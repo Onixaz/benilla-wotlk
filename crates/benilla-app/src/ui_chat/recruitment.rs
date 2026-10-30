@@ -1,13 +1,12 @@
-//! The `AUTO_JOIN_GUILD_CHANNEL` cascade (`0x49ea90`), the one place the client joins or leaves
-//! `GuildRecruitment - City` on its own. On AUTO (`CGChat::m_guildRecruitmentMode`, the default)
-//! a guilded player leaves it (`0x49ee70`) and an unguilded one in a capital joins it
-//! (`0x49eb70`), with no membership check; otherwise a retry waits for the next zone change. Once
-//! joined, the zone walk owns it as it owns Trade. Triggers: the `guildRecruitmentChannel` CVar
-//! moving to 1 (`0x512750` → `SetGuildRecruitmentMode`) and the `PLAYER_GUILDID` watcher
-//! (`0x5e2770`), whose first sight is the player create (`0x5dec1e`); its move to 0 leaves a
-//! joined channel. Deviation: no re-run
-//! when a remote player streams in, because the reference's re-run only repeats the join, which
-//! vmangos swallows, or the leave, whose "Not on channel" notice nothing prints.
+//! The `AUTO_JOIN_GUILD_CHANNEL` cascade, the one place the client joins or leaves
+//! `GuildRecruitment - City` on its own. On AUTO (the chat's guild-recruitment mode, the default) a
+//! guilded player leaves it and an unguilded one in a capital joins it (`0x49eb70`), with no
+//! membership check; otherwise a retry waits for the next zone change. Once joined, the zone walk
+//! owns it as it owns Trade. Triggers: the `guildRecruitmentChannel` CVar moving to 1 (`0x512750` →
+//! the mode setter) and the `PLAYER_GUILDID` watcher, whose first sight is the player create; its
+//! move to 0 leaves a joined channel. Deviation: no re-run when a remote player streams in, because
+//! the reference's re-run only repeats the join, which vmangos swallows, or the leave, whose "Not
+//! on channel" notice nothing prints.
 
 use bevy::prelude::*;
 
@@ -19,15 +18,15 @@ use crate::net::{NetCommands, ObjectStore, SelfPlayer};
 use super::channels::{city_word, ZoneChannelWalk};
 use super::edit::ChannelState;
 
-/// vmangos `AREA_FLAG_CAPITAL`, the cascade's capital test (`0x49eb2e`); the walk tests `0x8`,
-/// which marks the same six rows in 1.12 data.
+/// vmangos `AREA_FLAG_CAPITAL`, the cascade's capital test; the walk tests `0x8`, which marks the
+/// same six rows in 1.12 data.
 const AREA_FLAG_CAPITAL: u32 = 0x100;
 
 /// The cascade's own state: whether a run is owed, and the guild id its watcher last saw.
 #[derive(Resource, Default)]
 pub(crate) struct GuildRecruitmentCascade {
-    /// A run is owed: the one-shot `[0xb6e5e4]` and the tail-jump from `0x49ea70` in one flag,
-    /// kept while the cascade cannot act.
+    /// A run is owed: the one-shot and the tail-jump from the mode setter in one flag, kept while
+    /// the cascade cannot act.
     pending: bool,
     /// The last `PLAYER_GUILDID` seen; `None` makes the first sight a change, the create trigger.
     last_guild_id: Option<u32>,
@@ -59,9 +58,9 @@ impl GuildRecruitmentCascade {
     }
 }
 
-/// `guildRecruitmentChannel`'s change callback (`CVarHandler_guildRecruitmentChannel 0x512750`),
-/// queued for [`guild_recruitment_cascade`]. Before the chat cache seats the latch it is dropped:
-/// the restore overwrites the mode (`LoadChatSettingsCallback 0x508320`).
+/// `guildRecruitmentChannel`'s change callback (`0x512750`), queued for
+/// [`guild_recruitment_cascade`]. Before the chat cache seats the latch it is dropped: the restore
+/// overwrites the mode (`0x508320`).
 pub(crate) fn on_cvar(
     ev: On<crate::cvars::CvarChanged>,
     mut state: ResMut<GuildRecruitmentCascade>,
@@ -72,19 +71,19 @@ pub(crate) fn on_cvar(
     }
 }
 
-/// What `0x49ea90` does once the player and the zone row have resolved.
+/// What the cascade does once the player and the zone row have resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Cascade {
-    /// Guilded: leave `GuildRecruitment - City` (`0x49eb0e`-`0x49eb2b`).
+    /// Guilded: leave `GuildRecruitment - City`.
     Leave,
-    /// Unguilded, in a capital: join `GuildRecruitment` (`0x49eb2b`-`0x49eb64`).
+    /// Unguilded, in a capital: join `GuildRecruitment`.
     Join,
-    /// Unguilded, not in a capital: arm the retry (`0x49eb33`), no packet.
+    /// Unguilded, not in a capital: arm the retry, no packet.
     Deferred,
 }
 
-/// `0x49ea90`'s verdict: `None` when the latch is not AUTO (`0x49ea96`), not even a retry. The
-/// guild test comes first (`0x49eb0c`), so a guilded player leaves from anywhere.
+/// The cascade's verdict: `None` when the latch is not AUTO, not even a retry. The guild test
+/// comes first, so a guilded player leaves from anywhere.
 pub(crate) fn cascade(auto: bool, guild_id: u32, in_capital: bool) -> Option<Cascade> {
     if !auto {
         return None;
@@ -110,8 +109,8 @@ pub(super) fn guild_recruitment_cascade(
     commands: Res<NetCommands>,
 ) {
     let Some(mut script) = script else { return };
-    // `SetGuildRecruitmentMode(mode, 0)` (`0x508260`): unmoved is a no-op; 1 runs the cascade
-    // (`UpdateGuildStatus`), 0 leaves a joined recruitment channel and refreshes the windows.
+    // The mode setter (`0x508260`), called with 0: unmoved is a no-op; 1 runs the cascade, 0
+    // leaves a joined recruitment channel and refreshes the windows.
     if let Some(mode) = state.cvar.take() {
         if script.set_guild_recruitment_mode_from_cvar(mode) {
             if mode == 1 {
@@ -144,7 +143,7 @@ pub(super) fn guild_recruitment_cascade(
     if channels.zone_mask.is_none() {
         return;
     }
-    // The zone row: unresolvable ⇒ the retry stays armed (`0x49eaf5`).
+    // The zone row: unresolvable ⇒ the retry stays armed.
     let Some(areas) = areas.as_deref() else {
         return;
     };
@@ -158,10 +157,10 @@ pub(super) fn guild_recruitment_cascade(
         return;
     };
     if action == Cascade::Deferred {
-        return; // `0x49eb33`: the retry stays armed
+        return; // the retry stays armed
     }
-    // The name is composed against the "City" row whatever the zone (`0x49f140`); with no row or
-    // city word the run is consumed, not retried.
+    // The name is composed against the "City" row whatever the zone; with no row or city word the
+    // run is consumed, not retried.
     let target = channels
         .channels
         .rows()
@@ -183,7 +182,7 @@ pub(super) fn guild_recruitment_cascade(
         }
         Cascade::Join => {
             info!("chat: guild recruitment cascade — unguilded in a capital, joining {name:?}");
-            // `0x49eb70`: the slot (`0x49b980`, by name), window 1's list, then the send, always.
+            // The slot (by name), window 1's list, then the send, always.
             match channels.claim_slot(&name) {
                 Some(n) => {
                     debug!("chat: {name:?} registered as slot {n}");
@@ -202,13 +201,13 @@ pub(super) fn guild_recruitment_cascade(
         }
         Cascade::Deferred => {}
     }
-    // Both acting arms fire it (`0x49eb21`, `0x49eb5f`); chat frames re-read channels on it.
+    // Both acting arms fire it; chat frames re-read channels on it.
     script.fire_event("UPDATE_CHAT_WINDOWS", vec![]);
     state.pending = false;
 }
 
-/// Leave by the full name (`0x49ee70`): the packet and the mask bit (`0x49f10a`/`0x49f11a`). No
-/// window loses its entry: the strip matches that name verbatim (`0x49f017`), which none holds.
+/// Leave by the full name: the packet and the mask bit. No window loses its entry: the strip
+/// matches that name verbatim, which none holds.
 fn cascade_leave(channels: &mut ChannelState, commands: &NetCommands, name: String) {
     let _ = commands.0.send(channels.leave_command(name.clone()));
     channels.note_zone_channel_left(&name);
@@ -218,7 +217,7 @@ fn cascade_leave(channels: &mut ChannelState, commands: &NetCommands, name: Stri
 mod tests {
     use super::*;
 
-    /// The four legs of `0x49ea90`, and the order of its two tests.
+    /// The four legs, and the order of its two tests.
     #[test]
     fn the_cascade_reads_the_latch_then_the_guild_then_the_capital() {
         assert_eq!(

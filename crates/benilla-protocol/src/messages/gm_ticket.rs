@@ -26,7 +26,8 @@ pub const GMTICKET_RESPONSE_TICKET_DELETED: u32 = 9;
 /// The `f32`s are days, and a negative oldest or update figure means unknown.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GmTicket {
-    /// The server's ticket id, the client's `m_ticketID` (`[0xc1e8d0]`) that gates edit and delete.
+    /// The server's ticket id, the client's held ticket id (`[0xc1e8d0]`) that gates edit and
+    /// delete.
     pub id: u32,
     /// What the player typed, read into a 2000-byte buffer (`0x5ad351`).
     pub text: String,
@@ -45,7 +46,7 @@ pub struct GmTicket {
 }
 
 /// `SMSG_GMRESPONSE_RECEIVED` (`0x5ad4ef`): a GM's answer to a ticket, which the client keeps as
-/// `m_responseID` and `m_ticketID` and fires as `GMRESPONSE_RECEIVED(text, response)`.
+/// the response and ticket ids and fires as `GMRESPONSE_RECEIVED(text, response)`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GmResponse {
     pub response_id: u32,

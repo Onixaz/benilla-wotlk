@@ -75,8 +75,8 @@ pub(crate) struct Lifecycle<'w> {
     channel: ResMut<'w, ActiveChannel>,
     spell_mods: ResMut<'w, crate::spell::SpellModifiers>,
     pet_bar: ResMut<'w, crate::ui_pet::PetBar>,
-    /// The PlayAnimation call-order counter: every animation-bearing message stamps `next()`,
-    /// in packet order.
+    /// The animation call-order counter: every animation-bearing message stamps `next()`, in packet
+    /// order.
     play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
 }
 
@@ -134,8 +134,7 @@ fn on_spell_learned(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
 ) {
     if let SessionEvent::SpellLearned { spell_id } = ev {
-        // `0x4d4db0(ClntObjMgrGetActivePlayer(), 0x10)`: our own player, once its object has
-        // streamed.
+        // `0x4d4db0` on the active player (`0x10`): our own player, once its object has streamed.
         let learner = self_q.iter().next().map(|store| Learner {
             level: store.0.unit_level().unwrap_or(0),
             class: store.0.unit_class().unwrap_or(0),
@@ -173,7 +172,7 @@ fn on_spell_learned(
 
 fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
     if let SessionEvent::SpellRemoved { spell_id } = ev {
-        // `DelKnownSpell` drops a companion from its list (`0x53fad0`).
+        // The known-spell removal drops a companion from its list (`0x53fad0`).
         let companion = l
             .spells
             .as_deref()
@@ -226,7 +225,7 @@ fn on_spell_superceded(
     }
 }
 
-/// What `HandleCastResult` reaches beyond the ladder.
+/// What the cast-result handler reaches beyond the ladder.
 #[derive(SystemParam)]
 pub(crate) struct Reply<'w, 's> {
     self_guid: Res<'w, SelfGuid>,
@@ -237,13 +236,12 @@ pub(crate) struct Reply<'w, 's> {
     play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
 }
 
-/// `HandleCastResult 0x6e7330`, the one handler that casts: a reply whose spell names a
-/// `modalNextSpell` (column 38) chains it through the ladder in the same call (`0x6e74aa call
-/// 0x6e5a90` → `TryCast 0x6e4b60`), so it arms the in-flight slot before the next packet.
+/// The cast-result handler, the one handler that casts: a reply whose spell names a
+/// `modalNextSpell` (column 38) chains it through the ladder in the same call (the cast attempt),
+/// so it arms the in-flight slot before the next packet.
 ///
-/// The chained cast goes out at the null target guid (`0x6e74a6 push ebx; push ebx`, `ebx = 0`),
-/// so it binds through `ArmCast 0x6e5250`'s ordinary walk ([`CastTargeting::context`]) and takes
-/// every rung a press takes.
+/// The chained cast goes out at the null target guid (`ebx = 0`), so it binds through the target
+/// resolve's ordinary walk ([`CastTargeting::context`]) and takes every rung a press takes.
 fn on_cast_result(
     In(ev): In<SessionEvent>,
     mut ladder: CastLadder,
@@ -740,11 +738,10 @@ const ATTR_DO_NOT_DISPLAY: u32 = 0x80;
 /// `AttributesEx4 & 0x8000`: kept out of the spellbook, so off the tab and the bar (`0x542856`).
 const ATTR_EX4_NOT_IN_SPELLBOOK: u32 = 0x8000;
 
-/// The `ERR_LEARN_*` chat line the registrar `0x4b25b0` prints at `0x4b2909` for a spell learned
-/// mid-session; which line, and whether it carries the rank, is
-/// [`benilla_formats::SpellDisplay::learn_announcement`]'s. Ids `0x37`/`0x38`/`0x39` are chat
-/// type 10 rows, so all three land on the system channel. An unknown id says nothing, the
-/// registrar's bail at `0x4b25c6`/`0x4b25d2`/`0x4b25e0`.
+/// The `ERR_LEARN_*` chat line the registrar prints for a spell learned mid-session; which line,
+/// and whether it carries the rank, is [`benilla_formats::SpellDisplay::learn_announcement`]'s. Ids
+/// `0x37`/`0x38`/`0x39` are chat type 10 rows, so all three land on the system channel. An unknown
+/// id says nothing, the registrar's bail.
 fn announce_learn(spell_id: u32, spells: Option<&Spells>, errors: &mut UiErrorKeys) {
     let Some(display) = spells.and_then(|s| s.catalog.get(spell_id)) else {
         return;
@@ -764,13 +761,12 @@ fn announce_learn(spell_id: u32, spells: Option<&Spells>, errors: &mut UiErrorKe
 /// `SMSG_REMOVED_SPELL`: the spell leaves the book. A talent wipe arrives as these (vmangos
 /// `ResetTalents` calls `RemoveSpell` on every rank, each sending `SendSpellRemoved`), and
 /// [`crate::ui_talent`] derives rank from the book. The feeds diff `spells`, and
-/// [`crate::ui_action::LearnedAbilities`] re-derives from it (the reference's unlearn write site,
-/// `0x4b2c50`); a bar button naming the spell is left as is.
+/// [`crate::ui_action::LearnedAbilities`] re-derives from it (the reference's unlearn write site);
+/// a bar button naming the spell is left as is.
 ///
 /// It announces "You have unlearned %s." under
-/// [`benilla_formats::SpellDisplay::announces_unlearn`]'s gates: `RemoveSpell 0x5e9fe0`'s block at
-/// `0x5ea292`, a branch target past its `ret 0x8` at `0x5ea28f`, is reached from this packet's arm
-/// (`0x5e43e3`) with the flag set.
+/// [`benilla_formats::SpellDisplay::announces_unlearn`]'s gates: the client's spell-removal block,
+/// a branch target past its `ret 0x8`, is reached from this packet's arm with the flag set.
 fn removed_spell(
     spell_id: u32,
     actions: &mut PlayerActions,
@@ -784,8 +780,8 @@ fn removed_spell(
     announce_unlearn(spell_id, spells, errors);
 }
 
-/// `ERR_SPELL_UNLEARNED_S` (`0x5ea2ab push 0x14a`) with the bare name: `0x5ea2a3` pushes
-/// `SpellRec+0x1e0` and this path has no rank composer. Which spells say it is
+/// `ERR_SPELL_UNLEARNED_S` with the bare name: the reference pushes `SpellRec+0x1e0` and this path
+/// has no rank composer. Which spells say it is
 /// [`benilla_formats::SpellDisplay::announces_unlearn`]'s.
 fn announce_unlearn(spell_id: u32, spells: Option<&Spells>, errors: &mut UiErrorKeys) {
     let Some(display) = spells.and_then(|s| s.catalog.get(spell_id)) else {
@@ -814,9 +810,8 @@ fn superceded_spell(
     actions.spells.remove(&old_spell_id);
     actions.spells.insert(new_spell_id);
     actions.dirty = true;
-    // A rank-up announces once, like a first learn: the supersede pair `0x4b2f50` calls the
-    // unlearn `0x4b2c50`, which prints nothing, then the registrar `0x4b25b0` with `edx = 1`
-    // (`0x4b2f61`).
+    // A rank-up announces once, like a first learn: the supersede pair calls the unlearn, which
+    // prints nothing, then the registrar with `edx = 1`.
     announce_learn(new_spell_id, spells, errors);
     // The same flag flashes the tab of the new rank.
     tab_flash.0.push(new_spell_id);
@@ -844,26 +839,25 @@ fn cast_result(
     seq: u64,
 ) -> Option<u32> {
     debug!("net: cast result — spell {spell_id} success={success} reason={reason:?}");
-    // Is this the reply to our outstanding cast (`0x6e7408 cmp ecx,[0xceca88]`)? Read before either
-    // arm clears the guard: both clears are the reference's one `0x6e741a call 0x6e4940(0x1c)`.
+    // Is this the reply to our outstanding cast? Read before either arm clears the guard: both
+    // clears are the reference's one.
     let in_flight = pending.committed(Instant::now()) == Some(spell_id);
     if !success {
-        // `HandleCastFailed 0x6e1a00` clears the GCD armed at send (`0x6e1d83 → 0x6e1630`), and the
-        // bit-25 revert below drops a parked record; the spell's own recovery starts at SPELL_GO,
-        // which a failed cast never reaches. A failing cached auto-repeat spell with reason ≠ 0x17
-        // runs the full local cancel (`0x6e1cd9`–`0x6e1cea` → `0x6ea080`, the
-        // `SMSG_CANCEL_AUTO_REPEAT` routine). A deselect arrives as this failure (vmangos
+        // The cast-failed handler clears the GCD armed at send, and the bit-25 revert below drops a
+        // parked record; the spell's own recovery starts at SPELL_GO, which a failed cast never
+        // reaches. A failing cached auto-repeat spell with reason ≠ 0x17 runs the full local cancel
+        // (the `SMSG_CANCEL_AUTO_REPEAT` routine). A deselect arrives as this failure (vmangos
         // `HandleSetSelectionOpcode` → `Spell::cancel` → `SendCastResult(INTERRUPTED)`); target
         // death arrives as [`cancel_auto_repeat`].
         let now = Instant::now();
-        // Reason 0x17 DONT_REPORT exits before the GCD clear and the display (`6e1ce1`/`6e1cf7` →
-        // `0x6e224f`). The in-flight clear below still runs, as the reference's `0x6e741a` does
-        // once `HandleCastFailed` returns: vmangos sends 0x17 for real aborts.
+        // Reason 0x17 DONT_REPORT exits before the GCD clear and the display. The in-flight clear
+        // below still runs, as the reference's does once the cast-failed handler returns: vmangos
+        // sends 0x17 for real aborts.
         let dont_report = reason == Some(0x17);
         if !dont_report {
             cooldowns.clear_gcd(spell_id, now);
-            // The bit-25 revert (`6e73cc–6e73e6`): a non-0x3c failure of a cooldown-on-event spell
-            // removes its parked record (a failed Feign Death or Stealth).
+            // The bit-25 revert: a non-0x3c failure of a cooldown-on-event spell removes its parked
+            // record (a failed Feign Death or Stealth).
             if reason != Some(0x3c)
                 && spells
                     .and_then(|s| s.catalog.get(spell_id))
@@ -916,17 +910,16 @@ fn cast_result(
             });
         }
     }
-    // The `modalNextSpell` chain (`HandleCastResult 0x6e7330`, `0x6e7408`–`0x6e74aa`): the reply
-    // to our in-flight cast finishes its slot, then reads column 38 of its spell; non-zero and not
-    // the running repeat, the client casts it at the null target guid. Every hunter shot names 75,
-    // Auto Shot.
-    // - It fires on success as well as failure: `0x6e7356 cmp [ebp+0xf],0x2` / `0x6e735a jne`
-    //   sends a non-failure straight to the block the failure path reaches at `0x6e73eb`.
-    // - The slot clears first (`0x6e741a`), or the IsCasting rung (`0x6e4d97`, our `0x61`) would
-    //   refuse the chain. vmangos sends `SMSG_CAST_RESULT` before `SMSG_SPELL_GO`
-    //   (`Spell.cpp:3681`, `Spell.cpp:3715`), so the guard is still armed here.
-    // - Equal to the running repeat means re-arm, not re-cast (`0x6e745b` → `0x6e745d`), so a
-    //   second sting never resets the swing timer; with no record to refresh, we send nothing.
+    // The `modalNextSpell` chain (the cast-result handler): the reply to our in-flight cast
+    // finishes its slot, then reads column 38 of its spell; non-zero and not the running repeat,
+    // the client casts it at the null target guid. Every hunter shot names 75, Auto Shot.
+    // - It fires on success as well as failure: the reference sends a non-failure straight to the
+    //   block the failure path reaches.
+    // - The slot clears first, or the in-flight rung (our `0x61`) would refuse the chain. vmangos
+    //   sends `SMSG_CAST_RESULT` before `SMSG_SPELL_GO` (`Spell.cpp:3681`, `Spell.cpp:3715`), so
+    //   the guard is still armed here.
+    // - Equal to the running repeat means re-arm, not re-cast, so a second sting never resets the
+    //   swing timer; with no record to refresh, we send nothing.
     // The chained spell is returned; `on_cast_result` hands it to the ladder in the same call.
     if in_flight {
         pending.clear_if(spell_id);
@@ -966,9 +959,9 @@ fn spell_start(
         "net: spell start {spell_id} by {caster:#x} ({cast_time_ms}ms, flags \
          {cast_flags:#x}, target {target:?}, ammo {ammo_display_id:?})"
     );
-    // The nocked-ammo refresh (`0x60ba30` at `0x6e78b6`, gated at `0x6e78a1` on `SpellRec+0x20 &
-    // 0x20` or `+0x18 & 0x2`, for any caster): a ranged START attaches the wire's ammo display id,
-    // or detaches without one. The model persists through Load/Hold and the fire clip.
+    // The nocked-ammo refresh (gated on `SpellRec+0x20 & 0x20` or `+0x18 & 0x2`, for any caster): a
+    // ranged START attaches the wire's ammo display id, or detaches without one. The model persists
+    // through Load/Hold and the fire clip.
     if spells
         .and_then(|s| s.catalog.get(spell_id))
         .is_some_and(|d| d.ranged_attack())
@@ -1035,7 +1028,7 @@ fn spell_start(
 }
 
 /// `GAMEOBJECT_TYPE_ID` 3, `CHEST`: the only GameObject type whose `OPEN_LOCK` cast arms the
-/// loot-target latch (`0x6e830c`).
+/// loot-target latch.
 const GO_TYPE_CHEST: i32 = 3;
 
 /// `SMSG_SPELL_GO`: the cast launched. The server schedules damage off `Spell.dbc` Speed; the
@@ -1065,7 +1058,7 @@ fn spell_go(
     pending: &mut PendingCast,
     queued_melee: &mut QueuedMeleeSpell,
     go_lid: &mut MessageWriter<crate::go_anim::GoLidOpen>,
-    // The loot-target latch, armed here for a chest (`0x6e831b`).
+    // The loot-target latch, armed here for a chest.
     loot_latch: &mut crate::ui_loot::LootLatch,
     // The cooldown store and what it reads; the last member is the pet's, the second bank this
     // handler inserts into ([`pet_go_cooldown`]).
@@ -1077,8 +1070,8 @@ fn spell_go(
         &mut crate::ui_pet::PetBar,
         &crate::spell::SpellModifiers,
     ),
-    // The GO-deferred auto-attack start's writes (`0x6e83c0`) and the attack lock it gates on
-    // (`Engaged`, the reference's `[player+0xc48]`).
+    // The GO-deferred auto-attack start's writes and the attack lock it gates on (`Engaged`, the
+    // reference's `[player+0xc48]`).
     attack_ctx: (
         &mut crate::spell::AutoRepeatActive,
         &mut MessageWriter<crate::creature_anim::SheathRequest>,
@@ -1123,7 +1116,7 @@ fn spell_go(
     let (auto_repeat, sheath, engaged) = attack_ctx;
     let now = Instant::now();
     let display = spells.and_then(|s| s.catalog.get(spell_id));
-    // Our own OPEN_LOCK cast on a chest latches it here (`OnLootGameObject` call `0x80f6a0`).
+    // Our own OPEN_LOCK cast on a chest latches it here (the loot open's call, `0x80f6a0`).
     if self_guid.0 == Some(caster) {
         if let Some(go_guid) = go_target {
             let is_open_lock = display.is_some_and(|d| d.open_lock.is_some());
@@ -1153,13 +1146,13 @@ fn spell_go(
         // The queued strike fired on this swing: the queue opens here, like the in-flight finish.
         queued_melee.clear_if(spell_id);
 
-        // The GO-deferred auto-attack start (`0x6e83c0`), the complement of
-        // [`crate::spell::cast_send`]'s send-time tail: an `AttributesEx2 & 0x100000` spell (the
-        // stealth openers and Judgement, 36 rows) starts the swing once the server confirms it.
-        // The target is `hits[0]`, else the null pair (`0x6e83e9`–`0x6e83fe`), which `0x612df0`
-        // resolves to the selection or else the nearest hostile. Deviation: the fallback is the
-        // packet's target guid, never the nearest-hostile acquire, because that would attack
-        // something the player never named. Gated on `[player+0xc48] == 0` (`0x6e83e7`).
+        // The GO-deferred auto-attack start, the complement of [`crate::spell::cast_send`]'s
+        // send-time tail: an `AttributesEx2 & 0x100000` spell (the stealth openers and Judgement,
+        // 36 rows) starts the swing once the server confirms it. The target is `hits[0]`, else the
+        // null pair, which the reference resolves to the selection or else the nearest hostile.
+        // Deviation: the fallback is the packet's target guid, never the nearest-hostile acquire,
+        // because that would attack something the player never named. Gated on
+        // `[player+0xc48] == 0`.
         if display.is_some_and(|d| d.initiates_auto_attack_at_go()) && !engaged {
             if let (Some(&me), Some(guid)) =
                 (index.0.get(&caster), hits.first().copied().or(target))
@@ -1178,13 +1171,12 @@ fn spell_go(
             }
         }
 
-        // Our launch starts the cast's cooldown here, at the GO receive time. The self-insert
-        // forks on itemCaster == caster: the spell leg (`0x6e8498`: RecoveryTime, Category,
-        // CategoryRecoveryTime, on-hold from Attributes bit 25) or the item leg (`0x6e8566`,
-        // per-slot values with SpellRec fallbacks; a non-resident row pends via `0x6e8660` →
-        // `0x6e8830`). `SMSG_SPELL_COOLDOWN` is the server's override; vmangos sends none for a
-        // plain cast. A ranged-slot cast folds `UNIT_FIELD_RANGEDATTACKTIME` into the category
-        // recovery (`0x6e2b60`).
+        // Our launch starts the cast's cooldown here, at the GO receive time. The self-insert forks
+        // on itemCaster == caster: the spell leg (Category, CategoryRecoveryTime, on-hold from
+        // Attributes bit 25) or the item leg (per-slot values with SpellRec fallbacks; a
+        // non-resident row pends). `SMSG_SPELL_COOLDOWN` is the server's override; vmangos sends
+        // none for a plain cast. A ranged-slot cast folds `UNIT_FIELD_RANGEDATTACKTIME` into the
+        // category recovery.
         let ranged_ms = display
             .filter(|d| d.ranged_speed_cooldown())
             .and_then(|_| {
@@ -1202,7 +1194,7 @@ fn spell_go(
                 match use_spell {
                     Some(u) => cooldowns.start_item(entry, &u, display, now),
                     // Template not streamed, or naming another spell: the spell-keyed record,
-                    // unmodified, as the item leg never applies op 11 (`0x6e8566`, `0x6e8830`).
+                    // unmodified, as the item leg never applies op 11.
                     None => {
                         if let Some(d) = display {
                             cooldowns.start_spell(spell_id, d, ranged_ms, now, None);
@@ -1234,15 +1226,14 @@ fn spell_go(
         pet_bar.pending_cast = None;
     }
     if let Some(d) = display.filter(|_| pet_go_cooldown(caster, self_guid, index, stores)) {
-        // No ranged pad: `0x6e2b60` is called on the self leg only (`0x6e845d`). Op 11 still
-        // applies to both columns (`0x6e85c5`, `0x6e85d1`) off the player's tables, which gate
-        // on the spell's family and never the caster (`0x6e6b30`).
+        // No ranged pad: the reference is called on the self leg only. Op 11 still applies to both
+        // columns off the player's tables, which gate on the spell's family and never the caster.
         pet_bar
             .cooldowns
             .start_spell(spell_id, d, 0, now, Some(spell_mods));
-        // The flush that follows (`0x6e85fc` `0x4b31b0`, `0x6e8601` `0x4bce90`) fires off the
-        // list's generation, which the insert bumped: `ACTIONBAR_UPDATE_COOLDOWN`,
-        // `SPELL_UPDATE_COOLDOWN`, `PET_BAR_UPDATE_COOLDOWN`, and no `PET_BAR_UPDATE`.
+        // The flush that follows fires off the list's generation, which the insert bumped:
+        // `ACTIONBAR_UPDATE_COOLDOWN`, `SPELL_UPDATE_COOLDOWN`, `PET_BAR_UPDATE_COOLDOWN`, and no
+        // `PET_BAR_UPDATE`.
         if benilla_assets::trace::enabled() {
             let (recovery_ms, category_ms) = spell_mods.spell_cooldowns(d, 0);
             benilla_assets::trace::line(
@@ -1262,17 +1253,16 @@ fn spell_go(
         cooldowns.collect(now);
         pet_bar.cooldowns.collect(now);
     }
-    // Keyed by spell id, like the reap `0x614150(spellId, 0)`: a proc's GO must not clear another
-    // spell's precast state.
+    // Keyed by spell id, like the reap `(spellId, 0)`: a proc's GO must not clear another spell's
+    // precast state.
     if let Some(&e) = index.0.get(&caster) {
         if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
             commands.entity(e).remove::<Casting>();
         }
-        // The GO's chain-hop fill (`0x6e800d`), the producer for non-channelled chain spells. It
-        // must precede the CastEvent: the cast kit's chain proc consumes it the same frame. The
-        // reference gates it on the attribute predicate `0x6e4870`, whose role here is untraced;
-        // this fills unconditionally, harmless since consumption needs a chain proc and every fill
-        // clears.
+        // The GO's chain-hop fill, the producer for non-channelled chain spells. It must precede
+        // the CastEvent: the cast kit's chain proc consumes it the same frame. The reference gates
+        // it on the attribute predicate, whose role here is untraced; this fills unconditionally,
+        // harmless since consumption needs a chain proc and every fill clears.
         fill_chain_hops(caster, e, &hits, commands, index);
         cast_events.write(CastEvent {
             entity: e,
@@ -1342,7 +1332,7 @@ fn spell_failed_other(
         // The melee-slot interrupt's other half, beside the failing CAST_RESULT.
         queued_melee.clear_if(spell_id);
     }
-    // Keyed by spell id, like the reap (the 0x2A6 handler's `0x614150(spellId, 0)`).
+    // Keyed by spell id, like the reap (the 0x2A6 handler's `(spellId, 0)`).
     if let Some(&e) = index.0.get(&caster) {
         if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
             commands.entity(e).remove::<Casting>();
@@ -1376,10 +1366,10 @@ fn spell_delayed(
     }
 }
 
-/// `SMSG_CANCEL_AUTO_REPEAT`: the handler (`0x6e99d0` → `0x6ea080`) clears the autorepeat key
-/// `0xceac30`, which the button's checked state reads (`STOP_AUTOREPEAT_SPELL`), and both
-/// shooting-idle bits of `[+0xd58]`, so the Load/Hold idle drops
-/// ([`crate::creature_anim::AutoRepeatArmed`] and `RangedHold`). Nothing sheathes.
+/// `SMSG_CANCEL_AUTO_REPEAT`: the handler clears the autorepeat key, which the button's checked
+/// state reads (`STOP_AUTOREPEAT_SPELL`), and both shooting-idle bits of `[+0xd58]`, so the
+/// Load/Hold idle drops ([`crate::creature_anim::AutoRepeatArmed`] and `RangedHold`). Nothing
+/// sheathes.
 ///
 /// vmangos sends it on every player autorepeat interrupt (`SpellCaster.cpp:1826`), which is how
 /// target death stops a volley (`Unit::_UpdateAutoRepeatSpell` → `CheckCast(true)` fails →
@@ -1393,19 +1383,18 @@ fn cancel_auto_repeat(
     net: &crate::net::NetCommands,
 ) {
     debug!("net: cancel auto-repeat");
-    // The same cancel `0x6ea080` as every local trigger, its unconditional CMSG ack included.
+    // The same cancel as every local trigger, its unconditional CMSG ack included.
     let self_e = self_guid.0.and_then(|g| index.0.get(&g)).copied();
     crate::creature_anim::cancel_auto_repeat_local(self_e, auto_repeat, commands, net);
 }
 
-/// Whether this `SMSG_SPELL_GO` arms the pet's cooldown bank (`0x6e857a`–`0x6e85ad`). The GO
-/// handler inserts into two banks (`0x6e2ea0`'s `bankHead = 0xcecaec + 24*bank`): the self leg
-/// bank 0 (`0x6e8493`), this leg bank 1 (`0x6e85f2 mov ecx, 0xcecb04`), which `SMSG_PET_SPELLS`
-/// seeds (`0x4bdaa8 push 1`) and `GetPetActionCooldown` reads.
+/// Whether this `SMSG_SPELL_GO` arms the pet's cooldown bank. The GO handler inserts into two banks
+/// (the bank head is the base plus 24 per bank): the self leg bank 0, this leg bank 1, which
+/// `SMSG_PET_SPELLS` seeds and `GetPetActionCooldown` reads.
 ///
-/// The gate is the caster's owner off its own descriptor: `charmedBy` when set, else
-/// `summonedBy` (`0x6e858b`–`0x6e859a`), compared with the active player's guid (`0x468550`,
-/// `0x6e85a2`). Not `0x5ee5a0`'s `createdBy` fallback, which would arm it for totems.
+/// The gate is the caster's owner off its own descriptor: `charmedBy` when set, else `summonedBy`,
+/// compared with the active player's guid. Not the reference's `createdBy` fallback, which would
+/// arm it for totems.
 ///
 /// vmangos sends no cooldown packet for a pet's cast: `Creature::AddCooldown`
 /// (`Creature.cpp:3259-3282`) sends one only for a charmed non-pet's instant.
@@ -1447,8 +1436,8 @@ fn spell_cooldowns(
     }
 }
 
-/// `SMSG_ITEM_COOLDOWN` (`0x6e95d0`): the fixed 30 s use cooldown, keyed on the item instance's
-/// template entry, as the reference resolves it.
+/// `SMSG_ITEM_COOLDOWN`: the fixed 30 s use cooldown, keyed on the item instance's template entry,
+/// as the reference resolves it.
 fn item_cooldown(
     item_guid: u64,
     spell_id: u32,
@@ -1467,21 +1456,20 @@ fn item_cooldown(
     }
 }
 
-/// `SMSG_COOLDOWN_EVENT` (`0x6e9670` → `0x6e3050(force=0)`): start an on-hold cooldown's parked
-/// timers now (Stealth ends, Feign Death drops).
+/// `SMSG_COOLDOWN_EVENT` (`(force=0)`): start an on-hold cooldown's parked timers now (Stealth
+/// ends, Feign Death drops).
 fn cooldown_event(spell_id: u32, caster: u64, cooldowns: &mut Cooldowns) {
     debug!("net: cooldown event — spell {spell_id} on {caster:#x}");
     cooldowns.cooldown_event(spell_id, Instant::now());
 }
 
-/// `SMSG_CLEAR_COOLDOWN` (`0x6e9670` → `0x6e3050(force=1)`): remove the spell's record outright.
+/// `SMSG_CLEAR_COOLDOWN` (`(force=1)`): remove the spell's record outright.
 fn clear_cooldown(spell_id: u32, caster: u64, cooldowns: &mut Cooldowns) {
     debug!("net: clear cooldown — spell {spell_id} on {caster:#x}");
     cooldowns.clear_spell(spell_id);
 }
 
-/// `SMSG_COOLDOWN_CHEAT` (`0x6e9730` → `0x6e9700`): the GM reset wipes the self or pet list the
-/// guid names.
+/// `SMSG_COOLDOWN_CHEAT`: the GM reset wipes the self or pet list the guid names.
 fn cooldown_cheat(caster: u64, cooldowns: &mut Cooldowns) {
     debug!("net: cooldown cheat (wipe) for {caster:#x}");
     cooldowns.wipe();
@@ -1524,9 +1512,9 @@ fn channel_update(
     });
 }
 
-/// `SMSG_SET_FLAT_SPELL_MODIFIER` / `SMSG_SET_PCT_SPELL_MODIFIER` (`HandleSetSpellModifier
-/// 0x6e9950`): one store of the absolute value for a `(family bit, op)` pair, never a delta. The
-/// out-of-range refusal is [`crate::spell::SpellModifiers::set`]'s.
+/// `SMSG_SET_FLAT_SPELL_MODIFIER` / `SMSG_SET_PCT_SPELL_MODIFIER`: one store of the absolute value
+/// for a `(family bit, op)` pair, never a delta. The out-of-range refusal is
+/// [`crate::spell::SpellModifiers::set`]'s.
 fn set_spell_modifier(
     flat: bool,
     mask_bit: u8,
@@ -1537,9 +1525,9 @@ fn set_spell_modifier(
     mods.set(flat, mask_bit, op, value);
 }
 
-/// The caster's chain-hop array from a wire target list, as `0x605780`: clear, then fill,
-/// skipping the unit's own guid (`0x6057bf`/`0x6057c9`); unstreamed targets drop out. Its two
-/// callers are the `SMSG_SPELL_UPDATE_CHAIN_TARGETS` handler and `HandleSpellGo`.
+/// The caster's chain-hop array from a wire target list, as the reference: clear, then fill,
+/// skipping the unit's own guid; unstreamed targets drop out. Its two callers are the
+/// `SMSG_SPELL_UPDATE_CHAIN_TARGETS` handler and the `SMSG_SPELL_GO` handler.
 fn fill_chain_hops(
     caster: u64,
     caster_entity: Entity,
@@ -1559,8 +1547,8 @@ fn fill_chain_hops(
 
 /// `SMSG_SPELL_UPDATE_CHAIN_TARGETS`: the hop list a beam runs through, parked on the caster
 /// (`unit+0xd44`: capacity `+0xd44`, count `+0xd48`, data `+0xd4c`, quantum `+0xd50`) and consumed
-/// once by the next chain `CharProc` (`0x60db72` zeroes the count). vmangos sends it only for
-/// channelled spells (`Spell::SendChannelStart`); other chain spells fill from the GO (`0x6e800d`).
+/// once by the next chain proc. vmangos sends it only for channelled spells
+/// (`Spell::SendChannelStart`); other chain spells fill from the GO.
 fn spell_chain_targets(
     caster: u64,
     spell_id: u32,
@@ -1604,8 +1592,8 @@ mod tests {
         spells
     }
 
-    /// Heroic Strike carries `SPELL_ATTR_ABILITY`, so `0x4b29b3 add eax,0x37` lands on `0x38`, the
-    /// ability wording, with the argText `"%s (%s)"`.
+    /// Heroic Strike carries `SPELL_ATTR_ABILITY`, so the reference lands on `0x38`, the ability
+    /// wording, with the argText `"%s (%s)"`.
     #[test]
     fn a_learned_ability_announces_the_ability_line_with_its_rank() {
         let spells = catalog_with(
@@ -1638,8 +1626,7 @@ mod tests {
         assert_eq!(flash.0, vec![78], "queued for LEARNED_SPELL_IN_TAB");
     }
 
-    /// A plain row is a spell; a tradeskill row is a recipe whose argText drops the rank (it
-    /// returns from `0x4b2944` before the subtext composer).
+    /// A plain row is a spell; a tradeskill row is a recipe whose argText drops the rank.
     #[test]
     fn the_spell_and_recipe_arms_pick_their_own_key_and_argument() {
         let spells = catalog_with(
@@ -1693,8 +1680,7 @@ mod tests {
         );
     }
 
-    /// The supersede pair `0x4b2f50` reaches the registrar with `edx = 1`: one line, naming the new
-    /// rank.
+    /// The supersede pair reaches the registrar with `edx = 1`: one line, naming the new rank.
     #[test]
     fn a_rank_up_announces_the_new_rank_once() {
         let mut spells = Spells::empty_for_tests();
@@ -2439,8 +2425,8 @@ mod tests {
         }
     }
 
-    /// The GO's pet leg arms the pet's bank (`0xcecb04`), never the player's; the owner read falls
-    /// back to SUMMONEDBY, not CREATEDBY (`0x6e859a`); a stranger's cast arms neither.
+    /// The GO's pet leg arms the pet's bank, never the player's; the owner read falls back to
+    /// SUMMONEDBY, not CREATEDBY; a stranger's cast arms neither.
     #[test]
     fn a_pets_own_go_arms_the_pet_bank_and_only_the_pet_bank() {
         let fire = |caster: u64, store: ObjectStore| {
@@ -2455,7 +2441,7 @@ mod tests {
         };
 
         // Our pet: the PET bank only. The insert moves the list's generation, which is the flush's
-        // edge (`0x6e85fc`, `0x6e8601`: the cooldown events), and signals no `PET_BAR_UPDATE`.
+        // edge, and signals no `PET_BAR_UPDATE`.
         let (player, pet, signals, generation) = fire(20, owned(SUMMONEDBY, 10));
         assert!(pet, "our pet's GO arms the pet bank");
         assert!(!player, "…and never the player's");
@@ -2466,8 +2452,8 @@ mod tests {
         let (_, charmed, _, _) = fire(20, owned(CHARMEDBY, 10));
         assert!(charmed, "a charmed unit's GO arms it too");
 
-        // A totem carries CREATEDBY and no SUMMONEDBY: `0x5ee5a0` would accept it, `0x6e859a` does
-        // not.
+        // A totem carries CREATEDBY and no SUMMONEDBY: the reference would accept it, the reference
+        // does not.
         let (_, totem, _, _) = fire(30, owned(CREATEDBY, 10));
         assert!(!totem, "CREATEDBY alone is not this leg's owner test");
 
@@ -2477,9 +2463,8 @@ mod tests {
         assert_eq!(generation, 0, "and moves no edge");
     }
 
-    /// Op 11 on the GO insert: the self leg (`0x6e846f`, and `0x6e2b60`'s tail) and the pet leg
-    /// (`0x6e85c5`) apply the player's table; the item leg inserts the DBC values (`0x6e8566`),
-    /// here through its not-streamed fallback.
+    /// Op 11 on the GO insert: the self leg and the pet leg apply the player's table; the item leg
+    /// inserts the DBC values, here through its not-streamed fallback.
     #[test]
     fn op_11_shortens_the_self_and_pet_inserts_and_never_the_item_one() {
         fn display() -> benilla_formats::SpellDisplay {
@@ -2559,8 +2544,8 @@ mod tests {
                 .map(|h| h.0.clone())
         };
 
-        // `HandleSpellGo`'s fill (`0x6e800d`): the caster itself (vmangos includes self-hits) and
-        // an unstreamed target both drop.
+        // The `SMSG_SPELL_GO` handler's fill: the caster itself (vmangos includes self-hits) and an
+        // unstreamed target both drop.
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.world_mut()
             .run_system_once(
@@ -2643,8 +2628,8 @@ mod tests {
     }
 
     /// A deselect during Auto Shot arrives as a `SMSG_CAST_RESULT` failure of the cached repeat
-    /// (vmangos `HandleSetSelectionOpcode` → `Spell::cancel`), and `6e1cd9`'s jump into `0x6ea080`
-    /// makes it the full cancel: the key and the shooting idle both drop.
+    /// (vmangos `HandleSetSelectionOpcode` → `Spell::cancel`), and the reference's jump into the
+    /// reference makes it the full cancel: the key and the shooting idle both drop.
     #[test]
     fn a_cast_result_fail_of_the_cached_auto_repeat_spell_disarms_the_shooting_idle() {
         use crate::creature_anim::AutoRepeatArmed;
@@ -2720,7 +2705,7 @@ mod tests {
                 .unwrap();
         };
 
-        // Reason 0x17 is the one skip (`6e1ce1 cmp cl,0x17; je`): armed stays armed.
+        // Reason 0x17 is the one skip: armed stays armed.
         fire_fail(&mut app, 0x17);
         assert_eq!(app.world().resource::<AutoRepeatActive>().0, Some(75));
         assert!(app
@@ -2748,13 +2733,13 @@ mod tests {
                 .entity(self_e)
                 .get::<crate::creature_anim::NockedAmmo>()
                 .is_none(),
-            "the cancel un-nocks (the client's 0x6ea140 -> 0x60f530)"
+            "the cancel un-nocks"
         );
         let sent: Vec<_> = rx.try_iter().collect();
         assert!(
             sent.iter()
                 .any(|c| matches!(c, crate::net::ClientCommand::CancelAutoRepeat)),
-            "the cancel acks the server (CMSG_CANCEL_AUTO_REPEAT_SPELL, the 0x6ea0c6 send)"
+            "the cancel acks the server (CMSG_CANCEL_AUTO_REPEAT_SPELL)"
         );
     }
 
@@ -2806,14 +2791,14 @@ mod tests {
             (
                 0x20,
                 0,
-                "IS_TRADESKILL — the container join zeroes the flag at 0x5ea170",
+                "IS_TRADESKILL — the container join zeroes the flag",
             ),
             (
                 0,
                 1,
-                "castUI > 0 takes the container walk and never reaches 0x5ea292",
+                "castUI > 0 takes the container walk and never reaches",
             ),
-            (0x80, 0, "DO_NOT_DISPLAY — the sign test at 0x5ea29b"),
+            (0x80, 0, "DO_NOT_DISPLAY — the sign test"),
         ] {
             let mut errors = UiErrorKeys::default();
             removed_spell(
@@ -2836,8 +2821,8 @@ mod tests {
         assert!(errors.0.is_empty());
     }
 
-    /// `castUI` gates the unlearn line but not the learn line, which reads it only afterwards, at
-    /// `0x4b29bf`, for the book slot.
+    /// `castUI` gates the unlearn line but not the learn line, which reads it only afterwards, for
+    /// the book slot.
     #[test]
     fn cast_ui_silences_the_unlearn_but_not_the_learn() {
         let spells = catalog_with(
@@ -2872,10 +2857,10 @@ mod tests {
         );
         assert!(errors.0.is_empty(), "…but the unlearn block does");
     }
-    /// The GO-deferred auto-attack start (`0x6e83c0`):
-    /// - an Ex2 bit-20 spell's own GO swings at its first hit target (`0x6e83e9`);
+    /// The GO-deferred auto-attack start:
+    /// - an Ex2 bit-20 spell's own GO swings at its first hit target;
     /// - Serpent Sting carries Ex2 bit 17 (`DO_NOT_RESET_COMBAT_TIMERS`), not bit 20: no swing;
-    /// - already swinging, nothing (`0x6e83e7`);
+    /// - already swinging, nothing;
     /// - another caster's Backstab, nothing.
     #[test]
     fn a_go_deferred_spell_swings_at_its_first_hit_and_the_hunter_shots_do_not() {
@@ -3033,19 +3018,19 @@ mod tests {
         );
         assert!(
             swings(&fire(10, BACKSTAB, true)).is_empty(),
-            "already swinging: `0x6e83e7`'s attack-lock gate refuses"
+            "already swinging: the reference's attack-lock gate refuses"
         );
         assert!(
             swings(&fire(11, BACKSTAB, false)).is_empty(),
             "somebody else's Backstab is not our attack-start"
         );
     }
-    /// The `modalNextSpell` chain (`HandleCastResult 0x6e7330`, `0x6e7408`–`0x6e74aa`):
-    /// - a successful sting chains Auto Shot (`0x6e735a jne` to the chain block);
-    /// - a failed one does too (both converge at `0x6e73eb`);
-    /// - the in-flight guard clears first, or the IsCasting rung would refuse the chain;
-    /// - Auto Shot already running sends nothing (`0x6e745b`'s equal branch);
-    /// - a reply for a spell not in flight chains nothing (`0x6e7408`).
+    /// The `modalNextSpell` chain (the cast-result handler):
+    /// - a successful sting chains Auto Shot;
+    /// - a failed one does too;
+    /// - the in-flight guard clears first, or the in-flight rung would refuse the chain;
+    /// - Auto Shot already running sends nothing;
+    /// - a reply for a spell not in flight chains nothing.
     #[test]
     fn a_hunter_shots_cast_result_chains_auto_shot_exactly_once() {
         use crate::net::{Guid, SelfPlayer};
@@ -3174,7 +3159,7 @@ mod tests {
         assert_eq!(
             fire(SERPENT_STING, false, Some(SERPENT_STING), None).0,
             Some(AUTO_SHOT),
-            "a FAILED sting chains it as well (`0x6e735a jne` → the same `0x6e73eb`)"
+            "a FAILED sting chains it as well"
         );
         // Already shooting: re-arm, never re-cast.
         assert_eq!(

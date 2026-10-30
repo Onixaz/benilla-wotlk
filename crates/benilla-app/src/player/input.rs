@@ -109,14 +109,14 @@ pub(super) fn move_axes(
     player: &mut Player,
     rig: &CameraControl,
     both_buttons: bool,
-    // The reference's input predicates `0x514560` and `0x5145b0` (`state::may_translate`,
-    // `state::may_turn`); death takes both down.
+    // The reference's input predicates (`state::may_translate`, `state::may_turn`); death takes
+    // both down.
     may_translate: bool,
     may_turn: bool,
 ) -> MoveAxes {
-    // ── Autorun ── TOGGLEAUTORUN, a latch (1.12 defaults NUMLOCK and BUTTON4, winit's
-    // `Forward`). The reference's window-deactivate handler (`0x514490`, called only from the
-    // WM_ACTIVATE slot at `0x493058`) releases every direction bit and keeps `0x1000`.
+    // ── Autorun ── TOGGLEAUTORUN, a latch (1.12 defaults NUMLOCK and BUTTON4, winit's `Forward`).
+    // The reference's window-deactivate handler (called only from the WM_ACTIVATE slot) releases
+    // every direction bit and keeps `0x1000`.
     let mut autorun_armed = false;
     if binds.fired(crate::bindings::Input::ToggleAutoRun) {
         player.autorun = !player.autorun;
@@ -131,13 +131,12 @@ pub(super) fn move_axes(
     // ── The cancel set ── What clears autorun is what makes it a mode, not a held forward. Of
     // the reference's six writers, these have an analog here:
     // - A W or S key-down, unconditionally: the directional handlers tail into the shared SET
-    //   helper `0x514840`, which clears `0x1000` under `test cl,0x30` at `0x514a5a`, before the
-    //   axis is built (`0x5150a7`, emitter tail `0x5151a0`). The release path `0x514b70` restores
-    //   nothing, so letting go of S after reversing leaves you standing.
-    // - The transition into both buttons held (`0x514a73`, the same helper).
-    // - Losing the mover, a level: the emitter gate `0x514560` down (health `<= 0`,
-    //   `MOVEMENTFLAGS & 0x1200`, stand state 7) makes writer `0x514748` clear the bit at the next
-    //   emit; ours is `state::may_translate`. The server-ride term is benilla's own.
+    //   helper, which clears `0x1000` under `test cl,0x30`, before the axis is built. The release
+    //   path restores nothing, so letting go of S after reversing leaves you standing.
+    // - The transition into both buttons held (the same helper).
+    // - Losing the mover, a level: the emitter gate down (health `<= 0`, `MOVEMENTFLAGS & 0x1200`,
+    //   stand state 7) makes writer clear the bit at the next emit; ours is `state::may_translate`.
+    //   The server-ride term is benilla's own.
     // A jump, a chat EditBox taking focus and a zone change leave it set; mounting is untraced and
     // leaves it set here. A focused chat box releases nothing, so W held through ENTER still runs.
     let both_buttons_engaged = (both_buttons && rig.world_mouse.rose()) || binds.steering_began();
@@ -162,9 +161,9 @@ pub(super) fn move_axes(
         both_buttons,
         autorun,
     );
-    // The 1.12 control model (`0x7c5360`): A/D turn the character unless right-mouse is held,
-    // when they strafe and the facing tracks the camera; Q/E always strafe. W walks along the
-    // character's facing, so a left-drag orbit does not change it.
+    // The 1.12 control model: A/D turn the character unless right-mouse is held, when they strafe
+    // and the facing tracks the camera; Q/E always strafe. W walks along the character's facing, so
+    // a left-drag orbit does not change it.
     let mouselook = both_buttons || rig.look == Some(LookButton::Right);
     // The strafe axis nets like `fwd_axis`: vmangos relays no packet carrying both strafe bits,
     // and the reference's 1.12.1 capture sends none.
@@ -179,8 +178,8 @@ pub(super) fn move_axes(
             0
         };
     // A keyboard turn yaws left-positive, like the mouse, and never while `may_turn` is down: the
-    // reference skips its turn emitter `0x514f50`, and stops one in flight, behind `0x514755`. A
-    // corpse fails the precondition both predicates share (`0x5144e0`), so it cannot turn either.
+    // reference skips its turn emitter, and stops one in flight, behind. A corpse fails the
+    // precondition both predicates share, so it cannot turn either.
     let turning = !mouselook && may_turn && (turn_left || turn_right);
     let translating = fwd_axis != 0 || side_axis != 0;
 

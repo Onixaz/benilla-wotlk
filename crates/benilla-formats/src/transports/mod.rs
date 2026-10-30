@@ -194,13 +194,13 @@ fn normalize_orientation(o: f32) -> f32 {
 enum TimeMode {
     /// vmangos's `f32` seconds, truncated to ms per keyframe (`TransportMgr.cpp:297-325`).
     Vmangos,
-    /// The reference's closed form (`0x5f9120`) per stop-to-stop span, in integer ms. Interior
-    /// times are distance-linear, so it only calibrates periods; only the tests build it.
+    /// The reference's closed form per stop-to-stop span, in integer ms. Interior times are
+    /// distance-linear, so it only calibrates periods; only the tests build it.
     #[cfg_attr(not(test), allow(dead_code))]
     ClientForms,
 }
 
-/// Seconds to ms, `±0.5` then truncated, as the reference's `__ftol` idiom (`0x40a2b0`).
+/// Seconds to ms, `±0.5` then truncated, as the reference's `__ftol` idiom.
 fn round_ftol(t: f64) -> i32 {
     let scaled = t * 1000.0;
     let adj = if scaled > 0.0 {
@@ -211,7 +211,7 @@ fn round_ftol(t: f64) -> i32 {
     adj.trunc() as i32
 }
 
-/// A stop-to-stop span's time in ms, the reference's `0x5f9120` `!first` branch:
+/// A stop-to-stop span's time in ms, the reference's `!first` branch:
 /// `if 2B < D { (D − 2B)/v + 2A } else { 2·√(D/a) }`, with `A = v/a` stored `f32` and `B = ½·v·A`
 /// compared in `f64` but stored `f32`; the mixed precision is the reference's.
 fn span_time_ms(d_span: f32, speed: f32, accel: f32) -> u32 {
@@ -475,8 +475,8 @@ impl TransportTimetable {
                 raws.push(RawFrame {
                     map_id: node.map_id,
                     pos: node.pos,
-                    // The reference tests the stop bit as a mask (`0x5f4e37`), vmangos's
-                    // `IsStopFrame` as `== 2`; the data only holds 0 and 2.
+                    // The reference tests the stop bit as a mask, vmangos's `IsStopFrame` as
+                    // `== 2`; the data only holds 0 and 2.
                     is_stop: node.flags & 2 != 0,
                     delay_secs: node.delay as f32,
                     initial_orientation,

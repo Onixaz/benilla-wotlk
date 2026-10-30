@@ -9,7 +9,7 @@ use crate::script::{Model, SCREEN};
 
 use super::{decode_id, point_from_str, prefetch_named_target, resolve_named_target, NamedTarget};
 
-/// The name the reference prints for a widget that has none (the literal at `0x84c7f0`).
+/// The name the reference prints for a widget that has none.
 pub(crate) const UNNAMED: &str = "<unnamed>";
 
 /// `relativeTo` by `lua_type(L,3)` (`0x49dc11`..`0x49dca6`): a string, a table or an explicit
@@ -26,7 +26,7 @@ pub(crate) enum RelTarget {
     DefaultParent,
 }
 
-/// `SetPoint`'s parsed arguments (`0x7a2540`), ready for the caller's own commit.
+/// `SetPoint`'s parsed arguments, ready for the caller's own commit.
 pub(crate) struct PointArgs {
     pub(crate) point: Point,
     pub(crate) target: RelTarget,
@@ -60,7 +60,7 @@ fn anchor_to_self(who: &str, verb: &str) -> mlua::Error {
     mlua::Error::runtime(format!("{who}:{verb}(): trying to anchor to itself"))
 }
 
-/// `lua_isnumber` (`0x6f34d0`): a number, or a string Lua reads as one.
+/// `lua_isnumber`: a number, or a string Lua reads as one.
 fn as_number(lua: &Lua, v: &Value) -> Option<f32> {
     lua.coerce_number(v.clone())
         .ok()
@@ -68,7 +68,7 @@ fn as_number(lua: &Lua, v: &Value) -> Option<f32> {
         .map(|n| n as f32)
 }
 
-/// `lua_isstring` (`0x6f3510`): a string or a number.
+/// `lua_isstring`: a string or a number.
 fn as_string(lua: &Lua, v: &Value) -> Option<String> {
     match v {
         Value::String(_) | Value::Number(_) | Value::Integer(_) => lua
@@ -138,9 +138,8 @@ pub(crate) fn parse_set_point(
     })
 }
 
-/// Parse `SetAllPoints([relativeTo])` (`0x7a2940`). Unlike `SetPoint`, an omitted argument takes
-/// the layout parent, and a number is a name (`lua_isstring`, `0x7a29ea`): `SetAllPoints(42)`
-/// looks up `_G["42"]`.
+/// Parse `SetAllPoints([relativeTo])`. Unlike `SetPoint`, an omitted argument takes the layout
+/// parent, and a number is a name (`lua_isstring`): `SetAllPoints(42)` looks up `_G["42"]`.
 pub(crate) fn parse_set_all_points(lua: &Lua, arg: Option<&Value>, parent_base: &str) -> RelTarget {
     match arg {
         Some(Value::Table(t)) => RelTarget::Wrapper(t.clone()),
@@ -181,9 +180,9 @@ pub(crate) fn resolve_rel_target(
     Ok(id)
 }
 
-/// The XML `<Anchor relativeTo>` lookup (`CLayoutFrame::LoadXML 0x767800`), `$parent` already
-/// expanded: the Lua string arm's resolver (`0x76c700`), but a miss reports "Couldn't find
-/// relative frame" (`0x878440`) and skips the anchor (`0x767969`) without raising or falling back.
+/// The XML `<Anchor relativeTo>` lookup (the layout frame's XML load), `$parent` already expanded:
+/// the Lua string arm's resolver, but a miss reports "Couldn't find relative frame" and skips the
+/// anchor without raising or falling back.
 pub(crate) fn resolve_xml_relative_to(lua: &Lua, name: &str) -> Option<Table> {
     // One `_G` read, its wrapper returned: an `__index` may answer a second read differently.
     let nt = prefetch_named_target(lua, name, None);

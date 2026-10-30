@@ -14,9 +14,9 @@ mod loader_tests {
         framexml::parse(text).expect("valid FrameXML")
     }
 
-    /// `CMinimap::LoadXML 0x4ee2b0`: `minimapArrowModel` goes to engine children 1-8 (`0x4ee170`),
-    /// `minimapPlayerModel` to child 9 alone (`[Minimap+0x338]`, `0x4ee260`); without the
-    /// attributes the defaults are `0x84c768` and `0x8453c0`. `Minimap.xml:97` sets both.
+    /// The minimap's XML load: `minimapArrowModel` goes to engine children 1-8,
+    /// `minimapPlayerModel` to child 9 alone (`[Minimap+0x338]`); without the attributes the
+    /// engine's default models stand. `Minimap.xml:97` sets both.
     #[test]
     fn the_minimap_model_attributes_name_the_nine_engine_children() {
         let mut s = UiScript::new().unwrap();
@@ -58,8 +58,8 @@ mod loader_tests {
             "child 9 — [Minimap+0x338] — takes minimapPlayerModel alone"
         );
 
-        // The `<Frames>` child comes after the nine: the factory runs before the descent
-        // (`0x6ee408` before `0x6ee4ea`) and both append at the tail.
+        // The `<Frames>` child comes after the nine: the factory runs before the descent and both
+        // append at the tail.
         assert_eq!(
             s.eval::<String>("return ({Minimap:GetChildren()})[10]:GetName()")
                 .unwrap(),
@@ -156,8 +156,8 @@ mod loader_tests {
         );
     }
 
-    /// A miss stores 0 over the default parent (`0x6ee3ef`), so the frame is built parentless; an
-    /// empty `parent=""` keeps the default silently (`0x6ee3c7`).
+    /// A miss stores 0 over the default parent, so the frame is built parentless; an empty
+    /// `parent=""` keeps the default silently.
     #[test]
     fn a_parent_attribute_that_misses_leaves_the_frame_parentless() {
         let mut s = UiScript::new().unwrap();
@@ -190,14 +190,14 @@ mod loader_tests {
                 .unwrap(),
             "a parent= that names nothing nulls the parent; it does not fall back"
         );
-        // With no parent, `$parent` falls to the `"Top"` seed (`0x76c5b0`): `TopMissed`.
+        // With no parent, `$parent` falls to the `"Top"` seed: `TopMissed`.
         assert!(s.eval::<bool>("return EnclosingMissed == nil").unwrap());
         assert!(
             report
                 .warnings
                 .iter()
                 .any(|w| w == "Couldn't find frame parent: NotLoadedYet"),
-            "logged in the reference's own words (0x8710f0): {:?}",
+            "logged in the reference's own words: {:?}",
             report.warnings
         );
 
@@ -214,8 +214,8 @@ mod loader_tests {
         );
     }
 
-    /// The reference attaches the parent (`0x6ee408`) before it applies `name=` (`0x6ee4d6`), and
-    /// `$parent` walks the real parent chain (`0x76c5b0`); `parent=` itself is never expanded.
+    /// The reference attaches the parent before it applies `name=`, and `$parent` walks the real
+    /// parent chain; `parent=` itself is never expanded.
     #[test]
     fn a_dollar_parent_name_resolves_against_the_parent_attribute() {
         let mut s = UiScript::new().unwrap();
@@ -271,7 +271,7 @@ mod loader_tests {
         // No attribute, no lexical parent: the `"Top"` seed.
         assert!(s.eval::<bool>("return TopLoose ~= nil").unwrap());
 
-        // `parent=` is taken literally (`0x6ee3e8` hands it to `0x76c760`), so this one misses.
+        // `parent=` is taken literally, so this one misses.
         assert!(s.eval::<bool>("return Literal:GetParent() == nil").unwrap());
         assert!(
             report
@@ -337,7 +337,7 @@ mod loader_tests {
         );
         assert_eq!(s.eval::<String>("return ParentLoaded").unwrap(), "MyFrame");
 
-        // Bottom-up: the child's OnLoad ran before the parent's (`0x76a060`).
+        // Bottom-up: the child's OnLoad ran before the parent's.
         let order: Vec<String> = s.eval("return loadorder").unwrap();
         assert_eq!(order, vec!["child".to_string(), "parent".to_string()]);
 
@@ -384,8 +384,8 @@ mod loader_tests {
         );
     }
 
-    /// A region's `inherits=` is one name matched case-insensitively (`0x6ee747`), as a frame's
-    /// is, so a mis-cased template name still reaches the template.
+    /// A region's `inherits=` is one name matched case-insensitively, as a frame's is, so a
+    /// mis-cased template name still reaches the template.
     #[test]
     fn a_region_takes_a_mis_cased_template() {
         let s = UiScript::new().unwrap();
@@ -437,15 +437,15 @@ mod loader_tests {
         assert_eq!(s.eval::<f32>("return PinChild:GetHeight()").unwrap(), 200.0);
     }
 
-    /// `<Include>` recurses into `0x6ede10`, which runs a path with a case-insensitive `.lua`
-    /// suffix and parses anything else as XML; it never sniffs content.
+    /// `<Include>` recurses, which runs a path with a case-insensitive `.lua` suffix and parses
+    /// anything else as XML; it never sniffs content.
     #[test]
     fn include_runs_a_lua_target_and_still_parses_an_xml_one() {
         let s = UiScript::new().unwrap();
         let provider = |path: &str| -> Option<Vec<u8>> {
             match path {
                 "libs/Lib.lua" => Some(b"IncludedLua = 41 + 1".to_vec()),
-                // Case-insensitive, exactly as `0x64a4c0` compares it.
+                // Case-insensitive, exactly as the reference compares it.
                 "libs/Shouty.LUA" => Some(b"ShoutyLua = true".to_vec()),
                 "Sub.xml" => Some(br#"<Ui><Frame name="FromXmlInclude"/></Ui>"#.to_vec()),
                 _ => None,
@@ -476,7 +476,7 @@ mod loader_tests {
             .unwrap());
     }
 
-    /// The reference logs the raise and falls through unconditionally (`0x6ee00d`-`0x6ee012`).
+    /// The reference logs the raise and falls through unconditionally.
     #[test]
     fn a_raising_lua_include_does_not_take_the_rest_of_the_document() {
         let s = UiScript::new().unwrap();
@@ -529,8 +529,8 @@ mod loader_tests {
             .unwrap());
     }
 
-    /// `CSimpleFrame::LoadXML 0x769820`: a strata `0x6f17d0` does not know logs at severity 1
-    /// (`0x7699a4`) and skips `SetFrameStrata 0x76a470`.
+    /// The frame's XML load: a strata it does not know logs at severity 1 and skips
+    /// `SetFrameStrata`.
     #[test]
     fn an_unknown_xml_frame_strata_warns_and_leaves_the_stratum_alone() {
         let mut s = UiScript::new().unwrap();
@@ -565,7 +565,7 @@ mod loader_tests {
         );
     }
 
-    /// The Lua `SetFrameStrata 0x774360` raises on the same value (`luaL_error` at `0x774456`).
+    /// The Lua `SetFrameStrata` raises on the same value (`luaL_error`).
     #[test]
     fn the_lua_setframestrata_still_raises_on_the_same_value() {
         let s = UiScript::new().unwrap();
@@ -578,7 +578,7 @@ mod loader_tests {
     }
 
     /// The reference sets the flag from a number, `0` included, and only reads it for any other
-    /// argument (`0x48845d`, after `lua_isnumber 0x6f34d0`).
+    /// argument (after `lua_isnumber`).
     #[test]
     fn framexml_debug_is_a_get_or_set_and_gates_the_loader_traces() {
         let s = UiScript::new().unwrap();
@@ -614,11 +614,11 @@ mod loader_tests {
             "…but 0 is TRUTHY in Lua, so it really does disable it"
         );
         assert!(load(&s, &doc(), &no_files).traces.is_empty());
-        // The stored value truncates toward zero (`0x40a2b0`).
+        // The stored value truncates toward zero.
         assert_eq!(s.eval::<i32>("return FrameXML_Debug(1.9)").unwrap(), 1);
     }
 
-    /// The reference logs `Couldn't open %s` (`0x6edaa0`, `0x846ff4`) and carries on.
+    /// The reference logs `Couldn't open %s` and carries on.
     #[test]
     fn missing_include_is_a_missing_file_not_an_error_and_continues() {
         let s = UiScript::new().unwrap();
@@ -639,7 +639,7 @@ mod loader_tests {
         );
     }
 
-    /// The reference logs `"Error loading %s"` (`0x872e50`) for it and returns normally.
+    /// The reference logs `"Error loading %s"` for it and returns normally.
     #[test]
     fn missing_script_file_is_a_missing_file_not_an_error_and_continues() {
         let s = UiScript::new().unwrap();
@@ -669,7 +669,7 @@ mod loader_tests {
         assert!(s.eval::<bool>("return Still ~= nil").unwrap());
     }
 
-    /// An `<Anchor>` with no `<Offset>` takes its own `x`/`y` (`CLayoutFrame::LoadXML`,
+    /// An `<Anchor>` with no `<Offset>` takes its own `x`/`y` (the layout frame's XML load,
     /// `0x48b2d0`), the form 3.3.5a's `CharacterCreate.xml` writes, for a frame and a texture.
     #[test]
     fn an_anchor_without_an_offset_takes_its_own_x_and_y() {
@@ -845,8 +845,8 @@ mod loader_tests {
             .any(|w| w.contains("OnMessageScrollChanged")));
     }
 
-    /// `Instantiate 0x6ee280` logs `"Unknown frame type: %s"` (`0x871124`) and builds nothing for
-    /// the node or its `<Frames>`; only the Lua `CreateFrame` raises (`0x872fa8`).
+    /// The frame factory logs `"Unknown frame type: %s"` and builds nothing for the node or its
+    /// `<Frames>`; only the Lua `CreateFrame` raises.
     #[test]
     fn an_unknown_xml_frame_type_is_logged_and_its_node_skipped() {
         let s = UiScript::new().unwrap();
@@ -878,8 +878,8 @@ mod loader_tests {
         assert!(err.contains("unknown frame type 'Bogus'"), "{err}");
     }
 
-    /// A `.toc` line hands a listed `Bindings.xml` to `0x6ede10` (from `0x6edd51`), so each
-    /// `<Binding>` logs as an unknown frame type; `0x51f400` reads the bindings regardless.
+    /// A `.toc` line hands a listed `Bindings.xml` to the XML loader, so each `<Binding>` logs as
+    /// an unknown frame type; the reference reads the bindings regardless.
     #[test]
     fn a_bindings_document_loaded_as_framexml_raises_nothing() {
         let s = UiScript::new().unwrap();
@@ -925,7 +925,7 @@ mod loader_tests {
         assert!(s.eval::<bool>("return Another == nil").unwrap());
     }
 
-    /// `<StatusBar>` LoadXML extras (`0x782ef0`).
+    /// `<StatusBar>` XML-load extras.
     #[test]
     fn statusbar_xml_extras_apply() {
         let mut s = UiScript::new().unwrap();
@@ -978,8 +978,8 @@ mod loader_tests {
         );
     }
 
-    /// An anchorless `<Texture>` gets `SetAllPoints` after its LoadXML (`0x7701c0`), so its
-    /// `<Size>` goes unread: `StackSplitFrame.xml:10` authors 256×32 and draws 172×96.
+    /// An anchorless `<Texture>` gets `SetAllPoints` after its XML load, so its `<Size>` goes
+    /// unread: `StackSplitFrame.xml:10` authors 256×32 and draws 172×96.
     #[test]
     fn sized_anchorless_layer_texture_fills_its_frame() {
         let mut s = UiScript::new().unwrap();
@@ -1097,10 +1097,10 @@ mod loader_tests {
         );
     }
 
-    /// `0x7025fd` names a handler chunk `"%s:%s"` (`0x872a28`) from the object's `GetName`, or
-    /// `<unnamed>` (`0x84c7f0`), and `0x704c70` loads the raw body, so body line n is chunk line n.
+    /// The reference names an XML handler's chunk `"*:%s"` by the handler alone, whatever the
+    /// frame, and loads the raw body, so body line n is chunk line n.
     #[test]
-    fn an_xml_handler_chunk_is_named_by_its_frame_and_handler() {
+    fn an_xml_handler_chunk_is_named_by_its_handler() {
         let s = UiScript::new().unwrap();
         let doc = parse(
             "<Ui>\n\
@@ -1135,24 +1135,24 @@ mod loader_tests {
         // The `error` is on the body's second line: `:2:`.
         let named = raised(r#"NamedBtn:GetScript("OnClick")"#);
         assert!(
-            named.starts_with(r#"[string "NamedBtn:OnClick"]:2: boom"#),
+            named.starts_with(r#"[string "*:OnClick"]:2: boom"#),
             "{named}"
         );
-        // A `CreateFrame` instance is named by its own `GetName()`, not by its template.
+        // A `CreateFrame` instance's template handler too.
         let made = raised(r#"Made:GetScript("OnClick")"#);
         assert!(
-            made.starts_with(r#"[string "Made:OnClick"]:1: tmpl"#),
+            made.starts_with(r#"[string "*:OnClick"]:1: tmpl"#),
             "{made}"
         );
         let anon = raised(r#"BenillaAnon:GetScript("OnClick")"#);
         assert!(
-            anon.starts_with(r#"[string "<unnamed>:OnClick"]:1: anon"#),
+            anon.starts_with(r#"[string "*:OnClick"]:1: anon"#),
             "{anon}"
         );
     }
 
-    /// An inline `<Script>` is `"%s:<Scripts>"` (`0x871074`, at `0x6ee0ff`) over the document's
-    /// path with no `@`, so it reads `[string "…"]`; a `<Script file=>` is `"@%s"` (`0x8716e0`).
+    /// An inline `<Script>` is `"%s:<Scripts>"` over the document's path with no `@`, so it reads
+    /// `[string "…"]`; a `<Script file=>` is `"@%s"`.
     #[test]
     fn an_inline_script_chunk_is_named_for_the_document_not_as_a_file() {
         let s = UiScript::new().unwrap();
@@ -1288,7 +1288,7 @@ mod loader_tests {
         assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 
-    /// `<EditBox>` LoadXML extras (`0x779fb0`).
+    /// `<EditBox>` XML-load extras.
     #[test]
     fn editbox_xml_extras_apply() {
         let mut s = UiScript::new().unwrap();
@@ -1362,7 +1362,7 @@ mod loader_tests {
         assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 
-    /// The flags read by `StringToBOOL` (`0x815400`): GlueXML's `AccountLoginPasswordEdit` says
+    /// The flags read by the boolean parse (`0x815400`): GlueXML's `AccountLoginPasswordEdit` says
     /// `password="1"`, and the reference masks it.
     #[test]
     fn an_editbox_flag_written_as_a_digit_turns_the_flag_on() {
@@ -1585,7 +1585,7 @@ mod loader_tests {
     }
 
     /// The chat edit box's shape. The engine assigns the text slot from the direct-child
-    /// `<FontString>` at LoadXML; it never searches the regions, so the header stays its own.
+    /// `<FontString>` at its XML load; it never searches the regions, so the header stays its own.
     #[test]
     fn editbox_adopts_special_fontstring_not_a_layers_header() {
         let mut s = UiScript::new().unwrap();
@@ -1752,8 +1752,8 @@ mod loader_tests {
     }
 
     /// The `<Scripts>` walker enables the mouse for `OnEnter`, `OnLeave`, `OnMouseDown`,
-    /// `OnMouseUp` and `OnDragStart` (`0x769ef0` calls `0x76af00(2,-1)`), which is how the stock
-    /// `GameTimeFrame` hovers; the Lua `SetScript` (`0x7748d0`) never does.
+    /// `OnMouseUp` and `OnDragStart`, which is how the stock `GameTimeFrame` hovers; the Lua
+    /// `SetScript` never does.
     #[test]
     fn scripts_block_mouse_handlers_auto_enable_mouse() {
         let s = UiScript::new().unwrap();
@@ -1786,10 +1786,10 @@ mod loader_tests {
         );
     }
 
-    /// `CSimpleButton::LoadXML 0x96fed0` reads one attribute on each state font, `style=`, and
-    /// stores the named font object itself (`0x97001d`, `0x970088`, `0x9700ec` →
-    /// `CSimpleFont::GetFont 0x496f70`), which the 3.3.5a getters hand back (`0x977450`,
-    /// `0x977750`, `0x9775d0`). The label takes the normal object's justify and paint.
+    /// The button's XML load (`0x96fed0`) reads one attribute on each state font, `style=`, and
+    /// stores the named font object itself (`0x97001d`, `0x970088`, `0x9700ec` → the font lookup,
+    /// `0x496f70`), which the 3.3.5a getters hand back (`0x977450`, `0x977750`, `0x9775d0`). The
+    /// label takes the normal object's justify and paint.
     #[test]
     fn a_button_state_font_is_the_object_its_style_names() {
         let mut s = UiScript::new().unwrap();
@@ -1952,8 +1952,8 @@ mod loader_tests {
         );
     }
 
-    /// `text=` resolves as a global (`FrameScript_GetText 0x703bf0`) on all three element shapes;
-    /// a miss shows the raw value, as the reference's readers do, and a key-shaped miss warns.
+    /// `text=` resolves as a global on all three element shapes; a miss shows the raw value, as the
+    /// reference's readers do, and a key-shaped miss warns.
     #[test]
     fn a_text_attribute_resolves_through_the_global_strings() {
         let mut s = UiScript::new().unwrap();
@@ -2028,8 +2028,8 @@ mod loader_tests {
     // ── <SimpleHTML> ─────────────────────────────────────────────────────────────────────────
 
     /// `file=` names a document read verbatim, never joined to the XML's own directory, whose text
-    /// becomes the frame's (`0x78a2a0`, `0x78a2b2`), as the login screen's agreements load
-    /// `eula.html`; a file that does not open leaves the frame empty.
+    /// becomes the frame's, as the login screen's agreements load `eula.html`; a file that does not
+    /// open leaves the frame empty.
     #[test]
     fn simplehtml_file_sets_the_documents_text() {
         let mut s = UiScript::new().unwrap();
@@ -2065,9 +2065,9 @@ mod loader_tests {
         assert_eq!(s.eval::<i64>("return Gone:GetNumRegions()").unwrap(), 0);
     }
 
-    /// A direct-child `<FontString>` declares `elementFont[0]` and `<FontStringHeader1>`
-    /// `elementFont[1]`, neither a region, and `hyperlinkFormat=` lands at `+0x360`; stock
-    /// `ItemTextFrame.xml:214` uses the first.
+    /// A direct-child `<FontString>` declares element font 0 and `<FontStringHeader1>` element font
+    /// 1, neither a region, and `hyperlinkFormat=` lands at `+0x360`; stock `ItemTextFrame.xml:214`
+    /// uses the first.
     #[test]
     fn simplehtml_xml_declares_element_fonts_not_regions() {
         let mut s = UiScript::new().unwrap();
@@ -2161,8 +2161,8 @@ mod loader_tests {
         assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 
-    /// `CSimpleButton::LoadXML 0x7788c0` builds any `<...Texture>` child through the `<Layers>`
-    /// texture adder (`0x6f26f0`); `SpellBookFrame.xml:36` writes a bare `<NormalTexture/>`.
+    /// The button's XML load builds any `<...Texture>` child through the `<Layers>` texture adder;
+    /// `SpellBookFrame.xml:36` writes a bare `<NormalTexture/>`.
     #[test]
     fn a_bare_state_texture_element_still_builds_its_region() {
         let mut s = UiScript::new().unwrap();
@@ -2350,7 +2350,7 @@ mod region_template_tests {
         );
     }
 
-    /// The reference's font registry compares names with `SStrCmpI` (`0x783870`/`0x7838c7`).
+    /// The reference's font registry compares names case-insensitively.
     #[test]
     fn a_font_object_inherits_resolves_whatever_its_case() {
         let s = UiScript::new().unwrap();
@@ -2486,7 +2486,7 @@ mod chunk_name_tests {
         );
         let report = load_in(&s, &doc, "Bagnon/src/main.xml", &no_files);
         let err = report.errors.join("\n");
-        // Backslashes, and the reference's `"%s:<Scripts>"` form (`0x871074`).
+        // Backslashes, and the reference's `"%s:<Scripts>"` form.
         assert!(
             err.contains("Bagnon\\src\\main.xml:"),
             "the raise must name the document, got: {err}"

@@ -82,9 +82,9 @@ fn button_state_textures_switch_with_interaction() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `SetState 0x779790` moves the shown texture (`+0x4c4`) only onto a non-null slot, so a press or
-/// a disable with no art of its own keeps what was shown; art written into another state's slot
-/// is stored, not shown (`0x778fd0`'s `idx == [this+0x328]` gate).
+/// The button's state set moves the shown texture (`+0x4c4`) only onto a non-null slot, so a press
+/// or a disable with no art of its own keeps what was shown; art written into another state's slot
+/// is stored, not shown (the reference's `idx == [this+0x328]` gate).
 #[test]
 fn a_state_with_no_texture_leaves_the_shown_one_standing() {
     let mut s = script();
@@ -152,9 +152,9 @@ fn a_state_with_no_texture_leaves_the_shown_one_standing() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The enable helper `0x779160` (reached by `Enable`, `Disable` and the constructor) also writes
-/// layer 4, HIGHLIGHT, into the array `Enable/DisableDrawLayer` write (`[frame+0x198]`, `0x7791bb`
-/// → `0x76a730`), so a disable darkens every HIGHLIGHT region and `EnableDrawLayer` relights them.
+/// The enable helper (reached by `Enable`, `Disable` and the constructor) also writes layer 4,
+/// HIGHLIGHT, into the array `Enable/DisableDrawLayer` write (`[frame+0x198]`), so a disable
+/// darkens every HIGHLIGHT region and `EnableDrawLayer` relights them.
 #[test]
 fn disabling_a_button_takes_its_whole_highlight_layer() {
     let mut s = script();
@@ -223,7 +223,7 @@ fn disabling_a_button_takes_its_whole_highlight_layer() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `MouseButtonStringToBitmask` (`0x96e9c0`): Down bits 0-30, Up bits 31-61, `AnyDown`/`AnyUp`
+/// The mouse-button name parse (`0x96e9c0`): Down bits 0-30, Up bits 31-61, `AnyDown`/`AnyUp`
 /// every bit of their half, case folded, an unknown name 0.
 #[test]
 fn click_names_map_to_the_12340_mask() {
@@ -291,7 +291,7 @@ fn any_up_and_any_down_reach_on_click() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `CSimpleButton::OnLayerMouseDown` pushes the art on any press of an enabled Button, after the
+/// The button's layer mouse-down pushes the art on any press of an enabled Button, after the
 /// click-mask test and outside it (`0x96fb34`), so a press no registration names lights too.
 #[test]
 fn any_mouse_button_press_shows_the_pushed_texture() {
@@ -349,8 +349,8 @@ fn any_mouse_button_press_shows_the_pushed_texture() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `SetButtonState`/`GetButtonState` (`0x780270`/`0x780180`), the press state stock
-/// `ActionButtonDown`/`Up` drive; an unknown state raises, a disabled button reads DISABLED.
+/// `SetButtonState`/`GetButtonState`, the press state stock `ActionButtonDown`/`Up` drive; an
+/// unknown state raises, a disabled button reads DISABLED.
 #[test]
 fn set_button_state_drives_the_pushed_visual() {
     let mut s = script();
@@ -669,8 +669,8 @@ fn button_label_repaints_by_state_font_object() {
     assert!((c[0] - 0.1).abs() < 1e-6 && (c[1] - 0.2).abs() < 1e-6);
 }
 
-/// The highlight font object is put in force by a hover or `LockHighlight` (`UpdateTextState
-/// 0x96f4a0` reads the highlight layer), so a colour on the normal state cannot reach it:
+/// The highlight font object is put in force by a hover or `LockHighlight` (the text-state update
+/// `0x96f4a0` reads the highlight layer), so a colour on the normal state cannot reach it:
 /// `ClassTrainerSkillButtonTemplate`'s rows (`<HighlightFont style="GameFontHighlightLeft"/>`)
 /// turn white, and the trainer and trade-skill lists lock the selected row.
 #[test]
@@ -818,8 +818,8 @@ fn a_button_reports_its_labels_extent() {
     );
 }
 
-/// `Button:SetFontString` (`0x780a60`) re-parents the string, adopts it as the label and destroys
-/// the old one, and raises on anything but a FontString.
+/// `Button:SetFontString` re-parents the string, adopts it as the label and destroys the old one,
+/// and raises on anything but a FontString.
 #[test]
 fn set_font_string_adopts_the_label_and_raises_on_anything_else() {
     let mut s = crate::script::UiScript::new().unwrap();
@@ -841,7 +841,7 @@ fn set_font_string_adopts_the_label_and_raises_on_anything_else() {
     assert_eq!(s.eval::<String>("return b:GetText()").unwrap(), "Okay");
 
     assert!(s.eval::<bool>("return fs:GetParent() == b").unwrap());
-    // It also forces the draw layer to ARTWORK (`0x77fd10(parent, 2, 1)`); not asserted here.
+    // It also forces the draw layer to ARTWORK (`(parent, 2, 1)`); not asserted here.
 
     // The same string again is a no-op, the client's first compare, so it is not destroyed.
     s.run("b:SetFontString(fs)").unwrap();
@@ -931,10 +931,10 @@ fn set_font_string_anchors_only_an_unanchored_label() {
     );
 }
 
-/// A label made lazily (`SetText`, `0x96f860`) or adopted goes through
-/// `CSimpleButton::SetFontString 0x96f7b0`, which anchors it by the normal font object's justify
-/// (LEFT, RIGHT, else CENTER), not the string's own, then links it to that font (`0x96f4a0`).
-/// `text=` runs after the state fonts (`0x970150`), so its label is anchored the same way.
+/// A label made lazily (`SetText`, `0x96f860`) or adopted goes through the button's font-string set
+/// (`0x96f7b0`), which anchors it by the normal font object's justify (LEFT, RIGHT, else CENTER),
+/// not the string's own, then links it to that font (`0x96f4a0`). `text=` runs after the state
+/// fonts (`0x970150`), so its label is anchored the same way.
 #[test]
 fn a_lazily_made_label_is_anchored_by_the_normal_fonts_justify() {
     let mut s = script();
@@ -981,7 +981,7 @@ fn a_lazily_made_label_is_anchored_by_the_normal_fonts_justify() {
         "#,
     )
     .unwrap();
-    // `<NormalFont>` alone creates no label (the reference's LoadXML leaves `+0x338` null), so
+    // `<NormalFont>` alone creates no label (the reference's XML load leaves `+0x338` null), so
     // `GetFontString()` is nil until text is set.
     assert!(s
         .eval::<bool>("return left:GetFontString() == nil")
@@ -1132,9 +1132,9 @@ fn a_button_labels_own_setfont_survives_the_state_font_repoint() {
     );
 }
 
-/// A state-texture setter forks on `lua_type(L, 2)` (`0x781970`): a Texture object is installed
-/// into the slot (`0x781b0b` → `0x778fd0`), and nil clears the slot and destroys its texture
-/// (`0x781b5a`), which merely unhooked would draw in every state.
+/// A state-texture setter forks on `lua_type(L, 2)`: a Texture object is installed into the slot,
+/// and nil clears the slot and destroys its texture, which merely unhooked would draw in every
+/// state.
 #[test]
 fn a_state_texture_slot_takes_an_object_and_a_nil() {
     let mut s = script();
@@ -1196,8 +1196,7 @@ fn a_state_texture_slot_takes_an_object_and_a_nil() {
 }
 
 /// `SetButtonState(state[, lock])` always writes the lock (`[+0x32c]`), and the mouse-up edge
-/// (`0x7793de`) un-presses an unlocked button; `Tablet-2.0.lua:1645` pushes a row and never
-/// releases it itself.
+/// un-presses an unlocked button; `Tablet-2.0.lua:1645` pushes a row and never releases it itself.
 #[test]
 fn an_unlocked_scripted_push_is_released_by_the_next_mouse_release() {
     let mut s = script();
@@ -1231,8 +1230,8 @@ fn an_unlocked_scripted_push_is_released_by_the_next_mouse_release() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `SetButtonState`'s third argument (`0x780270`, default 0) locks the state against the mouse,
-/// PUSHED or NORMAL; `MainMenuBarMicroButtons.lua:22` holds a micro button PUSHED this way.
+/// `SetButtonState`'s third argument (default 0) locks the state against the mouse, PUSHED or
+/// NORMAL; `MainMenuBarMicroButtons.lua:22` holds a micro button PUSHED this way.
 #[test]
 fn a_locked_state_ignores_the_mouse_and_enable_disable_clears_the_lock() {
     let mut s = script();
@@ -1270,7 +1269,7 @@ fn a_locked_state_ignores_the_mouse_and_enable_disable_clears_the_lock() {
     );
     s.mouse_button(250.0, 50.0, "LeftButton", false);
 
-    // `0x779160` passes `locked = 0` on both arms, so Enable and Disable unlock.
+    // The reference passes `locked = 0` on both arms, so Enable and Disable unlock.
     s.run("MicroButton:Disable() MicroButton:Enable()").unwrap();
     assert_eq!(
         s.eval::<String>("return MicroButton:GetButtonState()")
@@ -1290,9 +1289,9 @@ fn a_locked_state_ignores_the_mouse_and_enable_disable_clears_the_lock() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The enter and leave notifies (`0x779490`/`0x7794e0`) read the button state (`[+0x328]`) only as
-/// a DISABLED guard and never write it; before the release, only a drag-threshold crossing on a
-/// drag-registered frame un-presses a held button.
+/// The enter and leave notifies read the button state (`[+0x328]`) only as a DISABLED guard and
+/// never write it; before the release, only a drag-threshold crossing on a drag-registered frame
+/// un-presses a held button.
 #[test]
 fn the_hover_is_not_an_input_to_the_press_state() {
     let mut s = script();
@@ -1328,7 +1327,7 @@ fn the_hover_is_not_an_input_to_the_press_state() {
         "PUSHED"
     );
 
-    // The release un-presses it off the button too: `0x7792d0` runs no hit test.
+    // The release un-presses it off the button too: the reference runs no hit test.
     s.mouse_button(500.0, 400.0, "LeftButton", false);
     assert!(
         shows(&s, "Interface\\HeldN.blp"),
@@ -1337,8 +1336,8 @@ fn the_hover_is_not_an_input_to_the_press_state() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `CSimpleButton`'s hide override (`+0x34` = `0x7791e0`) un-presses the button, then runs the
-/// base notify so `<OnHide>` still fires.
+/// The button's hide override (`+0x34`) un-presses the button, then runs the base notify so
+/// `<OnHide>` still fires.
 #[test]
 fn hiding_a_held_button_un_presses_it() {
     let mut s = script();
@@ -1369,7 +1368,7 @@ fn hiding_a_held_button_un_presses_it() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `Button:GetTextColor()` returns four values, r, g, b, a (`0x781100`, table `0x879d00`).
+/// `Button:GetTextColor()` returns four values, r, g, b, a.
 #[test]
 fn button_get_text_color_answers_four_values_through_the_state_font() {
     let s = script();
@@ -1470,7 +1469,7 @@ fn enable_and_disable_fire_their_scripts_on_a_change() {
     );
 }
 
-/// A frame still in its XML load (`+0x130`, set by `LoadXML` and cleared before its `OnLoad`)
+/// A frame still in its XML load (`+0x130`, set by the XML load and cleared before its `OnLoad`)
 /// runs no `OnEnable`/`OnDisable`: a child's `OnLoad` that disables its parent is silent, the
 /// parent's own `OnLoad` is not.
 #[test]

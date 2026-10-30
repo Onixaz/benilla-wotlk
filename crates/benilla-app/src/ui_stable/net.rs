@@ -62,9 +62,9 @@ fn list_stabled_pets(
         pets.len()
     );
     // Seed the pet-name cache from the rows, the pair `SMSG_PET_NAME_QUERY_RESPONSE` would carry:
-    // stock `PetStable.lua:163` hands `UnitName("pet")` to a tooltip whose `SetText` raises on nil
-    // (`0x531b90`), and this cache starts each world session empty, as 12340's pet-name cache does
-    // (persistence off, cleared at world entry, `0x52b7c4`).
+    // stock `PetStable.lua:163` hands `UnitName("pet")` to a tooltip whose `SetText` raises on nil,
+    // and this cache starts each world session empty, as 12340's pet-name cache does (persistence
+    // off, cleared at world entry, `0x52b7c4`).
     for pet in &pets {
         if !pet.name.is_empty() {
             names.insert_pet(pet.pet_number, pet.name.clone());
@@ -73,10 +73,10 @@ fn list_stabled_pets(
     stable_open.open(npc, num_stable_slots, pets);
 }
 
-/// `SMSG_STABLE_RESULT`, handled as the reference's jump table (`0x4cadac`, `0x4cad98`) does: 1
-/// shows `ERR_NOT_ENOUGH_MONEY` (`DisplayError(0x25)`), 8 and 9 re-request the list, as no success
-/// carries one, 10 counts a bought slot and re-requests, and 0, 2-7 and 12 up show nothing. 11
-/// fires `PET_STABLE_UPDATE` in the reference and nothing here: vmangos never sends it.
+/// `SMSG_STABLE_RESULT`, handled as the reference's jump table does: 1 shows `ERR_NOT_ENOUGH_MONEY`
+/// (error message `0x25`), 8 and 9 re-request the list, as no success carries one, 10 counts a
+/// bought slot and re-requests, and 0, 2-7 and 12 up show nothing. 11 fires `PET_STABLE_UPDATE` in
+/// the reference and nothing here: vmangos never sends it.
 fn stable_result(
     result: u8,
     stable_open: &mut StableOpen,
@@ -84,8 +84,7 @@ fn stable_result(
     net_commands: &NetCommands,
 ) {
     use benilla_protocol::messages::stable_result as code;
-    // Before the guid test, as `0x4cacf3` precedes `0x4cad05`: the count moves even with no
-    // stable open.
+    // Before the guid test, as in the reference: the count moves even with no stable open.
     if result == code::SUCCESS_BUY_SLOT {
         stable_open.num_stable_slots = stable_open.num_stable_slots.saturating_add(1);
     }

@@ -161,8 +161,7 @@ impl Logon {
         self.stream.is_some()
     }
 
-    /// `CLoginMgr::Cancel` (`0x5b3320`): the realmd socket closes; the session key and the last
-    /// list are kept.
+    /// The login cancel: the realmd socket closes; the session key and the last list are kept.
     pub fn close(&mut self) {
         self.stream = None;
     }
@@ -190,7 +189,7 @@ pub fn logon(host: &str, username: &str, password: &str) -> Result<Logon> {
                 auth::read_challenge_reply(&mut stream).context("reading logon challenge reply")?
             else {
                 // `SUCCESS_SURVEY` on the challenge authenticates with no SRP exchange; the
-                // reference's success arm copies no key (length 0 at `0x5b2e16`).
+                // reference's success arm copies no key.
                 return finish_logon(stream, [0u8; SESSION_KEY_LENGTH]);
             };
             let server_public_key = PublicKey::from_le_bytes(reply.server_public_key)

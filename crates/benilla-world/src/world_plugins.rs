@@ -89,7 +89,7 @@ impl PluginGroup for WorldPlugins {
             .add(crate::clouds::CloudsPlugin)
             // Weather (`SMSG_WEATHER`): the storm light blend and precipitation.
             .add(crate::weather::WeatherPlugin)
-            // The sun disc and glow halo (`CSky::Render`).
+            // The sun disc and glow halo (the sky render).
             .add(crate::sun::SunPlugin)
             // The interior classifier: M2 entities in a WMO room lit off its baked floor colour.
             .add(crate::interior::InteriorPlugin)
@@ -109,7 +109,7 @@ impl PluginGroup for WorldPlugins {
             // Liquid: animated lake/river/ocean water surfaces (MCLQ), spawned with their tile.
             .add(crate::liquid::LiquidPlugin)
             .add(crate::particles::ParticlePlugin)
-            // Water foam decals (`CWater0Ripple`): wake, ring and step-in splash.
+            // Water foam decals (the water ripple): wake, ring and step-in splash.
             .add(crate::water_fx::WaterFxPlugin)
             .add(crate::ffx_glow::FfxGlowPlugin)
             .add(crate::ribbons::RibbonPlugin)
@@ -184,6 +184,7 @@ impl Plugin for WorldFoundation {
             ..Default::default()
         });
         crate::collision::add_moved_position_sync(app, FixedPostUpdate);
+        crate::collision::use_change_aware_child_sync(app);
         // `WOW_PHYS_HZ=<hz>`: the fixed loop's rate, a measurement lever and never a setting (at
         // 8 Hz streamed colliders reach the spatial trees up to 125 ms late).
         if let Some(hz) = std::env::var("WOW_PHYS_HZ")

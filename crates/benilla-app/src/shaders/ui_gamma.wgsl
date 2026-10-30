@@ -20,7 +20,7 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
 fn fs_decode(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     let ui = textureSample(screen_texture, screen_sampler, in.uv);
     var rgb = ui.rgb;
-    // The reference's hardware ramp `pow(i / 255, gamma)` (`0x591680`). The branch keeps gamma 1
+    // The reference's hardware ramp `pow(i / 255, gamma)`. The branch keeps gamma 1
     // an exact identity and the floor guards `log2(0)` inside `pow`.
     if (ramp.x != 1.0) {
         rgb = pow(max(rgb, vec3<f32>(1e-6)), vec3<f32>(ramp.x));

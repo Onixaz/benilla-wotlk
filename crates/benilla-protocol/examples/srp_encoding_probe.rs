@@ -1,8 +1,8 @@
-//! Probe: whether realmd feeds the SRP6 big numbers to SHA-1 at fixed width or minimal length.
-//! The 1.12 client hashes `A`, `B`, `K`, the salt, `H(N)⊕H(g)` and `M1` at their declared
-//! widths, zero-padded in the high bytes (`0x5d3650`). vmangos hashes them as `BigNumber`s
-//! (`AsByteArray()` with `minSize = 0`), dropping high-order zero bytes, so the two disagree
-//! whenever a value has one; cmangos does the same (`Sha1Hash::UpdateBigNumbers`).
+//! Probe: whether realmd feeds the SRP6 big numbers to SHA-1 at fixed width or minimal length. The
+//! 1.12 client hashes `A`, `B`, `K`, the salt, `H(N)⊕H(g)` and `M1` at their declared widths,
+//! zero-padded in the high bytes. vmangos hashes them as `BigNumber`s (`AsByteArray()` with
+//! `minSize = 0`), dropping high-order zero bytes, so the two disagree whenever a value has one;
+//! cmangos does the same (`Sha1Hash::UpdateBigNumbers`).
 //!
 //! ```text
 //! cargo run --release -p benilla-protocol --example srp_encoding_probe -- --user U --pass P

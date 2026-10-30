@@ -2,50 +2,46 @@
 //! the hand-off when it arrives. The router emits one [`MissileSpawn`] per GO; this module owns
 //! launch and flight.
 //!
-//! Launch is release-keyed: a GO whose cast kit plays a body animation parks its projectiles on
-//! the caster ([`PendingMissiles`]) until the animation's `$CSL`/`$CSR`/`$CST` (casting hand) or
-//! `$BWR` (ranged) event drains them from its live position (`0x5ffbd0` → `0x60c940`). A GO with no
-//! cast-kit animation launches at once (`0x6e7a70`), and a queue whose event never fires launches
-//! when the one-shot ends (`0x5fc920`), both from the `$CSL` → `$CSR` → `$CST` → base cascade
-//! (`0x60c9b0`).
+//! Launch is release-keyed: a GO whose cast kit plays a body animation parks its projectiles on the
+//! caster ([`PendingMissiles`]) until the animation's `$CSL`/`$CSR`/`$CST` (casting hand) or `$BWR`
+//! (ranged) event drains them from its live position. A GO with no cast-kit animation launches at
+//! once, and a queue whose event never fires launches when the one-shot ends, both from the `$CSL`
+//! → `$CSR` → `$CST` → base cascade.
 //!
-//! The arrival deadline is fixed at GO: the launch (`0x61ceb0`) flies `distance / Speed` less the
-//! time queued, and a release already past it, as at melee range, shows only the impact. In flight
-//! the missile homes on the target's live attachment and arrives on time (`0x61e2a0`).
+//! The arrival deadline is fixed at GO: the launch flies `distance / Speed` less the time queued,
+//! and a release already past it, as at melee range, shows only the impact. In flight the missile
+//! homes on the target's live attachment and arrives on time.
 //!
-//! On arrival `0x61e1d0` picks an arm by whether the target guid still resolves, then by the hit
-//! bit `[missile+0x38] & 1`, set only at the spawn (`0x60a4e8`):
-//! - `0x61dc50`, a live target hit: wound, flinch and impact visual, no word; here
-//!   [`CastEventKind::Impact`].
-//! - `0x61dd50`, a live target missed: the outcome word, `UNIT_COMBAT` and chat, then the
-//!   disposition; here the defense clip and [`MissileMiss`].
-//! - `0x61d870`, no live target: plays on the caster, then walks the missile's guid list skipping
-//!   code 0; here [`CastEventKind::GroundImpact`]. A target that despawned mid-flight lands here as
-//!   well as a ground cast.
+//! On arrival the reference picks an arm by whether the target guid still resolves, then by the hit
+//! bit `[missile+0x38] & 1`, set only at the spawn:
+//! - A live target hit: wound, flinch and impact visual, no word; here [`CastEventKind::Impact`].
+//! - A live target missed: the outcome word, `UNIT_COMBAT` and chat, then the disposition; here the
+//!   defense clip and [`MissileMiss`].
+//! - No live target: plays on the caster, then walks the missile's guid list skipping code 0; here
+//!   [`CastEventKind::GroundImpact`]. A target that despawned mid-flight lands here as well as a
+//!   ground cast.
 //!
 //! With no visual-chain model a missile flies the wire's ammo (Auto Shot, Shoot, Throw: all
 //! `SpellVisual` 0), an `ItemDisplayInfo` row resolved by shape: a model in the right slot is
 //! `Item\ObjectComponents\Ammo\`, in the left `…\Weapon\` (thrown), each with its object skin. The
-//! reference resolves the row through `0x479f40`, forking on the wire's ammo InventoryType (`0x19`,
-//! thrown), and the shape rule matches it on every shipped row. With no model at all the missile
-//! flies invisible and still impacts on schedule.
+//! reference resolves the row, forking on the wire's ammo InventoryType (`0x19`, thrown), and the
+//! shape rule matches it on every shipped row. With no model at all the missile flies invisible and
+//! still impacts on schedule.
 //!
-//! A GO with no unit targets but a point flies one projectile at it (`0x6e8a50`'s empty-hit-array
-//! arm calls `0x60a3d0` once, unit slot −1): the Flare, a bomb thrown at empty ground. It aims at a
-//! fixed point ([`Aim::Ground`]), arrives as [`CastEventKind::GroundImpact`] on the caster
-//! (`0x61d870`) and flies the same straight, arrive-on-time line as a unit missile: the
-//! reference's flight is linear, with no gravity (`0x61ceb0`, `0x61e2a0`).
+//! A GO with no unit targets but a point flies one projectile at it (the reference's
+//! empty-hit-array arm spawns one, unit slot −1): the Flare, a bomb thrown at empty ground. It aims
+//! at a fixed point ([`Aim::Ground`]), arrives as [`CastEventKind::GroundImpact`] on the caster and
+//! flies the same straight, arrive-on-time line as a unit missile: the reference's flight is
+//! linear, with no gravity.
 //!
 //! A GO that names a trajectory flies the arc [`trajectory`] describes instead, landing at the
 //! packet's delay.
 //!
 //! Not built: `$BWR` launches from its event marker, where the reference first tries the ranged
 //! weapon's HandArrow/Bullet attachment (`0x23`/`0x24`); homing aims at the attachment point, not
-//! the ray-sphere intercept `0x61d230`, the same body point in practice; and `0x61dd50`'s
-//! per-outcome disposition (jump table `0x61d76c`, cases `0x61d784`), which keeps a BLOCK 5000 ms
-//! (`0x61e7c0`), rebuilds a RESIST or IMMUNE model (`0x707350` on `0x861790`), curves a DEFLECT
-//! away (`0x4531e0`, `0x7be490`) and re-launches a REFLECT at the caster, where every miss here
-//! ends on arrival.
+//! the ray-sphere intercept, the same body point in practice; and the reference's per-outcome
+//! disposition, which keeps a BLOCK 5000 ms, rebuilds a RESIST or IMMUNE model, curves a DEFLECT
+//! away and re-launches a REFLECT at the caster, where every miss here ends on arrival.
 
 use bevy::animation::transition::AnimationTransitions;
 use bevy::ecs::entity::EntityHashMap;
@@ -63,10 +59,10 @@ mod trajectory;
 use super::spell_fx::{attach_effect_visuals, ensure_model, EffectHost, FxMaterials, SpellFx};
 use super::{BoneAttach, DisplayModel, ModelHandle};
 
-/// The release events whose dispatcher arms drain the queue (`0x5ffbd0` → `0x60c940`).
+/// The release events whose dispatcher arms drain the queue.
 const RELEASE_IDENTS: [[u8; 4]; 4] = [*b"$CSL", *b"$CSR", *b"$CST", *b"$BWR"];
 
-/// The `0x60c9b0` launch cascade when no release event names a point, before the unit's base.
+/// The launch cascade when no release event names a point, before the unit's base.
 const MARKER_CASCADE: [[u8; 4]; 3] = [*b"$CSL", *b"$CSR", *b"$CST"];
 
 /// Seconds a queue waits for a one-shot that never starts, well above the frame or two a release
@@ -81,9 +77,9 @@ const DEST_FALLBACKS: [u16; 2] = [0xf, 0x13];
 /// tumbles end over end and shows its trail only here; a model without it plays its first clip.
 const INFLIGHT_ANIM: u16 = 144;
 
-/// The missile's orientation for flight direction `f`, the reference's frame (`0x61e2a0`): model
-/// +X along the flight, side = up × dir, up = dir × side, so it never rolls however the flight
-/// pitches. In Bevy, local −Z (wow +X) maps to `f` and local +Y (wow +Z) to that up.
+/// The missile's orientation for flight direction `f`, the reference's frame: model +X along the
+/// flight, side = up × dir, up = dir × side, so it never rolls however the flight pitches. In Bevy,
+/// local −Z (wow +X) maps to `f` and local +Y (wow +Z) to that up.
 fn missile_facing(f: Vec3) -> Quat {
     let side = Vec3::Y.cross(f);
     if side.length_squared() < 1e-6 {
@@ -95,9 +91,9 @@ fn missile_facing(f: Vec3) -> Quat {
     Quat::from_mat3(&Mat3::from_cols(f.cross(up), up, -f))
 }
 
-/// The projectile's looping flight sound, `SpellVisual` field 10: the reference's first flight
-/// step starts it (`0x61e79e`) and every later step moves it with the missile (`0x61e77c`).
-/// Written by [`spawn_missiles`] and [`move_missiles`] for `crate::sound::missile`.
+/// The projectile's looping flight sound, `SpellVisual` field 10: the reference's first flight step
+/// starts it and every later step moves it with the missile. Written by [`spawn_missiles`] and
+/// [`move_missiles`] for `crate::sound::missile`.
 #[derive(Message, Clone, Copy)]
 pub(crate) enum MissileSound {
     /// Start `kit_sound` on the launched `entity`, born at `pos`, the launch point, since the new
@@ -111,8 +107,8 @@ pub(crate) enum MissileSound {
     Stop { entity: Entity },
 }
 
-/// What a projectile flies at, the reference's two `CMissile` kinds: an owning unit slot, or −1
-/// for the location fallback (`0x60a5ec`).
+/// What a projectile flies at, the reference's two missile kinds: an owning unit slot, or −1 for
+/// the location fallback.
 #[derive(Clone, Copy)]
 enum Aim {
     /// A unit target, homed to its live attachment, so a moving target bends the path.
@@ -132,7 +128,7 @@ enum Aim {
 #[derive(Component)]
 pub(super) struct Missile {
     spell_id: u32,
-    /// A ground arrival plays on the caster (`0x61d870`), a unit arrival on the target.
+    /// A ground arrival plays on the caster, a unit arrival on the target.
     caster: Entity,
     aim: Aim,
     /// The [`SpellFx`] cache key; `None` flies invisible and still impacts.
@@ -188,7 +184,7 @@ pub(super) type AttachPosQuery<'w, 's> = Query<
 >;
 
 /// A unit's attachment position through the tag cascade, else its base; `None` only when the unit
-/// is gone. Chain-beam endpoints use it too, as `0x6ec780` reads the same table the same way.
+/// is gone. Chain-beam endpoints use it too, as the reference reads the same table the same way.
 pub(super) fn attach_world_pos(
     unit: Entity,
     tags: impl IntoIterator<Item = u16>,
@@ -221,7 +217,7 @@ fn aim_point(aim: Aim, units: &AttachPosQuery, joints: &Query<&GlobalTransform>)
 }
 
 /// The caster's launch point: the fired release event's own marker, as the dispatcher passes the
-/// event's live position (`0x5ffbd0` → `0x60c940`), else the `0x60c9b0` cascade at this pose.
+/// event's live position, else the cascade at this pose.
 fn launch_world_pos(
     caster: Entity,
     fired: Option<[u8; 4]>,
@@ -245,17 +241,17 @@ struct QueuedGo {
     spawn: MissileSpawn,
     /// The [`SpellFx`] key that becomes [`Missile::path`].
     key: Option<String>,
-    /// Seconds queued, subtracted from the flight at launch (`0x61ceb0`'s `elapsed` term).
+    /// Seconds queued, subtracted from the flight at launch (the reference's `elapsed` term).
     queued: f32,
     /// A one-shot has played on the caster since queuing, which arms the anim-end flush.
     saw_oneshot: bool,
 }
 
-/// Every caster's queue of projectiles awaiting release, the reference's `CGUnit+0xac` list of
-/// `CMissile` nodes, filled by the spawner `0x60a3d0` and drained by the release event; a caster
-/// that streams out drops its queue. It is also a gate: the `$BWR` handler tests the list head
-/// (`0x600182`) and only when a projectile waits re-animates the ranged prop, looks up the
-/// attachment and launches (`0x600294` calls `0x60c940`), so a shot's flex and launch are one act.
+/// Every caster's queue of projectiles awaiting release, the reference's unit `+0xac` list of
+/// missile nodes, filled by the spawner and drained by the release event; a caster that streams
+/// out drops its queue. It is also a gate: the `$BWR` handler tests the list head and only when a
+/// projectile waits re-animates the ranged prop, looks up the attachment and launches, so a shot's
+/// flex and launch are one act.
 #[derive(Resource, Default)]
 pub(crate) struct PendingMissiles(EntityHashMap<Vec<QueuedGo>>);
 
@@ -328,16 +324,16 @@ fn ensure_ammo_model(
 }
 
 /// A travelling spell's deferred miss word. `SMSG_SPELL_GO` skips its inline word when the
-/// `Spell.dbc` Speed is nonzero (`0x6e7d4e`); the arrival re-resolves the spell from
-/// `[missile+0x18]` and calls the same emitter `0x607140`. Its source class, CVar gates and colour
-/// are `crate::combat_text::missile_miss_text`'s.
+/// `Spell.dbc` Speed is nonzero; the arrival re-resolves the spell from `[missile+0x18]` and calls
+/// the same emitter. Its source class, CVar gates and colour are
+/// `crate::combat_text::missile_miss_text`'s.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct MissileMiss {
     /// The colour law's source class (`K`).
     pub(crate) caster: Entity,
-    /// Always the missed target (`0x61ddb3`; `0x61d9dc`'s is the per-entry target). Unlike the
-    /// inline site the arrival floats Reflect over the target, and the caster's word belongs to
-    /// the re-launched flight, which is not built.
+    /// Always the missed target; only the no-target arm's words take each list entry's target.
+    /// Unlike the inline site the arrival floats Reflect over the target, and the caster's word
+    /// belongs to the re-launched flight, which is not built.
     pub(crate) anchor: Entity,
     /// The colour law's `B` bit resolves off its record.
     pub(crate) spell_id: u32,
@@ -345,9 +341,9 @@ pub(crate) struct MissileMiss {
     pub(crate) code: u8,
 }
 
-/// A travelling spell is deflected, never parried: the launch classifier `0x61d720`, called from
-/// the launch at `0x61cebb`, stores PARRY(4) back as DEFLECT(9) (`0x61d756`), so the word, the
-/// `UNIT_COMBAT` feed and the chat line all see 9. Every other code passes through.
+/// A travelling spell is deflected, never parried: the launch classifier, called from the launch,
+/// stores PARRY(4) back as DEFLECT(9), so the word, the `UNIT_COMBAT` feed and the chat line all
+/// see 9. Every other code passes through.
 fn launch_outcome_code(code: u8) -> u8 {
     if code == 4 {
         9
@@ -376,7 +372,7 @@ pub(super) struct ArrivalOut<'w> {
     words: MessageWriter<'w, MissileMiss>,
 }
 
-/// The arrival hand-off, by the arms of the reference's per-tick dispatch `0x61e1d0` (module docs).
+/// The arrival hand-off, by the arms of the reference's per-tick dispatch (module docs).
 fn arrival_handoff(
     missile: &Missile,
     at: Vec3,
@@ -427,7 +423,7 @@ fn arrival_handoff(
 }
 
 /// Launch one queued GO from `launch`: a missile per target, or the one ground shot, each flying
-/// `distance / speed − time queued` (`0x61ceb0`); one already past its deadline hands off at once.
+/// `distance / speed − time queued`; one already past its deadline hands off at once.
 fn launch_go(
     go: &QueuedGo,
     launch: Vec3,
@@ -515,7 +511,7 @@ fn launch_go(
     }
 }
 
-/// Mark a new missile whose spell forces its projected batches (`CGMissile_C`'s attribute test),
+/// Mark a new missile whose spell forces its projected batches (the missile's attribute test),
 /// before its parts attach.
 pub(super) fn mark_forced_missiles(
     mut commands: Commands,
@@ -618,8 +614,7 @@ pub(super) fn spawn_missiles(
             );
         }
     }
-    // Age every queue, and flush one whose one-shot ended without its keyframe (the reference's
-    // anim-finish `0x5fc920` → `0x60c9b0`) or never started.
+    // Age every queue, and flush one whose one-shot ended without its keyframe or never started.
     let dt = time.delta_secs();
     let catalog = anim_data.as_deref().map(|d| &d.0);
     let mut flushes: Vec<(Entity, Vec<QueuedGo>)> = Vec::new();
@@ -700,7 +695,7 @@ pub(super) fn attach_missile_models(
             false, // a missile's flat quads are geometry, never ground decals
             // A free world model: its trail stays world-frozen and its pool finishes in place.
             EffectHost::default(),
-            // A `CMissile`, not a `CEffect`: no kit stage and no Birth/Hold/Decay, one sequence.
+            // A missile, not a kit effect: no kit stage and no Birth/Hold/Decay, one sequence.
             None,
             &mut FxMaterials {
                 store: &mut wow_materials,
@@ -861,9 +856,8 @@ fn land_short(
     });
 }
 
-/// The reference's arrive-on-time step `0x61e2a0`: each frame covers `dt / remaining time` of the
-/// gap to the live aim; at the deadline the missile snaps there, hands off and despawns. A
-/// trajectory missile flies its arc instead (`0x7015d0`), lands short at a server hit, and one of
+/// The reference's arrive-on-time step: each frame covers `dt / remaining time` of the gap to the
+/// live aim; at the deadline the missile snaps there, hands off and despawns. A trajectory missile flies its arc instead (`0x7015d0`), lands short at a server hit, and one of
 /// ours lands short on the first unit its step crosses, telling the server where.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 pub(super) fn move_missiles(
@@ -880,9 +874,9 @@ pub(super) fn move_missiles(
     let dt = time.delta_secs();
     for (entity, mut missile, mut transform) in &mut missiles {
         let Some(aim) = aim_point(missile.aim, &units, &joints) else {
-            // A unit target streamed out mid-flight: the reference's `0x61d870` plays on the
-            // caster and floats a word per guid from the missile's list (`0x61d9dc`, calling
-            // `0x607140`); not built, the flight ends silently.
+            // A unit target streamed out mid-flight: the reference's no-target arm plays on the
+            // caster and floats a word per guid from the missile's list; not built, the flight ends
+            // silently.
             sounds.write(MissileSound::Stop { entity });
             commands.entity(entity).despawn();
             continue;
@@ -1171,7 +1165,7 @@ mod tests {
         assert_eq!(impacts[0].spell_id, 133);
     }
 
-    /// The location fallback (`0x6e8a50`'s empty-hit-array arm) flies exactly one projectile.
+    /// The location fallback flies exactly one projectile.
     #[test]
     fn a_targetless_dest_go_flies_one_projectile_at_the_point() {
         let mut app = app();
@@ -1198,7 +1192,7 @@ mod tests {
         assert_eq!(ground, 1, "aimed at the point, homing to nothing");
     }
 
-    /// The reference reads the location latch only for an empty hit array (`0x6e8abc`).
+    /// The reference reads the location latch only for an empty hit array.
     #[test]
     fn a_dest_go_that_hit_units_flies_at_the_units_not_the_point() {
         let mut app = app();
@@ -1220,7 +1214,7 @@ mod tests {
         assert_eq!(aims, vec![true], "one unit-homing shot, no ground shot");
     }
 
-    /// `0x61d870` plays the kit on the caster with `extra` = the landing point.
+    /// The reference plays the kit on the caster with `extra` = the landing point.
     #[test]
     fn a_ground_arrival_hands_off_to_the_caster_with_the_landing_point() {
         let mut app = app();
@@ -1278,9 +1272,9 @@ mod tests {
         );
     }
 
-    /// The `0x61dd50` arm: a miss plays the victim's dodge or block clip, never the impact, and
-    /// floats its word over the target. A parry reads Deflect, rewritten at launch; a Reflect
-    /// floats over the target, where the inline site re-anchors it to the caster (`0x6e7e51`).
+    /// The live-target-missed arm: a miss plays the victim's dodge or block clip, never the impact,
+    /// and floats its word over the target. A parry reads Deflect, rewritten at launch; a Reflect
+    /// floats over the target, where the inline site re-anchors it to the caster.
     #[test]
     fn missed_arrival_words_the_target_deflects_a_parry_and_plays_dodge_or_block() {
         for (code, expect_state, expect_word) in [
@@ -1353,7 +1347,7 @@ mod tests {
         }
     }
 
-    /// A GO with no cast-kit animation launches at once (`0x6e7a70`), with the full flight time.
+    /// A GO with no cast-kit animation launches at once, with the full flight time.
     #[test]
     fn immediate_go_launches_at_once() {
         let mut app = app();

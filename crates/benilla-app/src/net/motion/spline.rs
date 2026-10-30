@@ -27,13 +27,12 @@ pub(crate) struct Spline {
     /// The server's spline id, echoed in `CMSG_MOVE_SPLINE_DONE` when the spline drives our own
     /// body; the server accepts only its newest id (vmangos `MovementHandler.cpp:807`).
     pub(crate) id: u32,
-    /// The `FLYING` bit was clear: the 1.12 client zeroes the spline's Δz (`0x616cec`) and takes Z
-    /// from the terrain, so [`ground_clamp_creatures`] re-grounds this unit. Flying keeps its Z.
+    /// The `FLYING` bit was clear: the 1.12 client zeroes the spline's Δz and takes Z from the
+    /// terrain, so [`ground_clamp_creatures`] re-grounds this unit. Flying keeps its Z.
     pub(crate) grounded: bool,
-    /// `SPLINEFLAG_RUNMODE`: the 1.12 client's commit `0x7c6a50` passes it to
-    /// `CMovement::SetRunMode` (`0x7c71c0`, from `0x7c6ac2`), so a spline without it sets
-    /// `MOVEFLAG_WALK_MODE`. Only the body we drive reads it ([`crate::player::server_ride`]); a
-    /// creature's gait comes from [`Spline::speed`].
+    /// `SPLINEFLAG_RUNMODE`: the 1.12 client's commit passes it to the run-mode setter, so a
+    /// spline without it sets `MOVEFLAG_WALK_MODE`. Only the body we drive reads it
+    /// ([`crate::player::server_ride`]); a creature's gait comes from [`Spline::speed`].
     pub(crate) run_mode: bool,
     /// The transport of a deck path (`SMSG_MONSTER_MOVE_TRANSPORT`), whose points are deck-local:
     /// sampled into the rider's [`crate::transport::TransportRider`] pose, never terrain-clamped.
@@ -72,10 +71,9 @@ impl Spline {
     }
 
     /// Raw-WoW position, facing (`None` when vertical) and pitch `asin(dz/len)` at `now`, at
-    /// constant speed. Segments are located by chord length here in both modes; the reference
-    /// uses the chord on a ground path only and a flying segment's Catmull-Rom length in 20 steps
-    /// (`0x454320`, `0x453760`). The evaluator `0x4541b0` lerps a ground path and runs a uniform
-    /// Catmull-Rom (`0x453580`) on a flying one.
+    /// constant speed. Segments are located by chord length here in both modes; the reference uses
+    /// the chord on a ground path only and a flying segment's Catmull-Rom length in 20 steps. The
+    /// evaluator lerps a ground path and runs a uniform Catmull-Rom on a flying one.
     pub(crate) fn sample(&self, now: Instant) -> ([f32; 3], Option<f32>, f32) {
         let pts = self.points.as_slice();
         if pts.len() < 2 {
@@ -128,10 +126,10 @@ impl Spline {
         (*pts.last().unwrap(), None, 0.0)
     }
 
-    /// The flying `(pitch, bank)` in radians (`0x7c5490`'s flying branch): pitch is the tangent's
-    /// climb; bank is `2·sign(cross)·acos(t̂·d̂)` between the XY tangent and the XY direction to
-    /// the point 1000 ms ahead (`0x7c5623`; 0 under the `2.384e-7` eps), snapped to ±π past ±π/2,
-    /// unsmoothed. The lean direction (a left turn rolls left) is inferred: its use is untraced.
+    /// The flying `(pitch, bank)` in radians: pitch is the tangent's climb; bank is
+    /// `2·sign(cross)·acos(t̂·d̂)` between the XY tangent and the XY direction to the point 1000 ms
+    /// ahead (0 under the `2.384e-7` eps), snapped to ±π past ±π/2, unsmoothed. The lean direction
+    /// (a left turn rolls left) is inferred: its use is untraced.
     pub(crate) fn flight_attitude(&self, now: Instant) -> (f32, f32) {
         let (pos, facing, pitch) = self.sample(now);
         let Some(f) = facing else {
@@ -159,9 +157,8 @@ impl Spline {
     }
 }
 
-/// Uniform Catmull-Rom position and `d/du` tangent on `pts[i] → pts[i+1]` at `u ∈ [0,1]`, the
-/// ends duplicated as the 1.12 client stores them (`0x601d30`, `0x601e66`), so the curve passes
-/// every waypoint.
+/// Uniform Catmull-Rom position and `d/du` tangent on `pts[i] → pts[i+1]` at `u ∈ [0,1]`, the ends
+/// duplicated as the 1.12 client stores them, so the curve passes every waypoint.
 fn catmull_rom(pts: &[[f32; 3]], i: usize, u: f32) -> ([f32; 3], [f32; 3]) {
     let p0 = pts[i.saturating_sub(1)];
     let p1 = pts[i];
@@ -355,8 +352,8 @@ pub(in crate::net) fn sample_splines(
         let was = tick.then(|| bevy_to_wow(t.translation));
         t.translation = wow_to_bevy(wow_pos);
         if let Some(f) = facing {
-            // A flying spline takes the full attitude, a swimming unit its travel pitch
-            // (`0x60a110`), a walker none; roll composes innermost, about the travel axis.
+            // A flying spline takes the full attitude, a swimming unit its travel pitch, a walker
+            // none; roll composes innermost, about the travel axis.
             let (pitch, bank) = if !spline.grounded {
                 spline.flight_attitude(now)
             } else if swimming {
@@ -413,12 +410,12 @@ fn trace_ride(guid: u64, spline: &Spline, pos: [f32; 3], was: [f32; 3], now: Ins
 }
 
 /// Whether benilla derives this body's Z and swim state, for both [`mark_swimming_creatures`] and
-/// [`ground_clamp_creatures`]. The reference never asks the kind: `0x6187a0` links any unit a
-/// `SMSG_MONSTER_MOVE` names (`0x619ca0`), and the per-frame vertical-zero gate
-/// (`0x616cec`-`0x616d03`) reads only the mover's flags. So: every `Unit`; a `Player` a server
-/// spline has moved, until the relay takes it back (`derived_before` is [`GroundClamped`]'s
-/// presence); never the body we steer ([`crate::net::Embodied`]); nothing else. A relayed player's
-/// Z comes grounded by its own client, and a down-ray would flatten its dead-reckoned jump arc.
+/// [`ground_clamp_creatures`]. The reference never asks the kind: it links any unit a
+/// `SMSG_MONSTER_MOVE` names, and the per-frame vertical-zero gate reads only the mover's flags.
+/// So: every `Unit`; a `Player` a server spline has moved, until the relay takes it back
+/// (`derived_before` is [`GroundClamped`]'s presence); never the body we steer
+/// ([`crate::net::Embodied`]); nothing else. A relayed player's Z comes grounded by its own client,
+/// and a down-ray would flatten its dead-reckoned jump arc.
 pub(crate) fn ground_derived(
     kind: EntityKind,
     splined: bool,
@@ -436,21 +433,21 @@ pub(crate) fn ground_derived(
     }
 }
 
-/// How far above the seat an idle unit's settle probe starts (yd): the swept-prism TOI
-/// (`0x632830`) still counts a face up to `1/36` yd (`[0x7ff9c8]`) behind the probe as a hit.
+/// How far above the seat an idle unit's settle probe starts (yd): the swept-prism TOI still counts
+/// a face up to `1/36` yd behind the probe as a hit.
 const IDLE_UP_BAND: f32 = 1.0 / 36.0;
 /// How far below the seat the settle probe reaches (yd). The reference's settle reaches
 /// `d·1.849 + 1/36` and a body beyond it falls; an idle unit here has no fall, so a miss leaves it
 /// at its seat, which is also the airborne gate.
 const GROUND_CLAMP_DOWN: f32 = 4.0;
 
-/// The Y a grounded mover ends its frame at (`0x634040`'s walk resolve), shared by the clamp and
+/// The Y a grounded mover ends its frame at (the reference's walk resolve), shared by the clamp and
 /// [`crate::player::server_ride`]; a probe miss returns `seat_y`.
 ///
 /// - `water_floor`: only under `MOVEFLAG_WATERWALKING`; the reference ORs the liquid layers into
-///   one walk trace (`0x63162e`), which the `max` reproduces.
-/// - `hover`: the reference ends at `z_before_snap − max(L − 1.0, 0)` (`0x636e81`-`0x636ea9`),
-///   here `(y + 1.0).min(seat_y)`.
+///   one walk trace, which the `max` reproduces.
+/// - `hover`: the reference ends at `z_before_snap − max(L − 1.0, 0)`, here
+///   `(y + 1.0).min(seat_y)`.
 pub(crate) fn grounded_y(
     seat_y: f32,
     floor: Option<f32>,
@@ -537,11 +534,11 @@ impl ClampStats {
 
 /// Grounds every [`ground_derived`] body on benilla's world: the 1.12 client zeroes a ground
 /// spline's Δz and takes Z from the world trace, and an idle unit reads grounded too, by an
-/// untraced path. Every probe starts at the body, measured from the seat (the Z the unit's
-/// position owner last wrote), never from the clamp's last answer, so a late floor takes the unit
-/// back. Skipped: flying and deck paths, and a swimming unit, whose wire Z is its depth (vmangos
-/// paths it in 3D without the flying flag, `MoveSplineInit.cpp:191`; the reference keeps Δz under
-/// SWIMMING, `[CMovement+0x40] & 0x200000` at `0x616cfa`).
+/// untraced path. Every probe starts at the body, measured from the seat (the Z the unit's position
+/// owner last wrote), never from the clamp's last answer, so a late floor takes the unit back.
+/// Skipped: flying and deck paths, and a swimming unit, whose wire Z is its depth (vmangos paths it
+/// in 3D without the flying flag, `MoveSplineInit.cpp:191`; the reference keeps Δz under SWIMMING,
+/// `[mover+0x40] & 0x200000`).
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(in crate::net) fn ground_clamp_creatures(
     world: benilla_world::collision::WorldCollision,
@@ -549,7 +546,7 @@ pub(in crate::net) fn ground_clamp_creatures(
     points: benilla_world::world_point::WorldPoint,
     epoch: Res<benilla_world::collision::ColliderEpoch>,
     // The body a walker's step sweeps: the shared player capsule. The reference sweeps each
-    // unit's own `CreatureModelData` radius and height (`[CMovement+0xb0]`/`+0xb4`); per-unit
+    // unit's own `CreatureModelData` radius and height (`[mover+0xb0]`/`+0xb4`); per-unit
     // extents are not built.
     capsule: Res<crate::player::PlayerCapsule>,
     mut commands: Commands,
@@ -724,9 +721,9 @@ fn clamp_unit(
             }
         }
     }
-    // Only for a unit not swimming: the reference takes this arm with the swim bit clear
-    // (`0x631617`). Deviation: its rate-limited hover climb (`0x636fa1`, 7 yd/s) is not
-    // reproduced, because the cache gate needs a pure function; it converges to this answer.
+    // Only for a unit not swimming: the reference takes this arm with the swim bit clear.
+    // Deviation: its rate-limited hover climb (7 yd/s) is not reproduced, because the cache gate
+    // needs a pure function; it converges to this answer.
     let water = granted
         .water_walking()
         .then(|| {
@@ -738,9 +735,9 @@ fn clamp_unit(
         })
         .flatten();
     let hover = granted.hovering();
-    // A continuing walker takes the swept step from last frame's pose with Δz = 0 (step-up
-    // `H` 2.0) and keeps only Y, so it rides a hill its chord cuts under; an idle unit or a new
-    // path settles down from the seat (`0x636dcd`-`0x636e45`, `d·1.849 + 1/36`).
+    // A continuing walker takes the swept step from last frame's pose with Δz = 0 (step-up `H` 2.0)
+    // and keeps only Y, so it rides a hill its chord cuts under; an idle unit or a new path settles
+    // down from the seat (`d·1.849 + 1/36`).
     let path = spline.map(|s| (s.id, s.start));
     let continuing = clamped
         .as_deref()
@@ -752,8 +749,7 @@ fn clamp_unit(
         let half_h = Vec3::Y * (crate::player::CAPSULE_HEIGHT * 0.5);
         let from = Vec3::new(pxz[0], py, pxz[1]) + half_h;
         // The frame's horizontal displacement as a one-second velocity: `grounded_step` travels
-        // `speed · dt`, and the reference's walk step takes a distance and a direction
-        // (`0x6367b0`).
+        // `speed · dt`, and the reference's walk step takes a distance and a direction.
         let delta = Vec3::new(xz[0] - pxz[0], 0.0, xz[1] - pxz[1]);
         let g = crate::player::mover::grounded_step(
             world,
@@ -921,21 +917,20 @@ type SwimMarkQuery = (
 #[component(storage = "SparseSet")]
 pub(in crate::net) struct SwimEvaluated;
 
-/// The exit band (yd) below the swim boundary: the player boundary's 1/36-yd hysteresis
-/// (`0x7ff9d0`), an absolute distance, not scaled with collision height.
+/// The exit band (yd) below the swim boundary: the player boundary's 1/36-yd hysteresis, an
+/// absolute distance, not scaled with collision height.
 const CREATURE_SWIM_EXIT_BAND: f32 = 1.0 / 36.0;
 
 /// A server-moved body ([`ground_derived`]) past the swim boundary, which no packet carries for
-/// one. The 1.12 client runs its depth decision `0x6030c0` on every linked CMovement (the frame
-/// walk `0x616800 → 0x615b10 → 0x616620`, the move apply `0x618c30`) and sets SWIMMING itself on
-/// a unit it does not steer (`0x60df70 → 0x61a130 → 0x61a230 → 0x7c6e50`).
+/// one. The 1.12 client runs its depth decision on every linked mover and sets SWIMMING itself on
+/// a unit it does not steer.
 ///
 /// The decision reads `UNIT_FIELD_FLAGS` on both legs ([`crate::player::may_swim`]): a unit with
-/// none of the three bits walks the lakebed, where vmangos paths it (`Object.cpp:2007`). Depth
-/// uses the unit's own collision height; the point the reference measures it from is untraced.
-/// The levitating bail (`0x400`) is not read: a spline-walked unit has no live flag word, and
-/// vmangos sets the bit on a creature only from a script (`boss_onyxia.cpp:679`). The splash
-/// (`sound::water`) sits outside the flag gate, as `0x60314a` does.
+/// none of the three bits walks the lakebed, where vmangos paths it (`Object.cpp:2007`). Depth uses
+/// the unit's own collision height; the point the reference measures it from is untraced. The
+/// levitating bail (`0x400`) is not read: a spline-walked unit has no live flag word, and vmangos
+/// sets the bit on a creature only from a script (`boss_onyxia.cpp:679`). The splash
+/// (`sound::water`) sits outside the flag gate, as in the reference.
 #[derive(Component)]
 pub(crate) struct CreatureSwimming;
 
@@ -956,7 +951,7 @@ pub(crate) struct GroundClamped {
     /// The granted modes the answer was computed under (HOVER and WATERWALKING change it).
     modes: crate::net::UnitMoveModes,
     /// The walker's `(spline id, start)` this continues; a new path re-seats, as the reference
-    /// re-bases on every inbound movement packet (`0x7c6420`).
+    /// re-bases on every inbound movement packet.
     path: Option<(u32, Instant)>,
 }
 
@@ -967,14 +962,14 @@ impl GroundClamped {
     }
 }
 
-/// The reference's `0x6030c0` decision for one creature:
+/// The reference's swim depth decision for one creature:
 ///
 /// ```text
-/// enter iff  flags ∧ depth >  0.75·h              (0x603106 test ah,0x41 + jne: ZF, strict)
-/// stay  iff  flags ∧ depth >= 0.75·h − 1/36       (0x6031c5 test ah,5 + jnp: parity, inclusive)
+/// enter iff  flags ∧ depth >  0.75·h              (mask 0x41 + jne: ZF, strict)
+/// stay  iff  flags ∧ depth >= 0.75·h − 1/36       (mask 5 + jnp: parity, inclusive)
 /// ```
 ///
-/// A false flag term forces a stop at any depth (`0x6031eb → 0x60dff0`), not only a refused start.
+/// A false flag term forces a stop at any depth, not only a refused start.
 fn creature_swim_state(marked: bool, depth: f32, boundary: f32, unit_flags: u32) -> bool {
     if !crate::player::may_swim(unit_flags) {
         return false; // both legs: without a permit a unit can neither start nor stay
@@ -1194,7 +1189,7 @@ mod under_floor {
     }
 
     /// A hovering unit rests a yard over its floor and never climbs: the reference ends at
-    /// `z_before_snap − max(L − 1.0, 0)` (`0x636e81`-`0x636ea9`).
+    /// `z_before_snap − max(L − 1.0, 0)`.
     #[test]
     fn a_hovering_creature_floats_a_yard_and_never_climbs() {
         let (mut app, npc) = half_arrived_world();
@@ -1506,8 +1501,8 @@ mod swim_gate {
         }
     }
 
-    /// Leaving keeps the 1/36-yd band and is inclusive at its edge (`0x6031c5`, a parity test),
-    /// where entering is strict (`0x603106`, a ZF test).
+    /// Leaving keeps the 1/36-yd band and is inclusive at its edge (a parity test), where entering
+    /// is strict (a ZF test).
     #[test]
     fn leaving_keeps_its_hysteresis_and_is_inclusive_where_entering_is_strict() {
         let boundary = swim_enter_depth(SEA_GIANT_H);
@@ -1531,7 +1526,7 @@ mod swim_gate {
         );
     }
 
-    /// Losing the flag mid-water (a charm ending) stops the swim at any depth (`0x6031eb`).
+    /// Losing the flag mid-water (a charm ending) stops the swim at any depth.
     #[test]
     fn losing_the_flag_mid_water_stops_the_swim_at_any_depth() {
         let boundary = swim_enter_depth(SEA_GIANT_H);
@@ -1723,7 +1718,7 @@ mod server_moved_players {
         }
     }
 
-    /// A flying path keeps its own Z for a player too: `0x616cec` reads the flags, not the kind.
+    /// A flying path keeps its own Z for a player too: the reference reads the flags, not the kind.
     #[test]
     fn a_flying_path_is_left_alone() {
         let (mut app, body) = hollow(EntityKind::Player);
@@ -1741,7 +1736,8 @@ mod server_moved_players {
     }
 
     /// Between paths a bot stays grounded: once `sample_splines` drops the finished spline, the
-    /// [`GroundClamped`] memo carries membership, as nothing is known to undo `0x619ca0`'s link.
+    /// [`GroundClamped`] memo carries membership, as nothing is known to undo the reference's
+    /// monster-move link.
     #[test]
     fn a_bot_stays_grounded_between_paths() {
         let (mut app, body) = hollow(EntityKind::Player);
@@ -1851,7 +1847,7 @@ mod server_moved_players {
         );
         assert!(
             crate::player::may_swim(0x8),
-            "PLAYER_CONTROLLED alone admits a player to the depth decision (0x60310b bit 3)"
+            "PLAYER_CONTROLLED alone admits a player to the depth decision"
         );
     }
 
@@ -2202,8 +2198,8 @@ mod inside_a_hull {
         );
     }
 
-    /// A new path re-bases from the server's Z (`0x7c6420`): a walker's memo under a late floor
-    /// does not carry into its next path.
+    /// A new path re-bases from the server's Z: a walker's memo under a late floor does not carry
+    /// into its next path.
     #[test]
     fn a_new_path_starts_again_from_the_seat() {
         let mut app = world();

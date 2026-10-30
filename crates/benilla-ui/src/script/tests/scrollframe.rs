@@ -70,7 +70,7 @@ fn get_scroll_child_roundtrips_wrapper_and_name_and_clears_on_nil() {
 }
 
 /// A positive offset lifts the child; offsets past the range or below zero are stored and applied
-/// as given, since `0x786db0` never reads the range.
+/// as given, since the reference's `SetVerticalScroll` never reads the range.
 #[test]
 fn scroll_child_top_tracks_vertical_scroll_unclamped_then_restores_on_clear() {
     let mut s = script();
@@ -151,8 +151,8 @@ fn scroll_child_top_tracks_vertical_scroll_unclamped_then_restores_on_clear() {
     );
 }
 
-/// `0x786db0` acts only when the offset differs from the stored one; a value past the range is
-/// still a change.
+/// The reference's `SetVerticalScroll` acts only when the offset differs from the stored one; a
+/// value past the range is still a change.
 #[test]
 fn set_vertical_scroll_fires_on_vertical_scroll_only_on_a_change() {
     let mut s = script();
@@ -272,8 +272,8 @@ fn vertical_scroll_range_is_local_units_on_a_scaled_frame() {
     );
 }
 
-/// `0x786db0` fires `OnVerticalScroll` with the unclamped stored value `[+0x328]`, under the
-/// handler conventions of `0x704f10`; the resolve's pump fires `OnScrollRangeChanged`
+/// The reference's `SetVerticalScroll` fires `OnVerticalScroll` with the unclamped stored value
+/// `[+0x328]`, under the handler conventions; the resolve's pump fires `OnScrollRangeChanged`
 /// horizontal first (`0x96afd0`).
 #[test]
 fn vertical_scroll_fires_as_given_and_the_pump_fires_range_changed() {
@@ -614,9 +614,9 @@ fn the_pump_reads_the_range_of_the_childs_measured_text() {
     );
 }
 
-/// The horizontal axis clones the vertical (`0x786d30` against `0x786db0`); `0x787100` passes both
-/// offsets to `SetPoint(TOPLEFT, self, TOPLEFT, +h, +v)` unnegated, so a positive horizontal
-/// offset pushes the child right.
+/// The horizontal axis clones the vertical; the reference passes both offsets to
+/// `SetPoint(TOPLEFT, self, TOPLEFT, +h, +v)` unnegated, so a positive horizontal offset pushes the
+/// child right.
 #[test]
 fn scroll_child_left_tracks_horizontal_scroll_unclamped_and_fires_on_change() {
     let mut s = script();
@@ -669,7 +669,7 @@ fn scroll_child_left_tracks_horizontal_scroll_unclamped_and_fires_on_change() {
         "a negative horizontal offset scrolls right"
     );
 
-    // Neither `0x786d30` nor `0x786db0` reads the range, so 450 is stored whole.
+    // Neither the horizontal nor the vertical scroll set reads the range, so 450 is stored whole.
     assert_eq!(
         s.eval::<f32>("return HSF:GetHorizontalScrollRange()")
             .unwrap(),

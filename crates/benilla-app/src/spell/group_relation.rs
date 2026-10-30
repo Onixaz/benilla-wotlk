@@ -1,7 +1,6 @@
-//! The group relations the party and raid words ask: `BindTarget 0x6e5b40`'s party arm
-//! (`6e5cad`-`6e5cec`) needs `0x606c20(caster, unit)` and `CanAssist`, its raid arm
-//! (`6e5cf1`-`6e5d2f`) `0x606d20(caster, unit)` and `CanAssist`, and the world pick's party leg
-//! (`480686`, `4806b8`) asks `0x606c20`.
+//! The group relations the party and raid words ask: the target bind's party arm needs the party
+//! test `(caster, unit)` and the assist check, its raid arm the group test `(caster, unit)` and the
+//! assist check, and the world pick's party leg (`480686`) asks the party test.
 //!
 //! - [`GroupRoster`]: the guids the reference's two tables hold, and [`publish_group_roster`],
 //!   which copies them out of `GroupState` before the input pass, so no cast or hover system
@@ -19,28 +18,25 @@ use crate::net::{ObjectStore, SelfGuid};
 use crate::ui_party::{raid_row_guids, GroupState};
 
 /// `UNIT_FIELD_FLAGS & 0x8`, `UNIT_FLAG_PLAYER_CONTROLLED` (vmangos `UnitDefines.h:548`), which
-/// both predicates test on both units (`606c5e`, `606c76`, `606d5e`, `606d76`).
+/// both predicates test on both units.
 const UNIT_FLAG_PLAYER_CONTROLLED: u32 = 0x8;
 
-/// The two tables `0x4e7f70` and `0x4baee0` read: the guids in the party slots and in the raid
-/// roster, as the frame began.
+/// The two tables read: the guids in the party slots and in the raid roster, as the frame began.
 #[derive(Resource, Default, Debug, PartialEq, Eq)]
 pub(crate) struct GroupRoster {
-    /// The party slots `[0xbc6f48 + 8i]`, `i < 4` (`4e7f96`-`4e7fb0`); none once an opcode emptied
-    /// them.
+    /// The party slots `[ + 8i]`, `i < 4`; none once an opcode emptied them.
     pub(crate) party: Vec<u64>,
-    /// The raid roster `[[0xb712a8 + 4i]]`, `i < [0xb713e0]` (`4baee0`), us included; none outside
-    /// a raid.
+    /// The raid roster `[[ + 4i]]`, `i <`, us included; none outside a raid.
     pub(crate) raid: Vec<u64>,
 }
 
 impl GroupRoster {
-    /// `0x4e7f70`: a nonzero guid that is the active player's (`4e7f84`) or in a party slot.
+    /// A nonzero guid that is the active player's or in a party slot.
     pub(crate) fn in_party(&self, me: Option<u64>, guid: u64) -> bool {
         guid != 0 && (me == Some(guid) || self.party.contains(&guid))
     }
 
-    /// `0x4918e0`: [`Self::in_party`], or a nonzero guid in the raid roster (`4918ee`).
+    /// [`Self::in_party`], or a nonzero guid in the raid roster.
     fn in_group(&self, me: Option<u64>, guid: u64) -> bool {
         self.in_party(me, guid) || guid != 0 && self.raid.contains(&guid)
     }
@@ -48,8 +44,7 @@ impl GroupRoster {
 
 /// Publish [`GroupRoster`] before the input pass, beside the pick's other published inputs. The
 /// party slots are the ones `partyN` reads (`GroupState::party_slots`), none after a leave or a
-/// kick (`slots_emptied`, `0x4e84a0`); the raid roster is the rows `raidN` reads
-/// ([`raid_row_guids`]).
+/// kick (`slots_emptied`); the raid roster is the rows `raidN` reads ([`raid_row_guids`]).
 pub(crate) fn publish_group_roster(
     group: Option<Res<GroupState>>,
     self_guid: Res<SelfGuid>,
@@ -76,7 +71,7 @@ pub(crate) fn publish_group_roster(
 /// What the two predicates read beside a [`TargetRelations`]' stores.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GroupInputs<'a> {
-    /// The active player's guid (`0x468550`), whom both predicates compare controllers to.
+    /// The active player's guid, whom both predicates compare controllers to.
     pub(crate) self_guid: Option<u64>,
     /// The candidate's guid.
     pub(crate) target_guid: Option<u64>,
@@ -96,23 +91,22 @@ impl crate::target::GroupMembers for GroupInputs<'_> {
 }
 
 impl TargetRelations<'_> {
-    /// `0x606c20(caster, candidate)`: the candidate is the caster (`606c3d`), or a member of his
-    /// party, or a unit that answers to one ([`Self::related`]).
+    /// The party test `(caster, candidate)`: the candidate is the caster, or a member of his party,
+    /// or a unit that answers to one ([`Self::related`]).
     pub(super) fn in_party(&self, is_self: bool) -> bool {
         self.related(is_self, GroupRoster::in_party)
     }
 
-    /// `0x606d20(caster, candidate)`: `0x606c20` with `0x4918e0` in place of `0x4e7f70`, so a
-    /// member of the raid roster counts as well as one of the party slots.
+    /// The group test `(caster, candidate)`: the party test with the raid roster's lookup in place
+    /// of the party's, so a member of the raid roster counts as well as one of the party slots.
     pub(super) fn in_group(&self, is_self: bool) -> bool {
         self.related(is_self, GroupRoster::in_group)
     }
 
-    /// The shape both predicates share: the caster is the candidate, or both are player-controlled
-    /// (`606c4f`-`606c79`), each answers to a player ([`controller`]), and one of the two
-    /// controllers is the active player and the other a member (`606ca3`-`606d02`), tried both
-    /// ways round. A member's pet is such a unit. Whoever has not streamed answers no controller
-    /// and no relation.
+    /// The shape both predicates share: the caster is the candidate, or both are player-controlled,
+    /// each answers to a player ([`controller`]), and one of the two controllers is the active
+    /// player and the other a member, tried both ways round. A member's pet is such a unit. Whoever
+    /// has not streamed answers no controller and no relation.
     fn related(&self, is_self: bool, member: fn(&GroupRoster, Option<u64>, u64) -> bool) -> bool {
         if is_self {
             return true;
@@ -144,10 +138,9 @@ impl TargetRelations<'_> {
     }
 }
 
-/// `0x606170`: the player a unit answers to, its charmer else its creator (`606170`-`60619f`)
-/// or the unit itself when neither is set, and only when that object is a player (`6061c6`-
-/// `6061cf`, `TYPEMASK_PLAYER`). `owner_store` is the charmer's or creator's descriptor, `None`
-/// while it has not streamed.
+/// The player a unit answers to, its charmer else its creator or the unit itself when
+/// neither is set, and only when that object is a player (`TYPEMASK_PLAYER`). `owner_store` is the
+/// charmer's or creator's descriptor, `None` while it has not streamed.
 fn controller(store: &ObjectStore, guid: u64, owner_store: Option<&ObjectStore>) -> Option<u64> {
     let (owner, owner_store) = match store.0.unit_owner(OwnerFallback::CreatedBy) {
         Some(owner) => (owner, owner_store),
@@ -253,7 +246,7 @@ mod tests {
         }
     }
 
-    /// `(0x606c20, 0x606d20)` toward a candidate, with the stores that stand behind it.
+    /// The party and group tests toward a candidate, with the stores that stand behind it.
     fn asked(
         roster: &GroupRoster,
         me: &ObjectStore,
@@ -278,7 +271,7 @@ mod tests {
         (rel.in_party(false), rel.in_group(false))
     }
 
-    /// `0x606c20` and `0x606d20` on players: the party slots satisfy both, the raid roster only the
+    /// The party and group tests on players: the party slots satisfy both, the raid roster only the
     /// second, and a player in neither answers neither.
     #[test]
     fn the_raid_roster_adds_to_the_party_slots_for_the_second_predicate_alone() {
@@ -287,11 +280,7 @@ mod tests {
         assert_eq!(ask(MEMBER), (true, true), "a party member");
         assert_eq!(ask(RAIDER), (false, true), "a raid member of another group");
         assert_eq!(ask(STRANGER), (false, false), "a player in neither");
-        assert_eq!(
-            ask(0),
-            (false, false),
-            "no guid is nobody's (`4e7f75`, `4baee9`)"
-        );
+        assert_eq!(ask(0), (false, false), "no guid is nobody's");
         assert_eq!(
             asked(&GroupRoster::default(), &me, None, (MEMBER, &other, None)),
             (false, false),
@@ -299,8 +288,8 @@ mod tests {
         );
     }
 
-    /// The caster is the candidate (`606c3d`, `606d3d`) whatever the roster holds, and a candidate
-    /// with no guid or no descriptor streamed answers no relation.
+    /// The caster is the candidate whatever the roster holds, and a candidate with no guid or no
+    /// descriptor streamed answers no relation.
     #[test]
     fn the_caster_is_his_own_group_and_a_missing_input_is_none() {
         let (me, other) = (player(1), player(1));
@@ -344,8 +333,8 @@ mod tests {
         assert!(!no_roster.in_party(false) && !no_roster.in_group(false));
     }
 
-    /// `606c5e`-`606c76`: both units must be player-controlled, so a member who is not, or a caster
-    /// who is not, has no party.
+    /// Both units must be player-controlled, so a member who is not, or a caster who is not, has no
+    /// party.
     #[test]
     fn both_sides_must_be_player_controlled() {
         let roster = roster();
@@ -361,9 +350,9 @@ mod tests {
         );
     }
 
-    /// `0x606170`: a pet is the group member it answers to, so a party member's pet is in the party
-    /// and a raider's in the raid; a pet of a stranger, a creature that answers to nobody and a pet
-    /// whose owner has not streamed are in neither.
+    /// A pet is the group member it answers to, so a party member's pet is in the party and a
+    /// raider's in the raid; a pet of a stranger, a creature that answers to nobody and a pet whose
+    /// owner has not streamed are in neither.
     #[test]
     fn a_pet_is_the_group_member_it_answers_to() {
         let roster = roster();
@@ -394,7 +383,7 @@ mod tests {
         assert_eq!(
             ask(14, &pet_of(MEMBER, 1, false), None),
             (false, false),
-            "an owner that has not streamed answers no controller (`606c92`)"
+            "an owner that has not streamed answers no controller"
         );
         // A creature nobody controls: the flag says player-controlled, but it is no player.
         let orphan = store(&[(TYPE, CREATURE_TYPE), (FLAGS, CONTROLLED)]);
@@ -408,8 +397,8 @@ mod tests {
             (false, false),
             "an NPC is not player-controlled"
         );
-        // Only a player counts as a controller (`6061c6`-`6061cf`): a creature standing in the
-        // roster, and a pet that answers to one, have none.
+        // Only a player counts as a controller: a creature standing in the roster, and a pet that
+        // answers to one, have none.
         let controlled = store(&[(TYPE, CREATURE_TYPE), (FLAGS, CONTROLLED)]);
         assert_eq!(
             ask(MEMBER, &controlled, None),
@@ -435,8 +424,8 @@ mod tests {
         );
     }
 
-    /// `606dce`-`606e02`: the controllers are tried both ways round, so a caster who answers to a
-    /// member (a charmed player) is in the group of a unit that answers to us.
+    /// The controllers are tried both ways round, so a caster who answers to a member (a charmed
+    /// player) is in the group of a unit that answers to us.
     #[test]
     fn the_controllers_are_tried_both_ways_round() {
         let roster = roster();
@@ -484,9 +473,8 @@ mod tests {
         );
     }
 
-    /// The party bit `0x8` and the raid bit `0x4` clear for the group the predicates name and
-    /// `CanAssist` passes (`6e5cad`-`6e5d2f`), and only the raid bit for a raid member outside
-    /// the party.
+    /// The party bit `0x8` and the raid bit `0x4` clear for the group the predicates name and the
+    /// assist check passes, and only the raid bit for a raid member outside the party.
     #[test]
     fn the_party_and_raid_bits_clear_for_the_group_and_only_when_assistable() {
         let factions = fx::factions();
@@ -554,7 +542,7 @@ mod tests {
                 true,
             ),
             ("a friendly creature", NPC, &npc, None, false, false),
-            // In the party, and no friend: `CanAssist` refuses after the predicate passes.
+            // In the party, and no friend: the assist check refuses after the predicate passes.
             (
                 "a member of the other faction",
                 ORC_MEMBER,
@@ -760,7 +748,7 @@ mod tests {
             }
         );
 
-        // A kick empties the slots and keeps the roster (`0x4e84a0`).
+        // A kick empties the slots and keeps the roster.
         world.resource_mut::<GroupState>().slots_emptied = true;
         assert_eq!(
             publish(&mut world),

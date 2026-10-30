@@ -1,6 +1,6 @@
 //! The cinematic frame swallows every key while it is up: the key-down walk gates on a shown
-//! keyboard frame with the slot set, not on handling (`0x76b7d0`), and a 1.12 handler cannot
-//! decline a key (`0x76ba25`), so the stock `OnKeyDown` re-runs `SCREENSHOT` by hand.
+//! keyboard frame with the slot set, not on handling, and a 1.12 handler cannot decline a key, so
+//! the stock `OnKeyDown` re-runs `SCREENSHOT` by hand.
 
 use benilla_ui::script::UiScript;
 

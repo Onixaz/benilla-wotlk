@@ -1,12 +1,10 @@
-//! The kit player: plays a `SoundEntries` kit by id or name (`PlaySoundById 0x458850`,
-//! `PlaySoundByName 0x458030`) through the client's audibility, duplicate and per-bus gates, the
-//! depleting weighted variation pick (`0x45bb70`/`0x45bd40`), per-shot volume and pitch variation
-//! (`0x458c60`/`0x458da0`), and the per-frame channel pump (`0x7a4ad0`/`0x7a5000`/`0x7a5dc0`).
+//! The kit player: plays a `SoundEntries` kit by id or by name, as the reference's two kit plays
+//! do, through the client's audibility, duplicate and per-bus gates, the depleting weighted
+//! variation pick, per-shot volume and pitch variation, and the per-frame channel pump.
 //!
-//! The variation gates are separate kit flag bits (0x400 pitch, 0x800 volume, `0x45c080`) and the
-//! draw is [`math::variation_draw`] (`0x455c70`). A looping channel beyond its cutoff stops here
-//! and restarts on its next trigger; the reference mutes it past the cutoff and restarts it on
-//! re-entry itself (`0x7a5095`, `0x7a51a2`).
+//! The variation gates are separate kit flag bits (0x400 pitch, 0x800 volume) and the draw is
+//! [`math::variation_draw`]. A looping channel beyond its cutoff stops here and restarts on its
+//! next trigger; the reference mutes it past the cutoff and restarts it on re-entry itself.
 
 use std::collections::HashMap;
 
@@ -24,8 +22,8 @@ use super::mixer::{self, StaticSoundData};
 use super::{AudioListener, SoundConfig, SoundOutput};
 
 /// The volume slider that scales a channel (master is global). Set by the caller, as the
-/// reference's play drivers set channel flag 0x2 for music, 0x8 for ambience and SFX otherwise
-/// (`0x45ce60`/`0x45cf00`); never derived from the kit's `SoundType`.
+/// reference's play drivers set channel flag 0x2 for music, 0x8 for ambience and SFX otherwise;
+/// never derived from the kit's `SoundType`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SoundCategory {
     Sfx,
@@ -33,8 +31,8 @@ pub(crate) enum SoundCategory {
     Ambience,
 }
 
-/// One kit's depleting variation pool (`0x45bb70` pick, `0x45bd40` refill): with all-1 weights, no
-/// repeat until every variation has played.
+/// One kit's depleting variation pool: with all-1 weights, no repeat until every variation has
+/// played.
 struct PickState {
     remaining: Vec<u32>,
 }
@@ -71,7 +69,7 @@ impl SoundKits {
     }
 
     /// The kit table, for [`super::vocal`]'s table build, which needs variation counts ahead of
-    /// play (the reference reads `0x45cda0(kit) + 0x94` there).
+    /// play (the reference reads the kit row's `+0x94` there).
     pub(super) fn catalog(&self) -> &SoundKitCatalog {
         &self.catalog
     }
@@ -83,7 +81,7 @@ pub(crate) struct ActiveChannel {
     /// The entity this channel belongs to; [`Latch`] says whether it also holds a latch, which
     /// the pump's reap releases when the sound stops.
     source: Option<Entity>,
-    /// A source-tagged loop follows its unit (the tracked play `0x61fec0`); one-shots stay put.
+    /// A source-tagged loop follows its unit; one-shots stay put.
     tracked: bool,
     handle: mixer::StaticSoundHandle,
     /// The spatial track keeping the 3D voice alive; `None` = 2D (main track).
@@ -124,13 +122,11 @@ pub(super) enum Latch {
     /// and liquid loops, spell holds).
     #[default]
     None,
-    /// The greeting line's `[unit+0xb1c]` (`0x60c28c`/`0x60c40a`): a unit whose greeting still
-    /// sounds refuses a new one.
+    /// The greeting line's `[unit+0xb1c]`: a unit whose greeting still sounds refuses a new one.
     Greeting,
-    /// The one-shot bark's `[unit+0xb20]`, the per-unit slot of the bark dispatch `0x623a40`
-    /// (jump table `0x623afc`), carrying the bark state `[unit+0xb24]`. A new bark whose state is
-    /// `<=` the sounding one is dropped; a higher one stops it and plays (`0x623a82`/`0x623a88`,
-    /// stop at `0x623a95`).
+    /// The one-shot bark's `[unit+0xb20]`, the per-unit slot of the bark dispatch, carrying the
+    /// bark state `[unit+0xb24]`. A new bark whose state is `<=` the sounding one is dropped; a
+    /// higher one stops it and plays.
     ///
     /// | state | `CreatureSoundData` column | what |
     /// |---|---|---|
@@ -140,56 +136,49 @@ pub(super) enum Latch {
     /// | 3 | none | plays nothing, still stops and latches |
     /// | 4 | 6 | the death bark, the maximum |
     ///
-    /// The state is read only while `[0xb20]` is live (`0x623a74`/`0x623a7d`), so it can live on
-    /// the channel.
+    /// The state is read only while `[0xb20]` is live, so it can live on the channel.
     Voice(u8),
-    /// A `SMSG_PLAY_OBJECT_SOUND` (`0x278`) live on this unit, the `AISOUNDDESC` pool at
-    /// `[0xb05f38]`. While one is live the unit's own vocals of classes 0 to 3 and 8 are suppressed
-    /// (`0x4591f0`, queried from `0x6234cb` and `0x623a59`; class test `0x6234bb`); the player twin
-    /// `0x62f880` has no such gate. It ends with the sound or when the emitter leaves
-    /// `DistanceCutoff` (`0x457a50`).
+    /// A `SMSG_PLAY_OBJECT_SOUND` (`0x278`) live on this unit, the `AISOUNDDESC` pool. While one is
+    /// live the unit's own vocals of classes 0 to 3 and 8 are suppressed; the player twin has no
+    /// such gate. It ends with the sound or when the emitter leaves `DistanceCutoff`.
     ObjectSound,
-    /// The unit's emote voice, `[unit+0xb28]` (`0x623c10`): it blocks nothing, a new emote voice
-    /// stops the sounding one (`0x623c68`-`0x623c70`, `Sound::Stop 0x7a5700`). Shared by the
-    /// text-emote voice and the `$CSD` anim event.
+    /// The unit's emote voice, `[unit+0xb28]`: it blocks nothing, a new emote voice stops the
+    /// sounding one. Shared by the text-emote voice and the `$CSD` anim event.
     EmoteVoice,
 }
 
-/// The class-bark chance roll (`0x623520`): `r = MulHi32(101, rand32)` in 0..=100, pass iff
-/// `threshold >= r`, so P = (threshold + 1) / 101. The reference's generator (`0x882664`, reseeded
-/// from the tick at `0x402802`) is not reproduced: any 32-bit draw serves, the arithmetic matches.
+/// The class-bark chance roll: `r = MulHi32(101, rand32)` in 0..=100, pass iff `threshold >= r`, so
+/// P = (threshold + 1) / 101. The reference's generator is not reproduced: any 32-bit draw serves,
+/// the arithmetic matches.
 pub(super) fn bark_chance_pass(threshold: u32, roll: u32) -> bool {
     ((101u64 * u64::from(roll)) >> 32) as u32 <= threshold
 }
 
-/// The class-5 (`$FDX` stand) threshold, 40 in both the creature table `0x8626d4` and the player
-/// twin `0x86424c`. Only classes 0, 2 and 5 are below 100, so `$WNG`, `$WGG` (classes 7, 10) and
-/// the ALERT bark (class 8) always pass.
+/// The class-5 (`$FDX` stand) threshold, 40 in both the creature table and the player twin. Only
+/// classes 0, 2 and 5 are below 100, so `$WNG`, `$WGG` (classes 7, 10) and the ALERT bark (class 8)
+/// always pass.
 pub(super) const STAND_CHANCE: u32 = 40;
 
-/// The class-0 (exertion) threshold, `0x8626d4[0] = 70`; the player twin is 35, so a player grunts
-/// about half as often. Class 1 (ExertionCritical) is 100 in both, so a crit always grunts.
+/// The class-0 (exertion) threshold; the player twin is 35, so a player grunts about half as often.
+/// Class 1 (ExertionCritical) is 100 in both, so a crit always grunts.
 pub(super) const EXERTION_CHANCE_CREATURE: u32 = 70;
-/// The player twin of [`EXERTION_CHANCE_CREATURE`], `0x86424c[0]`.
+/// The player twin of [`EXERTION_CHANCE_CREATURE`].
 pub(super) const EXERTION_CHANCE_PLAYER: u32 = 35;
 
-/// The class-2 (ordinary injury) threshold, `0x8626d4[2] = 60`; the player twin is 30. The twin is
-/// the victim's: the roll runs in its `[vtable+0x88]` (`0x623490` creature, `0x62f880` player),
-/// on the route `0x624530` → `0x623520`/`0x62f940` → the column selector `0x623020`. Classes 3
-/// (InjuryCritical) and 9 (InjuryCrushingBlow) are 100 in both and never rolled.
+/// The class-2 (ordinary injury) threshold; the player twin is 30. The twin is the victim's: the
+/// roll runs in its `[vtable+0x88]`, on the route → the column selector. Classes 3 (InjuryCritical)
+/// and 9 (InjuryCrushingBlow) are 100 in both and never rolled.
 pub(super) const INJURY_CHANCE_CREATURE: u32 = 60;
-/// The player twin of [`INJURY_CHANCE_CREATURE`], `0x86424c[2]`.
+/// The player twin of [`INJURY_CHANCE_CREATURE`].
 pub(super) const INJURY_CHANCE_PLAYER: u32 = 30;
 
-/// The class-5 cooldown: 10 000 ms on one global timestamp shared by every unit (`0x623290`,
-/// `[0xc4e0e4]`), stamped on an allowed attempt before the column-is-zero bail, so a silent or
-/// culled `$FDX` burns it too.
+/// The class-5 cooldown: 10 000 ms on one global timestamp shared by every unit, stamped on an
+/// allowed attempt before the column-is-zero bail, so a silent or culled `$FDX` burns it too.
 pub(super) const STAND_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// A voice bus, the reference's concurrency domain and index into its cap table (`0x87ce60`). Not
-/// the volume category: the bus is `[chan+0x84]` (0..12), the category flag bits in `[chan+0x38]`.
-/// A play on a full bus is refused, with no steal or queue (the pre-play gate `0x7a66a0` returns 1
-/// or 0), and callers do not retry.
+/// A voice bus, the reference's concurrency domain and index into its cap table. Not the volume
+/// category: the bus is `[chan+0x84]` (0..12), the category flag bits in `[chan+0x38]`. A play on a
+/// full bus is refused, with no steal or queue, and callers do not retry.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(super) struct Bus(pub(super) u8);
 
@@ -198,18 +187,18 @@ impl Bus {
     /// armor foley, and every play not routed elsewhere.
     pub(super) const DEFAULT: Bus = Bus(0);
 
-    /// Bus 1, cap 1: your character's error speech (`0x458250`, `0x4582d4`), its only tenant.
-    /// `0x458250` tries the annoyed line and then the ordinary one; this cap keeps the second from
-    /// sounding over the first.
+    /// Bus 1, cap 1: your character's error speech, its only tenant. The reference tries the
+    /// annoyed line and then the ordinary one; this cap keeps the second from sounding over the
+    /// first.
     pub(super) const ERROR_SPEECH: Bus = Bus(1);
 
-    /// Bus 5, cap 1: the attacker's exertion vocal (classes 0 and 1, `0x624786` → `0x623b10`), one
-    /// in the world at a time. `0x623b70` routes some units to bus 11, also cap 1, so routing by
-    /// column gives the same answer.
+    /// Bus 5, cap 1: the attacker's exertion vocal (classes 0 and 1), one in the world at a time.
+    /// The reference routes some units to bus 11, also cap 1, so routing by column gives the same
+    /// answer.
     pub(super) const EXERTION: Bus = Bus(5);
 
-    /// Bus 6, cap 2: a connecting swing's whoosh (`WeaponSwingSounds2`, `0x624c81` → `0x457f60` →
-    /// `0x458890`); `0x624ca0` plays it or the miss whoosh on bus 0, never both.
+    /// Bus 6, cap 2: a connecting swing's whoosh (`WeaponSwingSounds2`); the reference plays it or
+    /// the miss whoosh on bus 0, never both.
     pub(super) const WEAPON_SWING: Bus = Bus(6);
 
     /// Bus 7, cap 2: the victim's wound vocal (classes 2, 3 and 9; no shipped row populates 9).
@@ -217,21 +206,19 @@ impl Bus {
     pub(super) const INJURY: Bus = Bus(7);
 
     /// Bus 8, cap 1: the local player's own wound vocal, which the player twin substitutes for
-    /// classes 2, 3 and 9 (`0x62f8c5..0x62f8f3`). Exertion stays on [`Self::EXERTION`].
+    /// classes 2, 3 and 9. Exertion stays on [`Self::EXERTION`].
     pub(super) const SELF_INJURY: Bus = Bus(8);
 
-    /// Bus 9, cap 6: the terrain footstep off `$FSD` (`0x62342a` → `0x458380`). The same `$FSD`
-    /// first plays the armor foley on bus 0 (`[vt+0x8c]` → `0x4584e0`).
+    /// Bus 9, cap 6: the terrain footstep off `$FSD`. The same `$FSD` first plays the armor foley
+    /// on bus 0 (`[vt+0x8c]`).
     pub(super) const FOOTSTEP: Bus = Bus(9);
 
-    /// Bus 10, cap 4: melee contact, the `WeaponImpactSounds` hit (`0x624977` → `0x457ec0`), the
-    /// `CustomAttack[n]` column that replaces it (`0x6248ea`) and the parry or block clang
-    /// (`0x623640` → `0x457dc0`). The deflect clang is a fixed kit on bus 0.
+    /// Bus 10, cap 4: melee contact, the `WeaponImpactSounds` hit, the `CustomAttack[n]` column
+    /// that replaces it and the parry or block clang. The deflect clang is a fixed kit on bus 0.
     pub(super) const MELEE_IMPACT: Bus = Bus(10);
 }
 
-/// The reference's cap table, `.data` `0x87ce60`: 13 dwords with no writer, read only at
-/// `0x7a66b5`.
+/// The reference's cap table, `.data`: 13 dwords with no writer, read only.
 const BUS_CAP: [u32; 13] = [0x7fff_ffff, 1, 2, 2, 1, 1, 2, 2, 1, 6, 4, 1, 2];
 
 /// How many copies of one kit may sound at once, for kits without the `NO_DUPLICATES` flag.
@@ -239,8 +226,8 @@ const BUS_CAP: [u32; 13] = [0x7fff_ffff, 1, 2, 2, 1, 1, 2, 2, 1, 6, 4, 1, 2];
 /// coherently (five are one sound +14 dB), so a mass buff distorts.
 const SAME_KIT_MAX: usize = 2;
 
-/// The reference's per-kit suppressor: kit flag 0x20 and a same-kit channel still live
-/// (`0x458f40` lifts it into the flags word the pre-play gate `0x7a66a0` reads).
+/// The reference's per-kit suppressor: kit flag 0x20 and a same-kit channel still live (lifts it
+/// into the flags word the pre-play gate reads).
 fn no_duplicates_blocks(dedupe_exempt: bool, flags: u32, live_same_kit: usize) -> bool {
     !dedupe_exempt && flags & sound_kit_flags::NO_DUPLICATES != 0 && live_same_kit > 0
 }
@@ -254,7 +241,7 @@ fn same_kit_cap_blocks(dedupe_exempt: bool, live_same_kit: usize) -> bool {
 /// the quietest live one-shot loses its slot to a louder newcomer, and a newcomer quieter than
 /// everything is dropped.
 ///
-/// Deviation: the reference opens 512 virtual channels over its software voices (`SE2::Init`,
+/// Deviation: the reference opens 512 virtual channels over its software voices (the engine init,
 /// `System::init(512, …)` at `0x87d9cb`), so a voice that loses its slot goes virtual and returns
 /// when it is audible again; here it stops.
 fn claim_voice(out: &mut SoundOutput, candidate_amp: f32) -> bool {
@@ -342,27 +329,28 @@ pub(super) struct PlayExtras {
     pub(super) source: Option<Entity>,
     /// Loop regardless of the kit's 0x200 flag, for drivers whose column is the loop authority:
     /// every `CreatureSoundData` column-23 kit is named `*Loop*` yet half lack 0x200. The
-    /// reference's loop start `0x461d80` is untraced.
+    /// reference's loop start is untraced.
     pub(super) force_loop: bool,
-    /// Skip `NO_DUPLICATES` and [`SAME_KIT_MAX`], the one-shot lane's gates (`0x458f40` →
-    /// `0x7a66a0`). The ambient emitter pool ([`super::emitter_pool`]) keeps one entry per kit
-    /// (`0x461e60`) and opens through `0x7a5680` → `0x7a54d0`, which never reaches that gate;
-    /// gated, a 0x220 kit such as `NightElfStreetLampLoop` could not replace its own fade-out.
+    /// Skip `NO_DUPLICATES` and [`SAME_KIT_MAX`], the one-shot lane's gates. The ambient emitter
+    /// pool ([`super::emitter_pool`]) keeps one entry per kit and opens, which never reaches that
+    /// gate; gated, a 0x220 kit such as `NightElfStreetLampLoop` could not replace its own
+    /// fade-out.
     pub(super) dedupe_exempt: bool,
     /// Which per-unit latch this play takes; a `source` alone takes none.
     pub(super) latch: Latch,
     /// The voice bus this play competes on; defaults to the uncapped bus 0.
     pub(super) bus: Bus,
-    /// `0x458890`'s per-shot multiplier (1.0 at every site but one), applied inside
+    /// The reference's per-shot multiplier (1.0 at every site but one), applied inside
     /// [`math::variation_volume`] before the 0..1 clamp and distance attenuation.
     pub(super) volume_mult: Volume,
-    /// The DSP chain the sound plays through (`SE2SoundKitProperties::m_useDspChain`), from
+    /// The DSP chain the sound plays through (the kit properties' DSP-chain field), from
     /// [`voice_filter`]; ignored when the engine built none.
     pub(super) voice_filter: Option<super::dsp::VoiceFilter>,
 }
 
-/// A unit's voice chain for its vocals: a Death Knight's (`SI2::DK_GetPlayerFilterName`), when
-/// the engine built the chains (`Sound_EnableDSPEffects` at init, `SI2::Init` → `DSP_Init`).
+/// A unit's voice chain for its vocals: a Death Knight's (the reference's player filter name),
+/// when the engine built the chains (`Sound_EnableDSPEffects` at init, the sound init → the DSP
+/// init).
 pub(super) fn voice_filter(
     out: &SoundOutput,
     store: Option<&crate::net::ObjectStore>,
@@ -383,7 +371,7 @@ impl Default for Volume {
     }
 }
 
-/// A kit to play, by id or by `PlaySoundByName` name.
+/// A kit to play, by id or by kit name.
 pub(crate) enum KitRef<'a> {
     Id(u32),
     Name(&'a str),
@@ -414,9 +402,8 @@ pub(crate) fn play_kit(
     )
 }
 
-/// [`play_kit`] with [`PlayExtras`] (`0x458f90(kit, variant, posPtr)`). Returns whether a channel
-/// opened, as the play core `0x45ce60` returns the channel or 0; [`super::vocal`]'s escalation
-/// counter reads it.
+/// [`play_kit`] with [`PlayExtras`] (`(kit, variant, posPtr)`). Returns whether a channel opened,
+/// as the play core returns the channel or 0; [`super::vocal`]'s escalation counter reads it.
 pub(super) fn play_kit_ext(
     kits: &mut SoundKits,
     assets: &WorldAssets,
@@ -457,7 +444,7 @@ pub(super) fn play_kit_ext(
         kit.distance_cutoff,
         kit.eax_def,
     );
-    // Selection-time audibility (`0x45cdf0`): a positional kit beyond its cutoff never allocates.
+    // Selection-time audibility: a positional kit beyond its cutoff never allocates.
     let d_sq = pos.map(|p| math::dist_sq(listener, p));
     if let Some(d_sq) = d_sq {
         if cutoff > 0.0 && !math::audible(d_sq, cutoff) {
@@ -470,15 +457,15 @@ pub(super) fn play_kit_ext(
         return Ok(false); // a kit with no files is playable-as-nothing, not an error
     }
 
-    // The per-bus cap, the pre-play gate `0x7a66a0`'s always-on arm, before the duplicate walk
-    // (`0x7a66b5` precedes `0x7a66c4`). It counts allocated channels (`[0xcf553c + 4*bus]`), and a
-    // distance cull releases one, as the pump's reap does here.
+    // The per-bus cap, the always-on arm of the reference's pre-play gate, before the duplicate
+    // walk. It counts allocated channels per bus, and a distance cull releases one, as the pump's
+    // reap does here.
     if bus_at_cap(out.channels.iter().map(|c| c.bus), bus) {
         return Ok(false);
     }
 
-    // Duplicate suppression, the gate's other arm: kit flag 0x20 and a same-kit channel still
-    // live drop the play (`0x458f40` lifts `SoundEntries +0x7c` bit 0x20 into the flags word).
+    // Duplicate suppression, the gate's other arm: kit flag 0x20 and a same-kit channel still live
+    // drop the play (lifts `SoundEntries +0x7c` bit 0x20 into the flags word).
     let live_same_kit = out.channels.iter().filter(|c| c.kit == id).count();
     if no_duplicates_blocks(dedupe_exempt, flags, live_same_kit) {
         return Ok(false);
@@ -503,8 +490,7 @@ pub(super) fn play_kit_ext(
     // Decode (cached).
     let data = kits.sfx(assets, &path)?;
 
-    // Per-shot variation: 0x800 volume (`0x458c60`), 0x400 pitch (`0x458da0`). No 1.12 kit sets
-    // 0x800.
+    // Per-shot variation: 0x800 volume, 0x400 pitch. No 1.12 kit sets 0x800.
     let v = if flags & sound_kit_flags::VARY_VOLUME != 0 {
         let draw = math::variation_draw(kits.rng.next());
         math::variation_volume(Some(draw), volume, mult)
@@ -545,8 +531,8 @@ pub(super) fn play_kit_ext(
     };
     let (track, handle, hrtf, chain_track) = match (pos, chain) {
         (Some(p), chain) => {
-            // `EAXDef 0` has no `SoundSamplePreferences` row and the reference gives it no reverb
-            // (`0x45cdc0`/`0x7a5bf0`), so NPC voice lines (every `SoundType 17` row) stay dry.
+            // `EAXDef 0` has no `SoundSamplePreferences` row and the reference gives it no reverb,
+            // so NPC voice lines (every `SoundType 17` row) stay dry.
             let (t, h, cutoff) = mixer.play_3d(data, p, eax_def != 0, hrtf_on, chain)?;
             (Some(t), h, cutoff, None)
         }
@@ -595,8 +581,8 @@ pub(super) fn play_kit_ext(
     Ok(true)
 }
 
-/// The state of `unit`'s live bark: `[unit+0xb20]` live and `[unit+0xb24]`; `None` is a free slot
-/// (`0x623a74`/`0x623a7d`). The body loop (`0x623800`) and the greeting are separate handles.
+/// The state of `unit`'s live bark: `[unit+0xb20]` live and `[unit+0xb24]`; `None` is a free slot.
+/// The body loop and the greeting are separate handles.
 pub(super) fn unit_voice_state(out: &SoundOutput, unit: Entity) -> Option<u8> {
     out.channels.iter().find_map(|c| match c.latch {
         Latch::Voice(state) if c.source == Some(unit) => Some(state),
@@ -604,9 +590,8 @@ pub(super) fn unit_voice_state(out: &SoundOutput, unit: Entity) -> Option<u8> {
     })
 }
 
-/// Stop whatever holds `unit`'s bark slot (`0x623a95 call 0x7a5700`). It runs on every admitted
-/// bark before the column is read, so a bark with column 0 still silences the one it supersedes
-/// (`0x623aee`).
+/// Stop whatever holds `unit`'s bark slot. It runs on every admitted bark before the column is
+/// read, so a bark with column 0 still silences the one it supersedes.
 pub(super) fn stop_unit_voice(out: &mut SoundOutput, unit: Entity) {
     out.channels.retain_mut(|c| {
         if occupies_voice_slot(c.source, c.latch, unit) {
@@ -624,7 +609,7 @@ pub(super) fn occupies_voice_slot(source: Option<Entity>, latch: Latch, unit: En
     source == Some(unit) && matches!(latch, Latch::Voice(_))
 }
 
-/// Stop every emote voice of `unit` but the newest channel (`0x623c68`-`0x623c70`).
+/// Stop every emote voice of `unit` but the newest channel.
 pub(super) fn stop_older_emote_voices(out: &mut SoundOutput, unit: Entity) {
     let newest = out.channels.len().saturating_sub(1);
     let mut i = 0;
@@ -648,7 +633,7 @@ pub(super) fn occupies_greeting_latch(source: Option<Entity>, latch: Latch, unit
     source == Some(unit) && latch == Latch::Greeting
 }
 
-/// Is a server-pushed object sound live on `unit` (the `AISOUNDDESC` pool query `0x4591f0`)? See
+/// Is a server-pushed object sound live on `unit` (the `AISOUNDDESC` pool query)? See
 /// [`Latch::ObjectSound`].
 pub(super) fn object_sound_playing(out: &SoundOutput, unit: Entity) -> bool {
     out.channels
@@ -656,17 +641,16 @@ pub(super) fn object_sound_playing(out: &SoundOutput, unit: Entity) -> bool {
         .any(|c| c.source == Some(unit) && c.latch == Latch::ObjectSound)
 }
 
-/// Is `source`'s greeting line still live (`[unit+0xb1c]`, `0x60c28c`/`0x60c40a`)? A unit whose
-/// greeting sounds refuses a new one; the pump's reap releases it. Other owned channels do not
-/// count.
+/// Is `source`'s greeting line still live (`[unit+0xb1c]`)? A unit whose greeting sounds refuses a
+/// new one; the pump's reap releases it. Other owned channels do not count.
 pub(super) fn source_playing(out: &SoundOutput, source: Entity) -> bool {
     out.channels
         .iter()
         .any(|c| occupies_greeting_latch(c.source, c.latch, source))
 }
 
-/// Is `source` playing kit `kit_id`? The creature body loop's not-already-playing gate (`0x623800`
-/// latches its own channel); kit-scoped so a greeting or spell hold never masks it.
+/// Is `source` playing kit `kit_id`? The creature body loop's not-already-playing gate; kit-scoped
+/// so a greeting or spell hold never masks it.
 impl ActiveChannel {
     /// The entity this channel belongs to, if any.
     pub(super) fn source(&self) -> Option<Entity> {
@@ -680,14 +664,13 @@ pub(super) fn source_kit_playing(out: &SoundOutput, source: Entity, kit_id: u32)
         .any(|c| c.source == Some(source) && c.kit == kit_id)
 }
 
-/// The kit's name, or `None` with no `SoundEntries` row: the reference's `0x45cda0(id)` null test,
+/// The kit's name, or `None` with no `SoundEntries` row: the reference's kit-lookup null test,
 /// which permanently fails a doodad emitter pool entry (`[+0xE00] = -id`).
 pub(super) fn kit_name(kits: &SoundKits, id: u32) -> Option<&str> {
     kits.catalog.get(id).map(|k| k.name.as_str())
 }
 
-/// Whether kit `id` loops (flag 0x200), the client's `0x458830` split between tracked loops and
-/// one-shots.
+/// Whether kit `id` loops (flag 0x200), the client's split between tracked loops and one-shots.
 pub(super) fn kit_looping(kits: &SoundKits, id: u32) -> bool {
     kits.catalog
         .get(id)
@@ -704,8 +687,8 @@ pub(super) fn set_source_kit_gain(out: &mut SoundOutput, source: Entity, kit_id:
     }
 }
 
-/// Force-stop `source`'s channels on kit `kit_id`: a looping spell kit rides the tracked play
-/// `0x61fec0` and dies with its effect (`0x614150`). Kit-scoped so the caster's greeting survives.
+/// Force-stop `source`'s channels on kit `kit_id`: a looping spell kit rides the tracked play and
+/// dies with its effect. Kit-scoped so the caster's greeting survives.
 pub(super) fn stop_source_kit(out: &mut SoundOutput, source: Entity, kit_id: u32) {
     out.channels.retain_mut(|c| {
         if c.source == Some(source) && c.kit == kit_id {
@@ -717,16 +700,16 @@ pub(super) fn stop_source_kit(out: &mut SoundOutput, source: Entity, kit_id: u32
     });
 }
 
-/// Stop every kit channel, the sound-system restart's `SE2::StopAllSounds` (`0x87ded0`).
+/// Stop every kit channel, the sound-system restart's stop-all (`0x87ded0`).
 pub(super) fn stop_all(out: &mut SoundOutput) {
     for mut c in out.channels.drain(..) {
         c.handle.stop(mixer::declick());
     }
 }
 
-/// Force-stop every channel tagged with `source` on despawn, the unit teardown stop (`0x5fbb6c`).
-/// Returns how many it stopped, so the doodad reaper in [`super::anim_events`] can tell a reaped
-/// loop from a silent source.
+/// Force-stop every channel tagged with `source` on despawn, the unit teardown stop. Returns how
+/// many it stopped, so the doodad reaper in [`super::anim_events`] can tell a reaped loop from a
+/// silent source.
 pub(super) fn stop_source(out: &mut SoundOutput, source: Entity) -> usize {
     let before = out.channels.len();
     out.channels.retain_mut(|c| {
@@ -800,12 +783,12 @@ fn near_field(d_sq: f32, cutoff: f32) -> f32 {
 }
 
 impl SoundKits {
-    /// The ambience kit a ghost hears (`[0xb06d48]`, resolved at init by `0x4609b0`).
+    /// The ambience kit a ghost hears.
     pub(super) fn ghost_bed(&self) -> Option<u32> {
         self.catalog.ghost_bed()
     }
 
-    /// The ambience kit a submerged listener hears (`[0xb06d4c]`, resolved at init by `0x4609b0`).
+    /// The ambience kit a submerged listener hears.
     pub(super) fn underwater_bed(&self) -> Option<u32> {
         self.catalog.underwater_bed()
     }
@@ -839,8 +822,7 @@ impl SoundKits {
         Some((path, volume))
     }
 
-    /// `0x45bb70`: weighted-random pick over the kit's *remaining* weight pool, refilled when
-    /// exhausted (`0x45bd40`).
+    /// Weighted-random pick over the kit's *remaining* weight pool, refilled when exhausted.
     fn pick_variation(&mut self, kit: u32, weights: &[u32]) -> usize {
         if weights.len() == 1 {
             return 0;
@@ -907,8 +889,8 @@ pub(super) fn load_sound_kits(mut commands: Commands, assets: Option<Res<WorldAs
     }
 }
 
-/// The per-frame channel pump (`0x7a4ad0`): reap finished channels, follow tracked sources, cull
-/// positional ones beyond cutoff, recompute each volume.
+/// The per-frame channel pump: reap finished channels, follow tracked sources, cull positional ones
+/// beyond cutoff, recompute each volume.
 pub(super) fn pump_channels(
     mut out: NonSendMut<SoundOutput>,
     config: Res<SoundConfig>,
@@ -920,8 +902,8 @@ pub(super) fn pump_channels(
         if ch.handle.state() == PlaybackState::Stopped {
             return false;
         }
-        // A tracked loop follows its unit (`0x61fec0`); a despawned source keeps its last
-        // position until the despawn reaper stops the channel.
+        // A tracked loop follows its unit; a despawned source keeps its last position until the
+        // despawn reaper stops the channel.
         if ch.tracked {
             if let Some(p) = ch
                 .source
@@ -953,7 +935,7 @@ pub(super) fn pump_channels(
         }
         let d_sq = math::dist_sq(listener, p);
         if ch.cutoff > 0.0 && !math::audible(d_sq, ch.cutoff) {
-            // Beyond cutoff the reference mutes the channel (`0x7a5095`); here it stops.
+            // Beyond cutoff the reference mutes the channel; here it stops.
             ch.handle.stop(mixer::declick());
             return false;
         }
@@ -1088,7 +1070,7 @@ pub(super) fn plugin(app: &mut App) {
 mod tests {
     use super::*;
 
-    /// Pinned as the 13 dwords at `.data` `0x87ce60`.
+    /// Pinned as the 13 dwords at `.data`.
     #[test]
     fn the_cap_table_is_the_bytes_at_0x87ce60() {
         assert_eq!(BUS_CAP.len(), 13);
@@ -1121,7 +1103,7 @@ mod tests {
         assert!(!bus_at_cap(live(5, 9), Bus(7)));
     }
 
-    /// With all-1 weights every variation plays once per cycle (`0x45bb70`/`0x45bd40`).
+    /// With all-1 weights every variation plays once per cycle.
     #[test]
     fn depleting_pick_covers_all_variations_each_cycle() {
         let mut kits = SoundKits::new(benilla_formats::SoundKitCatalog::empty_for_tests());
@@ -1182,7 +1164,7 @@ mod tests {
         assert_eq!(admitted(100), 101, "a critical swing always grunts");
     }
 
-    /// Class 2 is rolled (`0x8626d4[2] = 60`, `0x86424c[2] = 30`); classes 3 and 9 always sound.
+    /// Class 2 is rolled; classes 3 and 9 always sound.
     #[test]
     fn an_ordinary_wound_grunt_is_rolled_but_a_crit_and_a_crush_always_sound() {
         let bucket = |r: u32| ((101u64 * u64::from(r)) >> 32) as u32;
@@ -1354,8 +1336,8 @@ mod tests {
         }
     }
 
-    /// The emitter pool's lane skips the one-shot suppressors (`0x458f40` → `0x7a66a0`): a 0x220
-    /// lamp loop must replace its own 3.0 s fade-out.
+    /// The emitter pool's lane skips the one-shot suppressors: a 0x220 lamp loop must replace its
+    /// own 3.0 s fade-out.
     #[test]
     fn the_emitter_pool_lane_is_exempt_from_the_one_shot_suppressors() {
         const LAMP: u32 = 0x220;

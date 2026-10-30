@@ -1,14 +1,13 @@
 //! TAB and nearest-unit targeting, and the attack auto-acquires.
 //!
 //! Deviation: TAB uses Classic Era's screen-space priority, not 1.12's ±30° facing cone and
-//! snapshot cursor (`0x493f60`), because the cone skips a close mob in front of the camera, which
-//! sits behind the character. On-screen candidates come first, the lowest score wins, and each
-//! press skips recently tabbed guids; a fighting-me bonus, not Classic's hard combat lock, ranks
-//! attackers first without pinning TAB to them.
+//! snapshot cursor, because the cone skips a close mob in front of the camera, which sits behind
+//! the character. On-screen candidates come first, the lowest score wins, and each press skips
+//! recently tabbed guids; a fighting-me bonus, not Classic's hard combat lock, ranks attackers
+//! first without pinning TAB to them.
 //!
-//! Kept from 1.12: the validity filters (`0x493e40`, [`can_attack`] `0x606980`, critters), the
-//! [`commit`] through `SetSelection` (`0x493540`), the attack acquire (`0x612df0` at `0x6130b5`),
-//! the ATTACKERSTATEUPDATE acquire (`0x6259c9`–`0x6259fe`) and the 41 yd range.
+//! Kept from 1.12: the validity filters ([`can_attack`], critters), the [`commit`] through
+//! `SetSelection`, the attack acquire, the ATTACKERSTATEUPDATE acquire and the 41 yd range.
 
 use benilla_formats::CreatureTypeFlags;
 use benilla_protocol::{guid, EntityKind};
@@ -27,7 +26,7 @@ use super::{Factions, Selection};
 // == The Classic-priority dials ==
 // Each names the Classic Era cvar it stands in for; the values are tuned.
 
-/// `targetNearestDistance`, the TAB range in yards: 1.12's default (`[0x804510]`).
+/// `targetNearestDistance`, the TAB range in yards: 1.12's default.
 const TAB_RANGE: f32 = 41.0;
 /// `TargetPriorityFrustumPullInSides`: the viewport width fraction pulled in from each side.
 const FRUSTUM_PULL_SIDES: f32 = 0.10;
@@ -50,22 +49,18 @@ fn tab_trace_on() -> bool {
     *ON.get_or_init(|| std::env::var_os("WOW_TAB_TRACE").is_some())
 }
 
-/// The reference's scan mode: the `TargetNearest*` shims (`0x489a80` enemy 1, `0x489aa0` friend 2,
-/// `0x489ac0`/`0x489ae0` party and raid 3/4) all call one cycler, `0x493f60(reverse, mode)`, and
-/// the mode reaches only the per-candidate filter `0x493e40`.
+/// The reference's scan mode: the `TargetNearest*` shims all call one cycler, `(reverse, mode)`,
+/// and the mode reaches only the per-candidate filter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScanSide {
-    /// Mode 1 (`0x493e73`): alive by the reads-dead triple `0x605f90`, and `CanAttack 0x606980`.
+    /// Mode 1: alive by the reads-dead triple, and the attack check.
     Enemy,
-    /// Mode 2 (`0x493eca`): `CanAssist 0x6066f0`, friendly or better (`0x60671e`), whose
-    /// `IsPvP 0x605ff0` leg refuses a creature without `UNIT_FLAG_PVP`; then health > 0 with no
-    /// dynflag leg, so a feigning ally counts.
+    /// Mode 2: the assist check, friendly or better, whose PvP-test leg refuses a creature without
+    /// `UNIT_FLAG_PVP`; then health > 0 with no dynflag leg, so a feigning ally counts.
     Friend,
-    /// Mode 3 (`0x493eed`): not us, then `0x4e7f70`, a member of our party slots. No health, dead
-    /// or reaction leg.
+    /// Mode 3: not us, then, a member of our party slots. No health, dead or reaction leg.
     Party,
-    /// Mode 4 (`0x493f15`): not us, then `0x4918e0`, party (`0x4e7f70`) or raid roster
-    /// (`0x4baee0`).
+    /// Mode 4: not us, then, party or raid roster.
     Raid,
 }
 
@@ -176,8 +171,8 @@ pub(super) fn load_creature_types(mut commands: Commands, world_assets: Option<R
 /// Everything the scan reads, shared by TAB, the attack acquire and the pet bar's Attack.
 ///
 /// Deviation: our own body is never a candidate. The reference's friendly scan picks the player at
-/// some facings (`CanAssist(P, P)` is true, `0x6061e0`; the cone test `0x47f220`), but our scoring
-/// always puts the player dead centre at distance 0, so CTRL-TAB would pick us on every press.
+/// some facings (the assist check of the player on itself is true), but our scoring always puts the
+/// player dead centre at distance 0, so CTRL-TAB would pick us on every press.
 #[derive(SystemParam)]
 #[allow(clippy::type_complexity)] // one bundled system param, the app's convention
 pub(crate) struct TargetScan<'w, 's> {
@@ -214,7 +209,7 @@ pub(crate) struct TargetScan<'w, 's> {
     reputations: Res<'w, Reputations>,
     names: Res<'w, NameCache>,
     creature_types: Option<Res<'w, CreatureTypes>>,
-    /// Every store, ours included: `CanAssist`'s owner chase must reach our body.
+    /// Every store, ours included: the assist check's owner chase must reach our body.
     stores: Query<'w, 's, &'static ObjectStore>,
     /// The owner chase's guid → entity map; `Option` because a UI-only harness has no net stack.
     index: Option<Res<'w, GuidIndex>>,
@@ -223,7 +218,7 @@ pub(crate) struct TargetScan<'w, 's> {
 }
 
 impl TargetScan<'_, '_> {
-    /// The per-candidate filter (`0x493e40`), the one place [`ScanSide`] forks.
+    /// The per-candidate filter, the one place [`ScanSide`] forks.
     fn is_valid(
         &self,
         side: ScanSide,
@@ -232,7 +227,7 @@ impl TargetScan<'_, '_> {
         self_store: Option<&ObjectStore>,
     ) -> bool {
         match side {
-            // Mode 1 (`0x493e73`): the reads-dead triple `0x605f90`, then `CanAttack`.
+            // Mode 1: the reads-dead triple, then the attack check.
             ScanSide::Enemy => {
                 if store.is_some_and(|s| s.0.unit_reads_dead()) {
                     return false;
@@ -245,7 +240,7 @@ impl TargetScan<'_, '_> {
                     self_store,
                 )
             }
-            // Mode 2 (`0x493eca`): `CanAssist 0x7293d0`, then raw health (no reads-dead triple).
+            // Mode 2: the assist check (`0x7293d0`), then raw health (no reads-dead triple).
             ScanSide::Friend => {
                 can_assist(
                     store,
@@ -269,7 +264,7 @@ impl TargetScan<'_, '_> {
         }
     }
 
-    /// A guid's descriptor, whichever entity holds it: `CanAssist`'s owner chase.
+    /// A guid's descriptor, whichever entity holds it: the assist check's owner chase.
     fn store_of(&self, guid: u64) -> Option<&ObjectStore> {
         let entity = *self.index.as_ref()?.0.get(&guid)?;
         self.stores.get(entity).ok()
@@ -355,8 +350,8 @@ impl TargetScan<'_, '_> {
                     }
                 }
             }
-            // Deviation: no scene-attach gate (the reference's `0x6704c0`), because the draw
-            // election hides every body outside the frustum, which would empty the off-screen tier.
+            // Deviation: no scene-attach gate, because the draw election hides every body outside
+            // the frustum, which would empty the off-screen tier.
             let dist = (tf.translation - self_tf.translation).length();
             if dist > TAB_RANGE {
                 trace_unit(guid_c.0, tf, "REJECT range (41 yd)");
@@ -407,7 +402,7 @@ impl TargetScan<'_, '_> {
 pub(super) struct TabHistory {
     /// `(guid, when)`, oldest first.
     visited: Vec<(u64, f64)>,
-    /// A side switch clears the history, as `0x493f60` rebuilds its list on a mode change.
+    /// A side switch clears the history, as the reference rebuilds its list on a mode change.
     side: Option<ScanSide>,
 }
 
@@ -438,15 +433,15 @@ pub(super) struct CommitOutcome {
     pub(super) swung: bool,
 }
 
-/// Commit a target through `SetSelection` (`0x493540`). A switch while attacking is stop, select,
-/// re-swing: StopAttack `0x5ecac0` (`0x493a08`) flags a stop in flight (`[player+0xc54]`),
-/// `CMSG_SET_SELECTION` goes out (`0x493857`), then unless the new target is us `Attack 0x5ecb70`
-/// swings past its already-attacking gate, or stops if `new_attackable` is false (`0x4938a1`).
+/// Commit a target through `SetSelection`. A switch while attacking is stop, select, re-swing:
+/// StopAttack flags a stop in flight (`[player+0xc54]`), `CMSG_SET_SELECTION` goes out, then unless
+/// the new target is us `Attack` swings past its already-attacking gate, or stops if
+/// `new_attackable` is false.
 ///
-/// The latch (`0x493637`) reduces to `engaged && had_old`: vmangos ends [`Engaged`] when the
-/// victim dies, before a TAB can land, so the old target's own legs change nothing seen.
-/// `engaged` is the server's echo, a round trip behind the reference's local lock, and the
-/// reference's second `CMSG_ATTACKSTOP` for an invalid new target is not sent here.
+/// The latch reduces to `engaged && had_old`: vmangos ends [`Engaged`] when the victim dies, before
+/// a TAB can land, so the old target's own legs change nothing seen. `engaged` is the server's
+/// echo, a round trip behind the reference's local lock, and the reference's second
+/// `CMSG_ATTACKSTOP` for an invalid new target is not sent here.
 pub(super) fn commit(
     selection: &mut Selection,
     seam: &mut crate::creature_anim::AttackSeam,
@@ -457,8 +452,8 @@ pub(super) fn commit(
     self_guid: Option<u64>,
     new_attackable: bool,
 ) -> CommitOutcome {
-    // `IsSelectable`, before the dedup (`0x4935ec`–`0x4935f3`): a non-selectable unit is a complete
-    // no-op that keeps the current target, for every selection writer.
+    // The selectable test, before the dedup: a non-selectable unit is a complete no-op that keeps
+    // the current target, for every selection writer.
     if !super::relations::is_selectable(target_store, self_guid) {
         return CommitOutcome::default();
     }
@@ -466,29 +461,29 @@ pub(super) fn commit(
         return CommitOutcome::default(); // the setter's dedup
     }
     let had_old = selection.guid.is_some();
-    // The last-target stamp (`0x49361d`-`0x493628`), past the two early outs.
+    // The last-target stamp, past the two early outs.
     selection.last = selection.guid;
     if let Some(old) = selection.guid {
-        // The old target's teardown (`0x4936cc` → `0x493910`) closes its loot first.
+        // The old target's teardown closes its loot first.
         seam.close_loot_on(old);
     }
     selection.target = Some(entity);
     selection.guid = Some(guid);
     let stop_and_repoint = engaged && had_old;
     if stop_and_repoint {
-        // `0x493a08`: the real StopAttack, which also un-queues a next-swing strike (`0x6e6f30`).
+        // The real StopAttack, which also un-queues a next-swing strike.
         seam.stop(engaged);
     }
     let _ = seam.net.0.send(ClientCommand::SetSelection { guid });
-    // `CGGameUI::Target`'s tail (`0x524f59`): `stopAutoAttackOnTargetChange` cancels auto-repeat and
-    // leaves the swing stopped; off, the swing moves to the new target.
+    // The UI target change's tail (`0x524f59`): `stopAutoAttackOnTargetChange` cancels auto-repeat
+    // and leaves the swing stopped; off, the swing moves to the new target.
     let stop_on_change = seam.stops_on_target_change();
     if stop_on_change {
         seam.cancel_auto_repeat();
     }
     let swung = stop_and_repoint && !stop_on_change && new_attackable && self_guid != Some(guid);
     if swung {
-        // `0x4938c8`: the swing goes out despite the lock, and cancels auto-repeat (`0x6ea080`).
+        // The swing goes out despite the lock, and cancels auto-repeat.
         seam.start(guid, engaged, true);
     }
     CommitOutcome {
@@ -497,8 +492,8 @@ pub(super) fn commit(
     }
 }
 
-/// One press on either side, as every `TargetNearest*` shim shares `0x493f60`: score the live
-/// world, pool by tier, walk the history forward or back, and [`commit`].
+/// One press on either side, as every `TargetNearest*` shim shares: score the live world, pool by
+/// tier, walk the history forward or back, and [`commit`].
 pub(super) fn cycle(
     side: ScanSide,
     reverse: bool,
@@ -567,10 +562,10 @@ pub(super) fn cycle(
         guid,
         scan.store_at(entity),
         engaged,
-        // `IsSelectable`'s `CREATEDBY` clause reads it.
+        // The selectable test's `CREATEDBY` clause reads it.
         scan.self_guid(),
-        // `Attack 0x5ecb70`'s validation, which a mode-2 pick fails (reaction >= 4 against
-        // `CanAttack`'s < 4). A duelling friendly passes `CanAttack`'s duel arm, which reads no
+        // `Attack`'s validation, which a mode-2 pick fails (reaction >= 4 against the attack
+        // check's < 4). A duelling friendly passes the attack check's duel arm, which reads no
         // reaction, so the reference's `Attack` would re-swing at it; here it gets none.
         side == ScanSide::Enemy,
     );
@@ -591,10 +586,9 @@ pub(super) fn cycle(
     }
 }
 
-/// The target half of the attack validator `0x612df0` (`0x61305d`–`0x613198`), shared by the
-/// player's Attack (`0x6131aa`) and the pet bar's (`0x4bd40d`): what it reads beyond the
-/// selection, the cycler it runs as `TargetNearestEnemy` (`0x6130b5`, `0x493f60(0, 1)`), and
-/// whether we are swinging, which that cycle's selection switch reads.
+/// The target half of the attack validator, shared by the player's Attack and the pet bar's: what
+/// it reads beyond the selection, the cycler it runs as `TargetNearestEnemy`, and whether we are
+/// swinging, which that cycle's selection switch reads.
 #[derive(SystemParam)]
 pub(crate) struct AttackPick<'w, 's> {
     scan: TargetScan<'w, 's>,
@@ -604,7 +598,7 @@ pub(crate) struct AttackPick<'w, 's> {
 }
 
 impl AttackPick<'_, '_> {
-    /// Whether we are attacking (`0x60ecb0`), as the server last echoed it.
+    /// Whether we are attacking, as the server last echoed it.
     pub(crate) fn engaged(&self) -> bool {
         !self.engaged.is_empty()
     }
@@ -615,15 +609,13 @@ impl AttackPick<'_, '_> {
     }
 
     /// The guid the swing, the pet's order or the cast goes at, or `None` once the refusal is
-    /// raised. The candidate is the guid the caller passed, else the selection (`0x61306b`):
-    /// `AttackTarget` passes none (`0x489b50` → `0x6131a0(0,0)`), nor does the pet bar
-    /// (`0x4be42b`); TryCast passes the caster on a self-cast press (`0x4e610e`). An empty
-    /// candidate (`0x61307f`) or a unit the actor is friendly toward (`0x6130a3`, dropped at
-    /// `0x6130a8`), the caster included, runs `TargetNearestEnemy` (`0x6130b5`), which commits its
-    /// pick before this returns, so a call after this one reads it. The target is then the
-    /// selection as it stands (`0x6130c1`): a fruitless scan leaves a friendly unit selected for
-    /// the final gate to refuse, and only an empty selection is `ERR_NO_ATTACK_TARGET`
-    /// (`0x6130d9`).
+    /// raised. The candidate is the guid the caller passed, else the selection: `AttackTarget`
+    /// passes none, nor does the pet bar; the cast attempt passes the caster on a self-cast press.
+    /// An empty candidate or a unit the actor is friendly toward, the caster included, runs
+    /// `TargetNearestEnemy`, which commits its pick before this returns, so a call after this one
+    /// reads it. The target is then the selection as it stands: a fruitless scan leaves a friendly
+    /// unit selected for the final gate to refuse, and only an empty selection is
+    /// `ERR_NO_ATTACK_TARGET`.
     pub(crate) fn target(
         &mut self,
         passed: Option<u64>,
@@ -651,13 +643,13 @@ impl AttackPick<'_, '_> {
                 .push(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
             return None;
         };
-        // `0x613118`, the second resolve: a miss refuses with no message (`0x613123`).
+        // The second resolve: a miss refuses with no message.
         let Some(store) = self.scan.store_of(guid) else {
             debug!("attack: {guid:#x} does not resolve, refused silently");
             return None;
         };
-        // The final gate's target legs; its actor legs (`0x61312e`, `0x613139`) repeat phase A's
-        // dead and mounted refusals, which the caller ran.
+        // The final gate's target legs; its actor legs repeat phase A's dead and mounted refusals,
+        // which the caller ran.
         if !attack_target_valid(
             Some(store),
             self.scan.factions.as_deref(),
@@ -674,13 +666,12 @@ impl AttackPick<'_, '_> {
         Some(guid)
     }
 
-    /// `0x6130a3`'s keep test: the actor's reaction to the held unit alone (`0x61309b`), not the
-    /// final gate's `CanAttack`, so a neutral mob is kept. A guid that does not resolve
-    /// (`0x613099`) is kept as well, for the second resolve to refuse. Actor → target is
-    /// [`reaction_from_player`] (the at-war bit), never `ring_reaction`. The reference's actor is
-    /// the caller, a pet on the pet arm (`0x4bd40d`), which vmangos gives its owner's faction
-    /// (`Pet.cpp:248`). The reaction to oneself is 4 before any faction rung (`0x606200`), so a
-    /// passed caster is never kept, FFA flag or not.
+    /// The reference's keep test: the actor's reaction to the held unit alone, not the final gate's
+    /// attack check, so a neutral mob is kept. A guid that does not resolve is kept as well, for
+    /// the second resolve to refuse. Actor → target is [`reaction_from_player`] (the at-war bit),
+    /// never `ring_reaction`. The reference's actor is the caller, a pet on the pet arm, which
+    /// vmangos gives its owner's faction (`Pet.cpp:248`). The reaction to oneself is 4 before any
+    /// faction rung, so a passed caster is never kept, FFA flag or not.
     fn keeps(&self, guid: u64) -> bool {
         if self.scan.self_guid() == Some(guid) {
             return false;
@@ -697,9 +688,9 @@ impl AttackPick<'_, '_> {
     }
 }
 
-/// The final gate's target legs (`0x613152`–`0x613169`): alive, where a zero-health target passes
-/// iff `UNIT_DYNAMIC_FLAGS` bit 5 is set (`0x613159`), and the full `CanAttack 0x606980`. A target
-/// with no descriptor fails [`can_attack`]; the reference always holds a live unit here.
+/// The final gate's target legs: alive, where a zero-health target passes iff `UNIT_DYNAMIC_FLAGS`
+/// bit 5 is set, and the full attack check. A target with no descriptor fails [`can_attack`]; the
+/// reference always holds a live unit here.
 pub(super) fn attack_target_valid(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
@@ -717,14 +708,14 @@ pub(super) fn attack_target_valid(
 #[derive(Message)]
 pub(crate) struct AttackNearestRequest;
 
-/// `TargetLastEnemy`'s memory, the reference's last-attackable guid `[0xb4e2e8]`, read at
-/// `0x489b45` and written at `0x49377d` in `SetSelection`. Never cleared: an unresolved guid is a
-/// bare `ret` in the select helper `0x489a40`, not a deselect.
+/// `TargetLastEnemy`'s memory, the reference's last-attackable guid, read and written in
+/// `SetSelection`. Never cleared: an unresolved guid is a bare `ret` in the select helper, not a
+/// deselect.
 #[derive(Resource, Default)]
 pub(crate) struct LastEnemy(pub(crate) Option<u64>);
 
-/// Stamp [`LastEnemy`] behind the five-conjunct gate `0x49372f`–`0x493778`. Runs before
-/// `ring::update_ring`'s death-clear: a hostile that dies while selected stays remembered.
+/// Stamp [`LastEnemy`] behind the five-conjunct gate. Runs before `ring::update_ring`'s
+/// death-clear: a hostile that dies while selected stays remembered.
 ///
 /// Deviation: sampled each frame, not stamped in `SetSelection`, so every selection writer is
 /// covered; a selected unit that turns hostile is remembered, where the reference's is not.
@@ -754,7 +745,7 @@ pub(super) fn remember_last_enemy(
     if !alive_enough {
         return;
     }
-    // Conjunct 5: `CanAttack(player, new)`.
+    // Conjunct 5: the attack check of the player on the new target.
     if can_attack(
         store,
         factions.as_deref(),
@@ -766,13 +757,13 @@ pub(super) fn remember_last_enemy(
     }
 }
 
-/// The ATTACKERSTATEUPDATE self-defence acquire (`0x6259c9`–`0x6259fe`): when we are the victim
-/// and hold no selection, select the attacker, with no counter-attack.
+/// The ATTACKERSTATEUPDATE self-defence acquire: when we are the victim and hold no selection,
+/// select the attacker, with no counter-attack.
 pub(super) fn auto_acquire_attacker(
     mut swings: MessageReader<SwingMessage>,
     self_player: Query<(Entity, &Guid), With<SelfPlayer>>,
     guids: Query<&Guid>,
-    // For `IsSelectable`: a `NOT_SELECTABLE` attacker is not acquired.
+    // For the selectable test: a `NOT_SELECTABLE` attacker is not acquired.
     stores: Query<&ObjectStore>,
     mut selection: ResMut<Selection>,
     mut seam: crate::creature_anim::AttackSeam,
@@ -824,8 +815,8 @@ mod tests {
         go_with(world, guid, None, engaged, self_guid, attackable)
     }
 
-    /// `go` with the new target's descriptor; `None` is an unresolved object, which skips
-    /// `IsSelectable` (`0x4935c8`).
+    /// `go` with the new target's descriptor; `None` is an unresolved object, which skips the
+    /// selectable test.
     fn go_with(
         world: &mut World,
         guid: u64,
@@ -870,9 +861,8 @@ mod tests {
         (world, rx)
     }
 
-    /// The teardown of the outgoing target (`0x493910`) closes a loot window on it
-    /// (`0x493959`–`0x493974`), its release ahead of the new selection; a window on anything else
-    /// stays open. The clear (`0x4938f8`) runs the same teardown.
+    /// The teardown of the outgoing target closes a loot window on it, its release ahead of the new
+    /// selection; a window on anything else stays open. The clear runs the same teardown.
     #[test]
     fn a_selection_change_closes_the_loot_on_the_outgoing_target() {
         use bevy::ecs::system::RunSystemOnce;
@@ -928,8 +918,8 @@ mod tests {
         assert_eq!(source(&world), None);
     }
 
-    /// `0x493540`: an engaged switch is stop, select, re-swing; the stop un-queues an on-next-swing
-    /// strike (`0x6e6f30`) and the re-swing cancels auto-repeat (`0x5ecd8c`).
+    /// An engaged switch is stop, select, re-swing; the stop un-queues an on-next-swing strike and
+    /// the re-swing cancels auto-repeat.
     #[test]
     fn commit_follows_the_stop_select_reswing_law() {
         let (mut world, rx) = commit_world();
@@ -998,8 +988,7 @@ mod tests {
     }
 
     /// `stopAutoAttackOnTargetChange` on (`0x524f59`): an engaged switch stops and selects but
-    /// swings at nothing, and a running Auto Shot is cancelled (`Spell_C_CancelAutoRepeat
-    /// 0x807560`).
+    /// swings at nothing, and a running Auto Shot is cancelled (`0x807560`).
     #[test]
     fn stop_on_target_change_ends_the_attack_instead_of_moving_it() {
         let (mut world, rx) = commit_world();
@@ -1027,8 +1016,8 @@ mod tests {
         assert_eq!(world.resource::<crate::spell::AutoRepeatActive>().0, None);
     }
 
-    /// `IsSelectable` refuses the whole commit before the dedup (`0x4935ee`/`0x4935f3`): nothing is
-    /// sent and the held target survives. vmangos flags the pre-event Baron Rivendare this way
+    /// The selectable test refuses the whole commit before the dedup: nothing is sent and the held
+    /// target survives. vmangos flags the pre-event Baron Rivendare this way
     /// (`instance_stratholme.cpp:224`).
     #[test]
     fn not_selectable_refuses_the_commit_and_keeps_the_old_target() {
@@ -1161,7 +1150,7 @@ mod tests {
         assert_eq!(pick_forward(&[], &[], None), None);
     }
 
-    /// `0x613152`–`0x613169`: a zero-health target is invalid unless dynamic-flag bit 5 is set.
+    /// A zero-health target is invalid unless dynamic-flag bit 5 is set.
     #[test]
     fn the_attack_orders_final_gate_reads_health_then_can_attack() {
         use benilla_protocol::ObjectFields;
@@ -1171,8 +1160,8 @@ mod tests {
         const TPL: u16 = 35;
         let reps = Reputations::default();
         let unit = |pairs: &[(u16, u32)]| ObjectStore(ObjectFields::from_pairs(pairs));
-        // With no catalog both reactions are neutral, which `CanAttack`'s mixed arm (< 4) admits,
-        // so the legs below decide.
+        // With no catalog both reactions are neutral, which the attack check's mixed arm (< 4)
+        // admits, so the legs below decide.
         let me = unit(&[(TPL, 1), (FLAGS, 1 << 3)]);
         let valid = |s: &ObjectStore| {
             attack_target_valid(Some(s), None, &reps, &crate::target::NoGroup, Some(&me))
@@ -1182,11 +1171,11 @@ mod tests {
         assert!(!valid(&unit(&[(HEALTH, 0)])), "a corpse");
         assert!(
             valid(&unit(&[(HEALTH, 0), (DYNFLAGS, 1 << 5)])),
-            "0x613159's second leg, verbatim"
+            "the reference's second leg, verbatim"
         );
         assert!(
             !valid(&unit(&[(HEALTH, 120), (FLAGS, 1 << 25)])),
-            "NOT_SELECTABLE is one of CanAttack's disqualifiers"
+            "NOT_SELECTABLE is one of the attack check's disqualifiers"
         );
         // No descriptor on either side is refused.
         assert!(!attack_target_valid(
@@ -1206,7 +1195,7 @@ mod tests {
     }
 
     /// `reverse` is the optional Lua argument of `TargetNearestEnemy` and `TargetNearestFriend`
-    /// (fetched with `0x6f1c10`, default 0): back walks the forward order in reverse.
+    /// (default 0): back walks the forward order in reverse.
     #[test]
     fn pick_back_walks_the_history_newest_first() {
         let pool = [
@@ -1232,7 +1221,7 @@ mod tests {
         assert_eq!(pick_back(&[0xA, 0xB, 0xC], &shrunk, Some(0xC)), Some(0));
     }
 
-    /// `0x493f60` rebuilds its list when the mode changes.
+    /// The reference rebuilds its list when the mode changes.
     #[test]
     fn a_side_switch_clears_the_history() {
         let mut h = TabHistory::default();
@@ -1255,8 +1244,8 @@ mod tests {
     const F_DUEL_ARBITER: u16 = 188;
     const F_PLAYER_FLAGS: u16 = 190;
     const F_DUEL_TEAM: u16 = 196;
-    /// `UNIT_FLAG_PVP_ATTACKABLE`, always on a player: it selects the player arms of `CanAttack`
-    /// and `CanAssist`.
+    /// `UNIT_FLAG_PVP_ATTACKABLE`, always on a player: it selects the player arms of the attack
+    /// check and the assist check.
     const CONTROLLED: u32 = 0x8;
     /// `OBJECT_FIELD_TYPE` for a Player object (OBJECT|UNIT|PLAYER).
     const TYPE_PLAYER: u32 = 0x19;
@@ -1265,9 +1254,9 @@ mod tests {
         ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs))
     }
 
-    /// With no `FactionTemplate.dbc` every reaction is neutral: attackable (`CanAttack`'s mixed
-    /// arm is < 4), not assistable (`CanAssist` needs >= 4). A same-team duel partner is friendly
-    /// from descriptor fields alone (`0x6061e0`). Mode 2 keeps a feigning ally and drops a corpse.
+    /// With no `FactionTemplate.dbc` every reaction is neutral: attackable (the attack check's
+    /// mixed arm is < 4), not assistable (the assist check needs >= 4). A same-team duel partner is
+    /// friendly from descriptor fields alone. Mode 2 keeps a feigning ally and drops a corpse.
     #[test]
     fn the_two_sides_of_the_scan_never_pick_each_others_units() {
         use bevy::ecs::system::RunSystemOnce;
@@ -1336,14 +1325,14 @@ mod tests {
                 .expect("the scan runs as a one-shot system")
         };
 
-        // Mode 1: the neutral mob only; `CanAttack`'s player arm refuses every duel-team ally.
+        // Mode 1: the neutral mob only; the attack check's player arm refuses every duel-team ally.
         assert_eq!(pool(&mut world, ScanSide::Enemy), [MOB]);
         // Mode 2: with no camera the order is pure distance.
         assert_eq!(pool(&mut world, ScanSide::Friend), [ALLY, ALLY_FEIGN]);
     }
 
-    /// Modes 3 and 4 (`0x493eed`, `0x493f15`): the party slots, then party or raid roster, with no
-    /// health or reaction leg, so a dead party member counts and a stranger never does.
+    /// Modes 3 and 4: the party slots, then party or raid roster, with no health or reaction leg,
+    /// so a dead party member counts and a stranger never does.
     #[test]
     fn the_party_and_raid_modes_take_only_the_roster() {
         use benilla_protocol::messages::GroupMemberEntry;
@@ -1451,7 +1440,7 @@ mod tests {
         assert_eq!(pool, [MOB]);
     }
 
-    /// It follows a hostile switch and survives a friendly selection and a clear (`0x49377d`).
+    /// It follows a hostile switch and survives a friendly selection and a clear.
     #[test]
     fn last_enemy_remembers_the_last_attackable_selection_across_a_clear() {
         use bevy::ecs::system::RunSystemOnce;
@@ -1479,7 +1468,7 @@ mod tests {
         };
         let a = mob(&mut world);
         let b = mob(&mut world);
-        // A same-team duel partner: friendly reaction, so `CanAttack`'s PvP arm refuses.
+        // A same-team duel partner: friendly reaction, so the attack check's PvP arm refuses.
         let friend = world
             .spawn(store(&[
                 (F_TYPE, TYPE_PLAYER),
@@ -1513,7 +1502,7 @@ mod tests {
         // So does a clear.
         assert_eq!(select(&mut world, None), Some(0xB));
 
-        // The four conjuncts besides `CanAttack` (`0x49372f`-`0x493778`), one state at a time.
+        // The four conjuncts besides the attack check, one state at a time.
         let dead_mob = world
             .spawn(store(&[(F_HEALTH, 0), (F_MAXHEALTH, 100)]))
             .id();

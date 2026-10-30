@@ -277,8 +277,7 @@ impl Plugin for UiThreatPlugin {
     }
 }
 
-/// The three handlers: each reads its unit first and drops the packet for a unit not held
-/// (`0x468460` with the unit mask).
+/// The three handlers: each reads its unit first and drops the packet for a unit not held.
 fn on_threat(
     In(ev): In<SessionEvent>,
     mut threat: ResMut<Threat>,

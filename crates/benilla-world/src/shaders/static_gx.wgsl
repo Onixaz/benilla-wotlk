@@ -42,7 +42,7 @@ struct GxCell {
 // The per-item records, indexed by the vertex word's low 16 bits: x the texture-array layer | the
 // WMO batch order << 16 (0 on cells), y a unified WMO item's MOHD ambient r|g<<8|b<<16 with bit 24
 // set (MOHD 0x2), z the MOMT SIDN colour r|g<<8|b<<16 in gamma bytes, w flags:
-// bit 0 exile kill, bits 1..=13 the interior-prop probe slot, bit 14 interior fog (`[0xca7f00]`).
+// bit 0 exile kill, bits 1..=13 the interior-prop probe slot, bit 14 interior fog.
 @group(1) @binding(1) var<storage, read> recs: array<vec4<u32>>;
 @group(1) @binding(2) var tex_array: texture_2d_array<f32>;
 // Repeat and clamp model-albedo samplers: trilinear, aniso 8, the same as the entity path's.
@@ -244,7 +244,7 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
         let class_trans = (in.word & WORD_CLASS_TRANS) != 0u;
         let trans_a = vc.a; // 1.0 where no MOCV is authored
         // WINDOW (MOMT 0x20), interior drawer only: GL_LIGHT0 becomes the Direct/Ambient
-        // midpoint pair, ambient +16/255 saturating (0x6d37e0).
+        // midpoint pair, ambient +16/255 saturating.
         let window_mid = 0.5 * (wow_light.light_ambient.rgb + wow_light.light_diffuse.rgb);
         let lit_window = clamp(
             window_mid + vec3<f32>(16.0 / 255.0) + window_mid * ndotl,
@@ -401,7 +401,7 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
     }
     // Planar eye-Z fog; other fog modes belong to blends never admitted here. The interior triple
     // keys on the per-frame record bit, not `WORD_INTERIOR`: the client sets it per group under
-    // `[0xca7f00]` (`0x6b5190` for surfaces, `0x6b62e0` for the group's doodads).
+    //.
     var fog_color = wow_light.fog_color;
     var fog_span = wow_light.fog_params.xy;
     if ((recs[in.word & 0xffffu].w & 16384u) != 0u) {

@@ -1,6 +1,6 @@
-// The cloud dome. Its colour is CPU-side as in the reference: the kernel's `0x6cfb00` port builds
-// the image the reference binds as its texture (`0x58ac70`). This stage applies the dome's rim
-// fade (`0x6d0530`) and blends the raw gamma texels premultiplied. Depth is the far pin in
+// The cloud dome. Its colour is CPU-side as in the reference: the kernel's port builds
+// the image the reference binds as its texture. This stage applies the dome's rim
+// fade and blends the raw gamma texels premultiplied. Depth is the far pin in
 // `sky_vertex.wgsl`.
 
 #import bevy_pbr::forward_io::VertexOutput

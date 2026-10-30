@@ -1,9 +1,8 @@
-//! The nameplate widgets: the reference's `CGNamePlateFrame` (ctor `0x7cb250`), an anonymous
-//! `Button` parented to the `WorldFrame` (`0x7786a3`) at strata WORLD, level 1. Plate addons
-//! (`_Nameplates`, `CustomNameplates`, pfUI, ShaguTweaks) find it in `WorldFrame:GetChildren()`
-//! and read it positionally: six regions in creation order, then one child, the health bar (1.12
-//! has no cast bar). Addons take plates over, so static properties are written once, anchors
-//! when the window changes and state when it moves.
+//! The nameplate widgets: the reference's nameplate frame, an anonymous `Button` parented to the
+//! `WorldFrame` at strata WORLD, level 1. Plate addons (`_Nameplates`, `CustomNameplates`, pfUI,
+//! ShaguTweaks) find it in `WorldFrame:GetChildren()` and read it positionally: six regions in
+//! creation order, then one child, the health bar (1.12 has no cast bar). Addons take plates over,
+//! so static properties are written once, anchors when the window changes and state when it moves.
 
 use crate::layout::{Anchor, Point};
 use crate::order::DrawLayer;
@@ -26,9 +25,8 @@ pub const BAR_FILL_TEXTURE: &str = "Interface\\TargetingFrame\\UI-TargetingFrame
 /// `NAMEPLATE_FONT`: Friz Quadrata.
 pub const PLATE_FONT: &str = "Fonts\\FRIZQT__.TTF";
 
-/// The plate's level; the bar's is one less, set absolutely (`0x7cb33e` → `0x76a4f0`). The draw
-/// walks levels outermost and each level's layers inside (`0x765920`), so the whole bar draws
-/// before the border that caps it.
+/// The plate's level; the bar's is one less, set absolutely. The draw walks levels outermost and
+/// each level's layers inside, so the whole bar draws before the border that caps it.
 const PLATE_LEVEL: u16 = 1;
 const BAR_LEVEL: u16 = 0;
 
@@ -62,10 +60,10 @@ pub struct PlateState {
     /// (`[unit+0xe60]`), and addons cache per-plate state on the frame.
     pub key: u64,
     /// Where the plate's top centre lands, in FrameXML units from the screen's bottom-left; the
-    /// plate hangs below it (`0x509ec0`).
+    /// plate hangs below it.
     pub top_centre: (f32, f32),
     /// `UNIT_FIELD_HEALTH` and `UNIT_FIELD_MAXHEALTH`, raw: `GetValue()` is the health, not a
-    /// fraction (`0x78f5d0`), and `GetMinMaxValues()` is `(0, max)`; plate addons divide.
+    /// fraction, and `GetMinMaxValues()` is `(0, max)`; plate addons divide.
     pub health: f32,
     pub max_health: f32,
     /// The bar's reaction colour, exact: addons read the unit's reaction from `GetStatusBarColor`.
@@ -83,7 +81,7 @@ pub struct PlateState {
     pub alpha: f32,
     /// Mouseover or target: the bar brightens.
     pub lit: bool,
-    /// The pointer is on the plate: the name goes yellow (`0x7cb850`) and the glow region shows.
+    /// The pointer is on the plate: the name goes yellow and the glow region shows.
     pub hovered: bool,
 }
 
@@ -123,21 +121,21 @@ pub(crate) struct NamePlates {
     by_frame: std::collections::HashMap<FrameHandle, usize>,
     /// Completed clicks, drained by [`UiScript::take_nameplate_clicks`].
     clicks: Vec<NamePlateClick>,
-    /// The hit-test veto (`0x7cba30`). Not the mouse-enabled bit: it leaves `IsMouseEnabled()`
-    /// true, where freelook (`0x60f830`) clears the bit.
+    /// The hit-test veto. Not the mouse-enabled bit: it leaves `IsMouseEnabled()` true, where
+    /// freelook clears the bit.
     hit_test_vetoed: bool,
     geometry: Option<PlateGeometry>,
 }
 
 impl NamePlates {
-    /// Whether the `0x7cba30` veto refuses `frame`: only a plate, only while the veto stands.
+    /// Whether the veto refuses `frame`: only a plate, only while the veto stands.
     pub(crate) fn vetoes(&self, frame: FrameHandle) -> bool {
         self.hit_test_vetoed && self.by_frame.contains_key(&frame)
     }
 }
 
-/// A completed click on a plate. The reference's click slot (`0x7cb910`) selects the unit on the
-/// left button (`0x4925d0`) and selects and interacts on the right (`0x492820`).
+/// A completed click on a plate. The reference's click slot selects the unit on the left button and
+/// selects and interacts on the right.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NamePlateClick {
     /// The unit whose plate was clicked ([`PlateState::key`]).
@@ -173,8 +171,8 @@ impl UiScript {
         }
     }
 
-    /// The unit whose plate is the hovered frame, the mouseover its OnEnter publishes (`0x7cb850`
-    /// → `0x492890`, `[0xb4e2c8]`); an addon frame on a plate takes the hover from it.
+    /// The unit whose plate is the hovered frame, the mouseover its OnEnter publishes; an addon
+    /// frame on a plate takes the hover from it.
     pub fn hovered_nameplate(&self) -> Option<u64> {
         let lua = self.lua();
         let model = lua
@@ -192,8 +190,8 @@ impl UiScript {
         std::mem::take(&mut model.nameplates.clicks)
     }
 
-    /// The freelook toggle (`0x60f830`): entering camera freelook disables mouse input on every
-    /// plate and leaving re-enables it (called from `0x483e80` and `0x483e70`).
+    /// The freelook toggle: entering camera freelook disables mouse input on every plate and
+    /// leaving re-enables it.
     pub fn set_nameplate_mouse(&mut self, enabled: bool) {
         let lua = self.lua();
         let mut model = crate::script::model_mut_of(lua);
@@ -203,10 +201,10 @@ impl UiScript {
         }
     }
 
-    /// The plate hit-test veto (`0x7cba30`): while a ground-targeted spell is armed, clicks fall
-    /// through plates to the `WorldFrame`. The caller supplies the first two terms of the
-    /// reference's `IsTargeting() && (flag & 0x60) && !0x6e6180()`; the third, a test of the same
-    /// word against `0x878e` whose meaning is unsettled, is not applied.
+    /// The plate hit-test veto: while a ground-targeted spell is armed, clicks fall through plates
+    /// to the `WorldFrame`. The caller supplies the first two terms of the reference's three-term
+    /// test, spell targeting on and `flag & 0x60`; the third, a negated test of the same word
+    /// against `0x878e` whose meaning is unsettled, is not applied.
     pub fn set_nameplate_hit_test_veto(&mut self, vetoed: bool) {
         if self.model_ref().nameplates.hit_test_vetoed == vetoed {
             return;
@@ -216,8 +214,8 @@ impl UiScript {
         model.nameplates.hit_test_vetoed = vetoed;
     }
 
-    /// Retire every live plate (`0x608a10` over the active list, as when the master toggle
-    /// clears); the app's every early return owes this, since a widget stays up until hidden.
+    /// Retire every live plate (a walk over the active list, as when the master toggle clears); the
+    /// app's every early return owes this, since a widget stays up until hidden.
     pub fn retire_nameplates(&mut self) {
         let lua = self.lua();
         let effects = {
@@ -330,8 +328,8 @@ impl Plate {
     /// Build one plate: the Button, its six regions in the reference's order, and the health bar.
     /// Written once, so a region an addon blanks stays blank.
     fn create(model: &mut Model, world: FrameHandle, effects: &mut SyncEffects) -> Plate {
-        // Anonymous, as the reference's name is zeroed (`0x76c50b`): plate addons reject a named
-        // `WorldFrame` child.
+        // Anonymous, as the reference's name is zeroed: plate addons reject a named `WorldFrame`
+        // child.
         let frame = model.arena.create(FrameKind::Button, None, Some(world));
         let strata = model
             .arena
@@ -340,17 +338,16 @@ impl Plate {
             .unwrap_or_default();
         model.arena.set_frame_strata(frame, strata);
         model.arena.set_frame_level(frame, PLATE_LEVEL, true);
-        // Mouse-enabled from birth by `CSimpleButton`'s ctor (`0x7786a3`), and registered for
-        // both buttons on the up edge (`RegisterForClicks(0x500)`, `0x7cb637`); the arena's
-        // Button default is the left alone.
+        // Mouse-enabled from birth by the button constructor, and registered for both buttons on
+        // the up edge (`RegisterForClicks(0x500)`); the arena's Button default is the left alone.
         if let Some(KindState::Button(bs)) = model.arena.frame_mut(frame).map(|f| &mut f.kind_state)
         {
             bs.click_mask = crate::widget::click_mask_of("LeftButtonUp")
                 | crate::widget::click_mask_of("RightButtonUp");
         }
 
-        // The ctor's blend modes, one `0x7703f0` call per texture: BLEND, but the glow is ADD
-        // (`0x7cb36a`), which [`is_unpainted_glow`] depends on.
+        // The ctor's blend modes, one call per texture: BLEND, but the glow is ADD, which
+        // [`is_unpainted_glow`] depends on.
         let border = texture(
             model,
             frame,
@@ -394,7 +391,7 @@ impl Plate {
             .expect("live bar");
         let fill_data = model.region_data.entry(fill).or_default();
         fill_data.texture = Some(BAR_FILL_TEXTURE.to_string());
-        // The fill keeps `CSimpleTexture`'s default BLEND (`0x76fc40`), written out as a fact.
+        // The fill keeps a texture's default BLEND, written out as a fact.
         fill_data.blend = BlendMode::Blend;
         if let Some(KindState::StatusBar(sb)) =
             model.arena.frame_mut(bar).map(|f| &mut f.kind_state)
@@ -435,7 +432,7 @@ impl Plate {
     }
 
     /// Write the window-derived sizes and anchors, on the first drive and a geometry change. The
-    /// reference's are real anchors too, through `SetPoint`'s own store (`0x767c70`).
+    /// reference's are real anchors too, through `SetPoint`'s own store.
     fn lay_out(model: &mut Model, i: usize, g: PlateGeometry) {
         let p = &model.nameplates.plates[i];
         let (frame, bar) = (p.frame, p.bar);
@@ -466,7 +463,7 @@ impl Plate {
         bar_input.width = g.bar_width;
         bar_input.height = g.bar_height;
 
-        // The name's (`0x7cb456`) and level's (`0x7cb7f5`) anchors, which `_Nameplates` checks.
+        // The name's and level's anchors, which `_Nameplates` checks.
         let name_data = model.region_data.entry(name).or_default();
         name_data.anchors = vec![Anchor::new(
             Point::Bottom,
@@ -530,8 +527,8 @@ impl Plate {
         let last = p.last.clone();
         let world_id = model.frame_id(world);
 
-        // Re-seated whenever it moves, as the reference does (`0x509ec0`). A moved offset keeps
-        // the graph's edges, so the precise touch; the first seat adds an edge, so the retarget.
+        // Re-seated whenever it moves, as the reference does. A moved offset keeps the graph's
+        // edges, so the precise touch; the first seat adds an edge, so the retarget.
         if last
             .as_ref()
             .is_none_or(|l| l.top_centre != state.top_centre)
@@ -646,8 +643,8 @@ impl Plate {
         model.nameplates.plates[i].last = Some(state.clone());
     }
 
-    /// Retire a plate: hide it, never destroy it (`0x608a10`), so it keeps its child-list index and
-    /// comes back as the same Lua object addons key their per-plate state by.
+    /// Retire a plate: hide it, never destroy it, so it keeps its child-list index and comes back
+    /// as the same Lua object addons key their per-plate state by.
     fn retire(model: &mut Model, i: usize, effects: &mut SyncEffects) {
         if model.nameplates.plates[i].last.is_none() {
             return;
@@ -660,7 +657,7 @@ impl Plate {
     }
 }
 
-/// One of the plate's textures, with its path and the blend mode the ctor sets (`0x7703f0`).
+/// One of the plate's textures, with its path and the blend mode the ctor sets.
 fn texture(
     model: &mut Model,
     frame: FrameHandle,
@@ -678,9 +675,9 @@ fn texture(
     rh
 }
 
-/// One of the plate's two FontStrings, OVERLAY as the ctor re-layers them (`0x7cb438`,
-/// `0x7cb4ea`). `justify_v` seats the name by its ink: our shaper's Friz line box is ascent-heavy
-/// and would drop it ~8 px below where the reference's metrics put it.
+/// One of the plate's two FontStrings, OVERLAY as the ctor re-layers them. `justify_v` seats the
+/// name by its ink: our shaper's Friz line box is ascent-heavy and would drop it ~8 px below where
+/// the reference's metrics put it.
 fn font_string(model: &mut Model, frame: FrameHandle, justify_v: JustifyV) -> RegionHandle {
     let rh = model
         .arena

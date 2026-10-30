@@ -541,8 +541,8 @@ const COOLDOWN_COUNT_HOOK: &str = r#"
 
 /// `BonusActionButtonTemplate`'s OnLoad raises the button by 2, then its cooldown by 2
 /// (BonusActionBarFrame.xml:13-15). A script level change carries the frame's same-strata
-/// children by the same step (`Method_SetFrameLevel` `0x49e9d0` passes 1 to
-/// `CSimpleFrame::SetFrameLevel` `0x4910a0`), so the cooldown ends three levels over its button.
+/// children by the same step (the `SetFrameLevel` method `0x49e9d0` passes 1 to the frame's level
+/// setter `0x4910a0`), so the cooldown ends three levels over its button.
 #[test]
 fn the_bonus_buttons_cooldown_sits_three_levels_over_it() {
     benilla_formats::wow_data_or_skip!();
@@ -612,8 +612,8 @@ fn every_mouse_button_uses_the_action() {
 }
 
 /// The click path never picks up: a shift-click uses the action like any click, and with a payload
-/// held the same `UseAction` places it (`CGActionBar::UseAction`, `0x5abbc0`, which reads the
-/// cursor and no modifier). Picking up is the drag's (ActionBarFrame.xml:18-24).
+/// held the same `UseAction` places it (`0x5abbc0`, which reads the cursor and no modifier).
+/// Picking up is the drag's (ActionBarFrame.xml:18-24).
 #[test]
 fn a_shift_click_uses_and_a_held_payload_places() {
     benilla_formats::wow_data_or_skip!();
@@ -809,8 +809,8 @@ fn drag_drop_onto_another_button_hops_the_displaced_action() {
 }
 
 /// The count shows only for `IsConsumableAction` (ActionButton.lua:285-292), false for a mount's
-/// item: zero charges, `InventoryType` 0 (`0x4e5250`). The flag rides the slot, not the state
-/// map: `ACTIONBAR_SLOT_CHANGED` repaints before the state feed writes.
+/// item: zero charges, `InventoryType` 0. The flag rides the slot, not the state map:
+/// `ACTIONBAR_SLOT_CHANGED` repaints before the state feed writes.
 #[test]
 fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
     benilla_formats::wow_data_or_skip!();
@@ -1123,8 +1123,8 @@ fn shipped_bag_frame_drives_end_to_end() {
         "a pickup alone queues no move"
     );
 
-    // Right-click while holding: the right arm has no cursor test (ContainerFrame.lua:583-599),
-    // and `UseContainerItem` clears the cursor before it reads the slot (`0x4fa198`).
+    // Right-click while holding: the right arm has no cursor test (ContainerFrame.lua:583-599), and
+    // `UseContainerItem` clears the cursor before it reads the slot.
     s.mouse_button(bx, by, "RightButton", true);
     s.mouse_button(bx, by, "RightButton", false);
     assert_eq!(
@@ -1224,7 +1224,7 @@ fn state_events_leave_empty_wells_untinted() {
 }
 
 /// A slot going empty draws no plate: the empty arm hides the icon (ActionButton.lua:168), and a
-/// texture-less region never draws, whatever its tint (`0x7706e0` gates on `+0xcc`).
+/// texture-less region never draws, whatever its tint (the texture draw gates on `+0xcc`).
 #[test]
 fn an_occupied_slot_going_empty_leaves_no_white_plate() {
     benilla_formats::wow_data_or_skip!();

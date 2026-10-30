@@ -168,7 +168,7 @@ fn text_emote_lines_link_the_performers_first_mention() {
         .contains("[Bob]"));
 }
 
-/// `DoEmote` sends a self-target as guid 0 (`0x5ef611`), so 1.12 has no self-emote sentence.
+/// `DoEmote` sends a self-target as guid 0, so 1.12 has no self-emote sentence.
 #[test]
 fn emoting_at_your_own_selection_sends_an_untargeted_emote() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -209,8 +209,8 @@ fn no_name(_: &str) -> Option<(bevy::prelude::Entity, u64)> {
     None
 }
 
-/// `0x49fdb1`: a word not starting with `%` names a player and replaces the selection; a miss is
-/// guid 0; no argument or a `%` word is the selection.
+/// A word not starting with `%` names a player and replaces the selection; a miss is guid 0; no
+/// argument or a `%` word is the selection.
 #[test]
 fn an_emote_argument_targets_the_named_player_and_not_the_selection() {
     use crate::target::Selection;
@@ -273,7 +273,7 @@ fn a_received_text_emote_composes_its_sentence_and_names_the_performer() {
         let e = line(WAVE, l).expect("a sentence");
         assert_eq!(e.text, expected);
         assert_eq!(e.kind, Some(K::TextEmote));
-        // arg2 is the performer, not the target (`0x49b47c`).
+        // arg2 is the performer, not the target.
         assert_eq!(e.sender, "Bob");
     }
     for (l, expected) in [
@@ -289,7 +289,7 @@ fn a_received_text_emote_composes_its_sentence_and_names_the_performer() {
 }
 
 /// `COMBATLOG_HONORAWARD`, `COMBATLOG_HONORGAIN` and `COMBATLOG_HONORGAIN_NO_RANK`, the forks of
-/// `CGChat::LogHonorGain` (`0x50b6d0`).
+/// the honor line (`0x50b6d0`).
 #[test]
 fn honor_gain_lines_pick_the_reference_form() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -339,7 +339,7 @@ fn xp_gain_lines_pick_the_reference_form() {
         with_strings(|g| super::feed::xp_gain_line(None, 120, 0, g)).as_deref(),
         Some("You gain 120 experience.")
     );
-    // The shipped lavender, 0x6F6FFF, chat-cache row 46.
+    // The shipped lavender, chat-cache row 46.
     assert_eq!(default_color(K::CombatXpGain), [111, 111, 255]);
 }
 
@@ -347,7 +347,7 @@ fn xp_gain_lines_pick_the_reference_form() {
 fn exploration_lines_pick_the_reference_form() {
     let _data = benilla_formats::wow_data_or_skip!();
     // `ERR_ZONE_EXPLORED` (`GlobalStrings.lua:1925`) is the toast on every exploration packet;
-    // `ERR_ZONE_EXPLORED_XP` (`:1926`) is the chat line, only when xp > 0 (`0x5e422f`).
+    // `ERR_ZONE_EXPLORED_XP` (`:1926`) is the chat line, only when xp > 0.
     assert_eq!(
         with_strings(|g| super::feed::exploration_toast("Westfall", g)).as_deref(),
         Some("Discovered: Westfall")
@@ -584,7 +584,7 @@ fn a_channel_notice_fires_its_token_and_the_reference_reads_arg7_and_arg10_bare(
     assert_eq!(lines_in_window(&s), 1);
 }
 
-/// The notice switch's MODE_CHANGE arm (`0x49c24d`) calls `0x49e910` and returns before the fire.
+/// The notice switch's MODE_CHANGE arm calls and returns before the fire.
 #[test]
 fn a_mode_change_notice_never_becomes_an_event() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -615,8 +615,7 @@ fn a_mode_change_notice_never_becomes_an_event() {
     assert_eq!(log.pending_len(), 1);
 }
 
-/// arg4, arg7, arg8 and arg9 are one channel record in the reference, defaulted together
-/// (`0x49b12f`).
+/// arg4, arg7, arg8 and arg9 are one channel record in the reference, defaulted together.
 #[test]
 fn a_channel_we_are_not_in_fires_the_bare_name_and_zeroes() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -654,7 +653,7 @@ fn stamping_a_channel_splits_the_display_form_from_the_base_name() {
     assert_eq!(e.channel_number, 2); // arg8
     assert_eq!(e.channel_base, "General - Elwynn Forest"); // arg9, zone tail intact
 
-    // A channel we are not in: its bare name in arg4, the rest empty (the miss leg `0x49aa86`).
+    // A channel we are not in: its bare name in arg4, the rest empty.
     let mut other = ev(K::Channel, "hi", "Bob");
     other.channel = "SomeoneElsesChannel".into();
     channels.stamp_channel(&mut other);
@@ -765,8 +764,8 @@ fn a_zone_change_must_not_deregister_the_channel_it_renames() {
         "the control must print — otherwise the assertion below proves nothing"
     );
 
-    // The border crossing: the leave goes out, the slot is renamed in place (`0x49bc50`), the join
-    // goes out, and only then do the two notices land.
+    // The border crossing: the leave goes out, the slot is renamed in place, the join goes out, and
+    // only then do the two notices land.
     let renamed = channels.rename_slot("General - Elwynn Forest", "General - Westfall");
     assert_eq!(
         renamed,
@@ -819,9 +818,8 @@ fn a_zone_change_must_not_deregister_the_channel_it_renames() {
     );
 }
 
-/// Leaving a city (`0x49a3b8`) sends the leave but keeps Trade's slot in state 3 (`0x49bcf0`): the
-/// notice comes back as `SUSPENDED`, the stock `YOU_LEFT` arm never runs, and a re-join takes the
-/// same slot.
+/// Leaving a city sends the leave but keeps Trade's slot in state 3: the notice comes back as
+/// `SUSPENDED`, the stock `YOU_LEFT` arm never runs, and a re-join takes the same slot.
 #[test]
 fn leaving_a_capital_suspends_trade_rather_than_deregistering_it() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -951,8 +949,8 @@ fn a_renamed_zone_channel_confirms_as_changed_not_joined() {
     );
 }
 
-/// The `YOU_LEFT` arm tears the record down after the fire (`0x49c5b0`, then `0x49bbd0` at
-/// `0x49c5c2`), so [`super::feed::deliver`] stamps the line before it frees the slot.
+/// The `YOU_LEFT` arm tears the record down after the fire, so [`super::feed::deliver`] stamps the
+/// line before it frees the slot.
 #[test]
 fn a_leave_notice_keeps_its_number_because_the_record_dies_after_the_line() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -1017,7 +1015,7 @@ fn a_freed_slot_is_reused_and_the_others_keep_their_numbers() {
         "and back into slot 2"
     );
 
-    // The ceiling is ten slots (`0x49b9c0`).
+    // The ceiling is ten slots.
     for i in 4..=super::edit::MAX_CHANNELS {
         assert_eq!(c.claim_slot(&format!("Custom{i}")), Some(i as u32));
     }
@@ -1231,7 +1229,7 @@ fn action_commands_parse() {
     // /pvp takes no argument; a trailing word is ignored.
     assert_eq!(parse_line("/pvp"), ParsedChat::Pvp);
     assert_eq!(parse_line("/pvp on"), ParsedChat::Pvp);
-    // /r rides its own arm: the reply state lives on ChatEditState.
+    // /r rides its own arm: the reply state lives on the chat edit state.
     assert_eq!(
         parse_line("/r hey"),
         ParsedChat::Reply { text: "hey".into() }
@@ -1599,8 +1597,8 @@ fn the_standing_still_arm_reports_moving_and_ignores_swimming() {
     );
 }
 
-/// `IsSelfControlled` (`0x5fa550`) is false only while confused, fleeing or move-disabled, the
-/// `0xc00004` mask, which leaves STUNNED out.
+/// Self-control is false only while confused, fleeing or move-disabled, the `0xc00004` mask, which
+/// leaves STUNNED out.
 #[test]
 fn self_controlled_is_true_for_an_ordinary_player() {
     use crate::player::self_controlled;
@@ -1616,7 +1614,7 @@ fn self_controlled_is_true_for_an_ordinary_player() {
     );
 }
 
-// ── the send-side emote gate, `CheckEmoteEligible` (`0x47db40`), on real `EmoteFlags` values ──
+// ── the send-side emote gate, the emote eligibility check, on real `EmoteFlags` values ──
 const BOW: u32 = 0x4801;
 const RUDE: u32 = 0x0001;
 const APPLAUD: u32 = 0x0000;
@@ -1624,8 +1622,8 @@ const CHEER: u32 = 0x0800;
 const SALUTE: u32 = 0x0800;
 const LAUGH: u32 = 0x0980;
 
-/// `0x5ef57e`: a unit with `UNIT_FLAG_POSSESSED` (`UNIT_FIELD_FLAGS & 0x01000000`) refuses every
-/// emote, silently; a missing `Emotes.dbc` row returns too (`0x5ef5b1`).
+/// A unit with `UNIT_FLAG_POSSESSED` (`UNIT_FIELD_FLAGS & 0x01000000`) refuses every emote,
+/// silently; a missing `Emotes.dbc` row returns too.
 #[test]
 fn a_possessed_unit_or_a_missing_row_refuses_the_emote() {
     assert_eq!(emote_gate(Some(0), 0, 0, false, 0), EmoteGate::Send);
@@ -1646,7 +1644,7 @@ fn a_possessed_unit_or_a_missing_row_refuses_the_emote() {
 }
 
 /// A chat-only text emote has `EmoteID` 0, so `DoEmote` reads `Emotes.dbc` row 0 (flags 0), which
-/// lacks `0x200`: dead (7) and asleep (3) refuse it, as they refuse a `/wave` (`0x47db8e`).
+/// lacks `0x200`: dead (7) and asleep (3) refuse it, as they refuse a `/wave`.
 #[test]
 fn a_chat_only_emote_reads_row_zero_and_is_refused_dead_or_asleep() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -1725,8 +1723,8 @@ fn unconditional_and_sleep_dead_rules() {
 
 // ── received lines: the addon lane, the language header, the talk gesture ──────────────────
 
-/// The text divides on its first tab (`0x49a8d0`), and with no tab it is all prefix; a lane
-/// without a name reports `"UNKNOWN"` (`0x49aff4`).
+/// The text divides on its first tab, and with no tab it is all prefix; a lane without a name
+/// reports `"UNKNOWN"`.
 #[test]
 fn an_inbound_addon_line_splits_on_the_first_tab_only() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -1764,7 +1762,7 @@ fn an_inbound_addon_line_splits_on_the_first_tab_only() {
     );
 }
 
-/// `CHAT_MSG_ADDON` carries prefix, message, distribution, sender, in that order (`0x49a95f`).
+/// `CHAT_MSG_ADDON` carries prefix, message, distribution, sender, in that order.
 #[test]
 fn the_addon_event_reaches_lua_with_four_arguments_in_order() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -1816,8 +1814,8 @@ fn the_addon_event_reaches_lua_with_four_arguments_in_order() {
     );
 }
 
-/// The send joins on a tab (`0x49f9b3`) and the receive splits on the first (`0x49a8d0`), so a
-/// payload's own tabs come back intact.
+/// The send joins on a tab and the receive splits on the first, so a payload's own tabs come back
+/// intact.
 #[test]
 fn an_addon_message_survives_its_own_send_and_receive() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -1898,8 +1896,8 @@ fn the_language_header_suppresses_only_the_frames_own_default_tongue() {
     );
 }
 
-/// The gesture selector in the parser `0x49d560` (`0x49d820`-`0x49d8ae`) matches the plaintext that
-/// `0x49dbc2` then hands to the display path `0x49a870`, so a laugh is language-independent.
+/// The gesture selector in the parser matches the plaintext that the handler then hands to the
+/// display path, so a laugh is language-independent.
 #[test]
 fn the_talk_gesture_reads_the_plaintext_not_the_garbled_line() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -1929,9 +1927,8 @@ fn the_talk_gesture_reads_the_plaintext_not_the_garbled_line() {
     );
 }
 
-/// `0x49d7f7`: a speaker whose `UNIT_FIELD_FLAGS` hold `0x20000000` (Polymorph, Kidney Shot, ...)
-/// plays no talk gesture on the immediate path; the copies behind a name query (`0x49ccc0`,
-/// `0x49d230`) have no such test.
+/// A speaker whose `UNIT_FIELD_FLAGS` hold `0x20000000` (Polymorph, Kidney Shot, ...) plays no talk
+/// gesture on the immediate path; the copies behind a name query have no such test.
 #[test]
 fn a_speaker_that_cannot_animate_queues_no_talk_gesture() {
     use super::feed::gesture_prevented;
@@ -2187,8 +2184,8 @@ fn a_docked_chat_window_survives_the_managed_position_pass() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The swim bit (`EmoteFlags & 0x0080`, `0x47db7d`) is clear on every posture emote, so the
-/// refusal to sit in water is the stand-state setter's (`player::state::stand_state_refused`).
+/// The swim bit (`EmoteFlags & 0x0080`) is clear on every posture emote, so the refusal to sit in
+/// water is the stand-state setter's (`player::state::stand_state_refused`).
 #[test]
 fn the_posture_emotes_carry_no_swim_suppression_flag() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -2310,8 +2307,8 @@ fn the_ding_block_is_printed_once() {
     );
 }
 
-/// A loss reaches stock signed, as the reference's `%d` fire passes it (`0x5e413e`): the health
-/// line prints it, and a lost stat prints no line (`if ( argN > 0 )`, `ChatFrame.lua:2577-2601`).
+/// A loss reaches stock signed, as the reference's `%d` fire passes it: the health line prints it,
+/// and a lost stat prints no line (`if ( argN > 0 )`, `ChatFrame.lua:2577-2601`).
 #[test]
 fn a_negative_gain_prints_signed() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -2492,8 +2489,8 @@ fn the_chat_cache_restore_is_finished_before_player_login() {
         "ChatFrame1 must carry the SYSTEM message group at PLAYER_LOGIN, not {:?}",
         read("ChatOrderProbe.loginRegistered")
     );
-    // The reference's login order: `ADDON_LOADED` (`0x4900a3`), `VARIABLES_LOADED` (`0x4900b2`),
-    // the chat-cache burst (`0x4900d6`), `PLAYER_LOGIN` (`0x490959`).
+    // The reference's login order: `ADDON_LOADED`, `VARIABLES_LOADED`, the chat-cache burst,
+    // `PLAYER_LOGIN`.
     assert_eq!(
         read("ChatOrderProbe.order"),
         "VARIABLES_LOADED UPDATE_CHAT_WINDOWS UPDATE_CHAT_COLOR PLAYER_LOGIN ",
@@ -2504,9 +2501,9 @@ fn the_chat_cache_restore_is_finished_before_player_login() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// `/afk` then `/dnd` through the real drain: every type but AFK clears a standing AFK first
-/// (`0x49f4f6 jne 0x49f3c7`), so `/dnd` (`0x15`) prints the clear and sends the empty `0x14` ahead
-/// of its own line and packet, three lines in all.
+/// `/afk` then `/dnd` through the real drain: every type but AFK clears a standing AFK first, so
+/// `/dnd` (`0x15`) prints the clear and sends the empty `0x14` ahead of its own line and packet,
+/// three lines in all.
 #[test]
 fn afk_then_dnd_clears_the_afk_first() {
     use crate::net::{ChatKind, ClientCommand, NetCommands};
@@ -2566,7 +2563,7 @@ fn afk_then_dnd_clears_the_afk_first() {
 }
 
 /// `SendChatMessage`'s language through the real drain: the id the binding resolved rides every
-/// type's packet (`0x49f6f9`) but AFK's, whose `SetAFK` (`0x5eb740`) never reads it.
+/// type's packet but AFK's, whose AFK mark never reads it.
 #[test]
 fn a_named_language_rides_the_chat_command() {
     use crate::net::{ChatKind, ClientCommand, NetCommands};
@@ -2615,9 +2612,9 @@ fn a_named_language_rides_the_chat_command() {
     );
 }
 
-/// `SendChatMessage`'s `CHANNEL` target through the real drain: `SStrToInt` into `0x49be50`
-/// (`0x49f4d9`-`0x49f4ea`), so the packet carries the numbered slot's name, and a number naming
-/// no confirmed slot, or a name, sends nothing at all.
+/// `SendChatMessage`'s `CHANNEL` target through the real drain: an integer parse, so the packet
+/// carries the numbered slot's name, and a number naming no confirmed slot, or a name, sends
+/// nothing at all.
 #[test]
 fn a_channel_send_carries_the_numbered_slots_name() {
     use super::edit::{ChannelSlot, ChannelState, SlotState};
@@ -2691,10 +2688,9 @@ fn a_channel_send_carries_the_numbered_slots_name() {
     );
 }
 
-/// `SendChatMessage`'s empty-line gate through the real drain (`0x49f28d`-`0x49f2a1`): an empty
-/// line, or one whose first byte is NUL, of any type but AFK and DND sends nothing and leaves a
-/// standing AFK set, since the gate is ahead of the AFK clear. The type check comes first, so an
-/// unknown type still reports.
+/// `SendChatMessage`'s empty-line gate through the real drain: an empty line, or one whose first
+/// byte is NUL, of any type but AFK and DND sends nothing and leaves a standing AFK set, since the
+/// gate is ahead of the AFK clear. The type check comes first, so an unknown type still reports.
 #[test]
 fn an_empty_line_sends_nothing_but_afk_and_dnd() {
     use super::edit::{ChannelSlot, ChannelState};

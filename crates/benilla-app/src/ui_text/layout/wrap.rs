@@ -107,8 +107,8 @@ pub(super) fn tokenize_words(line: &[ColorRun]) -> Vec<WrapWord> {
 /// `max_width`; `measure` also prices each separator. Assumes `words` is non-empty.
 ///
 /// A word too wide alone force-breaks at its last fitting glyph, as the reference drops the
-/// exceeding glyph and ends a line with no opportunity (`0x5c7780`; `0x5c7623` `fcomp`, `0x5c762b`
-/// `je`); when not one glyph fits, its builder bails and the rest of the source line drops.
+/// exceeding glyph and ends a line with no opportunity (`fcomp`, `je`); when not one glyph fits,
+/// its builder bails and the rest of the source line drops.
 pub(super) fn greedy_pack<F: FnMut(&str) -> f32>(
     words: Vec<WrapWord>,
     max_width: f32,

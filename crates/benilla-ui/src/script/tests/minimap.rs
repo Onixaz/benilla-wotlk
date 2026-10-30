@@ -32,7 +32,7 @@ fn minimap_zoom_api_and_extract() {
     assert_eq!(
         s.eval::<u8>("return m:GetZoom()").unwrap(),
         MINIMAP_ZOOM_LEVELS - 1,
-        "SetZoom clamps at levels-1 like the client's 0x6daa10"
+        "SetZoom clamps at levels-1 like the client's"
     );
     s.run("m:SetZoom(-2)").unwrap();
     assert_eq!(s.eval::<u8>("return m:GetZoom()").unwrap(), 0);
@@ -69,8 +69,8 @@ fn minimap_zoom_api_and_extract() {
     );
 }
 
-/// Two zoom indices, outdoor `0x86f698` and indoor `0x86f69c`, picked by the WMO inside flag
-/// `0xceaa60`; each persists across the transition.
+/// Two zoom indices, outdoor and indoor, picked by the WMO inside flag; each persists across the
+/// transition.
 #[test]
 fn minimap_indoor_and_outdoor_zoom_indices_are_independent() {
     let mut s = script();
@@ -124,7 +124,7 @@ fn minimap_indoor_and_outdoor_zoom_indices_are_independent() {
 }
 
 /// `SetZoom` writes the live index and its CVar (`minimapInsideZoom` inside a WMO, `minimapZoom`
-/// outside), as the client's `set_zoom` calls `CVar::Set`; the host's seed does not echo back.
+/// outside), as the client's zoom setter sets the CVar; the host's seed does not echo back.
 #[test]
 fn setzoom_persists_the_level_through_the_cvar_it_belongs_to() {
     let mut s = script();
@@ -156,7 +156,7 @@ fn setzoom_persists_the_level_through_the_cvar_it_belongs_to() {
     s.run("m:SetZoom(0)").unwrap();
     assert!(s.take_cvar_changes().is_empty());
 
-    // The seed clamps like `set_zoom`.
+    // The seed clamps like the zoom setter.
     s.set_minimap_zoom(99, 99);
     s.set_minimap_inside(false);
     assert_eq!(
@@ -179,9 +179,9 @@ fn zooming_without_a_registered_cvar_table_is_silent() {
     );
 }
 
-/// The `CMinimap` ctor (`0x4edbc0`) builds nine `CSimpleModel` children before the XML `<Frames>`
-/// descent, the last being the player arrow `[Minimap+0x338]`, so `({Minimap:GetChildren()})[9]`
-/// is the arrow; Questie and pfQuest read the player's heading from it.
+/// The minimap's constructor builds nine model children before the XML `<Frames>` descent, the last
+/// being the player arrow `[Minimap+0x338]`, so `({Minimap:GetChildren()})[9]` is the arrow;
+/// Questie and pfQuest read the player's heading from it.
 #[test]
 fn a_minimap_is_born_with_nine_model_children_and_the_ninth_is_the_player_arrow() {
     let mut s = script();
@@ -206,13 +206,13 @@ fn a_minimap_is_born_with_nine_model_children_and_the_ninth_is_the_player_arrow(
         )
         .unwrap());
 
-    // Questie's `GetPlayerFacing()`; 0 until the app pushes, the ctor default (`0x76c92d`).
+    // Questie's `GetPlayerFacing()`; 0 until the app pushes, the ctor default.
     s.run("function GetPlayerFacing() return ({Minimap:GetChildren()})[9]:GetFacing() end")
         .unwrap();
     s.run(r#"Minimap = m"#).unwrap();
     assert_eq!(s.eval::<f32>("return GetPlayerFacing()").unwrap(), 0.0);
 
-    // `SetPlayerFacing 0x4eb8e0` stores the argument into `[[minimap+0x338]+0x39c]` unchanged.
+    // The player-facing set stores the argument into `[[minimap+0x338]+0x39c]` unchanged.
     s.set_minimap_player_facing(2.5);
     assert_eq!(s.eval::<f32>("return GetPlayerFacing()").unwrap(), 2.5);
 
@@ -230,7 +230,7 @@ fn a_minimap_is_born_with_nine_model_children_and_the_ninth_is_the_player_arrow(
         "Frame"
     );
 
-    // The model files come from `CMinimap::LoadXML` (`0x4ee2b0`), so a Lua-built one has none.
+    // The model files come from the minimap's XML load, so a Lua-built one has none.
     assert!(s
         .eval::<Option<String>>("return ({m:GetChildren()})[9]:GetModel()")
         .unwrap()

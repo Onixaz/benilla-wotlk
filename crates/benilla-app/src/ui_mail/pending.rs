@@ -20,7 +20,7 @@ pub(crate) struct MailPending {
     /// Up to three senders, each with its own delivery countdown; an empty slot has no guid and
     /// no entry.
     senders: [Option<MailSender>; MAIL_RECENT_SENDERS],
-    /// Re-ask the server when the mailbox closes (`m_doPendingQuery`).
+    /// Re-ask the server when the mailbox closes.
     do_pending_query: bool,
     /// A queued `UPDATE_PENDING_MAIL`.
     notify: bool,
@@ -102,7 +102,7 @@ impl MailPending {
         true
     }
 
-    /// `MarkAsRead`'s tail (`0x56fed6`-`0x56ff3d`): a read arms the close-time re-query, and once
+    /// The mark-read's tail (`0x56fed6`-`0x56ff3d`): a read arms the close-time re-query, and once
     /// every row is read a waiting icon goes dark.
     pub(super) fn on_mail_read(&mut self, all_read: bool) {
         if near_zero(self.countdown) && all_read {
@@ -112,7 +112,7 @@ impl MailPending {
         self.do_pending_query = true;
     }
 
-    /// `UpdateRecentSenders` (`0x56de00`): a sender with no unread row left drops out; any drop
+    /// The recent-senders update (`0x56de00`): a sender with no unread row left drops out; any drop
     /// signals. `has_unread` answers for a `(guid, entry)`.
     pub(super) fn update_recent_senders(&mut self, has_unread: impl Fn(u64, u32) -> bool) {
         let mut changed = false;
@@ -137,7 +137,7 @@ impl MailPending {
             .filter(|s| (s.guid != 0 || s.entry != 0) && s.delay <= 0.0)
     }
 
-    /// A sender's name landed (`SenderNameQueryCallback`, `0x56d47a`).
+    /// A sender's name landed (the name query's callback, `0x56d47a`).
     pub(super) fn notify_senders(&mut self) {
         self.notify = true;
     }

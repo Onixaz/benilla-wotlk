@@ -192,7 +192,7 @@ fn an_addon_may_call_gametooltip_onload_the_reference_way_with_no_argument() {
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
-    // The tint, quantized: `SetBackdropColor` (`0x777d30`) stores a byte per channel, truncating
+    // The tint, quantized: `SetBackdropColor` stores a byte per channel, truncating
     // `x * 255 + 0.5`, so 0.09 reads back as 23/255.
     let q = |x: f32| f32::from((x * 255.0 + 0.5) as u8) / 255.0;
     let (r, g, b) = s
@@ -287,9 +287,9 @@ fn the_scanner_shape_reads_both_columns_and_hides_again() {
         "the right column is reachable by name"
     );
 
-    // `SetText` (`0x531b90`) shows the plate, as stock `PaperDollFrame.lua:747` relies on, so a
-    // scanner stays off screen by hiding again (`MikScrollingBattleText.lua:1832`) and by its
-    // `ANCHOR_NONE` owner.
+    // `SetText` shows the plate, as stock `PaperDollFrame.lua:747` relies on, so a scanner stays
+    // off screen by hiding again (`MikScrollingBattleText.lua:1832`) and by its `ANCHOR_NONE`
+    // owner.
     s.run("CTTooltip:Hide()").unwrap();
     assert!(
         !s.eval::<bool>("return CTTooltip:IsShown()").unwrap(),

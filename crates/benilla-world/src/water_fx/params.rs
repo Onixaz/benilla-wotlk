@@ -1,8 +1,7 @@
-//! The `CWater0Ripple` driver math as pure functions: `0x5fa760`'s per-emission parameters, the
+//! The water-ripple driver math as pure functions: the reference's per-emission parameters, the
 //! record lifecycle and the render texgen.
 
-/// Ring pulse interval in seconds: `400 + U[0, 50)` ms (`0x5fac41`..`0x5fac53`, the roll
-/// `(50·rng) >> 32` at `0x455c70`, millisecond ticks from `0x42b790`).
+/// Ring pulse interval in seconds: `400 + U[0, 50)` ms (the roll `(50·rng) >> 32`).
 pub(super) const RING_INTERVAL: (f32, f32) = (0.4, 0.45);
 
 /// Wake cooldown in seconds at `speed` yd/s: `k·625/min(speed, 20)` ms, one decal per 0.625 yd of
@@ -21,14 +20,14 @@ pub(super) enum WadeState {
     Standing,
 }
 
-/// One record's emission parameters, as the driver computes them (`0x5fa760`).
+/// One record's emission parameters, as the driver computes them.
 pub(super) struct FoamParams {
     pub(crate) size0: f32,
     /// yd/s.
     pub(crate) growth: f32,
     /// s.
     pub(crate) lifetime: f32,
-    /// Peak vertex alpha, `min(6 × driver alpha, 1)` (`0x68be62`).
+    /// Peak vertex alpha, `min(6 × driver alpha, 1)`.
     pub(crate) peak: f32,
     /// Render category: ring (`splash.blp`) vs wake (`wake.blp`).
     pub(crate) ring: bool,
@@ -90,7 +89,7 @@ pub(super) fn record_size(size0: f32, growth: f32, born: f32, now: f32) -> f32 {
 }
 
 /// A record's alpha at `now`: up to `peak` over the first 0.4 of its life and down to 0 over the
-/// rest (rate table `0x810348`, both categories).
+/// rest (both categories).
 pub(super) fn record_alpha(peak: f32, lifetime: f32, born: f32, now: f32) -> f32 {
     let age = (now - born) / lifetime;
     if age <= 0.4 {

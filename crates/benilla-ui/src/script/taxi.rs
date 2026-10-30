@@ -214,9 +214,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x517a40`: the number 1 or nil, never a boolean; an argument neither string nor number
-    // raises the reference's usage (`0x517a48`). Only the player is tracked, as the stock UI asks
-    // about no other unit.
+    // The number 1 or nil, never a boolean; an argument neither string nor number raises the
+    // reference's usage. Only the player is tracked, as the stock UI asks about no other unit.
     g.set(
         "UnitOnTaxi",
         lua.create_function(|lua, unit: mlua::Value| {

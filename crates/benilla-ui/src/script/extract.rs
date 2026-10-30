@@ -164,9 +164,9 @@ fn extract_one(
                 Some(crate::widget::KindState::Cooldown(c)) => c
                     .paint(frame.map_or(1.0, |f| f.effective_scale))
                     .map_or(QuadContent::Frame, QuadContent::Cooldown),
-                // A `<Model>`/`<PlayerModel>` pane's content hole, named so the app can
-                // join it to that window's bake. Both kinds share `KindState::Model`, as
-                // the client's `CGCharacterModelBase` extends `CSimpleModel`.
+                // A `<Model>`/`<PlayerModel>` pane's content hole, named so the app can join it to
+                // that window's bake. Both kinds share `KindState::Model`, as the client's
+                // character model widget extends its model widget.
                 Some(crate::widget::KindState::Model(m)) => QuadContent::ModelPane {
                     handle: fh,
                     name: frame.and_then(|f| f.name.clone()),
@@ -218,8 +218,8 @@ fn extract_one(
             let mut thumb_fill = false;
             if let Some(crate::widget::KindState::Slider(sl)) = owner_frame.map(|f| &f.kind_state) {
                 if sl.thumb == Some(rh) {
-                    // The thumb's own `CSimpleTexture::GetWidth`/`GetHeight`, as the drag
-                    // reads them (`slider::thumb_extent`), not its authored `<Size>`.
+                    // The thumb's own `GetWidth`/`GetHeight`, as the drag reads them
+                    // (`slider::thumb_extent`), not its authored `<Size>`.
                     let tsize = super::region::virtual_span(model, rh);
                     rect = rect.map(|r| slider::thumb_rect(r, tsize, sl.vertical, sl.fraction()));
                     thumb_fill = true;
@@ -272,10 +272,10 @@ fn extract_one(
                     return;
                 }
                 if bs.text == Some(rh) {
-                    // The label is linked to one shared font object (`UpdateTextState
-                    // 0x96f4a0`): the disabled slot, else the highlight one while the
-                    // highlight layer is on, which a locked highlight also turns on, else
-                    // the normal one. An empty slot unlinks and keeps the last paint
+                    // The label is linked to one shared font object (the button's text-state
+                    // update, `0x96f4a0`): the disabled slot, else the highlight one while the
+                    // highlight layer is on, which a locked highlight also turns on, else the
+                    // normal one. An empty slot unlinks and keeps the last paint
                     // (`SetFontObject 0x485160`), modelled as staying on normal.
                     let highlighted = hovered || bs.locked_highlight;
                     let (name, color) = if !bs.enabled() && bs.disabled_font.is_some() {
@@ -290,8 +290,8 @@ fn extract_one(
                     state_color = color;
                 }
             }
-            // A title region never draws: `CreateTitleRegion 0x773910` builds a plain
-            // Region with no textures, a hit rectangle only.
+            // A title region never draws: `CreateTitleRegion` builds a plain Region with no
+            // textures, a hit rectangle only.
             if region.map(|r| r.kind) == Some(crate::widget::RegionKind::Title) {
                 return;
             }
@@ -308,8 +308,8 @@ fn extract_one(
                 return;
             }
             let mut data = data_ref.cloned().unwrap_or_default();
-            // One hop (region combine `0x772180`): the region's alpha times its owner's
-            // `effective_alpha`, which `SetAlpha 0x76a690` already carries down the tree.
+            // One hop: the region's alpha times its owner's `effective_alpha`, which `SetAlpha`
+            // already carries down the tree.
             let alpha =
                 owner_frame.map(|f| f.effective_alpha).unwrap_or(1.0) * data.alpha.unwrap_or(1.0);
             if let Some(fo) = state_font {
@@ -346,7 +346,7 @@ fn extract_one(
                 }
             }
             // `Button:SetFont` sits between: a local set on the embedded font outranks its
-            // object (clearing the `inheritMask` bit, `CSimpleFontString+0xD4`, for good)
+            // object (clearing the `inheritMask` bit, the font string's `+0xD4`, for good)
             // but loses to the label's own, so `font_explicit` gates it too.
             if let Some(bf) = button_font {
                 if !data.font_explicit.face {
@@ -363,10 +363,10 @@ fn extract_one(
             if let Some(c) = state_color {
                 data.vertex_color = Some(c);
             }
-            // A region draws at its resolved rect only: drawable regions carry anchors
-            // (authored, or `region::implicit_creation_anchor`) and a failed resolve
-            // latches unresolvable (`0x768d55`), so an unanchored Lua region draws nowhere,
-            // as in the reference. The bar fill and thumbs keep their fraction geometry.
+            // A region draws at its resolved rect only: drawable regions carry anchors (authored,
+            // or `region::implicit_creation_anchor`) and a failed resolve latches unresolvable, so
+            // an unanchored Lua region draws nowhere, as in the reference. The bar fill and thumbs
+            // keep their fraction geometry.
             if let Some(sb) = bar_fill {
                 data.tex_coords = Some(bar_fill_uv(data.tex_coords, sb));
             }
@@ -394,7 +394,7 @@ fn extract_one(
                     text: data.text,
                     color: data.vertex_color,
                     // The gx translator's answer, not the getter's: a cleared axis draws
-                    // CENTER/MIDDLE (`0x44d420`), where `GetJustifyH` says "UNKNOWN".
+                    // CENTER/MIDDLE, where `GetJustifyH` says "UNKNOWN".
                     justify_h: data.justify.paint_h(),
                     justify_v: data.justify.paint_v(),
                     font: data.font_path,
@@ -408,9 +408,9 @@ fn extract_one(
                     world_seat: owner.is_some_and(|o| super::nameplate::is_world_seated(model, o)),
                 }
             } else {
-                // The draw gate is the texture slot, never the colour (`0x7706e0`: empty
-                // `+0xcc` emits nothing); a vertex colour alone is a tint. A gradient fills
-                // the texture slot, so it draws, at its midpoint since a quad has one tint.
+                // The draw gate is the texture slot, never the colour (empty `+0xcc` emits
+                // nothing); a vertex colour alone is a tint. A gradient fills the texture slot, so
+                // it draws, at its midpoint since a quad has one tint.
                 let fill = data.fill.or_else(|| data.gradient.map(|g| g.midpoint()));
                 let has_path = data.texture.is_some();
                 let has_texture = has_path || fill.is_some();
@@ -432,15 +432,15 @@ fn extract_one(
                     desaturated: data.desaturated && has_path,
                 }
             };
-            // A region draws at its owner's scale: only frames carry one (`0x76ac90`).
+            // A region draws at its owner's scale: only frames carry one.
             let scale = owner_frame.map(|f| f.effective_scale).unwrap_or(1.0);
             (rect, alpha, content, clip, scale)
         }
     };
-    // A `Model` frame's scene draws in its bucket's ARTWORK batch, last: `0x76fb00` drains
-    // quads, text, then render callbacks, and `0x76d160` registers the model's callback
-    // for layer 2 only (`0x76d17f cmp ebx,2`). So the world map's player arrow draws over
-    // the zone overlays at the same level, below its own OVERLAY and HIGHLIGHT regions.
+    // A `Model` frame's scene draws in its bucket's ARTWORK batch, last: the reference's layer draw
+    // drains quads, text, then render callbacks, and the model registers its callback for layer 2
+    // only. So the world map's player arrow draws over the zone overlays at the same level, below
+    // its own OVERLAY and HIGHLIGHT regions.
     let z = match &content {
         QuadContent::ModelPane { .. } => zkey.callback(order::DrawLayer::Artwork).raw(),
         _ => zkey.raw(),
@@ -474,10 +474,10 @@ fn extract_one(
 }
 
 /// The colour a Texture region draws with: texel × vertex colour per channel, alpha included (the
-/// stage-0 combine preset at submit, `.data 0x85c250` index 1: `MODULATE(TEXTURE, DIFFUSE)`). A
-/// desaturated region's pixel shader (`+0x128`) reads only the vertex alpha. `fill`, the region's
-/// solid colour, is a real 8×8 texel block in the client, so where set the product is the drawn
-/// colour; otherwise this is the tint the renderer modulates the art by, `None` for untinted.
+/// stage-0 combine preset at submit, index 1: `MODULATE(TEXTURE, DIFFUSE)`). A desaturated region's
+/// pixel shader (`+0x128`) reads only the vertex alpha. `fill`, the region's solid colour, is a
+/// real 8×8 texel block in the client, so where set the product is the drawn colour; otherwise this
+/// is the tint the renderer modulates the art by, `None` for untinted.
 fn texture_color(fill: Option<[f32; 4]>, vertex: Option<[f32; 4]>) -> Option<[f32; 4]> {
     match (fill, vertex) {
         (Some(f), Some(v)) => Some([f[0] * v[0], f[1] * v[1], f[2] * v[2], f[3] * v[3]]),
@@ -497,11 +497,11 @@ fn bar_fill_rect(r: Rect, sb: &crate::widget::StatusBarState) -> Rect {
     }
 }
 
-/// A StatusBar's fill UVs: `base` (its `<TexCoords>`/`SetTexCoord`, or the full texture) cut to
-/// the value fraction along the fill axis, `[left, right, top, bottom]` in 0..1 from top-left. The
-/// client crops rather than scales: `SetValue` (`0x7cc450` → `0x7833c0`) drives `0x770410`, which
-/// writes the 4-corner UV block (`+0x104..+0x120`) with `u1` set to the fill fraction. Vertical
-/// mirrors it up `v`, pinning the art's bottom edge (inferred, not traced).
+/// A StatusBar's fill UVs: `base` (its `<TexCoords>`/`SetTexCoord`, or the full texture) cut to the
+/// value fraction along the fill axis, `[left, right, top, bottom]` in 0..1 from top-left. The
+/// client crops rather than scales: `SetValue` drives, which writes the 4-corner UV block
+/// (`+0x104..+0x120`) with `u1` set to the fill fraction. Vertical mirrors it up `v`, pinning the
+/// art's bottom edge (inferred, not traced).
 fn bar_fill_uv(base: Option<TexCoords>, sb: &crate::widget::StatusBarState) -> TexCoords {
     // An affine base contributes its bounding edges (no live StatusBar uses one).
     let [l, r, t, b] = base.map(|tc| tc.edges()).unwrap_or([0.0, 1.0, 0.0, 1.0]);

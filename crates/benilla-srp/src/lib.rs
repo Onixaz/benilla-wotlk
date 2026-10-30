@@ -4,8 +4,8 @@
 //!
 //! # Encoding-unambiguous handshakes
 //!
-//! The 1.12.1 client hashes `A`, `B`, `K`, the salt and `M1` at their declared widths, zero-padded
-//! (`0x5d3650`); vmangos (`SHA1::Generator::UpdateData(BigNumber const&)`) and cmangos
+//! The 1.12.1 client hashes `A`, `B`, `K`, the salt and `M1` at their declared widths, zero-padded;
+//! vmangos (`SHA1::Generator::UpdateData(BigNumber const&)`) and cmangos
 //! (`Sha1Hash::UpdateBigNumbers`) drop high-order zero bytes, so a value with one hashes
 //! differently and realmd answers `WOW_FAIL_UNKNOWN_ACCOUNT` (0x04) to a correct password. The low
 //! end of `S` has the same split ([`calculate_interleaved`]).
@@ -218,8 +218,8 @@ fn calculate_u(client_public_key: &PublicKey, server_public_key: &PublicKey) -> 
 /// Fold `S` (32 LE bytes) into the 40-byte session key: SHA-1 the even and the odd bytes apart and
 /// interleave the two digests (WoW's `SHA1_Interleave`).
 ///
-/// The client strips leading zero bytes first, the low bytes of a little-endian `S` (`0x5d3360`);
-/// vmangos hashes all 32 (`SRP6::HashSessionKey`, `S.AsByteArray(32)`). This hashes all 32, and
+/// The client strips leading zero bytes first, the low bytes of a little-endian `S`; vmangos hashes
+/// all 32 (`SRP6::HashSessionKey`, `S.AsByteArray(32)`). This hashes all 32, and
 /// [`SrpClientChallenge::new`] never keeps an `S` with a zero low byte, so this `K` is both.
 fn calculate_interleaved(s: &[u8; 32]) -> [u8; 40] {
     let mut e = [0u8; 16];

@@ -289,10 +289,10 @@ fn messagechat_sendable_types_golden() {
     );
 }
 
-/// `SendAddonMessage` (reference `0x49f920`) sends `CMSG_MESSAGECHAT` on one of four lanes: `u32`
-/// type, `u32` language `LANG_ADDON`, then one cstring of prefix, TAB and message (`0x49f9b3`);
-/// there is no prefix or target field. The receiver splits on the first TAB (`0x49a8d0`); vmangos
-/// relays the TAB intact, as it skips `SanitizeChatMessage` for addon chat (`ChatHandler.cpp:49`).
+/// `SendAddonMessage` sends `CMSG_MESSAGECHAT` on one of four lanes: `u32` type, `u32` language
+/// `LANG_ADDON`, then one cstring of prefix, TAB and message; there is no prefix or target field.
+/// The receiver splits on the first TAB; vmangos relays the TAB intact, as it skips
+/// `SanitizeChatMessage` for addon chat (`ChatHandler.cpp:49`).
 #[test]
 fn addon_message_bodies_golden() {
     assert_eq!(
@@ -312,7 +312,7 @@ fn addon_message_bodies_golden() {
         "CMSG_MESSAGECHAT (addon, RAID) body"
     );
 
-    // The other lanes of the reference's four-lane whitelist (`0x49fa3f`-`0x49fa4e`).
+    // The other lanes of the reference's four-lane whitelist.
     assert_eq!(
         messages::messagechat(
             messages::CHAT_TYPE_PARTY,
@@ -536,7 +536,7 @@ fn name_and_creature_query_roundtrip() {
         _ => panic!("name query response"),
     }
 
-    // A hit, in `CreatureStats::Unpack 0x98d4c0`'s layout. Family, rank and display id get
+    // A hit, in the creature record unpack's layout (`0x98d4c0`). Family, rank and display id get
     // distinct non-zero values so a one-dword slip between adjacent fields cannot read as
     // plausible data.
     let body = hx(concat!(
@@ -597,7 +597,7 @@ fn name_and_creature_query_roundtrip() {
 }
 
 /// An empty wire subname is no subname: vmangos sends "" for a creature without one, and the
-/// reference renders no line for it (`0x608f50`).
+/// reference renders no line for it.
 #[test]
 fn creature_query_empty_subname_decodes_to_none() {
     let body = |subname_hex: &str| {
@@ -637,8 +637,8 @@ fn creature_query_empty_subname_decodes_to_none() {
     }
 }
 
-/// `CMSG_PING` is `u32` sequence then `u32` last RTT (reference `0x537e10`, vmangos
-/// `_HandlePing`); `SMSG_PONG` echoes the sequence.
+/// `CMSG_PING` is `u32` sequence then `u32` last RTT (vmangos `_HandlePing`); `SMSG_PONG` echoes
+/// the sequence.
 #[test]
 fn ping_body_golden_and_pong_roundtrip() {
     assert_eq!(
@@ -666,9 +666,9 @@ fn ping_body_golden_and_pong_roundtrip() {
     }
 }
 
-/// `SMSG_ADDON_INFO` has no count or names: the client reads one record per addon it sent. A
-/// retail capture is 12 records of `{status 2, info 1, key 0, u32 revision 0, url 0}`; status 2
-/// hides the addon from the Lua index (reference `0x51db84`).
+/// `SMSG_ADDON_INFO` has no count or names: the client reads one record per addon it sent. A retail
+/// capture is 12 records of `{status 2, info 1, key 0, u32 revision 0, url 0}`; status 2 hides the
+/// addon from the Lua index.
 #[test]
 fn the_addon_info_reply_pairs_its_statuses_back_against_what_we_sent() {
     let capture: Vec<u8> = std::iter::repeat_n(hx("0201000000000000"), 12)

@@ -379,8 +379,7 @@ fn death_arc_family_parses_and_decodes() {
     }
 }
 
-/// Root's ack lacks the trailing `f32` apply the other modes carry (`AckMessageHasValue`
-/// `0x7151f0`).
+/// Root's ack lacks the trailing `f32` apply the other modes carry (`0x7151f0`).
 #[test]
 fn move_flag_ack_bodies_differ_by_the_apply_tail() {
     use benilla_protocol::messages::{move_flag_ack, MovementInfo};

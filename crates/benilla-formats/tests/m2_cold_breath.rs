@@ -8,7 +8,7 @@ const HUMAN_MALE: &str = "Character\\Human\\Male\\HumanMale.m2";
 /// `SpellVisualEffectName` 107, "HARDCODED Breath Cold", names `Particles\ColdBreath.mdl`, which
 /// ships as `.m2`.
 const COLD_BREATH: &str = "Particles\\ColdBreath.m2";
-/// The `$BTH` family's attach tag, `DAT_0080c968[3]`: a raw M2 `AttachmentID`.
+/// The `$BTH` family's attach tag, its table's entry 3: a raw M2 `AttachmentID`.
 const BREATH_ATTACH: u16 = 0x11;
 const STAND: u16 = 0;
 
@@ -47,7 +47,7 @@ fn the_idle_player_keys_bth_and_attaches_it_at_the_mouth() {
         stand.duration
     );
 
-    // The tag is an attachment id, never an index, resolved through the AttachLookup (`0x710310`).
+    // The tag is an attachment id, never an index, resolved through the AttachLookup.
     let attachments = parse_m2_attachments(&bytes);
     let breath = attachments
         .iter()

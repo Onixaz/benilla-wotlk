@@ -23,8 +23,8 @@ pub const CLASSIC_CAN_FLY: u32 = 0x800_0000;
 /// 3.3.5a's `DISABLE_GRAVITY` (`0x400`) in the 1.12.1 word: the same bit, 1.12.1's levitating.
 pub const CLASSIC_DISABLE_GRAVITY: u32 = 0x400;
 
-/// `MSG_MOVE_TIME_SKIPPED` inbound: a packed guid and the ms that mover's client skipped
-/// (reference handler `0x603b40`). Our own `CMSG_MOVE_TIME_SKIPPED` has the same shape.
+/// `MSG_MOVE_TIME_SKIPPED` inbound: a packed guid and the ms that mover's client skipped. Our own
+/// `CMSG_MOVE_TIME_SKIPPED` has the same shape.
 pub(super) fn read_move_time_skipped(r: &mut &[u8]) -> io::Result<(u64, u32)> {
     let guid = crate::wire::read_packed_guid(r)?;
     let lag_ms = read_u32_le(r)?;
@@ -221,10 +221,10 @@ impl SpeedKind {
 }
 
 /// A mode the server grants the controlling client, one `MOVEMENTFLAGS` bit each (vmangos
-/// `MovementInfo.h:28-62`, reference setters `0x7c7280`-`0x7c7370`). Root stops translation and
-/// falling but not turning (`0x618054`); water walk makes liquid walkable (aura 104); feather fall
-/// caps the fall at 7 yd/s instead of 60.148 (aura 105, `0x7c5d20`); hover lifts ground contact by
-/// 1.0 yd (aura 106, `0x6367b0`). Levitate (spell 1706) grants the last three at once.
+/// `MovementInfo.h:28-62`). Root stops translation and falling but not turning; water walk makes
+/// liquid walkable (aura 104); feather fall caps the fall at 7 yd/s instead of 60.148 (aura 105);
+/// hover lifts ground contact by 1.0 yd (aura 106). Levitate (spell 1706) grants the last three at
+/// once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MoveMode {
     Root,
@@ -232,7 +232,7 @@ pub enum MoveMode {
     FeatherFall,
     Hover,
     /// 3.3.5a's `CAN_FLY`: the mover may take flight, and `SMSG_MOVE_UNSET_CAN_FLY` ends a flight
-    /// in progress (`0x6ef860` event 48 calls StopFlying `0x98c240`).
+    /// in progress (`0x6ef860` event 48 calls the flight stop `0x98c240`).
     CanFly,
     /// 3.3.5a's `DISABLE_GRAVITY`, 1.12.1's levitating bit once mapped: `apply` turns gravity off
     /// (`SMSG_MOVE_GRAVITY_DISABLE`), and the two directions ack on their own opcodes.
@@ -269,15 +269,15 @@ impl MoveMode {
     }
 
     /// Whether the ack ends in the `f32` apply value, 1.0 or 0.0: not root's or gravity's
-    /// (`AckMessageHasValue` `0x7151f0`, written after the info by `0x71ef80`).
+    /// (`0x7151f0`, written after the info by `0x71ef80`).
     pub fn ack_carries_apply(self) -> bool {
         !matches!(self, MoveMode::Root | MoveMode::DisableGravity)
     }
 }
 
 /// A mode set on a unit we do not control, by the twelve `SMSG_SPLINE_MOVE_*`: a bare packed guid,
-/// no counter, no ack (client handler `0x603c80`, any unit). vmangos sends the four shared modes
-/// only for units no player moves, and walk/run always. Walk mode and swimming have no acked form.
+/// no counter, no ack (any unit). vmangos sends the four shared modes only for units no player
+/// moves, and walk/run always. Walk mode and swimming have no acked form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplineMode {
     Root,
@@ -285,10 +285,10 @@ pub enum SplineMode {
     FeatherFall,
     Hover,
     /// `MOVEFLAG_WALK_MODE` (`0x100`); `apply` is the flag's direction, so `SET_WALK_MODE` applies
-    /// and `SET_RUN_MODE` removes (the reference `0x617e80` feeds `SetRunMode`, `0x7c71c0`).
+    /// and `SET_RUN_MODE` removes (the reference feeds `SetRunMode`).
     WalkMode,
-    /// `MOVEFLAG_SWIMMING` (`0x20_0000`), by `START_SWIM`/`STOP_SWIM`. The reference handles them
-    /// (`0x61a130`, `0x61a160`); vmangos never sends them (`Opcodes.cpp:888`).
+    /// `MOVEFLAG_SWIMMING` (`0x20_0000`), by `START_SWIM`/`STOP_SWIM`. The reference handles them;
+    /// vmangos never sends them (`Opcodes.cpp:888`).
     Swimming,
     /// 3.3.5a's `FLYING`, by `SMSG_SPLINE_MOVE_SET_FLYING`/`UNSET_FLYING` (`0x740ba0`): the set
     /// takes only on a unit already `CAN_FLY` (`0x989890`); the receiver applies it.
@@ -314,23 +314,23 @@ impl SplineMode {
 }
 
 /// What a relayed move's opcode means beyond its pose. The 23 `[packed guid][MovementInfo]` relays
-/// share one reference handler (`0x603bb0`, `0x601580`), and for most the opcode adds nothing the
-/// flags word does not say. The variants beyond `Pose` name the opcodes a receiver tells apart.
+/// share one reference handler, and for most the opcode adds nothing the flags word does not say.
+/// The variants beyond `Pose` name the opcodes a receiver tells apart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RelayVerb {
     /// Every other relay (start, stop, strafe, jump, turn, swim, land, facing, modes, knockback).
     #[default]
     Pose,
-    /// `MSG_MOVE_HEARTBEAT`, the periodic mid-move pulse. Both reference blends apply to it
-    /// (`0x619030`, `0x619090`); the tag they skip, `0x26`, is only pushed for a teleport.
+    /// `MSG_MOVE_HEARTBEAT`, the periodic mid-move pulse. Both reference blends apply to it; the
+    /// tag they skip, `0x26`, is only pushed for a teleport.
     Heartbeat,
     /// `MSG_MOVE_TELEPORT`, an observed near-teleport (Blink, `.tele`): the one relay the client
-    /// never smooths toward (tag `0x26`). It also re-bases the mover, zeroes its interpolation
-    /// (`0x617e90`) and past 30 yd re-anchors the world.
+    /// never smooths toward (tag `0x26`). It also re-bases the mover, zeroes its interpolation and
+    /// past 30 yd re-anchors the world.
     Teleport,
     /// `MSG_MOVE_ROOT` (`true`) / `MSG_MOVE_UNROOT` (`false`): the opcode, not the flags word,
-    /// decides. The client then runs `SetRoot` (`0x7c7340`, also wiping motion) or `ClearRoot`
-    /// (`0x7c7370`) unconditionally; vmangos's flags already agree (`MovementHandler.cpp:1064`).
+    /// decides. The client then roots (also wiping motion) or unroots the mover unconditionally;
+    /// vmangos's flags already agree (`MovementHandler.cpp:1064`).
     Root(bool),
 }
 

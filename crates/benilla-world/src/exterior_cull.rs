@@ -1,21 +1,19 @@
 //! The exterior scene draws only through the doorways the camera can see.
 //!
-//! The reference culls the outdoor scene once per frame in `CWorldScene::CullSortTable`
-//! (`0x79a790`), inside the frustum `CWorldScene::FrustumSet` (`0x790af0`) narrows to one screen
-//! rect. Outdoors the rect is the full screen ([`ExteriorWindows::Unrestricted`]). From inside a
-//! building it is the union of every portal view whose far side is outdoors
-//! (`CWorldScene::MergeIntoFrustumRect` `0x790ad0`, `CPortalView::Merge`); with none, the sort table
-//! is cleared and no exterior draws: a sealed room. The rect takes no size gate.
+//! The reference culls the outdoor scene once per frame in its sort-table cull (`0x79a790`), inside
+//! the frustum its frustum setup (`0x790af0`) narrows to one screen rect. Outdoors the rect is the
+//! full screen ([`ExteriorWindows::Unrestricted`]). From inside a building it is the union of every
+//! portal view whose far side is outdoors (`0x790ad0`, merging each portal view); with none, the
+//! sort table is cleared and no exterior draws: a sealed room. The rect takes no size gate.
 //!
-//! In that frustum, map chunks, WMO groups, liquid and the far band are tested on their boxes
-//! (`CWorldScene::FrustumCull(CAaBox*)` `0x78fb20`), and doodads and entities on their bounding
-//! spheres, once each: `CWorldScene::CullDoodadsExterior` (`0x799980`) through
-//! `CWorldScene::FrustumCull(center, radius)` (`0x791120`), `CWorldScene::CullDoodads`
-//! (`0x7987a0`) and `CWorldScene::CullEntitys` (`0x793060`). A body in a WMO room rides its
-//! building's group walk instead (`CWorldScene::CullEntitysInterior` `0x793270`), drawn when its
-//! room, or one a portal hop away (our doorway-straddle guard), is in the PVS and its sphere is
-//! in view. `WOW_NO_DRAW_ELECTION=1` keeps only the window leg. The occlusion buffer and
-//! volumes (`CWorldOcclusion`) are not built.
+//! In that frustum, map chunks, WMO groups, liquid and the far band are tested on their boxes (the
+//! box cull, `0x78fb20`), and doodads and entities on their bounding spheres, once each: the
+//! exterior doodad cull (`0x799980`) through the sphere cull (`0x791120`), the doodad cull
+//! (`0x7987a0`) and the entity cull (`0x793060`). A body in a WMO room rides its building's group
+//! walk instead (the interior entity cull, `0x793270`), drawn when its room, or one a portal hop
+//! away (our doorway-straddle guard), is in the PVS and its sphere is in view.
+//! `WOW_NO_DRAW_ELECTION=1` keeps only the window leg. The occlusion buffer and volumes are not
+//! built.
 //!
 //! The rect is a scale and offset on clip space, and [`Frustum::from_clip_from_world`] extracts
 //! the same planes the reference bilerps from its corner rays.
@@ -106,8 +104,8 @@ pub(crate) fn window_frustum(rect: Rect, clip_from_world: &Mat4) -> Frustum {
     Frustum::from_clip_from_world(&(rect_to_ndc * *clip_from_world))
 }
 
-/// The exterior rect from inside a building: the union of the outdoor windows, as
-/// `CPortalView::Merge` folds each into `frustumPortalView`. `None` with no window, or one that
+/// The exterior rect from inside a building: the union of the outdoor windows, as the reference's
+/// portal-view merge folds each into the frustum's portal view. `None` with no window, or one that
 /// collapsed to no area, which would extract a frustum of NaN planes.
 fn merged_window(rects: &[Rect]) -> Option<Rect> {
     let merged = rects
@@ -149,10 +147,9 @@ impl ExteriorGate {
         Self::Window(merged_window(rects).map(|r| window_frustum(r, &clip_from_world)))
     }
 
-    /// The box test, `CWorldScene::FrustumCull(CAaBox*)` (`0x78fb20`): terrain cells, WMO groups,
-    /// liquid, the far band. No `Aabb` (a mesh still loading, or nothing drawn) is admitted: a
-    /// missing bound is a timing gap, and blanking on it would flicker the world as tiles stream
-    /// in.
+    /// The box test (`0x78fb20`): terrain cells, WMO groups, liquid, the far band. No `Aabb` (a
+    /// mesh still loading, or nothing drawn) is admitted: a missing bound is a timing gap, and
+    /// blanking on it would flicker the world as tiles stream in.
     pub(crate) fn admits(&self, gt: &GlobalTransform, aabb: Option<&Aabb>) -> bool {
         match (self, aabb) {
             (Self::Open, _) | (_, None) => true,
@@ -162,8 +159,8 @@ impl ExteriorGate {
         }
     }
 
-    /// The sphere test, `CWorldScene::FrustumCull(center, radius)` (`0x791120`): a doodad
-    /// placement or a body, once each, on its world bounding sphere.
+    /// The sphere test (`0x791120`): a doodad placement or a body, once each, on its world bounding
+    /// sphere.
     pub(crate) fn admits_sphere(&self, center: Vec3, radius: f32) -> bool {
         match self {
             Self::Open => true,
@@ -188,8 +185,8 @@ impl ExteriorGate {
 }
 
 /// A body's world bounding sphere: the circumsphere of its model-space box, scaled with it.
-/// Deviation: the reference's entity sphere is the model header's (`CM2Model::GetBoundingSphere`
-/// `0x4f5e80`); the game hands the world the idle animation's box instead.
+/// Deviation: the reference's entity sphere is the model header's (`0x4f5e80`); the game hands the
+/// world the idle animation's box instead.
 fn body_sphere(gt: &GlobalTransform, bound: &Aabb) -> (Vec3, f32) {
     let scale = gt.affine().matrix3.x_axis.length();
     (
@@ -257,10 +254,10 @@ fn trace_body(
 #[derive(Resource)]
 pub(crate) struct CullTrace;
 
-/// What the body leg reads per net body: one sphere test on its root ([`body_sphere`]), which
-/// takes the whole visual with it (gear, mount, rider, billboard cards). A room claim
-/// ([`crate::wmo_portal::UnitWmoRoom`]) rides `CullEntitysInterior` with its building, no claim
-/// rides `CullEntitys` in the exterior walk; a body not yet rayed has none and reads as outdoors.
+/// What the body leg reads per net body: one sphere test on its root ([`body_sphere`]), which takes
+/// the whole visual with it (gear, mount, rider, billboard cards). A room claim
+/// ([`crate::wmo_portal::UnitWmoRoom`]) rides the interior entity cull with its building, no claim
+/// rides the entity cull in the exterior walk; a body not yet rayed has none and reads as outdoors.
 type ElectedBody = (
     Entity,
     &'static GlobalTransform,
@@ -342,12 +339,12 @@ fn apply_exterior_cull(
             // The lever: the window leg alone, in-room bodies exempt.
             in_room || gate.admits_sphere(center, radius)
         } else if in_room {
-            // `CullEntitysInterior`: drawn iff its room or a one-hop neighbour is in the PVS and
+            // The interior entity cull: drawn iff its room or a one-hop neighbour is in the PVS and
             // its sphere is in view; `room_pvs_visible` fails open at every resolve seam.
             crate::wmo_portal::room_pvs_visible(room, &instances, &wmos)
                 && in_view((center, radius))
         } else {
-            // `CullEntitys`: outdoors the full-screen rect, indoors the merged window, already a
+            // The entity cull: outdoors the full-screen rect, indoors the merged window, already a
             // sub-frustum of the view.
             match &gate {
                 ExteriorGate::Open => in_view((center, radius)),
@@ -460,7 +457,7 @@ mod tests {
         );
     }
 
-    /// `CPortalView::Merge` folds the windows into one rect; a window collapsed to no area, or
+    /// The portal-view merge folds the windows into one rect; a window collapsed to no area, or
     /// none at all, admits nothing rather than building a frustum of NaN planes.
     #[test]
     fn the_windows_merge_into_one_rect() {
@@ -570,7 +567,7 @@ mod tests {
     }
     const NOT_RAYED_YET: Option<crate::wmo_portal::UnitWmoRoom> = None;
 
-    /// A yard box on the body's origin, a creature's authored idle `CAaBox`.
+    /// A yard box on the body's origin, a creature's authored idle box.
     fn creature_box() -> Aabb {
         Aabb::from_min_max(Vec3::splat(-0.5), Vec3::splat(0.5))
     }
@@ -580,7 +577,7 @@ mod tests {
     }
 
     /// Two bodies dead ahead in a sealed room: only the room claim separates the one the exterior
-    /// walk never submits from the one `CullEntitysInterior` submits with its building.
+    /// walk never submits from the one the interior entity cull submits with its building.
     #[test]
     fn a_sealed_room_hides_the_outdoor_body_and_keeps_the_one_in_a_room() {
         let ahead = Vec3::new(0.0, 0.0, -50.0);
@@ -823,8 +820,8 @@ mod tests {
         )
     }
 
-    /// A sealed room never runs the exterior walk, the only path to the ADT liquid producer
-    /// `0x683ab0`, so the lake overhead is not drawn; the counters prove the cull reached it.
+    /// A sealed room never runs the exterior walk, the only path to the ADT liquid producer, so the
+    /// lake overhead is not drawn; the counters prove the cull reached it.
     #[test]
     fn a_sealed_room_hides_the_lake_overhead() {
         let overhead = Vec3::new(0.0, 30.0, -60.0);
@@ -842,7 +839,7 @@ mod tests {
         );
     }
 
-    /// Outdoors the gate is `Open` (`0x6811ca`) and liquid has no other owner, so no lake hides.
+    /// Outdoors the gate is `Open` and liquid has no other owner, so no lake hides.
     #[test]
     fn outdoors_every_lake_is_admitted() {
         let (vis, verdict) = run_liquid(

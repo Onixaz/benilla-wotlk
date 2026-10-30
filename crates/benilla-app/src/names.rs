@@ -1,9 +1,9 @@
 //! Unit-name resolution. Descriptors carry no names: a player's answers `CMSG_NAME_QUERY` (by
 //! guid), a creature's `CMSG_CREATURE_QUERY` (by template entry), a pet's or charm's
 //! `CMSG_PET_NAME_QUERY` (by pet number), and which one applies is read off the descriptor as the
-//! reference's `GetUnitName` (`0x609210`) reads it. Each key is asked once while in flight, and a
-//! negative answer is cached so a bad id never loops; for a player that is an empty name, which the
-//! reference evicts instead (`0x55f6f0`), so its next read asks again.
+//! reference's `GetUnitName` reads it. Each key is asked once while in flight, and a negative
+//! answer is cached so a bad id never loops; for a player that is an empty name, which the
+//! reference evicts instead, so its next read asks again.
 //!
 //! Creature templates persist, as the reference's `creaturecache.wdb` does; player and pet names
 //! are never written to disk and are cleared at world-session start, as the reference does.
@@ -18,31 +18,31 @@ use crate::net::{ClientCommand, NetCommands, ObjectStore};
 use crate::query_cache::QueryCache;
 
 /// The creature template's `type_flags` dword from `SMSG_CREATURE_QUERY_RESPONSE`, cached by the
-/// reference at `[CGUnit+0xb30] + 0x14`. Adjacent bits mean unrelated things, and the reference
-/// gives each its own getter, so every consumer names the bit it reads:
+/// reference at `[unit+0xb30] + 0x14`. Adjacent bits mean unrelated things, and the reference gives
+/// each its own getter, so every consumer names the bit it reads:
 ///
-/// | bit | reference getter | meaning |
-/// |---|---|---|
-/// | `0x1` | `0x529d15` | TAMEABLE |
-/// | `0x2` | `0x605f70` | VISIBLE_TO_GHOSTS |
-/// | `0x4` | `0x612530` | BOSS_MOB |
-/// | `0x8` | `0x6125f0` | [`DO_NOT_PLAY_WOUND_ANIM`] |
-/// | `0x10` | `0x612610` (inverted) | [`NO_FACTION_TOOLTIP`] |
-/// | `0x20` | `0x623b70` | [`MORE_AUDIBLE`] |
-/// | `0x40` | `0x60d840` | SPELL_ATTACKABLE / no harmful vertex colouring |
-/// | `0x80` | `0x613230` = `CanInteractWhileDead` | INTERACT_WHILE_DEAD |
+/// | bit | meaning |
+/// |---|---|
+/// | `0x1` | TAMEABLE |
+/// | `0x2` | VISIBLE_TO_GHOSTS |
+/// | `0x4` | BOSS_MOB |
+/// | `0x8` | [`DO_NOT_PLAY_WOUND_ANIM`] |
+/// | `0x10` | [`NO_FACTION_TOOLTIP`], its getter inverted |
+/// | `0x20` | [`MORE_AUDIBLE`] |
+/// | `0x40` | SPELL_ATTACKABLE / no harmful vertex colouring |
+/// | `0x80` | INTERACT_WHILE_DEAD |
 ///
 /// The names of `0x1`-`0x40` follow vmangos `CreatureDefines.h:146-152`.
 pub(crate) mod type_flags {
-    /// `0x8`: the reference skips the victim wound flinch for it (`0x60ea9f` in `0x60ea70`); the
-    /// blood spurt and the floating combat text still play.
+    /// `0x8`: the reference skips the victim wound flinch for it; the blood spurt and the floating
+    /// combat text still play.
     pub(crate) const DO_NOT_PLAY_WOUND_ANIM: u32 = 0x8;
 
-    /// `0x10`: the unit tooltip drops its faction line (`0x612610`, which returns it inverted).
+    /// `0x10`: the unit tooltip drops its faction line (which returns it inverted).
     pub(crate) const NO_FACTION_TOOLTIP: u32 = 0x10;
 
     /// `0x20`: the pass-2 election keeps an off-screen creature ticking so its combat stays
-    /// audible (`0x607da0`'s `0x623b70` arm).
+    /// audible.
     pub(crate) const MORE_AUDIBLE: u32 = 0x20;
 }
 
@@ -52,8 +52,8 @@ pub(crate) struct NameCache {
     /// A `None` answer is an empty wire name: the server does not know the guid.
     players: QueryCache<u64, String>,
     /// `(race, class, gender)` from `SMSG_NAME_QUERY_RESPONSE`, the `$`-macro expander's fallback
-    /// for an unstreamed subject (`0x506f70`). Present only when the server answered: a name
-    /// learned otherwise (our own, seeded at login) has no entry, never a zero triple.
+    /// for an unstreamed subject. Present only when the server answered: a name learned otherwise
+    /// (our own, seeded at login) has no entry, never a zero triple.
     player_traits: HashMap<u64, (u8, u8, u8)>,
     /// A `None` answer is an entry the server flagged unknown.
     creatures: QueryCache<u32, CreatureRecord>,
@@ -80,7 +80,7 @@ pub(crate) struct CreatureRecord {
     /// Read bit by bit through [`type_flags`].
     pub(crate) type_flags: u32,
     pub(crate) civilian: bool,
-    /// The tooltip's LEADER line (`0x6125c0`).
+    /// The tooltip's LEADER line.
     pub(crate) racial_leader: bool,
     /// `CreatureDisplayInfo.dbc` id, the first of the template's display ids, 0 when it has none.
     /// The only model for a unit with no world object, such as a stabled pet; an on-screen unit's
@@ -91,8 +91,8 @@ pub(crate) struct CreatureRecord {
     pub(crate) power_modifier: f32,
 }
 
-/// The 1.12 client's creature-rank getter (`0x605620`): 0 before the record is queried and 0 for
-/// any unit with a `UNIT_FIELD_PETNUMBER` (a charmed or enslaved unit), else the template rank.
+/// The 1.12 client's creature-rank getter: 0 before the record is queried and 0 for any unit with a
+/// `UNIT_FIELD_PETNUMBER` (a charmed or enslaved unit), else the template rank.
 /// `UnitClassification`, the tooltip's ELITE/BOSS word and `UnitLevel`'s world-boss -1 all read
 /// through it, so every rank read here goes through this function. No store reads as not-a-pet.
 pub(crate) fn gated_rank(rec: Option<&CreatureRecord>, store: Option<&ObjectStore>) -> u32 {
@@ -102,25 +102,24 @@ pub(crate) fn gated_rank(rec: Option<&CreatureRecord>, store: Option<&ObjectStor
     }
 }
 
-/// Which cache names a unit and under which key: the branch of the reference's `GetUnitName`
-/// (`0x609210`), which the combat log's `GetObjectName` (`0x6264e0`) also calls.
+/// Which cache names a unit and under which key: the branch of the reference's `GetUnitName`, which
+/// the combat log's name lookup also calls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NameKey {
-    /// The `OBJECT_FIELD_TYPE` player bit (`0x609232`): the name cache by guid.
+    /// The `OBJECT_FIELD_TYPE` player bit: the name cache by guid.
     Player(u64),
-    /// `UNIT_FIELD_PETNUMBER` non-zero (`0x609295`): the pet-name cache under that number.
+    /// `UNIT_FIELD_PETNUMBER` non-zero: the pet-name cache under that number.
     Pet(u32),
-    /// `UNIT_FIELD_PETNUMBER` zero (`0x60929d`): the creature record under the descriptor's
-    /// `OBJECT_FIELD_ENTRY` (`0x60b160`).
+    /// `UNIT_FIELD_PETNUMBER` zero: the creature record under the descriptor's
+    /// `OBJECT_FIELD_ENTRY`.
     Creature(u32),
 }
 
 impl NameKey {
-    /// With a descriptor this is `0x609210` exactly: the pet number and entry are the unit's
-    /// fields, not the guid's bits (a vmangos companion pet has a `HIGHGUID_PET` guid but
-    /// `PETNUMBER` 0; a charmed creature has a `HIGHGUID_UNIT` guid and a pet number). Without
-    /// one, a `HIGHGUID_PET` guid's entry slot is taken as the pet number, right only for a
-    /// permanent pet.
+    /// With a descriptor this is exactly: the pet number and entry are the unit's fields, not the
+    /// guid's bits (a vmangos companion pet has a `HIGHGUID_PET` guid but `PETNUMBER` 0; a charmed
+    /// creature has a `HIGHGUID_UNIT` guid and a pet number). Without one, a `HIGHGUID_PET` guid's
+    /// entry slot is taken as the pet number, right only for a permanent pet.
     pub(crate) fn of(guid_val: u64, unit: Option<&ObjectStore>) -> Option<Self> {
         if guid::is_player(guid_val) {
             return Some(Self::Player(guid_val));
@@ -153,7 +152,8 @@ impl NameCache {
         self.resolve_unit(guid_val, None, commands)
     }
 
-    /// The name for a unit keyed off its descriptor, as `0x609210` keys it; asks once on a miss.
+    /// The name for a unit keyed off its descriptor, as the reference's unit-name branch keys it;
+    /// asks once on a miss.
     pub(crate) fn resolve_unit(
         &self,
         guid_val: u64,
@@ -252,10 +252,9 @@ impl NameCache {
         self.generation = self.generation.wrapping_add(1);
     }
 
-    /// The reference's world-session wipe (`0x555740`; `0x5557ad call 0x560400` for the player
-    /// cache): every `DBCache` whose persistence byte `[cache+0x39]` is 0 is cleared, which is
-    /// `'WNAM'` (player names, ctor `0x554cd0`), `'WGLD'`, `'WPNM'` (pet names) and `'WPTN'`.
-    /// Called at world entry, before the login seeds our own name.
+    /// The reference's world-session wipe: every record cache whose persistence byte `[cache+0x39]`
+    /// is 0 is cleared, which is `'WNAM'` (player names), `'WGLD'`, `'WPNM'` (pet names) and
+    /// `'WPTN'`. Called at world entry, before the login seeds our own name.
     pub(crate) fn clear_world_session(&mut self) {
         self.players.clear();
         self.player_traits.clear();
@@ -273,8 +272,8 @@ impl NameCache {
         self.player_traits.get(&guid).copied()
     }
 
-    /// Record a pet-name answer, keyed by pet number; an empty name is a negative answer, which
-    /// the reference denies rather than caching (`DBCache::DenyItem`, `0x635365`).
+    /// Record a pet-name answer, keyed by pet number; an empty name is a negative answer, which the
+    /// reference's cache denies rather than caching (`0x635365`).
     pub(crate) fn insert_pet(&mut self, pet_number: u32, name: String) {
         self.pets
             .insert(pet_number, (!name.is_empty()).then_some(name));
@@ -300,9 +299,9 @@ impl NameCache {
     }
 
     /// The cached template record. Key it by the descriptor's `OBJECT_FIELD_ENTRY`, never the
-    /// guid's entry slot, as the reference does (`0x60b160`). On `None` each consumer picks its own
-    /// default as the reference's getters do: `MORE_AUDIBLE` fails closed (`0x623b70`),
-    /// `DO_NOT_PLAY_WOUND_ANIM` fails open (`0x6125f0`).
+    /// guid's entry slot, as the reference does. On `None` each consumer picks its own default as
+    /// the reference's getters do: `MORE_AUDIBLE` fails closed, `DO_NOT_PLAY_WOUND_ANIM` fails
+    /// open.
     pub(crate) fn creature_record(&self, entry: u32) -> Option<&CreatureRecord> {
         self.creatures.get(entry)
     }
@@ -337,7 +336,7 @@ impl crate::query_cache::AskOnce for NameCache {
 
 impl NameCache {
     /// Drop a player's cached name and traits so the next resolve re-asks: the reference's
-    /// remove-by-key for `SMSG_INVALIDATE_PLAYER` (`0x555600` into `0x560170`).
+    /// remove-by-key for `SMSG_INVALIDATE_PLAYER`.
     pub(crate) fn invalidate_player(&mut self, guid: u64) {
         self.players.evict(guid);
         self.player_traits.remove(&guid);
@@ -438,8 +437,8 @@ pub(crate) mod net {
     }
 
     /// `SMSG_INVALIDATE_PLAYER`, which vmangos sends after a rename (`CharacterHandler.cpp:839`):
-    /// the reference's eviction (`0x555600`) in a name cache with no TTL; its other, an empty-name
-    /// answer (`0x55f6f0`), is a cached negative here.
+    /// the reference's eviction in a name cache with no TTL; its other, an empty-name answer, is a
+    /// cached negative here.
     fn invalidate_player(guid: u64, names: &mut NameCache) {
         debug!("net: invalidating cached name for player {guid:#x}");
         names.invalidate_player(guid);
@@ -555,7 +554,7 @@ mod tests {
         assert_eq!(cache.peek(voidwalker), None);
     }
 
-    /// An empty answer is a negative (`DBCache::DenyItem`, `0x635365`): no `""` name, no re-ask.
+    /// An empty answer is a negative (the cache's deny, `0x635365`): no `""` name, no re-ask.
     #[test]
     fn an_empty_pet_name_is_a_negative_answer() {
         let (cmds, rx) = commands();
@@ -599,8 +598,7 @@ mod tests {
         );
     }
 
-    /// The reference's `0x555740` clears the stores whose `[cache+0x39]` byte is 0
-    /// (`0x55579f`-`0x5557ad` for the player cache at `0xc0e228`).
+    /// The reference's world-session wipe clears the stores whose `[cache+0x39]` byte is 0.
     #[test]
     fn world_entry_clears_the_identities_and_keeps_the_templates() {
         let (cmds, rx) = commands();
@@ -752,8 +750,8 @@ mod tests {
         }
     }
 
-    /// `0x609210`'s `UNIT_FIELD_PETNUMBER == 0` leg: a vmangos companion pet's guid holds a pet
-    /// number the server never answers for (`PetHandler.cpp:190-192`).
+    /// The reference's unit-name `UNIT_FIELD_PETNUMBER == 0` leg: a vmangos companion pet's guid
+    /// holds a pet number the server never answers for (`PetHandler.cpp:190-192`).
     #[test]
     fn a_companion_pet_is_named_by_its_descriptor_entry() {
         let (cmds, rx) = commands();

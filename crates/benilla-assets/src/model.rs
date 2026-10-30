@@ -75,10 +75,10 @@ pub struct ModelSubmesh {
     pub fog_policy: benilla_formats::FogPolicy,
     /// Set when the batch rides an M2 billboard bone; its mesh is built centred on the pivot.
     pub billboard: Option<BillboardInfo>,
-    /// The animated material alpha, colour alpha times transparency weight (`0x707680`).
+    /// The animated material alpha, colour alpha times transparency weight.
     pub alpha_anim: Option<std::sync::Arc<benilla_formats::AlphaAnim>>,
-    /// The texture transform's translation loop (sampled at `0x714260`, applied at `0x70b740`).
-    /// The `Arc` is also the material-dedup identity, shared by every instance.
+    /// The texture transform's translation loop. The `Arc` is also the material-dedup identity,
+    /// shared by every instance.
     pub uv_anim: Option<std::sync::Arc<benilla_formats::UvAnim>>,
     /// The UV loop per file sequence slot, `Some` only where slots disagree; also a dedup identity.
     pub uv_seq: Option<std::sync::Arc<benilla_formats::SeqLoops<[f32; 2]>>>,
@@ -243,10 +243,10 @@ fn skinned_mesh_as(sub: &RenderSubmesh, bake: BillboardBake) -> Mesh {
 pub struct ModelJoint {
     pub parent: i16,
     pub local_translation: Vec3,
-    /// The bone's billboard arm (bone flags 0x08/0x10/0x20/0x40). The reference replaces the
-    /// bone's rotation in the palette, so its children inherit the facing, and arms every flagged
-    /// bone: the animate kernel `0x714260` reads no vertex data, so a welded seam is no gate. The
-    /// seam holds because the replacement is built about the bone's own pivot.
+    /// The bone's billboard arm (bone flags 0x08/0x10/0x20/0x40). The reference replaces the bone's
+    /// rotation in the palette, so its children inherit the facing, and arms every flagged bone:
+    /// the animate kernel reads no vertex data, so a welded seam is no gate. The seam holds because
+    /// the replacement is built about the bone's own pivot.
     pub billboard: Option<benilla_formats::BillboardKind>,
     /// Bone flags 0x1/0x2/0x4: how the parent matrix is rebuilt from the model's root frame,
     /// applied before the billboard arm.
@@ -257,10 +257,10 @@ pub struct ModelJoint {
 #[derive(Clone, Default)]
 pub struct ModelSkeleton {
     pub joints: Vec<ModelJoint>,
-    /// The KeyBoneID 4 (SpineLow) bone, which counter-twists toward the aim while the body's yaw
-    /// is off it, as in a strafe (`0x711f10(4, …)` in `0x607ed0`).
+    /// The KeyBoneID 4 (SpineLow) bone, which counter-twists toward the aim while the body's yaw is
+    /// off it, as in a strafe.
     pub spine_bone: Option<u16>,
-    /// The KeyBoneID 6 (Head) bone, which takes the rest of that twist (`0x711f10(6, …)`).
+    /// The KeyBoneID 6 (Head) bone, which takes the rest of that twist.
     pub head_bone: Option<u16>,
 }
 
@@ -341,17 +341,17 @@ pub(crate) fn arm_subtree_roots(
     Some((shoulder_of(1)?, shoulder_of(2)?))
 }
 
-/// The upper-body subtree root, the reference's `CGUnit+0xd5c` from the probe `0x60ce70`:
-/// key-bone 4 (SpineLow), else 6 (Head). SpineLow's subtree leaves out the legs, which hang off
-/// the pelvis. `None` means no split, and a one-shot plays full-body.
+/// The upper-body subtree root, the reference's unit `+0xd5c` from the probe: key-bone 4
+/// (SpineLow), else 6 (Head). SpineLow's subtree leaves out the legs, which hang off the pelvis.
+/// `None` means no split, and a one-shot plays full-body.
 pub(crate) fn upper_subtree_root(skel: &Skeleton) -> Option<usize> {
     let bone_with = |k: i16| skel.bones.iter().position(|b| b.key_bone == k);
     bone_with(4).or_else(|| bone_with(6))
 }
 
-/// The finger key-bones per hand `(right, left)`, 8-12 and 13-17: the reference's `CloseHand`
-/// targets, posed with `HandsClosed` (AnimationData 15) while that hand holds a weapon
-/// (`0x479660`/`0x60b590`). Empty for a model without them.
+/// The finger key-bones per hand `(right, left)`, 8-12 and 13-17: the reference's hand-close
+/// targets, posed with `HandsClosed` (AnimationData 15) while that hand holds a weapon. Empty for a
+/// model without them.
 pub(crate) fn finger_subtree_roots(skel: &Skeleton) -> [Vec<usize>; 2] {
     let roots = |lo: i16, hi: i16| -> Vec<usize> {
         skel.bones
@@ -401,7 +401,7 @@ pub(crate) fn build_attachments(
 }
 
 /// One animation-event position, baked like [`ModelAttachment`]. The reference's by-4CC queries
-/// (`0x7130e0`/`0x7131b0`) take the first match: `$CSL`/`$CSR`/`$CST` hands, `$BWR` ranged release.
+/// take the first match: `$CSL`/`$CSR`/`$CST` hands, `$BWR` ranged release.
 #[derive(Clone, Copy)]
 pub struct ModelMarker {
     /// The identifier 4CC, stored forward (`*b"$CSL"`).
@@ -958,7 +958,7 @@ mod tests {
 
     /// The shipped pauldron `LShoulder_Plate_PVPAlliance_A_01.m2` welds two spherical billboard
     /// bones to the body with 50/50 seam rings: the card split refuses to lift them, and the
-    /// palette faces them anyway, since `0x714260` reads no vertex data.
+    /// palette faces them anyway, since the reference reads no vertex data.
     #[test]
     fn a_welded_billboard_bone_still_reaches_the_palette_with_its_arm() {
         let data = benilla_formats::wow_data_or_skip!();
@@ -991,7 +991,7 @@ mod tests {
 
     /// `RidingHorse.m2`'s rider seat (attachment 0) rides bone 30, flags 0x6: the mount's root
     /// basis replaces the seat's, so the gallop's spine swing reaches the rider as translation
-    /// only (the copy-root leg `0x714a18`).
+    /// only.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_riding_horse_seat_bone_carries_the_root_basis_arm() {

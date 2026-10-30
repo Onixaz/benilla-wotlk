@@ -16,10 +16,10 @@ pub use quest_poi::*;
 /// A [`Frame`]'s widget class; one with modeled behavior carries it in [`Frame::kind_state`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FrameKind {
-    /// Plain `CSimpleFrame`, the base container.
+    /// A plain `Frame`, the base container.
     Frame,
-    /// `CGWorldFrame` (factory `0x4959d0`), the singleton the world renders behind: a `Frame` to
-    /// Lua, in stratum `WORLD` below `BACKGROUND`; hovered, it is not over the UI but runs scripts.
+    /// The world frame, the singleton the world renders behind: a `Frame` to Lua, in stratum
+    /// `WORLD` below `BACKGROUND`; hovered, it is not over the UI but runs scripts.
     WorldFrame,
     Button,
     CheckButton,
@@ -28,34 +28,34 @@ pub enum FrameKind {
     Slider,
     ScrollFrame,
     Model,
-    /// `CGCharacterModelBase` (`0x505680`, factory `0x495bd0`): `Model` plus `SetUnit`,
-    /// `RefreshUnit` and `SetRotation` (table `0x84f1fc`), which a plain `<Model>` lacks.
+    /// The character model base: `Model` plus `SetUnit`, `RefreshUnit` and `SetRotation`, which a
+    /// plain `<Model>` lacks.
     PlayerModel,
-    /// `CGDressUpModelFrame` (factory `0x495c00`): `PlayerModel` plus `Undress`, `Dress` and
-    /// `TryOn` (table `0x84f190`); a try-on is composed app-side against live equipment.
+    /// `DressUpModel`: `PlayerModel` plus `Undress`, `Dress` and `TryOn`; a try-on is composed
+    /// app-side against live equipment.
     DressUpModel,
-    /// `TabardModel` (`0x503bd0`): `CGCharacterModelBase` plus ten verbs (table `0x84ee40`).
+    /// `TabardModel`: the character model base plus ten verbs.
     TabardModel,
-    /// `CSimpleMessageFrame`, `UIErrorsFrame`'s class: a sibling of the scrolling one.
+    /// `MessageFrame`, `UIErrorsFrame`'s class: a sibling of the scrolling one.
     MessageFrame,
-    /// `CSimpleMessageScrollFrame`, the chat window's ring-buffered class; a sibling of
-    /// [`FrameKind::MessageFrame`] whose offsets do not transfer (bases `0x7a3540`/`0x769090`).
+    /// `ScrollingMessageFrame`, the chat window's ring-buffered class; a sibling of
+    /// [`FrameKind::MessageFrame`] whose offsets do not transfer.
     ScrollingMessageFrame,
     ColorSelect,
     SimpleHtml,
     MovieFrame,
-    /// The `GameTooltip` family, a game-layer factory; its 38 bindings are `0x530c40`..`0x5364a0`.
+    /// The `GameTooltip` family, a game-layer factory with 38 bindings.
     GameTooltip,
-    /// The `<Minimap>` widget, a game-layer factory (`0x495940`) the app draws the map into.
+    /// The `<Minimap>` widget, a game-layer factory the app draws the map into.
     Minimap,
     /// The `Cooldown` widget (factory `0x51a380`): a `Frame` that paints its own sweep.
     Cooldown,
-    /// `CGQuestPOIFrame` (registered at `0x5210c1`): the world map's quest blob layer.
+    /// `QuestPOIFrame` (registered at `0x5210c1`): the world map's quest blob layer.
     QuestPoiFrame,
 }
 
 impl FrameKind {
-    /// A `CSimpleModel` kind, carrying a [`ModelState`].
+    /// A `Model` kind, carrying a [`ModelState`].
     pub fn is_model(self) -> bool {
         matches!(
             self,
@@ -67,7 +67,7 @@ impl FrameKind {
     }
 }
 
-/// The kind of a [`Region`] leaf, the client's `CScriptRegion`-derived non-frame objects.
+/// The kind of a [`Region`] leaf, the client's script-region non-frame objects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RegionKind {
     /// A `Texture` (BLP quad).
@@ -75,32 +75,31 @@ pub enum RegionKind {
     /// A `FontString` (text run).
     FontString,
     /// A frame's title region, the drag handle `Frame:CreateTitleRegion()` makes: a plain Region
-    /// (`0x773910`) that answers `"Region"` and has only the 19 Region methods.
+    /// that answers `"Region"` and has only the 19 Region methods.
     Title,
 }
 
-/// The state a modeled kind adds over `CSimpleFrame`, carried on the [`Frame`] node.
+/// The state a modeled kind adds over a plain `Frame`, carried on the [`Frame`] node.
 #[derive(Clone, Debug, PartialEq)]
 pub enum KindState {
     /// No modeled per-kind state.
     None,
-    /// `CSimpleStatusBar` (factory `0x6eef20`, LoadXML `0x782ef0`): a value filling a bar texture.
+    /// `StatusBar`: a value filling a bar texture.
     StatusBar(StatusBarState),
-    /// `CSimpleButton`/`CSimpleCheckbox` (factories `0x6eeab0`/`0x6eeb30`, LoadXML
-    /// `0x7788c0`/`0x785170`); the checkbox extends the button and uses the `checked` members.
+    /// `Button`/`CheckButton`; the checkbox extends the button and uses the `checked` members.
     Button(ButtonState),
-    /// `CSimpleEditBox` (factory `0x6eec70`): text, cursor, selection, flags and its FontString.
+    /// `EditBox`: text, cursor, selection, flags and its FontString.
     EditBox(EditBoxState),
-    /// `CSimpleMessageScrollFrame` (ctor `0x787670`): the line ring, fades and scrollback.
+    /// `ScrollingMessageFrame`: the line ring, fades and scrollback.
     ScrollingMessage(ScrollingMessageState),
-    /// `CSimpleMessageFrame` (ctor `0x785640`): lines and `insertMode`, no ring or scrollback.
+    /// `MessageFrame`: lines and `insertMode`, no ring or scrollback.
     Message(MessageFrameState),
-    /// `CSimpleScrollFrame`: the scroll child and offsets. `0x786db0` stores an offset unclamped;
-    /// `0x786e30` measures the range from the child's subtree.
+    /// `ScrollFrame`: the scroll child and offsets. The reference's setter stores an offset
+    /// unclamped; its range getter measures from the child's subtree.
     Scroll(ScrollFrameState),
-    /// `CSimpleSlider` (factory `0x6eee40`, LoadXML `0x789580`), every scrollbar included.
+    /// `Slider`, every scrollbar included.
     Slider(SliderState),
-    /// `CSimpleColorSelect` (ctor `0x78b220`, factory `0x6eef90`, LoadXML `0x78b3f0`).
+    /// `ColorSelect`.
     ColorSelect(ColorSelectState),
     /// The scene state of every model kind; the pixels are the app's.
     Model(ModelState),
@@ -199,7 +198,7 @@ impl TooltipAnchor {
         }
     }
 
-    /// The mode a name selects, in any case (`SStrCmpI`).
+    /// The mode a name selects, in any case (a case-insensitive compare).
     pub fn from_name(name: &str) -> Option<Self> {
         [
             TooltipAnchor::Left,
@@ -261,15 +260,14 @@ pub struct TooltipState {
     pub min_width_forced: bool,
     /// `FadeOut()`'s start on the `GetTime` clock; any fresh content or `Show` cancels the fade.
     pub fade_start: Option<f64>,
-    /// The guid of the unit this tooltip shows (`+0x368`/`+0x36c`, stored at `0x52a070`), whose
-    /// health watcher (`0x467e70`, registered at `0x52a0a8`) drives the bar; a `set_unit` push of
-    /// that unit, under any token, re-drives it.
+    /// The guid of the unit this tooltip shows (`+0x368`/`+0x36c`), whose health watcher drives the
+    /// bar; a `set_unit` push of that unit, under any token, re-drives it.
     pub unit_guid: Option<u64>,
     /// Shows world-hover content, which fades when the hover is lost; a window hover never fades.
     pub world_owned: bool,
     /// Armed for a compare render: the next `SetInventoryItem` prepends "Currently Equipped"
     /// (`[arg+0x18]`, not the compact `[arg+0x14]`), surviving the stock caller's `SetOwner` in
-    /// between (`MerchantFrame.xml:67-72`); the reference's route to `0x52b650` is untraced.
+    /// between (`MerchantFrame.xml:67-72`); the reference's route to the item builder is untraced.
     pub equipped_header_armed: bool,
     /// `SetPadding`: extra width past the content (`ItemRef.xml:40` sets 16 for the close button).
     pub padding: f32,
@@ -300,39 +298,39 @@ pub const TOOLTIP_FADE_SECS: f64 = 0.5;
 /// A wrap-flagged line's width, pinned when it is appended; the reference's column is untraced.
 pub const TOOLTIP_WRAP_WIDTH: f32 = 260.0;
 
-/// A model pane's scene: the `CSimpleModel` (`0x76c8e0`) members every model kind carries, read
-/// and written by `Model`'s 23 methods (table `0x878948`); the render is the app's.
+/// A model pane's scene: the `Model` members every model kind carries, read and written by
+/// `Model`'s 23 methods; the render is the app's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModelState {
     /// `SetModel`'s path as written (`.mdx`); the app's loader maps it to the shipped `.m2`.
     pub path: Option<String>,
-    /// `PlayerModel:SetUnit`'s unit (`0x505d70`); it and [`Self::path`] each clear the other.
+    /// `PlayerModel:SetUnit`'s unit; it and [`Self::path`] each clear the other.
     pub unit: Option<String>,
     /// `PlayerModel:SetCreature`'s creature entry (`0x597960`), drawn from its cached record's
     /// display; `SetUnit`, `SetModel` and `ClearModel` drop it.
     pub creature: Option<u32>,
     /// The last `SetSequence` id (`[bone0 block + 0xf8]`); what plays is [`Self::armed`].
     pub sequence: i32,
-    /// The pane's own scene clock in ms (`0x76cfc0`): its `OnUpdate` (`0x76d7f0`) adds
-    /// `trunc(elapsed · 1000)` only while shown; `AdvanceTime` is inert, `SetModel` keeps it.
+    /// The pane's own scene clock in ms: its `OnUpdate` adds `trunc(elapsed · 1000)` only while
+    /// shown; `AdvanceTime` is inert, `SetModel` keeps it.
     pub clock_ms: u64,
-    /// The sequence on bone slot 0. A `SetSequence` id the file does not own stops what played
-    /// and arms nothing (`0x7121a0` interrupts before its bounds check).
+    /// The sequence on bone slot 0. A `SetSequence` id the file does not own stops what played and
+    /// arms nothing.
     pub armed: Option<ArmedSequence>,
     /// `SetModel` ran and the loader's completion ([`ModelState::seed_from_facts`]) awaits facts.
     pub pending_seed: bool,
-    /// `ReplaceIconTexture`'s override (`0x76cfe0`); `SetModel` and `ClearModel` drop it.
+    /// `ReplaceIconTexture`'s override; `SetModel` and `ClearModel` drop it.
     pub icon: Option<String>,
-    /// No size authored: the pane takes the file's box extent, `bboxExtent · 768·√(a²+1)` units
-    /// (`0x6f1eb0`, `0x76d080`), re-derived on aspect change; an authored size clears it for good.
+    /// No size authored: the pane takes the file's box extent, `bboxExtent · 768·√(a²+1)` units,
+    /// re-derived on aspect change; an authored size clears it for good.
     pub implicit_size: bool,
-    /// Yaw in radians (`+0x39c`), one slot written by both `Model:SetFacing` (`0x76dce0`) and
-    /// `PlayerModel:SetRotation` (`0x505f00`), so `GetFacing` reads either back.
+    /// Yaw in radians (`+0x39c`), one slot written by both `Model:SetFacing` and
+    /// `PlayerModel:SetRotation`, so `GetFacing` reads either back.
     pub facing: f32,
     /// `SetModelScale`: the model's scale within the pane, default 1.
     pub scale: f32,
     /// The camera index still to install (`+0x320`): the ctor's `Some(0)`, or a `SetCamera` made
-    /// before the facts (`0x76cec0`). While it is `Some` the pane draws nothing (`0x76d5f0`).
+    /// before the facts. While it is `Some` the pane draws nothing.
     pub camera_pending: Option<i32>,
     /// The installed camera (`+0x31c`): a raw camera-table index, never via `cameraLookup`, drawn
     /// in perspective; `None`, the NULL camera an out-of-range index installs, draws orthographic.
@@ -350,11 +348,10 @@ pub struct ModelState {
     pub fog_near: f32,
     /// Fog far (`+0x3b0`), shaped like [`Self::fog_near`]; the ctor's is `1.0`.
     pub fog_far: f32,
-    /// A `ModelFFX`, the glue's `CSimpleModelFFX` (`0x46fa00`). Its vtable differs from
-    /// `CSimpleModel`'s in two slots past the destructor: its OnShow (`0x46fa60`) installs the glue
-    /// glow pass (`0x6cde60` with `[0xb414c4]`) and pins `LightParams.glow` to `*0x8380b4` (0.30),
-    /// and its layer-2 paint callback (`0x46fad0`, registered by `0x46fa90`) brackets the model
-    /// paint `0x76d240` with the full-screen-effect pass pair `0x6cd890`/`0x6cda70`.
+    /// A `ModelFFX`, the glue's model class. Its vtable differs from a plain `Model`'s in two slots
+    /// past the destructor: its OnShow installs the glue glow pass and pins `LightParams.glow` to
+    /// (0.30), and its layer-2 paint callback brackets the model paint with the full-screen-effect
+    /// pass pair.
     pub ffx: bool,
     /// `SetGlow(value)`: the model's glow, `None` until a script sets one.
     pub glow: Option<f32>,
@@ -362,20 +359,19 @@ pub struct ModelState {
     /// (`AddLight`, `AddCharacterLight`, `AddPetLight`), each two arrays of up to four,
     /// `ResetLights` clearing all six.
     pub ffx_lights: [[Vec<ModelLight>; 2]; 3],
-    /// The scene's lighting callback is the select screen's (`GenericLightingCallback`
-    /// `0x4e3a20`, installed by `SetCharSelectBackground` at `0x4e3c7f`); it rides the model
-    /// instance, so the next `SetModel` or `ClearModel` drops it.
+    /// The scene's lighting callback is the select screen's (`0x4e3a20`, installed by
+    /// `SetCharSelectBackground`); it rides the model instance, so the next `SetModel` or
+    /// `ClearModel` drops it.
     pub select_lighting: bool,
-    /// The number of the instance the last `SetModel` made: `0x76cce0` builds a new one on every
-    /// call (`0x76ccf5`-`0x76cd0d`), its scene starting over, even for the file it held. 0 for
-    /// none.
+    /// The number of the instance the last `SetModel` made: the reference builds a new one on every
+    /// call, its scene starting over, even for the file it held. 0 for none.
     pub instance: u64,
 }
 
 /// A model pane's armed fog, all the renderer needs ([`ModelState::armed_fog`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModelFog {
-    /// The packed `0xAARRGGBB` colour (`+0x3a8`); the fill callback `0x76d680` never reads alpha.
+    /// The packed `0xAARRGGBB` colour (`+0x3a8`); the fill callback never reads alpha.
     pub color: u32,
     /// Raw near and far (`+0x3ac`/`+0x3b0`); a batch fogs only when `1/(far − near) > 0`, so
     /// `far <= near` draws unfogged.
@@ -384,18 +380,18 @@ pub struct ModelFog {
 }
 
 impl ModelFog {
-    /// The colour as `[r, g, b]` in `0..=1`, the fill callback's unpack (`0x7bbf20`).
+    /// The colour as `[r, g, b]` in `0..=1`, the fill callback's unpack.
     pub fn rgb(&self) -> [f32; 3] {
         [16, 8, 0].map(|shift| ((self.color >> shift) & 0xff) as f32 / 255.0)
     }
 }
 
-/// A model pane's embedded `CGLight` (`+0x324`), its only light (`0x76d680`): off on a plain
-/// `<Model>` until Lua enables it, so a lit batch draws black (`0x71bf90`), and on for a
-/// `PlayerModel` (ctor `0x505680`). Colours are stored times their intensity.
+/// A model pane's embedded light (`+0x324`), its only light: off on a plain `<Model>` until Lua
+/// enables it, so a lit batch draws black, and on for a `PlayerModel`. Colours are stored times
+/// their intensity.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModelLight {
-    /// `+0x60`: set by a nonzero `SetLight` (`0x76e1e0`) first argument; `SetLight(0, …)` is inert.
+    /// `+0x60`: set by a nonzero `SetLight` first argument; `SetLight(0, …)` is inert.
     pub enabled: bool,
     /// `+0x08`: point (`1`, both ctors) or directional; picks where `SetLight`'s `(x, y, z)` goes.
     pub omni: bool,
@@ -407,7 +403,7 @@ pub struct ModelLight {
     pub diffuse: [f32; 3],
 }
 
-/// The `<Model>` ctor's light (`0x76c8e0`, `0x71b4a0`): white, and switched off.
+/// The `<Model>` ctor's light: white, and switched off.
 impl Default for ModelLight {
     fn default() -> Self {
         Self {
@@ -420,7 +416,7 @@ impl Default for ModelLight {
     }
 }
 
-/// A fresh pane as the `CSimpleModel` ctor leaves it.
+/// A fresh pane as the `Model` constructor leaves it.
 impl Default for ModelState {
     fn default() -> Self {
         Self {
@@ -452,8 +448,8 @@ impl Default for ModelState {
     }
 }
 
-/// What bone slot 0 plays, as the `0x7121a0` arm leaves it: the id and the anchor the cursor
-/// counts from, with no counter of its own, so a caller can scrub the pane every paint.
+/// What bone slot 0 plays, as the arm leaves it: the id and the anchor the cursor counts from, with
+/// no counter of its own, so a caller can scrub the pane every paint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArmedSequence {
     /// The `AnimationData.dbc` id: `SetSequence`'s argument, or the loader's Stand seed.
@@ -494,22 +490,22 @@ pub struct ModelFileFacts {
     pub sequences: Vec<SequenceFacts>,
     /// The header bounding box `(min, max)` in model space.
     pub bbox: ([f32; 3], [f32; 3]),
-    /// The camera table's size (`MD20+0x124`), `SetCamera`'s bound (`0x76cec0`); 0 for most models.
+    /// The camera table's size (`MD20+0x124`), `SetCamera`'s bound; 0 for most models.
     pub cameras: u32,
 }
 
 impl ModelFileFacts {
-    /// Whether the file owns `anim_id`: `0x711960`'s `animationLookup` test.
+    /// Whether the file owns `anim_id`: the reference's `animationLookup` test.
     pub fn owns(&self, anim_id: u16) -> bool {
         self.sequences.iter().any(|s| s.anim_id == anim_id)
     }
 
-    /// The sequence `SetSequence(anim_id)` plays: the id's first slot, variation 0 (`0x7121a0`).
+    /// The sequence `SetSequence(anim_id)` plays: the id's first slot, variation 0.
     pub fn sequence(&self, anim_id: u16) -> Option<&SequenceFacts> {
         self.sequences.iter().find(|s| s.anim_id == anim_id)
     }
 
-    /// The box's `(x, y)` extent, a size-less pane's implicit rect (`0x76d080`/`0x76d0d0`).
+    /// The box's `(x, y)` extent, a size-less pane's implicit rect.
     pub fn extent(&self) -> (f32, f32) {
         let (min, max) = self.bbox;
         ((max[0] - min[0]).max(0.0), (max[1] - min[1]).max(0.0))
@@ -520,7 +516,7 @@ impl ModelFileFacts {
         u32::try_from(idx).ok().filter(|&i| i < self.cameras)
     }
 
-    /// The loader's idle seed (`0x70ebd0`): Stand (id 0) if owned, else the first sequence's id.
+    /// The loader's idle seed: Stand (id 0) if owned, else the first sequence's id.
     pub fn stand_id(&self) -> Option<u16> {
         if self.owns(0) {
             Some(0)
@@ -542,8 +538,8 @@ pub fn model_key(path: &str) -> String {
 }
 
 impl ModelState {
-    /// `SetModel` (`0x76cce0`): a fresh instance, dropping unit, icon override and arm, seeded now
-    /// if the file is resident, else when it lands (`0x70ebd0`); the scene clock runs on.
+    /// `SetModel`: a fresh instance, dropping unit, icon override and arm, seeded now if the file
+    /// is resident, else when it lands; the scene clock runs on.
     pub fn set_file(&mut self, path: String, facts: Option<&ModelFileFacts>) {
         self.path = Some(path);
         self.unit = None;
@@ -568,8 +564,8 @@ impl ModelState {
         self.select_lighting = false;
     }
 
-    /// `SetSequence`/`SetSequenceTime` (`0x7121a0`): interrupts what plays, with no
-    /// `OnAnimFinished` (`0x76cdc6`), then arms `id` at `ms` unless the known file lacks it.
+    /// `SetSequence`/`SetSequenceTime`: interrupts what plays, with no `OnAnimFinished`, then arms
+    /// `id` at `ms` unless the known file lacks it.
     pub fn arm(&mut self, id: i32, ms: i64, facts: Option<&ModelFileFacts>) {
         self.sequence = id;
         let owned = u16::try_from(id)
@@ -583,8 +579,8 @@ impl ModelState {
         });
     }
 
-    /// The loader's completion (`0x70ebd0`): arms Stand, then replays an arm queued during the
-    /// load at its offset, which decides the result. A later call only re-checks ownership.
+    /// The loader's completion: arms Stand, then replays an arm queued during the load at its
+    /// offset, which decides the result. A later call only re-checks ownership.
     pub fn seed_from_facts(&mut self, facts: &ModelFileFacts) {
         let queued = self.armed.filter(|_| self.pending_seed);
         if self.pending_seed {
@@ -604,7 +600,7 @@ impl ModelState {
                 self.armed = None;
             }
         }
-        // The model-ready hook's other half (`0x76ce00`): the pending camera, 0 from the ctor.
+        // The model-ready hook's other half: the pending camera, 0 from the ctor.
         if let Some(idx) = self.camera_pending {
             self.install_camera(idx, Some(facts));
         }
@@ -619,8 +615,8 @@ impl ModelState {
         })
     }
 
-    /// `SetCamera` by raw index (`0x76cec0`): deferred until the facts are known, then installed
-    /// or answered with the NULL camera, either clearing the pending index (`0x76ce80`).
+    /// `SetCamera` by raw index: deferred until the facts are known, then installed or answered
+    /// with the NULL camera, either clearing the pending index.
     pub fn install_camera(&mut self, idx: i32, facts: Option<&ModelFileFacts>) {
         match facts {
             Some(f) => {
@@ -651,8 +647,8 @@ impl ModelState {
         })
     }
 
-    /// The armed sequence ran its length and `OnAnimFinished` (`0x76cdc0`) is owed, once per arm
-    /// and for a loop too: `0x719370` enqueues it before testing the loop flag.
+    /// The armed sequence ran its length and `OnAnimFinished` is owed, once per arm and for a loop
+    /// too: the reference enqueues it before testing the loop flag.
     pub fn completion_due(&self, facts: &ModelFileFacts) -> bool {
         let Some(armed) = self.armed else {
             return false;
@@ -670,27 +666,27 @@ impl ModelState {
     }
 }
 
-/// The Minimap widget's state. The client keeps two zoom indices, outdoor (`0x86f698`, CVar
-/// `minimapZoom`) and indoor (`0x86f69c`, CVar `minimapInsideZoom`, radii `{150,120,90,60,40,25}`
-/// yd); the WMO-interior flag `0xceaa60` picks which one `GetZoom`/`SetZoom` use.
+/// The Minimap widget's state. The client keeps two zoom indices, outdoor (CVar `minimapZoom`) and
+/// indoor (CVar `minimapInsideZoom`, radii `{150,120,90,60,40,25}` yd); the WMO-interior flag picks
+/// which one `GetZoom`/`SetZoom` use.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MinimapState {
-    /// The outdoor zoom index, 0 widest to 5 tightest; `SetZoom` clamps at 5 (`0x6daa10`).
+    /// The outdoor zoom index, 0 widest to 5 tightest; `SetZoom` clamps at 5.
     pub zoom: u8,
     pub inside_zoom: u8,
     /// Inside a WMO interior, which picks the index; pushed by the app, which owns that test.
     pub inside: bool,
     /// `Minimap:SetMaskTexture`'s mask, write-only from Lua; `None` is [`MINIMAP_DEFAULT_MASK`].
     pub mask_texture: Option<String>,
-    /// The player-arrow `Model` (`[Minimap+0x338]`), reached by `SetPlayerFacing` (`0x4eb8e0`).
+    /// The player-arrow `Model` (`[Minimap+0x338]`), reached by the minimap's player-facing setter.
     pub player_arrow: Option<FrameHandle>,
     /// The player texture's `[width, height]` in frame units (`0x57e280`/`0x57e1c0`), unsized
     /// from the ctor (`0x57dca0`).
     pub player_texture_size: [f32; 2],
 }
 
-/// Both zoom CVars register with `"3"` (`0x48fc5a`/`0x48fc76`) and the reset copies the CVar in;
-/// a higher index zooms in, 3 being a 60 yd indoor radius and a 133.3 yd outdoor half-extent.
+/// Both zoom CVars register with `"3"` and the reset copies the CVar in; a higher index zooms in, 3
+/// being a 60 yd indoor radius and a 133.3 yd outdoor half-extent.
 pub const MINIMAP_DEFAULT_ZOOM: u8 = 3;
 
 impl Default for MinimapState {
@@ -727,34 +723,34 @@ impl MinimapState {
     }
 }
 
-/// The zoom-level count (`GetZoomLevels`, `0x6da9a0`).
+/// The zoom-level count (`GetZoomLevels`).
 pub const MINIMAP_ZOOM_LEVELS: u8 = 6;
 
 /// The engine's circular minimap mask, which `Minimap:SetMaskTexture` replaces.
 pub const MINIMAP_DEFAULT_MASK: &str = "Textures\\MinimapMask";
 
-/// The `Model` children the `CMinimap` ctor (`0x4edbc0`) makes before its XML ones, even for an
-/// unloadable file (`0x4ee286`): five rim and party arrows, three POI arrows, the player arrow;
-/// addons (Questie, pfQuest) read `({Minimap:GetChildren()})[9]` as the player arrow.
+/// The `Model` children the `CMinimap` ctor makes before its XML ones, even for an unloadable file:
+/// five rim and party arrows, three POI arrows, the player arrow; addons (Questie, pfQuest) read
+/// `({Minimap:GetChildren()})[9]` as the player arrow.
 pub const MINIMAP_ENGINE_CHILDREN: usize = 9;
 
-/// The default `minimapArrowModel` (`0x84c768`), applied to engine children 1 to 8 (`0x4ee170`).
+/// The default `minimapArrowModel`, applied to engine children 1 to 8.
 pub const MINIMAP_DEFAULT_ARROW_MODEL: &str = "Interface\\Minimap\\Rotating-MinimapArrow.mdx";
 
-/// The default `minimapPlayerModel` (`0x8453c0`), applied to engine child 9 alone (`0x4ee260`).
+/// The default `minimapPlayerModel`, applied to engine child 9 alone.
 pub const MINIMAP_DEFAULT_PLAYER_MODEL: &str = "Interface\\Minimap\\MinimapArrow.mdx";
 
-/// A `CSimpleScrollFrame`'s members (`+0x318`/`+0x324`/`+0x328`); the getters measure the ranges
-/// live, and `range` is the pump's cache.
+/// A `ScrollFrame`'s members (`+0x318`/`+0x324`/`+0x328`); the getters measure the ranges live, and
+/// `range` is the pump's cache.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ScrollFrameState {
     /// `SetScrollChild`'s frame, which pans within this frame's rect.
     pub child: Option<FrameHandle>,
-    /// `SetHorizontalScroll`'s offset in px, unclamped; `0x787100` anchors the child at
+    /// `SetHorizontalScroll`'s offset in px, unclamped; anchors the child at
     /// `(+horizontal, +vertical)`, so scrolling right takes a negative offset, down a positive.
     pub horizontal: f32,
-    /// `SetVerticalScroll`'s offset in px (`0x786db0`), unclamped: a positive one lifts the child
-    /// to show what is below; the FrameXML scroll bar's range keeps it in bounds.
+    /// `SetVerticalScroll`'s offset in px, unclamped: a positive one lifts the child to show what
+    /// is below; the FrameXML scroll bar's range keeps it in bounds.
     pub vertical: f32,
     /// The `(horizontal, vertical)` ranges last measured, 12340's `[+0x2a4]`/`[+0x2a8]`, zero
     /// from the ctor (`0x96b2d0`): `OnScrollRangeChanged` fires when a measure moves either.
@@ -769,7 +765,7 @@ pub struct ScrollFrameState {
 }
 
 /// `Button:SetFont`'s record, one for the client's three embedded fonts (`+0x33c`, `+0x434`,
-/// `+0x3b8`), since `SetFont` (`0x780880`) sets all three alike and no Lua call parts them.
+/// `+0x3b8`), since `SetFont` sets all three alike and no Lua call parts them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ButtonFont {
     pub path: String,
@@ -780,8 +776,8 @@ pub struct ButtonFont {
     pub flags: String,
 }
 
-/// A button's state, `[CSimpleButton+0x328]`: 0 DISABLED, 1 NORMAL, 2 PUSHED, also the index into
-/// its texture array `+0x4b8`. Past the ctor, `SetState` (`0x779790`) is its only writer.
+/// A button's state, `[button+0x328]`: 0 DISABLED, 1 NORMAL, 2 PUSHED, also the index into its
+/// texture array `+0x4b8`. Past the constructor, the state setter is its only writer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ButtonVisualState {
     /// `Disable()`: the button fires no clicks and draws from the Disabled slot.
@@ -798,7 +794,7 @@ pub enum ButtonVisualState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ButtonState {
     /// The lock (`+0x32c`) of `SetButtonState(state, locked)`: while set, the hide, press, release
-    /// and drag edges skip the button, and an `Enable`/`Disable` that runs (`0x779160`) clears it.
+    /// and drag edges skip the button, and an `Enable`/`Disable` that runs clears it.
     pub locked: bool,
     /// A CheckButton's checked flag (`+0x4dc`, XML `checked`).
     pub checked: bool,
@@ -810,8 +806,8 @@ pub struct ButtonState {
     pub disabled: Option<RegionHandle>,
     /// `<HighlightTexture>` (`+0x4c8`), drawn over the state texture while hovered.
     pub highlight: Option<RegionHandle>,
-    /// `<CheckedTexture>` (`+0x4e0`), drawn while checked; `0x7854c0` shows
-    /// [`Self::disabled_checked`] instead when disabled and it exists.
+    /// `<CheckedTexture>` (`+0x4e0`), drawn while checked; shows [`Self::disabled_checked`] instead
+    /// when disabled and it exists.
     pub checked_tex: Option<RegionHandle>,
     /// `<DisabledCheckedTexture>` (`+0x4e4`), which replaces the checked texture when disabled.
     pub disabled_checked: Option<RegionHandle>,
@@ -839,8 +835,8 @@ pub struct ButtonState {
     pub locked_highlight: bool,
     /// The shown state texture (`+0x4c4`), written only by `set_state` and `set_state_slot`.
     shown: Option<RegionHandle>,
-    /// The state (`+0x328`), a latch moved only by edges: the enter and leave notifies
-    /// (`0x779490`/`0x7794e0`) never write it, so leaving a held button does not un-press it.
+    /// The state (`+0x328`), a latch moved only by edges: the enter and leave notifies never write
+    /// it, so leaving a held button does not un-press it.
     state: ButtonVisualState,
 }
 
@@ -891,8 +887,8 @@ pub fn mouse_button_bit(button: &str) -> Option<u32> {
     }
 }
 
-/// `MouseButtonStringToBitmask` (`0x96e9c0`): one `RegisterForClicks` name's bits, in any case;
-/// `AnyDown` is every Down bit, `AnyUp` every bit above them, anything else 0.
+/// The click-name parse (`0x96e9c0`): one `RegisterForClicks` name's bits, in any case; `AnyDown`
+/// is every Down bit, `AnyUp` every bit above them, anything else 0.
 pub fn click_mask_of(name: &str) -> u64 {
     let lower = name.to_ascii_lowercase();
     match lower.as_str() {
@@ -924,9 +920,9 @@ impl ButtonState {
         }
     }
 
-    /// `SetState` (`0x779790`): entering a state with no texture keeps the shown one
-    /// (`0x7797be`/`0x7797e2`). A button is NORMAL before `LoadXML` adds its art (ctor
-    /// `0x7786a0`), so a press or `Disable()` without its own texture keeps the normal art.
+    /// The state setter: entering a state with no texture keeps the shown one. A button is NORMAL
+    /// before its XML load adds its art, so a press or `Disable()` without its own texture keeps
+    /// the normal art.
     fn set_state(&mut self, new: ButtonVisualState) {
         if new == self.state {
             return;
@@ -937,28 +933,28 @@ impl ButtonState {
         }
     }
 
-    /// `SetButtonState(state, locked)` (`0x779790`), the one writer: the lock is stored before the
-    /// equal-state early-out (`0x77979d`), so it is set or cleared even when the state holds.
+    /// `SetButtonState(state, locked)`, the one writer: the lock is stored before the equal-state
+    /// early-out, so it is set or cleared even when the state holds.
     pub fn set_button_state(&mut self, new: ButtonVisualState, locked: bool) {
         self.locked = locked;
         self.set_state(new);
     }
 
-    /// `IsEnabled` (`0x7800b0`): the state alone; the class has no enabled flag.
+    /// `IsEnabled`: the state alone; the class has no enabled flag.
     pub fn enabled(&self) -> bool {
         self.state != ButtonVisualState::Disabled
     }
 
-    /// `GetButtonState` (`0x780180`): the latched state, never re-derived from the cursor.
+    /// `GetButtonState`: the latched state, never re-derived from the cursor.
     pub fn button_state(&self) -> ButtonVisualState {
         self.state
     }
 
-    // ── The engine's edges ──
-    // Six of `0x779790`'s seven call sites, all passing `locked = 0`; the seventh is Lua's.
+    // ── The engine's edges ── Six of the state setter's seven call sites, all passing `locked =
+    // 0`; the seventh is Lua's.
 
-    /// `SetEnabled` (`0x779160`): a no-op if nothing changes (`0x779175`/`0x77919c`), so enabling a
-    /// pushed button neither un-pushes nor unlocks it; returns whether it ran.
+    /// The enable setter: a no-op if nothing changes, so enabling a pushed button neither un-pushes
+    /// nor unlocks it; returns whether it ran.
     pub fn set_enabled(&mut self, on: bool) -> bool {
         if on == self.enabled() {
             return false;
@@ -974,40 +970,40 @@ impl ButtonState {
         true
     }
 
-    /// The hide edge (`0x7791e0`): an unlocked, enabled button goes NORMAL; `<OnHide>` still fires.
+    /// The hide edge: an unlocked, enabled button goes NORMAL; `<OnHide>` still fires.
     pub fn on_hide(&mut self) {
         if self.state != ButtonVisualState::Disabled && !self.locked {
             self.set_button_state(ButtonVisualState::Normal, false);
         }
     }
 
-    /// The press edge (`0x779210`), past the registration and hit gates, so a registered click
-    /// pushes the button even when the click itself does nothing.
+    /// The press edge, past the registration and hit gates, so a registered click pushes the button
+    /// even when the click itself does nothing.
     pub fn on_mouse_down(&mut self) {
         if !self.locked && self.state != ButtonVisualState::Disabled {
             self.set_button_state(ButtonVisualState::Pushed, false);
         }
     }
 
-    /// The release edge (`0x7792d0`): a pushed, unlocked button goes NORMAL wherever the cursor
-    /// is, even one Lua pushed. The caller skips it when the release ends a drag (`0x7792df`).
+    /// The release edge: a pushed, unlocked button goes NORMAL wherever the cursor is, even one Lua
+    /// pushed. The caller skips it when the release ends a drag.
     pub fn on_mouse_up(&mut self) {
         if !self.locked && self.state == ButtonVisualState::Pushed {
             self.set_button_state(ButtonVisualState::Normal, false);
         }
     }
 
-    /// The drag-start edge (`0x7793f0`), before `<OnDragStart>`: it fires at the drag threshold
-    /// (0.01 frame units, `0x81c468`) on a `RegisterForDrag` frame, not at the rect edge.
+    /// The drag-start edge, before `<OnDragStart>`: it fires at the drag threshold (0.01 frame
+    /// units) on a `RegisterForDrag` frame, not at the rect edge.
     pub fn on_drag_start(&mut self) {
         if !self.locked && self.state != ButtonVisualState::Disabled {
             self.set_button_state(ButtonVisualState::Normal, false);
         }
     }
 
-    /// `SetNormalTexture` and kin (`0x778fd0`): stores the slot, shown only if it is the current
-    /// state's (`0x779027`). The reference destroys a displaced texture (`0x77900a`); here the
-    /// region is made once and repainted, so a held `GetNormalTexture()` stays live.
+    /// `SetNormalTexture` and kin: stores the slot, shown only if it is the current state's. The
+    /// reference destroys a displaced texture; here the region is made once and repainted, so a
+    /// held `GetNormalTexture()` stays live.
     pub fn set_state_slot(&mut self, state: ButtonVisualState, rh: Option<RegionHandle>) {
         match state {
             ButtonVisualState::Disabled => self.disabled = rh,
@@ -1043,7 +1039,7 @@ impl ButtonState {
 /// A StatusBar's value and fill texture, zero-initialized like the client's members.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatusBarState {
-    /// `SetMinMaxValues` low bound (XML `minValue`); the loader swaps a reversed pair (`0x782ef0`).
+    /// `SetMinMaxValues` low bound (XML `minValue`); the loader swaps a reversed pair.
     pub min: f32,
     /// `SetMinMaxValues` high bound (XML `maxValue`).
     pub max: f32,
@@ -1051,7 +1047,7 @@ pub struct StatusBarState {
     pub range_set: bool,
     /// The current value (`SetValue`/XML `defaultValue`), clamped into `[min, max]`.
     pub value: f32,
-    /// VERTICAL fills bottom-up; HORIZONTAL, the default, left to right (enum `0x811b00`).
+    /// VERTICAL fills bottom-up; HORIZONTAL, the default, left to right.
     pub vertical: bool,
     /// The fill texture (`<BarTexture>`), cropped to [`Self::fraction`] along the orientation axis.
     pub bar: Option<RegionHandle>,
@@ -1068,17 +1064,17 @@ impl StatusBarState {
     }
 }
 
-/// A `CSimpleSlider`'s state. The default orientation is VERTICAL, unlike a StatusBar's: the
-/// stock `UIPanelScrollBarTemplate` declares none and is vertical.
+/// A `Slider`'s state. The default orientation is VERTICAL, unlike a StatusBar's: the stock
+/// `UIPanelScrollBarTemplate` declares none and is vertical.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SliderState {
-    /// `SetMinMaxValues` low bound (XML `minValue`); a reversed pair is not swapped (`0x789580`).
+    /// `SetMinMaxValues` low bound (XML `minValue`); a reversed pair is not swapped.
     pub min: f32,
     /// `SetMinMaxValues` high bound (XML `maxValue`).
     pub max: f32,
     /// The stored value (`+0x320`), zero-initialised and readable before any `SetValue`.
     pub value: f32,
-    /// `+0x314` bit 1, set by `SetMinMaxValues` (`0x7898f0`); until then `SetValue` is a no-op.
+    /// `+0x314` bit 1, set by `SetMinMaxValues`; until then `SetValue` is a no-op.
     pub range_valid: bool,
     /// `+0x314` bit 2, set by the first `SetValue`, which always fires `OnValueChanged`;
     /// `SetMinMaxValues` re-clamps the value only once this is set.
@@ -1086,7 +1082,7 @@ pub struct SliderState {
     /// `SetValueStep` (`+0x324`): every stored value is quantised onto `min + n·step`
     /// ([`slider_set_value`]); 0, the default the scrollbars keep, skips the quantiser.
     pub step: f32,
-    /// VERTICAL, the default, puts `min` at the top of the track (enum `0x811b00`).
+    /// VERTICAL, the default, puts `min` at the top of the track.
     pub vertical: bool,
     /// The thumb texture (`<ThumbTexture>`), placed at [`Self::fraction`] along the track.
     pub thumb: Option<RegionHandle>,
@@ -1111,10 +1107,10 @@ impl Default for SliderState {
 }
 
 /// Where a press grabs the thumb: the offset from its leading edge that stays under the cursor,
-/// with distances from the track's leading edge so every UI surface shares it. Off the thumb it
-/// is the center, warping the value under the cursor. Deviation: on the thumb it is the grabbed
-/// point, where `CSimpleSlider` (`0x789ba0`/`0x789ca0`) always centers it, because that feels
-/// less surprising and a stock-sized thumb hides the difference.
+/// with distances from the track's leading edge so every UI surface shares it. Off the thumb it is
+/// the center, warping the value under the cursor. Deviation: on the thumb it is the grabbed point,
+/// where the reference's slider always centers it, because that feels less surprising and a
+/// stock-sized thumb hides the difference.
 pub fn slider_grab(cursor: f32, thumb_lead: f32, thumb_extent: f32) -> f32 {
     if cursor >= thumb_lead && cursor <= thumb_lead + thumb_extent {
         cursor - thumb_lead
@@ -1135,11 +1131,11 @@ pub fn slider_fraction(
     (travel > 0.0).then(|| ((cursor - grab) / travel).clamp(0.0, 1.0))
 }
 
-/// `CSimpleSlider::SetValue`'s arithmetic (`0x789930`), op for op. The client holds the range as
-/// `min` and `span` (`0x7898f0` stores `end − start`). Clamp into `[min, span + min]`, a
-/// degenerate range pinning to `span + min`; then, unless `step` is 0, round half away from zero
-/// onto the `min + n·step` lattice. The result is not re-clamped, so an uneven range can overshoot
-/// `max` by up to half a step. The f64 intermediates are the x87 registers, each `as f32` a spill.
+/// `Slider:SetValue`'s arithmetic, op for op. The client holds the range as `min` and `span`
+/// (stores `end − start`). Clamp into `[min, span + min]`, a degenerate range pinning to `span +
+/// min`; then, unless `step` is 0, round half away from zero onto the `min + n·step` lattice. The
+/// result is not re-clamped, so an uneven range can overshoot `max` by up to half a step. The f64
+/// intermediates are the x87 registers, each `as f32` a spill.
 pub fn slider_set_value(v: f32, min: f32, span: f32, step: f32) -> f32 {
     let minv = f64::from(min);
     let vv = f64::from(v);
@@ -1188,9 +1184,9 @@ impl SliderState {
         }
     }
 
-    /// `SetValue` (`0x789930`): stores the settled value, returning it when `OnValueChanged` fires:
-    /// never without a range, always the first time, else only on a change, which is what ends the
-    /// scrollbar's `SetVerticalScroll` loop. The span is derived as `0x7898f0` computes it.
+    /// `SetValue`: stores the settled value, returning it when `OnValueChanged` fires: never
+    /// without a range, always the first time, else only on a change, which is what ends the
+    /// scrollbar's `SetVerticalScroll` loop. The span is derived as the reference computes it.
     pub fn store_value(&mut self, v: f32) -> Option<f32> {
         if !self.range_valid {
             return None;
@@ -1205,9 +1201,9 @@ impl SliderState {
         })
     }
 
-    /// `SetValueStep` (`0x789a60`): stores the step, then with a range re-runs `SetMinMaxValues`
-    /// with the max re-derived as `f32(span + min)` (`0x789a91`), which can re-quantise the value,
-    /// fire `OnValueChanged` and even change the range, since that sum rounds.
+    /// `SetValueStep`: stores the step, then with a range re-runs `SetMinMaxValues` with the max
+    /// re-derived as `f32(span + min)`, which can re-quantise the value, fire `OnValueChanged` and
+    /// even change the range, since that sum rounds.
     pub fn set_value_step(&mut self, step: f32) -> Option<f32> {
         self.step = step;
         if !self.range_valid {
@@ -1218,7 +1214,7 @@ impl SliderState {
         self.set_min_max(self.min, max)
     }
 
-    /// `SetMinMaxValues` (`0x7898f0`): sets the range; re-settles the value only once one exists.
+    /// `SetMinMaxValues`: sets the range; re-settles the value only once one exists.
     pub fn set_min_max(&mut self, min: f32, max: f32) -> Option<f32> {
         (self.min, self.max) = (min, max);
         self.range_valid = true;
@@ -1230,27 +1226,27 @@ impl SliderState {
     }
 }
 
-/// A `ColorSelect`'s colour (ctor `0x78b220`): HSV `f32`s, hue in degrees, `-1` for a grey
-/// (`0x7bbccd`). RGB enters rounded half up (quantizer A) and leaves floored (B), so a
-/// `GetColorRGB`/`SetColorRGB` round trip drops a channel by 1 for about 9.75 % of colours, and
-/// repeating it ratchets; that drift is the reference's. `SetColorRGB` discards a fifth argument.
+/// A `ColorSelect`'s colour: HSV `f32`s, hue in degrees, `-1` for a grey. RGB enters rounded half
+/// up (quantizer A) and leaves floored (B), so a `GetColorRGB`/`SetColorRGB` round trip drops a
+/// channel by 1 for about 9.75 % of colours, and repeating it ratchets; that drift is the
+/// reference's. `SetColorRGB` discards a fifth argument.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ColorSelectState {
     /// `[hue°, saturation, value]` (`+0x328`/`+0x32c`/`+0x330`); an RGB grey has hue `-1.0`.
     pub hsv: [f32; 3],
-    /// The hue disc (`<ColorWheelTexture>`, `0x78de90`, `+0x318`), its rect the wheel's hit box.
+    /// The hue disc (`<ColorWheelTexture>`, `+0x318`), its rect the wheel's hit box.
     pub wheel: Option<RegionHandle>,
-    /// The disc's marker (`<ColorWheelThumbTexture>`, `0x78e160`), placed from `hsv` at extract;
-    /// an XML anchor on it is discarded (`0x78b850` re-points it on every colour change).
+    /// The disc's marker (`<ColorWheelThumbTexture>`), placed from `hsv` at extract; an XML anchor
+    /// on it is discarded (the reference re-points it on every colour change).
     pub wheel_thumb: Option<RegionHandle>,
-    /// The brightness strip (`<ColorValueTexture>`, `0x78e450`, `+0x320`), the second hit box.
+    /// The brightness strip (`<ColorValueTexture>`, `+0x320`), the second hit box.
     pub value_strip: Option<RegionHandle>,
-    /// The strip's marker (`<ColorValueThumbTexture>`, `0x78e720`), placed from `hsv[2]`.
+    /// The strip's marker (`<ColorValueThumbTexture>`), placed from `hsv[2]`.
     pub value_thumb: Option<RegionHandle>,
 }
 
 impl Default for ColorSelectState {
-    /// The ctor's white: H=0, S=0, V=1 (`0x78b27e`/`0x78b298`/`0x78b28e`).
+    /// The ctor's white: H=0, S=0, V=1.
     fn default() -> ColorSelectState {
         ColorSelectState {
             hsv: [0.0, 0.0, 1.0],
@@ -1263,33 +1259,33 @@ impl Default for ColorSelectState {
 }
 
 impl ColorSelectState {
-    /// Quantizer A, `SetColorRGB`'s inbound leg (`0x78ec7d`): clamp to `[0, 1]`, `·255 + 0.5`,
-    /// truncate (`__ftol`, `0x40a2b0`), so round half up, in `f64` as the x87 registers run it.
+    /// Quantizer A, `SetColorRGB`'s inbound leg: clamp to `[0, 1]`, `·255 + 0.5`, truncate
+    /// (`__ftol`), so round half up, in `f64` as the x87 registers run it.
     pub fn quantize_a(v: f64) -> u8 {
         let clamped = if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) };
         // In-range the product is `[0.5, 255.5]`, so the truncation is always a valid byte.
         (clamped * 255.0 + 0.5) as u8
     }
 
-    /// Quantizer B, every outbound path (`0x7bbec0`): `v·255 + 512` as `f32` has a `2^-14` ulp, so
-    /// `>> 14` reads the floor of `v·255`. Unclamped: out of range wraps mod 256.
+    /// Quantizer B, every outbound path: `v·255 + 512` as `f32` has a `2^-14` ulp, so `>> 14` reads
+    /// the floor of `v·255`. Unclamped: out of range wraps mod 256.
     pub fn quantize_b(v: f32) -> u8 {
         let c = (f64::from(v) * 255.0 + 512.0) as f32;
         ((c.to_bits() >> 14) & 0xff) as u8
     }
 
-    /// `0x7bbf20`'s unpack: the byte times the `f32` `0x3b808081`, 1/255 rounded up.
+    /// The fill callback's unpack: the byte times the `f32` `0x3b808081`, 1/255 rounded up.
     fn unpack_byte(b: u8) -> f32 {
         let k = f32::from_bits(0x3b80_8081);
         (f64::from(i32::from(b)) * f64::from(k)) as f32
     }
 
-    /// The Lua-facing normalize: the byte times the `f64` `1/255` at `0x804578`, never a divide.
+    /// The Lua-facing normalize: the byte times the `f64` `1/255`, never a divide.
     pub fn normalize(byte: u8) -> f64 {
         f64::from(byte) * (1.0_f64 / 255.0)
     }
 
-    /// `0x7bf680`: the index of the largest `|component|`, a tie going to the later index.
+    /// The index of the largest `|component|`, a tie going to the later index.
     fn dominant_axis(v: &[f32; 3]) -> usize {
         let (a0, a1, a2) = (v[0].abs(), v[1].abs(), v[2].abs());
         if a0 > a1 {
@@ -1305,7 +1301,7 @@ impl ColorSelectState {
         }
     }
 
-    /// `0x7bf700`: the index of the smallest `|component|`.
+    /// The index of the smallest `|component|`.
     fn minor_axis(v: &[f32; 3]) -> usize {
         let (a0, a1, a2) = (v[0].abs(), v[1].abs(), v[2].abs());
         if a0 >= a1 {
@@ -1321,7 +1317,7 @@ impl ColorSelectState {
         }
     }
 
-    /// `0x7bbc80`, RGB to HSV: each store rounds to `f32`; the chroma divide runs in `f64`.
+    /// RGB to HSV: each store rounds to `f32`; the chroma divide runs in `f64`.
     fn rgb_to_hsv(rgb: &[f32; 3]) -> [f32; 3] {
         let f = f64::from;
         let dom = Self::dominant_axis(rgb);
@@ -1351,8 +1347,8 @@ impl ColorSelectState {
         [hue, sat, value]
     }
 
-    /// `0x7bbd60`, HSV to RGB: a grey never reads hue; the sector is floored by quantizer B's
-    /// trick, and the `f32` 1/60 (`0x3c888889`) is where the round trip's drift comes from.
+    /// HSV to RGB: a grey never reads hue; the sector is floored by quantizer B's trick, and the
+    /// `f32` 1/60 (`0x3c888889`) is where the round trip's drift comes from.
     pub fn hsv_to_rgb(hsv: &[f32; 3]) -> [f32; 3] {
         let f = f64::from;
         let (h, s, v) = (hsv[0], hsv[1], hsv[2]);
@@ -1379,13 +1375,13 @@ impl ColorSelectState {
         }
     }
 
-    /// Stores HSV raw, as the drag handler (`0x78bd80`) and `SetColorHSV` (`0x78e920`) do.
+    /// Stores HSV raw, as the drag handler and `SetColorHSV` do.
     pub fn set_hsv(&mut self, h: f32, s: f32, v: f32) {
         self.hsv = [h, s, v];
     }
 
-    /// `SetColorRGB`'s store (`0x78eb7e`): quantizer A, the `0x7bbf20` unpack, RGB to HSV. It
-    /// always stores, with no change gate: `0x78bafd` only tests whether a handler is bound.
+    /// `SetColorRGB`'s store: quantizer A, the unpack, RGB to HSV. It always stores, with no change
+    /// gate: the reference only tests whether a handler is bound.
     pub fn set_rgb(&mut self, r: f64, g: f64, b: f64) {
         let bytes = [
             Self::quantize_a(r),
@@ -1400,8 +1396,8 @@ impl ColorSelectState {
         self.hsv = Self::rgb_to_hsv(&rgb);
     }
 
-    /// The read-back `GetColorRGB` (`0x78edda`) and the `OnColorSelect` payload (`0x78bb36`) both
-    /// run, so they match bit for bit: HSV to RGB, quantizer B, then the `f64` `1/255`.
+    /// The read-back `GetColorRGB` and the `OnColorSelect` payload both run, so they match bit for
+    /// bit: HSV to RGB, quantizer B, then the `f64` `1/255`.
     pub fn rgb_f64(&self) -> (f64, f64, f64) {
         let rgb = Self::hsv_to_rgb(&self.hsv);
         (

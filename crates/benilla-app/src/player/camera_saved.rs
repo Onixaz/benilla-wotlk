@@ -1,10 +1,10 @@
-//! The per-character camera pose: 3.3.5a keeps it in two per-character CVars,
-//! `cameraSavedDistance` and `cameraSavedPitch` (`CameraRegisterCVars` `0x5fd942`, `0x5fd99a`),
-//! so it lives in the character's `config-cache.wtf` with the other rows of that scope.
+//! The per-character camera pose: 3.3.5a keeps it in two per-character CVars, `cameraSavedDistance`
+//! and `cameraSavedPitch` (registered at `0x5fd942`, `0x5fd99a`), so it lives in the character's
+//! `config-cache.wtf` with the other rows of that scope.
 //!
-//! `CGCamera::SaveCameraSettings` (`0x5ff320`) writes them with `%f` at the UI shutdown, inside
-//! the character slot's save; `0x5ff3e0` restores them once that file has loaded, the distance
-//! clamped to 0..50 and the pitch, saved in degrees, back to radians. No yaw is kept.
+//! The camera's settings save writes them with `%f` at the UI shutdown, inside the character slot's
+//! save; `0x5ff3e0` restores them once that file has loaded, the distance clamped to 0..50 and the
+//! pitch, saved in degrees, back to radians. No yaw is kept.
 
 use bevy::prelude::*;
 
@@ -30,8 +30,8 @@ pub(super) fn pitch_to_file(radians: f32) -> f32 {
     -radians.to_degrees()
 }
 
-/// `CGCamera::SaveCameraSettings` (`0x5ff320`): the zoom's target, not the arm a wall pulled in,
-/// and the pitch, into the two rows as `%f` writes them. Called by the character slot's save.
+/// The camera's settings save: the zoom's target, not the arm a wall pulled in, and the pitch, into
+/// the two rows as `%f` writes them. Called by the character slot's save.
 pub(crate) fn save_to_cvars(world: &mut World) {
     let Some(target) = world
         .get_resource::<CameraControl>()

@@ -59,8 +59,8 @@ const WORD_WINDOW: u32 = 1 << 26;
 // The batch authors vertex colours. White passes every lane unchanged except INT's
 // ×(1 + 4·MOCV.a) self-illumination, which a colourless entity batch skips, so it keys on this.
 const WORD_HAS_VC: u32 = 1 << 27;
-// `ShadeSel::Matte`, fixed 1.0: a map doodad never reaches the 2.5 site (`0x69e4ad`). Not
-// `WORD_SHADE_LIT`, so lifting the shader's `min(I, 1)` cap leaves this at 1.0.
+// `ShadeSel::Matte`, fixed 1.0: a map doodad never reaches the 2.5 site. Not `WORD_SHADE_LIT`, so
+// lifting the shader's `min(I, 1)` cap leaves this at 1.0.
 const WORD_MATTE: u32 = 1 << 28;
 // An interior M2 prop is WORD_INTERIOR with WORD_WMO clear, the entity shader's `interior_prop =
 // flags.z && !flags.x`: SH-probe light from its record slot, interior fog, no live point lights.
@@ -242,6 +242,9 @@ struct GxCell {
     ring: (f32, f32),
     /// The scan's last wholesale verdict (all steady or all gone); `None` walks every frame.
     settled: Option<bool>,
+    /// Where the camera stood at the last walk and how far it may move before any fader can
+    /// change class: the nearest band edge over the cell's faders. `None` walks.
+    slack: Option<(Vec3, f32)>,
     /// A prop region's distinct referrer sets, indexed by [`GxItemProp::set`].
     sets: Vec<Arc<[u16]>>,
 }
@@ -254,6 +257,7 @@ impl GxCell {
             .values()
             .fold((f32::MAX, 0.0), |(n, x), f| (n.min(f.near), x.max(f.far)));
         self.settled = None;
+        self.slack = None;
     }
 
     /// Hand every exile's entities to `pending`: the region is going, and they are its own.
@@ -474,7 +478,7 @@ impl StaticGx {
             return false;
         }
         // WMO group batches light on the FFP N·L and skip this. ADT doodads and MODD props are one
-        // class (`CMapDoodadDef`), `Matte` at 1.0: the 2.5 is the entity light node's, which
+        // class (the doodad placement), `Matte` at 1.0: the 2.5 is the entity light node's, which
         // neither has. `Shaded` reads 0.5; `Lit` has no producer here and is a backstop.
         let (shade_lit, matte) = match (&b.wmo, &b.prop, b.shade) {
             (Some(_), _, _) => (false, false),
@@ -584,6 +588,7 @@ impl StaticGx {
                     (entry.ring.0.min(near), entry.ring.1.max(far))
                 };
                 entry.settled = None;
+                entry.slack = None;
             }
         }
         entry.items.push(GxItem {

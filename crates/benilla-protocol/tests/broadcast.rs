@@ -8,9 +8,9 @@ use benilla_protocol::messages;
 use benilla_protocol::ServerPacket;
 use common::hx;
 
-/// `SMSG_SERVER_MESSAGE` (vmangos `Server/Packets/Misc.cpp:341-345`): a `u32` type and a cstring.
-/// A countdown fills its row's `%s`; a cancellation sends empty text (`World.cpp:2742`/`2761`),
-/// which the reference prints as the bare row (`0x49dfc8`).
+/// `SMSG_SERVER_MESSAGE` (vmangos `Server/Packets/Misc.cpp:341-345`): a `u32` type and a cstring. A
+/// countdown fills its row's `%s`; a cancellation sends empty text (`World.cpp:2742`/`2761`), which
+/// the reference prints as the bare row.
 #[test]
 fn server_message_decodes_a_countdown_and_a_cancellation() {
     let body = hx("020000003135204d696e7574657300"); // type 2 (RESTART_TIME), "15 Minutes"
@@ -85,7 +85,7 @@ fn defense_message_decodes() {
 }
 
 /// `SMSG_CHAT_RESTRICTED` (vmangos `Server/Packets/Chat.cpp:21-23`) has an empty body; the
-/// reference's handler reads nothing either (`0x5e4a09`).
+/// reference's handler reads nothing either.
 #[test]
 fn chat_restricted_is_bodyless() {
     let p = messages::parse_server(messages::opcode::SMSG_CHAT_RESTRICTED, &[]).unwrap();

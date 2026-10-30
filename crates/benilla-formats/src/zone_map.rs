@@ -1,7 +1,7 @@
-//! `Interface\WorldMap\<AreaName>.zmp` (`0x845374`), named by the continent's `WorldMapArea` row:
-//! a 128×128 row-major grid of `AreaTable.dbc` ids over the 64×64-tile world, two cells per tile
-//! edge. The world map resolves the cell under the cursor to a zone through it (`0x4a6ec0`); the
-//! loader (`0x4a5d00`) remaps cells to `WorldMapArea` ids.
+//! `Interface\WorldMap\<AreaName>.zmp`, named by the continent's `WorldMapArea` row: a 128×128
+//! row-major grid of `AreaTable.dbc` ids over the 64×64-tile world, two cells per tile edge. The
+//! world map resolves the cell under the cursor to a zone through it; the loader remaps cells to
+//! `WorldMapArea` ids.
 
 use anyhow::{bail, Context, Result};
 

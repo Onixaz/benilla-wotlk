@@ -1,4 +1,4 @@
-//! The world map, 12340's `CGWorldMap` over a catalog the app pushes once and a per-frame feed of
+//! The world map, as 12340 runs it, over a catalog the app pushes once and a per-frame feed of
 //! world positions. The selection is four cells, `[0xaccf04]` continent, `[0xaccf08]` zone,
 //! `[0xaccf0c]` `DungeonMap` row and `[0xaccf10]` direct `WorldMapArea` row, with one writer, the
 //! setter `0x546310`: it rebuilds the landmark list and fires `WORLD_MAP_UPDATE` before it returns,
@@ -621,7 +621,7 @@ impl WorldMapState {
         }
     }
 
-    /// `CGWorldMap::FindCurrentZone` (`0x547170`): the player's continent and zone, else the row
+    /// The current-zone lookup (`0x547170`): the player's continent and zone, else the row
     /// of the instance map, else the zone holding the instance's entrance; `None` is the cosmic
     /// sheet. `DungeonMapChunk` is not read, so no position resolves to a floor.
     fn current_zone(&self) -> (i32, i32, i32) {
@@ -954,17 +954,21 @@ impl super::UiScript {
     }
 
     /// Pushes the per-frame world positions; the player's arrival or departure re-runs the
-    /// landmark gates, which need a player.
+    /// landmark gates, which need a player. The feed is no extract input: the map's Lua reads it
+    /// through its verbs, whose own writes count, so a moving player's every frame leaves the
+    /// mutation count standing.
     pub fn set_world_map_feed(&mut self, feed: WorldMapFeed) {
         if self.model_ref().worldmap.feed == feed {
             return;
         }
         let mut model = self.model_mut();
+        let quiet = model.epoch();
         let had_player = model.worldmap.feed.player.is_some();
         model.worldmap.feed = feed;
         if had_player != model.worldmap.feed.player.is_some() {
             model.worldmap.rebuild_landmarks();
         }
+        model.set_epoch(quiet);
     }
 
     /// The four selection cells.
@@ -1026,7 +1030,8 @@ fn set_map_now(lua: &Lua, c: i32, z: i32, d: i32) {
 }
 
 impl WorldMapState {
-    /// A world state's value as last pushed, 0 for one never seen (`GetWorldState`).
+    /// A world state's value as last pushed, 0 for one never seen, as the reference's world-state
+    /// read answers.
     pub(crate) fn world_state(&self, id: u32) -> i32 {
         self.world_states.get(&id).copied().unwrap_or(0)
     }
@@ -1039,10 +1044,10 @@ impl WorldMapState {
             || self.dungeon(self.current_dungeon()).is_some()
     }
 
-    /// Whether a quest POI region shows on the displayed map, `UpdateAllQuestPOI`'s inner test
-    /// (`0x5e5a50`): on a dungeon floor `IsPOIVisibleOnDungeonMap` (`0x5e0180`), else the region's
-    /// own-area bind (`0x5e5ba1`) and `IsPOIOnCurrentMap` (`0x5e0110`). `None` when no area or
-    /// floor is displayed, which counts nothing.
+    /// Whether a quest POI region shows on the displayed map, the POI update's inner test
+    /// (`0x5e5a50`): on a dungeon floor the dungeon-map visibility test (`0x5e0180`), else the
+    /// region's own-area bind (`0x5e5ba1`) and the current-map test (`0x5e0110`). `None` when no
+    /// area or floor is displayed, which counts nothing.
     pub(crate) fn quest_poi_shown(&self, poi: &QuestPoiPlace) -> Option<bool> {
         let at = WorldMapPoint {
             map: poi.map,
@@ -1061,7 +1066,7 @@ impl WorldMapState {
         Some(row.map_id == poi.map && on(self.project(at)))
     }
 
-    /// `GetQuestPOIDistance`'s per-region term (`0x5e3b90`): the floor delta to the displayed
+    /// The quest POI distance's per-region term (`0x5e3b90`): the floor delta to the displayed
     /// floor and the squared distance from the player, for a region whose own area is on the
     /// player's map.
     pub(crate) fn quest_poi_distance(&self, poi: &QuestPoiPlace) -> Option<(i32, f32)> {

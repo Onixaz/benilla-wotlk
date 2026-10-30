@@ -48,7 +48,7 @@ fn board_and_dialog() -> UiScript {
 
 // ── The flag ──
 
-/// `SetToplevel`'s optional argument defaults to true (`0x775440`), unlike `SetMovable`'s.
+/// `SetToplevel`'s optional argument defaults to true, unlike `SetMovable`'s.
 #[test]
 fn the_flag_round_trips_and_defaults_off() {
     let s = script();
@@ -73,7 +73,7 @@ fn the_flag_round_trips_and_defaults_off() {
 }
 
 /// The XML `toplevel` and `enableKeyboard` attributes set the flags their methods read; in the
-/// reference the keyboard flag is separate from any handler (`0x76af00`).
+/// reference the keyboard flag is separate from any handler.
 #[test]
 fn the_xml_toplevel_and_enable_keyboard_attributes_both_reach_their_methods() {
     let s = script();
@@ -104,7 +104,8 @@ fn the_xml_toplevel_and_enable_keyboard_attributes_both_reach_their_methods() {
         s.eval::<bool>("return XmlTop:IsKeyboardEnabled()").unwrap(),
         "the XML attribute must reach the flag"
     );
-    // Off by default: `0x76af00` runs from the attribute or a call, never a constructor.
+    // Off by default: the reference's keyboard enable runs from the attribute or a call, never a
+    // constructor.
     s.run("Plain = CreateFrame('Frame', 'PlainKbd')").unwrap();
     assert!(!s.eval::<bool>("return Plain:IsKeyboardEnabled()").unwrap());
     s.run("Plain:EnableKeyboard(true)").unwrap();
@@ -193,7 +194,7 @@ fn the_trigger_is_the_effective_visibility_transition_not_the_show_call() {
 
 // ── The gate ──
 
-/// The occlusion gate runs before the compaction in `0x7650f0`, so a declined raise moves no level.
+/// The occlusion gate runs before the compaction, so a declined raise moves no level.
 #[test]
 fn a_raise_on_a_frame_that_overlaps_nothing_is_a_total_no_op() {
     let mut s = board_and_dialog();
@@ -236,7 +237,7 @@ fn the_scan_ignores_frames_below_the_raised_frames_own_level() {
     assert_eq!(level(&mut s, "Board"), 3);
 }
 
-/// The scan excludes the raised frame's own subtree (`0x767010`).
+/// The scan excludes the raised frame's own subtree.
 #[test]
 fn the_scan_excludes_the_raised_frames_own_subtree() {
     let mut s = board_and_dialog();
@@ -257,7 +258,8 @@ fn the_scan_excludes_the_raised_frames_own_subtree() {
     );
 }
 
-/// `0x7650f0` never writes the stratum (`+0xc0`), so a LOW toplevel frame raises within LOW only.
+/// The reference's raise never writes the stratum (`+0xc0`), so a LOW toplevel frame raises within
+/// LOW only.
 #[test]
 fn a_raise_can_never_lift_a_frame_out_of_its_stratum() {
     let mut s = script();
@@ -426,8 +428,7 @@ fn compaction_bounds_the_raise_across_repeated_shows() {
 
 // ── The Lua verbs ──
 
-/// `Raise` (`0x775a50`, then `0x76a5b0`, then `0x7650f0` with force 1) acts on the nearest toplevel
-/// self or ancestor, and on nothing when there is none.
+/// `Raise` acts on the nearest toplevel self or ancestor, and on nothing when there is none.
 #[test]
 fn lua_raise_acts_on_the_nearest_toplevel_ancestor_and_is_silent_without_one() {
     let mut s = board_and_dialog();
@@ -461,7 +462,7 @@ fn lua_raise_acts_on_the_nearest_toplevel_ancestor_and_is_silent_without_one() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The reference's `Lower` does nothing (`0x7652a0`: `xor eax,eax; ret 4`), and neither does ours.
+/// The reference's `Lower` does nothing (`xor eax,eax; ret 4`), and neither does ours.
 #[test]
 fn lua_lower_exists_and_does_nothing() {
     let mut s = board_and_dialog();
@@ -472,7 +473,7 @@ fn lua_lower_exists_and_does_nothing() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `StartMoving` raises a toplevel window before the drag begins (`0x7652b0` at `0x7652d7`).
+/// `StartMoving` raises a toplevel window before the drag begins.
 #[test]
 fn starting_a_move_raises_the_dragged_window() {
     let mut s = board_and_dialog();
@@ -512,7 +513,7 @@ fn centre(s: &UiScript, name: &str) -> (f32, f32) {
     (x as f32, y as f32)
 }
 
-/// A press raises the window: the trigger at `0x766392` in the mouse-down handler `0x7662c0`.
+/// A press raises the window: the trigger in the mouse-down handler.
 #[test]
 fn pressing_a_toplevel_window_brings_it_to_the_front() {
     let mut s = board_and_dialog();
@@ -572,7 +573,7 @@ fn pressing_a_child_of_a_toplevel_window_raises_the_window() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The mouse-up handler (`0x766420`, category `0xe`) has no raise; only the down edge raises.
+/// The mouse-up handler (category `0xe`) has no raise; only the down edge raises.
 #[test]
 fn releasing_over_a_toplevel_window_does_not_raise_it() {
     let mut s = board_and_dialog();
@@ -600,7 +601,7 @@ fn releasing_over_a_toplevel_window_does_not_raise_it() {
 }
 
 /// The press raises the capture (`root+0x80`) before the hover (`root+0x7c`), so a second button
-/// raises the held frame; the capture clears when the last button comes up (`0x7664bb`).
+/// raises the held frame; the capture clears when the last button comes up.
 #[test]
 fn a_chorded_press_raises_the_held_frame_not_the_one_under_the_cursor() {
     let mut s = board_and_dialog();
@@ -747,9 +748,9 @@ fn a_raise_with_a_hidden_child_keeps_the_windows_own_siblings_level() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `SetFrameLevel` (`0x49e9d0`) calls `CSimpleFrame::SetFrameLevel` with `propagate = 1`
-/// (`0x49ea50`): same-strata children move by the parent's step, a child in another strata stays,
-/// and a step up is capped at 128 (`0x4910d9`).
+/// `SetFrameLevel` (`0x49e9d0`) calls the frame's level set with `propagate = 1` (`0x49ea50`):
+/// same-strata children move by the parent's step, a child in another strata stays, and a step up
+/// is capped at 128 (`0x4910d9`).
 #[test]
 fn a_script_level_change_carries_the_same_strata_children() {
     let mut s = script();

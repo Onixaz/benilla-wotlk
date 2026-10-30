@@ -131,9 +131,9 @@ impl ChatEventKind {
     };
 }
 
-/// One `CHAT_MSG_*` fire, typed. The fire helper `0x49b0b0` signals it (`0x703f50`) with the
-/// format `"%s%s%s%s%s%s%d%d%s%d"` (`.rdata 0x844608`): arg7, arg8 and arg10 are numbers, the
-/// rest strings, never nil, as `ChatFrame_OnEvent` compares `arg7 > 0` bare.
+/// One `CHAT_MSG_*` fire, typed. The fire helper signals it with the format
+/// `"%s%s%s%s%s%s%d%d%s%d"` (`.rdata`): arg7, arg8 and arg10 are numbers, the rest strings, never
+/// nil, as `ChatFrame_OnEvent` compares `arg7 > 0` bare.
 ///
 /// | arg | field | what `ChatFrame_OnEvent` reads |
 /// |---|---|---|
@@ -148,9 +148,9 @@ impl ChatEventKind {
 /// | 9 | `channel_base` | the channel name without its number |
 /// | 10 | none | the split index, 0 from vmangos (`Chat/Channel.cpp:823-827`) |
 ///
-/// arg4, arg7, arg8 and arg9 are one record ([`super::edit::ChannelState::stamp_channel`]). arg1
-/// is the garbled text: the reference fills one buffer (`SStrCopy` at `0x49a9f0`, the garble
-/// `0x49b560` at `0x49aa7c`) that the line, arg1 and the bubble share ([`super::language`]).
+/// arg4, arg7, arg8 and arg9 are one record ([`super::edit::ChannelState::stamp_channel`]). arg1 is
+/// the garbled text: the reference fills one buffer that the line, arg1 and the bubble share
+/// ([`super::language`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ChatEvent {
     pub kind: Option<ChatEventKind>,
@@ -169,7 +169,7 @@ pub(crate) struct ChatEvent {
     pub sender_guid: u64,
     /// Our slot's state for this channel as the notice arrived (`None`: no slot), set before
     /// [`super::feed::deliver`] changes it: the reference's notice arms read `slot+0x9c` for the
-    /// token (`0x49c0c2`) before they write it (`0x49bb20`).
+    /// token before they write it.
     pub slot_state: Option<super::edit::SlotState>,
 }
 
@@ -214,10 +214,9 @@ impl ChatEvent {
         ]
     }
 
-    /// 3.3.5a's thirteen: [`Self::script_args`], then arg11 the line id, arg12 the sender's guid
-    /// as `0x` and sixteen upper-case hex digits (`0x74d0d0`) when it is a player's (high nibble
-    /// clear, `0x4fdc1b`) and else empty, and arg13 the Battle.net presence id, 0 for a realm
-    /// line.
+    /// 3.3.5a's thirteen: [`Self::script_args`], then arg11 the line id, arg12 the sender's guid as
+    /// `0x` and sixteen upper-case hex digits when it is a player's (high nibble clear) and else
+    /// empty, and arg13 the Battle.net presence id, 0 for a realm line.
     pub(crate) fn script_args_with_line(&self, line_id: u32) -> Vec<ScriptValue> {
         let guid = self.sender_guid;
         let player = guid >> 60 == 0 && guid & 0xf07f_ffff_ffff_ffff != 0;
@@ -288,10 +287,10 @@ pub(crate) fn event_name(kind: ChatEventKind) -> &'static str {
 }
 
 /// The `arg1` token for a `SMSG_CHANNEL_NOTIFY` byte, read as `CHAT_<token>_NOTICE`
-/// (`GlobalStrings.lua:494-745`), matching the client's jump table `0x49c60c`. `None`: the
-/// member-line bytes `0x00`/`0x01`, MODE_CHANGE `0x0C`, which fires no event (`0x49c24d`), and
-/// anything past `0x1F`. `0x02` answers `YOU_CHANGED` in state 2 (`0x49c087`); `0x03` answers
-/// `SUSPENDED` in state 3 (`0x49c0e0`), where `YOU_LEFT` would delete the window's channel.
+/// (`GlobalStrings.lua:494-745`), matching the client's jump table. `None`: the member-line bytes
+/// `0x00`/`0x01`, MODE_CHANGE `0x0C`, which fires no event, and anything past `0x1F`. `0x02`
+/// answers `YOU_CHANGED` in state 2; `0x03` answers `SUSPENDED` in state 3, where `YOU_LEFT` would
+/// delete the window's channel.
 pub(crate) fn notice_token(
     byte: u8,
     state: Option<super::edit::SlotState>,
@@ -332,7 +331,7 @@ pub(crate) fn notice_token(
         n::PLAYER_INVITED => "PLAYER_INVITED",
         n::PLAYER_INVITE_BANNED => "PLAYER_INVITE_BANNED",
         n::THROTTLED => "THROTTLED",
-        // 3.3.5a's tokens (`0x9fcfb8`, `0x9fcfac`, `0x9fcfa0`, `0x9fcf94`).
+        // 3.3.5a's tokens.
         n::NOT_IN_AREA => "NOT_IN_AREA",
         n::NOT_IN_LFG => "NOT_IN_LFG",
         n::VOICE_ON => "VOICE_ON",

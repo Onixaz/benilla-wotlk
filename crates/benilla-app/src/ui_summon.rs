@@ -1,21 +1,20 @@
-//! Being summoned: `SMSG_SUMMON_REQUEST` (handler `0x5e6140`) latches the question and fires
-//! `CONFIRM_SUMMON` with no arguments; Accept sends `CMSG_SUMMON_RESPONSE` with the summoner's
-//! guid. Declining sends nothing: 1.12 has no `CancelSummon`, and the server's two-minute expiry
-//! refuses.
+//! Being summoned: `SMSG_SUMMON_REQUEST` latches the question and fires `CONFIRM_SUMMON` with no
+//! arguments; Accept sends `CMSG_SUMMON_RESPONSE` with the summoner's guid. Declining sends
+//! nothing: 1.12 has no `CancelSummon`, and the server's two-minute expiry refuses.
 //!
-//! - The latch (`0x4963a0`) writes four globals, the guid's two halves, the zone and an absolute
-//!   deadline, then a bare `SignalEvent(516)`.
-//! - A dead or ghost player is refused before the latch (`0x5e6194`), so a live question is
-//!   untouched. The test is `0x605f30`: health <= 0, or a player with the `PLAYER_FLAGS` ghost bit
-//!   (a ghost's health is 1). With no player object, it latches.
-//! - `GetSummonConfirmSummoner()` (`0x48b6a0`) answers `""` on a cache miss and queries the name
-//!   (`0x55f1fa`); the popup re-reads it every frame (`StaticPopup.lua:1746`) until it lands.
-//! - `ConfirmSummon()` (`0x48b770`) checks no deadline, so two Accepts are two packets; vmangos
-//!   ignores the guid and checks its own `m_summon_expire`.
+//! - The latch writes four globals, the guid's two halves, the zone and an absolute deadline, then
+//!   a bare event signal (516).
+//! - A dead or ghost player is refused before the latch, so a live question is untouched. The test:
+//!   health <= 0, or a player with the `PLAYER_FLAGS` ghost bit (a ghost's health is 1). With no
+//!   player object, it latches.
+//! - `GetSummonConfirmSummoner()` answers `""` on a cache miss and queries the name; the popup
+//!   re-reads it every frame (`StaticPopup.lua:1746`) until it lands.
+//! - `ConfirmSummon()` checks no deadline, so two Accepts are two packets; vmangos ignores the guid
+//!   and checks its own `m_summon_expire`.
 //!
-//! Deviation: the latch is dropped at session end and an Accept with nothing latched sends
-//! nothing, so no stale or zero guid reaches the server. The reference never clears the guid or
-//! zone, only the deadline (`0x49014a`), so its `ConfirmSummon()` sends whatever is left.
+//! Deviation: the latch is dropped at session end and an Accept with nothing latched sends nothing,
+//! so no stale or zero guid reaches the server. The reference never clears the guid or zone, only
+//! the deadline, so its `ConfirmSummon()` sends whatever is left.
 
 use benilla_ui::script::{SummonConfirmUiState, UiScript};
 use bevy::prelude::*;
@@ -29,19 +28,19 @@ use crate::ui_script::{UiFeed, UiInput};
 /// [`feed_summon`] and [`drain_summon`].
 #[derive(Resource, Default)]
 pub(crate) struct SummonState {
-    /// `[0xb4e358]`/`[0xb4e35c]`, echoed by Accept; 0 when nothing has asked this session.
+    /// Echoed by Accept; 0 when nothing has asked this session.
     summoner: u64,
-    /// `[0xb4e354]`: the summoner's `AreaTable` id, not ours and not a map id.
+    /// The summoner's `AreaTable` id, not ours and not a map id.
     zone: u32,
-    /// `[0xb4e350]`, an absolute ms stamp there; here `Time<Real>` seconds, as the server's window
-    /// runs in real time. `None` is the zeroed deadline.
+    /// An absolute ms stamp there; here `Time<Real>` seconds, as the server's window runs in real
+    /// time. `None` is the zeroed deadline.
     expires_at: Option<f64>,
     /// A dialog still owed, set per packet: the same warlock summoning twice is two dialogs.
     ask: bool,
 }
 
 impl SummonState {
-    /// The latch, `0x4963a0`.
+    /// The latch.
     fn latch(&mut self, summoner: u64, zone: u32, delay_ms: u32, now: f64) {
         self.summoner = summoner;
         self.zone = zone;
@@ -53,7 +52,7 @@ impl SummonState {
         (self.summoner != 0).then_some(self.summoner)
     }
 
-    /// `0x4963e0`: ms left, clamped at zero; the binding (`0x48b660`) truncates to seconds.
+    /// Ms left, clamped at zero; the binding truncates to seconds.
     fn time_left_ms(&self, now: f64) -> u32 {
         self.expires_at.map_or(0.0, |at| {
             ((at - now).max(0.0) * 1000.0).min(f64::from(u32::MAX))
@@ -113,8 +112,8 @@ fn feed_summon(
     script.fire_event("CONFIRM_SUMMON", Vec::new());
 }
 
-/// `GetSummonConfirmAreaName()` (`0x48b720`): the summoner's bare `AreaTable.dbc` row name or
-/// `""`, with no parent walk and no GlobalString tail, unlike [`crate::ui_binder`]'s chain.
+/// `GetSummonConfirmAreaName()`: the summoner's bare `AreaTable.dbc` row name or `""`, with no
+/// parent walk and no GlobalString tail, unlike [`crate::ui_binder`]'s chain.
 fn area_name(zone: u32, areas: Option<&AreaTableRes>) -> String {
     areas
         .and_then(|a| a.0.name(zone))
@@ -175,8 +174,8 @@ pub(crate) mod net {
         app.net_handler(SessionEventKind::SummonRequest, on_request);
     }
 
-    /// `0x605f30` over the self object, not `unit_reads_dead` (`0x605f90`). An unstreamed self
-    /// latches (`0x5e6189`).
+    /// The reference's dead test over the self object, not `unit_reads_dead`. An unstreamed self
+    /// latches.
     fn on_request(
         In(ev): In<SessionEvent>,
         mut summon: ResMut<SummonState>,
@@ -207,8 +206,8 @@ pub(crate) mod net {
         }
     }
 
-    /// `SMSG_SUMMON_REQUEST`: latch the offer unless `dead_or_ghost` (`0x605f30`), which touches
-    /// nothing, so a live question survives.
+    /// `SMSG_SUMMON_REQUEST`: latch the offer unless `dead_or_ghost`, which touches nothing, so a
+    /// live question survives.
     pub(crate) fn request(
         summoner: u64,
         zone: u32,
@@ -272,7 +271,7 @@ mod tests {
         assert!(summon.ask, "the same summoner asking again owes a dialog");
     }
 
-    /// `0x4963e0`'s three cases: never armed, running, expired.
+    /// The reference's countdown read, in its three cases: never armed, running, expired.
     #[test]
     fn the_countdown_runs_from_the_packets_delay_and_never_goes_negative() {
         let mut summon = SummonState::default();

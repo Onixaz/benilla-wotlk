@@ -1,10 +1,10 @@
-//! The auction window's app side, after the 12340 `CGAuctionHouse`: [`net`] fills
-//! [`AuctionOpen`] from the wire, [`feed_auction`] pushes it into the VM and fires its events,
-//! and [`drain_auction`] sends the Lua intents through the house's query throttle.
+//! The auction window's app side, after the 12340 auction house: [`net`] fills [`AuctionOpen`] from
+//! the wire, [`feed_auction`] pushes it into the VM and fires its events, and [`drain_auction`]
+//! sends the Lua intents through the house's query throttle.
 //!
-//! The hello reply opens the window, not the click (`SetAuctioneer` `0x59f000` fires
+//! The hello reply opens the window, not the click (the auctioneer set, `0x59f000`, fires
 //! `AUCTION_HOUSE_SHOW`). Browse, Bids and Auctions are independent lists, each with its own
-//! query gate (`CanSendQuery` `0x59a2f0`). Walking out of range closes the window with no packet.
+//! query gate (`0x59a2f0`). Walking out of range closes the window with no packet.
 
 use bevy::prelude::*;
 
@@ -62,8 +62,8 @@ const BID_EMOTE: u32 = 3;
 #[derive(Resource)]
 pub(crate) struct AuctionHouses(pub(crate) benilla_formats::AuctionHouseCatalog);
 
-/// One row of a list as the reference keeps it (`AuctionItemInfo`): the wire record, its expiry
-/// and whether it is a sold auction from the pending sales.
+/// One row of a list as the reference keeps it: the wire record, its expiry and whether it is a
+/// sold auction from the pending sales.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AuctionEntry {
     pub(crate) wire: AuctionListEntry,
@@ -109,8 +109,8 @@ pub(crate) struct AuctionListSlot {
 /// Stacks to sell from, `(bag, slot, count)`.
 type Stacks = Vec<(i64, u32, u32)>;
 
-/// A multi-sell in progress (`m_multisell*`, `m_sellItems`): the stacks it draws from, consumed
-/// from the end, and the stacks still to list.
+/// A multi-sell in progress: the stacks it draws from, consumed from the end, and the stacks still
+/// to list.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct MultiSell {
     auctioneer: u64,
@@ -122,7 +122,7 @@ pub(crate) struct MultiSell {
     bid: u32,
     buyout: u32,
     minutes: u32,
-    /// The listing's events fire: more than one stack (`m_havePendingSell`).
+    /// The listing's events fire: more than one stack.
     pending: bool,
     /// Send the next stack in the drain.
     send_next: bool,
@@ -163,20 +163,20 @@ pub(crate) struct AuctionOpen {
     list_result_landed: [bool; 3],
     /// Messages queued for [`feed_auction`]; kept across a close, as a sale notice can land after.
     pub(crate) messages: Vec<AuctionMessage>,
-    /// `m_lastQueryTime`, on `Time::elapsed_secs_f64`.
+    /// The last query's time, on `Time::elapsed_secs_f64`.
     last_query: [Option<f64>; 3],
-    /// `m_queryPending`: sends not yet answered.
+    /// Sends not yet answered.
     pending: [i32; 3],
-    /// `m_desiredDelayTime`, seconds.
+    /// The query delay, seconds.
     delay_secs: f64,
     last_get_all: Option<f64>,
-    /// `m_canGetOwnerList` / `m_canGetBidderList`.
+    /// Whether the owner list and the bidder list may be asked for.
     can_get_owner: bool,
     can_get_bidder: bool,
     last_bidder_page: u32,
     /// The bid in flight, which a `BID_PLACED` result writes into the browse row.
     last_bid_amount: u32,
-    /// `m_outbidItems`, `(house, auction)`: kept across sessions, sent with each bidder query.
+    /// The outbid auctions, `(house, auction)`: kept across sessions, sent with each bidder query.
     pub(crate) outbid: Vec<(u32, u32)>,
     /// Sends the drain owes: the owner list after a listing, the sales after a removal, the
     /// bidder list after a bid, the bid emote.
@@ -187,7 +187,7 @@ pub(crate) struct AuctionOpen {
     pub(crate) multisell: Option<MultiSell>,
     /// `AUCTION_MULTISELL_*` events for the feed, in order.
     multisell_events: Vec<(&'static str, Vec<ScriptValue>)>,
-    /// Empty the VM's sell slot next feed (`ClearSellItem`).
+    /// Empty the VM's sell slot next feed, as the reference's sell-slot clear does.
     sell_slot_clear: bool,
     /// The drain took a query: the feed re-pushes the gate even if it reads unchanged.
     gate_dirty: bool,
@@ -198,7 +198,7 @@ pub(crate) struct AuctionOpen {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AuctionMessage {
     pub(crate) key: &'static str,
-    /// The entry and random property whose suffixed name fills the `%s` (`BuildItemName`).
+    /// The entry and random property whose suffixed item name fills the `%s`.
     pub(crate) item: Option<(u32, i32)>,
 }
 
@@ -216,7 +216,7 @@ impl AuctionMessage {
 }
 
 impl AuctionOpen {
-    /// `SetAuctioneer` (`0x59f000`): the gates open, the lists empty and the window shows.
+    /// The auctioneer set (`0x59f000`): the gates open, the lists empty and the window shows.
     pub(crate) fn open(&mut self, auctioneer: u64, house_id: u32) {
         self.auctioneer = Some(auctioneer);
         self.house_id = house_id;
@@ -233,7 +233,7 @@ impl AuctionOpen {
         self.gate_dirty = true;
     }
 
-    /// `CanSendQuery` (`0x59a2f0`): nothing in flight, and the delay past the last send or answer.
+    /// The query gate (`0x59a2f0`): nothing in flight, and the delay past the last send or answer.
     pub(crate) fn can_send(&self, list: usize, now: f64) -> bool {
         self.pending[list] <= 0 && self.last_query[list].is_none_or(|t| now - t >= self.delay_secs)
     }
@@ -296,8 +296,8 @@ impl AuctionOpen {
         }
     }
 
-    /// `AuctionItemExpired` (`0x59f2f0`): the auction leaves every list; leaving the owner list
-    /// asks the pending sales again.
+    /// The auction expiry (`0x59f2f0`): the auction leaves every list; leaving the owner list asks
+    /// the pending sales again.
     pub(crate) fn expire(&mut self, auction_id: u32) {
         for list in [LIST, OWNER, BIDDER] {
             let slot = &mut self.lists[list];
@@ -324,7 +324,7 @@ impl AuctionOpen {
         ));
     }
 
-    /// `OnMultisellFailure` (`0x59ab20`): a pending multi-sell ends, unlocked, its slot emptied,
+    /// The multi-sell failure (`0x59ab20`): a pending multi-sell ends, unlocked, its slot emptied,
     /// and fires `AUCTION_MULTISELL_FAILURE`.
     pub(crate) fn multisell_failure(&mut self) {
         if let Some(ms) = self.multisell.take() {
@@ -335,7 +335,7 @@ impl AuctionOpen {
         }
     }
 
-    /// `SellNextItem` (`0x59ba80`): draw one stack from the end of the gathered items, as
+    /// The next-item sell (`0x59ba80`): draw one stack from the end of the gathered items, as
     /// `(bag, slot, count)` per item; `None` once every stack is out, or on running dry.
     fn next_stack(&mut self) -> Option<(Stacks, MultiSell)> {
         let ms = self.multisell.as_mut()?;
@@ -769,7 +769,7 @@ impl Sender<'_> {
         let _ = self.commands.0.send(command);
     }
 
-    /// `GetOwnerList` (`0x59cc50`): the owner list and the pending sales, two answers owed.
+    /// The owner-list ask (`0x59cc50`): the owner list and the pending sales, two answers owed.
     fn owner_list(&self, auction: &mut AuctionOpen, now: f64) {
         if !auction.can_get_owner || !auction.can_send(OWNER, now) {
             debug!(
@@ -791,7 +791,7 @@ impl Sender<'_> {
         auction.can_get_owner = false;
     }
 
-    /// `BidderListItems` (`0x59ce50`) with this house's outbid ids.
+    /// The bidder-list ask (`0x59ce50`) with this house's outbid ids.
     fn bidder_list(&self, auction: &mut AuctionOpen, list_from: u32, now: f64) {
         if !auction.can_get_bidder {
             return;

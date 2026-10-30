@@ -5,10 +5,10 @@ pub use benilla_formats::PlayableAnim;
 use bevy::animation::graph::{AnimationGraph, AnimationNodeIndex};
 use bevy::prelude::*;
 
-/// One event keyframe on a clip, with where as well as when: the reference's event kernel
-/// (`0x719370`) fires at `placement · boneMatrix[bone] · position`, and many records sit far from
-/// the model origin. [`Self::offset`] serves a posed joint, [`Self::point`] a bone chain that
-/// never moves; both are exact.
+/// One event keyframe on a clip, with where as well as when: the reference's event kernel fires at
+/// `placement · boneMatrix[bone] · position`, and many records sit far from the model origin.
+/// [`Self::offset`] serves a posed joint, [`Self::point`] a bone chain that never moves; both are
+/// exact.
 #[derive(Debug, Clone, Copy)]
 pub struct ClipEvent {
     /// Seconds from the clip start.
@@ -36,19 +36,18 @@ pub struct AnimClip {
     /// Length in seconds; a unit streamed in dead seeks its one-shot to the end pose.
     pub duration: f32,
     /// The authored gait speed (yd/s) the playback rate divides the live speed by; 0 if none.
-    /// Signed: a backwards gait is authored negative and the reference's guard is `divisor > 0`
-    /// (`0x5fe2f0`), so it plays at 1×. Never take `abs()`.
+    /// Signed: a backwards gait is authored negative and the reference's guard is `divisor > 0`, so
+    /// it plays at 1×. Never take `abs()`.
     pub move_speed: f32,
     /// The cross-fade into this clip, in seconds.
     pub blend_time: f32,
     /// The sequence's bounds-sphere centre, Bevy model space: the reference's mouse-pick broad
-    /// phase, ahead of the posed per-triangle test (`0x7089c0`).
+    /// phase, ahead of the posed per-triangle test.
     pub bounds_center: Vec3,
     /// The bounds-sphere radius in model-local yards; 0 when unauthored.
     pub bounds_radius: f32,
     /// The sequence's box, Bevy model space, which sizes the blob shadow: clamped to ±5 per axis,
-    /// scaled, yaw-rotated, then axis-aligned (`0x711a20`, corners at `0x6d7920`); zero when
-    /// unauthored.
+    /// scaled, yaw-rotated, then axis-aligned; zero when unauthored.
     pub bounds_min: Vec3,
     pub bounds_max: Vec3,
     /// The sequence's event keyframes, by time on the clip clock.
@@ -58,7 +57,7 @@ pub struct AnimClip {
     pub arm_nodes: Option<(AnimationNodeIndex, AnimationNodeIndex)>,
     /// The upper-body masked node, so a swing or emote plays over the legs' own animation.
     pub upper_node: Option<AnimationNodeIndex>,
-    /// This variation's weight in the reference's per-play roll (`M2Sequence+0x14`, `0x71248a`).
+    /// This variation's weight in the reference's per-play roll (`M2Sequence+0x14`).
     pub frequency: u16,
     /// `(minReplay, maxReplay)` (`M2Sequence+0x18/+0x1c`): each arm rolls a play count `R` from
     /// it, so a one-shot runs `R` times. A loop uses it too: a placed doodad re-rolls its
@@ -73,8 +72,8 @@ pub struct AnimClip {
 pub struct ModelAnimations {
     pub graph: Handle<AnimationGraph>,
     pub clips: Vec<AnimClip>,
-    /// The `HandsClosed` grip nodes `(right, left)`, overlaid while that hand holds a weapon
-    /// (`0x479660`/`0x60b590`); an empty hand or a forearm shield stays open.
+    /// The `HandsClosed` grip nodes `(right, left)`, overlaid while that hand holds a weapon; an
+    /// empty hand or a forearm shield stays open.
     pub hand_close: [Option<AnimationNodeIndex>; 2],
     /// The header's PlayableAnimationLookup (`+0x2c/+0x30`): row `i` substitutes for requested id
     /// `i`. Empty on a 3.3.5a model, which [`Self::resolve`] walks through the fallback column.
@@ -83,9 +82,9 @@ pub struct ModelAnimations {
     pub animation_lookup: Vec<u16>,
     /// The global-sequence bone channels (an eyelid's blink), free-running over the sequence pose.
     pub global_bones: Vec<super::GlobalBone>,
-    /// Index into [`Self::clips`] of the loader-idle seed, the sequence the reference arms at load
-    /// (`0x71019b`): id 0 through the playable lookup, not the first file slot, which on
-    /// `DuelingFlag.m2` is Spawn. `None` when that idle is the rest pose and needs no rig.
+    /// Index into [`Self::clips`] of the loader-idle seed, the sequence the reference arms at load:
+    /// id 0 through the playable lookup, not the first file slot, which on `DuelingFlag.m2` is
+    /// Spawn. `None` when that idle is the rest pose and needs no rig.
     pub first_seq: Option<usize>,
     /// The pose evaluator's bake, mirroring [`Self::graph`].
     pub pose: std::sync::Arc<super::PoseSource>,
@@ -97,7 +96,7 @@ pub struct ResolvedAnim {
     /// The id to look up with [`ModelAnimations::find`].
     pub id: u16,
     /// PATH 1's high-16 direction code, else 0. Carried, not applied: the reference's arm negates
-    /// the play rate for code 1 and zeroes it for 2 and 3 (`0x7126d2`-`0x712712`).
+    /// the play rate for code 1 and zeroes it for 2 and 3.
     pub dir_flags: u16,
 }
 
@@ -107,9 +106,9 @@ impl ModelAnimations {
         self.clips.iter().find(|c| c.anim_id == anim_id)
     }
 
-    /// Whether the model authors `anim_id` (`0x711960`), which the GameObject arm's remap branches
-    /// on (`0x5f3930`). Not `find(..).is_some()`: `clips` lacks the zero-length sequences the parse
-    /// skips, which the reference still counts.
+    /// Whether the model authors `anim_id`, which the GameObject arm's remap branches on. Not
+    /// `find(..).is_some()`: `clips` lacks the zero-length sequences the parse skips, which the
+    /// reference still counts.
     pub fn owns(&self, anim_id: u16) -> bool {
         self.animation_lookup
             .get(anim_id as usize)
@@ -117,9 +116,8 @@ impl ModelAnimations {
     }
 
     /// The clip a free or effect model runs: `preferred` when the model has it, else the
-    /// reference's load bootstrap (`0x710153`-`0x71019b`), id 0 `Stand` at variation 0, else the
-    /// first record's id (`0x710181`). Unlike [`Self::first_seq`], no bind-pose gate: an effect's
-    /// emitters read the posed joints.
+    /// reference's load bootstrap, id 0 `Stand` at variation 0, else the first record's id. Unlike
+    /// [`Self::first_seq`], no bind-pose gate: an effect's emitters read the posed joints.
     pub fn preferred_clip(&self, preferred: Option<u16>) -> Option<&AnimClip> {
         preferred
             .and_then(|id| self.find(id))
@@ -128,8 +126,8 @@ impl ModelAnimations {
     }
 
     /// The file slot the loader-idle seed arms, [`Self::first_seq`]'s selection without its
-    /// bind-pose gate: the reference arms it on every instance (`0x70ebd0`), so a consumer keyed on
-    /// the playing sequence needs it, rig or not. `None` only for a model with no clip.
+    /// bind-pose gate: the reference arms it on every instance, so a consumer keyed on the playing
+    /// sequence needs it, rig or not. `None` only for a model with no clip.
     pub fn idle_seq(&self) -> Option<usize> {
         self.idle_clip().map(|c| c.seq_index)
     }
@@ -146,10 +144,10 @@ impl ModelAnimations {
             .or_else(|| self.clips.first())
     }
 
-    /// Pick a variation of `anim_id` for a `rand()` roll, the reference's weighted walk
-    /// (`0x7121a0`, variation −1). Exhaustion keeps the head: only the win path (`0x7124e9`)
-    /// overwrites the slot set at `0x71247a`. Variations are the sequences sharing `anim_id` in
-    /// file order, as retail files lay out the `variationNext` chain.
+    /// Pick a variation of `anim_id` for a `rand()` roll, the reference's weighted walk (variation
+    /// −1). Exhaustion keeps the head: only the win path overwrites the slot set. Variations are
+    /// the sequences sharing `anim_id` in file order, as retail files lay out the `variationNext`
+    /// chain.
     pub fn pick_variation(&self, anim_id: u16, roll: u16) -> Option<&AnimClip> {
         let mut roll = i32::from(roll);
         let mut head = None;
@@ -165,7 +163,7 @@ impl ModelAnimations {
 
     /// Resolve a requested id before a sequence lookup: inside a baked playable lookup, the
     /// model's own substitute; otherwise, and always on a 3.3.5a model, which carries no such
-    /// table, the `AnimationData.dbc` fallback walk of `SequenceFallbackById` (`0x826350`).
+    /// table, the reference's `AnimationData.dbc` fallback walk (`0x826350`).
     pub fn resolve(&self, requested: u16, catalog: &AnimDataCatalog) -> ResolvedAnim {
         if let Some(row) = self.playable_animation_lookup.get(requested as usize) {
             return ResolvedAnim {
@@ -421,7 +419,7 @@ mod tests {
         assert_eq!(pick(&[158, 159]), 158);
     }
 
-    // ── preferred_clip: the model-load bootstrap (`0x710153`–`0x71019b`) ─────────────────────
+    // ── preferred_clip: the model-load bootstrap ─────────────────────
 
     /// `LightningShield_State`'s shape: slot 0 is its Decay (159).
     #[test]
@@ -430,7 +428,7 @@ mod tests {
         assert_eq!(anims.preferred_clip(None).map(|c| c.anim_id), Some(0));
     }
 
-    /// The guarded fallback (`0x710181`), as on Cripple's effect: no Stand, slot 0 Hold (158).
+    /// The guarded fallback, as on Cripple's effect: no Stand, slot 0 Hold (158).
     #[test]
     fn preferred_clip_falls_back_to_the_first_record_without_a_stand() {
         let anims = test_anims(&[158, 159], Vec::new());
@@ -503,7 +501,7 @@ mod tests {
         assert_eq!(pick(&anims, 16, 0x5fff), 0); // last roll inside variation 0's weight
         assert_eq!(pick(&anims, 16, 0x6000), 1); // first roll past it
         assert_eq!(pick(&anims, 16, 0x7ffe), 1);
-        // A roll past the weights keeps the head (the reference's exhaust path, `0x7124de`).
+        // A roll past the weights keeps the head (the reference's exhaust path).
         assert_eq!(pick(&anims, 16, 0x7fff), 0);
         assert_eq!(pick(&anims, 5, 0x7fff), 2); // lone variation wins by exhaustion→head (weight 0)
         assert!(anims.pick_variation(99, 0).is_none());

@@ -131,7 +131,7 @@ const MAX_CLIP_ROWS: usize = 64;
 impl EffectMeta {
     /// Write this frame's uniform rows and return the clipped rows' offsets by (fog slot, clip
     /// bits). Rows 0..6 are the fog policies in [`EffectFog::slot`] order: `fog.x` the colour
-    /// policy (`0x70baf0`), `fog.y` rain's forced fog with `zw` its start and end.
+    /// policy, `fog.y` rain's forced fog with `zw` its start and end.
     fn build_params(
         &mut self,
         device: &RenderDevice,

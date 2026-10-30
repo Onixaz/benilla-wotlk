@@ -1,5 +1,5 @@
 //! The calendar behind the stock `Blizzard_Calendar` and the minimap clock's invite badge:
-//! 12340's `CGCalendar` and `CGCalendarEvent`. The app pushes the holiday tables once
+//! 12340's calendar and its events. The app pushes the holiday tables once
 //! ([`UiScript::set_calendar_catalog`]), the player's facts, the clock and the names it is asked
 //! for, and applies each server message through [`UiScript::calendar_packet`]; the verbs read the
 //! state and queue the sends ([`UiScript::take_calendar_requests`]). The state outlives a
@@ -61,7 +61,7 @@ pub struct CalendarPlayerView {
     pub guild_id: u32,
     /// `PLAYER_FIELD_ARENA_TEAM_INFO_1_1`'s three team ids.
     pub arena_teams: [u32; 3],
-    /// `GetPVPFactionIndex` (`0x6d6e90`): the race's side, 0 Horde, 1 Alliance, -1 neither.
+    /// The PvP faction index (`0x6d6e90`): the race's side, 0 Horde, 1 Alliance, -1 neither.
     pub pvp_faction: i32,
     /// The same of the player's faction template, which `LfgDungeons.dbc`'s side is matched to.
     pub faction_group: i32,
@@ -414,11 +414,11 @@ pub enum CalendarRequest {
         event_id: u64,
         tentative: bool,
     },
-    /// `CGMailInfo::ReceivedMail(0)` (`0x5c0c8f`): a removal mailed its notice.
+    /// The mail info's received-mail notice, with 0 (`0x5c0c8f`): a removal mailed its notice.
     ReceivedMail,
 }
 
-/// `CGGuildInfo::CanEditGuildEvent` (`0x5cbca0`): the rank's right bit 20.
+/// The guild's event-edit right (`0x5cbca0`): the rank's right bit 20.
 pub(crate) const RIGHT_EDIT_GUILD_EVENT: u32 = 0x10_0000;
 
 /// The filter CVars' values, a missing one off (`0x5c003a`).
@@ -457,7 +457,7 @@ pub(crate) fn with_calendar<R>(
     f(calendar, &ctx)
 }
 
-/// A filter CVar was written: the day lists rebuild with its value (`SetCalendarFilterCVarCallback`
+/// A filter CVar was written: the day lists rebuild with its value (the filter CVar's callback,
 /// `0x5127a0`).
 pub(crate) fn filter_cvar_written(model: &mut Model, key: &str) {
     if FILTERS
@@ -498,7 +498,7 @@ pub(crate) fn fire_signals(lua: &mlua::Lua) {
     }
 }
 
-/// `CGCalendar::GetDateTimeText` (`0x5b7e50`): `FULLDATE_AND_TIME` of the date and the clock,
+/// The calendar's date-time text (`0x5b7e50`): `FULLDATE_AND_TIME` of the date and the clock,
 /// either left empty where the packed time leaves it unset; the clock in 24 hours under
 /// `timeMgrUseMilitaryTime`.
 pub fn date_time_text(time: u32, military: bool, get: &dyn Fn(&str) -> String) -> String {
@@ -638,7 +638,7 @@ impl super::UiScript {
         self.calendar_run(|c, _| c.names_landed(fresh));
     }
 
-    /// `CGCalendar::EnterWorld` (`0x5be2a0`), at each world-enter cascade.
+    /// The calendar's world entry (`0x5be2a0`), at each world-enter cascade.
     pub fn calendar_enter_world(&mut self) {
         self.calendar_run(|c, ctx| c.enter_world(ctx));
     }
@@ -648,12 +648,12 @@ impl super::UiScript {
         self.calendar_run(|c, ctx| c.apply(ctx, wire));
     }
 
-    /// `CGCalendar::GuildChanged` (`0x5c0f40`): the player's own guild field moved.
+    /// The calendar's guild change (`0x5c0f40`): the player's own guild field moved.
     pub fn calendar_guild_changed(&mut self, in_guild: bool) {
         self.calendar_run(|c, ctx| c.guild_changed(ctx, in_guild));
     }
 
-    /// `CGCalendar::InvalidatePlayer` (`0x5bde60`).
+    /// The calendar's player invalidate (`0x5bde60`).
     pub fn calendar_invalidate_player(&mut self, guid: u64) {
         self.calendar_run(|c, _| c.invalidate_player(guid));
     }

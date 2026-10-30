@@ -8,10 +8,9 @@
 //! modifiedclick CTRL SELFCAST
 //! ```
 //!
-//! - Write (`CGUIBindings::SaveBindings` `0x55f1b0`): a `BINDINGMODE` line before a mode's first
-//!   key, then `bind <key> <command>` for each key the set holds off the defaults, `NONE` for a
-//!   default key it unbinds; then `modifiedclick <binding> <action>` for each action off its
-//!   default.
+//! - Write (`0x55f1b0`): a `BINDINGMODE` line before a mode's first key, then
+//!   `bind <key> <command>` for each key the set holds off the defaults, `NONE` for a default key
+//!   it unbinds; then `modifiedclick <binding> <action>` for each action off its default.
 //! - Read (`0x5641c0`): the defaults first, then line by line, `BINDINGMODE n` (n <= 3) switching
 //!   the mode, `bind` taking a key token of at most 31 bytes and the rest of the line as its
 //!   command, `modifiedclick` the same; any other line is ignored.
@@ -20,7 +19,7 @@
 
 use benilla_ui::script::keybind::KeyBinding;
 
-/// A key bound to nothing (`Bind` `0x562ed0` stores the literal).
+/// A key bound to nothing (the bind at `0x562ed0` stores the literal).
 const NONE: &str = "NONE";
 
 /// The reader's key buffer, 32 bytes with the terminator (`0x5641c0`).

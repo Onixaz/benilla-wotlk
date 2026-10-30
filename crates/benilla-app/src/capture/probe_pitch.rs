@@ -1,12 +1,12 @@
 //! `WOW_PROBE_PITCH`: the scripted dive, aiming a swimming avatar's nose up or down. In play the
-//! swim pitch (the wire's pitch tail, the body-pitch render `0x60a110`) is only written by
-//! mouse-look, which needs a moving OS cursor in the viewport.
+//! swim pitch (the wire's pitch tail) is only written by mouse-look, which needs a moving OS cursor
+//! in the viewport.
 //!
 //! Format: `WOW_PROBE_PITCH="<deg>@<start_s>[:<deg_per_sec>][;...]"`, nose-up positive like
 //! `Player::mover_pitch` and the wire. `"-30@22;30@40"` aims 30 degrees down at 22 s and up at 40;
 //! `"-45@20:9"` sweeps at 9 degrees/s from 20 s. The latest started entry wins and is re-applied
-//! every frame. It writes [`Player::aim_pitch`], the field the reference's `SetPitch`
-//! (`0x7c6f70`) writes, under the same 89-degree clamp.
+//! every frame. It writes [`Player::aim_pitch`], the field the reference's pitch setter writes,
+//! under the same 89-degree clamp.
 
 use bevy::prelude::*;
 

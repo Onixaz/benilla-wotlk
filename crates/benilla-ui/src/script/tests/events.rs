@@ -1,5 +1,5 @@
-//! Event registration and dispatch (`0x704d50`, `0x704f10`). Handlers read varargs through Lua
-//! 5.0's implicit `arg` table: `...` is not a value in the 1.12 client's grammar.
+//! Event registration and dispatch. Handlers read varargs through Lua 5.0's implicit `arg` table:
+//! `...` is not a value in the 1.12 client's grammar.
 
 use super::common::script;
 use crate::script::*;
@@ -17,7 +17,8 @@ fn globals_are_restored_after_firing_nesting_safe() {
     )
     .unwrap();
     s.fire_event("E", vec![ScriptValue::Str("x".into())]);
-    // `0x704f10` sets the globals for the handler and restores the prior values after.
+    // The reference's dispatch sets the globals for the handler and restores the prior values
+    // after.
     let (t, e, a): (String, String, String) = s.eval("return this, event, arg1").unwrap();
     assert_eq!(
         (t.as_str(), e.as_str(), a.as_str()),
@@ -42,8 +43,8 @@ fn handler_errors_are_collected_not_panicked() {
     assert!(errs[0].contains("boom"), "{errs:?}");
 }
 
-/// Each event's listener list is tail-appended (`0x7052d0`) and walked head-first (`0x703e50`);
-/// a duplicate registration returns early (`0x702264`).
+/// Each event's listener list is tail-appended and walked head-first; a duplicate registration
+/// returns early.
 #[test]
 fn events_fire_in_registration_order_fifo() {
     let mut s = script();
@@ -117,8 +118,8 @@ fn has_script_reports_the_kind_is_supported_not_that_one_is_set() {
     );
 }
 
-/// The walk saves the next node before the handler runs (`0x703ee8`); AceEvent-2.0's fire-once
-/// idiom unregisters inside its own handler.
+/// The walk saves the next node before the handler runs; AceEvent-2.0's fire-once idiom unregisters
+/// inside its own handler.
 #[test]
 fn a_self_unregistering_handler_does_not_rob_its_successor() {
     let mut s = script();
@@ -205,9 +206,9 @@ fn mid_dispatch_removal_of_the_next_stops_and_append_is_visited() {
     );
 }
 
-/// `RegisterAllEvents` (`0x774c20`, table `0x878ec0`, argc 1, arity 0) sends every event to the
-/// frame's `OnEvent`; `UnregisterAllEvents` clears it too, which is how AceEvent-2.0 gets back to
-/// per-event registration.
+/// `RegisterAllEvents` (argc 1, arity 0) sends every event to the frame's `OnEvent`;
+/// `UnregisterAllEvents` clears it too, which is how AceEvent-2.0 gets back to per-event
+/// registration.
 #[test]
 fn register_all_events_takes_every_event_and_unregister_all_clears_it() {
     let mut s = script();

@@ -1,7 +1,7 @@
-//! The object blips of `ObjectEnumProc` (`0x57f7f0`): each streamed object within 0.8 of the
-//! view radius takes the first blip its rules give, one `ObjectIcons.blp` cell per blip, and
-//! `RenderObjectBlips` (`0x580380`) draws them by blip in order, the same floor first. The party
-//! dots are `RenderGroupBlips`' (`0x57ff70`) class cells of `PartyRaidBlips.blp`.
+//! The object blips of the reference's object walk (`0x57f7f0`): each streamed object within 0.8
+//! of the view radius takes the first blip its rules give, one `ObjectIcons.blp` cell per blip, and
+//! the blip draw (`0x580380`) draws them by blip in order, the same floor first. The party dots are
+//! the group-blip draw's (`0x57ff70`) class cells of `PartyRaidBlips.blp`.
 
 use std::collections::HashMap;
 
@@ -25,14 +25,14 @@ use super::{party_member_pos, BlipCtx, HoverName, ObjectHover, TrackedCandidates
 /// Every object and party blip's quad, `0.0125` of the screen height × 1.6667 (`0x57dd16`): 16 px
 /// on the 140.8-px basis, and the hover box too (`0x57c720`).
 const BLIP_PX: f32 = 16.0;
-/// `UNIT_DYNAMIC_FLAGS` bit 0x2, set on a Hunter's Mark victim for its caster; one of
-/// `CanTrackUnit`'s two always-track clauses.
+/// `UNIT_DYNAMIC_FLAGS` bit 0x2, set on a Hunter's Mark victim for its caster; one of the unit
+/// tracking check's two always-track clauses.
 const UNIT_DYNFLAG_TRACK_UNIT: u32 = 0x2;
-/// The creature `type_flags` bit `CanInteractWhileDead` (`0x715e30`) reads.
+/// The creature `type_flags` bit the interact-while-dead check (`0x715e30`) reads.
 const TYPE_FLAG_INTERACT_WHILE_DEAD: u32 = 0x80;
 /// The profession-trainer `UNIT_NPC_FLAGS` bit: a town type tracking it adds the title line.
 const NPC_FLAG_PROFESSION_TRAINER: u32 = 0x40;
-/// `GAMEOBJECT_TYPE_FISHINGHOLE`, which `CanTrackObject` admits without `CanUse`.
+/// `GAMEOBJECT_TYPE_FISHINGHOLE`, which the object tracking check admits without the use check.
 const GO_TYPE_FISHINGHOLE: i32 = 25;
 /// `PLAYER_FLAGS` ghost bit.
 const PLAYER_FLAGS_GHOST: u32 = 0x10;
@@ -60,7 +60,7 @@ pub(in crate::minimap) enum Blip {
     QuestReward = 10,
     /// Quest status 7, or 4 under trivial tracking: the blue `!`.
     QuestRepeatable = 11,
-    /// An undiscovered flight master (`OnTaxiNodeStatus 0x6d5fc0`): the green `!`.
+    /// An undiscovered flight master (`0x6d5fc0`): the green `!`.
     Interact = 13,
     /// Our own pet or charm, cell 15, which the atlas leaves blank.
     OwnMinion = 15,
@@ -156,7 +156,7 @@ impl BlipWorld<'_> {
         self.town.is_some_and(|t| t.kind == TownKind::TrivialQuests)
     }
 
-    /// `IsDeadOrGhost` on the active player.
+    /// The dead-or-ghost test on the active player.
     fn self_dead(&self) -> bool {
         self.me.is_some_and(|m| {
             m.0.unit_health().unwrap_or(1) == 0 || m.0.player_flags() & PLAYER_FLAGS_GHOST != 0
@@ -176,7 +176,7 @@ impl BlipWorld<'_> {
         }
     }
 
-    /// `ObjectEnumProc` for one object; `None` draws nothing. `unknown_flight_master` is a flight
+    /// The object walk for one object; `None` draws nothing. `unknown_flight_master` is a flight
     /// master whose node we have not learned.
     pub(in crate::minimap) fn classify(
         &self,
@@ -274,13 +274,13 @@ impl BlipWorld<'_> {
         Some(blip.into())
     }
 
-    /// `GetPVPFactionIndex`: the race's template side, compared, never named.
+    /// The PvP faction index: the race's template side, compared, never named.
     fn pvp_side(&self, store: &ObjectStore) -> Option<u32> {
         let catalog = self.factions?.catalog();
         Some(catalog.race_template(store.0.unit_race()?)?.group_mask & 6)
     }
 
-    /// `CanTrackUnit` (`0x6dca00`).
+    /// The unit tracking check (`0x6dca00`).
     fn can_track_unit(&self, store: &ObjectStore) -> bool {
         if self.self_dead() || store.0.unit_is_untrackable() {
             return false;
@@ -302,7 +302,7 @@ impl BlipWorld<'_> {
         let type_id = f.gameobject_type_id();
         let reaction =
             crate::target::cursor_mode::go_reaction(self.factions, f.gameobject_faction(), self.me);
-        // `IsTracked` (`0x70f850`) and `CanInteract` (`0x71f8b0`): not a ghost, reaction neutral.
+        // The tracked and interact checks (`0x70f850`, `0x71f8b0`): not a ghost, reaction neutral.
         if let Some(TownKind::GameObject(wanted)) = self.town.map(|t| t.kind) {
             let ghost = self
                 .me
@@ -314,7 +314,7 @@ impl BlipWorld<'_> {
         if let Some(b) = self.quest_blip(guid) {
             return Some(b.into());
         }
-        // `CanTrackObject` (`0x6dca90`).
+        // The object tracking check (`0x6dca90`).
         if self.self_dead() {
             return None;
         }
@@ -345,8 +345,8 @@ fn tracked_resource(mask: u32, lock_id: u32, locks: &LockCatalog) -> bool {
     })
 }
 
-/// `CanTrackUnit`'s tracking half: `UNIT_DYNFLAG_TRACK_UNIT`, or our track-stealthed bit with the
-/// unit's CREEP flag, else the creature type's bit `type − 1` in `PLAYER_TRACK_CREATURES`.
+/// The unit tracking check's tracking half: `UNIT_DYNFLAG_TRACK_UNIT`, or our track-stealthed bit
+/// with the unit's CREEP flag, else the creature type's bit `type − 1` in `PLAYER_TRACK_CREATURES`.
 fn tracked_creature(
     tracking: SelfTracking,
     creature_type: impl FnOnce() -> u32,

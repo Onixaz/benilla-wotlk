@@ -1,5 +1,5 @@
 //! The one shared `AreaPOI.dbc` catalog, read by the minimap's landmark blips and the world map's
-//! landmark pass (`0x4a67a0`). Absent when the DBC fails to load; every reader then shows no POIs.
+//! landmark pass. Absent when the DBC fails to load; every reader then shows no POIs.
 
 use bevy::prelude::*;
 

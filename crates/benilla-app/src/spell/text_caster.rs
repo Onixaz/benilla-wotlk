@@ -67,13 +67,13 @@ pub(crate) fn operand_bit(v: PlayerValue) -> u64 {
     1 << v.index()
 }
 
-/// `IsTwoHanded` `0x714c80`'s weapon subclasses: two-handed axe, mace and sword, polearm, staff,
-/// the second exotic, spear and fishing pole.
+/// The two-handed test's weapon subclasses (`0x714c80`): two-handed axe, mace and sword, polearm,
+/// staff, the second exotic, spear and fishing pole.
 fn two_handed(class: u32, subclass: u32) -> bool {
     class == 2 && matches!(subclass, 1 | 5 | 6 | 8 | 10 | 12 | 17 | 20)
 }
 
-/// `GetVariableValue` `0x5782d0` for a value off the player's fields.
+/// The tooltip variable's value (`0x5782d0`) for a value off the player's fields.
 fn operand(store: &ObjectStore, items: &Items, v: PlayerValue) -> f32 {
     let p = &store.0;
     let stat = |i: u8| p.unit_stat(i).unwrap_or(0) as i32;
@@ -130,7 +130,7 @@ fn operand(store: &ObjectStore, items: &Items, v: PlayerValue) -> f32 {
             };
             d.unwrap_or(0.0).ceil().max(1.0)
         }
-        // `GetResistanceAndBuffs` school 0: the base less both buffs, the effective clamped.
+        // The resistance read for school 0: the base less both buffs, the effective clamped.
         PlayerValue::BaseArmor => (armor - armor_pos - armor_neg) as f32,
         PlayerValue::Armor => armor.max(0) as f32,
         PlayerValue::AttackSpeed(hand) => {
@@ -200,8 +200,8 @@ impl benilla_formats::Caster for TextCaster<'_> {
         (self.power_cost)(d)
     }
 
-    /// `Spell_C_GetPowerCostPerSecond` `0x7ff100`: the per-second cost plus its per-level term at
-    /// the spell's level less `baseLevel`, then op 14's percentage alone when positive.
+    /// The per-second cost lookup (`0x7ff100`): the per-second cost plus its per-level term at the
+    /// spell's level less `baseLevel`, then op 14's percentage alone when positive.
     fn power_cost_per_second(&self, d: &SpellDisplay) -> i32 {
         let level = d.skill_level((self.skill)(d.id)) as i32;
         let cost = (d.mana_per_second as i32).wrapping_add(

@@ -1,8 +1,7 @@
 //! Clones that wear their caster's look (Mirror Image): a unit with `UNIT_FIELD_FLAGS_2` bit `0x10`
-//! asks for it once its model is in (`CGUnit_C::InitializeComponent` `0x730100` →
-//! `RequestMirrorImageData` `0x716f10`), and `SMSG_MIRRORIMAGE_DATA` dresses its character model
-//! with the caster's race, customization and worn displays (`0x730290`). The reference shows
-//! nothing of the clone until the answer; benilla draws its bare display meanwhile.
+//! asks for it once its model is in (`0x730100` → `0x716f10`), and `SMSG_MIRRORIMAGE_DATA` dresses
+//! its character model with the caster's race, customization and worn displays (`0x730290`). The
+//! reference shows nothing of the clone until the answer; benilla draws its bare display meanwhile.
 
 use benilla_protocol::messages::{MirrorImage, MirrorLook};
 use benilla_protocol::{EntityKind, SessionEvent};
@@ -114,8 +113,8 @@ fn on_mirror_image_data(
 }
 
 /// The clone's worn displays as a player's [`super::Equipment`]: the geoset and composite slots,
-/// cloak and helm from the eleven `AddItemBySlot` displays. The guild tabard's emblem
-/// (`GuildGetGuildTabard`, `0x730716`) is not built.
+/// cloak and helm from the eleven per-slot item displays. The guild tabard's emblem (`0x730716`) is
+/// not built.
 pub(super) fn mirror_equipment(look: &MirrorLook) -> super::Equipment {
     let i = &look.items;
     super::Equipment {

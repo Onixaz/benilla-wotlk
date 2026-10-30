@@ -1,5 +1,5 @@
 //! 3.3.5a's library surface over stock Lua 5.1: the base-library string helpers and the bare
-//! aliases its built-in compat chunk publishes (`Wow.exe` `0x643180`).
+//! aliases its built-in compat chunk publishes (`Wow.exe`).
 //!
 //! The helpers are C bindings in the FrameScript base library: `strtrim` (`0x816960`),
 //! `strsplit` (`0x816a60`), `strjoin` (`0x816b60`) and `strconcat` (`0x816d80`), and the table
@@ -15,8 +15,8 @@ use mlua::{Lua, MultiValue, Table, Value, Variadic};
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `strtrim(str [, chars])`: `chars` defaults to `" \t\r\n"` (`0xa16860`); each end loses
-    // every byte in the set.
+    // `strtrim(str [, chars])`: `chars` defaults to `" \t\r\n"`; each end loses every byte in the
+    // set.
     g.set(
         "strtrim",
         lua.create_function(|lua, (s, chars): (mlua::String, Option<mlua::String>)| {

@@ -121,8 +121,8 @@ fn server_seed(opcode: u16, body: &[u8]) -> Result<u32> {
 /// What a world connect reports on its way to `SMSG_AUTH_RESPONSE`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorldConnectEvent {
-    /// The socket connected: the reference's connect operation completes `RESPONSE_CONNECTED`
-    /// here (`0x5aaa90`) and its authentication begins.
+    /// The socket connected: the reference's connect operation completes `RESPONSE_CONNECTED` here
+    /// and its authentication begins.
     Connected,
     /// A queue position (`AUTH_WAIT_QUEUE`), or `None` when the body carried none.
     Queued(Option<u32>),
@@ -156,7 +156,7 @@ impl WorldSession {
         if !on_event(WorldConnectEvent::Connected) {
             bail!("world connect abandoned");
         }
-        // Nagle off: the reference sets `TCP_NODELAY` on its game socket (`0x5bca60`).
+        // Nagle off: the reference sets `TCP_NODELAY` on its game socket.
         stream
             .set_nodelay(true)
             .context("disabling Nagle (TCP_NODELAY) on the world socket")?;
@@ -986,11 +986,11 @@ impl WorldSession {
         ))
     }
 
-    /// The halves [`Self::into_split`] made, one session again on the same connection: a logout
-    /// or a refused character login returns to character select on the link it entered by,
-    /// where the reference re-enumerates (`0x5aaeb0` → `0x401ee0(1, 1, 0)` → `0x46b880`), with
-    /// no new authentication. The cipher keeps the state each direction reached, and the reads
-    /// wait with the handshake's bound again, as every park step awaits one reply.
+    /// The halves [`Self::into_split`] made, one session again on the same connection: a logout or
+    /// a refused character login returns to character select on the link it entered by, where the
+    /// reference re-enumerates, with no new authentication. The cipher keeps the state each
+    /// direction reached, and the reads wait with the handshake's bound again, as every park step
+    /// awaits one reply.
     pub fn rejoin(reader: WorldReader, writer: WorldWriter) -> Result<Self> {
         // The read half is a clone of the write half's socket; dropping it closes nothing.
         let WorldReader {

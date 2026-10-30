@@ -48,8 +48,8 @@ fn segment(times: &[u32], t: u32) -> (usize, usize, f32) {
     if n == 1 {
         return (0, 0, 0.0);
     }
-    // 0x6d63e0: walk the keys as a cycle in file order; the first pair bracketing `t` wins, and
-    // a pair that does not ascend wraps through midnight.
+    // Walk the keys as a cycle in file order; the first pair bracketing `t` wins, and a pair that
+    // does not ascend wraps through midnight.
     let day = i64::from(DAY);
     let t = i64::from(t);
     for i in 0..n {

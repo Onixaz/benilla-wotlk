@@ -1,10 +1,10 @@
-//! The depth-prime twin: the reference's `M2UseZFill` ("z-fill transparent objects", default on,
-//! `0x82e748`). For a translucent instance (`0 < A < 1`: stealth, the appear and despawn ramps,
-//! the self-avatar feather) its collector clones each z-writing mesh command into a twin drawn
-//! first (comparator key `cmd+0x08` descending in the instance's tie), colour masked off, blend
-//! off, z-write on, so overlapping parts blend as one layer, not `0.3` over `0.3`.
-//! [`sync_zfill_twins`] keeps such a twin child, sharing mesh, transform and tag, on each fadeable
-//! part while its `MeshTag` alpha is translucent.
+//! The depth-prime twin: the reference's `M2UseZFill` ("z-fill transparent objects", default on).
+//! For a translucent instance (`0 < A < 1`: stealth, the appear and despawn ramps, the self-avatar
+//! feather) its collector clones each z-writing mesh command into a twin drawn first (comparator
+//! key `cmd+0x08` descending in the instance's tie), colour masked off, blend off, z-write on, so
+//! overlapping parts blend as one layer, not `0.3` over `0.3`. [`sync_zfill_twins`] keeps such a
+//! twin child, sharing mesh, transform and tag, on each fadeable part while its `MeshTag` alpha is
+//! translucent.
 //!
 //! Deviation: the reference twins every translucent command, authored-blend glass included; here
 //! twins exist only during an instance alpha episode, so every steady-state look is untouched.

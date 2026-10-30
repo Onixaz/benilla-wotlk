@@ -150,15 +150,15 @@ pub(super) fn read_attacker_state(r: &mut impl Read) -> io::Result<AttackerState
 }
 
 /// The server's refusal of `CMSG_ATTACKSWING`; every body is empty. Four opcodes, three variants:
-/// the reference (`0x6255b0`) handles `0x148` and `0x149` in one shared arm.
+/// the reference handles `0x148` and `0x149` in one shared arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttackSwingError {
-    /// `SMSG_ATTACKSWING_NOTINRANGE` (`0x145`): the reference latches code 1 (`0x625a8a`).
+    /// `SMSG_ATTACKSWING_NOTINRANGE` (`0x145`): the reference latches code 1.
     NotInRange,
-    /// `SMSG_ATTACKSWING_BADFACING` (`0x146`): the reference latches code 2 (`0x625aa1`).
+    /// `SMSG_ATTACKSWING_BADFACING` (`0x146`): the reference latches code 2.
     BadFacing,
     /// `SMSG_ATTACKSWING_DEADTARGET` (`0x148`) or `SMSG_ATTACKSWING_CANT_ATTACK` (`0x149`): no
-    /// message, the reference only stops the attack (`0x625ab8`).
+    /// message, the reference only stops the attack.
     DeadOrUnattackable,
 }
 

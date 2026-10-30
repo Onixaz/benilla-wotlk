@@ -66,8 +66,8 @@ pub struct TalentView {
     pub required_spell_known: bool,
     /// The required spell's name, for the `ITEM_REQ_SKILL` line while it is unknown.
     pub required_spell_name: Option<String>,
-    /// A pet talent the current pet may take (`IsTalentAvailableForPet`, `0x5c5a20`); one it may
-    /// not reads as no talent and cannot be learned. Unread for the player's talents.
+    /// A pet talent the current pet may take (`0x5c5a20`); one it may not reads as no talent and
+    /// cannot be learned. Unread for the player's talents.
     pub available: bool,
 }
 
@@ -253,7 +253,7 @@ fn number_of(v: &Value) -> Option<f64> {
     }
 }
 
-/// A boolean argument as `0x815500` reads it: nil and false are false, anything else true.
+/// A boolean argument as the reference reads it: nil and false are false, anything else true.
 fn flag_arg(v: Option<&Value>) -> bool {
     !matches!(v, None | Some(Value::Nil) | Some(Value::Boolean(false)))
 }

@@ -2,10 +2,9 @@
 //! with 1.12's own token set. These strings are what the table stores, the window shows and the
 //! files save; a press matches by equality, then once more with its leftmost modifier dropped.
 //!
-//! Prefix order is ALT-CTRL-SHIFT (`Blizzard_BindingUI.lua:176-182`; the emitter `0x4b6630` walks
-//! the table at `0x846bd0`), and it decides which modifier the fallback drops. Super/Cmd is not a
-//! 1.12 modifier, so a chord never carries it; that a press with it held runs nothing is
-//! `crate::bindings`'s deviation.
+//! Prefix order is ALT-CTRL-SHIFT (`Blizzard_BindingUI.lua:176-182`), and it decides which modifier
+//! the fallback drops. Super/Cmd is not a 1.12 modifier, so a chord never carries it; that a press
+//! with it held runs nothing is `crate::bindings`'s deviation.
 
 use std::fmt;
 
@@ -78,9 +77,9 @@ impl Chord {
     }
 
     /// The one retry after an exact miss: drop the leftmost modifier (ALT, then CTRL, then SHIFT).
-    /// `0x4b7990` re-probes the text after the first `'-'` (`0x4b7a2b`-`0x4b7a49`) and never
-    /// again (`0x4b7b41`), so `ALT-CTRL-Z` reaches `CTRL-Z` and stops. A bare `-` retries the
-    /// empty string there and misses, the `None` here.
+    /// The reference re-probes the text after the first `'-'` and never again, so `ALT-CTRL-Z`
+    /// reaches `CTRL-Z` and stops. A bare `-` retries the empty string there and misses, the `None`
+    /// here.
     pub(crate) fn fallback(self) -> Option<Chord> {
         if self.alt {
             Some(Chord { alt: false, ..self })
@@ -103,18 +102,18 @@ impl Chord {
 /// The 1.12 name a key press gets: a letter, digit or punctuation key what the active layout
 /// names it ([`LayoutNames`]), every other key its fixed name. `None` for a key the reference
 /// names `UNKNOWN` or drops, and for the modifiers, which are only prefixes
-/// (`IsKeyPressIgnoredForBinding`). Both Enters are `ENTER`.
+/// (the reference's ignored-key test). Both Enters are `ENTER`.
 pub(crate) fn key_token(k: KeyCode, layout: &LayoutNames) -> Option<KeyName> {
     match layout.name(k) {
-        // The lookup folds `a`-`z` up (`0x64b419`), so Turkish `VK_OEM_7`'s `i` is `I`'s key.
+        // The lookup folds `a`-`z` up, so Turkish `VK_OEM_7`'s `i` is `I`'s key.
         Some(LayoutName::Char(c)) => Some(KeyName::Char(c.to_ascii_uppercase())),
         Some(LayoutName::Dropped) => None,
         None => fixed_name(k),
     }
 }
 
-/// The fixed half of `0x42d800` and the Mac table: every key no layout names
-/// ([`super::layout::position`]).
+/// The fixed half of the reference's Windows key table, and the Mac table: every key no layout
+/// names ([`super::layout::position`]).
 fn fixed_name(k: KeyCode) -> Option<KeyName> {
     use KeyCode::*;
     use KeyName::Word;
@@ -131,13 +130,13 @@ fn fixed_name(k: KeyCode) -> Option<KeyName> {
         F10 => Word("F10"),
         F11 => Word("F11"),
         F12 => Word("F12"),
-        // On a Mac F13 is print-screen: the Mac key table `0x5bf320` maps keycode `0x69` to
-        // `0x212`, `PRINTSCREEN`, and macOS has no PrintScreen keycode.
+        // On a Mac F13 is print-screen: the Mac key table maps keycode `0x69` to `0x212`,
+        // `PRINTSCREEN`, and macOS has no PrintScreen keycode.
         #[cfg(target_os = "macos")]
         F13 => Word("PRINTSCREEN"),
-        // `IsValidBindingKeyString` accepts `F` + any digits (`0x846c04`) and the Mac table maps
-        // keycode `0x6A` to `F16` (`0x30d`). Deviation: the Windows key table stops at `VK_F12`
-        // and drops later F-keys; they are named here so a stored `F13`-`F24` can be pressed.
+        // The key-string check accepts `F` + any digits and the Mac table maps keycode `0x6A` to
+        // `F16` (`0x30d`). Deviation: the Windows key table stops at `VK_F12` and drops later
+        // F-keys; they are named here so a stored `F13`-`F24` can be pressed.
         #[cfg(not(target_os = "macos"))]
         F13 => Word("F13"),
         // On a Mac F14 and F15 are ScrollLock and Pause: keycodes `0x6B` and `0x71` map to
@@ -185,12 +184,12 @@ fn fixed_name(k: KeyCode) -> Option<KeyName> {
         NumpadDivide => Word("NUMPADDIVIDE"),
         NumpadMultiply => Word("NUMPADMULTIPLY"),
         NumpadDecimal => Word("NUMPADDECIMAL"),
-        // The Mac keypad's `=`: the namer's `0x30c`, and in `IsValidBindingKeyString`'s table.
+        // The Mac keypad's `=`: the namer's `0x30c`, and in the key-string check's table.
         NumpadEqual => Word("NUMPADEQUALS"),
         NumLock => Word("NUMLOCK"),
         PrintScreen => Word("PRINTSCREEN"),
-        // No ScrollLock or Pause: the namer (`0x4b66b0`) calls `0x210`/`0x211` `UNKNOWN`, and
-        // `IsValidBindingKeyString` (`0x4b7890`) has neither name.
+        // No ScrollLock or Pause: the namer calls `0x210`/`0x211` `UNKNOWN`, and the key-string
+        // check has neither name.
         CapsLock => Word("CAPSLOCK"),
         _ => return None,
     })
@@ -206,8 +205,8 @@ pub(crate) fn normalize_key(k: KeyCode) -> KeyCode {
 }
 
 /// `BUTTON6` to `BUTTON20`, indexed by `Other(n) - 5`: the reference names further buttons
-/// `BUTTON<n>` (`0x4b6aa0`'s bit-scan fallback), and winit passes the platform's button number, so
-/// the sixth button is `Other(5)`.
+/// `BUTTON<n>` (a bit-scan fallback), and winit passes the platform's button number, so the sixth
+/// button is `Other(5)`.
 const EXTRA_BUTTONS: &[&str] = &[
     "BUTTON6", "BUTTON7", "BUTTON8", "BUTTON9", "BUTTON10", "BUTTON11", "BUTTON12", "BUTTON13",
     "BUTTON14", "BUTTON15", "BUTTON16", "BUTTON17", "BUTTON18", "BUTTON19", "BUTTON20",
@@ -237,9 +236,9 @@ fn token_key(t: &str) -> Option<BindKey> {
         "MOUSEWHEELDOWN" => return Some(BindKey::WheelDown),
         _ => {}
     }
-    // One character: what a layout names some key, which the namer writes as UTF-8 (`0x4b66b0`'s
-    // `[0x21, 0xff]` arm through `0x41abb0`). [`key_token`] folds `a`-`z` up as the lookup does,
-    // so a lowercase letter is no press's name.
+    // One character: what a layout names some key, which the namer writes as UTF-8 (its
+    // `[0x21, 0xff]` arm). [`key_token`] folds `a`-`z` up as the lookup does, so a lowercase letter
+    // is no press's name.
     let mut chars = t.chars();
     if let (Some(c), None) = (chars.next(), chars.next()) {
         let pressable = !c.is_control() && !c.is_whitespace() && !c.is_ascii_lowercase();
@@ -317,7 +316,7 @@ fn token_key(t: &str) -> Option<BindKey> {
 mod tests {
     use super::*;
 
-    /// Ties this namer to the engine's `IsValidBindingKeyString`: every chord the install's
+    /// Ties this namer to the engine's key-string check: every chord the install's
     /// `WTF\DefaultBindings.wtf` ships is a key string it accepts and a chord the dispatcher can
     /// press, and one key of each token shape, since `KeyCode` cannot be enumerated.
     #[test]
@@ -630,7 +629,7 @@ mod tests {
                 "the stored '{expected}' is that key's chord"
             );
         }
-        // A key its layout drops binds nothing (`0x42da49`).
+        // A key its layout drops binds nothing.
         azerty.set(Backquote, Some(LayoutName::Dropped));
         assert_eq!(name(Backquote, &azerty), None);
     }

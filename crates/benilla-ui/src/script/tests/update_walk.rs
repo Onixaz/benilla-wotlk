@@ -154,8 +154,8 @@ fn a_raise_during_the_walk_follows_the_relinked_frames() {
     assert_eq!(take_log(&s), "Front2 Back3");
 }
 
-/// A kind's own update runs in its frame's slot (`CGCooldown::OnLayerUpdate` `0x5ec8f0`): a
-/// cooldown whose flash ends hides between the frames walked before it and those after.
+/// A kind's own update runs in its frame's slot (the cooldown's layer update): a cooldown whose
+/// flash ends hides between the frames walked before it and those after.
 #[test]
 fn a_cooldowns_self_hide_lands_in_its_walk_slot() {
     let mut s = script();
@@ -246,9 +246,9 @@ fn on_update_model_fires_in_draw_order_for_panes_on_screen() {
     assert_eq!(take_log(&s), "Lower Upper");
 }
 
-/// An ancestor's hide reaches the tooltip's `HideThis` override (`0x61eb20`), which drops its
-/// owner, so the ancestor's next show finds it ownerless and its `ShowThis` override (`0x61cff0`)
-/// hides it for good.
+/// An ancestor's hide reaches the tooltip's hide override (`0x61eb20`), which drops its owner, so
+/// the ancestor's next show finds it ownerless and its show override (`0x61cff0`) hides it for
+/// good.
 #[test]
 fn an_ancestor_hide_clears_the_tooltips_owner() {
     let s = script();
@@ -277,7 +277,7 @@ fn an_ancestor_hide_clears_the_tooltips_owner() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The pump drains the layout before the walk (`CLayoutFrame::ResizePending` in `0x495320`): a
+/// The pump drains the layout before the walk (the pending-resize pass in `0x495320`): a
 /// resize an event handler made fires its `OnSizeChanged` ahead of the walk's `OnUpdate`s.
 #[test]
 fn an_event_resize_fires_on_size_changed_before_the_walk() {
@@ -300,4 +300,30 @@ fn an_event_resize_fires_on_size_changed_before_the_walk() {
     s.queue_event("PLAYER_TARGET_CHANGED", Vec::new());
     s.tick(0.01);
     assert_eq!(take_log(&s), "event size update");
+}
+
+/// A fade step moves only line alphas: a paint write of the frame, which the extract patches
+/// alone, never a full mutation that sends it back to its whole walk.
+#[test]
+fn a_fading_message_line_is_a_paint_write() {
+    let mut s = script();
+    s.run(
+        r#"
+        Chat = CreateFrame("ScrollingMessageFrame", "Chat")
+        Chat:SetPoint("BOTTOMLEFT", 0, 0) Chat:SetWidth(300) Chat:SetHeight(100)
+        Chat:SetTimeVisible(1) Chat:SetFadeDuration(4)
+        Chat:AddMessage("hello")
+        "#,
+    )
+    .unwrap();
+    s.resolve();
+    s.tick(1.5); // into the fade
+    let (epoch, paint) = (s.visual_epoch(), s.paint_epoch());
+    s.tick(0.5);
+    assert_eq!(s.visual_epoch(), epoch, "the step is no full mutation");
+    assert_ne!(
+        s.paint_epoch(),
+        paint,
+        "the step marks the frame for its paint"
+    );
 }

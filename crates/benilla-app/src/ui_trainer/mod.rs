@@ -38,7 +38,7 @@ pub(crate) struct TrainerOpen {
     pub(crate) trainer_type: u32,
     pub(crate) greeting: String,
     /// A list landed and the engine's collapse set and line filter are not yet reset, as
-    /// `AddServices` (`0x596450`) resets them per list; an open window repaints through
+    /// the list build (`0x596450`) resets them per list; an open window repaints through
     /// [`reeval`], never a second list.
     pub(crate) fresh_list: bool,
     /// One of the re-evaluator's triggers fired with the window open; the feed re-derives and
@@ -92,8 +92,8 @@ impl TrainerOpen {
 #[derive(Resource, Default)]
 pub(crate) struct TrainerErrors(pub Vec<u32>);
 
-/// The spells the open trainer's services show as tooltips, which the spell-tooltip feed pushes:
-/// a pet-learn service's view is built against the pet (the builder's unit selector, `0x533a7f`).
+/// The spells the open trainer's services show as tooltips, which the spell-tooltip feed pushes: a
+/// pet-learn service's view is built against the pet (the builder's unit selector).
 #[derive(Resource, Default, PartialEq)]
 pub(crate) struct TrainerTooltipSubjects {
     pub(crate) player: Vec<u32>,
@@ -303,7 +303,7 @@ type TokenReads = (
     Option<String>,
 );
 
-/// `GetTrainerServiceDescription`'s parser inputs (`SpellParserParseText` over the player with its
+/// `GetTrainerServiceDescription`'s parser inputs (the spell-text parser over the player with its
 /// modifiers, `0x5959d0`) and the per-spell texts, rebuilt when a token input moves.
 #[derive(SystemParam)]
 pub(crate) struct DescriptionInputs<'w, 's> {
@@ -379,8 +379,8 @@ pub(crate) fn feed_trainer(
         if edge.entity != me {
             continue;
         }
-        // The reference watches each slot's value, max and permanent bonus (`0x5de180`,
-        // `0x5de450`): the second dword always, the third only when its high half moved.
+        // The reference watches each slot's value, max and permanent bonus: the second dword
+        // always, the third only when its high half moved.
         let skill_edge = edge
             .index
             .checked_sub(FIELD_PLAYER_SKILL_INFO_1_1)

@@ -1,7 +1,7 @@
-//! The visible cloud layer, the reference's cloud dome (`0x6d0530` mesh, `0x6cfb00` coloring,
-//! `0x58ac70` upload): a 12-ring cap from the pole to the 45° rim, faded at the rim, drawn last in
-//! the sky pass so clouds blend over a setting sun. [`crate::sky_order::CLOUDS_BIAS`] holds that
-//! place; the shared far-depth pin puts it behind all terrain.
+//! The visible cloud layer, the reference's cloud dome: a 12-ring cap from the pole to the 45° rim,
+//! faded at the rim, drawn last in the sky pass so clouds blend over a setting sun.
+//! [`crate::sky_order::CLOUDS_BIAS`] holds that place; the shared far-depth pin puts it behind all
+//! terrain.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::Projection;
@@ -30,7 +30,7 @@ pub type CloudMaterial = ExtendedMaterial<StandardMaterial, CloudExt>;
 /// raw gamma bytes in a non-sRGB texture.
 #[derive(Asset, AsBindGroup, Clone, TypePath)]
 pub struct CloudExt {
-    /// The colored tile, alpha the coverage, re-uploaded each regen (`0x58ac70`).
+    /// The colored tile, alpha the coverage, re-uploaded each regen.
     #[texture(100)]
     #[sampler(101)]
     pub(crate) texels: Handle<Image>,
@@ -68,20 +68,20 @@ pub(super) struct CloudLayer {
     pub(crate) material: Handle<CloudMaterial>,
 }
 
-/// Ring co-latitudes in units of π (`0x811570`), from the pole to the 45° rim.
+/// Ring co-latitudes in units of π, from the pole to the 45° rim.
 const RING_COLAT: [f32; 12] = [
     0.0, 0.025, 0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.205, 0.23, 0.245, 0.25,
 ];
-/// Per-ring vertex alpha (`0x8115a0`): opaque inner 9 rings, half ring 10, transparent rim.
+/// Per-ring vertex alpha: opaque inner 9 rings, half ring 10, transparent rim.
 #[rustfmt::skip]
 const RING_ALPHA: [f32; 12] = [
     1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 128.0 / 255.0, 0.0, 0.0,
 ];
-/// Azimuth steps per ring (`0x6d0530`).
+/// Azimuth steps per ring.
 const AZ_STEPS: usize = 16;
 
-/// The reference dome (`0x6d0530`): recentred by `−cos(π/4)` so the rim sits at eye level, with
-/// the coverage sampler's polar UV so the drawn cloud and the glare's occlusion line up.
+/// The reference dome: recentred by `−cos(π/4)` so the rim sits at eye level, with the coverage
+/// sampler's polar UV so the drawn cloud and the glare's occlusion line up.
 fn cloud_dome_mesh() -> Mesh {
     let shift = std::f32::consts::FRAC_PI_4.cos();
     let mut positions = Vec::with_capacity(12 * AZ_STEPS);
@@ -167,9 +167,8 @@ pub(super) fn setup_cloud_layer(
     commands.insert_resource(CloudLayer { image, material });
 }
 
-/// Hides the dome with the rest of the sky: under a WMO skybox past weight 0.99, as `CSky::Render`
-/// skips all six sky elements on one flag (`0x6d4a3b`), and while submerged, as the scene skips
-/// `CSky::Render` (`0x6812a4`).
+/// Hides the dome with the rest of the sky: under a WMO skybox past weight 0.99, as the sky render
+/// skips all six sky elements on one flag, and while submerged, as the scene skips the sky render.
 pub(super) fn apply_cloud_visibility(
     debug: Res<DebugState>,
     skybox: Res<crate::skybox::SkyboxWeight>,

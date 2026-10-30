@@ -57,8 +57,8 @@ fn held_torch_casts_one_warm_point_light_up_the_shaft() {
     );
 }
 
-/// A point light whose visibility track is a static `0` key never casts (`0x716413`): 11 of the
-/// corpus's 85, mostly spell impacts.
+/// A point light whose visibility track is a static `0` key never casts: 11 of the corpus's 85,
+/// mostly spell impacts.
 #[test]
 fn a_static_zero_visibility_key_reads_as_dark() {
     let data = benilla_formats::wow_data_or_skip!();

@@ -22,16 +22,16 @@ pub(crate) struct Registered {
     pub(crate) hidden: bool,
 }
 
-/// Which file a row is archived in (`CVar::IterateForArchive` `0x767030` walks one at a time).
+/// Which file a row is archived in (the archive walk, `0x767030`, takes one at a time).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Scope {
-    /// `Config.wtf` (`CVar::SaveAll` `0x767100`).
+    /// `Config.wtf` (`0x767100`).
     Config,
     /// `0x10`: the account's `config-cache.wtf`, account-data slot 0; reset at each account login
-    /// (`CVar::DeleteAccountCVars` `0x7673a0`).
+    /// (`0x7673a0`).
     Account,
     /// `0x20`: the character's `config-cache.wtf`, slot 1; dropped at every UI shutdown
-    /// (`CVar::DeleteCharacterCVars` `0x767350`).
+    /// (`0x767350`).
     Character,
 }
 
@@ -80,12 +80,12 @@ impl Registered {
     }
 }
 
-/// benilla's default against the reference's: the string the reference's `CVar::Register`
-/// (`0x63db90`) passes for the name, or, for a setting 1.12 keeps in FrameXML, the value
-/// `UIOptionsFrame.lua` boots it at. Not a `Config.wtf` line (`SaveConfig 0x63d980` writes only
-/// values off their default), and not always what a fresh install runs at: `hwDetect` rewrites
-/// sixteen video CVars from `VideoHardware.dbc` before the first frame ([`Reference::Overridden`]).
-/// Each row's register site or FrameXML line is cited above it.
+/// benilla's default against the reference's: the string the reference registers for the name, or,
+/// for a setting 1.12 keeps in FrameXML, the value `UIOptionsFrame.lua` boots it at. Not a
+/// `Config.wtf` line (`SaveConfig` writes only values off their default), and not always what a
+/// fresh install runs at: `hwDetect` rewrites sixteen video CVars from `VideoHardware.dbc` before
+/// the first frame ([`Reference::Overridden`]). Each row's register site or FrameXML line is cited
+/// above it.
 #[allow(dead_code)] // read only by the tests
 pub(crate) enum Reference {
     /// The reference registers this default and benilla ships it; the test compares the two.
@@ -177,20 +177,20 @@ pub(crate) fn registered_rows() -> impl Iterator<Item = &'static Registered> {
         .chain(super::camera_tuning::ROWS.iter())
 }
 
-/// The rows 3.3.5a registers and 1.12.1 has no name for, each with a reader in the 3.3.5a stock
-/// UI. Their register sites sit in one run (`0x51e2d8`-`0x51f2d2`, `CVar::Register` `0x767fc0`).
+/// The rows 3.3.5a registers and 1.12.1 has no name for, each with a reader in the 3.3.5a stock UI.
+/// Their register sites sit in one run.
 pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
-    // "The style of Edit Boxes for the ChatFrame" (`0x51e2d8`, "im"); `ChatFrame.lua` hides the
-    // edit box between lines in "im" and keeps it in "classic".
+    // "The style of Edit Boxes for the ChatFrame" ("im"); `ChatFrame.lua` hides the edit box
+    // between lines in "im" and keeps it in "classic".
     same("chatStyle", "im").per_account(),
-    // `0x51e2fb`, "1": a click on the window focuses the edit box, in "im" style only.
+    // "1": a click on the window focuses the edit box, in "im" style only.
     same("wholeChatWindowClickable", "1").per_account(),
-    // `0x51e31b`, "popout": where a new Real ID conversation opens.
+    // "popout": where a new Real ID conversation opens.
     same("conversationMode", "popout").per_account(),
-    // `0x51e35e`, "1": the mouse wheel scrolls a chat window (`FloatingChatFrame.lua`).
+    // "1": the mouse wheel scrolls a chat window (`FloatingChatFrame.lua`).
     same("chatMouseScroll", "1").per_account(),
-    // `0x51f2d2`, "": the GM a reload should reopen the GM chat window for; UIParent's
-    // `VARIABLES_LOADED` arm loads `Blizzard_GMChatUI` when it is not "".
+    // "": the GM a reload should reopen the GM chat window for; UIParent's `VARIABLES_LOADED` arm
+    // loads `Blizzard_GMChatUI` when it is not "".
     same("lastTalkedToGM", "").per_account(),
     // `0x51f147`, "3": when `IsThreatWarningEnabled` answers 1 (0 off, 1 in dungeons, 2 in a
     // group, 3 always), which the stock unit frames' threat glow reads.
@@ -203,22 +203,23 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // `0x51ee19`, "0" with flags 0x20: the keyring button, which the stock bar's first-key
     // `BAG_UPDATE` arm turns on (`MainMenuBar.lua:243-249`).
     same("showKeyring", "0").per_character(),
-    // `0x51e027`, "" with flags 0x120: the tracked achievements, which `LoadTrackedState` reads
-    // and the tracking verbs write (`0x5b3840`, `0x5b1fa0`); per character like the dropdowns.
+    // `0x51e027`, "" with flags 0x120: the tracked achievements, which the tracking state's load
+    // reads and the tracking verbs write (`0x5b3840`, `0x5b1fa0`); per character like the
+    // dropdowns.
     same("trackedAchievements", "").per_character(),
-    // `0x51e001`, "" with flags 0x120: the untimed quest watches, which `LoadTrackedQuests`
-    // (`0x5e65b0`) reads once the first quest log is built and `SaveTrackedQuests` (`0x5e0240`)
-    // writes; per character like the achievements.
+    // `0x51e001`, "" with flags 0x120: the untimed quest watches, which the watch load (`0x5e65b0`)
+    // reads once the first quest log is built and the watch save (`0x5e0240`) writes; per character
+    // like the achievements.
     same("trackedQuests", "").per_character(),
-    // `0x51f3a9`, "" with flags 0x20: the minimap's town tracking type, which `LoadTrackingInfo`
-    // (`0x57e070`) writes and `LoadTrackedState` (`0x57ea60`) restores.
+    // `0x51f3a9`, "" with flags 0x20: the minimap's town tracking type, which the tracking-info
+    // load (`0x57e070`) writes and the tracking state's load (`0x57ea60`) restores.
     same("minimapTrackedInfo", "").per_character(),
     // `0x51e0d0` "0" and `0x51e0f3` "7", flags 0x20: the objective tracker's sort and its filter
     // bits (achievements 1, completed quests 2, remote zones 4), read on `VARIABLES_LOADED`
     // (`WatchFrame.lua:279-280`).
     same("trackerSorting", "0").per_character(),
     same("trackerFilter", "7").per_character(),
-    // `0x51f3ce`, "1" with flags 0x20: the quest POI switch `UpdateAllQuestPOI` (`0x5e5a50`) reads.
+    // `0x51f3ce`, "1" with flags 0x20: the quest POI switch the POI update (`0x5e5a50`) reads.
     same("questPOI", "1").per_character(),
     // `0x51f25c`, `0x51f282`, `0x51f2aa`, flags 0x120: the dungeon finder's roles ("0", a bit
     // mask) and its selected dungeons and collapsed headers ("", bit arrays), per character.
@@ -226,8 +227,8 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("lfdCollapsedHeaders", "").per_character(),
     same("lfdSelectedDungeons", "").per_character(),
     // The login screen's third agreement (`readTerminationWithoutNotice`, "0"), and the saved
-    // Battle.net account list (`accountList`, "") and authenticator flag
-    // (`g_accountUsesToken`, "0") the glue's account verbs read and write.
+    // Battle.net account list (`accountList`, "") and authenticator flag ("0") the glue's account
+    // verbs read and write.
     same("readTerminationWithoutNotice", "0"),
     same("accountList", ""),
     same("g_accountUsesToken", "0"),
@@ -237,8 +238,7 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // registered default. Their host wiring is the options work's (#150).
     same("showToolsUI", "-1"),
     // `windowResizeLock` (`0x76a630`, "0", flags 1, callback `0x769890`): live, it refuses the
-    // window's border drag (`ResizeDragWindow 0x869970`). The knob is
-    // [`crate::video::VideoConfig::resize_lock`].
+    // window's border drag (`0x869970`). The knob is [`crate::video::VideoConfig::resize_lock`].
     same("windowResizeLock", "0"),
     same("Sound_EnableAllSound", "1"),
     same("Sound_EnableSFX", "1"),
@@ -252,7 +252,7 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("Sound_EnableSoftwareHRTF", "0"),
     // "1" on a machine with more than one processor.
     same("Sound_EnableDSPEffects", "1"),
-    // Read by `SE2::Init` only under `Sound_EnableMixMode2` (`0x87d8b4` skips
+    // Read by the sound engine's init only under `Sound_EnableMixMode2` (`0x87d8b4` skips
     // `setSoftwareFormat` at its "0"), so the slider never changes the mix; benilla mixes at the
     // device's rate.
     same("Sound_OutputQuality", "1"),
@@ -262,25 +262,25 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("Sound_OutputDriverIndex", "0"),
     same("Sound_OutputDriverName", "Primary Sound Driver"),
     same("Sound_NumChannels", "32"),
-    // The Effects panel's particle density (`CWorldParam::Initialize 0x78e400`, "1.0", flags 1,
-    // callback `0x78d860`: refused outside [0.1, 1.0], else the emission scalar); the first-run
-    // pass `0x78dd40` writes "1.0" again on any pixel-shader target past 3. The knob is
+    // The Effects panel's particle density (`0x78e400`, "1.0", flags 1, callback `0x78d860`:
+    // refused outside [0.1, 1.0], else the emission scalar); the first-run pass `0x78dd40` writes
+    // "1.0" again on any pixel-shader target past 3. The knob is
     // `benilla_world::particles::ParticleTuning`. Then the Stereo panel's three rows.
     same("particleDensity", "1.0"),
     same("gxStereoEnabled", "0"),
     same("gxStereoConvergence", "1"),
     same("gxStereoSeparation", "25"),
     same("extShadowQuality", "0"),
-    // Hardware voices need 12 or more from the driver (`SE2::Init` at `0x87d0e0`); a host without
-    // DirectSound 3D hardware reports none and the reference mixes in software, as benilla always
-    // does.
+    // Hardware voices need 12 or more from the driver (the sound engine's init, `0x87d0e0`); a host
+    // without DirectSound 3D hardware reports none and the reference mixes in software, as benilla
+    // always does.
     same("Sound_EnableHardware", "0"),
     same("Sound_MasterVolume", "1.0"),
     same("Sound_SFXVolume", "1.0"),
     same("Sound_MusicVolume", "0.4"),
     same("Sound_AmbienceVolume", "0.6"),
     // `environmentDetail` (`0x78e400`, "1.0", callback `0x78dc60`): clamped to [0.5, 1.5], it
-    // scales doodad fade levels 1-3 (`CWorldScene::ScaleFadeDist 0x78f570`). The knob is
+    // scales doodad fade levels 1-3 (`0x78f570`). The knob is
     // `benilla_world::model_fade::FadeScale`.
     same("environmentDetail", "1.0"),
     // `groundEffectDensity` ("16", callback `0x78dab0`: refused outside [16, 256]), the ground
@@ -290,31 +290,31 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
         "groundEffectDensity",
         "24",
         "16",
-        "the first-run defaults pass (`CWorldParam::SetDefaults 0x78e1a0`) writes \
-         `s_detailDoodadDensity[idx]` (`0xadbe5c`: 8, 12, 16, 24) of the matched \
-         `VideoHardware.dbc` row, and the fallback row a modern GPU reaches (693 on the reference \
-         install's `Logs/gx.log`) holds index 3",
+        "the first-run defaults pass (`0x78e1a0`) writes the detail doodad density table's \
+         entry (`0xadbe5c`: 8, 12, 16, 24) of the matched `VideoHardware.dbc` row, and the \
+         fallback row a modern GPU reaches (693 on the reference install's `Logs/gx.log`) holds \
+         index 3",
     ),
     same("groundEffectDist", "70.0"),
-    // `projectedTextures` ("0", callback `0x78dcf0`: bit 4 of `CWorld::enables2`), which gates
-    // the M2 projected batches (`World::ProjectTextureCallback 0x77f500`).
+    // `projectedTextures` ("0", callback `0x78dcf0`: bit 4 of the world's second enable mask),
+    // which gates the M2 projected batches (`0x77f500`).
     overridden(
         "projectedTextures",
         "1",
         "0",
-        "`CWorldParam::SetDefaultProjectedTextures 0x78ddf0` writes \"1\" on any pixel-shader \
+        "the first-run projected-textures pass (`0x78ddf0`) writes \"1\" on any pixel-shader \
          target past 2 when `videoOptionsVersion` is below 2, which a fresh install's is",
     ),
-    // `textureFilteringMode` (`InitializeEngineCallback 0x4047e0`, "1", callback `0x4023c0`:
-    // refused outside [0, 5]), read once at engine start into the filter and the anisotropy
-    // (`0xab6128`, `0xab6140`). The first-run pass writes "1" from the hardware row's trilinear
-    // bit, which every fallback row past 168 sets. The knob is `benilla_assets::TexFilterSetting`.
+    // `textureFilteringMode` (`0x4047e0`, "1", callback `0x4023c0`: refused outside [0, 5]), read
+    // once at engine start into the filter and the anisotropy (`0xab6128`, `0xab6140`). The
+    // first-run pass writes "1" from the hardware row's trilinear bit, which every fallback row
+    // past 168 sets. The knob is `benilla_assets::TexFilterSetting`.
     same("textureFilteringMode", "1"),
-    // `componentTextureLevel` (`CCharacterComponent::Initialize 0x401ff0`, "8"), read once: the
-    // composited body texture is `1 << level` px square, clamped to [7, 9]. The knob is
+    // `componentTextureLevel` (`0x401ff0`, "8"), read once: the composited body texture is
+    // `1 << level` px square, clamped to [7, 9]. The knob is
     // `crate::entities::skin_composite::ComponentLevel`.
     same("componentTextureLevel", "8"),
-    // The sound system's (`SI2::RegisterCVars`): the chat-duck volumes and the listener seat.
+    // The sound system's rows: the chat-duck volumes and the listener seat.
     same("ChatMusicVolume", "0.3"),
     same("ChatSoundVolume", "0.4"),
     same("ChatAmbienceVolume", "0.3"),
@@ -404,8 +404,7 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("timeMgrAlarmEnabled", "0").per_account(),
     // `0x51ef47`: "0" in enUS, koKR and esMX, "1" elsewhere; the calendar's clock text reads it.
     same("timeMgrUseMilitaryTime", "0").per_account(),
-    // `0x51eaf1`-`0x51eb92`, flags 0x20: the calendar's five filters (`SetCalendarFilterCVarCallback`
-    // `0x5127a0`).
+    // `0x51eaf1`-`0x51eb92`, flags 0x20: the calendar's five filters (`0x5127a0`).
     same("calendarShowWeeklyHolidays", "1").per_character(),
     same("calendarShowDarkmoon", "1").per_character(),
     same("calendarShowBattlegrounds", "0").per_character(),
@@ -461,22 +460,22 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
          reads enUS alone",
     ),
     same("useEnglishAudio", "0"),
-    // The account data's sync switches: `synchronizeSettings` for all of it (`0x6b991b`), then
-    // one per slot pair (`0x6b9997`, registered by every `AccountDataInitialize`), all "1".
+    // The account data's sync switches: `synchronizeSettings` for all of it (`0x6b991b`), then one
+    // per slot pair (`0x6b9997`, registered by every account-data init), all "1".
     same("synchronizeSettings", "1"),
     same("synchronizeConfig", "1"),
     same("synchronizeBindings", "1"),
     same("synchronizeMacros", "1"),
-    // The camera's pose, per character (`CameraRegisterCVars` `0x5fd942`, `0x5fd99a`): written at
-    // the UI shutdown by `CGCamera::SaveCameraSettings` (`0x5ff320`), read back by `0x5ff3e0`.
+    // The camera's pose, per character (`0x5fd942`, `0x5fd99a`): written at the UI shutdown by the
+    // camera's settings save, read back by `0x5ff3e0`.
     same("cameraSavedDistance", "5.55").per_character(),
     same("cameraSavedPitch", "10.0").per_character(),
     // The login screen's remembered account (`0x401ba7`, flags 0x40): hidden from Lua, which
     // reaches it through `GetSavedAccountName`/`SetSavedAccountName`.
     same("accountName", "").hidden(),
-    // The rest of `CGGameUI::RegisterGameCVars` (`0x51d9b0`), `0x51da34`-`0x51f41b` in site order,
-    // each at its registered string; flags 0x20 are per character. The stock interface reads and
-    // writes them; the engine readers of `autoStand`, `autoDismount`, `autoUnshift`,
+    // The rest of the game UI's CVar registration (`0x51d9b0`), `0x51da34`-`0x51f41b` in site
+    // order, each at its registered string; flags 0x20 are per character. The stock interface reads
+    // and writes them; the engine readers of `autoStand`, `autoDismount`, `autoUnshift`,
     // `unitHighlights` and `threatWorldText` have no counterpart here.
     same("autoStand", "1").per_account(),
     same("autoDismount", "1").per_account(),
@@ -490,9 +489,8 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("watchFrameBaseAlpha", "0").per_account(),
     same("watchFrameState", "0").per_account(),
     same("showQuestObjectivesOnMap", "1").per_character(),
-    // `0x51e04f`, "" with flags 0x110: the completed tutorials in order, which
-    // `CGTutorial::SaveFlaggedTutorials` (`0x530300`) writes and `LoadFlaggedTutorials`
-    // (`0x5303a0`) reads; no host reader here.
+    // `0x51e04f`, "" with flags 0x110: the completed tutorials in order, which the tutorial save
+    // (`0x530300`) writes and the tutorial load (`0x5303a0`) reads; no host reader here.
     same("flaggedTutorials", "").per_account(),
     same("worldMapOpacity", "0").per_character(),
     same("guildShowOffline", "1").per_account(),
@@ -529,8 +527,8 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("colorChatNamesByClass", "0").per_account(),
     same("miniWorldMap", "0").per_character(),
     same("dontShowEquipmentSetsOnItems", "0").per_account(),
-    // The rest of `CameraRegisterCVars` (`0x5fd910`), `0x5fd964`-`0x5fe2a7`, all flags 0x10 but
-    // the vehicle distance's 0x20. No host reader: the follow rig keeps its own model.
+    // The rest of the camera's CVar registration (`0x5fd910`), `0x5fd964`-`0x5fe2a7`, all flags
+    // 0x10 but the vehicle distance's 0x20. No host reader: the follow rig keeps its own model.
     same("cameraSavedVehicleDistance", "-1.0").per_character(),
     same("mouseInvertYaw", "0").per_account(),
     same("cameraDistanceMoveSpeed", "8.33").per_account(),
@@ -558,26 +556,23 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // `0x7f3a10`: "%d" of the locale's ceiling, 2 on enUS; the blood spurt reads it
     // (`creature_anim::blood`).
     same("violenceLevel", "2").per_account(),
-    // `SI2::RegisterSoundEngineCVars` (`0x4d11cf`, "0"): the Voice panel's self-mute and its
-    // binding's toggle (`VoiceChat.lua`).
+    // The sound engine's row (`0x4d11cf`, "0"): the Voice panel's self-mute and its binding's
+    // toggle (`VoiceChat.lua`).
     same("VoiceChatSelfMute", "0"),
 ];
 
 /// The host-backed CVars, one row per knob that has a reader: a host knob, or a Lua consumer
 /// such as the stock Video Options window's verbs.
 ///
-/// Not registered for want of a reader, though pfUI's `hdgraphic` writes them: `lodDist`
-/// (`0x688524`, "100.0", read at `0x6afb1d` for the doodad LOD swap), `footstepBias` (`0x6888b4`,
-/// "0.125", read at `0x68fcb6`), `mapObjLightLOD` (`0x6886ec`, "0") and `SkyCloudLOD` (`0x6d1d33`,
-/// "0"). `DistCull` (`0x688570`) has no reader in the reference either. `maxLOD` is no 1.12 CVar.
+/// Not registered for want of a reader, though pfUI's `hdgraphic` writes them: `lodDist` ("100.0",
+/// read for the doodad LOD swap), `footstepBias` ("0.125"), `mapObjLightLOD` ("0") and
+/// `SkyCloudLOD` ("0"). `DistCull` has no reader in the reference either. `maxLOD` is no 1.12 CVar.
 pub(crate) const REGISTERED: &[Registered] = &[
-    // `realmName` (`0x83f2d0`): registered `""` (`0x882748`), help "Last realm connected to"
-    // (`0x85d684`); the client builds its SavedVariables path from it (`0x5ab7d0`). Written from
-    // the session's realm when addons load. `Ace/AceState.lua:27` trims it at
-    // PLAYER_ENTERING_WORLD, so a nil breaks every Ace addon.
+    // `realmName`: registered `""`, help "Last realm connected to"; the client builds its
+    // SavedVariables path from it. Written from the session's realm when addons load.
+    // `Ace/AceState.lua:27` trims it at PLAYER_ENTERING_WORLD, so a nil breaks every Ace addon.
     same("realmName", ""),
-    // The logon server address (register site `0x5ab6a6`), a string row judged by
-    // `realmlist::on_cvar`.
+    // The logon server address, a string row judged by `realmlist::on_cvar`.
     deviates(
         crate::realmlist::CVAR_REALMLIST,
         crate::realmlist::DEFAULT_REALMLIST,
@@ -585,23 +580,21 @@ pub(crate) const REGISTERED: &[Registered] = &[
         "that host has not resolved since 2019, so shipping it makes every first launch a \
          DNS failure; benilla dials the machine it is running on",
     ),
-    // `autoClearAFK` (`0x5e24d4`, "1" `0x82e748`, handle `[0xc4d68c]` set at `0x5e24ef`, read at
-    // `0x5eb84b`) gates five implicit AFK clears: any chat send but type `0x14`, Jump,
-    // forward/back, strafe and turn (`0x513d36`/`0x514e23`/`0x514f0b`/`0x514fca`). Off, the clear
-    // does nothing at all: no echo, no mirror write, no packet.
+    // `autoClearAFK` gates five implicit AFK clears: any chat send but type `0x14`, Jump,
+    // forward/back, strafe and turn. Off, the clear does nothing at all: no echo, no mirror write,
+    // no packet.
     same("autoClearAFK", "1").per_account(),
     // `0x4d18c1`, "0": the reference mutes on losing focus. The knob is
     // `SoundConfig::background_sound`.
     same("Sound_EnableSoundWhenGameIsInBG", "0"),
-    // FMOD 3's mix-ahead buffer in ms (`0x4571ca`, flags 2: read once at sound init); here it sizes
-    // the render thread's ring ahead of the IO callback (`sound::output`). `0x457520` registers
-    // "50" or "100" by a host probe (`0x835e10`/`0x835e0c`), which one on a current machine
-    // untraced; ours is the larger, since the depth has to hide a whole stalled IO cycle.
+    // FMOD 3's mix-ahead buffer in ms (flags 2: read once at sound init); here it sizes the render
+    // thread's ring ahead of the IO callback (`sound::output`). The reference registers "50" or
+    // "100" by a host probe, which one on a current machine untraced; ours is the larger, since the
+    // depth has to hide a whole stalled IO cycle.
     same("SoundBufferSize", "100").latched(),
     // benilla's own, not a 1.12 CVar. Deviation: the reference clips at full scale and has no
-    // headroom mechanism (its SFX-bus duck `0x457960` is a sidechain armed only by server-pushed
-    // voice lines); benilla limits because every SFX is mastered to full scale and overlapping
-    // kits clip.
+    // headroom mechanism (its SFX-bus duck is a sidechain armed only by server-pushed voice lines);
+    // benilla limits because every SFX is mastered to full scale and overlapping kits clip.
     ours(
         "SoundOutputLimiter",
         "1",
@@ -610,37 +603,34 @@ pub(crate) const REGISTERED: &[Registered] = &[
     ),
     // `uiScale` ("1.0", callback `0x518b60`) and `useUiScale` ("0", callback `0x5237e0`), both
     // registered at `0x5238a0`. With the switch on, the game UI's parent takes `uiScale`, floored
-    // at 0.64 and capped at `aspect × 0.75` under 4:3 (`CGGameUI::SetUIScale 0x513240`); off, it
-    // takes `clamp(768 / height, 0.9, 1.0)` with the same cap (`ScaleToScreenSize 0x51fb80`). The
-    // knob is [`crate::ui_script::UiScaleCvar`].
+    // at 0.64 and capped at `aspect × 0.75` under 4:3 (`0x513240`); off, it takes
+    // `clamp(768 / height, 0.9, 1.0)` with the same cap (`0x51fb80`). The knob is
+    // [`crate::ui_script::UiScaleCvar`].
     same("uiScale", "1.0"),
     same("useUiScale", "0"),
-    // `farclip` (`CWorldParam::Initialize 0x78e400`, "350", callback `0x78d780`), validated per
-    // map by `World::ValidateFarClip 0x780770` ([`benilla_world::view::validate_farclip`]).
+    // `farclip` (`0x78e400`, "350", callback `0x78d780`), validated per map (`0x780770`,
+    // [`benilla_world::view::validate_farclip`]).
     overridden(
         "farclip",
         "777",
         "350",
-        "the first-run defaults pass (`CWorldParam::SetDefaults 0x78e1a0`) writes \
-         `s_farClip[2 × idx + cpu]` (`0xadbf00`) of the matched `VideoHardware.dbc` row, and the \
+        "the first-run defaults pass (`0x78e1a0`) writes the far-clip table's entry \
+         `2 × idx + cpu` (`0xadbf00`) of the matched `VideoHardware.dbc` row, and the \
          fallback row a modern GPU reaches (693 on the reference install's `Logs/gx.log`, index 4) \
          on a multi-core CPU gives 777",
     ),
-    // `nearclip` (`0x68867a`: name `0x84ffb0`, default `0x84fb48` "0.1", flags 1, callback
-    // `0x688d90`, record `[0xc7f348]`). The camera re-reads the record every frame: `0x511bc0`
-    // (sole caller `0x483094`) stamps `[cam+0x38]` from it through the handle `[0xbe1078]` that
-    // `0x50b728` caches, overwriting the ctor's 1/9 (`0x3de38e39`);
-    // `benilla_world::view::stamp_near_clip` is that.
-    // The callback's derived global `[0xc7b480]` has no reader. pfUI's `hdgraphic` writes
-    // 0.06..0.30, inside `[0.01, 0.33]`.
+    // `nearclip` (flags 1). The camera re-reads the record every frame: stamps `[cam+0x38]` from it
+    // through the handle that the reference caches, overwriting the ctor's 1/9 (`0x3de38e39`);
+    // `benilla_world::view::stamp_near_clip` is that. The callback's derived global has no reader.
+    // pfUI's `hdgraphic` writes 0.06..0.30, inside `[0.01, 0.33]`.
     same("nearclip", "0.1"),
     // `deselectOnClick` (`0x51d9cf`, "1"), the Controls panel's Sticky Targeting shown inverted:
     // a bare world or terrain left-click clears the target (`0x5278c0`, `0x527360`).
     same("deselectOnClick", "1").per_account(),
-    // `AutoInteract` (`0x603390`, record `[0xc4d9a4]`), Click-to-Move (`UIOptionsFrame.lua:7`):
-    // "1" on koKR alone (`0x603368`). The knob is [`crate::player::Approach`].
+    // `AutoInteract`, Click-to-Move (`UIOptionsFrame.lua:7`): "1" on koKR alone. The knob is
+    // [`crate::player::Approach`].
     same("AutoInteract", "0").per_account(),
-    // `blockTrades` (`0x51daec`, "0", flags 0x20): `HandleTradeMessage`'s refusal leg (`0x587478`)
+    // `blockTrades` (`0x51daec`, "0", flags 0x20): the trade handler's refusal leg (`0x587478`)
     // fires only when it is set. The knob is [`crate::ui_trade::BlockTrades`].
     same("blockTrades", "0").per_character(),
     // `autoSelfCast` (register site `0x51dbee`, name `0xa025e4`, default `0x9e1464` "1"): a
@@ -739,122 +729,111 @@ pub(crate) const REGISTERED: &[Registered] = &[
     same("CombatLogPeriodicSpells", "1").per_account(),
     // `combatLogRetentionTime` (`0x51efed`): seconds the combat log keeps an entry (`0x750400`).
     same(benilla_ui::script::RETENTION_CVAR, "300"),
-    // `assistAttack` (`0x48fc50`, record `[0xb4d8f8]`): `/assist` also starts the swing. The "3"
-    // beside it is the next registration's, `minimapZoom`: stock `/assist` selects without
-    // swinging.
+    // `assistAttack`: `/assist` also starts the swing. The "3" beside it is the next
+    // registration's, `minimapZoom`: stock `/assist` selects without swinging.
     same("assistAttack", "0").per_character(),
     // ── Mouse-look speed, per axis ───────────────────────────────────────────────────────────────
     //
     // `cameraYawMoveSpeed` is the MOUSE_LOOK_SPEED slider (`UIOptionsFrame.lua:89`); a nil there
-    // raises in `slider:SetValue` (`0x790980`) and stops `UIOptionsFrame_Load`. The stock Save
-    // writes `cameraPitchMoveSpeed` as half of it (`:355-356`). The reference integrates
-    // OS-accelerated pixels where we take raw device deltas, so the unit factor lives in
-    // `camera::LOOK_YAW_PER_SPEED` and these defaults stay the reference's. The validator
-    // `0x50c000` → `0x50b330` rejects values outside [0.1, 360] rather than clamping, and
-    // `player::camera::on_cvar` does the same.
+    // raises in `slider:SetValue` and stops `UIOptionsFrame_Load`. The stock Save writes
+    // `cameraPitchMoveSpeed` as half of it (`:355-356`). The reference integrates OS-accelerated
+    // pixels where we take raw device deltas, so the unit factor lives in
+    // `camera::LOOK_YAW_PER_SPEED` and these defaults stay the reference's. The validator rejects
+    // values outside [0.1, 360] rather than clamping, and `player::camera::on_cvar` does the same.
     same("cameraYawMoveSpeed", "180").per_account(),
     same("cameraPitchMoveSpeed", "90").per_account(),
-    // MOUSE_SENSITIVITY (`UIOptionsFrame.lua:87`): FrameXML's spelling of the binary's `mouseSpeed`
-    // (`0x402c7b`); lookups are case-insensitive (`CVar::Lookup 0x63de30`), here as there. The
-    // reference's default is `SPI_GETMOUSESPEED × 0.1`, "1.0" on stock Windows, and its record
-    // `[0x882704]` has no reader: the slider sets the OS pointer speed (`0x402ec0`, [0.1, 2.0]).
-    // The default matches; Deviation: here the dial multiplies the camera's own rate, because
-    // benilla does not change the OS pointer speed, a system-wide setting.
+    // MOUSE_SENSITIVITY (`UIOptionsFrame.lua:87`): FrameXML's spelling of the binary's
+    // `mouseSpeed`; lookups are case-insensitive, here as there. The reference's default is
+    // `SPI_GETMOUSESPEED × 0.1`, "1.0" on stock Windows, and its record has no reader: the slider
+    // sets the OS pointer speed ([0.1, 2.0]). The default matches; Deviation: here the dial
+    // multiplies the camera's own rate, because benilla does not change the OS pointer speed, a
+    // system-wide setting.
     same("mousespeed", "1"),
-    // The zoom-out limit is `cameraDistanceMax × cameraDistanceMaxFactor`, held to [0, 50]
-    // (`0x5112d6`). `cameraDistanceMax` (`0x50beb2`, default `0x84fbd0`) has no panel row; its
-    // validator `0x50b310` refuses a value outside [0, 50], and `player::camera::on_cvar` does the
-    // same. The factor is MAX_FOLLOW_DIST (`UIOptionsFrame.lua:90`), registered "1.0" (`0x82e92c`)
-    // with no validator: the slider's 1 to 2 is the slider's, not the CVar's.
+    // The zoom-out limit is `cameraDistanceMax × cameraDistanceMaxFactor`, held to [0, 50].
+    // `cameraDistanceMax` has no panel row; its validator refuses a value outside [0, 50], and
+    // `player::camera::on_cvar` does the same. The factor is MAX_FOLLOW_DIST
+    // (`UIOptionsFrame.lua:90`), registered "1.0" with no validator: the slider's 1 to 2 is the
+    // slider's, not the CVar's.
     same("cameraDistanceMax", "15.0").per_account(),
     same("cameraDistanceMaxFactor", "1.0").per_account(),
-    // `cameraSmoothStyle` (`0x50ba92`, default `[0x84f4f4]` "1"), the auto-return behind the
-    // character. The engine's enum is 0 Never, 1 Smart, 2 Always, as the stock dropdown writes it
-    // (`UIOptionsFrame.lua:525,536,547`); 3, the Never entry's position, is the validator's upper
-    // bound (`0x50b330(v, 0, 3)`). See `FollowStyle`.
+    // `cameraSmoothStyle`, the auto-return behind the character. The engine's enum is 0 Never, 1
+    // Smart, 2 Always, as the stock dropdown writes it (`UIOptionsFrame.lua:525,536,547`); 3, the
+    // Never entry's position, is the validator's upper bound (`(v, 0, 3)`). See `FollowStyle`.
     same("cameraSmoothStyle", "1").per_account(),
     // Read instead of `cameraSmoothStyle` while the state mask holds Track or Fear; no panel row.
     same("cameraSmoothTrackingStyle", "1").per_account(),
-    // AUTO_FOLLOW_SPEED (`UIOptionsFrame.lua:88`), deg/s, registered "180.0" (`[0xbe1070]`): it
-    // sets the transition's duration (`|dyaw| / rate * factor`), an average rate, not a slew. The
-    // knob clamps it to `FOLLOW_SPEED_RANGE`. The stock Save also writes `cameraPitchSmoothSpeed`
-    // at a quarter (`:353`), unregistered here: `FollowRig` has one rate.
+    // AUTO_FOLLOW_SPEED (`UIOptionsFrame.lua:88`), deg/s, registered "180.0": it sets the
+    // transition's duration (`|dyaw| / rate * factor`), an average rate, not a slew. The knob
+    // clamps it to `FOLLOW_SPEED_RANGE`. The stock Save also writes `cameraPitchSmoothSpeed` at a
+    // quarter (`:353`), unregistered here: `FollowRig` has one rate.
     same("cameraYawSmoothSpeed", "180").per_account(),
-    // `cameraPivot` `[0xbe10a4]` "1" (`0x50bda3`), smart pivot: gate `0x510690`, routing
-    // `0x50fee0`, release `0x5107f0`; ours is `player::camera_dynamics::SmartPivot`.
+    // `cameraPivot` "1", smart pivot: gate, routing, release; ours is
+    // `player::camera_dynamics::SmartPivot`.
     same("cameraPivot", "1").per_account(),
-    // Read by the routing (`0x50fff5`/`0x510004`) in radians of camera rotation, so they carry to
-    // benilla's raw-device units unchanged.
+    // Read by the routing in radians of camera rotation, so they carry to benilla's raw-device
+    // units unchanged.
     same("cameraPivotDXMax", "0.05").per_account(),
     same("cameraPivotDYMin", "0").per_account(),
-    // The pitch bias's ease-back once the pivot lets go, deg/s (`[0xbe0fc8]`; `0x512a50` divides
+    // The pitch bias's ease-back once the pivot lets go, deg/s (divides
     // |Δ| by rate · π/180 for the duration); no panel row.
     same("cameraTargetSmoothSpeed", "90").per_account(),
-    // `cameraWaterCollision` `[0xbe1088]` "1" (`0x50bd63`, `0x82e748`): one register, two consumers
-    // that must ship together. `0x50e5ec` builds it; its `0xf0000` nibble joins the trace mask of
-    // all three `0x50e570` queries (reaching `0x69cc13`), and `0x50e629` tests it to lift the sweep
-    // origin to `surface + 2/9`. Ours: `benilla_world::collision::camera_filter` and
-    // `player::camera_water`.
+    // `cameraWaterCollision` "1": one register, two consumers that must ship together. The
+    // reference builds it; its `0xf0000` nibble joins the trace mask of all three queries, and the
+    // reference tests it to lift the sweep origin to `surface + 2/9`. Ours:
+    // `benilla_world::collision::camera_filter` and `player::camera_water`.
     same("cameraWaterCollision", "1").per_account(),
-    // `cameraTerrainTilt` `[0xbe0fd4]` "0" (`0x50bcfd`), Follow Terrain: probe and staircase
-    // `0x50d900`, arm `0x50dbc0`; ours is `player::camera_dynamics::TerrainTilt`.
+    // `cameraTerrainTilt` "0", Follow Terrain: probe and staircase, arm; ours is
+    // `player::camera_dynamics::TerrainTilt`.
     same("cameraTerrainTilt", "0").per_account(),
-    // Rate in deg/s (`[0xbe0fc0]`), duration bounds in seconds (`[0xbe1050]`/`[0xbe1054]`). The 3 s
-    // floor always binds (20° at 7.5°/s is 2.67 s), so the camera leans rather than tracks.
+    // Rate in deg/s, duration bounds in seconds. The 3 s floor always binds (20° at 7.5°/s is 2.67
+    // s), so the camera leans rather than tracks.
     same("cameraGroundSmoothSpeed", "7.5").per_account(),
     same("cameraTerrainTiltTimeMin", "3").per_account(),
     same("cameraTerrainTiltTimeMax", "10").per_account(),
-    // `cameraBobbing` `[0xbe10c0]` "0" (`0x50b76d`), head bob: kernel `0x511920`, gate `0x5105e0`;
-    // ours is `player::camera_dynamics::HeadBob`.
+    // `cameraBobbing` "0", head bob: kernel, gate; ours is `player::camera_dynamics::HeadBob`.
     same("cameraBobbing", "0"),
-    // Amplitudes in the CVar's units, scaled by 1/36 (`[0x7ff9d0]`) to yards.
-    // `cameraBobbingSmoothSpeed` is the decay rate, read only in the disarm `0x51113a`, which
-    // divides the largest component by it for the ramp's duration (~0.069 s at these defaults).
+    // Amplitudes in the CVar's units, scaled by 1/36 to yards. `cameraBobbingSmoothSpeed` is the
+    // decay rate, read only in the disarm, which divides the largest component by it for the ramp's
+    // duration (~0.069 s at these defaults).
     same("cameraBobbingLRAmplitude", "2"),
     same("cameraBobbingUDAmplitude", "2"),
     same("cameraBobbingFrequency", "0.8"),
     same("cameraBobbingSmoothSpeed", "0.8").per_account(),
-    // `statusBarText` (`0x48fc34`, record `[0xb4d904]`, no engine reader), read by
-    // `TextStatusBar.lua:47,97`: "0" shows the numbers on hover only.
+    // `statusBarText` (no engine reader), read by `TextStatusBar.lua:47,97`: "0" shows the numbers
+    // on hover only.
     same("statusBarText", "0"),
-    // Enhanced Tooltips (`UIOptionsFrame.lua:15`), registered "1" at `0x48fddd` (`0x82e748`); read
-    // only by the stock interface.
+    // Enhanced Tooltips (`UIOptionsFrame.lua:15`), registered "1"; read only by the stock
+    // interface.
     same("UberTooltips", "1").per_account(),
     // `chatBubbles` (`0x51e16a`) and `chatBubblesParty` (`0x51e192`), both "1".
     same("ChatBubbles", "1").per_account(),
     same("ChatBubblesParty", "1").per_account(),
-    // Registered "1" (`0x82e748`), category 4. `profanityFilter` (`0x402e68`, name `0x82e7f4`,
-    // callback `0x403570`) masks `ChatProfanity.dbc` spans inside the shared masker `0x4a1a66`,
-    // covering all thirteen call sites; `spamFilter` (`0x402e8e`, name `0x82e7d4`, callback
-    // `0x4035b0`) silently drops a line matching `SpamMessages.dbc`. The knob is
-    // [`crate::text_filter::TextFilterSwitches`].
+    // Registered "1", category 4. `profanityFilter` masks `ChatProfanity.dbc` spans inside the
+    // shared masker, covering all thirteen call sites; `spamFilter` silently drops a line matching
+    // `SpamMessages.dbc`. The knob is [`crate::text_filter::TextFilterSwitches`].
     same("profanityFilter", "1").per_account(),
     same("spamFilter", "1").per_account(),
-    // Registered by `CGlueMgr::EnterWorld` (`0x46b633` `gameTip` "0", `0x46b658` `showGameTips`
-    // "1"), category 5. `gameTip` is the cursor and holds the next tip, not the one on screen;
-    // `crate::game_tip` advances it.
+    // Registered at Enter World (`gameTip` "0", `showGameTips` "1"), category 5. `gameTip` is the
+    // cursor and holds the next tip, not the one on screen; `crate::game_tip` advances it.
     same("gameTip", "0"),
     same("showGameTips", "1"),
-    // `showLootSpam` (`0x48fd1c`, name `0x8430a0`, "1" `0x82e748`, record `0xb4e2bc`): off, group
-    // loot-roll lines are hidden and only the winner shows. Its three readers are the roll-line
-    // composers; the knob is [`crate::ui_loot::LootConfig::show_loot_spam`].
+    // `showLootSpam`: off, group loot-roll lines are hidden and only the winner shows. Its three
+    // readers are the roll-line composers; the knob is
+    // [`crate::ui_loot::LootConfig::show_loot_spam`].
     same("showLootSpam", "1").per_account(),
-    // `guildMemberNotify` (`0x5e24c7`, "0" `0x82e570`, record `0xc4d3c4`): guildmate log on/off
-    // lines, read only in `SMSG_GUILD_EVENT`'s handler. The knob is
-    // [`crate::ui_guild::GuildMemberNotify`].
+    // `guildMemberNotify`: guildmate log on/off lines, read only in `SMSG_GUILD_EVENT`'s handler.
+    // The knob is [`crate::ui_guild::GuildMemberNotify`].
     same("guildMemberNotify", "0").per_account(),
-    // Both registered "3" (`0x48fc6c`, `0x48fc88`); the minimap's +/- buttons write them through
-    // `Minimap:SetZoom`. The knob is [`crate::minimap::MinimapZoom`].
+    // Both registered "3"; the minimap's +/- buttons write them through `Minimap:SetZoom`. The knob
+    // is [`crate::minimap::MinimapZoom`].
     same("minimapZoom", "3").per_character(),
     same("minimapInsideZoom", "3").per_character(),
-    // Load out of date AddOns, inverted (`0x402c3b`): "1" enforces the check. Read by the load walk
+    // Load out of date AddOns, inverted: "1" enforces the check. Read by the load walk
     // ([`Cvars::addon_version_check`]) and live by the VM's gate.
     same("checkAddonVersion", "1"),
-    // `gxApi` (`0x63a833`: name `0x842a64`, default `0x864f7c` "direct3d", flags 3, callback
-    // `0x63b030`, record `[0xc4ea94]`): the reference builds D3D9 unless it reads "OpenGl"
-    // (`0x63a3c4`, `0x842a5c`). Here it reports the wgpu backend (`wgpu::Backend::to_str`), pushed
-    // from `RenderAdapterInfo` and owned by the session, so it is never persisted. pfUI's
-    // `panel.lua:185` concatenates it.
+    // `gxApi` (default "direct3d", flags 3): the reference builds D3D9 unless it reads "OpenGl".
+    // Here it reports the wgpu backend (`wgpu::Backend::to_str`), pushed from `RenderAdapterInfo`
+    // and owned by the session, so it is never persisted. pfUI's `panel.lua:185` concatenates it.
     deviates(
         "gxApi",
         "",
@@ -863,14 +842,14 @@ pub(crate) const REGISTERED: &[Registered] = &[
          backend and no chooser; the value is the live adapter's own and is never persisted",
     )
     .latched(),
-    // `gxVSync` (`0x63a859`, "1", flags 3), `OptionsFrame.lua:9`. The knob is
+    // `gxVSync` ("1", flags 3), `OptionsFrame.lua:9`. The knob is
     // [`crate::video::VideoConfig::vsync`], which the window's present mode follows at the
     // `RestartGx` commit. `$WOW_NOVSYNC=1` overrides it for the session.
     same("gxVSync", "1").latched(),
-    // `gxWindow` (`RegisterGxCVars 0x76a630`, callback `0x769550`): "0" on enUS, "1" on zhCN, as
-    // `gxMaximize`. "0" mode-sets the display to `gxResolution` at `gxRefresh`; where the platform
-    // has no mode-set the window is borderless over the monitor instead ([`crate::video`]). The
-    // knob is [`crate::video::VideoConfig::display`].
+    // `gxWindow` (`0x76a630`, callback `0x769550`): "0" on enUS, "1" on zhCN, as `gxMaximize`. "0"
+    // mode-sets the display to `gxResolution` at `gxRefresh`; where the platform has no mode-set
+    // the window is borderless over the monitor instead ([`crate::video`]). The knob is
+    // [`crate::video::VideoConfig::display`].
     same("gxWindow", "0").latched(),
     // `gxResolution` (`0x76a630`, the hardware row's format size, callback `0x76a220`): the
     // fullscreen mode and the window's size, parsed by `video::on_cvar`. "" is benilla's "not
@@ -881,9 +860,9 @@ pub(crate) const REGISTERED: &[Registered] = &[
         "",
         "1024x768",
         "a fresh reference install mode-sets the display to its hardware row's format \
-         (`s_formats[resIdx]` at `0xcabe98`, index 4 on the fallback rows), which on any current \
-         monitor is a blurry 4:3 mode switch; until the player picks a size, ours keeps the \
-         desktop's own mode",
+         (the format table's entry at `0xcabe98`, index 4 on the fallback rows), which on any \
+         current monitor is a blurry 4:3 mode switch; until the player picks a size, ours keeps \
+         the desktop's own mode",
     )
     .latched(),
     // benilla's own: a body pane's doll renders at half the frame rate while the pane is open; the
@@ -894,14 +873,14 @@ pub(crate) const REGISTERED: &[Registered] = &[
         "benilla's own — the reference draws its doll inside the main pass and has no \
          second view to rate-limit",
     ),
-    // `gxMultisample` (`0x63a950`, flags 3). The reference formats its default from field 21 of the
-    // `VideoHardware.dbc` row `DetectHardware` (`0x641260`) matches, which is 1, no multisampling,
-    // on every fallback row a modern GPU reaches. The knob is [`benilla_world::view::MsaaSetting`],
+    // `gxMultisample` (flags 3). The reference formats its default from field 21 of the
+    // `VideoHardware.dbc` row the hardware detection matches, which is 1, no multisampling, on
+    // every fallback row a modern GPU reaches. The knob is [`benilla_world::view::MsaaSetting`],
     // read once at the camera's spawn; `$WOW_MSAA` overrides it for the session.
     same("gxMultisample", "1").latched(),
-    // `GetCurrentMultisampleFormat 0x48c580` looks up all three of the Video dropdown's values by
-    // name, so these must exist. They describe the swapchain's own pair and steer nothing;
-    // `SetMultisampleFormat` writes them as `0x48c640` does.
+    // `GetCurrentMultisampleFormat` looks up all three of the Video dropdown's values by name, so
+    // these must exist. They describe the swapchain's own pair and steer nothing;
+    // `SetMultisampleFormat` writes them as the reference does.
     deviates(
         "gxColorBits",
         "32",
@@ -918,30 +897,30 @@ pub(crate) const REGISTERED: &[Registered] = &[
     )
     .latched(),
     // The two Effects rows behind `Get/SetTerrainMip` and the stock slider's `BaseMip`
-    // (`CWorldParam::Initialize 0x78e400`), and `texLodBias` beside them.
+    // (`0x78e400`), and `texLodBias` beside them.
     //
     // `shadowLevel` ("1", callback `0x78d6f0`: refused above 1, "Shadow mip level changed upon
     // restart."), behind `Get/SetTerrainMip` as `1 − level` (`0x54eb10`/`0x54eb40`): read once into
-    // `CWorld::shadowMipLevel` at world init, it allocates every terrain chunk's layer textures one
-    // mip down (`CMapChunk::RenderPrep 0x7d3fe0` sets flag `0x10`, which `0x7ba050` reads), where
-    // otherwise only chunks past 777 yd take it. Applied live here, the stock logout prompt dropped
-    // (`FrameXMLFixes.xml`); the knob is `benilla_world::terrain_stream::TerrainOptions::low_mip`.
+    // the world's shadow mip level at world init, it allocates every terrain chunk's layer textures
+    // one mip down (the chunk's render prep, `0x7d3fe0`, sets flag `0x10`, which `0x7ba050` reads),
+    // where otherwise only chunks past 777 yd take it. Applied live here, the stock logout prompt
+    // dropped (`FrameXMLFixes.xml`); the knob is
+    // `benilla_world::terrain_stream::TerrainOptions::low_mip`.
     same("shadowLevel", "1"),
     // `texLodBias` ("0.0", callback `0x78d730`: refused outside [-1.0, 1.0]), behind
     // `Get/SetTexLodBias`; the stock UI binds no control to it.
     same("texLodBias", "0.0"),
     // `baseMip` ("0", callback `0x78df00`: refused above 1): the device's first uploaded mip, so a
-    // 1 halves every texture, applied live (`TextureNotifyGxRestart` reloads them). The knob is
+    // 1 halves every texture, applied live (the device restart's notice reloads them). The knob is
     // `benilla_assets::TexFilterSetting::base_mip`.
     same("baseMip", "0"),
-    // `spellEffectLevel` (`0x78e400`, "9", flags 1, no callback): `SpellVisualsInitialize`
+    // `spellEffectLevel` (`0x78e400`, "9", flags 1, no callback): the spell visuals' init
     // (`0x7fc5a0`) caches the record and each blizzard shard emitter scales its rate by
     // `level / 9 × 0.9 + 0.1` at spawn (`0x7fb5e9`). The stock UI binds no control to it.
     same("spellEffectLevel", "9"),
-    // Weather Intensity (`OptionsFrame.lua:33`), registered "2" (`0x67b806`, flags 0, callback
-    // `0x67b870`, name `0x8685ac`). The reader is `benilla_world::weather::WeatherState`, which
-    // scales the precipitation spawn rate by `0x67b870`'s table {0.1, 0.33, 0.66, 1.0}; rendering
-    // only.
+    // Weather Intensity (`OptionsFrame.lua:33`), registered "2" (flags 0). The reader is
+    // `benilla_world::weather::WeatherState`, which scales the precipitation spawn rate by the
+    // reference's table {0.1, 0.33, 0.66, 1.0}; rendering only.
     deviates(
         "weatherDensity",
         "3",
@@ -954,75 +933,68 @@ pub(crate) const REGISTERED: &[Registered] = &[
          the only client we compare with. The slider is how a player takes it back down",
     ),
     // `Gamma` ("1.0", callback `0x401a30`) and `DesktopGamma` ("0", callback `0x401a80`), both
-    // registered at `0x401dad`. The ramp `pow(i/255, gamma)` is uploaded only while
-    // `DesktopGamma` reads 0, and the device skips it while windowed
-    // (`CGxDeviceD3d::DeviceSetGamma`); `DesktopGamma` 1 puts the desktop's own ramp back. The
-    // knob is [`crate::ui_gamma::DisplayGamma`], the same curve in the composite pass. Spelled
-    // "1.000000" because `SetGamma 0x54ea90` formats with `"%f"`, and Restore Defaults must
+    // registered at `0x401dad`. The ramp `pow(i/255, gamma)` is uploaded only while `DesktopGamma`
+    // reads 0, and the device skips it while windowed; `DesktopGamma` 1 puts the desktop's own ramp
+    // back. The knob is [`crate::ui_gamma::DisplayGamma`], the same curve in the composite pass.
+    // Spelled "1.000000" because `SetGamma 0x54ea90` formats with `"%f"`, and Restore Defaults must
     // compare equal to the default; [`sync_cvars`] seeds it the same way.
     same("gamma", "1.000000"),
     same("DesktopGamma", "0"),
     // ── The stock Video Options window's other boxes (`OptionsFrame.lua:5-22`) ───────────────────
     //
-    // `ffx` (`0x6ccfe3`: name `0x86f2ac`, record `[0xce8a04]`), `ffxGlow` (`0x6cc17d`, name
-    // `0x86f200`) and `ffxDeath` (`0x6cc6d1`, name `0x86f238`): each "1", flags 1, with the echo stub
-    // `0x6cde30` as callback, and each record's integer read every frame. The FFX begin/end pair
-    // (`0x6cd890`/`0x6cda70`) runs the active pass only while `ffx` (`0x6cd8a6`), `pixelShaders`
-    // (`0x6cd8b6`) and that pass's own enable hold: `CFFXGlow` (`0x6cc5a0`) reads `ffxGlow` at
-    // `0x6cc5a8`, `CFFXDeath` (`0x6cded0`) reads `ffxDeath` at `0x6cdf10`. The stock Okay writes
-    // `ffx` as Enable All Shaders (`OptionsFrame.lua:202-204`). The knob is
-    // [`benilla_world::ffx_glow::FfxSwitches`].
+    // `ffx`, `ffxGlow` and `ffxDeath`: each "1", flags 1, with the echo stub as callback, and each
+    // record's integer read every frame. The FFX begin/end pair runs the active pass only while
+    // `ffx`, `pixelShaders` and that pass's own enable hold: the glow pass reads `ffxGlow`, the
+    // death pass reads `ffxDeath`. The stock Okay writes `ffx` as Enable All Shaders
+    // (`OptionsFrame.lua:202-204`). The knob is [`benilla_world::ffx_glow::FfxSwitches`].
     same("ffx", "1"),
     same("ffxGlow", "1"),
     same("ffxDeath", "1"),
-    // `specular` (`CWorldParam::Initialize 0x78e400`, "0", callback `0x78de60`: "Specular
-    // disabled on restart."), Terrain Highlights: `CWorld::enables` bit `0x8000000`, read into
-    // `CMap::enableSpecular` at each map load (`CMap::LoadWdt` → `0x7bd8a0`), hence the stock
-    // row's logout requirement. The knob is `benilla_world::terrain_stream::TerrainSpecular`.
+    // `specular` (`0x78e400`, "0", callback `0x78de60`: "Specular disabled on restart."), Terrain
+    // Highlights: bit `0x8000000` of the world's enable mask, read into the map's specular switch
+    // at each map load (the WDT load → `0x7bd8a0`), hence the stock row's logout requirement. The
+    // knob is `benilla_world::terrain_stream::TerrainSpecular`.
     overridden(
         "specular",
         "1",
         "0",
-        "the first-run defaults pass (`CWorldParam::SetDefaults 0x78e1a0`) writes the matched          `VideoHardware.dbc` row's specularity bit, which the fallback row a modern GPU reaches          (693 on the reference install's `Logs/gx.log`) sets",
+        "the first-run defaults pass (`0x78e1a0`) writes the matched `VideoHardware.dbc` row's \
+         specularity bit, which the fallback row a modern GPU reaches (693 on the reference \
+         install's `Logs/gx.log`) sets",
     ),
-    // `lod` (`0x68848c`: name `0x8697d0`, "1", flags 1, callback `0x688920`, record `[0xc7f314]`),
-    // World LOD: bit 2 of `[0xc7b2a4]`, which gates the doodad LOD distance test at `0x6afb11`. No
-    // effect here: benilla has no doodad LOD swap, as `lodDist` above has no row.
+    // `lod` ("1", flags 1), World LOD: bit 2, which gates the doodad LOD distance test. No effect
+    // here: benilla has no doodad LOD swap, as `lodDist` above has no row.
     same("lod", "1"),
-    // `movieSubtitle` (`0x402c18`: name `0x82e9d8`, "0", flags 0, record `[0x882640]`), Cinematic
-    // Subtitles: the pre-rendered movies' subtitles, read by the glue's `GetMovieSubtitles`
-    // (`0x46dbc0`). No effect here: benilla plays no pre-rendered movie.
+    // `movieSubtitle` ("0", flags 0), Cinematic Subtitles: the pre-rendered movies' subtitles, read
+    // by the glue's `GetMovieSubtitles`. No effect here: benilla plays no pre-rendered movie.
     same("movieSubtitle", "0"),
-    // `useWeatherShaders` (`0x67b81d`: name `0x868598`, "1", flags 0, no callback, record
-    // `[0xc7b588]`), Weather Shaders: read in each precipitation effect's constructor (`0x67480f`,
-    // `0x6775a7`, `0x679274`), which clears the effect's shader flag at 0. No effect here: rain's
-    // two legs are one draw with other scalars, but snow's fixed-function leg (`0x678960`) is a
-    // CPU-built triangle per flake where the shader leg (`0x678610`) is a point sprite, a second
-    // draw path `benilla_world::weather` does not have, so the shader leg always runs.
+    // `useWeatherShaders` ("1", flags 0, no callback), Weather Shaders: read in each precipitation
+    // effect's constructor, which clears the effect's shader flag at 0. No effect here: rain's two
+    // legs are one draw with other scalars, but snow's fixed-function leg is a CPU-built triangle
+    // per flake where the shader leg is a point sprite, a second draw path `benilla_world::weather`
+    // does not have, so the shader leg always runs.
     same("useWeatherShaders", "1"),
-    // The latched `gx*` rows the stock window's boxes and refresh dropdown write (flags 3, committed
-    // by `RestartGx`), each callback storing one field of the device-format record `0xc4eb98`.
+    // The latched `gx*` rows the stock window's boxes and refresh dropdown write (flags 3,
+    // committed by `RestartGx`), each callback storing one field of the device-format record.
     //
-    // `gxMaximize` (`0x63a8e0`: name `0x864edc`, "0", "1" on zhCN like `gxWindow`, callback
-    // `0x63b1f0` → `+0x09` `[0xc4eba1]`): the window rebuild `0x58cf10` makes a windowed, maximized
-    // window a borderless popup (style `0x90000000`) at the screen's full size (`GetSystemMetrics`
-    // 0 and 1). The knob is [`crate::video::VideoConfig::maximize`].
+    // `gxMaximize` ("0", "1" on zhCN like `gxWindow`, callback → `+0x09`): the window rebuild makes
+    // a windowed, maximized window a borderless popup (style `0x90000000`) at the screen's full
+    // size (`GetSystemMetrics` 0 and 1). The knob is [`crate::video::VideoConfig::maximize`].
     same("gxMaximize", "0").latched(),
-    // `gxTripleBuffer` ("0", callback `0x769360`: refused above 1): a second back buffer, used
-    // only with vsync (`ISetPresentParms 0x68e250`). The knob is
-    // [`crate::video::VideoConfig::triple_buffer`], one more swapchain frame in flight.
+    // `gxTripleBuffer` ("0", callback `0x769360`: refused above 1): a second back buffer, used only
+    // with vsync (`0x68e250`). The knob is [`crate::video::VideoConfig::triple_buffer`], one more
+    // swapchain frame in flight.
     same("gxTripleBuffer", "0").latched(),
     // `gxCursor` ("1", callback `0x7695e0`): the hardware cursor, else the device draws the cursor
-    // texture over each presented frame (`CGxDevice::ICursorDraw 0x687a90`). The knob is
+    // texture over each presented frame (`0x687a90`). The knob is
     // [`crate::video::VideoConfig::hw_cursor`], which `crate::cursor` follows.
     same("gxCursor", "1").latched(),
     // `gxAspect` ("1", callback `0x769580`): a windowed window wider or taller than the screen
-    // shrinks keeping its aspect (`AdjustWindowRectToWorkArea 0x684d70`). The knob is
-    // [`crate::video::VideoConfig::aspect`].
+    // shrinks keeping its aspect (`0x684d70`). The knob is [`crate::video::VideoConfig::aspect`].
     same("gxAspect", "1").latched(),
     // `gxFixLag` (callback `0x7696a0`), Reduce Input Lag: after each present the device waits for
-    // the GPU to drain (`CGxDeviceD3d::ScenePresent 0x6a3450`). The knob is
-    // [`crate::video::VideoConfig::fix_lag`], a swapchain of one frame in flight.
+    // the GPU to drain (`0x6a3450`). The knob is [`crate::video::VideoConfig::fix_lag`], a
+    // swapchain of one frame in flight.
     deviates(
         "gxFixLag",
         "0",
@@ -1053,22 +1025,19 @@ pub(crate) const REGISTERED: &[Registered] = &[
         "benilla's own — 1.12 has no player-side perf log; its nearest thing is the \
          Ctrl+R framerate label, a number with no file behind it",
     ),
-    // `lastCharacterIndex` (`0x402d93`, "0" `0x82e570`, category 4, handle `[0x882674]`), help
-    // "Last character selected": a 0-based row (the selection cell `[0x83856c]` under `"%d"`), so
-    // "0" is the first character. It mirrors [`crate::char_select::Roster::pending_index`].
+    // `lastCharacterIndex` (category 4), help "Last character selected": a 0-based row (the
+    // selection cell under `"%d"`), so "0" is the first character. It mirrors
+    // [`crate::char_select::Roster::pending_index`].
     same(crate::char_select::CVAR_LAST_CHARACTER, "0"),
-    // The four user agreements the login screen walks (`0x402db6`, `0x402dd9`, `0x402dfc`,
-    // `0x402e1f`; "0" `0x82e570`, category 4): "Status of the TOS" (`0x82e8e4`), "... the EULA"
-    // (`0x82e8c8`), "... the Scanning notice" (`0x82e89c`) and "... the Contest notice"
-    // (`0x82e86c`). The glue manager reads them once at startup (`0x46a400`) as accepted (1) and
-    // changed (negative), and its `Accept*` writes "1" (`0x46aef0` and its siblings).
+    // The four user agreements the login screen walks (category 4): "Status of the TOS", "... the
+    // EULA", "... the Scanning notice" and "... the Contest notice". The glue manager reads them
+    // once at startup as accepted (1) and changed (negative), and its `Accept*` writes "1".
     same("readTOS", "0"),
     same("readEULA", "0"),
     same("readScanning", "0"),
     same("readContest", "0"),
-    // The screenshot writer's (`ClientRegisterConsoleCommands`, `0x401ee4` "jpeg", `0x401f0c` "3",
-    // flags 1): `tga` in any case writes a Targa, anything else a JPEG, at quality 1..10
-    // ([`crate::screenshot`]).
+    // The screenshot writer's rows (`0x401ee4` "jpeg", `0x401f0c` "3", flags 1): `tga` in any case
+    // writes a Targa, anything else a JPEG, at quality 1..10 ([`crate::screenshot`]).
     same("screenshotFormat", "jpeg"),
     same("screenshotQuality", "3"),
 ];

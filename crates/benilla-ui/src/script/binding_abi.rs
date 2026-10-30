@@ -1,17 +1,16 @@
 //! The argument and error ABI every registered Lua C-binding of the 1.12 client opens with.
 //!
-//! The reference's helpers: `is-number` (`0x6f34d0`) accepts tag 3 or a string coerced through
-//! `0x6f7c20`; `is-number-or-string` (`0x6f3510`) accepts tag 3 or 4; `tonumber` (`0x6f3620`)
-//! feeds `0x40a2b0`, a double-to-int32 cast that truncates toward zero (the x87 rounding control
-//! set to chop), so -2.9 is -2.
+//! The reference's helpers: `is-number` accepts tag 3 or a string that coerces to a number;
+//! `is-number-or-string` accepts tag 3 or 4; `tonumber` feeds a double-to-int32 cast that truncates
+//! toward zero (the x87 rounding control set to chop), so -2.9 is -2.
 //!
-//! A bad argument raises: `0x6f4940` is `luaL_error`, which never returns (it ends in `longjmp` or
-//! `exit(1)` through `0x6f4440`, `0x6fc780`, `0x6f5d80`), so the `xor eax,eax; ret` after it is
-//! unreachable and the caller's statement is abandoned. An empty answer is settled per binding:
+//! A bad argument raises: the reference's error call is `luaL_error`, which never returns (it ends
+//! in `longjmp` or `exit(1)`), so the `xor eax,eax; ret` after it is unreachable and the caller's
+//! statement is abandoned. An empty answer is settled per binding:
 //!
 //! 1. push nil, one value (`UnitAffectingCombat` on a unit out of combat, or a token naming none);
 //! 2. zero values, distinct from nil to anything counting the returns (`arg.n`), reached only by a
-//!    `xor eax,eax; ret` that skips `0x6f4940` (`GetDefaultLanguage`'s failure edges);
+//!    `xor eax,eax; ret` that skips the raise (`GetDefaultLanguage`'s failure edges);
 //! 3. raise.
 
 use mlua::{Lua, Value};
@@ -29,10 +28,10 @@ pub(crate) fn ftol(n: f64) -> i32 {
     }
 }
 
-/// Shape A: `is-number` (`0x6f34d0`), `tonumber` (`0x6f3620`), then the truncating `0x40a2b0`,
-/// raising the binding's `Usage:` on failure. A missing argument fails like a wrong-typed one
-/// (`0x6f3410` returns NULL past `L->top`); a numeric string passes. `0x40a2b0` stores a qword but
-/// the bindings consume only the low dword, hence `i32`.
+/// Shape A: `is-number`, `tonumber`, then the truncating cast, raising the binding's `Usage:` on
+/// failure. A missing argument fails like a wrong-typed one (the argument fetch returns NULL past
+/// `L->top`); a numeric string passes. The cast stores a qword but the bindings consume only the
+/// low dword, hence `i32`.
 ///
 /// Deviation: past ±2^63 Rust saturates where the x87 stores its integer-indefinite pattern,
 /// because no real argument reaches that range.
@@ -44,24 +43,24 @@ pub(crate) fn number_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Resu
 }
 
 /// Shape D: an `is-number`-gated flag whose failure keeps its zero instead of raising. The value
-/// must be strictly `> 0.0` (`0x53303f`), so 0, a negative and NaN are false and `0.5` or `"1"`
-/// true; `SetInventoryItem`'s `nameOnly` is one.
+/// must be strictly `> 0.0`, so 0, a negative and NaN are false and `0.5` or `"1"` true;
+/// `SetInventoryItem`'s `nameOnly` is one.
 pub(crate) fn positive_number_flag(lua: &Lua, v: Value) -> mlua::Result<bool> {
     Ok(lua.coerce_number(v)?.is_some_and(|n| n > 0.0))
 }
 
-/// Shape C: a bare `lua_tonumber` (`0x6f3620`) with no `is-number` guard, so it cannot fail:
-/// anything but a number or numeric string reads as 0.0. The reference uses it for colour and
-/// coordinate tuples (`Set*Color`, `SetTexCoord`, `SetPosition`) and shape A for scalar setters
-/// (`SetAlpha`, `SetWidth`, `SetValue`, `SetID`); which applies is per binding.
+/// Shape C: a bare `lua_tonumber` with no `is-number` guard, so it cannot fail: anything but a
+/// number or numeric string reads as 0.0. The reference uses it for colour and coordinate tuples
+/// (`Set*Color`, `SetTexCoord`, `SetPosition`) and shape A for scalar setters (`SetAlpha`,
+/// `SetWidth`, `SetValue`, `SetID`); which applies is per binding.
 pub(crate) fn coerced_number(lua: &Lua, v: Option<Value>) -> f64 {
     v.and_then(|v| lua.coerce_number(v).ok().flatten())
         .unwrap_or(0.0)
 }
 
-/// `is-number-or-string` (`0x6f3510`) then `0x6f3690`, raising the binding's `Usage:` on failure:
-/// a number is stringified (`UnitAffectingCombat(5)` passes here, then the unit resolver raises
-/// `Unknown unit name` for `"5"`, `0x515c14`), and nil, a boolean, a table or a function raises.
+/// `is-number-or-string` then the string fetch, raising the binding's `Usage:` on failure: a number
+/// is stringified (`UnitAffectingCombat(5)` passes here, then the unit resolver raises
+/// `Unknown unit name` for `"5"`), and nil, a boolean, a table or a function raises.
 pub(crate) fn string_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<String> {
     match lua.coerce_string(v)? {
         // Lossy: a Lua string is bytes, so invalid UTF-8 costs a glyph, never the call.
@@ -99,9 +98,8 @@ pub(crate) fn text_arg(lua: &Lua, v: Option<Value>) -> mlua::Result<Option<Strin
 }
 
 /// Lua's number-to-string as the 1.12 client compiles it: MSVC's `sprintf("%.14g")`
-/// (`luaV_tostring` `0x6f7c80`, format `0x871960`). `EditBox:SetNumber` (`0x798690`) formats
-/// through it too, being byte-identical to `SetText` (`0x7984c0`). The exponent has at least three
-/// digits: `1e20` prints `1e+020`.
+/// (`luaV_tostring`). `EditBox:SetNumber` formats through it too, being byte-identical to
+/// `SetText`. The exponent has at least three digits: `1e20` prints `1e+020`.
 ///
 /// Deviation: the result is correctly rounded, where the reference rounds to 17 digits half-up and
 /// then again to 14, differing in the last digit on about 0.05% of doubles, because no consumer
@@ -159,15 +157,14 @@ fn trim_g(s: &str) -> &str {
     s.trim_end_matches('0').trim_end_matches('.')
 }
 
-/// `GetBoolOrDefault` (`0x6f1c10`, jump table `0x6f1ce8`), the reference's boolean argument
-/// coercion, which is not Lua truthiness:
+/// The reference's boolean argument coercion, which is not Lua truthiness:
 ///
 /// - absent (`None`, `LUA_TNONE`) takes `default`, but nil is false; a binding whose default is
 ///   true takes a `MultiValue`, since mlua turns a missing argument into nil
-/// - a boolean is itself; a number truncates toward zero (`0x40a2b0`), then `!= 0`
-/// - a string goes by its first byte, through the remap table at `0x6f1d08`: `'0' 'F' 'N' 'f' 'n'`
-///   false, `'1'..='9' 'T' 'Y' 't' 'y'` true; any other is compared whole, case-insensitively
-///   (`0x64a4c0`): `"off"`/`"disabled"` false, `"on"`/`"enabled"` true, anything else `default`
+/// - a boolean is itself; a number truncates toward zero, then `!= 0`
+/// - a string goes by its first byte, through the remap table: `'0' 'F' 'N' 'f' 'n'` false,
+///   `'1'..='9' 'T' 'Y' 't' 'y'` true; any other is compared whole, case-insensitively:
+///   `"off"`/`"disabled"` false, `"on"`/`"enabled"` true, anything else `default`
 /// - lightuserdata, a table, function, userdata or thread takes `default`
 ///
 /// So `"0"` is false and `"0.5"` goes by its first byte: the Interface panel passes its options
@@ -180,7 +177,7 @@ pub(crate) fn bool_or_default(v: Option<&Value>, default: bool) -> bool {
         Value::Nil => false,
         Value::Boolean(b) => *b,
         Value::LightUserData(_) => default,
-        // Truncated like `0x40a2b0`, testing only the low dword.
+        // Truncated like a number argument's cast, testing only the low dword.
         Value::Integer(i) => (*i as i32) != 0,
         Value::Number(n) => (*n as i64 as i32) != 0,
         Value::String(s) => {
@@ -209,12 +206,11 @@ pub(crate) fn bool_or_default(v: Option<&Value>, default: bool) -> bool {
 }
 
 /// The 1.12 predicate return: `1` for true, nil for false, never a Lua boolean. The widget and
-/// `Unit*` predicates push the number 1 (`0x6f3810`) or nil (`0x6f37f0`); outside the base library
-/// (`rawequal`, `pcall`, `xpcall`), the one binding that calls `lua_pushboolean` (`0x6f39f0`) is
-/// `IsPetAttackActive` (`0x4be0e0`). Direct comparisons see it: stock `UIOptionsFrame.xml:310`
-/// saves `tostring(this:GetChecked())` and `BuffFrame.lua:71` compares it with `"1"`. The false
-/// leg is per binding: `IsEnabled` (`0x7800b0`) and numeric getters such as `UnitLevel`
-/// (`0x518144`) answer 0 and do not use this.
+/// `Unit*` predicates push the number 1 or nil; outside the base library (`rawequal`, `pcall`,
+/// `xpcall`), the one binding that calls `lua_pushboolean` is `IsPetAttackActive`. Direct
+/// comparisons see it: stock `UIOptionsFrame.xml:310` saves `tostring(this:GetChecked())` and
+/// `BuffFrame.lua:71` compares it with `"1"`. The false leg is per binding: `IsEnabled` and numeric
+/// getters such as `UnitLevel` answer 0 and do not use this.
 pub(crate) fn flag(b: bool) -> Value {
     if b {
         Value::Integer(1)

@@ -7,9 +7,8 @@
 //!
 //! - `scale`: `SetModelScale(3)` moves nothing, as the authored eye rides the model's root.
 //! - `position`: `SetPosition(0.4, -0.3, 0.9)` moves nothing, for the same reason.
-//! - `facing`: `SetFacing(1.0)` moves nothing: the up vector `0x7ac640` builds is model-space `+Z`
-//!   at `roll = 0`, the facing's own axis. Only `<PlayerModel>`'s frozen camera (`0x7acf10`)
-//!   shows a facing.
+//! - `facing`: `SetFacing(1.0)` moves nothing: the up vector builds is model-space `+Z` at
+//!   `roll = 0`, the facing's own axis. Only `<PlayerModel>`'s frozen camera shows a facing.
 //! - `ortho`, the control: `SetCamera(9)` is past the file's camera count, so the widget installs
 //!   the NULL camera and falls to the orthographic leg, and the perspective camera goes inactive.
 //!
@@ -31,8 +30,8 @@ use crate::ui_models::{TilePerspectiveCamera, TileRoot, UiModelTiles};
 /// 0 type 0, eye `(1.6927, 0.7238, 0.8837)`, fov `0.95002`; index 1 type 1, eye
 /// `(5.5556, 0, 1.8056)`, fov `0.67620`), so index 9 is past the count.
 const FILE: &str = r"Creature\\Wolf\\Wolf.mdx";
-/// The pane's size in FrameXML units: the pet pane's `318x224`, a worked example of the
-/// projection `0x5c3cc0` (`theta = 0.287938 * fov`).
+/// The pane's size in FrameXML units: the pet pane's `318x224`, a worked example of the projection
+/// (`theta = 0.287938 * fov`).
 const PANE_W: f32 = 318.0;
 const PANE_H: f32 = 224.0;
 /// Frames to let a change settle: the extract republishes it, then the renderer aims the camera.

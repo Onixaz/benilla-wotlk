@@ -1,12 +1,11 @@
 //! `VocalUISounds.dbc`, the error speech a character says in its own race and sex voice when the
 //! client refuses something. One row per `(race, line)`, the line being the message catalog's
-//! `type_tag` (the record's `+0x0c`), so a refusal reaching `CGGameUI::DisplayError` names it.
+//! `type_tag` (the record's `+0x0c`), so a refusal reaching the error display names it.
 //!
-//! Layout: 7 `u32` fields in 28-byte records (the builder `0x45813d` strides `0x1c`): `ID`, the
-//! line (`0x45815c`), the race (`0x45816b`), the male and female kits (`0x458173`, `0x458180`, to
-//! `[0xb06240 + line*12]` and `[0xb06570 + line*12]`), then the annoyed pair (`0x458190`,
-//! `0x4581a3`, to `[0xb06244 + line*12]` and `[0xb06574 + line*12]`). A kit id of `0` or
-//! `0xFFFF_FFFF` misses in the kit lookup (`0x45cda0`), so that line is silent.
+//! Layout: 7 `u32` fields in 28-byte records (the builder strides `0x1c`): `ID`, the line, the
+//! race, the male and female kits (each into a per-line table of 12-byte entries), then the annoyed
+//! pair (into the same entries' next slot). A kit id of `0` or `0xFFFF_FFFF` misses in the kit
+//! lookup, so that line is silent.
 
 use crate::Chain;
 use anyhow::{Context, Result};
@@ -16,8 +15,8 @@ use crate::dbc::{parse, u32_at};
 
 const VOCAL_UI_SOUNDS: &str = "DBFilesClient\\VocalUISounds.dbc";
 
-/// The reference table's line count, the bound its builder (`0x45815f`) and player (`0x45829c`)
-/// test. A `type_tag` of exactly `0x44` means no speech: play the record's named cue instead.
+/// The reference table's line count, the bound its builder and player test. A `type_tag` of exactly
+/// `0x44` means no speech: play the record's named cue instead.
 pub const VOCAL_UI_LINES: usize = 0x44;
 
 /// One `VocalUISounds.dbc` row: the kits one race says one line with, per sex.
@@ -36,8 +35,8 @@ pub struct VocalUiSound {
 }
 
 impl VocalUiSound {
-    /// The ordinary line's kit at `sex`, `0` and `-1` folded to none. The reference refuses a
-    /// `sex` past 1 at its entry (`0x458254`/`0x45825b`).
+    /// The ordinary line's kit at `sex`, `0` and `-1` folded to none. The reference refuses a `sex`
+    /// past 1 at its entry.
     pub fn normal_kit(&self, sex: u32) -> Option<u32> {
         kit(self.normal, sex)
     }
@@ -59,8 +58,8 @@ pub struct VocalUiSoundCatalog {
 }
 
 impl VocalUiSoundCatalog {
-    /// Every kept row in file order. The reference builds its table walking the file backwards
-    /// (`0x458140`), so on a duplicate `(race, line)` the lowest-indexed row wins.
+    /// Every kept row in file order. The reference builds its table walking the file backwards, so
+    /// on a duplicate `(race, line)` the lowest-indexed row wins.
     pub fn rows(&self) -> &[VocalUiSound] {
         &self.rows
     }

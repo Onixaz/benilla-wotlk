@@ -39,10 +39,10 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetText",
         lua.create_function(|lua, this: Table| with_editbox(lua, &this, |eb| eb.text.clone()))?,
     )?;
-    // SetNumber is SetText: `0x798690` and `0x7984c0` are byte-identical but for the usage
-    // string. Its gate is `lua_isstring` (`0x6f3510`), so a string is set verbatim, never parsed,
-    // and nil, a boolean, a table or no argument raises the usage string. On a numeric box `-5` or
-    // `0.8` leaves it empty: the sign or point fails the digit test after the clear has run.
+    // SetNumber is SetText: the two bindings are byte-identical but for the usage string. Its gate
+    // is `lua_isstring`, so a string is set verbatim, never parsed, and nil, a boolean, a table or
+    // no argument raises the usage string. On a numeric box `-5` or `0.8` leaves it empty: the sign
+    // or point fails the digit test after the clear has run.
     m.set(
         "SetNumber",
         lua.create_function(|lua, (this, v): (Table, Value)| {
@@ -57,8 +57,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // GetNumber: the real text as a number, else 0. The reference (`0x798790`) is atof, which also
-    // reads the leading number of a text like "12abc".
+    // GetNumber: the real text as a number, else 0. The reference is atof, which also reads the
+    // leading number of a text like "12abc".
     m.set(
         "GetNumber",
         lua.create_function(|lua, this: Table| {
@@ -109,8 +109,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetInputLanguage/ToggleInputLanguage (`0x799550`/`0x799610`): the IME's input language, not
-    // the chat language. With no IME, as here, the answer is "ROMAN" and the toggle does nothing.
+    // GetInputLanguage/ToggleInputLanguage: the IME's input language, not the chat language. With
+    // no IME, as here, the answer is "ROMAN" and the toggle does nothing.
     m.set(
         "GetInputLanguage",
         lua.create_function(|lua, this: Table| {
@@ -159,7 +159,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetCursorPosition",
         lua.create_function(|lua, this: Table| with_editbox(lua, &this, |eb| eb.cursor as i64))?,
     )?;
-    // GetUTF8CursorPosition() (`0x976a70`): the characters before the caret (`SStrLenUTF8`).
+    // GetUTF8CursorPosition() (`0x976a70`): the characters before the caret, counted as UTF-8.
     m.set(
         "GetUTF8CursorPosition",
         lua.create_function(|lua, this: Table| {
@@ -172,16 +172,15 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     m.set(
-        // `GetMaxLetters` (`0x79929f`) reads the field `SetMaxLetters` writes.
+        // `GetMaxLetters` reads the field `SetMaxLetters` writes.
         "GetMaxLetters",
         lua.create_function(|lua, this: Table| {
             with_editbox(lua, &this, |eb| eb.max_letters as i64)
         })?,
     )?;
     m.set(
-        // `SetMaxBytes` (`0x798f30`) has `SetMaxLetters`'s exact count gate (`0x798fbc`) and raw
-        // coercion, but its no-limit value is -1 (`0x799012`; the ctor writes -1 at `0x7799df`):
-        // a non-positive argument is unlimited, a positive one caps the bytes.
+        // `SetMaxBytes` has `SetMaxLetters`'s exact count gate and raw coercion, but its no-limit
+        // value is -1: a non-positive argument is unlimited, a positive one caps the bytes.
         "SetMaxBytes",
         lua.create_function(|lua, (this, args): (Table, mlua::MultiValue)| {
             let args: Vec<Value> = args.into_iter().collect();
@@ -205,9 +204,9 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     m.set(
-        // `SetMaxLetters` (`0x799110`) checks the count exactly, `lua_gettop` (`0x6f3070`) against
-        // 2 at `0x79919c`, and not the type: no argument or two raise `Usage:`, nil or `{}` store
-        // 0, `"12"` stores 12. 0 is no limit: the insert skips its trim on zero (`0x77c085`).
+        // `SetMaxLetters` checks the count exactly, `lua_gettop` against 2, and not the type: no
+        // argument or two raise `Usage:`, nil or `{}` store 0, `"12"` stores 12. 0 is no limit: the
+        // insert skips its trim on zero.
         "SetMaxLetters",
         lua.create_function(|lua, (this, args): (Table, mlua::MultiValue)| {
             let args: Vec<Value> = args.into_iter().collect();
@@ -296,8 +295,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             },
         )?,
     )?;
-    // GetTextInsets (`0x798c30` → `0x77a710`) copies the four out, then re-seats the text region
-    // (`0x77a73f` → `0x77b8c0`), so the getter puts a script-moved region back.
+    // GetTextInsets copies the four out, then re-seats the text region, so the getter puts a
+    // script-moved region back.
     m.set(
         "GetTextInsets",
         lua.create_function(|lua, this: Table| {
@@ -306,8 +305,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok((ins[0], ins[1], ins[2], ins[3]))
         })?,
     )?;
-    // GetNumLetters (`0x7992c0`): the class array's letters (`0x77bc80`), classes 2, 3 and 6 only,
-    // so escapes are free and a 43-byte item link counts 9.
+    // GetNumLetters: the class array's letters, classes 2, 3 and 6 only, so escapes are free and a
+    // 43-byte item link counts 9.
     m.set(
         "GetNumLetters",
         lua.create_function(|lua, this: Table| {
@@ -318,12 +317,11 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // The XML's fifth flag, `ignoreArrows`, is `SetAltArrowKeyMode` in Lua; 1.12 has no
-    // `SetIgnoreArrows` (the 48-entry table `[0x87bb68, 0x87bce8)`).
+    // `SetIgnoreArrows`.
     //
-    // SetAltArrowKeyMode (`0x7996e0`) reads `GetBoolOrDefault` (`0x6f1c10`) with default 1: no
-    // argument enables, nil disables, a number truncates (0 and 0.5 off, -1 on), `""` takes the
-    // default and `"0"` disables. GetAltArrowKeyMode (`0x799790`) answers the number 1 or nil,
-    // never a boolean (`0x799815`).
+    // SetAltArrowKeyMode reads its argument as a boolean with default 1: no argument enables, nil
+    // disables, a number truncates (0 and 0.5 off, -1 on), `""` takes the default and `"0"`
+    // disables. GetAltArrowKeyMode answers the number 1 or nil, never a boolean.
     m.set(
         "SetAltArrowKeyMode",
         lua.create_function(|lua, (this, args): (Table, mlua::MultiValue)| {
@@ -366,11 +364,11 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The font block, entries #0-#15 of the EditBox's own 48-entry method table (`0x87bb68`, count
-/// at `0x799ab5`); 1.12 has no `FontInstance` class, so each text-bearing kind declares it. Ten
-/// come from [`super::super::font_block`], `SetSpacing`/`GetSpacing` (#10-#11) from its
-/// `install_spacing`. The justify four (#12-#15) act on the box's own [`EditBoxState::justify`]
-/// word, not its text region.
+/// The font block, entries #0-#15 of the EditBox's own 48-entry method table; 1.12 has no
+/// `FontInstance` class, so each text-bearing kind declares it. Ten come from
+/// [`super::super::font_block`], `SetSpacing`/`GetSpacing` (#10-#11) from its `install_spacing`.
+/// The justify four (#12-#15) act on the box's own [`EditBoxState::justify`] word, not its text
+/// region.
 fn install_font_block(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // Every font method acts on the box's implicit FontString (`[this+0x324]`, our
     // `text_region`), created on demand.
@@ -378,8 +376,8 @@ fn install_font_block(lua: &Lua, m: &Table) -> mlua::Result<()> {
         let h = frame_handle_of(lua, this)?;
         super::ensure_text_region(lua, h).ok_or_else(|| mlua::Error::runtime("not an EditBox"))
     };
-    // The box listens on its font (vtable `0x81c8dc` slot 0, `0x77e2a0`): a change of face or
-    // spacing (mask `0x11`) re-seats its text region (`0x77e2b5` → `0x77b8c0`).
+    // The box listens on its font: a change of face or spacing (mask `0x11`) re-seats its text
+    // region.
     let changed: crate::script::font_block::FontChanged = |lua, this| {
         reseat_text_region(lua, frame_handle_of(lua, this)?);
         Ok(())
@@ -387,9 +385,9 @@ fn install_font_block(lua: &Lua, m: &Table) -> mlua::Result<()> {
     crate::script::font_block::install(lua, m, resolve, "EditBox", Some(changed))?;
     crate::script::font_block::install_spacing(lua, m, resolve, Some(changed))?;
 
-    // SetJustifyH/SetJustifyV return nothing. An unknown token raises `Usage:` (`0x87c77c`); a
-    // token of the other axis parses and masks to nothing, so `SetJustifyH("TOP")` clears justifyH
-    // and `GetJustifyH()` answers "UNKNOWN".
+    // SetJustifyH/SetJustifyV return nothing. An unknown token raises `Usage:`; a token of the
+    // other axis parses and masks to nothing, so `SetJustifyH("TOP")` clears justifyH and
+    // `GetJustifyH()` answers "UNKNOWN".
     for (name, mask) in [
         ("SetJustifyH", EditBoxState::JUSTIFY_H_MASK),
         ("SetJustifyV", EditBoxState::JUSTIFY_V_MASK),

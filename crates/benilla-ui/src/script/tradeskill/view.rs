@@ -1,6 +1,6 @@
-//! The display list the tradeskill API indexes, the client's `CGTradeSkillInfo` statics: the
-//! rebuild (`RefreshList 0x5dd5a0`), the filter pass and sort (`SetInvTypeFilter 0x5dcc40`) and
-//! the repeat (`0x5d9fa0`, `0x5da070`, `0x5da0f0`).
+//! The display list the tradeskill API indexes, the client's tradeskill statics: the rebuild
+//! (`0x5dd5a0`), the filter pass and sort (`0x5dcc40`) and the repeat (`0x5d9fa0`, `0x5da070`,
+//! `0x5da0f0`).
 
 use std::cmp::Ordering;
 
@@ -10,7 +10,7 @@ use crate::script::Model;
 /// Every filter bit set: all sub-classes shown, none folded, all slots shown.
 const ALL: u32 = u32::MAX;
 
-/// One display entry: a recipe, or the header of a sub-class (`m_spellId == -1`).
+/// One display entry: a recipe, or the header of a sub-class (spell id `-1`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Entry {
     /// Position in `TradeSkillState::recipes`, `None` for a header.
@@ -21,7 +21,7 @@ pub(super) struct Entry {
     visible: bool,
 }
 
-/// One sub-class record (`m_subClassList`).
+/// One sub-class record.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct SubClass {
     pub(super) key: (i32, i32),
@@ -46,11 +46,11 @@ struct Recast {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TradeSkillModel {
     pub(crate) state: Option<TradeSkillState>,
-    /// Visible entries first, in display order (`m_displayList`).
+    /// Visible entries first, in display order.
     pub(super) display: Vec<Entry>,
-    /// `m_filteredSkills`, what `GetNumTradeSkills` answers.
+    /// The filtered count, what `GetNumTradeSkills` answers.
     pub(super) filtered: usize,
-    /// Sorted by class, then name (`QSortSubClasses 0x5da6b0`).
+    /// Sorted by class, then name (`0x5da6b0`).
     pub(super) sub_classes: Vec<SubClass>,
     /// Bit i shows sub-class i (`0xad0e00`).
     pub(super) sub_class_filter: u32,
@@ -110,7 +110,7 @@ fn bit(mask: u32, i: usize) -> bool {
     mask & 1u32.wrapping_shl(i as u32) != 0
 }
 
-/// `SStrSortUTF8I`: case-insensitive, then raw bytes.
+/// The reference's UTF-8 collation: case-insensitive, then raw bytes.
 fn collate(a: &str, b: &str) -> Ordering {
     a.to_lowercase()
         .cmp(&b.to_lowercase())
@@ -123,7 +123,7 @@ impl TradeSkillModel {
         self.state.as_ref()?.recipes.get(e.recipe?)
     }
 
-    /// The display entry at a 1-based Lua index, visible or not (`index < m_numDisplayEntries`).
+    /// The display entry at a 1-based Lua index, visible or not (below the display entry count).
     pub(super) fn entry(&self, index: i64) -> Option<&Entry> {
         usize::try_from(index.checked_sub(1)?)
             .ok()
@@ -164,10 +164,10 @@ impl TradeSkillModel {
         false
     }
 
-    /// `RefreshList(1)`: rebuild the entries and sub-classes, keeping each sub-class's shown and
-    /// folded flags by key. A product template in flight holds the old list (`0x5dd5a0`).
-    /// Deviation: the reference holds its old count over the new spells; an old list that no
-    /// longer matches the recipes is emptied instead.
+    /// The list refresh with its rebuild flag set: rebuild the entries and sub-classes, keeping
+    /// each sub-class's shown and folded flags by key. A product template in flight holds the old
+    /// list (`0x5dd5a0`). Deviation: the reference holds its old count over the new spells; an old
+    /// list that no longer matches the recipes is emptied instead.
     fn refresh(&mut self) {
         let Some(s) = self.state.as_ref() else {
             return;
@@ -242,7 +242,7 @@ impl TradeSkillModel {
         }
     }
 
-    /// `Profession_FilterSpell` (`0x5dc110`): the product's required level within the level
+    /// The spell filter (`0x5dc110`): the product's required level within the level
     /// filter, then the name filter found in any searched text.
     fn passes_text_filters(&self, r: &TradeSkillRecipe) -> bool {
         if let Some(req) = r.required_level.map(|l| l as i32) {
@@ -258,7 +258,7 @@ impl TradeSkillModel {
         r.search_text.iter().any(|t| t.contains(name))
     }
 
-    /// `SetInvTypeFilter` (`0x5dcc40`): with `from_bits`, the masks set each sub-class's shown
+    /// The slot filter pass (`0x5dcc40`): with `from_bits`, the masks set each sub-class's shown
     /// and folded flags first; then every entry's visibility, `filtered`, and the sort.
     pub(super) fn apply(&mut self, from_bits: bool) {
         if from_bits {
@@ -342,7 +342,7 @@ impl TradeSkillModel {
         self.filtered = filtered;
     }
 
-    /// `QSortSkills` (`0x5dae60`): visible entries of shown sub-classes first, by sub-class, the
+    /// The recipe sort (`0x5dae60`): visible entries of shown sub-classes first, by sub-class, the
     /// header first, then difficulty, trivialHigh and item level descending, and name.
     fn compare(&self, a: &Entry, b: &Entry) -> Ordering {
         if !self.sub_classes.is_empty() {
@@ -380,20 +380,20 @@ impl TradeSkillModel {
             .then_with(|| collate(&ra.name, &rb.name))
     }
 
-    /// The sub-class whose header is display entry `index` (0-based), as
-    /// `GetSubClassIndexFromSkill` (`0x5da7d0`).
+    /// The sub-class whose header is display entry `index` (0-based), as the reference resolves it
+    /// (`0x5da7d0`).
     pub(super) fn sub_class_of_header(&self, index: usize) -> Option<usize> {
         let e = self.display.get(index).filter(|e| e.recipe.is_none())?;
         self.sub_classes.iter().position(|c| c.key == e.key)
     }
 
-    /// Whether display entry `index` (0-based) is a folded header (`IsCollapsedHeader 0x5da830`).
+    /// Whether display entry `index` (0-based) is a folded header (`0x5da830`).
     pub(super) fn is_collapsed_header(&self, index: usize) -> bool {
         self.sub_class_of_header(index)
             .is_some_and(|i| !bit(self.collapse_filter, i))
     }
 
-    /// The selection's 0-based display position, visible or not (`GetSelectionIndex 0x5da670`).
+    /// The selection's 0-based display position, visible or not (`0x5da670`).
     pub(super) fn selection_index(&self) -> Option<usize> {
         if self.selected == 0 {
             return None;
@@ -441,7 +441,7 @@ impl TradeSkillModel {
         count.max(1)
     }
 
-    /// `StopRecast` (`0x5d9ff0`); whether a repeat stopped, which fires `UPDATE_TRADESKILL_RECAST`.
+    /// The repeat stop; whether a repeat stopped, which fires `UPDATE_TRADESKILL_RECAST`.
     pub(super) fn stop_recast(&mut self) -> bool {
         let active = self.recast.spell != 0 || self.recast.pending_spell != 0;
         self.recast.spell = 0;
@@ -458,7 +458,7 @@ impl TradeSkillModel {
         self.recast.pending_times = 0;
     }
 
-    /// `DoRecast`: `(cast again, fire UPDATE_TRADESKILL_RECAST)`.
+    /// The repeat's next cast: `(cast again, fire UPDATE_TRADESKILL_RECAST)`.
     pub(super) fn do_recast(&mut self, spell: u32) -> (bool, bool) {
         if self.recast.spell == 0 {
             return (false, self.stop_recast());
@@ -475,7 +475,7 @@ impl TradeSkillModel {
         }
     }
 
-    /// `UpdateTradeSkillRecast`: whether a repeat of `spell` stopped.
+    /// The repeat update on a failed cast: whether a repeat of `spell` stopped.
     pub(super) fn cast_failed(&mut self, spell: u32) -> bool {
         let mut fire = false;
         if spell == self.recast.spell {

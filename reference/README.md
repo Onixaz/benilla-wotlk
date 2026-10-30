@@ -1,65 +1,51 @@
 # `reference/`: verified facts about the reference client, vendored
 
-Generated tables describing the 3.3.5a reference client, committed so benilla can measure itself
-against them on any machine without re-deriving them. A filename begins with the client version it
-describes. Data, not documentation: each generated surface has a generator beside it in
-`scripts/`. `3.3.5a-message-catalog.tsv` also feeds `scripts/gen-message-catalog.py`, which
-re-shapes it into `crates/benilla-ui/src/messages/catalog.rs`.
+Tables describing the 3.3.5a reference client, committed so benilla can measure itself against them
+on any machine without re-deriving them. A filename begins with the client version it describes.
+Data, not documentation. `3.3.5a-message-catalog.tsv` also feeds `scripts/gen-message-catalog.py`,
+which re-shapes it into `crates/benilla-ui/src/messages/catalog.rs`.
 
-Nothing here is Blizzard content. A catalogue of names is not the thing named, the same way a
-comment may quote a byte address and `docs/MAP.md` may name a file.
+Nothing here is Blizzard content: a catalogue of names is not the thing named, the same way
+`docs/MAP.md` may name a file. The tables carry no client addresses and no names of the client's
+internal code; a table the client registers is named by an opaque id.
 
 ## 3.3.5a build 12340
 
-`scripts/gen-reference-wotlk.py` accepts only the verified enUS build-12340 `Wow.exe` with SHA-256
-`aa63a5750d60ef16746c686b3d5e26876d98953eab08b1c026cd0faf78e88cb8`. It reads that executable and
-GNU objdump's instruction boundaries; it never copies executable bytes into this repository. Run:
+Eight tables were derived from the enUS build-12340 client and are vendored as they stand:
 
-```text
-python scripts/gen-reference-wotlk.py --exe PATH/TO/Wow.exe --objdump PATH/TO/objdump
-```
+- `3.3.5a-event-catalog.tsv`: the 646 named entries of the 722-slot in-world event table.
+- `3.3.5a-glue-events.tsv`: the 41-slot glue-screen event table, which the glue screens load in
+  place of the in-world one, so a glue event's id names a different event in-game.
+- `3.3.5a-events.tsv`: each named event with its argument formats and producer families,
+  attributing a producer to 473 of 606 named events. It remains advisory because computed-id
+  paths may remain.
+- `3.3.5a-shapes.tsv`: all 2,987 bindings in 113 global, widget-method, base-library and
+  standard-library registrar tables (`table` is the table's id, `t001`..`t113` in client order).
+  Return arity is proven for 2,828 rows (2,191 exact and 637 set-valued), leaving 159 explicitly
+  reasoned unknowns. Every row has a non-gateable observed argc floor, and 2,445 rows have a
+  matching return-kind trace. A `delegated-push` trace describes only the binding's visible suffix
+  and remains advisory; only `kinds_conf=agree` without that note is fit for a kind gate.
+- `3.3.5a-message-catalog.tsv`: all 730 rows of the UI message table, each key with its display
+  kind, sound, type tag and chat type.
+- `3.3.5a-opcodes.tsv`: every incoming world opcode the client registers a handler for, with the
+  events its handler fires directly. Symbolic names remain blank unless handler behaviour proves
+  them; the seven `BATTLEFIELD_MGR_*` disagreements in published community tables are settled by
+  their handlers' own events.
+- `3.3.5a-verb-events.tsv`: the 61 verb/event pairs fired inside the registered verb's own body. It
+  is explicitly a floor: an event a verb fires through a helper is not listed.
+- `3.3.5a-dbc.tsv`: all 241 DBC tables the client loads, one row per table loader (237 at startup,
+  four on demand), with the column count and row size each loader checks and the number of
+  functions that read it. Readers are a floor (a read through a computed pointer is not seen),
+  complete for the twelve `gt` tables, and attributed to Lua bindings and opcode handlers that read
+  directly. Ten tables have no reader: 12340 loads them and never reads them.
 
-It regenerates eight executable-derived surfaces:
-
-- `3.3.5a-event-catalog.tsv`: the exact 646 named entries in the 722-slot in-world event registry.
-  The separate 41-slot GlueXML registry is also decoded and validated so its numeric ids cannot be
-  mislabelled with world names.
-- `3.3.5a-event-firesites.tsv`: every one of the 1,082 direct calls to the two event-dispatch
-  wrappers. A computed value or an argument push across a control-flow boundary is `dyn`/`?`, never
-  a guess. `3.3.5a-events.tsv` aggregates that evidence with the verified unit-field bridge and
-  unit-token fan-out families, attributing a producer to 473 of 606 named events. It remains
-  advisory because other computed-id paths may remain.
-- `3.3.5a-shapes.tsv`: all 2,987 bindings in 113 exact global, widget-method, base-library and
-  standard-library registrar tables. The registry facts are complete. Conservative control-flow
-  and helper-return analysis proves return arity for 2,828 rows (2,191 exact and 637 set-valued),
-  leaving 159 explicitly reasoned unknowns. Every row has a non-gateable observed argc floor, and
-  2,445 rows have a matching return-kind stack trace. A `delegated-push` trace describes only the
-  binding's visible suffix and remains advisory; only `kinds_conf=agree` without that note is fit
-  for a kind gate.
-- `3.3.5a-message-catalog.tsv`: all 730 rows of the `CGGameUI` message table at `0xac8af0`, including
-  each key, display kind, sound, type tag and chat type.
-- `3.3.5a-opcodes.tsv`: every literal incoming world-opcode registration in the exact executable,
-  preserving opcode id, registration site, handler and context plus any directly fired FrameScript
-  events. Symbolic names remain blank unless handler behaviour proves them; the seven
-  `BATTLEFIELD_MGR_*` disagreements in published community tables are settled by their handlers'
-  exact event fire sites.
-- `3.3.5a-verb-events.tsv`: the 61 verb/event pairs whose dispatcher site lies in the registered
-  verb's own body. It is explicitly a floor: helper attribution waits for verified build-12340
-  function extents and a complete call graph.
-- `3.3.5a-dbc.tsv`: all 241 DBC tables the client loads, one row per table loader (237 in the
-  startup run at `0x6337d0`, four loaded on demand), with the column count and row size each
-  loader checks, its table object, and the functions that read it. Readers are a floor (a read
-  through a computed pointer is not seen), complete for the twelve `gt` tables, and attributed to
-  Lua bindings and opcode handlers that read directly. Ten tables have no reader: 12340 loads
-  them and never reads them.
-
-The ninth surface, `3.3.5a-globals.tsv`, is the entire addon-visible global namespace: 46,312
+The ninth table, `3.3.5a-globals.tsv`, is the entire addon-visible global namespace: 46,312
 names, `name<TAB>type<TAB>origin`. It unions 43,708 names captured in-world after loading all 23
 shipped `Blizzard_*` addons (minus the capture addon's two globals) with 2,606 shipped-UI
 definitions absent from that session as type `lod`. Its origin totals are 35 Lua 5.1, 2,079 engine
 and 44,198 FrameXML names.
 
-That table cannot come from the executable registry alone. The capture addon at
+That table cannot come from the client's registry alone. The capture addon at
 `scripts/reference-global-capture/` loads the shipped addons and records a sorted `_G`; generate its
 union with the shipped UI using:
 
@@ -87,23 +73,11 @@ loads at the width its loader checks, if a loader reads a table `dbc_tables.rs` 
 register, if a table 12340 reads is neither read nor listed with what it backs, or if benilla
 reads one of the tables 12340 never reads without saying so.
 
-## `1.12-glue-events.tsv` and `1.12-glue-surface.tsv`
+## The glue screens
 
-The glue screens' own FrameScript state. The glue builder (`0x46a7b0`) gives Lua a different
-surface and a different event table from the in-game state's, and GlueXML runs against those.
-
-`1.12-glue-events.tsv` is the 26-entry event table (`0xb41e70`) the builder loads in place of the
-in-game one (`0x703d90` at `0x46a88f`), so a glue event's id names a different event in-game. It is
-vendored from the client's bytes, as `1.12-event-catalog.tsv` is.
-
-`1.12-glue-surface.tsv` is every function in the glue state's `_G` before GlueXML loads: the base
-set both states share (`0x7039e0`), the three registrars the in-game state calls too, and the four
-glue-only tables, with each glue verb's in-game namesake and the six whose shape differs from it.
-Regenerating: `scripts/gen-reference-glue-surface.py`, from the shapes and globals tables, so it
-reproduces the committed file from any clone.
-
-Reading them: `crates/benilla-ui/src/script/tests/glue_surface.rs` holds the surface table to the
-shapes table, row for row by `table_va`, and the glue VM (`UiScript::new_glue`) to the surface table:
-every function it exposes is a glue-state one, and every glue-state function it lacks is on the
-file's `NOT_YET` list, which only shrinks. The same file holds the VM's event table to
-`1.12-glue-events.tsv`.
+The glue screens run their own Lua state: a different surface and a different event table from the
+in-game state's, and GlueXML runs against those.
+`crates/benilla-ui/src/script/tests/glue_surface.rs` holds the glue VM (`UiScript::new_glue`) to the
+glue registrar tables of `3.3.5a-shapes.tsv`: every function it exposes is a glue-state one, and
+every glue-state function it lacks is on the file's `NOT_YET` list, which only shrinks. The same file
+holds the VM's event table to `3.3.5a-glue-events.tsv`.

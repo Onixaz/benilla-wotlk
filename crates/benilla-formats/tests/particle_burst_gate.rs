@@ -1,5 +1,5 @@
 //! A burst emitter fires on the rising edge of `enabled != 0 && sampledRate > 0`, both sampled on
-//! one clock in one frame (`0x718ed2`-`0x718ef6`). Of the warrior impact flare's two (kit 437),
+//! one clock in one frame. Of the warrior impact flare's two (kit 437),
 //! #0's enabled track steps to 0 on the key its rate steps to 50, so only #1 ever fires.
 
 use benilla_formats::{open_chain, parse_m2_particle_emitters};

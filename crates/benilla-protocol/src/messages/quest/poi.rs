@@ -1,6 +1,6 @@
 //! The quest points of interest: `CMSG_QUEST_POI_QUERY` (483), which the quest log update sends for
 //! the quests it holds no POI for (`0x5e6cd1`), and `SMSG_QUEST_POI_QUERY_RESPONSE` (484), read by
-//! `CGQuestLog::HandlePOIQueryResponse` (`0x5e7370`) into the 25-slot store.
+//! the quest log's POI response handler (`0x5e7370`) into the 25-slot store.
 
 use std::io;
 

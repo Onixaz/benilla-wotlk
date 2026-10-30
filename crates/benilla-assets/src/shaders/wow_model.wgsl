@@ -3,7 +3,7 @@
 //   clutter, WMO: color = clamp(ambient + diffuse·max(N·L, 0)) × tex × tint
 //   fog:          color = mix(fog_color, color, fog_factor); out = color, raw gamma
 // The M2 law is the order-2 SH lobe of `Shaders\Vertex\Model2.bls` (cvar `M2UseShaders`, default
-// 1); M2's one FFP light site (`70bdf6`) runs only with that cvar off. Clutter and WMO are the FFP
+// 1); M2's one FFP light site runs only with that cvar off. Clutter and WMO are the FFP
 // light (GL_LIGHTING, GL_LIGHT0, GL_COLOR_MATERIAL); clutter's normal is the terrain normal under
 // the tuft, which the reference writes onto the clutter vertex.
 // Not built: a specular term (the M2 per-material shininess is only inferred) and the WMO
@@ -26,7 +26,7 @@ struct WowFragOut {
 
 // Per-material uniforms at binding 100, in `WowModelExt`'s field order (materials.rs).
 //   clutter_fade: x = plateau-end view depth (yd, 0.75·far), y = ramp-zero view depth (the ~70 yd
-//     detail-doodad horizon `[0x867958]`), z = the batch marker bits, w = clutter
+//     detail-doodad horizon), z = the batch marker bits, w = clutter
 //   model_flags: x = WMO, y = fade blend twin, z = interior (a WMO interior group, or an interior
 //     M2 lit by its SH probe), w = unlit fullbright (M2 UNLIT 0x01 or Mod/Mod2x, or WMO UNLIT on
 //     an exterior-group batch; the interior drawer ignores it)
@@ -95,8 +95,8 @@ struct WowLight {
     // Per rig slot (sizes mirrored in rig_palette.rs): the base bone index into `palettes`, whose
     // 3 rows per bone are `rig_from_joint × inverse_bindpose` from the rig's own origin.
     rig_table: array<u32, 2048>,
-    // Per rig slot: the CM2 body tint (`model+0x184/188/18c`) packed `0xFFRRGGBB` like the
-    // reference's node value (`0x60d840`: `param | 0xff000000`); 0 is identity.
+    // Per rig slot: the M2 body tint (`model+0x184/188/18c`) packed `0xFFRRGGBB` like the
+    // reference's node value (`param | 0xff000000`); 0 is identity.
     rig_tint: array<u32, 2048>,
     // Per rig slot: the world origin its palette rows are measured from.
     rig_origin: array<vec4<f32>, 2048>,
@@ -113,7 +113,7 @@ struct WowLight {
 // The M2 cutout alpha-test reference, 224/255; in sync with `materials::VANILLA_ALPHA_KEY_REF`.
 const VANILLA_ALPHA_KEY: f32 = 0.8784314;
 
-// The detail-doodad pass's stage-0 `D3DSAMP_MIPMAPLODBIAS = +0.25` (`0x6813f4`).
+// The detail-doodad pass's stage-0 `D3DSAMP_MIPMAPLODBIAS = +0.25`.
 const DETAIL_DOODAD_LOD_BIAS: f32 = 0.25;
 
 // Bevy's `VertexOutput` (same fields, locations and defs; no tangents, morphs or visibility
@@ -157,7 +157,7 @@ fn wow_normalize(v: vec3<f32>) -> vec3<f32> {
 }
 
 // The point lights at P: the reference commits at most three per draw, the nearest to the
-// receiving unit's own position `anchor` (`0x71bf90` gathers by squared distance, `0x71c730` seats
+// receiving unit's own position `anchor` (gathers by squared distance, seats
 // slots 1-3). Range bounds candidacy only; a selected light falls off as `1/(0.7·d + 0.03·d²)`,
 // diffuse only, on the submitted normal (no GL_LIGHT_MODEL_TWO_SIDE). Mirrored in terrain.wgsl.
 fn point_light_sum(P: vec3<f32>, N: vec3<f32>, anchor: vec3<f32>) -> vec3<f32> {
@@ -210,7 +210,7 @@ fn mcnk_cell_anchor(P: vec3<f32>) -> vec3<f32> {
 }
 
 #ifdef WOW_MERGED_FADE
-// The doodad fade curve (`0x683f80`, in sync with `model_fade::doodad_fade_alpha`): alpha =
+// The doodad fade curve (in sync with `model_fade::doodad_fade_alpha`): alpha =
 // 1 − (d − start)/range, d = horizontal distance − radius, over a size-bucketed band.
 fn merged_fade_alpha(radius: f32, horiz_dist: f32) -> f32 {
     if (radius > 7.0) {
@@ -320,7 +320,7 @@ fn wow_skin_normals(frame_from_local: mat4x4<f32>, normal: vec3<f32>) -> vec3<f3
 
 // The env stage's generated coordinate, `Diffuse_Env.bls` and `Diffuse_T1_Env.bls`: in view space,
 // h = −R + (0, 0, 1) for R = reflect(P̂, N), and uv = h.xy / |h| · ½ + ½. The reference view basis
-// (`0x5c3e70`) is Bevy's with z negated, so −R there is (−R.x, −R.y, R.z) here.
+//Is Bevy's with z negated, so −R there is (−R.x, −R.y, R.z) here.
 fn wow_sphere_map(p_view: vec3<f32>, n_view: vec3<f32>) -> vec2<f32> {
     let r = reflect(normalize(p_view), n_view);
     let h = vec3<f32>(-r.x, -r.y, r.z + 1.0);
@@ -620,7 +620,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
             vo.uv,
             view.mip_bias,
         );
-        // Stage 1's own texture transform (`SetupTextures 0x81f450`), the stage-0 law on the
+        // Stage 1's own texture transform (the texture setup, `0x81f450`), the stage-0 law on the
         // second coordinate; a sphere-map stage takes none.
         var uv1 = in.uv2;
         if ((u32(m.combiner.y) & 1u) == 0u) {
@@ -641,7 +641,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
         alpha_has_fade = c.has_pa;
     }
 #endif
-    // The detail-doodad LOD bias (`0x6813f4`): on the atlases whose alpha pyramid is binary below
+    // The detail-doodad LOD bias: on the atlases whose alpha pyramid is binary below
     // mip 0 it keeps every fragment below full alpha, so the fade erodes per pixel, not per leaf.
     // wgpu has no sampler LOD bias and the sampler is shared with unbiased batches, so it goes on
     // this sample. Clutter's tint is white and its vertex colour the MCSH grey, so `* vo.color`
@@ -661,8 +661,8 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
 #endif
     }
     // The clutter distance fade, the reference's stage-1 ramp: u = (z_eye − 52.5)/17.5 by a
-    // camera-space texgen (`0x6b2b80`), so the boundary is a view plane, not a sphere; the ramp is
-    // a bilinear read of the 64-texel table `4·(63 − col)` (`0x6b2320`). It multiplies the alpha
+    // camera-space texgen, so the boundary is a view plane, not a sphere; the ramp is
+    // a bilinear read of the 64-texel table `4·(63 − col)`. It multiplies the alpha
     // the cutout tests (ALPHAREF `detailDoodadAlpha` = 128).
     if (m.clutter_fade.w > 0.5) {
         let z_eye = -(view.view_from_world * vec4<f32>(in.world_position.xyz, 1.0)).z;
@@ -672,7 +672,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     }
 
     // The body tint (an aura colouring the whole model), by rig slot, 0 = identity: the material
-    // ambient+diffuse colour (gx SetState(1), GL_COLOR_MATERIAL), so it multiplies the light sum
+    // ambient+diffuse colour (gx render state 1, GL_COLOR_MATERIAL), so it multiplies the light sum
     // inside the clamp, never the emission.
     let tint_word = wow_light.rig_tint[(fade_tag >> 19u) & 0x7ffu];
     let inst_tint = select(
@@ -702,7 +702,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // `wow_normalize`: an authored zero normal reaches here on the unskinned lane.
     let n_m2 = wow_normalize(pbr_input.world_normal);
     // Bevy negates `world_normal` on back faces of double-sided materials (foliage, every WMO
-    // face); the reference never enables GL_LIGHT_MODEL_TWO_SIDE (`0x59ce30`), so undo it.
+    // face); the reference never enables GL_LIGHT_MODEL_TWO_SIDE, so undo it.
     let n_lit = select(-n_m2, n_m2, is_front);
     let ndotl = max(dot(n_lit, L), 0.0);
     let lit_nl = clamp(wow_light.light_ambient.rgb + wow_light.light_diffuse.rgb * ndotl, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -711,12 +711,12 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     let n1 = vec4<f32>(n_lit, 1.0);
     let x2y2 = n_lit.x * n_lit.x - n_lit.y * n_lit.y;
     // Exterior doodads and entities: the header's `Model2.bls` lobe at the per-instance intensity
-    // I, `[node+0xa4]` (animator targets 2.5 lit and 0.5 shadowed, `0x69e4ad`/`0x69e280`; 1.0
-    // indoors, `0x69e36b`). `sun_scale.x` picks the family:
-    //   ≥ 0.85: an entity M2, 2.5 mixed toward 0.5 by the tag's shade byte (ramped like `0x69e770`)
-    //   0.5..0.85: a doodad (ADT MDDF or WMO MODD, both `CMapDoodadDef`): 1.0, never 2.5
+    // I, `[node+0xa4]` (animator targets 2.5 lit and 0.5 shadowed; 1.0
+    // indoors). `sun_scale.x` picks the family:
+    //   ≥ 0.85: an entity M2, 2.5 mixed toward 0.5 by the tag's shade byte
+    //   0.5..0.85: a doodad (ADT MDDF or WMO MODD, both one doodad-def kind): 1.0, never 2.5
     //   < 0.5: a doodad on MCSH-shadowed ground: 0.5
-    // Deviation: `min(I, 1)`. The reference bakes I into the SH unclamped (`0x71c4e0`), so a lit
+    // Deviation: `min(I, 1)`. The reference bakes I into the SH unclamped, so a lit
     // entity commits ×2.5 there and ×1.0 here; lifting the cap takes sun-facing surfaces past 1.0.
     // `entity_shade::LIT_T` aims the lit ramp at 1.0 because of it: lift the cap and set `LIT_T`
     // back to 0.0 together.
@@ -754,7 +754,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // WMO interior groups (`groupFlags & 0x48 == 0`) by batch class (`tint.w`): INT (1) is unlit
     // `tex × MOCV`; TRANS (2) is the reference's two passes, lit × MOCV.a + unlit × (1 − MOCV.a),
     // as one lerp; EXT (0) is `lit_nl`. A WINDOW batch (MOMT 0x20) on the interior drawer lights
-    // with ambient = diffuse = the Direct/Ambient midpoint, ambient +16/255 (`0x6d37e0`).
+    // with ambient = diffuse = the Direct/Ambient midpoint, ambient +16/255.
     var trans_a = 1.0;
 #ifdef VERTEX_COLORS
     trans_a = in.color.a;
@@ -822,7 +822,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     let point_diffuse = in.point_lit;
 
     // The hover/target highlight (tag bit 31): the scene's committed ambient
-    // (`0x614576`-`0x6145bd`), added to the batch colour inside the final clamp, lit or unlit
+    //Added to the batch colour inside the final clamp, lit or unlit
     // (`c29`). Sampled live, where the reference holds the value sampled when the highlight
     // began: a unit's tag has no slot to hold a colour, and the ambient moves slowly.
     let highlight = select(vec3<f32>(0.0), wow_light.light_ambient.rgb, highlighted);
@@ -869,7 +869,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     );
     lit_rgb = albedo * primary;
 #endif
-    // The unlit path: an M2's unlit program outputs `c28 + c29` (`0x70c663`-`0x70c693` fold the
+    // The unlit path: an M2's unlit program outputs `c28 + c29` (fold the
     // tint·M2Color term into `c29` beside the highlight), so the texel modulates
     // `clamp(C·tint + highlight)`, C the M2Color. A WMO keeps the plain modulate.
     var unlit_rgb = albedo * inst_tint;
@@ -933,7 +933,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
         rgb = clamp(2.0 * tex_u * v, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     // An M2 Mod or Mod2x batch draws the bare texel: the reference zeroes its tint·M2Color term and
-    // forces the primary colour to the blend identity (`0x70c507`/`0x70c5b8`), so neither the
+    // forces the primary colour to the blend identity, so neither the
     // animated M2Color nor the body tint reaches it. Its alpha still does, through the lerp below.
     let is_mod = (u32(m.clutter_fade.z) & 128u) != 0u;
     let is_mod2x = (u32(m.clutter_fade.z) & 256u) != 0u;
@@ -942,10 +942,10 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     }
 
     // Linear fog by planar eye depth, as in terrain.wgsl. Per-batch colour policy (`clutter_fade.z`
-    // bits 4-6, the M2 state setter `0x70baf0`): 0 scene, 1 black (additive), 2 white (Mod),
+    // bits 4-6, the M2 state setter): 0 scene, 1 black (additive), 2 white (Mod),
     // 3 grey (Mod2x), 4 unfogged (render flag 0x02). Tag bit 30, not the static `model_flags.z`,
-    // selects the interior triple: WMO content by the per-group `[0xca7f00]` gate on the pushes
-    // `0x6b5190`/`0x6b62e0`, an entity M2 by its node's classification (`0x71c110`, `[node+0xc]`).
+    // selects the interior triple: WMO content by the per-group gate on the pushes
+    //An entity M2 by its node's classification (`[node+0xc]`).
     // The combiner's added term follows the primary colour; the result clamps like the
     // reference's fixed-point output.
     if (combined) {

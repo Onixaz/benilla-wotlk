@@ -68,16 +68,16 @@ impl TaxiCatalogs {
     }
 }
 
-/// A node's world `(x, y)` on the taxi map's 0..1 space, as the reference computes it
-/// (`0x4db958`), with the rect from `WorldMapContinent.dbc` fields 9-12 of the node's continent:
+/// A node's world `(x, y)` on the taxi map's 0..1 space, as the reference computes it, with the
+/// rect from `WorldMapContinent.dbc` fields 9-12 of the node's continent:
 ///
 /// ```text
 /// u = (Ymax − worldY) / (Xmax − Xmin)    ; world Y (west+) → horizontal, inverted
 /// v = (worldX − Xmin) / (Ymax − Ymin)    ; world X (north+) → vertical, from BOTTOMLEFT
 /// ```
 ///
-/// The denominators are cross-axis; the reference's route projector `0x4dc890` uses same-axis
-/// ones, and the two agree because every shipped continent's rect is square.
+/// The denominators are cross-axis; the reference's route projector uses same-axis ones, and the
+/// two agree because every shipped continent's rect is square.
 pub(crate) fn project(cont: &WorldMapContinent, world_x: f32, world_y: f32) -> (f32, f32) {
     let (min_x, min_y) = cont.taxi_min;
     let (max_x, max_y) = cont.taxi_max;
@@ -90,10 +90,10 @@ pub(crate) fn project(cont: &WorldMapContinent, world_x: f32, world_y: f32) -> (
 type Edge = (u32, u32);
 
 /// The route from `from` to `to` through known nodes, minimizing summed distance with the fare
-/// carried along, as the reference's relaxation (`0x4dbce0`) does; ties go to fewer hops. `dist`
-/// is the per-edge metric: `build_nodes` passes the straight 3-D distance between the two nodes,
-/// where the reference's `0x4dbbd0` sums the length of the path's own points. `from` counts as
-/// known: the server opens the map only on a visited node. The chain runs `from` to `to`.
+/// carried along, as the reference's relaxation does; ties go to fewer hops. `dist` is the per-edge
+/// metric: `build_nodes` passes the straight 3-D distance between the two nodes, where the
+/// reference sums the length of the path's own points. `from` counts as known: the server opens the
+/// map only on a visited node. The chain runs `from` to `to`.
 fn shortest_route(
     known: &TaxiMask,
     edges: impl Fn(u32) -> Vec<Edge>,
@@ -148,9 +148,9 @@ fn shortest_route(
     Some((chain, total_fare))
 }
 
-/// `TaxiNodeCost`'s fare (`0x4dc3d0`): the price times `1 - discount`, both in f64 with nothing
-/// stored (`fsubr`, `fmul st,st(1)`), the product stored as an f32 and rounded half to even
-/// (`fstp dword`, `fistp dword`).
+/// `TaxiNodeCost`'s fare: the price times `1 - discount`, both in f64 with nothing stored (`fsubr`,
+/// `fmul st,st(1)`), the product stored as an f32 and rounded half to even (`fstp dword`,
+/// `fistp dword`).
 fn shown_fare(price: u32, discount: f64) -> u32 {
     let product = (f64::from(price) * (1.0 - discount)) as f32;
     f64::from(product).round_ties_even() as u32
@@ -168,14 +168,14 @@ pub(super) struct ResolvedTaxiNode {
 pub(super) struct TaxiRouteCache(pub(super) Vec<ResolvedTaxiNode>);
 
 /// The listed nodes: every known node on the current node's continent, which the reference caches
-/// off the packet (`DAT_00bb4a80+4`), by id. The current node is `Current`, a routable one
+/// off the packet (the node table's `+4`), by id. The current node is `Current`, a routable one
 /// `Reachable` with its fare and route segments, and an unroutable one is left out, where the
 /// reference keeps it typed `NONE`, which stock `TaxiFrame.lua` hides; its `DISTANT` type is
 /// never produced. Returns the continent's map id, the Lua nodes and their routes, in one order.
 ///
 /// A Lua node's fare takes the flight master's price `discount` ([`shown_fare`]), and is 0 with
-/// none, when the flight master or the player does not resolve (`0x4dc3fa`, `0x4dc423`); the
-/// route's fare stays the raw sum, which `CMSG_ACTIVATETAXIEXPRESS` carries (`0x4dc96f`).
+/// none, when the flight master or the player does not resolve; the route's fare stays the raw sum,
+/// which `CMSG_ACTIVATETAXIEXPRESS` carries.
 pub(super) fn build_nodes(
     open: &TaxiOpen,
     cat: &TaxiCatalogs,
@@ -254,10 +254,10 @@ pub(super) fn build_nodes(
     Some((map_id, ui, resolved))
 }
 
-/// The message an `SMSG_ACTIVATETAXIREPLY` code shows: the reference's handler (`0x5ed1e0`)
-/// closes the map on 0, shows `[0x85fedc + 4*code]` through `DisplayError` (`0x496720`) for
-/// 1-12, and does nothing from 13 up. The message row picks the surface, the yellow info line for
-/// seven of the twelve, and the sound: `ERR_TAXINOTENOUGHMONEY` speaks line `0x36`.
+/// The message an `SMSG_ACTIVATETAXIREPLY` code shows: the reference's handler closes the map on 0,
+/// shows the code's row of its message table through the error display for 1-12, and does nothing
+/// from 13 up. The message row picks the surface, the yellow info line for seven of the twelve, and
+/// the sound: `ERR_TAXINOTENOUGHMONEY` speaks line `0x36`.
 pub(super) fn taxi_error_key(code: u32) -> Option<&'static str> {
     Some(match code {
         taxi_reply::OK => return None,
@@ -367,8 +367,8 @@ mod tests {
         );
     }
 
-    /// `0x4dc3d0`'s rounding: `1 - discount` stays f64 and only the product is stored as f32, so a
-    /// near-tie becomes an exact `.5` and rounds to even where the f64 shortcut rounds down.
+    /// The reference's rounding: `1 - discount` stays f64 and only the product is stored as f32, so
+    /// a near-tie becomes an exact `.5` and rounds to even where the f64 shortcut rounds down.
     #[test]
     fn the_shown_fare_stores_only_the_product_as_f32() {
         let (d05, d10) = (f64::from(0.05f32), f64::from(0.1f32));

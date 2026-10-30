@@ -63,8 +63,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // SetReverse(flag) (`0x5ec9a0`) and SetDrawEdge(flag) (`0x5eca30`) store `lua_toboolean`
-    // (`0x815500`); the getters answer the stored flag as a boolean (`0x84e4d0`).
+    // SetReverse(flag) (`0x5ec9a0`) and SetDrawEdge(flag) (`0x5eca30`) store `lua_toboolean`; the
+    // getters answer the stored flag as a boolean (`0x84e4d0`).
     m.set(
         "SetReverse",
         lua.create_function(|lua, (this, on): (Table, Value)| {
@@ -94,8 +94,8 @@ fn truthy(v: &Value) -> bool {
     !matches!(v, Value::Nil | Value::Boolean(false))
 }
 
-/// `CGCooldown::OnLayerUpdate` (`0x5ec8f0`), in the cooldown's walk slot after the base update: the
-/// clock advances, and a cooldown whose flash ended hides, firing its visibility events. A hidden
+/// The Cooldown widget's layer update, in the cooldown's walk slot after the base update: the clock
+/// advances, and a cooldown whose flash ended hides, firing its visibility events. A hidden
 /// cooldown's clock stands still until it shows again, as the walk reaches only shown frames.
 pub(super) fn update(lua: &Lua, h: FrameHandle) {
     // A step that moved nothing drawn (an unarmed box) leaves the mutation count where it stood

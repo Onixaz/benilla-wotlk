@@ -3,7 +3,7 @@
 
 use std::io::{self, Read};
 
-/// `SMSG_TUTORIAL_FLAGS` (handler `0x4b5700`): bit `id` is `bytes[id >> 3] & (1 << (id & 7))`.
+/// `SMSG_TUTORIAL_FLAGS`: bit `id` is `bytes[id >> 3] & (1 << (id & 7))`.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct TutorialFlags {
     pub bytes: Vec<u8>,
@@ -15,7 +15,7 @@ pub(super) fn read_tutorial_flags(r: &mut impl Read) -> io::Result<TutorialFlags
     Ok(TutorialFlags { bytes })
 }
 
-/// `CMSG_TUTORIAL_FLAG` (`0x4b54c0`): the 0-based id as a `u32`.
+/// `CMSG_TUTORIAL_FLAG`: the 0-based id as a `u32`.
 pub fn tutorial_flag(id: u32) -> Vec<u8> {
     id.to_le_bytes().to_vec()
 }

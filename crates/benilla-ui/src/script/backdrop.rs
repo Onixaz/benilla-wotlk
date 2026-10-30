@@ -4,7 +4,7 @@
 
 use crate::layout::Rect;
 
-/// The default `edgeSize`, logical 32: the constructor writes device 0.025 (`DAT_0081c9b0`).
+/// The default `edgeSize`, logical 32: the constructor writes device 0.025.
 pub const DEFAULT_EDGE_SIZE: f32 = 32.0;
 
 /// `BackgroundInsets`: the background's inset from the frame rect; the border is never inset.
@@ -17,8 +17,8 @@ pub struct Insets {
 }
 
 /// A frame's installed backdrop (the 0x68-byte struct at `frame+0x1ac`): exactly the keys the
-/// reader accepts (`0x7776e0`) plus the two colours. The colours default to opaque white; the XML
-/// parser defaults a present but partial `<Color>` or `<BorderColor>` to black.
+/// reader accepts plus the two colours. The colours default to opaque white; the XML parser
+/// defaults a present but partial `<Color>` or `<BorderColor>` to black.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Backdrop {
     /// The background texture (`+0x24`); none or empty draws no background.
@@ -27,7 +27,7 @@ pub struct Backdrop {
     pub edge_file: Option<String>,
     /// Tile the background, else stretch it (`+0x40`).
     pub tile: bool,
-    /// `tileSize` in logical px (`+0x4c`); 0 tiles at `edge_size` (`0x77f0c0`).
+    /// `tileSize` in logical px (`+0x4c`); 0 tiles at `edge_size`.
     pub tile_size: f32,
     /// `edgeSize` in logical px (`+0x48`): the border piece size and the edge tiling period.
     pub edge_size: f32,
@@ -41,7 +41,7 @@ pub struct Backdrop {
 
 impl Default for Backdrop {
     fn default() -> Self {
-        // The constructor (`0x77e5f0`).
+        // The constructor.
         Self {
             bg_file: None,
             edge_file: None,
@@ -66,7 +66,7 @@ impl Backdrop {
 
 /// One drawable piece, the background or one of the 8 border pieces: explicit corners, not a rect,
 /// so the bottom-right inset quirk can slant it, and per-corner UVs, since the top and bottom edges
-/// are rotated 90° (`0x77f0c0`). Both arrays run `[TL, TR, BR, BL]`, y-up.
+/// are rotated 90°. Both arrays run `[TL, TR, BR, BL]`, y-up.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BackdropPiece {
     /// Corner positions in screen px.
@@ -74,7 +74,7 @@ pub struct BackdropPiece {
     /// Corner UVs in texture space.
     pub uvs: [[f32; 2]; 4],
     /// The texture needs repeat addressing. The corners stay in `[0,1]` but share the edge texture,
-    /// so they carry `true` too and the border batches as one texture (`0x77e8d0`).
+    /// so they carry `true` too and the border batches as one texture.
     pub tile: bool,
     /// Drawn with `bg_file` and `bg_color`, else with `edge_file` and `border_color`.
     pub is_bg: bool,
@@ -122,7 +122,7 @@ fn aa_corners(x0: f32, x1: f32, y_bottom: f32, y_top: f32) -> [[f32; 2]; 4] {
 }
 
 /// The drawable pieces for a frame's resolved rect (y-up), in paint order: the background (layer
-/// `BACKGROUND`), then the 8 border pieces (layer `BORDER`). Geometry `0x77e8d0`, UVs `0x77f0c0`.
+/// `BACKGROUND`), then the 8 border pieces (layer `BORDER`).
 pub fn pieces(frame: Rect, bd: &Backdrop) -> Vec<BackdropPiece> {
     let mut out = Vec::with_capacity(9);
     let e = bd.edge_size;
@@ -136,15 +136,15 @@ pub fn pieces(frame: Rect, bd: &Backdrop) -> Vec<BackdropPiece> {
             bd.insets.top,
             bd.insets.bottom,
         );
-        // The four anchors, y-up. Bottom-right takes the top inset, as the reference does
-        // (`0x77e9ae` loads `+0x50`, top, not `+0x54`); invisible when the two are equal.
+        // The four anchors, y-up. Bottom-right takes the top inset, as the reference does (it loads
+        // `+0x50`, top, not `+0x54`); invisible when the two are equal.
         let corners = [
             [l + il, t - it],
             [r - ir, t - it],
             [r - ir, b + it], // BR: the top inset
             [l + il, b + ib],
         ];
-        // Untiled, no `SetTexCoord` runs and the background stretches over `[0,1]` (`0x77f0c0`).
+        // Untiled, no `SetTexCoord` runs and the background stretches over `[0,1]`.
         let uvs = if bd.tile {
             let period = if bd.tile_size != 0.0 { bd.tile_size } else { e };
             let bg_w = (r - ir) - (l + il);
@@ -164,7 +164,7 @@ pub fn pieces(frame: Rect, bd: &Backdrop) -> Vec<BackdropPiece> {
 
     // ── The 8 border pieces ──
     if bd.has_border() {
-        // Edge strips tile `run` periods between the corners, 0 below two edges (`0x77f0c0`).
+        // Edge strips tile `run` periods between the corners, 0 below two edges.
         let w_run = ((r - l) / e - 2.0).max(0.0);
         let h_run = ((t - b) / e - 2.0).max(0.0);
 

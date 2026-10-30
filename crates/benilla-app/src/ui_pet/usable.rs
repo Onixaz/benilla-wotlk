@@ -1,8 +1,8 @@
-//! The pet-usability predicate `CGPetInfo::PetActionsUsable` (`0x5d3e80`) with control required,
-//! asked once by everything the reference lets it gate: `GetPetActionsUsable` (`0x5d53c3`), the
-//! dispatcher behind `CastPetAction` and the orders, both autocast toggles and the bar write the
-//! drag makes (`0x5d5ad0`). A false answer leaves each of them before anything is latched, armed,
-//! cancelled or sent.
+//! The pet-usability predicate (`0x5d3e80`) with control required, asked once by everything the
+//! reference lets it gate: `GetPetActionsUsable` (`0x5d53c3`), the dispatcher behind
+//! `CastPetAction` and the orders, both autocast toggles and the bar write the drag makes
+//! (`0x5d5ad0`). A false answer leaves each of them before anything is latched, armed, cancelled or
+//! sent.
 
 use benilla_formats::SpellDisplay;
 use benilla_protocol::messages::{OwnerFallback, PetActionEntry, PET_UNUSABLE_UNIT_FLAGS};
@@ -60,7 +60,7 @@ pub(super) fn actions_usable_with(
     if pet.0.unit_owner(OwnerFallback::SummonedBy) != Some(me) {
         return false;
     }
-    // `0x5d3f6e`: `CGUnit_C::IsControllable` (`0x5d3310`), not stunned, fleeing or confused.
+    // `0x5d3f6e`: the unit's controllable test (`0x5d3310`), not stunned, fleeing or confused.
     if !ignore_control && pet.0.unit_flags() & PET_UNUSABLE_UNIT_FLAGS != 0 {
         return false;
     }
@@ -78,10 +78,10 @@ const UNIT_FLAG_STUNNED: u32 = 0x4_0000;
 const UNIT_FLAG_FLEEING: u32 = 0x80_0000;
 const UNIT_FLAG_CONFUSED: u32 = 0x40_0000;
 
-/// `CGPetInfo::PetActionSlotUsable` (`0x5d3fd0`) for one slot word. An order, a mode or an empty
-/// word asks the bar's predicate; a spell asks it without the control test (`usable_uncontrolled`
-/// holds the pet it resolved), needs its record, is refused by a stun, fear or confusion its
-/// `AttributesEx5` does not exempt, then by `Spell_C_IsUsableAction` (`0x80b5d0`, `walk`).
+/// The pet-slot usability test (`0x5d3fd0`) for one slot word. An order, a mode or an empty word
+/// asks the bar's predicate; a spell asks it without the control test (`usable_uncontrolled` holds
+/// the pet it resolved), needs its record, is refused by a stun, fear or confusion its
+/// `AttributesEx5` does not exempt, then by the action usability test (`0x80b5d0`, `walk`).
 pub(super) fn slot_usable(
     entry: PetActionEntry,
     display: Option<&SpellDisplay>,

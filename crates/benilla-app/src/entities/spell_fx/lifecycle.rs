@@ -1,12 +1,11 @@
-//! The effect-model animation lifecycle, `Stand` → `Hold` → `Decay`, of a spell-visual `CEffect`.
+//! The effect-model animation lifecycle, `Stand` → `Hold` → `Decay`, of a spell-visual effect.
 //!
-//! The model-load bootstrap (`0x710153`–`0x71019b`) arms `AnimationData.dbc` id 0 `Stand`, not the
-//! file-order-first sequence. At each span's end the scene tick runs the model's completion
-//! callback with the completed id (`0x719370`, `0x707595`), picked per [`FxStage`] by
-//! `PlaySpellVisualKit 0x60edf0`: stages 0/1 destroy (`0x5fbf50`), which the span clock in
-//! [`super::attach_spell_fx`] models; stage 2 hands over to `Hold` if the model authors it, else
-//! stays on the birth (`0x5ff170`); stages 3/4 re-arm the completed id forever (`0x60ed00`). The
-//! reap plays `Decay` out (`0x614150`); the destructor `0x6203e0` plays nothing.
+//! The model-load bootstrap arms `AnimationData.dbc` id 0 `Stand`, not the file-order-first
+//! sequence. At each span's end the scene tick runs the model's completion callback with the
+//! completed id, picked per [`FxStage`] by the kit player: stages 0/1 destroy, which the span clock
+//! in [`super::attach_spell_fx`] models; stage 2 hands over to `Hold` if the model authors it, else
+//! stays on the birth; stages 3/4 re-arm the completed id forever. The reap plays `Decay` out; the
+//! destructor plays nothing.
 //!
 //! Deviation: `Hold` is one repeating play where the reference re-arms it each pass with variation
 //! -1, a weighted random pick, because at most one `Spells\` model authors several variations.
@@ -17,26 +16,25 @@ use bevy::prelude::*;
 
 use crate::creature_anim::FxStage;
 
-/// `AnimationData.dbc` 158 `Hold`, the sustained pulse leg (`0x9e` at `0x5ff188`/`0x5ff1bb`).
+/// `AnimationData.dbc` 158 `Hold`, the sustained pulse leg (`0x9e`).
 pub(crate) const ANIM_HOLD: u16 = 158;
-/// `AnimationData.dbc` 159 `Decay`, the fade-out leg (`0x9f` at `0x5ff233`/`0x6141c0`).
+/// `AnimationData.dbc` 159 `Decay`, the fade-out leg (`0x9f`).
 pub(crate) const ANIM_DECAY: u16 = 159;
 
-/// The completion callback an effect instance carries (the `model+0x70` registration `0x711bb0`
-/// writes). On every kit-effect root that armed a rig, since the reap needs its player; a missile,
-/// an item glow or the `fxview` fixture is not a `CEffect` and carries none.
+/// The completion callback an effect instance carries, registered at `model+0x70`. On every
+/// kit-effect root that armed a rig, since the reap needs its player; a missile, an item glow or
+/// the `fxview` fixture is not a kit effect and carries none.
 #[derive(Component)]
 pub(crate) enum FxAnimLife {
-    /// Stage 2's birth, waiting for `0x5ff170`'s handover to `Hold`.
+    /// Stage 2's birth, waiting for the handover to `Hold`.
     Birth(AnimationNodeIndex),
     /// Nothing left to advance; the node is kept so a reap can stop it before arming `Decay`.
     Settled(AnimationNodeIndex),
 }
 
 impl FxAnimLife {
-    /// Arm `clip` for `stage`. [`FxStage::Relive`] repeats whatever the sequence flag says
-    /// (`0x60ed00` reads none); the other stages wrap a bit-0-clear sequence (`0x71462a`) and clamp
-    /// a bit-0-set one (`0x7145db`), as the M2 sampler does.
+    /// Arm `clip` for `stage`. [`FxStage::Relive`] repeats whatever the sequence flag says; the
+    /// other stages wrap a bit-0-clear sequence and clamp a bit-0-set one, as the M2 sampler does.
     pub(super) fn arm(
         player: &mut AnimationPlayer,
         clip: &benilla_assets::AnimClip,
@@ -59,16 +57,15 @@ impl FxAnimLife {
     }
 }
 
-/// Marks a reaped instance that plays its `Decay` out (`0x6141c0`); its expiry is already set to
-/// the decay span.
+/// Marks a reaped instance that plays its `Decay` out; its expiry is already set to the decay span.
 #[derive(Component)]
 pub(crate) struct FxDecay;
 
 /// Run each instance's completion callback, the `Hold` handover or the reap's `Decay`. The
-/// reference drains them at the end of the scene tick (`0x707595` in `0x7074b0`); run in `Update`,
-/// after `PreUpdate` advances the players, this fires in the frame the span ends. Completion is
-/// `completions() >= 1`, not `is_finished()`: a wrapping birth never finishes, and the reference
-/// latches at the first span end either way (`0x7194bc`).
+/// reference drains them at the end of the scene tick; run in `Update`, after `PreUpdate` advances
+/// the players, this fires in the frame the span ends. Completion is `completions() >= 1`, not
+/// `is_finished()`: a wrapping birth never finishes, and the reference latches at the first span
+/// end either way.
 pub(crate) fn advance_fx_anim(
     mut commands: Commands,
     mut instances: Query<(
@@ -89,14 +86,14 @@ pub(crate) fn advance_fx_anim(
         let FxAnimLife::Birth(armed) = *life else {
             continue; // settled: nothing changes on completion
         };
-        // `0x719370`'s fire-once latch: one notification per authored span.
+        // The reference's fire-once latch: one notification per authored span.
         if !player
             .animation(armed)
             .is_some_and(|a| a.completions() >= 1)
         {
             continue;
         }
-        // `0x5ff170`: arm `Hold` if the model authors it and keep it running (`0x5ff1d0`'s deadline
+        // Arm `Hold` if the model authors it and keep it running (the reference's deadline
         // `node+0x58` is set only at stage 3); otherwise stay parked on the birth.
         match anims.find(ANIM_HOLD) {
             Some(hold) => {
@@ -122,8 +119,8 @@ pub(super) fn trace_leg(leg: &str, root: Entity, anim_id: u16) {
     benilla_assets::trace::line("fx", &format!("leg {leg} e={root} anim={anim_id}"));
 }
 
-/// The reap's decay-out (`0x614150`, gates `0x614187`–`0x6141a1`): arm `Decay` if the model authors
-/// it; otherwise the caller's immediate expiry stands (`0x6141d6`, straight to the destructor).
+/// The reap's decay-out: arm `Decay` if the model authors it; otherwise the caller's immediate
+/// expiry stands (straight to the destructor).
 fn arm_decay(player: &mut AnimationPlayer, armed: AnimationNodeIndex, anims: &ModelAnimations) {
     let Some(decay) = anims.find(ANIM_DECAY) else {
         return;
@@ -136,8 +133,8 @@ fn arm_decay(player: &mut AnimationPlayer, armed: AnimationNodeIndex, anims: &Mo
         .replay();
 }
 
-/// How long a reaped instance keeps rendering (`0x6141f0`): its model's `Decay` span, or `None`
-/// when it authors none and is destroyed at once.
+/// How long a reaped instance keeps rendering: its model's `Decay` span, or `None` when it authors
+/// none and is destroyed at once.
 pub(crate) fn decay_span(anims: Option<&ModelAnimations>) -> Option<f32> {
     anims?.find(ANIM_DECAY).map(|c| c.duration)
 }
@@ -178,7 +175,7 @@ mod tests {
             .repeat_mode()
     }
 
-    /// `IceShield_State`'s birth clamps: armed unrepeated, watching for `0x5ff170`'s handover.
+    /// `IceShield_State`'s birth clamps: armed unrepeated, watching for the handover to `Hold`.
     #[test]
     fn state_arms_the_birth_and_watches_for_the_handover() {
         let mut player = AnimationPlayer::default();
@@ -187,7 +184,7 @@ mod tests {
         assert_eq!(repeat(&player, 0), RepeatAnimation::Never);
     }
 
-    /// `0x60ed00` re-arms without reading the clamp bit, so a clamping precast repeats.
+    /// The reference re-arms without reading the clamp bit, so a clamping precast repeats.
     #[test]
     fn relive_repeats_even_a_clamping_sequence() {
         let mut player = AnimationPlayer::default();
@@ -209,7 +206,7 @@ mod tests {
         assert_eq!(repeat(&wrapping, 0), RepeatAnimation::Forever);
     }
 
-    /// The reap's gate (`0x6141a1`): no `Decay` is `None`, the straight-to-destructor branch.
+    /// The reap's gate: no `Decay` is `None`, the straight-to-destructor branch.
     #[test]
     fn decay_span_is_the_gate_and_the_lifetime() {
         let with = test_anims(&[clip(0, 0, false), clip(ANIM_HOLD, 1, true), {

@@ -1,8 +1,8 @@
 //! 3.3.5a's `Frame:IsMouseOver([top [, bottom [, left [, right]]]])` (`0x49e100`).
 //!
 //! Each offset is a number in the frame's units, 0 when absent or not a number; the hit test
-//! (`0x488570`) answers false for a frame with no laid-out rect and otherwise whether the cursor
-//! lies in the rect grown by the offsets: `left + left_off <= x <= right + right_off` and
+//! answers false for a frame with no laid-out rect and otherwise whether the cursor lies in the
+//! rect grown by the offsets: `left + left_off <= x <= right + right_off` and
 //! `bottom + bottom_off <= y <= top + top_off`. `FloatingChatFrame.lua` fades a chat window in on
 //! it every frame. No 1.12.1 method table binds it.
 

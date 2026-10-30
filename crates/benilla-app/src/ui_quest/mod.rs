@@ -36,19 +36,18 @@ pub(crate) struct QuestGiver {
     /// The panel's source: an NPC, a GameObject, a quest-starter item or a sharing player.
     pub(crate) npc: Option<u64>,
     pub(crate) view: Option<QuestView>,
-    /// The reference's latch `0xbe0824`, written by DETAILS and OFFER_REWARD (`0x500ef0`) and by
-    /// REQUEST_ITEMS' `closeOnCancel` (`0x501070`), and zeroed only on world enter (`0x500af0`).
-    /// Non-zero turns a plain unit's decline into the silent teardown ([`decline_leg`]). vmangos
-    /// sends 1 on every DETAILS and OFFER_REWARD; REQUEST_ITEMS carries 1 on a single-quest
-    /// auto-open and 0 on `COMPLETE_QUEST` (`QuestHandler.cpp:390-395`).
+    /// The reference's close-on-cancel latch, written by DETAILS and OFFER_REWARD and by
+    /// REQUEST_ITEMS' `closeOnCancel`, and zeroed only on world enter. Non-zero turns a plain
+    /// unit's decline into the silent teardown ([`decline_leg`]). vmangos sends 1 on every DETAILS
+    /// and OFFER_REWARD; REQUEST_ITEMS carries 1 on a single-quest auto-open and 0 on
+    /// `COMPLETE_QUEST` (`QuestHandler.cpp:390-395`).
     pub(crate) close_on_cancel: u32,
-    /// The reference's already-acted latch `0xbe0844`, set by `AcceptQuest` and by a re-opening
-    /// `DeclineQuest`, which keeps the panel up; both refuse while it is set (`0x5013a8`,
-    /// `0x5013fe`) until a panel publish clears it ([`Self::open`]).
+    /// The reference's already-acted latch, set by `AcceptQuest` and by a re-opening
+    /// `DeclineQuest`, which keeps the panel up; both refuse while it is set until a panel publish
+    /// clears it ([`Self::open`]).
     pub(crate) acted: bool,
-    /// The reference's `0xbe0828`: the chosen reward's item id, latched by `GetQuestReward`
-    /// (`0x50161a`) for the turn-in's item line (`0x5dc676`-`0x5dc6c6`), and zeroed by a panel
-    /// publish (`0x500d8c`), world enter (`0x500b15`) and the turn-in.
+    /// The reference's chosen-reward cell: the chosen reward's item id, latched by `GetQuestReward`
+    /// for the turn-in's item line, and zeroed by a panel publish, world enter and the turn-in.
     pub(crate) chosen_reward: u32,
     /// Per-guid dialog status from `SMSG_QUESTGIVER_STATUS`, the `!`/`?` marker's value.
     statuses: HashMap<u64, u32>,
@@ -66,8 +65,8 @@ impl QuestGiver {
     pub(crate) fn open(&mut self, npc: u64, view: QuestView) {
         self.npc = Some(npc);
         self.view = Some(view);
-        // `0x500bd0` clears the already-acted latch (`0x500d91`) and the chosen reward
-        // (`0x500d8c`) on every panel publish.
+        // The reference clears the already-acted latch and the chosen reward on every panel
+        // publish.
         self.acted = false;
         self.chosen_reward = 0;
     }
@@ -184,7 +183,7 @@ impl QuestGiver {
 }
 
 /// `SMSG_QUESTGIVER_QUEST_INVALID`'s `QuestFailedReason` as a GlobalStrings key, per the
-/// reference's handler `0x5dbca0` (the `0x18f` arm of the quest demux `0x5e5910`), whose default,
+/// reference's handler (the `0x18f` arm of the quest demux), whose default,
 /// `ERR_QUEST_NEED_PREREQS`, takes reason 0 and everything unlisted.
 pub(crate) fn questgiver_invalid_key(reason: u32) -> &'static str {
     match reason {
@@ -198,8 +197,8 @@ pub(crate) fn questgiver_invalid_key(reason: u32) -> &'static str {
     }
 }
 
-/// `SMSG_QUESTGIVER_QUEST_FAILED`'s reason as a GlobalStrings key, per the reference's handler
-/// `0x5dc840` (the `0x192` arm); each line's `%s` is the quest's title (`questRecord+0x9c`).
+/// `SMSG_QUESTGIVER_QUEST_FAILED`'s reason as a GlobalStrings key, per the reference's handler (the
+/// `0x192` arm); each line's `%s` is the quest's title (`questRecord+0x9c`).
 pub(crate) fn questgiver_failed_key(reason: u32) -> &'static str {
     match reason {
         4 | 50 => "ERR_QUEST_FAILED_BAG_FULL_S", // msgId 140
@@ -240,8 +239,8 @@ impl Plugin for UiQuestPlugin {
     }
 }
 
-/// Whether the minimap tracks low-level quests (`IsTrackingTrivialQuests 0x57bf30`), which shows
-/// the low-level quest markers over their givers.
+/// Whether the minimap tracks low-level quests (`0x57bf30`), which shows the low-level quest
+/// markers over their givers.
 #[derive(Resource, Default, PartialEq)]
 pub(crate) struct TrivialQuestTracking(pub(crate) bool);
 
@@ -263,8 +262,8 @@ impl NpcSession for QuestGiver {
     }
 
     /// Walking away from a shared quest (a 14 yd leash) still declines it to the sharer. The
-    /// reference's watchdog calls the teardown directly (`0x4933da` to `0x501130`), not
-    /// `DeclineQuest`, so an NPC's panel closes with no giver re-open.
+    /// reference's watchdog calls the teardown directly, not `DeclineQuest`, so an NPC's panel
+    /// closes with no giver re-open.
     fn walk_away_send(&self, npc: u64) -> Option<ClientCommand> {
         benilla_protocol::guid::is_player(npc).then_some(ClientCommand::QuestPushResult {
             sharer: npc,
@@ -278,16 +277,15 @@ impl NpcSession for QuestGiver {
 }
 
 /// A greeting row is active when its wire icon is 3 or 4 and available otherwise, never by the
-/// quest log (`0x5dbbfe`-`0x5dbc08`; gossip's rows too, `0x4e2430`, `0x4e2580`). vmangos's 3 and 4
-/// are `DIALOG_STATUS_INCOMPLETE` and `_REWARD_REP` (`QuestDef.h:118-130`), and it marks an
-/// auto-complete quest, never in the log, `_REWARD_REP` (`Player.cpp:12577`).
+/// quest log (gossip's rows too). vmangos's 3 and 4 are `DIALOG_STATUS_INCOMPLETE` and
+/// `_REWARD_REP` (`QuestDef.h:118-130`), and it marks an auto-complete quest, never in the log,
+/// `_REWARD_REP` (`Player.cpp:12577`).
 pub(crate) fn row_is_active(icon: u32) -> bool {
     matches!(icon, 3 | 4)
 }
 
-/// An available row with icon 0 is one-click: its select sends `COMPLETE_QUEST`, not
-/// `QUERY_QUEST` (`0x5dbc13` stores the flag, `0x5012db` reads it). vmangos never sends icon 0 on
-/// this packet.
+/// An available row with icon 0 is one-click: its select sends `COMPLETE_QUEST`, not `QUERY_QUEST`.
+/// vmangos never sends icon 0 on this packet.
 pub(crate) fn row_is_one_click(icon: u32) -> bool {
     icon == 0
 }
@@ -350,7 +348,7 @@ pub(crate) fn reward_spell_view(
         spell_id,
         name: d.map(|d| d.name.clone()),
         texture: d.and_then(|d| d.icon.clone()),
-        // `isTradeskillSpell`: `Spell.dbc` col 6 `Attributes` bit `0x20` (`0x501e59`).
+        // `isTradeskillSpell`: `Spell.dbc` col 6 `Attributes` bit `0x20`.
         tradeskill: d.is_some_and(|d| d.attributes & 0x20 != 0),
         // `isSpellLearned`: the cast spell has a learn-spell (36) or learn-pet-spell (57) effect.
         learned: u32::try_from(cast)
@@ -492,7 +490,7 @@ pub(crate) fn feed_quest(
         spells.as_deref(),
     );
     // The background is the source object's material, never a creature's and never on the wire
-    // (`GetQuestBackgroundMaterial`, `0x502230`); the reader window's binding shares its body.
+    // (`GetQuestBackgroundMaterial`); the reader window's binding shares its body.
     let fresh = fresh.map(|mut st| {
         st.background_material = giver.npc.and_then(|source| {
             crate::ui_item_text::object_material(
@@ -563,9 +561,9 @@ pub(crate) fn feed_quest(
     *last_npc = giver.npc;
 }
 
-/// `CloseQuest()`: its binding `0x501a10` calls only the teardown `0x501130(0,1)`, which declines
-/// a sharing player's quest and closes anything else silently. The player test is the guid's
-/// shape; the reference's `0x468460` also needs the sharer in view, which the range guard ensures.
+/// `CloseQuest()`: its binding calls only the teardown, which declines a sharing player's quest and
+/// closes anything else silently. The player test is the guid's shape; the reference's also needs
+/// the sharer in view, which the range guard ensures.
 fn close_quest(npc: u64, commands: &NetCommands) {
     if benilla_protocol::guid::is_player(npc) {
         debug!("ui_quest: closing {npc:#x}'s shared quest — declining it");
@@ -576,27 +574,28 @@ fn close_quest(npc: u64, commands: &NetCommands) {
     }
 }
 
-/// The leg of `DeclineQuest()`'s core `0x5013f0` a source takes.
+/// The leg of `DeclineQuest()`'s core a source takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DeclineLeg {
-    /// The already-acted latch is set (`0x5013fe`) or the source does not resolve (`0x50142c`).
+    /// The already-acted latch is set or the source does not resolve.
     Nothing,
-    /// The teardown `0x501130(0,1)` (`0x5014aa`): declines to a sharer, closes the window.
+    /// The teardown: declines to a sharer, closes the window.
     Teardown,
-    /// A gossip-flagged unit (`0x50143b`-`0x501474`): `CMSG_GOSSIP_HELLO`; the window stays.
+    /// A gossip-flagged unit: `CMSG_GOSSIP_HELLO`; the window stays.
     GossipHello,
-    /// A plain unit (`0x5014e4`-`0x501526`): `CMSG_QUESTGIVER_HELLO`; the window stays.
+    /// A plain unit: `CMSG_QUESTGIVER_HELLO`; the window stays.
     QuestgiverHello,
 }
 
-/// `DeclineQuest`'s fork (`0x5013f0`, called by its binding `0x501d30`); the re-open legs leave
-/// the window up, and items and players are taken by guid shape. In order:
+/// `DeclineQuest`'s fork; the re-open legs leave the window up, and items and players are taken by
+/// guid shape. In order:
 ///
 /// 1. the already-acted latch set, or the source unresolvable: nothing;
-/// 2. a unit with the gossip NPC flag: `CMSG_GOSSIP_HELLO`, whatever `0xbe0824` says;
-/// 3. an item, a player, or a non-zero `0xbe0824`: the teardown `0x501130(0,1)`;
-/// 4. a GameObject: its interact virtual `[vtbl+0x60]` (`0x5014d0`), whose override is untraced,
-///    so it takes the teardown here;
+/// 2. a unit with the gossip NPC flag: `CMSG_GOSSIP_HELLO`, whatever the close-on-cancel latch
+///    says;
+/// 3. an item, a player, or a non-zero close-on-cancel latch: the teardown;
+/// 4. a GameObject: its interact virtual `[vtbl+0x60]`, whose override is untraced, so it takes the
+///    teardown here;
 /// 5. any other unit: `CMSG_QUESTGIVER_HELLO`.
 fn decline_leg(npc: u64, acted: bool, close_on_cancel: u32, npc_flags: Option<u32>) -> DeclineLeg {
     use benilla_protocol::guid;
@@ -663,8 +662,8 @@ fn drain_quest(
             debug!("ui_quest: greeting select {sel:?} out of range — ignored");
             continue;
         };
-        // `SelectActiveQuest` (`0x501320`) always sends COMPLETE_QUEST; `SelectAvailableQuest`
-        // (`0x5012a0`) does too for a one-click row, and QUERY_QUEST otherwise.
+        // `SelectActiveQuest` always sends COMPLETE_QUEST; `SelectAvailableQuest` does too for a
+        // one-click row, and QUERY_QUEST otherwise.
         let cmd = if sel.active || row_is_one_click(icon) {
             ClientCommand::QuestgiverComplete { npc, quest }
         } else {
@@ -705,7 +704,7 @@ fn drain_quest(
                 }
             }
             QuestAction::Accept => {
-                // `0x501380` refuses while the already-acted latch is set (`0x5013a8`).
+                // The reference refuses while the already-acted latch is set.
                 if giver.acted {
                     continue;
                 }
@@ -725,14 +724,14 @@ fn drain_quest(
                         quest,
                         start_cheat,
                     });
-                    // `AcceptQuest`'s tail (`0x5013df`) triggers the Quest Log tutorial.
+                    // `AcceptQuest`'s tail triggers the Quest Log tutorial.
                     if let Some(t) = tutorials.as_mut() {
                         t.write(crate::tutorial::TutorialEvent::trigger(
                             crate::tutorial::id::QUEST_LOG,
                         ));
                     }
-                    // The reference closes on the click, not on an answer: it sends `0x189`
-                    // (`0x5eac10`), then clears with `0x501130(0,0)`, firing `QUEST_FINISHED`.
+                    // The reference closes on the click, not on an answer: it sends `0x189`, then
+                    // clears with the teardown, firing `QUEST_FINISHED`.
                     giver.clear();
                 }
             }
@@ -745,7 +744,7 @@ fn drain_quest(
             }
             QuestAction::Reward(choice) => {
                 if let Some(quest) = view_quest {
-                    // `0x5015b0` latches the chosen row's item when the panel offers a choice.
+                    // The reference latches the chosen row's item when the panel offers a choice.
                     if let Some(QuestView::Reward(o)) = giver.view.as_ref() {
                         if let Some(it) = o.choices.get(choice as usize) {
                             giver.chosen_reward = it.item_id;
@@ -950,7 +949,7 @@ mod tests {
         assert_eq!(giver.status(0x99), Some(dialog_status::AVAILABLE));
     }
 
-    /// Reasons 2 to 5 sit inside `0x5dbca0`'s jump table and still take its default.
+    /// Reasons 2 to 5 sit inside the handler's jump table and still take its default.
     #[test]
     fn questgiver_invalid_keys_match_the_reference_table() {
         assert_eq!(questgiver_invalid_key(13), "ERR_QUEST_ALREADY_ON");
@@ -1048,8 +1047,9 @@ mod tests {
 
     // ── DeclineQuest and CloseQuest ──────────────────────────────────────────────
 
-    /// Run `lua` on a window open on `giver` with `0xbe0824` at `close_on_cancel` and return the
-    /// sends; `npc_flags` streams the giver with those flags, `None` leaves it unstreamed.
+    /// Run `lua` on a window open on `giver` with the close-on-cancel latch at `close_on_cancel`
+    /// and return the sends; `npc_flags` streams the giver with those flags, `None` leaves it
+    /// unstreamed.
     fn drain_after(
         giver: u64,
         npc_flags: Option<u32>,
@@ -1109,8 +1109,7 @@ mod tests {
     const SHARER: u64 = 0x0000_0000_0000_002A; // HIGHGUID_PLAYER: a zero high word
     const NPC: u64 = 0xF130_0000_0000_0007; // HIGHGUID_UNIT
 
-    /// Both verbs reach the teardown `0x501130(0,1)`: `CloseQuest` directly, `DeclineQuest` through
-    /// its player leg.
+    /// Both verbs reach the teardown: `CloseQuest` directly, `DeclineQuest` through its player leg.
     #[test]
     fn every_way_out_of_a_shared_quest_answers_the_sharer() {
         for verb in ["DeclineQuest()", "CloseQuest()"] {
@@ -1148,14 +1147,14 @@ mod tests {
         );
     }
 
-    /// `0xbe0824`'s one reader is `0x5014a2`.
+    /// The close-on-cancel latch's one reader.
     #[test]
     fn a_non_zero_latch_suppresses_a_plain_units_reopen() {
         let sent = drain_after(NPC, Some(0), 1, "DeclineQuest()");
         assert!(sent.is_empty(), "flag 1 suppresses the re-open: {sent:?}");
     }
 
-    /// `CloseQuest` tears the window down; `DeclineQuest` bails first (`0x50142c`) and leaves it.
+    /// `CloseQuest` tears the window down; `DeclineQuest` bails first and leaves it.
     #[test]
     fn an_unstreamed_giver_ends_the_session_silently() {
         let (app, sent) = drain_world(NPC, None, 0, "CloseQuest()");
@@ -1195,7 +1194,7 @@ mod tests {
         }
     }
 
-    /// The gossip leg (`0x50143b`) is tested before the latch (`0x5014a2`).
+    /// The gossip leg is tested before the latch.
     #[test]
     fn the_gossip_leg_precedes_the_latch() {
         use crate::target::cursor_mode::npc_flags;
@@ -1206,7 +1205,7 @@ mod tests {
         );
     }
 
-    /// The acted latch `0xbe0844` refuses the second `DeclineQuest` and the `AcceptQuest`.
+    /// The acted latch refuses the second `DeclineQuest` and the `AcceptQuest`.
     #[test]
     fn a_reopening_decline_keeps_the_window_and_latches_acted() {
         let (app, sent) = drain_world(
@@ -1229,7 +1228,7 @@ mod tests {
         );
     }
 
-    /// The latch-diverted leg (`0x5014aa`) takes the teardown `0x501130(0,1)`.
+    /// The latch-diverted leg takes the teardown.
     #[test]
     fn a_latched_decline_closes_the_window() {
         let (app, sent) = drain_world(NPC, Some(0), 1, "DeclineQuest()");

@@ -1,7 +1,7 @@
-//! The frame update walk, `CSimpleTop::OnLayerUpdate` (`0x495320`): each stratum low to high, each
-//! level low to high, each level's shown frames oldest link first (`CFrameStrataNode::OnLayerUpdate`
-//! `0x494a10`), every frame's layer update in its slot (`CSimpleFrame::OnLayerUpdate` `0x490770`):
-//! its `OnUpdate`, its animations, then its kind's own update.
+//! The frame update walk, the UI root's layer update (`0x495320`): each stratum low to high, each
+//! level low to high, each level's shown frames oldest link first (the stratum node's walk,
+//! `0x494a10`), every frame's layer update in its slot (`0x490770`): its `OnUpdate`, its
+//! animations, then its kind's own update.
 //!
 //! The level list walk saves the next link before each frame runs, so a frame an earlier handler
 //! hid is skipped, and a frame linked into the level being walked waits in its pending list for
@@ -183,7 +183,9 @@ impl UiScript {
 
     /// The message kinds' line fades: MessageFrame's (`0x968a60`), which also keeps only the lines
     /// that fit its height, read from the resolved rect, and ScrollingMessageFrame's (`0x969e60`).
-    /// A step that moved no line's alpha and freed no line changed nothing drawn.
+    /// A step that moved no line's alpha and freed no line changed nothing drawn; one that did is a
+    /// paint write of this frame, whose lines the extract re-reads alone (a freed line changes the
+    /// frame's entry count, which sends the extract back to its full walk).
     fn update_message_lines(&self, h: FrameHandle, kind: FrameKind, elapsed: f32) {
         let mut model = self.model_mut();
         let quiet = model.epoch();
@@ -197,8 +199,9 @@ impl UiScript {
             Some(KindState::ScrollingMessage(smf)) => smf.tick(elapsed),
             _ => false,
         };
-        if !faded {
-            model.set_epoch(quiet);
+        model.set_epoch(quiet);
+        if faded {
+            model.paint_mut(&[crate::order::ZTarget::Frame(h)]);
         }
     }
 

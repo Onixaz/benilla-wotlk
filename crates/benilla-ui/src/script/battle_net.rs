@@ -1,9 +1,9 @@
 //! 3.3.5a's Battle.net verbs, answered for a client with no Battle.net session.
 //!
-//! Each binding first asks the login client for a live Battle.net connection with its features on
-//! (`0x6b0990`, then `0x533c40`); without one it answers zero or false. benilla only logs in to a
-//! realm, never to Battle.net, so that is every answer it can give: `FriendsMicroButton`'s
-//! `OnLoad` and `FriendsFrame` read the counts unguarded (`FriendsFrame.lua:346`, `:452`).
+//! Each binding first asks the login client for a live Battle.net connection with its features on;
+//! without one it answers zero or false. benilla only logs in to a realm, never to Battle.net, so
+//! that is every answer it can give: `FriendsMicroButton`'s `OnLoad` and `FriendsFrame` read the
+//! counts unguarded (`FriendsFrame.lua:346`, `:452`).
 
 use mlua::Lua;
 
@@ -35,7 +35,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             lua.create_function(|_, _: mlua::MultiValue| Ok(mlua::MultiValue::new()))?,
         )?;
     }
-    // `0x537a00`: 12 only with a Real ID connection (`0x533c40`), else no value.
+    // `0x537a00`: 12 only with a Real ID connection, else no value.
     g.set(
         "BNGetMaxPlayersInConversation",
         lua.create_function(|_, _: mlua::MultiValue| Ok(mlua::MultiValue::new()))?,

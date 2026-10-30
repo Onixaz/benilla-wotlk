@@ -721,10 +721,10 @@ fn real_hunter_shots_take_the_bows_load_and_release_clips() {
     assert_eq!(cat.kit(164).and_then(|k| k.anim_id), Some(46), "AttackBow");
 }
 
-/// The type-8 arm truncates (`_ftol`, `0x40a2b0`); the small-int decode would give no trail.
+/// The type-8 arm truncates (`_ftol`); the small-int decode would give no trail.
 #[test]
 fn a_weapon_trail_proc_decodes_by_truncation() {
-    // Kit 324's shipped row: Zero = 16263465 (`0xf82929`), One = 20, Two = 600, Three = 100.
+    // Kit 324's shipped row: Zero = 16263465, One = 20, Two = 600, Three = 100.
     let proc = CharProc {
         ty: char_proc_type::WEAPON_TRAIL,
         params: [16_263_465.0, 20.0, 600.0, 100.0],
@@ -744,7 +744,7 @@ fn a_weapon_trail_proc_decodes_by_truncation() {
     );
 }
 
-/// A zero duration fires nothing (`0x5fe494`).
+/// A zero duration fires nothing.
 #[test]
 fn a_zero_duration_trail_proc_is_no_trail() {
     let proc = CharProc {

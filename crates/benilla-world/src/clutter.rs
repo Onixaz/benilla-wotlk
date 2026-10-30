@@ -1,7 +1,7 @@
 //! Ground clutter (`GroundEffect*.dbc`): the terrain streamer registers each chunk that can carry
 //! tufts at tile load, and a chunk is scattered and meshed only inside the detail-doodad horizon,
-//! `groundEffectDist` (`CWorld::detailDoodadDist`, read by `CMapChunk::RenderPrep 0x7d3fe0`), the
-//! reference's per-chunk `CDetailDoodadInst` build and unlink.
+//! `groundEffectDist` (the world's detail-doodad distance, read by the chunk render prep at
+//! `0x7d3fe0`), the reference's per-chunk detail-doodad build and unlink.
 
 use std::collections::HashMap;
 
@@ -43,8 +43,8 @@ impl Plugin for ClutterPlugin {
 }
 
 /// Drop the built meshes when the cutout value moves (a density write must not re-mesh): the ref is
-/// baked into the material. The reference's `detailDoodadAlpha` is a console command (`0x6739a0`,
-/// registered at `0x63f9e0`), not a CVar, so it never persists.
+/// baked into the material. The reference's `detailDoodadAlpha` is a console command, not a CVar,
+/// so it never persists.
 fn remesh_on_cutout_change(
     mut commands: Commands,
     cfg: Res<ClutterConfig>,
@@ -119,7 +119,7 @@ pub(crate) struct GroundClutter {
 /// The detail-doodad alpha-test ref, `detailDoodadAlpha` = 128/255, lower than the model key.
 pub(crate) const DETAIL_DOODAD_ALPHA_REF: f32 = 128.0 / 255.0;
 
-/// `groundEffectDist`'s registered 70 yd (`CWorld::detailDoodadDist`'s static `70.0`); clutter
+/// `groundEffectDist`'s registered 70 yd (the detail-doodad distance's static `70.0`); clutter
 /// fades out over its last quarter.
 pub(crate) const DETAIL_DOODAD_FADE_FAR: f32 = 70.0;
 
@@ -131,9 +131,9 @@ pub const GROUND_EFFECT_DENSITY_RANGE: std::ops::RangeInclusive<f32> = 16.0..=25
 
 /// Ground-clutter tunables. `density` scales the scatter's 16 cells per chunk, so
 /// `groundEffectDensity` is `density × 16`, and a change re-scatters loaded tiles, as the
-/// reference's setter dirties its pools (`World::SetDetailDoodadDensity 0x780710`). `fade_far` is
-/// `groundEffectDist`. Seeded from `$WOW_CLUTTER_DENSITY` (a multiple of 16 cells),
-/// `$WOW_CLUTTER_ALPHA` and `$WOW_CLUTTER_FADE`; density 0 is no clutter.
+/// reference's setter dirties its pools (`0x780710`). `fade_far` is `groundEffectDist`. Seeded
+/// from `$WOW_CLUTTER_DENSITY` (a multiple of 16 cells), `$WOW_CLUTTER_ALPHA` and
+/// `$WOW_CLUTTER_FADE`; density 0 is no clutter.
 #[derive(Resource, Clone, Copy)]
 pub struct ClutterConfig {
     pub density: f32,
@@ -263,8 +263,7 @@ struct ShadedPlacement {
     tint: f32,
     /// The ground normal under the tuft, in Bevy space, on every vertex: here the MCNR normal of
     /// the nearest outer-grid vertex ([`terrain_normal_at`]). The reference uses the plane of the
-    /// cell's centre-fan triangle the tuft lands in (planes built at `0x6bfec1`–`0x6bfefe`, the
-    /// triangle picked at `0x6c0148`–`0x6c0193`, the normal stored at `0x6b2a87`–`0x6b2a9c`).
+    /// cell's centre-fan triangle the tuft lands in.
     ground_normal: [f32; 3],
 }
 
@@ -390,9 +389,9 @@ fn build_chunk_clutter(
                 // The reference's random per-tuft scale, in [0.9, 1.1].
                 let inst_scale = d.scale;
                 // One tint per tuft. The reference makes the grey the lit material (colour material
-                // on ambient and diffuse, `0x59cfec`), `clamp(grey × light) × texture`; the shader
-                // multiplies it outside the clamp, `texture × grey × clamp(light)`, so under light
-                // above 1.0 a shadowed tuft comes out darker than the reference's.
+                // on ambient and diffuse), `clamp(grey × light) × texture`; the shader multiplies
+                // it outside the clamp, `texture × grey × clamp(light)`, so under light above 1.0 a
+                // shadowed tuft comes out darker than the reference's.
                 let tint = [sp.tint, sp.tint, sp.tint, 1.0];
                 for (i, p) in sub.positions.iter().enumerate() {
                     positions.push((rot * (wow_to_bevy(*p) * inst_scale) + origin).to_array());
@@ -414,8 +413,8 @@ fn build_chunk_clutter(
             mesh.insert_indices(Indices::U32(indices));
             let mesh = meshes.add(mesh);
             // The detail-doodad pass owns the render state, never the batch: the reference sets one
-            // for every tuft (`0x6b2b80`: alpha blend, ALPHAREF `detailDoodadAlpha`, cull off,
-            // depth write on), and its per-slot draw `0x6b2d60` binds only the texture.
+            // for every tuft (ALPHAREF `detailDoodadAlpha`, cull off, depth write on), and its
+            // per-slot draw binds only the texture.
             let material = assets.model_material(
                 sub.texture.as_deref(),
                 ModelBlend::AlphaTest, // the pass's cutout, not the batch's authored blend
@@ -471,8 +470,8 @@ fn frustum_corner_reach(fov_y: f32, aspect: f32) -> f32 {
 }
 
 /// Build a chunk's clutter when its box comes within the fade reach, and tear it down past it,
-/// where the fade is already zero. The reference builds and unlinks per chunk at 70 yd
-/// (`[0x867958]`), by the nearest view depth of the chunk's bounding sphere.
+/// where the fade is already zero. The reference builds and unlinks per chunk at 70 yd, by the
+/// nearest view depth of the chunk's bounding sphere.
 pub(crate) fn stream_chunk_clutter(
     mut commands: Commands,
     cam: Query<(&GlobalTransform, Option<&Projection>), With<WorldCamera>>,
@@ -598,9 +597,9 @@ mod tests {
         ((254.0 - 256.0 * u) / 255.0).clamp(0.0, 252.0 / 255.0)
     }
 
-    /// The reference's 64-texel clamp/linear ramp (`0x6b235b` fills it, `[0x867958]` = 70 anchors
-    /// it): `alpha = (254 − 256u)/255` capped at `252/255`, so the plateau ends at 52.63672 yd,
-    /// zero falls at 69.86328 yd, and the 128/255 cutout erases opaque grass at 61.11328 yd.
+    /// The reference's 64-texel clamp/linear ramp (the 70 yd distance anchors it):
+    /// `alpha = (254 − 256u)/255` capped at `252/255`, so the plateau ends at 52.63672 yd, zero
+    /// falls at 69.86328 yd, and the 128/255 cutout erases opaque grass at 61.11328 yd.
     #[test]
     fn the_ramp_hits_the_reference_landmarks() {
         assert!(

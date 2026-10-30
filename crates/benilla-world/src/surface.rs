@@ -1,14 +1,13 @@
 //! The `TerrainType` id under a unit's feet, answered in one place. The reference caches it per
-//! unit at `CGUnit+0xc60`, resolved on movement by an environment down-ray (`0x6a8a20`), and four
-//! readers share it: the `$FSD` footstep sound (`0x62341d`), the footprint decal (`0x5fc06e`), the
-//! footstep spray (`0x5fc20f`) and `0x623749`.
+//! unit at the unit's `+0xc60`, resolved on movement by an environment down-ray, and four readers
+//! share it: the `$FSD` footstep sound, the footprint decal, the footstep spray and one more.
 //!
-//! A terrain probe (`0x69c320`) races a WMO probe (`0x6a8840`) over the building's collision
-//! faces, and the nearer surface supplies the type; here that race is the [`UnitWmoRoom`] claim.
-//! With a claim, [`surface_terrain_sample`] re-casts over the group's render faces and reads the
-//! hit face's `MOPY.material_id → MOMT+0x20`, a `TerrainType.dbc` id. Without one, the MCNK
-//! dominant layer goes through `GroundEffectTexture` to `TerrainType`. `None` is the reference's
-//! `−1`: silent, no print, and never a retry on the terrain under a claimed floor.
+//! A terrain probe races a WMO probe over the building's collision faces, and the nearer surface
+//! supplies the type; here that race is the [`UnitWmoRoom`] claim. With a claim,
+//! [`surface_terrain_sample`] re-casts over the group's render faces and reads the hit face's
+//! `MOPY.material_id → MOMT+0x20`, a `TerrainType.dbc` id. Without one, the MCNK dominant layer
+//! goes through `GroundEffectTexture` to `TerrainType`. `None` is the reference's `−1`: silent, no
+//! print, and never a retry on the terrain under a claimed floor.
 //!
 //! The claim covers interior groups only, so a surface on an exterior group (bridges and docks,
 //! `Wood`) still takes the terrain leg, unlike the reference; the fix belongs in the claim.

@@ -40,18 +40,17 @@ pub(super) struct EntityPart {
     /// room: the plain day/night matte, sun ×1.0. A WMO part's interior is baked into `material`.
     pub(super) material_interior: Option<Handle<WowModelMaterial>>,
     /// The interior-prop variant, whose `MeshTag` the shader reads as an SH-probe slot. Units and
-    /// GameObjects alike take it: the reference registers every entity M2 with one entity-node fill
-    /// (`Node::SetModel` `0x6716f0`), so one law lights them all indoors (`0x6a7300`).
+    /// GameObjects alike take it: the reference registers every entity M2 with one entity-node
+    /// fill, so one law lights them all indoors.
     pub(super) material_interior_bake: Option<Handle<WowModelMaterial>>,
     /// The bake variant's blend form, so a fading bake-lit part keeps its probe light.
     pub(super) material_interior_bake_blend: Option<Handle<WowModelMaterial>>,
     /// The exterior material's blend form, worn during the spawn appear-fade (`RenderFade`).
     pub(super) fade_blend: Option<Handle<WowModelMaterial>>,
     /// The depth-prime form ([`benilla_world::model_render::zfill_material`], the reference's
-    /// `M2UseZFill` clone, `0x707f7d`–`0x708072`): a translucent part's colour-masked, z-writing
-    /// child draws it first, so a fading or stealthed body blends as one layer. `None` when the
-    /// batch disables z-write or z-test (the reference's `(flags & 0x10) == 0` gate) or cannot fade
-    /// (Mod/Mod2x).
+    /// `M2UseZFill` clone): a translucent part's colour-masked, z-writing child draws it first, so
+    /// a fading or stealthed body blends as one layer. `None` when the batch disables z-write or
+    /// z-test (the reference's `(flags & 0x10) == 0` gate) or cannot fade (Mod/Mod2x).
     pub(super) zfill: Option<Handle<WowModelMaterial>>,
     pub(super) blend: ModelBlend,
     /// Additive blending (M2 blend mode 3 `NoAlphaAdd` or 4 `Add`), which [`ModelBlend`]'s single
@@ -62,8 +61,8 @@ pub(super) struct EntityPart {
     pub(super) two_sided: bool,
     /// The part's `skinSectionId` (geoset id). A player body's attach spawns only the selected
     /// geosets; every other model draws whole, even with several authored (101 creature models):
-    /// the reference's visibility array starts all visible and only the character compositor
-    /// writes it, which a creature never reaches (`0x5fb200`).
+    /// the reference's visibility array starts all visible and only the character compositor writes
+    /// it, which a creature never reaches.
     pub(super) geoset_id: u16,
     /// The character texture slot (type 1 body, 6 hair) a player's attach re-skins per appearance.
     pub(super) char_slot: Option<CharSkinSlot>,
@@ -81,7 +80,7 @@ pub(super) struct EntityPart {
     /// [`Self::rgb_anim`] per file sequence slot, only where the slots disagree: four of the five
     /// such batches are empty in slot 0, so a shared material would seed white (Freezing Trap).
     pub(super) rgb_seq: Option<std::sync::Arc<benilla_formats::SeqLoops<[f32; 3]>>>,
-    /// The texture-transform translation that scrolls the batch's UVs (`0x70b740`).
+    /// The texture-transform translation that scrolls the batch's UVs.
     pub(super) uv_anim: Option<std::sync::Arc<benilla_formats::UvAnim>>,
     /// [`Self::uv_anim`] per file sequence slot, only where the slots disagree, so an effect
     /// advancing `Stand` → `Hold` → `Decay` reads the slot it plays.
@@ -147,41 +146,41 @@ pub(crate) struct DisplayModel {
     /// The first sequence's authored duration, the spell-effect clock for a model whose sequences
     /// build no clip (the eat/drink tankard: 6.667 s, no bone keys).
     pub(crate) first_seq_span: Option<f32>,
-    /// The camera framing pivot's height in model-local yards before scale (`0x50cbc0`), stamped on
-    /// each instance as `CameraPivot`; `0.0` without bounds.
+    /// The camera framing pivot's height in model-local yards before scale, stamped on each
+    /// instance as `CameraPivot`; `0.0` without bounds.
     pub(super) pivot_height_local: f32,
     /// How far that pivot drops while swimming: the reference's swim preset `cam+0x124` is the
-    /// standing height less `StandSeq.max.z − SwimSeq.max.z` (`0x50ccf6`), picked on
-    /// `MOVEFLAG_SWIMMING` (`0x50f880`); `0.0` without a Swim sequence, the reference's own guard.
+    /// standing height less `StandSeq.max.z − SwimSeq.max.z`, picked on `MOVEFLAG_SWIMMING`; `0.0`
+    /// without a Swim sequence, the reference's own guard.
     pub(super) swim_pivot_drop_local: f32,
     /// The selection ring's radius in model-local yards before scale, the Stand footprint
-    /// `sqrt(0.5 · sqrt(dx² + dy²))`, scaled by `OBJECT_FIELD_SCALE_X` (`0x608e00`/`0x60aee0`).
+    /// `sqrt(0.5 · sqrt(dx² + dy²))`, scaled by `OBJECT_FIELD_SCALE_X`.
     pub(super) ground_radius_local: f32,
-    /// The authored portrait camera the portrait booth frames through (`0x713540`).
+    /// The authored portrait camera the portrait booth frames through.
     pub(super) portrait_camera: Option<benilla_assets::PortraitCamera>,
-    /// Camera-table index 1, the rig a `<PlayerModel>` widget renders through (`0x505890`); without
-    /// it the reference uses its fixed fallback camera.
+    /// Camera-table index 1, the rig a `<PlayerModel>` widget renders through; without it the
+    /// reference uses its fixed fallback camera.
     pub(super) pane_camera: Option<benilla_assets::PortraitCamera>,
-    /// A bow's `$WTT`/`$WTB` string anchors (`0x611ff0`), `[top, bottom]` as
+    /// A bow's `$WTT`/`$WTB` string anchors, `[top, bottom]` as
     /// `(bone, model-local Bevy position)`.
     pub(super) string_anchors: Option<[(u16, Vec3); 2]>,
-    /// A fishing pole's `$CCH` line anchor (`0x61f780`) in mesh-frame Bevy space.
+    /// A fishing pole's `$CCH` line anchor in mesh-frame Bevy space.
     pub(super) cch_marker: Option<Vec3>,
     /// The authored bbox z-extent in model-local yards before scale: a model with no PlayerName
-    /// attachment anchors overhead text at `feet + scale × this × 1.25` (`0x608640`).
+    /// attachment anchors overhead text at `feet + scale × this × 1.25`.
     pub(super) bbox_z_local: f32,
-    /// The Stand sequence box's z-extent, the chat bubble's anchor height (`0x711a20`): a file
-    /// constant, so the bubble never moves with the pose as the overhead name does.
+    /// The Stand sequence box's z-extent, the chat bubble's anchor height: a file constant, so the
+    /// bubble never moves with the pose as the overhead name does.
     pub(super) stand_box_z_local: f32,
     /// The vertex-box centre in Bevy model space, the interior fold's MOLR reference point for a
     /// GameObject (the reference's `[def+0x5c]` anchor).
     pub(super) bake_center_local: Vec3,
-    /// MD20 `GlobalModelFlags & 3` (`0x7106c0`): `1` pitches to the slope, `3` pitches and rolls,
-    /// anything else stays level.
+    /// MD20 `GlobalModelFlags & 3`: `1` pitches to the slope, `3` pitches and rolls, anything else
+    /// stays level.
     pub(super) terrain_tilt: u8,
     /// A `Character\` model, the gate for the customization pipeline. It follows the display, not
     /// the entity kind (a druid in bear form wears a creature model), as the reference's race and
-    /// gender getters read the display's row (`0x60c690`).
+    /// gender getters read the display's row.
     pub(super) is_character_body: bool,
 }
 
@@ -351,10 +350,10 @@ pub(super) fn build_parts(
             ribbons = model.ribbons.clone();
             lights = model.lights.clone();
             terrain_tilt = (model.global_flags & 3) as u8;
-            // Not the render sphere (`0xCC`), which sizes the corpse decal (`0x5d6fe0`).
+            // Not the render sphere (`0xCC`), which sizes the corpse decal.
             ground_radius_local = model.bounds.map_or(0.0, |b| b.ring_footprint);
             // Attachment 17's Z + 0.0972, about neck height on every character model, else 0.9 ×
-            // the vertex-box Z extent, a box that spans every animation (`0x50cbc0`).
+            // the vertex-box Z extent, a box that spans every animation.
             pivot_height_local = model.bounds.map_or(0.0, |b| {
                 b.pivot_z
                     .map(|z| z + 0.0972)

@@ -1,4 +1,4 @@
-//! The dungeon finder's sends, `CGLookingForGroup`'s (`0x552850`-`0x55d440`).
+//! The dungeon finder's sends, the reference dungeon finder's (`0x552850`-`0x55d440`).
 
 use anyhow::Result;
 
@@ -7,17 +7,17 @@ use crate::messages::{self, opcode, LfgJoin};
 use super::WorldWriter;
 
 impl WorldWriter {
-    /// `RequestLFGStatus` (`0x555920`), at each world entry and on joining a party.
+    /// The status request (`0x555920`), at each world entry and on joining a party.
     pub fn lfg_get_status(&mut self) -> Result<()> {
         self.send(opcode::CMSG_LFG_GET_STATUS, &[])
     }
 
-    /// `RequestLFGPlayerInfo` (`0x555990`).
+    /// The player-info request (`0x555990`).
     pub fn lfg_player_lock_info_request(&mut self) -> Result<()> {
         self.send(opcode::CMSG_LFG_PLAYER_LOCK_INFO_REQUEST, &[])
     }
 
-    /// `RequestLFGPartyInfo` (`0x555a00`).
+    /// The party-info request (`0x555a00`).
     pub fn lfg_party_lock_info_request(&mut self) -> Result<()> {
         self.send(opcode::CMSG_LFG_PARTY_LOCK_INFO_REQUEST, &[])
     }
@@ -32,7 +32,7 @@ impl WorldWriter {
         self.send(opcode::CMSG_LFG_LEAVE, &[])
     }
 
-    /// `ProposalResponse` (`0x554450`).
+    /// The proposal answer (`0x554450`).
     pub fn lfg_proposal_result(&mut self, id: u32, accept: bool) -> Result<()> {
         self.send(
             opcode::CMSG_LFG_PROPOSAL_RESULT,

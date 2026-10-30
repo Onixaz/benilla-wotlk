@@ -164,16 +164,15 @@ fn random_roll_broadcast_decodes() {
     ));
 }
 
-/// The `$`-macro types are the reference's wire gate: parser `0x49d560` sends 0x0B, 0x0C, 0x0D,
-/// 0x1A and 0x5A to the expander at `0x49da3d`, and 0x52 to 0x54 to the one at `0x49d961`. The
-/// chain at `0x49cf36-0x49cf5d` is the pending-chat gate, which omits 0x5A; it is not this one.
+/// The `$`-macro types are the reference's wire gate: parser sends 0x0B, 0x0C, 0x0D, 0x1A and 0x5A
+/// to the expander, and 0x52 to 0x54 to the one. The chain is the pending-chat gate, which omits
+/// 0x5A; it is not this one.
 #[test]
 fn the_macro_expanded_chat_types_are_the_reference_wire_gate() {
     let mut got = messages::MACRO_EXPANDED_TYPES;
     got.sort_unstable();
     assert_eq!(got, [0x0B, 0x0C, 0x0D, 0x1A, 0x52, 0x53, 0x54, 0x5A]);
-    // 0x59 RAID_BOSS_WHISPER takes its own branch (`0x49d610`): never expanded, remapped to a
-    // plain whisper.
+    // 0x59 RAID_BOSS_WHISPER takes its own branch: never expanded, remapped to a plain whisper.
     for t in [
         messages::CHAT_MSG_SAY,
         messages::CHAT_MSG_YELL,

@@ -1,32 +1,30 @@
 //! The unit blob shadow: the dark oval under every player, NPC and creature, drawn by the
-//! reference's `0x6d7920` and rebuilt here on the shared surface-decal projector.
+//! reference's shadow pass and rebuilt here on the shared surface-decal projector.
 //!
-//! - Draw path: the per-frame model-node pass `0x683dd0` gates at `0x6d78f0` and draws through
-//!   the selection ring's decal chain (`0x6d7330 → 0x6d6fa0 → 0x6d7480`). Its collector flags
-//!   `0x2f0122` add liquid receivers to the ring's; `GroundDecalSurface` has none yet, so the
-//!   shadow lands on terrain and WMO faces only.
-//! - Frame slot: phase 1, among the opaque drains (`0x6812c5` in `0x681070`). Per unit the ring
-//!   ticks first and the shadow draws second (`0x683ec3`), so the multiply darkens the ring. It
-//!   lands after terrain and WMO and before footprints, M2 opaque, water and both M2 transparent
-//!   passes, so every transparent paints over it: `Rung::SHADOW_SORT`.
-//! - Texture: `Textures\ShadowBlob.blp`, a 32×32 grayscale radial blob under a binary alpha
-//!   disc. The reference adds a 64×8 trapezoid ramp on a second stage (`0x6d81a0`/`0x6d82d0`)
-//!   whose combine is untraced; here the ramp is a vertical vertex-alpha fade.
-//! - Box (`0x711a20`, `0x6d7920`): the `playableAnimationLookup[0]` sequence's box (Stand, fixed
-//!   per model, not the playing sequence), clamped into ±5 per axis pre-scale (a cap, never a
-//!   floor), scaled, yaw-rotated and axis-aligned-bounded. Vertically `+(h/2)` up and
-//!   `-(5/3)(h/2)` down about the origin. A zero horizontal box draws nothing.
+//! - Draw path: the per-frame model-node pass gates and draws through the selection ring's decal
+//!   chain. Its collector flags `0x2f0122` add liquid receivers to the ring's; `GroundDecalSurface`
+//!   has none yet, so the shadow lands on terrain and WMO faces only.
+//! - Frame slot: phase 1, among the opaque drains. Per unit the ring ticks first and the shadow
+//!   draws second, so the multiply darkens the ring. It lands after terrain and WMO and before
+//!   footprints, M2 opaque, water and both M2 transparent passes, so every transparent paints over
+//!   it: `Rung::SHADOW_SORT`.
+//! - Texture: `Textures\ShadowBlob.blp`, a 32×32 grayscale radial blob under a binary alpha disc.
+//!   The reference adds a 64×8 trapezoid ramp on a second stage whose combine is untraced; here the
+//!   ramp is a vertical vertex-alpha fade.
+//! - Box: the `playableAnimationLookup[0]` sequence's box (Stand, fixed per model, not the playing
+//!   sequence), clamped into ±5 per axis pre-scale (a cap, never a floor), scaled, yaw-rotated and
+//!   axis-aligned-bounded. Vertically `+(h/2)` up and `-(5/3)(h/2)` down about the origin. A zero
+//!   horizontal box draws nothing.
 //! - Appearance: multiply (`GL_DST_COLOR/GL_ZERO`, `EffectBlend::Multiply`), white vertices with
-//!   alpha = the model's base alpha `CM2Model+0x180` (read at `0x6d7fd6`). That carries the
-//!   appear and despawn fades, the first-person fade and the stealth or ghost aura fade
-//!   (`0x60d180` drives the same `0x614f80`), but not the M2 colour and texture-weight tracks
-//!   (`0x707aea`), exactly like `UnitRenderAlpha`. Unlit, no fog, no depth write; the texture is
+//!   alpha = the model's base alpha (`+0x180`). That carries the appear and despawn fades, the
+//!   first-person fade and the stealth or ghost aura fade, but not the M2 colour and texture-weight
+//!   tracks, exactly like `UnitRenderAlpha`. Unlit, no fog, no depth write; the texture is
 //!   `Rgba8Unorm`, so the multiply runs on raw bytes as the reference's does.
-//! - Registration: units, players and corpses cast one; game objects and dynamic objects never do
-//!   (`0x670e94`, `0x613e10`). The reference's `shadowLOD` toggle is not built: always on.
+//! - Registration: units, players and corpses cast one; game objects and dynamic objects never do.
+//!   The reference's `shadowLOD` toggle is not built: always on.
 //! - Deviation: the shadow is gated on `InheritedVisibility`, though the reference draws one under
-//!   an undrawn body (`0x48161d`), because benilla's exterior-scene election hides units the
-//!   reference never loads, and their shadows would stay on the floor below.
+//!   an undrawn body, because benilla's exterior-scene election hides units the reference never
+//!   loads, and their shadows would stay on the floor below.
 //!
 //! Each shadow's triangles are rebuilt only when [`ShadowKey`] moves and copied onto the effect
 //! stream every shown frame.
@@ -44,11 +42,11 @@ use benilla_world::particles::buffer::{begin_effect_frame, EffectVertex};
 use benilla_world::schedule::WorldStage;
 use benilla_world::view::WorldCamera;
 
-/// The reference's shadow disc, created by `0x6d8070`.
+/// The reference's shadow disc.
 const SHADOW_TEXTURE: &str = "mpq://textures/shadowblob.blp";
-/// Each box corner component is clamped into ±5 yd pre-scale (`0x6992c0`, `0x699250`).
+/// Each box corner component is clamped into ±5 yd pre-scale.
 const BOX_CLAMP: f32 = 5.0;
-/// The reference's degenerate-box epsilon (`[0x8029d4]`).
+/// The reference's degenerate-box epsilon.
 const DEGENERATE_EPS: f32 = 2.384e-7;
 
 /// One unit's shadow record, a top-level entity despawned with its owner.
@@ -246,7 +244,7 @@ fn update_shadows(
             .clamp(Vec3::splat(-BOX_CLAMP), Vec3::splat(BOX_CLAMP))
             * s;
         if bmax.x - bmin.x <= DEGENERATE_EPS || bmax.z - bmin.z <= DEGENERATE_EPS {
-            // The reference's degenerate-box no-op exit (`0x61e9c0`): no shadow.
+            // The reference's degenerate-box no-op exit: no shadow.
             hide(&mut key, &mut verts);
             n_degen += 1;
             continue;
@@ -284,7 +282,7 @@ fn update_shadows(
             (min_x, max_x) = (min_x.min(w.x), max_x.max(w.x));
             (min_z, max_z) = (min_z.min(w.z), max_z.max(w.z));
         }
-        // Vertically `+(h/2)` up, `-(5/3)(h/2)` down (`[0xcea60c]`, `[0xcea610]`).
+        // Vertically `+(h/2)` up, `-(5/3)(h/2)` down.
         let half_v = (bmax.y - bmin.y) * 0.5;
         let frame = DecalFrame {
             center: unit.translation,
@@ -321,8 +319,8 @@ fn update_shadows(
                 &mut job.verts.0,
                 frame,
                 |p| {
-                    // The reference's second-stage ramp (`0x6d81a0`), run vertically: inferred
-                    // from the asymmetric vertical reach, its combine being untraced.
+                    // The reference's second-stage ramp, run vertically: inferred from the
+                    // asymmetric vertical reach, its combine being untraced.
                     alpha * shadow_ramp((p.y - frame.min_y) / span_v)
                 },
                 |x, z| frame.rect_uv(x, z),
@@ -515,8 +513,8 @@ fn key_changed(a: &ShadowKey, b: &ShadowKey) -> bool {
         || a.surfaces != b.surfaces
 }
 
-/// The reference's trapezoid alpha ramp (`0x6d81a0`/`0x6d82d0`): over `x = 12u`, `x/2` below 2,
-/// 1 through 10, `(12-x)/2` after.
+/// The reference's trapezoid alpha ramp: over `x = 12u`, `x/2` below 2, 1 through 10, `(12-x)/2`
+/// after.
 fn shadow_ramp(u: f32) -> f32 {
     let x = 12.0 * u.clamp(0.0, 1.0);
     if x < 2.0 {

@@ -62,9 +62,9 @@ pub(super) fn sandbox(lua: &Lua) -> mlua::Result<()> {
             let raw = src.as_bytes();
             let bytes = crate::source::chunk(&raw).to_vec();
             // The chunk name is the caller's string verbatim, defaulting to the source itself
-            // (`luaB_loadstring` `0x703280`, `0x70329a`), which `luaO_chunkid` `0x6f5c40` renders
-            // as `[string "…"]`. It comes from the raw bytes: `luaL_loadbuffer` `0x6f5690` strips
-            // a BOM only after `0x703296` took the name.
+            // (`luaB_loadstring`), which `luaO_chunkid` renders as `[string "…"]`. It comes from
+            // the raw bytes: `luaL_loadbuffer` strips a BOM only after `luaB_loadstring` took the
+            // name.
             let name = match &chunkname {
                 Some(n) => String::from_utf8_lossy(&n.as_bytes()).into_owned(),
                 None => String::from_utf8_lossy(&raw).into_owned(),
@@ -75,8 +75,7 @@ pub(super) fn sandbox(lua: &Lua) -> mlua::Result<()> {
                 .set_mode(mlua::ChunkMode::Text);
             match chunk.into_function() {
                 Ok(f) => Ok((Value::Function(f), Value::Nil)),
-                // The failure leg returns nil and Lua's own message, unprefixed (`0x7032c6`,
-                // `0x7032d2`).
+                // The failure leg returns nil and Lua's own message, unprefixed.
                 Err(e) => Ok((
                     Value::Nil,
                     Value::String(lua.create_string(lua_message(&e))?),
@@ -100,14 +99,44 @@ pub(super) fn sandbox(lua: &Lua) -> mlua::Result<()> {
              end",
         )
         .set_name(PCALL_CHUNK)
-        .call(handler)?;
+        .call(handler.clone())?;
     lua.set_named_registry_value(REG_HANDLER_PCALL, pcall)?;
+    // The `OnUpdate` sweep's whole fire in one call: `this` set and `this`/`event` restored, the
+    // handler run under the same message handler through a reused thunk, so a frame's update
+    // allocates nothing. The thunk's upvalues are saved around the call, so a nested fire holds.
+    let update: mlua::Function = lua
+        .load(
+            "local xpcall, handler = xpcall, ...
+             local cf, cs, ce
+             local function thunk() return cf(cs, ce) end
+             return function(f, self, elapsed)
+                 local pf, ps, pe = cf, cs, ce
+                 cf, cs, ce = f, self, elapsed
+                 local saved_this, saved_event = this, event
+                 this = self
+                 local ok, err = xpcall(thunk, handler)
+                 this, event = saved_this, saved_event
+                 cf, cs, ce = pf, ps, pe
+                 return ok, err
+             end",
+        )
+        .set_name(PCALL_CHUNK)
+        .call(handler)?;
+    lua.set_named_registry_value(REG_UPDATE_FIRE, update)?;
 
     Ok(())
 }
 
 /// The registry slot of [`protected_call`]'s `xpcall` wrapper.
 const REG_HANDLER_PCALL: &str = "benilla.handler_pcall";
+
+/// The registry slot of the `OnUpdate` sweep's fire ([`update_fire`]).
+const REG_UPDATE_FIRE: &str = "benilla.update_fire";
+
+/// `fire(handler, self, elapsed) -> (ok, err)`: an `OnUpdate` call with `this` set and restored.
+pub(super) fn update_fire(lua: &Lua) -> mlua::Result<mlua::Function> {
+    lua.named_registry_value(REG_UPDATE_FIRE)
+}
 
 /// The wrapper's chunk name; its frames, and the `xpcall` between them, end a handler's traceback.
 const PCALL_CHUNK: &str = "=handler_pcall";
@@ -190,11 +219,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `debugprofilestart`/`debugprofilestop` (`0x817350`/`0x817370`), the two real `debug*` verbs
-/// (`OsGetAsyncTimeClocks`, `0x86ae30`): start latches, stop answers the milliseconds since. Ours
-/// read the `GetTime()` clock ([`super::clock::now`]), the monotonic session seconds the tick
-/// advances, as benilla has no cycle counter; read in Rust, so an addon that replaces the
-/// `GetTime` global cannot bend it.
+/// `debugprofilestart`/`debugprofilestop` (`0x817350`/`0x817370`), the two real `debug*` verbs (on
+/// the OS cycle clock): start latches, stop answers the milliseconds since. Ours read the
+/// `GetTime()` clock ([`super::clock::now`]), the monotonic session seconds the tick advances, as
+/// benilla has no cycle counter; read in Rust, so an addon that replaces the `GetTime` global
+/// cannot bend it.
 fn install_profile(lua: &Lua) -> mlua::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     let start = std::sync::Arc::new(AtomicU64::new(0f64.to_bits()));
@@ -224,11 +253,11 @@ pub(super) fn error_handler(lua: &Lua) -> Option<mlua::Function> {
         .flatten()
 }
 
-/// `seterrorhandler(f)` / `geterrorhandler()`, engine globals in 1.12 (`0x702900`, `0x702950`)
-/// over one registry reference, `[0x8722cc]`. It starts at -1 (`0x7039e0`), so `geterrorhandler()`
-/// answers nil until something is set; in the running client FrameXML sets `_ERRORMESSAGE` first
-/// (`BasicControls.xml:16`), so every addon finds that. `seterrorhandler` takes a function alone
-/// and raises its `Usage:` on anything else, nil included, so the slot can never be cleared.
+/// `seterrorhandler(f)` / `geterrorhandler()`, engine globals in 1.12 over one registry reference.
+/// It starts at -1, so `geterrorhandler()` answers nil until something is set; in the running
+/// client FrameXML sets `_ERRORMESSAGE` first (`BasicControls.xml:16`), so every addon finds that.
+/// `seterrorhandler` takes a function alone and raises its `Usage:` on anything else, nil included,
+/// so the slot can never be cleared.
 fn install_error_handler(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
     g.set(
@@ -247,8 +276,8 @@ fn install_error_handler(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The registry flag `FrameScript_HandleError` (`0x819730`) holds around its call of the handler,
-/// `s_inErrorHandler` (`[0xd3f79c]`), here around [`super::UiScript::dispatch_script_errors_to_handler`].
+/// The registry flag the script error dispatch (`0x819730`) holds around its call of the handler
+/// (`[0xd3f79c]`), here around [`super::UiScript::dispatch_script_errors_to_handler`].
 pub(super) const REG_IN_ERROR_HANDLER: &str = "benilla.in_error_handler";
 
 /// `debuglocals([level])` (`0x819a60`): nothing outside the handler dispatch. Inside it, one string
@@ -339,7 +368,7 @@ fn frame_variables(lua: &Lua, level: i32) -> mlua::Result<Vec<Value>> {
 /// `debuglocals`' buffer size (`0x819a60`), the terminator included.
 const LOCALS_BUFFER: usize = 4096;
 
-/// `FrameScript_PackVariable` (`0x819300`): one `name = value` line per variable, appended to
+/// The variable pack (`0x819300`): one `name = value` line per variable, appended to
 /// `buffer` up to [`LOCALS_BUFFER`]. A table lists its entries one level deep, each indented one
 /// space; a frame or region table is named by its object.
 fn pack_variable(lua: &Lua, name: &[u8], value: &Value, depth: usize, buffer: &mut Vec<u8>) {
@@ -400,8 +429,8 @@ fn pack_variable(lua: &Lua, name: &[u8], value: &Value, depth: usize, buffer: &m
     push_line(buffer, line);
 }
 
-/// A table's display: its object's name, `<unnamed>` without one (`GetDisplayName` `0x482aa0`),
-/// or `<table>` when `[0]` holds no object.
+/// A table's display: its object's name, `<unnamed>` without one (`0x482aa0`), or `<table>` when
+/// `[0]` holds no object.
 fn object_display_name(t: &mlua::Table) -> String {
     if !matches!(t.raw_get::<Value>(0), Ok(Value::LightUserData(_))) {
         return "<table>".into();
@@ -418,8 +447,8 @@ fn c_str(bytes: &[u8]) -> &[u8] {
     bytes.split(|b| *b == 0).next().unwrap_or(&[])
 }
 
-/// The line and its `\n`, `SStrPrintf`'d into 1 KiB, then `SStrPack`'d into the buffer, each
-/// truncating short of its terminator.
+/// The line and its `\n`, formatted into 1 KiB, then appended to the buffer, each truncating short
+/// of its terminator.
 fn push_line(buffer: &mut Vec<u8>, mut line: Vec<u8>) {
     line.push(b'\n');
     line.truncate(1023);
@@ -496,7 +525,7 @@ ldexp = math.ldexp
 
 -- ── the debug* family: six verified STUBS and two real ones ────────────────────────────────────
 --
--- All eight, read at the bytes (`0x7027e0`..`0x702860`):
+-- All eight, read at the bytes:
 -- `debuginfo`, `debugload`, `debugprint`, `debugdump`, `debugbreak` and `debugtimestamp` are
 -- **byte-identical `xor eax,eax; ret` stubs** — three bytes, no `call`, no memory write. They
 -- cannot print, log, write or set a global, and they return ZERO Lua values. So these are not
@@ -537,16 +566,16 @@ do
     local _format, _find, _sub, _len = string.format, string.find, string.sub, string.len
     local CONV = "diouxXeEfgGqscp"  -- Lua 5.1 conversion letters
 
+    -- No reference to 5.0's implicit `arg` anywhere in this function: one would make 5.1 build
+    -- that table on every call, the fast path's included.
     local function reformat(fmt, ...)
-        if type(fmt) ~= "string" then
-            return _format(fmt, unpack(arg, 1, arg.n))
-        end
-        -- fast path: no "%<digit>" at all ⇒ definitely no positional spec.
-        if not _find(fmt, "%%%d") then
-            return _format(fmt, unpack(arg, 1, arg.n))
+        -- fast path: not a string, or no "%<digits>$" ⇒ no positional spec. A width or a zero
+        -- pad (`%02d`) is a digit after `%` too, and must not send the call down the rebuild.
+        if type(fmt) ~= "string" or not _find(fmt, "%%%d+%$") then
+            return _format(fmt, ...)
         end
 
-        local args = arg
+        local args = { ... }
         local pieces = {}      -- rebuilt (sequential) format fragments
         local order = {}       -- for each real conversion: the source arg index, or false=sequential
         local seen_pos, seen_seq = false, false
@@ -604,9 +633,9 @@ do
 end
 "#;
 
-/// The rest of 12340's base-library extras table (`s_extraFuncs`, `0xa443a8`) that FrameXML and
-/// addons call: `strlenutf8` (`0x817c70`, stock `AutoComplete.lua` measures the typed text with
-/// it), `strreplace` (`0x816c40`), `scrub` (`0x817bf0`), `difftime` (`0x8178a0`) and the no-op
+/// The rest of 12340's base-library extras table (`0xa443a8`) that FrameXML and addons call:
+/// `strlenutf8` (`0x817c70`, stock `AutoComplete.lua` measures the typed text with it),
+/// `strreplace` (`0x816c40`), `scrub` (`0x817bf0`), `difftime` (`0x8178a0`) and the no-op
 /// `debughook`.
 fn install_extras(lua: &Lua) -> mlua::Result<()> {
     use mlua::{MultiValue, Value};
@@ -688,9 +717,8 @@ fn install_extras(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `time()` and `date([format [, when]])`: 1.12 engine globals (`0x7035a0`, `0x7033a0`), Lua 5.0's
-/// `os.time`/`os.date` hoisted. `time` is wall-clock epoch seconds, as addons persist it across
-/// sessions.
+/// `time()` and `date([format [, when]])`: 1.12 engine globals, Lua 5.0's `os.time`/`os.date`
+/// hoisted. `time` is wall-clock epoch seconds, as addons persist it across sessions.
 ///
 /// Deviation: `date` formats UTC where the reference uses local time, because the tree has no
 /// timezone database.
@@ -823,9 +851,9 @@ fn format_epoch(secs: i64, fmt: &str) -> String {
     }
     out
 }
-/// `luaO_chunkid` (`0x6f5c40`), for `debugstack`'s `short_src`. An `@` name longer than
-/// [`CHUNKID_KEEP`] keeps only its tail behind `"..."`, so a long addon path loses the `\AddOns\`
-/// that corpus libraries search for.
+/// `luaO_chunkid`, for `debugstack`'s `short_src`. An `@` name longer than [`CHUNKID_KEEP`] keeps
+/// only its tail behind `"..."`, so a long addon path loses the `\AddOns\` that corpus libraries
+/// search for.
 fn chunk_id(source: &str) -> String {
     if let Some(rest) = source.strip_prefix('=') {
         // A `=name` chunk is taken verbatim, clipped to the buffer from the front.
@@ -853,16 +881,15 @@ fn chunk_id(source: &str) -> String {
 /// `LUA_IDSIZE`: the `short_src` buffer, 60 bytes with the terminator.
 const LUA_IDSIZE: usize = 60;
 
-/// Characters an `@` name keeps, tail-first, behind `"..."` (`0x6f5c40`).
+/// Characters an `@` name keeps, tail-first, behind `"..."`.
 const CHUNKID_KEEP: usize = 52;
 
 /// What `[string "…"]` costs the budget in the third `luaO_chunkid` arm.
 const STRING_CHUNK_OVERHEAD: usize = 17;
 
 /// One `debugstack` frame, `short_src ":" [currentline ":"] DESC`, the caller pushing its `\n`.
-/// DESC (`0x7038fa`) is `` in function `%s' `` for a named frame (`0x872c98`), else by `what`:
-/// `" in main chunk"` (`0x872c88`), `" ?"` for C or a tail call (`0x872c6c`), or
-/// `" in function <%s:%d>"` (`0x872c70`).
+/// DESC is `` in function `%s' `` for a named frame (``), else by `what`: `" in main
+/// chunk"` (``), `" ?"` for C or a tail call (``), or `" in function <%s:%d>"` (``).
 fn traceback_frame(d: &mlua::Debug) -> String {
     let src = d.source();
     let names = d.names();
@@ -901,11 +928,11 @@ fn traceback_frame(d: &mlua::Debug) -> String {
     line
 }
 
-/// `debugstack`'s walk (`0x703760`): Lua 5.0's `db_errorfb` without its header, each frame
-/// followed by `"\n"` (`0x703971`) rather than preceded by `"\n\t"`, so line 1 is a frame.
-/// Frames print while the level is `<= start + count1` (`0x703857`, `jbe`); then a failed
-/// `getstack(level + count2)` probe prints that level as an ordinary frame, else `"...\n"` and
-/// the last `count2` follow. So `count1 = 1` gives two frames on a two-deep stack, not one.
+/// `debugstack`'s walk: Lua 5.0's `db_errorfb` without its header, each frame followed by `"\n"`
+/// rather than preceded by `"\n\t"`, so line 1 is a frame. Frames print while the level is
+/// `<= start + count1` (`jbe`); then a failed `getstack(level + count2)` probe prints that level as
+/// an ordinary frame, else `"...\n"` and the last `count2` follow. So `count1 = 1` gives two frames
+/// on a two-deep stack, not one.
 fn traceback_frames(lua: &Lua, start: usize, count1: usize, count2: usize) -> String {
     let mut out = String::new();
     let mut level = start;

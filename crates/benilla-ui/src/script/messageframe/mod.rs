@@ -2,8 +2,8 @@
 //! parent and child, each with its own method table, so a method only one carries is nil on the
 //! other:
 //!
-//! - [`scrolling`]: `CSimpleMessageScrollFrame` (ctor `0x787670`), the chat window's class.
-//! - [`plain`]: `CSimpleMessageFrame` (ctor `0x785640`), `UIErrorsFrame`'s class.
+//! - [`scrolling`]: `ScrollingMessageFrame`, the chat window's class.
+//! - [`plain`]: `MessageFrame`, `UIErrorsFrame`'s class.
 //!
 //! Both display a stack of [`MessageLine`] records, so the row measure, the band emit and the font
 //! read are shared here.
@@ -26,12 +26,10 @@ pub(super) use plain::REG_MESSAGEFRAME_METHODS;
 pub(super) use scrolling::REG_SCROLLINGMESSAGEFRAME_METHODS;
 
 /// `AddMessage`'s text; `None` means the whole call does nothing, no line and no error. Both
-/// bindings (`0x795590`, `0x792900`) jump to their epilogue (`0x79582b`, `0x792b81`) when
-/// `lua_isstring` (`0x6f3510`) fails, `lua_tostring` (`0x6f3690`) gives NULL or the string is empty
-/// (`0x79564b`). Stock `ContainerFrame.lua:753` passes the undefined `NO_EMPTY_KEYRING_SLOTS` on a
-/// full keyring and gets a silent click. Only the text is gated so: a bad colour still adds the
-/// line in white (`0x79581c`), and the receiver checks (`0x847ef8`) still raise. A number becomes
-/// its decimal text (`0x6f7c80`).
+/// bindings jump to their epilogue when `lua_isstring` fails, `lua_tostring` gives NULL or the
+/// string is empty. Stock `ContainerFrame.lua:753` passes the undefined `NO_EMPTY_KEYRING_SLOTS` on
+/// a full keyring and gets a silent click. Only the text is gated so: a bad colour still adds the
+/// line in white, and the receiver checks still raise. A number becomes its decimal text.
 pub(super) fn message_text(lua: &mlua::Lua, v: &mlua::Value) -> Option<String> {
     super::binding_abi::optional_string(lua, v).filter(|s| !s.is_empty())
 }
@@ -146,7 +144,7 @@ pub(super) struct MessageFont {
     /// The child's `justifyH`, which centres `UIErrorsFrame`'s lines and keeps chat flush left;
     /// LEFT without a declared FontString, not the FontString default of CENTER.
     pub(super) justify_h: JustifyH,
-    /// The font's line gap (`SetSpacing`): lines step `height + spacing` (`UpdateRect 0x968790`).
+    /// The font's line gap (`SetSpacing`): lines step `height + spacing` (`0x968790`).
     pub(super) spacing: f32,
 }
 
@@ -355,13 +353,13 @@ impl UiScript {
 
     /// Push one [`QuadContent::Text`] per visible message of either class, its `rows` lines a block
     /// of `rows × height + (rows − 1) × spacing`, one spacing from the next: a MessageFrame steps
-    /// `height + spacing` (`UpdateRect 0x968790`), a scrolling frame anchors each message's string
-    /// one spacing past the last and the string inherits the gap (`ScrollMessages 0x969fa0`). A
-    /// scrolling frame stacks up from the bottom, `scroll_offset` choosing the bottom message. A
-    /// MessageFrame does too for `insertMode` BOTTOM, and for TOP hangs the newest off
-    /// the top edge (`UIErrorsFrame.xml:4`); the reference's anchor per mode is untraced, and this
-    /// reading reproduces both stock uses. A message that partly fits draws clipped; a faded
-    /// scrolling line keeps its rows, as the reference never re-packs chat.
+    /// `height + spacing` (`0x968790`), a scrolling frame anchors each message's string one spacing
+    /// past the last and the string inherits the gap (`0x969fa0`). A scrolling frame stacks up from
+    /// the bottom, `scroll_offset` choosing the bottom message. A MessageFrame does too for
+    /// `insertMode` BOTTOM, and for TOP hangs the newest off the top edge (`UIErrorsFrame.xml:4`);
+    /// the reference's anchor per mode is untraced, and this reading reproduces both stock uses. A
+    /// message that partly fits draws clipped; a faded scrolling line keeps its rows, as the
+    /// reference never re-packs chat.
     pub(super) fn emit_message_lines(
         model: &Model,
         fh: FrameHandle,

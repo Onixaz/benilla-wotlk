@@ -63,9 +63,9 @@ fn school_index(lua: &Lua, v: Value) -> mlua::Result<usize> {
     Ok(i as usize)
 }
 
-/// `CGPlayer_C::GetAttackPowerContributionFromStat` (`0x6d7070`): strength gives two attack power
-/// per point past 10, or one for a class whose damage bonus stat is agility; agility gives one per
-/// point past 10 to that class, plus the whole value in a form with flag `0x20`.
+/// The player's attack power from a stat (`0x6d7070`): strength gives two attack power per point
+/// past 10, or one for a class whose damage bonus stat is agility; agility gives one per point past
+/// 10 to that class, plus the whole value in a form with flag `0x20`.
 fn attack_power_for_stat(s: &UnitCombatStats, stat: i32, value: i32) -> i32 {
     let Some(bonus_stat) = s.damage_bonus_stat else {
         return 0;

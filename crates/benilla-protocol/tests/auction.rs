@@ -87,7 +87,7 @@ fn auction_sell_item_body_golden() {
         "CMSG_AUCTION_SELL_ITEM body (one stack)"
     );
 
-    // A stack assembled from two partial stacks, as SellNextItem builds it.
+    // A stack assembled from two partial stacks, as the reference's next-item sell builds it.
     let body = messages::auction_sell_item(
         AUCTIONEER,
         &[(0x4000_0000_0000_0001, 3), (0x4000_0000_0000_0002, 2)],

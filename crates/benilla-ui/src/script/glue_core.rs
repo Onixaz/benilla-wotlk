@@ -1,17 +1,15 @@
-//! The glue core's login-screen verbs (registrar `0x46ddf0`, table `0x8373b8`): the login, the
-//! status dialog's button, the saved account, the four user agreements, the build, the locale,
-//! the server, the screen name, the glue music and the quit. Each reads a slot the host seeds or
-//! queues a [`GlueRequest`] the host's glue manager drains; the screen state machine they drive
-//! (`CGlueMgr::Update`, `0x46b930`) is the host's.
+//! The glue core's login-screen verbs: the login, the status dialog's button, the saved account,
+//! the four user agreements, the build, the locale, the server, the screen name, the glue music and
+//! the quit. Each reads a slot the host seeds or queues a [`GlueRequest`] the host's glue manager
+//! drains; the screen state machine they drive (the glue manager's update) is the host's.
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{flag, string_arg};
 
 /// One of the five user agreements the login screen walks before it shows the login boxes
-/// (`AccountLogin_ShowUserAgreements`), each a CVar the glue manager reads once at its init
-/// (`CGlueMgr::Initialize`, `0x4db9f0`): `readTOS`, `readEULA`, `readTerminationWithoutNotice`,
-/// `readScanning`, `readContest`.
+/// (`AccountLogin_ShowUserAgreements`), each a CVar the glue manager reads once at its init:
+/// `readTOS`, `readEULA`, `readTerminationWithoutNotice`, `readScanning`, `readContest`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlueNotice {
     Tos,
@@ -36,9 +34,9 @@ impl GlueNotice {
     }
 }
 
-/// One agreement's two flags, as the glue manager seeds them from its CVar's integer value
-/// (`0x46a41a`-`0x46a42e` for `readTOS`): accepted is the value being 1, the notice (the agreement
-/// changed since it was read) is the value being negative.
+/// One agreement's two flags, as the glue manager seeds them from its CVar's integer value (for
+/// `readTOS`): accepted is the value being 1, the notice (the agreement changed since it was read)
+/// is the value being negative.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NoticeState {
     pub accepted: bool,
@@ -88,44 +86,40 @@ impl std::fmt::Debug for GlueCredentials {
 /// A glue verb's effect on the host, drained by its glue manager.
 #[derive(Debug)]
 pub enum GlueRequest {
-    /// `DefaultServerLogin(account, password)` (`0x4dc260`), handed to `CGlueMgr::Login`
-    /// (`0x46afb0`), whose guards and dialogs are the host's.
+    /// `DefaultServerLogin(account, password)` (`0x4dc260`), handed to the glue manager's login,
+    /// whose guards and dialogs are the host's.
     Login(GlueCredentials),
-    /// `StatusDialogClick()` (`0x4dc500` → `0x46b720`): the status dialog's button, per screen
-    /// state.
+    /// `StatusDialogClick()` (`0x4dc500`): the status dialog's button, per screen state.
     StatusDialogClick,
     /// `SetSavedAccountName(name)` (`0x4dbec0`): the `accountName` CVar's new value.
     SetSavedAccountName(String),
-    /// `AcceptTOS` and its three siblings (`0x46d000`, `0x46d070`, `0x46d0e0`, `0x46d150`): the
-    /// agreement's CVar set to `"1"` (`0x46aef0` and its siblings).
+    /// `AcceptTOS` and its three siblings: the agreement's CVar set to `"1"`.
     Accept(GlueNotice),
-    /// `PlayGlueMusic(file)` (`0x4dc070` → `0x45aeb0`).
+    /// `PlayGlueMusic(file)` (`0x4dc070`).
     PlayGlueMusic(String),
-    /// `StopGlueMusic()` (`0x4dc1a0`): `0x45b050(1.0)`, a one-second fade.
+    /// `StopGlueMusic()` (`0x4dc1a0`), a one-second fade.
     StopGlueMusic,
     /// `DisconnectFromServer()` (`0x4dda10`): the world connection dropped if up, then the logon
     /// cancelled.
     DisconnectFromServer,
-    /// `QuitGame()` (`0x4dc050` → `0x46b870` → `0x401560(0)`).
+    /// `QuitGame()` (`0x4dc050`).
     QuitGame,
-    /// `RequestRealmList([dialog])` (`0x46ecf0` → `0x46b8d0`): screen state 4, the status dialog
-    /// when `dialog`, and a realm list query (`0x5ab840`).
+    /// `RequestRealmList([dialog])`: screen state 4, the status dialog when `dialog`, and a realm
+    /// list query (`0x5ab840`).
     RequestRealmList { dialog: bool },
-    /// `CancelRealmListQuery()` (`0x46ed10` → `0x46b7e0`): in screen state 4 only, the query
-    /// completes cancelled and the state goes to 0; nothing is sent.
+    /// `CancelRealmListQuery()`: in screen state 4 only, the query completes cancelled and the
+    /// state goes to 0; nothing is sent.
     CancelRealmListQuery,
-    /// `RealmListDialogCancelled()` on the login screen (`0x46b810` → `CLoginMgr::Cancel`
-    /// `0x5b3320`): the realmd link closes, with no dialog and no screen change.
+    /// `RealmListDialogCancelled()` on the login screen (the login manager's cancel): the realmd
+    /// link closes, with no dialog and no screen change.
     CancelLogon,
-    /// `ChangeRealm` reaching `ConnectToRealm` (`0x46b210`) with this realm, `realmName` already
-    /// set to it (`0x5ab7b0`).
+    /// `ChangeRealm` reaching the realm connect with this realm, `realmName` already set to it.
     ChangeRealm(String),
-    /// `GetCharacterListUpdate()` (`0x4e4530` → `0x4723d0` → `0x46b880`): the roster is already
-    /// cleared in the VM; the host takes screen state 3, the `CHAR_LIST_RETRIEVING` dialog and
-    /// the `CMSG_CHAR_ENUM`.
+    /// `GetCharacterListUpdate()` (`0x4e4530`): the roster is already cleared in the VM; the host
+    /// takes screen state 3, the `CHAR_LIST_RETRIEVING` dialog and the `CMSG_CHAR_ENUM`.
     GetCharacterList,
-    /// `LaunchURL(url)` (`0x4dc1c0` → `0x5abd00`) for a URL that passed `launch_url_allowed`
-    /// (`0x5abd00` tests `0x5abc10` first): the player's browser opens it (`0x429ff0`).
+    /// `LaunchURL(url)` (`0x4dc1c0`) for a URL that passed `launch_url_allowed`: the player's
+    /// browser opens it.
     LaunchUrl(String),
     /// `PlayGlueAmbience(name [, fade])` (`0x4dc0c0`): the named ambience, faded in over `fade`
     /// seconds, or the sound's own when none.
@@ -136,10 +130,10 @@ pub enum GlueRequest {
     StopAllSfx(f32),
     /// `PlayCreditsMusic(kit)` (`0x4dc150`).
     PlayCreditsMusic(String),
-    /// `EnterWorld()` (`0x4dc510` → `CGlueMgr::EnterWorld` `0x4d9bd0`), whose guards are the
-    /// host's.
+    /// `EnterWorld()` (`0x4dc510` → the glue manager's enter-world `0x4d9bd0`), whose guards are
+    /// the host's.
     EnterWorld,
-    /// `CancelLogin()` (`0x4dce60` → `0x4d99e0`).
+    /// `CancelLogin()` (`0x4dce60`).
     CancelLogin,
     /// `Screenshot()` (`0x4dc520`), answered with `GLUE_SCREENSHOT_SUCCEEDED` or `_FAILED`.
     Screenshot,
@@ -148,19 +142,19 @@ pub enum GlueRequest {
     /// `CMSG_REALM_SPLIT` with this state: `0xFFFFFFFF` asks (`RequestRealmSplitInfo`,
     /// `0x4de2e0`), 0 to 2 answers (`SetRealmSplitState`, `0x4de250`).
     RealmSplit(u32),
-    /// `CreateCharacter(name)` past the client's name check (`0x4e0380`): the host's
-    /// `CGlueMgr::CreateCharacter` (`0x4d8c60`), or a paid change of an existing character.
+    /// `CreateCharacter(name)` past the client's name check (`0x4e0380`): the host's character
+    /// create (`0x4d8c60`), or a paid change of an existing character.
     CreateCharacter(super::glue_create::GlueCharCreate),
-    /// `DeleteCharacter(index)` (`0x4e33a0`) for a row on the roster: the host's
-    /// `CGlueMgr::DeleteCharacter` (`0x4d8cc0`) with its guid.
+    /// `DeleteCharacter(index)` (`0x4e33a0`) for a row on the roster: the host's character delete
+    /// with its guid.
     DeleteCharacter(u64),
     /// `SaveAddOns()` (`0x4dcac0`): the enable bits changed since the last load or save, for the
     /// host to write to each character's enable file.
     SaveAddOns(Vec<super::glue_addons::GlueAddonChange>),
 }
 
-/// The hosts `LaunchURL` opens, the 10-entry table at `0x85cc34`: a leading `*` stands for one
-/// label, so `*.blizzard.com` takes `forums.blizzard.com` and not `a.b.blizzard.com`.
+/// The hosts `LaunchURL` opens, the 10-entry table: a leading `*` stands for one label, so
+/// `*.blizzard.com` takes `forums.blizzard.com` and not `a.b.blizzard.com`.
 const LAUNCH_HOSTS: [&str; 10] = [
     "*.blizzard.com",
     "*.blizzcon.com",
@@ -174,16 +168,16 @@ const LAUNCH_HOSTS: [&str; 10] = [
     "*.wowtaiwan.com.tw",
 ];
 
-/// The gate in front of the browser: `0x5abd00` tests `0x5abc10` and `0x429ff0` takes the URL.
-/// The URL begins `http://` (`0x85d6bc`, compared case-folded), every byte after it is a letter,
-/// a digit, `.`, `-` or `/` (so no query, port, escape or `_`), and its host, the text up to the
-/// first `/`, is one of [`LAUNCH_HOSTS`], compared case-folded. `0x429ff0` refuses a URL of 0x400
-/// bytes or more (`0x42a01c`). The reference works on a C string, so the verb cuts its argument
-/// at a NUL before asking; a URL with a NUL in it is refused here.
+/// The gate in front of the browser: the reference's verb tests the URL against the whitelist, then
+/// the browser launch takes it. The URL begins `http://` (compared case-folded), every byte after
+/// it is a letter, a digit, `.`, `-` or `/` (so no query, port, escape or `_`), and its host, the
+/// text up to the first `/`, is one of [`LAUNCH_HOSTS`], compared case-folded. The launch refuses a
+/// URL of 0x400 bytes or more. The reference works on a C string, so the verb cuts its argument at
+/// a NUL before asking; a URL with a NUL in it is refused here.
 ///
-/// Deviation: a host of 0x80 bytes or more is refused. The reference copies the host into a 0x80-byte
-/// buffer (`0x5abc7c`-`0x5abc9c`) and writes its terminator one byte past the end, and the cut
-/// host could end in a whitelisted suffix the real one does not; this takes the safe side.
+/// Deviation: a host of 0x80 bytes or more is refused. The reference copies the host into a
+/// 0x80-byte buffer and writes its terminator one byte past the end, and the cut host could end in
+/// a whitelisted suffix the real one does not; this takes the safe side.
 pub fn launch_url_allowed(url: &str) -> bool {
     if url.len() >= 0x400 || url.contains('\0') {
         return false;
@@ -210,7 +204,7 @@ pub fn launch_url_allowed(url: &str) -> bool {
     LAUNCH_HOSTS
         .iter()
         .any(|entry| match entry.strip_prefix('*') {
-            // `SStrChr(host, '.')`, then the rest against the entry past its `*`.
+            // The host past its first `.`, then the rest against the entry past its `*`.
             Some(suffix) => host
                 .iter()
                 .position(|&b| b == b'.')
@@ -232,15 +226,15 @@ pub struct GlueServer {
 #[derive(Default)]
 pub(crate) struct GlueCore {
     requests: Vec<GlueRequest>,
-    /// The `accountName` CVar (`[0x8826c8]`), which `GetSavedAccountName` (`0x4dd5d0`) reads.
+    /// The `accountName` CVar, which `GetSavedAccountName` (`0x4dd5d0`) reads.
     saved_account: String,
     notices: [NoticeState; 5],
-    /// ClientServices' world-connection flag (`[svc+0x1b00]`), which `IsConnectedToServer`
+    /// The client services' world-connection flag (`[svc+0x1b00]`), which `IsConnectedToServer`
     /// (`0x4dda50`) reads.
     connected: bool,
     server: GlueServer,
-    /// The current glue screen's name (`[0xb41478]`), which `SetCurrentScreen` (`0x4dc000` →
-    /// `0x46b860`) copies into a 0x40-byte buffer.
+    /// The current glue screen's name, which `SetCurrentScreen` (`0x4dc000`) copies into a
+    /// 0x40-byte buffer.
     pub(super) screen: String,
     /// The realm list the realm verbs read ([`super::glue_realm`]).
     pub(super) realms: super::glue_realm::GlueRealmList,
@@ -254,7 +248,7 @@ pub(crate) struct GlueCore {
     pub(super) addons: super::glue_addons::GlueAddonEnable,
 }
 
-/// `SetCurrentScreen`'s buffer, 0x40 bytes with its terminator (`0x46b860`, `SStrCopy`).
+/// `SetCurrentScreen`'s buffer, 0x40 bytes with its terminator (a bounded copy).
 const SCREEN_NAME_MAX: usize = 0x3f;
 
 impl super::UiScript {
@@ -293,9 +287,8 @@ impl super::UiScript {
         self.model_ref().glue.screen.clone()
     }
 
-    /// A string global's text, `GetGlobalString`'s answer (`0x703bf0` with no gender and no
-    /// ordinal takes `0x704350`): the global's string (a number stringified), else the empty
-    /// string (`0x882748`).
+    /// A string global's text, the global-string read's answer (with no gender and no ordinal
+    /// takes): the global's string (a number stringified), else the empty string.
     pub fn global_text(&self, key: &str) -> String {
         global_text(&self.lua, key)
     }
@@ -325,8 +318,8 @@ fn global_text(lua: &Lua, key: &str) -> String {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // Both arguments `is-number-or-string` (`0x46d168`, `0x46d178`), else the usage error
-    // (`0x837cbc`); then `CGlueMgr::Login(account, password)` (`0x46d1a0`).
+    // Both arguments `is-number-or-string`, else the usage error; then the glue manager's login
+    // with `(account, password)`.
     g.set(
         "DefaultServerLogin",
         lua.create_function(|lua, (account, password): (Value, Value)| {
@@ -338,8 +331,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             let account = string_arg(lua, account, USAGE)?;
             let password = string_arg(lua, password, USAGE)?;
-            // `CGlueMgr::LoginServerLogin` (`0x4d8a30`) does nothing until the Scan.dll check
-            // has opened its gate (`[0xb6b474]`, `0x4d8a33`).
+            // The glue manager's login-server login does nothing until the Scan.dll check has
+            // opened its gate.
             let scan = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data")
@@ -365,7 +358,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The `accountName` CVar's string (`0x46cdd5`, `[cvar+0x20]`).
+    // The `accountName` CVar's string (`[cvar+0x20]`).
     g.set(
         "GetSavedAccountName",
         lua.create_function(|lua, ()| {
@@ -375,8 +368,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             lua.create_string(&model.glue.saved_account)
         })?,
     )?;
-    // A string argument (`0x46cdf8`) or `Usage: SetSavedAccountName("accountName")` (`0x837c28`),
-    // then `CVar::Set` (`0x46ce2e`), so the next `GetSavedAccountName` reads it back at once.
+    // A string argument or `Usage: SetSavedAccountName("accountName")`, then a CVar set, so the
+    // next `GetSavedAccountName` reads it back at once.
     g.set(
         "SetSavedAccountName",
         lua.create_function(|lua, name: Value| {
@@ -388,10 +381,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // Each agreement: `Show*Notice` and `*Accepted` push 1 or nil off the flag pair the glue
-    // manager seeded (`[0xb41df8]`/`[0xb41dfc]` for the TOS, `[0xb41e00]`/`[0xb41e04]` the EULA,
-    // `[0xb41e08]`/`[0xb41e0c]` scanning, `[0xb41e10]`/`[0xb41e14]` the contest); `Accept*` sets
-    // accepted, clears the notice and sets the CVar to "1" (`0x46aef0`, `0x46af20`, `0x46af50`,
-    // `0x46af80`).
+    // manager seeded; `Accept*` sets accepted, clears the notice and sets the CVar to "1".
     for (notice, show, accepted, accept) in [
         (GlueNotice::Tos, "ShowTOSNotice", "TOSAccepted", "AcceptTOS"),
         (
@@ -467,15 +457,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The locale name table `0x8558a4` at the locale index `[0xc0e080]` (`0x46ce40`), the same
-    // answer as the in-game binding: benilla is enUS-only.
+    // The locale name table at the locale index, the same answer as the in-game binding: benilla is
+    // enUS-only.
     g.set(
         "GetLocale",
         lua.create_function(|lua, _: MultiValue| lua.create_string("enUS"))?,
     )?;
 
-    // A string argument (`0x46ce68`) or `Usage: SetCurrentScreen("screen")` (`0x837c54`), copied
-    // into the 0x40-byte screen buffer (`0x46b860`).
+    // A string argument or `Usage: SetCurrentScreen("screen")`, copied into the 0x40-byte screen
+    // buffer.
     g.set(
         "SetCurrentScreen",
         lua.create_function(|lua, name: Value| {
@@ -533,7 +523,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // A string argument (`0x46ceb8`) or `Usage: PlayGlueMusic("filename")` (`0x837c78`).
+    // A string argument or `Usage: PlayGlueMusic("filename")`.
     g.set(
         "PlayGlueMusic",
         lua.create_function(|lua, file: Value| {
@@ -542,14 +532,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // A string argument (`0x46cf68`) or `Usage: LaunchURL("URL")` (`0x837ca4`), then `0x5abd00`,
-    // which opens the browser for a URL `0x5abc10` passes and does nothing for any other. The
-    // in-game state has no such verb.
+    // A string argument or `Usage: LaunchURL("URL")`, then, which opens the browser for a URL
+    // passes and does nothing for any other. The in-game state has no such verb.
     g.set(
         "LaunchURL",
         lua.create_function(|lua, url: Value| {
             let url = string_arg(lua, url, "Usage: LaunchURL(\"URL\")")?;
-            // The C string ends at a NUL (`0x6f3690`), for the gate and for the shell alike.
+            // The C string ends at a NUL, for the gate and for the shell alike.
             let url = url.split('\0').next().unwrap_or_default();
             if launch_url_allowed(url) {
                 queue(lua, GlueRequest::LaunchUrl(url.to_string()));
@@ -664,7 +653,7 @@ mod tests {
         );
     }
 
-    /// `0x5abc10`: the scheme, the character set past it and the host table.
+    /// The scheme, the character set past it and the host table.
     #[test]
     fn launch_url_opens_only_the_whitelisted_hosts() {
         let ok = [
@@ -701,7 +690,7 @@ mod tests {
         }
         // The gate takes a C string: a NUL inside one is refused outright.
         assert!(!launch_url_allowed("http://www.blizzard.com/\0?q=1"));
-        // 0x400 bytes or more is refused (`0x42a01c`); one byte under is not.
+        // 0x400 bytes or more is refused; one byte under is not.
         let path = |n: usize| format!("http://www.blizzard.com/{}", "a".repeat(n - 24));
         assert!(launch_url_allowed(&path(0x3ff)));
         assert!(!launch_url_allowed(&path(0x400)));

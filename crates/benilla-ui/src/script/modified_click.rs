@@ -15,16 +15,17 @@ use mlua::{Lua, Value};
 use super::binding_abi::flag;
 use super::Model;
 
-/// One binding as `MODIFIEDCLICK::SetBinding` (`0x55e180`) stores it: `AddModifiers`' side bits
-/// (`0x55d860`: LSHIFT 1, RSHIFT 2, LCTRL 4, RCTRL 8, LALT 0x10, RALT 0x20) and a mouse button by
-/// its binding index (`BUTTON1` is the left, `IndexToMouseButton` `0x5eec20`).
+/// One binding as the reference's binding setter (`0x55e180`) stores it: the modifier parse's side
+/// bits (`0x55d860`: LSHIFT 1, RSHIFT 2, LCTRL 4, RCTRL 8, LALT 0x10, RALT 0x20) and a mouse
+/// button by its binding index (`BUTTON1` is the left, `0x5eec20`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ClickBinding {
     modifiers: u8,
     button: Option<u8>,
 }
 
-/// `AddModifiers` (`0x55d860`): the modifier prefixes, each optionally `-`-joined, and the rest.
+/// The modifier parse (`0x55d860`): the modifier prefixes, each optionally `-`-joined, and the
+/// rest.
 fn add_modifiers(text: &str) -> (u8, &str) {
     const PREFIXES: [(&str, u8); 9] = [
         ("LSHIFT", 0x1),
@@ -83,8 +84,8 @@ impl ClickBinding {
         rest.is_empty().then_some(Self { modifiers, button })
     }
 
-    /// `MODIFIEDCLICK::GetBinding` (`0x55e230`): `AddMetaPrefix`'s ALT, CTRL then SHIFT parts
-    /// (`0x55d990`), then `BUTTON<n>`, or `NONE` for neither.
+    /// The binding getter (`0x55e230`): the meta prefix's ALT, CTRL then SHIFT parts (`0x55d990`),
+    /// then `BUTTON<n>`, or `NONE` for neither.
     fn canonical(&self) -> String {
         let m = self.modifiers;
         if m == 0 && self.button.is_none() {
@@ -118,9 +119,9 @@ impl ClickBinding {
         out
     }
 
-    /// `MODIFIEDCLICK::IsActive` (`0x55d6b0`): any one of its modifiers held, then its button the
-    /// running click's (`m_mouseButtonName`, set only around a click or mouse script) or no click
-    /// running; with no modifier, only a button binding can hold.
+    /// The binding's active test (`0x55d6b0`): any one of its modifiers held, then its button the
+    /// running click's (the current mouse button name, set only around a click or mouse script) or
+    /// no click running; with no modifier, only a button binding can hold.
     fn holds(&self, model: &Model) -> bool {
         let (shift, ctrl, alt) = model.modifiers;
         let m = self.modifiers;
@@ -148,7 +149,7 @@ struct Row {
     explicit: bool,
 }
 
-/// The table, in declaration order (`m_fulllist`), and the explicitly bound rows of stored sets
+/// The table, in declaration order, and the explicitly bound rows of stored sets
 /// 1 (account) and 2 (character); lives in [`super::keybind::KeybindState`].
 #[derive(Debug, Default)]
 pub(crate) struct ModifiedClicks {
@@ -172,7 +173,7 @@ impl ModifiedClicks {
         }
     }
 
-    /// `LoadModifiedClick` (`0x562dd0`): a redefinition is skipped, so the first file keeps the
+    /// The declaration load (`0x562dd0`): a redefinition is skipped, so the first file keeps the
     /// action; a refused default leaves it unbound. A set already loaded binds it at once, since
     /// here the sets are read before the interface files.
     fn register(&mut self, action: &str, default: &str, current_set: u32) {
@@ -192,7 +193,8 @@ impl ModifiedClicks {
         });
     }
 
-    /// `CopyBindings(set, CURRENT)` (`0x562b80`): every row back to its default, then the set's.
+    /// The binding copy from `set` to the current set (`0x562b80`): every row back to its default,
+    /// then the set's.
     pub(super) fn load(&mut self, set: u32) {
         let chosen = self.chosen(set).cloned().unwrap_or_default();
         for r in &mut self.rows {
@@ -282,7 +284,7 @@ impl ModifiedClicks {
 }
 
 impl super::UiScript {
-    /// `IsModifiedClick(action)` asked from the engine, as `IsAutoLooting 0x513700` asks it.
+    /// `IsModifiedClick(action)` asked from the engine, as the auto-loot test (`0x513700`) asks it.
     pub fn is_modified_click(&self, action: &str) -> bool {
         is_modified_click(&self.model_ref(), Some(action))
     }
@@ -318,7 +320,7 @@ pub(crate) fn register(model: &mut Model, clicks: &[crate::bindings_xml::Modifie
     }
 }
 
-/// `CGUIBindings::IsModifiedClick` (`0x55f940`): with no action, any modifier key down or any row
+/// The engine's `IsModifiedClick` (`0x55f940`): with no action, any modifier key down or any row
 /// holding; an action that is itself a modifier set (`"SHIFT"`) needs each of its modifiers held;
 /// otherwise the action's row holds by `0x55d6b0`, and an undeclared action never holds.
 pub(super) fn is_modified_click(model: &Model, action: Option<&str>) -> bool {

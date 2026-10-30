@@ -3,8 +3,8 @@
 //! the reference's whole follow interface to the UI (there is no `IsFollowing()`).
 //!
 //! Deviation: every stop fires `END`, because the reference's three silent stops are a bug: two
-//! writers reset the follow mode cell `0xc4d888` directly (`0x5fb646`, `0x60396f`), leaving a
-//! stale guid at `0xc4d980`, and the canceller's early-out (`0x60fb70`) fires nothing.
+//! writers reset the follow mode cell directly, leaving a stale guid, and the canceller's early-out
+//! fires nothing.
 
 use bevy::prelude::*;
 
@@ -36,7 +36,7 @@ fn feed_follow(
     let memo = feed.vm.get(&script);
     match (follow.guid, memo.told) {
         // Started, or switched subject: a switch fires END first, as the reference's arm routine
-        // (`0x611130`) calls the canceller (`0x61113e`) before arming.
+        // calls the canceller before arming.
         (Some(guid), told) if told != Some(guid) => {
             if told.is_some() {
                 script.fire_event("AUTOFOLLOW_END", vec![]);

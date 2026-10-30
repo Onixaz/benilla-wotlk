@@ -1,10 +1,9 @@
-//! The pet bar's one drag verb, `PickupPetAction`: a pickup with an empty cursor, a drop with a
-//! pet payload held (`PetActionBarFrame.lua:252-283`). Only a pet slot makes or takes the
-//! payload, a word carried verbatim (`0x4bce00`), so a drag only rearranges the bar the server
-//! sent. A drop clears the cursor before deciding (`0x495190`) and only a write that relocated
-//! nothing refills it (`0x4bce38`), so a refused drop loses the payload, as in the reference.
-//! Both bar writes, the drop's (`0x4bce33`) and the pickup's blank (`0x4be27f`), ask the pet's
-//! usability predicate first (`0x4bc9d0`): on an unusable pet the drop writes nothing and refills
+//! The pet bar's one drag verb, `PickupPetAction`: a pickup with an empty cursor, a drop with a pet
+//! payload held (`PetActionBarFrame.lua:252-283`). Only a pet slot makes or takes the payload, a
+//! word carried verbatim, so a drag only rearranges the bar the server sent. A drop clears the
+//! cursor before deciding and only a write that relocated nothing refills it, so a refused drop
+//! loses the payload, as in the reference. Both bar writes, the drop's and the pickup's blank, ask
+//! the pet's usability predicate first: on an unusable pet the drop writes nothing and refills
 //! nothing, and the pickup holds its action with the slot left as it was.
 
 use mlua::Lua;
@@ -13,9 +12,9 @@ use crate::script::Model;
 
 use super::{queue_cursor_update, CursorPayload, CursorPetAction};
 
-/// Pet bar slots (`NUM_PET_ACTION_SLOTS`, vmangos `MAX_UNIT_ACTION_BAR_INDEX`). Deviation: slot
-/// 11 is refused, because the reference's gate (`cmp esi,0xa; jbe`) admits it and neither
-/// `0x4bce00` nor `0x4bc9a0` bounds-checks again, so it writes one dword past the array.
+/// Pet bar slots (`NUM_PET_ACTION_SLOTS`, vmangos `MAX_UNIT_ACTION_BAR_INDEX`). Deviation: slot 11
+/// is refused, because the reference's gate (`cmp esi,0xa; jbe`) admits it and neither nor
+/// bounds-checks again, so it writes one dword past the array.
 const PET_SLOTS: u32 = 10;
 
 /// The slot type as the client masks it.
@@ -28,24 +27,24 @@ fn is_token(packed: u32) -> bool {
     matches!(kind(packed), 6 | 7)
 }
 
-/// The word as a payload, if it can be one: `0x494e20`'s jump table (`0x494f40`) takes types 1-7
-/// only, so displacing an empty slot carries nothing.
+/// The word as a payload, if it can be one: the reference's jump table takes types 1-7 only, so
+/// displacing an empty slot carries nothing.
 fn payload_word(packed: u32) -> Option<u32> {
     (1..=7).contains(&kind(packed)).then_some(packed)
 }
 
-/// The duplicate scan's compare (`0x4bca44`, `0x4bca57`): all but the autocast bits, any type.
+/// The duplicate scan's compare: all but the autocast bits, any type.
 fn same_action(a: u32, b: u32) -> bool {
     a & 0x3FFF_FFFF == b & 0x3FFF_FFFF
 }
 
-/// The word a spell pickup leaves in its slot: type 1, id 0. The duplicate scan skips this
-/// source (`0x4bca34`), which would otherwise match every other blanked slot.
+/// The word a spell pickup leaves in its slot: type 1, id 0. The duplicate scan skips this source,
+/// which would otherwise match every other blanked slot.
 fn is_blanked_spell(packed: u32) -> bool {
     kind(packed) == 1 && packed & 0xFFFF == 0
 }
 
-/// A slot a token occupant may move to (`0x4bca8b`), such as an empty or blanked-spell slot.
+/// A slot a token occupant may move to, such as an empty or blanked-spell slot.
 fn is_relocation_candidate(packed: u32) -> bool {
     !is_token(packed) && packed & 0xFFFF == 0
 }
@@ -58,11 +57,11 @@ struct Assigned {
     displaced: Option<u32>,
 }
 
-/// The assign core (`0x4bc9a0`), the whole of a drop; `None` is no write and no send. In order:
-/// an identical dword is a no-op (`0x4bc9e2`), a passive spell is refused silently (`0x4bc9f8`),
-/// a duplicate's slot takes the occupant, which makes a drag a swap (`0x4bca78`), else a token
-/// occupant needs a candidate slot or the drop aborts. The reference's return (`0x4bcb92`), 1
-/// only when nothing was relocated, cannot tell an abort from a relocation; this one can.
+/// The assign core, the whole of a drop; `None` is no write and no send. In order: an identical
+/// dword is a no-op, a passive spell is refused silently, a duplicate's slot takes the occupant,
+/// which makes a drag a swap, else a token occupant needs a candidate slot or the drop aborts. The
+/// reference's return, 1 only when nothing was relocated, cannot tell an abort from a relocation;
+/// this one can.
 fn assign(slots: &mut [u32], target: usize, source: u32, passive: bool) -> Option<Assigned> {
     let occupant = *slots.get(target)?;
     if occupant == source {
@@ -92,11 +91,10 @@ fn assign(slots: &mut [u32], target: usize, source: u32, passive: bool) -> Optio
     })
 }
 
-/// `PickupPetAction(slot)` (`0x4be180`), 1-based. A pet whose object does not resolve
-/// (`0x4be1f7`) or is `UNIT_FLAG_POSSESSED` (`0x4be20a`) blocks both ends, the gate sitting above
-/// the cursor fork, so the cursor is left as it was. Another payload stays held here, where the
-/// reference clears it (`0x4be220`) and picks the slot up. A pickup blanks only a spell slot
-/// (`0x4be268`), so a dragged token is copied, not moved.
+/// `PickupPetAction(slot)`, 1-based. A pet whose object does not resolve or is
+/// `UNIT_FLAG_POSSESSED` blocks both ends, the gate sitting above the cursor fork, so the cursor is
+/// left as it was. Another payload stays held here, where the reference clears it and picks the
+/// slot up. A pickup blanks only a spell slot, so a dragged token is copied, not moved.
 pub(super) fn pickup_pet_action(model: &mut Model, slot: u32) -> bool {
     if !model.pet_bar.pickup_allowed {
         return false;
@@ -129,8 +127,8 @@ pub(super) fn pickup_pet_action(model: &mut Model, slot: u32) -> bool {
     true
 }
 
-/// The drop: the cursor always empties, and only a homeless occupant refills it (`0x4bce3d`).
-/// Returns whether anything was written; the cursor empties on `false` too.
+/// The drop: the cursor always empties, and only a homeless occupant refills it. Returns whether
+/// anything was written; the cursor empties on `false` too.
 fn place_pet_action(model: &mut Model, slot: u32) -> bool {
     let Some(CursorPayload::PetAction(held)) = model.cursor.clone() else {
         return false;
@@ -170,10 +168,9 @@ fn slot_index(model: &Model, slot: u32) -> Option<usize> {
 }
 
 /// Run [`assign`] on the engine's optimistic mirror of the ten words and queue the send; the
-/// pickup's blank goes through it too, as in the reference (`0x4be268`). `0x4bc9a0` takes its
-/// send flag from both callers as 1, which makes it ask `0x4bcf70` before anything else
-/// (`0x4bc9c7`-`0x4bc9d7`); the app's answer, the one the bar's `GetPetActionsUsable` reads, is
-/// `PetBarState::actions_usable`.
+/// pickup's blank goes through it too, as in the reference. The reference takes its send flag from
+/// both callers as 1, which makes it ask before anything else; the app's answer, the one the bar's
+/// `GetPetActionsUsable` reads, is `PetBarState::actions_usable`.
 fn write_slot(model: &mut Model, target: usize, source: u32, passive: bool) -> Option<Assigned> {
     if !model.pet_bar.actions_usable {
         return None;
@@ -181,8 +178,8 @@ fn write_slot(model: &mut Model, target: usize, source: u32, passive: bool) -> O
     let mut words: Vec<u32> = model.pet_bar.slots.iter().map(|s| s.view.packed).collect();
     let assigned = assign(&mut words, target, source, passive)?;
 
-    // One `CMSG_PET_SET_ACTION`: the relocation pair first whenever there was one, changed or
-    // not, then the target pair (`0x4bcad4`).
+    // One `CMSG_PET_SET_ACTION`: the relocation pair first whenever there was one, changed or not,
+    // then the target pair.
     let mut entries: Vec<(u32, u32)> = Vec::with_capacity(2);
     if let Some(j) = assigned.reloc {
         entries.push((j as u32, words[j]));
@@ -196,8 +193,8 @@ fn write_slot(model: &mut Model, target: usize, source: u32, passive: bool) -> O
     Some(assigned)
 }
 
-/// A token's texture is a global's name (`GetPetActionInfo`, `0x4bdc50`), which the bar resolves
-/// with `getglobal` (`PetActionBarFrame.lua:102`); the cursor needs the path, resolved here.
+/// A token's texture is a global's name (`GetPetActionInfo`), which the bar resolves with
+/// `getglobal` (`PetActionBarFrame.lua:102`); the cursor needs the path, resolved here.
 fn resolve_token_icon(lua: &Lua) {
     let name = {
         let model = lua
@@ -261,7 +258,7 @@ mod tests {
         assert_eq!(a.displaced, None, "nothing left over to carry");
     }
 
-    /// The pickup's blank (the duplicate scan skips it, `0x4bca34`) leaves no copy to swap with.
+    /// The pickup's blank (the duplicate scan skips it) leaves no copy to swap with.
     #[test]
     fn a_blanked_source_displaces_the_occupant_instead_of_swapping() {
         let mut bar = [CLAW, GROWL, FILLER, ATTACK];
@@ -381,10 +378,10 @@ mod tests {
         assert_eq!(p.texture, None);
     }
 
-    /// `0x4bc9d0`: the write asks the pet's usability predicate first, and the app's answer is the
-    /// one the bar last pushed. The pickup still lifts its action (`0x4be25d`), but its blank
-    /// (`0x4be27f`) is refused, so the slot keeps the word and nothing is sent; the drop clears the
-    /// cursor before it decides (`0x4be220`), and its refused write refills nothing (`0x4bce38`).
+    /// The write asks the pet's usability predicate first, and the app's answer is the one the bar
+    /// last pushed. The pickup still lifts its action, but its blank is refused, so the slot keeps
+    /// the word and nothing is sent; the drop clears the cursor before it decides, and its refused
+    /// write refills nothing.
     #[test]
     fn an_unusable_bar_writes_nothing_at_either_end() {
         let mut s = UiScript::new().unwrap();

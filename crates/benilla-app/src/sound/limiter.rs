@@ -1,12 +1,11 @@
 //! The output limiter, the mix's last stage.
 //!
 //! Deviation: the reference sums at full scale and clips (a close 1.0 kit reaches
-//! `FSOUND_SetVolume(255)` through `0x7a5dc0`, FMOD's MMX mixers saturate with `paddsw`, and no
-//! gain depends on the live voice count); this limits, because every WoW SFX is mastered to full
-//! scale, so overlapping kits clip into broadband distortion, as when a mass buff lands five
-//! sample-aligned copies of one 0 dBFS file. `SoundOutputLimiter 0` turns it off. The reference's
-//! voice and bus caps bound the count, not the level, and its SFX auto-duck (`0x457960`) is armed
-//! only by server-pushed voice lines.
+//! `FSOUND_SetVolume(255)`, FMOD's MMX mixers saturate with `paddsw`, and no gain depends on the
+//! live voice count); this limits, because every WoW SFX is mastered to full scale, so overlapping
+//! kits clip into broadband distortion, as when a mass buff lands five sample-aligned copies of one
+//! 0 dBFS file. `SoundOutputLimiter 0` turns it off. The reference's voice and bus caps bound the
+//! count, not the level, and its SFX auto-duck is armed only by server-pushed voice lines.
 //!
 //! A look-ahead brickwall limiter, stereo-linked and allocation-free on the render path:
 //!

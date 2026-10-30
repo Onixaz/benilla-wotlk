@@ -1,5 +1,5 @@
-//! The getters and `SpellCanTargetUnit` over a `target` chain: the token resolves to a guid
-//! through [`UnitGuids`] (`0x515970`), and the guid's snapshot answers.
+//! The getters and `SpellCanTargetUnit` over a `target` chain: the token resolves to a guid through
+//! [`UnitGuids`], and the guid's snapshot answers.
 
 use std::collections::HashMap;
 
@@ -134,7 +134,7 @@ fn a_chain_answers_the_snapshot_of_the_unit_it_ends_on() {
 
 /// A chain that names nobody answers what the getter answers for no unit: nil, 0 and nil. A chain
 /// to a guid nothing holds reads 0 and nil too, but its name is the reference's name-cache leg
-/// (`0x5171eb`, else `UNKNOWNOBJECT` at `0x517216`), which is not built, so it is not asserted.
+/// (else `UNKNOWNOBJECT`), which is not built, so it is not asserted.
 #[test]
 fn a_chain_to_a_unit_nobody_holds_answers_nothing() {
     let s = world();
@@ -295,7 +295,7 @@ fn spell_can_target_unit_answers_the_verdict_of_the_unit_the_token_names() {
     assert!(refused(&s, "raid3target"));
 }
 
-/// The reference gates the argument (`0x6e6d0e`); a token the resolver does not know names nobody.
+/// The reference gates the argument; a token the resolver does not know names nobody.
 #[test]
 fn spell_can_target_unit_gates_its_argument() {
     let s = world();

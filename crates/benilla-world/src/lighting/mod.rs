@@ -37,20 +37,20 @@ pub struct WowLighting {
     /// space; Bevy's `DistanceFog` blends in linear and would break the gamma invariant.
     pub fog_color: [f32; 3],
     /// The pushed fog pair from [`resolve::scene_fog`]: `end = min(band end, farclip)` and
-    /// `start = frac × end` unclamped (`0x6cee61`), negative under storm: the near veil in rain.
+    /// `start = frac × end` unclamped, negative under storm: the near veil in rain.
     pub(crate) fog_start: f32,
     pub(crate) fog_end: f32,
     /// The interior fog triple (`DNState+0x80/84/88`): the scene fog lerped toward the claimed
     /// WMO's MFOG by the 4 s [`WmoCrossfade`]. Only content tagged as in a room on the camera's
-    /// portal chain reads it: the group's surfaces (`0x6b5190`) and liquid (`0x6b62e0`) and the M2s
-    /// in it (`0x71c110`); terrain, ADT liquid, the sky and exterior groups keep the scene fog.
+    /// portal chain reads it: the group's surfaces and liquid and the M2s in it; terrain, ADT
+    /// liquid, the sky and exterior groups keep the scene fog.
     pub(crate) wmo_fog_color: [f32; 3],
     pub(crate) wmo_fog_start: f32,
     pub(crate) wmo_fog_end: f32,
     /// The five sky-dome stops, zenith to horizon (`Atmosphere.sky`, IntBand rows 2-6).
     pub(crate) sky: [[f32; 3]; 5],
     /// Per-kind water tint `[shallow, deep]`: IntBand rows 16/17 (river, lake) and 14/15 (ocean),
-    /// raw and area-blended like every band (`0x6d30e0` merges all 18 colour rows per light).
+    /// raw and area-blended like every band (merges all 18 colour rows per light).
     pub(crate) water_river: [[f32; 3]; 2],
     pub(crate) water_ocean: [[f32; 3]; 2],
     /// Per-kind water alphas `[shallow, deep]`, `LightParams` fields 5-8, blended like the tint.
@@ -58,54 +58,54 @@ pub struct WowLighting {
     pub(crate) water_ocean_alpha: [f32; 2],
     /// The FFXGlow composite weight, `LightParams.glow` quantised as the reference packs it.
     pub(crate) glow: f32,
-    /// The dawn/dusk sky warp strength `curve(dayfrac) × highlightSky` for `sky.wgsl`'s warp
-    /// (`0x6d0f50`): 0, the identity, except at dawn and dusk in flagged zones.
+    /// The dawn/dusk sky warp strength `curve(dayfrac) × highlightSky` for `sky.wgsl`'s warp: 0,
+    /// the identity, except at dawn and dusk in flagged zones.
     pub(crate) sky_warp: f32,
-    /// The sun disc size multiplier (`0xce8cac`): 1 across midday, 2 at the dawn and dusk horizon.
+    /// The sun disc size multiplier: 1 across midday, 2 at the dawn and dusk horizon.
     pub(crate) sun_disc_scale: f32,
-    /// The sun lens-flare day envelope (`0xce9818`): 1 from 07:30 to 19:30, 0 at night.
+    /// The sun lens-flare day envelope: 1 from 07:30 to 19:30, 0 at night.
     pub(crate) sun_flare_dn: f32,
     /// The white moon, camera to moon in Bevy space: up at night, below the horizon by day.
     pub(crate) moon_dir_white: Vec3,
-    /// The moon disc size multiplier (`0xce8c8c`): 1 overhead, 1.5 at moonrise and moonset.
+    /// The moon disc size multiplier: 1 overhead, 1.5 at moonrise and moonset.
     pub(crate) moon_disc_scale: f32,
-    /// The moon lens-flare night envelope (`0xce9768`): 0 from 03:15 to 22:45, full after midnight.
+    /// The moon lens-flare night envelope: 0 from 03:15 to 22:45, full after midnight.
     pub(crate) moon_flare_dn: f32,
     /// `moon02`, camera to body in Bevy space: drawn vertex-black, it only occludes the stars.
     pub(crate) moon_dir_02: Vec3,
-    /// `moon02`'s size multiplier, the `0xce8c8c` curve on its own phase clock (base ×1.0).
+    /// `moon02`'s size multiplier, the curve on its own phase clock (base ×1.0).
     pub(crate) moon02_disc_scale: f32,
-    /// The star field's global alpha (`0xce9a98`): 1 in deep night, 0 all day.
+    /// The star field's global alpha: 1 in deep night, 0 all day.
     pub(crate) star_alpha: f32,
-    /// The SIDN night fraction (`DNState+0x1ac`, `0xce9a34`) scaling the WMO windows' night glow.
+    /// The SIDN night fraction (`DNState+0x1ac`) scaling the WMO windows' night glow.
     pub(crate) sidn_night: f32,
     /// The celestial tint (sRGB) the reference broadcasts into the sun and white-moon discs and
-    /// glares each frame (`[0xce9c2c]`, `0x6d2260`): IntBand sub-9, the row [`Self::spec`] samples
-    /// (the gather `0x6d64d0` swaps slots 8/9; alpha forced 0xFF at `0x6d62e0`). The moon's teal
-    /// rim is the dome's night bands through the disc's feathered edge, not this tint.
+    /// glares each frame: IntBand sub-9, the row [`Self::spec`] samples (the gather swaps slots
+    /// 8/9; alpha forced 0xFF). The moon's teal rim is the dome's night bands through the disc's
+    /// feathered edge, not this tint.
     pub(crate) celestial_tint: [f32; 3],
-    /// Authored cloud density `C`, FloatBand sub-3 with the weather and area blends (`[0xce9c64]`):
-    /// the coverage threshold, 0 cloudless to 1 full overcast.
+    /// Authored cloud density `C`, FloatBand sub-3 with the weather and area blends: the coverage
+    /// threshold, 0 cloudless to 1 full overcast.
     pub(crate) cloud_density: f32,
-    /// The cloud palette `[sun-glow, slope, gbase]`, IntBand sub-10/11/12 (`0x6d64d0`).
+    /// The cloud palette `[sun-glow, slope, gbase]`, IntBand sub-10/11/12.
     pub(crate) cloud_colors: [[f32; 3]; 3],
-    /// The storm blend `bcc = min(1, density·4)` (`0x6d4500`) of the weather global `[0xce9ba0]`,
-    /// never `C`: the storm `LightParams` weight, the seed `floor(255·(1−bcc))` of the five body
-    /// alphas (`0x6d2c74`) and the cloud glow dim `1 − 0.75·bcc`.
+    /// The storm blend `bcc = min(1, density·4)` of the weather global, never `C`: the storm
+    /// `LightParams` weight, the seed `floor(255·(1−bcc))` of the five body alphas and the cloud
+    /// glow dim `1 − 0.75·bcc`.
     pub(crate) storm_bcc: f32,
-    /// The cloud glow's body (`0x6cfb00`): the sun from about 04:50 to 22:10, else the moon.
+    /// The cloud glow's body: the sun from about 04:50 to 22:10, else the moon.
     pub(crate) cloud_glow_dir: Vec3,
-    /// The cloud glow's day envelope (`0xce9ab8`), times `1 − 0.75·bcc` for the glow intensity.
+    /// The cloud glow's day envelope, times `1 − 0.75·bcc` for the glow intensity.
     pub(crate) cloud_glow_track: f32,
 }
 
 impl WowLighting {
     /// Per-kind water swatch endpoints `(shallow_rgb, deep_rgb, shallow_alpha, deep_alpha)`, the
-    /// IntBand rows raw: the × 0.711 dim belongs to the sky fill `0x68c250`, not to water. The ADT
-    /// swatch is the reference's 64-row byte ramp between them (`0x68a830`, in `liquid.wgsl`);
-    /// WMO liquid's opacity is the 256-entry `shallow + d·(deep − shallow)/256` (`0x6b6b60`). One
-    /// depth `V` indexes colour and alpha: `clamp(byte/42)` for river and lake (`0x68d790`, opaque
-    /// by about 5 yd), `clamp(byte/255)` for ocean (`0x68d690`), both built in `0x68c4c0`.
+    /// IntBand rows raw: the × 0.711 dim belongs to the sky fill, not to water. The ADT swatch is
+    /// the reference's 64-row byte ramp between them (in `liquid.wgsl`); WMO liquid's opacity is
+    /// the 256-entry `shallow + d·(deep − shallow)/256`. One depth `V` indexes colour and alpha:
+    /// `clamp(byte/42)` for river and lake (opaque by about 5 yd), `clamp(byte/255)` for ocean,
+    /// both built.
     pub(crate) fn water_colors(&self, kind: LiquidKind) -> ([f32; 3], [f32; 3], f32, f32) {
         let (shallow_rgb, deep_rgb, alpha) = if kind == LiquidKind::Ocean {
             (

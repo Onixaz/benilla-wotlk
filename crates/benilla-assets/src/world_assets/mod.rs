@@ -68,8 +68,8 @@ pub fn normalize_path(path: &str) -> String {
 }
 
 /// The cache key a UI sprite reference folds to: [`normalize_path`], then any three-character
-/// extension stripped, as the reference strips it (`0x449590`) and keys its texture cache on the
-/// stem. `Foo`, `Foo.blp` and `Foo.tga` are one entry; `Foo.jpeg` keys as itself.
+/// extension stripped, as the reference strips it and keys its texture cache on the stem. `Foo`,
+/// `Foo.blp` and `Foo.tga` are one entry; `Foo.jpeg` keys as itself.
 pub fn sprite_key(path: &str) -> String {
     let key = normalize_path(path);
     match key.len().checked_sub(4) {
@@ -78,10 +78,10 @@ pub fn sprite_key(path: &str) -> String {
     }
 }
 
-/// The two files a UI sprite reference may live in, in the order of `TextureCreate`'s two-candidate
-/// chain (`0x449d90`, extension table `0x835248 = {".tga", ".blp"}`): `.tga` first for a `.tga`
-/// reference, `.blp` first otherwise, and a miss on the first is silent. The sweeps that assert our
-/// own paths resolve call this too, so they cannot disagree with what draws.
+/// The two files a UI sprite reference may live in, in the order of the texture create's
+/// two-candidate chain (extension table `= {".tga", ".blp"}`): `.tga` first for a `.tga` reference,
+/// `.blp` first otherwise, and a miss on the first is silent. The sweeps that assert our own paths
+/// resolve call this too, so they cannot disagree with what draws.
 pub fn sprite_candidates(path: &str) -> [String; 2] {
     let stem = sprite_key(path);
     let normalized = normalize_path(path);
@@ -93,9 +93,9 @@ pub fn sprite_candidates(path: &str) -> [String; 2] {
     }
 }
 
-/// The texel size of a UI sprite, which `CSimpleTexture`'s size getters read (`[tex+0x144]`,
-/// `[tex+0x148]`; `0x770720`, `0x770790`) for a region with no authored size, one texel per
-/// FrameXML unit. Decoded, so layout gets the size the screen shows.
+/// The texel size of a UI sprite, which the texture region's size getters read (`[tex+0x144]`,
+/// `[tex+0x148]`) for a region with no authored size, one texel per FrameXML unit. Decoded, so
+/// layout gets the size the screen shows.
 pub fn sprite_dimensions(
     chain: &Mutex<Chain>,
     loose_root: Option<&Path>,
@@ -172,8 +172,8 @@ fn decode_sprite_bytes(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
 }
 
 /// Read a file from the patch chain, then, for an `Interface\AddOns\` path, the loose addon folder:
-/// how art, fonts and audio an addon ships all load. The reference asks the install tree first
-/// (`0x647e60`'s attempt #4 is the MPQ); the chain holds no `AddOns\` path, so the order is moot.
+/// how art, fonts and audio an addon ships all load. The reference asks the install tree first (its
+/// file open tries the MPQ fourth); the chain holds no `AddOns\` path, so the order is moot.
 pub fn read_chain_or_loose(
     chain: &Mutex<Chain>,
     loose_root: Option<&Path>,
@@ -358,7 +358,7 @@ impl WorldAssets {
         made
     }
 
-    /// A UI sprite repeating on both axes, for a frame `Backdrop`'s tiled pieces (`0x77f0c0`).
+    /// A UI sprite repeating on both axes, for a frame `Backdrop`'s tiled pieces.
     pub fn sprite_texture_tiled(
         &mut self,
         path: &str,
@@ -418,8 +418,8 @@ impl WorldAssets {
     }
 
     /// The tabard designer's emblem cell for the caller to tint: white carrying its own alpha,
-    /// `(a << 24) | 0x00FFFFFF` per texel (the reference's `0x503431` loop). A file that fails to
-    /// open gives `None`, where the reference keeps its static array's stale contents.
+    /// `(a << 24) | 0x00FFFFFF` per texel. A file that fails to open gives `None`, where the
+    /// reference keeps its static array's stale contents.
     pub fn emblem_mask_texture(
         &mut self,
         path: &str,
@@ -542,7 +542,7 @@ impl WorldAssets {
                 cull_mode,
                 ..default()
             },
-            // No texture: an untextured white draw, the reference's disabled stage (`0x59d020`).
+            // No texture: an untextured white draw, the reference's disabled stage.
             None => StandardMaterial {
                 base_color: Color::WHITE,
                 ..default()

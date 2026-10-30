@@ -3,9 +3,9 @@
 //!
 //! The reference computes the bone palette in view space and replaces a billboard bone's rows with
 //! the camera basis. Spherical (`0x08`) takes the whole basis, bone X toward the viewer, Y
-//! screen-right, Z screen-up (the rows `{(0,0,−1),(1,0,0),(0,1,0)}` at `0x714463`); lock-X/Y/Z
-//! (`0x10`/`0x20`/`0x40`) keeps its authored axis and rebuilds the other two from the camera. It
-//! is one shared orientation for every billboard, never a per-pivot aim or a facet normal.
+//! screen-right, Z screen-up (the rows `{(0,0,−1),(1,0,0),(0,1,0)}`); lock-X/Y/Z
+//! (`0x10`/`0x20`/`0x40`) keeps its authored axis and rebuilds the other two from the camera. It is
+//! one shared orientation for every billboard, never a per-pivot aim or a facet normal.
 //!
 //! A card's mesh is centred at its bone pivot in model-local Bevy axes (WoW X→−Z, Y→−X, Z→+Y), so
 //! the entity sits at the pivot with the rebuilt basis as its rotation.
@@ -36,7 +36,7 @@ pub struct BillboardCard {
     /// `elapsed − arm_ms`, re-armed per play like the reference's sequence tracks.
     arm_neg_ms: u32,
     /// The global-sequence clock's attach anchor (ms), stamped on the first placement pass and
-    /// never re-armed: the reference snapshots the scene clock once per instance (`CM2Model+0x68`)
+    /// never re-armed: the reference snapshots the scene clock once per instance (model `+0x68`)
     /// and samples at `sceneNow − attach`, so cards attached on different frames breathe apart.
     gseq_attach_ms: Option<u32>,
     /// The bone's armed first-sequence translation loop (a quest marker's bob, Bevy axes), added
@@ -93,7 +93,7 @@ impl BillboardCard {
 
     /// A card with no mesh: a billboard bone's replaced palette matrix as a live transform, for an
     /// item's particle emitter to ride (an item spawns no rig); the reference folds the emitter's
-    /// position through this matrix (`0x7190a9`-`0x71910c`). `pivot` is model-local Bevy axes.
+    /// position through this matrix. `pivot` is model-local Bevy axes.
     pub fn frame_following(kind: BillboardKind, pivot: Vec3, owner: Entity) -> Self {
         Self {
             world_pivot: Vec3::ZERO, // re-seated from the owner before the first facing write
@@ -148,12 +148,12 @@ impl BillboardCard {
     }
 }
 
-/// A bone's rewritten parent matrix, the `flags & 0x7` arm (`0x71496d`-`0x714d0c`), taken before
-/// its own TRS and the `& 0x78` billboard switch, which still runs. `root` is the model's frame
-/// `[model+0xfc]` (composed at `0x714389`; a rider's seat anchor), `pivot` the bone's bind local
-/// translation. The tail `T' = pivotWorld − piv·newBasis` keeps where the animated parent carried
-/// the bone and drops only its orientation, so a mount carries its rider without rocking them.
-/// The reference's row K is our column K, both the image of basis vector K.
+/// A bone's rewritten parent matrix, the `flags & 0x7` arm, taken before its own TRS and the
+/// `& 0x78` billboard switch, which still runs. `root` is the model's frame `[model+0xfc]` (a
+/// rider's seat anchor), `pivot` the bone's bind local translation. The tail
+/// `T' = pivotWorld − piv·newBasis` keeps where the animated parent carried the bone and drops only
+/// its orientation, so a mount carries its rider without rocking them. The reference's row K is our
+/// column K, both the image of basis vector K.
 pub(crate) fn parent_arm_matrix(
     arm: benilla_formats::ParentArm,
     parent: Affine3A,
@@ -161,9 +161,9 @@ pub(crate) fn parent_arm_matrix(
     pivot: Vec3,
 ) -> Affine3A {
     use benilla_formats::ParentBasis;
-    // `0x714bdb`'s unit guard: a degenerate axis is left as it is.
+    // The reference's unit guard: a degenerate axis is left as it is.
     const UNIT_EPS: f32 = 1.0 / (1 << 22) as f32;
-    // `0x80c5c8`, the ratio leg's own constant, not the unit eps above.
+    // The ratio leg's own constant, not the unit eps above.
     const RATIO_EPS: f32 = 1e-5;
     let (p, r) = (parent.matrix3, root.matrix3);
     let per_axis = |f: &dyn Fn(usize) -> Vec3A| Mat3A::from_cols(f(0), f(1), f(2));
@@ -193,8 +193,7 @@ pub(crate) fn parent_arm_matrix(
     };
     Affine3A {
         matrix3,
-        // `flags & 1` (`0x714c92`) takes the root's own origin; otherwise the pivot-preserving
-        // tail at `0x714caf`.
+        // `flags & 1` takes the root's own origin; otherwise the pivot-preserving tail.
         translation: if arm.ignore_translate {
             root.translation
         } else {
@@ -245,8 +244,8 @@ pub fn billboard_basis(
 }
 
 /// A rigged host's billboard and parent-arm bones, beside its `AnimationPlayer`. The reference
-/// billboards the bone palette, where children multiply onto the replaced matrix (`0x7151ba`), so
-/// geometry skinned to a billboard bone's child (the frost-armor sheets) inherits the facing.
+/// billboards the bone palette, where children multiply onto the replaced matrix, so geometry
+/// skinned to a billboard bone's child (the frost-armor sheets) inherits the facing.
 #[derive(Component)]
 pub struct BillboardJointRig {
     /// The host root, the model's own frame `[model+0xfc]` that the `flags & 0x7` arm builds from.
@@ -296,12 +295,12 @@ impl BillboardJointRig {
 }
 
 /// The palette half of the billboard law: each billboard joint's world rotation becomes the camera
-/// basis, keeping scale and translation (the reference's tail `0x715868`), and its descendants
-/// re-compose on it, so skinned geometry and riding emitters inherit the facing. Every palette
-/// consumer must read after this pass: avian's physics sync re-propagates from locals in the
-/// fixed loop, so an Update read sees the un-billboarded pose. The walk never enters a nested rig,
-/// not even its root (a spell effect on an attach bone), so no rig overwrites another's frames.
-/// M2 bones are parent-sorted; a malformed child whose parent follows it keeps its propagated pose.
+/// basis, keeping scale and translation, and its descendants re-compose on it, so skinned geometry
+/// and riding emitters inherit the facing. Every palette consumer must read after this pass:
+/// avian's physics sync re-propagates from locals in the fixed loop, so an Update read sees the
+/// un-billboarded pose. The walk never enters a nested rig, not even its root (a spell effect on an
+/// attach bone), so no rig overwrites another's frames. M2 bones are parent-sorted; a malformed
+/// child whose parent follows it keeps its propagated pose.
 pub fn billboard_joint_palette(
     cam: Query<&GlobalTransform, With<WorldCamera>>,
     hosts: Query<&BillboardJointRig>,
@@ -496,7 +495,7 @@ pub(crate) fn face_billboards(
                     return;
                 }
             }
-            // The gseq attach anchor, stamped on the first placement pass (`CM2Model+0x68`). Written
+            // The gseq attach anchor, stamped on the first placement pass (model `+0x68`). Written
             // once: a `get_or_insert` through the `Mut` would mark the card changed every frame.
             let attach_ms = match card.gseq_attach_ms {
                 Some(ms) => ms,
@@ -568,8 +567,8 @@ mod tests {
     use benilla_assets::BillboardInfo;
 
     /// The R14 pauldron's spikes run along WoW −Z (`seamswing`), Bevy −Y: a spherical billboard
-    /// points them screen-down from every camera and discards the pre-billboard rotation
-    /// (`0x7152f8`), so the wearer's shoulder yaw never reaches them.
+    /// points them screen-down from every camera and discards the pre-billboard rotation, so the
+    /// wearer's shoulder yaw never reaches them.
     #[test]
     fn a_spike_along_its_bone_axis_points_screen_down_from_every_angle() {
         let spike_local = Vec3::NEG_Y;
@@ -1042,9 +1041,8 @@ mod tests {
         );
     }
 
-    /// Each `flags & 0x6` leg (`0x71496d`-`0x714d0c`) is asserted on what defines it, axis lengths
-    /// for scale and axis directions for rotation, so a leg doing another's job fails; then the
-    /// pivot-preserving tail.
+    /// Each `flags & 0x6` leg is asserted on what defines it, axis lengths for scale and axis
+    /// directions for rotation, so a leg doing another's job fails; then the pivot-preserving tail.
     #[test]
     fn the_parent_arm_legs_match_their_byte_definitions() {
         use benilla_formats::{ParentArm, ParentBasis};
@@ -1309,8 +1307,8 @@ mod tests {
                 .get::<GlobalTransform>()
                 .unwrap()
                 .to_scale_rotation_translation();
-            // The spherical basis at this camera: Bevy-local −Z (WoW X) toward the viewer, +Y
-            // (WoW Z) screen-up, the camera-born plane at `0x71547c`.
+            // The spherical basis at this camera: Bevy-local −Z (WoW X) toward the viewer, +Y (WoW
+            // Z) screen-up, the camera-born plane.
             assert!(
                 (rj * -Vec3::Z).dot(Vec3::Z) > 0.999,
                 "the nested billboard faces the camera (nested_first={nested_first})"

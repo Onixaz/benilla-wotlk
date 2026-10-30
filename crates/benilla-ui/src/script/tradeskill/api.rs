@@ -607,7 +607,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // TradeSkillOnlyShowMakeable(flag) / TradeSkillOnlyShowSkillUps(flag) (`0x5dd3e0`,
-    // `0x5dd420`): `StringToBOOL`, absent meaning on; a change fires TRADE_SKILL_UPDATE.
+    // `0x5dd420`): the flag read as a string boolean, absent meaning on; a change fires
+    // TRADE_SKILL_UPDATE.
     g.set(
         "TradeSkillOnlyShowMakeable",
         lua.create_function(|lua, v: mlua::Variadic<Value>| {

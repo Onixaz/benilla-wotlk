@@ -22,7 +22,7 @@ pub use kernel::{occ1_moon, occ1_sun};
 #[derive(Resource)]
 pub struct CloudCoverage {
     kernel: kernel::CloudKernel,
-    /// Whether the init rebuild ran (`0x6cff90`); the bands scroll after it (`0x6cffc0`).
+    /// Whether the init rebuild ran; the bands scroll after it.
     primed: bool,
     frozen: bool,
     last_density: f32,
@@ -80,7 +80,7 @@ impl Plugin for CloudsPlugin {
 }
 
 /// Advances the coverage field (a full rebuild first, then the 10 Hz band scroll) and re-uploads
-/// its texels when they change, as the reference does per regen (`0x58ac70`).
+/// its texels when they change, as the reference does per regen.
 fn tick_clouds(
     mut cov: ResMut<CloudCoverage>,
     light: Res<WowLighting>,
@@ -91,9 +91,9 @@ fn tick_clouds(
     underwater: Res<crate::liquid::Underwater>,
     mut was_submerged: Local<bool>,
 ) {
-    // Surfacing forces a full rebuild: the reference's wet→dry edge (`0x680ac3`) calls
-    // `0x6d2210(1)`, which selects `0x6cff90`; a band scroll would bring the clouds back over
-    // 0.4 s. Going under needs nothing, since the sky pass is skipped while submerged.
+    // Surfacing forces a full rebuild: the reference's wet→dry edge calls the cloud regen with 1,
+    // which selects the full rebuild; a band scroll would bring the clouds back over 0.4 s. Going
+    // under needs nothing, since the sky pass is skipped while submerged.
     let submerged = underwater.0.any();
     let surfaced = *was_submerged && !submerged;
     *was_submerged = submerged;

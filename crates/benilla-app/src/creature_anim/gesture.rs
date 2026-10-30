@@ -1,7 +1,8 @@
-//! The client-local gesture, which no packet announces: the chat display path picks a code from
-//! the message and calls `0x60bb30(unit, code)`, which resolves it through five `Emotes.dbc` flag
-//! slots and plays it through `0x5fcd20`, the player `SMSG_EMOTE` uses. Its other caller is the
-//! NPC-interact path, always with code 0 (talk), so [`crate::target::click`] pushes through here.
+//! The client-local gesture, which no packet announces: the chat display path picks a code from the
+//! message and calls the gesture player with `(unit, code)`, which resolves it through five
+//! `Emotes.dbc` flag slots and plays it through the one-shot emote player `SMSG_EMOTE` uses. Its
+//! other caller is the NPC-interact path, always with code 0 (talk), so [`crate::target::click`]
+//! pushes through here.
 
 use bevy::prelude::*;
 
@@ -9,8 +10,8 @@ use crate::net::GuidIndex;
 
 use super::{EmoteAnim, PlaySeq};
 
-/// A gesture code, the integer `0x60bb30` takes: one of five `EmoteFlags` bits, resolved by
-/// scanning `Emotes.dbc` for it ([`benilla_formats::EmoteSoundCatalog::gesture`]).
+/// A gesture code, the integer takes: one of five `EmoteFlags` bits, resolved by scanning
+/// `Emotes.dbc` for it ([`benilla_formats::EmoteSoundCatalog::gesture`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Gesture {
     /// `EmoteFlags 0x08`: a plain say, and every NPC interaction.
@@ -40,7 +41,7 @@ impl Gesture {
 }
 
 /// Gestures asked for and not yet played, `(speaker guid, code)`, from the chat display path and
-/// the interact click, the two callers of `0x60bb30`.
+/// the interact click, the gesture player's two callers.
 #[derive(Resource, Default)]
 pub(crate) struct GestureQueue(Vec<(u64, Gesture)>);
 
@@ -53,12 +54,12 @@ impl GestureQueue {
     }
 }
 
-/// The gesture a chat line plays, by wire chat type and text (`0x49d7d0` to `0x49d8ae`). Only
-/// `SAY`, `YELL` and `PARTY` gesture, never a creature's `MONSTER_SAY`/`MONSTER_YELL`. A text
-/// equal, case-insensitively, to a `LAUGH_WORDn` global laughs (the scan stops at the first
-/// missing or empty one); otherwise `PARTY` does nothing, `YELL` shouts whatever its text, and
-/// `SAY` reads its last byte only: `?` asks, `!` exclaims, anything else talks. `laugh_word(n)`
-/// reads the global off the player's own FrameXML; `None` ends the list.
+/// The gesture a chat line plays, by wire chat type and text. Only `SAY`, `YELL` and `PARTY`
+/// gesture, never a creature's `MONSTER_SAY`/`MONSTER_YELL`. A text equal, case-insensitively, to a
+/// `LAUGH_WORDn` global laughs (the scan stops at the first missing or empty one); otherwise
+/// `PARTY` does nothing, `YELL` shouts whatever its text, and `SAY` reads its last byte only: `?`
+/// asks, `!` exclaims, anything else talks. `laugh_word(n)` reads the global off the player's own
+/// FrameXML; `None` ends the list.
 pub(crate) fn select_gesture(
     chat_type: u8,
     text: &str,
@@ -90,7 +91,7 @@ pub(crate) fn select_gesture(
     }
 }
 
-/// Drain [`GestureQueue`]: the client's `0x60bb30` and its tail call into `0x5fcd20`.
+/// Drain [`GestureQueue`]: the client's gesture player and its tail call into the emote player.
 pub(super) fn drive_gestures(
     mut queue: ResMut<GestureQueue>,
     mut out: MessageWriter<EmoteAnim>,
@@ -105,7 +106,7 @@ pub(super) fn drive_gestures(
         let Some(&entity) = index.0.get(&guid) else {
             continue; // the speaker is not streamed
         };
-        // A slot no row carries: the client bails too (`0x60bb43`).
+        // A slot no row carries: the client bails too.
         let Some(emote_id) = emotes.gesture(gesture.slot()) else {
             continue;
         };

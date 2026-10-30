@@ -1,6 +1,6 @@
 //! `WeaponImpactSounds.dbc`: the melee impact sounds, ten normal and ten critical kits per weapon
 //! subclass and material (column 2; a metal weapon carries the metal parry kits), which the client
-//! reads as `AUIMPACTSOUNDARRAY` (`0x587450`). Slots 7-9 are wood, stone and ethereal creatures,
+//! reads as `AUIMPACTSOUNDARRAY`. Slots 7-9 are wood, stone and ethereal creatures,
 //! `CreatureImpactType` 2, 1 and 3.
 
 use std::collections::HashMap;

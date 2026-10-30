@@ -1,4 +1,4 @@
-//! The addon-info block ending `CMSG_AUTH_SESSION`, written by `0x51d910` after the 20-byte
+//! The addon-info block ending `CMSG_AUTH_SESSION`, written by the reference after the 20-byte
 //! proof: a `u32` uncompressed size, then a zlib (RFC1950) stream to the end of the packet.
 //! Uncompressed, it is one record per addon whose `.toc` sets `## Secure:` non-zero, enabled or
 //! not, with no count or trailer: `CString` name, `u8` flags (`.pub` byte 0), `u32` CRC-32 of the
@@ -15,8 +15,8 @@
 /// seeing it does not send the 256-byte modulus back in `SMSG_ADDON_INFO`.
 pub const STANDARD_MODULUS_CRC: u32 = 0x4C1C_776D;
 
-/// The addons `SMSG_ADDON_INFO` hides: record i answers `sent[i]` (the reply carries no names),
-/// and status 2 makes the reference set `[rec+0x29] = 1` (`0x51db84`), dropping it from Lua.
+/// The addons `SMSG_ADDON_INFO` hides: record i answers `sent[i]` (the reply carries no names), and
+/// status 2 makes the reference set `[rec+0x29] = 1`, dropping it from Lua.
 pub fn hidden_from_reply(statuses: &[u8], sent: &[SecureAddon]) -> Vec<String> {
     statuses
         .iter()

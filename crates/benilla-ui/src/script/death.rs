@@ -1,8 +1,7 @@
 //! The release, reclaim, resurrect and self-res verbs and the getters the `DEATH`,
-//! `RECOVER_CORPSE`, `RESURRECT` and `XP_LOSS` dialogs call, over a snapshot the app pushes.
-//! The three predicates answer Lua booleans where the reference answers `1` or nil
-//! (`ResurrectHasSickness` `0x48aa00`, `ResurrectHasTimer` `0x48aa30`, `CheckSpiritHealerDist`
-//! `0x48d120`).
+//! `RECOVER_CORPSE`, `RESURRECT` and `XP_LOSS` dialogs call, over a snapshot the app pushes. The
+//! three predicates answer Lua booleans where the reference answers `1` or nil
+//! (`ResurrectHasSickness`, `ResurrectHasTimer`, `CheckSpiritHealerDist`).
 
 use mlua::{Lua, Value};
 
@@ -25,7 +24,7 @@ pub struct DeathUiState {
     /// The sickness duration a spirit-healer res would apply ("N minutes"); `None` below the
     /// sickness level picks `XP_LOSS_NO_SICKNESS` (`UIParent.lua:399-408`).
     pub sickness_duration: Option<String>,
-    /// `HasSoulstone()`'s label (`0x48ac80`), stamped on the DEATH dialog's second button:
+    /// `HasSoulstone()`'s label, stamped on the DEATH dialog's second button:
     /// `PLAYER_SELF_RES_SPELL`'s `Spell.dbc` name (3026 and 20758-20761 "Use Soulstone", 21169
     /// "Reincarnation", 23700 "Twisting Nether"), else a carried self-resurrect item's name.
     pub self_res_label: Option<String>,

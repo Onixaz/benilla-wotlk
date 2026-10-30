@@ -1,9 +1,9 @@
 //! The sky dome, the gradient backdrop. The reference draws the sky first each frame as an unlit,
 //! vertex-coloured dome without depth writes: a camera-centred cap of 1 apex and 5 rings × 24
-//! segments, recentred by `−cos(45°)` so the rim sits at eye level (builder `0x6d0d10`, colours
-//! `0x6d0f50`). The five `Light.dbc` `SkyColor` stops (LightIntBand rows 2 to 6) sit one per ring
-//! at 90°, 16.8°, 9.8°, 3.7° and 1.8° of elevation, the horizon and below are the fog colour
-//! (row 7), and colour is linear in elevation between rings.
+//! segments, recentred by `−cos(45°)` so the rim sits at eye level. The five `Light.dbc` `SkyColor`
+//! stops (LightIntBand rows 2 to 6) sit one per ring at 90°, 16.8°, 9.8°, 3.7° and 1.8° of
+//! elevation, the horizon and below are the fog colour (row 7), and colour is linear in elevation
+//! between rings.
 //!
 //! Here a world-aligned sphere around the camera interpolates the stops per fragment by view
 //! elevation, at the far plane ([`crate::sky_order`]), so world geometry always paints over it.
@@ -51,8 +51,8 @@ pub struct SkyExt {
     /// Fog colour (LightIntBand row 7): the horizon (0°) and below.
     #[uniform(100)]
     pub(crate) fog: Vec4,
-    /// Dawn/dusk azimuthal warp (`0x6d0f50`): `x` the strength `S` (`WowLighting.sky_warp`, 0 for
-    /// none), `y` the sun azimuth `atan2(sun.z, sun.x)` in radians, `zw` reserved.
+    /// Dawn/dusk azimuthal warp: `x` the strength `S` (`WowLighting.sky_warp`, 0 for none), `y` the
+    /// sun azimuth `atan2(sun.z, sun.x)` in radians, `zw` reserved.
     #[uniform(100)]
     pub(crate) warp: Vec4,
 }
@@ -67,8 +67,8 @@ impl MaterialExtension for SkyExt {
         "embedded://benilla_world/shaders/sky.wgsl".into()
     }
 
-    /// No depth write, as every sky element inherits from `CSky::Render` (`0x6d4940`); the depth
-    /// test stays on. The glare quads are then occluded by world geometry only, never the dome.
+    /// No depth write, as every sky element inherits from the sky render; the depth test stays on.
+    /// The glare quads are then occluded by world geometry only, never the dome.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
@@ -168,7 +168,8 @@ fn setup_sky(
     mut materials: ResMut<Assets<SkyMaterial>>,
 ) {
     let mesh = meshes.add(dome_mesh());
-    // Seeded with the neutral-day fallback; `update_sky_colors` overwrites from Light.dbc each frame.
+    // Seeded with the neutral-day fallback; `update_sky_colors` overwrites from Light.dbc each
+    // frame.
     let material = materials.add(SkyMaterial {
         base: StandardMaterial {
             unlit: true,
@@ -218,9 +219,9 @@ fn follow_camera(
 }
 
 /// Hide the dome for the debug toggle, under a WMO skybox (its MOSB model replaces the gradient)
-/// and while submerged: the reference's submerged test (`0x6812a4`) skips `CSky::Render`
-/// (`0x6d4940`) whole. The skybox gate is its weight: below 0.99 the dome still draws under the
-/// crossfading skybox ([`crate::skybox::SkyboxWeight`]).
+/// and while submerged: the reference's submerged test skips the sky render whole. The skybox gate
+/// is its weight: below 0.99 the dome still draws under the crossfading skybox
+/// ([`crate::skybox::SkyboxWeight`]).
 fn apply_sky_visibility(
     debug: Res<DebugState>,
     skybox: Res<crate::skybox::SkyboxWeight>,

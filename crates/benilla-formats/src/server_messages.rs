@@ -1,8 +1,7 @@
 //! `ServerMessages.dbc`, the five sentences the server can say to everyone. `SMSG_SERVER_MESSAGE`
-//! carries a row id and a fill: the client indexes this table by `messageType` (`0x49dfbb`, store
-//! `[0xc0d990]`) and fills the row's `%s` with the packet's text (`snprintf(buf, 0x400, …)` at
-//! `0x49dff0`), or copies the row when the text is empty (`0x49dfc8`, `0x64a5a0`). The ids are
-//! vmangos's `ServerMessageType` (`World.h:62`).
+//! carries a row id and a fill: the client indexes this table by `messageType` and fills the row's
+//! `%s` with the packet's text (`snprintf(buf, 0x400, …)`), or copies the row when the text is
+//! empty. The ids are vmangos's `ServerMessageType` (`World.h:62`).
 
 use crate::dbc_layout::LocalizedTable;
 use anyhow::{Context, Result};
@@ -41,8 +40,8 @@ impl ServerMessagesCatalog {
         self.rows.len()
     }
 
-    /// The line `SMSG_SERVER_MESSAGE` becomes (`0x49dfab`-`0x49e030`): a row and a fill format, a
-    /// row alone is copied, and no row falls back to the reference's `"[%d]: %s"` (`0x844864`).
+    /// The line `SMSG_SERVER_MESSAGE` becomes: a row and a fill format, a row alone is copied, and
+    /// no row falls back to the reference's `"[%d]: %s"`.
     ///
     /// Deviation: a row with two `%s` fills only the first, because the reference's one-argument
     /// `snprintf` fills the second with stack garbage; no shipped row has two.

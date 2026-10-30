@@ -1086,7 +1086,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             ) = match info {
                 Some(i) => (
                     Some(i.name),
-                    // An empty subname is none: the reference draws no line for it (`0x608f50`).
+                    // An empty subname is none: the reference draws no line for it.
                     Some(i.subname).filter(|s| !s.is_empty()),
                     Some(i.cursor_name).filter(|s| !s.is_empty()),
                     Some(i.creature_type),
@@ -1155,8 +1155,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::StandStateUpdate { state } => {
             vec![SessionEvent::StandStateUpdate { state }]
         }
-        // Nothing: the reference's `0x5e7d70` discards the echoed guid, and the inspect window
-        // reads the target's `PLAYER_VISIBLE_ITEM_*` fields. Parsed so no tally calls it dropped.
+        // Nothing: the reference's discards the echoed guid, and the inspect window reads the
+        // target's `PLAYER_VISIBLE_ITEM_*` fields. Parsed so no tally calls it dropped.
         ServerPacket::Inspect { .. } => Vec::new(),
         ServerPacket::FishNotHooked => vec![SessionEvent::FishNotHooked],
         ServerPacket::FishEscaped => vec![SessionEvent::FishEscaped],
@@ -1398,10 +1398,10 @@ fn entity_kind(t: ObjectType) -> EntityKind {
     }
 }
 
-/// A create's display id. A player resolves like a unit (the 1.12 client's `CGPlayer` inherits
-/// `CGUnit`'s display build); a corpse's is the player's native display (reference: `0x5d6700`).
-/// A bone pile's id is still reported: `entities::corpse` swaps in `<Race><Sex>DeathSkeleton`,
-/// and `None` would hide the flesh-to-bones flip the reference reloads the model on.
+/// A create's display id. A player resolves like a unit (the 1.12 client's player object inherits
+/// the unit's display build); a corpse's is the player's native display. A bone pile's id is still
+/// reported: `entities::corpse` swaps in `<Race><Sex>DeathSkeleton`, and `None` would hide the
+/// flesh-to-bones flip the reference reloads the model on.
 fn display_id(t: ObjectType, mask: &ObjectFields) -> Option<u32> {
     match t {
         ObjectType::Unit | ObjectType::Player => {
@@ -1416,8 +1416,8 @@ fn display_id(t: ObjectType, mask: &ObjectFields) -> Option<u32> {
     }
 }
 
-/// `OBJECT_FIELD_SCALE_X`, the complete render scale: the reference sizes by it alone (`0x613ef0`),
-/// and vmangos already folds the display scale in (`Unit::GetScaleForDisplayId`).
+/// `OBJECT_FIELD_SCALE_X`, the complete render scale: the reference sizes by it alone, and vmangos
+/// already folds the display scale in (`Unit::GetScaleForDisplayId`).
 fn object_scale(t: ObjectType, mask: &ObjectFields) -> f32 {
     let raw = match t {
         // vmangos sets a corpse's scale too (`Corpse::Create` → `SetObjectScale`).

@@ -16,9 +16,8 @@ const MONSTER_MOVE_STOP: u8 = 0x1;
 /// The absolute waypoints after the start, endpoint last (vmangos `PacketBuilder`). Flying
 /// (`WriteCatmullRomPath`): a `u32` count, then that many absolute points. Ground
 /// (`WriteLinearPath`): a `u32` count, the absolute endpoint, then `count - 1` packed
-/// `endpoint - waypoint` offsets. The start is not among them: vmangos writes from
-/// `firstPoint = 1` (`MoveSplineInit.cpp:169`), and the reference decoder (`0x6018f0`) reads
-/// the same `count - 1`.
+/// `endpoint - waypoint` offsets. The start is not among them: vmangos writes from `firstPoint = 1`
+/// (`MoveSplineInit.cpp:169`), and the reference decoder reads the same `count - 1`.
 fn read_monster_move_spline(r: &mut &[u8], catmull_rom: bool) -> io::Result<Vec<Vector3d>> {
     let count = read_u32_le(r)?;
     // 0xFFFF bounds only the pre-allocation against a corrupt `count`.

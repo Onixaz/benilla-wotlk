@@ -389,8 +389,8 @@ fn in_flight_roll_opens_without_a_name_or_icon() {
 }
 
 /// The stock popup paints only in `OnShow`, so a `START_LOOT_ROLL` that beats its roll to the model
-/// stays blank. On a cache miss the reference fires it from the item-template arrival callback
-/// (`0x61b460`, armed by `0x61b310`), and `feed_loot_rolls` holds it the same way.
+/// stays blank. On a cache miss the reference fires it from the item-template arrival callback, and
+/// `feed_loot_rolls` holds it the same way.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn nothing_repaints_a_frame_that_opened_before_its_snapshot() {
@@ -629,8 +629,7 @@ fn the_stock_group_loot_frame_survives_an_in_flight_roll() {
     }
     s.set_loot_rolls(rolls());
 
-    // Roll 9 is in flight and roll 99 unknown: both answer the reference's miss tail, quality 1
-    // (`0x4c31a3`).
+    // Roll 9 is in flight and roll 99 unknown: both answer the reference's miss tail, quality 1.
     for roll in [9, 99] {
         s.run(&format!("GroupLootFrame_OpenNewFrame({roll}, 55000)"))
             .unwrap_or_else(|e| panic!("stock OpenNewFrame raised on roll {roll}: {e}"));

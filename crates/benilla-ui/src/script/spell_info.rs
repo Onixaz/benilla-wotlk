@@ -23,7 +23,7 @@ pub struct SpellInfo {
     pub cost: i64,
     pub funnel: bool,
     pub power_type: i64,
-    /// `GetCastTime` as an unsigned dword, 0 under `Attributes & 0x40`.
+    /// The spell's cast time as an unsigned dword, 0 under `Attributes & 0x40`.
     pub cast_ms: u32,
     /// `(minRange, maxRange)`; `None` without the player or the caster, which ends the returns
     /// at seven.
@@ -34,8 +34,8 @@ pub struct SpellInfo {
 pub trait SpellInfoSource {
     fn spell_info(&self, spell_id: u32, pet: bool) -> Option<SpellInfo>;
 
-    /// `Spell_C_IsCurrentSpell` (`0x806030`) for `spell_id`, the player's cast state as the call
-    /// is made.
+    /// The current-spell test (`0x806030`) for `spell_id`, the player's cast state as the call is
+    /// made.
     fn is_current_spell(&self, _spell_id: u32) -> bool {
         false
     }
@@ -48,9 +48,10 @@ impl super::UiScript {
     }
 }
 
-/// `GetSlotFromLua`'s spell (`0x540670`), `Ok(None)` for a name the book lacks: a number and a
-/// string are a book slot below 1024, else the binding raises; a string is a book name, with the
-/// second argument its subtext unless it names a unit. The error names the binding, `verb`.
+/// The Lua spell-argument resolver's spell (`0x540670`), `Ok(None)` for a name the book lacks: a
+/// number and a string are a book slot below 1024, else the binding raises; a string is a book
+/// name, with the second argument its subtext unless it names a unit. The error names the binding,
+/// `verb`.
 pub(super) fn spell_of(
     lua: &Lua,
     args: &MultiValue,

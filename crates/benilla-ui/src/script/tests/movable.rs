@@ -62,8 +62,8 @@ fn the_canonical_addon_idiom_moves_a_frame_and_the_position_survives_the_stop() 
     assert_eq!(corner(&mut s), (200.0, 150.0), "no longer following");
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 
-    // The stop unflattens the frame (`UnflattenFrame` `0x48a840`): one anchor, to the screen
-    // point nearest its own, here the centres.
+    // The stop unflattens the frame (`0x48a840`): one anchor, to the screen point nearest its own,
+    // here the centres.
     let (n, point, rel, x, y) = s
         .eval::<(i64, String, Option<String>, f64, f64)>(
             "local p, r, _, x, y = MovePanel:GetPoint() return MovePanel:GetNumPoints(), p, r, x, y",
@@ -98,7 +98,7 @@ fn a_moving_frame_follows_successive_mouse_moves() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The reference's `StartMoving` raises on a frame that is not movable (`0x776700`).
+/// The reference's `StartMoving` raises on a frame that is not movable.
 #[test]
 fn start_moving_on_a_frame_that_is_not_movable_raises_and_moves_nothing() {
     let mut s = script();
@@ -206,7 +206,7 @@ fn a_frame_stretched_between_two_anchors_moves_rigidly() {
 }
 
 /// A scaled frame tracks the cursor 1:1 on screen: the offsets it writes are in local units
-/// (`0x768710` divides by the frame's scale).
+/// (divides by the frame's scale).
 #[test]
 fn a_scaled_frame_tracks_the_cursor_one_to_one_on_screen() {
     let mut s = script();
@@ -242,8 +242,8 @@ fn a_scaled_frame_tracks_the_cursor_one_to_one_on_screen() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The reference refuses `SetUserPlaced` unless the frame is movable or resizable (`0x776adb`),
-/// and its drag start sets the bit itself (`0x7652b0`).
+/// The reference refuses `SetUserPlaced` unless the frame is movable or resizable, and its drag
+/// start sets the bit itself.
 #[test]
 fn the_three_flags_default_off_round_trip_and_user_placed_is_guarded() {
     let mut s = script();
@@ -329,9 +329,9 @@ fn the_xml_movable_and_resizable_attributes_reach_the_methods() {
     );
 }
 
-/// `StartSizing(grip)` (`0x776830`, called from `FloatingChatFrame.lua:600`) moves the gripped
-/// edges and plants the opposite ones. Which edges a grip moves is untraced in the reference, whose
-/// verb has no inline math; this takes the anchor point's plain meaning, as that caller does.
+/// `StartSizing(grip)` (called from `FloatingChatFrame.lua:600`) moves the gripped edges and plants
+/// the opposite ones. Which edges a grip moves is untraced in the reference, whose verb has no
+/// inline math; this takes the anchor point's plain meaning, as that caller does.
 #[test]
 fn start_sizing_moves_the_gripped_edge_and_plants_the_other() {
     let mut s = crate::script::UiScript::new().unwrap();
@@ -382,7 +382,7 @@ fn start_sizing_moves_the_gripped_edge_and_plants_the_other() {
     );
 }
 
-/// `CreateTitleRegion` (`0x773910`) and `GetTitleRegion` (`0x773820`): the object half.
+/// `CreateTitleRegion` and `GetTitleRegion`: the object half.
 #[test]
 fn a_title_region_is_a_plain_region_and_creating_it_twice_is_destructive() {
     let mut s = script();
@@ -396,7 +396,7 @@ fn a_title_region_is_a_plain_region_and_creating_it_twice_is_destructive() {
     )
     .unwrap();
 
-    // With none, it returns one nil, where `GetBackdrop` (`0x777370`) returns no value at all.
+    // With none, it returns one nil, where `GetBackdrop` returns no value at all.
     assert_eq!(s.arity("TFrame:GetTitleRegion()").unwrap(), 1);
     assert!(s
         .eval::<Option<bool>>("return TFrame:GetTitleRegion() ~= nil and true or nil")
@@ -439,8 +439,7 @@ fn a_title_region_is_a_plain_region_and_creating_it_twice_is_destructive() {
         "the second call ran ClearAllPoints on the region it returned"
     );
 
-    // It answers the 19 Region methods and nothing else (`0x81c554`, `0x81c528`): no Show/Hide,
-    // no scripts, no textures.
+    // It answers the 19 Region methods and nothing else: no Show/Hide, no scripts, no textures.
     for name in crate::script::REGION_MAP_METHODS {
         assert_eq!(
             s.eval::<String>(&format!("return type(TR.{name})"))
@@ -536,7 +535,7 @@ fn a_title_region_drag_swallows_the_press_and_ends_on_release() {
         "the move ended at the release; a scripted StartMoving would still be running"
     );
 
-    // The movable bit is not read on this path (`0x7662c0`, `0x765320`, `0x7652b0`, `0x768430`).
+    // The movable bit is not read on this path.
     assert!(!s.eval::<bool>("return TP:IsMovable()").unwrap());
 }
 
@@ -570,9 +569,9 @@ fn region_getters_answer_in_the_owners_units_under_scale() {
     assert!((cx - (fl + fr) * 0.5).abs() < 1e-3);
 }
 
-/// `SavePlacedFrames` writes a frame only when it is user-placed (`0x1000`) and movable or
-/// resizable (`0x300`): the drag start (`0x7652b0` at `0x7652e5`) and the restore set the bit past
-/// `SetUserPlaced`'s guard (`0x776adb`), so clearing the flags stops the save.
+/// The placed-frame save writes a frame only when it is user-placed (`0x1000`) and movable or
+/// resizable (`0x300`): the drag start and the restore set the bit past `SetUserPlaced`'s guard, so
+/// clearing the flags stops the save.
 #[test]
 fn the_write_filter_is_user_placed_and_movable_or_resizable() {
     let mut s = script();
@@ -612,7 +611,7 @@ fn the_write_filter_is_user_placed_and_movable_or_resizable() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `LoadPlacedFrames` seats the position only on a movable frame and the size only on a
+/// The placed-frame load seats the position only on a movable frame and the size only on a
 /// resizable one, each arm stamping userPlaced; a frame with neither flag is left alone. The
 /// snapshot names the point nearest the screen's same point, so it reads back where it was.
 #[test]

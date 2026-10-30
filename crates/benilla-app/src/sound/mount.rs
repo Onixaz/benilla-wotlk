@@ -1,8 +1,7 @@
-//! The dismount sound, the one mount-transition sound the client plays: the dismount handler
-//! `0x607ce0` always plays a fixed kit, resolved once at startup by name-match to
-//! `"SpiritWolf (DONOTRENAME)"` (`0x623110` → `0x8627bc`), at the dismounting unit. It is not
-//! CreatureSoundData, and the attach path `0x607a00` plays nothing, so mounting is silent. A
-//! remount (id → id′) is not a dismount.
+//! The dismount sound, the one mount-transition sound the client plays: the dismount handler always
+//! plays a fixed kit, resolved once at startup by name-match to `"SpiritWolf (DONOTRENAME)"`, at
+//! the dismounting unit. It is not CreatureSoundData, and the attach path plays nothing, so
+//! mounting is silent. A remount (id → id′) is not a dismount.
 
 use bevy::prelude::*;
 
@@ -13,7 +12,7 @@ use benilla_world::schedule::WorldStage;
 use super::kit::{play_kit, KitRef, SoundCategory, SoundKits};
 use super::{AudioListener, SoundConfig, SoundOutput};
 
-/// The client's fixed dismount kit by SoundEntries `Name`, the constant at `0x8627bc`.
+/// The client's fixed dismount kit by SoundEntries `Name`, the constant.
 const DISMOUNT_KIT: &str = "SpiritWolf (DONOTRENAME)";
 
 /// Play the dismount kit on any streamed unit's `UNIT_FIELD_MOUNTDISPLAYID` edge to zero, or at an

@@ -11,7 +11,7 @@ pub const ACTION_BUTTON_SLOTS: usize = 144;
 
 /// The action-button kind, bits 24-31 of a slot word (`ActionButtonType`, vmangos `Player.h`).
 pub const ACTION_KIND_SPELL: u8 = 0x00;
-/// An equipment set, the action its id (`CGActionBar::IsEquipmentSet`, `0x5a78f0`).
+/// An equipment set, the action its id (`0x5a78f0`).
 pub const ACTION_KIND_EQUIPMENT_SET: u8 = 0x20;
 pub const ACTION_KIND_MACRO: u8 = 0x40;
 pub const ACTION_KIND_ITEM: u8 = 0x80;
@@ -59,11 +59,11 @@ pub fn set_action_button(button: u8, packed: u32) -> Vec<u8> {
     body
 }
 
-/// `CMSG_SET_ACTIONBAR_TOGGLES`: one `u8`, the whole body (`SetActionBarToggles 0x4e76e0`).
-/// The byte is server-owned: the reference never writes its copy (`PLAYER_FIELD_BYTES` byte 2),
-/// which changes only when `SMSG_UPDATE_OBJECT` echoes it, with no change event; read it with
-/// [`super::ObjectFields::player_action_bar_toggles`]. The reference packs only bits 0..3, so a
-/// set clears the high nibble; this encoder does not mask. Bits name bars only in FrameXML.
+/// `CMSG_SET_ACTIONBAR_TOGGLES`: one `u8`, the whole body (`SetActionBarToggles`). The byte is
+/// server-owned: the reference never writes its copy (`PLAYER_FIELD_BYTES` byte 2), which changes
+/// only when `SMSG_UPDATE_OBJECT` echoes it, with no change event; read it with
+/// [`super::ObjectFields::player_action_bar_toggles`]. The reference packs only bits 0..3, so a set
+/// clears the high nibble; this encoder does not mask. Bits name bars only in FrameXML.
 pub fn set_actionbar_toggles(toggles: u8) -> Vec<u8> {
     vec![toggles]
 }

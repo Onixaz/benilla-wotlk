@@ -1,19 +1,18 @@
-//! Raid-target marker overhead billboards, the name render's marker leg (`0x6c709a`): each unit
-//! holding a mark on the 8-slot board (`GroupState::raid_targets`) and without a live V-nameplate
-//! (`[CGUnit+0xe60] == 0`; the plate shows its own raid icon) gets a world billboard, the unit
-//! quad LUT `(-.5,1,0),(.5,1,0),(.5,0,0),(-.5,0,0)` over the 4-column `UI-RaidTargetingIcons`
-//! atlas (`col = idx&3`, `row = idx>>2`, cell 0.25), indices `{0,1,3,3,1,2}`.
+//! Raid-target marker overhead billboards, the name render's marker leg: each unit holding a mark
+//! on the 8-slot board (`GroupState::raid_targets`) and without a live V-nameplate
+//! (`[unit+0xe60] == 0`; the plate shows its own raid icon) gets a world billboard, the unit quad
+//! LUT `(-.5,1,0),(.5,1,0),(.5,0,0),(-.5,0,0)` over the 4-column `UI-RaidTargetingIcons` atlas
+//! (`col = idx&3`, `row = idx>>2`, cell 0.25), indices `{0,1,3,3,1,2}`.
 //!
-//! Seat (`0x6c70d8`): with the unit's name shown, the bottom sits at
-//! `anchor + (lineCount + 1) * scale`, one line pitch above the name block; else at the anchor.
-//! `scale` is the names' height law ([`crate::nameplates::height_scale`]).
+//! Seat: with the unit's name shown, the bottom sits at `anchor + (lineCount + 1) * scale`, one
+//! line pitch above the name block; else at the anchor. `scale` is the names' height law
+//! ([`crate::nameplates::height_scale`]).
 //!
-//! Size (`0x6c7200`): a fixed one-unit world quad; `scale` never enters its geometry, and the
-//! billboard chain (`0x7bca80`) renormalizes the basis to unit length.
+//! Size: a fixed one-unit world quad; `scale` never enters its geometry, and the billboard chain
+//! renormalizes the basis to unit length.
 //!
 //! Drawn in the names' world pass, unlit and blended. Deviation: no depth write, as for the names,
-//! because blended sorting looks the same.
-//! The reference's third gate (`0x605f30() == 0`) is untraced and not applied.
+//! because blended sorting looks the same. The reference's third gate is untraced and not applied.
 
 use bevy::prelude::*;
 
@@ -27,7 +26,7 @@ use benilla_world::view::WorldCamera;
 /// The mark atlas: 4x2 icons in a 4-column grid, cell 0.25.
 const MARK_TEXTURE: &str = "mpq://interface/targetingframe/ui-raidtargetingicons.blp";
 
-/// The marker's world size (`0x6c7200`): one unit, independent of the name `scale`.
+/// The marker's world size: one unit, independent of the name `scale`.
 const MARK_WORLD_SIZE: f32 = 1.0;
 
 /// One live marker: the billboard entity and the unit it rides.
@@ -49,7 +48,7 @@ pub(crate) struct RaidMarks {
 #[derive(Component)]
 struct RaidMarkBillboard;
 
-/// The marker quad (`0x6c709a`) for one wire icon: the LUT, the atlas cell, the index list.
+/// The marker quad for one wire icon: the LUT, the atlas cell, the index list.
 fn mark_mesh(icon: u32) -> Mesh {
     use bevy::asset::RenderAssetUsages;
     use bevy::mesh::{Indices, PrimitiveTopology};
@@ -82,8 +81,8 @@ fn mark_mesh(icon: u32) -> Mesh {
     mesh
 }
 
-/// The marker's transform for `unit` this frame, seated per `0x6c70d8`. Generic over the
-/// joint-globals filter, like [`overhead_anchor`].
+/// The marker's transform for `unit` this frame, seated per. Generic over the joint-globals filter,
+/// like [`overhead_anchor`].
 fn mark_place<F: bevy::ecs::query::QueryFilter>(
     unit: Entity,
     tf: &Transform,
@@ -96,7 +95,7 @@ fn mark_place<F: bevy::ecs::query::QueryFilter>(
     mounts: &Query<(), With<crate::entities::mount::MountChild>>,
 ) -> Transform {
     let anchor = overhead_anchor(unit, tf, attach, poses, fallback, globals, mounts);
-    // `scale` drives only the seat, never the quad size (`0x6c7200`).
+    // `scale` drives only the seat, never the quad size.
     let scale = height_scale(anchor.y - tf.translation.y);
     let lift = match plates.line_count(unit) {
         Some(lines) => (lines as f32 + 1.0) * scale,
@@ -285,7 +284,7 @@ mod tests {
                 [0.5, 0.0, 0.0],
                 [-0.5, 0.0, 0.0]
             ],
-            "the 0xce875c unit-quad LUT"
+            "the unit-quad LUT"
         );
         let cell = |icon: u32| {
             let mesh = mark_mesh(icon);

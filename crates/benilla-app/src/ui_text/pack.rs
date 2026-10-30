@@ -8,9 +8,9 @@
 //! re-prepared into a new, blank `wgpu::Texture` while [`crate::ui_pass`]'s cached bind groups keep
 //! sampling the old one.
 //!
-//! Deviation: one sheet, where the reference keeps up to 8 pages per font (`[CGxFont+0x18c]`),
-//! because a nameplate bakes its glyphs into one mesh with one material, which a page would split.
-//! When it fills, [`Sheet::reset`] drops every cell at once, the only event that moves a UV.
+//! Deviation: one sheet, where the reference keeps up to 8 pages per font (`[font+0x18c]`), because
+//! a nameplate bakes its glyphs into one mesh with one material, which a page would split. When it
+//! fills, [`Sheet::reset`] drops every cell at once, the only event that moves a UV.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::Image;

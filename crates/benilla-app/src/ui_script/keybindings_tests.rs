@@ -24,8 +24,8 @@ pub(crate) fn click(s: &mut UiScript, frame: &str, button: &str) {
     s.mouse_button(x, y, button, false);
 }
 
-/// `loadstring` on each stock command body: the reference compiles each at load (`0x704c70`),
-/// and running one would need FrameXML this test does not load.
+/// `loadstring` on each stock command body: the reference compiles each at load, and running one
+/// would need FrameXML this test does not load.
 #[test]
 fn every_command_body_compiles() {
     benilla_formats::wow_data_or_skip!();

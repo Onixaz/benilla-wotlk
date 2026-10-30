@@ -27,29 +27,29 @@ mod widgets;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LoadReport {
     /// Issues that dropped nothing, and the document layer's parse warnings. An unknown frame type
-    /// drops its node yet lands here: the reference logs it and goes on (`0x6ee356`).
+    /// drops its node yet lands here: the reference logs it and goes on.
     pub warnings: Vec<String>,
     /// Failures the reference raises on: a handler that fails to compile, a method call that
     /// errors, a malformed included document.
     pub errors: Vec<String>,
     /// `<Include file=>` and `<Script file=>` paths the provider lacks. The reference logs
-    /// `"Couldn't open %s"` (`0x6edaa0`, `0x846ff4`) or `"Error loading %s"` (`0x872e50`) and goes
-    /// on (`0x6ee00d`); kept apart from `warnings` so a load that resolved nothing is not clean.
+    /// `"Couldn't open %s"` or `"Error loading %s"` and goes on; kept apart from `warnings` so a
+    /// load that resolved nothing is not clean.
     pub missing_files: Vec<String>,
     /// Frame instances `CreateFrame` built.
     pub frames: usize,
-    /// Trace lines, only while `FrameXML_Debug` is on: the reference's flag (`[0xceea30]`) boots 0
-    /// and its loader traces gate on `flag > 0` (`0x6ee298`). A trace is severity 0, not a warning.
+    /// Trace lines, only while `FrameXML_Debug` is on: the reference's flag boots 0 and its loader
+    /// traces gate on `flag > 0`. A trace is severity 0, not a warning.
     pub traces: Vec<String>,
-    /// The document's own load status, the lines `0x6ede10` reports into its record for
-    /// `Logs\FrameXML.log`: the traces, each `<Include>` or `<Script file=>` that did not open or
-    /// parse, and each included document's own record under its banner. The caller closes it
-    /// under the document's banner ([`crate::status::Status::close_into`]).
+    /// The document's own load status, the lines reports into its record for `Logs\FrameXML.log`:
+    /// the traces, each `<Include>` or `<Script file=>` that did not open or parse, and each
+    /// included document's own record under its banner. The caller closes it under the document's
+    /// banner ([`crate::status::Status::close_into`]).
     pub status: crate::status::Status,
 }
 
-/// Materialize a parsed FrameXML document into live frames in `script`, in document order
-/// (`0x6ede10`). `files` returns a path's bytes; a `None` is a [`LoadReport::missing_files`] row.
+/// Materialize a parsed FrameXML document into live frames in `script`, in document order. `files`
+/// returns a path's bytes; a `None` is a [`LoadReport::missing_files`] row.
 pub fn load(
     script: &UiScript,
     doc: &ParsedDocument,
@@ -185,9 +185,9 @@ pub fn apply_template(lua: &mlua::Lua, wrapper: &Table, kind: &str, template: &s
     out
 }
 
-/// Apply a `<Texture>` or `<FontString>` template to a region `CreateTexture` or
-/// `CreateFontString` just made (`0x773a20`, `0x773c40`): the template node's `LoadXML` on the new
-/// region, `$parent` its owner's name. Returns the warnings, then the errors.
+/// Apply a `<Texture>` or `<FontString>` template to a region `CreateTexture` or `CreateFontString`
+/// just made (`0x773c40`): the template node's XML load on the new region, `$parent` its owner's
+/// name. Returns the warnings, then the errors.
 pub fn apply_region_template(
     lua: &mlua::Lua,
     region: &Table,
@@ -242,8 +242,8 @@ pub fn join_ref(base: &str, path: &str) -> String {
     out.join("/")
 }
 
-/// A `CSimpleModel` kind, whose `LoadXML` (`0x76cac0`) reads `scale=` as the model's scale;
-/// `ModelFFX` shares it (its second vtable's slot 2).
+/// A model widget kind, whose XML load reads `scale=` as the model's scale; `ModelFFX` shares it
+/// (its second vtable's slot 2).
 pub(super) fn model_kind_tag(tag: &str) -> bool {
     crate::script::frame_kind_from_tag(tag).is_some_and(crate::widget::FrameKind::is_model)
 }
@@ -279,7 +279,7 @@ struct Loader<'a> {
     /// What the provider's path space sits under in the install's, for the status lines.
     pub(super) status_root: &'a str,
     // The template and font registries live on the `Model` and persist across loads: the
-    // reference's template table is global (`0x6ee500`), so `MerchantFrame.xml` inherits a template
+    // reference's template table is global, so `MerchantFrame.xml` inherits a template
     // `CharacterFrameTemplates.xml` registered. Fonts are their own namespace, stored flattened.
     pub(super) report: LoadReport,
     /// Warn-once keys.
@@ -313,8 +313,8 @@ impl Loader<'_> {
     /// Run a file chunk (bytes, as on disk) in the one global state, named after its path. The
     /// name matters: unnamed, mlua's `#[track_caller]` `load` names it after this Rust line.
     fn run(&self, chunk: &[u8], path: &str) -> mlua::Result<()> {
-        // The reference's file chunk name, `"@%s"` (`0x8716e0`, `0x704bc0`; a file name to
-        // `luaO_chunkid 0x6f5c40`), with `\` separators as in `crate::script::addon_chunk_name`.
+        // The reference's file chunk name, `"@%s"` (a file name to `luaO_chunkid`), with `\`
+        // separators as in `crate::script::addon_chunk_name`.
         self.run_named(chunk, &format!("@{}", path.replace('/', "\\")))
     }
 
@@ -346,10 +346,9 @@ impl Loader<'_> {
         }
     }
 
-    /// Resolve `text=` as a global-string key (`FrameScript_GetText 0x703bf0`), so
-    /// `GlobalStrings.lua` must run before any XML. A miss comes back empty (`0x882748`) and all
-    /// three `text=` readers then show the raw value (`0x778c07`, `0x771006`, `0x7292a6`). The
-    /// warning on a key-shaped miss is benilla's own.
+    /// Resolve `text=` as a global-string key, so `GlobalStrings.lua` must run before any XML. A
+    /// miss comes back empty and all three `text=` readers then show the raw value. The warning on
+    /// a key-shaped miss is benilla's own.
     pub(super) fn resolve_text(&mut self, raw: &str, dbg: &str) -> String {
         if let Ok(s) = self.lua().globals().get::<String>(raw) {
             return s;
@@ -366,16 +365,15 @@ impl Loader<'_> {
         raw.to_string()
     }
 
-    /// Walk one document's top-level items in order (`0x6ede10`).
+    /// Walk one document's top-level items in order.
     pub(super) fn load_doc(&mut self, doc: &ParsedDocument) {
         for item in &doc.items {
             match item {
                 TopLevel::Include(path) => self.do_include(path),
                 // Deviation: a `<Script file=>` value with a separator joins the including
-                // document's directory, like a bare name. The reference uses it verbatim
-                // (`0x6ee070`-`0x6ee079`) against the install directory, the root `0x646ea0`
-                // scans from Storm's base path `0xc52418` (the basename retry at `0x647ed3` is
-                // off), where a stock install has no such file, so joining breaks nothing.
+                // document's directory, like a bare name. The reference uses it verbatim against
+                // the install directory, the root scans from Storm's base path (the basename retry
+                // is off), where a stock install has no such file, so joining breaks nothing.
                 TopLevel::Script(ScriptRef::File(path)) => {
                     let joined = join_ref(self.base(), path);
                     match (self.files)(&joined) {
@@ -387,7 +385,7 @@ impl Loader<'_> {
                             }
                         }
                         None => {
-                            // The chunk arm (`0x704bc0`), whatever the extension.
+                            // The chunk arm, whatever the extension.
                             let line = status::missing(&self.status_path(&joined), true);
                             self.report.status.report(status::FAILURE, line);
                             self.report.missing_files.push(format!(
@@ -402,8 +400,8 @@ impl Loader<'_> {
                     // find in the file; the reference counts from the body's first line.
                     let mut chunk = "\n".repeat(line.saturating_sub(1) as usize).into_bytes();
                     chunk.extend_from_slice(body.as_bytes());
-                    // The reference names an inline body `"%s:<Scripts>"` (`0x871074`, formatted at
-                    // `0x6ee0ff`) over the document's path with no `@`, so a raise reads
+                    // The reference names an inline body `"%s:<Scripts>"` over the document's path
+                    // with no `@`, so a raise reads
                     // `[string "Interface\FrameXML\Foo.xml:<Scripts>"]`, not a file path.
                     let name = format!("{}:<Scripts>", self.path.replace('/', "\\"));
                     if let Err(e) = self.run_named(&chunk, &name) {
@@ -441,10 +439,9 @@ impl Loader<'_> {
             ));
             return;
         };
-        // `<Include>` recurses (`0x6ee00d`) into the reference's load-one-file routine `0x6ede10`,
-        // which dispatches on the resolved path's extension, never its content: a `.lua` suffix
-        // (`0x6edee6`-`0x6edf0f`) runs the file as a chunk (`0x704bc0`), anything else parses as
-        // XML. A `.toc` line goes through the same routine.
+        // `<Include>` recurses into the reference's load-one-file routine, which dispatches on the
+        // resolved path's extension, never its content: a `.lua` suffix runs the file as a chunk,
+        // anything else parses as XML. A `.toc` line goes through the same routine.
         if status::runs_as_lua(&joined) {
             if let Err(e) = self.run(crate::source::chunk(&bytes), &joined) {
                 self.report
@@ -458,7 +455,7 @@ impl Loader<'_> {
             Ok(sub) => {
                 self.report.warnings.extend(sub.warnings.iter().cloned());
                 // The included document resolves and names against its own path until it is done,
-                // and reports into a record of its own, closed under its banner (`0x6ee21c`).
+                // and reports into a record of its own, closed under its banner.
                 let outer = std::mem::replace(&mut self.path, joined.clone());
                 let outer_status = std::mem::take(&mut self.report.status);
                 self.load_doc(&sub);
@@ -552,8 +549,8 @@ impl Loader<'_> {
     }
 
     /// Build one template-expanded frame element, its nested `<Frames>`, then its `OnLoad`
-    /// (bottom-up, `0x76a060`). `parent` is the lexically enclosing frame, which `parent=`
-    /// overrides; `None` when the frame type is unknown, which skips the subtree.
+    /// (bottom-up). `parent` is the lexically enclosing frame, which `parent=` overrides; `None`
+    /// when the frame type is unknown, which skips the subtree.
     pub(super) fn materialize(
         &mut self,
         el: &Element,
@@ -563,9 +560,9 @@ impl Loader<'_> {
         // Only creation lives here: everything after `CreateFrame` is `decorate`, which
         // `apply_template` enters for a frame that already exists.
 
-        // 0 · The type lookup. `Instantiate 0x6ee280` checks the tag before reading `parent=`; a
-        //     miss logs `"Unknown frame type: %s"` (`0x871124`, at `0x6ee356`), builds nothing for
-        //     the node and goes on to the next sibling. Only the Lua door raises.
+        // 0 · The type lookup. The frame instantiation checks the tag before reading `parent=`;
+        //     a miss logs `"Unknown frame type: %s"`, builds nothing for the node and goes on to
+        //     the next sibling. Only the Lua door raises.
         if crate::script::object::registered_frame_kind(self.lua(), &el.tag).is_none() {
             self.report
                 .warnings
@@ -573,24 +570,24 @@ impl Loader<'_> {
             return None;
         }
 
-        // 1a · `parent=` wins over the lexical parent, unexpanded: `0x6ee280` hands the raw value
-        //      to the by-name lookup `0x76c760` (at `0x6ee3e8`). A miss is logged and stores 0 over
-        //      the default parent (`0x6ee3ef`), so the frame is built parentless (`0x6ee408`); an
-        //      empty `parent=""` keeps the default parent silently (`0x6ee3c7`).
+        // 1a · `parent=` wins over the lexical parent, unexpanded: the reference hands the raw
+        //      value to the by-name lookup. A miss is logged and stores 0 over the default
+        //      parent, so the frame is built parentless; an empty `parent=""` keeps the default
+        //      parent silently.
         //      `None`: no attribute, or an empty one. `Some(None)`: a miss, parentless and logged.
         let attr_parent: Option<Option<Table>> =
             el.attr("parent")
                 .filter(|name| !name.is_empty())
                 .map(|name| {
-                    // Only a frame counts: `0x76c760` reads the frame registry, so a non-frame
-                    // global of that name is a miss. A frame wrapper is the one table carrying
-                    // lightuserdata at `[0]` (`0x6f3ea0`).
+                    // Only a frame counts: the by-name lookup reads the frame registry, so a
+                    // non-frame global of that name is a miss. A frame wrapper is the one table
+                    // carrying lightuserdata at `[0]`.
                     let hit =
                         self.lua().globals().get::<Table>(name).ok().filter(|t| {
                             matches!(t.raw_get::<Value>(0), Ok(Value::LightUserData(_)))
                         });
                     if hit.is_none() {
-                        // The reference's wording (`0x8710f0`).
+                        // The reference's own wording.
                         self.report
                             .warnings
                             .push(format!("Couldn't find frame parent: {name}"));
@@ -602,10 +599,10 @@ impl Loader<'_> {
             None => parent,
         };
 
-        // 1b · The name resolves after the parent, against it. `Instantiate 0x6ee280` passes the
-        //      parent to the constructor (`0x6ee408`) before it applies `name=` (`0x6ee4d6`), and
-        //      `SetName 0x76c650` expands `$parent` by walking the real parent chain to the nearest
-        //      name, seeded `"Top"` (`0x76c5b0`). The base is the parent frame's own name, not the
+        // 1b · The name resolves after the parent, against it. The frame instantiation passes
+        //      the parent to the constructor before it applies `name=`, and the name set
+        //      expands `$parent` by walking the real parent chain to the nearest name, seeded
+        //      `"Top"`. The base is the parent frame's own name, not the
         //      attribute text; a nulled parent leaves the `"Top"` seed.
         let attr_parent_name: Option<String> =
             attr_parent.as_ref().map(|resolved| match resolved {
@@ -654,8 +651,8 @@ impl Loader<'_> {
             .clone()
             .unwrap_or_else(|| format!("<{}>", el.tag));
 
-        // One of the reference's five loader traces: `Instantiate 0x6ee280`'s `"-- Creating %s
-        // named %s"` (`0x871154`), gated `flag > 0` at `0x6ee298`; the first `%s` is the tag.
+        // One of the reference's five loader traces: the frame instantiation's
+        // `"-- Creating %s named %s"`, gated `flag > 0`; the first `%s` is the tag.
         if self.debug() {
             let trace = format!("-- Creating {} named {dbg_name}", el.tag);
             self.report.status.report(status::TRACE, trace.clone());
@@ -669,10 +666,9 @@ impl Loader<'_> {
         Some(wrapper)
     }
 
-    /// Everything a frame element does to an existing frame, from `LoadXML` attributes to its
-    /// `OnLoad` (last, bottom-up, `0x76a060`); shared by [`Self::materialize`] and
-    /// [`apply_template`]. `$parent` is `self_name` in this frame's contents and `parent_name` in
-    /// its own anchors (`0x76c5b0`).
+    /// Everything a frame element does to an existing frame, from its XML attributes to its
+    /// `OnLoad` (last, bottom-up); shared by [`Self::materialize`] and [`apply_template`].
+    /// `$parent` is `self_name` in this frame's contents and `parent_name` in its own anchors.
     pub(super) fn decorate(
         &mut self,
         el: &Element,
@@ -689,25 +685,25 @@ impl Loader<'_> {
         if let Some(h) = loading {
             self.model().xml_loading.insert(h);
         }
-        // 1b · <Animations>, which the region base loads first (`CScriptRegion::LoadXML`
-        //      `0x488670`); each group's `OnLoad` runs here.
+        // 1b · <Animations>, which the region base's XML load reads first (`0x488670`); each
+        //      group's `OnLoad` runs here.
         self.apply_animations(el, wrapper, self_name, dbg_name);
-        // 2 · LoadXML attributes (`0x769820`).
+        // 2 · The XML attributes.
         self.apply_attrs(el, wrapper, dbg_name);
         // 2b · <Attributes>, stored before any script can read them.
         self.apply_frame_attributes(el, wrapper, dbg_name);
-        // 3 · <Size> and 4 · <Anchors> (the CLayoutFrame geometry base, `0x767800`).
+        // 3 · <Size> and 4 · <Anchors> (the layout geometry base).
         self.apply_size(el, wrapper, dbg_name);
         self.apply_anchors(el, wrapper, parent_name, dbg_name);
-        // 5 · <Layers> regions (`0x769d70`); `$parent` in a region name is this frame.
+        // 5 · <Layers> regions; `$parent` in a region name is this frame.
         self.apply_layers(el, wrapper, self_name, dbg_name);
         // 5·b · a direct-child `<FontString>`: the widget's own text font (EditBox, message frame).
         self.apply_special_fontstrings(el, wrapper, self_name, dbg_name);
-        // 5a · <Backdrop> plate (LoadXML `0x77e6c0`): the tiled bg + 8-piece border.
+        // 5a · <Backdrop> plate: the tiled bg + 8-piece border.
         self.apply_backdrop(el, wrapper, dbg_name);
         // 5a' · <TitleRegion>: the drag handle, through the API's own CreateTitleRegion.
         self.apply_title_region(el, wrapper, self_name, dbg_name);
-        // 5b · per-kind LoadXML extras (EditBox `0x779fb0`), each gated on the element's own tag,
+        // 5b · per-kind XML-load extras, each gated on the element's own tag,
         //      so a Frame wearing a <Button> template skips the Button steps.
         self.apply_statusbar(el, wrapper, dbg_name);
         self.apply_slider(el, wrapper, self_name, dbg_name);
@@ -717,10 +713,10 @@ impl Loader<'_> {
         self.apply_messageframe(el, wrapper, dbg_name);
         self.apply_simplehtml(el, wrapper, dbg_name);
         self.apply_minimap(el, wrapper, dbg_name);
-        // 6 · <Scripts> handlers (`0x769ef0`); OnLoad is captured to fire bottom-up below.
+        // 6 · <Scripts> handlers; OnLoad is captured to fire bottom-up below.
         let onload = self.apply_scripts(el, wrapper, dbg_name);
 
-        // 7 · <ScrollChild>, read by the ScrollFrame's own `LoadXML` (`0x96b920`) for each
+        // 7 · <ScrollChild>, read by the ScrollFrame's own XML load (`0x96b920`) for each
         //     template and then the instance, so it is whole, its `OnLoad` included, before the
         //     `<Frames>` the post-load pass builds (`0x48f400`) and before this frame's `OnLoad`.
         //     Its first child is built like a `<Frames>` child and becomes the scroll child; the
@@ -772,9 +768,9 @@ impl Loader<'_> {
         }
     }
 
-    /// `<Attributes><Attribute name type value/></Attributes>` (`0x492f70`): `type` defaults to
-    /// `string`; `nil`, `boolean` and `number` convert the value, and a missing value is an error
-    /// except for `nil`. Each lands in the frame's attribute table without the change notifier.
+    /// `<Attributes><Attribute name type value/></Attributes>`: `type` defaults to `string`; `nil`,
+    /// `boolean` and `number` convert the value, and a missing value is an error except for `nil`.
+    /// Each lands in the frame's attribute table without the change notifier.
     fn apply_frame_attributes(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         for attrs in children_named(el, "Attributes") {
             for a in &attrs.children {
@@ -854,8 +850,8 @@ impl Loader<'_> {
                     }
                 }
             }
-            // No `relativeTo=`: the layout parent (`0x76c6e0`, called at `0x76785b`), or the
-            // screen for a parentless frame, which `nil` means here.
+            // No `relativeTo=`: the layout parent, or the screen for a parentless frame, which
+            // `nil` means here.
             None => match d
                 .wrapper
                 .call_method::<Option<Table>>("GetParent", ())
@@ -894,8 +890,8 @@ impl Loader<'_> {
             .ok()
             .flatten();
         let mut cur = wrapper.clone();
-        // The frame's own name and its nearest named ancestor's, else `"Top"` (`0x76c5b0`'s
-        // walk), read through `GetName`/`GetParent`. Bounded, so a malformed chain cannot hang.
+        // The frame's own name and its nearest named ancestor's, else `"Top"`, read through
+        // `GetName`/`GetParent`. Bounded, so a malformed chain cannot hang.
         for _ in 0..64 {
             let Ok(Some(parent)) = cur.call_method::<Option<Table>>("GetParent", ()) else {
                 break;

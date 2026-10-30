@@ -86,9 +86,9 @@ pub(crate) const TEMP_BAR_PET: u32 = 0x1;
 pub(crate) struct PlayerActions {
     /// Wire slot (0-based) to its packed action; the Lua action id is slot + 1.
     pub buttons: HashMap<u8, ActionButton>,
-    /// The spell book (`SMSG_INITIAL_SPELLS`), ordered on purpose: the reference's first-hit
-    /// scans (the lock resolver `0x5f83d0`) pick between equal spells, 6478 and 22810 "Opening",
-    /// by array order, which is ascending id: the server sends the book from a `std::map`.
+    /// The spell book (`SMSG_INITIAL_SPELLS`), ordered on purpose: the reference's first-hit scans
+    /// pick between equal spells, 6478 and 22810 "Opening", by array order, which is ascending id:
+    /// the server sends the book from a `std::map`.
     pub spells: BTreeSet<u32>,
     /// The saved equipment sets (`SMSG_EQUIPMENT_SET_LIST`), which a set slot names by id.
     pub equipment_sets: Vec<benilla_protocol::messages::EquipmentSet>,
@@ -151,7 +151,7 @@ impl PlayerActions {
 
 /// The world right-click's GameObject openers, queued one frame for the cast ladder: the click
 /// system cannot also hold the ladder's resources, and only the ladder sends a cast, so a chest
-/// right-clicked mid-cast takes the reference's silent same-spell bail (`0x6e4d43`).
+/// right-clicked mid-cast takes the reference's silent same-spell bail.
 #[derive(Resource, Default)]
 pub(crate) struct GoOpenerCasts(pub(crate) Vec<GoOpener>);
 
@@ -170,23 +170,23 @@ pub(crate) enum GoOpener {
 pub(crate) struct Spells {
     pub(crate) catalog: SpellCatalog,
     /// Form id to its `SpellShapeshiftForm.dbc` row: `BonusActionBar` pages the bar
-    /// (`GetBonusBarOffset 0x4e7620`), `flags1` holds the stance and cancel bits.
+    /// (`GetBonusBarOffset`), `flags1` holds the stance and cancel bits.
     pub(crate) forms: std::collections::HashMap<u32, benilla_formats::ShapeshiftForm>,
-    /// `SpellRange.dbc`, the `GetMinMaxRange 0x6e3480` inputs; empty on a failed load.
+    /// `SpellRange.dbc`, the range lookup's inputs; empty on a failed load.
     pub(crate) ranges: benilla_formats::SpellRangeCatalog,
-    /// `SpellCastTimes.dbc`, read through `CastingTimeIndex` (`GetCastTime 0x6e3340`).
+    /// `SpellCastTimes.dbc`, read through `CastingTimeIndex` by the cast-time lookup.
     pub(crate) cast_times: benilla_formats::SpellCastTimeCatalog,
-    /// `SpellDuration.dbc`: the `$d`/`$o` tokens' source (`GetDuration 0x6ea000`).
+    /// `SpellDuration.dbc`: the `$d`/`$o` tokens' source, through the duration lookup.
     pub(crate) durations: benilla_formats::SpellDurationCatalog,
     /// `SpellRadius.dbc`: the `$a` token's yards.
     pub(crate) radii: benilla_formats::SpellRadiusCatalog,
 }
 
 impl Spells {
-    /// The cast time in ms as `GetCastTime 0x6e3340` returns it for argument 1, the tooltip's
-    /// (`52eb4b`): the level-scaled `CastingTimeIndex` row, then spell-mod op 10 (`0x6e33b7`),
-    /// with no clamp, so row 18's negative time survives. A missing row returns 0 before the
-    /// modifier (`0x6e338a`). The cast-speed multiply (`0x6e3422`) is not applied.
+    /// The cast time in ms as the reference's cast-time lookup returns it for argument 1, the
+    /// tooltip's: the level-scaled `CastingTimeIndex` row, then spell-mod op 10, with no clamp, so
+    /// row 18's negative time survives. A missing row returns 0 before the modifier. The cast-speed
+    /// multiply is not applied.
     pub(crate) fn cast_time_unclamped_ms(
         &self,
         def: &benilla_formats::SpellDisplay,
@@ -201,8 +201,8 @@ impl Spells {
             })
     }
 
-    /// [`Self::cast_time_unclamped_ms`] for argument 0, the cast validator's (`0x609e16`): a
-    /// result at or below zero reads 0 (`0x6e3461`-`0x6e3470`).
+    /// [`Self::cast_time_unclamped_ms`] for argument 0, the cast validator's: a result at or below
+    /// zero reads 0.
     pub(crate) fn cast_time_ms(
         &self,
         def: &benilla_formats::SpellDisplay,
@@ -212,8 +212,8 @@ impl Spells {
         self.cast_time_unclamped_ms(def, caster_level, mods).max(0) as u32
     }
 
-    /// The learned spell `CGSpellBook_RegisterLearnedSpell` keeps for an `Effect[0]` (`0x5420a5`),
-    /// each learn overwriting it, so the book's last in ascending id order.
+    /// The learned spell the spell book's learn hook keeps for an `Effect[0]` (`0x5420a5`), each
+    /// learn overwriting it, so the book's last in ascending id order.
     pub(crate) fn learned_with_effect(&self, learned: &BTreeSet<u32>, effect: u32) -> Option<u32> {
         learned.iter().rev().copied().find(|id| {
             self.catalog
@@ -252,11 +252,10 @@ pub(crate) fn real_spells() -> Option<Spells> {
     })
 }
 
-/// The reference's learned-ability latches: at learn time `CGSpellBook_RegisterLearnedSpell
-/// 0x542030` stores a spell's id by its `Effect[0]` (switch `0x54209e`), and `DelKnownSpell`
-/// clears it (`0x53fb37`..`0x53fb77`). The skin cursor and click read the slots through
-/// `GetSkinningSpell 0x53bce0` ([`Self::skinning_spell`]), so a corpse whose slot is empty gets
-/// neither.
+/// The reference's learned-ability latches: at learn time the spell book's learn hook (`0x542030`)
+/// stores a spell's id by its `Effect[0]` (switch `0x54209e`), and unlearning clears it
+/// (`0x53fb37`..`0x53fb77`). The skin cursor and click read the slots through the skinning lookup
+/// (`0x53bce0`, [`Self::skinning_spell`]), so a corpse whose slot is empty gets neither.
 #[derive(Resource, Default)]
 pub(crate) struct LearnedAbilities {
     /// `[0xbe5d6c + 4 × EffectMiscValue[0]]` (`0x5420c7`): the known `SPELL_EFFECT_SKINNING` spell
@@ -266,12 +265,12 @@ pub(crate) struct LearnedAbilities {
     /// `[0xbe5d7c]` (`0x5420d6`): the known `SPELL_EFFECT_SKIN_PLAYER_CORPSE` spell, Remove
     /// Insignia, the slot a player or corpse reads.
     pub(crate) skin_player_corpse: Option<u32>,
-    /// `[0xcecad8]`: the known `SPELL_EFFECT_FEED_PET` spell, latched by `0x6ea1d0` (from
-    /// `0x5e9e49`); gate 3 of [`drop_item::drop_item_on_unit`] and the spell it casts.
+    /// The known `SPELL_EFFECT_FEED_PET` spell, latched; gate 3 of [`drop_item::drop_item_on_unit`]
+    /// and the spell it casts.
     pub(crate) feed_pet: Option<u32>,
 }
 
-/// What `GetSkinningSpell 0x53bce0` tells apart by the object's type mask.
+/// What the skinning lookup (`0x53bce0`) tells apart by the object's type mask.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum SkinSubject {
     /// Mask `0x90`, a player or a corpse: the Remove Insignia slot.
@@ -300,7 +299,7 @@ impl SkinSubject {
     }
 }
 
-/// `CGUnit_C::GetSkinningType 0x715e50`: the creature template's type flags `0x100` herb (1),
+/// The unit's skinning type (`0x715e50`): the creature template's type flags `0x100` herb (1),
 /// `0x200` rock (2), `0x8000` bolts (3), in that order, otherwise leather (0).
 pub(crate) fn skinning_type(type_flags: u32) -> usize {
     if type_flags & 0x100 != 0 {
@@ -314,8 +313,7 @@ pub(crate) fn skinning_type(type_flags: u32) -> usize {
     }
 }
 
-/// The GlobalString of the tooltip's skinnable line by [`skinning_type`]
-/// (`CGTooltip::AddSkinnableText 0x620ee0`).
+/// The GlobalString of the tooltip's skinnable line by [`skinning_type`] (`0x620ee0`).
 pub(crate) fn skinnable_text_key(type_flags: u32) -> &'static str {
     [
         "UNIT_SKINNABLE_LEATHER",
@@ -326,7 +324,7 @@ pub(crate) fn skinnable_text_key(type_flags: u32) -> &'static str {
 }
 
 impl LearnedAbilities {
-    /// `GetSkinningSpell 0x53bce0`: the spell the skin cursor, click and tooltip read for
+    /// The skinning lookup (`0x53bce0`): the spell the skin cursor, click and tooltip read for
     /// `subject`, `None` when its slot is empty.
     pub(crate) fn skinning_spell(&self, subject: SkinSubject) -> Option<u32> {
         match subject {
@@ -339,7 +337,7 @@ impl LearnedAbilities {
 /// The "Remove Insignia" effect, latched into `[0xbe5d7c]` (`0x5420d6`).
 const SPELL_EFFECT_SKIN_PLAYER_CORPSE: u32 = 0x74;
 
-/// The effect latched into `[0xcecad8]` at learn time (`0x5e9e42`); only Feed Pet 6991 has it.
+/// The effect the reference latches at learn time; only Feed Pet 6991 has it.
 const SPELL_EFFECT_FEED_PET: u32 = 0x65;
 
 /// Re-derives [`LearnedAbilities`] whenever the book changes, standing in for learn-time writes.

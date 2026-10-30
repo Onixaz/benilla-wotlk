@@ -1,8 +1,8 @@
-//! The residency window, derived from `farclip` (177..777) as the reference derives it:
-//! `SetFarClip` (`0x6725d0`) sets `r = 1 + trunc(farclip / 33.333)` chunks, and the world tick
-//! (`0x672730`) centres two windows on the viewer's chunk, the inner `idx ± r` (must be resident)
-//! and the outer `idx ± max(r + 2, 8)` (requested ahead, built under 5 ms a frame). Eviction is
-//! membership in the outer window, by tile (`[area+0x88]` vs `bounds >> 4`).
+//! The residency window, derived from `farclip` (177..777) as the reference derives it: the
+//! far-clip setter sets `r = 1 + trunc(farclip / 33.333)` chunks, and the world tick centres two
+//! windows on the viewer's chunk, the inner `idx ± r` (must be resident) and the outer
+//! `idx ± max(r + 2, 8)` (requested ahead, built under 5 ms a frame). Eviction is membership in the
+//! outer window, by tile (`[area+0x88]` vs `bounds >> 4`).
 //!
 //! - Deviation: whole tiles, because benilla loads, spawns and releases ADT tiles, not chunks: a
 //!   tile is wanted when any of its chunks lies in the outer window, so the resident edge is a
@@ -16,7 +16,7 @@ use benilla_formats::{world_to_chunk, CHUNK_SIZE, TILE_SIZE};
 const CHUNKS_PER_TILE: i32 = 16;
 /// Chunk indices run `0..=1023` (64 tiles × 16), matching the reference's `[0, 0x3ff]` clamp.
 const CHUNK_MAX: i32 = 64 * CHUNKS_PER_TILE - 1;
-/// The outer window's floor in chunks: `max(r + 2, 8)` (`0x672966`–`0x67297b`).
+/// The outer window's floor in chunks: `max(r + 2, 8)`.
 const OUTER_FLOOR_CHUNKS: i32 = 8;
 /// Chunks the outer window grows by for the release test only.
 pub const KEEP_BAND_CHUNKS: i32 = 1;
@@ -82,8 +82,8 @@ impl StreamWindow {
     }
 }
 
-/// The inner half-width in chunks, `1 + trunc(farclip / 33.333)` (`0x6725e9`: `fmul −0.03`,
-/// `__ftol`, `1 − eax`): 777 ⇒ 24, 350 ⇒ 11, 177 ⇒ 6.
+/// The inner half-width in chunks, `1 + trunc(farclip / 33.333)` (`fmul −0.03`, `__ftol`,
+/// `1 − eax`): 777 ⇒ 24, 350 ⇒ 11, 177 ⇒ 6.
 pub fn inner_radius(farclip: f32) -> i32 {
     1 + (farclip / CHUNK_SIZE).trunc() as i32
 }

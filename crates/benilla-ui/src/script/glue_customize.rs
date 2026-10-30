@@ -1,4 +1,4 @@
-//! The create screen's appearance dials as `CCharacterComponent` walks them: each dial holds a
+//! The create screen's appearance dials as the character component walks them: each dial holds a
 //! `CharSections` variation or colour index, and a step or a draw only lands on rows the class's
 //! flag selection admits (`0x4f39a0`), the face keyed by the skin, the hair style and colour by
 //! each other, the facial hair by the hair colour.
@@ -10,7 +10,7 @@ const FACIAL_HAIR: usize = 2;
 const HAIR: usize = 3;
 const UNDERWEAR: usize = 4;
 
-/// One (race, sex)'s `CharSections` grid as `BuildComponentArray` (`0x4f3dd0`) lays it out: per
+/// One (race, sex)'s `CharSections` grid as the component array build (`0x4f3dd0`) lays it out: per
 /// base section, `[variation][color]`, each slot the `Flags` of the row there or `None`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GlueCustomizeGrid {
@@ -19,7 +19,7 @@ pub struct GlueCustomizeGrid {
     pub facial_hair_styles: u32,
 }
 
-/// `ComponentFlagsMatch` (`0x4f39a0`) at the create screen's selections, 0 and, for class 6, 1
+/// The component flag match (`0x4f39a0`) at the create screen's selections, 0 and, for class 6, 1
 /// (`0x4f3a40` with context 0): a creatable row, and for a Death Knight one flagged `0x4` or
 /// `0x10`; never an NPC's (`0x8`), and `0x4` only for a Death Knight. The barber shop's context
 /// selects 2 and 3, which admit a barber-only row (`0x2`) beside a creatable one.
@@ -32,7 +32,7 @@ fn flags_match(flags: u32, death_knight: bool, barber: bool) -> bool {
     }
 }
 
-/// The five dials, `CharacterPreferences`' section indices.
+/// The five dials, the character preferences' section indices.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Prefs {
     skin: i32,
@@ -95,12 +95,12 @@ impl<'a> Customizer<'a> {
         self.p.dials()
     }
 
-    /// `ComponentGetNumVariations` (`0x4f3ae0`).
+    /// The section's variation count (`0x4f3ae0`).
     fn num_variations(&self, ty: usize) -> i32 {
         self.grid.sections[ty].len() as i32
     }
 
-    /// `ComponentGetNumColors` (`0x4f3b10`).
+    /// The variation's colour count (`0x4f3b10`).
     fn num_colors(&self, ty: usize, var: i32) -> i32 {
         usize::try_from(var)
             .ok()
@@ -108,12 +108,12 @@ impl<'a> Customizer<'a> {
             .map_or(0, |c| c.len() as i32)
     }
 
-    /// `ComponentValidateBase` (`0x4f3b50`): the slot is inside the grid, filled or not.
+    /// The base check (`0x4f3b50`): the slot is inside the grid, filled or not.
     fn in_grid(&self, ty: usize, var: i32, color: i32) -> bool {
         var >= 0 && color >= 0 && color < self.num_colors(ty, var)
     }
 
-    /// `ComponentGetSectionsRecord` (`0x4f3ba0`): the row's flags.
+    /// The sections-record read (`0x4f3ba0`): the row's flags.
     fn row(&self, ty: usize, var: i32, color: i32) -> Option<u32> {
         if !self.in_grid(ty, var, color) {
             return None;
@@ -135,7 +135,7 @@ impl<'a> Customizer<'a> {
     }
 
     /// The `n`th admitted slot: a colour of variation `fixed`, or with `by_var` a variation at
-    /// colour `fixed` (`0x4e7e90`, `0x4e7f20`, `0x4e7fb0`, `0x4e8050`); -1 past the last.
+    /// colour `fixed` (`0x4e7e90`, `0x4e7f20`, `0x4e8050`); -1 past the last.
     fn nth(&self, ty: usize, fixed: i32, by_var: bool, n: i32) -> i32 {
         let count = if by_var {
             self.num_variations(ty)
@@ -169,28 +169,28 @@ impl<'a> Customizer<'a> {
             .count() as i32
     }
 
-    /// `GetNumSkins` (`0x4e7b80`).
+    /// The skin count (`0x4e7b80`).
     fn num_skins(&self) -> i32 {
         self.count(SKIN, 0, false)
     }
 
-    /// `GetNumFacesForSkin` (`0x4e7d50`).
+    /// The face count for the skin (`0x4e7d50`).
     fn num_faces(&self, skin: i32) -> i32 {
         self.count(FACE, skin, true)
     }
 
-    /// `GetNumHairStylesForColor` (`0x4e7c10`).
+    /// The hair style count for the colour (`0x4e7c10`).
     fn num_hair_styles(&self, color: i32) -> i32 {
         self.count(HAIR, color, true)
     }
 
-    /// `GetNumHairColorsForStyle` (`0x4e7cb0`).
+    /// The hair colour count for the style (`0x4e7cb0`).
     fn num_hair_colors(&self, style: i32) -> i32 {
         self.count(HAIR, style, false)
     }
 
-    /// `GetNumFacialFeaturesForHairColor` (`0x4e7df0`): the styles table's count where the race
-    /// keeps no facial-hair rows.
+    /// The facial-hair count for the hair colour (`0x4e7df0`): the styles table's count where the
+    /// race keeps no facial-hair rows.
     fn num_facial(&self, color: i32) -> i32 {
         if self.num_variations(FACIAL_HAIR) == 0 {
             return self.grid.facial_hair_styles as i32;
@@ -198,8 +198,8 @@ impl<'a> Customizer<'a> {
         self.count(FACIAL_HAIR, color, true)
     }
 
-    /// `GetNthFacialFeatureIndex` (`0x4e80e0`), whose scan runs to the admitted count, not the
-    /// grid's width.
+    /// The `n`th facial feature's index (`0x4e80e0`), whose scan runs to the admitted count, not
+    /// the grid's width.
     fn nth_facial(&self, color: i32, current: i32, n: i32) -> i32 {
         if !self.in_grid(FACIAL_HAIR, current, color) {
             return if n < self.grid.facial_hair_styles as i32 {
@@ -220,12 +220,12 @@ impl<'a> Customizer<'a> {
         -1
     }
 
-    /// `SetSkinColor` (`0x4ea6b0`) takes any index.
+    /// The skin setter (`0x4ea6b0`) takes any index.
     fn set_skin(&mut self, skin: i32) {
         self.p.skin = skin;
     }
 
-    /// `SetFace` (`0x4ea490`): refused on an NPC skin (`0x8`) or a slot off the grid.
+    /// The face setter (`0x4ea490`): refused on an NPC skin (`0x8`) or a slot off the grid.
     fn set_face(&mut self, face: i32) {
         if self.row(SKIN, 0, self.p.skin).is_some_and(|f| f & 0x8 != 0) {
             return;
@@ -235,21 +235,21 @@ impl<'a> Customizer<'a> {
         }
     }
 
-    /// `SetHairStyle` (`0x4ea3e0`): the style must have the current colour's slot.
+    /// The hair style setter (`0x4ea3e0`): the style must have the current colour's slot.
     fn set_hair_style(&mut self, style: i32) {
         if self.in_grid(HAIR, style, self.p.hair_color) {
             self.p.hair_style = style;
         }
     }
 
-    /// `SetHairColor` (`0x4ea2f0`): the current style must have the colour's slot.
+    /// The hair colour setter (`0x4ea2f0`): the current style must have the colour's slot.
     fn set_hair_color(&mut self, color: i32) {
         if self.in_grid(HAIR, self.p.hair_style, color) {
             self.p.hair_color = color;
         }
     }
 
-    /// `SetBeardStyle` (`0x4ea590`): `0..=` the styles table's count.
+    /// The facial-hair setter (`0x4ea590`): `0..=` the styles table's count.
     fn set_beard(&mut self, style: i32) {
         if (0..=self.grid.facial_hair_styles as i32).contains(&style) {
             self.p.facial_hair = style;
@@ -261,7 +261,7 @@ impl<'a> Customizer<'a> {
         (from + step).rem_euclid(n)
     }
 
-    /// `SetNextSkin` (`0x4eb150`) and `SetPrevSkin` (`0x4eb290`): the next skin whose row, the
+    /// The next and previous skin steps (`0x4eb150`, `0x4eb290`): the next skin whose row, the
     /// current face's row on it and its underwear are all admitted.
     pub(super) fn step_skin(&mut self, step: i32) -> bool {
         let n = self.num_colors(SKIN, 0);
@@ -282,9 +282,9 @@ impl<'a> Customizer<'a> {
         true
     }
 
-    /// `SetNextFace` (`0x4eb710`) and `SetPrevFace` (`0x4eb990`): the next face with an admitted
-    /// skin at or above `skin_from` (`m_prevSkinIndex`), the scan not wrapping (`0x4eb7a6`); the
-    /// skin moves to the first such where the face is not admitted on the current one.
+    /// The next and previous face steps (`0x4eb710`, `0x4eb990`): the next face with an admitted
+    /// skin at or above `skin_from` (the previous skin index), the scan not wrapping (`0x4eb7a6`);
+    /// the skin moves to the first such where the face is not admitted on the current one.
     pub(super) fn step_face(&mut self, step: i32, skin_from: i32) -> bool {
         let n = self.num_variations(FACE);
         if n <= 0 {
@@ -321,9 +321,9 @@ impl<'a> Customizer<'a> {
         true
     }
 
-    /// `SetNextHairStyle` (`0x4f0490`) and `SetPrevHairStyle` (`0x4f0630`): the next style with an
-    /// admitted colour, keeping the current colour where the style has it, else taking the
-    /// style's first and the first facial hair that colour admits.
+    /// The next and previous hair style steps (`0x4f0490`, `0x4f0630`): the next style with an
+    /// admitted colour, keeping the current colour where the style has it, else taking the style's
+    /// first and the first facial hair that colour admits.
     pub(super) fn step_hair_style(&mut self, step: i32) -> bool {
         let n = self.num_variations(HAIR);
         if n <= 0 {
@@ -356,8 +356,8 @@ impl<'a> Customizer<'a> {
         true
     }
 
-    /// `SetNextHairColor` (`0x4eb500`) and `SetPrevHairColor` (`0x4eb5c0`): the style's next
-    /// admitted colour.
+    /// The next and previous hair colour steps (`0x4eb500`, `0x4eb5c0`): the style's next admitted
+    /// colour.
     pub(super) fn step_hair_color(&mut self, step: i32) -> bool {
         let n = self.num_colors(HAIR, self.p.hair_style);
         if n <= 0 {
@@ -377,9 +377,9 @@ impl<'a> Customizer<'a> {
         true
     }
 
-    /// `SetNextFacialFeature` (`0x4ebca0`) and `SetPrevFacialFeature` (`0x4ebe80`): off the
-    /// facial-hair rows, a plain step through the styles table; on them, the next style with an
-    /// admitted colour, keeping the hair colour where it has it.
+    /// The next and previous facial-hair steps (`0x4ebca0`, `0x4ebe80`): off the facial-hair rows,
+    /// a plain step through the styles table; on them, the next style with an admitted colour,
+    /// keeping the hair colour where it has it.
     pub(super) fn step_facial(&mut self, step: i32) -> bool {
         if !self.in_grid(FACIAL_HAIR, self.p.facial_hair, self.p.hair_color) {
             let count = self.grid.facial_hair_styles as i32;
@@ -419,7 +419,7 @@ impl<'a> Customizer<'a> {
         true
     }
 
-    /// `SetRandomSkin` (`0x4eb3e0`).
+    /// The random skin draw (`0x4eb3e0`).
     pub(super) fn random_skin(&mut self, roll: &mut impl FnMut(i32) -> i32) {
         let n = self.num_skins();
         let skin = self.nth(SKIN, 0, false, if n > 0 { roll(n) } else { 0 });
@@ -428,7 +428,7 @@ impl<'a> Customizer<'a> {
         }
     }
 
-    /// `SetRandomFace` (`0x4ebc10`).
+    /// The random face draw (`0x4ebc10`).
     pub(super) fn random_face(&mut self, roll: &mut impl FnMut(i32) -> i32) {
         let n = self.num_faces(self.p.skin);
         let face = self.nth(FACE, self.p.skin, true, if n > 0 { roll(n) } else { 0 });
@@ -437,7 +437,7 @@ impl<'a> Customizer<'a> {
         }
     }
 
-    /// `SetRandomHairStyle` (`0x4eb470`).
+    /// The random hair style draw (`0x4eb470`).
     pub(super) fn random_hair_style(&mut self, roll: &mut impl FnMut(i32) -> i32) {
         let n = self.num_hair_styles(self.p.hair_color);
         let style = self.nth(
@@ -451,7 +451,7 @@ impl<'a> Customizer<'a> {
         }
     }
 
-    /// `SetRandomHairColor` (`0x4eb680`).
+    /// The random hair colour draw (`0x4eb680`).
     pub(super) fn random_hair_color(&mut self, roll: &mut impl FnMut(i32) -> i32) {
         let n = self.num_hair_colors(self.p.hair_style);
         let color = self.nth(
@@ -465,7 +465,7 @@ impl<'a> Customizer<'a> {
         }
     }
 
-    /// `SetRandomFacialFeature` (`0x4ec050`).
+    /// The random facial-hair draw (`0x4ec050`).
     pub(super) fn random_facial(&mut self, roll: &mut impl FnMut(i32) -> i32) {
         let n = self.num_facial(self.p.hair_color);
         let pick = if n > 0 { roll(n) } else { 0 };
@@ -475,7 +475,7 @@ impl<'a> Customizer<'a> {
         }
     }
 
-    /// `ValidateComponentData` (`0x4e9d50`): each dial the class does not admit becomes the
+    /// The component data check (`0x4e9d50`): each dial the class does not admit becomes the
     /// admitted one its old index picks, modulo the count.
     pub(super) fn validate(&mut self) {
         let v = self;
@@ -530,8 +530,8 @@ impl<'a> Customizer<'a> {
         }
     }
 
-    /// `ComponentValidateFacialFeature` (`0x4f3d50`): inside the styles table, and admitted where
-    /// the race keeps a facial-hair row for the style and colour.
+    /// The facial-hair check (`0x4f3d50`): inside the styles table, and admitted where the race
+    /// keeps a facial-hair row for the style and colour.
     fn facial_valid(&self) -> bool {
         let (style, color) = (self.p.facial_hair, self.p.hair_color);
         if style < 0 || style > self.grid.facial_hair_styles as i32 {

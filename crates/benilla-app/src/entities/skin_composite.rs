@@ -2,13 +2,12 @@
 //! blit at every authored level of the 512² base skin, and the levels above the side are dropped,
 //! as the reference composites each section at its `>> (9 - level)` size (`0x4f1a20`). A level
 //! change re-composites every cached look into its own image, so standing bodies keep their
-//! materials. An arriving body's first composite runs off the
-//! main thread: the reference's world composite is unforced, so its section loads poll and never
-//! block the frame (`0x44b430`), and it draws nothing of a unit whose first composite has not
-//! finished, its ShouldRender answering `0x477860(cc, 0)`'s result (`0x607e7c`). Only the forced
-//! callers wait on their loads (`0x44ad50`): the glue model (`0x470c59`, `0x471308`, `0x4731b6`),
-//! the dressing room (`0x504485`), `PlayerModel`'s `SetUnit` (`0x5059be`) and world entry
-//! (`0x49091e`). Here the forced lane ([`SkinComposites::force`]) composites on the calling thread.
+//! materials. An arriving body's first composite runs off the main thread: the reference's world
+//! composite is unforced, so its section loads poll and never block the frame, and it draws nothing
+//! of a unit whose first composite has not finished, its render gate answering the unforced
+//! composite's result. Only the forced callers wait on their loads: the glue model, the dressing
+//! room, `PlayerModel`'s `SetUnit` and world entry. Here the forced lane
+//! ([`SkinComposites::force`]) composites on the calling thread.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -120,11 +119,10 @@ impl SkinComposites {
         BodyAtlas::Pending
     }
 
-    /// An atlas composited on this thread on a miss, or waited for if it is already running, as
-    /// the reference's forced composite waits on its section loads (`0x44ad50`) and passes no
-    /// admission test: the glue model's (`0x477860(cc, 1)` at `0x470c59`, `0x471308`, `0x4731b6`)
-    /// and the dressing room's (`0x504485`, in `0x504470`). A re-dress of a standing body and a
-    /// rig-heal rebuild come here too, so neither drops out for a frame.
+    /// An atlas composited on this thread on a miss, or waited for if it is already running, as the
+    /// reference's forced composite waits on its section loads and passes no admission test: the
+    /// glue model's and the dressing room's. A re-dress of a standing body and a rig-heal rebuild
+    /// come here too, so neither drops out for a frame.
     pub(super) fn force(
         &mut self,
         key: SkinKey,

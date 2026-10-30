@@ -12,10 +12,10 @@ use crate::pending_item_ops::PendingItemOps;
 
 use super::{slot_guid, slot_guid_count, wire_pos, INVTYPE_AMMO};
 
-/// The one auto-equip sender, as in the reference (`AutoEquipCursorItem`, `0x5e1480`); answers
-/// whether it sent. An ammo item loads by entry with `CMSG_SET_AMMO` and stays in its bag. An
-/// unbound, equippable `bonding == 2` item raises `AUTOEQUIP_BIND_CONFIRM` and sends nothing
-/// (`0x5e163b`) unless `suppress`, the reference's flag, which the accept's re-issue sets.
+/// The one auto-equip sender, as in the reference (`AutoEquipCursorItem`); answers whether it sent.
+/// An ammo item loads by entry with `CMSG_SET_AMMO` and stays in its bag. An unbound, equippable
+/// `bonding == 2` item raises `AUTOEQUIP_BIND_CONFIRM` and sends nothing unless `suppress`, the
+/// reference's flag, which the accept's re-issue sets.
 pub(crate) fn send_auto_equip(
     script: &mut UiScript,
     gate: &mut crate::ui_bind_confirm::BindGate,
@@ -96,10 +96,9 @@ pub(super) fn drain_container_autoequips(
     }
 }
 
-/// Sends the auto-stores `PutItemInBag`/`PutItemInBackpack` queued. The destination is a bag, not
-/// a slot (`0x4c7c00` to `0x5e12e0`): `CMSG_AUTOSTORE_BAG_ITEM` names `(srcbag, srcslot, dstbag)`
-/// and the server picks the slot. A split carry sends `CMSG_SPLIT_ITEM` instead (the reference's
-/// fork on `[0xb4b40c]`). Takes no pending lock.
+/// Sends the auto-stores `PutItemInBag`/`PutItemInBackpack` queued. The destination is a bag, not a
+/// slot: `CMSG_AUTOSTORE_BAG_ITEM` names `(srcbag, srcslot, dstbag)` and the server picks the slot.
+/// A split carry sends `CMSG_SPLIT_ITEM` instead. Takes no pending lock.
 pub(super) fn drain_bag_autostores(
     script: Option<NonSendMut<UiScript>>,
     commands: Res<NetCommands>,
@@ -169,8 +168,8 @@ pub(crate) struct ScriptItemUse<'w, 's> {
 
 impl ScriptItemUse<'_, '_> {
     /// `UseInventoryItem(id)`, a doll right-click, sent through [`super::send_item_use`], as the
-    /// reference's doll click reaches the same `CGItem::Use` a bag click does (`0x4c7af0`): a worn
-    /// quest-starter offers its quest. Ids outside 1..=19 are refused.
+    /// reference's doll click reaches the same item use a bag click does: a worn quest-starter
+    /// offers its quest. Ids outside 1..=19 are refused.
     pub(crate) fn use_inventory_item(&mut self, script: &mut UiScript, id: u32) {
         let Self {
             self_q,
@@ -228,7 +227,7 @@ impl ScriptItemUse<'_, '_> {
         self.use_at(script, bag, slot, false);
     }
 
-    /// `CGItem_C::UseItem` (`0x708c20`) on a bag item, `UseQuestLogSpecialItem`'s path: the use
+    /// The direct item use (`0x708c20`) on a bag item, `UseQuestLogSpecialItem`'s path: the use
     /// dispatcher alone, with no sale, bank move or equip.
     pub(crate) fn use_item(&mut self, script: &mut UiScript, bag: i64, slot: u32) {
         self.use_at(script, bag, slot, true);
@@ -326,9 +325,8 @@ impl ScriptItemUse<'_, '_> {
                 })
             });
 
-        // The reference's equip-vs-use fork (`0x4fa3b9`): an equippable item auto-equips unless
-        // its `StartQuest` (`[rec+0x1a8]`) is set (`0x4fa3bd`). Everything below is the use
-        // dispatcher `0x5d8d00`, in its own order.
+        // The reference's equip-vs-use fork: an equippable item auto-equips unless its `StartQuest`
+        // (`[rec+0x1a8]`) is set. Everything below is the use dispatcher, in its own order.
         if let Some(c) = clicked.filter(|c| !direct && c.start_quest == 0 && c.inventory_type != 0)
         {
             // This path never moves the cursor, so it plays the equip sound itself; a deferred
@@ -351,12 +349,12 @@ impl ScriptItemUse<'_, '_> {
             return;
         }
         // A Glyph-class template (16) fires `USE_GLYPH` ahead of the use (`0x5d8ad3`), which opens
-        // the glyph frame (`UIParent.lua:1053`); `UseItem`'s direct path has no such arm.
+        // the glyph frame (`UIParent.lua:1053`); the direct item use has no such arm.
         if !direct && clicked.is_some_and(|c| c.class == ITEM_CLASS_GLYPH) {
             script.fire_event("USE_GLYPH", Vec::new());
         }
-        // A wrapped gift unwraps with `CMSG_OPEN_ITEM` (`0x5d8d92`, emitter `0x5edd60`), first in
-        // the dispatcher; vmangos swaps the entry back from `character_gifts`.
+        // A wrapped gift unwraps with `CMSG_OPEN_ITEM`, first in the dispatcher; vmangos swaps the
+        // entry back from `character_gifts`.
         if let Some(c) = clicked.filter(|c| c.unwraps_gift) {
             debug!(
                 "ui_items: unwrap gift {:#x} (lua bag {bag} → wire {bag_index}/{wire_slot})",
@@ -368,8 +366,8 @@ impl ScriptItemUse<'_, '_> {
             });
             return;
         }
-        // Wrapping paper (`0x5d8d9d`'s other branch, `0x5edea0`) sends nothing: its slot locks and
-        // the cursor becomes mode 2 until a left-click on a container slot sends `CMSG_WRAP_ITEM`.
+        // Wrapping paper sends nothing: its slot locks and the cursor becomes mode 2 until a
+        // left-click on a container slot sends `CMSG_WRAP_ITEM`.
         if let Some(c) = clicked.filter(|c| c.begins_gift_wrap) {
             debug!(
                 "ui_items: arm gift wrap with {:#x} (lua bag {bag} slot {slot})",
@@ -378,7 +376,7 @@ impl ScriptItemUse<'_, '_> {
             script.arm_gift_wrap(bag, slot);
             return;
         }
-        // A quest-starter (`0x5d8dd2`) offers its quest, ahead of the readable and open arms.
+        // A quest-starter offers its quest, ahead of the readable and open arms.
         if let Some(c) = clicked.filter(|c| c.start_quest != 0) {
             debug!(
                 "ui_items: quest-starter {:#x} offers quest {}",
@@ -404,9 +402,9 @@ impl ScriptItemUse<'_, '_> {
             );
             return;
         }
-        // A book, a template with `PageText` (`0x5d8e4c`), opens the reader with no packet
-        // (`0x4e32e0`). It precedes the open arm, the inverse of the tooltip: an item both
-        // readable and lootable shows `<Right Click to Open>` and reads on click.
+        // A book, a template with `PageText`, opens the reader with no packet. It precedes the open
+        // arm, the inverse of the tooltip: an item both readable and lootable shows
+        // `<Right Click to Open>` and reads on click.
         if let Some(c) = clicked.filter(|c| c.page_text != 0) {
             if item_text.toggle_closed(c.guid) {
                 debug!("ui_items: re-click closes the book {:#x}", c.guid);
@@ -433,16 +431,16 @@ impl ScriptItemUse<'_, '_> {
             }
             return;
         }
-        // A lootable template (`0x5d8f7c`, emitter `0x5edc80`) sends `CMSG_OPEN_ITEM`, which the
-        // server answers with a loot window on the item (`SpellHandler.cpp:227`). Unlike the
-        // tooltip line, the send tests neither the lock id nor the unlocked bit, so a locked box
-        // sends and the server's `EQUIP_ERR_ITEM_LOCKED` is the "Item is locked" line.
+        // A lootable template sends `CMSG_OPEN_ITEM`, which the server answers with a loot window
+        // on the item (`SpellHandler.cpp:227`). Unlike the tooltip line, the send tests neither the
+        // lock id nor the unlocked bit, so a locked box sends and the server's
+        // `EQUIP_ERR_ITEM_LOCKED` is the "Item is locked" line.
         if let Some(c) = clicked.filter(|c| c.opens_loot) {
             debug!(
                 "ui_items: open item {:#x} (lua bag {bag} → wire {bag_index}/{wire_slot})",
                 c.guid
             );
-            // `OpenLootItem 0x6dcd70`: the open loot closes and the auto-loot flag is set first.
+            // The item open (`0x6dcd70`): the open loot closes and the auto-loot flag is set first.
             let closed =
                 crate::ui_loot::close_interaction(loot, loot_latch, &ladder.commands, true);
             if let Some(g) =
@@ -457,7 +455,7 @@ impl ScriptItemUse<'_, '_> {
             loot.set_auto_loot(auto, loot_latch, &ladder.commands);
             // The latch on the item, before the send (`0x6dcdd4`), so its type-1 response passes.
             loot_latch.0 = Some(c.guid);
-            // The grey lock, before the send (`LockItem` at `0x6dcded`), until the loot closes.
+            // The grey lock, before the send (`0x6dcded`), until the loot closes.
             let (guid, count) = self_q
                 .iter()
                 .next()
@@ -507,8 +505,8 @@ pub(super) fn drain_container_repairs(
         return;
     };
     let me = self_q.iter().next();
-    // Repair-mode clicks (the reference's `0x4f9c7b` route) repair the one item: the purse test
-    // first (`0x4f9cc8`), then `ITEM_REPAIR` as it goes out (`0x4f9ce4`).
+    // Repair-mode clicks repair the one item: the purse test first, then `ITEM_REPAIR` as it goes
+    // out.
     for (bag, slot) in script.take_container_repairs() {
         let (Some(vendor), Some(me)) = (merchant.vendor, me) else {
             continue;
@@ -530,7 +528,7 @@ pub(super) fn drain_container_repairs(
             None => debug!("ui_items: repair on empty slot (bag {bag} slot {slot}) — ignored"),
         }
     }
-    // The paper doll's repair clicks (`0x4c7714`, `0x4c79c4`), the same arm on a worn item.
+    // The paper doll's repair clicks, the same arm on a worn item.
     for id in script.take_inventory_repairs() {
         let (Some(vendor), Some(me)) = (merchant.vendor, me) else {
             continue;
@@ -634,8 +632,8 @@ pub(super) fn drain_container_moves(
     }
 }
 
-/// The equip deferral's positions (`0x5e0c40`): slots 0..=22 (equipment and equipped bags) and
-/// 67..=73 (bank bags) of the player's own array; the backpack and keyring are not.
+/// The equip deferral's positions: slots 0..=22 (equipment and equipped bags) and 67..=73 (bank
+/// bags) of the player's own array; the backpack and keyring are not.
 fn is_equip_position(bag_index: u8, slot: u8) -> bool {
     let bank_bags = super::BANK_BAG_SLOT_FIRST..super::BANK_BAG_SLOT_FIRST + super::BANK_BAGS;
     bag_index == BAG_PLAYER_INVENTORY && (slot <= 22 || bank_bags.contains(&slot))
@@ -664,8 +662,8 @@ pub(crate) fn send_container_move(
             debug!("ui_items: container move {mv:?} out of range — ignored");
             return false;
         };
-        // The deferral (`0x5e0c40`) asks when exactly one end is an equip position, about the item
-        // at the other end, which the swap equips; an unequip to an empty slot asks nothing.
+        // The deferral asks when exactly one end is an equip position, about the item at the other
+        // end, which the swap equips; an unequip to an empty slot asks nothing.
         if !suppress
             && mv.count.is_none()
             && is_equip_position(dst.0, dst.1) != is_equip_position(src.0, src.1)
@@ -741,8 +739,7 @@ pub(crate) fn send_container_move(
             (mv.src_bag, mv.src_slot, src_guid, src_count),
             (mv.dst_bag, mv.dst_slot, dst_guid, dst_count),
         ]);
-        // One event per end that holds an item: the reference locks items, not slots
-        // (`CGItem_C::Lock` `0x706fe0`).
+        // One event per end that holds an item: the reference locks items, not slots (`0x706fe0`).
         for (bag, slot, guid) in [
             (mv.src_bag, mv.src_slot, src_guid),
             (mv.dst_bag, mv.dst_slot, dst_guid),
@@ -914,7 +911,7 @@ mod tests {
         );
     }
 
-    /// A repair-mode right-click on a bag item: `ITEM_REPAIR` as it goes out (`0x4f9ce4`), then
+    /// A repair-mode right-click on a bag item: `ITEM_REPAIR` as it goes out, then
     /// `CMSG_REPAIR_ITEM` with the vendor's and the item's guid, and no use or sale.
     #[test]
     fn a_repair_click_sounds_and_ships_the_items_guid() {
@@ -968,8 +965,8 @@ mod tests {
         );
     }
 
-    /// A repair-mode click on a worn item (`0x4c7714`): `ITEM_REPAIR` as it goes out (`0x4c7780`),
-    /// then `CMSG_REPAIR_ITEM` with the vendor's and the worn item's guid.
+    /// A repair-mode click on a worn item: `ITEM_REPAIR` as it goes out, then `CMSG_REPAIR_ITEM`
+    /// with the vendor's and the worn item's guid.
     #[test]
     fn a_worn_repair_click_sounds_and_ships_the_items_guid() {
         const VENDOR: u64 = 0xF130_0000_0000_0042;
@@ -1144,13 +1141,13 @@ mod tests {
         assert!(exact.shown.is_empty() && exact.sounded.is_empty());
     }
 
-    /// `UseContainerItem`'s repair arm (`0x4fa22e`–`0x4fa236`, error `0x4fa23a`).
+    /// `UseContainerItem`'s repair arm.
     #[test]
     fn a_bag_repair_the_purse_cannot_cover_is_refused_and_one_it_covers_is_sent() {
         the_purse_test_refuses_one_copper_short_and_pays_the_exact_cost(false);
     }
 
-    /// `PickupInventoryItem`'s repair arm (`0x4c775f`–`0x4c7766`, error `0x4c776a`).
+    /// `PickupInventoryItem`'s repair arm.
     #[test]
     fn a_worn_repair_the_purse_cannot_cover_is_refused_and_one_it_covers_is_sent() {
         the_purse_test_refuses_one_copper_short_and_pays_the_exact_cost(true);
@@ -1192,12 +1189,12 @@ mod tests {
 }
 
 /// The answers to `EquipPendingItem`/`CancelPendingEquip`. Accept re-runs the original sender with
-/// `suppress` set, as the reference's `0x5e1be0` does: 1.12 has no confirm opcode, and a slot that
-/// changed under the dialog is judged afresh. Cancel sends nothing and frees the record.
+/// `suppress` set, as the reference's does: 1.12 has no confirm opcode, and a slot that changed
+/// under the dialog is judged afresh. Cancel sends nothing and frees the record.
 ///
-/// Deviation: the reference's cancel also unlocks both occupants (`UnlockItem`, `0x495420`), which
-/// its deferral locked; ours locks nothing while the question is up, because a [`PendingItemOps`]
-/// lock clears only against a wire op and a deferred action has none.
+/// Deviation: the reference's cancel also unlocks both occupants, which its deferral locked; ours
+/// locks nothing while the question is up, because a [`PendingItemOps`] lock clears only against a
+/// wire op and a deferred action has none.
 pub(super) fn drain_bind_confirm_answers(
     script: Option<NonSendMut<UiScript>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -1212,7 +1209,7 @@ pub(super) fn drain_bind_confirm_answers(
     };
     let store = self_q.iter().next();
     for answer in script.take_pending_equip_answers() {
-        // An unfiled index does nothing: `0x5e1be0` bounds-checks it and returns.
+        // An unfiled index does nothing: the reference bounds-checks it and returns.
         let Some(rec) = gate.equips.take(answer.index) else {
             debug!(
                 "ui_items: bind answer for index {} — no such pending equip",
@@ -1313,7 +1310,7 @@ mod bind_confirm_tests {
     /// Flurry Axe, a real `item_template` row: quality 4, bonding 2 (bind on equip).
     const FLURRY_AXE: u32 = 871;
     const AXE_GUID: u64 = 0x4000_0000_0000_0871;
-    /// `ITEM_FIELD_FLAGS` (field 21); bit 0 is soulbound (`0x5da2c0`).
+    /// `ITEM_FIELD_FLAGS` (field 21); bit 0 is soulbound.
     const F_ITEM_FLAGS: u16 = 21;
     /// `PLAYER_FIELD_PACK_SLOT_1`, backpack slot 1's guid pair.
     const F_PACK_SLOT_1: u16 = 532;
@@ -1587,7 +1584,7 @@ mod bind_confirm_tests {
         assert!(rx.try_iter().next().is_none(), "a cancel never sends");
     }
 
-    /// The equip predicate is `bonding == 2` alone, with no quality leg (`0x5e0e54`).
+    /// The equip predicate is `bonding == 2` alone, with no quality leg.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn only_bind_on_equip_defers_the_place() {
@@ -1628,7 +1625,7 @@ mod bind_confirm_tests {
         assert!(rx.try_iter().next().is_none());
     }
 
-    /// `0x5da2c0`, the predicate the tooltip's Soulbound override also uses.
+    /// The predicate the tooltip's Soulbound override also uses.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_already_bound_item_places_without_asking() {
@@ -1644,7 +1641,7 @@ mod bind_confirm_tests {
         assert!(rx.try_iter().next().is_some(), "and it places");
     }
 
-    /// The auto-equip arm (`0x5e1480`, event 289): the same predicate and re-issue, its own dialog.
+    /// The auto-equip arm (event 289): the same predicate and re-issue, its own dialog.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn auto_equipping_a_boe_asks_and_the_accept_re_issues() {
@@ -1732,7 +1729,7 @@ mod bind_confirm_tests {
         );
     }
 
-    /// The `0x5ea930` conjunct, driven by its level leg.
+    /// The conjunct, driven by its level leg.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_unusable_item_is_never_asked_about() {
@@ -1780,9 +1777,9 @@ mod bind_confirm_tests {
         );
     }
 
-    /// Right-clicks a bind-on-use item in a bag (the use arm, `0x5d8d00`, event 290);
-    /// `no_use_spell` drops its on-use spell, since four of `0x5d91d3`'s five predecessors are
-    /// failed spell lookups and the reference still asks.
+    /// Right-clicks a bind-on-use item in a bag (the use arm, event 290); `no_use_spell` drops its
+    /// on-use spell, since four of the five paths into the reference's question are failed spell
+    /// lookups and it still asks.
     fn right_click_a_bind_on_use_item(
         no_use_spell: bool,
     ) -> (App, crossbeam_channel::Receiver<ClientCommand>) {

@@ -8,10 +8,10 @@ use benilla_formats::{Chain, M2Light};
 use crate::model_key;
 
 /// List the placed MODD props that the interior lane lights literal black. Its base light is the
-/// MODD colour, ambient `cap96`, diffuse `floor112` (`0x694e90` → `0x6a77e0`), and the floor is a
-/// hue-preserving scale by `112/max`, so `#000000` stays black and only the owning group's MOLR
-/// lights reach the prop. Exterior wins: any exterior referrer makes the prop sky-lit
-/// (`0x695aa0`); `RESCUED` counts those an interior group names first.
+/// MODD colour, ambient `cap96`, diffuse `floor112`, and the floor is a hue-preserving scale by
+/// `112/max`, so `#000000` stays black and only the owning group's MOLR lights reach the prop.
+/// Exterior wins: any exterior referrer makes the prop sky-lit; `RESCUED` counts those an interior
+/// group names first.
 pub fn darkpropscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let roots = super::wmo_roots(chain, prefix)?;
 
@@ -159,10 +159,10 @@ struct FamilyStats {
     examples: Vec<String>,
 }
 
-/// List the models that author M2 light blocks (`0x718960`): per point light (`type` 1) its bone,
-/// position, diffuse colour times intensity and attenuation, `OFF` when a static 0 visibility key
-/// keeps it dark (`0x71646d`); directional lights (`type` 0) feed ambient and are only counted.
-/// The summary totals them by content family and by colour.
+/// List the models that author M2 light blocks: per point light (`type` 1) its bone, position,
+/// diffuse colour times intensity and attenuation, `OFF` when a static 0 visibility key keeps it
+/// dark; directional lights (`type` 0) feed ambient and are only counted. The summary totals them
+/// by content family and by colour.
 pub fn m2lightscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let names = super::m2_names(chain, prefix)?;
 

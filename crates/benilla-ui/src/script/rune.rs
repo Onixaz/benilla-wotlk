@@ -1,6 +1,6 @@
-//! The rune table, 12340's `CGRuneInfo` (`0xc24304`-`0xc24388`), and its verbs `GetRuneType`
+//! The rune table, 12340's rune state (`0xc24304`-`0xc24388`), and its verbs `GetRuneType`
 //! (`0x6131e0`), `GetRuneCooldown` (`0x613020`) and `GetRuneCount` (`0x613140`). Times are
-//! milliseconds on the `GetTime` clock, as the reference keeps `OsGetAsyncTimeMs` stamps; a
+//! milliseconds on the `GetTime` clock, as the reference keeps millisecond OS clock stamps; a
 //! last-used time of 0 is a ready rune.
 
 use mlua::{Lua, MultiValue, Value};
@@ -22,18 +22,18 @@ pub enum RuneEvent {
     Type { rune: u8 },
     /// `ACTIONBAR_UPDATE_COOLDOWN`, once after `SMSG_ADD_RUNE_POWER` (`0x5ee598`).
     ActionBarCooldown,
-    /// `CGSpellBook::UpdateUsable` (`0x53cf10`): the usable state reads the runes again.
+    /// The spellbook's usable update (`0x53cf10`): the usable state reads the runes again.
     Usable,
 }
 
 /// The player's runes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuneState {
-    /// Each slot's kind (0 blood, 1 unholy, 2 frost, 3 death), `m_runes`.
+    /// Each slot's kind (0 blood, 1 unholy, 2 frost, 3 death).
     pub kinds: [u8; MAX_RUNES],
-    /// The kinds the last resync set, `m_baseRunes`.
+    /// The kinds the last resync set, the base runes.
     pub base_kinds: [u8; MAX_RUNES],
-    /// How many slots are live; 0 makes every slot valid (`0x5edfc0`).
+    /// How many slots are live; 0 makes every slot valid.
     pub count: u32,
     /// The ready-rune mask (`0xc24388`), all set until a cast reports otherwise.
     pub ready: u32,
@@ -74,7 +74,7 @@ fn started_ago(now_ms: u32, share: f32) -> u32 {
 }
 
 impl RuneState {
-    /// `0x5edfc0`: a slot below the live count, or any of the eight while none is set.
+    /// A slot below the live count, or any of the eight while none is set.
     pub fn valid(&self, index: usize) -> bool {
         index < MAX_RUNES && (self.count == 0 || index < self.count as usize)
     }
@@ -87,7 +87,7 @@ impl RuneState {
             .unwrap_or(0.0)
     }
 
-    /// `ComputeRuneRechargeTime` (`0x5ee140`): due `(1 - progress) / rate` seconds from now, or
+    /// The rune recharge time (`0x5ee140`): due `(1 - progress) / rate` seconds from now, or
     /// never below 0.01 runes a second. The x87 keeps the quotient wide and truncates, so a fresh
     /// rune at 0.1 a second is due in 9999 ms.
     fn compute_recharge(&mut self, index: usize, progress: f32, now_ms: u32) {
@@ -159,9 +159,9 @@ impl RuneState {
         events
     }
 
-    /// `SetPredictedRunes` (`0x5ee240`): `after` becomes the ready mask. A rune ready in `before`
-    /// and spent in `after` starts its recharge from its progress byte, unless already started;
-    /// one coming ready, or ready with a start left over, clears.
+    /// The predicted-runes set (`0x5ee240`): `after` becomes the ready mask. A rune ready in
+    /// `before` and spent in `after` starts its recharge from its progress byte, unless already
+    /// started; one coming ready, or ready with a start left over, clears.
     pub fn set_predicted(
         &mut self,
         before: u32,
@@ -212,7 +212,7 @@ impl RuneState {
         self.set_predicted(self.ready, ready, None, now_ms)
     }
 
-    /// `CountPredictedRunesOfType` (`0x5ee3d0`): live ready runes of `kind`.
+    /// The predicted-runes count by type (`0x5ee3d0`): live ready runes of `kind`.
     pub fn ready_of_kind(&self, kind: u8) -> u32 {
         (0..(self.count as usize).min(MAX_RUNES))
             .filter(|&i| self.kinds[i] == kind && self.ready & (1 << i) != 0)

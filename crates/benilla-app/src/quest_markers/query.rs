@@ -2,13 +2,13 @@
 //! pushes a status, it only answers the query (vmangos `QuestHandler.cpp:36-77`), so every refresh
 //! is the client's to trigger ([`query_statuses`]).
 //!
-//! The gold `!` and the flight master's green `!` share one slot, `unit+0xb2c`: `0x607480`
-//! installs whichever arrives, `0x6073f0` zeroes it with the status at `+0xcb8`, and the per-unit
-//! path `0x607380` tears it down, then re-issues `0x182` on `UNIT_NPC_FLAGS` bit 1 and `0x1aa` on
-//! bit 3. So one system owns both asks, and `ui_taxi` keeps only the answer.
+//! The gold `!` and the flight master's green `!` share one slot, `unit+0xb2c`: the reference
+//! installs whichever arrives, zeroes it with the status at `+0xcb8`, and the per-unit path tears
+//! it down, then re-issues `0x182` on `UNIT_NPC_FLAGS` bit 1 and `0x1aa` on bit 3. So one system
+//! owns both asks, and `ui_taxi` keeps only the answer.
 //!
-//! A quest-flagged GameObject is asked about and never rendered: the answer handler `0x5dc9f0`
-//! resolves the guid with typemask 8 (`0x468460`), so its answer dies at `0x5dca2f`.
+//! A quest-flagged GameObject is asked about and never rendered: the answer handler resolves the
+//! guid with typemask 8, so its answer dies.
 
 use std::collections::HashMap;
 
@@ -23,37 +23,36 @@ use crate::ui_quest::QuestGiver;
 
 /// `UNIT_NPC_FLAGS` questgiver service bit.
 const NPC_FLAG_QUESTGIVER: u32 = 0x2;
-/// `UNIT_NPC_FLAGS` flightmaster service bit, the other half of `0x607380`'s re-gate (`0x6073de`)
-/// and the gate on the only `0x1aa` sender.
+/// `UNIT_NPC_FLAGS` flightmaster service bit, the other half of the per-unit refresh's re-gate and
+/// the gate on the only `0x1aa` sender.
 const NPC_FLAG_FLIGHTMASTER: u32 = crate::target::cursor_mode::npc_flags::FLIGHTMASTER;
-/// `GAMEOBJECT_FLAGS` bit 2, the sweep's whole GameObject gate (`0x5eb0ef`..`0x5eb0f5`: shift 2,
-/// so mask `0x4`, not the unit leg's `0x2`). The name is vmangos's (`GameObjectDefines.h:76`).
+/// `GAMEOBJECT_FLAGS` bit 2, the sweep's whole GameObject gate (so mask `0x4`, not the unit leg's
+/// `0x2`). The name is vmangos's (`GameObjectDefines.h:76`).
 const GO_FLAG_INTERACT_COND: u32 = 0x4;
 
 /// Asks the dialog status of every questgiver-flagged creature, and re-asks when the answer could
-/// have changed. The reference sweeps every visible object (`0x5eb070 → 0x468380`) from its
-/// self-player field watches (`0x468070`) and four packet handlers.
+/// have changed. The reference sweeps every visible object from its self-player field watches and
+/// four packet handlers.
 ///
 /// - Sweep: [`self_generation`] (the field watches) XOR [`QuestGiver::reask_epoch`] (the packet
 ///   handlers); a changed generation is a sweep.
-/// - Per unit: asked from the create path and when its service bits (`0x60b490`, `0x60b4c5`) or
-///   reaction inputs (`0x606f0a`) move, our [`unit_ask_key`]. The entry goes when the guid leaves
-///   [`GuidIndex`], as the reference's cache at `unit+0xcb8` dies with the object.
-/// - GameObject: asked only on a sweep (`0x5eb159`, `0x5eb456`), gated on
-///   [`GO_FLAG_INTERACT_COND`] and a reaction toward us above 1 ([`go_reaction`], `0x5f7fd0`). Its
-///   constructor calls no sender, so there is no query at first sight, and with no status slot it
-///   is never torn down.
+/// - Per unit: asked from the create path and when its service bits or reaction inputs move, our
+///   [`unit_ask_key`]. The entry goes when the guid leaves [`GuidIndex`], as the reference's cache
+///   at `unit+0xcb8` dies with the object.
+/// - GameObject: asked only on a sweep, gated on [`GO_FLAG_INTERACT_COND`] and a reaction toward us
+///   above 1 ([`go_reaction`]). Its constructor calls no sender, so there is no query at first
+///   sight, and with no status slot it is never torn down.
 ///
-/// The light sweep's callback `0x5eb0a0` sends `0x182` for a questgiver and tears down
-/// (`0x5eb143`) any Hated or Hostile creature, questgiver or not, never on the flag alone. A flag
-/// change reaches `0x607380` through the `UNIT_NPC_FLAGS` watch (`0x60b420`), which tears down
-/// first (`0x607384`), then re-gates on reaction. The full sweep `0x5eb3c0` (your revive, your own
-/// reaction inputs) runs `0x607380` on every creature (`0x5eb3f0`): `full` below.
+/// The light sweep's callback sends `0x182` for a questgiver and tears down any Hated or Hostile
+/// creature, questgiver or not, never on the flag alone. A flag change reaches the per-unit refresh
+/// through the `UNIT_NPC_FLAGS` watch, which tears down first, then re-gates on reaction. The full
+/// sweep (your revive, your own reaction inputs) runs the per-unit refresh on every creature:
+/// `full` below.
 ///
-/// Not covered: the reference's `ITEM` watch (`0x5d9375`) also sweeps when an item moves between
-/// containers; with no item objects, only our equipment and bag guids are folded. Per unit, its
-/// reaction refresh also keys on charm, persuade, duel team and `PLAYER_BYTES_3`; ours on the
-/// faction template, a standing change coming through the reputation sweep.
+/// Not covered: the reference's `ITEM` watch also sweeps when an item moves between containers;
+/// with no item objects, only our equipment and bag guids are folded. Per unit, its reaction
+/// refresh also keys on charm, persuade, duel team and `PLAYER_BYTES_3`; ours on the faction
+/// template, a standing change coming through the reputation sweep.
 #[allow(clippy::type_complexity)] // a Bevy system: one param per resource
 pub(super) fn query_statuses(
     self_q: Query<Ref<ObjectStore>, With<SelfPlayer>>,
@@ -84,8 +83,8 @@ pub(super) fn query_statuses(
         state.fields = self_generation(&store.0);
     }
     let generation = state.fields ^ (u64::from(quest.reask_epoch()) << 32);
-    // The full sweep's triggers (`0x5eb3c0`): your revive, the `≤0 → >0` crossing (`0x6046f0`),
-    // and your own reaction inputs moving (`0x606e20`). Edges, since death is a light sweep.
+    // The full sweep's triggers: your revive, the `≤0 → >0` crossing, and your own reaction inputs
+    // moving. Edges, since death is a light sweep.
     let alive = store.0.unit_health().unwrap_or(1) != 0;
     // Compared only between frames that both saw the field, or the template's arrival at login
     // would fire a full sweep.
@@ -99,8 +98,8 @@ pub(super) fn query_statuses(
     // A sweep frame, the only time a GameObject is asked about.
     let swept = state.generation != generation || full;
     state.generation = generation;
-    // A guid that left the world drops its ask key and cached status. A sweep never clears the
-    // map: only a unit's own key moving is a `0x607380`. Pruned only when the index moved, as the
+    // A guid that left the world drops its ask key and cached status. A sweep never clears the map:
+    // only a unit's own key moving is a per-unit refresh. Pruned only when the index moved, as the
     // `ResMut` retain marks `QuestGiver` changed.
     if index.is_changed() {
         state.asked.retain(|guid, _| index.0.contains_key(guid));
@@ -114,7 +113,7 @@ pub(super) fn query_statuses(
         if !swept && !full && !catalogs_moved && !obj.is_changed() {
             continue;
         }
-        // `0x6073f0` zeroes the marker (`+0xb2c`, the green `!` too) and the status (`+0xcb8`)
+        // The reference zeroes the marker (`+0xb2c`, the green `!` too) and the status (`+0xcb8`)
         // together, so every teardown takes both.
         let tear_down = |quest: &mut QuestGiver, ecs: &mut Commands| {
             quest.clear_status(guid.0);
@@ -124,11 +123,11 @@ pub(super) fn query_statuses(
             }
         };
         match net.kind {
-            // Typemask exactly `OBJECT|UNIT` (`0x5eb0d3`): a player, `0x19`, leaves the sweep here.
+            // Typemask exactly `OBJECT|UNIT`: a player, `0x19`, leaves the sweep here.
             EntityKind::Unit => {
-                // The unit's reaction toward us (`0x6061e0`, this = the unit, at `0x5eb12a`), the
-                // direction `ring_reaction` resolves: `<= 1` is Hated or Hostile, and a missing
-                // input reads Neutral, so a cold catalog never blanks a marker.
+                // The unit's reaction toward us (this = the unit), the direction `ring_reaction`
+                // resolves: `<= 1` is Hated or Hostile, and a missing input reads Neutral, so a
+                // cold catalog never blanks a marker.
                 let reaction = crate::target::ring_reaction(
                     factions.as_deref(),
                     &reputations,
@@ -137,24 +136,24 @@ pub(super) fn query_statuses(
                     Some(&store),
                 );
                 if reaction <= 1 {
-                    // The sweep's one teardown (`0x5eb143`), questgiver or not. Dropping the ask
-                    // key brings the marker back through a `0x607380` when the reaction recovers.
+                    // The sweep's one teardown, questgiver or not. Dropping the ask key brings the
+                    // marker back through a per-unit refresh when the reaction recovers.
                     state.asked.remove(&guid.0);
                     tear_down(&mut quest, &mut ecs);
                     continue;
                 }
                 let key = unit_ask_key(&obj.0);
                 let key_moved = state.asked.insert(guid.0, key) != Some(key);
-                // `0x607380`, from the unit's field watches, its create path and the full sweep:
-                // tear down first (`0x607384`), then re-gate. An escort giver's flag drop, with
-                // the quest-log write, moves the ask key and lands here.
+                // The per-unit refresh, from the unit's field watches, its create path and the full
+                // sweep: tear down first, then re-gate. An escort giver's flag drop, with the
+                // quest-log write, moves the ask key and lands here.
                 let per_unit = key_moved || full;
                 if per_unit {
                     tear_down(&mut quest, &mut ecs);
                 }
-                // The re-gate, the reaction being above 1. `0x182` goes out from `0x607380`
-                // (`0x6073cd`) and from the light sweep (`0x5eb159`), so every sweep re-asks;
-                // `0x1aa` has one sender, `0x607380` (`0x6073e8`), so never on a light sweep.
+                // The re-gate, the reaction being above 1. `0x182` goes out from the per-unit
+                // refresh and from the light sweep, so every sweep re-asks; `0x1aa` has one sender,
+                // the per-unit refresh, so never on a light sweep.
                 let flags = obj.0.unit_npc_flags();
                 if (per_unit || swept) && flags & NPC_FLAG_QUESTGIVER != 0 {
                     let _ = commands
@@ -167,14 +166,13 @@ pub(super) fn query_statuses(
                         .send(ClientCommand::TaxiNodeStatusQuery { guid: guid.0 });
                 }
             }
-            // `TYPEMASK_GAMEOBJECT` (`0x5eb0da`): sweep only, no ask key, no teardown.
+            // `TYPEMASK_GAMEOBJECT`: sweep only, no ask key, no teardown.
             EntityKind::GameObject if swept => {
                 if obj.0.gameobject_flags() & GO_FLAG_INTERACT_COND == 0 {
                     continue;
                 }
-                // A reaction toward us above 1 (`0x5eb101`): Unfriendly and Neutral pass, a
-                // faction-less object reads Neutral, and `None` (no catalog yet) passes, as in the
-                // cursor's gate.
+                // A reaction toward us above 1: Unfriendly and Neutral pass, a faction-less object
+                // reads Neutral, and `None` (no catalog yet) passes, as in the cursor's gate.
                 let reaction = go_reaction(
                     factions.as_deref(),
                     obj.0.gameobject_faction(),
@@ -199,9 +197,9 @@ fn unit_ask_key(fields: &benilla_protocol::ObjectFields) -> u64 {
         | (u64::from(fields.unit_faction_template().unwrap_or(0)) << 32)
 }
 
-/// Folds the self descriptor fields the reference watches, one handler each (`0x468070`), into one
-/// value: level, the quest log, money, every skill, `PLAYER_FLAGS`, alive or dead, and the
-/// equipment and bag guids in place of the reference's `ITEM` watch.
+/// Folds the self descriptor fields the reference watches, one handler each, into one value: level,
+/// the quest log, money, every skill, `PLAYER_FLAGS`, alive or dead, and the equipment and bag
+/// guids in place of the reference's `ITEM` watch.
 fn self_generation(fields: &benilla_protocol::ObjectFields) -> u64 {
     const FNV_PRIME: u64 = 0x0000_0100_0000_01B3;
     let mut h = 0xcbf2_9ce4_8422_2325u64; // FNV offset
@@ -210,9 +208,8 @@ fn self_generation(fields: &benilla_protocol::ObjectFields) -> u64 {
         h = h.wrapping_mul(FNV_PRIME);
     };
     fold(u64::from(fields.unit_level().unwrap_or(0)));
-    // Health enters as the alive bit: the `UNIT_FIELD_HEALTH` watch (`0x6046f0`) sweeps only on a
-    // zero crossing, death to the light sweep (`0x604774`) and revive to the full one
-    // (`0x6047f0`); damage and regen ticks reach neither.
+    // Health enters as the alive bit: the `UNIT_FIELD_HEALTH` watch sweeps only on a zero crossing,
+    // death to the light sweep and revive to the full one; damage and regen ticks reach neither.
     fold(u64::from(fields.unit_health().unwrap_or(1) == 0));
     fold(u64::from(fields.player_flags()));
     fold(u64::from(fields.player_money().unwrap_or(0)));
@@ -454,8 +451,8 @@ mod tests {
         );
     }
 
-    /// The light sweep (`0x5eb0a0`, death among its triggers) sends without tearing down; the full
-    /// sweep (`0x5eb3f0`: your revive, your own reaction inputs) tears down first, in `0x607380`.
+    /// The light sweep (death among its triggers) sends without tearing down; the full sweep (your
+    /// revive, your own reaction inputs) tears down first, in the per-unit refresh.
     #[test]
     fn a_light_sweep_re_asks_but_only_a_revive_tears_the_marker_down_first() {
         use crate::net::{Guid, NetEntity};
@@ -532,7 +529,7 @@ mod tests {
         assert_eq!(asked(&mut app), 1, "a light sweep re-asks");
         assert_eq!(held(&app), Some(5), "…and does NOT tear the marker down");
 
-        // Death, the `>0 → ≤0` edge, is a light sweep (`0x6046f0`).
+        // Death, the `>0 → ≤0` edge, is a light sweep.
         set_self(
             &mut app,
             &[(FIELD_LEVEL, 5), (FIELD_HEALTH, 0), (FIELD_FACTION, 1)],
@@ -549,7 +546,7 @@ mod tests {
         assert_eq!(
             held(&app),
             None,
-            "…and tears every creature's marker down first (0x5eb3f0 -> 0x607380)"
+            "…and tears every creature's marker down first"
         );
 
         // Our own faction moving, the full sweep's other trigger, is outside the generation, so
@@ -563,7 +560,7 @@ mod tests {
         assert_eq!(held(&app), None, "…fully");
     }
 
-    /// The sweep tears down on hostility (`0x5eb143`), the flag deciding only the send; on the real
+    /// The sweep tears down on hostility, the flag deciding only the send; on the real
     /// `FactionTemplate.dbc`.
     #[test]
     fn a_hostile_questgiver_is_torn_down_and_never_asked_about() {
@@ -631,7 +628,7 @@ mod tests {
                 .collect()
         };
 
-        // First sight is a `0x607380` teardown for each, so statuses are seeded after it.
+        // First sight is a teardown for each, so statuses are seeded after it.
         app.update();
         assert_eq!(
             drain(&rx),
@@ -662,13 +659,13 @@ mod tests {
         assert_eq!(
             quest.status(HOSTILE),
             None,
-            "and a Hated/Hostile one is torn down (0x5eb143), questgiver flag or not"
+            "and a Hated/Hostile one is torn down, questgiver flag or not"
         );
     }
 
-    /// `CMSG_TAXINODE_STATUS_QUERY`'s one sender is `0x607380` (`0x6073e8`): on sight, on the
-    /// unit's own key moving and on a full sweep, never a light one and never on mouseover
-    /// (`0x5eb220` is the callback of a seeder nothing calls). `0x6073f0` clears both markers.
+    /// `CMSG_TAXINODE_STATUS_QUERY`'s one sender is the per-unit refresh: on sight, on the unit's
+    /// own key moving and on a full sweep, never a light one and never on mouseover (that callback
+    /// belongs to a seeder nothing calls). Its clear zeroes both markers.
     #[test]
     fn a_flight_master_is_asked_by_the_per_unit_path_only_and_loses_its_green_with_the_gold() {
         use crate::net::{Guid, NetEntity};
@@ -736,7 +733,7 @@ mod tests {
             (taxi, giver)
         };
 
-        // On sight: the create path is a `0x607380`, so each service is asked once.
+        // On sight: the create path is a per-unit refresh, so each service is asked once.
         app.update();
         let (taxi, giver) = drain(&rx);
         assert_eq!(taxi, vec![FM], "the flight master is asked on sight");
@@ -749,7 +746,7 @@ mod tests {
         app.update();
         assert_eq!(drain(&rx), (vec![], vec![]), "then quiet");
 
-        // A light sweep re-asks the questgiver; `0x5eb0a0` never tests bit `0x8`.
+        // A light sweep re-asks the questgiver; the reference never tests bit `0x8`.
         app.world_mut().resource_mut::<QuestGiver>().bump_reask();
         app.update();
         let (taxi, giver) = drain(&rx);
@@ -790,11 +787,11 @@ mod tests {
         assert_eq!(drain(&rx).0, vec![FM], "a revive re-asks the flight master");
         assert!(
             app.world().entity(fm).get::<FlightMasterStatus>().is_none(),
-            "…after tearing its green marker down first (0x607384, the shared 0x6073f0)"
+            "…after tearing its green marker down first"
         );
 
-        // And its own key moving is a `0x607380` too: the flightmaster bit going off takes the
-        // marker with it, and does not re-ask.
+        // And its own key moving is a per-unit refresh too: the flightmaster bit going off takes
+        // the marker with it, and does not re-ask.
         app.world_mut()
             .entity_mut(fm)
             .insert(FlightMasterStatus { known: false });

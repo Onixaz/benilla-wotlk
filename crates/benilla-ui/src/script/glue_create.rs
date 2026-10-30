@@ -1,7 +1,6 @@
-//! The character create verbs (table `0xac4228`, registered by `0x4dfd00`) and the state they keep,
-//! `CCharacterCreation`'s: the creatable races (`0x4e1c20`), the selected race index, class and
-//! sex, the five appearance dials, the dials each (race, sex) last held, the facing, and the name
-//! generator's dictionary.
+//! The character create verbs (table `0xac4228`) and the state they keep, the character creation's:
+//! the creatable races (`0x4e1c20`), the selected race index, class and sex, the five appearance
+//! dials, the dials each (race, sex) last held, the facing, and the name generator's dictionary.
 //!
 //! The host seeds the tables ([`GlueCreateCatalog`]) from the DBCs; the character itself is the
 //! host's scene drive, which reads [`super::UiScript::glue_create_look`]. Indices are 1-based in Lua
@@ -17,11 +16,11 @@ use super::binding_abi::{number_arg, string_arg};
 use super::glue_customize::{Customizer, GlueCustomizeGrid};
 use super::ScriptValue;
 
-/// `g_scriptSexIndex`: Lua's sex numbers for male, female and none, as `GetCharacterInfo` answers.
+/// Lua's sex numbers for male, female and none, as `GetCharacterInfo` answers.
 const SCRIPT_SEX: [u8; 3] = [2, 3, 1];
 
-/// `s_classRoles` (`0xa394b0`, read by `0x552940` at class id − 1): bit `0x2` tank, `0x4` healer,
-/// `0x8` damage.
+/// The class roles table (`0xa394b0`, read by `0x552940` at class id − 1): bit `0x2` tank, `0x4`
+/// healer, `0x8` damage.
 const CLASS_ROLES: [u8; 11] = [
     0x0B, 0x0F, 0x09, 0x09, 0x0D, 0x0B, 0x0D, 0x09, 0x09, 0x00, 0x0F,
 ];
@@ -91,8 +90,7 @@ impl GlueCreateCatalog {
     }
 }
 
-/// `GetDisplayRaceNameFromRecord`/`GetDisplayClassNameFromRecord`: the gendered name, the neutral
-/// one where it is empty.
+/// The race and class display names: the gendered name, the neutral one where it is empty.
 fn display_name<'a>(name: &'a str, female: &'a str, male: &'a str, sex: u8) -> &'a str {
     let gendered = match sex {
         0 => male,
@@ -106,7 +104,7 @@ fn display_name<'a>(name: &'a str, female: &'a str, male: &'a str, sex: u8) -> &
     }
 }
 
-/// The character the screen builds: `CCharacterCreation::m_character`'s preferences.
+/// The character the screen builds: the character creation's preferences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GlueCreateCharacter {
     pub race: u8,
@@ -123,9 +121,8 @@ pub struct GlueCreateLook {
     pub facing: f32,
 }
 
-/// A create request: `CHARACTER_CREATE_INFO`, handed to the host's `CGlueMgr::CreateCharacter`
-/// (`0x4d8c60`), or, for an existing character's paid change, with that character's guid and
-/// paid-service flags.
+/// A create request: the character's create info, handed to the host's create (`0x4d8c60`), or, for
+/// an existing character's paid change, with that character's guid and paid-service flags.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GlueCharCreate {
     pub name: String,
@@ -143,25 +140,25 @@ pub struct GlueCharCreate {
 
 /// The create verbs' slots in the glue model.
 pub(crate) struct GlueCreate {
-    /// `m_charCustomizeFrame`: the model frame `SetCharCustomizeFrame` found.
+    /// The model frame `SetCharCustomizeFrame` found.
     pub(super) customize_frame: Option<String>,
     pub(super) catalog: GlueCreateCatalog,
-    /// `m_races`: the creatable race ids, Alliance then Horde, each in table order.
+    /// The creatable race ids, Alliance then Horde, each in table order.
     races: Vec<u8>,
-    /// `m_raceIndex` into `races`.
+    /// The selected index into `races`.
     race_index: Option<usize>,
-    /// `m_classes`: the class ids `CharBaseInfo` lists for the race, row order.
+    /// The class ids `CharBaseInfo` lists for the race, row order.
     classes: Vec<u8>,
-    /// `m_selectedClassID`, 1 at load.
+    /// The selected class id, 1 at load.
     class_id: u8,
-    /// `m_existingCharacterIndex`, a roster index for a paid change.
+    /// The existing character, a roster index for a paid change.
     existing: Option<usize>,
     character: Option<GlueCreateCharacter>,
-    /// `m_charPreferences`: the dials each (race, sex) held when the screen left it.
+    /// The dials each (race, sex) held when the screen left it.
     preferences: HashMap<(u8, u8), [u8; 5]>,
-    /// `m_charFacing`, radians.
+    /// The facing, radians.
     facing: f32,
-    /// `m_prevSkinIndex`: the skin last drawn, built with or stepped to.
+    /// The skin last drawn, built with or stepped to.
     prev_skin: u8,
     /// The name generator's trigram dictionary for the race and sex (`0x4e6560`), sorted.
     dictionary: Vec<(String, u32)>,
@@ -188,7 +185,7 @@ impl Default for GlueCreate {
     }
 }
 
-/// `CRandom::dice_`'s role: a uniform draw in `0..n` (`n · r >> 32`).
+/// The reference's dice roll: a uniform draw in `0..n` (`n · r >> 32`).
 fn roll(rng: &mut u64, n: usize) -> usize {
     // xorshift64*
     let mut x = *rng;
@@ -205,8 +202,8 @@ impl GlueCreate {
         roll(&mut self.rng, n)
     }
 
-    /// `CCharacterCreation::Initialize` (`0x4e1c20`): the races not flagged `0x1`, Alliance's
-    /// first and then Horde's, each in table order.
+    /// The character creation's start (`0x4e1c20`): the races not flagged `0x1`, Alliance's first
+    /// and then Horde's, each in table order.
     fn initialize(&mut self) {
         self.facing = 0.0;
         self.existing = None;
@@ -257,7 +254,7 @@ impl GlueCreate {
         }
     }
 
-    /// `ValidateComponentData` (`0x4e9d50`) for the class.
+    /// The component validation (`0x4e9d50`) for the class.
     fn validate(&self, race: u8, sex: u8, class: u8, dials: [u8; 5]) -> [u8; 5] {
         let Some(grid) = self.catalog.customize.get(&(race, sex)) else {
             return dials;
@@ -413,7 +410,7 @@ impl GlueCreate {
     }
 
     /// `0x4e01f0`: one dial to the next or previous slot the class admits; a face steps from the
-    /// skin last picked (`m_prevSkinIndex`), which only a skin step moves.
+    /// skin last picked, which only a skin step moves.
     fn cycle(&mut self, dial: usize, delta: i32) {
         let Some(ch) = self.character else { return };
         if delta == 0 || dial >= 5 {
@@ -467,8 +464,8 @@ impl GlueCreate {
         self.character = Some(GlueCreateCharacter { dials, ..ch });
     }
 
-    /// `CNameGen::LoadNames` (`0x4e6790`) and `CreateDictionary` (`0x4e6560`): every three-letter
-    /// run of the race and sex's names, each led by `_`, lower-cased and counted, sorted.
+    /// The name generator's load (`0x4e6790`) and dictionary (`0x4e6560`): every three-letter run
+    /// of the race and sex's names, each led by `_`, lower-cased and counted, sorted.
     fn load_names(&mut self) {
         let Some(c) = self.character else { return };
         let mut counts: Vec<(String, u32)> = Vec::new();
@@ -489,7 +486,7 @@ impl GlueCreate {
         self.dictionary = counts;
     }
 
-    /// `CNameGen::GenerateName` (`0x4e63a0`): a `_`-led trigram to start, then each next trigram
+    /// The name generator's draw (`0x4e63a0`): a `_`-led trigram to start, then each next trigram
     /// chosen among those whose first two letters end the name so far, weighted by count, until a
     /// trigram of two letters ends it or the name fills `size − 1`.
     fn generate_name(&mut self, size: usize) -> String {
@@ -544,8 +541,8 @@ impl GlueCreate {
     }
 }
 
-/// The client's name check before a create (`ClientServices::CharacterValidateName`,
-/// `0x6b0f90`), as the token its failure shows: none for a name that passes.
+/// The client's name check before a create (`0x6b0f90`), as the token its failure shows: none for a
+/// name that passes.
 ///
 /// Deviation: the profanity and reserved-name lists are left to the server, which refuses those
 /// names with its own result code.

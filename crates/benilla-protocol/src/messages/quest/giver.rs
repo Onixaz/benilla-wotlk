@@ -110,8 +110,8 @@ pub struct QuestDetails {
     pub title: String,
     pub details: String,
     pub objectives: String,
-    /// `CGQuestInfo::m_autoLaunched`: the publisher stores it in the decline latch (`0x58de4f`),
-    /// so Decline closes the window instead of going back to the greeting.
+    /// The quest info's auto-launched flag: the publisher stores it in the decline latch
+    /// (`0x58de4f`), so Decline closes the window instead of going back to the greeting.
     pub auto_launched: bool,
     pub flags: u32,
     pub suggested_players: u32,
@@ -467,7 +467,7 @@ pub(in crate::messages) fn read_questgiver_quest_invalid(r: &mut &[u8]) -> io::R
     read_u32_le(r)
 }
 
-/// Read `SMSG_QUESTGIVER_QUEST_FAILED` (`0x6cda70`): `u32 questId, u32 reason`.
+/// Read `SMSG_QUESTGIVER_QUEST_FAILED`: `u32 questId, u32 reason`.
 pub(in crate::messages) fn read_questgiver_quest_failed(r: &mut &[u8]) -> io::Result<(u32, u32)> {
     Ok((read_u32_le(r)?, read_u32_le(r)?))
 }

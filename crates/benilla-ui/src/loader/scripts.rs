@@ -5,8 +5,8 @@ use crate::framexml::Element;
 use super::{children_named, Loader};
 
 impl Loader<'_> {
-    /// `<Scripts>` (`0x769ef0`): `SetScript` for each handler. Returns the `OnLoad`, which the
-    /// caller fires bottom-up.
+    /// `<Scripts>`: `SetScript` for each handler. Returns the `OnLoad`, which the caller fires
+    /// bottom-up.
     pub(super) fn apply_scripts(
         &mut self,
         el: &Element,
@@ -14,8 +14,7 @@ impl Loader<'_> {
         dbg: &str,
     ) -> Option<Function> {
         let mut onload = None;
-        // A handler's chunk name is `"<GetName()>:<Handler>"` off the wrapper, `<unnamed>` for a
-        // nameless frame (`0x7025fd`-`0x70263c`), never the loader's `dbg`.
+        // The owner's name only words the unknown-function warning; the chunk is `*:<Handler>`.
         for scripts in children_named(el, "Scripts") {
             let owner = wrapper
                 .call_method::<Option<String>>("GetName", ())
@@ -25,16 +24,16 @@ impl Loader<'_> {
             for handler in &scripts.children {
                 let name = handler.tag.clone();
                 // An empty body clears the handler to nil, but a whitespace one is an empty
-                // function: `SetScript` (`0x7025c0`) tests only NULL and the first byte
-                // (`0x7025f8`), and nothing trims the body (`0x6f29d0`). The stock blanks
-                // (`BuffFrame.xml:101`) are whitespace, so their `GetScript` answers a function.
+                // function: `SetScript` tests only NULL and the first byte, and nothing trims the
+                // body. The stock blanks (`BuffFrame.xml:101`) are whitespace, so their `GetScript`
+                // answers a function.
                 let cleared = handler.body.is_empty();
                 let func = if let Some(global) = self.function_attribute(handler) {
                     self.named_handler(&global, &name, &owner)
                 } else if cleared {
                     None
                 } else {
-                    match self.compile_handler(handler, &name, &owner, dbg) {
+                    match self.compile_handler(handler, &name, dbg) {
                         Some(f) => Some(f),
                         None => continue,
                     }
@@ -47,10 +46,9 @@ impl Loader<'_> {
                     );
                     continue;
                 }
-                // After each `SetScript` the XML walker enables the handler's input kind
-                // (`0x769ef0` → `0x76af00`): these five arm the mouse (`OnDragStop` and
-                // `OnReceiveDrag` do not), `OnMouseWheel` the wheel (kind 3). The Lua `SetScript`
-                // never does (`0x7748d0`).
+                // After each `SetScript` the XML walker enables the handler's input kind: these
+                // five arm the mouse (`OnDragStop` and `OnReceiveDrag` do not), `OnMouseWheel` the
+                // wheel (kind 3). The Lua `SetScript` never does.
                 const MOUSE_KIND: [&str; 5] = [
                     "OnEnter",
                     "OnLeave",
@@ -108,15 +106,16 @@ impl Loader<'_> {
         }
     }
 
-    /// Compile a handler body as the client does: formatted into `return function(<params>) %s
-    /// end` ([`crate::script::event::script_parameters`]), keeping the function the chunk returns,
-    /// the body on the template's first line so its line numbers hold. A `function=` replaces the
-    /// body before this is reached ([`Self::named_handler`]).
+    /// Compile a handler body as `LoadXML_Scripts` (`0x48fef0`) does: formatted into `return
+    /// function(<params>) %s end` ([`crate::script::event::script_parameters`]), the body on the
+    /// first line so its line numbers hold, the chunk named `*:<Handler>` (`0x9eb83c`), and
+    /// compiled once: the reference caches the function on the XML node and every instance of a
+    /// template shares it. Keyed here by handler and body, as an expanded template clones its
+    /// nodes. A `function=` replaces the body before this is reached ([`Self::named_handler`]).
     pub(super) fn compile_handler(
         &mut self,
         handler: &Element,
         name: &str,
-        owner: &str,
         dbg: &str,
     ) -> Option<Function> {
         // The raw body, never trimmed: a whitespace body is a real empty chunk (`apply_scripts`).
@@ -124,17 +123,30 @@ impl Loader<'_> {
         if body.is_empty() {
             return None;
         }
+        let cache = self.handler_cache();
+        let key = format!("{name}\0{body}");
+        if let Some(f) = cache
+            .as_ref()
+            .and_then(|c| c.raw_get::<Option<Function>>(key.as_str()).ok().flatten())
+        {
+            return Some(f);
+        }
         let params = crate::script::event::script_parameters(name);
         let source = format!("return function({params}) {body} end");
         let compiled = self
             .lua()
             .load(source.as_str())
-            .set_name(format!("{owner}:{name}"))
+            .set_name(format!("*:{name}"))
             .set_mode(mlua::ChunkMode::Text)
             .into_function()
             .and_then(|chunk| chunk.call::<Function>(()));
         match compiled {
-            Ok(f) => Some(f),
+            Ok(f) => {
+                if let Some(c) = cache {
+                    let _ = c.raw_set(key, f.clone());
+                }
+                Some(f)
+            }
             Err(e) => {
                 self.report
                     .errors
@@ -144,16 +156,28 @@ impl Loader<'_> {
         }
     }
 
-    /// Fire a captured `OnLoad` under the event path's convention, `this` set and restored
-    /// (`0x704d50`); an error is recorded, never propagated.
+    /// The VM's compiled XML handlers, by handler and body.
+    fn handler_cache(&self) -> Option<Table> {
+        const KEY: &str = "benilla.xml_handlers";
+        let lua = self.lua();
+        if let Ok(t) = lua.named_registry_value::<Table>(KEY) {
+            return Some(t);
+        }
+        let t = lua.create_table().ok()?;
+        lua.set_named_registry_value(KEY, &t).ok()?;
+        Some(t)
+    }
+
+    /// Fire a captured `OnLoad` under the event path's convention, `this` set and restored; an
+    /// error is recorded, never propagated.
     pub(super) fn fire_onload(&mut self, wrapper: &Table, func: &Function, dbg: &str) {
         if let Err(e) = self.invoke_handler(wrapper, func) {
             self.report.errors.push(format!("{dbg}: OnLoad: {e}"));
         }
     }
 
-    /// `PostLoadXML` (`0x490410`) runs `OnShow` after `OnLoad` for a frame visible at the end of
-    /// its load, whose shows during the load were silent (`0x4902d0`).
+    /// The post-load pass (`0x490410`) runs `OnShow` after `OnLoad` for a frame visible at the end
+    /// of its load, whose shows during the load were silent (`0x4902d0`).
     pub(super) fn fire_onshow_after_load(&mut self, h: crate::widget::FrameHandle, dbg: &str) {
         let id = {
             let mut model = self.model();

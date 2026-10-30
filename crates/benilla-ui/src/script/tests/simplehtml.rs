@@ -118,9 +118,9 @@ fn page(s: &UiScript) {
     .unwrap();
 }
 
-/// Answer every pending measure at 16 px a line and 100 wide, with the reference's line count
-/// (`0x5c2070`): a trailing break opens no line, so a `<BR/>` block's `"\n"` is one line, and an
-/// empty string is none.
+/// Answer every pending measure at 16 px a line and 100 wide, with the reference's line count: a
+/// trailing break opens no line, so a `<BR/>` block's `"\n"` is one line, and an empty string is
+/// none.
 fn measure_at_16px(s: &mut UiScript) {
     s.resolve();
     let reqs = s.fontstrings_needing_measure();
@@ -132,7 +132,7 @@ fn measure_at_16px(s: &mut UiScript) {
     s.resolve();
 }
 
-/// `0x5c2070`'s line count for a string, at the fidelity these tests need.
+/// The reference's line count for a string, at the fidelity these tests need.
 fn client_lines(text: &str) -> usize {
     if text.is_empty() {
         return 0;
@@ -174,7 +174,7 @@ fn a_well_formed_body_is_one_block_per_tag() {
             ("Right body.".to_string(), "RIGHT"),
         ]
     );
-    // `elementFont[1]` has no path, so `0x78ae30` substitutes `elementFont[0]`; nothing scales a
+    // `elementFont[1]` has no path, so the reference substitutes `elementFont[0]`; nothing scales a
     // header.
     for blk in &b {
         assert_eq!(blk.font.as_deref(), Some("Fonts\\MORPHEUS.TTF"));
@@ -185,7 +185,7 @@ fn a_well_formed_body_is_one_block_per_tag() {
 }
 
 /// Block 0 pins TOPLEFT to the frame's TOPLEFT and each later block TOPLEFT to the previous one's
-/// BOTTOMLEFT at `-spacing` (`0x767c70`); spacing starts at 0 (`0x770d89`), so the blocks touch.
+/// BOTTOMLEFT at `-spacing`; spacing starts at 0, so the blocks touch.
 #[test]
 fn blocks_chain_bottom_to_top_and_are_flush_at_spacing_zero() {
     let mut s = script();
@@ -230,7 +230,7 @@ fn spacing_steps_the_blocks_apart() {
         "block N+1 sits at block N's BOTTOMLEFT displaced by -spacing"
     );
     assert_eq!(s.eval::<f32>("return Page:GetSpacing()").unwrap(), 4.0);
-    // A negative spacing is clamped to 0 before it is stored (`0x772246`).
+    // A negative spacing is clamped to 0 before it is stored.
     s.run("Page:SetSpacing(-9)").unwrap();
     assert_eq!(s.eval::<f32>("return Page:GetSpacing()").unwrap(), 0.0);
 
@@ -242,7 +242,7 @@ fn spacing_steps_the_blocks_apart() {
     );
 }
 
-/// A BODY-level `<BR/>` is its own `"\n"` block, which `0x5c2070` counts as one line.
+/// A BODY-level `<BR/>` is its own `"\n"` block, which the reference counts as one line.
 #[test]
 fn a_body_level_br_is_exactly_one_blank_line() {
     let mut s = script();
@@ -293,9 +293,9 @@ fn the_three_fallback_routes_each_land_on_one_raw_block() {
     }
 }
 
-/// The login screen's server alert (`SHOW_SERVER_ALERT`'s text, `ServerAlertText:SetText(arg1)`)
-/// is plain text with blank lines, brackets, an apostrophe and a final newline: one `P` block of
-/// the raw string, no collapse (`0x78a501`).
+/// The login screen's server alert (`SHOW_SERVER_ALERT`'s text, `ServerAlertText:SetText(arg1)`) is
+/// plain text with blank lines, brackets, an apostrophe and a final newline: one `P` block of the
+/// raw string, no collapse.
 #[test]
 fn a_plain_text_server_alert_is_one_raw_p_block_with_its_newlines() {
     let s = script();
@@ -520,9 +520,9 @@ fn an_unfloated_image_reserves_height_without_becoming_the_anchor() {
     );
 }
 
-/// The `<IMG>` in `page_text` 2654 has no `width=` or `height=`, and the reference's
-/// `CSimpleTexture::GetWidth 0x770720`/`GetHeight 0x770790` answer an authored 0 with the art's
-/// texel size, a texel to a FrameXML unit: the 128×128 crest is a 128-unit square.
+/// The `<IMG>` in `page_text` 2654 has no `width=` or `height=`, and the reference texture's
+/// `GetWidth`/`GetHeight` answer an authored 0 with the art's texel size, a texel to a FrameXML
+/// unit: the 128×128 crest is a 128-unit square.
 #[test]
 fn the_books_unsized_crest_is_its_arts_texel_square_not_the_whole_page() {
     const CREST: &str = "Interface\\PvPRankBadges\\PvPRankAlliance";
@@ -571,8 +571,8 @@ fn the_books_unsized_crest_is_its_arts_texel_square_not_the_whole_page() {
     );
 }
 
-/// An unfloated image reserves `GetHeight()` in the flow (`0x78ad07`), its art's texel height when
-/// it has no `height=`; a floated one reserves nothing, so text runs over it in the reference too.
+/// An unfloated image reserves `GetHeight()` in the flow, its art's texel height when it has no
+/// `height=`; a floated one reserves nothing, so text runs over it in the reference too.
 #[test]
 fn an_unsized_image_reserves_its_arts_texel_height_unless_it_is_floated() {
     let mut s = script();
@@ -607,7 +607,7 @@ fn an_unsized_image_reserves_its_arts_texel_height_unless_it_is_floated() {
 }
 
 /// With no size oracle a zero-size image has no span and does not resolve, as in the reference for
-/// a texture with no `CGxTex*`: `assemble 0x767a20` returns 0 and the quad is all zeros.
+/// a texture with no device texture: `assemble` returns 0 and the quad is all zeros.
 #[test]
 fn without_a_size_oracle_an_unsized_image_does_not_resolve() {
     let mut s = script();
@@ -629,7 +629,7 @@ fn without_a_size_oracle_an_unsized_image_does_not_resolve() {
 
 // ── The Lua table ──
 
-/// The 19 names of `.data 0x87ba80`, and only those: there is no `GetText`.
+/// The 19 names of `.data`, and only those: there is no `GetText`.
 #[test]
 fn the_method_table_is_the_nineteen_names() {
     let s = script();
@@ -671,8 +671,8 @@ fn the_method_table_is_the_nineteen_names() {
         .unwrap());
 }
 
-/// The optional element name (`0x795d80`): absent means `P`, the four names match in any case, and
-/// any other string stays as the first real argument.
+/// The optional element name: absent means `P`, the four names match in any case, and any other
+/// string stays as the first real argument.
 #[test]
 fn the_element_name_argument_is_optional_case_insensitive_and_non_matching_falls_through() {
     let s = script();
@@ -761,9 +761,8 @@ fn the_paint_setters_land_on_the_element_and_reach_the_next_parse() {
     );
 }
 
-/// An element with no font path takes `elementFont[0]` whole, colour included: `0x78ae29` to
-/// `0x78ae54` swap the register before the one `SetFontObject`, so an `H1` given only a colour
-/// draws in `P`'s.
+/// An element with no font path takes `elementFont[0]` whole, colour included: the reference swaps
+/// the register before the one `SetFontObject`, so an `H1` given only a colour draws in `P`'s.
 #[test]
 fn an_element_with_no_font_of_its_own_loses_its_own_colour_too() {
     let s = script();
@@ -775,7 +774,7 @@ fn an_element_with_no_font_of_its_own_loses_its_own_colour_too() {
     "#,
     )
     .unwrap();
-    // The getter still answers red: it reads the element font, never a block (`0x795d3e` reads
+    // The getter still answers red: it reads the element font, never a block (the reference reads
     // `[this + idx*4 + 0x350]`).
     assert_eq!(
         s.eval::<(f32, f32, f32, f32)>("return Page:GetTextColor(\"H1\")")
@@ -811,8 +810,8 @@ fn block_color(s: &UiScript, name: &str, i: usize) -> Option<[f32; 4]> {
 }
 
 /// `SetFontObject` on an element font: a re-point keeps what a local setter set (the inheritMask
-/// bit at `CSimpleFont+0x2c`/`CSimpleFontString+0xD4` is never restored), and nil unlinks the
-/// object but leaves the paint.
+/// bit at font `+0x2c`/font string `+0xD4` is never restored), and nil unlinks the object but
+/// leaves the paint.
 #[test]
 fn set_font_object_keeps_local_overrides_and_the_nil_form_leaves_the_paint_standing() {
     let s = script();
@@ -849,7 +848,7 @@ fn set_font_object_keeps_local_overrides_and_the_nil_form_leaves_the_paint_stand
     );
 }
 
-/// `0x78adb0` gives every block its tag's `align`, so `SetJustifyH` is stored and answered but
+/// The reference gives every block its tag's `align`, so `SetJustifyH` is stored and answered but
 /// never drawn.
 #[test]
 fn set_justify_h_is_stored_and_answered_but_never_drawn() {
@@ -871,7 +870,7 @@ fn set_justify_h_is_stored_and_answered_but_never_drawn() {
         "LEFT",
         "the tag's absent align (LEFT) wins over the element font's justify"
     );
-    // A non-token raises the usage string (`0x87c77c`).
+    // A non-token raises the usage string.
     assert!(s.run(r#"Page:SetJustifyH("sideways")"#).is_err());
 }
 

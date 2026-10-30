@@ -144,7 +144,7 @@ fn release(world: &mut World, b: MouseButton) {
 }
 
 /// The right button's session, entered with no button: the mouse turns the camera and the body
-/// together, the cursor is locked and hidden, and `IsMouselooking` answers 1 (`0x514210`).
+/// together, the cursor is locked and hidden, and `IsMouselooking` answers 1.
 #[test]
 fn mouselook_start_turns_the_camera_and_the_character_with_no_button_held() {
     let mut w = world(false);
@@ -178,8 +178,8 @@ fn mouselook_start_turns_the_camera_and_the_character_with_no_button_held() {
     assert!(w.resource::<CameraControl>().is_looking());
 }
 
-/// `MouselookStop` (`0x514240`) ends the session: the cursor comes back and the mouse turns
-/// nothing, and `IsMouselooking` answers nil.
+/// `MouselookStop` ends the session: the cursor comes back and the mouse turns nothing, and
+/// `IsMouselooking` answers nil.
 #[test]
 fn mouselook_stop_ends_the_session() {
     let mut w = world(false);
@@ -198,7 +198,7 @@ fn mouselook_stop_ends_the_session() {
 }
 
 /// CustomNameplates' steer: a right press a plate took calls `MouselookStart`, and the button's
-/// release ends it (`0x492b50` routes it to `TurnOrActionStop`) without a world click.
+/// release ends it (the release routes to `TurnOrActionStop`) without a world click.
 #[test]
 fn the_right_release_ends_a_mouselook_its_press_started_on_the_ui() {
     let mut w = world(true);
@@ -225,7 +225,7 @@ fn the_right_release_ends_a_mouselook_its_press_started_on_the_ui() {
     );
 }
 
-/// The loading cover's world enter clears the whole word (`0x5144c0`).
+/// The loading cover's world enter clears the whole word.
 #[test]
 fn the_cover_ends_a_scripted_mouselook() {
     let mut w = world(false);
@@ -237,7 +237,7 @@ fn the_cover_ends_a_scripted_mouselook() {
     assert!(!is_mouselooking(&w));
 }
 
-/// A session across a focus loss: the look state stays as the deactivate leaves it (`0x514490`
+/// A session across a focus loss: the look state stays as the deactivate leaves it (the reference
 /// keeps the mouse bits), the OS cursor is free and shown meanwhile and the mouse turns nothing,
 /// and the focus takes it back locked and hidden, with no jolt on the frame it returns.
 fn a_session_survives_focus_loss(start: impl Fn(&mut World)) {
@@ -321,7 +321,7 @@ fn mouselook_stop_while_unfocused_ends_it_and_the_focus_takes_nothing_back() {
 }
 
 /// One bit, whoever set it: `MouselookStop` ends a right drag in flight and disarms its click, so
-/// the release after it selects nothing (`0x514810(0)`, then `0x515090(1, 0, …)`).
+/// the release after it selects nothing.
 #[test]
 fn mouselook_stop_ends_a_right_drag_and_its_release_clicks_nothing() {
     let mut w = world(false);
@@ -366,7 +366,7 @@ fn mouselook_start_under_a_left_drag_is_the_both_button_run() {
     {
         let wm = &w.resource::<CameraControl>().world_mouse;
         assert!(wm.both(), "both channels held");
-        assert!(wm.rose(), "the transition into the run (0x514a73)");
+        assert!(wm.rose(), "the transition into the run");
     }
     w.run_system_once(look_frame).unwrap();
     w.resource_mut::<ButtonInput<MouseButton>>().clear();

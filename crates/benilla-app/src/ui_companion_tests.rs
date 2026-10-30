@@ -108,8 +108,8 @@ fn the_lists_take_companions_alone_and_sort_by_creature_name() {
     );
 }
 
-/// `UpdateCompanions` (`0x53cec0`) does not sort while a record is pending: the lists keep spell
-/// order and the name reads nil.
+/// The companion list update (`0x53cec0`) does not sort while a record is pending: the lists keep
+/// spell order and the name reads nil.
 #[test]
 fn a_pending_record_holds_the_sort() {
     let pending_bear = |entry: u32| if entry == 801 { None } else { names(entry) };
@@ -167,8 +167,8 @@ fn the_active_flag_reads_the_critter_guid_and_the_mount_auras() {
     assert_eq!(active(&state.mounts), [20]);
 }
 
-/// `Spell_C_CancelAura` (`0x802f80`): the critter out goes home by `CMSG_DISMISS_CRITTER` with its
-/// guid, a mount by `CMSG_CANCEL_AURA`, and a charmed player sends nothing.
+/// The aura cancel (`0x802f80`): the critter out goes home by `CMSG_DISMISS_CRITTER` with its guid,
+/// a mount by `CMSG_CANCEL_AURA`, and a charmed player sends nothing.
 #[test]
 fn a_dismissal_sends_the_critter_home_or_cancels_the_mount() {
     let cat = catalog();

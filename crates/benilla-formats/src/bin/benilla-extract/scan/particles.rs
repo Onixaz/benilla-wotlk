@@ -438,10 +438,10 @@ pub fn partcensus(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// List the emitters whose file slot 0 never emits while another slot does (`peak0 <= 0 <
-/// peakN`, the peak rates). The reference samples the playing sequence's rate window every frame
-/// (`0x71850d`), so a consumer pinned to slot 0 never births a particle from them. `slots` counts
-/// file sequence slots, the axis `EmitTiming` bakes on.
+/// List the emitters whose file slot 0 never emits while another slot does (`peak0 <= 0 < peakN`,
+/// the peak rates). The reference samples the playing sequence's rate window every frame, so a
+/// consumer pinned to slot 0 never births a particle from them. `slots` counts file sequence slots,
+/// the axis `EmitTiming` bakes on.
 pub fn partslotscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let names = super::m2_names(chain, prefix)?;
     let (mut scanned, mut with_emitters, mut emitters, mut dead0) = (0u32, 0u32, 0u32, 0u32);

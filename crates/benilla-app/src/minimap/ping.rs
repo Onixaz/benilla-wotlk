@@ -11,17 +11,17 @@
 //! - Across: our ping sends `MSG_MINIMAP_PING` (raw world floats, relayed to the rest of the group
 //!   only, `GroupHandler.cpp:384-391`); a member's seats the same way. A ping seats locally at
 //!   click time, so a solo ping works.
-//! - Out: `MINIMAP_PING (unitToken, nx, ny)` fires with the relay `0x4ee330`'s offsets
+//! - Out: `MINIMAP_PING (unitToken, nx, ny)` fires with the relay the reference's offsets
 //!   `(−dy·k, dx·k)`, `k = 1/(2·radius)`; `Minimap:GetPingPosition()` reads them back.
 //!
-//! The reference keeps the world point in two statics nothing clears (`0xbc787c`/`0xbc7880`), and
-//! the stock `Minimap.lua` owns everything visible: it shows the `MiniMapPing` `<Model>`
+//! The reference keeps the world point in two statics nothing clears, and the stock `Minimap.lua`
+//! owns everything visible: it shows the `MiniMapPing` `<Model>`
 //! (`Interface\MiniMap\Ping\MinimapPing.mdx`, rendered by `crate::ui_models`), holds it 5 s and
 //! fades it 0.5 s (`MINIMAPPING_TIMER`, `MINIMAPPING_FADE_TIMER`). `WorldMapPing` is the same model
 //! on the world map.
 //!
 //! Reaching a ping does not clear it: the reference's 10-yd `d² < 100` auto-clear belongs to the
-//! `SMSG_GOSSIP_POI` marker (`0x6d99aa`–`0x6d9a4c`).
+//! `SMSG_GOSSIP_POI` marker.
 
 use bevy::prelude::*;
 
@@ -132,8 +132,8 @@ pub(super) fn drive_minimap_ping(
     let Some(live) = ping.live.as_ref() else {
         return;
     };
-    // Ours goes on the wire only when grouped, as the reference's `PingLocation` (`0x4eeca0`)
-    // sends; the local ping stands either way.
+    // Ours goes on the wire only when grouped, as the reference's `PingLocation` sends; the local
+    // ping stands either way.
     if live.sender == 0 && group.in_group {
         let _ = commands.0.send(ClientCommand::MinimapPing {
             x: live.world.0,
@@ -291,9 +291,8 @@ mod tests {
         );
     }
 
-    /// No proximity clear: the 10-yd `d² < 100` auto-clear is the `SMSG_GOSSIP_POI` marker's
-    /// (`0x6d99aa`–`0x6d9a4c`), and the ping's statics are never cleared. A frame with no click
-    /// seats nothing over it.
+    /// No proximity clear: the 10-yd `d² < 100` auto-clear is the `SMSG_GOSSIP_POI` marker's, and
+    /// the ping's statics are never cleared. A frame with no click seats nothing over it.
     #[test]
     fn reaching_the_ping_does_not_clear_it() {
         let mut c = ctx();

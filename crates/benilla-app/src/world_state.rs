@@ -3,9 +3,8 @@
 //! and by the world map's landmark pass ([`crate::ui_world_map`]), where an `AreaPOI.dbc` row with
 //! a `WorldStateID` shows only while that state is nonzero.
 //!
-//! The reference keeps an open hash keyed by the raw wire dword (`[0xb71ec8]`, bucket
-//! `mask & key`, value at node `+0x18`); keys stay raw because `$<n>e` reads the negated key
-//! (`$2077e` looks up `0xFFFFF7E3`).
+//! The reference keeps an open hash keyed by the raw wire dword (bucket `mask & key`, value at node
+//! `+0x18`); keys stay raw because `$<n>e` reads the negated key (`$2077e` looks up `0xFFFFF7E3`).
 //!
 //! An init first runs `InitWorldStates` (`0x548970`): it stores map, zone and area as the display
 //! filter ([`WorldStates::scope`]) and rebuilds the world-state UI list, and only then are the
@@ -26,13 +25,13 @@ pub(crate) struct WorldStates {
 
 impl WorldStates {
     /// Bumped per write and per init, not per pair, the edge readers rebuild on: the reference's
-    /// handler re-runs the world-map landmark builder once per packet (`0x48fa0d` to `0x4a67a0`).
+    /// handler re-runs the world-map landmark builder once per packet.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// The reference's getter (`0x4c5810`): a missing key reads 0 (`0x4c5867`). Signed, as the
-    /// reference prints it through `"%d"`.
+    /// The reference's getter: a missing key reads 0. Signed, as the reference prints it through
+    /// `"%d"`.
     pub(crate) fn get(&self, key: u32) -> i32 {
         self.values.get(&key).copied().unwrap_or(0) as i32
     }
@@ -56,9 +55,9 @@ impl WorldStates {
         self.generation = self.generation.wrapping_add(1);
     }
 
-    /// Writes `(id, value)` pairs, the reference's setter (`0x4c5870`) for both opcodes. Init's
-    /// trailing `(0, 0)` is written as data; a zero value is stored, not deleted (`edx` is never
-    /// tested in `[0x4c5870, 0x4c5a31)`); a repeated key overwrites in place (`0x4c58bb`).
+    /// Writes `(id, value)` pairs, the reference's setter for both opcodes. Init's trailing
+    /// `(0, 0)` is written as data; a zero value is stored, not deleted (`edx` is never tested); a
+    /// repeated key overwrites in place.
     pub(crate) fn write(&mut self, states: &[(u32, u32)]) {
         self.values.extend(states.iter().copied());
         self.generation = self.generation.wrapping_add(1);

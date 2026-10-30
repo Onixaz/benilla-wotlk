@@ -1,7 +1,6 @@
-//! The WMO-interior minimap's offscreen composite, the reference's own pipeline: tiles drawn into
-//! a 256 × 256 target (`0x4eda42`/`0x4eda48`) under an ortho half-extent of 1.5 × the view radius
-//! (`0x4ec130`, the factor at `0x80308c`), cleared colour-only to opaque black (unpacked at
-//! `0x59b910`), blending off and alpha-tested at `GEQUAL 224/255`; the blit shows the middle
+//! The WMO-interior minimap's offscreen composite, the reference's own pipeline: tiles drawn into a
+//! 256 × 256 target under an ortho half-extent of 1.5 × the view radius, cleared colour-only to
+//! opaque black, blending off and alpha-tested at `GEQUAL 224/255`; the blit shows the middle
 //! two-thirds, netting 1.0 × radius on screen.
 //!
 //! The alpha test and the target's resolution only work together: the test keeps the clear from
@@ -18,11 +17,11 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, T
 use crate::portrait::MINIMAP_COMPOSITE_LAYER;
 use crate::ui_pass::UiQuadMaterial;
 
-/// The target's edge in texels (`0x4eda42`). A fidelity constant, not a quality knob: a larger
-/// target samples the bake's one-texel gaps and draws them as hairlines.
+/// The target's edge in texels. A fidelity constant, not a quality knob: a larger target samples
+/// the bake's one-texel gaps and draws them as hairlines.
 pub(super) const RT_SIZE: u32 = 256;
 
-/// The target's ortho half-extent as a multiple of the on-screen view radius (`0x80308c`).
+/// The target's ortho half-extent as a multiple of the on-screen view radius.
 pub(super) const RT_HALF_EXTENT_SCALE: f32 = 1.5;
 
 /// The fraction of the target's edge the blit shows, netting 1.0 × radius on screen.
@@ -102,8 +101,8 @@ pub(super) fn setup_composite(
             RenderLayers::layer(MINIMAP_COMPOSITE_LAYER),
             RenderTarget::Image(image.clone().into()),
             Camera {
-                // The reference's clear: colour only, opaque black (`0x4ec8ef`, mask 1). Anything
-                // the bake leaves uncovered reads black, the exterior group's footprint included.
+                // The reference's clear: colour only, opaque black (mask 1). Anything the bake
+                // leaves uncovered reads black, the exterior group's footprint included.
                 clear_color: ClearColorConfig::Custom(Color::BLACK),
                 // Off until indoors; `drive_composite` owns the switch.
                 is_active: false,

@@ -36,7 +36,7 @@ pub struct M2Model {
     pub collision: Option<CollisionMesh>,
     /// Particle emitters, positions in WoW model space.
     pub emitters: Vec<ModelEmitter>,
-    /// Ribbon emitters (trails), the reference's `CRibbonEmitter` (simulated at `0x7b7e60`).
+    /// Ribbon emitters (trails), the reference's `CRibbonEmitter`.
     pub ribbons: Vec<ModelRibbon>,
     /// M2 light blocks in WoW model space; fire props and held torches author a point light.
     pub lights: Vec<ModelLight>,
@@ -46,39 +46,38 @@ pub struct M2Model {
     pub inverse_bindposes: Handle<SkinnedMeshInverseBindposes>,
     /// The animations; `None` when no bone, global sequence, emitter or material loop animates.
     pub animations: Option<ModelAnimations>,
-    /// The first sequence's length in seconds, the spell-fx completion clock: the reference ends
-    /// an effect after one pass of its armed sequence, whatever its bones or loop flag
-    /// (`0x7194f8`). The reference arms `animationLookup[0]`'s sequence, not the first; the two
-    /// coincide on every effect model checked.
+    /// The first sequence's length in seconds, the spell-fx completion clock: the reference ends an
+    /// effect after one pass of its armed sequence, whatever its bones or loop flag. The reference
+    /// arms `animationLookup[0]`'s sequence, not the first; the two coincide on every effect model
+    /// checked.
     pub first_seq_span: Option<f32>,
     /// Every parsed sequence in file order, listed even when [`Self::animations`] is `None`: the
     /// UI model pane's clock reads them.
     pub sequences: Vec<M2SequenceInfo>,
     /// Attachment points (hands, sheaths), each on its bone.
     pub attachments: Vec<ModelAttachment>,
-    /// The event table's positional markers, queried by 4CC, first match (`0x7130e0`/`0x7131b0`).
+    /// The event table's positional markers, queried by 4CC, first match.
     pub markers: Vec<crate::ModelMarker>,
-    /// The unit-frame portrait camera, `cameraLookup[0]` (`0x713540`), rendered as authored:
-    /// `lookAt` and the record's perspective, with no framing on top (`0x7ac640`).
+    /// The unit-frame portrait camera, `cameraLookup[0]`, rendered as authored: `lookAt` and the
+    /// record's perspective, with no framing on top.
     pub portrait_camera: Option<PortraitCamera>,
     /// The camera table's first record, the glue scenes' `Model:SetCamera(0)`; their
     /// `cameraLookup[0]` is the `0xffff` none sentinel.
     pub camera0: Option<PortraitCamera>,
     /// The camera table's second record, which a `<PlayerModel>` (paper doll, inspect, pet page)
-    /// renders through: raw index 1, not through `cameraLookup` (`0x505b30`, chooser `0x505890`,
-    /// frozen at `0x7acf10`). `None` with fewer than two cameras, where the reference builds a
-    /// fixed camera.
+    /// renders through: raw index 1, not through `cameraLookup`. `None` with fewer than two
+    /// cameras, where the reference builds a fixed camera.
     pub pane_camera: Option<PortraitCamera>,
     /// The whole camera table by raw index, for `SetCamera(n)`; an index past its end leaves the
     /// pane on the orthographic leg.
     pub cameras: Vec<PaneCamera>,
     /// A bow's `$WTT`/`$WTB` string ends `[top, bottom]` as (bone, Bevy-space point), for the
-    /// string drawer `0x611ff0`.
+    /// string drawer.
     pub string_anchors: Option<[(u16, Vec3); 2]>,
-    /// The fishing pole's `$CCH` rod tip, Bevy space, where the line draw `0x61f780` starts.
+    /// The fishing pole's `$CCH` rod tip, Bevy space, where the line draw starts.
     pub cch_marker: Option<Vec3>,
-    /// The header's `GlobalModelFlags` (`+0x10`); bits `&3` conform the model to the ground
-    /// (`0x7106c0`): 1 pitch, 3 pitch and roll, else level.
+    /// The header's `GlobalModelFlags` (`+0x10`); bits `&3` conform the model to the ground: 1
+    /// pitch, 3 pitch and roll, else level.
     pub global_flags: u32,
 }
 
@@ -161,21 +160,20 @@ pub struct ModelEmitter {
     /// bone's frame. Zero for an out-of-range bone.
     pub bone_pivot: [f32; 3],
     /// The billboard bone this emitter's chain reaches. The reference folds the position through
-    /// the replaced palette matrix (`0x718960` at `0x7190a9`-`0x71910c`, written by `0x715868`),
-    /// so the origin is `pivot + camBasis·(def.position − pivot)`. A rigged world host has it in
-    /// its palette already; unrigged item models and booth bakes, whose pose drops the camera
-    /// arms, need it.
+    /// the replaced palette matrix, so the origin is `pivot + camBasis·(def.position − pivot)`. A
+    /// rigged world host has it in its palette already; unrigged item models and booth bakes, whose
+    /// pose drops the camera arms, need it.
     pub billboard: Option<EmitterBillboard>,
-    /// The recursion model, whose emitters become this one's children (`0x7b5dd0`).
+    /// The recursion model, whose emitters become this one's children.
     pub recursion: Option<Handle<M2Model>>,
-    /// The geometry model, drawn per particle in place of a quad (`0x7b4840`).
+    /// The geometry model, drawn per particle in place of a quad.
     pub geometry: Option<Handle<M2Model>>,
     /// How far the owner model's transparent batches sort from its origin, model-local yards:
     /// the owner-last draw-order rung's size ([`benilla_formats::m2_owner_reach`]).
     pub owner_reach: f32,
     /// The owner model's bound sphere for the water-plane side, Bevy model space: the reference
-    /// classifies once per model, above when `d ≥ −r`, `r = |world matrix row 0| × radius`
-    /// (`0x7083df`-`0x7084dd`). `(ZERO, 0)` without header bounds.
+    /// classifies once per model, above when `d ≥ −r`, `r = |world matrix row 0| × radius`.
+    /// `(ZERO, 0)` without header bounds.
     pub water_bound: (Vec3, f32),
     /// The owner's loader-idle file slot ([`crate::ModelAnimations::idle_seq`]), baked here for
     /// the lanes with no rig to ask; 0 when the model builds no animations.
@@ -200,7 +198,7 @@ fn m2_dep_url(raw: &str) -> String {
     format!("mpq://{stem}.m2")
 }
 
-/// One ribbon emitter, riding its bone like [`ModelEmitter::bone_pivot`] (`0x718960`).
+/// One ribbon emitter, riding its bone like [`ModelEmitter::bone_pivot`].
 #[derive(Clone)]
 pub struct ModelRibbon {
     pub def: benilla_formats::RibbonEmitterDef,
@@ -208,12 +206,12 @@ pub struct ModelRibbon {
     pub bone_pivot: [f32; 3],
     /// As [`ModelEmitter::owner_reach`]: a trail takes its model's owner-last rung too.
     pub owner_reach: f32,
-    /// As [`ModelEmitter::water_bound`]; the ribbon leg reads the model's verdict too (`0x7081f1`).
+    /// As [`ModelEmitter::water_bound`]; the ribbon leg reads the model's verdict too.
     pub water_bound: (Vec3, f32),
 }
 
 /// One M2 light and its bone's rest pivot: the reference moves the light with the live bone each
-/// frame (`0x718960`), so a torch's glow follows the hand.
+/// frame, so a torch's glow follows the hand.
 #[derive(Clone, Copy)]
 pub struct ModelLight {
     pub def: M2Light,
@@ -467,7 +465,7 @@ impl AssetLoader for M2ModelLoader {
                 }
             }
             // Groups 3 and 4 hold every joint outside the right and the left fingers, for the
-            // weapon grip (`CloseHand`, `0x479660`).
+            // weapon grip (the reference's hand close).
             let finger_roots = finger_subtree_roots(&skeleton_raw);
             for i in 0..skeleton_raw.bones.len() {
                 let target = bone_target_id(i as u16);

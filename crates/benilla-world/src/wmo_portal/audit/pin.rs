@@ -407,8 +407,8 @@ fn wmo_pin_probe() {
         vis.len(),
         pvs.visible.len()
     );
-    // The interior-fog gate (`[0xca7f00]`, [`super::super::GroupPvs`]): the groups that wear the
-    // building's own MFOG rather than the scene fog.
+    // The interior-fog gate ([`super::super::GroupPvs`]): the groups that wear the building's own
+    // MFOG rather than the scene fog.
     let fogged: Vec<usize> = pvs
         .interior_fog
         .iter()
@@ -690,10 +690,10 @@ fn shadowfang_sees_true_interiors_that_are_off_the_fog_chain() {
 }
 
 /// Pass 2 walks on from a window rather than only marking the group it admits: the reference ends
-/// its per-group predicate in the portal recursion (`0x6b3d39 call 0x6b41c0`), Pass 1's own entry,
-/// not in Pass 3's callback draw (`0x6b4160`). Measured as the gain, the groups the Pass 2 walk
-/// entered that no window admitted and Pass 1 never reached, from each Darnassus interior with a
-/// doorway; the city's portal-linked outdoor areas give the walk somewhere to go.
+/// its per-group predicate in the portal recursion, Pass 1's own entry, not in Pass 3's callback
+/// draw. Measured as the gain, the groups the Pass 2 walk entered that no window admitted and Pass
+/// 1 never reached, from each Darnassus interior with a doorway; the city's portal-linked outdoor
+/// areas give the walk somewhere to go.
 #[test]
 fn darnassus_pass_two_walks_on_from_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -822,7 +822,7 @@ fn darnassus_pass_two_walks_on_from_the_window() {
     );
     assert!(
         total_gain > 0,
-        "Pass 2 must WALK ON from a window-admitted exterior group (0x6b3d39 -> 0x6b41c0); a \
+        "Pass 2 must WALK ON from a window-admitted exterior group; a \
          marking pass scores exactly zero here"
     );
 }

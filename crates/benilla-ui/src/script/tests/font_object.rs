@@ -126,8 +126,8 @@ fn tablet_reads_the_tooltip_header_size_off_the_global() {
     assert_eq!((header, normal), (14.0, 12.0));
 }
 
-/// `inherits=` is flattened once, at load, where the reference links it live (`0x770c60`), and
-/// the published object carries the flattened values.
+/// `inherits=` is flattened once, at load, where the reference links it live, and the published
+/// object carries the flattened values.
 #[test]
 fn an_inheriting_font_still_flattens_to_the_same_values() {
     let s = script();
@@ -254,8 +254,8 @@ fn set_font_object_takes_the_object_or_the_name() {
         .eval::<bool>("return byObject:GetFontObject() == byName:GetFontObject()")
         .unwrap());
 
-    // nil, the third form in the reference's usage string (`.rdata 0x87c5cc`), unlinks the object
-    // and leaves the paint.
+    // nil, the third form in the reference's usage string (`.rdata`), unlinks the object and leaves
+    // the paint.
     s.run("byName:SetFontObject(nil)").unwrap();
     assert!(s
         .eval::<bool>("return byName:GetFontObject() == nil")
@@ -479,7 +479,7 @@ fn create_font_mints_publishes_and_paints() {
         ("Fonts\\FRIZQT__.TTF".to_string(), 20.0, String::new())
     );
 
-    // A name that already names a font object returns that object unchanged (`0x7839ab`).
+    // A name that already names a font object returns that object unchanged.
     s.run("again = CreateFont('_NameplatesNameplateFont')")
         .unwrap();
     assert!(s.eval::<bool>("return again == Nameplate.Font").unwrap());
@@ -583,8 +583,8 @@ fn button_state_fonts_take_the_object_and_follow_its_mutation() {
     s.run("b:SetHighlightFontObject('GameFontNormal')").unwrap();
 }
 
-/// The reference gates every merge (`0x770910`/`0x770800`) on the source's has-a-value mask, and a
-/// fresh `CreateFont` object's mask is 0, so the FontString keeps what it had.
+/// The reference gates every merge on the source's has-a-value mask, and a fresh `CreateFont`
+/// object's mask is 0, so the FontString keeps what it had.
 #[test]
 fn an_empty_font_object_copies_nothing_onto_a_fontstring() {
     let mut s = script();
@@ -644,8 +644,8 @@ fn set_font_returns_one_or_nil() {
     assert!(s.eval::<bool>("return f:SetFont('', 12) == nil").unwrap());
 }
 
-/// The justify tokens are one reference table (`.rdata 0x811ad0`) matched whole and case-blind by
-/// `SStrCmpI`; a FontString (getters `0x79e5f0`/`0x79e7f0`) and a `<Font>` object answer alike.
+/// The justify tokens are one reference table (`.rdata`) matched whole and case-blind; a FontString
+/// and a `<Font>` object answer alike.
 #[test]
 fn both_tables_speak_one_justify_law() {
     let s = script();
@@ -705,8 +705,8 @@ fn both_tables_speak_one_justify_law() {
     }
 }
 
-/// `SetFont` is one routine (`0x79f210`) behind three entries, Font `0x7a0270`, FontString
-/// `0x79d4f0` and EditBox `0x797210`; a bad argument raises its usage string (`0x87c69c`).
+/// `SetFont` is one routine behind three entries, Font, FontString and EditBox; a bad argument
+/// raises its usage string.
 #[test]
 fn set_font_is_one_routine_on_both_tables() {
     let s = script();
@@ -758,8 +758,8 @@ fn set_font_is_one_routine_on_both_tables() {
 }
 
 /// `SetJustifyH("TOP")` parses (`0x08`), sets nothing in the axis mask `0x07` and raises nothing;
-/// `GetJustifyH` then answers `"UNKNOWN"` (`0x6f1a00`, `.data 0x838044`), yet the ui-to-gx
-/// translator `0x44d420` pre-sets each axis to 1, so the text still draws centred, not LEFT.
+/// `GetJustifyH` then answers `"UNKNOWN"` (`.data`), yet the ui-to-gx translator pre-sets each axis
+/// to 1, so the text still draws centred, not LEFT.
 #[test]
 fn a_cross_axis_token_erases_the_axis_but_still_draws_centred() {
     let mut s = script();
@@ -813,9 +813,9 @@ fn a_cross_axis_token_erases_the_axis_but_still_draws_centred() {
     );
 }
 
-/// The shared font block (`0x79f910`, FontString's `0x79dbe0`) is on six tables: FontString, Font,
-/// EditBox, MessageFrame, ScrollingMessageFrame and SimpleHTML, not Button. A message frame with no
-/// `<FontString>` draws LEFT, and creating its style region (CENTER by default) must keep it LEFT.
+/// The shared font block is on six tables: FontString, Font, EditBox, MessageFrame,
+/// ScrollingMessageFrame and SimpleHTML, not Button. A message frame with no `<FontString>` draws
+/// LEFT, and creating its style region (CENTER by default) must keep it LEFT.
 #[test]
 fn the_font_block_reaches_both_message_frame_tables() {
     let mut s = script();
@@ -837,7 +837,7 @@ fn the_font_block_reaches_both_message_frame_tables() {
             "MsgBlockFont",
             "{obj}:GetFontObject must answer the OBJECT it was given"
         );
-        // The shared `SetFont` contract (`0x79f210`).
+        // The shared `SetFont` contract.
         assert!(
             s.eval::<bool>(&format!(
                 "return {obj}:SetFont('Fonts\\\\MORPHEUS.TTF', 16) == 1"
@@ -849,7 +849,7 @@ fn the_font_block_reaches_both_message_frame_tables() {
             .eval::<(mlua::Value, f32, String)>(&format!("return {obj}:GetFont()"))
             .unwrap();
         assert_eq!(height, 16.0, "{obj}:GetFont reads back what SetFont wrote");
-        // The four-value getters return four values on all six tables (`0x79f9b3`).
+        // The four-value getters return four values on all six tables.
         assert_eq!(s.arity(&format!("{obj}:GetShadowColor()")).unwrap(), 4);
     }
 
@@ -874,8 +874,7 @@ fn the_font_block_reaches_both_message_frame_tables() {
     );
 }
 
-/// The third argument is looked up as a font object first, and as a template only on a miss
-/// (`0x773d39`, then `0x773d47`).
+/// The third argument is looked up as a font object first, and as a template only on a miss.
 #[test]
 fn create_font_string_applies_the_font_object_named_by_its_third_argument() {
     let s = script();
@@ -913,8 +912,8 @@ fn create_font_string_applies_the_font_object_named_by_its_third_argument() {
         .expect("the two-argument form still works");
 }
 
-/// The reference answers 1 or nil (`0x79f345`/`0x79f361`), nil when the font factory (`0x5c1ae0`)
-/// finds no readable file; with no host probe, any non-empty path answers 1.
+/// The reference answers 1 or nil, nil when the font factory finds no readable file; with no host
+/// probe, any non-empty path answers 1.
 #[test]
 fn set_font_answers_the_hosts_load_verdict_when_there_is_a_host() {
     let mut s = script();
@@ -1232,7 +1231,7 @@ fn text_widgets_set_and_get_their_fonts_spacing() {
 }
 
 /// A scrolling frame's messages step `height + spacing`: each one is a block one spacing from the
-/// next (`ScrollMessages 0x969fa0`), and its wrapped lines draw at the same gap.
+/// next (the message scroll, `0x969fa0`), and its wrapped lines draw at the same gap.
 #[test]
 fn message_lines_step_the_font_height_plus_spacing() {
     let mut s = script();

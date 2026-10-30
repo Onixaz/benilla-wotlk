@@ -1,4 +1,4 @@
-//! Minimap tracking, `CGMinimapFrame`'s two globals: the active tracking spell (`0xbeba68`) and
+//! Minimap tracking, the minimap frame's two globals: the active tracking spell (`0xbeba68`) and
 //! the town type (`0xbeba64`), one of the fifteen rows at `0xa11c50`. The verbs are the ones the
 //! stock `MiniMapTracking` button and its menu call (`Minimap.lua:408-468`).
 
@@ -97,7 +97,8 @@ impl TrackingSpell {
 /// The VM's tracking state.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct TrackingModel {
-    /// The known tracking spells in book display order (`s_trackingSpells`, sorted by `0x53ca70`).
+    /// The known tracking spells in book display order (the reference's tracking-spell list, sorted
+    /// by `0x53ca70`).
     pub(crate) spells: Vec<TrackingSpell>,
     /// The active tracking spell, 0 for none.
     pub(crate) spell: u32,
@@ -146,8 +147,8 @@ fn row(model: &TrackingModel, index: i64) -> Option<Row<'_>> {
     }
 }
 
-/// `LoadTrackingInfo` (`0x57e070`): the town type into the global and `minimapTrackedInfo`, then
-/// `MINIMAP_UPDATE_TRACKING`.
+/// The tracking-info load (`0x57e070`): the town type into the global and `minimapTrackedInfo`,
+/// then `MINIMAP_UPDATE_TRACKING`.
 fn load_town(lua: &Lua, town: Option<usize>) {
     {
         let mut model = super::model_mut_of(lua);
@@ -261,7 +262,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 };
                 match picked {
                     Err(spell_id) => {
-                        // `Spell_C::CastSpell` at the null guid.
+                        // The spell cast at the null guid.
                         model.script_calls.push(ScriptCall::CastSpell {
                             spell_id,
                             at: CastAt::Selection,
@@ -311,7 +312,7 @@ impl super::UiScript {
         }
     }
 
-    /// Whether `spell_id` is a known tracking spell (`IsTrackingSpell` `0x53bd10`).
+    /// Whether `spell_id` is a known tracking spell (`0x53bd10`).
     pub fn is_tracking_spell(&self, spell_id: u32) -> bool {
         self.model_ref()
             .minimap_tracking
@@ -320,8 +321,8 @@ impl super::UiScript {
             .any(|s| s.spell_id == spell_id)
     }
 
-    /// `SetTrackingSpell` (`0x57ea30`), from a tracking aura's add or removal on the player: a new
-    /// spell clears the town type, and either way `MINIMAP_UPDATE_TRACKING` fires.
+    /// The tracking-spell setter (`0x57ea30`), from a tracking aura's add or removal on the player:
+    /// a new spell clears the town type, and either way `MINIMAP_UPDATE_TRACKING` fires.
     pub fn set_tracking_spell(&mut self, spell_id: u32) {
         // Only a known tracking spell moves it (`0x727760` add, `0x722090` removal).
         if spell_id != 0 && !self.is_tracking_spell(spell_id) {
@@ -335,7 +336,7 @@ impl super::UiScript {
         }
     }
 
-    /// `LoadTrackedState` (`0x5128d0` → `0x57ea60`), before `VARIABLES_LOADED`: the town type
+    /// The tracked-state load (`0x5128d0` → `0x57ea60`), before `VARIABLES_LOADED`: the town type
     /// `minimapTrackedInfo` names, if this class is offered it.
     pub fn load_tracked_state(&mut self, class_id: u8) {
         let town = {
@@ -367,7 +368,7 @@ impl super::UiScript {
             .map(|i| &TOWN_TYPES[i])
     }
 
-    /// `OnUpdateShapeshiftForm` (`0x6da130`): a form entered with nothing tracked casts the first
+    /// The shapeshift-form update (`0x6da130`): a form entered with nothing tracked casts the first
     /// known tracking spell `allowed` admits in it.
     pub fn track_in_form(&mut self, allowed: impl Fn(u32) -> bool) {
         let pick = {
@@ -386,7 +387,7 @@ impl super::UiScript {
         }
     }
 
-    /// `IsTrackingTrivialQuests` (`0x57bf30`): the low-level quest type is the town type.
+    /// The trivial-quest tracking test (`0x57bf30`): the low-level quest type is the town type.
     pub fn tracking_trivial_quests(&self) -> bool {
         self.minimap_town_tracking()
             .is_some_and(|t| t.kind == TownKind::TrivialQuests)

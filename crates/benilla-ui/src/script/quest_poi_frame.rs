@@ -124,8 +124,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             with_poi(lua, &this, |p| p.spline_points = n)
         })?,
     )?;
-    // DrawQuestBlob(questId, draw) (`0x5905f0`): adds the quest's blob from its POI data
-    // (`0x5e3ac0`) or removes it (`0x58fb40`); with no POI data neither has a blob to touch.
+    // DrawQuestBlob(questId, draw) (`0x5905f0`): adds the quest's blob from its POI data or removes
+    // it (`0x58fb40`); with no POI data neither has a blob to touch.
     m.set(
         "DrawQuestBlob",
         lua.create_function(|lua, (this, _quest, _draw): (Table, Value, Value)| {

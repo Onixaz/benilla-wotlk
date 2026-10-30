@@ -176,7 +176,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         },
     )?;
 
-    // ── the rest of the Region map (`0xcf54b4`) ─────────────────────────────────────────────────
+    // ── the rest of the Region map ─────────────────────────────────────────────────
     //
     // The map is a closed set, `script::REGION_MAP_METHODS`, and a test asserts it whole.
 

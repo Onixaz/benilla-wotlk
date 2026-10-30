@@ -1708,8 +1708,8 @@ fn a_key_dropped_on_the_button_files_itself() {
         "the reference's own dangling string name prints nothing — un-quirking it is a decision, \
          not a default"
     );
-    // Nor does it raise: `AddMessage` reads its text through `lua_isstring` (`0x6f3510`), whose
-    // failure edge jumps to the function's epilogue (`0x79562c`).
+    // Nor does it raise: `AddMessage` reads its text through `lua_isstring`, whose failure edge
+    // jumps to the function's epilogue.
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
@@ -2024,7 +2024,7 @@ fn the_backpack_buttons_ring_follows_its_own_window_through_real_clicks() {
 
 /// `SetTooltipMoney` (`GameTooltip.lua:97`) reads the money frame's width, which resolves inside
 /// the setter, and only then raises the floor (`SetMinimumWidth`, `0x61d040`). The reference sizes
-/// after the setter (`CalculateSize` `0x61caf0`, called at `0x62d8b4`), so the floor holds on
+/// after the setter (its size pass `0x61caf0`, called at `0x62d8b4`), so the floor holds on
 /// every frame of the hover loop (#312). Here and not in `benilla-ui`, whose own tests run under
 /// `WOW_LAYOUT_VERIFY`: its fall-through past the gate re-sizes the tooltip and hides the miss.
 #[test]

@@ -1,8 +1,8 @@
-//! The objective tracker's engine side (`CGQuestLog`): the quest watch list (`AddQuestWatch`
-//! `0x5e64d0`, at most 25, timed or not, sorted by the `trackerSorting` CVar and kept in
-//! `trackedQuests`), the quest POI store the tracker and the world map count (`UpdateAllQuestPOI`
-//! `0x5e5a50`, 25 slots fed by `SMSG_QUEST_POI_QUERY_RESPONSE`), and the verbs the stock
-//! `WatchFrame.lua` reads per watched quest: the special item, the completion text and the link.
+//! The objective tracker's engine side: the quest watch list (`AddQuestWatch` `0x5e64d0`, at most
+//! 25, timed or not, sorted by the `trackerSorting` CVar and kept in `trackedQuests`), the quest
+//! POI store the tracker and the world map count (`0x5e5a50`, 25 slots fed by
+//! `SMSG_QUEST_POI_QUERY_RESPONSE`), and the verbs the stock `WatchFrame.lua` reads per watched
+//! quest: the special item, the completion text and the link.
 
 use std::collections::{HashMap, HashSet};
 
@@ -13,9 +13,9 @@ use super::quest_log::QuestLogEntryView;
 use super::worldmap::QuestPoiPlace;
 use super::Model;
 
-/// `CGQuestLog::m_questWatches` holds 25 (`0x5e6525`, `cmp 0x19`).
+/// The watch list holds 25 (`0x5e6525`, `cmp 0x19`).
 const MAX_WATCHES: usize = 25;
-/// `m_questPOIs` holds 25 quests (`0x5e7020`).
+/// The quest POI list holds 25 quests (`0x5e7020`).
 const POI_SLOTS: usize = 25;
 
 /// One watch: the quest and, for a progress watch, its expiry on the `GetTime` clock.
@@ -28,7 +28,7 @@ pub(crate) struct QuestWatch {
     distance: (i32, f32),
 }
 
-/// The special item behind a quest's tracker button (`GetQuestSpecialItem` `0x5e0da0`), as the app
+/// The special item behind a quest's tracker button (`0x5e0da0`), as the app
 /// finds it in the bags: the template's source item, else with flag `0x20000` a drop item, either
 /// one with an on-use spell.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -43,7 +43,8 @@ pub struct QuestSpecialItemView {
     pub in_range: Option<bool>,
 }
 
-/// One region of a quest's POI, as `HandlePOIQueryResponse` keeps it (`0x5e7370`).
+/// One region of a quest's POI, as the `SMSG_QUEST_POI_QUERY_RESPONSE` handler keeps it
+/// (`0x5e7370`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct QuestPoiRegion {
     /// The leaderboard objective it serves, -1 for the turn-in.
@@ -75,7 +76,8 @@ struct PoiSlot {
 #[derive(Debug, Default)]
 pub(crate) struct QuestWatchState {
     pub(crate) watches: Vec<QuestWatch>,
-    /// `m_trackedQuestsLoaded`: the CVar is read once, on the first log that holds a quest.
+    /// Whether the tracked quests loaded: the CVar is read once, on the first log that holds a
+    /// quest.
     loaded: bool,
     pois: Vec<PoiSlot>,
     /// Quests asked for and not yet answered, so a rebuild does not re-send.
@@ -127,8 +129,8 @@ fn named_quest(lua: &Lua, model: &Model, v: Value) -> mlua::Result<u32> {
     })
 }
 
-/// `CGQuestLog::AddQuestWatch` (`0x5e64d0`): a quest in the log, re-timed if already watched
-/// with a timer, else appended while fewer than 25 are watched and the list re-sorted.
+/// The watch add behind `AddQuestWatch` (`0x5e64d0`): a quest in the log, re-timed if already
+/// watched with a timer, else appended while fewer than 25 are watched and the list re-sorted.
 pub(crate) fn add_watch(model: &mut Model, quest_id: u32, secs: i64) {
     if quest_id == 0 || !in_log(model, quest_id) {
         return;
@@ -164,7 +166,7 @@ fn remove_watch(model: &mut Model, quest_id: u32) -> bool {
     removed
 }
 
-/// `SaveTrackedQuests` (`0x5e0240`): the untimed watches. The reference saves at logout; every
+/// The tracked-quests save (`0x5e0240`): the untimed watches. The reference saves at logout; every
 /// change saves here, which leaves the stored value the same.
 fn save(model: &mut Model) {
     let ids: Vec<u32> = model
@@ -186,9 +188,9 @@ fn cvar_int(model: &Model, name: &str) -> i64 {
         .unwrap_or(0)
 }
 
-/// `CGQuestLog::SortQuestWatches` (`0x5e5c10`): by `trackerSorting`, 0 manual (untouched), 1 by
-/// POI distance, 2 hardest first, 3 easiest first, ties and any other value by quest id. True
-/// when the order changed.
+/// The watch sort behind `SortQuestWatches` (`0x5e5c10`): by `trackerSorting`, 0 manual
+/// (untouched), 1 by POI distance, 2 hardest first, 3 easiest first, ties and any other value by
+/// quest id. True when the order changed.
 pub(crate) fn sort_watches(model: &mut Model) -> bool {
     let sort = cvar_int(model, "trackersorting");
     if sort == 0 || model.quest_watch.watches.len() <= 1 {
@@ -240,7 +242,7 @@ pub(crate) fn sort_watches(model: &mut Model) -> bool {
     sort != 1 || changed
 }
 
-/// `GetQuestPOIDistance` (`0x5e3b90`): the nearest region on the player's map serving an open
+/// The quest's POI distance (`0x5e3b90`): the nearest region on the player's map serving an open
 /// objective, by floor delta then distance; `f32::MAX` with no POI.
 fn poi_distance(model: &Model, quest_id: u32) -> (i32, f32) {
     let Some(poi) = model.quest_watch.poi(quest_id) else {
@@ -258,7 +260,7 @@ fn poi_distance(model: &Model, quest_id: u32) -> (i32, f32) {
     best
 }
 
-/// `ComputeBlobQuestObjectives` (`0x5e2950`), which the app computes per row.
+/// The quest's objective mask (`0x5e2950`), which the app computes per row.
 fn objective_mask(model: &Model, quest_id: u32) -> u32 {
     model
         .quest_log
@@ -289,7 +291,7 @@ fn place(r: &QuestPoiRegion) -> QuestPoiPlace {
     }
 }
 
-/// `UpdateAllQuestPOI` (`0x5e5a50`): mark each slot shown when one of its counting regions is on
+/// The POI update (`0x5e5a50`): mark each slot shown when one of its counting regions is on
 /// the displayed map, and count them; 0 with the `questPOI` CVar off or no area displayed.
 fn update_all_pois(model: &mut Model) -> i64 {
     if cvar_int(model, "questpoi") == 0 {
@@ -326,7 +328,7 @@ fn update_all_pois(model: &mut Model) -> i64 {
     count
 }
 
-/// `GetPOIQuestIDByVisibleIndex` (`0x5e3840`), 0-based: the shown complete or objective-less
+/// The POI quest by visible index (`0x5e3840`), 0-based: the shown complete or objective-less
 /// quests in slot order, then the watched open ones in watch order, then the rest.
 fn poi_by_visible_index(model: &Model, index: usize) -> Option<u32> {
     let pois = &model.quest_watch.pois;
@@ -379,8 +381,8 @@ impl super::UiScript {
             .collect()
     }
 
-    /// A quest's 1-based log row, 0 when it is not a visible quest row (`GetQuestIndex`
-    /// `0x5deeb0`), the `QUEST_ACCEPTED` argument.
+    /// A quest's 1-based log row, 0 when it is not a visible quest row (`0x5deeb0`), the
+    /// `QUEST_ACCEPTED` argument.
     pub fn quest_log_index(&self, quest_id: u32) -> usize {
         quest_index(&self.model_ref(), quest_id)
     }
@@ -394,8 +396,8 @@ impl super::UiScript {
         std::mem::take(&mut self.model_mut().quest_watch.poi_wants)
     }
 
-    /// `HandlePOIQueryResponse` (`0x5e7370`): each quest into its slot or the first slot whose
-    /// quest left the log (`FindOrFreePOISlot` `0x5e7020`), then `QUEST_POI_UPDATE`.
+    /// `SMSG_QUEST_POI_QUERY_RESPONSE` (`0x5e7370`): each quest into its slot or the first slot
+    /// whose quest left the log (`0x5e7020`), then `QUEST_POI_UPDATE`.
     pub fn apply_quest_pois(&mut self, pois: Vec<QuestPoiView>) {
         {
             let mut model = self.model_mut();
@@ -437,7 +439,8 @@ impl super::UiScript {
         }
     }
 
-    /// `UpdateWatchTimers` (`0x5dfef0`): drop each timed watch past its expiry, announcing the log.
+    /// The watch-timer update (`0x5dfef0`): drop each timed watch past its expiry, announcing the
+    /// log.
     pub(crate) fn expire_quest_watches(&mut self) {
         let expired = {
             let mut model = self.model_mut();
@@ -742,8 +745,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UseQuestLogSpecialItem(index) (`0x5e5640`): the item's own use (`CGItem_C::UseItem`
-    // `0x708c20`), with no merchant sale, bank move or equip.
+    // UseQuestLogSpecialItem(index) (`0x5e5640`): the item's own use (`0x708c20`), with no
+    // merchant sale, bank move or equip.
     g.set(
         "UseQuestLogSpecialItem",
         lua.create_function(|lua, v: Value| {
@@ -808,7 +811,7 @@ fn special_item(
     Some((item, slot))
 }
 
-/// `CGTooltip::GetQuestDifficultyColorString` (`0x61e540`, strings at `0xad2a68`): red five and
+/// The tooltip's quest difficulty colour (`0x61e540`, strings at `0xad2a68`): red five and
 /// more levels over the player, orange three, yellow within two, green down to the grey band.
 fn quest_color(level: i32, player: i32) -> &'static str {
     let delta = level - player;

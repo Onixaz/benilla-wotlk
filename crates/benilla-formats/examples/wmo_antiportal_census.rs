@@ -4,10 +4,10 @@
 //! `cargo run -p benilla-formats --example wmo_antiportal_census`
 //!
 //! 15 shipped groups are batch-less, and no bit singles them out. The 1.12 client has no antiportal
-//! branch on the group flags (the only bits above `0x10000` it tests are `0x40000` at `0x6b42e0`
-//! and `0x20000` at `0x6c46a6`), so a batch-less group is invisible geometry, not an occluder.
-//! Flags are MOGP's own 32 bits at `+0x08`, in every shipped group a superset of the MOGI copy.
-//! Output is Blizzard data: never commit it.
+//! branch on the group flags (the only bits above `0x10000` it tests are `0x40000` and `0x20000`),
+//! so a batch-less group is invisible geometry, not an occluder. Flags are MOGP's own 32 bits at
+//! `+0x08`, in every shipped group a superset of the MOGI copy. Output is Blizzard data: never
+//! commit it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
@@ -240,8 +240,8 @@ cross-tab below for which flag bit(s) the data implicates.",
 
     // ==== which buildings own many exterior groups ============================================
     // The reference draws exterior groups only through the deferred portal windows the interior
-    // flood leaves, each against its own window's sub-frustum (`0x6b3c73`-`0x6b3d6f`); only a
-    // building whose shell is split into many groups shows that culling.
+    // flood leaves, each against its own window's sub-frustum; only a building whose shell is split
+    // into many groups shows that culling.
     println!("\n---- roots by EXTERIOR (0x8) group count, top {MAX_EXTERIOR_RANK} ----");
     let mut ranked: Vec<(&String, &u32)> = exterior_per_root.iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));

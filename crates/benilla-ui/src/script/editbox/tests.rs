@@ -46,8 +46,8 @@ fn an_autofocus_box_self_acquires_on_the_first_event() {
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "a");
 }
 
-/// The OnShow override (`0x77a750`, vtable `0x81c910` slot +0x30) focuses an autoFocus box when
-/// nothing holds focus; there is no topmost or best choice.
+/// The OnShow override (vtable slot +0x30) focuses an autoFocus box when nothing holds focus; there
+/// is no topmost or best choice.
 #[test]
 fn an_autofocus_box_takes_the_keyboard_when_it_is_shown() {
     let s = script();
@@ -77,8 +77,7 @@ fn an_autofocus_box_takes_the_keyboard_when_it_is_shown() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// Focus on show takes both halves of `[0xcf4dc8] == 0 && (flags & 1)`: no focus held, and
-/// autoFocus.
+/// Focus on show takes both halves of `focus == 0 && (flags & 1)`: no focus held, and autoFocus.
 #[test]
 fn the_show_focus_is_refused_without_autofocus_or_with_the_keyboard_taken() {
     let s = script();
@@ -113,7 +112,7 @@ fn the_show_focus_is_refused_without_autofocus_or_with_the_keyboard_taken() {
         "a shown autoFocus box does not steal a focus that is already held",
     );
 
-    // Hiding a box without the keyboard leaves focus alone (`0x77e410`'s per-box guard).
+    // Hiding a box without the keyboard leaves focus alone (the reference's per-box guard).
     s.run("LATE:Hide()").unwrap();
     assert_eq!(
         s.focused_editbox_name().as_deref(),
@@ -126,7 +125,7 @@ fn the_show_focus_is_refused_without_autofocus_or_with_the_keyboard_taken() {
 #[test]
 fn non_autofocus_unfocused_box_ignores_input() {
     let mut s = script();
-    // The ctor leaves autoFocus on (`0x779a29`/`0x779a2e`), so a bare box would self-acquire.
+    // The ctor leaves autoFocus on, so a bare box would self-acquire.
     s.run(r#"E = CreateFrame("EditBox", "E"); E:SetAutoFocus(false)"#)
         .unwrap();
     assert!(!s.char_input("a"), "no focus, no autoFocus → not consumed");
@@ -221,8 +220,8 @@ fn click_focuses_regardless_of_autofocus_and_transition_order_is_lost_then_gaine
 // ── text buffer + editing + OnTextChanged/OnTextSet ─────────────────────────────────────────
 
 /// An edit only raises the box's `textChanged` bit; `OnTextChanged` fires once, at the flush its
-/// update runs after its `OnUpdate` (`0x77d3e0`), so edits between two flushes coalesce. (A typed
-/// key flushes the box before it acts, `0x77b1e2`, so keys fire per key.)
+/// update runs after its `OnUpdate`, so edits between two flushes coalesce. (A typed key flushes
+/// the box before it acts, so keys fire per key.)
 #[test]
 fn edits_between_two_flushes_coalesce_into_one_ontextchanged() {
     let mut s = script();
@@ -262,8 +261,8 @@ fn edits_between_two_flushes_coalesce_into_one_ontextchanged() {
     assert_eq!(s.eval::<i64>("return changed").unwrap(), 1);
 }
 
-/// `OnTextSet` fires inside `SetText` (`0x77be6b`), `OnTextChanged` at the drain; an unchanged
-/// text fires neither.
+/// `OnTextSet` fires inside `SetText`, `OnTextChanged` at the drain; an unchanged text fires
+/// neither.
 #[test]
 fn set_text_fires_ontextset_at_once_and_ontextchanged_at_the_drain() {
     let mut s = script();
@@ -303,9 +302,9 @@ fn numeric_aborts_a_mixed_insert_wholesale() {
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "12");
 }
 
-/// `Insert` deletes the selection before its `numeric` test (`0x77bf13`, then `0x77bf41`): a
-/// letter typed over a numeric box's selection empties it, so `OnTextChanged` fires at the flush,
-/// while the abort comes before `OnChar` (`0x77c13c`).
+/// `Insert` deletes the selection before its `numeric` test: a letter typed over a numeric box's
+/// selection empties it, so `OnTextChanged` fires at the flush, while the abort comes before
+/// `OnChar`.
 #[test]
 fn a_non_digit_typed_over_a_numeric_selection_deletes_it() {
     let mut s = script();
@@ -410,8 +409,8 @@ fn paste_inserts_at_the_cursor_and_replaces_the_selection() {
     assert!(s.paste("CD"), "focused box consumes the paste");
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "abCD");
     s.run("E:HighlightText(0, -1)").unwrap();
-    // Ctrl+V is a key-down, which flushes the box before it pastes (`0x77b1e2`): the first
-    // paste's change fires at the second, the second's at the walk.
+    // Ctrl+V is a key-down, which flushes the box before it pastes: the first paste's change fires
+    // at the second, the second's at the walk.
     assert!(s.paste("xyz"));
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "xyz");
     assert_eq!(s.eval::<i64>("return changed").unwrap(), 1);
@@ -553,10 +552,10 @@ fn multiline_enter_inserts_a_newline_without_onspacepressed() {
     assert_eq!(s.eval::<i64>("return spaces").unwrap(), 0);
 }
 
-/// The method table `[0x87bb68, 0x87bce8)` has `SetAltArrowKeyMode`/`GetAltArrowKeyMode` at 46/47
-/// and no `SetIgnoreArrows`; the XML `ignoreArrows` is the same flag (`[E+0x318] & 0x10`). The
-/// gate is on the key, in the host (`UiKeyboardCapture::arrows_fall_through`), so an `EditAction`
-/// that arrives here acts whatever the flag says.
+/// The method table has `SetAltArrowKeyMode`/`GetAltArrowKeyMode` at 46/47 and no
+/// `SetIgnoreArrows`; the XML `ignoreArrows` is the same flag (`[E+0x318] & 0x10`). The gate is on
+/// the key, in the host (`UiKeyboardCapture::arrows_fall_through`), so an `EditAction` that arrives
+/// here acts whatever the flag says.
 #[test]
 fn alt_arrow_key_mode_is_the_flag_and_the_engine_core_no_longer_swallows_moves() {
     let mut s = script();
@@ -588,11 +587,10 @@ fn alt_arrow_key_mode_is_the_flag_and_the_engine_core_no_longer_swallows_moves()
     assert!(
         s.eval::<bool>("return type(E:GetAltArrowKeyMode()) == 'number'")
             .unwrap(),
-        "the set arm pushes the double 1.0 (0x6f3810), not a boolean"
+        "the set arm pushes the double 1.0, not a boolean"
     );
 
-    // `GetBoolOrDefault` (`0x6f1c10`, default 1), arm by arm; three are backwards under Lua
-    // truthiness.
+    // The boolean read with default 1, arm by arm; three are backwards under Lua truthiness.
     for (arg, want) in [
         ("", Some(1)),      // absent -> the default 1 -> enabled
         ("nil", None),      // nil -> 0
@@ -631,8 +629,7 @@ fn alt_arrow_key_mode_is_the_flag_and_the_engine_core_no_longer_swallows_moves()
     );
 }
 
-/// The XML `ignoreArrows` is the same flag: its string (`0x879b78`) has one use, the attribute
-/// read at `0x77a13a`.
+/// The XML `ignoreArrows` is the same flag: its string has one use, the attribute read.
 #[test]
 fn the_ignore_arrows_xml_attribute_is_alt_arrow_key_mode() {
     let s = script();
@@ -681,8 +678,7 @@ fn get_number_parses_the_text() {
 #[test]
 fn typing_fires_the_generic_on_char_with_what_was_inserted() {
     // The box's input vtable does not chain to the base, but Insert fires the generic `OnChar`
-    // (`+0x180`) at `0x77c13c`, through the varargs firer `0x7026f0` (not the fixed-arity
-    // `0x702690`) with the inserted string.
+    // (`+0x180`), through the varargs firer with the inserted string.
     let mut s = script();
     s.run(
         r#"
@@ -714,8 +710,8 @@ fn typing_fires_the_generic_on_char_with_what_was_inserted() {
 
 #[test]
 fn key_paths_never_fire_the_generic_on_key_down() {
-    // The box's key-down handler (`0x77b160`) never chains to the base, so a generic `OnKeyDown`
-    // on the focused box does not fire.
+    // The box's key-down handler never chains to the base, so a generic `OnKeyDown` on the focused
+    // box does not fire.
     let mut s = script();
     s.run(
         r#"
@@ -851,7 +847,7 @@ fn history_off_by_default_and_up_is_still_consumed() {
     s.run(r#"E = CreateFrame("EditBox", "E"); E:SetText("t"); E:SetFocus()"#)
         .unwrap();
     // No historyLines: AddHistoryLine does nothing, and UP is consumed but inert, since a focused
-    // box eats every key (both handlers return 1, `0x77a900`/`0x77b160`).
+    // box eats every key (both handlers return 1).
     s.run(r#"E:AddHistoryLine("x")"#).unwrap();
     assert!(s.editbox_action(UP));
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "t");
@@ -1000,8 +996,8 @@ fn text_ui_reports_caret_geometry_and_focus() {
     assert!(s.focused_editbox_text_ui().is_none(), "hidden box: none");
 }
 
-/// Click places the cursor at the nearest char boundary (`0x77b800` → `0x77d0d0`), collapsing
-/// any selection; dragging extends it (`0x77a860`); release ends the drag.
+/// Click places the cursor at the nearest char boundary, collapsing any selection; dragging extends
+/// it; release ends the drag.
 #[test]
 fn click_places_cursor_and_drag_selects() {
     let mut s = script();
@@ -1086,7 +1082,7 @@ fn ctrl_arrows_jump_words() {
 }
 
 /// Copy needs a selection, cut copies then deletes, and a password box copies its mask run, never
-/// the text (the client copies the empty string, `0x882748`).
+/// the text (the client copies the empty string).
 #[test]
 fn copy_cut_and_the_password_placeholder() {
     let mut s = script();
@@ -1187,8 +1183,8 @@ fn select_all_action() {
     );
 }
 
-/// The scroll window keeps the cursor visible (`0x77da80`) in whole chars: typing past the edge
-/// advances `display_from`, HOME snaps it back.
+/// The scroll window keeps the cursor visible in whole chars: typing past the edge advances
+/// `display_from`, HOME snaps it back.
 #[test]
 fn scroll_window_keeps_the_cursor_visible() {
     let mut s = script();
@@ -1212,7 +1208,7 @@ fn scroll_window_keeps_the_cursor_visible() {
     assert_eq!(ui.caret_x, 0.0);
 }
 
-/// The caret blink (`0x77a790`): a 0.5 s half-period, reset to shown by every edit.
+/// The caret blink: a 0.5 s half-period, reset to shown by every edit.
 #[test]
 fn caret_blinks_on_tick_and_resets_on_edit() {
     let mut s = script();
@@ -1229,12 +1225,12 @@ fn caret_blinks_on_tick_and_resets_on_edit() {
     assert!(s.focused_editbox_text_ui().unwrap().caret_on);
 }
 
-// ── a hyperlink is one keypress (`AdvanceTokens 0x77bb30`) ─────────────────────
+// ── a hyperlink is one keypress (the token advance) ─────────────────────
 //
 // Driven through the keyboard API: a Backspace that took only the link's trailing `|r` would
 // colour everything typed after it.
 
-/// An epic link exactly as the client's own builder formats one (`0x52adb0`).
+/// An epic link exactly as the client's own builder formats one.
 const LINK: &str = "|cffa335ee|Hitem:11684:0:0:0|h[Ironfoe]|h|r";
 
 fn box_with_link(suffix: &str) -> UiScript {
@@ -1342,11 +1338,7 @@ fn a_typed_pipe_is_doubled_and_costs_one_letter() {
     s.run(r#"E = CreateFrame("EditBox", "E"); E:SetFocus()"#)
         .unwrap();
     s.char_input("|");
-    assert_eq!(
-        text_of(&s),
-        "||",
-        "OnChar 0x77c200 inserts the literal at 0x879cac"
-    );
+    assert_eq!(text_of(&s), "||", "OnChar inserts the literal");
     assert_eq!(s.eval::<i64>("return E:GetNumLetters()").unwrap(), 1);
 }
 
@@ -1375,8 +1367,8 @@ fn creating_a_box_does_not_focus_it_the_way_showing_one_does() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `SetMaxLetters` gates the exact count (`lua_gettop`, `0x6f3070`) and reads the value with a bare
-/// `lua_tonumber` (`0x6f3620`); 0 is no limit.
+/// `SetMaxLetters` gates the exact count (`lua_gettop`) and reads the value with a bare
+/// `lua_tonumber`; 0 is no limit.
 #[test]
 fn set_max_letters_gates_the_argument_count_and_coerces_the_value() {
     let s = script();
@@ -1398,7 +1390,7 @@ fn set_max_letters_gates_the_argument_count_and_coerces_the_value() {
     assert_eq!(
         s.eval::<String>("return E:GetText()").unwrap(),
         "abcdefgh",
-        "0 skips the trim block whole (0x77c085) — it is no limit, not no letters"
+        "0 skips the trim block whole — it is no limit, not no letters"
     );
 
     // A numeric string coerces; anything else is 0.
@@ -1414,9 +1406,8 @@ fn set_max_letters_gates_the_argument_count_and_coerces_the_value() {
     );
 }
 
-/// The ctor builds five regions in order, the text FontString (`0x779bee`), three selection
-/// textures (`0x779c41`-`0x779c72`) and the caret (`0x779c86`), and `GetRegions` (`0x773f60`)
-/// walks one creation-ordered list, so authored regions start at index 6.
+/// The ctor builds five regions in order, the text FontString, three selection textures and the
+/// caret, and `GetRegions` walks one creation-ordered list, so authored regions start at index 6.
 #[test]
 fn an_editbox_is_born_with_the_ctors_five_regions_ahead_of_its_authored_ones() {
     let s = script();
@@ -1439,7 +1430,7 @@ fn an_editbox_is_born_with_the_ctors_five_regions_ahead_of_its_authored_ones() {
     let report = crate::loader::load(&s, &doc, &|_| None);
     assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
 
-    // The embedded `<FontString>` declares the ctor's text region, not a sixth (`0x779fb0`).
+    // The embedded `<FontString>` declares the ctor's text region, not a sixth.
     assert_eq!(
         s.eval::<i64>("return Box:GetNumRegions()").unwrap(),
         7,
@@ -1481,8 +1472,8 @@ fn an_editbox_is_born_with_the_ctors_five_regions_ahead_of_its_authored_ones() {
     );
 }
 
-/// `SetNumber` is `SetText` (`0x798690` and `0x7984c0` are byte-identical), so a number arrives
-/// through Lua's `%.14g`; the expected strings are the reference's own output.
+/// `SetNumber` is `SetText`, so a number arrives through Lua's `%.14g`; the expected strings are
+/// the reference's own output.
 #[test]
 fn set_number_formats_like_the_references_printf() {
     let s = UiScript::new().unwrap();
@@ -1575,10 +1566,9 @@ fn set_max_bytes_caps_the_buffer_in_bytes_with_minus_one_unlimited() {
     assert!(s.run("E:SetMaxBytes(1, 2)").is_err(), "too many raises");
 }
 
-/// `OnCursorChanged(x, y, w, h)` fires when the caret moves, with the reference's args
-/// (`0x77dd5f`, each scaled): `x` the advance along the line, `y` negative downward by row, `w`
-/// the constant 4, `h` the line height. Stock `ScrollingEdit_OnCursorChanged` reads `-y` as the
-/// distance down.
+/// `OnCursorChanged(x, y, w, h)` fires when the caret moves, with the reference's args (each
+/// scaled): `x` the advance along the line, `y` negative downward by row, `w` the constant 4, `h`
+/// the line height. Stock `ScrollingEdit_OnCursorChanged` reads `-y` as the distance down.
 #[test]
 fn the_caret_flush_fires_on_cursor_changed_with_the_references_four_args() {
     let mut s = script();

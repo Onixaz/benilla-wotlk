@@ -5,29 +5,26 @@
 //! floor's material, and only outdoors does the ADT ground-effect layer decide. `None` is the
 //! reference's -1 and is silent.
 //!
-//! Only `$FSD` sounds (`0x5ffbd0` → `0x623390`); the per-foot side tags (`$FL`, `$FR`, `$SL`, …)
-//! go to the visual footfall `0x5fbf70` ([`crate::footprints`]) and play nothing
-//! ([`crate::creature_anim::is_footstep_sound`]).
+//! Only `$FSD` sounds; the per-foot side tags (`$FL`, `$FR`, `$SL`, …) go to the visual footfall
+//! ([`crate::footprints`]) and play nothing ([`crate::creature_anim::is_footstep_sound`]).
 //!
-//! `$FSD` plays an armor foley and then the terrain step. The foley is `0x623390`'s first act after
-//! the state gates (`0x6233d9 call [vt+0x8c]`), ahead of the class gate, so a class-0 creature
-//! still rustles; the foley is uncapped on bus 0, the step on bus 9 with its cap of 6. The foley's
+//! `$FSD` plays an armor foley and then the terrain step. The foley is the reference's first act
+//! after the state gates (`call [vt+0x8c]`), ahead of the class gate, so a class-0 creature still
+//! rustles; the foley is uncapped on bus 0, the step on bus 9 with its cap of 6. The foley's
 //! material:
-//! - a unit (`0x623610`): `CreatureModelData.FoleyMaterialID` off its display
-//!   (`[[unit+0xb3c]+0x28]`).
-//! - a player (`0x62fa30`): the chest item's `Material`, through the equipment guid array at
-//!   `[player+0x1d38]` element 4, which is filled only for the local player (`0x5dd454`); the
-//!   private `PLAYER_FIELD_INV_SLOT_*` makes the same read self-only here.
+//! - a unit: `CreatureModelData.FoleyMaterialID` off its display (`[[unit+0xb3c]+0x28]`).
+//! - a player: the chest item's `Material`, through the equipment guid array at `[player+0x1d38]`
+//!   element 4, which is filled only for the local player; the private `PLAYER_FIELD_INV_SLOT_*`
+//!   makes the same read self-only here.
 //!
 //! `Material.dbc` names a kit only for chain, plate and leather: cloth is silent.
 //!
 //! The footstep class is `CreatureSoundData.FootstepID` through the display→sound chain with the
 //! model fallback (`benilla_formats::creature_sound`). Class 0 or no row is silent: the handler
-//! bails on a zero class before any lookup (`0x6233ec`).
+//! bails on a zero class before any lookup.
 //!
-//! Before the class, `0x623390` gates on the root unit (the rider of a mount): hover (`0x6233aa`,
-//! move flag `0x4000_0000`), stealth (`0x62339c`, `BYTES_1` byte 3 bit `0x2`) and player ghost
-//! (`0x6233d3`, `PLAYER_FLAGS & 0x10`).
+//! Before the class, the reference gates on the root unit (the rider of a mount): hover (move flag
+//! `0x4000_0000`), stealth (`BYTES_1` byte 3 bit `0x2`) and player ghost (`PLAYER_FLAGS & 0x10`).
 //!
 //! Wading, feet below a water surface down to the unit's swim boundary (`0.75·h`), takes the
 //! lookup's splash kit, falling back to dry when the class has none; deeper, the unit swims and
@@ -55,8 +52,8 @@ use super::{AudioListener, SoundConfig, SoundOutput};
 #[derive(Resource)]
 pub(crate) struct Footsteps(pub(crate) FootstepCatalog);
 
-/// The foley's height above the unit's origin (`0x45851d fadd [0x801628]`), a fixed lift, not
-/// model-derived; WoW's Z is Bevy's Y.
+/// The foley's height above the unit's origin (`fadd`), a fixed lift, not model-derived; WoW's Z is
+/// Bevy's Y.
 const FOLEY_HEIGHT: f32 = 2.0;
 
 fn load_footsteps(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
@@ -79,8 +76,8 @@ fn footstep_sounds(
     // GlobalTransform: a mount's steps fire on the mount child, whose local Transform is
     // seat-relative.
     units: Query<(&NetEntity, &GlobalTransform, Option<&CollisionHeight>)>,
-    // The state gates read the root unit: `0x623390`'s `this` is the unit the mount model's
-    // events are registered against (`0x607a00`), the rider.
+    // The state gates read the root unit: the reference's `this` is the unit the mount model's
+    // events are registered against, the rider.
     parents: Query<&ChildOf>,
     root_state: Query<(Option<&ObjectStore>, Option<&MovementState>)>,
     footsteps: Option<Res<Footsteps>>,
@@ -128,11 +125,11 @@ fn footstep_sounds(
         if store.is_some_and(|s| s.0.unit_is_stealthed() || s.0.player_is_ghost()) {
             continue;
         }
-        // The armor foley (`0x6233d9`), ahead of the gates below, on the stepping entity: a
-        // mount's body rustles under the rider.
+        // The armor foley, ahead of the gates below, on the stepping entity: a mount's body rustles
+        // under the rider.
         if let (Some(materials), Some(it)) = (materials.as_deref(), items.as_mut()) {
             let material = match net.kind {
-                // `0x62fa30` reads the chest through the private inv-slot array: self only.
+                // The reference reads the chest through the private inv-slot array: self only.
                 EntityKind::Player => {
                     super::worn_chest_material(store, &objects, it, &net_commands)
                 }
@@ -141,7 +138,7 @@ fn footstep_sounds(
                     .and_then(|d| creatures.as_deref()?.foley_material(d)),
             };
             if let Some(kit) = material.and_then(|m| materials.0.foley_kit(m)) {
-                // The unit's origin, raised, not the fired key's point (`0x45851d`).
+                // The unit's origin, raised, not the fired key's point.
                 let mut at = transform.translation();
                 at.y += FOLEY_HEIGHT;
                 if let Err(e) = play_kit_ext(
@@ -153,13 +150,13 @@ fn footstep_sounds(
                     KitRef::Id(kit),
                     Some(at),
                     SoundCategory::Sfx,
-                    PlayExtras::default(), // bus 0, uncapped, volume 1.0: `0x458870`'s
+                    PlayExtras::default(), // bus 0, uncapped, volume 1.0, as in the reference
                 ) {
                     warn!("foley (kit {kit}): {e:#}");
                 }
             }
         }
-        // The voice row's class; zero or no row is silent (`0x6233ec`), with no default.
+        // The voice row's class; zero or no row is silent, with no default.
         let class = match net.display_id.and_then(|d| voices.0.for_display(d)) {
             Some(v) if v.footstep_class != 0 => v.footstep_class,
             _ => continue,
@@ -204,8 +201,8 @@ fn footstep_sounds(
             &config,
             listener,
             KitRef::Id(kit),
-            // The step plays at the event's point: `0x623390` hands `pos` to `0x458380` as both
-            // the audibility reference and the play position (`0x458434`).
+            // The step plays at the event's point: the handler hands `pos` to the positioned kit
+            // play as both the audibility reference and the play position.
             Some(ev.pos.unwrap_or_else(|| transform.translation())),
             SoundCategory::Sfx,
             PlayExtras {

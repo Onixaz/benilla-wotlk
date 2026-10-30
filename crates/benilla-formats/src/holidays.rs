@@ -1,8 +1,7 @@
 //! The calendar's holidays as 12340 lays them out: `Holidays.dbc` (55 columns in 0xdc-byte
-//! records, `HolidaysRec::Read` `0x8b00f0`), and the name and description tables it points into,
-//! `HolidayNames.dbc` and `HolidayDescriptions.dbc` (18 columns in 0x48 each, an id and a
-//! localized string). The readers are `CGCalendar`'s (`GetHolidayName` `0x5b9430`,
-//! `GetHolidayDescription` `0x5b9490`, `InitHolidays` `0x5c04f0`).
+//! records, `0x8b00f0`), and the name and description tables it points into, `HolidayNames.dbc`
+//! and `HolidayDescriptions.dbc` (18 columns in 0x48 each, an id and a localized string). The
+//! readers are the calendar's (`0x5b9430`, `0x5b9490`, `0x5c04f0`).
 
 use std::collections::HashMap;
 
@@ -110,7 +109,7 @@ fn run<const N: usize>(r: &benilla_dbc::Record, start: usize) -> [i32; N] {
 }
 
 /// Read the three holiday tables off the patch chain, `Holidays.dbc` in file order, the order
-/// `InitHolidays` walks.
+/// the calendar's holiday init walks.
 pub fn load_holidays(chain: &mut Chain) -> Result<Vec<Holiday>> {
     let names = read_texts(chain, HOLIDAY_NAMES, names_schema())?;
     let descriptions = read_texts(chain, HOLIDAY_DESCRIPTIONS, descriptions_schema())?;

@@ -1,10 +1,9 @@
-//! Lua globals whose whole body pushes one catalog id at `CGGameUI::DisplayError`'s dispatcher.
+//! Lua globals whose whole body pushes one catalog id at the error display's dispatcher.
 //! Engine-side refusals share the [`Model::ui_errors`] queue, which the app resolves against
 //! GlobalStrings and fires as `UI_ERROR_MESSAGE` (event `0xe0`), the reference's route.
 //!
-//! `NotWhileDeadError` (`0x48d340`, registered at `0x83e398`) is `push 0x7e; call 0x496720`: no
-//! argument, no dead check, no return, and a silent catalog row (`0xb4be70`). FrameXML decides
-//! when to call it (`UIParent.lua:663-666`, `ContainerFrame.lua:147` and `:190`).
+//! `NotWhileDeadError`: no argument, no dead check, no return, and a silent catalog row. FrameXML
+//! decides when to call it (`UIParent.lua:663-666`, `ContainerFrame.lua:147` and `:190`).
 
 use mlua::Lua;
 

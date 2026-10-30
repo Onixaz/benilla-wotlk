@@ -1,11 +1,11 @@
 //! The camera-in-interior WMO fog: which MFOG record's fog the camera's room wants this frame.
 //!
-//! The selector `0x69de20` bails when the root has exactly one MFOG record (`0x69de4b`), as five in
-//! six shipped roots do, and the room keeps the scene fog; past the bail it seeds with record 0
-//! (`0x69ded2`). `select_wmo_fog` then blends over the seed, by the radius falloff and nearest
-//! last, every record the group's fog indices name, index 0 included, that holds the camera inside
-//! its outer radius with `flags & 1` clear. The 4 s crossfade is `crate::lighting`'s. A
-//! portal-less prop runs no flood and never engages; no shipped prop is an enterable room.
+//! The selector bails when the root has exactly one MFOG record, as five in six shipped roots do,
+//! and the room keeps the scene fog; past the bail it seeds with record 0. `select_wmo_fog` then
+//! blends over the seed, by the radius falloff and nearest last, every record the group's fog
+//! indices name, index 0 included, that holds the camera inside its outer radius with `flags & 1`
+//! clear. The 4 s crossfade is `crate::lighting`'s. A portal-less prop runs no flood and never
+//! engages; no shipped prop is an enterable room.
 
 use benilla_formats::WmoFog;
 use bevy::prelude::*;
@@ -17,14 +17,14 @@ use bevy::prelude::*;
 pub struct CameraWmoFog(pub Option<WmoFogTarget>);
 
 /// One resolved MFOG fog triple in the record's own units; the staging transform is the consumer's
-/// (`end = min(end, farclip)`, `start = end × start_scalar`, `0x6cef43`–`0x6cef62`).
+/// (`end = min(end, farclip)`, `start = end × start_scalar`).
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct WmoFogTarget {
     /// Fog colour, RGB 0..1 as filed (the MFOG dword reads `0xAARRGGBB`).
     pub(crate) color: [f32; 3],
     /// Fog end distance (yd), unclamped.
     pub(crate) end: f32,
-    /// Fog start as a fraction of end: the 1.12 client multiplies, never subtracts (`0x6cef56`).
+    /// Fog start as a fraction of end: the 1.12 client multiplies, never subtracts.
     pub(crate) start_scalar: f32,
 }
 
@@ -35,7 +35,7 @@ pub(super) fn select_wmo_fog(
     fog_indices: [u8; 4],
     eye_local: [f32; 3],
 ) -> Option<WmoFogTarget> {
-    // The one-record bail (`0x69de4b`): the room keeps the scene fog.
+    // The one-record bail: the room keeps the scene fog.
     if fogs.len() < 2 {
         return None;
     }

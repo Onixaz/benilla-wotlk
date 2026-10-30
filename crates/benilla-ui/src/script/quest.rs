@@ -152,15 +152,15 @@ pub enum QuestAction {
     Continue,
     /// Reward panel Complete → `CMSG_QUESTGIVER_CHOOSE_REWARD` with the 0-based choice.
     Reward(u32),
-    /// `DeclineQuest()`: the detail panel's Decline and the progress and reward panels' Cancel.
-    /// Its binding (`0x501d30`) re-opens the giver through `0x5013f0`: `CMSG_GOSSIP_HELLO` for a
-    /// gossip unit, `CMSG_QUESTGIVER_HELLO` for another unit, the teardown `0x501130(0,1)` for an
-    /// item or a player (or with `0xbe0824` set), a GameObject's interact call. The app owns this.
+    /// `DeclineQuest()`: the detail panel's Decline and the progress and reward panels' Cancel. Its
+    /// binding re-opens the giver: `CMSG_GOSSIP_HELLO` for a gossip unit, `CMSG_QUESTGIVER_HELLO`
+    /// for another unit, the teardown for an item or a player, a GameObject's interact call. The
+    /// app owns this.
     Decline,
     /// `CloseQuest()`, from `QuestFrame_OnHide`: ESC, the close button, the greeting's Goodbye, a
-    /// panel eviction. Its binding (`0x501a10`) calls only the teardown `0x501130(0,1)`, whose one
-    /// send is `MSG_QUEST_PUSH_RESULT` DECLINE for a player source, so closing an NPC's window
-    /// sends nothing. It stays apart from `Decline`: the re-open is `DeclineQuest`'s alone.
+    /// panel eviction. Its binding calls only the teardown, whose one send is
+    /// `MSG_QUEST_PUSH_RESULT` DECLINE for a player source, so closing an NPC's window sends
+    /// nothing. It stays apart from `Decline`: the re-open is `DeclineQuest`'s alone.
     Close,
 }
 
@@ -213,7 +213,7 @@ pub(super) fn reward_spell_returns(
     ]))
 }
 
-/// A reward spell's link (`CGTooltip::GetSpellLink` `0x61e4b0`), nil for none or for an id with no
+/// A reward spell's link (the tooltip's spell link, `0x61e4b0`), nil for none or for an id with no
 /// `Spell.dbc` row.
 pub(super) fn reward_spell_link(
     lua: &Lua,
@@ -227,8 +227,8 @@ pub(super) fn reward_spell_link(
     }
 }
 
-/// The icon an empty offer row answers: display 0 has no `ItemDisplayInfo` row, so the icon
-/// lookup falls back to the question mark (`0x5d88b0`, `0x847fe4`) under the icon folder.
+/// The icon an empty offer row answers: display 0 has no `ItemDisplayInfo` row, so the icon lookup
+/// falls back to the question mark under the icon folder.
 const EMPTY_ROW_ICON: &str = "Interface\\Icons\\INV_Misc_QuestionMark";
 
 /// The greeting rows of one list, active or available, in their 1-based order.
@@ -396,8 +396,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     fn trivial(row: Option<&GossipQuestRow>, model: &crate::script::Model) -> bool {
         quest_is_trivial(level(row), model.player_req.level)
     }
-    // `GetActiveTitle` (`0x58bed0`): the title, then `isComplete` as a boolean
-    // (`IsQuestCompleteAt` `0x58bcb0`).
+    // `GetActiveTitle` (`0x58bed0`): the title, then `isComplete` as a boolean (the completion
+    // test, `0x58bcb0`).
     install_row(
         lua,
         "GetActiveTitle",
@@ -466,12 +466,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         },
     )?;
 
-    // GetQuestItemInfo(type, index) → name, texture, numItems, quality, isUsable (`0x501f80`): five
-    // values, `isUsable` 1 or nil. A type other than `"reward"`, `"choice"` or `"required"` (any
-    // case, `0x64a4c0`) or an index outside 1..7 (`0x501719`) raises `0x84edd8`, as does a
-    // non-string type or non-number index. An index inside that range with no item answers the
-    // zeroed row the offer publisher leaves (`0x500ef0`): no name, the question-mark icon of
-    // display 0, count 0, quality 0 and usable. A template in flight answers an empty name.
+    // GetQuestItemInfo(type, index) → name, texture, numItems, quality, isUsable: five values,
+    // `isUsable` 1 or nil. A type other than `"reward"`, `"choice"` or `"required"` (any case) or
+    // an index outside 1..7 raises, as does a non-string type or non-number index. An index inside
+    // that range with no item answers the zeroed row the offer publisher leaves: no name, the
+    // question-mark icon of display 0, count 0, quality 0 and usable. A template in flight answers
+    // an empty name.
     g.set(
         "GetQuestItemInfo",
         lua.create_function(|lua, (kind, index): (Value, Value)| {
@@ -608,7 +608,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     install_action(lua, "CloseQuest", super::QuestAction::Close)?;
     install_action(lua, "CompleteQuest", super::QuestAction::Continue)?;
 
-    // GetQuestBackgroundMaterial() → nil or a material name (`0x502230`).
+    // GetQuestBackgroundMaterial() → nil or a material name.
     g.set(
         "GetQuestBackgroundMaterial",
         lua.create_function(|lua, ()| {
@@ -628,9 +628,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // QuestChooseRewardError() (`0x5021a0`), no returns: Complete pressed with choices and none
-    // picked (`QuestFrame.lua:98`). It shows game error `0x98` through `0x496720`: the sound
-    // `igQuestFailed`, then `ERR_QUEST_MUST_CHOOSE` through `UI_ERROR_MESSAGE`, synchronously.
+    // QuestChooseRewardError(), no returns: Complete pressed with choices and none picked
+    // (`QuestFrame.lua:98`). It shows game error `0x98`: the sound `igQuestFailed`, then
+    // `ERR_QUEST_MUST_CHOOSE` through `UI_ERROR_MESSAGE`, synchronously.
     g.set(
         "QuestChooseRewardError",
         lua.create_function(|lua, ()| {
@@ -665,8 +665,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetQuestReward(choice): stock passes the 1-based row (`QuestFrame.lua:100`), and the wire
-    // takes it less one, floored at 0, as in the reference (`0x501d80`); vmangos indexes
-    // `RewChoiceItemId` with it.
+    // takes it less one, floored at 0, as in the reference; vmangos indexes `RewChoiceItemId` with
+    // it.
     g.set(
         "GetQuestReward",
         lua.create_function(|lua, choice: Option<u32>| {
@@ -783,7 +783,7 @@ mod tests {
         assert_eq!(s.eval::<i64>("return GetNumQuestRewards()").unwrap(), 1);
         assert_eq!(s.eval::<i64>("return GetRewardMoney()").unwrap(), 1234);
 
-        // Five values, `isUsable` 1 or nil (`0x501f80`), the type matched in any case.
+        // Five values, `isUsable` 1 or nil, the type matched in any case.
         assert_eq!(s.arity(r#"GetQuestItemInfo("reward", 1)"#).unwrap(), 5);
         let (name, texture, count, quality, usable) = s
             .eval::<(String, String, i64, i64, i64)>(r#"return GetQuestItemInfo("REWARD", 1)"#)
@@ -811,7 +811,7 @@ mod tests {
                 1
             )
         );
-        // Outside 1..7, an unknown type or a missing argument raises `0x84edd8`.
+        // Outside 1..7, an unknown type or a missing argument raises.
         for call in [
             r#"GetQuestItemInfo("reward", 8)"#,
             r#"GetQuestItemInfo("reward", 0)"#,

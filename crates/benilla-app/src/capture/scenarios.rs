@@ -557,8 +557,8 @@ pub(super) const ON_DEMAND: &[Scenario] = &[
     },
     // The inn kitchen: its hearth carries the building's strongest MOCV-alpha bake, α≈100 at the
     // firebox (group-local (-32.9, 1.5, 2), world ≈ (-9461.7, -8.4, 58) per MODF uid 71414 on tile
-    // 31,49, origin (-9464.25, 24.39, 56.53), rot -97°). Over a floor face, as for `INN_EYE`;
-    // the reference culls a floorless pocket's group the same way (outside leg `0x6811ca`).
+    // 31,49, origin (-9464.25, 24.39, 56.53), rot -97°). Over a floor face, as for `INN_EYE`; the
+    // reference culls a floorless pocket's group the same way.
     Scenario {
         name: "inn-interior",
         map: Some(MAP_AZEROTH),

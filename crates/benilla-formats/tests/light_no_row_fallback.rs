@@ -1,7 +1,7 @@
-//! A map with no `Light.dbc` row falls back to the record whose id is 1. For Deeprun Tram (369)
-//! the per-map filter of `0x6d6170` matches nothing (`0x6d61a9`), the tail writes `idMap[1]` into
-//! slot 0 (`0x6d62b2`-`0x6d62c9`), `0x6d2d00` has nothing to blend, and that record, the Azeroth
-//! global with `LightParams` 12 (int bands 199..216, float bands 67..72), commits whole.
+//! A map with no `Light.dbc` row falls back to the record whose id is 1. For Deeprun Tram (369) the
+//! reference's per-map filter matches nothing, its tail writes `idMap[1]` into slot 0, the blend
+//! has nothing to mix, and that record, the Azeroth global with `LightParams` 12 (int bands
+//! 199..216, float bands 67..72), commits whole.
 
 use benilla_formats::{Chain, LightCatalog, Submersion};
 

@@ -1,6 +1,6 @@
 //! `SpellMechanic.dbc`: the `%s` of `SPELL_FAILED_PREVENTED_BY_MECHANIC` ("Can't do that while
-//! %s"), naming the blocking aura's mechanic. The reference reads this table (`0xc0d7c4`) in
-//! `0x6e2190`, its `0x8d` argument arm.
+//! %s"), naming the blocking aura's mechanic. The reference reads this table, its `0x8d` argument
+//! arm.
 
 use std::collections::HashMap;
 

@@ -1,4 +1,4 @@
-//! The currency tab's tables, as 12340's `CGCurrencyTypes` reads them:
+//! The currency tab's tables, as 12340's currency list reads them:
 //!
 //! - `CurrencyTypes.dbc` (`ID`, `ItemID`, `CategoryID`, `BitIndex`): each currency's item, its
 //!   category and its `PLAYER_FIELD_KNOWN_CURRENCIES` bit, 1-based (`0x5b0030`).

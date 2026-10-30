@@ -5,8 +5,8 @@
 //! `ACTIVE_TALENT_GROUP_CHANGED(new, old)` when the active group moved.
 //!
 //! The pet's one group is its family's tree: `TalentTab.dbc` rows whose `petTalentMask` holds the
-//! family's `petTalentType`, picked by the family `SMSG_PET_SPELLS` carries (`SetPet`,
-//! `0x5d6ab6` into `0x5c9df0`), and the pet body's ranks, which fire `PET_TALENT_UPDATE`
+//! family's `petTalentType`, picked by the family `SMSG_PET_SPELLS` carries (`0x5d6ab6` into
+//! `0x5c9df0`), and the pet body's ranks, which fire `PET_TALENT_UPDATE`
 //! (`0x5c9f10`). A pet talent outside its family's category reads as no talent (`0x5c5a20`).
 
 use std::collections::{BTreeSet, HashMap};
@@ -210,8 +210,8 @@ impl PetTalentInputs<'_, '_> {
             || self.families.as_ref().is_some_and(|r| r.is_changed())
     }
 
-    /// The pet's `CreatureFamily.dbc` row through its template (`CGUnit_C::GetCreatureFamily`),
-    /// `None` without the pet, its template or the row: `0x5c5a20`'s refusals.
+    /// The pet's `CreatureFamily.dbc` row through its template, `None` without the pet, its
+    /// template or the row: `0x5c5a20`'s refusals.
     fn pet_family_category(&self, pet_guid: u64) -> Option<i32> {
         let store = self.pet.store(pet_guid)?;
         let entry = store.0.object_entry().filter(|&e| e != 0)?;
@@ -348,7 +348,7 @@ fn feed_talents(
             script.fire_event(event, args);
         }
     }
-    // The talent and profession point deltas, as the reference's `SignalEvent2` sends them:
+    // The talent and profession point deltas, as the reference's event fire sends them:
     // `ChatFrame.lua:1326` tests `arg2 > 0` unguarded, so an argless fire raises. The
     // free-professions line is not composed here: the stock `ChatFrame_OnEvent` arm
     // (`ChatFrame.lua:1324-1334`) prints `LEVEL_UP_SKILL_POINTS` itself on `arg2 > 0`.

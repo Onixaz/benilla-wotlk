@@ -135,22 +135,22 @@ impl Attempt<'_> {
 /// guards ([`crate::ui_script::glue_mgr`]), and the native realm list's Cancel over login.
 #[derive(Message)]
 pub(crate) enum GlueLogin {
-    /// `CGlueMgr::Login` (`0x46afb0`) reaching `ClientServices`' logon (`0x5ab4b0`): one attempt,
-    /// typed, with the screen's credentials. It supersedes a logon still parked at the realm list,
-    /// as the reference starts the next logon whatever link the last one left.
+    /// The glue login reaching the client's logon: one attempt, typed, with the screen's
+    /// credentials. It supersedes a logon still parked at the realm list, as the reference starts
+    /// the next logon whatever link the last one left.
     Submit { account: String, password: String },
-    /// `CLoginMgr::Cancel` (`0x5b3320`): the status dialog's Cancel during the logon, and
-    /// `RealmListDialogCancelled` on the login screen. The attempt in flight is dropped, the
-    /// realmd link closes, and nothing resubmits.
+    /// The logon cancel: the status dialog's Cancel during the logon, and
+    /// `RealmListDialogCancelled` on the login screen. The attempt in flight is dropped, the realmd
+    /// link closes, and nothing resubmits.
     Abandon,
     /// The status dialog's Cancel during the world connect, which completes it
-    /// `RESPONSE_CANCELLED` (`0x46b754`); the failure arm then drops the world socket alone
-    /// (`0x46befd`, `0x5ab1a0`), so the attempt in flight ends and the realmd link stays up.
+    /// `RESPONSE_CANCELLED`; the failure arm then drops the world socket alone, so the attempt in
+    /// flight ends and the realmd link stays up.
     CancelWorld,
     /// `DisconnectFromServer` (`0x4dda10`): the world session dropped if there is one, then the
     /// logon cancelled, as select's Back drops the parked session.
     Disconnect,
-    /// `QuitGame` (`0x4dc050` → `0x401560(0)`): the process ends, with no grace for a sound.
+    /// `QuitGame` (`0x4dc050`): the process ends, with no grace for a sound.
     Quit,
 }
 
@@ -193,9 +193,8 @@ pub(crate) fn answer_glue(
     }
 }
 
-/// `CLoginMgr::Cancel` (`0x5b3320`): the attempt in flight is dropped at its next stage boundary
-/// (a dial asked for under the old generation included), the realmd link closes, and nothing
-/// resubmits.
+/// The logon cancel: the attempt in flight is dropped at its next stage boundary (a dial asked
+/// for under the old generation included), the realmd link closes, and nothing resubmits.
 fn close_logon(
     abandon: &LoginAbandon,
     intent: &mut LoginIntent,
@@ -310,7 +309,7 @@ fn drive_policy(
     for msg in disconnects.read() {
         attempt.intent.in_flight = false;
         // A logout or a refused character login keeps the world link: the IO thread is back at
-        // character select on it (`0x5aaeb0`, `0x5aad70`), with nothing to log on again.
+        // character select on it, with nothing to log on again.
         if msg.end == benilla_protocol::SessionEnd::LoggedOut {
             continue;
         }
@@ -342,9 +341,9 @@ fn drive_policy(
     }
 }
 
-/// The login's success edge, the world server's authentication (`SMSG_AUTH_RESPONSE`,
-/// `0x5ab2b8`): go to CharSelect, but only from `Login`, since an unattended reconnect's lands
-/// while `InWorld`. The roster is the stock screen's own ask, and comes once the screen is up.
+/// The login's success edge, the world server's authentication (`SMSG_AUTH_RESPONSE`): go to
+/// CharSelect, but only from `Login`, since an unattended reconnect's lands while `InWorld`. The
+/// roster is the stock screen's own ask, and comes once the screen is up.
 fn to_select_on_auth(
     mut auths: MessageReader<WorldAuthMessage>,
     mut intent: ResMut<LoginIntent>,
@@ -354,8 +353,8 @@ fn to_select_on_auth(
     pick: Option<Res<crate::net::CharPick>>,
 ) {
     // A message of an attempt a Cancel or a disconnect has passed since is not an edge: the
-    // reference drops the socket there (`0x46befd`, `0x46d360`), so the session that parked
-    // behind the screen's back is abandoned.
+    // reference drops the socket there, so the session that parked behind the screen's back is
+    // abandoned.
     let now = LoginAbandon::now(abandon.as_deref());
     let (mut edge, mut stale) = (false, false);
     for msg in auths.read() {

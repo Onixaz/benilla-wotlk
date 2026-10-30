@@ -1,8 +1,8 @@
-//! The openable-item live probe (`WOW_PROBE_CLAM=1`): right-clicks a lootable item in the bags
-//! and checks a loot window opens. The click makes two writes before the send (`0x5edc80`): the
-//! grey lock ([`PendingItemOps`], `0x4953e0` at `0x5edcd9`) and the loot latch ([`LootLatch`],
-//! `0x5edcc0`). vmangos answers `CMSG_OPEN_ITEM` with `SendLoot(item guid, LOOT_CORPSE)`, so
-//! `SMSG_LOOT_RESPONSE` comes back type 1 on the item's own guid, which a cold latch refuses.
+//! The openable-item live probe (`WOW_PROBE_CLAM=1`): right-clicks a lootable item in the bags and
+//! checks a loot window opens. The click makes two writes before the send: the grey lock
+//! ([`PendingItemOps`]) and the loot latch ([`LootLatch`]). vmangos answers `CMSG_OPEN_ITEM` with
+//! `SendLoot(item guid, LOOT_CORPSE)`, so `SMSG_LOOT_RESPONSE` comes back type 1 on the item's own
+//! guid, which a cold latch refuses.
 //!
 //! The click runs through the live VM's `UseContainerItem(0, slot)`, the bag button's own call;
 //! each reading is `LootFrame:IsShown()` plus the session guid:
@@ -41,9 +41,9 @@ const CLOSE_TIMEOUT_SECS: f64 = 10.0;
 /// How long the `.additem -1` gets to take the probe's own copy back out of the bags.
 const CLEANUP_TIMEOUT_SECS: f64 = 8.0;
 /// How long the REOPEN round waits after the window goes down before clicking again. A race the
-/// reference shares: `CloseLoot()` clears the latch at the send (`0x48f2c9` in `CloseInteraction`,
-/// `0x48f200`) and `SMSG_LOOT_RELEASE_RESPONSE` clears it again, guid-matched (`0x5ec0d4`), so a
-/// re-open of the same object inside that round trip is refused.
+/// reference shares: `CloseLoot()` clears the latch at the send, in the interaction close, and
+/// `SMSG_LOOT_RELEASE_RESPONSE` clears it again, guid-matched, so a re-open of the same object
+/// inside that round trip is refused.
 const REOPEN_SETTLE_SECS: f64 = 1.0;
 /// Frames the BEFORE control samples.
 const CONTROL_FRAMES: usize = 60;

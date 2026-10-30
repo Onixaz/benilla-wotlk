@@ -144,8 +144,8 @@ struct QuadProbe {
     index: u32,
     /// The four corners in physical pixels, in `expand_quads`' own vertex order.
     corners: [Vec2; 4],
-    /// The corners' mid NDC depth; `dspread` is their spread, which the reference's plain
-    /// billboard (`0x7b2a50`) keeps at zero.
+    /// The corners' mid NDC depth; `dspread` is their spread, which the reference's plain billboard
+    /// keeps at zero.
     dquad: f32,
     dspread: f32,
     /// The quad centre's distance to the camera plane, yards.

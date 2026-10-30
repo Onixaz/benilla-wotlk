@@ -1,11 +1,11 @@
 // WDL distant terrain: the coarse horizon hulls the reference draws past the detailed tiles,
 // unlit, untextured, white vertex diffuse fogged with the scene's fog colour. The hull emitter
-// `0x6bd780` sets its own fog pair, start 0 and end 1.0 (`0x6bd7ae`-`0x6bd7c8`), so beyond one
+//Sets its own fog pair, start 0 and end 1.0, so beyond one
 // yard the hull is the flat fog colour: a silhouette against the unfogged sky.
 //
 // The band is a backdrop, not the far half of a shared clip plane. The reference's far-band pass
-// (`0x6841a0`, projection at `0x6842f2`) uses near `farclip - 33` (`[0x8101b0]`) and the depth
-// range `[0.955, 0.96]` (`[0x80febc]` = 0.96, `[0x80fec4]` = 0.005): the band overlaps the detailed
+//Uses near `farclip - 33` and the depth
+// range `[0.955, 0.96]` (0.96,0.005): the band overlaps the detailed
 // world by 33 yd, closing the seam, and stays behind all of it. On Bevy's infinite reverse-Z
 // (depth = near / eye_z) that range becomes a clamp just below `near / farclip`, the farthest
 // depth the detailed world keeps (it discards past the wall), still in front of the sky's 0.0.
@@ -18,7 +18,7 @@
 }
 
 /// How far the band reaches inside the far-clip wall: the reference's far-band near plane
-/// `farclip - 33.0` (`[0x8101b0]`, about one WDL outer cell).
+/// `farclip - 33.0` (about one WDL outer cell).
 const WDL_OVERLAP: f32 = 33.0;
 
 /// Keeps the band strictly behind a world fragment exactly at the wall (`GreaterEqual` passes a

@@ -319,8 +319,8 @@ fn npc_text_update_greeting_extraction() {
     }
 }
 
-/// The greeting draw (reference `0x4e2010`): a weighted random pick over the blocks whose chosen
-/// gender column is non-empty.
+/// The greeting draw: a weighted random pick over the blocks whose chosen gender column is
+/// non-empty.
 #[test]
 fn greeting_draw_follows_the_weighted_law() {
     use benilla_protocol::messages::{select_greeting, NpcTextBlock};

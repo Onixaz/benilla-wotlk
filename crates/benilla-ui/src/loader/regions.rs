@@ -5,7 +5,7 @@ use crate::framexml::{self, Element};
 use super::{abs_dim, abs_value, children_named, color_of, tex_coords_of, Loader};
 
 impl Loader<'_> {
-    /// `<Layers>` (`0x769d70`): each `<Texture>` and `<FontString>`, created on its layer.
+    /// `<Layers>`: each `<Texture>` and `<FontString>`, created on its layer.
     pub(super) fn apply_layers(
         &mut self,
         el: &Element,
@@ -17,8 +17,8 @@ impl Loader<'_> {
             for layer in children_named(layers, "Layer") {
                 let level = layer.attr("level").unwrap_or("ARTWORK").to_string();
                 for region in &layer.children {
-                    // `inherits=` may name a region template, in the frames' one registry
-                    // (`0x6ee500`); a font object's name passes on to `apply_fontstring_font`.
+                    // `inherits=` may name a region template, in the frames' one registry; a font
+                    // object's name passes on to `apply_fontstring_font`.
                     let region = &self.expand_region(region);
                     let is_texture = region.tag.eq_ignore_ascii_case("Texture");
                     let is_fontstring = region.tag.eq_ignore_ascii_case("FontString");
@@ -53,9 +53,8 @@ impl Loader<'_> {
         }
     }
 
-    /// A region's own `LoadXML` (`0x7701c0` for a texture, `0x771480` for a font string) past its
-    /// creation: its animations, `hidden` and `alpha`, layout, font and visual, then the implicit
-    /// creation anchor, which leaves an anchored region alone.
+    /// A region's own XML load past its creation: its animations, `hidden` and `alpha`, layout,
+    /// font and visual, then the implicit creation anchor, which leaves an anchored region alone.
     pub(super) fn load_region(
         &mut self,
         region: &Element,
@@ -99,8 +98,8 @@ impl Loader<'_> {
         parent_name: &str,
         dbg: &str,
     ) {
-        // A `<SimpleHTML>`'s direct `<FontString>` declares its `P` font, not a region
-        // (`0x78a1fe`); `apply_simplehtml` owns it.
+        // A `<SimpleHTML>`'s direct `<FontString>` declares its `P` font, not a region;
+        // `apply_simplehtml` owns it.
         if el.tag.eq_ignore_ascii_case("SimpleHTML") {
             return;
         }
@@ -112,8 +111,8 @@ impl Loader<'_> {
             let rname: Option<String> = region
                 .name()
                 .map(|raw| framexml::resolve_name(raw, parent_name));
-            // An EditBox's `<FontString>` declares the text string its ctor built (`0x779fb0`,
-            // `0x779bee`), so it creates nothing: a second region would also shift `GetRegions`.
+            // An EditBox's `<FontString>` declares the text string its ctor built, so it creates
+            // nothing: a second region would also shift `GetRegions`.
             let existing_text = el
                 .tag
                 .eq_ignore_ascii_case("EditBox")
@@ -212,7 +211,7 @@ impl Loader<'_> {
                 let rel_to: Option<String> = anchor
                     .attr("relativeTo")
                     .map(|r| framexml::resolve_name(r, parent_name));
-                // The `<Offset>` child, else the anchor's own `x`/`y` (`CLayoutFrame::LoadXML`,
+                // The `<Offset>` child, else the anchor's own `x`/`y` (the layout frame's XML load,
                 // `0x48b2d0`).
                 let (x, y) = children_named(anchor, "Offset")
                     .next()
@@ -246,17 +245,17 @@ impl Loader<'_> {
         let color = children_named(region, "Color").next().map(color_of);
         if is_texture {
             if let Some(file) = region.attr("file") {
-                // A `<Color>` beside `file=` is discarded, not a tint: `0x76fe20` applies it in its
-                // child loop, then the file, read after (`0x770102`), overwrites the same slot.
+                // A `<Color>` beside `file=` is discarded, not a tint: the reference applies it in
+                // its child loop, then the file, read after, overwrites the same slot.
                 self.call_region(region_wrapper, "SetTexture", file.to_string(), dbg);
             } else if let Some(c) = color {
                 // No file: a solid fill, an 8×8 texture in the reference, so its alpha multiplies
                 // with `SetVertexColor` rather than being replaced by it.
                 self.call_region(region_wrapper, "SetTexture", (c[0], c[1], c[2], c[3]), dbg);
             }
-            // `<Gradient>` writes the vertex colours (`+0xb8`, `0x77304d`), which `file=` leaves
-            // alone, so unlike `<Color>` it tints the art. MinColor is the first stop and MaxColor
-            // the second; the reference's stop-to-vertex order is untraced (`0x7700b0`).
+            // `<Gradient>` writes the vertex colours (`+0xb8`), which `file=` leaves alone, so
+            // unlike `<Color>` it tints the art. MinColor is the first stop and MaxColor the
+            // second; the reference's stop-to-vertex order is untraced.
             if let Some(g) = children_named(region, "Gradient").next() {
                 let stop = |tag: &str| children_named(g, tag).next().map(color_of);
                 // A gradient missing a stop is skipped: an absent stop is not a black one.
@@ -287,7 +286,7 @@ impl Loader<'_> {
             }
         } else {
             if let Some(text) = region.attr("text") {
-                // A global-string key, not a literal (`0x703bf0`).
+                // A global-string key, not a literal.
                 let text = self.resolve_text(text, dbg);
                 if let Err(e) = crate::script::store_text(self.lua, region_wrapper, Some(text)) {
                     self.report
@@ -346,8 +345,8 @@ impl Loader<'_> {
             })
     }
 
-    /// Whether `name` is a registered font object: the reference's flat, case-insensitive lookup
-    /// (`0x783870`, `SStrCmpI`), with no template walk.
+    /// Whether `name` is a registered font object: the reference's flat, case-insensitive lookup,
+    /// with no template walk.
     pub(super) fn is_font_object(&self, name: &str) -> bool {
         let model = self.model();
         let fonts = model.framexml_fonts.borrow();
@@ -355,7 +354,7 @@ impl Loader<'_> {
     }
 
     /// A `<FontString>`'s font: `inherits=` through [`Self::font_object_through_templates`], then
-    /// `font=`, a font object's name first and a file only on a miss (`0x770f40`, `0x771104`).
+    /// `font=`, a font object's name first and a file only on a miss.
     pub(super) fn apply_fontstring_font(&mut self, region: &Element, wrapper: &Table, dbg: &str) {
         if let Some(name) = region.attr("inherits") {
             // The expanded element keeps the instance's `inherits=`, a template's name, so the
@@ -377,9 +376,8 @@ impl Loader<'_> {
                 );
             }
         }
-        // `font=` gates `<FontHeight>` and `outline=` (`0x7710e1`-`0x771254`): a font object's
-        // name links it and skips them (`0x771114`, `0x771119`), any other value is a file they
-        // qualify (`0x77110b`), and with no `font=` they are never read (`0x7710fa`), so
+        // `font=` gates `<FontHeight>` and `outline=`: a font object's name links it and skips
+        // them, any other value is a file they qualify, and with no `font=` they are never read, so
         // `ZoneText.xml`'s `AutoFollowStatusText` draws at GameFontNormal's 12, not its own 20.
         match region.attr("font") {
             Some(name) if self.is_font_object(name) => {
@@ -391,8 +389,8 @@ impl Loader<'_> {
                 }
             }
             Some(path) => {
-                // Applied directly, not through the Lua `SetFont`, which requires a height
-                // (`0x87c69c`) where XML may omit it.
+                // Applied directly, not through the Lua `SetFont`, which requires a height where
+                // XML may omit it.
                 let height = children_named(region, "FontHeight")
                     .next()
                     .and_then(abs_value);

@@ -762,7 +762,7 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         // `UNIT_END + 0x485`, read at `+0x1214 + 4 * type` (`GetRuneCooldown` `0x613092`).
         run(F::PlayerRuneRegen, Player, 1305, 4),
         // `UNIT_END + 0x48c`, `+0x492` and `+0x498`: the player block's `+0x1230`, `+0x1248` and
-        // `+0x1260` (`Spell_C_HandleGlyphClick` `0x80c3e0`).
+        // `+0x1260` (the glyph click, `0x80c3e0`).
         run(F::PlayerGlyphSlots, Player, 1312, 6),
         run(F::PlayerGlyphs, Player, 1318, 6),
         one(F::PlayerGlyphsEnabled, Player, 1324),

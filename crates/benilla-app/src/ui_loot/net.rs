@@ -28,14 +28,14 @@ pub(super) fn register(app: &mut App) {
 /// The rows 12340 reads off a response: the count clamps to 18 (`0x6d55e7`).
 const MAX_LOOT_ROWS: usize = 18;
 
-/// 12340's moving test after `OpenLoot` (`0x6d57a6`, `0xc000ff`), in benilla's flag layout.
+/// 12340's moving test after the loot open (`0x6d57a6`, `0xc000ff`), in benilla's flag layout.
 const MOVING_CLOSES_LOOT: u32 = {
     use crate::creature_anim::move_flags as f;
     f::STEERING | f::ASCENDING | f::DESCENDING
 };
 
-/// `OnLootResponse 0x6d53b0`'s item shape: an object we do not hold is released (`0x6d560f`), one
-/// we hold is latched (`0x6d56c8`), targeted and opened (`OpenLoot 0x5264f0`).
+/// The loot response handler's item shape (`0x6d53b0`): an object we do not hold is released
+/// (`0x6d560f`), one we hold is latched (`0x6d56c8`), targeted and opened (`0x5264f0`).
 fn on_response(
     In(ev): In<SessionEvent>,
     mut select: crate::target::SelectCommit,
@@ -137,8 +137,8 @@ fn on_release_response(
     }
 }
 
-/// `UnlockItem 0x495420` on the loot guid, as the loot closes call it: only an item we locked at
-/// its `CMSG_OPEN_ITEM` send unlocks, and its slot queues for `ITEM_LOCK_CHANGED`.
+/// The item unlock on the loot guid, as the loot closes call it: only an item we locked at its
+/// `CMSG_OPEN_ITEM` send unlocks, and its slot queues for `ITEM_LOCK_CHANGED`.
 struct ItemUnlock<'a> {
     pending: &'a mut PendingItemOps,
     lock_cleared: &'a mut LockTransitions,
@@ -208,8 +208,8 @@ fn admit_response(guid: u64, loot_type: u8, latch: &mut LootLatch, net: &NetComm
 }
 
 /// `SMSG_FISH_ESCAPED` (the skill roll failed) or `SMSG_FISH_NOT_HOOKED` (clicked before the
-/// splash, or expired): a yellow toast, as the handlers `0x5e3fc5`/`0x5e3fe2` push ids
-/// `0x13e`/`0x13f`, type-1 entries that `DisplayError` fires as `UI_INFO_MESSAGE` (`0x49684b`).
+/// splash, or expired): a yellow toast, as the handlers push ids `0x13e`/`0x13f`, type-1 entries
+/// that the error display fires as `UI_INFO_MESSAGE`.
 fn fish_verdict(escaped: bool, errors: &mut UiErrorKeys) {
     let key = if escaped {
         "ERR_FISH_ESCAPED"
@@ -220,17 +220,17 @@ fn fish_verdict(escaped: bool, errors: &mut UiErrorKeys) {
     errors.0.push(UiError::key(key));
 }
 
-/// The default arm is code 7's arm (`0x5eba11 ja 0x5ebabd`), so it releases; the compare is
-/// unsigned, so codes 0..3 and 15..255 all land there.
+/// The default arm is code 7's arm, so it releases; the compare is unsigned, so codes 0..3 and
+/// 15..255 all land there.
 const DEFAULT_ARM_RELEASES: bool = true;
 
 /// One arm of the loot-refusal jump table: the message it pushes, and whether it falls into the
-/// release tail at `0x5ebac2`.
+/// release tail.
 struct LootRefusal {
-    /// The `GlobalStrings` key of the id the arm hands `CGGameUI::DisplayError` (`0x496720`).
+    /// The `GlobalStrings` key of the id the arm hands the UI's error display.
     key: &'static str,
-    /// The tail zeroes the loot guid (our [`LootLatch`]), runs `UnlockItem 0x495420` and
-    /// `RecomputeBaseAnim 0x5fd9e0(-1)`: it ends the kneel.
+    /// The tail zeroes the loot guid (our [`LootLatch`]), runs the item unlock and the
+    /// base-animation recompute with `-1`: it ends the kneel.
     releases: bool,
 }
 
@@ -341,10 +341,9 @@ fn loot_master_list(candidates: Vec<u64>, loot: &mut LootState) {
     loot.set_master_candidates(candidates);
 }
 
-/// `OnItemPush 0x491a60`'s outermost gate (`0x491b56`/`0x491b61`): only our own push prints or
-/// animates. Another member's push takes the `0x491d9f` arm and prints `LOOT_ITEM` with their
-/// name, which is not built, so a foreign push is dropped. `showInChat` is a later gate
-/// (`0x491bf3`/`0x491db1`), carried into [`LootState::push_receive`].
+/// `OnItemPush`'s outermost gate: only our own push prints or animates. Another member's push takes
+/// the arm and prints `LOOT_ITEM` with their name, which is not built, so a foreign push is
+/// dropped. `showInChat` is a later gate, carried into [`LootState::push_receive`].
 fn is_our_push(p: &ItemPushResult, self_guid: &SelfGuid) -> bool {
     self_guid.0 == Some(p.player_guid)
 }
@@ -496,10 +495,10 @@ mod tests {
         }
     }
 
-    /// Codes 10 and 12..=14 answer an open window and jump past the release tail `0x5ebac2`.
+    /// Codes 10 and 12..=14 answer an open window and jump past the release tail.
     #[test]
     fn only_the_window_less_refusals_drop_the_kneel() {
-        // The releasing arms plus the default, which is code 7's arm (`ja 0x5ebabd`).
+        // The releasing arms plus the default, which is code 7's arm.
         for code in [4u8, 5, 6, 7, 8, 9, 11, 0, 1, 2, 3, 15, 200, 255] {
             let mut errors = UiErrorKeys::default();
             let mut latch = LootLatch(Some(CORPSE));
@@ -700,7 +699,7 @@ mod tests {
             .expect("the handler runs as a one-shot system");
     }
 
-    /// The `CMSG_LOOT` send armed the same guid: the match branch (`0x5eb93e`).
+    /// The `CMSG_LOOT` send armed the same guid: the match branch.
     #[test]
     fn a_matching_latch_admits_any_loot_type() {
         let (mut world, _rx) = tabbed_world();
@@ -710,7 +709,7 @@ mod tests {
         assert_eq!(world.resource::<LootState>().source(), Some(CORPSE));
     }
 
-    /// The refusal arm (`0x5eb963`): a type-1 answer on a cold latch answers nothing we asked.
+    /// The refusal arm: a type-1 answer on a cold latch answers nothing we asked.
     #[test]
     fn a_cold_latch_refuses_a_corpse_typed_response_and_bounces_it() {
         let (mut world, rx) = tabbed_world();
@@ -732,7 +731,7 @@ mod tests {
         );
     }
 
-    /// The refusal's clear is not guid-matched (`0x5eb9d2`): a response for B drops a latch on A.
+    /// The refusal's clear is not guid-matched: a response for B drops a latch on A.
     #[test]
     fn a_refusal_drops_whatever_latch_was_live_not_just_a_matching_one() {
         let (mut world, rx) = tabbed_world();
@@ -800,8 +799,8 @@ mod tests {
         assert!(world.resource::<LockTransitions>().0.is_empty());
     }
 
-    /// The server's release (`0x5ec090` → `0x5ec0f3`) closes the window through the shared close,
-    /// sending nothing back, and its last step deselects the dead unit it closed on.
+    /// The server's release closes the window through the shared close, sending nothing back, and
+    /// its last step deselects the dead unit it closed on.
     #[test]
     fn a_release_response_closes_the_window_and_deselects_a_dead_unit() {
         let (net, rx) = net();
@@ -969,7 +968,7 @@ mod tests {
             .expect("the handler runs as a one-shot system");
     }
 
-    /// `0x5ebc35` → `0x48f3a0` → `SetSelection 0x493540` on the looted unit's guid.
+    /// The selection set on the looted unit's guid.
     #[test]
     fn a_loot_window_opening_on_a_unit_selects_it() {
         let (mut world, rx) = tabbed_world();
@@ -985,7 +984,7 @@ mod tests {
         assert_eq!(
             selection.last,
             Some(KOBOLD),
-            "…through SetSelection's stamp"
+            "…through the selection set's stamp"
         );
         let sent: Vec<_> = rx.try_iter().collect();
         assert!(
@@ -998,8 +997,8 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
-    /// `0x48f3a0` tests `TYPEMASK_UNIT`; `SetSelection`'s `IsSelectable` refuses the flagged unit;
-    /// a refused response never reaches `0x5ebc35`.
+    /// The reference tests `TYPEMASK_UNIT`; the selection set's selectable test refuses the flagged
+    /// unit; a refused response never reaches the select.
     #[test]
     fn a_chest_an_unselectable_unit_and_a_refusal_leave_the_target() {
         for (guid, latched, loot_type) in [
@@ -1023,8 +1022,8 @@ mod tests {
         }
     }
 
-    /// The selection comes before the window (`0x48f3be`, then `0x4c1cb0`): the outgoing target's
-    /// teardown closes the window still open on it, its release ahead of the new selection.
+    /// The selection comes before the window: the outgoing target's teardown closes the window
+    /// still open on it, its release ahead of the new selection.
     #[test]
     fn the_selection_tears_down_the_old_targets_window_before_the_new_one_opens() {
         let (mut world, rx) = tabbed_world();
@@ -1043,12 +1042,12 @@ mod tests {
             "{sent:?}"
         );
         assert_eq!(world.resource::<LootState>().source(), Some(CORPSE));
-        // [`LootLatch`]'s deviation: the reference's teardown zeroes it here (`0x48f2c9`).
+        // [`LootLatch`]'s deviation: the reference's teardown zeroes it here.
         assert_eq!(world.resource::<LootLatch>().0, Some(CORPSE));
     }
 
-    /// `SetSelection`'s switch while swinging (`0x493a08`, `0x4938a1`): the swing at the Tab target
-    /// stops, and none opens on the body.
+    /// The selection set's switch while swinging: the swing at the Tab target stops, and none opens
+    /// on the body.
     #[test]
     fn looting_while_swinging_at_the_tab_target_stops_the_swing() {
         use crate::net::SelfPlayer;
@@ -1072,8 +1071,8 @@ mod tests {
         );
     }
 
-    /// `StartAttack`'s target gate (`0x5ecc16`-`0x5ecc29`): a body is no swing target even when
-    /// hostile, so looting one mid-swing stops and selects, and swings at nothing.
+    /// `StartAttack`'s target gate: a body is no swing target even when hostile, so looting one
+    /// mid-swing stops and selects, and swings at nothing.
     #[test]
     fn looting_a_hostile_body_while_swinging_never_swings_at_it() {
         use crate::net::{ObjectStore, SelfPlayer};
@@ -1267,7 +1266,7 @@ mod tests {
 
     /// The response's tail (`0x6d57a6`-`0x6d57b5`): a bit of our movement word's low byte, forward,
     /// back, strafe, turn or pitch, takes the move-start close on the window it just opened, the
-    /// release after the selection and the dead body's deselect last (`0x48f369`).
+    /// release after the selection and the dead body's deselect last.
     #[test]
     fn a_window_that_opens_while_moving_closes_as_a_movement_start_does() {
         for bit in (0..8).map(|b| 1u32 << b) {
@@ -1317,8 +1316,8 @@ mod tests {
         }
     }
 
-    /// `SetObject 0x5896b0` sweeps an armed auto-loot window (`DoAutoLoot 0x588f90`) before the
-    /// response's movement close (`0x6d57b5`), so a body auto-looted on the run is taken, then
+    /// The window's object set (`0x5896b0`) sweeps an armed auto-loot window (`0x588f90`) before
+    /// the response's movement close (`0x6d57b5`), so a body auto-looted on the run is taken, then
     /// released.
     #[test]
     fn auto_loot_on_the_run_takes_the_rows_before_the_release() {
@@ -1451,7 +1450,7 @@ mod tests {
         }
     }
 
-    /// Only a releasing arm reaches `UnlockItem 0x495420`, through the tail `0x5ebac2`.
+    /// Only a releasing arm reaches the item unlock, through the tail.
     #[test]
     fn a_releasing_loot_error_on_the_opened_item_unlocks_it() {
         let mut world = opened_lockbox_world();

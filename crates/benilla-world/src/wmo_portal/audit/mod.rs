@@ -77,10 +77,10 @@ const UNDERCITY: Site = Site {
 
 /// Ironforge's lava chasm under the Great Forge. The grates at lava level (world z≈421,
 /// `.go xyz -4845 -995 421 0`) are cavern group g89 (one portal, p114 to g91); a camera over a
-/// column with nothing walkable below reads outside and blanks the interior, as the reference
-/// does: its down-ray's liquid cast is a dead edge here (`0x6be345`) and a miss retries nothing
-/// (`0x682207`). `WOW_PIN_EYE=-4990,-960,470` is such a column; `WOW_PIN_EYE=-4830,-1090,480`
-/// seeds g91 and draws.
+/// column with nothing walkable below reads outside and blanks the interior, as the reference does:
+/// its down-ray's liquid cast is a dead edge here and a miss retries nothing.
+/// `WOW_PIN_EYE=-4990,-960,470` is such a column; `WOW_PIN_EYE=-4830,-1090,480` seeds g91 and
+/// draws.
 #[allow(dead_code)] // aimed at by `WOW_PIN_*` runs
 const IRONFORGE: Site = Site {
     wmo: r"world\wmo\khazmodan\cities\ironforge\ironforge.wmo",

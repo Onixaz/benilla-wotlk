@@ -1,5 +1,5 @@
-//! The text region's rect (`0x77b8c0`, re-seated on every resize by `0x77a8d0`) and a multi-line
-//! box's own height (`0x77d4d0` @`0x77d8ad`), driven through the Lua methods and the tick.
+//! The text region's rect and a multi-line box's own height, driven through the Lua methods and the
+//! tick.
 
 use crate::script::{MeasureRequest, QuadContent, TextMeasure, UiScript};
 
@@ -106,8 +106,7 @@ fn a_multi_line_box_is_as_tall_as_its_text_and_its_insets() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The relayout runs ahead of the `OnTextChanged` fire (`0x77d447` before `0x77d498`), so the
-/// handler reads the new height.
+/// The relayout runs ahead of the `OnTextChanged` fire, so the handler reads the new height.
 #[test]
 fn on_text_changed_sees_the_height_the_flush_just_set() {
     let mut s = script();
@@ -175,7 +174,7 @@ fn a_trailing_newline_alone_adds_no_line() {
     );
 }
 
-/// Only a multi-line box is sized (`0x77d86a je` skips the write).
+/// Only a multi-line box is sized.
 #[test]
 fn a_single_line_box_keeps_its_height() {
     let mut s = script();
@@ -326,8 +325,7 @@ fn text_rect(s: &UiScript, text: &str) -> Option<(f32, f32, f32, f32)> {
 }
 
 /// A box built in Lua, with no `<FontString>` and no `SetTextInsets`, has its text seated at its
-/// first resolve: `ApplyRect` (`0x76b580`) sees it resized from the ctor's zero rect and the
-/// override `0x77a8d0` runs `0x77b8c0` (`0x77a8e7`).
+/// first resolve: the rect apply sees it resized from the ctor's zero rect and the override runs.
 #[test]
 fn a_lua_box_with_a_font_seats_its_text_at_its_first_resolve() {
     let mut s = script();
@@ -400,8 +398,8 @@ fn a_resized_box_re_seats_its_text() {
     assert_eq!(text_rect(&s, "single"), Some((100.0, 350.0, 232.0, 200.0)));
 }
 
-/// A single-line box at `(100, 200)`, 200×32 with insets (10, 20, 3, 5), whose text region a
-/// script has moved to `TOPLEFT (40, 40)`; `SEATED` is where `0x77b8c0` puts it.
+/// A single-line box at `(100, 200)`, 200×32 with insets (10, 20, 3, 5), whose text region a script
+/// has moved to `TOPLEFT (40, 40)`; `SEATED` is where the reference puts it.
 fn moved_text_region(s: &mut UiScript) {
     s.run(
         r#"
@@ -437,7 +435,7 @@ fn move_text_region(s: &mut UiScript) {
     );
 }
 
-/// `GetTextInsets` (`0x77a710`) copies the insets out, then re-seats (`0x77a73f` → `0x77b8c0`).
+/// `GetTextInsets` copies the insets out, then re-seats.
 #[test]
 fn get_text_insets_puts_a_moved_text_region_back() {
     let mut s = script();
@@ -450,8 +448,8 @@ fn get_text_insets_puts_a_moved_text_region_back() {
     assert_eq!(text_rect(&s, "single"), Some(SEATED));
 }
 
-/// A new face or size notifies the box (`0x79f342` → `0x77e2a0`), which re-seats its text
-/// (`0x77e2b5`); the same font again sets no change bit (`0x79f2ef`), so it does not.
+/// A new face or size notifies the box, which re-seats its text; the same font again sets no change
+/// bit, so it does not.
 #[test]
 fn set_font_puts_a_moved_text_region_back_when_the_font_changes() {
     let mut s = script();
@@ -470,8 +468,7 @@ fn set_font_puts_a_moved_text_region_back_when_the_font_changes() {
     );
 }
 
-/// Linking another font object propagates into the box's font (`0x770c60` → `0x77e4b0`), whose
-/// notify re-seats the text (`0x77e4d7` → `0x77e2a0`).
+/// Linking another font object propagates into the box's font, whose notify re-seats the text.
 #[test]
 fn set_font_object_puts_a_moved_text_region_back() {
     let mut s = script();

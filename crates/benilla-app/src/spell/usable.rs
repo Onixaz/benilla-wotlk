@@ -1,15 +1,15 @@
-//! The usable walk, `Spell_C::IsSpellUsableNow 0x6e3d60`: the ordered gates behind
-//! `IsUsableAction`'s grey tint. Any tripped gate answers `(usable, oom) = (false, false)`; only
-//! the power leg, the last, sets `notEnoughMana`.
+//! The usable walk, the reference's usability check: the ordered gates behind `IsUsableAction`'s
+//! grey tint. Any tripped gate answers `(usable, oom) = (false, false)`; only the power leg, the
+//! last, sets `notEnoughMana`.
 //!
 //! Built: the TRADE_SKILL early-out, dead (leg 1), reagents and totems (3), the equipped item (4),
 //! combo points (5), shapeshift form (6), only-stealthed (7), not-in-combat (8), CasterAuraState
-//! (9), TargetAuraState and its CanAttack/CanAssist fork (10/10b, the only legs that read the
-//! current target), the bit-25 cooldown fold (11) and power (12).
+//! (9), TargetAuraState and its attack-or-assist fork (10/10b, the only legs that read the current
+//! target), the bit-25 cooldown fold (11) and power (12).
 //!
-//! Not built, each answering usable: leg 2's caster aura-immunity helpers (`0x6e9f20/40/60`), leg
-//! 4's `AttributesEx3` sub-conditions. CanAssist in leg 10b is a reaction-rank test (friendly or
-//! better), not the reference's `0x6066f0`.
+//! Not built, each answering usable: leg 2's caster aura-immunity helpers, leg 4's `AttributesEx3`
+//! sub-conditions. The assist check in leg 10b is a reaction-rank test (friendly or better), not
+//! the reference's.
 
 use benilla_protocol::messages::ItemUseSpell;
 
@@ -29,13 +29,13 @@ use crate::ui_action::Spells;
 /// Leg 8's caster unit flag.
 use crate::player::UNIT_FLAG_IN_COMBAT;
 
-/// The implicit targets leg 10b forks on (`0x6e3f8a`/`0x6e3fa2`): 6, single enemy, asks
-/// `CanAttack 0x606980`; 21, single friend, asks `CanAssist 0x6066f0`.
+/// The implicit targets leg 10b forks on: 6, single enemy, asks the attack check; 21, single
+/// friend, asks the assist check.
 const IMPLICIT_TARGET_ENEMY: u32 = 6;
 const IMPLICIT_TARGET_FRIEND: u32 = 21;
 
-/// Everything the walk reads besides the spell. `target_store` is the current target's (leg 10
-/// reads the current-target global `0xb4e2d8`, not an explicit cast target).
+/// Everything the walk reads besides the spell. `target_store` is the current target's (not an
+/// explicit cast target).
 pub(crate) struct UsableCtx<'a> {
     pub(crate) store: &'a ObjectStore,
     pub(crate) target_store: Option<&'a ObjectStore>,
@@ -49,7 +49,7 @@ pub(crate) struct UsableCtx<'a> {
     /// Every carried entry's count for the frame ([`crate::ui_items::carried_counts`]).
     pub(crate) carried: &'a std::collections::HashMap<u32, u32>,
     /// The rune table and costs leg 12 reads for a rune spell; `None` when the caster is not the
-    /// active player, which `Spell_C_HaveSpellPower` refuses (`0x80182d`).
+    /// active player, which the power check refuses (`0x80182d`).
     pub(crate) runes: Option<RuneCheck<'a>>,
     /// The caster's combo points on the current target: [`super::ComboPoints`]' player bank, or
     /// the pet's for the pet (`GetComboPoints(target)` with the target 0, `0x513920`, `0x5d3520`).
@@ -63,7 +63,7 @@ pub(crate) struct RuneCheck<'a> {
     pub(crate) costs: &'a benilla_formats::SpellRuneCostCatalog,
 }
 
-/// `POWER_RUNE`, the power type `Spell_C_HaveSpellPower` sends to the rune check (`0x8017fe`).
+/// `POWER_RUNE`, the power type the power check sends to the rune check (`0x8017fe`).
 pub(crate) const POWER_RUNE: u32 = 5;
 
 /// The rune kinds `SpellRuneCost.dbc` charges, then death, which stands in for any (`0x5ee786`).
@@ -73,10 +73,10 @@ const RUNE_FROST: u8 = 2;
 const RUNE_DEATH: u8 = 3;
 
 impl RuneCheck<'_> {
-    /// `CGRuneInfo::HasRunesForSpell` (`0x5ee5b0`): free when the cost percentage modifies to 0;
-    /// else each kind's ready runes against its cost, scaled only by a percentage above 100, with
-    /// ready death runes covering the whole shortfall. No row, or a non-rune spell, is free. The
-    /// per-school unit cost modifiers before the spell mod (`0x5ee61b`-`0x5ee641`) are not built.
+    /// The rune check (`0x5ee5b0`): free when the cost percentage modifies to 0; else each kind's
+    /// ready runes against its cost, scaled only by a percentage above 100, with ready death runes
+    /// covering the whole shortfall. No row, or a non-rune spell, is free. The per-school unit cost
+    /// modifiers before the spell mod (`0x5ee61b`-`0x5ee641`) are not built.
     pub(crate) fn has_runes(&self, d: &SpellDisplay, mods: &SpellModifiers) -> bool {
         self.shortfall(d, mods).0
     }
@@ -120,10 +120,10 @@ impl RuneCheck<'_> {
         (false, needed)
     }
 
-    /// `CGRuneInfo::ComputeRuneSpellCooldown` (`0x5ee7e0`): when a rune spell lacks runes, the
-    /// ready time on the `GetTime` millisecond clock of the last kind it waits for. Each short
-    /// kind waits for its first rune back, or its last when two are short; a recharging death
-    /// rune that comes back sooner stands in for the latest rune (`0x5ee8c0`-`0x5ee958`).
+    /// The rune cooldown (`0x5ee7e0`): when a rune spell lacks runes, the ready time on the
+    /// `GetTime` millisecond clock of the last kind it waits for. Each short kind waits for its
+    /// first rune back, or its last when two are short; a recharging death rune that comes back
+    /// sooner stands in for the latest rune (`0x5ee8c0`-`0x5ee958`).
     pub(crate) fn rune_ready_ms(&self, d: &SpellDisplay, mods: &SpellModifiers) -> Option<u32> {
         self.costs.get(d.rune_cost_id)?;
         let (has, needed) = self.shortfall(d, mods);
@@ -132,7 +132,7 @@ impl RuneCheck<'_> {
         }
         let st = self.state;
         let not_ready = |i: usize| st.ready & (1 << i) == 0;
-        // `GetRuneRechargeTime` (`0x5ee1f0`): 0 for a ready rune.
+        // The rune's recharge time (`0x5ee1f0`): 0 for a ready rune.
         let recharge = |i: usize| if not_ready(i) { st.recharge_ms[i] } else { 0 };
         let later = |t: u32, than: u32| than == 0 || t.wrapping_sub(than) as i32 >= 0;
         let mut times = [0u32; benilla_ui::script::MAX_RUNES];
@@ -179,12 +179,12 @@ impl RuneCheck<'_> {
     }
 }
 
-/// The search covers equipment indices `0..=22` (`0x5f0c50`'s `cmp ebx,0x17; jl`): the 19 worn
+/// The search covers equipment indices `0..=22` (the reference's `cmp ebx,0x17; jl`): the 19 worn
 /// slots and the four equipped bags.
 pub(crate) const EQUIPMENT_SLOTS: u8 = 23;
 
-/// `AttributesEx3`'s hand restrictions, the source of the search's slot mask (`0x5f0c50`'s
-/// callers): `0x400` main hand only (mask `0x8000`), `0x1000000` off hand only (mask `0x10000`).
+/// `AttributesEx3`'s hand restrictions, the source of the search's slot mask: `0x400` main hand
+/// only (mask `0x8000`), `0x1000000` off hand only (mask `0x10000`).
 const ATTR_EX3_MAIN_HAND_ONLY: u32 = 0x0000_0400;
 const ATTR_EX3_OFF_HAND_ONLY: u32 = 0x0100_0000;
 
@@ -193,11 +193,11 @@ const ATTR_EX3_OFF_HAND_ONLY: u32 = 0x0100_0000;
 const ITEM_FLAG_DEPRECATED: u32 = 0x0000_0010;
 
 /// `TARGET_FLAG_ITEM` (`Targets`, column 13): the `EquippedItem*` columns describe the clicked
-/// item, not the caster's gear, so the search passes (`0x6e40e0`).
+/// item, not the caster's gear, so the search passes.
 const TARGET_FLAG_ITEM: u32 = 0x0000_0010;
 
-/// The search's slot mask from `AttributesEx3` (`0x6e4136`..`0x6e4153`): bit 10 index 15 alone,
-/// else bit 24 index 16 alone, else every slot.
+/// The search's slot mask from `AttributesEx3`: bit 10 index 15 alone, else bit 24 index 16 alone,
+/// else every slot.
 fn hand_mask(d: &SpellDisplay) -> u32 {
     if d.attributes_ex3 & ATTR_EX3_MAIN_HAND_ONLY != 0 {
         1 << crate::items::EQUIPMENT_SLOT_MAINHAND
@@ -209,8 +209,8 @@ fn hand_mask(d: &SpellDisplay) -> u32 {
 }
 
 /// Whether the equipped-item search runs at all for `d`: the reference's short-circuits to "fits"
-/// (`0x6e40e0` at `6e4103`..`6e4130`) are `EquippedItemClass < 0`, a zero subclass mask (no item
-/// required, not a wildcard), and an item-targeting spell (`0x495d60` checks those).
+/// are `EquippedItemClass < 0`, a zero subclass mask (no item required, not a wildcard), and an
+/// item-targeting spell.
 fn needs_equipped_item(d: &SpellDisplay) -> bool {
     d.equipped_item_class >= 0
         && d.equipped_item_subclass_mask != 0
@@ -219,7 +219,7 @@ fn needs_equipped_item(d: &SpellDisplay) -> bool {
 
 /// The equipment slots [`equipped_item_fits`] reads for `d`, a bit each: none unless it searches,
 /// else the slots its hand restriction leaves and both hands, which the disarm ladder reads
-/// whatever the restriction (`0x5f0c69`, `0x5f0c91`).
+/// whatever the restriction.
 pub(crate) fn worn_slots_read(d: &SpellDisplay) -> u32 {
     if needs_equipped_item(d) {
         (hand_mask(d) | HANDS) & EQUIPMENT_MASK
@@ -340,9 +340,9 @@ pub(crate) fn slot_item_cached(
     })
 }
 
-/// The equipped-item refusal reason, keyed on `AttributesEx3` alone (`0x6e40e0` at
-/// `6e416e`..`6e4180`): main-hand-only `0x1a`, off-hand-only `0x1b`, else `0x19`. All three render
-/// "Must have a %s equipped" with the item subclass name.
+/// The equipped-item refusal reason, keyed on `AttributesEx3` alone: main-hand-only `0x1a`,
+/// off-hand-only `0x1b`, else `0x19`. All three render "Must have a %s equipped" with the item
+/// subclass name.
 pub(crate) fn equipped_item_reason(d: &SpellDisplay) -> u8 {
     if d.attributes_ex3 & ATTR_EX3_MAIN_HAND_ONLY != 0 {
         0x1a
@@ -353,9 +353,8 @@ pub(crate) fn equipped_item_reason(d: &SpellDisplay) -> u8 {
     }
 }
 
-/// Leg 4 (`0x6e40e0`), shared with the tooltip's requirement line: does a worn item match
-/// `EquippedItemClass` and `EquippedItemSubClassMask`? An item whose template has not streamed
-/// counts as a match.
+/// Leg 4, shared with the tooltip's requirement line: does a worn item match `EquippedItemClass`
+/// and `EquippedItemSubClassMask`? An item whose template has not streamed counts as a match.
 pub(crate) fn equipped_item_fits(
     d: &SpellDisplay,
     store: &ObjectStore,
@@ -363,14 +362,14 @@ pub(crate) fn equipped_item_fits(
     items: &Items,
     commands: &NetCommands,
 ) -> bool {
-    // The short-circuits to "fits" (`0x6e40e0` at `6e4103`..`6e4130`): a caster that is not the
-    // active player (always ours here), and those of [`needs_equipped_item`].
+    // The short-circuits to "fits": a caster that is not the active player (always ours here), and
+    // those of [`needs_equipped_item`].
     if !needs_equipped_item(d) {
         return true;
     }
     let class = d.equipped_item_class as u32;
     let mut mask = hand_mask(d);
-    // The disarm ladder strips the one hidden hand from the mask (`0x5f0c69`/`0x5f0c91`).
+    // The disarm ladder strips the one hidden hand from the mask.
     if let Some(hidden) = crate::items::disarmed_equipment_slot(store, objects, items, commands) {
         mask &= !(1u32 << hidden);
     }
@@ -421,22 +420,20 @@ fn equipped_slots_match(
         })
 }
 
-/// The item arm of the usable compute (`0x4e5050`), gate by gate:
+/// The item arm of the usable compute, gate by gate:
 ///
-/// 1. a held count of 0 (the cache at `0xbc6390`) answers `(false, false)` (`4e50ab`). `held`
-///    is carried copies ([`crate::ui_items::InventoryScope::CARRIED`]) or a worn copy. The
-///    reference's count (`0x4e6d20`, mask `0x47`) also takes the keyring and sums spell charges
-///    for a charged item; ours does neither, so a key reads count 0 and a spent charged copy
-///    stays lit.
-/// 2. `IsItemOnCooldown 0x6e2fc0` (`4e50d0`) answers `(false, false)`. It asks `0x6e1690` with
-///    the item's first on-use spell and the item entry as the key: an on-hold-record test, so a
-///    running cooldown or the GCD never greys an item.
-/// 3. the item's first on-use spell runs the whole plain-spell walk, [`spell_usable`] (`0x4e5a50`
-///    hands it back with type 0; `4e51b0`). This is where food greys in combat: its rows carry
-///    [`ATTR_NOT_IN_COMBAT`], leg 8.
-/// 4. an item with no on-use spell, or no template yet, is usable (`4e5127`..`4e5135`).
+/// 1. a held count of 0 answers `(false, false)`. `held` is carried copies
+///    ([`crate::ui_items::InventoryScope::CARRIED`]) or a worn copy. The reference's count (mask
+///    `0x47`) also takes the keyring and sums spell charges for a charged item; ours does neither,
+///    so a key reads count 0 and a spent charged copy stays lit.
+/// 2. The item cooldown test answers `(false, false)`. It asks with the item's first on-use spell
+///    and the item entry as the key: an on-hold-record test, so a running cooldown or the GCD never
+///    greys an item.
+/// 3. the item's first on-use spell runs the whole plain-spell walk, [`spell_usable`]. This is
+///    where food greys in combat: its rows carry [`ATTR_NOT_IN_COMBAT`], leg 8.
+/// 4. an item with no on-use spell, or no template yet, is usable.
 ///
-/// An on-use spell with no catalog row reads grey with `notEnoughMana = 0` (`4e51aa`).
+/// An on-use spell with no catalog row reads grey with `notEnoughMana = 0`.
 pub(crate) fn item_usable(
     entry: u32,
     use_spell: Option<&ItemUseSpell>,
@@ -456,8 +453,8 @@ pub(crate) fn item_usable(
     };
     let spell_id = use_spell.spell_id;
     let d = spells.and_then(|s| s.catalog.get(spell_id));
-    // Gate 2: the item entry as `0x6e1690`'s `itemId`, and the item's own category where it has
-    // one (the `spellcategory[5]` override, `6e171b`).
+    // Gate 2: the item entry as the reference's `itemId`, and the item's own category where it has
+    // one (the `spellcategory[5]` override).
     let category = match use_spell.category {
         0 => d.map_or(0, |d| d.category),
         c => c,
@@ -481,16 +478,15 @@ pub(crate) fn spell_usable(
     items: &Items,
     commands: &NetCommands,
 ) -> (bool, bool) {
-    // Early-out (`0x6e3d99`): a tradeskill "spell" is always usable.
+    // Early-out: a tradeskill "spell" is always usable.
     if d.effects[0] == SPELL_EFFECT_TRADE_SKILL {
         return (true, false);
     }
-    // Leg 1 (`0x6e3dad`): a dead or ghost caster (`0x605f30`) needs the castable-while-dead
-    // attribute (`0x6e3db6`).
+    // Leg 1: a dead or ghost caster needs the castable-while-dead attribute.
     if ctx.store.0.is_dead_or_ghost() && d.attributes & ATTR_CASTABLE_WHILE_DEAD == 0 {
         return (false, false);
     }
-    // Leg 3 (`0x6e4000`): every reagent count carried, every totem tool present.
+    // Leg 3: every reagent count carried, every totem tool present.
     let carried = |entry: u32| ctx.carried.get(&entry).copied().unwrap_or(0);
     for &(entry, count) in &d.reagents {
         if entry != 0 && carried(entry) < count {
@@ -502,19 +498,19 @@ pub(crate) fn spell_usable(
             return (false, false);
         }
     }
-    // Leg 4 (`0x6e40e0`): some worn item matches the class and subclass mask.
+    // Leg 4: some worn item matches the class and subclass mask.
     if !equipped_item_fits(d, ctx.store, objects, items, commands) {
         return (false, false);
     }
-    // Leg 5 (`Spell_C_IsUsableAction` `0x80b5d0`): a finishing move (`AttributesEx & 0x500000`,
-    // one any-of test) fails while the caster holds no combo points on the current target, so a
-    // point banked on another mob greys the button. No class gate, unlike Lua `GetComboPoints`:
-    // a warrior's Overpower greys here. The player's aura-262 exemption is not built.
+    // Leg 5 (`0x80b5d0`): a finishing move (`AttributesEx & 0x500000`, one any-of test) fails while
+    // the caster holds no combo points on the current target, so a point banked on another mob
+    // greys the button. No class gate, unlike Lua `GetComboPoints`: a warrior's Overpower greys
+    // here. The player's aura-262 exemption is not built.
     if d.needs_combo_points() && ctx.combo_points == 0 {
         return (false, false);
     }
-    // Leg 6 (`CheckShapeshiftRules 0x72bac0`): the form's `SpellShapeshiftForm.dbc` flags decide
-    // whether it counts as shapeshifted and whether it refuses every unnamed spell.
+    // Leg 6, the form check (`0x72bac0`): the form's `SpellShapeshiftForm.dbc` flags decide whether
+    // it counts as shapeshifted and whether it refuses every unnamed spell.
     let form = ctx.store.0.unit_shapeshift_form();
     let form_flags = spells.forms.get(&u32::from(form)).map_or(0, |f| f.flags);
     if !d.usable_in_form(form, form_flags) {
@@ -535,8 +531,7 @@ pub(crate) fn spell_usable(
     {
         return (false, false);
     }
-    // Legs 10/10b (`0x6e3f58`): no current target is unusable; then the aura-state bit; then the
-    // relation fork.
+    // Legs 10/10b: no current target is unusable; then the aura-state bit; then the relation fork.
     if d.target_aura_state != 0 {
         let Some(target) = ctx.target_store else {
             return (false, false);
@@ -545,7 +540,7 @@ pub(crate) fn spell_usable(
             return (false, false);
         }
         match d.implicit_target_a1 {
-            // `CanAttack 0x606980`.
+            // The attack check.
             IMPLICIT_TARGET_ENEMY
                 if !can_attack(
                     Some(target),
@@ -557,7 +552,7 @@ pub(crate) fn spell_usable(
             {
                 return (false, false);
             }
-            // Reaction friendly or better, standing in for `CanAssist 0x6066f0`.
+            // Reaction friendly or better, standing in for the assist check.
             IMPLICIT_TARGET_FRIEND
                 if ring_reaction(
                     ctx.factions,
@@ -572,13 +567,13 @@ pub(crate) fn spell_usable(
             _ => {}
         }
     }
-    // Leg 11 (`0x6e3fb8`): only a cooldown-on-event spell greys, while its record is on hold
-    // (`0x6e1690`); a running cooldown never greys here.
+    // Leg 11: only a cooldown-on-event spell greys, while its record is on hold; a running cooldown
+    // never greys here.
     if d.cooldown_on_event() && ctx.cooldowns.has_on_hold_record(spell_id, 0, d.category) {
         return (false, false);
     }
-    // Leg 12 (`0x6e3fba`..`0x6e3feb`): power, the only notEnoughMana writer. A rune spell asks
-    // the rune table instead of a pool (`Spell_C_HaveSpellPower` `0x801826`).
+    // Leg 12: power, the only notEnoughMana writer. A rune spell asks the rune table instead of a
+    // pool (the power check, `0x801826`).
     let affordable = if d.power_type == POWER_RUNE {
         ctx.runes.is_some_and(|r| r.has_runes(d, ctx.spell_mods))
     } else {
@@ -590,26 +585,24 @@ pub(crate) fn spell_usable(
     (true, false)
 }
 
-/// The resolved power cost, `GetPowerCost 0x6e31b0`: `manaCost`, plus the signed
-/// `(level - baseLevel) * manaCostPerlevel` (only creature spells carry it), plus
-/// `ManaCostPercentage` of the reference's per-type basis (`0x612c50`): base health for health,
-/// base mana for mana, 1000 for rage, 100 for focus and energy, and 0 otherwise. Then
-/// `SPELLMOD_COST` through `0x6e6af0` (`6e32e3`), clamped at 0.
-/// The reference's per-school unit modifiers are not applied.
+/// The resolved power cost, the power-cost lookup: `manaCost`, plus the signed `(level -
+/// baseLevel) * manaCostPerlevel` (only creature spells carry it), plus `ManaCostPercentage` of the
+/// reference's per-type basis: base health for health, base mana for mana, 1000 for rage, 100 for
+/// focus and energy, and 0 otherwise. Then `SPELLMOD_COST`, clamped at 0. The reference's
+/// per-school unit modifiers are not applied.
 ///
-/// One cost for leg 12, the press-path gate and the tooltip, as `0x6e31b0` serves all six of its
-/// callers. The press-path gate refuses an unaffordable cast without sending anything
-/// (`0x609657`), so an unmodified cost refuses casts a talented character can afford.
+/// One cost for leg 12, the press-path gate and the tooltip, as the reference serves all six of its
+/// callers. The press-path gate refuses an unaffordable cast without sending anything, so an
+/// unmodified cost refuses casts a talented character can afford.
 pub(crate) fn power_cost(d: &SpellDisplay, store: &ObjectStore, mods: &SpellModifiers) -> u32 {
-    // The level term reads `baseLevel` (`+0x70`), as `0x6e31b0` does, but the reference scales a
+    // The level term reads `baseLevel` (`+0x70`), as the reference does, but the reference scales a
     // caster value / 5 there (vmangos: the level / 5); only creature spells have a per-level cost.
     power_cost_at(d, &store.0, store.0.unit_level().unwrap_or(0), mods)
 }
 
-/// [`power_cost`] against `unit`'s fields at the level term `level`, the value `0x6e31b0` reads
-/// through the caster's `[vtbl+0xa8]` over 5 (`6e3242`-`6e3254`). With the unit selector set, the
-/// tooltip's caster is the player's charm, else its summon (`6e31fe`-`6e3228`), whose own basis
-/// `0x612c50` is called (`6e327d`).
+/// [`power_cost`] against `unit`'s fields at the level term `level`, the value reads through the
+/// caster's `[vtbl+0xa8]` over 5. With the unit selector set, the tooltip's caster is the player's
+/// charm, else its summon, whose own basis is called.
 pub(crate) fn power_cost_at(
     d: &SpellDisplay,
     unit: &benilla_protocol::ObjectFields,
@@ -631,17 +624,17 @@ pub(crate) fn power_cost_at(
     u32::try_from(mods.apply(d, OP_COST, cost)).unwrap_or(0)
 }
 
-/// What [`power_cost_at`] scales `d`'s percentage cost by: `0x612c50`, a jump table on the power
-/// type plus 2 (`612c53`-`612c5e`), on the caster's fields.
+/// What [`power_cost_at`] scales `d`'s percentage cost, a jump table on the power type plus 2, on
+/// the caster's fields.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum CostBasis {
-    /// No percentage, or a type the table sends to 0 (`612c97`): the cost reads no unit field.
+    /// No percentage, or a type the table sends to 0: the cost reads no unit field.
     None,
-    /// Mana: `UNIT_FIELD_BASE_MANA`, unit block `+0x270` (`612c65`-`612c6b`).
+    /// Mana: `UNIT_FIELD_BASE_MANA`, unit block `+0x270`.
     BaseMana,
-    /// Health (-2): `UNIT_FIELD_BASE_HEALTH`, unit block `+0x274` (`612c87`-`612c8d`).
+    /// Health (-2): `UNIT_FIELD_BASE_HEALTH`, unit block `+0x274`.
     BaseHealth,
-    /// A constant, not the pool: 1000 for rage (`612c7e`), 100 for focus and energy (`612c75`).
+    /// A constant, not the pool: 1000 for rage, 100 for focus and energy.
     Fixed(u32),
 }
 
@@ -663,9 +656,8 @@ pub(crate) fn cost_reads_level(d: &SpellDisplay) -> bool {
     d.mana_cost_per_level != 0
 }
 
-/// Whether the caster can afford `d`, for leg 12 (`0x6e3fba`) and the press-path gate
-/// (`0x60962c`): `UNIT_FIELD_POWER[type]`, or `UNIT_FIELD_HEALTH` for any negative PowerType
-/// (`0x609631`; Bloodrage's -2), against [`power_cost`].
+/// Whether the caster can afford `d`, for leg 12 and the press-path gate: `UNIT_FIELD_POWER[type]`,
+/// or `UNIT_FIELD_HEALTH` for any negative PowerType (Bloodrage's -2), against [`power_cost`].
 pub(crate) fn can_afford(d: &SpellDisplay, store: &ObjectStore, mods: &SpellModifiers) -> bool {
     let power_type = d.power_type as i32;
     let avail = if power_type < 0 {
@@ -684,8 +676,8 @@ mod tests {
     // Field indices, private in the protocol crate: health 22, power1 23, max health 28, flags
     // 46, aurastate 125, bytes_1 138, player flags 190.
     fn player(pairs: &[(u16, u32)]) -> ObjectStore {
-        // `UNIT_FLAG_PVP_ATTACKABLE` (bit 3), which every player carries: `CanAttack 0x606980`
-        // picks its arm on that bit for both parties.
+        // `UNIT_FLAG_PVP_ATTACKABLE` (bit 3), which every player carries: the attack check picks
+        // its arm on that bit for both parties.
         let mut base = vec![(22u16, 100u32), (23, 500), (46, 1 << 3)];
         base.extend_from_slice(pairs);
         ObjectStore(ObjectFields::from_pairs(&base))
@@ -739,7 +731,7 @@ mod tests {
         assert!(!fits(true, &[(INV_OFFHAND, 0x2b)]));
     }
 
-    /// `0x5f0c50`'s slot mask and its two rejects, deprecated and broken.
+    /// The reference's slot mask and its two rejects, deprecated and broken.
     #[test]
     fn the_equipped_item_search_masks_by_hand_and_rejects_broken_gear() {
         use crate::items::TestDeps;
@@ -920,8 +912,8 @@ mod tests {
         )
     }
 
-    /// `HasRunesForSpell` (`0x5ee5b0`): each kind's ready runes against the row, the shortfall
-    /// covered by ready death runes, and a cost cut to nothing is free.
+    /// The rune check (`0x5ee5b0`): each kind's ready runes against the row, the shortfall covered
+    /// by ready death runes, and a cost cut to nothing is free.
     #[test]
     fn a_rune_spell_needs_its_runes_or_death_runes() {
         use benilla_formats::{SpellRuneCost, SpellRuneCostCatalog};
@@ -1001,8 +993,8 @@ mod tests {
         assert_eq!(power_cost(&bloodrage, &without_gear, &mods), 337);
     }
 
-    /// `0x612c50`'s jump table (`0x612ca0`, indexed by the type plus 2): base health for -2, base
-    /// mana, fixed bases for rage, focus and energy, and 0 for -1, happiness and past the table.
+    /// The reference's jump table (indexed by the type plus 2): base health for -2, base mana,
+    /// fixed bases for rage, focus and energy, and 0 for -1, happiness and past the table.
     #[test]
     fn percentage_cost_bases_follow_power_type() {
         let store = player(&[
@@ -1065,7 +1057,7 @@ mod tests {
         assert_eq!(power_cost(&d, &store, &mods), 70);
         assert!(
             can_afford(&d, &store, &mods),
-            "the talent brings it inside the pool, so TryCast must send the cast"
+            "the talent brings it inside the pool, so the cast attempt must send the cast"
         );
 
         // Another class's family takes nothing.
@@ -1076,7 +1068,7 @@ mod tests {
         assert_eq!(power_cost(&other_class, &store, &mods), 100);
     }
 
-    /// Each gate trips alone; only the power leg raises notEnoughMana (`0x6e3feb`).
+    /// Each gate trips alone; only the power leg raises notEnoughMana.
     #[test]
     fn gates_trip_independently_and_only_power_sets_oom() {
         let alive = player(&[]);
@@ -1184,7 +1176,8 @@ mod tests {
         assert_eq!(walk(&tradeskill, &dead), (true, false));
     }
 
-    /// Leg 10: the aura-state bit gates, and CanAttack passes on the default neutral reaction.
+    /// Leg 10: the aura-state bit gates, and the attack check passes on the default neutral
+    /// reaction.
     #[test]
     fn target_aura_state_reads_the_current_target() {
         let me = player(&[]);

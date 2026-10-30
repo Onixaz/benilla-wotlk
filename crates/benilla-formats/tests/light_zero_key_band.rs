@@ -1,7 +1,6 @@
 //! A band row with no keyframes commits the reference's constant, black or `+0.0`: the colour
-//! evaluator `0x6d62e0` stores `0xff000000` (guard `0x6d62ef`, store `0x6d62f6`), the scalar one
-//! `+0.0f` (`0x6d6489`, `fld [0x7ffd74]`), and both copy on unconditionally. 973 of 7668
-//! `LightIntBand` rows and 132 of 2556 `LightFloatBand` rows are keyless.
+//! evaluator stores `0xff000000`, the scalar one `+0.0f`, and both copy on unconditionally. 973 of
+//! 7668 `LightIntBand` rows and 132 of 2556 `LightFloatBand` rows are keyless.
 
 use benilla_formats::{Chain, LightCatalog, ZERO_KEY_COLOR, ZERO_KEY_SCALAR};
 

@@ -1,9 +1,9 @@
-//! The tradeskill bindings behind the stock `Blizzard_TradeSkillUI`, the client's
-//! `CGTradeSkillInfo`: the app pushes a snapshot ([`UiScript::set_trade_skill`]) with recipes
-//! resolved from `Spell.dbc`, `SkillLineAbility.dbc`, item templates and bag counts, and the engine
-//! builds the display list (`RefreshList 0x5dd5a0`): one header per product sub-class, sorted and
-//! filtered in place (`0x5dcc40`). Every Lua index, `SetTradeSkillItem`'s included, is 1-based into
-//! that list ([`recipe_at`]); its first `GetNumTradeSkills()` entries are the visible ones.
+//! The tradeskill bindings behind the stock `Blizzard_TradeSkillUI`, the client's tradeskill state:
+//! the app pushes a snapshot ([`UiScript::set_trade_skill`]) with recipes resolved from
+//! `Spell.dbc`, `SkillLineAbility.dbc`, item templates and bag counts, and the engine builds the
+//! display list (`0x5dd5a0`): one header per product sub-class, sorted and filtered in place
+//! (`0x5dcc40`). Every Lua index, `SetTradeSkillItem`'s included, is 1-based into that list
+//! ([`recipe_at`]); its first `GetNumTradeSkills()` entries are the visible ones.
 
 mod api;
 mod view;
@@ -122,7 +122,7 @@ pub struct TradeSkillRecipe {
     pub cooldown_end: Option<f64>,
     /// The spell's parsed description.
     pub description: Option<String>,
-    /// The case-folded texts the name filter searches (`Profession_FilterSpell 0x5dc110`).
+    /// The case-folded texts the name filter searches (`0x5dc110`).
     pub search_text: Vec<String>,
     /// In display order.
     pub reagents: Vec<TradeSkillReagent>,
@@ -149,11 +149,11 @@ pub struct TradeSkillState {
 
 impl super::UiScript {
     /// Pushes the open window's snapshot, or `None` on close; the app re-pushes on any change,
-    /// each push a list rebuild (`RefreshList`).
+    /// each push a list rebuild.
     ///
     /// A push for another line resets the name, level and makeable filters, the sub-class,
     /// slot and fold masks and the selection; the same line keeps them across a close
-    /// (`SetTradeSkill 0x5de120`).
+    /// (`0x5de120`).
     pub fn set_trade_skill(&mut self, state: Option<TradeSkillState>) {
         let fire = self.model_mut().trade_skill.set_state(state);
         if fire {
@@ -177,7 +177,7 @@ impl super::UiScript {
     }
 
     /// Our own cast of `spell_id` started: a pending repeat of it becomes the running one, and
-    /// any other is dropped (`CommitPendingRecast 0x5da0f0`).
+    /// any other is dropped (`0x5da0f0`).
     pub fn trade_skill_cast_started(&mut self, spell_id: u32) {
         self.model_mut().trade_skill.commit_pending_recast(spell_id);
     }
@@ -192,7 +192,7 @@ impl super::UiScript {
         again
     }
 
-    /// Our own cast of `spell_id` failed: its repeat stops (`UpdateTradeSkillRecast 0x5da020`).
+    /// Our own cast of `spell_id` failed: its repeat stops (`0x5da020`).
     pub fn trade_skill_cast_failed(&mut self, spell_id: u32) {
         if self.model_mut().trade_skill.cast_failed(spell_id) {
             self.fire_event("UPDATE_TRADESKILL_RECAST", vec![]);

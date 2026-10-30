@@ -1,5 +1,5 @@
-//! The text region's rect and a multi-line box's own height: `0x77b8c0` seats the FontString by
-//! the insets, and the flush's relayout `0x77d4d0` sizes a multi-line box to its text.
+//! The text region's rect and a multi-line box's own height: the reference seats the FontString by
+//! the insets, and the flush's relayout sizes a multi-line box to its text.
 
 use mlua::Lua;
 
@@ -7,22 +7,21 @@ use crate::layout::{Anchor, Point, Rect};
 use crate::script::{MeasureRequest, Model};
 use crate::widget::{EditBoxState, FrameHandle, KindState, RegionHandle};
 
-/// `0x77b8c0`, the text FontString's rect. The reference writes nothing while the box's rect is
-/// unresolved (`0x77b8c7`); then it clears the points (`0x77b8da`), sets the width
-/// `boxW − (right + left)` for either kind (`0x77b905`), the height 0 multi-line (`0x77b91e`) or
-/// `boxH − (top + bottom)` single-line (`0x77b940`), and one `TOPLEFT` point at `(left, −top)`
-/// (`0x77b96b`), and raises dirty bits 0-2 (`0x77ba7f or eax,7`): the box's next flush fires
-/// `OnTextChanged` again, with the text unchanged.
+/// The text FontString's rect. The reference writes nothing while the box's rect is unresolved;
+/// then it clears the points, sets the width `boxW − (right + left)` for either kind, the height 0
+/// multi-line or `boxH − (top + bottom)` single-line, and one `TOPLEFT` point at `(left, −top)`,
+/// and raises dirty bits 0-2: the box's next flush fires `OnTextChanged` again, with the text
+/// unchanged.
 ///
 /// Multi-line, benilla writes that shape, the width once the box has a rect: until then only the
 /// point is written, and the size is kept.
 ///
-/// Single-line, benilla pins `TOPLEFT` and `BOTTOMRIGHT` at the inset corners and keeps no
-/// explicit size. That is a gap: it covers the same rect, but an explicit width here would be a
-/// wrap width, since benilla's single-line region holds the whole text where the reference's holds
-/// only the window's substring (`0x77d858`). A script sees the difference: `GetPoint` on the
-/// region answers two points where the reference answers one, and `GetWidth`/`GetHeight` answer
-/// the text's measure where the reference answers the explicit size.
+/// Single-line, benilla pins `TOPLEFT` and `BOTTOMRIGHT` at the inset corners and keeps no explicit
+/// size. That is a gap: it covers the same rect, but an explicit width here would be a wrap width,
+/// since benilla's single-line region holds the whole text where the reference's holds only the
+/// window's substring. A script sees the difference: `GetPoint` on the region answers two points
+/// where the reference answers one, and `GetWidth`/`GetHeight` answer the text's measure where the
+/// reference answers the explicit size.
 pub(super) fn seat_text_region(model: &mut Model, h: FrameHandle) {
     let resolved = model.resolved.contains_key(&h);
     let Some(KindState::EditBox(eb)) = model.arena.frame_mut(h).map(|f| &mut f.kind_state) else {
@@ -72,17 +71,17 @@ pub(super) fn seat_text_region(model: &mut Model, h: FrameHandle) {
     }
 }
 
-/// The EditBox's `OnSizeChanged` override (`0x77a8d0`, vtable `0x81c910` slot `+0x48`): after the
-/// base script fire (`0x77a8e0`), `0x77a8e7` re-seats the text region (`0x77b8c0`) on every resize
-/// of any box. `ApplyRect` (`0x76b580`) calls it when the width or height moved by the resize
-/// epsilon, the first resolve included, against the ctor's zero rect. `true` when a re-seat moved
-/// a layout input, for the caller to resolve it in the same pass, as the reference's drain does.
+/// The EditBox's `OnSizeChanged` override (vtable slot `+0x48`): after the base script fire, the
+/// reference re-seats the text region on every resize of any box. The rect apply calls it when the
+/// width or height moved by the resize epsilon, the first resolve included, against the ctor's zero
+/// rect. `true` when a re-seat moved a layout input, for the caller to resolve it in the same pass,
+/// as the reference's drain does.
 pub(in crate::script) fn reseat_resized(model: &mut Model) -> bool {
     let epoch = model.layout_epoch;
     for i in 0..model.arena.editbox_kinds().len() {
         let h = model.arena.editbox_kinds()[i];
         let Some(&now) = model.resolved.get(&h) else {
-            continue; // no rect, no `ApplyRect`
+            continue; // no rect, no rect apply
         };
         let Some(KindState::EditBox(eb)) = model.arena.frame_mut(h).map(|f| &mut f.kind_state)
         else {
@@ -110,13 +109,12 @@ fn multi_line_text_width(model: &Model, h: FrameHandle, [l, r]: [f32; 2]) -> Opt
     Some(rect.width() / crate::script::object::eff_scale(model, h) - (r + l))
 }
 
-/// The flush's relayout tail (`0x77d4d0` @`0x77d863`–`0x77d8ad`), run on dirty bit 0 by the
-/// box's flush ([`super::flush`]): a multi-line box's own height becomes
-/// `(insetTop + insetBottom) + h`, `h` its text's measured wrapped height (`0x7729b0`), or one
-/// line's (`0x7727b0(fs, 1)`) when that is exactly 0, as for empty text. It reads neither the
-/// authored height nor the rect, so the box grows and shrinks with its text and a `SetHeight`
-/// lasts until the flush after its resize re-seats the text; a single-line box is never sized
-/// (`0x77d86a`). The text region's width is the one [`seat_text_region`] last wrote.
+/// The flush's relayout tail, run on dirty bit 0 by the box's flush ([`super::flush`]): a
+/// multi-line box's own height becomes `(insetTop + insetBottom) + h`, `h` its text's measured
+/// wrapped height, or one line's (`(fs, 1)`) when that is exactly 0, as for empty text. It reads
+/// neither the authored height nor the rect, so the box grows and shrinks with its text and a
+/// `SetHeight` lasts until the flush after its resize re-seats the text; a single-line box is never
+/// sized. The text region's width is the one [`seat_text_region`] last wrote.
 ///
 /// `false` when the text's measure is pending, for the flush to retry.
 pub(super) fn relayout(lua: &Lua, h: FrameHandle) -> bool {
@@ -135,7 +133,7 @@ pub(super) fn relayout(lua: &Lua, h: FrameHandle) -> bool {
     let Some(rh) = super::ensure_text_region(lua, h) else {
         return true;
     };
-    // `0x7729b0` measures in the call; with no engine installed the measure lands a tick later.
+    // The reference measures in the call; with no engine installed the measure lands a tick later.
     crate::script::measure::ensure_measured(lua, rh);
     let Some(text_h) = text_height(lua, h, rh) else {
         return false;
@@ -156,8 +154,8 @@ pub(super) fn relayout(lua: &Lua, h: FrameHandle) -> bool {
 }
 
 /// The text's height for the box: its measure under the current key, or one line's when that is
-/// exactly 0.0 (`0x77d877` `fcom 0.0` → `0x77d88e`), as it is for empty text, which is never
-/// measured (`0x7729ff`). `None` while either measure is pending.
+/// exactly 0.0 (`fcom 0.0`), as it is for empty text, which is never measured. `None` while either
+/// measure is pending.
 fn text_height(lua: &Lua, h: FrameHandle, rh: RegionHandle) -> Option<f32> {
     let measured = {
         let model = lua
@@ -181,9 +179,9 @@ fn text_height(lua: &Lua, h: FrameHandle, rh: RegionHandle) -> Option<f32> {
 /// Any text that lays out as one line: its measured height is one line's.
 const ONE_LINE: &str = "0";
 
-/// `0x7727b0(fs, 1)`, one line's height in the text region's font: the installed engine's measure
-/// of one line, the same measure a line of text takes, cached on the box under its key. `None`
-/// with no engine installed.
+/// `(fs, 1)`, one line's height in the text region's font: the installed engine's measure of one
+/// line, the same measure a line of text takes, cached on the box under its key. `None` with no
+/// engine installed.
 fn line_height(lua: &Lua, h: FrameHandle, rh: RegionHandle) -> Option<f32> {
     let mut model = crate::script::model_mut_of(lua);
     let scale = owner_scale(&model, h);

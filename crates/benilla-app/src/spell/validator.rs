@@ -1,23 +1,22 @@
-//! The requirement validator `0x6094f0`: the press-time gates `TryCast 0x6e4b60` runs between
-//! the target bind and the commit, plus the range compare `IsTargetInRange 0x6e47b0` that
-//! `CanTargetUnit 0x6e4440` runs before it. Pure predicates answering the reference's reason codes,
-//! called by [`super::cast_send`]'s ladder in its order. Only `TryCast` reaches `0x6094f0`, never
-//! the greying walk `0x6e3d60`.
+//! The requirement validator: the press-time gates the cast attempt runs between the target bind
+//! and the commit, plus the range compare, the range check, that the unit-target check runs before
+//! it. Pure predicates answering the reference's reason codes, called by [`super::cast_send`]'s
+//! ladder in its order. Only the cast attempt reaches, never the greying walk.
 
 use super::SpellModifiers;
 use benilla_formats::{RangeUnit, SpellDisplay, SpellRange};
 
-/// The range refusals `CanTargetUnit 0x6e4440` emits: "Out of range." and "Target too close".
+/// The range refusals the unit-target check emits: "Out of range." and "Target too close".
 pub(super) const ERR_OUT_OF_RANGE: u8 = 0x59;
 pub(super) const ERR_TOO_CLOSE: u8 = 0x76;
 
-/// The range refusal, before `ArmCast`/`SendCast`, so an out-of-range press never runs the commit
-/// tail (the ranged sheath snap `0x6e5930` included): squared 3D distance against
+/// The range refusal, before the target resolve and the cast send, so an out-of-range press never
+/// runs the commit tail (the ranged sheath snap included): squared 3D distance against
 /// [`benilla_formats::min_max_range`], beyond max² out of range, inside a nonzero min² too close.
-/// `target` is the bound unit, the target `IsTargetInRange 0x6e47b0` hands `GetMinMaxRange`
-/// (`0x6e47ca`): its reach pads a ranged row and its motion, with the caster's, earns the moving
-/// bonus. The function looks the auto-attack target up only when that target is no unit, which a
-/// bound unit never is, so none is passed. No range row or no distance passes; the server judges.
+/// `target` is the bound unit, the target the range check hands the range lookup: its reach pads a
+/// ranged row and its motion, with the caster's, earns the moving bonus. The function looks the
+/// auto-attack target up only when that target is no unit, which a bound unit never is, so none is
+/// passed. No range row or no distance passes; the server judges.
 pub(super) fn cast_range_refusal(
     spell: &SpellDisplay,
     row: Option<&SpellRange>,
@@ -45,8 +44,8 @@ pub(super) fn cast_range_refusal(
 const PREVENTION_SILENCE: u32 = 1;
 const PREVENTION_PACIFY: u32 = 2;
 
-/// The crowd-control leg of `0x6094f0`, above its mounted block (`0x609c6c`), so a stunned
-/// mounted caster is told about the stun. Six arms in the reference's order, first match wins:
+/// The crowd-control leg, above its mounted block, so a stunned mounted caster is told about the
+/// stun. Six arms in the reference's order, first match wins:
 ///
 /// | # | arm | gate | reason |
 /// |---|---|---|---|
@@ -57,9 +56,9 @@ const PREVENTION_PACIFY: u32 = 2;
 /// | 5 | FLEEING | bit 23 | `0x1e` |
 /// | 6 | CONFUSED | bit 22 | `0x16` |
 ///
-/// A dead caster skips all six (`0x60980d`). Only `TryCast` calls this, so stun, silence and
-/// pacify refuse on the press without greying a button; the greying walk's own copy of these
-/// helpers (fear, confuse, charm) is not built. SILENCED reads `test ah,0x20`, invisible to a
+/// A dead caster skips all six. Only the cast attempt calls this, so stun, silence and pacify
+/// refuse on the press without greying a button; the greying walk's own copy of these helpers
+/// (fear, confuse, charm) is not built. SILENCED reads `test ah,0x20`, invisible to a
 /// dword-immediate scan.
 ///
 /// Each arm first scans the caster's `UNIT_FIELD_AURA[0..47]` for auras of its own types (charm
@@ -80,7 +79,7 @@ pub(crate) fn cast_cc_refusal(
     const UNIT_FLAG_CONFUSED: u32 = 0x0040_0000;
     const UNIT_FLAG_FLEEING: u32 = 0x0080_0000;
 
-    // A dead caster skips the leg (`0x60980d`); an earlier rung refuses a corpse.
+    // A dead caster skips the leg; an earlier rung refuses a corpse.
     if health == Some(0) {
         return None;
     }
@@ -137,16 +136,16 @@ pub(crate) fn cast_cc_refusal(
 /// `SpellMechanic.dbc` name.
 const REASON_PREVENTED_BY_MECHANIC: u8 = 0x8d;
 
-/// The mounted block of `CheckAndReportSpellInhibitFlags` (`0x739e8f`): a live
-/// `UNIT_FIELD_MOUNTDISPLAYID` meets it unless Attributes bit 24 (`0x01000000`,
-/// `SPELL_ATTR_ALLOW_WHILE_MOUNTED`) is set; a spell with no record has no exemption. A caster
-/// [`can_auto_dismount`] refuses is told `0x39` "You are mounted", any other dismounts at the send
-/// (`SendPendingCast 0x80af40`). The mount-required gate (`0x53`) is not built.
+/// The mounted block of the inhibit check (`0x739e8f`): a live `UNIT_FIELD_MOUNTDISPLAYID` meets it
+/// unless Attributes bit 24 (`0x01000000`, `SPELL_ATTR_ALLOW_WHILE_MOUNTED`) is set; a spell with
+/// no record has no exemption. A caster [`can_auto_dismount`] refuses is told `0x39` "You are
+/// mounted", any other dismounts at the send (the pending send, `0x80af40`). The mount-required
+/// gate (`0x53`) is not built.
 pub(crate) fn cast_mounted_refusal(mounted: bool, spell: Option<&SpellDisplay>) -> bool {
     mounted && spell.is_none_or(|d| d.attributes & 0x0100_0000 == 0)
 }
 
-/// `CGUnit_C::CanAutoDismount` (`0x71b0c0`) for the active player: never on a taxi
+/// The auto-dismount check (`0x71b0c0`) for the active player: never on a taxi
 /// (`UNIT_FLAG_TAXI_FLIGHT`), only with `autoDismount` on, and in flight only with
 /// `autoDismountFlying` on too.
 pub(crate) fn can_auto_dismount(
@@ -166,9 +165,9 @@ pub(crate) fn can_auto_dismount(
 const INTERRUPT_UNDER_WATER: u32 = 0x80;
 const INTERRUPT_ABOVE_WATER: u32 = 0x100;
 
-/// `AttributesEx & (IS_CHANNELED 0x4 | IS_SELF_CHANNELED 0x40)`, the gate on arm B
-/// (`0x609d6a`/`0x609db1`): only a channeled spell has its channel column read, which keeps
-/// Summon Baby Shark 25849 (`Channel 0x100`, `AttributesEx 0`) out.
+/// `AttributesEx & (IS_CHANNELED 0x4 | IS_SELF_CHANNELED 0x40)`, the gate on arm B: only a
+/// channeled spell has its channel column read, which keeps Summon Baby Shark 25849
+/// (`Channel 0x100`, `AttributesEx 0`) out.
 const ATTR_EX_CHANNELED: u32 = 0x44;
 
 /// `SPELL_FAILED_ONLY_ABOVEWATER`, "Cannot use while swimming".
@@ -176,14 +175,14 @@ pub(super) const ERR_ONLY_ABOVEWATER: u8 = 0x50;
 /// `SPELL_FAILED_ONLY_UNDERWATER`, "Can only use while swimming".
 pub(super) const ERR_ONLY_UNDERWATER: u8 = 0x58;
 
-/// The water refusal, `0x6094f0`'s environment block `0x609d33`..`0x609de2`: after the
-/// mounted, posture and day/night legs, before the moving gate, so a druid on land is refused
-/// before the form gate `0x612480` runs. Each face reads its bit in two columns:
+/// The water refusal, the reference's environment block: after the mounted, posture and day/night
+/// legs, before the moving gate, so a druid on land is refused before the form gate runs. Each face
+/// reads its bit in two columns, `AuraInterruptFlags` (arm A) and `ChannelInterruptFlags` (arm B):
 ///
-/// | reason | bit | arm A, `AuraInterruptFlags` | arm B, `ChannelInterruptFlags` |
-/// |---|---|---|---|
-/// | [`ERR_ONLY_UNDERWATER`] `0x58` | `0x100` | `0x609d36`, `0x609d46` | `0x609d6f`, `0x609d7b` |
-/// | [`ERR_ONLY_ABOVEWATER`] `0x50` | `0x80` | `0x609da4`, `0x609dac` | `0x609db5`, `0x609dc2` |
+/// | reason | bit |
+/// |---|---|
+/// | [`ERR_ONLY_UNDERWATER`] `0x58` | `0x100` |
+/// | [`ERR_ONLY_ABOVEWATER`] `0x50` | `0x80` |
 ///
 /// Swimming is `[[caster+0x118]+0x40] & 0x200000`, the movement word the moving gate reads. Arm B
 /// matters: Fishing ranks 2-4 (7731/7732/18248) carry the bit only in `ChannelInterruptFlags
@@ -208,13 +207,13 @@ pub(super) fn cast_water_refusal(move_flags_word: u32, spell: Option<&SpellDispl
 }
 
 /// The MOVING|TURNING interrupt bits, tested on both `AuraInterruptFlags` (+0x58) and
-/// `ChannelInterruptFlags` (+0x5c) (`0x609e0e`/`0x609e1c`).
+/// `ChannelInterruptFlags` (+0x5c).
 const AURA_INTERRUPT_MOVING_TURNING: u32 = 0x18;
 
-/// The moving refusal, `0x6094f0`'s moving block (`0x609de3`..`0x609e48`), the only local emitter
-/// of `0x2e` "Can't do that while moving": no packet, no cast bar, no GCD. vmangos accepts the
-/// cast (its moving reject covers only autorepeat and sit-still spells, `Spell.cpp:5437`) and
-/// then interrupts it. It refuses when all hold:
+/// The moving refusal, the reference's moving block, the only local emitter of `0x2e` "Can't do
+/// that while moving": no packet, no cast bar, no GCD. vmangos accepts the cast (its moving reject
+/// covers only autorepeat and sit-still spells, `Spell.cpp:5437`) and then interrupts it. It
+/// refuses when all hold:
 ///
 /// - `InterruptFlags & 0x1`;
 /// - the wire `MovementFlags` (`[unit+0x9a8]+0x40`) carry any of `0x200f`, forward, backward,
@@ -223,8 +222,7 @@ const AURA_INTERRUPT_MOVING_TURNING: u32 = 0x18;
 /// - a nonzero resolved cast time, or the [`AURA_INTERRUPT_MOVING_TURNING`] bits in either
 ///   interrupt column, which refuses a zero-cast-time channel.
 ///
-/// An uncataloged spell passes. It sits after the mounted block and before the shapeshift-form
-/// leg (`0x609e50`).
+/// An uncataloged spell passes. It sits after the mounted block and before the shapeshift-form leg.
 pub(super) fn cast_moving_refusal(
     move_flags_word: u32,
     cast_time_ms: u32,
@@ -254,7 +252,7 @@ mod tests {
         }
     }
 
-    /// `IsTargetInRange 0x6e47b0`'s two compares, on Auto Shot's {8, 35} row plus the reach pad.
+    /// The range check's two compares, on Auto Shot's {8, 35} row plus the reach pad.
     #[test]
     fn cast_range_refusal_follows_the_two_compares() {
         let mods = SpellModifiers::default();
@@ -285,7 +283,7 @@ mod tests {
         let refuse = |d2: f32| cast_range_refusal(&d, Some(&fireball), me, reach, Some(d2), &mods);
         assert_eq!(refuse(0.1), None);
         assert_eq!(refuse(60.0 * 60.0), Some(ERR_OUT_OF_RANGE));
-        // The bound target is the pad's second reach (`0x6e47ca`): 35 + 1.5 + 1.5 = 38.
+        // The bound target is the pad's second reach: 35 + 1.5 + 1.5 = 38.
         assert_eq!(refuse(37.0 * 37.0), None);
         assert_eq!(refuse(39.0 * 39.0), Some(ERR_OUT_OF_RANGE));
         // With no unit bound the row stands as it is: 35.
@@ -330,9 +328,9 @@ mod tests {
         );
     }
 
-    /// A warrior running after a running mob presses Hamstring (the melee row) at 7 yards:
-    /// `GetMinMaxRange` adds the moving bonus to the 5.0 floor (`0x6e3648`-`0x6e36a2`), so the
-    /// press goes out to 7.667, and a standing pair is refused at the same distance.
+    /// A warrior running after a running mob presses Hamstring (the melee row) at 7 yards: the
+    /// range lookup adds the moving bonus to the 5.0 floor, so the press goes out to 7.667, and a
+    /// standing pair is refused at the same distance.
     #[test]
     fn cast_range_refusal_lets_two_running_units_reach_the_moving_bonus() {
         let mods = SpellModifiers::default();
@@ -372,8 +370,8 @@ mod tests {
         assert_eq!(press(standing, standing, 5.0), None);
     }
 
-    /// `CanAutoDismount` (`0x71b0c0`): the taxi bit, `autoDismount`, then `autoDismountFlying`
-    /// only while flying.
+    /// The auto-dismount check (`0x71b0c0`): the taxi bit, `autoDismount`, then
+    /// `autoDismountFlying` only while flying.
     #[test]
     fn auto_dismount_needs_the_flying_cvar_only_in_flight() {
         use crate::creature_anim::move_flags::FLYING;
@@ -541,7 +539,7 @@ mod tests {
         );
     }
 
-    /// Every condition of the moving refusal (`0x609de3`).
+    /// Every condition of the moving refusal.
     #[test]
     fn cast_moving_refusal_follows_the_validator_condition() {
         use crate::creature_anim::move_flags as mf;
@@ -791,7 +789,7 @@ mod cc_refusal_tests {
         );
     }
 
-    /// A dead caster skips all six arms (`0x60980d`'s `jle` on `UNIT_FIELD_HEALTH`).
+    /// A dead caster skips all six arms (the reference's `jle` on `UNIT_FIELD_HEALTH`).
     #[test]
     fn a_dead_caster_takes_no_crowd_control_refusal() {
         let cast = spell(1);

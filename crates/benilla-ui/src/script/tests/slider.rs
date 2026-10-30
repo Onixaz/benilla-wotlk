@@ -1,5 +1,5 @@
-//! Slider (LoadXML `0x789580`): value, step and orientation, the vertical default, the unswapped
-//! min/max, the value quantiser, and the change gate that keeps scrollbar wiring from recursing.
+//! Slider: value, step and orientation, the vertical default, the unswapped min/max, the value
+//! quantiser, and the change gate that keeps scrollbar wiring from recursing.
 
 use super::common::script;
 use crate::script::QuadContent;
@@ -133,7 +133,7 @@ fn slider_track_press_seats_the_thumb_and_a_mouseless_slider_ignores_it() {
     s.mouse_button(108.0, 108.0, "LeftButton", false);
 
     // A mouse-disabled slider ignores a press on thumb and track alike. A 1.12 Slider has no
-    // `Disable`: the trio is registered on the Button table (`0x879d00`) alone.
+    // `Disable`: the trio is registered on the Button table alone.
     s.run(r#"SlTrack:SetValue(0); SlTrack:EnableMouse(false); fired = {}"#)
         .unwrap();
     for y in [192.0, 150.0] {
@@ -171,8 +171,8 @@ fn slider_methods_exist_only_on_sliders() {
 
 #[test]
 fn slider_default_orientation_is_vertical() {
-    // Every scrollbar omits `orientation` and is vertical, so the CSimpleSlider default is
-    // `VERTICAL`, where StatusBar's is `HORIZONTAL`.
+    // Every scrollbar omits `orientation` and is vertical, so the slider's default is `VERTICAL`,
+    // where StatusBar's is `HORIZONTAL`.
     let s = script();
     s.run(
         r#"
@@ -198,7 +198,7 @@ fn slider_value_clamps_and_does_not_swap_minmax() {
         assert(sl:GetValue() == 100, "clamped to max")
         sl:SetValue(-5)
         assert(sl:GetValue() == 0, "clamped to min")
-        -- Unlike StatusBar, a reversed pair is NOT swapped (LoadXML `0x789580` stores min + range).
+        -- Unlike StatusBar, a reversed pair is NOT swapped (the XML load stores min + range).
         sl:SetMinMaxValues(80, 20)
         local mn, mx = sl:GetMinMaxValues()
         assert(mn == 80 and mx == 20, "reversed pair kept as given, not swapped")
@@ -252,7 +252,7 @@ fn a_slider_answers_its_own_enable_trio() {
             assert(type(b[name]) == "function", "Button still answers " .. name)
         end
         -- The Button's own predicate is the NUMBER 1 / the NUMBER 0, never a Lua boolean — its
-        -- false leg is 0 rather than nil, settled per body at `0x7800b0`'s `setne`+`fild`
+        -- false leg is 0 rather than nil, settled per body's `setne`+`fild`
         -- (`binding_abi::flag`'s doc).
         assert(b:IsEnabled() == 1, "1, not true")
         b:Disable()
@@ -314,9 +314,9 @@ fn slider_scrollbar_wiring_does_not_recurse() {
 
 #[test]
 fn slider_value_bits_gate_the_first_fire_and_the_range_reclamp() {
-    // The reference's `+0x314` bit1 (has a range) and bit2 (has a value), from `SetValue`
-    // (`0x789930`) and `SetMinMaxValues` (`0x7898f0`): a rangeless SetValue is a no-op, the
-    // first SetValue always fires, and SetMinMaxValues re-clamps only once a value exists.
+    // The reference's `+0x314` bit1 (has a range) and bit2 (has a value), from `SetValue` and
+    // `SetMinMaxValues`: a rangeless SetValue is a no-op, the first SetValue always fires, and
+    // SetMinMaxValues re-clamps only once a value exists.
     let s = script();
     s.run(
         r#"
@@ -383,9 +383,9 @@ fn slider_onload_range_does_not_run_an_unarmed_onvaluechanged() {
 #[test]
 fn a_thumb_with_no_authored_size_takes_its_arts_texel_span_and_still_drags() {
     // Dewdrop-2.0's `OpenSlider`, in its construction order: `SetThumbTexture(path)` and no size.
-    // The reference sizes the thumb by its own `GetWidth`/`GetHeight` (`0x789ba0` calls
-    // `0x770720`, `0x770790`), which fall back to the art's texel span: 32×32 for
-    // `UI-SliderBar-Button-Vertical`, leaving 96 units of travel on the 128-unit track.
+    // The reference sizes the thumb by its own `GetWidth`/`GetHeight`, which fall back to the art's
+    // texel span: 32×32 for `UI-SliderBar-Button-Vertical`, leaving 96 units of travel on the
+    // 128-unit track.
     let mut s = script();
     s.set_screen_size(1024.0, 768.0);
     s.set_texture_size_probe(Box::new(|p| {
@@ -441,8 +441,8 @@ fn a_thumb_with_no_authored_size_takes_its_arts_texel_span_and_still_drags() {
 
 #[test]
 fn slider_setvalue_quantises_onto_the_min_anchored_lattice() {
-    // `SetValue` (`0x789930`) rounds the clamped value onto `min + n·step` (half away from zero,
-    // then `__ftol`) before storing, so the lattice is anchored at `min`, not at zero.
+    // `SetValue` rounds the clamped value onto `min + n·step` (half away from zero, then `__ftol`)
+    // before storing, so the lattice is anchored at `min`, not at zero.
     let s = script();
     s.run(
         r#"
@@ -473,7 +473,7 @@ fn slider_setvalue_quantises_onto_the_min_anchored_lattice() {
 #[test]
 fn a_zero_step_leaves_the_value_continuous() {
     // `UIPanelScrollBarTemplate` declares no `valueStep`, so `[+0x324]` stays at the constructor's
-    // 0.0 and `0x78999c` skips the quantiser: a stepless slider stores what it is handed.
+    // 0.0 and the reference skips the quantiser: a stepless slider stores what it is handed.
     let s = script();
     s.run(
         r#"
@@ -491,9 +491,9 @@ fn a_zero_step_leaves_the_value_continuous() {
 
 #[test]
 fn the_quantised_value_is_not_re_clamped_and_may_pass_max() {
-    // The clamp runs before the quantiser and nothing clamps after it (`0x789a06` stores
-    // `min + n·step` as computed), so a range that is not a whole number of steps rounds past
-    // its max. This looks like a bug but is the reference's arithmetic; no stock slider hits it.
+    // The clamp runs before the quantiser and nothing clamps after it (stores `min + n·step` as
+    // computed), so a range that is not a whole number of steps rounds past its max. This looks
+    // like a bug but is the reference's arithmetic; no stock slider hits it.
     let s = script();
     s.run(
         r#"
@@ -546,8 +546,8 @@ fn a_faux_scrollframes_rows_snap_and_its_bottom_is_exact() {
 
 #[test]
 fn a_move_inside_one_step_fires_nothing() {
-    // The change gate compares against the stored, already quantised value (`0x789a0b`), so a
-    // drag within one step's band never reaches `OnValueChanged`.
+    // The change gate compares against the stored, already quantised value, so a drag within one
+    // step's band never reaches `OnValueChanged`.
     let s = script();
     s.run(
         r#"
@@ -579,8 +579,8 @@ fn a_move_inside_one_step_fires_nothing() {
 
 #[test]
 fn set_value_step_re_quantises_the_held_value_and_can_fire() {
-    // `SetValueStep` (`0x789a60`) stores the step and re-pushes the range, which re-clamps a held
-    // value through `SetValue` onto the new lattice, and that move fires.
+    // `SetValueStep` stores the step and re-pushes the range, which re-clamps a held value through
+    // `SetValue` onto the new lattice, and that move fires.
     let s = script();
     s.run(
         r#"
@@ -615,8 +615,8 @@ fn set_value_step_re_quantises_the_held_value_and_can_fire() {
 
 #[test]
 fn a_step_before_any_range_is_the_whole_call() {
-    // With no range (bit1 clear at `0x789a6c`) the step is stored and nothing else happens, so an
-    // `<OnLoad>` that sets a step before a range runs no handler.
+    // With no range the step is stored and nothing else happens, so an `<OnLoad>` that sets a step
+    // before a range runs no handler.
     let s = script();
     s.run(
         r#"

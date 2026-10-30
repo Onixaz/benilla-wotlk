@@ -80,8 +80,8 @@ impl Plugin for UiBankPlugin {
 }
 
 /// The `ERR_BANKSLOT_*` line for a `SMSG_BUY_BANK_SLOT_RESULT` code. The reference's handler
-/// (`0x5e3f8d`) ignores any code `>= 3`, `OK` included (`0x5e3f9c`), and maps the rest through the
-/// three-entry table at `0x80af14`, message ids `0x100..=0x102`.
+/// ignores any code `>= 3`, `OK` included, and maps the rest through the three-entry table, message
+/// ids `0x100..=0x102`.
 fn bank_slot_error_key(result: u32) -> Option<&'static str> {
     Some(match result {
         bank_slot_result::FAILED_TOO_MANY => "ERR_BANKSLOT_FAILED_TOO_MANY", // 0x100
@@ -92,8 +92,7 @@ fn bank_slot_error_key(result: u32) -> Option<&'static str> {
 }
 
 /// Push the purchase row and fire the bank events. `BANKFRAME_OPENED` has no arguments: the
-/// reference fires it bare (`0x4f8522`), and stock `BankFrame.lua:127` titles with
-/// `UnitName("npc")`.
+/// reference fires it bare, and stock `BankFrame.lua:127` titles with `UnitName("npc")`.
 fn feed_bank(
     script: Option<NonSendMut<UiScript>>,
     open: Res<BankOpen>,

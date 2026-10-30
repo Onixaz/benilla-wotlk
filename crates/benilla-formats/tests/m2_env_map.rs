@@ -1,6 +1,6 @@
 //! Generated (environment-map) texcoords: `texCoordSet` (`+0x12`) indexes `texture_unit_lookup`
-//! (`0x9c`), and the reference takes a value above 2 as generated (`0x70b8bd`). The Deeprun Tram's
-//! glass authors `[-1]` and leaves all 330 vertices' UVs at (0, 0).
+//! (`0x9c`), and the reference takes a value above 2 as generated. The Deeprun Tram's glass authors
+//! `[-1]` and leaves all 330 vertices' UVs at (0, 0).
 
 use benilla_formats::{load_m2_mesh, open_chain};
 

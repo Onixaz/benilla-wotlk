@@ -5,8 +5,8 @@
 
 use super::{MessageRecord, MsgKind};
 
-/// Every row of `0xac8af0`, indexed by message id: the ids are dense `0..730`, so
-/// `CATALOG[id]` is the reference's `0xac8af0 + 20*id`.
+/// Every row of the reference's message table, indexed by message id: the ids are dense
+/// `0..730`, so `CATALOG[id]` is the reference's row `id`.
 ///
 /// `rustfmt` is off: the generator emits one row per line, and a rewrap would drift from it.
 #[rustfmt::skip]

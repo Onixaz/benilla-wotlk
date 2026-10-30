@@ -105,8 +105,8 @@ pub(crate) const GROUND_EFFECT_NOISE: [u8; 256] = [
     0x96, 0xd1, 0x64, 0x26, 0xd7, 0x45, 0xcc, 0x4f, 0xc8, 0xb0, 0xe9, 0xb5, 0x00, 0xd6, 0x31, 0xea,
 ];
 
-/// The reference's detail-doodad PRNG (`0x4531e0`, seed expanded by `0x44ea80`), seeded once per
-/// chunk; one stream drives both scatter passes.
+/// The reference's detail-doodad PRNG, seeded once per chunk; one stream drives both scatter
+/// passes.
 struct BlizzardRandomizer {
     source: u32,
     seed: u32,
@@ -129,8 +129,8 @@ impl BlizzardRandomizer {
 
     /// Advance and return the next `source`.
     fn shuffle(&mut self) -> u32 {
-        // A negative lane index adds the lane's own constant, not a mod-256 wrap (`0x4531e0`); the
-        // result stays in `[0, 251]`.
+        // A negative lane index adds the lane's own constant, not a mod-256 wrap; the result stays
+        // in `[0, 251]`.
         let lane = |byte: u32, sub: i32, wrap: i32| -> u8 {
             let idx = (byte & 0xFF) as i32 - sub;
             (if idx < 0 { idx + wrap } else { idx }) as u8
@@ -163,15 +163,15 @@ impl BlizzardRandomizer {
 }
 
 /// The cells per chunk the scatter's `density_scale` multiplies: `groundEffectDensity`'s registered
-/// 16 (`CWorldParam::Initialize 0x78e400`), cells visited with repeats, so clutter is patchy.
+/// 16 (`0x78e400`), cells visited with repeats, so clutter is patchy.
 pub const FRILL_DENSITY: u32 = 16;
 
 /// The top of `groundEffectDensity`'s range, its change callback's (`0x78dab0`).
 pub const FRILL_DENSITY_MAX: u32 = 256;
 
-/// Scatter ground clutter over one terrain chunk, a port of the reference's
-/// `CMapChunk::CreateDetailDoodads` (`0x6bfc10`): one RNG stream per chunk, seeded by the global
-/// chunk coords `(globalChunkY << 16) | globalChunkX`; pass 1 picks `groundEffectDensity` cells
+/// Scatter ground clutter over one terrain chunk, a port of the reference's detail-doodad build:
+/// one RNG stream per chunk, seeded by the global chunk coords
+/// `(globalChunkY << 16) | globalChunkX`; pass 1 picks `groundEffectDensity` cells
 /// `(rng & 7, rng & 7)` with repeats, and pass 2 spawns `density` doodads in each, slot
 /// `(n + listIndex) & 3`, from the layer [`ChunkMesh::pred_tex`] names, never MCAL alpha.
 /// `density_scale` multiplies [`FRILL_DENSITY`].

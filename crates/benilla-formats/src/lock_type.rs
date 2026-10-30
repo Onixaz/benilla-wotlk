@@ -1,8 +1,8 @@
 //! `LockType.dbc`, a lock's interaction kind (Herbalism, Mining, Pick Lock, Fishing): its name and,
-//! for three kinds, the cursor shown over a GameObject wearing it (`0x5f3070`). The GO cursor
-//! resolves by data: template `lockId` → [`crate::LockCatalog`] row → its first slot's `LockType`
-//! index → `CursorName`, which names the cursor BLP, or when empty falls through to the Interact
-//! gear. `LockType` 1 (Pick Lock) is also the classifier's never-grayed case.
+//! for three kinds, the cursor shown over a GameObject wearing it. The GO cursor resolves by data:
+//! template `lockId` → [`crate::LockCatalog`] row → its first slot's `LockType` index →
+//! `CursorName`, which names the cursor BLP, or when empty falls through to the Interact gear.
+//! `LockType` 1 (Pick Lock) is also the classifier's never-grayed case.
 
 use std::collections::HashMap;
 
@@ -16,7 +16,7 @@ const LOCK_TYPE: &str = "DBFilesClient\\LockType.dbc";
 /// The file's column count, which `benilla-dbc` checks against the header: `ID`, then `Name`,
 /// `ResourceName` and `Verb` over sixteen locales and a mask each, then `CursorName`.
 const LOCK_TYPE_FIELDS: usize = 53;
-/// `CursorName`, the string 5875's `0x5f3070` reads (`[row+0x70]`, its column 28).
+/// `CursorName`, the string 5875's reads (`[row+0x70]`, its column 28).
 const CURSOR_NAME_FIELD: usize = 52;
 /// The `Name` block's enUS column, the toast's `[row + locale*4 + 4]` at locale 0.
 const NAME_FIELD: usize = 1;
@@ -34,8 +34,8 @@ impl LockTypeCatalog {
         self.cursors.get(&lock_type_id).map(String::as_str)
     }
 
-    /// A lock kind's `Name` ("Herbalism"), filled into "Requires %s" (`0x5f34f9`); the caller
-    /// supplies the reference's `"UNKNOWN"` for a missing row.
+    /// A lock kind's `Name` ("Herbalism"), filled into "Requires %s"; the caller supplies the
+    /// reference's `"UNKNOWN"` for a missing row.
     pub fn name(&self, lock_type_id: u32) -> Option<&str> {
         self.names.get(&lock_type_id).map(String::as_str)
     }

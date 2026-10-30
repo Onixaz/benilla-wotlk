@@ -39,9 +39,9 @@ fn gameobject_custom_anim(
     });
 }
 
-/// `SMSG_GAMEOBJECT_DESPAWN_ANIM`: AnimationData 157 on the one-shot channel (`0x5f8c50`).
-/// vmangos sends `SMSG_DESTROY_OBJECT` in the same tick, so the mark is a component queued now,
-/// ahead of the closure [`object_destroyed`] queues, not a message.
+/// `SMSG_GAMEOBJECT_DESPAWN_ANIM`: AnimationData 157 on the one-shot channel. vmangos sends
+/// `SMSG_DESTROY_OBJECT` in the same tick, so the mark is a component queued now, ahead of the
+/// closure [`object_destroyed`] queues, not a message.
 fn gameobject_despawn_anim(guid: u64, commands: &mut Commands, index: &GuidIndex) {
     debug!("net: gameobject {guid:#x} despawn anim");
     if let Some(&e) = index.0.get(&guid) {
@@ -177,8 +177,8 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             debug!("net: item template {entry} → {info:?}");
             sc.items.insert_template(entry, info);
         }
-        // `0x5e4f30`'s two arms share the item lookup (`0x468460`, `TYPEMASK_ITEM`) and differ on
-        // a miss.
+        // The reference's item-time handler has two arms that share the item lookup
+        // (`TYPEMASK_ITEM`) and differ on a miss.
         SessionEvent::ItemTime { item_guid, seconds } => {
             // An unheld item drops the update, with no queue (`0x1EA`'s arm returns), so an item
             // created after the login re-send (`Player::SendItemDurations`) waits for the next.
@@ -206,9 +206,9 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
                     }
                 }
             }
-            // `0x1EB`'s miss arm queues on a resolving player's list (`0x5ebd40`), and only the
-            // active player's is replayed (`0x5d8440` → `0x5ebde0`). vmangos names the owner, us
-            // (`Player.cpp:11883`, `:12077`), so it queues on the active player.
+            // `0x1EB`'s miss arm queues on a resolving player's list, and only the active player's
+            // is replayed. vmangos names the owner, us (`Player.cpp:11883`, `:12077`), so it queues
+            // on the active player.
             _ if sc.self_guid.0.is_some_and(|g| sc.index.0.contains_key(&g)) => {
                 sc.items.queue_enchant_time(item_guid, slot, seconds)
             }
@@ -237,7 +237,7 @@ fn on_object_move(In(ev): In<SessionEvent>, mut sc: Scene) {
 }
 
 /// An observed mover skipped time: only its relay chain moves, as the reference's handler does
-/// (`0x603b40` → `0x61ab90`, `[CMovement+0xac] += lag`); an unknown guid is dropped, as there.
+/// (`[mover+0xac] += lag`); an unknown guid is dropped, as there.
 fn on_move_time_skipped(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::MoveTimeSkipped { guid, lag_ms } = ev {
         if let Some(mut m) = sc
@@ -292,7 +292,7 @@ fn on_unit_move(In(ev): In<SessionEvent>, mut sc: Scene) {
 }
 
 /// Our corpse's `CORPSE_FIELD_FLAGS` can flip to BONES under a live guid; the reclaim latch is
-/// re-asked on that edge, as the reference's `FLAGS` handler does (`0x5d6d60`).
+/// re-asked on that edge, as the reference's `FLAGS` handler does.
 fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::ObjectValues { guid, fields } = ev {
         crate::death::net::recheck_corpse(guid, &fields, &sc.self_guid, &mut sc.death_net);
@@ -467,9 +467,8 @@ fn object_create(
         scale,
     };
     // A transport's cycle anchor: the create block's `UPDATE_FLAG_TRANSPORT` u32 and when it
-    // landed; a re-create re-anchors. The reference's per-frame tick (`0x630970`) runs types 15
-    // (boats, a path-progress clock) and 11 (lifts, `time-since-create % period`,
-    // `GameObject.cpp:246`).
+    // landed; a re-create re-anchors. The reference's per-frame tick runs types 15 (boats, a
+    // path-progress clock) and 11 (lifts, `time-since-create % period`, `GameObject.cpp:246`).
     let go_type = (kind == EntityKind::GameObject).then(|| fields.gameobject_type_id());
     let transport_anchor = matches!(go_type, Some(11 | 15))
         .then_some(transport_progress)
@@ -493,9 +492,9 @@ fn object_create(
             yaw: orientation,
             quat: go_quat,
         });
-    // A GameObject is placed by its quaternion. A mover's create block also seeds its flags
-    // (`0x618c30`, merge mask `0x75a07dff`) and pitch (`0x7c6420`) before the model is built
-    // (`0x613e10`), so a swimmer that streams in nose-down is drawn nose-down from the first frame.
+    // A GameObject is placed by its quaternion. A mover's create block also seeds its flags (merge
+    // mask `0x75a07dff`) and pitch before the model is built, so a swimmer that streams in
+    // nose-down is drawn nose-down from the first frame.
     let placement = match kind {
         EntityKind::GameObject => gameobject_rotation(go_quat, orientation),
         _ => mover.map_or_else(
@@ -514,9 +513,9 @@ fn object_create(
             local_orientation: t.orientation,
             seat: t.seat,
         });
-    // Warm the name cache as a unit streams in, the reference's timing: its create path
-    // (`0x5fb880`) queries every creature (`0x60afb0`, at `0x60b157`), whose name is the record's
-    // field 0 (`0x60934b`). Its `CreatureCache.wdb` answers without the wire; ours lasts a session.
+    // Warm the name cache as a unit streams in, the reference's timing: its create path queries
+    // every creature, whose name is the record's field 0. Its `CreatureCache.wdb` answers without
+    // the wire; ours lasts a session.
     if matches!(kind, EntityKind::Unit | EntityKind::Player) {
         let _ = names.resolve(guid, net_commands);
         // A pet guid carries a pet number, so `resolve` asks the pet-name query; the template is
@@ -634,7 +633,7 @@ fn item_create(
         merge_fields(commands, stores, edges, e, guid, fields);
     } else {
         let e = crate::items::spawn_item(commands, index, guid, fields, container);
-        // Replay the enchant times queued while it was not held (`0x5ebde0`), as of now.
+        // Replay the enchant times queued while it was not held, as of now.
         let queued = items.take_enchant_times(guid);
         if !queued.is_empty() {
             let mut countdowns = crate::items::Countdowns::default();
@@ -664,9 +663,9 @@ fn object_move(
     }
 }
 
-/// A relayed `MSG_MOVE_*`. The reference schedules a remote's apply (`0x618c30`): the mover's
-/// replay chain gives the packet a fire-time, a due move applies now and a later one queues for
-/// `drain_pending_moves`, with dead-reckoning in between. `WOW_REMOTE_SNAP=1` applies at arrival.
+/// A relayed `MSG_MOVE_*`. The reference schedules a remote's apply: the mover's replay chain gives
+/// the packet a fire-time, a due move applies now and a later one queues for `drain_pending_moves`,
+/// with dead-reckoning in between. `WOW_REMOTE_SNAP=1` applies at arrival.
 fn unit_move(
     guid: u64,
     mv: crate::net::motion::RelayMove,
@@ -681,7 +680,7 @@ fn unit_move(
 ) {
     use crate::net::motion::{apply_move, arrival_snap, trace_relay, PendingMove, RelayOutcome};
     // Our own guid: the server writing our pose (`SetAsServerSide`, `ctime = 0`), which the
-    // reference applies with no mover gate (`0x603bb0`); it goes to `player::wire_in`.
+    // reference applies with no mover gate; it goes to `player::wire_in`.
     if self_guid.0 == Some(guid) {
         trace_relay(
             guid,
@@ -790,13 +789,13 @@ fn object_values(
 
 /// `SMSG_DESTROY_OBJECT`: corpse decay ahead of respawn, or a despawn.
 fn object_destroyed(guid: u64, commands: &mut Commands, index: &mut GuidIndex) {
-    // The object is freed now and its model fades out, as the reference's OnDeactivate
-    // (`0x6145e0`, called by `0x464920` on DESTROY and OUT_OF_RANGE alike) hands the model to the
-    // `SWModelFadeout` scheduler (`0x672df0`). The guid leaves the index at once ([`tear_down`]).
+    // The object is freed now and its model fades out, as the reference's object deactivation (on
+    // DESTROY and OUT_OF_RANGE alike) hands the model to its model fade-out scheduler. The guid
+    // leaves the index at once ([`tear_down`]).
     //
-    // A pinned object only gets its pending-destroy bit and is freed when the last pin drops
-    // (`0x464920`, `0x468410`). Our one pin is an announced `SMSG_GAMEOBJECT_DESPAWN_ANIM`, whose
-    // end runs the deferred teardown ([`crate::go_anim::release_despawn_pin`]).
+    // A pinned object only gets its pending-destroy bit and is freed when the last pin drops. Our
+    // one pin is an announced `SMSG_GAMEOBJECT_DESPAWN_ANIM`, whose end runs the deferred teardown
+    // ([`crate::go_anim::release_despawn_pin`]).
     if let Some(e) = index.0.remove(&guid) {
         // An item has no model to fade, so it goes now with its countdown cells.
         if guid::is_item(guid) {
@@ -820,7 +819,7 @@ fn object_destroyed(guid: u64, commands: &mut Commands, index: &mut GuidIndex) {
 
 /// The `OutOfRange` block: the object still exists, out of our range.
 fn objects_removed(guids: Vec<u64>, commands: &mut Commands, index: &mut GuidIndex) {
-    // Faded, not popped: OUT_OF_RANGE reaches `0x464920` like DESTROY, and the object ends now
+    // Faded, not popped: OUT_OF_RANGE reaches the same teardown as DESTROY, and the object ends now
     // while its model fades ([`tear_down`]).
     for g in guids {
         if let Some(e) = index.0.remove(&g) {
@@ -829,9 +828,9 @@ fn objects_removed(guids: Vec<u64>, commands: &mut Commands, index: &mut GuidInd
     }
 }
 
-/// An object's teardown, the reference's `0x464920`: the object is freed and its detached model
-/// fades out ([`DespawnFade`]); its OnDeactivate (`0x5fbb60` → `0x493910`) clears the selection
-/// and sends `CMSG_SET_SELECTION 0` at once.
+/// An object's teardown, as in the reference: the object is freed and its detached model fades out
+/// ([`DespawnFade`]); its deactivation clears the selection and sends `CMSG_SET_SELECTION 0` at
+/// once.
 ///
 /// The model stays on the same entity, so removing its [`Guid`] is what ends the object for every
 /// consumer; the [`NetEntity`] and [`ObjectStore`] stay so the model draws out (a decaying corpse
@@ -933,9 +932,9 @@ fn monster_move(
                 .remove::<crate::transport::TransportRider>()
                 .insert(crate::vehicle::TransitionCue);
         }
-        // The final facing (moveType 2/3/4) snaps the raw facing (`0x7c6f30`) and resets the
-        // display smoother. A following path overrides it with the tangent each frame (`0x7c5490`),
-        // so it sticks only on a stop. A deck packet's facing is the rider's `local_orientation`.
+        // The final facing (moveType 2/3/4) snaps the raw facing and resets the display smoother. A
+        // following path overrides it with the tangent each frame, so it sticks only on a stop. A
+        // deck packet's facing is the rider's `local_orientation`.
         if transport.is_none() && !matches!(facing, MonsterMoveFacing::None) {
             let target_pos = |g: u64| {
                 index
@@ -953,16 +952,16 @@ fn monster_move(
                 }
             }
         }
-        // Every spline move un-nocks and drops the weapon hold here. The handler `0x6018f0`
-        // (opcodes 0xDD, 0x2AE) ends through `0x60d040` (clear `0x400`) and `0x60f530` (un-nock) on
-        // every path but one: a stop within 3 yd of the stop point jumps past both (`0x6019e4`).
+        // Every spline move un-nocks and drops the weapon hold here. The handler (opcodes 0xDD,
+        // 0x2AE) ends through (clear `0x400`) and (un-nock) on every path but one: a stop within 3
+        // yd of the stop point jumps past both.
         commands.entity(e).remove::<(
             crate::creature_anim::NockLatch,
             crate::creature_anim::RangedHold,
         )>();
-        // A rooted unit takes no path: `0x6187a0`, the only route into the spline installer
-        // `0x7c6a50`, returns on ROOT (`0x6187c2`). Only the path is refused: the un-nock tail runs
-        // on every path (`0x6020ef`), and the rest for a rooted unit is untraced.
+        // A rooted unit takes no path, the only route into the spline installer, returns on ROOT.
+        // Only the path is refused: the un-nock tail runs on every path, and the rest for a rooted
+        // unit is untraced.
         if rooted {
             return;
         }
@@ -1001,14 +1000,14 @@ fn modes_of(guid: u64, index: &GuidIndex, modes: &Query<&mut UnitMoveModes>) -> 
         .unwrap_or_default()
 }
 
-/// `MOVEFLAG_PITCH_UP | PITCH_DOWN`, which StopFlying clears with the flight bits.
+/// `MOVEFLAG_PITCH_UP | PITCH_DOWN`, which the flight stop clears with the flight bits.
 const PITCH_BITS: u32 = 0xc0;
-/// `MOVEFLAG_SPLINE_ELEVATION`, which StartFlight clears.
+/// `MOVEFLAG_SPLINE_ELEVATION`, which the flight start clears.
 const SPLINE_ELEVATION: u32 = 0x400_0000;
 
 /// `SMSG_SPLINE_MOVE_*`: a mode on a unit we do not control, with no ack. An unknown guid is
-/// dropped, as the reference's handler (`0x603c80`) does; our own guid is not special-cased, as
-/// vmangos never sends it for a player's mover.
+/// dropped, as the reference's handler does; our own guid is not special-cased, as vmangos never
+/// sends it for a player's mover.
 fn spline_move_mode(
     guid: u64,
     mode: SplineMode,
@@ -1022,7 +1021,7 @@ fn spline_move_mode(
         return; // the reference drops it too
     };
     // Flight and gravity write the one flags word (`0x740ba0`), which for a unit we do not
-    // control is the pose's: StartFlight takes only on a unit that may fly (`0x989890`).
+    // control is the pose's: the flight start takes only on a unit that may fly (`0x989890`).
     if mode == SplineMode::Flying {
         if let Ok(mut rm) = remote.get_mut(e) {
             use crate::creature_anim::move_flags as f;
@@ -1033,7 +1032,7 @@ fn spline_move_mode(
                 rm.vertical_velocity = 0.0;
                 rm.fall_start_z = None;
             } else if !apply {
-                // StopFlying (`0x98c240`): the pitch and the flight bits go.
+                // The flight stop (`0x98c240`): the pitch and the flight bits go.
                 rm.flags &= !(PITCH_BITS | f::ASCENDING | f::DESCENDING | f::FLYING);
             }
         }
@@ -1057,9 +1056,9 @@ fn spline_move_mode(
         }
     }
 
-    // `SetRoot`'s one-shot wipe (`0x7c7340`): it clears `0xffe07f00`'s complement and stops the
-    // fall (`0x7c6290`), so the unit fails the integration gate and a relayed player stops dead.
-    // A creature has no direction bits; `monster_move` refuses its path instead.
+    // The root apply's one-shot wipe: it clears `0xffe07f00`'s complement and stops the fall, so
+    // the unit fails the integration gate and a relayed player stops dead. A creature has no
+    // direction bits; `monster_move` refuses its path instead.
     if mode == SplineMode::Root && apply {
         if let Ok(mut rm) = remote.get_mut(e) {
             use crate::creature_anim::move_flags;
@@ -1405,7 +1404,7 @@ mod tests {
             assert_eq!(
                 m.0,
                 move_flags::HOVER | move_flags::WATER_WALKING,
-                "two grants accumulate in one word — the reference has one CMovement+0x40"
+                "two grants accumulate in one word — the reference has one flags word"
             );
 
             grant(&mut w, SplineMode::Hover, false);
@@ -1417,8 +1416,8 @@ mod tests {
             );
         }
 
-        /// `SET_RUN_MODE` clears the walk bit: the pair is inverted against its names (`0x617e80`
-        /// → `SetRunMode` `0x7c71c0`), folded at the parse.
+        /// `SET_RUN_MODE` clears the walk bit: the pair is inverted against its names
+        /// (`SetRunMode`), folded at the parse.
         #[test]
         fn the_walk_bit_round_trips_with_the_run_opcodes_sense() {
             use crate::creature_anim::move_flags;
@@ -1432,8 +1431,8 @@ mod tests {
             assert_eq!(w.entity(e).get::<UnitMoveModes>().unwrap().0, 0);
         }
 
-        /// `SetRoot` (`0x7c7340`) wipes the direction bits, so the unit fails the integration gate
-        /// (`0x616e20`, `test [esi+0x40], 0x20ff`) and is not stepped.
+        /// The root apply wipes the direction bits, so the unit fails the integration gate
+        /// (`test [esi+0x40], 0x20ff`) and is not stepped.
         #[test]
         fn a_root_wipes_the_direction_bits_the_dead_reckon_runs_on() {
             use crate::creature_anim::move_flags;
@@ -1451,7 +1450,7 @@ mod tests {
             assert!(w.entity(e).get::<UnitMoveModes>().unwrap().rooted());
         }
 
-        /// `ClearRoot` (`0x7c7370`) only clears the bit.
+        /// The unroot only clears the bit.
         #[test]
         fn an_unroot_clears_the_bit_and_invents_no_movement() {
             let (mut w, e) = world_with_unit(Some(remote_walking_forward()));
@@ -1465,7 +1464,7 @@ mod tests {
             );
         }
 
-        /// As in the reference's handler (`0x603c80`); the create carries the modes itself.
+        /// As in the reference's handler; the create carries the modes itself.
         #[test]
         fn a_grant_for_a_unit_we_do_not_have_is_dropped() {
             let (mut w, e) = world_with_unit(None);
@@ -1489,7 +1488,8 @@ mod tests {
             assert!(w.entity(e).get::<UnitMoveModes>().is_none());
         }
 
-        /// `0x6187a0` returns on ROOT (`0x6187c2`), so a queued path does not move a pinned body.
+        /// The reference's server-position apply returns on ROOT, so a queued path does not move a
+        /// pinned body.
         #[test]
         fn a_rooted_unit_refuses_the_path_the_server_queued() {
             let mut w = World::new();

@@ -1,5 +1,5 @@
-//! The model pane's clock, sequence arm and handlers (`0x76d7f0`, `0x7121a0`, `0x76cac0`). The
-//! engine parses no M2: a file's sequences and bounds are [`ModelFileFacts`] the host hands over.
+//! The model pane's clock, sequence arm and handlers. The engine parses no M2: a file's sequences
+//! and bounds are [`ModelFileFacts`] the host hands over.
 
 use super::common::script;
 use crate::script::UiScript;
@@ -57,7 +57,7 @@ fn play_head(s: &UiScript, name: &str, path: &str) -> Option<(u16, u32)> {
     m.play_head(facts).map(|p| (p.anim_id, p.cursor_ms))
 }
 
-/// `OnUpdate` (`0x76d7f0`) adds `trunc(elapsed · 1000)` ms, for visible frames only.
+/// `OnUpdate` adds `trunc(elapsed · 1000)` ms, for visible frames only.
 #[test]
 fn the_clock_runs_only_while_the_pane_is_shown_and_truncates() {
     let mut s = script();
@@ -71,7 +71,7 @@ fn the_clock_runs_only_while_the_pane_is_shown_and_truncates() {
     s.tick(0.5);
     assert_eq!(pane(&s, "Ping").clock_ms, 500);
     s.tick(0.0166); // 16.6 ms → 16, not 17
-    assert_eq!(pane(&s, "Ping").clock_ms, 516, "trunc, no +0.5 (76d854)");
+    assert_eq!(pane(&s, "Ping").clock_ms, 516, "trunc, no +0.5");
 
     s.run("Ping:Hide()").unwrap();
     s.tick(1.0);
@@ -94,8 +94,8 @@ fn the_clock_runs_only_while_the_pane_is_shown_and_truncates() {
     assert_eq!(play_head(&s, "Ping", PING_FILE), Some((0, 283)));
 }
 
-/// The loader's completion (`0x70ebd0`) arms Stand (id 0 if the file owns it, else
-/// `animations[0]`'s id), at `SetModel` when the facts are known or when they land.
+/// The loader's completion arms Stand (id 0 if the file owns it, else `animations[0]`'s id), at
+/// `SetModel` when the facts are known or when they land.
 #[test]
 fn set_model_seeds_stand_now_or_when_the_facts_land() {
     let mut s = script();
@@ -151,7 +151,7 @@ fn set_model_seeds_stand_now_or_when_the_facts_land() {
     assert_eq!(pane(&s, "Odd").armed.map(|a| a.anim_id), Some(204));
 }
 
-/// `0x7121a0` interrupts the track before its bounds check; a queued arm waits for the facts.
+/// The reference interrupts the track before its bounds check; a queued arm waits for the facts.
 #[test]
 fn an_unowned_id_stops_the_track_and_arms_nothing() {
     let mut s = script();
@@ -324,8 +324,8 @@ fn on_update_model_fires_per_visible_paint_with_this() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `0x719370` enqueues the completion before it tests the loop flag, so a loop's first pass fires
-/// `OnAnimFinished`; a pane with no file fails `0x76d24c`'s gate and never paints.
+/// The reference enqueues the completion before it tests the loop flag, so a loop's first pass
+/// fires `OnAnimFinished`; a pane with no file fails the reference's gate and never paints.
 #[test]
 fn a_loop_completes_once_and_a_fileless_pane_paints_nothing() {
     let mut s = script();
@@ -388,7 +388,7 @@ fn a_loop_completes_once_and_a_fileless_pane_paints_nothing() {
 fn a_size_less_pane_takes_its_files_rect_in_layout_units() {
     let mut s = script();
     s.set_screen_size(1024.0, 768.0);
-    // The map arrow's own box (`MinimapArrow.m2`, `0x76d080`/`0x76d0d0`): 0.0262 × 0.0263 units.
+    // The map arrow's own box (`MinimapArrow.m2`): 0.0262 × 0.0263 units.
     let arrow = |s: &mut UiScript| {
         s.set_model_facts(
             r"Interface\Minimap\MinimapArrow.mdx",
@@ -493,7 +493,7 @@ fn replace_icon_texture_lives_and_dies_with_the_instance() {
     );
 }
 
-/// A model pane's XML `scale=` is the model's scale (`0x76cac0`, `+0x3a0`), never the frame's.
+/// A model pane's XML `scale=` is the model's scale (`+0x3a0`), never the frame's.
 #[test]
 fn the_model_scale_attribute_is_the_models_own() {
     let mut s = script();

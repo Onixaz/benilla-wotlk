@@ -54,30 +54,30 @@ pub(crate) struct PetTempBar;
 pub(crate) struct PetBar {
     /// The last `SMSG_PET_SPELLS`, with `SMSG_PET_MODE` and local presses folded in.
     pub(crate) spells: PetSpells,
-    /// The pet's own cooldowns, the list at `0xcecb04`. Seeded from `SMSG_PET_SPELLS`, topped up
-    /// by `SMSG_SPELL_COOLDOWN` for the pet's guid, by the pet's own `SMSG_SPELL_GO` and by a
-    /// press's GCD. Each mutation but the seed fires the flush, off [`Cooldowns::generation`]
+    /// The pet's own cooldowns, the list. Seeded from `SMSG_PET_SPELLS`, topped up by
+    /// `SMSG_SPELL_COOLDOWN` for the pet's guid, by the pet's own `SMSG_SPELL_GO` and by a press's
+    /// GCD. Each mutation but the seed fires the flush, off [`Cooldowns::generation`]
     /// (`bar::fire_pet_cooldown_events`).
     pub(crate) cooldowns: Cooldowns,
-    /// The client's `[0xb714b0]`, a local latch: all of `IsPetAttackActive`, and the only thing
-    /// that lights Attack (`0x4bdf16`-`0x4bdf22`). Raised only for a possessed unit (`0x4bd420`),
-    /// so never on a hunter's bar; lowered by `PetStopAttack` (`0x4bd650`), a new pet (`0x4bc8ce`)
-    /// and the old-target clear (`0x493a18`). `PET_ATTACK_*` read the pet's flag `0x800` instead.
+    /// The client's attack latch, local: all of `IsPetAttackActive`, and the only thing that lights
+    /// Attack. Raised only for a possessed unit, so never on a hunter's bar; lowered by
+    /// `PetStopAttack`, a new pet and the old-target clear. `PET_ATTACK_*` read the pet's flag
+    /// `0x800` instead.
     pub(crate) attacking: bool,
-    /// `PET_BAR_UPDATE` signals, counted. Both state writes signal unconditionally (`0x4bc940`,
-    /// `0x4bc960`), and `OnClick`'s `SetChecked(0)` needs that repaint to relight a press on the
-    /// current mode, so the count is in the feed's dedup key. Wrapping: only a change is read.
+    /// `PET_BAR_UPDATE` signals, counted. Both state writes signal unconditionally, and `OnClick`'s
+    /// `SetChecked(0)` needs that repaint to relight a press on the current mode, so the count is
+    /// in the feed's dedup key. Wrapping: only a change is read.
     pub(crate) bar_signals: u32,
-    /// `[0xb714a8]`: the charm or possess expiry, the packet's duration past its arrival; `None`
-    /// when the duration is 0, as for a hunter's or warlock's own pet.
+    /// The charm or possess expiry, the packet's duration past its arrival; `None` when the
+    /// duration is 0, as for a hunter's or warlock's own pet.
     pub(crate) expires: Option<Instant>,
     /// The pet's pending cast, the spell a cast as the pet sent and its expiry: the per-caster
-    /// pending list `Spell_C_CastSpell` asks (`0x80d34b`), released by the pet's go or failure.
+    /// pending list the cast ladder asks (`0x80d34b`), released by the pet's go or failure.
     pub(crate) pending_cast: Option<(u32, Instant)>,
 }
 
 impl PetBar {
-    /// `PetHasActionBar()`: a nonzero cached guid, with no alive or control check (`0x4bdc20`).
+    /// `PetHasActionBar()`: a nonzero cached guid, with no alive or control check.
     pub(crate) fn has_bar(&self) -> bool {
         self.spells.pet_guid != 0
     }
@@ -150,8 +150,8 @@ impl Plugin for UiPetPlugin {
 }
 
 /// The unit behind [`PetBar`]'s cached guid, plus our own guid for the ownership tests the
-/// reference makes before trusting the pet's fields (`0x5ff780`, `0x612e33`), and the usability
-/// predicate every pet-bar verb the reference guards asks of them ([`PetUnit::usable_pet`]).
+/// reference makes before trusting the pet's fields, and the usability predicate every pet-bar verb
+/// the reference guards asks of them ([`PetUnit::usable_pet`]).
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct PetUnit<'w, 's> {
     index: Res<'w, GuidIndex>,
@@ -174,7 +174,7 @@ impl PetUnit<'_, '_> {
     }
 
     /// The active player's descriptor, `None` while its object is not streamed: the lookup the
-    /// usability predicate makes on the client's player guid (`0x4bcf89`, typemask `0x10`).
+    /// usability predicate makes on the client's player guid (typemask `0x10`).
     pub(crate) fn player_store(&self) -> Option<&ObjectStore> {
         self.store(self.self_guid.0?)
     }

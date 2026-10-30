@@ -1,4 +1,4 @@
-//! The above-water liquid ambient loop, as 12340's `SI2::HandleWaterSounds` (`0x4d2390`) plays it:
+//! The above-water liquid ambient loop, as 12340's water-sound pass (`0x4d2390`) plays it:
 //! one 3D loop at the horizontally nearest liquid within 60 yd of the player, the kit its
 //! `LiquidType` row names. A type flagged `0x80` is skipped while the player is inside. The query
 //! runs at most every 500 ms and only once the player has moved (`0x4d2230`); a same-kit liquid

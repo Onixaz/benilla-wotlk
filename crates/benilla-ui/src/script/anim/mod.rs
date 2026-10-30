@@ -1,9 +1,9 @@
-//! The animation system: `AnimationGroup` (`CSimpleAnimGroup`, methods `0xac1ab8`) and its
-//! `Animation`s (`CSimpleAnim` `0xac18e0`; `Alpha` `0xac1aa0`, `Translation` `0xac19dc`,
-//! `Rotation` `0xac19f0`, `Scale` `0xac1a24`, `Path` `0xac1a48`), owned by a frame or a region.
-//! A group plays its animations order by order (`m_animLists`), each one through its start
-//! delay, duration and end delay, and ticks in its owner frame's layer update (`0x490770`) while
-//! the frame is shown. The state machine is the reference's; [`lua`] is its Lua face.
+//! The animation system: `AnimationGroup` (methods `0xac1ab8`) and its `Animation`s (`0xac18e0`;
+//! `Alpha` `0xac1aa0`, `Translation` `0xac19dc`, `Rotation` `0xac19f0`, `Scale` `0xac1a24`, `Path`
+//! `0xac1a48`), owned by a frame or a region. A group plays its animations order by order, each one
+//! through its start delay, duration and end delay, and ticks in its owner frame's layer update
+//! (`0x490770`) while the frame is shown. The state machine is the reference's; [`lua`] is its Lua
+//! face.
 //!
 //! Alpha and Translation draw: an alpha animation adds to the owner's alpha byte from the value
 //! saved when the first alpha group began (`0x48f8e0`, `0x487ce0`), restored each tick
@@ -46,7 +46,7 @@ pub(crate) enum Owner {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Kind {
     Plain,
-    /// `m_change`, the alpha step in bytes, `change × 255` truncated (`0x4982e0`).
+    /// The alpha step in bytes, `change × 255` truncated (`0x4982e0`).
     Alpha(i16),
     /// The offset in UI units.
     Translation(f32, f32),
@@ -103,9 +103,9 @@ impl Kind {
 pub(crate) struct Group {
     pub(crate) owner: Owner,
     pub(crate) name: Option<String>,
-    /// Every animation, in link order (`m_animations`).
+    /// Every animation, in link order.
     pub(crate) anims: Vec<u32>,
-    /// The animations by order, ascending (`m_animLists`).
+    /// The animations by order, ascending.
     lists: Vec<Vec<u32>>,
     pub(crate) flags: u16,
     pub(crate) loop_type: u8,
@@ -140,8 +140,7 @@ pub(crate) struct Anim {
     pub(crate) smoothing: Option<(f32, f32)>,
 }
 
-/// An owner's playing list and its saved alpha (`m_playingAnimGroups`, `m_animAlpha`,
-/// `m_animSavedAlpha`).
+/// An owner's playing groups, its animated alpha and its saved alpha.
 #[derive(Clone, Debug, Default)]
 struct OwnerState {
     groups: Vec<u32>,
@@ -167,7 +166,7 @@ impl AnimStore {
         self.next
     }
 
-    /// `CSimpleAnimGroup` ctor (`0x499eb0`), registered on its owner.
+    /// The group constructor (`0x499eb0`), registered on its owner.
     pub(crate) fn new_group(&mut self, owner: Owner, name: Option<String>) -> u32 {
         let id = self.id();
         self.groups.insert(
@@ -191,7 +190,8 @@ impl AnimStore {
         id
     }
 
-    /// `CSimpleAnim` ctor (`0x499bb0`), linked to its group's tail, not yet in an order list.
+    /// The animation constructor (`0x499bb0`), linked to its group's tail, not yet in an order
+    /// list.
     pub(crate) fn new_anim(&mut self, group: u32, kind: Kind, name: Option<String>) -> u32 {
         let id = self.id();
         self.anims.insert(
@@ -262,7 +262,7 @@ impl AnimStore {
         g.progress >= 1.0
     }
 
-    /// `GetMaxAnimOrder` (`0x498a40`), -1 with none.
+    /// The highest animation order (`0x498a40`), -1 with none.
     pub(crate) fn max_order(&self, g: u32) -> i32 {
         self.group(g)
             .and_then(|g| g.lists.last())
@@ -271,7 +271,7 @@ impl AnimStore {
             .map_or(-1, |a| a.order)
     }
 
-    /// `ComputeDuration` (`0x49ac80`): the longest delay-padded animation of each order, summed.
+    /// The duration compute (`0x49ac80`): the longest delay-padded animation of each order, summed.
     fn compute_duration(&mut self, g: u32) {
         let Some(group) = self.groups.get(&g) else {
             return;
@@ -291,8 +291,8 @@ impl AnimStore {
         }
     }
 
-    /// `RegisterAnimList` + `AddAnimListNode` (`0x499a20`, `0x49a580`): into its order's list,
-    /// a new list inserted in order.
+    /// The order-list register and node add (`0x499a20`, `0x49a580`): into its order's list, a new
+    /// list inserted in order.
     fn add_to_list(&mut self, g: u32, a: u32) {
         let order = self.anims.get(&a).map_or(-1, |a| a.order);
         if order == -1 {
@@ -321,14 +321,14 @@ impl AnimStore {
         }
     }
 
-    /// `NotifyAnimAdded` (`0x49acf0`).
+    /// The animation-added notice (`0x49acf0`).
     pub(crate) fn notify_added(&mut self, g: u32, a: u32) {
         self.add_to_list(g, a);
         self.compute_duration(g);
     }
 
-    /// `NotifyOrderChanged` (`0x49ad30`): out of its old list into its new one. True when the old
-    /// list emptied, which `RemoveAnimListNode` (`0x49b7b0`) answers with a full re-sort, the
+    /// The order-changed notice (`0x49ad30`): out of its old list into its new one. True when the
+    /// old list emptied, which the node removal (`0x49b7b0`) answers with a full re-sort, the
     /// caller's to run since it stops the group.
     pub(crate) fn relist(&mut self, g: u32, a: u32) -> bool {
         let emptied = {
@@ -354,7 +354,7 @@ impl AnimStore {
         self.compute_duration(g);
     }
 
-    /// `SortAnimations`' list rebuild (`0x49b1c0`), after its stop: unordered animations take
+    /// The animation sort's list rebuild (`0x49b1c0`), after its stop: unordered animations take
     /// the order after the previous one's.
     pub(crate) fn sort(&mut self, g: u32) {
         let anims = self.group(g).map(|g| g.anims.clone()).unwrap_or_default();
@@ -401,7 +401,7 @@ impl AnimStore {
     }
 }
 
-/// `CSimpleAnimSCurveSmoother::GetSmoothProgress` (`0x497ba0`).
+/// The S-curve smoother's progress (`0x497ba0`).
 fn smooth(weights: (f32, f32), p: f32) -> f32 {
     let (i, o) = (weights.0.abs() >= 0.001, weights.1.abs() >= 0.001);
     match (i, o) {
@@ -412,7 +412,7 @@ fn smooth(weights: (f32, f32), p: f32) -> f32 {
     }
 }
 
-/// `CSimpleAnim::UpdateProgress` (`0x4985f0`): the time consumed.
+/// The animation's progress update (`0x4985f0`): the time consumed.
 fn update_progress(a: &mut Anim, elapsed: f32) -> f32 {
     let prev = a.elapsed;
     a.elapsed += elapsed;
@@ -489,7 +489,7 @@ pub(crate) fn set_smoothing(a: &mut Anim, w: (f32, f32)) {
     }
 }
 
-/// `s_smoothWeights` (`0x815240`, `0x815590`).
+/// The smoothing weights table (`0x815240`, `0x815590`).
 pub(crate) const SMOOTHING: [(&str, f32, f32); 5] = [
     ("NONE", 0.0, 0.0),
     ("IN", 1.0, 0.0),

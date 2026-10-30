@@ -99,7 +99,7 @@ pub fn m2seq(chain: &mut Chain, internal_path: &str) -> Result<()> {
             if s.looping { "loop " } else { "clamp" },
             s.duration,
             // `mspd`: the authored move speed (yd/s) dividing the locomotion rate,
-            // `speed / (mspd · |modelScale|)` (`0x5fe2f0` at 0x5fe4be..0x5fe550); 0 plays at 1×.
+            // `speed / (mspd · |modelScale|)`; 0 plays at 1×.
             s.move_speed,
             // `blend`: the blend-in time (s) the client cross-fades over on a blended arm (op4
             // `blendFlag != 0`, the `+0x98 -> +0xc4` snapshot decayed over `1/blendTime`); 0 cuts.
@@ -196,8 +196,7 @@ fn print_m2anim_summary(s: &M2AnimSummary, bytes: &benilla_m2::M2Model) {
             }
         );
         let Some(d) = defs.get(i) else { continue };
-        // A burst emitter fires one `ftol(rate)` puff at its rate edge and never pours
-        // (`0x718ec8` → `0x7b5550`).
+        // A burst emitter fires one `ftol(rate)` puff at its rate edge and never pours.
         let burst = if d.burst() { "BURST " } else { "" };
         let views = d.timing.slot_views();
         let rate = match d.timing.constant_rate() {
@@ -284,15 +283,15 @@ fn print_m2anim_summary(s: &M2AnimSummary, bytes: &benilla_m2::M2Model) {
                 }
             }
         }
-        // The kernel spread (`0x7b8d70`, `0x7b8890`): a sphere's ranges are latitude and longitude
-        // about +X, its area the shell radii; a plane's a cone about +Z, its area the rectangle.
+        // The kernel spread: a sphere's ranges are latitude and longitude about +X, its area the
+        // shell radii; a plane's a cone about +Z, its area the rectangle.
         let spread = match d.shape {
             benilla_formats::ParticleShape::Sphere => format!(
                 "radius [{:.2}..{:.2}] lat ±{:.2} lon ±{:.2}",
                 now.area_length, now.area_width, now.vertical_range, now.horizontal_range
             ),
-            // A spline repurposes them (loader `0x70fa5e`-`0x70fae5`): area is tMin/tMax, vRange
-            // the tangent spin, hRange the scatter.
+            // A spline repurposes them: area is tMin/tMax, vRange the tangent spin, hRange the
+            // scatter.
             benilla_formats::ParticleShape::Spline => match &d.spline {
                 Some(s) => format!(
                     "spline {} pts [{:.2} {:.2} {:.2} ..], t [{:.2}..{:.2}] spin ±{:.2} scatter {:.2}",
@@ -323,8 +322,8 @@ fn print_m2anim_summary(s: &M2AnimSummary, bytes: &benilla_m2::M2Model) {
         if let Some(r) = &d.recursion_model {
             println!("             CHILD-EMITTERS: {r}");
         }
-        // The emitter-motion terms (`0x7b5230`): the follow-delta response's (speed, fraction)
-        // samples and the velocity-inherit scale.
+        // The emitter-motion terms: the follow-delta response's (speed, fraction) samples and the
+        // velocity-inherit scale.
         let motion = match (d.follow_emitter(), d.inherits_emitter_motion()) {
             (false, false) => String::new(),
             (f, i) => {
@@ -773,7 +772,7 @@ pub fn m2batch(chain: &mut Chain, internal_path: &str) -> Result<()> {
             // `mat` indexes the materials above, `color` the colour-alpha tracks (`ffff` for none)
             // and `weight` `transLookup`. The reference skips a batch whose
             // `A = instanceAlpha × colors[color].alpha × transparency[transLookup[weight]].weight`
-            // is 0 or less (`0x707680`).
+            // is 0 or less.
             println!("skin batches ({}):", skin.batches().len());
             for (i, b) in skin.batches().iter().enumerate() {
                 let w = m
@@ -900,9 +899,9 @@ pub fn m2batch(chain: &mut Chain, internal_path: &str) -> Result<()> {
     Ok(())
 }
 
-/// A track's `(lo, hi, held)` over sequence `seq_idx`'s band, by the reference's key search
-/// (`0x713d50`): the window is `ranges[seq_idx]`, and a collapsed window (`lo >= hi`) holds
-/// `keys[lo]`, so `held` means the band keys nothing.
+/// A track's `(lo, hi, held)` over sequence `seq_idx`'s band, by the reference's key search: the
+/// window is `ranges[seq_idx]`, and a collapsed window (`lo >= hi`) holds `keys[lo]`, so `held`
+/// means the band keys nothing.
 fn band_span(
     track: &benilla_m2::M2ScalarTrack,
     seq_idx: usize,
@@ -931,8 +930,8 @@ fn band_span(
 }
 
 /// Dump an M2's per-sequence material alpha: every colour-alpha and transparency track, then each
-/// batch's `colour.alpha × transparency.weight` (the reference's combine, `0x707680`) per sequence
-/// band. The reference skips a batch whose factor is 0 or less in that animation.
+/// batch's `colour.alpha × transparency.weight` (the reference's combine) per sequence band. The
+/// reference skips a batch whose factor is 0 or less in that animation.
 pub fn m2alpha(chain: &mut Chain, internal_path: &str) -> Result<()> {
     let name = normalize(internal_path);
     let data = benilla_formats::read_m2(chain, &name)
@@ -1041,7 +1040,7 @@ pub fn m2alpha(chain: &mut Chain, internal_path: &str) -> Result<()> {
     }
     println!(
         "\n* = the band keys nothing: the value is `keys[ranges[seq].lo]`, the bracket the \
-         reference's collapsed key window holds (`0x713d50`)"
+         reference's collapsed key window holds"
     );
 
     // Our bake per render batch (a billboard batch may split per bone, lengthening the list);
@@ -1085,18 +1084,18 @@ pub fn m2alpha(chain: &mut Chain, internal_path: &str) -> Result<()> {
 /// An emitter's file flags as the mechanisms the runtime keys off, plus any unmapped bits.
 fn part_flags(flags: u32) -> String {
     const NAMED: [(u32, &str); 14] = [
-        // 0x1 is unlit, not lit (`0x70bb00`): an emitter without it takes the scene's light.
+        // 0x1 is unlit, not lit: an emitter without it takes the scene's light.
         (0x0001, "unlit"),
-        // Runtime `rt+0x1ac` bit 0x10 (loader `0x70fd13` → `0x7b5d00`): the reference heap-sorts
-        // live particles back to front before the quad writer (`0x7b3a10`); we draw pool order.
+        // Runtime `rt+0x1ac` bit 0x10: the reference heap-sorts live particles back to front before
+        // the quad writer; we draw pool order.
         (0x0002, "depthSortParticles(TODO)"),
-        // File 0x8 sets `rt+0x194` bit 1 = NOT(0x8) (loader `0x70fd01`), the vertex-format word,
-        // not the ride switch; bit 1's reader is untraced, and bit 0 (file 0x1) picks a 4- or
-        // 8-word vertex stride. Half the corpus authors 0x8.
+        // File 0x8 sets `rt+0x194` bit 1 = NOT(0x8), the vertex-format word, not the ride switch;
+        // bit 1's reader is untraced, and bit 0 (file 0x1) picks a 4- or 8-word vertex stride. Half
+        // the corpus authors 0x8.
         (0x0008, "vertexFormat(rt+0x194 b1, reader unread)"),
-        // The ride-or-trail switch (spawn `0x7b8a9a`, draw `0x7b3e6f`): set keeps particles
-        // emitter-local, riding the live emitter; clear bakes birth into world space, so a moving
-        // host lays a trail `speed × lifetime` long.
+        // The ride-or-trail switch: set keeps particles emitter-local, riding the live emitter;
+        // clear bakes birth into world space, so a moving host lays a trail `speed × lifetime`
+        // long.
         (0x0010, "modelSpace(ride)"),
         (0x0020, "sizeByInstanceScale"),
         (0x0040, "inheritEmitterMotion"),

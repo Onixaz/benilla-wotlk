@@ -1,10 +1,10 @@
 //! The V-plate frame border, resampled sharp.
 //!
 //! Deviation: the reference magnifies the 128 × 32 `Interface\Tooltips\Nameplate-Border` art with
-//! `GL_LINEAR` (`0x770200`, filter `[0x878cf0]` = 1), smearing its 1 px bevel once the plate is
-//! larger than native; we resample the same pixels to the plate's physical size with sharp
-//! bilinear and draw it 1:1, because the chosen look is the same art with a crisp bevel.
-//! [`super::drive_vplates`] regenerates it when the physical size changes.
+//! `GL_LINEAR` (filter1), smearing its 1 px bevel once the plate is larger than native; we resample
+//! the same pixels to the plate's physical size with sharp bilinear and draw it 1:1, because the
+//! chosen look is the same art with a crisp bevel. [`super::drive_vplates`] regenerates it when the
+//! physical size changes.
 
 /// Resample `src` (an `sw × sh` sRGB RGBA8 image) to `dw × dh` with sharp bilinear, premultiplied
 /// so alpha edges do not fringe dark. Magnifying squeezes each texel boundary to about one output

@@ -1,8 +1,7 @@
 //! `ItemBagFamily.dbc`: what a specialised bag accepts ("Arrows", "Soul Shards", "Keys", …), the
 //! `%s` of inventory error reason 16, `ERR_WRONG_BAG_TYPE_SUBCLASS`. Despite that name the
-//! reference (`0x5ede00`) keys the row by the bag's `BagFamily`, not its subclass, through
-//! `0x5da050` into `[0xc0dc38]`. 5875's ids skipped 4 and 5, so this is keyed, never indexed;
-//! 12340 ships 0 to 15.
+//! reference keys the row by the bag's `BagFamily`, not its subclass. 5875's ids skipped 4 and 5,
+//! so this is keyed, never indexed; 12340 ships 0 to 15.
 
 use std::collections::HashMap;
 

@@ -34,9 +34,9 @@ pub(crate) struct TradeSession {
     partner: Option<u64>,
     /// An unanswered incoming `BEGIN_TRADE`, the initiator's guid; not yet a trade.
     request: Option<u64>,
-    /// Our `CMSG_INITIATE_TRADE` is live: the reference's `[0xc4bec8]`, set only as it goes out
-    /// (`0x5d4021`) and cleared by the status handler's tail (`0x5d4931`), which codes 1, 2, 4,
-    /// 7, 9 and 22 skip, so it survives `OPEN_WINDOW` for the life of a trade we opened.
+    /// Our `CMSG_INITIATE_TRADE` is live: the reference's initiate latch, set only as it goes out
+    /// and cleared by the status handler's tail, which codes 1, 2, 4, 7, 9 and 22 skip, so it
+    /// survives `OPEN_WINDOW` for the life of a trade we opened.
     initiated: bool,
     /// `OPEN_WINDOW` arrived; `partner` is set before it.
     open: bool,
@@ -52,12 +52,11 @@ pub(crate) struct TradeSession {
     our_accept: bool,
     /// The partner pressed Trade (`TRADE_ACCEPT`).
     their_accept: bool,
-    /// A `TRADE_REQUEST_CANCEL` owed to [`feed_trade`]. `CANCELED` signals it (`0x4bf832`)
-    /// before it clears the window (`0x4bf842`), so it survives [`Self::close_window`].
+    /// A `TRADE_REQUEST_CANCEL` owed to [`feed_trade`]. `CANCELED` signals it before it clears the
+    /// window, so it survives [`Self::close_window`].
     request_cancel: bool,
     /// Owed lines whose `%s` names a player, parked until [`NameCache`] answers. The reference
-    /// prints `ERR_INITIATE_TRADE_S` from its name cache in the sender (`0x5d4031`: `0x5d4042` on
-    /// a hit, the query callback `0x5d4080` at `0x5d40ca` on a miss); the lines survive
+    /// prints `ERR_INITIATE_TRADE_S` from its name cache in the sender; the lines survive
     /// [`Self::close_window`], since that callback hangs off the name query, not the trade.
     named_lines: Vec<NamedLine>,
 }
@@ -79,9 +78,9 @@ pub(crate) struct NamedLine {
     pub(crate) key: &'static str,
     /// Whose name fills the `%s`.
     pub(crate) who: u64,
-    /// Print only while the player is streamed: the status arms read the live `CGUnit`
-    /// (`0x609210`) after `0x468460(guid, TYPEMASK_PLAYER)`, while `ERR_INITIATE_TRADE_S` goes
-    /// through the name cache `0x55f080` with no object test.
+    /// Print only while the player is streamed: the status arms read the live unit after an object
+    /// lookup of `(guid, TYPEMASK_PLAYER)`, while `ERR_INITIATE_TRADE_S` goes through the name
+    /// cache with no object test.
     pub(crate) needs_live_object: bool,
 }
 
@@ -164,7 +163,7 @@ impl TradeSession {
         self.own_state += 1;
     }
 
-    /// The partner offer state our `CMSG_ACCEPT_TRADE` carries (`0x703f50`).
+    /// The partner offer state our `CMSG_ACCEPT_TRADE` carries.
     pub(crate) fn their_state(&self) -> u32 {
         self.their_state
     }
@@ -221,8 +220,8 @@ impl TradeSession {
         self.our_accept = true;
     }
 
-    /// Our accept flag, the reference's `[0xb71730]`, which `0x4bf230` reads before it changes it
-    /// or sends `CMSG_UNACCEPT_TRADE`.
+    /// Our accept flag, as the reference keeps it: its unaccept reads the flag before it changes
+    /// it or sends `CMSG_UNACCEPT_TRADE`.
     pub(crate) fn we_accepted(&self) -> bool {
         self.our_accept
     }
@@ -232,8 +231,7 @@ impl TradeSession {
         self.our_accept = false;
     }
 
-    /// Owe `TRADE_REQUEST_CANCEL`, the one Lua event the status dispatcher fires (`0x4bf832`, the
-    /// sole `SignalEvent` in `[0x4bf720, 0x4bfa08)`).
+    /// Owe `TRADE_REQUEST_CANCEL`, the one Lua event the status dispatcher fires.
     pub(crate) fn signal_request_cancel(&mut self) {
         self.request_cancel = true;
     }
@@ -252,18 +250,18 @@ impl TradeSession {
         std::mem::take(&mut self.named_lines)
     }
 
-    /// The name a `%s` status line carries, or `None` when the reference prints nothing: cases 0,
-    /// 5 and 14 read the guid cell `[0xc4bed0]` under the latch `[0xc4bec8]`, both of which
-    /// `InitiateTrade` (`0x5d3fb0`) sets, while the `BEGIN_TRADE` arm (`0x5d4815`) fills only the
-    /// cell. So a refuser stays silent when vmangos echoes `IGNORE_YOU` to both sides
-    /// (`TradeHandler.cpp:46`). The live-object guard rides [`NamedLine::needs_live_object`].
+    /// The name a `%s` status line carries, or `None` when the reference prints nothing: cases 0, 5
+    /// and 14 read the guid cell under the latch, both of which `InitiateTrade` sets, while the
+    /// `BEGIN_TRADE` arm fills only the cell. So a refuser stays silent when vmangos echoes
+    /// `IGNORE_YOU` to both sides (`TradeHandler.cpp:46`). The live-object guard rides
+    /// [`NamedLine::needs_live_object`].
     pub(crate) fn line_names(&self) -> Option<u64> {
         self.initiated.then_some(self.partner).flatten()
     }
 
-    /// Close the window, the reference's `SetTradePartner(0, 0)` (`0x4bf4e0`), from `CANCELED`,
-    /// `COMPLETE`, `CLOSE_WINDOW` or the local `CloseTrade` (`0x4bfdc0`): a full reset, a superset
-    /// of [`Self::clear_pending`], keeping the two signals the reference raises before it,
+    /// Close the window, the reference's trade-partner reset to `(0, 0)`, from `CANCELED`,
+    /// `COMPLETE`, `CLOSE_WINDOW` or the local `CloseTrade`: a full reset, a superset of
+    /// [`Self::clear_pending`], keeping the two signals the reference raises before it,
     /// [`Self::request_cancel`] and [`Self::named_lines`].
     pub(crate) fn close_window(&mut self) {
         *self = TradeSession {
@@ -273,10 +271,10 @@ impl TradeSession {
         };
     }
 
-    /// The status handler's tail (`0x5d490a`): clear the initiate latch `[0xc4bec8]` and the
-    /// pending guid `[0xc4bed0]`, on every code but 1, 2, 4, 7, 9 and 22, after the arm has read
-    /// them. It never touches the window. `partner` stands for the pending guid only while the
-    /// window is shut; once open it is the window partner `[0xb71728]`, which stays.
+    /// The status handler's tail: clear the initiate latch and the pending guid, on every code but
+    /// 1, 2, 4, 7, 9 and 22, after the arm has read them. It never touches the window. `partner`
+    /// stands for the pending guid only while the window is shut; once open it is the window
+    /// partner, which stays.
     pub(crate) fn clear_pending(&mut self) {
         self.initiated = false;
         self.request = None;
@@ -285,8 +283,8 @@ impl TradeSession {
         }
     }
 
-    /// `TRADE_REJECTED` (case 9, `0x4bf821`): drop the partner's accept and nothing else; vmangos
-    /// never sends it.
+    /// `TRADE_REJECTED` (case 9): drop the partner's accept and nothing else; vmangos never sends
+    /// it.
     pub(crate) fn partner_unaccepted(&mut self) {
         self.their_accept = false;
     }
@@ -384,8 +382,8 @@ impl Plugin for UiTradePlugin {
 #[derive(Resource, Default)]
 pub(crate) struct BlockTrades(pub(crate) bool);
 
-/// `0x468460(guid, TYPEMASK_PLAYER)`: the guid's live object, `None` when it is not a streamed
-/// player. Asked by the ladder's leg 3 (`0x4bf779`) and by the `%s` lines' second guard.
+/// The object lookup of `(guid, TYPEMASK_PLAYER)`: the guid's live object, `None` when it is not a
+/// streamed player. Asked by the ladder's leg 3 and by the `%s` lines' second guard.
 fn streamed_player<'a>(
     index: &GuidIndex,
     stores: &'a Query<&ObjectStore>,
@@ -397,10 +395,9 @@ fn streamed_player<'a>(
     index.0.get(&guid).and_then(|e| stores.get(*e).ok())
 }
 
-/// Answer an incoming trade request with the reference's eight-leg ladder (`0x4bf736`, case 1 of
-/// `0x4bf720`, over `[0x4bf736, 0x4bf7f8)`); only leg 8 prints, so the order is behaviour. A
-/// system, not a packet handler, because leg 8 may wait on a name query. There is no consent
-/// step: 1.12 registers `TRADE_REQUEST` (event `0x11d`, slot `0xbe160c`) and never signals it,
+/// Answer an incoming trade request with the reference's eight-leg ladder; only leg 8 prints, so
+/// the order is behaviour. A system, not a packet handler, because leg 8 may wait on a name query.
+/// There is no consent step: 1.12 registers `TRADE_REQUEST` (event `0x11d`) and never signals it,
 /// so the stock `TRADE` popup never shows and a request that passes opens the window unasked.
 fn answer_trade_request(
     mut trade: ResMut<TradeSession>,
@@ -419,9 +416,9 @@ fn answer_trade_request(
         return;
     };
 
-    // Legs 1 and 3 send nothing: our own initiate is live (`[0xc4bec8]`), or the initiator is no
-    // streamed player. Leg 3 is asked before leg 2 here, while the reference asks the ignore list
-    // first (`0x4bf759` precedes `0x4bf779`); the two differ for an ignored, unstreamed initiator.
+    // Legs 1 and 3 send nothing: our own initiate is live, or the initiator is no streamed player.
+    // Leg 3 is asked before leg 2 here, while the reference asks the ignore list first; the two
+    // differ for an ignored, unstreamed initiator.
     let initiator_store = streamed_player(&index, &stores, initiator);
     if trade.initiated || initiator_store.is_none() {
         info!(
@@ -435,8 +432,8 @@ fn answer_trade_request(
         return;
     }
 
-    // Leg 2, the ignore list (`0x5ae5a0`): `CMSG_IGNORE_TRADE` (`0x4bf759` → `0x5d41c0`), read by
-    // the initiator as "is ignoring you"; vmangos has no such check (`TradeHandler.cpp:567`).
+    // Leg 2, the ignore list: `CMSG_IGNORE_TRADE`, read by the initiator as "is ignoring you";
+    // vmangos has no such check (`TradeHandler.cpp:567`).
     if social.is_ignored(initiator) {
         info!(target: "trade", "BEGIN_TRADE from an ignored {initiator:#x}; sending CMSG_IGNORE_TRADE");
         let _ = commands.0.send(ClientCommand::IgnoreTrade);
@@ -444,10 +441,9 @@ fn answer_trade_request(
         return;
     }
 
-    // Legs 4-7, a silent busy: a dead or ghost initiator (`0x605f30`; `unit_reads_dead`, like
-    // `UnitIsDead` `0x517ac0`, would refuse a feigning hunter), a cinematic (`[0xb4e310]`), lost
-    // player control (`[0xb4b3e4]`, which `0x4958e0` writes, not an in-world flag) or an open
-    // auction house (`[0xb725f8]`, its auctioneer, not a pending trade).
+    // Legs 4-7, a silent busy: a dead or ghost initiator (`unit_reads_dead`, like `UnitIsDead`,
+    // would refuse a feigning hunter), a cinematic, lost player control (not an in-world flag) or
+    // an open auction house (its auctioneer, not a pending trade).
     let dead_or_ghost = initiator_store.is_some_and(|s| s.0.is_dead_or_ghost());
     if dead_or_ghost
         || cinematic.is_playing()
@@ -461,8 +457,8 @@ fn answer_trade_request(
     }
 
     // Leg 8, Block Trades, the one leg that names the initiator. The reference reads the live
-    // `CGUnit` (`0x609210`); this may wait on a name query, with no timer, since vmangos cancels
-    // the trade to us when the initiator leaves (`Player.cpp:11747`), which clears the request.
+    // unit; this may wait on a name query, with no timer, since vmangos cancels the trade to us
+    // when the initiator leaves (`Player.cpp:11747`), which clears the request.
     if block_trades.0 {
         let Some(name) = names.resolve(initiator, &commands).map(str::to_string) else {
             return;
@@ -470,7 +466,7 @@ fn answer_trade_request(
         info!(target: "trade", "BEGIN_TRADE from {name} refused by BlockTrades; sending CMSG_BUSY_TRADE");
         let _ = commands.0.send(ClientCommand::BusyTrade);
         trade.refuse_request();
-        // `0x496720(0xbb, name)`: one `DisplayError`; catalog row `0xbb` makes it a chat line.
+        // One error raise of `(0xbb, name)`; catalog row `0xbb` makes it a chat line.
         errors
             .0
             .push(crate::ui_action::UiError::s("ERR_TRADE_BLOCKED_S", name));
@@ -616,9 +612,8 @@ fn feed_trade(
     if changed {
         script.set_trade(fresh.clone());
     }
-    // The per-slot events the stock `TradeFrame.lua` repaints one slot on, arg1 the 1-based slot
-    // (`0x4bf414`/`0x4bf452` target, `0x4bf487`/`0x4bfaef` player); the reference also fires the
-    // full `TRADE_UPDATE` (`0x4c034f`).
+    // The per-slot events the stock `TradeFrame.lua` repaints one slot on, arg1 the 1-based slot;
+    // the reference also fires the full `TRADE_UPDATE`.
     if changed && trade.is_open() && !opened {
         let empty = TradeState::default();
         let old = last.as_ref().unwrap_or(&empty);
@@ -653,15 +648,15 @@ fn feed_trade(
             None => trade.owe_named_line(line),
         }
     }
-    // `TRADE_REQUEST_CANCEL`, ahead of the `TRADE_CLOSED` the same arm fires: `0x4bf832` signals,
-    // then `0x4bf842` calls `0x4bf4e0`, which fires `TRADE_CLOSED` at `0x4bf522`. Stock
-    // `UIParent.lua:395` only hides the never-shown `TRADE` popup on it; addons may listen.
+    // `TRADE_REQUEST_CANCEL`, ahead of the `TRADE_CLOSED` the same arm fires: the reference
+    // signals, then closes the window, which fires `TRADE_CLOSED`. Stock `UIParent.lua:395` only
+    // hides the never-shown `TRADE` popup on it; addons may listen.
     if trade.take_request_cancel() {
         script.fire_event("TRADE_REQUEST_CANCEL", vec![]);
     }
     if opened {
-        // `SetTradePartner`'s open leg (`0x4bf4e0`): coins held on the cursor fold into the offer
-        // first and fire the two money events locally; the send goes out with the money intent.
+        // The trade-partner set's open leg: coins held on the cursor fold into the offer first and
+        // fire the two money events locally; the send goes out with the money intent.
         if let Some(offer) = script.fold_cursor_money_into_trade() {
             trade.set_own_gold(offer);
             script.fire_event("PLAYER_TRADE_MONEY", vec![]);
@@ -699,8 +694,8 @@ fn feed_trade(
     }
     *last_player_gold = if trade.is_open() { player_gold } else { 0 };
     // The partner's gold: `TRADE_MONEY_CHANGED`, which the `TARGET_TRADE` money frame repaints on
-    // (`MoneyFrame.lua:133`). The reference fires it at `0x4bf4d6`, beside `PLAYER_TRADE_MONEY` at
-    // `0x4bf4ab`; which side each reports is inferred from `MoneyFrame.lua`, not traced.
+    // (`MoneyFrame.lua:133`). The reference fires it, beside `PLAYER_TRADE_MONEY`; which side each
+    // reports is inferred from `MoneyFrame.lua`, not traced.
     let their_gold = trade.their.gold;
     if trade.is_open() && their_gold != *last_their_gold {
         script.fire_event("TRADE_MONEY_CHANGED", vec![]);
@@ -818,7 +813,7 @@ fn drain_trade(
     }
 }
 
-/// The coinage-change reflex (`0x5ddf30`): an offer above the purse is trimmed to the purse.
+/// The coinage-change reflex: an offer above the purse is trimmed to the purse.
 fn trimmed_offer(offer: u32, purse: u32) -> Option<u32> {
     (offer > purse).then_some(purse)
 }
@@ -1347,7 +1342,7 @@ mod tests {
                 "ERR_TRADE_BLOCKED_S",
                 "Grubbis".to_string()
             )],
-            "the refusal raises the reference's own `0x496720(0xbb, name)`"
+            "the refusal raises the reference's own error `(0xbb, name)`"
         );
         assert_eq!(
             benilla_ui::messages::kind_of("ERR_TRADE_BLOCKED_S"),

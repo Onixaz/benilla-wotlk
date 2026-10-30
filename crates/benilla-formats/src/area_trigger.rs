@@ -32,10 +32,9 @@ pub struct AreaTriggerRow {
 impl AreaTriggerRow {
     /// Whether `p` is inside, as the reference's `0x6ce140` tests it. A sphere is a plain 3D
     /// distance check, inclusive (`radius² >= Σ(centre − p)²`); a box carries `p` into its frame
-    /// through the inverse of its placement (`0x4c1b30` translate, `0x4c3380` rotate by
-    /// `box_yaw`, `0x4c2fc0` inverse), strict against half of `box_size` on all six faces
-    /// (`0x6cb930`). The server re-tests with no slop but an inn's 5 yd (AzerothCore
-    /// `Handlers/MiscHandler.cpp:754`).
+    /// through the inverse of its placement (`0x4c1b30` translate, `0x4c3380` rotate by `box_yaw`,
+    /// `0x4c2fc0` inverse), strict against half of `box_size` on all six faces. The server re-tests
+    /// with no slop but an inn's 5 yd (AzerothCore `Handlers/MiscHandler.cpp:754`).
     pub fn contains(&self, p: [f32; 3]) -> bool {
         if self.radius != 0.0 {
             let d = [

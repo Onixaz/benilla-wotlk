@@ -51,8 +51,8 @@ fn a_modelless_head_display_is_not_a_worn_helm() {
         .count();
     assert_eq!((masked, masked_modelless), (1314, 12));
 
-    // The reference gates on `ModelName[0]` alone (`0x4799c1`); the 41 rows that fill only the
-    // right slot carry no vis pair.
+    // The reference gates on `ModelName[0]` alone; the 41 rows that fill only the right slot carry
+    // no vis pair.
     let right_only = items
         .iter()
         .filter(|(_, d)| d.model[0].is_none() && d.model[1].is_some())

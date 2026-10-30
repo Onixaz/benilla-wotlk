@@ -5,7 +5,7 @@
 
 use mlua::{Lua, Value};
 
-/// The tokens by record index, `MirrorTimerTypeToken` (`0x513e00`); an empty record is `"UNKNOWN"`.
+/// The tokens by record index, the type-to-token map (`0x513e00`); an empty record is `"UNKNOWN"`.
 pub const MIRROR_TIMER_TOKENS: [&str; 3] = ["EXHAUSTION", "BREATH", "FEIGNDEATH"];
 
 /// One running timer, a 0x1c-byte record: value, max value and scale in ms as the wire sends them,
@@ -16,8 +16,8 @@ pub struct MirrorTimer {
     pub max_value: i32,
     pub scale: i32,
     pub paused: i32,
-    /// The owning spell's name when its row exists, which `GetMirrorTimerLabel` (`0x5199a0`) reads
-    /// before `<TOKEN>_LABEL`.
+    /// The owning spell's name when its row exists, which the label read (`0x5199a0`) reads before
+    /// `<TOKEN>_LABEL`.
     pub spell_name: Option<String>,
     /// Stamped by [`super::UiScript::start_mirror_timer`].
     pub started_ms: u32,
@@ -37,8 +37,8 @@ impl super::UiScript {
         }
     }
 
-    /// `SMSG_STOP_MIRROR_TIMER`, and each record when the client leaves the world
-    /// (`CGGameUI::CancelMirrorTimers`, `0x513ea0`): the record empties to `"UNKNOWN"`.
+    /// `SMSG_STOP_MIRROR_TIMER`, and each record when the client leaves the world (`0x513ea0`): the
+    /// record empties to `"UNKNOWN"`.
     pub fn stop_mirror_timer(&mut self, index: usize) {
         if let Some(slot) = self.model_mut().mirror_timers.get_mut(index) {
             *slot = None;
@@ -58,14 +58,15 @@ impl super::UiScript {
         }
     }
 
-    /// The bar's caption, `GetMirrorTimerLabel` (`0x5199a0`): the owning spell's name, else the
+    /// The bar's caption, the label read (`0x5199a0`): the owning spell's name, else the
     /// `<TOKEN>_LABEL` string, "" when there is none.
     pub fn mirror_timer_label(&self, index: usize, spell_name: Option<&str>) -> String {
         label(&self.lua, index, spell_name)
     }
 }
 
-/// `OsGetAsyncTimeMs` as the VM keeps it: `GetTime()` in whole ms, wrapping as a `u32` does.
+/// The reference's millisecond clock as the VM keeps it: `GetTime()` in whole ms, wrapping as a
+/// `u32` does.
 fn now_ms(now: f64) -> u32 {
     (now * 1000.0) as u64 as u32
 }

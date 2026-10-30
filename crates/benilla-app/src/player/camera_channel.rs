@@ -1,22 +1,20 @@
-//! The camera's smoothed-scalar channel: one template the reference instantiates for pitch
-//! (armer/inner `0x512830`/`0x512980`), pitch bias (`0x512a50`/`0x512ba0`), ground tilt
-//! (`0x512490`/`0x5125e0`) and pivot height (`0x5126b0`/`0x512790`), stepped in one block of
-//! `0x50f160`.
+//! The camera's smoothed-scalar channel: one template the reference instantiates for pitch, pitch
+//! bias, ground tilt and pivot height, all four stepped in one block each frame.
 //!
 //! The armer rewraps the live value into `[target − π, target + π]`, refuses a request when the
 //! channel is already arming the same `{target, delay, factor}` or is within 0.001 of the target,
 //! and otherwise sets `duration = |target − live| / rate · factor`. The step eases by the cosine
-//! smoothstep `0x5b7bb0`, `a + (b − a)·(1 − cos πs)/2` with `s = elapsed / duration`, and lands on
-//! the target at `s ≥ 1`. The duration is seconds, not a rate, and the rate is in the live value's
-//! units: the angular channels convert their deg/s CVar with `π/180`, the height's is yd/s.
+//! smoothstep, `a + (b − a)·(1 − cos πs)/2` with `s = elapsed / duration`, and lands on the target
+//! at `s ≥ 1`. The duration is seconds, not a rate, and the rate is in the live value's units: the
+//! angular channels convert their deg/s CVar with `π/180`, the height's is yd/s.
 //!
-//! Deviation: a delay holds the channel at `from`, because the reference's `0x512830` backs the
-//! start time up by the delay, so `s` runs negative and the even cosine jumps the value away and
-//! back, an unclamped divide rather than a behaviour. No default reaches it: every
-//! `cameraTerrainTilt*` row's `Delay` is 0, and the pitch and bias arms pass 0.
+//! Deviation: a delay holds the channel at `from`, because the reference's armer backs the start
+//! time up by the delay, so `s` runs negative and the even cosine jumps the value away and back, an
+//! unclamped divide rather than a behaviour. No default reaches it: every `cameraTerrainTilt*`
+//! row's `Delay` is 0, and the pitch and bias arms pass 0.
 
-/// The armer's "already there, already arming this" epsilon, 0.001 at `[0x801360]`, shared by all
-/// four channels and the `0x5107f0`/`0x5106f0` displacement predicates.
+/// The armer's "already there, already arming this" epsilon, 0.001, shared by all four channels and
+/// the displacement predicates.
 pub(super) const CHANNEL_EPS: f32 = 0.001;
 
 /// One `arm` request: the armer's four arguments plus the ground channel's duration bound.
@@ -34,12 +32,12 @@ pub(super) struct Arm {
     pub(super) bound: Option<(f32, f32)>,
 }
 
-/// The ground channel's duration bound, `0x50dd29`-`0x50dd83`, with `lo = TimeMin × factor` and
-/// `hi = TimeMax × factor`: below `lo` takes `lo`, else at or above `hi`, or NaN, takes `hi`, else
-/// the duration stands. Nothing orders the pair, so an inverted one is an odd duration, not a fault.
+/// The ground channel's duration bound, with `lo = TimeMin × factor` and `hi = TimeMax × factor`:
+/// below `lo` takes `lo`, else at or above `hi`, or NaN, takes `hi`, else the duration stands.
+/// Nothing orders the pair, so an inverted one is an odd duration, not a fault.
 fn tilt_bound(duration: f32, (time_min, time_max): (f32, f32), factor: f32) -> f32 {
-    // `lo` is compared unrounded, live on the x87 stack (`0x50dd4c`); `hi` is stored as an f32
-    // first (`0x50dd40`). Only an inverted pair can see the difference.
+    // `lo` is compared unrounded, live on the x87 stack; `hi` is stored as an f32 first. Only an
+    // inverted pair can see the difference.
     let lo = f64::from(time_min) * f64::from(factor);
     let hi = time_max * factor;
     if f64::from(duration) < lo {
@@ -52,7 +50,7 @@ fn tilt_bound(duration: f32, (time_min, time_max): (f32, f32), factor: f32) -> f
 }
 
 impl Arm {
-    /// No delay, factor 1 and no bound, as the pitch (`0x512830`) and bias (`0x512a50`) sites arm.
+    /// No delay, factor 1 and no bound, as the pitch and bias sites arm.
     pub(super) fn at(target: f32, rate: f32) -> Self {
         Self {
             target,
@@ -88,8 +86,8 @@ pub(super) struct SmoothChannel {
     wrap: bool,
 }
 
-/// What [`SmoothChannel::arm`] did: the reference's three-way return (`0x512a50` returns 1 for
-/// already arming, 0 for already there).
+/// What [`SmoothChannel::arm`] did: the reference's three-way return (1 for already arming, 0 for
+/// already there).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Armed {
     Started,
@@ -100,7 +98,7 @@ pub(super) enum Armed {
 }
 
 impl SmoothChannel {
-    /// A radians channel (pitch, bias, ground tilt), which the armer rewraps (`0x512abe`).
+    /// A radians channel (pitch, bias, ground tilt), which the armer rewraps.
     pub(super) fn angular() -> Self {
         Self {
             wrap: true,
@@ -119,7 +117,7 @@ impl SmoothChannel {
 
     /// Sets the channel to `v` with nothing in flight, the reference's hard snap: the water band
     /// crossing writes the pitch's live `[cam+0xf4]` and target `[cam+0x1e0]` directly while
-    /// `[cam+0x90] & 1` (`0x50ed13`), and a camera's first height arm snaps (`0x5127d4`).
+    /// `[cam+0x90] & 1`, and a camera's first height arm snaps.
     pub(super) fn snap(&mut self, v: f32) {
         self.live = v;
         self.from = v;
@@ -129,7 +127,7 @@ impl SmoothChannel {
 
     /// The armer, in the reference's order.
     pub(super) fn arm(&mut self, arm: &Arm) -> Armed {
-        // The rewrap is stored back, not only compared (`0x512abe`).
+        // The rewrap is stored back, not only compared.
         if self.wrap {
             let two_pi = std::f32::consts::TAU;
             while self.live - arm.target > std::f32::consts::PI {
@@ -144,8 +142,8 @@ impl SmoothChannel {
                 && (f.memo.0 - arm.delay).abs() < CHANNEL_EPS
                 && (f.memo.1 - arm.factor).abs() < CHANNEL_EPS
             {
-                // The bound runs on this return too (`0x512555` returns 1, `0x50dd21` tests it),
-                // so it bounds the duration in flight again every frame.
+                // The bound runs on this return too, so it bounds the duration in flight again
+                // every frame.
                 if let Some(bound) = arm.bound {
                     f.duration = tilt_bound(f.duration, bound, arm.factor);
                 }
@@ -174,15 +172,15 @@ impl SmoothChannel {
         Armed::Started
     }
 
-    /// Steps the tween and returns the live value (`0x50f160`'s block).
+    /// Steps the tween and returns the live value.
     pub(super) fn advance(&mut self, dt: f32) -> f32 {
         if let Some(f) = self.flight.as_mut() {
             f.elapsed += dt;
             let t = f.elapsed - f.delay;
             if t >= 0.0 {
                 // The floor lands a zero or NaN duration on the target. The reference's ground step
-                // divides by it raw (`0x50f45e`) and eases whenever C0 is set (`0x50f46f`), which a
-                // NaN `s` sets, so a NaN duration writes NaN into its live value.
+                // divides by it raw and eases whenever C0 is set, which a NaN `s` sets, so a NaN
+                // duration writes NaN into its live value.
                 let s = t / f.duration.max(f32::EPSILON);
                 if s >= 1.0 {
                     self.live = self.to;
@@ -356,8 +354,8 @@ mod tests {
         );
     }
 
-    // The expectations below are `0x50dd29`-`0x50dd83` read directly: `lo = TimeMin × factor`,
-    // `hi = TimeMax × factor`; below `lo` → `lo`, else at or above `hi` or NaN → `hi`, else as is.
+    // The expectations below are read directly: `lo = TimeMin × factor`, `hi = TimeMax × factor`;
+    // below `lo` → `lo`, else at or above `hi` or NaN → `hi`, else as is.
 
     #[test]
     fn an_ordered_tilt_bound_keeps_its_clamp() {

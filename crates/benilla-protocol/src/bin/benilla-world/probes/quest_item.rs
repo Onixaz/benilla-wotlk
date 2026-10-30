@@ -182,7 +182,7 @@ impl Probe for QuestItem {
             "--quest-item: expected QUEST_INVALID reason 13 (ALREADY_ON, 0x0d), \
              got {refusal}"
         );
-        println!("✅ refusal: QUEST_INVALID reason 13 → ERR_QUEST_ALREADY_ON (the ref's 0x5dbca0)");
+        println!("✅ refusal: QUEST_INVALID reason 13 → ERR_QUEST_ALREADY_ON");
 
         // Leave the character as found; the starter survives the accept, so remove it too.
         session.send_chat(&format!(".quest remove {QUEST_ID}"))?;

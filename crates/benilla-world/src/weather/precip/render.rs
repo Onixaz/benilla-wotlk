@@ -45,8 +45,8 @@ pub(super) fn push_patters(
         let t = (p.age / PATTER_LIFE).clamp(0.0, 1.0);
         let frame = ((t * 4.0) as u32).min(3) as f32;
         let (u0, v0) = (frame * 0.25, f32::from(p.variant) * 0.25);
-        // No vertex alpha: the atlas's 4 frames are the animation, its grey-128 ground neutral.
-        // The texcoord law (`0x675ac0`): base-left, apex, base-right.
+        // No vertex alpha: the atlas's 4 frames are the animation, its grey-128 ground neutral. The
+        // texcoord law: base-left, apex, base-right.
         for (pos, uv) in [
             (p.pos - right, [u0, v0 + 0.25]),
             (p.pos + up, [u0 + 0.125, v0 + 0.043]),
@@ -74,10 +74,10 @@ pub(super) struct FlakeView {
     pub(super) world_per_px: f32,
 }
 
-/// Snow flakes: the point-sprite leg `0x678610` as screen-aligned quads, since wgpu has no point
-/// size. Per `snowpoint.bls`: white, alpha `clamp01(t − f1)` while falling and
-/// `clamp01(1 − 4·(t − f2))` settled, the whole texture per flake (`GL_COORD_REPLACE`). There is
-/// no per-flake size: the 32-byte record has no spare field and none of the 5 spawn draws is one.
+/// Snow flakes: the point-sprite leg as screen-aligned quads, since wgpu has no point size. Per
+/// `snowpoint.bls`: white, alpha `clamp01(t − f1)` while falling and `clamp01(1 − 4·(t − f2))`
+/// settled, the whole texture per flake (`GL_COORD_REPLACE`). There is no per-flake size: the
+/// 32-byte record has no spare field and none of the 5 spawn draws is one.
 pub(super) fn push_flakes(
     out: &mut Vec<EffectVertex>,
     drops: &[Drop],

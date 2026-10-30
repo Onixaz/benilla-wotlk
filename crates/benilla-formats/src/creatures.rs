@@ -22,8 +22,8 @@ pub struct CreatureModel {
     pub model_path: String,
     /// `CreatureModelData.modelScale * CreatureDisplayInfo.creatureModelScale`.
     pub scale: f32,
-    /// `textureVariation[0..2]`, bare names found beside the model, for its `Monster1/2/3` slots;
-    /// a humanoid NPC's body build (`0x5fb200`) never reads them.
+    /// `textureVariation[0..2]`, bare names found beside the model, for its `Monster1/2/3` slots; a
+    /// humanoid NPC's body build never reads them.
     pub textures: [Option<String>; 3],
     /// A character-model NPC's appearance; `None` for a plain creature (`ExtendedDisplayInfoID` 0).
     pub npc_appearance: Option<NpcAppearance>,
@@ -71,7 +71,7 @@ struct DisplayRow {
     /// `SizeClass` (field 9, +0x24), the display's override, read signed: `−1` defers to the model.
     size_class: i32,
     /// `CreatureModelAlpha` (field 5, +0x14), 0..=255: the `baseAlpha` of the reference's unit
-    /// alpha product (`0x60d2d0`, × 1/255), which is a flat 1.0 for players.
+    /// alpha product (× 1/255), which is a flat 1.0 for players.
     model_alpha: u32,
     /// `ParticleColorID` (field 13), a `ParticleColor.dbc` key; 0 = none.
     particle_color: u32,
@@ -90,7 +90,7 @@ struct ModelRow {
     blood: i32,
     /// `FootprintTextureID` (field 6), read signed: `−1` leaves no prints.
     footprint_texture: i32,
-    /// `FootprintTextureLength`/`Width` (fields 7/8), in inches (× 1/36 to yards, `0x607a00`).
+    /// `FootprintTextureLength`/`Width` (fields 7/8), in inches (× 1/36 to yards).
     footprint_length: f32,
     footprint_width: f32,
     /// `collisionHeight` (field 15), raw model units.
@@ -137,7 +137,7 @@ pub struct CreatureCatalog {
 
 impl CreatureCatalog {
     /// A display's own `creatureModelScale`, the mount scale law: a mount renders at
-    /// `OBJECT_FIELD_SCALE_X × creatureModelScale`, without `modelScale` (`0x613ef0`).
+    /// `OBJECT_FIELD_SCALE_X × creatureModelScale`, without `modelScale`.
     pub fn display_scale(&self, display_id: u32) -> Option<f32> {
         self.display.get(&display_id).map(|r| r.scale)
     }
@@ -158,8 +158,8 @@ impl CreatureCatalog {
 
     /// A display's audible size class, 0 Small to 4 Colossal, the axis of
     /// [`crate::DeathThudCatalog`]. The display's `SizeClass` wins and only its `−1` defers to the
-    /// model's (`0x625500`); `None` when both are `−1`, which the reference's unsigned `>= 5` gate
-    /// (`0x623744`) also silences.
+    /// model's; `None` when both are `−1`, which the reference's unsigned `>= 5` gate also
+    /// silences.
     pub fn size_class(&self, display_id: u32) -> Option<u32> {
         let row = self.display.get(&display_id)?;
         let class = match row.size_class {
@@ -178,7 +178,7 @@ impl CreatureCatalog {
     }
 
     /// Every model path: being a creature model decides whether an M2's animation events reach
-    /// `CGUnit_C::HandleAnimEvent`.
+    /// the unit's anim-event handler.
     pub fn model_paths(&self) -> impl Iterator<Item = &str> + '_ {
         self.models.values().map(|m| m.path.as_str())
     }
@@ -196,8 +196,8 @@ impl CreatureCatalog {
     }
 
     /// `modelScale × creatureModelScale`. The server folds it into `OBJECT_FIELD_SCALE_X`, which
-    /// alone scales a unit (`0x613ef0`), so only the glue screens read this: the reference sizes
-    /// the serverless character-select pet by it (`0x472dc6`).
+    /// alone scales a unit, so only the glue screens read this: the reference sizes the serverless
+    /// character-select pet by it.
     pub fn model_scale(&self, display_id: u32) -> Option<f32> {
         let row = self.display.get(&display_id)?;
         let model = self.models.get(&row.model_id)?;
@@ -212,9 +212,10 @@ impl CreatureCatalog {
     }
 
     /// `CreatureModelData.collisionHeight`, the `h` of every depth line (swim `0.75·h`, splash
-    /// `0.4·h`, foam gate `2·h`, read against `CMovement+0xb4`). It is the M2's collision-box Z
-    /// extent, pre-scale: the prism is this × `max(OBJECT_FIELD_SCALE_X, creatureModelScale)`
-    /// (`0x60b312` → `0x617501`). A miss takes the constructor default, `2.0277777` (`0x616fd8`).
+    /// `0.4·h`, foam gate `2·h`, read against the movement block's `+0xb4`). It is the M2's
+    /// collision-box Z extent, pre-scale: the prism is this ×
+    /// `max(OBJECT_FIELD_SCALE_X, creatureModelScale)`. A miss takes the constructor default,
+    /// `2.0277777`.
     pub fn collision_height(&self, display_id: u32) -> Option<f32> {
         let row = self.display.get(&display_id)?;
         Some(self.models.get(&row.model_id)?.collision_height)
@@ -233,9 +234,9 @@ impl CreatureCatalog {
         })
     }
 
-    /// A display's foley material (`Material.dbc`), the creature half of the footfall rustle:
-    /// `0x623610` hands `[[unit+0xb3c]+0x28]` to `0x4584e0`, while a player reads its chest
-    /// (`0x62fa30`). Every shipped row is 0, so an NPC's silent armor is the data, not a bug.
+    /// A display's foley material (`Material.dbc`), the creature half of the footfall rustle: the
+    /// reference hands `[[unit+0xb3c]+0x28]`, while a player reads its chest. Every shipped row is
+    /// 0, so an NPC's silent armor is the data, not a bug.
     pub fn foley_material(&self, display_id: u32) -> Option<u32> {
         let row = self.display.get(&display_id)?;
         Some(self.models.get(&row.model_id)?.foley_material)
@@ -250,8 +251,8 @@ impl CreatureCatalog {
             .is_none_or(|m| m.flags & 0x2 == 0)
     }
 
-    /// A display's footprint decal, fields 6..=8, in yards (inches × 1/36, the client's cache at
-    /// `0x607a00` for the getter `0x607920`); `None` for a `−1` texture or a 0×0 print.
+    /// A display's footprint decal, fields 6..=8, in yards (inches × 1/36); `None` for a `−1`
+    /// texture or a 0×0 print.
     pub fn footprint(&self, display_id: u32) -> Option<FootprintParams> {
         let row = self.display.get(&display_id)?;
         let model = self.models.get(&row.model_id)?;
@@ -284,8 +285,8 @@ impl CreatureCatalog {
         })
     }
 
-    /// The `(race, sex)` of a display's `CreatureDisplayInfoExtra` row, the unit's display
-    /// override (`[unit+0xb38]`, `0x60afb0`); `None` for a display with no extra row.
+    /// The `(race, sex)` of a display's `CreatureDisplayInfoExtra` row, the unit's display override
+    /// (`[unit+0xb38]`); `None` for a display with no extra row.
     pub fn display_race_sex(&self, display_id: u32) -> Option<(u8, u8)> {
         let extra = self.display.get(&display_id)?.extended_id;
         let row = (extra != 0).then(|| self.extra.get(&extra)).flatten()?;
@@ -356,8 +357,7 @@ pub(crate) fn creature_display_info_schema(l: &dbc_layout::CreatureDisplayInfo) 
     }
     for i in s.fields.len()..l.fields {
         let name = match i {
-            // 5875 has no `PortraitTextureName` here: a signed size class, tested for -1 at
-            // `0x625509`.
+            // 5875 has no `PortraitTextureName` here: a signed size class, tested for -1.
             _ if i == l.size_class => "SizeClass".into(),
             _ if i == l.blood_level => "BloodLevel".into(),
             // Some maps label this BloodID, but its 5875 values (33..188) are NPC sound ids.
@@ -747,7 +747,7 @@ mod tests {
         );
     }
 
-    /// The three arms of `0x625500`: an override, a `−1` deferral and an agreeing row.
+    /// The three arms: an override, a `−1` deferral and an agreeing row.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_size_class_column_resolves_its_three_arms() {

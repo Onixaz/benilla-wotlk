@@ -5,10 +5,10 @@
 //! player's list.
 //!
 //! `UnitAura`, `UnitBuff`, `UnitDebuff`, `CancelUnitBuff` and `GameTooltip:SetUnitAura` and its two
-//! siblings share one argument reader (`0x6110a0`, `0x608390`): a unit, then a 1-based index or a
-//! spell name and rank, then a filter string ([`AuraQuery`]). One finder (`0x72c9b0`) walks the
-//! unit's list under that filter ([`find`]). The 1.12 `GetPlayerBuff` family ([`player_buff`])
-//! is still installed beside them, though 3.3.5a's stock UI no longer calls it (#52).
+//! siblings share one argument reader (`0x608390`): a unit, then a 1-based index or a spell name
+//! and rank, then a filter string ([`AuraQuery`]). One finder (`0x72c9b0`) walks the unit's list
+//! under that filter ([`find`]). The 1.12 `GetPlayerBuff` family ([`player_buff`]) is still
+//! installed beside them, though 3.3.5a's stock UI no longer calls it (#52).
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -44,7 +44,7 @@ pub struct AuraState {
     /// (`0x72cad0`) and `CancelUnitBuff`'s first gate (`0x8042ec`).
     pub cancelable: bool,
     /// `GetPlayerBuff`'s second return, cache record `+0xc`: no finite duration to show. Derived
-    /// from the spell (`0x4e452e`-`0x4e45c5`), not from `expiration_time`, so it holds before any
+    /// from the spell, not from `expiration_time`, so it holds before any
     /// `SMSG_UPDATE_AURA_DURATION` and a permanent aura never shows a `0 s` timer.
     pub until_cancelled: bool,
     /// `AttributesEx & 0x4` (`SPELL_ATTR_EX_IS_CHANNELED`), [`cancel_authorized`]'s second arm.
@@ -63,9 +63,9 @@ pub struct AuraState {
     pub raid: bool,
 }
 
-/// The cancel gate of `CancelPlayerBuff` (`0x4e49a0`, `0x4e49fb`-`0x4e4a14`):
-/// a helpful aura with `AFLAG_CANCELABLE` (vmangos: unless `SPELL_ATTR_NO_AURA_CANCEL`), or any
-/// aura of a channeled spell, the only negative aura that cancels (breaking a channel on you).
+/// The cancel gate of `CancelPlayerBuff`: a helpful aura with `AFLAG_CANCELABLE` (vmangos: unless
+/// `SPELL_ATTR_NO_AURA_CANCEL`), or any aura of a channeled spell, the only negative aura that
+/// cancels (breaking a channel on you).
 pub(super) fn cancel_authorized(a: &AuraState) -> bool {
     (a.helpful && a.cancelable) || a.channeled
 }
@@ -147,9 +147,9 @@ impl AuraFilter {
     }
 }
 
-/// What the aura readers' shared argument list selects (`0x6110a0` into a `0x18`-byte record):
-/// the unit's token, then a 0-based index (`-1` when a name is given, `0x6083f3`) or a name and
-/// optional rank, and the filter.
+/// What the aura readers' shared argument list selects (into a `0x18`-byte record): the unit's
+/// token, then a 0-based index (`-1` when a name is given, `0x6083f3`) or a name and optional rank,
+/// and the filter.
 pub(crate) struct AuraQuery {
     token: String,
     index: i64,
@@ -177,7 +177,7 @@ fn to_string(v: Option<&Value>) -> Option<String> {
 }
 
 impl AuraQuery {
-    /// Read `args` as `0x6110a0` does: a string unit and a number or string second argument, or
+    /// Read `args` as the reference does: a string unit and a number or string second argument, or
     /// `None`, where every caller raises its usage line. A numeric second argument is the index,
     /// truncated (`0x6083d1`), with the filter next; any other string is the name, the rank and
     /// then the filter.
@@ -220,7 +220,7 @@ impl AuraQuery {
     }
 }
 
-/// `SStrCmpUTF8I`'s fold (`0x76ea40`): the whole string, case-insensitively.
+/// The reference's UTF-8 case-insensitive compare: the whole string, case-insensitively.
 fn same_text(a: &str, b: &str) -> bool {
     a.chars()
         .flat_map(char::to_lowercase)
@@ -264,10 +264,10 @@ pub(crate) fn auras_of<'m>(model: &'m Model, token: &str) -> Option<&'m [AuraSta
     })
 }
 
-/// The token `0x60b420` names a caster by: the first of `player`, `pet`, `partyN`, `partypetN`,
-/// `raidN`, `raidpetN`, `target`, `npc` and `mouseover` that is the caster, nil for none. The
-/// reference also tries `vehicle`, `arenaN`, `arenapetN` and `focus`, which the resolver has no
-/// guid for yet (#90).
+/// The token names a caster by: the first of `player`, `pet`, `partyN`, `partypetN`, `raidN`,
+/// `raidpetN`, `target`, `npc` and `mouseover` that is the caster, nil for none. The reference also
+/// tries `vehicle`, `arenaN`, `arenapetN` and `focus`, which the resolver has no guid for yet
+/// (#90).
 fn caster_token(model: &Model, caster: u64) -> Option<String> {
     let guids = &model.unit_guids;
     guids

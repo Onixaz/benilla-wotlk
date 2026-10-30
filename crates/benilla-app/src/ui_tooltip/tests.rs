@@ -116,10 +116,10 @@ fn unit(level: u32, base_mana: u32) -> benilla_protocol::ObjectFields {
     benilla_protocol::ObjectFields::from_pairs(&[(22u16, 100u32), (34, level), (162, base_mana)])
 }
 
-/// The pet bar's views scale by the pet's level (`0x6e3130` with the selector: the charm or
-/// summon's `[vtbl+0xa8]`, `0x60cd80`, level × 5 capped at `maxLevel × 5`): Voidwalker Sacrifice
-/// rank 1 (7812: 305, 2.3 a level from 16, cap 22) reads 318 at 22 and at 30, and the player's own
-/// view of it, in no line of the player's, reads the floor.
+/// The pet bar's views scale by the pet's level (with the selector: the charm or summon's
+/// `[vtbl+0xa8]`, level × 5 capped at `maxLevel × 5`): Voidwalker Sacrifice rank 1 (7812: 305, 2.3
+/// a level from 16, cap 22) reads 318 at 22 and at 30, and the player's own view of it, in no line
+/// of the player's, reads the floor.
 #[test]
 fn a_pet_view_scales_sacrifice_by_the_pets_level() {
     let Some(spells) = real_spells() else { return };
@@ -151,7 +151,7 @@ fn a_pet_view_scales_sacrifice_by_the_pets_level() {
     )
     .expect("Sacrifice view");
     absorb(v, 305);
-    // No pet unit reads level 0 (`0x6e31a4`), which floors at the rank's base.
+    // No pet unit reads level 0, which floors at the rank's base.
     let v = spell_tooltip_view(7812, &spells, &mut t.pet_ctx(&objects, Some(&player), None))
         .expect("Sacrifice view");
     absorb(v, 305);
@@ -184,8 +184,8 @@ fn a_pet_view_scales_blood_pact_by_the_pets_level() {
 }
 
 /// Seduction (6358, 24% of base mana) on the pet bar costs 24% of the succubus's
-/// `UNIT_FIELD_BASE_MANA`, as `0x6e31b0` calls `0x612c50` on the pet (`6e327d`): 449 of 1874, not
-/// 329 of the warlock's 1373. No pet unit is `GetPowerCost`'s -1 (`0x6e3233`), no cost cell.
+/// `UNIT_FIELD_BASE_MANA`, as the reference reads the cost basis off the pet: 449 of 1874, not 329
+/// of the warlock's 1373. No pet unit is the power-cost getter's -1, no cost cell.
 #[test]
 fn a_pet_view_costs_seduction_from_the_pets_base_mana() {
     let Some(spells) = real_spells() else { return };
@@ -213,9 +213,9 @@ fn a_pet_view_costs_seduction_from_the_pets_base_mana() {
     assert_eq!(v.cost, None);
 }
 
-/// The `$g`/`$G` branch (`0x508180`) reads the active player's `UNIT_FIELD_BYTES_0` byte 2
-/// (`0x508214`): the first form on 0, the second on anything else. A female player's Conjure Food
-/// and Water (587, 5504) tooltips read "her allies" and Hellfire (1949) "to herself".
+/// The `$g`/`$G` branch reads the active player's `UNIT_FIELD_BYTES_0` byte 2: the first form on 0,
+/// the second on anything else. A female player's Conjure Food and Water (587, 5504) tooltips read
+/// "her allies" and Hellfire (1949) "to herself".
 #[test]
 fn a_female_players_spell_tooltips_take_the_second_gender_form() {
     let Some(spells) = real_spells() else { return };
@@ -245,8 +245,7 @@ fn a_female_players_spell_tooltips_take_the_second_gender_form() {
     }
     let hellfire = text(1949, &her);
     assert!(hellfire.contains("Fire damage to herself"), "{hellfire}");
-    // The branch looks the active player up (`0x508189`-`0x5081a4`): a pet view reads the
-    // player's gender, never the pet's.
+    // The branch looks the active player up: a pet view reads the player's gender, never the pet's.
     let pet = unit(20, 0);
     let pets = spell_tooltip_view(
         587,
@@ -269,9 +268,9 @@ fn empty_player() -> ObjectStore {
     )]))
 }
 
-/// Battle Shout rank 1's `$s1` (14 + 1d1, 0.5 a level from 1, cap 11) scales by the player's
-/// skill in its line over 5 (`0x6e3130`), not the character level: a class line sits at level
-/// × 5 (vmangos `Player::UpdateSkillsForLevel`), so levels 1, 11 and 60 read 15, 20 and 20.
+/// Battle Shout rank 1's `$s1` (14 + 1d1, 0.5 a level from 1, cap 11) scales by the player's skill
+/// in its line over 5, not the character level: a class line sits at level × 5 (vmangos
+/// `Player::UpdateSkillsForLevel`), so levels 1, 11 and 60 read 15, 20 and 20.
 #[test]
 fn battle_shout_description_scales_by_the_skill_level() {
     use benilla_protocol::messages::FIELD_PLAYER_SKILL_INFO_1_1;
@@ -395,9 +394,8 @@ fn fireball_view_on_real_data() {
     }
 }
 
-/// Improved Devotion Aura's +25% on op 8 reaches the spell's description, 55 armor to 68; the
-/// aura text expands as the aura tooltip `0x52f880` expands it, with the points' modifiers off
-/// (`52f940`), so it keeps 55.
+/// Improved Devotion Aura's +25% on op 8 reaches the spell's description, 55 armor to 68; the aura
+/// text expands as the aura tooltip expands it, with the points' modifiers off, so it keeps 55.
 #[test]
 fn improved_devotion_aura_updates_the_description_but_not_the_aura_text() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -424,8 +422,8 @@ fn improved_devotion_aura_updates_the_description_but_not_the_aura_text() {
     assert_eq!(improved.aura_description, base.aura_description);
 }
 
-/// Fire Blast rank 1's 8 s is its category recovery, its own recovery 0; Improved Fire Blast's
-/// flat op 11 shortens the category value, and the cell shows the larger column (`0x52eada`).
+/// Fire Blast rank 1's 8 s is its category recovery, its own recovery 0; Improved Fire Blast's flat
+/// op 11 shortens the category value, and the cell shows the larger column.
 #[test]
 fn improved_fire_blast_shortens_the_cooldown_cell() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -451,9 +449,9 @@ fn improved_fire_blast_shortens_the_cooldown_cell() {
     assert_eq!(improved.cooldown.as_deref(), Some("6.5 sec cooldown"));
 }
 
-/// The cast cell reads `GetCastTime(1)` (`52eb4b`): op 10 applies and nothing clamps, so a
-/// modifier past the whole cast time reaches the negative "Instant cast" arm (`0x52ebce`), where
-/// a clamped zero would take the no-mana "Instant" (`0x52ec4b`).
+/// The cast cell reads the cast-time getter with selector 1: op 10 applies and nothing clamps, so a
+/// modifier past the whole cast time reaches the negative "Instant cast" arm, where a clamped zero
+/// would take the no-mana "Instant".
 #[test]
 fn the_cast_cell_takes_op_10_unclamped() {
     // The cells fill the install's `GlobalStrings.lua`.
@@ -573,7 +571,7 @@ fn cost_and_cast_cells_on_real_data() {
     assert_eq!(v.cast_time.as_deref(), Some("Next melee"));
 
     // Throw (2764) and Auto Shot (75) read "Attack speed" off `Attributes & 0x2` alone; Attack
-    // (6603), `Effect[0]` ATTACK, omits the line (`0x52eb3c`).
+    // (6603), `Effect[0]` ATTACK, omits the line.
     let v = spell_tooltip_view(
         2764,
         &spells,
@@ -603,8 +601,8 @@ fn cost_and_cast_cells_on_real_data() {
     assert_eq!(v.cast_time.as_deref(), Some("Channeled"));
 }
 
-/// The range cell (`0x52e9a2`-`0x52ea8c`): the melee row prints a number off the reaches, an
-/// authored row its own, and the on-next-swing and self rows nothing.
+/// The range cell: the melee row prints a number off the reaches, an authored row its own, and the
+/// on-next-swing and self rows nothing.
 #[test]
 fn range_cell_on_real_data() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -690,8 +688,8 @@ fn range_cell_on_real_data() {
     .expect("Fireball view");
     assert_eq!(v.range.as_deref(), Some("35 yd range"));
 
-    // The tooltip passes a null target (`0x52e9c2`), so the auto-attack target pads no ranged row:
-    // Fireball still reads its 35 while you swing at a 1.5-reach unit, and Charge its 8-25.
+    // The tooltip passes a null target, so the auto-attack target pads no ranged row: Fireball
+    // still reads its 35 while you swing at a 1.5-reach unit, and Charge its 8-25.
     let v = spell_tooltip_view(
         133,
         &spells,
@@ -757,8 +755,8 @@ fn the_required_item_chance_and_reagent_lines_on_real_data() {
     .expect("Shoot view");
     assert_eq!(v.requires_item.as_deref(), Some("Requires Wands"));
     assert!(!v.item_met, "nothing worn satisfies class 2 / bit 19 → red");
-    // A multi-bit mask is named by `ItemSubClassMask.dbc` (`0x52eef0`, `0x6e2380`): Parry's
-    // 0x2a5f3 is the eleven melee subclasses, one name.
+    // A multi-bit mask is named by `ItemSubClassMask.dbc`: Parry's 0x2a5f3 is the eleven melee
+    // subclasses, one name.
     let parry = spells.catalog.get(3127).expect("Parry 3127");
     assert!(parry.equipped_item_subclass_mask.count_ones() > 1);
     let v = spell_tooltip_view(
@@ -769,15 +767,15 @@ fn the_required_item_chance_and_reagent_lines_on_real_data() {
     .expect("Parry view");
     assert_eq!(v.requires_item.as_deref(), Some("Requires Melee Weapon"));
 
-    // 2. Attack (6603): `Effect[0] == 78` omits the cast line (`0x52eb15`), though
+    // 2. Attack (6603): `Effect[0] == 78` omits the cast line, though
     // `Attributes & 0x40` is clear.
     let d = spells.catalog.get(6603).expect("Attack 6603");
     assert_eq!(d.effects[0], 78, "SPELL_EFFECT_ATTACK");
     assert!(!d.passive, "6603 carries Attributes 0x10, not 0x40");
     let v = spell_tooltip_view(6603, &spells, &mut t.ctx(&objects, 0, None)).expect("Attack view");
     assert_eq!(v.cast_time, None, "the law's Effect[0] gate");
-    // The chance line `Effect[0]` selects (`0x52f5b1`): ATTACK skips the passive gate. No
-    // descriptor, no line; the wire's values are already percents.
+    // The chance line `Effect[0]` selects: ATTACK skips the passive gate. No descriptor, no line;
+    // the wire's values are already percents.
     assert_eq!(v.chance, None, "no player streamed yet");
     let rated = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
         (22u16, 100u32),
@@ -984,9 +982,9 @@ fn eval(app: &mut App, lua: &str) -> Option<i64> {
         .unwrap()
 }
 
-/// The hover pushes `"mouseover"` with the hovered guid, the pair `0x492890` writes to
-/// `0xb4e2c8`/`0xb4e2cc`: `UnitIsUnit` (`0x516070`) resolves both tokens through `0x515970` and
-/// compares guids, so hovering the target answers 1 and hovering anyone else nil.
+/// The hover pushes `"mouseover"` with the hovered guid, the pair the mouseover publisher writes:
+/// `UnitIsUnit` resolves both tokens through the unit-token resolver and compares guids, so
+/// hovering the target answers 1 and hovering anyone else nil.
 #[test]
 fn the_mouseover_token_carries_the_hovered_guid() {
     let (mut app, wolf, boar) = mouseover_app();
@@ -1014,9 +1012,9 @@ fn the_mouseover_token_carries_the_hovered_guid() {
     );
 }
 
-/// `UnitCreatureType("mouseover")` goes through the resolver `0x605570` for a hovered player as
-/// for a creature: a druid in Cat Form is a Beast, and out of form a Humanoid by race. The plate
-/// itself is built for a player from its race and class, whatever type the snapshot carries.
+/// `UnitCreatureType("mouseover")` goes through the resolver for a hovered player as for a
+/// creature: a druid in Cat Form is a Beast, and out of form a Humanoid by race. The plate itself
+/// is built for a player from its race and class, whatever type the snapshot carries.
 #[test]
 fn the_mouseover_token_names_the_hovered_units_creature_type() {
     use benilla_protocol::ObjectFields;
@@ -1064,10 +1062,9 @@ fn the_mouseover_token_names_the_hovered_units_creature_type() {
     assert_eq!(creature_type(&mut app).as_deref(), Some("Humanoid"));
 }
 
-/// Once no unit wins the pick, `"mouseover"` names nobody: the publisher `0x492890` zeroes the pair
-/// (`0x4928e8`, `0x4928f2`) and writes a null, corpse or GameObject guid, which the resolver
-/// rejects as a unit (`0x515bca mov ecx,8`, `0x515bd9 je`). Empty ground, a corpse and a nearer
-/// GameObject each clear it, in the frame the hover leaves the unit.
+/// Once no unit wins the pick, `"mouseover"` names nobody: the publisher zeroes the pair and writes
+/// a null, corpse or GameObject guid, which the resolver rejects as a unit. Empty ground, a corpse
+/// and a nearer GameObject each clear it, in the frame the hover leaves the unit.
 #[test]
 fn the_mouseover_token_clears_when_no_unit_is_hovered() {
     use benilla_protocol::ObjectFields;

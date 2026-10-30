@@ -1,4 +1,4 @@
-//! `thudcensus`: the death thud a corpse makes as it lands (`$DTH`, `0x6236e0`): the full
+//! `thudcensus`: the death thud a corpse makes as it lands (`$DTH`): the full
 //! `DeathThudLookups.dbc` grid, `SizeClass × TerrainTypeSoundID` to land and water `SoundEntries`
 //! kits, and the creature models that key a `$DTH`. An empty cell is authored silence (Sand and
 //! Soggy have no water column), as is a model with no `$DTH`.
@@ -111,7 +111,7 @@ pub fn thudcensus(chain: &mut Chain) -> Result<()> {
     for name in crate::scan::m2_names(chain, None)? {
         let key = mdx_key(&name);
         let Some(models) = by_key.get(&key) else {
-            continue; // not a creature model: `CGUnit_C::HandleAnimEvent` never sees its events
+            continue; // not a creature model: the unit's anim-event handler never sees its events
         };
         let Ok(bytes) = benilla_formats::read_m2(chain, &name) else {
             continue;

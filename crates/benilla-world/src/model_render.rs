@@ -20,8 +20,8 @@ pub use batch::{BatchVariants, EntityUvLane, M2BatchMaterials, ModelMaterials, S
 pub use sort::{M2BatchSort, SortOrigin};
 
 /// Yards of transparent sort bias per authored batch step: a model's coplanar batches tie on one
-/// mesh centre, and the reference keeps their authored order inside the instance's sort key
-/// (`0x707db1`). Under [`benilla_formats::owner_last_rung`]'s 1-yd floor, over f32 noise at 500 yd.
+/// mesh centre, and the reference keeps their authored order inside the instance's sort key. Under
+/// [`benilla_formats::owner_last_rung`]'s 1-yd floor, over f32 noise at 500 yd.
 pub(crate) const BATCH_ORDER_SORT_EPS: f32 = 1e-3;
 
 /// The eps product's ceiling, since `depth_bias as i32` is a pipeline-key axis: under 1.0, and
@@ -63,7 +63,7 @@ pub struct MatKey {
     /// The static terrain-shade selector, fixed per placement.
     shade: ShadeSel,
     /// Authored batch index + 1 (0 = unordered): the transparent sort bias of every batch, and for
-    /// WMO the clip-z nudge too (MOBA batches draw in strict file order, `0x6b4f10`/`0x6b5190`).
+    /// WMO the clip-z nudge too (MOBA batches draw in strict file order).
     batch_order: u16,
     /// The `Arc<UvAnim>` pointer, stable while its model is loaded: one material per UV loop.
     uv_anim: Option<usize>,
@@ -77,7 +77,7 @@ pub struct MatKey {
     window: bool,
     /// The MOHD ambient of a WMO batch under its root's unified law (MOHD `0x2`).
     wmo_unified: Option<[u8; 3]>,
-    /// A depth-prime twin ([`zfill_material`], the reference's `M2UseZFill` clone at `0x707f7d`).
+    /// A depth-prime twin ([`zfill_material`], the reference's `M2UseZFill` clone).
     zfill: bool,
     /// A WMO skybox batch ([`crate::skybox`]), with its own pipeline and sort rung.
     sky_depth: bool,
@@ -120,16 +120,16 @@ impl<'a> Stage2<'a> {
 }
 
 /// The static terrain-shade selector in `sun_scale.x`, which the shader thresholds into the
-/// reference's intensities (2.5 lit, 1.0 day/night, 0.5 shadowed; `[node+0xa4]`, `0x69e280`).
-/// Entities are always [`ShadeSel::Lit`] and shade per instance by the `MeshTag` byte.
+/// reference's intensities (2.5 lit, 1.0 day/night, 0.5 shadowed; `[node+0xa4]`). Entities are
+/// always [`ShadeSel::Lit`] and shade per instance by the `MeshTag` byte.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ShadeSel {
-    /// Entity M2s only: the 2.5 and its 3.3333/s chase live on the WENTITY light node (vtable
-    /// `0x810810`, `[obj+0xe0]`), which [`crate::entity_shade`] ramps per instance into the
-    /// `MeshTag` byte for units, players and GameObjects alike.
+    /// Entity M2s only: the 2.5 and its 3.3333/s chase live on the WENTITY light node
+    /// (`[obj+0xe0]`), which [`crate::entity_shade`] ramps per instance into the `MeshTag` byte for
+    /// units, players and GameObjects alike.
     Lit,
     /// Lit ground at 1.0: exterior WMO MODD props and ADT map doodads, never the 2.5 site; a map
-    /// doodad's `CMapDoodadDef` `[+0xa4]` is only ever 0.0, 0.5 or 1.0.
+    /// doodad's placement `[+0xa4]` is only ever 0.0, 0.5 or 1.0.
     Matte,
     /// The base sits on MCSH-shadowed terrain: the reference's dim 0.5.
     Shaded,
@@ -157,8 +157,8 @@ pub type MaterialCache = benilla_assets::SpatialCache<MatKey, Handle<WowModelMat
 
 /// Build or fetch the deduped [`WowModelMaterial`] for one model batch. `fade_variant` marks the
 /// blend twin every fade rides, built with the source blend, never `Blend`: the twin always blends
-/// (`0x70c1fd`) but its alpha test keys on the stored mode (`0x70c237`), so AlphaKey keeps its
-/// 224/255 cutout and Opaque has none.
+/// but its alpha test keys on the stored mode, so AlphaKey keeps its 224/255 cutout and Opaque has
+/// none.
 pub fn model_material(
     cache: &mut MaterialCache,
     materials: &mut Assets<WowModelMaterial>,
@@ -232,7 +232,7 @@ pub fn model_material(
     // `specialize` must key on the same `clutter_fade.z` bit 2.
     let source_cutout = blend == ModelBlend::AlphaTest && !alphatest_disabled();
     let alpha_mode = if is_additive || fade_variant {
-        // A fade twin always blends (`0x70c1fd`); its source blend only sets the cutout marker.
+        // A fade twin always blends; its source blend only sets the cutout marker.
         AlphaMode::Blend
     } else {
         match blend {
@@ -266,9 +266,9 @@ pub fn model_material(
             depth_bias,
             ..default()
         },
-        // No texture: the reference disables the texture stage and draws the flat vertex colour,
-        // a white modulate whose alpha test passes everywhere (`0x59baa0`). Blend and cull still
-        // apply, so an untextured fade twin keeps its alpha path.
+        // No texture: the reference disables the texture stage and draws the flat vertex colour, a
+        // white modulate whose alpha test passes everywhere. Blend and cull still apply, so an
+        // untextured fade twin keeps its alpha path.
         None => StandardMaterial {
             base_color: Color::WHITE,
             alpha_mode,
@@ -287,13 +287,13 @@ pub fn model_material(
                 clutter_fade: Vec4::new(
                     0.0,
                     0.0,
-                    // Bits: 0 no depth write (M2 0x10), 1 no depth test (0x08), 2 additive,
-                    // 3 opaque intent (the shader pins alpha to 1.0: Metal has bound opaque
-                    // draws with blending on when an extra camera exists), 4-6 fog policy
-                    // (`0x70baf0`), 7 Mod (DST_COLOR, ZERO) and 8 Mod2x (DST_COLOR, SRC_COLOR),
-                    // exact because the framebuffer holds gamma as in the reference, 10 twin
-                    // cutout (the source alpha-tests: 224/255 on the unfaded alpha; an Opaque
-                    // source has no test, `0x70c237`), 12 env map, 13 sky depth.
+                    // Bits: 0 no depth write (M2 0x10), 1 no depth test (0x08), 2 additive, 3
+                    // opaque intent (the shader pins alpha to 1.0: Metal has bound opaque draws
+                    // with blending on when an extra camera exists), 4-6 fog policy, 7 Mod
+                    // (DST_COLOR, ZERO) and 8 Mod2x (DST_COLOR, SRC_COLOR), exact because the
+                    // framebuffer holds gamma as in the reference, 10 twin cutout (the source
+                    // alpha-tests: 224/255 on the unfaded alpha; an Opaque source has no test), 12
+                    // env map, 13 sky depth.
                     f32::from(
                         u16::from(no_depth_write)
                             | (u16::from(no_depth_test) << 1)
@@ -313,9 +313,9 @@ pub fn model_material(
                     0.0,
                 ),
                 // x WMO (FFP N·L × MOCV), y fade variant, z WMO interior group (sun off), w unlit:
-                // M2 UNLIT 0x01, or WMO UNLIT on an exterior group (`0x6b4f10`; the interior
-                // drawer `0x6b5190` ignores it). M2 Mod/Mod2x are always unlit, and additive is
-                // lit unless 0x01 is set (`DAT_00811fa8 = {1,1,1,1,1,0,0}`).
+                // M2 UNLIT 0x01, or WMO UNLIT on an exterior group (the interior drawer ignores
+                // it). M2 Mod/Mod2x are always unlit, and additive is lit unless 0x01 is set
+                // (the per-blend-mode lit table `{1,1,1,1,1,0,0}`).
                 model_flags: Vec4::new(
                     if is_wmo { 1.0 } else { 0.0 },
                     if fade_variant { 1.0 } else { 0.0 },
@@ -329,9 +329,9 @@ pub fn model_material(
                     },
                 ),
                 // x the shade selector. y the WMO batch order, uniform data, not a pipeline key:
-                // the vertex stage scales clip z by (1 + y·2⁻²³), so a later coplanar batch wins
-                // in any draw order, as in MOBA order. zw the UV-animation offset at t = 0, the
-                // seed the per-frame table row is added to: `0x714260` adds the un-pivoted
+                // the vertex stage scales clip z by (1 + y·2⁻²³), so a later coplanar batch wins in
+                // any draw order, as in MOBA order. zw the UV-animation offset at t = 0, the seed
+                // the per-frame table row is added to: the reference adds the un-pivoted
                 // translation to the stage UVs, and no placed doodad rotates or scales them.
                 sun_scale: {
                     let uv0 = uv_anim.map_or([0.0, 0.0], |a| a.sample(0.0));
@@ -346,7 +346,7 @@ pub fn model_material(
                 },
                 // xyz the animated M2Color tint's first key (white when static: the vertex colours
                 // carry it). w the WMO interior class: INT batches draw unlit tex × MOCV and TRANS
-                // batches lerp lit to baked by the MOCV alpha (`0x6b5190`); exterior and M2 are 0.
+                // batches lerp lit to baked by the MOCV alpha; exterior and M2 are 0.
                 tint: {
                     let t0 = rgb_anim.map_or([1.0, 1.0, 1.0], |a| a.sample(0.0));
                     // The unified drawer lerps the TRANS batches of exterior groups too (`0x7a95de`).
@@ -409,7 +409,7 @@ pub fn model_material(
 pub(crate) const ZFILL_MARKER: u16 = 1 << 9;
 
 /// `clutter_fade.z` marker bit 10: the twin's source alpha-tests, so the shader keeps the 224/255
-/// cutout while blending. Never on an Opaque source: mode 0 has no alpha test (`0x70c237`).
+/// cutout while blending. Never on an Opaque source: mode 0 has no alpha test.
 pub(crate) const TWIN_CUTOUT_MARKER: u16 = 1 << 10;
 
 /// `clutter_fade.z` marker bit 12: texture coordinates from the view-space reflection vector, the
@@ -436,18 +436,17 @@ fn skybox_sort_bias(batch_order: u16) -> f32 {
 
 /// The depth-prime twin's sort bias in yards (negative draws earlier), past the spread of one
 /// model's part centres so all its twins draw before any colour part, as the reference's one sort
-/// key per instance with twins first does (`cmd+0x14 = model+0x84`, `0x707db1`, `0x70ae10`). 8 yd
-/// covers humanoids and mounts; a taller model can keep some self-overlap, and a transparent
-/// sorting within 8 yd behind a fading body draws after its prime and clips where the body covers
-/// it. As a raster depth bias it is ~2⁻²⁰ relative, away from the eye.
+/// key per instance with twins first does (`cmd+0x14 = model+0x84`). 8 yd covers humanoids and
+/// mounts; a taller model can keep some self-overlap, and a transparent sorting within 8 yd behind
+/// a fading body draws after its prime and clips where the body covers it. As a raster depth bias
+/// it is ~2⁻²⁰ relative, away from the eye.
 pub(crate) const ZFILL_SORT_BIAS: f32 = -8.0;
 
-/// Build or fetch the depth-prime twin for one fadeable entity batch, the reference's
-/// `M2UseZFill` clone (`0x707f7d`): while a model is translucent, a colour-masked, z-writing copy
-/// of each depth-writing batch draws first, so only its nearest surface blends. `cutout` marks an
-/// AlphaKey source, whose twin keeps its alpha test as the reference's does (mode 0 has none,
-/// `0x70c237`); it must match what the colour pass discards, or the holes get depth walls.
-/// Colour-only inputs are canonical, so twins dedupe.
+/// Build or fetch the depth-prime twin for one fadeable entity batch, the reference's `M2UseZFill`
+/// clone: while a model is translucent, a colour-masked, z-writing copy of each depth-writing batch
+/// draws first, so only its nearest surface blends. `cutout` marks an AlphaKey source, whose twin
+/// keeps its alpha test as the reference's does (mode 0 has none); it must match what the colour
+/// pass discards, or the holes get depth walls. Colour-only inputs are canonical, so twins dedupe.
 pub fn zfill_material(
     cache: &mut MaterialCache,
     materials: &mut Assets<WowModelMaterial>,
@@ -608,11 +607,10 @@ pub struct FarSideOfWater;
 const GC_DEADLINE_SECS: f32 = 2.0;
 
 /// Swap each transparent M2 batch onto or off its far-side twin: the reference draws a model's
-/// transparents on the eye's far side before the water pass (`0x707680`), split per model, and
-/// every batch carries its model's transform. An instance inside the `±r` band draws on both
-/// sides, clipped at the waterline (`M2UseClipPlanes`, [`crate::straddle`]); WMO translucents
-/// never classify. Only changed batches re-classify; the eye crossing the surface or surfaces
-/// streaming walk them all.
+/// transparents on the eye's far side before the water pass, split per model, and every batch
+/// carries its model's transform. An instance inside the `±r` band draws on both sides, clipped at
+/// the waterline (`M2UseClipPlanes`, [`crate::straddle`]); WMO translucents never classify. Only
+/// changed batches re-classify; the eye crossing the surface or surfaces streaming walk them all.
 #[allow(clippy::type_complexity)]
 pub(crate) fn classify_water_side(
     interleave: crate::particles::WaterInterleave,
@@ -1070,9 +1068,9 @@ pub enum ModelKind {
 }
 
 /// A model root whose projected batches draw whatever `projectedTextures` says: the reference's
-/// `CM2Model` flag `0x4`, set on a spell effect, missile or dynamic object whose spell carries
-/// attribute ExE `0x40000000` (`CGDynamicObject_C::ModelLoaded`, `CGMissile_C`, `CEffect`).
-/// GameObject models carry it always (`CGGameObject_C`), here by their [`ModelKind`].
+/// model flag `0x4`, set on a spell effect, missile or dynamic object whose spell carries attribute
+/// ExE `0x40000000` (set as each one's model loads). GameObject models carry it always, here by
+/// their [`ModelKind`].
 #[derive(Component)]
 // Sparse: a few effect roots carry it, and a column would split their tables.
 #[component(storage = "SparseSet")]

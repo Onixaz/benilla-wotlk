@@ -360,9 +360,9 @@ fn debug_panel_ui(
                             // Doodad animation cost: anim hosts, ticking ones (hidden ones pause),
                             // material-alpha samplers and UV-scrolling materials.
                             let ticking = anim_hosts.iter().filter(|h| h.active).count();
-                            // Samplers at 0 are batches the reference culls (`A <= 0`,
-                            // `0x707b3a`-`0x707b5c`), such as a voidwalker's death-only geometry;
-                            // `dim` counts batches drawn below full strength.
+                            // Samplers at 0 are batches the reference culls (`A <= 0`), such as a
+                            // voidwalker's death-only geometry; `dim` counts batches drawn below
+                            // full strength.
                             let (mut hidden, mut dim) = (0usize, 0usize);
                             for m in &mat_anims {
                                 if m.current <= 0.0 {
@@ -477,8 +477,8 @@ fn debug_panel_ui(
                                     benilla_world::weather::storm_blend(ws.sky_density),
                                 ));
                             }
-                            // The `weatherDensity` CVar (Weather Intensity 0-3), scaling spawn
-                            // gain through the `0x67b870` quality table.
+                            // The `weatherDensity` CVar (Weather Intensity 0-3), scaling spawn gain
+                            // through the quality table.
                             if let Some(ws) = weather_state.as_mut() {
                                 let mut wd = ws.weather_density;
                                 ui.horizontal(|ui| {

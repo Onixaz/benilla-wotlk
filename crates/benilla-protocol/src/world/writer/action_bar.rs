@@ -27,7 +27,7 @@ impl WorldWriter {
 
     /// Post the extra bars' visibility byte, `PLAYER_FIELD_BYTES` byte 2. The server owns it: the
     /// reference never writes it locally, it holds once `SMSG_UPDATE_OBJECT` echoes it, and a
-    /// disconnected send is dropped silently (`0x5ab637`).
+    /// disconnected send is dropped silently.
     pub fn set_actionbar_toggles(&mut self, toggles: u8) -> Result<()> {
         self.send(
             opcode::CMSG_SET_ACTIONBAR_TOGGLES,

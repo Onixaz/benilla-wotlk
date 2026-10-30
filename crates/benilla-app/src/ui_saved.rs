@@ -1,14 +1,13 @@
 //! The saved-variables host side: FrameXML's two files and when they are read and written. The
 //! declaration sets and the serializer are [`benilla_ui::script`]'s.
 //!
-//! `LoadSavedVariables` (`0x512930`) runs after the addons and before `VARIABLES_LOADED`: it
-//! creates the account's and the character's folders, then runs the account's
-//! `SavedVariables.lua` and the character's, each a chunk, so a saved value overrides a file-scope
-//! default before any consumer reads it; a file that is missing or fails logs
-//! `Error loading <path>` (`0xa4486c`) to the load's record. `CGGameUI::SaveSavedVariables`
-//! (`0x5271da`) writes both at the UI shutdown, after `PLAYER_LOGOUT`, with the one-time `.bak`
-//! ([`crate::local_state::write_saved_file`]); there is no autosave and no Lua call that forces a
-//! write.
+//! The saved-variables load (`0x512930`) runs after the addons and before `VARIABLES_LOADED`: it
+//! creates the account's and the character's folders, then runs the account's `SavedVariables.lua`
+//! and the character's, each a chunk, so a saved value overrides a file-scope default before any
+//! consumer reads it; a file that is missing or fails logs `Error loading <path>` (`0xa4486c`) to
+//! the load's record. The saved-variables save (`0x5271da`) writes both at the UI shutdown, after
+//! `PLAYER_LOGOUT`, with the one-time `.bak` ([`crate::local_state::write_saved_file`]); there is
+//! no autosave and no Lua call that forces a write.
 
 use std::path::{Path, PathBuf};
 

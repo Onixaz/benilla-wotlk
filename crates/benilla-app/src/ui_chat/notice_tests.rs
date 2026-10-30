@@ -1,8 +1,7 @@
 //! The guid-tail channel notices through [`super::feed::feed_chat`] to the stock chat frame: the
-//! reference hands every notice's channel name to its composer `0x49a870` (the cached leg
-//! `0x49c59f`-`0x49c5b0`, the name-query leg `0x49cfb4`-`0x49cfc1`), which numbers it off the
-//! joined channels (`0x49aa1e`-`0x49aa48`) and fills arg7-arg9 from that record (`0x49b10c`-
-//! `0x49b12a`). Without that stamp the stock filter (`ChatFrame.lua:1373-1392`) prints nothing.
+//! reference hands every notice's channel name to its composer, which numbers it off the joined
+//! channels and fills arg7-arg9 from that record. Without that stamp the stock filter
+//! (`ChatFrame.lua:1373-1392`) prints nothing.
 
 use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
@@ -139,8 +138,8 @@ fn a_members_join_reaches_the_stock_frame_numbered() {
     assert!(f.script().errors().is_empty(), "{:?}", f.script().errors());
 }
 
-/// A join whose name is not cached waits on the name query, then prints stamped, as the
-/// reference's queued node carries the channel name to the callback (`0x49cfb4`-`0x49cfc1`).
+/// A join whose name is not cached waits on the name query, then prints stamped, as the reference's
+/// queued node carries the channel name to the callback.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_join_resolved_after_its_name_query_is_stamped_too() {
@@ -210,8 +209,8 @@ fn owner_change_and_kick_notices_print() {
     assert!(f.script().errors().is_empty(), "{:?}", f.script().errors());
 }
 
-/// An invite names a channel we are not in, so it stays unstamped (the miss leg `0x49aa86`,
-/// `0x49b12f`) and prints only through the stock filter's `INVITE` exemption (`ChatFrame.lua:1374`).
+/// An invite names a channel we are not in, so it stays unstamped and prints only through the stock
+/// filter's `INVITE` exemption (`ChatFrame.lua:1374`).
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_invite_to_a_channel_we_are_not_in_still_prints() {

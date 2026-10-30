@@ -137,7 +137,7 @@ fn queued(s: &UiScript) -> Vec<String> {
         .collect()
 }
 
-/// `RefreshList`: one header per sub-class, the `(-1, -1)` verb group first and named by the
+/// The list refresh: one header per sub-class, the `(-1, -1)` verb group first and named by the
 /// alternate verb, then by class and name; recipes by difficulty, then name.
 #[test]
 fn the_list_groups_under_the_verb_header_and_sub_class_headers() {
@@ -193,7 +193,7 @@ fn info_returns_five_values_with_the_alternate_verb() {
         .unwrap());
 }
 
-/// `QSortSkills`: difficulty, then trivialHigh and item level descending, then name.
+/// The recipe sort: difficulty, then trivialHigh and item level descending, then name.
 #[test]
 fn recipes_sort_by_difficulty_trivial_rank_item_level_and_name() {
     let mut s = UiScript::new().unwrap();

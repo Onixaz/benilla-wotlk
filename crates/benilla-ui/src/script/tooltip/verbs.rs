@@ -140,10 +140,9 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetText(text, r, g, b, alpha, wrap) (`0x531b90`): alpha has its own number gate, default 1,
-    // and a text that is neither string nor number raises the binding's usage error. It clears,
-    // writes line 1 and shows: the empty-slot hover calls no Show after it
-    // (PaperDollFrame.lua:747).
+    // SetText(text, r, g, b, alpha, wrap): alpha has its own number gate, default 1, and a text
+    // that is neither string nor number raises the binding's usage error. It clears, writes line 1
+    // and shows: the empty-slot hover calls no Show after it (PaperDollFrame.lua:747).
     m.set(
         "SetText",
         lua.create_function(|lua, (this, args): (Table, Variadic<Value>)| {
@@ -174,10 +173,9 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // AppendText(text) (`0x531e30`): appends to line 1's left cell in place, keeping its colour,
-    // and does nothing with no lines, as the reference's body does (`0x5305b0`, line 1 at
-    // `0x5305cc`). The bag tooltips hang a keybinding on their SetText title with it
-    // (ContainerFrame.xml:198, MainMenuBarBagButtons.lua:91).
+    // AppendText(text): appends to line 1's left cell in place, keeping its colour, and does
+    // nothing with no lines, as the reference's body does. The bag tooltips hang a keybinding on
+    // their SetText title with it (ContainerFrame.xml:198, MainMenuBarBagButtons.lua:91).
     m.set(
         "AppendText",
         lua.create_function(|lua, (this, text): (Table, Value)| {
@@ -210,9 +208,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             append_line(lua, &this, (text, color), None, wrap)
         })?,
     )?;
-    // AddDoubleLine(textL, textR, rL, gL, bL, rR, gR, bR [, wrap]) (`0x531840`): each side's
-    // colour gates on its own r-slot. The core forces wrap off when the right text is non-empty;
-    // this never wraps.
+    // AddDoubleLine(textL, textR, rL, gL, bL, rR, gR, bR [, wrap]): each side's colour gates on its
+    // own r-slot. The core forces wrap off when the right text is non-empty; this never wraps.
     m.set(
         "AddDoubleLine",
         lua.create_function(
@@ -245,8 +242,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "NumLines",
         lua.create_function(|lua, this: Table| with_tip(lua, &this, |t| t.num_lines as i64))?,
     )?;
-    // AddFontStrings(left, right) (`0x530c40`): adopts two caller-made FontStrings as the next
-    // line pair, placed like an engine-grown pair but keeping the caller's fonts.
+    // AddFontStrings(left, right): adopts two caller-made FontStrings as the next line pair, placed
+    // like an engine-grown pair but keeping the caller's fonts.
     m.set(
         "AddFontStrings",
         lua.create_function(|lua, (this, left, right): (Table, Table, Table)| {
@@ -392,7 +389,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     // Show and Hide are the shared pair: the visibility cascade runs the tooltip's overrides
-    // (`ShowThis` `0x61cff0`, `HideThis` `0x61eb20`).
+    // (show `0x61cff0`, hide `0x61eb20`).
 
     // The content methods: items, spells and auras, talents, units.
     crate::script::tooltip_item::install_methods(lua, &m)?;
@@ -408,8 +405,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The twelve-name compare chain SetOwner and SetAnchorType share (`SStrCmpI`, `0x61ec8f`): any
-/// case, and a value that is not a string or number, or matches no name, is mode 0. The warning
+/// The twelve-name compare chain SetOwner and SetAnchorType share (case-insensitive, `0x61ec8f`):
+/// any case, and a value that is not a string or number, or matches no name, is mode 0. The warning
 /// on an unknown name is ours; Lua sees no difference.
 fn parse_anchor(lua: &Lua, verb: &str, anchor: &Value) -> TooltipAnchor {
     let Some(name) = optional_string(lua, anchor) else {

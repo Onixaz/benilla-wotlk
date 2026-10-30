@@ -1,7 +1,7 @@
 //! `PageTextMaterial.dbc`: a readable's material id (a book's `PageMaterial`, a text object's
-//! `data[2]`) → the basename `ItemTextGetMaterial()` (`0x4e39f0`) hands to Lua, which paints the
+//! `data[2]`) → the basename `ItemTextGetMaterial()` hands to Lua, which paints the
 //! `ItemText-<basename>-*` corners and picks the text colour (`ItemTextFrame.lua:63-104`). An id
-//! outside `0 < id <= [0xc0da20]` returns nil, which the Lua shows as "Parchment", without corners.
+//! outside `0 < id <=` returns nil, which the Lua shows as "Parchment", without corners.
 
 use std::collections::HashMap;
 

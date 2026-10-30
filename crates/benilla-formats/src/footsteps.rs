@@ -5,8 +5,8 @@
 //!
 //! Class 7 is the character class (its rows are the `CharacterMediumLarge*` kits), reached through
 //! the display's sound data, never a code default. Class 0 means no footsteps: the reference bails
-//! before any lookup (`0x6233ec`). A position with no ground-effect layer is silent: its sentinel
-//! is -1, which the kit lookup's signed bounds check rejects (`0x458450`).
+//! before any lookup. A position with no ground-effect layer is silent: its sentinel is -1, which
+//! the kit lookup's signed bounds check rejects.
 
 use std::collections::HashMap;
 
@@ -46,7 +46,7 @@ impl FootstepCatalog {
     }
 
     /// Whether the ground under an effect layer takes footprints: `TerrainType.Flags` bit 0, the
-    /// bit the reference's footprint gate tests (`0x699e8e`). No layer, no prints.
+    /// bit the reference's footprint gate tests. No layer, no prints.
     pub fn leaves_footprints(&self, effect_id: Option<u32>) -> bool {
         effect_id
             .and_then(|e| self.effect_terrain.get(&e))

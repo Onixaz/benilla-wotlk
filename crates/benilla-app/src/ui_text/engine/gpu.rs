@@ -83,7 +83,7 @@ fn build(world_assets: &WorldAssets, images: &Assets<Image>, dpi: f32) -> Option
 
 /// Build the engine now if the patch chain and the window exist and it is not built yet, for a VM
 /// whose files load before the first `Update`: the reference's font system is up before any XML
-/// loads, and `GetStringWidth` (`0x483e80`) measures inside an `OnLoad`.
+/// loads, and `GetStringWidth` measures inside an `OnLoad`.
 pub(crate) fn ensure_atlas(world: &mut World) {
     if world.contains_resource::<UiFontAtlas>() {
         return;

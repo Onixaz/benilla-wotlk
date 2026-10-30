@@ -1,7 +1,7 @@
-//! The mail bindings, 12340's `CGMailInfo` verbs (`MailInfo_Scripts`). The app pushes the inbox,
-//! resolved from the wire (`UiScript::set_mail`), and whether a mailbox is open; the verbs gate on
-//! the reference's command-pending flag and queue [`MailCommand`]s the app sends. Indices are
-//! 1-based, as `MailFrame.lua` uses them.
+//! The mail bindings, 12340's mail verbs. The app pushes the inbox, resolved from the wire
+//! (`UiScript::set_mail`), and whether a mailbox is open; the verbs gate on the reference's
+//! command-pending flag and queue [`MailCommand`]s the app sends. Indices are 1-based, as
+//! `MailFrame.lua` uses them.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -13,7 +13,7 @@ use super::{Model, ScriptValue};
 pub const MAIL_SEND_SLOTS: usize = 12;
 /// `MailboxMessageInfo`'s attachment slots.
 pub const MAIL_ATTACHMENT_SLOTS: usize = 16;
-/// The send array's size (`CGMailInfo::m_sendItems[16]`), which the readers bound by.
+/// The send array's size, 16 slots in the reference's mail state, which the readers bound by.
 const SEND_ARRAY: usize = 16;
 
 /// `CheckInbox`'s rate limit: a list query at most once a minute (`0x56e499`).
@@ -122,7 +122,7 @@ impl MailInboxRow {
         self.attachments.iter().flatten().next()
     }
 
-    /// `GetAttachment` (`0x56d920`): `None` (the reference's -1) is the first filled slot.
+    /// The attachment read (`0x56d920`): `None` (the reference's -1) is the first filled slot.
     fn attachment(&self, slot: Option<u32>) -> Option<&MailAttachmentView> {
         match slot {
             None => self.first_attachment(),
@@ -254,9 +254,9 @@ fn num_send_items(model: &Model) -> usize {
     model.mail_send_items.iter().flatten().count()
 }
 
-/// The reason `AddItemToOutgoingMail` (`0x56fff0`) refuses an item, by its message key. Its
-/// holiday and zone- or instance-bound arms read template fields the VM does not carry; the server
-/// refuses those.
+/// The reason the outgoing-mail add (`0x56fff0`) refuses an item, by its message key. Its holiday
+/// and zone- or instance-bound arms read template fields the VM does not carry; the server refuses
+/// those.
 fn attach_refusal(model: &Model, item: &CursorItem) -> Option<&'static str> {
     if model.mail_lock_send_items {
         return Some("ERR_CLIENT_LOCKED_OUT");
@@ -297,7 +297,7 @@ fn attach_refusal(model: &Model, item: &CursorItem) -> Option<&'static str> {
     None
 }
 
-/// `AddItemToOutgoingMail` (`0x56fff0`): `index` `None` takes the first free send slot. On success
+/// The outgoing-mail add (`0x56fff0`): `index` `None` takes the first free send slot. On success
 /// the item locks and `MAIL_SEND_INFO_UPDATE` fires.
 fn add_item_to_outgoing(model: &mut Model, index: Option<usize>, mut item: CursorItem) -> bool {
     if let Some(key) = attach_refusal(model, &item) {
@@ -312,7 +312,7 @@ fn add_item_to_outgoing(model: &mut Model, index: Option<usize>, mut item: Curso
         model.ui_errors.push("ERR_MAIL_INVALID_ATTACHMENT_SLOT");
         return false;
     };
-    // `SetSendItem` (`0x56d290`) drops the same item from any other slot.
+    // The send-slot setter (`0x56d290`) drops the same item from any other slot.
     for (i, s) in model.mail_send_items.iter_mut().enumerate() {
         if i != slot
             && s.as_ref()
@@ -363,7 +363,7 @@ pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool
     true
 }
 
-/// A bag slot attached to the outgoing mail reads locked (`LockItem`).
+/// A bag slot attached to the outgoing mail reads locked.
 pub(super) fn holds_slot(model: &Model, bag: i64, slot: u32) -> bool {
     model
         .mail_send_items
@@ -403,7 +403,7 @@ impl super::UiScript {
         drain_field!(self, mail_commands)
     }
 
-    /// `TalkToMailbox` (`0x56da60`) and `SMSG_SHOW_MAILBOX` (`0x56dbc0`): the mailbox opens, the
+    /// The mailbox opener (`0x56da60`) and `SMSG_SHOW_MAILBOX` (`0x56dbc0`): the mailbox opens, the
     /// form resets with its events, then `MAIL_SHOW`.
     pub fn open_mailbox(&mut self) {
         {
@@ -421,7 +421,7 @@ impl super::UiScript {
         close_mail(&mut self.model_mut());
     }
 
-    /// `CGMailInfo::EnterWorld` (`0x571530`): no mailbox, an empty form, nothing pending, and
+    /// The mail state's world entry (`0x571530`): no mailbox, an empty form, nothing pending, and
     /// the inbox throttle reset.
     pub fn mail_enter_world(&mut self) {
         let mut model = self.model_mut();
@@ -659,7 +659,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (index, attach): (Value, Value)| {
             let index = index_arg(lua, index, "Usage: GetInboxItem(messageIndex, attachIndex)")?;
             let slot = attach_arg(lua, attach)?;
-            // `canUse` is the shared item-usable gate (`CanUseItem`, `0x5710ea`).
+            // `canUse` is the shared item-usable gate (`0x5710ea`).
             let a = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
@@ -1408,8 +1408,8 @@ fn send_slot_arg(lua: &Lua, v: Value) -> mlua::Result<Option<usize>> {
     })
 }
 
-/// `MarkAsRead` (`0x56fe30`): an unread row turns read locally and queues the packet; a read one,
-/// or none, does nothing.
+/// The mark-as-read (`0x56fe30`): an unread row turns read locally and queues the packet; a read
+/// one, or none, does nothing.
 fn mark_as_read(model: &mut Model, index: usize) {
     let Some(r) = row_mut(model, index).filter(|r| r.flags & flags::READ == 0) else {
         return;

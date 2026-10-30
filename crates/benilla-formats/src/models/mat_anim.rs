@@ -1,8 +1,8 @@
 //! The material-alpha bake: each M2 batch's colour-alpha and transparency-weight tracks as loops
 //! the runtime samples per instance, one per sequence. The reference's per-batch alpha is
 //! `instanceAlpha × colors[colorIndex].alpha × transparency[transLookup[idx]].weight`, both tracks
-//! evaluated every frame (`0x707680`); `A ≤ 0` skips the batch before its blend mode is read, and
-//! an opaque batch with `0 < A < 1` draws blended (`0x70c20f`).
+//! evaluated every frame; `A ≤ 0` skips the batch before its blend mode is read, and an opaque
+//! batch with `0 < A < 1` draws blended.
 
 use benilla_m2::{M2ScalarTrack, M2Vec3Track};
 
@@ -51,12 +51,12 @@ impl AlphaSeq {
     }
 }
 
-/// A batch's animated alpha for the whole model, one [`AlphaSeq`] per file sequence slot (the
-/// slot [`benilla_m2::M2Track::ranges`] and [`crate::ModelAnimation::seq_index`] use), since the
-/// reference reads the playing sequence's window every frame: hidden in Stand, drawn in Death.
-/// A consumer that passes no sequence reads slot 0; the placed-doodad lane does, on its spawn
-/// clock. The reference reads bone 0's armed sequence, which for a placed doodad is animation id
-/// 0, its variation re-rolled every play window (`0x7121a0`).
+/// A batch's animated alpha for the whole model, one [`AlphaSeq`] per file sequence slot (the slot
+/// [`benilla_m2::M2Track::ranges`] and [`crate::ModelAnimation::seq_index`] use), since the
+/// reference reads the playing sequence's window every frame: hidden in Stand, drawn in Death. A
+/// consumer that passes no sequence reads slot 0; the placed-doodad lane does, on its spawn clock.
+/// The reference reads bone 0's armed sequence, which for a placed doodad is animation id 0, its
+/// variation re-rolled every play window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AlphaAnim {
     per_seq: Vec<AlphaSeq>,
@@ -536,7 +536,7 @@ mod tests {
         assert_eq!(a.period, 1.0);
         assert!((a.sample(0.25) - 0.5).abs() < 1e-6);
         // Past the band's last key the value ramps on toward key 2 of a later sequence: the
-        // reference bounds `k1 = k0 + 1` by the key count, not the window's `hi` (`0x713d50`).
+        // reference bounds `k1 = k0 + 1` by the key count, not the window's `hi`.
         let expect = 1.0 + (0.3 - 1.0) * (1900.0 - 1500.0) / (5000.0 - 1500.0);
         assert!(
             (a.sample(0.9) - expect).abs() < 1e-4,
@@ -569,7 +569,7 @@ mod tests {
     }
 
     /// A band that keys nothing holds `keys[ranges[slot].lo]`, the reference's collapsed window
-    /// (`lo >= hi`, `0x713d50`).
+    /// (`lo >= hi`).
     #[test]
     fn band_empty_track_holds_its_bracket_key() {
         // Slot 1's window has collapsed onto key 0, value 0.

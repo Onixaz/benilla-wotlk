@@ -20,7 +20,7 @@ fn with_store<R>(lua: &Lua, f: impl FnOnce(&mut AnimStore) -> R) -> R {
     with(lua, |m| f(&mut m.anims))
 }
 
-/// `CSimpleAnimGroup::Play` (`0x49a8f0`).
+/// The group's play (`0x49a8f0`).
 pub(crate) fn group_play(lua: &Lua, g: u32) -> bool {
     let start = with_store(lua, |s| {
         let group = s.groups.get_mut(&g)?;
@@ -91,7 +91,7 @@ pub(crate) fn group_play(lua: &Lua, g: u32) -> bool {
     true
 }
 
-/// `CSimpleAnim::Play` (`0x49ad80`).
+/// The animation's play (`0x49ad80`).
 pub(crate) fn anim_play(lua: &Lua, a: u32) -> bool {
     let Some(g) = with_store(lua, |s| s.anims.get(&a).map(|a| a.group)) else {
         return false;
@@ -116,7 +116,7 @@ pub(crate) fn anim_play(lua: &Lua, a: u32) -> bool {
     true
 }
 
-/// `CSimpleAnimGroup::Pause` (`0x49aab0`).
+/// The group's pause (`0x49aab0`).
 pub(crate) fn group_pause(lua: &Lua, g: u32) {
     let list = with_store(lua, |s| {
         let list = s.list(g);
@@ -134,7 +134,7 @@ pub(crate) fn group_pause(lua: &Lua, g: u32) {
     fire(lua, g, "OnPause", Vec::new());
 }
 
-/// `CSimpleAnim::Pause` (`0x497e60`).
+/// The animation's pause (`0x497e60`).
 pub(crate) fn anim_pause(lua: &Lua, a: u32) {
     let Some(g) = with_store(lua, |s| s.anims.get(&a).map(|a| a.group)) else {
         return;
@@ -160,7 +160,7 @@ fn reset_group(s: &mut AnimStore, g: u32) {
     }
 }
 
-/// `CSimpleAnimGroup::Stop` (`0x49b0f0`).
+/// The group's stop (`0x49b0f0`).
 pub(crate) fn group_stop(lua: &Lua, g: u32, requested: bool) {
     let list = with_store(lua, |s| {
         let list = s.list(g);
@@ -180,7 +180,7 @@ pub(crate) fn group_stop(lua: &Lua, g: u32, requested: bool) {
     with_store(lua, |s| reset_group(s, g));
 }
 
-/// `CSimpleAnim::Stop` (`0x49adc0`).
+/// The animation's stop (`0x49adc0`).
 pub(crate) fn anim_stop(lua: &Lua, a: u32, requested: bool) {
     let g = with_store(lua, |s| {
         let anim = s.anims.get_mut(&a)?;
@@ -199,8 +199,8 @@ pub(crate) fn anim_stop(lua: &Lua, a: u32, requested: bool) {
     notify_anim_stopped(lua, g, a);
 }
 
-/// `CSimpleAnimGroup::NotifyAnimStopped` (`0x49ab60`): the last animation stopping stops the
-/// group, unrequested.
+/// The group's animation-stopped notice (`0x49ab60`): the last animation stopping stops the group,
+/// unrequested.
 fn notify_anim_stopped(lua: &Lua, g: u32, a: u32) {
     let others = with_store(lua, |s| {
         let list = s.list(g);
@@ -228,7 +228,7 @@ fn notify_anim_stopped(lua: &Lua, g: u32, a: u32) {
     with_store(lua, |s| reset_group(s, g));
 }
 
-/// `CSimpleAnimGroup::Finish` (`0x498580`): end at the current pass's end.
+/// The group's finish (`0x498580`): end at the current pass's end.
 pub(crate) fn group_finish(lua: &Lua, g: u32) {
     with_store(lua, |s| {
         let done = s.is_done(g);
@@ -241,7 +241,7 @@ pub(crate) fn group_finish(lua: &Lua, g: u32) {
 }
 
 /// The region chain a playing group affects: the owner, then its frame and the frame's parents
-/// (`CScriptRegion::m_parent`).
+/// (the region's parent link).
 fn chain(model: &Model, owner: Owner) -> Vec<Owner> {
     let mut out = vec![owner];
     let mut frame = match owner {
@@ -255,7 +255,7 @@ fn chain(model: &Model, owner: Owner) -> Vec<Owner> {
     out
 }
 
-/// `HasActiveAnimGroup` (`0x488740`) and `HasActiveAnimOfType(Alpha)` (`0x488770`).
+/// The active-group test (`0x488740`) and its alpha-only form (`0x488770`).
 fn active(model: &Model, owner: Owner, alpha_only: bool) -> bool {
     chain(model, owner).into_iter().any(|o| {
         model.anims.owners.get(&o).is_some_and(|st| {
@@ -290,7 +290,8 @@ fn set_alpha_byte(model: &mut Model, owner: Owner, byte: u8) {
     }
 }
 
-/// `NotifyAnimBegin` (`0x4889c0`) → `AnimActivated`: the first alpha group saves the owner's alpha.
+/// The animation-begin notice (`0x4889c0`) → the owner's activation: the first alpha group saves
+/// the owner's alpha.
 fn notify_begin(lua: &Lua, g: u32) {
     with(lua, |m| {
         let Some(owner) = m.anims.groups.get(&g).map(|g| g.owner) else {
@@ -309,8 +310,8 @@ fn notify_begin(lua: &Lua, g: u32) {
     });
 }
 
-/// `NotifyAnimEnd` (`0x488980`) → `AnimDeactivated`: with no alpha group left playing, the saved
-/// alpha comes back.
+/// The animation-end notice (`0x488980`) → the owner's deactivation: with no alpha group left
+/// playing, the saved alpha comes back.
 fn notify_end(lua: &Lua, g: u32) {
     with(lua, |m| {
         let Some(owner) = m.anims.groups.get(&g).map(|g| g.owner) else {
@@ -333,13 +334,13 @@ fn notify_end(lua: &Lua, g: u32) {
     });
 }
 
-/// `AddAnimAlpha` (`0x48f8e0` frame, `0x487ce0` region): the step on the current byte, clamped.
+/// The alpha add (`0x48f8e0` frame, `0x487ce0` region): the step on the current byte, clamped.
 fn add_alpha(model: &mut Model, owner: Owner, delta: i16) {
     let v = (i32::from(delta) + i32::from(alpha_byte(model, owner))).clamp(0, 255) as u8;
     set_alpha_byte(model, owner, v);
 }
 
-/// `AddAnimTranslation`: a region's own rect, a frame's every region below it (`0x491c60`).
+/// The translation add: a region's own rect, a frame's every region below it (`0x491c60`).
 fn add_translation(model: &mut Model, owner: Owner, d: (f32, f32)) {
     if d == (0.0, 0.0) {
         return;
@@ -381,7 +382,7 @@ fn apply(lua: &Lua, a: u32, progress: f32) {
     });
 }
 
-/// `CSimpleAnim::OnUpdate` (`0x498d50`): done, and the time consumed.
+/// The animation's update (`0x498d50`): done, and the time consumed.
 fn anim_on_update(lua: &Lua, a: u32, elapsed: f32) -> (bool, f32) {
     let step = with_store(lua, |s| {
         let anim = s.anims.get_mut(&a)?;
@@ -420,7 +421,7 @@ fn anim_on_update(lua: &Lua, a: u32, elapsed: f32) -> (bool, f32) {
     (true, consumed)
 }
 
-/// `AdvanceLoopState` (`0x49b470`): the next order, or the end of a pass: finish, or loop.
+/// The loop-state advance (`0x49b470`): the next order, or the end of a pass: finish, or loop.
 fn advance_loop_state(lua: &Lua, g: u32, elapsed: f32, remaining: f32) {
     enum Next {
         Play(Vec<u32>),
@@ -552,7 +553,7 @@ fn apply_done_orders(lua: &Lua, g: u32, reverse: bool) {
     }
 }
 
-/// `DoGroupUpdateWork` (`0x49c350`).
+/// The group's update work (`0x49c350`).
 fn do_group_update_work(lua: &Lua, g: u32, elapsed: f32) {
     let Some((reverse, paused)) = with_store(lua, |s| {
         s.groups
@@ -637,7 +638,7 @@ fn do_group_update_work(lua: &Lua, g: u32, elapsed: f32) {
     }
 }
 
-/// `CSimpleAnimGroup::OnUpdate` (`0x49c760`).
+/// The group's update (`0x49c760`).
 fn group_on_update(lua: &Lua, g: u32, elapsed: f32) {
     let idle = with_store(lua, |s| {
         s.is_done(g) || s.groups.get(&g).is_none_or(|x| x.loop_state == NONE)
@@ -711,9 +712,9 @@ pub(crate) fn animated_frames(m: &Model) -> Vec<FrameHandle> {
         .collect()
 }
 
-/// A frame's animation step in its layer update (`0x490770`): `PreOnAnimUpdate` on the frame, then
-/// on each region in link order, restoring an alpha-animated owner's saved byte (`0x48eba0`), then
-/// `OnAnimUpdate` the same way, each owner's groups in creation order.
+/// A frame's animation step in its layer update (`0x490770`): the pre-update pass on the frame,
+/// then on each region in link order, restoring an alpha-animated owner's saved byte
+/// (`0x48eba0`), then the update pass the same way, each owner's groups in creation order.
 pub(crate) fn update_frame(lua: &Lua, h: FrameHandle, elapsed: f32) {
     let owners: Vec<Owner> = {
         let m = lua

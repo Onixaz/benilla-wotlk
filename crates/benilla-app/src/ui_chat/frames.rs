@@ -219,10 +219,10 @@ fn strip_zone(channel: &str) -> &str {
     }
 }
 
-/// A channel notice: the notice byte's token ([`notice_token`], the jump table at `0x49c60c`)
-/// names `CHAT_<TOKEN>_NOTICE_BN` or else `CHAT_<TOKEN>_NOTICE` (`ChatFrame.lua:2778-2802`),
-/// filled with arg8 and arg4, then for CHANNEL_NOTICE_USER arg2 and any arg5; INVITE takes arg4
-/// and arg2 alone. `None` for MODE_CHANGE and bytes past the table, which print nothing.
+/// A channel notice: the notice byte's token ([`notice_token`]) names `CHAT_<TOKEN>_NOTICE_BN` or
+/// else `CHAT_<TOKEN>_NOTICE` (`ChatFrame.lua:2778-2802`), filled with arg8 and arg4, then for
+/// CHANNEL_NOTICE_USER arg2 and any arg5; INVITE takes arg4 and arg2 alone. `None` for MODE_CHANGE
+/// and bytes past the table, which print nothing.
 pub(crate) fn compose_notice(
     event: &ChatEvent,
     kind: ChatEventKind,

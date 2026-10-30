@@ -707,8 +707,8 @@ pub(super) fn seed_ui_fixture(
                     ..Default::default()
                 },
             );
-            // The item-set block (`0x52b650`), Defias Leather with one of 5 equipped: the gold
-            // "(1/5)" header, the member ladder, a green (2) bonus and a gray (4) one.
+            // The item-set block, Defias Leather with one of 5 equipped: the gold "(1/5)" header,
+            // the member ladder, a green (2) bonus and a gray (4) one.
             let mut inv: benilla_ui::script::InventorySlots = Default::default();
             inv[4] = Some(benilla_ui::script::InvSlotView {
                 durability: None,
@@ -781,8 +781,8 @@ pub(super) fn seed_ui_fixture(
                 return;
             };
             // A ranked player under the cursor, pushed as the mouseover feed does, then the call
-            // `drive_mouseover_tooltip` makes: the title is `0x609370`'s rank leg over the name,
-            // "Sergeant Bob".
+            // `drive_mouseover_tooltip` makes: the title is the reference name decorator's rank leg
+            // over the name, "Sergeant Bob".
             script.set_unit(
                 "mouseover",
                 Some(benilla_ui::script::UnitState {
@@ -917,8 +917,8 @@ pub(super) fn seed_ui_fixture(
                     (34, 2),      // UNIT_FIELD_LEVEL
                     (35, 1),      // UNIT_FIELD_FACTIONTEMPLATE: human
                     (36, 0x0101), // UNIT_FIELD_BYTES_0: race human, class warrior
-                    // UNIT_FIELD_FLAGS bit 3 (`PLAYER_CONTROLLED`), which every player carries;
-                    // `CanAttack` picks its arm on it, and without it no plate draws on the wolf.
+                    // UNIT_FIELD_FLAGS bit 3 (`PLAYER_CONTROLLED`), which every player carries; the
+                    // attack check picks its arm on it, and without it no plate draws on the wolf.
                     (46, 0x8),
                 ])),
                 crate::net::SelfPlayer,

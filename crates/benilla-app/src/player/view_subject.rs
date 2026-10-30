@@ -29,7 +29,7 @@ pub(crate) struct VehicleFocus(pub(crate) Option<RemoteView>);
 #[derive(Clone, Copy)]
 pub(crate) struct RemoteView {
     /// For readers of the followed unit's state: the reference's camera shake reads the followed
-    /// unit (`[cam+0x88]`/`[cam+0x8c]`), never the active player (`0x468550`).
+    /// unit (`[cam+0x88]`/`[cam+0x8c]`), never the active player.
     pub(crate) entity: Entity,
     /// The subject's feet in world space, which the rig orbits.
     pub(crate) feet: Vec3,
@@ -76,8 +76,8 @@ pub(super) fn publish_view_subject(
         .or_else(|| vehicle.as_deref().and_then(|v| v.0));
 
     // `CMSG_FAR_SIGHT` on the field's edge: 1 as the view attaches and 0 as it releases, the
-    // reference's two sites (`0x5ee290`). It follows the field, not the resolve: a release sent
-    // while the subject streams in would tear down the server's stream around it.
+    // reference's two sites. It follows the field, not the resolve: a release sent while the
+    // subject streams in would tear down the server's stream around it.
     if *engaged != anchor {
         if anchor.is_some() {
             let _ = net.0.send(ClientCommand::FarSight { engage: true });

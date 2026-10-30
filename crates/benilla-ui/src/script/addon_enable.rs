@@ -1,29 +1,28 @@
-//! One character's addon enable hash, the table an `ADDONSTATELIST` node (`0xbe1bd0`) holds at
-//! `+0x10`, with the node's dirty byte (`+0xc`). Both the glue AddOns screen and the in-game verbs
-//! write through its setter, and the writer `0x51ef20` saves a node only while it is dirty, one
-//! line per entry, so a character that toggled nothing writes nothing and one that never set an
-//! addon keeps inheriting what the realm's other characters chose (`0x51e470`).
+//! One character's addon enable hash, the table an `ADDONSTATELIST` node holds at `+0x10`, with the
+//! node's dirty byte (`+0xc`). Both the glue AddOns screen and the in-game verbs write through its
+//! setter, and the writer saves a node only while it is dirty, one line per entry, so a character
+//! that toggled nothing writes nothing and one that never set an addon keeps inheriting what the
+//! realm's other characters chose.
 
 use std::collections::HashMap;
 
-/// A character's explicit enable rows: those `AddOnList_LoadCharacter 0x51ebe0` read from its
-/// `AddOns.txt`, whether or not that addon is installed now, plus those the setter `0x51ea20` put
-/// there since. An addon with no row here is not the character's choice, and the query answers it
-/// from the other characters.
+/// A character's explicit enable rows: those the per-character load read from its `AddOns.txt`,
+/// whether or not that addon is installed now, plus those the setter put there since. An addon with
+/// no row here is not the character's choice, and the query answers it from the other characters.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EnableHash {
     /// In insertion order, each name in the spelling that first put it here.
     rows: Vec<(String, bool)>,
-    /// Lowercased name to its row: every compare in the reference is `SStrCmpI` (`0x64a4c0`).
+    /// Lowercased name to its row: every compare in the reference is case-insensitive.
     index: HashMap<String, usize>,
-    /// The node's `+0xc`: set when a setter call changes the hash (`0x51ebbc`), cleared by a
-    /// reload (`0x51ec59`) and by the writer as it saves (`0x51ef68`).
+    /// The node's `+0xc`: set when a setter call changes the hash, cleared by a reload and by the
+    /// writer as it saves.
     dirty: bool,
 }
 
 impl EnableHash {
     /// The loader's hash, clean. A name on two lines keeps its first spelling and takes the last
-    /// value, as the reload looks each one up and overwrites its byte (`0x51ee31`, `0x51eeef`).
+    /// value, as the reload looks each one up and overwrites its byte.
     pub fn from_rows(rows: impl IntoIterator<Item = (String, bool)>) -> Self {
         let mut hash = Self::default();
         for (name, on) in rows {
@@ -33,7 +32,7 @@ impl EnableHash {
     }
 
     /// The account-wide file's rows standing in for a character with no file of its own: dirty, so
-    /// the next save writes them as the character's (`LoadAddOnEnableState` `0x5f9382`).
+    /// the next save writes them as the character's (`0x5f9382`).
     pub fn from_account_rows(rows: impl IntoIterator<Item = (String, bool)>) -> Self {
         let mut hash = Self::from_rows(rows);
         hash.dirty = true;
@@ -47,9 +46,8 @@ impl EnableHash {
             .map(|&i| self.rows[i].1)
     }
 
-    /// The setter `0x51ea20` on this node: a row with the same value is left alone
-    /// (`0x51ebab`-`0x51ebb1`); a changed row is stored and a missing one inserted, and either
-    /// dirties the node (`0x51ebb3`-`0x51ebbc`, `0x51eb62`).
+    /// The setter on this node: a row with the same value is left alone; a changed row is stored
+    /// and a missing one inserted, and either dirties the node.
     pub fn set(&mut self, name: &str, on: bool) {
         if self.get(name) == Some(on) {
             return;
@@ -68,8 +66,8 @@ impl EnableHash {
         &self.rows
     }
 
-    /// The writer's view of the node (`0x51ef59`-`0x51ef68`): every row when dirty, clearing the
-    /// flag; `None` when clean, which writes nothing.
+    /// The writer's view of the node: every row when dirty, clearing the flag; `None` when clean,
+    /// which writes nothing.
     pub fn take_dirty(&mut self) -> Option<Vec<(String, bool)>> {
         std::mem::take(&mut self.dirty).then(|| self.rows.clone())
     }
@@ -126,7 +124,7 @@ mod tests {
                 ("Off".to_string(), false)
             ])
         );
-        assert!(!h.is_dirty(), "the writer clears the flag (`0x51ef68`)");
+        assert!(!h.is_dirty(), "the writer clears the flag");
         assert_eq!(h.take_dirty(), None);
     }
 

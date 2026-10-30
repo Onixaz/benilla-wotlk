@@ -6,7 +6,7 @@ use benilla_formats::{open_chain, parse_m2_render_submeshes, uv_transform};
 
 const SWIPE: &str = "Spells\\SwipeCaster.m2";
 
-/// The u extent of the UVs offset by `t` under `uv' = R·S·((uv + t) − p) + p` (`0x714260`).
+/// The u extent of the UVs offset by `t` under `uv' = R·S·((uv + t) − p) + p`.
 fn u_span_at(uvs: &[[f32; 2]], offset: [f32; 2]) -> (f32, f32) {
     uvs.iter()
         .map(|&uv| uv_transform(uv, offset, [0.0, 0.0, 0.0, 1.0], [1.0, 1.0])[0])

@@ -1,8 +1,8 @@
-//! The social API: friends, ignores, voice mutes and `/who` (`FriendList_Scripts`, registrar
-//! `0xad93d8`). The app pushes a display-ready [`SocialState`] (the reference resolves names, class
-//! and zone engine-side too) and drains the queued [`SocialRequest`]s. Selection is engine state in
-//! the reference (a guid per list, read back through `0x6b35e0`), so a set changes the snapshot at
-//! once and queues the change for the app.
+//! The social API: friends, ignores, voice mutes and `/who` (the friend list's script table,
+//! registrar `0xad93d8`). The app pushes a display-ready [`SocialState`] (the reference resolves
+//! names, class and zone engine-side too) and drains the queued [`SocialRequest`]s. Selection is
+//! engine state in the reference (a guid per list, read back through `0x6b35e0`), so a set changes
+//! the snapshot at once and queues the change for the app.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -13,7 +13,8 @@ use super::who_sort::WhoSortChain;
 /// One friend row as `GetFriendInfo` (`0x6b4130`) answers it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FriendInfo {
-    /// Not a Lua return: `IsRAFPlayer`'s friend leg finds the friend by guid (`0x6b3510`).
+    /// Not a Lua return: the Recruit-a-Friend check's friend leg finds the friend by guid
+    /// (`0x6b3510`).
     pub guid: u64,
     /// From the name cache; `None` while the name query is in flight, which answers nil.
     pub name: Option<String>,
@@ -63,12 +64,12 @@ pub struct WhoRecords {
 /// The social snapshot the app pushes whole; the default is a fresh login's.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SocialState {
-    /// In display order: online first, then by name (`QSortFriends` `0x6b3960`).
+    /// In display order: online first, then by name (`0x6b3960`).
     pub friends: Vec<FriendInfo>,
     /// The selected friend, 1-based, 0 for none (`GetSelectedFriend` `0x6b44b0`).
     pub selected_friend: u32,
-    /// The ignored players' names, sorted (`QSortIgnore` `0x6b3a60`); empty while a name query is
-    /// out, which `GetIgnoreName` answers as `UNKNOWN`.
+    /// The ignored players' names, sorted (`0x6b3a60`); empty while a name query is out, which
+    /// `GetIgnoreName` answers as `UNKNOWN`.
     pub ignores: Vec<String>,
     /// The selected ignore, on the same scale.
     pub selected_ignore: u32,
@@ -129,7 +130,7 @@ impl super::UiScript {
     }
 }
 
-/// The friend array's slots (`FriendList` `+0x0`, 100 entries).
+/// The friend array's slots (the friend list's `+0x0`, 100 entries).
 const MAX_FRIENDS: usize = 100;
 /// The ignore and mute arrays' slots (`+0xd490`, `+0xd7c0`, 50 each).
 const MAX_IGNORES: usize = 50;
@@ -141,7 +142,7 @@ fn slot(n: f64) -> Option<usize> {
     (n >= 1.0 && n <= u32::MAX as f64).then(|| n as usize - 1)
 }
 
-/// A name match as `SStrCmpUTF8I` makes it: case-insensitive over the whole name.
+/// A name match as the reference makes it: a case-insensitive UTF-8 compare over the whole name.
 fn same_name(a: &str, b: &str) -> bool {
     a.to_lowercase() == b.to_lowercase()
 }
@@ -178,7 +179,7 @@ fn row_named(names: &[String], name: &str) -> Option<u32> {
         .map(|i| i as u32 + 1)
 }
 
-/// The 1-based row of the friend named `name` (`GetFriendInfoByName` `0x6b3570`).
+/// The 1-based row of the friend named `name` (`0x6b3570`).
 fn friend_named(friends: &[FriendInfo], name: &str) -> Option<u32> {
     friends
         .iter()
@@ -186,8 +187,8 @@ fn friend_named(friends: &[FriendInfo], name: &str) -> Option<u32> {
         .map(|i| i as u32 + 1)
 }
 
-/// Is the player a name or unit token names on `names`? `ChatTokenToGUID` (`0x4fb580`'s caller)
-/// tries the argument as a cached name, then as a unit token.
+/// Is the player a name or unit token names on `names`? The reference's token-to-guid lookup tries
+/// the argument as a cached name, then as a unit token.
 fn token_listed(model: &crate::script::Model, names: &[String], token: &str) -> bool {
     let listed = |name: &str| row_named(names, name).is_some();
     listed(token)
@@ -382,8 +383,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetFriendNotes(index or name, notes) (`0x6b7c90`): `SetNotes` (`0x6b5540`) stores the note
-    // (511 bytes), fires `FRIENDLIST_UPDATE` at once, then sends it; an unlisted name prints
+    // SetFriendNotes(index or name, notes) (`0x6b7c90`): the note write (`0x6b5540`) stores the
+    // note (511 bytes), fires `FRIENDLIST_UPDATE` at once, then sends it; an unlisted name prints
     // `ERR_FRIEND_NOT_FOUND`.
     g.set(
         "SetFriendNotes",
@@ -466,9 +467,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetMuteStatus(nameOrUnit[, channel]) (`0x4fcdf0`): 1 for a player on the ignore or mute list
-    // (`0x4fce5b`), the argument read as a cached name, else a unit token (`0x4fb580`); no value,
-    // not an error, without a string (`0x4fce0d`). A voice-channel squelch also answers 1, and
-    // benilla joins no voice channel.
+    // (`0x4fce5b`), the argument read as a cached name, else a unit token; no value, not an error,
+    // without a string (`0x4fce0d`). A voice-channel squelch also answers 1, and benilla joins no
+    // voice channel.
     g.set(
         "GetMuteStatus",
         lua.create_function(|lua, args: MultiValue| {
@@ -716,8 +717,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetWhoToUI(flag) (`0x6b3430`): the Who frame passes 1 on show and 0 on hide; the flag is
-    // `GetBoolOrDefault` with default 0 (`0x815500`).
+    // SetWhoToUI(flag) (`0x6b3430`): the Who frame passes 1 on show and 0 on hide; the flag is the
+    // bool-or-default read with default 0.
     g.set(
         "SetWhoToUI",
         lua.create_function(|lua, flag: Value| {
@@ -802,7 +803,7 @@ fn clamp_index(index: i32, len: usize) -> u32 {
     }
 }
 
-/// `SStrCopy` into a buffer of `max + 1`: at most `max` bytes, cut on a character boundary.
+/// A string copy into a buffer of `max + 1`: at most `max` bytes, cut on a character boundary.
 fn truncate_bytes(s: &str, max: usize) -> &str {
     if s.len() <= max {
         return s;
@@ -1003,7 +1004,7 @@ mod tests {
         );
     }
 
-    /// `SetNotes` (`0x6b5540`) stores the note and fires `FRIENDLIST_UPDATE` before it returns.
+    /// The note write (`0x6b5540`) stores the note and fires `FRIENDLIST_UPDATE` before it returns.
     #[test]
     fn set_friend_notes_stores_announces_and_queues() {
         let mut s = contacts();

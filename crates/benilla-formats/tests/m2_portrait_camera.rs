@@ -1,5 +1,4 @@
-//! M2 cameras: `0x7c` bytes a record (built at `0x70f270`); the unit-frame portrait renders
-//! through `cameraLookup[0]` (`0x713540`).
+//! M2 cameras: `0x7c` bytes a record; the unit-frame portrait renders through `cameraLookup[0]`.
 
 use benilla_formats::{parse_m2_portrait_camera, Chain};
 
@@ -56,8 +55,8 @@ fn character_and_creature_portrait_cameras_parse_sane() {
     assert!(close(cam.roll, 0.0), "roll {}", cam.roll);
 }
 
-/// A `<PlayerModel>` pane renders through raw `cameras[1]`: the chooser `0x505890`, from
-/// `0x505b30`, takes index 1, not `cameraLookup`. Every record's clips are 8/36 and 1000/36.
+/// A `<PlayerModel>` pane renders through raw `cameras[1]`: the chooser, takes index 1, not
+/// `cameraLookup`. Every record's clips are 8/36 and 1000/36.
 #[test]
 fn pane_cameras_match_the_authored_records() {
     let data = benilla_formats::wow_data_or_skip!();

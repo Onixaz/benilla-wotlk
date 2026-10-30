@@ -47,8 +47,8 @@ pub mod petition_result {
     pub const NOT_AUTHORIZED: u32 = 11;
 }
 
-/// One row of `SMSG_PETITION_SHOWLIST` (`GuildPetitionInfo`, `0x18` bytes): a charter the NPC
-/// sells. A guild registrar sends one, an arena registrar the three team sizes.
+/// One row of `SMSG_PETITION_SHOWLIST` (`0x18` bytes in the client): a charter the NPC sells. A
+/// guild registrar sends one, an arena registrar the three team sizes.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PetitionShowListEntry {
     /// Row index, 1-based; `CMSG_PETITION_BUY` echoes it as the charter's `muid`.
@@ -59,9 +59,9 @@ pub struct PetitionShowListEntry {
     pub charter_display_id: u32,
     /// Price in copper.
     pub charter_cost: u32,
-    /// `m_charterType`: 0 a guild charter; 12340's buy refusals test 1 for an arena one.
+    /// The charter type: 0 a guild charter; 12340's buy refusals test 1 for an arena one.
     pub charter_type: u32,
-    /// `m_requiredSignatures`; an arena row's is the team size less one.
+    /// The signatures required; an arena row's is the team size less one.
     pub required_signatures: u32,
 }
 
@@ -160,8 +160,8 @@ pub(super) fn read_petition_sign_results(r: &mut impl Read) -> io::Result<Petiti
     })
 }
 
-/// `SMSG_PETITION_QUERY_RESPONSE`: a petition's record, `CGPetition` (`0x13c4` bytes in the
-/// client), keyed by petition id.
+/// `SMSG_PETITION_QUERY_RESPONSE`: a petition's record (`0x13c4` bytes in the client), keyed by
+/// petition id.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PetitionQueryResponse {
     /// The petition id we asked about.
@@ -199,8 +199,8 @@ pub struct PetitionQueryResponse {
 /// The arena charter's `static_type` (`GetPetitionInfo` answers `"arena"`).
 pub const PETITION_TYPE_ARENA: u32 = 1;
 
-/// Read `SMSG_PETITION_QUERY_RESPONSE` (`CGPetition::Unpack`, `0x98d090`): the fields in record
-/// order, then always ten choice strings (`0x98d171`), then `muid` before `static_type`.
+/// Read `SMSG_PETITION_QUERY_RESPONSE` (the petition record's unpack, `0x98d090`): the fields in
+/// record order, then always ten choice strings (`0x98d171`), then `muid` before `static_type`.
 pub(super) fn read_petition_query_response(r: &mut impl Read) -> io::Result<PetitionQueryResponse> {
     let mut p = PetitionQueryResponse {
         petition_id: read_u32_le(r)?,
@@ -228,7 +228,7 @@ pub(super) fn read_petition_query_response(r: &mut impl Read) -> io::Result<Peti
     Ok(p)
 }
 
-/// `CGPetition`'s fixed ten choice rows, packed and unpacked whatever the count says.
+/// The petition record's fixed ten choice rows, packed and unpacked whatever the count says.
 const PETITION_CHOICES: usize = 10;
 
 /// `MSG_PETITION_RENAME`: the server's echo of a successful rename (`PetitionsHandler.cpp:209`);
@@ -267,7 +267,7 @@ pub fn petition_show_list(npc: u64) -> Vec<u8> {
     npc.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_PETITION_BUY` (`0x6d6b10`): the NPC, then a zeroed `CGPetition` packed by
+/// Body of `CMSG_PETITION_BUY` (`0x6d6b10`): the NPC, then a zeroed petition record packed by
 /// `0x98cf70` with the name as its title and the vendor row's index as its `muid`.
 pub fn petition_buy(npc: u64, name: &str, index: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(81 + name.len());
@@ -291,8 +291,8 @@ pub fn petition_show_signatures(item: u64) -> Vec<u8> {
     item.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_PETITION_SIGN` (vmangos `Packets/Petition.cpp:35-39`): the item guid, then an
-/// `i8` the server skips. `SignPetition` defaults it to 1 (`0x4f46d9`, sent at `0x4f4749`).
+/// Body of `CMSG_PETITION_SIGN` (vmangos `Packets/Petition.cpp:35-39`): the item guid, then an `i8`
+/// the server skips. `SignPetition` defaults it to 1.
 pub fn petition_sign(item: u64, arg: i8) -> Vec<u8> {
     let mut body = Vec::with_capacity(9);
     body.extend_from_slice(&item.to_le_bytes());

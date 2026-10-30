@@ -45,8 +45,7 @@ pub struct AreaPoi {
 }
 
 /// Every `AreaPOI.dbc` row in file order, plus an id index. The order is the reference's: its
-/// landmark builder `0x4a67a0` walks the table by record (`[0xc0e054]`, count `[0xc0e058]`), so
-/// `GetMapLandmarkInfo(i)` indexes in DBC order.
+/// landmark builder walks the table by record, so `GetMapLandmarkInfo(i)` indexes in DBC order.
 pub struct AreaPoiCatalog {
     rows: Vec<(u32, AreaPoi)>,
     by_id: HashMap<u32, usize>,

@@ -1,5 +1,5 @@
 //! `BattlemasterList.dbc` and `PvpDifficulty.dbc`: every battleground and arena type the queue
-//! names, and each map's level brackets. 12340 reads the first from `CGBattlefieldInfo`'s list,
+//! names, and each map's level brackets. 12340 reads the first from the battlefield info's list,
 //! join and status bindings and the second only to place a level in a bracket (`0x54ba00`).
 
 use anyhow::{Context, Result};
@@ -11,7 +11,7 @@ use crate::Chain;
 const BATTLEMASTER_LIST: &str = "DBFilesClient\\BattlemasterList.dbc";
 const PVP_DIFFICULTY: &str = "DBFilesClient\\PvpDifficulty.dbc";
 
-/// One `BattlemasterList.dbc` row (`BattlemasterListRec`, `0x40` bytes in the client).
+/// One `BattlemasterList.dbc` row (`0x40` bytes in the client).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BattlemasterRec {
     pub id: u32,
@@ -56,9 +56,9 @@ impl BattlemasterCatalog {
         self.rows.iter().find(|r| r.id == id)
     }
 
-    /// `GetBracketForLevel` (`0x54ba00`): the first map's bracket holding `level`, its range
-    /// index; the random battleground answers 0 at level 80 alone. The walk stops at the end of
-    /// the map's run of rows, as the reference's does.
+    /// The bracket-for-level lookup (`0x54ba00`): the first map's bracket holding `level`, its
+    /// range index; the random battleground answers 0 at level 80 alone. The walk stops at the end
+    /// of the map's run of rows, as the reference's does.
     pub fn bracket_for_level(&self, rec: &BattlemasterRec, level: u32) -> Option<i32> {
         if rec.id == RANDOM_BATTLEGROUND {
             return (level == 80).then_some(0);

@@ -1,14 +1,15 @@
-//! The pure animation selection: `0x5fd8b0`'s gait picks, the one-shot tables, the rate math.
+//! The pure animation selection: the reference selector's gait picks, the one-shot tables, the rate
+//! math.
 
 use benilla_assets::AnimClip;
 use bevy::prelude::*;
 
 use crate::net::{RemoteMotion, Spline};
 
-/// Walk speed (yd/s) for a unit whose movement block has none; Run starts above 2× (`0x5fd224`).
+/// Walk speed (yd/s) for a unit whose movement block has none; Run starts above 2×.
 pub(super) const DEFAULT_WALK_SPEED: f32 = 2.5;
 
-/// At or above this speed (yd/s) a unit plays Sprint (143) over Run (`[0x80c484]`, `0x5fd202`).
+/// At or above this speed (yd/s) a unit plays Sprint (143) over Run.
 const FAST_RUN_SPEED: f32 = 11.0;
 
 /// Below this ground speed (yd/s) a streamed mover counts as standing still.
@@ -18,43 +19,42 @@ pub(super) const STAND: u16 = 0;
 
 pub(super) const DEATH: u16 = 1;
 
-/// ShuffleLeft (11): once armed it plays out its clip, not ending with the turn (`0x719370`).
+/// ShuffleLeft (11): once armed it plays out its clip, not ending with the turn.
 pub(super) const SHUFFLE_LEFT: u16 = 11;
 /// See [`SHUFFLE_LEFT`].
 pub(super) const SHUFFLE_RIGHT: u16 = 12;
 
-/// StealthWalk (119), gated with [`STEALTH_STAND`] on `UNIT_FIELD_BYTES_1` byte 3's CREEP bit
-/// (`0x5fd1d3`), ahead of the whole speed tail and not rate-scaled. Translucency is the stealth
-/// aura's own kit (CharProc 14); this flag is only the pose.
+/// StealthWalk (119), gated with [`STEALTH_STAND`] on `UNIT_FIELD_BYTES_1` byte 3's CREEP bit,
+/// ahead of the whole speed tail and not rate-scaled. Translucency is the stealth aura's own kit
+/// (CharProc 14); this flag is only the pose.
 pub(super) const STEALTH_WALK: u16 = 119;
 
-/// StealthStand (120), from the chain's last resolver `0x5fd830`, so every other one outranks it.
+/// StealthStand (120), from the chain's last resolver, so every other one outranks it.
 pub(super) const STEALTH_STAND: u16 = 120;
 
-/// Mount (91), the rider's seat whatever the unit does: the client arms it outside the selector
-/// (`0x607a00`, `0x5fe2f0`); benilla pins the gait slot, and the locomotion plays on the mount.
+/// Mount (91), the rider's seat whatever the unit does: the client arms it outside the selector;
+/// benilla pins the gait slot, and the locomotion plays on the mount.
 pub(super) const MOUNT: u16 = 91;
 
-/// Loot (50), the kneel while a loot window is open: the loot leg `0x5fd260`, after locomotion
-/// and ahead of the cast pin (`0x5fd2e0`) and the Ready idle (`0x5fd360`), declining when mounted
-/// or without the `[+0xd58] & 0x40` enable. It needs a session (`0x6126b0`: self, the loot latch;
-/// remote, [`UNIT_FLAG_LOOTING`]) and a kneelable target (`0x612710`: self, the target's kind;
-/// remote, [`UNIT_FLAG_LOOT_SUPPRESS`] clear).
+/// Loot (50), the kneel while a loot window is open: the loot leg, after locomotion and ahead of
+/// the cast pin and the Ready idle, declining when mounted or without the `[+0xd58] & 0x40` enable.
+/// It needs a session (the loot latch; remote, [`UNIT_FLAG_LOOTING`]) and a kneelable target (the
+/// target's kind; remote, [`UNIT_FLAG_LOOT_SUPPRESS`] clear).
 pub(super) const LOOT: u16 = 50;
 
-/// `UNIT_FLAG_LOOTING` (`0x400`), a remote unit's loot-kneel predicate (`0x6126db`). vmangos sets
-/// it for corpse loot only (`Player.cpp:8148`), so others never see a chest kneel.
+/// `UNIT_FLAG_LOOTING` (`0x400`), a remote unit's loot-kneel predicate. vmangos sets it for corpse
+/// loot only (`Player.cpp:8148`), so others never see a chest kneel.
 pub(super) const UNIT_FLAG_LOOTING: u32 = 0x400;
 
-/// `UNIT_FIELD_FLAGS` bit `0x1000_0000`, which must be clear for a remote unit's loot kneel
-/// (`0x612710`); its name and role are inferred. vmangos never sets it (`UNIT_FLAG_UNK_28`).
+/// `UNIT_FIELD_FLAGS` bit `0x1000_0000`, which must be clear for a remote unit's loot kneel; its
+/// name and role are inferred. vmangos never sets it (`UNIT_FLAG_UNK_28`).
 pub(super) const UNIT_FLAG_LOOT_SUPPRESS: u32 = 0x1000_0000;
 
-/// MountSpecial (94), the mount rearing: a one-shot on the mount model (`0x5fe2f0` routes it).
+/// MountSpecial (94), the mount rearing: a one-shot on the mount model.
 pub(crate) const MOUNT_SPECIAL: u16 = 94;
 
-/// Knockdown (121), with [`LIFT_OFF`] and [`LAND`] the ids whose arm takes the base-animation lock
-/// (`0x5fdba0`, table `0x5fdd90`): `PlayAnimation` refuses every base request while one holds.
+/// Knockdown (121), with [`LIFT_OFF`] and [`LAND`] the ids whose arm takes the base-animation lock:
+/// the unit's animation play refuses every base request while one holds.
 pub(crate) const KNOCKDOWN: u16 = 121;
 /// See [`KNOCKDOWN`]: the taxi pair takes the same lock under the reference's other bit.
 pub(crate) const LIFT_OFF: u16 = 192;
@@ -67,18 +67,18 @@ pub(crate) mod move_flags {
     pub const BACKWARD: u32 = 0x2;
     pub const STRAFE_LEFT: u32 = 0x4;
     pub const STRAFE_RIGHT: u32 = 0x8;
-    /// The keyboard turn keys (with `TURN_RIGHT`), which rotate the facing (`0x7c4f30`).
+    /// The keyboard turn keys (with `TURN_RIGHT`), which rotate the facing.
     pub const TURN_LEFT: u32 = 0x10;
     pub const TURN_RIGHT: u32 = 0x20;
     /// Walk mode: it scales only the rate numerator, never the id choice.
     pub const WALK_MODE: u32 = 0x100;
-    /// `MOVEFLAG_LEVITATING`: the swim decision `0x6030c0` bails on it first (`0x6030d2`), so
-    /// liquid can neither latch nor clear [`SWIMMING`]; GM flight sets both (`Player.cpp:4595`).
+    /// `MOVEFLAG_LEVITATING`: the swim decision bails on it first, so liquid can neither latch nor
+    /// clear [`SWIMMING`]; GM flight sets both (`Player.cpp:4595`).
     pub const LEVITATING: u32 = 0x400;
     /// JUMPING/FALLING: set for the whole airborne arc.
     pub const FALLING: u32 = 0x2000;
-    /// `MOVEFLAG_FALLINGFAR` (`0x633220`/`0x633240`): a jump latches it 1/9 yd below its launch
-    /// height, a step-off fall after 500 ms airborne; only StopFalling (`0x7c6290`) clears it.
+    /// `MOVEFLAG_FALLINGFAR`: a jump latches it 1/9 yd below its launch height, a step-off fall
+    /// after 500 ms airborne; only the fall stop clears it.
     pub const FALLING_FAR: u32 = 0x4000;
     /// `MOVEFLAG_ROOT`: vmangos kicks a root-apply ack without it unless the ack still falls
     /// (`MovementHandler.cpp:715-722`); a moving bit beside it freezes the 1.12 client.
@@ -96,24 +96,24 @@ pub(crate) mod move_flags {
     /// `MOVEFLAG_ONTRANSPORT` (`MovementInfo.h:56`, not TBC's 0x200): every packet carrying it
     /// also carries the transport-local pose.
     pub const ON_TRANSPORT: u32 = 0x0200_0000;
-    /// `MOVEFLAG_WATERWALKING`: liquid is walkable ground; read by the liquid-mask selector
-    /// `0x6315f0` (`0x63160d`, only when not swimming) and the opcode 0x22 apply `0x61a430`.
+    /// `MOVEFLAG_WATERWALKING`: liquid is walkable ground; read by the liquid-mask selector (only
+    /// when not swimming) and the opcode 0x22 apply.
     pub const WATER_WALKING: u32 = 0x1000_0000;
-    /// `MOVEFLAG_SAFE_FALL`, feather fall: its one effect is the terminal fall speed (`0x7c5d23`),
-    /// 7.0 yd/s (`[0x87d898]`) instead of 60.148 (`[0x87d894]`).
+    /// `MOVEFLAG_SAFE_FALL`, feather fall: its one effect is the terminal fall speed, 7.0 yd/s
+    /// instead of 60.148.
     pub const SAFE_FALL: u32 = 0x2000_0000;
-    /// `MOVEFLAG_HOVER`: the body rests 1.0 yd above the ground (Levitate): the walk resolver
-    /// `0x6367b0` adds the `[0x7ff9d8]` offset and the step-down reach widens by it (`0x633e35`).
+    /// `MOVEFLAG_HOVER`: the body rests 1.0 yd above the ground (Levitate): the walk resolver adds
+    /// the offset and the step-down reach widens by it.
     pub const HOVER: u32 = 0x4000_0000;
 
-    /// The bits a server-authored move packet owns, the reference's merge mask (`0x618c30` @
-    /// `0x618deb`). [`ON_TRANSPORT`] is outside it: a server pose relocates a rider but never
-    /// boards or deboards them. 3.3.5a's masks (`0x6eb730`: `0x77fffdff`, our own `0x77e00dff`)
-    /// also hold [`ASCENDING`] and [`CAN_FLY`].
+    /// The bits a server-authored move packet owns, the reference's merge mask. [`ON_TRANSPORT`] is
+    /// outside it: a server pose relocates a rider but never boards or deboards them. 3.3.5a's
+    /// masks (`0x6eb730`: `0x77fffdff`, our own `0x77e00dff`) also hold [`ASCENDING`] and
+    /// [`CAN_FLY`].
     pub const SERVER_AUTHORED: u32 = 0x75a0_7dff | ASCENDING | CAN_FLY;
 
-    /// Merge a server-authored packet's flags under [`SERVER_AUTHORED`] (`0x618de7`), for our mover
-    /// and every watched one: all thirty relay opcodes take this mask (`0x618f20`).
+    /// Merge a server-authored packet's flags under [`SERVER_AUTHORED`], for our mover and every
+    /// watched one: all thirty relay opcodes take this mask.
     pub const fn merge_server_authored(local: u32, wire: u32) -> u32 {
         (local & !SERVER_AUTHORED) | (wire & SERVER_AUTHORED)
     }
@@ -121,7 +121,7 @@ pub(crate) mod move_flags {
     /// Any horizontal direction bit: the client's `[9e8] & 0xf` gate.
     pub const ANY_MOVE: u32 = FORWARD | BACKWARD | STRAFE_LEFT | STRAFE_RIGHT;
 
-    /// The low byte: forward, back, strafe, turn and pitch, the loot response's test (`0x5ebc40`).
+    /// The low byte: forward, back, strafe, turn and pitch, the loot response's test.
     pub const STEERING: u32 = 0xff;
 
     /// The bits that get a mover integrated at all, 3.3.5a's `0xc010ff` (`0x6eb730`, and the
@@ -129,19 +129,19 @@ pub(crate) mod move_flags {
     /// flight and the mode bits are not among them.
     pub const INTEGRATED: u32 = STEERING | FALLING | ASCENDING | DESCENDING;
 
-    /// The committed-lower-body test routing a one-shot to the masked overlay (`0x5fe6dc`); the
-    /// client's separate mouse-turn test (`d58 & 0x1800`) reads a field benilla does not model.
+    /// The committed-lower-body test routing a one-shot to the masked overlay; the client's
+    /// separate mouse-turn test (`d58 & 0x1800`) reads a field benilla does not model.
     pub const ROUTE_COMMITTED_MOVE: u32 =
         FORWARD | BACKWARD | STRAFE_LEFT | STRAFE_RIGHT | TURN_LEFT | TURN_RIGHT | SWIMMING;
 
-    /// The stationary-cast pin's moving test (`0x5fde80`): no turn bits, so a caster turning in
-    /// place keeps the pin, where [`ROUTE_COMMITTED_MOVE`]'s turn bits would flap it.
+    /// The stationary-cast pin's moving test: no turn bits, so a caster turning in place keeps the
+    /// pin, where [`ROUTE_COMMITTED_MOVE`]'s turn bits would flap it.
     pub const CAST_PIN_MOVE: u32 = ANY_MOVE | SWIMMING;
 }
 
-/// The rate (/s) the strafing yaw eases at: the reference closes a quarter of the gap per frame
-/// (`0x607ed0`, `[0x8029b0]`), 17.3/s at 60 fps. Deviation: a time-based rate, because the
-/// reference's per-frame step changes with the frame rate.
+/// The rate (/s) the strafing yaw eases at: the reference closes a quarter of the gap per frame,
+/// 17.3/s at 60 fps. Deviation: a time-based rate, because the reference's per-frame step changes
+/// with the frame rate.
 const STRAFE_BLEND_RATE: f32 = 17.26;
 
 /// Ease the rendered yaw toward `aim + offset` through the aim-relative offset, which swings round
@@ -152,9 +152,9 @@ pub(crate) fn ease_strafe_yaw(current_yaw: f32, aim: f32, offset: f32, dt: f32) 
     super::wrap_pi(aim + eased)
 }
 
-/// The strafe body heading's offset from the aim (`0x607ed0`): ±π/2, ±π/4 with forward or back,
-/// left positive, mirrored while backpedaling. Both strafe bits give 0, as they cancel to no
-/// lateral motion, where the client's fold keys on the left bit alone: an unobservable edge.
+/// The strafe body heading's offset from the aim: ±π/2, ±π/4 with forward or back, left positive,
+/// mirrored while backpedaling. Both strafe bits give 0, as they cancel to no lateral motion, where
+/// the client's fold keys on the left bit alone: an unobservable edge.
 pub(crate) fn strafe_body_offset(flags: u32) -> f32 {
     use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
     let left = flags & move_flags::STRAFE_LEFT != 0;
@@ -172,9 +172,9 @@ pub(crate) fn strafe_body_offset(flags: u32) -> f32 {
     }
 }
 
-/// The swim body pitch for every mover with a reported pitch (`0x60a110` to `0x710620`): the
-/// reference's `Rz(facing)·Ry(2π − pitch)` is `Ry(yaw)·Rx(pitch)` here, nose up positive, and
-/// only SWIMMING or FLYING with forward or back pitches (`Animate` `0x71fd80`).
+/// The swim body pitch for every mover with a reported pitch: the reference's `Rz(facing)·Ry(2π −
+/// pitch)` is `Ry(yaw)·Rx(pitch)` here, nose up positive, and only SWIMMING or FLYING with forward
+/// or back pitches (the model animate, `0x71fd80`).
 pub(crate) fn swim_body_rotation(yaw: f32, flags: u32, pitch: f32) -> Quat {
     if flags & (move_flags::SWIMMING | move_flags::FLYING) != 0
         && flags & (move_flags::FORWARD | move_flags::BACKWARD) != 0
@@ -185,7 +185,7 @@ pub(crate) fn swim_body_rotation(yaw: f32, flags: u32, pitch: f32) -> Quat {
     }
 }
 
-/// The per-frame movement state the selector `0x5fd8b0` reads.
+/// The per-frame movement state the selector reads.
 #[derive(Component, Clone, Copy, Default)]
 pub(crate) struct MovementState {
     /// Live directional speed (yd/s); for a swimmer the flag-scalar swim speed whatever its pitch.
@@ -198,18 +198,18 @@ pub(crate) struct MovementState {
     pub(crate) stand_state: u8,
     /// The CREEP bit, stamped from the unit's own descriptor every frame, self included.
     pub(crate) stealthed: bool,
-    /// On a flying server spline (a taxi): the selector plays Fly 135 on its Flying bit 0x200
-    /// (`0x5fd19c`); [`unify`] stamps it from the live [`Spline`].
+    /// On a flying server spline (a taxi): the selector plays Fly 135 on its Flying bit 0x200;
+    /// [`unify`] stamps it from the live [`Spline`].
     pub(crate) flying: bool,
 }
 
 /// A bracketed animation state: an enter one-shot, a loop, an exit one-shot.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Special {
-    /// JumpStart (37), armed directly by `MSG_MOVE_JUMP` (`0x60e480` case 0xbb), then the Jump (38)
-    /// hang once 37's clip ends; a step-off fall never enters here.
+    /// JumpStart (37), armed directly by `MSG_MOVE_JUMP`, then the Jump (38) hang once 37's clip
+    /// ends; a step-off fall never enters here.
     Jump,
-    /// The Fall (40) loop from the tick FALLINGFAR latches (`0x602c40`), with no enter one-shot.
+    /// The Fall (40) loop from the tick FALLINGFAR latches, with no enter one-shot.
     Fall,
     /// A stand-state pose (1 Sit, 3 Sleep, 8 Kneel): down, loop, up.
     Pose(u8),
@@ -255,10 +255,10 @@ impl Special {
     }
 }
 
-/// The landing one-shot from the flags at touchdown (`0x602c60`): JumpEnd 39 stopped, none
-/// swimming, backpedaling or walking, else JumpLandRun 187. A rooted arc end is no landing:
-/// `SetRoot` (`0x7c7340`) stops the fall in mid-air and the reference sends no land packet
-/// (`0x602df3` gating opcode `0xc9`), the packet this dispatcher runs on.
+/// The landing one-shot from the flags at touchdown: JumpEnd 39 stopped, none swimming,
+/// backpedaling or walking, else JumpLandRun 187. A rooted arc end is no landing: a root stops the
+/// fall in mid-air and the reference sends no land packet (gating opcode `0xc9`), the packet this
+/// dispatcher runs on.
 pub(super) fn jump_land_pick(flags: u32) -> Option<u16> {
     use move_flags::*;
     if flags & (SWIMMING | ROOT) != 0 {
@@ -287,13 +287,13 @@ pub(super) enum Mode {
     Land { id: u16, flags: u32 },
     /// An action one-shot full-body on bone 0 (standing, or a mid-air cast or emote); `under` is
     /// the Special it replaced. Airborne, a finished clip holds and only a Special edge exits (the
-    /// FALLINGFAR Fall, once at `0x61a820`, or the landing); grounded, any movement-flag change
-    /// since the base was armed re-picks at once, as the client's base re-arm overwrites bone 0.
+    /// FALLINGFAR Fall, or the landing); grounded, any movement-flag change since the base was
+    /// armed re-picks at once, as the client's base re-arm overwrites bone 0.
     Swing { id: u16, under: Option<Special> },
 }
 
-/// The ids a unit in [`Mode::Gait`] tries, most specific first: the `0x5fd8b0` chain without its
-/// Special states. `ready` is the engaged idle, which locomotion outranks.
+/// The ids a unit in [`Mode::Gait`] tries, most specific first: the chain without its Special
+/// states. `ready` is the engaged idle, which locomotion outranks.
 ///
 /// The pick without a state emote, which [`base_candidates`] adds.
 pub(super) fn gait_candidates(
@@ -321,11 +321,10 @@ impl BaseCands {
     }
 }
 
-/// The full pick of the `0x5fd8b0` chain in its byte order: the resolvers [`claimed_candidates`]
-/// covers, then the state-emote resolver (`0x5fd770`, `0x5fd9a1`), then the idle fallback
-/// (`0x5fd830`). `state_anim` is the resolver's verdict ([`state_emote_anim`]); a set state claims
-/// the base over the swim idle, the prowl idle and Stand, so `/stand`'s state 26 holds Stand
-/// against both until the unit moves.
+/// The full pick of the chain in its byte order: the resolvers [`claimed_candidates`] covers, then
+/// the state-emote resolver, then the idle fallback. `state_anim` is the resolver's verdict
+/// ([`state_emote_anim`]); a set state claims the base over the swim idle, the prowl idle and
+/// Stand, so `/stand`'s state 26 holds Stand against both until the unit moves.
 pub(super) fn base_candidates(
     state: &MovementState,
     walk_speed: f32,
@@ -342,9 +341,8 @@ pub(super) fn base_candidates(
     }
 }
 
-/// The idle fallback (`0x5fd830`), the chain's last resolver: the swim idle on `SWIMMING` or
-/// `FLYING` (`ChooseDefaultAnim` `0x71e340`), else the prowl idle, else Stand. The hover idle
-/// (193, `0x5fd88d`) is not modelled.
+/// The idle fallback, the chain's last resolver: the swim idle on `SWIMMING` or `FLYING`
+/// (`0x71e340`), else the prowl idle, else Stand. The hover idle (193) is not modelled.
 fn idle_fallback(state: &MovementState) -> &'static [u16] {
     if state.flags & (move_flags::SWIMMING | move_flags::FLYING) != 0 {
         &[41, 0]
@@ -356,8 +354,8 @@ fn idle_fallback(state: &MovementState) -> &'static [u16] {
 }
 
 /// The resolvers ahead of the state-emote resolver, `None` where none claims the base. The
-/// locomotion resolver (`0x5fd100`) runs on `[9e8] & 0xf` alone, so a stationary swimmer is not
-/// its: it falls through the standing resolvers to the swim idle in [`idle_fallback`].
+/// locomotion resolver runs on `[9e8] & 0xf` alone, so a stationary swimmer is not its: it falls
+/// through the standing resolvers to the swim idle in [`idle_fallback`].
 fn claimed_candidates(
     state: &MovementState,
     walk_speed: f32,
@@ -366,10 +364,10 @@ fn claimed_candidates(
 ) -> Option<&'static [u16]> {
     use move_flags::*;
     let f = state.flags;
-    // A flyer is a swimmer to every arm here (`ChooseMovementAnim` `0x717050`); a flying mount's
-    // flight cycles sit in the swim slots.
+    // A flyer is a swimmer to every arm here (`0x717050`); a flying mount's flight cycles sit in
+    // the swim slots.
     let swimming = f & (SWIMMING | FLYING) != 0;
-    // Swimming locomotion (`0x5fd100`): turn, then strafe, then backward, then forward.
+    // Swimming locomotion: turn, then strafe, then backward, then forward.
     if swimming && f & ANY_MOVE != 0 {
         return Some(if f & (TURN_LEFT | TURN_RIGHT) != 0 {
             &[41, 0]
@@ -383,20 +381,20 @@ fn claimed_candidates(
             &[42, 41, 0]
         });
     }
-    // A flying spline, the taxi (`0x5fd19c`): Fly 135 ahead of backward and speed.
+    // A flying spline, the taxi: Fly 135 ahead of backward and speed.
     if state.flying {
         return Some(&[135, 0]);
     }
-    // Backward dominates strafe (`0x5fd1bc`, `[9e8] & 2` → WalkBackwards 13).
+    // Backward dominates strafe (`[9e8] & 2` → WalkBackwards 13).
     if f & BACKWARD != 0 {
         return Some(&[13, 4, 0]);
     }
-    // Stealthed and moving, the prowl (`0x5fd1d3`); Walk is row 119's AnimationData fallback.
+    // Stealthed and moving, the prowl; Walk is row 119's AnimationData fallback.
     if state.stealthed && f & ANY_MOVE != 0 {
         return Some(&[STEALTH_WALK, 4, 0]);
     }
-    // Ground gaits by live speed (`0x5fd202`/`0x5fd224`): Sprint at 11 and above, Run above twice
-    // walk, else Walk. Strafe takes these too: the reference has no ground strafe branch.
+    // Ground gaits by live speed: Sprint at 11 and above, Run above twice walk, else Walk. Strafe
+    // takes these too: the reference has no ground strafe branch.
     if f & ANY_MOVE != 0 {
         let s = state.speed;
         return Some(if s >= FAST_RUN_SPEED {
@@ -407,16 +405,15 @@ fn claimed_candidates(
             &[4, 0]
         });
     }
-    // Turning in place: the shuffle (`0x5fd3f0`, 11 left, 12 right); the fidget gate (`0x5fce30`)
-    // refuses a swimmer.
+    // Turning in place: the shuffle (11 left, 12 right); the fidget gate refuses a swimmer.
     if !swimming && f & TURN_LEFT != 0 {
         return Some(&[SHUFFLE_LEFT, STAND]);
     }
     if !swimming && f & TURN_RIGHT != 0 {
         return Some(&[SHUFFLE_RIGHT, STAND]);
     }
-    // Standing and engaged: the Ready idle (`0x5fd360`), gated on engagement, not the sheath; a
-    // swimmer's is the swim idle (`0x5fd3ac`).
+    // Standing and engaged: the Ready idle, gated on engagement, not the sheath; a swimmer's is the
+    // swim idle.
     if let Some(r) = ready {
         return Some(match r {
             _ if swimming => &[41, 0],
@@ -426,10 +423,10 @@ fn claimed_candidates(
             _ => &[25, 0],
         });
     }
-    // Auto-repeat in the ranged stance (`0x5fd460`), ahead of the chair loops (`0x5fd550`).
+    // Auto-repeat in the ranged stance, ahead of the chair loops.
     if let Some(l) = ranged_load {
-        // A finished Load becomes its Hold through the completion dispatch (`0x5fc3f0`, fired at
-        // `0x7075af`); each Hold falls back to its Load, so a model without it holds full draw.
+        // A finished Load becomes its Hold through the completion dispatch; each Hold falls back to
+        // its Load, so a model without it holds full draw.
         return Some(match l {
             105 => &[105, 25, 0],
             106 => &[106, 25, 0],
@@ -441,7 +438,7 @@ fn claimed_candidates(
         });
     }
     // Standing: a chair loop (4/5/6); state 2 (`SIT_CHAIR`) writes no override in the reference
-    // (its row declines, `0x5fd644`), so it falls through.
+    // (its row declines), so it falls through.
     match state.stand_state {
         4 => Some(&[102, 0]),
         5 => Some(&[103, 0]),
@@ -450,7 +447,7 @@ fn claimed_candidates(
     }
 }
 
-/// The local auto-repeat standing idle by the ranged item's subclass (`0x5fd460`, LUT `0x5fd530`).
+/// The local auto-repeat standing idle by the ranged item's subclass.
 pub(super) fn ranged_load_anim(ranged: Option<(u8, u8)>) -> u16 {
     match ranged {
         Some((2, 2)) => 105,           // Bow → LoadBow
@@ -466,9 +463,8 @@ pub(super) fn is_ranged_load(id: u16) -> bool {
     matches!(id, 105 | 106 | 112)
 }
 
-/// The Hold a finished ranged Load becomes, unconditionally (`0x5fc3f0` slot 11, a bare call at
-/// `0x5fc5e9`); the `[+0xd24]` and `[+0xd58] & 0x600` test at `0x5fc5bc` is the Hold's own
-/// re-arm (slot 13). The Hold alone in the cycle is authored as a loop.
+/// The Hold a finished ranged Load becomes, unconditionally; the `[+0xd24]` and `[+0xd58] & 0x600`
+/// test is the Hold's own re-arm (slot 13). The Hold alone in the cycle is authored as a loop.
 pub(super) fn ranged_hold_anim(load: u16) -> u16 {
     match load {
         105 => 109,       // LoadBow → HoldBow
@@ -478,16 +474,16 @@ pub(super) fn ranged_hold_anim(load: u16) -> u16 {
     }
 }
 
-/// Whether the drawn ranged idle owns the standing pose: `0x5fd460` claims on sheath CUR == 2
-/// (`0x5fd463`) and the auto-repeat bit `[+0xd58] & 0x200` (`0x5fd476`) alone, a bit only the
-/// local cast-send sets (`0x6e593b`). `0x400` ([`super::RangedHold`]) is not tested here, only by
-/// `0x5fc3f0`'s Hold sustain.
+/// Whether the drawn ranged idle owns the standing pose: the reference's ranged-idle resolver
+/// claims on sheath CUR == 2 and the auto-repeat bit `[+0xd58] & 0x200` alone, a bit only the local
+/// cast-send sets. `0x400` ([`super::RangedHold`]) is not tested here, only by the completion
+/// dispatcher's Hold sustain.
 pub(super) fn ranged_idle_gate(auto_repeat: bool, sheath_cur: Option<u8>) -> bool {
     sheath_cur == Some(2) && auto_repeat
 }
 
-/// The victim's defense reaction (`$CPP`, `0x624a01` to `0x60ec00`); a parry picks by the mainhand
-/// through the LUT `0x60ec98` and bails with no clip for anything else (`0x60ec3a`).
+/// The victim's defense reaction (`$CPP`); a parry picks by the mainhand through the LUT and bails
+/// with no clip for anything else.
 pub(super) fn defense_anim(victim_state: u32, main: Option<(u8, u8)>) -> Option<u16> {
     match victim_state {
         2 | 8 => Some(30), // DODGE / DEFLECTS → Dodge
@@ -506,8 +502,8 @@ pub(super) fn defense_anim(victim_state: u32, main: Option<(u8, u8)>) -> Option<
     }
 }
 
-/// `PlayAnimation`'s substitution (`0x5fe2f0` @ `0x5fe3cc`–`0x5fe3e9`): Special1H/2H (57/58)
-/// becomes SpecialUnarmed (118) when both hands are empty; a non-weapon in hand keeps the clip.
+/// The animation play's substitution: Special1H/2H (57/58) becomes SpecialUnarmed (118) when both
+/// hands are empty; a non-weapon in hand keeps the clip.
 pub(super) fn unarmed_special(id: u16, main: Option<(u8, u8)>, off: Option<(u8, u8)>) -> u16 {
     if matches!(id, 57 | 58) && main.is_none() && off.is_none() {
         118
@@ -521,23 +517,23 @@ pub(super) fn is_swing_id(id: u16) -> bool {
     matches!(id, 16..=19 | 85 | 87 | 88 | 117)
 }
 
-/// The client's COMBAT classifier (`0x5fcc10`): a combat clip requested over another is not
-/// armed; the playing one's rate doubles and the request defers.
+/// The client's COMBAT classifier: a combat clip requested over another is not armed; the playing
+/// one's rate doubles and the request defers.
 pub(super) fn is_combat_anim(id: u16) -> bool {
     matches!(id, 10 | 16..=24 | 30 | 36 | 57..=59 | 85..=88 | 95 | 117 | 118)
 }
 
-/// The client's CAST classifier (`0x5fcbb0`); with [`is_combat_anim`] it is the transplant test
-/// (`0x5feae0`): a locomotion request lifts such a bone-0 clip to the key bone, not replacing it.
+/// The client's CAST classifier; with [`is_combat_anim`] it is the transplant test: a locomotion
+/// request lifts such a bone-0 clip to the key bone, not replacing it.
 pub(super) fn is_cast_anim(id: u16) -> bool {
     matches!(id, 2 | 32 | 33 | 53 | 54)
 }
 
-/// The state-emote resolver's verdict (`0x5fd770`): the row's `AnimID` for the unit's
-/// `UNIT_NPC_EMOTESTATE`, `None` when it passes over. A state with no row passes over, a row
-/// whose `AnimID` is 0 claims the base for Stand (`0x5fd816` stores `row+8` as it is), and the
-/// current interact NPC passes over a row whose `EmoteFlags` carry `EMOTE_FLAG_INTERACTION`
-/// (`0x5fd7e2`-`0x5fd7fd`), so a vendor stops hammering while his window is open.
+/// The state-emote resolver's verdict: the row's `AnimID` for the unit's `UNIT_NPC_EMOTESTATE`,
+/// `None` when it passes over. A state with no row passes over, a row whose `AnimID` is 0 claims
+/// the base for Stand (stores `row+8` as it is), and the current interact NPC passes over a row
+/// whose `EmoteFlags` carry `EMOTE_FLAG_INTERACTION`, so a vendor stops hammering while his window
+/// is open.
 pub(super) fn state_emote_anim(
     state: u32,
     anim: Option<u32>,
@@ -550,7 +546,7 @@ pub(super) fn state_emote_anim(
     anim.map(|a| a as u16)
 }
 
-/// The mainhand swing id (`0x6246a0`); anything but an equipped melee weapon swings unarmed (16).
+/// The mainhand swing id; anything but an equipped melee weapon swings unarmed (16).
 pub(super) fn swing_anim_main(wielded: Option<(u8, u8)>) -> u16 {
     match wielded {
         Some((2, sub)) => match sub {
@@ -573,7 +569,7 @@ pub(super) fn swing_anim_off(wielded: Option<(u8, u8)>) -> u16 {
     }
 }
 
-/// The draw/stow clip by sheath type (`0x611930`–`0x611cc6`): HipSheath 90 for 3 and 7, else 89.
+/// The draw/stow clip by sheath type: HipSheath 90 for 3 and 7, else 89.
 pub(super) fn sheath_clip(sheath_type: u8) -> u16 {
     if (1u32 << (sheath_type & 0x1f)) & 0x88 != 0 {
         90
@@ -582,16 +578,14 @@ pub(super) fn sheath_clip(sheath_type: u8) -> u16 {
     }
 }
 
-/// The ranged anims exempt from the `& 0x10` stow while ranged-drawn (`0x5fe180`, called only on
-/// that path, `0x5fe04c`). ReadyThrown 108 is not one: it stows, and the driver's snap bracket
-/// keeps the thrown wind-up.
+/// The ranged anims exempt from the `& 0x10` stow while ranged-drawn (called only on that path).
+/// ReadyThrown 108 is not one: it stows, and the driver's snap bracket keeps the thrown wind-up.
 const SHEATH_RANGED_EXEMPT: [u16; 9] = [46, 49, 105, 106, 107, 109, 110, 111, 112];
 
-/// The per-animation sheath reconcile (`0x5fdf80`): the state the clip's WeaponFlags force, first
-/// match winning, each a snap. `& 4` stows; mounted stows on every recompute (`0x5fdfd9`) and
-/// dismount restores nothing (inferred); `& 0x10` stows, bar the ranged exemptions while
-/// ranged-drawn; engaged or `& 0x20` draws melee unless ranged-drawn; else a remote unit takes
-/// the server's byte (`0x5fe16e`).
+/// The per-animation sheath reconcile: the state the clip's WeaponFlags force, first match winning,
+/// each a snap. `& 4` stows; mounted stows on every recompute and dismount restores nothing
+/// (inferred); `& 0x10` stows, bar the ranged exemptions while ranged-drawn; engaged or `& 0x20`
+/// draws melee unless ranged-drawn; else a remote unit takes the server's byte.
 pub(super) fn reconcile_sheath(
     cur: u8,
     anim: u16,
@@ -625,9 +619,9 @@ pub(super) fn reconcile_sheath(
     None
 }
 
-/// Whether a looping base arm keeps the head variation rather than rolling (`0x5fdba0`): with an
-/// auto-attack target, a cast or channel held, or a combat, cast or ready clip leaving. The ids
-/// here approximate the client's four classifiers (`0x5fcc10`, `0x5fcbb0`, `0x5fde40`, `0x5fde60`).
+/// Whether a looping base arm keeps the head variation rather than rolling: with an auto-attack
+/// target, a cast or channel held, or a combat, cast or ready clip leaving. The ids here
+/// approximate the client's four classifiers.
 pub(super) fn arm_forces_head(engaged: bool, casting: bool, outgoing: u16) -> bool {
     engaged || casting || matches!(outgoing, 16..=19 | 25..=29 | 51..=54)
 }
@@ -644,9 +638,8 @@ pub(super) fn wound_anim(hit_info: u32, engaged: bool) -> u16 {
 }
 
 /// Whether the wound overlay takes the full body rather than the upper body: any id over a ready
-/// stance (25–29) on bone 0 (`0x60eae8`; `base_anim` is the armed id, so mid-swing it masks), or
-/// StandWound (8) stationary and unmounted (`0x60eb9a` to `0x60ebea`); the reference's
-/// transport-substate test is not modelled.
+/// stance (25–29) on bone 0 (`base_anim` is the armed id, so mid-swing it masks), or StandWound (8)
+/// stationary and unmounted; the reference's transport-substate test is not modelled.
 pub(super) fn wound_full_body(id: u16, base_anim: u16, flags: u32, mounted: bool) -> bool {
     matches!(base_anim, 25..=29)
         || (id == 8
@@ -654,27 +647,27 @@ pub(super) fn wound_full_body(id: u16, base_anim: u16, flags: u32, mounted: bool
             && flags & (move_flags::ANY_MOVE | move_flags::FALLING | move_flags::SWIMMING) == 0)
 }
 
-/// The wound overlay's amplitude λ₀, `+0x108 = 0.75` on op4's `linkFlag = 0` path (`0x712682`):
-/// the flinch peaks at 75%, never fully replacing the pose.
+/// The wound overlay's amplitude λ₀, `+0x108 = 0.75` on op4's `linkFlag = 0` path: the flinch peaks
+/// at 75%, never fully replacing the pose.
 pub(super) const WOUND_AMPLITUDE: f32 = 0.75;
 
-/// The wound overlay's graph weight: the client blends by `λ = (3 − 2t)·t² · λ₀`, `t` the
-/// fraction of the window left (`0x714880`), and Bevy's normalized blend lands on λ at
-/// `w = others · λ/(1 − λ)`, `others` the weight of the rest of the subtree (so `w ≤ 3·others`).
+/// The wound overlay's graph weight: the client blends by `λ = (3 − 2t)·t² · λ₀`, `t` the fraction
+/// of the window left, and Bevy's normalized blend lands on λ at `w = others · λ/(1 − λ)`, `others`
+/// the weight of the rest of the subtree (so `w ≤ 3·others`).
 pub(super) fn wound_weight(remaining_frac: f32, others: f32) -> f32 {
     let t = remaining_frac.clamp(0.0, 1.0);
     let lambda = (3.0 - 2.0 * t) * t * t * WOUND_AMPLITUDE;
     others * lambda / (1.0 - lambda)
 }
 
-/// The client's per-bone blend weight at amplitude 1 (`0x714880`–`0x714921`), `t` the fraction
-/// left: the 150 ms fade-to-rest (`0x7123af`) and the blended re-arm (`0x7125f2`).
+/// The client's per-bone blend weight at amplitude 1, `t` the fraction left: the 150 ms
+/// fade-to-rest and the blended re-arm.
 pub(crate) fn blend_lambda(remaining_frac: f32) -> f32 {
     let t = remaining_frac.clamp(0.0, 1.0);
     (3.0 - 2.0 * t) * t * t
 }
 
-/// The engaged idle, `0x5fd360`'s Ready pick (`0x5fcdc0`); fist and dagger ready as 1H.
+/// The engaged idle, the reference's Ready pick; fist and dagger ready as 1H.
 pub(super) fn ready_anim(main: Option<(u8, u8)>) -> u16 {
     match main {
         Some((2, sub)) => match sub {
@@ -688,7 +681,7 @@ pub(super) fn ready_anim(main: Option<(u8, u8)>) -> u16 {
 }
 
 /// The unit's Special: airborne, Fall once FALLINGFAR latches, else Jump for an upward launch (a
-/// step-off fall keeps its gait, `0x5fd8e8`); still and sitting, sleeping or kneeling, a Pose.
+/// step-off fall keeps its gait); still and sitting, sleeping or kneeling, a Pose.
 pub(super) fn current_special(mv: &MovementState, jump_arc: bool) -> Option<Special> {
     if mv.flags & move_flags::FALLING != 0 {
         if mv.flags & move_flags::FALLING_FAR != 0 {
@@ -705,7 +698,7 @@ pub(super) fn current_special(mv: &MovementState, jump_arc: bool) -> Option<Spec
     }
 }
 
-/// Where a requested one-shot is routed this play (the route flag `esi`, `0x5fe6c8`..`0x5fe74d`).
+/// Where a requested one-shot is routed this play (the route flag `esi`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum OneShotRoute {
     /// The SpineLow overlay ([`AnimClip::upper_node`]): the torso plays it, the legs keep the base.
@@ -714,7 +707,7 @@ pub(super) enum OneShotRoute {
     FullBody,
 }
 
-/// The CLASS_A set (`0x5fed90`'s byte table over `id - 2`), the only ids that may play on the
+/// The CLASS_A set (the reference's byte table over `id - 2`), the only ids that may play on the
 /// key bone; every other id plays full-body.
 fn is_class_a(id: u16) -> bool {
     matches!(id,
@@ -722,14 +715,13 @@ fn is_class_a(id: u16) -> bool {
         | 122..=125 | 128..=130 | 133 | 134 | 136..=138 | 185 | 186 | 195)
 }
 
-/// The mount-set (`0x5fec80`'s byte table), the ids a mounted rider's request sends to the mount
-/// model.
+/// The mount-set, the ids a mounted rider's request sends to the mount model.
 fn is_mount_set(id: u16) -> bool {
     matches!(id, 0 | 1 | 3..=6 | 8..=13 | 37..=45 | 92..=95 | 119 | 120 | 127 | 131 | 132 | 135 | 143 | 187)
 }
 
-/// Where a request goes while the unit has a mount model (`0x5fe7b5`..`0x5fe803`): a mount-set id
-/// to the mount, a CLASS_A id to the rider's key bone (8-10 are both), anything else nowhere.
+/// Where a request goes while the unit has a mount model: a mount-set id to the mount, a CLASS_A id
+/// to the rider's key bone (8-10 are both), anything else nowhere.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct MountedRoute {
     pub(super) mount: bool,
@@ -743,14 +735,14 @@ pub(super) fn route_mounted(id: u16) -> MountedRoute {
     }
 }
 
-/// The COMBAT set (`0x5fcc10`), the ids an airborne unit masks: every swing, no emote and no
-/// cast, so a jump-in-place cast replaces the hang full-body.
+/// The COMBAT set, the ids an airborne unit masks: every swing, no emote and no cast, so a
+/// jump-in-place cast replaces the hang full-body.
 fn is_combat(id: u16) -> bool {
     matches!(id, 10 | 16..=24 | 30 | 36 | 57..=59 | 85..=88 | 95 | 117 | 118)
 }
 
-/// The ids forced full-body whatever the state: the Death class {1, 6, 131, 132} (`0x5fda90`)
-/// and the special attacks {57, 58, 118} (`0x5fec60`).
+/// The ids forced full-body whatever the state: the Death class {1, 6, 131, 132} and the special
+/// attacks {57, 58, 118}.
 fn is_forced_full_body(id: u16) -> bool {
     matches!(id, 1 | 6 | 131 | 132 | 57 | 58 | 118)
 }
@@ -758,11 +750,11 @@ fn is_forced_full_body(id: u16) -> bool {
 /// EmoteEat, the `/eat` and `/drink` loop.
 const EMOTE_EAT: u16 = 61;
 
-/// Route an unmounted one-shot by live state (`0x5fe6c8`..`0x5fe74d`): masked while the lower body is
-/// committed (moving, turning, swimming, a non-zero stand state, or a COMBAT id airborne), else
-/// full-body, so one Attack1H is full-body standing and masked running.
+/// Route an unmounted one-shot by live state: masked while the lower body is committed (moving,
+/// turning, swimming, a non-zero stand state, or a COMBAT id airborne), else full-body, so one
+/// Attack1H is full-body standing and masked running.
 pub(super) fn route_oneshot(id: u16, flags: u32, stand_state: u8) -> OneShotRoute {
-    // EmoteEat (61) unmounted always takes the key bone, whatever the state (`0x5fe834`).
+    // EmoteEat (61) unmounted always takes the key bone, whatever the state.
     if id == EMOTE_EAT {
         return OneShotRoute::Masked;
     }
@@ -779,11 +771,11 @@ pub(super) fn route_oneshot(id: u16, flags: u32, stand_state: u8) -> OneShotRout
     }
 }
 
-/// The ids whose rate the client scales by speed (`0x5fee80`), also its LOCOMOTION set.
+/// The ids whose rate the client scales by speed, also its LOCOMOTION set.
 const RATE_SCALED: &[u16] = &[4, 5, 11, 12, 13, 37, 38, 39, 42, 43, 44, 45, 135, 143, 187];
 
-/// Whether a requested clip is locomotion to the transplant tests (`0x5feae0`, `0x5fe912`). Fall
-/// (40) and SwimIdle (41) are not: a FALLINGFAR latch mid-cast replaces the cast on bone 0.
+/// Whether a requested clip is locomotion to the transplant tests. Fall (40) and SwimIdle (41) are
+/// not: a FALLINGFAR latch mid-cast replaces the cast on bone 0.
 pub(super) fn is_locomotion(id: u16) -> bool {
     RATE_SCALED.contains(&id)
 }
@@ -797,11 +789,10 @@ pub(super) fn gait_is_locomotion(state: &MovementState, walk_speed: f32) -> bool
         .is_some_and(|id| is_locomotion(*id))
 }
 
-/// A clip's rate, `0x5fe2f0`'s `speed / (moveSpeed · ‖row0‖)` (`0x5fe4be`..`0x5fe550`), 1× unless
-/// the divisor is positive and the id rate-scaled. `‖row0‖` is the rendered scale of the model
-/// playing it (`CGUnit+0x90`, `OBJECT_FIELD_SCALE_X`, times a mount's display scale `+0x9c`),
-/// the mount's model when mounted; the spell-visual factor `+0x94`
-/// (`[0.75, 2.0]`) has no producer yet and must join here.
+/// A clip's rate, the reference's `speed / (moveSpeed · ‖row0‖)`, 1× unless the divisor is positive
+/// and the id rate-scaled. `‖row0‖` is the rendered scale of the model playing it (`unit+0x90`,
+/// `OBJECT_FIELD_SCALE_X`, times a mount's display scale `+0x9c`), the mount's model when mounted;
+/// the spell-visual factor `+0x94` (`[0.75, 2.0]`) has no producer yet and must join here.
 pub(super) fn playback_rate(clip: &AnimClip, speed: f32, model_scale: f32) -> f32 {
     scaled_rate(clip, speed, model_scale).unwrap_or(1.0)
 }
@@ -825,7 +816,7 @@ pub(crate) fn unify(
     creature_swimming: bool,
     modes: Option<&crate::net::UnitMoveModes>,
 ) -> MovementState {
-    // Every leg reads the flying spline live, as the selector does at select time (`0x5fd19c`).
+    // Every leg reads the flying spline live, as the selector does at select time.
     let flying = spline.is_some_and(|s| !s.grounded);
     if let Some(m) = movement {
         return MovementState { flying, ..*m };

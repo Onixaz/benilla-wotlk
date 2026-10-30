@@ -228,10 +228,10 @@ fn chunk_at(chunks: &[ChunkMesh], wow: [f32; 3]) -> Option<&ChunkMesh> {
     chunks.get(row as usize * 16 + col as usize)
 }
 
-/// Whether a raw WoW position is in MCSH shadow, from one tile's chunks; `None` off the tile,
-/// never "lit": a doodad straddling tiles is listed in each, and only its origin's tile answers,
-/// as the reference's global world-to-chunk lookup (`0x69b350`) does. It picks a map doodad's
-/// static shade, 1.0 lit or 0.5 shadowed; the 2.5 lit value belongs to an entity's light node.
+/// Whether a raw WoW position is in MCSH shadow, from one tile's chunks; `None` off the tile, never
+/// "lit": a doodad straddling tiles is listed in each, and only its origin's tile answers, as the
+/// reference's global world-to-chunk lookup does. It picks a map doodad's static shade, 1.0 lit or
+/// 0.5 shadowed; the 2.5 lit value belongs to an entity's light node.
 pub fn mcsh_shadowed_at(chunks: &[ChunkMesh], wow: [f32; 3]) -> Option<bool> {
     match chunk_at(chunks, wow) {
         Some(c) => c.mcsh_shadowed_at(wow),
@@ -250,8 +250,7 @@ pub struct Doodad {
     pub rotation: [f32; 3],
     /// Uniform scale (MDDF stores it ×1024).
     pub scale: f32,
-    /// MDDF uniqueId, shared by every tile a doodad straddles; the reference dedups by it
-    /// (`0x694bc0`).
+    /// MDDF uniqueId, shared by every tile a doodad straddles; the reference dedups by it.
     pub unique_id: u32,
 }
 
@@ -264,7 +263,7 @@ pub struct WmoInstance {
     pub position: [f32; 3],
     /// Euler rotation in degrees (X, Y, Z); Y is the heading about the up axis.
     pub rotation: [f32; 3],
-    /// MODF uniqueId, the same in every tile a building straddles, deduped by it (`0x694bc0`).
+    /// MODF uniqueId, the same in every tile a building straddles, deduped by it.
     pub unique_id: u32,
     /// MODF doodad-set index: the set shown beside the always-on set 0.
     pub doodad_set: u16,

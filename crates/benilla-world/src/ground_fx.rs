@@ -29,7 +29,7 @@ pub(crate) struct GroundFxDecal {
     uvs: [[f32; 2]; 4],
     texture: Handle<Image>,
     blend: EffectBlend,
-    /// The part's `0x70baf0` fog policy (from the shared material's baked marker bits).
+    /// The part's fog policy (from the shared material's baked marker bits).
     fog: EffectFog,
     /// The part's M2Color RGB loop and its attach-time origin, sampled into the tint at push time.
     rgb_anim: Option<(std::sync::Arc<benilla_formats::RgbAnim>, f32)>,

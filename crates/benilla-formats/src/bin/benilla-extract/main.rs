@@ -113,8 +113,8 @@ enum Command {
     Chaincensus,
     /// Census the camera-shake system: the 24 `CameraShakes.dbc` presets and all that names one.
     Shakecensus,
-    /// Census the death thud a corpse makes on landing (`$DTH`, `0x6236e0`): the
-    /// `DeathThudLookups.dbc` grid and which creature models key a `$DTH`.
+    /// Census the death thud a corpse makes on landing (`$DTH`): the `DeathThudLookups.dbc` grid
+    /// and which creature models key a `$DTH`.
     Thudcensus,
     /// Census the `SpellVisualKit` CharProc columns, a kit's effect on the body, by stage.
     Charprocs,
@@ -164,8 +164,8 @@ enum Command {
         internal_path: String,
     },
     /// Dump an M2's per-sequence material alpha: each colour-alpha and transparency track, then
-    /// every batch's combined factor per sequence band. `HIDE` marks a batch the reference skips
-    /// in that sequence: `A <= 0` culls before the blend mode is read (`0x707b3a`-`0x707b5c`).
+    /// every batch's combined factor per sequence band. `HIDE` marks a batch the reference skips in
+    /// that sequence: `A <= 0` culls before the blend mode is read.
     M2alpha {
         /// Internal path to the `.m2` (forward or back slashes accepted).
         internal_path: String,
@@ -175,8 +175,8 @@ enum Command {
         /// Internal path to the `.m2` (forward or back slashes accepted).
         internal_path: String,
     },
-    /// Sweep every `.m2` for where addressing an attachment by id through AttachLookup
-    /// (`0x710310`) disagrees with scanning its records; item glows hang on the item's ids 0..4.
+    /// Sweep every `.m2` for where addressing an attachment by id through AttachLookup disagrees
+    /// with scanning its records; item glows hang on the item's ids 0..4.
     Attachscan {
         /// Optional path prefix to restrict the sweep (e.g. `Item\ObjectComponents\Weapon`).
         prefix: Option<String>,
@@ -230,10 +230,9 @@ enum Command {
         prefix: Option<String>,
     },
     /// Sweep every `GameObjectDisplayInfo` model and resolve what the reference's GameObject
-    /// animation arm plays per reachable state and anim-progress substate (substate table
-    /// `0x5f3c30`, LUT `0x8607e4`, missing-sequence remap `0x5f3972`) against the loader's seed
-    /// (`0x710153`, animation 0 through `playableAnimationLookup`); a model whose every substate
-    /// lands on the seed's sequence is state-blind.
+    /// animation arm plays per reachable state and anim-progress substate against the loader's seed
+    /// (animation 0 through `playableAnimationLookup`); a model whose every substate lands on the
+    /// seed's sequence is state-blind.
     Goanimscan,
     /// Sweep every `.m2` and census each `M2Event`'s `bone` and `position`: the reference's
     /// dispatchers play at the event's own world point, so per 4CC it counts the records off the
@@ -242,10 +241,10 @@ enum Command {
         /// Internal-path prefix filter (e.g. `creature`), case-insensitive; all models if omitted.
         prefix: Option<String>,
     },
-    /// Census `GameObjectDisplayInfo.Sound[0..9]`: only `0x5f4010` reads them, called only from
-    /// the GameObject anim-event dispatcher (`0x5f3e20`), `$GO0..5` to slots 0-5 and `$GC0..3` to
-    /// 6-9. Per slot: filled, tagged by the display's model, on an armable sequence, and naming a
-    /// looping kit (0x200, which picks `0x5f4010`'s emitter-pool lane over its one-shot lane).
+    /// Census `GameObjectDisplayInfo.Sound[0..9]`: one reader takes them, called only from the
+    /// GameObject anim-event dispatcher, `$GO0..5` to slots 0-5 and `$GC0..3` to 6-9. Per slot:
+    /// filled, tagged by the display's model, on an armable sequence, and naming a looping kit
+    /// (0x200, which picks that reader's emitter-pool lane over its one-shot lane).
     Goslotscan,
     /// Sweep every `.m2` for batches whose visibility changes per sequence, drawn in one
     /// animation and culled by `A <= 0` in another.
@@ -326,10 +325,9 @@ enum Command {
         /// models if omitted.
         prefix: Option<String>,
     },
-    /// Sweep every `.m2` for batches whose texture coordinates are generated, the sphere-map
-    /// stages (`texture_unit_lookup[texCoordSet] > 2`, the reference's gate at `0x70b8bd`). Their
-    /// UVs go unused by design; `DEGENERATE` marks those collapsed to one point, which a renderer
-    /// reading vertex UVs paints as one texel.
+    /// Sweep every `.m2` for batches whose texture coordinates are generated, the sphere-map stages
+    /// (`texture_unit_lookup[texCoordSet] > 2`). Their UVs go unused by design; `DEGENERATE` marks
+    /// those collapsed to one point, which a renderer reading vertex UVs paints as one texel.
     Envmapscan {
         /// Internal-path prefix filter (e.g. `world`), case-insensitive; all models if omitted.
         prefix: Option<String>,
@@ -375,18 +373,18 @@ enum Command {
         /// Internal-path prefix filter (e.g. `spells`), case-insensitive; all models if omitted.
         prefix: Option<String>,
     },
-    /// Sweep every `.m2` for M2 dynamic lights (`0x718960`): per model its point (`type==1`) and
-    /// directional light counts, each point light's bone, position, colour, attenuation and
-    /// visibility gate, then totals by content family and a diffuse-palette tally.
+    /// Sweep every `.m2` for M2 dynamic lights: per model its point (`type==1`) and directional
+    /// light counts, each point light's bone, position, colour, attenuation and visibility gate,
+    /// then totals by content family and a diffuse-palette tally.
     M2lightscan {
         /// Internal-path prefix filter (e.g. `item\objectcomponents`), case-insensitive; all
         /// models if omitted.
         prefix: Option<String>,
     },
-    /// Sweep every WMO root and cross-tab its MOSB skybox model against its groups' `0x40000`
-    /// flag, which never appears without a MOSB in all 815 roots; the reference tests it on the
-    /// flood-visited group (`0x6b42e0`). Also which buildings replace the `Light.dbc` dome with an
-    /// authored sky, and in how many groups: only Stratholme's is reachable in 1.12.
+    /// Sweep every WMO root and cross-tab its MOSB skybox model against its groups' `0x40000` flag,
+    /// which never appears without a MOSB in all 815 roots; the reference tests it on the
+    /// flood-visited group. Also which buildings replace the `Light.dbc` dome with an authored sky,
+    /// and in how many groups: only Stratholme's is reachable in 1.12.
     Skyboxscan,
     /// Dump all 18 `LightIntBand` rows of the `Light.dbc` entry covering a position at a time of
     /// day. One params record, raw: near a sphere's falloff edge the live light is mostly the
@@ -407,8 +405,8 @@ enum Command {
         minute: u32,
     },
     /// Dump every `LightIntBand` and `LightFloatBand` row of a named `LightParams` id, for rows no
-    /// position reaches: magma submersion reads the fixed global row 7 and slime row 6
-    /// (`0x6d2371`), not the zone's underwater slot.
+    /// position reaches: magma submersion reads the fixed global row 7 and slime row 6, not the
+    /// zone's underwater slot.
     Lightparam {
         /// `LightParams.dbc` id (1-based).
         id: u32,
@@ -465,8 +463,8 @@ enum Command {
         tile_radius: u32,
     },
     /// Dump a WMO root's placed props: each MODD doodad with its MODS sets and the groups whose
-    /// MODR names it. The reference creates props only from a group's MODR refs (`0x695aa0`), so
-    /// it never creates one no group names; benilla still spawns those.
+    /// MODR names it. The reference creates props only from a group's MODR refs, so it never
+    /// creates one no group names; benilla still spawns those.
     Wmodoodads {
         /// Internal path to the WMO root (forward or back slashes accepted).
         internal_path: String,
@@ -474,9 +472,9 @@ enum Command {
         filter: Option<String>,
     },
     /// Sweep every WMO root for placed MODD props the interior lane lights literal black: its base
-    /// light is the MODD colour (ambient `cap96`, diffuse `floor112`, `0x694e90` → `0x6a77e0`), and
-    /// the `112/max` floor keeps `#000000` black. An exterior referrer sky-lights a prop instead
-    /// (`0x695aa0`); `RESCUED` counts those an interior group names first.
+    /// light is the MODD colour (ambient `cap96`, diffuse `floor112`), and the `112/max` floor
+    /// keeps `#000000` black. An exterior referrer sky-lights a prop instead; `RESCUED` counts
+    /// those an interior group names first.
     Darkpropscan {
         /// Internal-path prefix to limit the sweep (e.g. `world\wmo\azeroth`); all if omitted.
         prefix: Option<String>,
@@ -498,8 +496,8 @@ enum Command {
         filter: String,
     },
     /// Print the terrain MCSH baked-shadow bit at a position, which an exterior M2 doodad samples
-    /// once at its base (sun scale 1.0 lit, 0.5 shadowed, `0x698cb4`), and the texel
-    /// neighbourhood: one ~0.52 yd texel can split adjacent pieces across a shadow edge.
+    /// once at its base (sun scale 1.0 lit, 0.5 shadowed), and the texel neighbourhood: one ~0.52
+    /// yd texel can split adjacent pieces across a shadow edge.
     Shadeat {
         /// Map directory name (e.g. `Azeroth`).
         map: String,

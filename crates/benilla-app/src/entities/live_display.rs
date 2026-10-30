@@ -2,11 +2,10 @@
 //! `GAMEOBJECT_DISPLAYID` swaps the entity's model in place, and one that moves
 //! `OBJECT_FIELD_SCALE_X` eases its render scale.
 //!
-//! The reference's display handler rebuilds the model (`0x60abe0`) when the display record changed
-//! (`0x60ae10`, against `[unit+0xb34]`), re-resolving its model facts (`0x60afb0`) and the stand or
-//! ride animation (`0x60ce70`): an instant swap, a ghost's revive too. Its scale handler eases
-//! over 2 s with a cosine smoothstep (`0x614bbf`). Here a swap tears the visual down for
-//! `attach_entity_visuals` to rebuild without the spawn fade; the unit's
+//! The reference's display handler rebuilds the model when the display record changed (against
+//! `[unit+0xb34]`), re-resolving its model facts and the stand or ride animation: an instant swap,
+//! a ghost's revive too. Its scale handler eases over 2 s with a cosine smoothstep. Here a swap
+//! tears the visual down for `attach_entity_visuals` to rebuild without the spawn fade; the unit's
 //! [`super::spell_fx::FxAttached`] list outlives it, as the reference's per-unit `+0xb4` effect
 //! list does, so persistent effects re-spawn on the new body.
 
@@ -18,7 +17,7 @@ use crate::net::{Guid, NetEntity, ObjectStore};
 use super::collision_height::{collision_height_for, CollisionHeight};
 use super::{Creatures, VisualAttached};
 
-/// The reference's scale-ease window: 2 s, cosine smoothstep (`0x614bbf`).
+/// The reference's scale-ease window: 2 s, cosine smoothstep.
 const SCALE_EASE_SECS: f32 = 2.0;
 
 /// The display id the visual was built with, cube included: [`refresh_live_display`]'s diff key.
@@ -26,8 +25,8 @@ const SCALE_EASE_SECS: f32 = 2.0;
 pub(super) struct AppliedDisplay(pub(super) Option<u32>);
 
 /// A live display swap tore this entity's visual down. The reference's rebuild ends by replaying
-/// the pending morph's impact kit (`0x60ad67`), which `crate::creature_anim`'s morph-latch watcher
-/// does on this edge.
+/// the pending morph's impact kit, which `crate::creature_anim`'s morph-latch watcher does on this
+/// edge.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct DisplaySwapped {
     pub(crate) entity: Entity,
@@ -56,9 +55,9 @@ fn live_display_id(kind: EntityKind, store: &ObjectStore) -> Option<u32> {
             .gameobject_displayid()
             .filter(|&d| d > 0)
             .map(|d| d as u32),
-        // A death-time snapshot. The in-place flesh-to-bones flip, which the reference reloads on
-        // (`CORPSE_FIELD_FLAGS` handler `0x5d5fa0`, `0x5d6d60`), is not built: vmangos removes the
-        // corpse and adds a separate bones object under the same guid (`Map.cpp:3608-3649`).
+        // A death-time snapshot. The in-place flesh-to-bones flip, which the reference's
+        // `CORPSE_FIELD_FLAGS` handler reloads on, is not built: vmangos removes the corpse and
+        // adds a separate bones object under the same guid (`Map.cpp:3608-3649`).
         EntityKind::Corpse => store.0.corpse_display_id(),
         _ => None,
     }
@@ -82,7 +81,7 @@ pub(super) fn refresh_live_display(
             Option<Ref<CollisionHeight>>,
             &Transform,
         ),
-        // A torn-down unit is freed, not rebuilt (`0x464920`).
+        // A torn-down unit is freed, not rebuilt.
         (
             With<VisualAttached>,
             Without<benilla_world::model_fade::DespawnFade>,
@@ -109,7 +108,7 @@ pub(super) fn refresh_live_display(
         if let Some(live) = live {
             if applied.0 != Some(live) {
                 info!(
-                    "display swap: guid {:016x} {:?} {:?} -> {} (instant, the 0x60abe0 rebuild)",
+                    "display swap: guid {:016x} {:?} {:?} -> {} (instant)",
                     guid.0, net.kind, applied.0, live
                 );
                 net.display_id = Some(live);
@@ -128,7 +127,7 @@ pub(super) fn refresh_live_display(
         if let Some(live) = store.0.object_scale_x().filter(|s| *s > 0.0 && scaled_kind) {
             if live != net.scale {
                 info!(
-                    "scale change: guid {:016x} {} -> {} (2 s cosine ease, 0x614bbf)",
+                    "scale change: guid {:016x} {} -> {} (2 s cosine ease)",
                     guid.0, net.scale, live
                 );
                 net.scale = live;
@@ -162,8 +161,8 @@ pub(super) fn refresh_live_display(
     }
 }
 
-/// Tick every [`ScaleEase`], `from + (to − from) · (0.5 − 0.5·cos(π·t/2 s))` (`0x614bbf`), then
-/// land exactly on the target.
+/// Tick every [`ScaleEase`], `from + (to − from) · (0.5 − 0.5·cos(π·t/2 s))`, then land exactly on
+/// the target.
 pub(super) fn tick_scale_ease(
     mut commands: Commands,
     time: Res<Time>,
@@ -213,7 +212,7 @@ pub(super) fn heal_rig_starved(
     }
     for (entity, guid) in starved.iter().take(HEAL_PER_FRAME) {
         info!(
-            "rig heal: guid {:016x} was denied a palette rig at attach — rebuilding (0x60abe0 shape)",
+            "rig heal: guid {:016x} was denied a palette rig at attach — rebuilding",
             guid.0
         );
         commands
@@ -245,7 +244,7 @@ pub(super) fn heal_rig_starved(
 }
 
 /// Tear a unit's visual down for `attach_entity_visuals` to rebuild from scratch, fade-skipped by
-/// `Reattached`: the `0x60abe0` rebuild of a display swap and of a clone's look landing.
+/// `Reattached`: the rebuild of a display swap and of a clone's look landing.
 pub(super) fn rebuild_visual(commands: &mut Commands, entity: Entity) {
     commands
         .entity(entity)

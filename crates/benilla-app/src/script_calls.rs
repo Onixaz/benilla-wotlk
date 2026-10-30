@@ -1,11 +1,11 @@
-//! The one point in the frame where the script calls that touch the selection, the player's cast
-//! or the targeting cursor take effect, in the order the script made them. In the reference each
-//! such call is done when it returns (the macro runner `0x4f14e0` fires every line in one pass;
-//! `TargetByName` `0x489d60` and `TargetUnit` `0x4899d0` commit through `SetSelection 0x493540`;
-//! `CastSpellByName` `0x4b4ab0` casts at the selection as it stands then), so `/target Bob` then
-//! `/cast Flash Heal` heals Bob, and `/cast` then `/target` casts at the old target. A fixed order
-//! between per-kind drains cannot give both, so the VM keeps one queue ([`ScriptCall`]) and this
-//! system applies it front to back, each call through its owner's applier.
+//! The one point in the frame where the script calls that touch the selection, the player's cast or
+//! the targeting cursor take effect, in the order the script made them. In the reference each such
+//! call is done when it returns (the macro runner fires every line in one pass; `TargetByName` and
+//! `TargetUnit` commit through the selection setter; `CastSpellByName` casts at the selection as it
+//! stands then), so `/target Bob` then `/cast Flash Heal` heals Bob, and `/cast` then `/target`
+//! casts at the old target. A fixed order between per-kind drains cannot give both, so the VM keeps
+//! one queue ([`ScriptCall`]) and this system applies it front to back, each call through its
+//! owner's applier.
 
 use std::collections::VecDeque;
 
@@ -92,8 +92,8 @@ pub(crate) fn apply_script_calls(
                 cast_as_pet(&mut appliers.p3(), out);
             }
         }
-        // TryCast's attack pick can move the selection mid-cast (`0x6e4efb`), so a press held
-        // there is picked and resumed before the next call reads the selection.
+        // The cast attempt's attack pick can move the selection mid-cast, so a press held there is
+        // picked and resumed before the next call reads the selection.
         let Some(held) = appliers.p3().ladder.take_held() else {
             return;
         };
@@ -125,9 +125,8 @@ fn cast_as_pet(cast: &mut crate::spell::ScriptCast, out: crate::ui_pet::PetCast)
     }
 }
 
-/// Apply every queued call front to back. Applying one may queue more: a macro's lines run
-/// inside `UseAction` (`0x4e6098 call 0x4f1460`), so the calls they make go before the next one
-/// queued.
+/// Apply every queued call front to back. Applying one may queue more: a macro's lines run inside
+/// `UseAction`, so the calls they make go before the next one queued.
 pub(crate) fn in_call_order(
     script: &mut UiScript,
     mut apply: impl FnMut(&mut UiScript, ScriptCall),
@@ -211,8 +210,8 @@ mod tests {
                 ])),
             )
         };
-        // We are a player (`OBJECT_FIELD_TYPE` 0x19, `UNIT_FLAG_PVP_ATTACKABLE`), which selects
-        // `CanAttack`'s player arm: with no `FactionTemplate.dbc` a plain unit is attackable.
+        // We are a player (`OBJECT_FIELD_TYPE` 0x19, `UNIT_FLAG_PVP_ATTACKABLE`), which selects The
+        // attack check's player arm: with no `FactionTemplate.dbc` a plain unit is attackable.
         let me = world.spawn((SelfPlayer, unit(ME, 0.0))).id();
         world
             .entity_mut(me)
@@ -484,7 +483,8 @@ mod tests {
             f.app
                 .world_mut()
                 .insert_resource(crate::spell::AutoSelfCast(auto));
-            // `CanAssist` passes a friendly player-controlled unit (`UNIT_FLAG_PLAYER_CONTROLLED`).
+            // The assist check passes a friendly player-controlled unit
+            // (`UNIT_FLAG_PLAYER_CONTROLLED`).
             with_factions(&mut f, selected_template, &[(FLAGS, 0x8)]);
             with_fortitude(&mut f);
             run(&mut f, lua);
@@ -498,7 +498,7 @@ mod tests {
         }
     }
 
-    /// The pet's guid, and the pet book's Growl (`CMSG_PET_ACTION`'s type-1 word, `0x4b34ce`).
+    /// The pet's guid, and the pet book's Growl (`CMSG_PET_ACTION`'s type-1 word).
     const PET: u64 = 0x50;
     const GROWL: u32 = 2649;
 
@@ -516,9 +516,8 @@ mod tests {
             .collect()
     }
 
-    /// The book's pet cast (`CGSpellBook::CastSpell` `0x53bc40`) hands `SendPetAction` the guid it
-    /// was given, so `CastSpell(slot, "pet", 1)` aims the pet's spell at the player, not the
-    /// selection.
+    /// The book's pet cast (`0x53bc40`) hands the pet-action send the guid it was given, so
+    /// `CastSpell(slot, "pet", 1)` aims the pet's spell at the player, not the selection.
     #[test]
     fn a_pet_book_cast_on_self_aims_at_the_player() {
         for (lua, target) in [
@@ -578,8 +577,8 @@ mod tests {
         }
     }
 
-    /// `/target` then `/cast`: `TargetUnit` commits through `SetSelection 0x493540` before it
-    /// returns, and `CastSpellByName` (`0x4b4ab0`) casts at the selection as it stands then.
+    /// `/target` then `/cast`: `TargetUnit` commits through the selection setter before it returns,
+    /// and `CastSpellByName` casts at the selection as it stands then.
     #[test]
     fn a_cast_after_a_target_goes_to_the_new_target() {
         let mut f = frame(true);
@@ -597,9 +596,8 @@ mod tests {
         assert_eq!(selected(&f), Some(NEW));
     }
 
-    /// `ClearTarget` (`0x489ff0`) reads the selection at call time and deselects through
-    /// `0x493540(0,0)`: after `TargetUnit("player")` there is one to clear, with or without a
-    /// target before the script ran.
+    /// `ClearTarget` reads the selection at call time and deselects: after `TargetUnit("player")`
+    /// there is one to clear, with or without a target before the script ran.
     #[test]
     fn a_clear_after_a_target_ends_with_nothing_selected() {
         for selected_before in [true, false] {
@@ -619,8 +617,8 @@ mod tests {
         }
     }
 
-    /// `TargetNearestEnemy` (`0x489a80` → `0x493f60(0, 1)`) commits through `SetSelection` before
-    /// it returns, so the cast after it in the same script goes to the unit the TAB cycle picked.
+    /// `TargetNearestEnemy` commits through the selection setter before it returns, so the cast
+    /// after it in the same script goes to the unit the TAB cycle picked.
     #[test]
     fn a_cast_after_target_nearest_enemy_goes_to_the_picked_unit() {
         let mut f = frame(true);
@@ -631,9 +629,9 @@ mod tests {
         assert_eq!(selected(&f), Some(MOB));
     }
 
-    /// `TargetLastTarget` (`0x489b00`) reads the pair `SetSelection` stamps with the outgoing
-    /// selection (`0x49361d`): a held pair re-selects, which swaps the two; an empty one deselects
-    /// through `0x493540(0,0)` (`0x489b2d`), which stamps what it drops.
+    /// `TargetLastTarget` reads the pair the selection setter stamps with the outgoing selection: a
+    /// held pair re-selects, which swaps the two; an empty one deselects, which stamps what it
+    /// drops.
     #[test]
     fn target_last_target_swaps_and_deselects_on_an_empty_pair() {
         let mut f = frame(false);
@@ -655,8 +653,7 @@ mod tests {
         assert_eq!(selected(&f), Some(ME), "and back again");
     }
 
-    /// `AttackTarget` (`0x489b50` → `0x6131a0`) swings at the selection as the calls before it
-    /// left it.
+    /// `AttackTarget` swings at the selection as the calls before it left it.
     #[test]
     fn attack_target_swings_at_the_selection_in_call_order() {
         let mut f = frame(true);
@@ -667,9 +664,9 @@ mod tests {
         assert_eq!(swings(&f), (vec![NEW], false));
     }
 
-    /// `0x6130a3`: a unit we are friendly toward is dropped (`0x6130a8`) and `TargetNearestEnemy`
-    /// runs (`0x6130b5`), moving the selection; the swing goes at what it picked (`0x6130c1`).
-    /// The Attack button reaches the same `0x6131a0` through `TryCast` (`0x6e4c90`).
+    /// A unit we are friendly toward is dropped and `TargetNearestEnemy` runs, moving the
+    /// selection; the swing goes at what it picked. The Attack button reaches the same through the
+    /// cast attempt.
     #[test]
     fn attack_with_a_friend_selected_swings_at_the_nearest_enemy_instead() {
         for lua in ["AttackTarget()", "UseAction(1)"] {
@@ -712,9 +709,9 @@ mod tests {
         }
     }
 
-    /// With no enemy in reach the scan moves nothing (`0x493f60`), so the selection re-read at
-    /// `0x6130c1` is the friend, which the final gate's `CanAttack` refuses (`0x613171`); only an
-    /// empty selection is "There is nothing to attack." (`0x6130d9`). Neither swings.
+    /// With no enemy in reach the scan moves nothing, so the selection re-read is the friend, which
+    /// the final gate's attack check refuses; only an empty selection is "There is nothing to
+    /// attack.". Neither swings.
     #[test]
     fn attack_with_no_enemy_near_refuses_by_what_is_selected() {
         let mut f = frame(true);
@@ -732,10 +729,9 @@ mod tests {
         assert_eq!(swings(&f), (vec![], false));
     }
 
-    /// A hostile corpse is kept (`0x6130a3` reads the reaction alone), so no scan runs past it to
-    /// the live mob, and the final gate refuses a unit neither alive nor feigning (`0x613152`–
-    /// `0x613165`): "You cannot attack that target.", and no swing, which vmangos would stop
-    /// (`CombatHandler.cpp:53-58`).
+    /// A hostile corpse is kept, so no scan runs past it to the live mob, and the final gate
+    /// refuses a unit neither alive nor feigning: "You cannot attack that target.", and no swing,
+    /// which vmangos would stop (`CombatHandler.cpp:53-58`).
     #[test]
     fn attack_at_a_corpse_cannot_attack_it() {
         let mut f = frame(true);
@@ -747,8 +743,8 @@ mod tests {
         assert_eq!(swings(&f), (vec![], false));
     }
 
-    /// `0x6131a0` toggles only past the validator: attacking a live foe stops, and a press the
-    /// validator refuses neither stops nor swings.
+    /// The reference's Attack toggle acts only past the validator: attacking a live foe stops, and
+    /// a press the validator refuses neither stops nor swings.
     #[test]
     fn attack_toggles_off_only_past_the_validator() {
         for (health, stopped, refused) in [
@@ -772,9 +768,9 @@ mod tests {
         }
     }
 
-    /// A macro's lines run inside `UseAction` (`0x4e6098 call 0x4f1460`), so what they call lands
-    /// before the calls the pressing script makes after it: the macro's cast goes to the old
-    /// target, then the script's `TargetUnit` moves the selection.
+    /// A macro's lines run inside `UseAction`, so what they call lands before the calls the
+    /// pressing script makes after it: the macro's cast goes to the old target, then the script's
+    /// `TargetUnit` moves the selection.
     #[test]
     fn a_macros_calls_land_inside_the_use_action_that_ran_it() {
         let mut f = frame(true);
@@ -809,8 +805,8 @@ mod tests {
         assert_eq!(selected(&f), Some(NEW));
     }
 
-    /// Sinister Strike: `AttributesEx & 0x200`, one of predicate `0x6e5200`'s bits, and the enemy
-    /// word (implicit target 6).
+    /// Sinister Strike: `AttributesEx & 0x200`, one of the bits a reference cast predicate tests,
+    /// and the enemy word (implicit target 6).
     const SINISTER_STRIKE: u32 = 1752;
 
     /// Sinister Strike in the catalog and on action slot 1.
@@ -855,9 +851,9 @@ mod tests {
             .collect()
     }
 
-    /// TryCast's attack pick (`0x6e4efb` → `0x612df0`): a strike pressed with no target selects the
-    /// nearest enemy before its bind, so the selection goes out ahead of the cast and its swing,
-    /// and the call after it reads the selection only once the cast is done.
+    /// The cast attempt's attack pick: a strike pressed with no target selects the nearest enemy
+    /// before its bind, so the selection goes out ahead of the cast and its swing, and the call
+    /// after it reads the selection only once the cast is done.
     #[test]
     fn a_strike_with_no_target_selects_the_nearest_enemy_and_casts_at_it() {
         let mut f = frame(false);
@@ -875,9 +871,8 @@ mod tests {
         );
     }
 
-    /// A self-cast press passes the caster to the pick (`0x4e610e`), and the reaction to oneself is
-    /// 4 (`0x606200`), so the pick Tabs to the enemy. With no faction table the caster would read
-    /// neutral and be kept.
+    /// A self-cast press passes the caster to the pick, and the reaction to oneself is 4, so the
+    /// pick Tabs to the enemy. With no faction table the caster would read neutral and be kept.
     #[test]
     fn a_self_cast_strike_selects_the_nearest_enemy() {
         let mut f = frame(false);
@@ -890,8 +885,8 @@ mod tests {
         );
     }
 
-    /// The pick's keep test (`0x6130a3`) drops a friend, so a strike at one retargets the nearest
-    /// enemy, where the bind alone would refuse it as an invalid target.
+    /// The pick's keep test drops a friend, so a strike at one retargets the nearest enemy, where
+    /// the bind alone would refuse it as an invalid target.
     #[test]
     fn a_strike_at_a_friend_retargets_the_nearest_enemy() {
         let mut f = frame(true);
@@ -905,8 +900,8 @@ mod tests {
         );
     }
 
-    /// `0x6130d9`: with no enemy to acquire, the strike stops at the pick with "There is nothing to
-    /// attack.", not the bind's "You have no target.".
+    /// With no enemy to acquire, the strike stops at the pick with "There is nothing to attack.",
+    /// not the bind's "You have no target.".
     #[test]
     fn a_strike_with_nothing_to_attack_says_so_and_sends_nothing() {
         let mut f = frame(false);

@@ -465,8 +465,8 @@ fn quad_summary(q: Option<&UiQuad>) -> String {
 }
 
 /// Hand the VM the host's font engine for `seam`, so `GetStringWidth` right after `SetText`
-/// measures, as the reference answers it inline (`0x79e510` → `0x772890`). Also seated before the
-/// manifest loads ([`super::lifecycle::load_ingame_ui_on_world_entry`]), for every `<OnLoad>`.
+/// measures, as the reference answers it inline. Also seated before the manifest loads
+/// ([`super::lifecycle::load_ingame_ui_on_world_entry`]), for every `<OnLoad>`.
 pub(crate) fn seat_text_measurer(script: &mut UiScript, atlas: &UiFontAtlas, seam: f32) {
     script.set_text_measurer(Box::new(crate::ui_text::AtlasMeasurer::new(
         atlas.engine(),
@@ -510,9 +510,9 @@ pub(super) fn tick_script(
         return;
     };
     let (w, h) = (window.width(), window.height());
-    // The client's UI space is 768 units tall at every aspect (`f(screenH) = 768`, `0x41ad10`; the
-    // caret's `H_px/192`, `0x77b8c0`), `768/uiScale` with the dial. The VM lives in it: quads
-    // scale ×s out, and the mouse and the measures ÷s in.
+    // The client's UI space is 768 units tall at every aspect (`f(screenH) = 768`, the caret's
+    // `H_px/192`), `768/uiScale` with the dial. The VM lives in it: quads scale ×s out, and the
+    // mouse and the measures ÷s in.
     let s = super::seam_scale(h, ui_scale.for_vm(script.vm_kind()));
     // A moved seam scale or DPI stales every text metric the engine caches: integer-stepped
     // advances do not rescale, and the size snap moves a string's width by several percent,
@@ -752,8 +752,8 @@ pub(super) fn paint_script(
             script.set_editbox_advances(req.id, req.key, cum, rows, cell_h);
         }
     }
-    // The focused editbox's text UI: its Text quad, scroll window, caret and selection spans,
-    // and the blink phase (0.5 s, `0x77a790`).
+    // The focused editbox's text UI: its Text quad, scroll window, caret and selection spans, and
+    // the blink phase (0.5 s).
     let text_ui = script.focused_editbox_text_ui();
     let _ = lap(); // re-arm: the editbox seam above is not the walk's cost
                    // ── The extract gate ──────────────────────────────────────────────────────
@@ -1331,10 +1331,10 @@ fn convert_entry(
             ffx,
         } => {
             use crate::portrait::PortraitSource;
-            // A `ModelFFX`'s scene draws once, at its own bucket's ARTWORK callback (`0x46fa90`
-            // overrides the paint registration `0x76d160`), so every UI region paints over it.
-            // The scene is the glue booth's, which renders the window's view of the stage the
-            // glue VM feeds it (`crate::ui_script::glue_scene`); the pane shows its part of it.
+            // A `ModelFFX`'s scene draws once, at its own bucket's ARTWORK callback, so every UI
+            // region paints over it. The scene is the glue booth's, which renders the window's view
+            // of the stage the glue VM feeds it (`crate::ui_script::glue_scene`); the pane shows
+            // its part of it.
             if ffx {
                 let Some(PortraitSource::Live(image)) =
                     booths.images.0.get(crate::portrait::GLUE_SLOT)
@@ -1354,7 +1354,7 @@ fn convert_entry(
                         rect.min.y / h,
                         rect.max.y / h,
                     ]),
-                    // The scene draws at the widget's own alpha (`0x76d120`).
+                    // The scene draws at the widget's own alpha.
                     color: [1.0, 1.0, 1.0, own_alpha],
                     // The booth's target is premultiplied.
                     premultiplied: true,
@@ -1380,19 +1380,18 @@ fn convert_entry(
                     crate::ui_models::TileRequest {
                         path: path.to_string(),
                         size_px,
-                        // 1 model unit is `1280 · modelScale · layoutScale` FrameXML units
-                        // (`0x76d1a0`).
+                        // 1 model unit is `1280 · modelScale · layoutScale` FrameXML units.
                         px_per_unit: 1280.0 * model_scale * layout * s * dpi,
                         // `SetPosition` is in layout units: `768 · √(a²+1)` FrameXML per unit.
                         pos_px_per_unit: 768.0 * diag * layout * s * dpi,
-                        // A particle's half-extent: eye space, neither scale (`0x7b2a50`).
+                        // A particle's half-extent: eye space, neither scale.
                         star_px_per_unit: 768.0 * diag * s * dpi,
                         facing,
                         position: Vec3::new(position.0, position.1, position.2),
                         // The perspective root, in model units: translate `pos · layoutScale`,
                         // rotate `facing`, scale `G48 · (5/3) · modelScale · layoutScale`, where
-                        // `G48 · (5/3)` is the 4:3 renormalizer `√((4/3)²+1)/√(a²+1)`
-                        // (`0x80655c`); the near and far planes do not scale with it.
+                        // `G48 · (5/3)` is the 4:3 renormalizer `√((4/3)²+1)/√(a²+1)`; the near and
+                        // far planes do not scale with it.
                         root_scale: (5.0 / 3.0) / diag * model_scale * layout,
                         root_pos: Vec3::new(position.0, position.1, position.2) * layout,
                         camera,
@@ -1401,7 +1400,7 @@ fn convert_entry(
                         icon: icon.clone(),
                         rect,
                         z_key: eq.z,
-                        // The instance draws at the widget's own alpha (`0x76d120`).
+                        // The instance draws at the widget's own alpha.
                         alpha: own_alpha,
                         clip,
                     },
@@ -1516,9 +1515,9 @@ fn convert_entry(
                 return;
             }
             // A path the archives lack draws nothing. The reference keeps the widget's previous
-            // texture and returns nil to Lua (`CSimpleTexture::SetTexture`, `0x770200`); a path
-            // here is re-resolved every frame, so the cell is empty. With no `WorldAssets` at all
-            // (a data-less run) the quad draws untextured.
+            // texture and returns nil to Lua from `SetTexture`; a path here is re-resolved every
+            // frame, so the cell is empty. With no `WorldAssets` at all (a data-less run) the quad
+            // draws untextured.
             //
             // `SetTexCoord`'s edges map to raw UV corners, so a mirrored slice (`left > right`)
             // keeps its flip; resolved before the handle because the wrap mode follows it.
@@ -2330,11 +2329,11 @@ mod extract_gate_tests {
         assert_eq!(scene.len(), 1, "the pane draws the glue booth's image once");
         let q = scene[0];
         assert!(q.premultiplied);
-        // The widget's own alpha (`0x76d120`); `SetAlpha` writes the raw value down the subtree
-        // with no product, so the holder's earlier 0.5 is gone.
+        // The widget's own alpha; `SetAlpha` writes the raw value down the subtree with no product,
+        // so the holder's earlier 0.5 is gone.
         assert!((q.color[3] - 0.8).abs() < 1e-3, "{:?}", q.color);
         // The ARTWORK callback of the pane's own bucket: after its ARTWORK regions, before its
-        // OVERLAY ones and every child frame's (`0x46fa90`, layer 2).
+        // OVERLAY ones and every child frame's (layer 2).
         let z_of = |rgb: [f32; 3]| {
             quads
                 .iter()
@@ -2607,7 +2606,7 @@ mod extract_gate_tests {
             quads.quads.len()
         );
         // The comparison app replays the history: `Show()` re-stacks a hidden frame to the tail of
-        // its draw bucket (the client's show, `0x76ae10`), so B draws above C.
+        // its draw bucket (the client's show), so B draws above C.
         let mut reference = app_from_script(&format!("{BUILD}\nhidden:Hide()\nhidden:Show()"));
         reference.update();
         assert!(

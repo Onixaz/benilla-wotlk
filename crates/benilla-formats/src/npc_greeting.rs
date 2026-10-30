@@ -1,9 +1,9 @@
 //! The NPC greeting voice, a per-display property apart from the body vocals of
 //! [`crate::creature_sound`]: `UNIT_FIELD_DISPLAYID` → `CreatureDisplayInfo.dbc`'s `NPCSoundID`
-//! (column 12 in 12340, after `PortraitTextureName`) → `NPCSounds.dbc` (`0x54afa0`: `ID`, `hello`,
-//! `goodbye`, `pissed`, and `ack`, 0 on every row and never read). Each is a
-//! `SoundEntries` kit of type 17, no-duplicates (`0x20`), cut off at 45 yd, a 3D emitter at the NPC
-//! (`0x7a5b10`). `CreatureSoundData.NPCSoundID` is not on the path (`0x60c3b0`, `0x623910`).
+//! (column 12 in 12340, after `PortraitTextureName`) → `NPCSounds.dbc` (`ID`, `hello`, `goodbye`,
+//! `pissed`, and `ack`, 0 on every row and never read). Each is a `SoundEntries` kit of type 17,
+//! no-duplicates (`0x20`), cut off at 45 yd, a 3D emitter at the NPC.
+//! `CreatureSoundData.NPCSoundID` is not on the path.
 
 use std::collections::HashMap;
 
@@ -16,14 +16,13 @@ use crate::dbc::{parse, u32_at};
 /// The greeting kit set for one NPC (each a `SoundEntries` kit id; `0` = none).
 #[derive(Clone, Copy, Debug)]
 pub struct NpcGreeting {
-    /// `NPCSounds.hello`, played on a left-click select (`0x60c270`) and once when an interaction
-    /// window opens (`0x60c3b0(1)`).
+    /// `NPCSounds.hello`, played on a left-click select and once when an interaction window opens.
     pub hello: u32,
-    /// `NPCSounds.goodbye`, played when the interaction window closes to nothing (`0x60c3b0(0)`),
-    /// not when it swaps to another NPC.
+    /// `NPCSounds.goodbye`, played when the interaction window closes to nothing, not when it swaps
+    /// to another NPC.
     pub goodbye: u32,
-    /// `NPCSounds.pissed`: after five left-click hellos its variations play in turn, then the
-    /// cycle restarts (`0x623910` reads row `+0xc`).
+    /// `NPCSounds.pissed`: after five left-click hellos its variations play in turn, then the cycle
+    /// restarts (the reference reads row `+0xc`).
     pub pissed: u32,
 }
 

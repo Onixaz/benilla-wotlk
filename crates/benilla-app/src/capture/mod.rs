@@ -170,8 +170,8 @@ fn glue_screen() -> Option<GlueScreen> {
 ///
 /// Three lanes: the effect pool (`WOW_FX_MODEL`), a unit (`WOW_FX_DISPLAY`, the component set a
 /// streamed creature gets) and a GameObject (`WOW_FX_GO`, whose sequence `crate::go_anim`'s state
-/// machine picks, `0x5f3cb0`). A missing `GAMEOBJECT_STATE` reads as 0, ACTIVE, which on a model
-/// with no `Opened` sequence resolves elsewhere.
+/// machine picks). A missing `GAMEOBJECT_STATE` reads as 0, ACTIVE, which on a model with no
+/// `Opened` sequence resolves elsewhere.
 ///
 /// Knobs, defaults in parentheses: `WOW_FX_AGE` s after attach (1.0), `WOW_FX_AZ`/`WOW_FX_EL`
 /// orbit degrees (0/10), `WOW_FX_DIST` yd (5), `WOW_FX_FLY` yd/s along the facing (0),

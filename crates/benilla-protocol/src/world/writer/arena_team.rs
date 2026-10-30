@@ -57,7 +57,7 @@ impl WorldWriter {
         self.send(opcode::CMSG_ARENA_TEAM_ACCEPT, &[])
     }
 
-    /// `DeclineArenaTeam()` (`0x6d48b0`): empty.
+    /// `DeclineArenaTeam()`: empty.
     pub fn arena_team_decline(&mut self) -> Result<()> {
         self.send(opcode::CMSG_ARENA_TEAM_DECLINE, &[])
     }

@@ -223,8 +223,8 @@ fn a_click_on_the_minimap_parks_a_centre_relative_ping_request() {
     assert_eq!(s.take_minimap_ping_request(), None, "off-widget is no ping");
 }
 
-/// The reference answers from statics nothing clears (`0x4eefd0`), and stock `Minimap_OnUpdate`
-/// uses the pair with no nil test; here it is the app's last publish, `(0, 0)` before any.
+/// The reference answers from statics nothing clears, and stock `Minimap_OnUpdate` uses the pair
+/// with no nil test; here it is the app's last publish, `(0, 0)` before any.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn get_ping_position_answers_two_numbers_always() {

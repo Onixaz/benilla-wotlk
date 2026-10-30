@@ -9,16 +9,15 @@ use mlua::Lua;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingEquipAnswer {
     /// The event's `arg1`, not a slot: a 0-based index into the reference's pending-equip array
-    /// (`0xc4c298`, stride `0x20`), kept untranslated because Lua only hands it back.
+    /// (stride `0x20`), kept untranslated because Lua only hands it back.
     pub index: u32,
-    /// Accept re-issues the action; cancel sends nothing and only releases the item locks
-    /// (`0x495420`).
+    /// Accept re-issues the action; cancel sends nothing and only releases the item locks.
     pub accept: bool,
 }
 
 impl super::UiScript {
     /// The equip answers in call order. The app ignores an index it holds no record for, as the
-    /// reference's `0x5e1be0` bounds-checks it and returns.
+    /// reference's bounds-checks it and returns.
     pub fn take_pending_equip_answers(&mut self) -> Vec<PendingEquipAnswer> {
         drain_field!(self, pending_equip_answers)
     }
@@ -28,9 +27,8 @@ impl super::UiScript {
         drain_field!(self, bind_on_use_confirms)
     }
 
-    /// The client's item-usable predicate (`0x5ea930`), which the app's equip deferral asks: an
-    /// item the player cannot equip is never asked about. Entry `0` and an unanswered template
-    /// read usable.
+    /// The client's item-usable predicate, which the app's equip deferral asks: an item the player
+    /// cannot equip is never asked about. Entry `0` and an unanswered template read usable.
     pub fn item_usable(&self, item_id: u32) -> bool {
         super::item_stats::item_usable_by_id(&self.model_ref(), item_id)
     }
@@ -39,7 +37,7 @@ impl super::UiScript {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `0x4898f0`, the `OnAccept` of `EQUIP_BIND` and `AUTOEQUIP_BIND` (`StaticPopup.lua:612-647`).
+    // The `OnAccept` of `EQUIP_BIND` and `AUTOEQUIP_BIND` (`StaticPopup.lua:612-647`).
     g.set(
         "EquipPendingItem",
         lua.create_function(|lua, index: u32| {
@@ -52,8 +50,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x489960`, their `OnCancel` and also their `OnHide`: a second bind question hides the
-    // standing dialog (`exclusive = 1`), and that cancel releases the superseded item's locks.
+    // Their `OnCancel` and also their `OnHide`: a second bind question hides the standing dialog
+    // (`exclusive = 1`), and that cancel releases the superseded item's locks.
     g.set(
         "CancelPendingEquip",
         lua.create_function(|lua, index: u32| {
@@ -66,8 +64,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x48d770`, `USE_BIND`'s `OnAccept`, with no argument and no cancel: the use arm's pending
-    // state is two globals (item `0xc4c240`, target `0xc4c1d0`), and declining drops it.
+    // `USE_BIND`'s `OnAccept`, with no argument and no cancel: the use arm's pending state is two
+    // globals, and declining drops it.
     g.set(
         "ConfirmBindOnUse",
         lua.create_function(|lua, ()| {

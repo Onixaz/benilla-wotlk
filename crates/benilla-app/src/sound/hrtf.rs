@@ -1,7 +1,7 @@
 //! `Sound_EnableSoftwareHRTF`: the reference initialises FMOD with `FMOD_INIT_SOFTWARE_HRTF`
-//! (`0x10`, `SE2::Init` at `0x87d420`), which puts a lowpass on every 3D software voice. Its cutoff
-//! is open while the sound is within 90° of the listener's forward axis and falls linearly to
-//! 4000 Hz directly behind (FMOD's `HRTFMinAngle` 180, `HRTFMaxAngle` 360, `HRTFFreq` 4000; WoW
+//! (`0x10`, the engine init at `0x87d420`), which puts a lowpass on every 3D software voice. Its
+//! cutoff is open while the sound is within 90° of the listener's forward axis and falls linearly
+//! to 4000 Hz directly behind (FMOD's `HRTFMinAngle` 180, `HRTFMaxAngle` 360, `HRTFFreq` 4000; WoW
 //! never calls `setAdvancedSettings`). The filter is two cascaded one-pole RC stages, bypassed at the
 //! open cutoff.
 //!

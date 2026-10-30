@@ -1,24 +1,22 @@
 //! The loading screen's tip of the day. 1.12's FrameXML only has the `showGameTips` option, so the
-//! feature is engine-side: `CGlueMgr::EnterWorld` picks a `GameTips.dbc` row for the screen and
+//! feature is engine-side: the glue's world entry picks a `GameTips.dbc` row for the screen and
 //! writes the next index back to the `gameTip` CVar.
 //!
-//! Selection (`0x46b662`-`0x46b6e3`): `gameTip` holds the next index, not the shown one, so stored
-//! values run 1..=count and never 0. The walk is sequential and wraps by clamping (`i < 0 || i >=
-//! count` gives 0, `0x46b682`), not by modulo; `count <= 0` bails. `showGameTips` off skips the
-//! `CVar::Set` as well as the draw (`0x46b671`/`0x46b678`), so it freezes the index; so does
-//! `[selChar+0x10a]`, which `0x5b42a0` sets when `SMSG_CHAR_ENUM` reports level 0 (unreachable
-//! against vmangos, honoured anyway).
+//! Selection: `gameTip` holds the next index, not the shown one, so stored values run 1..=count and
+//! never 0. The walk is sequential and wraps by clamping (`i < 0 || i >= count` gives 0), not by
+//! modulo; `count <= 0` bails. `showGameTips` off skips the CVar write as well as the draw, so it
+//! freezes the index; so does `[selChar+0x10a]`, which the reference sets when `SMSG_CHAR_ENUM`
+//! reports level 0 (unreachable against vmangos, honoured anyway).
 //!
-//! Only the glue-to-world load shows a tip: the setter `0x406630` has one caller, and neither
+//! Only the glue-to-world load shows a tip: the setter has one caller, and neither
 //! `SMSG_TRANSFER_PENDING` arm sets it. The tip is picked at the entry raise and cleared only at
-//! the dismiss (`0x407f2b`, inside `0x407e80`), so a later raise such as the
-//! `SMSG_LOGIN_VERIFY_WORLD` snap keeps it.
+//! the dismiss, so a later raise such as the `SMSG_LOGIN_VERIFY_WORLD` snap keeps it.
 //!
 //! Layout, laid out once per raise and drawn between the background and the progress bar, in the
-//! screen's `[0,1]` ortho: scale and wrap width `s = 515 / (a·1024)`, where `a = [0x832a4c]` is
-//! aspect × 0.75 (`0x41ad10`); position `(0.5 − s·0.5, 0.1 + yoff)`, left-justified; `0xd7c8c8c8`
-//! ARGB with an opaque black shadow at `(+0.001, −0.001)`. In a height-fit 4:3 box the `a` cancels,
-//! so the box gives the reference's numbers at every aspect:
+//! screen's `[0,1]` ortho: scale and wrap width `s = 515 / (a·1024)`, where `a` is aspect × 0.75;
+//! position `(0.5 − s·0.5, 0.1 + yoff)`, left-justified; `0xd7c8c8c8` ARGB with an opaque black
+//! shadow at `(+0.001, −0.001)`. In a height-fit 4:3 box the `a` cancels, so the box gives the
+//! reference's numbers at every aspect:
 //!
 //! ```text
 //! ref wrap  = s·W          = 515·W / (a·1024)          = 515·H / (1024·0.75) = 0.6706·H
@@ -27,13 +25,12 @@
 //! our left  = (W − 4H/3)/2 + (0.5 − s₁/2)·(4H/3)              = 0.5·W − 0.3353·H
 //! ```
 //!
-//! `yoff` is `(1 − a)·0.5` only for `a < 1` (`0x4066b9`), zero on any window at least 4:3 wide.
-//! Narrower than 4:3 the loading screen's box overflows where the reference letterboxes top and
-//! bottom, so the whole screen differs there, the tip with it.
+//! `yoff` is `(1 − a)·0.5` only for `a < 1`, zero on any window at least 4:3 wide. Narrower than
+//! 4:3 the loading screen's box overflows where the reference letterboxes top and bottom, so the
+//! whole screen differs there, the tip with it.
 //!
 //! The `|cffffd100Tip:|r ` prefix and trailing `\r\n` are in the DBC data and the escapes are
-//! interpreted (`0x5c28af`, flags bit `0x800` clear), so the line goes through
-//! [`benilla_ui::markup`].
+//! interpreted (flags bit `0x800` clear), so the line goes through [`benilla_ui::markup`].
 
 use benilla_ui::markup::{self, TokenKind};
 use bevy::ecs::system::EntityCommands;
@@ -41,20 +38,19 @@ use bevy::prelude::*;
 
 use benilla_formats::GameTipsCatalog;
 
-/// `s` at `a = 1`, the 4:3 box this draws into: the text's scale and also its wrap width
-/// (`0x406e18` passes `s` for both). Not a FrameXML length: `0x41ae40` divides `G44` back out, so
+/// `s` at `a = 1`, the 4:3 box this draws into: the text's scale and also its wrap width (the
+/// reference passes `s` for both). Not a FrameXML length: the reference divides `G44` back out, so
 /// the FrameXML-unit helper would be off by 1.25 at 4:3.
 const TIP_SCALE: f32 = 515.0 / 1024.0;
 
-/// The baseline from the bottom of the `[0,1]` ortho. `0x4066ee` builds it as `0.05·0.5 + 0.075`,
-/// the progress bar's top edge, so the block sits on the bar.
+/// The baseline from the bottom of the `[0,1]` ortho. The reference builds it as
+/// `0.05·0.5 + 0.075`, the progress bar's top edge, so the block sits on the bar.
 const TIP_BOTTOM: f32 = 0.1;
 
-/// The font height as a fraction of the viewport height. In `0x406659`'s `0.018 · [0x832a48]` the
-/// slot is a unit conversion, not part of the size: `0x41ad10` writes it as height/diagonal and
-/// `[0x832a44]` as width/diagonal, the diagonal-normalized units `0x44d040` works in (`0x41ae70`
-/// and `0x41ae60` multiply by each). Applying its shipped `.data` value, 0.6, would shrink the
-/// line.
+/// The font height as a fraction of the viewport height. In the reference's `0.018 · k` the `k` is
+/// a unit conversion, not part of the size: height over diagonal (its twin is width over diagonal),
+/// the diagonal-normalized units the reference's text works in. Applying its shipped `.data` value,
+/// 0.6, would shrink the line.
 const TIP_FONT_FRACTION: f32 = 0.018;
 
 /// The body colour `0xd7c8c8c8` (ARGB) and its shadow offset, in the same `[0,1]` space.
@@ -62,7 +58,7 @@ const TIP_COLOR: Color = Color::srgba(200.0 / 255.0, 200.0 / 255.0, 200.0 / 255.
 const TIP_SHADOW_OFFSET: f32 = 0.001;
 
 /// The `showGameTips` switch and the `gameTip` cursor. `next` is an `i64` because the CVar can hold
-/// anything; the reference clamps at read time (`0x46b682`), not at write time.
+/// anything; the reference clamps at read time, not at write time.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(crate) struct GameTipSetting {
     pub(crate) show: bool,
@@ -81,21 +77,21 @@ impl Default for GameTipSetting {
 /// The tips table and the row the screen shows, laid out once per raise.
 #[derive(Resource, Default)]
 pub(crate) struct GameTips {
-    /// `GameTips.dbc` in file order, the array at `[0xc0dcd0]`/`[0xc0dcd4]`.
+    /// `GameTips.dbc` in file order, the array.
     catalog: GameTipsCatalog,
-    /// `[0x882e10]`: the row on screen; `None` with tips off, in-world, or with an empty table.
+    /// The row on screen; `None` with tips off, in-world, or with an empty table.
     shown: Option<String>,
 }
 
 impl GameTips {
-    /// `EnterWorld`'s tip block: clamps the stored index and returns that row with the index to
-    /// store (`shown + 1`); `None` for an empty table (`count <= 0` bails at `0x46b684`).
+    /// The world entry's tip block: clamps the stored index and returns that row with the index to
+    /// store (`shown + 1`); `None` for an empty table (`count <= 0` bails).
     fn take(&self, stored: i64) -> Option<(&str, u32)> {
         let count = self.catalog.len();
         if count == 0 {
             return None;
         }
-        // The clamp is the wrap; the second range test at `0x46b695`-`0x46b69b` is dead.
+        // The clamp is the wrap; the second range test is dead.
         let index = if stored < 0 || stored >= count as i64 {
             0
         } else {
@@ -110,8 +106,8 @@ impl GameTips {
     }
 }
 
-/// The tip as coloured runs: `|cAARRGGBB…|r` honoured against `base`, which `|r` restores
-/// (`0x5cce99` restores `FontString+0x2c`), and the trailing `\r\n` dropped.
+/// The tip as coloured runs: `|cAARRGGBB…|r` honoured against `base`, which `|r` restores (restores
+/// `FontString+0x2c`), and the trailing `\r\n` dropped.
 pub(crate) fn spans(tip: &str, base: Color) -> Vec<(String, Color)> {
     let mut out: Vec<(String, Color)> = Vec::new();
     let mut colour = base;
@@ -207,7 +203,7 @@ pub(crate) fn tip_bundle() -> impl Bundle {
 pub(crate) struct GameTipPlugin;
 
 /// The tip CVars' change callback. A hand-edited cursor lands verbatim; [`raise`] clamps it, as the
-/// reference does (`0x46b682`).
+/// reference does.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut setting: ResMut<GameTipSetting>) {
     match ev.key().as_str() {
         "showgametips" => setting.show = ev.flag(),
@@ -246,7 +242,7 @@ fn empty_tip(e: &mut EntityCommands, vis: &mut Visibility) {
 }
 
 /// Takes the raise's tip edge, then paints what the screen shows: the reference picks the row in
-/// `EnterWorld`, lays it out once per raise and draws it every frame.
+/// the world entry, lays it out once per raise and draws it every frame.
 fn drive_game_tip(
     mut screen: ResMut<crate::loading_screen::LoadingScreen>,
     mut tips: ResMut<GameTips>,
@@ -382,7 +378,7 @@ pub(crate) fn raise(
     }
 }
 
-/// The dismiss (`0x407f2b`, inside `0x407e80`), the only thing that takes a tip down.
+/// The dismiss, the only thing that takes a tip down.
 pub(crate) fn clear(tips: &mut GameTips) {
     tips.shown = None;
 }
@@ -435,7 +431,7 @@ mod tests {
         assert_eq!(t.shown(), Some("b"));
     }
 
-    /// An empty table bails (`count <= 0` at `0x46b684`) rather than showing a blank line.
+    /// An empty table bails (`count <= 0`) rather than showing a blank line.
     #[test]
     fn an_empty_table_shows_nothing() {
         let mut t = tips(&[]);

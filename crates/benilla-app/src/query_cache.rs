@@ -1,12 +1,12 @@
-//! `QueryCache<K, V>`, the ask-once cache: the reference's `DBCache<T>` (vtable `0x80912c`). A
-//! miss sends the query once, a second lookup of a pending key does not re-send, the response
-//! lands the record, and eviction is explicit only.
+//! `QueryCache<K, V>`, the ask-once cache, as the reference's WDB caches. A miss sends the query
+//! once, a second lookup of a pending key does not re-send, the response lands the record, and
+//! eviction is explicit only.
 //!
 //! The read that asks takes `&self` (the in-flight set is behind a lock), so read-only systems
 //! share the owning resource and its change detection means an answer landed.
 //!
-//! A negative answer is cached as `None` and never re-asked: an integer-keyed store's high-bit miss
-//! (`0x556e67`), or a player's empty name.
+//! A negative answer is cached as `None` and never re-asked: an integer-keyed store's high-bit
+//! miss, or a player's empty name.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;

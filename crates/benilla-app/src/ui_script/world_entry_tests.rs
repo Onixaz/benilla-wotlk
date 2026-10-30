@@ -225,7 +225,7 @@ fn the_addon_identity_follows_the_character() {
 
 /// A quit after a logout runs [`super::shutdown_ui_state`] again, against a boot VM, and writes
 /// nothing: `ui_saved::save`, `save_enable_state` and `save_addon_variables` each refuse an empty
-/// source. The reference guards the case explicitly (`0x401ee0`, its `ds:0x882734` test).
+/// source. The reference guards the case explicitly (its `ds:` test).
 #[test]
 fn quitting_from_the_character_screen_does_not_blank_the_session_it_wrote() {
     let _l = ENV_LOCK
@@ -265,9 +265,9 @@ fn quitting_from_the_character_screen_does_not_blank_the_session_it_wrote() {
 }
 
 /// The latch that makes a `/logout` fire `PLAYER_LEAVING_WORLD`, armed by the entry load as the
-/// reference's world-enter cascade `0x4908c0` arms it, which a fresh login enters from the
-/// player's create (`0x5deb60`) and a `/reload` from `0x490168`. A player-object check would read
-/// false there: the logout despawns our avatar in the drain before `OnExit(InWorld)` runs.
+/// reference's world-enter cascade arms it, which a fresh login enters from the player's create and
+/// a `/reload` from the UI init. A player-object check would read false there: the logout despawns
+/// our avatar in the drain before `OnExit(InWorld)` runs.
 #[test]
 fn the_login_arms_the_world_latch_and_the_logout_spends_it() {
     let _l = ENV_LOCK
@@ -299,9 +299,9 @@ fn the_login_arms_the_world_latch_and_the_logout_spends_it() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// `CGGameUI::InitializeGame` flags `realmList`, `realmName` and `scriptMemory` read-only for the
-/// world session (`0x48f566`-`0x48f584`) and `ShutdownGame` clears them (`0x491240`): an
-/// in-game `SetCVar` of one raises, through a reload too, and the character screen's does not.
+/// The game UI's init flags `realmList`, `realmName` and `scriptMemory` read-only for the world
+/// session and the game shutdown clears them: an in-game `SetCVar` of one raises, through a reload
+/// too, and the character screen's does not.
 #[test]
 fn the_realm_cvars_are_read_only_to_lua_only_in_the_world() {
     let _l = ENV_LOCK
@@ -343,9 +343,8 @@ fn the_realm_cvars_are_read_only_to_lua_only_in_the_world() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// The reference's one guard in the shutdown tail: `0x490bd0` tests the active player's GUID pair
-/// (`0x490bee call 0x468550`, `0x490bf3 or eax,edx`) and with none jumps (`0x490bf5 je 0x490c25`)
-/// past only the `PLAYER_LEAVING_WORLD` fire, `0x490c20 call 0x490a80`; in-world roots fire both.
+/// The reference's one guard in the shutdown tail: it tests the active player's GUID pair and with
+/// none jumps past only the `PLAYER_LEAVING_WORLD` fire; in-world roots fire both.
 #[test]
 fn a_quit_from_the_character_screen_fires_logout_without_leaving_world() {
     let _l = ENV_LOCK
@@ -380,7 +379,7 @@ fn a_quit_from_the_character_screen_fires_logout_without_leaving_world() {
     assert_eq!(
         script.eval::<i64>("return SeenLeaving").unwrap(),
         0,
-        "the glue-screen quit fired PLAYER_LEAVING_WORLD — the reference's 0x490bf5 skips it"
+        "the glue-screen quit fired PLAYER_LEAVING_WORLD — the reference's skips it"
     );
     assert_eq!(
         script.eval::<i64>("return SeenLogout").unwrap(),
@@ -444,8 +443,8 @@ fn logging_out_leaves_no_in_game_frames_behind() {
 
 // ───────────────────────────────── ReloadUI ─────────────────────────────────
 
-/// `ReloadUI()` is the reference's teardown and rebuild pair (`0x495664`/`0x495669`): the logout
-/// and login edges, run without leaving the world.
+/// `ReloadUI()` is the reference's teardown and rebuild pair: the logout and login edges, run
+/// without leaving the world.
 #[test]
 fn reload_ui_is_a_fresh_login_in_place() {
     benilla_formats::wow_data_or_skip!();
@@ -539,7 +538,7 @@ fn a_disable_staged_in_the_session_applies_at_the_reload() {
 }
 
 /// The teardown writes saved variables after `PLAYER_LOGOUT`, and the rebuild restores them after
-/// file scope, so the saved value wins (the reference's `AddOn_Load` order).
+/// file scope, so the saved value wins (the reference's addon-load order).
 #[test]
 fn saved_variables_round_trip_through_a_reload() {
     let _l = ENV_LOCK
@@ -572,7 +571,7 @@ fn saved_variables_round_trip_through_a_reload() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// Dropped, not deferred: the reference's gate (`0x494a50(0xa)`) refuses a reload at the glue.
+/// Dropped, not deferred: the reference's gate refuses a reload at the glue.
 #[test]
 fn reload_outside_the_world_is_dropped() {
     let _l = ENV_LOCK
@@ -976,8 +975,8 @@ fn an_addon_that_fails_to_load_without_raising_is_readable_in_the_error_log() {
     );
 
     // 4. Nothing in chat, and the reference's lines in `benilla-config/Logs/FrameXML.log`, each
-    // stamped `M/D HH:MM:SS.mmm` and ended `\r\n`: the add-on's banner, its toc's, then each
-    // miss by its arm (`0x6edaa0`, `0x704bc0`). The clean core and probe add nothing.
+    // stamped `M/D HH:MM:SS.mmm` and ended `\r\n`: the add-on's banner, its toc's, then each miss
+    // by its arm. The clean core and probe add nothing.
     let lines = world.resource::<crate::ui_chat::ChatLog>().pending_lines();
     assert!(
         !lines.iter().any(|l| l.contains("AaMissing")),
@@ -1502,7 +1501,7 @@ ScreenProbeHeight = GetScreenHeight()
 
 /// [`super::seat_from_roster`]'s `"player"` push is replaced when the descriptor streams in, but
 /// `UnitName("player")` reads only the record seeded beside it, which neither a nameless snapshot
-/// nor a despawn clears, as the reference never clears `0xc27d88`.
+/// nor a despawn clears, as the reference never clears.
 #[test]
 fn the_entry_load_seeds_a_record_the_feed_cannot_take_away() {
     let _l = ENV_LOCK
@@ -1577,11 +1576,9 @@ fn taken_kit_names(world: &mut World) -> Vec<String> {
         .collect()
 }
 
-/// The reference's `0x48fbf0`, which login (`0x48f681`) and `/reloadui` (`0x495669`) both call,
-/// wraps the TOC walk, the addons and the saved variables in the counted sound suppression
-/// (`0x48fbfa` to `0x49016d`); the login cascade `0x4908c0`, which a fresh login runs later from
-/// the player's create (`0x5deb60`), brackets itself (`0x4908d5` to `0x490a56`). Stock
-/// `TargetFrame_OnHide` plays at load.
+/// The reference's UI init, which login and `/reloadui` both call, wraps the TOC walk, the addons
+/// and the saved variables in the counted sound suppression; the login cascade, which a fresh login
+/// runs later from the player's create, brackets itself. Stock `TargetFrame_OnHide` plays at load.
 #[test]
 fn a_login_and_a_reload_load_without_the_lost_target_sound() {
     let _data = benilla_formats::wow_data_or_skip!();

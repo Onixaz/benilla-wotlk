@@ -2,9 +2,9 @@
 //! rest) closes client-side, sending nothing as 1.12 does, when the player walks out of range or
 //! the NPC despawns; the window's feed then fires its `*_CLOSED`.
 //!
-//! The reference's watchdog is `0x493230`, run every frame from `CGWorldFrame`'s layer update. The
-//! NPC range is the cursor's own 50/9 yd service gate ([`SERVICE_RANGE_SQ`], 5.5556 yd centre to
-//! centre), and the leash belongs to the latched object, 14 yd for a player ([`leash_sq`]).
+//! The reference's watchdog, run every frame from the world frame's layer update. The NPC range is
+//! the cursor's own 50/9 yd service gate ([`SERVICE_RANGE_SQ`], 5.5556 yd centre to centre), and
+//! the leash belongs to the latched object, 14 yd for a player ([`leash_sq`]).
 
 use bevy::prelude::*;
 
@@ -42,20 +42,18 @@ pub(crate) trait NpcSession: Resource {
     fn npc(&self) -> Option<u64>;
     /// The window's client-side close, with no packet: the same clear its close button does.
     fn close(&mut self);
-    /// What a walk-away close sends first, if anything. The reference's watchdog (`0x4933da`)
-    /// calls the quest session's end (`0x501130`) directly, not `DeclineQuest`, so walking away
-    /// from an NPC's quest panel sends nothing, while a shared quest still owes the sharer
-    /// `MSG_QUEST_PUSH_RESULT{DECLINE_QUEST}`.
+    /// What a walk-away close sends first, if anything. The reference's watchdog calls the quest
+    /// session's end directly, not `DeclineQuest`, so walking away from an NPC's quest panel sends
+    /// nothing, while a shared quest still owes the sharer `MSG_QUEST_PUSH_RESULT{DECLINE_QUEST}`.
     fn walk_away_send(&self, _npc: u64) -> Option<ClientCommand> {
         None
     }
 }
 
-/// The walk-away leash, set by the latched object's type, not the window: the reference's
-/// `0x4930d0` stores the opener's range and overwrites it for an object with the PLAYER typemask
-/// bit (`0x493156`). Thirteen of the client's fourteen arming sites push 50/9 yd
-/// ([`SERVICE_RANGE_SQ`]); a player gets `10.0 + 4.0 = 14.0` yd (`[0x8044b0] + [0x80306c]`,
-/// squared at `0x49316d`), which here means a shared quest's sharer.
+/// The walk-away leash, set by the latched object's type, not the window: the reference's stores
+/// the opener's range and overwrites it for an object with the PLAYER typemask bit. Thirteen of the
+/// client's fourteen arming sites push 50/9 yd ([`SERVICE_RANGE_SQ`]); a player gets
+/// `10.0 + 4.0 = 14.0` yd, which here means a shared quest's sharer.
 fn leash_sq(npc: u64) -> f32 {
     if benilla_protocol::guid::is_player(npc) {
         PLAYER_LEASH_SQ
@@ -88,7 +86,7 @@ pub(crate) fn close_npc_session_out_of_range<T: NpcSession>(
         return;
     };
     // Centre to centre with no bounding radii, and `dist² <= leash²` keeps: the reference's
-    // compare (`0x4932f2`, `0x4932fe`).
+    // compare.
     let out = match index.0.get(&npc).and_then(|e| transforms.get(*e).ok()) {
         Some(tf) => tf.translation.distance_squared(self_tf.translation) > leash_sq(npc),
         None => true, // the NPC despawned out from under the window
@@ -102,7 +100,7 @@ pub(crate) fn close_npc_session_out_of_range<T: NpcSession>(
     }
 }
 
-/// The windows `CloseInteraction 0x512e60` walks, in its order; trade, the item text, the mail
+/// The windows the interaction close `0x512e60` walks, in its order; trade, the item text, the mail
 /// and the guild bank close by their own paths.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct InteractWindows<'w> {
@@ -167,10 +165,10 @@ impl InteractWindows<'_> {
     }
 }
 
-/// The interact slot's clear (`ClearInteractTarget 0x518d50`): a window closing on an NPC closes
-/// the first window, in `CloseInteraction`'s order, still open on it. A lone-option gossip that
-/// handed off to a trainer, vendor or flight master is that window, so closing the hand-off's
-/// window frees the re-click gate. The gossip menu's own close finds itself first (`0x58a576`).
+/// The interact slot's clear (`0x518d50`): a window closing on an NPC closes the first window, in
+/// the interaction close's order, still open on it. A lone-option gossip that handed off to a
+/// trainer, vendor or flight master is that window, so closing the hand-off's window frees the
+/// re-click gate. The gossip menu's own close finds itself first (`0x58a576`).
 pub(crate) fn close_interaction(
     mut windows: InteractWindows,
     mut last: Local<[Option<u64>; INTERACT_WINDOWS]>,
@@ -212,11 +210,11 @@ pub(crate) fn feed_interact_npc(
     // `SMSG_PETITION_SHOWLIST` (`Player.cpp:12428-12431`).
     registrar: Option<Res<crate::ui_petition::GuildRegistrarState>>,
     // A menuless stable master is asked for its list straight from the interact, the reference's
-    // `0x5f05bc` path, with no gossip session behind it.
+    // path, with no gossip session behind it.
     stable: Option<Res<crate::ui_stable::StableOpen>>,
     tabard: Option<Res<crate::ui_tabard::TabardOpen>>,
     // The arena registrar's vendor and the battlemaster each set the interact target
-    // (`0x5a22a0`, `SetBattlemaster` `0x5496d0`).
+    // (`0x5a22a0`, `0x5496d0`).
     petition_vendor: Option<Res<crate::ui_petition::PetitionVendorState>>,
     battlemaster: Option<Res<crate::ui_battlefield::Battlefield>>,
     index: Option<Res<GuidIndex>>,

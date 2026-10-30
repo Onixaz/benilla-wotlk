@@ -197,7 +197,7 @@ fn walk(s: &mut UiScript, root: &Path, name: &str, done: &mut Vec<String>, reg: 
     }
     let toc = read_toc(root, name);
     if toc.load_on_demand() {
-        return; // the reference's `0x51f600` loads only records whose LoadOnDemand byte is 0
+        return; // the reference loads only records whose LoadOnDemand byte is 0
     }
     done.push(name.to_string());
     for dep in toc.dependencies() {
@@ -448,8 +448,8 @@ fn the_item_button_helpers_paint_a_slots_icon_and_count() {
 fn the_roster_seat_names_the_character_the_addons_will_meet() {
     let seat = super::seat_from_roster(&roster()).expect("a pending pick seats a player");
     assert_eq!(seat.name.as_deref(), Some("Harness"));
-    // 0, not 60: `UnitLevel` (`0x517fc0`) has no `"player"` fast path, so with no object it pushes
-    // the number 0 (`0x51813e`). The level arrives with the descriptor.
+    // 0, not 60: `UnitLevel` has no `"player"` fast path, so with no object it pushes the number 0.
+    // The level arrives with the descriptor.
     assert_eq!(seat.level, 0);
     assert_eq!(seat.race_file.as_deref(), Some("Human"));
     assert_eq!(seat.class_file.as_deref(), Some("WARRIOR"));
@@ -459,8 +459,8 @@ fn the_roster_seat_names_the_character_the_addons_will_meet() {
         Some("Alliance"),
         "nil here is 24 corpus addons stopping on AceDB-2.0's file-scope concatenation"
     );
-    // `UnitExists` (`0x515fb0`) takes the GUID off the object (`0x515994`); with none, the roster
-    // fallback (`0x491900`) bails on the zero GUID (`0x4e80aa`) and it pushes nil (`0x516001`).
+    // `UnitExists` takes the GUID off the object; with none, the roster fallback bails on the zero
+    // GUID and it pushes nil.
     assert!(!seat.exists);
     assert!(seat.is_player);
     // Left for the descriptor to say.
@@ -641,8 +641,8 @@ fn the_backpack_button_still_hovers_with_bagnon_holding_its_script() {
     );
 }
 
-/// `Bagnon_Forever/database/ui.lua:61` calls `GetTextWidth` on a CheckButton, a 1.12 Button method
-/// (`0x782290`); Button has no `GetStringWidth`.
+/// `Bagnon_Forever/database/ui.lua:61` calls `GetTextWidth` on a CheckButton, a 1.12 Button method;
+/// Button has no `GetStringWidth`.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_button_reports_its_own_label_width() {
@@ -880,8 +880,8 @@ fn text_quad(s: &mut UiScript, owner: &str) -> QuadContent {
 }
 
 /// A FontString's `font=` (`Bagnon_Core/core/Item.xml:14`) names a font object before a file: the
-/// reference asks the registry first (`0x783d15` calls `0x783870`). A stack count's dark edge is
-/// `NumberFontNormal`'s outline; it has no `<Shadow>` (`Fonts.xml:150`).
+/// reference asks the registry first. A stack count's dark edge is `NumberFontNormal`'s outline; it
+/// has no `<Shadow>` (`Fonts.xml:150`).
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_stack_count_wears_the_font_object_its_font_attr_names() {
@@ -929,8 +929,8 @@ fn a_stack_count_wears_the_font_object_its_font_attr_names() {
 
 /// `BagnonPopupFrame` (`Bagnon_Core/core/Frame.xml:23-36`) tints white `ChatFrameBackground` art
 /// with a `<Gradient>`; untinted, the dropdown is a white box. A `<Gradient>` survives beside
-/// `file=` where `<Color>` does not: it writes the vertex colours (`+0xb8`, by `0x77f910`),
-/// `<Color>` the texture (`+0xcc`, by `0x770360`).
+/// `file=` where `<Color>` does not: it writes the vertex colours (`+0xb8`), `<Color>` the texture
+/// (`+0xcc`).
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_texture_gradient_tints_the_art_it_sits_on() {
@@ -1022,10 +1022,9 @@ fn resolved_font(s: &UiScript, lua_expr: &str) -> (String, String) {
     (r[0].clone(), r[1].clone())
 }
 
-/// `CSimpleFontString::LoadXML` reads `<FontHeight>`, `outline=` and `monochrome=` only on the leg
-/// where `font=` names a file (`[0x77111e, 0x771254)`); with no `font=`, `0x7710f1`/`0x7710fa`
-/// jump to `0x771254`. Stock `AutoFollowStatusText` (`ZoneText.xml:172-183`) inherits
-/// `GameFontNormal` (12px) beside a dead `<FontHeight val="20">`.
+/// The FontString XML load reads `<FontHeight>`, `outline=` and `monochrome=` only on the leg where
+/// `font=` names a file; with no `font=` it skips all three. Stock `AutoFollowStatusText`
+/// (`ZoneText.xml:172-183`) inherits `GameFontNormal` (12px) beside a dead `<FontHeight val="20">`.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_fontheight_with_no_font_attr_beside_it_is_never_read() {
@@ -1108,9 +1107,9 @@ fn bagnon_forevers_records_survive_the_logout_boundary() {
     let root = corpus_or_skip!();
     let mut s = seat(&root, Seat::BeforeAddons);
 
-    // The first-login scan (PLAYER_LOGIN, in `seat`) recorded the backpack. The 1 in `16,1,` is
-    // the reference's: `ContainerIDToInventoryID(0)` gives slot 19, the tabard's (`0x4f94e0`),
-    // and `GetInventoryItemCount` (`0x4c8680`) answers 1 for it, empty or worn (`0x4c8797`).
+    // The first-login scan (PLAYER_LOGIN, in `seat`) recorded the backpack. The 1 in `16,1,` is the
+    // reference's: `ContainerIDToInventoryID(0)` gives slot 19, the tabard's, and
+    // `GetInventoryItemCount` answers 1 for it, empty or worn.
     let record = "local r = BagnonForeverData[GetRealmName()][UnitName('player')] \
                   return tostring(r[0] and r[0].s), tostring(r[0] and r[0][1])";
     let (size, item) = s
@@ -1264,9 +1263,9 @@ fn a_bag_slot_click_toggles_bagnon_not_the_native_window() {
 }
 
 /// Bagnon lights `MainMenuBarBackpackButton` from its OnShow and OnHide (`Bagnon.lua:33`, `:39`),
-/// and OnShow runs synchronously (`0x775750` → `0x76ae10`), so the last write wins. The `B`
-/// binding's bare `ToggleBackpack()` ends lit; a click ends unlit either way, because stock
-/// `BackpackButton_OnClick` (`MainMenuBarBagButtons.lua:55-68`) rescans the native frames last.
+/// and OnShow runs synchronously, so the last write wins. The `B` binding's bare `ToggleBackpack()`
+/// ends lit; a click ends unlit either way, because stock `BackpackButton_OnClick`
+/// (`MainMenuBarBagButtons.lua:55-68`) rescans the native frames last.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_backpack_button_lit_state_with_bagnon_holding_the_bags() {

@@ -3,16 +3,16 @@
 //! `cargo run -p benilla-assets --example face_facing_at -- <map> <x> <y> <z> [wmo-substring]`
 //! e.g. `face_facing_at Kalimdor -8137.9 -4897.2 2.0 caverns`.
 //!
-//! The reference's movement collision is one-sided: `0x671cc0` emits each face's plane at the file
-//! winding and `0x632700` processes it only if `n·dir <= -1e-5`, so a face blocks a fall only if
-//! its authored normal points up. Faces take the app's collider transform, `wow_to_bevy` then the
-//! placement `Transform`; both are proper rotations, so the winding and the sign of `n·dir`
-//! survive. Output is Blizzard data: never commit it.
+//! The reference's movement collision is one-sided: the WMO face gather emits each face's plane at
+//! the file winding and the collision test processes it only if `n·dir <= -1e-5`, so a face blocks
+//! a fall only if its authored normal points up. Faces take the app's collider transform,
+//! `wow_to_bevy` then the placement `Transform`; both are proper rotations, so the winding and the
+//! sign of `n·dir` survive. Output is Blizzard data: never commit it.
 
 use benilla_assets::coords::{placement_rotation, wow_to_bevy};
 use bevy::prelude::*;
 
-/// The reference's facing gate: `[0x80c5c4] = 0xb727c5ac`. A face is processed iff `n·dir <= EPS`.
+/// The reference's facing gate. A face is processed iff `n·dir <= EPS`.
 const FACING_EPS: f32 = f32::from_bits(0xb727_c5ac);
 
 fn main() -> anyhow::Result<()> {

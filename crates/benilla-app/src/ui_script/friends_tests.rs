@@ -114,7 +114,7 @@ fn the_window_opens_on_friends_with_the_guild_tab_disabled() {
 }
 
 /// The tabs inherit through `FriendsFrameTabTemplate`, which adds only `<OnClick>`; handlers
-/// replace per name (`0x76a0d0`), so the base template's `<OnShow>` fit still runs two hops down.
+/// replace per name, so the base template's `<OnShow>` fit still runs two hops down.
 #[test]
 fn the_social_tabs_fit_their_labels_on_the_first_show() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -794,8 +794,8 @@ fn selecting_a_row_reads_back_in_the_same_tick() {
 }
 
 /// `WhoListScrollFrame` is 287 tall (`FriendsFrame.xml:1661`), so its overflow `n * 16 - 287` is
-/// 15px short of the bar's `(n - 17) * 16`; the reference stores the scroll value unclamped
-/// (`0x786db0`), so the bar's end reaches the last row.
+/// 15px short of the bar's `(n - 17) * 16`; the reference stores the scroll value unclamped, so the
+/// bar's end reaches the last row.
 #[test]
 fn the_who_list_reaches_its_last_row_at_the_bars_end() {
     let _data = benilla_formats::wow_data_or_skip!();

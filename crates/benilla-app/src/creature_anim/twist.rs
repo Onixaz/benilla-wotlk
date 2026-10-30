@@ -1,7 +1,7 @@
-//! The strafe counter-twist (the `0x607ed0` tail → the `0x711f10` bone channels): a strafe turns
-//! the root toward the slide while the aim holds, and SpineLow (KeyBoneID 4) turns back half the
-//! gap and Head (KeyBoneID 6) the rest, each capped at 45°, so a pure strafe's head lands on the
-//! aim. [`crate::player`] and [`crate::net::motion`] write [`BodyTwist::yaw_gap`].
+//! The strafe counter-twist: a strafe turns the root toward the slide while the aim holds, and
+//! SpineLow (KeyBoneID 4) turns back half the gap and Head (KeyBoneID 6) the rest, each capped at
+//! 45°, so a pure strafe's head lands on the aim. [`crate::player`] and [`crate::net::motion`]
+//! write [`BodyTwist::yaw_gap`].
 
 use bevy::prelude::*;
 
@@ -51,9 +51,9 @@ pub(crate) fn wrap_pi(angle: f32) -> f32 {
     PI - (PI - angle).rem_euclid(TAU)
 }
 
-/// The `(spine, head)` twist angles. The reference's full-share branch (`0x6103a0`) fires only for
-/// the local player during a click-to-move action (`[0xc4d888]` holds `0xc`, disabled, in
-/// ordinary play), which benilla does not have.
+/// The `(spine, head)` twist angles. The reference's full-share branch fires only for the local
+/// player during a click-to-move action (whose state holds `0xc`, disabled, in ordinary play),
+/// which benilla does not have.
 fn twist_shares(gap: f32) -> (f32, f32) {
     use std::f32::consts::FRAC_PI_4;
     let spine = (gap * 0.5).clamp(-FRAC_PI_4, FRAC_PI_4);
@@ -61,11 +61,10 @@ fn twist_shares(gap: f32) -> (f32, f32) {
     (spine, head)
 }
 
-/// [`twist_shares`] with the mount gate: the `0x607ed0` tail arms SpineLow only while
-/// `CGUnit+0xdc`, the mount model (set by `0x613d80`, read as the mount by `0x614cd0`), is null,
-/// and Head always, so a rider's head keeps its share and stops short of the aim. A mounted spine
-/// share is zero, not skipped: the zero write restores the animated base, the reference's disarm
-/// (`0x711f10(4, 0, 0x80)`), where skipping would freeze the last twist.
+/// [`twist_shares`] with the mount gate: the turn tail arms SpineLow only while `unit+0xdc`, the
+/// mount model, is null, and Head always, so a rider's head keeps its share and stops short of the
+/// aim. A mounted spine share is zero, not skipped: the zero write restores the animated base, the
+/// reference's disarm, where skipping would freeze the last twist.
 fn armed_shares(gap: f32, mounted: bool) -> (f32, f32) {
     let (spine, head) = twist_shares(gap);
     (if mounted { 0.0 } else { spine }, head)

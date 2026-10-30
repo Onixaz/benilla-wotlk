@@ -2,10 +2,10 @@
 //! chain is `SkillLineAbility.dbc`'s `forward_spellid`, the column the server's supersede reads;
 //! caster ranks are unchained, so a deliberate down-rank is never moved. Deviation: this runs on
 //! every book or bar change, where the reference re-points slots in memory only on
-//! `SMSG_SUPERCEDED_SPELL` (`0x4e5e60`), because vmangos never rewrites stored slots on a rank-up
+//! `SMSG_SUPERCEDED_SPELL`, because vmangos never rewrites stored slots on a rank-up
 //! (`Player::AddSpell`), drops superseded ranks from the book (`Player.cpp:3463`) and sends no
-//! supersede while loading (`Player.cpp:3704`), so a stored slot can name a spell the character
-//! no longer knows.
+//! supersede while loading (`Player.cpp:3704`), so a stored slot can name a spell the character no
+//! longer knows.
 
 use bevy::prelude::*;
 

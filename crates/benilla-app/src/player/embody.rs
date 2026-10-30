@@ -1,14 +1,14 @@
-//! Which unit the client simulates, animates from input and streams. The reference keeps apart
-//! the active player (`ds:0xb41414`, fixed under far sight and possession), the camera anchor
-//! (`camera+0x88`) and the active mover (`ds:0xc4da98`, set only by `SetActiveMover` `0x6006e0`;
-//! unresolved, the input applier `0x514640` skips its tick): [`SelfPlayer`] is the character,
-//! [`Embodied`] the attached body and camera anchor, [`ActiveMover`] the body we may move.
+//! Which unit the client simulates, animates from input and streams. The reference keeps apart the
+//! active player (a global, fixed under far sight and possession), the camera anchor
+//! (`camera+0x88`) and the active mover (a global set only by the active-mover setter; unresolved,
+//! the input applier skips its tick): [`SelfPlayer`] is the character, [`Embodied`] the attached
+//! body and camera anchor, [`ActiveMover`] the body we may move.
 //!
-//! - Losing control removes only [`ActiveMover`]: `0x5fa600` zeroes the mover globals and keeps
-//!   the anchor, so the camera follows the feared body, smoothed (`0x50d810`). The spline ride
-//!   hangs off [`Embodied`], and vmangos drops all movement until the `CMSG_MOVE_SPLINE_DONE` it
-//!   awaits after a player's spline launch (`MoveSplineInit.cpp:131`, `MovementHandler.cpp:295`),
-//!   so detaching while feared would freeze us server-side.
+//! - Losing control removes only [`ActiveMover`]: the reference zeroes the mover globals and keeps
+//!   the anchor, so the camera follows the feared body, smoothed. The spline ride hangs off
+//!   [`Embodied`], and vmangos drops all movement until the `CMSG_MOVE_SPLINE_DONE` it awaits after
+//!   a player's spline launch (`MoveSplineInit.cpp:131`, `MovementHandler.cpp:295`), so detaching
+//!   while feared would freeze us server-side.
 //! - An unstreamed claimed mover puts [`Embodied`] on nobody: outbound `MSG_MOVE_*` carry no guid,
 //!   so driving our own body would write our pose onto the creature.
 //! - The reins change hands by guid, not entity: a worldport re-streams our body under a new one.
@@ -48,8 +48,7 @@ pub(super) fn maintain_embodiment(
         if want_guid.is_some() {
             // `Player` holds the old body's pose; the controller adopts the new one's first.
             player.reseat = true;
-            // `SetActiveMover` `0x6006e0` cancels click-to-move and follow on the outgoing mover,
-            // through `0x6103a0` → `0x60fb60(0, 1)`.
+            // The active-mover setter cancels click-to-move and follow on the outgoing mover.
             follow.stop();
             approach.stop();
         }

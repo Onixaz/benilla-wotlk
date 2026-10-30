@@ -23,27 +23,27 @@ use super::{
     BaseAnimRecompute, CastEvent, CastEventKind, CastHold, EmoteAnim, SpellGoTargets, WoundAnim,
 };
 
-/// The 1.12 client's missile model for an unresolvable visual (`0x860c9c`), shipped in the MPQs.
+/// The 1.12 client's missile model for an unresolvable visual, shipped in the MPQs.
 const ERROR_CUBE: &str = "Spells\\ErrorCube.mdx";
 
 /// The [`SpellKitFx`] reap key for the loot sparkle, outside the spell id range; the reference keys
-/// these nodes by attach tag and node flag (`0x61fa10`). A unit wears at most one.
+/// these nodes by attach tag and node flag. A unit wears at most one.
 const LOOT_FX_KEY: u32 = u32::MAX;
 
-/// The attachment the loot sparkle, ding and mount poof hang from, else the unit base
-/// (`0x61fb4f`). A per-effect table value (`0x80c968`), not a constant: a new user reads its row.
+/// The attachment the loot sparkle, ding and mount poof hang from, else the unit base. A per-effect
+/// table value, not a constant: a new user reads its row.
 const HARDCODED_FX_ATTACH: u16 = 0x13;
 
-/// The level-up effect's `SpellVisualEffectName` name (`0x8618e0`).
+/// The level-up effect's `SpellVisualEffectName` name.
 const LEVEL_UP_EFFECT: &str = "HARDCODED Unit Level Up";
 
-/// The mount cloud, hardcoded index 6: row 1185, the druid-morph puff (`0x5ffa50` → `0x61fae0`).
+/// The mount cloud, hardcoded index 6: row 1185, the druid-morph puff.
 const MOUNT_POOF_EFFECT: &str = "HARDCODED Mount Poof";
-/// The meeting-stone join, hardcoded index 0xc (`0x861808`), spawned on the local player by the
-/// `SMSG 0x295` status-1 arm (`0x4ca2c7`).
+/// The meeting-stone join, hardcoded index 0xc, spawned on the local player by the `SMSG 0x295`
+/// status-1 arm.
 const MEETING_STONE_JOIN_EFFECT: &str = "HARDCODED Meeting Stone Join";
 
-/// The meeting-stone join visual on `entity`: a one-shot at `0x13` (`0x61fae0`, `0x5fbf50`).
+/// The meeting-stone join visual on `entity`: a one-shot at `0x13`.
 pub(crate) fn meeting_stone_join_fx(visuals: &SpellVisuals, entity: Entity) -> Option<SpellKitFx> {
     let (effect, path) = visuals.0.hardcoded_effect(MEETING_STONE_JOIN_EFFECT)?;
     Some(SpellKitFx::Begin {
@@ -69,31 +69,30 @@ pub(crate) struct SpellVisuals(pub(crate) SpellVisualCatalog);
 #[derive(Message, Clone, Copy, Debug)]
 pub(crate) enum SpellKitSound {
     /// Ring this kit at the unit; a looping kit (`SoundEntries` flag 0x200) becomes the unit's
-    /// tracked hold loop until [`Self::StopHold`] (`0x458830` → `0x61fec0`, one-shot `0x458870`).
+    /// tracked hold loop until [`Self::StopHold`].
     Play { entity: Entity, kit_sound: u32 },
-    /// The cast or channel hold ended: stop the unit's hold loop (`0x614150`).
+    /// The cast or channel hold ended: stop the unit's hold loop.
     StopHold { entity: Entity },
-    /// Ring this kit at a world point, the kit play's `extra` override (`0x60f49e`): a missile's
-    /// ground arrival. Always a one-shot: no shipped ground-arrival kit loops.
+    /// Ring this kit at a world point, the kit play's `extra` override: a missile's ground arrival.
+    /// Always a one-shot: no shipped ground-arrival kit loops.
     PlayAt { pos: Vec3, kit_sound: u32 },
-    /// Stop this kit's sound on the unit as its aura leaves (`0x614150`, 0.15 s fade).
+    /// Stop this kit's sound on the unit as its aura leaves (0.15 s fade).
     StopKit { entity: Entity, kit_sound: u32 },
 }
 
 /// A kit's camera shake (kit field 14 → `SpellEffectCameraShakes.dbc`), consumed by
-/// [`crate::camera_shake`]: once per kit play at every stage (`0x620e11`, or `0x60f4e6` with no
-/// node), never cancelled.
+/// [`crate::camera_shake`]: once per kit play at every stage, never cancelled.
 #[derive(Message, Clone, Copy, Debug)]
 pub(crate) enum SpellKitShake {
     /// At the unit's position.
     Play { entity: Entity, group: u32 },
-    /// At a world point, the kit play's `extra` override (`0x60f4c1`): a missile's ground arrival.
+    /// At a world point, the kit play's `extra` override: a missile's ground arrival.
     PlayAt { pos: Vec3, group: u32 },
 }
 
-/// Which owner's reap can kill a persistent effect. The reference's reap `0x614150(spellId,
-/// force)` spares stage-2 nodes (flag `0x1000`) unless `force` is set, which only the aura-remove
-/// path does (`0x612320` → `0x5ff290`), so a cast's GO never takes the same spell's aura models.
+/// Which owner's reap can kill a persistent effect. The reference's reap, by spell id and a force
+/// flag, spares stage-2 nodes (flag `0x1000`) unless `force` is set, which only the aura-remove
+/// path does, so a cast's GO never takes the same spell's aura models.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FxClass {
     /// Precast and channel holds, reaped by the cast router's edges.
@@ -102,26 +101,26 @@ pub(crate) enum FxClass {
     AuraState,
 }
 
-/// The kit stage an instance's model runs its animation lifecycle as: `0x60edf0`'s per-stage
-/// completion callback (jump table `0x60f4f8`). Independent of [`FxClass`].
+/// The kit stage an instance's model runs its animation lifecycle as: the reference's per-stage
+/// completion callback. Independent of [`FxClass`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FxStage {
-    /// Stages 0 and 1: destroyed at the first completion (`0x5fbf50`).
+    /// Stages 0 and 1: destroyed at the first completion.
     OneShot,
-    /// Stage 2: after birth, loop `Hold` (158) if the model has one, `Decay` (159) on reap; a
-    /// model with no `Hold` stays parked on its birth (`0x5ff170`).
+    /// Stage 2: after birth, loop `Hold` (158) if the model has one, `Decay` (159) on reap; a model
+    /// with no `Hold` stays parked on its birth.
     State,
-    /// Stages 3 and 4: re-arm the sequence that just completed, forever (`0x60ed00`).
+    /// Stages 3 and 4: re-arm the sequence that just completed, forever.
     Relive,
 }
 
-/// One effect model a play hangs on a unit. Record id and tag are the reference's same-slot
-/// replace key: `AddEffect` (`0x61fdd0`) first destroys the owner's nodes with the same record at
-/// the same tag (`0x6208e0`), while two rows naming one `.mdx` coexist.
+/// One effect model a play hangs on a unit. Record id and tag are the reference's same-slot replace
+/// key: the effect add first destroys the owner's nodes with the same record at the same tag, while
+/// two rows naming one `.mdx` coexist.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FxSlot {
     /// The M2 attachment, or [`benilla_formats::WORLD_EFFECT_TAG`] for the field-12 world plant,
-    /// which the replace walk skips (`0x620913`).
+    /// which the replace walk skips.
     pub(crate) tag: u16,
     /// The `SpellVisualEffectName` record id.
     pub(crate) effect: u32,
@@ -129,13 +128,13 @@ pub(crate) struct FxSlot {
     pub(crate) path: String,
 }
 
-/// A kit's attach-point effect models (kit fields 3 to 11 → `SpellVisualEffectName`, slot loop
-/// `0x60f00d`), consumed by `crate::entities::spell_fx` in emission order.
+/// A kit's attach-point effect models (kit fields 3 to 11 → `SpellVisualEffectName`), consumed by
+/// `crate::entities::spell_fx` in emission order.
 #[derive(Message, Clone)]
 pub(crate) enum SpellKitFx {
-    /// Attach the kit's models. A persistent one lives until a matching [`Self::Reap`] and
-    /// replaces the unit's live persistent instances of the same `(spell_id, class)`; otherwise
-    /// it ends after one pass of its first sequence (`0x5fbf50`).
+    /// Attach the kit's models. A persistent one lives until a matching [`Self::Reap`] and replaces
+    /// the unit's live persistent instances of the same `(spell_id, class)`; otherwise it ends
+    /// after one pass of its first sequence.
     Begin {
         entity: Entity,
         spell_id: u32,
@@ -145,7 +144,7 @@ pub(crate) enum SpellKitFx {
         stage: FxStage,
         effects: Vec<FxSlot>,
     },
-    /// Despawn the unit's persistent effects matching `(spell_id, class)` (`0x614150`).
+    /// Despawn the unit's persistent effects matching `(spell_id, class)`.
     Reap {
         entity: Entity,
         spell_id: u32,
@@ -153,26 +152,24 @@ pub(crate) enum SpellKitFx {
     },
 }
 
-/// A kit play whose `CharProc` slots name a beam, the dispatcher's chain case (`0x60da79`), run at
-/// the kit tail (`0x60f35c`) and from the channel poll (`0x612b18`). Consumed by
-/// `crate::entities::chain_beam`.
+/// A kit play whose `CharProc` slots name a beam, the dispatcher's chain case, run at the kit tail
+/// and from the channel poll. Consumed by `crate::entities::chain_beam`.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct ChainProcPlay {
     /// The caster end, owner of the hop array.
     pub(crate) entity: Entity,
-    /// `0` for a bare kit push, which never builds a beam (`0x6ecbd0`).
+    /// `0` for a bare kit push, which never builds a beam.
     pub(crate) spell_id: u32,
     pub(crate) proc: benilla_formats::ChainProc,
 }
 
-/// One projectile per target on the GO's Speed > 0 branch (`0x6e8a50` → `0x60a3d0`), consumed
-/// by `crate::entities::missile`.
+/// One projectile per target on the GO's Speed > 0 branch, consumed by `crate::entities::missile`.
 #[derive(Message, Clone)]
 pub(crate) struct MissileSpawn {
     pub(crate) caster: Entity,
     pub(crate) spell_id: u32,
-    /// `SpellVisual` column 8's model, or `ERROR_CUBE` for an unresolvable id; `None` when column
-    /// 8 is below 1 or there is no row, and the spawner flies the wire ammo model (`0x479f40`).
+    /// `SpellVisual` column 8's model, or `ERROR_CUBE` for an unresolvable id; `None` when column 8
+    /// is below 1 or there is no row, and the spawner flies the wire ammo model.
     pub(crate) path: Option<String>,
     /// The GO's ammo display, flown when [`Self::path`] is `None`.
     pub(crate) ammo_display_id: Option<u32>,
@@ -180,23 +177,22 @@ pub(crate) struct MissileSpawn {
     /// ([`benilla_formats::VisualStages::missile_dest_attachment`]); `None` aims at the target's
     /// base.
     pub(crate) dest_tag: Option<u16>,
-    /// `Spell.dbc` Speed; flight time is distance over speed (`0x61ceb0`).
+    /// `Spell.dbc` Speed; flight time is distance over speed.
     pub(crate) speed: f32,
     /// `None` for a hit; for a miss the `SpellMissInfo`, where the missile still flies and arrival
     /// plays the victim's dodge (3) or block (5) clip.
     pub(crate) targets: Vec<(Entity, Option<u8>)>,
-    /// With no targets and a DEST point on the GO, one projectile flies at the point (`0x6e8a50`'s
-    /// empty-hit arm, `0x6e8aa2`), arriving as [`super::CastEventKind::GroundImpact`].
-    /// The reference latches on `flags & 0x60` and aims a SOURCE-only cast at a zeroed DEST
-    /// point; this launches only with a real DEST (`flags & 0x40`), a zeroed aim being a quirk
-    /// not aped.
+    /// With no targets and a DEST point on the GO, one projectile flies at the point, arriving as
+    /// [`super::CastEventKind::GroundImpact`]. The reference latches on `flags & 0x60` and aims a
+    /// SOURCE-only cast at a zeroed DEST point; this launches only with a real DEST
+    /// (`flags & 0x40`), a zeroed aim being a quirk not aped.
     pub(crate) ground_aim: Option<Vec3>,
     /// The caster's ranged fallback visual, carried to arrival when the caster may be gone.
     pub(crate) weapon_visual: Option<u32>,
-    /// `SpellVisual` field 10: the sound the projectile loops in flight (`CMissile+0x40`).
+    /// `SpellVisual` field 10: the sound the projectile loops in flight (the missile's `+0x40`).
     pub(crate) missile_sound: Option<u32>,
-    /// Launch at the cast animation's release event (`0x5ffbd0` → `0x60c940`), not at GO; the
-    /// reference launches at GO only when the cast kit plays no body animation (`0x6e7a70`).
+    /// Launch at the cast animation's release event, not at GO; the reference launches at GO only
+    /// when the cast kit plays no body animation.
     pub(crate) awaits_release: bool,
     /// The GO's trajectory, with the spell's `SpellMissile.dbc` row.
     pub(crate) trajectory: Option<(super::Trajectory, Option<benilla_formats::SpellMissileRec>)>,
@@ -222,8 +218,8 @@ pub(super) fn load_spell_visuals(mut commands: Commands, assets: Option<Res<Worl
     }
 }
 
-/// The lookups behind the ranged fallback (`0x60d450`): caster → ranged weapon display →
-/// `ItemDisplayInfo` column 10.
+/// The lookups behind the ranged fallback: caster → ranged weapon display → `ItemDisplayInfo`
+/// column 10.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct WeaponVisualSrc<'w, 's> {
     displays: Option<Res<'w, ItemDisplays>>,
@@ -260,10 +256,11 @@ impl WeaponVisualSrc<'_, '_> {
     }
 }
 
-/// `ViolenceGetLevel() < 2`, as [`track_violence_level`] keeps it from `violenceLevel`.
+/// The violence level below 2, as [`track_violence_level`] keeps it from `violenceLevel`.
 static LOW_VIOLENCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// `GetSpellVisual` (`0x7fa290`): below violence level 2 a spell's second visual, when it has one.
+/// The spell's visual pick (`0x7fa290`): below violence level 2 a spell's second visual, when it
+/// has one.
 pub(crate) fn spell_visual_id(d: &benilla_formats::SpellDisplay) -> u32 {
     pick_visual(d, LOW_VIOLENCE.load(std::sync::atomic::Ordering::Relaxed))
 }
@@ -284,9 +281,9 @@ pub(super) fn track_violence_level(cvars: Option<Res<crate::cvars::Cvars>>) {
     }
 }
 
-/// A spell's effective `SpellVisual` row ([`spell_visual_id`]). A ranged spell
-/// (`Attributes & 0x2`) fills its row's zero slots, never state or channel, from the caster's
-/// ranged weapon visual (`0x60d450`); a basic shot has no row and takes it whole.
+/// A spell's effective `SpellVisual` row ([`spell_visual_id`]). A ranged spell (`Attributes & 0x2`)
+/// fills its row's zero slots, never state or channel, from the caster's ranged weapon visual; a
+/// basic shot has no row and takes it whole.
 fn resolve_stages(
     spells: &crate::ui_action::Spells,
     visuals: &SpellVisualCatalog,
@@ -296,12 +293,12 @@ fn resolve_stages(
     let def = spells.catalog.get(spell_id)?;
     let own = visuals.stages(spell_visual_id(def)).copied();
     if !def.ranged_slot() {
-        return own; // no fill (`0x60d468`)
+        return own; // no fill
     }
     let Some(weapon) = weapon_visual().and_then(|v| visuals.stages(v)) else {
         return own;
     };
-    // No own row: the reference zeroes the row before the same fill (`0x60d4bc`).
+    // No own row: the reference zeroes the row before the same fill.
     Some(own.unwrap_or_default().merged_over_weapon(weapon))
 }
 
@@ -361,8 +358,8 @@ fn resolve_kit_traced(
     kit
 }
 
-/// The in-flight cast's strike sound for the `$TRD` event (`0x62faa0`): `SpellVisual` dword 14
-/// (Mining's 1143 "Mining Impact"). No ranged fallback: `$TRD` rides work animations only.
+/// The in-flight cast's strike sound for the `$TRD` event: `SpellVisual` dword 14 (Mining's 1143
+/// "Mining Impact"). No ranged fallback: `$TRD` rides work animations only.
 pub(crate) fn held_strike_sound(
     spells: &crate::ui_action::Spells,
     visuals: &SpellVisualCatalog,
@@ -385,7 +382,7 @@ fn resolve_kit_effects(visuals: &SpellVisualCatalog, kit: &VisualKit) -> Vec<FxS
 }
 
 /// A server-pushed kit (`SMSG_PLAY_SPELL_VISUAL` at stage 0, `SMSG_PLAY_SPELL_IMPACT` at stage 1),
-/// played with spell id 0: its effects end only on their own (`0x800610`/`0x8006c0` → `0x60edf0`).
+/// played with spell id 0: its effects end only on their own (`0x800610`/`0x8006c0`).
 #[derive(Message, Clone, Copy)]
 pub(crate) struct KitPush {
     pub(crate) entity: Entity,
@@ -420,7 +417,7 @@ struct KitOut<'a, 'w1, 'w2, 'w3, 'w4, 'w5, 'w6, 'w7, 'w8> {
     recomputes: &'a mut MessageWriter<'w8, BaseAnimRecompute>,
 }
 
-/// One kit play's policy on the reference's `PlaySpellVisualKit` (`0x60edf0`):
+/// One kit play's policy on the reference's kit player:
 /// - `persistent`: the effect models outlive the play (a precast or channel hold).
 /// - `effects`: whether the models spawn; `false` for the impact hand-off's state stage, whose
 ///   models [`arm_aura_state_fx`] owns.
@@ -432,14 +429,13 @@ struct KitPlay {
     sound: bool,
     /// The models' animation lifecycle ([`FxStage`]).
     stage: FxStage,
-    /// The stage-2 (state kit) play (`0x60f383`): `0x60f387` branches around the only anim play
-    /// (`0x60f3c5`), so the id is only compared with what the unit plays, a mismatch spent on a
-    /// [`BaseAnimRecompute`].
+    /// The stage-2 (state kit) play: the kit player branches around the only anim play, so the id
+    /// is only compared with what the unit plays, a mismatch spent on a [`BaseAnimRecompute`].
     stage_2: bool,
 }
 
 impl KitPlay {
-    /// Stages 0 and 1 (`0x5fbf50`): self-terminating models, every leg on.
+    /// Stages 0 and 1: self-terminating models, every leg on.
     const DISCRETE: Self = Self {
         persistent: false,
         effects: true,
@@ -463,8 +459,8 @@ fn play_kit(
             // Stage 2 compares, never plays; the driver holds the armed id and compares.
             out.recomputes.write(BaseAnimRecompute { entity, anim_id });
         } else if (8..=10).contains(&anim_id) {
-            // A CombatWound id (8 to 10) lays a severity-0 wound in the blend slot, not the
-            // kit's own id (`0x60f3ad` → `0x60f510`, `0x60f3b8`).
+            // A CombatWound id (8 to 10) lays a severity-0 wound in the blend slot, not the kit's
+            // own id.
             out.wounds.write(WoundAnim { entity });
         } else {
             out.oneshots.write(EmoteAnim {
@@ -482,7 +478,7 @@ fn play_kit(
     if let Some(group) = kit.shake {
         out.shakes.write(SpellKitShake::Play { entity, group });
     }
-    // The beam case runs for every play at every stage (`0x60f35c`), ungated by `play.effects`.
+    // The beam case runs for every play at every stage, ungated by `play.effects`.
     if let Some(proc) = kit.chain_proc() {
         out.chain.write(ChainProcPlay {
             entity,
@@ -490,8 +486,8 @@ fn play_kit(
             proc,
         });
     }
-    // The trail arm (`0x60d80a`), on the same terms; the reference dispatches it before the kit's
-    // anim (`0x60f3c5`), so a kit with both fires its trail on its own swing.
+    // The trail arm, on the same terms; the reference dispatches it before the kit's anim, so a kit
+    // with both fires its trail on its own swing.
     if let Some(trail) = kit.trail_proc() {
         out.trails
             .write(crate::weapon_trail::TrailArm { entity, trail });
@@ -549,10 +545,9 @@ struct ImpactPlay {
     seq: u64,
 }
 
-/// The unit-impact hand-off (`0x61dc50`): the impact kit (stage 1), then the state kit's anim and
-/// sound, its models owned by [`arm_aura_state_fx`]. The stage-2 gate `0x61dc20` is not built: its
-/// content is untraced. The flinch comes after the kit for a harmful instant hit (`0x6e8bf0`),
-/// before it for every missile target.
+/// The unit-impact hand-off: the impact kit (stage 1), then the state kit's anim and sound, its
+/// models owned by [`arm_aura_state_fx`]. The stage-2 gate is not built: its content is untraced.
+/// The flinch comes after the kit for a harmful instant hit, before it for every missile target.
 fn play_impact(
     entity: Entity,
     impact: ImpactPlay,
@@ -594,11 +589,11 @@ fn play_impact(
 ///
 /// - Start: the precast kit's anim becomes the [`CastHold`] (stage 4) and its sound rings.
 /// - Go: the hold drops and the cast kit plays; the GO's targets play their impacts inline when
-///   `Spell.dbc` Speed is 0 (`0x6e8bf0`), else fly a [`MissileSpawn`] (`0x6e8a50`).
+///   `Spell.dbc` Speed is 0, else fly a [`MissileSpawn`].
 /// - Impact: a missile arrived on this unit ([`play_impact`]).
 /// - Fail: the hold drops silently.
-/// - Channel: `UNIT_CHANNEL_SPELL` polled per frame (`0x612a30`); observers have no packet. A set
-///   field holds the channel kit's anim and rings its sound once, a cleared one drops it.
+/// - Channel: `UNIT_CHANNEL_SPELL` polled per frame; observers have no packet. A set field holds
+///   the channel kit's anim and rings its sound once, a cleared one drops it.
 pub(super) fn route_cast_visuals(
     mut commands: Commands,
     mut events: MessageReader<CastEvent>,
@@ -651,8 +646,8 @@ pub(super) fn route_cast_visuals(
     };
 
     for p in pushes.read() {
-        // No kit-level scan, but each slot's same-(record, tag) replace (`0x6208e0`) swaps the old
-        // batch out; the driver's same-id dedup (`0x5fdba0`) keeps a looping clip running.
+        // No kit-level scan, but each slot's same-(record, tag) replace swaps the old batch out;
+        // the driver's same-id dedup keeps a looping clip running.
         if let Some(kit) = visuals.0.kit(p.kit_id) {
             play_kit(
                 p.entity,
@@ -684,8 +679,8 @@ pub(super) fn route_cast_visuals(
                         class: FxClass::Hold,
                     });
                 }
-                // A ranged-attribute START draws the ranged weapon (`0x6e78f3`); vmangos sends
-                // START once per auto-repeat activation (`Spell.cpp:3448`).
+                // A ranged-attribute START draws the ranged weapon; vmangos sends START once per
+                // auto-repeat activation (`Spell.cpp:3448`).
                 if spells
                     .catalog
                     .get(ev.spell_id)
@@ -706,8 +701,8 @@ pub(super) fn route_cast_visuals(
                     |s| s.precast,
                     || weapon_src.caster(ev.entity),
                 ) {
-                    // The `0x400` weapon-visual hold: a ranged visual play sets it (`0x60d020`),
-                    // any other clears it (`0x6ec39e`); it keeps a remote shooter drawn.
+                    // The `0x400` weapon-visual hold: a ranged visual play sets it, any other
+                    // clears it; it keeps a remote shooter drawn.
                     let ranged = spells
                         .catalog
                         .get(ev.spell_id)
@@ -748,7 +743,7 @@ pub(super) fn route_cast_visuals(
                 }
             }
             CastEventKind::Go => {
-                // Spell-id-keyed (`0x614150(spellId, 0)`): a proc's GO keeps another spell's hold.
+                // Spell-id-keyed (the reap with no force): a proc's GO keeps another spell's hold.
                 if held_spell(&pending, ev.entity) == Some(ev.spell_id) {
                     commands.entity(ev.entity).try_remove::<CastHold>();
                     pending.insert(ev.entity, None);
@@ -761,8 +756,8 @@ pub(super) fn route_cast_visuals(
                     spell_id: ev.spell_id,
                     class: FxClass::Hold,
                 });
-                // A ranged-slot GO redraws ranged before the cast kit (`0x60f34c`, gate
-                // `Attributes & 0x2`, stages 0 and 4): what redraws a bow an emote lowered.
+                // A ranged-slot GO redraws ranged before the cast kit (gate `Attributes & 0x2`,
+                // stages 0 and 4): what redraws a bow an emote lowered.
                 if spells
                     .catalog
                     .get(ev.spell_id)
@@ -806,7 +801,7 @@ pub(super) fn route_cast_visuals(
                 }
             }
             CastEventKind::Impact { weapon_visual } => {
-                // The arrival flinches every living target, no hostility test (`0x61dc74`).
+                // The arrival flinches every living target, no hostility test.
                 play_impact(
                     ev.entity,
                     ImpactPlay {
@@ -851,13 +846,13 @@ pub(super) fn route_cast_visuals(
         }
     }
 
-    // Speed 0 plays every impact now (`0x6e8bf0`), Speed > 0 flies one projectile per target.
-    // Misses fly too; the reference deflects them off the target, which is not built.
+    // Speed 0 plays every impact now, Speed > 0 flies one projectile per target. Misses fly too;
+    // the reference deflects them off the target, which is not built.
     for go in go_targets.read() {
         let Some(display) = spells.catalog.get(go.spell_id) else {
             continue;
         };
-        // Resolved once per GO (`0x6e802e`); every consumer below reads the merged row.
+        // Resolved once per GO; every consumer below reads the merged row.
         let wv = weapon_src.caster(go.caster);
         let stages = resolve_stages(spells, &visuals.0, go.spell_id, || wv);
         // The instant area kit (`0x80ee85`): column 23's kit at the dest point when the targets
@@ -868,7 +863,7 @@ pub(super) fn route_cast_visuals(
             }
         }
         if display.speed <= 0.0 {
-            // Each hit flinches after its impact kit iff the spell is harmful (`0x6e8c7b`).
+            // Each hit flinches after its impact kit iff the spell is harmful.
             let flinch = display.is_harmful();
             for &target in &go.hits {
                 play_impact(
@@ -885,7 +880,7 @@ pub(super) fn route_cast_visuals(
                 );
             }
         } else {
-            // The spawn gate is Speed alone (`0x60a3d0`): basic shots have no visual row.
+            // The spawn gate is Speed alone: basic shots have no visual row.
             let path = stages.and_then(|s| {
                 (s.missile_model >= 1).then(|| {
                     visuals
@@ -904,10 +899,10 @@ pub(super) fn route_cast_visuals(
                 .map(|&e| (e, None))
                 .chain(go.misses.iter().map(|&(e, code)| (e, Some(code))))
                 .collect();
-            // Only an empty hit array consults the ground point (`0x6e8abc … je 0x6e8ba2`).
+            // Only an empty hit array consults the ground point.
             let ground_aim = targets.is_empty().then_some(go.dest).flatten();
             if !targets.is_empty() || ground_aim.is_some() {
-                // The release gate (`0x6e7a70`, inverted).
+                // The release gate (inverted).
                 let awaits_release = stages
                     .filter(|s| s.cast != 0)
                     .and_then(|s| visuals.0.kit(s.cast))
@@ -951,7 +946,7 @@ pub(super) fn route_cast_visuals(
                     class: FxClass::Hold,
                 });
             }
-            // No ranged fallback on the channel poll (`0x612a30`).
+            // No ranged fallback on the channel poll.
             if let Some(kit) = resolve_kit(spells, &visuals.0, cur, |s| s.channel, || None) {
                 if let Some(anim_id) = kit.anim_id {
                     // Fallible: a unit mid-stream-out is un-indexed but still in this query.
@@ -965,8 +960,8 @@ pub(super) fn route_cast_visuals(
                 if let Some(kit_sound) = kit.sound {
                     out.sounds.write(SpellKitSound::Play { entity, kit_sound });
                 }
-                // The CharProc dispatcher's second caller (`0x612b18`): Drain Life's beam is
-                // reached only here, on the rising edge, and lives until the field clears.
+                // The CharProc dispatcher's second caller: Drain Life's beam is reached only here,
+                // on the rising edge, and lives until the field clears.
                 if let Some(proc) = kit.chain_proc() {
                     out.chain.write(ChainProcPlay {
                         entity,
@@ -1160,11 +1155,11 @@ pub(crate) fn arm_aura_state_fx(
 }
 
 /// Arm and reap the loot sparkle on a dead lootable unit and on a corpse object with
-/// `CORPSE_FIELD_DYNAMIC_FLAGS` bit 0 (`0x5d6de0`): the `"HARDCODED Loot Art"` row at `0x13`.
-/// Edge-driven (`0x600440`) with no viewer or distance logic, since the server strips the flag per
-/// viewer; the falling edge reaps with no fade (`0x600680`).
+/// `CORPSE_FIELD_DYNAMIC_FLAGS` bit 0: the `"HARDCODED Loot Art"` row at `0x13`. Edge-driven with
+/// no viewer or distance logic, since the server strips the flag per viewer; the falling edge reaps
+/// with no fade.
 pub(super) fn arm_loot_fx(
-    // Re-read on an edge of any of the four fields and on first sight (armed at build, `0x5d6e30`).
+    // Re-read on an edge of any of the four fields and on first sight (armed at build).
     units: Query<(Entity, &ObjectStore, &crate::net::NetEntity)>,
     arrived: Query<Entity, (Added<ObjectStore>, Without<ItemObject>)>,
     mut edges: MessageReader<FieldChanged>,
@@ -1200,14 +1195,14 @@ pub(super) fn arm_loot_fx(
         due.into_iter().filter_map(|e| units.get(e).ok()).collect()
     };
     for (entity, store, net) in scan {
-        // A corpse object's sparkle: bit 0 rising calls `0x5d6e30`, the same row at the same tag.
+        // A corpse object's sparkle: bit 0 rising spawns the same row at the same tag.
         let lootable = if net.kind == benilla_protocol::EntityKind::Corpse {
             store.0.corpse_lootable()
         } else {
             store.0.unit_is_dead() && store.0.unit_lootable()
         };
         if lootable && armed.insert(entity) {
-            // The Looting tutorial on the rise (`0x60049b`).
+            // The Looting tutorial on the rise.
             if let Some(t) = tutorials.as_mut() {
                 t.write(crate::tutorial::TutorialEvent::trigger(
                     crate::tutorial::id::LOOTING,
@@ -1218,9 +1213,9 @@ pub(super) fn arm_loot_fx(
                 spell_id: LOOT_FX_KEY,
                 persistent: true,
                 class: FxClass::Hold,
-                // A unit's loot art loops its first sequence (`0x600640`). A corpse's is a bare
-                // model with no sequence armed (`0x5d6e30`); this plumbing has no such instance, so
-                // it runs `OneShot` persistent.
+                // A unit's loot art loops its first sequence. A corpse's is a bare model with no
+                // sequence armed; this plumbing has no such instance, so it runs `OneShot`
+                // persistent.
                 stage: if net.kind == benilla_protocol::EntityKind::Corpse {
                     FxStage::OneShot
                 } else {
@@ -1244,9 +1239,9 @@ pub(super) fn arm_loot_fx(
     armed.retain(|e| units.contains(*e));
 }
 
-/// The level-up ding: any streamed unit's `UNIT_FIELD_LEVEL` change (`0x6045b0`) spawns
-/// [`LEVEL_UP_EFFECT`], independent of `SMSG_LEVELUP_INFO`; a unit streaming in does not ding. Its
-/// sound is the model's own `$SND` event.
+/// The level-up ding: any streamed unit's `UNIT_FIELD_LEVEL` change spawns [`LEVEL_UP_EFFECT`],
+/// independent of `SMSG_LEVELUP_INFO`; a unit streaming in does not ding. Its sound is the model's
+/// own `$SND` event.
 pub(super) fn arm_level_up_fx(
     mut edges: MessageReader<FieldChanged>,
     visuals: Option<Res<SpellVisuals>>,
@@ -1283,9 +1278,8 @@ pub(super) fn arm_level_up_fx(
 }
 
 /// The mount poof: a `UNIT_FIELD_MOUNTDISPLAYID` change to nonzero on any unit spawns
-/// [`MOUNT_POOF_EFFECT`] on the rider as a one-shot (`0x604570` → `0x5ffa50`, gated at `0x5ffa87`).
-/// The same-record, same-tag replace (`0x6208e0`) is not built, so a mount swap within 2.8 s would
-/// show two clouds.
+/// [`MOUNT_POOF_EFFECT`] on the rider as a one-shot. The same-record, same-tag replace is not
+/// built, so a mount swap within 2.8 s would show two clouds.
 pub(super) fn arm_mount_poof_fx(
     mut edges: MessageReader<FieldChanged>,
     visuals: Option<Res<SpellVisuals>>,
@@ -1311,7 +1305,7 @@ pub(super) fn arm_mount_poof_fx(
             spell_id: 0,
             persistent: false,
             class: FxClass::Hold,
-            // `0x5fbf50`: destroyed at first completion; the shipped model runs 2.8 s.
+            // Destroyed at first completion; the shipped model runs 2.8 s.
             stage: FxStage::OneShot,
             effects: vec![FxSlot {
                 tag: HARDCODED_FX_ATTACH,
@@ -1339,7 +1333,7 @@ pub(super) fn earn_effect_plays(
 }
 
 /// The earn effect on `entity` (`0x5b30d5`-`0x5b311e`): a one-shot at `0x13` (`[0xa32b20]`),
-/// replacing an earlier one through the same-slot replace (`DestroyMatchingEffects` `0x6f8a60`).
+/// replacing an earlier one through the same-slot replace (`0x6f8a60`).
 pub(crate) fn achievement_earn_fx(visuals: &SpellVisuals, entity: Entity) -> Option<SpellKitFx> {
     let (effect, path) = visuals.0.hardcoded_effect(ACHIEVEMENT_EFFECT)?;
     Some(SpellKitFx::Begin {
@@ -1356,15 +1350,14 @@ pub(crate) fn achievement_earn_fx(visuals: &SpellVisuals, entity: Entity) -> Opt
     })
 }
 
-/// The pending-morph latch, the reference's `[unit+0xd54]`: armed by `0x5ff0c0` on every aura add
-/// and remove of an [`is_morph_spell`] spell; the display rebuild `0x60abe0` replays its impact kit
-/// (`0x60ad67`), the shapeshift cloud both ways. Shift-out works because the aura fields apply
-/// before `DISPLAYID`.
+/// The pending-morph latch, the reference's `[unit+0xd54]`: armed on every aura add and remove of
+/// an [`is_morph_spell`] spell; the display rebuild replays its impact kit, the shapeshift cloud
+/// both ways. Shift-out works because the aura fields apply before `DISPLAYID`.
 #[derive(Resource, Default)]
 pub(crate) struct MorphLatch(EntityHashMap<u32>);
 
-/// The latch-arm predicate (`0x5ff100`): an effect slot with `Effect` 6 (APPLY_AURA) whose aura is
-/// 36 (MOD_SHAPESHIFT) or 56 (TRANSFORM), slot-paired, with no other gate.
+/// The latch-arm predicate: an effect slot with `Effect` 6 (APPLY_AURA) whose aura is 36
+/// (MOD_SHAPESHIFT) or 56 (TRANSFORM), slot-paired, with no other gate.
 fn is_morph_spell(spells: &crate::ui_action::Spells, spell_id: u32) -> bool {
     const SPELL_EFFECT_APPLY_AURA: u32 = 6;
     const SPELL_AURA_MOD_SHAPESHIFT: u32 = 36;
@@ -1377,10 +1370,10 @@ fn is_morph_spell(spells: &crate::ui_action::Spells, spell_id: u32) -> bool {
     })
 }
 
-/// Arm [`MorphLatch`] from aura-slot edges, as the add watcher and the remove tail (`0x6123ad`)
-/// both call `0x5ff0c0`: old spell first, new second, so a form swap latches the form entered.
-/// A slot edge is a [`UnitAuras`] change diffed against the slots last seen; first sight emits no
-/// edge, as the reference's watchers fire on deltas only.
+/// Arm [`MorphLatch`] from aura-slot edges, as the add watcher and the remove tail both arm it: old
+/// spell first, new second, so a form swap latches the form entered. A slot edge is a [`UnitAuras`]
+/// change diffed against the slots last seen; first sight emits no edge, as the reference's
+/// watchers fire on deltas only.
 pub(super) fn arm_morph_latch(
     units: Query<(), With<ObjectStore>>,
     changed: Query<(Entity, &UnitAuras), Changed<UnitAuras>>,
@@ -1476,9 +1469,9 @@ pub(super) fn play_state_done_kits(
     }
 }
 
-/// The rebuild's impact-kit replay (the tail of `0x60abe0`): a display swap with the latch armed
-/// plays the latched impact kit and clears it, a frame later on the rebuilt body. The same-record,
-/// same-tag replace (`0x6208e0`) is not built, so a cold-cache shift-in briefly shows two clouds.
+/// The rebuild's impact-kit replay: a display swap with the latch armed plays the latched impact
+/// kit and clears it, a frame later on the rebuilt body. The same-record, same-tag replace is not
+/// built, so a cold-cache shift-in briefly shows two clouds.
 pub(super) fn replay_morph_kit(
     mut swaps: MessageReader<crate::entities::DisplaySwapped>,
     visuals: Option<Res<SpellVisuals>>,
@@ -1495,7 +1488,7 @@ pub(super) fn replay_morph_kit(
     mut recomputes: MessageWriter<BaseAnimRecompute>,
 ) {
     for swap in swaps.read() {
-        // Cleared even when the kit resolves to nothing (`0x60ad6c`).
+        // Cleared even when the kit resolves to nothing.
         let Some(spell_id) = latch.0.remove(&swap.entity) else {
             continue; // no latch
         };

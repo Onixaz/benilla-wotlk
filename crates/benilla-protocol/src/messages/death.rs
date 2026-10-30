@@ -254,7 +254,7 @@ mod tests {
 }
 
 /// `SMSG_AREA_SPIRIT_HEALER_TIME`: a battleground spirit healer's guid and the ms until its next
-/// resurrection wave (client `0x48fa29`).
+/// resurrection wave.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AreaSpiritHealerTime {
     pub healer: u64,

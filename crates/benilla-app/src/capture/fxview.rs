@@ -87,8 +87,8 @@ pub(crate) fn drive_fx_view(
                 .id();
         }
         // `WOW_FX_GO`, the GameObject lane: a placed GO animates through `crate::go_anim`'s state
-        // machine (`0x5f3cb0`), not the effect pool. The descriptor carries only display, TYPE_ID
-        // and STATE, the fields the machine reads; seated on terrain.
+        // machine, not the effect pool. The descriptor carries only display, TYPE_ID and STATE, the
+        // fields the machine reads; seated on terrain.
         if let Some(display) = req.go {
             if let Some(hit) = spatial.cast_ray(
                 pos,

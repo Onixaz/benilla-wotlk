@@ -1,15 +1,14 @@
 //! GameObject display-slot sounds: the ten `GameObjectDisplayInfo.Sound[0..9]` kits a door,
 //! chest or goober plays as its animation runs.
 //!
-//! The reference's only reader of the columns, `0x5f4010`, is called only from the GameObject M2
-//! animation-event dispatcher `0x5f3e20` (registered at create, `0x5f7d1f`, on the types
-//! [`crate::go_anim::GoAnim`] animates). So a slot sounds only when the model authors the event
-//! keyframe and its clip plays; there is no state-transition sound path.
+//! The reference's only reader of the columns, is called only from the GameObject M2
+//! animation-event dispatcher (registered at create, on the types [`crate::go_anim::GoAnim`]
+//! animates). So a slot sounds only when the model authors the event keyframe and its clip plays;
+//! there is no state-transition sound path.
 //!
-//! The kit's `SoundEntries` flag `0x200` (`0x5f4051 call 0x458830`) picks the lane: clear is a
-//! positioned one-shot (`0x458870`), set registers into the 32-entry ambient emitter pool
-//! (`0x461d80`), one handle per object shared with its `$DSL`. Only `0x5f40c0`, from the state
-//! dispatch `0x5f3cb0` and teardown, drops that loop; this dispatcher has no `$DSE` arm.
+//! The kit's `SoundEntries` flag `0x200` picks the lane: clear is a positioned one-shot, set
+//! registers into the 32-entry ambient emitter pool, one handle per object shared with its `$DSL`.
+//! Only, from the state dispatch and teardown, drops that loop; this dispatcher has no `$DSE` arm.
 //! Slot 5 (Opened) is empty in every 1.12.1 display row.
 
 use bevy::prelude::*;
@@ -45,8 +44,8 @@ fn load_go_sounds(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     }
 }
 
-/// The display slot an M2 event tag addresses in `0x5f3e20`: `$GO0..5` → `Sound[0..5]`,
-/// `$GC0..3` → the Custom slots `Sound[6..9]`.
+/// The display slot an M2 event tag addresses: `$GO0..5` → `Sound[0..5]`, `$GC0..3` → the Custom
+/// slots `Sound[6..9]`.
 fn go_event_slot(ident: &[u8; 4]) -> Option<usize> {
     match ident {
         [b'$', b'G', b'O', d @ b'0'..=b'5'] => Some((d - b'0') as usize),
@@ -77,8 +76,8 @@ pub(super) fn go_display_sounds(
     // (0.334 s on the centaur teleporter), so an unresolvable id would warn several times a second.
     mut complained: Local<std::collections::HashSet<u32>>,
 ) {
-    // `0x5f3cb0` first releases the loop (`0x5f3cc8 call 0x5f40c0`), before it picks the new
-    // substate's animation; drained even when nothing else resolves.
+    // The reference first releases the loop, before it picks the new substate's animation; drained
+    // even when nothing else resolves.
     for d in dispatched.read() {
         super::emitter_pool::release(&mut pool, d.0);
     }
@@ -105,13 +104,13 @@ pub(super) fn go_display_sounds(
             .and_then(|d| go_sounds.0.slots(d))
             .map(|s| s[slot])
             .unwrap_or(0);
-        // An unfilled column is silence: `0x458830` fails a null id and `0x5f4010` returns.
+        // An unfilled column is silence: the kit lookup fails a null id and the handler returns.
         if kit == 0 {
             continue;
         }
-        // Where the key fired, not the object's origin: both lanes take `0x5f3e20`'s event world
-        // position (`[ebp+0x10]`) verbatim, `0x458870(id, pos, -1, 1.0f)` and
-        // `0x461d80(id, pos, 0)`. Many shipped events sit off their origin, up to 63.4 yd.
+        // Where the key fired, not the object's origin: both lanes take the event's world position
+        // (`[ebp+0x10]`) verbatim, the one-shot play as `(id, pos, -1, 1.0f)` and the emitter
+        // registrar as `(id, pos, 0)`. Many shipped events sit off their origin, up to 63.4 yd.
         let pos = ev.pos.unwrap_or_else(|| transform.translation());
         // A looping kit registers in the shared emitter pool, not a channel of its own, so a row
         // of braziers is one hum and a re-fired marker is a no-op, not a restart.
@@ -150,7 +149,7 @@ pub(super) fn plugin(app: &mut App) {
 mod tests {
     use super::go_event_slot;
 
-    /// The dispatcher's slot table (`0x5f3e20`).
+    /// The dispatcher's slot table.
     #[test]
     fn event_tags_map_to_display_slots() {
         assert_eq!(go_event_slot(b"$GO0"), Some(0));

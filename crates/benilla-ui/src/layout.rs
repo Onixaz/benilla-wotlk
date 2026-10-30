@@ -1,26 +1,25 @@
-//! The frame anchor resolver: the 1.12 client's `CLayoutFrame` rect resolution, transcribed
-//! function by function, with the reference's operations in the reference's order.
+//! The frame anchor resolver: the 1.12 client's layout-frame rect resolution, transcribed function
+//! by function, with the reference's operations in the reference's order.
 //!
 //! The client computes on the x87 at 53-bit precision, which `f64` matches, and narrows to `f32`
 //! only at its stores (each sub-edge before a `combine_*`, each final edge, the `width * scale`
 //! span), so the arithmetic here runs in `f64` with an explicit `as f32` at exactly those sites.
 //!
-//! Rects are `[bottom, left, top, right]` (frame `+0x64..+0x70`, `GetRect` `0x768320`) in screen
-//! pixels, y-up.
+//! Rects are `[bottom, left, top, right]` (frame `+0x64..+0x70`, `GetRect`) in screen pixels, y-up.
 
 use std::collections::VecDeque;
 
 // ── Constants ────────────────────────────────────────────────────────────────────────────────
 
-/// The unset-coordinate sentinel, `+Inf` (`0xcf550c`, set at runtime from `0x81d56c`).
+/// The unset-coordinate sentinel, `+Inf`.
 const UNSET: f64 = f64::INFINITY;
 
-/// The least width or height change that fires `OnSizeChanged`: 2^-22, bits `0x34800000` at
-/// `0x8029d4`, tested in `ApplyRect` (`0x76b580`).
+/// The least width or height change that fires `OnSizeChanged`: 2^-22, bits `0x34800000`, tested
+/// where the rect is applied.
 pub const SIZE_EPS: f64 = 2.384_185_791_015_625e-7;
 
-/// The least edge move against the cached rect for the client to re-store it and `ApplyRect`, 1e-5
-/// (`0x80c5c8`, in `0x768d20`). Recorded, not applied: the caller's own dirty gate decides.
+/// The least edge move against the cached rect for the client to re-store and apply it, 1e-5.
+/// Recorded, not applied: the caller's own dirty gate decides.
 pub const RESOLVE_EPS: f64 = f32::from_bits(0x3727_c5ac) as f64;
 
 /// Point id to X column: left 0, center 1, right 2.
@@ -31,7 +30,7 @@ const Y_ROW: [u8; 9] = [0, 0, 0, 1, 1, 1, 2, 2, 2];
 // ── Public types ─────────────────────────────────────────────────────────────────────────────
 
 /// The nine anchor points; the discriminant is the client's point id, the slot in its
-/// `anchorPoints[9]` (tables at `0x81c3b8..0x81c3fc`).
+/// `anchorPoints[9]`.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Point {
@@ -68,7 +67,7 @@ impl Point {
     }
 }
 
-/// An anchor target, which the caller maps to a frame or an external rect (`CAnchor+0xc`).
+/// An anchor target, which the caller maps to a frame or an external rect (the anchor's `+0xc`).
 pub type Handle = u32;
 
 /// A resolved rect, `[bottom, left, top, right]` in screen pixels, y-up.
@@ -111,8 +110,8 @@ impl Rect {
     }
 }
 
-/// One anchor, a client `CAnchor` (`xOff +4`, `yOff +8`, `relativeTo +0xc`, `relativePoint +0x10`):
-/// `point` on this frame pins to `relative_point` on the target.
+/// One anchor, a client anchor record (`xOff +4`, `yOff +8`, `relativeTo +0xc`,
+/// `relativePoint +0x10`): `point` on this frame pins to `relative_point` on the target.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Anchor {
     pub point: Point,
@@ -145,19 +144,18 @@ impl Anchor {
 /// (bit 4 of `G+0x3c`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct LayoutInput {
-    /// Slotted by `point`, the later of two on one point winning (`SetPoint`, `0x767c70`).
+    /// Slotted by `point`, the later of two on one point winning (`SetPoint`).
     pub anchors: Vec<Anchor>,
-    /// `0.0` is the no-size sentinel (`0x7ffd74`): the axis derives from the anchors.
+    /// `0.0` is the no-size sentinel: the axis derives from the anchors.
     pub width: f32,
     pub height: f32,
-    /// The effective scale, parent times own (`0x76ac90`), applied only to the anchor offsets and
-    /// the size span.
+    /// The effective scale, parent times own, applied only to the anchor offsets and the size span.
     pub scale: f32,
     /// Clamp the rect into `[0, extent]` on each axis.
     pub clamp: bool,
-    /// The clamp's X extent; the client's default is `0.8` (`0x41ae60`).
+    /// The clamp's X extent; the client's default is `0.8`.
     pub extent_x: f32,
-    /// The clamp's Y extent; the client's default is `0.6` (`0x41ae70`).
+    /// The clamp's Y extent; the client's default is `0.6`.
     pub extent_y: f32,
     /// `SetClampRectInsets`' `[left, right, top, bottom]`, already times the scale.
     pub clamp_insets: [f32; 4],
@@ -199,9 +197,9 @@ pub enum ResolveOutcome {
 
 // ── Leaf kernels: each returns the un-narrowed `f64` ─────────────────────────────────────────
 
-/// `combineEdge` (`0x767440`): an edge from the opposite edge and the signed `size * scale` span,
-/// else from the axis center. The sentinels compare by IEEE equality, as the client's `fcomp`
-/// does, so a NaN never matches one.
+/// `combineEdge`: an edge from the opposite edge and the signed `size * scale` span, else from the
+/// axis center. The sentinels compare by IEEE equality, as the client's `fcomp` does, so a NaN
+/// never matches one.
 #[allow(clippy::float_cmp)]
 pub fn combine_edge(center: f32, opp: f32, span: f32) -> f64 {
     let (c, o, s) = (f64::from(center), f64::from(opp), f64::from(span));
@@ -219,7 +217,7 @@ pub fn combine_edge(center: f32, opp: f32, span: f32) -> f64 {
     UNSET
 }
 
-/// `combineCenter` (`0x7672d0`): an axis center from the low and high edges and the signed span.
+/// `combineCenter`: an axis center from the low and high edges and the signed span.
 #[allow(clippy::float_cmp)]
 pub fn combine_center(lo: f32, hi: f32, span: f32) -> f64 {
     let (l, h, s) = (f64::from(lo), f64::from(hi), f64::from(span));
@@ -237,9 +235,9 @@ pub fn combine_center(lo: f32, hi: f32, span: f32) -> f64 {
     UNSET
 }
 
-/// `CAnchor::ResolveX` (`0x7a2f90`): the anchor's X against its target's cached `rect`, which is
-/// `None` when `GetRect` fails. `mirror` is the target's normalize predicate (vtable `+0x24`, 0 for
-/// an ordinary frame at `0x46ff60`), which shifts the edges to start at 0, each stored as `f32`.
+/// The anchor's X resolve: the anchor's X against its target's cached `rect`, which is `None` when
+/// `GetRect` fails. `mirror` is the target's normalize predicate (vtable `+0x24`), which shifts the
+/// edges to start at 0, each stored as `f32`.
 pub fn anchor_resolve_x(
     scale: f32,
     x_off: f32,
@@ -266,7 +264,7 @@ pub fn anchor_resolve_x(
     }
 }
 
-/// `CAnchor::ResolveY` (`0x7a3070`), the Y counterpart of [`anchor_resolve_x`].
+/// The anchor's Y resolve, the Y counterpart of [`anchor_resolve_x`].
 pub fn anchor_resolve_y(
     scale: f32,
     y_off: f32,
@@ -349,8 +347,8 @@ pub fn assemble_rect(
     }
 }
 
-/// `ApplyRect`'s `OnSizeChanged` test (`0x76b580`): width or height moved by at least
-/// [`SIZE_EPS`], the deltas taken in `f64` from the `f32` edges.
+/// The rect apply's `OnSizeChanged` test: width or height moved by at least [`SIZE_EPS`], the
+/// deltas taken in `f64` from the `f32` edges.
 pub fn size_changed(old: Rect, new: Rect) -> bool {
     let dw =
         (f64::from(new.right) - f64::from(new.left)) - (f64::from(old.right) - f64::from(old.left));
@@ -390,7 +388,7 @@ const G_BOTTOM: u32 = 0x08;
 const G_XC: u32 = 0x10;
 const G_YC: u32 = 0x20;
 
-// The point ids each edge scans (`.rdata` 0x81c3b8..0x81c3f4).
+// The point ids each edge scans (`.rdata`).
 const IDS_LEFT: [usize; 3] = [0, 3, 6];
 const IDS_RIGHT: [usize; 3] = [2, 5, 8];
 const IDS_TOP: [usize; 3] = [0, 1, 2];
@@ -398,7 +396,7 @@ const IDS_BOTTOM: [usize; 3] = [6, 7, 8];
 const IDS_XC: [usize; 3] = [1, 4, 7];
 const IDS_YC: [usize; 3] = [3, 4, 5];
 
-/// `anchorScanX` (`0x7671a0`): the first of the edge's anchors whose X resolves, else `+Inf`.
+/// `anchorScanX`: the first of the edge's anchors whose X resolves, else `+Inf`.
 #[allow(clippy::float_cmp)]
 fn anchor_scan_x(ids: &[usize; 3], f: &EdgeInput) -> f64 {
     for &id in ids {
@@ -412,7 +410,7 @@ fn anchor_scan_x(ids: &[usize; 3], f: &EdgeInput) -> f64 {
     UNSET
 }
 
-/// `anchorScanY` (`0x7671f0`).
+/// `anchorScanY`.
 #[allow(clippy::float_cmp)]
 fn anchor_scan_y(ids: &[usize; 3], f: &EdgeInput) -> f64 {
     for &id in ids {
@@ -427,9 +425,9 @@ fn anchor_scan_y(ids: &[usize; 3], f: &EdgeInput) -> f64 {
 }
 
 /// The edge resolvers' span, `size * scale` narrowed to `f32`, negated for LEFT and BOTTOM. The
-/// client reads `size` through a virtual getter: a frame's is the authored field (`0x768420`), but
-/// a texture (`0x770720`) and a font string (`0x772930`) replace an authored `0.0` with their
-/// content's extent, so a region's [`LayoutInput`] must already carry that extent.
+/// client reads `size` through a virtual getter: a frame's is the authored field, but a texture and
+/// a font string replace an authored `0.0` with their content's extent, so a region's
+/// [`LayoutInput`] must already carry that extent.
 fn size_span(size: f32, scale: f32, negate: bool) -> f32 {
     let span = (f64::from(size) * f64::from(scale)) as f32;
     if negate {
@@ -439,7 +437,7 @@ fn size_span(size: f32, scale: f32, negate: bool) -> f32 {
     }
 }
 
-/// LEFT (`0x7673d0`): its anchor scan, else `combineEdge(Xcenter, RIGHT, -width * scale)`.
+/// LEFT: its anchor scan, else `combineEdge(Xcenter, RIGHT, -width * scale)`.
 #[allow(clippy::float_cmp)]
 fn resolve_left(f: &EdgeInput, guard: &mut u32) -> f64 {
     if *guard & G_LEFT != 0 {
@@ -459,7 +457,7 @@ fn resolve_left(f: &EdgeInput, guard: &mut u32) -> f64 {
     r
 }
 
-/// RIGHT (`0x767540`): its anchor scan, else `combineEdge(Xcenter, LEFT, width * scale)`.
+/// RIGHT: its anchor scan, else `combineEdge(Xcenter, LEFT, width * scale)`.
 #[allow(clippy::float_cmp)]
 fn resolve_right(f: &EdgeInput, guard: &mut u32) -> f64 {
     if *guard & G_RIGHT != 0 {
@@ -479,7 +477,7 @@ fn resolve_right(f: &EdgeInput, guard: &mut u32) -> f64 {
     r
 }
 
-/// TOP (`0x7674d0`): its anchor scan, else `combineEdge(Ycenter, BOTTOM, height * scale)`.
+/// TOP: its anchor scan, else `combineEdge(Ycenter, BOTTOM, height * scale)`.
 #[allow(clippy::float_cmp)]
 fn resolve_top(f: &EdgeInput, guard: &mut u32) -> f64 {
     if *guard & G_TOP != 0 {
@@ -499,7 +497,7 @@ fn resolve_top(f: &EdgeInput, guard: &mut u32) -> f64 {
     r
 }
 
-/// BOTTOM (`0x7675b0`): its anchor scan, else `combineEdge(Ycenter, TOP, -height * scale)`.
+/// BOTTOM: its anchor scan, else `combineEdge(Ycenter, TOP, -height * scale)`.
 #[allow(clippy::float_cmp)]
 fn resolve_bottom(f: &EdgeInput, guard: &mut u32) -> f64 {
     if *guard & G_BOTTOM != 0 {
@@ -519,7 +517,7 @@ fn resolve_bottom(f: &EdgeInput, guard: &mut u32) -> f64 {
     r
 }
 
-/// Xcenter (`0x767260`): its anchor scan, else `combineCenter(LEFT, RIGHT, width * scale)`.
+/// Xcenter: its anchor scan, else `combineCenter(LEFT, RIGHT, width * scale)`.
 #[allow(clippy::float_cmp)]
 fn resolve_xcenter(f: &EdgeInput, guard: &mut u32) -> f64 {
     if *guard & G_XC != 0 {
@@ -539,7 +537,7 @@ fn resolve_xcenter(f: &EdgeInput, guard: &mut u32) -> f64 {
     r
 }
 
-/// Ycenter (`0x767360`): its anchor scan, else `combineCenter(BOTTOM, TOP, height * scale)`.
+/// Ycenter: its anchor scan, else `combineCenter(BOTTOM, TOP, height * scale)`.
 #[allow(clippy::float_cmp)]
 fn resolve_ycenter(f: &EdgeInput, guard: &mut u32) -> f64 {
     if *guard & G_YC != 0 {
@@ -559,8 +557,8 @@ fn resolve_ycenter(f: &EdgeInput, guard: &mut u32) -> f64 {
     r
 }
 
-/// `assemble` (`0x767a20`) composed, resolving LEFT, BOTTOM, RIGHT, TOP in the client's order; the
-/// `+Inf` test reads the un-narrowed `f64` edge, as the client's `fcomp` precedes its `fst`.
+/// `assemble` composed, resolving LEFT, BOTTOM, RIGHT, TOP in the client's order; the `+Inf` test
+/// reads the un-narrowed `f64` edge, as the client's `fcomp` precedes its `fst`.
 #[allow(clippy::float_cmp)]
 fn resolve_edges(f: &EdgeInput) -> ResolveOutcome {
     let mut guard = 0u32;
@@ -596,7 +594,7 @@ fn build_edge_input(
             y_off: a.y_off,
             rel_point: a.relative_point.id() as u32,
             rel_rect: target_rect(a.relative_to).map(Rect::to_array),
-            // An ordinary frame's normalize predicate returns 0 (`0x46ff60`).
+            // An ordinary frame's normalize predicate returns 0.
             mirror: false,
         });
     }
@@ -632,9 +630,9 @@ pub fn resolve_rect_edges(
 // ── Graph driver ─────────────────────────────────────────────────────────────────────────────
 
 /// Resolves anchored frames in dependency order, a driver of benilla's own: the client resolves
-/// lazily through a dependency-ordered deferred queue (`0x7680e0`, ordered by `0x7681b0`). Handles
-/// index its arrays directly, so they must be dense. A round: [`begin`](Self::begin),
-/// [`set_external`](Self::set_external) and [`set_frame`](Self::set_frame), [`solve`](Self::solve).
+/// lazily through a dependency-ordered deferred queue. Handles index its arrays directly, so they
+/// must be dense. A round: [`begin`](Self::begin), [`set_external`](Self::set_external) and
+/// [`set_frame`](Self::set_frame), [`solve`](Self::solve).
 #[derive(Clone, Debug, Default)]
 pub struct LayoutSolver {
     /// Overwritten in place, so each anchors `Vec` keeps its allocation.
@@ -703,8 +701,8 @@ impl LayoutSolver {
         self.unresolvable.clear();
     }
 
-    /// Seed a rect this solve does not compute, such as the screen root (`CSimpleTop`); also
-    /// publishes one mid-sweep for later nodes of the same pass.
+    /// Seed a rect this solve does not compute, such as the screen root; also publishes one
+    /// mid-sweep for later nodes of the same pass.
     pub fn set_external(&mut self, h: Handle, rect: Rect) {
         self.ensure(h);
         self.touch(h);
@@ -970,7 +968,7 @@ mod tests {
 
     // ── Composed resolver ─────────────────────────────────────────────────────────────────────
 
-    /// The rect the running reference client's `assemble` (`0x767a20`) produced.
+    /// The rect the running reference client's `assemble` produced.
     #[test]
     fn oracle_single_topleft_explicit_size() {
         let f = LayoutInput::sized(

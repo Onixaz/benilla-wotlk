@@ -186,10 +186,10 @@ pub fn shakecensus(chain: &mut Chain) -> Result<()> {
 
     // The third producer, the `$SHK` animation event, whose payload is a group id, never a preset.
     println!("\n$SHK animation events — the third producer (GameObject / DynamicObject only)\n");
-    // Only the GameObject (typemask 0x20, `0x5f3e20`) and DynamicObject (0x40, `0x5d58c0`)
-    // dispatchers decode `$SHK`; on a creature it reaches `CGUnit_C::HandleAnimEvent` and on a
-    // bone-attached `CEffect` the fixed `$SND`/`$HIT` router `0x61f6f0`, and neither decodes it.
-    // A DynamicObject's area model is its persistent area kit's world or base effect (`0x704b30`).
+    // Only the GameObject (typemask 0x20) and DynamicObject (0x40) dispatchers decode `$SHK`; on a
+    // creature it reaches the unit's anim-event handler and on a bone-attached effect the fixed
+    // `$SND`/`$HIT` router, and neither decodes it. A DynamicObject's area model is its persistent
+    // area kit's world or base effect (`0x704b30`).
     let gos = benilla_formats::load_gameobject_catalog(chain)?;
     let go_models: BTreeSet<String> = gos.iter().map(|(_, path)| mdx_key(path)).collect();
     let creature_models: BTreeSet<String> = creatures.model_paths().map(mdx_key).collect();
@@ -248,7 +248,7 @@ pub fn shakecensus(chain: &mut Chain) -> Result<()> {
             } else if dynobj_models.contains(&key) {
                 "DynamicObject area model (SpellVisual field 12) — LIVE"
             } else if creature_models.contains(&key) {
-                "creature model — INERT (CGUnit_C::HandleAnimEvent decodes no $SHK)"
+                "creature model — INERT (the unit's anim-event handler decodes no $SHK)"
             } else {
                 "no host names it — INERT"
             };

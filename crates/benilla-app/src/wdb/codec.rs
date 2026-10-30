@@ -1,7 +1,7 @@
-//! The `.wdb` file, byte for byte: 12340's `DBCache<T>` on disk (Load `0x67ba40`, Save
-//! `0x66a090`). A 24-byte header of six little-endian u32 (FourCC, build, locale, record size,
-//! format version, server cache version), then `key | u32 size | body` entries in insertion order,
-//! then a zero key and a zero size.
+//! The `.wdb` file, byte for byte: 12340's query cache on disk (load `0x67ba40`, save `0x66a090`).
+//! A 24-byte header of six little-endian u32 (FourCC, build, locale, record size, format version,
+//! server cache version), then `key | u32 size | body` entries in insertion order, then a zero key
+//! and a zero size.
 
 use std::collections::HashMap;
 
@@ -10,8 +10,8 @@ use benilla_protocol::messages::opcode;
 /// The build every header carries and every load demands (`0x66a124`, `0x67bb50`).
 const BUILD: u32 = 12340;
 
-/// One persisted cache: the nine `DBCache` instances built with persistence on (the enabled byte
-/// at `+0x45`, static constructors `0x9cb680`..`0x9cb920`). Name, guild, pet name, petition, arena
+/// One persisted cache: the nine cache instances built with persistence on (the enabled byte at
+/// `+0x45`, static constructors `0x9cb680`..`0x9cb920`). Name, guild, pet name, petition, arena
 /// team and dance caches are built with it off and never touch disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Kind {
@@ -20,7 +20,7 @@ pub(crate) struct Kind {
     pub(crate) file: &'static str,
     /// `sizeof(T)` in memory, which the header carries and the load compares; not a body length.
     pub(crate) record_size: u32,
-    /// `T::s_cacheVersion`.
+    /// The record type's cache version.
     pub(crate) version: u32,
     /// Bytes of the key: u32 entries, the u64 item guid of item text, the 16-byte Warden id.
     pub(crate) key_len: usize,
@@ -132,7 +132,7 @@ pub(crate) enum Refused {
     Corrupt,
 }
 
-/// One cache's records in insertion order, the order Save walks (`LinkToTail` `0x67af9d`).
+/// One cache's records in insertion order, the order the save walks (`0x67af9d`).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct WdbFile {
     /// The server cache version the header carries (`+0x38`), stored unchecked on load.
@@ -184,8 +184,8 @@ impl WdbFile {
         true
     }
 
-    /// `VerifyAndUpdateVersion` (`0x66f940`): another server cache version drops every record.
-    /// Whether it did.
+    /// The version check (`0x66f940`): another server cache version drops every record. Whether it
+    /// did.
     pub(crate) fn set_server_version(&mut self, version: u32) -> bool {
         if self.server_version == version {
             return false;

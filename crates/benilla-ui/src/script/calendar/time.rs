@@ -1,11 +1,11 @@
-//! 12340's `WowTime` (`0x76c190`-`0x76cf10`): a broken-down date whose every field may be unset
-//! (-1), packed into one wire word. The reference steps days through the C runtime's `mktime`
+//! 12340's packed date-time (`0x76c190`-`0x76cf10`): a broken-down date whose every field may be
+//! unset (-1), packed into one wire word. The reference steps days through the C runtime's `mktime`
 //! and `localtime`; this steps them on the proleptic Gregorian calendar, which is the same away
-//! from a daylight-saving edge, and `AddHolidayDuration`'s own correction cancels that edge.
+//! from a daylight-saving edge, and the holiday-duration add's own correction cancels that edge.
 
 use crate::civil;
 
-/// A `WowTime`. Years count from 2000, months and month days from 0, weekdays from Sunday.
+/// A packed date-time. Years count from 2000, months and month days from 0, weekdays from Sunday.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WowTime {
     pub minute: i32,
@@ -15,11 +15,11 @@ pub struct WowTime {
     pub month: i32,
     pub year: i32,
     pub flags: i32,
-    /// `m_tzHours`, the server's zone offset the clock packet carries; never packed.
+    /// The server's zone offset the clock packet carries; never packed.
     pub tz_hours: i32,
 }
 
-/// `WowTime::WowTime` (`0x76c190`): every field unset.
+/// The packed time's constructor (`0x76c190`): every field unset.
 impl Default for WowTime {
     fn default() -> Self {
         Self {
@@ -45,7 +45,7 @@ fn field(value: u32, shift: u32, bits: u32) -> i32 {
 }
 
 impl WowTime {
-    /// `WowDecodeTime` (`0x76cab0`).
+    /// The time decode (`0x76cab0`).
     pub fn decode(value: u32) -> Self {
         Self {
             minute: field(value, 0, 6),
@@ -59,7 +59,7 @@ impl WowTime {
         }
     }
 
-    /// `WowEncodeTime` (`0x76ca50`): an unset field packs as all ones.
+    /// The time encode (`0x76ca50`): an unset field packs as all ones.
     pub fn encode(&self) -> u32 {
         (self.minute as u32 & 0x3f)
             | (self.hour as u32 & 0x1f) << 6
@@ -70,7 +70,7 @@ impl WowTime {
             | (self.flags as u32 & 0x3) << 29
     }
 
-    /// A date alone, the clock fields unset, as `EncodeDate` (`0x5b7af0`) builds a table key.
+    /// A date alone, the clock fields unset, as the date encode (`0x5b7af0`) builds a table key.
     pub fn date(month: i32, month_day: i32, year: i32) -> Self {
         Self {
             month,
@@ -97,7 +97,7 @@ impl WowTime {
         self.weekday = c.weekday as i32;
     }
 
-    /// `AddDays` (`0x76c280`): nothing unless the date is whole; `keep_time` carries the clock
+    /// The day add (`0x76c280`): nothing unless the date is whole; `keep_time` carries the clock
     /// through the step, else only the date moves.
     pub fn add_days(&mut self, days: i32, keep_time: bool) {
         if self.year < 0 || self.month < 0 || self.month_day < 0 {
@@ -115,7 +115,8 @@ impl WowTime {
         }
     }
 
-    /// `GetHourAndMinutes` (`0x76c360`): minutes into the day, 0 with either clock field unset.
+    /// The hour-and-minutes read (`0x76c360`): minutes into the day, 0 with either clock field
+    /// unset.
     pub fn hour_and_minutes(&self) -> i32 {
         if self.hour < 0 || self.minute < 0 {
             return 0;
@@ -139,7 +140,7 @@ impl WowTime {
         true
     }
 
-    /// `AddMinutes` (`0x76c3f0`).
+    /// The minute add (`0x76c3f0`).
     pub fn add_minutes(&mut self, minutes: i32) {
         let mut total = self.hour_and_minutes() + minutes;
         let days = total / 1440;
@@ -154,8 +155,8 @@ impl WowTime {
         self.set_minutes_of_day(total);
     }
 
-    /// `SetDate` (`0x76c480`): a year past 2000 is taken as a full year; refuses a month past 11,
-    /// a month day past 31 or a year past 2031.
+    /// The date set (`0x76c480`): a year past 2000 is taken as a full year; refuses a month past
+    /// 11, a month day past 31 or a year past 2031.
     pub fn set_date(&mut self, month: u32, month_day: u32, year: u32) -> bool {
         if month >= 12 || month_day >= 32 {
             return false;
@@ -170,7 +171,7 @@ impl WowTime {
         true
     }
 
-    /// `AddHolidayDuration` (`0x76c4c0`): whole days keep the clock, the rest adds minutes, and
+    /// The holiday-duration add (`0x76c4c0`): whole days keep the clock, the rest adds minutes, and
     /// an hour gained or lost to the step is put back.
     pub fn add_holiday_duration(&mut self, minutes: i32) {
         let start = *self;
@@ -236,9 +237,9 @@ impl WowTime {
             .find(|&(a, b)| a >= 0 && b >= 0 && a != b)
     }
 
-    /// `ConvertToLocal` (`0x76cba0`): a time stamped in another zone moves by its offset, and its
-    /// weekday goes unset. Deviation: the reference adds the host's own offset from UTC too; this
-    /// crate has no zone source, so the host reads as UTC (`crate::civil`).
+    /// The local conversion (`0x76cba0`): a time stamped in another zone moves by its offset, and
+    /// its weekday goes unset. Deviation: the reference adds the host's own offset from UTC too;
+    /// this crate has no zone source, so the host reads as UTC (`crate::civil`).
     pub fn convert_to_local(&mut self) {
         if self.tz_hours == 0 {
             return;

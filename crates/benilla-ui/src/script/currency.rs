@@ -1,6 +1,6 @@
-//! 3.3.5a's currency list (`CGCurrencyTypes`): `CurrencyCategory.dbc`'s headers, each over its
-//! known `CurrencyTypes.dbc` rows, the rows marked unused gathered under the category that sorts
-//! last, and the backpack's watched tokens. The unused and watched marks are the per-character
+//! 3.3.5a's currency list: `CurrencyCategory.dbc`'s headers, each over its known
+//! `CurrencyTypes.dbc` rows, the rows marked unused gathered under the category that sorts last,
+//! and the backpack's watched tokens. The unused and watched marks are the per-character
 //! `currencyTokens*` CVars, one bit per currency's `BitIndex` (`0x5b0440`, `0x5b0590`).
 
 use mlua::{Lua, MultiValue, Table, Value};
@@ -109,7 +109,7 @@ fn sorted_categories(model: &super::Model) -> Vec<&CurrencyCategoryView> {
     cats
 }
 
-/// `BuildDisplayList` (`0x5b0030`): a header per category with a row to show, then, expanded,
+/// The display list build (`0x5b0030`): a header per category with a row to show, then, expanded,
 /// its known rows not marked unused, or under the last category every row marked unused; each
 /// category's rows by name, uncached names last.
 fn display_list(model: &super::Model) -> Vec<Entry> {
@@ -125,8 +125,8 @@ fn display_list(model: &super::Model) -> Vec<Entry> {
     let mut out = Vec::new();
     for (i, cat) in cats.iter().enumerate() {
         let last = i + 1 == cats.len();
-        // `CategoryHasKnownTypes` (`0x5afe30`): a known row of the category, or for the last one
-        // any row marked unused, known or not.
+        // The category's known-row test (`0x5afe30`): a known row of the category, or for the last
+        // one any row marked unused, known or not.
         let has_known = types.iter().any(|t| {
             (t.category_id == cat.id && known(model, t.bit_index))
                 || (last && cvar_bit(model, "currencyTokensUnused", t.bit_index))
@@ -223,8 +223,8 @@ fn index_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<i64> {
     }
 }
 
-/// `SetUnused`/`SetBackpack` (`0x5b0440`, `0x5b0590`): a non-header row's bit set or cleared in the
-/// CVar pair, written back with `%d`.
+/// The unused and backpack setters (`0x5b0440`, `0x5b0590`): a non-header row's bit set or cleared
+/// in the CVar pair, written back with `%d`.
 fn set_mark(lua: &Lua, index: i64, on: bool, pair: &str) {
     let write = {
         let model = read(lua);

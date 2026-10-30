@@ -1,7 +1,7 @@
-//! The retrieving tooltip. A `Set*Item` whose template is in flight shows `RETRIEVING_ITEM_INFO`
-//! in red and shows the plate (`SetItemNoStats 0x623760`); when a record the call missed lands,
-//! the call runs again with its stored arguments (`TooltipItemCallback 0x626650`), whatever the
-//! tooltip's owner does.
+//! The retrieving tooltip. A `Set*Item` whose template is in flight shows `RETRIEVING_ITEM_INFO` in
+//! red and shows the plate (the no-stats item builder, `0x623760`); when a record the call missed
+//! lands, the call runs again with its stored arguments (the tooltip's item callback, `0x626650`),
+//! whatever the tooltip's owner does.
 
 use std::collections::HashSet;
 
@@ -66,7 +66,7 @@ pub(crate) fn note_set_miss(model: &mut crate::script::Model, set_id: u32) {
     }
 }
 
-/// `SetItemNoStats`' line: `RETRIEVING_ITEM_INFO` in the tooltip red (`0x623765`).
+/// The no-stats builder's line: `RETRIEVING_ITEM_INFO` in the tooltip red (`0x623765`).
 pub(super) fn retrieving(lua: &Lua, this: &Table) -> mlua::Result<()> {
     if let Some(text) = crate::strings::global(lua, "RETRIEVING_ITEM_INFO") {
         append_line(lua, this, (text, RED), None, false)?;
@@ -74,7 +74,7 @@ pub(super) fn retrieving(lua: &Lua, this: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The bindings whose builder registers `TooltipItemCallback`: every item content setter.
+/// The bindings whose builder registers the item callback: every item content setter.
 const ITEM_SETTERS: &[&str] = &[
     "SetAction",
     "SetAuctionCompareItem",
@@ -171,7 +171,7 @@ fn call_setter(
 }
 
 impl crate::script::UiScript {
-    /// Re-run every waiting setter call `landed` answers, as `TooltipItemCallback` does.
+    /// Re-run every waiting setter call `landed` answers, as the tooltip's item callback does.
     pub(crate) fn answer_item_waits(&mut self, landed: impl Fn(&ItemMisses) -> bool) {
         let waiting: Vec<FrameHandle> = {
             let model = self.model_ref();

@@ -765,3 +765,19 @@ fn the_debug_map_verbs_answer_nothing() {
         "world state 4375 opens the queue"
     );
 }
+
+/// A moving player's feed is no extract input: the map's Lua reads it through its verbs, so a new
+/// position leaves the mutation count standing, while the verbs still answer the new place.
+#[test]
+fn a_moving_player_leaves_the_mutation_count_standing() {
+    let mut s = vm();
+    s.run("SetMapZoom(2, 1)").unwrap();
+    let pos = |s: &mut UiScript| -> (f64, f64) {
+        s.eval(r#"return GetPlayerMapPosition("player")"#).unwrap()
+    };
+    let at = pos(&mut s);
+    let before = s.visual_epoch();
+    s.set_world_map_feed(player_at(0, -1510.0, -9490.0, 12));
+    assert_eq!(s.visual_epoch(), before, "a feed write moved the count");
+    assert_ne!(pos(&mut s), at, "the verb answers the new place");
+}

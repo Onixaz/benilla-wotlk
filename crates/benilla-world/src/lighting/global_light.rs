@@ -77,11 +77,11 @@ pub fn pack_model_core_rows(
     rows[17][3] = sun[2].w;
 }
 
-/// The reference commits a point light's diffuse raw, `colour × intensity × modelFade` (composed
-/// at `0x716a67`), over-gamut included: `0x71ca80` stores a peak-normalized byte colour and the
-/// peak `max(1, r, g, b)`, and `0x593040` decodes them back before the GL light is set. Saturation
-/// comes from the per-vertex clamp of the summed lighting, never from the commit. Deviation: the
-/// round trip's 8-bit quantization is skipped, because it moves a channel by under 0.5 %.
+/// The reference commits a point light's diffuse raw, `colour × intensity × modelFade`, over-gamut
+/// included: its packer stores a peak-normalized byte colour and the peak `max(1, r, g, b)`, and
+/// the light setup decodes them back before the GL light is set. Saturation comes from the
+/// per-vertex clamp of the summed lighting, never from the commit. Deviation: the round trip's
+/// 8-bit quantization is skipped, because it moves a channel by under 0.5 %.
 pub fn commit_raw(rgb: [f32; 3]) -> [f32; 3] {
     rgb.map(|c| c.max(0.0))
 }
@@ -96,10 +96,9 @@ const POINT_PACK_RADIUS: f32 = 300.0;
 
 /// The rooms a point light belongs to: a WMO's MOLT fixture (the groups whose MOLR names it) or a
 /// prop's M2 light (the groups whose MODR names the prop). The reference admits a WMO's props only
-/// in frames the portal walk visits their group (`0x6838f0`, from `0x685d70`), so a culled room's
-/// torch registers no light; [`build_light_data`] drops the light while its rooms are culled. A
-/// newtype, since a bare [`crate::wmo_portal::WmoGroupVis`] would enlist the light in
-/// `apply_model_visibility`.
+/// in frames the portal walk visits their group, so a culled room's torch registers no light;
+/// [`build_light_data`] drops the light while its rooms are culled. A newtype, since a bare
+/// [`crate::wmo_portal::WmoGroupVis`] would enlist the light in `apply_model_visibility`.
 #[derive(Component)]
 pub struct LightRooms(pub(crate) crate::wmo_portal::WmoGroupVis);
 
@@ -449,7 +448,7 @@ mod tests {
     }
 
     /// A held torch, authored `(0.467, 0.290, 0.133) × 3.0`, commits its raw product through the
-    /// real packer, red 40% past white (`0x71ca80` encodes, `0x593040` decodes it back).
+    /// real packer, red 40% past white.
     #[test]
     fn the_torch_commits_the_raw_authored_product() {
         let mut app = App::new();

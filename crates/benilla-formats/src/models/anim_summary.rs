@@ -45,8 +45,8 @@ pub struct M2AnimSummary {
     pub seq0_has_bone_motion: bool,
     pub seq0_animated_bone_count: usize,
     /// Sequences sharing sequence 0's `anim_id`, its variation chain. The reference arms with
-    /// `variationIdx = −1`, a frequency-weighted pick over this chain (`0x695100`), so above 1 the
-    /// instances do not all play the same variation.
+    /// `variationIdx = −1`, a frequency-weighted pick over this chain, so above 1 the instances do
+    /// not all play the same variation.
     pub seq0_variation_count: usize,
     /// Bone global-sequence channels as `(bone, "T"/"R"/"S", period_ms)`, such as the eye-blink.
     pub global_seq_channels: Vec<(u16, &'static str, u32)>,

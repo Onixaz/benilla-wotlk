@@ -6,10 +6,10 @@ use crate::script::anim::{self, lua as anim_lua, Kind, OriginPoint};
 use super::{children_named, Loader};
 
 impl Loader<'_> {
-    /// `<Animations>` (`CScriptRegion::LoadXML_Animations` `0x4883f0`), right after the region's
-    /// `parentKey`: each `<AnimationGroup>` built, loaded and posted at once (`0x816000`), so its
-    /// `OnLoad` runs inside the owner's load. `$parent` in a group's name is the owner's name, and
-    /// in an animation's the group's (`SetName` over the script parent).
+    /// `<Animations>` (`0x4883f0`), right after the region's `parentKey`: each `<AnimationGroup>`
+    /// built, loaded and posted at once (`0x816000`), so its `OnLoad` runs inside the owner's load.
+    /// `$parent` in a group's name is the owner's name, and in an animation's the group's (named
+    /// over the script parent).
     pub(super) fn apply_animations(
         &mut self,
         el: &Element,
@@ -89,7 +89,8 @@ impl Loader<'_> {
             self.load_anim(child, aid, &anim, aname.as_deref().unwrap_or(&base), dbg);
             anims.push(aid);
         }
-        // `PostLoadXML` (`0x49c2a0`): each animation's `OnLoad`, the sort, the group's `OnLoad`.
+        // The group's post-load (`0x49c2a0`): each animation's `OnLoad`, the sort, the group's
+        // `OnLoad`.
         for aid in anims {
             anim_lua::fire(lua, aid, "OnLoad", Vec::new());
         }
@@ -98,8 +99,7 @@ impl Loader<'_> {
         Ok(())
     }
 
-    /// `CSimpleAnim::LoadXML` (`0x49b810`) and its kinds' (`0x49c170` Alpha, `0x49bb00`
-    /// Translation).
+    /// An animation's load (`0x49b810`) and its kinds' (`0x49c170` Alpha, `0x49bb00` Translation).
     fn load_anim(&mut self, node: &Element, aid: u32, anim: &Table, base: &str, dbg: &str) {
         let num = |k: &str| node.attr(k).and_then(|v| v.trim().parse::<f64>().ok());
         let lua = self.lua;

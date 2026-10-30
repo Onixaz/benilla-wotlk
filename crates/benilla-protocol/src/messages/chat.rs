@@ -34,21 +34,19 @@ pub const CHAT_MSG_RAID_WARNING: u8 = 0x58;
 pub const CHAT_MSG_RAID_BOSS_WHISPER: u8 = 0x59;
 pub const CHAT_MSG_RAID_BOSS_EMOTE: u8 = 0x5A;
 /// The server's "your message was filtered" notice: its text is the addressee's name, which the
-/// chat frame formats into `CHAT_FILTERED`; the client's spam and profanity filters exempt it
-/// (`0x49aacc`).
+/// chat frame formats into `CHAT_FILTERED`; the client's spam and profanity filters exempt it.
 pub const CHAT_MSG_FILTERED: u8 = 0x5B;
 pub const CHAT_MSG_BATTLEGROUND: u8 = 0x5C;
 pub const CHAT_MSG_BATTLEGROUND_LEADER: u8 = 0x5D;
-/// 3.3.5a's achievement lanes, numbered past 1.12.1's last: "%s has earned the achievement
-/// $a!", the earner in the receiver guid and the id after the chat tag (`0x50c1cd`).
+/// 3.3.5a's achievement lanes, numbered past 1.12.1's last: "%s has earned the achievement $a!",
+/// the earner in the receiver guid and the id after the chat tag.
 pub const CHAT_MSG_ACHIEVEMENT: u8 = 0x5E;
 pub const CHAT_MSG_GUILD_ACHIEVEMENT: u8 = 0x5F;
 /// 3.3.5a's party leader's own party line, `CHAT_MSG_PARTY_LEADER`, past the shared numbering.
 pub const CHAT_MSG_PARTY_LEADER: u8 = 0x60;
 
 /// The only chat types the 1.12 client runs its `$`-macro expander over; the rest reach the frame
-/// verbatim. This is the wire gate (`0x49d5e4-0x49d606`); the re-expansion after a name query
-/// (`0x49cf36`) omits `0x5A`.
+/// verbatim. This is the wire gate; the re-expansion after a name query omits `0x5A`.
 pub const MACRO_EXPANDED_TYPES: [u8; 8] = [
     CHAT_MSG_MONSTER_SAY,        // 0x0B
     CHAT_MSG_MONSTER_YELL,       // 0x0C
@@ -201,17 +199,16 @@ pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
 }
 
 /// Read a 3.3.5a `SMSG_MESSAGECHAT` body, or with `gm` an `SMSG_GM_MESSAGECHAT` one: the 12340
-/// client parses both in `0x50be70` (wrappers `0x50eba0`, `0x50ebc0`), as AzerothCore's
+/// client parses both (wrappers `0x50eba0`, `0x50ebc0`), as AzerothCore's
 /// `ChatHandler::BuildChatPacket` writes them. `u8 type`, `u32 language`, `u64 sender`, `u32`
 /// flags, a per-type middle, `u32 len` (NUL included), the text, `u8 chatTag`, then
 /// `u32 achievementId` on the two achievement types. The middle is
 ///
 /// - the monster and boss shapes: the sender's length-prefixed name and the receiver guid, then the
-///   receiver's length-prefixed name when that guid is neither 0, a player nor a pet (`0x50c28e`);
+///   receiver's length-prefixed name when that guid is neither 0, a player nor a pet;
 /// - `WHISPER_FOREIGN`: the sender's name and the receiver guid;
-/// - the battleground system lines: the receiver guid, then its name unless it is 0 or a player
-///   (`0x50c210`);
-/// - the achievement types: the receiver guid (`0x50c1cd`);
+/// - the battleground system lines: the receiver guid, then its name unless it is 0 or a player;
+/// - the achievement types: the receiver guid;
 /// - every other type: with `gm`, the sender's length-prefixed name; the channel name (cstring)
 ///   on `CHANNEL`; then the receiver guid.
 ///
@@ -290,8 +287,8 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Cha
     })
 }
 
-/// Whether a monster-shape receiver guid is followed by its name: set, and neither a player nor
-/// a pet (`0x50c2c3`-`0x50c2ef`).
+/// Whether a monster-shape receiver guid is followed by its name: set, and neither a player nor a
+/// pet.
 fn names_receiver(guid: u64) -> bool {
     let high = (guid >> 32) as u32;
     guid != 0 && !client_is_player(guid) && high & 0xf0f0_0000 != 0xf040_0000
@@ -337,7 +334,7 @@ pub(super) fn read_random_roll(r: &mut &[u8]) -> io::Result<(u32, u32, u32, u64)
 mod tests {
     use super::*;
 
-    /// A party leader's `/p` arrives as 3.3.5a type `0x33` (`ChatBubbleShow`'s 51), in the default
+    /// A party leader's `/p` arrives as 3.3.5a type `0x33` (the chat bubble's 51), in the default
     /// shape: language, sender, flags, receiver, text, tag. It parses to its own lane.
     #[test]
     fn a_party_leader_line_parses_to_its_own_lane() {

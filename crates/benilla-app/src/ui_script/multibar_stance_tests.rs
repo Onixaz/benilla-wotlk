@@ -248,8 +248,8 @@ fn shipped_multibars_drive_end_to_end() {
     );
 }
 
-/// The stance bar (`ShapeshiftBarFrame`) over the reference's form list (`0xb71100`): hidden at
-/// zero forms, the active form checked, a non-castable one greyed, a click queuing its spell.
+/// The stance bar (`ShapeshiftBarFrame`) over the reference's form list: hidden at zero forms, the
+/// active form checked, a non-castable one greyed, a click queuing its spell.
 #[test]
 fn shipped_stance_bar_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
@@ -375,7 +375,7 @@ fn shipped_stance_bar_drives_end_to_end() {
 
     // `ShapeshiftButtonTemplate` registers no clicks (BonusActionBarFrame.xml:19-38), so the mask
     // stays left-up only. The press pushes the button whatever its mouse button: the mask gates
-    // the click, not the pushed state (`CSimpleButton::OnLayerMouseDown`, `0x96fa80`).
+    // the click, not the pushed state (the button's mouse-down, `0x96fa80`).
     let depressed = |s: &UiScript| {
         s.extract().iter().any(|q| {
             matches!(&q.content, QuadContent::Texture { path: Some(p), .. } if p.contains("Quickslot-Depress"))
@@ -540,7 +540,7 @@ fn the_vertical_multibars_exist_hidden_on_the_reference_pages() {
 }
 
 /// Each extra bar is down until its bit of `PLAYER_FIELD_BYTES` byte 2 is set; a fresh character's
-/// byte is 0, and the bits name bars only in FrameXML (`0x4e76e0`). Bar 4 also needs bar 3
+/// byte is 0, and the bits name bars only in FrameXML. Bar 4 also needs bar 3
 /// (MultiActionBars.lua:73), since `MultiBarLeft` anchors to `MultiBarRight`.
 #[test]
 fn every_extra_bar_stays_down_until_its_own_toggle_is_set() {
@@ -1399,8 +1399,8 @@ fn the_middle_strip_tiles_along_its_length_only() {
     );
 }
 
-/// The reference fires `UPDATE_SHAPESHIFT_FORMS` only when the form list changes (`0x4b28ff`,
-/// `0x4b2e43`): its `ShapeshiftBar_Update` re-shows the middle strip with no manage pass
+/// The reference fires `UPDATE_SHAPESHIFT_FORMS` only when the form list changes: its
+/// `ShapeshiftBar_Update` re-shows the middle strip with no manage pass
 /// (BonusActionBarFrame.lua:170, 177), so a state change sent as one would draw the strip over the
 /// raised bar. Driven through [`crate::ui_shapeshift::push_forms`].
 #[test]

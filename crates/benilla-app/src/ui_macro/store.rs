@@ -7,20 +7,20 @@
 //! END
 //! ```
 //!
-//! - Write (`SaveMacrosCallback` `0x5668f0`): `MACRO %d "%s" %s` (id, name, icon), the body's
+//! - Write (`0x5668f0`): `MACRO %d "%s" %s` (id, name, icon), the body's
 //!   non-empty lines, `END`. The character set's ids carry the base `0x1000000` (`0xa0f834`); the
 //!   icon is the bare texture name under `Interface\Icons\`.
-//! - Read (`LoadMacrosCallback` `0x567c10`): outside a macro a line must open with `MACRO`, any
+//! - Read (`0x567c10`): outside a macro a line must open with `MACRO`, any
 //!   case, and name an id not 0 and not taken (one under the set's base gains it), a quoted name
 //!   and an optional icon; inside one, a line that is `END`, any case, closes it and every other
 //!   non-empty line is body. 36 per set at most; a malformed line is skipped.
 
 use benilla_ui::script::MacroView;
 
-/// The path prefix the client prepends to a stored icon basename (`0x84ca64`).
+/// The path prefix the client prepends to a stored icon basename.
 pub(super) const ICON_PREFIX: &str = "Interface\\Icons\\";
 
-/// The id base of the character set (`s_macroIDBase` `0xa0f834`); the account set's is 0.
+/// The id base of the character set (`0xa0f834`); the account set's is 0.
 pub(super) const CHARACTER_BASE: u32 = 0x100_0000;
 
 /// The reader's cap per set (`0x567c10`, `0x24`).

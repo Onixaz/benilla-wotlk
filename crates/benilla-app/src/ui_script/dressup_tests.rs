@@ -297,8 +297,7 @@ fn the_paper_doll_slots_preview_and_post_what_you_wear() {
 }
 
 /// An unresolved item has no link, which stock `PaperDollFrame.lua:653` inserts unguarded:
-/// `EditBox:Insert(nil)` is a no-op, as the reference reads its argument with `lua_tostring`
-/// (`0x7984b0`).
+/// `EditBox:Insert(nil)` is a no-op, as the reference reads its argument with `lua_tostring`.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shift_clicking_an_unresolved_slot_posts_nothing_and_never_raises() {

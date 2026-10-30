@@ -1,7 +1,7 @@
 //! The WMO-interior claims published each frame: [`CurrentWmoInterior`], the player's claim by the
 //! render seed's ray (faces and portal crossings), and [`CurrentAreaInterior`], the zone-text claim
-//! (faces only, the CGLight node's `+0x90` bit 0 set by `0x6a87f0`). A doorway portal under the
-//! eye seeds the render flood without making you indoors.
+//! (faces only, the light node's `+0x90` bit 0 set). A doorway portal under the eye seeds the
+//! render flood without making you indoors.
 
 use bevy::math::Affine3A;
 use bevy::prelude::*;
@@ -85,16 +85,16 @@ pub struct WmoInteriorKeys {
 }
 
 /// Height (yd) above the feet of [`CurrentWmoInterior`]'s probe. The position-cast legs cast from
-/// the feet (`0x6a8a20`): a lifted origin can take terrain buried above a floor as nearest.
+/// the feet: a lifted origin can take terrain buried above a floor as nearest.
 pub const INTERIOR_PROBE_HEIGHT: f32 = 1.7;
 
 /// Float-safety lift (yd) for the position-cast legs: feet rest on the floor plane, and a coplanar
 /// `z <= eye.z` test must not lose the floor to rounding.
 pub(crate) const POSITION_PROBE_LIFT: f32 = 0.1;
 
-/// The zone-text indoor claim, the CGLight node's `[node+0x90]` bit 0 (`0x6a87f0`): the keys of
-/// the group owning the nearest face under the player (faces only, EXTERIOR excluded, terrain
-/// raced, 1000 yd), or `None` outdoors.
+/// The zone-text indoor claim, the light node's `[node+0x90]` bit 0: the keys of the group owning
+/// the nearest face under the player (faces only, EXTERIOR excluded, terrain raced, 1000 yd), or
+/// `None` outdoors.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CurrentAreaInterior(pub Option<WmoInteriorKeys>);
 
@@ -109,7 +109,7 @@ pub(super) fn track_area_interior(
     adt_tiles: Res<Assets<AdtTile>>,
     mut current: ResMut<CurrentAreaInterior>,
 ) {
-    // Cast from the position, lifted only for float safety, as the client does (`0x6a8a20`).
+    // Cast from the position, lifted only for float safety, as the client does.
     let eye_world = if let Some(body) = viewer.at {
         body + Vec3::Y * POSITION_PROBE_LIFT
     } else if let Some(cam_t) = cam.iter().next() {
@@ -157,8 +157,8 @@ pub(super) fn track_area_interior(
 }
 
 /// Track [`CurrentWmoInterior`] and [`PlayerWmoRoom`] from the character, where the client's audio
-/// listener sits (`SoundListenerAtCharacter` default 1, `0x457890`), not the camera, which stands
-/// in before login. Portal-less models count, unlike in the PVS.
+/// listener sits (`SoundListenerAtCharacter` default 1), not the camera, which stands in before
+/// login. Portal-less models count, unlike in the PVS.
 pub(super) fn track_current_interior(
     wmos: Res<Assets<WmoModel>>,
     viewer: Res<crate::view::Viewer>,
@@ -176,8 +176,8 @@ pub(super) fn track_current_interior(
     } else {
         return;
     };
-    // The terrain leg, sampled once for the column (`GetAreaID` races the same two probes,
-    // `0x670345`): a tunnel under a hill must not claim the player on the grass above it.
+    // The terrain leg, sampled once for the column (the area lookup races the same two probes): a
+    // tunnel under a hill must not claim the player on the grass above it.
     let terrain = terrain_height_under(&streamer, &adt_tiles, eye_world);
     let mut found = None;
     let mut found_room = None;
@@ -218,9 +218,9 @@ pub(super) fn track_current_interior(
 const UNIT_ROOM_RESAMPLE_DIST_SQ: f32 = 0.25 * 0.25;
 
 /// Maintain [`UnitWmoRoom`] on every net entity with the faces-only down-ray of the zone-text
-/// claim, cast from the unit's own position as the client casts its position legs (`0x6a8a20`).
-/// Which leg the reference's per-unit liquid depth uses, and whether it scopes to the group rather
-/// than the placement, is untraced.
+/// claim, cast from the unit's own position as the client casts its position legs. Which leg the
+/// reference's per-unit liquid depth uses, and whether it scopes to the group rather than the
+/// placement, is untraced.
 pub(super) fn track_unit_interiors(
     mut commands: Commands,
     wmos: Res<Assets<WmoModel>>,
@@ -339,8 +339,8 @@ fn room_cast(
 }
 
 /// Whether a world position is indoors for the unit light law: the nearest surface under it is a
-/// face of a WMO group with neither `0x8` nor `0x40`, the lighting-class fork on `MOGI & 0x48`
-/// (`0x6a87f0`). A WMO without a `WMOAreaTable` identity counts.
+/// face of a WMO group with neither `0x8` nor `0x40`, the lighting-class fork on `MOGI & 0x48`. A
+/// WMO without a `WMOAreaTable` identity counts.
 pub fn indoors_at<'a>(
     wmos: &Assets<WmoModel>,
     instances: impl IntoIterator<Item = &'a WmoPortalInstance>,
@@ -363,15 +363,15 @@ pub fn indoors_at<'a>(
 }
 
 /// Which attach a light node uses to find its WMO group: `[node+0x90]` bit `0x2000`, set at node
-/// creation from the typemask (`0x613e10`/`0x670db0`) and read by the dispatch `0x6a86d0`, which
-/// has no subclass test: the lane follows the object kind, not the shading law.
+/// creation from the typemask and read by the dispatch, which has no subclass test: the lane
+/// follows the object kind, not the shading law.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LightAttach {
-    /// Units, players and ADT/WMO doodads: the down-ray attach `0x6a8a20`, from the node position
+    /// Units, players and ADT/WMO doodads: the down-ray attach, from the node position
     /// (`[node+0xa8]`).
     DownRay,
-    /// GameObjects: the containment attach `0x6a8c10` → `0x6a8ed0`, from the world bounding-box
-    /// centre (`[node+0x5c]`, `0x6717d0`); on a downward miss it retries 1000 yd up (`0x6a908d`).
+    /// GameObjects: the containment attach, from the world bounding-box centre (`[node+0x5c]`); on
+    /// a downward miss it retries 1000 yd up.
     Containment,
 }
 
@@ -380,11 +380,11 @@ pub enum IndoorVerdict {
     /// No WMO face under the position: the exterior law, MCSH-driven 2.5/0.5 intensity.
     Outdoors,
     /// An outdoor-class WMO face (`MOGI & 0x48`) is nearest: the exterior law at the forced-lit
-    /// 2.5, not sampling the terrain MCSH beneath (`0x6a8a20` sets skip-shadow `[node+0xd] |= 0x2`
-    /// on its WMO branch for every node subclass, `0x6a8bc7`).
+    /// 2.5, not sampling the terrain MCSH beneath (the reference sets skip-shadow
+    /// `[node+0xd] |= 0x2` on its WMO branch for every node subclass).
     OutdoorsOnWmo,
-    /// Indoors, but the footprint ray missed every MOCV face or the hit face's MOPY bit 0x1
-    /// selects the exterior colours (`0x6a8410`): the plain matte variant.
+    /// Indoors, but the footprint ray missed every MOCV face or the hit face's MOPY bit 0x1 selects
+    /// the exterior colours: the plain matte variant.
     DayNight,
     /// Indoors over a baked floor: the hit's barycentric MOCV bytes and the hit group's MOLR lobes
     /// in world (Bevy) space, colour × intensity.
@@ -396,12 +396,12 @@ pub enum IndoorVerdict {
 
 /// A position's interior light verdict: the [`down_ray_claim`] classify runs per placement and the
 /// nearest claim across placements wins, the client's one global nearest hit. An interior winner
-/// runs the footprint ray on that placement's mesh (`0x6717d0` → `0x69e4c0`); the MOLR lobes come
-/// from the footprint hit's group, where the reference's link between the two rays is untraced.
+/// runs the footprint ray on that placement's mesh; the MOLR lobes come from the footprint hit's
+/// group, where the reference's link between the two rays is untraced.
 ///
 /// `anchor_world` is the attach's anchor ([`LightAttach`]). Also returns the winning room as
 /// `(key, group)`, or `None` outdoors: the per-(instance, group) render record the attach creates
-/// (`0x685f85`, `[P+0x98]`), where the interior-fog gate is asked. Pass `()` as the key to skip it.
+/// (`[P+0x98]`), where the interior-fog gate is asked. Pass `()` as the key to skip it.
 pub fn indoor_verdict_at<'a, K: Copy>(
     wmos: &'a Assets<WmoModel>,
     instances: impl IntoIterator<Item = (K, &'a WmoPortalInstance)>,
@@ -452,8 +452,8 @@ pub fn indoor_verdict_among<K: Copy>(
     let probe_world = anchor_world + Vec3::Y * POSITION_PROBE_LIFT;
     let terrain = terrain_height_under(streamer, adt_tiles, probe_world);
     let mut best: Option<(DownRayClaim, &WmoModel, &WmoPortalInstance, [f32; 3], K)> = None;
-    // The containment lane's upward retry (`0x6a9093`, +1000 yd) runs only when the whole downward
-    // pass found nothing, so no claim is arbitrated against one cast the other way.
+    // The containment lane's upward retry (+1000 yd) runs only when the whole downward pass found
+    // nothing, so no claim is arbitrated against one cast the other way.
     for retry_up in [false, true] {
         if retry_up && (best.is_some() || !matches!(attach, LightAttach::Containment)) {
             break;
@@ -499,11 +499,11 @@ pub fn indoor_verdict_among<K: Copy>(
     if claim.outdoor {
         return (IndoorVerdict::OutdoorsOnWmo, None);
     }
-    // The room is the attach ray's group (`0x6a8a20`), not the footprint sample's: the render
-    // record hangs off the attach, and the footprint ray only picks the bake colours.
+    // The room is the attach ray's group, not the footprint sample's: the render record hangs off
+    // the attach, and the footprint ray only picks the bake colours.
     let room = Some((key, claim.group));
     // The footprint sample, on the winning placement only (an unbounded upward retry would let a
-    // deck overhead adopt a unit in the open); the down-ray lane never retries upward (`0x6a8ab0`).
+    // deck overhead adopt a unit in the open); the down-ray lane never retries upward.
     let sample = footprint_sample(model, probe_local).or_else(|| {
         matches!(attach, LightAttach::Containment)
             .then(|| footprint_sample_above(model, probe_local))
@@ -535,9 +535,9 @@ pub fn indoor_verdict_among<K: Copy>(
 }
 
 /// The footprint down-ray: the nearest render face below the probe in the interior groups (faces
-/// pre-filtered by the client's BSP mask 0x88), with its group, its barycentric MOCV in bytes
-/// (`0x6a77e0` takes a byte colour) and whether MOPY bit 0x1 selects day/night. An exact tie keeps
-/// the later face (`0x6bc780`), in face order rather than BSP order; no floor was seen with one.
+/// pre-filtered by the client's BSP mask 0x88), with its group, its barycentric MOCV in bytes (the
+/// reference takes a byte colour) and whether MOPY bit 0x1 selects day/night. An exact tie keeps
+/// the later face, in face order rather than BSP order; no floor was seen with one.
 pub(super) fn footprint_sample(
     model: &WmoModel,
     probe_local: [f32; 3],
@@ -546,8 +546,8 @@ pub(super) fn footprint_sample(
 }
 
 /// The footstep material ray, the second of the client's two: re-cast over `group`'s render faces,
-/// the winning face's `MOPY` material → `MOMT` ground type (`0x6a26c0`). `None` is the client's
-/// `-1`, silent: never a reason to fall back to terrain, since the building won the column.
+/// the winning face's `MOPY` material → `MOMT` ground type. `None` is the client's `-1`, silent:
+/// never a reason to fall back to terrain, since the building won the column.
 pub(crate) fn surface_terrain_sample(
     model: &WmoModel,
     group: usize,
@@ -561,8 +561,8 @@ pub(crate) fn surface_terrain_sample(
         .copied()
 }
 
-/// The containment attach's upward retry (`0x6a908d`, re-cast to `anchor.z + 1000`): the nearest
-/// render face above the probe.
+/// The containment attach's upward retry (re-cast to `anchor.z + 1000`): the nearest render face
+/// above the probe.
 pub(super) fn footprint_sample_above(
     model: &WmoModel,
     probe_local: [f32; 3],
@@ -857,8 +857,8 @@ mod tests {
         assert_eq!(footprint_sample(&model, [-1.0, -1.0, -1.0]), None);
     }
 
-    /// The containment attach's upward retry (`0x6a908d`): after a downward miss the nearest face
-    /// above answers, with the group, MOCV and MOPY it gives from below.
+    /// The containment attach's upward retry: after a downward miss the nearest face above answers,
+    /// with the group, MOCV and MOPY it gives from below.
     #[test]
     fn the_upward_retry_finds_the_floor_a_sunk_object_sits_under() {
         let mut model = bare_model();

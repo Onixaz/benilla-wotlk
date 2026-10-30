@@ -42,7 +42,7 @@ pub(crate) struct SheetTables {
     pub(crate) form_flags: HashMap<u32, u32>,
 }
 
-/// `GetHealthRegenRateFromSpirit`'s cap on the spirit `gtOCTRegenHP` prices (`[0xadaa10]`).
+/// The spirit health-regen rate's cap on the spirit `gtOCTRegenHP` prices (`[0xadaa10]`).
 const SPIRIT_REGEN_CAP: i32 = 50;
 
 /// The figures 12340 derives from a unit's level, class and stats through the gt tables, for the
@@ -86,7 +86,7 @@ fn gt_derived(store: &ObjectStore, gt: &GameTables) -> [f32; 4] {
     ]
 }
 
-/// `CGPlayer_C::GetCombatRatingPct` (`0x6de410`) for each rating: the points over the level's
+/// The player's combat rating percentage (`0x6de410`) for each rating: the points over the level's
 /// `gtCombatRatings` price, times the class's `gtOCTClassCombatRatingScalar`; 0 when either is 0.
 fn combat_rating_bonus(store: &ObjectStore, gt: &GameTables) -> [f32; 25] {
     let f = &store.0;
@@ -167,11 +167,10 @@ impl Plugin for UiCharPlugin {
 type SkillBlock = Option<(u64, std::collections::HashMap<u16, u16>)>;
 
 /// One skill-up chat line, `ERR_SKILL_UP_SI` or `ERR_SKILL_GAINED_S`, pushed as `CHAT_MSG_SKILL`.
-/// The server sends no skill-up message; the reference's watcher on the skill value words
-/// (`0x5de180`) prints these through `0x496720`, silent for a line whose `SkillRaceClassInfo`
-/// flags carry `0x402` or that no row admits for this race and class (`0x5de352`), so a level-up
-/// prints none. Not `ui_action::show_messages`: that sink sends every chat row as
-/// `CHAT_MSG_SYSTEM`, and these two ask for `CHAT_MSG_SKILL` (23).
+/// The server sends no skill-up message; the reference's watcher on the skill value words prints
+/// these, silent for a line whose `SkillRaceClassInfo` flags carry `0x402` or that no row admits
+/// for this race and class, so a level-up prints none. Not `ui_action::show_messages`: that sink
+/// sends every chat row as `CHAT_MSG_SYSTEM`, and these two ask for `CHAT_MSG_SKILL` (23).
 fn skill_line(script: &UiScript, chat: &mut crate::ui_chat::ChatLog, key: &str, args: &[Arg<'_>]) {
     let Some(template) = script
         .lua()
@@ -200,10 +199,10 @@ fn watch_skill_ups(
         return;
     };
     // The memo is per VM and a new VM re-seeds silently; with no VM nothing is diffed, or a stale
-    // skill-up would replay at the next login. `SKILL_LINES_CHANGED` fires here only when a line
-    // is added, removed or changes value; the reference fires it at the end of every skill-list
-    // rebuild (`0x4d2fec`), which its value, max, permanent-bonus and temporary-bonus watchers
-    // run (registered `0x5dda54`-`0x5ddaf0`), and from both header collapse and expand verbs.
+    // skill-up would replay at the next login. `SKILL_LINES_CHANGED` fires here only when a line is
+    // added, removed or changes value; the reference fires it at the end of every skill-list
+    // rebuild, which its value, max, permanent-bonus and temporary-bonus watchers run, and from
+    // both header collapse and expand verbs.
     let Some(mut script) = script else {
         return;
     };
@@ -339,8 +338,8 @@ fn feed_skills(
     *last = Some(fresh);
 }
 
-/// One skill slot as a Skills-tab row, or `None` where the reference's list build (`0x4d2cb0`)
-/// skips it; the checks run in that build's order.
+/// One skill slot as a Skills-tab row, or `None` where the reference's list build skips it; the
+/// checks run in that build's order.
 pub(crate) fn skills_row(
     slot: &benilla_protocol::messages::PlayerSkillSlot,
     catalog: &benilla_formats::SkillLineCatalog,
@@ -377,7 +376,7 @@ pub(crate) fn skills_row(
         category_name: category_name.to_string(),
         category_order,
         description: line.description.clone(),
-        // The unlearnable bit and a nonzero skill step (`0x4d3953`).
+        // The unlearnable bit and a nonzero skill step.
         abandonable: slot.step != 0 && rc.unlearnable(),
         mono: rc.mono(),
     })
@@ -422,8 +421,8 @@ fn weapon_skill_id(
     weapon_subclass_skill(t.subclass).unwrap_or(SKILL_UNARMED)
 }
 
-/// A skill's `(value + permanent bonus, temporary bonus)`, split as the reference's `0x5ea460`
-/// splits it; value 0 skips the permanent add (`0x5ea4b4`). Signed: a malus can exceed the value.
+/// A skill's `(value + permanent bonus, temporary bonus)`, split as the reference splits it; value
+/// 0 skips the permanent add. Signed: a malus can exceed the value.
 fn skill_pair(store: &ObjectStore, skill_id: u32) -> (i32, i32) {
     for i in 0..PLAYER_SKILL_SLOTS {
         if let Some(s) = store.0.player_skill(i) {
@@ -588,7 +587,7 @@ fn combat_stats(
         }),
         combat_rating_bonus: tables.map_or([0.0; 25], |t| combat_rating_bonus(store, &t.gt)),
         // `GetManaRegen` answers only a mana user (power type byte 0, `0x612abb`); the base table
-        // `CGUnit::GetPowerRegenBase` adds is 0 for mana.
+        // the unit's power-regen base adds is 0 for mana.
         mana_regen: (f.unit_power_type() == 0).then(|| {
             [
                 f.unit_power_regen(0, false).unwrap_or(0.0),
@@ -631,7 +630,7 @@ fn slot_view(
     let entry = obj.object_entry()?;
     let count = obj.item_stack_count().unwrap_or(1).max(1);
     // `OBJECT_FIELD_TYPE & TYPEMASK_CONTAINER`, read off the object as `GetInventoryItemCount`'s
-    // first fork reads it (`0x4c87a6`).
+    // first fork reads it.
     let is_container = obj.is_container();
     let content_guids: Vec<u64> = {
         let slots = obj.container_num_slots().unwrap_or(0).min(36) as u8;
@@ -643,8 +642,8 @@ fn slot_view(
         .filter(|&(_, max)| max > 0);
     // `ITEM_FIELD_FLAGS`, for its wrapped (0x08) and force-red (0x10) bits.
     let flags = obj.item_flags().unwrap_or(0);
-    // Soulbound or carrying a binding enchant (`0x5da2c0`), read off the raw descriptor, never off
-    // the enchant lines below.
+    // Soulbound or carrying a binding enchant, read off the raw descriptor, never off the enchant
+    // lines below.
     let already_bound = crate::items::already_bound(obj, rolls.enchants);
     let creator = obj
         .item_creator()
@@ -685,8 +684,8 @@ fn slot_view(
         None => (None, 0, 0, None, Vec::new(), (0, 0), false),
     };
     // A container counts its contents' stacks when its subclass's `DisplayFlags` has 0x4, else 0
-    // (`GetInventoryItemCount` `0x4c8680`: `0x4c881a`, summed by `0x622130`); the bit is on Soul
-    // Bag (1/1) and the Quiver class (11/0..3) only, so a plain bag shows no count.
+    // (`GetInventoryItemCount`); the bit is on Soul Bag (1/1) and the Quiver class (11/0..3) only,
+    // so a plain bag shows no count.
     let counts_contents = sub_classes.is_some_and(|c| c.0.display_flags(kind.0, kind.1) & 0x4 != 0);
     let contents_count = is_container.then(|| {
         if counts_contents {
@@ -1046,8 +1045,8 @@ pub(crate) fn feed_char(
     };
 
     // `GetWeaponEnchantInfo`'s data, pushed every frame outside the gate: the remaining time is a
-    // live countdown, which the reference also recomputes per call (`0x5d9d00`). Pushed first, so
-    // handlers the snapshots fire read the fresh value.
+    // live countdown, which the reference also recomputes per call. Pushed first, so handlers the
+    // snapshots fire read the fresh value.
     let objects = &inv.objects;
     script.set_weapon_enchants(
         weapon_enchant(store, objects, EQUIPMENT_SLOT_MAINHAND),
@@ -1207,13 +1206,12 @@ fn same_item(a: Option<&InvSlotView>, b: Option<&InvSlotView>) -> bool {
     }
 }
 
-/// The 0-based weapon slots `GetWeaponEnchantInfo` (`0x4c9790`) reads (`0x4c97c3`, `0x4c988b`);
-/// the frames' live ids are one higher.
+/// The 0-based weapon slots `GetWeaponEnchantInfo` reads; the frames' live ids are one higher.
 const EQUIPMENT_SLOT_MAINHAND: u8 = 15;
 const EQUIPMENT_SLOT_OFFHAND: u8 = 16;
 
 /// The temporary enchantment slot (0 permanent, 2..6 random properties), as the reference's
-/// remaining-time read passes it (`0x4c9828`).
+/// remaining-time read passes it.
 const TEMP_ENCHANTMENT_SLOT: u8 = 1;
 
 /// One weapon's temporary enchantment, read off the raw descriptor rather than
@@ -1243,7 +1241,7 @@ mod tests {
     use benilla_protocol::messages::ObjectFields;
     use bevy::ecs::system::RunSystemOnce;
 
-    /// The reference's split (`0x5ea460`); a value-0 line skips the permanent add (`0x5ea4b4`).
+    /// The reference's split; a value-0 line skips the permanent add.
     #[test]
     fn a_skill_pair_folds_the_permanent_bonus_into_the_base() {
         /// `PLAYER_SKILL_INFO_1_1`: id|step, value|max, temp|perm per slot.

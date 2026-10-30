@@ -1,6 +1,6 @@
-//! The equipment manager's wire: the server's list and replies into the VM, which owns the sets
-//! as 12340's `CGEquipmentManager` does, and the VM's saves, deletes and swaps out. The action
-//! bar's set slots read the VM's list back through [`PlayerActions::equipment_sets`].
+//! The equipment manager's wire: the server's list and replies into the VM, which owns the sets as
+//! 12340's equipment manager does, and the VM's saves, deletes and swaps out. The action bar's set
+//! slots read the VM's list back through [`PlayerActions::equipment_sets`].
 
 use benilla_protocol::messages::{EquipmentSet, EquipmentSetUseSlot};
 use benilla_protocol::{SessionEvent, SessionEventKind};

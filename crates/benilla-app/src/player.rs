@@ -114,26 +114,24 @@ pub(crate) use view_subject::{RemoteView, VehicleFocus, ViewSubject};
 pub(crate) struct ViewSubjectPublish;
 
 /// `UNIT_FLAG_STUNNED`, the `UNIT_FIELD_FLAGS` bit that stops turning. The reference reads it off
-/// the descriptor (`[[unit+0x110]+0xa0]`, predicate `0x5145b0`, an inverted `not/shr/and` test) at
-/// `0x514755`, which skips the turn and pitch emitters and stops either in flight. StartTurn
-/// (`0x602b20`) and StartPitch (`0x602b80`), the only two of the twelve relayed `MSG_MOVE_*`
-/// wrappers with a stun test, refuse on it, and it suppresses the auto-face smoothing
-/// (`0x600dd7`). No reader touches animation: its sites at `0x5eb4f2` and `0x5ec219` are in
-/// `ToggleSheath` (`0x5eb480`) and `CanLootNow` (`0x5ec110`).
+/// the descriptor (`[[unit+0x110]+0xa0]`, an inverted `not/shr/and` test), which skips the turn and
+/// pitch emitters and stops either in flight. The turn start and the pitch start, the only two of
+/// the twelve relayed `MSG_MOVE_*` wrappers with a stun test, refuse on it, and it suppresses the
+/// auto-face smoothing. No reader touches animation: its sites are in `ToggleSheath` and the
+/// loot-now check.
 ///
 /// vmangos's stun aura sets it (`SpellAuras.cpp:3523`) and roots (`SpellAuras.cpp:3542`), where a
 /// root aura only roots (`SpellAuras.cpp:3772`): a rooted player can still turn, a stunned one
 /// cannot.
 pub(crate) const UNIT_FLAG_STUNNED: u32 = 0x0004_0000;
 
-/// `IsSelfControlled` (`0x5fa550`, `test eax, 0xc00004` at `0x5fa566`): false while
-/// `DISABLE_MOVE` (`0x4`), `CONFUSED` (`0x400000`) or `FLEEING` (`0x800000`) is set; the stun and
-/// taxi bits are not in the mask. It is true for an ordinary player, so a gate on it fires in the
-/// normal case and is suppressed while feared. Its readers are the movement and collision layer
-/// and `DoEmote`.
+/// The reference's self-control test (`test eax, 0xc00004`): false while `DISABLE_MOVE` (`0x4`),
+/// `CONFUSED` (`0x400000`) or `FLEEING` (`0x800000`) is set; the stun and taxi bits are not in the
+/// mask. It is true for an ordinary player, so a gate on it fires in the normal case and is
+/// suppressed while feared. Its readers are the movement and collision layer and `DoEmote`.
 ///
-/// `POSSESSED` (`0x1000000`) is not handled: the reference recurses on the charmer's guid
-/// (`0x5fa582`) and answers with the charmer's flags, which needs the charmer's descriptor.
+/// `POSSESSED` (`0x1000000`) is not handled: the reference recurses on the charmer's guid and
+/// answers with the charmer's flags, which needs the charmer's descriptor.
 pub(crate) fn self_controlled(unit_flags: u32) -> bool {
     /// `DISABLE_MOVE | CONFUSED | FLEEING`, the reference's literal `0xc00004`.
     const NOT_SELF_CONTROLLED: u32 = 0x0000_0004 | 0x0040_0000 | 0x0080_0000;
@@ -142,27 +140,26 @@ pub(crate) fn self_controlled(unit_flags: u32) -> bool {
 
 /// `UNIT_FLAG_IN_COMBAT`, bit 19 of `UNIT_FIELD_FLAGS` (vmangos `UnitDefines.h:564`), read by the
 /// client as `shr reg,0x13; test rl,1`. The local player has no separate combat latch: its two
-/// hardcoded readers (`0x482f70`, `0x4d6038`) and `UnitAffectingCombat("player")` read this bit.
+/// hardcoded readers and `UnitAffectingCombat("player")` read this bit.
 pub(crate) const UNIT_FLAG_IN_COMBAT: u32 = 0x0008_0000;
 
 /// `UNIT_FLAG_TAXI_FLIGHT`, bit 20 of `UNIT_FIELD_FLAGS` (vmangos `UnitDefines.h:565`), read by the
-/// client as `shr reg,0x14; test rl,1` at 20 sites with no shared gate, among them
-/// `SetStandState`'s third guard, the idle auto-AFK gate and `UnitOnTaxi`.
+/// client as `shr reg,0x14; test rl,1` at 20 sites with no shared gate, among them the stand-state
+/// setter's third guard, the idle auto-AFK gate and `UnitOnTaxi`.
 pub(crate) const UNIT_FLAG_TAXI_FLIGHT: u32 = 0x0010_0000;
 
-/// A stand-state request for [`posture`]'s one setter, the client's `SetStandState` (`0x5ed430`:
-/// send `CMSG_STANDSTATECHANGE` and apply locally through `0x6127b0`). The posture emotes (`/sit`,
-/// `/sleep`, `/kneel`, `/stand`, `/lay`) send it, as `DoEmote`'s `EmoteSpecProc == 1` branch calls
-/// the setter the `X` key does; the server sets no posture for a state text emote
-/// (`ChatHandler.cpp:729-733`). States are `UnitStandStateType`: 0 stand, 1 sit, 3 sleep, 8 kneel.
+/// A stand-state request for [`posture`]'s one setter, the client's stand-state setter (send
+/// `CMSG_STANDSTATECHANGE` and apply locally). The posture emotes (`/sit`, `/sleep`, `/kneel`,
+/// `/stand`, `/lay`) send it, as `DoEmote`'s `EmoteSpecProc == 1` branch calls the setter the `X`
+/// key does; the server sets no posture for a state text emote (`ChatHandler.cpp:729-733`). States
+/// are `UnitStandStateType`: 0 stand, 1 sit, 3 sleep, 8 kneel.
 #[derive(bevy::ecs::message::Message, Clone, Copy, Debug)]
 pub(crate) struct StandStateRequest {
     pub(crate) state: u8,
 }
 
 /// `SMSG_STANDSTATE_UPDATE` for our body (the eat and drink sit, the stand on damage), applied by
-/// [`posture`] through the same local setter with no refusal and no packet back (`0x603e50` →
-/// `0x6127b0`).
+/// [`posture`] through the same local setter with no refusal and no packet back.
 #[derive(bevy::ecs::message::Message, Clone, Copy, Debug)]
 pub(crate) struct ServerStandState {
     pub(crate) state: u8,
@@ -183,8 +180,8 @@ pub(super) type BodyQuery<'w, 's> = Query<
         Has<crate::creature_anim::Engaged>,
         Option<&'static crate::net::UnitSpeeds>,
         Option<&'static mut BodyTwist>,
-        // Both hands and the ranged slot, for the `Z` toggle's cycle (the reference's
-        // `GetWeapon(0/1/2)`).
+        // Both hands and the ranged slot, for the `Z` toggle's cycle (the reference reads each
+        // through the weapon getter).
         Option<&'static crate::creature_anim::Wielded>,
         // The raw `OBJECT_FIELD_SCALE_X` for the pivot height, not the transform's 2 s-eased scale.
         Option<&'static crate::net::NetEntity>,
@@ -347,8 +344,8 @@ impl Plugin for PlayerPlugin {
                 .in_set(crate::char_select::InWorldGated),
         )
         // The world's right mouse-down, off that latch and ahead of `control`, the button's
-        // binding, as `0x483c40` runs its hook before `ExecuteBinding`; off in capture mode, like
-        // `control`.
+        // binding, as the reference's world frame runs its hook before executing the binding; off
+        // in capture mode, like `control`.
         .add_systems(
             Update,
             camera::send_world_right_press

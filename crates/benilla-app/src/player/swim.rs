@@ -1,15 +1,14 @@
 //! Swim mode: deep enough, the avatar leaves the floor and swims in 3D along its pitched facing.
-//! The reference's decision `0x6030c0` latches `MOVEFLAG_SWIMMING` (`0x00200000`) on the depth
-//! over the feet against 0.75 × the unit's collision height, with a 1/36-yd hysteresis; there is
-//! no wade flag (`0x40000000` is HOVER).
+//! The reference's decision latches `MOVEFLAG_SWIMMING` (`0x00200000`) on the depth over the feet
+//! against 0.75 × the unit's collision height, with a 1/36-yd hysteresis; there is no wade flag
+//! (`0x40000000` is HOVER).
 //!
 //! The floating resolver bypasses gravity: an idle swimmer's depth is frozen, the vertical comes
 //! only from the pitched stroke, and the one constraint is a top cap with the feet at
-//! `surface - 0.75·h` (`0x632ba0`), satisfied again when the surface falls ([`settle_to_rest`]) and
-//! never pulling a deeper swimmer up. A rise into the cap turns level at full speed
-//! ([`cap_redirect`]). The way out through the top is the jump an ascent ends in ([`breach_step`],
-//! `0x730d10`); the ways to rise are the ascent ([`super::vertical`]) and aiming up while swimming
-//! forward (`0x7c6f70`).
+//! `surface - 0.75·h`, satisfied again when the surface falls ([`settle_to_rest`]) and never
+//! pulling a deeper swimmer up. A rise into the cap turns level at full speed ([`cap_redirect`]).
+//! The way out through the top is the jump an ascent ends in ([`breach_step`], `0x730d10`); the
+//! ways to rise are the ascent ([`super::vertical`]) and aiming up while swimming forward.
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -32,19 +31,16 @@ pub(super) const SWIM_BACK_SPEED: f32 = 2.5;
 /// `0x9883f0`), about 14% over the land jump's 7.955547.
 const SWIM_JUMP_SPEED: f32 = 9.096_748;
 
-/// The share of the unit's collision height the water must cover to swim (`0x8012cc`, compared
-/// at `0x6030c0`).
+/// The share of the unit's collision height the water must cover to swim.
 const SWIM_DEPTH_FRAC: f32 = 0.75;
-/// The enter/leave band (yd, `0x7ff9d0`): enter above `0.75·h`, leave below `0.75·h - 1/36`,
-/// hold between (`0x603100`, `0x6031c0`).
+/// The enter/leave band (yd): enter above `0.75·h`, leave below `0.75·h - 1/36`, hold between.
 const SWIM_HYSTERESIS: f32 = 1.0 / 36.0;
 
-/// The `UNIT_FIELD_FLAGS` bits that let a unit swim: `PLAYER_CONTROLLED` (0x8, set on every
-/// player, vmangos `Player.cpp:462`), `PET_IN_COMBAT` (0x800) and `USE_SWIM_ANIMATION` (0x8000,
-/// from the creature's `CAN_SWIM`). `0x6030c0` tests them on both legs: with none set a unit
-/// cannot enter and is stopped at any depth (`0x6031b4`, then `0x60dff0`). The client's only reads
-/// of 0x8000 are this predicate (`0x5fb922`, `0x603111`, `0x6031d0`). Every body a player can be
-/// [`crate::net::Embodied`] in has 0x8, so only the creature marker
+/// The `UNIT_FIELD_FLAGS` bits that let a unit swim: `PLAYER_CONTROLLED` (0x8, set on every player,
+/// vmangos `Player.cpp:462`), `PET_IN_COMBAT` (0x800) and `USE_SWIM_ANIMATION` (0x8000, from the
+/// creature's `CAN_SWIM`). The reference tests them on both legs: with none set a unit cannot enter
+/// and is stopped at any depth. The client's only reads of 0x8000 are this predicate. Every body a
+/// player can be [`crate::net::Embodied`] in has 0x8, so only the creature marker
 /// (`crate::net::motion::spline::mark_swimming_creatures`) needs this.
 const SWIM_UNIT_FLAGS: u32 = 0x8 | 0x800 | 0x8000;
 
@@ -60,13 +56,13 @@ pub(crate) fn swim_enter_depth(h: f32) -> f32 {
     SWIM_DEPTH_FRAC * h
 }
 /// The depth (yd) below which swimming stops, `0.75·h - 1/36`: the band is absolute, never scaled
-/// by `h` (`0x6030f2` subtracts `[0x7ff9d0]`).
+/// by `h`.
 pub(super) fn swim_exit_depth(h: f32) -> f32 {
     swim_enter_depth(h) - SWIM_HYSTERESIS
 }
 
 /// The depth (yd) of the top cap a rising swimmer's feet stop at, the floating resolver's top
-/// plane (`0x632ba0`). It equals the enter depth, so a capped swimmer never drops out of the latch.
+/// plane. It equals the enter depth, so a capped swimmer never drops out of the latch.
 fn rest_cap(h: f32) -> f32 {
     swim_enter_depth(h)
 }
@@ -80,14 +76,14 @@ pub(super) fn surface_over_feet(world: &WorldPoint, feet: Vec3) -> Option<f32> {
         .map(|hit| feet.y + (hit.surface_z - wow[2]))
 }
 
-/// Latches [`Player::swimming`] as `0x6030c0` does and returns it: enter on a strict
+/// Latches [`Player::swimming`] as the reference does and returns it: enter on a strict
 /// `depth > 0.75·h`, leave on `depth < 0.75·h - 1/36` or no liquid at all. Entry also waits out a
-/// rising launch until its upward speed halves (`0x7c5de0`, about 0.236 s for a swim jump), so the
-/// hop re-latches still rising and its residual velocity is dropped (`0x7c6e50` → `0x7c6290`).
-/// `now` is `Time::elapsed_secs`. Never touches [`Player::settling`], the terrain streamer's.
+/// rising launch until its upward speed halves (about 0.236 s for a swim jump), so the hop
+/// re-latches still rising and its residual velocity is dropped. `now` is `Time::elapsed_secs`.
+/// Never touches [`Player::settling`], the terrain streamer's.
 pub(super) fn update_swimming(player: &mut Player, surface_y: Option<f32>, now: f32) -> bool {
-    // LEVITATING skips the whole decision (`0x6030d2` test ah,4, to `0x6031fa`): it is GM flight,
-    // whose SWIMMING the dry ground would otherwise clear the next frame.
+    // LEVITATING skips the whole decision (4): it is GM flight, whose SWIMMING the dry ground would
+    // otherwise clear the next frame.
     if player.modes.levitating {
         return player.swimming;
     }
@@ -112,9 +108,8 @@ pub(super) fn update_swimming(player: &mut Player, surface_y: Option<f32>, now: 
     player.swimming
 }
 
-/// A depth-driven stop zeroes the mover pitch, which water walking reads on land: StopSwim
-/// `0x7c6e80` (via `0x6031eb` → `0x60dff0` → `0x61a070`) is the pitch's only zeroing writer. A
-/// breach keeps its aim, as `CMovement::Jump` (`0x7c6230`) clears SWIMMING through `0x7c61f0`.
+/// A depth-driven stop zeroes the mover pitch, which water walking reads on land: the swim stop is
+/// the pitch's only zeroing writer. A breach keeps its aim, as the mover's jump clears SWIMMING.
 fn stop_pitch(player: &mut Player, was: bool) {
     if was && !player.swimming {
         player.mover_pitch = 0.0;
@@ -122,9 +117,9 @@ fn stop_pitch(player: &mut Player, was: bool) {
 }
 
 /// The take-off frame of a jump while swimming (`0x9883f0`), at any depth: [`SWIM_JUMP_SPEED`],
-/// then FALLING. The last swim frame's travel carries the leap, frozen as in every jump
-/// (`0x7c61f0` never rewrites it), and there is no gravity tick this frame, so the jump tail
-/// carries the exact seed. The caller has already cleared [`Player::swimming`].
+/// then FALLING. The last swim frame's travel carries the leap, frozen as in every jump, and there
+/// is no gravity tick this frame, so the jump tail carries the exact seed. The caller has already
+/// cleared [`Player::swimming`].
 pub(super) fn breach_step(
     player: &mut Player,
     time: &Time,
@@ -166,11 +161,11 @@ pub(super) struct SwimOutcome {
     pub surface_pitch: Option<f32>,
 }
 
-/// Clamps a rising stroke's upward speed to `cap`, the rise that reaches the rest line this
-/// frame, and turns the rest level at the same speed; returns the velocity and, when the cap bit,
-/// the travel pitch. The 1.12 client is seen swimming level at full speed along the surface; its
-/// own-input resolver (`0x634640`) as read slides a steep aim along the cap at `cos(pitch)·speed`,
-/// near zero, so the mechanism behind the seen behaviour is untraced.
+/// Clamps a rising stroke's upward speed to `cap`, the rise that reaches the rest line this frame,
+/// and turns the rest level at the same speed; returns the velocity and, when the cap bit, the
+/// travel pitch. The 1.12 client is seen swimming level at full speed along the surface; its
+/// own-input resolver as read slides a steep aim along the cap at `cos(pitch)·speed`, near zero, so
+/// the mechanism behind the seen behaviour is untraced.
 fn cap_redirect(input_vel: Vec3, cap: f32) -> (Vec3, Option<f32>) {
     if input_vel.y <= 0.0 || input_vel.y <= cap {
         return (input_vel, None);
@@ -190,19 +185,19 @@ fn settle_to_rest(feet_y: f32, surface_y: f32, h: f32) -> f32 {
     (feet_y - (surface_y - rest_cap(h))).max(0.0)
 }
 
-/// The surface [`swim_step`] caps the swimmer under, or `None` in GM flight: `LEVITATING` lifts
-/// the water's authority (`0x6030d2`, as in [`update_swimming`]), so an ascent is free. A
-/// momentary sample miss in real water is `Some(own feet Y)`, a hold for the frame. Both arms of
-/// the constraint, the rise cap and the settle, must read this one source.
+/// The surface [`swim_step`] caps the swimmer under, or `None` in GM flight: `LEVITATING` lifts the
+/// water's authority (as in [`update_swimming`]), so an ascent is free. A momentary sample miss in
+/// real water is `Some(own feet Y)`, a hold for the frame. Both arms of the constraint, the rise
+/// cap and the settle, must read this one source.
 pub(super) fn rest_line(player: &Player, surface_y: Option<f32>) -> Option<f32> {
     (!player.modes.levitating).then(|| surface_y.unwrap_or(player.pos.y))
 }
 
-/// One swim frame through the floating resolver (`0x634640`): no gravity, the vertical only from
-/// `input_vel`, a slide against the lakebed and banks, the rise capped at the rest line
-/// ([`cap_redirect`]) and a stroke left above it settled back ([`settle_to_rest`]). `surface_y`
-/// is the waterline where the frame starts, which caps its climb; `surface_at` resamples it where
-/// the stroke lands, since on a steep river a frame's descent can be the whole hysteresis band.
+/// One swim frame through the floating resolver: no gravity, the vertical only from `input_vel`, a
+/// slide against the lakebed and banks, the rise capped at the rest line ([`cap_redirect`]) and a
+/// stroke left above it settled back ([`settle_to_rest`]). `surface_y` is the waterline where the
+/// frame starts, which caps its climb; `surface_at` resamples it where the stroke lands, since on a
+/// steep river a frame's descent can be the whole hysteresis band.
 pub(super) fn swim_step(
     player: &mut Player,
     time: &Time,
@@ -241,8 +236,8 @@ pub(super) fn swim_step(
     // falling to meet them, and a river falling a tenth of a yard per yard sheds the 1/36-yd band
     // within a few frames, flapping the latch between swim and fall. The drop is swept, so a bank
     // still holds the feet up. Only under a stroke, as the resolver's outer gate skips an idle
-    // mover (`0x634100` test [esi+0x40],0x200f), and only under the rest line the cap reads, or GM
-    // flight over a lake would drop onto the waterline.
+    // mover (the reference's `test [esi+0x40],0x200f`), and only under the rest line the cap reads,
+    // or GM flight over a lake would drop onto the waterline.
     if surface_y.is_some() && input_vel != Vec3::ZERO {
         if let Some(surface_now) = surface_at(c - half_h) {
             let excess = settle_to_rest(c.y - half_h.y, surface_now, player.collision_height.0);
@@ -267,8 +262,8 @@ pub(super) fn swim_step(
     }
 }
 
-/// The stroke's unit direction, shared with flight: the travel basis (`0x7c5880`) pitches forward
-/// by `pitch` and keeps strafe level, and an ascent or descent replaces it with its own
+/// The stroke's unit direction, shared with flight: the travel basis pitches forward by `pitch` and
+/// keeps strafe level, and an ascent or descent replaces it with its own
 /// ([`super::vertical::stroke`]). `basis` and `amounts` are as [`drive_step`] takes them.
 pub(super) fn stroke_direction(
     pitch: f32,
@@ -312,9 +307,8 @@ pub(super) fn drive_step(
     wobble: f32,
 ) -> SwimFrame {
     let swim_fwd = amounts.0;
-    // Drunk and swimming, the pitch wobbles too, by the facing veer's angle × 4.0 each frame
-    // (`0x60aabc`-`0x60ab0a`, `[0x80306c]`, committed through `0x60de70`), clamped to ±π/2
-    // (`0x60aba0`, `0x808acc`/`0x80c5e4`), not the mouselook's ±89°.
+    // Drunk and swimming, the pitch wobbles too, by the facing veer's angle × 4.0 each frame,
+    // clamped to ±π/2, not the mouselook's ±89°.
     if wobble != 0.0 {
         player.mover_pitch = (player.mover_pitch + wobble * super::drunk::SWIM_PITCH_WOBBLE_SCALE)
             .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
@@ -322,8 +316,8 @@ pub(super) fn drive_step(
     let mut pitch = player.mover_pitch;
     let dir3 = stroke_direction(player.mover_pitch, basis, amounts, vertical);
     let rest_line = rest_line(player, surface_y);
-    // The directional speed (`0x7c4c90`'s swim arm): backward takes `min(swimBack, swim)`,
-    // forward and strafe the swim speed.
+    // The directional speed: backward takes `min(swimBack, swim)`, forward and strafe the swim
+    // speed.
     let (swim_speed, swim_back_speed) = match speeds {
         Some(s) if !move_speed.env_override => (s.swim, s.swim_back),
         _ => (SWIM_SPEED, SWIM_BACK_SPEED),
@@ -333,8 +327,8 @@ pub(super) fn drive_step(
     } else {
         swim_speed
     };
-    // The stroke rate's numerator is the flag speed whatever the pitch: `0x5fe2f0` divides
-    // `GetCurrentSpeed` by the clip's speed, for local and observed units alike.
+    // The stroke rate's numerator is the flag speed whatever the pitch: the reference divides the
+    // current speed by the clip's speed, for local and observed units alike.
     player.swim_stroke_speed = if dir3 == Vec3::ZERO { 0.0 } else { dir_speed };
     let out = swim_step(
         player,
@@ -354,8 +348,7 @@ pub(super) fn drive_step(
         held: false,
         grounded: out.grounded,
         jumped: false,
-        // A knockback clears SWIMMING at take-off (`StartFalling`, `0x7c61f0`), so the land
-        // mover flies it.
+        // A knockback clears SWIMMING at take-off (the fall start), so the land mover flies it.
         knocked: false,
         air_nudged: false,
         ground: None, // swimming detaches from any platform frame below
@@ -369,8 +362,8 @@ pub(super) fn translate_amounts(
     axes: &super::input::MoveAxes,
     translate_gated: bool,
 ) -> (f32, f32) {
-    // The translate predicate `0x514560` (a root, or death) cuts swim translation as it cuts the
-    // walk; the water reads its own axes, so it needs its own cut.
+    // The translate predicate (a root, or death) cuts swim translation as it cuts the walk; the
+    // water reads its own axes, so it needs its own cut.
     if translate_gated {
         return (0.0, 0.0);
     }
@@ -429,14 +422,14 @@ mod tests {
         assert!(!update_swimming(&mut player, Some(0.5), 0.2));
         assert_eq!(
             player.mover_pitch, 0.0,
-            "`0x7c6e80` zeroes +0x20 on StopSwim"
+            "the reference zeroes +0x20 on the swim stop"
         );
         // No liquid at all is the same stop.
         player.mover_pitch = -0.9;
         assert!(update_swimming(&mut player, Some(deep), 1.0));
         assert!(!update_swimming(&mut player, None, 1.1));
         assert_eq!(player.mover_pitch, 0.0);
-        // A breach clears the latch itself (`0x7c61f0`), so the next tick sees no stop.
+        // A breach clears the latch itself, so the next tick sees no stop.
         player.mover_pitch = -0.9;
         assert!(update_swimming(&mut player, Some(deep), 2.0));
         player.swimming = false; // as the controller's breach arm does
@@ -450,8 +443,7 @@ mod tests {
         update_swimming(player, Some(depth), 2.1);
     }
 
-    /// `PET_IN_COMBAT` is no typo: `0x6030c0` tests bit 11 on entry (`0x60310b`) and on the stop
-    /// (`0x6031ca`).
+    /// `PET_IN_COMBAT` is no typo: the reference tests bit 11 on entry and on the stop.
     #[test]
     fn the_swim_gate_is_those_three_unit_flags_and_no_others() {
         const PLAYER_CONTROLLED: u32 = 0x8;

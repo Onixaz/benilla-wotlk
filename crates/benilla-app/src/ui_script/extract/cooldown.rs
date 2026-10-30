@@ -1,6 +1,6 @@
-//! A `Cooldown` widget's paint ([`CooldownPaint`]) to screen quads, in its draw order
-//! (`0x5ebd20`): the dark wedge and the finish flash on ARTWORK, the edge on OVERLAY. Both arts
-//! load clamped (`SetCooldown`'s texture flags, `0x5ecdd0`: no wrap bit), as every UI sprite here.
+//! A `Cooldown` widget's paint ([`CooldownPaint`]) to screen quads, in its draw order (`0x5ebd20`):
+//! the dark wedge and the finish flash on ARTWORK, the edge on OVERLAY. Both arts load clamped
+//! (`SetCooldown`'s texture flags: no wrap bit), as every UI sprite here.
 
 use bevy::prelude::*;
 

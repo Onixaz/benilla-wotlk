@@ -24,8 +24,7 @@ use benilla_protocol::messages::BAG_PLAYER_INVENTORY;
 /// A vendor row's unlimited `current_count`, `-1` to Lua.
 const STOCK_UNLIMITED: u32 = 0xFFFF_FFFF;
 
-/// `UNIT_NPC_FLAG_REPAIR`, the bit `CanMerchantRepair` tests (`CGMerchantInfo::CanRepair
-/// 0x5845b0`).
+/// `UNIT_NPC_FLAG_REPAIR`, the bit `CanMerchantRepair` tests (`0x5845b0`).
 const NPC_FLAG_REPAIR: u32 = 0x1000;
 
 /// The first absolute buyback slot, 74-85 (`0x584bb0` stores `0x4b - 1`).
@@ -154,8 +153,8 @@ fn buy_error_key(reason: u8) -> Option<&'static str> {
 }
 
 /// The message a `SMSG_SELL_ITEM` error code shows, from 12340's switch at `0x6d157c`, which hands
-/// the row's text to `AddErrorMessage` (`0x6d15f7`) while the vendor's unit exists. Its default is
-/// silence: 0 returns before the switch, and 5 and 10 up skip the message.
+/// the row's text to the error display (`0x6d15f7`) while the vendor's unit exists. Its default
+/// is silence: 0 returns before the switch, and 5 and 10 up skip the message.
 fn sell_error_key(reason: u8) -> Option<&'static str> {
     Some(match reason {
         sell_result::CANT_FIND_ITEM => "ERR_ITEM_NOT_FOUND", // 0x17
@@ -190,8 +189,8 @@ fn icon_and_link(
 }
 
 /// A row's `ItemExtendedCost.dbc` record, its required items resolved. A personal-rating demand
-/// passes only through `CheckPersonalAndTeamRating 0x5a37b0`, which needs a team in the bracket;
-/// arena teams are not built, so it fails as for a player in none.
+/// passes only through the personal-and-team rating check (`0x5a37b0`), which needs a team in the
+/// bracket; arena teams are not built, so it fails as for a player in none.
 fn resolve_extended_cost(
     id: u32,
     costs: Option<&ExtendedCosts>,
@@ -334,8 +333,8 @@ fn resolve_buyback(
     }
 }
 
-/// One item's repair cost, by `CGMerchantInfo::GetRepairCost 0x584b20`'s arithmetic
-/// ([`benilla_formats::DurabilityTables`]), after the price `discount`.
+/// One item's repair cost, by the reference's repair-cost arithmetic (`0x584b20`,
+/// [`benilla_formats::DurabilityTables`]), after the price `discount`.
 fn item_repair_cost(
     guid: u64,
     objects: &Objects,
@@ -941,9 +940,9 @@ pub(crate) mod purse_fixture {
         benilla_formats::DurabilityTables::from_rows([(20, row)], [(3, 1.0)])
     }
 
-    /// The sword's repair in full, and after the two honor steps (`0x612bcf`, `0x612bd7`) an honor
-    /// rank byte of 8 earns at this vendor; a test at the discounted price discriminates the
-    /// discount only while the two differ.
+    /// The sword's repair in full, and after the two honor steps an honor rank byte of 8 earns at
+    /// this vendor; a test at the discounted price discriminates the discount only while the two
+    /// differ.
     pub(crate) fn sword_prices() -> (u32, u32) {
         let t = tables();
         let steps = f64::from(0.05f32) + f64::from(0.05f32);
@@ -1092,9 +1091,9 @@ mod tests {
         ));
     }
 
-    /// `GetRepairAllCost` sums each item's cost after the open merchant's discount (`0x4faf8a`):
-    /// at Honored with a PvP-flagged vendor and honor rank byte 8, 0.2 comes off each item before
-    /// its rounding, and the undiscounted total is not what the VM reads.
+    /// `GetRepairAllCost` sums each item's cost after the open merchant's discount: at Honored with
+    /// a PvP-flagged vendor and honor rank byte 8, 0.2 comes off each item before its rounding, and
+    /// the undiscounted total is not what the VM reads.
     #[test]
     fn the_repair_all_total_takes_the_merchants_discount() {
         use benilla_protocol::field::{
@@ -1537,7 +1536,7 @@ mod tests {
         }
     }
 
-    /// The reference's cache write (`0x5dcdbf`), keyed by entry as vmangos fills the field.
+    /// The reference's cache write, keyed by entry as vmangos fills the field.
     #[test]
     fn a_sold_out_refusal_zeroes_only_that_rows_count() {
         let mut open = MerchantOpen::default();

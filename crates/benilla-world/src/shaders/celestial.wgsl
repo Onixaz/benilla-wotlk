@@ -1,8 +1,8 @@
 // Celestial discs (sun, white moon, moon02) and their glares, blended in gamma space as the
-// reference blends onto gamma bytes. Discs take its horizon clip and fade (`0x6d1960`): clipped
+// reference blends onto gamma bytes. Discs take its horizon clip and fade: clipped
 // at height 0 with alpha 0 there, `clamp(2.5 * height, 0, 1)` in the 0.4-unit band above
-// (`0x6d1ac5`), the colour's alpha byte beyond. Glares skip the clip (`0x7e57e0`) and add,
-// saturating, like the reference's SRC_ALPHA, ONE blend (`0x7e5a16`). Depth is the far pin in
+//The colour's alpha byte beyond. Glares skip the clip and add,
+// saturating, like the reference's SRC_ALPHA, ONE blend. Depth is the far pin in
 // `sky_vertex.wgsl`.
 
 #import bevy_pbr::{

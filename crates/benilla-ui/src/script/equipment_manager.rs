@@ -1,7 +1,7 @@
-//! 3.3.5a's equipment manager (`CGEquipmentManager`, `EquipmentManager_Scripts.cpp`'s 17 globals):
-//! the saved sets the client owns and edits, the server's list and id replies, the set swap's
-//! `CMSG_EQUIPMENT_SET_USE`, and the paper doll's item-location verbs the stock `EquipmentManager.lua`
-//! and the slot flyout read (`GetInventoryItemsForSlot` `0x5e95c0`).
+//! 3.3.5a's equipment manager and its 17 script globals: the saved sets the client owns and edits,
+//! the server's list and id replies, the set swap's `CMSG_EQUIPMENT_SET_USE`, and the paper doll's
+//! item-location verbs the stock `EquipmentManager.lua` and the slot flyout read
+//! (`GetInventoryItemsForSlot` `0x5e95c0`).
 //!
 //! An item location packs where an item is as the stock `EquipmentManager_UnpackLocation` reads
 //! it: `0x100000` the player's own slots, `0x200000` the bags, `0x400000` the bank, the bag in bits
@@ -15,9 +15,9 @@ use super::CursorPayload;
 
 /// The slots a set records, every equipment slot.
 pub const EQUIPMENT_SET_SLOTS: usize = 19;
-/// The most sets a player keeps (`CanCreateSet` `0x5af460`).
+/// The most sets a player keeps (the set-create check, `0x5af460`).
 pub const MAX_EQUIPMENT_SETS: usize = 10;
-/// A set slot's guid for "leave this slot as it is" (`m_ignoredSlots`, `0x5ade50`).
+/// A set slot's guid for "leave this slot as it is" (the save's ignored slots, `0x5ade50`).
 pub const IGNORED_SLOT: u64 = 1;
 
 const LOCATION_PLAYER: i64 = 0x10_0000;
@@ -31,7 +31,7 @@ const BAG_INV_FIRST: u8 = 19;
 const BANK_BAG_INV_FIRST: u8 = 67;
 /// The player's own bag for `CMSG_EQUIPMENT_SET_USE` (`0x5adb7f`).
 const PLAYER_BAG: u8 = 0xff;
-/// The `ItemFlags` lock bit `SetContainsLockedItems` tests (`0x5ad9a1`).
+/// The `ItemFlags` lock bit the locked-item test reads (`0x5ad9a1`).
 const ITEM_FLAG_LOCKED: u32 = 0x1;
 
 /// One saved set (`EQUIPMENT_SET`).
@@ -59,16 +59,16 @@ pub enum EquipmentSetRequest {
     Use([(u64, u8, u8); EQUIPMENT_SET_SLOTS]),
 }
 
-/// The client's set state (`CGEquipmentManager`'s statics, `0xc1e908`..`0xc1e95c`).
+/// The client's set state (the equipment manager's statics, `0xc1e908`..`0xc1e95c`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct EquipmentManager {
     pub(crate) sets: Vec<EquipmentSetView>,
     /// Ids saved and not yet named by the server (`+0x230`): a save of one sends nothing.
     awaiting_guid: Vec<u32>,
-    /// A list has arrived (`m_loaded`); `SaveEquipmentSet` does nothing before it.
+    /// A list has arrived; `SaveEquipmentSet` does nothing before it.
     loaded: bool,
     pub(crate) ignored: [bool; EQUIPMENT_SET_SLOTS],
-    /// A swap is out (`m_swapPending`), refusing another until its result.
+    /// A swap is out, refusing another until its result.
     swap_pending: bool,
     pending_set: u32,
 }
@@ -82,7 +82,7 @@ impl EquipmentManager {
         self.sets.iter().find(|s| s.id == id)
     }
 
-    /// The lowest id no set holds (`GetNextFreeSetID` `0x5ae530`), `None` past 9.
+    /// The lowest id no set holds (`0x5ae530`), `None` past 9.
     fn next_free_id(&self) -> Option<u32> {
         (0..MAX_EQUIPMENT_SETS as u32).find(|id| self.by_id(*id).is_none())
     }
@@ -274,7 +274,7 @@ fn can_use(model: &super::Model) -> bool {
             .is_some_and(|c| super::cvars::sstr_to_int(&c.value) != 0)
 }
 
-/// `SetContainsLockedItems` (`0x5ad940`): an item of the set carries the lock flag. The buyback
+/// The locked-item test (`0x5ad940`): an item of the set carries the lock flag. The buyback
 /// exception has no buyback items here to meet.
 fn contains_locked(model: &super::Model, set: &EquipmentSetView) -> bool {
     set.items.iter().any(|&g| {
@@ -283,9 +283,9 @@ fn contains_locked(model: &super::Model, set: &EquipmentSetView) -> bool {
     })
 }
 
-/// `CGEquipmentManager::SaveSet` (`0x5ade50`): the name, the icon and each slot's equipped item,
-/// or [`IGNORED_SLOT`]; a set still waiting for its guid takes nothing. Queues the save and
-/// fires `EQUIPMENT_SETS_CHANGED`.
+/// The set save (`0x5ade50`): the name, the icon and each slot's equipped item, or
+/// [`IGNORED_SLOT`]; a set still waiting for its guid takes nothing. Queues the save and fires
+/// `EQUIPMENT_SETS_CHANGED`.
 fn save_set(lua: &Lua, index: usize, name: &str, icon: &str) {
     {
         let mut model = super::model_mut_of(lua);
@@ -341,15 +341,15 @@ fn icon_file(path: &str) -> String {
     path.rsplit(['\\', '/']).next().unwrap_or(path).to_owned()
 }
 
-/// `ScrubString` (`0x5af9fc`, 32 characters): the name trimmed and cut to fit, refused if empty.
+/// The name scrub (`0x5af9fc`, 32 characters): the name trimmed and cut to fit, refused if empty.
 fn scrub_name(name: &str) -> Option<String> {
     let name: String = name.trim().chars().take(32).collect();
     (!name.is_empty()).then_some(name)
 }
 
-/// `CGEquipmentManager::UseEquipmentSet` (`0x5ada20`): each slot's item and where it is; in combat
-/// only the weapon slots swap, and the first other slot that would move warns once. A missing
-/// item warns once and leaves its slot. Queues the send and fires `EQUIPMENT_SWAP_PENDING`.
+/// The set use (`0x5ada20`): each slot's item and where it is; in combat only the weapon slots
+/// swap, and the first other slot that would move warns once. A missing item warns once and leaves
+/// its slot. Queues the send and fires `EQUIPMENT_SWAP_PENDING`.
 fn use_set(lua: &Lua, set: &EquipmentSetView) -> bool {
     let warn_s = |model: &mut super::Model, key: &'static str| {
         model.ui_errors_s.push((key, set.name.clone()));
@@ -438,7 +438,7 @@ fn result_table(lua: &Lua, v: Option<&Value>) -> mlua::Result<Table> {
     }
 }
 
-/// `CGEquipmentManager::EquipSet` (`0x5ae660`), an action button's use of a set slot: the stock
+/// The set equip (`0x5ae660`), an action button's use of a set slot: the stock
 /// `EquipmentManager.lua` hears `WEAR_EQUIPMENT_SET` and swaps.
 pub(crate) fn wear_set(lua: &Lua, id: u32) {
     let name = read(lua)
@@ -560,7 +560,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The save's ignored slots (`m_ignoredSlots`, `0xc1e908`): a slot 1..19, else the usage.
+    // The save's ignored slots (`0xc1e908`): a slot 1..19, else the usage.
     g.set(
         "EquipmentManagerIgnoreSlotForSave",
         lua.create_function(|lua, slot: Value| {
@@ -726,7 +726,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // PickupEquipmentSetByName(name) (`0x5af250`), PickupEquipmentSet(index) (`0x5af2c0`): the set
-    // on the cursor (`SetCursorEquipmentSet` `0x520dc0`), its full icon path as the art.
+    // on the cursor (`0x520dc0`), its full icon path as the art.
     g.set(
         "PickupEquipmentSetByName",
         lua.create_function(|lua, name: Value| {
@@ -779,7 +779,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     install_item_verbs(lua)
 }
 
-/// `SetCursorEquipmentSet` (`0x520dc0`).
+/// The cursor's equipment-set set (`0x520dc0`).
 fn pickup(lua: &Lua, set: &EquipmentSetView) {
     let mut model = super::model_mut_of(lua);
     model.cursor = Some(CursorPayload::EquipmentSet(

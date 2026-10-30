@@ -84,7 +84,7 @@ const PVP_TIMER: u32 = benilla_ui::script::PLAYER_FLAGS_PVP_TIMER;
 /// The PvP toggle timer's five minutes (`0x6de789`).
 const PVP_TIMER_SPAN: std::time::Duration = std::time::Duration::from_millis(300_000);
 
-/// `m_pvpCooldownTimestamp` (`[player+0x1940]`) and the flags it was last set from.
+/// The PvP cooldown's timestamp (`[player+0x1940]`) and the flags it was last set from.
 #[derive(Default)]
 struct PvpTimer {
     flags: Option<u32>,
@@ -102,8 +102,8 @@ impl PvpTimer {
         }
     }
 
-    /// The `PLAYER_FLAGS` watch (`0x6e102c`): a change in `0x40300` re-stamps unless the timer
-    /// flag was set before and after (`SetPvpCooldownTimestamp`, `0x6de750`).
+    /// The `PLAYER_FLAGS` watch (`0x6e102c`): a change in `0x40300` re-stamps unless the timer flag
+    /// was set before and after (the PvP cooldown's stamp, `0x6de750`).
     fn watch(&mut self, old: u32, new: u32, now: std::time::Instant) {
         if (old ^ new) & 0x40300 == 0 {
             return;
@@ -115,7 +115,7 @@ impl PvpTimer {
         }
     }
 
-    /// `GetPVPToggleTimer` (`0x6de7a0`).
+    /// The PvP toggle's timer (`0x6de7a0`).
     fn toggle_timer(&self, now: std::time::Instant) -> i32 {
         if self.flags.unwrap_or(0) & PVP_TIMER == 0 {
             return PVP_TIMER_SPAN.as_millis() as i32;
@@ -248,12 +248,12 @@ fn feed_honor(
         }
     }
 
-    // --- the inspect reply -------------------------------------------------------------------
-    // The reference's latch clears only at `0x4c6f70`, from a `NotifyInspect` naming another
-    // player, and on `ClearInspectPlayer`. Deviation: we clear it whenever the inspected token's
-    // guid moves, because our window re-resolves its token each frame and both tabs read it, so
-    // the reference's rule would let the two tabs show different players. `ClearInspectPlayer`
-    // drops the token, which clears the slot here too.
+    // --- the inspect reply ------------------------------------------------------------------- The
+    // reference's latch clears only, from a `NotifyInspect` naming another player, and on
+    // `ClearInspectPlayer`. Deviation: we clear it whenever the inspected token's guid moves,
+    // because our window re-resolves its token each frame and both tabs read it, so the reference's
+    // rule would let the two tabs show different players. `ClearInspectPlayer` drops the token,
+    // which clears the slot here too.
     let inspected = inspect_target
         .token
         .as_deref()

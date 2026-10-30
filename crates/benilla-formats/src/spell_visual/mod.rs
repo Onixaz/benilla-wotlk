@@ -57,12 +57,11 @@ const FLAG_DEST_ATTACH_IS_ID: u32 = 0x200;
 /// The data writes "no value" in an id column as 0 or as this, inconsistently; both read `None`.
 const NONE_SENTINEL: u32 = u32::MAX;
 
-/// `CharProc` slots per kit; the dispatcher (`0x60d7c0`) walks exactly four.
+/// `CharProc` slots per kit; the dispatcher walks exactly four.
 pub const KIT_CHAR_PROCS: usize = 4;
 
-/// One `CharProc` slot, a type key and four float params. The dispatcher (`0x60d7c0`) switches on
-/// the type through a byte table (`0x60dc20`) into nine cases (`0x60dbfc`), each reading the params
-/// it wants.
+/// One `CharProc` slot, a type key and four float params. The dispatcher switches on the type
+/// through a byte table into nine cases, each reading the params it wants.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CharProc {
     /// `CharProcType[i]`; never -1, as an empty slot is `None` in the kit.
@@ -76,10 +75,10 @@ impl CharProc {
         char_proc_small_int(self.params[i])
     }
 
-    /// This slot as a weapon swing trail. The type-8 arm (`0x60d80a`) truncates with `_ftol`, not
-    /// the small-int decode: `unit+0xd1c = zero | three << 24`, `unit+0xd20 = two`. `CharParamOne`
-    /// is not read; it holds 20.0 on 22 of the 34 trail kits and 0 to 25 on the rest. A zero
-    /// duration fires nothing (`0x5fe494`), so it reads as `None`.
+    /// This slot as a weapon swing trail. The type-8 arm truncates with `_ftol`, not the small-int
+    /// decode: `unit+0xd1c = zero | three << 24`, `unit+0xd20 = two`. `CharParamOne` is not read;
+    /// it holds 20.0 on 22 of the 34 trail kits and 0 to 25 on the rest. A zero duration fires
+    /// nothing, so it reads as `None`.
     pub fn as_weapon_trail(&self) -> Option<TrailProc> {
         if self.ty != char_proc_type::WEAPON_TRAIL {
             return None;
@@ -138,37 +137,35 @@ impl TrailProc {
         ]
     }
 
-    /// The starting alpha, 100 on 19 of the 34 trail kits; the fade rate, the segment count and
-    /// the end test all derive from it (`0x6c6560`).
+    /// The starting alpha, 100 on 19 of the 34 trail kits; the fade rate, the segment count and the
+    /// end test all derive from it.
     pub fn alpha(&self) -> u8 {
         (self.packed >> 24) as u8
     }
 }
 
-/// The `CharProc` type keys benilla models, out of the dispatcher's nine cases (`0x60d7c0`).
+/// The `CharProc` type keys benilla models, out of the dispatcher's nine cases.
 pub mod char_proc_type {
-    /// Body tint (`0x60d840`): `round(params[0])` is `0x00RRGGBB`, stored with alpha `0xff` in a
-    /// node on `unit+0xce0`; each frame the head node's RGB / 255 goes to `model+0x184..0x18c`.
+    /// Body tint: `round(params[0])` is `0x00RRGGBB`, stored with alpha `0xff` in a node on
+    /// `unit+0xce0`; each frame the head node's RGB / 255 goes to `model+0x184..0x18c`.
     pub const TINT: i32 = 1;
-    /// Body translucency (`0x60d972`): `params[0]` is the aura's alpha factor, in a spell-keyed
-    /// node linked at the head of `unit+0xb50`. The unit's alpha is `baseAlpha` times the head
-    /// node's factor alone, never a product over the list (`0x60d180`), ramped over 1000 ms
-    /// (`0x614f80`). Stealth's 0.3 and the ghost's 0.5 are this proc.
+    /// Body translucency: `params[0]` is the aura's alpha factor, in a spell-keyed node linked at
+    /// the head of `unit+0xb50`. The unit's alpha is `baseAlpha` times the head node's factor
+    /// alone, never a product over the list, ramped over 1000 ms. Stealth's 0.3 and the ghost's 0.5
+    /// are this proc.
     pub const ALPHA: i32 = 14;
-    /// Body animation rate (`0x60db7e`), the freeze: `SetBoneAnimSpeed` (`0x712910`) sets
-    /// `params[0]` as the rate of the mount's bone 0, the body's key bone 4 when it has one
-    /// (`0x711d20`) and the body's bone 0, re-basing so the current frame holds. Arming an
-    /// animation never resets it (`0x7121a0`), so rate 0 holds the pose for the aura's life; the
-    /// old rates return when the node expires (`0x6203e0`). Of the 15 kits a live spell reaches,
-    /// 14 ship 0 (Ice Block, Freeze, Petrify, …) and kit 1744 ships 8947848.0 (`0x888888`),
-    /// passed through as is.
+    /// Body animation rate, the freeze: the bone-speed setter sets `params[0]` as the rate of the
+    /// mount's bone 0, the body's key bone 4 when it has one and the body's bone 0, re-basing so
+    /// the current frame holds. Arming an animation never resets it, so rate 0 holds the pose for
+    /// the aura's life; the old rates return when the node expires. Of the 15 kits a live spell
+    /// reaches, 14 ship 0 (Ice Block, Freeze, Petrify, …) and kit 1744 ships 8947848.0
+    /// (`0x888888`), passed through as is.
     pub const ANIM_RATE: i32 = 11;
 
-    /// Weapon swing trail (`0x60d80a`), the ribbon between a weapon's `$WTB` and `$WTT` markers.
-    /// It latches on the unit: the next `PlayAnimation` (`0x5fe2f0`, reading at `0x5fe48e`) hands
-    /// it to both weapon-hand trails and clears it, so it fires once per arm. For 21 of the 34
-    /// kits carrying it (Heroic Strike's 324, Hamstring's 3050, Sunder's 557) it is the whole
-    /// visual: they fill no effect slot.
+    /// Weapon swing trail, the ribbon between a weapon's `$WTB` and `$WTT` markers. It latches on
+    /// the unit: the next animation start hands it to both weapon-hand trails and clears it, so it
+    /// fires once per arm. For 21 of the 34 kits carrying it (Heroic Strike's 324, Hamstring's
+    /// 3050, Sunder's 557) it is the whole visual: they fill no effect slot.
     pub const WEAPON_TRAIL: i32 = 8;
 
     /// A beam, as the data keys it on channel-stage kits (Drain Life, Mind Flay). It reaches the
@@ -334,7 +331,7 @@ pub struct SpellVisualCatalog {
     /// `SpellVisualEffectName` id → model path (field 2).
     effect_paths: HashMap<u32, String>,
     /// The `"HARDCODED *"` rows, name → (id, path): the effects the engine spawns itself, which the
-    /// client resolves by name at boot against 14 baked strings (`0x61f5b0`).
+    /// client resolves by name at boot against 14 baked strings.
     hardcoded: HashMap<String, (u32, String)>,
     chain_effects: HashMap<u32, ChainEffect>,
     /// `SpellMissile.dbc`, by `Spell.dbc` column 163.
@@ -382,7 +379,7 @@ impl SpellVisualCatalog {
     }
 
     /// Seed one `"HARDCODED …"` row, for tests. The id matters: it is half the reference's
-    /// same-slot replace key (`0x6208e0`), so an engine-spawned effect dedups like a kit slot's.
+    /// same-slot replace key, so an engine-spawned effect dedups like a kit slot's.
     #[must_use]
     pub fn with_hardcoded(mut self, name: &str, id: u32, path: &str) -> Self {
         self.hardcoded
@@ -433,7 +430,7 @@ impl SpellVisualCatalog {
     }
 
     /// An engine-spawned effect's `(id, model path)` by its baked name, compared without case as
-    /// the client's boot resolve (`0x61f5b0`) does.
+    /// the client's boot resolve does.
     pub fn hardcoded_effect(&self, name: &str) -> Option<(u32, &str)> {
         self.hardcoded
             .iter()

@@ -477,10 +477,10 @@ fn the_tab_highlight_is_exactly_its_tab() {
                     ))
                     .unwrap();
                 // The widths differ, as in the reference: only the most-derived `<OnLoad>` runs,
-                // since `SetScript` releases the slot's one ref before reading the new body
-                // (`0x7025ec`). Tab 2's ends in `PanelTemplates_TabResize`, which sets the
-                // highlight to the tab width; tab 1's then sets it to `GetTextWidth() + 31`, 14
-                // wider than the tab (`Blizzard_MacroUI.xml`, `:510-511`).
+                // since `SetScript` releases the slot's one ref before reading the new body. Tab
+                // 2's ends in `PanelTemplates_TabResize`, which sets the highlight to the tab
+                // width; tab 1's then sets it to `GetTextWidth() + 31`, 14 wider than the tab
+                // (`Blizzard_MacroUI.xml`, `:510-511`).
                 let label: f64 = s
                     .eval(&format!("return {tab}Text:GetStringWidth()"))
                     .unwrap();

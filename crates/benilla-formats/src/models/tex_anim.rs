@@ -88,9 +88,8 @@ fn is_scale_identity(v: [f32; 2]) -> bool {
 }
 
 /// Bake the batch's rotation loop per file sequence slot: the raw quaternion keys lerped per
-/// component and never normalised, as the reference does (`0x713ea0` lerps, `0x7bddb0` uses the
-/// result as is, so between two 22.5° keys `|q|` dips to cos 11.25° and the block shrinks a
-/// little). `None` when the rotation never leaves the identity.
+/// component and never normalised, as the reference does (so between two 22.5° keys `|q|` dips to
+/// cos 11.25° and the block shrinks a little). `None` when the rotation never leaves the identity.
 pub(super) fn bake_uv_rot_seqs(
     model: &M2Model,
     combo_index: u16,
@@ -141,11 +140,10 @@ pub(super) fn bake_uv_scale_seqs(
     )
 }
 
-/// The texture transform, `uv' = R_q((uv + t − p) ⊙ s) + p` with `p = (½, ½)` (`0x715f25`):
-/// translate, scale about the pivot, then rotate about it. `R_q`, the raw quaternion's rotation,
-/// is read here as its z-rotation alone, `c = 1 − 2z²`, `s = 2zw`, `+θ` counter-clockwise with `u`
-/// right and `v` up: no shipped rotation has x or y components. `wow_model.wgsl`'s UV fold must
-/// stay in step.
+/// The texture transform, `uv' = R_q((uv + t − p) ⊙ s) + p` with `p = (½, ½)`: translate, scale
+/// about the pivot, then rotate about it. `R_q`, the raw quaternion's rotation, is read here as its
+/// z-rotation alone, `c = 1 − 2z²`, `s = 2zw`, `+θ` counter-clockwise with `u` right and `v` up: no
+/// shipped rotation has x or y components. `wow_model.wgsl`'s UV fold must stay in step.
 pub fn uv_transform(uv: [f32; 2], t: [f32; 2], q: [f32; 4], s: [f32; 2]) -> [f32; 2] {
     let (c, sn) = rotation_2x2(q);
     let dx = (uv[0] + t[0] - 0.5) * s[0];

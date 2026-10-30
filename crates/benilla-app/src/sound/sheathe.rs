@@ -1,4 +1,4 @@
-//! Draw and stow sounds, as 12340's `SI2::PlaySheatheSound` (`0x4d07b0`) picks them: the moved
+//! Draw and stow sounds, as 12340's sheathe-sound play (`0x4d07b0`) picks them: the moved
 //! item's `Material.dbc` row names the kit, `SheatheSoundID` to stow and `UnsheatheSoundID` to draw,
 //! played 2 yd above the unit. The material rides `SMSG_ITEM_QUERY_SINGLE_RESPONSE` into
 //! `Wielded` for players; a creature's reads 0.

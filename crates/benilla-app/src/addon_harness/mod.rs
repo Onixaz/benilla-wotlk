@@ -51,8 +51,8 @@ pub struct AddonReport {
     /// `## Interface`, as written (3.3.5a is `30300`); other values are not refused.
     pub interface: Vec<u32>,
     /// No manifest entry raised, failed to parse or dropped a frame. An entry naming no file does
-    /// not count: the 1.12 client logs `Couldn't open %s` and carries on (`0x6edaa0`); its row
-    /// stays in [`Self::errors`].
+    /// not count: the 1.12 client logs `Couldn't open %s` and carries on; its row stays in
+    /// [`Self::errors`].
     pub loaded: bool,
     /// Load errors, verbatim, tagged by file.
     pub errors: Vec<String>,
@@ -60,8 +60,8 @@ pub struct AddonReport {
     /// package's fault, since the 1.12 client logs `Couldn't open %s` and carries on, as ours does.
     pub absent_own_files: Vec<String>,
     /// Manifest entries resolving outside the addon's folder, as resolved paths (the `..` collapsed
-    /// as `0x6ede10` does), that neither the AddOns tree nor the patch chain holds: the addon wants
-    /// a neighbour that is not installed.
+    /// as the reference does), that neither the AddOns tree nor the patch chain holds: the addon
+    /// wants a neighbour that is not installed.
     pub absent_foreign_files: Vec<String>,
     /// Names it calls that the VM does not have (see the module doc).
     pub missing_globals: Vec<String>,
@@ -98,8 +98,8 @@ pub struct AddonReport {
     /// Errors raised after the addon's own files loaded, while the session start is driven: its
     /// `ADDON_LOADED`, `VARIABLES_LOADED`, `PLAYER_LOGIN`, `PLAYER_ENTERING_WORLD`, then a few
     /// ticks of `OnUpdate`. Each dependency's `ADDON_LOADED` already fired beside its own files,
-    /// where `0x51f5ad` fires it ([`load_dependencies`]). Kept apart from [`Self::loaded`], which
-    /// counts load errors.
+    /// where the reference fires it ([`load_dependencies`]). Kept apart from [`Self::loaded`],
+    /// which counts load errors.
     pub session_errors: Vec<String>,
     /// What the addon's UI overrides raised when invoked (see [`drive_ui_probe`]).
     pub probe_errors: Vec<String>,
@@ -267,7 +267,7 @@ fn survey_one(
         "UNIT_AURA",
         vec![benilla_ui::script::ScriptValue::Str("player".into())],
     );
-    // The addon's dependencies, first and recursively, as `AddOn_Load` (`0x51f240`) does in its
+    // The addon's dependencies, first and recursively, as the client's addon loader does in its
     // first two steps. Loaded before `globals_of` below, so a name a dependency provides is not
     // missing.
     let mut dep_loads: Vec<LoadedDep> = Vec::new();
@@ -295,9 +295,9 @@ fn survey_one(
     let warn_mark = script.diagnostics().last().map_or(0, |d| d.seq);
 
     let files = load_addon_files(&script, root, name, &toc);
-    // The live walk stamps each addon as loaded just before its `ADDON_LOADED` (`0x51f5ad`);
-    // without it `IsAddOnLoaded` answers nil and a LoadOnDemand dependent's `LoadAddOn` runs
-    // this addon a second time. The dependencies stamped themselves in `load_dependencies`.
+    // The live walk stamps each addon as loaded just before its `ADDON_LOADED`; without it
+    // `IsAddOnLoaded` answers nil and a LoadOnDemand dependent's `LoadAddOn` runs this addon a
+    // second time. The dependencies stamped themselves in `load_dependencies`.
     script.mark_addon_loaded(name);
     let wants = missing_calls(root, name, &toc, &known, &dep_methods);
     // After the addon's files, so a template its own XML declares is registered.
@@ -572,12 +572,12 @@ fn only_on(have: &[String], probes: &[String]) -> String {
 
 /// Drive the session-start sequence over a loaded addon and report what its handlers raised.
 ///
-/// The order is the 1.12 client's (`UI_Init`, `0x48fbf0`): `ADDON_LOADED`, `VARIABLES_LOADED`,
-/// `PLAYER_LOGIN`, with `PLAYER_ENTERING_WORLD` in the cascade, then ten ticks of 0.1 s for
-/// `OnUpdate` and first-tick timers (Ace's one-second `AceEvent_FullyInitialized` included; a
-/// longer timer is not reached). Only the surveyed addon's `ADDON_LOADED` fires here: each
-/// dependency's fired in [`load_dependencies`], inside its own `AddOn_Load` (`0x51f5ad`). Not
-/// `ui_script::finish_ui_load`, which would read the real saved variables.
+/// The order is the 1.12 client's: `ADDON_LOADED`, `VARIABLES_LOADED`, `PLAYER_LOGIN`, with
+/// `PLAYER_ENTERING_WORLD` in the cascade, then ten ticks of 0.1 s for `OnUpdate` and first-tick
+/// timers (Ace's one-second `AceEvent_FullyInitialized` included; a longer timer is not reached).
+/// Only the surveyed addon's `ADDON_LOADED` fires here: each dependency's fired in
+/// [`load_dependencies`], inside its own load. Not `ui_script::finish_ui_load`, which would read
+/// the real saved variables.
 fn drive_session_start(
     script: &mut UiScript,
     name: &str,
@@ -734,11 +734,11 @@ fn drive_ui_probe(script: &mut UiScript) -> Vec<String> {
 
 /// Load an addon's declared dependencies into the VM, depth-first, each at most once.
 ///
-/// The 1.12 client's order (`AddOn_Load`, `0x51f240`): optional dependencies first, failures
-/// ignored; required ones next, a failure aborting the dependent; then its own files. The abort is
-/// not reproduced, only the state the dependent's file scope meets; a missing required dependency
-/// is reported ([`AddonReport::missing_deps`]), an absent optional one is silent. Errors inside a
-/// dependency are its own row, never the dependent's.
+/// The 1.12 client's order: optional dependencies first, failures ignored; required ones next, a
+/// failure aborting the dependent; then its own files. The abort is not reproduced, only the state
+/// the dependent's file scope meets; a missing required dependency is reported
+/// ([`AddonReport::missing_deps`]), an absent optional one is silent. Errors inside a dependency
+/// are its own row, never the dependent's.
 fn load_dependencies(
     script: &mut UiScript,
     root: &Path,
@@ -767,12 +767,11 @@ fn load_dependencies(
         };
         load_dependencies(script, root, &dep_toc, installed, seen, loaded);
         let files = load_addon_files(script, root, dep, &dep_toc);
-        // `ADDON_LOADED` fires here, at the 1.12 client's position: `AddOn_Load` (`0x51f240`) runs
-        // an addon's dependencies, its `.toc` files (`0x51f3fa`), `Bindings.xml`, the two
-        // SavedVariables chunks, then `ADDON_LOADED` (event 429, `0x51f5ad`), before the next
-        // addon. The loaded flag is set first (`[rec+0x18]=1` at `0x51f313`), so a handler's
-        // `IsAddOnLoaded` is true. Fired outside the surveyed addon's error mark: a library raising
-        // in its initialiser is its own row.
+        // `ADDON_LOADED` fires here, at the 1.12 client's position: its addon loader runs an
+        // addon's dependencies, its `.toc` files, `Bindings.xml`, the two SavedVariables chunks,
+        // then `ADDON_LOADED` (event 429), before the next addon. The loaded flag is set first
+        // (`[rec+0x18]=1`), so a handler's `IsAddOnLoaded` is true. Fired outside the surveyed
+        // addon's error mark: a library raising in its initialiser is its own row.
         script.mark_addon_loaded(dep);
         script.fire_event(
             "ADDON_LOADED",
@@ -1023,10 +1022,9 @@ fn global_strings() -> Option<&'static str> {
     .as_deref()
 }
 
-/// Put a player and a realm in the VM before the addon loads: the 1.12 client runs `AddOn_Load`
-/// from `UI_Init`, after the world is entered, so an addon's file scope always sees a real
-/// character (AceDB-2.0 opens with
-/// `string.format(PLAYER_OF_REALM, UnitName("player"), GetRealmName())`).
+/// Put a player and a realm in the VM before the addon loads: the 1.12 client loads addons at UI
+/// start-up, after the world is entered, so an addon's file scope always sees a real character
+/// (AceDB-2.0 opens with `string.format(PLAYER_OF_REALM, UnitName("player"), GetRealmName())`).
 ///
 /// Every seat below is a state an in-world character is always in, kept minimal and ordinary: a VM
 /// answering nil or zero there would fail addons on a state the 1.12 client cannot be in.
@@ -1078,7 +1076,7 @@ fn seat_a_session(script: &mut UiScript) {
             // `UnitFactionGroup("player")`: every playable race has a side, and AceDB-2.0
             // concatenates it into its per-realm key at file scope.
             faction_group: Some("Alliance".into()),
-            // `0x5efe00`'s team digit for Human (race 1), the rank-title key's second `%d`.
+            // The reference's team digit for Human (race 1), the rank-title key's second `%d`.
             pvp_team: crate::ui_unit::race_pvp_team(1),
             ..Default::default()
         }),
@@ -1382,8 +1380,8 @@ struct FileLoad {
     /// package is incomplete.
     absent: AbsentFiles,
     /// Anything raised, failed to parse or dropped a frame ([`AddonReport::loaded`]). False when
-    /// the only failures are absent files: `0x6edaa0` logs `"Couldn't open %s"`, returns null, and
-    /// the walk carries on.
+    /// the only failures are absent files: the reference logs `"Couldn't open %s"`, returns null,
+    /// and the walk carries on.
     raised: bool,
 }
 
@@ -1401,8 +1399,8 @@ fn load_addon_files(script: &UiScript, root: &Path, name: &str, toc: &Toc) -> Fi
         let Some(bytes) = read_under(root, &path) else {
             errors.push(format!("{file}: not found"));
             // Whose package is incomplete: `join_ref` has collapsed the `..`s as the 1.12 client
-            // does (`0x6ede10`), so a path still inside the addon's folder is its own manifest
-            // unsatisfied, and one outside it wants a neighbour.
+            // does, so a path still inside the addon's folder is its own manifest unsatisfied, and
+            // one outside it wants a neighbour.
             let own = path
                 .strip_prefix(base.as_str())
                 .is_some_and(|rest| rest.starts_with('/'));
@@ -2575,7 +2573,7 @@ mod tests {
 mod dependency_tests {
     use super::*;
 
-    /// A dependency is loaded before its dependent, depth-first, as `AddOn_Load` (`0x51f240`) does.
+    /// A dependency is loaded before its dependent, depth-first, as the client's addon loader does.
     #[test]
     fn a_dependency_runs_before_the_addon_that_declares_it() {
         let tmp = std::env::temp_dir().join(format!("benilla-harness-deps-{}", std::process::id()));
@@ -2959,10 +2957,9 @@ mod dependency_tests {
     }
 
     /// A dependency's `ADDON_LOADED` lands before the dependent's first line runs: the 1.12 client
-    /// emits per addon its dependencies, its `.toc` files (`0x51f3fa`), `Bindings.xml`, the
-    /// SavedVariables chunks, then `ADDON_LOADED` (`0x51f5ad`). The read is at file scope (as
-    /// `KTMAutoHider`'s `<OnLoad>` reads `KLHThreatMeter`'s GUI), and `EagerLib` initialises on its
-    /// own event only.
+    /// emits per addon its dependencies, its `.toc` files, `Bindings.xml`, the SavedVariables
+    /// chunks, then `ADDON_LOADED`. The read is at file scope (as `KTMAutoHider`'s `<OnLoad>` reads
+    /// `KLHThreatMeter`'s GUI), and `EagerLib` initialises on its own event only.
     #[test]
     fn a_dependencys_addon_loaded_precedes_the_dependents_file_scope() {
         let tmp =
@@ -3070,9 +3067,8 @@ mod dependency_tests {
     }
 
     /// A manifest entry with no file is split by whose package is short: `own`, a `.toc` listing a
-    /// file its folder lacks (the 1.12 client logs `Couldn't open %s` at `0x6edaa0` and carries
-    /// on), or `foreign`, a `..` entry (collapsed as `0x6ede10` does) into a folder not installed.
-    /// The two never merge.
+    /// file its folder lacks (the 1.12 client logs `Couldn't open %s` and carries on), or
+    /// `foreign`, a `..` entry into a folder not installed. The two never merge.
     #[test]
     fn an_absent_manifest_entry_is_attributed_to_whose_package_is_short() {
         let tmp =
@@ -3129,7 +3125,7 @@ mod dependency_tests {
             wants.absent_own_files
         );
 
-        // Nothing is subtracted from `errors`, and both addons count as loaded: `0x6edaa0` logs
+        // Nothing is subtracted from `errors`, and both addons count as loaded: the reference logs
         // `Couldn't open %s` and the walk carries on with nothing raised.
         for r in [short, wants] {
             assert!(
@@ -3202,8 +3198,8 @@ mod dependency_tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// An optional dependency loads first (`AddOn_Load`'s order; `FuBar_BagFu` needs `Ace2` first),
-    /// and an uninstalled one is silent: `missing_deps` is required-only.
+    /// An optional dependency loads first (the client's addon-load order; `FuBar_BagFu` needs
+    /// `Ace2` first), and an uninstalled one is silent: `missing_deps` is required-only.
     #[test]
     fn an_optional_dependency_loads_first_and_a_missing_one_is_silent() {
         let tmp =

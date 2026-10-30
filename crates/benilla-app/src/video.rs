@@ -1,12 +1,11 @@
 //! The stock Video window's Resolution and Effects rows as the window, the presentation path and
-//! the world see them: the change callbacks of the reference's registration blocks
-//! (`RegisterGxCVars 0x76a630`, `CWorldParam::Initialize 0x78e400`, `Client.cpp`'s `0x4047e0`),
-//! each arm writing its own knob.
+//! the world see them: the change callbacks of the reference's registration blocks (`0x76a630`,
+//! `0x78e400`, `0x4047e0`), each arm writing its own knob.
 //!
 //! `gxWindow "0"` mode-sets the display to `gxResolution` at `gxRefresh`, as the reference's device
-//! does (`ISetPresentParms 0x68e250`). Deviation: where the platform has no client mode-set
-//! (Wayland, where winit ignores `Fullscreen::Exclusive`, and macOS) the window is borderless over
-//! the monitor at its own mode, and the refresh dropdown shows the stock panel's disabled state.
+//! does (`0x68e250`). Deviation: where the platform has no client mode-set (Wayland, where winit
+//! ignores `Fullscreen::Exclusive`, and macOS) the window is borderless over the monitor at its own
+//! mode, and the refresh dropdown shows the stock panel's disabled state.
 //!
 //! The `gx*` rows are latched until `RestartGx()`, as in the reference; a restart re-asserts them
 //! against the window rather than re-creating the device, since wgpu reconfigures the surface live.
@@ -93,8 +92,8 @@ pub(crate) enum DisplayMode {
 /// The windowed size while `gxResolution` is unpicked ("").
 pub(crate) const DEFAULT_WINDOWED: UVec2 = UVec2::new(1600, 900);
 
-/// `gxWindow`'s value to the mode, by the reference's `SStrToInt(v) != 0` (`0x769550`); shared
-/// by [`crate::cvars`]'s arm and the boot read.
+/// `gxWindow`'s value to the mode, by the reference's integer parse of it being nonzero
+/// (`0x769550`); shared by [`crate::cvars`]'s arm and the boot read.
 pub(crate) fn display_from_flag(v: f32) -> DisplayMode {
     if v != 0.0 {
         DisplayMode::Windowed
@@ -112,9 +111,9 @@ pub(crate) fn parse_resolution(value: &str) -> Option<UVec2> {
 }
 
 /// The `WindowMode` a configuration means. `maximize` is `gxMaximize`, which counts only while
-/// windowed: the reference's window rebuild (`0x58cf10`) gives a windowed, maximized window the
-/// popup style `0x90000000`, no caption and no border, sized to the screen, which is a borderless
-/// window over the monitor. `exclusive` is the mode to set, `None` keeping the monitor's own.
+/// windowed: the reference's window rebuild gives a windowed, maximized window the popup style
+/// `0x90000000`, no caption and no border, sized to the screen, which is a borderless window over
+/// the monitor. `exclusive` is the mode to set, `None` keeping the monitor's own.
 pub(crate) fn window_mode(
     display: DisplayMode,
     maximize: bool,
@@ -160,8 +159,8 @@ pub(crate) fn boot_windowed_size() -> UVec2 {
         .unwrap_or(DEFAULT_WINDOWED)
 }
 
-/// A windowed window's client size and outer top-left, fitted to `work` (physical px) as
-/// `CGxDevice::AdjustWindowRectToWorkArea 0x684d70` fits the outer rect, `frame` being the outer
+/// A windowed window's client size and outer top-left, fitted to `work` (physical px) as the
+/// reference's device fits the outer rect to the work area (`0x684d70`), `frame` being the outer
 /// rect's excess over the client: an overflowing axis clamps, the other following the aspect with
 /// `aspect` (`gxAspect`) by stepping down to a near-whole length, then the rect is centred.
 pub(crate) fn fit_to_work_area(
@@ -217,8 +216,9 @@ pub(crate) fn fit_to_work_area(
 }
 
 /// The swapchain's frames in flight: one more with `gxTripleBuffer` under vsync, the reference's
-/// second back buffer (`ISetPresentParms 0x68e250` counts it only with vsync); `None` is wgpu's 2.
-/// The patched `bevy_render` (`third_party/bevy_render`) reconfigures the surface when it moves.
+/// second back buffer (the present parameters, `0x68e250`, count it only with vsync); `None` is
+/// wgpu's 2. The patched `bevy_render` (`third_party/bevy_render`) reconfigures the surface when it
+/// moves.
 pub(crate) fn frame_latency(vsync: bool, triple_buffer: bool) -> Option<std::num::NonZero<u32>> {
     (vsync && triple_buffer).then(|| std::num::NonZero::new(3).expect("non-zero"))
 }
@@ -249,7 +249,7 @@ pub(crate) struct VideoConfig {
     pub(crate) fix_lag: bool,
     /// `gxCursor`: the OS cursor, else the client draws its own over the frame ([`crate::cursor`]).
     pub(crate) hw_cursor: bool,
-    /// `windowResizeLock`: the window's border drag is refused (`ResizeDragWindow 0x869970`).
+    /// `windowResizeLock`: the window's border drag is refused (`0x869970`).
     pub(crate) resize_lock: bool,
     /// `gxAspect`: a window too big for the screen keeps its aspect as it shrinks
     /// ([`fit_to_work_area`]).
@@ -294,9 +294,9 @@ pub(crate) fn present_mode(vsync: bool) -> PresentMode {
     }
 }
 
-/// `componentTextureLevel`, the composited body texture's side as `1 << level`
-/// (`CCharacterComponent::Initialize`, `0x401ff0` then `0x4f1a20`, together clamping to [7, 9]);
-/// 8 is 256², 9 is 512².
+/// `componentTextureLevel`, the composited body texture's side as `1 << level` (the character
+/// component's init, `0x401ff0` then `0x4f1a20`, together clamping to [7, 9]); 8 is 256², 9 is
+/// 512².
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct ComponentTextureLevel(pub(crate) u8);
 
@@ -383,7 +383,7 @@ pub(crate) fn on_cvar(
             }
             info!("video: full-screen effects {:?}", *fx.ffx);
         }
-        // `World::SetFarClip`, validated for the map the player is on.
+        // The world's far-clip setter, validated for the map the player is on.
         "farclip" => {
             let map = fx.map.as_ref().map_or(0, |m| m.0);
             fx.view.set_farclip(v, map);
@@ -459,8 +459,8 @@ pub(crate) fn on_cvar(
                 );
             }
         }
-        // `0x78dc60`: clamped, then `ScaleFadeDist`. Marking the view distance changed wakes every
-        // cached draw-set verdict, as the bands they rest on moved.
+        // `0x78dc60`: clamped, then the fade distances scaled. Marking the view distance changed
+        // wakes every cached draw-set verdict, as the bands they rest on moved.
         "environmentdetail" => {
             benilla_world::model_fade::set_fade_scale(v);
             fx.view.set_changed();
@@ -475,11 +475,11 @@ pub(crate) fn on_cvar(
         "shadowlevel" => fx.terrain.low_mip = int != 0,
         // `0x78de60`. Applied live, where the reference reads it at map load.
         "specular" => fx.terrain.specular = int != 0,
-        // `0x78dcf0`: `CWorld::enables2` bit 4, read per projected batch.
+        // `0x78dcf0`: the world's second enable word, bit 4, read per projected batch.
         "projectedtextures" => fx.projected.0 = int != 0,
         // Read once at character-component init in the reference; here every body re-composites.
         "componenttexturelevel" => fx.component_level.0 = int.clamp(7, 9) as u8,
-        // Weather Intensity 0..3 (`MapWeather.cpp`'s handler), the precipitation spawn rate.
+        // Weather Intensity 0..3 (the reference's weather handler), the precipitation spawn rate.
         "weatherdensity" => fx.weather.weather_density = v.trunc().clamp(0.0, 3.0) as u8,
         // No callback (`0x78e400`): the record's integer, read at each shard emitter's spawn.
         "spelleffectlevel" => fx.spell_effect_level.0 = int,
@@ -487,8 +487,8 @@ pub(crate) fn on_cvar(
     }
 }
 
-/// The `spellEffectLevel` record's integer (`SStrToInt` of the value): what the blizzard shard
-/// emitter reads at spawn (`BlizzardObject::Init 0x7fb5b0`).
+/// The `spellEffectLevel` record's integer (the value parsed as an integer): what the blizzard
+/// shard emitter reads at spawn (`0x7fb5b0`).
 #[derive(Resource)]
 pub(crate) struct SpellEffectLevel(pub(crate) i32);
 
@@ -574,9 +574,9 @@ impl Plugin for VideoPlugin {
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct GxRestarts(pub(crate) u32);
 
-/// Carry `RestartGx()` calls into [`GxRestarts`] and commit the latched `gx*` rows (flags `3`),
-/// as the reference's restart runs `UpdateGxCVars` (`0x7698b0`); `GetCVar` answers the applied
-/// value until then.
+/// Carry `RestartGx()` calls into [`GxRestarts`] and commit the latched `gx*` rows (flags `3`), as
+/// the reference's restart commits them (`0x7698b0`); `GetCVar` answers the applied value until
+/// then.
 fn drain_restart_gx(
     script: Option<NonSendMut<benilla_ui::script::UiScript>>,
     mut restarts: ResMut<GxRestarts>,
@@ -601,15 +601,15 @@ fn drain_restart_gx(
     info!("video: RestartGx — {committed} staged setting(s) committed; re-asserting the display");
 }
 
-/// The reference's filters on the monitor's modes (`SetupFormats 0x54f050`): keep when
-/// `w/h >= 1.248` (just under 5:4, so square and portrait fail), `w > 640` and `h > 480`.
+/// The reference's filters on the monitor's modes (`0x54f050`): keep when `w/h >= 1.248` (just
+/// under 5:4, so square and portrait fail), `w > 640` and `h > 480`.
 fn offerable(size: UVec2) -> bool {
     size.x > 640 && size.y > 480 && size.x as f32 / size.y as f32 >= 1.248
 }
 
-/// `SetupFormats`' four hardcoded sizes, used when no monitor mode survives [`offerable`]. The
-/// reference also takes this path when `widescreen` (default `"1"`) is 0; benilla does not
-/// register that CVar.
+/// The reference format setup's four hardcoded sizes, used when no monitor mode survives
+/// [`offerable`]. The reference also takes this path when `widescreen` (default `"1"`) is 0;
+/// benilla does not register that CVar.
 const SCREEN_FALLBACK: [UVec2; 4] = [
     UVec2::new(800, 600),
     UVec2::new(1024, 768),
@@ -617,7 +617,7 @@ const SCREEN_FALLBACK: [UVec2; 4] = [
     UVec2::new(1600, 1200),
 ];
 
-/// A mode's refresh rate in whole Hz, as `CGxMonitorMode::m_refreshRate` holds it.
+/// A mode's refresh rate in whole Hz, as the reference's monitor mode holds it.
 fn mode_hz(mode: &VideoMode) -> u32 {
     (mode.refresh_rate_millihertz + 500) / 1000
 }
@@ -761,11 +761,11 @@ pub(crate) fn video_caps() -> benilla_ui::script::VideoCaps {
     }
 }
 
-/// [`publish_display_modes`]' push and the device caps for a VM about to load, which the
-/// reference has before `UI_Init`: `UpdateMenuBarTop` divides the current entry's sides at load
-/// (`UIParent.lua:1171`), and the Resolution panel's `PLAYER_ENTERING_WORLD` arm disables
-/// Hardware Cursor for good on a nil cursor cap (`VideoOptionsPanels.lua:119`). The list is
-/// never empty, as `SetupFormats` always leaves one: with no window to size the current entry,
+/// [`publish_display_modes`]' push and the device caps for a VM about to load, which the reference
+/// has before the UI initializes: `UpdateMenuBarTop` divides the current entry's sides at load
+/// (`UIParent.lua:1171`), and the Resolution panel's `PLAYER_ENTERING_WORLD` arm disables Hardware
+/// Cursor for good on a nil cursor cap (`VideoOptionsPanels.lua:119`). The list is never empty, as
+/// the reference's format setup always leaves one: with no window to size the current entry,
 /// `GetCurrentResolution` answers 1 and `UpdateMenuBarTop` reads the first.
 pub(crate) fn seed_display_modes_for_vm(
     world: &mut World,
@@ -881,12 +881,12 @@ fn display_session() -> String {
     String::new()
 }
 
-/// `gxRefresh` against the primary monitor once its modes are known, as `ValidateFormatMonitor
-/// 0x769e10` checks the boot format and `SetGxCVars 0x769950` writes it back: a rate no mode offers
-/// (the refresh callback's `0x76a580` test) becomes the monitor's current one. Deviation: the
-/// reference takes the size's lowest rate over the 60 its first-run hwDetect writes; benilla runs no
-/// hwDetect, and the lowest (50 Hz on a common 144 Hz panel) is not among the first size's rates
-/// the stock dropdown lists, so it would read blank.
+/// `gxRefresh` against the primary monitor once its modes are known, as the reference checks the
+/// boot format against the monitor (`0x769e10`) and writes it back (`0x769950`): a rate no mode
+/// offers (the refresh callback's `0x76a580` test) becomes the monitor's current one. Deviation:
+/// the reference takes the size's lowest rate over the 60 its first-run hwDetect writes; benilla
+/// runs no hwDetect, and the lowest (50 Hz on a common 144 Hz panel) is not among the first size's
+/// rates the stock dropdown lists, so it would read blank.
 fn validate_refresh(
     mut cfg: ResMut<VideoConfig>,
     cvars: Option<ResMut<crate::cvars::Cvars>>,
@@ -969,8 +969,9 @@ fn wanted_mode(cfg: &VideoConfig, monitor: Option<(Entity, &bevy::window::Monito
     window_mode(cfg.display, cfg.maximize, exclusive, selection)
 }
 
-/// The outer rect's excess over the client area, winit's `outer_size` less `inner_size`, which
-/// `ICreateWindow 0x68ebb0` takes from `AdjustWindowRectEx`; zero before the OS window exists.
+/// The outer rect's excess over the client area, winit's `outer_size` less `inner_size`, which the
+/// reference's window creation (`0x68ebb0`) takes from `AdjustWindowRectEx`; zero before the OS
+/// window exists.
 fn outer_frame(window: Entity) -> UVec2 {
     bevy::winit::WINIT_WINDOWS.with_borrow(|windows| {
         windows.get_window(window).map_or(UVec2::ZERO, |w| {
@@ -1002,9 +1003,9 @@ const SHOW_AFTER_SETTLE: u32 = 2;
 /// The frame a window whose primary monitor is never named (Wayland names none) is shown unfitted.
 const SHOW_UNSETTLED: u32 = 10;
 
-/// The boot window's reveal. `ICreateWindow 0x68ebb0` creates the window at its fitted rect and
-/// shows it; winit names the monitor only after the window exists, so ours is born hidden
-/// (`visible: false` in `lib.rs`) and shown once [`apply_window_mode`] has fitted it.
+/// The boot window's reveal. The reference's window creation (`0x68ebb0`) creates the window at its
+/// fitted rect and shows it; winit names the monitor only after the window exists, so ours is born
+/// hidden (`visible: false` in `lib.rs`) and shown once [`apply_window_mode`] has fitted it.
 #[derive(Default)]
 struct BootReveal {
     frame: u32,
@@ -1034,8 +1035,8 @@ impl BootReveal {
 /// frame the primary monitor's modes are known (the boot window cannot name a mode). An unchanged
 /// mode is not re-asserted, so a restart that moved nothing leaves the display alone. A windowed
 /// window is fitted to the monitor ([`fitted_window`]) while `gxResolution` keeps the size asked
-/// for, as `SetGxCVars 0x769950` writes the requested format. The boot window is shown here
-/// ([`BootReveal`]).
+/// for, as the reference's write-back (`0x769950`) writes the requested format. The boot window is
+/// shown here ([`BootReveal`]).
 #[allow(clippy::too_many_arguments)]
 fn apply_window_mode(
     cfg: Res<VideoConfig>,
@@ -1170,8 +1171,8 @@ fn extract_fix_lag(
 }
 
 /// Reduce Input Lag: after the frame's present, wait for the GPU to finish it, as the reference
-/// spins on an event query after `Present` (`CGxDeviceD3d::ScenePresent 0x6a3450`), so the CPU
-/// never runs a frame ahead and the next frame's input is sampled against a drained queue.
+/// spins on an event query after `Present` (`0x6a3450`), so the CPU never runs a frame ahead and
+/// the next frame's input is sampled against a drained queue.
 fn fix_input_lag(fix_lag: Res<FixLag>, device: Res<bevy::render::renderer::RenderDevice>) {
     if !fix_lag.0 {
         return;
@@ -1260,7 +1261,7 @@ mod tests {
     }
 
     /// Fullscreen mode-sets where the platform can and is borderless where it cannot; a windowed,
-    /// maximized window is the reference's popup over the screen (`0x58cf10`).
+    /// maximized window is the reference's popup over the screen.
     #[test]
     fn the_window_mode_of_each_configuration() {
         let m = MonitorSelection::Primary;
@@ -1348,8 +1349,8 @@ mod tests {
         assert_eq!(pick_mode(&m, UVec2::new(800, 600), 60), None);
     }
 
-    /// `SetupFormats`' filters: strictly over 640x480 and at least 1.248 wide; with none left, the
-    /// four fallback sizes.
+    /// The reference format setup's filters: strictly over 640x480 and at least 1.248 wide; with
+    /// none left, the four fallback sizes.
     #[test]
     fn the_offered_sizes_are_the_references_filter() {
         let m = monitor(&[
@@ -1377,7 +1378,7 @@ mod tests {
         assert!(fallback.iter().all(|m| m.refresh_rates.is_empty()));
     }
 
-    /// Triple buffering counts only under vsync, as `ISetPresentParms` does.
+    /// Triple buffering counts only under vsync, as the reference's present parameters do.
     #[test]
     fn triple_buffering_is_one_more_frame_in_flight_under_vsync() {
         assert_eq!(frame_latency(true, true).map(|n| n.get()), Some(3));

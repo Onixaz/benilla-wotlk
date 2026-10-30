@@ -140,8 +140,8 @@ fn the_guild_recruitment_latch_moves_from_the_cvar_alone() {
     assert_eq!(s.guild_recruitment_mode(), 0);
 }
 
-/// A manual join of `GuildRecruitment` drops the latch to 0 (`SetGuildRecruitmentMode(0, true)`,
-/// `0x508260`): it dirties the file and leaves nothing.
+/// A manual join of `GuildRecruitment` drops the latch to 0 (the recruitment-mode set with
+/// `(0, true)`, `0x508260`): it dirties the file and leaves nothing.
 #[test]
 fn a_manual_guild_recruitment_verb_resets_the_latch() {
     let mut s = script();
@@ -203,7 +203,7 @@ fn events(s: &crate::script::UiScript) -> Vec<String> {
         .unwrap()
 }
 
-/// `RebuildDisplayChannelList` (`0x504840`): the group header, the world header over the
+/// The display-list rebuild (`0x504840`): the group header, the world header over the
 /// `ChatChannels.dbc` slots, the custom header over the rest, each channel in slot order;
 /// `GetChannelDisplayInfo` (`0x4ff580`) answers nine values per entry and none past the list.
 #[test]
@@ -410,7 +410,7 @@ fn an_unnamed_member_reads_unknown_and_a_leave_unselects() {
     assert_eq!(s.eval::<i64>("return GetNumDisplayChannels()").unwrap(), 5);
 }
 
-/// `BuildPartyDisplayList` (`0x5045c0`): the party lists under the group header, and selecting it
+/// The party display list (`0x5045c0`): the party lists under the group header, and selecting it
 /// builds the player and the party at once, the leader as owner, with nothing on the wire.
 #[test]
 fn a_party_lists_under_the_group_header_and_builds_its_roster_at_once() {
@@ -452,7 +452,7 @@ fn a_party_lists_under_the_group_header_and_builds_its_roster_at_once() {
     .unwrap();
 }
 
-/// `BuildRaidDisplayList` (`0x504720`): the raid's entry wins over the party's, ranks map to owner
+/// The raid display list (`0x504720`): the raid's entry wins over the party's, ranks map to owner
 /// and moderator; in a battleground (`0x572f50`) the raid lists as the battleground.
 #[test]
 fn a_raid_lists_its_entry_and_a_battleground_raid_the_battleground() {

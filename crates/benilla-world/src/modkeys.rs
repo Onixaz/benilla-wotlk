@@ -19,10 +19,10 @@ pub const DEV_CHORD: &str = "Ctrl+Shift";
 /// `CTRL-SHIFT-PAGEDOWN` use this plane, and no letter does. Not gated on
 /// `ui_script::UiKeyboardCapture`: a chord is never typed text.
 ///
-/// Deviation: the reference (`0x4b7990`) retries a binding miss once without the leftmost
-/// modifier, so `CTRL-SHIFT-P` would reach `SHIFT-P` (`TOGGLECHARACTER3`, the pet paper doll); in
-/// a run with dev affordances `bindings::BindingDispatch::resolve` skips that retry on this plane,
-/// because a dev chord must open nothing in game. An exact `CTRL-SHIFT-` binding still dispatches.
+/// Deviation: the reference retries a binding miss once without the leftmost modifier, so
+/// `CTRL-SHIFT-P` would reach `SHIFT-P` (`TOGGLECHARACTER3`, the pet paper doll); in a run with dev
+/// affordances `bindings::BindingDispatch::resolve` skips that retry on this plane, because a dev
+/// chord must open nothing in game. An exact `CTRL-SHIFT-` binding still dispatches.
 pub fn dev_chord(keys: &ButtonInput<KeyCode>, key: KeyCode) -> bool {
     dev_plane(keys) && keys.just_pressed(key)
 }

@@ -1,8 +1,8 @@
 //! Whether a BLP's stored S3TC blocks can go to the GPU untouched, as the reference uploads them
-//! (`glCompressedTexImage2DARB`; its software DXT decoder is a 16-bit-device fallback, device
-//! formats `0x58a230`, per-level upload formats `0x59f270`). They can when the device accepts BC
-//! ([`bc_supported`]) and mip 0 is whole 4x4 blocks; otherwise the chain decodes to `Rgba8Unorm`.
-//! Both the async loader ([`crate::blp`]) and `WorldAssets` ([`crate::world_assets`]) ask here.
+//! (`glCompressedTexImage2DARB`; its software DXT decoder is a 16-bit-device fallback, per-level
+//! upload formats). They can when the device accepts BC ([`bc_supported`]) and mip 0 is whole 4x4
+//! blocks; otherwise the chain decodes to `Rgba8Unorm`. Both the async loader ([`crate::blp`]) and
+//! `WorldAssets` ([`crate::world_assets`]) ask here.
 
 use std::sync::OnceLock;
 

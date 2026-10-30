@@ -110,8 +110,8 @@ fn empty_line_is_a_one_unit_row_and_the_chain_stays_inside_the_plate() {
             ("PvP", 24.0, 12.0),
         ],
     );
-    // Rows 14 + 1 + 12 + 12 with 3 slot gaps ⇒ totalh 45, height 65; maxw 90 ⇒ width 110.
-    // The reference's `AddLine("")` returns without adding a line (`0x530270`); ours adds this row.
+    // Rows 14 + 1 + 12 + 12 with 3 slot gaps ⇒ totalh 45, height 65; maxw 90 ⇒ width 110. The
+    // reference's `AddLine("")` returns without adding a line; ours adds this row.
     s.run(
         r#"
         assert(TTE:GetWidth() == 110, "auto width, got " .. tostring(TTE:GetWidth()))
@@ -380,8 +380,8 @@ fn fadeout_ramps_then_hides() {
     assert!(s.take_errors().is_empty());
 }
 
-/// Every GameTooltip clamps to the screen (the geometry-flags bit 4 clamp, `assemble 0x767a20`), so
-/// the zone text's `ANCHOR_LEFT` (`Minimap.lua:39`) hangs down from the screen top, not above it.
+/// Every GameTooltip clamps to the screen (the geometry-flags bit 4 clamp, `assemble`), so the zone
+/// text's `ANCHOR_LEFT` (`Minimap.lua:39`) hangs down from the screen top, not above it.
 #[test]
 fn owner_anchored_tooltip_clamps_to_screen() {
     let mut s = script();
@@ -432,7 +432,7 @@ fn owner_anchored_tooltip_clamps_to_screen() {
     assert!(s.take_errors().is_empty());
 }
 
-/// `0x52fa50`'s duration ladder over stand-in templates: the arm edges, the ceiling on every arm
+/// The reference's duration ladder over stand-in templates: the arm edges, the ceiling on every arm
 /// but seconds, and the `_P1` plural pick.
 #[test]
 fn the_duration_ladder_ceils_every_arm_but_seconds() {
@@ -575,9 +575,9 @@ fn an_emptied_pooled_line_drops_its_stale_box_and_the_plate_still_contains_the_c
 }
 
 /// An omitted `anchorType` is mode 0, ANCHOR_LEFT: `0x61ec64` zeroes the local and the
-/// `lua_isstring` gate (`0x61ec70`) skips the compare chain. `ResetPosition` (`0x61b040`) returns
-/// for mode 10 (`0x61b05c`) before its clear (`0x61b070`), and the core always passes the arg
-/// that gates mode 9's skip as 1 (`0x61ea9c`), so only ANCHOR_PRESERVE keeps the points.
+/// `lua_isstring` gate (`0x61ec70`) skips the compare chain. The position reset (`0x61b040`)
+/// returns for mode 10 (`0x61b05c`) before its clear (`0x61b070`), and the core always passes the
+/// arg that gates mode 9's skip as 1 (`0x61ea9c`), so only ANCHOR_PRESERVE keeps the points.
 #[test]
 fn set_owner_defaults_to_anchor_left_and_only_preserve_keeps_the_placement() {
     let mut s = script();
@@ -661,9 +661,10 @@ fn set_owner_stamps_full_alpha_even_with_no_fade_running() {
     .unwrap();
 }
 
-/// `Show` (`ShowThis`, `0x61cff0`) shows only with an owner (`+0x29c`) and a line (`+0x2a4`);
-/// otherwise it hides (`0x61d028`), and the tooltip's hide (`0x61eb20`) is the `SetOwner` core
-/// with a NULL owner, which un-owns. `QuestieTracker.lua`'s OnEnter can call `Show` with no line.
+/// `Show` (the tooltip's show, `0x61cff0`) shows only with an owner (`+0x29c`) and a line
+/// (`+0x2a4`); otherwise it hides (`0x61d028`), and the tooltip's hide (`0x61eb20`) is the
+/// `SetOwner` core with a NULL owner, which un-owns. `QuestieTracker.lua`'s OnEnter can call `Show`
+/// with no line.
 #[test]
 fn show_with_no_lines_self_hides_and_un_owns() {
     let mut s = script();
@@ -750,7 +751,7 @@ fn a_non_string_anchor_is_silently_mode_zero_and_never_raises() {
     );
 }
 
-/// `ANCHOR_CURSOR`, mode 8, clears at `SetOwner` like mode 9; the per-frame `OnLayerUpdate`
+/// `ANCHOR_CURSOR`, mode 8, clears at `SetOwner` like mode 9; the per-frame layer update
 /// (`0x61b2e0`) then pins the plate's BOTTOM to the screen's BOTTOMLEFT at the cursor, over its
 /// effective scale.
 #[test]
@@ -903,11 +904,10 @@ fn get_owner_answers_the_owner_frame_or_nil() {
     .unwrap();
 }
 
-/// A Lua `SetOwner` runs the tooltip's `Hide` first, which clears the shown flag before the
-/// `HideThis` override (`0x48f620` → `0x61eb20`): its clear fires OnTooltipCleared with the old
-/// owner still set and `IsShown` already false, then OnHide fires for a shown plate only. The
-/// core's own clear then fires OnTooltipCleared before the new owner is stored (`0x61ea06` before
-/// `0x61ea7e`).
+/// A Lua `SetOwner` runs the tooltip's `Hide` first, which clears the shown flag before the hide
+/// override (`0x48f620` → `0x61eb20`): its clear fires OnTooltipCleared with the old owner still
+/// set and `IsShown` already false, then OnHide fires for a shown plate only. The core's own clear
+/// then fires OnTooltipCleared before the new owner is stored (`0x61ea06` before `0x61ea7e`).
 #[test]
 fn set_owner_hides_then_clears_before_the_owner_is_stored() {
     let s = script();
@@ -946,9 +946,8 @@ fn set_owner_hides_then_clears_before_the_owner_is_stored() {
     assert!(s.eval::<bool>("return Tip:IsOwned(SeqA)").unwrap());
 }
 
-/// The binding hides before it checks the owner, then raises the reference's errors in order,
-/// each naming the tooltip (`0x61ee6e`, `0x61ebc9`, `0x61ec1c`, `0x61ec4a`), `<unnamed>` without a
-/// name (`0x9ea280`).
+/// The binding hides before it checks the owner, then raises the reference's errors in order, each
+/// naming the tooltip (`0x61ee6e`, `0x61ebc9`, `0x61ec1c`, `0x61ec4a`), `<unnamed>` without a name.
 #[test]
 fn set_owner_raises_the_reference_errors_after_hiding() {
     let s = script();

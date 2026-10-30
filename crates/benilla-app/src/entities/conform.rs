@@ -1,8 +1,7 @@
-//! Terrain conform (`0x7106c0`): a model whose M2 has `GlobalModelFlags & 3` of 1 pitches to the
-//! ground (mounts, quadrupeds) and of 3 pitches and rolls (low wide bodies: kodo, basilisk, crab),
-//! wild or mounted alike. The tilt is one [`ConformNode`] the root bones hang under, so a rider
-//! tilts with its mount while the unit's yaw and collider stay upright. `WOW_NO_MOUNT_TILT=1`
-//! disables it.
+//! Terrain conform: a model whose M2 has `GlobalModelFlags & 3` of 1 pitches to the ground (mounts,
+//! quadrupeds) and of 3 pitches and rolls (low wide bodies: kodo, basilisk, crab), wild or mounted
+//! alike. The tilt is one [`ConformNode`] the root bones hang under, so a rider tilts with its
+//! mount while the unit's yaw and collider stay upright. `WOW_NO_MOUNT_TILT=1` disables it.
 
 use avian3d::prelude::SpatialQuery;
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
@@ -11,15 +10,15 @@ use bevy::prelude::*;
 /// Ray envelope around the unit's feet: start this far up, reach this far down past the feet.
 const TILT_PROBE_UP: f32 = 2.0;
 const TILT_PROBE_DOWN: f32 = 4.0;
-/// The walkable cutoff (`[0x80e028]`, about cos 89°): a steeper face targets world-up.
+/// The walkable cutoff (about cos 89°): a steeper face targets world-up.
 const TILT_WALKABLE_Y: f32 = 0.0175;
-/// The freeze band (`[0x80c6a8]`, about cos 69.07°): steeper ground holds the last stance.
+/// The freeze band (about cos 69.07°): steeper ground holds the last stance.
 const TILT_FREEZE_Y: f32 = 0.3572;
-/// The up-vector smoothing (`[0x80c6a0]`): the residual toward the target decays by `0.0018^dt`.
+/// The up-vector smoothing: the residual toward the target decays by `0.0018^dt`.
 const TILT_DECAY: f32 = 0.0018;
 
 /// The tilt carrier a flagged model's root bones hang under, a child of the unit spawned when the
-/// display's `terrain_tilt != 0`; [`conform_units`] writes its rotation, the `0x7106c0` stage.
+/// display's `terrain_tilt != 0`; [`conform_units`] writes its rotation, the stage.
 #[derive(Component)]
 pub(super) struct ConformNode {
     /// The unit whose feet sample the ground and whose yaw frames it: for a mount child, the host.
@@ -28,8 +27,8 @@ pub(super) struct ConformNode {
     pub(super) mode: u8,
 }
 
-/// The smoothed up-vector's target for one sampled face normal (`0x637140`, `0x614cd0`): world-up
-/// on a miss or an unwalkable face, `None` (hold the stance) in the freeze band, else the normal.
+/// The smoothed up-vector's target for one sampled face normal: world-up on a miss or an unwalkable
+/// face, `None` (hold the stance) in the freeze band, else the normal.
 fn tilt_target(sampled: Option<Vec3>) -> Option<Vec3> {
     match sampled {
         Some(n) if n.y < TILT_WALKABLE_Y => Some(Vec3::Y),
@@ -39,9 +38,9 @@ fn tilt_target(sampled: Option<Vec3>) -> Option<Vec3> {
     }
 }
 
-/// The `0x7106c0` flag dispatch in the unit's local frame: flag 1 (`0x710769`) keeps left
-/// horizontal, a pure pitch of `atan2(n.z, n.y)` without roll; flag 3 (`0x710a80`) takes the normal
-/// as up; any other, flag 2 included, is level. No clamp, no easing: all smoothing is upstream.
+/// The flag dispatch in the unit's local frame: flag 1 keeps left horizontal, a pure pitch of
+/// `atan2(n.z, n.y)` without roll; flag 3 takes the normal as up; any other, flag 2 included, is
+/// level. No clamp, no easing: all smoothing is upstream.
 fn conform_rotation(mode: u8, n_local: Vec3) -> Quat {
     match mode {
         1 => Quat::from_rotation_x(n_local.z.atan2(n_local.y)),
@@ -62,7 +61,7 @@ fn conform_rotation(mode: u8, n_local: Vec3) -> Quat {
 
 /// Conform every flagged model to the ground under its unit: one face normal per unit from a
 /// down-ray against the decal receivers (the reference averages its walkable contact normals,
-/// `CMovement+0x24`; the two agree on a uniform slope), smoothed on the up-vector.
+/// the movement block's `+0x24`; the two agree on a uniform slope), smoothed on the up-vector.
 ///
 /// Deviation: the reference updates every unit every frame; here only units showing a flagged
 /// visual are tracked, and a parked rig skips its ray and re-seeds at the slope on waking, to bound
@@ -99,8 +98,8 @@ pub(super) fn conform_units(
         // flagged body over a mount), and stepping twice would square the decay.
         if seen.insert(node.unit) {
             // A unit on a flying spline eases level here: its flying pitch and bank are on the unit
-            // transform, from `sample_splines` (`0x7c5490`'s flying branch), whatever the model
-            // flags. The probe misses in the air, so `tilt_target` yields world-up.
+            // transform, from `sample_splines`, whatever the model flags. The probe misses in the
+            // air, so `tilt_target` yields world-up.
             let target = {
                 let origin = unit_tf.translation + Vec3::Y * TILT_PROBE_UP;
                 let sampled = spatial

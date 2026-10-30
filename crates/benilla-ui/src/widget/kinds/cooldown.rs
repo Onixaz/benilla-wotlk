@@ -1,7 +1,7 @@
-//! The `Cooldown` widget (factory `0x51a380`, ctor `0x5ecae0`), a `CSimpleFrame` that draws its
-//! own sweep: a dark wedge over the part of the duration still to run, an optional edge line at
-//! the sweep angle, and a one-second star flash when a forward sweep completes. Its state and its
-//! paint geometry, both pure; `script::cooldown_widget` binds them to Lua and the tick.
+//! The `Cooldown` widget (factory `0x51a380`, ctor `0x5ecae0`), a `Frame` that draws its own sweep:
+//! a dark wedge over the part of the duration still to run, an optional edge line at the sweep
+//! angle, and a one-second star flash when a forward sweep completes. Its state and its paint
+//! geometry, both pure; `script::cooldown_widget` binds them to Lua and the tick.
 
 /// The finish flash's length, ms: `OnUpdate` re-arms the clock for it (`0x5ec946`).
 pub const COOLDOWN_FLASH_MS: u32 = 1000;
@@ -75,8 +75,8 @@ impl CooldownState {
         self.armed = true;
     }
 
-    /// The per-frame update of a shown cooldown (`0x5ec8f0`). `now − start` is unsigned
-    /// (`0x5ec91b`), so a start still in the future counts as done.
+    /// The per-frame update of a shown cooldown. `now − start` is unsigned (`0x5ec91b`), so a start
+    /// still in the future counts as done.
     pub fn update(&mut self, now_ms: u32) -> CooldownStep {
         self.elapsed_ms = now_ms.wrapping_sub(self.start_ms);
         if self.elapsed_ms < self.duration_ms {

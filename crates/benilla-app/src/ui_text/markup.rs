@@ -18,8 +18,8 @@ pub(super) struct ColorRun {
 
 /// Resolve `input`'s inline markup, whose grammar is [`benilla_ui::markup`]'s, into lines of
 /// [`ColorRun`]s. `|n` breaks the line in every box. The reference skips it in a single-line box
-/// (`K & 0x200`, set by `SetMultiLine` at `0x77a5e2`), though its cursor model still parses it; no
-/// stock string carries `|n`, and a typed `|` becomes `||` (`0x77c200`).
+/// (`K & 0x200`, set by `SetMultiLine`), though its cursor model still parses it; no stock string
+/// carries `|n`, and a typed `|` becomes `||`.
 pub(super) fn parse_markup(input: &str, base_color: [f32; 4]) -> Vec<Vec<ColorRun>> {
     use benilla_ui::markup::TokenKind as T;
 
@@ -35,8 +35,8 @@ pub(super) fn parse_markup(input: &str, base_color: [f32; 4]) -> Vec<Vec<ColorRu
         match token.kind {
             T::Color(rgba) => {
                 flush(&mut runs, &mut cur, color, &mut link);
-                // At the string's alpha: the escape's `AA` is discarded (`0x5c2ab2`) and the
-                // emitter patches in the FontString's own (`0x5cceb0`), so a fading link fades.
+                // At the string's alpha: the escape's `AA` is discarded and the emitter patches in
+                // the FontString's own, so a fading link fades.
                 color = rgba.to_f32_at(base_color[3]);
             }
             T::ColorReset => {
@@ -74,11 +74,11 @@ pub(super) fn parse_markup(input: &str, base_color: [f32; 4]) -> Vec<Vec<ColorRu
     lines
 }
 
-/// [`parse_markup`] under the FontString line-count law of `GxuFont_GetTextBlockHeight`
-/// (`0x5c2070`): a line's terminating break is consumed with it, so a trailing break opens no line
-/// (a `<BR/>` block, `"\n"`, is one blank line), and an empty string is zero lines of height 0.
-/// Not the EditBox's law, hence a seam of its own: a multiline EditBox ending in a break shows the
-/// empty row its caret sits on, through `line_rows` (`0x77da80`).
+/// [`parse_markup`] under the FontString line-count law of `GxuFont_GetTextBlockHeight`: a line's
+/// terminating break is consumed with it, so a trailing break opens no line (a `<BR/>` block,
+/// `"\n"`, is one blank line), and an empty string is zero lines of height 0. Not the EditBox's
+/// law, hence a seam of its own: a multiline EditBox ending in a break shows the empty row its
+/// caret sits on, through `line_rows`.
 pub(super) fn fontstring_lines(input: &str, base_color: [f32; 4]) -> Vec<Vec<ColorRun>> {
     if input.is_empty() {
         return Vec::new();
@@ -208,8 +208,8 @@ mod markup_tests {
         assert_eq!(lines[1][0].text, "two");
     }
 
-    /// Build 5875 has no inline-texture escape: the remap table at `0x5c2b10` sends every `|` lead
-    /// but C, H, N and R to the ordinary-character arm, so `|T…|t` draws as text.
+    /// Build 5875 has no inline-texture escape: the remap table sends every `|` lead but C, H, N
+    /// and R to the ordinary-character arm, so `|T…|t` draws as text.
     #[test]
     fn there_is_no_inline_texture_escape() {
         let lines = parse_markup("a|TInterface\\Icons\\Foo:16:16|tb", WHITE);
@@ -330,13 +330,13 @@ mod markup_tests {
         assert_eq!(drawn, "a|Tfoo|tb");
     }
 
-    /// The line-count law (`0x5c2070`) where it differs from a split, and where it does not.
+    /// The line-count law where it differs from a split, and where it does not.
     #[test]
     fn a_trailing_break_does_not_open_a_line() {
         let n = |t: &str| fontstring_lines(t, [1.0, 1.0, 1.0, 1.0]).len();
         assert_eq!(n("\n"), 1, "a <BR/> block is ONE blank line");
         assert_eq!(n("a\n"), 1);
-        // The item tooltip's set spacer, the reference's literal at `0x854b2c`.
+        // The item tooltip's set spacer, the reference's literal.
         assert_eq!(n(" \n"), 1, "the set's blank gold spacer is one row");
         assert_eq!(n(""), 0, "an empty string is zero lines, height 0.0");
         // As a split counts them.

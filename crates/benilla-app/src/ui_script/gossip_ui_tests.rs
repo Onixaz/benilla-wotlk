@@ -236,7 +236,7 @@ fn hover(s: &mut UiScript, frame: &str) {
     s.mouse_move(x, y);
 }
 
-/// The state fonts come from `<NormalFont style=>` and kin (`CSimpleButton::LoadXML 0x96fed0`): a
+/// The state fonts come from `<NormalFont style=>` and kin (the button XML load, `0x96fed0`): a
 /// quest row's label is `QuestFontLeft`, left-justified beside its icon (`GossipFrame.xml`), and
 /// the `UIPanelButtonTemplate` Goodbye button is gold, white under the cursor and grey disabled
 /// (`GameFontNormal`, `GameFontHighlight`, `GameFontDisable`).

@@ -1,7 +1,7 @@
-//! `CGQuestPOIFrame` (`.?AVCGQuestPOIFrame@@`, registered at `0x5210c1`): the world map's quest
-//! blob layer, a `Frame` that fills and borders the areas of the quests it is asked to draw. A
-//! blob is built from the client's quest POI data (`0x5e3ac0`), which benilla does not read yet
-//! (`SMSG_QUEST_POI_QUERY_RESPONSE`, #134), so the layer holds its settings and draws no blob.
+//! `QuestPOIFrame` (registered at `0x5210c1`): the world map's quest blob layer, a `Frame` that
+//! fills and borders the areas of the quests it is asked to draw. A blob is built from the client's
+//! quest POI data, which benilla does not read yet (`SMSG_QUEST_POI_QUERY_RESPONSE`, #134), so the
+//! layer holds its settings and draws no blob.
 
 /// The blob layer's settings (`+0x29c..+0x2b4`).
 #[derive(Clone, Debug, PartialEq)]

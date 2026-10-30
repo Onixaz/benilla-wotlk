@@ -1,9 +1,8 @@
 //! Unit animation: a per-unit state machine that picks an `AnimationData.dbc` clip from movement
-//! state (the gait by speed and flags, reference selector `0x5fd8b0`; the stand-state and jump
-//! Specials; one-shots), cross-fades into it, and plays a locomotion clip at
-//! `speed / sequence.moveSpeed` (`0x5fe2f0`). A one-shot plays full-body on a standing idle unit
-//! and on the SpineLow torso-masked overlay while moving, seated or airborne in combat
-//! (`0x5fe2f0`). Death overrides everything.
+//! state (the gait by speed and flags, the stand-state and jump Specials; one-shots), cross-fades
+//! into it, and plays a locomotion clip at `speed / sequence.moveSpeed`. A one-shot plays full-body
+//! on a standing idle unit and on the SpineLow torso-masked overlay while moving, seated or
+//! airborne in combat. Death overrides everything.
 
 use std::time::Instant;
 
@@ -14,7 +13,7 @@ use bevy::prelude::*;
 use benilla_assets::AssetSet;
 use benilla_world::schedule::WorldStage;
 
-/// The pure selection logic: the `0x5fd100` tables, the gait, swing and ready picks, the rate math.
+/// The pure selection logic: the tables, the gait, swing and ready picks, the rate math.
 pub(crate) mod select;
 pub(crate) use select::{
     ease_strafe_yaw, move_flags, strafe_body_offset, swim_body_rotation, MovementState,
@@ -25,47 +24,45 @@ use select::{Mode, Special};
 mod twist;
 pub(crate) use twist::{wrap_pi, BodyTwist};
 
-/// Parks an off-frustum rig's pose while its clocks run, as the reference does not tick one
-/// (`0x683dd0`); a parked unit's events fire only for a `MORE_AUDIBLE` template.
+/// Parks an off-frustum rig's pose while its clocks run, as the reference does not tick one; a
+/// parked unit's events fire only for a `MORE_AUDIBLE` template.
 mod lod;
 
-/// Wielded `(item class, subclass)` per hand as worn (`GetWeapon(slot, 1)`, `0x605e30`, what the
+/// Wielded `(item class, subclass)` per hand as worn (the weapon getter's worn read, what the
 /// paperdoll shows); behaviour reads `armed_main`/`armed_off`, which apply the disarm ladder.
 #[derive(Component, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Wielded {
     pub(crate) main: Option<(u8, u8)>,
     pub(crate) off: Option<(u8, u8)>,
-    /// The ranged-slot item's `(class, subclass)`, the auto-repeat idle's selector (`0x5fd530`).
+    /// The ranged-slot item's `(class, subclass)`, the auto-repeat idle's selector.
     pub(crate) ranged: Option<(u8, u8)>,
     /// The hand items' sheath types (0 none, 1 back 2H, 2 back staff, 3 hip, 4 shield); each picks
-    /// its arm's draw/stow clip, HipSheath 90 for types 3 and 7, else Sheath 89 (`0x611930`).
+    /// its arm's draw/stow clip, HipSheath 90 for types 3 and 7, else Sheath 89.
     pub(crate) main_sheath: u8,
     pub(crate) off_sheath: u8,
-    /// The ranged sheath type: it picks the draw clip (`0x6118a0`), but the stow is always
-    /// Sheath 89 (`0x611b60`).
+    /// The ranged sheath type: it picks the draw clip, but the stow is always Sheath 89.
     pub(crate) ranged_sheath: u8,
     /// The ranged `InventoryType` (0 when empty): `0x1a` and `0x19` draw with the right arm,
-    /// anything else (`0x0f`, a bow) with the left (`0x611b60` @ `0x611c74`).
+    /// anything else (`0x0f`, a bow) with the left.
     pub(crate) ranged_inv: u32,
     /// Each held slot's `Material` (main, off, ranged), the draw/stow sound's only key; off the
     /// wire, since the weapon class does not determine it.
     pub(crate) materials: [u8; 3],
     /// `UNIT_FIELD_FLAGS & UNIT_FLAG_DISARMED`, replicated for every unit; the reference reads it
-    /// inside `GetWeapon` (`[[unit+0x110]+0xa0] & 0x200000`), for creatures as for players.
+    /// inside the weapon getter (`[[unit+0x110]+0xa0] & 0x200000`), for creatures as for players.
     pub(crate) disarmed: bool,
 }
 
-/// `UNIT_FIELD_FLAGS` bit 21 (vmangos `UnitDefines.h:566`), tested inside `GetWeapon` at
-/// `0x5ec2b8` (CGPlayer) and `0x605e58`/`0x605e98` (CGUnit).
+/// `UNIT_FIELD_FLAGS` bit 21 (vmangos `UnitDefines.h:566`), tested inside the weapon getter, the
+/// player's and the unit's alike.
 pub(crate) const UNIT_FLAG_DISARMED: u32 = 0x0020_0000;
 
 /// `ItemClass` 2, weapon: the disarm ladder's whole test, so a shield is never the hand it hides.
 pub(crate) const ITEM_CLASS_WEAPON: u8 = 2;
 
 /// The one held slot the disarm hides: the main hand if it holds a weapon, else the off hand if it
-/// does (`GetWeapon(slot, 0)`, `0x5ec2ae`/`0x5ec262`); the ranged slot is never gated
-/// (`0x5ec25e`), as vmangos agrees (`Unit.h:991`). Over classes so the action bar's
-/// equipped-item test (`0x5ea5d0`) can use it on raw inventory.
+/// does (the weapon getter's held read); the ranged slot is never gated, as vmangos agrees
+/// (`Unit.h:991`). Over classes so the action bar's equipped-item test can use it on raw inventory.
 pub(crate) fn disarmed_hand(main_class: Option<u8>, off_class: Option<u8>) -> Option<usize> {
     if main_class == Some(ITEM_CLASS_WEAPON) {
         return Some(0);
@@ -84,54 +81,52 @@ impl Wielded {
             .flatten()
     }
 
-    /// The main hand as `GetWeapon(0, 0)` sees it, read by the swing (`0x6246a0`), the Ready idle
-    /// (`0x5fcdc0`), the parry table, the sheath machine and the swing sound.
+    /// The main hand as the weapon getter's held read sees it, read by the swing, the Ready idle,
+    /// the parry table, the sheath machine and the swing sound.
     pub(crate) fn armed_main(&self) -> Option<(u8, u8)> {
         self.main.filter(|_| self.disarmed_hand() != Some(0))
     }
 
-    /// The off hand as `GetWeapon(1, 0)` sees it.
+    /// The off hand as the weapon getter's held read sees it.
     pub(crate) fn armed_off(&self) -> Option<(u8, u8)> {
         self.off.filter(|_| self.disarmed_hand() != Some(1))
     }
 }
 
 /// Auto-attacking (`SMSG_ATTACKSTART` to `ATTACKSTOP`), holding the target guid, the reference's
-/// `[+0xc48]`: the Ready idle gates on it, not on sheath (`0x5fd360`); `0x6e3480` reads its reach.
+/// `[+0xc48]`: the Ready idle gates on it, not on sheath; the reference's reach check reads it.
 #[derive(Component)]
 pub(crate) struct Engaged(pub(crate) u64);
 
 /// The local player's auto-repeat is armed: the reference's `[+0xd58] & 0x200`, set only by the
-/// local cast-send (`0x6e593b`); with the ranged sheath drawn a standing unit idles on the Load
-/// clip (`0x5fd460`). Cleared only through `cancel_auto_repeat_local`, including on
-/// `SMSG_CANCEL_AUTO_REPEAT`, which vmangos sends when a volley's target dies
-/// (`SpellCaster.cpp:1829`). A remote shooter plays LoadBow once at its `SMSG_SPELL_START`
-/// (`CastHold`, `0x6e7901`), then the fire clip per GO; the reference holds HoldBow (109) from
-/// the end of the Load until the first GO.
+/// local cast-send; with the ranged sheath drawn a standing unit idles on the Load clip. Cleared
+/// only through `cancel_auto_repeat_local`, including on `SMSG_CANCEL_AUTO_REPEAT`, which vmangos
+/// sends when a volley's target dies (`SpellCaster.cpp:1829`). A remote shooter plays LoadBow once
+/// at its `SMSG_SPELL_START` (`CastHold`), then the fire clip per GO; the reference holds HoldBow
+/// (109) from the end of the Load until the first GO.
 #[derive(Component)]
 pub(crate) struct AutoRepeatArmed;
 
-/// The ranged weapon-visual hold, `[+0xd58] & 0x400`, set for any caster whose ranged visual
-/// plays (`0x60d020`); cleared by a non-ranged visual (`0x6ec39e`), the local cancel, melee
-/// attack-start or a spline move (`0x6020e8`), never by a sheath change or volley end. It gates
-/// nothing here: the reference re-arms the Hold at each completion while it holds (`0x5fc3f0`,
-/// via `0x7075af`), ours loops the Hold once armed. It is no entry into the drawn idle: read as
-/// one, it leaves a shooter aiming after a single Serpent Sting.
+/// The ranged weapon-visual hold, `[+0xd58] & 0x400`, set for any caster whose ranged visual plays;
+/// cleared by a non-ranged visual, the local cancel, melee attack-start or a spline move, never by
+/// a sheath change or volley end. It gates nothing here: the reference re-arms the Hold at each
+/// completion while it holds, ours loops the Hold once armed. It is no entry into the drawn idle:
+/// read as one, it leaves a shooter aiming after a single Serpent Sting.
 #[derive(Component)]
 pub(crate) struct RangedHold;
 
-/// The displayed nocked ammo, the reference's `[+0xd28]`/`[+0xd2c]` (`UpdateAmmoDisplay`
-/// `0x60ba30`): an `ItemDisplayInfo` model at HandArrow (35), bow only (`0x60bb19`), set per shot
-/// from the `SMSG_SPELL_START` ammo tail. Removed by the un-nock `0x60f530`: the local cancel,
-/// leaving the ranged sheath (`0x60fc72`), or a weapon change.
+/// The displayed nocked ammo, the reference's `[+0xd28]`/`[+0xd2c]` (the ammo display update): an
+/// `ItemDisplayInfo` model at HandArrow (35), bow only, set per shot from the `SMSG_SPELL_START`
+/// ammo tail. Removed by the un-nock: the local cancel, leaving the ranged sheath, or a weapon
+/// change.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct NockedAmmo {
     /// Never 0: an id-0 refresh removes the component.
     pub(crate) display_id: u32,
 }
 
-/// The nock latch `[+0xd58] & 0x4000`: set at `$BWP` (`0x624b70`, LoadBow ~0.6 s), cleared at
-/// `$BWR` (`0x60016c`, AttackBow ~0.067 s) and on un-nock; the arrow model shows only while set.
+/// The nock latch `[+0xd58] & 0x4000`: set at `$BWP` (LoadBow ~0.6 s), cleared at `$BWR` (AttackBow
+/// ~0.067 s) and on un-nock; the arrow model shows only while set.
 #[derive(Component)]
 pub(crate) struct NockLatch;
 
@@ -158,9 +153,8 @@ pub(crate) fn drive_nock_latch(
     }
 }
 
-/// The one local auto-repeat cancel, reference `0x6ea080`: clears the key (`[0xceac30]`), both
-/// idle bits and the nock (`0x60f530`) and sends `CMSG_CANCEL_AUTO_REPEAT_SPELL` (`0x6ea0c6`);
-/// the sheath stays drawn.
+/// The one local auto-repeat cancel, as in the reference: clears the key, both idle bits and the
+/// nock and sends `CMSG_CANCEL_AUTO_REPEAT_SPELL`; the sheath stays drawn.
 pub(crate) fn cancel_auto_repeat_local(
     entity: Option<Entity>,
     auto_repeat: &mut crate::spell::AutoRepeatActive,
@@ -168,7 +162,7 @@ pub(crate) fn cancel_auto_repeat_local(
     net: &crate::net::NetCommands,
 ) {
     if auto_repeat.0.is_none() {
-        // The reference's `[0xceac30] == 0` early-out: nothing running, nothing sent.
+        // The reference's early-out: nothing running, nothing sent.
         return;
     }
     auto_repeat.0 = None;
@@ -180,18 +174,18 @@ pub(crate) fn cancel_auto_repeat_local(
     let _ = net.0.send(crate::net::ClientCommand::CancelAutoRepeat);
 }
 
-/// The local StopAttack, reference `0x5ecac0`: when attacking, `CMSG_ATTACKSTOP` (`0x624370`),
-/// then `CancelQueuedCast` (`0x6e6f30`) cancels a queued on-next-swing spell with
-/// `CMSG_CANCEL_CAST` (`0x6e4940`), which is why Auto Shot (`0x6e5976`) darkens a Raptor Strike
-/// ring. `Engaged` stays until the `SMSG_ATTACKSTOP` echo (`0x624e40`), as in the reference.
+/// The local StopAttack, as in the reference: when attacking, `CMSG_ATTACKSTOP`, then the
+/// queued-cast cancel drops a queued on-next-swing spell with `CMSG_CANCEL_CAST`, which is why Auto
+/// Shot darkens a Raptor Strike ring. `Engaged` stays until the `SMSG_ATTACKSTOP` echo, as in the
+/// reference.
 pub(crate) fn stop_attack_local(
     engaged: bool,
     queued_melee: &mut crate::spell::QueuedMeleeSpell,
     net: &crate::net::NetCommands,
 ) {
     if !engaged {
-        // The reference's `!IsAttacking(0x60ecb0) && [+0xc50] == 0` early-out (`[+0xc50]`, a
-        // locally started attack, is not modelled): nothing sent, a queued strike survives.
+        // The reference's not-attacking and `[+0xc50] == 0` early-out (`[+0xc50]`, a locally
+        // started attack, is not modelled): nothing sent, a queued strike survives.
         return;
     }
     let _ = net.0.send(crate::net::ClientCommand::AttackStop);
@@ -203,11 +197,11 @@ pub(crate) fn stop_attack_local(
     }
 }
 
-/// The local StartAttack, reference `0x5ecb70`: the swing send (`0x5eccfd`) is skipped while
-/// attacking unless a stop is in flight (`[+0xc54]`, which the target switch passes as
-/// `stop_in_flight`); the tail, melee sheath snap then auto-repeat cancel (`0x5ecd78`), always
-/// runs, so melee and auto-shot are exclusive. Callers own the entry checks: no call from a cast
-/// press while engaged (`0x6e51cb`), the attackability walk (`0x606980`) and `[0xb4b3e4]`.
+/// The local StartAttack, as in the reference: the swing send is skipped while attacking unless a
+/// stop is in flight (`[+0xc54]`, which the target switch passes as `stop_in_flight`); the tail,
+/// melee sheath snap then auto-repeat cancel, always runs, so melee and auto-shot are exclusive.
+/// Callers own the entry checks: no call from a cast press while engaged, the attackability walk
+/// and the world gate.
 pub(crate) fn start_attack_local(
     entity: Entity,
     target: u64,
@@ -218,16 +212,15 @@ pub(crate) fn start_attack_local(
     commands: &mut Commands,
     net: &crate::net::NetCommands,
 ) {
-    // Starting an attack stands you up (`0x5ecc9b`), after the attackability check but before
-    // the range logic and the already-attacking skip, so a re-issued or out-of-reach attack
-    // stands you too.
+    // Starting an attack stands you up, after the attackability check but before the range logic
+    // and the already-attacking skip, so a re-issued or out-of-reach attack stands you too.
     commands.write_message(crate::player::StandStateRequest { state: 0 });
     if !engaged || stop_in_flight {
         let _ = net
             .0
             .send(crate::net::ClientCommand::AttackSwing { guid: target });
     }
-    // Idempotent, matching `0x5ecd80`'s unconditional call.
+    // Idempotent, matching the reference's unconditional call.
     sheath.write(SheathRequest {
         entity,
         state: 1,
@@ -236,9 +229,9 @@ pub(crate) fn start_attack_local(
     cancel_auto_repeat_local(Some(entity), auto_repeat, commands, net);
 }
 
-/// The Attack toggle, reference `0x6131a0` (the Attack pseudo-spell, `0x6e4c7a`): stop when
-/// attacking, else start. Only the start arm cancels auto-repeat, so toggling melee off leaves
-/// Auto Shot running. The stop arm's `[0xb4b3e4]` world gate is not modelled.
+/// The Attack toggle, as in the reference (the Attack pseudo-spell): stop when attacking, else
+/// start. Only the start arm cancels auto-repeat, so toggling melee off leaves Auto Shot running.
+/// The stop arm's world gate is not modelled.
 pub(crate) fn toggle_attack_local(
     entity: Entity,
     target: u64,
@@ -266,7 +259,7 @@ pub(crate) fn toggle_attack_local(
 }
 
 /// The attack seams' write set as one param, for the selection writers that run the reference's
-/// stop, select, re-swing (`SetSelection` `0x493540`), and the loot its teardown closes.
+/// stop, select, re-swing, and the loot its teardown closes.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttackSeam<'w, 's> {
     pub(crate) net: Res<'w, crate::net::NetCommands>,
@@ -285,11 +278,10 @@ pub(crate) struct AttackSeam<'w, 's> {
 }
 
 impl AttackSeam<'_, '_> {
-    /// The selection teardown's loot close (`0x493910`, `0x493959`–`0x493974`): a window looting
-    /// the outgoing selection closes as `CloseLoot` does, its release ahead of anything the new
-    /// selection sends. The close's dead-unit deselect (`0x48f369`) targets the selection already
-    /// being torn down, so none is asked; the reference's nested teardown there also sends a
-    /// `CMSG_SET_SELECTION` 0 (`0x493a2a`), which this does not.
+    /// The selection teardown's loot close: a window looting the outgoing selection closes as
+    /// `CloseLoot` does, its release ahead of anything the new selection sends. The close's
+    /// dead-unit deselect targets the selection already being torn down, so none is asked; the
+    /// reference's nested teardown there also sends a `CMSG_SET_SELECTION` 0, which this does not.
     pub(crate) fn close_loot_on(&mut self, outgoing: u64) {
         if self.loot.source() == Some(outgoing) {
             debug!("target: the selection teardown closes the loot on {outgoing:#x}");
@@ -307,18 +299,18 @@ impl AttackSeam<'_, '_> {
         self.stop_on_change.as_deref().is_some_and(|s| s.0)
     }
 
-    /// `Spell_C_CancelAutoRepeat` (`0x807560`).
+    /// The auto-repeat cancel (`0x807560`).
     pub(crate) fn cancel_auto_repeat(&mut self) {
         let me = self.me.single().ok();
         cancel_auto_repeat_local(me, &mut self.auto_repeat, &mut self.ecs, &self.net);
     }
 
-    /// StopAttack (`0x5ecac0`).
+    /// StopAttack.
     pub(crate) fn stop(&mut self, engaged: bool) {
         stop_attack_local(engaged, &mut self.queued_melee, &self.net);
     }
 
-    /// StartAttack (`0x5ecb70`); a no-op before our own entity streams in.
+    /// StartAttack; a no-op before our own entity streams in.
     pub(crate) fn start(&mut self, target: u64, engaged: bool, stop_in_flight: bool) {
         let Ok(e) = self.me.single() else { return };
         start_attack_local(
@@ -335,7 +327,7 @@ impl AttackSeam<'_, '_> {
 }
 
 /// Mid-cast (`SMSG_SPELL_START` to GO or failure), inserted only for a nonzero cast time and
-/// removed by the same spell id (the reference's reap `0x614150(spellId, 0)` is keyed).
+/// removed by the same spell id (the reference's reap is keyed by spell id).
 #[derive(Component, Clone, Copy)]
 pub(crate) struct Casting {
     pub(crate) spell_id: u32,
@@ -343,10 +335,10 @@ pub(crate) struct Casting {
     pub(crate) until: Option<Instant>,
 }
 
-/// The reference's PlayAnimation order: handlers run in packet order and the later play wins
-/// bone 0 (`0x5fe2f0`). benilla's swing and cast pipelines are separate streams, so each
-/// animation-bearing message carries a stamp (the wire in packet order, scene-time emitters when
-/// they fire), and the driver resolves a same-frame collision by the highest.
+/// The reference's animation play order: handlers run in packet order and the later play wins
+/// bone 0. benilla's swing and cast pipelines are separate streams, so each animation-bearing
+/// message carries a stamp (the wire in packet order, scene-time emitters when they fire), and the
+/// driver resolves a same-frame collision by the highest.
 #[derive(Resource, Default)]
 pub(crate) struct PlaySeq(u64);
 
@@ -376,29 +368,29 @@ pub(crate) enum CastEventKind {
     Go,
     /// Died without release (`SMSG_SPELL_FAILED_OTHER`, or our failed `SMSG_CAST_RESULT`).
     Fail,
-    /// The spell landed on this unit (a missile arrival, `0x61dc50`): impact kit, then state kit.
-    /// `weapon_visual` is the caster's ranged-weapon `SpellVisual` (`0x60d450`), carried from the
-    /// GO since the caster may despawn.
+    /// The spell landed on this unit (a missile arrival): impact kit, then state kit.
+    /// `weapon_visual` is the caster's ranged-weapon `SpellVisual`, carried from the GO since the
+    /// caster may despawn.
     Impact { weapon_visual: Option<u32> },
-    /// A projectile with no live target at arrival (`0x61d870`, a despawned target too): the kit
-    /// plays on the caster (`entity`) at `pos` (`0x61d8e7`), `SpellVisual` field 13, stage 3. Sent
-    /// here only for a dest-targeted GO's missile with no hit (`MissileSpawn::ground_aim`).
+    /// A projectile with no live target at arrival (a despawned target too): the kit plays on the
+    /// caster (`entity`) at `pos`, `SpellVisual` field 13, stage 3. Sent here only for a
+    /// dest-targeted GO's missile with no hit (`MissileSpawn::ground_aim`).
     GroundImpact { pos: Vec3 },
 }
 
 /// The anim held while a cast is in flight (`SpellVisualKit` field 2): full-body when standing
-/// (`[CGUnit+0xb4]`), a looping masked overlay when moving; reaped by `spell_id`.
+/// (`[unit+0xb4]`), a looping masked overlay when moving; reaped by `spell_id`.
 #[derive(Component, Clone, Copy)]
 pub(crate) struct CastHold {
     pub(crate) anim_id: u16,
     pub(crate) spell_id: u32,
-    /// A ranged wind-up (`Attributes & 0x2`): the reference brackets it with ranged snaps
-    /// (`0x60f34c`, `0x6e5930`), so the sheath reconcile's force-stow never survives the frame.
+    /// A ranged wind-up (`Attributes & 0x2`): the reference brackets it with ranged snaps, so the
+    /// sheath reconcile's force-stow never survives the frame.
     pub(crate) ranged: bool,
 }
 
 /// A hand's fingers close (`HandsClosed`, 15) purely because a weapon occupies its attach point,
-/// not on combat or sheath; a shield or empty hand stays open (`0x60b590`, paperdoll `0x5059a0`).
+/// not on combat or sheath; a shield or empty hand stays open.
 #[derive(Component, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct HandGrip {
     /// A weapon on the right-hand attach point (id 1).
@@ -436,26 +428,25 @@ pub(crate) struct EmoteAnim {
     pub(crate) anim_id: u16,
     /// `PlaySeq` stamp; a kit anim inherits its `CastEvent`'s.
     pub(crate) seq: u64,
-    /// Came through the shared one-shot emote player (`0x5fcd20`: `SMSG_EMOTE`, the gesture
-    /// dispatcher), which skips an id already armed on the key bone or bone 0 (`0x5fcd56`). A kit
-    /// anim and `DoEmote`'s local play call `0x5fe2f0` directly and take no such test.
+    /// Came through the shared one-shot emote player (`SMSG_EMOTE`, the gesture dispatcher),
+    /// which skips an id already armed on the key bone or bone 0. A kit anim and `DoEmote`'s local
+    /// play call directly and take no such test.
     pub(crate) via_player: bool,
 }
 
-/// A state kit's `AnimID`, compared and never played: both field-4 callers (`0x5ff4c6`,
-/// `0x61dced`) pass stage 2, which `0x60edf0` diverts at `0x60f387`, and a mismatch with the armed
-/// id (`0x5fdb50`) recomputes the base (`0x5fd9e0`). So it only cuts: Charge's
-/// Knockdown (121) falls to Stand, since `0x5fd8b0` never yields its Stun (14). An in-place aura
-/// refresh emits nothing (`0x604d00`).
+/// A state kit's `AnimID`, compared and never played: both field-4 callers pass stage 2, which the
+/// kit player diverts, and a mismatch with the armed id recomputes the base. So it only cuts:
+/// Charge's Knockdown (121) falls to Stand, since the base selector never yields its Stun (14). An
+/// in-place aura refresh emits nothing.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct BaseAnimRecompute {
     pub(crate) entity: Entity,
-    /// The right side of `0x60f390`'s compare.
+    /// The right side of the reference's armed-id compare.
     pub(crate) anim_id: u16,
 }
 
-/// Rears a rider's mount: MountSpecial (94) on the mount child while the rider holds Mount (91)
-/// (`0x608d50`); dropped when there is no mount child.
+/// Rears a rider's mount: MountSpecial (94) on the mount child while the rider holds Mount (91);
+/// dropped when there is no mount child.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct MountFlourish {
     pub(crate) unit: Entity,
@@ -486,16 +477,15 @@ fn flourish_to_anim(
     }
 }
 
-/// A spell-side wound flinch, the reference's `0x60ea70(unit, 0)` from the kit player
-/// (`0x60f3ad`), the instant-hit loop (`0x6e8c89`, harmful only) and the missile impact
-/// (`0x61dc74`): CombatWound (9) or StandWound (8) by engagement, in the secondary-blend slot.
+/// A spell-side wound flinch, the reference's wound play from the kit player, the instant-hit loop
+/// (harmful only) and the missile impact: CombatWound (9) or StandWound (8) by engagement, in the
+/// secondary-blend slot.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct WoundAnim {
     pub(crate) entity: Entity,
 }
 
-/// One `SMSG_SPELL_GO`'s target lists: impacts inline for `Spell.dbc` Speed 0, else missiles (the
-/// reference's `0x6e8bf0` and `0x6e8a50`).
+/// One `SMSG_SPELL_GO`'s target lists: impacts inline for `Spell.dbc` Speed 0, else missiles.
 #[derive(Message, Clone)]
 pub(crate) struct SpellGoTargets {
     pub(crate) caster: Entity,
@@ -503,13 +493,13 @@ pub(crate) struct SpellGoTargets {
     /// Units the spell landed on; each gets the impact hand-off.
     pub(crate) hits: Vec<Entity>,
     /// Missed units with `SpellMissInfo`: the arrival plays Dodge (30) or ShieldBlock (24), never
-    /// Parry (`0x61ceb0`), and no impact kit; the deflect glance-off flight is not built.
+    /// Parry, and no impact kit; the deflect glance-off flight is not built.
     pub(crate) misses: Vec<(Entity, u8)>,
     /// A dest-targeted cast's ground point, in bevy coords; not read, the reference's
     /// dest-anchored launch visual is untraced.
     pub(crate) dest: Option<Vec3>,
     /// The GO's ammo block (`castFlags & 0x20`): the ammo's `ItemDisplayInfo` id, the missile model
-    /// when the visual chain has none (`0x479f40`).
+    /// when the visual chain has none.
     pub(crate) ammo_display_id: Option<u32>,
     /// `PlaySeq` stamp, the GO's `CastEvent`'s.
     pub(crate) seq: u64,
@@ -538,7 +528,7 @@ pub(crate) use sheath::{
 /// The `SMSG_EMOTE` to `EmoteAnim` consumer.
 mod emote_anim;
 
-/// The client-local gestures (chat, NPC interact), the reference's `0x60bb30`.
+/// The client-local gestures (chat, NPC interact), as the reference plays them.
 mod gesture;
 use emote_anim::emote_to_anim;
 pub(crate) use emote_anim::{local_play_eligible, LocalPlay};
@@ -613,36 +603,36 @@ pub(crate) struct AnimDriver {
     /// The movement flags the base was last armed for: the reference has no per-one-shot latch,
     /// so a root landing with a cast one-shot (Ice Block) still lets the base overwrite bone 0.
     gait_flags: u32,
-    /// Whether the unit was the interact NPC last frame: `SetInteractNPC` (`0x4930d0`) re-picks
-    /// its base on open (`0x493198`) and on clear (`0x493219`), so a flip cuts a one-shot.
+    /// Whether the unit was the interact NPC last frame: the interact-NPC setter re-picks its base
+    /// on open and on clear, so a flip cuts a one-shot.
     interacting: bool,
     /// Whether the interaction in `interacting` (or the one just cleared) targets a player, whose
-    /// open and clear skip the re-pick (`0x493159`, `0x493203`: the PLAYER typemask bit).
+    /// open and clear skip the re-pick (the PLAYER typemask bit).
     interact_player: bool,
-    /// The clear's re-pick (`0x493219`) runs while `[0xb4e2d0]` still names the NPC, so it picks
-    /// Stand; the global is zeroed after (`0x49334b`). The state returns at the next re-pick:
-    /// the Stand window's end, a movement-flag edge, or leaving Gait.
+    /// The clear's re-pick runs while the reference's interact-NPC global still names the NPC, so
+    /// it picks Stand; the global is zeroed after. The state returns at the next re-pick: the Stand
+    /// window's end, a movement-flag edge, or leaving Gait.
     interact_hold: bool,
     /// The reference's `[unit+0xd58] & 0xc0000`: while Knockdown, LiftOff or Land holds it, base
     /// requests are refused, so a stun's knockdown survives the root's Stand recompute.
     base_lock: driver::play::BaseAnimLock,
     /// The committed sheath state, the reference's `[unit+0xd40]`: seeded from the descriptor,
-    /// re-adopted when it changes (`0x604c70`), overwritten by requests and the reconcile.
+    /// re-adopted when it changes, overwritten by requests and the reconcile.
     sheath_cur: Option<u8>,
     /// The last descriptor sheath byte, to detect changes.
     sheath_byte: Option<u8>,
     /// The pending mid-animation weapon swap while a draw/stow one-shot plays.
     sheath_swap: Option<SheathSwap>,
     /// Whether any animation started this frame, for the weapon-trail latch: the reference reads
-    /// `unit+0xd1c` in `PlayAnimation` (`0x5fe48e`), its single entry point, locomotion
-    /// included, so starting to run starts Charge's trail.
+    /// `unit+0xd1c` in the animation play call, its single entry point, locomotion included, so
+    /// starting to run starts Charge's trail.
     started_anim: bool,
     /// A masked upper-body one-shot on the SpineLow overlay while the base drives the legs; a
     /// full-body one lives in `Mode::Swing` until locomotion transplants it here.
     overlay: Option<Overlay>,
-    /// The key-bone cross-fade, the reference's per-bone secondary (λ 1 to 0): 150 ms to rest
-    /// after a one-shot (`0x5fc920`, `0x7123af`) or a re-arm over the new clip's blendTime
-    /// (`0x7125f2`); a transplant (`blendFlag = 0`) seeds none.
+    /// The key-bone cross-fade, the reference's per-bone secondary (λ 1 to 0): 150 ms to rest after
+    /// a one-shot or a re-arm over the new clip's blendTime; a transplant (`blendFlag = 0`) seeds
+    /// none.
     overlay_fade: Option<OverlayFade>,
     /// The wound flinch, the reference's secondary blend slot (λ 0.75 to 0 over the clip), apart
     /// from `overlay` so a masked swing and a wound coexist.
@@ -653,21 +643,21 @@ pub(crate) struct AnimDriver {
     /// Last frame's vertical speed: a jump out of a one-frame detachment never toggles FALLING,
     /// so a rise past `JUMP_ARC_MIN_UP` from below also classifies the arc.
     last_vertical_speed: f32,
-    /// FALLING last frame: marks takeoff and a step-off fall's landing (`0x602c60` land pick).
+    /// FALLING last frame: marks takeoff and a step-off fall's landing.
     was_falling: bool,
-    /// The reference's `CGUnit+0xd60`: a combat clip requested over another doubles the playing
-    /// clip's rate and parks here until no one-shot is live; any normal arm clears it (`0x5fe48e`).
+    /// The reference's `unit+0xd60`: a combat clip requested over another doubles the playing
+    /// clip's rate and parks here until no one-shot is live; any normal arm clears it.
     deferred: Option<u16>,
-    /// The looping arm's node and rolled budget `R` (`block+0xbc`, `0x7126d8`): the watchdog
-    /// (`0x719370`) re-picks after `R` passes. `None` for a one-shot or a freeze.
+    /// The looping arm's node and rolled budget `R` (`block+0xbc`): the watchdog re-picks after `R`
+    /// passes. `None` for a one-shot or a freeze.
     loop_window: Option<(bevy::animation::graph::AnimationNodeIndex, u32)>,
     /// The rate last written to the base slot, recorded for the hover inspector.
     gait_rate: f32,
-    /// The last mount display id: any change arms bone 0, like the reference's field watcher
-    /// (`0x604329`): Mount 91 (`0x607b44`) or Stand 0 (`0x607ce0`), displacing a one-shot.
+    /// The last mount display id: any change arms bone 0, like the reference's field watcher: Mount
+    /// 91 or Stand 0, displacing a one-shot.
     mount_display: u32,
     /// The Special wanted last frame. Its edge is a play in the reference and clears the deferred
-    /// cache (`0x5fe48e`); its level must not, so a fast-path park survives mid-air.
+    /// cache; its level must not, so a fast-path park survives mid-air.
     last_special: Option<Special>,
     /// The airborne snapshot node `leave_special` stopped, named so the rate sync does not
     /// restart it (a standing locomotion clip also reads rate 0). A symptom fix for the swim hop's
@@ -708,8 +698,8 @@ struct Overlay {
     looping: bool,
 }
 
-/// A key-bone cross-fade: `out` holds the outgoing pose (`0x7123af`), `None` over the base;
-/// `left`/`total` span 150 ms or the incoming clip's blendTime.
+/// A key-bone cross-fade: `out` holds the outgoing pose, `None` over the base; `left`/`total` span
+/// 150 ms or the incoming clip's blendTime.
 #[derive(Clone, Copy)]
 struct OverlayFade {
     out: Option<bevy::animation::graph::AnimationNodeIndex>,
@@ -718,8 +708,7 @@ struct OverlayFade {
     total: f32,
 }
 
-/// A wound-flinch decay: the reference seeds `λ₀ = 0.75`, `rate = 1/span` (`0x712647`) and
-/// self-releases (`0x7147b9`).
+/// A wound-flinch decay: the reference seeds `λ₀ = 0.75`, `rate = 1/span` and self-releases.
 #[derive(Clone, Copy)]
 struct Wound {
     node: bevy::animation::graph::AnimationNodeIndex,
@@ -761,7 +750,7 @@ impl Default for AnimDriver {
 }
 
 impl AnimDriver {
-    /// The requested id playing now; the mouse pick's bounds follow it (`0x7089c0`).
+    /// The requested id playing now; the mouse pick's bounds follow it.
     pub(crate) fn active_anim(&self) -> Option<u16> {
         match self.mode {
             Mode::Gait => self.gait,
@@ -774,7 +763,7 @@ impl AnimDriver {
     }
 
     /// `active_anim` through the model's fallback, the sequence actually playing (what the
-    /// reconcile reads, `0x5fdb50`); the mode machine keeps comparing the requested id.
+    /// reconcile reads); the mode machine keeps comparing the requested id.
     pub(crate) fn resolved_anim(
         &self,
         anims: &ModelAnimations,
@@ -871,8 +860,9 @@ impl Plugin for CreatureAnimPlugin {
                     (arm_aura_state_fx, play_state_done_kits)
                         .chain()
                         .before(WorldStage::Present),
-                    // `0x5ff0c0` arms, `0x60abe0` replays on a display swap; arm first, since the
-                    // swap crosses from last frame's teardown, armed by the same wire burst.
+                    // The reference arms the latch and replays it on a display swap; arm first,
+                    // since the swap crosses from last frame's teardown, armed by the same wire
+                    // burst.
                     (arm_morph_latch, replay_morph_kit).chain(),
                     blood_spurts,
                     hard_landing_dust,
@@ -893,7 +883,7 @@ impl Plugin for CreatureAnimPlugin {
                     crate::ranged_flex::flex_ranged_props
                         // The material samplers must see the clip armed this frame.
                         .before(benilla_world::model_render::ModelVisSet),
-                    // The un-nock reset (`0x60f59d`), off the same `$BWR`: after the arm, or its
+                    // The un-nock reset, off the same `$BWR`: after the arm, or its
                     // skip-while-releasing guard cancels a gun's blast on its first frame.
                     crate::ranged_flex::reset_ranged_props_on_unnock
                         .before(benilla_world::model_render::ModelVisSet),
@@ -941,8 +931,8 @@ fn find_resolved<'a>(
 mod attack_stand_tests {
     use super::*;
 
-    /// StartAttack stands a seated player (`0x5ecc9b`) even on the already-engaged skip, which
-    /// jumps past the stand to `0x5ecd78` and sends no `CMSG_ATTACKSWING`.
+    /// StartAttack stands a seated player even on the already-engaged skip, which jumps past the
+    /// stand to the auto-repeat cancel and sends no `CMSG_ATTACKSWING`.
     #[test]
     fn starting_an_attack_stands_you_even_when_the_swing_is_skipped() {
         let mut app = App::new();
@@ -992,7 +982,7 @@ mod attack_stand_tests {
 mod nock_latch_tests {
     use super::*;
 
-    /// The `$BWP`/`$BWR` nock cycle (set `0x624b70`, cleared `0x60016c`).
+    /// The `$BWP`/`$BWR` nock cycle.
     #[test]
     fn bwp_latches_and_bwr_clears_the_nock() {
         let mut app = App::new();
@@ -1043,8 +1033,8 @@ mod nock_latch_tests {
 mod disarm_tests {
     use super::*;
 
-    /// The ladder hides one weapon, main hand first: a disarmed dual-wielder punches with the
-    /// main hand and still swings its off-hand weapon (`0x5ec240`, `0x605e30`).
+    /// The ladder hides one weapon, main hand first: a disarmed dual-wielder punches with the main
+    /// hand and still swings its off-hand weapon.
     #[test]
     fn disarm_hides_one_weapon_main_hand_first() {
         let worn = Wielded {
@@ -1063,7 +1053,7 @@ mod disarm_tests {
         assert_eq!(select::swing_anim_off(worn.armed_off()), 88); // AttackOffPierce
         assert_eq!(select::ready_anim(worn.armed_main()), 26); // Ready1H
 
-        // The main hand's claim skips the off-hand probe (`0x5ec28d je 0x5ec2aa`).
+        // The main hand's claim skips the off-hand probe.
         assert_eq!(disarmed.disarmed_hand(), Some(0));
         assert_eq!(disarmed.armed_main(), None);
         assert_eq!(disarmed.armed_off(), Some((2, 0xf)), "the off hand is KEPT");
@@ -1071,7 +1061,7 @@ mod disarm_tests {
         assert_eq!(select::swing_anim_off(disarmed.armed_off()), 88); // still the dagger
         assert_eq!(select::ready_anim(disarmed.armed_main()), 25); // ReadyUnarmed
 
-        // The ranged slot has no gate (`0x5ec25e`).
+        // The ranged slot has no gate.
         assert_eq!(disarmed.ranged, Some((2, 0x2)));
         assert_eq!(select::ranged_load_anim(disarmed.ranged), 105); // LoadBow
 

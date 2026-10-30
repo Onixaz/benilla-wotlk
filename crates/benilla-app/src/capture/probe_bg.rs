@@ -1188,8 +1188,8 @@ fn report(arena: &Arena, net: &NetCommands, queue: &BattlefieldQueue, script: &m
         error!("PROBE bg: LUA ERROR {e}");
     }
 
-    // `LeaveBattlefield` sends nothing until the scoreboard's "ended" byte (`0x4abe66`), so a live
-    // match is left by a GM teleport; the server clears the slot on the map change.
+    // `LeaveBattlefield` sends nothing until the scoreboard's "ended" byte, so a live match is left
+    // by a GM teleport; the server clears the slot on the map change.
     info!(
         "PROBE bg: LEAVING map {} (active_map={:?})",
         arena.map,

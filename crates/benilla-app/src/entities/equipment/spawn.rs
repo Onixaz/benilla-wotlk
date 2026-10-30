@@ -91,10 +91,10 @@ impl SeatWriters<'_, '_> {
     }
 }
 
-/// Spawn each changed slot's item model under its attachment's joint once the model has built.
-/// The diff is per slot, and a new attach point alone moves the root: the reference's sheath
-/// paths touch only the weapon and quiver ids (`0x611770`) and stow a melee weapon by re-parenting
-/// its model (`0x60b590`, `0x712f70`), so the model and everything riding it survive.
+/// Spawn each changed slot's item model under its attachment's joint once the model has built. The
+/// diff is per slot, and a new attach point alone moves the root: the reference's sheath paths
+/// touch only the weapon and quiver ids and stow a melee weapon by re-parenting its model, so the
+/// model and everything riding it survive.
 #[allow(clippy::type_complexity)]
 pub(in crate::entities) fn attach_held_items(
     mut commands: Commands,
@@ -108,12 +108,12 @@ pub(in crate::entities) fn attach_held_items(
             Option<&benilla_world::interior::BodyBakeCenter>,
             Option<&Transform>,
             // The wearer's slot, which a slotless item's parts carry so the body tint reaches them;
-            // an attached model inherits its parent's computed colours (`0x714000`).
+            // an attached model inherits its parent's computed colours.
             Option<&benilla_world::rig_palette::RigSkin>,
             // The attach joint spawns on demand from the live pose, never the rest pose.
             Option<&mut benilla_world::rig_anim::RigPose>,
         ),
-        // A torn-down wearer gets no new item model: the reference frees it at once (`0x464920`).
+        // A torn-down wearer gets no new item model: the reference frees it at once.
         Without<benilla_world::model_fade::DespawnFade>,
     >,
     held: Option<Res<ItemDisplays>>,
@@ -259,7 +259,7 @@ fn spawn_slot(
         .spawn((
             Transform::from_translation(offset),
             Visibility::default(),
-            // Chained to the wearer (`0x712f70` sets `[model+0x1cc]`): the wearer's render alpha
+            // Chained to the wearer (the reference sets `[model+0x1cc]`): the wearer's render alpha
             // multiplies everything under this root, glow instances included.
             benilla_world::model_fade::ParentModel(entity),
         ))
@@ -281,9 +281,9 @@ fn spawn_slot(
                 attach: hs.attach,
             });
     }
-    // The bowstring, for a drawn bow only, the ranged slot in the left hand: `0x611e10` registers
-    // `0x611ff0` for subclass Bow. The `$WTT`/`$WTB` markers are not the gate, as melee weapons
-    // author them too for the swing trail (`0x6c67f0`).
+    // The bowstring, for a drawn bow only, the ranged slot in the left hand: the reference
+    // registers its string anchors for subclass Bow alone. The `$WTT`/`$WTB` markers are not the
+    // gate, as melee weapons author them too for the swing trail.
     if slot_idx == 2 && hs.attach == attach_id::HAND_LEFT {
         if let Some([top, bottom]) = dm.string_anchors {
             commands.entity(root).insert(crate::bowstring::Bowstring {
@@ -294,8 +294,8 @@ fn spawn_slot(
             });
         }
     }
-    // The swing trail's `WTOBJECT`, one per weapon hand (`0x608d60`) and freed with the model,
-    // for a model with both markers (`0x6c67f0`'s `0x7130e0` presence gate).
+    // The swing trail's `WTOBJECT`, one per weapon hand and freed with the model, for a model with
+    // both markers.
     if slot_idx <= 1 {
         if let Some([top, bottom]) = dm.string_anchors {
             commands
@@ -303,8 +303,8 @@ fn spawn_slot(
                 .insert(crate::weapon_trail::WeaponTrail::new(top.1, bottom.1));
         }
     }
-    // The fishing line's near anchor (`0x61f780`). The reference gates on class 2 subclass 20 and
-    // `$CCH`; only one weapon model in the data authors `$CCH`, so the marker alone is equivalent.
+    // The fishing line's near anchor. The reference gates on class 2 subclass 20 and `$CCH`; only
+    // one weapon model in the data authors `$CCH`, so the marker alone is equivalent.
     if slot_idx == 0 {
         if let Some(tip) = dm.cch_marker {
             commands
@@ -312,7 +312,7 @@ fn spawn_slot(
                 .insert(crate::fishing_line::FishingPoleTip { owner: entity, tip });
         }
     }
-    // The ranged prop (`[CGUnit+0xd24]`) animates off the body's `$BWP`/`$BWR` keys: BowPull (160)
+    // The ranged prop (unit `+0xd24`) animates off the body's `$BWP`/`$BWR` keys: BowPull (160)
     // on the pull, then Stand or BowRelease (161), a firearm's muzzle blast (`crate::ranged_flex`).
     // So it gets a pose, a player and bone anchors; only bows, crossbows and firearms author them.
     let flexes = slot_idx == 2
@@ -321,9 +321,8 @@ fn spawn_slot(
             a.owns(crate::ranged_flex::BOW_PULL) || a.owns(crate::ranged_flex::BOW_RELEASE)
         });
     // The item rig, for geometry welded to a billboard bone (an R14 pauldron's spikes): the
-    // reference billboards an attached model like a standalone one (`0x718657`..`0x71876f`),
-    // blending the bone's camera-replaced row per vertex (`0x71a460`). All seven such models are
-    // keyless, so no other joint moves.
+    // reference billboards an attached model like a standalone one, blending the bone's
+    // camera-replaced row per vertex. All seven such models are keyless, so no other joint moves.
     let item_rig = dm
         .inverse_bindposes
         .as_ref()
@@ -406,8 +405,8 @@ fn spawn_slot(
         benilla_world::rig_anim::RigPose::new(root, &dm.skeleton)
     });
     // The slot each part's `MeshTag` carries: the item's own when it has one, as the vertex stage
-    // indexes the palette by it and the tint arrives up the `ParentModel` chain (`0x714000`),
-    // else the wearer's, which carries the body's tint.
+    // indexes the palette by it and the tint arrives up the `ParentModel` chain, else the wearer's,
+    // which carries the body's tint.
     let rig_slot = item_rig.or(rider).unwrap_or(ctx.rig_slot);
     // Billboard batches spawn as world-root cards below; as children they would sit at the grip.
     let mut billboard_parts = Vec::new();
@@ -457,8 +456,8 @@ fn spawn_slot(
                 ));
             }
             // Lit as its wearer, whose light collector an equipped item aliases
-            // (`[item+0x3b8] = [wearer+0x3b8]`, `0x718960`). Every part gets a tag, interior
-            // variant or not, so the tint and the ground shade reach it.
+            // (`[item+0x3b8] = [wearer+0x3b8]`). Every part gets a tag, interior variant or not, so
+            // the tint and the ground shade reach it.
             child.insert(MeshTag(benilla_world::mesh_tag::spawn_tag(
                 rig_slot, tag_alpha,
             )));
@@ -475,8 +474,8 @@ fn spawn_slot(
             ) {
                 child.insert(lit);
             }
-            // The authored alpha, `colourAlpha × weight` (`0x707680`), pinned to the file's first
-            // sequence and composed into the tag in the unit lane's order.
+            // The authored alpha, `colourAlpha × weight`, pinned to the file's first sequence and
+            // composed into the tag in the unit lane's order.
             if let Some(anim) = &part.alpha_anim {
                 // A flexing prop's alpha follows its own player.
                 child.insert(if flexes {
@@ -614,9 +613,9 @@ fn spawn_slot(
                 anchor: Some(root),
                 // The reference frees a model's emitters with the model: no cloud is left behind.
                 on_owner_loss: benilla_world::particles::OwnerLoss::Free,
-                // The item root, whose chain is an attached model's alpha (`0x714000`).
+                // The item root, whose chain is an attached model's alpha.
                 alpha: Some(root),
-                // The wearer's light node, aliased into each attached model (`0x718960`).
+                // The wearer's light node, aliased into each attached model.
                 light_node: Some(entity),
             },
             // A resting item's emitters run its loader-idle sequence; a flexing prop's the one it
@@ -889,7 +888,7 @@ mod tests {
         (tags, slot)
     }
 
-    /// An attached model inherits its parent's computed colours (`0x714000`).
+    /// An attached model inherits its parent's computed colours.
     #[test]
     fn an_attachment_wears_its_wearers_instance_slot() {
         for interior in [true, false] {
@@ -919,7 +918,7 @@ mod tests {
         assert_eq!(benilla_world::mesh_tag::rig_of(tags[0]), 0);
     }
 
-    /// A display welded to a billboard bone gets its own joint rig (`0x718657`..`0x71876f`).
+    /// A display welded to a billboard bone gets its own joint rig.
     #[test]
     fn a_welded_billboard_item_spawns_its_own_rig() {
         let a = attach_a_welded_shoulder();
@@ -1012,7 +1011,7 @@ mod tests {
                 clips: Vec::new(),
                 hand_close: [None, None],
                 playable_animation_lookup: Vec::new(),
-                // `owns(161)`, the reference's `0x711960` test.
+                // `owns(161)`, the reference's animation-presence test.
                 animation_lookup: {
                     let mut v = vec![0xffffu16; 162];
                     v[0] = 0;

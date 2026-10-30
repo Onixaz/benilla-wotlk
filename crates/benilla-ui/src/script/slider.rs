@@ -1,10 +1,9 @@
-//! The `Slider` methods of `CSimpleSlider` (factory `0x6eee40`, `Slider::LoadXML` `0x789580`): a
-//! value in `[min, max]` with a step and an orientation (`0x811b00`), driving a thumb texture along
-//! the track, whose placement follows the documented widget model, untraced in the reference.
-//! `SetValue` fires `OnValueChanged` (slot `+0x330`) on the first value and then only on a change
-//! (`+0x314` bit 2, `0x789a06` in `SetValue` `0x789930`), which ends the loop between the stock
-//! scrollbar's `OnValueChanged` and its ScrollFrame's `OnVerticalScroll`. The methods exist only on
-//! Slider frames, as in the client's per-class method sets.
+//! The `Slider` widget's methods and XML load: a value in `[min, max]` with a step and an
+//! orientation, driving a thumb texture along the track, whose placement follows the documented
+//! widget model, untraced in the reference. `SetValue` fires `OnValueChanged` (slot `+0x330`) on
+//! the first value and then only on a change (`+0x314` bit 2, in `SetValue`), which ends the loop
+//! between the stock scrollbar's `OnValueChanged` and its ScrollFrame's `OnVerticalScroll`. The
+//! methods exist only on Slider frames, as in the client's per-class method sets.
 
 use mlua::{Lua, Table, Value};
 
@@ -40,7 +39,7 @@ fn with_slider<T>(
 }
 
 /// Get or create the thumb texture region and return its id; `layer` re-layers an existing thumb,
-/// and a new one defaults to OVERLAY (`0x789580`).
+/// and a new one defaults to OVERLAY.
 fn ensure_thumb(lua: &Lua, this: &Table, layer: Option<DrawLayer>) -> mlua::Result<u32> {
     let h = frame_handle_of(lua, this)?;
     let mut model = crate::script::model_mut_of(lua);
@@ -134,8 +133,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "SetMinMaxValues",
         lua.create_function(|lua, (this, min, max): (Table, f32, f32)| {
-            // A reversed pair is kept, not swapped (`0x789580`). A held value re-clamps and fires
-            // on a move; a fresh slider with no value yet fires nothing (bit 2).
+            // A reversed pair is kept, not swapped. A held value re-clamps and fires on a move; a
+            // fresh slider with no value yet fires nothing (bit 2).
             let (changed, range) = with_slider(lua, &this, |s| {
                 let before = (s.range_valid, s.min, s.max);
                 let changed = s.set_min_max(min, max);
@@ -200,7 +199,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // A 1.12 Slider has no enabled state: `Enable`/`Disable`/`IsEnabled` exist only in the Button
-    // table (`0x879d00`: `0x77fef0`, `0x77ffd0`, `0x7800b0`), so a Slider must not answer them.
+    // table, so a Slider must not answer them.
 
     // `SetThumbTexture(path [, layer])` or `(r, g, b [, a])`, a region's two `SetTexture` forms, on
     // the thumb region, created on first use.
@@ -312,10 +311,10 @@ pub(super) fn thumb_rect(r: Rect, thumb_size: (f32, f32), vertical: bool, fracti
     }
 }
 
-/// The thumb region's own width and height, as `0x789ba0` reads them through the texture's
-/// geometry slots (`[vtable+0x1c]`/`+0x20`, `0x770720`/`0x770790`): the authored span, else the
-/// art's texel span, else 0. `None` without a thumb region: `0x789ba0` gates the value math on
-/// `+0x328`, so a thumbless slider captures a press but never moves.
+/// The thumb region's own width and height, as the reference reads them through the texture's
+/// geometry slots (`[vtable+0x1c]`/`+0x20`): the authored span, else the art's texel span, else 0.
+/// `None` without a thumb region: the reference gates the value math on `+0x328`, so a thumbless
+/// slider captures a press but never moves.
 fn thumb_extent(model: &Model, thumb: Option<crate::widget::RegionHandle>) -> Option<(f32, f32)> {
     Some(super::region::virtual_span(model, thumb?))
 }
@@ -346,7 +345,7 @@ pub(super) fn begin_drag(
         _ => return None,
     };
     // No thumb region: the press still captures, the dispatcher's store being unconditional, but
-    // the value never moves (`0x789ba0`, `+0x328`).
+    // the value never moves (`+0x328`).
     let Some(size) = thumb_extent(model, thumb) else {
         model.slider_drag = Some(SliderDrag {
             slider: h,

@@ -1,16 +1,15 @@
 //! The placed frames: 12340's `layout-local.txt` (account-data slot 6, local only), written at the
-//! UI shutdown (`SavePlacedFrames` `0x5234a0`) and read back after the UI loads
-//! (`LoadPlacedFrames` `0x5183a0`). This is the engine half, a snapshot out and a restore in; the
-//! app owns the file (`benilla_app::ui_layout`).
+//! UI shutdown (`0x5234a0`) and read back after the UI loads (`0x5183a0`). This is the engine half,
+//! a snapshot out and a restore in; the app owns the file (`benilla_app::ui_layout`).
 
 use crate::layout::Anchor;
 
 use super::object::point_from_str;
 use super::SCREEN;
 
-/// One user-placed frame as 12340's `layout-local.txt` keeps it (`SavePlacedFrames` `0x5234a0`,
-/// `PlacedFrameCallback` `0x517e00`): its level, the nearest of its nine points to the screen's
-/// same point, the offset between the two and its size, in the frame's own units, rounded.
+/// One user-placed frame as 12340's `layout-local.txt` keeps it (`0x5234a0`, its per-frame callback
+/// `0x517e00`): its level, the nearest of its nine points to the screen's same point, the offset
+/// between the two and its size, in the frame's own units, rounded.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlacedFrame {
     pub name: String,
@@ -39,9 +38,9 @@ const POINTS: [(&str, f32, f32); 9] = [
 ];
 
 impl super::UiScript {
-    /// The frames `SavePlacedFrames` writes, in frame order: named, user-placed, movable or
+    /// The frames the placed-frame save writes, in frame order: named, user-placed, movable or
     /// resizable, with a resolved rect. Each takes the point, of the nine, that lies nearest the
-    /// screen's same point (the first on a tie), as `PlacedFrameCallback` picks it.
+    /// screen's same point (the first on a tie), as the save's per-frame callback picks it.
     pub fn placed_frames(&mut self) -> Vec<PlacedFrame> {
         let mut model = self.model_mut();
         super::UiScript::resolve_layout(&mut model);
@@ -81,9 +80,9 @@ impl super::UiScript {
             .collect()
     }
 
-    /// `LoadPlacedFrames` (`0x5183a0`) seating each row on the frame of its name, if it exists: the
-    /// level when the row has one, the anchor to the screen's same point when the frame is movable,
-    /// the size when it is resizable, each arm marking the frame user-placed.
+    /// The placed-frame load (`0x5183a0`), seating each row on the frame of its name, if it exists:
+    /// the level when the row has one, the anchor to the screen's same point when the frame is
+    /// movable, the size when it is resizable, each arm marking the frame user-placed.
     pub fn place_frames(&mut self, rows: impl IntoIterator<Item = PlacedFrame>) {
         let mut model = self.model_mut();
         for row in rows {

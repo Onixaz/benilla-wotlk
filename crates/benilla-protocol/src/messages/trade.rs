@@ -152,7 +152,7 @@ pub fn initiate_trade(target: u64) -> Vec<u8> {
     target.to_le_bytes().to_vec()
 }
 
-/// `CMSG_ACCEPT_TRADE`: the partner's offer state being accepted (`0x703f50`).
+/// `CMSG_ACCEPT_TRADE`: the partner's offer state being accepted.
 pub fn accept_trade(their_state: u32) -> Vec<u8> {
     their_state.to_le_bytes().to_vec()
 }

@@ -1,8 +1,8 @@
 //! The mirror-timer feed: breath, fatigue and feign-death edges off the wire, kept in the VM's
 //! timer table and fired as `MIRROR_TIMER_START`, `_PAUSE` and `_STOP` (`UIParent.lua:134`,
-//! `MirrorTimer.lua:72-75`), as `CGGameUI::OnMirrorTimerEvent` (`0x519a50`) does. The stock bars
-//! integrate `value + scale * elapsed` every `OnUpdate`, so a packet every few seconds paints a
-//! smooth countdown, and a world entry reads the table back through `GetMirrorTimerInfo`.
+//! `MirrorTimer.lua:72-75`), as the reference's mirror-timer handler (`0x519a50`) does. The stock
+//! bars integrate `value + scale * elapsed` every `OnUpdate`, so a packet every few seconds paints
+//! a smooth countdown, and a world entry reads the table back through `GetMirrorTimerInfo`.
 //!
 //! The client computes nothing: vmangos's `Player::UpdateMirrorTimers` runs the timers off its own
 //! liquid checks and ships a value and a signed rate, so there is no local underwater predicate to
@@ -34,13 +34,12 @@ pub(crate) struct MirrorTimerFeed(pub(crate) Vec<MirrorTimerEdge>);
 
 /// The three records as the client keeps them (`0xbd0b80`), C-side in 12340, so a rebuilt VM (a
 /// `/reload`) gets them back for its world-entry poll; emptied when the client leaves the world
-/// (`CGGameUI::CancelMirrorTimers`, `0x513ea0`).
+/// (`0x513ea0`).
 #[derive(Resource, Default)]
 struct MirrorRecords([Option<MirrorTimer>; 3]);
 
-/// The timer's arg1 and `MirrorTimerColors` key, the client's word by wire type
-/// (`MirrorTimerTypeToken`, `0x513e00`). Type 0 is `EXHAUSTION` on the client and `FATIGUE` on the
-/// server; the Lua keys on the client's word.
+/// The timer's arg1 and `MirrorTimerColors` key, the client's word by wire type (`0x513e00`). Type
+/// 0 is `EXHAUSTION` on the client and `FATIGUE` on the server; the Lua keys on the client's word.
 fn script_name(kind: MirrorTimerKind) -> &'static str {
     MIRROR_TIMER_TOKENS[record(kind)]
 }
@@ -117,7 +116,7 @@ fn feed_mirror_timers(
         let name = ScriptValue::Str(script_name(kind).into());
         let (event, args): (&str, Vec<ScriptValue>) = match edge {
             MirrorTimerEdge::Start(start) => {
-                // The owning spell's name when its row exists (`GetMirrorTimerLabel`, `0x5199a0`).
+                // The owning spell's name when its row exists (`0x5199a0`).
                 let spell = spell_name(start.spell_id);
                 let label = script.mirror_timer_label(record(kind), spell.as_deref());
                 // The fire (`0x519c06`), then the record (`0x519c40`).

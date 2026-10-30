@@ -1,4 +1,4 @@
-//! The backdrop Lua verbs and extract emission (the reference's Backdrop object, `0x77e5f0`).
+//! The backdrop Lua verbs and extract emission (the reference's Backdrop object).
 
 use super::common::script;
 use crate::script::*;
@@ -35,7 +35,7 @@ fn backdrop_installs_and_extracts_pieces_with_colors() {
     // bg (1) + 8 border pieces.
     assert_eq!(pieces.len(), 9);
     // The colour is a packed `0xAARRGGBB` byte quad, stored as `×255 + 0.5` through `__ftol`
-    // (`SetBackdropColor 0x777d30`), so 0.09 reads back as 23/255.
+    // (`SetBackdropColor`), so 0.09 reads back as 23/255.
     assert_eq!(pieces[0].0, "bg");
     let q = |x: f32| f32::from((x * 255.0 + 0.5) as u8) / 255.0;
     assert_eq!(pieces[0].1, [q(0.09), q(0.09), q(0.19), 1.0]);
@@ -44,7 +44,7 @@ fn backdrop_installs_and_extracts_pieces_with_colors() {
         .all(|(p, c)| p == "edge" && *c == [1.0, 1.0, 1.0, 1.0]));
 }
 
-// The four traps of `GetBackdrop()` (`0x777370`), as an addon observes them.
+// The four traps of `GetBackdrop()`, as an addon observes them.
 #[test]
 fn get_backdrop_reconstructs_from_the_struct() {
     let s = script();
@@ -172,8 +172,8 @@ fn set_backdrop_nil_tears_down() {
         .all(|q| !matches!(q.content, QuadContent::Backdrop { .. })));
 }
 
-/// The colour setters (`0x777d30`, `0x7780d0`) read r/g/b with a bare `lua_tonumber` (nil is 0.0)
-/// and gate alpha on `lua_isnumber` (`0x778227`) over a staged 1.0 (`0x778220`).
+/// The colour setters read r/g/b with a bare `lua_tonumber` (nil is 0.0) and gate alpha on
+/// `lua_isnumber` over a staged 1.0.
 #[test]
 fn backdrop_colors_coerce_rgb_but_default_alpha_opaque() {
     let s = script();

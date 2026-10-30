@@ -1,8 +1,8 @@
 //! Carried M2 lights: the point lights an entity's models bring, beside the placed ones
-//! (`benilla_world::terrain_stream`'s `spawn_lights_for`). The reference makes no distinction:
-//! `0x718960` gathers every drawn model's `type == 1` lights each frame, attached children included
-//! (`0x7191b9`, `0x719286`), at the live bone matrix into the one scene light DB (`0x71b650`,
-//! `0x71bb60`), so a held torch lights the ground. Each light here rides its host bone's joint.
+//! (`benilla_world::terrain_stream`'s `spawn_lights_for`). The reference makes no distinction: it
+//! gathers every drawn model's `type == 1` lights each frame, attached children included, at the
+//! live bone matrix into the one scene light DB, so a held torch lights the ground. Each light here
+//! rides its host bone's joint.
 
 use benilla_assets::coords::wow_to_bevy;
 use benilla_assets::ModelLight;
@@ -70,8 +70,8 @@ mod tests {
         }
     }
 
-    /// Only casting lights spawn (the gather's gate in `0x718960`), each a child of its bone's
-    /// joint at `position − bone_pivot`; colour × intensity survives the packer's `intensity / 4π`.
+    /// Only casting lights spawn, each a child of its bone's joint at `position − bone_pivot`;
+    /// colour × intensity survives the packer's `intensity / 4π`.
     #[test]
     fn only_casting_lights_spawn_and_they_ride_their_bone() {
         let mut app = App::new();

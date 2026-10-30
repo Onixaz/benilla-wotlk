@@ -1,10 +1,10 @@
-//! The query caches on disk: 12340's nine persisted `DBCache`s as `Cache\WDB\<locale>\*.wdb`
+//! The query caches on disk: 12340's nine persisted caches as `Cache\WDB\<locale>\*.wdb`
 //! ([`crate::local_state::wdb_dir`]), in the reference's own bytes ([`codec`]).
 //!
-//! As the reference: every file loads once at start (`LoadDBCaches` `0x635060`) and is rewritten
-//! whole once at exit (`DBCache_Destroy` `0x635540`); each answer the server sends lands in its
-//! file's records; a server cache version other than the one a file carries drops its records
-//! (`SMSG_CLIENTCACHE_VERSION`, `0x66f940`). No realm is checked: one set serves the install.
+//! As the reference: every file loads once at start (`0x635060`) and is rewritten whole once at
+//! exit (`0x635540`); each answer the server sends lands in its file's records; a server cache
+//! version other than the one a file carries drops its records (`SMSG_CLIENTCACHE_VERSION`,
+//! `0x66f940`). No realm is checked: one set serves the install.
 //!
 //! A loaded record reaches the game as the answer it was: its response is rebuilt and run through
 //! the same handler table as the wire's, so nothing asks again for what the file already holds.
@@ -125,7 +125,7 @@ fn on_query_answer(In(ev): In<SessionEvent>, mut caches: ResMut<WdbCaches>) {
     }
 }
 
-/// `SetClientCacheVersion` (`0x635710`): each file whose version differs drops its records and
+/// The cache version's handler (`0x635710`): each file whose version differs drops its records and
 /// takes the server's; the game's caches drop theirs with it.
 fn on_cache_version(In(ev): In<SessionEvent>, world: &mut World) {
     let SessionEvent::ClientCacheVersion { version } = ev else {

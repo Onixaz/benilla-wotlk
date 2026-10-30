@@ -267,8 +267,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x52fdd0`: a type off 1..=4, or the skin with no row, is ignored; `backward` is
-    // `StringToBOOL`, absent meaning forward.
+    // `0x52fdd0`: a type off 1..=4, or the skin with no row, is ignored; `backward` is read as a
+    // boolean, absent meaning forward.
     g.set(
         "SetNextBarberShopStyle",
         lua.create_function(|lua, args: MultiValue| {

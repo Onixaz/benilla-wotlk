@@ -1,33 +1,33 @@
 //! Drunkenness, from the drunk byte (`PLAYER_BYTES_3` byte 1). For the active player while moving
-//! (`flags & 0xf`, callers `0x60a984`–`0x60ab14`), the reference adds a wobble each frame to the
-//! facing, 2π-wrapped through `0x60de30`, unless a keyboard turn is held (`flags & 0x30`, not
-//! mouselook), and four times the wobble to the swim pitch, clamped, while swimming (`0x200000`).
-//! Its amplitude and frequency both scale with the fraction: ±0.75° a frame at full drunk.
-//! The binary computes on the x87 stack at 53-bit precision and rounds to f32 only at its stores,
-//! as the port does in f64, with the binary's constants bit for bit.
+//! (`flags & 0xf`), the reference adds a wobble each frame to the facing, 2π-wrapped, unless a
+//! keyboard turn is held (`flags & 0x30`, not mouselook), and four times the wobble to the swim
+//! pitch, clamped, while swimming (`0x200000`). Its amplitude and frequency both scale with the
+//! fraction: ±0.75° a frame at full drunk. The binary computes on the x87 stack at 53-bit precision
+//! and rounds to f32 only at its stores, as the port does in f64, with the binary's constants bit
+//! for bit.
 
-/// 0.01 at `0x8029d0`: the drunk byte's fraction scale (`0x5e2a90`).
+/// 0.01: the drunk byte's fraction scale.
 const DRUNK_SCALE: f32 = f32::from_bits(0x3c23_d70a);
-/// π/180 at `0x7ffaac`: the phase's degrees-to-radians factor.
+/// π/180: the phase's degrees-to-radians factor.
 const DEG2RAD: f32 = f32::from_bits(0x3c8e_fa35);
-/// The three harmonic frequencies, at `0x80c5e0`, `0x80c5dc` and `0x80c5d8`.
+/// The three harmonic frequencies.
 const PULSE_F1: f32 = f32::from_bits(0x3dbe_76c9); // 0.093
 const PULSE_F2: f32 = f32::from_bits(0x3e1d_b22d); // 0.154
 const PULSE_F3: f32 = f32::from_bits(0x3e47_ae14); // 0.195
-/// The mean's 1/3 at `0x80c5d4`, 12 ULPs below the nearest f32 to 1/3.
+/// The mean's 1/3, 12 ULPs below the nearest f32 to 1/3.
 const PULSE_MEAN: f32 = f32::from_bits(0x3eaa_aa9f);
-/// π/240 at `0x80c4bc`: the amplitude per unit of fraction.
+/// π/240: the amplitude per unit of fraction.
 const PULSE_AMP: f32 = f32::from_bits(0x3c56_7750);
-/// 4.0 at `0x80306c`: the wobble's swim-pitch multiplier (`0x60aaf1`).
+/// 4.0: the wobble's swim-pitch multiplier.
 pub(super) const SWIM_PITCH_WOBBLE_SCALE: f32 = 4.0;
 
-/// The drunk fraction, `min(byte, 100) × 0.01` (`0x5e2a90`).
+/// The drunk fraction, `min(byte, 100) × 0.01`.
 pub(super) fn fraction(byte: u8) -> f32 {
     let clamped = byte.min(100);
     (f64::from(clamped) * f64::from(DRUNK_SCALE)) as f32
 }
 
-/// The frame's wobble in radians for the time in ms and the drunk fraction (`0x60ab20`).
+/// The frame's wobble in radians for the time in ms and the drunk fraction.
 pub(super) fn wobble(now_ms: u32, fraction: f32) -> f32 {
     if fraction == 0.0 {
         return 0.0;
@@ -43,10 +43,10 @@ pub(super) fn wobble(now_ms: u32, fraction: f32) -> f32 {
     (mean * (f64::from(PULSE_AMP) * f64::from(fraction))) as f32
 }
 
-// Deviation: no drunk field-of-view lane, because the reference's is invisible in play: its
-// target `(179° − 90°)·fraction` (camera `+0x10c`, setter `0x511250`) eases at
-// `cameraFoVSmoothSpeed`, 0.5°/s, and restarts on every drunk-byte change, so it creeps under 1°.
-// Not built: entering the world already drunk, the reference snaps the full fisheye (`0x50d0f0`).
+// Deviation: no drunk field-of-view lane, because the reference's is invisible in play: its target
+// `(179° − 90°)·fraction` (camera `+0x10c`) eases at `cameraFoVSmoothSpeed`, 0.5°/s, and restarts
+// on every drunk-byte change, so it creeps under 1°. Not built: entering the world already drunk,
+// the reference snaps the full fisheye.
 
 #[cfg(test)]
 mod tests {

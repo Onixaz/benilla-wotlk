@@ -6,9 +6,8 @@ use super::*;
 /// shown; set for feign death and appear-dead spawns, with health left intact.
 pub const UNIT_DYNFLAG_DEAD: u32 = 0x20;
 
-/// `UNIT_STAND_STATE_DEAD` (`UnitDefines.h:109`), the third leg of `0x605f90`; vmangos never
-/// writes it. Both `[vtbl+0xa4]` overrides (`0x60be50`, `0x5ed570`) read `UNIT_FIELD_BYTES_1`
-/// byte 0.
+/// `UNIT_STAND_STATE_DEAD` (`UnitDefines.h:109`), the third leg; vmangos never writes it. Both
+/// `[vtbl+0xa4]` overrides read `UNIT_FIELD_BYTES_1` byte 0.
 const STAND_STATE_DEAD: u8 = 7;
 
 /// The reference's raw-to-shown power divisor (`0x7fde00`, table `0xaf5220`): 10 for rage and
@@ -27,9 +26,9 @@ pub fn power_display_scale(ty: u32) -> u32 {
 /// the client's two owner readers do differently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnerFallback {
-    /// `UNIT_FIELD_CREATEDBY`, as the own-pet resolver `0x5ee5a0` reads.
+    /// `UNIT_FIELD_CREATEDBY`, as the own-pet resolver reads.
     CreatedBy,
-    /// `UNIT_FIELD_SUMMONEDBY`, as the `PET_ATTACK_*` callback `0x5ff580` reads.
+    /// `UNIT_FIELD_SUMMONEDBY`, as the `PET_ATTACK_*` callback reads.
     SummonedBy,
 }
 
@@ -48,7 +47,7 @@ impl ObjectFields {
         self.get_i32(FIELD_UNIT_NATIVEDISPLAYID)
     }
     /// `UNIT_FIELD_FLAGS_2` (`[unit+0xd0]+0xd8`); bit `0x10` makes the unit a clone whose look
-    /// comes from `SMSG_MIRRORIMAGE_DATA` (`CGUnit_C::InitializeComponent` `0x730100`).
+    /// comes from `SMSG_MIRRORIMAGE_DATA` (the unit's component setup, `0x730100`).
     pub fn unit_flags2(&self) -> u32 {
         self.get_u32(FIELD_UNIT_FLAGS_2).unwrap_or(0)
     }
@@ -77,7 +76,7 @@ impl ObjectFields {
         self.get_guid(FIELD_UNIT_SUMMON).filter(|&g| g != 0)
     }
     /// `UNIT_FIELD_CRITTER`: the companion this unit has out; the summon arm of
-    /// `Spell_C_IsActiveSpell` (`0x802cb0`) compares its entry bits with the spell's creature.
+    /// the active-spell test (`0x802cb0`) compares its entry bits with the spell's creature.
     pub fn unit_critter(&self) -> Option<u64> {
         self.get_guid(FIELD_UNIT_CRITTER).filter(|&g| g != 0)
     }
@@ -86,7 +85,7 @@ impl ObjectFields {
         self.get_guid(FIELD_UNIT_CHARM).filter(|&g| g != 0)
     }
     /// A player's pet as the client reads it off the descriptor: `CHARM` if set, else `SUMMON`
-    /// (`partypetN`'s `0x4e8204`-`0x4e821a`, the party snapshot's `0x5f0a25`-`0x5f0a39`).
+    /// (as `partypetN` and the party snapshot read it).
     pub fn unit_pet_guid(&self) -> Option<u64> {
         self.unit_charm().or_else(|| self.unit_summon())
     }
@@ -99,7 +98,7 @@ impl ObjectFields {
         self.get_guid(FIELD_UNIT_CHARMEDBY).filter(|&g| g != 0)
     }
     /// The owner as the client's owner readers compute it: `CHARMEDBY` if set, else the fallback,
-    /// which differs by caller (`0x5ee62f` reads `CREATEDBY`, `0x5ff769` `SUMMONEDBY`).
+    /// which differs by caller (one reader takes `CREATEDBY`, another `SUMMONEDBY`).
     pub fn unit_owner(&self, fallback: OwnerFallback) -> Option<u64> {
         self.unit_charmed_by().or_else(|| match fallback {
             OwnerFallback::CreatedBy => self.unit_created_by(),
@@ -110,20 +109,20 @@ impl ObjectFields {
     pub fn unit_created_by(&self) -> Option<u64> {
         self.get_guid(FIELD_UNIT_CREATEDBY).filter(|&g| g != 0)
     }
-    /// `UNIT_CREATED_BY_SPELL`: the summoning spell; `0x6ea1e0` requires it to feed a pet.
+    /// `UNIT_CREATED_BY_SPELL`: the summoning spell; requires it to feed a pet.
     pub fn unit_created_by_spell(&self) -> Option<u32> {
         self.get_u32(FIELD_UNIT_CREATED_BY_SPELL)
             .filter(|&s| s != 0)
     }
-    /// `UNIT_FIELD_PETNUMBER` is nonzero: a pet or charm, which the rank getter `0x605620`
-    /// reports as rank 0. vmangos writes 0 for guardians and totems (`CharmInfo::SetPetNumber`
-    /// without the stat window), so they keep their template's rank.
+    /// `UNIT_FIELD_PETNUMBER` is nonzero: a pet or charm, which the rank getter reports as rank 0.
+    /// vmangos writes 0 for guardians and totems (`CharmInfo::SetPetNumber` without the stat
+    /// window), so they keep their template's rank.
     pub fn unit_is_pet_or_charm(&self) -> bool {
         self.unit_pet_number() != 0
     }
-    /// `UNIT_FIELD_PETNUMBER`: `GetUnitName` (`0x609210`) keys the pet-name cache on it when
-    /// nonzero. A `HIGHGUID_PET` guid's number is no substitute: a companion's is never filed in
-    /// its charm info, so no pet-name query answers it.
+    /// `UNIT_FIELD_PETNUMBER`: `GetUnitName` keys the pet-name cache on it when nonzero. A
+    /// `HIGHGUID_PET` guid's number is no substitute: a companion's is never filed in its charm
+    /// info, so no pet-name query answers it.
     pub fn unit_pet_number(&self) -> u32 {
         self.get_u32(FIELD_UNIT_PETNUMBER).unwrap_or(0)
     }
@@ -144,32 +143,32 @@ impl ObjectFields {
     pub fn unit_is_dead(&self) -> bool {
         self.unit_max_health().unwrap_or(0) > 0 && self.unit_health().unwrap_or(0) == 0
     }
-    /// Reads as dead, the reference's `0x605f90`: health 0, `UNIT_DYNFLAG_DEAD` (feign death,
-    /// `0x605f9d`) or stand state 7 (`0x605faa`). Feign death sets only the flag
-    /// (`Unit.cpp:9491`) and every viewer, the feigner included, receives it.
+    /// Reads as dead, as the reference's reads-dead test has it: health 0, `UNIT_DYNFLAG_DEAD`
+    /// (feign death) or stand state 7. Feign death sets only the flag (`Unit.cpp:9491`) and every
+    /// viewer, the feigner included, receives it.
     pub fn unit_reads_dead(&self) -> bool {
         self.unit_is_dead()
             || self.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0
             || self.unit_stand_state() == STAND_STATE_DEAD
     }
-    /// Health as `UnitHealth` (`0x5174d0`) reads it: 0 under `UNIT_DYNFLAG_DEAD`, else raw.
-    /// `UnitHealthMax` (`0x5175b0`) has no such gate, so a feigning unit's bar shows empty.
+    /// Health as `UnitHealth` reads it: 0 under `UNIT_DYNFLAG_DEAD`, else raw. `UnitHealthMax` has
+    /// no such gate, so a feigning unit's bar shows empty.
     pub fn unit_shown_health(&self) -> Option<u32> {
         if self.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0 {
             return Some(0);
         }
         self.unit_health()
     }
-    /// Power as `UnitMana` (`0x517670`) reads it: 0 under `UNIT_DYNFLAG_DEAD`, else divided by
-    /// [`power_display_scale`]. Its `POWER_HEALTH` leg (`0x5176f7`) compares a zero-extended
-    /// byte with -2, so it never matches and is left out.
+    /// Power as `UnitMana` reads it: 0 under `UNIT_DYNFLAG_DEAD`, else divided by
+    /// [`power_display_scale`]. Its `POWER_HEALTH` leg compares a zero-extended byte with -2, so it
+    /// never matches and is left out.
     pub fn unit_shown_power(&self, ty: u8) -> Option<u32> {
         if self.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0 {
             return (ty < 7).then_some(0);
         }
         Some(self.unit_power(ty)? / power_display_scale(u32::from(ty)))
     }
-    /// Maximum power as `UnitManaMax` (`0x5177e0`) reads it: divided, with no dead gate.
+    /// Maximum power as `UnitManaMax` reads it: divided, with no dead gate.
     pub fn unit_shown_max_power(&self, ty: u8) -> Option<u32> {
         Some(self.unit_max_power(ty)? / power_display_scale(u32::from(ty)))
     }
@@ -202,13 +201,13 @@ impl ObjectFields {
         })
     }
     /// Live auras by ascending slot, buffs 0-31 then debuffs 32-47: the order `UnitBuff` and
-    /// `UnitDebuff` read another unit in (`0x519500`, `0x5198f0`). The local player's buff bar
-    /// keeps insertion order in a packed cache (`0xbc6040`) instead, which this cannot recover.
+    /// `UnitDebuff` read another unit. The local player's buff bar keeps insertion order in a
+    /// packed cache instead, which this cannot recover.
     pub fn unit_auras(&self) -> impl Iterator<Item = UnitAuraSlot> + '_ {
         (0..UNIT_AURA_SLOTS).filter_map(|slot| self.unit_aura(slot))
     }
     /// Every `UNIT_FIELD_AURA` slot's raw spell id, zeros and stale ids included, as the cast
-    /// validator's crowd-control scan (`0x6e9ca0`) reads them, without `AURAFLAGS`.
+    /// validator's crowd-control scan reads them, without `AURAFLAGS`.
     pub fn unit_aura_ids(&self) -> impl Iterator<Item = u32> + '_ {
         (0..UNIT_AURA_SLOTS)
             .map(|slot| self.get_u32(FIELD_UNIT_AURA + u16::from(slot)).unwrap_or(0))
@@ -224,7 +223,7 @@ impl ObjectFields {
         (self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) & 0xff) as u8
     }
     /// `UNIT_FIELD_BYTES_1` byte 1: a hunter pet's loyalty level, 1-8, which `GetPetLoyalty`
-    /// (`0x4be700`) indexes `PetLoyalty.dbc` with; 0 is none and answers nil.
+    /// indexes `PetLoyalty.dbc` with; 0 is none and answers nil.
     pub fn unit_loyalty_level(&self) -> u8 {
         ((self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 8) & 0xff) as u8
     }
@@ -242,13 +241,13 @@ impl ObjectFields {
         ((packed >> 16) as u16, (packed & 0xffff) as u16)
     }
     /// `UNIT_FIELD_BYTES_1` byte 3 bit `0x2`, `UNIT_VIS_FLAGS_CREEP` (`SpellAuras.cpp:3610`):
-    /// stealthed; read by the usable check (`[+0x110]+0x213 & 2`) and the tracker (`0x5ed210`).
+    /// stealthed; read by the usable check (`[+0x110]+0x213 & 2`) and the tracker.
     pub fn unit_is_stealthed(&self) -> bool {
         (self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 24) & 0x2 != 0
     }
     /// `UNIT_FIELD_BYTES_1` byte 3 bit `0x1`, `UNIT_VIS_FLAGS_GHOST`, set by the ghost aura: it
-    /// only hides names and plates (`byte3 & 0x03`, `0x607101`, `0x60f62e`); the ghostly body is
-    /// the aura's own visual kit (spell 8326, kit 989).
+    /// only hides names and plates (`byte3 & 0x03`); the ghostly body is the aura's own visual kit
+    /// (spell 8326, kit 989).
     pub fn unit_is_ghost_visual(&self) -> bool {
         (self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 24) & 0x1 != 0
     }
@@ -265,13 +264,13 @@ impl ObjectFields {
         self.get_u32(FIELD_UNIT_AURASTATE).unwrap_or(0)
     }
 
-    /// `UNIT_FIELD_BYTES_2` byte 3, the shapeshift form (`CGUnit_C::GetShapeshiftForm` `0x71af70`).
+    /// `UNIT_FIELD_BYTES_2` byte 3, the shapeshift form (`0x71af70`).
     pub fn unit_shapeshift_form(&self) -> u8 {
         (self.get_u32(FIELD_UNIT_BYTES_2).unwrap_or(0) >> 24) as u8
     }
     /// `UNIT_FIELD_POWER1..7`: current power of type `ty`, on the wire's raw scale (`0x71c2e0`);
     /// a predicted value `SMSG_POWER_UPDATE` set reads first, as `UnitPower` reads the client's
-    /// copy (`GetPredictedPower`).
+    /// predicted copy.
     pub fn unit_power(&self, ty: u8) -> Option<u32> {
         if let Some(predicted) = self.predicted_power(ty) {
             return Some(predicted);
@@ -306,13 +305,13 @@ impl ObjectFields {
     pub fn unit_flags(&self) -> u32 {
         self.get_u32(FIELD_UNIT_FLAGS).unwrap_or(0)
     }
-    /// `UNIT_FIELD_COMBATREACH` (`+0x1f0`): melee reach, summed as `rA + rB + 1.333`, floor 5.0,
-    /// by the attack range gate (`0x6e3480`); 1.5, the vanilla default, before it streams.
+    /// `UNIT_FIELD_COMBATREACH` (`+0x1f0`): melee reach, summed as `rA + rB + 1.333`, floor 5.0, by
+    /// the attack range gate; 1.5, the vanilla default, before it streams.
     pub fn unit_combat_reach(&self) -> f32 {
         self.get_f32(FIELD_UNIT_COMBATREACH).unwrap_or(1.5)
     }
     /// `UNIT_FIELD_BOUNDINGRADIUS`: horizontal radius in yards; the water-foam depth gate takes
-    /// `max(2 * radius, 1.0)` (`0x5fa760`), so absent reads 0.
+    /// `max(2 * radius, 1.0)`, so absent reads 0.
     pub fn unit_bounding_radius(&self) -> f32 {
         self.get_f32(FIELD_UNIT_BOUNDINGRADIUS).unwrap_or(0.0)
     }
@@ -321,16 +320,16 @@ impl ObjectFields {
         self.get_u32(FIELD_UNIT_DYNAMIC_FLAGS).unwrap_or(0)
     }
     /// `UNIT_DYNAMIC_FLAGS` bit `0x20` alone: `SetSelection`'s last-enemy stamp gates on
-    /// `HEALTH > 0 || dynflag 0x20` (`0x49372f`), not on [`Self::unit_reads_dead`].
+    /// `HEALTH > 0 || dynflag 0x20`, not on [`Self::unit_reads_dead`].
     pub fn unit_dynflag_dead(&self) -> bool {
         self.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0
     }
-    /// `UNIT_DYNAMIC_FLAGS` bit `0x4`: tapped, the only test in `UnitIsTapped` (`0x519c90`).
+    /// `UNIT_DYNAMIC_FLAGS` bit `0x4`: tapped, the only test in `UnitIsTapped`.
     pub fn unit_tapped(&self) -> bool {
         self.unit_dynamic_flags() & 0x4 != 0
     }
-    /// `UNIT_DYNAMIC_FLAGS` bit `0x8`: tapped by me (`UnitIsTappedByPlayer`, `0x519d00`), which
-    /// the server sets per viewer; tapped but not by me is the grey unit frame.
+    /// `UNIT_DYNAMIC_FLAGS` bit `0x8`: tapped by me (`UnitIsTappedByPlayer`), which the server sets
+    /// per viewer; tapped but not by me is the grey unit frame.
     pub fn unit_tapped_by_player(&self) -> bool {
         self.unit_dynamic_flags() & 0x8 != 0
     }

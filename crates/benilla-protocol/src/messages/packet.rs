@@ -22,7 +22,7 @@ use super::{
 };
 
 /// The final facing a `SMSG_MONSTER_MOVE` dictates (`moveType`), applied as a hard snap, not a
-/// turn (`0x6018f0`); `Spot` and `Target` resolve once, from positions at receipt.
+/// turn; `Spot` and `Target` resolve once, from positions at receipt.
 #[derive(Debug, Clone, Copy)]
 pub enum MonsterMoveFacing {
     /// `moveType` 0 or a stop: the unit faces its travel direction.
@@ -50,11 +50,11 @@ pub struct CreatureQueryInfo {
     pub pet_family: u32,
     /// 0 normal, 1 elite, 2 rare-elite, 3 world boss, 4 rare (tooltip: "", Elite, Elite, Boss, "").
     pub rank: u32,
-    /// Bit `0x10` (HIDE_FACTION_TOOLTIP) drops the tooltip's faction line (`0x612610`).
+    /// Bit `0x10` (HIDE_FACTION_TOOLTIP) drops the tooltip's faction line.
     pub type_flags: u32,
     /// The tooltip's green CIVILIAN line and the dishonorable-kill mark.
     pub civilian: bool,
-    /// The tooltip's white LEADER line (`0x6125c0`).
+    /// The tooltip's white LEADER line.
     pub racial_leader: bool,
     /// The template's first display id, `0` if none, for drawing an unseen creature; a spawned
     /// unit may use any of its four ids, so its own display id wins.
@@ -89,8 +89,8 @@ pub enum ServerPacket {
     CharDelete {
         result: u8,
     },
-    /// `SMSG_CHARACTER_LOGIN_FAILED`: a 1-based reason index, not a `ResponseCodes` value, that
-    /// the client maps (`0x5aae08`) 1 to "world server is down" and past 6 to "login failed".
+    /// `SMSG_CHARACTER_LOGIN_FAILED`: a 1-based reason index, not a `ResponseCodes` value, that the
+    /// client maps 1 to "world server is down" and past 6 to "login failed".
     CharacterLoginFailed {
         result: u8,
     },
@@ -104,7 +104,7 @@ pub enum ServerPacket {
         packets: Vec<ServerPacket>,
     },
     /// `SMSG_DESTROY_OBJECT`: a plain `u64` guid that ceased to exist server-side. The client frees
-    /// it outright (`0x4674a0`), unlike an `OutOfRange` block, whose objects it keeps staged.
+    /// it outright, unlike an `OutOfRange` block, whose objects it keeps staged.
     DestroyObject {
         guid: u64,
     },
@@ -147,8 +147,8 @@ pub enum ServerPacket {
         flags: u32,
         position: Vector3d,
         orientation: f32,
-        /// Swim pitch (radians, +up) while `MOVEFLAG_SWIMMING`, else `0.0`: observers integrate
-        /// the vertical with it, as the client's swim velocity basis does (`0x7c5880`).
+        /// Swim pitch (radians, +up) while `MOVEFLAG_SWIMMING`, else `0.0`: observers integrate the
+        /// vertical with it, as the client's swim velocity basis does.
         pitch: f32,
         /// vmangos's own ms clock at receipt (`MovementInfo::stime`), shared by all relayed moves.
         time: u32,
@@ -374,7 +374,8 @@ pub enum ServerPacket {
         binder: u64,
         area: u32,
     },
-    /// `SMSG_SET_PROFICIENCY`: equippable subclasses of item class 2 or 4 (`0xc4d4a0[class]`).
+    /// `SMSG_SET_PROFICIENCY`: equippable subclasses of item class 2 or 4 (the reference's
+    /// per-class table entry).
     SetProficiency {
         item_class: u8,
         subclass_mask: u32,
@@ -654,9 +655,9 @@ pub enum ServerPacket {
     /// The server refused our `CMSG_ATTACKSWING` (`SMSG_ATTACKSWING_*` `0x145`, `0x146`, `0x148`,
     /// `0x149`, all empty), collapsed to the three arms the reference wires.
     AttackSwingError(AttackSwingError),
-    /// `SMSG_CANCEL_COMBAT` (`0x14e`, empty): stop our attack, no message (reference `0x5e7dd0`).
+    /// `SMSG_CANCEL_COMBAT` (`0x14e`, empty): stop our attack, no message.
     CancelCombat,
-    /// `SMSG_FEIGN_DEATH_RESISTED` (`0x2b4`, empty): a bare `DisplayError(421)` (`0x6e9800`).
+    /// `SMSG_FEIGN_DEATH_RESISTED` (`0x2b4`, empty): a bare error-display line, error id 421.
     FeignDeathResisted,
     /// `SMSG_AI_REACTION`: a creature's aggro flare (2 HOSTILE) or stealth alert (0 ALERT).
     AiReaction {
@@ -712,7 +713,7 @@ pub enum ServerPacket {
         seconds: u32,
     },
     /// `SMSG_SET_FLAT_SPELL_MODIFIER` / `SMSG_SET_PCT_SPELL_MODIFIER`: one absolute cell of a
-    /// talent modifier table; one handler reads both (`0x6e9950`) and the opcode picks the table.
+    /// talent modifier table; one handler reads both and the opcode picks the table.
     SpellModifier {
         /// `true`: `0x266`, the flat table (summed, added). `false`: `0x267`, the percent table
         /// (summed, plus 100, clamped at 0, then a raw multiplier).
@@ -1036,9 +1037,9 @@ pub enum ServerPacket {
     },
     /// `SMSG_LOGOUT_COMPLETE`: the world session is over; we are back at character select.
     LogoutComplete,
-    /// `SMSG_LOGOUT_RESPONSE`: `{u32 reason, u8 instant}` (reference `0x5b4630`). A non-zero
-    /// `reason` refuses (1 combat, 2 frozen, 3 falling); `instant` (resting, taxi, GM) means
-    /// `LogoutComplete` follows at once, else a 20 s server timer runs, the CAMP countdown.
+    /// `SMSG_LOGOUT_RESPONSE`: `{u32 reason, u8 instant}`. A non-zero `reason` refuses (1 combat, 2
+    /// frozen, 3 falling); `instant` (resting, taxi, GM) means `LogoutComplete` follows at once,
+    /// else a 20 s server timer runs, the CAMP countdown.
     LogoutResponse {
         reason: u32,
         instant: bool,
@@ -1088,9 +1089,9 @@ pub enum ServerPacket {
         difficulties: Option<GroupDifficulties>,
         /// Group-type bit `0x04`, `HasLFGRestrictions`.
         lfg_restricted: bool,
-        /// Group-type bit `0x08`'s status byte, `CGPartyInfo::m_playerLFGFlags`; 0 otherwise.
+        /// Group-type bit `0x08`'s status byte, the party's LFG flags; 0 otherwise.
         lfg_status: u8,
-        /// Group-type bit `0x08`'s dungeon slot, `CGPartyInfo::m_lfgSlot`; 0 otherwise.
+        /// Group-type bit `0x08`'s dungeon slot, the party's LFG slot; 0 otherwise.
         lfg_slot: u32,
         /// Group-type bit `0x01`: a battleground's group, which leaves the real group's counts.
         battleground: bool,

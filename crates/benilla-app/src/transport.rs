@@ -7,8 +7,8 @@
 //!   sampled at `(anchor + elapsed) % period`.
 //! - Type 11 (`TRANSPORT`, elevators and trams): the `TransportAnimation.dbc` keyframe path keyed
 //!   by template entry, at `spawn + R(spawn_quat)·lerp(keyframes, (anchor + elapsed) % period)`
-//!   ([`benilla_formats::elevator_sample`], the reference's `0x5f6280`; vmangos does the same in
-//!   `ElevatorTransport::Update`, `Transport.cpp:396`).
+//!   ([`benilla_formats::elevator_sample`], vmangos does the same in `ElevatorTransport::Update`,
+//!   `Transport.cpp:396`).
 //!
 //! This module only moves the streamed GameObject; riding keys on [`Transport`], not the drive.
 
@@ -323,7 +323,7 @@ fn arm_transports(
             .entry(mo.taxi_path_id)
             .or_insert_with(|| {
                 let t = nodes.path(mo.taxi_path_id).and_then(|path| {
-                    // The build pins its period to the reference's own bookkeeping (`0x5f4cc0`).
+                    // The build pins its period to the reference's own bookkeeping.
                     let t = TransportTimetable::build(path, mo.move_speed, mo.accel_rate)?;
                     info!(
                         "transport: path {} timetable built — period {} ms",
@@ -354,9 +354,9 @@ fn arm_transports(
     }
 }
 
-/// The per-frame tick, the reference's `(progress + anchor) % period` leg walk (`0x5f50a0`):
-/// sample and write translation and rotation (model scale is baked in by the renderer). An
-/// off-map sample, a boat on the other continent's leg, hides the model; a lift never trips it.
+/// The per-frame tick, the reference's `(progress + anchor) % period` leg walk: sample and write
+/// translation and rotation (model scale is baked in by the renderer). An off-map sample, a boat on
+/// the other continent's leg, hides the model; a lift never trips it.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn tick_transports(
     current_map: Option<Res<CurrentMap>>,
@@ -430,11 +430,11 @@ fn write_deck_pose(
 /// Put the ridden transport on the destination map in the worldport frame, so `wire_in` composes
 /// the rider's pose through the destination continent's coordinates rather than off its grid.
 ///
-/// The reference keeps nothing across `SMSG_NEW_WORLD`: `0x401bc0` destroys every object
-/// (`0x467700` → `0x467800`), builds a manager on the destination map (`0x464ff0`) and rebuilds
-/// rider and transport from the post-ack creates. We spare the ridden transport instead; the
-/// server's create for it (`Map.cpp:1698-1702`, which is why `SendInitTransports` skips it at
-/// `Map.cpp:1726`) re-anchors it a round trip later, and this fills that window.
+/// The reference keeps nothing across `SMSG_NEW_WORLD`: it destroys every object, builds a manager
+/// on the destination map and rebuilds rider and transport from the post-ack creates. We spare the
+/// ridden transport instead; the server's create for it (`Map.cpp:1698-1702`, which is why
+/// `SendInitTransports` skips it at `Map.cpp:1726`) re-anchors it a round trip later, and this
+/// fills that window.
 ///
 /// It writes the pose itself because `CurrentMap` still names the source map this frame, so
 /// [`tick_transports`] would hide the deck. Order: before it, and before `WorldStage::Input`.
@@ -599,20 +599,19 @@ fn compose_riders(
 }
 
 /// Re-ground a rider on a grounded deck spline onto the deck. The reference treats a grounded
-/// `SMSG_MONSTER_MOVE_TRANSPORT` spline as a plain one: the transport guid is in neither
-/// `0x616cb0`'s predicate nor `0x634040`'s dispatch, `0x616d03` zeroes the Z delta, and the WALK
-/// resolver `0x6367b0` re-derives Z from a world trace (`0x636e52`) at the composed position,
-/// whose class mask from `0x6315f0` (`0x100111`) has the `0x100000` bit that admits GameObject
-/// meshes, the deck among them.
+/// `SMSG_MONSTER_MOVE_TRANSPORT` spline as a plain one: the transport guid is in neither its
+/// grounded-spline predicate nor its dispatch, the Z delta is zeroed, and the WALK resolver
+/// re-derives Z from a world trace at the composed position, whose class mask has the `0x100000`
+/// bit that admits GameObject meshes, the deck among them.
 ///
 /// It runs here, not in [`crate::net::ground_clamp_creatures`] (in `WorldStage::Net`), because
 /// only after [`compose_riders`] and [`republish_moved_collider_aabbs`] are the rider's position
 /// and the deck's box this frame's. The height goes to the `Transform`, not `local_pos`, which
 /// [`compose_riders`] recomposes from every frame.
 ///
-/// Not modelled: `0x616af0`'s anti-warp guard takes the wire Z verbatim, skipping the re-ground,
-/// when the horizontal step exceeds 3 yd (`[0x80c5bc]` = 9.0, squared) or 60 yd/s, the common
-/// first substep on a deck; ours re-grounds that frame, and both settle the same the next.
+/// Not modelled: the reference's anti-warp guard takes the wire Z verbatim, skipping the re-ground,
+/// when the horizontal step exceeds 3 yd (9.0, squared) or 60 yd/s, the common first substep on a
+/// deck; ours re-grounds that frame, and both settle the same the next.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn ground_deck_riders(
     world: benilla_world::collision::WorldCollision,
@@ -650,12 +649,11 @@ fn ground_deck_riders(
     }
 }
 
-/// Publish the ride frame onto every model standing on a transport, the reference's `SetMoveBase`
-/// install (`0x617170`/`0x618970` → `0x718910` → `[CM2Model+0x17c]`), the frame a rider's
-/// world-space effects are stored in ([`benilla_world::ride_frame`]). The body we steer takes the
-/// mover's platform attach, an observed rider its [`TransportRider`] tail; attached models inherit
-/// it through `ParentModel`, as the reference propagates `[model+0x17c]` to children every frame
-/// (`0x7142c1` in the animate kernel `0x714260`).
+/// Publish the ride frame onto every model standing on a transport, the reference's move-base
+/// install (`[model+0x17c]`), the frame a rider's world-space effects are stored in
+/// ([`benilla_world::ride_frame`]). The body we steer takes the mover's platform attach, an
+/// observed rider its [`TransportRider`] tail; attached models inherit it through `ParentModel`, as
+/// the reference propagates `[model+0x17c]` to children every frame.
 fn stamp_ride_frames(
     mut commands: Commands,
     player: Res<crate::player::Player>,

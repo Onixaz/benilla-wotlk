@@ -177,9 +177,9 @@ fn toggling_the_window_opens_it_and_asks_for_the_queue_status() {
     assert!(!s.eval::<bool>("return HelpFrame:IsVisible()").unwrap());
 }
 
-/// The ticket text is a multi-line box and the scroll child itself (`HelpFrame.xml`, 541×357 in
-/// the 378-tall `HelpFrameOpenTicketScrollFrame`): the box sizes itself to its wrapped text
-/// (`0x77d4d0` @`0x77d8ad`), so `ScrollingEdit_OnTextChanged`'s recompute ranges over all of it.
+/// The ticket text is a multi-line box and the scroll child itself (`HelpFrame.xml`, 541×357 in the
+/// 378-tall `HelpFrameOpenTicketScrollFrame`): the box sizes itself to its wrapped text, so
+/// `ScrollingEdit_OnTextChanged`'s recompute ranges over all of it.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ticket_text_grows_with_its_lines_and_its_scroll_frame_ranges_over_them() {
@@ -229,8 +229,8 @@ fn the_ticket_text_grows_with_its_lines_and_its_scroll_frame_ranges_over_them() 
 }
 
 /// A stand-in font engine: each byte 7 wide, each line 14 tall, a multi-line box's rows starting
-/// after each newline, a trailing one opening an empty row as the reference's break routine does
-/// (`0x5c250b`–`0x5c2522`); the texts here never wrap.
+/// after each newline, a trailing one opening an empty row as the reference's break routine does;
+/// the texts here never wrap.
 struct Rows;
 
 impl TextMeasure for Rows {
@@ -253,8 +253,8 @@ impl TextMeasure for Rows {
     }
 }
 
-/// The ticket text is multi-line: UP moves the caret a row at its letter column (`0x77cb20`), and
-/// Shift+HOME selects back to the line's start (`0x77c980`), not the ticket's.
+/// The ticket text is multi-line: UP moves the caret a row at its letter column, and Shift+HOME
+/// selects back to the line's start, not the ticket's.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_ticket_texts_caret_moves_by_rows_and_lines() {

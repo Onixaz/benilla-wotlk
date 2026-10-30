@@ -60,8 +60,8 @@ pub(super) fn apply_model_visibility(
     mut unmarked: RemovedComponents<super::FarSideOfWater>,
     instances: Query<&WmoPortalInstance>,
     windows: Res<crate::wmo_portal::ExteriorWindows>,
-    // The camera's own building is not exterior scene: the reference draws it through the
-    // interior portal walk, never the per-window exterior populate (`[0xc7b748]` is the branch).
+    // The camera's own building is not exterior scene: the reference draws it through the interior
+    // portal walk, never the per-window exterior populate.
     claim: Res<crate::wmo_portal::CameraInteriorClaim>,
     // Read-only: this system owns the `DoodadFade` handle pick, and the far side composes into it.
     far_twins: Res<super::FarSideTwins>,
@@ -201,17 +201,17 @@ pub(super) fn apply_model_visibility(
                     .is_none_or(|inst| gv.drawn_by(inst))
             });
 
-        // The same flood picks the fog: the group drawer `0x6b5190` and the group-doodad drawer
-        // `0x6b62e0` push the interior triple only under the per-group `[0xca7f00]`. `None`
-        // off-WMO leaves the bit to the entity classifier.
+        // The same flood picks the fog: the group drawer and the group-doodad drawer push the
+        // interior triple only under the per-group. `None` off-WMO leaves the bit to the entity
+        // classifier.
         let room_fog = group_vis.map(|gv| {
             instances
                 .get(gv.instance)
                 .is_ok_and(|inst| gv.interior_fogged_by(inst))
         });
 
-        // The animated colour-alpha × transparency-weight factor, into the tag below and the
-        // cull here: the reference skips a batch whose alpha is ≤ 0 (`0x707b3a`).
+        // The animated colour-alpha × transparency-weight factor, into the tag below and the cull
+        // here: the reference skips a batch whose alpha is ≤ 0.
         let mat_factor = mat_anim.map_or(1.0, |m| m.current);
 
         // Inside a WMO, exterior content draws only through a portal window; untagged content
@@ -234,7 +234,7 @@ pub(super) fn apply_model_visibility(
                 .is_some_and(|o| matches!(card_owners.get(o), Ok(v) if !v.get()));
 
         // A projected batch draws only under `projectedTextures` or a forcing model
-        // (`World::ProjectTextureCallback 0x77f500`).
+        // (the world's projected-texture callback, `0x77f500`).
         let projection_off = !projected.0
             && batch_sort.is_some_and(|s| s.key.projected)
             && part.kind != ModelKind::GameObject
@@ -324,9 +324,9 @@ pub(super) fn apply_model_visibility(
             });
         // The same exterior-window term as the submesh walk.
         let exterior_ok = !exterior || Some(gv.instance) == own_instance || gate.admits(xf, aabb);
-        // A building's water rides the building's toggle: the reference's WMO liquid drain
-        // `0x684cd0` gates on the "Map objects" bit `[0xc7b2a4] & 0x100`, while the three ADT
-        // drains test the "Water" bit `0x1000000`. ADT liquid must not take this toggle.
+        // A building's water rides the building's toggle: the reference's WMO liquid drain gates on
+        // the "Map objects" bit, while the three ADT drains test the "Water" bit `0x1000000`. ADT
+        // liquid must not take this toggle.
         let toggled_on = m.kind_visible[kind_index(ModelKind::Wmo)];
         let want = if portal_ok && exterior_ok && toggled_on {
             Visibility::Inherited
@@ -337,8 +337,8 @@ pub(super) fn apply_model_visibility(
             *vis = want;
         }
         // The pool's fog follows this frame's flood, not the latch, as the reference's WMO liquid
-        // pass pushes interior fog under the same `[0xca7f00]` as the geometry; a pool drawn by
-        // the latch alone wears scene fog. `liquid.wgsl` ANDs it with the surface's own class.
+        // pass pushes interior fog under the same as the geometry; a pool drawn by the latch alone
+        // wears scene fog. `liquid.wgsl` ANDs it with the surface's own class.
         if let Some(mut tag) = tag {
             let on = instances
                 .get(gv.instance)
@@ -521,8 +521,8 @@ mod tests {
         );
     }
 
-    /// The reference's WMO liquid drain `0x684cd0` gates on the "Map objects" bit
-    /// `[0xc7b2a4] & 0x100` (`ModelKind::Wmo`), not the ADT drains' "Water" bit `0x1000000`.
+    /// The reference's WMO liquid drain gates on the "Map objects" bit (`ModelKind::Wmo`), not the
+    /// ADT drains' "Water" bit `0x1000000`.
     #[test]
     fn a_wmo_pool_rides_the_map_objects_toggle() {
         let mut app = App::new();

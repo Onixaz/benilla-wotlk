@@ -1,7 +1,6 @@
 //! `ItemClass.dbc`: an item class's name, `GetItemInfo`'s fifth return (`itemType`). The binding
-//! (`0x48e070`) bounds the class by the row count (`0xc0dc28`), indexes the rows (`0xc0dc24`) and
-//! pushes the name unfiltered, `(OBSOLETE)` suffixes included, or "" when there is no row
-//! (`0x48e236`).
+//! bounds the class by the row count, indexes the rows and pushes the name unfiltered, `(OBSOLETE)`
+//! suffixes included, or "" when there is no row.
 
 use std::collections::HashMap;
 

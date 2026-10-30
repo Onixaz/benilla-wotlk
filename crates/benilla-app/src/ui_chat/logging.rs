@@ -85,8 +85,8 @@ pub(crate) struct LocalTime {
 }
 
 /// `M/D HH:MM:SS.mmm` of now, local time: the reference's log-line stamp
-/// (`"%u/%u %02u:%02u:%02u.%03u  "`, `0x866aa0`, from `GetLocalTime` at `0x65a871`), which
-/// `crate::ui_script::load_log` shares.
+/// (`"%u/%u %02u:%02u:%02u.%03u  "`, from `GetLocalTime`), which `crate::ui_script::load_log`
+/// shares.
 pub(crate) fn stamp() -> String {
     let t = local_now();
     format!(

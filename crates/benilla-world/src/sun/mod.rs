@@ -1,12 +1,12 @@
 //! The celestial layer over the sky dome: the sun and white moon (each a disc and an additive
-//! glare), moon02 and the `Stars.m2` stars. The reference's setup `0x6d1ba0` builds the six
-//! bodies, the builder `0x6d3b80` places each at `cam + 12·dir`, `CSky::Render` (`0x6d4940`) draws
-//! stars, sun, white moon and moon02 in a far depth slice without depth writes, and every disc
-//! takes the horizon clip and fade `0x6d1960`. One broadcast celestial diffuse (`[0xce9c2c]`,
-//! LightIntBand sub-9, alpha 0xFF) tints every disc and glare but moon02, which has no colour
-//! writer; the white moon's teal rim is the dome's night bands (sub-3..6) through its feathered
-//! edge. Every body takes the sky's far-depth pin. The bodies are placed in plain world space, so
-//! they project through our camera's 45° fovy, where the reference's is 44.1° at 16:9.
+//! glare), moon02 and the `Stars.m2` stars. The reference's setup builds the six bodies, the
+//! builder places each at `cam + 12·dir`, the sky render draws stars, sun, white moon and moon02 in
+//! a far depth slice without depth writes, and every disc takes the horizon clip and fade. One
+//! broadcast celestial diffuse (LightIntBand sub-9, alpha 0xFF) tints every disc and glare but
+//! moon02, which has no colour writer; the white moon's teal rim is the dome's night bands
+//! (sub-3..6) through its feathered edge. Every body takes the sky's far-depth pin. The bodies are
+//! placed in plain world space, so they project through our camera's 45° fovy, where the
+//! reference's is 44.1° at 16:9.
 
 use bevy::pbr::MaterialPlugin;
 use bevy::prelude::*;
@@ -27,7 +27,7 @@ use setup::setup_sun;
 enum SunPart {
     /// The `sunCenter.blp` disc (alpha-blended, band-tinted, horizon clip+fade).
     Disc,
-    /// The additive lens flare (`sunGlare.blp`, `0x6cf490`): view-lerped scale 3→20, alpha 0.5→1.
+    /// The additive lens flare (`sunGlare.blp`): view-lerped scale 3→20, alpha 0.5→1.
     Glare,
 }
 
@@ -53,8 +53,7 @@ struct MoonSprite {
     part: MoonPart,
 }
 
-/// One `Stars.m2` patch or the fallback, faded by the star curve's model-global byte `[stars+0xb]`
-/// (`0x6d1b50`).
+/// One `Stars.m2` patch or the fallback, faded by the star curve's model-global byte `[stars+0xb]`.
 #[derive(Component)]
 struct StarDome {
     /// The patch's authored transparency weight (`Stars.m2` keys 1.0 to 0.25 over its seven
@@ -86,14 +85,13 @@ impl Plugin for SunPlugin {
     }
 }
 
-/// Hide the sky pass's elements while a WMO skybox owns the sky or the eye is submerged.
-/// `CSky::Render` gates stars, sun disc, white moon, moon02, gradient and cloud dome on one
-/// boolean: `0x6d49cd` sets it, a skybox slot whose weight exceeds `[0x808aac]` = 0.99 clears it
-/// (`0x6d49fb`/`0x6d4a2e`), and `0x6d4a3b` then skips all six; through the 4 s crossfade they
-/// draw under the skybox. A submerged eye skips `CSky::Render` whole (`0x6812a4`), or the discs
-/// would draw black under the murk. The glares draw on their own path
-/// (`0x483740 → 0x6d48c0 → 0x7e57e0`), which neither gate reaches, and fade underwater
-/// themselves; the gradient and cloud domes ([`crate::sky`], [`crate::clouds`]) gate themselves.
+/// Hide the sky pass's elements while a WMO skybox owns the sky or the eye is submerged. The sky
+/// render gates stars, sun disc, white moon, moon02, gradient and cloud dome on one boolean: the
+/// reference sets it, a skybox slot whose weight exceeds 0.99 clears it, and the sky render then
+/// skips all six; through the 4 s crossfade they draw under the skybox. A submerged eye skips the
+/// sky render whole, or the discs would draw black under the murk. The glares draw on their own
+/// path, which neither gate reaches, and fade underwater themselves; the gradient and cloud domes
+/// ([`crate::sky`], [`crate::clouds`]) gate themselves.
 #[allow(clippy::type_complexity)]
 fn apply_celestial_visibility(
     skybox: Res<crate::skybox::SkyboxWeight>,

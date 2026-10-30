@@ -1,8 +1,8 @@
-//! The glue core's system verbs (table `0xac3e00`, registered by the glue manager's `Resume`
+//! The glue core's system verbs (table `0xac3e00`, registered by the glue manager's resume,
 //! `0x4da5f0`) past the login screen's own ([`super::glue_core`]): the CVars, the client's
-//! identity, the account list and authenticator flag, the Scan.dll check, the PIN, matrix and
-//! token prompts, the billing, the glue sounds, the cursor, and the requests only the host can
-//! serve (`EnterWorld`, `CancelLogin`, the realm split, the screenshot).
+//! identity, the account list and authenticator flag, the Scan.dll check, the PIN, matrix and token
+//! prompts, the billing, the glue sounds, the cursor, and the requests only the host can serve
+//! (`EnterWorld`, `CancelLogin`, the realm split, the screenshot).
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -10,17 +10,15 @@ use super::binding_abi::{flag, string_arg};
 use super::glue_core::{queue, GlueRequest};
 use super::ScriptValue;
 
-/// The Scan.dll check's state, `CGlueMgr::m_scandllStatus` (`[0xb6b46c]`) with the login gate
-/// `m_scandllOkayToLogIn` (`[0xb6b474]`).
+/// The Scan.dll check's state, the glue manager's scan status with its login gate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ScanDll {
     /// Not started (status 0): `IsScanDLLFinished` is nil and the login gate is shut.
     #[default]
     Idle,
-    /// The scan ended without a verdict (status 2), the outcome for an install with no
-    /// `Scan.dll` to load: `ScanThreadProc` (`0x4e58d0`) fails `ScanFileForHack`, and
-    /// `ScanDLLFinished` (`0x4e5940`) fires `SCANDLL_ERROR`. `ScanDLLContinueAnyway` opens the
-    /// gate from here.
+    /// The scan ended without a verdict (status 2), the outcome for an install with no `Scan.dll`
+    /// to load: the scan thread fails its file scan, and the scan's finish fires `SCANDLL_ERROR`.
+    /// `ScanDLLContinueAnyway` opens the gate from here.
     Failed,
     /// The gate is open: `IsScanDLLFinished` answers 1 and the login may proceed.
     Ok,
@@ -39,13 +37,13 @@ pub struct GlueBilling {
 #[derive(Default)]
 pub(crate) struct GlueSystem {
     pub(super) scan: ScanDll,
-    /// `SCANDLL_ERROR` waits for the glue manager's next idle tick (`0x4dab40` at state 14 calls
-    /// `ScanDLLFinished`), never inside the `ScanDLLStart` call.
+    /// `SCANDLL_ERROR` waits for the glue manager's next idle tick (`0x4dab40` at state 14 finishes
+    /// the scan), never inside the `ScanDLLStart` call.
     scan_error_due: bool,
-    /// `CGxDevice::CursorSetVisible`'s last answer, `HideCursor`/`ShowCursor`.
+    /// The device cursor's last visibility, as `HideCursor`/`ShowCursor` set it.
     pub(super) cursor_hidden: bool,
     pub(super) billing: GlueBilling,
-    /// Whether the logon was a trial account's, `Login::IsTrialAccount`; `None` with no logon.
+    /// Whether the logon was a trial account's, as the login reports it; `None` with no logon.
     pub(super) trial: Option<bool>,
 }
 
@@ -70,8 +68,8 @@ impl super::UiScript {
         self.model_ref().glue.system.cursor_hidden
     }
 
-    /// The glue manager's idle arm for the Scan.dll check: once `ScanDLLStart` ran, the check
-    /// ends here with `SCANDLL_ERROR` and the `SCANDLL_MESSAGE_ERROR` text (`0x4e5940`).
+    /// The glue manager's idle arm for the Scan.dll check: once `ScanDLLStart` ran, the check ends
+    /// here with `SCANDLL_ERROR` and the `SCANDLL_MESSAGE_ERROR` text.
     pub fn run_glue_scan_tick(&mut self) {
         let due = std::mem::take(&mut self.model_mut().glue.system.scan_error_due);
         if due {
@@ -81,7 +79,7 @@ impl super::UiScript {
     }
 }
 
-/// `CVar::LookupRegistered` failing: `Couldn't find CVar named '%s'`, which every glue CVar
+/// The CVar lookup failing: `Couldn't find CVar named '%s'`, which every glue CVar
 /// getter but `GetCVarBool` raises.
 fn no_such_cvar(name: &str) -> mlua::Error {
     mlua::Error::runtime(format!("Couldn't find CVar named '{name}'"))
@@ -99,7 +97,7 @@ fn string_ish(lua: &Lua, v: Option<&Value>) -> Option<String> {
     }
 }
 
-/// `StringToBOOL`: a CVar value's truth, as `GetCVarBool` (`0x4ddd90`) reads it.
+/// A CVar value's truth, as `GetCVarBool` (`0x4ddd90`) reads it.
 fn cvar_truth(value: &str) -> bool {
     let v = value.trim();
     !(v.is_empty() || v == "0" || v.eq_ignore_ascii_case("false"))
@@ -132,10 +130,10 @@ pub(super) fn install_cvar_ranges(lua: &Lua) -> mlua::Result<()> {
                     .get(&cvar.to_ascii_lowercase())
                     .ok_or_else(|| no_such_cvar(&cvar))?;
                 let key = slot.name.to_ascii_lowercase();
-                // `GetCVarMax` walks `CShadowCache::ValidateShadowMode` up from 0 and answers the
-                // last mode the device takes (`0x514e30`): benilla draws no shadow maps, so that is
-                // the blob mode. `GetCVarAbsoluteMax` answers `GetMaxShadowMode`, `NUM_SHADOW_MODES
-                // - 1` (`0x515010`).
+                // `GetCVarMax` walks the shadow cache's mode check up from 0 and answers the last
+                // mode the device takes (`0x514e30`): benilla draws no shadow maps, so that is the
+                // blob mode. `GetCVarAbsoluteMax` answers the highest shadow mode, the mode count
+                // less one (`0x515010`).
                 const SHADOW_DEVICE_MAX: f64 = 0.0;
                 const SHADOW_ABSOLUTE_MAX: f64 = 5.0;
                 let n = match (key.as_str(), which) {
@@ -384,10 +382,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, _: MultiValue| Ok(()))?,
     )?;
 
-    // The Scan.dll check. `ScanDLLStart(versionURL, dllURL)` (`0x4dccf0` → `0x4e5cb0`): the usage
-    // error, then, once only, the scan thread; benilla loads no `Scan.dll`, so the scan ends at
-    // the next idle tick as a failed load does. `ScanDLLContinueAnyway` (`0x4e5860`) opens the
-    // gate after that ending; `IsScanDLLFinished` (`0x4dce00`) reads the gate.
+    // The Scan.dll check. `ScanDLLStart(versionURL, dllURL)` (`0x4dccf0`): the usage error, then,
+    // once only, the scan thread; benilla loads no `Scan.dll`, so the scan ends at the next idle
+    // tick as a failed load does. `ScanDLLContinueAnyway` opens the gate after that ending;
+    // `IsScanDLLFinished` (`0x4dce00`) reads the gate.
     g.set(
         "ScanDLLStart",
         lua.create_function(|lua, args: MultiValue| {
@@ -665,10 +663,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, _: MultiValue| Ok(()))?,
     )?;
 
-    // The host's: `EnterWorld` (`0x4dc510` → `0x4d9bd0`), `CancelLogin` (`0x4dce60` →
-    // `0x4d99e0`), `Screenshot` (`0x4dc520`), `QuitGameAndRunLauncher` (`0x4dc060`, which quits:
-    // benilla has no launcher), `ReadyForAccountDataTimes` (`0x4de390`), and the realm split
-    // query and answer (`0x4de2e0`, `0x4de250`), each a `CMSG_REALM_SPLIT`.
+    // The host's: `EnterWorld` (`0x4dc510` → `0x4d9bd0`), `CancelLogin` (`0x4dce60`), `Screenshot`
+    // (`0x4dc520`), `QuitGameAndRunLauncher` (`0x4dc060`, which quits: benilla has no launcher),
+    // `ReadyForAccountDataTimes` (`0x4de390`), and the realm split query and answer (`0x4de2e0`,
+    // `0x4de250`), each a `CMSG_REALM_SPLIT`.
     g.set(
         "EnterWorld",
         lua.create_function(|lua, _: MultiValue| {

@@ -1,5 +1,5 @@
-//! The `SetCVar` (`0x488c10`) and `RegisterCVar` (`0x488b00`) bindings: how each reads its
-//! arguments, the read-only flag, and when `CVAR_UPDATE` fires.
+//! The `SetCVar` and `RegisterCVar` bindings: how each reads its arguments, the read-only flag, and
+//! when `CVAR_UPDATE` fires.
 
 use crate::script::UiScript;
 
@@ -20,8 +20,8 @@ fn raised(s: &UiScript, chunk: &str) -> String {
         .to_string()
 }
 
-/// `lua_tostring` on argument 2 returns NULL for anything but a string or a number, and the
-/// binding stores `"0"` for it (`0x488c8d`-`0x488c98`): an unticked box's `GetChecked()` is nil.
+/// `lua_tostring` on argument 2 returns NULL for anything but a string or a number, and the binding
+/// stores `"0"` for it: an unticked box's `GetChecked()` is nil.
 #[test]
 fn set_cvar_stores_zero_for_a_value_with_no_string_form() {
     let mut s = script_with(&[("EnableMusic", "1")]);
@@ -41,7 +41,7 @@ fn set_cvar_stores_zero_for_a_value_with_no_string_form() {
     assert_eq!(get(&s, "EnableMusic"), "0", "an absent value");
 }
 
-/// A number goes through `luaV_tostring` (`0x6f7c80`), MSVC's `%.14g`; a string is kept as is.
+/// A number goes through `luaV_tostring`, MSVC's `%.14g`; a string is kept as is.
 #[test]
 fn set_cvar_stores_a_number_as_lua_text() {
     let s = script_with(&[("MusicVolume", "1.0")]);
@@ -60,8 +60,8 @@ fn set_cvar_stores_a_number_as_lua_text() {
     }
 }
 
-/// `lua_isstring(1)` fails (`0x488c1a`) and the binding raises the reference's own usage text
-/// (`0x84235c`); a number passes and names the CVar by its text.
+/// `lua_isstring(1)` fails and the binding raises the reference's own usage text; a number passes
+/// and names the CVar by its text.
 #[test]
 fn set_cvar_raises_the_reference_usage_without_a_name() {
     let s = script_with(&[("5", "a")]);
@@ -80,8 +80,8 @@ fn set_cvar_raises_the_reference_usage_without_a_name() {
     assert_eq!(get(&s, "5"), "b");
 }
 
-/// Flag bit2 (`0x488c67`-`0x488c78`): the in-game session flags three rows (`0x48f566`), and
-/// only the Lua binding tests it; before the flag the same write lands.
+/// Flag bit2: the in-game session flags three rows, and only the Lua binding tests it; before the
+/// flag the same write lands.
 #[test]
 fn set_cvar_refuses_a_read_only_row_only_once_flagged() {
     let mut s = script_with(&[
@@ -130,14 +130,13 @@ fn set_cvar_refuses_a_read_only_row_only_once_flagged() {
     s.run("SetCVar(\"MusicVolume\", 0.5)").unwrap();
     assert_eq!(get(&s, "MusicVolume"), "0.5", "other rows stay writable");
 
-    // The host's and the console's writes go through `CVar::Set` (`0x63df50`), which never
-    // tests the flag.
+    // The host's and the console's writes go through the CVar set, which never tests the flag.
     s.set_cvar_engine("realmList", "logon.example.org");
     assert_eq!(get(&s, "realmList"), "logon.example.org");
     s.run("ConsoleExec(\"realmName Elsewhere\")").unwrap();
     assert_eq!(get(&s, "realmName"), "Elsewhere");
 
-    // `ShutdownGame`'s clear (`0x491252`).
+    // The game shutdown's clear.
     s.set_cvar_read_only("realmList", false);
     s.run("SetCVar(\"realmList\", \"again\")").unwrap();
     assert_eq!(get(&s, "realmList"), "again");
@@ -158,9 +157,8 @@ fn the_read_only_flag_survives_a_host_reseed() {
     assert!(raised(&s, "SetCVar(\"realmName\", \"x\")").contains("is read-only"));
 }
 
-/// `CVAR_UPDATE` fires whenever argument 3 passes `lua_isstring`, changed or not, with the token
-/// as arg1 and the value text as arg2 (`0x488cad`-`0x488cd5`), inside the call: `SignalEvent2`
-/// (`0x703f50`) walks its listeners in place.
+/// `CVAR_UPDATE` fires whenever argument 3 passes `lua_isstring`, changed or not, with the token as
+/// arg1 and the value text as arg2, inside the call: the event signal walks its listeners in place.
 #[test]
 fn set_cvar_fires_cvar_update_inside_the_call_for_every_token() {
     let s = script_with(&[("MusicVolume", "1.0")]);
@@ -204,9 +202,8 @@ fn set_cvar_fires_cvar_update_inside_the_call_for_every_token() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// `RegisterCVar` takes argument 2 as the default only when `lua_isstring` passes (`0x488b56`),
-/// else `"0"` (`0x488b6f`); a number default is `%.14g` text. Without a name it raises its usage
-/// text (`0x8422e8`).
+/// `RegisterCVar` takes argument 2 as the default only when `lua_isstring` passes, else `"0"`; a
+/// number default is `%.14g` text. Without a name it raises its usage text.
 #[test]
 fn register_cvar_defaults_to_zero_and_reads_numbers_as_lua_text() {
     let mut s = UiScript::new().unwrap();

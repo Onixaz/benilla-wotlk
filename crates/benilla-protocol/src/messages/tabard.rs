@@ -5,8 +5,8 @@ use std::io::{self, Read};
 
 use crate::wire::{read_u32_le, read_u64_le};
 
-/// Body of `MSG_SAVE_GUILD_EMBLEM` (0x1F1, client `0x5e03f0`): the raw vendor guid, then emblem
-/// style, emblem color, border style, border color and background color as `u32`s.
+/// Body of `MSG_SAVE_GUILD_EMBLEM` (0x1F1): the raw vendor guid, then emblem style, emblem color,
+/// border style, border color and background color as `u32`s.
 pub fn save_guild_emblem(vendor: u64, design: [u32; 5]) -> Vec<u8> {
     let mut body = vendor.to_le_bytes().to_vec();
     for v in design {
@@ -15,28 +15,28 @@ pub fn save_guild_emblem(vendor: u64, design: [u32; 5]) -> Vec<u8> {
     body
 }
 
-/// Body of `MSG_TABARDVENDOR_ACTIVATE` (0x1F2, client `0x5e00e0`): the NPC guid.
+/// Body of `MSG_TABARDVENDOR_ACTIVATE` (0x1F2): the NPC guid.
 pub fn tabard_vendor_activate(npc: u64) -> Vec<u8> {
     npc.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_BATTLEMASTER_HELLO` (0x2D7, client `0x5e01a0`, no gate): the NPC guid.
+/// Body of `CMSG_BATTLEMASTER_HELLO` (0x2D7, no gate): the NPC guid.
 pub fn battlemaster_hello(npc: u64) -> Vec<u8> {
     npc.to_le_bytes().to_vec()
 }
 
-/// `MSG_SAVE_GUILD_EMBLEM` inbound (client `0x5e70f0`): the result row.
+/// `MSG_SAVE_GUILD_EMBLEM` inbound: the result row.
 pub(super) fn read_save_guild_emblem_result(r: &mut impl Read) -> io::Result<u32> {
     read_u32_le(r)
 }
 
-/// `MSG_TABARDVENDOR_ACTIVATE` inbound (`0x5e70c0`): the vendor guid. Only this opens the frame.
+/// `MSG_TABARDVENDOR_ACTIVATE` inbound: the vendor guid. Only this opens the frame.
 pub(super) fn read_tabard_vendor_activate(r: &mut impl Read) -> io::Result<u64> {
     read_u64_le(r)
 }
 
-/// The reply's message keys (`0x85fe88`); row 5 is the `0x1d1` sentinel that shows nothing, and a
-/// result past the table is ignored.
+/// The reply's message keys; row 5 is the `0x1d1` sentinel that shows nothing, and a result past
+/// the table is ignored.
 pub const GUILD_EMBLEM_RESULT_MESSAGES: [Option<&str>; 6] = [
     Some("ERR_GUILDEMBLEM_SUCCESS"),
     Some("ERR_GUILDEMBLEM_INVALID_TABARD_COLORS"),

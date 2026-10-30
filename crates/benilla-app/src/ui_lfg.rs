@@ -1,7 +1,8 @@
 //! The dungeon finder feed: the five tables pushed once per VM, every `SMSG_LFG_*` handed to the
-//! VM's `CGLookingForGroup` port in wire order, the group edges it reacts to, and the sends its
-//! verbs queue. A packet waits in [`LfgFeed`] until a VM is up, so one landing between the login
-//! and the UI's first frame is applied in order after the VM's `InitializeGame`.
+//! VM's port of the reference's dungeon-finder engine in wire order, the group edges it reacts to,
+//! and the sends its verbs queue. A packet waits in [`LfgFeed`] until a VM is up, so one landing
+//! between the login and the UI's first frame is applied in order after the VM's game
+//! initialization.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -590,7 +591,7 @@ fn reward(r: LfgCompletionReward) -> LfgCompletionRewardView {
     }
 }
 
-/// The engine's lines through `DisplayError`'s queue, its kits through the UI sound path.
+/// The engine's lines through the error display's queue, its kits through the UI sound path.
 fn show(
     script: &UiScript,
     lines: Vec<LfgLine>,

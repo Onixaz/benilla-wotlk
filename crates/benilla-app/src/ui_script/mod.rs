@@ -17,7 +17,7 @@ mod content;
 pub(crate) mod extract;
 /// The stock glue screens.
 pub(crate) mod glue;
-/// `CGlueMgr`'s screen states over the native login, for the stock glue screens.
+/// The glue manager's screen states over the native login, for the stock glue screens.
 pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
@@ -107,20 +107,19 @@ pub(crate) struct UiCostWanted(pub(crate) bool);
 #[derive(Resource, Default)]
 pub(crate) struct PlayerUiHover(pub(crate) Option<u32>);
 
-/// Who owns this frame's keys (the client's `DAT_00cf4dc8 != 0` gate), written in [`UiInput`] and
-/// read after it: a focused EditBox takes every key, a shown keyboard-enabled frame only the key
-/// it ate. Neither releases a held key: only the window deactivate (`0x514490`, from `0x493058`)
-/// and the world-enter cascade (`0x5144c0`) clear the direction bits, so W keeps running while
-/// you type.
+/// Who owns this frame's keys (the client's key-owner gate), written in [`UiInput`] and
+/// read after it: a focused EditBox takes every key, a shown keyboard-enabled frame only the key it
+/// ate. Neither releases a held key: only the window deactivate and the world-enter cascade clear
+/// the direction bits, so W keeps running while you type.
 #[derive(Resource, Default)]
 pub(crate) struct UiKeyboardCapture {
-    /// A focused EditBox eats every key (`0x77b35e` returns 1 on every path but alt-arrow).
+    /// A focused EditBox eats every key.
     pub(crate) typing: bool,
-    /// Keys a shown keyboard-enabled frame consumed this frame (the existence gate, `0x76b7d0`),
-    /// per key so the map eating `M` suppresses no other binding; raw codes, as read.
+    /// Keys a shown keyboard-enabled frame consumed this frame (the existence gate), per key so the
+    /// map eating `M` suppresses no other binding; raw codes, as read.
     pub(crate) consumed: Vec<bevy::input::keyboard::KeyCode>,
     /// The arrows fall through: the focused box is in alt-arrow mode and ALT is up, so the
-    /// reference declines them at `0x77b1c4` and `CGWorldFrame` runs their bindings.
+    /// reference declines them and the world frame runs their bindings.
     pub(crate) arrows_fall_through: bool,
 }
 
@@ -131,7 +130,7 @@ pub(crate) struct UiKeyboardCapture {
 pub(crate) struct PlayerUiClickConsumed(pub(crate) bool);
 
 /// Whether the cursor carries a payload, a `Send` mirror. A click on sky with one held never
-/// deselects: the reference gates its nothing-leg `SetSelection(0,0)` on no payload (`0x492d30`).
+/// deselects: the reference gates its nothing-leg `SetSelection(0,0)` on no payload.
 #[derive(Resource, Default)]
 pub(crate) struct CursorPayloadHeld(pub(crate) bool);
 
@@ -235,14 +234,14 @@ pub(crate) struct UiPassState {
 
 /// UI chrome under the pointer: [`PointerOverUi`] minus the nameplates, which take the mouse but
 /// not the wheel. The reference has no such bit: a wheel notch walks the strata and falls through
-/// any frame without `OnMouseWheel` to `CGWorldFrame`.
+/// any frame without `OnMouseWheel` to the world frame.
 #[derive(Resource, Default)]
 pub(crate) struct PointerOverUiPanel(pub(crate) bool);
 
 /// The player-UI feed phase, after [`WorldStage::Net`] and ungated (`UnitFeed` is the gated
 /// sub-phase): every push this frame's tick must see, as in the reference's frame, where packet
-/// dispatch precedes every `FrameScript_SignalEvent` and both precede `OnUpdate`. Every VM holder
-/// in `Update` is in this set or `.after(UiInput)`, as `game_plugins::schedule_tests` checks.
+/// dispatch precedes every script event signal and both precede `OnUpdate`. Every VM holder in
+/// `Update` is in this set or `.after(UiInput)`, as `game_plugins::schedule_tests` checks.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiFeed;
 
@@ -301,9 +300,8 @@ impl Default for UiScaleCvar {
 }
 
 impl UiScaleCvar {
-    /// The dial as `kind`'s VM sees it: the game UI's parent alone takes the scale
-    /// (`CGGameUI::SetUIScale 0x513240` scales the frame at `[0xbd0778]`), so the glue screens
-    /// stay 768 units tall.
+    /// The dial as `kind`'s VM sees it: the game UI's parent alone takes the scale (the UI scale
+    /// set `0x513240` scales the frame), so the glue screens stay 768 units tall.
     pub(crate) fn for_vm(&self, kind: benilla_ui::script::VmKind) -> f32 {
         match kind {
             benilla_ui::script::VmKind::Glue => 1.0,
@@ -337,8 +335,8 @@ impl Default for UiScaleSetting {
 
 impl UiScaleSetting {
     /// The UI parent's scale on a window `width` × `height` px. With `useUiScale` on it is
-    /// `uiScale`, floored at 0.64 (`CGGameUI::SetUIScale 0x513240`); off, `768 / height` above 768
-    /// px tall and 1.0 at or below, held to [0.9, 1.0] (`ScaleToScreenSize 0x51fb80`). Both cap it
+    /// `uiScale`, floored at 0.64 (the UI scale set `0x513240`); off, `768 / height` above 768 px
+    /// tall and 1.0 at or below, held to [0.9, 1.0] (the screen-size scale `0x51fb80`). Both cap it
     /// at `aspect × 0.75` on a window narrower than 4:3, so the UI's 1024-unit width still fits.
     pub(crate) fn resolve(&self, width: f32, height: f32) -> f32 {
         if let Some(env) = self.env {
@@ -366,7 +364,7 @@ impl UiScaleSetting {
 }
 
 /// Re-derive [`UiScaleCvar`] when either row or the window's size moves, as the reference's two
-/// callbacks and its mode-set path (`ScaleToScreenSize` on a new screen size) do.
+/// callbacks and its mode-set path (the screen-size scale on a new screen size) do.
 pub(crate) fn resolve_ui_scale(
     setting: Res<UiScaleSetting>,
     windows: Query<Ref<Window>, With<bevy::window::PrimaryWindow>>,
@@ -470,7 +468,7 @@ impl Plugin for UiScriptPlugin {
             .add_message::<WorldLeaveSweepMessage>()
             .add_systems(Update, lifecycle::arm_leaving_world_on_self_create)
             // A queued `ReloadUI()` runs in `PreUpdate`, a frame after its drain (the reference's
-            // deferral, `0x495590`) and before every `Update` seed or feed.
+            // deferral) and before every `Update` seed or feed.
             .init_resource::<ReloadUiPending>()
             // Both are exclusive edges on the VM and must not interleave.
             .add_systems(
@@ -828,8 +826,8 @@ impl benilla_ui::script::TextMeasure for FixedWidthFont {
 #[cfg(test)]
 pub(crate) mod test_ui;
 
-/// The chat loader's two login events (`0x498a60`): `UPDATE_CHAT_WINDOWS` once, then
-/// `UPDATE_CHAT_COLOR` per registry entry.
+/// The chat loader's two login events: `UPDATE_CHAT_WINDOWS` once, then `UPDATE_CHAT_COLOR` per
+/// registry entry.
 #[cfg(test)]
 pub(crate) fn fire_chat_login(s: &mut benilla_ui::script::UiScript) {
     // `FCF_OnUpdate` reads `UIOptionsFrame:IsShown()` every frame; stand in a closed one.
@@ -850,7 +848,8 @@ pub(crate) fn fire_chat_login(s: &mut benilla_ui::script::UiScript) {
     }
 }
 
-/// The `benilla_formats::TokenContext::printf` seam: `SStrPrintf` over the template filler.
+/// The `benilla_formats::TokenContext::printf` seam: the client's formatted print over the template
+/// filler.
 pub(crate) fn token_printf(template: &str, args: &[benilla_formats::TokenNumber]) -> String {
     let args: Vec<_> = args
         .iter()
@@ -1283,8 +1282,9 @@ mod pointer_arbiter_tests {
         );
     }
 
-    /// The camera reads the raw flag (`0x7662c0` gives a mouse-down to exactly one frame, the
-    /// plate); the wheel reads chrome, walking past a frame that only takes the mouse.
+    /// The camera reads the raw flag (the reference's mouse dispatch gives a mouse-down to exactly
+    /// one frame, the plate); the wheel reads chrome, walking past a frame that only takes the
+    /// mouse.
     #[test]
     fn the_camera_yields_to_a_plate_and_the_wheel_does_not() {
         let mut app = app();

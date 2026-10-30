@@ -1,8 +1,8 @@
-//! The reputation pane's fifteen globals, a port of 12340's `CGReputationInfo`
+//! The reputation pane's fifteen globals, a port of 12340's reputation info
 //! (`0x5cfe40`..`0x5d2e30`): the app pushes every faction with a reputation slot, and the engine
-//! keeps the client's own faction list and header tree over it. Indexes are 1-based into that
-//! list, whose shown rows come first; every faction lookup goes through one helper
-//! (`GetFactionInfoHelper`, `0x5d0da0`), which answers thirteen values on every path.
+//! keeps the client's own faction list and header tree over it. Indexes are 1-based into that list,
+//! whose shown rows come first; every faction lookup goes through one helper (`0x5d0da0`), which
+//! answers thirteen values on every path.
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -52,7 +52,7 @@ pub struct FactionEntry {
     pub peace_forced: bool,
     /// Flag `0x20`; it files the row under "Inactive".
     pub inactive: bool,
-    /// `FactionHasReputationForPlayer` (`0x5d0ce0`): a header that is also a reputation bar.
+    /// The faction's has-reputation test (`0x5d0ce0`): a header that is also a reputation bar.
     pub has_rep: bool,
 }
 
@@ -211,7 +211,7 @@ fn enter_world(tree: &mut FactionTree, state: &ReputationState) {
     tree.built = true;
 }
 
-/// `AddVisibleFaction` (`0x5d08d0`): one row per slot, a header by its wire flag, then the rows
+/// The visible-faction add (`0x5d08d0`): one row per slot, a header by its wire flag, then the rows
 /// of every ancestor header, "Other" for a parentless one.
 fn add_visible(tree: &mut FactionTree, state: &ReputationState, rep_list_id: u32) {
     let rep = i64::from(rep_list_id);
@@ -235,7 +235,7 @@ fn add_visible(tree: &mut FactionTree, state: &ReputationState, rep_list_id: u32
     add_faction_header(tree, state, parent, 0);
 }
 
-/// `AddFactionHeader` (`0x5d01f0`): the ancestors first, then a header row for `id` unless one
+/// The faction-header add (`0x5d01f0`): the ancestors first, then a header row for `id` unless one
 /// exists.
 fn add_faction_header(tree: &mut FactionTree, state: &ReputationState, id: i64, depth: usize) {
     let record = tree.record(state, id);
@@ -257,7 +257,7 @@ fn add_faction_header(tree: &mut FactionTree, state: &ReputationState, id: i64, 
     add_header(tree, id, parent);
 }
 
-/// `AddHeader` (`0x5cfe70`): every call unfolds every header.
+/// The header add (`0x5cfe70`): every call unfolds every header.
 fn add_header(tree: &mut FactionTree, id: i64, parent: i64) {
     if tree.header_slot(id).is_none() {
         tree.headers.push(Header {
@@ -286,19 +286,19 @@ fn has_rep(tree: &FactionTree, state: &ReputationState, id: i64) -> bool {
     tree.record(state, id).is_some_and(|e| e.has_rep)
 }
 
-/// `FactionSortIsHidden` (`0x5d16b0`): an empty header, unless it is a reputation bar itself.
+/// The sort's hidden test (`0x5d16b0`): an empty header, unless it is a reputation bar itself.
 fn header_hidden(tree: &FactionTree, state: &ReputationState, h: &Header) -> bool {
     h.count == 0 && !has_rep(tree, state, h.faction_id)
 }
 
-/// Case-insensitive name order, raw bytes breaking a tie: the client's `SStrSortUTF8I`.
+/// Case-insensitive name order, raw bytes breaking a tie: the client's case-folding UTF-8 sort.
 fn collate(a: &str, b: &str) -> Ordering {
     a.to_lowercase()
         .cmp(&b.to_lowercase())
         .then_with(|| a.as_bytes().cmp(b.as_bytes()))
 }
 
-/// `QSortFactionHeaders` (`0x5d1710`) on two headers of one level: a real faction by name, before
+/// The header comparator (`0x5d1710`) on two headers of one level: a real faction by name, before
 /// the synthetic ones, "Other" before "Inactive".
 fn header_order(tree: &FactionTree, state: &ReputationState, a: i64, b: i64) -> Ordering {
     match (tree.record(state, a), tree.record(state, b)) {
@@ -325,7 +325,7 @@ fn header_path(tree: &FactionTree, h: &Header) -> Vec<i64> {
     path
 }
 
-/// `SortFactions` (`0x5d1880`): count each header's rows, order the headers, count the shown rows
+/// The faction sort (`0x5d1880`): count each header's rows, order the headers, count the shown rows
 /// and order the list, shown rows first.
 fn sort(tree: &mut FactionTree, state: &ReputationState) {
     for h in 0..tree.headers.len() {
@@ -386,7 +386,7 @@ fn sort(tree: &mut FactionTree, state: &ReputationState) {
     }
     tree.shown = shown;
 
-    // `QSortFactions` (`0x5d02f0`): hidden last, then by header, the header's own row first.
+    // The row comparator (`0x5d02f0`): hidden last, then by header, the header's own row first.
     let keys: Vec<(bool, usize, bool, String, i64)> = tree
         .rows
         .iter()
@@ -416,7 +416,7 @@ fn sort(tree: &mut FactionTree, state: &ReputationState) {
     tree.rows = order.into_iter().map(|i| tree.rows[i]).collect();
 }
 
-/// `IsHeaderDescendant` (`0x5cfee0`): header `slot` sits somewhere under `ancestor`.
+/// The descendant test (`0x5cfee0`): header `slot` sits somewhere under `ancestor`.
 fn is_descendant(tree: &FactionTree, mut slot: usize, ancestor: i64) -> bool {
     if ancestor == INACTIVE || ancestor == OTHER {
         return false;
@@ -437,9 +437,9 @@ fn is_descendant(tree: &FactionTree, mut slot: usize, ancestor: i64) -> bool {
     false
 }
 
-/// `CollapseHeader` (`0x5d1d20`) by 0-based row: a header row folds itself and its sub-headers;
-/// any other row, or none, folds or opens every header. `false` when no header matched, the one
-/// arm that neither sorts nor fires `UPDATE_FACTION`.
+/// The header collapse (`0x5d1d20`) by 0-based row: a header row folds itself and its sub-headers;
+/// any other row, or none, folds or opens every header. `false` when no header matched, the one arm
+/// that neither sorts nor fires `UPDATE_FACTION`.
 fn collapse(tree: &mut FactionTree, state: &ReputationState, row: usize, fold: bool) -> bool {
     match tree.rows.get(row).filter(|r| r.is_header) {
         Some(r) => {
@@ -477,7 +477,7 @@ fn synthetic_header(lua: &Lua, key: i64) -> String {
         .unwrap_or_else(|_| fallback.into())
 }
 
-/// `GetFactionInfoHelper` (`0x5d0da0`): name, description, standingID, barMin, barMax, barValue,
+/// The faction-info helper (`0x5d0da0`): name, description, standingID, barMin, barMax, barValue,
 /// atWarWith, canToggleAtWar, isHeader, isCollapsed, hasRep, isWatched, isChild.
 fn faction_info(lua: &Lua, model: &Model, faction: i64) -> mlua::Result<MultiValue> {
     let (tree, state) = (&model.reputation_tree, &model.reputation);
@@ -533,8 +533,8 @@ fn header_refuses(tree: &FactionTree, faction: i64) -> bool {
     tree.header_slot(faction).is_some_and(|slot| slot > 0)
 }
 
-/// `SetAtWar` (`0x5d0a10`): peace needs standing of -3000 or better and no combat; the local flag
-/// takes war only when peace is not forced, and the send carries the asked state either way.
+/// The at-war set (`0x5d0a10`): peace needs standing of -3000 or better and no combat; the local
+/// flag takes war only when peace is not forced, and the send carries the asked state either way.
 fn set_at_war(model: &mut Model, faction: i64, at_war: bool) {
     let tree = &model.reputation_tree;
     if header_refuses(tree, faction) {

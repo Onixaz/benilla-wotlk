@@ -1,17 +1,16 @@
 //! The sound engine's init-time settings and the sound-system restart.
 //!
 //! The reference reads the output device, the channel count, the software HRTF and the DSP effects
-//! once, in `SI2::Init` (`0x4c82e0`) → `SE2::Init` (`0x87c710`), and again only when the Sound
-//! panel calls `Sound_GameSystem_RestartSoundSystem` (`0x985d30`: `SI2::ShutDown(1)`, `Init(1)`).
-//! [`EngineSettings`] is that latch: [`boot_settings`] fills it from the stored config before the
-//! device opens, and [`restart_sound_system`] refills it from the live CVars. A restart stops every
-//! sound (`SE2::StopAllSounds 0x87ded0`), and the zone pump picks its music again.
+//! once, in the sound interface's init (`0x4c82e0`) → the sound engine's init (`0x87c710`), and
+//! again only when the Sound panel calls `Sound_GameSystem_RestartSoundSystem` (`0x985d30`: a
+//! shutdown and an init). [`EngineSettings`] is that latch: [`boot_settings`] fills it from the
+//! stored config before the device opens, and [`restart_sound_system`] refills it from the live
+//! CVars. A restart stops every sound (`0x87ded0`), and the zone pump picks its music again.
 //!
-//! The output device list is the reference's cache (`s_outputDrivers`): index 0 is "System
-//! Default", index `i` the host's device `i - 1`, enumerated at init and at each restart. The
-//! choice persists by name (`Sound_OutputDriverName`) and is resolved to an index at init
-//! ([`find_driver`], `FindDriverIndex 0x8790c0`), which is written back to
-//! `Sound_OutputDriverIndex`.
+//! The output device list is the reference's cache: index 0 is "System Default", index `i` the
+//! host's device `i - 1`, enumerated at init and at each restart. The choice persists by name
+//! (`Sound_OutputDriverName`) and is resolved to an index at init ([`find_driver`]), which is
+//! written back to `Sound_OutputDriverIndex`.
 
 use bevy::prelude::*;
 
@@ -20,10 +19,10 @@ use crate::cvars::{CvarChanged, Cvars};
 use super::{output, SoundOutput};
 
 /// The cached list's entry 0, the reference's fallback literal for `SYSTEM_DEFAULT`
-/// (`SE2::GetOutputDriverName 0x8784a0`).
+/// (`0x8784a0`).
 pub(crate) const SYSTEM_DEFAULT: &str = "System Default";
 
-/// `Sound_NumChannels`'s clamp (`SE2::Init` at `0x87cea3`/`0x87ceb2`).
+/// `Sound_NumChannels`'s clamp (the engine init, at `0x87cea3`/`0x87ceb2`).
 const CHANNELS_MIN: i32 = 12;
 const CHANNELS_MAX: i32 = 128;
 
@@ -58,7 +57,7 @@ impl Default for EngineSettings {
 pub(crate) struct OutputDrivers(pub(crate) Vec<String>);
 
 impl OutputDrivers {
-    /// The cached name at `index` (`SE2::GetOutputDriverName_Cached 0x8792b0`).
+    /// The cached name at `index` (`0x8792b0`).
     pub(crate) fn name(&self, index: usize) -> Option<&str> {
         match index {
             0 => Some(SYSTEM_DEFAULT),
@@ -72,8 +71,8 @@ impl OutputDrivers {
     }
 }
 
-/// `FindDriverIndex` (`0x8790c0`): `index` if its entry carries `name`, else the first entry that
-/// does, else 0. The comparison is case-sensitive (`SStrCmp`).
+/// The driver lookup: `index` if its entry carries `name`, else the first entry that does, else 0.
+/// The comparison is case-sensitive.
 pub(crate) fn find_driver(drivers: &OutputDrivers, name: &str, index: i32) -> usize {
     if let Ok(i) = usize::try_from(index) {
         if drivers.name(i) == Some(name) {
@@ -90,7 +89,7 @@ pub(crate) fn voice_ceiling(num_channels: i32) -> usize {
     num_channels.clamp(CHANNELS_MIN, CHANNELS_MAX) as usize
 }
 
-/// A CVar value as `CVar::m_intValue` reads it.
+/// A CVar value as the CVar's integer value reads it.
 fn int(value: Option<&str>, default: i32) -> i32 {
     value.map_or(default, benilla_ui::script::sstr_to_int)
 }
@@ -128,7 +127,7 @@ pub(crate) struct DeviceChanged(pub(super) bool);
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct RestartSet;
 
-/// `OutputDriverIndexHandler` (`0x4d0dd0`): an index write stores that entry's name in
+/// The index CVar's handler (`0x4d0dd0`): an index write stores that entry's name in
 /// `Sound_OutputDriverName`; an index past the list stores `""`, as FMOD's failed name read leaves
 /// the zeroed buffer.
 pub(super) fn on_driver_index(
@@ -148,15 +147,15 @@ pub(super) fn on_driver_index(
     cvars.set("Sound_OutputDriverName", &name);
 }
 
-/// Write the boot-resolved index back to the registry once it has loaded, as `SI2::Init` sets
-/// `Sound_OutputDriverIndex` after `SE2::Init`.
+/// Write the boot-resolved index back to the registry once it has loaded, as the sound interface's
+/// init sets `Sound_OutputDriverIndex` after the engine's.
 pub(super) fn write_back_driver(out: NonSend<SoundOutput>, mut cvars: ResMut<Cvars>) {
     cvars.set("Sound_OutputDriverIndex", &out.engine.driver.to_string());
 }
 
-/// A lost output device restarts: `SI2::HandleSoundDeviceChange` (`0x4c66b0`) →
-/// `ValidateOutputDriver` (`0x4c6560`) resets the index to 0 and restarts; the panel's own restart
-/// arrives through [`super::ui`].
+/// A lost output device restarts: the device-change handler (`0x4c66b0`) → the driver check
+/// (`0x4c6560`) resets the index to 0 and restarts; the panel's own restart arrives through
+/// [`super::ui`].
 pub(super) fn restart_on_lost_device(
     mut out: NonSendMut<SoundOutput>,
     mut restarts: MessageWriter<SoundRestart>,
@@ -184,7 +183,7 @@ pub(super) fn restart_sound_system(
             .iter()
             .any(|n| Some(n.as_str()) == drivers.name(out.engine.driver));
     if lost {
-        // `ValidateOutputDriver` sets the index to "0" before it restarts.
+        // The driver check sets the index to "0" before it restarts.
         cvars.set("Sound_OutputDriverIndex", "0");
         cvars.set("Sound_OutputDriverName", SYSTEM_DEFAULT);
     }
@@ -228,7 +227,7 @@ mod tests {
         assert_eq!(d.device(1).as_deref(), Some("Speakers"));
     }
 
-    /// `FindDriverIndex`: the index when its name matches, else a search by name, else 0.
+    /// The driver lookup: the index when its name matches, else a search by name, else 0.
     #[test]
     fn the_saved_name_wins_over_a_stale_index() {
         let d = drivers();

@@ -1,8 +1,8 @@
-//! Is a claimed WMO room visible this frame? The reference elects an object standing in a WMO
-//! group with its building (`0x6834e0`, in the WMO-group render path): when the group is not
-//! rendered, the object is neither drawn nor ticked. The anim-LOD gate (`creature_anim::lod`) and
-//! the body draw election (`crate::exterior_cull`) both ask it of a body's [`UnitWmoRoom`], and one
-//! function answers both so they cannot disagree.
+//! Is a claimed WMO room visible this frame? The reference elects an object standing in a WMO group
+//! with its building (in the WMO-group render path): when the group is not rendered, the object is
+//! neither drawn nor ticked. The anim-LOD gate (`creature_anim::lod`) and the body draw election
+//! (`crate::exterior_cull`) both ask it of a body's [`UnitWmoRoom`], and one function answers both
+//! so they cannot disagree.
 
 use bevy::prelude::*;
 
