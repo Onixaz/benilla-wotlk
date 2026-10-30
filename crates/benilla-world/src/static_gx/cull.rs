@@ -64,17 +64,27 @@ fn fade_step(size: f32, d: f32, current: FadeClass) -> FadeClass {
     }
 }
 
-/// How far a fader `d` yd away may move before [`fade_step`] can answer differently: its
-/// distance to the nearer alpha threshold of its band (`doodad_fade_alpha_at`'s 0.99 and 0.01),
-/// less the hysteresis either exit shifts it by. A fader with no band never changes.
-fn class_slack(near: f32, far: f32, d: f32) -> f32 {
+/// How far a fader `d` yd away in `class` may move before [`fade_step`] can answer differently:
+/// its distance to that class's own exits, at its band's alpha thresholds
+/// (`doodad_fade_alpha_at`'s 0.99 and 0.01). Steady leaves past the steady edge, Gone inside the
+/// gone edge, and Feather [`FADE_HYST`] beyond either. A fader with no band never changes.
+fn class_slack(near: f32, far: f32, d: f32, class: FadeClass) -> f32 {
     if near == f32::MAX {
         return f32::MAX;
     }
     let span = far - near;
     let (steady_edge, gone_edge) = (near + 0.01 * span, far - 0.01 * span);
-    ((d - steady_edge).abs().min((d - gone_edge).abs()) - FADE_HYST).max(0.0)
+    let to_exit = match class {
+        FadeClass::Steady => steady_edge - d,
+        FadeClass::Gone => d - gone_edge,
+        FadeClass::Feather => (d - (steady_edge - FADE_HYST)).min(gone_edge + FADE_HYST - d),
+    };
+    // The alpha ramp rounds differently from the edges computed here.
+    (to_exit - SLACK_EPS).max(0.0)
 }
+
+/// Yards [`class_slack`] keeps back from an exit.
+const SLACK_EPS: f32 = 1e-3;
 
 /// A referrer set's PVS verdict, `WmoGroupVis::drawn_by`'s rule: any named room visible, a missing
 /// bit fail-open. An empty set, an unnamed prop, is never portal-culled.
@@ -214,9 +224,9 @@ fn scan_faders(
             }
         }
         let d = f.center.distance(cam_pos);
-        slack = slack.min(class_slack(f.near, f.far, d));
         let old = f.class();
         let new = fade_step(f.size, d, old);
+        slack = slack.min(class_slack(f.near, f.far, d, new));
         if new == old {
             continue;
         }
@@ -397,6 +407,20 @@ pub(super) fn cull_cells(
     let m = &debug.models;
     let doodads_on =
         m.kind_visible[crate::model_render::kind_index(crate::model_render::ModelKind::Doodad)];
+    // A region's box holds every set and group box, so a region wholly past farclip or outside the
+    // frustum admits none of them.
+    let region_in_view = |draw: &super::render::GxCellDraw| {
+        let center = draw.origin + Vec3::from(draw.aabb.center);
+        let radius = Vec3::from(draw.aabb.half_extents).length();
+        crate::view::within_farclip(view.farclip, cam_pos, cam_fwd, center, radius)
+            && frustum.intersects_sphere(
+                &bevy::camera::primitives::Sphere {
+                    center: center.into(),
+                    radius,
+                },
+                false,
+            )
+    };
 
     // ---- The fader exile scan ----
     // An `environmentDetail` write moved every band: re-derive them before the scan reads them.
@@ -490,6 +514,9 @@ pub(super) fn cull_cells(
             let Ok(inst) = instances.get(entity) else {
                 continue;
             };
+            if !region_in_view(draw) {
+                continue;
+            }
             let mut sel = crate::static_gx::render::GxSel {
                 drawn: vec![false; draw.sets.len()],
                 fog: vec![false; draw.sets.len()],
@@ -549,6 +576,9 @@ pub(super) fn cull_cells(
             let Ok(inst) = instances.get(entity) else {
                 continue;
             };
+            if !region_in_view(draw) {
+                continue;
+            }
             let max_group = draw.groups.iter().map(|(g, _)| *g).max().unwrap_or(0);
             let mut sel = crate::static_gx::render::GxSel {
                 drawn: vec![false; usize::from(max_group) + 1],
@@ -698,8 +728,8 @@ pub(super) fn cull_cells(
 mod tests {
     use super::*;
 
-    /// No camera move shorter than a fader's slack changes what `fade_step` answers, from any
-    /// class, so a cell can skip its walk until the camera has travelled the cell's minimum.
+    /// No camera move shorter than a fader's slack takes it out of the class it stepped into, so
+    /// a cell can skip its walk until the camera has travelled the cell's minimum.
     #[test]
     fn a_move_inside_the_slack_never_changes_a_class() {
         for size in [0.5f32, 2.0, 6.0, 15.0, 40.0, 120.0] {
@@ -708,19 +738,19 @@ mod tests {
             };
             let mut d = 0.0f32;
             while d < far + 40.0 {
-                let slack = class_slack(near, far, d);
                 for class in [FadeClass::Steady, FadeClass::Feather, FadeClass::Gone] {
                     let here = fade_step(size, d, class);
+                    let slack = class_slack(near, far, d, here);
                     for frac in [-0.999f32, -0.5, 0.5, 0.999] {
                         let moved = (d + slack.min(500.0) * frac).max(0.0);
                         assert_eq!(
-                            fade_step(size, moved, class),
+                            fade_step(size, moved, here),
                             here,
-                            "size {size} d {d} moved {moved} slack {slack} from {class:?}"
+                            "size {size} d {d} moved {moved} slack {slack} in {here:?}"
                         );
                     }
                 }
-                d += 0.37;
+                d += 0.037;
             }
         }
     }
