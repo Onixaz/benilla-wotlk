@@ -187,6 +187,7 @@ impl Plugin for WorldFoundation {
         });
         crate::collision::add_moved_position_sync(app, FixedPostUpdate);
         crate::collision::use_change_aware_child_sync(app);
+        crate::collision::use_change_aware_aabb_refit(app);
         // `WOW_PHYS_HZ=<hz>`: the fixed loop's rate, a measurement lever and never a setting (at
         // 8 Hz streamed colliders reach the spatial trees up to 125 ms late).
         if let Some(hz) = std::env::var("WOW_PHYS_HZ")

@@ -411,6 +411,104 @@ pub(crate) fn use_change_aware_child_sync(app: &mut bevy::app::App) {
     );
 }
 
+/// avian's `update_moved_collider_aabbs`, visiting only colliders whose pose or shape changed:
+/// avian's walks every collider twice a step to read three change ticks, so each resident static
+/// hull costs every frame.
+#[allow(clippy::type_complexity)]
+pub fn refit_changed_collider_aabbs(
+    mut colliders: bevy::ecs::system::Query<
+        (
+            bevy::ecs::entity::Entity,
+            &Position,
+            &Rotation,
+            &mut ColliderAabb,
+            &mut avian3d::collision::collider::EnlargedAabb,
+            &Collider,
+            Option<&CollisionMargin>,
+            &avian3d::collider_tree::ColliderTreeProxyKey,
+        ),
+        (
+            bevy::ecs::query::Without<ColliderDisabled>,
+            bevy::ecs::query::Or<(
+                bevy::ecs::query::Changed<Position>,
+                bevy::ecs::query::Changed<Rotation>,
+                bevy::ecs::query::Changed<Collider>,
+            )>,
+        ),
+    >,
+    narrow_phase: bevy::ecs::system::Res<NarrowPhaseConfig>,
+    length_unit: bevy::ecs::system::Res<PhysicsLengthUnit>,
+    mut trees: ResMut<avian3d::collider_tree::ColliderTrees>,
+    mut moved_proxies: ResMut<avian3d::collider_tree::MovedProxies>,
+    context: bevy::ecs::system::StaticSystemParam<<Collider as AnyCollider>::Context>,
+    mut moved: bevy::ecs::system::Local<
+        Vec<(
+            avian3d::collider_tree::ColliderTreeProxyKey,
+            obvhs::aabb::Aabb,
+        )>,
+    >,
+) {
+    use avian3d::collider_tree::ColliderTreeType;
+    // avian's `AABB_MARGIN`, scaled the same way.
+    let margin = length_unit.0 * 0.05;
+    let tolerance = length_unit.0 * narrow_phase.contact_tolerance;
+    moved.clear();
+    for (entity, pos, rot, mut aabb, mut enlarged, collider, collision_margin, key) in
+        &mut colliders
+    {
+        let growth = Vec3::splat(tolerance + collision_margin.map_or(0.0, |m| m.0));
+        *aabb = collider
+            .aabb_with_context(pos.0, *rot, AabbContext::new(entity, &*context))
+            .grow(growth);
+        if enlarged.update(&aabb, margin) {
+            moved.push((*key, obvhs::aabb::Aabb::from(enlarged.get())));
+        }
+    }
+    for tree_type in ColliderTreeType::ALL {
+        let tree = trees.tree_for_type_mut(tree_type);
+        tree.bvh.init_primitives_to_nodes_if_uninit();
+        let count = moved
+            .iter()
+            .filter(|(k, _)| k.tree_type() == tree_type)
+            .count();
+        if count == 0 {
+            continue;
+        }
+        // avian's split: refit up from a few moved leaves, or once over the tree past 10%.
+        let whole = count as f32 >= 0.1 * tree.proxies.len() as f32;
+        for (key, enlarged) in moved.iter().filter(|(k, _)| k.tree_type() == tree_type) {
+            if whole {
+                tree.set_proxy_aabb(key.id(), *enlarged);
+            } else {
+                tree.resize_proxy_aabb(key.id(), *enlarged);
+            }
+            if moved_proxies.insert(*key) {
+                tree.moved_proxies.push(key.id());
+            }
+        }
+        if whole {
+            tree.refit_all();
+        }
+    }
+}
+
+/// Swap avian's every-collider AABB update for [`refit_changed_collider_aabbs`]. Call after
+/// `PhysicsPlugins`.
+pub(crate) fn use_change_aware_aabb_refit(app: &mut bevy::app::App) {
+    use bevy::ecs::schedule::IntoScheduleConfigs;
+    let _ = app.remove_systems_in_set(
+        PhysicsSchedule,
+        avian3d::collider_tree::update_moved_collider_aabbs::<Collider>,
+        bevy::ecs::schedule::ScheduleCleanupPolicy::RemoveSystemsOnly,
+    );
+    app.add_systems(
+        PhysicsSchedule,
+        refit_changed_collider_aabbs
+            .in_set(avian3d::collider_tree::ColliderTreeSystems::UpdateAabbs)
+            .ambiguous_with_all(),
+    );
+}
+
 /// The filtered sync places a spawned collider, follows a moved one, and seats a collider attached
 /// later to an entity that never moves, as avian's unfiltered one does.
 #[cfg(test)]
@@ -433,6 +531,7 @@ mod moved_position_sync {
         });
         add_moved_position_sync(&mut app, bevy::app::PostUpdate);
         use_change_aware_child_sync(&mut app);
+        use_change_aware_aabb_refit(&mut app);
         app.init_asset::<Mesh>();
         app.finish();
         app.cleanup();
@@ -494,6 +593,60 @@ mod moved_position_sync {
             p.abs_diff_eq(Vec3::new(7.0, 1.0, -2.0), 1e-5),
             "late attach: {p}"
         );
+    }
+
+    /// The collider tree's box for a collider: the one the mover's shape casts query.
+    fn tree_box(app: &App, e: Entity) -> (Vec3, Vec3) {
+        let key = *app
+            .world()
+            .get::<avian3d::collider_tree::ColliderTreeProxyKey>(e)
+            .unwrap();
+        let trees = app
+            .world()
+            .resource::<avian3d::collider_tree::ColliderTrees>();
+        let b = trees
+            .tree_for_type(key.tree_type())
+            .get_proxy_aabb(key.id())
+            .unwrap();
+        let v = |p: &[f32; 3]| Vec3::from_array(*p);
+        (v(&b.min.to_array()), v(&b.max.to_array()))
+    }
+
+    #[test]
+    fn the_filtered_refit_moves_a_moved_colliders_tree_box() {
+        let mut app = world();
+        let door = app
+            .world_mut()
+            .spawn((
+                RigidBody::Static,
+                Collider::sphere(0.5),
+                Transform::from_xyz(3.0, 0.0, 0.0),
+            ))
+            .id();
+        let wall = app
+            .world_mut()
+            .spawn((
+                RigidBody::Static,
+                Collider::cuboid(1.0, 1.0, 1.0),
+                Transform::from_xyz(-4.0, 0.0, 0.0),
+            ))
+            .id();
+        settle(&mut app);
+        let (lo, hi) = tree_box(&app, door);
+        assert!(lo.x < 3.0 && hi.x > 3.0, "spawned box: {lo} {hi}");
+        let wall_box = tree_box(&app, wall);
+
+        app.world_mut()
+            .get_mut::<Transform>(door)
+            .unwrap()
+            .translation = Vec3::new(9.0, 0.0, 0.0);
+        settle(&mut app);
+        let (lo, hi) = tree_box(&app, door);
+        assert!(
+            lo.x < 9.0 && hi.x > 9.0 && lo.x > 3.0,
+            "moved box: {lo} {hi}"
+        );
+        assert_eq!(tree_box(&app, wall), wall_box, "the still wall's box moved");
     }
 
     #[test]

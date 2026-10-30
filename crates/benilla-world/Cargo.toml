@@ -16,6 +16,8 @@ dev = ["benilla-formats/dev", "benilla-assets/dev"]
 
 [dependencies]
 avian3d = "0.6"
+# avian's collider-tree AABB type, for `collision::refit_changed_collider_aabbs`.
+obvhs = "0.3"
 benilla-assets = { path = "../benilla-assets", default-features = false }
 benilla-formats = { path = "../benilla-formats", default-features = false }
 # No `benilla-protocol`: the engine renders a world and does not speak the protocol.
