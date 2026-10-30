@@ -69,6 +69,17 @@ fn seed_item_strings(s: &mut UiScript) {
         ITEM_MOD_INTELLECT = "[MOD_INTELLECT %c%d]"
         ITEM_MOD_SPIRIT    = "[MOD_SPIRIT %c%d]"
         ITEM_MOD_STAMINA   = "[MOD_STAMINA %c%d]"
+        ITEM_MOD_HIT_RATING   = "[MOD_HIT_RATING %d]"
+        ITEM_MOD_CRIT_RATING  = "[MOD_CRIT_RATING %d]"
+        ITEM_MOD_SPELL_POWER  = "[MOD_SPELL_POWER %d]"
+        ITEM_MOD_BLOCK_VALUE  = "[MOD_BLOCK_VALUE %c%d]"
+        FERAL_DRUID_ITEM_AP   = "[FERAL_AP %d]"
+        EMPTY_SOCKET_META     = "[EMPTY_SOCKET_META]"
+        EMPTY_SOCKET_RED      = "[EMPTY_SOCKET_RED]"
+        EMPTY_SOCKET_YELLOW   = "[EMPTY_SOCKET_YELLOW]"
+        EMPTY_SOCKET_BLUE     = "[EMPTY_SOCKET_BLUE]"
+        EMPTY_SOCKET_NO_COLOR = "[EMPTY_SOCKET_NO_COLOR]"
+        ITEM_SOCKET_BONUS     = "[SOCKET_BONUS %s]"
         ITEM_RESIST_ALL    = "[RESIST_ALL %c%d]"
         ITEM_RESIST_SINGLE = "[RESIST_SINGLE %c%d %s]"
 
@@ -207,3 +218,4 @@ mod law;
 mod mechanics;
 mod retrieving;
 mod set;
+mod sockets;

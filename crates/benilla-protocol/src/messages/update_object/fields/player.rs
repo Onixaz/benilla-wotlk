@@ -40,25 +40,23 @@ impl ObjectFields {
     pub fn item_has_text(&self) -> bool {
         self.item_flags().is_some_and(|f| f & 0x200 != 0)
     }
-    /// `ITEM_FIELD_ENCHANTMENT + 3*slot` (field `22 + 3*slot`): the enchant id in one of 7 slots
-    /// (0 permanent, 1 temporary, 2-6 random properties), each an id, duration and charges
-    /// (`Item.h:117-119`). Signed: the tooltip looks up `abs(id)` and paints a negative one red.
+    /// `ITEM_FIELD_ENCHANTMENT + 3*slot`: the enchant id in one of 12 slots (0 permanent, 1
+    /// temporary, 2-4 sockets, 5 socket bonus, 6 prismatic, 7-11 random properties), each an id,
+    /// duration and charges. Signed: the tooltip looks up `abs(id)` and paints a negative one red.
     pub fn item_enchant(&self, slot: u8) -> Option<i32> {
-        (slot < 7)
-            .then(|| self.get_u32(FIELD_ITEM_ENCHANTMENT + 3 * u16::from(slot)))?
+        self.get_u32(item_enchant_index(slot)?)
             .map(|id| id as i32)
             .filter(|&id| id != 0)
     }
     /// `ITEM_FIELD_ENCHANTMENT + 3*slot + 2`: charges left, shown as `" (N Charges)"` if nonzero.
     /// The tooltip skips the duration; a countdown comes from `SMSG_ITEM_ENCHANT_TIME_UPDATE`.
     pub fn item_enchant_charges(&self, slot: u8) -> u32 {
-        (slot < 7)
-            .then(|| self.get_u32(FIELD_ITEM_ENCHANTMENT + 3 * u16::from(slot) + 2))
-            .flatten()
+        item_enchant_index(slot)
+            .and_then(|i| self.get_u32(i + 2))
             .unwrap_or(0)
     }
     /// `ITEM_FIELD_RANDOM_PROPERTIES_ID` (field 44): the `ItemRandomProperties.dbc` suffix, 0 if
-    /// none; only the name uses it, the roll's enchants fill enchant slots 2-6.
+    /// none; only the name uses it, the roll's enchants fill enchant slots 7-11.
     pub fn item_random_properties_id(&self) -> u32 {
         self.get_u32(44).unwrap_or(0)
     }
@@ -759,5 +757,16 @@ impl ObjectFields {
                 ObjectType::Object
             }
         })
+    }
+}
+
+/// Where enchant slot `slot`'s triple starts in the shared index space; `None` past slot 11.
+fn item_enchant_index(slot: u8) -> Option<u16> {
+    let slot = u16::from(slot);
+    match slot {
+        0..=1 => Some(FIELD_ITEM_ENCHANTMENT + 3 * slot),
+        2..=6 => Some(FIELD_ITEM_ENCHANTMENT_SOCKETS + 3 * (slot - 2)),
+        7..=11 => Some(FIELD_ITEM_ENCHANTMENT_PROPS + 3 * (slot - 7)),
+        _ => None,
     }
 }

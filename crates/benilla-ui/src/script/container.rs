@@ -73,9 +73,14 @@ pub struct ContainerSlot {
 /// One enchant slot as the tooltip renders it; the app resolves the row.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EnchantView {
-    /// `ITEM_FIELD_ENCHANTMENT` slot: 0 permanent, 1 temporary, 2-6 the random suffix; only 0 and
-    /// 1 are coloured.
+    /// `ITEM_FIELD_ENCHANTMENT` slot: 0 permanent, 1 temporary, 2-4 sockets, 5 socket bonus, 6
+    /// prismatic, 7-11 the random suffix; only 0 and 1 are coloured.
     pub slot: u8,
+    /// `abs(id)`, the `SpellItemEnchantment` row, which the socket walk compares to the template's
+    /// socket bonus.
+    pub id: u32,
+    /// A socketed gem's colour (`GemProperties.Type`), for the socket bonus's match.
+    pub gem_type: Option<u32>,
     /// The id was negative: `abs(id)` names the row, and slots 0 and 1 paint red, not green.
     pub negative: bool,
     /// The `SpellItemEnchantment` row's name, copied unformatted.
@@ -94,7 +99,7 @@ pub struct RandomPropertyView {
     /// The suffix (`"of the Monkey"`), joined on by `ITEM_SUFFIX_TEMPLATE`, for the names the app
     /// does not compose itself.
     pub suffix: String,
-    /// The roll's five enchants, named, in slots 2-6; always white.
+    /// The roll's five enchants, named, in slots 7-11; always white.
     pub enchants: Vec<EnchantView>,
 }
 

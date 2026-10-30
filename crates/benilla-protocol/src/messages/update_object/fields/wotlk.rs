@@ -410,6 +410,21 @@ mod tests {
     }
 
     #[test]
+    fn all_twelve_item_enchant_slots_reach_the_shared_space() {
+        // Wire triple `22 + 3*slot`: permanent, a socket gem, the socket bonus and the last prop.
+        let item = ObjectFields::from_wotlk(
+            wire(&[(22, 3_000), (28, 3_100), (30, 2), (37, 3_301), (55, 3_400)]),
+            ObjectType::Item,
+        );
+        assert_eq!(item.item_enchant(0), Some(3_000));
+        assert_eq!(item.item_enchant(2), Some(3_100));
+        assert_eq!(item.item_enchant_charges(2), 2);
+        assert_eq!(item.item_enchant(5), Some(3_301));
+        assert_eq!(item.item_enchant(11), Some(3_400));
+        assert_eq!(item.item_enchant(12), None);
+    }
+
+    #[test]
     fn a_container_s_slots_and_a_corpse_s_owner_move_with_their_blocks() {
         let bag = ObjectFields::from_wotlk(wire(&[(64, 16), (66, 0x77)]), ObjectType::Container);
         assert_eq!(bag.container_num_slots(), Some(16));
@@ -434,7 +449,8 @@ mod tests {
             (Field::ObjectScaleX, FIELD_OBJECT_SCALE_X),
             (Field::ItemStackCount, FIELD_ITEM_STACK_COUNT),
             (Field::ItemEnchantPermTemp, FIELD_ITEM_ENCHANTMENT),
-            (Field::ItemEnchantProps, FIELD_ITEM_ENCHANTMENT + 3 * 3),
+            (Field::ItemEnchantSockets, FIELD_ITEM_ENCHANTMENT_SOCKETS),
+            (Field::ItemEnchantProps, FIELD_ITEM_ENCHANTMENT_PROPS),
             (Field::ItemTextId, 45),
             (Field::ContainerNumSlots, FIELD_CONTAINER_NUM_SLOTS),
             (Field::ContainerSlots, FIELD_CONTAINER_SLOT_1),

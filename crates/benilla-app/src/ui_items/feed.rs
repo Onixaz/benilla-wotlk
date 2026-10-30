@@ -175,6 +175,8 @@ fn template_view(
     // keyed tokens.
     get: &dyn Fn(&str) -> Option<String>,
     caster: Option<&dyn benilla_formats::Caster>,
+    // The socket bonus's name.
+    enchants: Option<&crate::items::Enchants>,
 ) -> benilla_ui::script::ItemTemplateView {
     let spell_name = |id: u32| -> Option<String> {
         spells
@@ -269,6 +271,12 @@ fn template_view(
         item_set: t.item_set,
         random_property: t.random_property,
         recipe_creates: recipe_creates(t, spells),
+        socket_colors: t.socket_colors,
+        socket_bonus: t.socket_bonus,
+        socket_bonus_name: (t.socket_bonus != 0)
+            .then(|| enchants.and_then(|e| e.0.name(t.socket_bonus)))
+            .flatten()
+            .map(str::to_string),
     }
 }
 
@@ -374,10 +382,17 @@ pub(super) fn feed_item_sets(
         } else {
             mod_sensitive.remove(&set_id);
         }
-        let members: Vec<(u32, Option<String>)> = row
+        let members: Vec<benilla_ui::script::ItemSetMember> = row
             .items
             .iter()
-            .map(|&id| (id, items.template(id, 0, &commands).map(|t| t.name.clone())))
+            .map(|&id| {
+                let t = items.template(id, 0, &commands);
+                benilla_ui::script::ItemSetMember {
+                    id,
+                    name: t.map(|t| t.name.clone()),
+                    inventory_type: t.map_or(0, |t| t.inventory_type),
+                }
+            })
             .collect();
         let view = benilla_ui::script::ItemSetView {
             name: row.name.clone(),
@@ -409,7 +424,7 @@ pub(super) fn feed_item_sets(
                 .flatten(),
             members,
         };
-        if view.members.iter().all(|(_, n)| n.is_some()) {
+        if view.members.iter().all(|m| m.name.is_some()) {
             done.push(set_id);
         }
         if *last != view {
@@ -475,7 +490,11 @@ pub(crate) fn feed_item_stats(
     sub_classes: Option<Res<super::ItemSubClasses>>,
     // `GetItemInfo`'s `itemType` and `itemTexture`.
     classes: Option<Res<super::ItemClasses>>,
-    icons: Option<Res<ItemDisplays>>,
+    // The bag icons, and the socket bonus's name.
+    (icons, enchants): (
+        Option<Res<ItemDisplays>>,
+        Option<Res<crate::items::Enchants>>,
+    ),
     mut pending: Local<crate::ui_script::VmMemo<std::collections::HashSet<u32>>>,
     mut mod_sensitive: Local<crate::ui_script::VmMemo<HashSet<u32>>>,
     mut last_home: Local<crate::ui_script::VmMemo<Option<String>>>,
@@ -580,6 +599,7 @@ pub(crate) fn feed_item_stats(
                         icons.as_deref(),
                         &get,
                         caster,
+                        enchants.as_deref(),
                     ),
                 ))
             })
@@ -750,12 +770,12 @@ fn resolve_slot(
                 fields.item_flags().unwrap_or(0),
                 // Soulbound, or carrying a binding enchant, off the raw descriptor.
                 crate::items::already_bound(fields, rolls.enchants),
-                // The roll behind the name's suffix; its enchants are already in slots 2..6.
+                // The roll behind the name's suffix; its enchants are already in slots 7..11.
                 fields.item_random_properties_id(),
-                // All seven enchant slots with charges and countdowns: our own items stream whole,
+                // All twelve enchant slots with charges and countdowns: our own items stream whole,
                 // where others' carry two slots.
                 crate::items::enchant_lines(
-                    (0..7).map(|s| {
+                    (0..crate::items::ENCHANT_SLOTS as u8).map(|s| {
                         (
                             s,
                             fields.item_enchant(s).unwrap_or(0),

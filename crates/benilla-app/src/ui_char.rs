@@ -649,10 +649,10 @@ fn slot_view(
         .item_creator()
         .filter(|&g| g != 0)
         .and_then(|g| names.resolve(g, commands).map(str::to_string));
-    // All seven enchant slots: our own gear streams as item objects, where an inspected player's
+    // All twelve enchant slots: our own gear streams as item objects, where an inspected player's
     // descriptor carries only two.
     let enchants = crate::items::enchant_lines(
-        (0..7).map(|s| {
+        (0..crate::items::ENCHANT_SLOTS as u8).map(|s| {
             (
                 s,
                 obj.item_enchant(s).unwrap_or(0),
@@ -1210,7 +1210,7 @@ fn same_item(a: Option<&InvSlotView>, b: Option<&InvSlotView>) -> bool {
 const EQUIPMENT_SLOT_MAINHAND: u8 = 15;
 const EQUIPMENT_SLOT_OFFHAND: u8 = 16;
 
-/// The temporary enchantment slot (0 permanent, 2..6 random properties), as the reference's
+/// The temporary enchantment slot (0 permanent, 7..11 random properties), as the reference's
 /// remaining-time read passes it.
 const TEMP_ENCHANTMENT_SLOT: u8 = 1;
 

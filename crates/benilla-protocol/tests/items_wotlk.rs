@@ -147,6 +147,9 @@ fn starting_pants_decode_whole() {
             map: 0,
             bag_family: 0,
             totem_category: 0,
+            socket_colors: [0; 3],
+            socket_bonus: 0,
+            gem_properties: 0,
         }))
     );
 }
@@ -204,4 +207,24 @@ fn stats_count_above_ten_is_refused() {
     assert!(
         messages::parse_server_with_tail(opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE, &body).is_err()
     );
+}
+
+#[test]
+fn sockets_socket_bonus_and_gem_properties_decode() {
+    // The wand's tail with a red and a blue socket, socket bonus 3301 and gem properties 7.
+    let tail = concat!(
+        "00000000000000000000000000000000000000000000000000000000",
+        "00000000000000004501000000000000000000000000000000000000",
+    );
+    let socketed = concat!(
+        "00000000020000000000000008000000000000000000000000000000",
+        "e50c0000070000004501000000000000000000000000000000000000",
+    );
+    assert!(WAND.ends_with(tail));
+    let hex = format!("{}{socketed}", &WAND[..WAND.len() - tail.len()]);
+    let (_, info) = parse_wotlk(&hx(&hex));
+    let info = info.expect("a template");
+    assert_eq!(info.socket_colors, [2, 8, 0]);
+    assert_eq!(info.socket_bonus, 3_301);
+    assert_eq!(info.gem_properties, 7);
 }

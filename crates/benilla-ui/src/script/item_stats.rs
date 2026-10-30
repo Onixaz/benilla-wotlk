@@ -94,6 +94,11 @@ pub struct ItemTemplateView {
     /// The item a recipe teaches to make: a learn-spell (36) trigger whose taught spell creates
     /// (24) an item; 0 for none. `IsDressableItem` dresses a pattern as its product.
     pub recipe_creates: u32,
+    /// `SocketColor` per socket, a mask (1 meta, 2 red, 4 yellow, 8 blue); 0 for no socket.
+    pub socket_colors: [u32; 3],
+    /// The socket bonus's `SpellItemEnchantment` row, 0 for none, and its name.
+    pub socket_bonus: u32,
+    pub socket_bonus_name: Option<String>,
 }
 
 /// The player state the tooltip's red lines and the usable gate compare against.
@@ -192,8 +197,8 @@ pub fn item_usable(
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ItemSetView {
     pub name: String,
-    /// `(item id, name)` per member in DBC order; `None` while its template is uncached.
-    pub members: Vec<(u32, Option<String>)>,
+    /// The members in DBC order.
+    pub members: Vec<ItemSetMember>,
     /// `(required equipped count, bonus text)` in DBC slot order; the renderer sorts by count, as
     /// the builder's qsort does.
     pub bonuses: Vec<(u32, String)>,
@@ -201,6 +206,26 @@ pub struct ItemSetView {
     pub required_skill: u32,
     pub required_skill_rank: u32,
     pub required_skill_name: Option<String>,
+}
+
+/// One `ItemSet.dbc` member: its id, and its name and slot type once its template is cached.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ItemSetMember {
+    pub id: u32,
+    pub name: Option<String>,
+    /// `InventoryType`, which a worn piece of the set outside the DBC's list is fitted by.
+    pub inventory_type: u32,
+}
+
+impl ItemSetMember {
+    /// A resolved member, for tests and fixtures.
+    pub fn new(id: u32, name: &str, inventory_type: u32) -> Self {
+        Self {
+            id,
+            name: Some(name.into()),
+            inventory_type,
+        }
+    }
 }
 
 impl super::UiScript {

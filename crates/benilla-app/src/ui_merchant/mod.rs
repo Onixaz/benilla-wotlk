@@ -1697,6 +1697,9 @@ mod tests {
                 map: 0,
                 bag_family: 0,
                 totem_category: 0,
+                socket_colors: [0; 3],
+                socket_bonus: 0,
+                gem_properties: 0,
             }),
         );
         let resolved = resolve_item(&row(2129, 1, 3), &items, None, None, &commands);

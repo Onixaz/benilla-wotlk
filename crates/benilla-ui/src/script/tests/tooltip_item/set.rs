@@ -22,6 +22,16 @@ fn item_set_block_counts_and_colors() {
     };
     vest.stats.clear();
     s.set_item_template(6303, vest);
+    // The worn belt: the count reads each worn piece's own set id.
+    s.set_item_template(
+        6304,
+        ItemTemplateView {
+            name: "Defias Belt".into(),
+            inventory_type: 6,
+            item_set: 161,
+            ..Default::default()
+        },
+    );
     // Two members equipped: the chest itself and the belt.
     let mut slots: InventorySlots = Default::default();
     slots[4] = Some(InvSlotView {
@@ -36,11 +46,15 @@ fn item_set_block_counts_and_colors() {
     let set_view = ItemSetView {
         name: "Defias Leather".into(),
         members: vec![
-            (6303, Some("Defias Mark".into())),
-            (6304, Some("Defias Belt".into())),
-            (6305, Some("Defias Gloves".into())),
-            (6306, None), // template still in flight: no line yet
-            (6307, Some("Defias Boots".into())),
+            ItemSetMember::new(6303, "Defias Mark", 5),
+            ItemSetMember::new(6304, "Defias Belt", 6),
+            ItemSetMember::new(6305, "Defias Gloves", 10),
+            // Template still in flight: no line yet, and the members after it wait for the total.
+            ItemSetMember {
+                id: 6306,
+                ..Default::default()
+            },
+            ItemSetMember::new(6307, "Defias Boots", 8),
         ],
         // Stored high-first in DBC slot order (The Gladiator ships 3,2,5,4); the renderer sorts.
         bonuses: vec![
@@ -61,7 +75,7 @@ fn item_set_block_counts_and_colors() {
         -- in the reference: its line add bails before its `inc [esi+0x31c]`).
         assert(TTTextLeft3:GetText() == " \n", "blank before the header, got "
                .. string.format("%q", tostring(TTTextLeft3:GetText())))
-        assert(TTTextLeft4:GetText() == "[SET_NAME Defias Leather 2/5]", "got " .. tostring(TTTextLeft4:GetText()))
+        assert(TTTextLeft4:GetText() == "[SET_NAME Defias Leather 2/3]", "got " .. tostring(TTTextLeft4:GetText()))
         assert(TTTextLeft5:GetText() == "  Defias Mark")
         assert(TTTextLeft8:GetText() == "  Defias Boots", "in-flight member renders no line")
         assert(TTTextLeft9:GetText() == " \n", "blank before the bonuses, got "
@@ -88,7 +102,7 @@ fn item_set_block_counts_and_colors() {
     let green = [0.0, 1.0, 0.0, 1.0];
     let red = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
     assert_eq!(
-        color(&lines, "[SET_NAME Defias Leather 2/5]"),
+        color(&lines, "[SET_NAME Defias Leather 2/3]"),
         gold,
         "set name is gold"
     );
@@ -164,6 +178,78 @@ fn item_set_block_counts_and_colors() {
     s.run(r#"TT:SetOwner(Slot10, "ANCHOR_RIGHT"); SetItemByIdForTest(TT, 9999)"#)
         .unwrap();
     assert_eq!(s.take_item_set_asks(), vec![1], "the set ask recorded");
+    assert!(s.take_errors().is_empty());
+}
+
+/// A worn piece counts by its own set id, so a variant the DBC does not list (a 25-player tier
+/// piece) still counts, stands in cream for the member of its slot, and lights the bonus.
+#[test]
+fn a_worn_variant_outside_the_list_counts_toward_the_set() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    let piece = |name: &str, inventory_type: u32| ItemTemplateView {
+        name: name.into(),
+        quality: 4,
+        class: 4,
+        inventory_type,
+        item_set: 794,
+        ..Default::default()
+    };
+    s.set_item_template(40503, piece("Valorous Tunic", 5));
+    s.set_item_template(40504, piece("Valorous Handguards", 10));
+    let mut slots: InventorySlots = Default::default();
+    slots[4] = Some(InvSlotView {
+        item_id: 40503,
+        ..Default::default()
+    });
+    slots[9] = Some(InvSlotView {
+        item_id: 40504,
+        ..Default::default()
+    });
+    s.set_inventory_slots(slots);
+    s.set_item_set(
+        794,
+        ItemSetView {
+            name: "Cryptstalker Battlegear".into(),
+            members: vec![
+                ItemSetMember::new(43000, "Heroes' Handguards", 10),
+                ItemSetMember::new(43001, "Heroes' Headpiece", 1),
+                ItemSetMember::new(43002, "Heroes' Tunic", 20),
+            ],
+            bonuses: vec![(2, "Your pet deals an additional 5% damage.".into())],
+            ..Default::default()
+        },
+    );
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "Slot10"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        CreateFrame("GameTooltip", "TT"):SetOwner(a, "ANCHOR_RIGHT")
+        SetItemByIdForTest(TT, 40503)
+    "#,
+    )
+    .unwrap();
+    let lines = lines_of(&mut s);
+    let cream = [1.0, 1.0, 151.0 / 255.0, 1.0];
+    let gray = [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0];
+    let green = [0.0, 1.0, 0.0, 1.0];
+    let has = |t: &str, c: [f32; 4]| lines.contains(&(t.to_string(), c));
+    assert!(
+        has(
+            "[SET_NAME Cryptstalker Battlegear 2/3]",
+            [1.0, 210.0 / 255.0, 0.0, 1.0]
+        ),
+        "{lines:?}"
+    );
+    assert!(has("  Valorous Handguards", cream));
+    assert!(has("  Heroes' Headpiece", gray));
+    assert!(
+        has("  Valorous Tunic", cream),
+        "a chest stands in for the robe member"
+    );
+    assert!(has(
+        "[SET_BONUS Your pet deals an additional 5% damage.]",
+        green
+    ));
     assert!(s.take_errors().is_empty());
 }
 

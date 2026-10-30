@@ -141,6 +141,9 @@ pub(super) fn seed_ui_fixture(
         map: 0,
         bag_family: 0,
         totem_category: 0,
+        socket_colors: [0; 3],
+        socket_bonus: 0,
+        gem_properties: 0,
     };
 
     match fixture {
@@ -332,8 +335,8 @@ pub(super) fn seed_ui_fixture(
                 ObjectFields::from_pairs(&[
                     (3, 94_005),
                     (14, 1),
-                    (48, 6),              // CONTAINER_NUM_SLOTS
-                    (50, G_JERKY as u32), // CONTAINER_SLOT_1
+                    (78, 6),              // CONTAINER_NUM_SLOTS
+                    (80, G_JERKY as u32), // CONTAINER_SLOT_1
                 ]),
                 true,
             );
@@ -708,7 +711,19 @@ pub(super) fn seed_ui_fixture(
                 },
             );
             // The item-set block, Defias Leather with one of 5 equipped: the gold "(1/5)" header,
-            // the member ladder, a green (2) bonus and a gray (4) one.
+            // the member ladder, a green (2) bonus and a gray (4) one. The worn piece counts by
+            // its own template's set id.
+            script.set_item_template(
+                6303,
+                benilla_ui::script::ItemTemplateView {
+                    name: "Defias Mark".into(),
+                    quality: 2,
+                    class: 4,
+                    inventory_type: 5,
+                    item_set: 161,
+                    ..Default::default()
+                },
+            );
             let mut inv: benilla_ui::script::InventorySlots = Default::default();
             inv[4] = Some(benilla_ui::script::InvSlotView {
                 durability: None,
@@ -721,11 +736,11 @@ pub(super) fn seed_ui_fixture(
                 benilla_ui::script::ItemSetView {
                     name: "Defias Leather".into(),
                     members: vec![
-                        (6303, Some("Defias Mark".into())),
-                        (6304, Some("Defias Belt".into())),
-                        (6305, Some("Defias Gloves".into())),
-                        (6306, Some("Defias Trousers".into())),
-                        (6307, Some("Defias Boots".into())),
+                        benilla_ui::script::ItemSetMember::new(6303, "Defias Mark", 5),
+                        benilla_ui::script::ItemSetMember::new(6304, "Defias Belt", 6),
+                        benilla_ui::script::ItemSetMember::new(6305, "Defias Gloves", 10),
+                        benilla_ui::script::ItemSetMember::new(6306, "Defias Trousers", 7),
+                        benilla_ui::script::ItemSetMember::new(6307, "Defias Boots", 8),
                     ],
                     bonuses: vec![
                         (2, "Increases movement speed slightly.".into()),

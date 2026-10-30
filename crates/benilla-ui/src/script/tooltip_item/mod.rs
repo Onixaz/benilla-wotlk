@@ -19,6 +19,8 @@ use super::ItemTemplateView;
 
 mod names;
 mod render;
+mod set_count;
+mod sockets;
 mod wait;
 
 pub(super) use render::Sell;
@@ -97,7 +99,7 @@ fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
 }
 
 /// A random-suffix roll's enchant lines: the reference copies the suffix row's five ids into
-/// enchant slots 2..6 for a block source with no item object.
+/// enchant slots 7..11 for a block source with no item object.
 fn roll_enchants(lua: &Lua, random_property_id: u32) -> Vec<crate::script::EnchantView> {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()

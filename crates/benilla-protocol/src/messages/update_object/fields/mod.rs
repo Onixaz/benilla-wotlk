@@ -282,9 +282,11 @@ pub mod quest_slot_state {
 }
 // Inventory fields. The PLAYER slot arrays are private, and each slot is a 2-field guid.
 const FIELD_ITEM_STACK_COUNT: u16 = 14; // OBJECT_END + 0x8
-const FIELD_ITEM_ENCHANTMENT: u16 = 22; // OBJECT_END + 0x10; 7 slots × 3 (id, duration, charges)
-const FIELD_CONTAINER_NUM_SLOTS: u16 = 48; // ITEM_END = 6 + 0x2A
-const FIELD_CONTAINER_SLOT_1: u16 = 50; // ITEM_END + 0x2; 36 slots × 2
+const FIELD_ITEM_ENCHANTMENT: u16 = 22; // OBJECT_END + 0x10; slots 0 and 1 × 3 (id, duration, charges)
+const FIELD_ITEM_ENCHANTMENT_SOCKETS: u16 = 48; // slots 2..=6 × 3, past 1.12.1's ITEM_END
+const FIELD_ITEM_ENCHANTMENT_PROPS: u16 = 63; // slots 7..=11 × 3
+const FIELD_CONTAINER_NUM_SLOTS: u16 = 78; // the widened ITEM_END
+const FIELD_CONTAINER_SLOT_1: u16 = 80; // ITEM_END + 0x2; 36 slots × 2
 
 // From the CONTAINER block on, the hex comments in vmangos `UpdateFields_1_12_1.h` run 6 low. The
 // indices here follow its enum arithmetic, which the server compiles: INV_SLOT_HEAD = 188 + 0x12A.
@@ -433,9 +435,10 @@ struct Shadow {
 /// OBJECT, UNIT and PLAYER.
 fn descriptor_len(object_type: ObjectType) -> u16 {
     match object_type {
-        ObjectType::Object => 6,      // OBJECT_END = 0x6
-        ObjectType::Item => 48,       // ITEM_END = OBJECT_END + 0x2A
-        ObjectType::Container => 122, // CONTAINER_END = ITEM_END + 0x4A
+        ObjectType::Object => 6, // OBJECT_END = 0x6
+        // 1.12.1's ITEM_END (OBJECT_END + 0x2A), plus 3.3.5a's enchant slots 2..=11 kept past it.
+        ObjectType::Item => 78,
+        ObjectType::Container => 152, // CONTAINER_END = ITEM_END + 0x4A
         ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
         // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a fields kept past it.
         ObjectType::Player => 1660,
