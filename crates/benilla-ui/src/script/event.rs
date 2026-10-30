@@ -62,10 +62,7 @@ pub(super) fn fire_event_handler(
 pub(super) struct UpdateSweep {
     scripts: Table,
     wrappers: Table,
-    pcall: Function,
-    globals: Table,
-    this_key: mlua::String,
-    event_key: mlua::String,
+    fire: Function,
     on_update: mlua::String,
 }
 
@@ -74,10 +71,7 @@ impl UpdateSweep {
         Ok(UpdateSweep {
             scripts: lua.named_registry_value(REG_SCRIPTS)?,
             wrappers: lua.named_registry_value(super::REG_WRAPPERS)?,
-            pcall: super::stdlib::handler_pcall(lua)?,
-            globals: lua.globals(),
-            this_key: lua.create_string("this")?,
-            event_key: lua.create_string("event")?,
+            fire: super::stdlib::update_fire(lua)?,
             on_update: lua.create_string("OnUpdate")?,
         })
     }
@@ -98,17 +92,9 @@ impl UpdateSweep {
         };
         let _fire = super::handler_prof::armed()
             .then(|| super::handler_prof::Fire::open(lua, id, "OnUpdate"));
-        let g = &self.globals;
-        let saved_this: Value = g.get(&self.this_key)?;
-        let saved_event: Value = g.get(&self.event_key)?;
-        g.set(&self.this_key, wrapper.clone())?;
-        let outcome = self
-            .pcall
+        self.fire
             .call((func, wrapper, f64::from(elapsed)))
-            .and_then(super::stdlib::pcall_outcome);
-        g.set(&self.this_key, saved_this)?;
-        g.set(&self.event_key, saved_event)?;
-        outcome
+            .and_then(super::stdlib::pcall_outcome)
     }
 }
 

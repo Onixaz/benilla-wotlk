@@ -99,14 +99,44 @@ pub(super) fn sandbox(lua: &Lua) -> mlua::Result<()> {
              end",
         )
         .set_name(PCALL_CHUNK)
-        .call(handler)?;
+        .call(handler.clone())?;
     lua.set_named_registry_value(REG_HANDLER_PCALL, pcall)?;
+    // The `OnUpdate` sweep's whole fire in one call: `this` set and `this`/`event` restored, the
+    // handler run under the same message handler through a reused thunk, so a frame's update
+    // allocates nothing. The thunk's upvalues are saved around the call, so a nested fire holds.
+    let update: mlua::Function = lua
+        .load(
+            "local xpcall, handler = xpcall, ...
+             local cf, cs, ce
+             local function thunk() return cf(cs, ce) end
+             return function(f, self, elapsed)
+                 local pf, ps, pe = cf, cs, ce
+                 cf, cs, ce = f, self, elapsed
+                 local saved_this, saved_event = this, event
+                 this = self
+                 local ok, err = xpcall(thunk, handler)
+                 this, event = saved_this, saved_event
+                 cf, cs, ce = pf, ps, pe
+                 return ok, err
+             end",
+        )
+        .set_name(PCALL_CHUNK)
+        .call(handler)?;
+    lua.set_named_registry_value(REG_UPDATE_FIRE, update)?;
 
     Ok(())
 }
 
 /// The registry slot of [`protected_call`]'s `xpcall` wrapper.
 const REG_HANDLER_PCALL: &str = "benilla.handler_pcall";
+
+/// The registry slot of the `OnUpdate` sweep's fire ([`update_fire`]).
+const REG_UPDATE_FIRE: &str = "benilla.update_fire";
+
+/// `fire(handler, self, elapsed) -> (ok, err)`: an `OnUpdate` call with `this` set and restored.
+pub(super) fn update_fire(lua: &Lua) -> mlua::Result<mlua::Function> {
+    lua.named_registry_value(REG_UPDATE_FIRE)
+}
 
 /// The wrapper's chunk name; its frames, and the `xpcall` between them, end a handler's traceback.
 const PCALL_CHUNK: &str = "=handler_pcall";
@@ -536,16 +566,16 @@ do
     local _format, _find, _sub, _len = string.format, string.find, string.sub, string.len
     local CONV = "diouxXeEfgGqscp"  -- Lua 5.1 conversion letters
 
+    -- No reference to 5.0's implicit `arg` anywhere in this function: one would make 5.1 build
+    -- that table on every call, the fast path's included.
     local function reformat(fmt, ...)
-        if type(fmt) ~= "string" then
-            return _format(fmt, unpack(arg, 1, arg.n))
-        end
-        -- fast path: no "%<digit>" at all ⇒ definitely no positional spec.
-        if not _find(fmt, "%%%d") then
-            return _format(fmt, unpack(arg, 1, arg.n))
+        -- fast path: not a string, or no "%<digits>$" ⇒ no positional spec. A width or a zero
+        -- pad (`%02d`) is a digit after `%` too, and must not send the call down the rebuild.
+        if type(fmt) ~= "string" or not _find(fmt, "%%%d+%$") then
+            return _format(fmt, ...)
         end
 
-        local args = arg
+        local args = { ... }
         local pieces = {}      -- rebuilt (sequential) format fragments
         local order = {}       -- for each real conversion: the source arg index, or false=sequential
         local seen_pos, seen_seq = false, false
