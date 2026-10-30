@@ -679,7 +679,7 @@ fn a_widescreen_mode_seats_the_cast_bar_above_the_bars() {
             .unwrap()
     };
     show_bars(&s, &[]);
-    assert_eq!(s.eval::<f64>("return menuBarTop").unwrap(), 75.0);
+    // `menuBarTop` is a file local (UIParent.lua:1164); the cast bar's seat reads it.
     assert_eq!(cast_y(&s), 115.0, "CastingBarFrame: menuBarTop 75 + its 40");
     show_bars(&s, &[1]);
     assert_eq!(cast_y(&s), 160.0, "bottom-left up: 115 + bottomEither 45");
