@@ -1722,6 +1722,7 @@ pub(super) fn writer_loop(
                     ClientCommand::BattlefieldStatusRequest => w.battlefield_status(),
                     ClientCommand::PetUnlearn { trainer } => w.pet_unlearn(trainer),
                     ClientCommand::BankerActivate { guid } => w.banker_activate(guid),
+                    ClientCommand::SpellClick { guid } => w.spell_click(guid),
                     ClientCommand::BuyBankSlot { guid } => w.buy_bank_slot(guid),
                     ClientCommand::AutoBankItem { bag, slot } => w.autobank_item(bag, slot),
                     ClientCommand::AutoStoreBankItem { bag, slot } => {

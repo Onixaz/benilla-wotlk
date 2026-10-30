@@ -1539,6 +1539,10 @@ pub(crate) enum ClientCommand {
     BankerActivate {
         guid: u64,
     },
+    /// `CMSG_SPELLCLICK`: right-click a spellclick NPC, a vehicle to board.
+    SpellClick {
+        guid: u64,
+    },
     /// `CMSG_BUY_BANK_SLOT`: success is only the `PLAYER_BYTES_2` count rising; a refusal is
     /// `SMSG_BUY_BANK_SLOT_RESULT`.
     BuyBankSlot {

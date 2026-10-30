@@ -697,6 +697,8 @@ pub const SMSG_GMRESPONSE_STATUS_UPDATE: u16 = 0x04F1; // 1265
 // The bank: `CMSG_BANKER_ACTIVATE` opens a pure banker; `SMSG_SHOW_BANK` also arrives unasked
 // from the `GOSSIP_OPTION_BANKER` option.
 pub const CMSG_BANKER_ACTIVATE: u16 = 0x01B7; // 439
+/// A spellclick NPC's right-click, its `u64` guid (`0x6d2740`).
+pub const CMSG_SPELLCLICK: u16 = 0x03F8; // 1016
 pub const SMSG_SHOW_BANK: u16 = 0x01B8; // 440
 pub const CMSG_BUY_BANK_SLOT: u16 = 0x01B9; // 441
 pub const SMSG_BUY_BANK_SLOT_RESULT: u16 = 0x01BA; // 442
