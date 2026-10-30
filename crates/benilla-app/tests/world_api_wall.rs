@@ -175,6 +175,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("weather::WeatherMessage", "record"),
     ("weather::WeatherState", "record"),
     ("wmo_portal::room_pvs_visible", "record"),
+    ("wmo_portal::standing_group", "record"),
     ("world_census::CensusReport", "record"),
     ("world_census::WorldCensus", "record"),
     ("world_map::CurrentMap", "record"),
