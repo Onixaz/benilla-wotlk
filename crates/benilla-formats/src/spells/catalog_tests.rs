@@ -1637,3 +1637,28 @@ fn aura_vision_mask_folds_the_column_and_the_detection_auras() {
     d.required_aura_vision = 1;
     assert_eq!(d.aura_vision_mask(), 0x21);
 }
+
+/// The missile column names `SpellMissile.dbc` rows: some spell holds one, and nearly every id
+/// resolves (the shipped table leaves a stray one dangling, which flies no trajectory).
+#[test]
+fn real_spell_missile_ids_name_spell_missile_rows() {
+    let data = crate::wow_data_or_skip!();
+    let mut chain = crate::open_chain(&data).expect("open chain");
+    let cat = load_spell_catalog(&mut chain).expect("load Spell/SpellIcon");
+    let visuals = crate::load_spell_visual_catalog(&mut chain).expect("load the visual tables");
+    let ids: Vec<u32> = cat
+        .iter()
+        .map(|(_, d)| d.missile)
+        .filter(|&m| m != 0)
+        .collect();
+    assert!(!ids.is_empty(), "no spell names a missile");
+    let ids_len = ids.len();
+    let missing: Vec<u32> = ids
+        .into_iter()
+        .filter(|&m| visuals.missile(m).is_none())
+        .collect();
+    assert!(
+        missing.len() * 10 < ids_len,
+        "missile ids with no row: {missing:?}"
+    );
+}

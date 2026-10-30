@@ -334,7 +334,7 @@ pub struct SpellVisualCatalog {
     /// client resolves by name at boot against 14 baked strings.
     hardcoded: HashMap<String, (u32, String)>,
     chain_effects: HashMap<u32, ChainEffect>,
-    /// `SpellMissile.dbc`, by `Spell.dbc` column 163.
+    /// `SpellMissile.dbc`, by `Spell.dbc` column 227.
     missiles: HashMap<u32, SpellMissileRec>,
 }
 

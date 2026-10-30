@@ -127,7 +127,8 @@ const COL_ATTRIBUTES_EX6: usize = 10;
 const COL_ATTRIBUTES_EX7: usize = 11;
 const COL_TOTEM_CATEGORY_1: usize = 222;
 const COL_SPEED: usize = 47;
-const COL_SPELL_MISSILE: usize = 163;
+/// `SpellMissileID` (`SpellRec+0x28c`): column 227, the four locstrings before it 17 columns each.
+const COL_SPELL_MISSILE: usize = 227;
 const COL_EFFECT_1: usize = 71;
 /// `EffectMiscValue[0]`, `71 + 13 × 3`: the 14th `[3]` array from `Effect`.
 const COL_EFFECT_MISC_1: usize = 110;
