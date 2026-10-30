@@ -954,17 +954,21 @@ impl super::UiScript {
     }
 
     /// Pushes the per-frame world positions; the player's arrival or departure re-runs the
-    /// landmark gates, which need a player.
+    /// landmark gates, which need a player. The feed is no extract input: the map's Lua reads it
+    /// through its verbs, whose own writes count, so a moving player's every frame leaves the
+    /// mutation count standing.
     pub fn set_world_map_feed(&mut self, feed: WorldMapFeed) {
         if self.model_ref().worldmap.feed == feed {
             return;
         }
         let mut model = self.model_mut();
+        let quiet = model.epoch();
         let had_player = model.worldmap.feed.player.is_some();
         model.worldmap.feed = feed;
         if had_player != model.worldmap.feed.player.is_some() {
             model.worldmap.rebuild_landmarks();
         }
+        model.set_epoch(quiet);
     }
 
     /// The four selection cells.
