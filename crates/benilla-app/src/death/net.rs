@@ -5,7 +5,7 @@ use benilla_protocol::{EntityKind, MoveMode, ObjectFields, SessionEvent, Session
 use bevy::prelude::*;
 
 use super::{CorpsePoint, DeathNet, ResurrectOffer};
-use crate::net::{MoveModeMessage, NetHandlerApp, SelfGuid};
+use crate::net::{GuidIndex, MoveModeMessage, NetHandlerApp, SelfGuid, UnitMoveModes};
 
 /// Register the death handlers and the session-end listener.
 pub(super) fn register(app: &mut App) {
@@ -67,7 +67,10 @@ fn on_durability_damage_death(In(ev): In<SessionEvent>, mut log: ResMut<crate::u
 
 fn on_move_mode(
     In(ev): In<SessionEvent>,
+    mut commands: Commands,
     self_guid: Res<SelfGuid>,
+    index: Res<GuidIndex>,
+    mut modes: Query<&mut UnitMoveModes>,
     mut death_net: ResMut<DeathNet>,
     mut out: MessageWriter<MoveModeMessage>,
 ) {
@@ -78,6 +81,10 @@ fn on_move_mode(
         apply,
     } = ev
     {
+        // An unknown unit drops, as `0x732450` does.
+        if self_guid.0 != Some(guid) && !index.0.contains_key(&guid) {
+            return;
+        }
         move_mode(
             guid,
             counter,
@@ -86,6 +93,15 @@ fn on_move_mode(
             &self_guid,
             &mut death_net,
             &mut out,
+        );
+        unit_move_mode(
+            guid,
+            mode,
+            apply,
+            &mut commands,
+            &self_guid,
+            &index,
+            &mut modes,
         );
     }
 }
@@ -201,9 +217,10 @@ fn durability_damage_death(log: &mut crate::ui_chat::ChatLog) {
     ));
 }
 
-/// The acked movement modes, root, water-walk, feather-fall and hover, addressed only to our own
-/// mover and applied by the controller ([`crate::player::wire_in`]); water-walk is also mirrored
-/// into [`DeathNet`] as a ghost cue.
+/// The acked movement modes (root, water-walk, feather-fall, hover, flight, gravity), forwarded to
+/// the controller ([`crate::player::wire_in`]), which applies and acks those naming the unit it
+/// moves: our own body or a possessed one (`0x732450` resolves any unit by guid). Our own
+/// water-walk is also mirrored into [`DeathNet`] as a ghost cue.
 fn move_mode(
     guid: u64,
     counter: u32,
@@ -213,10 +230,7 @@ fn move_mode(
     death_net: &mut DeathNet,
     out: &mut MessageWriter<MoveModeMessage>,
 ) {
-    if self_guid.0 != Some(guid) {
-        return;
-    }
-    if mode == MoveMode::WaterWalk {
+    if self_guid.0 == Some(guid) && mode == MoveMode::WaterWalk {
         death_net.water_walk = apply;
     }
     out.write(MoveModeMessage {
@@ -225,4 +239,98 @@ fn move_mode(
         mode,
         apply,
     });
+}
+
+/// Another unit's acked mode is that unit's own movement state (`0x6eeff0`), kept through a
+/// hand-over: it lands in its [`UnitMoveModes`], the word `monster_move`'s root gate and the
+/// controller's take-over read.
+fn unit_move_mode(
+    guid: u64,
+    mode: MoveMode,
+    apply: bool,
+    commands: &mut Commands,
+    self_guid: &SelfGuid,
+    index: &GuidIndex,
+    modes: &mut Query<&mut UnitMoveModes>,
+) {
+    if self_guid.0 == Some(guid) {
+        return;
+    }
+    let Some(&e) = index.0.get(&guid) else {
+        return;
+    };
+    let set = |word: &mut UnitMoveModes| {
+        if apply {
+            word.0 |= mode.flag();
+        } else {
+            word.0 &= !mode.flag();
+        }
+    };
+    if let Ok(mut word) = modes.get_mut(e) {
+        set(&mut word);
+    } else {
+        let mut word = UnitMoveModes::default();
+        set(&mut word);
+        commands.entity(e).insert(word);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    const ME: u64 = 0x45;
+    const EYE: u64 = 0xF130_006F_5F29_221A;
+
+    fn world() -> (World, Entity) {
+        let mut w = World::new();
+        w.insert_resource(SelfGuid(Some(ME)));
+        w.init_resource::<DeathNet>();
+        w.init_resource::<Messages<MoveModeMessage>>();
+        let eye = w.spawn(UnitMoveModes(0x1000)).id();
+        let mut index = GuidIndex::default();
+        index.0.insert(EYE, eye);
+        w.insert_resource(index);
+        (w, eye)
+    }
+
+    fn send(w: &mut World, guid: u64, mode: MoveMode, apply: bool) {
+        w.run_system_once_with(
+            on_move_mode,
+            SessionEvent::MoveMode {
+                guid,
+                counter: 1,
+                mode,
+                apply,
+            },
+        )
+        .unwrap();
+    }
+
+    /// `0x732450` resolves any unit: a possessed unit's grant reaches the controller and its own
+    /// word, which the launch path's root gate reads.
+    #[test]
+    fn another_unit_s_grant_is_forwarded_and_lands_in_its_own_word() {
+        let (mut w, eye) = world();
+        send(&mut w, EYE, MoveMode::Root, false);
+        send(&mut w, EYE, MoveMode::CanFly, true);
+        let word = w.entity(eye).get::<UnitMoveModes>().unwrap().0;
+        assert_eq!(word & 0x1000, 0, "unrooted, so its launch path is taken");
+        assert_ne!(word & MoveMode::CanFly.flag(), 0);
+        let forwarded = w.resource::<Messages<MoveModeMessage>>().len();
+        assert_eq!(
+            forwarded, 2,
+            "the controller decides whether it drives the unit"
+        );
+
+        send(&mut w, 0xDEAD, MoveMode::Root, true);
+        assert_eq!(
+            w.resource::<Messages<MoveModeMessage>>().len(),
+            2,
+            "an unknown unit drops"
+        );
+        send(&mut w, ME, MoveMode::WaterWalk, true);
+        assert!(w.resource::<DeathNet>().water_walk, "our own ghost cue");
+    }
 }

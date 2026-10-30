@@ -2611,9 +2611,9 @@ pub(crate) struct ClientControlMessage {
     pub(crate) allow_move: bool,
 }
 
-/// `SMSG_FORCE_*_SPEED_CHANGE` for our mover; the controller answers
-/// [`ClientCommand::ForceSpeedAck`] with its live pose.
-#[derive(Message, Clone, Copy)]
+/// `SMSG_FORCE_*_SPEED_CHANGE` for any unit; the controller answers the one it moves with
+/// [`ClientCommand::ForceSpeedAck`] and its live pose.
+#[derive(Message, Clone, Copy, PartialEq, Debug)]
 pub(crate) struct SpeedChangeMessage {
     pub(crate) guid: u64,
     pub(crate) kind: SpeedKind,
@@ -2621,11 +2621,11 @@ pub(crate) struct SpeedChangeMessage {
     pub(crate) speed: f32,
 }
 
-/// Root, water-walk, feather-fall or hover granted or revoked on our mover: the server's
-/// `IsFlagAckOpcode` set. The controller acks with its live pose.
-#[derive(Message, Clone, Copy)]
+/// An acked mode granted or revoked on a unit: the server's `IsFlagAckOpcode` set. The controller
+/// applies and acks those naming the unit it moves, with its live pose.
+#[derive(Message, Clone, Copy, PartialEq, Debug)]
 pub(crate) struct MoveModeMessage {
-    /// Our mover's guid, echoed in the ack.
+    /// The unit's guid, echoed in the ack.
     pub(crate) guid: u64,
     pub(crate) counter: u32,
     pub(crate) mode: MoveMode,

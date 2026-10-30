@@ -67,6 +67,8 @@ pub(super) fn control(
         Res<crate::loading_screen::LoadingScreen>,
         // Our body's create-block mover state, forced in as the reference's create does.
         MessageReader<crate::net::SelfCreateMover>,
+        // The driven body's guid and own modes, for the hand-over (`wire_in`).
+        Query<(&crate::net::Guid, Option<&crate::net::UnitMoveModes>), With<Embodied>>,
     ),
     mut commands: Commands,
     mut player: ResMut<Player>,
@@ -312,6 +314,11 @@ pub(super) fn control(
         body.single()
             .ok()
             .map(|(_, t, ..)| (t.translation, server_ride::yaw_of(t.rotation))),
+        speed_capsule
+            .11
+            .single()
+            .ok()
+            .map(|(g, m)| (g.0, m.map_or(0, |m| m.0))),
     );
 
     let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z).normalize_or_zero();
