@@ -14,6 +14,7 @@ use crate::dbc::{f32_at, parse, str_at, u32_at};
 const CREATURE_MODEL_DATA: &str = "DBFilesClient\\CreatureModelData.dbc";
 const CREATURE_DISPLAY_INFO: &str = "DBFilesClient\\CreatureDisplayInfo.dbc";
 const CREATURE_DISPLAY_INFO_EXTRA: &str = "DBFilesClient\\CreatureDisplayInfoExtra.dbc";
+const CHR_RACES: &str = "DBFilesClient\\ChrRaces.dbc";
 
 /// A resolved creature display: model, scale, skins and, for a humanoid NPC, its appearance.
 #[derive(Debug, Clone)]
@@ -52,8 +53,10 @@ pub struct NpcAppearance {
     pub hair_color: u8,
     pub facial_hair: u8,
     /// Worn `ItemDisplayInfo` ids (fields 8..17), 0 = empty, by body slot: head, shoulder, shirt,
-    /// chest, belt, pants, boots, wrist, gloves, tabard (no cloak column).
+    /// chest, belt, pants, boots, wrist, gloves, tabard.
     pub equipment: [u32; 10],
+    /// The cape's `ItemDisplayInfo` id, the eleventh `NPCItemDisplay` slot (field 18); 0 = none.
+    pub cape: u32,
     /// The baked body atlas under `Textures\BakedNpcTextures\`; `None` composites the body live.
     pub bake_name: Option<String>,
 }
@@ -132,12 +135,24 @@ pub struct CreatureCatalog {
     display: HashMap<u32, DisplayRow>,
     models: HashMap<u32, ModelRow>,
     extra: HashMap<u32, NpcAppearance>,
+    /// `ChrRaces` id → (male, female) body display, the extra display scale's key (`0x71c050`).
+    race_displays: HashMap<u32, (u32, u32)>,
     particle_colors: crate::ParticleColorTable,
 }
 
+/// A unit's model scale from its DBC product (`0x71c110`): a product `<= 0` is 1.0, and the family
+/// term, when the unit has one, wins when larger and always on a pet (`UNIT_FIELD_PETNUMBER`).
+pub fn compose_unit_model_scale(product: f32, family: Option<f32>, is_pet: bool) -> f32 {
+    let scale = if product <= 0.0 { 1.0 } else { product };
+    match family {
+        Some(f) if f > scale || is_pet => f,
+        _ => scale,
+    }
+}
+
 impl CreatureCatalog {
-    /// A display's own `creatureModelScale`, the mount scale law: a mount renders at
-    /// `OBJECT_FIELD_SCALE_X × creatureModelScale`, without `modelScale`.
+    /// A display's own `creatureModelScale`, the mount scale law: a mounted unit's true scale takes
+    /// the mount display's column alone (`0x73d5d0`), without its `modelScale`.
     pub fn display_scale(&self, display_id: u32) -> Option<f32> {
         self.display.get(&display_id).map(|r| r.scale)
     }
@@ -195,13 +210,43 @@ impl CreatureCatalog {
         self.display.iter().map(|(id, r)| (*id, r.model_id))
     }
 
-    /// `modelScale × creatureModelScale`. The server folds it into `OBJECT_FIELD_SCALE_X`, which
-    /// alone scales a unit, so only the glue screens read this: the reference sizes the serverless
-    /// character-select pet by it.
+    /// `modelScale × creatureModelScale`, without the extra display scale: the character-select
+    /// pet's product and a corpse's display scale (`0x705ac0`).
     pub fn model_scale(&self, display_id: u32) -> Option<f32> {
         let row = self.display.get(&display_id)?;
         let model = self.models.get(&row.model_id)?;
         Some(model.scale * row.scale)
+    }
+
+    /// The extra display scale (`0x71c050`): a character-model display takes its race's body
+    /// display's `creatureModelScale` (male for sex 0, female for 1); 1.0 on any miss.
+    fn extra_display_scale(&self, row: &DisplayRow) -> f32 {
+        let Some(extra) = self.extra.get(&row.extended_id) else {
+            return 1.0;
+        };
+        let Some(&(male, female)) = self.race_displays.get(&u32::from(extra.race)) else {
+            return 1.0;
+        };
+        let body = match extra.sex {
+            0 => male,
+            1 => female,
+            _ => 0,
+        };
+        self.display.get(&body).map_or(1.0, |r| r.scale)
+    }
+
+    /// A unit's model scale for a display (`0x722ae0` → `0x71c110`): extra display scale ×
+    /// `creatureModelScale` × `modelScale`, composed with the family term by
+    /// [`compose_unit_model_scale`]; 1.0 when the display or its model row is missing.
+    pub fn unit_model_scale(&self, display_id: u32, family: Option<f32>, is_pet: bool) -> f32 {
+        let Some(row) = self.display.get(&display_id) else {
+            return 1.0;
+        };
+        let Some(model) = self.models.get(&row.model_id) else {
+            return 1.0;
+        };
+        let product = self.extra_display_scale(row) * row.scale * model.scale;
+        compose_unit_model_scale(product, family, is_pet)
     }
 
     /// `CreatureModelAlpha / 255`, the first factor of the unit alpha product.
@@ -213,8 +258,8 @@ impl CreatureCatalog {
 
     /// `CreatureModelData.collisionHeight`, the `h` of every depth line (swim `0.75·h`, splash
     /// `0.4·h`, foam gate `2·h`, read against the movement block's `+0xb4`). It is the M2's
-    /// collision-box Z extent, pre-scale: the prism is this ×
-    /// `max(OBJECT_FIELD_SCALE_X, creatureModelScale)`. A miss takes the constructor default,
+    /// collision-box Z extent, pre-scale: the prism is this × the native display's model scale ×
+    /// `max(OBJECT_FIELD_SCALE_X, 1)` (`0x726061`). A miss takes the constructor default,
     /// `2.0277777`.
     pub fn collision_height(&self, display_id: u32) -> Option<f32> {
         let row = self.display.get(&display_id)?;
@@ -478,12 +523,33 @@ pub fn load_creature_catalog(chain: &mut Chain) -> Result<CreatureCatalog> {
     // Best-effort too: without it every override resolves as a missing row.
     let particle_colors = crate::load_particle_colors(chain).unwrap_or_default();
 
+    // Best-effort: without it every extra display scale is 1.0.
+    let race_displays = load_race_displays(chain).unwrap_or_default();
+
     Ok(CreatureCatalog {
         display,
         models,
         extra,
+        race_displays,
         particle_colors,
     })
+}
+
+/// `ChrRaces.dbc` → each race's (male, female) body display, columns 4 and 5 (`+0x10`/`+0x14`).
+fn load_race_displays(chain: &mut Chain) -> Result<HashMap<u32, (u32, u32)>> {
+    let bytes = chain
+        .read_file(CHR_RACES)
+        .with_context(|| format!("reading {CHR_RACES}"))?;
+    let schema = crate::characters::chr_races_schema(&crate::dbc_layout::LAYOUTS.chr_races);
+    let rs = parse(&bytes, schema, "ChrRaces")?;
+    Ok(rs
+        .records()
+        .iter()
+        .filter_map(|r| {
+            let id = u32_at(r, 0)?;
+            Some((id, (u32_at(r, 4).unwrap_or(0), u32_at(r, 5).unwrap_or(0))))
+        })
+        .collect())
 }
 
 /// Load CreatureDisplayInfoExtra.dbc: `extendedDisplayInfoId` → [`NpcAppearance`].
@@ -510,9 +576,8 @@ fn load_creature_display_info_extra(chain: &mut Chain) -> Result<HashMap<u32, Np
                     hair_style: u32_at(r, 5).unwrap_or(0) as u8,
                     hair_color: u32_at(r, 6).unwrap_or(0) as u8,
                     facial_hair: u32_at(r, 7).unwrap_or(0) as u8,
-                    // 1.12.1's ten slots lead in both clients; 3.3.5a's eleventh, the cape, is
-                    // not read yet.
                     equipment: std::array::from_fn(|i| u32_at(r, l.equipment + i).unwrap_or(0)),
+                    cape: u32_at(r, l.equipment + 10).unwrap_or(0),
                     bake_name: str_at(&rs, r, l.bake_name),
                 },
             );
@@ -670,6 +735,138 @@ mod tests {
                 "{sibling} should name a real colour, splitting its own family"
             );
         }
+    }
+
+    fn display_row(model_id: u32, extended_id: u32, scale: f32) -> DisplayRow {
+        DisplayRow {
+            model_id,
+            extended_id,
+            scale,
+            textures: [None, None, None],
+            blood_level: 0,
+            size_class: -1,
+            model_alpha: 255,
+            particle_color: 0,
+        }
+    }
+
+    fn model_row(scale: f32) -> ModelRow {
+        ModelRow {
+            path: String::new(),
+            scale,
+            flags: 0,
+            size_class: -1,
+            blood: 0,
+            footprint_texture: -1,
+            footprint_length: 0.0,
+            footprint_width: 0.0,
+            collision_height: 0.0,
+            foley_material: 0,
+            footstep_shake: 0,
+            death_thud_shake: 0,
+            missile_collision: [0.0; 3],
+        }
+    }
+
+    fn appearance(race: u8, sex: u8) -> NpcAppearance {
+        NpcAppearance {
+            race,
+            sex,
+            skin: 0,
+            face: 0,
+            hair_style: 0,
+            hair_color: 0,
+            facial_hair: 0,
+            equipment: [0; 10],
+            cape: 0,
+            bake_name: None,
+        }
+    }
+
+    /// `0x71c110`: a non-positive product is 1.0; the family term wins when larger, or on a pet.
+    #[test]
+    fn the_unit_model_scale_composes_the_family_term() {
+        assert_eq!(compose_unit_model_scale(1.5, None, false), 1.5);
+        assert_eq!(compose_unit_model_scale(0.0, None, false), 1.0);
+        assert_eq!(compose_unit_model_scale(-2.0, None, true), 1.0);
+        assert_eq!(
+            compose_unit_model_scale(0.8, Some(1.1), false),
+            1.1,
+            "larger wins"
+        );
+        assert_eq!(
+            compose_unit_model_scale(1.2, Some(0.9), false),
+            1.2,
+            "smaller loses"
+        );
+        assert_eq!(
+            compose_unit_model_scale(1.2, Some(0.9), true),
+            0.9,
+            "a pet always takes it"
+        );
+        assert_eq!(compose_unit_model_scale(1.0, Some(1.0), false), 1.0);
+    }
+
+    /// `0x71c050` × `creatureModelScale` × `modelScale`: a character-model display multiplies in
+    /// its race's body display column by sex; a plain display, or a missing row, does not.
+    #[test]
+    fn the_unit_model_scale_multiplies_the_extra_display_scale() {
+        let mut cat = CreatureCatalog::default();
+        cat.models.insert(1, model_row(2.0));
+        cat.display.insert(10, display_row(1, 0, 1.5)); // plain: 1.5 × 2.0
+        cat.display.insert(11, display_row(1, 7, 1.0)); // male body of race 6
+        cat.display.insert(12, display_row(1, 8, 1.0)); // female body of race 6
+        cat.display.insert(13, display_row(1, 9, 1.0)); // sex 2: body display 0
+        cat.display.insert(20, display_row(1, 0, 1.25)); // race 6 male body
+        cat.display.insert(21, display_row(1, 0, 1.1)); // race 6 female body
+        cat.display.insert(30, display_row(99, 0, 3.0)); // no model row
+        cat.extra.insert(7, appearance(6, 0));
+        cat.extra.insert(8, appearance(6, 1));
+        cat.extra.insert(9, appearance(6, 2));
+        cat.race_displays.insert(6, (20, 21));
+
+        assert_eq!(cat.unit_model_scale(10, None, false), 3.0);
+        assert_eq!(cat.unit_model_scale(11, None, false), 1.25 * 2.0);
+        assert_eq!(cat.unit_model_scale(12, None, false), 1.1 * 2.0);
+        assert_eq!(cat.unit_model_scale(13, None, false), 2.0);
+        assert_eq!(cat.unit_model_scale(30, None, false), 1.0, "no model row");
+        assert_eq!(
+            cat.unit_model_scale(404, Some(5.0), true),
+            1.0,
+            "no display row"
+        );
+        assert_eq!(cat.unit_model_scale(10, Some(4.0), false), 4.0);
+    }
+
+    /// The Lich King on the Acherus platform (display 24191), a Lifeblood flower (24890) and a
+    /// hunter's wolf on the shipped DBCs: each is the DBC product, and the pet takes its family's
+    /// level ramp.
+    #[test]
+    fn unit_model_scales_on_real_data() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cat = load_creature_catalog(&mut chain).expect("load creature catalog");
+        let families = crate::load_creature_families(&mut chain).expect("families");
+        let product = |d: u32| {
+            let row = &cat.display[&d];
+            row.scale * cat.models[&row.model_id].scale
+        };
+        let lich_king = cat.unit_model_scale(24191, None, false);
+        assert!(lich_king > 1.5, "the Lich King draws large: {lich_king}");
+        assert_eq!(lich_king, product(24191));
+        let flower = cat.unit_model_scale(24890, None, false);
+        assert!(
+            (0.05..0.2).contains(&flower),
+            "a knee-high flower: {flower}"
+        );
+        assert_eq!(flower, product(24890));
+        let wolf = families.unit_scale(1, 80).expect("Wolf");
+        let pet = cat.unit_model_scale(903, Some(wolf), true);
+        assert_eq!(pet, wolf, "a pet always takes its family scale");
+        eprintln!(
+            "lich king {lich_king}, flower {flower}, wolf pet {pet}, wild {}",
+            cat.unit_model_scale(903, Some(wolf), false)
+        );
     }
 
     /// HumanMale's Base boot print (id 1) is 12×10 inches, 1/3 × 5/18 yd; a `−1` model has none.

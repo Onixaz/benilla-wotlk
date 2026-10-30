@@ -196,9 +196,9 @@ pub(crate) struct Guid(pub(crate) u64);
 pub(crate) struct NetEntity {
     pub(crate) kind: EntityKind,
     pub(crate) display_id: Option<u32>,
-    /// `OBJECT_FIELD_SCALE_X`, the complete render scale: the server already folds in the DBC
-    /// scale, so it is never multiplied by ours. A live change eases over 2 s with a cosine
-    /// smoothstep, through `entities::live_display`.
+    /// `OBJECT_FIELD_SCALE_X`, the wire's factor of the true scale; a unit multiplies its model
+    /// scale in (`entities::model_scale`). A live change eases over 2 s with a cosine smoothstep,
+    /// through `entities::live_display`.
     pub(crate) scale: f32,
 }
 

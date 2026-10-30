@@ -8,9 +8,9 @@
 //! - Trigger: the per-foot tags `$xL*`/`$xR*` of [`AnimSoundEvent`], placed at the event's authored
 //!   offset through the live bone; `$FSD` is sound-only.
 //! - Ink and size: `CreatureModelData.FootprintTextureID` to `FootprintTextures.dbc`, Length and
-//!   Width in inches (1/36 yd) times the wire `OBJECT_FIELD_SCALE_X` alone; `0xFFFFFFFF` is
-//!   printless. A mount prints its own ink at the rider's scale. The texture is a left foot; right
-//!   prints mirror.
+//!   Width in inches (1/36 yd) times the unit's true scale (`0x71fb60`), a mount's ink times the
+//!   mounted true scale with its display column in; `0xFFFFFFFF` is printless. The texture is a
+//!   left foot; right prints mirror.
 //! - Caps: ring pools of 64 for the local player and 512 for everyone else.
 //! - Suppressed by hover, stealth (not death), a player ghost and more than 50 yd from the camera
 //!   eye ([`footfall_culls`], the local player's feet included); water does not suppress it.
@@ -116,7 +116,6 @@ fn load_ink(
 /// The root unit's reads (the rider, for a mount).
 type RootState = (
     Has<Embodied>,
-    Option<&'static NetEntity>,
     Option<&'static ObjectStore>,
     Option<&'static MovementState>,
 );
@@ -154,7 +153,7 @@ fn spawn_footprints(
         let Ok((net, transform)) = units.get(ev.entity) else {
             continue;
         };
-        // Ink and size from the event's model, scale and gates from the root unit.
+        // Ink, size and scale from the event's model, gates from the root unit.
         let Some(params) = net.display_id.and_then(|d| creatures.footprint(d)) else {
             continue;
         };
@@ -165,7 +164,7 @@ fn spawn_footprints(
         while let Ok(child_of) = parents.get(root) {
             root = child_of.parent();
         }
-        let (is_self, root_net, store, movement) = match roots.get(root) {
+        let (is_self, store, movement) = match roots.get(root) {
             Ok(r) => r,
             Err(_) => continue,
         };
@@ -194,12 +193,10 @@ fn spawn_footprints(
         }
         // The facing maps to the frame's -z axis, so v = 0 is the toe; the reference's sign is
         // untraced, and a backwards print flips one sign here.
-        let yaw = transform
-            .to_scale_rotation_translation()
-            .1
-            .to_euler(EulerRot::YXZ)
-            .0;
-        let scale = root_net.unwrap_or(net).scale.max(0.0);
+        let (world_scale, rotation, _) = transform.to_scale_rotation_translation();
+        let yaw = rotation.to_euler(EulerRot::YXZ).0;
+        // The event model's world scale is the true scale: the unit's, or a mount's with its column.
+        let scale = world_scale.x.max(0.0);
         let (half_len, half_wid) = (params.length * scale * 0.5, params.width * scale * 0.5);
         if half_len <= 0.0 || half_wid <= 0.0 {
             continue;

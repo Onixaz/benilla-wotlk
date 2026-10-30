@@ -1,7 +1,7 @@
 //! A character body's appearance inputs: its look ([`CharLook`]), its worn display ids
 //! ([`WornEquip`]) and its per-appearance materials ([`build_char_skin_materials`]).
 
-use benilla_formats::{CharSkinSlot, ModelBlend};
+use benilla_formats::{CharSkinSlot, ComponentContext, ComponentLook, ModelBlend};
 use benilla_protocol::EntityKind;
 use bevy::prelude::*;
 
@@ -48,6 +48,7 @@ pub(super) fn resolve_char_look(
     stores: &Query<&ObjectStore>,
     mirror: Option<&super::super::mirror_image::MirrorLookOf>,
     equipment: Option<&super::super::Equipment>,
+    tables: LookTables,
 ) -> Option<CharLook> {
     // The look follows the display, not the entity kind: the display's own appearance row first,
     // the wire's only for a character body without one, as the reference's race and sex getters
@@ -55,7 +56,7 @@ pub(super) fn resolve_char_look(
     let d = dm?;
     // A clone's caster look comes first, ahead of the display's own row (`0x73014a`).
     if let Some(m) = mirror.and_then(|m| m.for_display(net.display_id)) {
-        return Some(CharLook {
+        return Some(tables.validated(CharLook {
             race: m.race,
             sex: m.sex,
             class: m.class,
@@ -65,7 +66,7 @@ pub(super) fn resolve_char_look(
             hair_color: m.hair_color,
             facial_hair: m.facial_hair,
             body: BodySkin::Composite,
-        });
+        }));
     }
     if let Some(npc) = d.npc_appearance.as_ref() {
         // The unit's `UNIT_FIELD_BYTES_0` class (`0x71d06c`); a baked atlas gets none (`0x730363`).
@@ -122,7 +123,7 @@ pub(super) fn resolve_char_look(
                 s.player_hair_color().unwrap_or(0),
                 s.player_facial_hair().unwrap_or(0),
             ]);
-        return Some(CharLook {
+        return Some(tables.validated(CharLook {
             race: s.unit_race()?,
             sex: s.unit_gender()?,
             class: s.unit_class().unwrap_or(0),
@@ -132,9 +133,49 @@ pub(super) fn resolve_char_look(
             hair_color,
             facial_hair,
             body: BodySkin::Composite,
-        });
+        }));
     }
     None
+}
+
+/// The tables the component check reads; either absent, a look stands as sent.
+#[derive(Clone, Copy, Default)]
+pub(super) struct LookTables<'a> {
+    pub(super) sections: Option<&'a SkinSections>,
+    pub(super) characters: Option<&'a super::super::Characters>,
+}
+
+impl LookTables<'_> {
+    /// A player's look through the component check, context 1 (`0x71d19c`, a mirror image's at
+    /// `0x73052b`): a skin, face, hair or facial-hair choice its row's flags refuse becomes the
+    /// n-th valid one. An NPC's context 2 admits every row; a corpse's component skips the check.
+    fn validated(self, look: CharLook) -> CharLook {
+        let (Some(sections), Some(characters)) = (self.sections, self.characters) else {
+            return look;
+        };
+        let checked = sections.tables.validate_look(
+            ComponentLook {
+                race: look.race,
+                sex: look.sex,
+                class: look.class,
+                skin: look.skin,
+                face: look.face,
+                hair_style: look.hair_style,
+                hair_color: look.hair_color,
+                facial_hair: look.facial_hair,
+            },
+            ComponentContext::World,
+            characters.0.facial_hair_styles(look.race, look.sex),
+        );
+        CharLook {
+            skin: checked.skin,
+            face: checked.face,
+            hair_style: checked.hair_style,
+            hair_color: checked.hair_color,
+            facial_hair: checked.facial_hair,
+            ..look
+        }
+    }
 }
 
 impl CharLook {
@@ -199,13 +240,13 @@ pub(super) fn resolve_worn_equip(
                 tabard_preview: false,
             })
             .unwrap_or_default(),
-        // An NPC wears its CreatureDisplayInfoExtra columns, ItemDisplayInfo ids by bodyslot: 2 to
-        // 9 are the armor slots, 0 the helm, and there is no cloak column.
+        // An NPC wears its CreatureDisplayInfoExtra columns, ItemDisplayInfo ids by item slot: 2 to
+        // 9 the armor, 0 the helm and 10 the cape, each added as a player's item (`0x730210`).
         EntityKind::Unit => dm
             .and_then(|d| d.npc_appearance.as_ref())
             .map(|npc| WornEquip {
                 bodyslots: std::array::from_fn(|i| npc.equipment[i + 2]),
-                cloak: 0,
+                cloak: npc.cape,
                 helm: npc.equipment[0],
                 emblem: None,
                 tabard_preview: false,

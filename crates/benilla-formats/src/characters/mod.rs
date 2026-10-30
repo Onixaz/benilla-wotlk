@@ -6,11 +6,13 @@
 //! disables geosets 0..=1700; higher IDs keep their model visibility through
 //! [`VisibleGeosets::contains`].
 
+mod components;
 mod customization;
 mod geosets;
 mod sections;
 mod shipped;
 
+pub use components::{ComponentContext, ComponentLook};
 pub use customization::{
     CharCreateCatalog, CharSectionGrid, CreateRaceRow, NameGenRow, StartOutfitItem,
 };

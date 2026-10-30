@@ -238,6 +238,7 @@ pub(super) fn attach_entity_visuals(
             Option<&super::Arrival>,
             Has<super::live_display::ShownRebuild>,
             Option<&super::mirror_image::MirrorLookOf>,
+            Option<&super::model_scale::ModelScale>,
         ),
         // A torn-down unit gets no model: the reference frees it at once.
         (
@@ -302,6 +303,7 @@ pub(super) fn attach_entity_visuals(
         arrival,
         shown_rebuild,
         mirror,
+        model_scale,
     ) in &pending
     {
         // The appear ramp's origin: the unit's arrival, however long its visual waited to build.
@@ -352,8 +354,13 @@ pub(super) fn attach_entity_visuals(
 
         // A character model carries every hair, facial and body geoset, and is shared by its
         // display, so the entity's own look picks which show.
-        let look =
-            model.and_then(|_| resolve_char_look(net, dm, entity, &stores, mirror, equipment));
+        let look = model.and_then(|_| {
+            let tables = char_skin::LookTables {
+                sections: sections.as_deref(),
+                characters: characters.as_deref(),
+            };
+            resolve_char_look(net, dm, entity, &stores, mirror, equipment, tables)
+        });
         // A body whose composite is still running is not built: nothing of it draws, its mount
         // included, until it can draw dressed, as the reference's render gate answers the
         // composite driver's 0. Retried each frame, with the look of that frame. A display swap
@@ -725,11 +732,10 @@ pub(super) fn attach_entity_visuals(
                     .entity(entity)
                     .remove::<benilla_world::model_fade::UnitAppearFade>();
             }
-            // Size is `OBJECT_FIELD_SCALE_X` alone: the server already folds the DBC scale into it
-            // (vmangos `Unit::GetScaleForDisplayId`, `Unit.cpp:9579`), and the reference renders at
-            // the field.
+            // The true scale short of the mount (`0x71c0e0`): model scale × `SCALE_X`; a game
+            // object's is `SCALE_X` alone (`0x4d5f90`).
             let placement = if let Ok(mut t) = transforms.get_mut(entity) {
-                t.scale = Vec3::splat(net.scale);
+                t.scale = Vec3::splat(super::model_scale::true_scale(net, model_scale));
                 *t
             } else {
                 Transform::default()

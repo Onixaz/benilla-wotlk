@@ -119,7 +119,11 @@ pub(in crate::entities) fn redress_player_looks(
 
         let worn = resolve_worn_equip(net, Some(live), Some(dm));
         // Players only: a clone's look is never re-dressed in place.
-        let look = resolve_char_look(net, Some(dm), entity, &stores, None, Some(live));
+        let tables = super::char_skin::LookTables {
+            sections: sections.as_deref(),
+            characters: characters.as_deref(),
+        };
+        let look = resolve_char_look(net, Some(dm), entity, &stores, None, Some(live), tables);
         // A re-dress is the reference's incremental composite: the new geosets apply at once and
         // the atlas composites that frame when its sections are resident, never gated or withheld.
         // So it composites here, in the frame, taking over a running composite of the same look;
@@ -405,6 +409,7 @@ mod tests {
             hair_color: 0,
             facial_hair: 0,
             equipment: [0; 10],
+            cape: 0,
             bake_name: None,
         });
         app.insert_resource(Creatures {

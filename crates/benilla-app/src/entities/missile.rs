@@ -70,6 +70,9 @@ const MARKER_CASCADE: [[u8; 4]; 3] = [*b"$CSL", *b"$CSR", *b"$CST"];
 /// is a polled edge, and a kit animation that never resolves on the model would hang the queue.
 const RELEASE_WAIT_MAX: f32 = 0.25;
 
+/// Seconds a latched special idle holds a queue: past it the release goes ahead (`0x734406`).
+const SPECIAL_IDLE_HOLD_MAX: f32 = 2.0;
+
 /// The destination attachments tried after the spawn's own tag, as the reference cascades.
 const DEST_FALLBACKS: [u16; 2] = [0xf, 0x13];
 
@@ -632,14 +635,23 @@ pub(super) fn spawn_missiles(
         if !units.contains(caster) {
             return false; // caster streamed out: its queue dies with it
         }
-        let live = casters
-            .get(caster)
-            .is_ok_and(|(drv, player, tr, anims)| oneshot_is_live(drv, player, tr, anims, catalog));
+        let caster_anim = casters.get(caster).ok();
+        let live = caster_anim.is_some_and(|(drv, player, tr, anims)| {
+            oneshot_is_live(drv, player, tr, anims, catalog)
+        });
+        // A latched special idle of a cast or ranged-attack behavior holds the queue for up to
+        // 2000 ms (`0x73442f`, `0x734406`).
+        let held = caster_anim
+            .and_then(|(drv, ..)| drv.special_idle())
+            .is_some_and(|anim| crate::creature_anim::select::is_special_idle_anim(anim, catalog));
         let mut flush = false;
         for go in gos.iter_mut() {
             go.queued += dt;
             go.saw_oneshot |= live;
             flush |= (go.saw_oneshot && !live) || (!go.saw_oneshot && go.queued > RELEASE_WAIT_MAX);
+        }
+        if held && gos.iter().all(|go| go.queued < SPECIAL_IDLE_HOLD_MAX) {
+            flush = false;
         }
         if flush {
             // Launched below: the launch's borrows cannot live inside this closure.
@@ -792,7 +804,9 @@ impl TrajectoryWorld<'_, '_> {
             .as_deref()
             .zip(net.display_id)
             .and_then(|(c, d)| c.missile_collision(d));
-        let (c, r) = trajectory::hit_sphere(tf.translation(), net.scale, model, dir);
+        // The unit's true scale (`0x6fc02b`), its transform's eased scale.
+        let (scale, _, at) = tf.to_scale_rotation_translation();
+        let (c, r) = trajectory::hit_sphere(at, scale.x, model, dir);
         Some((c, r + radius))
     }
 
