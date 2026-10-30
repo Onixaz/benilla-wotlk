@@ -63,10 +63,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("ObjectEffectPackage", "#243 object effects"),
     ("ObjectEffectPackageElem", "#243 object effects"),
     (
-        "OverrideSpellData",
-        "#235 the vehicle and override action bar",
-    ),
-    (
         "PaperDollItemFrame",
         "#239 equipment slot names: GetInventorySlotInfo",
     ),
@@ -84,7 +80,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
     ("SpellDifficulty", "#240 per-difficulty spell variants"),
     ("SpellItemEnchantmentCondition", "#202 meta gem conditions"),
-    ("SpellMissile", "#110 spell missiles"),
     ("SpellMissileMotion", "#110 spell missile motion"),
     ("SpellVisualKitAreaModel", "#110 area spell visual kits"),
     (
@@ -95,10 +90,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("StringLookups", "#245 string lookups"),
     ("TransportPhysics", "#243 transport rocking"),
     ("TransportRotation", "#243 transport rotation"),
-    ("Vehicle", "#235 vehicles"),
-    ("VehicleSeat", "#235 vehicles"),
-    ("VehicleUIIndicator", "#235 the vehicle seat indicator"),
-    ("VehicleUIIndSeat", "#235 the vehicle seat indicator"),
     ("VideoHardware", "#245 graphics defaults by video card"),
     ("WorldChunkSounds", "#244 per-chunk zone sounds"),
     (

@@ -987,6 +987,43 @@ pub(crate) enum ArenaTeamCommand {
     Decline,
 }
 
+/// A vehicle request (`0x74c7f0`-`0x74ca90`, `0x757200`, `0x6d27c0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum VehicleCommand {
+    /// `CMSG_REQUEST_VEHICLE_EXIT`, `_PREV_SEAT` or `_NEXT_SEAT`, empty, by opcode.
+    Empty(u16),
+    /// `CMSG_REQUEST_VEHICLE_SWITCH_SEAT`: `vehicle`'s `seat`.
+    SwitchSeat { vehicle: u64, seat: u8 },
+    /// `CMSG_EJECT_PASSENGER` or `CMSG_PLAYER_VEHICLE_ENTER`, a bare guid, by opcode.
+    ByGuid { opcode: u16, guid: u64 },
+    /// A pitch report (`MSG_MOVE_SET_PITCH` and the pitch starts and stop), by opcode.
+    Pitch {
+        opcode: u16,
+        mover: u64,
+        flags: u32,
+        flags2: u16,
+        pos: [f32; 3],
+        orientation: f32,
+        pitch: f32,
+    },
+    /// `CMSG_DISMISS_CONTROLLED_VEHICLE` with the mover's pose, or with `seat`
+    /// `CMSG_CHANGE_SEATS_ON_CONTROLLED_VEHICLE`.
+    Controlled {
+        mover: u64,
+        flags: u32,
+        pos: [f32; 3],
+        orientation: f32,
+        seat: Option<(u64, u8)>,
+    },
+    /// `CMSG_UPDATE_PROJECTILE_POSITION`: our trajectory missile's local hit, raw WoW.
+    ProjectileHit {
+        caster: u64,
+        spell: u32,
+        cast_id: u8,
+        at: [f32; 3],
+    },
+}
+
 /// A message to the server through the write thread, carrying any pose it needs.
 #[derive(Debug)]
 pub(crate) enum ClientCommand {
@@ -1033,6 +1070,8 @@ pub(crate) enum ClientCommand {
         guid: u64,
         lag_ms: u32,
     },
+    /// A vehicle request.
+    Vehicle(VehicleCommand),
     /// `CMSG_TIME_SYNC_RESP`: the request's counter and our movement clock when it was handled.
     TimeSyncResp {
         counter: u32,
@@ -1243,6 +1282,17 @@ pub(crate) enum ClientCommand {
         pet_guid: u64,
         spell_id: u32,
         target: benilla_protocol::messages::UseItemTarget,
+    },
+    /// `CMSG_PET_CAST_SPELL` for a trajectory missile: the flown shot and the mover's pose for its
+    /// stop report.
+    PetCastTrajectory {
+        pet_guid: u64,
+        spell_id: u32,
+        shot: benilla_protocol::messages::TrajectoryShot,
+        flags: u32,
+        flags2: u16,
+        pos: [f32; 3],
+        orientation: f32,
     },
     /// `CMSG_PET_SET_ACTION`: one or two `(position, word)` pairs. The bar's autocast toggle is
     /// one entry with bit 30 flipped.
@@ -1498,6 +1548,10 @@ pub(crate) enum ClientCommand {
     /// `CMSG_BANKER_ACTIVATE`: a pure banker's direct opener (bit 8 the lowest service bit); a
     /// gossip banker goes through the menu. Answered by `SMSG_SHOW_BANK`.
     BankerActivate {
+        guid: u64,
+    },
+    /// `CMSG_SPELLCLICK`: right-click a spellclick NPC, a vehicle to board.
+    SpellClick {
         guid: u64,
     },
     /// `CMSG_BUY_BANK_SLOT`: success is only the `PLAYER_BYTES_2` count rising; a refusal is

@@ -9,6 +9,8 @@ pub const HIGH_ITEM: u16 = 0x4000;
 pub const HIGH_GAMEOBJECT: u16 = 0xF110;
 /// `HIGHGUID_UNIT`: a spawned creature.
 pub const HIGH_UNIT: u16 = 0xF130;
+/// `HIGHGUID_VEHICLE`: a creature spawned as a vehicle, with a template entry as a creature's.
+pub const HIGH_VEHICLE: u16 = 0xF150;
 /// `HIGHGUID_PET`.
 pub const HIGH_PET: u16 = 0xF140;
 /// `HIGHGUID_MO_TRANSPORT` (`ObjectGuid.h:77`): a boat or zeppelin, gameobject type 15.
@@ -26,9 +28,10 @@ pub fn is_player(guid: u64) -> bool {
     guid != 0 && high(guid) == HIGH_PLAYER
 }
 
-/// A creature or pet guid (`IsCreatureOrPet`); only a creature's carries a template entry.
+/// A creature, vehicle or pet guid (`IsCreatureOrVehicle` or `IsPet`); a pet's carries no
+/// template entry.
 pub fn is_creature_or_pet(guid: u64) -> bool {
-    matches!(high(guid), HIGH_UNIT | HIGH_PET)
+    matches!(high(guid), HIGH_UNIT | HIGH_VEHICLE | HIGH_PET)
 }
 
 /// A pet guid (`IsPet`), whose middle field is a pet number, not a template entry.
@@ -63,7 +66,9 @@ pub fn is_gameobject(guid: u64) -> bool {
 pub fn entry(guid: u64) -> Option<u32> {
     match high(guid) {
         HIGH_MO_TRANSPORT => Some((guid & 0xFFFF_FFFF) as u32),
-        HIGH_UNIT | HIGH_GAMEOBJECT | HIGH_TRANSPORT => Some(((guid >> 24) & 0xFF_FFFF) as u32),
+        HIGH_UNIT | HIGH_VEHICLE | HIGH_GAMEOBJECT | HIGH_TRANSPORT => {
+            Some(((guid >> 24) & 0xFF_FFFF) as u32)
+        }
         _ => None,
     }
 }
@@ -84,6 +89,14 @@ mod tests {
         assert!(is_creature_or_pet(g));
         assert!(!is_player(g));
         assert_eq!(entry(g), Some(69));
+    }
+
+    /// A vehicle's guid carries its creature entry, as a creature's does.
+    #[test]
+    fn vehicle_guid_decodes_as_a_creature() {
+        let g = compose(HIGH_VEHICLE, 27714, 42569);
+        assert!(is_creature_or_pet(g) && !is_pet(g));
+        assert_eq!(entry(g), Some(27714));
     }
 
     #[test]

@@ -118,6 +118,7 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         transport,
         spline,
         fields,
+        vehicle: _,
     } = ev
     {
         crate::death::net::note_corpse(guid, kind, &fields, &sc.self_guid, &mut sc.death_net);
@@ -332,6 +333,7 @@ fn on_monster_move(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::MonsterMove {
         guid,
         transport,
+        seat,
         start,
         spline_id,
         path,
@@ -346,6 +348,7 @@ fn on_monster_move(In(ev): In<SessionEvent>, mut sc: Scene) {
         monster_move(
             guid,
             transport,
+            seat,
             start,
             spline_id,
             path,
@@ -508,6 +511,7 @@ fn object_create(
             transport_guid: t.guid,
             local_pos: [t.pos.x, t.pos.y, t.pos.z],
             local_orientation: t.orientation,
+            seat: t.seat,
         });
     // Warm the name cache as a unit streams in, the reference's timing: its create path queries
     // every creature, whose name is the record's field 0. Its `CreatureCache.wdb` answers without
@@ -844,6 +848,7 @@ pub(crate) fn tear_down(mut ent: EntityWorldMut) {
 fn monster_move(
     guid: u64,
     transport: Option<u64>,
+    seat: i8,
     start: [f32; 3],
     spline_id: u32,
     path: Vec<[f32; 3]>,
@@ -901,9 +906,12 @@ fn monster_move(
                         .map(|(world, yaw)| world - yaw)
                 }
             };
+            // A monster move's transport change animates a vehicle seat's enter (`0x73c8e0`).
+            commands.entity(e).insert(crate::vehicle::TransitionCue);
             match riders.get_mut(e) {
                 Ok(mut rider) => {
                     rider.transport_guid = t;
+                    rider.seat = seat;
                     rider.local_pos = start;
                     if let Some(o) = local_facing {
                         rider.local_orientation = o;
@@ -914,13 +922,15 @@ fn monster_move(
                         transport_guid: t,
                         local_pos: start,
                         local_orientation: local_facing.unwrap_or_default(),
+                        seat,
                     });
                 }
             }
         } else if riders.get(e).is_ok() {
             commands
                 .entity(e)
-                .remove::<crate::transport::TransportRider>();
+                .remove::<crate::transport::TransportRider>()
+                .insert(crate::vehicle::TransitionCue);
         }
         // The final facing (moveType 2/3/4) snaps the raw facing and resets the display smoother. A
         // following path overrides it with the tangent each frame, so it sticks only on a stop. A
@@ -1508,6 +1518,7 @@ mod tests {
                         monster_move(
                             MOB,
                             None,
+                            -1,
                             [0.0, 0.0, 0.0],
                             7,
                             path.clone(),
@@ -1564,6 +1575,7 @@ mod tests {
                     monster_move(
                         MOB,
                         Some(BOAT),
+                        -1,
                         [1.5, -2.5, 0.75],
                         7,
                         deck_path.clone(),
@@ -1611,6 +1623,7 @@ mod tests {
                     monster_move(
                         MOB,
                         None,
+                        -1,
                         [100.0, 200.0, 30.0],
                         8,
                         world_path.clone(),

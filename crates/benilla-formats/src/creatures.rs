@@ -100,6 +100,21 @@ struct ModelRow {
     /// `FootstepShakeSize`/`DeathThudShakeSize` (fields 11/12), `CameraShakes.dbc` ids; 0 = none.
     footstep_shake: u32,
     death_thud_shake: u32,
+    /// `MissileCollisionRadius`, `…Push` and `…Raise` (fields 25-27).
+    missile_collision: [f32; 3],
+}
+
+/// A model's missile hit sphere inputs (`0x6fbff0`), before the unit's scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MissileCollision {
+    /// `MissileCollisionRadius`; 0 takes half the collision height.
+    pub radius: f32,
+    /// `MissileCollisionPush`: the sphere moves back along the missile's flight by this.
+    pub push: f32,
+    /// `MissileCollisionRaise`: the sphere rises by this.
+    pub raise: f32,
+    /// `collisionHeight`, raw model units.
+    pub collision_height: f32,
 }
 
 /// A footprint decal: the `FootprintTextures.dbc` key and the print size in yards (length along
@@ -204,6 +219,19 @@ impl CreatureCatalog {
     pub fn collision_height(&self, display_id: u32) -> Option<f32> {
         let row = self.display.get(&display_id)?;
         Some(self.models.get(&row.model_id)?.collision_height)
+    }
+
+    /// A display's missile hit sphere inputs, `CreatureModelData` fields 15 and 25-27.
+    pub fn missile_collision(&self, display_id: u32) -> Option<MissileCollision> {
+        let row = self.display.get(&display_id)?;
+        let model = self.models.get(&row.model_id)?;
+        let [radius, push, raise] = model.missile_collision;
+        Some(MissileCollision {
+            radius,
+            push,
+            raise,
+            collision_height: model.collision_height,
+        })
     }
 
     /// A display's foley material (`Material.dbc`), the creature half of the footfall rustle: the
@@ -402,6 +430,10 @@ pub fn load_creature_catalog(chain: &mut Chain) -> Result<CreatureCatalog> {
                         foley_material: u32_at(r, 10).unwrap_or(0),
                         footstep_shake: u32_at(r, 11).unwrap_or(0),
                         death_thud_shake: u32_at(r, 12).unwrap_or(0),
+                        // Past the named columns the schema reads raw words.
+                        missile_collision: std::array::from_fn(|i| {
+                            f32::from_bits(u32_at(r, 25 + i).unwrap_or(0))
+                        }),
                     },
                 );
             }

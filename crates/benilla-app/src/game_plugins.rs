@@ -236,6 +236,8 @@ impl PluginGroup for GamePlugins {
             .add(UiTotemPlugin)
             // The threat lists; after UiUnitPlugin, whose feed sets it runs in.
             .add(crate::ui_threat::UiThreatPlugin)
+            // Vehicles; after the net plugin, whose object handlers spawn the unit it reads.
+            .add(crate::vehicle::VehiclePlugin)
             // The rune table; after UiActionPlugin, whose `Spells` names each rune spell's power.
             .add(crate::ui_rune::UiRunePlugin)
             // After UiActionPlugin, whose `Spells` and cooldown clock it shares.
@@ -663,6 +665,11 @@ pub(crate) mod schedule_tests {
             ("MessageSounds", TypeId::of::<crate::sound::MessageSounds>),
             ("UiErrorKeys", TypeId::of::<crate::ui_action::UiErrorKeys>),
             ("UiErrorTexts", TypeId::of::<crate::ui_action::UiErrorTexts>),
+            // The cast send appends; the vehicle's aim drains it once, after the frame's casts.
+            (
+                "TrajectoryCasts",
+                TypeId::of::<crate::vehicle::TrajectoryCasts>,
+            ),
         ];
         const STREAMS: &[ClassRow] = &[
             ("SoundKits", TypeId::of::<crate::sound::SoundKits>),
@@ -856,7 +863,43 @@ pub(crate) mod schedule_tests {
     ///   against the `TutorialEvent` writers `tutorial::watch_self`, `watch_windows`,
     ///   `ui_battlefield::feed_battlefield` and `ui_dialog_verbs::feed_meeting_stone` and the
     ///   drain `tutorial::feed_tutorials`: it only appends one fire-once ask.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_905;
+    /// - The vehicle seats (#632) add 15: `vehicle::ride::ride_seats` re-roots a passenger's rig in
+    ///   the entity-visuals chain right after `reseat_mounts`, as a mount re-seat does, and shares
+    ///   its unordered `RigPose` readers (the nameplate, overhead mark, combat-text and anim-event
+    ///   sound readers), which see the seat a frame late at worst; it reads `NetEntity` for the
+    ///   ground frame against `refresh_live_display`, later in the same chain, which only swaps a
+    ///   display; and it and `sweep_seat_anchors` spawn and despawn their anchors through
+    ///   `Commands` against `finish_colliders` and read `GlobalTransform` scales against
+    ///   `publish_camera_pose`, as the other such spawners pair.
+    /// - The pet's temporary bar (#632) adds 7 net: `ui_pet::temp_bar::update_pet_temp_bar` writes
+    ///   the local slots 121-132 in `PlayerActions` before the identity feed, against the
+    ///   `UnitFeed` readers of the bar (the cast bar, shapeshift, spellbook, talent, trade-skill,
+    ///   language, requirement, menu-gate and tooltip feeds), which see a new pet slot a frame late
+    ///   at worst; ordering `pet_stop_on_old_target_clear` before the identity feed takes back the
+    ///   rest.
+    /// - The override bar (#632) adds 10: `vehicle::override_bar::update_override_bar` writes the
+    ///   same slots after the pet's, against the same ten readers, on the same frame-late terms.
+    /// - The vehicle aim (#632) adds 2: `vehicle::feed_vehicle_view` reads a control-seat
+    ///   vehicle's reported pitch from `RemoteMotion` against `transport::compose_riders` and
+    ///   `ground_deck_riders`, which move only its pose; in `UnitFeed` it cannot follow them, and
+    ///   the pitch it reads is the packet's.
+    /// - The vehicle transitions (#632) add 15: `vehicle::transit::ride_transits` carries an
+    ///   entering or exiting passenger's rig on a free anchor just before `ride_seats`, and shares
+    ///   the same unordered `RigPose`, `NetEntity`, `GlobalTransform` and `Commands` pairs on the
+    ///   same frame-late terms.
+    /// - The vehicle camera (#632) adds 14: `vehicle::camera::feed_vehicle_camera` reads the
+    ///   focus's `Transform` just before `publish_view_subject`, against the same portrait-booth,
+    ///   tile, marker and self-ride writers that publish already pairs with, a frame late at worst;
+    ///   and `ZoomLimit`'s max against `ui_barber::drain_barber`, which writes only the barber
+    ///   floor.
+    /// - Trajectory missiles (#632) add 1: `entities::missile::move_missiles` now reads the group,
+    ///   factions and unit stores its hit test asks hostility of, against a writer that runs
+    ///   unordered; a missile picks its units on its first flight step, a frame late at worst.
+    /// - The trajectory cast (#632) adds 2: `vehicle::shot::send_trajectory_casts` runs after the
+    ///   world stages and the entity visuals, but reads `Player` against
+    ///   `release_post_snap_hold`, which writes only the snap hold, and `RigPose` against
+    ///   `quest_markers::build_markers`; the pose it aims from is a frame late at worst.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_971;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

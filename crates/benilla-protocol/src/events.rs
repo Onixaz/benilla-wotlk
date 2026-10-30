@@ -245,6 +245,8 @@ pub enum SessionEvent {
         transport: Option<TransportPose>,
         /// The path it was already walking (`MOVEFLAG_SPLINE_ENABLED`), with the ms already ridden.
         spline: Option<CreateSpline>,
+        /// `UPDATEFLAG_VEHICLE`: the unit's `Vehicle.dbc` id and its facing at create.
+        vehicle: Option<(u32, f32)>,
         /// The full descriptor from the create mask; later [`Self::ObjectValues`] merge into it.
         fields: ObjectFields,
     },
@@ -299,6 +301,8 @@ pub enum SessionEvent {
         guid: u64,
         /// `SMSG_MONSTER_MOVE_TRANSPORT`: `start`/`path` are deck-local, and the unit now rides it.
         transport: Option<u64>,
+        /// The vehicle seat it rides, else `-1`.
+        seat: i8,
         start: [f32; 3],
         /// Echoed in `CMSG_MOVE_SPLINE_DONE` when the spline drives our own player.
         spline_id: u32,
@@ -746,6 +750,8 @@ pub enum SessionEvent {
         ammo_display_id: Option<u32>,
         /// The cast item when the first guid is not the caster; the item cooldown keys on it.
         item_caster: Option<u64>,
+        /// A trajectory missile's `(elevation, delay ms)` (`CAST_FLAG_ADJUST_MISSILE`).
+        trajectory: Option<(f32, u32)>,
     },
     /// A channeled beam's hops (`SMSG_SPELL_UPDATE_CHAIN_TARGETS`), consumed once by the next chain
     /// `CharProc`; the reference fills that `unit+0xd44` array from spell-go hits too.
@@ -826,6 +832,16 @@ pub enum SessionEvent {
     ThreatUpdate(crate::messages::ThreatUpdate),
     /// `victim` leaves `unit`'s threat list (`SMSG_THREAT_REMOVE`).
     ThreatRemove { unit: u64, victim: u64 },
+    /// `guid`'s vehicle id, 0 to take its vehicle away (`SMSG_PLAYER_VEHICLE_DATA`).
+    PlayerVehicleData { guid: u64, vehicle_id: u32 },
+    /// The seat change our passenger waits on is off (`SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA`).
+    CancelExpectedRideVehicleAura,
+    /// Where `caster`'s trajectory missile `cast_id` hit (`SMSG_SET_PROJECTILE_POSITION`).
+    SetProjectilePosition {
+        caster: u64,
+        cast_id: u8,
+        position: [f32; 3],
+    },
     /// `unit`'s threat list is dropped (`SMSG_THREAT_CLEAR`).
     ThreatClear { unit: u64 },
     /// The unit dismounts now, ahead of its descriptor (`SMSG_DISMOUNT`).

@@ -508,6 +508,8 @@ pub(crate) fn cast_target_mask(def: &SpellDisplay) -> u32 {
         26 => word |= 0x4000,
         35 => word |= TF_UNIT_PARTY,
         57 | 61 => word |= TF_UNIT_RAID,
+        // A trajectory destination whose missile flies its aim needs no location: the aim is it.
+        89 if def.flies_aim => word &= !0x40,
         _ => {}
     }
     word
@@ -690,6 +692,15 @@ mod tests {
             AutoSelfCast::default().0,
             "autoSelfCast defaults to 12340's \"1\" (0x51dbee)"
         );
+    }
+
+    /// Implicit target 89 drops the location bit only for a missile that flies its aim.
+    #[test]
+    fn a_flown_trajectory_needs_no_location() {
+        let mut d = spell(0x40, 89);
+        assert_eq!(cast_target_mask(&d), 0x40);
+        d.flies_aim = true;
+        assert_eq!(cast_target_mask(&d), 0);
     }
 
     #[test]

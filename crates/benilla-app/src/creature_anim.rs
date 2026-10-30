@@ -503,6 +503,19 @@ pub(crate) struct SpellGoTargets {
     pub(crate) ammo_display_id: Option<u32>,
     /// `PlaySeq` stamp, the GO's `CastEvent`'s.
     pub(crate) seq: u64,
+    /// The GO's trajectory (`castFlags & 0x20000`).
+    pub(crate) trajectory: Option<Trajectory>,
+}
+
+/// A trajectory missile's launch off its GO (`0x732ff0`): the pitch it leaves at and the time it
+/// lands, with the caster and cast id `SMSG_SET_PROJECTILE_POSITION` names it by.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Trajectory {
+    pub(crate) pitch: f32,
+    /// Seconds from the GO to the landing.
+    pub(crate) delay: f32,
+    pub(crate) caster: u64,
+    pub(crate) cast_id: u8,
 }
 
 /// The sheath policy: requests, ceremony overlays, the `AnimationData.dbc` table.

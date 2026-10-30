@@ -387,6 +387,7 @@ fn move_flag_ack_bodies_differ_by_the_apply_tail() {
 
     let info = MovementInfo {
         flags: 0,
+        flags2: 0,
         timestamp: 0x1122_3344,
         position: Vector3d {
             x: 1.0,
@@ -696,6 +697,7 @@ fn gravity_collision_height_and_spline_flight_parse_and_ack() {
     ));
     let info = MovementInfo {
         flags: 0,
+        flags2: 0,
         timestamp: 1,
         position: Vector3d {
             x: 0.0,

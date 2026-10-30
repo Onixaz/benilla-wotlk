@@ -234,8 +234,11 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
         "swimming" => boolean(model.option_state.swimming, args),
         "mounted" => boolean(model.option_state.mounted, args),
         "spec" => any_number(1, args, true),
-        "flyable" | "flying" | "indoors" | "outdoors" | "stealth" | "equipped" | "worn"
-        | "vehicleui" | "unithasvehicleui" => false,
+        // The seat flag `0x20000000`: the player's seat (`0x5ef430`), the group's unit's
+        // (`0x5ef470`).
+        "vehicleui" => super::vehicle::has_vehicle_ui(model, "player"),
+        "unithasvehicleui" => super::vehicle::has_vehicle_ui(model, token),
+        "flyable" | "flying" | "indoors" | "outdoors" | "stealth" | "equipped" | "worn" => false,
         _ => return None,
     })
 }

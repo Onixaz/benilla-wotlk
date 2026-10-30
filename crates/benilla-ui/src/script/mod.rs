@@ -251,6 +251,7 @@ mod totem;
 mod tracking;
 mod ui_errors;
 mod update_walk;
+mod vehicle;
 pub use tooltip_unit::{skill_rung, skill_rung_suffix, TooltipTint};
 pub use tracking::{TownKind, TownType, TrackingSpell, TOWN_TYPES};
 mod trade;
@@ -461,6 +462,10 @@ pub(crate) use types::{FontExplicit, MeasuredText, RegionData};
 pub use unit::{
     grey_band, level_reads_unknown, parse_unit_token, power_token, unit_is_grey, PlayerRecord,
     SelectionRequest, UnitBase, UnitGuids, UnitState, UnitTokenParse,
+};
+pub use vehicle::{
+    AimRec, AimUnit, VehicleIndicatorView, VehicleRequest, VehicleSeatView, VehicleTree,
+    VehicleUnitView, VehicleView, VirtualSeat,
 };
 pub use weapon_enchant::WeaponEnchant;
 pub use who_sort::{WhoSortChain, WhoSortKey};
@@ -987,6 +992,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     region::install_in_game(lua)?;
     modelframe::install_player_model(lua)?;
     unit::install(lua)?;
+    vehicle::install(lua)?;
     party::install(lua)?;
     social::install(lua)?;
     guild::install(lua)?;

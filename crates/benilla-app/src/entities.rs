@@ -72,8 +72,10 @@ pub(crate) use collision_height::CollisionHeight;
 
 /// Spell missiles: the projectile a cast with a `Spell.dbc` Speed above 0 flies at each target.
 mod missile;
+pub(crate) use missile::{
+    aim_launch_pos, AttachPosQuery, MissileMiss, MissileSound, PendingMissiles,
+};
 use missile::{attach_missile_models, mark_forced_missiles, move_missiles, spawn_missiles};
-pub(crate) use missile::{MissileMiss, MissileSound, PendingMissiles};
 
 /// A WMO-display GameObject's doodad props (a ship's sails), parented under it to ride a transport.
 mod wmo_props;
@@ -242,6 +244,14 @@ pub(crate) struct Creatures {
 }
 
 impl Creatures {
+    /// A display's missile hit sphere inputs (`0x6fbff0`).
+    pub(crate) fn missile_collision(
+        &self,
+        display_id: u32,
+    ) -> Option<benilla_formats::MissileCollision> {
+        self.catalog.missile_collision(display_id)
+    }
+
     /// Whether a display id has a model row behind it (`CreatureDisplayInfo` →
     /// `CreatureModelData`), the chain the reference walks after the race row's id.
     pub(crate) fn resolves_model(&self, display_id: u32) -> bool {
@@ -434,6 +444,10 @@ pub(crate) struct VisualAttached;
 #[derive(SystemSet, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct EntityVisualsSet;
 
+/// The mount re-seat in [`EntityVisualsSet`], which a vehicle seat follows.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct MountReseatSet;
+
 /// [`update_display_models`]' set: a creator of display-cache entries orders before it.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct DisplayBuildSet;
@@ -602,6 +616,7 @@ impl Plugin for EntitiesPlugin {
         app.add_message::<mount::MountDropped>();
         mount::register(app);
         mirror_image::register(app);
+        missile::register(app);
         app.add_systems(
             Update,
             publish_world_units
@@ -697,7 +712,11 @@ impl Plugin for EntitiesPlugin {
                 // A mount change re-seats the rig on the mount's attachment 0 or back, as the
                 // reference re-parents the body model. A clone asks for its caster's look once its
                 // model is in.
-                (reseat_mounts, mirror_image::request_mirror_images).chain(),
+                (
+                    reseat_mounts.in_set(MountReseatSet),
+                    mirror_image::request_mirror_images,
+                )
+                    .chain(),
                 // A display swap rebuilds, a scale change eases over the reference's 2 s, and a
                 // unit denied a palette rig rebuilds once the table has room.
                 (

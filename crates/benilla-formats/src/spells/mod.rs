@@ -127,6 +127,8 @@ const COL_ATTRIBUTES_EX6: usize = 10;
 const COL_ATTRIBUTES_EX7: usize = 11;
 const COL_TOTEM_CATEGORY_1: usize = 222;
 const COL_SPEED: usize = 47;
+/// `SpellMissileID` (`SpellRec+0x28c`): column 227, the four locstrings before it 17 columns each.
+const COL_SPELL_MISSILE: usize = 227;
 const COL_EFFECT_1: usize = 71;
 /// `EffectMiscValue[0]`, `71 + 13 × 3`: the 14th `[3]` array from `Effect`.
 const COL_EFFECT_MISC_1: usize = 110;
@@ -620,6 +622,8 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 visual,
                 visual_low_violence,
                 speed,
+                missile: u32_at(r, COL_SPELL_MISSILE).unwrap_or(0),
+                flies_aim: false,
                 attributes,
                 attributes_ex: u32_at(r, COL_ATTRIBUTES_EX).unwrap_or(0),
                 attributes_ex2: u32_at(r, COL_ATTRIBUTES_EX2).unwrap_or(0),
@@ -772,6 +776,13 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 }),
             },
         );
+    }
+    // A missing `SpellMissile.dbc` leaves every aim unflown, as no row resolves.
+    if let Ok(bytes) = chain.read_file(crate::spell_visual::missiles::SPELL_MISSILE) {
+        let missiles = crate::spell_visual::missiles::parse_missiles(&bytes)?;
+        for d in spells.values_mut().filter(|d| d.missile != 0) {
+            d.flies_aim = missiles.get(&d.missile).is_some_and(|m| m.flags & 0x1 != 0);
+        }
     }
     Ok(SpellCatalog(std::sync::Arc::new(CatalogTables {
         spells,

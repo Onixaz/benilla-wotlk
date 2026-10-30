@@ -272,6 +272,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 ammo_display_id: s.ammo_display_id,
                 // Against the resolved caster: a GameObject's own guid in slot 1 is not an item.
                 item_caster: (s.item_or_caster != caster).then_some(s.item_or_caster),
+                trajectory: s.trajectory,
             }];
             events.extend(runes);
             events
@@ -380,6 +381,21 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::ThreatRemove { unit, victim }]
         }
         ServerPacket::ThreatClear { unit } => vec![SessionEvent::ThreatClear { unit }],
+        ServerPacket::PlayerVehicleData { guid, vehicle_id } => {
+            vec![SessionEvent::PlayerVehicleData { guid, vehicle_id }]
+        }
+        ServerPacket::CancelExpectedRideVehicleAura => {
+            vec![SessionEvent::CancelExpectedRideVehicleAura]
+        }
+        ServerPacket::SetProjectilePosition {
+            caster,
+            cast_id,
+            position,
+        } => vec![SessionEvent::SetProjectilePosition {
+            caster,
+            cast_id,
+            position: [position.x, position.y, position.z],
+        }],
         ServerPacket::Dismount { guid } => vec![SessionEvent::Dismount { guid }],
         ServerPacket::MirrorImageData { guid, image } => {
             vec![SessionEvent::MirrorImageData { guid, image }]
@@ -815,6 +831,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::MonsterMove {
             guid,
             transport,
+            seat,
             start,
             spline_id,
             path,
@@ -826,6 +843,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         } => vec![SessionEvent::MonsterMove {
             guid,
             transport,
+            seat,
             start: v3(start),
             spline_id,
             path: path.into_iter().map(v3).collect(),
@@ -1339,6 +1357,7 @@ fn decode_objects(objects: Vec<Object>) -> Vec<SessionEvent> {
                         transport_progress: movement.transport_progress,
                         transport: movement.transport,
                         spline: movement.spline,
+                        vehicle: movement.vehicle,
                         fields: mask,
                     });
                 }

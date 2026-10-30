@@ -68,6 +68,7 @@ mod trainer;
 mod tutorial;
 mod unit_state;
 mod update_object;
+mod vehicle;
 mod vendor;
 mod world_state;
 pub use account_data::{
@@ -244,14 +245,14 @@ pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket};
 pub use page_text::page_text_query;
 pub use parse::{parse_auth_response_wotlk, parse_server, parse_server_with_tail};
 pub use pet::{
-    pet_abandon, pet_action, pet_cancel_aura, pet_cast_spell, pet_rename, pet_set_action,
-    pet_spell_autocast, pet_stop_attack, pet_tame_failure_key, pet_unlearn, PetActionEntry,
-    PetMode, PetSpellCooldown, PetSpells, PetUnlearnConfirm, PET_ACTION_SLOTS, PET_ACT_COMMAND,
-    PET_ACT_DISABLED, PET_ACT_ENABLED, PET_ACT_PASSIVE, PET_ACT_REACTION, PET_AUTOCAST_ALLOWED,
-    PET_AUTOCAST_ON, PET_COMMAND_ATTACK, PET_COMMAND_DISMISS, PET_COMMAND_FOLLOW, PET_COMMAND_STAY,
-    PET_COOLDOWN_PERMANENT, PET_REACT_AGGRESSIVE, PET_REACT_DEFENSIVE, PET_REACT_PASSIVE,
-    PET_STATE_VEHICLE, PET_TALK_ATTACK, PET_TALK_ORDER, PET_TYPE_SPELL, PET_TYPE_SPELL_EXTRA,
-    PET_UNUSABLE_UNIT_FLAGS,
+    pet_abandon, pet_action, pet_cancel_aura, pet_cast_spell, pet_cast_trajectory, pet_rename,
+    pet_set_action, pet_spell_autocast, pet_stop_attack, pet_tame_failure_key, pet_unlearn,
+    PetActionEntry, PetMode, PetSpellCooldown, PetSpells, PetUnlearnConfirm, TrajectoryShot,
+    PET_ACTION_SLOTS, PET_ACT_COMMAND, PET_ACT_DISABLED, PET_ACT_ENABLED, PET_ACT_PASSIVE,
+    PET_ACT_REACTION, PET_AUTOCAST_ALLOWED, PET_AUTOCAST_ON, PET_COMMAND_ATTACK,
+    PET_COMMAND_DISMISS, PET_COMMAND_FOLLOW, PET_COMMAND_STAY, PET_COOLDOWN_PERMANENT,
+    PET_REACT_AGGRESSIVE, PET_REACT_DEFENSIVE, PET_REACT_PASSIVE, PET_STATE_VEHICLE,
+    PET_TALK_ATTACK, PET_TALK_ORDER, PET_TYPE_SPELL, PET_TYPE_SPELL_EXTRA, PET_UNUSABLE_UNIT_FLAGS,
 };
 pub use petition::{
     offer_petition, petition_buy, petition_decline, petition_query, petition_rename,
@@ -336,6 +337,10 @@ pub use update_object::{
     FIELD_PLAYER_SKILL_INFO_1_1, PLAYER_COMBAT_RATINGS, PLAYER_EXPLORED_ZONES_SLOTS,
     PLAYER_GLYPH_SOCKETS, PLAYER_KNOWN_TITLE_BITS, PLAYER_QUEST_LOG_SLOTS, PLAYER_SKILL_SLOTS,
     QUEST_LOG_SLOT_FIELDS, UNIT_AURA_POSITIVE_SLOTS, UNIT_AURA_SLOTS,
+};
+pub use vehicle::{
+    change_seats_on_controlled_vehicle, dismiss_controlled_vehicle, request_vehicle_switch_seat,
+    update_projectile_position, vehicle_guid,
 };
 pub use vendor::{
     buy_item, buy_item_in_slot, buy_result, buyback_item, list_inventory, repair_item, sell_item,

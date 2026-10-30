@@ -16,6 +16,12 @@ impl WorldWriter {
         )
     }
 
+    /// Right-click a spellclick NPC (`CMSG_SPELLCLICK`, full guid): a vehicle to board, a unit's
+    /// click spell.
+    pub fn spell_click(&mut self, guid: u64) -> Result<()> {
+        self.send(opcode::CMSG_SPELLCLICK, &guid.to_le_bytes())
+    }
+
     /// Buy the next bank-bag slot; success is silent, failure answers `SMSG_BUY_BANK_SLOT_RESULT`.
     pub fn buy_bank_slot(&mut self, banker_guid: u64) -> Result<()> {
         self.send(

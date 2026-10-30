@@ -25,6 +25,8 @@ pub(super) struct Frame<'a> {
     pub(super) moving: bool,
     pub(super) relaxed: bool,
     pub(super) mounted: bool,
+    /// A live seated passenger's ride anim (`0x747b20`), pinned as the mounted rider's Mount is.
+    pub(super) seat_pose: Option<u16>,
     pub(super) looting: bool,
     pub(super) engaged: bool,
     pub(super) airborne_frozen: bool,
@@ -59,6 +61,7 @@ pub(super) fn run(
         moving,
         relaxed,
         mounted,
+        seat_pose,
         looting,
         engaged,
         airborne_frozen,
@@ -361,6 +364,15 @@ pub(super) fn run(
                     &mount_cands
                 } else {
                     cands
+                };
+                // A live seated passenger's lower anim replaces the base pick (`0x7385c0`).
+                let seat_cands;
+                let cands: &[u16] = match seat_pose {
+                    Some(anim) => {
+                        seat_cands = [anim, STAND];
+                        &seat_cands
+                    }
+                    None => cands,
                 };
                 let target = cands[0];
                 // A turn shuffle ends at its own clip window, not with the turn: the reference's

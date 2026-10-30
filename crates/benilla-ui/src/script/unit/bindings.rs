@@ -161,42 +161,6 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `UnitHasVehicleUI(unit)` (`0x613740`): a Lua boolean, the flag `0x20000000` of the seat the
-    // unit rides (`0x613600`: the held unit's vehicle seat, else a party member's seat id). The
-    // token goes through `lua_tolstring` and the non-raising resolver (`0x60abf0`), so any
-    // argument answers. benilla tracks no vehicle, so every unit sits on no seat and answers
-    // false, as the macro conditions `vehicleui` and `unithasvehicleui` do.
-    g.set(
-        "UnitHasVehicleUI",
-        lua.create_function(|_, _token: Value| Ok(false))?,
-    )?;
-    // `UnitControllingVehicle(unit)` (`0x613570`): a Lua boolean, true for a unit on a seat of
-    // kind 3 riding its own charm (`0x6135b8`-`0x6135db`); the same non-raising token path, so
-    // false on no seat, as above.
-    g.set(
-        "UnitControllingVehicle",
-        lua.create_function(|_, _token: Value| Ok(false))?,
-    )?;
-    // `UnitTargetsVehicleInRaidUI(unit)` (`0x613780`): the flag `0x8` of the same seat
-    // (`0x613798`), so false on no seat, as above.
-    g.set(
-        "UnitTargetsVehicleInRaidUI",
-        lua.create_function(|_, _token: Value| Ok(false))?,
-    )?;
-    // `UnitInVehicle(unit)` (`0x6133d0`): 1 or nil, a held unit's passenger state, else the party
-    // record's status bit `0x200` (`0x61347b`).
-    g.set(
-        "UnitInVehicle",
-        lua.create_function(|lua, token: Value| {
-            let token = Some(crate::script::binding_abi::string_arg(
-                lua,
-                token,
-                r#"Usage: UnitInVehicle("unit")"#,
-            )?);
-            unit_predicate(lua, &token, |u| u.in_vehicle)
-        })?,
-    )?;
-
     // `IsReferAFriendLinked(unit)` (`0x51d1b0`): 1 or nil, never raising, and nil with no player
     // object; the token resolves to a guid (`0x60c1c0`) that the refer-a-friend test (`0x6d7590`)
     // asks.

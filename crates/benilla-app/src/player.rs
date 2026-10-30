@@ -107,7 +107,11 @@ pub(crate) use state::{
 pub(crate) use swim::{may_swim, swim_enter_depth};
 /// The camera's followed unit when not our body; [`crate::camera_shake`] takes its body frame and
 /// two suspend gates from it, as the reference does from `[cam+0x88]`.
-pub(crate) use view_subject::ViewSubject;
+pub(crate) use view_subject::{RemoteView, VehicleFocus, ViewSubject};
+
+/// The camera subject's publish, which the vehicle camera's feed precedes.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ViewSubjectPublish;
 
 /// `UNIT_FLAG_STUNNED`, the `UNIT_FIELD_FLAGS` bit that stops turning. The reference reads it off
 /// the descriptor (`[[unit+0x110]+0xa0]`, an inverted `not/shr/and` test), which skips the turn and
@@ -235,16 +239,18 @@ impl Plugin for PlayerPlugin {
         app.add_observer(camera_dynamics::on_cvar);
         app.init_resource::<camera::LookConfig>();
         app.init_resource::<camera_zoom::ZoomLimit>();
+        app.init_resource::<camera_zoom::VehicleSeatZoom>();
         app.init_resource::<camera::FollowConfig>();
         app.init_resource::<camera_dynamics::CameraOptions>();
         // Far sight resolves `PLAYER_FARSIGHT` to a pose before `control` seats the camera: a
         // separate system, as `control` holds our `Transform` mutably and cannot read another's.
         app.init_resource::<view_subject::ViewSubject>()
+            .init_resource::<view_subject::VehicleFocus>()
             .init_resource::<scoped_view::ScopedView>()
             .add_systems(
                 Update,
                 (
-                    view_subject::publish_view_subject,
+                    view_subject::publish_view_subject.in_set(ViewSubjectPublish),
                     // The spyglass zoom (aura 76), before `control`, which reads it to hold the
                     // rig in first person.
                     scoped_view::apply_scoped_view,

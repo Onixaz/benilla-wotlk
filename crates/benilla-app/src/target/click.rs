@@ -679,11 +679,17 @@ impl Dispatch<'_, '_> {
             debug!("right-click interact: {guid:#x} — its window is already open, nothing sent");
             return;
         }
-        let npc_flags = self
+        let (npc_flags, flags2) = self
             .stores
             .get(entity)
-            .map(|(s, _)| s.0.unit_npc_flags())
-            .unwrap_or(0);
+            .map(|(s, _)| (s.0.unit_npc_flags(), s.0.unit_flags2()))
+            .unwrap_or((0, 0));
+        let in_group = self
+            .skin
+            .group
+            .as_deref()
+            .is_some_and(|g| g.is_member(guid));
+        let npc_flags = spell_clickable(npc_flags, flags2, in_group);
         let me = self.me();
         let self_store = self.self_store();
         // Peeked, not taken: the cursor clears only once a sale goes out. The reference sends the
@@ -1452,15 +1458,26 @@ pub(crate) enum ServiceArm {
     StableMaster,
     /// `0x800000`: the guild bank opener, `CMSG_GUILD_BANKER_ACTIVATE`.
     GuildBanker,
-    /// `0x1000000` with `UNIT_FIELD_FLAGS_2` allowing it (`0x71c570`): `CMSG_SPELLCLICK`.
+    /// `0x1000000` with `UNIT_FIELD_FLAGS_2` allowing it (`0x71c570`): `CMSG_SPELLCLICK`
+    /// (`0x6d2740`).
     SpellClick,
     /// `0x4000000`.
     Mailbox,
 }
 
+/// `npc_flags` less the spellclick bit where `0x71c570` refuses it: `UNIT_FIELD_FLAGS_2` `0x2000`
+/// bars it, and `0x1000` keeps it to a unit in our group.
+pub(crate) fn spell_clickable(npc_flags: u32, flags2: u32, in_group: bool) -> u32 {
+    if flags2 & 0x2000 != 0 || (flags2 & 0x1000 != 0 && !in_group) {
+        npc_flags & !cursor_mode::npc_flags::SPELLCLICK
+    } else {
+        npc_flags
+    }
+}
+
 /// The ladder; `None` when no consulted bit is set. The repairer and the vendor kinds have no arm.
-/// The player-vehicle arm (`0x723050`) never takes an NPC. `UNIT_FIELD_FLAGS_2` is not mirrored,
-/// so the spellclick arm reads it as 0.
+/// The player-vehicle arm (`0x723050`) never takes an NPC. The spellclick bit is gated first
+/// ([`spell_clickable`]).
 pub(crate) fn service_arm(npc_flags: u32, quest_status: Option<u32>) -> Option<ServiceArm> {
     use cursor_mode::npc_flags as f;
     let bit = |m: u32| npc_flags & m != 0;
@@ -1574,7 +1591,7 @@ pub(crate) fn service_action(
             ServiceAction::Send(ClientCommand::ListStabledPets { npc: guid })
         }
         ServiceArm::GuildBanker => ServiceAction::TalkToGuildBanker,
-        ServiceArm::SpellClick => ServiceAction::Silent("spell click, which is not built"),
+        ServiceArm::SpellClick => ServiceAction::Send(ClientCommand::SpellClick { guid }),
         ServiceArm::Mailbox => ServiceAction::OpenMailbox,
     }
 }
@@ -1940,6 +1957,17 @@ mod tests {
         );
     }
 
+    /// `UNIT_FIELD_FLAGS_2` `0x2000` bars a spellclick, and `0x1000` keeps it to the group.
+    #[test]
+    fn the_spellclick_bit_obeys_the_second_flags() {
+        use cursor_mode::npc_flags as f;
+        let flags = f::SPELLCLICK | f::MAILBOX;
+        assert_eq!(spell_clickable(flags, 0, false), flags);
+        assert_eq!(spell_clickable(flags, 0x2000, true), f::MAILBOX);
+        assert_eq!(spell_clickable(flags, 0x1000, false), f::MAILBOX);
+        assert_eq!(spell_clickable(flags, 0x1000, true), flags);
+    }
+
     #[test]
     fn the_service_arms_send_what_the_reference_sends() {
         let sent = |arm, ghost| match service_action(arm, 0x42, ghost, None) {
@@ -1994,8 +2022,11 @@ mod tests {
         assert_eq!(sent(ServiceArm::Mailbox, false), "open-mailbox");
         // A guild banker activates the bank (`0x6ddbb0` calls `0x6d23c0`).
         assert_eq!(sent(ServiceArm::GuildBanker, false), "talk-guild-banker");
-        // Taken, but nothing benilla builds answers it yet.
-        assert_eq!(sent(ServiceArm::SpellClick, false), "silent");
+        // The spellclick arm sends the unit's guid (`0x6d2740`).
+        assert!(matches!(
+            service_action(ServiceArm::SpellClick, 0x42, false, None),
+            ServiceAction::Send(ClientCommand::SpellClick { guid: 0x42 })
+        ));
         assert!(matches!(
             service_action(ServiceArm::TabardDesigner, 0x42, false, None),
             ServiceAction::Send(ClientCommand::TabardVendorActivate { npc: 0x42 })

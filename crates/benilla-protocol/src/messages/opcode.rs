@@ -697,6 +697,8 @@ pub const SMSG_GMRESPONSE_STATUS_UPDATE: u16 = 0x04F1; // 1265
 // The bank: `CMSG_BANKER_ACTIVATE` opens a pure banker; `SMSG_SHOW_BANK` also arrives unasked
 // from the `GOSSIP_OPTION_BANKER` option.
 pub const CMSG_BANKER_ACTIVATE: u16 = 0x01B7; // 439
+/// A spellclick NPC's right-click, its `u64` guid (`0x6d2740`).
+pub const CMSG_SPELLCLICK: u16 = 0x03F8; // 1016
 pub const SMSG_SHOW_BANK: u16 = 0x01B8; // 440
 pub const CMSG_BUY_BANK_SLOT: u16 = 0x01B9; // 441
 pub const SMSG_BUY_BANK_SLOT_RESULT: u16 = 0x01BA; // 442
@@ -1340,3 +1342,29 @@ pub const SMSG_ENABLE_BARBER_SHOP: u16 = 0x0427; // 1063
 pub const SMSG_BARBER_SHOP_RESULT: u16 = 0x0428; // 1064
 /// The faction reactions the server forces (`0x5d15d0`).
 pub const SMSG_SET_FORCED_REACTIONS: u16 = 0x02A5; // 677
+
+// Vehicles (3.3.5a only): the vehicle id a unit gains or loses, the cancelled-ride notice, the
+// seat and exit requests, and the trajectory missile's impact point.
+/// A unit's vehicle id, packed guid and `u32`, 0 to remove it (`0x716db0`).
+pub const SMSG_PLAYER_VEHICLE_DATA: u16 = 0x04A7; // 1191
+/// Empty: the pending seat change our passenger waits on is off (`0x800510`).
+pub const SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA: u16 = 0x049D; // 1181
+/// Where a trajectory missile hit, as the caster's client saw it (`0x8005a0`).
+pub const SMSG_SET_PROJECTILE_POSITION: u16 = 0x04BF; // 1215
+/// Our missile's impact point, sent by the caster (`0x703640`).
+pub const CMSG_UPDATE_PROJECTILE_POSITION: u16 = 0x04BE; // 1214
+/// Leave the vehicle we ride and do not control, empty (`0x74c7f0`).
+pub const CMSG_REQUEST_VEHICLE_EXIT: u16 = 0x0476; // 1142
+/// The previous and next seat, empty (`0x74c8b0`, `0x74c9a0`).
+pub const CMSG_REQUEST_VEHICLE_PREV_SEAT: u16 = 0x0477; // 1143
+pub const CMSG_REQUEST_VEHICLE_NEXT_SEAT: u16 = 0x0478; // 1144
+/// A given seat: packed vehicle guid, `u8` seat (`0x74ca90`).
+pub const CMSG_REQUEST_VEHICLE_SWITCH_SEAT: u16 = 0x0479; // 1145
+/// Leave the vehicle we control: our move report (`0x6ef540`).
+pub const CMSG_DISMISS_CONTROLLED_VEHICLE: u16 = 0x046D; // 1133
+/// Change seats on the vehicle we control: our move report, packed vehicle guid, `u8` seat.
+pub const CMSG_CHANGE_SEATS_ON_CONTROLLED_VEHICLE: u16 = 0x049B; // 1179
+/// Ride a vehicle by talking to it, `u64` guid (`0x6d27c0`).
+pub const CMSG_PLAYER_VEHICLE_ENTER: u16 = 0x04A8; // 1192
+/// Eject a passenger, `u64` guid (`0x757200`).
+pub const CMSG_EJECT_PASSENGER: u16 = 0x04A9; // 1193

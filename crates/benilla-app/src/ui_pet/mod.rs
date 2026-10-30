@@ -20,6 +20,7 @@ mod drain;
 mod menu;
 mod net;
 mod possess;
+mod temp_bar;
 mod unit;
 mod usable;
 
@@ -29,6 +30,7 @@ use drain::drain_pet_actions;
 pub(crate) use drain::pet_stop_on_old_target_clear;
 pub(crate) use drain::{PetCast, PetPress};
 use menu::{drain_pet_menu, feed_pet_menu};
+pub(crate) use temp_bar::temp_slot_texture;
 use unit::feed_pet_unit;
 
 #[cfg(test)]
@@ -41,6 +43,10 @@ mod press_tests;
 mod tests;
 #[cfg(test)]
 mod usable_tests;
+
+/// The pet's temporary-bar writer, which the override bar's follows.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct PetTempBar;
 
 /// The pet action bar's state. A zero `spells.pet_guid` means no bar: the teardown packet carries
 /// only that guid.
@@ -102,7 +108,8 @@ impl Plugin for UiPetPlugin {
                 // goes dark the frame the selection moves.
                 pet_stop_on_old_target_clear
                     .in_set(UnitFeed)
-                    .before(feed_pet_bar),
+                    .before(feed_pet_bar)
+                    .before(crate::ui_action::SlotIdentityFeed),
                 // After the pet snapshot: these feeds' events reach Lua at once, and their
                 // handlers read `HasPetUI()`, which `crate::ui_pet_stats` pushes. The bar pushes
                 // its cooldown triples before the cooldown events and the pet's flush fires after
@@ -119,6 +126,13 @@ impl Plugin for UiPetPlugin {
                     .after(crate::ui_pet_stats::PetSnapshot),
                 feed_pet_menu.in_set(UnitFeed),
                 possess::feed_possess_spell.in_set(UnitFeed),
+                // Before the slot feed, which shows the slots it writes.
+                temp_bar::update_pet_temp_bar
+                    .in_set(UnitFeed)
+                    .in_set(PetTempBar)
+                    .after(crate::ui_action::ActionRanks)
+                    .after(pet_stop_on_old_target_clear)
+                    .before(crate::ui_action::SlotIdentityFeed),
                 // After this frame's presses, as the one drain before it ran them ahead of the
                 // toggles, stops and writes.
                 drain_pet_actions
@@ -144,6 +158,8 @@ pub(crate) struct PetUnit<'w, 's> {
     stores: Query<'w, 's, &'static ObjectStore>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
     self_guid: Res<'w, crate::net::SelfGuid>,
+    /// Our seat, whose vehicle is the transport the predicate asks after.
+    seat: Query<'w, 's, &'static crate::vehicle::Passenger, With<crate::net::SelfPlayer>>,
 }
 
 impl PetUnit<'_, '_> {

@@ -195,6 +195,8 @@ pub(crate) enum UseOutcome {
     /// The Attack slot passed the cast attempt's dead rung: the player's Attack ([`AttackPress`])
     /// runs.
     Attack,
+    /// A pet-action slot: the pet bar's action at this 0-based index is pressed.
+    PetAction(u32),
 }
 
 /// `UseAction` on the pressed slot: a cast, an item use or a macro run, at the selection as the
@@ -347,6 +349,9 @@ pub(crate) fn use_action(
                 );
             }
         }
+        // A pet-action slot presses the pet bar's action by index, at no unit (`0x5ac000` →
+        // `0x5d4210`).
+        Some(b) if b.kind == super::ACTION_KIND_PET => return UseOutcome::PetAction(b.action),
         Some(b) => {
             debug!(
                 "ui_action: action {action} kind {:#04x} has no use path",

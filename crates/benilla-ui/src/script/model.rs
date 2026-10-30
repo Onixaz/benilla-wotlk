@@ -488,6 +488,8 @@ pub(crate) struct Model {
     /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
     pub(crate) bonus_bar_offset: u8,
+    /// The temporary bar has an owner (`CGActionBar::m_tempPageActiveFlags`).
+    pub(crate) temp_action_bar: bool,
     /// The main bar's page, 0-based (`[0xc1e598]`): `GetActionBarPage` answers it plus one.
     pub(crate) action_bar_page: u8,
     /// `(action id, packed)` per slot `PickupAction`/`PlaceAction` changed, 0 clearing it: one
@@ -621,6 +623,15 @@ pub(crate) struct Model {
     pub(crate) spell_info: Option<std::rc::Rc<dyn super::spell_info::SpellInfoSource>>,
     /// Each held unit's threat list.
     pub(crate) threat: super::threat::ThreatView,
+    /// Each unit's passenger state and seat.
+    pub(crate) vehicles: super::vehicle::VehicleView,
+    /// The seat indicators by id.
+    pub(crate) vehicle_indicators:
+        std::sync::Arc<HashMap<u32, super::vehicle::VehicleIndicatorView>>,
+    /// The vehicle verbs' requests, for the app to send.
+    pub(crate) vehicle_requests: Vec<super::vehicle::VehicleRequest>,
+    /// `s_vehicleAimNormPower`, 0..1.
+    pub(crate) vehicle_aim_power: f32,
     /// The four totem slots and their tools.
     pub(crate) totems: super::totem::TotemSlots,
     /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
@@ -1134,6 +1145,9 @@ impl Model {
         if token.eq_ignore_ascii_case("focus") {
             return self.focus_unit();
         }
+        if token.eq_ignore_ascii_case("vehicle") {
+            return self.vehicle_unit();
+        }
         self.pushed_unit(token).or_else(|| self.chained_unit(token))
     }
 
@@ -1154,6 +1168,20 @@ impl Model {
                     .values()
                     .find(|u| u.exists && u.guid == guid)
             })
+    }
+
+    /// The seated player's vehicle by guid, as the getters look its object up (`0x468460`):
+    /// whichever snapshot holds it, the per-guid feed's ([`super::UnitGuids::chain_ends`]) first.
+    fn vehicle_unit(&self) -> Option<&UnitState> {
+        let guid = self.unit_guids.vehicle;
+        if guid == 0 {
+            return None;
+        }
+        self.units_by_guid.get(&guid).or_else(|| {
+            self.units_by_lower
+                .values()
+                .find(|u| u.exists && u.guid == guid)
+        })
     }
 
     /// The snapshot pushed under `token` itself, folded as 1.12's resolver folds (`_strnicmp`:
@@ -1368,6 +1396,7 @@ impl Model {
             equipment_set_requests: Vec::new(),
             action_states: HashMap::new(),
             bonus_bar_offset: 0,
+            temp_action_bar: false,
             action_bar_page: 0,
             action_sets: Vec::new(),
             ui_errors: Vec::new(),
@@ -1433,6 +1462,10 @@ impl Model {
             title_throttle: Default::default(),
             spell_info: None,
             threat: Default::default(),
+            vehicles: Default::default(),
+            vehicle_indicators: Default::default(),
+            vehicle_requests: Vec::new(),
+            vehicle_aim_power: 0.0,
             totems: Default::default(),
             totem_destroys: Vec::new(),
             multicast: Default::default(),

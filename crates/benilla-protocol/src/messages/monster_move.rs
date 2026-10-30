@@ -66,12 +66,10 @@ pub(super) fn read_monster_move_wotlk(
     on_transport: bool,
 ) -> io::Result<ServerPacket> {
     let guid = read_packed_guid(r)?;
-    let transport = if on_transport {
-        let transport = read_packed_guid(r)?;
-        let _seat = read_u8(r)?;
-        Some(transport)
+    let (transport, seat) = if on_transport {
+        (Some(read_packed_guid(r)?), read_u8(r)? as i8)
     } else {
-        None
+        (None, -1)
     };
     let _unk = read_u8(r)?;
     let start = Vector3d::read(r)?;
@@ -90,6 +88,7 @@ pub(super) fn read_monster_move_wotlk(
         return Ok(ServerPacket::MonsterMove {
             guid,
             transport,
+            seat,
             start,
             spline_id,
             path: Vec::new(),
@@ -134,6 +133,7 @@ pub(super) fn read_monster_move_wotlk(
     Ok(ServerPacket::MonsterMove {
         guid,
         transport,
+        seat,
         start,
         spline_id,
         path,

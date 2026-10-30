@@ -128,6 +128,9 @@ pub(crate) struct CastLadder<'w, 's> {
     pub(crate) pet_bar: Option<Res<'w, crate::ui_pet::PetBar>>,
     /// `secureAbilityToggle`; a harness without it reads the default, on.
     pub(crate) secure_toggle: Option<Res<'w, super::SecureAbilityToggle>>,
+    /// Where a pet cast whose missile flies its aim goes to be aimed and sent.
+    /// Absent without the vehicle plugin, when such a cast is sent plain.
+    pub(crate) trajectory_casts: Option<ResMut<'w, crate::vehicle::TrajectoryCasts>>,
 }
 
 /// What a targeting-cursor click bound: what the location bind or the target bind fills into the
@@ -368,12 +371,27 @@ impl CastLadder<'_, '_> {
     /// (the player's only), the pet's pending cast and its cooldown start (the player's, with the
     /// pet as caster).
     fn commit_pet(&mut self, spell_id: u32, pet: u64, target: UseItemTarget) {
-        debug!("ui_pet: pet cast {spell_id} sent as {pet:#x} at {target:?}");
-        let _ = self.commands.0.send(ClientCommand::PetCastSpell {
-            pet_guid: pet,
-            spell_id,
-            target,
-        });
+        let flies_aim = self
+            .spells
+            .as_deref()
+            .and_then(|s| s.catalog.get(spell_id))
+            .is_some_and(|d| d.flies_aim);
+        let aims = self.trajectory_casts.as_deref_mut().filter(|_| flies_aim);
+        if let Some(aims) = aims {
+            // `0x80b39d`: the aim replaces the targets, flown from the mover.
+            debug!("ui_pet: pet cast {spell_id} as {pet:#x} flies an aim");
+            aims.0.push(crate::vehicle::TrajectoryCast {
+                caster: pet,
+                spell_id,
+            });
+        } else {
+            debug!("ui_pet: pet cast {spell_id} sent as {pet:#x} at {target:?}");
+            let _ = self.commands.0.send(ClientCommand::PetCastSpell {
+                pet_guid: pet,
+                spell_id,
+                target,
+            });
+        }
         let now = Instant::now();
         let mods = self.spell_mods.clone();
         self.ecs.queue(move |world: &mut World| {

@@ -251,13 +251,16 @@ pub(in crate::net) fn apply_move(
     landings: &mut MessageWriter<crate::creature_anim::HardLanding>,
 ) {
     use crate::creature_anim::move_flags::FALLING;
-    // A transport-local pose, re-anchored each frame by `compose_riders`; no tail means off.
+    // A transport-local pose, re-anchored each frame by `compose_riders`; no tail means off. A
+    // relayed move's transport change animates a vehicle seat's enter or exit (`0x6ef860`).
+    commands.entity(e).insert(crate::vehicle::TransitionCue);
     match &ev.transport {
         Some(t) => {
             commands.entity(e).insert(crate::transport::TransportRider {
                 transport_guid: t.guid,
                 local_pos: [t.pos.x, t.pos.y, t.pos.z],
                 local_orientation: t.orientation,
+                seat: t.seat,
             });
         }
         None => {

@@ -223,7 +223,7 @@ pub(super) fn seat_or_spawn_mount(
 /// The rider's ground frame: its own entity, or a fresh conform node under it for a model the
 /// reference tilts to the terrain (`GlobalModelFlags & 3` of 1 or 3). Mounted, the composite
 /// tilts through the mount's node instead.
-fn ground_frame(
+pub(crate) fn ground_frame(
     commands: &mut Commands,
     unit: Entity,
     net: &NetEntity,
@@ -250,7 +250,7 @@ fn ground_frame(
 /// Move a rig's consumer anchors onto `frame` and make it the model frame, as the reference's model
 /// attach and detach do; the anchors carry every held item, effect and overhead rider. `pose_dirty`
 /// re-seats them and the palette in the same frame's compose.
-fn reseat_rig(commands: &mut Commands, rig: &mut RigPose, frame: Entity, conform: bool) {
+pub(crate) fn reseat_rig(commands: &mut Commands, rig: &mut RigPose, frame: Entity, conform: bool) {
     if rig.joints_root == frame {
         return;
     }

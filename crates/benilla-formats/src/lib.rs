@@ -45,7 +45,8 @@ pub use cinematics::{
     CinematicSequence, CinematicView, SEQUENCE_CAMERAS,
 };
 pub use creatures::{
-    load_creature_catalog, CreatureCatalog, CreatureModel, FootprintParams, NpcAppearance,
+    load_creature_catalog, CreatureCatalog, CreatureModel, FootprintParams, MissileCollision,
+    NpcAppearance,
 };
 pub use macro_icons::{load_macro_icons, load_macro_item_icons};
 mod macro_icons;
@@ -57,8 +58,13 @@ pub use gm_ticket_category::{
     load_gm_ticket_categories, GmTicketCategory, GmTicketCategoryCatalog,
 };
 mod summon_properties;
+mod vehicle;
 pub use summon_properties::{
     load_summon_properties, SummonPropertiesCatalog, SUMMON_CONTROL_POSSESSED,
+};
+pub use vehicle::{
+    load_vehicles, IndicatorSeat, OverrideSpellsRec, VehicleCatalog, VehicleRec, VehicleSeatRec,
+    VehicleUiIndicator, OVERRIDE_SPELLS, VEHICLE_SEATS,
 };
 mod glyphs;
 pub use glyphs::{load_glyph_catalog, GlyphCatalog, GlyphProperty, GlyphSlot};
@@ -260,8 +266,8 @@ pub use talents::{load_talent_catalog, Talent, TalentCatalog, TalentTabInfo, MAX
 mod spell_visual;
 pub use spell_visual::{
     char_proc_small_int, char_proc_type, load_spell_visual_catalog, ChainEffect, ChainProc,
-    CharProc, SpellVisualCatalog, TrailProc, VisualKit, VisualStages, KIT_CHAR_PROCS,
-    KIT_SLOT_TAGS, MISSILE_ATTACH_TABLE, WORLD_EFFECT_TAG,
+    CharProc, SpellMissileRec, SpellVisualCatalog, TrailProc, VisualKit, VisualStages,
+    DEFAULT_MISSILE_GRAVITY, KIT_CHAR_PROCS, KIT_SLOT_TAGS, MISSILE_ATTACH_TABLE, WORLD_EFFECT_TAG,
 };
 mod emit_timing;
 pub use emit_timing::{EmitParams, EmitTiming, ParamsNow};

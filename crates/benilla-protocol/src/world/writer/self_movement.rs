@@ -74,6 +74,88 @@ impl WorldWriter {
         )
     }
 
+    /// `MSG_MOVE_SET_PITCH`, `_START_PITCH_UP`, `_START_PITCH_DOWN` or `_STOP_PITCH`: the mover's
+    /// pose with its extra flags and pitch, which an aiming vehicle's `ALWAYS_ALLOW_PITCHING`
+    /// carries (`0x6ee460`'s move event).
+    #[allow(clippy::too_many_arguments)] // the movement report's fields, one each
+    pub fn move_pitch(
+        &mut self,
+        opcode: u16,
+        mover: u64,
+        flags: u32,
+        flags2: u16,
+        pos: [f32; 3],
+        orientation: f32,
+        pitch: f32,
+    ) -> Result<()> {
+        let mut info = movement_info(pos, orientation, flags);
+        info.flags2 = flags2;
+        info.pitch = pitch;
+        self.send(opcode, &messages::movement(mover, &info))
+    }
+
+    /// `CMSG_REQUEST_VEHICLE_EXIT`, `_PREV_SEAT` or `_NEXT_SEAT`: one of the three empty seat
+    /// requests for a vehicle we ride and do not control.
+    pub fn request_vehicle(&mut self, opcode: u16) -> Result<()> {
+        self.send(opcode, &[])
+    }
+
+    /// `CMSG_REQUEST_VEHICLE_SWITCH_SEAT`: `vehicle`'s `seat`.
+    pub fn request_vehicle_switch_seat(&mut self, vehicle: u64, seat: u8) -> Result<()> {
+        self.send(
+            opcode::CMSG_REQUEST_VEHICLE_SWITCH_SEAT,
+            &messages::request_vehicle_switch_seat(vehicle, seat),
+        )
+    }
+
+    /// `CMSG_UPDATE_PROJECTILE_POSITION`: where `caster`'s trajectory missile `cast_id` hit, raw
+    /// WoW coordinates.
+    pub fn update_projectile_position(
+        &mut self,
+        caster: u64,
+        spell: u32,
+        cast_id: u8,
+        at: [f32; 3],
+    ) -> Result<()> {
+        let [x, y, z] = at;
+        self.send(
+            opcode::CMSG_UPDATE_PROJECTILE_POSITION,
+            &messages::update_projectile_position(
+                caster,
+                spell,
+                cast_id,
+                crate::wire::Vector3d { x, y, z },
+            ),
+        )
+    }
+
+    /// `CMSG_EJECT_PASSENGER` or `CMSG_PLAYER_VEHICLE_ENTER`, each a bare guid.
+    pub fn vehicle_guid(&mut self, opcode: u16, guid: u64) -> Result<()> {
+        self.send(opcode, &messages::vehicle_guid(guid))
+    }
+
+    /// `CMSG_DISMISS_CONTROLLED_VEHICLE` with our pose, or with `seat`
+    /// `CMSG_CHANGE_SEATS_ON_CONTROLLED_VEHICLE`.
+    pub fn controlled_vehicle(
+        &mut self,
+        mover: u64,
+        flags: u32,
+        pose: ([f32; 3], f32),
+        seat: Option<(u64, u8)>,
+    ) -> Result<()> {
+        let info = movement_info(pose.0, pose.1, flags);
+        match seat {
+            None => self.send(
+                opcode::CMSG_DISMISS_CONTROLLED_VEHICLE,
+                &messages::dismiss_controlled_vehicle(mover, &info),
+            ),
+            Some((vehicle, seat)) => self.send(
+                opcode::CMSG_CHANGE_SEATS_ON_CONTROLLED_VEHICLE,
+                &messages::change_seats_on_controlled_vehicle(mover, &info, vehicle, seat),
+            ),
+        }
+    }
+
     /// `CMSG_TIME_SYNC_RESP`: answer a time-sync request with our movement clock at `client_ms`.
     pub fn time_sync_resp(&mut self, counter: u32, client_ms: u32) -> Result<()> {
         self.send(

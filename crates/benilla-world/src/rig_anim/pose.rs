@@ -93,6 +93,23 @@ impl RigPose {
         }
     }
 
+    /// `bone`'s model-space pivot at bind pose: the bind translations summed up its chain.
+    pub fn bind_pivot(&self, bone: u16) -> Option<Vec3> {
+        let mut at = usize::from(bone);
+        let mut pivot = *self.binds.get(at)?;
+        // Parent-sorted, so a walk ends; the bound guards a malformed loop.
+        for _ in 0..self.binds.len() {
+            match usize::try_from(self.parents[at]).ok().filter(|&p| p < at) {
+                Some(p) => {
+                    pivot += self.binds[p];
+                    at = p;
+                }
+                None => break,
+            }
+        }
+        Some(pivot)
+    }
+
     /// For a rig drawn by an off-world camera (a portrait booth): drops the billboard kinds, which
     /// the world pass would face to the `WorldCamera`; the camera-free parent arms stay.
     pub fn without_camera_billboards(mut self) -> Self {

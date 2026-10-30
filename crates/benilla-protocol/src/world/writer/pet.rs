@@ -33,6 +33,28 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_PET_CAST_SPELL` for a trajectory missile: the shot, then the mover's stop report at
+    /// its pose.
+    #[allow(clippy::too_many_arguments)] // the shot and the mover's pose, one each
+    pub fn pet_cast_trajectory(
+        &mut self,
+        pet_guid: u64,
+        spell_id: u32,
+        shot: &messages::TrajectoryShot,
+        flags: u32,
+        flags2: u16,
+        pos: [f32; 3],
+        orientation: f32,
+    ) -> Result<()> {
+        let count = self.cast_counter.take();
+        let mut stop = crate::world::movement::movement_info(pos, orientation, flags);
+        stop.flags2 = flags2;
+        self.send(
+            opcode::CMSG_PET_CAST_SPELL,
+            &messages::pet_cast_trajectory(pet_guid, count, spell_id, shot, &stop),
+        )
+    }
+
     /// `CMSG_PET_STOP_ATTACK`: the Attack button's second press.
     pub fn pet_stop_attack(&mut self, pet_guid: u64) -> Result<()> {
         self.send(

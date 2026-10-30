@@ -389,9 +389,18 @@ struct AuraUnits<'w> {
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
 }
 
+#[allow(clippy::type_complexity)] // a Bevy system's full input set
 fn feed_auras(
     script: Option<NonSendMut<UiScript>>,
-    self_q: Query<(&ObjectStore, &Guid, Option<&UnitAuras>), With<SelfPlayer>>,
+    self_q: Query<
+        (
+            &ObjectStore,
+            &Guid,
+            Option<&UnitAuras>,
+            Option<&crate::vehicle::Passenger>,
+        ),
+        With<SelfPlayer>,
+    >,
     units: AuraUnits,
     stores: Query<&ObjectStore>,
     tables: Query<&UnitAuras>,
@@ -408,7 +417,7 @@ fn feed_auras(
     let Some(mut script) = script else {
         return;
     };
-    let Ok((store, self_guid, self_table)) = self_q.single() else {
+    let Ok((store, self_guid, self_table, seated)) = self_q.single() else {
         // No avatar between a worldport's frames: the lists stand until it streams back.
         return;
     };
@@ -534,6 +543,10 @@ fn feed_auras(
                 .map_or(0, |(_, guid)| guid),
             npc: units.interact.as_deref().and_then(|i| i.1).unwrap_or(0),
             focus: focus_guid,
+            // The player's transport while seated (`0x60ac87`).
+            vehicle: seated
+                .filter(|p| p.state == crate::vehicle::SEATED)
+                .map_or(0, |p| p.vehicle),
             held,
             table_of,
             buffs_visible,

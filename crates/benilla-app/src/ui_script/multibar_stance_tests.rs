@@ -71,6 +71,7 @@ fn shipped_multibars_drive_end_to_end() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.set_action(
@@ -82,6 +83,7 @@ fn shipped_multibars_drive_end_to_end() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.set_action(
@@ -93,6 +95,7 @@ fn shipped_multibars_drive_end_to_end() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -430,6 +433,7 @@ fn multibar_hover_renders_the_buttons_own_action() {
                 count: 0,
                 consumable: false,
                 stackable: false,
+                pet_spell: None,
             }),
         );
         s.set_spell_tooltip(
@@ -675,7 +679,7 @@ fn a_widescreen_mode_seats_the_cast_bar_above_the_bars() {
             .unwrap()
     };
     show_bars(&s, &[]);
-    assert_eq!(s.eval::<f64>("return menuBarTop").unwrap(), 75.0);
+    // `menuBarTop` is a file local (UIParent.lua:1164); the cast bar's seat reads it.
     assert_eq!(cast_y(&s), 115.0, "CastingBarFrame: menuBarTop 75 + its 40");
     show_bars(&s, &[1]);
     assert_eq!(cast_y(&s), 160.0, "bottom-left up: 115 + bottomEither 45");
@@ -831,6 +835,7 @@ fn a_held_payload_ghosts_the_empty_wells_it_opens() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     // Raise after PLAYER_ENTERING_WORLD: its arm re-reads the server's toggle byte and would lower
@@ -899,6 +904,7 @@ fn a_held_payload_ghosts_the_empty_wells_it_opens() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("ACTIONBAR_SLOT_CHANGED", vec![ScriptValue::Number(2.0)]);
@@ -1251,6 +1257,7 @@ fn an_extra_bars_empty_well_keeps_its_bound_hotkey_label() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     // An occupied well and two empty ones, all bound, held open so the empty ones show: the

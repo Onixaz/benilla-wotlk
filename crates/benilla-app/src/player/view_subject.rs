@@ -20,6 +20,11 @@ pub(crate) struct ViewSubject {
     pub(crate) remote: Option<RemoteView>,
 }
 
+/// A vehicle seat's camera focus (`0x759200`), which the camera orbits while no far sight does:
+/// the vehicle, or our body, at the seat's camera offset.
+#[derive(Resource, Default)]
+pub(crate) struct VehicleFocus(pub(crate) Option<RemoteView>);
+
 /// A far-sight subject's pose, in the two forms the camera rig asks for.
 #[derive(Clone, Copy)]
 pub(crate) struct RemoteView {
@@ -53,6 +58,7 @@ pub(super) fn publish_view_subject(
         Option<&crate::net::NetEntity>,
     )>,
     net: Res<NetCommands>,
+    vehicle: Option<Res<VehicleFocus>>,
     mut engaged: Local<Option<u64>>,
 ) {
     let anchor = self_store
@@ -66,7 +72,8 @@ pub(super) fn publish_view_subject(
             entity,
             feet: t.translation,
             pivot_height: head_height(pivot, net.map_or(1.0, |n| n.scale)),
-        });
+        })
+        .or_else(|| vehicle.as_deref().and_then(|v| v.0));
 
     // `CMSG_FAR_SIGHT` on the field's edge: 1 as the view attaches and 0 as it releases, the
     // reference's two sites. It follows the field, not the resolve: a release sent while the

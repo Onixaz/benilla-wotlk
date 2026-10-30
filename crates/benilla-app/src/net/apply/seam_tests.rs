@@ -32,6 +32,7 @@ fn create() -> SessionEvent {
         transport_progress: None,
         transport: None,
         spline: None,
+        vehicle: None,
         fields: ObjectFields::from_pairs(&[
             (FIELD_UNIT_HEALTH, 100),
             (FIELD_UNIT_MAXHEALTH, 100),
@@ -144,6 +145,7 @@ fn create_with_speeds(speeds: Option<MoveSpeeds>) -> SessionEvent {
             transport_progress,
             transport,
             spline,
+            vehicle,
             fields,
             ..
         } => SessionEvent::ObjectCreate {
@@ -158,6 +160,7 @@ fn create_with_speeds(speeds: Option<MoveSpeeds>) -> SessionEvent {
             transport_progress,
             transport,
             spline,
+            vehicle,
             fields,
         },
         _ => unreachable!(),

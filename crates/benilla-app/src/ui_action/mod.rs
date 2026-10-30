@@ -46,6 +46,10 @@ pub(crate) struct CooldownEvents;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SlotIdentityFeed;
 
+/// The rank pass over the bar's spell slots, which a local slot writer follows.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ActionRanks;
+
 pub(crate) use errors::{
     attack_actor_blocked, attack_actor_refusal, keyed_line, keyed_line_s, reagent_totem_refusal,
     show_messages, ui_error_text, CastErrors, CastFail, Caster, FillArg, MessageSink, MountErrors,
@@ -56,6 +60,24 @@ pub(crate) use weapon_icon::{melee_auto_attack_icon, ranged_weapon_icon};
 /// `Attack`, the auto-attack pseudo-spell: it toggles melee rather than casting. The use path
 /// keys on this id; the icon keys on `SPELL_EFFECT_ATTACK`, which only 6603 carries.
 pub(crate) const SPELL_ATTACK: u32 = 6603;
+
+/// A slot word's pet-action kind, `0x10000000 | index` (`0x5a78c0`): the temporary bar's slots
+/// name the pet bar's actions by index, never stored on the server.
+pub(crate) const ACTION_KIND_PET: u8 = 0x10;
+
+/// The first temporary bar slot (wire 120, `0x5ab800`), twelve long.
+pub(crate) const TEMP_BAR_FIRST_SLOT: u8 = 120;
+
+/// The temporary bar's owners (`CGActionBar::m_tempPageActiveFlags`, `0x5a7c20`): bit `0x1` the
+/// pet's bar (`0x5d4ad0`). Any set pages the bonus bar to 5 (`0x5a83c0`) and pins
+/// `GetActionBarPage` to 1 (`0x5a7fd0`).
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TempActionBar {
+    pub(crate) flags: u32,
+}
+
+/// The pet bar's temporary-bar flag.
+pub(crate) const TEMP_BAR_PET: u32 = 0x1;
 
 /// The action slots (wire 0..143) and the known spells. The bar is client-authoritative:
 /// [`drain::drain_action_sets`] writes it directly, and vmangos stores a slot without a reply
@@ -79,6 +101,29 @@ pub(crate) struct PlayerActions {
 }
 
 impl PlayerActions {
+    /// A local write that the server never hears of, as the temporary bar's (`0x5ab800`); returns
+    /// whether the slot moved.
+    pub(crate) fn set_local(&mut self, slot: u8, packed: u32) -> bool {
+        let fresh = (packed != 0).then_some(ActionButton {
+            slot,
+            action: packed & 0x00FF_FFFF,
+            kind: (packed >> 24) as u8,
+        });
+        if self.buttons.get(&slot) == fresh.as_ref() {
+            return false;
+        }
+        match fresh {
+            Some(b) => {
+                self.buttons.insert(slot, b);
+            }
+            None => {
+                self.buttons.remove(&slot);
+            }
+        }
+        self.dirty = true;
+        true
+    }
+
     /// One button write, the tail every `PlaceAction` shares (`0x5aae80`, then
     /// `CMSG_SET_ACTION_BUTTON`): the store, `dirty` for the feed (which fires
     /// `ACTIONBAR_SLOT_CHANGED`), and the send. `packed == 0` clears; vmangos and AzerothCore
@@ -365,6 +410,7 @@ impl Plugin for UiActionPlugin {
         net::register(app);
         equipment_sets::register(app);
         app.init_resource::<PlayerActions>()
+            .init_resource::<TempActionBar>()
             .init_resource::<LearnedAbilities>()
             .init_resource::<CastErrors>()
             .init_resource::<MountErrors>()
@@ -383,6 +429,7 @@ impl Plugin for UiActionPlugin {
                     // input pass, in any order: a gesture fills only one of their queues.
                     ranks::normalize_action_ranks
                         .in_set(UnitFeed)
+                        .in_set(ActionRanks)
                         .before(feed::feed_actions),
                     feed::feed_actions.in_set(UnitFeed).in_set(SlotIdentityFeed),
                     state::feed_action_state

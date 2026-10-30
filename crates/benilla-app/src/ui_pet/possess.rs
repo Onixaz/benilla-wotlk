@@ -102,8 +102,10 @@ pub(super) fn feed_possess_spell(
     mut field_edges: MessageReader<crate::net::FieldChanged>,
     spells: Option<Res<crate::ui_action::Spells>>,
     summons: Option<Res<crate::spell::SummonSlots>>,
+    riding: Query<&crate::transport::TransportRider, With<crate::net::SelfPlayer>>,
     mut memory: Local<crate::ui_script::VmMemo<PossessMemory>>,
 ) {
+    let riding = riding.single().ok().map(|r| r.transport_guid);
     let Some(mut script) = script else {
         field_edges.clear();
         return;
@@ -140,9 +142,13 @@ pub(super) fn feed_possess_spell(
     }
     if find {
         if let (Some(spells), Some(summons)) = (spells.as_deref(), summons.as_deref()) {
-            // benilla seats no vehicle (#235), so we never ride our charm.
             let auras = me.and_then(|me| pet.auras(me));
-            if let Some(found) = find_possessed_spell(auras, false, &spells.catalog, &summons.0) {
+            // We ride our charm, else our summon, while our transport is it (`0x5d62a0`).
+            let charm = player.and_then(|p| p.0.unit_pet_guid());
+            let on_charm_vehicle = riding.is_some() && charm == riding;
+            if let Some(found) =
+                find_possessed_spell(auras, on_charm_vehicle, &spells.catalog, &summons.0)
+            {
                 next = found;
             }
         }

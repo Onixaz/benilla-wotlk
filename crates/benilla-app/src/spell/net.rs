@@ -390,6 +390,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
         dest,
         ammo_display_id,
         item_caster,
+        trajectory,
         ..
     } = ev
     {
@@ -406,6 +407,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
             dest,
             ammo_display_id,
             item_caster,
+            trajectory,
             &mut sc.commands,
             &l.index,
             &sc.casting,
@@ -1044,6 +1046,7 @@ fn spell_go(
     dest: Option<[f32; 3]>,
     ammo_display_id: Option<u32>,
     item_caster: Option<u64>,
+    trajectory: Option<(f32, u32)>,
     commands: &mut Commands,
     index: &GuidIndex,
     casting: &Query<&Casting>,
@@ -1288,6 +1291,12 @@ fn spell_go(
                 dest,
                 ammo_display_id,
                 seq,
+                trajectory: trajectory.map(|(pitch, delay_ms)| crate::creature_anim::Trajectory {
+                    pitch,
+                    delay: delay_ms as f32 / 1000.0,
+                    caster,
+                    cast_id: cast_count,
+                }),
             });
         }
     }
@@ -2157,6 +2166,7 @@ mod tests {
                             None,
                             None,
                             None,
+                            None,
                             &mut commands,
                             &index,
                             &casting,
@@ -2361,6 +2371,7 @@ mod tests {
                         None,
                         None,
                         item_caster.or(Some(caster)),
+                        None,
                         &mut commands,
                         &index,
                         &casting,
@@ -2561,6 +2572,7 @@ mod tests {
                        0,
                         vec![10, 20, 40, 30],
                         vec![],
+                        None,
                         None,
                         None,
                         None,
@@ -2948,6 +2960,7 @@ mod tests {
                             vec![],
                             // A different guid from `hits[0]`, which the arm must take.
                             Some(99),
+                            None,
                             None,
                             None,
                             None,

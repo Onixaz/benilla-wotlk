@@ -338,6 +338,45 @@ pub fn pet_cast_spell(
     body
 }
 
+/// A trajectory cast's aim: the launch and the impact the client flew, in WoW coordinates, and the
+/// pitch and speed it flew them at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrajectoryShot {
+    pub source: [f32; 3],
+    pub dest: [f32; 3],
+    pub pitch: f32,
+    pub speed: f32,
+}
+
+/// Body of a trajectory `CMSG_PET_CAST_SPELL` (`0x80b406`-`0x80b46c`): castFlags 2, the targets
+/// with the launch as SOURCE and the impact as DEST, the pitch and speed, then `u8` 1 and the
+/// mover's `MSG_MOVE_STOP` report (`0x71f060`: `u32` opcode, packed guid, movement).
+pub fn pet_cast_trajectory(
+    pet_guid: u64,
+    cast_count: u8,
+    spell_id: u32,
+    shot: &TrajectoryShot,
+    stop: &crate::messages::MovementInfo,
+) -> Vec<u8> {
+    use super::spells::{put_target_point, TARGET_FLAG_DEST_LOCATION, TARGET_FLAG_SOURCE_LOCATION};
+    let mut body = Vec::with_capacity(96);
+    body.extend_from_slice(&pet_guid.to_le_bytes());
+    body.push(cast_count);
+    body.extend_from_slice(&spell_id.to_le_bytes());
+    body.push(2);
+    body.extend_from_slice(
+        &(TARGET_FLAG_SOURCE_LOCATION | TARGET_FLAG_DEST_LOCATION).to_le_bytes(),
+    );
+    put_target_point(&mut body, shot.source);
+    put_target_point(&mut body, shot.dest);
+    body.extend_from_slice(&shot.pitch.to_le_bytes());
+    body.extend_from_slice(&shot.speed.to_le_bytes());
+    body.push(1);
+    body.extend_from_slice(&u32::from(super::opcode::MSG_MOVE_STOP).to_le_bytes());
+    stop.write(pet_guid, &mut body);
+    body
+}
+
 /// Body of `CMSG_PET_STOP_ATTACK` (opcode 746, `0x5d4665`): the pet guid, sent by the Attack
 /// button's second press.
 pub fn pet_stop_attack(pet_guid: u64) -> Vec<u8> {
@@ -528,6 +567,50 @@ mod tests {
         for c in [1.0f32, 2.0, 3.0] {
             want.extend_from_slice(&c.to_le_bytes());
         }
+        assert_eq!(body, want);
+    }
+
+    /// A trajectory shot: flags 2, mask `0x60` with both points, pitch and speed, then the mover's
+    /// stop report behind a 1.
+    #[test]
+    fn pet_cast_trajectory_body_golden() {
+        let shot = TrajectoryShot {
+            source: [1.0, 2.0, 3.0],
+            dest: [4.0, 5.0, 6.0],
+            pitch: 0.5,
+            speed: 30.0,
+        };
+        let stop = crate::messages::MovementInfo {
+            flags: 0,
+            flags2: 0,
+            timestamp: 9,
+            position: Vector3d {
+                x: 7.0,
+                y: 8.0,
+                z: 9.0,
+            },
+            orientation: 1.0,
+            transport: None,
+            pitch: 0.0,
+            fall_time: 0,
+            jump: None,
+        };
+        let body = pet_cast_trajectory(0xF150_0000_0000_0007, 3, 47801, &shot, &stop);
+        let mut want = vec![0x07, 0, 0, 0, 0, 0, 0x50, 0xF1, 3];
+        want.extend_from_slice(&47801u32.to_le_bytes());
+        want.push(2);
+        want.extend_from_slice(&0x60u32.to_le_bytes());
+        for point in [shot.source, shot.dest] {
+            want.push(0);
+            for c in point {
+                want.extend_from_slice(&c.to_le_bytes());
+            }
+        }
+        want.extend_from_slice(&0.5f32.to_le_bytes());
+        want.extend_from_slice(&30.0f32.to_le_bytes());
+        want.push(1);
+        want.extend_from_slice(&0xB7u32.to_le_bytes());
+        stop.write(0xF150_0000_0000_0007, &mut want);
         assert_eq!(body, want);
     }
 

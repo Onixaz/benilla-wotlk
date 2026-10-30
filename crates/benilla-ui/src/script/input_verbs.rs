@@ -338,6 +338,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    // `VehicleCameraZoomIn` and `VehicleCameraZoomOut` (`0x6018a0`, `0x6018b0`) are the same
+    // verbs.
+    g.set(
+        "VehicleCameraZoomIn",
+        g.get::<mlua::Function>("CameraZoomIn")?,
+    )?;
+    g.set(
+        "VehicleCameraZoomOut",
+        g.get::<mlua::Function>("CameraZoomOut")?,
+    )?;
     // Not built: the `MoveView*` pairs (`(direction, time, 0)` and `(direction, time)` for In, Out,
     // Right, Left, Up, Down = 0..5), whose effect on the camera is not established; 1.12's own
     // `MOVEVIEW*` bindings are commented out. And `ToggleMouseMove`, which toggles freelook with no

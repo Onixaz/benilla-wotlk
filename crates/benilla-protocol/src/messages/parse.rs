@@ -14,7 +14,7 @@ use super::{
     loot, mail, meeting_stone, mirror_timer, monster_move, movement, opcode, page_text, pet,
     petition, pose, progression, pvp, quest, rune, social, spellbook, spells, stable, summon,
     tabard, talents, taxi, threat, totem, trade, trainer, tutorial, unit_state, update_object,
-    vendor, world_state, AttackSwingError, CalendarPacket, Character, CreatureQueryInfo,
+    vehicle, vendor, world_state, AttackSwingError, CalendarPacket, Character, CreatureQueryInfo,
     DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
 };
 
@@ -1119,6 +1119,21 @@ fn parse_server_body(
         opcode::SMSG_THREAT_REMOVE => {
             let (unit, victim) = threat::read_threat_remove(&mut r)?;
             ServerPacket::ThreatRemove { unit, victim }
+        }
+        opcode::SMSG_PLAYER_VEHICLE_DATA => {
+            let (guid, vehicle_id) = vehicle::read_player_vehicle_data(&mut r)?;
+            ServerPacket::PlayerVehicleData { guid, vehicle_id }
+        }
+        opcode::SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA => {
+            ServerPacket::CancelExpectedRideVehicleAura
+        }
+        opcode::SMSG_SET_PROJECTILE_POSITION => {
+            let (caster, cast_id, position) = vehicle::read_set_projectile_position(&mut r)?;
+            ServerPacket::SetProjectilePosition {
+                caster,
+                cast_id,
+                position,
+            }
         }
         opcode::SMSG_THREAT_CLEAR => ServerPacket::ThreatClear {
             unit: read_packed_guid(&mut r)?,

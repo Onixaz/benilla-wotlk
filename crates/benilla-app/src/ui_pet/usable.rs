@@ -123,8 +123,7 @@ impl PetUnit<'_, '_> {
                 self.self_guid.0,
                 self.player_store(),
                 pet,
-                // benilla seats no vehicle (#235), so no ride is ever the pet.
-                None,
+                self.seat.single().ok().map(|p| p.vehicle),
                 ignore_control,
             )
         })

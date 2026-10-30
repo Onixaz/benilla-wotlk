@@ -3,8 +3,8 @@
 //! `UNIT_FIELD_TARGET`. Every compare folds ASCII case. The bases are 12340's (`0x60abf0`, in its
 //! compare order): `player`, `vehicle`, `pet`, `target`, `partypetN`, `partyN`, `raidpetN`,
 //! `raidN`, `bossN`, `arenapetN`, `arenaN`, `commentatorN`, `mouseover`, `focus`, then the exact
-//! `npc`, `questnpc` and `none`. The app pushes no guid for `vehicle`, `bossN`, `arenaN`,
-//! `arenapetN`, `commentatorN`, `focus` or `questnpc` yet, so they name nobody (#90); 12340's
+//! `npc`, `questnpc` and `none`. The app pushes no guid for `bossN`, `arenaN`, `arenapetN`,
+//! `commentatorN` or `questnpc` yet, so they name nobody (#90); 12340's
 //! `pet` and `-` suffixes and its name lookup (`0x60aaa0`, `0x60a630`) are not built.
 
 use std::collections::HashMap;
@@ -17,6 +17,8 @@ pub struct UnitGuids {
     pub player: u64,
     /// The pet: `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON`.
     pub pet: u64,
+    /// The vehicle the player sits in, its movement transport while seated (`0x60ac87`), else 0.
+    pub vehicle: u64,
     /// The target global.
     pub target: u64,
     /// The mouseover global, read only while it is a held unit.
@@ -208,6 +210,7 @@ impl UnitGuids {
         let Self {
             player,
             pet,
+            vehicle,
             target,
             mouseover,
             npc,
@@ -220,6 +223,7 @@ impl UnitGuids {
         } = self;
         *player == other.player
             && *pet == other.pet
+            && *vehicle == other.vehicle
             && *target == other.target
             && *mouseover == other.mouseover
             && *npc == other.npc
@@ -267,9 +271,9 @@ impl UnitGuids {
             UnitBase::Mouseover if !self.held.contains_key(&self.mouseover) => return None,
             UnitBase::Mouseover => self.mouseover,
             UnitBase::Focus => self.focus,
+            UnitBase::Vehicle => self.vehicle,
             // No guid pushed for these yet (#90).
-            UnitBase::Vehicle
-            | UnitBase::QuestNpc
+            UnitBase::QuestNpc
             | UnitBase::Boss(_)
             | UnitBase::Arena(_)
             | UnitBase::ArenaPet(_)
@@ -284,11 +288,11 @@ impl UnitGuids {
     /// A guid repeats when two units share a target, and the last hop's unit need not be held: the
     /// lookup that finds its object is the reader's.
     pub(crate) fn chain_ends(&self) -> impl Iterator<Item = u64> + '_ {
-        // The focus too: `focus` reads its unit by guid, the way a hop's end is read.
+        // The focus and the vehicle too: they read their unit by guid, the way a hop's end is read.
         self.held
             .values()
             .copied()
-            .chain(std::iter::once(self.focus))
+            .chain([self.focus, self.vehicle])
             .filter(|&guid| guid != 0 && guid != crate::script::focus::NOBODY)
     }
 
@@ -299,8 +303,8 @@ impl UnitGuids {
     }
 
     /// Every token naming `guid`, in the order 12340's unit-event fan-out lists them (`0x60bb70`):
-    /// `player`, `pet`, `partyN`, `partypetN`, `raidN`, `raidpetN`, `target`, `focus`, `npc`. No
-    /// `target` hop and no `mouseover`. The reference also lists `vehicle`, `arenaN`, `arenapetN`
+    /// `player`, `vehicle`, `pet`, `partyN`, `partypetN`, `raidN`, `raidpetN`, `target`, `focus`,
+    /// `npc`. No `target` hop and no `mouseover`. The reference also lists `arenaN`, `arenapetN`
     /// and `bossN`, which this resolver has no base for.
     pub(crate) fn tokens_naming(&self, guid: u64) -> Vec<String> {
         let mut out = Vec::new();
@@ -309,6 +313,9 @@ impl UnitGuids {
         }
         if self.player == guid {
             out.push("player".into());
+        }
+        if self.vehicle == guid {
+            out.push("vehicle".into());
         }
         if self.player != 0 && self.pet == guid {
             out.push("pet".into());
@@ -382,10 +389,29 @@ mod tests {
         assert_eq!(mob.tokens_naming(MOB), ["target", "focus", "npc"]);
     }
 
+    /// `vehicle` names the seated player's transport, `vehicletarget` hops off it, and the
+    /// fan-out lists `vehicle` right after `player` (`0x60bb70`).
+    #[test]
+    fn the_vehicle_is_a_base_and_is_fanned_out() {
+        const CART: u64 = 0xF150_0000_0000_0001;
+        let mut g = UnitGuids {
+            vehicle: CART,
+            pet: CART,
+            ..guids()
+        };
+        g.held.insert(CART, ME);
+        assert_eq!(g.guid_of("vehicle"), Some(CART));
+        assert_eq!(g.guid_of("vehicletarget"), Some(ME));
+        assert_eq!(g.tokens_naming(CART), ["vehicle", "pet"]);
+        assert_eq!(guids().guid_of("vehicle"), None, "not seated, nobody");
+        assert!(g.chain_ends().any(|e| e == CART));
+    }
+
     fn guids() -> UnitGuids {
         UnitGuids {
             player: ME,
             pet: PET,
+            vehicle: 0,
             target: MOB,
             mouseover: MOB,
             npc: MOB,

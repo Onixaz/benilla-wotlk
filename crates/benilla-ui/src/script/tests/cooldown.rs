@@ -54,6 +54,7 @@ fn action_state_bindings_answer_the_reference_conventions() {
             count: 4,
             consumable: true,
             stackable: false,
+            pet_spell: None,
         }),
     );
     assert!(s.eval::<bool>("return IsConsumableAction(3) == 1").unwrap());

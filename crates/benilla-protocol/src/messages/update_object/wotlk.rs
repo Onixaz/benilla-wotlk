@@ -139,6 +139,7 @@ fn read_movement_block(r: &mut impl Read) -> io::Result<WotlkMovement> {
     let mut speeds = None;
     let mut transport = None;
     let mut transport_progress = None;
+    let mut vehicle = None;
     let mut spline = None;
     let mut rotation = None;
 
@@ -149,6 +150,7 @@ fn read_movement_block(r: &mut impl Read) -> io::Result<WotlkMovement> {
         mover = Some(MoverState {
             flags: info.flags,
             pitch: info.pitch,
+            flags2: info.flags2,
         });
         // Walk, run, run back, swim, swim back, flight, flight back, turn rate, pitch rate.
         let mut s = [0.0f32; 9];
@@ -185,8 +187,7 @@ fn read_movement_block(r: &mut impl Read) -> io::Result<WotlkMovement> {
         transport_progress = Some(read_u32_le(r)?);
     }
     if update_flag & UPDATE_FLAG_VEHICLE != 0 {
-        let _vehicle_id = read_u32_le(r)?;
-        let _orientation = read_f32_le(r)?;
+        vehicle = Some((read_u32_le(r)?, read_f32_le(r)?));
     }
     if update_flag & UPDATE_FLAG_ROTATION != 0 {
         rotation = Some(unpack_rotation(read_u64_le(r)? as i64));
@@ -199,6 +200,7 @@ fn read_movement_block(r: &mut impl Read) -> io::Result<WotlkMovement> {
             speeds,
             transport_progress,
             transport,
+            vehicle,
             spline,
         },
         rotation,

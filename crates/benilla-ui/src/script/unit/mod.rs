@@ -146,8 +146,8 @@ pub struct UnitState {
     /// `UnitGroupRolesAssigned` (`0x60c810`): the LFG role bits `SMSG_GROUP_LIST` carries for a
     /// group member or the player, tank `0x2`, healer `0x4`, damage `0x8`; 0 outside the group.
     pub group_roles: u8,
-    /// `UnitInVehicle` (`0x6133d0`): a party record's vehicle status bit `0x200`. benilla tracks
-    /// no vehicle, so a held unit rides none.
+    /// `UnitInVehicle` (`0x6133d0`)'s unheld leg: the party record's vehicle status bit `0x200`;
+    /// a held unit's passenger state rides [`super::VehicleView`].
     pub in_vehicle: bool,
     /// `UNIT_DYNAMIC_FLAGS` (field 143), raw. The event of the same name fires when any bit moves:
     /// the reference's field watch compares the whole dword, and bits such as `0x2` (tracked) are

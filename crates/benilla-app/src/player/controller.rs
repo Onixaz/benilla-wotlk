@@ -21,6 +21,7 @@ pub(super) fn control(
         Res<camera_dynamics::CameraOptions>,
         // Only `nearclip` is read here, for the self-avatar fade.
         Res<benilla_world::view::ViewDistance>,
+        Res<camera_zoom::VehicleSeatZoom>,
     ),
     mut net: (
         Res<NetCommands>,
@@ -96,7 +97,8 @@ pub(super) fn control(
     let (mut window, mut cursor_opts) = window.into_inner();
     let mouse_motion = &pointer.0;
     let look_cfg = *pointer.1;
-    let (zoom_max, zoom_floor) = (pointer.2.max, pointer.2.barber_floor);
+    let (zoom_bounds, zoom_floor) = (pointer.2.bounds(&pointer.6), pointer.2.barber_floor);
+    let vehicle_zoom = pointer.6.ask;
     let (move_speed, capsule, inspect, ui_capture, click_consumed) = (
         &speed_capsule.0,
         &speed_capsule.1 .0,
@@ -277,7 +279,12 @@ pub(super) fn control(
     // A rebound zoom key steps 1.0 per press, the stock `CameraZoomIn(1.0)` (`Bindings.xml:707`).
     let zoom = binds.amount(crate::bindings::Input::CameraZoomIn)
         - binds.amount(crate::bindings::Input::CameraZoomOut);
-    apply_zoom_scroll(zoom, dt, &mut rig, zoom_max, zoom_floor);
+    // A vehicle seat's zoom (`0x74c0e0`): its preferred distance within its range on the enter,
+    // the distance before it on the exit.
+    if let Some(z) = vehicle_zoom {
+        rig.apply_vehicle_zoom(z, zoom_bounds);
+    }
+    apply_zoom_scroll(zoom, dt, &mut rig, zoom_bounds, zoom_floor);
 
     // Free fly is a dev tool on the dev chord: a bare `F` is the player's to bind.
     if crate::run_mode::dev_chord(&keys, KeyCode::KeyF) {

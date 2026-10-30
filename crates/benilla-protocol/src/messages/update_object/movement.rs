@@ -57,6 +57,8 @@ pub struct MoverState {
     pub flags: u32,
     /// Swim pitch in radians, +up; on the wire only with `MOVEFLAG_SWIMMING`, else `0.0`.
     pub pitch: f32,
+    /// 3.3.5a's extra movement flags, raw (`CMovement+0x44`).
+    pub flags2: u16,
 }
 
 /// The decoded fields of a movement block; the rest is read and discarded to stay aligned.
@@ -76,6 +78,9 @@ pub struct MovementBlock {
     pub transport: Option<TransportPose>,
     /// The path this unit is already walking at create (`MOVEFLAG_SPLINE_ENABLED`).
     pub spline: Option<CreateSpline>,
+    /// `UPDATEFLAG_VEHICLE`: the unit's `Vehicle.dbc` id and its facing at create, from which
+    /// the vehicle's facing limits run (`0x757fa0`).
+    pub vehicle: Option<(u32, f32)>,
 }
 
 impl MovementBlock {}

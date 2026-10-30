@@ -1365,6 +1365,37 @@ pub(super) fn writer_loop(
                         jump,
                         transport,
                     ),
+                    ClientCommand::Vehicle(v) => match v {
+                        super::VehicleCommand::Empty(opcode) => w.request_vehicle(opcode),
+                        super::VehicleCommand::Pitch {
+                            opcode,
+                            mover,
+                            flags,
+                            flags2,
+                            pos,
+                            orientation,
+                            pitch,
+                        } => w.move_pitch(opcode, mover, flags, flags2, pos, orientation, pitch),
+                        super::VehicleCommand::SwitchSeat { vehicle, seat } => {
+                            w.request_vehicle_switch_seat(vehicle, seat)
+                        }
+                        super::VehicleCommand::ByGuid { opcode, guid } => {
+                            w.vehicle_guid(opcode, guid)
+                        }
+                        super::VehicleCommand::Controlled {
+                            mover,
+                            flags,
+                            pos,
+                            orientation,
+                            seat,
+                        } => w.controlled_vehicle(mover, flags, (pos, orientation), seat),
+                        super::VehicleCommand::ProjectileHit {
+                            caster,
+                            spell,
+                            cast_id,
+                            at,
+                        } => w.update_projectile_position(caster, spell, cast_id, at),
+                    },
                     ClientCommand::SetActiveMover { guid } => w.set_active_mover(guid),
                     ClientCommand::NotActiveMover {
                         guid,
@@ -1544,6 +1575,23 @@ pub(super) fn writer_loop(
                         spell_id,
                         target,
                     } => w.pet_cast_spell(pet_guid, spell_id, target),
+                    ClientCommand::PetCastTrajectory {
+                        pet_guid,
+                        spell_id,
+                        shot,
+                        flags,
+                        flags2,
+                        pos,
+                        orientation,
+                    } => w.pet_cast_trajectory(
+                        pet_guid,
+                        spell_id,
+                        &shot,
+                        flags,
+                        flags2,
+                        pos,
+                        orientation,
+                    ),
                     ClientCommand::PetSetAction { pet_guid, entries } => {
                         w.pet_set_action(pet_guid, &entries)
                     }
@@ -1691,6 +1739,7 @@ pub(super) fn writer_loop(
                     ClientCommand::BattlefieldStatusRequest => w.battlefield_status(),
                     ClientCommand::PetUnlearn { trainer } => w.pet_unlearn(trainer),
                     ClientCommand::BankerActivate { guid } => w.banker_activate(guid),
+                    ClientCommand::SpellClick { guid } => w.spell_click(guid),
                     ClientCommand::BuyBankSlot { guid } => w.buy_bank_slot(guid),
                     ClientCommand::AutoBankItem { bag, slot } => w.autobank_item(bag, slot),
                     ClientCommand::AutoStoreBankItem { bag, slot } => {

@@ -29,6 +29,7 @@ pub(super) fn movement_info(pos: [f32; 3], orientation: f32, flags: u32) -> Move
         pitch: 0.0,
         fall_time: 0,
         jump: None,
+        flags2: 0,
     }
 }
 
