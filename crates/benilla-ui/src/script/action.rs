@@ -126,10 +126,10 @@ impl super::UiScript {
         }
     }
 
-    /// Whether the temporary bar has an owner (`CGActionBar::m_tempPageActiveFlags`), which pins
-    /// `GetActionBarPage` to 1 (`0x5a7fd0`).
-    pub fn set_temp_action_bar(&mut self, active: bool) {
-        set_field!(self, temp_action_bar, active);
+    /// The temporary bar's owners (`CGActionBar::m_tempPageActiveFlags`): any pins
+    /// `GetActionBarPage` to 1 (`0x5a7fd0`), the pet's (`0x1`) hides the pet bar (`0x5d3720`).
+    pub fn set_temp_action_bar(&mut self, flags: u32) {
+        set_field!(self, temp_action_bar, flags);
     }
 
     /// Push the current bonus-bar page offset (0 = the plain main bar; warrior stances 1..3).
@@ -417,7 +417,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if model.temp_action_bar {
+            if model.temp_action_bar != 0 {
                 return Ok(1);
             }
             Ok(i64::from(model.action_bar_page) + 1)
@@ -747,6 +747,27 @@ mod tests {
             );
         }
         assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 3);
+    }
+
+    /// The temporary bar's owners: any pins the page to 1 (`0x5a7fd0`); only the pet's hides the
+    /// pet bar (`0x5d3720`), as a possessed unit's actions then ride the bonus page.
+    #[test]
+    fn the_pet_s_temporary_bar_hides_the_pet_bar_and_another_owner_does_not() {
+        let mut s = UiScript::new().unwrap();
+        s.set_pet_actions(true, true, true, Vec::new());
+        s.run("ChangeActionBarPage(3)").unwrap();
+        assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
+
+        s.set_temp_action_bar(0x4); // the override bar
+        assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 1);
+        assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
+
+        s.set_temp_action_bar(0x1 | 0x4);
+        assert!(s.eval::<bool>("return PetHasActionBar() == nil").unwrap());
+
+        s.set_temp_action_bar(0);
+        assert_eq!(s.eval::<i64>("return GetActionBarPage()").unwrap(), 3);
+        assert_eq!(s.eval::<i64>("return PetHasActionBar()").unwrap(), 1);
     }
 
     #[test]

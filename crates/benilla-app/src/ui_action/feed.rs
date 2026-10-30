@@ -389,7 +389,7 @@ pub(super) fn feed_actions(
             .map(|f| f.bonus_bar)
             .unwrap_or(0) as u8
     };
-    script.set_temp_action_bar(temp_flags != 0);
+    script.set_temp_action_bar(temp_flags);
     if offset != memory.bonus_offset {
         debug!("ui_action: bonus bar offset {} (form {form})", offset);
         let left_temp = memory.bonus_offset == 5;

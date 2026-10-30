@@ -136,6 +136,9 @@ pub(super) fn update_pet_temp_bar(
         );
         temp.flags = flags;
         if let Some(mut script) = script {
+            // The flag is set before the event (`0x5d4ad0`), whose stock handler asks
+            // `PetHasActionBar` whether the pet bar stays.
+            script.set_temp_action_bar(flags);
             script.fire_event("PET_BAR_UPDATE", vec![]);
         }
     }

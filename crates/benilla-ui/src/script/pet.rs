@@ -19,6 +19,8 @@ const PET_COMMAND_ATTACK: u32 = 2;
 const PET_REACT_PASSIVE: u32 = 0;
 const PET_REACT_DEFENSIVE: u32 = 1;
 const PET_REACT_AGGRESSIVE: u32 = 2;
+/// The pet's bit in the temporary bar's owners (`0x5d4ad0`).
+const TEMP_BAR_PET: u32 = 0x1;
 
 /// A slot word as the server packs it: the type in the top byte, the action in the low bits.
 const fn order(kind: u8, action: u32) -> u32 {
@@ -371,13 +373,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // PetHasActionBar() (`0x5d3720`): nil while the pet's actions own the main bar's temporary
+    // page (`m_tempPageActiveFlags & 1`), so the stock pet bar hides behind the bonus bar.
     g.set(
         "PetHasActionBar",
         lua.create_function(move |lua, ()| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(flag(model.pet_bar.has_bar))
+            Ok(flag(
+                model.pet_bar.has_bar && model.temp_action_bar & TEMP_BAR_PET == 0,
+            ))
         })?,
     )?;
 
