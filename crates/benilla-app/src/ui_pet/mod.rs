@@ -158,6 +158,8 @@ pub(crate) struct PetUnit<'w, 's> {
     stores: Query<'w, 's, &'static ObjectStore>,
     auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
     self_guid: Res<'w, crate::net::SelfGuid>,
+    /// Our seat, whose vehicle is the transport the predicate asks after.
+    seat: Query<'w, 's, &'static crate::vehicle::Passenger, With<crate::net::SelfPlayer>>,
 }
 
 impl PetUnit<'_, '_> {
