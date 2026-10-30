@@ -29,7 +29,8 @@ use fog::select_wmo_fog;
 pub use fog::{CameraWmoFog, WmoFogTarget};
 pub use interior::{
     indoor_verdict_among, indoor_verdict_at, indoors_at, terrain_z_local, verdict_buildings,
-    IndoorVerdict, LightAttach, VerdictBuilding, INTERIOR_PROBE_HEIGHT,
+    verdict_buildings_stamped, IndoorVerdict, LightAttach, VerdictBuilding, WmoFootprint,
+    INTERIOR_PROBE_HEIGHT,
 };
 pub(crate) use interior::{surface_terrain_sample, WmoAreas, POSITION_PROBE_LIFT};
 use interior::{track_area_interior, track_current_interior, track_unit_interiors};
@@ -247,6 +248,7 @@ impl Plugin for WmoPortalPlugin {
         .init_resource::<CameraInteriorClaim>()
         .init_resource::<ExteriorWindows>()
         .init_resource::<WmoCullProbe>()
+        .add_systems(Update, interior::stamp_wmo_footprints.before(WmoPvsSet))
         .add_systems(
             Update,
             (
