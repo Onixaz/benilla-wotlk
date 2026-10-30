@@ -142,8 +142,11 @@ impl Plugin for VehiclePlugin {
                     drive_vehicle_aim
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(send_vehicle_requests),
-                    // After the aim's power is read.
-                    shot::send_trajectory_casts.after(drive_vehicle_aim),
+                    // After the aim's power is read, and the frame's move, pose and casts.
+                    shot::send_trajectory_casts
+                        .after(drive_vehicle_aim)
+                        .after(benilla_world::schedule::WorldStage::Present)
+                        .after(crate::entities::EntityVisualsSet),
                     // Before the camera reads its subject and zoom.
                     camera::feed_vehicle_camera
                         .after(passenger::advance_transits)

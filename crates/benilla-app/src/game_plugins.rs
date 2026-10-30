@@ -665,6 +665,11 @@ pub(crate) mod schedule_tests {
             ("MessageSounds", TypeId::of::<crate::sound::MessageSounds>),
             ("UiErrorKeys", TypeId::of::<crate::ui_action::UiErrorKeys>),
             ("UiErrorTexts", TypeId::of::<crate::ui_action::UiErrorTexts>),
+            // The cast send appends; the vehicle's aim drains it once, after the frame's casts.
+            (
+                "TrajectoryCasts",
+                TypeId::of::<crate::vehicle::TrajectoryCasts>,
+            ),
         ];
         const STREAMS: &[ClassRow] = &[
             ("SoundKits", TypeId::of::<crate::sound::SoundKits>),
@@ -890,7 +895,11 @@ pub(crate) mod schedule_tests {
     /// - Trajectory missiles (#632) add 1: `entities::missile::move_missiles` now reads the group,
     ///   factions and unit stores its hit test asks hostility of, against a writer that runs
     ///   unordered; a missile picks its units on its first flight step, a frame late at worst.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_969;
+    /// - The trajectory cast (#632) adds 2: `vehicle::shot::send_trajectory_casts` runs after the
+    ///   world stages and the entity visuals, but reads `Player` against
+    ///   `release_post_snap_hold`, which writes only the snap hold, and `RigPose` against
+    ///   `quest_markers::build_markers`; the pose it aims from is a frame late at worst.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_971;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
