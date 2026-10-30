@@ -436,7 +436,7 @@ pub(super) const MICRO_BUTTON_STAND_INS: &str = r#"
 
 /// One file's bytes, off the chain for a path or from this crate's `assets/ui` for a bare name;
 /// also the loader's `<Include>`/`<Script file=>` provider.
-pub(super) fn read(req: &str) -> Option<Vec<u8>> {
+pub(crate) fn read(req: &str) -> Option<Vec<u8>> {
     if super::reference_ui::is_chain_entry(req) {
         return super::reference_ui::read(req);
     }

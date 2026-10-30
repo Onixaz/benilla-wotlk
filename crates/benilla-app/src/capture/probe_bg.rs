@@ -1,7 +1,8 @@
 //! The inside-a-battleground live probe (`WOW_PROBE_BG=wsg|ab|av`): level, greet a battlemaster,
 //! queue, take the port through the stock `AcceptBattlefieldPort`, print a census every
-//! [`CENSUS_EVERY`] from inside, then take the flag and die for the graveyard leg. Inert without
-//! the env.
+//! [`CENSUS_EVERY`] from inside, then take the flag and die for the graveyard leg. If the match
+//! has ended by the last census, leave through `LeaveBattlefield` and check the returned zone's
+//! score frame instead. Inert without the env.
 //!
 //! One body can never fill a battleground (`battleground_template.min_players_per_team`), so the
 //! probe sends `.debug bg`, which toggles `BattleGroundMgr::m_testing` and lets a match form with
@@ -276,6 +277,12 @@ enum Phase {
         released_at: f64,
         next_sample: f64,
         samples: u32,
+    },
+    LeavingEnded {
+        sent_at: f64,
+    },
+    ReturnedEnded {
+        at: f64,
     },
     Done,
 }
@@ -692,6 +699,20 @@ fn bg_probe(
             }
 
             if samples >= census_samples() {
+                if script
+                    .eval::<bool>("return GetBattlefieldWinner() ~= nil")
+                    .unwrap_or(false)
+                {
+                    info!("PROBE bg: ENDED — LeaveBattlefield() through the stock scoreboard verb");
+                    match script.eval::<()>("LeaveBattlefield()") {
+                        Ok(()) => probe.phase = Phase::LeavingEnded { sent_at: now },
+                        Err(e) => {
+                            error!("PROBE bg: FAILURE — LeaveBattlefield() raised: {e}");
+                            finish(&mut probe, &net);
+                        }
+                    }
+                    return;
+                }
                 // The flag leg, then the graveyard: `.die` clears the probe's god shield, and a
                 // battleground death is the only way to reach the area spirit healer.
                 match arena.flag {
@@ -892,6 +913,41 @@ fn bg_probe(
                     samples,
                 };
             }
+        }
+        Phase::LeavingEnded { sent_at } => {
+            if let Some(returned) = map.as_ref().filter(|m| m.0 != arena.map) {
+                info!("PROBE bg: RETURNED to map {}", returned.0);
+                probe.phase = Phase::ReturnedEnded { at: now };
+            } else if now - sent_at > 15.0 {
+                error!("PROBE bg: FAILURE — LeaveBattlefield() did not port out in 15 s");
+                let [x, y, z] = arena.at;
+                gm(&net, format!(".go xyz {x} {y} {z} 0"));
+                finish(&mut probe, &net);
+            }
+        }
+        Phase::ReturnedEnded { at } => {
+            if now - at < 2.0 {
+                return;
+            }
+            let Some(script) = script else {
+                if now - at > 10.0 {
+                    error!("PROBE bg: FAILURE — no VM 10 s after the return worldport");
+                    finish(&mut probe, &net);
+                }
+                return;
+            };
+            let state = script.eval::<String>(
+                "return 'shown=' .. tostring(WorldStateScoreFrame:IsShown()) .. \
+                 ' winner=' .. tostring(GetBattlefieldWinner())",
+            );
+            match state {
+                Ok(state) if state == "shown=false winner=nil" => {
+                    info!("PROBE bg: RETURN SCORE PASS — {state}");
+                }
+                Ok(state) => error!("PROBE bg: RETURN SCORE FAILURE — {state}"),
+                Err(e) => error!("PROBE bg: RETURN SCORE FAILURE — {e}"),
+            }
+            finish(&mut probe, &net);
         }
         Phase::Done => {}
     }
@@ -1188,14 +1244,13 @@ fn report(arena: &Arena, net: &NetCommands, queue: &BattlefieldQueue, script: &m
         error!("PROBE bg: LUA ERROR {e}");
     }
 
-    // `LeaveBattlefield` sends nothing until the scoreboard's "ended" byte, so a live match is left
-    // by a GM teleport; the server clears the slot on the map change.
+    // A live match's ordinary exit is a GM teleport; the ended-match leg above uses the stock
+    // `LeaveBattlefield()` path and waits for its own worldport before checking the score frame.
     info!(
         "PROBE bg: LEAVING map {} (active_map={:?})",
         arena.map,
         queue.active_map()
     );
-    let _ = script.eval::<()>("LeaveBattlefield()");
     // Not `.recall`: every `.go` saves the recall point (`TeleportCommands.cpp:755`), so after
     // the flag leg it lies inside the battleground. A hop to map 0 is a real map change.
     let [x, y, z] = arena.at;
