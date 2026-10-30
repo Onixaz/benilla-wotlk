@@ -151,14 +151,27 @@ pub(crate) fn feed_battlefield_score(
         script.reset_battlefield_score_filter();
     }
     let last = last.get(&script);
-    let changed = fresh.is_some() && fresh != *last;
-    if changed {
-        script.set_battlefield_scores(fresh.clone().expect("checked"));
-        *last = fresh;
-    }
+    let changed = sync_board(&mut script, fresh, board.log.is_none(), last);
     if changed || status_rebuild {
         script.fire_event("UPDATE_BATTLEFIELD_SCORE", vec![]);
     }
+}
+
+/// `EnterWorld` (`0x54ca50`) drops the finished board, including the VM's winner and rows.
+fn sync_board(
+    script: &mut UiScript,
+    fresh: Option<BattlefieldScores>,
+    no_log: bool,
+    last: &mut Option<BattlefieldScores>,
+) -> bool {
+    // An unresolved packet keeps the prior board until its names arrive; only a missing log
+    // clears the VM, as on world entry.
+    if (fresh.is_none() && !no_log) || fresh == *last {
+        return false;
+    }
+    script.set_battlefield_scores(fresh.clone().unwrap_or_default());
+    *last = fresh;
+    true
 }
 
 /// The score request (`0x54ce30`): once asked, a finished match's or an arena's board is not
@@ -191,7 +204,7 @@ fn drain_battlefield_score(
     }
 }
 
-/// The world-enter reset (`EnterWorld`, `0x54ca50`): the request stamp and the finished flag.
+/// The world-enter reset (`EnterWorld`, `0x54ca50`): the request stamp, board and finished flag.
 fn reset_score_on_world_enter(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
     mut board: ResMut<BattlefieldScoreboard>,
@@ -248,6 +261,47 @@ impl Plugin for BattlefieldScorePlugin {
 mod tests {
     use super::*;
     use benilla_formats::{WorldStateUiCatalog, WorldStateUiRow};
+
+    fn wotlk_score_frame() -> UiScript {
+        let mut script = UiScript::new().unwrap();
+        script.set_screen_size(1024.0, 768.0);
+        script.register_cvars(crate::cvars::registered_pairs());
+        let mut errors = Vec::new();
+        for entry in crate::ui_script::test_ui::production_order(&[&[
+            r"Interface\FrameXML\GlobalStrings.lua",
+            r"Interface\FrameXML\Fonts.xml",
+            r"Interface\FrameXML\FontStyles.xml",
+            r"Interface\FrameXML\BasicControls.xml",
+            r"Interface\FrameXML\UIParent.xml",
+            r"Interface\FrameXML\GameTooltip.xml",
+            r"Interface\FrameXML\UIPanelTemplates.lua",
+            r"Interface\FrameXML\UIPanelTemplates.xml",
+            r"Interface\FrameXML\ChatFrame.lua",
+            r"Interface\FrameXML\UIDropDownMenu.xml",
+            r"Interface\FrameXML\WorldStateFrame.xml",
+        ]]) {
+            let path = entry.replace('\\', "/");
+            let bytes = crate::ui_script::test_ui::read(&path)
+                .unwrap_or_else(|| panic!("{entry}: not found"));
+            if path.to_ascii_lowercase().ends_with(".lua") {
+                if let Err(e) = script.run_chunk_named(&bytes, &format!("@{entry}")) {
+                    errors.push(e.to_string());
+                }
+                continue;
+            }
+            let doc = benilla_ui::framexml::parse(&benilla_ui::source::decode(&bytes))
+                .unwrap_or_else(|e| panic!("{entry}: {e}"));
+            let provider = |req: &str| crate::ui_script::test_ui::read(req);
+            errors.extend(benilla_ui::loader::load_in(&script, &doc, &path, &provider).errors);
+        }
+        errors.extend(script.take_errors());
+        let score_errors: Vec<_> = errors.iter().filter(|e| e.contains("WorldState")).collect();
+        assert!(
+            score_errors.is_empty(),
+            "score frame load: {score_errors:?}"
+        );
+        script
+    }
 
     fn row(map_id: u32, ui_type: u32, text: &str) -> WorldStateUiRow {
         WorldStateUiRow {
@@ -315,5 +369,75 @@ mod tests {
         let board = app.world().resource::<BattlefieldScoreboard>();
         assert!(board.log.is_none());
         assert!(board.next_request.is_none());
+    }
+
+    #[test]
+    fn world_entry_drops_an_ended_board_before_new_zone_states_arrive() {
+        benilla_formats::wow_data_or_skip!();
+        let mut app = App::new();
+        app.add_message::<crate::net::WorldEnterCascadeMessage>()
+            .init_resource::<BattlefieldScoreboard>()
+            .add_systems(Update, reset_score_on_world_enter);
+        app.world_mut()
+            .resource_mut::<BattlefieldScoreboard>()
+            .apply(PvpLogData {
+                ended: true,
+                winner: Some(1),
+                ..Default::default()
+            });
+        let mut script = wotlk_score_frame();
+        let mut last = None;
+        assert!(sync_board(
+            &mut script,
+            Some(BattlefieldScores {
+                ended: true,
+                winner: 1,
+                rows: vec![BattlefieldScoreRow {
+                    name: "Player".into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            false,
+            &mut last,
+        ));
+        script.fire_event("UPDATE_BATTLEFIELD_SCORE", vec![]);
+        assert!(script
+            .eval::<bool>("return WorldStateScoreFrame:IsShown()")
+            .unwrap());
+        assert_eq!(
+            script.eval::<i64>("return GetBattlefieldWinner()").unwrap(),
+            1
+        );
+        assert!(!sync_board(&mut script, None, false, &mut last));
+        assert_eq!(
+            script.eval::<i64>("return GetBattlefieldWinner()").unwrap(),
+            1
+        );
+
+        app.world_mut()
+            .write_message(crate::net::WorldEnterCascadeMessage);
+        app.update();
+        assert!(app
+            .world()
+            .resource::<BattlefieldScoreboard>()
+            .log
+            .is_none());
+        // The feed must also push the cascade's empty board into the VM.
+        assert!(sync_board(&mut script, None, true, &mut last));
+        script.fire_event("UPDATE_BATTLEFIELD_SCORE", vec![]);
+        script.fire_event("PLAYER_ENTERING_WORLD", vec![]);
+        script.fire_event("UPDATE_WORLD_STATES", vec![]);
+        assert!(script
+            .eval::<bool>(
+                "return not WorldStateScoreFrame:IsShown() and GetBattlefieldWinner() == nil \
+                 and GetNumBattlefieldScores() == 0",
+            )
+            .unwrap());
+        let errors = script.take_errors();
+        assert!(
+            errors.iter().all(|e| !e.contains("WorldState")),
+            "score frame errors: {errors:?}"
+        );
     }
 }
