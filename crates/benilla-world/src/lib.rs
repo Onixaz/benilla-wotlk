@@ -121,6 +121,7 @@ pub mod decal;
 pub mod dev_state;
 pub mod doodad_anim;
 pub mod entity_shade;
+pub mod ext_shadow;
 pub mod exterior_cull;
 pub mod ffx_glow;
 pub mod final_pass;

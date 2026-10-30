@@ -22,6 +22,8 @@
 //!   `Rgba8Unorm`, so the multiply runs on raw bytes as the reference's does.
 //! - Registration: units, players and corpses cast one; game objects and dynamic objects never do.
 //!   The reference's `shadowLOD` toggle is not built: always on.
+//! - Mode: drawn only at `extShadowQuality` 0 (`0x7e4a17`); modes 1 to 5 are the shadow maps
+//!   (`benilla_world::ext_shadow`).
 //! - Deviation: the shadow is gated on `InheritedVisibility`, though the reference draws one under
 //!   an undrawn body, because benilla's exterior-scene election hides units the reference never
 //!   loads, and their shadows would stay on the floor below.
@@ -88,12 +90,22 @@ impl Plugin for BlobShadowPlugin {
                 Update,
                 (sync_shadows, update_shadows)
                     .chain()
+                    .run_if(blob_mode)
                     // After net motion and input, so the decal follows this frame's transforms.
                     .after(WorldStage::Input),
             )
             // After the frame's stream clear.
-            .add_systems(PostUpdate, push_shadows.after(begin_effect_frame));
+            .add_systems(
+                PostUpdate,
+                push_shadows.run_if(blob_mode).after(begin_effect_frame),
+            );
     }
+}
+
+/// The blob draws only while `extShadowQuality` is 0 or below (`0x7e4a17`); a shadow-map mode
+/// draws the unit's own shadow instead.
+fn blob_mode(quality: Option<Res<benilla_world::ext_shadow::ExtShadowQuality>>) -> bool {
+    quality.is_none_or(|q| q.0 == 0)
 }
 
 /// Load the shadow disc once.

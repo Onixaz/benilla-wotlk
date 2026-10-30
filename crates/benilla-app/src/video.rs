@@ -294,16 +294,57 @@ pub(crate) fn present_mode(vsync: bool) -> PresentMode {
     }
 }
 
-/// `componentTextureLevel`, the composited body texture's side as `1 << level` (the character
-/// component's init, `0x401ff0` then `0x4f1a20`, together clamping to [7, 9]); 8 is 256², 9 is
-/// 512².
+/// `componentTextureLevel`, `componentThread` and `componentCompress` as set; [`Self::bake`]
+/// combines them as the character component's two inits do (`0x401ff0`, `0x4f1a20`).
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct ComponentTextureLevel(pub(crate) u8);
+pub(crate) struct ComponentTextureLevel {
+    pub(crate) level: i32,
+    pub(crate) thread: bool,
+    pub(crate) compress: bool,
+}
 
 impl Default for ComponentTextureLevel {
-    /// The registered "8".
+    /// The registered "8", "1" and "1".
     fn default() -> Self {
-        Self(8)
+        Self {
+            level: 8,
+            thread: true,
+            compress: true,
+        }
+    }
+}
+
+/// The composited body texture: `1 << level` px square, DXT1 when `compress`, else RGB565.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ComponentBake {
+    pub(crate) level: u8,
+    pub(crate) compress: bool,
+}
+
+impl ComponentTextureLevel {
+    /// The bake on this machine's core count.
+    pub(crate) fn bake(&self) -> ComponentBake {
+        let cores = std::thread::available_parallelism().map_or(1, usize::from);
+        component_bake(self.level, self.thread, self.compress, cores)
+    }
+}
+
+/// `0x401ff0`: threading needs 2+ cores and caps the level at 9; without it the level caps at 8 and
+/// compression is off; the floor is 7. `0x4f1a20` clamps [6, 9], caps 8 uncompressed, and
+/// compresses only when threaded (`0x4f1dd8`).
+pub(crate) fn component_bake(
+    level: i32,
+    thread: bool,
+    compress: bool,
+    cores: usize,
+) -> ComponentBake {
+    let threaded = thread && cores >= 2;
+    let (cap, compress) = if threaded { (9, compress) } else { (8, false) };
+    let level = level.min(cap).max(7);
+    let level = if compress { level } else { level.min(8) };
+    ComponentBake {
+        level: level as u8,
+        compress,
     }
 }
 
@@ -322,6 +363,7 @@ pub(crate) struct EffectKnobs<'w> {
     ffx: ResMut<'w, benilla_world::ffx_glow::FfxSwitches>,
     terrain: ResMut<'w, benilla_world::terrain_stream::TerrainOptions>,
     projected: ResMut<'w, benilla_world::view::ProjectedTextures>,
+    shadow: Option<ResMut<'w, benilla_world::ext_shadow::ExtShadowQuality>>,
     component_level: ResMut<'w, ComponentTextureLevel>,
 }
 
@@ -477,8 +519,28 @@ pub(crate) fn on_cvar(
         "specular" => fx.terrain.specular = int != 0,
         // `0x78dcf0`: the world's second enable word, bit 4, read per projected batch.
         "projectedtextures" => fx.projected.0 = int != 0,
+        // `0x78dcb0`: a mode the shadow cache cannot run (`0x8740d0`) is refused, else it applies
+        // on the next frame. The reference echoes the mode's description to the console first.
+        "extshadowquality" => match u8::try_from(int)
+            .ok()
+            .filter(|m| benilla_ui::script::shadow_mode_runs(i32::from(*m)))
+        {
+            Some(mode) => {
+                if let Some(shadow) = fx.shadow.as_mut() {
+                    shadow.set_if_neq(benilla_world::ext_shadow::ExtShadowQuality(mode));
+                }
+            }
+            None => refuse(
+                &mut cvars,
+                &mut console,
+                &ev,
+                "[INVALID]Unsupported quality level.",
+            ),
+        },
         // Read once at character-component init in the reference; here every body re-composites.
-        "componenttexturelevel" => fx.component_level.0 = int.clamp(7, 9) as u8,
+        "componenttexturelevel" => fx.component_level.level = int,
+        "componentthread" => fx.component_level.thread = int != 0,
+        "componentcompress" => fx.component_level.compress = int != 0,
         // Weather Intensity 0..3 (the reference's weather handler), the precipitation spawn rate.
         "weatherdensity" => fx.weather.weather_density = v.trunc().clamp(0.0, 3.0) as u8,
         // No callback (`0x78e400`): the record's integer, read at each shard emitter's spawn.
@@ -1185,6 +1247,32 @@ fn fix_input_lag(fix_lag: Res<FixLag>, device: Res<bevy::render::renderer::Rende
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The baked size and format (`0x401ff0`, `0x4f1a20`): 7 is 128², 8 is 256², 9 is 512² only
+    /// compressed; one core or no threading caps at 8 uncompressed; the floor is 7.
+    #[test]
+    fn the_component_bake_follows_the_three_cvars_and_the_cores() {
+        let bake = |level, thread, compress, cores| {
+            let b = component_bake(level, thread, compress, cores);
+            (1u32 << b.level, b.compress)
+        };
+        assert_eq!(bake(7, true, true, 4), (128, true));
+        assert_eq!(bake(8, true, true, 4), (256, true));
+        assert_eq!(bake(9, true, true, 4), (512, true));
+        assert_eq!(bake(9, true, false, 4), (256, false));
+        assert_eq!(bake(9, false, true, 4), (256, false));
+        assert_eq!(bake(9, true, true, 1), (256, false));
+        assert_eq!(bake(4, true, true, 4), (128, true));
+        assert_eq!(bake(12, true, true, 4), (512, true));
+        let stock = ComponentTextureLevel::default();
+        assert_eq!(
+            component_bake(stock.level, stock.thread, stock.compress, 2),
+            ComponentBake {
+                level: 8,
+                compress: true
+            }
+        );
+    }
 
     /// The list rebuilds only when an input moves: a monitor edit that marks nothing is not read
     /// (the gate holds), and the same edit marked is.

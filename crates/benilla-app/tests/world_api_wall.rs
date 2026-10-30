@@ -94,6 +94,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("collision::WorldCollision", "record"),
     ("decal::WorldDecal", "record"),
     ("dev_state::STILL_INPUTS_CHANGED", "record"),
+    ("ext_shadow::ExtShadowQuality", "record"),
     ("doodad_anim::AnimMatPart", "record"),
     ("doodad_anim::DoodadAnimHost", "record"),
     ("doodad_anim::MatAnim", "record"),

@@ -713,7 +713,9 @@ impl Plugin for StaticGxPlugin {
             // Bake, scene walk, publish; after `CheckVisibility`, which is load-bearing. A spawned
             // exile flushed by an earlier sync point would be visible before bevy_pbr ticked its
             // specialization, a render panic (`bevy_pbr-0.18.1/material.rs:1061`); after it, the
-            // exile shows the next frame, ticked. `chain_ignore_deferred` adds no sync points.
+            // exile shows the next frame, ticked. The shadow-map casters' check (`ext_shadow`) is
+            // the same trap (`light.rs:1856`), so after it too. `chain_ignore_deferred` adds no
+            // sync points.
             (
                 bake::flush_static_gx,
                 cull::cull_cells,
@@ -721,7 +723,8 @@ impl Plugin for StaticGxPlugin {
             )
                 .chain_ignore_deferred()
                 .after(bevy::transform::TransformSystems::Propagate)
-                .after(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
+                .after(bevy::camera::visibility::VisibilitySystems::CheckVisibility)
+                .after(bevy::light::SimulationLightSystems::CheckLightVisibility),
         );
         render::build(app);
     }

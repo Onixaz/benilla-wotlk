@@ -204,18 +204,28 @@ fn the_effects_page_asks_for_no_restart_or_logout() {
         .unwrap());
 }
 
-/// The shadow slider spans the device's modes, which here are the blob mode alone.
+/// The shadow slider spans the modes benilla builds, the blob mode through the cascaded maps, and a
+/// step on it writes the row.
 #[test]
-fn the_shadow_slider_caps_at_the_blob_mode() {
+fn the_shadow_slider_spans_the_built_modes() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let s = opened("vid-shadow", "VideoOptionsEffectsPanel");
+    let mut s = opened("vid-shadow", "VideoOptionsEffectsPanel");
     let (lo, hi): (f64, f64) = s
         .eval("return VideoOptionsEffectsPanelShadowQuality:GetMinMaxValues()")
         .unwrap();
-    assert_eq!((lo, hi), (0.0, 0.0));
+    assert_eq!(
+        (lo, hi),
+        (0.0, f64::from(benilla_ui::script::shadow_device_max()))
+    );
+    assert_eq!(hi, 5.0, "every exterior shadow mode is built");
+    s.run("VideoOptionsEffectsPanelShadowQuality:SetValue(3) VideoOptionsFrameOkay:Click()")
+        .unwrap();
+    assert!(changed(&mut s)
+        .iter()
+        .any(|(n, v)| n == "extShadowQuality" && v == "3"));
 }
 
 /// Each page's Defaults verb puts its own rows back, the Resolution page's with a restart.

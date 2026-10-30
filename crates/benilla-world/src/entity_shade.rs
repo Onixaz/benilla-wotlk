@@ -60,6 +60,9 @@ pub struct GroundShade {
     /// reference's WMO down-ray sets skip-shadow `[node+0xd] |= 0x2`, and the exterior leg then
     /// commits 2.5.
     pub(crate) on_wmo: bool,
+    /// A shadow-map mode past 1 is set: the reference skips the MCSH query and commits the lit
+    /// intensity (`0x7a1e32`), the maps shading the body instead.
+    maps_lit: bool,
     /// The ramped ambient word (0..1 per channel), the bake fold's input; the classifier seeds it.
     pub(crate) ambient: Vec3,
     pub(crate) ambient_target: Vec3,
@@ -79,6 +82,7 @@ impl Default for GroundShade {
             sampled: false,
             indoor: false,
             on_wmo: false,
+            maps_lit: false,
             ambient: Vec3::ZERO,
             ambient_target: Vec3::ZERO,
             logged_target: -1.0,
@@ -98,7 +102,7 @@ impl GroundShade {
     fn effective_target(&self) -> f32 {
         if self.indoor {
             DAYNIGHT_T
-        } else if self.on_wmo {
+        } else if self.on_wmo || self.maps_lit {
             LIT_T
         } else {
             self.target
@@ -271,16 +275,21 @@ pub(crate) fn update_ground_shade(
     // The card pass's up-walk: a card can follow a deep joint, which is not a shade root.
     child_of: Query<&ChildOf>,
     dirty_roots: Res<ShadeDirtyRoots>,
+    shadow_quality: Option<Res<crate::ext_shadow::ExtShadowQuality>>,
     mut self_log: Local<f32>,
 ) {
     let Some(streamer) = streamer else {
         return;
     };
+    let maps_lit = shadow_quality.is_some_and(|q| q.0 > 1);
     let step = SHADE_RAMP_PER_SEC * time.delta_secs();
     let ambient_step = AMBIENT_RAMP_PER_SEC * time.delta_secs();
     // A root's byte moved (or first landed) this frame: every card re-resolves.
     let mut bytes_moved = false;
-    for (root, gt, shade, is_self, root_vis) in &mut roots {
+    for (root, gt, mut shade, is_self, root_vis) in &mut roots {
+        if shade.maps_lit != maps_lit {
+            shade.maps_lit = maps_lit;
+        }
         // Settled in place, both chases on target and its byte asserted (or hidden, unasserted):
         // nothing below would change, so the row is left unmarked (a city holds ~750 roots).
         {

@@ -175,16 +175,25 @@ struct GxPipelines {
     /// Keyed `(cutout, two_sided)`, re-specialized if the world view's (samples, format) changes.
     pipelines: HashMap<(bool, bool), CachedRenderPipelineId>,
     specialized_for: Option<(u32, TextureFormat)>,
+    /// The shadow-map caster pass's group 0, the cascade's view uniform alone.
+    shadow_view_layout: BindGroupLayoutDescriptor,
+    /// The caster pipelines, keyed by cutout; queued once, since a depth map has no view key.
+    shadow_pipelines: HashMap<bool, CachedRenderPipelineId>,
 }
 
 fn init_pipelines(mut commands: Commands, render_device: Res<RenderDevice>) {
+    // Bevy's mesh view numbering for the view, the lights and the directional shadow maps, which
+    // the shadow-map receive (`wow_shadow.wgsl`) reads as on the entity path.
     let view_layout = BindGroupLayoutDescriptor::new(
         "static_gx_view_layout",
-        &BindGroupLayoutEntries::sequential(
+        &BindGroupLayoutEntries::with_indices(
             ShaderStages::VERTEX_FRAGMENT,
             (
-                uniform_buffer::<ViewUniform>(true),
-                storage_buffer_read_only_sized(false, None),
+                (0, uniform_buffer::<ViewUniform>(true)),
+                (1, uniform_buffer::<bevy::pbr::GpuLights>(true)),
+                (5, texture_2d_array(TextureSampleType::Depth)),
+                (6, sampler(SamplerBindingType::Comparison)),
+                (32, storage_buffer_read_only_sized(false, None)),
             ),
         ),
     );
@@ -203,6 +212,13 @@ fn init_pipelines(mut commands: Commands, render_device: Res<RenderDevice>) {
             ),
         ),
     );
+    let shadow_view_layout = BindGroupLayoutDescriptor::new(
+        "static_gx_shadow_view_layout",
+        &BindGroupLayoutEntries::single(
+            ShaderStages::VERTEX_FRAGMENT,
+            uniform_buffer::<ViewUniform>(true),
+        ),
+    );
     let (sampler, sampler_clamp) = policy_samplers(&render_device);
     commands.insert_resource(GxPipelines {
         view_layout,
@@ -212,6 +228,8 @@ fn init_pipelines(mut commands: Commands, render_device: Res<RenderDevice>) {
         policy_generation: benilla_assets::tex_filter_generation(),
         pipelines: HashMap::default(),
         specialized_for: None,
+        shadow_view_layout,
+        shadow_pipelines: HashMap::default(),
     });
 }
 
@@ -329,7 +347,17 @@ fn prepare_static_gx(
         pipes.pipelines.clear();
         for cutout in [false, true] {
             for two_sided in [false, true] {
-                let mut defs = vec![];
+                // The mesh view types' array sizes, which the shadow-map receive's lights take.
+                let mut defs = vec![
+                    ShaderDefVal::UInt(
+                        "MAX_DIRECTIONAL_LIGHTS".into(),
+                        bevy::pbr::MAX_DIRECTIONAL_LIGHTS as u32,
+                    ),
+                    ShaderDefVal::UInt(
+                        "MAX_CASCADES_PER_LIGHT".into(),
+                        bevy::pbr::MAX_CASCADES_PER_LIGHT as u32,
+                    ),
+                ];
                 if cutout {
                     defs.push(ShaderDefVal::from("GX_CUTOUT"));
                 }
@@ -375,6 +403,40 @@ fn prepare_static_gx(
             }
         }
         pipes.specialized_for = Some(key);
+    }
+    if pipes.shadow_pipelines.is_empty() {
+        let shader: Handle<Shader> =
+            asset_server.load("embedded://benilla_world/shaders/static_gx.wgsl");
+        for cutout in [false, true] {
+            let id = pipeline_cache.queue_render_pipeline(RenderPipelineDescriptor {
+                label: Some(format!("static_gx shadow c{}", u8::from(cutout)).into()),
+                layout: vec![pipes.shadow_view_layout.clone(), pipes.cell_layout.clone()],
+                vertex: VertexState {
+                    shader: shader.clone(),
+                    shader_defs: vec![],
+                    entry_point: Some("vertex_shadow".into()),
+                    buffers: vec![vertex_layout()],
+                },
+                fragment: cutout.then(|| FragmentState {
+                    shader: shader.clone(),
+                    shader_defs: vec![],
+                    entry_point: Some("fragment_shadow".into()),
+                    targets: vec![],
+                }),
+                // The reference renders its casters unculled (`0x7bbc50`).
+                primitive: PrimitiveState::default(),
+                depth_stencil: Some(DepthStencilState {
+                    format: CORE_3D_DEPTH_FORMAT,
+                    depth_write_enabled: true,
+                    depth_compare: CompareFunction::GreaterEqual,
+                    stencil: StencilState::default(),
+                    bias: DepthBiasState::default(),
+                }),
+                multisample: MultisampleState::default(),
+                ..default()
+            });
+            pipes.shadow_pipelines.insert(cutout, id);
+        }
     }
 
     // Every published map empty is a map change (`StaticGx::clear`): reset the pool and cache.
@@ -646,26 +708,51 @@ fn kill_bit(killed: &[u64], i: usize) -> u32 {
     )
 }
 
-/// Group 0: bevy's view uniform and the `wow_shared_light` storage every material binds.
+/// The caster pass's group 0: the view uniform buffer, offset per cascade.
+#[derive(Resource)]
+struct GxShadowViewBind(BindGroup);
+
+/// Group 0: bevy's view uniform, the world view's lights and directional shadow maps, and the
+/// `wow_shared_light` storage every material binds.
 #[derive(Resource)]
 struct GxViewBind(BindGroup);
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_view_bind(
     mut commands: Commands,
     pipes: Res<GxPipelines>,
     pipeline_cache: Res<PipelineCache>,
     render_device: Res<RenderDevice>,
     view_uniforms: Res<ViewUniforms>,
+    light_meta: Res<bevy::pbr::LightMeta>,
+    shadow_samplers: Res<bevy::pbr::ShadowSamplers>,
+    views: Query<&bevy::pbr::ViewShadowBindings, With<StaticGxView>>,
     light: Option<Res<crate::lighting::SharedLightBuffer>>,
 ) {
-    let (Some(view_binding), Some(light)) = (view_uniforms.uniforms.binding(), light) else {
+    let (Some(view_binding), Some(lights_binding), Some(light), Some(shadows)) = (
+        view_uniforms.uniforms.binding(),
+        light_meta.view_gpu_lights.binding(),
+        light,
+        views.iter().next(),
+    ) else {
         return;
     };
+    commands.insert_resource(GxShadowViewBind(render_device.create_bind_group(
+        "static_gx_shadow_view",
+        &pipeline_cache.get_bind_group_layout(&pipes.shadow_view_layout),
+        &BindGroupEntries::single(view_binding.clone()),
+    )));
     let layout = pipeline_cache.get_bind_group_layout(&pipes.view_layout);
     commands.insert_resource(GxViewBind(render_device.create_bind_group(
         "static_gx_view",
         &layout,
-        &BindGroupEntries::sequential((view_binding, light.0.as_entire_binding())),
+        &BindGroupEntries::with_indices((
+            (0, view_binding),
+            (1, lights_binding),
+            (5, &shadows.directional_light_depth_texture_view),
+            (6, &shadow_samplers.directional_light_comparison_sampler),
+            (32, light.0.as_entire_binding()),
+        )),
     )));
 }
 
@@ -680,6 +767,7 @@ impl ViewNode for StaticGxNode {
         &'static ViewTarget,
         &'static ViewDepthTexture,
         &'static ViewUniformOffset,
+        &'static bevy::pbr::ViewLightsUniformOffset,
         &'static StaticGxView,
     );
 
@@ -687,7 +775,7 @@ impl ViewNode for StaticGxNode {
         &self,
         _graph: &mut RenderGraphContext,
         render_context: &mut RenderContext<'w>,
-        (target, depth, view_offset, _marker): QueryItem<'w, '_, Self::ViewQuery>,
+        (target, depth, view_offset, lights_offset, _marker): QueryItem<'w, '_, Self::ViewQuery>,
         world: &'w World,
     ) -> Result<(), NodeRunError> {
         let _t = super::gx_perf_guard(4);
@@ -752,7 +840,7 @@ impl ViewNode for StaticGxNode {
             occlusion_query_set: None,
         });
         let span = diagnostics.pass_span(&mut pass, "static_gx");
-        pass.set_bind_group(0, &view_bind.0, &[view_offset.offset]);
+        pass.set_bind_group(0, &view_bind.0, &[view_offset.offset, lights_offset.offset]);
         for (gpu, draw, sel) in &resolved {
             let Some(mesh) = meshes.get(draw.mesh.id()) else {
                 continue;
@@ -793,6 +881,122 @@ impl ViewNode for StaticGxNode {
     }
 }
 
+#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
+struct StaticGxShadowLabel;
+
+/// The retained statics into each shadow-map cascade of the world view, after bevy's own casters
+/// and onto their depth: every resident region whose bound meets the cascade, all its runs.
+#[derive(Default)]
+struct StaticGxShadowNode;
+
+impl ViewNode for StaticGxShadowNode {
+    type ViewQuery = (&'static bevy::pbr::ViewLightEntities, &'static StaticGxView);
+
+    fn run<'w>(
+        &self,
+        _graph: &mut RenderGraphContext,
+        render_context: &mut RenderContext<'w>,
+        (lights, _marker): QueryItem<'w, '_, Self::ViewQuery>,
+        world: &'w World,
+    ) -> Result<(), NodeRunError> {
+        // Statics cast only past mode 2, whose light carries the bands beside the unit map
+        // (`ext_shadow`, `0x7bb9d0`); modes 1 and 2 are one cascade of units.
+        if lights.lights.len() < 4 {
+            return Ok(());
+        }
+        let gx = world.resource::<GxWorld>();
+        let cache = world.resource::<GxGpuCache>();
+        let pipes = world.resource::<GxPipelines>();
+        let pipeline_cache = world.resource::<PipelineCache>();
+        let Some(view_bind) = world.get_resource::<GxShadowViewBind>() else {
+            return Ok(());
+        };
+        let pipeline = |cutout: bool| {
+            pipes
+                .shadow_pipelines
+                .get(&cutout)
+                .and_then(|id| pipeline_cache.get_render_pipeline(*id))
+        };
+        let (Some(opaque), Some(cutout)) = (pipeline(false), pipeline(true)) else {
+            return Ok(());
+        };
+        let meshes = world.resource::<RenderAssets<RenderMesh>>();
+        let allocator = world.resource::<MeshAllocator>();
+        let regions: Vec<(&GxCellGpu, &GxCellDraw)> = gx
+            .cells
+            .iter()
+            .filter_map(|(k, d)| cache.cells.get(k).map(|g| (g, d.as_ref())))
+            .chain(
+                gx.wmos
+                    .iter()
+                    .filter_map(|(k, d)| cache.wmos.get(k).map(|g| (g, d.as_ref()))),
+            )
+            .chain(
+                gx.props
+                    .iter()
+                    .filter_map(|(k, d)| cache.props.get(k).map(|g| (g, d.as_ref()))),
+            )
+            .collect();
+        for &light_view in &lights.lights {
+            let (Some(shadow_view), Some(extracted), Some(offset)) = (
+                world.get::<bevy::pbr::ShadowView>(light_view),
+                world.get::<ExtractedView>(light_view),
+                world.get::<ViewUniformOffset>(light_view),
+            ) else {
+                continue;
+            };
+            let Some(clip_from_world) = extracted.clip_from_world else {
+                continue;
+            };
+            let frustum = bevy::camera::primitives::Frustum::from_clip_from_world(&clip_from_world);
+            let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
+                label: Some("static_gx_shadow"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(
+                    shadow_view.depth_attachment.get_attachment(StoreOp::Store),
+                ),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_bind_group(0, &view_bind.0, &[offset.offset]);
+            for (gpu, draw) in &regions {
+                // A caster nearer the sun than the map's eye still casts: no near-plane test.
+                let at = bevy::math::Affine3A::from_translation(draw.origin);
+                if !frustum.intersects_obb(&draw.aabb, &at, false, true) {
+                    continue;
+                }
+                let Some(mesh) = meshes.get(draw.mesh.id()) else {
+                    continue;
+                };
+                let (Some(vslice), Some(islice)) = (
+                    allocator.mesh_vertex_slice(&draw.mesh.id()),
+                    allocator.mesh_index_slice(&draw.mesh.id()),
+                ) else {
+                    continue;
+                };
+                let bevy::render::mesh::RenderMeshBufferInfo::Indexed { index_format, .. } =
+                    &mesh.buffer_info
+                else {
+                    continue;
+                };
+                pass.set_vertex_buffer(0, vslice.buffer.slice(..));
+                pass.set_index_buffer(islice.buffer.slice(..), *index_format);
+                for run in &gpu.runs {
+                    pass.set_render_pipeline(if run.cutout { cutout } else { opaque });
+                    pass.set_bind_group(1, &gpu.bind_groups[run.slot].1, &[]);
+                    pass.draw_indexed(
+                        (islice.range.start + run.index_range.start)
+                            ..(islice.range.start + run.index_range.end),
+                        i32::try_from(vslice.range.start).unwrap_or(0),
+                        0..1,
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Wire the render half (called by the plugin only when armed).
 pub(super) fn build(app: &mut App) {
     // The shader registers in `crate::shaders`: `embedded_asset!` prefixes by the calling file.
@@ -815,6 +1019,15 @@ pub(super) fn build(app: &mut App) {
             (
                 prepare_static_gx.in_set(RenderSystems::PrepareResources),
                 prepare_view_bind.in_set(RenderSystems::PrepareBindGroups),
+            ),
+        )
+        .add_render_graph_node::<ViewNodeRunner<StaticGxShadowNode>>(Core3d, StaticGxShadowLabel)
+        .add_render_graph_edges(
+            Core3d,
+            (
+                bevy::pbr::graph::NodePbr::LateShadowPass,
+                StaticGxShadowLabel,
+                Node3d::StartMainPass,
             ),
         )
         .add_render_graph_node::<ViewNodeRunner<StaticGxNode>>(Core3d, StaticGxLabel)

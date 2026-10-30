@@ -323,7 +323,7 @@ pub use cursor::{
     CursorMerchantItem, CursorMoney, CursorPayload, CursorPetAction, CursorSpell, CursorStablePet,
     EnchantConfirm, WorldPick, EQUIPMENT_BAG,
 };
-pub use cvars::sstr_to_int;
+pub use cvars::{shadow_device_max, shadow_mode_runs, sstr_to_int, SHADOW_MODE_MAX};
 pub use cvars::{
     MultisampleFormat, ScreenMode, ScreenResolution, SeededCvar, VideoCaps, CVAR_GAMMA,
     IN_WORLD_READ_ONLY_CVARS, VIDEO_EFFECTS_DEFAULT_CVARS, VIDEO_RESOLUTION_DEFAULT_CVARS,

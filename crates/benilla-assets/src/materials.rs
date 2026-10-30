@@ -17,13 +17,16 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::ShaderRef;
 
-/// Compile the four WGSL files into the binary under `embedded://benilla_assets/shaders/…`. Call
+/// Compile the material WGSL files into the binary under `embedded://benilla_assets/shaders/…`. Call
 /// after Bevy's `AssetPlugin`, whose registry this fills; [`crate::register_asset_loaders`] does.
 pub fn register_shaders(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/terrain.wgsl");
     bevy::asset::embedded_asset!(app, "shaders/wow_model.wgsl");
     bevy::asset::embedded_asset!(app, "shaders/wdl.wgsl");
     bevy::asset::embedded_asset!(app, "shaders/liquid.wgsl");
+    bevy::asset::embedded_asset!(app, "shaders/wow_model_shadow.wgsl");
+    // An import library (`benilla_assets::wow_shadow`), so it must be loaded, not only served.
+    bevy::shader::load_shader_library!(app, "shaders/wow_shadow.wgsl");
 }
 
 /// The WDL far-band shader's source, for the tests that live beside the renderer (`wdl.rs`).
@@ -148,6 +151,16 @@ impl MaterialExtension for WowModelExt {
         "embedded://benilla_assets/shaders/wow_model.wgsl".into()
     }
 
+    /// The shadow-map caster pass, the world's only prepass: skinned, and gated as the reference
+    /// gathers casters.
+    fn prepass_vertex_shader() -> ShaderRef {
+        "embedded://benilla_assets/shaders/wow_model_shadow.wgsl".into()
+    }
+
+    fn prepass_fragment_shader() -> ShaderRef {
+        "embedded://benilla_assets/shaders/wow_model_shadow.wgsl".into()
+    }
+
     /// The reference writes depth for every M2 batch, transparent ones too, and tests `LEQUAL`,
     /// unless render flag 0x10 (no write) or 0x08 (no test) clears it.
     fn specialize(
@@ -156,6 +169,10 @@ impl MaterialExtension for WowModelExt {
         layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        // No world camera runs a prepass, so a prepass pipeline is a shadow map's.
+        if key.mesh_key.contains(MeshPipelineKey::DEPTH_PREPASS) {
+            return specialize_shadow_caster(descriptor, layout);
+        }
         // `WOW_RIG_SKIN` skins from the shared buffer's palette. The base layout lacks our joint
         // attributes: rebuild it with Bevy's conditionals (mesh.rs, locations 0-5) plus 10/11.
         if layout.0.contains(crate::ATTRIBUTE_WOW_JOINT_INDEX) {
@@ -328,6 +345,36 @@ impl MaterialExtension for WowModelExt {
     }
 }
 
+/// The model lane's shadow-map caster pipeline: `wow_model_shadow.wgsl`'s vertex locations (the
+/// main pass's position, UV and joints), no culling and no raster bias, as the reference renders
+/// its casters (`0x7bbc50`: culling off).
+fn specialize_shadow_caster(
+    descriptor: &mut RenderPipelineDescriptor,
+    layout: &MeshVertexBufferLayoutRef,
+) -> Result<(), SpecializedMeshPipelineError> {
+    let mut attrs = Vec::with_capacity(4);
+    for (attr, loc) in [
+        (Mesh::ATTRIBUTE_POSITION, 0),
+        (Mesh::ATTRIBUTE_UV_0, 2),
+        (crate::ATTRIBUTE_WOW_JOINT_INDEX, 10),
+        (crate::ATTRIBUTE_WOW_JOINT_WEIGHT, 11),
+    ] {
+        if layout.0.contains(attr) {
+            attrs.push(attr.at_shader_location(loc));
+        }
+    }
+    if layout.0.contains(crate::ATTRIBUTE_WOW_JOINT_INDEX) {
+        descriptor.vertex.shader_defs.push("WOW_RIG_SKIN".into());
+    }
+    descriptor.vertex.buffers = vec![layout.0.get_layout(&attrs)?];
+    descriptor.primitive.cull_mode = None;
+    if let Some(ds) = descriptor.depth_stencil.as_mut() {
+        ds.bias.constant = 0;
+        ds.bias.slope_scale = 0.0;
+    }
+    Ok(())
+}
+
 /// Distant low-detail terrain (WDL), the horizon hills beyond the streamed tiles: opaque white
 /// geometry under the scene fog colour at the hull pass's own start 0 and end 1.0.
 pub type WdlMaterial = ExtendedMaterial<StandardMaterial, WdlExt>;
@@ -346,6 +393,11 @@ impl MaterialExtension for WdlExt {
     }
     fn fragment_shader() -> ShaderRef {
         "embedded://benilla_assets/shaders/wdl.wgsl".into()
+    }
+    /// The horizon hills cast nothing: the reference's caster query walks the loaded chunks and
+    /// map objects only (`0x7bd200`).
+    fn enable_shadows() -> bool {
+        false
     }
 }
 
@@ -387,6 +439,10 @@ impl MaterialExtension for LiquidExt {
     }
     fn fragment_shader() -> ShaderRef {
         "embedded://benilla_assets/shaders/liquid.wgsl".into()
+    }
+    /// Water casts no shadow: no liquid is among the reference's casters (`0x7bd200`).
+    fn enable_shadows() -> bool {
+        false
     }
 
     /// `sky_order::WATER_BIAS` (−2e4) is a sort rung, kept out of the rasterizer: as a depth-bias
@@ -443,10 +499,74 @@ impl MaterialExtension for TerrainExtension {
     fn fragment_shader() -> ShaderRef {
         "embedded://benilla_assets/shaders/terrain.wgsl".into()
     }
+
+    /// A vertex-colour map's cells carry MCCV: appended to whichever layout the pass built, at
+    /// location 14, which only `terrain.wgsl`'s `TERRAIN_MCCV` path reads.
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if layout.0.contains(crate::adt::ATTRIBUTE_TERRAIN_MCCV) {
+            descriptor.vertex.shader_defs.push("TERRAIN_MCCV".into());
+            let mccv = layout
+                .0
+                .get_layout(&[crate::adt::ATTRIBUTE_TERRAIN_MCCV.at_shader_location(14)])?;
+            if let Some(buffer) = descriptor.vertex.buffers.first_mut() {
+                buffer.attributes.extend(mccv.attributes);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    /// The caster pass reads the material uniforms and the skin palette through wow_model.wgsl's
+    /// own struct blocks: a drift in either would skin shadows from the wrong rows.
+    #[test]
+    fn the_shadow_caster_mirrors_the_model_structs() {
+        let model = include_str!("shaders/wow_model.wgsl");
+        let shadow = include_str!("shaders/wow_model_shadow.wgsl");
+        for head in ["struct ModelParams {", "struct WowLight {"] {
+            let block = |src: &str| {
+                let at = src.find(head).expect("struct present");
+                let end = at + src[at..].find("\n};").expect("struct closed");
+                // A checkout may hold either line ending.
+                src[at..end].replace('\r', "")
+            };
+            assert_eq!(
+                block(model),
+                block(shadow),
+                "{head} differs between wow_model.wgsl and wow_model_shadow.wgsl"
+            );
+        }
+    }
+
+    /// Mode 0 draws no light, and every receive leaves its colour untouched then: the term is 1
+    /// before any map is sampled.
+    #[test]
+    fn the_shadow_receive_is_inert_without_the_light() {
+        let src = include_str!("shaders/wow_shadow.wgsl");
+        let term = &src[src.find("fn shadow_term").expect("shadow_term")..];
+        let first_sample = term.find("dynamic_term(").expect("samples the dynamic map");
+        let gate = term
+            .find("if (!shadow_maps_on()) {")
+            .expect("gated on the light");
+        assert!(
+            gate < first_sample,
+            "the light gate must come before any sampling"
+        );
+        let model = include_str!("shaders/wow_model.wgsl");
+        assert!(
+            model.contains("if (shadow < 1.0) {"),
+            "the model receive multiplies only in shadow"
+        );
+        let terrain = include_str!("shaders/terrain.wgsl");
+        assert!(terrain.contains("shadow_lit = min(shadow_lit, wow_shadow::shadow_term("));
+    }
+
     /// The sky depth law for the WMO skybox, the one sky element on the model lane.
     #[test]
     fn the_sky_lane_pins_the_far_depth_at_the_vertex() {

@@ -46,6 +46,11 @@ impl MaterialExtension for CloudExt {
         "embedded://benilla_world/shaders/cloud.wgsl".into()
     }
 
+    /// The sky casts no shadow-map shadow (`ext_shadow`): it is no caster of the reference's.
+    fn enable_shadows() -> bool {
+        false
+    }
+
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,

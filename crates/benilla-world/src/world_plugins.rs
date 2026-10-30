@@ -81,6 +81,8 @@ impl PluginGroup for WorldPlugins {
             // Map.dbc and the current map, keyed off by the streamers, loading screen and lighting.
             .add(crate::world_map::WorldMapPlugin)
             .add(crate::lighting::LightingPlugin)
+            // The exterior shadow maps (`extShadowQuality` 1 to 5) on one directional light.
+            .add(crate::ext_shadow::plugin)
             // Sky dome: the Light.dbc gradient backdrop (camera-centred), driven by the lighting.
             .add(crate::sky::SkyPlugin)
             // The WMO skybox, after `SkyPlugin`, whose dome it stands down.
