@@ -25,8 +25,14 @@ pub fn register_shaders(app: &mut App) {
     bevy::asset::embedded_asset!(app, "shaders/wdl.wgsl");
     bevy::asset::embedded_asset!(app, "shaders/liquid.wgsl");
     bevy::asset::embedded_asset!(app, "shaders/wow_model_shadow.wgsl");
-    // An import library (`benilla_assets::wow_shadow`), so it must be loaded, not only served.
-    bevy::shader::load_shader_library!(app, "shaders/wow_shadow.wgsl");
+    // An import library (`benilla_assets::wow_shadow`), so it must be loaded, not only served;
+    // a headless app has no `Shader` assets and nothing to compile it into.
+    if app
+        .world()
+        .contains_resource::<Assets<bevy::shader::Shader>>()
+    {
+        bevy::shader::load_shader_library!(app, "shaders/wow_shadow.wgsl");
+    }
 }
 
 /// The WDL far-band shader's source, for the tests that live beside the renderer (`wdl.rs`).
