@@ -474,6 +474,7 @@ pub(in crate::net) struct ClampStats {
     visited: u32,
     skipped: u32,
     held: u32,
+    parked: u32,
     cast: u32,
     swept: u32,
     hit: u32,
@@ -497,6 +498,7 @@ impl Default for ClampStats {
             visited: 0,
             skipped: 0,
             held: 0,
+            parked: 0,
             cast: 0,
             swept: 0,
             hit: 0,
@@ -516,6 +518,7 @@ impl ClampStats {
         self.visited += o.visited;
         self.skipped += o.skipped;
         self.held += o.held;
+        self.parked += o.parked;
         self.cast += o.cast;
         self.swept += o.swept;
         self.hit += o.hit;
@@ -562,6 +565,8 @@ pub(in crate::net) fn ground_clamp_creatures(
         // [`ground_derived`]'s other Z authorities: the controller and the relay's dead-reckoning.
         Has<crate::net::Embodied>,
         Has<crate::net::RemoteMotion>,
+        // A rig out of view: its Z is drawn nowhere, so it walks on the wire's.
+        Has<benilla_world::rig_anim::AnimParked>,
     )>,
     mut stats: Local<Parallel<ClampStats>>,
     mut inserts: Local<Parallel<Vec<(Entity, GroundClamped)>>>,
@@ -577,11 +582,18 @@ pub(in crate::net) fn ground_clamp_creatures(
     // batches spread a few dozen walkers over the pool.
     let mut gated = stats.borrow_local_mut();
     let mut casts: Vec<ClampRow> = Vec::new();
-    for row in &mut q {
+    for mut row in &mut q {
         gated.visited += 1;
         match clamp_gate(&row, epoch, legacy) {
             ClampGate::Skip => gated.skipped += 1,
             ClampGate::Hold => gated.held += 1,
+            ClampGate::Parked => {
+                gated.parked += 1;
+                // The wake re-seats from the wire pose, never sweeps from where the unit parked.
+                if let Some(c) = row.4.as_mut().filter(|c| c.path.is_some()) {
+                    c.path = None;
+                }
+            }
             ClampGate::Cast => casts.push(row),
         }
     }
@@ -606,10 +618,11 @@ pub(in crate::net) fn ground_clamp_creatures(
         // `WOW_CLAMP_COST=1`: the sweep's cost per frame. `cast` against `visited` is what the
         // cast gate saves, `moved` against `hit` how often a write changes Y; quote `ms`.
         eprintln!(
-            "[clamp-cost] visited={} skipped={} held={} cast={} swept={} reseat={} armed={} hit={} moved={} noflr={} ratchet={} deepest={} worst={} ms={:.3}",
+            "[clamp-cost] visited={} skipped={} held={} parked={} cast={} swept={} reseat={} armed={} hit={} moved={} noflr={} ratchet={} deepest={} worst={} ms={:.3}",
             s.visited,
             s.skipped,
             s.held,
+            s.parked,
             s.cast,
             s.swept,
             s.reseat,
@@ -639,6 +652,7 @@ type ClampRow<'a> = (
     Option<&'a crate::net::UnitMoveModes>,
     bool,
     bool,
+    bool,
 );
 
 /// What [`clamp_gate`] decides for a row before any probe.
@@ -647,13 +661,17 @@ enum ClampGate {
     Skip,
     /// The last answer stands: the ray cannot answer differently.
     Hold,
+    /// The rig is out of view ([`benilla_world::rig_anim::AnimParked`]): the wire Z stands.
+    /// Deviation: the reference walks every grounded mover through its surface trace; a parked
+    /// rig is drawn nowhere, and its padded wake sphere re-grounds it before it is.
+    Parked,
     Cast,
 }
 
 /// The cheap half of one unit's clamp: whether its Z is ours to derive, and whether the last
 /// answer still stands.
 fn clamp_gate(row: &ClampRow, epoch: u64, legacy: bool) -> ClampGate {
-    let (_, net, spline, t, clamped, swimming, modes, embodied, relayed) = row;
+    let (_, net, spline, t, clamped, swimming, modes, embodied, relayed, parked) = row;
     if !ground_derived(
         net.kind,
         spline.is_some(),
@@ -684,6 +702,9 @@ fn clamp_gate(row: &ClampRow, epoch: u64, legacy: bool) -> ClampGate {
             return ClampGate::Hold;
         }
     }
+    if *parked && !legacy {
+        return ClampGate::Parked;
+    }
     ClampGate::Cast
 }
 
@@ -699,7 +720,7 @@ fn clamp_unit(
     row: &mut ClampRow,
     s: &mut ClampStats,
 ) -> Option<(Entity, GroundClamped)> {
-    let (entity, net, spline, t, clamped, _, modes, _, _) = row;
+    let (entity, net, spline, t, clamped, _, modes, _, _, _) = row;
     let (entity, net, spline, modes) = (*entity, *net, *spline, *modes);
     let cost = clamp_cost_enabled();
     let xz = [t.translation.x, t.translation.z];
@@ -1186,6 +1207,32 @@ mod under_floor {
         app.world_mut().resource_mut::<ColliderEpoch>().bump();
         clamp(&mut app);
         assert_eq!(y_of(&app, npc), TERRAIN_Y, "the new floor is found");
+    }
+
+    /// A rig out of view casts nothing: a step taken while parked keeps the wire Z, and the wake
+    /// grounds it again.
+    #[test]
+    fn a_parked_rig_walks_on_the_wire_z_and_grounds_on_waking() {
+        let (mut app, npc) = half_arrived_world();
+        clamp(&mut app);
+        assert_eq!(y_of(&app, npc), TERRAIN_Y, "grounded while in view");
+
+        app.world_mut()
+            .entity_mut(npc)
+            .insert(benilla_world::rig_anim::AnimParked);
+        // The unit's position owner writes the next wire pose.
+        app.world_mut()
+            .get_mut::<Transform>(npc)
+            .unwrap()
+            .translation = Vec3::new(1.0, WIRE_Y, 0.0);
+        clamp(&mut app);
+        assert_eq!(y_of(&app, npc), WIRE_Y, "a parked rig is not cast");
+
+        app.world_mut()
+            .entity_mut(npc)
+            .remove::<benilla_world::rig_anim::AnimParked>();
+        clamp(&mut app);
+        assert_eq!(y_of(&app, npc), TERRAIN_Y, "the wake grounds it");
     }
 
     /// A hovering unit rests a yard over its floor and never climbs: the reference ends at
