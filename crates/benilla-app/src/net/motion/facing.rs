@@ -169,9 +169,16 @@ pub(crate) fn drive_display_facing(
     // `Option<Res<_>>` throughout: a headless test mounts this system without the UI plugins.
     interact: Option<Res<crate::ui_session::InteractNpc>>,
     emotes: Option<Res<crate::sound::EmoteSounds>>,
+    // A parked rig is drawn nowhere: its display facing resumes from its state when it wakes, as
+    // the reference ticks no pass-2 unit.
     candidates: Query<
         (Entity, &NetEntity, &ObjectStore),
-        (Without<Spline>, Without<RemoteMotion>, Without<ActiveMover>),
+        (
+            Without<Spline>,
+            Without<RemoteMotion>,
+            Without<ActiveMover>,
+            Without<benilla_world::rig_anim::AnimParked>,
+        ),
     >,
     self_q: Query<Entity, With<SelfPlayer>>,
     mut transforms: Query<&mut Transform>,
