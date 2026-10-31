@@ -845,19 +845,24 @@ mod get_item_info_tests {
             .unwrap();
         assert_eq!(name, "Worn Shortsword");
         assert_eq!(link, "item:25:2564:7:0");
-        // A case-insensitive prefix, and a short string still parses.
+        // A short string still parses, and `item:` is found anywhere, so a full hyperlink names
+        // its item (`SStrStr`, `0x516cbd`, `0x50f649`).
         assert_eq!(
-            s.eval::<String>("local _, link = GetItemInfo(\"ITEM:25\") return link")
+            s.eval::<String>("local _, link = GetItemInfo(\"item:25\") return link")
                 .unwrap(),
             "item:25:0:0:0"
         );
+        assert_eq!(
+            s.eval::<String>(
+                "return (GetItemInfo(\"|cffffffff|Hitem:25:0:0:0|h[Worn Shortsword]|h|r\"))"
+            )
+            .unwrap(),
+            "Worn Shortsword"
+        );
 
-        // A bare name and a full hyperlink are id 0: no values and no ask.
-        for arg in [
-            "\"Worn Shortsword\"",
-            "\"|cffffffff|Hitem:25:0:0:0|h[Worn Shortsword]|h|r\"",
-            "\"\"",
-        ] {
+        // A bare name, an upper-case `ITEM:` (the search is case-sensitive) and an empty string
+        // are id 0: no values and no ask.
+        for arg in ["\"Worn Shortsword\"", "\"ITEM:25\"", "\"\""] {
             assert_eq!(
                 s.arity(&format!("GetItemInfo({arg})")).unwrap(),
                 0,
