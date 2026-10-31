@@ -59,6 +59,8 @@ pub struct EnchantCatalog {
     flags: HashMap<u32, u32>,
     /// `SrcItemID`, the gem a socket enchant came from, for the rows that name one.
     gem_items: HashMap<u32, u32>,
+    /// The sockets a prismatic enchant adds: its first effect 8's `EffectPointsMin` (`0x708140`).
+    prismatic: HashMap<u32, u32>,
 }
 
 /// `Flags & 0x1`: applying the enchant binds the item. It is the only gate on the bind confirm,
@@ -106,6 +108,11 @@ impl EnchantCatalog {
         self.gem_items.get(&enchant_id).copied()
     }
 
+    /// The sockets the enchant adds, 0 for one with no prismatic effect (8).
+    pub fn prismatic_sockets(&self, enchant_id: u32) -> u32 {
+        self.prismatic.get(&enchant_id).copied().unwrap_or(0)
+    }
+
     /// Build from explicit maps, for tests; `flags` is also the row set [`Self::has_row`] reads.
     pub fn from_rows(
         visuals: HashMap<u32, i32>,
@@ -117,6 +124,7 @@ impl EnchantCatalog {
             names,
             flags,
             gem_items: HashMap::new(),
+            prismatic: HashMap::new(),
         }
     }
 
@@ -193,6 +201,8 @@ const ENCHANT_NAME: usize = 14;
 const ENCHANT_VISUAL: usize = 31;
 const ENCHANT_FLAGS: usize = 32;
 const ENCHANT_SRC_ITEM: usize = 33;
+/// The prismatic-socket effect type.
+const ENCHANT_PRISMATIC_SOCKET: u32 = 8;
 
 /// Load and join `ItemVisuals.dbc` and `ItemVisualEffects.dbc`, applying the reference's skips.
 pub fn load_item_visual_catalog(chain: &mut Chain) -> Result<ItemVisualCatalog> {
@@ -241,8 +251,13 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
     let mut names = HashMap::new();
     let mut flags = HashMap::with_capacity(rs.records().len());
     let mut gem_items = HashMap::new();
+    let mut prismatic = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
+        // Effects at columns 2..5, their minimum points at 5..8.
+        if let Some(i) = (0..3).find(|&i| u32_at(r, 2 + i) == Some(ENCHANT_PRISMATIC_SOCKET)) {
+            prismatic.insert(id, u32_at(r, 5 + i).unwrap_or(0));
+        }
         // Every row, `Flags == 0` included: the keys are the row set.
         flags.insert(id, u32_at(r, ENCHANT_FLAGS).unwrap_or(0));
         let gem = u32_at(r, ENCHANT_SRC_ITEM).unwrap_or(0);
@@ -263,6 +278,7 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
         names,
         flags,
         gem_items,
+        prismatic,
     })
 }
 

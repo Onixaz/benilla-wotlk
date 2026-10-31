@@ -11,10 +11,13 @@ use crate::Chain;
 
 const GEM_PROPERTIES: &str = "DBFilesClient\\GemProperties.dbc";
 
-/// The gem colours by the enchant a socketed gem leaves in its slot.
+/// The gem colours by the enchant a socketed gem leaves in its slot, and each row by its own id,
+/// the id an item template's `GemProperties` names.
 #[derive(Debug, Clone, Default)]
 pub struct GemPropertiesCatalog {
     types: HashMap<u32, u32>,
+    /// Row id to `(EnchantID, Type)`.
+    rows: HashMap<u32, (u32, u32)>,
 }
 
 impl GemPropertiesCatalog {
@@ -22,7 +25,29 @@ impl GemPropertiesCatalog {
     pub fn from_rows(rows: impl IntoIterator<Item = (u32, u32)>) -> Self {
         Self {
             types: rows.into_iter().collect(),
+            rows: HashMap::new(),
         }
+    }
+
+    /// Build from `(row id, enchant id, type)` rows, for tests and fixtures.
+    pub fn from_full_rows(rows: impl IntoIterator<Item = (u32, u32, u32)>) -> Self {
+        let rows: HashMap<u32, (u32, u32)> = rows
+            .into_iter()
+            .map(|(id, enchant, ty)| (id, (enchant, ty)))
+            .collect();
+        Self {
+            types: rows
+                .values()
+                .filter(|&&(enchant, _)| enchant != 0)
+                .copied()
+                .collect(),
+            rows,
+        }
+    }
+
+    /// The row a gem template names: its socket enchant and colour mask.
+    pub fn gem(&self, gem_properties_id: u32) -> Option<(u32, u32)> {
+        self.rows.get(&gem_properties_id).copied()
     }
 
     /// `Type`, the colour mask (1 meta, 2 red, 4 yellow, 8 blue), of the gem behind a socket
@@ -57,9 +82,8 @@ pub fn load_gem_properties(chain: &mut Chain) -> Result<GemPropertiesCatalog> {
     let rows = rs
         .records()
         .iter()
-        .filter_map(|r| Some((u32_at(r, 1)?, u32_at(r, 4)?)))
-        .filter(|&(enchant, _)| enchant != 0);
-    Ok(GemPropertiesCatalog::from_rows(rows))
+        .filter_map(|r| Some((u32_at(r, 0)?, u32_at(r, 1)?, u32_at(r, 4)?)));
+    Ok(GemPropertiesCatalog::from_full_rows(rows))
 }
 
 #[cfg(test)]
