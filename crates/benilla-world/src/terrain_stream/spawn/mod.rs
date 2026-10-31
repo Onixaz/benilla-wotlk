@@ -882,19 +882,14 @@ pub(super) fn spawn_loaded_placements(
                 mode,
             );
             // A despawn hook returns the slot to the table. A prop whose every batch merged, or
-            // one that can sleep, holds it on a bare carrier, since a blob or a sleeping part
-            // cannot own one prop's slot.
-            let mut kept: Vec<Entity> = Vec::new();
+            // one that can sleep, has no part to own its slot, so the placement holds it.
             if let Some(slot) = interior_slot {
-                let owner = match ents.first() {
-                    Some(&first) if !sleepy => first,
-                    _ => {
-                        let carrier = commands.spawn_empty().id();
-                        kept.push(carrier);
-                        carrier
+                match ents.first() {
+                    Some(&first) if !sleepy => {
+                        commands.entity(first).insert(PropProbeSlot(slot));
                     }
-                };
-                commands.entity(owner).insert(PropProbeSlot(slot));
+                    _ => p.probe_slots.push(slot),
+                }
             }
             // Cull the prop with the rooms that name it: the reference admits a WMO's doodads to
             // the frame per group its portal walk reaches (over the group's MODR list), so a prop
@@ -913,17 +908,6 @@ pub(super) fn spawn_loaded_placements(
                     &object,
                 );
             }
-            if let SceneTag::Room(instance, groups) = &tag {
-                for &e in &kept {
-                    commands.entity(e).insert((
-                        WmoGroupVis {
-                            instance: *instance,
-                            groups: Arc::clone(groups),
-                        },
-                        crate::exterior_cull::ExteriorScene,
-                    ));
-                }
-            }
             d.sleeper =
                 (sleepy && dormancy::has_entity_phase(&entity_batches, m)).then(|| Sleeper {
                     mask: entity_batches,
@@ -937,9 +921,8 @@ pub(super) fn spawn_loaded_placements(
                     anim_bound,
                     interior_slot,
                 });
-            // The entity phase above; the carrier, hull and lights below stay while it sleeps.
+            // The entity phase above; the hull and lights below stay while it sleeps.
             let first_kept = ents.len();
-            ents.extend(kept);
             // Solid to body and camera iff it has a collision hull, like a map doodad; welded per
             // placement, as every prop despawns with its building. The mouse pick tests its drawn
             // batches instead.
@@ -1181,6 +1164,7 @@ mod retire_tests {
             refs: 1,
             owner: (0, 0),
             sleeper: None,
+            probe_slots: Vec::new(),
         }
     }
 

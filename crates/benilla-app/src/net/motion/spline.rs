@@ -929,6 +929,8 @@ type SwimMarkQuery = (
     Has<GroundClamped>,
     Has<crate::net::Embodied>,
     Has<crate::net::RemoteMotion>,
+    // Out of view: the mark feeds only the clamp and the swim clips, which a parked rig skips.
+    Has<benilla_world::rig_anim::AnimParked>,
 );
 
 /// The stamp [`mark_swimming_creatures`] leaves once a unit's room claim settles; 1.12 water is
@@ -1019,9 +1021,28 @@ pub(in crate::net) fn mark_swimming_creatures(
             commands.entity(e).remove::<SwimEvaluated>();
         }
     }
-    for (e, net, t, collision, store, marked, evaluated, splined, clamped, embodied, relayed) in
-        &units
+    for (
+        e,
+        net,
+        t,
+        collision,
+        store,
+        marked,
+        evaluated,
+        splined,
+        clamped,
+        embodied,
+        relayed,
+        parked,
+    ) in &units
     {
+        // A parked unit drops its stamp, so the frame it wakes re-asks the water it stands in.
+        if parked && !embodied {
+            if evaluated {
+                commands.entity(e).remove::<SwimEvaluated>();
+            }
+            continue;
+        }
         if !ground_derived(net.kind, splined, clamped, embodied, relayed) {
             // A kind no input can admit (a GameObject) is stamped once, so the gate drops it; a
             // player can join the set standing still, and stays unstamped.

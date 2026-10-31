@@ -17,6 +17,7 @@
 //! themselves, so nothing of Bevy's PBR shadow lookup runs. At mode 0 no light exists, and Bevy's
 //! light passes stay gated off (`world_plugins`).
 
+use bevy::camera::primitives::CascadesFrusta;
 use bevy::light::cascade::{build_directional_light_cascades, Cascade};
 use bevy::light::{
     CascadeShadowConfig, Cascades, DirectionalLightShadowMap, NotShadowCaster,
@@ -172,6 +173,13 @@ pub(crate) fn plugin(app: &mut App) {
                 .run_if(light_exists)
                 .in_set(SimulationLightSystems::UpdateDirectionalLightCascades)
                 .after(build_directional_light_cascades),
+        )
+        .add_systems(
+            PostUpdate,
+            narrow_cascade_frusta
+                .run_if(light_exists)
+                .after(SimulationLightSystems::UpdateLightFrusta)
+                .before(SimulationLightSystems::CheckLightVisibility),
         );
 }
 
@@ -273,6 +281,72 @@ fn place_cascades(
             view.clone_from(&maps);
         }
     }
+}
+
+/// Texels of padding around a narrowed cull rect, for the receivers' filter taps.
+const CULL_PAD_TEXELS: f32 = 4.0;
+
+/// Cull each map's casters with its frustum narrowed to the camera's clip frustum, as the
+/// reference does under `shadowCull` (`0x7bafd0`): the map renders with its full matrix, but only
+/// the rect of it the camera's frustum covers along the light gathers casters, since a receiver on
+/// screen samples only there. Bevy culls with `CascadesFrusta` and renders with `Cascades`, so this
+/// rewrites the former after Bevy builds it.
+fn narrow_cascade_frusta(
+    quality: Res<ExtShadowQuality>,
+    cam: Query<(&GlobalTransform, &Projection), With<WorldCamera>>,
+    mut lights: Query<(&Cascades, &mut CascadesFrusta), With<ShadowLight>>,
+) {
+    let Some((cam_t, Projection::Perspective(p))) = cam.iter().next() else {
+        return;
+    };
+    let corners = Projection::Perspective(p.clone())
+        .get_frustum_corners(-p.near, -p.far)
+        .map(|c| cam_t.affine().transform_point3a(c));
+    let pad = CULL_PAD_TEXELS * 2.0 / shadow_map_size(quality.0.min(SHADOW_MODE_MAX)) as f32;
+    for (cascades, mut frusta) in &mut lights {
+        for (view, maps) in &cascades.cascades {
+            let Some(view_frusta) = frusta.frusta.get_mut(view) else {
+                continue;
+            };
+            for (map, frustum) in maps.iter().zip(view_frusta.iter_mut()) {
+                if let Some(narrowed) = narrowed_cull(&map.clip_from_world, &corners, pad) {
+                    *frustum = narrowed;
+                }
+            }
+        }
+    }
+}
+
+/// A map's cull frustum shrunk to the clip-space XY rect of the camera frustum's corners, padded
+/// and clamped to the map; `None` when the camera's rect misses the map.
+fn narrowed_cull(
+    clip_from_world: &Mat4,
+    corners: &[bevy::math::Vec3A; 8],
+    pad: f32,
+) -> Option<bevy::camera::primitives::Frustum> {
+    let (mut lo, mut hi) = (Vec2::splat(f32::INFINITY), Vec2::splat(f32::NEG_INFINITY));
+    for c in corners {
+        let p = clip_from_world.project_point3(Vec3::from(*c)).truncate();
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    let lo = (lo - pad).max(Vec2::NEG_ONE);
+    let hi = (hi + pad).min(Vec2::ONE);
+    if hi.x <= lo.x || hi.y <= lo.y {
+        return None;
+    }
+    // Clip XY [lo, hi] onto [-1, 1]; depth and w untouched.
+    let scale = 2.0 / (hi - lo);
+    let offset = -(hi + lo) / (hi - lo);
+    let remap = Mat4::from_cols(
+        Vec4::new(scale.x, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, scale.y, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, 1.0, 0.0),
+        Vec4::new(offset.x, offset.y, 0.0, 1.0),
+    );
+    Some(bevy::camera::primitives::Frustum::from_clip_from_world(
+        &(remap * *clip_from_world),
+    ))
 }
 
 /// The caster set needs work: the mode moved, or modes 1 and 2 are keeping new meshes out.

@@ -330,12 +330,15 @@ pub fn classify_entity_interior(
             Option<&LitEmitters>,
             Option<&mut ParticleLight>,
             Option<&mut NodeAmbient>,
+            // A parked rig is out of view: its light is not re-resolved until it wakes.
+            Has<crate::rig_anim::AnimParked>,
         ),
         Or<(With<LitParts>, With<LitEmitters>)>,
     >,
     mut nodes: Query<&mut crate::entity_shade::GroundShade>,
-    bake_states: Query<&BakeState>,
-    seats: Query<&PropProbeSlot>,
+    // An anchor's cached bake products and its seated probe slot.
+    held: Query<(Option<&BakeState>, Option<&PropProbeSlot>)>,
+    footprints: Query<&crate::wmo_portal::WmoFootprint>,
     mut queue: ResMut<InteriorReauthor>,
     part_anchors: Query<&ClassifiedBy>,
     // Fading parts included, or an entity streaming in indoors fades in under exterior light. The
@@ -357,10 +360,12 @@ pub fn classify_entity_interior(
     {
         let due: Vec<(Entity, crate::wmo_portal::LightAttach, Vec3)> = anchors
             .iter()
-            .filter(|(_, anchor_t, _, state, ..)| {
+            .filter(|(_, anchor_t, _, state, .., parked)| {
                 !state.as_deref().is_some_and(|s| {
-                    s.generation == residency.generation
-                        && anchor_t.translation().distance_squared(s.last_pos) < RESAMPLE_DIST_SQ
+                    *parked
+                        || s.generation == residency.generation
+                            && anchor_t.translation().distance_squared(s.last_pos)
+                                < RESAMPLE_DIST_SQ
                 })
             })
             .filter(|(_, _, lit_parts, _, _, bake_center, lit_emitters, ..)| {
@@ -373,7 +378,12 @@ pub fn classify_entity_interior(
             .collect();
         if !due.is_empty() {
             let buildings = buildings.get_or_insert_with(|| {
-                crate::wmo_portal::verdict_buildings(&wmos, instances.iter())
+                crate::wmo_portal::verdict_buildings_stamped(
+                    &wmos,
+                    instances
+                        .iter()
+                        .map(|(e, i)| (e, i, footprints.get(e).ok())),
+                )
             });
             let (buildings, streamer, adt_tiles) = (&*buildings, &*streamer, &*adt_tiles);
             let ray = |&(anchor, attach, at): &(Entity, crate::wmo_portal::LightAttach, Vec3)| {
@@ -403,6 +413,7 @@ pub fn classify_entity_interior(
         lit_emitters,
         particle_light,
         node_ambient,
+        parked,
     ) in &mut anchors
     {
         n_anchors += 1;
@@ -416,7 +427,10 @@ pub fn classify_entity_interior(
                 && pos.distance_squared(settled_state.last_pos) < RESAMPLE_DIST_SQ;
             if settled {
                 if let AppliedLaw::Bake(slot) = settled_state.law {
-                    if let (Ok(node), Ok(bake)) = (nodes.get(anchor), bake_states.get(anchor)) {
+                    if let (Ok(node), Ok(bake)) = (
+                        nodes.get(anchor),
+                        held.get(anchor).ok().and_then(|(b, _)| b).ok_or(()),
+                    ) {
                         if !node.ramps_settled() {
                             let words = (
                                 node.ambient.to_array(),
@@ -455,12 +469,17 @@ pub fn classify_entity_interior(
                 continue;
             }
         }
+        // A parked rig keeps its standing law; it re-resolves the frame after it wakes, and only a
+        // first resolve runs while parked.
+        if had_state && parked {
+            continue;
+        }
         // Re-resolving, with the bake input the pre-pass read the same way.
         let Some(bake) = anchor_bake(lit_parts, lit_emitters.is_some(), bake_center, &parts) else {
             n_fade_blocked += 1;
             continue;
         };
-        let seated = seats.get(anchor).ok().map(|s| s.0);
+        let seated = held.get(anchor).ok().and_then(|(_, s)| s).map(|s| s.0);
         n_resolved += 1;
         let _r = std::time::Instant::now();
         let (attach, attach_at) = attach_anchor(containment, bake_center, anchor_t);
@@ -468,7 +487,12 @@ pub fn classify_entity_interior(
         let verdict = verdicts.remove(&anchor).unwrap_or_else(|| {
             crate::wmo_portal::indoor_verdict_among(
                 buildings.get_or_insert_with(|| {
-                    crate::wmo_portal::verdict_buildings(&wmos, instances.iter())
+                    crate::wmo_portal::verdict_buildings_stamped(
+                        &wmos,
+                        instances
+                            .iter()
+                            .map(|(e, i)| (e, i, footprints.get(e).ok())),
+                    )
                 }),
                 &streamer,
                 &adt_tiles,
