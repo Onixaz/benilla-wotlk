@@ -52,6 +52,7 @@ tables! {
         "BarberShopStyle" => barber_shop_style::schema(),
         "CameraShakes" => camera_shakes::camera_shakes_schema(),
         "Cfg_Categories" => cfg_categories::cfg_categories_schema(),
+        "Cfg_Configs" => cfg_configs::schema(),
         "CharacterFacialHairStyles" => {
             characters::char_facial_hair_schema(&LAYOUTS.character_facial_hair_styles)
         },

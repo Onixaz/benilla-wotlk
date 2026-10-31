@@ -24,9 +24,6 @@
 //! Deviation: the indoor dedup keys `(WMOID, MOGP uniqueID)`, not the client's raw per-WMO group
 //! index, because the raw index can alias across adjacent buildings.
 //!
-//! The reference's PvP display gate (a cached boolean, not the realm type) is untraced; ours is
-//! always open.
-
 use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
 
@@ -94,6 +91,12 @@ fn elect_event(cache: &ZoneCache, next: &ZoneSignal) -> Option<&'static str> {
         });
     }
     None
+}
+
+/// Build 12340 `0x51ba50` suppresses ordinary territory text on a PvE realm, but a zone with
+/// AreaTable flag `0x10` still exposes it.
+fn territory_visible(realm_pvp: bool, zone_flags: u32) -> bool {
+    realm_pvp || zone_flags & 0x10 != 0
 }
 
 /// Resolves the texts and PvP info, pushes the zone caches, then fires the elected zone event and,
@@ -212,14 +215,11 @@ fn feed_zone_events(
     } else {
         None
     };
-    let realm_pvp = roster
-        .as_ref()
-        .and_then(|r| r.realm_type())
-        .is_some_and(|t| crate::realm_select::pvp_rp(t).0);
+    let realm_pvp = roster.as_ref().is_some_and(|r| r.realm_is_pvp());
     let territory = || {
         let row = zone_row?;
         let store = self_store.single().ok()?;
-        if !realm_pvp && row.flags & 0x10 == 0 {
+        if !territory_visible(realm_pvp, row.flags) {
             return None;
         }
         let catalog = factions.as_ref().map(|f| f.catalog());
@@ -288,6 +288,7 @@ impl Plugin for AreaPlugin {
                 // After the leaf authority: leaf, indoor bit and names must come from one frame, as
                 // in the client's single-pass resolve, or a stale leaf fires a spurious splash.
                 feed_zone_events
+                    .after(crate::char_select::RealmEntrySet)
                     .after(crate::ui_script::UiInput)
                     .after(benilla_world::terrain_stream::AreaAuthoritySet),
             );
@@ -297,6 +298,19 @@ impl Plugin for AreaPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pve_gate_uses_the_shipped_ordinary_and_capital_zone_flags() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let areas = benilla_formats::load_area_table_catalog(&mut chain).expect("AreaTable");
+        let elwynn = areas.get(12).expect("Elwynn Forest");
+        let stormwind = areas.get(1519).expect("Stormwind City");
+        assert!(!territory_visible(false, elwynn.flags));
+        assert!(territory_visible(true, elwynn.flags));
+        assert!(territory_visible(false, stormwind.flags));
+        assert!(territory_visible(true, stormwind.flags));
+    }
 
     fn sig(zone_id: u32, zone: &str, sub: &str, indoor: bool) -> ZoneSignal {
         ZoneSignal {

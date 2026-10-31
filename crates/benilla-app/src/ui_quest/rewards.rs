@@ -124,10 +124,7 @@ impl RewardInputs<'_, '_> {
     /// A PvP realm (`Cfg_Configs.dbc`'s `PlayerKillingAllowed` for the realm's type), where
     /// `QuestFlagsPVP` answers nil (`[0xb2f998]`, set at `0x4055c7`).
     pub(crate) fn realm_is_pvp(&self) -> bool {
-        self.roster
-            .as_ref()
-            .and_then(|r| r.realm_type())
-            .is_some_and(|t| crate::realm_select::pvp_rp(t).0)
+        self.roster.as_ref().is_some_and(|r| r.realm_is_pvp())
     }
 
     /// A quest-log row's extras from its template, at the player's level.

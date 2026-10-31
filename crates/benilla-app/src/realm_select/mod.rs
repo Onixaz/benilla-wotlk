@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use benilla_formats::RealmCategory;
+use benilla_formats::{RealmCategory, RealmConfig};
 
 /// The persisted CVar naming the last realm connected to; the SavedVariables path is built from it.
 pub(crate) const CVAR_REALM_NAME: &str = "realmName";
@@ -15,6 +15,7 @@ pub(crate) const CVAR_REALM_NAME: &str = "realmName";
 #[derive(Resource, Default)]
 pub(crate) struct Realms {
     categories: Option<Vec<RealmCategory>>,
+    configs: Option<Vec<RealmConfig>>,
 }
 
 impl Realms {
@@ -37,22 +38,26 @@ impl Realms {
                 flags: c.flags,
             })
             .collect();
-        let types = REALM_TYPES
-            .map(|realm_type| {
-                let (pvp, rp) = pvp_rp(realm_type);
-                benilla_ui::script::GlueRealmType {
-                    realm_type,
-                    pvp,
-                    rp,
-                }
+        let types = self
+            .configs
+            .iter()
+            .flatten()
+            .map(|config| benilla_ui::script::GlueRealmType {
+                realm_type: config.realm_type,
+                pvp: config.pvp,
+                rp: config.rp,
             })
             .collect();
         (categories, types)
     }
 
-    /// A realm type's `(pvp, rp)` in `Cfg_Configs.dbc`, `(false, false)` for a type with no row.
+    /// The first matching row's PvP and RP flags, false when the type has no row.
     pub(crate) fn pvp_rp(&self, realm_type: u32) -> (bool, bool) {
-        pvp_rp(realm_type)
+        self.configs
+            .iter()
+            .flatten()
+            .find(|r| r.realm_type == realm_type)
+            .map_or((false, false), |r| (r.pvp, r.rp))
     }
 }
 
@@ -68,31 +73,41 @@ impl Realms {
         };
         Realms {
             categories: Some(vec![cat(1, "United States"), cat(5, "Oceanic")]),
+            configs: Some(vec![
+                RealmConfig {
+                    realm_type: 0,
+                    pvp: false,
+                    rp: false,
+                },
+                RealmConfig {
+                    realm_type: 1,
+                    pvp: true,
+                    rp: false,
+                },
+                RealmConfig {
+                    realm_type: 6,
+                    pvp: false,
+                    rp: true,
+                },
+                RealmConfig {
+                    realm_type: 8,
+                    pvp: true,
+                    rp: true,
+                },
+                RealmConfig {
+                    realm_type: 10,
+                    pvp: true,
+                    rp: false,
+                },
+            ]),
         }
     }
 }
 
-/// The realm types `Cfg_Configs.dbc` has a row for.
-const REALM_TYPES: std::ops::RangeInclusive<u32> = 0..=8;
-
-/// The realm type as `(pvp, rp)`, shared by `GetRealmInfo` and `GetServerName`: the
-/// `Cfg_Configs.dbc` row whose `RealmType` matches, its `PlayerKillingAllowed` and
-/// `RoleplayingRealm` transcribed (types 3 and 5 are PvP, 7 is RP); a type with no row reads
-/// neither.
-pub(crate) fn pvp_rp(realm_type: u32) -> (bool, bool) {
-    match realm_type {
-        0 | 2 | 4 => (false, false),
-        1 | 3 | 5 => (true, false),
-        6 | 7 => (false, true),
-        8 => (true, true),
-        _ => (false, false),
-    }
-}
-
-/// The install's realm categories, read once.
+/// The install's realm categories and type configurations, read once.
 pub(crate) struct RealmSelectPlugin;
 
-/// The realm-category load, for a reader of [`Realms`] to order itself after.
+/// The realm-table load, for a reader of [`Realms`] to order itself after.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RealmSelectSet;
 
@@ -100,15 +115,15 @@ impl Plugin for RealmSelectPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Realms>().add_systems(
             Startup,
-            load_categories
+            load_realm_tables
                 .after(benilla_assets::AssetSet::Open)
                 .in_set(RealmSelectSet),
         );
     }
 }
 
-/// Read the category set once, after the archive chain opens.
-fn load_categories(mut realms: ResMut<Realms>, assets: Option<Res<benilla_assets::WorldAssets>>) {
+/// Read both realm tables once, after the archive chain opens.
+fn load_realm_tables(mut realms: ResMut<Realms>, assets: Option<Res<benilla_assets::WorldAssets>>) {
     use benilla_assets::LockRecover;
     let Some(assets) = assets else {
         return;
@@ -130,6 +145,13 @@ fn load_categories(mut realms: ResMut<Realms>, assets: Option<Res<benilla_assets
              page: {e:#}"
         ),
     }
+    match benilla_formats::load_realm_configs(&mut chain) {
+        Ok(configs) => {
+            info!("realm list: {} realm configurations", configs.len());
+            realms.configs = Some(configs);
+        }
+        Err(e) => warn!("realm list: Cfg_Configs.dbc failed to load: {e:#}"),
+    }
 }
 
 #[cfg(test)]
@@ -144,25 +166,32 @@ mod tests {
         let loaded = benilla_formats::load_realm_categories(&mut chain).expect("DBC");
         let realms = Realms {
             categories: Some(loaded),
+            ..Default::default()
         };
         let (categories, _) = realms.glue_setup();
         let names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"United States"), "{names:?}");
     }
 
-    /// The types are the shipped `Cfg_Configs` rows; a type with no row reads neither column.
+    /// Both the glue list and a selected realm use the same install rows.
     #[test]
     fn the_realm_types_are_the_shipped_cfg_configs_rows() {
-        for t in [0, 2, 4] {
-            assert_eq!(pvp_rp(t), (false, false), "type {t}");
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let configs = benilla_formats::load_realm_configs(&mut chain).expect("Cfg_Configs.dbc");
+        let realms = Realms {
+            configs: Some(configs.clone()),
+            ..Default::default()
+        };
+        let (_, glue) = realms.glue_setup();
+        assert_eq!(glue.len(), configs.len());
+        for (row, entry) in configs.iter().zip(glue) {
+            assert_eq!(
+                (entry.realm_type, entry.pvp, entry.rp),
+                (row.realm_type, row.pvp, row.rp)
+            );
+            assert_eq!(realms.pvp_rp(row.realm_type), (row.pvp, row.rp));
         }
-        for t in [1, 3, 5] {
-            assert_eq!(pvp_rp(t), (true, false), "type {t}");
-        }
-        for t in [6, 7] {
-            assert_eq!(pvp_rp(t), (false, true), "type {t}");
-        }
-        assert_eq!(pvp_rp(8), (true, true));
-        assert_eq!(pvp_rp(77), (false, false));
+        assert_eq!(realms.pvp_rp(77), (false, false));
     }
 }
