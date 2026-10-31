@@ -3,7 +3,7 @@
 //! `UNIT_FIELD_TARGET`. Every compare folds ASCII case. The bases are 12340's (`0x60abf0`, in its
 //! compare order): `player`, `vehicle`, `pet`, `target`, `partypetN`, `partyN`, `raidpetN`,
 //! `raidN`, `bossN`, `arenapetN`, `arenaN`, `commentatorN`, `mouseover`, `focus`, then the exact
-//! `npc`, `questnpc` and `none`. The app pushes no guid for `bossN`, `arenaN`, `arenapetN`,
+//! `npc`, `questnpc` and `none`. The app pushes no guid for `arenaN`, `arenapetN`,
 //! `commentatorN` or `questnpc` yet, so they name nobody (#90); 12340's
 //! `pet` and `-` suffixes and its name lookup (`0x60aaa0`, `0x60a630`) are not built.
 
@@ -35,6 +35,8 @@ pub struct UnitGuids {
     pub raid: Vec<u64>,
     /// `raidpetN`'s guid, row for row with [`Self::raid`].
     pub raid_pets: Vec<u64>,
+    /// `bossN`'s guid, the encounter's slot N-1 (`0x5ed710`); a slot past the end is nobody.
+    pub boss: Vec<u64>,
     /// Each held unit a token can reach, to its `UNIT_FIELD_TARGET` (0 for none): the object
     /// manager's lookup with the unit typemask (`ecx = 8`) and the descriptor read a `target` hop
     /// makes. A guid missing here is not held.
@@ -219,6 +221,7 @@ impl UnitGuids {
             party_pets,
             raid,
             raid_pets,
+            boss,
             held,
         } = self;
         *player == other.player
@@ -231,6 +234,7 @@ impl UnitGuids {
             && *party_pets == other.party_pets
             && *raid == other.raid
             && *raid_pets == other.raid_pets
+            && *boss == other.boss
             && *held == other.held
     }
 
@@ -268,13 +272,14 @@ impl UnitGuids {
             // Capped at the roster count.
             UnitBase::RaidPet(row) => at(&self.raid_pets, row),
             UnitBase::Raid(row) => at(&self.raid, row),
+            // Bounded by the slot count, as `0x5ed710` is.
+            UnitBase::Boss(row) => at(&self.boss, row),
             UnitBase::Mouseover if !self.held.contains_key(&self.mouseover) => return None,
             UnitBase::Mouseover => self.mouseover,
             UnitBase::Focus => self.focus,
             UnitBase::Vehicle => self.vehicle,
             // No guid pushed for these yet (#90).
             UnitBase::QuestNpc
-            | UnitBase::Boss(_)
             | UnitBase::Arena(_)
             | UnitBase::ArenaPet(_)
             | UnitBase::Commentator(_) => return None,
@@ -303,9 +308,9 @@ impl UnitGuids {
     }
 
     /// Every token naming `guid`, in the order 12340's unit-event fan-out lists them (`0x60bb70`):
-    /// `player`, `vehicle`, `pet`, `partyN`, `partypetN`, `raidN`, `raidpetN`, `target`, `focus`,
-    /// `npc`. No `target` hop and no `mouseover`. The reference also lists `arenaN`, `arenapetN`
-    /// and `bossN`, which this resolver has no base for.
+    /// `player`, `vehicle`, `pet`, `partyN`, `partypetN`, `raidN`, `raidpetN`, `bossN`, `target`,
+    /// `focus`, `npc`. No `target` hop and no `mouseover`. The reference also lists `arenaN` and
+    /// `arenapetN`, which this resolver has no guid for.
     pub(crate) fn tokens_naming(&self, guid: u64) -> Vec<String> {
         let mut out = Vec::new();
         if guid == 0 {
@@ -331,6 +336,10 @@ impl UnitGuids {
                     out.push(format!("{prefix}{}", i + 1));
                 }
             }
+        }
+        // The first slot only, as the reference's loop breaks on a match.
+        if let Some(i) = self.boss.iter().position(|&g| g == guid) {
+            out.push(format!("boss{}", i + 1));
         }
         if self.target == guid {
             out.push("target".into());
@@ -407,6 +416,21 @@ mod tests {
         assert!(g.chain_ends().any(|e| e == CART));
     }
 
+    /// `bossN` reads the encounter's slot N-1, bounded by the slots (`0x5ed710`), and the fan-out
+    /// lists it after the raid tables and before `target` (`0x60bb70`).
+    #[test]
+    fn boss_tokens_read_the_encounter_slots() {
+        let mut g = guids();
+        assert_eq!(g.guid_of("boss1"), None, "no slots");
+        g.boss = vec![MOB, 0];
+        assert_eq!(g.guid_of("boss1"), Some(MOB));
+        assert_eq!(g.guid_of("Boss1target"), Some(P1), "a hop off the boss");
+        assert_eq!(g.guid_of("boss2"), None, "an empty slot");
+        assert_eq!(g.guid_of("boss3"), None, "past the slots");
+        assert_eq!(g.guid_of("boss0"), None);
+        assert_eq!(g.tokens_naming(MOB), ["boss1", "target", "npc"]);
+    }
+
     fn guids() -> UnitGuids {
         UnitGuids {
             player: ME,
@@ -420,6 +444,7 @@ mod tests {
             party_pets: [P1_PET, 0, 0, 0],
             raid: vec![ME, P1, R3],
             raid_pets: vec![PET, P1_PET, 0],
+            boss: Vec::new(),
             held: HashMap::from([
                 (ME, MOB),
                 (PET, 0),

@@ -193,8 +193,8 @@ pub const SMSG_ATTACKSTART: u16 = 0x0143; // 323
 pub const SMSG_ATTACKSTOP: u16 = 0x0144; // 324
 pub const SMSG_ATTACKERSTATEUPDATE: u16 = 0x014A; // 330
 
-// The server's refusals of a `CMSG_ATTACKSWING`, all with empty bodies (`Combat.cpp`). `0x147`
-// NOTSTANDING is absent on purpose: the reference registers no handler for it.
+// The server's refusals of a `CMSG_ATTACKSWING`, all with empty bodies (`Combat.cpp`). `0x147` is
+// `SMSG_INSTANCE_LOCK_WARNING_QUERY` on 3.3.5a.
 pub const SMSG_ATTACKSWING_NOTINRANGE: u16 = 0x0145; // 325
 pub const SMSG_ATTACKSWING_BADFACING: u16 = 0x0146; // 326
 pub const SMSG_ATTACKSWING_DEADTARGET: u16 = 0x0148; // 328
@@ -785,8 +785,9 @@ pub const CMSG_LEARN_PREVIEW_TALENTS_PET: u16 = 0x04C2;
 /// The respec, both ways: the trainer's gossip line (`Player.cpp:12406`) makes the server ask with
 /// the trainer's guid and the cost; the `CONFIRM_TALENT_WIPE` Accept sends the latched guid back.
 pub const MSG_TALENT_WIPE_CONFIRM: u16 = 0x02AA; // 682
-/// The instance boot timer: `u32 delayMs`, `u32 reason`; boot START for a positive delay, STOP for
-/// zero, and with reason 1 or 2 a zero delay also shows `ERR_RAID_GROUP_ONLY` or `_FULL`.
+/// The instance boot timer: `u32 delayMs`, `u32 reason`; boot START for a positive delay, STOP
+/// otherwise, and with reason 1-4 a zero delay first shows `ERR_RAID_GROUP_LOWLEVEL`, `_ONLY`,
+/// `_FULL` or `_REQUIREMENTS_UNMATCH`.
 pub const SMSG_RAID_GROUP_ONLY: u16 = 0x0286; // 646
 /// A queue slot (`0x54ae40`): `u32 slot`, `u64 queue`, then unless the word is 0 `u8` min and
 /// max level, `u32 instance`, `u8 rated`, `u32 status` and the status's tail.
@@ -1202,10 +1203,12 @@ pub const SMSG_UPDATE_WORLD_STATE: u16 = 0x02C3; // 707
 
 // ── Instance and raid lockouts ──
 
-/// "You are now saved to this instance": a `u32` flag, 0 from vmangos (1 adds a debug prefix).
-/// Deviation: 2 or more prints nothing, because the reference prints an uninitialized buffer.
+/// "You are now saved to this instance" (`0x52bb10`): a `u32` flag, 0 the line and the lock clock
+/// stopped, 1 a debug prefix. Deviation: 2 or more prints nothing, because the reference prints an
+/// uninitialized buffer.
 pub const SMSG_INSTANCE_SAVE_CREATED: u16 = 0x02CB; // 715
-/// A raid-lockout warning: `u32 type`, `u32 mapId`, `u32 secondsUntilReset`.
+/// A raid-lockout message: `u32 type`, `u32 mapId`, `u32 difficulty`, `u32 seconds`, and for the
+/// welcome `u8 locked`, `u8 extended`.
 pub const SMSG_RAID_INSTANCE_MESSAGE: u16 = 0x02FA; // 762
 /// "Reset all instances": empty body (`ResetInstances`).
 pub const CMSG_RESET_INSTANCES: u16 = 0x031D; // 797
@@ -1219,6 +1222,14 @@ pub const SMSG_INSTANCE_RESET_FAILED: u16 = 0x031F; // 799
 pub const SMSG_UPDATE_LAST_INSTANCE: u16 = 0x0320; // 800
 /// Whether we hold any permanent bind: `u32` flag, half of `CanShowResetInstances()`.
 pub const SMSG_UPDATE_INSTANCE_OWNERSHIP: u16 = 0x032B; // 811
+/// The lock warning's answer (`RespondInstanceLock`): `u8` accept.
+pub const CMSG_INSTANCE_LOCK_RESPONSE: u16 = 0x013F; // 319
+/// "Accept this instance's lock?": `u32 ms`, `u32 completedMask`, `u8 extending`.
+pub const SMSG_INSTANCE_LOCK_WARNING_QUERY: u16 = 0x0147; // 327
+/// A boss slot or encounter objective change: `u32 type`, then per type (`0x5eddd0`).
+pub const SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT: u16 = 0x0214; // 532
+/// `RESET_FAILED_NOTIFY` as system chat: empty body (`0x50cee0`).
+pub const SMSG_RESET_FAILED_NOTIFY: u16 = 0x0396; // 918
 
 // ── The dungeon finder (handlers set at game start, `0x55d440`) ──
 

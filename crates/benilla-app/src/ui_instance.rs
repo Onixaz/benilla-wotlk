@@ -1,75 +1,159 @@
-//! The instance lockout messages, the bookkeeping behind `CanShowResetInstances()`, and
-//! `CMSG_RESET_INSTANCES`. No 1.12 Lua handles the lines: the client fills the `GlobalStrings.lua`
-//! template itself and hands it to the chat composer as `CHAT_MSG_SYSTEM`; here the net handlers
-//! queue them and [`feed_instance`] resolves them against the VM.
+//! The instance packets the 12340 client handles itself: the lockout lines it composes from
+//! `GlobalStrings.lua` and hands to chat as `CHAT_MSG_SYSTEM`, the raid welcome it signals as
+//! `RAID_INSTANCE_WELCOME`, the instance lock clock behind the `INSTANCE_LOCK` dialog, the
+//! encounter's boss slots behind `bossN`, and the bookkeeping behind `CanShowResetInstances()`.
+//! The net handlers queue; [`feed_instance`], which has the VM, resolves and fires.
 //!
-//! Deviation: walking out of a party dungeon ourselves also counts as holding a bind
-//! ([`InstanceState::saw_own_dungeon`]), because vmangos reports only permanent binds
-//! (`Player.cpp:16175`) and makes only raid binds permanent (`Map.cpp:3528`), so the server alone
-//! would never offer the reset after a 5-man.
+//! Deviation: walking out of a resettable instance ourselves also counts as holding a bind
+//! ([`InstanceState::saw_own_dungeon`]), because AzerothCore never sends
+//! `SMSG_UPDATE_INSTANCE_OWNERSHIP`, so the server alone would never offer the reset.
 
-use benilla_protocol::messages::{InstanceResetFailure, RaidInstanceMessage, RaidInstanceWarning};
-use benilla_ui::script::UiScript;
+use std::time::{Duration, Instant};
+
+use benilla_protocol::messages::{
+    EncounterUnitUpdate, InstanceLockWarning, InstanceResetFailure, RaidInstanceMessage,
+    RaidInstanceWarning,
+};
+use benilla_ui::script::{InstanceLock, ScriptValue, UiScript};
 use bevy::prelude::*;
 
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
-use crate::ui_script::{UiFeed, UiInput};
+use crate::ui_script::{UiFeed, UiInput, WorldLeaveSweepMessage};
 
 /// `CanShowResetInstances()`'s window, 25 hours: `cmp eax, 0x15f90` against `time(0)` minus when we
-/// left, unsigned, so the boundary is inclusive.
+/// left, signed, so the boundary is inclusive (`0x51959e`).
 const RESET_OFFER_WINDOW_SECS: u64 = 90_000;
 
-/// The lockout bookkeeping: three of the four globals `CanShowResetInstances` reads; the fourth,
-/// the map we stand on, is [`benilla_world::world_map::CurrentMap`]. Session-scoped, like the
-/// reference's zero-initialized globals.
+/// The encounter's boss slots, the fixed array `0x5ed7b0` sizes on the first engage.
+pub(crate) const BOSS_SLOTS: usize = 16;
+
+/// `bossN` for every slot, in slot order.
+pub(crate) const BOSS_TOKENS: [&str; BOSS_SLOTS] = [
+    "boss1", "boss2", "boss3", "boss4", "boss5", "boss6", "boss7", "boss8", "boss9", "boss10",
+    "boss11", "boss12", "boss13", "boss14", "boss15", "boss16",
+];
+
+/// The lockout bookkeeping (`[0xbd0884]`-`[0xbd0890]`) and what the packets owe the VM.
+/// Session-scoped, like the reference's zero-initialized globals.
 #[derive(Resource, Default)]
 pub(crate) struct InstanceState {
-    /// "do you hold any bind": `SMSG_UPDATE_INSTANCE_OWNERSHIP`, sent on every map change
-    /// (`Player.cpp:2116`), where vmangos says yes only for a raid save.
+    /// "do you hold any bind", `SMSG_UPDATE_INSTANCE_OWNERSHIP` (`0x513b0b`).
     owns_saved: bool,
-    /// benilla's half of the same term: we watched the player walk out of a party dungeon. Raised
-    /// by [`LatchWriter::WorldEntry`], cleared by a reset and at logout, and never by an
-    /// `owns_saved = false`, which vmangos sends on the very teleport out of the dungeon.
+    /// benilla's half of the same term: we watched the player walk out of a resettable instance.
+    /// Raised by [`LatchWriter::WorldEntry`], cleared by a reset and at logout.
     saw_own_dungeon: bool,
-    /// The `Map.dbc` id of the last dungeon left; only a party dungeon lands here.
-    last_dungeon: Option<u32>,
-    /// When [`Self::last_dungeon`] was recorded, in seconds. Deviation: the app's monotonic clock,
-    /// not `time(0)`, because it cannot run backwards; they differ only across a suspend.
-    last_dungeon_at: u64,
+    /// The `Map.dbc` id of the last resettable instance left (`[0xbd0888]`).
+    last_instance: Option<u32>,
+    /// When [`Self::last_instance`] was recorded, in seconds (`[0xbd0884]`). Deviation: the app's
+    /// monotonic clock, not `time(0)`, because it cannot run backwards; they differ only across a
+    /// suspend.
+    last_instance_at: u64,
     /// `SMSG_UPDATE_LAST_INSTANCE` map ids for [`track_instance_state`]: the packet tests against
     /// the current map, which [`benilla_world::world_map::CurrentMap`] reaches only after the
     /// drain's deferred insert.
     pending_last_instance: Vec<u32>,
-    /// Lines for [`feed_instance`] to resolve against the VM's `GlobalStrings.lua`; the wire drain
-    /// cannot reach the VM.
+    /// Lines for [`feed_instance`] to resolve against the VM's `GlobalStrings.lua`.
     lines: Vec<LockoutLine>,
+    /// `RAID_INSTANCE_WELCOME`s to fire: the map, its difficulty, seconds, locked, extended.
+    welcomes: Vec<(u32, u32, i32, bool, bool)>,
+    /// The instance lock clock (`[0xbd0874]`-`[0xbd087c]`).
+    lock: LockClock,
+    /// `INSTANCE_LOCK_START`/`_STOP` owed, in order.
+    lock_events: Vec<&'static str>,
+}
+
+/// How a line names its map.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LineMap {
+    /// No `%s` (`INSTANCE_SAVED`, `RESET_FAILED_NOTIFY`).
+    None,
+    /// The `Map.dbc` name, else the id in decimal (`0x50cda0`).
+    Name(u32),
+    /// The name with its `MapDifficulty.dbc` difficulty (`0x4fe070`), "" with no map row.
+    WithDifficulty(u32, u32),
 }
 
 /// One lockout line as the reference holds it between the template lookup and its formatting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LockoutLine {
-    /// The `GlobalStrings.lua` token.
+    /// The `GlobalStrings.lua` token, looked up with no ordinal (`push -1`).
     token: &'static str,
-    /// `GetText`'s third argument: `Some(n)` picks `_P1` for every `n != 1`; `None` is the
-    /// reference's `or edx,-1`, always the bare token.
-    ordinal: Option<u32>,
-    /// The `Map.dbc` id whose name fills `%s`; `None` for `INSTANCE_SAVED`, which has no `%s`.
-    map: Option<u32>,
-    /// The `%d` fills in template order (`RAID_INSTANCE_WELCOME` takes three).
-    numbers: Vec<u32>,
+    /// The map that fills `%s`.
+    map: LineMap,
+    /// The `%d` fills, after the name.
+    numbers: Vec<i64>,
     /// The `"(Debug-Only Lock Notice) %s"` wrapper, `SMSG_INSTANCE_SAVE_CREATED`'s flag-1 arm.
     debug_notice: bool,
 }
 
-/// Which of the last-dungeon latch's two writers is speaking. The reference does not care; benilla
-/// does, as only the world entry is first-hand evidence of a bind.
+impl LockoutLine {
+    fn plain(token: &'static str, map: LineMap) -> Self {
+        Self {
+            token,
+            map,
+            numbers: Vec::new(),
+            debug_notice: false,
+        }
+    }
+}
+
+/// The instance lock clock (`0x513b20`): a deadline, the encounters done, and whether it extends.
+#[derive(Debug, Default)]
+struct LockClock {
+    deadline: Option<Instant>,
+    completed_mask: u32,
+    extending: bool,
+}
+
+impl LockClock {
+    /// `0x513b20`: a positive `ms` (as `i32`) arms and signals `INSTANCE_LOCK_START`, any other
+    /// clears and signals `INSTANCE_LOCK_STOP`.
+    fn set(&mut self, warning: InstanceLockWarning, now: Instant) -> &'static str {
+        if warning.ms as i32 <= 0 {
+            *self = Self::default();
+            "INSTANCE_LOCK_STOP"
+        } else {
+            *self = Self {
+                deadline: Some(now + Duration::from_millis(u64::from(warning.ms))),
+                completed_mask: warning.completed_mask,
+                extending: warning.extending,
+            };
+            "INSTANCE_LOCK_START"
+        }
+    }
+
+    /// `0x513b90`: the clock as the verbs read it, all zero once the deadline has passed.
+    fn read(&self, now: Instant) -> InstanceLock {
+        match self.deadline.filter(|&d| d > now) {
+            Some(d) => InstanceLock {
+                running: true,
+                secs: u32::try_from((d - now).as_millis() / 1000).unwrap_or(u32::MAX),
+                completed_mask: self.completed_mask,
+                extending: self.extending,
+            },
+            None => InstanceLock::default(),
+        }
+    }
+}
+
+/// Which of the last-instance latch's two writers is speaking. The reference does not care;
+/// benilla does, as only the world entry is first-hand evidence of a bind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LatchWriter {
     /// The map-load path: we just walked out of this map.
     WorldEntry,
-    /// `SMSG_UPDATE_LAST_INSTANCE`: the server's word, already given as `owns_saved`.
+    /// `SMSG_UPDATE_LAST_INSTANCE`: the server's word.
     Packet,
+}
+
+/// The two map facts the latch and the reset gate read, at the current dungeon difficulty.
+pub(crate) struct MapFacts<'a> {
+    /// The map has a `Map.dbc` row.
+    pub(crate) known: &'a dyn Fn(u32) -> bool,
+    /// A dungeon or raid (`InstanceType` 1 or 2) that resets on leaving: the difficulty is past 3
+    /// or its `MapDifficulty.dbc` row has no `RaidDuration` (`0x634a80`).
+    pub(crate) resettable: &'a dyn Fn(u32) -> bool,
 }
 
 impl InstanceState {
@@ -78,34 +162,31 @@ impl InstanceState {
         self.owns_saved = owns;
     }
 
-    /// The latch: record `map` as the dungeon just left if it is a party dungeon and not the map we
-    /// stand on, tested first (`cmp edx,esi; je`), as vmangos sends one packet per permanent bind
-    /// on every map change, the entered instance included.
+    /// The latch (`0x5195c0`): record `map` as the instance just left when it is resettable and
+    /// not the map we stand on, tested first (`cmp esi,edi; je`).
     pub(crate) fn note_last_instance(
         &mut self,
         map: u32,
         current_map: Option<u32>,
-        party_dungeon: bool,
+        resettable: bool,
         now_secs: u64,
         writer: LatchWriter,
     ) {
-        if current_map == Some(map) {
+        if current_map == Some(map) || !resettable {
             return;
         }
-        if party_dungeon {
-            self.last_dungeon = Some(map);
-            self.last_dungeon_at = now_secs;
-            // Walking out of a 5-man proves the bind the server took on entry.
-            if writer == LatchWriter::WorldEntry {
-                self.saw_own_dungeon = true;
-            }
+        self.last_instance = Some(map);
+        self.last_instance_at = now_secs;
+        // Walking out of one proves the bind the server took on entry.
+        if writer == LatchWriter::WorldEntry {
+            self.saw_own_dungeon = true;
         }
     }
 
-    /// `SMSG_INSTANCE_RESET`, before the body is read: any reset clears the offer.
+    /// `SMSG_INSTANCE_RESET`, before the body is read (`0x5138a0`): any reset clears the offer.
     pub(crate) fn clear_last_instance(&mut self) {
-        self.last_dungeon = None;
-        self.last_dungeon_at = 0;
+        self.last_instance = None;
+        self.last_instance_at = 0;
         // The witness goes with the reset; the reference's bind term is the server's to retract.
         self.forget_witness();
     }
@@ -115,68 +196,165 @@ impl InstanceState {
         self.saw_own_dungeon = false;
     }
 
-    /// `CanShowResetInstances()`, its four terms in the reference's order:
+    /// `CanShowResetInstances()` (`0x5194e0`), its terms in the reference's order:
     ///
     /// 1. a bind held, or [`InstanceState::saw_own_dungeon`];
-    /// 2. not standing in a party dungeon;
-    /// 3. the last dungeon left is a party dungeon `Map.dbc` knows;
-    /// 4. left no more than [`RESET_OFFER_WINDOW_SECS`] ago.
+    /// 2. not standing in a resettable instance;
+    /// 3. the last instance left has a `Map.dbc` row;
+    /// 4. it is resettable;
+    /// 5. left no more than [`RESET_OFFER_WINDOW_SECS`] ago.
     ///
-    /// A map with no `Map.dbc` row is not a party dungeon (the reference's null-record branch).
-    pub(crate) fn can_reset(
-        &self,
-        current_map: Option<u32>,
-        is_party_dungeon: &dyn Fn(u32) -> bool,
-        now_secs: u64,
-    ) -> bool {
+    /// Deviation: term 4 tests the last instance, where the reference reads the current map's
+    /// record a second time (`0x519567`), which contradicts term 2 and keeps its row from ever
+    /// showing.
+    pub(crate) fn can_reset(&self, current_map: Option<u32>, facts: &MapFacts, now: u64) -> bool {
         if !self.owns_saved && !self.saw_own_dungeon {
             return false;
         }
-        if current_map.is_some_and(is_party_dungeon) {
+        if current_map.is_some_and(facts.resettable) {
             return false;
         }
-        let Some(last) = self.last_dungeon else {
+        let Some(last) = self.last_instance.filter(|&m| (facts.known)(m)) else {
             return false;
         };
-        if !is_party_dungeon(last) {
+        if !(facts.resettable)(last) {
             return false;
         }
-        now_secs.saturating_sub(self.last_dungeon_at) <= RESET_OFFER_WINDOW_SECS
+        now.saturating_sub(self.last_instance_at) <= RESET_OFFER_WINDOW_SECS
     }
 
-    /// Queue a line: one per packet, so two identical warnings print twice, as in the reference.
+    /// The leave-world sweep's leg (`0x5258f6`): the lock clock stops, signalled.
+    fn leave_world(&mut self) {
+        self.lock = LockClock::default();
+        self.lock_events.push("INSTANCE_LOCK_STOP");
+    }
+
     fn push(&mut self, line: LockoutLine) {
         self.lines.push(line);
     }
+}
 
-    fn take_lines(&mut self) -> Vec<LockoutLine> {
-        std::mem::take(&mut self.lines)
+/// One encounter slot (`0x5ed7b0`): a unit, its priority and its place.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct EncounterSlot {
+    guid: u64,
+    priority: u8,
+    index: u8,
+}
+
+/// The encounter's boss slots (`[0xc242f8]`), which `bossN` reads (`0x5ed710`): empty, or
+/// [`BOSS_SLOTS`] slots once a unit engages, the held ones sorted first.
+#[derive(Resource, Debug, Default)]
+pub(crate) struct EncounterUnits {
+    slots: Vec<EncounterSlot>,
+    /// `INSTANCE_ENCOUNTER_ENGAGE_UNIT`s owed, fired by the unit feed after it pushes `bossN`.
+    signals: u32,
+}
+
+impl EncounterUnits {
+    /// `bossN`'s guid for 0-based `row`, 0 past the slots or on an empty one.
+    pub(crate) fn boss(&self, row: usize) -> u64 {
+        self.slots.get(row).map_or(0, |s| s.guid)
     }
 
-    fn take_pending_last_instance(&mut self) -> Vec<u32> {
-        std::mem::take(&mut self.pending_last_instance)
+    /// Every slot's guid, 0 for an empty one; none before the first engage.
+    pub(crate) fn guids(&self) -> impl Iterator<Item = u64> + '_ {
+        self.slots.iter().map(|s| s.guid)
+    }
+
+    /// The signals owed, taken; a zero count leaves change detection alone.
+    pub(crate) fn take_signals(this: &mut ResMut<Self>) -> u32 {
+        if this.signals == 0 {
+            return 0;
+        }
+        std::mem::take(&mut this.signals)
+    }
+
+    /// One `SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT` (`0x5eddd0`). The timers and objectives are kept
+    /// by the reference and read by nothing, so they are dropped here.
+    pub(crate) fn apply(&mut self, update: EncounterUnitUpdate) {
+        use EncounterUnitUpdate as U;
+        match update {
+            U::Engage { guid, priority } => self.engage(guid, priority),
+            U::Disengage { guid } => self.disengage(guid),
+            U::Priority { guid, priority } => {
+                if let Some(slot) = self.slots.iter_mut().find(|s| s.guid == guid) {
+                    slot.priority = priority;
+                    self.sort();
+                    self.signals += 1;
+                }
+            }
+            U::Resort => {
+                self.sort();
+                self.signals += 1;
+            }
+            U::Timer { .. }
+            | U::EnableObjective { .. }
+            | U::UpdateObjective { .. }
+            | U::DisableObjective { .. }
+            | U::Unknown(_) => {}
+        }
+    }
+
+    /// `0x5ed7b0`: a held unit is ignored; else the slots are made on first use and the unit takes
+    /// the first empty one, at its own index.
+    fn engage(&mut self, guid: u64, priority: u8) {
+        if self.slots.iter().any(|s| s.guid == guid) {
+            return;
+        }
+        if self.slots.len() < BOSS_SLOTS {
+            self.slots = vec![EncounterSlot::default(); BOSS_SLOTS];
+        }
+        if let Some((i, slot)) = self.slots.iter_mut().enumerate().find(|(_, s)| s.guid == 0) {
+            *slot = EncounterSlot {
+                guid,
+                priority,
+                index: i as u8,
+            };
+        }
+        self.sort();
+        self.signals += 1;
+    }
+
+    /// `0x5ed870`: a held unit's slot is emptied; with the first slot then empty, the slots go.
+    fn disengage(&mut self, guid: u64) {
+        let Some(slot) = self.slots.iter_mut().find(|s| s.guid == guid) else {
+            return;
+        };
+        *slot = EncounterSlot::default();
+        self.sort();
+        self.signals += 1;
+        if self.slots.first().is_some_and(|s| s.guid == 0) {
+            self.slots.clear();
+        }
+    }
+
+    /// `0x5ed750`: held slots first, by priority then index (`0x5ed590`), then each held slot's
+    /// index renumbered to its place.
+    fn sort(&mut self) {
+        self.slots
+            .sort_by_key(|s| (s.guid == 0, s.priority, s.index));
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            if slot.guid != 0 {
+                slot.index = i as u8;
+            }
+        }
+    }
+
+    /// The world leave (`0x5edb10`): the slots go, unsignalled.
+    fn clear(&mut self) {
+        self.slots.clear();
+        self.signals = 0;
     }
 }
 
-/// One queued line's text: `GetText`, the `%s` and `%d` fills, then the debug wrapper; `None` for
-/// a token the player's `GlobalStrings.lua` lacks or leaves empty, as the reference's null and
-/// empty guards do.
-fn lockout_text(
-    line: &LockoutLine,
-    map_name: Option<&str>,
-    get: &dyn Fn(&str) -> Option<String>,
-) -> Option<String> {
-    // `GetText(token, nil, ordinal)`'s own plural pick, through the shared primitive.
-    let template = benilla_ui::strings::plural(line.token, line.ordinal, get)?;
-    // Every lockout template takes its `%s` before its `%d`s, so one ordered list is exact.
+/// One queued line's text: the template, the `%s` and `%d` fills, then the debug wrapper; `None`
+/// for a token the player's `GlobalStrings.lua` leaves empty.
+fn lockout_text(line: &LockoutLine, map_name: Option<&str>, template: &str) -> Option<String> {
     let mut args: Vec<benilla_ui::strings::Arg<'_>> = Vec::new();
     args.extend(map_name.map(benilla_ui::strings::Arg::S));
-    args.extend(
-        line.numbers
-            .iter()
-            .map(|n| benilla_ui::strings::Arg::D(i64::from(*n))),
-    );
-    let text = benilla_ui::strings::fill(&template, &args);
+    args.extend(line.numbers.iter().map(|n| benilla_ui::strings::Arg::D(*n)));
+    let text = benilla_ui::strings::fill(template, &args);
     if text.is_empty() {
         return None;
     }
@@ -188,11 +366,9 @@ fn lockout_text(
 }
 
 /// The reference's `"(Debug-Only Lock Notice) %s"`, a literal in the binary, not a GlobalString.
-/// Only flag 1 shows it; vmangos sends 0 (`Map.cpp:2289`, `Map.cpp:2389`).
 const DEBUG_LOCK_NOTICE_PREFIX: &str = "(Debug-Only Lock Notice) ";
 
-/// A template's `%s`: the `Map.dbc` name, or the id in decimal when there is no row, as the
-/// reference prints it (`"%d"`, when `[id]` is null).
+/// A template's `%s`: the `Map.dbc` name, or the id in decimal when there is no row.
 fn map_name(map: u32, catalog: Option<&benilla_assets::MapCatalogRes>) -> String {
     catalog
         .and_then(|c| c.0.name(map))
@@ -200,38 +376,53 @@ fn map_name(map: u32, catalog: Option<&benilla_assets::MapCatalogRes>) -> String
         .map_or_else(|| map.to_string(), str::to_string)
 }
 
-/// The line for one `SMSG_RAID_INSTANCE_MESSAGE`, `None` for a type the jump table drops (0 and 5
-/// up). The reference divides with truncation (the welcome's days), and the plural follows the
-/// truncated number.
+/// `0x4fe070`: the map's name, as `DUNGEON_NAME_WITH_DIFFICULTY` with its `MapDifficulty.dbc`
+/// difficulty's text when the row names one; "" with no map row.
+fn map_name_with_difficulty(
+    map: u32,
+    difficulty: u32,
+    catalog: Option<&benilla_assets::MapCatalogRes>,
+    difficulties: Option<&crate::ui_transfer::MapDifficulties>,
+    text: &dyn Fn(&str) -> String,
+) -> String {
+    let Some(name) = catalog.and_then(|c| c.0.name(map)) else {
+        return String::new();
+    };
+    let row = difficulties
+        .and_then(|d| benilla_formats::find_map_difficulty(&d.0, map as i32, difficulty as i32));
+    match row.filter(|r| !r.difficulty_string.is_empty()) {
+        Some(r) => benilla_ui::strings::fill(
+            &text("DUNGEON_NAME_WITH_DIFFICULTY"),
+            &[
+                benilla_ui::strings::Arg::S(name),
+                benilla_ui::strings::Arg::S(&text(&r.difficulty_string)),
+            ],
+        ),
+        None => name.to_string(),
+    }
+}
+
+/// The line for one `SMSG_RAID_INSTANCE_MESSAGE` (`0x50ca80`), `None` for the welcome, an event,
+/// and for a type the jump table drops. The counts divide signed, truncating.
 fn raid_instance_line(message: &RaidInstanceMessage) -> Option<LockoutLine> {
     let warning = RaidInstanceWarning::from_wire(message.message_type)?;
-    let t = message.reset;
-    let (ordinal, numbers) = match warning {
-        RaidInstanceWarning::Hours => {
-            let hours = t / 3_600;
-            (Some(hours), vec![hours])
-        }
+    let token = warning.token()?;
+    let numbers = match warning {
+        RaidInstanceWarning::Hours => vec![i64::from(message.seconds / 3_600)],
         RaidInstanceWarning::Minutes | RaidInstanceWarning::MinutesSoon => {
-            let mins = t / 60;
-            (Some(mins), vec![mins])
+            vec![i64::from(message.seconds / 60)]
         }
-        RaidInstanceWarning::Welcome => {
-            let days = t / 86_400;
-            let hours = (t - days * 86_400) / 3_600;
-            let mins = (t - (days * 24 + hours) * 3_600) / 60;
-            (None, vec![days, hours, mins])
-        }
+        _ => Vec::new(),
     };
     Some(LockoutLine {
-        token: warning.token(),
-        ordinal,
-        map: Some(message.map),
+        token,
+        map: LineMap::WithDifficulty(message.map, message.difficulty),
         numbers,
         debug_notice: false,
     })
 }
 
-/// The six lockout packet handlers; the feed, which has the VM, resolves the lines they queue.
+/// The instance packet handlers; the feed, which has the VM, resolves what they queue.
 pub(crate) mod net {
     use super::*;
 
@@ -246,8 +437,11 @@ pub(crate) mod net {
             .net_handler(K::InstanceSaveCreated, on_packet)
             .net_handler(K::InstanceReset, on_packet)
             .net_handler(K::InstanceResetFailed, on_packet)
+            .net_handler(K::ResetFailedNotify, on_packet)
+            .net_handler(K::InstanceLockWarning, on_packet)
             .net_handler(K::UpdateLastInstance, on_packet)
-            .net_handler(K::UpdateInstanceOwnership, on_packet);
+            .net_handler(K::UpdateInstanceOwnership, on_packet)
+            .net_handler(K::EncounterUnit, on_encounter_unit);
     }
 
     fn on_packet(In(ev): In<SessionEvent>, mut state: ResMut<InstanceState>) {
@@ -260,6 +454,11 @@ pub(crate) mod net {
             SessionEvent::InstanceResetFailed { failure } => {
                 instance_reset_failed(&mut state, failure)
             }
+            SessionEvent::ResetFailedNotify => reset_failed_notify(&mut state),
+            SessionEvent::InstanceLockWarning { warning } => {
+                debug!("ui_instance: lock warning {warning:?}");
+                instance_lock_warning(&mut state, warning, Instant::now())
+            }
             SessionEvent::UpdateLastInstance { map } => update_last_instance(&mut state, map),
             SessionEvent::UpdateInstanceOwnership { owns } => {
                 update_instance_ownership(&mut state, owns)
@@ -268,68 +467,100 @@ pub(crate) mod net {
         }
     }
 
-    /// `SMSG_RAID_INSTANCE_MESSAGE`: one of four `RAID_INSTANCE_*` lines.
+    fn on_encounter_unit(In(ev): In<SessionEvent>, mut units: ResMut<EncounterUnits>) {
+        if let SessionEvent::EncounterUnit { update } = ev {
+            debug!("ui_instance: encounter unit {update:?}");
+            units.apply(update);
+        }
+    }
+
+    /// `SMSG_RAID_INSTANCE_MESSAGE`: a countdown or expiry line, or the welcome event.
     pub(crate) fn raid_instance_message(state: &mut InstanceState, message: RaidInstanceMessage) {
+        if let Some((locked, extended)) = message.welcome {
+            state.welcomes.push((
+                message.map,
+                message.difficulty,
+                message.seconds,
+                locked,
+                extended,
+            ));
+            return;
+        }
         match raid_instance_line(&message) {
             Some(line) => state.push(line),
             None => debug!(
-                "ui_instance: SMSG_RAID_INSTANCE_MESSAGE type {} has no template — silent, as the \
+                "ui_instance: SMSG_RAID_INSTANCE_MESSAGE type {} has no arm — silent, as the \
                  reference's jump table is",
                 message.message_type
             ),
         }
     }
 
-    /// `SMSG_INSTANCE_RESET`: clear the latch before the body is read, then print
+    /// `SMSG_INSTANCE_RESET` (`0x50ccd0`): clear the latch before the body is read, then print
     /// `INSTANCE_RESET_SUCCESS`.
     pub(crate) fn instance_reset(state: &mut InstanceState, map: u32) {
         state.clear_last_instance();
-        state.push(LockoutLine {
-            token: "INSTANCE_RESET_SUCCESS",
-            ordinal: None,
-            map: Some(map),
-            numbers: Vec::new(),
-            debug_notice: false,
-        });
+        state.push(LockoutLine::plain(
+            "INSTANCE_RESET_SUCCESS",
+            LineMap::Name(map),
+        ));
     }
 
-    /// `SMSG_INSTANCE_RESET_FAILED`: one of three refusals. Deviation: reason 3 and up prints
-    /// nothing, where the reference prints an uninitialized 2 KB stack buffer, because that is a
-    /// bug and vmangos means 3 and up as silent (`MapPersistentStateMgr.h:275`).
+    /// `SMSG_INSTANCE_RESET_FAILED` (`0x50cda0`): one of three refusals. Deviation: reason 3 and
+    /// up prints nothing, where the reference prints an uninitialized stack buffer.
     pub(crate) fn instance_reset_failed(state: &mut InstanceState, failure: InstanceResetFailed) {
         match InstanceResetFailure::from_wire(failure.reason) {
-            Some(reason) => state.push(LockoutLine {
-                token: reason.token(),
-                ordinal: None,
-                map: Some(failure.map),
-                numbers: Vec::new(),
-                debug_notice: false,
-            }),
+            Some(reason) => state.push(LockoutLine::plain(
+                reason.token(),
+                LineMap::Name(failure.map),
+            )),
             None => debug!(
-                "ui_instance: SMSG_INSTANCE_RESET_FAILED reason {} is INSTANCERESET_FAIL_SILENTLY \
-                 or above — no line",
+                "ui_instance: SMSG_INSTANCE_RESET_FAILED reason {} has no line",
                 failure.reason
             ),
         }
     }
 
-    /// `SMSG_UPDATE_LAST_INSTANCE`: queued for [`track_instance_state`] to weigh against the map we
-    /// end up on. No line.
+    /// `SMSG_RESET_FAILED_NOTIFY` (`0x50cee0`): `RESET_FAILED_NOTIFY`, the body unread.
+    pub(crate) fn reset_failed_notify(state: &mut InstanceState) {
+        state.push(LockoutLine::plain("RESET_FAILED_NOTIFY", LineMap::None));
+    }
+
+    /// `SMSG_INSTANCE_LOCK_WARNING_QUERY` (`0x6e2e90`): the lock clock, and its event.
+    pub(crate) fn instance_lock_warning(
+        state: &mut InstanceState,
+        warning: InstanceLockWarning,
+        now: Instant,
+    ) {
+        let event = state.lock.set(warning, now);
+        state.lock_events.push(event);
+    }
+
+    /// `SMSG_UPDATE_LAST_INSTANCE` (`0x4fe100`): queued for [`track_instance_state`] to weigh
+    /// against the map we end up on. No line.
     pub(crate) fn update_last_instance(state: &mut InstanceState, map: u32) {
         state.pending_last_instance.push(map);
     }
 
-    /// `SMSG_UPDATE_INSTANCE_OWNERSHIP`: one store, no line.
+    /// `SMSG_UPDATE_INSTANCE_OWNERSHIP` (`0x4fb990`): one store, no line.
     pub(crate) fn update_instance_ownership(state: &mut InstanceState, owns: bool) {
         state.set_ownership(owns);
     }
 
-    /// `SMSG_INSTANCE_SAVE_CREATED`: `INSTANCE_SAVED`, bare on flag 0 and wrapped on flag 1.
-    /// Deviation: flag 2 and up prints nothing, where the reference prints an uninitialized 2 KB
-    /// stack buffer, because that is a bug, not a mechanism.
+    /// `SMSG_INSTANCE_SAVE_CREATED` (`0x52bb10`): flag 0 prints `INSTANCE_SAVED` and stops the
+    /// lock clock; flag 1 prints it wrapped. Deviation: flag 2 and up prints nothing, where the
+    /// reference prints an uninitialized stack buffer.
     pub(crate) fn instance_save_created(state: &mut InstanceState, flag: u32) {
         let debug_notice = match flag {
-            0 => false,
+            0 => {
+                let stop = InstanceLockWarning {
+                    ms: 0,
+                    completed_mask: 0,
+                    extending: false,
+                };
+                instance_lock_warning(state, stop, Instant::now());
+                false
+            }
             1 => true,
             other => {
                 debug!("ui_instance: SMSG_INSTANCE_SAVE_CREATED flag {other} has no arm — no line");
@@ -337,97 +568,174 @@ pub(crate) mod net {
             }
         };
         state.push(LockoutLine {
-            token: "INSTANCE_SAVED",
-            ordinal: None,
-            map: None,
-            numbers: Vec::new(),
             debug_notice,
+            ..LockoutLine::plain("INSTANCE_SAVED", LineMap::None)
         });
     }
 }
 
-/// Runs both latch writers, VM-free so the latch survives a `/reload` as the reference's globals
-/// do. The first observed map records nothing: there is no map left at login, as in the reference
-/// (and map 0 is not a dungeon).
-fn track_instance_state(
-    mut state: ResMut<InstanceState>,
-    maps: Option<Res<benilla_assets::MapCatalogRes>>,
-    current_map: Option<Res<benilla_world::world_map::CurrentMap>>,
-    time: Res<Time<Real>>,
-    mut last_map: Local<Option<u32>>,
-) {
-    let Some(here) = current_map.as_ref().map(|m| m.0) else {
-        return;
-    };
-    let now = time.elapsed().as_secs();
-    let party_dungeon = |m: u32| maps.as_ref().is_some_and(|c| c.0.is_party_dungeon(m));
-
-    // Writer 1, the world entry: `prev` is the map we are leaving.
-    if let Some(prev) = last_map.replace(here) {
-        state.note_last_instance(
-            prev,
-            Some(here),
-            party_dungeon(prev),
-            now,
-            LatchWriter::WorldEntry,
-        );
+/// Whether `map` is resettable at the current dungeon difficulty (`0x5195f1`-`0x519616`).
+fn resettable(
+    map: u32,
+    maps: Option<&benilla_assets::MapCatalogRes>,
+    difficulties: Option<&crate::ui_transfer::MapDifficulties>,
+    difficulty: u32,
+) -> bool {
+    if !matches!(maps.and_then(|c| c.0.instance_type(map)), Some(1 | 2)) {
+        return false;
     }
-    // Writer 2, the packet, now that `CurrentMap` has caught up with the transfer.
-    for map in state.take_pending_last_instance() {
-        let is_dungeon = party_dungeon(map);
-        state.note_last_instance(map, Some(here), is_dungeon, now, LatchWriter::Packet);
+    difficulty > 3
+        || difficulties
+            .and_then(|d| benilla_formats::find_map_difficulty(&d.0, map as i32, difficulty as i32))
+            .is_none_or(|r| r.raid_duration == 0)
+}
+
+/// The map catalog, the difficulty rows and the group, the inputs of [`resettable`].
+#[derive(bevy::ecs::system::SystemParam)]
+struct ResetInputs<'w> {
+    maps: Option<Res<'w, benilla_assets::MapCatalogRes>>,
+    difficulties: Option<Res<'w, crate::ui_transfer::MapDifficulties>>,
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
+    current_map: Option<Res<'w, benilla_world::world_map::CurrentMap>>,
+}
+
+impl ResetInputs<'_> {
+    fn resettable(&self, map: u32) -> bool {
+        let difficulty = self
+            .group
+            .as_ref()
+            .map_or(0, |g| g.current_dungeon_difficulty());
+        resettable(
+            map,
+            self.maps.as_deref(),
+            self.difficulties.as_deref(),
+            difficulty,
+        )
+    }
+
+    fn known(&self, map: u32) -> bool {
+        self.maps
+            .as_ref()
+            .is_some_and(|c| c.0.instance_type(map).is_some())
     }
 }
 
-/// Show every queued line as `CHAT_MSG_SYSTEM`, then publish `IsInInstance` and
-/// `CanShowResetInstances` every frame, as both move with the map and the clock (the setters diff).
+/// Runs both latch writers, VM-free so the latch survives a `/reload` as the reference's globals
+/// do. The first observed map records nothing: there is no map left at login.
+fn track_instance_state(
+    mut state: ResMut<InstanceState>,
+    inputs: ResetInputs,
+    time: Res<Time<Real>>,
+    mut last_map: Local<Option<u32>>,
+) {
+    let Some(here) = inputs.current_map.as_ref().map(|m| m.0) else {
+        return;
+    };
+    let now = time.elapsed().as_secs();
+
+    // Writer 1, the world entry: `prev` is the map we are leaving.
+    if let Some(prev) = last_map.replace(here) {
+        if prev != here {
+            let resettable = inputs.resettable(prev);
+            state.note_last_instance(prev, Some(here), resettable, now, LatchWriter::WorldEntry);
+        }
+    }
+    // Writer 2, the packet, now that `CurrentMap` has caught up with the transfer.
+    if !state.pending_last_instance.is_empty() {
+        for map in std::mem::take(&mut state.pending_last_instance) {
+            let resettable = inputs.resettable(map);
+            state.note_last_instance(map, Some(here), resettable, now, LatchWriter::Packet);
+        }
+    }
+}
+
+/// Show every queued line as `CHAT_MSG_SYSTEM`, fire the welcomes and the lock events, then
+/// publish what the instance verbs read; the setters diff.
+#[allow(clippy::too_many_arguments)]
 fn feed_instance(
     script: Option<NonSendMut<UiScript>>,
     mut state: ResMut<InstanceState>,
     mut chat: ResMut<ChatLog>,
-    maps: Option<Res<benilla_assets::MapCatalogRes>>,
-    current_map: Option<Res<benilla_world::world_map::CurrentMap>>,
+    inputs: ResetInputs,
     time: Res<Time<Real>>,
+    mut fed_maps: Local<crate::ui_script::VmMemo<bool>>,
 ) {
     let Some(mut script) = script else {
-        // No VM (an engine-only run): drop the queue rather than let it grow; a real session seats
-        // the VM before any of these packets can arrive.
-        let dropped = state.take_lines().len();
-        if dropped > 0 {
-            debug!("ui_instance: no VM — dropped {dropped} lockout line(s)");
-        }
+        // No VM (an engine-only run): drop the queues rather than let them grow.
+        state.lines.clear();
+        state.welcomes.clear();
+        state.lock_events.clear();
         return;
     };
-    let here = current_map.as_ref().map(|m| m.0);
-    let now = time.elapsed().as_secs();
-
-    for line in state.take_lines() {
-        let name = line.map.map(|m| map_name(m, maps.as_deref()));
-        let get = |key: &str| script.lua().globals().get::<String>(key).ok();
-        match lockout_text(&line, name.as_deref(), &get) {
-            Some(text) => {
-                debug!("ui_instance: {} -> {text:?}", line.token);
-                chat.push_event(ChatEvent::text_only(ChatEventKind::System, text));
+    let maps = inputs.maps.as_deref();
+    let difficulties = inputs.difficulties.as_deref();
+    if !state.lines.is_empty() {
+        for line in std::mem::take(&mut state.lines) {
+            let text = |token: &str| script.engine_text(token);
+            let name = match line.map {
+                LineMap::None => None,
+                LineMap::Name(m) => Some(map_name(m, maps)),
+                LineMap::WithDifficulty(m, d) => {
+                    Some(map_name_with_difficulty(m, d, maps, difficulties, &text))
+                }
+            };
+            match lockout_text(&line, name.as_deref(), &text(line.token)) {
+                Some(text) => {
+                    debug!("ui_instance: {} -> {text:?}", line.token);
+                    chat.push_event(ChatEvent::text_only(ChatEventKind::System, text));
+                }
+                None => debug!("ui_instance: {} resolves to nothing — no line", line.token),
             }
-            // A missing or empty key: silence.
-            None => debug!("ui_instance: {} resolves to nothing — no line", line.token),
+        }
+    }
+    for (map, difficulty, seconds, locked, extended) in std::mem::take(&mut state.welcomes) {
+        let text = |token: &str| script.engine_text(token);
+        let name = map_name_with_difficulty(map, difficulty, maps, difficulties, &text);
+        debug!("ui_instance: RAID_INSTANCE_WELCOME {name:?} {seconds} {locked} {extended}");
+        script.fire_event(
+            "RAID_INSTANCE_WELCOME",
+            vec![
+                ScriptValue::Str(name),
+                ScriptValue::Int(i64::from(seconds)),
+                ScriptValue::Int(i64::from(locked)),
+                ScriptValue::Int(i64::from(extended)),
+            ],
+        );
+    }
+    // The clock before its events, so `INSTANCE_LOCK_START`'s `OnShow` reads the time.
+    script.set_instance_lock(state.lock.read(Instant::now()));
+    if !state.lock_events.is_empty() {
+        for event in std::mem::take(&mut state.lock_events) {
+            debug!("ui_instance: {event}");
+            script.fire_event(event, vec![]);
         }
     }
 
-    script.set_instance_type(here.and_then(|m| maps.as_ref().and_then(|c| c.0.instance_type(m))));
+    let fed = fed_maps.get(&script);
+    if !*fed {
+        if let Some(maps) = maps {
+            script.set_dynamic_difficulty_maps(maps.0.dynamic_difficulty_maps());
+            *fed = true;
+        }
+    }
+    let here = inputs.current_map.as_ref().map(|m| m.0);
+    script.set_instance_type(here.and_then(|m| maps.and_then(|c| c.0.instance_type(m))));
     script.set_map_info(here.and_then(|m| {
-        let c = &maps.as_ref()?.0;
+        let c = &maps?.0;
         c.instance_type(m)?;
         Some((
             c.name(m).unwrap_or_default().to_string(),
             c.has_dynamic_difficulty(m),
         ))
     }));
-    let party_dungeon = |m: u32| maps.as_ref().is_some_and(|c| c.0.is_party_dungeon(m));
-    script.set_can_reset_instances(state.can_reset(here, &party_dungeon, now));
+    let facts = MapFacts {
+        known: &|m| inputs.known(m),
+        resettable: &|m| inputs.resettable(m),
+    };
+    script.set_can_reset_instances(state.can_reset(here, &facts, time.elapsed().as_secs()));
 }
 
-/// Turn the `ResetInstances()` calls the dialog made into `CMSG_RESET_INSTANCES` sends.
+/// Turn the `ResetInstances()` calls and `RespondInstanceLock` answers into their sends.
 fn drain_instance(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
     let Some(mut script) = script else {
         return;
@@ -435,11 +743,39 @@ fn drain_instance(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommand
     for _ in 0..script.take_reset_instance_asks() {
         let _ = commands.0.send(ClientCommand::ResetInstances);
     }
+    for accept in script.take_instance_lock_responses() {
+        let _ = commands
+            .0
+            .send(ClientCommand::InstanceLockResponse { accept });
+    }
 }
 
-/// Drop the witness at logout, as the next login may be another character. The three globals stay,
-/// as the reference keeps them (its clear runs only on `SMSG_INSTANCE_RESET`): its bind term is
-/// re-sent at the next world entry, where ours has no server to correct it.
+/// The leave-world sweep (a cross-map worldport, a `/reload`, a logout): the lock clock stops.
+fn instance_leave_world(
+    mut sweeps: MessageReader<WorldLeaveSweepMessage>,
+    mut state: ResMut<InstanceState>,
+) {
+    if sweeps.read().next().is_some() {
+        state.leave_world();
+    }
+}
+
+/// The encounter's world leave (`0x5edb10`), skipped on a `/reload`: a cross-map worldport and a
+/// logout drop the boss slots.
+fn encounter_leave_world(
+    mut ports: MessageReader<crate::net::WorldportMessage>,
+    mut logged_out: MessageReader<crate::net::LoggedOutMessage>,
+    mut units: ResMut<EncounterUnits>,
+) {
+    let ported = ports.read().filter(|w| w.needs_ack).count() > 0;
+    let out = logged_out.read().count() > 0;
+    if (ported || out) && !units.slots.is_empty() {
+        units.clear();
+    }
+}
+
+/// Drop the witness at logout, as the next login may be another character. The reference's
+/// globals stay (its clear runs only on `SMSG_INSTANCE_RESET`).
 fn clear_witness_on_logout(
     mut state: ResMut<InstanceState>,
     mut logged_out: MessageReader<crate::net::LoggedOutMessage>,
@@ -454,515 +790,34 @@ pub(crate) struct UiInstancePlugin;
 impl Plugin for UiInstancePlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<InstanceState>().add_systems(
-            Update,
-            (
-                // The latch before the feed, so a map change and its answer share a frame.
-                clear_witness_on_logout.before(track_instance_state),
-                track_instance_state.before(feed_instance),
-                feed_instance.in_set(UiFeed),
-                drain_instance.after(UiInput),
-            ),
-        );
+        app.init_resource::<InstanceState>()
+            .init_resource::<EncounterUnits>()
+            .add_message::<WorldLeaveSweepMessage>()
+            .add_systems(
+                Update,
+                (
+                    // After the drain that writes the logout and sweep messages; the latch before
+                    // the feed, so a map change and its answer share a frame.
+                    (
+                        clear_witness_on_logout,
+                        instance_leave_world,
+                        track_instance_state,
+                        feed_instance
+                            .in_set(UiFeed)
+                            .run_if(crate::ui_script::ingame_ui_up),
+                    )
+                        .chain()
+                        .after(crate::net::apply_net_updates)
+                        .after(crate::ui_unit::fire_leaving_world_on_worldport),
+                    // Before the feeds that read the slots, so a port's frame pushes no boss.
+                    encounter_leave_world
+                        .after(crate::net::apply_net_updates)
+                        .before(UiFeed),
+                    drain_instance.after(UiInput),
+                ),
+            );
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The shipped 1.12 templates from `GlobalStrings.lua`, so these tests need no install.
-    fn globals(key: &str) -> Option<String> {
-        let v = match key {
-            "RAID_INSTANCE_WARNING_HOURS" => "WARNING! %s is scheduled to reset in %d hour.",
-            "RAID_INSTANCE_WARNING_HOURS_P1" => "WARNING! %s is scheduled to reset in %d hours.",
-            "RAID_INSTANCE_WARNING_MIN" => "WARNING! %s is scheduled to reset in %d minute!",
-            "RAID_INSTANCE_WARNING_MIN_P1" => "WARNING! %s is scheduled to reset in %d minutes!",
-            "RAID_INSTANCE_WARNING_MIN_SOON" => {
-                "WARNING! %s is scheduled to reset in %d minute. Please exit the zone or you will \
-                 be returned to your bind location!"
-            }
-            "RAID_INSTANCE_WARNING_MIN_SOON_P1" => {
-                "WARNING! %s is scheduled to reset in %d minutes. Please exit the zone or you will \
-                 be returned to your bind location!"
-            }
-            "RAID_INSTANCE_WELCOME" => {
-                "Welcome to %s. This raid instance is scheduled to reset in %dd %dh %dm."
-            }
-            "INSTANCE_RESET_SUCCESS" => "%s has been reset.",
-            "INSTANCE_RESET_FAILED" => {
-                "Cannot reset %s.  There are players still inside the instance."
-            }
-            "INSTANCE_RESET_FAILED_OFFLINE" => {
-                "Cannot reset %s.  There are players offline in your party."
-            }
-            "INSTANCE_RESET_FAILED_ZONING" => {
-                "Cannot reset %s.  There are players in your party attempting to zone into an \
-                 instance."
-            }
-            "INSTANCE_SAVED" => "You are now saved to this instance",
-            _ => return None,
-        };
-        Some(v.to_string())
-    }
-
-    fn line_text(line: &LockoutLine, name: Option<&str>) -> Option<String> {
-        lockout_text(line, name, &globals)
-    }
-
-    fn warning(message_type: u32, map: u32, reset: u32) -> Option<LockoutLine> {
-        raid_instance_line(&RaidInstanceMessage {
-            message_type,
-            map,
-            reset,
-        })
-    }
-
-    #[test]
-    fn welcome_line_breaks_the_duration_into_d_h_m() {
-        // 3 d 2 h 5 m 30 s: the seconds truncate away.
-        let secs = 3 * 86_400 + 2 * 3_600 + 5 * 60 + 30;
-        let line = warning(4, 409, secs).expect("type 4 has a template");
-        assert_eq!(line.token, "RAID_INSTANCE_WELCOME");
-        assert_eq!(line.ordinal, None, "the reference passes -1 here");
-        assert_eq!(line.numbers, vec![3, 2, 5]);
-        assert_eq!(
-            line_text(&line, Some("Molten Core")).as_deref(),
-            Some("Welcome to Molten Core. This raid instance is scheduled to reset in 3d 2h 5m.")
-        );
-    }
-
-    #[test]
-    fn countdown_lines_pluralize_on_the_truncated_count() {
-        let one = warning(1, 409, 3_600 + 59).expect("type 1");
-        assert_eq!(one.numbers, vec![1]);
-        assert_eq!(
-            line_text(&one, Some("Molten Core")).as_deref(),
-            Some("WARNING! Molten Core is scheduled to reset in 1 hour.")
-        );
-
-        let two = warning(1, 409, 2 * 3_600).expect("type 1");
-        assert_eq!(
-            line_text(&two, Some("Molten Core")).as_deref(),
-            Some("WARNING! Molten Core is scheduled to reset in 2 hours.")
-        );
-
-        // Under an hour truncates to 0, and 0 takes `_P1`.
-        let zero = warning(1, 409, 900).expect("type 1");
-        assert_eq!(zero.numbers, vec![0]);
-        assert_eq!(
-            line_text(&zero, Some("Molten Core")).as_deref(),
-            Some("WARNING! Molten Core is scheduled to reset in 0 hours.")
-        );
-
-        let mins = warning(2, 309, 5 * 60).expect("type 2");
-        assert_eq!(
-            line_text(&mins, Some("Zul'Gurub")).as_deref(),
-            Some("WARNING! Zul'Gurub is scheduled to reset in 5 minutes!")
-        );
-
-        let soon = warning(3, 309, 60).expect("type 3");
-        assert_eq!(
-            line_text(&soon, Some("Zul'Gurub")).as_deref(),
-            Some(
-                "WARNING! Zul'Gurub is scheduled to reset in 1 minute. Please exit the zone or \
-                 you will be returned to your bind location!"
-            )
-        );
-    }
-
-    /// The jump table drops type 5 too, which later clients call `RAID_INSTANCE_EXPIRED`.
-    #[test]
-    fn dropped_warning_types_make_no_line() {
-        assert!(warning(0, 409, 60).is_none());
-        assert!(warning(5, 409, 60).is_none());
-        assert!(warning(u32::MAX, 409, 60).is_none());
-    }
-
-    #[test]
-    fn reset_lines_fill_the_map_name() {
-        let mut state = InstanceState::default();
-        net::instance_reset(&mut state, 36);
-        let lines = state.take_lines();
-        assert_eq!(lines.len(), 1);
-        assert_eq!(
-            line_text(&lines[0], Some("Deadmines")).as_deref(),
-            Some("Deadmines has been reset.")
-        );
-
-        for (reason, expected) in [
-            (
-                0u32,
-                "Cannot reset Deadmines.  There are players still inside the instance.",
-            ),
-            (
-                1,
-                "Cannot reset Deadmines.  There are players offline in your party.",
-            ),
-            (
-                2,
-                "Cannot reset Deadmines.  There are players in your party attempting to zone into \
-                 an instance.",
-            ),
-        ] {
-            let mut state = InstanceState::default();
-            net::instance_reset_failed(
-                &mut state,
-                benilla_protocol::messages::InstanceResetFailed { reason, map: 36 },
-            );
-            let lines = state.take_lines();
-            assert_eq!(lines.len(), 1, "reason {reason} makes one line");
-            assert_eq!(
-                line_text(&lines[0], Some("Deadmines")).as_deref(),
-                Some(expected)
-            );
-        }
-
-        // `INSTANCERESET_FAIL_SILENTLY`: no line, where the reference prints a stack buffer.
-        let mut state = InstanceState::default();
-        net::instance_reset_failed(
-            &mut state,
-            benilla_protocol::messages::InstanceResetFailed { reason: 3, map: 36 },
-        );
-        assert!(state.take_lines().is_empty());
-    }
-
-    #[test]
-    fn save_created_has_three_arms() {
-        let mut state = InstanceState::default();
-        net::instance_save_created(&mut state, 0);
-        let lines = state.take_lines();
-        assert_eq!(
-            line_text(&lines[0], None).as_deref(),
-            Some("You are now saved to this instance")
-        );
-
-        net::instance_save_created(&mut state, 1);
-        let lines = state.take_lines();
-        assert_eq!(
-            line_text(&lines[0], None).as_deref(),
-            Some("(Debug-Only Lock Notice) You are now saved to this instance")
-        );
-
-        net::instance_save_created(&mut state, 2);
-        assert!(state.take_lines().is_empty());
-    }
-
-    #[test]
-    fn an_unresolvable_token_makes_no_line() {
-        let line = LockoutLine {
-            token: "NOT_A_REAL_GLOBAL_STRING",
-            ordinal: None,
-            map: Some(409),
-            numbers: Vec::new(),
-            debug_notice: false,
-        };
-        assert_eq!(line_text(&line, Some("Molten Core")), None);
-    }
-
-    /// `GetText`'s own `if ( not string )` arm.
-    #[test]
-    fn a_missing_plural_twin_falls_back_to_the_bare_token() {
-        // Stand-ins, so each assertion reads as which key it reached.
-        let sparse = |key: &str| match key {
-            "RAID_INSTANCE_WARNING_HOURS" => Some("<bare>".to_string()),
-            _ => None,
-        };
-        let both = |key: &str| match key {
-            "RAID_INSTANCE_WARNING_HOURS" => Some("<bare>".to_string()),
-            "RAID_INSTANCE_WARNING_HOURS_P1" => Some("<twin>".to_string()),
-            "RAID_INSTANCE_WELCOME" => Some("<welcome>".to_string()),
-            _ => None,
-        };
-        let plural = benilla_ui::strings::plural;
-        assert_eq!(
-            plural("RAID_INSTANCE_WARNING_HOURS", Some(5), &sparse).as_deref(),
-            Some("<bare>"),
-            "no twin: GetText's own `if ( not string )` arm"
-        );
-        assert_eq!(
-            plural("RAID_INSTANCE_WARNING_HOURS", Some(5), &both).as_deref(),
-            Some("<twin>")
-        );
-        assert_eq!(
-            plural("RAID_INSTANCE_WARNING_HOURS", Some(1), &both).as_deref(),
-            Some("<bare>"),
-            "exactly 1 is the bare token"
-        );
-        assert_eq!(
-            plural("RAID_INSTANCE_WELCOME", None, &both).as_deref(),
-            Some("<welcome>"),
-            "no ordinal is the bare token"
-        );
-    }
-
-    #[test]
-    fn an_unknown_map_id_prints_as_its_number() {
-        assert_eq!(map_name(9999, None), "9999");
-        let line = warning(4, 9999, 3_600).expect("type 4");
-        assert_eq!(
-            line_text(&line, Some(&map_name(9999, None))).as_deref(),
-            Some("Welcome to 9999. This raid instance is scheduled to reset in 0d 1h 0m.")
-        );
-    }
-
-    #[test]
-    fn last_instance_records_only_a_party_dungeon_we_are_not_in() {
-        let mut state = InstanceState::default();
-
-        // A raid we left: not recorded (type 2, not 1).
-        state.note_last_instance(409, Some(0), false, 100, LatchWriter::Packet);
-        assert_eq!(state.last_dungeon, None);
-
-        // The dungeon we stand in: the early-out fires before the type test.
-        state.note_last_instance(36, Some(36), true, 100, LatchWriter::Packet);
-        assert_eq!(state.last_dungeon, None);
-
-        state.note_last_instance(36, Some(0), true, 100, LatchWriter::Packet);
-        assert_eq!(state.last_dungeon, Some(36));
-        assert_eq!(state.last_dungeon_at, 100);
-
-        // None of it first-hand: only the world-entry writer is.
-        assert!(!state.saw_own_dungeon);
-    }
-
-    /// The module's deviation: the witness alone meets term 1, and outlives `owns_saved = false`.
-    #[test]
-    fn walking_out_of_a_dungeon_satisfies_term_one_by_itself() {
-        let dungeons = |m: u32| m == 36;
-        let mut state = InstanceState::default();
-
-        // The server's answer alone: no, for every non-raider on vmangos.
-        state.set_ownership(false);
-        assert!(!state.can_reset(Some(0), &dungeons, 100));
-
-        // We walk out of the Deadmines ourselves.
-        state.note_last_instance(36, Some(0), true, 100, LatchWriter::WorldEntry);
-        assert!(state.saw_own_dungeon);
-        assert!(state.can_reset(Some(0), &dungeons, 100));
-
-        // `SendSavedInstances` says no on that same teleport, and must not undo the witness.
-        state.set_ownership(false);
-        assert!(state.can_reset(Some(0), &dungeons, 100));
-
-        // The other three terms still hold: the witness replaces term 1 only.
-        assert!(!state.can_reset(Some(36), &dungeons, 100)); // 2 · standing back inside
-        assert!(!state.can_reset(Some(0), &dungeons, 100 + RESET_OFFER_WINDOW_SECS + 1)); // 4
-
-        // 3 · a reset landed: the latch and the witness go together.
-        state.clear_last_instance();
-        assert!(!state.saw_own_dungeon);
-        assert!(!state.can_reset(Some(0), &dungeons, 100));
-    }
-
-    #[test]
-    fn the_witness_does_not_survive_a_logout() {
-        let dungeons = |m: u32| m == 36;
-        let mut state = InstanceState::default();
-        state.note_last_instance(36, Some(0), true, 100, LatchWriter::WorldEntry);
-        assert!(state.can_reset(Some(0), &dungeons, 100));
-
-        state.forget_witness();
-        assert!(!state.can_reset(Some(0), &dungeons, 100));
-        // The reference's three globals stay: only our addition is cleared.
-        assert_eq!(state.last_dungeon, Some(36));
-        assert_eq!(state.last_dungeon_at, 100);
-    }
-
-    /// Writer 2 is unreachable against vmangos, which names only permanent binds and makes only
-    /// raid binds permanent (`Map.cpp:3528`), so this is its only cover: the queue drains against
-    /// the map we end up on, and the packet never raises the witness. Skips without client data.
-    #[test]
-    fn both_latch_writers_through_the_real_system() {
-        let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let maps = benilla_formats::load_map_catalog(&mut chain).expect("Map.dbc");
-        assert!(maps.is_party_dungeon(36), "Deadmines is InstanceType 1");
-        assert!(
-            !maps.is_party_dungeon(409),
-            "Molten Core is a raid, not a dungeon"
-        );
-
-        // One system across ticks: its `Local` holds the last map, and `run_system_once` would
-        // make a fresh one each call.
-        let mut app = App::new();
-        app.init_resource::<InstanceState>()
-            .init_resource::<Time<Real>>()
-            .insert_resource(benilla_assets::MapCatalogRes(maps))
-            .insert_resource(benilla_world::world_map::CurrentMap(36))
-            .add_systems(Update, track_instance_state);
-
-        let state = |app: &App| {
-            let s = app.world().resource::<InstanceState>();
-            (s.last_dungeon, s.saw_own_dungeon)
-        };
-        let queue = |app: &mut App, map: u32| {
-            net::update_last_instance(&mut app.world_mut().resource_mut::<InstanceState>(), map);
-        };
-
-        // Writer 1: the first tick only observes map 36; the flip to 0 records it.
-        app.update();
-        assert_eq!(state(&app), (None, false));
-
-        app.insert_resource(benilla_world::world_map::CurrentMap(0));
-        app.update();
-        assert_eq!(
-            state(&app),
-            (Some(36), true),
-            "the flip records the dungeon AND our own eyes"
-        );
-
-        // Writer 2, on a fresh state: a raid id is dropped, a party dungeon lands without the
-        // witness.
-        app.insert_resource(InstanceState::default());
-        queue(&mut app, 409);
-        app.update();
-        assert_eq!(state(&app), (None, false), "a raid is not a party dungeon");
-
-        queue(&mut app, 36);
-        app.update();
-        assert_eq!(
-            state(&app),
-            (Some(36), false),
-            "the packet is the server's word, never our own eyes"
-        );
-
-        // The packet's early-out: the instance we stand in is not one we left.
-        app.insert_resource(InstanceState::default());
-        app.insert_resource(benilla_world::world_map::CurrentMap(36));
-        app.update();
-        queue(&mut app, 36);
-        app.update();
-        assert_eq!(state(&app), (None, false));
-    }
-
-    /// `CanShowResetInstances()`'s four terms, one at a time.
-    #[test]
-    fn can_reset_needs_all_four_terms() {
-        let dungeons = |m: u32| m == 36 || m == 33;
-        let mut state = InstanceState::default();
-        state.set_ownership(true);
-        state.note_last_instance(36, Some(0), true, 100, LatchWriter::Packet);
-
-        // All four hold: bound somewhere, standing outside, left a dungeon, recently.
-        assert!(state.can_reset(Some(0), &dungeons, 100));
-        assert!(state.can_reset(Some(0), &dungeons, 100 + RESET_OFFER_WINDOW_SECS));
-
-        // 4 · past the window.
-        assert!(!state.can_reset(Some(0), &dungeons, 100 + RESET_OFFER_WINDOW_SECS + 1));
-
-        // 2 · standing in a party dungeon.
-        assert!(!state.can_reset(Some(33), &dungeons, 100));
-        // A raid is not a party dungeon, so it does not suppress the row.
-        assert!(state.can_reset(Some(409), &dungeons, 100));
-
-        // 1 · no bind at all, neither told nor witnessed.
-        state.set_ownership(false);
-        assert!(!state.saw_own_dungeon);
-        assert!(!state.can_reset(Some(0), &dungeons, 100));
-        state.set_ownership(true);
-
-        // 3 · the latch cleared by a reset that landed.
-        state.clear_last_instance();
-        assert!(!state.can_reset(Some(0), &dungeons, 100));
-    }
-
-    /// Every token this module emits resolves in the shipped `GlobalStrings.lua` with the fills the
-    /// composer expects, and matches the copies quoted above. Skips without client data.
-    #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn every_lockout_token_resolves_in_the_real_global_strings() {
-        let data = benilla_formats::wow_data_or_skip!();
-        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
-        let src = chain
-            .read_file("Interface\\FrameXML\\GlobalStrings.lua")
-            .expect("GlobalStrings.lua in the chain");
-        let s = benilla_ui::script::UiScript::new().expect("VM");
-        s.run(&String::from_utf8_lossy(&src)).expect("runs clean");
-        let real = |key: &str| s.lua().globals().get::<String>(key).ok();
-
-        // Every token, and the quoted copy above is the shipped text.
-        for token in [
-            "RAID_INSTANCE_WARNING_HOURS",
-            "RAID_INSTANCE_WARNING_MIN",
-            "RAID_INSTANCE_WARNING_MIN_SOON",
-            "RAID_INSTANCE_WELCOME",
-            "INSTANCE_RESET_SUCCESS",
-            "INSTANCE_RESET_FAILED",
-            "INSTANCE_RESET_FAILED_OFFLINE",
-            "INSTANCE_RESET_FAILED_ZONING",
-            "INSTANCE_SAVED",
-        ] {
-            let text = real(token).unwrap_or_default();
-            assert!(!text.is_empty(), "{token} missing from GlobalStrings.lua");
-            assert_eq!(
-                Some(text),
-                globals(token),
-                "{token}: the quoted copy in this file has drifted from the shipped string"
-            );
-        }
-
-        // The three plural twins exist and differ from their bare tokens.
-        for token in [
-            "RAID_INSTANCE_WARNING_HOURS",
-            "RAID_INSTANCE_WARNING_MIN",
-            "RAID_INSTANCE_WARNING_MIN_SOON",
-        ] {
-            let twin = real(&format!("{token}_P1"));
-            assert!(twin.is_some(), "{token} has a shipped plural twin");
-            assert_eq!(
-                benilla_ui::strings::plural(token, Some(2), &real),
-                twin,
-                "{token} at two takes its twin"
-            );
-            assert_ne!(twin, real(token), "{token}'s two forms differ");
-        }
-        // The welcome has none, which is why the reference passes it no ordinal.
-        assert!(
-            real("RAID_INSTANCE_WELCOME_P1").is_none(),
-            "RAID_INSTANCE_WELCOME has no _P1 in 1.12"
-        );
-
-        // Every warning template names the instance and takes exactly the fills we hand it.
-        for (ty, fills) in [(1u32, 1usize), (2, 1), (3, 1), (4, 3)] {
-            let line = warning(ty, 409, 3_600).expect("a template");
-            let template = benilla_ui::strings::plural(line.token, line.ordinal, &real).unwrap();
-            assert!(template.contains("%s"), "{} names the instance", line.token);
-            assert_eq!(
-                template.matches("%d").count(),
-                fills,
-                "{} takes {fills} number(s)",
-                line.token
-            );
-            assert_eq!(line.numbers.len(), fills);
-        }
-
-        // Two lines end to end against the real strings: the welcome and a refusal.
-        let welcome = warning(4, 409, 3 * 86_400 + 2 * 3_600 + 5 * 60).expect("type 4");
-        assert_eq!(
-            lockout_text(&welcome, Some("Molten Core"), &real).as_deref(),
-            Some("Welcome to Molten Core. This raid instance is scheduled to reset in 3d 2h 5m.")
-        );
-        let mut state = InstanceState::default();
-        net::instance_reset_failed(
-            &mut state,
-            benilla_protocol::messages::InstanceResetFailed { reason: 0, map: 36 },
-        );
-        assert_eq!(
-            lockout_text(&state.take_lines()[0], Some("Deadmines"), &real).as_deref(),
-            Some("Cannot reset Deadmines.  There are players still inside the instance.")
-        );
-    }
-
-    #[test]
-    fn fill_is_positional_and_never_borrows_the_wrong_argument() {
-        use benilla_ui::strings::{fill, Arg};
-        assert_eq!(
-            fill("%s: %d/%d", &[Arg::S("MC"), Arg::D(2), Arg::D(5)]),
-            "MC: 2/5"
-        );
-        assert_eq!(fill("%s: %d/%d", &[Arg::S("MC"), Arg::D(2)]), "MC: 2/%d");
-        assert_eq!(fill("100%% sure", &[]), "100% sure");
-        assert_eq!(fill("no fills", &[Arg::D(7)]), "no fills");
-    }
-}
+mod tests;

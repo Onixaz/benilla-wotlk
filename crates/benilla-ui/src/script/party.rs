@@ -181,6 +181,11 @@ pub enum PartyRequest {
     ReadyCheckAnswer(bool),
     /// `RequestRaidInfo()` (`CMSG_REQUEST_RAID_INFO`).
     RequestRaidInfo,
+    /// `SetDungeonDifficulty(n)` (`0x526050`), past its gates: the 0-based difficulty, which the
+    /// app stores as the player's and the group's, then sends `MSG_SET_DUNGEON_DIFFICULTY`.
+    SetDungeonDifficulty(u32),
+    /// `SetRaidDifficulty(n)` (`0x5261a0`), past its gates: as the dungeon's, for the raid.
+    SetRaidDifficulty(u32),
 }
 
 impl super::UiScript {

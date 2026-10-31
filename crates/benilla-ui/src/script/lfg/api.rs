@@ -161,7 +161,7 @@ fn all_entries(lfg: &LfgModel) -> impl Iterator<Item = Entry> + '_ {
 }
 
 /// The encounter info push (`0x5538b0`): the `index`-th encounter of the map and difficulty.
-fn encounter_info(
+pub(crate) fn encounter_info(
     lua: &Lua,
     lfg: &LfgModel,
     map: i32,

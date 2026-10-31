@@ -938,6 +938,7 @@ pub(super) fn drain_party(
     commands: Res<NetCommands>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
     mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,
+    raid_map: super::net::CurrentRaidMap,
 ) {
     let Some(mut script) = script else {
         return;
@@ -1162,6 +1163,33 @@ pub(super) fn drain_party(
             }
             PartyRequest::RequestRaidInfo => {
                 let _ = commands.0.send(ClientCommand::RequestRaidInfo);
+            }
+            // `0x526050`: both difficulties stored, the line when the current one moved, then
+            // the send.
+            PartyRequest::SetDungeonDifficulty(difficulty) => {
+                let set = benilla_protocol::messages::DifficultySet {
+                    difficulty,
+                    set_player: true,
+                    set_group: true,
+                };
+                ui_errors.0.extend(group.apply_dungeon_difficulty(set));
+                let _ = commands
+                    .0
+                    .send(ClientCommand::SetDungeonDifficulty { difficulty });
+            }
+            // `0x5261a0`: the raid setter with both flags (`0x5255a0`), then the send.
+            PartyRequest::SetRaidDifficulty(difficulty) => {
+                let set = benilla_protocol::messages::DifficultySet {
+                    difficulty,
+                    set_player: true,
+                    set_group: true,
+                };
+                ui_errors
+                    .0
+                    .extend(group.apply_raid_difficulty(set, raid_map.kind()));
+                let _ = commands
+                    .0
+                    .send(ClientCommand::SetRaidDifficulty { difficulty });
             }
         }
     }

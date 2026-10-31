@@ -64,19 +64,25 @@ pub(crate) struct InstanceBoot {
 }
 
 impl InstanceBoot {
-    /// `SMSG_RAID_GROUP_ONLY`: a positive delay arms, zero clears; an event fires either way.
+    /// `SMSG_RAID_GROUP_ONLY`: a zero delay first shows the reason's error (the jump table at
+    /// `0x6e3be3`), then the boot clock (`0x513ad0`) arms on a positive delay as `i32` and clears
+    /// otherwise; an event fires either way.
     pub(crate) fn apply(&mut self, delay_ms: u32, reason: u32, now: Instant) {
-        if delay_ms > 0 {
+        if delay_ms == 0 {
+            match reason {
+                1 => self.errors.push("ERR_RAID_GROUP_LOWLEVEL"),
+                2 => self.errors.push("ERR_RAID_GROUP_ONLY"),
+                3 => self.errors.push("ERR_RAID_GROUP_FULL"),
+                4 => self.errors.push("ERR_RAID_GROUP_REQUIREMENTS_UNMATCH"),
+                _ => {}
+            }
+        }
+        if delay_ms as i32 > 0 {
             self.deadline = Some(now + std::time::Duration::from_millis(u64::from(delay_ms)));
             self.events.push("INSTANCE_BOOT_START");
         } else {
             self.deadline = None;
             self.events.push("INSTANCE_BOOT_STOP");
-            match reason {
-                1 => self.errors.push("ERR_RAID_GROUP_ONLY"),
-                2 => self.errors.push("ERR_RAID_GROUP_FULL"),
-                _ => {}
-            }
         }
     }
 
@@ -1474,15 +1480,26 @@ mod tests {
         boot.apply(60_500, 0, now);
         assert_eq!(boot.events, vec!["INSTANCE_BOOT_START"]);
         assert_eq!(boot.secs(now), 60, "whole seconds, truncated");
-        boot.apply(0, 1, now);
+        boot.apply(0, 2, now);
         assert_eq!(
             boot.events,
             vec!["INSTANCE_BOOT_START", "INSTANCE_BOOT_STOP"]
         );
         assert_eq!(boot.errors, vec!["ERR_RAID_GROUP_ONLY"]);
         assert_eq!(boot.secs(now), 0);
+        for (reason, key) in [
+            (1, "ERR_RAID_GROUP_LOWLEVEL"),
+            (3, "ERR_RAID_GROUP_FULL"),
+            (4, "ERR_RAID_GROUP_REQUIREMENTS_UNMATCH"),
+        ] {
+            boot.apply(0, reason, now);
+            assert_eq!(boot.errors.last(), Some(&key));
+        }
         boot.apply(0, 7, now);
-        assert_eq!(boot.errors.len(), 1, "a reason outside 1/2 names nothing");
+        assert_eq!(boot.errors.len(), 4, "a reason outside 1-4 names nothing");
+        boot.apply(0x8000_0000, 0, now);
+        assert_eq!(boot.secs(now), 0, "a negative delay clears");
+        assert_eq!(boot.errors.len(), 4, "only a zero delay shows a reason");
     }
 
     #[test]
