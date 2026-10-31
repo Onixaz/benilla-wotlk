@@ -117,16 +117,17 @@ fn notification_decodes() {
     }
 }
 
-/// `SMSG_PLAYED_TIME` (vmangos `Server/Packets/Misc.cpp:278-282`): total and level, `u32` seconds.
+/// `SMSG_PLAYED_TIME` (`0x401390`): total and level, `u32` seconds, then the show flag.
 #[test]
 fn played_time_decodes() {
-    let body = hx("40e20100100e0000"); // total = 123456, level = 3600
+    let body = hx("40e20100100e000001"); // total = 123456, level = 3600, shown
     let p = messages::parse_server(messages::opcode::SMSG_PLAYED_TIME, &body).unwrap();
     assert!(matches!(
         p,
         ServerPacket::PlayedTime {
             total: 123_456,
             level: 3600,
+            show: true,
         }
     ));
     assert!(matches!(
@@ -134,8 +135,14 @@ fn played_time_decodes() {
         [SessionEvent::PlayedTime {
             total: 123_456,
             level: 3600,
+            show: true,
         }]
     ));
+    // The world entry's silent ask, and a body without the flag, read unshown.
+    for body in ["40e20100100e000000", "40e20100100e0000"] {
+        let p = messages::parse_server(messages::opcode::SMSG_PLAYED_TIME, &hx(body)).unwrap();
+        assert!(matches!(p, ServerPacket::PlayedTime { show: false, .. }));
+    }
 }
 
 /// `MSG_RANDOM_ROLL`'s broadcast (vmangos `Handlers/GroupHandler.cpp:394-422`): `u32` min, max

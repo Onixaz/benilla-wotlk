@@ -226,9 +226,10 @@ pub fn channel_moderate(name: &str) -> Vec<u8> {
     cstrings_body(&[name])
 }
 
-/// `CMSG_PLAYED_TIME` body, the `/played` request: empty (`Handlers/MiscHandler.cpp:935`).
-pub fn played_time() -> Vec<u8> {
-    Vec::new()
+/// `CMSG_PLAYED_TIME` body: the `u8` show flag the answer echoes, 1 from `RequestTimePlayed`
+/// (`0x5158b0`) and 0 from the world entry's ask (`0x6e6e4a`).
+pub fn played_time(show: bool) -> Vec<u8> {
+    vec![u8::from(show)]
 }
 
 /// `CMSG_QUERY_TIME` body: empty (`Handlers/QueryHandler.cpp:107`). The answer is the server's

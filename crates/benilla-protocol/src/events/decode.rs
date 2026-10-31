@@ -188,8 +188,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::DefenseMessage { zone_id, text }]
         }
         ServerPacket::ChatRestricted => vec![SessionEvent::ChatRestricted],
-        ServerPacket::PlayedTime { total, level } => {
-            vec![SessionEvent::PlayedTime { total, level }]
+        ServerPacket::PlayedTime { total, level, show } => {
+            vec![SessionEvent::PlayedTime { total, level, show }]
         }
         ServerPacket::RandomRoll {
             min,
@@ -315,6 +315,25 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             item_guid,
             spell_id,
         }],
+        ServerPacket::SocketGemsResult { item, enchants } => {
+            vec![SessionEvent::SocketGemsResult { item, enchants }]
+        }
+        ServerPacket::ItemRefundInfo { item, record } => {
+            vec![SessionEvent::ItemRefundInfo { item, record }]
+        }
+        ServerPacket::ItemRefundResult { item, result, cost } => {
+            vec![SessionEvent::ItemRefundResult { item, result, cost }]
+        }
+        ServerPacket::ReadItemOk { item } => vec![SessionEvent::ReadItemOk { item }],
+        ServerPacket::ReadItemFailed { item, failure } => {
+            vec![SessionEvent::ReadItemFailed { item, failure }]
+        }
+        ServerPacket::GameObjectPageText { guid } => {
+            vec![SessionEvent::GameObjectPageText { guid }]
+        }
+        ServerPacket::ItemNameQueryResponse { entry, name } => {
+            vec![SessionEvent::ItemName { entry, name }]
+        }
         ServerPacket::ItemTime { item_guid, seconds } => {
             vec![SessionEvent::ItemTime { item_guid, seconds }]
         }

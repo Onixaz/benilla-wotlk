@@ -411,7 +411,8 @@ pub const SMSG_CHAT_RESTRICTED: u16 = 0x02FD; // 765
 /// (`Map.cpp:1868-1884`); 12340 reads it at `0x50c850`.
 pub const SMSG_DEFENSE_MESSAGE: u16 = 0x033A; // 826
 
-/// `/played`: an empty request; the reply is `u32 total`, `u32 level` seconds (`Misc.cpp:278-282`).
+/// `/played`: a `u8` show flag, 1 from `RequestTimePlayed` (`0x5158b0`), 0 from the world entry's
+/// ask (`0x6e6e4a`); the reply is `u32 total`, `u32 level` seconds and the flag echoed.
 pub const CMSG_PLAYED_TIME: u16 = 0x01CC; // 460
 pub const SMSG_PLAYED_TIME: u16 = 0x01CD; // 461
 /// Ask the server's clock: an empty request; the reply is one `u32` of unix seconds
@@ -1379,3 +1380,25 @@ pub const CMSG_CHANGE_SEATS_ON_CONTROLLED_VEHICLE: u16 = 0x049B; // 1179
 pub const CMSG_PLAYER_VEHICLE_ENTER: u16 = 0x04A8; // 1192
 /// Eject a passenger, `u64` guid (`0x757200`).
 pub const CMSG_EJECT_PASSENGER: u16 = 0x04A9; // 1193
+
+// The readable-item round trip: a book's read sends `u8 bag, u8 slot` (`0x6d5c90`); OK and FAILED
+// answer on the item's `u64` guid, FAILED with a reason byte (`0x6d5d90`).
+pub const CMSG_READ_ITEM: u16 = 0x00AD; // 173
+pub const SMSG_READ_ITEM_OK: u16 = 0x00AE; // 174
+pub const SMSG_READ_ITEM_FAILED: u16 = 0x00AF; // 175
+/// A used GameObject's page to read, `u64` guid (`0x70be30`).
+pub const SMSG_GAMEOBJECT_PAGETEXT: u16 = 0x01DF; // 479
+/// The item-name cache's query, `u32 entry, u64 guid` (`0x668a20`), and its answer (`0x6351d0`).
+pub const CMSG_ITEM_NAME_QUERY: u16 = 0x02C4; // 708
+pub const SMSG_ITEM_NAME_QUERY_RESPONSE: u16 = 0x02C5; // 709
+/// Accept the socketing window: the item's `u64` guid, then a `u64` gem guid per socket
+/// (`0x5c4ff0`).
+pub const CMSG_SOCKET_GEMS: u16 = 0x0347; // 839
+/// A purchase's refund record (`0x6d1650`), asked by the item's `u64` guid (`0x7089e0`).
+pub const SMSG_ITEM_REFUND_INFO_RESPONSE: u16 = 0x04B2; // 1202
+pub const CMSG_ITEM_REFUND_INFO: u16 = 0x04B3; // 1203
+/// Refund a purchase, `u64` item guid (`0x5d91b0`), and its result (`0x6d9b40`).
+pub const CMSG_ITEM_REFUND: u16 = 0x04B4; // 1204
+pub const SMSG_ITEM_REFUND_RESULT: u16 = 0x04B5; // 1205
+/// The socketed item's new socket and bonus enchants (`0x6e6330`).
+pub const SMSG_SOCKET_GEMS_RESULT: u16 = 0x050B; // 1291

@@ -29,7 +29,16 @@ impl ObjectFields {
     }
     /// `ITEM_FIELD_FLAGS` (field 21): `0x08` wrapped, never alerts; `0x10` forces red status 4.
     pub fn item_flags(&self) -> Option<u32> {
-        self.get_u32(21)
+        self.get_u32(FIELD_ITEM_FLAGS)
+    }
+    /// `ITEM_FIELD_OWNER` (field 6).
+    pub fn item_owner(&self) -> Option<u64> {
+        self.get_guid(6).filter(|&g| g != 0)
+    }
+    /// `ITEM_FIELD_CREATE_PLAYED_TIME` (shared 45, 3.3.5a's 62): the owner's played seconds when a
+    /// bound item's trade window opened, read with `ITEM_FIELD_FLAGS & 0x100` (`0x708b40`).
+    pub fn item_create_played_time(&self) -> Option<u32> {
+        self.get_u32(45)
     }
     /// `ITEM_FIELD_CREATOR` (field 10): crafter, or letter sender (`HandleMailCreateTextItem`).
     pub fn item_creator(&self) -> Option<u64> {
@@ -758,6 +767,12 @@ impl ObjectFields {
             }
         })
     }
+}
+
+/// Where enchant slot `slot`'s triple starts in the shared index space, its id's field, for a local
+/// write; `None` past slot 11.
+pub fn item_enchant_field(slot: u8) -> Option<u16> {
+    item_enchant_index(slot)
 }
 
 /// Where enchant slot `slot`'s triple starts in the shared index space; `None` past slot 11.

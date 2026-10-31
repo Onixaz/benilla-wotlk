@@ -43,7 +43,9 @@ pub enum Field {
     ItemEnchantProps,
     ItemPropertySeed,
     ItemRandomPropertiesId,
-    ItemTextId,
+    /// `ITEM_FIELD_CREATE_PLAYED_TIME`: the owner's played seconds when a bound item's trade
+    /// window opened.
+    ItemCreatePlayedTime,
     ItemDurability,
     ItemMaxDurability,
     ContainerNumSlots,
@@ -373,7 +375,8 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         run(F::ItemEnchantPermTemp, Item, 22, 6),
         one(F::ItemPropertySeed, Item, 43),
         one(F::ItemRandomPropertiesId, Item, 44),
-        one(F::ItemTextId, Item, 45),
+        // 3.3.5a's create played time, in 1.12.1's `ITEM_FIELD_ITEM_TEXT_ID`, which it lacks.
+        one(F::ItemCreatePlayedTime, Item, 45),
         one(F::ItemDurability, Item, 46),
         one(F::ItemMaxDurability, Item, 47),
         run(F::ItemEnchantSockets, Item, 48, 15),
@@ -607,6 +610,7 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         one(F::ItemRandomPropertiesId, Item, 59),
         one(F::ItemDurability, Item, 60),
         one(F::ItemMaxDurability, Item, 61),
+        one(F::ItemCreatePlayedTime, Item, 62),
         one(F::ContainerNumSlots, Container, 64),
         run(F::ContainerSlots, Container, 66, 72),
         run(F::UnitCharm, Unit, 6, 2),

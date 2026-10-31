@@ -685,8 +685,10 @@ pub enum SessionEvent {
     InstanceDifficulty { difficulty: u32, dynamic: u32 },
     /// A trial account's whisper cap (`SMSG_CHAT_RESTRICTED`, empty body): error id `0x1c3`.
     ChatRestricted,
-    /// `/played` (`SMSG_PLAYED_TIME`): total and this-level played time, in seconds.
-    PlayedTime { total: u32, level: u32 },
+    /// `/played` (`SMSG_PLAYED_TIME`): total and this-level played time, in seconds. The player's
+    /// played clock always takes `total` (`0x6cf470`); only `show` prints it and fires
+    /// `TIME_PLAYED_MSG` (`0x4013f6`).
+    PlayedTime { total: u32, level: u32, show: bool },
     /// A `/random` broadcast (`MSG_RANDOM_ROLL`).
     RandomRoll {
         min: u32,
@@ -787,6 +789,33 @@ pub enum SessionEvent {
     /// `SMSG_ITEM_TIME_UPDATE`: seconds left on a timed item, 0 when expired. The client shows
     /// this, not `ITEM_FIELD_DURATION` (vmangos `Item::SendTimeUpdate`, `Objects/Item.cpp:1094`).
     ItemTime { item_guid: u64, seconds: u32 },
+    /// `SMSG_SOCKET_GEMS_RESULT`: the item's new enchants in slots 2 to 5, a 0 leaving its slot.
+    SocketGemsResult { item: u64, enchants: [u32; 4] },
+    /// `SMSG_ITEM_REFUND_INFO_RESPONSE`: a purchase's refund record.
+    ItemRefundInfo {
+        item: u64,
+        record: crate::messages::RefundRecord,
+    },
+    /// `SMSG_ITEM_REFUND_RESULT`: 0 with what came back, else the refusal code.
+    ItemRefundResult {
+        item: u64,
+        result: u32,
+        cost: Option<crate::messages::PurchaseCost>,
+    },
+    /// `SMSG_READ_ITEM_OK`: the book shows translated.
+    ReadItemOk { item: u64 },
+    /// `SMSG_READ_ITEM_FAILED`.
+    ReadItemFailed {
+        item: u64,
+        failure: crate::messages::ReadItemFailure,
+    },
+    /// `SMSG_GAMEOBJECT_PAGETEXT`: read a used GameObject's page.
+    GameObjectPageText { guid: u64 },
+    /// `SMSG_ITEM_NAME_QUERY_RESPONSE`: an entry's name and `InventoryType`; `None` is unknown.
+    ItemName {
+        entry: u32,
+        name: Option<(String, u32)>,
+    },
     /// `SMSG_ITEM_ENCHANT_TIME_UPDATE`: seconds left on a temporary enchant, 0 when expired; the
     /// tooltip countdown's only feed, never the `ITEM_FIELD_ENCHANTMENT` duration.
     ItemEnchantTime {
@@ -1403,9 +1432,10 @@ impl SessionEventKind {
 /// with persistence on (`+0x45`, `0x9cb680`..`0x9cb920`) less the Warden modules and the item
 /// names, which have no query here: the reader hands each one's body on as a
 /// [`SessionEvent::QueryAnswer`].
-pub const PERSISTED_RESPONSES: [u16; 7] = [
+pub const PERSISTED_RESPONSES: [u16; 8] = [
     crate::messages::opcode::SMSG_CREATURE_QUERY_RESPONSE,
     crate::messages::opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE,
+    crate::messages::opcode::SMSG_ITEM_NAME_QUERY_RESPONSE,
     crate::messages::opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE,
     crate::messages::opcode::SMSG_NPC_TEXT_UPDATE,
     crate::messages::opcode::SMSG_QUEST_QUERY_RESPONSE,

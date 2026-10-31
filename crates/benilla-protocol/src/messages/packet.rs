@@ -557,10 +557,12 @@ pub enum ServerPacket {
     },
     /// `SMSG_CHAT_RESTRICTED`: a trial account hit its whisper cap; empty body.
     ChatRestricted,
-    /// `SMSG_PLAYED_TIME` (`/played`): total and this-level played time, in seconds.
+    /// `SMSG_PLAYED_TIME` (`/played`): total and this-level played time, in seconds, and whether
+    /// the request asked to show it.
     PlayedTime {
         total: u32,
         level: u32,
+        show: bool,
     },
     /// `MSG_RANDOM_ROLL`: the server's `/random` broadcast.
     RandomRoll {
@@ -700,6 +702,40 @@ pub enum ServerPacket {
     ItemCooldown {
         item_guid: u64,
         spell_id: u32,
+    },
+    /// `SMSG_SOCKET_GEMS_RESULT`: the socketed item's enchants for sockets 1-3 and the bonus.
+    SocketGemsResult {
+        item: u64,
+        enchants: [u32; 4],
+    },
+    /// `SMSG_ITEM_REFUND_INFO_RESPONSE`: one purchase's refund record.
+    ItemRefundInfo {
+        item: u64,
+        record: super::item_ops::RefundRecord,
+    },
+    /// `SMSG_ITEM_REFUND_RESULT`: 0 with what came back, else the refusal.
+    ItemRefundResult {
+        item: u64,
+        result: u32,
+        cost: Option<super::item_ops::PurchaseCost>,
+    },
+    /// `SMSG_READ_ITEM_OK`: the book may be read, translated.
+    ReadItemOk {
+        item: u64,
+    },
+    /// `SMSG_READ_ITEM_FAILED`.
+    ReadItemFailed {
+        item: u64,
+        failure: super::item_ops::ReadItemFailure,
+    },
+    /// `SMSG_GAMEOBJECT_PAGETEXT`: open a used GameObject's page.
+    GameObjectPageText {
+        guid: u64,
+    },
+    /// `SMSG_ITEM_NAME_QUERY_RESPONSE`: an entry's name and `InventoryType`, `None` when unknown.
+    ItemNameQueryResponse {
+        entry: u32,
+        name: Option<(String, u32)>,
     },
     /// `SMSG_ITEM_TIME_UPDATE`: a duration-limited item instance's time left, in seconds.
     ItemTime {
@@ -1669,6 +1705,13 @@ impl ServerPacket {
             ServerPacket::CancelAutoRepeat => "SMSG_CANCEL_AUTO_REPEAT".into(),
             ServerPacket::SpellCooldownList { .. } => "SMSG_SPELL_COOLDOWN".into(),
             ServerPacket::ItemCooldown { .. } => "SMSG_ITEM_COOLDOWN".into(),
+            ServerPacket::SocketGemsResult { .. } => "SMSG_SOCKET_GEMS_RESULT".into(),
+            ServerPacket::ItemRefundInfo { .. } => "SMSG_ITEM_REFUND_INFO_RESPONSE".into(),
+            ServerPacket::ItemRefundResult { .. } => "SMSG_ITEM_REFUND_RESULT".into(),
+            ServerPacket::ReadItemOk { .. } => "SMSG_READ_ITEM_OK".into(),
+            ServerPacket::ReadItemFailed { .. } => "SMSG_READ_ITEM_FAILED".into(),
+            ServerPacket::GameObjectPageText { .. } => "SMSG_GAMEOBJECT_PAGETEXT".into(),
+            ServerPacket::ItemNameQueryResponse { .. } => "SMSG_ITEM_NAME_QUERY_RESPONSE".into(),
             ServerPacket::ItemTime { .. } => "SMSG_ITEM_TIME_UPDATE".into(),
             ServerPacket::ItemEnchantTime { .. } => "SMSG_ITEM_ENCHANT_TIME_UPDATE".into(),
             ServerPacket::SpellModifier { flat, .. } => if *flat {
