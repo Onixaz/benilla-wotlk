@@ -71,6 +71,14 @@ pub(crate) fn bound_tradeable(
         && trade_stamp(fields, me, enchants).is_some_and(|s| window_open(s, played_now))
 }
 
+/// A weapon imbue held at the trade-window confirm (`0x80cafe`): the spell and the bound item it
+/// would end the window of, and whether `END_BOUND_TRADEABLE` is still to fire.
+#[derive(Resource, Default)]
+pub(crate) struct SpellEnchantConfirm {
+    pub(crate) parked: Option<(u32, u64)>,
+    pub(crate) raise: bool,
+}
+
 /// The refund results waiting for the VM's strings.
 #[derive(Resource, Default)]
 pub(crate) struct RefundResults(Vec<(u32, Option<PurchaseCost>)>);
@@ -81,6 +89,7 @@ impl Plugin for UiSocketPlugin {
     fn build(&self, app: &mut App) {
         crate::item_names::register(app);
         app.init_resource::<RefundRecords>()
+            .init_resource::<SpellEnchantConfirm>()
             .init_resource::<RefundResults>()
             .net_handler(K::SocketGemsResult, on_socket_gems_result)
             .net_handler(K::ItemRefundInfo, on_refund_info)

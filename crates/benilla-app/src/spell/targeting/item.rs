@@ -162,11 +162,38 @@ pub(crate) fn commit_item_cast_on_pick(
             }
         }
     }
+    // A weapon imbue parked at its trade-window confirm raises it here, where the VM is.
+    if let Some(confirm) = ladder.spell_enchant.as_deref_mut() {
+        if std::mem::take(&mut confirm.raise) {
+            script.fire_event(
+                "END_BOUND_TRADEABLE",
+                vec![benilla_ui::script::ScriptValue::Str("spellenchant".into())],
+            );
+        }
+    }
     for answer in script.take_enchant_confirms() {
+        if answer == benilla_ui::script::EnchantConfirm::SpellEnchant {
+            // `0x52345b`: the parked imbue cast at the parked item, confirmed; nothing parked,
+            // nothing cast.
+            let parked = ladder
+                .spell_enchant
+                .as_deref_mut()
+                .and_then(|c| c.parked.take());
+            if let Some((spell_id, item)) = parked {
+                debug!("ui_action: imbue {spell_id} confirmed onto {item:#x}");
+                ladder.commit_targeted(
+                    spell_id,
+                    crate::spell::CastCommit::Spell,
+                    crate::spell::cast_send::TargetedBind::Item(item),
+                );
+            }
+            continue;
+        }
         let Some(guid) = parked.0 else { continue };
         match answer {
             benilla_ui::script::EnchantConfirm::Bind => asks.push((guid, true)),
             benilla_ui::script::EnchantConfirm::Replace => bind_outright.push(guid),
+            benilla_ui::script::EnchantConfirm::SpellEnchant => {}
         }
     }
 

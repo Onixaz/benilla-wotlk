@@ -64,9 +64,10 @@ fn held_at<'a>(model: &'a Model, bag: i64, slot: u32, equipped: bool) -> Option<
     Some(Held::Bag(bag, slot, s))
 }
 
-/// The record a purchase verb reads: present, enchant-free and in its window (`0x5d8d80`).
+/// The record a purchase verb reads: present, enchant-free and in its window, on an item no open
+/// loot window takes from (`0x5d8d80`).
 fn open_record<'a>(model: &'a Model, held: &Held<'_>) -> Option<(&'a RefundView, i64)> {
-    if socket::has_enchantments(held) {
+    if socket::has_enchantments(held) || held.guid() == model.loot_source {
         return None;
     }
     let left = seconds_left(model, held.guid())?;
@@ -114,8 +115,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
     // GetContainerItemPurchaseInfo(bag, slot[, isEquipped]) (`0x5d8d80`) → money, honorPoints,
-    // arenaPoints, itemCount, refundSec; nothing without an open record. Not built: the reference
-    // also answers nothing for the item an open loot window takes from (`[0xbfa8d8]`).
+    // arenaPoints, itemCount, refundSec; nothing without an open record.
     g.set(
         "GetContainerItemPurchaseInfo",
         lua.create_function(|lua, (bag, slot, equipped): (Value, Value, Value)| {
@@ -234,8 +234,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // EndBoundTradeable(kind) (`0x5233d0`): the trade-window-ending confirm's Yes. "itemenchant"
-    // re-runs the item enchant confirmed and "gem" accepts the socketing window. Not built:
-    // "spellenchant", the trade window's enchant, whose confirm this engine never raises.
+    // re-runs the item enchant confirmed, "gem" accepts the socketing window and "spellenchant"
+    // casts the parked weapon imbue.
     g.set(
         "EndBoundTradeable",
         lua.create_function(|lua, kind: Value| {
@@ -248,6 +248,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .push(super::cursor::EnchantConfirm::Bind);
             } else if kind.eq_ignore_ascii_case("gem") {
                 socket::accept(&mut model);
+            } else if kind.eq_ignore_ascii_case("spellenchant") {
+                model
+                    .enchant_confirms
+                    .push(super::cursor::EnchantConfirm::SpellEnchant);
             }
             Ok(())
         })?,
@@ -314,6 +318,16 @@ mod tests {
         );
         s.set_played_time(17_200);
         assert_eq!(s.arity("GetContainerItemPurchaseInfo(0, 1)").unwrap(), 0);
+    }
+
+    /// The item an open loot window takes from answers nothing (`[0xbfa8d8]`).
+    #[test]
+    fn a_looted_purchase_answers_nothing() {
+        let mut s = script_with_purchase(Vec::new());
+        s.set_loot_source(ITEM);
+        assert_eq!(s.arity("GetContainerItemPurchaseInfo(0, 1)").unwrap(), 0);
+        s.set_loot_source(0);
+        assert_eq!(s.arity("GetContainerItemPurchaseInfo(0, 1)").unwrap(), 5);
     }
 
     /// A permanent enchant or a gem ends the refund (`0x708ac0`); the third socket is not read.

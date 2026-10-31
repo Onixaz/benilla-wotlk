@@ -632,6 +632,8 @@ pub(crate) struct Model {
     pub(crate) played_time: Option<(u32, f64)>,
     /// `ContainerRefundItemPurchase` sends, item guids, for the app.
     pub(crate) refund_sends: Vec<u64>,
+    /// The open loot window's object (`[0xbfa8d8]`), 0 with none.
+    pub(crate) loot_source: u64,
     /// `CharTitles.dbc`'s rows in file order.
     pub(crate) title_rows: Vec<super::title::TitleRow>,
     /// The active player's title fields, `None` with no player.
@@ -1485,6 +1487,7 @@ impl Model {
             bound_trade_stamps: HashMap::new(),
             played_time: None,
             refund_sends: Vec::new(),
+            loot_source: 0,
             title_rows: Vec::new(),
             player_titles: None,
             title_sets: Vec::new(),

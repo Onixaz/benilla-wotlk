@@ -474,6 +474,9 @@ pub enum EnchantConfirm {
     /// `ReplaceEnchant()`: binds the parked guid, skipping the gate. There is no replace packet:
     /// the popup only gates the same cast.
     Replace,
+    /// `EndBoundTradeable("spellenchant")`: casts the parked weapon imbue at the parked item,
+    /// confirmed (`0x52345b`).
+    SpellEnchant,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
