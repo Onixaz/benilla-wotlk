@@ -92,6 +92,23 @@ pub struct EnchantView {
     pub remaining_ms: Option<u64>,
     /// The sockets a prismatic enchant (slot 6) adds, its effect 8's points (`0x708140`).
     pub prismatic_sockets: u32,
+    /// A gem enchant's activation condition, a meta gem's.
+    pub condition: Option<EnchantConditionView>,
+}
+
+/// One `SpellItemEnchantmentCondition.dbc` row as the app resolves it: five tests on the equipped
+/// gems' colour counts, read while `logic` is nonzero.
+pub type EnchantConditionView = [EnchantConditionTest; 5];
+
+/// One condition test: the left colour (`1` meta .. `4` blue), the operator, and a right colour or,
+/// with a right type of 0, a count.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EnchantConditionTest {
+    pub left_type: u8,
+    pub operator: u8,
+    pub right_type: u8,
+    pub right_value: i32,
+    pub logic: u8,
 }
 
 /// One `ItemRandomProperties` row, an item's random-suffix roll. The app pushes the whole table at
@@ -691,12 +708,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetContainerItemInfo(bag, slot) (`0x5d7a90`) → texture, itemCount, locked, quality, readable,
-    // lootable, link; no values for an empty or unknown slot. The refund confirm reads the link
-    // (`ContainerFrame.lua:684`). Lootable is the template's `0x4`, read once its answer is in.
+    // lootable, link; no values for an empty or unknown slot. The three flags answer 1 or nil; the
+    // quality is -1 until the template is in, and for one with no `InventoryType`. Lootable is the
+    // template's `0x4`. The refund confirm reads the link (`ContainerFrame.lua:684`).
     lua.globals().set(
         "GetContainerItemInfo",
         lua.create_function(|lua, (bag, slot): (i64, u32)| {
-            let (info, held_here, lootable) = {
+            let (info, held_here, lootable, quality) = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
@@ -706,13 +724,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .get(&bag)
                     .and_then(|c| c.slots.get(&slot))
                     .cloned();
-                let lootable = info.as_ref().is_some_and(|s| {
-                    model
-                        .item_templates
-                        .get(&s.item_id)
-                        .is_some_and(|t| t.flags & 0x4 != 0)
-                });
-                (info, held, lootable)
+                let template = info
+                    .as_ref()
+                    .and_then(|s| model.item_templates.get(&s.item_id));
+                let lootable = template.is_some_and(|t| t.flags & 0x4 != 0);
+                let quality = template
+                    .filter(|t| t.inventory_type != 0)
+                    .map_or(-1, |t| i64::from(t.quality));
+                (info, held, lootable, quality)
             };
             let Some(s) = info else {
                 return Ok(mlua::MultiValue::new());
@@ -725,12 +744,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Value::Integer(i64::from(s.count)),
                 // A held item's source slot reads locked, derived from the cursor so the app's
                 // re-push cannot wipe it.
-                Value::Boolean(s.locked || held_here),
-                match s.quality {
-                    Some(q) => Value::Integer(i64::from(q)),
-                    None => Value::Nil,
-                },
-                Value::Boolean(s.readable),
+                super::binding_abi::flag(s.locked || held_here),
+                Value::Integer(quality),
+                super::binding_abi::flag(s.readable),
                 super::binding_abi::flag(lootable),
                 match &s.link {
                     Some(l) => Value::String(lua.create_string(l.as_str())?),
@@ -998,7 +1014,36 @@ mod tests {
             )
             .unwrap();
         assert_eq!(icon, "Interface\\Icons\\INV_Misc_Food_16");
-        assert_eq!((count, quality), (5, 1));
+        // No pushed template, or one with no `InventoryType`, reads -1 (`0x5d7ba7`).
+        assert_eq!((count, quality), (5, -1));
+        let quality_of = |s: &mut UiScript| {
+            s.eval::<i64>("return (select(4, GetContainerItemInfo(0, 1)))")
+                .unwrap()
+        };
+        s.set_item_template(
+            117,
+            crate::script::ItemTemplateView {
+                quality: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(quality_of(&mut s), -1, "jerky has no InventoryType");
+        s.set_item_template(
+            117,
+            crate::script::ItemTemplateView {
+                quality: 1,
+                inventory_type: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(quality_of(&mut s), 1);
+        // The flags answer 1 or nil, never a boolean.
+        assert!(s
+            .eval::<bool>("return select(3, GetContainerItemInfo(0, 1)) == nil")
+            .unwrap());
+        assert!(s
+            .eval::<bool>("return select(5, GetContainerItemInfo(0, 4)) == 1")
+            .unwrap());
         assert_eq!(
             s.eval::<i64>(
                 "local _, _, id = string.find(GetContainerItemLink(0, 1), 'item:(%d+)') \
@@ -1015,11 +1060,11 @@ mod tests {
             .eval::<bool>("local _, _, _, _, readable = GetContainerItemInfo(0, 4) return readable")
             .unwrap());
 
-        // An in-flight slot: texture and quality nil, itemCount real.
+        // An in-flight slot: texture nil, quality -1, itemCount real.
         assert!(s
             .eval::<bool>(
                 "local texture, itemCount, locked, quality = GetContainerItemInfo(0, 3)\n\
-                 return texture == nil and quality == nil and itemCount ~= nil",
+                 return texture == nil and quality == -1 and itemCount ~= nil",
             )
             .unwrap());
         assert!(s
