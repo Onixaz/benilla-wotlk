@@ -456,6 +456,7 @@ pub(crate) mod net {
             }
             SessionEvent::ResetFailedNotify => reset_failed_notify(&mut state),
             SessionEvent::InstanceLockWarning { warning } => {
+                debug!("ui_instance: lock warning {warning:?}");
                 instance_lock_warning(&mut state, warning, Instant::now())
             }
             SessionEvent::UpdateLastInstance { map } => update_last_instance(&mut state, map),
