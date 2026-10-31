@@ -253,6 +253,19 @@ pub(crate) fn live_enchant(fields: &ObjectFields, slot: u8, cat: Option<&Enchant
     cat.is_some_and(|c| c.0.has_row(id)).then_some(id)
 }
 
+/// A gem enchant's condition row as the VM's tooltip reads it.
+pub(crate) fn condition_view(
+    c: &benilla_formats::EnchantCondition,
+) -> benilla_ui::script::EnchantConditionView {
+    c.tests.map(|t| benilla_ui::script::EnchantConditionTest {
+        left_type: t.left_type,
+        operator: t.operator,
+        right_type: t.right_type,
+        right_value: t.right_value,
+        logic: t.logic,
+    })
+}
+
 /// `SpellItemEnchantment.Flags & 1`: this enchant soulbinds the item it lands on.
 pub(crate) fn binds(id: u32, cat: Option<&Enchants>) -> bool {
     cat.is_some_and(|c| c.0.binds_the_item(id))
@@ -283,6 +296,8 @@ fn enchant_lines_quiet(
                 negative: id < 0,
                 charges,
                 remaining_ms,
+                prismatic_sockets: enchants.0.prismatic_sockets(id.unsigned_abs()),
+                condition: enchants.0.condition(id.unsigned_abs()).map(condition_view),
             })
         })
         .collect();

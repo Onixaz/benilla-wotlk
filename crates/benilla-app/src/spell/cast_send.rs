@@ -131,6 +131,13 @@ pub(crate) struct CastLadder<'w, 's> {
     /// Where a pet cast whose missile flies its aim goes to be aimed and sent.
     /// Absent without the vehicle plugin, when such a cast is sent plain.
     pub(crate) trajectory_casts: Option<ResMut<'w, crate::vehicle::TrajectoryCasts>>,
+    /// The weapon imbue's trade-window confirm, and the played clock and enchant table its bound
+    /// test reads.
+    pub(crate) spell_enchant: Option<ResMut<'w, crate::ui_socket::SpellEnchantConfirm>>,
+    pub(crate) trade_window: (
+        Option<Res<'w, crate::net::PlayedClock>>,
+        Option<Res<'w, crate::items::Enchants>>,
+    ),
 }
 
 /// What a targeting-cursor click bound: what the location bind or the target bind fills into the
@@ -474,12 +481,22 @@ impl CastLadder<'_, '_> {
         on_object: Option<u64>,
         hold: Option<HeldCast>,
     ) {
+        let played = self.trade_window.0.as_deref().map_or(0, |c| c.now());
+        let enchants = self.trade_window.1.as_deref();
+        let objects = &self.objects;
+        let me = ctx.self_guid;
+        let bound_trade = |item: u64| {
+            objects
+                .object(item)
+                .is_some_and(|f| crate::ui_socket::bound_tradeable(f, me, enchants, played))
+        };
         send_spell_cast(
             spell_id,
             ctx,
             commit,
             on_object,
             hold,
+            (self.spell_enchant.as_deref_mut(), &bound_trade),
             &self.commands,
             &self.self_player,
             self.spells.as_deref(),
@@ -536,6 +553,11 @@ fn send_spell_cast(
     bound_object: Option<u64>,
     // Set for a player's spell press, which parks in `held_for_pick` at the attack pick.
     hold: Option<HeldCast>,
+    // The weapon imbue's trade-window confirm and its bound test.
+    trade_confirm: (
+        Option<&mut crate::ui_socket::SpellEnchantConfirm>,
+        &dyn Fn(u64) -> bool,
+    ),
     commands: &NetCommands,
     self_player: &Query<(Entity, Has<crate::creature_anim::Engaged>), With<SelfPlayer>>,
     spells: Option<&Spells>,
@@ -715,6 +737,16 @@ fn send_spell_cast(
             }
         }
     };
+    // A weapon imbue whose item is bound but still in its trade window asks first and the cast is
+    // released (`0x80cb23`); the Yes casts it at that item (`EndBoundTradeable("spellenchant")`).
+    if let (Some(item), (Some(confirm), bound_trade)) = (item_target, trade_confirm) {
+        if bound_trade(item) {
+            debug!("ui_action: cast {spell_id} on {item:#x} ends its trade window — confirm first");
+            confirm.parked = Some((spell_id, item));
+            confirm.raise = true;
+            return;
+        }
+    }
     // The range gate (the unit-target check → the range check, before the commit): a too-close shot
     // never reaches the sheath snap. Only the selection is tested; a self-bind is distance 0.
     if let Some(d) = def {

@@ -261,7 +261,7 @@ pub(super) fn drain_chat_input(
                 let _ = commands.0.send(ClientCommand::RandomRoll { min, max });
             }
             ParsedChat::Played => {
-                let _ = commands.0.send(ClientCommand::PlayedTime);
+                let _ = commands.0.send(ClientCommand::PlayedTime { show: true });
             }
             ParsedChat::Shot => {
                 // The camera pose in a capture `Scenario`'s raw WoW coords, to chat and a file.

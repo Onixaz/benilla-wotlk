@@ -312,12 +312,13 @@ pub(super) fn read_notification(r: &mut &[u8]) -> io::Result<String> {
     read_cstring(r)
 }
 
-/// Read `SMSG_PLAYED_TIME`, the `/played` answer: total then this-level played time, both `u32`
-/// seconds (vmangos `Server/Packets/Misc.cpp:278-282`).
-pub(super) fn read_played_time(r: &mut &[u8]) -> io::Result<(u32, u32)> {
+/// Read `SMSG_PLAYED_TIME` (`0x401390`): total then this-level played time, both `u32` seconds,
+/// then the request's show flag; a missing flag reads 0, the handler's zeroed byte.
+pub(super) fn read_played_time(r: &mut &[u8]) -> io::Result<(u32, u32, bool)> {
     let total = read_u32_le(r)?;
     let level = read_u32_le(r)?;
-    Ok((total, level))
+    let show = crate::wire::read_u8(r).is_ok_and(|b| b != 0);
+    Ok((total, level, show))
 }
 
 /// Read the `MSG_RANDOM_ROLL` broadcast (`GroupHandler.cpp:394-422`): `u32` minimum, maximum and

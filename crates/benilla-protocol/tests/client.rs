@@ -487,10 +487,11 @@ fn chat_ignored_played_time_random_roll_golden() {
     assert_eq!(messages::opcode::CMSG_CHAT_IGNORED, 0x0225);
 
     assert_eq!(
-        messages::played_time(),
-        Vec::<u8>::new(),
-        "CMSG_PLAYED_TIME body: empty"
+        messages::played_time(true),
+        vec![1u8],
+        "CMSG_PLAYED_TIME body: the show flag"
     );
+    assert_eq!(messages::played_time(false), vec![0u8]);
     assert_eq!(messages::opcode::CMSG_PLAYED_TIME, 0x01CC);
     assert_eq!(messages::opcode::SMSG_PLAYED_TIME, 0x01CD);
 

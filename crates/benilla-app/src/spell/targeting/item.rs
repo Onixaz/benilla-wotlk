@@ -27,6 +27,10 @@ pub(crate) struct ClickedItem {
     /// `ITEM_FIELD_ENCHANTMENT` PERM (0) and TEMP (1); `None` for empty, a negative id, or an id
     /// with no `SpellItemEnchantment` row.
     pub(crate) existing_enchant: [Option<u32>; 2],
+    /// A purchase whose refund window is open (`item+0x3d4`, `0x5215ad`).
+    pub(crate) refund_open: bool,
+    /// Bound, but still in its trade window (`0x5210d0`).
+    pub(crate) bound_tradeable: bool,
 }
 
 /// The enchant the cast would apply, `SpellItemEnchantment[EffectMiscValue]`.
@@ -48,6 +52,12 @@ pub(crate) enum ItemBind {
     /// Park the guid and fire `BIND_ENCHANT` (event 402, no args); its Yes, `BindEnchant`, re-runs
     /// the gate confirmed.
     ConfirmBind,
+    /// Park the guid and fire `END_REFUND` with 1; its Yes, `EndRefund(1)`, re-runs the gate
+    /// confirmed.
+    ConfirmEndRefund,
+    /// Park the guid and fire `END_BOUND_TRADEABLE` with `"itemenchant"`; its Yes re-runs the gate
+    /// confirmed.
+    ConfirmEndBoundTradeable,
     /// Park the guid and fire `REPLACE_ENCHANT` (event 403, old name then new); its Yes,
     /// `ReplaceEnchant`, skips the gate and binds.
     ConfirmReplace { existing: u32, new: u32 },
@@ -91,10 +101,19 @@ pub(crate) fn item_bind_verdict(
     {
         return ItemBind::Refuse(crate::spell::cast_target::ERR_INVALID_TARGET);
     }
+    if new.is_some_and(|n| n.binds) && !item.already_bound && !confirmed && item.inventory_type != 0
+    {
+        return ItemBind::ConfirmBind;
+    }
+    // A temporary enchant leaves a refund open; a bound item's trade window ends unless it is a
+    // temporary enchant that does not bind (`0x5210d0`).
+    if item.refund_open && perm && !confirmed {
+        return ItemBind::ConfirmEndRefund;
+    }
+    if item.bound_tradeable && !confirmed && (perm || new.is_some_and(|n| n.binds)) {
+        return ItemBind::ConfirmEndBoundTradeable;
+    }
     if let Some(new) = new {
-        if new.binds && !item.already_bound && !confirmed && item.inventory_type != 0 {
-            return ItemBind::ConfirmBind;
-        }
         if let Some(existing) = item.existing_enchant[usize::from(!perm)] {
             return ItemBind::ConfirmReplace {
                 existing,
@@ -115,8 +134,14 @@ pub(crate) fn commit_item_cast_on_pick(
     self_q: Query<&crate::net::ObjectStore, With<SelfPlayer>>,
     enchants: Option<Res<crate::items::Enchants>>,
     mut parked: ResMut<EnchantConfirmItem>,
+    windows: (
+        Res<crate::ui_socket::RefundRecords>,
+        Res<crate::net::PlayedClock>,
+    ),
     mut ladder: crate::spell::CastLadder,
 ) {
+    let (refunds, played) = windows;
+    let played_now = played.now();
     let Some(mut script) = script else {
         return;
     };
@@ -137,11 +162,38 @@ pub(crate) fn commit_item_cast_on_pick(
             }
         }
     }
+    // A weapon imbue parked at its trade-window confirm raises it here, where the VM is.
+    if let Some(confirm) = ladder.spell_enchant.as_deref_mut() {
+        if std::mem::take(&mut confirm.raise) {
+            script.fire_event(
+                "END_BOUND_TRADEABLE",
+                vec![benilla_ui::script::ScriptValue::Str("spellenchant".into())],
+            );
+        }
+    }
     for answer in script.take_enchant_confirms() {
+        if answer == benilla_ui::script::EnchantConfirm::SpellEnchant {
+            // `0x52345b`: the parked imbue cast at the parked item, confirmed; nothing parked,
+            // nothing cast.
+            let parked = ladder
+                .spell_enchant
+                .as_deref_mut()
+                .and_then(|c| c.parked.take());
+            if let Some((spell_id, item)) = parked {
+                debug!("ui_action: imbue {spell_id} confirmed onto {item:#x}");
+                ladder.commit_targeted(
+                    spell_id,
+                    crate::spell::CastCommit::Spell,
+                    crate::spell::cast_send::TargetedBind::Item(item),
+                );
+            }
+            continue;
+        }
         let Some(guid) = parked.0 else { continue };
         match answer {
             benilla_ui::script::EnchantConfirm::Bind => asks.push((guid, true)),
             benilla_ui::script::EnchantConfirm::Replace => bind_outright.push(guid),
+            benilla_ui::script::EnchantConfirm::SpellEnchant => {}
         }
     }
 
@@ -184,6 +236,15 @@ pub(crate) fn commit_item_cast_on_pick(
             already_bound: fields.is_some_and(|f| crate::items::already_bound(f, cat)),
             existing_enchant: [0u8, 1]
                 .map(|slot| fields.and_then(|f| crate::items::live_enchant(f, slot, cat))),
+            refund_open: refunds.open(item_guid, played_now),
+            bound_tradeable: fields.is_some_and(|f| {
+                crate::ui_socket::bound_tradeable(
+                    f,
+                    self_q.iter().next().and_then(|s| s.0.object_guid()),
+                    cat,
+                    played_now,
+                )
+            }),
         };
         // `EffectMiscValue` is signed; the reference rejects a negative one before the row lookup.
         let new = u32::try_from(def.effect_misc_value[0])
@@ -205,6 +266,19 @@ pub(crate) fn commit_item_cast_on_pick(
                 debug!("ui_action: item bind confirm for {spell_id} on item {item_guid:#x}");
                 parked.0 = Some(item_guid);
                 script.fire_event("BIND_ENCHANT", vec![]);
+            }
+            ItemBind::ConfirmEndRefund => {
+                debug!("ui_action: end-refund confirm for {spell_id} on item {item_guid:#x}");
+                parked.0 = Some(item_guid);
+                script.fire_event("END_REFUND", vec![benilla_ui::script::ScriptValue::Int(1)]);
+            }
+            ItemBind::ConfirmEndBoundTradeable => {
+                debug!("ui_action: end-bound-tradeable confirm for {spell_id} on {item_guid:#x}");
+                parked.0 = Some(item_guid);
+                script.fire_event(
+                    "END_BOUND_TRADEABLE",
+                    vec![benilla_ui::script::ScriptValue::Str("itemenchant".into())],
+                );
             }
             ItemBind::ConfirmReplace { existing, new } => {
                 // Old name first, then new: "Do you want to replace %s with %s?".

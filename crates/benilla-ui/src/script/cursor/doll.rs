@@ -180,8 +180,9 @@ pub(super) fn use_inventory_item(model: &mut Model, id: u32) {
 /// `IsInventoryItemLocked(id)`: true while `id` is the held item's source or the app reports a
 /// pending operation on it. Reads [`Model::inv_slot`], since `BankFrameItemButton_UpdateLock`
 /// asks about bank slots too.
-pub(super) fn is_inventory_item_locked(model: &Model, id: u32) -> bool {
-    let held_here = matches!(&model.cursor, Some(CursorPayload::Item(c)) if c.bag == EQUIPMENT_BAG && c.slot == id);
+pub(in crate::script) fn is_inventory_item_locked(model: &Model, id: u32) -> bool {
+    let held_here = matches!(&model.cursor, Some(CursorPayload::Item(c)) if c.bag == EQUIPMENT_BAG && c.slot == id)
+        || crate::script::socket::holds_slot(model, EQUIPMENT_BAG, id);
     let fed = usize::try_from(id)
         .ok()
         .and_then(|i| model.inv_slot("player", i))

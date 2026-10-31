@@ -1,6 +1,6 @@
 //! The world-enter sends wait for our own player's create, as the reference's do: none goes out on
 //! the login edge alone, which fires before the server seats the player; the create sends
-//! `CMSG_SET_ACTIVE_MOVER`, then the cascade's `CMSG_QUERY_TIME`, `MSG_QUERY_NEXT_MAIL_TIME`,
+//! `CMSG_PLAYED_TIME` (`0x6e6e27`), `CMSG_SET_ACTIVE_MOVER`, then the cascade's `CMSG_QUERY_TIME`, `MSG_QUERY_NEXT_MAIL_TIME`,
 //! `CMSG_BATTLEFIELD_STATUS` and the dungeon finder's `CMSG_LFG_GET_STATUS` and
 //! `CMSG_LFG_PLAYER_LOCK_INFO_REQUEST` (`0x557240`); a worldport's fresh create sends them all
 //! again.
@@ -74,6 +74,7 @@ fn sent(rx: &Receiver<ClientCommand>) -> Vec<String> {
 
 fn the_sends() -> Vec<String> {
     vec![
+        "PlayedTime { show: false }".into(),
         format!("SetActiveMover {ME:#x}"),
         "QueryTime".into(),
         "QueryNextMailTime".into(),

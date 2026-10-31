@@ -817,7 +817,9 @@ fn a_command_ready_with_an_install_goes_out_on_the_new_writer() {
                 fresh_link: true,
             })
             .unwrap();
-        cmd_tx.send(ClientCommand::PlayedTime).unwrap();
+        cmd_tx
+            .send(ClientCommand::PlayedTime { show: true })
+            .unwrap();
         drop(held);
         let (old_index, new_index) = (2 * round, 2 * round + 1);
         wait_until(
@@ -885,7 +887,9 @@ fn account_data_without_a_world_writer_goes_to_the_park() {
     });
 
     let (done, _written) = crossbeam_channel::bounded(1);
-    cmd_tx.send(ClientCommand::PlayedTime).unwrap();
+    cmd_tx
+        .send(ClientCommand::PlayedTime { show: true })
+        .unwrap();
     cmd_tx
         .send(ClientCommand::AccountData(Wire::Upload {
             slot: 7,

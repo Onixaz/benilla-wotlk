@@ -48,8 +48,8 @@ impl WorldWriter {
     }
 
     /// Ask our played time (`CMSG_PLAYED_TIME`), answered by `SMSG_PLAYED_TIME`.
-    pub fn played_time(&mut self) -> Result<()> {
-        self.send(opcode::CMSG_PLAYED_TIME, &messages::played_time())
+    pub fn played_time(&mut self, show: bool) -> Result<()> {
+        self.send(opcode::CMSG_PLAYED_TIME, &messages::played_time(show))
     }
 
     /// Roll `/random`; the server checks `min <= max <= 10000` and answers on the same opcode.

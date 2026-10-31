@@ -100,6 +100,7 @@ impl Plugin for NetPlugin {
             .init_resource::<Reputations>()
             .init_resource::<HomeBind>()
             .init_resource::<PlayedTimeAnswer>()
+            .init_resource::<PlayedClock>()
             .init_resource::<Proficiencies>()
             .init_resource::<crate::names::NameCache>()
             .init_resource::<crate::go_templates::GameObjectTemplates>()
@@ -741,6 +742,21 @@ pub(crate) struct HomeBind(pub(crate) Option<u32>);
 /// One slot: the server sends one reply per request.
 #[derive(Resource, Default)]
 pub(crate) struct PlayedTimeAnswer(pub(crate) Option<(u32, u32)>);
+
+/// The played clock's seed (`0x6cf470`): every `SMSG_PLAYED_TIME`'s total, shown or not, and when
+/// it came, which the refund and trade windows count against. The feed stamps it on the `GetTime`
+/// clock for the VM.
+#[derive(Resource, Default)]
+pub(crate) struct PlayedClock(pub(crate) Option<(u32, Instant)>);
+
+impl PlayedClock {
+    /// The played clock now (`0x6cf440`): the total plus the seconds since; 0 before the first answer.
+    pub(crate) fn now(&self) -> i64 {
+        self.0.map_or(0, |(total, at)| {
+            i64::from(total) + at.elapsed().as_secs() as i64
+        })
+    }
+}
 
 /// Equip proficiencies (`SMSG_SET_PROFICIENCY`): item class (2 weapon, 4 armor) to a subclass
 /// bitmask, the client's `[class]` store.
@@ -2035,8 +2051,33 @@ pub(crate) enum ClientCommand {
     ChannelModerate {
         name: String,
     },
-    /// `/played` (`CMSG_PLAYED_TIME`).
-    PlayedTime,
+    /// `CMSG_PLAYED_TIME`: `show` for `/played` and `RequestTimePlayed`, off for the world
+    /// entry's ask that seeds the played clock.
+    PlayedTime {
+        show: bool,
+    },
+    /// `CMSG_SOCKET_GEMS`: the socketing window's accept.
+    SocketGems {
+        item: u64,
+        gems: [u64; 3],
+    },
+    /// `CMSG_ITEM_REFUND_INFO`: ask a refundable purchase's record.
+    ItemRefundInfo {
+        item: u64,
+    },
+    /// `CMSG_ITEM_REFUND`: refund a purchase.
+    ItemRefund {
+        item: u64,
+    },
+    /// `CMSG_READ_ITEM`: ask to read a book at a bag position.
+    ReadItem {
+        bag: u8,
+        slot: u8,
+    },
+    /// `CMSG_ITEM_NAME_QUERY`: an entry for the item-name cache.
+    ItemNameQuery {
+        entry: u32,
+    },
     /// An account-data request or upload in the world ([`crate::account_data`]). With the world
     /// stream over and the link parked, as after the logout an Exit Game makes, it goes out on the
     /// parked session, where 12340's UI shutdown sends it (`0x6b9b90`).

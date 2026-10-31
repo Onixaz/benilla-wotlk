@@ -20,6 +20,7 @@ use super::ItemTemplateView;
 mod names;
 mod render;
 mod set_count;
+mod socket_tips;
 mod sockets;
 mod wait;
 
@@ -341,6 +342,7 @@ fn compare_slot(
 
 /// Register the item content channels into the GameTooltip kind method table.
 pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
+    socket_tips::install(lua, m)?;
     // GameTooltip:GetItem() (`0x61ef10`): the shown item's name and link, nothing without one. A
     // template in flight answers an empty name.
     m.set(
@@ -643,6 +645,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                     openable_source: false,
                                     duration_ms: s.duration_ms,
                                     guid: s.guid,
+                                    socket_preview: None,
                                 },
                             )
                         });
@@ -759,6 +762,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                 openable_source: !has_cd,
                                 duration_ms: s.duration_ms,
                                 guid: s.guid,
+                                socket_preview: None,
                             },
                             cost.unwrap_or(0),
                         )

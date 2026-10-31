@@ -90,6 +90,25 @@ pub struct EnchantView {
     /// Ms left on a temporary enchant, from `SMSG_ITEM_ENCHANT_TIME_UPDATE`, never the item's own
     /// duration field; `Some` prints the countdown form.
     pub remaining_ms: Option<u64>,
+    /// The sockets a prismatic enchant (slot 6) adds, its effect 8's points (`0x708140`).
+    pub prismatic_sockets: u32,
+    /// A gem enchant's activation condition, a meta gem's.
+    pub condition: Option<EnchantConditionView>,
+}
+
+/// One `SpellItemEnchantmentCondition.dbc` row as the app resolves it: five tests on the equipped
+/// gems' colour counts, read while `logic` is nonzero.
+pub type EnchantConditionView = [EnchantConditionTest; 5];
+
+/// One condition test: the left colour (`1` meta .. `4` blue), the operator, and a right colour or,
+/// with a right type of 0, a count.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EnchantConditionTest {
+    pub left_type: u8,
+    pub operator: u8,
+    pub right_type: u8,
+    pub right_value: i32,
+    pub logic: u8,
 }
 
 /// One `ItemRandomProperties` row, an item's random-suffix roll. The app pushes the whole table at
@@ -275,6 +294,31 @@ pub enum UiCursorMode {
     CastError,
 }
 
+/// The UI-side holds on `(bag, slot)` that the item lock (`item+0x394 & 1`) marks: the cursor's
+/// source, an armed wrap's paper, the auction sell slot and multi-sell, the mail attachments and
+/// the socketed item. Derived here, so the app's re-push cannot wipe them.
+pub(super) fn slot_held(model: &super::Model, bag: i64, slot: u32) -> bool {
+    matches!(
+        &model.cursor,
+        Some(CursorPayload::Item(c)) if c.bag == bag && c.slot == slot
+    ) || matches!(
+        &model.pending_wrap,
+        Some(w) if w.bag == bag && w.slot == slot
+    ) || super::auction::holds_slot(model, bag, slot)
+        || super::mail::holds_slot(model, bag, slot)
+        || super::socket::holds_slot(model, bag, slot)
+}
+
+/// Whether a bag slot's item is locked: a pending operation the app reports, or a UI-side hold.
+pub(super) fn bag_slot_locked(
+    model: &super::Model,
+    bag: i64,
+    slot: u32,
+    s: &ContainerSlot,
+) -> bool {
+    s.locked || slot_held(model, bag, slot)
+}
+
 /// `PickupContainerItem`'s gesture:
 /// - an empty cursor picks up a resolved item whose slot is not locked;
 /// - a click on the held item's own slot cancels;
@@ -282,7 +326,7 @@ pub enum UiCursorMode {
 ///   displaced item in the source slot, never on the cursor (no cursor set);
 /// - a split carry places onto an empty or same-item slot, and stays held over another item;
 /// - a spell or action payload stays held.
-fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u32) {
+pub(super) fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u32) {
     // An armed gift wrap completes here, before the cursor is read. `PickupContainerItem` is the
     // only caller of the wrap sender, so an equipped item cannot be wrapped.
     if let Some(wrap) = model.pending_wrap {
@@ -335,13 +379,16 @@ fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u32) {
         }
         return;
     }
+    // The socketed item is locked while the window holds it (`0x5c4680`), and a locked item
+    // never picks up.
+    let socketed = super::socket::holds_slot(model, bag, slot);
     match model.cursor.take() {
         None => {
             let picked = model
                 .containers
                 .get(&bag)
                 .and_then(|c| c.slots.get(&slot))
-                .filter(|s| s.item_id != 0 && !s.locked)
+                .filter(|s| s.item_id != 0 && !s.locked && !socketed)
                 .map(|s| CursorItem {
                     bag,
                     slot,
@@ -605,35 +652,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetContainerItemPurchaseInfo(bag, slot[, isEquipped]) (`0x5d8d80`) → money, honorPoints,
-    // arenaPoints, itemCount, refundSec, read off the item's refund record (`item+0x3d4`) while
-    // its two-hour window is open. The record is filled only by `SMSG_ITEM_REFUND_INFO_RESPONSE`,
-    // which benilla does not read yet, so every item answers as one without a record: nothing.
-    lua.globals().set(
-        "GetContainerItemPurchaseInfo",
-        lua.create_function(|lua, (bag, slot): (Value, Value)| {
-            const USAGE: &str = "Usage: GetContainerItemPurchaseInfo(index, slot[, isEquipped])";
-            super::binding_abi::number_arg(lua, bag, USAGE)?;
-            super::binding_abi::number_arg(lua, slot, USAGE)?;
-            Ok(())
-        })?,
-    )?;
-
-    // GetContainerItemPurchaseItem(bag, slot, itemIndex[, isEquipped]) (`0x5d8f70`) → texture,
-    // count, link of the record's `itemIndex`th cost item; nothing without a refund record, as
-    // above. The usage text is the reference's, which drops the `Get`.
-    lua.globals().set(
-        "GetContainerItemPurchaseItem",
-        lua.create_function(|lua, (bag, slot, index): (Value, Value, Value)| {
-            const USAGE: &str =
-                "Usage: ContainerItemPurchaseItem(bag, slot, itemIndex[, isEquipped])";
-            for v in [bag, slot, index] {
-                super::binding_abi::number_arg(lua, v, USAGE)?;
-            }
-            Ok(())
-        })?,
-    )?;
-
     lua.globals().set(
         "GetBagName",
         lua.create_function(|lua, bag: i64| {
@@ -689,36 +707,31 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetContainerItemInfo(bag, slot) → texture, itemCount, locked, quality, readable, the five
-    // `ContainerFrame.lua:241` reads; no values for an empty or unknown slot.
+    // GetContainerItemInfo(bag, slot) (`0x5d7a90`) → texture, itemCount, locked, quality, readable,
+    // lootable, link; no values for an empty or unknown slot. The three flags answer 1 or nil; the
+    // quality is -1 until the template is in, and for one with no `InventoryType`. Lootable is the
+    // template's `0x4`. The refund confirm reads the link (`ContainerFrame.lua:684`).
     lua.globals().set(
         "GetContainerItemInfo",
         lua.create_function(|lua, (bag, slot): (i64, u32)| {
-            let (info, held_here) = {
+            let (info, held_here, lootable, quality) = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                let held = matches!(
-                    &model.cursor,
-                    Some(CursorPayload::Item(c)) if c.bag == bag && c.slot == slot
-                ) ||
-                // An armed wrap's paper reads locked until the send or a cancel.
-                    matches!(
-                        &model.pending_wrap,
-                        Some(w) if w.bag == bag && w.slot == slot
-                    ) ||
-                // The auction sell slot, a multi-sell's items and the mail attachments read
-                // locked, as the client's item lock marks them.
-                    super::auction::holds_slot(&model, bag, slot)
-                    || super::mail::holds_slot(&model, bag, slot);
-                (
-                    model
-                        .containers
-                        .get(&bag)
-                        .and_then(|c| c.slots.get(&slot))
-                        .cloned(),
-                    held,
-                )
+                let held = slot_held(&model, bag, slot);
+                let info = model
+                    .containers
+                    .get(&bag)
+                    .and_then(|c| c.slots.get(&slot))
+                    .cloned();
+                let template = info
+                    .as_ref()
+                    .and_then(|s| model.item_templates.get(&s.item_id));
+                let lootable = template.is_some_and(|t| t.flags & 0x4 != 0);
+                let quality = template
+                    .filter(|t| t.inventory_type != 0)
+                    .map_or(-1, |t| i64::from(t.quality));
+                (info, held, lootable, quality)
             };
             let Some(s) = info else {
                 return Ok(mlua::MultiValue::new());
@@ -731,12 +744,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Value::Integer(i64::from(s.count)),
                 // A held item's source slot reads locked, derived from the cursor so the app's
                 // re-push cannot wipe it.
-                Value::Boolean(s.locked || held_here),
-                match s.quality {
-                    Some(q) => Value::Integer(i64::from(q)),
+                super::binding_abi::flag(s.locked || held_here),
+                Value::Integer(quality),
+                super::binding_abi::flag(s.readable),
+                super::binding_abi::flag(lootable),
+                match &s.link {
+                    Some(l) => Value::String(lua.create_string(l.as_str())?),
                     None => Value::Nil,
                 },
-                Value::Boolean(s.readable),
             ]))
         })?,
     )?;
@@ -999,7 +1014,36 @@ mod tests {
             )
             .unwrap();
         assert_eq!(icon, "Interface\\Icons\\INV_Misc_Food_16");
-        assert_eq!((count, quality), (5, 1));
+        // No pushed template, or one with no `InventoryType`, reads -1 (`0x5d7ba7`).
+        assert_eq!((count, quality), (5, -1));
+        let quality_of = |s: &mut UiScript| {
+            s.eval::<i64>("return (select(4, GetContainerItemInfo(0, 1)))")
+                .unwrap()
+        };
+        s.set_item_template(
+            117,
+            crate::script::ItemTemplateView {
+                quality: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(quality_of(&mut s), -1, "jerky has no InventoryType");
+        s.set_item_template(
+            117,
+            crate::script::ItemTemplateView {
+                quality: 1,
+                inventory_type: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(quality_of(&mut s), 1);
+        // The flags answer 1 or nil, never a boolean.
+        assert!(s
+            .eval::<bool>("return select(3, GetContainerItemInfo(0, 1)) == nil")
+            .unwrap());
+        assert!(s
+            .eval::<bool>("return select(5, GetContainerItemInfo(0, 4)) == 1")
+            .unwrap());
         assert_eq!(
             s.eval::<i64>(
                 "local _, _, id = string.find(GetContainerItemLink(0, 1), 'item:(%d+)') \
@@ -1016,11 +1060,11 @@ mod tests {
             .eval::<bool>("local _, _, _, _, readable = GetContainerItemInfo(0, 4) return readable")
             .unwrap());
 
-        // An in-flight slot: texture and quality nil, itemCount real.
+        // An in-flight slot: texture nil, quality -1, itemCount real.
         assert!(s
             .eval::<bool>(
                 "local texture, itemCount, locked, quality = GetContainerItemInfo(0, 3)\n\
-                 return texture == nil and quality == nil and itemCount ~= nil",
+                 return texture == nil and quality == -1 and itemCount ~= nil",
             )
             .unwrap());
         assert!(s

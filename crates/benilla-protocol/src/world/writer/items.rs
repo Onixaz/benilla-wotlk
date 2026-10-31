@@ -8,6 +8,38 @@ use crate::messages::{self, opcode};
 use super::WorldWriter;
 
 impl WorldWriter {
+    /// `CMSG_SOCKET_GEMS`: put the placed gems into the item's sockets; the server answers with
+    /// `SMSG_SOCKET_GEMS_RESULT` and the gems' destruction.
+    pub fn socket_gems(&mut self, item: u64, gems: [u64; 3]) -> Result<()> {
+        self.send(opcode::CMSG_SOCKET_GEMS, &messages::socket_gems(item, gems))
+    }
+
+    /// `CMSG_ITEM_REFUND_INFO`: ask a refundable purchase's record.
+    pub fn item_refund_info(&mut self, item: u64) -> Result<()> {
+        self.send(
+            opcode::CMSG_ITEM_REFUND_INFO,
+            &messages::item_guid_body(item),
+        )
+    }
+
+    /// `CMSG_ITEM_REFUND`: refund a purchase to the open merchant.
+    pub fn item_refund(&mut self, item: u64) -> Result<()> {
+        self.send(opcode::CMSG_ITEM_REFUND, &messages::item_guid_body(item))
+    }
+
+    /// `CMSG_READ_ITEM`: ask to read a book, answered by `SMSG_READ_ITEM_OK` or `_FAILED`.
+    pub fn read_item(&mut self, bag: u8, slot: u8) -> Result<()> {
+        self.send(opcode::CMSG_READ_ITEM, &messages::read_item(bag, slot))
+    }
+
+    /// `CMSG_ITEM_NAME_QUERY`: an entry's name and `InventoryType` for the item-name cache.
+    pub fn item_name_query(&mut self, entry: u32) -> Result<()> {
+        self.send(
+            opcode::CMSG_ITEM_NAME_QUERY,
+            &messages::item_name_query(entry),
+        )
+    }
+
     /// `CMSG_ITEM_QUERY_SINGLE`: an item template by entry; `guid` is 0 for a template-only ask.
     pub fn item_query(&mut self, entry: u32, guid: u64) -> Result<()> {
         self.send(

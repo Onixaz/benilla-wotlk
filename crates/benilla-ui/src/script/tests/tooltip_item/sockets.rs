@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use super::{lines_of, script};
 use crate::script::*;
 
-const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const GRAY: [f32; 4] = [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0];
+const GOLD: [f32; 4] = [1.0, 210.0 / 255.0, 0.0, 1.0];
 
 /// A head piece with a red and a blue socket and a socket bonus, as `Valorous Cryptstalker Tunic`.
 fn socketed() -> ItemTemplateView {
@@ -75,6 +75,58 @@ fn gem(slot: u8, name: &str, gem_type: u32) -> EnchantView {
         name: name.into(),
         ..Default::default()
     }
+}
+
+/// A meta gem whose condition the worn gems miss grays its line and appends the condition line,
+/// gray too; with two red gems worn both turn white (`0x61c0b0`, `0x629ce5`).
+#[test]
+fn a_meta_gem_reads_its_condition_against_the_worn_gems() {
+    let mut s = script();
+    s.set_item_template(4000, socketed());
+    let mut meta = gem(2, "+21 Critical Strike Rating", 1);
+    // "at least 2 red gems": left red (2), op 5 (>=), count 2, no further test.
+    meta.condition = Some(
+        [EnchantConditionTest {
+            left_type: 2,
+            operator: 5,
+            right_type: 0,
+            right_value: 2,
+            logic: 0,
+        }; 5],
+    );
+    bag_item(&mut s, vec![meta]);
+    let line = |s: &mut UiScript| {
+        hover_bag(s)
+            .into_iter()
+            .find(|(t, _)| t.contains("+21 Critical Strike Rating"))
+            .expect("the meta gem's line")
+            .0
+    };
+    let unmet = line(&mut s);
+    assert!(
+        unmet.starts_with(
+            "|cff808080+21 Critical Strike Rating|r
+  |cff808080"
+        ),
+        "{unmet}"
+    );
+
+    // Two red gems worn in the head.
+    let mut slots: InventorySlots = Default::default();
+    slots[1] = Some(InvSlotView {
+        item_id: 9,
+        enchants: vec![gem(2, "+8 Strength", 2), gem(3, "+8 Strength", 2)],
+        ..Default::default()
+    });
+    s.set_inventory_slots(slots);
+    let met = line(&mut s);
+    assert!(
+        met.starts_with(
+            "|cffffffff+21 Critical Strike Rating|r
+  |cffffffff"
+        ),
+        "{met}"
+    );
 }
 
 /// Each rating stat is a green ON_EQUIP line in wire order, after the requirements and before the
@@ -154,7 +206,8 @@ fn a_bare_template_lists_its_sockets_and_a_gray_bonus() {
     assert_eq!(lines[red + 2].1, GRAY);
 }
 
-/// An item object walks its slots: a gem prints its name white in its socket's place, an empty
+/// An item object walks its slots: a gem prints its name in its socket's place, coded white with
+/// no unmet condition (`0x629ce5`), an empty
 /// coloured socket grays the bonus, the bonus's own enchant in slot 5 prints nothing, and a
 /// prismatic enchant in slot 6 adds a colourless socket.
 #[test]
@@ -165,8 +218,11 @@ fn an_instance_walks_its_sockets_and_greens_a_full_match() {
     bag_item(&mut s, vec![gem(2, "+20 Strength", 2)]);
     let lines = hover_bag(&mut s);
     let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
-    let red = texts.iter().position(|t| *t == "+20 Strength").unwrap();
-    assert_eq!(lines[red].1, WHITE);
+    let red = texts
+        .iter()
+        .position(|t| *t == "|cffffffff+20 Strength|r")
+        .unwrap();
+    assert_eq!(lines[red].1, GOLD);
     assert_eq!(texts[red + 1], "[EMPTY_SOCKET_BLUE]");
     assert_eq!(lines[red + 2], ("[SOCKET_BONUS +6 Stamina]".into(), GRAY));
 
@@ -187,8 +243,11 @@ fn an_instance_walks_its_sockets_and_greens_a_full_match() {
     );
     let lines = hover_bag(&mut s);
     let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
-    let red = texts.iter().position(|t| *t == "+20 Strength").unwrap();
-    assert_eq!(texts[red + 1], "+10 Strength and +15 Stamina");
+    let red = texts
+        .iter()
+        .position(|t| *t == "|cffffffff+20 Strength|r")
+        .unwrap();
+    assert_eq!(texts[red + 1], "|cffffffff+10 Strength and +15 Stamina|r");
     assert_eq!(lines[red + 2], ("[SOCKET_BONUS +6 Stamina]".into(), GREEN));
     assert_eq!(
         texts.iter().filter(|t| t.contains("+6 Stamina")).count(),
@@ -211,6 +270,7 @@ fn an_instance_walks_its_sockets_and_greens_a_full_match() {
             slot: 6,
             id: 3729,
             name: "Socket Belt".into(),
+            prismatic_sockets: 1,
             ..Default::default()
         }],
     );

@@ -176,6 +176,7 @@ tables! {
         "SpellFocusObject" => spell_focus::schema(),
         "SpellIcon" => dbc::spell_icon_schema(),
         "SpellItemEnchantment" => item_visuals::spell_item_enchantment_schema(),
+        "SpellItemEnchantmentCondition" => item_visuals::spell_item_enchantment_condition_schema(),
         "SpellMechanic" => spell_mechanic::schema(),
         "SpellRadius" => spells::radius::schema(),
         "SpellRange" => spells::ranges::schema(),

@@ -60,6 +60,21 @@ impl ChatLanguages {
         language
     }
 
+    /// A readable's text in `language` as a reader at `skill` sees it (`0x505930` with both flags
+    /// set, as `0x589e90` calls it): `<…>` spans and punctuation stay. With no player it is copied whole.
+    pub(crate) fn translate(&self, language: u32, skill: u32, text: &str) -> String {
+        match self.words.as_ref().filter(|_| self.have_player) {
+            Some(words) => benilla_formats::garble(
+                words,
+                language,
+                skill,
+                text,
+                benilla_formats::Garble::ITEM_TEXT,
+            ),
+            None => text.to_string(),
+        }
+    }
+
     /// The line as this character hears it: unchanged for language 0, fluency, or no word pool.
     pub(crate) fn garble(&self, language: u32, text: &str) -> String {
         let Some(words) = self.words.as_ref() else {
@@ -70,7 +85,7 @@ impl ChatLanguages {
 }
 
 /// Load `LanguageWords.dbc` once at startup.
-pub(super) fn load_language_words(
+pub(crate) fn load_language_words(
     mut langs: ResMut<ChatLanguages>,
     assets: Option<Res<benilla_assets::WorldAssets>>,
 ) {
@@ -95,7 +110,7 @@ pub(super) fn load_language_words(
 
 /// Recompute the per-language skill map and the GM bit when the spell book, the catalogs or our
 /// descriptor change; the reference keeps the same map at spell add.
-pub(super) fn feed_language_skills(
+pub(crate) fn feed_language_skills(
     mut langs: ResMut<ChatLanguages>,
     actions: Option<Res<PlayerActions>>,
     spells: Option<Res<Spells>>,

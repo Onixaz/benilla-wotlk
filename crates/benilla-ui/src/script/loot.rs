@@ -86,6 +86,11 @@ impl super::UiScript {
         set_field!(self, loot, state);
     }
 
+    /// Push the looted object's guid, 0 with no loot open (`[0xbfa8d8]`).
+    pub fn set_loot_source(&mut self, guid: u64) {
+        set_field!(self, loot_source, guid);
+    }
+
     /// Drain the 1-based rows `LootSlot` took; the app maps each to the coin or the item's wire
     /// slot and applies the bind-on-pickup deferral.
     pub fn take_loot_picks(&mut self) -> Vec<u32> {

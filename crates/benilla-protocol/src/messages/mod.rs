@@ -30,6 +30,7 @@ mod group;
 mod guild;
 mod guild_bank;
 mod instance;
+mod item_ops;
 mod items;
 mod lfg;
 mod loot;
@@ -204,6 +205,10 @@ pub use instance::{
     instance_lock_response, reset_instances, set_difficulty, EncounterUnitUpdate,
     InstanceLockWarning, InstanceResetFailed, InstanceResetFailure, RaidGroupOnly,
     RaidInstanceMessage, RaidInstanceWarning,
+};
+pub use item_ops::{
+    item_guid_body, item_name_query, read_item, socket_gems, PurchaseCost, ReadItemFailure,
+    RefundRecord,
 };
 pub use items::{
     auto_equip_item, auto_store_bag_item, decode_item_query_response, destroy_item, item_query,

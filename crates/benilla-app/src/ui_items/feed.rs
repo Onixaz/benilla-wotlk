@@ -277,6 +277,17 @@ fn template_view(
             .then(|| enchants.and_then(|e| e.0.name(t.socket_bonus)))
             .flatten()
             .map(str::to_string),
+        gem_properties: t.gem_properties,
+        gem: enchants
+            .and_then(|e| e.1.gem(t.gem_properties))
+            .map(|(enchant, gem_type)| benilla_ui::script::GemView {
+                gem_type,
+                enchant,
+                enchant_name: enchants.and_then(|e| e.0.name(enchant)).map(str::to_string),
+                condition: enchants
+                    .and_then(|e| e.0.condition(enchant))
+                    .map(crate::items::condition_view),
+            }),
     }
 }
 
@@ -302,13 +313,15 @@ fn recipe_creates(t: &ItemInfo, spells: Option<&crate::ui_action::Spells>) -> u3
         .unwrap_or(0)
 }
 
-/// Answers the engine's set-id asks from `ItemSet.dbc`: member names from the template cache, each
+/// Answers the engine's set-id asks from `ItemSet.dbc`: member names from the item-name cache, each
 /// miss queried as the reference queries set members, and bonus text from the `$`-engine. A set
 /// stays pending, re-pushing, until every member resolves.
 pub(super) fn feed_item_sets(
     script: Option<NonSendMut<UiScript>>,
     sets: Option<Res<super::ItemSets>>,
     items: Res<Items>,
+    // The pieces' names and slot types, the set block's own cache (`0x62ba33`).
+    names: Res<crate::item_names::ItemNames>,
     commands: Res<NetCommands>,
     spells: Option<Res<crate::ui_action::Spells>>,
     spell_mods: Res<crate::spell::SpellModifiers>,
@@ -386,11 +399,11 @@ pub(super) fn feed_item_sets(
             .items
             .iter()
             .map(|&id| {
-                let t = items.template(id, 0, &commands);
+                let n = names.get_or_ask(id, &commands);
                 benilla_ui::script::ItemSetMember {
                     id,
-                    name: t.map(|t| t.name.clone()),
-                    inventory_type: t.map_or(0, |t| t.inventory_type),
+                    name: n.map(|n| n.name.clone()),
+                    inventory_type: n.map_or(0, |n| n.inventory_type),
                 }
             })
             .collect();
@@ -424,7 +437,8 @@ pub(super) fn feed_item_sets(
                 .flatten(),
             members,
         };
-        if view.members.iter().all(|m| m.name.is_some()) {
+        // Done once every piece is answered; one the server does not know keeps no name.
+        if row.items.iter().all(|&id| names.answered(id)) {
             done.push(set_id);
         }
         if *last != view {

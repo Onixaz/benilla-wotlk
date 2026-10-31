@@ -36,7 +36,8 @@ pub(crate) struct GoTemplate {
     pub(crate) meeting_stone: Option<MeetingStoneTemplate>,
     /// MO_TRANSPORT (type 15) only: the transport timetable's inputs.
     pub(crate) mo_transport: Option<MoTransport>,
-    /// TEXT (type 9) only; a right-click reads it only when `page_id` is nonzero.
+    /// TEXT (type 9), which a right-click reads when `page_id` is nonzero, and GOOBER (type 10),
+    /// whose page the server opens with `SMSG_GAMEOBJECT_PAGETEXT` on use.
     pub(crate) text_page: Option<TextPage>,
     /// The `PageTextMaterial.dbc` id `GetQuestBackgroundMaterial` answers for a quest from this
     /// object (`0x710300`): QUESTGIVER (2) and TEXT (9) read `data[2]`, GOOBER (10) `data[9]`.
@@ -72,6 +73,8 @@ pub(crate) struct TextPage {
     pub(crate) page_id: u32,
     /// `data[2]`, a `PageTextMaterial.dbc` id.
     pub(crate) material: u32,
+    /// The page's `Languages.dbc` id, prop `0x10` (`0x7102c0`); 0 reads plain.
+    pub(crate) language: u32,
 }
 
 /// Entry to template, asked once per connection.
@@ -145,9 +148,17 @@ impl GameObjectTemplates {
             move_speed: data[1].max(0) as f32,
             accel_rate: data[2].max(0) as f32,
         });
-        let text_page = (type_id == 9).then(|| TextPage {
-            page_id: data[0].max(0) as u32,
-            material: data[2].max(0) as u32,
+        // The page, its language and its material, 12340 props `0xf`, `0x10` and `0x11`: TEXT's
+        // `data[0..=2]`, GOOBER's `data[7..=9]` (`0x746190`).
+        let text_page = match type_id {
+            9 => Some(0),
+            10 => Some(7),
+            _ => None,
+        }
+        .map(|at| TextPage {
+            page_id: data[at].max(0) as u32,
+            language: data[at + 1].max(0) as u32,
+            material: data[at + 2].max(0) as u32,
         });
         let quest_material = match type_id {
             2 | 9 => Some(data[2].max(0) as u32),
@@ -329,9 +340,18 @@ mod tests {
             .expect("type 9 captures");
         assert_eq!(page.page_id, 1416);
         assert_eq!(page.material, 2);
-        // A goober's data[0] is a lockId.
+        // A goober's data[0] is a lockId; its page is data[7], its material data[9].
         t.insert(2037, 10, "Lever".into(), &data);
-        assert!(t.templates.get(2037).unwrap().text_page.is_none());
+        let page = t.templates.get(2037).unwrap().text_page.expect("type 10");
+        assert_eq!((page.page_id, page.material), (0, 0));
+        data[7] = 3065;
+        data[9] = 5;
+        t.insert(2038, 10, "Plaque".into(), &data);
+        let page = t.templates.get(2038).unwrap().text_page.expect("type 10");
+        assert_eq!((page.page_id, page.material), (3065, 5));
+        // Any other type has no page.
+        t.insert(2039, 3, "Chest".into(), &data);
+        assert!(t.templates.get(2039).unwrap().text_page.is_none());
     }
 
     #[test]

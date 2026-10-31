@@ -847,6 +847,8 @@ fn feed_loot(
         group: &group,
         names: &names,
     };
+    // The looted object (`[0xbfa8d8]`), which the purchase verbs refuse while it is open.
+    script.set_loot_source(loot.source().unwrap_or(0));
     let fresh = snapshot(&loot, &items, icons.as_deref(), &commands, rolls, who).map(|mut snap| {
         snap.source_unit = loot.source().is_some_and(|g| objects.is_unit(g));
         snap

@@ -49,6 +49,10 @@ pub(super) struct ItemInstance {
     pub duration_ms: Option<u64>,
     /// The item object's guid, which the equipment-set line looks up; 0 for a source with none.
     pub guid: u64,
+    /// p9, the socket preview, `SetSocketedItem` alone: the gem placed per socket, which stands in its
+    /// socket (`0x6277f0`). The preview cuts the bind region, a gem's own line, durability, the
+    /// class, race and requirement lines, the set block and the creator line.
+    pub socket_preview: Option<[Option<crate::script::ItemTemplateView>; 3]>,
 }
 
 /// The sets holding `item` (`0x5ae380`): each set's name once per slot that holds it, in set
@@ -202,11 +206,16 @@ pub(super) fn render_view(
         }
     };
 
-    // The gray header (`[arg+0x18]`) is all a compare adds: the only two of the builder's 31 call
-    // sites passing p5 pass p4 = 0, so none is cut.
-    if flags.currently_equipped {
+    // The header (`[arg+0x18]`) is all a compare adds: the only call sites passing p5 pass p4 = 0,
+    // so none is cut. For a gem it is the red DESTROY_GEM, which grays the name and the gem line
+    // (`SetExistingSocketGem`'s `toDestroy`).
+    let destroy_gem = flags.currently_equipped && v.gem_properties != 0;
+    if destroy_gem {
+        keyed("DESTROY_GEM", &[], RED, false)?;
+    } else if flags.currently_equipped {
         keyed("CURRENTLY_EQUIPPED", &[], GRAY, false)?;
     }
+    let preview = inst.is_some_and(|i| i.socket_preview.is_some());
     let name = inst
         .and_then(|i| i.name.clone())
         .unwrap_or_else(|| v.name.clone());
@@ -214,6 +223,8 @@ pub(super) fn render_view(
     // not even for an unusable item.
     let name_color = if flags.name_only {
         WHITE
+    } else if destroy_gem {
+        GRAY
     } else {
         quality_color(v.quality)
     };
@@ -238,8 +249,9 @@ pub(super) fn render_view(
     if v.flags & 0x2000 != 0 {
         keyed("ITEM_SIGNABLE", &[], GREEN, false)?;
     }
-    // p4's first cut: the bind/lock region. ITEM_SIGNABLE above survives it.
-    if !flags.name_only {
+    // p4's first cut: the bind/lock region, which the socket preview cuts too. ITEM_SIGNABLE above
+    // survives it.
+    if !flags.name_only && !preview {
         if v.flags & 0x2 != 0 {
             keyed("ITEM_CONJURED", &[], WHITE, false)?;
         }
@@ -486,6 +498,32 @@ pub(super) fn render_view(
             }
         }
         // The druid's feral attack power off a main-hand weapon's DPS above 54.81 (`0x61a8f0`).
+        // A gem's own line (`0x6277f0`): its socket enchant's name, white, red while its required
+        // skill is short, gray when it is to be destroyed; then a meta gem's condition lines
+        // (`0x62a994`).
+        if v.gem_properties != 0 && !preview {
+            if let Some(name) = v.gem.as_ref().and_then(|g| g.enchant_name.clone()) {
+                let skill_ok = v.required_skill == 0
+                    || req
+                        .skills
+                        .get(&v.required_skill)
+                        .is_some_and(|&have| have >= v.required_skill_rank);
+                let color = if destroy_gem {
+                    GRAY
+                } else {
+                    req_color(skill_ok)
+                };
+                add((name, color))?;
+            }
+            if let Some(cond) = v.gem.as_ref().and_then(|g| g.condition.as_ref()) {
+                let counts =
+                    crate::script::socket::equipped_gem_counts(&crate::script::model_mut_of(lua));
+                let (text, _) = super::sockets::condition_text(cond, counts, false, &get);
+                if !text.is_empty() {
+                    addw((text, WHITE))?;
+                }
+            }
+        }
         if req.class_id == 11
             && v.class == 2
             && matches!(v.inventory_type, 13 | 17 | 21 | 22)
@@ -498,7 +536,9 @@ pub(super) fn render_view(
             }
         }
     }
-    if let Some((cur, max)) = inst.and_then(|i| i.durability).filter(|&(_, max)| max > 0) {
+    if preview {
+        // The socket preview prints no durability or duration (`0x6277f0`).
+    } else if let Some((cur, max)) = inst.and_then(|i| i.durability).filter(|&(_, max)| max > 0) {
         // Red only when broken.
         let color = if cur == 0 { RED } else { WHITE };
         keyed(
@@ -520,13 +560,14 @@ pub(super) fn render_view(
     // the ladder. Its prefix ships no `_P1` twin, so every count reads "days" or "hrs"
     // (`GlobalStrings.lua:2401-2404`). The reference's formatter takes a dword, so a timer past
     // 49.7 days saturates here; no 1.12 item lasts past a fortnight.
-    if let Some(ms) = inst.and_then(|i| i.duration_ms) {
+    if let Some(ms) = inst.and_then(|i| i.duration_ms).filter(|_| !preview) {
         let ms = u32::try_from(ms).unwrap_or(u32::MAX);
         if let Some(line) = duration_text(ms, "ITEM_DURATION", true, &get) {
             add((line, WHITE))?;
         }
     }
-    if v.allowable_class > 0
+    if !preview
+        && v.allowable_class > 0
         && (v.allowable_class & full_mask(&CLASS_NAMES)) != full_mask(&CLASS_NAMES)
     {
         let list: Vec<&str> = CLASS_NAMES
@@ -544,7 +585,9 @@ pub(super) fn render_view(
             )?;
         }
     }
-    if v.allowable_race > 0 && (v.allowable_race & full_mask(&RACE_NAMES)) != full_mask(&RACE_NAMES)
+    if !preview
+        && v.allowable_race > 0
+        && (v.allowable_race & full_mask(&RACE_NAMES)) != full_mask(&RACE_NAMES)
     {
         let list: Vec<&str> = RACE_NAMES
             .iter()
@@ -577,7 +620,8 @@ pub(super) fn render_view(
     }
     // ITEM_MIN_SKILL with a rank, ITEM_REQ_SKILL without; the required spell takes ITEM_REQ_SKILL
     // too.
-    if let Some(skill) = &v.required_skill_name {
+    // The requirement lines (`0x6277f0`), which the socket preview cuts; the level lines above stay.
+    if let Some(skill) = v.required_skill_name.as_ref().filter(|_| !preview) {
         let have = req.skills.get(&v.required_skill).copied().unwrap_or(0);
         let color = req_color(have >= v.required_skill_rank.max(1));
         if v.required_skill_rank > 0 {
@@ -587,7 +631,7 @@ pub(super) fn render_view(
             keyed("ITEM_REQ_SKILL", &[Arg::S(skill)], color, false)?;
         }
     }
-    if v.required_spell != 0 {
+    if v.required_spell != 0 && !preview {
         if let Some(name) = &v.required_spell_name {
             keyed(
                 "ITEM_REQ_SKILL",
@@ -597,7 +641,7 @@ pub(super) fn render_view(
             )?;
         }
     }
-    if let Some(rep) = &v.required_rep_line {
+    if let Some(rep) = v.required_rep_line.as_ref().filter(|_| !preview) {
         // Red below the required rank (`[+0x58]`); an unfed faction reads as unmet.
         let rank = req
             .rep_ranks
@@ -609,7 +653,7 @@ pub(super) fn render_view(
             req_color(u32::from(rank) >= v.required_rep_rank),
         ))?;
     }
-    if taught_known {
+    if taught_known && !preview {
         keyed("ITEM_SPELL_KNOWN", &[], RED, false)?;
     }
     // The green stat lines (`0x6277f0`): the feral line, then each rating stat in wire order as the
@@ -655,7 +699,7 @@ pub(super) fn render_view(
     // flight waits), a second blank, then the bonuses sorted by threshold, green when the skill is
     // met and enough are worn. A met bonus is ITEM_SET_BONUS, the text alone; only an unmet one is
     // ITEM_SET_BONUS_GRAY, with its count.
-    if let Some(set) = &set_view {
+    if let Some(set) = set_view.as_ref().filter(|_| !preview) {
         let count = count_set(v.item_set, &set.members, &worn);
         addw((SET_SPACER.into(), GOLD))?;
         keyed(
@@ -719,7 +763,7 @@ pub(super) fn render_view(
         // own `|cff00ff00`. A wrapped instance (`0x8`) takes ITEM_WRAPPED_BY off
         // `ITEM_FIELD_GIFTCREATOR` in the reference; that is not built, so a wrapped instance
         // prints no creator line.
-        if inst.flags & 0x8 == 0 {
+        if inst.flags & 0x8 == 0 && inst.socket_preview.is_none() {
             if let Some(name) = &inst.creator {
                 let key = if inst.has_text {
                     "ITEM_WRITTEN_BY"
@@ -767,7 +811,55 @@ pub(super) fn render_view(
             }
         }
     }
+    // The trade lines (`0x6277f0`): an open refund window's countdown, which takes the money
+    // block's place, then a bound item's trade window.
+    let mut refundable = false;
+    if let Some(inst) = inst.filter(|i| i.guid != 0) {
+        let (refund_left, trade_left) = {
+            let model = crate::script::model_mut_of(lua);
+            let enchanted = inst
+                .enchants
+                .iter()
+                .any(|e| matches!(e.slot, 0 | 2 | 3 | 6));
+            let refund =
+                crate::script::refund::seconds_left(&model, inst.guid).filter(|_| !enchanted);
+            let trade = inst
+                .already_bound
+                .then(|| crate::script::refund::bound_trade_left(&model, inst.guid))
+                .flatten();
+            (refund, trade)
+        };
+        for (left, key) in [
+            (refund_left, "REFUND_TIME_REMAINING"),
+            (trade_left, "BIND_TRADE_TIME_REMAINING"),
+        ] {
+            let Some(left) = left else { continue };
+            if let (Some(time), Some(t)) = (window_text(left, &get), get(key)) {
+                add((" ".into(), GOLD))?;
+                addw((fill(&t, &[Arg::S(&time)]), REFUND_BLUE))?;
+            }
+        }
+        refundable = refund_left.is_some();
+    }
+    if refundable {
+        return Ok(());
+    }
     add_sell_price(lua, this, v, flags.sell)
+}
+
+/// A trade or refund window's time left (`0x6277f0`): `INT_SPELL_DURATION`'s largest unit, except
+/// that 61 minutes to under two hours reads "1 hour" and the minutes past it.
+fn window_text(left: i64, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let left = u32::try_from(left).ok()?;
+    if !(3660..7200).contains(&left) {
+        return duration_text(left.saturating_mul(1000), "INT_SPELL_DURATION", false, get);
+    }
+    let hours = plural_template("INT_SPELL_DURATION_HOURS", 1, get)?.replacen("%d", "1", 1);
+    let n = (left - 3600) / 60;
+    let minutes =
+        plural_template("INT_SPELL_DURATION_MIN", n, get)?.replacen("%d", &n.to_string(), 1);
+    let delimiter = get("TIME_UNIT_DELIMITER").unwrap_or_default();
+    Some(format!("{hours}{delimiter}{minutes}"))
 }
 
 /// The money block, the builder's last lines (`0x62d71b..0x62d8ef`): nothing in repair mode

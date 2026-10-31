@@ -5,8 +5,13 @@
 //! else a copied mail letter's own text (`ITEM_FIELD_FLAGS & 0x200`), asked by the item's guid
 //! (`0x58a1a0`).
 //!
-//! The events follow `ItemTextFrame.lua:10-96`; `ITEM_TEXT_TRANSLATION`, the foreign-language
-//! bar, never fires, as neither source carries the language column.
+//! A book item the player has not read yet (no `ITEM_FIELD_FLAGS` `0x2` translated bit) asks the
+//! server first: `ITEM_TEXT_BEGIN` fires, `CMSG_READ_ITEM` goes out, and `SMSG_READ_ITEM_OK` or
+//! `_FAILED` decides (`0x58a1a0`, `0x6d5d90`). A used GOOBER's page arrives as
+//! `SMSG_GAMEOBJECT_PAGETEXT` (`0x70be30`), the same read call.
+//!
+//! The events follow `ItemTextFrame.lua:10-96`. Unread pages pass the chat's translator in the
+//! book's or object's language (`0x589e90`).
 
 use bevy::prelude::*;
 
@@ -18,6 +23,9 @@ use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands, Objects};
 use crate::query_cache::QueryCache;
 use crate::ui_script::{UiFeed, UiInput};
+
+/// `ITEM_FIELD_FLAGS & 0x2`: the item was read once, so it shows with no read check.
+const ITEM_FIELD_FLAG_TRANSLATED: u32 = 0x2;
 
 /// One page of a book as the wire gave it (`SMSG_PAGE_TEXT_QUERY_RESPONSE`).
 pub(crate) struct PageText {
@@ -104,10 +112,22 @@ pub(crate) enum ReadSource {
     Pages { visited: Vec<u32> },
 }
 
+/// The read check a book item takes before its text shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReadCheck {
+    /// Not judged yet: judged once `ITEM_TEXT_BEGIN` fires.
+    Unchecked,
+    /// `CMSG_READ_ITEM` sent, the answer not in.
+    Waiting,
+    /// Show the text, with the translation bar's ms when the answer read it untranslated.
+    Show { translation_ms: Option<u32> },
+}
+
 pub(crate) struct ReadSession {
     /// An item's or a GameObject's guid; reading the same object again closes the reader.
     pub(crate) object_guid: u64,
     pub(crate) source: ReadSource,
+    check: ReadCheck,
     /// Keyed on the VM, so a `/reload` re-fires `ITEM_TEXT_BEGIN` for a reader still open.
     told: crate::ui_script::VmMemo<ItemTextTold>,
 }
@@ -142,6 +162,21 @@ impl ItemTextOpen {
         );
     }
 
+    /// The read check's answer for the open book: `Some` shows it, `None` closes it. An answer for
+    /// another object is dropped (`0x589e90`).
+    fn answer(&mut self, item: u64, check: Option<ReadCheck>) {
+        let Some(sess) = self.pending.as_mut().filter(|s| s.object_guid == item) else {
+            return;
+        };
+        match check {
+            Some(c) => sess.check = c,
+            None => {
+                self.pending = None;
+                self.closing = true;
+            }
+        }
+    }
+
     /// The reference's toggle, the read call with flag 0 from both click routes: reading the open
     /// object again closes it. Returns whether it closed.
     pub(crate) fn toggle_closed(&mut self, object_guid: u64) -> bool {
@@ -164,6 +199,7 @@ impl ItemTextOpen {
         self.pending = Some(ReadSession {
             object_guid,
             source,
+            check: ReadCheck::Unchecked,
             told: Default::default(),
         });
     }
@@ -179,7 +215,83 @@ mod net {
 
     pub(super) fn register(app: &mut App) {
         app.net_handler(SessionEventKind::PageText, on_page_text)
-            .net_handler(SessionEventKind::ItemText, on_item_text);
+            .net_handler(SessionEventKind::ItemText, on_item_text)
+            .net_handler(SessionEventKind::ReadItemOk, on_read_item_ok)
+            .net_handler(SessionEventKind::ReadItemFailed, on_read_item_failed)
+            .net_handler(
+                SessionEventKind::GameObjectPageText,
+                on_gameobject_page_text,
+            );
+    }
+
+    /// `SMSG_READ_ITEM_OK`: the item's translated bit goes on locally (`0x707060`) and the text
+    /// shows.
+    fn on_read_item_ok(
+        In(ev): In<SessionEvent>,
+        mut open: ResMut<super::ItemTextOpen>,
+        index: Res<crate::net::GuidIndex>,
+        mut stores: Query<&mut crate::net::ObjectStore>,
+        mut edges: MessageWriter<crate::net::FieldChanged>,
+    ) {
+        let SessionEvent::ReadItemOk { item } = ev else {
+            return;
+        };
+        debug!("item text: read check passed for {item:#x}");
+        if let Some((entity, mut store)) = index
+            .0
+            .get(&item)
+            .and_then(|&e| Some((e, stores.get_mut(e).ok()?)))
+        {
+            let flags = store.0.item_flags().unwrap_or(0) | super::ITEM_FIELD_FLAG_TRANSLATED;
+            let delta = benilla_protocol::messages::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_ITEM_FLAGS,
+                flags,
+            )]);
+            crate::net::merge_store_fields(&mut store.0, delta, entity, item, |e| {
+                edges.write(e);
+            });
+        }
+        open.answer(
+            item,
+            Some(super::ReadCheck::Show {
+                translation_ms: None,
+            }),
+        );
+    }
+
+    /// `SMSG_READ_ITEM_FAILED`: reason 0 shows the text, 1 shows it untranslated with the
+    /// translation bar, any other closes the reader.
+    fn on_read_item_failed(In(ev): In<SessionEvent>, mut open: ResMut<super::ItemTextOpen>) {
+        let SessionEvent::ReadItemFailed { item, failure } = ev else {
+            return;
+        };
+        debug!("item text: read check failed for {item:#x}: {failure:?}");
+        use benilla_protocol::messages::ReadItemFailure as F;
+        let check = match failure {
+            F::Show => Some(super::ReadCheck::Show {
+                translation_ms: None,
+            }),
+            F::Untranslated { ms } => Some(super::ReadCheck::Show {
+                translation_ms: Some(ms),
+            }),
+            F::Close => None,
+        };
+        open.answer(item, check);
+    }
+
+    /// `SMSG_GAMEOBJECT_PAGETEXT` (`0x70be30`): the read call with flag 0 on the GameObject, so a
+    /// page already open closes.
+    fn on_gameobject_page_text(In(ev): In<SessionEvent>, mut open: ResMut<super::ItemTextOpen>) {
+        let SessionEvent::GameObjectPageText { guid } = ev else {
+            return;
+        };
+        if !benilla_protocol::guid::is_gameobject(guid) {
+            return;
+        }
+        if !open.toggle_closed(guid) {
+            debug!("item text: read gameobject page {guid:#x}");
+            open.open_pages(guid);
+        }
     }
 
     /// `SMSG_ITEM_TEXT_QUERY_RESPONSE` (`0x635a40`): the letter's text lands in the cache.
@@ -221,7 +333,11 @@ impl Plugin for UiItemTextPlugin {
                 (
                     // Feed before the input pass so an open paints this frame; drain after it
                     // so a close clears this frame.
-                    feed_item_text.in_set(UiFeed),
+                    // After the language feeds, whose skills and words the translator reads.
+                    feed_item_text
+                        .in_set(UiFeed)
+                        .after(crate::ui_chat::load_language_words)
+                        .after(crate::ui_chat::feed_language_skills),
                     drain_item_text.after(UiInput),
                 ),
             );
@@ -236,6 +352,10 @@ struct Readable {
     material: Option<String>,
     /// The first `PageText` id; 0 for a letter or a template with no page.
     page_head: u32,
+    /// The pages' language: an item template's `LanguageID`, a GameObject's prop `0x10`.
+    language: u32,
+    /// An item already read (`ITEM_FIELD_FLAGS & 0x2`) shows its pages as written.
+    translated: bool,
 }
 
 /// The material a quest from `guid` paints on, `GetQuestBackgroundMaterial`, the body of
@@ -278,14 +398,19 @@ fn readable(
             title: go.name.clone(),
             material: go.text_page.and_then(|p| name(p.material)),
             page_head: go.text_page.map_or(0, |p| p.page_id),
+            language: go.text_page.map_or(0, |p| p.language),
+            translated: false,
         });
     }
-    let entry = objects.object(guid)?.object_entry()?;
+    let fields = objects.object(guid)?;
+    let entry = fields.object_entry()?;
     let t = items.template(entry, guid, commands)?;
     Some(Readable {
         title: t.name.clone(),
         material: name(t.page_material),
         page_head: t.page_text,
+        language: t.language_id,
+        translated: fields.item_flags().unwrap_or(0) & ITEM_FIELD_FLAG_TRANSLATED != 0,
     })
 }
 
@@ -306,6 +431,8 @@ fn feed_item_text(
     // The `$`-macro subject for the page body: the local player.
     self_q: Query<(&crate::net::ObjectStore, &crate::net::Guid), With<crate::net::SelfPlayer>>,
     states: Res<crate::world_state::WorldStates>,
+    // The reader's language skill and the garble word pool, the chat's own.
+    languages: Option<Res<crate::ui_chat::ChatLanguages>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -355,6 +482,43 @@ fn feed_item_text(
         sess.told.get(&script).begun = true;
     }
 
+    // The read check (`0x58a1a0`): a book item not yet read asks the server by its bag position;
+    // a letter, a read book and a GameObject show at once. An item with no bag position sends
+    // nothing and waits.
+    if sess.check == ReadCheck::Unchecked {
+        let unread = !benilla_protocol::guid::is_gameobject(sess.object_guid)
+            && matches!(sess.source, ReadSource::Pages { .. })
+            && objects.object(sess.object_guid).is_some_and(|f| {
+                f.item_flags().unwrap_or(0) & (ITEM_FIELD_FLAG_TRANSLATED | 0x200) == 0
+            });
+        sess.check = if unread {
+            let at = self_q.iter().next().and_then(|(store, _)| {
+                crate::ui_items::collect_inventory(
+                    &store.0,
+                    &objects,
+                    crate::ui_items::InventoryScope::DEFAULT,
+                )
+                .into_iter()
+                .find(|&(_, _, g)| g == sess.object_guid)
+            });
+            if let Some((bag, slot, _)) = at {
+                debug!(
+                    "item text: read check for {:#x} at bag {bag} slot {slot}",
+                    sess.object_guid
+                );
+                let _ = commands.0.send(ClientCommand::ReadItem { bag, slot });
+            }
+            ReadCheck::Waiting
+        } else {
+            ReadCheck::Show {
+                translation_ms: None,
+            }
+        };
+    }
+    let ReadCheck::Show { translation_ms } = sess.check else {
+        return; // the answer is in flight
+    };
+
     let (creator, text, page, has_next) = match &mut sess.source {
         ReadSource::Letter => {
             let creator_guid = objects
@@ -401,6 +565,18 @@ fn feed_item_text(
             achievement: None,
         },
     );
+    // A page not yet read shows through the translator (`0x589e90`): at the reader's skill, or
+    // none when the check read it untranslated. A letter and a read book show as written.
+    let text = match languages.as_deref() {
+        Some(langs) if matches!(sess.source, ReadSource::Pages { .. }) && !readable.translated => {
+            let skill = match translation_ms {
+                Some(_) => 0,
+                None => langs.skill(readable.language),
+            };
+            langs.translate(readable.language, skill, &text)
+        }
+        _ => text,
+    };
     script.set_item_text(Some(ItemTextState {
         item: readable.title,
         creator,
@@ -411,6 +587,18 @@ fn feed_item_text(
     }));
     script.fire_event("ITEM_TEXT_READY", vec![]);
     sess.told.get(&script).ready = true;
+    // An untranslated read starts the translation bar, its seconds the answer's ms (`0x6d5d90`).
+    if let Some(ms) = translation_ms {
+        sess.check = ReadCheck::Show {
+            translation_ms: None,
+        };
+        script.fire_event(
+            "ITEM_TEXT_TRANSLATION",
+            vec![benilla_ui::script::ScriptValue::Number(
+                f64::from(ms) * 0.001,
+            )],
+        );
+    }
 }
 
 /// `PageTextMaterial.dbc`; absent without client data, leaving every reader on Parchment.

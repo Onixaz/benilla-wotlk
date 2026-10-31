@@ -10,9 +10,9 @@ use crate::wire::{
 use super::{
     achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, barber,
     battlefield, binder, broadcast, calendar, channel, chat, combat_log, death, duel,
-    equipment_set, gameobject, gm_ticket, gossip, group, guild, guild_bank, instance, items, lfg,
-    loot, mail, meeting_stone, mirror_timer, monster_move, movement, opcode, page_text, pet,
-    petition, pose, progression, pvp, quest, rune, social, spellbook, spells, stable, summon,
+    equipment_set, gameobject, gm_ticket, gossip, group, guild, guild_bank, instance, item_ops,
+    items, lfg, loot, mail, meeting_stone, mirror_timer, monster_move, movement, opcode, page_text,
+    pet, petition, pose, progression, pvp, quest, rune, social, spellbook, spells, stable, summon,
     tabard, talents, taxi, threat, totem, trade, trainer, tutorial, unit_state, update_object,
     vehicle, vendor, world_state, AttackSwingError, CalendarPacket, Character, CreatureQueryInfo,
     DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
@@ -904,8 +904,8 @@ fn parse_server_body(
         }
         opcode::SMSG_CHAT_RESTRICTED => ServerPacket::ChatRestricted,
         opcode::SMSG_PLAYED_TIME => {
-            let (total, level) = chat::read_played_time(&mut r)?;
-            ServerPacket::PlayedTime { total, level }
+            let (total, level, show) = chat::read_played_time(&mut r)?;
+            ServerPacket::PlayedTime { total, level, show }
         }
         opcode::MSG_RANDOM_ROLL => {
             let (min, max, roll, guid) = chat::read_random_roll(&mut r)?;
@@ -1048,6 +1048,32 @@ fn parse_server_body(
                 item_guid,
                 spell_id,
             }
+        }
+        opcode::SMSG_SOCKET_GEMS_RESULT => {
+            let (item, enchants) = item_ops::read_socket_gems_result(&mut r)?;
+            ServerPacket::SocketGemsResult { item, enchants }
+        }
+        opcode::SMSG_ITEM_REFUND_INFO_RESPONSE => {
+            let (item, record) = item_ops::read_item_refund_info(&mut r)?;
+            ServerPacket::ItemRefundInfo { item, record }
+        }
+        opcode::SMSG_ITEM_REFUND_RESULT => {
+            let (item, result, cost) = item_ops::read_item_refund_result(&mut r)?;
+            ServerPacket::ItemRefundResult { item, result, cost }
+        }
+        opcode::SMSG_READ_ITEM_OK => ServerPacket::ReadItemOk {
+            item: read_u64_le(&mut r)?,
+        },
+        opcode::SMSG_READ_ITEM_FAILED => {
+            let (item, failure) = item_ops::read_read_item_failed(&mut r)?;
+            ServerPacket::ReadItemFailed { item, failure }
+        }
+        opcode::SMSG_GAMEOBJECT_PAGETEXT => ServerPacket::GameObjectPageText {
+            guid: read_u64_le(&mut r)?,
+        },
+        opcode::SMSG_ITEM_NAME_QUERY_RESPONSE => {
+            let (entry, name) = item_ops::read_item_name_query_response(&mut r)?;
+            ServerPacket::ItemNameQueryResponse { entry, name }
         }
         opcode::SMSG_ITEM_TIME_UPDATE => {
             let (item_guid, seconds) = items::read_item_time(&mut r)?;

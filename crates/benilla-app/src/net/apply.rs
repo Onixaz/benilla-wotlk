@@ -44,8 +44,8 @@ pub(super) fn tag_self_player(
     }
 }
 
-/// Our own player's create, as the reference handles it: the active-mover setter (sending
-/// `CMSG_SET_ACTIVE_MOVER`), then the world-enter cascade. `SMSG_LOGIN_VERIFY_WORLD` and
+/// Our own player's create, as the reference handles it: the played-time ask, the active-mover
+/// setter (sending `CMSG_SET_ACTIVE_MOVER`), then the world-enter cascade. `SMSG_LOGIN_VERIFY_WORLD` and
 /// `SMSG_NEW_WORLD` purge the streamed world (`session::worldport`), so a login, a reconnect and
 /// every cross-map worldport create us afresh and tag us again; a same-map teleport creates
 /// nothing. The server has seated the player by then, so nothing sent here is dropped.
@@ -61,6 +61,9 @@ pub(crate) fn enter_world_on_self_create(
                 &format!("SET_ACTIVE_MOVER guid={:#x} (self create)", guid.0),
             );
         }
+        // The player's constructor seeds the played clock with an unshown ask (`0x6e6e27`), ahead
+        // of the mover.
+        let _ = net.0.send(ClientCommand::PlayedTime { show: false });
         let _ = net.0.send(ClientCommand::SetActiveMover { guid: guid.0 });
         cascades.write(WorldEnterCascadeMessage);
     }

@@ -451,7 +451,7 @@ mod tests {
             (Field::ItemEnchantPermTemp, FIELD_ITEM_ENCHANTMENT),
             (Field::ItemEnchantSockets, FIELD_ITEM_ENCHANTMENT_SOCKETS),
             (Field::ItemEnchantProps, FIELD_ITEM_ENCHANTMENT_PROPS),
-            (Field::ItemTextId, 45),
+            (Field::ItemCreatePlayedTime, 45),
             (Field::ContainerNumSlots, FIELD_CONTAINER_NUM_SLOTS),
             (Field::ContainerSlots, FIELD_CONTAINER_SLOT_1),
             (Field::UnitCharm, FIELD_UNIT_CHARM),
