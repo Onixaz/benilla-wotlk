@@ -750,7 +750,7 @@ pub(crate) struct PlayedTimeAnswer(pub(crate) Option<(u32, u32)>);
 pub(crate) struct PlayedClock(pub(crate) Option<(u32, Instant)>);
 
 impl PlayedClock {
-    /// `GetPlayedTime` (`0x6cf440`): the total plus the seconds since; 0 before the first answer.
+    /// The played clock now (`0x6cf440`): the total plus the seconds since; 0 before the first answer.
     pub(crate) fn now(&self) -> i64 {
         self.0.map_or(0, |(total, at)| {
             i64::from(total) + at.elapsed().as_secs() as i64

@@ -29,7 +29,7 @@ pub(crate) struct ClickedItem {
     pub(crate) existing_enchant: [Option<u32>; 2],
     /// A purchase whose refund window is open (`item+0x3d4`, `0x5215ad`).
     pub(crate) refund_open: bool,
-    /// Bound, but still in its trade window: `IsBound && !IsBoundForTrade` (`0x5215f0`).
+    /// Bound, but still in its trade window (`0x5210d0`).
     pub(crate) bound_tradeable: bool,
 }
 
@@ -106,7 +106,7 @@ pub(crate) fn item_bind_verdict(
         return ItemBind::ConfirmBind;
     }
     // A temporary enchant leaves a refund open; a bound item's trade window ends unless it is a
-    // temporary enchant that does not bind (`0x521775`, `0x521781`).
+    // temporary enchant that does not bind (`0x5210d0`).
     if item.refund_open && perm && !confirmed {
         return ItemBind::ConfirmEndRefund;
     }

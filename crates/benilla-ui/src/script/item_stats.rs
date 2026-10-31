@@ -304,7 +304,7 @@ impl super::UiScript {
     }
 }
 
-/// The item-quality palette (`0xad2b0c`, eight entries), and the escape strings.
+/// The item-quality palette (`0xad2d84`, eight entries), and the escape strings (`0xad2a84`).
 /// `GetItemQualityColor` answers each channel times 1/255; a quality past the table reads Common.
 const QUALITY_COLORS: [(u8, u8, u8, &str); 8] = [
     (0x9d, 0x9d, 0x9d, "|cff9d9d9d"), // 0 Poor
@@ -327,7 +327,7 @@ pub(super) fn item_link(item_id: u32, name: &str, quality: u32) -> String {
     format!("{hex}|Hitem:{item_id}:0:0:0|h[{name}]|h|r")
 }
 
-/// `CreateItemLink` (`0x61e2c0`), `GetItemInfo`'s second return: the quality's colour, then
+/// The item-link builder behind `GetItemInfo`'s second return: the quality's colour, then
 /// `|Hitem:` with the id, the enchant, three gems, a 0, the random property, the seed and the
 /// player's level (`0xa24f04`), the name and a reset.
 fn create_item_link(item_id: u32, quality: u32, f: &ItemFields, level: u32, name: &str) -> String {
@@ -419,7 +419,7 @@ struct ItemFields {
 }
 
 /// `GetItemInfo`'s argument (`0x516c60`): a number, or a string holding `item:` anywhere, a bare
-/// item string or a full link (`SStrStr`, case-sensitive). A name (the reference searches the
+/// item string or a full link (a case-sensitive substring search). A name (the reference searches the
 /// item cache by name) and any other string are id 0. A non-number non-string raises.
 fn parse_item_arg(v: &Value) -> mlua::Result<(i64, ItemFields)> {
     let as_number = match v {
@@ -530,7 +530,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetItemInfo(itemID | "itemlink") (`0x516c60`) → itemName, itemLink, itemRarity, itemLevel,
     // itemMinLevel, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture,
     // itemSellPrice: eleven values. The name takes the link's random-property suffix and the link
-    // is a full hyperlink (`CreateItemLink`). An uncached template answers no values and records
+    // is a full hyperlink (`0xa24f04`). An uncached template answers no values and records
     // the ask. Not built: a name argument, which the reference finds in the item cache by name.
     lua.globals().set(
         "GetItemInfo",
@@ -545,7 +545,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 if v.is_none() && item_id != 0 {
                     model.item_stat_asks.insert(item_id);
                 }
-                // `BuildItemName` with the link's random property: a positive id's suffix.
+                // The name takes the link's random property: a positive id's suffix.
                 let suffix = u32::try_from(fields.random_property)
                     .ok()
                     .and_then(|rp| model.random_properties.get(&rp))
@@ -896,7 +896,7 @@ mod get_item_info_tests {
             );
         }
 
-        // An item string's enchant and gems carry into the link (`0x50f630`, `0x61e2c0`).
+        // An item string's enchant and gems carry into the link (`0x50f630`, `0xa24f04`).
         let (name, link): (String, String) = s
             .eval("local a,b = GetItemInfo(\"item:25:2564:7:0\") return a,b")
             .unwrap();
@@ -906,7 +906,7 @@ mod get_item_info_tests {
             "|cffffffff|Hitem:25:2564:7:0:0:0:0:0:0|h[Worn Shortsword]|h|r"
         );
         // A short string still parses, and `item:` is found anywhere, so a full hyperlink names
-        // its item (`SStrStr`, `0x516cbd`, `0x50f649`).
+        // its item (a case-sensitive search, `0x516cbd`, `0x50f649`).
         assert_eq!(
             s.eval::<String>("local _, link = GetItemInfo(\"item:25\") return link")
                 .unwrap(),

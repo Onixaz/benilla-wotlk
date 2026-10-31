@@ -61,7 +61,7 @@ impl ChatLanguages {
     }
 
     /// A readable's text in `language` as a reader at `skill` sees it (`0x505930` with both flags
-    /// set, `0x589f60`): `<…>` spans and punctuation stay. With no player it is copied whole.
+    /// set, as `0x589e90` calls it): `<…>` spans and punctuation stay. With no player it is copied whole.
     pub(crate) fn translate(&self, language: u32, skill: u32, text: &str) -> String {
         match self.words.as_ref().filter(|_| self.have_player) {
             Some(words) => benilla_formats::garble(

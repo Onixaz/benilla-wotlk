@@ -1,11 +1,11 @@
-//! The socketing window's engine, 12340's `CGItemSocketInfo` (statics `0xc20fa8`..`0xc20fe8`) and
+//! The socketing window's engine, 12340's socket state (statics `0xc20fa8`..`0xc20fe8`) and
 //! its bindings (registrar table `0xad0568`), with the two openers `SocketContainerItem`
 //! (`0x5d8b10`) and `SocketInventoryItem` (`0x5ea6a0`).
 //!
 //! The engine holds the socketed item's guid and a gem guid per socket; the stock window reads it
 //! through the verbs on `SOCKET_INFO_UPDATE` and closes on `SOCKET_INFO_CLOSE`. The socketed item
 //! is locked while it is set (`0x5c4680`). The reference re-signals the window when the item's
-//! fields change (`UpdateItem` `0x5c4ef0`) and drops a gem whose object goes (`RemoveItem`
+//! fields change (`0x5c4ef0`) and drops a gem whose object goes (
 //! `0x5c4f40`); here [`watch`] reads both off the bag and doll snapshots each tick.
 
 use mlua::{Lua, Value};
@@ -17,15 +17,15 @@ use super::{ContainerSlot, EnchantView, InvSlotView, ItemTemplateView, Model};
 /// The sockets an item can have, and the engine's gem slots.
 pub const MAX_SOCKETS: usize = 3;
 
-/// `GetSocketTypes`' names by colour bit (`0xa25f60`, the tooltip's table).
+/// `GetSocketTypes`' names by colour bit (`0xad6704`, the tooltip's table).
 const SOCKET_COLOR_NAMES: [&str; 4] = ["Meta", "Red", "Yellow", "Blue"];
 
 /// The engine's state: the socketed item and the gem placed per socket.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SocketInfo {
-    /// `m_socketItem`; 0 when the window is closed.
+    /// The socketed item; 0 when the window is closed.
     pub(crate) item: u64,
-    /// `m_gemItems`; 0 for an empty socket.
+    /// The gem placed per socket; 0 for an empty socket.
     pub(crate) gems: [u64; MAX_SOCKETS],
     /// The socketed item's enchant slots when last signalled, so a change re-signals the window.
     seen: Vec<EnchantView>,
@@ -79,7 +79,7 @@ impl<'a> Held<'a> {
         }
     }
 
-    /// The full name, random suffix joined (`GetFullItemName`).
+    /// The full name, random suffix joined.
     pub(super) fn name(&self) -> Option<String> {
         match self {
             Held::Bag(_, _, s) => s
@@ -142,7 +142,7 @@ pub(super) fn num_sockets(model: &Model, held: &Held<'_>) -> u32 {
     colored + prismatic
 }
 
-/// `GemMatchesSocket` (`0x5c48d0`): an uncoloured socket takes anything; a coloured one a gem
+/// Whether a gem fits a socket (`0x5c48d0`): an uncoloured socket takes anything; a coloured one a gem
 /// sharing a colour bit; a gem with no `GemProperties` row fits no colour.
 pub(super) fn gem_matches(
     socket: Option<&ItemTemplateView>,
@@ -160,7 +160,7 @@ pub(super) fn gem_matches(
             .is_some_and(|g| g.gem_type & color & 0xf != 0)
 }
 
-/// `SetItem` (`0x5c4680`): unlocks the old item, clears the gems, then locks the new one and
+/// Set the socketed item (`0x5c4680`): unlocks the old item, clears the gems, then locks the new one and
 /// signals `SOCKET_INFO_UPDATE`, or signals `SOCKET_INFO_CLOSE` for 0 or an unknown template.
 pub(super) fn set_item(model: &mut Model, guid: u64) {
     let old = find(model, model.socket_info.item).map(|h| h.position());
@@ -191,7 +191,7 @@ fn queue(model: &mut Model, event: &str) {
     model.pending_events.push((event.to_string(), Vec::new()));
 }
 
-/// `SetGem` (`0x5c4780`): place `gem` (0 empties the socket) in socket `i`. A gem goes only where
+/// Place `gem` (0 empties the socket) in socket `i` (`0x5c4780`). A gem goes only where
 /// its meta bit matches the socket's, else the reference's error shows. Returns whether it took.
 fn set_gem(model: &mut Model, i: usize, gem: u64) -> bool {
     let item = model.socket_info.item;
@@ -232,7 +232,7 @@ fn set_gem(model: &mut Model, i: usize, gem: u64) -> bool {
     }
 }
 
-/// `UpdateItem` and `RemoveItem` off the snapshots: the socketed item gone closes the window, its
+/// The item watchers (`0x5c4ef0`, `0x5c4f40`) off the snapshots: the socketed item gone closes the window, its
 /// enchants changing re-signals it, and a gem gone empties its socket.
 pub(super) fn watch(model: &mut Model) {
     let item = model.socket_info.item;
@@ -267,7 +267,7 @@ pub(super) fn template_arrived(model: &mut Model, item_id: u32) {
     }
 }
 
-/// `CountEquippedGems` (`0x6de4d0`): meta, red, yellow and blue gems socketed in the worn items,
+/// The worn gems' colour counts (`0x6de4d0`): meta, red, yellow and blue gems socketed in the worn items,
 /// a gem counting once per colour bit. A broken item (durability 0 and not wrapped) and one
 /// flagged `0x10` count none.
 pub(super) fn equipped_gem_counts(model: &Model) -> [i32; 4] {
@@ -292,7 +292,7 @@ pub(super) fn equipped_gem_counts(model: &Model) -> [i32; 4] {
     counts
 }
 
-/// `HasEnchantments` (`0x708ac0`): a permanent enchant, a gem in the first two sockets or a
+/// Whether the item holds an enchant (`0x708ac0`): a permanent enchant, a gem in the first two sockets or a
 /// prismatic socket; the third socket is not read.
 pub(super) fn has_enchantments(held: &Held<'_>) -> bool {
     held.enchants()
@@ -325,7 +325,7 @@ fn gem_template(model: &mut Model, i: usize, existing: bool) -> Option<(u32, Ite
     }
 }
 
-/// The socket item's template, which `GemMatchesSocket` reads.
+/// The socket item's template, which the socket fit reads.
 fn socket_stats(model: &Model) -> Option<ItemTemplateView> {
     find(model, model.socket_info.item)
         .and_then(|h| model.item_templates.get(&h.item_id()).cloned())
@@ -642,7 +642,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `Accept` (`0x5c4ff0`): queue the send when an item is set and a gem placed; the engine keeps its
+/// The accept (`0x5c4ff0`): queue the send when an item is set and a gem placed; the engine keeps its
 /// gems until their objects go.
 pub(super) fn accept(model: &mut Model) {
     let info = &model.socket_info;

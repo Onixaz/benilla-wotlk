@@ -59,7 +59,7 @@ fn window_open(stamp: u32, played_now: i64) -> bool {
     i64::from(stamp) - played_now + 7200 > 0
 }
 
-/// `IsBound && !IsBoundForTrade` (`0x709550`): bound by its flag, the player's own, flagged
+/// Bound but still tradeable (`0x709550`, `0x708b40`): bound by its flag, the player's own, flagged
 /// `0x100`, with no binding enchant, and its trade window open.
 pub(crate) fn bound_tradeable(
     fields: &ObjectFields,

@@ -343,7 +343,7 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
         let gem = u32_at(r, ENCHANT_SRC_ITEM).unwrap_or(0);
         if gem != 0 {
             gem_items.insert(id, gem);
-            // Only a gem's enchant carries a condition (`0x61c0cb`).
+            // Only a gem's enchant carries a condition (`0x61c0b0`).
             let row = u32_at(r, ENCHANT_CONDITION).unwrap_or(0);
             if let Some(c) = condition_rows.get(&row).filter(|_| row != 0) {
                 conditions.insert(id, *c);

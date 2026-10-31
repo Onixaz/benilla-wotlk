@@ -49,8 +49,8 @@ pub(super) struct ItemInstance {
     pub duration_ms: Option<u64>,
     /// The item object's guid, which the equipment-set line looks up; 0 for a source with none.
     pub guid: u64,
-    /// p9 `socketPreview`, `SetSocketedItem` alone: the gem placed per socket, which stands in its
-    /// socket (`0x627f6b`). The preview cuts the bind region, a gem's own line, durability, the
+    /// p9, the socket preview, `SetSocketedItem` alone: the gem placed per socket, which stands in its
+    /// socket (`0x6277f0`). The preview cuts the bind region, a gem's own line, durability, the
     /// class, race and requirement lines, the set block and the creator line.
     pub socket_preview: Option<[Option<crate::script::ItemTemplateView>; 3]>,
 }
@@ -498,7 +498,7 @@ pub(super) fn render_view(
             }
         }
         // The druid's feral attack power off a main-hand weapon's DPS above 54.81 (`0x61a8f0`).
-        // A gem's own line (`0x627a5c`): its socket enchant's name, white, red while its required
+        // A gem's own line (`0x6277f0`): its socket enchant's name, white, red while its required
         // skill is short, gray when it is to be destroyed; then a meta gem's condition lines
         // (`0x62a994`).
         if v.gem_properties != 0 && !preview {
@@ -537,7 +537,7 @@ pub(super) fn render_view(
         }
     }
     if preview {
-        // The socket preview prints no durability or duration (`0x62a8f6`).
+        // The socket preview prints no durability or duration (`0x6277f0`).
     } else if let Some((cur, max)) = inst.and_then(|i| i.durability).filter(|&(_, max)| max > 0) {
         // Red only when broken.
         let color = if cur == 0 { RED } else { WHITE };
@@ -620,7 +620,7 @@ pub(super) fn render_view(
     }
     // ITEM_MIN_SKILL with a rank, ITEM_REQ_SKILL without; the required spell takes ITEM_REQ_SKILL
     // too.
-    // The requirement lines (`0x62a9f0`), which the socket preview cuts; the level lines above stay.
+    // The requirement lines (`0x6277f0`), which the socket preview cuts; the level lines above stay.
     if let Some(skill) = v.required_skill_name.as_ref().filter(|_| !preview) {
         let have = req.skills.get(&v.required_skill).copied().unwrap_or(0);
         let color = req_color(have >= v.required_skill_rank.max(1));
@@ -811,7 +811,7 @@ pub(super) fn render_view(
             }
         }
     }
-    // The trade lines (`0x62d58a`): an open refund window's countdown, which takes the money
+    // The trade lines (`0x6277f0`): an open refund window's countdown, which takes the money
     // block's place, then a bound item's trade window.
     let mut refundable = false;
     if let Some(inst) = inst.filter(|i| i.guid != 0) {
@@ -847,7 +847,7 @@ pub(super) fn render_view(
     add_sell_price(lua, this, v, flags.sell)
 }
 
-/// A trade or refund window's time left (`0x62d5c0`): `INT_SPELL_DURATION`'s largest unit, except
+/// A trade or refund window's time left (`0x6277f0`): `INT_SPELL_DURATION`'s largest unit, except
 /// that 61 minutes to under two hours reads "1 hour" and the minutes past it.
 fn window_text(left: i64, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     let left = u32::try_from(left).ok()?;

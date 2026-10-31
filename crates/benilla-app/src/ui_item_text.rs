@@ -11,7 +11,7 @@
 //! `SMSG_GAMEOBJECT_PAGETEXT` (`0x70be30`), the same read call.
 //!
 //! The events follow `ItemTextFrame.lua:10-96`. Unread pages pass the chat's translator in the
-//! book's or object's language (`0x589f60`).
+//! book's or object's language (`0x589e90`).
 
 use bevy::prelude::*;
 
@@ -482,7 +482,7 @@ fn feed_item_text(
         sess.told.get(&script).begun = true;
     }
 
-    // The read check (`0x58a2a0`): a book item not yet read asks the server by its bag position;
+    // The read check (`0x58a1a0`): a book item not yet read asks the server by its bag position;
     // a letter, a read book and a GameObject show at once. An item with no bag position sends
     // nothing and waits.
     if sess.check == ReadCheck::Unchecked {
@@ -565,7 +565,7 @@ fn feed_item_text(
             achievement: None,
         },
     );
-    // A page not yet read shows through the translator (`0x589f60`): at the reader's skill, or
+    // A page not yet read shows through the translator (`0x589e90`): at the reader's skill, or
     // none when the check read it untranslated. A letter and a read book show as written.
     let text = match languages.as_deref() {
         Some(langs) if matches!(sess.source, ReadSource::Pages { .. }) && !readable.translated => {
@@ -587,7 +587,7 @@ fn feed_item_text(
     }));
     script.fire_event("ITEM_TEXT_READY", vec![]);
     sess.told.get(&script).ready = true;
-    // An untranslated read starts the translation bar, its seconds the answer's ms (`0x6d5e2a`).
+    // An untranslated read starts the translation bar, its seconds the answer's ms (`0x6d5d90`).
     if let Some(ms) = translation_ms {
         sess.check = ReadCheck::Show {
             translation_ms: None,

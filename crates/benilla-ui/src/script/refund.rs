@@ -26,7 +26,7 @@ pub struct RefundView {
     pub played_at_purchase: u32,
 }
 
-/// `GetPlayedTime` (`0x6cf440`): the last total the server said plus the seconds since; 0 before
+/// The played clock now (`0x6cf440`): the last total the server said plus the seconds since; 0 before
 /// the first answer.
 pub(super) fn played_now(model: &Model) -> i64 {
     model.played_time.map_or(0, |(total, at)| {

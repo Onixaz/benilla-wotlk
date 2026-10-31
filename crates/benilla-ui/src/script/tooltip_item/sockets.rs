@@ -25,7 +25,7 @@ fn gem_matches_socket(socket_color: u32, gem_type: Option<u32>) -> bool {
 /// The colour names a condition test reads, by operand type (`0x61c0b0`); 0 has none.
 const GEM_COLOR_TOKENS: [&str; 5] = ["", "META_GEM", "RED_GEM", "YELLOW_GEM", "BLUE_GEM"];
 
-/// `GetEnchantmentConditionText` (`0x61c0b0`): one `"  Requires …"` line per test, white when it
+/// The condition text (`0x61c0b0`): one `"  Requires …"` line per test, white when it
 /// holds and gray when not, each after a line break when `newline` is set or a line is already
 /// out; and whether every test held. Counts are meta, red, yellow, blue.
 pub(super) fn condition_text(
@@ -173,7 +173,7 @@ pub(super) fn socket_lines(
     for slot in 0..ENCHANT_SLOTS {
         let socket = slot.checked_sub(2).filter(|&s| s <= 2).map(usize::from);
         let current = enchants.iter().find(|e| e.slot == slot);
-        // The socket preview (`0x627f6b`): a placed gem's enchant stands in its socket, and a
+        // The socket preview (`0x6277f0`): a placed gem's enchant stands in its socket, and a
         // socket left empty prints nothing.
         let swapped;
         let shown = match (preview, socket) {
