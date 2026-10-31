@@ -1192,14 +1192,24 @@ pub enum SessionEvent {
         entries: Vec<crate::messages::RaidInstanceEntry>,
     },
     // ── Instance lockouts ─────────────────────────────────────────────────────────────────
-    // Four become client-composed `CHAT_MSG_SYSTEM` lines and two feed `CanShowResetInstances()`;
+    // Most become client-composed `CHAT_MSG_SYSTEM` lines and two feed `CanShowResetInstances()`;
     // the map name is never on the wire, only a `Map.dbc` id.
-    /// A raid lockout's welcome/countdown line (`SMSG_RAID_INSTANCE_MESSAGE`).
+    /// A raid lockout's countdown, welcome or expiry (`SMSG_RAID_INSTANCE_MESSAGE`).
     RaidInstanceMessage {
         message: crate::messages::RaidInstanceMessage,
     },
-    /// We are now saved to this instance (`SMSG_INSTANCE_SAVE_CREATED`); vmangos always sends
-    /// `flag` 0, and 1 is the reference's debug wrapper.
+    /// A boss slot or encounter objective change (`SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT`).
+    EncounterUnit {
+        update: crate::messages::EncounterUnitUpdate,
+    },
+    /// The instance lock clock (`SMSG_INSTANCE_LOCK_WARNING_QUERY`).
+    InstanceLockWarning {
+        warning: crate::messages::InstanceLockWarning,
+    },
+    /// A group member's instance reset failed (`SMSG_RESET_FAILED_NOTIFY`).
+    ResetFailedNotify,
+    /// We are now saved to this instance (`SMSG_INSTANCE_SAVE_CREATED`); the server sends `flag`
+    /// 0, and 1 is the reference's debug wrapper.
     InstanceSaveCreated { flag: u32 },
     /// An instance reset took (`SMSG_INSTANCE_RESET`); `map` is a `Map.dbc` id.
     InstanceReset { map: u32 },

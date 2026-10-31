@@ -2026,6 +2026,15 @@ pub(super) fn writer_loop(
                     ClientCommand::ReadyCheckAnswer { ready } => w.ready_check_answer(ready),
                     ClientCommand::RequestRaidInfo => w.request_raid_info(),
                     ClientCommand::ResetInstances => w.reset_instances(),
+                    ClientCommand::InstanceLockResponse { accept } => {
+                        w.instance_lock_response(accept)
+                    }
+                    ClientCommand::SetDungeonDifficulty { difficulty } => {
+                        w.set_dungeon_difficulty(difficulty)
+                    }
+                    ClientCommand::SetRaidDifficulty { difficulty } => {
+                        w.set_raid_difficulty(difficulty)
+                    }
                     ClientCommand::DuelAccepted { arbiter } => w.duel_accepted(arbiter),
                     ClientCommand::DuelCancelled { arbiter } => w.duel_cancelled(arbiter),
                     ClientCommand::TogglePvp => w.toggle_pvp(),

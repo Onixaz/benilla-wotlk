@@ -201,8 +201,9 @@ pub use guild_bank::{
     GuildBankSlot, GuildBankSwap, GuildBankTab, GUILD_BANK_MONEY_LOG_TAB, GUILD_BANK_TAB_SLOTS,
 };
 pub use instance::{
-    reset_instances, InstanceResetFailed, InstanceResetFailure, RaidGroupOnly, RaidInstanceMessage,
-    RaidInstanceWarning,
+    instance_lock_response, reset_instances, set_difficulty, EncounterUnitUpdate,
+    InstanceLockWarning, InstanceResetFailed, InstanceResetFailure, RaidGroupOnly,
+    RaidInstanceMessage, RaidInstanceWarning,
 };
 pub use items::{
     auto_equip_item, auto_store_bag_item, decode_item_query_response, destroy_item, item_query,

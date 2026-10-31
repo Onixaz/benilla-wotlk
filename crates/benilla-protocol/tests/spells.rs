@@ -64,16 +64,6 @@ fn attack_swing_refusal_wire() {
         decode(ServerPacket::FeignDeathResisted).pop().unwrap(),
         SessionEvent::FeignDeathResisted
     ));
-
-    // 0x147 SMSG_ATTACKSWING_NOTSTANDING stays unknown: the reference never registers it and
-    // vmangos never sends it.
-    assert!(
-        matches!(
-            messages::parse_server(0x0147, &[]).unwrap(),
-            ServerPacket::Other { opcode: 0x0147 }
-        ),
-        "0x147 NOTSTANDING must stay unparsed — the reference never registers it"
-    );
 }
 
 /// The XP, exploration and level-up bodies (vmangos `Server/Packets/Misc.cpp:512-532`).

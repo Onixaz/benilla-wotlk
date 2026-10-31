@@ -1,8 +1,24 @@
-//! `IsInInstance`, `CanShowResetInstances` and `ResetInstances`, the whole Lua side of instance
-//! lockouts (the rest arrives as `CHAT_MSG_SYSTEM` lines), and `IsThreatWarningEnabled`, which
-//! keys on the map's instance type. The readers answer off state the app pushes from `Map.dbc`.
+//! The Lua side of instances: `IsInInstance`, `GetInstanceInfo`, the reset and lock-warning verbs,
+//! the difficulty setters and `IsThreatWarningEnabled`, which keys on the map's instance type. The
+//! readers answer off state the app pushes from `Map.dbc` and the instance packets; the lockout
+//! lines arrive as `CHAT_MSG_SYSTEM`.
 
 use mlua::{Lua, MultiValue, Value};
+
+use super::binding_abi::number_arg;
+
+/// The instance lock clock as `GetInstanceLockInfo` (`0x513b90`) reads it: all zero once the
+/// deadline has passed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InstanceLock {
+    /// The deadline has not passed: what the encounter verb tests.
+    pub running: bool,
+    /// The time left in whole seconds, the reference's unsigned millisecond quotient.
+    pub secs: u32,
+    /// `DungeonEncounter.dbc` `Bit`s done.
+    pub completed_mask: u32,
+    pub extending: bool,
+}
 
 /// `IsInInstance()`'s type word for a `Map.dbc` `InstanceType`: the reference's table, and `"none"`
 /// from 4 up.
@@ -49,6 +65,22 @@ impl super::UiScript {
     pub fn take_reset_instance_asks(&mut self) -> u32 {
         drain_field!(self, reset_instance_asks)
     }
+
+    /// Push the instance lock clock, as it reads this frame.
+    pub fn set_instance_lock(&mut self, lock: InstanceLock) {
+        set_field!(self, instance_lock, lock);
+    }
+
+    /// `RespondInstanceLock(accept)` answers since the last drain, each a
+    /// `CMSG_INSTANCE_LOCK_RESPONSE`.
+    pub fn take_instance_lock_responses(&mut self) -> Vec<bool> {
+        drain_field!(self, instance_lock_responses)
+    }
+
+    /// Push the dynamic-difficulty maps (`Map.dbc` `Flags & 0x100`), once per catalog.
+    pub fn set_dynamic_difficulty_maps(&mut self, maps: Vec<i32>) {
+        set_field!(self, dynamic_difficulty_maps, maps);
+    }
 }
 
 /// The flag `0x519df0` recomputes off the `threatWarning` CVar, the map and the group, read on
@@ -92,7 +124,13 @@ fn atoi(s: &str) -> i64 {
     }
 }
 
-/// Register the lockout globals and `IsThreatWarningEnabled`.
+/// The model, read-only.
+fn model_of(lua: &Lua) -> mlua::AppDataRef<'_, super::ModelCell> {
+    lua.app_data_ref::<super::ModelCell>()
+        .expect("model app_data")
+}
+
+/// Register the instance globals and `IsThreatWarningEnabled`.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -198,6 +236,140 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // `GetInstanceDifficulty()` (`0x515750`): `SMSG_INSTANCE_DIFFICULTY`'s difficulty + 1.
+    g.set(
+        "GetInstanceDifficulty",
+        lua.create_function(|lua, ()| {
+            let model = model_of(lua);
+            Ok(f64::from(model.lfg.world.1) + 1.0)
+        })?,
+    )?;
+
+    // `CanMapChangeDifficulty([mapId])` (`0x517d70`): 1 when the map, else the current one, has
+    // `Map.dbc` flag `0x100`, else nil.
+    g.set(
+        "CanMapChangeDifficulty",
+        lua.create_function(|lua, map: Value| {
+            let model = model_of(lua);
+            let map = match lua.coerce_number(map)? {
+                Some(n) => super::binding_abi::ftol(n),
+                None => model.lfg.world.0,
+            };
+            Ok(super::binding_abi::flag(
+                model.dynamic_difficulty_maps.contains(&map),
+            ))
+        })?,
+    )?;
+
+    // `GetInstanceLockTimeRemaining()` (`0x516340`): whole seconds left, extending, and the
+    // current map's encounter total and completed count at the instance difficulty (`0x553830`).
+    g.set(
+        "GetInstanceLockTimeRemaining",
+        lua.create_function(|lua, ()| {
+            let model = model_of(lua);
+            let lock = model.instance_lock;
+            let (map, difficulty, _) = model.lfg.world;
+            let (total, done) =
+                model
+                    .lfg
+                    .catalog
+                    .encounter_counts(map, difficulty as i32, lock.completed_mask);
+            Ok(MultiValue::from_vec(vec![
+                Value::Number(f64::from(lock.secs)),
+                Value::Boolean(lock.extending),
+                Value::Number(f64::from(total)),
+                Value::Number(f64::from(done)),
+            ]))
+        })?,
+    )?;
+
+    // `GetInstanceLockTimeRemainingEncounter(index)` (`0x516410`): the current map's index-th
+    // encounter at the instance difficulty while the clock runs, else the first of map 0's
+    // difficulty 0, which no row holds.
+    g.set(
+        "GetInstanceLockTimeRemainingEncounter",
+        lua.create_function(|lua, index: Value| {
+            let index = match lua.coerce_number(index)? {
+                Some(n) => n,
+                None => {
+                    return Err(mlua::Error::RuntimeError(
+                        "Usage: GetInstanceLockTimeRemainingEncounter(encounterIndex)".into(),
+                    ))
+                }
+            };
+            let model = model_of(lua);
+            let lock = model.instance_lock;
+            let (map, difficulty, _) = model.lfg.world;
+            if lock.running {
+                super::lfg::encounter_info(
+                    lua,
+                    &model.lfg,
+                    map,
+                    difficulty as i32,
+                    i64::from(super::binding_abi::ftol(index - 1.0)),
+                    lock.completed_mask,
+                )
+            } else {
+                super::lfg::encounter_info(lua, &model.lfg, 0, 0, 0, 0)
+            }
+        })?,
+    )?;
+
+    // `RespondInstanceLock(accept)` (`0x613ed0`): the reference's boolean coercion, then
+    // `CMSG_INSTANCE_LOCK_RESPONSE`.
+    g.set(
+        "RespondInstanceLock",
+        lua.create_function(|lua, args: MultiValue| {
+            let accept = super::binding_abi::bool_or_default(args.front(), false);
+            crate::script::model_mut_of(lua)
+                .instance_lock_responses
+                .push(accept);
+            Ok(())
+        })?,
+    )?;
+
+    // `SetDungeonDifficulty(n)` (`0x526050`) and `SetRaidDifficulty(n)` (`0x5261a0`): 1-based,
+    // past the range (1-2 dungeon, 1-4 raid) nothing; in a group, only its leader, else
+    // `ERR_NOT_LEADER`. The app applies the choice and sends it.
+    for (binding, usage, max, raid) in [
+        (
+            "SetDungeonDifficulty",
+            "Usage: SetDungeonDifficulty(difficulty)",
+            1u32,
+            false,
+        ),
+        (
+            "SetRaidDifficulty",
+            "Usage: SetRaidDifficulty(difficulty)",
+            3,
+            true,
+        ),
+    ] {
+        g.set(
+            binding,
+            lua.create_function(move |lua, n: Value| {
+                // `(uint)(n - 1.0)`, so a 0 wraps past the range.
+                let difficulty = (number_arg(lua, n, usage)? as u32).wrapping_sub(1);
+                if difficulty > max {
+                    return Ok(());
+                }
+                let mut model = crate::script::model_mut_of(lua);
+                let party = &model.party;
+                let grouped = !party.members.is_empty() || !party.raid.is_empty();
+                if grouped && party.leader_guid != party.own_guid {
+                    model.ui_errors.push("ERR_NOT_LEADER");
+                    return Ok(());
+                }
+                model.party_requests.push(if raid {
+                    super::PartyRequest::SetRaidDifficulty(difficulty)
+                } else {
+                    super::PartyRequest::SetDungeonDifficulty(difficulty)
+                });
+                Ok(())
+            })?,
+        )?;
+    }
+
     Ok(())
 }
 
@@ -257,5 +429,130 @@ mod tests {
         s.set_instance_type(Some(0));
         s.set_map_info(Some(("Eastern Kingdoms".into(), false)));
         assert_eq!(info(&mut s), "Eastern Kingdoms,none,1,[],0,0,false");
+    }
+
+    /// The lock verbs (`0x516340`, `0x516410`) over the pushed clock and the current map's
+    /// encounters at the instance difficulty.
+    #[test]
+    fn the_lock_verbs_read_the_clock_and_the_encounters() {
+        use crate::script::{EncounterView, InstanceLock, LfgCatalogView};
+        let encounter = |bit, name: &str| EncounterView {
+            map_id: 631,
+            difficulty: 1,
+            bit,
+            name: name.into(),
+            icon: None,
+        };
+        let mut s = UiScript::new().unwrap();
+        s.set_lfg_catalog(LfgCatalogView {
+            encounters: vec![
+                encounter(0, "Lord Marrowgar"),
+                encounter(1, "Lady Deathwhisper"),
+                encounter(2, "Gunship Battle"),
+            ],
+            ..Default::default()
+        });
+        s.set_lfg_world(631, 1, 0);
+        let remaining = |s: &mut UiScript| {
+            s.eval::<String>(
+                "local t, e, n, d = GetInstanceLockTimeRemaining() \
+                 return table.concat({t, tostring(e), n, d}, ',')",
+            )
+            .unwrap()
+        };
+        assert_eq!(remaining(&mut s), "0,false,3,0", "no clock: nothing done");
+        assert!(
+            s.eval::<bool>("return GetInstanceLockTimeRemainingEncounter(1) == nil")
+                .unwrap(),
+            "no clock: map 0's first encounter, which none is"
+        );
+        s.set_instance_lock(InstanceLock {
+            running: true,
+            secs: 59,
+            completed_mask: 0b101,
+            extending: true,
+        });
+        assert_eq!(remaining(&mut s), "59,true,3,2");
+        assert_eq!(
+            s.eval::<String>(
+                "local n, i, done = GetInstanceLockTimeRemainingEncounter(2) \
+                 return n .. ',' .. tostring(i) .. ',' .. tostring(done)"
+            )
+            .unwrap(),
+            "Lady Deathwhisper,nil,false"
+        );
+        assert!(s
+            .eval::<String>(
+                "return tostring(select(2, pcall(GetInstanceLockTimeRemainingEncounter)))"
+            )
+            .unwrap()
+            .contains("Usage: GetInstanceLockTimeRemainingEncounter(encounterIndex)"));
+        assert_eq!(
+            s.eval::<f64>("return GetInstanceDifficulty()").unwrap(),
+            2.0
+        );
+    }
+
+    /// `RespondInstanceLock` coerces as the reference's boolean helper does.
+    #[test]
+    fn respond_instance_lock_queues_the_answer() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            "RespondInstanceLock(true) RespondInstanceLock(false) RespondInstanceLock('1') \
+             RespondInstanceLock()",
+        )
+        .unwrap();
+        assert_eq!(s.take_instance_lock_responses(), [true, false, true, false]);
+        assert!(s.take_instance_lock_responses().is_empty());
+    }
+
+    /// `CanMapChangeDifficulty([map])` (`0x517d70`): the given map, else the current one.
+    #[test]
+    fn can_map_change_difficulty_reads_the_flag() {
+        let mut s = UiScript::new().unwrap();
+        s.set_dynamic_difficulty_maps(vec![631, 724]);
+        s.set_lfg_world(631, 0, 0);
+        assert_eq!(
+            s.eval::<String>(
+                "return tostring(CanMapChangeDifficulty()) .. ',' .. \
+                 tostring(CanMapChangeDifficulty(36)) .. ',' .. \
+                 tostring(CanMapChangeDifficulty(724))"
+            )
+            .unwrap(),
+            "1,nil,1"
+        );
+    }
+
+    /// The difficulty setters (`0x526050`, `0x5261a0`): the range, then the leader gate.
+    #[test]
+    fn the_difficulty_setters_gate_on_range_and_leader() {
+        use crate::script::{PartyMemberInfo, PartyRequest, PartyState};
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            "SetDungeonDifficulty(2) SetDungeonDifficulty(3) SetDungeonDifficulty(0) \
+             SetRaidDifficulty(4) SetRaidDifficulty(5)",
+        )
+        .unwrap();
+        assert_eq!(
+            s.take_party_requests(),
+            [
+                PartyRequest::SetDungeonDifficulty(1),
+                PartyRequest::SetRaidDifficulty(3),
+            ],
+            "solo: in range only"
+        );
+        assert!(s
+            .eval::<String>("return tostring(select(2, pcall(SetRaidDifficulty, 'x')))")
+            .unwrap()
+            .contains("Usage: SetRaidDifficulty(difficulty)"));
+        s.set_party(PartyState {
+            members: vec![PartyMemberInfo::default()],
+            leader_guid: 7,
+            own_guid: 1,
+            ..Default::default()
+        });
+        s.run("SetDungeonDifficulty(1)").unwrap();
+        assert!(s.take_party_requests().is_empty());
+        assert_eq!(s.take_ui_errors(), ["ERR_NOT_LEADER"]);
     }
 }

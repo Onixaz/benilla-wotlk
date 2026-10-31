@@ -12,6 +12,7 @@ mod engine;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use api::encounter_info;
 pub(super) use api::install;
 pub(crate) use engine::{Catalog, LfgModel};
 

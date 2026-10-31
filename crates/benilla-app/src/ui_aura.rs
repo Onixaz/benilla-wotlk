@@ -387,6 +387,7 @@ struct AuraUnits<'w> {
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
+    encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
 }
 
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
@@ -526,6 +527,11 @@ fn feed_auras(
     let target_guid = units.selection.guid.unwrap_or(0);
     let focus_guid = script.focus_guid();
     let catalog_moved = spells.as_ref().is_some_and(|s| s.is_changed());
+    // The encounter's slots, copied out so the feed allocates nothing.
+    let mut boss = [0u64; crate::ui_instance::BOSS_SLOTS];
+    let boss_slots = units.encounter.as_deref().map_or(0, |e| {
+        boss.iter_mut().zip(e.guids()).map(|(b, g)| *b = g).count()
+    });
     let unit_changed = memo.units.feed(
         &mut script,
         units::Inputs {
@@ -547,6 +553,7 @@ fn feed_auras(
             vehicle: seated
                 .filter(|p| p.state == crate::vehicle::SEATED)
                 .map_or(0, |p| p.vehicle),
+            boss: &boss[..boss_slots],
             held,
             table_of,
             buffs_visible,

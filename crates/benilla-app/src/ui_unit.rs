@@ -600,6 +600,7 @@ pub(crate) struct UnitTokens<'w, 's> {
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
     quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
+    encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
     group: Res<'w, crate::ui_party::GroupState>,
     pub(crate) stores: Query<'w, 's, &'static ObjectStore>,
     me: Query<'w, 's, (Entity, &'static Guid), With<SelfPlayer>>,
@@ -656,10 +657,14 @@ impl UnitTokens<'_, '_> {
             // The interaction NPC's guid.
             UnitBase::Npc => self.held(self.interact.as_ref()?.1?),
             UnitBase::QuestNpc => self.held(self.quest.as_ref()?.quest_npc()?),
+            // The encounter's slot (`0x5ed710`).
+            UnitBase::Boss(row) => {
+                let guid = self.encounter.as_ref()?.boss(usize::try_from(row).ok()?);
+                (guid != 0).then(|| self.held(guid)).flatten()
+            }
             // 12340's bases the app has no unit for yet (#90).
             UnitBase::Vehicle
             | UnitBase::Focus
-            | UnitBase::Boss(_)
             | UnitBase::Arena(_)
             | UnitBase::ArenaPet(_)
             | UnitBase::Commentator(_) => None,
@@ -1237,11 +1242,13 @@ pub(crate) fn fire_transitions(
     }
 }
 
-/// The two interaction sources `feed_units` snapshots: the `"npc"` and the `"questnpc"` units.
+/// The sources `feed_units` snapshots besides the selection: the `"npc"` and `"questnpc"` units,
+/// and the encounter's `"bossN"`.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Interactions<'w> {
     npc: Option<Res<'w, crate::ui_session::InteractNpc>>,
     quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
+    encounter: Option<ResMut<'w, crate::ui_instance::EncounterUnits>>,
 }
 
 fn feed_units(
@@ -1264,7 +1271,7 @@ fn feed_units(
     mut sink: crate::ui_action::MessageSink,
     // `ResMut` because the guild-identity cache is lazy: a miss sends `CMSG_GUILD_QUERY`.
     mut guild: ResMut<crate::ui_guild::GuildState>,
-    interact: Interactions,
+    mut interact: Interactions,
     // Rested billing minutes, sent only in `SMSG_AUTH_RESPONSE`; the reference keeps a global.
     entered_world: Option<MessageReader<crate::net::EnteredWorldMessage>>,
 ) {
@@ -1295,7 +1302,8 @@ fn feed_units(
     let factions_changed = factions.as_ref().is_some_and(|r| r.is_changed());
     // The interaction NPC moves when nothing else does, and `MERCHANT_SHOW` reads `"npc"`.
     let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
-        || interact.quest.as_ref().is_some_and(|r| r.is_changed());
+        || interact.quest.as_ref().is_some_and(|r| r.is_changed())
+        || interact.encounter.as_ref().is_some_and(|r| r.is_changed());
     gate::trace(
         "feed_units",
         &[
@@ -1632,12 +1640,36 @@ fn feed_units(
         memo.action_bar_toggles = None;
     }
 
+    // `"bossN"`: each encounter slot's unit while the object manager holds it, read as `"focus"`
+    // is; the slot order is the encounter's sort.
+    let bosses: Vec<Option<UnitState>> = (0..crate::ui_instance::BOSS_SLOTS)
+        .map(|row| {
+            let guid = interact.encounter.as_ref().map_or(0, |e| e.boss(row));
+            let entity = *index.as_ref()?.0.get(&guid)?;
+            Some(held.state(stores.all.get(entity).ok()?, guid))
+        })
+        .collect();
+    for (token, snap) in crate::ui_instance::BOSS_TOKENS.iter().zip(&bosses) {
+        let dirty = match (snap, memo.last.get(*token)) {
+            (Some(cur), Some(prev)) => cur != prev,
+            (None, None) => false,
+            _ => true,
+        };
+        if dirty {
+            gate.audit("feed_units", "a boss snapshot");
+            script.set_unit(token, snap.clone());
+        }
+    }
+
     for (token, snap) in [
         ("player", &player),
         ("target", &target),
         ("targettarget", &tot),
         ("focus", &focus),
-    ] {
+    ]
+    .into_iter()
+    .chain(crate::ui_instance::BOSS_TOKENS.into_iter().zip(&bosses))
+    {
         match snap {
             Some(cur) => {
                 let prev = memo.last.get(token);
@@ -1653,6 +1685,15 @@ fn feed_units(
                     gate.audit("feed_units", "a unit-token clear");
                 }
             }
+        }
+    }
+
+    // `INSTANCE_ENCOUNTER_ENGAGE_UNIT`, argless, once per slot change (`0x5ed7b0`, `0x5ed870`),
+    // after the `bossN` pushes the boss frames read on it.
+    if let Some(encounter) = interact.encounter.as_mut() {
+        for _ in 0..crate::ui_instance::EncounterUnits::take_signals(encounter) {
+            gate.audit("feed_units", "the encounter-unit signal");
+            script.fire_event("INSTANCE_ENCOUNTER_ENGAGE_UNIT", vec![]);
         }
     }
 

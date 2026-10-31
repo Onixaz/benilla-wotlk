@@ -1141,11 +1141,21 @@ pub enum ServerPacket {
     RaidInstanceInfo {
         entries: Vec<super::group::RaidInstanceEntry>,
     },
-    /// `SMSG_RAID_INSTANCE_MESSAGE`: a raid lockout's welcome or countdown line.
+    /// `SMSG_RAID_INSTANCE_MESSAGE`: a raid lockout's countdown, welcome or expiry.
     RaidInstanceMessage {
         message: super::instance::RaidInstanceMessage,
     },
-    /// `SMSG_INSTANCE_SAVE_CREATED`: "now saved"; vmangos sends 0 (the client's `1` line differs).
+    /// `SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT`: a boss slot or encounter objective change.
+    EncounterUnit {
+        update: super::instance::EncounterUnitUpdate,
+    },
+    /// `SMSG_INSTANCE_LOCK_WARNING_QUERY`: the lock clock and what it locks.
+    InstanceLockWarning {
+        warning: super::instance::InstanceLockWarning,
+    },
+    /// `SMSG_RESET_FAILED_NOTIFY`: a group member's reset failed, empty.
+    ResetFailedNotify,
+    /// `SMSG_INSTANCE_SAVE_CREATED`: "now saved"; the server sends 0 (the client's `1` line differs).
     InstanceSaveCreated {
         flag: u32,
     },
@@ -1834,6 +1844,9 @@ impl ServerPacket {
             ServerPacket::RaidInstanceInfo { .. } => "SMSG_RAID_INSTANCE_INFO".into(),
             ServerPacket::DuelRequested { .. } => "SMSG_DUEL_REQUESTED".into(),
             ServerPacket::RaidInstanceMessage { .. } => "SMSG_RAID_INSTANCE_MESSAGE".into(),
+            ServerPacket::EncounterUnit { .. } => "SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT".into(),
+            ServerPacket::InstanceLockWarning { .. } => "SMSG_INSTANCE_LOCK_WARNING_QUERY".into(),
+            ServerPacket::ResetFailedNotify => "SMSG_RESET_FAILED_NOTIFY".into(),
             ServerPacket::InstanceSaveCreated { .. } => "SMSG_INSTANCE_SAVE_CREATED".into(),
             ServerPacket::InstanceReset { .. } => "SMSG_INSTANCE_RESET".into(),
             ServerPacket::InstanceResetFailed { .. } => "SMSG_INSTANCE_RESET_FAILED".into(),

@@ -1782,6 +1782,13 @@ fn parse_server_body(
         opcode::SMSG_RAID_INSTANCE_MESSAGE => ServerPacket::RaidInstanceMessage {
             message: instance::read_raid_instance_message(&mut r)?,
         },
+        opcode::SMSG_UPDATE_INSTANCE_ENCOUNTER_UNIT => ServerPacket::EncounterUnit {
+            update: instance::read_encounter_unit(&mut r)?,
+        },
+        opcode::SMSG_INSTANCE_LOCK_WARNING_QUERY => ServerPacket::InstanceLockWarning {
+            warning: instance::read_instance_lock_warning(&mut r)?,
+        },
+        opcode::SMSG_RESET_FAILED_NOTIFY => ServerPacket::ResetFailedNotify,
         opcode::SMSG_INSTANCE_SAVE_CREATED => ServerPacket::InstanceSaveCreated {
             flag: instance::read_u32_body(&mut r)?,
         },

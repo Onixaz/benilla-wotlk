@@ -2193,6 +2193,18 @@ pub(crate) enum ClientCommand {
     RequestRaidInfo,
     /// `CMSG_RESET_INSTANCES`; answered per instance, `SMSG_INSTANCE_RESET` or `_FAILED`.
     ResetInstances,
+    /// `CMSG_INSTANCE_LOCK_RESPONSE`: the lock warning's answer.
+    InstanceLockResponse {
+        accept: bool,
+    },
+    /// A client `MSG_SET_DUNGEON_DIFFICULTY`, 0-based.
+    SetDungeonDifficulty {
+        difficulty: u32,
+    },
+    /// A client `MSG_SET_RAID_DIFFICULTY`, 0-based.
+    SetRaidDifficulty {
+        difficulty: u32,
+    },
     // ── Duel ── (a challenge is a `CastSpell` of the duel spell)
     /// `CMSG_DUEL_ACCEPTED`, also the challenger's own auto-accept.
     DuelAccepted {

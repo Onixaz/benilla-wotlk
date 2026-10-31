@@ -87,10 +87,16 @@ impl MapCatalog {
             .is_some_and(|f| f & FLAG_DYNAMIC_DIFFICULTY != 0)
     }
 
-    /// Whether `map_id` is a party dungeon, the reference's lockout test rather than "is an
-    /// instance": `cmp [rec+8],1` gates `SMSG_UPDATE_LAST_INSTANCE` and `CanShowResetInstances`.
-    pub fn is_party_dungeon(&self, map_id: u32) -> bool {
-        self.instance_type(map_id) == Some(1)
+    /// Every map whose difficulty can change inside it, sorted.
+    pub fn dynamic_difficulty_maps(&self) -> Vec<i32> {
+        let mut maps: Vec<i32> = self
+            .flags
+            .iter()
+            .filter(|(_, f)| *f & FLAG_DYNAMIC_DIFFICULTY != 0)
+            .map(|(&id, _)| id as i32)
+            .collect();
+        maps.sort_unstable();
+        maps
     }
 
     /// The map's entrance `(map, x, y)` on another map, which a corpse and the world map use

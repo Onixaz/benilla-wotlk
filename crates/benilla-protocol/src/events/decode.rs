@@ -746,6 +746,11 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::RaidInstanceMessage { message } => {
             vec![SessionEvent::RaidInstanceMessage { message }]
         }
+        ServerPacket::EncounterUnit { update } => vec![SessionEvent::EncounterUnit { update }],
+        ServerPacket::InstanceLockWarning { warning } => {
+            vec![SessionEvent::InstanceLockWarning { warning }]
+        }
+        ServerPacket::ResetFailedNotify => vec![SessionEvent::ResetFailedNotify],
         ServerPacket::InstanceSaveCreated { flag } => {
             vec![SessionEvent::InstanceSaveCreated { flag }]
         }

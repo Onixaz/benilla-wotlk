@@ -50,7 +50,7 @@ pub(crate) struct CurrentRaidMap<'w> {
 }
 
 impl CurrentRaidMap<'_> {
-    fn kind(&self) -> RaidMap {
+    pub(super) fn kind(&self) -> RaidMap {
         RaidMap::of(self.here.as_ref().map(|m| m.0), self.maps.as_deref())
     }
 }

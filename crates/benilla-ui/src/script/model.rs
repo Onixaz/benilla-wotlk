@@ -309,6 +309,12 @@ pub(crate) struct Model {
     pub(crate) can_reset_instances: bool,
     /// `ResetInstances()` calls queued.
     pub(crate) reset_instance_asks: u32,
+    /// The instance lock clock (`0x513b90`), app-pushed each frame.
+    pub(crate) instance_lock: super::instance::InstanceLock,
+    /// `RespondInstanceLock(accept)` answers queued.
+    pub(crate) instance_lock_responses: Vec<bool>,
+    /// The `Map.dbc` ids whose `Flags` hold `0x100`, the dynamic-difficulty maps.
+    pub(crate) dynamic_difficulty_maps: Vec<i32>,
     /// Friends, ignores and the last `/who`, display-resolved as the reference resolves them.
     pub(crate) social: social::SocialState,
     /// Social calls (`AddFriend`, `RemoveFriend`, `SendWho`, …) queued.
@@ -1313,6 +1319,9 @@ impl Model {
             instance_type: None,
             can_reset_instances: false,
             reset_instance_asks: 0,
+            instance_lock: Default::default(),
+            instance_lock_responses: Vec::new(),
+            dynamic_difficulty_maps: Vec::new(),
             social: social::SocialState::default(),
             social_requests: Vec::new(),
             guild: guild::GuildState::default(),

@@ -11,20 +11,22 @@ use benilla_ui::script::{AuraState, UiScript, UnitGuids};
 
 use super::{aura_list, record_inputs, table_inputs, AuraInput, ListCtx};
 use crate::net::ObjectStore;
+use crate::ui_instance::BOSS_TOKENS;
 use crate::ui_party::{
     raid_row_guids, GroupState, PARTY_PET_TOKENS, PARTY_TOKENS, RAID_PET_TOKENS, RAID_TOKENS,
 };
 use crate::unit_auras::UnitAuras as AuraTable;
 
 /// The tokens `UNIT_AURA` fires for besides `"player"`, in firing order: [`EVENT_UNITS`], then the
-/// group's, each resolved by [`event_guid`].
+/// group's and the encounter's, each resolved by [`event_guid`].
 const EVENT_UNITS: [&str; 4] = ["pet", "target", "targettarget", "focus"];
 
 const EVENT_TOKEN_COUNT: usize = EVENT_UNITS.len()
     + PARTY_TOKENS.len()
     + PARTY_PET_TOKENS.len()
     + RAID_TOKENS.len()
-    + RAID_PET_TOKENS.len();
+    + RAID_PET_TOKENS.len()
+    + BOSS_TOKENS.len();
 
 fn event_tokens() -> impl Iterator<Item = &'static str> {
     EVENT_UNITS
@@ -33,6 +35,7 @@ fn event_tokens() -> impl Iterator<Item = &'static str> {
         .chain(PARTY_PET_TOKENS)
         .chain(RAID_TOKENS)
         .chain(RAID_PET_TOKENS)
+        .chain(BOSS_TOKENS)
 }
 
 /// The guid [`event_tokens`]' `i`-th names, 0 for nobody.
@@ -47,7 +50,8 @@ fn event_guid(g: &UnitGuids, i: usize) -> u64 {
         4..=7 => g.party[i - 4],
         8..=11 => g.party_pets[i - 8],
         12..=51 => at(&g.raid, i - 12),
-        _ => at(&g.raid_pets, i - 52),
+        52..=91 => at(&g.raid_pets, i - 52),
+        _ => at(&g.boss, i - 92),
     }
 }
 
@@ -94,6 +98,8 @@ pub(super) struct Inputs<'g, 'a, H, T, V> {
     pub(super) focus: u64,
     /// `vehicle`'s guid, 0 when the player is not seated.
     pub(super) vehicle: u64,
+    /// `bossN`'s guids, one per encounter slot.
+    pub(super) boss: &'g [u64],
     /// The object manager's lookup.
     pub(super) held: H,
     /// A held unit's aura table, by guid.
@@ -161,6 +167,7 @@ impl UnitAuras {
             npc,
             focus,
             vehicle,
+            boss,
             held,
             table_of,
             buffs_visible,
@@ -193,9 +200,12 @@ impl UnitAuras {
             g.focus,
         ) = (me, pet, vehicle, target, mouseover, npc, focus);
         fill_group(&mut g, group, me, &held);
+        g.boss.clear();
+        g.boss.extend_from_slice(boss);
         g.held.clear();
         walk.clear();
         walk.extend([me, pet, vehicle, target, mouseover, npc, focus].map(|g| (g, false)));
+        walk.extend(boss.iter().map(|&g| (g, false)));
         walk.extend(g.party.iter().chain(&g.party_pets).map(|&g| (g, true)));
         walk.extend(g.raid.iter().chain(&g.raid_pets).map(|&g| (g, true)));
         while let Some((guid, record_ok)) = walk.pop() {
