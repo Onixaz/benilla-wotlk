@@ -211,6 +211,7 @@ fn an_instance_walks_its_sockets_and_greens_a_full_match() {
             slot: 6,
             id: 3729,
             name: "Socket Belt".into(),
+            prismatic_sockets: 1,
             ..Default::default()
         }],
     );

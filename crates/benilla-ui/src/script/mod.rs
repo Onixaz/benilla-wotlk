@@ -209,6 +209,10 @@ mod achievement;
 mod currency;
 mod equipment_manager;
 mod glyph;
+mod refund;
+mod socket;
+pub use refund::RefundView;
+pub use socket::MAX_SOCKETS;
 mod multicast;
 mod party;
 mod pet;
@@ -381,7 +385,9 @@ pub use glyph::{
 };
 pub use inspect::{InspectView, UnitReach};
 pub use instance::InstanceLock;
-pub use item_stats::{item_usable, ItemSetMember, ItemSetView, ItemTemplateView, PlayerReqState};
+pub use item_stats::{
+    item_usable, GemView, ItemSetMember, ItemSetView, ItemTemplateView, PlayerReqState,
+};
 pub use item_text::ItemTextState;
 pub use layout_cache::PlacedFrame;
 pub use lfg::{
@@ -1046,6 +1052,8 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     shapeshift::install(lua)?;
     rune::install(lua)?;
     glyph::install(lua)?;
+    socket::install(lua)?;
+    refund::install(lua)?;
     title::install(lua)?;
     equipment_manager::install(lua)?;
     currency::install(lua)?;

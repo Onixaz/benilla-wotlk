@@ -91,6 +91,8 @@ impl super::UiScript {
         let quiet = self.visual_epoch();
         let quiet_at_entry = quiet;
         self.model_mut().now += f64::from(elapsed);
+        // The socketed item's changes queue first, the reference signalling them as they land.
+        self.watch_socket_item();
         // Events queued since the last tick fire before this tick's walk.
         let pending = drain_field!(self, pending_events);
         self.restore_epoch(quiet);

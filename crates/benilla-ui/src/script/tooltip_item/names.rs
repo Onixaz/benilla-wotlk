@@ -25,6 +25,8 @@ pub(super) const ENCHANT_RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 pub(super) const GOLD: [f32; 4] = [1.0, 210.0 / 255.0, 0.0, 1.0];
 pub(super) const GRAY: [f32; 4] = [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0];
 /// An equipped set member's cream, (ffffff97).
+/// The refund and bind-trade countdowns' light blue (`0xad2da8`, `0xad2dac`).
+pub(super) const REFUND_BLUE: [f32; 4] = [0.0, 204.0 / 255.0, 1.0, 1.0];
 pub(super) const CREAM: [f32; 4] = [1.0, 1.0, 151.0 / 255.0, 1.0];
 
 /// InventoryType to the slot line's key: the builder's 30-entry table, indexed by `[record+0x2c]`;

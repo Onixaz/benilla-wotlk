@@ -99,6 +99,21 @@ pub struct ItemTemplateView {
     /// The socket bonus's `SpellItemEnchantment` row, 0 for none, and its name.
     pub socket_bonus: u32,
     pub socket_bonus_name: Option<String>,
+    /// `GemProperties` (template `+0x1e8`), nonzero on a gem; a socket takes only such an item.
+    pub gem_properties: u32,
+    /// The gem's `GemProperties.dbc` row: its colour mask (`Type`), its socket enchant
+    /// (`EnchantID`) and that enchant's name, the gem tooltip's line and a socket's once filled.
+    /// `None` when the template names no row.
+    pub gem: Option<GemView>,
+}
+
+/// One gem's `GemProperties.dbc` row, resolved by the app.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GemView {
+    /// 1 meta, 2 red, 4 yellow, 8 blue.
+    pub gem_type: u32,
+    pub enchant: u32,
+    pub enchant_name: Option<String>,
 }
 
 /// The player state the tooltip's red lines and the usable gate compare against.
@@ -236,6 +251,7 @@ impl super::UiScript {
             model.item_stat_asks.remove(&item_id);
             model.item_templates.insert(item_id, view);
         }
+        super::socket::template_arrived(&mut self.model_mut(), item_id);
         self.answer_item_waits(|m| m.items.contains(&item_id));
         self.lfg_item_arrived(item_id);
     }
@@ -389,7 +405,8 @@ fn parse_item_arg(v: &Value) -> mlua::Result<(i64, u32, u32, u32)> {
     if let Some(n) = as_number {
         return Ok((n as i64, 0, 0, 0));
     }
-    // An `item:` string; any other string is id 0.
+    // A string holding `item:` anywhere, a bare item string or a full link (`0x516c60` finds it
+    // with `SStrStr`); any other string is id 0.
     let Value::String(s) = v else {
         return Err(mlua::Error::RuntimeError(
             "Usage: GetItemInfo(itemID|\"itemlink\")".into(),
@@ -398,11 +415,7 @@ fn parse_item_arg(v: &Value) -> mlua::Result<(i64, u32, u32, u32)> {
     let s = s
         .to_str()
         .map_err(|_| mlua::Error::RuntimeError("Usage: GetItemInfo(itemID|\"itemlink\")".into()))?;
-    let Some(rest) = s
-        .get(..5)
-        .filter(|p| p.eq_ignore_ascii_case("item:"))
-        .map(|_| &s[5..])
-    else {
+    let Some(rest) = s.find("item:").map(|at| &s[at + 5..]) else {
         return Ok((0, 0, 0, 0));
     };
     let mut fields = rest.splitn(4, ':').map(reference_atoi);

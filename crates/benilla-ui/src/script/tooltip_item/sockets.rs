@@ -61,13 +61,54 @@ pub(super) fn socket_lines(
         true => &[][..],
         false => inst.enchants.as_slice(),
     };
-    // The template's coloured sockets, and one more for a prismatic enchant.
-    let prismatic = enchants.iter().any(|e| e.slot == PRISMATIC_SLOT);
-    let sockets = v.socket_colors.iter().filter(|&&c| c != 0).count() + usize::from(prismatic);
+    // The template's coloured sockets, and those a prismatic enchant adds (`0x7094e0`).
+    let prismatic = enchants
+        .iter()
+        .find(|e| e.slot == PRISMATIC_SLOT)
+        .map_or(0, |e| e.prismatic_sockets as usize);
+    let sockets = v.socket_colors.iter().filter(|&&c| c != 0).count() + prismatic;
     let mut all_match = true;
+    let preview = inst.socket_preview.as_ref();
     for slot in 0..ENCHANT_SLOTS {
         let socket = slot.checked_sub(2).filter(|&s| s <= 2).map(usize::from);
-        let Some(e) = enchants.iter().find(|e| e.slot == slot) else {
+        let current = enchants.iter().find(|e| e.slot == slot);
+        // The socket preview (`0x627f6b`): a placed gem's enchant stands in its socket, and a
+        // socket left empty prints nothing.
+        let swapped;
+        let shown = match (preview, socket) {
+            (Some(placed), Some(s)) => match &placed[s] {
+                Some(gem) => {
+                    if !gem_matches_socket(v.socket_colors[s], gem.gem.as_ref().map(|g| g.gem_type))
+                    {
+                        all_match = false;
+                    }
+                    match &gem.gem {
+                        Some(g) => {
+                            swapped = crate::script::EnchantView {
+                                slot,
+                                id: g.enchant,
+                                gem_type: Some(g.gem_type),
+                                name: g.enchant_name.clone().unwrap_or_default(),
+                                ..Default::default()
+                            };
+                            Some(&swapped)
+                        }
+                        None => current,
+                    }
+                }
+                None => {
+                    if current.is_none() && v.socket_colors[s] != 0 {
+                        all_match = false;
+                    }
+                    current
+                }
+            },
+            _ => current,
+        };
+        let Some(e) = shown else {
+            if preview.is_some() {
+                continue;
+            }
             let Some(socket) = socket.filter(|&s| s < sockets) else {
                 continue;
             };
@@ -80,8 +121,12 @@ pub(super) fn socket_lines(
             }
             continue;
         };
-        // The prismatic enchant and the socket bonus's own enchant print no line.
+        // The prismatic enchant and the socket bonus's own enchant print no line, nor does a
+        // nameless one, which the line core drops.
         if slot == PRISMATIC_SLOT || (v.socket_bonus != 0 && e.id == v.socket_bonus) {
+            continue;
+        }
+        if e.name.is_empty() {
             continue;
         }
         if let Some(socket) = socket {

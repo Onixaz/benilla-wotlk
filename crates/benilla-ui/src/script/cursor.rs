@@ -9,7 +9,7 @@ use super::{Model, ScriptValue};
 
 mod bag_verbs;
 mod bar;
-mod doll;
+pub(super) mod doll;
 mod drag;
 pub(crate) mod money;
 mod pet;
