@@ -248,7 +248,9 @@ impl Plugin for WmoPortalPlugin {
         .init_resource::<CameraInteriorClaim>()
         .init_resource::<ExteriorWindows>()
         .init_resource::<WmoCullProbe>()
-        .add_systems(Update, interior::stamp_wmo_footprints.before(WmoPvsSet))
+        // In `First`: a building spawned mid-frame casts through its untransformed bounds until
+        // the next frame stamps it.
+        .add_systems(First, interior::stamp_wmo_footprints)
         .add_systems(
             Update,
             (
