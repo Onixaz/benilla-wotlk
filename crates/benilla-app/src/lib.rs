@@ -101,6 +101,7 @@ mod script_calls;
 mod shaders;
 
 mod game_tip;
+mod item_names;
 mod opaque2d;
 /// Where "the client is going down" is observed, in `Last`; every system that persists state on the
 /// way out registers through it.
@@ -183,6 +184,7 @@ mod ui_script;
 mod ui_session;
 mod ui_shapeshift;
 mod ui_social;
+mod ui_socket;
 mod ui_spell_info;
 mod ui_spellbook;
 mod ui_stable;

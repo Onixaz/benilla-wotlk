@@ -283,6 +283,7 @@ fn enchant_lines_quiet(
                 negative: id < 0,
                 charges,
                 remaining_ms,
+                prismatic_sockets: enchants.0.prismatic_sockets(id.unsigned_abs()),
             })
         })
         .collect();

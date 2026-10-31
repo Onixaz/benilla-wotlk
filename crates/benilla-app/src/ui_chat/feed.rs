@@ -1187,12 +1187,25 @@ pub(crate) fn played_time_bridge(
     script: Option<NonSendMut<benilla_ui::script::UiScript>>,
     commands: Res<NetCommands>,
     answer: Option<ResMut<crate::net::PlayedTimeAnswer>>,
+    clock: Option<Res<crate::net::PlayedClock>>,
+    mut seeded: Local<crate::ui_script::VmMemo<Option<std::time::Instant>>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
+    // Every answer reseeds the VM's played clock, the refund and trade windows' base, once per VM:
+    // one answered before this VM existed seeds it on its first frame.
+    if let Some((total, at)) = clock.and_then(|c| c.0) {
+        let seeded = seeded.get(&script);
+        if *seeded != Some(at) {
+            *seeded = Some(at);
+            script.set_played_time(total.saturating_add(at.elapsed().as_secs() as u32));
+        }
+    }
     for _ in 0..script.take_played_time_asks() {
-        let _ = commands.0.send(crate::net::ClientCommand::PlayedTime);
+        let _ = commands
+            .0
+            .send(crate::net::ClientCommand::PlayedTime { show: true });
     }
     let Some(mut answer) = answer else {
         return;

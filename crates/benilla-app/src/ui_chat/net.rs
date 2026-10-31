@@ -134,11 +134,17 @@ fn on_toast(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorTexts>) {
 fn on_played_time(
     In(ev): In<SessionEvent>,
     mut answer: ResMut<PlayedTimeAnswer>,
+    mut clock: ResMut<crate::net::PlayedClock>,
     mut chat_log: ResMut<ChatLog>,
 ) {
-    if let SessionEvent::PlayedTime { total, level } = ev {
-        answer.0 = Some((total, level));
-        played_time(total, level, &mut chat_log);
+    if let SessionEvent::PlayedTime { total, level, show } = ev {
+        debug!("net: played time {total} s (level {level} s, shown {show})");
+        clock.0 = Some((total, std::time::Instant::now()));
+        // Only a shown answer prints and fires `TIME_PLAYED_MSG` (`0x4013f6`).
+        if show {
+            answer.0 = Some((total, level));
+            played_time(total, level, &mut chat_log);
+        }
     }
 }
 

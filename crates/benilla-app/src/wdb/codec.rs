@@ -32,9 +32,6 @@ const fn fourcc(s: &[u8; 4]) -> u32 {
     u32::from_be_bytes(*s)
 }
 
-/// `SMSG_ITEM_NAME_QUERY_RESPONSE`, which benilla does not ask; its file is kept as found.
-const SMSG_ITEM_NAME_QUERY_RESPONSE: u16 = 0x2c5;
-
 pub(crate) const CREATURE: Kind = Kind {
     signature: fourcc(b"WMOB"),
     file: "creaturecache.wdb",
@@ -57,7 +54,7 @@ pub(crate) const ITEM_NAME: Kind = Kind {
     record_size: 0x08,
     version: 1,
     key_len: 4,
-    response: SMSG_ITEM_NAME_QUERY_RESPONSE,
+    response: opcode::SMSG_ITEM_NAME_QUERY_RESPONSE,
 };
 pub(crate) const ITEM: Kind = Kind {
     signature: fourcc(b"WIDB"),

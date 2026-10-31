@@ -82,6 +82,7 @@ use crate::ui_saved::UiSavedPlugin;
 use crate::ui_script::UiScriptPlugin;
 use crate::ui_shapeshift::UiShapeshiftPlugin;
 use crate::ui_social::UiSocialPlugin;
+use crate::ui_socket::UiSocketPlugin;
 use crate::ui_spell_info::UiSpellInfoPlugin;
 use crate::ui_spellbook::UiSpellbookPlugin;
 use crate::ui_stable::UiStablePlugin;
@@ -222,6 +223,7 @@ impl PluginGroup for GamePlugins {
             // After UiActionPlugin, whose `Spells` catalog it shares.
             .add(UiTalentPlugin)
             .add(UiGlyphPlugin)
+            .add(UiSocketPlugin)
             .add(UiTitlePlugin)
             .add(UiCurrencyPlugin)
             .add(UiSpellInfoPlugin)
@@ -906,7 +908,11 @@ pub(crate) mod schedule_tests {
     ///   add 3 net: `arm_go_loot_fx`, `play_delayed_area_kits` and `stamp_model_scales` write
     ///   messages or `Commands` against `finish_colliders`, and the area kit reads the caster's
     ///   `GlobalTransform` against `publish_camera_pose`, as the other such spawners pair.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_974;
+    /// - Socketing and refunds (#202, #206) add 3: `ui_socket::drain_item_sends`, an
+    ///   `.after(UiInput)` drain of the VM's own sends, against `finish_colliders`, as the other
+    ///   such drains pair; and `ui_socket::feed_refunds` against `ui_items::feed_item_stats` and
+    ///   `feed_spell_tooltips` over `Items`: it only reads templates.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_977;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

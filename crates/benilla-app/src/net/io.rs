@@ -1473,7 +1473,12 @@ pub(super) fn writer_loop(
                     }
                     ClientCommand::ChannelAnnouncements { name } => w.channel_announcements(&name),
                     ClientCommand::ChannelModerate { name } => w.channel_moderate(&name),
-                    ClientCommand::PlayedTime => w.played_time(),
+                    ClientCommand::PlayedTime { show } => w.played_time(show),
+                    ClientCommand::SocketGems { item, gems } => w.socket_gems(item, gems),
+                    ClientCommand::ItemRefundInfo { item } => w.item_refund_info(item),
+                    ClientCommand::ItemRefund { item } => w.item_refund(item),
+                    ClientCommand::ReadItem { bag, slot } => w.read_item(bag, slot),
+                    ClientCommand::ItemNameQuery { entry } => w.item_name_query(entry),
                     // Commands are written in order, so everything before it is out.
                     ClientCommand::Flush(done) => {
                         let _ = done.send(());

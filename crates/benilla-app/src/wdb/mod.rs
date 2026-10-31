@@ -148,6 +148,7 @@ fn on_cache_version(In(ev): In<SessionEvent>, world: &mut World) {
     drop_persisted::<crate::ui_quest_log::QuestLog>(world);
     drop_persisted::<crate::ui_item_text::PageTexts>(world);
     drop_persisted::<crate::ui_item_text::LetterTexts>(world);
+    drop_persisted::<crate::item_names::ItemNames>(world);
 }
 
 fn drop_persisted<T: Persisted>(world: &mut World) {
