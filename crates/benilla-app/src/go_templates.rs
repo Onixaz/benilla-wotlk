@@ -73,6 +73,8 @@ pub(crate) struct TextPage {
     pub(crate) page_id: u32,
     /// `data[2]`, a `PageTextMaterial.dbc` id.
     pub(crate) material: u32,
+    /// The page's `Languages.dbc` id, prop `0x10` (`0x7102c0`); 0 reads plain.
+    pub(crate) language: u32,
 }
 
 /// Entry to template, asked once per connection.
@@ -146,16 +148,17 @@ impl GameObjectTemplates {
             move_speed: data[1].max(0) as f32,
             accel_rate: data[2].max(0) as f32,
         });
-        // The page and its material, 12340 props `0xf` and `0x11`: TEXT's `data[0]` and `data[2]`,
-        // GOOBER's `data[7]` and `data[9]` (`0x746190`).
+        // The page, its language and its material, 12340 props `0xf`, `0x10` and `0x11`: TEXT's
+        // `data[0..=2]`, GOOBER's `data[7..=9]` (`0x746190`).
         let text_page = match type_id {
-            9 => Some((data[0], data[2])),
-            10 => Some((data[7], data[9])),
+            9 => Some(0),
+            10 => Some(7),
             _ => None,
         }
-        .map(|(page, material)| TextPage {
-            page_id: page.max(0) as u32,
-            material: material.max(0) as u32,
+        .map(|at| TextPage {
+            page_id: data[at].max(0) as u32,
+            language: data[at + 1].max(0) as u32,
+            material: data[at + 2].max(0) as u32,
         });
         let quest_material = match type_id {
             2 | 9 => Some(data[2].max(0) as u32),

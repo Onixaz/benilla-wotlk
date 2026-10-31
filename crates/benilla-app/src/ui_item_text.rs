@@ -10,8 +10,8 @@
 //! `_FAILED` decides (`0x58a1a0`, `0x6d5d90`). A used GOOBER's page arrives as
 //! `SMSG_GAMEOBJECT_PAGETEXT` (`0x70be30`), the same read call.
 //!
-//! The events follow `ItemTextFrame.lua:10-96`. Deviation: untranslated text shows as written, as
-//! no source carries the language the reference garbles it by.
+//! The events follow `ItemTextFrame.lua:10-96`. Unread pages pass the chat's translator in the
+//! book's or object's language (`0x589f60`).
 
 use bevy::prelude::*;
 
@@ -333,7 +333,11 @@ impl Plugin for UiItemTextPlugin {
                 (
                     // Feed before the input pass so an open paints this frame; drain after it
                     // so a close clears this frame.
-                    feed_item_text.in_set(UiFeed),
+                    // After the language feeds, whose skills and words the translator reads.
+                    feed_item_text
+                        .in_set(UiFeed)
+                        .after(crate::ui_chat::load_language_words)
+                        .after(crate::ui_chat::feed_language_skills),
                     drain_item_text.after(UiInput),
                 ),
             );
@@ -348,6 +352,10 @@ struct Readable {
     material: Option<String>,
     /// The first `PageText` id; 0 for a letter or a template with no page.
     page_head: u32,
+    /// The pages' language: an item template's `LanguageID`, a GameObject's prop `0x10`.
+    language: u32,
+    /// An item already read (`ITEM_FIELD_FLAGS & 0x2`) shows its pages as written.
+    translated: bool,
 }
 
 /// The material a quest from `guid` paints on, `GetQuestBackgroundMaterial`, the body of
@@ -390,14 +398,19 @@ fn readable(
             title: go.name.clone(),
             material: go.text_page.and_then(|p| name(p.material)),
             page_head: go.text_page.map_or(0, |p| p.page_id),
+            language: go.text_page.map_or(0, |p| p.language),
+            translated: false,
         });
     }
-    let entry = objects.object(guid)?.object_entry()?;
+    let fields = objects.object(guid)?;
+    let entry = fields.object_entry()?;
     let t = items.template(entry, guid, commands)?;
     Some(Readable {
         title: t.name.clone(),
         material: name(t.page_material),
         page_head: t.page_text,
+        language: t.language_id,
+        translated: fields.item_flags().unwrap_or(0) & ITEM_FIELD_FLAG_TRANSLATED != 0,
     })
 }
 
@@ -418,6 +431,8 @@ fn feed_item_text(
     // The `$`-macro subject for the page body: the local player.
     self_q: Query<(&crate::net::ObjectStore, &crate::net::Guid), With<crate::net::SelfPlayer>>,
     states: Res<crate::world_state::WorldStates>,
+    // The reader's language skill and the garble word pool, the chat's own.
+    languages: Option<Res<crate::ui_chat::ChatLanguages>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -550,6 +565,18 @@ fn feed_item_text(
             achievement: None,
         },
     );
+    // A page not yet read shows through the translator (`0x589f60`): at the reader's skill, or
+    // none when the check read it untranslated. A letter and a read book show as written.
+    let text = match languages.as_deref() {
+        Some(langs) if matches!(sess.source, ReadSource::Pages { .. }) && !readable.translated => {
+            let skill = match translation_ms {
+                Some(_) => 0,
+                None => langs.skill(readable.language),
+            };
+            langs.translate(readable.language, skill, &text)
+        }
+        _ => text,
+    };
     script.set_item_text(Some(ItemTextState {
         item: readable.title,
         creator,
