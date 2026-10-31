@@ -217,8 +217,9 @@ pub(crate) fn fit_to_work_area(
 
 /// The swapchain's frames in flight: one more with `gxTripleBuffer` under vsync, the reference's
 /// second back buffer (the present parameters, `0x68e250`, count it only with vsync); `None` is
-/// wgpu's 2. The patched `bevy_render` (`third_party/bevy_render`) reconfigures the surface when it
-/// moves.
+/// wgpu's 2. Bevy reads it only when it creates the surface, so it is set at boot alone.
+/// Deviation: the reference applies `gxTripleBuffer` at `RestartGx`; here it takes effect at the
+/// next start, and the layer gives its Video row the stock restart notice.
 pub(crate) fn frame_latency(vsync: bool, triple_buffer: bool) -> Option<std::num::NonZero<u32>> {
     (vsync && triple_buffer).then(|| std::num::NonZero::new(3).expect("non-zero"))
 }
@@ -243,8 +244,6 @@ pub(crate) struct VideoConfig {
     pub(crate) resolution: Option<UVec2>,
     /// `gxRefresh` in Hz, the fullscreen mode's rate.
     pub(crate) refresh: u32,
-    /// `gxTripleBuffer` ([`frame_latency`]).
-    pub(crate) triple_buffer: bool,
     /// `gxFixLag`: the frame waits for the GPU to drain after its present ([`fix_input_lag`]).
     pub(crate) fix_lag: bool,
     /// `gxCursor`: the OS cursor, else the client draws its own over the frame ([`crate::cursor`]).
@@ -268,7 +267,6 @@ impl Default for VideoConfig {
             maximize: false,
             resolution: None,
             refresh: 75,
-            triple_buffer: false,
             fix_lag: false,
             hw_cursor: true,
             resize_lock: false,
@@ -408,10 +406,10 @@ pub(crate) fn on_cvar(
         "gxwindow" => cfg.display = display_from_flag(int as f32),
         "gxmaximize" => cfg.maximize = int != 0,
         // `0x769360`: "TripleBuffer must be 0 or 1".
+        // Read at boot alone ([`boot_frame_latency`]).
         "gxtriplebuffer" if !(0..=1).contains(&int) => {
             refuse(&mut cvars, &mut console, &ev, "TripleBuffer must be 0 or 1")
         }
-        "gxtriplebuffer" => cfg.triple_buffer = int != 0,
         "gxfixlag" => cfg.fix_lag = int != 0,
         "gxcursor" => cfg.hw_cursor = int != 0,
         "windowresizelock" => cfg.resize_lock = int != 0,
@@ -984,8 +982,7 @@ fn validate_refresh(
     }
 }
 
-/// Push vsync and the frames in flight to the window only when the setting moves or a
-/// `RestartGx()` asks: the capture probes write `present_mode` directly, and their override must
+/// Push vsync to the window only when the setting moves or a `RestartGx()` asks: the capture probes write `present_mode` directly, and their override must
 /// stick.
 fn apply_present_mode(
     cfg: Res<VideoConfig>,
@@ -999,7 +996,6 @@ fn apply_present_mode(
         return;
     }
     let want = present_mode(cfg.vsync);
-    let latency = frame_latency(cfg.vsync, cfg.triple_buffer);
     let Ok(mut window) = windows.single_mut() else {
         return;
     };
@@ -1010,10 +1006,6 @@ fn apply_present_mode(
             "video: vsync {} ({want:?})",
             if cfg.vsync { "on" } else { "off" }
         );
-    }
-    if window.desired_maximum_frame_latency != latency {
-        window.desired_maximum_frame_latency = latency;
-        info!("video: frames in flight {}", latency.map_or(2, |n| n.get()));
     }
 }
 
@@ -1711,7 +1703,7 @@ mod tests {
         );
     }
 
-    /// Vsync, the frames in flight and the resize lock reach the window.
+    /// Vsync and the resize lock reach the window; the frames in flight stay as the window was born.
     #[test]
     fn the_presentation_rows_reach_the_window() {
         let (mut app, win) = window_app(VideoConfig::default());
@@ -1722,7 +1714,6 @@ mod tests {
         {
             let mut cfg = app.world_mut().resource_mut::<VideoConfig>();
             cfg.vsync = true;
-            cfg.triple_buffer = true;
             cfg.resize_lock = true;
         }
         app.world_mut().resource_mut::<GxRestarts>().0 += 1;
@@ -1731,17 +1722,13 @@ mod tests {
             !window(&app).resizable,
             "windowResizeLock refuses the border drag"
         );
-        assert_eq!(
-            window(&app).desired_maximum_frame_latency.map(|n| n.get()),
-            Some(3)
-        );
         app.world_mut().resource_mut::<VideoConfig>().vsync = false;
         app.update();
         assert_eq!(window(&app).present_mode, PresentMode::AutoNoVsync);
         assert_eq!(
             window(&app).desired_maximum_frame_latency,
             None,
-            "no second back buffer without vsync"
+            "a restart leaves the boot frames in flight"
         );
     }
 

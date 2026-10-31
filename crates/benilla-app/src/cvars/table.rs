@@ -984,8 +984,8 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // size (`GetSystemMetrics` 0 and 1). The knob is [`crate::video::VideoConfig::maximize`].
     same("gxMaximize", "0").latched(),
     // `gxTripleBuffer` ("0", callback `0x769360`: refused above 1): a second back buffer, used only
-    // with vsync (`0x68e250`). The knob is [`crate::video::VideoConfig::triple_buffer`], one more
-    // swapchain frame in flight.
+    // with vsync (`0x68e250`). The knob is [`crate::video::boot_frame_latency`], one more
+    // swapchain frame in flight from the next start.
     same("gxTripleBuffer", "0").latched(),
     // `gxCursor` ("1", callback `0x7695e0`): the hardware cursor, else the device draws the cursor
     // texture over each presented frame (`0x687a90`). The knob is

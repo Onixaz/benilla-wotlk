@@ -29,5 +29,13 @@
                 entry.tooltipRequirement = nil
             end
         end
+
+        -- Deviation: Triple Buffering applies at the next start, not at RestartGx, so its row
+        -- takes the restart notice the stock table gives Texture Filtering (gameRestart and the
+        -- OPTION_RESTART_REQUIREMENT tooltip line, VideoOptionsPanels.lua:392).
+        if ResolutionPanelOptions and ResolutionPanelOptions.gxTripleBuffer then
+            ResolutionPanelOptions.gxTripleBuffer.gameRestart = 1
+            ResolutionPanelOptions.gxTripleBuffer.tooltipRequirement = OPTION_RESTART_REQUIREMENT
+        end
     ]]></Script>
 </Ui>

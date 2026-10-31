@@ -29,11 +29,10 @@
 //! benilla-buildstamp = { git = "https://github.com/Onixaz/benilla-wotlk" }
 //!
 //! # Cargo reads `[patch]` and `[profile]` from the root manifest only, so benilla's are repeated:
-//! # without the patches the addon Lua, the mixer and the swapchain latency are not benilla's.
+//! # without the patches the addon Lua and the mixer are not benilla's.
 //! [patch.crates-io]
 //! lua-src = { git = "https://github.com/Onixaz/benilla-wotlk" }
 //! kira = { git = "https://github.com/Onixaz/benilla-wotlk" }
-//! bevy_render = { git = "https://github.com/Onixaz/benilla-wotlk" }
 //!
 //! # The dev build; `assert_no_alloc` keeps its debug assertions, or `benilla-app` does
 //! # not build.

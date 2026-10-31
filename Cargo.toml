@@ -45,9 +45,6 @@ lua-src = { path = "third_party/lua-src" }
 # kira 0.12.4, patched to compute spatial gains and the volume tween per output chunk and
 # interpolate them, not per sample frame (`third_party/kira/BENILLA.md`).
 kira = { path = "third_party/kira" }
-# bevy_render 0.18.1, patched to reconfigure a window's surface when its
-# `desired_maximum_frame_latency` moves (`third_party/bevy_render/BENILLA.md`).
-bevy_render = { path = "third_party/bevy_render" }
 
 # Two builds. `dev` (`cargo dev`): every run, probe, test and gate builds it, so they share one
 # set of compiled artifacts. `release` is built, never tested: to play (`cargo play`), to ship
