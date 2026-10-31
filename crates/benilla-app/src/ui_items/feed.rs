@@ -284,6 +284,9 @@ fn template_view(
                 gem_type,
                 enchant,
                 enchant_name: enchants.and_then(|e| e.0.name(enchant)).map(str::to_string),
+                condition: enchants
+                    .and_then(|e| e.0.condition(enchant))
+                    .map(crate::items::condition_view),
             }),
     }
 }

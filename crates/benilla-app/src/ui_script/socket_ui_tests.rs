@@ -40,6 +40,7 @@ fn gem(name: &str, gem_type: u32, enchant: u32, enchant_name: &str) -> ItemTempl
             gem_type,
             enchant,
             enchant_name: Some(enchant_name.into()),
+            condition: None,
         }),
         ..Default::default()
     }
@@ -150,7 +151,7 @@ fn the_socketing_window_places_a_gem_and_accepts_it() {
     .unwrap();
     let lines = description(&mut s);
     assert!(
-        lines.iter().any(|l| l == "+8 Strength"),
+        lines.iter().any(|l| l == "|cffffffff+8 Strength|r"),
         "the preview shows the placed gem: {lines:?}"
     );
     assert!(

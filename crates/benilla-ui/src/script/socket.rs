@@ -267,6 +267,31 @@ pub(super) fn template_arrived(model: &mut Model, item_id: u32) {
     }
 }
 
+/// `CountEquippedGems` (`0x6de4d0`): meta, red, yellow and blue gems socketed in the worn items,
+/// a gem counting once per colour bit. A broken item (durability 0 and not wrapped) and one
+/// flagged `0x10` count none.
+pub(super) fn equipped_gem_counts(model: &Model) -> [i32; 4] {
+    let mut counts = [0; 4];
+    for s in model.inventory_slots.iter().skip(1).take(19).flatten() {
+        let broken =
+            s.flags & 0x8 == 0 && s.durability.is_some_and(|(cur, max)| max > 0 && cur == 0);
+        if broken || s.flags & 0x10 != 0 {
+            continue;
+        }
+        for e in s.enchants.iter().filter(|e| (2..=4).contains(&e.slot)) {
+            let Some(t) = e.gem_type.filter(|&t| t != 0) else {
+                continue;
+            };
+            for (bit, n) in counts.iter_mut().enumerate() {
+                if t & (1 << bit) != 0 {
+                    *n += 1;
+                }
+            }
+        }
+    }
+    counts
+}
+
 /// `HasEnchantments` (`0x708ac0`): a permanent enchant, a gem in the first two sockets or a
 /// prismatic socket; the third socket is not read.
 pub(super) fn has_enchantments(held: &Held<'_>) -> bool {

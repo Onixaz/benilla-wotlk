@@ -14,7 +14,7 @@ use crate::Chain;
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
 
-use crate::dbc::{parse, str_at, u32_at};
+use crate::dbc::{i32_at, parse, str_at, u32_at};
 
 const ITEM_VISUALS: &str = "DBFilesClient\\ItemVisuals.dbc";
 const ITEM_VISUAL_EFFECTS: &str = "DBFilesClient\\ItemVisualEffects.dbc";
@@ -61,6 +61,26 @@ pub struct EnchantCatalog {
     gem_items: HashMap<u32, u32>,
     /// The sockets a prismatic enchant adds: its first effect 8's `EffectPointsMin` (`0x708140`).
     prismatic: HashMap<u32, u32>,
+    /// A gem enchant's activation condition (`ConditionID`, a meta gem's), by enchant id.
+    conditions: HashMap<u32, EnchantCondition>,
+}
+
+/// One `SpellItemEnchantmentCondition.dbc` row: up to five tests on the equipped gems' colour
+/// counts, read in order while `logic` is nonzero (`0x61c0b0`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EnchantCondition {
+    pub tests: [EnchantConditionTest; 5],
+}
+
+/// One test: the left colour (`1` meta .. `4` blue), the operator, and a right colour or, with a
+/// right type of 0, a count.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EnchantConditionTest {
+    pub left_type: u8,
+    pub operator: u8,
+    pub right_type: u8,
+    pub right_value: i32,
+    pub logic: u8,
 }
 
 /// `Flags & 0x1`: applying the enchant binds the item. It is the only gate on the bind confirm,
@@ -108,6 +128,11 @@ impl EnchantCatalog {
         self.gem_items.get(&enchant_id).copied()
     }
 
+    /// A gem enchant's condition, for one that names a gem (`SrcItemID`) and a condition row.
+    pub fn condition(&self, enchant_id: u32) -> Option<&EnchantCondition> {
+        self.conditions.get(&enchant_id)
+    }
+
     /// The sockets the enchant adds, 0 for one with no prismatic effect (8).
     pub fn prismatic_sockets(&self, enchant_id: u32) -> u32 {
         self.prismatic.get(&enchant_id).copied().unwrap_or(0)
@@ -125,6 +150,7 @@ impl EnchantCatalog {
             flags,
             gem_items: HashMap::new(),
             prismatic: HashMap::new(),
+            conditions: HashMap::new(),
         }
     }
 
@@ -201,6 +227,58 @@ const ENCHANT_NAME: usize = 14;
 const ENCHANT_VISUAL: usize = 31;
 const ENCHANT_FLAGS: usize = 32;
 const ENCHANT_SRC_ITEM: usize = 33;
+const ENCHANT_CONDITION: usize = 34;
+const SPELL_ITEM_ENCHANTMENT_CONDITION: &str = "DBFilesClient\\SpellItemEnchantmentCondition.dbc";
+
+/// `SpellItemEnchantmentCondition.dbc`: 31 columns packed in 64 bytes, the id then five each of
+/// the left type (u8), left operand (u32), operator (u8), right type (u8), right operand (u32) and
+/// logic (u8).
+pub(crate) fn spell_item_enchantment_condition_schema() -> Schema {
+    let mut s = Schema::new("SpellItemEnchantmentCondition");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    for (group, ty) in [
+        ("LtOperandType", FieldType::UInt8),
+        ("LtOperand", FieldType::UInt32),
+        ("Operator", FieldType::UInt8),
+        ("RtOperandType", FieldType::UInt8),
+        ("RtOperand", FieldType::UInt32),
+        ("Logic", FieldType::UInt8),
+    ] {
+        for i in 0..5 {
+            s.add_field(SchemaField::new(format!("{group}{i}"), ty));
+        }
+    }
+    s
+}
+
+/// The condition rows by id; an unreadable file leaves every gem unconditioned.
+fn load_conditions(chain: &mut Chain) -> HashMap<u32, EnchantCondition> {
+    let Ok(bytes) = chain.read_file(SPELL_ITEM_ENCHANTMENT_CONDITION) else {
+        return HashMap::new();
+    };
+    let Ok(rs) = parse(
+        &bytes,
+        spell_item_enchantment_condition_schema(),
+        "SpellItemEnchantmentCondition",
+    ) else {
+        return HashMap::new();
+    };
+    let byte = |r, i| u32_at(r, i).unwrap_or(0) as u8;
+    rs.records()
+        .iter()
+        .filter_map(|r| {
+            let id = u32_at(r, 0)?;
+            let tests = std::array::from_fn(|i| EnchantConditionTest {
+                left_type: byte(r, 1 + i),
+                operator: byte(r, 11 + i),
+                right_type: byte(r, 16 + i),
+                right_value: i32_at(r, 21 + i).unwrap_or(0),
+                logic: byte(r, 26 + i),
+            });
+            Some((id, EnchantCondition { tests }))
+        })
+        .collect()
+}
 /// The prismatic-socket effect type.
 const ENCHANT_PRISMATIC_SOCKET: u32 = 8;
 
@@ -250,8 +328,10 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
     let mut visuals = HashMap::new();
     let mut names = HashMap::new();
     let mut flags = HashMap::with_capacity(rs.records().len());
+    let condition_rows = load_conditions(chain);
     let mut gem_items = HashMap::new();
     let mut prismatic = HashMap::new();
+    let mut conditions = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         // Effects at columns 2..5, their minimum points at 5..8.
@@ -263,6 +343,11 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
         let gem = u32_at(r, ENCHANT_SRC_ITEM).unwrap_or(0);
         if gem != 0 {
             gem_items.insert(id, gem);
+            // Only a gem's enchant carries a condition (`0x61c0cb`).
+            let row = u32_at(r, ENCHANT_CONDITION).unwrap_or(0);
+            if let Some(c) = condition_rows.get(&row).filter(|_| row != 0) {
+                conditions.insert(id, *c);
+            }
         }
         let visual = u32_at(r, ENCHANT_VISUAL).unwrap_or(0) as i32;
         if visual != 0 {
@@ -279,11 +364,38 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
         flags,
         gem_items,
         prismatic,
+        conditions,
     })
 }
 
 #[cfg(test)]
 mod tests {
+    /// The meta gems' enchants carry their conditions.
+    #[test]
+    fn a_meta_gem_enchant_carries_its_condition() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cat = load_enchant_catalog(&mut chain).expect("load");
+        assert!(
+            cat.conditions.len() > 20,
+            "{} conditioned gems",
+            cat.conditions.len()
+        );
+        // Relentless Earthsiege Diamond (enchant 3628): at least one red, one yellow and one blue.
+        let c = cat
+            .condition(3628)
+            .expect("Relentless carries its condition");
+        let colours: Vec<(u8, u8, i32, u8)> = c.tests[..3]
+            .iter()
+            .map(|t| (t.left_type, t.operator, t.right_value, t.logic))
+            .collect();
+        assert_eq!(colours, [(2, 5, 1, 1), (3, 5, 1, 1), (4, 5, 1, 0)]);
+        assert!(
+            cat.prismatic.values().any(|&n| n == 1),
+            "a prismatic enchant adds one socket"
+        )
+    }
+
     use super::*;
 
     #[test]

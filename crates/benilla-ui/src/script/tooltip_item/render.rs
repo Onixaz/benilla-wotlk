@@ -499,7 +499,8 @@ pub(super) fn render_view(
         }
         // The druid's feral attack power off a main-hand weapon's DPS above 54.81 (`0x61a8f0`).
         // A gem's own line (`0x627a5c`): its socket enchant's name, white, red while its required
-        // skill is short, gray when it is to be destroyed. Not built: a meta gem's condition text.
+        // skill is short, gray when it is to be destroyed; then a meta gem's condition lines
+        // (`0x62a994`).
         if v.gem_properties != 0 && !preview {
             if let Some(name) = v.gem.as_ref().and_then(|g| g.enchant_name.clone()) {
                 let skill_ok = v.required_skill == 0
@@ -513,6 +514,14 @@ pub(super) fn render_view(
                     req_color(skill_ok)
                 };
                 add((name, color))?;
+            }
+            if let Some(cond) = v.gem.as_ref().and_then(|g| g.condition.as_ref()) {
+                let counts =
+                    crate::script::socket::equipped_gem_counts(&crate::script::model_mut_of(lua));
+                let (text, _) = super::sockets::condition_text(cond, counts, false, &get);
+                if !text.is_empty() {
+                    addw((text, WHITE))?;
+                }
             }
         }
         if req.class_id == 11

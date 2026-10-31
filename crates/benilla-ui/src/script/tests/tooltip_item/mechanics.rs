@@ -707,12 +707,12 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
                 suffix: "of the Monkey".into(),
                 enchants: vec![
                     EnchantView {
-                        slot: 2,
+                        slot: 7,
                         name: "Agility +7".into(),
                         ..Default::default()
                     },
                     EnchantView {
-                        slot: 3,
+                        slot: 8,
                         name: "Stamina +7".into(),
                         ..Default::default()
                     },
@@ -818,7 +818,7 @@ fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
             RandomPropertyView {
                 suffix: "of the Monkey".into(),
                 enchants: vec![EnchantView {
-                    slot: 2,
+                    slot: 7,
                     name: "Agility +7".into(),
                     ..Default::default()
                 }],
@@ -894,7 +894,7 @@ fn random_property_template_hover_shows_the_placeholder() {
             quality: Some(2),
             item_id: 8888,
             enchants: vec![EnchantView {
-                slot: 2,
+                slot: 7,
                 name: "Stamina +7".into(),
                 ..Default::default()
             }],

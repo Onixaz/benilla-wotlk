@@ -317,8 +317,9 @@ pub use combat_log::{
     CombatLogUnit, Damage, Drain, Heal, Miss, MissType, OBJECT_NONE, RETENTION_CVAR,
 };
 pub use container::{
-    BagAutoStore, ContainerMove, ContainerSlot, ContainerState, EnchantView, PendingWrap,
-    PetitionSlotView, RandomPropertyView, UiCursorMode,
+    BagAutoStore, ContainerMove, ContainerSlot, ContainerState, EnchantConditionTest,
+    EnchantConditionView, EnchantView, PendingWrap, PetitionSlotView, RandomPropertyView,
+    UiCursorMode,
 };
 pub use cursor::item_lock_args;
 pub use cursor::money::coin_icon;
