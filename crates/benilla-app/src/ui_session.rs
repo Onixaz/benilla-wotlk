@@ -425,10 +425,11 @@ mod tests {
                 sent.as_slice(),
                 [ClientCommand::QuestPushResult {
                     sharer: SHARER,
+                    quest: 0,
                     msg: benilla_protocol::messages::QuestShareMsg::DECLINE_QUEST,
                 }]
             ),
-            "walking away from a share still declines it: {sent:?}"
+            "walking away from a share declines it with quest 0, as `0x512f16` does: {sent:?}"
         );
 
         // An NPC giver at 10 yd: closed, silently.

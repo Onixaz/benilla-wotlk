@@ -1505,6 +1505,7 @@ mod tests {
             suffix_factor: 0,
             random_property_id: 0,
             count: 1,
+            total_count: 1,
         }
     }
 

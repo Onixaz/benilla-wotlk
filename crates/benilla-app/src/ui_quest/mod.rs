@@ -49,6 +49,9 @@ pub(crate) struct QuestGiver {
     /// The reference's chosen-reward cell: the chosen reward's item id, latched by `GetQuestReward`
     /// for the turn-in's item line, and zeroed by a panel publish, world enter and the turn-in.
     pub(crate) chosen_reward: u32,
+    /// Bumped by every panel packet: each fires its panel's event, the same panel's again
+    /// included (`0x58dfa4`, `0x58bb46`, `0x58ba70`).
+    published: u32,
     /// Per-guid dialog status from `SMSG_QUESTGIVER_STATUS`, the `!`/`?` marker's value.
     statuses: HashMap<u64, u32>,
     /// Messages queued for [`feed_quest`], each a GlobalStrings key and its fills.
@@ -69,6 +72,7 @@ impl QuestGiver {
         // publish.
         self.acted = false;
         self.chosen_reward = 0;
+        self.published = self.published.wrapping_add(1);
     }
 
     #[allow(dead_code)]
@@ -182,28 +186,37 @@ impl QuestGiver {
     }
 }
 
-/// `SMSG_QUESTGIVER_QUEST_INVALID`'s `QuestFailedReason` as a GlobalStrings key, per the
-/// reference's handler (the `0x18f` arm of the quest demux), whose default,
-/// `ERR_QUEST_NEED_PREREQS`, takes reason 0 and everything unlisted.
+/// `SMSG_QUESTGIVER_QUEST_INVALID`'s `QuestFailedReason` as a GlobalStrings key, per 12340's
+/// jump table on `reason - 1` (`0x6cd7d2`-`0x6cd7e1`), whose default, `ERR_QUEST_NEED_PREREQS`,
+/// takes reason 0 and everything unlisted.
 pub(crate) fn questgiver_invalid_key(reason: u32) -> &'static str {
     match reason {
-        1 => "ERR_QUEST_FAILED_LOW_LEVEL",         // msgId 142
-        6 => "ERR_QUEST_FAILED_WRONG_RACE",        // msgId 144
-        12 => "ERR_QUEST_ONLY_ONE_TIMED",          // msgId 146
-        13 => "ERR_QUEST_ALREADY_ON",              // msgId 148
-        20 => "ERR_QUEST_FAILED_MISSING_ITEMS",    // msgId 143
-        22 => "ERR_QUEST_FAILED_NOT_ENOUGH_MONEY", // msgId 145
-        _ => "ERR_QUEST_NEED_PREREQS",             // msgId 147, the default
+        1 => "ERR_QUEST_FAILED_LOW_LEVEL",                // msgId 0x97
+        6 => "ERR_QUEST_FAILED_WRONG_RACE",               // msgId 0x99
+        7 => "ERR_QUEST_ALREADY_DONE",                    // msgId 0x9f
+        12 => "ERR_QUEST_ONLY_ONE_TIMED",                 // msgId 0x9c
+        13 | 18 => "ERR_QUEST_ALREADY_ON",                // msgId 0x9e
+        16 => "ERR_QUEST_FAILED_EXPANSION",               // msgId 0x9b
+        21 => "ERR_QUEST_FAILED_MISSING_ITEMS",           // msgId 0x98
+        23 => "ERR_QUEST_FAILED_NOT_ENOUGH_MONEY",        // msgId 0x9a
+        26 => "ERR_QUEST_FAILED_TOO_MANY_DAILY_QUESTS_I", // msgId 0x22e, `%d` 25
+        27 => "ERR_QUEST_FAILED_CAIS",                    // msgId 0x234
+        29 => "ERR_QUEST_ALREADY_DONE_DAILY",             // msgId 0xa0
+        _ => "ERR_QUEST_NEED_PREREQS",                    // msgId 0x9d, the default
     }
 }
 
-/// `SMSG_QUESTGIVER_QUEST_FAILED`'s reason as a GlobalStrings key, per the reference's handler (the
-/// `0x192` arm); each line's `%s` is the quest's title (`questRecord+0x9c`).
+/// The daily cap the two `TOO_MANY_DAILY_QUESTS_I` arms print (`0x6cd827`, `0x6cdaf6`).
+pub(crate) const DAILY_QUEST_CAP: i64 = 25;
+
+/// `SMSG_QUESTGIVER_QUEST_FAILED`'s reason as a GlobalStrings key, per 12340's jump table on
+/// `reason - 4` (`0x6cdab5`-`0x6cdac4`); each `%s` line's fill is the quest's title.
 pub(crate) fn questgiver_failed_key(reason: u32) -> &'static str {
     match reason {
-        4 | 50 => "ERR_QUEST_FAILED_BAG_FULL_S", // msgId 140
-        17 => "ERR_QUEST_FAILED_MAX_COUNT_S",    // msgId 141
-        _ => "ERR_QUEST_FAILED_S",               // msgId 139
+        4 | 16 | 50 => "ERR_QUEST_FAILED_BAG_FULL_S", // msgId 0x95
+        17 => "ERR_QUEST_FAILED_MAX_COUNT_S",         // msgId 0x96
+        74 => "ERR_QUEST_FAILED_TOO_MANY_DAILY_QUESTS_I", // msgId 0x22e, `%d` 25
+        _ => "ERR_QUEST_FAILED_S",                    // msgId 0x94
     }
 }
 
@@ -263,10 +276,11 @@ impl NpcSession for QuestGiver {
 
     /// Walking away from a shared quest (a 14 yd leash) still declines it to the sharer. The
     /// reference's watchdog calls the teardown directly, not `DeclineQuest`, so an NPC's panel
-    /// closes with no giver re-open.
+    /// closes with no giver re-open; that call (`0x512f16`) passes quest 0.
     fn walk_away_send(&self, npc: u64) -> Option<ClientCommand> {
         benilla_protocol::guid::is_player(npc).then_some(ClientCommand::QuestPushResult {
-            sharer: npc,
+            sharer: self.quest_npc().unwrap_or(npc),
+            quest: 0,
             msg: QuestShareMsg::DECLINE_QUEST,
         })
     }
@@ -395,6 +409,8 @@ fn snapshot(
             choices: resolve_items(&d.choices, items, icons, commands),
             rewards: resolve_items(&d.rewards, items, icons, commands),
             reward_money: d.extra.money.max(0) as u32,
+            // A negative reward is a cost: `GetQuestMoneyToGet` (`0x58de68`-`0x58de70`).
+            required_money: d.extra.money.min(0).unsigned_abs(),
             reward_spell: reward_spell_view(d.extra.spell, d.extra.spell_cast, spells),
             ..Default::default()
         },
@@ -414,6 +430,8 @@ fn snapshot(
             choices: resolve_items(&o.choices, items, icons, commands),
             rewards: resolve_items(&o.rewards, items, icons, commands),
             reward_money: o.extra.money.max(0) as u32,
+            // The cost the stock Complete button confirms (`QuestFrame.lua:94-101`).
+            required_money: o.extra.money.min(0).unsigned_abs(),
             reward_spell: reward_spell_view(o.extra.spell, o.extra.spell_cast, spells),
             ..Default::default()
         },
@@ -429,8 +447,9 @@ fn panel_event(panel: QuestPanel) -> &'static str {
     }
 }
 
-/// Push the quest view into the VM and fire its events: a panel's open event on a new panel,
-/// `QUEST_ITEM_UPDATE` on a content change, `QUEST_FINISHED` on close.
+/// Push the quest view into the VM and fire its events: a panel's event on every panel packet,
+/// `QUEST_ITEM_UPDATE` when an item record lands on the open panel (`0x58b8f0`), `QUEST_FINISHED`
+/// on close. A giver's name landing fires nothing.
 pub(crate) fn feed_quest(
     script: Option<NonSendMut<UiScript>>,
     mut giver: ResMut<QuestGiver>,
@@ -451,14 +470,15 @@ pub(crate) fn feed_quest(
     mut sink: MessageSink,
     mut last: Local<crate::ui_script::VmMemo<Option<QuestState>>>,
     mut last_name: Local<crate::ui_script::VmMemo<Option<String>>>,
-    mut last_npc: Local<crate::ui_script::VmMemo<Option<u64>>>,
+    // The last frame's giver and panel-publish count.
+    mut last_seen: Local<crate::ui_script::VmMemo<(Option<u64>, u32)>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
     let last = last.get(&script);
     let last_name = last_name.get(&script);
-    let last_npc = last_npc.get(&script);
+    let last_seen = last_seen.get(&script);
     // Each take reads first: a `Mut` take on an idle frame would mark the giver changed.
     if giver.completed_fanfare && giver.take_completed_fanfare() {
         script.queue_sound_kit("QUESTCOMPLETED");
@@ -520,6 +540,22 @@ pub(crate) fn feed_quest(
         if let Some(e) = extra {
             st.extras = rewards.for_panel(e, &store.0, name);
         }
+        // `IsQuestCompletable` also wants the bags to hold each required item, up to the first
+        // empty row (`0x58cbed`-`0x58cbfb`).
+        if let QuestView::Progress(p) = view {
+            st.completable &= p
+                .required_items
+                .iter()
+                .take_while(|r| r.item_id != 0)
+                .all(|r| {
+                    crate::ui_items::count_of(
+                        &store.0,
+                        &objects,
+                        r.item_id,
+                        crate::ui_items::InventoryScope::QUEST_ITEMS,
+                    ) >= r.count
+                });
+        }
         st.suggested_group = suggested;
         st.flags_pvp = flags & quest_flags::FLAGS_PVP != 0 && !rewards.realm_is_pvp();
         st.auto_accept = flags & quest_flags::AUTO_ACCEPT != 0;
@@ -530,8 +566,9 @@ pub(crate) fn feed_quest(
         .and_then(|g| names.resolve(g, &commands).map(str::to_string));
     let name_changed = *last_name != npc_name;
     // A different giver while a panel is open is a close then an open.
-    let switched = npc_switched(*last_npc, giver.npc);
-    if fresh == *last && !name_changed && !switched {
+    let switched = npc_switched(last_seen.0, giver.npc);
+    let republished = std::mem::replace(&mut last_seen.1, giver.published) != giver.published;
+    if fresh == *last && !name_changed && !switched && !republished {
         return;
     }
     script.set_quest(fresh.clone());
@@ -545,30 +582,30 @@ pub(crate) fn feed_quest(
             let _ = script.take_quest_actions();
         }
         (_, Some(f)) => {
-            let same_panel = last.as_ref().is_some_and(|l| l.panel == f.panel);
-            let event = if same_panel {
-                "QUEST_ITEM_UPDATE"
-            } else {
-                panel_event(f.panel)
-            };
-            script.fire_event(event, vec![]);
+            if republished || last.is_none() {
+                script.fire_event(panel_event(f.panel), vec![]);
+            } else if *last != fresh {
+                script.fire_event("QUEST_ITEM_UPDATE", vec![]);
+            }
         }
         (Some(_), None) => script.fire_event("QUEST_FINISHED", vec![]),
         (None, None) => {}
     }
     *last = fresh;
     *last_name = npc_name;
-    *last_npc = giver.npc;
+    last_seen.0 = giver.npc;
 }
 
 /// `CloseQuest()`: its binding calls only the teardown, which declines a sharing player's quest and
 /// closes anything else silently. The player test is the guid's shape; the reference's also needs
-/// the sharer in view, which the range guard ensures.
-fn close_quest(npc: u64, commands: &NetCommands) {
+/// the sharer in view, which the range guard ensures. The decline goes to the inform guid when
+/// set, else the source, and names the open quest (`0x58cadc`-`0x58cb09`).
+fn close_quest(npc: u64, reply_to: u64, quest: u32, commands: &NetCommands) {
     if benilla_protocol::guid::is_player(npc) {
-        debug!("ui_quest: closing {npc:#x}'s shared quest — declining it");
+        debug!("ui_quest: closing {npc:#x}'s shared quest {quest} — declining it");
         let _ = commands.0.send(ClientCommand::QuestPushResult {
-            sharer: npc,
+            sharer: reply_to,
+            quest,
             msg: QuestShareMsg::DECLINE_QUEST,
         });
     }
@@ -662,6 +699,11 @@ fn drain_quest(
             debug!("ui_quest: greeting select {sel:?} out of range — ignored");
             continue;
         };
+        // The already-acted latch refuses a second select until the next panel (`0x58cc2f`,
+        // `0x58ccbf`), so a double click sends once.
+        if giver.acted {
+            continue;
+        }
         // `SelectActiveQuest` always sends COMPLETE_QUEST; `SelectAvailableQuest` does too for a
         // one-click row, and QUERY_QUEST otherwise.
         let cmd = if sel.active || row_is_one_click(icon) {
@@ -670,6 +712,7 @@ fn drain_quest(
             ClientCommand::QuestgiverQuery { npc, quest }
         };
         let _ = commands.0.send(cmd);
+        giver.acted = true;
     }
 
     let view_quest = giver.view.as_ref().and_then(|v| match v {
@@ -678,10 +721,11 @@ fn drain_quest(
         QuestView::Reward(o) => Some(o.quest_id),
         QuestView::Greeting(_) => None,
     });
+    let reply_to = giver.quest_npc().unwrap_or(npc);
     for action in script.take_quest_actions() {
         match action {
             QuestAction::Close => {
-                close_quest(npc, &commands);
+                close_quest(npc, reply_to, view_quest.unwrap_or(0), &commands);
                 giver.clear();
             }
             QuestAction::Decline => {
@@ -690,7 +734,7 @@ fn drain_quest(
                 match leg {
                     DeclineLeg::Nothing => {}
                     DeclineLeg::Teardown => {
-                        close_quest(npc, &commands);
+                        close_quest(npc, reply_to, view_quest.unwrap_or(0), &commands);
                         giver.clear();
                     }
                     DeclineLeg::GossipHello => {
@@ -704,8 +748,9 @@ fn drain_quest(
                 }
             }
             QuestAction::Accept => {
-                // The reference refuses while the already-acted latch is set.
-                if giver.acted {
+                // The reference refuses while the already-acted latch is set, and off the detail
+                // panel (`0x58cd26`).
+                if giver.acted || !matches!(giver.view, Some(QuestView::Detail(_))) {
                     continue;
                 }
                 if let Some(quest) = view_quest {
@@ -735,15 +780,24 @@ fn drain_quest(
                     giver.clear();
                 }
             }
+            // Each sends once per panel, from its own panel (`0x58cf40`, `0x58cfa3`).
             QuestAction::Continue => {
+                if giver.acted || !matches!(giver.view, Some(QuestView::Progress(_))) {
+                    continue;
+                }
                 if let Some(quest) = view_quest {
+                    giver.acted = true;
                     let _ = commands
                         .0
                         .send(ClientCommand::QuestgiverRequestReward { npc, quest });
                 }
             }
             QuestAction::Reward(choice) => {
+                if giver.acted || !matches!(giver.view, Some(QuestView::Reward(_))) {
+                    continue;
+                }
                 if let Some(quest) = view_quest {
+                    giver.acted = true;
                     // The reference latches the chosen row's item when the panel offers a choice.
                     if let Some(QuestView::Reward(o)) = giver.view.as_ref() {
                         if let Some(it) = o.choices.get(choice as usize) {
@@ -956,12 +1010,21 @@ mod tests {
         assert_eq!(questgiver_invalid_key(1), "ERR_QUEST_FAILED_LOW_LEVEL");
         assert_eq!(questgiver_invalid_key(6), "ERR_QUEST_FAILED_WRONG_RACE");
         assert_eq!(questgiver_invalid_key(12), "ERR_QUEST_ONLY_ONE_TIMED");
-        assert_eq!(questgiver_invalid_key(20), "ERR_QUEST_FAILED_MISSING_ITEMS");
+        assert_eq!(questgiver_invalid_key(21), "ERR_QUEST_FAILED_MISSING_ITEMS");
         assert_eq!(
-            questgiver_invalid_key(22),
+            questgiver_invalid_key(23),
             "ERR_QUEST_FAILED_NOT_ENOUGH_MONEY"
         );
-        for reason in [0, 2, 3, 4, 5, 7, 11, 14, 19, 21, 23, 99, u32::MAX] {
+        assert_eq!(questgiver_invalid_key(7), "ERR_QUEST_ALREADY_DONE");
+        assert_eq!(questgiver_invalid_key(16), "ERR_QUEST_FAILED_EXPANSION");
+        assert_eq!(questgiver_invalid_key(18), "ERR_QUEST_ALREADY_ON");
+        assert_eq!(
+            questgiver_invalid_key(26),
+            "ERR_QUEST_FAILED_TOO_MANY_DAILY_QUESTS_I"
+        );
+        assert_eq!(questgiver_invalid_key(27), "ERR_QUEST_FAILED_CAIS");
+        assert_eq!(questgiver_invalid_key(29), "ERR_QUEST_ALREADY_DONE_DAILY");
+        for reason in [0, 2, 3, 4, 5, 11, 14, 19, 20, 22, 28, 30, 99, u32::MAX] {
             assert_eq!(
                 questgiver_invalid_key(reason),
                 "ERR_QUEST_NEED_PREREQS",
@@ -974,8 +1037,13 @@ mod tests {
     fn questgiver_failed_keys_match_the_reference_table() {
         assert_eq!(questgiver_failed_key(4), "ERR_QUEST_FAILED_BAG_FULL_S");
         assert_eq!(questgiver_failed_key(50), "ERR_QUEST_FAILED_BAG_FULL_S");
+        assert_eq!(questgiver_failed_key(16), "ERR_QUEST_FAILED_BAG_FULL_S");
         assert_eq!(questgiver_failed_key(17), "ERR_QUEST_FAILED_MAX_COUNT_S");
-        for reason in [0, 1, 5, 16, 18, 49, 51] {
+        assert_eq!(
+            questgiver_failed_key(74),
+            "ERR_QUEST_FAILED_TOO_MANY_DAILY_QUESTS_I"
+        );
+        for reason in [0, 1, 5, 18, 49, 51, 73, 75] {
             assert_eq!(questgiver_failed_key(reason), "ERR_QUEST_FAILED_S");
         }
     }
@@ -1119,10 +1187,11 @@ mod tests {
                     sent.as_slice(),
                     [ClientCommand::QuestPushResult {
                         sharer: SHARER,
+                        quest: 1,
                         msg: QuestShareMsg::DECLINE_QUEST,
                     }]
                 ),
-                "{verb} must answer the sharer: {sent:?}"
+                "{verb} must answer the sharer, naming the open quest: {sent:?}"
             );
         }
     }

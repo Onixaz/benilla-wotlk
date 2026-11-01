@@ -30,6 +30,8 @@ pub(crate) enum QuestLine {
     /// The quest template's fixed reward items, one [`Self::Item`] each once the template is here
     /// (`0x6d1018`).
     RewardItems(u32),
+    /// `LEVEL_UP_CHAR_POINTS` as a `CHAT_MSG_MONEY` line (`0x6d0f5d`-`0x6d0fa6`).
+    Talents(u32),
 }
 
 /// The lines raised and not yet shown.
@@ -50,6 +52,8 @@ impl QuestLines {
 /// What a line resolves to this frame.
 enum Resolved {
     Show(UiError),
+    /// A chat line of its own type, no catalog row.
+    Chat(crate::ui_chat::ChatEventKind, UiError),
     /// Its record is still in flight.
     Wait,
     /// The server does not know the quest or item, or the line has nothing to say.
@@ -107,6 +111,7 @@ fn feed_quest_lines(
     }
     lines.0 = expanded;
     let mut shown = Vec::new();
+    let mut chat_lines = Vec::new();
     let mut accepted = Vec::new();
     lines.0.retain(
         |&line| match resolve(line, &quest_log, &items, &commands, &get) {
@@ -119,11 +124,21 @@ fn feed_quest_lines(
                 }
                 false
             }
+            Resolved::Chat(kind, msg) => {
+                if let Some(text) = ui_error_text(&msg, &get) {
+                    chat_lines.push((kind, text));
+                }
+                false
+            }
             Resolved::Wait => true,
             Resolved::Drop => false,
         },
     );
     show_messages(&mut script, &mut sink, "ui_quest", shown);
+    for (kind, text) in chat_lines {
+        sink.chat
+            .push_event(crate::ui_chat::ChatEvent::text_only(kind, text));
+    }
     // `QUEST_ACCEPTED` with the quest's log row follows the accept line, both raised once the
     // template is cached (the accept callback `0x6df2b0`, then the log update `0x6df370`).
     for id in accepted {
@@ -159,6 +174,10 @@ fn resolve(
             "ERR_QUEST_REWARD_MONEY_S",
             coin_text(copper, &|k| get(k).unwrap_or_default()),
         )),
+        QuestLine::Talents(n) => Resolved::Chat(
+            crate::ui_chat::ChatEventKind::Money,
+            UiError::args("LEVEL_UP_CHAR_POINTS", vec![FillArg::D(i64::from(n))]),
+        ),
         // Expanded before resolving; one still here waits on its template.
         QuestLine::RewardItems(_) => Resolved::Wait,
         QuestLine::Item(entry) => match items.template(entry, 0, commands) {

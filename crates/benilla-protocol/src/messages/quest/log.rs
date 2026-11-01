@@ -208,6 +208,35 @@ pub(in crate::messages) fn read_quest_update_add_item(r: &mut &[u8]) -> io::Resu
     Ok((read_u32_le(r)?, read_u32_le(r)?))
 }
 
+/// Read `SMSG_QUESTUPDATE_ADD_PVP_KILL` (`0x6d8030`): `u32 questId, u32 count`. The required
+/// count comes from the template (`+0x2098`); AzerothCore's trailing copy of it is left unread.
+pub(in crate::messages) fn read_quest_update_add_pvp_kill(r: &mut &[u8]) -> io::Result<(u32, u32)> {
+    let quest_id = read_u32_le(r)?;
+    let count = read_u32_le(r)?;
+    *r = &[];
+    Ok((quest_id, count))
+}
+
+/// Read `SMSG_QUEST_FORCE_REMOVE` (`0x6d8370`): the quest id.
+pub(in crate::messages) fn read_quest_force_remove(r: &mut &[u8]) -> io::Result<u32> {
+    read_u32_le(r)
+}
+
+/// Read `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE` (`0x5b5190`): a `u32` count, then the ids.
+pub(in crate::messages) fn read_quests_completed(r: &mut &[u8]) -> io::Result<Vec<u32>> {
+    let count = read_u32_le(r)?;
+    let mut ids = Vec::with_capacity((count as usize).min(r.len() / 4));
+    for _ in 0..count {
+        ids.push(read_u32_le(r)?);
+    }
+    Ok(ids)
+}
+
+/// Body of `CMSG_QUERY_QUESTS_COMPLETED`: empty.
+pub fn query_quests_completed() -> Vec<u8> {
+    Vec::new()
+}
+
 /// Read `SMSG_QUESTUPDATE_COMPLETE` (`0x6d8030`): the quest id, once every objective is done.
 pub(in crate::messages) fn read_quest_update_complete(r: &mut &[u8]) -> io::Result<u32> {
     read_u32_le(r)
@@ -420,5 +449,56 @@ mod tests {
             read_quest_update_add_item(&mut b2.as_slice()).unwrap(),
             (3000, 5)
         );
+    }
+
+    /// The three 12340 handles that had no arm: each now decodes, AzerothCore's trailing required
+    /// count on the PvP update included.
+    #[test]
+    fn pvp_kill_force_remove_and_completed_quests_decode() {
+        use crate::messages::{opcode, parse_server_with_tail, ServerPacket};
+
+        let mut b = Vec::new();
+        for v in [11_052, 3, 10] {
+            push_u32(&mut b, v);
+        }
+        let (p, tail) = parse_server_with_tail(opcode::SMSG_QUESTUPDATE_ADD_PVP_KILL, &b).unwrap();
+        assert!(matches!(
+            p,
+            ServerPacket::QuestUpdateAddPvpKill {
+                quest_id: 11_052,
+                count: 3
+            }
+        ));
+        assert_eq!(
+            tail, 0,
+            "the server's required count is consumed, not left as a tail"
+        );
+
+        let mut b = Vec::new();
+        push_u32(&mut b, 783);
+        let (p, tail) = parse_server_with_tail(opcode::SMSG_QUEST_FORCE_REMOVE, &b).unwrap();
+        assert!(matches!(
+            p,
+            ServerPacket::QuestForceRemove { quest_id: 783 }
+        ));
+        assert_eq!(tail, 0);
+
+        let mut b = Vec::new();
+        for v in [3, 7, 33, 783] {
+            push_u32(&mut b, v);
+        }
+        let (p, tail) =
+            parse_server_with_tail(opcode::SMSG_QUERY_QUESTS_COMPLETED_RESPONSE, &b).unwrap();
+        match p {
+            ServerPacket::QuestsCompleted(ids) => assert_eq!(ids, [7, 33, 783]),
+            other => panic!("expected QuestsCompleted, got {}", other.name()),
+        }
+        assert_eq!(tail, 0);
+        // A count past the body fails the read instead of inventing ids.
+        let mut b = Vec::new();
+        push_u32(&mut b, 2);
+        push_u32(&mut b, 7);
+        assert!(parse_server_with_tail(opcode::SMSG_QUERY_QUESTS_COMPLETED_RESPONSE, &b).is_err());
+        assert!(query_quests_completed().is_empty());
     }
 }

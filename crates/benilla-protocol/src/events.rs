@@ -972,6 +972,12 @@ pub enum SessionEvent {
     QuestObjectivesComplete { quest_id: u32 },
     /// The quest failed (`SMSG_QUESTUPDATE_FAILED`, or `_FAILEDTIMER` when `timed`).
     QuestFailed { quest_id: u32, timed: bool },
+    /// A player-kill objective's new count (`SMSG_QUESTUPDATE_ADD_PVP_KILL`), a line only.
+    QuestObjectivePvpKill { quest_id: u32, count: u32 },
+    /// The server removed a quest from the log (`SMSG_QUEST_FORCE_REMOVE`), a line only.
+    QuestForceRemoved { quest_id: u32 },
+    /// Every quest the character has turned in (`SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`).
+    QuestsCompleted(Vec<u32>),
     /// The log refused a new quest: no free slot (`SMSG_QUESTLOG_FULL`).
     QuestLogFull,
     /// A member's verdict on a quest we shared (`MSG_QUEST_PUSH_RESULT`). `member` is that

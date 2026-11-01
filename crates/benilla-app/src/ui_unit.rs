@@ -922,6 +922,13 @@ pub(crate) fn snapshot(
         group_leader: store.0.player_is_group_leader(),
         // The raw dword `PLAYER_FLAGS_CHANGED` fires on; 0 on a creature, as in the reference.
         player_flags: store.0.player_flags(),
+        // `IsUnitOnQuest`'s scan and the `UNIT_QUEST_LOG_CHANGED` watch's window, players only.
+        quest_ids: store.0.player_quest_ids(),
+        quest_log_stamp: if matches!(store.0.object_type(), Some(ObjectType::Player)) {
+            store.0.player_quest_log_stamp()
+        } else {
+            0
+        },
         // `PLAYER_FLAGS` AFK `0x2` and DND `0x4` (`0x60ccf3`, `0x60cdd1`); 0 on a creature.
         afk: store.0.player_flags() & 0x2 != 0,
         dnd: store.0.player_flags() & 0x4 != 0,
@@ -1173,6 +1180,13 @@ fn creature_type_word(t: u32) -> Option<&'static str> {
     })
 }
 
+/// The `PLAYER_QUEST_LOG` descriptor indexes, 25 slots of 5 fields.
+fn quest_log_window() -> std::ops::Range<u16> {
+    use benilla_protocol::messages::{PLAYER_QUEST_LOG_SLOTS, QUEST_LOG_SLOT_FIELDS};
+    let start = benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1;
+    start..start + QUEST_LOG_SLOT_FIELDS * u16::from(PLAYER_QUEST_LOG_SLOTS)
+}
+
 /// Diff a token's snapshot against the last pushed and fire the per-field `UNIT_*` events. The
 /// watch-bridge arms fire off `edges`, as the reference's create runs no notify pass; the rest fire
 /// on a token's first snapshot (`prev = None`) too, where the reference's behaviour is untraced.
@@ -1215,6 +1229,11 @@ pub(crate) fn fire_transitions(
     // fires it. No stock file registers it; addons do, to repaint the tapped state.
     if edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS) {
         script.fire_event("UNIT_DYNAMIC_FLAGS", vec![tok()]);
+    }
+    // `UNIT_QUEST_LOG_CHANGED`: one watch over every player's whole quest-log window (`0x60c280`,
+    // registered per player unit at byte `0x28`, `0x1f4` long), so any slot field fires it once.
+    if edges.moved_in(cur.guid, quest_log_window()) {
+        script.fire_event("UNIT_QUEST_LOG_CHANGED", vec![tok()]);
     }
     // The power events are named per resource (`UNIT_MANA`, `UNIT_MAXRAGE`, `UNIT_RUNIC_POWER`,
     // …), and `power_token` yields the suffix; runes have none.
@@ -2764,6 +2783,52 @@ mod tests {
             assert!(!want.contains_key(&race));
             assert_eq!(race_pvp_team(race), -1, "race {race} has no ChrRaces row");
         }
+    }
+
+    /// `0x60c280`: one watch over the whole `PLAYER_QUEST_LOG` window, so a frame moving several of
+    /// a member's slot fields fires `UNIT_QUEST_LOG_CHANGED` once, and a field outside it none.
+    #[test]
+    fn a_quest_log_field_fires_unit_quest_log_changed_once() {
+        use benilla_protocol::field::FIELD_PLAYER_QUEST_LOG_1_1 as QL;
+        let fired = |edges: &FieldEdges| -> Vec<String> {
+            let mut s = UiScript::new().unwrap();
+            s.run(
+                r#"
+                SEEN = {}
+                local f = CreateFrame("Frame")
+                f:RegisterEvent("UNIT_QUEST_LOG_CHANGED")
+                f:SetScript("OnEvent", function(self, event, arg1) table.insert(SEEN, event .. ":" .. arg1) end)
+            "#,
+            )
+            .unwrap();
+            let unit = UnitState {
+                exists: true,
+                has_object: true,
+                is_player: true,
+                guid: MATE,
+                ..Default::default()
+            };
+            let moved = UnitState {
+                quest_log_stamp: 1,
+                ..unit.clone()
+            };
+            fire_transitions(&mut s, "party1", Some(&unit), &moved, edges);
+            s.eval::<Vec<String>>("return SEEN").unwrap()
+        };
+        const MATE: u64 = 0x2;
+        assert_eq!(
+            fired(&FieldEdges::of(&[
+                (MATE, QL),
+                (MATE, QL + 2),
+                (MATE, QL + 124)
+            ])),
+            vec!["UNIT_QUEST_LOG_CHANGED:party1".to_string()]
+        );
+        assert!(fired(&FieldEdges::of(&[(MATE, QL + 125)])).is_empty());
+        assert!(
+            fired(&FieldEdges::of(&[(0x3, QL)])).is_empty(),
+            "another unit's edge"
+        );
     }
 
     /// A unit's first snapshot is no transition: the reference's create runs no notify pass.

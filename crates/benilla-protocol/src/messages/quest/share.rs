@@ -74,11 +74,13 @@ pub fn quest_confirm_accept(quest_id: u32) -> Vec<u8> {
     quest_id.to_le_bytes().to_vec()
 }
 
-/// Body of `MSG_QUEST_PUSH_RESULT` from the client (`Quest.cpp:73-77`): the sharer being answered,
-/// the `npcGuid` the shared DETAILS came under. vmangos ignores it (`QuestHandler.cpp:461-467`).
-pub fn quest_push_result(sharer: u64, msg: QuestShareMsg) -> Vec<u8> {
-    let mut b = Vec::with_capacity(9);
+/// Body of `MSG_QUEST_PUSH_RESULT` from the client: `u64 sharer, u32 quest, u8 verdict`, the
+/// decline at `0x58cab5`-`0x58cb13` and the busy reply at `0x6d0778`-`0x6d07c4`. 1.12.1 had no
+/// quest id, and AzerothCore reads it (`HandleQuestPushResult`).
+pub fn quest_push_result(sharer: u64, quest_id: u32, msg: QuestShareMsg) -> Vec<u8> {
+    let mut b = Vec::with_capacity(13);
     b.extend_from_slice(&sharer.to_le_bytes());
+    b.extend_from_slice(&quest_id.to_le_bytes());
     b.push(msg.0);
     b
 }
@@ -118,9 +120,9 @@ mod tests {
     }
 
     #[test]
-    fn push_result_body_is_guid_then_msg() {
-        let b = quest_push_result(0x0000_0000_0000_002A, QuestShareMsg::DECLINE_QUEST);
-        assert_eq!(b, vec![0x2A, 0, 0, 0, 0, 0, 0, 0, 3]);
+    fn push_result_body_is_guid_quest_then_msg() {
+        let b = quest_push_result(0x0000_0000_0000_002A, 0x0102, QuestShareMsg::DECLINE_QUEST);
+        assert_eq!(b, vec![0x2A, 0, 0, 0, 0, 0, 0, 0, 0x02, 0x01, 0, 0, 3]);
     }
 
     #[test]

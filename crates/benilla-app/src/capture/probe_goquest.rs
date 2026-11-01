@@ -1,9 +1,7 @@
-//! The GameObject-questgiver live probe (`WOW_PROBE_GOQUEST=1`). The reference asks about a
-//! quest-giving GameObject as it does a creature: the sweep sends `CMSG_QUESTGIVER_STATUS_QUERY`
-//! for any GameObject with `GAMEOBJECT_FLAGS` bit 2 whose reaction toward us is `> 1`. It then
-//! refuses the answer: its handler resolves the guid with typemask 8, a GameObject's `0x21` misses
-//! bit 3, and the packet dies. Real 1.12 captures carry no GameObject status at all, but vmangos
-//! answers one (`TYPEMASK_CREATURE_OR_GAMEOBJECT`, `QuestHandler.cpp:40`), so without the refusal a
+//! The GameObject-questgiver live probe (`WOW_PROBE_GOQUEST=1`). The reference's sweep sends
+//! `CMSG_QUESTGIVER_STATUS_MULTIPLE_QUERY`, and the server's answer names quest-giving GameObjects
+//! beside creatures. It then refuses each GameObject's entry: its handler resolves the guid with
+//! typemask 8, a GameObject's `0x21` misses bit 3, and the entry dies, so without the refusal a
 //! wanted poster would wear a `!`. The probe tells "asked and refused" from "never asked" through
 //! [`QuestGiver::refused_for`], keyed by guid since one drain answers several quest objects.
 //!

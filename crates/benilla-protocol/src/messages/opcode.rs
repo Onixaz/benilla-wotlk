@@ -613,6 +613,8 @@ pub const CMSG_QUESTGIVER_CHOOSE_REWARD: u16 = 0x018E; // 398
 pub const SMSG_QUESTGIVER_QUEST_INVALID: u16 = 0x018F; // 399
 pub const SMSG_QUESTGIVER_QUEST_COMPLETE: u16 = 0x0191; // 401
 pub const SMSG_QUESTGIVER_QUEST_FAILED: u16 = 0x0192; // 402
+/// 3.3.5a only: an empty body, the sweep's one status ask (`0x6dc5d6`, `0x6d50c0`).
+pub const CMSG_QUESTGIVER_STATUS_MULTIPLE_QUERY: u16 = 0x0417;
 /// 3.3.5a only: `u32 count`, then `{u64 guid, u8 status}` per NPC; 12340 routes it with 0x183.
 pub const SMSG_QUESTGIVER_STATUS_MULTIPLE: u16 = 0x0418;
 
@@ -624,6 +626,14 @@ pub const SMSG_QUESTUPDATE_FAILEDTIMER: u16 = 0x0197; // 407
 pub const SMSG_QUESTUPDATE_COMPLETE: u16 = 0x0198; // 408
 pub const SMSG_QUESTUPDATE_ADD_KILL: u16 = 0x0199; // 409
 pub const SMSG_QUESTUPDATE_ADD_ITEM: u16 = 0x019A; // 410
+/// `u32 questId, u32 count` (`0x6d8030`); AzerothCore appends the required count, unread.
+pub const SMSG_QUESTUPDATE_ADD_PVP_KILL: u16 = 0x046F; // 1135
+/// `u32 questId` (`0x6d8370`): the server dropped the quest from the log.
+pub const SMSG_QUEST_FORCE_REMOVE: u16 = 0x021E; // 542
+/// `QueryQuestsCompleted()` (`0x5b1bb0`): an empty body.
+pub const CMSG_QUERY_QUESTS_COMPLETED: u16 = 0x0500; // 1280
+/// `u32 count`, then that many `u32` quest ids (`0x5b5190`).
+pub const SMSG_QUERY_QUESTS_COMPLETED_RESPONSE: u16 = 0x0501; // 1281
 
 // Quest sharing. `MSG_QUEST_PUSH_RESULT` runs both ways: the receiver sends its verdict, and the
 // server relays every verdict, its own and the receiver's, to the sharer.

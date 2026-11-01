@@ -917,9 +917,11 @@ pub(crate) mod schedule_tests {
     ///   drain, against `finish_colliders`, as the other such drains pair; and
     ///   `ui_notices::feed_notices` against `feed_item_stats` and `feed_spell_tooltips` over
     ///   `Items`: it only reads templates.
+    /// - The quest progress lines (#638) add 1: `ui_quest_log::progress::announce_quest_progress`
+    ///   against `feed_item_stats` over `Items`: it only reads templates.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_863;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_864;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

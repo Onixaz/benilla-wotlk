@@ -669,11 +669,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // it.
     g.set(
         "GetQuestReward",
-        lua.create_function(|lua, choice: Option<u32>| {
+        lua.create_function(|lua, choice: Option<Value>| {
+            // A missing or non-number choice reads -1 (`0x58d62b`); with choices on the reward
+            // panel, one out of range raises (`0x58cff1`-`0x58cff9`, `0x58d65c`).
+            let index = match choice {
+                Some(v) => lua.coerce_number(v)?.map_or(-1, |n| n as i64 - 1),
+                None => -1,
+            };
             let mut model = crate::script::model_mut_of(lua);
-            model.quest_actions.push(super::QuestAction::Reward(
-                choice.unwrap_or(0).saturating_sub(1),
-            ));
+            let choices = model
+                .quest
+                .as_ref()
+                .filter(|q| q.panel == QuestPanel::Reward)
+                .map_or(0, |q| q.choices.len() as i64);
+            if choices > 0 && !(0..choices).contains(&index) {
+                return Err(mlua::Error::RuntimeError(
+                    "Invalid reward choice in GetQuestReward([choice])".into(),
+                ));
+            }
+            model
+                .quest_actions
+                .push(super::QuestAction::Reward(index.max(0) as u32));
             Ok(())
         })?,
     )?;
@@ -1002,6 +1018,33 @@ mod tests {
         assert_eq!(s.eval::<i64>("return GetNumQuestItems()").unwrap(), 1);
         assert_eq!(s.eval::<i64>("return GetQuestMoneyToGet()").unwrap(), 500);
         assert!(s.eval::<bool>("return IsQuestCompletable()").unwrap());
+    }
+
+    /// `0x58cff1`-`0x58cff9`: with choices on the reward panel, a choice out of range, or none,
+    /// raises; a panel with no choices takes any.
+    #[test]
+    fn get_quest_reward_refuses_a_choice_out_of_range() {
+        let mut s = UiScript::new().unwrap();
+        s.set_quest(Some(QuestState {
+            panel: QuestPanel::Reward,
+            choices: vec![QuestItemView::default(), QuestItemView::default()],
+            ..QuestState::default()
+        }));
+        for bad in ["GetQuestReward()", "GetQuestReward(0)", "GetQuestReward(3)"] {
+            let err = s.run(bad).unwrap_err().to_string();
+            assert!(
+                err.contains("Invalid reward choice in GetQuestReward([choice])"),
+                "{bad}: {err}"
+            );
+        }
+        s.run("GetQuestReward(2)").unwrap();
+        assert_eq!(s.take_quest_actions(), vec![QuestAction::Reward(1)]);
+        s.set_quest(Some(QuestState {
+            panel: QuestPanel::Reward,
+            ..QuestState::default()
+        }));
+        s.run("GetQuestReward()").unwrap();
+        assert_eq!(s.take_quest_actions(), vec![QuestAction::Reward(0)]);
     }
 
     #[test]

@@ -17,7 +17,6 @@ use bevy::prelude::*;
 use benilla_protocol::EntityKind;
 
 use crate::net::{ClientCommand, GuidIndex, NetCommands, NetEntity, ObjectStore, SelfPlayer};
-use crate::target::cursor_mode::go_reaction;
 use crate::target::ring::Factions;
 use crate::ui_quest::QuestGiver;
 
@@ -26,28 +25,26 @@ const NPC_FLAG_QUESTGIVER: u32 = 0x2;
 /// `UNIT_NPC_FLAGS` flightmaster service bit, the other half of the per-unit refresh's re-gate and
 /// the gate on the only `0x1aa` sender.
 const NPC_FLAG_FLIGHTMASTER: u32 = crate::target::cursor_mode::npc_flags::FLIGHTMASTER;
-/// `GAMEOBJECT_FLAGS` bit 2, the sweep's whole GameObject gate (so mask `0x4`, not the unit leg's
-/// `0x2`). The name is vmangos's (`GameObjectDefines.h:76`).
-const GO_FLAG_INTERACT_COND: u32 = 0x4;
 
 /// Asks the dialog status of every questgiver-flagged creature, and re-asks when the answer could
 /// have changed. The reference sweeps every visible object from its self-player field watches and
-/// four packet handlers.
+/// packet handlers.
 ///
 /// - Sweep: [`self_generation`] (the field watches) XOR [`QuestGiver::reask_epoch`] (the packet
-///   handlers); a changed generation is a sweep.
+///   handlers), or your revive or reaction inputs moving; a changed generation is a sweep, which
+///   sends one `CMSG_QUESTGIVER_STATUS_MULTIPLE_QUERY` (`0x6d50c0`), whose answer (`0x418`)
+///   re-marks every giver, and no status query by guid. The revive and reaction edges first walk
+///   every visible object (`0x6dc5a0` -> `0x6d51f0`): one we cannot interact with (Hated or
+///   Hostile here) is torn down, and a flight master asked its taxi status. The teardown runs on
+///   every sweep here, as a hostile unit can hold no status.
 /// - Per unit: asked from the create path and when its service bits or reaction inputs move, our
 ///   [`unit_ask_key`]. The entry goes when the guid leaves [`GuidIndex`], as the reference's cache
 ///   at `unit+0xcb8` dies with the object.
-/// - GameObject: asked only on a sweep, gated on [`GO_FLAG_INTERACT_COND`] and a reaction toward us
-///   above 1 ([`go_reaction`]). Its constructor calls no sender, so there is no query at first
-///   sight, and with no status slot it is never torn down.
+/// - GameObject: never asked by guid: its constructor calls no sender, and the sweep's answer
+///   covers it. A GameObject's answer dies at the typemask-8 lookup anyway.
 ///
-/// The light sweep's callback sends `0x182` for a questgiver and tears down any Hated or Hostile
-/// creature, questgiver or not, never on the flag alone. A flag change reaches the per-unit refresh
-/// through the `UNIT_NPC_FLAGS` watch, which tears down first, then re-gates on reaction. The full
-/// sweep (your revive, your own reaction inputs) runs the per-unit refresh on every creature:
-/// `full` below.
+/// A flag change reaches the per-unit refresh through the `UNIT_NPC_FLAGS` watch, which tears
+/// down first, then re-gates on reaction.
 ///
 /// Not covered: the reference's `ITEM` watch also sweeps when an item moves between containers;
 /// with no item objects, only our equipment and bag guids are folded. Per unit, its reaction
@@ -95,7 +92,7 @@ pub(super) fn query_statuses(
     if my_faction.is_some() {
         state.my_faction = my_faction;
     }
-    // A sweep frame, the only time a GameObject is asked about.
+    // A sweep frame.
     let swept = state.generation != generation || full;
     state.generation = generation;
     // A guid that left the world drops its ask key and cached status. A sweep never clears the map:
@@ -144,49 +141,38 @@ pub(super) fn query_statuses(
                 }
                 let key = unit_ask_key(&obj.0);
                 let key_moved = state.asked.insert(guid.0, key) != Some(key);
-                // The per-unit refresh, from the unit's field watches, its create path and the full
-                // sweep: tear down first, then re-gate. An escort giver's flag drop, with the
-                // quest-log write, moves the ask key and lands here.
-                let per_unit = key_moved || full;
-                if per_unit {
-                    tear_down(&mut quest, &mut ecs);
-                }
-                // The re-gate, the reaction being above 1. `0x182` goes out from the per-unit
-                // refresh and from the light sweep, so every sweep re-asks; `0x1aa` has one sender,
-                // the per-unit refresh, so never on a light sweep.
+                // The per-unit refresh, from the unit's field watches and its create path: tear
+                // down first, then re-gate. An escort giver's flag drop, with the quest-log write,
+                // moves the ask key and lands here.
                 let flags = obj.0.unit_npc_flags();
-                if (per_unit || swept) && flags & NPC_FLAG_QUESTGIVER != 0 {
-                    let _ = commands
-                        .0
-                        .send(ClientCommand::QuestgiverStatusQuery { npc: guid.0 });
+                if key_moved {
+                    tear_down(&mut quest, &mut ecs);
+                    if flags & NPC_FLAG_QUESTGIVER != 0 {
+                        let _ = commands
+                            .0
+                            .send(ClientCommand::QuestgiverStatusQuery { npc: guid.0 });
+                    }
                 }
-                if per_unit && flags & NPC_FLAG_FLIGHTMASTER != 0 {
+                // The taxi ask (`0x6d5130`) goes out from the per-unit path and from the walk the
+                // revive and reaction edges run (`0x6dc5a0`); the field and packet triggers send
+                // the bare query (`0x6d50c0`), with no walk.
+                if (key_moved || full) && flags & NPC_FLAG_FLIGHTMASTER != 0 {
                     let _ = commands
                         .0
                         .send(ClientCommand::TaxiNodeStatusQuery { guid: guid.0 });
                 }
             }
-            // `TYPEMASK_GAMEOBJECT`: sweep only, no ask key, no teardown.
-            EntityKind::GameObject if swept => {
-                if obj.0.gameobject_flags() & GO_FLAG_INTERACT_COND == 0 {
-                    continue;
-                }
-                // A reaction toward us above 1: Unfriendly and Neutral pass, a faction-less object
-                // reads Neutral, and `None` (no catalog yet) passes, as in the cursor's gate.
-                let reaction = go_reaction(
-                    factions.as_deref(),
-                    obj.0.gameobject_faction(),
-                    Some(&store),
-                );
-                if !reaction.is_none_or(|r| r > 1) {
-                    continue;
-                }
-                let _ = commands
-                    .0
-                    .send(ClientCommand::QuestgiverStatusQuery { npc: guid.0 });
-            }
+            // `TYPEMASK_GAMEOBJECT`: the sweep's interact test alone; with no status slot here
+            // there is nothing to tear down, and the answer covers the rest.
+            EntityKind::GameObject => {}
             _ => {}
         }
+    }
+    // The sweep's one query, after the walk (`0x6dc5c7`).
+    if swept {
+        let _ = commands
+            .0
+            .send(ClientCommand::QuestgiverStatusMultipleQuery);
     }
 }
 
@@ -232,6 +218,10 @@ fn self_generation(fields: &benilla_protocol::ObjectFields) -> u64 {
         if let Some(guid) = fields.player_inv_slot(i) {
             fold(guid);
         }
+    }
+    // The daily-quest ids, which the reset zeroes (`0x6d9f20`, watched at `0x6e52fd`).
+    for id in fields.player_daily_quests() {
+        fold(u64::from(id));
     }
     h
 }
@@ -298,26 +288,34 @@ mod tests {
             app.world_mut().resource_mut::<GuidIndex>().0.insert(NPC, e);
             e
         };
-        let asked = |app: &mut App| -> usize {
+        let asked = |app: &mut App| -> (usize, usize) {
             app.update();
-            rx.try_iter()
-                .filter(
-                    |c| matches!(c, ClientCommand::QuestgiverStatusQuery { npc } if *npc == NPC),
-                )
-                .count()
+            sent(&rx, NPC)
         };
 
         let npc = spawn_npc(&mut app);
-        assert_eq!(asked(&mut app), 1, "asked once when it comes into view");
-        assert_eq!(asked(&mut app), 0, "not again while nothing has changed");
+        assert_eq!(
+            asked(&mut app),
+            (1, 1),
+            "asked by guid when it comes into view; a fresh world's first frame is a sweep"
+        );
+        assert_eq!(
+            asked(&mut app),
+            (0, 0),
+            "not again while nothing has changed"
+        );
 
         // The ding: `SatisfyQuestLevel` made the answer UNAVAILABLE, so the whole set is re-asked.
         *app.world_mut()
             .entity_mut(me)
             .get_mut::<ObjectStore>()
             .unwrap() = ObjectStore(ObjectFields::from_pairs(&[(FIELD_LEVEL, 6)]));
-        assert_eq!(asked(&mut app), 1, "our level changed — re-ask everyone");
-        assert_eq!(asked(&mut app), 0, "…once");
+        assert_eq!(
+            asked(&mut app),
+            (0, 1),
+            "our level changed — one multiple query re-asks everyone, none by guid"
+        );
+        assert_eq!(asked(&mut app), (0, 0), "…once");
 
         // Out of view: the cached status dies with the object, as the reference's does.
         app.world_mut()
@@ -325,14 +323,14 @@ mod tests {
             .set_status(NPC, 5);
         app.world_mut().resource_mut::<GuidIndex>().0.remove(&NPC);
         app.world_mut().entity_mut(npc).despawn();
-        assert_eq!(asked(&mut app), 0, "gone: nothing to ask");
+        assert_eq!(asked(&mut app), (0, 0), "gone: nothing to ask");
         assert!(
             app.world().resource::<QuestGiver>().status(NPC).is_none(),
             "the cached status goes with the object"
         );
 
         let npc = spawn_npc(&mut app);
-        assert_eq!(asked(&mut app), 1, "back in view — asked afresh");
+        assert_eq!(asked(&mut app), (1, 0), "back in view — asked afresh");
 
         // The flag goes off: drop the answer, which drops the marker with it.
         app.world_mut()
@@ -344,7 +342,7 @@ mod tests {
             .unwrap() = ObjectStore(ObjectFields::from_pairs(&[(FIELD_NPC_FLAGS, 0x1)]));
         assert_eq!(
             asked(&mut app),
-            0,
+            (0, 0),
             "no longer a questgiver — nothing to ask"
         );
         assert!(
@@ -451,10 +449,11 @@ mod tests {
         );
     }
 
-    /// The light sweep (death among its triggers) sends without tearing down; the full sweep (your
-    /// revive, your own reaction inputs) tears down first, in the per-unit refresh.
+    /// Every sweep, a packet's, death, revive or our own reaction moving, sends one multiple query
+    /// and no query by guid, and leaves an interactable giver's marker up for the answer to
+    /// replace (`0x6d50c0`, `0x6dc5a0` -> `0x6d51f0`).
     #[test]
-    fn a_light_sweep_re_asks_but_only_a_revive_tears_the_marker_down_first() {
+    fn every_sweep_sends_one_multiple_query_and_keeps_the_marker() {
         use crate::net::{Guid, NetEntity};
         use benilla_protocol::{EntityKind, ObjectFields};
 
@@ -500,13 +499,9 @@ mod tests {
             .resource_mut::<GuidIndex>()
             .0
             .insert(NPC, npc);
-        let asked = |app: &mut App| -> usize {
+        let asked = |app: &mut App| -> (usize, usize) {
             app.update();
-            rx.try_iter()
-                .filter(
-                    |c| matches!(c, ClientCommand::QuestgiverStatusQuery { npc } if *npc == NPC),
-                )
-                .count()
+            sent(&rx, NPC)
         };
         let set_self = |app: &mut App, pairs: &[(u16, u32)]| {
             *app.world_mut()
@@ -521,43 +516,45 @@ mod tests {
         };
         let held = |app: &App| app.world().resource::<QuestGiver>().status(NPC);
 
-        assert_eq!(asked(&mut app), 1, "the create-path query");
+        assert_eq!(
+            asked(&mut app),
+            (1, 1),
+            "the create-path query, on the first sweep"
+        );
         restore(&mut app);
 
-        // A packet's light sweep (a turn-in, a reputation or roster change): the `!` stays up.
+        // A packet's sweep (a turn-in, a reputation or roster change): the `!` stays up.
         app.world_mut().resource_mut::<QuestGiver>().bump_reask();
-        assert_eq!(asked(&mut app), 1, "a light sweep re-asks");
+        assert_eq!(asked(&mut app), (0, 1), "a packet re-asks everyone at once");
         assert_eq!(held(&app), Some(5), "…and does NOT tear the marker down");
 
-        // Death, the `>0 → ≤0` edge, is a light sweep.
+        // Death, the `>0 → ≤0` edge.
         set_self(
             &mut app,
             &[(FIELD_LEVEL, 5), (FIELD_HEALTH, 0), (FIELD_FACTION, 1)],
         );
-        assert_eq!(asked(&mut app), 1, "death re-asks");
-        assert_eq!(held(&app), Some(5), "…and is still a light sweep");
+        assert_eq!(asked(&mut app), (0, 1), "death re-asks");
+        assert_eq!(held(&app), Some(5), "…keeping the marker");
 
-        // Revive, the `≤0 → >0` edge, is the full sweep.
+        // Revive, the `≤0 → >0` edge, walks the visible objects first; an interactable giver keeps
+        // its marker.
         set_self(
             &mut app,
             &[(FIELD_LEVEL, 5), (FIELD_HEALTH, 100), (FIELD_FACTION, 1)],
         );
-        assert_eq!(asked(&mut app), 1, "revive re-asks");
+        assert_eq!(asked(&mut app), (0, 1), "revive re-asks");
         assert_eq!(
             held(&app),
-            None,
-            "…and tears every creature's marker down first"
+            Some(5),
+            "…and the walk tears down only the hostile"
         );
 
-        // Our own faction moving, the full sweep's other trigger, is outside the generation, so
-        // `full` alone raises the sweep.
-        restore(&mut app);
+        // Our own faction moving is outside the generation, so `full` alone raises the sweep.
         set_self(
             &mut app,
             &[(FIELD_LEVEL, 5), (FIELD_HEALTH, 100), (FIELD_FACTION, 2)],
         );
-        assert_eq!(asked(&mut app), 1, "our own faction change sweeps");
-        assert_eq!(held(&app), None, "…fully");
+        assert_eq!(asked(&mut app), (0, 1), "our own faction change sweeps");
     }
 
     /// The sweep tears down on hostility, the flag deciding only the send; on the real
@@ -633,7 +630,7 @@ mod tests {
         assert_eq!(
             drain(&rx),
             vec![FRIENDLY],
-            "on sight, only the non-hostile questgiver is asked about"
+            "on sight, only the non-hostile questgiver is asked about by guid"
         );
 
         // Now both wear a marker, and a sweep runs.
@@ -646,10 +643,9 @@ mod tests {
         app.update();
         let asked = drain(&rx);
         let quest = app.world().resource::<QuestGiver>();
-        assert_eq!(
-            asked,
-            vec![FRIENDLY],
-            "and the sweep asks about the same one — {asked:x?}"
+        assert!(
+            asked.is_empty(),
+            "the sweep asks nobody by guid: its one multiple query covers them — {asked:x?}"
         );
         assert_eq!(
             quest.status(FRIENDLY),
@@ -663,9 +659,9 @@ mod tests {
         );
     }
 
-    /// `CMSG_TAXINODE_STATUS_QUERY`'s one sender is the per-unit refresh: on sight, on the unit's
-    /// own key moving and on a full sweep, never a light one and never on mouseover (that callback
-    /// belongs to a seeder nothing calls). Its clear zeroes both markers.
+    /// `CMSG_TAXINODE_STATUS_QUERY` goes out from the per-unit refresh (on sight, on the unit's own
+    /// key moving) and from the revive and reaction walk (`0x6d51f0`), never from a field or
+    /// packet sweep, which sends the bare multiple query. The unit's clear zeroes both markers.
     #[test]
     fn a_flight_master_is_asked_by_the_per_unit_path_only_and_loses_its_green_with_the_gold() {
         use crate::net::{Guid, NetEntity};
@@ -746,18 +742,22 @@ mod tests {
         app.update();
         assert_eq!(drain(&rx), (vec![], vec![]), "then quiet");
 
-        // A light sweep re-asks the questgiver; the reference never tests bit `0x8`.
+        // A packet's sweep asks nobody by guid, and not the flight master.
         app.world_mut().resource_mut::<QuestGiver>().bump_reask();
         app.update();
         let (taxi, giver) = drain(&rx);
-        assert_eq!(giver, vec![GIVER], "a light sweep re-asks the questgiver");
+        assert_eq!(
+            giver,
+            vec![] as Vec<u64>,
+            "the multiple query covers the questgiver"
+        );
         assert_eq!(
             taxi,
             vec![] as Vec<u64>,
-            "…and never the flight master: 0x1aa has one sender site and it is not in the sweep"
+            "…and the bare query walks no unit, so no taxi ask"
         );
 
-        // With the green marker up, a full sweep (a revive) takes it down and re-asks.
+        // With the green marker up, death and revive walk the visible objects.
         app.world_mut()
             .entity_mut(fm)
             .insert(FlightMasterStatus { known: false });
@@ -770,24 +770,19 @@ mod tests {
                 (FIELD_HEALTH, hp),
             ]));
         };
-        set_self(&mut app, 0); // death: a light sweep
+        set_self(&mut app, 0); // death: a field watch, the bare query
         app.update();
         assert_eq!(
             drain(&rx).0,
             vec![] as Vec<u64>,
             "death does not re-ask taxi"
         );
-        assert!(
-            app.world().entity(fm).get::<FlightMasterStatus>().is_some(),
-            "…and a light sweep leaves the green marker up"
-        );
-
-        set_self(&mut app, 100); // revive: a full sweep
+        set_self(&mut app, 100); // revive: the walk
         app.update();
         assert_eq!(drain(&rx).0, vec![FM], "a revive re-asks the flight master");
         assert!(
-            app.world().entity(fm).get::<FlightMasterStatus>().is_none(),
-            "…after tearing its green marker down first"
+            app.world().entity(fm).get::<FlightMasterStatus>().is_some(),
+            "…and an interactable one keeps its green marker for the answer"
         );
 
         // And its own key moving is a per-unit refresh too: the flightmaster bit going off takes
@@ -811,10 +806,10 @@ mod tests {
         );
     }
 
-    /// A GameObject's only send sites sit in sweep callbacks: no query at first sight, where the
-    /// unit control asks, and one per sweep.
+    /// A GameObject is never asked by guid: no query at first sight, where the unit control asks,
+    /// and none on a sweep, whose multiple query covers it.
     #[test]
-    fn a_gameobject_is_asked_on_a_sweep_and_never_at_first_sight() {
+    fn a_gameobject_is_never_asked_by_guid() {
         use crate::net::{Guid, NetEntity};
         use benilla_protocol::ObjectFields;
 
@@ -909,33 +904,9 @@ mod tests {
         app.world_mut().resource_mut::<QuestGiver>().bump_reask();
         let swept = asked(&mut app);
         assert!(
-            swept.contains(&POSTER),
-            "the sweep asks about the poster — {swept:x?}"
-        );
-        assert!(
-            swept.contains(&NPC),
-            "and re-asks the creature, as it always did — {swept:x?}"
-        );
-        assert!(
-            !swept.contains(&DOOR),
-            "but never the GameObject without GAMEOBJECT_FLAGS bit 2 — {swept:x?}"
-        );
-        assert_eq!(
-            swept.iter().filter(|g| **g == POSTER).count(),
-            1,
-            "exactly once per sweep"
-        );
-
-        assert!(
-            asked(&mut app).is_empty(),
-            "between sweeps, nothing — a GameObject has no per-object key to re-ask on"
-        );
-
-        // Not one-shot: the reference keeps no per-GameObject memo of having asked.
-        app.world_mut().resource_mut::<QuestGiver>().bump_reask();
-        assert!(
-            asked(&mut app).contains(&POSTER),
-            "and again on the next sweep"
+            swept.is_empty(),
+            "the sweep asks no object by guid, the poster, the door and the creature alike — \
+             {swept:x?}"
         );
     }
 
@@ -1002,13 +973,9 @@ mod tests {
             .0
             .insert(NPC, npc_e);
 
-        let asked = |app: &mut App| -> usize {
+        let asked = |app: &mut App| -> (usize, usize) {
             app.update();
-            rx.try_iter()
-                .filter(
-                    |c| matches!(c, ClientCommand::QuestgiverStatusQuery { npc } if *npc == NPC),
-                )
-                .count()
+            sent(&rx, NPC)
         };
         // One field replaced, the rest kept: a values-update delta's shape.
         let set_self = |app: &mut App, field: u16, value: u32| {
@@ -1023,8 +990,12 @@ mod tests {
                 .unwrap() = ObjectStore(ObjectFields::from_pairs(&pairs));
         };
 
-        assert_eq!(asked(&mut app), 1, "the first sight");
-        assert_eq!(asked(&mut app), 0, "then quiet");
+        assert_eq!(
+            asked(&mut app),
+            (1, 1),
+            "the first sight, on the first sweep"
+        );
+        assert_eq!(asked(&mut app), (0, 0), "then quiet");
 
         for (label, field, value) in [
             ("death", FIELD_HEALTH, 0u32), // the alive bit, not the raw value
@@ -1034,14 +1005,14 @@ mod tests {
             ("an equipped item", FIELD_INV_SLOT_0, 0xbbbb),
         ] {
             set_self(&mut app, field, value);
-            assert_eq!(asked(&mut app), 1, "{label} changed — re-ask");
-            assert_eq!(asked(&mut app), 0, "{label}: exactly once");
+            assert_eq!(asked(&mut app), (0, 1), "{label} changed — re-ask everyone");
+            assert_eq!(asked(&mut app), (0, 0), "{label}: exactly once");
         }
 
         // The packet half: reputation, the group roster and the quest packets all land here.
         app.world_mut().resource_mut::<QuestGiver>().bump_reask();
-        assert_eq!(asked(&mut app), 1, "a swept packet — re-ask");
-        assert_eq!(asked(&mut app), 0, "exactly once");
+        assert_eq!(asked(&mut app), (0, 1), "a swept packet — re-ask everyone");
+        assert_eq!(asked(&mut app), (0, 0), "exactly once");
 
         // Per unit: its flightmaster bit, then its faction template.
         let set_npc = |app: &mut App, pairs: &[(u16, u32)]| {
@@ -1057,8 +1028,12 @@ mod tests {
                 (FIELD_FACTION, 35),
             ],
         );
-        assert_eq!(asked(&mut app), 1, "its flightmaster bit — re-ask that one");
-        assert_eq!(asked(&mut app), 0, "exactly once");
+        assert_eq!(
+            asked(&mut app),
+            (1, 0),
+            "its flightmaster bit — re-ask that one"
+        );
+        assert_eq!(asked(&mut app), (0, 0), "exactly once");
 
         set_npc(
             &mut app,
@@ -1067,7 +1042,34 @@ mod tests {
                 (FIELD_FACTION, 12),
             ],
         );
-        assert_eq!(asked(&mut app), 1, "its faction template — re-ask that one");
-        assert_eq!(asked(&mut app), 0, "exactly once");
+        assert_eq!(
+            asked(&mut app),
+            (1, 0),
+            "its faction template — re-ask that one"
+        );
+        assert_eq!(asked(&mut app), (0, 0), "exactly once");
+    }
+
+    /// A frame's asks: the `0x182`s naming `npc`, and the sweep's `0x417`s.
+    fn sent(rx: &crossbeam_channel::Receiver<ClientCommand>, npc: u64) -> (usize, usize) {
+        let (mut by_guid, mut multiple) = (0, 0);
+        for c in rx.try_iter() {
+            match c {
+                ClientCommand::QuestgiverStatusQuery { npc: n } if n == npc => by_guid += 1,
+                ClientCommand::QuestgiverStatusMultipleQuery => multiple += 1,
+                _ => {}
+            }
+        }
+        (by_guid, multiple)
+    }
+
+    /// The day's daily ids are a field watch: the reset zeroing them re-asks (`0x6d9f20`).
+    #[test]
+    fn the_daily_reset_re_asks_everyone() {
+        let base = ObjectStore::default();
+        let mut daily = benilla_protocol::ObjectFields::from_pairs(&[(1407, 1234)]);
+        assert_ne!(self_generation(&base.0), self_generation(&daily));
+        daily = benilla_protocol::ObjectFields::from_pairs(&[(1407, 0)]);
+        assert_eq!(self_generation(&base.0), self_generation(&daily));
     }
 }

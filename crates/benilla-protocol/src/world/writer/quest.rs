@@ -112,12 +112,31 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_QUESTGIVER_STATUS_MULTIPLE_QUERY`: every visible giver's status, answered by
+    /// `SMSG_QUESTGIVER_STATUS_MULTIPLE`.
+    pub fn questgiver_status_multiple_query(&mut self) -> Result<()> {
+        self.send(opcode::CMSG_QUESTGIVER_STATUS_MULTIPLE_QUERY, &[])
+    }
+
+    /// `CMSG_QUERY_QUESTS_COMPLETED`, answered by the turned-in quest ids.
+    pub fn query_quests_completed(&mut self) -> Result<()> {
+        self.send(
+            opcode::CMSG_QUERY_QUESTS_COMPLETED,
+            &messages::query_quests_completed(),
+        )
+    }
+
     /// `MSG_QUEST_PUSH_RESULT`: our answer to a shared quest, relayed to `sharer`, the player guid
     /// the shared details panel arrived under.
-    pub fn quest_push_result(&mut self, sharer: u64, msg: messages::QuestShareMsg) -> Result<()> {
+    pub fn quest_push_result(
+        &mut self,
+        sharer: u64,
+        quest_id: u32,
+        msg: messages::QuestShareMsg,
+    ) -> Result<()> {
         self.send(
             opcode::MSG_QUEST_PUSH_RESULT,
-            &messages::quest_push_result(sharer, msg),
+            &messages::quest_push_result(sharer, quest_id, msg),
         )
     }
 }

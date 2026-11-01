@@ -1,7 +1,10 @@
 //! The quest log's app side: reads the player's `PLAYER_QUEST_LOG` slots every frame, resolves
 //! each quest through the `SMSG_QUEST_QUERY_RESPONSE` cache and pushes the log, every quest with
-//! its objective lines, firing `QUEST_LOG_UPDATE` on a change. An advanced objective also toasts
-//! its line and fires `QUEST_WATCH_UPDATE`. Abandons, shares and header folds drain from here.
+//! its objective lines, firing `QUEST_LOG_UPDATE` on a change. The progress lines and
+//! `QUEST_WATCH_UPDATE` come from the packets ([`progress`]). Abandons, shares and header folds
+//! drain from here.
+
+mod progress;
 
 use crate::ui_items::{count_of, InventoryScope};
 use std::collections::HashSet;
@@ -15,7 +18,7 @@ use benilla_protocol::messages::{
 use benilla_protocol::ObjectFields;
 use benilla_ui::script::{
     QuestItemView, QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogState,
-    ScriptValue, UiScript,
+    UiScript,
 };
 use benilla_ui::strings::{fill, Arg};
 
@@ -48,6 +51,12 @@ pub(crate) struct QuestLog {
     collapsed: HashSet<String>,
     /// Per pushed entry, the header's title, `None` for a quest: the fold drain's index map.
     header_keys: Vec<Option<String>>,
+    /// The progress packets not yet announced, in arrival order.
+    notices: Vec<progress::QuestNotice>,
+    /// Quests a `_FAILEDTIMER` marked expired (`0x5e5840`), until they leave the log.
+    expired: HashSet<u32>,
+    /// The last `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`, not yet pushed.
+    completed_answer: Option<Vec<u32>>,
 }
 
 /// `questcache.wdb`.
@@ -80,6 +89,11 @@ impl QuestLog {
         })
     }
 
+    /// Whether a `_FAILEDTIMER` marked `quest_id` expired (`0x5dee60`).
+    pub(crate) fn is_expired(&self, quest_id: u32) -> bool {
+        self.expired.contains(&quest_id)
+    }
+
     /// Whether the server answered `quest_id` as unknown, not still pending.
     pub(crate) fn template_answered_unknown(&self, quest_id: u32) -> bool {
         self.templates.answered_unknown(quest_id)
@@ -96,6 +110,9 @@ impl QuestLog {
         self.row_slots.clear();
         self.collapsed.clear();
         self.header_keys.clear();
+        self.notices.clear();
+        self.expired.clear();
+        self.completed_answer = None;
     }
 }
 
@@ -138,6 +155,7 @@ pub(crate) struct UiQuestLogPlugin;
 impl Plugin for UiQuestLogPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
+        progress::register(app);
         crate::query_cache::register::<QuestLog>(app);
         app.init_resource::<QuestLog>()
             .add_systems(
@@ -152,6 +170,9 @@ impl Plugin for UiQuestLogPlugin {
             .add_systems(
                 Update,
                 (
+                    progress::announce_quest_progress
+                        .in_set(UnitFeed)
+                        .before(feed_quest_log),
                     feed_quest_log.in_set(UnitFeed),
                     // Before the script tick, so `QuestTimerFrame` reads this frame's clock.
                     feed_server_clock.in_set(UiFeed),
@@ -203,12 +224,14 @@ fn creature_line(
     let req = obj.required_count;
     let is_go = obj.creature_or_go & GO_OBJECTIVE_BIT != 0;
     let cur = u32::from(counter).min(req);
-    // A GameObject takes `QUEST_OBJECTS_FOUND` on both legs; with no GameObject name cache here,
-    // one without an override wears the placeholder.
+    // A GameObject takes `QUEST_OBJECTS_FOUND` on both legs, named from the GameObject cache.
     let (key, name) = if !obj.text.is_empty() {
         ("QUEST_OBJECTS_FOUND", obj.text.as_str())
     } else if is_go {
-        ("QUEST_OBJECTS_FOUND", NAME_PLACEHOLDER)
+        (
+            "QUEST_OBJECTS_FOUND",
+            creature_name.unwrap_or(NAME_PLACEHOLDER),
+        )
     } else {
         (
             "QUEST_MONSTERS_KILLED",
@@ -253,6 +276,15 @@ fn item_line(
     })
 }
 
+/// `GetQuestLevel` (`0x5e0d20`): a level -1 quest, a holiday's, reads the player's level.
+fn quest_level(t: &QuestTemplate, player_level: u32) -> u32 {
+    if t.level == u32::MAX {
+        player_level
+    } else {
+        t.level
+    }
+}
+
 /// The template's `money` as (required, reward): a negative value is demanded at turn-in.
 fn money_split(money: i32) -> (u32, u32) {
     if money < 0 {
@@ -294,10 +326,42 @@ fn resolve_template_item(
     }
 }
 
+/// What the leaderboard's later lines read beside the template: the GameObject names, the
+/// reputation objective, the player's sex for its standing labels, and the money check of the
+/// completed quest's `log` line.
+#[derive(Default)]
+pub(crate) struct ObjectiveExtras<'a> {
+    pub(crate) gos: Option<&'a crate::go_templates::GameObjectTemplates>,
+    /// `(faction name, current rank, needed rank, met)`, ranks 0..=7.
+    pub(crate) reputation: Option<(String, u8, u8, bool)>,
+    pub(crate) female: bool,
+    /// The player's coinage, for a quest that costs money.
+    pub(crate) money: u64,
+    /// The objectives text through the quest text parser, the `log` line.
+    pub(crate) objectives_text: String,
+}
+
+/// A standing to its rank 0..=7, hated to exalted, on the leaderboard's thresholds (`0x5e1460`).
+pub(crate) fn standing_rank(standing: i32) -> u8 {
+    match standing {
+        42000.. => 7,
+        21000.. => 6,
+        9000.. => 5,
+        3000.. => 4,
+        0.. => 3,
+        -3000.. => 2,
+        -6000.. => 1,
+        _ => 0,
+    }
+}
+
 /// One quest's objective lines, for every quest, as the watch frame reads any quest's. The
-/// leaderboard (`0x5e1460`) walks `event`, the four creature or GameObject rows, the six required
-/// items, the intermediate drops, then players slain. The `event`, drop and player lines are not
-/// built.
+/// leaderboard (`0x5e1460`) walks `event` (the end text), the four creature or GameObject rows,
+/// the six required items, then one `player` line, else one `reputation` line; a quest with none
+/// of these that is done reads its objectives text as a `log` line. Deviation: the intermediate
+/// drops, which the reference walks before the player line while the quest is incomplete, are not
+/// listed: `GetNumQuestLeaderBoards` (`0x5e1300`) never counts them.
+#[allow(clippy::too_many_arguments)] // the leaderboard's whole input set
 fn build_objectives(
     template: &QuestTemplate,
     log_slot: &QuestLogSlot,
@@ -306,22 +370,36 @@ fn build_objectives(
     items: &Items,
     names: &NameCache,
     commands: &NetCommands,
-    // The VM's own `GlobalStrings.lua`, for the leaderboard's three format keys.
+    // The VM's own `GlobalStrings.lua`, for the leaderboard's format keys.
     get: &dyn Fn(&str) -> Option<String>,
+    extras: &ObjectiveExtras<'_>,
 ) -> Vec<QuestLogObjectiveView> {
     let mut objectives = Vec::with_capacity(template.objectives.len());
+    // The end text, verbatim, done when the slot's state is.
+    if !template.end_text.is_empty() {
+        let done = log_slot.state & quest_slot_state::COMPLETE != 0;
+        objectives.push(QuestLogObjectiveView {
+            text: template.end_text.clone(),
+            kind: "event".into(),
+            finished: done,
+            cur: u32::from(done),
+            req: 1,
+        });
+    }
     // Creature or GameObject: the counter index is the array index, empty elements included.
     for (i, obj) in template.objectives.iter().enumerate() {
         let is_go = obj.creature_or_go & GO_OBJECTIVE_BIT != 0;
-        let creature_name = (obj.creature_or_go != 0 && !is_go)
-            .then(|| {
-                names
-                    .resolve_creature(obj.creature_or_go, 0, commands)
-                    .map(str::to_string)
-            })
-            .flatten();
-        if let Some(line) = creature_line(obj, log_slot.counters[i], creature_name.as_deref(), get)
-        {
+        let name = match (obj.creature_or_go, is_go) {
+            (0, _) => None,
+            (entry, false) => names
+                .resolve_creature(entry, 0, commands)
+                .map(str::to_string),
+            (entry, true) => extras
+                .gos
+                .and_then(|g| g.name_by_entry(entry & !GO_OBJECTIVE_BIT, commands))
+                .map(str::to_string),
+        };
+        if let Some(line) = creature_line(obj, log_slot.counters[i], name.as_deref(), get) {
             objectives.push(line);
         }
     }
@@ -340,6 +418,64 @@ fn build_objectives(
             get,
         ) {
             objectives.push(line);
+        }
+    }
+    // Players slain read counter 0.
+    if template.players_slain != 0 {
+        let cur = u32::from(log_slot.counters[0]);
+        let req = template.players_slain;
+        objectives.push(QuestLogObjectiveView {
+            text: get("QUEST_PLAYERS_KILLED").map_or_else(String::new, |f| {
+                fill(&f, &[Arg::D(i64::from(cur)), Arg::D(i64::from(req))])
+            }),
+            kind: "player".into(),
+            finished: cur >= req,
+            cur: cur.min(req),
+            req,
+        });
+    } else if let Some((faction, current, needed, met)) = &extras.reputation {
+        // The labels are the player's own, the `_FEMALE` form first for a woman.
+        let label = |rank: u8| {
+            let key = format!("FACTION_STANDING_LABEL{}", rank + 1);
+            extras
+                .female
+                .then(|| get(&format!("{key}_FEMALE")))
+                .flatten()
+                .or_else(|| get(&key))
+                .unwrap_or_default()
+        };
+        objectives.push(QuestLogObjectiveView {
+            text: get("QUEST_FACTION_NEEDED").map_or_else(String::new, |f| {
+                fill(
+                    &f,
+                    &[
+                        Arg::S(faction),
+                        Arg::S(&label(*current)),
+                        Arg::S(&label(*needed)),
+                    ],
+                )
+            }),
+            kind: "reputation".into(),
+            finished: *met,
+            cur: u32::from(*met),
+            req: 1,
+        });
+    } else if objectives.is_empty() && log_slot.state & quest_slot_state::FAIL == 0 {
+        // Nothing to count: the objectives text, once the quest is done. The reference's done
+        // test passes such a quest only for an exploration or escort flag (`flags & 6`) with the
+        // slot complete and any cost in hand (`0x5e0ea0`).
+        let cost = (-i64::from(template.money)).max(0) as u64;
+        let done = template.flags & 6 != 0
+            && log_slot.state & quest_slot_state::COMPLETE != 0
+            && extras.money >= cost;
+        if done {
+            objectives.push(QuestLogObjectiveView {
+                text: extras.objectives_text.clone(),
+                kind: "log".into(),
+                finished: true,
+                cur: 1,
+                req: 1,
+            });
         }
     }
     objectives
@@ -531,18 +667,18 @@ pub(crate) fn feed_quest_log(
     icons: Option<Res<ItemDisplays>>,
     commands: Res<NetCommands>,
     // The player's store, and the item and container stores the bag walk reads, moving.
-    (header_names, tag_names, stirred_self, stirred_items): (
+    (header_names, tag_names, stirred_self, stirred_items, gos): (
         Option<Res<QuestHeaderNamesRes>>,
         Option<Res<QuestTagNamesRes>>,
         Query<(), (With<SelfPlayer>, Changed<ObjectStore>)>,
         Query<(), (Changed<ObjectStore>, Without<crate::net::NetEntity>)>,
+        // The GameObject objectives' names.
+        Option<Res<crate::go_templates::GameObjectTemplates>>,
     ),
     states: Res<crate::world_state::WorldStates>,
     // The XP, honor, title and reputation extras each row's detail carries.
     rewards: crate::ui_quest::rewards::RewardInputs,
     spells: Option<Res<Spells>>,
-    // The completion toast is a message-catalog row, whose surface and sound the sink reads.
-    mut sink: crate::ui_action::MessageSink,
     mut last: Local<crate::ui_script::VmMemo<QuestLogState>>,
     // The accept line's queue.
     mut quest_lines: ResMut<crate::ui_quest::QuestLines>,
@@ -567,6 +703,7 @@ pub(crate) fn feed_quest_log(
         || icons.as_ref().is_some_and(|r| r.is_changed())
         || header_names.as_ref().is_some_and(|r| r.is_changed())
         || tag_names.as_ref().is_some_and(|r| r.is_changed())
+        || gos.as_ref().is_some_and(|r| r.is_changed())
         || states.is_changed()
         || spells.as_ref().is_some_and(|r| r.is_changed())
         || rewards.changed();
@@ -591,6 +728,11 @@ pub(crate) fn feed_quest_log(
             log_slot,
         });
     }
+
+    // A timer's expiry mark lives on the quest's row, so it leaves with the quest.
+    quest_log
+        .expired
+        .retain(|id| slots.iter().any(|&(q, _)| q == *id));
 
     // The quest-slot watcher's accept line, whose catalog row carries `QUESTADDED`. The first
     // snapshot after login is silent: the initial create fills the whole log.
@@ -626,6 +768,8 @@ pub(crate) fn feed_quest_log(
         .filter_map(|(r, hit)| hit.then_some(r))
         .collect();
 
+    let player_level = store.0.unit_level().unwrap_or(0);
+
     // ── Section headers ─────────────────────────────────────────────────────────────────────────
     // One per `ZoneOrSort`: a positive id names an `AreaTable` zone, a negative a `QuestSort`.
     let ordered = {
@@ -645,7 +789,7 @@ pub(crate) fn feed_quest_log(
                             .unwrap_or_default()
                             .to_string()
                     },
-                    level: t.map(|t| t.level).unwrap_or(0),
+                    level: t.map_or(0, |t| quest_level(t, player_level)),
                     title: t.map(|t| t.title.clone()).unwrap_or_default(),
                     slot: r.slot,
                 }
@@ -697,7 +841,7 @@ pub(crate) fn feed_quest_log(
                 match quest_log.template(r.quest_id, &commands) {
                     Some(t) => (
                         t.title.clone(),
-                        t.level,
+                        quest_level(t, player_level),
                         // The tag: `Type` is a `QuestInfo.dbc` id, 0 naming none. No table gives
                         // `None`, never `""`: the row's Lua tests presence.
                         tag_names
@@ -719,9 +863,28 @@ pub(crate) fn feed_quest_log(
                             &names,
                             &commands,
                             &get,
+                            &ObjectiveExtras {
+                                gos: gos.as_deref(),
+                                reputation: rewards.rep_objective(&store.0, t),
+                                female: store.0.unit_gender() == Some(1),
+                                money: u64::from(store.0.player_money().unwrap_or(0)),
+                                objectives_text: crate::npc_text::substitute(
+                                    &t.objectives_text,
+                                    &macros,
+                                ),
+                            },
                         ),
                         // Every row's: the bindings resolve the selection per call.
                         Some(QuestLogDetail {
+                            // At the level cap the reward is at least the money paid in place
+                            // of XP (`0x5e48f0`).
+                            reward_money: {
+                                let paid = t.money.max(0) as u32;
+                                match (store.0.unit_level(), store.0.player_max_level()) {
+                                    (Some(l), Some(m)) if l >= m => paid.max(t.money_max_level),
+                                    _ => paid,
+                                }
+                            },
                             extras: rewards.for_template(
                                 t,
                                 &store.0,
@@ -798,44 +961,10 @@ pub(crate) fn feed_quest_log(
     if fresh == *last {
         return;
     }
-    // Announced after the push, so a handler reads the new log. The reference announces from the
-    // `SMSG_QUESTUPDATE_*` handler, dropping a toast whose name is uncached; this rides the log
-    // diff, so a quest under a collapsed header announces nothing. A progress toast is the
-    // leaderboard line, as the `ERR_QUEST_ADD_*_SII` keys compose the same sentence.
-    let progressed = quests_with_progressed_objectives(last, &fresh);
     script.set_quest_log(fresh.clone());
-    if !progressed.is_empty() {
-        for quest in progressed {
-            for line in quest.changed_lines {
-                script.fire_event("UI_INFO_MESSAGE", vec![ScriptValue::Str(line)]);
-            }
-            if quest.completed {
-                // Catalog row `0xf8`, or `0xf9` with no text, never the turn-in's
-                // `ERR_QUEST_COMPLETE_S`. The reference shows it only on
-                // `SMSG_QUESTUPDATE_COMPLETE`, its `%s` the quest's end text (`+0x129c`); this
-                // shows the title, on any completion flip.
-                let line = if quest.title.is_empty() {
-                    crate::ui_action::keyed_line(&script, "ERR_QUEST_UNKNOWN_COMPLETE")
-                } else {
-                    crate::ui_action::keyed_line_s(
-                        &script,
-                        "ERR_QUEST_OBJECTIVE_COMPLETE_S",
-                        &[&quest.title],
-                    )
-                };
-                crate::ui_action::show_messages(&mut script, &mut sink, "ui_quest_log", line);
-            }
-            // The quest's 1-based log row (`0x5deeb0`), for which the stock `QuestLog_OnEvent` adds
-            // a timed watch (`QuestLogFrame.lua:265-271`).
-            script.fire_event(
-                "QUEST_WATCH_UPDATE",
-                vec![ScriptValue::Int(i64::from(quest.index))],
-            );
-        }
-    }
-    // Last: `QUEST_WATCH_UPDATE` fires at once from the update handler, while `QUEST_LOG_UPDATE`
-    // is a unique signal flushed after the frame's packets (`0x614760`), so the tracker redraws
-    // with the progress watch already added.
+    // `QUEST_LOG_UPDATE` is a unique signal flushed after the frame's packets (`0x614760`), so it
+    // follows the packets' `QUEST_WATCH_UPDATE` ([`progress`]) and the tracker redraws with the
+    // progress watch already added.
     script.fire_event("QUEST_LOG_UPDATE", vec![]);
     *last = fresh;
 }
@@ -857,58 +986,6 @@ fn accepted_quests(prior: &[(u32, u8)], now: &[(u32, u8)]) -> Vec<u32> {
                         && was_state & quest_slot_state::FAIL != 0))
         })
         .map(|(&(id, _), _)| id)
-        .collect()
-}
-
-/// Whether an objective advanced. The reference toasts only on the server's additive
-/// `SMSG_QUESTUPDATE_ADD_KILL` and `_ADD_ITEM`, with no removal opcode, so a count going down or a
-/// name landing late announces nothing. A turn-in destroys the items (vmangos `Player.cpp:13252`)
-/// before the slot clears (`Player.cpp:13294`): a silent dip.
-fn advanced(now: &QuestLogObjectiveView, was: &QuestLogObjectiveView) -> bool {
-    now.cur > was.cur
-}
-
-/// One quest whose objectives advanced between two log states.
-struct QuestProgress {
-    /// The quest's 1-based row in the new log, `GetQuestLogTitle`'s index.
-    index: u32,
-    /// The COMPLETE toast's `%s` here; empty takes `ERR_QUEST_UNKNOWN_COMPLETE`.
-    title: String,
-    changed_lines: Vec<String>,
-    /// The quest's COMPLETE state turned on in this diff.
-    completed: bool,
-}
-
-/// The quests in both states with a same-position line that advanced, or whose COMPLETE state
-/// turned on. A quest or a line appearing or leaving is not progress.
-fn quests_with_progressed_objectives(
-    old: &QuestLogState,
-    new: &QuestLogState,
-) -> Vec<QuestProgress> {
-    fn entry_of(s: &QuestLogState, id: u32) -> Option<&QuestLogEntryView> {
-        s.entries.iter().find(|e| !e.is_header && e.quest_id == id)
-    }
-    new.entries
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| !e.is_header)
-        .filter_map(|(i, e)| {
-            let prev = entry_of(old, e.quest_id)?;
-            let changed_lines: Vec<String> = e
-                .objectives
-                .iter()
-                .zip(prev.objectives.iter())
-                .filter(|(now, was)| advanced(now, was))
-                .map(|(now, _)| now.text.clone())
-                .collect();
-            let completed = e.complete == 1 && prev.complete != 1;
-            (!changed_lines.is_empty() || completed).then_some(QuestProgress {
-                index: i as u32 + 1,
-                title: e.title.clone(),
-                changed_lines,
-                completed,
-            })
-        })
         .collect()
 }
 
@@ -1362,6 +1439,7 @@ mod tests {
             &names,
             &commands,
             &probe_strings,
+            &ObjectiveExtras::default(),
         );
 
         // The unused quads emit nothing; no names are seeded, so both lines wear the placeholder.
@@ -1408,6 +1486,7 @@ mod tests {
             &names,
             &commands,
             &probe_strings,
+            &ObjectiveExtras::default(),
         );
 
         // Pass order: both creatures, then the item.
@@ -1451,6 +1530,7 @@ mod tests {
             &names,
             &commands,
             &probe_strings,
+            &ObjectiveExtras::default(),
         );
         assert_eq!(objectives.len(), 2);
         // The override is the creature's name, under `QUEST_OBJECTS_FOUND`.
@@ -1493,6 +1573,7 @@ mod tests {
             &names,
             &commands,
             &probe_strings,
+            &ObjectiveExtras::default(),
         );
         assert!(objectives.is_empty(), "{objectives:#?}");
     }
@@ -1529,6 +1610,7 @@ mod tests {
             &names,
             &commands,
             &probe_strings,
+            &ObjectiveExtras::default(),
         );
         assert_eq!(objectives.len(), 1);
         assert!(
@@ -1791,139 +1873,5 @@ mod tests {
             .set_changed();
         app.update();
         assert_ne!(marked(&app), settled, "the player's store moved: rebuilt");
-    }
-
-    // ── quests_with_progressed_objectives ───────────────────────────────────────────────────────
-
-    /// A one-objective entry whose `cur`/`req` are parsed from its text's trailing `cur/req`, so
-    /// the two cannot disagree.
-    fn entry(quest_id: u32, objective_text: &str) -> QuestLogEntryView {
-        let (cur, req) = objective_text
-            .rsplit_once(' ')
-            .and_then(|(_, tail)| tail.split_once('/'))
-            .map(|(c, r)| (c.parse().unwrap(), r.parse().unwrap()))
-            .expect("fixture line must end in `cur/req`");
-        QuestLogEntryView {
-            quest_id,
-            objectives: vec![QuestLogObjectiveView {
-                text: objective_text.into(),
-                kind: "monster".into(),
-                finished: cur >= req,
-                cur,
-                req,
-            }],
-            ..Default::default()
-        }
-    }
-
-    fn state(entries: Vec<QuestLogEntryView>) -> QuestLogState {
-        QuestLogState {
-            num_quests: entries.iter().filter(|e| !e.is_header).count() as u32,
-            entries,
-            hidden_quest_ids: Vec::new(),
-            daily_completed: 0,
-        }
-    }
-
-    #[test]
-    fn no_progress_fires_nothing() {
-        let old = state(vec![entry(1, "Kobold Vermin slain: 3/10")]);
-        let same = state(vec![entry(1, "Kobold Vermin slain: 3/10")]);
-        assert!(quests_with_progressed_objectives(&old, &same).is_empty());
-    }
-
-    #[test]
-    fn a_progressed_quest_fires_its_new_log_index_and_the_moved_lines() {
-        let old = state(vec![
-            entry(1, "Kobold Vermin slain: 3/10"),
-            entry(2, "Tough Wolf Meat: 2/8"),
-        ]);
-        let progressed = state(vec![
-            entry(1, "Kobold Vermin slain: 3/10"),
-            entry(2, "Tough Wolf Meat: 3/8"),
-        ]);
-        let fired = quests_with_progressed_objectives(&old, &progressed);
-        assert_eq!(fired.len(), 1);
-        assert_eq!(fired[0].index, 2);
-        assert_eq!(fired[0].changed_lines, ["Tough Wolf Meat: 3/8"]);
-        // Both advancing fires both, each at its own index with its own line.
-        let both = state(vec![
-            entry(1, "Kobold Vermin slain: 4/10"),
-            entry(2, "Tough Wolf Meat: 3/8"),
-        ]);
-        let fired = quests_with_progressed_objectives(&old, &both);
-        assert_eq!(
-            fired
-                .iter()
-                .map(|q| (q.index, q.changed_lines.clone()))
-                .collect::<Vec<_>>(),
-            [
-                (1, vec!["Kobold Vermin slain: 4/10".to_string()]),
-                (2, vec!["Tough Wolf Meat: 3/8".to_string()]),
-            ]
-        );
-    }
-
-    #[test]
-    fn appearing_or_leaving_the_log_is_not_progress() {
-        let empty = state(vec![]);
-        let with_entry = state(vec![entry(7, "Kobold Worker slain: 0/10")]);
-        // A fresh accept is not progress, nor is a late template growing lines from none.
-        assert!(quests_with_progressed_objectives(&empty, &with_entry).is_empty());
-        let grown = state(vec![QuestLogEntryView {
-            quest_id: 7,
-            objectives: vec![],
-            ..Default::default()
-        }]);
-        assert!(quests_with_progressed_objectives(&grown, &with_entry).is_empty());
-        // Nor a turn-in or abandon removing the quest.
-        assert!(quests_with_progressed_objectives(&with_entry, &empty).is_empty());
-    }
-
-    /// A turn-in destroys the items (an immediate `SMSG_DESTROY_OBJECT`) before the slot clears in
-    /// the batched `SMSG_UPDATE_OBJECT` (`Player::RewardQuest`), so the line dips to `0/req` for a
-    /// frame; the reference toasts only on `SMSG_QUESTUPDATE_ADD_ITEM`.
-    #[test]
-    fn a_regressing_objective_never_announces() {
-        let held = state(vec![entry(313, "Rumbleshot's Ammo: 1/1")]);
-        let emptied = state(vec![entry(313, "Rumbleshot's Ammo: 0/1")]);
-        assert!(
-            quests_with_progressed_objectives(&held, &emptied).is_empty(),
-            "the bag emptying under a still-logged quest is not progress"
-        );
-        // The slot clearing next frame is silent too: the quest leaves the log.
-        assert!(quests_with_progressed_objectives(&emptied, &state(vec![])).is_empty());
-        // The control: the same quest actually being collected still announces.
-        let looted = state(vec![entry(313, "Rumbleshot's Ammo: 1/1")]);
-        assert_eq!(
-            quests_with_progressed_objectives(&emptied, &looted)[0].changed_lines,
-            ["Rumbleshot's Ammo: 1/1"]
-        );
-    }
-
-    /// A name landing late rewrites the text with the count unmoved: no toast.
-    #[test]
-    fn a_name_landing_late_does_not_re_announce() {
-        let placeholder = state(vec![entry(5, "...: 3/5")]);
-        let named = state(vec![entry(5, "Small Barnacled Clam: 3/5")]);
-        assert!(quests_with_progressed_objectives(&placeholder, &named).is_empty());
-    }
-
-    /// The COMPLETE flip announces once for the quest, not again per objective line.
-    #[test]
-    fn the_complete_flip_announces_once_not_per_objective() {
-        let mut before = entry(9, "Kobold Vermin slain: 10/10");
-        before.complete = 0;
-        before.objectives[0].finished = false;
-        let mut after = entry(9, "Kobold Vermin slain: 10/10");
-        after.complete = 1;
-        after.title = "A Threat Within".into();
-        let fired = quests_with_progressed_objectives(&state(vec![before]), &state(vec![after]));
-        assert_eq!(fired.len(), 1);
-        assert!(fired[0].completed);
-        assert!(
-            fired[0].changed_lines.is_empty(),
-            "the objective count did not move — only the quest's COMPLETE state did"
-        );
     }
 }

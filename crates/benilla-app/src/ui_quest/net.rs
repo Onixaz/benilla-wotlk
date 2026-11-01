@@ -90,10 +90,15 @@ fn on_complete(
     mut lines: ResMut<QuestLines>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
     mut center: MessageWriter<crate::ui_unit::CombatTextEvent>,
+    (quest_log, commands): (Res<QuestLog>, Res<NetCommands>),
 ) {
     if let SessionEvent::QuestComplete(c) = ev {
         turn_in_awards(&c, &mut chat, &mut center);
-        quest_complete(c, &mut quest, &mut lines);
+        // A quest with a next in its chain keeps the window up for that quest's panel.
+        let chained = quest_log
+            .template(c.quest_id, &commands)
+            .is_some_and(|t| t.next_quest_in_chain != 0);
+        quest_complete(c, chained, &mut quest, &mut lines);
     }
 }
 
@@ -146,14 +151,9 @@ fn on_objectives_complete(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver
     }
 }
 
-fn on_failed(
-    In(ev): In<SessionEvent>,
-    mut quest: ResMut<QuestGiver>,
-    mut quest_log: ResMut<QuestLog>,
-    commands: Res<NetCommands>,
-) {
+fn on_failed(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
     if let SessionEvent::QuestFailed { quest_id, timed } = ev {
-        quest_failed(quest_id, timed, &mut quest_log, &commands, &mut quest);
+        quest_failed(quest_id, timed, &mut quest);
     }
 }
 
@@ -220,8 +220,10 @@ fn quest_detail(d: QuestDetails, quest: &mut QuestGiver, commands: &NetCommands)
             "net: busy — refusing {:#x}'s shared quest {}",
             d.npc, d.quest_id
         );
+        // The reply goes to the inform guid when set, else the source (`0x6d0797`-`0x6d07ba`).
         let _ = commands.0.send(ClientCommand::QuestPushResult {
-            sharer: d.npc,
+            sharer: if d.sharer != 0 { d.sharer } else { d.npc },
+            quest: d.quest_id,
             msg: QuestShareMsg::BUSY,
         });
         return;
@@ -254,9 +256,12 @@ fn quest_offer(o: QuestOfferReward, quest: &mut QuestGiver) {
 }
 
 /// `SMSG_QUESTGIVER_QUEST_COMPLETE` (`0x6d1110`): the turn-in's chat lines, then the window
-/// closes. The XP, money and items themselves arrive by `UPDATE_OBJECT` and `ITEM_PUSH_RESULT`;
-/// 3.3.5a's body has no item list: the fixed rewards print from the template (`0x6d1018`).
-fn quest_complete(c: QuestComplete, quest: &mut QuestGiver, lines: &mut QuestLines) {
+/// closes unless the quest is `chained` (`0x6d10ca`: `nextQuestInChain != 0` keeps it open, with
+/// no `QUEST_FINISHED`). The XP, money and items themselves arrive by `UPDATE_OBJECT` and
+/// `ITEM_PUSH_RESULT`; 3.3.5a's body has no item list: the fixed rewards print from the template
+/// (`0x6d1018`). Deviation: the reference prints and closes from the template's callback, so with
+/// the template uncached its window waits; this closes at once.
+fn quest_complete(c: QuestComplete, chained: bool, quest: &mut QuestGiver, lines: &mut QuestLines) {
     // The reference plays the `QUESTCOMPLETED` fanfare on this packet.
     quest.completed_fanfare = true;
     debug!(
@@ -271,53 +276,47 @@ fn quest_complete(c: QuestComplete, quest: &mut QuestGiver, lines: &mut QuestLin
     if (c.money as i32) > 0 {
         lines.push(QuestLine::Money(c.money));
     }
+    // Signed tests, after the honor line.
+    if c.talents as i32 > 0 {
+        lines.push(QuestLine::Talents(c.talents));
+    }
+    // Deviation: the arena award's `COMBATLOG_ARENAPOINTSAWARD` line goes out as chat type `0x32`
+    // (`0x6d0ff4`), which has no `ChatTypeInfo` row in the stock UI, so it is not raised.
     lines.push(QuestLine::RewardItems(c.quest_id));
     if quest.chosen_reward != 0 {
         lines.push(QuestLine::Item(std::mem::take(&mut quest.chosen_reward)));
     }
-    quest.clear();
+    if !chained {
+        quest.clear();
+    }
     // A turn-in can move every giver's marker, so the reference re-asks from here.
     quest.bump_reask();
 }
 
-/// `SMSG_QUESTUPDATE_ADD_KILL`: the progress toast comes from the quest-log objective diff
-/// (`crate::ui_quest_log::feed_quest_log`), and the reference prints no chat line for it.
+/// `SMSG_QUESTUPDATE_ADD_KILL`: its line is the quest log's (`crate::ui_quest_log`).
 fn quest_objective_kill(entry: u32, count: u32, required: u32, quest: &mut QuestGiver) {
     debug!("net: quest kill/use objective {entry:#x} at {count}/{required}");
     quest.bump_reask();
 }
 
-/// `SMSG_QUESTUPDATE_ADD_ITEM`, which carries only the count added; its toast comes from the same
-/// objective diff.
+/// `SMSG_QUESTUPDATE_ADD_ITEM`, which 12340 registers no handler for; its line comes from the
+/// item push.
 fn quest_objective_item(item_id: u32, count: u32, quest: &mut QuestGiver) {
     debug!("net: quest item objective {item_id} +{count}");
     quest.bump_reask();
 }
 
-/// `SMSG_QUESTUPDATE_COMPLETE` (0x198): the `ERR_QUEST_OBJECTIVE_COMPLETE_S` toast (kind 1, never
-/// chat) comes from the quest-log diff's complete flip, as the progress toasts do.
+/// `SMSG_QUESTUPDATE_COMPLETE` (0x198): its line is the quest log's (`crate::ui_quest_log`).
 fn quest_objectives_complete(quest_id: u32, quest: &mut QuestGiver) {
     debug!("net: quest {quest_id} objectives complete");
     // The turn-in `?` can turn gold with no quest-log change, so the reference re-asks here.
     quest.bump_reask();
 }
 
-/// `SMSG_QUESTUPDATE_FAILED` (`0x196`) or `_FAILEDTIMER` (`0x197`): `ERR_QUEST_FAILED_S` (msg
-/// `0x8b`) in chat, named by the quest's title. The reference's arm prints nothing without a cached
-/// template, as here, or when the slot's `byte[slot+7] & 2` is set, which this does not check.
-fn quest_failed(
-    quest_id: u32,
-    timed: bool,
-    quest_log: &mut QuestLog,
-    net_commands: &NetCommands,
-    quest: &mut QuestGiver,
-) {
+/// `SMSG_QUESTUPDATE_FAILED` (`0x196`) or `_FAILEDTIMER` (`0x197`): its line is the quest log's
+/// (`crate::ui_quest_log`).
+fn quest_failed(quest_id: u32, timed: bool, quest: &mut QuestGiver) {
     debug!("net: quest {quest_id} failed (timed: {timed})");
-    if let Some(t) = quest_log.template(quest_id, net_commands) {
-        quest.push_message(UiError::s("ERR_QUEST_FAILED_S", t.title.clone()));
-    } else {
-        debug!("net: quest {quest_id} has no cached template — the reference shows nothing");
-    }
     // A failure moves what the givers offer, so the reference re-asks here too.
     quest.bump_reask();
 }
@@ -334,15 +333,29 @@ fn quest_log_full(quest: &mut QuestGiver) {
 /// giver guid and fires `QUEST_FINISHED`.
 fn quest_giver_invalid(reason: u32, quest: &mut QuestGiver) {
     debug!("net: questgiver refused to offer the quest (reason {reason})");
-    quest.push_message(UiError::key(crate::ui_quest::questgiver_invalid_key(
+    quest.push_message(with_daily_cap(crate::ui_quest::questgiver_invalid_key(
         reason,
     )));
     quest.clear();
 }
 
+/// A reason key as its message: the daily cap's line takes the cap, the rest no fill.
+fn with_daily_cap(key: &'static str) -> UiError {
+    if key == "ERR_QUEST_FAILED_TOO_MANY_DAILY_QUESTS_I" {
+        UiError::args(
+            key,
+            vec![crate::ui_action::FillArg::D(
+                crate::ui_quest::DAILY_QUEST_CAP,
+            )],
+        )
+    } else {
+        UiError::key(key)
+    }
+}
+
 /// `SMSG_QUESTGIVER_QUEST_FAILED`: the line's `%s` is the quest's title, from the open panel or the
-/// template cache. A full bag adds msg 0, `ERR_INV_FULL`, on the red surface, and the window closes
-/// as on an invalid quest.
+/// template cache. A full bag adds msg 0, `ERR_INV_FULL`, on the red surface; the default line is
+/// silent for a quest a timer expired (`0x6cdb03`); and the window closes as on an invalid quest.
 fn quest_giver_failed(
     quest_id: u32,
     reason: u32,
@@ -359,11 +372,13 @@ fn quest_giver_failed(
                 .map(|t| t.title.clone())
         })
         .unwrap_or_default();
-    quest.push_message(UiError::s(
-        crate::ui_quest::questgiver_failed_key(reason),
-        title,
-    ));
-    if matches!(reason, 4 | 50) {
+    let key = crate::ui_quest::questgiver_failed_key(reason);
+    match key {
+        "ERR_QUEST_FAILED_TOO_MANY_DAILY_QUESTS_I" => quest.push_message(with_daily_cap(key)),
+        "ERR_QUEST_FAILED_S" if quest_log.is_expired(quest_id) => {}
+        _ => quest.push_message(UiError::s(key, title)),
+    }
+    if key == "ERR_QUEST_FAILED_BAG_FULL_S" {
         quest.push_message(UiError::key("ERR_INV_FULL"));
     }
     quest.clear();
@@ -469,8 +484,11 @@ mod tests {
                 quest_id: 7,
                 xp: 450,
                 money: 1_025,
+                talents: 1,
+                arena_points: 15,
                 ..Default::default()
             },
+            false,
             &mut giver,
             &mut lines,
         );
@@ -480,6 +498,7 @@ mod tests {
                 QuestLine::Completed(7),
                 QuestLine::Experience(450),
                 QuestLine::Money(1_025),
+                QuestLine::Talents(1),
                 QuestLine::RewardItems(7),
                 QuestLine::Item(2_047),
             ]
@@ -493,6 +512,7 @@ mod tests {
                 quest_id: 7,
                 ..Default::default()
             },
+            false,
             &mut giver,
             &mut lines,
         );
@@ -500,6 +520,27 @@ mod tests {
             lines.queued(),
             [QuestLine::Completed(7), QuestLine::RewardItems(7)]
         );
+    }
+
+    /// `0x6d10ca`: a chained turn-in leaves the window to the next quest's panel.
+    #[test]
+    fn a_chained_turn_in_keeps_the_window_and_a_last_one_closes_it() {
+        let turn_in = |chained| {
+            let mut giver = open_detail(7);
+            let mut lines = QuestLines::default();
+            quest_complete(
+                QuestComplete {
+                    quest_id: 7,
+                    ..Default::default()
+                },
+                chained,
+                &mut giver,
+                &mut lines,
+            );
+            giver.is_open()
+        };
+        assert!(turn_in(true));
+        assert!(!turn_in(false));
     }
 
     fn open_detail(quest_id: u32) -> QuestGiver {
@@ -626,6 +667,7 @@ mod tests {
                 sent.as_slice(),
                 [ClientCommand::QuestPushResult {
                     sharer: SHARER,
+                    quest: 200,
                     msg: QuestShareMsg::BUSY,
                 }]
             ),

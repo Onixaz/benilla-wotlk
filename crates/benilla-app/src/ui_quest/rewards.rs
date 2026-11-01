@@ -97,6 +97,34 @@ impl RewardInputs<'_, '_> {
         }
     }
 
+    /// A reputation objective's leaderboard inputs (`0x5e1460`'s reputation arm): the faction's
+    /// name, the player's rank and the needed rank (0..=7), and whether the standing meets the
+    /// amount. `None` with no objective or no `Faction.dbc` row.
+    pub(crate) fn rep_objective(
+        &self,
+        store: &ObjectFields,
+        t: &QuestTemplate,
+    ) -> Option<(String, u8, u8, bool)> {
+        let faction = t.rep_objective_faction;
+        if faction == 0 {
+            return None;
+        }
+        let name = self
+            .factions
+            .as_ref()?
+            .catalog()
+            .faction_name(faction)?
+            .to_string();
+        let amount = t.rep_objective_value as i32;
+        let standing = self.standing(store, faction);
+        Some((
+            name,
+            crate::ui_quest_log::standing_rank(standing),
+            crate::ui_quest_log::standing_rank(amount),
+            standing >= amount,
+        ))
+    }
+
     fn title(&self, store: &ObjectFields, id: u32, player_name: &str) -> Option<String> {
         let female = store.unit_gender() == Some(1);
         title_text(&self.tables.as_ref()?.0, id, female, player_name)
@@ -161,16 +189,20 @@ impl RewardInputs<'_, '_> {
         }
     }
 
-    /// A quest panel's extras from its packet: the XP and honor as sent, the honor a tenth of the
-    /// wire value (`0x58c110`).
+    /// A quest panel's extras from its packet: the XP as sent below the level cap and 0 at it
+    /// (`0x58de94`-`0x58deb9`), the honor a tenth of the wire value (`0x58c110`).
     pub(crate) fn for_panel(
         &self,
         e: &QuestExtraRewards,
         store: &ObjectFields,
         player_name: &str,
     ) -> QuestRewardExtras {
+        let below_cap = matches!(
+            (store.unit_level(), store.player_max_level()),
+            (Some(level), Some(max)) if level < max
+        );
         QuestRewardExtras {
-            xp: e.xp,
+            xp: if below_cap { e.xp } else { 0 },
             honor: e.honor / 10,
             talents: e.talents,
             arena_points: e.arena_points,

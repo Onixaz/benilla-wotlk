@@ -926,6 +926,10 @@ pub(crate) struct Model {
     pub(crate) quest_log_pushes: Vec<u32>,
     /// `ConfirmAcceptQuest()` calls, the escort confirm; the app holds the pending quest.
     pub(crate) quest_confirms: u32,
+    /// `QueryQuestsCompleted()` calls, one `CMSG_QUERY_QUESTS_COMPLETED` each.
+    pub(crate) quests_completed_queries: u32,
+    /// The last `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`'s ids, which `GetQuestsCompleted` keys.
+    pub(crate) quests_completed: Vec<u32>,
     /// Item id to its tooltip view.
     pub(crate) item_templates: HashMap<u32, ItemTemplateView>,
     /// Item ids asked for and missing, for the app to answer.
@@ -1646,6 +1650,8 @@ impl Model {
             quest_log_abandons: Vec::new(),
             quest_log_pushes: Vec::new(),
             quest_confirms: 0,
+            quests_completed_queries: 0,
+            quests_completed: Vec::new(),
             item_templates: HashMap::new(),
             item_sets: HashMap::new(),
             item_set_asks: HashSet::new(),
