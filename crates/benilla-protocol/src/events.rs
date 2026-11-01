@@ -789,6 +789,11 @@ pub enum SessionEvent {
     /// `SMSG_ITEM_TIME_UPDATE`: seconds left on a timed item, 0 when expired. The client shows
     /// this, not `ITEM_FIELD_DURATION` (vmangos `Item::SendTimeUpdate`, `Objects/Item.cpp:1094`).
     ItemTime { item_guid: u64, seconds: u32 },
+    /// `SMSG_INSPECT_TALENT`'s worn items of the inspected player.
+    InspectItems {
+        guid: u64,
+        items: Vec<crate::messages::InspectItem>,
+    },
     /// `SMSG_SOCKET_GEMS_RESULT`: the item's new enchants in slots 2 to 5, a 0 leaving its slot.
     SocketGemsResult { item: u64, enchants: [u32; 4] },
     /// `SMSG_ITEM_REFUND_INFO_RESPONSE`: a purchase's refund record.

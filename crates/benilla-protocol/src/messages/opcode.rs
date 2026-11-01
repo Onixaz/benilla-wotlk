@@ -1402,3 +1402,5 @@ pub const CMSG_ITEM_REFUND: u16 = 0x04B4; // 1204
 pub const SMSG_ITEM_REFUND_RESULT: u16 = 0x04B5; // 1205
 /// The socketed item's new socket and bonus enchants (`0x6e6330`).
 pub const SMSG_SOCKET_GEMS_RESULT: u16 = 0x050B; // 1291
+/// An inspected player's talents and worn items, packed guid first (`0x6ce0c0`).
+pub const SMSG_INSPECT_TALENT: u16 = 0x03F4; // 1012
