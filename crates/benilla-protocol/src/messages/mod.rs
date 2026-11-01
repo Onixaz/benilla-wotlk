@@ -207,8 +207,8 @@ pub use instance::{
     RaidInstanceMessage, RaidInstanceWarning,
 };
 pub use item_ops::{
-    item_guid_body, item_name_query, read_item, socket_gems, PurchaseCost, ReadItemFailure,
-    RefundRecord,
+    item_guid_body, item_name_query, read_item, socket_gems, InspectItem, PurchaseCost,
+    ReadItemFailure, RefundRecord,
 };
 pub use items::{
     auto_equip_item, auto_store_bag_item, decode_item_query_response, destroy_item, item_query,

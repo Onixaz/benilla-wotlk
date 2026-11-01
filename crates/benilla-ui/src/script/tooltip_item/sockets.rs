@@ -121,6 +121,47 @@ pub(super) fn condition_text(
     (out, all_met)
 }
 
+/// A requirement's red line: `<prefix>_MIN_SKILL` with the rank, else `<prefix>_REQ_SKILL`, the
+/// skill named or "UNKNOWN".
+fn requirement_line(
+    lua: &Lua,
+    this: &Table,
+    r: &crate::script::EnchantRequirementView,
+    prefix: &str,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> mlua::Result<()> {
+    let name = r.skill_name.as_deref().unwrap_or("UNKNOWN");
+    let (key, line) = if r.skill_rank != 0 {
+        let key = format!("{prefix}_MIN_SKILL");
+        let t = get(&key).unwrap_or_default();
+        (
+            key,
+            fill(&t, &[Arg::S(name), Arg::D(i64::from(r.skill_rank))]),
+        )
+    } else {
+        let key = format!("{prefix}_REQ_SKILL");
+        let t = get(&key).unwrap_or_default();
+        (key, fill(&t, &[Arg::S(name)]))
+    };
+    if get(&key).is_none() {
+        return Ok(());
+    }
+    append_line(lua, this, (line, RED), None, false)
+}
+
+/// The gem template's icon; a miss asks for it and records the running setter's wait.
+fn gem_icon(lua: &Lua, gem_item: u32) -> Option<String> {
+    let mut model = crate::script::model_mut_of(lua);
+    match model.item_templates.get(&gem_item) {
+        Some(t) => t.icon.clone(),
+        None => {
+            model.item_stat_asks.insert(gem_item);
+            super::note_item_miss(&mut model, gem_item);
+            None
+        }
+    }
+}
+
 /// An empty socket: its `EMPTY_SOCKET_*` line and icon, or the colourless pair for a prismatic one.
 pub(super) fn empty_socket(
     lua: &Lua,
@@ -146,8 +187,8 @@ pub(super) fn empty_socket(
     add_texture(lua, this, Some(icon), None, WHITE)
 }
 
-/// The slot walk over an instance's enchants. Not built: a gem's icon and the enchant and
-/// prismatic skill and level requirements.
+/// The slot walk over an instance's enchants: each line, a gem's icon, and the red lines of an
+/// unmet enchant or prismatic skill and level requirement.
 pub(super) fn socket_lines(
     lua: &Lua,
     this: &Table,
@@ -155,8 +196,25 @@ pub(super) fn socket_lines(
     inst: &ItemInstance,
     get: &dyn Fn(&str) -> Option<String>,
 ) -> mlua::Result<()> {
-    // The worn gems a meta gem's condition counts.
-    let counts = crate::script::socket::equipped_gem_counts(&crate::script::model_mut_of(lua));
+    // The worn gems a condition counts, the inspected wearer's for their item, and the player's
+    // level and skills the requirements read.
+    let (counts, req) = {
+        let model = crate::script::model_mut_of(lua);
+        let counts = if inst.inspected {
+            model.inspect.as_ref().map_or([0; 4], |i| i.gem_counts)
+        } else {
+            crate::script::socket::equipped_gem_counts(&model)
+        };
+        (counts, model.player_req.clone())
+    };
+    let skill_ok = |r: &crate::script::EnchantRequirementView| {
+        r.skill == 0
+            || req
+                .skills
+                .get(&r.skill)
+                .is_some_and(|&have| have >= r.skill_rank)
+    };
+    let level_ok = |r: &crate::script::EnchantRequirementView| r.min_level <= req.level;
     // A signable item's ids read as zero.
     let enchants = match v.flags & 0x2000 != 0 {
         true => &[][..],
@@ -176,6 +234,7 @@ pub(super) fn socket_lines(
         // The socket preview (`0x6277f0`): a placed gem's enchant stands in its socket, and a
         // socket left empty prints nothing.
         let swapped;
+        let mut preview_icon = None;
         let shown = match (preview, socket) {
             (Some(placed), Some(s)) => match &placed[s] {
                 Some(gem) => {
@@ -191,8 +250,10 @@ pub(super) fn socket_lines(
                                 gem_type: Some(g.gem_type),
                                 name: g.enchant_name.clone().unwrap_or_default(),
                                 condition: g.condition,
+                                requirement: g.requirement.clone(),
                                 ..Default::default()
                             };
+                            preview_icon = gem.icon.clone();
                             Some(&swapped)
                         }
                         None => current,
@@ -219,7 +280,20 @@ pub(super) fn socket_lines(
                     all_match = false;
                     empty_socket(lua, this, Some(name), GRAY, get)?;
                 }
-                None => empty_socket(lua, this, None, GRAY, get)?,
+                None => {
+                    // A prismatic socket whose enchant asks a skill reads red while the skill or
+                    // the level is short, and names the skill (`0x6277f0`).
+                    let asks = enchants
+                        .iter()
+                        .find(|e| e.slot == PRISMATIC_SLOT)
+                        .and_then(|e| e.requirement.as_ref())
+                        .filter(|r| r.skill != 0);
+                    let ok = asks.is_none_or(|r| skill_ok(r) && level_ok(r));
+                    empty_socket(lua, this, None, if ok { GRAY } else { RED }, get)?;
+                    if let Some(r) = asks.filter(|r| !skill_ok(r)) {
+                        requirement_line(lua, this, r, "SOCKET_ITEM", get)?;
+                    }
+                }
             }
             continue;
         };
@@ -236,12 +310,6 @@ pub(super) fn socket_lines(
                 all_match = false;
             }
         }
-        // Slots 0, 1 and 5 are green, or bright red for a negative id; the rest are white.
-        let color = match (matches!(slot, 0 | 1 | 5), e.negative) {
-            (true, false) => GREEN,
-            (true, true) => ENCHANT_RED,
-            (false, _) => WHITE,
-        };
         // A temporary enchant's countdown replaces its name, in the same line and colour; the
         // time is `SMSG_ITEM_ENCHANT_TIME_UPDATE`'s.
         let mut text = match e.remaining_ms {
@@ -257,24 +325,65 @@ pub(super) fn socket_lines(
         if let Some(charges) = charges_phrase(e.charges, get) {
             text.push_str(&format!(" ({charges})"));
         }
-        // A gem's line carries its own colour, white while its condition holds and gray when not,
-        // its condition lines appended (`0x629ce5`). Not built: the red for an unmet enchant skill
-        // or level requirement.
-        if socket.is_some() {
-            let (cond, met) = e.condition.as_ref().map_or((String::new(), true), |c| {
-                condition_text(c, counts, true, get)
-            });
-            let code = if met { "|cffffffff" } else { "|cff808080" };
-            append_line(
-                lua,
-                this,
-                (format!("{code}{text}|r{cond}"), GOLD),
-                None,
-                false,
-            )?;
+        let (s_ok, l_ok) = e
+            .requirement
+            .as_ref()
+            .map_or((true, true), |r| (skill_ok(r), level_ok(r)));
+        // Slots 0, 1 and 5 are green, or bright red for a negative id, and the requirement red while
+        // the skill or level is short.
+        if !matches!(slot, 2..=4 | 7..=11) {
+            let color = match (s_ok && l_ok, e.negative) {
+                (false, _) => RED,
+                (true, false) => GREEN,
+                (true, true) => ENCHANT_RED,
+            };
+            append_line(lua, this, (text, color), None, false)?;
             continue;
         }
-        append_line(lua, this, (text, color), None, false)?;
+        // A socket's and a roll's line carries its own colour: red while the enchant's skill or
+        // level is short, else white while its condition holds and gray when not, the condition
+        // lines appended (`0x629ce5`). In a prismatic socket, or on an item with a prismatic
+        // enchant, the gem's own requirement also gates the socket.
+        let prismatic_socket = socket.is_some_and(|s| v.socket_colors[s] == 0 || prismatic != 0);
+        let socket_ok = !prismatic_socket || (s_ok && l_ok);
+        let (cond, met) = e.condition.as_ref().map_or((String::new(), true), |c| {
+            condition_text(c, counts, true, get)
+        });
+        let code = match (socket_ok && s_ok && l_ok, met) {
+            (false, _) => "|cffff2020",
+            (true, true) => "|cffffffff",
+            (true, false) => "|cff808080",
+        };
+        append_line(
+            lua,
+            this,
+            (format!("{code}{text}|r{cond}"), GOLD),
+            None,
+            false,
+        )?;
+        // The gem's icon beside its line; a template in flight is asked and repaints the hover.
+        let icon = match preview_icon {
+            Some(icon) => Some(icon),
+            None if e.gem_item != 0 => gem_icon(lua, e.gem_item),
+            None => None,
+        };
+        if let Some(icon) = icon {
+            add_texture(lua, this, Some(icon), None, WHITE)?;
+        }
+        if let Some(r) = e.requirement.as_ref() {
+            if !s_ok && r.skill != 0 {
+                requirement_line(lua, this, r, "ENCHANT_ITEM", get)?;
+            }
+            if !l_ok {
+                if let Some(t) = get("ENCHANT_ITEM_REQ_LEVEL") {
+                    let line = fill(&t, &[Arg::D(i64::from(r.min_level))]);
+                    append_line(lua, this, (line, RED), None, false)?;
+                }
+            }
+            if !socket_ok && r.skill != 0 {
+                requirement_line(lua, this, r, "SOCKET_ITEM", get)?;
+            }
+        }
     }
     if let (Some(bonus), Some(t)) = (&v.socket_bonus_name, get("ITEM_SOCKET_BONUS")) {
         let color = if all_match { GREEN } else { GRAY };

@@ -495,6 +495,20 @@ fn rank_links(abilities: &HashMap<u32, Vec<SlaRow>>) -> HashMap<u32, u32> {
         .collect()
 }
 
+/// Every `SkillLine.dbc` row's enUS display name by id, for the readers that only name a skill.
+pub(crate) fn load_skill_names(chain: &mut Chain) -> HashMap<u32, String> {
+    let Ok(bytes) = chain.read_file(SKILL_LINE) else {
+        return HashMap::new();
+    };
+    let Ok(rs) = parse(&bytes, skill_line_schema(), "SkillLine") else {
+        return HashMap::new();
+    };
+    rs.records()
+        .iter()
+        .filter_map(|r| Some((u32_at(r, 0)?, str_at(&rs, r, COL_SL_NAME_ENUS)?)))
+        .collect()
+}
+
 pub(crate) fn skill_line_schema() -> Schema {
     let mut s = Schema::new("SkillLine");
     for i in 0..SKILL_LINE_FIELDS {

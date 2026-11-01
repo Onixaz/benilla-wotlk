@@ -48,6 +48,9 @@ pub struct InspectView {
     /// Equipment by inventory slot id 1..=19, like the self feed; ammo (0) and bags (20..=23) stay
     /// `None`, since another player's are not visible.
     pub slots: InventorySlots,
+    /// The inspected player's worn gems by colour (meta, red, yellow, blue), which a condition on
+    /// one of their items reads (`0x6de4d0`).
+    pub gem_counts: [i32; 4],
 }
 
 impl super::UiScript {

@@ -315,6 +315,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             item_guid,
             spell_id,
         }],
+        ServerPacket::InspectItems { guid, items } => {
+            vec![SessionEvent::InspectItems { guid, items }]
+        }
         ServerPacket::SocketGemsResult { item, enchants } => {
             vec![SessionEvent::SocketGemsResult { item, enchants }]
         }

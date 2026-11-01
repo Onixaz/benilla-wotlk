@@ -43,11 +43,17 @@ pub enum TalentsInfo {
 /// (`u32 talentId`, `u8 rank`).
 pub(super) fn read_talents_info(r: &mut impl Read) -> io::Result<TalentsInfo> {
     let is_pet = read_u8(r)? != 0;
-    let unspent = read_i32_le(r)?.max(0) as u32;
     if is_pet {
+        let unspent = read_i32_le(r)?.max(0) as u32;
         let talents = read_talent_list(r)?;
         return Ok(TalentsInfo::Pet { unspent, talents });
     }
+    read_player_talents(r)
+}
+
+/// The player talent body (`0x5c9740`), which `SMSG_INSPECT_TALENT` carries too.
+pub(super) fn read_player_talents(r: &mut impl Read) -> io::Result<TalentsInfo> {
+    let unspent = read_i32_le(r)?.max(0) as u32;
     let group_count = read_u8(r)?;
     let active_group = read_u8(r)?;
     let mut groups = Vec::with_capacity(group_count.into());

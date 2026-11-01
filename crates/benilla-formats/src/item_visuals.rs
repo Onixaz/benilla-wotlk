@@ -63,6 +63,19 @@ pub struct EnchantCatalog {
     prismatic: HashMap<u32, u32>,
     /// A gem enchant's activation condition (`ConditionID`, a meta gem's), by enchant id.
     conditions: HashMap<u32, EnchantCondition>,
+    /// The skill and level an enchant asks of its wearer, for the rows that ask either.
+    requirements: HashMap<u32, EnchantRequirement>,
+}
+
+/// An enchant's requirement: `RequiredSkillID` and `RequiredSkillRank`, with the skill's name
+/// from `SkillLine.dbc`, and `MinLevel`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnchantRequirement {
+    pub skill: u32,
+    pub skill_rank: u32,
+    /// `None` when the skill has no row; the tooltip then prints "UNKNOWN".
+    pub skill_name: Option<String>,
+    pub min_level: u32,
 }
 
 /// One `SpellItemEnchantmentCondition.dbc` row: up to five tests on the equipped gems' colour
@@ -128,6 +141,11 @@ impl EnchantCatalog {
         self.gem_items.get(&enchant_id).copied()
     }
 
+    /// The skill and level the enchant asks, `None` when it asks neither.
+    pub fn requirement(&self, enchant_id: u32) -> Option<&EnchantRequirement> {
+        self.requirements.get(&enchant_id)
+    }
+
     /// A gem enchant's condition, for one that names a gem (`SrcItemID`) and a condition row.
     pub fn condition(&self, enchant_id: u32) -> Option<&EnchantCondition> {
         self.conditions.get(&enchant_id)
@@ -151,6 +169,7 @@ impl EnchantCatalog {
             gem_items: HashMap::new(),
             prismatic: HashMap::new(),
             conditions: HashMap::new(),
+            requirements: HashMap::new(),
         }
     }
 
@@ -228,6 +247,9 @@ const ENCHANT_VISUAL: usize = 31;
 const ENCHANT_FLAGS: usize = 32;
 const ENCHANT_SRC_ITEM: usize = 33;
 const ENCHANT_CONDITION: usize = 34;
+const ENCHANT_REQUIRED_SKILL: usize = 35;
+const ENCHANT_REQUIRED_SKILL_RANK: usize = 36;
+const ENCHANT_MIN_LEVEL: usize = 37;
 const SPELL_ITEM_ENCHANTMENT_CONDITION: &str = "DBFilesClient\\SpellItemEnchantmentCondition.dbc";
 
 /// `SpellItemEnchantmentCondition.dbc`: 31 columns packed in 64 bytes, the id then five each of
@@ -329,6 +351,8 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
     let mut names = HashMap::new();
     let mut flags = HashMap::with_capacity(rs.records().len());
     let condition_rows = load_conditions(chain);
+    let skill_names = crate::skill_lines::load_skill_names(chain);
+    let mut requirements = HashMap::new();
     let mut gem_items = HashMap::new();
     let mut prismatic = HashMap::new();
     let mut conditions = HashMap::new();
@@ -340,6 +364,19 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
         }
         // Every row, `Flags == 0` included: the keys are the row set.
         flags.insert(id, u32_at(r, ENCHANT_FLAGS).unwrap_or(0));
+        let skill = u32_at(r, ENCHANT_REQUIRED_SKILL).unwrap_or(0);
+        let min_level = u32_at(r, ENCHANT_MIN_LEVEL).unwrap_or(0);
+        if skill != 0 || min_level != 0 {
+            requirements.insert(
+                id,
+                EnchantRequirement {
+                    skill,
+                    skill_rank: u32_at(r, ENCHANT_REQUIRED_SKILL_RANK).unwrap_or(0),
+                    skill_name: skill_names.get(&skill).cloned(),
+                    min_level,
+                },
+            );
+        }
         let gem = u32_at(r, ENCHANT_SRC_ITEM).unwrap_or(0);
         if gem != 0 {
             gem_items.insert(id, gem);
@@ -365,6 +402,7 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
         gem_items,
         prismatic,
         conditions,
+        requirements,
     })
 }
 

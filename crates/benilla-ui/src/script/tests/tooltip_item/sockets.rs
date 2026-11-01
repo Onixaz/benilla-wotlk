@@ -286,6 +286,177 @@ fn an_instance_walks_its_sockets_and_greens_a_full_match() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
+/// A gem whose enchant asks a skill the player lacks reads red, shows its gem's icon beside it, and
+/// names the skill in a red line under it; a met requirement turns the line white and drops the
+/// red line (`0x629c04`, `0x629d11`).
+#[test]
+fn an_unmet_gem_requirement_reds_its_line_and_names_the_skill() {
+    let mut s = script();
+    s.set_item_template(4000, socketed());
+    s.set_item_template(
+        5000,
+        ItemTemplateView {
+            name: "Dragon's Eye".into(),
+            icon: Some(r"Interface\Icons\INV_Jewelcrafting_DragonsEye02".into()),
+            ..Default::default()
+        },
+    );
+    let mut eye = gem(2, "+34 Strength", 2);
+    eye.gem_item = 5000;
+    eye.requirement = Some(EnchantRequirementView {
+        skill: 755,
+        skill_rank: 370,
+        skill_name: Some("Jewelcrafting".into()),
+        min_level: 0,
+    });
+    bag_item(&mut s, vec![eye]);
+    s.run(
+        r#"
+        ENCHANT_ITEM_MIN_SKILL = "[ENCHANT_ITEM_MIN_SKILL %s %d]"
+        local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0)
+        a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT")
+        for i = 1, 3 do tt:CreateTexture("TTTexture" .. i, "ARTWORK") end
+    "#,
+    )
+    .unwrap();
+    let lines = hover_bag(&mut s);
+    let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
+    let at = texts
+        .iter()
+        .position(|t| *t == "|cffff2020+34 Strength|r")
+        .unwrap_or_else(|| panic!("the red gem line in {texts:?}"));
+    assert_eq!(lines[at].1, GOLD);
+    assert_eq!(
+        lines[at + 1],
+        (
+            "[ENCHANT_ITEM_MIN_SKILL Jewelcrafting 370]".into(),
+            [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0]
+        )
+    );
+    let icon: String = s.eval("return TTTexture1:GetTexture() or ''").unwrap();
+    assert!(icon.ends_with("INV_Jewelcrafting_DragonsEye02"), "{icon}");
+
+    let mut req = PlayerReqState::default();
+    req.skills.insert(755, 375);
+    s.set_player_req_state(req);
+    let texts: Vec<String> = hover_bag(&mut s).into_iter().map(|(t, _)| t).collect();
+    assert!(
+        texts.iter().any(|t| t == "|cffffffff+34 Strength|r"),
+        "{texts:?}"
+    );
+    assert!(!texts
+        .iter()
+        .any(|t| t.starts_with("[ENCHANT_ITEM_MIN_SKILL")));
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+}
+
+/// A condition on an inspected player's item counts that player's gems, not the viewer's.
+#[test]
+fn an_inspected_item_counts_its_wearers_gems() {
+    let mut s = script();
+    s.set_item_template(4000, socketed());
+    let mut meta = gem(2, "+21 Critical Strike Rating", 1);
+    meta.condition = Some(
+        [EnchantConditionTest {
+            left_type: 2,
+            operator: 5,
+            right_type: 0,
+            right_value: 2,
+            logic: 0,
+        }; 5],
+    );
+    let mut slots: InventorySlots = Default::default();
+    slots[1] = Some(InvSlotView {
+        item_id: 4000,
+        enchants: vec![meta],
+        ..Default::default()
+    });
+    // The viewer wears the same head, no red gems; the inspected player has two.
+    s.set_inventory_slots(slots.clone());
+    s.set_inspect(Some(InspectView {
+        unit: "target".into(),
+        guid: 0x42,
+        slots,
+        gem_counts: [1, 2, 0, 0],
+    }));
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0)
+        a:SetWidth(10); a:SetHeight(10)
+        CreateFrame("GameTooltip", "TT")
+    "#,
+    )
+    .unwrap();
+    let line = |s: &mut UiScript, unit: &str| {
+        s.run(&format!(
+            r#"TT:SetOwner(Slot, "ANCHOR_RIGHT"); TT:SetInventoryItem("{unit}", 1)"#
+        ))
+        .unwrap();
+        lines_of(s)
+            .into_iter()
+            .find(|(t, _)| t.contains("+21 Critical Strike Rating"))
+            .expect("the meta gem's line")
+            .0
+    };
+    assert!(line(&mut s, "player").starts_with("|cff808080"));
+    assert!(line(&mut s, "target").starts_with("|cffffffff"));
+}
+
+/// `GetItemInfo` takes a held item's name, in any case, and an unheld name answers nothing; a link
+/// with a negative random property takes its `ItemRandomSuffix` name (`0x709de0`, `0x706d70`).
+#[test]
+fn get_item_info_finds_a_held_name_and_a_negative_suffix() {
+    let mut s = script();
+    s.set_item_template(
+        4000,
+        ItemTemplateView {
+            name: "Socketed Helm".into(),
+            quality: 4,
+            ..Default::default()
+        },
+    );
+    let mut slots = HashMap::new();
+    slots.insert(
+        1,
+        ContainerSlot {
+            count: 1,
+            item_id: 4000,
+            link: Some("|cffa335ee|Hitem:4000:0:0:0|h[Socketed Helm]|h|r".into()),
+            ..Default::default()
+        },
+    );
+    s.set_container(
+        0,
+        Some(ContainerState {
+            bag_family: 0,
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots,
+        }),
+    );
+    s.set_random_suffixes(HashMap::from([(5, "of the Monkey".to_string())]));
+    s.run(r#"ITEM_SUFFIX_TEMPLATE = "%s %s""#).unwrap();
+    let (name, link): (Option<String>, Option<String>) = s
+        .eval(r#"local n, l = GetItemInfo("socketed helm"); return n, l"#)
+        .unwrap();
+    assert_eq!(name.as_deref(), Some("Socketed Helm"));
+    assert!(link.is_some_and(|l| l.contains("|Hitem:4000:")));
+    let none: Option<String> = s.eval(r#"return (GetItemInfo("Unheld Helm"))"#).unwrap();
+    assert_eq!(none, None);
+    let suffixed: String = s
+        .eval(r#"return (GetItemInfo("item:4000:0:0:0:0:0:-5:0"))"#)
+        .unwrap();
+    assert_eq!(suffixed, "Socketed Helm of the Monkey");
+    let missing: String = s
+        .eval(r#"return (GetItemInfo("item:4000:0:0:0:0:0:-9:0"))"#)
+        .unwrap();
+    assert_eq!(
+        missing, "Socketed Helm ",
+        "a missing row still takes the suffix form"
+    );
+}
+
 /// A druid reads a main-hand weapon's feral attack power: `(dps - 54.81) * 14`, rounded.
 #[test]
 fn a_druid_reads_a_weapons_feral_attack_power() {

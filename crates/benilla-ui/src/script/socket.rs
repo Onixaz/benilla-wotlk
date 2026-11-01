@@ -292,6 +292,33 @@ pub(super) fn equipped_gem_counts(model: &Model) -> [i32; 4] {
     counts
 }
 
+/// The item-by-name table (`0x709de0`): an item object the player holds whose full name matches,
+/// case-insensitively; filled as items are created (`0x70aa40`) and emptied as they go
+/// (`0x709e20`), so only held items answer.
+pub(super) fn item_id_by_name(model: &Model, name: &str) -> Option<u32> {
+    // The table compares in UTF-8 without case (`0x76ea40`).
+    let name = name.to_lowercase();
+    let matches = |n: &str| n.to_lowercase() == name;
+    model
+        .inventory_slots
+        .iter()
+        .flatten()
+        .find(|s| s.item_id != 0 && s.name.as_deref().is_some_and(matches))
+        .map(|s| s.item_id)
+        .or_else(|| {
+            model
+                .containers
+                .values()
+                .flat_map(|c| c.slots.values())
+                .find(|s| {
+                    s.item_id != 0
+                        && s.link.is_some()
+                        && matches(&cursor::item_link_name(s.link.as_deref()))
+                })
+                .map(|s| s.item_id)
+        })
+}
+
 /// Whether the item holds an enchant (`0x708ac0`): a permanent enchant, a gem in the first two sockets or a
 /// prismatic socket; the third socket is not read.
 pub(super) fn has_enchantments(held: &Held<'_>) -> bool {

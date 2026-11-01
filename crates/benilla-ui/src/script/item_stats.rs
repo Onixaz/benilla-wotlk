@@ -116,6 +116,8 @@ pub struct GemView {
     pub enchant_name: Option<String>,
     /// The enchant's activation condition, a meta gem's.
     pub condition: Option<super::EnchantConditionView>,
+    /// The enchant's skill and level requirement, which a socketed gem's line reads.
+    pub requirement: Option<super::EnchantRequirementView>,
 }
 
 /// The player state the tooltip's red lines and the usable gate compare against.
@@ -296,6 +298,11 @@ impl super::UiScript {
         rows: std::collections::HashMap<u32, super::RandomPropertyView>,
     ) {
         set_field!(self, random_properties, rows);
+    }
+
+    /// Pushes the `ItemRandomSuffix` names once, at load.
+    pub fn set_random_suffixes(&mut self, names: std::collections::HashMap<u32, String>) {
+        set_field!(self, random_suffixes, names);
     }
 
     /// Pushes the player state the red lines compare against.
@@ -531,11 +538,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // itemMinLevel, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture,
     // itemSellPrice: eleven values. The name takes the link's random-property suffix and the link
     // is a full hyperlink (`0xa24f04`). An uncached template answers no values and records
-    // the ask. Not built: a name argument, which the reference finds in the item cache by name.
+    // the ask. A name argument finds an item the player holds by that name.
     lua.globals().set(
         "GetItemInfo",
         lua.create_function(|lua, arg: Value| {
             let (id, fields) = parse_item_arg(&arg)?;
+            // A name, not an item string: an item object the player holds by that name (`0x709de0`).
+            let id = match (&arg, id) {
+                (Value::String(s), 0) => {
+                    let name = s.to_string_lossy();
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    super::socket::item_id_by_name(&model, &name).map_or(0, i64::from)
+                }
+                (_, id) => id,
+            };
             let Ok(item_id) = u32::try_from(id) else {
                 return Ok(MultiValue::new()); // no record holds a negative or past-u32 id
             };
@@ -545,12 +563,24 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 if v.is_none() && item_id != 0 {
                     model.item_stat_asks.insert(item_id);
                 }
-                // The name takes the link's random property: a positive id's suffix.
-                let suffix = u32::try_from(fields.random_property)
-                    .ok()
-                    .and_then(|rp| model.random_properties.get(&rp))
-                    .map(|r| r.suffix.clone())
-                    .filter(|s| !s.is_empty());
+                // The name takes the link's random property (`0x706d70`): a positive id's
+                // non-empty suffix, a negative id's `ItemRandomSuffix` name, empty for a missing row.
+                let rp = fields.random_property;
+                let suffix = match rp {
+                    1.. => model
+                        .random_properties
+                        .get(&(rp as u32))
+                        .map(|r| r.suffix.clone())
+                        .filter(|s| !s.is_empty()),
+                    0 => None,
+                    _ => Some(
+                        model
+                            .random_suffixes
+                            .get(&rp.unsigned_abs())
+                            .cloned()
+                            .unwrap_or_default(),
+                    ),
+                };
                 (v, suffix, model.player_req.level)
             };
             let Some(v) = view else {

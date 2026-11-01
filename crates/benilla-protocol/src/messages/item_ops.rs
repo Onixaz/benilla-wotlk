@@ -148,6 +148,57 @@ pub(super) fn read_item_name_query_response(
     Ok((entry, Some((name, inventory_type))))
 }
 
+/// One worn item of an inspected player (`0x6cdf30`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InspectItem {
+    /// The inventory slot, 0-based (0 head .. 18 tabard).
+    pub slot: u8,
+    pub entry: u32,
+    /// A negative wire entry: the item counts toward its wearer's gem conditions (`0x6de4d0`).
+    pub counts_gems: bool,
+    /// The twelve enchant slots, 0 for an empty one.
+    pub enchants: [u32; 12],
+    pub random_property: i16,
+    pub creator: u64,
+    pub seed: u32,
+}
+
+/// Read `SMSG_INSPECT_TALENT` (`0x6ce0c0`): the packed guid, the player talent body, then the worn
+/// items: a `u32` slot mask and per set bit the entry, a `u16` enchant mask with a `u16` per set bit,
+/// a `u16` random property, the creator's packed guid and a `u32` seed. Only the items are kept.
+pub(super) fn read_inspect_talent(r: &mut &[u8]) -> io::Result<(u64, Vec<InspectItem>)> {
+    let guid = crate::wire::read_packed_guid(r)?;
+    super::talents::read_player_talents(r)?;
+    let mask = read_u32_le(r)?;
+    let mut items = Vec::new();
+    for slot in 0..19u8 {
+        if mask & (1 << slot) == 0 {
+            continue;
+        }
+        let raw = read_u32_le(r)? as i32;
+        let enchant_mask = crate::wire::read_u16_le(r)?;
+        let mut enchants = [0u32; 12];
+        for (i, e) in enchants.iter_mut().enumerate() {
+            if enchant_mask & (1 << i) != 0 {
+                *e = u32::from(crate::wire::read_u16_le(r)?);
+            }
+        }
+        let random_property = crate::wire::read_u16_le(r)? as i16;
+        let creator = crate::wire::read_packed_guid(r)?;
+        let seed = read_u32_le(r)?;
+        items.push(InspectItem {
+            slot,
+            entry: raw.unsigned_abs(),
+            counts_gems: raw < 0,
+            enchants,
+            random_property,
+            creator,
+            seed,
+        });
+    }
+    Ok((guid, items))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,6 +283,36 @@ mod tests {
                 name: None
             }
         ));
+    }
+
+    /// The talent body is read past, then each worn item with its enchants by mask.
+    #[test]
+    fn an_inspect_talent_reads_the_worn_items() {
+        let mut b = vec![0x01, 0x07]; // packed guid 7
+        b.extend_from_slice(&0u32.to_le_bytes()); // unspent
+        b.extend_from_slice(&[1, 0]); // one group, active 0
+        b.extend_from_slice(&[1]); // one talent
+        b.extend_from_slice(&1234u32.to_le_bytes());
+        b.push(2);
+        b.push(0); // no glyphs
+        b.extend_from_slice(&0b10u32.to_le_bytes()); // slot 1, the neck
+        b.extend_from_slice(&(-40_000i32).to_le_bytes());
+        b.extend_from_slice(&0b100u16.to_le_bytes()); // enchant slot 2, a gem
+        b.extend_from_slice(&3628u16.to_le_bytes());
+        b.extend_from_slice(&(-5i16).to_le_bytes());
+        b.push(0); // creator, empty packed guid
+        b.extend_from_slice(&9u32.to_le_bytes());
+        match parse_server(opcode::SMSG_INSPECT_TALENT, &b).unwrap() {
+            ServerPacket::InspectItems { guid, items } => {
+                assert_eq!(guid, 7);
+                assert_eq!(items.len(), 1);
+                let it = &items[0];
+                assert_eq!((it.slot, it.entry, it.counts_gems), (1, 40_000, true));
+                assert_eq!(it.enchants[2], 3628);
+                assert_eq!((it.random_property, it.seed), (-5, 9));
+            }
+            other => panic!("got {}", other.name()),
+        }
     }
 
     #[test]

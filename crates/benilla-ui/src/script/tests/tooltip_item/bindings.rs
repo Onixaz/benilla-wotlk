@@ -710,6 +710,7 @@ fn item_bindings_return_the_pushed_repair_cost() {
         unit: "target".into(),
         guid: 0x42,
         slots: inv,
+        gem_counts: [0; 4],
     }));
     let mut slots = HashMap::new();
     for (slot, id, name) in [(1, 8201, "Worn Helm"), (2, 8202, "Whole Helm")] {

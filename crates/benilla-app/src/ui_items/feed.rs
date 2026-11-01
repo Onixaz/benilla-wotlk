@@ -287,6 +287,9 @@ fn template_view(
                 condition: enchants
                     .and_then(|e| e.0.condition(enchant))
                     .map(crate::items::condition_view),
+                requirement: enchants
+                    .and_then(|e| e.0.requirement(enchant))
+                    .map(crate::items::requirement_view),
             }),
     }
 }
@@ -479,6 +482,13 @@ pub(super) fn feed_random_properties(
         rows.len()
     );
     script.set_random_properties(rows);
+    script.set_random_suffixes(
+        props
+            .0
+            .iter_suffixes()
+            .map(|(id, name)| (id, name.to_string()))
+            .collect(),
+    );
     *pushed.get(&script) = true;
 }
 

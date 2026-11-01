@@ -932,6 +932,8 @@ pub(crate) struct Model {
     /// `ItemRandomProperties` id to its view, pushed whole at startup: a clicked tooltip cannot
     /// repaint on a late answer. The reference reads its loaded store.
     pub(crate) random_properties: HashMap<u32, super::RandomPropertyView>,
+    /// `ItemRandomSuffix.dbc`'s names, the suffix a negative random-property id takes.
+    pub(crate) random_suffixes: HashMap<u32, String>,
     /// The player's level, class, race and skills, for a tooltip's red requirement lines.
     pub(crate) player_req: PlayerReqState,
     /// Spell id to its tooltip view, and the misses asked for.
@@ -1642,6 +1644,7 @@ impl Model {
             item_sets: HashMap::new(),
             item_set_asks: HashSet::new(),
             random_properties: HashMap::new(),
+            random_suffixes: HashMap::new(),
             item_stat_asks: HashSet::new(),
             player_req: PlayerReqState::default(),
             spell_tooltips: HashMap::new(),
