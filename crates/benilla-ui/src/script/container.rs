@@ -94,6 +94,20 @@ pub struct EnchantView {
     pub prismatic_sockets: u32,
     /// A gem enchant's activation condition, a meta gem's.
     pub condition: Option<EnchantConditionView>,
+    /// The gem item a socket enchant came from (`SrcItemID`), whose icon the line shows; 0 for none.
+    pub gem_item: u32,
+    /// The skill and level the enchant asks of its wearer.
+    pub requirement: Option<EnchantRequirementView>,
+}
+
+/// An enchant's requirement: a skill at a rank, by name, and a minimum level.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnchantRequirementView {
+    pub skill: u32,
+    pub skill_rank: u32,
+    /// The skill's `SkillLine.dbc` name; `None` prints "UNKNOWN".
+    pub skill_name: Option<String>,
+    pub min_level: u32,
 }
 
 /// One `SpellItemEnchantmentCondition.dbc` row as the app resolves it: five tests on the equipped
@@ -118,7 +132,7 @@ pub struct RandomPropertyView {
     /// The suffix (`"of the Monkey"`), joined on by `ITEM_SUFFIX_TEMPLATE`, for the names the app
     /// does not compose itself.
     pub suffix: String,
-    /// The roll's five enchants, named, in slots 7-11; always white.
+    /// The roll's five enchants, named, in slots 7-11.
     pub enchants: Vec<EnchantView>,
 }
 

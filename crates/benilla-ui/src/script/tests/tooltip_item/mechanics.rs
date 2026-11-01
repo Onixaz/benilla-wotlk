@@ -586,13 +586,13 @@ fn enchant_line_colour_is_per_slot_and_sign() {
         "slot 1, id < 0 → the pure red, NOT the requirement red"
     );
     assert_eq!(
-        color_of("Stamina +7"),
-        [1.0, 1.0, 1.0, 1.0],
-        "a property slot is white"
+        color_of("|cffffffffStamina +7|r"),
+        [1.0, 210.0 / 255.0, 0.0, 1.0],
+        "a property slot carries its own white over the gold line"
     );
     assert_eq!(
-        color_of("Spirit +3"),
-        [1.0, 1.0, 1.0, 1.0],
+        color_of("|cffffffffSpirit +3|r"),
+        [1.0, 210.0 / 255.0, 0.0, 1.0],
         "…and stays white even with a negative id"
     );
 }
@@ -742,12 +742,16 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
         Some(&"Bloodrazor of the Monkey"),
         "the plate takes the roll's suffixed name — got {texts:?}"
     );
-    for line in ["Agility +7", "Stamina +7"] {
+    for line in ["|cffffffffAgility +7|r", "|cffffffffStamina +7|r"] {
         let l = lines
             .iter()
             .find(|(t, _)| t == line)
             .unwrap_or_else(|| panic!("the roll's slot line {line} — got {texts:?}"));
-        assert_eq!(l.1, [1.0, 1.0, 1.0, 1.0], "{line} is white");
+        assert_eq!(
+            l.1,
+            [1.0, 210.0 / 255.0, 0.0, 1.0],
+            "{line} carries its white over the gold line"
+        );
     }
 }
 
@@ -850,7 +854,7 @@ fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
         "the plate takes the link's own suffixed name — got {texts:?}"
     );
     assert!(
-        texts.iter().any(|t| t == "Agility +7"),
+        texts.iter().any(|t| t == "|cffffffffAgility +7|r"),
         "the roll's slot line — got {texts:?}"
     );
 }
@@ -914,7 +918,7 @@ fn random_property_template_hover_shows_the_placeholder() {
     let lines = super::lines_of(&mut s);
     let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
     assert!(
-        !texts.contains(&"[ITEM_RANDOM_ENCHANT]") && texts.contains(&"Stamina +7"),
+        !texts.contains(&"[ITEM_RANDOM_ENCHANT]") && texts.contains(&"|cffffffffStamina +7|r"),
         "an instance's known roll replaces the placeholder — got {texts:?}"
     );
 }

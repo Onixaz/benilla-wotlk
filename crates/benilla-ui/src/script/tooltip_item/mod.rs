@@ -646,6 +646,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                     duration_ms: s.duration_ms,
                                     guid: s.guid,
                                     socket_preview: None,
+                                    inspected: !unit.eq_ignore_ascii_case("player"),
                                 },
                             )
                         });
@@ -763,6 +764,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                 duration_ms: s.duration_ms,
                                 guid: s.guid,
                                 socket_preview: None,
+                                inspected: false,
                             },
                             cost.unwrap_or(0),
                         )

@@ -53,6 +53,9 @@ pub(super) struct ItemInstance {
     /// socket (`0x6277f0`). The preview cuts the bind region, a gem's own line, durability, the
     /// class, race and requirement lines, the set block and the creator line.
     pub socket_preview: Option<[Option<crate::script::ItemTemplateView>; 3]>,
+    /// The item is an inspected player's: a condition counts their gems, not the player's
+    /// (`0x629cd5`).
+    pub inspected: bool,
 }
 
 /// The sets holding `item` (`0x5ae380`): each set's name once per slot that holds it, in set
