@@ -469,7 +469,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetLootMethod() → lootmethod, masterlooterPartyID: two returns in 1.12.
+    // GetLootMethod() (`0x52cd90`) → the method, the master looter's party index (0 the player,
+    // 1-4 a party slot) and its raid index (1-40), each nil when it has none.
     g.set(
         "GetLootMethod",
         lua.create_function(|lua, ()| {
@@ -487,7 +488,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some(idx) => Value::Integer(i64::from(idx)),
                 None => Value::Nil,
             };
-            Ok((Value::String(lua.create_string(method)?), master))
+            let raid_index = (model.party.loot_master_guid != 0)
+                .then(|| {
+                    model
+                        .party
+                        .raid
+                        .iter()
+                        .position(|r| r.guid == model.party.loot_master_guid)
+                })
+                .flatten()
+                .map_or(Value::Nil, |i| Value::Integer(i as i64 + 1));
+            Ok((
+                Value::String(lua.create_string(method)?),
+                master,
+                raid_index,
+            ))
         })?,
     )?;
 

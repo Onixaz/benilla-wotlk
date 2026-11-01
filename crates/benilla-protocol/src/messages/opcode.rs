@@ -933,6 +933,10 @@ pub const SMSG_LOOT_ROLL: u16 = 0x02A2; // 674
 // Master loot: no roll; the master looter gets the eligible members when the window opens.
 pub const CMSG_LOOT_MASTER_GIVE: u16 = 0x02A3; // 675
 pub const SMSG_LOOT_MASTER_LIST: u16 = 0x02A4; // 676
+/// A corpse's master looter and round-robin looter (`0x71ca50`).
+pub const SMSG_LOOT_LIST: u16 = 0x03F9; // 1017
+/// One open loot row redrawn (`0x6d58d0`).
+pub const SMSG_LOOT_SLOT_CHANGED: u16 = 0x04FD; // 1277
 
 // Death: `CMSG_REPOP_REQUEST` is one byte; our `MSG_CORPSE_QUERY` request is empty.
 pub const CMSG_REPOP_REQUEST: u16 = 0x015A; // 346

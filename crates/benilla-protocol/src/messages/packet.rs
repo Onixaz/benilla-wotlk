@@ -10,15 +10,16 @@ use super::{
     GmResponse, GmTicket, GossipMenu, GossipPoi, GroupDifficulties, GroupLootInfo,
     GroupMemberEntry, GuildCommandResult, GuildEventNotice, GuildInfo, GuildQueryResponse,
     GuildRoster, InitWorldStates, InspectHonorStats, ItemInfo, ItemPushResult, JumpInfo,
-    LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll, MailList,
-    MailResult, MailSender, MirrorTimerStart, MoveMode, Object, PartyKillLog, PartyMemberStatsInfo,
-    PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList,
-    PetitionShowSignatures, PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept,
-    QuestDetails, QuestGiverList, QuestOfferReward, QuestPushResult, QuestRequestItems,
-    QuestTemplate, ResurrectRequestBody, SpeedKind, SpellChainTargets, SpellCooldown,
-    SpellDamageLog, SpellEnergizeLog, SpellGo, SpellHealLog, SpellInstaKillLog, SpellLogExecute,
-    SpellLogMiss, SpellOutcomeLog, SpellRemoveLog, SpellStart, SplineMode, StabledPet, TaxiMask,
-    TradeStatus, TradeStatusExtended, TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
+    LevelUpInfo, LootAllPassed, LootItem, LootList, LootRoll, LootRollWon, LootSlotChanged,
+    LootStartRoll, MailList, MailResult, MailSender, MirrorTimerStart, MoveMode, Object,
+    PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
+    PetitionRename, PetitionShowList, PetitionShowSignatures, PetitionSignResults, PvpCredit,
+    QuestComplete, QuestConfirmAccept, QuestDetails, QuestGiverList, QuestOfferReward,
+    QuestPushResult, QuestRequestItems, QuestTemplate, ResurrectRequestBody, SpeedKind,
+    SpellChainTargets, SpellCooldown, SpellDamageLog, SpellEnergizeLog, SpellGo, SpellHealLog,
+    SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog, SpellRemoveLog, SpellStart,
+    SplineMode, StabledPet, TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell,
+    TransportPose, VendorItem, WhoResults, XpGain,
 };
 
 /// The final facing a `SMSG_MONSTER_MOVE` dictates (`moveType`), applied as a hard snap, not a
@@ -1026,6 +1027,10 @@ pub enum ServerPacket {
     LootRollWon(LootRollWon),
     /// `SMSG_LOOT_ALL_PASSED`: everyone passed; the item goes back to ordinary corpse looting.
     LootAllPassed(LootAllPassed),
+    /// `SMSG_LOOT_LIST`: a corpse's master looter and round-robin looter.
+    LootList(LootList),
+    /// `SMSG_LOOT_SLOT_CHANGED`: one open loot row redrawn.
+    LootSlotChanged(LootSlotChanged),
     /// `SMSG_LOOT_MASTER_LIST`: master-loot candidates; precedes its `SMSG_LOOT_RESPONSE`.
     LootMasterList {
         candidates: Vec<u64>,
@@ -1839,6 +1844,8 @@ impl ServerPacket {
             ServerPacket::LootRoll(_) => "SMSG_LOOT_ROLL".into(),
             ServerPacket::LootRollWon(_) => "SMSG_LOOT_ROLL_WON".into(),
             ServerPacket::LootAllPassed(_) => "SMSG_LOOT_ALL_PASSED".into(),
+            ServerPacket::LootList(_) => "SMSG_LOOT_LIST".into(),
+            ServerPacket::LootSlotChanged(_) => "SMSG_LOOT_SLOT_CHANGED".into(),
             ServerPacket::LootMasterList { .. } => "SMSG_LOOT_MASTER_LIST".into(),
             ServerPacket::ItemPushResult(_) => "SMSG_ITEM_PUSH_RESULT".into(),
             ServerPacket::CorpseQuery(_) => "MSG_CORPSE_QUERY".into(),

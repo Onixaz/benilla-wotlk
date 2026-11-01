@@ -7,15 +7,15 @@ use crate::messages::{
     EnvironmentalDamageLog, ExplorationXp, FriendStatusUpdate, GmResponse, GmTicket, GossipMenu,
     GroupDifficulties, GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice,
     GuildInfo, GuildQueryResponse, GuildRoster, InspectHonorStats, ItemInfo, ItemPushResult,
-    JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll, MailList,
-    MailResult, MailSender, MirrorTimerStart, MonsterMoveFacing, MoverState, ObjectFields,
-    PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
-    PetitionRename, PetitionShowList, PetitionShowSignatures, PetitionSignResults, PvpCredit,
-    QuestComplete, QuestConfirmAccept, QuestDetails, QuestGiverList, QuestOfferReward,
-    QuestRequestItems, QuestShareMsg, QuestTemplate, SpellDamageLog, SpellEnergizeLog,
-    SpellHealLog, SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog,
-    SpellRemoveLog, StabledPet, TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell,
-    TransportPose, VendorItem, WhoResults, XpGain,
+    JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootList, LootRoll, LootRollWon,
+    LootSlotChanged, LootStartRoll, MailList, MailResult, MailSender, MirrorTimerStart,
+    MonsterMoveFacing, MoverState, ObjectFields, PartyKillLog, PartyMemberStatsInfo,
+    PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList,
+    PetitionShowSignatures, PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept,
+    QuestDetails, QuestGiverList, QuestOfferReward, QuestRequestItems, QuestShareMsg,
+    QuestTemplate, SpellDamageLog, SpellEnergizeLog, SpellHealLog, SpellInstaKillLog,
+    SpellLogExecute, SpellLogMiss, SpellOutcomeLog, SpellRemoveLog, StabledPet, TaxiMask,
+    TradeStatus, TradeStatusExtended, TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
 };
 
 /// Coarse entity classification, free of wire types, carried on [`SessionEvent::ObjectCreate`].
@@ -1080,6 +1080,10 @@ pub enum SessionEvent {
     LootRollWon(LootRollWon),
     /// Everyone passed (`SMSG_LOOT_ALL_PASSED`); the item returns to ordinary looting.
     LootAllPassed(LootAllPassed),
+    /// A corpse's master looter and round-robin looter (`SMSG_LOOT_LIST`).
+    LootList(LootList),
+    /// One open loot row redrawn (`SMSG_LOOT_SLOT_CHANGED`).
+    LootSlotChanged(LootSlotChanged),
     /// Master-loot candidates (`SMSG_LOOT_MASTER_LIST`), sent by `SendLoot` before its response.
     LootMasterList { candidates: Vec<u64> },
     /// An item landed in our bags (`SMSG_ITEM_PUSH_RESULT`): the "You receive loot" line.

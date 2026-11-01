@@ -179,6 +179,10 @@ pub struct UnitState {
     /// The GlobalString of the tooltip's red skinnable line (`UNIT_SKINNABLE_LEATHER`, `_HERB`,
     /// `_ROCK`, `_BOLTS`), set for a non-player with `UNIT_FIELD_FLAGS`' skinnable bit.
     pub skinnable: Option<&'static str>,
+    /// A dead unit's master looter and round-robin looter by name (`SMSG_LOOT_LIST`), the
+    /// tooltip's `MASTER_LOOTER` and `LOOT` lines; `None` while unnamed or unset.
+    pub master_looter: Option<String>,
+    pub looter: Option<String>,
     /// The faction name ("Stormwind"), the tooltip line after the level line, from `Faction.dbc`
     /// through the faction template with its hiding gates applied; `None` shows no line.
     pub faction_name: Option<String>,

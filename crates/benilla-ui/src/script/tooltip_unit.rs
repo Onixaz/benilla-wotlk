@@ -184,6 +184,14 @@ fn render_unit(lua: &Lua, this: &Table, token: &str) -> mlua::Result<bool> {
     if u.racial_leader && u.pvp {
         append_line(lua, this, ("Leader".into(), WHITE), None, false)?;
     }
+    // A dead unit's looters (`0x621070`): "MASTER_LOOTER: name", then "LOOT: name".
+    if u.dead {
+        for (key, name) in [("MASTER_LOOTER", &u.master_looter), ("LOOT", &u.looter)] {
+            if let (Some(name), Some(label)) = (name, crate::strings::global(lua, key)) {
+                append_line(lua, this, (format!("{label}: {name}"), WHITE), None, false)?;
+            }
+        }
+    }
     // The threat line: the player's percent to pull on this unit, then the raid frame's threat
     // mark tinted by status from the table `GetThreatStatusColor` reads (`0xad2d70`).
     let threat = super::threat::tooltip_line(&crate::script::model_mut_of(lua), u.guid);

@@ -144,6 +144,8 @@ pub(super) fn seed_ui_fixture(
         socket_colors: [0; 3],
         socket_bonus: 0,
         gem_properties: 0,
+        flags2: 0,
+        required_disenchant_skill: -1,
     };
 
     match fixture {

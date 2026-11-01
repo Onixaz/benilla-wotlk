@@ -98,12 +98,13 @@ pub fn loot_release(guid: u64) -> Vec<u8> {
     guid.to_le_bytes().to_vec()
 }
 
-/// `RollVote` (vmangos `Group/Group.h:88-99`): the server rejects a vote `>= 3`
-/// (`GroupHandler.cpp:367-368`). Overloaded on `SMSG_LOOT_ROLL`: see [`LootRoll::is_dice`].
+/// `RollVote`, the `rollType` of `CMSG_LOOT_ROLL` and `RollOnLoot`: 3 is Disenchant, sent only
+/// when the start's vote mask has bit `1 << rollType` (`0x6fbc70`).
 pub mod roll_vote {
     pub const PASS: u8 = 0;
     pub const NEED: u8 = 1;
     pub const GREED: u8 = 2;
+    pub const DISENCHANT: u8 = 3;
 }
 
 /// `CMSG_LOOT_ROLL` (`Loot.cpp:18-23`): `u64 lootedTarget, u32 itemSlot, u8 rollType`. The
@@ -124,46 +125,68 @@ pub fn loot_master_give(loot_guid: u64, slot: u8, player_guid: u64) -> Vec<u8> {
     body
 }
 
-/// `SMSG_LOOT_START_ROLL` (`Loot.cpp:43-51`): a group roll opened on one drop, sent to every
-/// eligible roller. Its `randomSuffix` is always 0 (`Group/Group.cpp:765`) and is discarded.
+/// `SMSG_LOOT_START_ROLL` (`0x6fb2c0`): a group roll opened on one drop. `map_id` is the looted
+/// object's map; a roll for another map than ours is dropped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LootStartRoll {
     pub looted_target: u64,
+    pub map_id: u32,
     /// The wire [`LootItem::slot`], carried as a `u32` here.
     pub item_slot: u32,
     pub item_id: u32,
+    pub random_suffix: u32,
     pub random_property_id: u32,
-    /// How long the roll stays open, in ms (vmangos: `60_000`, `Group.cpp:67`).
+    /// The stack size, `GetLootRollItemInfo`'s `count`.
+    pub count: u32,
+    /// How long the roll stays open, in ms.
     pub countdown_ms: u32,
+    /// The votes this roller may cast, bit `1 << rollType`: 0x1 Pass, 0x2 Need, 0x4 Greed, 0x8
+    /// Disenchant.
+    pub vote_mask: u8,
 }
 
-/// `SMSG_LOOT_ROLL` (`Loot.cpp:53-63`): one player's vote or dice roll, sent to every roller.
-/// `(roll_number, roll_type)` is overloaded: a vote is `(0, 0)` Need, `(128, 128)` Pass or
-/// `(128, 2)` Greed; a dice result is `(1..=100, 1 or 2)` (`Group/Group.cpp:970-990,1163,1214`).
+/// What one `SMSG_LOOT_ROLL` reports, as `0x6fa840` reads `(rollNumber, rollType)`: a signed
+/// `rollNumber` below 0 (128 and up on the wire) is a vote, Greed on type 2, Disenchant on 3,
+/// else Pass; at 0 and up, type 0 is the Need vote and 1, 2, 3 are the Need, Greed and
+/// Disenchant dice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RollAnnounce {
+    Need,
+    Greed,
+    Disenchant,
+    Pass,
+    NeedRoll(u8),
+    GreedRoll(u8),
+    DisenchantRoll(u8),
+}
+
+/// `SMSG_LOOT_ROLL` (`0x6fae40`): one player's vote or dice roll; the last byte is the auto-pass
+/// flag, an item the roller cannot loot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LootRoll {
     pub looted_target: u64,
     pub item_slot: u32,
     pub roller: u64,
     pub item_id: u32,
+    pub random_suffix: u32,
     pub random_property_id: u32,
     pub roll_number: u8,
     pub roll_type: u8,
+    pub auto_pass: bool,
 }
 
 impl LootRoll {
-    /// A dice result rather than a vote: vmangos rolls `urand(1, 100)` (`Group.cpp:1162,1213`).
-    pub fn is_dice(&self) -> bool {
-        (1..=100).contains(&self.roll_number)
-    }
-
-    /// The [`roll_vote`] this announcement reports, when it is a vote.
-    pub fn vote(&self) -> Option<u8> {
-        match (self.roll_number, self.roll_type) {
-            (0, 0) => Some(roll_vote::NEED),
-            (128, 128) => Some(roll_vote::PASS),
-            (128, roll_vote::GREED) => Some(roll_vote::GREED),
-            _ => None,
+    /// The announcement this `(rollNumber, rollType)` pair is (`0x6fa840`).
+    pub fn announce(&self) -> RollAnnounce {
+        let n = self.roll_number;
+        match (n >= 128, self.roll_type) {
+            (true, 2) => RollAnnounce::Greed,
+            (true, 3) => RollAnnounce::Disenchant,
+            (true, _) => RollAnnounce::Pass,
+            (false, 0) => RollAnnounce::Need,
+            (false, 2) => RollAnnounce::GreedRoll(n),
+            (false, 3) => RollAnnounce::DisenchantRoll(n),
+            (false, _) => RollAnnounce::NeedRoll(n),
         }
     }
 }
@@ -175,11 +198,12 @@ pub struct LootRollWon {
     pub looted_target: u64,
     pub item_slot: u32,
     pub item_id: u32,
+    pub random_suffix: u32,
     pub random_property_id: u32,
     pub winner: u64,
     /// The winning dice value, or 100 with Need when only one player may roll (`Group.cpp:1110`).
     pub roll_number: u8,
-    /// The [`roll_vote`] that won.
+    /// The [`roll_vote`] that won: 1 Need, 2 Greed, 3 Disenchant.
     pub roll_type: u8,
 }
 
@@ -191,75 +215,103 @@ pub struct LootAllPassed {
     pub item_slot: u32,
     pub item_id: u32,
     pub random_property_id: u32,
+    pub random_suffix: u32,
+}
+
+/// `SMSG_LOOT_LIST` (`0x71ca50` -> `0x71bc00`): a corpse's master looter and round-robin looter,
+/// each a packed guid, 0 for none, shown on the dead unit's tooltip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LootList {
+    pub creature: u64,
+    pub master_looter: u64,
+    pub looter: u64,
+}
+
+/// `SMSG_LOOT_SLOT_CHANGED` (`0x6d58d0`): one row of the open loot redrawn, by wire slot; the
+/// slot type is not on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LootSlotChanged {
+    pub looted_target: u64,
+    pub slot: u8,
+    pub item_id: u32,
+    pub display_info_id: u32,
+    pub random_suffix: u32,
+    pub random_property_id: u32,
+    pub count: u32,
 }
 
 pub(super) fn read_loot_start_roll(r: &mut &[u8]) -> io::Result<LootStartRoll> {
-    let looted_target = read_u64_le(r)?;
-    let item_slot = read_u32_le(r)?;
-    let item_id = read_u32_le(r)?;
-    let _random_suffix = read_u32_le(r)?; // literal 0 on the wire (Group.cpp:765)
-    let random_property_id = read_u32_le(r)?;
-    let countdown_ms = read_u32_le(r)?;
     Ok(LootStartRoll {
-        looted_target,
-        item_slot,
-        item_id,
-        random_property_id,
-        countdown_ms,
+        looted_target: read_u64_le(r)?,
+        map_id: read_u32_le(r)?,
+        item_slot: read_u32_le(r)?,
+        item_id: read_u32_le(r)?,
+        random_suffix: read_u32_le(r)?,
+        random_property_id: read_u32_le(r)?,
+        count: read_u32_le(r)?,
+        countdown_ms: read_u32_le(r)?,
+        vote_mask: read_u8(r)?,
     })
 }
 
 pub(super) fn read_loot_roll(r: &mut &[u8]) -> io::Result<LootRoll> {
-    let looted_target = read_u64_le(r)?;
-    let item_slot = read_u32_le(r)?;
-    let roller = read_u64_le(r)?;
-    let item_id = read_u32_le(r)?;
-    let _random_suffix = read_u32_le(r)?; // literal 0 on the wire (Group.cpp:794)
-    let random_property_id = read_u32_le(r)?;
-    let roll_number = read_u8(r)?;
-    let roll_type = read_u8(r)?;
     Ok(LootRoll {
-        looted_target,
-        item_slot,
-        roller,
-        item_id,
-        random_property_id,
-        roll_number,
-        roll_type,
+        looted_target: read_u64_le(r)?,
+        item_slot: read_u32_le(r)?,
+        roller: read_u64_le(r)?,
+        item_id: read_u32_le(r)?,
+        random_suffix: read_u32_le(r)?,
+        random_property_id: read_u32_le(r)?,
+        roll_number: read_u8(r)?,
+        roll_type: read_u8(r)?,
+        auto_pass: read_u8(r)? != 0,
+    })
+}
+
+/// Read `SMSG_LOOT_LIST`.
+pub(super) fn read_loot_list(r: &mut &[u8]) -> io::Result<LootList> {
+    Ok(LootList {
+        creature: read_u64_le(r)?,
+        master_looter: crate::wire::read_packed_guid(r)?,
+        looter: crate::wire::read_packed_guid(r)?,
+    })
+}
+
+/// Read `SMSG_LOOT_SLOT_CHANGED`.
+pub(super) fn read_loot_slot_changed(r: &mut &[u8]) -> io::Result<LootSlotChanged> {
+    Ok(LootSlotChanged {
+        looted_target: read_u64_le(r)?,
+        slot: read_u8(r)?,
+        item_id: read_u32_le(r)?,
+        display_info_id: read_u32_le(r)?,
+        random_suffix: read_u32_le(r)?,
+        random_property_id: read_u32_le(r)?,
+        count: read_u32_le(r)?,
     })
 }
 
 pub(super) fn read_loot_roll_won(r: &mut &[u8]) -> io::Result<LootRollWon> {
-    let looted_target = read_u64_le(r)?;
-    let item_slot = read_u32_le(r)?;
-    let item_id = read_u32_le(r)?;
-    let _random_suffix = read_u32_le(r)?; // literal 0 on the wire (Group.cpp:821)
-    let random_property_id = read_u32_le(r)?;
-    let winner = read_u64_le(r)?;
-    let roll_number = read_u8(r)?;
-    let roll_type = read_u8(r)?;
     Ok(LootRollWon {
-        looted_target,
-        item_slot,
-        item_id,
-        random_property_id,
-        winner,
-        roll_number,
-        roll_type,
+        looted_target: read_u64_le(r)?,
+        item_slot: read_u32_le(r)?,
+        item_id: read_u32_le(r)?,
+        random_suffix: read_u32_le(r)?,
+        random_property_id: read_u32_le(r)?,
+        winner: read_u64_le(r)?,
+        roll_number: read_u8(r)?,
+        roll_type: read_u8(r)?,
     })
 }
 
+/// `SMSG_LOOT_ALL_PASSED` (`0x6fb600`): the random property before the suffix, unlike the rest of
+/// the family.
 pub(super) fn read_loot_all_passed(r: &mut &[u8]) -> io::Result<LootAllPassed> {
-    let looted_target = read_u64_le(r)?;
-    let item_slot = read_u32_le(r)?;
-    let item_id = read_u32_le(r)?;
-    let random_property_id = read_u32_le(r)?;
-    let _random_suffix = read_u32_le(r)?; // the swapped tail, a literal 0 (Group.cpp:850)
     Ok(LootAllPassed {
-        looted_target,
-        item_slot,
-        item_id,
-        random_property_id,
+        looted_target: read_u64_le(r)?,
+        item_slot: read_u32_le(r)?,
+        item_id: read_u32_le(r)?,
+        random_property_id: read_u32_le(r)?,
+        random_suffix: read_u32_le(r)?,
     })
 }
 
@@ -462,82 +514,62 @@ mod tests {
         }
     }
 
+    /// The 12340 body `0x6fb2c0` reads, as `Group::SendLootStartRoll` writes it.
     #[test]
     fn loot_start_roll_decodes() {
         let mut body = 0xAAu64.to_le_bytes().to_vec();
-        body.extend_from_slice(&1u32.to_le_bytes()); // itemSlot
-        body.extend_from_slice(&17182u32.to_le_bytes()); // itemEntryId
-        body.extend_from_slice(&0u32.to_le_bytes()); // randomSuffix, always 0
-        body.extend_from_slice(&0u32.to_le_bytes()); // itemRandomPropId
-        body.extend_from_slice(&60_000u32.to_le_bytes()); // LOOT_ROLL_TIMEOUT (Group.cpp:67)
-
+        for v in [574u32, 1, 17182, 9, 7, 2, 60_000] {
+            body.extend_from_slice(&v.to_le_bytes());
+        }
+        body.push(0x0F);
         match parse_server(opcode::SMSG_LOOT_START_ROLL, &body).unwrap() {
             ServerPacket::LootStartRoll(p) => assert_eq!(
                 p,
                 LootStartRoll {
                     looted_target: 0xAA,
+                    map_id: 574,
                     item_slot: 1,
                     item_id: 17182,
-                    random_property_id: 0,
+                    random_suffix: 9,
+                    random_property_id: 7,
+                    count: 2,
                     countdown_ms: 60_000,
+                    vote_mask: 0x0F,
                 }
             ),
             other => panic!("expected LootStartRoll, got {}", other.name()),
         }
     }
 
-    /// A Greed vote `(128, 2)` and a Greed roll `(1..=100, 2)` share their `roll_type`.
+    /// `0x6fa840`'s split: a signed roll number below 0 is a vote, keyed by type.
     #[test]
-    fn loot_roll_decodes_and_disambiguates() {
-        let announce = |roll_number: u8, roll_type: u8| {
+    fn loot_roll_decodes_and_names_every_shape() {
+        let announce = |roll_number: u8, roll_type: u8, auto_pass: u8| {
             let mut body = 0xAAu64.to_le_bytes().to_vec();
-            body.extend_from_slice(&1u32.to_le_bytes()); // itemSlot
-            body.extend_from_slice(&0xBBu64.to_le_bytes()); // rollerGuid
-            body.extend_from_slice(&17182u32.to_le_bytes()); // itemEntryId
-            body.extend_from_slice(&0u32.to_le_bytes()); // randomSuffix
-            body.extend_from_slice(&0u32.to_le_bytes()); // itemRandomPropId
-            body.push(roll_number);
-            body.push(roll_type);
+            body.extend_from_slice(&1u32.to_le_bytes());
+            body.extend_from_slice(&0xBBu64.to_le_bytes());
+            body.extend_from_slice(&17182u32.to_le_bytes());
+            body.extend_from_slice(&0u32.to_le_bytes());
+            body.extend_from_slice(&0u32.to_le_bytes());
+            body.extend_from_slice(&[roll_number, roll_type, auto_pass]);
             match parse_server(opcode::SMSG_LOOT_ROLL, &body).unwrap() {
                 ServerPacket::LootRoll(p) => p,
                 other => panic!("expected LootRoll, got {}", other.name()),
             }
         };
-
-        let need_vote = announce(0, 0);
-        assert_eq!(
-            need_vote,
-            LootRoll {
-                looted_target: 0xAA,
-                item_slot: 1,
-                roller: 0xBB,
-                item_id: 17182,
-                random_property_id: 0,
-                roll_number: 0,
-                roll_type: 0,
-            }
-        );
-
-        // The three vote shapes (Group.cpp:970-990).
-        assert!(!need_vote.is_dice());
-        assert_eq!(need_vote.vote(), Some(roll_vote::NEED));
-
-        let pass_vote = announce(128, 128);
-        assert!(!pass_vote.is_dice());
-        assert_eq!(pass_vote.vote(), Some(roll_vote::PASS));
-
-        let greed_vote = announce(128, roll_vote::GREED);
-        assert!(!greed_vote.is_dice());
-        assert_eq!(greed_vote.vote(), Some(roll_vote::GREED));
-
-        // Dice results are urand(1, 100) (Group.cpp:1163, 1214), so both bounds are legal.
-        for roll_number in [1u8, 57, 100] {
-            for roll_type in [roll_vote::NEED, roll_vote::GREED] {
-                let dice = announce(roll_number, roll_type);
-                assert!(dice.is_dice(), "roll {roll_number} type {roll_type}");
-                assert_eq!(dice.vote(), None, "roll {roll_number} type {roll_type}");
-                assert_eq!(dice.roll_type, roll_type);
-            }
+        let auto = announce(128, 0, 1);
+        assert!(auto.auto_pass);
+        assert_eq!(auto.announce(), RollAnnounce::Pass);
+        for (n, t, want) in [
+            (0, 0, RollAnnounce::Need),
+            (128, 2, RollAnnounce::Greed),
+            (128, 3, RollAnnounce::Disenchant),
+            (128, 0, RollAnnounce::Pass),
+            (57, 1, RollAnnounce::NeedRoll(57)),
+            (57, 2, RollAnnounce::GreedRoll(57)),
+            (57, 3, RollAnnounce::DisenchantRoll(57)),
+        ] {
+            assert_eq!(announce(n, t, 0).announce(), want, "({n}, {t})");
         }
     }
 
@@ -546,11 +578,11 @@ mod tests {
         let mut body = 0xAAu64.to_le_bytes().to_vec();
         body.extend_from_slice(&1u32.to_le_bytes()); // itemSlot
         body.extend_from_slice(&17182u32.to_le_bytes()); // itemEntryId
-        body.extend_from_slice(&0u32.to_le_bytes()); // randomSuffix
+        body.extend_from_slice(&9u32.to_le_bytes()); // randomSuffix
         body.extend_from_slice(&0u32.to_le_bytes()); // itemRandomPropId
         body.extend_from_slice(&0xBBu64.to_le_bytes()); // winnerGuid
         body.push(84); // rollNumber
-        body.push(roll_vote::NEED);
+        body.push(roll_vote::DISENCHANT);
 
         match parse_server(opcode::SMSG_LOOT_ROLL_WON, &body).unwrap() {
             ServerPacket::LootRollWon(p) => assert_eq!(
@@ -559,10 +591,11 @@ mod tests {
                     looted_target: 0xAA,
                     item_slot: 1,
                     item_id: 17182,
+                    random_suffix: 9,
                     random_property_id: 0,
                     winner: 0xBB,
                     roll_number: 84,
-                    roll_type: roll_vote::NEED,
+                    roll_type: roll_vote::DISENCHANT,
                 }
             ),
             other => panic!("expected LootRollWon, got {}", other.name()),
@@ -571,13 +604,11 @@ mod tests {
 
     #[test]
     fn loot_all_passed_decodes() {
-        // A non-zero prop id ahead of the suffix proves the swapped order (Loot.cpp:77-84).
+        // The property ahead of the suffix (`0x6fb600`).
         let mut body = 0xAAu64.to_le_bytes().to_vec();
-        body.extend_from_slice(&1u32.to_le_bytes()); // itemSlot
-        body.extend_from_slice(&17182u32.to_le_bytes()); // itemEntryId
-        body.extend_from_slice(&7u32.to_le_bytes()); // itemRandomPropId, read
-        body.extend_from_slice(&0u32.to_le_bytes()); // randomSuffixId, discarded
-
+        for v in [1u32, 17182, 7, 9] {
+            body.extend_from_slice(&v.to_le_bytes());
+        }
         match parse_server(opcode::SMSG_LOOT_ALL_PASSED, &body).unwrap() {
             ServerPacket::LootAllPassed(p) => assert_eq!(
                 p,
@@ -586,9 +617,54 @@ mod tests {
                     item_slot: 1,
                     item_id: 17182,
                     random_property_id: 7,
+                    random_suffix: 9,
                 }
             ),
             other => panic!("expected LootAllPassed, got {}", other.name()),
+        }
+    }
+
+    /// `Group::SendLooter`: the corpse, then two packed guids, an empty one a lone 0.
+    #[test]
+    fn loot_list_decodes() {
+        let mut body = 0xF130_0000_0000_00AAu64.to_le_bytes().to_vec();
+        body.extend_from_slice(&[0x01, 0x2A]); // packed 0x2A
+        body.push(0); // no looter
+        match parse_server(opcode::SMSG_LOOT_LIST, &body).unwrap() {
+            ServerPacket::LootList(p) => assert_eq!(
+                p,
+                LootList {
+                    creature: 0xF130_0000_0000_00AA,
+                    master_looter: 0x2A,
+                    looter: 0,
+                }
+            ),
+            other => panic!("expected LootList, got {}", other.name()),
+        }
+    }
+
+    /// `0x6d58d0`: the guid, a `u8` slot, then five `u32`.
+    #[test]
+    fn loot_slot_changed_decodes() {
+        let mut body = 0xAAu64.to_le_bytes().to_vec();
+        body.push(3);
+        for v in [2589u32, 7629, 0, 0, 4] {
+            body.extend_from_slice(&v.to_le_bytes());
+        }
+        match parse_server(opcode::SMSG_LOOT_SLOT_CHANGED, &body).unwrap() {
+            ServerPacket::LootSlotChanged(p) => assert_eq!(
+                p,
+                LootSlotChanged {
+                    looted_target: 0xAA,
+                    slot: 3,
+                    item_id: 2589,
+                    display_info_id: 7629,
+                    random_suffix: 0,
+                    random_property_id: 0,
+                    count: 4,
+                }
+            ),
+            other => panic!("expected LootSlotChanged, got {}", other.name()),
         }
     }
 

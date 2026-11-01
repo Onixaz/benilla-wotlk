@@ -181,6 +181,7 @@ fn drive_mouseover_tooltip(
             rx.factions.as_deref(),
             self_store,
         );
+        crate::ui_loot::apply_looters(&mut s, guid, tables.loot_lists(), &names);
         Some((guid, s))
     });
     // The hovered GameObject, when nothing else was picked or it is nearer. Not gated on

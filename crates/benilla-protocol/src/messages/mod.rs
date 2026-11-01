@@ -226,8 +226,8 @@ pub use lfg::{
 };
 pub use loot::{
     autostore_loot_item, loot, loot_error, loot_master_give, loot_money, loot_release, loot_roll,
-    loot_type, roll_vote, slot_type, ItemPushResult, LootAllPassed, LootItem, LootResponseBody,
-    LootRoll, LootRollWon, LootStartRoll,
+    loot_type, roll_vote, slot_type, ItemPushResult, LootAllPassed, LootItem, LootList,
+    LootResponseBody, LootRoll, LootRollWon, LootSlotChanged, LootStartRoll, RollAnnounce,
 };
 pub use mail::{
     get_mail_list, item_text_query, mail_action, mail_create_text_item, mail_delete,
