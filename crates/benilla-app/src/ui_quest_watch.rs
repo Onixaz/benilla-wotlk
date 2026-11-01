@@ -113,13 +113,14 @@ fn poi_line(
         finished: cur >= req,
         cur,
         req,
+        intermediate: false,
     }
 }
 
 /// Each logged quest's POI lines (`0x5e58c0`, `0x5e20a0`, `0x5e1ff0`): the objectives by entry
 /// with their raw counters (`0x5e2370`), the items by id with the bag count capped (`0x5e2630`),
 /// the drops, and the header zone's top area. Rebuilt only when an input moved.
-#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // one Bevy system's full input set
 fn feed_quest_poi_lines(
     script: Option<NonSendMut<UiScript>>,
     me: Query<Ref<ObjectStore>, With<SelfPlayer>>,
@@ -230,6 +231,7 @@ fn feed_quest_poi_lines(
                 finished: done,
                 cur: u32::from(done),
                 req: 1,
+                intermediate: false,
             }
         });
         board.push(event.clone());

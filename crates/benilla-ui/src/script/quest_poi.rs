@@ -345,172 +345,6 @@ fn quest_area(model: &Model, quest_id: u32) -> (u32, i32) {
     (wm.area_row_for(top).unwrap_or(0), 0)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::script::UiScript;
-
-    fn icon(x: i32, y: i32) -> Option<PoiIcon> {
-        Some(PoiIcon {
-            x,
-            y,
-            ..Default::default()
-        })
-    }
-
-    /// Two open icons on one spot are pushed apart; a one-point region's icon stays put
-    /// (`0x5e3165`).
-    #[test]
-    fn overlapping_open_icons_are_pushed_apart_unless_pinned() {
-        let rect = (1000.0, -1000.0, 0.0, 0.0);
-        let mut icons = vec![icon(100, 100), icon(100, 100)];
-        spread(&mut icons, &[0, 1], &[true, true], rect, OVERLAP_DISTANCE);
-        let (a, b) = (icons[0].unwrap(), icons[1].unwrap());
-        assert_ne!((a.x, a.y), (b.x, b.y), "the pair separated");
-        let mut icons = vec![icon(100, 100), icon(104, 100)];
-        spread(&mut icons, &[0, 1], &[false, true], rect, OVERLAP_DISTANCE);
-        assert_eq!(icons[0].unwrap().x, 100, "a pinned icon does not move");
-        assert!(
-            icons[1].unwrap().x > 104,
-            "the other is pushed away from it"
-        );
-        // Far apart: only the aspect squeeze's rounding moves them.
-        let mut icons = vec![icon(-900, 0), icon(900, 0)];
-        spread(&mut icons, &[0, 1], &[true, true], rect, OVERLAP_DISTANCE);
-        assert_eq!((icons[0].unwrap().x, icons[1].unwrap().x), (-900, 900));
-    }
-
-    /// A complete icon stacked on an earlier one steps along the first offset, scaled.
-    #[test]
-    fn stacked_complete_icons_fan_out() {
-        let mut icons = vec![icon(0, 0), icon(1, 1)];
-        fan_out(&mut icons, &[0, 1], 0.6);
-        assert_eq!(icons[0].unwrap().x, 0);
-        assert_eq!((icons[1].unwrap().x, icons[1].unwrap().y), (31, 52));
-        let mut icons = vec![icon(0, 0), icon(1, 1)];
-        fan_out(&mut icons, &[0, 1], 0.0);
-        assert_eq!(icons[1].unwrap().x, 1, "POIShiftComplete 0 leaves them");
-    }
-
-    fn with_lines() -> UiScript {
-        use crate::script::{QuestLogEntryView, QuestLogState};
-        let mut s = UiScript::new().unwrap();
-        s.set_quest_log(QuestLogState {
-            num_quests: 1,
-            entries: vec![
-                QuestLogEntryView {
-                    title: "Elwynn Forest".into(),
-                    is_header: true,
-                    ..Default::default()
-                },
-                QuestLogEntryView {
-                    quest_id: 33,
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        });
-        let line = |t: &str, k: &str, done| QuestLogObjectiveView {
-            text: t.into(),
-            kind: k.into(),
-            finished: done,
-            ..Default::default()
-        };
-        let mut board = vec![None; 18];
-        board[4] = Some(line("Diseased Wolf Pelt: 3/8", "item", false));
-        board[16] = Some(line("Return to Eagan.", "event", true));
-        s.set_quest_poi_lines(
-            [(
-                33,
-                QuestPoiLines {
-                    board,
-                    drops: vec![line("Venom Sac: 0/1", "item", false)],
-                    drops_needed: 1,
-                    top_area: 12,
-                },
-            )]
-            .into(),
-        );
-        s
-    }
-
-    /// `0x5e6650` reads `index` as is; `0x5e60d0` minus one; both fall back to the selection.
-    #[test]
-    fn the_poi_lines_answer_by_row_or_selection() {
-        let s = with_lines();
-        assert_eq!(
-            s.eval::<(String, String, Option<i64>)>("return GetQuestPOILeaderBoard(4, 2)")
-                .unwrap(),
-            ("Diseased Wolf Pelt: 3/8".into(), "item".into(), None)
-        );
-        assert_eq!(
-            s.eval::<(String, String, i64)>("return GetQuestPOILeaderBoard(16, 2)")
-                .unwrap(),
-            ("Return to Eagan.".into(), "event".into(), 1)
-        );
-        assert_eq!(
-            s.eval::<i64>("return select('#', GetQuestPOILeaderBoard(0, 2))")
-                .unwrap(),
-            3
-        );
-        assert!(
-            s.eval::<bool>("return GetQuestPOILeaderBoard(4) == nil")
-                .unwrap(),
-            "no selection"
-        );
-        s.run("SelectQuestLogEntry(2)").unwrap();
-        assert_eq!(
-            s.eval::<String>("return (GetQuestPOILeaderBoard(4))")
-                .unwrap(),
-            "Diseased Wolf Pelt: 3/8"
-        );
-        assert_eq!(s.eval::<i64>("return GetNumQuestItemDrops()").unwrap(), 1);
-        assert_eq!(
-            s.eval::<i64>("return GetNumQuestItemDrops(1)").unwrap(),
-            0,
-            "a header row"
-        );
-        assert_eq!(
-            s.eval::<String>("return (GetQuestLogItemDrop(1, 2))")
-                .unwrap(),
-            "Venom Sac: 0/1"
-        );
-        assert!(s
-            .run("GetQuestLogItemDrop()")
-            .unwrap_err()
-            .to_string()
-            .contains("Usage: GetQuestLogItemDrop(index)"));
-        assert!(s
-            .run("GetQuestPOILeaderBoard()")
-            .unwrap_err()
-            .to_string()
-            .contains("Usage: GetQuestLogLeaderBoard(index)"));
-        assert!(s
-            .run("QuestPOIGetIconInfo()")
-            .unwrap_err()
-            .to_string()
-            .contains("Usage: QuestPOIGetIconInfo(questID)"));
-        assert_eq!(
-            s.eval::<i64>("return select('#', QuestPOIGetIconInfo(33))")
-                .unwrap(),
-            0,
-            "no POI slot"
-        );
-    }
-
-    /// The push distance only takes values at or above the overlap distance (`0x5dfb40`).
-    #[test]
-    fn the_overlap_verbs_set_the_spacing() {
-        let s = UiScript::new().unwrap();
-        s.run("SetPOIIconOverlapDistance(20) SetPOIIconOverlapPushDistance(10)")
-            .unwrap();
-        assert_eq!(s.model_ref().quest_poi.overlap, 20.0);
-        assert_eq!(s.model_ref().quest_poi.push, OVERLAP_PUSH_DISTANCE);
-        s.run("SetPOIIconOverlapPushDistance(25)").unwrap();
-        assert_eq!(s.model_ref().quest_poi.push, 25.0);
-    }
-}
-
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -683,4 +517,170 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::script::UiScript;
+
+    fn icon(x: i32, y: i32) -> Option<PoiIcon> {
+        Some(PoiIcon {
+            x,
+            y,
+            ..Default::default()
+        })
+    }
+
+    /// Two open icons on one spot are pushed apart; a one-point region's icon stays put
+    /// (`0x5e3165`).
+    #[test]
+    fn overlapping_open_icons_are_pushed_apart_unless_pinned() {
+        let rect = (1000.0, -1000.0, 0.0, 0.0);
+        let mut icons = vec![icon(100, 100), icon(100, 100)];
+        spread(&mut icons, &[0, 1], &[true, true], rect, OVERLAP_DISTANCE);
+        let (a, b) = (icons[0].unwrap(), icons[1].unwrap());
+        assert_ne!((a.x, a.y), (b.x, b.y), "the pair separated");
+        let mut icons = vec![icon(100, 100), icon(104, 100)];
+        spread(&mut icons, &[0, 1], &[false, true], rect, OVERLAP_DISTANCE);
+        assert_eq!(icons[0].unwrap().x, 100, "a pinned icon does not move");
+        assert!(
+            icons[1].unwrap().x > 104,
+            "the other is pushed away from it"
+        );
+        // Far apart: only the aspect squeeze's rounding moves them.
+        let mut icons = vec![icon(-900, 0), icon(900, 0)];
+        spread(&mut icons, &[0, 1], &[true, true], rect, OVERLAP_DISTANCE);
+        assert_eq!((icons[0].unwrap().x, icons[1].unwrap().x), (-900, 900));
+    }
+
+    /// A complete icon stacked on an earlier one steps along the first offset, scaled.
+    #[test]
+    fn stacked_complete_icons_fan_out() {
+        let mut icons = vec![icon(0, 0), icon(1, 1)];
+        fan_out(&mut icons, &[0, 1], 0.6);
+        assert_eq!(icons[0].unwrap().x, 0);
+        assert_eq!((icons[1].unwrap().x, icons[1].unwrap().y), (31, 52));
+        let mut icons = vec![icon(0, 0), icon(1, 1)];
+        fan_out(&mut icons, &[0, 1], 0.0);
+        assert_eq!(icons[1].unwrap().x, 1, "POIShiftComplete 0 leaves them");
+    }
+
+    fn with_lines() -> UiScript {
+        use crate::script::{QuestLogEntryView, QuestLogState};
+        let mut s = UiScript::new().unwrap();
+        s.set_quest_log(QuestLogState {
+            num_quests: 1,
+            entries: vec![
+                QuestLogEntryView {
+                    title: "Elwynn Forest".into(),
+                    is_header: true,
+                    ..Default::default()
+                },
+                QuestLogEntryView {
+                    quest_id: 33,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+        let line = |t: &str, k: &str, done| QuestLogObjectiveView {
+            text: t.into(),
+            kind: k.into(),
+            finished: done,
+            ..Default::default()
+        };
+        let mut board = vec![None; 18];
+        board[4] = Some(line("Diseased Wolf Pelt: 3/8", "item", false));
+        board[16] = Some(line("Return to Eagan.", "event", true));
+        s.set_quest_poi_lines(
+            [(
+                33,
+                QuestPoiLines {
+                    board,
+                    drops: vec![line("Venom Sac: 0/1", "item", false)],
+                    drops_needed: 1,
+                    top_area: 12,
+                },
+            )]
+            .into(),
+        );
+        s
+    }
+
+    /// `0x5e6650` reads `index` as is; `0x5e60d0` minus one; both fall back to the selection.
+    #[test]
+    fn the_poi_lines_answer_by_row_or_selection() {
+        let s = with_lines();
+        assert_eq!(
+            s.eval::<(String, String, Option<i64>)>("return GetQuestPOILeaderBoard(4, 2)")
+                .unwrap(),
+            ("Diseased Wolf Pelt: 3/8".into(), "item".into(), None)
+        );
+        assert_eq!(
+            s.eval::<(String, String, i64)>("return GetQuestPOILeaderBoard(16, 2)")
+                .unwrap(),
+            ("Return to Eagan.".into(), "event".into(), 1)
+        );
+        assert_eq!(
+            s.eval::<i64>("return select('#', GetQuestPOILeaderBoard(0, 2))")
+                .unwrap(),
+            3
+        );
+        assert!(
+            s.eval::<bool>("return GetQuestPOILeaderBoard(4) == nil")
+                .unwrap(),
+            "no selection"
+        );
+        s.run("SelectQuestLogEntry(2)").unwrap();
+        assert_eq!(
+            s.eval::<String>("return (GetQuestPOILeaderBoard(4))")
+                .unwrap(),
+            "Diseased Wolf Pelt: 3/8"
+        );
+        assert_eq!(s.eval::<i64>("return GetNumQuestItemDrops()").unwrap(), 1);
+        assert_eq!(
+            s.eval::<i64>("return GetNumQuestItemDrops(1)").unwrap(),
+            0,
+            "a header row"
+        );
+        assert_eq!(
+            s.eval::<String>("return (GetQuestLogItemDrop(1, 2))")
+                .unwrap(),
+            "Venom Sac: 0/1"
+        );
+        assert!(s
+            .run("GetQuestLogItemDrop()")
+            .unwrap_err()
+            .to_string()
+            .contains("Usage: GetQuestLogItemDrop(index)"));
+        assert!(s
+            .run("GetQuestPOILeaderBoard()")
+            .unwrap_err()
+            .to_string()
+            .contains("Usage: GetQuestLogLeaderBoard(index)"));
+        assert!(s
+            .run("QuestPOIGetIconInfo()")
+            .unwrap_err()
+            .to_string()
+            .contains("Usage: QuestPOIGetIconInfo(questID)"));
+        assert_eq!(
+            s.eval::<i64>("return select('#', QuestPOIGetIconInfo(33))")
+                .unwrap(),
+            0,
+            "no POI slot"
+        );
+    }
+
+    /// The push distance only takes values at or above the overlap distance (`0x5dfb40`).
+    #[test]
+    fn the_overlap_verbs_set_the_spacing() {
+        let s = UiScript::new().unwrap();
+        s.run("SetPOIIconOverlapDistance(20) SetPOIIconOverlapPushDistance(10)")
+            .unwrap();
+        assert_eq!(s.model_ref().quest_poi.overlap, 20.0);
+        assert_eq!(s.model_ref().quest_poi.push, OVERLAP_PUSH_DISTANCE);
+        s.run("SetPOIIconOverlapPushDistance(25)").unwrap();
+        assert_eq!(s.model_ref().quest_poi.push, 25.0);
+    }
 }

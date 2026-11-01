@@ -232,7 +232,7 @@ fn unknown_opcode_decodes_to_packet_dropped() {
     assert!(matches!(packet, ServerPacket::Other { opcode: 0x0001 }));
     match decode(packet).as_slice() {
         [SessionEvent::PacketDropped {
-            opcode: 0x021E,
+            opcode: 0x0001,
             unparseable: false,
         }] => {}
         other => panic!("expected one PacketDropped event, got {other:?}"),
