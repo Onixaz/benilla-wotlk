@@ -535,6 +535,7 @@ fn feed_battlefield(
     commands: Res<NetCommands>,
     mut sink: crate::ui_action::MessageSink,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
+    ui_clock: Option<Res<crate::ui_notices::UiClock>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -570,10 +571,16 @@ fn feed_battlefield(
         .and_then(|(m, id)| m.instance_type(id.0))
         == Some(INSTANCE_TYPE_BATTLEGROUND);
     let world_pvp = &state.world_pvp;
-    // The UI clock, without the server's offset, as `GetWintergraspWaitTime` reads it.
-    let ui_now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i32);
+    // The UI clock, `time()` plus the server's offset (`0x548700`), as `GetWintergraspWaitTime`
+    // reads it.
+    let ui_now = ui_clock.as_deref().map_or_else(
+        || {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i32)
+        },
+        crate::ui_notices::UiClock::now,
+    );
     let frame = BattlefieldFrame {
         slots: [0, 1]
             .map(|i| slot_view(queue.slots[i].as_ref(), queue.active_map, table, maps, now)),

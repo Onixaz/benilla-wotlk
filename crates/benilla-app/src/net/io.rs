@@ -1982,6 +1982,8 @@ pub(super) fn writer_loop(
                     }
                     ClientCommand::RepopRequest => w.repop_request(),
                     ClientCommand::CorpseQuery => w.corpse_query(),
+                    ClientCommand::UiTimeRequest => w.ui_time_request(),
+                    ClientCommand::AcceptLevelGrant { granter } => w.accept_level_grant(granter),
                     ClientCommand::CorpseMapPositionQuery { transport } => {
                         w.corpse_map_position_query(transport)
                     }

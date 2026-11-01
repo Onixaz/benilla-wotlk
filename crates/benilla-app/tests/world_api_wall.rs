@@ -119,6 +119,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("interact::cast_pick_ray", "record"),
     ("interior::NodeAmbient", "record"),
     ("lighting::LightBlob", "record"),
+    ("lighting::LightOverrides", "record"),
     ("lighting::WorldTime", "record"),
     ("lighting::WowLighting", "record"),
     ("mac_quit::MacQuitPlugin", "record"),

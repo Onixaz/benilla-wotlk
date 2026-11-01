@@ -1719,12 +1719,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let ws = |id| wm.world_states.get(&id).copied().unwrap_or(0);
                 (ws(3801) != 0, ws(4354))
             });
+            let offset = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .ui_time_offset;
             if !active {
                 return Ok(MultiValue::new());
             }
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs() as i32);
+                .map_or(0, |d| d.as_secs() as i32)
+                .wrapping_add(offset);
             Ok(MultiValue::from_vec(vec![Value::Number(f64::from(
                 end.wrapping_sub(now).max(0),
             ))]))

@@ -9,11 +9,13 @@ use benilla_formats::{LightCatalog, LiquidKind};
 mod blob; // off-world light blobs (portrait booths, body panes, glue scene)
 mod daynight; // the sun, moon and day/night curves
 mod global_light; // the shared global-light storage buffer
+mod overrides; // the server's light overrides
 mod prop_probes; // the interior-prop SH probe table
 mod resolve; // the per-frame time-of-day resolve and the interior-fog crossfade
 mod sh; // the model SH probe fold
 pub use blob::LightBlob;
 pub use global_light::{new_shared_light_buffer, LightRooms, SharedLightBuffer, WorldPointLight};
+pub use overrides::LightOverrides;
 pub use prop_probes::{PropProbeSlot, PropProbes, MAX_PROP_PROBES};
 // The std430 layout stays in the crate: off-world producers state values through `LightBlob`,
 // never a row index.
@@ -214,6 +216,7 @@ impl Plugin for LightingPlugin {
             .init_resource::<GameClock>()
             .init_resource::<WorldTime>()
             .init_resource::<WmoCrossfade>()
+            .init_resource::<LightOverrides>()
             .insert_resource(ClearColor(Color::BLACK))
             .add_systems(Startup, setup_lighting.after(AssetSet::Open))
             .add_systems(

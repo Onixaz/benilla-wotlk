@@ -1031,6 +1031,30 @@ pub enum ServerPacket {
     LootList(LootList),
     /// `SMSG_LOOT_SLOT_CHANGED`: one open loot row redrawn.
     LootSlotChanged(LootSlotChanged),
+    /// `SMSG_OVERRIDE_LIGHT`.
+    OverrideLight(crate::messages::OverrideLight),
+    /// `SMSG_WORLD_STATE_UI_TIMER_UPDATE`: the server's UI clock.
+    UiTime(u32),
+    /// `SMSG_ARENA_ERROR`: the code, and the team type for code 0.
+    ArenaError {
+        error: u32,
+        team_type: Option<u8>,
+    },
+    /// `SMSG_PROPOSE_LEVEL_GRANT`.
+    ProposeLevelGrant {
+        granter: u64,
+    },
+    /// `SMSG_REFER_A_FRIEND_FAILURE`: the code, and a name for code 9.
+    ReferAFriendFailure {
+        error: u32,
+        name: String,
+    },
+    /// `SMSG_SEND_UNLEARN_SPELLS`.
+    UnlearnSpells(Vec<u32>),
+    /// `SMSG_CROSSED_INEBRIATION_THRESHOLD`.
+    InebriationThreshold(crate::messages::InebriationThreshold),
+    /// `SMSG_LEARNED_DANCE_MOVES`.
+    LearnedDanceMoves(u64),
     /// `SMSG_LOOT_MASTER_LIST`: master-loot candidates; precedes its `SMSG_LOOT_RESPONSE`.
     LootMasterList {
         candidates: Vec<u64>,
@@ -1846,6 +1870,14 @@ impl ServerPacket {
             ServerPacket::LootAllPassed(_) => "SMSG_LOOT_ALL_PASSED".into(),
             ServerPacket::LootList(_) => "SMSG_LOOT_LIST".into(),
             ServerPacket::LootSlotChanged(_) => "SMSG_LOOT_SLOT_CHANGED".into(),
+            ServerPacket::OverrideLight(_) => "SMSG_OVERRIDE_LIGHT".into(),
+            ServerPacket::UiTime(_) => "SMSG_WORLD_STATE_UI_TIMER_UPDATE".into(),
+            ServerPacket::ArenaError { .. } => "SMSG_ARENA_ERROR".into(),
+            ServerPacket::ProposeLevelGrant { .. } => "SMSG_PROPOSE_LEVEL_GRANT".into(),
+            ServerPacket::ReferAFriendFailure { .. } => "SMSG_REFER_A_FRIEND_FAILURE".into(),
+            ServerPacket::UnlearnSpells(_) => "SMSG_SEND_UNLEARN_SPELLS".into(),
+            ServerPacket::InebriationThreshold(_) => "SMSG_CROSSED_INEBRIATION_THRESHOLD".into(),
+            ServerPacket::LearnedDanceMoves(_) => "SMSG_LEARNED_DANCE_MOVES".into(),
             ServerPacket::LootMasterList { .. } => "SMSG_LOOT_MASTER_LIST".into(),
             ServerPacket::ItemPushResult(_) => "SMSG_ITEM_PUSH_RESULT".into(),
             ServerPacket::CorpseQuery(_) => "MSG_CORPSE_QUERY".into(),

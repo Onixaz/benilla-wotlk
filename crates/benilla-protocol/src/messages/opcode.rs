@@ -963,6 +963,28 @@ pub const SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE: u16 = 0x04B7; // 1207
 /// Empty: the corpse is not in this instance, `ERR_CORPSE_IS_NOT_IN_INSTANCE` (`0x526530`).
 pub const SMSG_CORPSE_NOT_IN_INSTANCE: u16 = 0x0506; // 1286
 
+// Small notices (`notices.rs`).
+/// A `Light.dbc` row blended as another (`0x526530`).
+pub const SMSG_OVERRIDE_LIGHT: u16 = 0x0412; // 1042
+/// Asks for the server's UI clock, every 20 s in world (`0x548760`, `0x5488f0`).
+pub const CMSG_WORLD_STATE_UI_TIMER_UPDATE: u16 = 0x04F6; // 1270
+/// The server's UI clock, Unix seconds (`0x526530`).
+pub const SMSG_WORLD_STATE_UI_TIMER_UPDATE: u16 = 0x04F7; // 1271
+/// An arena error code (`0x6cce90`).
+pub const SMSG_ARENA_ERROR: u16 = 0x0376; // 886
+/// A refer-a-friend level grant offered by its granter (`0x526530`).
+pub const SMSG_PROPOSE_LEVEL_GRANT: u16 = 0x041F; // 1055
+/// The offer accepted: the granter's packed guid (`0x521b00`).
+pub const CMSG_ACCEPT_LEVEL_GRANT: u16 = 0x0420; // 1056
+/// A refer-a-friend error code (`0x526530`).
+pub const SMSG_REFER_A_FRIEND_FAILURE: u16 = 0x0421; // 1057
+/// The spells the trainer shows as used (`0x6e2240`).
+pub const SMSG_SEND_UNLEARN_SPELLS: u16 = 0x041E; // 1054
+/// A player's drunk state crossed a threshold (`0x6d01b0`).
+pub const SMSG_CROSSED_INEBRIATION_THRESHOLD: u16 = 0x03C1; // 961
+/// The learned dance moves' mask (`0x5758a0`).
+pub const SMSG_LEARNED_DANCE_MOVES: u16 = 0x0455; // 1109
+
 // Mover modes, acked (`IsFlagAckOpcode`): the SMSG is a packed guid and `u32 counter`; the ack
 // echoes the packed guid, the counter and a `MovementInfo`, plus an `f32` apply for all but root
 // (`0x71ef80`). An unacked change never reaches observers.

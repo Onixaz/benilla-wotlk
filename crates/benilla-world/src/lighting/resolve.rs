@@ -181,9 +181,11 @@ pub(super) fn update_time_lighting(
     mut wmo_ramp: ResMut<WmoCrossfade>,
     mut clock: ResMut<GameClock>,
     mut lighting: ResMut<WowLighting>,
-    mut last_dump: Local<Option<u32>>,
-    mut last_fog_dump: Local<Option<u32>>,
+    mut overrides: ResMut<super::LightOverrides>,
+    // The last minute each debug dump printed: the atmosphere, then the fog.
+    mut last_dumps: Local<(Option<u32>, Option<u32>)>,
 ) {
+    let (last_dump, last_fog_dump) = &mut *last_dumps;
     // `minute` drives the `Light.dbc` sample, the clock and the log; the fractional `minute_f`
     // drives the celestial positions and curves, which would otherwise step once per game minute.
     let (minute, minute_f, source) = if debug.lighting.follow_server_time {
@@ -229,14 +231,20 @@ pub(super) fn update_time_lighting(
     let storm = weather
         .as_ref()
         .map_or(0.0, |w| crate::weather::storm_blend(w.sky_density));
+    // The server's overrides, each fade advanced as the blend pass advances it (`0x7f1360`).
+    if overrides.needs_tick(map) {
+        overrides.tick(map, time.delta_secs() * 1000.0);
+    }
+    let live = overrides.current();
     let atmo = sampler
         .as_ref()
         .map(|s| {
-            let clear =
-                s.0.sample_blended(map, wow_pos, minute * 2, false, submerged, ghost);
+            let blend = |stormy| {
+                s.0.sample_blended_with(map, wow_pos, minute * 2, stormy, submerged, ghost, &live)
+            };
+            let clear = blend(false);
             if storm > 0.0 {
-                let stormy =
-                    s.0.sample_blended(map, wow_pos, minute * 2, true, submerged, ghost);
+                let stormy = blend(true);
                 clear.lerp(&stormy, storm)
             } else {
                 clear

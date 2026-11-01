@@ -245,6 +245,16 @@ fn blend_alpha(dist: f32, start: f32, end: f32) -> f32 {
     }
 }
 
+/// A server light override (`SMSG_OVERRIDE_LIGHT`) at its current fade: `Light.dbc` row `light`
+/// takes row `override_id`'s params at `light`'s own position and falloff (`0x7f10a0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LightOverride {
+    pub light: u32,
+    pub override_id: u32,
+    /// The fade, `[0, 1]`, which caps the falloff weight (`0x7ee5d0`).
+    pub fade: f32,
+}
+
 impl LightCatalog {
     /// Read the lighting DBCs off the patch chain.
     pub fn load(chain: &mut Chain) -> Result<Self> {
@@ -459,6 +469,23 @@ impl LightCatalog {
         submersion: Submersion,
         ghost: bool,
     ) -> Atmosphere {
+        self.sample_blended_with(map, pos, time, stormy, submersion, ghost, &[])
+    }
+
+    /// [`Self::sample_blended`], then each server override in order (`0x7f1360`): inside its
+    /// base light's sphere it blends by the falloff weight capped at its fade (`0x7ee5d0`). An id
+    /// with no row adds nothing, as `0x7f10a0` makes no override for it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sample_blended_with(
+        &self,
+        map: u32,
+        pos: [f32; 3],
+        time: u32,
+        stormy: bool,
+        submersion: Submersion,
+        ghost: bool,
+        overrides: &[LightOverride],
+    ) -> Atmosphere {
         // Magma and slime replace the whole blend with one fixed row (before the slot selection);
         // without the row the chain falls through, as the `maxId` guard does.
         if let Some(p) = submersion.fixed_param() {
@@ -513,6 +540,23 @@ impl LightCatalog {
                 acc = acc.lerp(&atmo, blend_alpha(dist, l.falloff_start, l.falloff_end));
             }
         }
+        for o in overrides.iter().filter(|o| o.fade > 0.0) {
+            let by_id = |id: u32| self.lights.iter().find(|l| l.id == id);
+            let (Some(base), Some(with)) = (by_id(o.light), by_id(o.override_id)) else {
+                continue;
+            };
+            let d = (0..3)
+                .map(|i| (base.pos[i] - pos[i]).powi(2))
+                .sum::<f32>()
+                .sqrt();
+            if d >= base.falloff_end {
+                continue;
+            }
+            if let Some(atmo) = atmo_of(with) {
+                let weight = blend_alpha(d, base.falloff_start, base.falloff_end).min(o.fade);
+                acc = acc.lerp(&atmo, weight);
+            }
+        }
         acc
     }
 
@@ -552,7 +596,8 @@ impl LightCatalog {
                 Atmosphere::DEFAULT
             };
             println!(
-                "  d={d:7.0} | {:6.0}->{:6.0} | a={alpha:.3} | amb {} sun {}",
+                "  id {:4} d={d:7.0} | {:6.0}->{:6.0} | a={alpha:.3} | amb {} sun {}",
+                l.id,
                 l.falloff_start,
                 l.falloff_end,
                 c(a.ambient),

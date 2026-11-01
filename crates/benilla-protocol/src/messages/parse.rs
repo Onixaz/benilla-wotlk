@@ -1456,6 +1456,32 @@ fn parse_server_body(
         }
         opcode::SMSG_LOOT_ROLL => ServerPacket::LootRoll(loot::read_loot_roll(&mut r)?),
         opcode::SMSG_LOOT_LIST => ServerPacket::LootList(loot::read_loot_list(&mut r)?),
+        opcode::SMSG_OVERRIDE_LIGHT => {
+            ServerPacket::OverrideLight(super::notices::read_override_light(&mut r)?)
+        }
+        opcode::SMSG_WORLD_STATE_UI_TIMER_UPDATE => {
+            ServerPacket::UiTime(super::notices::read_ui_time(&mut r)?)
+        }
+        opcode::SMSG_ARENA_ERROR => {
+            let (error, team_type) = super::notices::read_arena_error(&mut r)?;
+            ServerPacket::ArenaError { error, team_type }
+        }
+        opcode::SMSG_PROPOSE_LEVEL_GRANT => ServerPacket::ProposeLevelGrant {
+            granter: super::notices::read_propose_level_grant(&mut r)?,
+        },
+        opcode::SMSG_REFER_A_FRIEND_FAILURE => {
+            let (error, name) = super::notices::read_refer_a_friend_failure(&mut r)?;
+            ServerPacket::ReferAFriendFailure { error, name }
+        }
+        opcode::SMSG_SEND_UNLEARN_SPELLS => {
+            ServerPacket::UnlearnSpells(super::notices::read_unlearn_spells(&mut r)?)
+        }
+        opcode::SMSG_CROSSED_INEBRIATION_THRESHOLD => {
+            ServerPacket::InebriationThreshold(super::notices::read_inebriation_threshold(&mut r)?)
+        }
+        opcode::SMSG_LEARNED_DANCE_MOVES => {
+            ServerPacket::LearnedDanceMoves(super::notices::read_learned_dance_moves(&mut r)?)
+        }
         opcode::SMSG_LOOT_SLOT_CHANGED => {
             ServerPacket::LootSlotChanged(loot::read_loot_slot_changed(&mut r)?)
         }

@@ -823,6 +823,10 @@ pub(crate) struct Model {
     pub(crate) loot_roll_votes: Vec<(u32, u8)>,
     /// Need or Greed on a bind-on-pickup roll: a `CONFIRM_LOOT_ROLL` popup ask, not a vote.
     pub(crate) loot_roll_confirms: Vec<(u32, u8)>,
+    /// `AcceptLevelGrant` (true) and `DeclineLevelGrant` (false) calls.
+    pub(crate) level_grant_answers: Vec<bool>,
+    /// The server's UI clock less the local clock, seconds; 0 until it is read.
+    pub(crate) ui_time_offset: i32,
 
     /// The item-text reader: the pushed page, then the close and page-turn calls.
     pub(crate) item_text: Option<item_text::ItemTextState>,
@@ -1581,6 +1585,8 @@ impl Model {
             combat_log: combat_log::CombatLogStore::default(),
             loot_roll_votes: Vec::new(),
             loot_roll_confirms: Vec::new(),
+            level_grant_answers: Vec::new(),
+            ui_time_offset: 0,
             item_text: None,
             item_text_close: false,
             item_text_page_turns: Vec::new(),

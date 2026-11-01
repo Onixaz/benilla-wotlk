@@ -20,6 +20,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::SpellSuperceded, on_spell_superceded)
         .net_handler(K::PetSpells, on_pet_spells)
         .net_handler(K::SpellModifier, on_spell_modifier)
+        .net_handler(K::UnlearnSpells, on_unlearn_spells)
         .net_handler(K::Disconnected, on_session_end);
 }
 
@@ -85,8 +86,20 @@ fn on_buy_failed(In(ev): In<SessionEvent>, mut errors: ResMut<TrainerErrors>) {
 }
 
 /// An open trainer window ends with the session.
-fn on_session_end(In(_): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
+fn on_session_end(
+    In(_): In<SessionEvent>,
+    mut trainer_open: ResMut<TrainerOpen>,
+    mut unlearned: ResMut<super::UnlearnedSpells>,
+) {
     trainer_open.clear_session();
+    unlearned.0.clear();
+}
+
+/// `SMSG_SEND_UNLEARN_SPELLS` (`0x6e2240`): the list replaces the last one.
+fn on_unlearn_spells(In(ev): In<SessionEvent>, mut unlearned: ResMut<super::UnlearnedSpells>) {
+    if let SessionEvent::UnlearnSpells(spells) = ev {
+        unlearned.0 = spells;
+    }
 }
 
 /// `SMSG_TRAINER_LIST`: open the window on the trainer's services.
