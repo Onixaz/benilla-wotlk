@@ -321,7 +321,7 @@ fn resolve_template_item(
         count,
         quality,
         item_id: entry,
-        usable: true, // not computed; the stock frame tints unusable ones red
+        usable: true, // the getter's can-use test (`0x5e45eb`) clears it
         link,
     }
 }

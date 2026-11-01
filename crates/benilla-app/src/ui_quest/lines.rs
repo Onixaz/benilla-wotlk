@@ -84,6 +84,10 @@ fn feed_quest_lines(
     items: Res<Items>,
     commands: Res<NetCommands>,
     mut sink: MessageSink,
+    tutorial_bank: Option<Res<crate::tutorial::Tutorials>>,
+    mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
+    // The accept callback's process-wide count (`0xc9eb08`).
+    mut accepts: Local<u32>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -139,15 +143,45 @@ fn feed_quest_lines(
         sink.chat
             .push_event(crate::ui_chat::ChatEvent::text_only(kind, text));
     }
-    // `QUEST_ACCEPTED` with the quest's log row follows the accept line, both raised once the
-    // template is cached (the accept callback `0x6df2b0`, then the log update `0x6df370`).
+    // `QUEST_ACCEPTED` with the quest's log row follows the accept line and its tutorials, all
+    // raised once the template is cached (the accept callback `0x6df2b0`, then the log update
+    // `0x6df370`).
     for id in accepted {
+        let quest_type = quest_log
+            .template(id, &commands)
+            .map_or(0, |t| t.quest_type);
+        let flagged = tutorial_bank
+            .as_deref()
+            .is_some_and(|t| t.is_flagged(crate::tutorial::id::QUEST_LOG));
+        for tutorial in accept_tutorials(quest_type, flagged, &mut accepts) {
+            if let Some(t) = tutorials.as_mut() {
+                t.write(crate::tutorial::TutorialEvent::trigger(tutorial));
+            }
+        }
         let index = script.quest_log_index(id) as i64;
         script.fire_event(
             "QUEST_ACCEPTED",
             vec![benilla_ui::script::ScriptValue::Int(index)],
         );
     }
+}
+
+/// The accept callback's tutorials (`0x6df448`-`0x6df481`): a quest of type 1 raises Group Quest
+/// then Groups, and from the fourth accept on the Quest Log one; the count stops once the Quest Log
+/// tutorial is acknowledged.
+fn accept_tutorials(quest_type: u32, quest_log_flagged: bool, accepts: &mut u32) -> Vec<u32> {
+    use crate::tutorial::id;
+    let mut out = Vec::new();
+    if quest_type == 1 {
+        out.extend([id::GROUP_QUEST, id::GROUPS]);
+    }
+    if !quest_log_flagged {
+        *accepts = accepts.saturating_add(1);
+        if *accepts >= 4 {
+            out.push(id::QUEST_LOG);
+        }
+    }
+    out
 }
 
 fn resolve(
@@ -399,6 +433,69 @@ mod tests {
             ["Received item: |cffffffff|Hitem:6529:0:0:0|h[Shiny Bauble]|h|r."]
         );
         assert!(app.world().resource::<QuestLines>().queued().is_empty());
+    }
+
+    fn triggered(app: &mut App) -> Vec<u32> {
+        app.world_mut()
+            .resource_mut::<Messages<crate::tutorial::TutorialEvent>>()
+            .drain()
+            .filter_map(|e| match e {
+                crate::tutorial::TutorialEvent::Trigger { id, .. } => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 12340 raises the Quest Log tutorial from the accept callback on the fourth accept, never on
+    /// the click (`0x6df341`), and a group quest's two with every accept (`0x6df307`).
+    #[test]
+    fn the_quest_log_tutorial_waits_for_the_fourth_accept() {
+        use crate::tutorial::id;
+        let (mut app, _rx) = app();
+        app.add_message::<crate::tutorial::TutorialEvent>();
+        let mut group = template(9, "Group Quest", 0);
+        group.quest_type = 1;
+        {
+            let world = app.world_mut();
+            let mut log = world.resource_mut::<QuestLog>();
+            for q in 1..=3 {
+                log.insert_template(template(q, "Solo Quest", 0));
+            }
+            log.insert_template(group);
+        }
+        let mut seen = Vec::new();
+        for q in [1, 2, 3, 9] {
+            app.world_mut()
+                .resource_mut::<QuestLines>()
+                .push(QuestLine::Accepted(q));
+            app.update();
+            seen.push(triggered(&mut app));
+        }
+        assert_eq!(
+            seen,
+            [
+                vec![],
+                vec![],
+                vec![],
+                vec![id::GROUP_QUEST, id::GROUPS, id::QUEST_LOG]
+            ]
+        );
+    }
+
+    #[test]
+    fn an_acknowledged_quest_log_tutorial_stops_the_count() {
+        use crate::tutorial::id;
+        let mut n = 0;
+        for _ in 0..3 {
+            assert!(accept_tutorials(0, false, &mut n).is_empty());
+        }
+        assert!(
+            accept_tutorials(0, true, &mut n).is_empty(),
+            "flagged: no count"
+        );
+        assert_eq!(n, 3);
+        assert_eq!(accept_tutorials(0, false, &mut n), [id::QUEST_LOG]);
+        assert_eq!(accept_tutorials(0, false, &mut n), [id::QUEST_LOG]);
     }
 
     fn words(key: &str) -> String {

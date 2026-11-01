@@ -330,7 +330,7 @@ fn resolve_item(
         count: it.count,
         quality,
         item_id: it.item_id,
-        usable: true, // not computed; the stock frame tints unusable ones red
+        usable: true, // the getter's can-use test (`0x58d32c`) clears it
         link,
     }
 }
@@ -622,6 +622,8 @@ enum DeclineLeg {
     GossipHello,
     /// A plain unit: `CMSG_QUESTGIVER_HELLO`; the window stays.
     QuestgiverHello,
+    /// A GameObject: its right-click, the use; the window stays.
+    UseObject,
 }
 
 /// `DeclineQuest`'s fork; the re-open legs leave the window up, and items and players are taken by
@@ -631,9 +633,8 @@ enum DeclineLeg {
 /// 2. a unit with the gossip NPC flag: `CMSG_GOSSIP_HELLO`, whatever the close-on-cancel latch
 ///    says;
 /// 3. an item, a player, or a non-zero close-on-cancel latch: the teardown;
-/// 4. a GameObject: its interact virtual `[vtbl+0x60]`, whose override is untraced, so it takes the
-///    teardown here;
-/// 5. any other unit: `CMSG_QUESTGIVER_HELLO`.
+/// 4. a GameObject: its right-click `[vtbl+0xb0]` (`0x711140`), the use (`0x58ceb2`);
+/// 5. anything else: `CMSG_QUESTGIVER_HELLO`.
 fn decline_leg(npc: u64, acted: bool, close_on_cancel: u32, npc_flags: Option<u32>) -> DeclineLeg {
     use benilla_protocol::guid;
     if acted {
@@ -649,8 +650,11 @@ fn decline_leg(npc: u64, acted: bool, close_on_cancel: u32, npc_flags: Option<u3
     if unit && flags & crate::target::cursor_mode::npc_flags::GOSSIP != 0 {
         return DeclineLeg::GossipHello;
     }
-    if close_on_cancel != 0 || !unit {
+    if close_on_cancel != 0 {
         return DeclineLeg::Teardown;
+    }
+    if guid::is_gameobject(npc) {
+        return DeclineLeg::UseObject;
     }
     DeclineLeg::QuestgiverHello
 }
@@ -663,6 +667,7 @@ fn drain_quest(
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
+    mut interacts: Option<MessageWriter<crate::target::Interact>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -703,6 +708,14 @@ fn drain_quest(
         // `0x58ccbf`), so a double click sends once.
         if giver.acted {
             continue;
+        }
+        // `SelectActiveQuest` triggers its tutorial before the send (`0x58ccea`).
+        if sel.active {
+            if let Some(t) = tutorials.as_mut() {
+                t.write(crate::tutorial::TutorialEvent::trigger(
+                    crate::tutorial::id::QUEST_TURN_IN,
+                ));
+            }
         }
         // `SelectActiveQuest` always sends COMPLETE_QUEST; `SelectAvailableQuest` does too for a
         // one-click row, and QUERY_QUEST otherwise.
@@ -745,6 +758,13 @@ fn drain_quest(
                         let _ = commands.0.send(ClientCommand::QuestgiverHello { npc });
                         giver.acted = true;
                     }
+                    DeclineLeg::UseObject => {
+                        if let (Some(&entity), Some(out)) = (index.0.get(&npc), interacts.as_mut())
+                        {
+                            out.write(crate::target::Interact(entity));
+                        }
+                        giver.acted = true;
+                    }
                 }
             }
             QuestAction::Accept => {
@@ -769,12 +789,6 @@ fn drain_quest(
                         quest,
                         start_cheat,
                     });
-                    // `AcceptQuest`'s tail triggers the Quest Log tutorial.
-                    if let Some(t) = tutorials.as_mut() {
-                        t.write(crate::tutorial::TutorialEvent::trigger(
-                            crate::tutorial::id::QUEST_LOG,
-                        ));
-                    }
                     // The reference closes on the click, not on an answer: it sends `0x189`, then
                     // clears with the teardown, firing `QUEST_FINISHED`.
                     giver.clear();
@@ -787,6 +801,12 @@ fn drain_quest(
                 }
                 if let Some(quest) = view_quest {
                     giver.acted = true;
+                    // The tutorial goes before the send (`0x58cf74`).
+                    if let Some(t) = tutorials.as_mut() {
+                        t.write(crate::tutorial::TutorialEvent::trigger(
+                            crate::tutorial::id::QUEST_TURN_IN,
+                        ));
+                    }
                     let _ = commands
                         .0
                         .send(ClientCommand::QuestgiverRequestReward { npc, quest });
@@ -803,6 +823,12 @@ fn drain_quest(
                         if let Some(it) = o.choices.get(choice as usize) {
                             giver.chosen_reward = it.item_id;
                         }
+                    }
+                    // The tutorial goes before the send (`0x58d00b`).
+                    if let Some(t) = tutorials.as_mut() {
+                        t.write(crate::tutorial::TutorialEvent::trigger(
+                            crate::tutorial::id::QUEST_TURN_IN,
+                        ));
                     }
                     let _ = commands.0.send(ClientCommand::QuestgiverChooseReward {
                         npc,
@@ -953,6 +979,7 @@ mod tests {
                 quest_id: 100,
                 title: "A Threat Within".into(),
                 request_text: "Bring me the tusks.".into(),
+                emote_delay: 0,
                 emote: 0,
                 close_on_cancel: 1,
                 quest_flags: 0,
@@ -1134,10 +1161,34 @@ mod tests {
         close_on_cancel: u32,
         lua: &str,
     ) -> (App, Vec<ClientCommand>) {
+        let view = QuestView::Detail(QuestDetails {
+            npc: giver,
+            quest_id: 1,
+            title: "A Threat Within".into(),
+            details: String::new(),
+            objectives: String::new(),
+            auto_launched: close_on_cancel != 0,
+            choices: Vec::new(),
+            rewards: Vec::new(),
+            ..Default::default()
+        });
+        drain_view(giver, npc_flags, close_on_cancel, view, lua)
+    }
+
+    /// [`drain_world`] on any panel.
+    fn drain_view(
+        giver: u64,
+        npc_flags: Option<u32>,
+        close_on_cancel: u32,
+        view: QuestView,
+        lua: &str,
+    ) -> (App, Vec<ClientCommand>) {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
         app.insert_resource(NetCommands(tx));
         app.init_resource::<GuidIndex>();
+        app.add_message::<crate::tutorial::TutorialEvent>();
+        app.add_message::<crate::target::Interact>();
         if let Some(flags) = npc_flags {
             // 147 = `UNIT_NPC_FLAGS` (the descriptor index `unit_npc_flags()` reads).
             let fields = benilla_protocol::ObjectFields::from_pairs(&[(147, flags)]);
@@ -1148,20 +1199,7 @@ mod tests {
                 .insert(giver, e);
         }
         let mut quest = QuestGiver::default();
-        quest.open(
-            giver,
-            QuestView::Detail(QuestDetails {
-                npc: giver,
-                quest_id: 1,
-                title: "A Threat Within".into(),
-                details: String::new(),
-                objectives: String::new(),
-                auto_launched: close_on_cancel != 0,
-                choices: Vec::new(),
-                rewards: Vec::new(),
-                ..Default::default()
-            }),
-        );
+        quest.open(giver, view);
         // The latch is written by the packet, after the open (as `net::quest_detail` does).
         quest.close_on_cancel = close_on_cancel;
         app.insert_resource(quest);
@@ -1172,6 +1210,109 @@ mod tests {
         app.update();
         let sent = rx.try_iter().collect();
         (app, sent)
+    }
+
+    fn tutorials(app: &mut App) -> Vec<u32> {
+        app.world_mut()
+            .resource_mut::<Messages<crate::tutorial::TutorialEvent>>()
+            .drain()
+            .filter_map(|e| match e {
+                crate::tutorial::TutorialEvent::Trigger { id, .. } => Some(id),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 12340's accept raises no tutorial (`0x58cd20`); the three turn-in verbs raise theirs before
+    /// the send (`0x58ccea`, `0x58cf74`, `0x58d00b`), and an available row's select raises none.
+    #[test]
+    fn the_turn_in_verbs_raise_the_tutorial_and_accept_does_not() {
+        use crate::tutorial::id::QUEST_TURN_IN;
+        let (mut app, sent) = drain_world(NPC, Some(0), 0, "AcceptQuest()");
+        assert!(matches!(
+            sent.as_slice(),
+            [ClientCommand::QuestgiverAccept { .. }]
+        ));
+        assert!(tutorials(&mut app).is_empty(), "accept triggers nothing");
+
+        let greeting = || {
+            QuestView::Greeting(benilla_protocol::messages::QuestGiverList {
+                npc: NPC,
+                quests: vec![
+                    benilla_protocol::messages::QuestListEntry {
+                        quest_id: 5,
+                        icon: 3,
+                        ..Default::default()
+                    },
+                    benilla_protocol::messages::QuestListEntry {
+                        quest_id: 6,
+                        icon: 8,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            })
+        };
+        let (mut app, _) = drain_view(NPC, Some(0), 0, greeting(), "SelectActiveQuest(1)");
+        assert_eq!(tutorials(&mut app), [QUEST_TURN_IN]);
+        let (mut app, _) = drain_view(NPC, Some(0), 0, greeting(), "SelectAvailableQuest(1)");
+        assert!(tutorials(&mut app).is_empty());
+
+        let progress = QuestView::Progress(QuestRequestItems {
+            npc: NPC,
+            quest_id: 1,
+            is_complete: true,
+            ..Default::default()
+        });
+        let (mut app, sent) = drain_view(NPC, Some(0), 0, progress, "CompleteQuest()");
+        assert!(matches!(
+            sent.as_slice(),
+            [ClientCommand::QuestgiverRequestReward { .. }]
+        ));
+        assert_eq!(tutorials(&mut app), [QUEST_TURN_IN]);
+
+        let reward = QuestView::Reward(benilla_protocol::messages::QuestOfferReward {
+            npc: NPC,
+            quest_id: 1,
+            ..Default::default()
+        });
+        let (mut app, sent) = drain_view(NPC, Some(0), 0, reward, "GetQuestReward(0)");
+        assert!(matches!(
+            sent.as_slice(),
+            [ClientCommand::QuestgiverChooseReward { .. }]
+        ));
+        assert_eq!(tutorials(&mut app), [QUEST_TURN_IN]);
+    }
+
+    /// A GameObject's decline re-uses the object through its right-click and keeps the window
+    /// (`0x58ceab`-`0x58cebf`); with the close-on-cancel latch set it takes the teardown.
+    #[test]
+    fn declining_a_gameobjects_quest_uses_the_object_again() {
+        const CHEST: u64 = 0xF110_0000_0000_0042; // HIGHGUID_GAMEOBJECT
+        let (mut app, sent) = drain_world(CHEST, Some(0), 0, "DeclineQuest() DeclineQuest()");
+        assert!(sent.is_empty(), "{sent:?}");
+        let object = app.world().resource::<GuidIndex>().0[&CHEST];
+        let used: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Messages<crate::target::Interact>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            used,
+            [crate::target::Interact(object)],
+            "once: the acted latch"
+        );
+        assert!(app.world().resource::<QuestGiver>().is_open());
+
+        let (mut app, sent) = drain_world(CHEST, Some(0), 1, "DeclineQuest()");
+        assert!(sent.is_empty(), "{sent:?}");
+        assert!(app
+            .world_mut()
+            .resource_mut::<Messages<crate::target::Interact>>()
+            .drain()
+            .next()
+            .is_none());
+        assert!(!app.world().resource::<QuestGiver>().is_open());
     }
 
     const SHARER: u64 = 0x0000_0000_0000_002A; // HIGHGUID_PLAYER: a zero high word

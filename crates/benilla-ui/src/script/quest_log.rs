@@ -558,14 +558,24 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     let model = lua
                         .app_data_ref::<crate::script::ModelCell>()
                         .expect("model app_data");
-                    model.selected_quest_detail().and_then(|d| {
-                        usize::try_from(row)
-                            .ok()
-                            .and_then(|n| pick(d).get(n))
-                            .cloned()
-                    })
+                    model
+                        .selected_quest_detail()
+                        .and_then(|d| {
+                            usize::try_from(row)
+                                .ok()
+                                .and_then(|n| pick(d).get(n))
+                                .cloned()
+                        })
+                        .map(|it| {
+                            let verdict = crate::script::item_stats::quest_item_quality_usable(
+                                &model, it.item_id, it.quality, it.usable,
+                            );
+                            (it, verdict)
+                        })
                 };
-                let Some((it, name)) = item.and_then(|it| it.name.clone().map(|n| (it, n))) else {
+                let Some(((it, (quality, usable)), name)) =
+                    item.and_then(|it| it.0.name.clone().map(|n| (it, n)))
+                else {
                     return Ok(MultiValue::from_vec(vec![
                         Value::Nil,
                         Value::Nil,
@@ -582,8 +592,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Value::String(lua.create_string(&name)?),
                     texture,
                     Value::Integer(i64::from(it.count)),
-                    Value::Integer(i64::from(it.quality)),
-                    crate::script::binding_abi::flag(it.usable),
+                    Value::Integer(quality),
+                    crate::script::binding_abi::flag(usable),
                 ]))
             })?,
         )
@@ -1000,6 +1010,40 @@ mod tests {
                 },
             ],
         }
+    }
+
+    /// The can-use test clears `isUsable` (`0x5e45eb`); inventory type 0 answers quality -1
+    /// (`0x5e45b4`).
+    #[test]
+    fn a_log_reward_the_player_cannot_use_answers_unusable() {
+        let mut s = UiScript::new().unwrap();
+        s.set_quest_log(two_quests());
+        s.run("SelectQuestLogEntry(1)").unwrap();
+        s.set_player_req_state(crate::script::PlayerReqState {
+            level: 10,
+            class_id: 1,
+            race_id: 1,
+            ..Default::default()
+        });
+        let hammer = crate::script::ItemTemplateView {
+            quality: 1,
+            inventory_type: 13,
+            allowable_class: -1,
+            allowable_race: -1,
+            ..Default::default()
+        };
+        s.set_item_template(2024, hammer.clone());
+        let row = "local _, _, _, q, u = GetQuestLogRewardInfo(1) return q, u == 1";
+        assert_eq!(s.eval::<(i64, bool)>(row).unwrap(), (1, true));
+        s.set_item_template(
+            2024,
+            crate::script::ItemTemplateView {
+                required_level: 20,
+                inventory_type: 0,
+                ..hammer
+            },
+        );
+        assert_eq!(s.eval::<(i64, bool)>(row).unwrap(), (-1, false));
     }
 
     #[test]

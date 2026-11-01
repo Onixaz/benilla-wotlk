@@ -8,6 +8,7 @@ use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
 use super::{QuestGiver, QuestLine, QuestLines};
+use crate::creature_anim::SetEmoteQueue;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp};
 use crate::ui_action::UiError;
 use crate::ui_quest_log::QuestLog;
@@ -60,25 +61,59 @@ fn on_giver_status(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
     }
 }
 
-fn on_greeting(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+/// The panel packets' emote writer; absent without the animation plugin.
+type EmoteOut<'w> = Option<MessageWriter<'w, SetEmoteQueue>>;
+
+/// The emote pairs a panel packet plays on its NPC: the greeting and progress readers queue their
+/// one pair (`0x6d0447`, `0x6d0a95`), the details reader its run unless a player shares it
+/// (`0x6d0740`), the reward reader its run (`0x6d0b8f`).
+fn panel_emotes(ev: &SessionEvent) -> Option<SetEmoteQueue> {
+    let (guid, emotes) = match ev {
+        SessionEvent::QuestGreeting(l) => (l.npc, vec![(l.emote_delay, l.emote)]),
+        SessionEvent::QuestDetail(d) if !benilla_protocol::guid::is_player(d.npc) => {
+            (d.npc, d.emotes.clone())
+        }
+        SessionEvent::QuestProgress(p) => (p.npc, vec![(p.emote_delay, p.emote)]),
+        SessionEvent::QuestOffer(o) => (o.npc, o.emotes.clone()),
+        _ => return None,
+    };
+    Some(SetEmoteQueue { guid, emotes })
+}
+
+fn queue_panel_emotes(ev: &SessionEvent, out: &mut EmoteOut) {
+    if let (Some(ask), Some(out)) = (panel_emotes(ev), out.as_mut()) {
+        out.write(ask);
+    }
+}
+
+fn on_greeting(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut emotes: EmoteOut) {
+    queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestGreeting(list) = ev {
         quest_greeting(list, &mut quest);
     }
 }
 
-fn on_detail(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, commands: Res<NetCommands>) {
+fn on_detail(
+    In(ev): In<SessionEvent>,
+    mut quest: ResMut<QuestGiver>,
+    commands: Res<NetCommands>,
+    mut emotes: EmoteOut,
+) {
+    queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestDetail(d) = ev {
         quest_detail(d, &mut quest, &commands);
     }
 }
 
-fn on_progress(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_progress(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut emotes: EmoteOut) {
+    queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestProgress(p) = ev {
         quest_progress(p, &mut quest);
     }
 }
 
-fn on_offer(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
+fn on_offer(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>, mut emotes: EmoteOut) {
+    queue_panel_emotes(&ev, &mut emotes);
     if let SessionEvent::QuestOffer(o) = ev {
         quest_offer(o, &mut quest);
     }
@@ -733,6 +768,7 @@ mod tests {
             quest_id,
             title: "A Threat Within".into(),
             request_text: String::new(),
+            emote_delay: 0,
             emote: 0,
             close_on_cancel,
             quest_flags: 0,
@@ -741,6 +777,45 @@ mod tests {
             required_items: Vec::new(),
             is_complete: false,
         }
+    }
+
+    /// Every panel reader plays its emotes on the NPC; a player's shared details play none.
+    #[test]
+    fn each_panel_packet_queues_its_emotes_on_the_npc() {
+        const NPC: u64 = 0xF130_0000_0000_0007;
+        const SHARER: u64 = 0x0000_0000_0000_002A;
+        let ask = |ev: SessionEvent| panel_emotes(&ev).map(|a| (a.guid, a.emotes));
+        let list = QuestGiverList {
+            npc: NPC,
+            emote_delay: 30,
+            emote: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            ask(SessionEvent::QuestGreeting(list)),
+            Some((NPC, vec![(30, 1)]))
+        );
+        let mut d = detail(NPC, 100);
+        d.emotes = vec![(0, 1), (60, 2)];
+        assert_eq!(
+            ask(SessionEvent::QuestDetail(d.clone())),
+            Some((NPC, vec![(0, 1), (60, 2)]))
+        );
+        d.npc = SHARER;
+        assert_eq!(
+            ask(SessionEvent::QuestDetail(d)),
+            None,
+            "a sharer plays nothing"
+        );
+        let mut p = progress(NPC, 100, 0);
+        (p.emote_delay, p.emote) = (10, 6);
+        assert_eq!(
+            ask(SessionEvent::QuestProgress(p)),
+            Some((NPC, vec![(10, 6)]))
+        );
+        let mut o = offer(NPC, 100, 0);
+        o.emotes = vec![(0, 4)];
+        assert_eq!(ask(SessionEvent::QuestOffer(o)), Some((NPC, vec![(0, 4)])));
     }
 
     fn offer(npc: u64, quest_id: u32, auto_finish: u32) -> QuestOfferReward {

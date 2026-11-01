@@ -528,10 +528,13 @@ pub(crate) use sheath::{
 /// The `SMSG_EMOTE` to `EmoteAnim` consumer.
 mod emote_anim;
 
+/// The per-unit emote queue the questgiver panels fill.
+mod emote_queue;
 /// The client-local gestures (chat, NPC interact), as the reference plays them.
 mod gesture;
 use emote_anim::emote_to_anim;
 pub(crate) use emote_anim::{local_play_eligible, LocalPlay};
+pub(crate) use emote_queue::SetEmoteQueue;
 pub(crate) use gesture::{select_gesture, Gesture, GestureQueue};
 
 /// The Bevy systems that execute the state machine `select` picks.
@@ -832,6 +835,7 @@ impl Plugin for CreatureAnimPlugin {
             .init_resource::<PlaySeq>()
             .init_resource::<gesture::GestureQueue>()
             .add_message::<EmoteAnim>()
+            .add_message::<SetEmoteQueue>()
             .add_message::<BaseAnimRecompute>()
             .add_message::<MountFlourish>()
             .add_message::<WoundAnim>()
@@ -888,6 +892,8 @@ impl Plugin for CreatureAnimPlugin {
                     hard_landing_dust,
                     emote_to_anim,
                     gesture::drive_gestures,
+                    emote_queue::set_emote_queues,
+                    emote_queue::drive_emote_queues,
                     // Before the driver, so the flourish lands the frame it arrived.
                     flourish_to_anim,
                     drive_animations,
