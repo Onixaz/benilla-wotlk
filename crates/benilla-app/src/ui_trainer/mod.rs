@@ -113,6 +113,7 @@ impl Plugin for UiTrainerPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         app.init_resource::<TrainerOpen>()
+            .init_resource::<UnlearnedSpells>()
             .init_resource::<TrainerErrors>()
             .init_resource::<TrainerTooltipSubjects>()
             .add_systems(
@@ -269,9 +270,14 @@ fn only_pane_moved(old: &TrainerState, new: &TrainerState) -> bool {
 }
 
 /// The player as the re-evaluator and the requirement getters read it.
-fn player_view(store: Option<&ObjectStore>, known: &BTreeSet<u32>) -> reeval::PlayerView {
+fn player_view(
+    store: Option<&ObjectStore>,
+    known: &BTreeSet<u32>,
+    unlearned: &[u32],
+) -> reeval::PlayerView {
     reeval::PlayerView {
         known: known.clone(),
+        unlearned: unlearned.to_vec(),
         level: store.and_then(|s| s.0.unit_level()).unwrap_or(0),
         skills: store
             .map(|store| {
@@ -322,7 +328,12 @@ pub(crate) struct DescriptionInputs<'w, 's> {
 pub(crate) struct ReEvalInputs<'w, 's> {
     self_player: Query<'w, 's, (Entity, &'static ObjectStore), With<SelfPlayer>>,
     edges: MessageReader<'w, 's, FieldChanged>,
+    unlearned: Res<'w, UnlearnedSpells>,
 }
+
+/// The `SMSG_SEND_UNLEARN_SPELLS` list (`0x6e2240`), which the re-evaluator grays.
+#[derive(Resource, Default)]
+pub(crate) struct UnlearnedSpells(pub(crate) Vec<u32>);
 
 /// Push the current trainer into the VM and fire its events on a change. Another trainer while
 /// open is a close then an open: `ShowUIPanel` returns early on a visible frame.
@@ -397,7 +408,11 @@ pub(crate) fn feed_trainer(
         }
     }
     // `0x596b00` over every row, then `TRAINER_UPDATE` unconditionally, as its tail fires it.
-    let player = player_view(self_player.map(|(_, s)| s), &actions.spells);
+    let player = player_view(
+        self_player.map(|(_, s)| s),
+        &actions.spells,
+        &re_eval.unlearned.0,
+    );
     let forced = open.re_derive && open.trainer.is_some();
     if forced {
         open.re_derive = false;

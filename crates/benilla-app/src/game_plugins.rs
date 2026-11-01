@@ -140,6 +140,7 @@ impl PluginGroup for GamePlugins {
                 connect: self.connect,
             })
             .add(crate::death::DeathPlugin)
+            .add(crate::ui_notices::NoticesPlugin)
             .add(crate::char_select::CharSelectPlugin { start: self.start })
             .add(crate::login::LoginPlugin)
             .add(crate::realm_select::RealmSelectPlugin)
@@ -912,9 +913,13 @@ pub(crate) mod schedule_tests {
     ///   `.after(UiInput)` drain of the VM's own sends, against `finish_colliders`, as the other
     ///   such drains pair; and `ui_socket::feed_refunds` against `ui_items::feed_item_stats` and
     ///   `feed_spell_tooltips` over `Items`: it only reads templates.
+    /// - The small notices (#641) add 3: `ui_notices::drain_level_grant`, an `.after(UiInput)`
+    ///   drain, against `finish_colliders`, as the other such drains pair; and
+    ///   `ui_notices::feed_notices` against `feed_item_stats` and `feed_spell_tooltips` over
+    ///   `Items`: it only reads templates.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_860;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_863;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

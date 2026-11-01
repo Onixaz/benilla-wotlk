@@ -37,6 +37,7 @@ mod loot;
 mod mail;
 mod meeting_stone;
 mod names;
+mod notices;
 mod pet;
 mod petition;
 mod player_flags;

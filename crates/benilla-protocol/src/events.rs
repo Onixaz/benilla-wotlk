@@ -1084,6 +1084,22 @@ pub enum SessionEvent {
     LootList(LootList),
     /// One open loot row redrawn (`SMSG_LOOT_SLOT_CHANGED`).
     LootSlotChanged(LootSlotChanged),
+    /// A `Light.dbc` row blended as another (`SMSG_OVERRIDE_LIGHT`).
+    OverrideLight(crate::messages::OverrideLight),
+    /// The server's UI clock, Unix seconds (`SMSG_WORLD_STATE_UI_TIMER_UPDATE`).
+    UiTime(u32),
+    /// An arena error (`SMSG_ARENA_ERROR`): the code, and the team type for code 0.
+    ArenaError { error: u32, team_type: Option<u8> },
+    /// A refer-a-friend level grant offered (`SMSG_PROPOSE_LEVEL_GRANT`).
+    ProposeLevelGrant { granter: u64 },
+    /// A refer-a-friend error (`SMSG_REFER_A_FRIEND_FAILURE`): the code, and a name for code 9.
+    ReferAFriendFailure { error: u32, name: String },
+    /// The spells the trainer shows as used (`SMSG_SEND_UNLEARN_SPELLS`).
+    UnlearnSpells(Vec<u32>),
+    /// A player's drunk state crossed a threshold (`SMSG_CROSSED_INEBRIATION_THRESHOLD`).
+    InebriationThreshold(crate::messages::InebriationThreshold),
+    /// The learned dance moves' mask (`SMSG_LEARNED_DANCE_MOVES`).
+    LearnedDanceMoves(u64),
     /// Master-loot candidates (`SMSG_LOOT_MASTER_LIST`), sent by `SendLoot` before its response.
     LootMasterList { candidates: Vec<u64> },
     /// An item landed in our bags (`SMSG_ITEM_PUSH_RESULT`): the "You receive loot" line.

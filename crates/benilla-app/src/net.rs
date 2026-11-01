@@ -2130,6 +2130,12 @@ pub(crate) enum ClientCommand {
     RepopRequest,
     /// `MSG_CORPSE_QUERY`, on becoming a ghost and at each world entry as one.
     CorpseQuery,
+    /// `CMSG_WORLD_STATE_UI_TIMER_UPDATE`: ask for the server's UI clock.
+    UiTimeRequest,
+    /// `CMSG_ACCEPT_LEVEL_GRANT`: accept the pending refer-a-friend level.
+    AcceptLevelGrant {
+        granter: u64,
+    },
     /// `CMSG_CORPSE_MAP_POSITION_QUERY`: where our corpse's unstreamed transport is.
     CorpseMapPositionQuery {
         transport: u32,

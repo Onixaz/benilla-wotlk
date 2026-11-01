@@ -34,6 +34,7 @@ fn warrior(known: &[u32]) -> reeval::PlayerView {
         known: known.iter().copied().collect(),
         level: 10,
         skills: Vec::new(),
+        unlearned: Vec::new(),
     }
 }
 
@@ -862,6 +863,7 @@ mod re_derive {
             known: BTreeSet::new(),
             level: 10,
             skills: Vec::new(),
+            unlearned: Vec::new(),
         }
     }
 
@@ -874,6 +876,19 @@ mod re_derive {
 
     fn state(wire: &TrainerSpell, player: &PlayerView) -> u8 {
         re_derive(wire, &catalog(), &skill_lines(), player)
+    }
+
+    /// `0x596f66`: an unlearned spell grays ahead of a failed level requirement.
+    #[test]
+    fn an_unlearned_spell_reads_gray() {
+        let mut w = service(RANK1);
+        w.req_level = 60;
+        assert_eq!(state(&w, &player()), trainer_spell_state::RED);
+        let unlearned = PlayerView {
+            unlearned: vec![RANK1],
+            ..player()
+        };
+        assert_eq!(state(&w, &unlearned), trainer_spell_state::GRAY);
     }
 
     #[test]

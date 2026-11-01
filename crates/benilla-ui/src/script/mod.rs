@@ -182,6 +182,7 @@ pub mod keybind;
 mod keyboard;
 mod layout;
 mod layout_cache;
+mod level_grant;
 mod lfg;
 mod loot;
 mod loot_roll;
@@ -1090,6 +1091,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     weapon_enchant::install(lua)?;
     loot::install(lua)?;
     loot_roll::install(lua)?;
+    level_grant::install(lua)?;
     quest::install(lua)?;
     quest_log::install(lua)?;
     quest_watch::install(lua)?;

@@ -39,6 +39,7 @@ mod meeting_stone;
 mod mirror_timer;
 mod monster_move;
 mod movement;
+mod notices;
 pub mod opcode;
 mod opcode_names;
 mod packet;
@@ -247,6 +248,7 @@ pub use movement::{
     CLASSIC_ASCENDING, CLASSIC_CAN_FLY, CLASSIC_DESCENDING, CLASSIC_DISABLE_GRAVITY,
     CLASSIC_FLYING,
 };
+pub use notices::{accept_level_grant, InebriationThreshold, OverrideLight};
 pub use opcode_names::opcode_name;
 pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket};
 pub use page_text::page_text_query;

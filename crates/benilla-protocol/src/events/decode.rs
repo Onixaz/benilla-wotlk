@@ -629,6 +629,20 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::LootAllPassed(p) => vec![SessionEvent::LootAllPassed(p)],
         ServerPacket::LootList(p) => vec![SessionEvent::LootList(p)],
         ServerPacket::LootSlotChanged(p) => vec![SessionEvent::LootSlotChanged(p)],
+        ServerPacket::OverrideLight(p) => vec![SessionEvent::OverrideLight(p)],
+        ServerPacket::UiTime(t) => vec![SessionEvent::UiTime(t)],
+        ServerPacket::ArenaError { error, team_type } => {
+            vec![SessionEvent::ArenaError { error, team_type }]
+        }
+        ServerPacket::ProposeLevelGrant { granter } => {
+            vec![SessionEvent::ProposeLevelGrant { granter }]
+        }
+        ServerPacket::ReferAFriendFailure { error, name } => {
+            vec![SessionEvent::ReferAFriendFailure { error, name }]
+        }
+        ServerPacket::UnlearnSpells(s) => vec![SessionEvent::UnlearnSpells(s)],
+        ServerPacket::InebriationThreshold(p) => vec![SessionEvent::InebriationThreshold(p)],
+        ServerPacket::LearnedDanceMoves(m) => vec![SessionEvent::LearnedDanceMoves(m)],
         ServerPacket::LootMasterList { candidates } => {
             vec![SessionEvent::LootMasterList { candidates }]
         }

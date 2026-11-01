@@ -171,7 +171,9 @@ pub use ground_effects::{
     GroundEffectCatalog, FRILL_DENSITY, FRILL_DENSITY_MAX,
 };
 mod light;
-pub use light::{Atmosphere, LightCatalog, Submersion, ZERO_KEY_COLOR, ZERO_KEY_SCALAR};
+pub use light::{
+    Atmosphere, LightCatalog, LightOverride, Submersion, ZERO_KEY_COLOR, ZERO_KEY_SCALAR,
+};
 mod loading_screen;
 pub use loading_screen::{load_loading_screens, LoadingScreenCatalog};
 mod liquid;

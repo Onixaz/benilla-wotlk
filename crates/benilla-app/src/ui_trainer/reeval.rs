@@ -1,7 +1,6 @@
 //! The trainer's state re-evaluator, as the reference runs it (`0x596b00`): on any of its triggers
-//! it re-derives every service's state from the player's book, skills and level, so the wire state
-//! lasts only until the first. Not built: its gray for a row in the `SMSG_SEND_UNLEARN_SPELLS` list
-//! (`0x596f66`), a packet benilla does not read.
+//! it re-derives every service's state from the player's book, skills, level and the
+//! `SMSG_SEND_UNLEARN_SPELLS` list, so the wire state lasts only until the first.
 
 use std::collections::BTreeSet;
 
@@ -26,6 +25,9 @@ pub(super) struct PlayerView {
     pub level: u32,
     /// The occupied `PLAYER_SKILL_INFO` slots, in slot order.
     pub skills: Vec<SkillSlot>,
+    /// The `SMSG_SEND_UNLEARN_SPELLS` list (`0x6e2240`), which the unlearned test reads
+    /// (`0x53be30`).
+    pub unlearned: Vec<u32>,
 }
 
 impl PlayerView {
@@ -108,6 +110,10 @@ pub(super) fn re_derive(
         .iter()
         .filter(|&&id| id != 0)
         .all(|&id| known_or_higher(id, &player.known, skill_lines));
+    // An unlearned spell is gray before the ability and level tests (`0x596f66`).
+    if player.unlearned.contains(&wire.spell) {
+        return GRAY;
+    }
     if !abilities_met {
         return RED;
     }
