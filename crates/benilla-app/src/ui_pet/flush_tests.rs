@@ -355,7 +355,6 @@ fn the_flush_runs_after_every_feed_that_pushes_a_pet_cooldown() {
 /// `PET_BAR_UPDATE_COOLDOWN`. So the GCD a pet-bar press starts sweeps the pet tab's button
 /// through the flush's `SPELL_UPDATE_COOLDOWN` alone.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_pet_gcd_sweeps_the_spellbooks_pet_tab_button() {
     benilla_formats::wow_data_or_skip!();
     use benilla_protocol::messages::{PetActionEntry, PET_ACT_ENABLED};
@@ -380,8 +379,7 @@ fn a_pet_gcd_sweeps_the_spellbooks_pet_tab_button() {
 
     let mut script = benilla_ui::script::UiScript::new().unwrap();
     script.set_screen_size(1024.0, 768.0);
-    let failures = crate::ui_script::load_default_ui(&script);
-    assert!(failures.is_empty(), "load failures: {failures:?}");
+    crate::ui_script::test_ui::load_stock_ui(&mut script);
     listen(&script);
     rig.app.world_mut().insert_non_send_resource(script);
 
@@ -417,9 +415,13 @@ fn a_pet_gcd_sweeps_the_spellbooks_pet_tab_button() {
             .unwrap(),
         "the GCD sweeps the spellbook's button"
     );
+    // `SpellButton_UpdateButton` hands `GetSpellCooldown(id, bookType)` to `CooldownFrame_SetTimer`.
     assert!(
-        (s.eval::<f64>("return SpellButton1Cooldown.duration")
-            .unwrap()
+        (s.eval::<f64>(
+            "local _, duration = GetSpellCooldown(SpellBook_GetSpellID(1), BOOKTYPE_PET) \
+             return duration"
+        )
+        .unwrap()
             - 1.5)
             .abs()
             < 1e-9,

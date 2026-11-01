@@ -668,7 +668,7 @@ pub(crate) fn seat_login(s: &mut UiScript) {
 /// The whole production interface, the core then the layer, as the app loads it into a VM with a
 /// seated player, its character record and the display's mode list; fails on any load raise but
 /// the frames still waiting on a port of their own.
-pub(super) fn load_stock_ui(s: &mut UiScript) {
+pub(crate) fn load_stock_ui(s: &mut UiScript) {
     seat_login(s);
     let failures: Vec<String> = super::load_default_ui(s)
         .into_iter()
