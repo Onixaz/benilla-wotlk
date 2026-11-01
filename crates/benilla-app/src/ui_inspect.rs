@@ -10,11 +10,13 @@
 
 use bevy::prelude::*;
 
+use benilla_protocol::messages::InspectItem;
+use benilla_protocol::{SessionEvent, SessionEventKind as K};
 use benilla_ui::script::{InspectView, InvSlotView, InventorySlots, ScriptValue, UiScript};
 
 use crate::entities::ItemDisplays;
 use crate::items::Items;
-use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore};
+use crate::net::{ClientCommand, GuidIndex, NetCommands, NetHandlerApp, ObjectStore};
 use crate::portrait::InspectBooth;
 use crate::ui_script::UiFeed;
 
@@ -23,6 +25,15 @@ use crate::ui_script::UiFeed;
 #[derive(Resource, Default)]
 pub(crate) struct InspectTarget {
     pub(crate) token: Option<String>,
+}
+
+/// `SMSG_INSPECT_TALENT`'s worn items of the last player inspected (`0x6cdf30`): their twelve
+/// enchant slots, which the visible-item fields do not carry, and which count toward that player's
+/// gem conditions.
+#[derive(Resource, Default)]
+struct InspectWorn {
+    guid: u64,
+    items: Vec<InspectItem>,
 }
 
 /// The last view pushed and level seen, per VM ([`crate::ui_script::VmMemo`]), so a `/reload`'s
@@ -45,8 +56,43 @@ impl Plugin for InspectUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InspectTarget>()
             .init_resource::<InspectFeedState>()
+            .init_resource::<InspectWorn>()
+            .net_handler(K::InspectItems, on_inspect_items)
             .add_systems(Update, feed_inspect.in_set(UiFeed));
     }
+}
+
+fn on_inspect_items(In(ev): In<SessionEvent>, mut worn: ResMut<InspectWorn>) {
+    let SessionEvent::InspectItems { guid, items } = ev else {
+        return;
+    };
+    debug!("inspect: {} worn items for {guid:#x}", items.len());
+    *worn = InspectWorn { guid, items };
+}
+
+/// The inspected player's gem counts (`0x6de4d0`): meta, red, yellow and blue, each gem in a
+/// counted item's sockets once per colour bit.
+fn inspect_gem_counts(
+    items: &[InspectItem],
+    enchants: Option<&crate::items::Enchants>,
+) -> [i32; 4] {
+    let mut counts = [0; 4];
+    let Some(enchants) = enchants else {
+        return counts;
+    };
+    for item in items.iter().filter(|i| i.counts_gems) {
+        for &id in &item.enchants[2..=4] {
+            let Some(t) = enchants.1.gem_type(id).filter(|&t| t != 0) else {
+                continue;
+            };
+            for (bit, n) in counts.iter_mut().enumerate() {
+                if t & (1 << bit) != 0 {
+                    *n += 1;
+                }
+            }
+        }
+    }
+    counts
 }
 
 /// One inspected slot from the target's visible-item entry; `slot0` is the 0-based
@@ -120,6 +166,7 @@ fn feed_inspect(
     stores: Query<&ObjectStore>,
     selection: Res<crate::target::Selection>,
     group: Res<crate::ui_party::GroupState>,
+    worn: Res<InspectWorn>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -185,10 +232,30 @@ fn feed_inspect(
             slot - 1,
         );
     }
+    // The inspect packet's worn items replace the visible enchants with all twelve slots.
+    let worn = if worn.guid == guid {
+        worn.items.as_slice()
+    } else {
+        &[]
+    };
+    for item in worn {
+        let Some(view) = slots
+            .get_mut(usize::from(item.slot) + 1)
+            .and_then(Option::as_mut)
+            .filter(|v| v.item_id == item.entry)
+        else {
+            continue;
+        };
+        view.enchants = crate::items::enchant_lines(
+            (0..12u8).map(|j| (j, item.enchants[usize::from(j)] as i32, 0, None)),
+            catalogs.0.as_deref(),
+        );
+    }
     let view = InspectView {
         unit: token.clone(),
         guid,
         slots,
+        gem_counts: inspect_gem_counts(worn, catalogs.0.as_deref()),
     };
     if memo.last.as_ref() != Some(&view) {
         script.set_inspect(Some(view.clone()));

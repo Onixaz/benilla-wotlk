@@ -77,6 +77,7 @@ fn inspect_view(unit: &str) -> InspectView {
         unit: unit.into(),
         guid: 0x0000_0000_0000_0042,
         slots,
+        gem_counts: [0; 4],
     }
 }
 

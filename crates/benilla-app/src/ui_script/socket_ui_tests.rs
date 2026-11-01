@@ -41,6 +41,7 @@ fn gem(name: &str, gem_type: u32, enchant: u32, enchant_name: &str) -> ItemTempl
             enchant,
             enchant_name: Some(enchant_name.into()),
             condition: None,
+            requirement: None,
         }),
         ..Default::default()
     }

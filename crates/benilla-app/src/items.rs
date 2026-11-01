@@ -266,6 +266,18 @@ pub(crate) fn condition_view(
     })
 }
 
+/// An enchant's skill and level requirement as the VM's tooltip reads it.
+pub(crate) fn requirement_view(
+    r: &benilla_formats::EnchantRequirement,
+) -> benilla_ui::script::EnchantRequirementView {
+    benilla_ui::script::EnchantRequirementView {
+        skill: r.skill,
+        skill_rank: r.skill_rank,
+        skill_name: r.skill_name.clone(),
+        min_level: r.min_level,
+    }
+}
+
 /// `SpellItemEnchantment.Flags & 1`: this enchant soulbinds the item it lands on.
 pub(crate) fn binds(id: u32, cat: Option<&Enchants>) -> bool {
     cat.is_some_and(|c| c.0.binds_the_item(id))
@@ -298,6 +310,11 @@ fn enchant_lines_quiet(
                 remaining_ms,
                 prismatic_sockets: enchants.0.prismatic_sockets(id.unsigned_abs()),
                 condition: enchants.0.condition(id.unsigned_abs()).map(condition_view),
+                gem_item: enchants.0.gem_item(id.unsigned_abs()).unwrap_or(0),
+                requirement: enchants
+                    .0
+                    .requirement(id.unsigned_abs())
+                    .map(requirement_view),
             })
         })
         .collect();
@@ -310,17 +327,18 @@ fn enchant_lines_quiet(
 pub(crate) struct RandomProperties(pub(crate) benilla_formats::RandomPropertyCatalog);
 
 /// The item's display name, the reference's one formatter over `(entry, randomPropertyId)`:
-/// `ITEM_SUFFIX_TEMPLATE` (`"%s %s"`) with the roll's suffix, or the plain name when the id names
-/// no suffixed row. Every surface that shows an item name goes through here.
+/// `ITEM_SUFFIX_TEMPLATE` (`"%s %s"`) with the roll's suffix, a negative id's `ItemRandomSuffix`
+/// name, or the plain name when the id names no suffix. Every surface that shows an item name goes
+/// through here.
 pub(crate) fn item_display_name(
     base: &str,
     random_property_id: i32,
     props: Option<&RandomProperties>,
 ) -> String {
-    match props.and_then(|p| p.0.get(random_property_id)) {
-        Some(row) => format!("{base} {}", row.suffix),
-        None => base.to_string(),
-    }
+    props.map_or_else(
+        || base.to_string(),
+        |p| p.0.suffixed_name(base, random_property_id),
+    )
 }
 
 /// The tooltip lines of a roll, for a source with no item object: the reference copies the row's
