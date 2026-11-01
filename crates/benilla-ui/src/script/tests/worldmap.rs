@@ -512,6 +512,34 @@ fn positions_project_onto_the_map_of_the_moment() {
     );
 }
 
+/// `GetDeathReleasePosition` (`0x5459c0`) projects the release graveyard as the corpse is
+/// projected, and reads `(0, 0)` without one.
+#[test]
+fn the_release_graveyard_projects_like_the_corpse() {
+    let mut s = vm();
+    s.run("SetMapZoom(2, 1)").unwrap();
+    let release =
+        |s: &mut UiScript| -> (f64, f64) { s.eval("return GetDeathReleasePosition()").unwrap() };
+    assert_eq!(release(&mut s), (0.0, 0.0));
+    let at = WorldMapPoint {
+        map: 0,
+        x: -1500.0,
+        y: -9500.0,
+    };
+    s.set_world_map_feed(WorldMapFeed {
+        release: Some(at),
+        corpse: Some(at),
+        ..player_at(0, -1500.0, -9500.0, 12)
+    });
+    let (u, v) = release(&mut s);
+    assert!(
+        (u - 0.75).abs() < 1e-5 && (v - (1.0 - 400.0 / 1500.0)).abs() < 1e-5,
+        "{u} {v}"
+    );
+    let corpse: (f64, f64) = s.eval("return GetCorpseMapPosition()").unwrap();
+    assert_eq!((u, v), corpse);
+}
+
 /// The landmark gates and `GetMapLandmarkInfo`'s seven values: a town at zone and continent
 /// level once explored, the capital everywhere, the tower at zone level while its state is set,
 /// its icon picked by the state; the zone level shows icon 0 unless `Flags & 0x80`.

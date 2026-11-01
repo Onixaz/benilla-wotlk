@@ -19,6 +19,14 @@ impl WorldWriter {
         self.send(opcode::MSG_CORPSE_QUERY, &[])
     }
 
+    /// Ask where our corpse's transport is (`CMSG_CORPSE_MAP_POSITION_QUERY`), by its low guid.
+    pub fn corpse_map_position_query(&mut self, transport: u32) -> Result<()> {
+        self.send(
+            opcode::CMSG_CORPSE_MAP_POSITION_QUERY,
+            &messages::corpse_map_position_query(transport),
+        )
+    }
+
     /// Self-resurrect while `PLAYER_SELF_RES_SPELL` is set; the server casts it, with no reply.
     pub fn self_res(&mut self) -> Result<()> {
         self.send(opcode::CMSG_SELF_RES, &[])

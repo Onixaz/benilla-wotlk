@@ -4,13 +4,18 @@
 use benilla_protocol::{EntityKind, MoveMode, ObjectFields, SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{CorpsePoint, DeathNet, ResurrectOffer};
-use crate::net::{GuidIndex, MoveModeMessage, NetHandlerApp, SelfGuid, UnitMoveModes};
+use super::{CorpsePoint, DeathNet, ReleasePoint, ResurrectOffer};
+use crate::net::{
+    GuidIndex, MoveModeMessage, NetHandlerApp, ObjectStore, SelfGuid, SelfPlayer, UnitMoveModes,
+};
 
 /// Register the death handlers and the session-end listener.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::CorpseQuery, on_corpse_query)
+        .net_handler(K::DeathReleaseLoc, on_death_release_loc)
+        .net_handler(K::CorpseMapPosition, on_corpse_map_position)
+        .net_handler(K::CorpseNotInInstance, on_corpse_not_in_instance)
         .net_handler(K::CorpseReclaimDelay, on_corpse_reclaim_delay)
         .net_handler(K::ResurrectRequest, on_resurrect_request)
         .net_handler(K::SpiritHealerConfirm, on_spirit_healer_confirm)
@@ -19,15 +24,61 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Disconnected, on_session_end);
 }
 
-fn on_corpse_query(In(ev): In<SessionEvent>, mut death_net: ResMut<DeathNet>) {
+/// Whether our own player is a ghost now; `None` while it is not streamed.
+fn self_ghost(self_q: &Query<&ObjectStore, With<SelfPlayer>>) -> Option<bool> {
+    self_q.single().ok().map(|s| s.0.player_is_ghost())
+}
+
+fn on_corpse_query(
+    In(ev): In<SessionEvent>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    mut death_net: ResMut<DeathNet>,
+) {
     if let SessionEvent::CorpseQuery {
         found,
         display_map,
         position,
         corpse_map,
+        transport,
     } = ev
     {
-        corpse_query(found, display_map, position, corpse_map, &mut death_net);
+        let answer = found.then_some(CorpsePoint {
+            display_map,
+            position,
+            local: position,
+            corpse_map,
+            transport,
+        });
+        corpse_query(answer, self_ghost(&self_q) == Some(true), &mut death_net);
+    }
+}
+
+fn on_death_release_loc(
+    In(ev): In<SessionEvent>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    mut death_net: ResMut<DeathNet>,
+) {
+    if let SessionEvent::DeathReleaseLoc { map, position } = ev {
+        death_release_loc(map, position, self_ghost(&self_q), &mut death_net);
+    }
+}
+
+fn on_corpse_map_position(In(ev): In<SessionEvent>, mut death_net: ResMut<DeathNet>) {
+    if let SessionEvent::CorpseMapPosition { position, facing } = ev {
+        death_net.corpse_transport_frame = Some((position, facing));
+    }
+}
+
+/// `SMSG_CORPSE_NOT_IN_INSTANCE`: the message display's `ERR_CORPSE_IS_NOT_IN_INSTANCE`
+/// (`0x526530`).
+fn on_corpse_not_in_instance(
+    In(ev): In<SessionEvent>,
+    mut errors: ResMut<crate::ui_action::UiErrorKeys>,
+) {
+    if let SessionEvent::CorpseNotInInstance = ev {
+        errors.0.push(crate::ui_action::UiError::key(
+            "ERR_CORPSE_IS_NOT_IN_INSTANCE",
+        ));
     }
 }
 
@@ -161,19 +212,23 @@ pub(crate) fn forget_corpse(guid: u64, death_net: &mut DeathNet) {
     }
 }
 
-/// `MSG_CORPSE_QUERY`'s answer; a not-found, asked or pushed at bones conversion, drops the marker.
-fn corpse_query(
-    found: bool,
-    display_map: i32,
-    position: [f32; 3],
-    corpse_map: u32,
-    death_net: &mut DeathNet,
-) {
-    death_net.corpse = found.then_some(CorpsePoint {
-        display_map,
-        position,
-        corpse_map,
-    });
+/// `MSG_CORPSE_QUERY`'s answer (`0x526530`): a found corpse is kept only while we are a ghost; a
+/// not-found, asked or pushed at bones conversion, drops the marker.
+fn corpse_query(answer: Option<CorpsePoint>, ghost: bool, death_net: &mut DeathNet) {
+    match answer {
+        Some(cp) if ghost => death_net.corpse = Some(cp),
+        Some(_) => {}
+        None => death_net.corpse = None,
+    }
+}
+
+/// `SMSG_DEATH_RELEASE_LOC` (`0x6e2e90`): kept unless we are a ghost or not streamed, which store
+/// map -1; map -1 is no point.
+fn death_release_loc(map: i32, position: [f32; 3], ghost: Option<bool>, death_net: &mut DeathNet) {
+    death_net.release = match (ghost, u32::try_from(map)) {
+        (Some(false), Ok(map)) => Some(ReleasePoint { map, position }),
+        _ => None,
+    };
 }
 
 /// `SMSG_CORPSE_RECLAIM_DELAY`, anchored at arrival on the clock the feed reads. The 1.12 client
@@ -306,6 +361,54 @@ mod tests {
             },
         )
         .unwrap();
+    }
+
+    fn point(transport: u32) -> CorpsePoint {
+        CorpsePoint {
+            display_map: 0,
+            position: [1.0, 2.0, 3.0],
+            local: [1.0, 2.0, 3.0],
+            corpse_map: 0,
+            transport,
+        }
+    }
+
+    /// `0x526530`: a found corpse lands only while a ghost; a not-found always drops it.
+    #[test]
+    fn a_corpse_answer_is_kept_only_while_a_ghost() {
+        let mut death_net = DeathNet::default();
+        corpse_query(Some(point(0)), false, &mut death_net);
+        assert!(death_net.corpse.is_none(), "alive: the answer is ignored");
+        corpse_query(Some(point(7)), true, &mut death_net);
+        assert_eq!(death_net.corpse, Some(point(7)));
+        corpse_query(Some(point(0)), false, &mut death_net);
+        assert_eq!(
+            death_net.corpse,
+            Some(point(7)),
+            "an ignored answer keeps the last"
+        );
+        corpse_query(None, false, &mut death_net);
+        assert!(death_net.corpse.is_none());
+    }
+
+    /// `0x6e2e90`: kept while dead and not a ghost; a ghost, no player or map -1 clears it.
+    #[test]
+    fn the_release_point_is_kept_unless_a_ghost_or_map_minus_one() {
+        let mut death_net = DeathNet::default();
+        death_release_loc(571, [5.0, 6.0, 7.0], Some(false), &mut death_net);
+        assert_eq!(
+            death_net.release,
+            Some(ReleasePoint {
+                map: 571,
+                position: [5.0, 6.0, 7.0]
+            })
+        );
+        death_release_loc(-1, [0.0; 3], Some(false), &mut death_net);
+        assert!(death_net.release.is_none());
+        death_release_loc(571, [5.0, 6.0, 7.0], Some(true), &mut death_net);
+        assert!(death_net.release.is_none(), "a ghost stores map -1");
+        death_release_loc(571, [5.0, 6.0, 7.0], None, &mut death_net);
+        assert!(death_net.release.is_none(), "no player stores map -1");
     }
 
     /// `0x732450` resolves any unit: a possessed unit's grant reaches the controller and its own

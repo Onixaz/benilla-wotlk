@@ -231,6 +231,8 @@ pub struct WorldMapPlayer {
 pub struct WorldMapFeed {
     pub player: Option<WorldMapPlayer>,
     pub corpse: Option<WorldMapPoint>,
+    /// The release graveyard (`SMSG_DEATH_RELEASE_LOC`).
+    pub release: Option<WorldMapPoint>,
     /// `party1`..`party4` in party order.
     pub party: Vec<Option<WorldMapPoint>>,
     /// `raid1`..`raid40` in roster order.
@@ -1521,11 +1523,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetDeathReleasePosition() (`0x5459c0`): the release graveyard `0x512ca0` keeps, which no
-    // packet fills here yet, so the zeroed outputs.
+    // GetDeathReleasePosition() (`0x5459c0`): the release graveyard, projected as the corpse is.
     g.set(
         "GetDeathReleasePosition",
-        lua.create_function(|_, ()| Ok((0.0f64, 0.0f64)))?,
+        lua.create_function(|lua, ()| {
+            Ok(pair(with_map(lua, |wm| {
+                wm.feed.release.map_or((0.0, 0.0), |p| wm.project(p).0)
+            })))
+        })?,
     )?;
 
     // ProcessMapClick(x, y) (`0x5468f0`): a continent on the Azeroth sheet, a zone through the

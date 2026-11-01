@@ -1035,6 +1035,23 @@ pub enum ServerPacket {
     },
     /// `SMSG_DURABILITY_DAMAGE_DEATH` (empty): the 10% death durability loss, a red error line.
     DurabilityDamageDeath,
+    /// `SMSG_DEATH_RELEASE_LOC`: the release graveyard; map -1 clears it.
+    DeathReleaseLoc {
+        map: i32,
+        position: [f32; 3],
+    },
+    /// `SMSG_PRE_RESURRECT`: drop the missiles in flight at this unit.
+    PreResurrect {
+        guid: u64,
+    },
+    /// `SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE`: the corpse's transport's world position and
+    /// facing.
+    CorpseMapPosition {
+        position: [f32; 3],
+        facing: f32,
+    },
+    /// `SMSG_CORPSE_NOT_IN_INSTANCE` (empty).
+    CorpseNotInInstance,
     /// `SMSG_RESURRECT_REQUEST`: a resurrection offer.
     ResurrectRequest(ResurrectRequestBody),
     /// `SMSG_SPIRIT_HEALER_CONFIRM`: the healer asks; `CMSG_SPIRIT_HEALER_ACTIVATE` targets `npc`.
@@ -1821,6 +1838,12 @@ impl ServerPacket {
             ServerPacket::CorpseQuery(_) => "MSG_CORPSE_QUERY".into(),
             ServerPacket::CorpseReclaimDelay { .. } => "SMSG_CORPSE_RECLAIM_DELAY".into(),
             ServerPacket::DurabilityDamageDeath => "SMSG_DURABILITY_DAMAGE_DEATH".into(),
+            ServerPacket::DeathReleaseLoc { .. } => "SMSG_DEATH_RELEASE_LOC".into(),
+            ServerPacket::PreResurrect { .. } => "SMSG_PRE_RESURRECT".into(),
+            ServerPacket::CorpseMapPosition { .. } => {
+                "SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE".into()
+            }
+            ServerPacket::CorpseNotInInstance => "SMSG_CORPSE_NOT_IN_INSTANCE".into(),
             ServerPacket::ResurrectRequest(_) => "SMSG_RESURRECT_REQUEST".into(),
             ServerPacket::SpiritHealerConfirm { .. } => "SMSG_SPIRIT_HEALER_CONFIRM".into(),
             ServerPacket::MoveSetCollisionHeight { .. } => "SMSG_MOVE_SET_COLLISION_HGT".into(),

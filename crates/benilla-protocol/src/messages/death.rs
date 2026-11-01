@@ -4,9 +4,9 @@ use std::io;
 
 use crate::wire::{read_cstring, read_f32_le, read_i32_le, read_u32_le, read_u64_le, read_u8};
 
-/// `MSG_CORPSE_QUERY`'s answer (`QueryHandler.cpp:258-304`), a lone `u8(0)` when not found; the
-/// request is the same opcode, empty. The server also sends an unprompted not-found when a looted
-/// corpse turns to bones (`Map.cpp:3624-3629`), which means "drop the marker".
+/// `MSG_CORPSE_QUERY`'s answer (`0x526530`), a lone `u8(0)` when not found; the request is the
+/// same opcode, empty. The server also sends an unprompted not-found when a looted corpse turns to
+/// bones (`Map.cpp:3624-3629`), which means "drop the marker".
 #[derive(Debug, Clone, PartialEq)]
 pub struct CorpseLocation {
     pub found: bool,
@@ -16,6 +16,9 @@ pub struct CorpseLocation {
     pub position: [f32; 3],
     /// The corpse's real map id, never adjusted.
     pub corpse_map: u32,
+    /// The low guid of the transport the corpse lies on, 0 for none; `position` is then
+    /// transport-local.
+    pub transport: u32,
 }
 
 pub(super) fn read_corpse_query_response(r: &mut &[u8]) -> io::Result<CorpseLocation> {
@@ -26,16 +29,19 @@ pub(super) fn read_corpse_query_response(r: &mut &[u8]) -> io::Result<CorpseLoca
             display_map: 0,
             position: [0.0; 3],
             corpse_map: 0,
+            transport: 0,
         });
     }
     let display_map = read_i32_le(r)?;
     let position = [read_f32_le(r)?, read_f32_le(r)?, read_f32_le(r)?];
     let corpse_map = read_u32_le(r)?;
+    let transport = read_u32_le(r)?;
     Ok(CorpseLocation {
         found: true,
         display_map,
         position,
         corpse_map,
+        transport,
     })
 }
 
@@ -44,6 +50,25 @@ pub(super) fn read_corpse_query_response(r: &mut &[u8]) -> io::Result<CorpseLoca
 /// 30 s, or 60 or 120 s after repeated deaths (`Player.cpp:106`).
 pub(super) fn read_corpse_reclaim_delay(r: &mut &[u8]) -> io::Result<u32> {
     read_u32_le(r)
+}
+
+/// `SMSG_DEATH_RELEASE_LOC`: the graveyard a release goes to, `i32 map` and the point (`0x6e2e90`);
+/// map -1 with a zero point clears it.
+pub(super) fn read_death_release_loc(r: &mut &[u8]) -> io::Result<(i32, [f32; 3])> {
+    let map = read_i32_le(r)?;
+    Ok((map, [read_f32_le(r)?, read_f32_le(r)?, read_f32_le(r)?]))
+}
+
+/// `SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE`: the corpse's transport's world position and facing,
+/// three `f32` and an `f32` (`0x526530`).
+pub(super) fn read_corpse_map_position(r: &mut &[u8]) -> io::Result<([f32; 3], f32)> {
+    let position = [read_f32_le(r)?, read_f32_le(r)?, read_f32_le(r)?];
+    Ok((position, read_f32_le(r)?))
+}
+
+/// `CMSG_CORPSE_MAP_POSITION_QUERY` body: the transport's low guid, a `u32` (`0x51f430`).
+pub fn corpse_map_position_query(transport: u32) -> Vec<u8> {
+    transport.to_le_bytes().to_vec()
 }
 
 /// `SMSG_RESURRECT_REQUEST`, a resurrection offer (`Spell.cpp:5024-5044`). `sickness` warns the
@@ -111,7 +136,8 @@ pub fn resurrect_response(caster: u64, accept: bool) -> Vec<u8> {
 mod tests {
     use super::*;
 
-    /// Built as `HandleCorpseQueryOpcode` builds it (`QueryHandler.cpp:296-303`).
+    /// Built as `HandleCorpseQueryOpcode` builds it: the 12340 arm reads a trailing transport
+    /// `u32` after the real map (`0x526530`).
     #[test]
     fn corpse_query_found_golden() {
         let mut body = vec![1u8];
@@ -120,6 +146,7 @@ mod tests {
         body.extend_from_slice(&(-132.49f32).to_le_bytes());
         body.extend_from_slice(&83.53f32.to_le_bytes());
         body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&7u32.to_le_bytes());
         let mut r = body.as_slice();
         let loc = read_corpse_query_response(&mut r).unwrap();
         assert!(r.is_empty(), "the whole body is consumed");
@@ -130,6 +157,7 @@ mod tests {
                 display_map: 0,
                 position: [-8949.95, -132.49, 83.53],
                 corpse_map: 0,
+                transport: 7,
             }
         );
     }
@@ -154,10 +182,46 @@ mod tests {
         body.extend_from_slice(&1666.54f32.to_le_bytes());
         body.extend_from_slice(&25.0f32.to_le_bytes());
         body.extend_from_slice(&36u32.to_le_bytes()); // the corpse's real map: Deadmines
+        body.extend_from_slice(&0u32.to_le_bytes()); // no transport
         let mut r = body.as_slice();
         let loc = read_corpse_query_response(&mut r).unwrap();
         assert_eq!(loc.display_map, 0);
         assert_eq!(loc.corpse_map, 36);
+    }
+
+    /// `Player::RepopAtGraveyard`'s graveyard and `ResurrectPlayer`'s clear (`Player.cpp:4417`).
+    #[test]
+    fn death_release_loc_golden() {
+        let mut body = 0i32.to_le_bytes().to_vec();
+        for f in [-9339.1f32, 171.4, 61.6] {
+            body.extend_from_slice(&f.to_le_bytes());
+        }
+        let mut r = body.as_slice();
+        assert_eq!(
+            read_death_release_loc(&mut r).unwrap(),
+            (0, [-9339.1, 171.4, 61.6])
+        );
+        assert!(r.is_empty());
+        let mut body = (-1i32).to_le_bytes().to_vec();
+        body.extend_from_slice(&[0; 12]);
+        let mut r = body.as_slice();
+        assert_eq!(read_death_release_loc(&mut r).unwrap(), (-1, [0.0; 3]));
+    }
+
+    /// Three floats and a facing (`QueryHandler.cpp:412-417`); the query is one `u32`.
+    #[test]
+    fn corpse_map_position_golden() {
+        let mut body = Vec::new();
+        for f in [1.0f32, 2.0, 3.0, 1.5] {
+            body.extend_from_slice(&f.to_le_bytes());
+        }
+        let mut r = body.as_slice();
+        assert_eq!(
+            read_corpse_map_position(&mut r).unwrap(),
+            ([1.0, 2.0, 3.0], 1.5)
+        );
+        assert!(r.is_empty());
+        assert_eq!(corpse_map_position_query(0x1234), [0x34, 0x12, 0, 0]);
     }
 
     /// One `u32` of ms (`Misc.cpp:653-656`); 30 s is the base delay.
