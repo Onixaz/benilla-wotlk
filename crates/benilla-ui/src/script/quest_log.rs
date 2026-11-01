@@ -1237,7 +1237,7 @@ mod tests {
         assert!(s
             .eval::<bool>(
                 "local t, k, f = GetQuestLogLeaderBoard(1)\n\
-                 return t == 'Kobold Vermin slain: 3/10' and k == 'monster' and f == false"
+                 return t == 'Kobold Vermin slain: 3/10' and k == 'monster' and f == nil"
             )
             .unwrap());
         assert_eq!(

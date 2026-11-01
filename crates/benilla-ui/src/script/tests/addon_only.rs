@@ -170,8 +170,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "SetMacroItem",
     "SetMacroSpell",
     "SetMouselookOverrideBinding",
-    "SetPOIIconOverlapDistance",
-    "SetPOIIconOverlapPushDistance",
     "SilenceMember",
     "SpellHasRange",
     "TargetDirectionEnemy",

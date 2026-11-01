@@ -926,6 +926,8 @@ pub(crate) struct Model {
     pub(crate) quest_log_pushes: Vec<u32>,
     /// `ConfirmAcceptQuest()` calls, the escort confirm; the app holds the pending quest.
     pub(crate) quest_confirms: u32,
+    /// The world map's quest POI lines and icon spacing.
+    pub(crate) quest_poi: super::quest_poi::QuestPoiState,
     /// `QueryQuestsCompleted()` calls, one `CMSG_QUERY_QUESTS_COMPLETED` each.
     pub(crate) quests_completed_queries: u32,
     /// The last `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`'s ids, which `GetQuestsCompleted` keys.
@@ -1650,6 +1652,7 @@ impl Model {
             quest_log_abandons: Vec::new(),
             quest_log_pushes: Vec::new(),
             quest_confirms: 0,
+            quest_poi: Default::default(),
             quests_completed_queries: 0,
             quests_completed: Vec::new(),
             item_templates: HashMap::new(),

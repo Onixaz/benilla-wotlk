@@ -194,6 +194,7 @@ mod merchant;
 mod messageframe;
 mod minimap;
 pub mod nameplate;
+mod quest_poi;
 mod quest_poi_frame;
 pub use nameplate::{PlateGeometry, PlateState};
 mod macro_options;
@@ -427,6 +428,7 @@ pub use quest::{
     QuestState,
 };
 pub use quest_log::{QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogState};
+pub use quest_poi::QuestPoiLines;
 pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};
 pub(crate) use region::{apply_font_parts, implicit_creation_anchor_lua, store_text};
 pub use reputation::{FactionEntry, ReputationSend, ReputationState};
@@ -1095,6 +1097,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     quest::install(lua)?;
     quest_log::install(lua)?;
     quest_watch::install(lua)?;
+    quest_poi::install(lua)?;
     minimap::install(lua)?;
     cooldown_widget::install(lua)?;
     quest_poi_frame::install(lua)?;

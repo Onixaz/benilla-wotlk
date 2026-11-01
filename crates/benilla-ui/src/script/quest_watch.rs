@@ -55,6 +55,10 @@ pub struct QuestPoiRegion {
     pub flags: u32,
     /// The outline's mean point in world yards, integer-divided as the reference sums it.
     pub center: (i32, i32),
+    /// The outline's point count; a one-point region's icon is never pushed aside (`0x5e3165`).
+    pub points: u32,
+    /// The icon placement's priority, the lowest winning (`0x5e2eb0`).
+    pub priority: i32,
 }
 
 /// One quest's POI as the response delivers it.
@@ -65,11 +69,13 @@ pub struct QuestPoiView {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-struct PoiSlot {
-    quest_id: u32,
-    regions: Vec<QuestPoiRegion>,
+pub(super) struct PoiSlot {
+    pub(super) quest_id: u32,
+    pub(super) regions: Vec<QuestPoiRegion>,
     /// `+0x28`: a region shows on the displayed map, set by the last count.
     shown: bool,
+    /// The icon `QuestPOIUpdateIcons` placed, `None` for none (`0x5e2eb0`).
+    pub(super) icon: Option<super::quest_poi::PoiIcon>,
 }
 
 /// The tracker's model.
@@ -79,7 +85,7 @@ pub(crate) struct QuestWatchState {
     /// Whether the tracked quests loaded: the CVar is read once, on the first log that holds a
     /// quest.
     loaded: bool,
-    pois: Vec<PoiSlot>,
+    pub(super) pois: Vec<PoiSlot>,
     /// Quests asked for and not yet answered, so a rebuild does not re-send.
     poi_asked: HashSet<u32>,
     /// `CMSG_QUEST_POI_QUERY` ids for the app to send.
@@ -88,7 +94,7 @@ pub(crate) struct QuestWatchState {
 }
 
 impl QuestWatchState {
-    fn poi(&self, quest_id: u32) -> Option<&PoiSlot> {
+    pub(super) fn poi(&self, quest_id: u32) -> Option<&PoiSlot> {
         self.pois.iter().find(|p| p.quest_id == quest_id)
     }
 }
@@ -180,12 +186,21 @@ fn save(model: &mut Model) {
     super::cvars::set_from_engine(model, "trackedQuests", value);
 }
 
-fn cvar_int(model: &Model, name: &str) -> i64 {
+pub(super) fn cvar_int(model: &Model, name: &str) -> i64 {
     model
         .cvars
         .get(name)
         .and_then(|c| c.value.trim().parse().ok())
         .unwrap_or(0)
+}
+
+/// A float CVar by lowercased name, 0 when unset.
+pub(super) fn cvar_float(model: &Model, name: &str) -> f32 {
+    model
+        .cvars
+        .get(name)
+        .and_then(|c| c.value.trim().parse().ok())
+        .unwrap_or(0.0)
 }
 
 /// The watch sort behind `SortQuestWatches` (`0x5e5c10`): by `trackerSorting`, 0 manual
@@ -261,7 +276,7 @@ fn poi_distance(model: &Model, quest_id: u32) -> (i32, f32) {
 }
 
 /// The quest's objective mask (`0x5e2950`), which the app computes per row.
-fn objective_mask(model: &Model, quest_id: u32) -> u32 {
+pub(super) fn objective_mask(model: &Model, quest_id: u32) -> u32 {
     model
         .quest_log
         .entries
@@ -272,7 +287,7 @@ fn objective_mask(model: &Model, quest_id: u32) -> u32 {
 
 /// A region counts for a complete quest (mask all ones) only as the turn-in, else when it serves
 /// an objective still open (`0x5e5b46`-`0x5e5b7b`).
-fn serves(r: &QuestPoiRegion, mask: u32) -> bool {
+pub(super) fn serves(r: &QuestPoiRegion, mask: u32) -> bool {
     if mask == u32::MAX {
         r.objective == -1
     } else {
@@ -280,7 +295,7 @@ fn serves(r: &QuestPoiRegion, mask: u32) -> bool {
     }
 }
 
-fn place(r: &QuestPoiRegion) -> QuestPoiPlace {
+pub(super) fn place(r: &QuestPoiRegion) -> QuestPoiPlace {
     QuestPoiPlace {
         map: r.map,
         area: r.area,
@@ -426,6 +441,7 @@ impl super::UiScript {
                     quest_id: poi.quest_id,
                     regions: poi.regions,
                     shown: false,
+                    icon: None,
                 };
             }
         }
@@ -966,6 +982,7 @@ mod tests {
                     quest_id: id,
                     regions: Vec::new(),
                     shown: true,
+                    icon: None,
                 });
             }
         }

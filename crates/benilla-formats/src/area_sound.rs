@@ -94,6 +94,19 @@ impl AreaSoundCatalog {
         self.ambience.get(&id)
     }
 
+    /// The top area over `area_id` up `ParentAreaID`, itself for a zone; `None` for an unknown id.
+    pub fn top_area(&self, area_id: u32) -> Option<u32> {
+        let mut id = area_id;
+        for _ in 0..8 {
+            let a = self.areas.get(&id)?;
+            if a.parent == 0 {
+                return Some(id);
+            }
+            id = a.parent;
+        }
+        Some(id)
+    }
+
     /// An `areaId`'s audio rows, each id left `0` taken from the nearest ancestor up
     /// `ParentAreaID`: a subzone without its own music plays its zone's.
     pub fn resolve(&self, area_id: u32) -> Option<AreaAudio<'_>> {
