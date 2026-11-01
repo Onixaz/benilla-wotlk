@@ -99,7 +99,8 @@ impl QuestWatchState {
     }
 }
 
-/// The 1-based log row of a quest, 0 when it is not a visible quest row (`0x5deeb0`).
+/// The 1-based log row of a quest, a folded one included, 0 when it is not in the log
+/// (`0x5deeb0`).
 fn quest_index(model: &Model, quest_id: u32) -> usize {
     model
         .quest_log
@@ -119,12 +120,7 @@ fn quest_at(model: &Model, index: i64) -> Option<&QuestLogEntryView> {
 
 /// A quest in the log, a folded one included, as `AddQuestWatch` searches (`0x5e64f8`).
 fn in_log(model: &Model, quest_id: u32) -> bool {
-    model
-        .quest_log
-        .entries
-        .iter()
-        .any(|e| !e.is_header && e.quest_id == quest_id)
-        || model.quest_log.hidden_quest_ids.contains(&quest_id)
+    model.quest_log.quest(quest_id).is_some()
 }
 
 /// The quest a watch verb names: the row at the numeric argument, else the selection (`0x5e67c0`).
@@ -347,14 +343,7 @@ fn update_all_pois(model: &mut Model) -> i64 {
 /// quests in slot order, then the watched open ones in watch order, then the rest.
 fn poi_by_visible_index(model: &Model, index: usize) -> Option<u32> {
     let pois = &model.quest_watch.pois;
-    let settled = |id: u32| {
-        model
-            .quest_log
-            .entries
-            .iter()
-            .find(|e| !e.is_header && e.quest_id == id)
-            .is_none_or(|e| e.complete == 1 || e.objectives.is_empty())
-    };
+    let settled = |id: u32| super::quest_log::quest_complete_at(&model.quest_log, id);
     let shown = |id: u32| pois.iter().any(|p| p.quest_id == id && p.shown);
     let watched = |id: u32| model.quest_watch.watches.iter().any(|w| w.quest_id == id);
     pois.iter()
@@ -396,8 +385,8 @@ impl super::UiScript {
             .collect()
     }
 
-    /// A quest's 1-based log row, 0 when it is not a visible quest row (`0x5deeb0`), the
-    /// `QUEST_ACCEPTED` argument.
+    /// A quest's 1-based log row, a folded one included, 0 when it is not in the log
+    /// (`0x5deeb0`): the `QUEST_ACCEPTED` and `QUEST_WATCH_UPDATE` argument.
     pub fn quest_log_index(&self, quest_id: u32) -> usize {
         quest_index(&self.model_ref(), quest_id)
     }
@@ -482,8 +471,7 @@ impl super::UiScript {
 /// After a log push: load the saved watches once the log holds a quest (`0x5e6c2b`), prune the
 /// watches of quests that left it, and queue the POI asks for quests the store lacks.
 pub(crate) fn on_quest_log(model: &mut Model) {
-    let has_quest = model.quest_log.entries.iter().any(|e| !e.is_header)
-        || !model.quest_log.hidden_quest_ids.is_empty();
+    let has_quest = model.quest_log.entries.iter().any(|e| !e.is_header);
     if !model.quest_watch.loaded && has_quest {
         model.quest_watch.loaded = true;
         let saved = model

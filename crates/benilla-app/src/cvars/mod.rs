@@ -1773,9 +1773,11 @@ mod tests {
             !out.contains_key("playerStatRightDropdown"),
             "nor the stale entry"
         );
+        // `questLogCollapseFilter` boots at -1 over its registered "0", so it is always archived.
         assert_eq!(
             cvars.compose_scope(Scope::Character),
-            "SET playerStatLeftDropdown \"PLAYERSTAT_SPELL_COMBAT\"\n"
+            "SET playerStatLeftDropdown \"PLAYERSTAT_SPELL_COMBAT\"\n\
+             SET questLogCollapseFilter \"-1\"\n"
         );
         cvars.reset_scope(Scope::Character);
         assert_eq!(cvars.get("playerStatLeftDropdown"), Some(""));

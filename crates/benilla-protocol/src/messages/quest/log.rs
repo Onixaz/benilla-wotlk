@@ -46,6 +46,8 @@ pub mod quest_flags {
     /// `QuestFlagsPVP` (`0x58c3ec`): the quest flags the player for PvP.
     pub const FLAGS_PVP: u32 = 0x0000_2000;
     pub const WEEKLY: u32 = 0x0000_8000;
+    /// A quest-item push that makes the quest pass its completion test completes it (`0x6d7d1b`).
+    pub const AUTO_COMPLETE: u32 = 0x0001_0000;
     /// `QuestGetAutoAccept` (`0x58c433`).
     pub const AUTO_ACCEPT: u32 = 0x0008_0000;
 }
@@ -63,6 +65,10 @@ pub struct QuestTemplate {
     pub suggested_players: u32,
     pub rep_objective_faction: u32,
     pub rep_objective_value: u32,
+    /// Record `+0x24`, `+0x28`: a faction whose standing must stay at or below the value for the
+    /// quest to read complete (`0x5e1006`).
+    pub opposite_rep_faction: u32,
+    pub opposite_rep_value: u32,
     pub next_quest_in_chain: u32,
     pub xp_id: u32,
     pub money: i32,
@@ -133,8 +139,8 @@ pub(in crate::messages) fn read_quest_query_response(r: &mut &[u8]) -> io::Resul
         rep_objective_value: read_u32_le(r)?,
         ..Default::default()
     };
-    let _opposite_rep_faction = read_u32_le(r)?;
-    let _opposite_rep_value = read_u32_le(r)?;
+    q.opposite_rep_faction = read_u32_le(r)?;
+    q.opposite_rep_value = read_u32_le(r)?;
     q.next_quest_in_chain = read_u32_le(r)?;
     q.xp_id = read_u32_le(r)?;
     q.money = read_i32_le(r)?;
@@ -304,7 +310,7 @@ mod tests {
         }
         push_i32(&mut b, -3); // zone or sort
                               // type, suggested, rep faction and value, opposite faction and value, next, xp id
-        for v in [2u32, 5, 169, 500, 0, 0, 777, 6] {
+        for v in [2u32, 5, 169, 500, 67, 900, 777, 6] {
             push_u32(&mut b, v);
         }
         push_i32(&mut b, 5000); // money
@@ -373,6 +379,7 @@ mod tests {
         assert_eq!(q.quest_type, 2);
         assert_eq!(q.suggested_players, 5);
         assert_eq!(q.rep_objective_faction, 169);
+        assert_eq!((q.opposite_rep_faction, q.opposite_rep_value), (67, 900));
         assert_eq!(q.next_quest_in_chain, 777);
         assert_eq!(q.xp_id, 6);
         assert_eq!(q.money, 5000);

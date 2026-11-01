@@ -983,6 +983,7 @@ mod tests {
                 },
                 crate::script::QuestLogEntryView {
                     quest_id: 63,
+                    no_objectives: true,
                     ..Default::default()
                 },
             ],

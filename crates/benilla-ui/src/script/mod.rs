@@ -427,7 +427,9 @@ pub use quest::{
     QuestAction, QuestItemView, QuestPanel, QuestRewardExtras, QuestRewardSpell, QuestSelect,
     QuestState,
 };
-pub use quest_log::{QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogState};
+pub use quest_log::{
+    fold_quest_log, QuestLogDetail, QuestLogEntryView, QuestLogObjectiveView, QuestLogState,
+};
 pub use quest_poi::QuestPoiLines;
 pub use quest_watch::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView};
 pub(crate) use region::{apply_font_parts, implicit_creation_anchor_lua, store_text};

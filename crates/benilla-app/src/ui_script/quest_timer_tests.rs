@@ -44,6 +44,7 @@ fn quest(id: u32, title: &str, timer: u32) -> QuestLogEntryView {
             text: "Bloodscalp Scout slain: 0/8".into(),
             kind: "monster".into(),
             finished: false,
+            intermediate: false,
             cur: 0,
             req: 8,
         }],
@@ -55,7 +56,6 @@ fn log(entries: Vec<QuestLogEntryView>) -> QuestLogState {
     QuestLogState {
         num_quests: entries.len() as u32,
         entries,
-        hidden_quest_ids: Vec::new(),
         daily_completed: 0,
     }
 }

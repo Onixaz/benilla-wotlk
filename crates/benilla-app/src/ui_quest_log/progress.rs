@@ -2,15 +2,17 @@
 //! group (`0x6d8030`), the forced removal (`0x6d8370`) and the item push's quest-item check
 //! (`0x6d7de0`). Each line names the quest through the template cache and fires
 //! `QUEST_WATCH_UPDATE` with the quest's log row. The completed-quest answer (`0x5b5190`) lands
-//! here too, as it fires its event from the packet.
+//! here too, as it fires its event from the packet, and so do `GetQuestTimers`' expiries.
 
-use benilla_protocol::messages::{quest_slot_state, ItemPushResult, QuestTemplate};
+use benilla_protocol::messages::{
+    quest_flags, quest_slot_state, ItemPushResult, QuestLogSlot, QuestTemplate,
+};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{ScriptValue, UiScript};
 use benilla_ui::strings::{fill, Arg};
 use bevy::prelude::*;
 
-use super::{QuestLog, GO_OBJECTIVE_BIT};
+use super::{quest_complete, CompletionInputs, QuestLog, GO_OBJECTIVE_BIT};
 use crate::go_templates::GameObjectTemplates;
 use crate::items::Items;
 use crate::names::NameCache;
@@ -134,18 +136,26 @@ pub(super) struct Lookups<'a> {
     pub(super) gos: Option<&'a GameObjectTemplates>,
     pub(super) items: &'a Items,
     pub(super) commands: &'a NetCommands,
+    /// The bags and standings an auto-complete's completion test reads.
+    pub(super) carried: &'a dyn Fn(u32) -> u32,
+    pub(super) standing: &'a dyn Fn(u32) -> i32,
+    /// The player's guid, which an auto-complete names as its questgiver (`0x6d7d41`).
+    pub(super) player_guid: u64,
 }
 
 impl Lookups<'_> {
+    /// The player's slot holding `quest_id`.
+    fn slot_of(&self, quest_id: u32) -> Option<QuestLogSlot> {
+        self.store.and_then(|s| {
+            (0..benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS)
+                .filter_map(|slot| s.player_quest_log(slot))
+                .find(|l| l.quest_id == quest_id)
+        })
+    }
+
     /// The player's slot state for `quest_id`, 0 when it holds no slot.
     fn slot_state(&self, quest_id: u32) -> u8 {
-        self.store
-            .and_then(|s| {
-                (0..benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS)
-                    .filter_map(|slot| s.player_quest_log(slot))
-                    .find(|l| l.quest_id == quest_id)
-            })
-            .map_or(0, |l| l.state)
+        self.slot_of(quest_id).map_or(0, |l| l.state)
     }
 }
 
@@ -294,15 +304,17 @@ pub(super) fn resolve(
                 // ends the walk. An uncached template is asked and finished by its own pass.
                 let Some(store) = w.store else { continue };
                 for slot in 0..benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS {
-                    let Some(quest_id) = store.player_quest_log(slot).map(|l| l.quest_id) else {
+                    let Some(log_slot) = store.player_quest_log(slot) else {
                         continue;
                     };
+                    let quest_id = log_slot.quest_id;
                     if quest_id as i32 <= 0 || log.expired.contains(&quest_id) {
                         continue;
                     }
                     match log.template(quest_id, w.commands) {
                         Some(t) => {
-                            if quest_item_loot(t, item, count, total, w, &mut out) {
+                            let push = Push { item, count, total };
+                            if quest_item_loot(t, push, Some((log_slot, false)), w, &mut out) {
                                 break;
                             }
                         }
@@ -323,7 +335,10 @@ pub(super) fn resolve(
                 total,
             } => match log.template(quest_id, w.commands) {
                 Some(t) => {
-                    quest_item_loot(t, item, count, total, w, &mut out);
+                    let entry = w
+                        .slot_of(quest_id)
+                        .map(|s| (s, log.expired.contains(&quest_id)));
+                    quest_item_loot(t, Push { item, count, total }, entry, w, &mut out);
                 }
                 None if log.template_answered_unknown(quest_id) => {}
                 None => held.push(QuestNotice::ItemPushFor {
@@ -343,15 +358,22 @@ fn expired(log: &QuestLog, quest_id: u32, w: &Lookups<'_>) -> bool {
     log.expired.contains(&quest_id) || w.slot_state(quest_id) & quest_slot_state::FAIL != 0
 }
 
-/// `0x6d7c30`: whether `template` collects `item`, which ends the slot walk, and its line when the
-/// push carried the count past what the bags held. An uncached item shows nothing. Deviation: the
-/// reference then completes an auto-complete quest (flag `0x10000`) once its completion test
-/// passes; that test is not built, so nothing is sent.
-fn quest_item_loot(
-    template: &QuestTemplate,
+/// One item push: the entry, the count added and the bags' total.
+#[derive(Clone, Copy)]
+struct Push {
     item: u32,
     count: u32,
     total: u32,
+}
+
+/// `0x6d7c30`: whether `template` collects `item`, which ends the slot walk, and its line when the
+/// push carried the count past what the bags held; then an auto-complete quest (`0x10000`) whose
+/// log row, `entry` as its slot and expiry mark, passes the completion test is completed toward
+/// the player itself (`0x6d7d1b` -> `0x6d4d40`). An uncached item shows nothing.
+fn quest_item_loot(
+    template: &QuestTemplate,
+    Push { item, count, total }: Push,
+    entry: Option<(QuestLogSlot, bool)>,
     w: &Lookups<'_>,
     out: &mut Vec<Announce>,
 ) -> bool {
@@ -381,22 +403,62 @@ fn quest_item_loot(
         ],
         Some(template.quest_id),
     ));
+    if template.flags & quest_flags::AUTO_COMPLETE != 0 {
+        if let (Some((slot, expired)), Some(store)) = (entry, w.store) {
+            let inputs = CompletionInputs {
+                carried: w.carried,
+                standing: w.standing,
+                money: u64::from(store.player_money().unwrap_or(0)),
+            };
+            if quest_complete(template, &slot, expired, &inputs) {
+                debug!("ui_quest_log: quest {} auto-completes", template.quest_id);
+                let _ = w.commands.0.send(ClientCommand::QuestgiverComplete {
+                    npc: w.player_guid,
+                    quest: template.quest_id,
+                });
+            }
+        }
+    }
     true
 }
 
-/// Drains the notices and the completed-quest answer, and sends `QueryQuestsCompleted()`'s
-/// requests. Before the log feed: `QUEST_WATCH_UPDATE` fires from the packet, ahead of the
-/// frame's `QUEST_LOG_UPDATE`, which the reference flushes after the packets.
+/// `GetQuestTimers`' expiries (`0x5e6349`): each new one keeps its mark, asks every questgiver's
+/// status again (`0x5e582a`) and shows `ERR_QUEST_FAILED_S` with the quest's title.
+fn expiry_lines(log: &mut QuestLog, expiries: Vec<u32>, commands: &NetCommands) -> Vec<Announce> {
+    let mut out = Vec::new();
+    for quest_id in expiries {
+        if !log.expired.insert(quest_id) {
+            continue;
+        }
+        let _ = commands
+            .0
+            .send(ClientCommand::QuestgiverStatusMultipleQuery);
+        if let Some(t) = log.template(quest_id, commands) {
+            out.push(line(
+                "ERR_QUEST_FAILED_S",
+                vec![AnnounceArg::S(t.title.clone())],
+                None,
+            ));
+        }
+    }
+    out
+}
+
+/// Drains the notices, the completed-quest answer and the timer expiries, and sends
+/// `QueryQuestsCompleted()`'s requests. Before the log feed: `QUEST_WATCH_UPDATE` fires from the
+/// packet, ahead of the frame's `QUEST_LOG_UPDATE`, which the reference flushes after the packets.
 #[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 pub(super) fn announce_quest_progress(
     script: Option<NonSendMut<UiScript>>,
-    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    self_q: Query<(&ObjectStore, &Guid), With<SelfPlayer>>,
     mut log: ResMut<QuestLog>,
     names: Res<NameCache>,
     gos: Option<Res<GameObjectTemplates>>,
     items: Res<Items>,
     commands: Res<NetCommands>,
     mut sink: MessageSink,
+    // The auto-complete's completion test: the bag walk and the standings.
+    (objects, rewards): (crate::net::Objects, crate::ui_quest::rewards::RewardInputs),
 ) {
     let Some(mut script) = script else {
         return;
@@ -404,24 +466,43 @@ pub(super) fn announce_quest_progress(
     for _ in 0..script.take_quests_completed_queries() {
         let _ = commands.0.send(ClientCommand::QueryQuestsCompleted);
     }
+    let expiries = script.take_quest_log_expiries();
     // Read first, so an idle frame leaves the log unmarked for the feed's change gate.
-    if log.notices.is_empty() && log.completed_answer.is_none() {
+    if log.notices.is_empty() && log.completed_answer.is_none() && expiries.is_empty() {
         return;
     }
+    let mut lines = expiry_lines(&mut log, expiries, &commands);
     if let Some(ids) = log.completed_answer.take() {
         script.set_quests_completed(ids);
         script.fire_event("QUEST_QUERY_COMPLETE", vec![]);
     }
+    let me = self_q.iter().next();
+    let store = me.map(|(s, _)| &s.0);
+    let carried = |id: u32| {
+        store.map_or(0, |s| {
+            crate::ui_items::count_of(
+                s,
+                &objects,
+                id,
+                crate::ui_items::InventoryScope::QUEST_ITEMS,
+            )
+        })
+    };
+    let standing = |faction: u32| store.map_or(0, |s| rewards.standing(s, faction));
     let lookups = Lookups {
-        store: self_q.iter().next().map(|s| &s.0),
+        store,
         names: &names,
         gos: gos.as_deref(),
         items: &items,
         commands: &commands,
+        carried: &carried,
+        standing: &standing,
+        player_guid: me.map_or(0, |(_, g)| g.0),
     };
     let notices = std::mem::take(&mut log.notices);
-    let (lines, held) = resolve(&mut log, notices, &lookups);
+    let (resolved, held) = resolve(&mut log, notices, &lookups);
     log.notices = held;
+    lines.extend(resolved);
     for a in lines {
         let args: Vec<Arg<'_>> = a
             .args
@@ -510,6 +591,9 @@ mod tests {
             gos: None,
             items: &items,
             commands: &commands,
+            carried: &|_| 0,
+            standing: &|_| 0,
+            player_guid: 0x2A,
         };
         let (out, held) = resolve(&mut log, notices, &w);
         assert!(held.is_empty());
@@ -663,6 +747,84 @@ mod tests {
         );
     }
 
+    /// `0x6d7c30`: an auto-complete quest the push completes is completed toward the player's own
+    /// guid; one still short, or without the flag, sends nothing.
+    #[test]
+    fn an_item_push_completes_an_auto_complete_quest_toward_the_player() {
+        let complete_sent = |flags: u32, in_bags: u32| {
+            let mut log = QuestLog::default();
+            let mut t = QuestTemplate {
+                quest_id: QUEST,
+                flags,
+                ..Default::default()
+            };
+            t.required_items[0] = (750, 8);
+            log.insert_template(t);
+            let store =
+                benilla_protocol::ObjectFields::from_pairs(&[(FIELD_PLAYER_QUEST_LOG_1_1, QUEST)]);
+            let names = NameCache::default();
+            let mut items = Items::default();
+            items.insert_template(750, Some(crate::items::test_template("Tough Wolf Meat")));
+            let (tx, rx) = crossbeam_channel::unbounded();
+            let commands = NetCommands(tx);
+            let carried = move |id: u32| if id == 750 { in_bags } else { 0 };
+            let w = Lookups {
+                store: Some(&store),
+                names: &names,
+                gos: None,
+                items: &items,
+                commands: &commands,
+                carried: &carried,
+                standing: &|_| 0,
+                player_guid: 0x2A,
+            };
+            let push = QuestNotice::ItemPush {
+                item: 750,
+                count: 1,
+                total: in_bags,
+            };
+            let (out, _) = resolve(&mut log, vec![push], &w);
+            assert_eq!(out.len(), 1, "the line shows either way");
+            rx.try_iter()
+                .filter_map(|c| match c {
+                    ClientCommand::QuestgiverComplete { npc, quest } => Some((npc, quest)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            complete_sent(quest_flags::AUTO_COMPLETE, 8),
+            [(0x2A, QUEST)]
+        );
+        assert!(complete_sent(quest_flags::AUTO_COMPLETE, 7).is_empty());
+        assert!(complete_sent(0, 8).is_empty());
+    }
+
+    /// `GetQuestTimers`' expiry keeps the mark, re-asks the status and shows the failure, once.
+    #[test]
+    fn a_timer_expiry_is_marked_announced_and_reasked_once() {
+        let mut log = QuestLog::default();
+        log.insert_template(template());
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let commands = NetCommands(tx);
+        let out = expiry_lines(&mut log, vec![QUEST, QUEST], &commands);
+        assert_eq!(
+            out,
+            [line(
+                "ERR_QUEST_FAILED_S",
+                vec![s("Wolves Across the Border")],
+                None
+            )]
+        );
+        assert!(log.is_expired(QUEST));
+        assert_eq!(
+            rx.try_iter()
+                .filter(|c| matches!(c, ClientCommand::QuestgiverStatusMultipleQuery))
+                .count(),
+            1
+        );
+    }
+
     /// A logged quest whose template is not cached holds the push for its own pass.
     #[test]
     fn an_item_push_waits_on_an_uncached_template() {
@@ -678,6 +840,9 @@ mod tests {
             gos: None,
             items: &items,
             commands: &commands,
+            carried: &|_| 0,
+            standing: &|_| 0,
+            player_guid: 0x2A,
         };
         let (out, held) = resolve(
             &mut log,

@@ -46,6 +46,7 @@ fn entries(n: u32) -> QuestLogState {
                     text: "Kobold Vermin slain: 3/10".into(),
                     kind: "monster".into(),
                     finished: false,
+                    intermediate: false,
                     cur: 3,
                     req: 10,
                 }]
@@ -59,7 +60,6 @@ fn entries(n: u32) -> QuestLogState {
     QuestLogState {
         num_quests: n,
         entries,
-        hidden_quest_ids: Vec::new(),
         daily_completed: 0,
     }
 }
@@ -577,13 +577,13 @@ fn overflowing_entry() -> QuestLogState {
             text: format!("Objective {i} of 10 slain: 0/5"),
             kind: "monster".into(),
             finished: false,
+            intermediate: false,
             cur: 0,
             req: 5,
         })
         .collect();
     QuestLogState {
         num_quests: 1,
-        hidden_quest_ids: Vec::new(),
         daily_completed: 0,
         entries: vec![QuestLogEntryView {
             quest_id: 1,
@@ -1093,5 +1093,49 @@ fn the_stock_title_width_cap_bites_and_resets_each_update() {
         .abs()
             < 0.5,
         "an untagged short title keeps its natural width"
+    );
+}
+
+/// A header's click folds it at once (`0x5e0c00`): the list loses its quest, the log keeps it as a
+/// row past the shown ones, and the tracker keeps tracking it.
+#[test]
+fn shipped_questlog_header_click_folds_its_quest_and_the_tracker_keeps_it() {
+    let _data = benilla_formats::wow_data_or_skip!();
+    let header = |title: &str, sort_index| QuestLogEntryView {
+        title: title.into(),
+        is_header: true,
+        sort_index,
+        ..Default::default()
+    };
+    let mut log = entries(2);
+    log.entries[1].sort_index = 1;
+    log.entries.insert(0, header("Elwynn Forest", 0));
+    log.entries.insert(2, header("Westfall", 1));
+    let mut s = open_log(log);
+    s.run("AddQuestWatch(2)").unwrap(); // quest 1
+    s.tick(0.0);
+    assert!(
+        draws_text(&mut s, "Quest 1"),
+        "the tracker titles the quest"
+    );
+
+    let at = row_centre(&mut s, 1);
+    click_at(&mut s, at, false);
+    s.tick(0.0);
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert_eq!(
+        s.eval::<(i64, i64)>("return GetNumQuestLogEntries()")
+            .unwrap(),
+        (3, 2)
+    );
+    assert_eq!(
+        s.eval::<String>("return QuestLogScrollFrameButton2NormalText:GetText()")
+            .unwrap(),
+        "Westfall"
+    );
+    assert_eq!(s.eval::<i64>("return GetQuestIndexForWatch(1)").unwrap(), 4);
+    assert!(
+        draws_text(&mut s, "Quest 1"),
+        "the folded quest is still tracked"
     );
 }

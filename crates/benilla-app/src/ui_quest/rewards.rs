@@ -61,7 +61,7 @@ impl RewardInputs<'_, '_> {
 
     /// A faction's raw standing, as the reference's reputation lookup (`0x5d05b0`) reads it: the
     /// wire slot plus the race/class base, 0 without a slot.
-    fn standing(&self, store: &ObjectFields, faction: u32) -> i32 {
+    pub(crate) fn standing(&self, store: &ObjectFields, faction: u32) -> i32 {
         let Some(catalog) = self.factions.as_ref().map(|f| f.catalog()) else {
             return 0;
         };
