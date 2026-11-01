@@ -250,7 +250,7 @@ pub use movement::{
 };
 pub use notices::{accept_level_grant, InebriationThreshold, OverrideLight};
 pub use opcode_names::opcode_name;
-pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket};
+pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket, SplineArc};
 pub use page_text::page_text_query;
 pub use parse::{parse_auth_response_wotlk, parse_server, parse_server_with_tail};
 pub use pet::{

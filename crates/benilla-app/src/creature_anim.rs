@@ -432,6 +432,9 @@ pub(crate) struct EmoteAnim {
     /// which skips an id already armed on the key bone or bone 0. A kit anim and `DoEmote`'s local
     /// play call directly and take no such test.
     pub(crate) via_player: bool,
+    /// The play seam's Special remap applies (`0x7385c0`): everything but a kit with flag `0x4` or
+    /// `0x10`, which plays its Special1H/2H as authored (`0x73b198`).
+    pub(crate) remap_special: bool,
 }
 
 /// A state kit's `AnimID`, compared and never played: both field-4 callers pass stage 2, which the
@@ -473,6 +476,7 @@ fn flourish_to_anim(
             anim_id: select::MOUNT_SPECIAL,
             seq: play_seq.next(),
             via_player: false,
+            remap_special: true,
         });
     }
 }

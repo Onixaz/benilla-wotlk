@@ -868,6 +868,8 @@ mod tests {
                     grounded: true,
                     run_mode: true,
                     deck: None,
+                    arc: None,
+                    facing_fixed: false,
                 });
             }
             app.world_mut()

@@ -36,6 +36,15 @@ pub enum MonsterMoveFacing {
     Angle(f32),
 }
 
+/// A spline's jump arc (`SPLINEFLAG_PARABOLIC` `0x800`): from `effect_start_ms` into the path the
+/// height gains `(T − s)·a/2·e − a/2·e²` over the path's own, `e` the seconds past the start
+/// (`0x987d20`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SplineArc {
+    pub vertical_acceleration: f32,
+    pub effect_start_ms: u32,
+}
+
 /// One creature template's UI-visible head, from `SMSG_CREATURE_QUERY_RESPONSE`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreatureQueryInfo {
@@ -139,6 +148,10 @@ pub enum ServerPacket {
         flying: bool,
         /// `SPLINEFLAG_RUNMODE`; a spline without it forces `MOVEFLAG_WALK_MODE` on for the unit.
         run_mode: bool,
+        /// `SPLINEFLAG_PARABOLIC`: a jump or a knockback's arc.
+        arc: Option<SplineArc>,
+        /// `SPLINEFLAG_ORIENTATION_FIXED` (`0x4000`): the unit keeps its facing along the path.
+        facing_fixed: bool,
     },
     /// A relayed player `MSG_MOVE_*`: authoritative pose and live `moveFlags`; `transport` is set
     /// while `MOVEFLAG_ON_TRANSPORT`, a pose local to the transport.

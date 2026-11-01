@@ -297,6 +297,8 @@ pub struct VisualKit {
     /// type-9 slot: `params[0]` is its shard model index, `params[1]` the emit rate the graphics
     /// quality scales.
     pub char_proc_slots: [Option<CharProc>; KIT_CHAR_PROCS],
+    /// Column 37, the kit flags.
+    pub flags: u32,
 }
 
 impl VisualKit {
@@ -629,6 +631,7 @@ fn parse_kits(bytes: &[u8]) -> Result<HashMap<u32, VisualKit>> {
                 world_effect: u32_at(r, 14).and_then(some_unless_none),
                 shake: u32_at(r, 16).and_then(some_unless_none),
                 char_proc_slots,
+                flags: u32_at(r, KIT_FLAGS_FIELD).unwrap_or(0),
             },
         );
     }

@@ -48,6 +48,10 @@ pub struct CreateSpline {
     pub cyclic: bool,
     /// `MoveSplineFlag::Runmode`; its absence forces walk mode on.
     pub run_mode: bool,
+    /// `MoveSplineFlag::Parabolic`: the jump arc, as on `MonsterMove`.
+    pub arc: Option<crate::messages::SplineArc>,
+    /// `MoveSplineFlag::OrientationFixed`: the unit keeps its facing along the path.
+    pub facing_fixed: bool,
 }
 
 /// A `LIVING` block's live mover state: the `MOVEMENTFLAGS` word and the swim pitch that rides it.

@@ -5,7 +5,7 @@
 
 use std::io;
 
-use crate::messages::{MonsterMoveFacing, ServerPacket};
+use crate::messages::{MonsterMoveFacing, ServerPacket, SplineArc};
 use crate::wire::{
     capacity_hint, packed_to_vector3d, read_f32_le, read_i32_le, read_packed_guid, read_u32_le,
     read_u64_le, read_u8, Vector3d,
@@ -51,6 +51,7 @@ mod wotlk_spline {
     pub const PARABOLIC: u32 = 0x800;
     pub const WALKMODE: u32 = 0x1000;
     pub const FLYING: u32 = 0x2000;
+    pub const ORIENTATION_FIXED: u32 = 0x4000;
     pub const CATMULLROM: u32 = 0x4_0000;
     pub const CYCLIC: u32 = 0x8_0000;
     pub const ANIMATION: u32 = 0x20_0000;
@@ -97,6 +98,8 @@ pub(super) fn read_monster_move_wotlk(
             duration_ms: 0,
             flying: false,
             run_mode: true,
+            arc: None,
+            facing_fixed: false,
         });
     }
     let spline_flags = read_u32_le(r)?;
@@ -105,10 +108,14 @@ pub(super) fn read_monster_move_wotlk(
         let _effect_start_time = read_u32_le(r)?;
     }
     let duration_ms = read_u32_le(r)?;
-    if spline_flags & wotlk_spline::PARABOLIC != 0 {
-        let _vertical_acceleration = read_f32_le(r)?;
-        let _effect_start_time = read_u32_le(r)?;
-    }
+    let arc = if spline_flags & wotlk_spline::PARABOLIC != 0 {
+        Some(SplineArc {
+            vertical_acceleration: read_f32_le(r)?,
+            effect_start_ms: read_u32_le(r)?,
+        })
+    } else {
+        None
+    };
     let smooth = spline_flags & (wotlk_spline::FLYING | wotlk_spline::CATMULLROM) != 0;
     let tail = if smooth {
         let mut points = read_monster_move_spline(r, true)?;
@@ -142,6 +149,8 @@ pub(super) fn read_monster_move_wotlk(
         duration_ms,
         flying: smooth,
         run_mode: spline_flags & wotlk_spline::WALKMODE == 0,
+        arc,
+        facing_fixed: spline_flags & wotlk_spline::ORIENTATION_FIXED != 0,
     })
 }
 
@@ -266,6 +275,8 @@ mod tests {
             facing,
             flying,
             run_mode,
+            arc,
+            facing_fixed,
             ..
         } = parse_wotlk(opcode::SMSG_MONSTER_MOVE_TRANSPORT, &b)
         else {
@@ -275,7 +286,48 @@ mod tests {
         assert_eq!(path.len(), 3);
         assert_eq!((path[2].x, path[2].y, path[2].z), (9.0, 9.0, 9.0));
         assert!(matches!(facing, MonsterMoveFacing::Angle(a) if a == 1.5));
-        assert!(flying && !run_mode);
+        assert!(flying && !run_mode && !facing_fixed);
+        assert_eq!(
+            arc,
+            Some(SplineArc {
+                vertical_acceleration: 19.29,
+                effect_start_ms: 0
+            })
+        );
+    }
+
+    /// A creature knockback (`MotionMaster::MoveKnockbackFrom`): a ground hop with `Parabolic` and
+    /// `OrientationFixed`.
+    #[test]
+    fn a_3_3_5a_knockback_reads_its_arc_and_fixed_facing() {
+        let mut b = head_wotlk(0x55, None, [0.0, 0.0, 0.0], 0);
+        b.extend_from_slice(&(0x800u32 | 0x4000).to_le_bytes());
+        b.extend_from_slice(&900u32.to_le_bytes()); // duration
+        b.extend_from_slice(&24.5f32.to_le_bytes()); // vertical acceleration
+        b.extend_from_slice(&0u32.to_le_bytes()); // effect start
+        b.extend_from_slice(&1u32.to_le_bytes());
+        for f in [-12.0f32, 0.0, 0.0] {
+            b.extend_from_slice(&f.to_le_bytes());
+        }
+        let ServerPacket::MonsterMove {
+            path,
+            flying,
+            arc,
+            facing_fixed,
+            ..
+        } = parse_wotlk(opcode::SMSG_MONSTER_MOVE, &b)
+        else {
+            panic!("expected MonsterMove")
+        };
+        assert_eq!(path.len(), 2);
+        assert!(!flying && facing_fixed);
+        assert_eq!(
+            arc,
+            Some(SplineArc {
+                vertical_acceleration: 24.5,
+                effect_start_ms: 0
+            })
+        );
     }
 
     #[test]

@@ -14,6 +14,7 @@ use crate::wire::{
 use super::fields::ObjectFields;
 use super::movement::{CreateSpline, MovementBlock, MoverState, ObjectType};
 use super::Object;
+use crate::messages::SplineArc;
 
 const UPDATE_FLAG_TRANSPORT: u16 = 0x0002;
 const UPDATE_FLAG_HAS_TARGET: u16 = 0x0004;
@@ -26,8 +27,10 @@ const UPDATE_FLAG_POSITION: u16 = 0x0100;
 const UPDATE_FLAG_ROTATION: u16 = 0x0200;
 
 /// 3.3.5a's `MoveSplineFlag` bits (AzerothCore `MoveSplineFlag.h`).
+const SPLINE_FLAG_PARABOLIC: u32 = 0x800;
 const SPLINE_FLAG_WALKMODE: u32 = 0x1000;
 const SPLINE_FLAG_FLYING: u32 = 0x2000;
+const SPLINE_FLAG_ORIENTATION_FIXED: u32 = 0x4000;
 const SPLINE_FLAG_FINAL_POINT: u32 = 0x8000;
 const SPLINE_FLAG_FINAL_TARGET: u32 = 0x1_0000;
 const SPLINE_FLAG_FINAL_ANGLE: u32 = 0x2_0000;
@@ -225,8 +228,8 @@ fn read_create_spline(r: &mut impl Read) -> io::Result<Option<CreateSpline>> {
     let id = read_u32_le(r)?;
     let _duration_mod = read_f32_le(r)?;
     let _duration_mod_next = read_f32_le(r)?;
-    let _vertical_acceleration = read_f32_le(r)?;
-    let _effect_start_time = read_u32_le(r)?;
+    let vertical_acceleration = read_f32_le(r)?;
+    let effect_start_ms = read_u32_le(r)?;
     let amount_of_nodes = read_u32_le(r)?;
     let mut nodes = Vec::with_capacity(capacity_hint(amount_of_nodes, 0xFFFF));
     for _ in 0..amount_of_nodes {
@@ -243,6 +246,11 @@ fn read_create_spline(r: &mut impl Read) -> io::Result<Option<CreateSpline>> {
         flying: spline_flags & SPLINE_FLAG_FLYING != 0,
         cyclic: spline_flags & SPLINE_FLAG_CYCLIC != 0,
         run_mode: spline_flags & SPLINE_FLAG_WALKMODE == 0,
+        arc: (spline_flags & SPLINE_FLAG_PARABOLIC != 0).then_some(SplineArc {
+            vertical_acceleration,
+            effect_start_ms,
+        }),
+        facing_fixed: spline_flags & SPLINE_FLAG_ORIENTATION_FIXED != 0,
     }))
 }
 

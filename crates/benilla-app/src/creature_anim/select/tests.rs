@@ -944,6 +944,8 @@ fn unify_stamps_flying_from_the_live_spline_on_every_leg() {
     use std::time::{Duration, Instant};
     let spline = |grounded| crate::net::Spline {
         deck: None,
+        arc: None,
+        facing_fixed: false,
         points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
         start: Instant::now(),
         duration: Duration::from_secs(10),
@@ -960,6 +962,58 @@ fn unify_stamps_flying_from_the_live_spline_on_every_leg() {
     // Spline leg (a remote taxi): flying, FORWARD and a speed.
     let v = unify(None, None, Some(&spline(false)), false, None);
     assert!(v.flying && v.flags & move_flags::FORWARD != 0 && v.speed > 0.0);
+}
+
+/// A parabolic spline in flight falls: a knockback (fixed facing) in Fall, a jump launching up;
+/// the finished arc is stopped, so the landing pick is JumpEnd.
+#[test]
+fn unify_reads_a_flying_arc_as_falling_and_its_end_as_stopped() {
+    use std::time::{Duration, Instant};
+    let arc = |frac: f32, facing_fixed| crate::net::Spline {
+        deck: None,
+        arc: Some(benilla_protocol::SplineArc {
+            vertical_acceleration: 16.0,
+            effect_start_ms: 0,
+        }),
+        facing_fixed,
+        points: vec![[0.0, 0.0, 0.0], [-8.0, 0.0, 0.0]],
+        start: Instant::now() - Duration::from_secs_f32(frac),
+        duration: Duration::from_secs(1),
+        id: 1,
+        grounded: true,
+        run_mode: true,
+    };
+    let v = unify(None, None, Some(&arc(0.1, true)), false, None);
+    assert_eq!(v.flags, move_flags::FALLING | move_flags::FALLING_FAR);
+    assert_eq!(current_special(&v, false), Some(Special::Fall));
+    let v = unify(None, None, Some(&arc(0.1, false)), false, None);
+    assert_eq!(v.flags, move_flags::FALLING);
+    assert!(v.vertical_speed > 0.0);
+    assert_eq!(current_special(&v, true), Some(Special::Jump));
+    let v = unify(None, None, Some(&arc(1.5, true)), false, None);
+    assert_eq!(v.flags, 0);
+    assert_eq!(jump_land_pick(v.flags), Some(39));
+}
+
+/// The play seam's Special remap from the held hands (`0x73870a`).
+#[test]
+fn special_attacks_follow_the_held_weapon() {
+    let sword_1h = Some((2, 7));
+    let sword_2h = Some((2, 8));
+    let shield = Some((4, 6));
+    assert_eq!(
+        special_anim(57, sword_2h, None),
+        58,
+        "Heroic Strike with a 2H"
+    );
+    assert_eq!(special_anim(58, sword_1h, None), 57, "Slam with a 1H");
+    assert_eq!(special_anim(58, sword_1h, shield), 57);
+    assert_eq!(special_anim(57, sword_2h, sword_2h), 57, "Titan's Grip");
+    assert_eq!(special_anim(58, None, None), 118);
+    assert_eq!(special_anim(57, None, shield), 57);
+    assert_eq!(special_anim(58, Some((2, 20)), None), 58, "fishing pole");
+    assert_eq!(special_anim(57, Some((2, 0x10)), None), 57, "thrown");
+    assert_eq!(special_anim(16, None, None), 16, "only 57 and 58 remap");
 }
 
 /// Server-granted modes are bits of the movement block's `+0x40` word the selector tests, and the
@@ -980,6 +1034,8 @@ fn the_granted_modes_fold_into_the_flags_word_on_every_leg_but_our_own() {
     // Creature leg on a path: the granted bit rides alongside the spline's own FORWARD.
     let spline = crate::net::Spline {
         deck: None,
+        arc: None,
+        facing_fixed: false,
         points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
         start: Instant::now(),
         duration: Duration::from_secs(10),

@@ -892,6 +892,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             duration_ms,
             flying,
             run_mode,
+            arc,
+            facing_fixed,
         } => vec![SessionEvent::MonsterMove {
             guid,
             transport,
@@ -904,6 +906,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             duration_ms,
             flying,
             run_mode,
+            arc,
+            facing_fixed,
         }],
         ServerPacket::PlayerMove {
             guid,
