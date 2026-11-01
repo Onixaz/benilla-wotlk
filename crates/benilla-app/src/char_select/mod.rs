@@ -30,6 +30,10 @@ pub(crate) enum ClientState {
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct InWorldGated;
 
+/// The selected realm's PvP flag is latched before zone and quest UI reads it.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct RealmEntrySet;
+
 /// The lifecycle state and the roster.
 pub(crate) struct CharSelectPlugin {
     /// The screen this session opens on: `Login` when connected, `InWorld` for a world capture.
@@ -58,10 +62,13 @@ impl Plugin for CharSelectPlugin {
                 Update,
                 publish_world_live.before(benilla_world::schedule::WorldStage::Net),
             )
-            .add_systems(Update, debug_logout_smoke)
+            .add_systems(Update, debug_logout_smoke.after(RealmEntrySet))
             .add_systems(
                 Update,
-                session_edges().after(benilla_world::schedule::WorldStage::Net),
+                session_edges()
+                    .after(benilla_world::schedule::WorldStage::Net)
+                    .before(crate::ui_script::UiFeed)
+                    .in_set(RealmEntrySet),
             );
     }
 }
@@ -96,12 +103,18 @@ pub(crate) struct Roster {
     pub(crate) pending_pick: Option<u64>,
     /// The realm-list entry this session connected to, refreshed with each roster.
     pub(super) realm: Option<benilla_protocol::RealmInfo>,
+    /// `Cfg_Configs.dbc`'s selected realm PvP flag, latched on each world entry.
+    pvp_realm: bool,
 }
 
 impl Roster {
     /// The connected realm's type, `Cfg_Configs.dbc`'s `RealmType` key.
     pub(crate) fn realm_type(&self) -> Option<u32> {
         self.realm.as_ref().map(|r| r.realm_type)
+    }
+
+    pub(crate) fn realm_is_pvp(&self) -> bool {
+        self.pvp_realm
     }
 
     /// A roster with a pick in flight, for tests outside this module.
@@ -205,9 +218,15 @@ fn apply_roster_policy(
 /// `Connected` ([`EnteredWorldMessage`]): the world owns the session.
 fn enter_on_connected(
     mut msgs: MessageReader<EnteredWorldMessage>,
+    mut roster: ResMut<Roster>,
+    realms: Res<crate::realm_select::Realms>,
     mut next: ResMut<NextState<ClientState>>,
 ) {
     if msgs.read().next().is_some() {
+        // Build 12340 `0x405540` selects the first matching Cfg_Configs row on world entry.
+        roster.pvp_realm = roster
+            .realm_type()
+            .is_some_and(|realm_type| realms.pvp_rp(realm_type).0);
         next.set(ClientState::InWorld);
     }
 }
@@ -225,6 +244,7 @@ fn back_on_disconnect(
     }
     // With no reconnect coming, a kept pick would auto-answer the next roster.
     roster.pending_pick = None;
+    roster.pvp_realm = false;
     next.set(ClientState::Login);
 }
 
@@ -240,6 +260,7 @@ fn back_on_login_refused(
         return;
     }
     roster.pending_pick = None;
+    roster.pvp_realm = false;
     next.set(ClientState::CharSelect);
 }
 
@@ -251,6 +272,7 @@ fn back_on_logout(
 ) {
     if msgs.read().next().is_some() {
         roster.pending_pick = None;
+        roster.pvp_realm = false;
         next.set(ClientState::CharSelect);
     }
 }
@@ -428,6 +450,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
             .insert_state(ClientState::CharSelect)
             .init_resource::<Roster>()
+            .insert_resource(crate::realm_select::Realms::us_client())
             .init_resource::<crate::ui_script::PlayerUiHover>()
             .init_resource::<crate::ui_script::UiKeyboardCapture>()
             .add_message::<EnteredWorldMessage>()
@@ -469,6 +492,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
             .insert_state(ClientState::CharSelect)
             .init_resource::<Roster>()
+            .insert_resource(crate::realm_select::Realms::us_client())
             .init_resource::<crate::ui_script::PlayerUiHover>()
             .init_resource::<crate::ui_script::UiKeyboardCapture>()
             .add_message::<EnteredWorldMessage>()
@@ -502,6 +526,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
             .insert_state(ClientState::CharSelect)
             .init_resource::<Roster>()
+            .insert_resource(crate::realm_select::Realms::us_client())
             .init_resource::<crate::ui_script::PlayerUiHover>()
             .init_resource::<crate::ui_script::UiKeyboardCapture>()
             .add_message::<EnteredWorldMessage>()
@@ -543,6 +568,7 @@ mod tests {
             app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
                 .insert_state(ClientState::InWorld)
                 .insert_resource(Roster::with_pending_pick(vec![character(7, "Seven")], 7))
+                .insert_resource(crate::realm_select::Realms::us_client())
                 .insert_resource(CharPick(tx.into()))
                 .init_resource::<crate::cvars::Cvars>()
                 .add_message::<CharListMessage>()
@@ -576,6 +602,37 @@ mod tests {
                 "refused: {refused} — the roster was answered with the pick just left"
             );
             assert_eq!(app.world().resource::<Roster>().pending_pick, None);
+        }
+    }
+
+    /// The selected realm's DBC flag is sampled on each world entry, including a realm change.
+    #[test]
+    fn world_entry_latches_the_selected_realm_pvp_flag() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
+            .insert_state(ClientState::CharSelect)
+            .init_resource::<Roster>()
+            .insert_resource(crate::realm_select::Realms::us_client())
+            .add_message::<EnteredWorldMessage>()
+            .add_systems(Update, enter_on_connected);
+
+        for (realm_type, expected) in [(0, false), (1, true), (10, true), (77, false)] {
+            app.world_mut().resource_mut::<Roster>().realm = Some(benilla_protocol::RealmInfo {
+                name: "Probe".into(),
+                address: "127.0.0.1:8085".into(),
+                population: 1.0,
+                characters: 1,
+                realm_type,
+                flags: 0,
+                category: 1,
+                id: 1,
+            });
+            app.world_mut().write_message(EnteredWorldMessage {
+                billing_time_rested: 0,
+                tutorial_flags: None,
+            });
+            app.update();
+            assert_eq!(app.world().resource::<Roster>().realm_is_pvp(), expected);
         }
     }
 

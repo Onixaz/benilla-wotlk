@@ -912,7 +912,8 @@ pub(crate) mod schedule_tests {
     ///   `.after(UiInput)` drain of the VM's own sends, against `finish_colliders`, as the other
     ///   such drains pair; and `ui_socket::feed_refunds` against `ui_items::feed_item_stats` and
     ///   `feed_spell_tooltips` over `Items`: it only reads templates.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_977;
+    // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_923;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

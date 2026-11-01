@@ -76,6 +76,8 @@ pub use spell_rune_cost::{load_spell_rune_costs, SpellRuneCost, SpellRuneCostCat
 pub use totem_category::{load_totem_categories, TotemCategory, TotemCategoryCatalog};
 mod cfg_categories;
 pub use cfg_categories::{load_realm_categories, RealmCategory};
+mod cfg_configs;
+pub use cfg_configs::{load_realm_configs, RealmConfig};
 mod wow_ini;
 pub use wow_ini::client_region;
 mod itembagfamily;

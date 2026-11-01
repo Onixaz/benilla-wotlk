@@ -63,6 +63,33 @@ fn new_area_splashes_zone_pvp_and_subzone_then_fades_out() {
     assert!(!visible(&s, "ZoneTextFrame"), "fade-out ends in Hide()");
 }
 
+/// The stock 12340 `ZoneText.lua:47` paints a PvE ordinary zone tan when the engine returns no
+/// PvP type; the same zone on a PvP realm has its faction line and green text.
+#[test]
+fn ordinary_zone_splash_follows_the_realm_pvp_gate() {
+    let _data = benilla_formats::wow_data_or_skip!();
+    for (pvp, faction, expected_line, expected_color) in [
+        ("", "", "", [1.0, 0.9294, 0.7607]),
+        (
+            "friendly",
+            "Alliance",
+            "(Alliance Territory)",
+            [0.1, 1.0, 0.1],
+        ),
+    ] {
+        let mut s = harness();
+        set_area(&mut s, "Elwynn Forest", "Northshire Abbey", pvp, faction);
+        s.fire_event("ZONE_CHANGED_NEW_AREA", vec![]);
+        assert_eq!(text_of(&s, "PVPInfoTextString"), expected_line);
+        let color: (f64, f64, f64) = s
+            .eval("local r, g, b = ZoneTextString:GetTextColor() return r, g, b")
+            .unwrap();
+        for (actual, expected) in [color.0, color.1, color.2].into_iter().zip(expected_color) {
+            assert!((actual - expected).abs() < 0.0001, "color {color:?}");
+        }
+    }
+}
+
 #[test]
 fn subzone_hop_shows_only_the_small_line() {
     let _data = benilla_formats::wow_data_or_skip!();

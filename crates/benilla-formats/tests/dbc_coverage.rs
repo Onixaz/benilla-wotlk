@@ -22,10 +22,6 @@ use benilla_formats::{dbc_width, READ_TABLES};
 const NOT_READ: &[(&str, &str)] = &[
     ("AreaGroup", "#240 GetTradeSkillTools' area requirement"),
     ("BannedAddOns", "#245 the addon ban list"),
-    (
-        "Cfg_Configs",
-        "#245 realm type rules: GetRealmInfo; realm_select hardcodes its rows",
-    ),
     ("CreatureMovementInfo", "#243 creature movement"),
     ("DanceMoves", "#243 dance studio emotes"),
     ("DeclinedWord", "#242 Russian name declension"),
