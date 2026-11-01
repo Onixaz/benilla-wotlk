@@ -838,9 +838,15 @@ pub(crate) struct UnitStores<'w, 's> {
 pub(crate) struct SnapshotTables<'w> {
     classes: Option<Res<'w, crate::chr_classes::ChrClassTable>>,
     spells: Option<Res<'w, crate::ui_action::Spells>>,
+    loot_lists: Option<Res<'w, crate::ui_loot::LootLists>>,
 }
 
 impl SnapshotTables<'_> {
+    /// The corpses' looters (`SMSG_LOOT_LIST`), for [`crate::ui_loot::apply_looters`].
+    pub(crate) fn loot_lists(&self) -> Option<&crate::ui_loot::LootLists> {
+        self.loot_lists.as_deref()
+    }
+
     /// `ChrClasses.dbc`; without it no class has a relic slot, the reference's bounds leg.
     pub(crate) fn classes(&self) -> Option<&ChrClasses> {
         self.classes.as_deref().map(|t| &t.0)
@@ -1376,6 +1382,7 @@ fn feed_units(
         self_store: self_pair.map(|(s, _)| s),
         classes: chr,
         types,
+        loot_lists: tables.loot_lists(),
     };
     let target = selection.target.zip(selection.guid).and_then(|(e, guid)| {
         let store = stores.all.get(e).ok()?;

@@ -16,7 +16,10 @@ use crate::ui_items::KEYRING_CONTAINER;
 use crate::ui_party::{GroupState, GROUPTYPE_RAID, GROUP_MEMBER_SUBGROUP};
 use crate::ui_script::{UiFeed, UiInput};
 
+mod looters;
 mod net;
+
+pub(crate) use looters::{apply_looters, LootLists};
 
 /// `ItemBondingType::BIND_WHEN_PICKED_UP`, the first conjunct of the `LOOT_BIND` confirm: the take
 /// dispatcher `0x589140` compares the item record's `+0x178` against 1.
@@ -120,7 +123,13 @@ pub(crate) struct LootState {
     unlocks: Vec<u64>,
     /// Steps at every open, so the feed sees one window replace another (`0x5896b0`).
     generation: u64,
+    /// Rows `SMSG_LOOT_SLOT_CHANGED` redrew, as indices into `items`, each owing its
+    /// `LOOT_SLOT_CHANGED` once its template is cached (`0x589a30`, `0x589460`).
+    changed_rows: Vec<usize>,
 }
+
+/// The loot window's rows (`0x589a30` scans 18).
+const LOOT_WINDOW_ROWS: usize = 18;
 
 /// The client's candidate array: 40 slots, bound-checked by the getter.
 const MASTER_LOOT_CANDIDATE_SLOTS: usize = 40;
@@ -162,6 +171,63 @@ impl LootState {
         self.loot_type = loot_type;
         self.fishing = loot_type == benilla_protocol::messages::loot_type::FISHING;
         self.master_candidates = std::mem::take(&mut self.pending_master_candidates);
+        self.changed_rows.clear();
+    }
+
+    /// `0x6dc770`: a roll that ended makes its slot lootable, only in an open window on that
+    /// object; the take reads the type at click time, so nothing redraws.
+    pub(crate) fn clear_slot_type(&mut self, looted_target: u64, wire_slot: u32) {
+        if self.source != Some(looted_target) {
+            return;
+        }
+        for it in &mut self.items {
+            if u32::from(it.slot) == wire_slot {
+                it.slot_type = slot_type::ALLOW_LOOT;
+            }
+        }
+    }
+
+    /// `SMSG_LOOT_SLOT_CHANGED` (`0x6d58d0` -> `0x589a30`), only for the open object: the row
+    /// holding the wire slot, else the first looted row, else a new row while fewer than 18. The
+    /// slot type is the wire slot's own, kept from the response.
+    pub(crate) fn slot_changed(&mut self, p: &benilla_protocol::messages::LootSlotChanged) {
+        if self.source != Some(p.looted_target) {
+            return;
+        }
+        let live = |it: &LootItem, taken: &[u8]| !taken.contains(&it.slot);
+        let row = self
+            .items
+            .iter()
+            .position(|it| it.slot == p.slot && live(it, &self.taken))
+            .or_else(|| self.items.iter().position(|it| !live(it, &self.taken)));
+        let kind = self
+            .items
+            .iter()
+            .find(|it| it.slot == p.slot)
+            .map_or(slot_type::ALLOW_LOOT, |it| it.slot_type);
+        let entry = LootItem {
+            slot: p.slot,
+            item_id: p.item_id,
+            count: p.count,
+            display_info_id: p.display_info_id,
+            random_property_id: p.random_property_id,
+            slot_type: kind,
+        };
+        let row = match row {
+            Some(i) => {
+                self.items[i] = entry;
+                i
+            }
+            None if self.items.len() < LOOT_WINDOW_ROWS => {
+                self.items.push(entry);
+                self.items.len() - 1
+            }
+            None => return,
+        };
+        self.taken.retain(|&s| s != p.slot);
+        if !self.changed_rows.contains(&row) {
+            self.changed_rows.push(row);
+        }
     }
 
     /// Stages a list for the next open; an open window takes it at once, as a refresh.
@@ -227,6 +293,7 @@ impl LootState {
         self.shown = false;
         self.binds.clear();
         self.reswept = None;
+        self.changed_rows.clear();
     }
 
     /// Session end: drops the window, the queued pushes and the flag.
@@ -528,6 +595,7 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut loot: ResMut<LootCo
 impl Plugin for UiLootPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
+        looters::register(app);
         app.add_observer(on_cvar);
         app.init_resource::<LootState>()
             .init_resource::<LootConfig>()
@@ -868,6 +936,7 @@ fn feed_loot(
         *last = None;
     }
     if fresh == *last {
+        fire_changed_rows(&mut loot, &mut script, &items, &commands);
         return;
     }
     script.set_loot(fresh.clone());
@@ -928,6 +997,43 @@ fn feed_loot(
         (None, None) => {}
     }
     *last = fresh;
+    fire_changed_rows(&mut loot, &mut script, &items, &commands);
+}
+
+/// `LOOT_SLOT_CHANGED` with each redrawn row's 1-based display row, the coin row counted, once its
+/// template is cached (`0x589a30`, the cache callback `0x589460`); the stock `LootFrame` redraws
+/// that button. A window not shown yet paints every row at `LOOT_OPENED` instead. Not applied: the
+/// callback's `LOOT_OPENED` once no template is pending, which reopens a shown window.
+fn fire_changed_rows(
+    loot: &mut LootState,
+    script: &mut UiScript,
+    items: &Items,
+    commands: &NetCommands,
+) {
+    if loot.changed_rows.is_empty() {
+        return;
+    }
+    if !loot.shown {
+        loot.changed_rows.clear();
+        return;
+    }
+    let coin = u32::from(loot.coin_slot);
+    let rows = std::mem::take(&mut loot.changed_rows);
+    for row in rows {
+        let Some(it) = loot.items.get(row) else {
+            continue;
+        };
+        if items.template(it.item_id, 0, commands).is_none()
+            && !items.template_answered_unknown(it.item_id)
+        {
+            loot.changed_rows.push(row);
+            continue;
+        }
+        script.fire_event(
+            "LOOT_SLOT_CHANGED",
+            vec![ScriptValue::Int(i64::from(row as u32 + 1 + coin))],
+        );
+    }
 }
 
 /// Whether a take must raise `LOOT_BIND_CONFIRM` first (`0x589140`): bind on pickup, uncommon or
@@ -1557,6 +1663,108 @@ mod tests {
             app.update();
             assert_eq!(opens(&mut app), 1, "and only once");
         }
+    }
+
+    /// `0x589a30`/`0x589460`: a cached row redraws at once, an uncached one when its template
+    /// lands; the row number counts the coin row; another object's message is dropped.
+    #[test]
+    fn a_changed_slot_fires_once_its_template_is_cached() {
+        const CLEAVER: u32 = 4949;
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.add_message::<crate::sound::LootPickupSound>()
+            .add_message::<crate::target::DeselectGuid>()
+            .init_resource::<LootMoveStart>()
+            .init_resource::<LootLatch>()
+            .init_resource::<crate::net::GuidIndex>()
+            .init_resource::<LootState>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<GroupState>()
+            .init_resource::<NameCache>()
+            .init_resource::<Items>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<LootConfig>()
+            .insert_resource(NetCommands(tx))
+            .add_systems(bevy::prelude::Update, feed_loot);
+        app.world_mut().resource_mut::<Items>().insert_template(
+            TOUGH_JERKY,
+            Some(crate::items::test_template("Tough Jerky")),
+        );
+        app.world_mut().resource_mut::<LootState>().open(
+            0x42,
+            loot_type::CORPSE,
+            5,
+            vec![item(0, TOUGH_JERKY, 1), item(1, TOUGH_JERKY, 2)],
+        );
+        let script = UiScript::new().unwrap();
+        script
+            .run(
+                "CHANGED = {}
+                 local f = CreateFrame(\"Frame\")
+                 f:RegisterEvent(\"LOOT_SLOT_CHANGED\")
+                 f:SetScript(\"OnEvent\", function(_, _, row) tinsert(CHANGED, row) end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.update();
+        let changed = |app: &mut App| {
+            let script = app.world_mut().non_send_resource_mut::<UiScript>();
+            let n = script.eval::<i64>("return getn(CHANGED)").unwrap();
+            (1..=n)
+                .map(|i| script.eval::<i64>(&format!("return CHANGED[{i}]")).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let msg = |guid: u64, slot: u8, item_id: u32, count: u32| {
+            benilla_protocol::messages::LootSlotChanged {
+                looted_target: guid,
+                slot,
+                item_id,
+                display_info_id: 7,
+                random_suffix: 0,
+                random_property_id: 0,
+                count,
+            }
+        };
+
+        app.world_mut()
+            .resource_mut::<LootState>()
+            .slot_changed(&msg(0x99, 1, TOUGH_JERKY, 5));
+        app.world_mut()
+            .resource_mut::<LootState>()
+            .slot_changed(&msg(0x42, 1, TOUGH_JERKY, 5));
+        app.update();
+        assert_eq!(
+            changed(&mut app),
+            vec![3],
+            "wire slot 1 is row 2, after the coin row"
+        );
+        assert_eq!(app.world().resource::<LootState>().items[1].count, 5);
+
+        app.world_mut()
+            .resource_mut::<LootState>()
+            .slot_changed(&msg(0x42, 0, CLEAVER, 1));
+        app.update();
+        assert_eq!(changed(&mut app), vec![3], "the uncached row waits");
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(CLEAVER, Some(crate::items::test_template("Orcish Cleaver")));
+        app.update();
+        assert_eq!(changed(&mut app), vec![3, 2]);
+        app.update();
+        assert_eq!(changed(&mut app), vec![3, 2], "once");
+    }
+
+    /// `0x6dc770`: a finished roll makes its slot lootable in the window on that object only.
+    #[test]
+    fn a_finished_roll_clears_the_slot_type() {
+        let mut loot = LootState::default();
+        let mut rolling = item(2, TOUGH_JERKY, 1);
+        rolling.slot_type = slot_type::ROLL_ONGOING;
+        loot.open(0x42, loot_type::CORPSE, 0, vec![rolling]);
+        loot.clear_slot_type(0x99, 2);
+        assert_eq!(loot.items[0].slot_type, slot_type::ROLL_ONGOING);
+        loot.clear_slot_type(0x42, 2);
+        assert_eq!(loot.items[0].slot_type, slot_type::ALLOW_LOOT);
     }
 
     /// The rows `LOOT_BIND_CONFIRM` has named so far, in order.

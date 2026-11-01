@@ -106,6 +106,9 @@ fn rolls() -> LootRollsState {
                 item_id: 17182,
                 link: Some(STAFF_LINK.into()),
                 random_property_id: 0,
+                vote_mask: 0x0F,
+                reasons: [0; 3],
+                disenchant_skill: -1,
             },
             LootRollEntry {
                 roll_id: 8,
@@ -118,6 +121,9 @@ fn rolls() -> LootRollsState {
                 item_id: 25,
                 link: Some(SWORD_LINK.into()),
                 random_property_id: 0,
+                vote_mask: 0x0F,
+                reasons: [0; 3],
+                disenchant_skill: -1,
             },
             // No template yet: name, texture, quality and link (which embeds the name) are nil.
             LootRollEntry {
@@ -131,6 +137,9 @@ fn rolls() -> LootRollsState {
                 item_id: 4306,
                 link: None,
                 random_property_id: 0,
+                vote_mask: 0x0F,
+                reasons: [0; 3],
+                disenchant_skill: -1,
             },
         ],
     }
@@ -656,4 +665,65 @@ fn the_stock_group_loot_frame_survives_an_in_flight_roll() {
             && (painted.2 - common.2).abs() < 1e-6,
         "the stock roll popup paints the miss tail's Common, got {painted:?} want {common:?}"
     );
+}
+
+/// The stock 3.3.5a popup through the production load: a roll whose mask refuses Need paints Need
+/// disabled with its reason (`LootFrame.lua:368-388`), and the Disenchant button sends rollType 3,
+/// with no confirm below rare quality (`0x6fbc70`).
+#[test]
+fn the_3_3_5a_group_loot_frame_paints_the_vote_mask_and_sends_disenchant() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _load_failures) =
+        super::layer_tests::production_load_with("grouploot", false, "", |_| {});
+    let _ = s.take_errors();
+    s.set_loot_rolls(LootRollsState {
+        rolls: vec![LootRollEntry {
+            roll_id: 1,
+            name: Some("Orcish Cleaver".into()),
+            texture: Some(r"Interface\Icons\INV_Axe_04".into()),
+            quantity: 1,
+            quality: Some(2),
+            bind_on_pickup: false,
+            vote_mask: 0x0D,
+            reasons: [1, 0, 0],
+            disenchant_skill: 25,
+            time_left_ms: 60_000,
+            item_id: 4949,
+            link: Some("|cff1eff00|Hitem:4949:0:0:0|h[Orcish Cleaver]|h|r".into()),
+            random_property_id: 0,
+        }],
+    });
+    s.fire_event(
+        "START_LOOT_ROLL",
+        vec![ScriptValue::Int(1), ScriptValue::Int(60_000)],
+    );
+    s.tick(0.05);
+    assert!(s
+        .eval::<bool>("return GroupLootFrame1:IsVisible() and GroupLootFrame1.rollID == 1")
+        .unwrap());
+    assert_eq!(
+        s.eval::<String>("return GroupLootFrame1Name:GetText()")
+            .unwrap(),
+        "Orcish Cleaver"
+    );
+    assert!(s
+        .eval::<bool>(
+            "local f = GroupLootFrame1\n\
+             return f.needButton:IsEnabled() == 0 and f.greedButton:IsEnabled() ~= 0\n\
+             and f.disenchantButton:IsEnabled() ~= 0\n\
+             and f.needButton.reason == LOOT_ROLL_INELIGIBLE_REASON1",
+        )
+        .unwrap());
+    s.run("GroupLootFrame1.disenchantButton:Click()").unwrap();
+    assert_eq!(s.take_loot_roll_votes(), vec![(1, 3)]);
+    assert!(s.take_loot_roll_confirms().is_empty());
+    let errors: Vec<String> = s
+        .take_errors()
+        .into_iter()
+        .filter(|e| e.contains("Loot"))
+        .collect();
+    assert!(errors.is_empty(), "script errors: {errors:?}");
 }

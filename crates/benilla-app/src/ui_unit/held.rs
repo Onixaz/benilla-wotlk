@@ -32,6 +32,8 @@ pub(super) struct HeldUnits<'a> {
     pub(super) self_store: Option<&'a ObjectStore>,
     pub(super) classes: Option<&'a ChrClasses>,
     pub(super) types: CreatureTypeSources<'a>,
+    /// The corpses' looters, the dead unit's tooltip lines.
+    pub(super) loot_lists: Option<&'a crate::ui_loot::LootLists>,
 }
 
 impl HeldUnits<'_> {
@@ -95,6 +97,7 @@ impl HeldUnits<'_> {
             self.factions,
             self.self_store,
         );
+        crate::ui_loot::apply_looters(&mut s, guid, self.loot_lists, self.names);
         s
     }
 }
@@ -174,6 +177,7 @@ pub(super) fn feed_chain_units(
         self_store: self_q.iter().next(),
         classes: tables.classes(),
         types: tables.types(&names),
+        loot_lists: tables.loot_lists(),
     };
     let built: HashMap<u64, UnitState> = ends
         .iter()

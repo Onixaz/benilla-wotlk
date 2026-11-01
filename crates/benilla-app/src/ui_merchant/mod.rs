@@ -1700,6 +1700,8 @@ mod tests {
                 socket_colors: [0; 3],
                 socket_bonus: 0,
                 gem_properties: 0,
+                flags2: 0,
+                required_disenchant_skill: -1,
             }),
         );
         let resolved = resolve_item(&row(2129, 1, 3), &items, None, None, &commands);

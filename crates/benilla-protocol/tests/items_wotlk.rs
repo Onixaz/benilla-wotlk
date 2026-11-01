@@ -150,6 +150,8 @@ fn starting_pants_decode_whole() {
             socket_colors: [0; 3],
             socket_bonus: 0,
             gem_properties: 0,
+            flags2: 0,
+            required_disenchant_skill: -1,
         }))
     );
 }

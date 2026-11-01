@@ -1455,6 +1455,10 @@ fn parse_server_body(
             ServerPacket::LootStartRoll(loot::read_loot_start_roll(&mut r)?)
         }
         opcode::SMSG_LOOT_ROLL => ServerPacket::LootRoll(loot::read_loot_roll(&mut r)?),
+        opcode::SMSG_LOOT_LIST => ServerPacket::LootList(loot::read_loot_list(&mut r)?),
+        opcode::SMSG_LOOT_SLOT_CHANGED => {
+            ServerPacket::LootSlotChanged(loot::read_loot_slot_changed(&mut r)?)
+        }
         opcode::SMSG_LOOT_ROLL_WON => ServerPacket::LootRollWon(loot::read_loot_roll_won(&mut r)?),
         opcode::SMSG_LOOT_ALL_PASSED => {
             ServerPacket::LootAllPassed(loot::read_loot_all_passed(&mut r)?)

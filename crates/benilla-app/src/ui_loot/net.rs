@@ -19,6 +19,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::LootClearMoney, on_clear_money)
         .net_handler(K::LootReleaseResponse, on_release_response)
         .net_handler(K::LootMasterList, on_master_list)
+        .net_handler(K::LootSlotChanged, on_slot_changed)
         .net_handler(K::FishNotHooked, on_fish_verdict)
         .net_handler(K::FishEscaped, on_fish_verdict)
         .net_handler(K::ItemPushResult, on_item_push_result)
@@ -103,6 +104,16 @@ fn on_error(
 fn on_removed(In(ev): In<SessionEvent>, mut loot: ResMut<LootState>) {
     if let SessionEvent::LootRemoved { slot } = ev {
         loot_removed(slot, &mut loot);
+    }
+}
+
+fn on_slot_changed(In(ev): In<SessionEvent>, mut loot: ResMut<LootState>) {
+    if let SessionEvent::LootSlotChanged(p) = ev {
+        debug!(
+            "net: loot slot {} changed to item {} x{}",
+            p.slot, p.item_id, p.count
+        );
+        loot.slot_changed(&p);
     }
 }
 
