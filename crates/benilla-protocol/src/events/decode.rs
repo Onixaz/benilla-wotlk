@@ -636,11 +636,20 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             display_map: loc.display_map,
             position: loc.position,
             corpse_map: loc.corpse_map,
+            transport: loc.transport,
         }],
         ServerPacket::CorpseReclaimDelay { delay_ms } => {
             vec![SessionEvent::CorpseReclaimDelay { delay_ms }]
         }
         ServerPacket::DurabilityDamageDeath => vec![SessionEvent::DurabilityDamageDeath],
+        ServerPacket::DeathReleaseLoc { map, position } => {
+            vec![SessionEvent::DeathReleaseLoc { map, position }]
+        }
+        ServerPacket::PreResurrect { guid } => vec![SessionEvent::PreResurrect { guid }],
+        ServerPacket::CorpseMapPosition { position, facing } => {
+            vec![SessionEvent::CorpseMapPosition { position, facing }]
+        }
+        ServerPacket::CorpseNotInInstance => vec![SessionEvent::CorpseNotInInstance],
         ServerPacket::ResurrectRequest(r) => vec![SessionEvent::ResurrectRequest {
             caster: r.caster,
             name: r.name,

@@ -2128,8 +2128,12 @@ pub(crate) enum ClientCommand {
     },
     /// `CMSG_REPOP_REQUEST`: Release Spirit.
     RepopRequest,
-    /// `MSG_CORPSE_QUERY`, on becoming a ghost and on login dead.
+    /// `MSG_CORPSE_QUERY`, on becoming a ghost and at each world entry as one.
     CorpseQuery,
+    /// `CMSG_CORPSE_MAP_POSITION_QUERY`: where our corpse's unstreamed transport is.
+    CorpseMapPositionQuery {
+        transport: u32,
+    },
     /// `CMSG_RECLAIM_CORPSE`: the server requires a ghost, the delay elapsed and 39 yd.
     ReclaimCorpse {
         corpse: u64,

@@ -89,6 +89,7 @@ impl Probe for Death {
                 display_map,
                 position,
                 corpse_map,
+                ..
             } => {
                 if self.post_revive_query_sent {
                     self.corpse_gone = Some(!*found);

@@ -153,8 +153,9 @@ pub use combat_log::{
     SpellLogMiss, SpellOutcomeLog, SpellRemoveKind, SpellRemoveLog,
 };
 pub use death::{
-    area_spirit_healer, reclaim_corpse, repop_request, resurrect_response, spirit_healer_activate,
-    AreaSpiritHealerTime, CorpseLocation, ResurrectRequestBody,
+    area_spirit_healer, corpse_map_position_query, reclaim_corpse, repop_request,
+    resurrect_response, spirit_healer_activate, AreaSpiritHealerTime, CorpseLocation,
+    ResurrectRequestBody,
 };
 pub use duel::{
     duel_accepted, duel_cancelled, read_duel_complete, read_duel_countdown, read_duel_requested,

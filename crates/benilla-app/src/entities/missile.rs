@@ -998,13 +998,40 @@ fn collide(
     Some(at)
 }
 
-/// The server-hit handler.
+/// The server-hit and pre-resurrect handlers.
 pub(super) fn register(app: &mut App) {
     use crate::net::NetHandlerApp;
     app.net_handler(
         benilla_protocol::SessionEventKind::SetProjectilePosition,
         on_set_projectile_position,
+    )
+    .net_handler(
+        benilla_protocol::SessionEventKind::PreResurrect,
+        on_pre_resurrect,
     );
+}
+
+/// `SMSG_PRE_RESURRECT` (`0x716d80`): every missile in flight at the unit is freed where it is
+/// (`0x703a80`), with no arrival.
+fn on_pre_resurrect(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    index: Res<crate::net::GuidIndex>,
+    missiles: Query<(Entity, &Missile)>,
+    mut commands: Commands,
+    mut sounds: MessageWriter<MissileSound>,
+) {
+    let benilla_protocol::SessionEvent::PreResurrect { guid } = ev else {
+        return;
+    };
+    let Some(&unit) = index.0.get(&guid) else {
+        return;
+    };
+    for (entity, missile) in &missiles {
+        if matches!(missile.aim, Aim::Unit { target, .. } if target == unit) {
+            sounds.write(MissileSound::Stop { entity });
+            commands.entity(entity).despawn();
+        }
+    }
 }
 
 /// `SMSG_SET_PROJECTILE_POSITION` (`0x6ff2c0`): every in-flight trajectory missile of the caster's

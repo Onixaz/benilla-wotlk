@@ -431,7 +431,16 @@ fn emit_minimap(
     world: benilla_world::world_point::WorldPoint,
     asset_server: Res<AssetServer>,
     // The last indoor verdict per object blip, and the stamps it was rayed against.
-    (death_net, mut indoor_memo, residency, collider_epoch, mut class_memo, stirred_me, rotate): (
+    (
+        death_net,
+        mut indoor_memo,
+        residency,
+        collider_epoch,
+        mut class_memo,
+        stirred_me,
+        rotate,
+        release_poi,
+    ): (
         Res<crate::death::DeathNet>,
         Local<IndoorMemo>,
         Res<benilla_world::interior::WmoResidency>,
@@ -447,6 +456,7 @@ fn emit_minimap(
             ),
         >,
         Res<MinimapRotate>,
+        Res<crate::death::ReleasePoi>,
     ),
     blip_inputs: blips::BlipInputs,
     mut composite: ResMut<composite::MinimapComposite>,
@@ -809,6 +819,7 @@ fn emit_minimap(
                 ctx,
                 pois.as_ref().map(|p| &p.0),
                 poi_marker.on_map(map.0),
+                release_poi.on_map(map.0),
                 map.0,
                 &assets.rim_arrows,
                 assets.poi.as_ref(),

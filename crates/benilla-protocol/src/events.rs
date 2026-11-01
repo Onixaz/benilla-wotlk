@@ -1119,7 +1119,17 @@ pub enum SessionEvent {
         display_map: i32,
         position: [f32; 3],
         corpse_map: u32,
+        /// The transport's low guid, 0 for none; `position` is then transport-local.
+        transport: u32,
     },
+    /// The release graveyard (`SMSG_DEATH_RELEASE_LOC`); map -1 clears it.
+    DeathReleaseLoc { map: i32, position: [f32; 3] },
+    /// Drop the missiles in flight at this unit (`SMSG_PRE_RESURRECT`), sent at our release.
+    PreResurrect { guid: u64 },
+    /// A transport corpse's transport in the world (`SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE`).
+    CorpseMapPosition { position: [f32; 3], facing: f32 },
+    /// `SMSG_CORPSE_NOT_IN_INSTANCE`: the `ERR_CORPSE_IS_NOT_IN_INSTANCE` line.
+    CorpseNotInInstance,
     /// Corpse reclaim delay (`SMSG_CORPSE_RECLAIM_DELAY`): 30 s, 60 or 120 s on repeated deaths.
     CorpseReclaimDelay { delay_ms: u32 },
     /// The 10% death durability loss (`SMSG_DURABILITY_DAMAGE_DEATH`, empty body): the red line.

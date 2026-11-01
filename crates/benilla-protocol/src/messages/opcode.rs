@@ -948,6 +948,16 @@ pub const SMSG_CORPSE_RECLAIM_DELAY: u16 = 0x0269; // 617
 pub const CMSG_SELF_RES: u16 = 0x02B3; // 691
 /// A non-PvP death's 10% durability loss: empty body, a red error line (`Unit.cpp:1170-1182`).
 pub const SMSG_DURABILITY_DAMAGE_DEATH: u16 = 0x02BD; // 701
+/// The release graveyard, `i32 map` and three `f32`; map -1 clears it (`0x6e2e90`).
+pub const SMSG_DEATH_RELEASE_LOC: u16 = 0x0378; // 888
+/// A packed guid whose in-flight missiles the client drops (`0x716d80`).
+pub const SMSG_PRE_RESURRECT: u16 = 0x0494; // 1172
+/// A transport corpse's position: the transport's low guid as a `u32` (`0x51f430`).
+pub const CMSG_CORPSE_MAP_POSITION_QUERY: u16 = 0x04B6; // 1206
+/// The transport's world position and facing, three `f32` and an `f32` (`0x526530`).
+pub const SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE: u16 = 0x04B7; // 1207
+/// Empty: the corpse is not in this instance, `ERR_CORPSE_IS_NOT_IN_INSTANCE` (`0x526530`).
+pub const SMSG_CORPSE_NOT_IN_INSTANCE: u16 = 0x0506; // 1286
 
 // Mover modes, acked (`IsFlagAckOpcode`): the SMSG is a packed guid and `u32 counter`; the ack
 // echoes the packed guid, the counter and a `MovementInfo`, plus an `f32` apply for all but root

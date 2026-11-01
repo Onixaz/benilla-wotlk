@@ -1982,6 +1982,9 @@ pub(super) fn writer_loop(
                     }
                     ClientCommand::RepopRequest => w.repop_request(),
                     ClientCommand::CorpseQuery => w.corpse_query(),
+                    ClientCommand::CorpseMapPositionQuery { transport } => {
+                        w.corpse_map_position_query(transport)
+                    }
                     ClientCommand::ReclaimCorpse { corpse } => w.reclaim_corpse(corpse),
                     ClientCommand::SelfRes => w.self_res(),
                     ClientCommand::SpiritHealerActivate { npc } => w.spirit_healer_activate(npc),

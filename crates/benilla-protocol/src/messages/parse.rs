@@ -1469,6 +1469,18 @@ fn parse_server_body(
             ServerPacket::CorpseQuery(death::read_corpse_query_response(&mut r)?)
         }
         opcode::SMSG_DURABILITY_DAMAGE_DEATH => ServerPacket::DurabilityDamageDeath,
+        opcode::SMSG_DEATH_RELEASE_LOC => {
+            let (map, position) = death::read_death_release_loc(&mut r)?;
+            ServerPacket::DeathReleaseLoc { map, position }
+        }
+        opcode::SMSG_PRE_RESURRECT => ServerPacket::PreResurrect {
+            guid: read_packed_guid(&mut r)?,
+        },
+        opcode::SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE => {
+            let (position, facing) = death::read_corpse_map_position(&mut r)?;
+            ServerPacket::CorpseMapPosition { position, facing }
+        }
+        opcode::SMSG_CORPSE_NOT_IN_INSTANCE => ServerPacket::CorpseNotInInstance,
         opcode::SMSG_CORPSE_RECLAIM_DELAY => ServerPacket::CorpseReclaimDelay {
             delay_ms: death::read_corpse_reclaim_delay(&mut r)?,
         },

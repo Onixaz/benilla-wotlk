@@ -613,7 +613,7 @@ fn compose_riders(
 /// when the horizontal step exceeds 3 yd (9.0, squared) or 60 yd/s, the common first substep on a
 /// deck; ours re-grounds that frame, and both settle the same the next.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
-fn ground_deck_riders(
+pub(crate) fn ground_deck_riders(
     world: benilla_world::collision::WorldCollision,
     mut riders: Query<
         (

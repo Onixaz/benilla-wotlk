@@ -88,7 +88,7 @@ pub(crate) enum RimArrow {
     /// A party or raid member, or your pet: sequence `0xa5`; the group passes draw its texture
     /// flat ([`GROUP_ARROW_PX`]).
     Group,
-    /// Your own corpse: sequence `0xa7`, `+0x48 == 2`.
+    /// Your own corpse and the release graveyard: sequence `0xa7`, `+0x48 == 2`.
     Corpse,
     /// The guard's directions ([`crate::poi_marker`]): sequence `0xa8`, the default arm, gold.
     Guide,
@@ -272,12 +272,14 @@ pub(super) struct LandmarkSelection<'a> {
     pub(super) arrows: Vec<(f32, &'a AreaPoi, RimArrow)>,
 }
 
-/// The landmark selection (module doc). `marker`, the guard-directions POI, is appended after the
-/// DBC scan as the reference appends its static blip slot: it skips the candidacy gate but not the
-/// 694.444-yd cut, which the reference spares only for the corpse slot.
+/// The landmark selection (module doc). `marker`, the guard-directions POI, and `release`, the
+/// release graveyard's spirit-healer POI (`0x7f4a00`), are appended after the DBC scan as the
+/// reference appends its static blip slots: they skip the candidacy gate but not the 694.444-yd
+/// cut, which the reference spares only for the corpse slot.
 pub(super) fn select_landmarks<'a>(
     pois: impl Iterator<Item = &'a AreaPoi>,
     marker: Option<&'a AreaPoi>,
+    release: Option<&'a AreaPoi>,
     map_id: u32,
     wx: f32,
     wy: f32,
@@ -288,7 +290,8 @@ pub(super) fn select_landmarks<'a>(
     let candidates = pois
         .filter(|p| p.continent_id == map_id && p.flags & FLAG_CANDIDATE != 0)
         .map(|p| (p, RimArrow::Landmark))
-        .chain(marker.map(|m| (m, RimArrow::Guide)));
+        .chain(marker.map(|m| (m, RimArrow::Guide)))
+        .chain(release.map(|r| (r, RimArrow::Corpse)));
     for (p, art) in candidates {
         let d = ((p.pos[0] - wx).powi(2) + (p.pos[1] - wy).powi(2)).sqrt();
         if d / radius_yd <= BLIP_EDGE_RATIO {
@@ -345,6 +348,7 @@ pub(super) fn emit_landmarks(
     ctx: &BlipCtx,
     cat: Option<&AreaPoiCatalog>,
     marker: Option<&AreaPoi>,
+    release: Option<&AreaPoi>,
     map_id: u32,
     arrows: &RimArrowArt,
     poi_icons: Option<&PoiAtlas>,
@@ -354,6 +358,7 @@ pub(super) fn emit_landmarks(
     let sel = select_landmarks(
         cat.into_iter().flat_map(|c| c.rows().map(|(_, p)| p)),
         marker,
+        release,
         map_id,
         ctx.wx,
         ctx.wy,
@@ -641,7 +646,7 @@ mod tests {
             poi(3, 0x1d, 556.0, "Stormwind"),
             poi(3, 0x5, 601.0, "Goldshire"),
         ];
-        let sel = select_landmarks(rows.iter(), None, 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(rows.iter(), None, None, 0, 0.0, 0.0, 133.0);
         assert!(sel.icons.is_empty(), "no Flags&2 row is in range");
         let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
         assert_eq!(names, ["Stormwind", "Goldshire"]);
@@ -657,7 +662,7 @@ mod tests {
             poi(3, 1, 400.0, "city-mid"),
             poi(0, 1, 695.0, "beyond-rank"),
         ];
-        let sel = select_landmarks(rows.iter(), None, 0, 0.0, 0.0, 100.0);
+        let sel = select_landmarks(rows.iter(), None, None, 0, 0.0, 0.0, 100.0);
         let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
         assert_eq!(names, ["minor-near", "minor-far", "city-near"]);
     }
@@ -671,7 +676,7 @@ mod tests {
             poi(3, 0x5, 400.0, "Northshire Abbey"),
         ];
         let marker = poi(0, 0x63, 500.0, "Stormwind Warrior Trainer");
-        let sel = select_landmarks(cities.iter(), Some(&marker), 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(cities.iter(), Some(&marker), None, 0, 0.0, 0.0, 133.0);
         let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
         assert_eq!(
             names,
@@ -690,7 +695,7 @@ mod tests {
     #[test]
     fn the_guard_marker_draws_its_icon_in_range() {
         let marker = poi(0, 0x63, 50.0, "The Bank");
-        let sel = select_landmarks(std::iter::empty(), Some(&marker), 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(std::iter::empty(), Some(&marker), None, 0, 0.0, 0.0, 133.0);
         assert!(sel.arrows.is_empty(), "in range — no rim arrow");
         assert_eq!(sel.icons.len(), 1);
         assert_eq!(sel.icons[0].icon, 6);
@@ -701,7 +706,7 @@ mod tests {
     fn the_guard_marker_skips_the_candidacy_filter() {
         let mut marker = poi(0, 0, 300.0, "The Inn"); // Flags bit 0 clear: a DBC row would drop
         marker.continent_id = 571; // and a continent that isn't the displayed one
-        let sel = select_landmarks(std::iter::empty(), Some(&marker), 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(std::iter::empty(), Some(&marker), None, 0, 0.0, 0.0, 133.0);
         assert_eq!(sel.arrows.len(), 1, "appended unconditionally");
     }
 
@@ -711,7 +716,7 @@ mod tests {
         tower.icon = 9;
         let plain = poi(3, 0x5, 50.0, "Northshire Abbey");
         let rows = [tower, plain];
-        let sel = select_landmarks(rows.iter(), None, 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(rows.iter(), None, None, 0, 0.0, 0.0, 133.0);
         assert_eq!(sel.arrows.len(), 0);
         assert_eq!(sel.icons.len(), 1, "only the Flags&2 tower draws in range");
     }

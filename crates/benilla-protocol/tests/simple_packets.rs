@@ -267,6 +267,7 @@ fn death_arc_family_parses_and_decodes() {
     body.extend_from_slice(&1666.54f32.to_le_bytes());
     body.extend_from_slice(&25.0f32.to_le_bytes());
     body.extend_from_slice(&36u32.to_le_bytes());
+    body.extend_from_slice(&0u32.to_le_bytes()); // no transport
     let pkt = messages::parse_server(opcode::MSG_CORPSE_QUERY, &body).unwrap();
     match decode(pkt).as_slice() {
         [SessionEvent::CorpseQuery {
@@ -274,6 +275,7 @@ fn death_arc_family_parses_and_decodes() {
             display_map,
             position,
             corpse_map,
+            transport: 0,
         }] => {
             assert!(found);
             assert_eq!(*display_map, 0);
@@ -287,6 +289,38 @@ fn death_arc_family_parses_and_decodes() {
     match decode(pkt).as_slice() {
         [SessionEvent::CorpseQuery { found: false, .. }] => {}
         other => panic!("corpse query not-found decode: {other:?}"),
+    }
+
+    let mut body = 0i32.to_le_bytes().to_vec();
+    for f in [-9339.1f32, 171.4, 61.6] {
+        body.extend_from_slice(&f.to_le_bytes());
+    }
+    let pkt = messages::parse_server(opcode::SMSG_DEATH_RELEASE_LOC, &body).unwrap();
+    match decode(pkt).as_slice() {
+        [SessionEvent::DeathReleaseLoc { map: 0, position }] => assert_eq!(position[1], 171.4),
+        other => panic!("death release loc decode: {other:?}"),
+    }
+    let pkt = messages::parse_server(opcode::SMSG_PRE_RESURRECT, &hx("012a")).unwrap();
+    match decode(pkt).as_slice() {
+        [SessionEvent::PreResurrect { guid: 0x2A }] => {}
+        other => panic!("pre-resurrect decode: {other:?}"),
+    }
+    let mut body = Vec::new();
+    for f in [1.0f32, 2.0, 3.0, 0.5] {
+        body.extend_from_slice(&f.to_le_bytes());
+    }
+    let pkt =
+        messages::parse_server(opcode::SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE, &body).unwrap();
+    match decode(pkt).as_slice() {
+        [SessionEvent::CorpseMapPosition { position, facing }] => {
+            assert_eq!((*position, *facing), ([1.0, 2.0, 3.0], 0.5));
+        }
+        other => panic!("corpse map position decode: {other:?}"),
+    }
+    let pkt = messages::parse_server(opcode::SMSG_CORPSE_NOT_IN_INSTANCE, &[]).unwrap();
+    match decode(pkt).as_slice() {
+        [SessionEvent::CorpseNotInInstance] => {}
+        other => panic!("corpse not in instance decode: {other:?}"),
     }
 
     let pkt = messages::parse_server(opcode::SMSG_CORPSE_RECLAIM_DELAY, &30_000u32.to_le_bytes())

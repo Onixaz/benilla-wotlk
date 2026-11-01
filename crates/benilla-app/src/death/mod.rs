@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use benilla_assets::coords::wow_to_bevy;
+use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_ui::script::{DeathAction, DeathUiState, ScriptValue, UiScript};
 
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfGuid, SelfPlayer};
@@ -19,11 +19,22 @@ pub(crate) mod net;
 pub(crate) struct CorpsePoint {
     /// The map to route toward; for a corpse inside an instance, the entrance's.
     pub(crate) display_map: i32,
-    /// The corpse, or the dungeon entrance standing in for it.
+    /// The corpse, or the dungeon entrance standing in for it, in the world: the answer's point,
+    /// carried by its transport when it has one ([`resolve_corpse_position`]).
     pub(crate) position: [f32; 3],
+    /// The answer's point as sent, transport-local when `transport` is set.
+    pub(crate) local: [f32; 3],
     /// The corpse's real map id, never adjusted.
-    #[allow(dead_code)] // for the map markers
     pub(crate) corpse_map: u32,
+    /// The low guid of the transport the corpse lies on, 0 for none.
+    pub(crate) transport: u32,
+}
+
+/// The graveyard a release goes to (`SMSG_DEATH_RELEASE_LOC`), in raw WoW coordinates.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ReleasePoint {
+    pub(crate) map: u32,
+    pub(crate) position: [f32; 3],
 }
 
 /// A pending resurrection offer (`SMSG_RESURRECT_REQUEST`), the RESURRECT popup's data.
@@ -65,6 +76,18 @@ pub(crate) struct DeathNet {
     /// is not built.
     #[allow(dead_code)]
     pub(crate) water_walk: bool,
+    /// The release graveyard, kept while not a ghost at arrival (`0x6e2e90`): the world map's
+    /// `GetDeathReleasePosition` and the minimap's spirit-healer POI (`0x51f690`).
+    pub(crate) release: Option<ReleasePoint>,
+    /// The corpse's transport in the world, `SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE`'s position
+    /// and facing (`0x512bd0`), read while the transport is not streamed.
+    pub(crate) corpse_transport_frame: Option<([f32; 3], f32)>,
+    /// When `CMSG_CORPSE_MAP_POSITION_QUERY` may go again, on the real clock: 30 s after a send,
+    /// cleared while the transport resolves (`0x51f430`).
+    pub(crate) corpse_map_query_at: Option<f64>,
+    /// A world-enter cascade the feed has not run yet; it clears the release point and re-asks the
+    /// corpse as `0x528010` does.
+    pub(crate) world_entered: bool,
 }
 
 impl DeathNet {
@@ -165,7 +188,7 @@ fn feed_death(
     >,
     self_guid: Res<SelfGuid>,
     player: Option<Res<crate::player::Player>>,
-    death_net: Res<DeathNet>,
+    mut death_net: ResMut<DeathNet>,
     // Real time: `reclaim_at` is stamped on `Time<Real>` by the net path.
     time: Res<Time<Real>>,
     mut feed: ResMut<DeathFeedState>,
@@ -248,7 +271,13 @@ fn feed_death(
     });
 
     // ── The world edges: the release window and the corpse asks, which a `/reload` must not
-    // repeat.
+    // repeat. The world-enter cascade clears the release point and re-asks the corpse
+    // (`0x528010`), which covers logging in a ghost.
+    if death_net.world_entered {
+        death_net.world_entered = false;
+        death_net.release = None;
+        update_corpse_location(ghost, &mut death_net, &net);
+    }
     let prev = feed.mirror.filter(|&(g, ..)| g == guid);
     feed.mirror = Some((guid, dead, ghost));
     match (prev, dead, ghost) {
@@ -260,21 +289,16 @@ fn feed_death(
         (Some((_, true, false)), d, g) if g || !d => {
             feed.died_at = None;
             if g {
-                // Now a ghost: ask where the corpse is.
-                let _ = net.0.send(ClientCommand::CorpseQuery);
+                // The ghost bit's watcher (`0x6df710`): drop the corpse and ask where it is.
+                update_corpse_location(true, &mut death_net, &net);
             }
         }
-        // Ghost to alive: reclaim, spirit healer or an accepted res.
+        // Ghost to alive: reclaim, spirit healer or an accepted res. The ghost bit's watcher
+        // drops the release point and the corpse, and asks nothing (`0x6df710`).
         (Some((_, _, true)), false, false) => {
             feed.died_at = None;
-            // The not-found answer drops the map markers. The reference sends nothing on this edge:
-            // its ghost-bit watcher clears the corpse cache, and it queries only while a ghost. The
-            // server's own push needs a looter (`Map.cpp:3617-3629`).
-            let _ = net.0.send(ClientCommand::CorpseQuery);
-        }
-        // Logging in a ghost: no edge, just the corpse ask.
-        (None, _, true) => {
-            let _ = net.0.send(ClientCommand::CorpseQuery);
+            death_net.release = None;
+            update_corpse_location(false, &mut death_net, &net);
         }
         _ => {}
     }
@@ -356,6 +380,134 @@ fn feed_death(
             _ => {}
         }
         memo.corpse_range = range;
+    }
+}
+
+/// `0x524a30`: drop the corpse point, and ask where the corpse is only while a ghost. The range
+/// verdict reads the cleared point next, so `CORPSE_OUT_OF_RANGE` fires as the reference's does.
+fn update_corpse_location(ghost: bool, death_net: &mut DeathNet, net: &NetCommands) {
+    death_net.corpse = None;
+    if ghost {
+        let _ = net.0.send(ClientCommand::CorpseQuery);
+    }
+}
+
+/// A corpse answer's transport guid: the low word under the MO_TRANSPORT high word, its sign bit
+/// spread as `0x523db0` spreads it.
+pub(crate) fn corpse_transport_guid(transport: u32) -> u64 {
+    let high = ((transport as i32) >> 31) as u32 | 0x1FC0_0000;
+    (u64::from(high) << 32) | u64::from(transport)
+}
+
+/// `0x51f430`: a corpse on a transport rides it. A streamed transport carries the local point by
+/// its own pose; else `CMSG_CORPSE_MAP_POSITION_QUERY` asks for the transport's place, at most
+/// every 30 s, and the last answer's position and facing carry the point.
+fn resolve_corpse_position(
+    mut death_net: ResMut<DeathNet>,
+    index: Res<crate::net::GuidIndex>,
+    transforms: Query<&Transform>,
+    net: Res<NetCommands>,
+    time: Res<Time<Real>>,
+) {
+    let Some(cp) = death_net.corpse.filter(|cp| cp.transport != 0) else {
+        return;
+    };
+    let pose = index
+        .0
+        .get(&corpse_transport_guid(cp.transport))
+        .and_then(|&e| transforms.get(e).ok());
+    let world = if let Some(t) = pose {
+        if death_net.corpse_map_query_at.is_some() {
+            death_net.corpse_map_query_at = None;
+        }
+        bevy_to_wow(t.translation + t.rotation * wow_to_bevy(cp.local))
+    } else {
+        let now = time.elapsed_secs_f64();
+        if death_net.corpse_map_query_at.is_none_or(|at| now >= at) {
+            let _ = net.0.send(ClientCommand::CorpseMapPositionQuery {
+                transport: cp.transport,
+            });
+            death_net.corpse_map_query_at = Some(now + 30.0);
+        }
+        transport_frame_point(cp.local, death_net.corpse_transport_frame)
+    };
+    if cp.position != world {
+        if let Some(cp) = death_net.corpse.as_mut() {
+            cp.position = world;
+        }
+    }
+}
+
+/// A transport-local point through the transport's world position and facing, `0x512bd0`'s
+/// matrix: a turn about Z, then the move. No answer yet is the identity.
+fn transport_frame_point(local: [f32; 3], frame: Option<([f32; 3], f32)>) -> [f32; 3] {
+    let ([ox, oy, oz], facing) = frame.unwrap_or(([0.0; 3], 0.0));
+    let (s, c) = facing.sin_cos();
+    let [x, y, z] = local;
+    [x * c - y * s + ox, x * s + y * c + oy, z + oz]
+}
+
+/// The release graveyard's minimap POI (`0x7f4a00`): `POIIcons` cell 8 at importance -1 with the
+/// in-range icon bit, named by `SPIRIT_HEALER_RELEASE_RED`. `0x51f690` places it only for the
+/// current map; here it is kept for the release map and drawn on it.
+#[derive(Resource, Default)]
+pub(crate) struct ReleasePoi {
+    from: Option<ReleasePoint>,
+    poi: Option<benilla_formats::AreaPoi>,
+}
+
+impl ReleasePoi {
+    /// The POI if it lies on `map_id`.
+    pub(crate) fn on_map(&self, map_id: u32) -> Option<&benilla_formats::AreaPoi> {
+        self.poi.as_ref().filter(|p| p.continent_id == map_id)
+    }
+}
+
+/// Rebuild [`ReleasePoi`] when the release point changes; waits for the VM, which holds its name.
+fn build_release_poi(
+    script: Option<NonSend<UiScript>>,
+    death_net: Res<DeathNet>,
+    mut release_poi: ResMut<ReleasePoi>,
+) {
+    if release_poi.from == death_net.release {
+        return;
+    }
+    let Some(script) = script else {
+        return;
+    };
+    let name = script
+        .lua()
+        .globals()
+        .get::<String>("SPIRIT_HEALER_RELEASE_RED")
+        .unwrap_or_default();
+    release_poi.from = death_net.release;
+    release_poi.poi = death_net.release.map(|r| benilla_formats::AreaPoi {
+        importance: u32::MAX, // -1, ahead of every landmark band
+        icon: 8,
+        icons: [8; 9],
+        faction_id: 0,
+        pos: [r.position[0], r.position[1], 0.0],
+        continent_id: r.map,
+        flags: 0x2,
+        area_id: 0,
+        name,
+        description: String::new(),
+        world_state_id: 0,
+        map_link: 0,
+    });
+    debug!(
+        "release POI: {:?}",
+        release_poi.poi.as_ref().map(|p| (p.continent_id, p.pos))
+    );
+}
+
+/// Note a world-enter cascade for [`feed_death`], which holds the descriptor it needs.
+fn note_world_enter(
+    mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
+    mut death_net: ResMut<DeathNet>,
+) {
+    if cascades.read().next().is_some() {
+        death_net.world_entered = true;
     }
 }
 
@@ -599,6 +751,7 @@ impl Plugin for DeathPlugin {
         net::register(app);
         app.init_resource::<DeathNet>()
             .init_resource::<DeathFeedState>()
+            .init_resource::<ReleasePoi>()
             .add_systems(
                 Update,
                 (
@@ -607,6 +760,16 @@ impl Plugin for DeathPlugin {
                     drive_death_look,
                     // Before the feed, so the frame a session ends carries no memory of it.
                     end_session_death_feed.before(feed_death),
+                    note_world_enter
+                        .after(crate::net::enter_world_on_self_create)
+                        .before(feed_death),
+                    // After the transport chain, so a corpse rides this frame's deck pose.
+                    resolve_corpse_position
+                        .in_set(UiFeed)
+                        .after(crate::transport::ground_deck_riders)
+                        .after(note_world_enter)
+                        .before(feed_death),
+                    build_release_poi.in_set(UiFeed).after(feed_death),
                 ),
             );
     }
@@ -723,6 +886,133 @@ mod tests {
             feed.died_at.is_none(),
             "the release window is the dead session's, and re-arms at the next login"
         );
+    }
+}
+
+#[cfg(test)]
+mod corpse_tests {
+    use bevy::ecs::system::RunSystemOnce;
+
+    use super::*;
+
+    const BOAT: u32 = 0x10;
+
+    fn corpse_on(transport: u32, local: [f32; 3]) -> CorpsePoint {
+        CorpsePoint {
+            display_map: 0,
+            position: local,
+            local,
+            corpse_map: 0,
+            transport,
+        }
+    }
+
+    fn app(cp: CorpsePoint) -> (App, crossbeam_channel::Receiver<ClientCommand>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.insert_resource(NetCommands(tx))
+            .insert_resource(DeathNet {
+                corpse: Some(cp),
+                ..default()
+            })
+            .init_resource::<crate::net::GuidIndex>()
+            .init_resource::<Time<Real>>();
+        (app, rx)
+    }
+
+    fn resolved(app: &App) -> [f32; 3] {
+        app.world().resource::<DeathNet>().corpse.unwrap().position
+    }
+
+    /// `0x523db0` puts the low word under the MO_TRANSPORT high word.
+    #[test]
+    fn the_transport_guid_is_the_mo_transport_high_word() {
+        assert_eq!(corpse_transport_guid(0x10), 0x1FC0_0000_0000_0010);
+        assert_eq!(corpse_transport_guid(0x8000_0001), 0xFFFF_FFFF_8000_0001);
+    }
+
+    /// `0x512bd0`'s matrix turns the local point about Z by the facing, then moves it.
+    #[test]
+    fn the_answer_frame_turns_then_moves_the_local_point() {
+        assert_eq!(
+            transport_frame_point([1.0, 2.0, 3.0], None),
+            [1.0, 2.0, 3.0]
+        );
+        let p = transport_frame_point(
+            [1.0, 0.0, 2.0],
+            Some(([100.0, 200.0, 10.0], std::f32::consts::FRAC_PI_2)),
+        );
+        assert!((p[0] - 100.0).abs() < 1e-4 && (p[1] - 201.0).abs() < 1e-4);
+        assert_eq!(p[2], 12.0);
+    }
+
+    /// An unstreamed transport is asked for once per 30 s, and the answer carries the point.
+    #[test]
+    fn an_unstreamed_transport_is_asked_for_and_its_answer_carries_the_corpse() {
+        let (mut app, rx) = app(corpse_on(BOAT, [1.0, 0.0, 0.0]));
+        app.world_mut()
+            .run_system_once(resolve_corpse_position)
+            .unwrap();
+        app.world_mut()
+            .run_system_once(resolve_corpse_position)
+            .unwrap();
+        let asks: Vec<_> = rx.try_iter().collect();
+        assert!(
+            matches!(
+                asks.as_slice(),
+                [ClientCommand::CorpseMapPositionQuery { transport: BOAT }]
+            ),
+            "one ask in the throttle window: {asks:?}"
+        );
+        app.world_mut()
+            .resource_mut::<DeathNet>()
+            .corpse_transport_frame = Some(([50.0, 60.0, 5.0], 0.0));
+        app.world_mut()
+            .run_system_once(resolve_corpse_position)
+            .unwrap();
+        assert_eq!(resolved(&app), [51.0, 60.0, 5.0]);
+    }
+
+    /// A streamed transport carries the local point by its own pose, and asks nothing.
+    #[test]
+    fn a_streamed_transport_carries_the_corpse_by_its_pose() {
+        let (mut app, rx) = app(corpse_on(BOAT, [1.0, 2.0, 3.0]));
+        let boat = app
+            .world_mut()
+            .spawn(Transform::from_translation(wow_to_bevy([
+                100.0, 200.0, 10.0,
+            ])))
+            .id();
+        app.world_mut()
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(corpse_transport_guid(BOAT), boat);
+        app.world_mut()
+            .run_system_once(resolve_corpse_position)
+            .unwrap();
+        let p = resolved(&app);
+        assert!((p[0] - 101.0).abs() < 1e-3 && (p[1] - 202.0).abs() < 1e-3);
+        assert!((p[2] - 13.0).abs() < 1e-3);
+        assert!(rx.try_iter().next().is_none());
+    }
+
+    /// `0x524a30`: the corpse drops either way; only a ghost asks again.
+    #[test]
+    fn the_corpse_update_asks_only_while_a_ghost() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let net = NetCommands(tx);
+        let mut death_net = DeathNet {
+            corpse: Some(corpse_on(0, [1.0, 2.0, 3.0])),
+            ..default()
+        };
+        update_corpse_location(false, &mut death_net, &net);
+        assert!(death_net.corpse.is_none());
+        assert!(rx.try_iter().next().is_none());
+        update_corpse_location(true, &mut death_net, &net);
+        assert!(matches!(
+            rx.try_iter().collect::<Vec<_>>().as_slice(),
+            [ClientCommand::CorpseQuery]
+        ));
     }
 }
 

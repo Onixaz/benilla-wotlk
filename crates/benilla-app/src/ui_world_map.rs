@@ -443,6 +443,9 @@ fn feed_world_map(
                 cp.position[1],
             )
         }),
+        release: death_net
+            .release
+            .map(|r| point(r.map, r.position[0], r.position[1])),
         party: group.party_slots().map(member).collect(),
         raid,
     });
