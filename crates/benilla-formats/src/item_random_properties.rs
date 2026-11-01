@@ -38,6 +38,8 @@ pub struct RandomProperty {
 /// `ItemRandomProperties.dbc` keyed by id, for the name suffix and the tooltip's enchants.
 pub struct RandomPropertyCatalog {
     rows: HashMap<u32, RandomProperty>,
+    /// `ItemRandomSuffix.dbc`'s enUS names by row, the names a negative id takes.
+    suffixes: HashMap<u32, String>,
 }
 
 impl RandomPropertyCatalog {
@@ -47,13 +49,33 @@ impl RandomPropertyCatalog {
         (id > 0).then(|| self.rows.get(&(id as u32)))?
     }
 
+    /// The suffix a random-property id names (`0x706d70`): a positive id's `ItemRandomProperties`
+    /// row, a negative id's `ItemRandomSuffix` row by its magnitude. A negative id always takes the
+    /// suffix form, an empty suffix for a missing row; `None` is the plain name.
+    pub fn suffix(&self, id: i32) -> Option<&str> {
+        match id {
+            0 => None,
+            1.. => self.get(id).map(|r| r.suffix.as_str()),
+            _ => Some(
+                self.suffixes
+                    .get(&id.unsigned_abs())
+                    .map_or("", String::as_str),
+            ),
+        }
+    }
+
     /// The display name as the reference builds it: `ITEM_SUFFIX_TEMPLATE` (`"%s %s"`) for a
-    /// resolved suffix, else the plain name.
+    /// suffix, else the plain name.
     pub fn suffixed_name(&self, name: &str, id: i32) -> String {
-        match self.get(id) {
-            Some(row) => format!("{name} {}", row.suffix),
+        match self.suffix(id) {
+            Some(suffix) => format!("{name} {suffix}"),
             None => name.to_string(),
         }
+    }
+
+    /// Every random suffix as `(row, name)`, for the whole-table push to the engine.
+    pub fn iter_suffixes(&self) -> impl Iterator<Item = (u32, &str)> + '_ {
+        self.suffixes.iter().map(|(&id, n)| (id, n.as_str()))
     }
 
     /// Every row as `(id, row)`, for the whole-table push to the engine.
@@ -63,7 +85,10 @@ impl RandomPropertyCatalog {
 
     /// A catalog from explicit rows, for tests and fixtures.
     pub fn from_rows(rows: HashMap<u32, RandomProperty>) -> Self {
-        RandomPropertyCatalog { rows }
+        RandomPropertyCatalog {
+            rows,
+            suffixes: HashMap::new(),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -116,11 +141,65 @@ pub fn load_random_property_catalog(chain: &mut Chain) -> Result<RandomPropertyC
         }
         rows.insert(id, RandomProperty { suffix, enchants });
     }
-    Ok(RandomPropertyCatalog { rows })
+    Ok(RandomPropertyCatalog {
+        rows,
+        suffixes: load_suffix_names(chain),
+    })
+}
+
+const ITEM_RANDOM_SUFFIX: &str = "DBFilesClient\\ItemRandomSuffix.dbc";
+
+/// `ItemRandomSuffix.dbc`: 29 columns, 116 bytes: the id, the 17-column name, the internal name,
+/// five enchants and five allocation shares.
+pub(crate) fn item_random_suffix_schema() -> Schema {
+    let mut s = Schema::new("ItemRandomSuffix");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    for i in 0..16 {
+        s.add_field(SchemaField::new(format!("Name{i}"), FieldType::String));
+    }
+    s.add_field(SchemaField::new("NameFlags", FieldType::UInt32));
+    s.add_field(SchemaField::new("InternalName", FieldType::String));
+    for group in ["Enchantment", "AllocationPct"] {
+        for i in 0..RANDOM_PROPERTY_SLOTS {
+            s.add_field(SchemaField::new(format!("{group}{i}"), FieldType::UInt32));
+        }
+    }
+    s
+}
+
+/// The suffix names by row; an unreadable file names none, so a negative id reads its suffix empty.
+fn load_suffix_names(chain: &mut Chain) -> HashMap<u32, String> {
+    let Ok(bytes) = chain.read_file(ITEM_RANDOM_SUFFIX) else {
+        return HashMap::new();
+    };
+    let Ok(rs) = parse(&bytes, item_random_suffix_schema(), "ItemRandomSuffix") else {
+        return HashMap::new();
+    };
+    rs.records()
+        .iter()
+        .filter_map(|r| Some((u32_at(r, 0)?, str_at(&rs, r, 1)?)))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
+
+    /// A negative id names its `ItemRandomSuffix` row by magnitude: -5 is "of the Monkey".
+    #[test]
+    fn a_negative_id_takes_its_random_suffix() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let cat = load_random_property_catalog(&mut chain).expect("load");
+        assert_eq!(cat.suffix(-5), Some("of the Monkey"));
+        assert_eq!(cat.suffixed_name("Blade", -5), "Blade of the Monkey");
+        assert_eq!(
+            cat.suffix(-99_999),
+            Some(""),
+            "a missing row still takes the suffix form"
+        );
+        assert_eq!(cat.suffix(0), None);
+    }
+
     use super::*;
 
     #[test]
@@ -141,8 +220,9 @@ mod tests {
             cat.suffixed_name("Chipped Claw", 5),
             "Chipped Claw of Intellect"
         );
-        // The formatter's plain-name exit: 0, negative, and an id past the table.
-        for id in [0, -1, 999_999] {
+        // The formatter's plain-name exit: 0 and a positive id past the table; a negative id always
+        // takes the suffix form.
+        for id in [0, 999_999] {
             assert_eq!(cat.suffixed_name("Chipped Claw", id), "Chipped Claw");
         }
     }

@@ -120,6 +120,7 @@ tables! {
         "ItemGroupSounds" => item_sounds::item_group_sounds_schema(),
         "ItemPetFood" => creature_families::food_schema(),
         "ItemRandomProperties" => item_random_properties::item_random_properties_schema(),
+        "ItemRandomSuffix" => item_random_properties::item_random_suffix_schema(),
         "ItemSet" => itemsets::item_set_schema(),
         "ItemSubClass" => itemsubclass::item_sub_class_schema(),
         "ItemSubClassMask" => itemsubclass::item_sub_class_mask_schema(),

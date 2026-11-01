@@ -158,7 +158,7 @@ pub use item_sounds::{load_item_group_sounds, ItemGesture, ItemGroupSoundsCatalo
 mod item_visuals;
 pub use item_visuals::{
     load_enchant_catalog, load_item_visual_catalog, EnchantCatalog, EnchantCondition,
-    EnchantConditionTest, ItemVisualCatalog, ITEM_VISUAL_SLOTS,
+    EnchantConditionTest, EnchantRequirement, ItemVisualCatalog, ITEM_VISUAL_SLOTS,
 };
 mod item_random_properties;
 pub use item_random_properties::{

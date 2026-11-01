@@ -44,7 +44,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "#239 unique-equipped limits: GetItemUniqueness",
     ),
     ("ItemPurchaseGroup", "#239 merchant purchase groups"),
-    ("ItemRandomSuffix", "#239 random suffix item names"),
     ("LoadingScreenTaxiSplines", "#243 the taxi loading screen"),
     ("MailTemplate", "#245 templated mail text: GetInboxText"),
     ("Movie", "#130 movies"),
