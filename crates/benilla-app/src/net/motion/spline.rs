@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
-use benilla_protocol::{CreateSpline, EntityKind};
+use benilla_protocol::{CreateSpline, EntityKind, SplineArc};
 use bevy::prelude::*;
 use bevy::tasks::{ComputeTaskPool, ParallelSliceMut};
 use bevy::utils::Parallel;
@@ -37,6 +37,12 @@ pub(crate) struct Spline {
     /// The transport of a deck path (`SMSG_MONSTER_MOVE_TRANSPORT`), whose points are deck-local:
     /// sampled into the rider's [`crate::transport::TransportRider`] pose, never terrain-clamped.
     pub(crate) deck: Option<u64>,
+    /// `SPLINEFLAG_PARABOLIC`: the jump arc over the path, airborne from its effect start
+    /// (`0x98ca00`), off the terrain and in the Fall or Jump special.
+    pub(crate) arc: Option<SplineArc>,
+    /// `SPLINEFLAG_ORIENTATION_FIXED` (`0x4000`): the facing is not taken from the path tangent
+    /// (`0x98cbd8`), so a knockback flies backwards.
+    pub(crate) facing_fixed: bool,
 }
 
 /// The id of a spline the server ended with a stop, owed in `CMSG_MOVE_SPLINE_DONE`. vmangos arms
@@ -59,6 +65,38 @@ impl Spline {
             })
             .sum();
         length / self.duration.as_secs_f32().max(1e-3)
+    }
+
+    /// The arc's height over the path at `now` (`0x987d20`): `(T − s)·a/2·e −
+    /// a/2·e²`, `e` the seconds past the effect start `s`, zero outside it.
+    fn arc_height(&self, now: Instant) -> f32 {
+        let Some((e, arc)) = self.arc_elapsed(now) else {
+            return 0.0;
+        };
+        let a = arc.vertical_acceleration;
+        (self.arc_span(arc) * a * 0.5 - 0.5 * a * e) * e
+    }
+
+    /// The seconds the arc has flown at `now`, while it flies: past its effect start, before the
+    /// path's end.
+    fn arc_elapsed(&self, now: Instant) -> Option<(f32, SplineArc)> {
+        let arc = self.arc?;
+        let t = now.saturating_duration_since(self.start);
+        let start = Duration::from_millis(u64::from(arc.effect_start_ms));
+        (t > start && t < self.duration).then(|| ((t - start).as_secs_f32(), arc))
+    }
+
+    /// The arc's flight time `T − s` in seconds.
+    fn arc_span(&self, arc: SplineArc) -> f32 {
+        self.duration.as_secs_f32() - arc.effect_start_ms as f32 * 0.001
+    }
+
+    /// The vertical speed (yd/s, up) while the arc flies, else `None`: the reference's in-air bit
+    /// (`0x6e96c0`), which keeps the unit falling for the animation and off the terrain.
+    pub(crate) fn airborne(&self, now: Instant) -> Option<f32> {
+        let (e, arc) = self.arc_elapsed(now)?;
+        let a = arc.vertical_acceleration;
+        Some(self.arc_span(arc) * a * 0.5 - a * e)
     }
 
     /// Elapsed over duration, clamped to `0..=1`; the inspector's motion line reads it.
@@ -112,7 +150,8 @@ impl Spline {
                     catmull_rom(pts, i, t)
                 };
                 let (dx, dy, dz) = (dir[0], dir[1], dir[2]);
-                let facing = (dx * dx + dy * dy > 1e-6).then(|| dy.atan2(dx));
+                let facing = (!self.facing_fixed && dx * dx + dy * dy > 1e-6).then(|| dy.atan2(dx));
+                let pos = [pos[0], pos[1], pos[2] + self.arc_height(now)];
                 let dlen = (dx * dx + dy * dy + dz * dz).sqrt();
                 let pitch = if dlen > f32::EPSILON {
                     (dz / dlen).clamp(-1.0, 1.0).asin()
@@ -189,6 +228,8 @@ pub(in crate::net) fn monster_move_spline(
     flying: bool,
     run_mode: bool,
     deck: Option<u64>,
+    arc: Option<SplineArc>,
+    facing_fixed: bool,
 ) -> Option<Spline> {
     if stop || duration_ms == 0 || path.len() < 2 {
         return None;
@@ -203,6 +244,8 @@ pub(in crate::net) fn monster_move_spline(
         grounded: !flying,
         run_mode,
         deck,
+        arc,
+        facing_fixed,
     })
 }
 
@@ -230,6 +273,8 @@ pub(in crate::net) fn create_spline(spline: CreateSpline) -> Option<Spline> {
         run_mode: spline.run_mode,
         // The create block's spline tail names no transport; its path is in world coordinates.
         deck: None,
+        arc: spline.arc,
+        facing_fixed: spline.facing_fixed,
     })
 }
 
@@ -269,13 +314,15 @@ pub(in crate::net) fn trace_create_spline(guid: u64, spline: Option<&CreateSplin
 }
 
 /// One `mmv` trace line per `SMSG_MONSTER_MOVE`: the jump to the new path's start, `xy` the
-/// desync and `z` only our terrain against the wire's.
+/// desync and `z` only our terrain against the wire's; `arc=` a parabola's acceleration.
 pub(in crate::net) fn trace_move_snap(
     guid: u64,
     from: Option<[f32; 3]>,
     start: [f32; 3],
     stop: bool,
     duration_ms: u32,
+    arc: Option<SplineArc>,
+    facing_fixed: bool,
 ) {
     if !benilla_assets::trace::enabled() {
         return;
@@ -287,11 +334,16 @@ pub(in crate::net) fn trace_move_snap(
     benilla_assets::trace::line(
         "mmv",
         &format!(
-            "{guid:#x} {snap} start=[{:.2},{:.2},{:.2}] dur={duration_ms}{}",
+            "{guid:#x} {snap} start=[{:.2},{:.2},{:.2}] dur={duration_ms}{}{}{}",
             start[0],
             start[1],
             start[2],
             if stop { " stop" } else { "" },
+            arc.map_or(String::new(), |a| format!(
+                " arc={:.2}@{}",
+                a.vertical_acceleration, a.effect_start_ms
+            )),
+            if facing_fixed { " fixed" } else { "" },
         ),
     );
 }
@@ -683,7 +735,11 @@ fn clamp_gate(row: &ClampRow, epoch: u64, legacy: bool) -> ClampGate {
     }
     // A flying path is authoritative on Z; a deck path has no terrain under the deck and a
     // deck-local wire Z; in liquid the wire Z is the creature's swim depth.
-    if spline.is_some_and(|s| !s.grounded || s.deck.is_some()) || *swimming {
+    // An arc in flight keeps its own Z too (`0x75ee00`).
+    let now = Instant::now();
+    if spline.is_some_and(|s| !s.grounded || s.deck.is_some() || s.airborne(now).is_some())
+        || *swimming
+    {
         return ClampGate::Skip;
     }
     // The cast gate: same XZ, same collider epoch, same modes, and our own answer still the Y
@@ -1384,6 +1440,8 @@ mod tests {
     fn spline_at(points: Vec<[f32; 3]>, grounded: bool, frac: f32) -> (Spline, Instant) {
         let spline = Spline {
             deck: None,
+            arc: None,
+            facing_fixed: false,
             points,
             start: Instant::now() - Duration::from_secs_f32(10.0 * frac),
             duration: Duration::from_secs(10),
@@ -1393,6 +1451,46 @@ mod tests {
         };
         let now = Instant::now();
         (spline, now)
+    }
+
+    /// A knockback (`MoveKnockbackFrom`: 2 yd high over 10 s, `a = 8h/T²`) arcs over the chord,
+    /// keeps its facing, and is airborne only while the arc flies.
+    #[test]
+    fn a_knockback_arc_rises_over_the_chord_and_keeps_its_facing() {
+        let knockback = |frac| {
+            let (mut s, now) = spline_at(vec![[0.0, 0.0, 0.0], [-10.0, 0.0, 0.0]], true, frac);
+            s.arc = Some(SplineArc {
+                vertical_acceleration: 2.0 * 8.0 / 100.0,
+                effect_start_ms: 0,
+            });
+            s.facing_fixed = true;
+            (s, now)
+        };
+        let (s, now) = knockback(0.5);
+        let (pos, facing, _) = s.sample(now);
+        assert!((pos[0] + 5.0).abs() < 0.05, "{pos:?}");
+        assert!((pos[2] - 2.0).abs() < 0.01, "the peak: {pos:?}");
+        assert_eq!(facing, None, "the facing is fixed, not the path's");
+        assert!(s.airborne(now).is_some_and(|vz| vz.abs() < 0.01));
+        let (s, now) = knockback(0.1);
+        assert!(s.airborne(now).is_some_and(|vz| vz > 0.5), "rising");
+        assert!(s.sample(now).0[2] > 0.5);
+        let (s, now) = knockback(1.0);
+        assert_eq!(s.airborne(now), None, "landed");
+        assert_eq!(s.sample(now).0[2], 0.0);
+    }
+
+    /// An arc's effect start keeps the path on the ground until it passes.
+    #[test]
+    fn an_arc_flies_only_after_its_effect_start() {
+        let (mut s, now) = spline_at(vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]], true, 0.2);
+        s.arc = Some(SplineArc {
+            vertical_acceleration: 1.0,
+            effect_start_ms: 5_000,
+        });
+        assert_eq!(s.airborne(now), None);
+        assert_eq!(s.sample(now).0[2], 0.0);
+        assert!(s.sample(now).1.is_some(), "facing along the path");
     }
 
     /// A ground path is a straight lerp: mid first leg of an L it sits on the chord, facing along.
@@ -1476,6 +1574,8 @@ mod tests {
             flying: false,
             cyclic: false,
             run_mode: true,
+            arc: None,
+            facing_fixed: false,
         })
         .expect("a live walk");
         let (pos, facing, _) = s.sample(Instant::now());
@@ -1498,6 +1598,8 @@ mod tests {
             flying: false,
             cyclic: false,
             run_mode: true,
+            arc: None,
+            facing_fixed: false,
         };
         let straight = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]];
         assert!(create_spline(spline(5_000, 5_000, straight.clone())).is_none());
@@ -1714,6 +1816,8 @@ mod server_moved_players {
     fn walking(app: &mut App, e: Entity) {
         app.world_mut().entity_mut(e).insert(Spline {
             deck: None,
+            arc: None,
+            facing_fixed: false,
             points: vec![RIM_A, RIM_B],
             start: Instant::now(),
             duration: Duration::from_secs(4),
@@ -1792,6 +1896,8 @@ mod server_moved_players {
         let (mut app, body) = hollow(EntityKind::Player);
         app.world_mut().entity_mut(body).insert(Spline {
             deck: None,
+            arc: None,
+            facing_fixed: false,
             points: vec![RIM_A, RIM_B],
             start: Instant::now(),
             duration: Duration::from_secs(4),
@@ -2113,6 +2219,8 @@ mod inside_a_hull {
     fn path(app: &mut App, e: Entity, id: u32, a: [f32; 3], b: [f32; 3], secs: u64) {
         app.world_mut().entity_mut(e).insert(Spline {
             deck: None,
+            arc: None,
+            facing_fixed: false,
             points: vec![a, b],
             start: Instant::now(),
             duration: Duration::from_secs(secs),

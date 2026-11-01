@@ -342,6 +342,8 @@ fn on_monster_move(In(ev): In<SessionEvent>, mut sc: Scene) {
         duration_ms,
         flying,
         run_mode,
+        arc,
+        facing_fixed,
     } = ev
     {
         let rooted = modes_of(guid, &sc.index, &sc.modes).rooted();
@@ -357,6 +359,8 @@ fn on_monster_move(In(ev): In<SessionEvent>, mut sc: Scene) {
             duration_ms,
             flying,
             run_mode,
+            arc,
+            facing_fixed,
             rooted,
             &mut sc.commands,
             &sc.index,
@@ -857,6 +861,8 @@ fn monster_move(
     duration_ms: u32,
     flying: bool,
     run_mode: bool,
+    arc: Option<benilla_protocol::SplineArc>,
+    facing_fixed: bool,
     rooted: bool,
     commands: &mut Commands,
     index: &GuidIndex,
@@ -875,6 +881,8 @@ fn monster_move(
             start,
             stop,
             duration_ms,
+            arc,
+            facing_fixed,
         );
         // Transport membership, settled before any pose is read, and above the root gate, which
         // refuses only the path. An `Angle` facing is deck-local (`MoveSplineInit.cpp:87`); a
@@ -976,6 +984,8 @@ fn monster_move(
             flying,
             run_mode,
             transport,
+            arc,
+            facing_fixed,
         ) {
             Some(spline) => {
                 commands.entity(e).insert(spline).remove::<SplineStopped>();
@@ -1526,6 +1536,8 @@ mod tests {
                             3000,
                             false,
                             true,
+                            None,
+                            false,
                             rooted,
                             &mut commands,
                             &index,
@@ -1583,6 +1595,8 @@ mod tests {
                         3000,
                         false,
                         true,
+                        None,
+                        false,
                         false,
                         &mut commands,
                         &index,
@@ -1631,6 +1645,8 @@ mod tests {
                         3000,
                         false,
                         true,
+                        None,
+                        false,
                         false,
                         &mut commands,
                         &index,

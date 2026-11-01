@@ -63,8 +63,9 @@ const JUMP_ARC_MIN_UP: f32 = 0.5;
 #[derive(Clone, Copy)]
 enum OneShotReq {
     Swing(u32),
-    /// The id, and whether it came through the emote player's armed-id test.
-    Emote(u16, bool),
+    /// The id, whether it came through the emote player's armed-id test, and whether the play
+    /// seam's Special remap applies ([`EmoteAnim::remap_special`]).
+    Emote(u16, bool, bool),
 }
 
 /// The live one-shot the combat fast path tests: the key bone's clip, else bone 0's.
@@ -395,10 +396,10 @@ pub(super) fn drive_animations(
         pending_slow.insert(s.0);
     }
     for e in emotes.read() {
-        pending
-            .entry(e.entity)
-            .or_default()
-            .push((OneShotReq::Emote(e.anim_id, e.via_player), e.seq));
+        pending.entry(e.entity).or_default().push((
+            OneShotReq::Emote(e.anim_id, e.via_player, e.remap_special),
+            e.seq,
+        ));
     }
     // A mounted rider's mount-set emotes go to the mount model; the rider keeps the request for its
     // own CLASS_A and nowhere routes. The emote player's armed test runs once, on the rider, ahead
@@ -412,7 +413,7 @@ pub(super) fn drive_animations(
             continue;
         }
         for &(req, seq) in reqs {
-            let OneShotReq::Emote(id, via_player) = req else {
+            let OneShotReq::Emote(id, via_player, remap) = req else {
                 continue;
             };
             if !route_mounted(id).mount {
@@ -423,7 +424,7 @@ pub(super) fn drive_animations(
                 .flatten()
                 .and_then(|u| armed_id(u.4, u.2, u.3, u.1));
             if armed != Some(id) {
-                to_mount.push((child.0, (OneShotReq::Emote(id, false), seq)));
+                to_mount.push((child.0, (OneShotReq::Emote(id, false, remap), seq)));
             }
         }
     }
@@ -929,21 +930,21 @@ fn drive_unit(
                         (id, None)
                     }
                     // The armed-id test compares the record's own AnimID, before the play
-                    // seam's unarmed remap.
-                    OneShotReq::Emote(id, via_player) => (id, via_player.then_some(id)),
+                    // seam's Special remap from the held hands.
+                    OneShotReq::Emote(id, via_player, remap) => {
+                        let w = wielded.copied().unwrap_or_default();
+                        let played = if remap {
+                            select::special_anim(id, w.armed_main(), w.armed_off())
+                        } else {
+                            id
+                        };
+                        (played, via_player.then_some(id))
+                    }
                 })
                 .collect()
         })
         .unwrap_or_default();
     requests.extend(defense.map(|id| (id, None)));
-    // At the play seam, Special1H/2H with both hands empty becomes SpecialUnarmed(118), for every
-    // request.
-    {
-        let w = wielded.copied().unwrap_or_default();
-        for (id, _) in &mut requests {
-            *id = select::unarmed_special(*id, w.armed_main(), w.armed_off());
-        }
-    }
     // The deferred cache (`+0xd60`): once no one-shot is live, the parked combat clip plays. Fresh
     // requests supersede it. Never mid-air: the read is past the airborne freeze, so the landing
     // play clears it.
@@ -1201,6 +1202,7 @@ fn drive_unit(
     }
 
     // ── The mode machine: the base track's decision.
+    let mode_before = drv.mode;
     mode::run(
         mode::Frame {
             entity,
@@ -1231,6 +1233,12 @@ fn drive_unit(
         &mut player,
         rng,
     );
+    if drv.mode != mode_before && benilla_assets::trace::enabled() {
+        benilla_assets::trace::line(
+            "fct",
+            &format!("anim mode unit={entity} {mode_before:?} -> {:?}", drv.mode),
+        );
+    }
 
     // ── The base slot's playback rate, written over whatever the mode machine settled on: the rate
     // write sits outside the selector. JumpLandRun 187 resolves to Run 5 on creature models, so a

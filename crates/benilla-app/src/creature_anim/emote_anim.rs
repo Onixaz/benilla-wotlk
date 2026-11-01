@@ -54,6 +54,7 @@ pub(super) fn emote_to_anim(
             anim_id: anim_id as u16,
             seq: play_seq.next(),
             via_player: true,
+            remap_special: true,
         });
     }
 }

@@ -454,6 +454,10 @@ impl KitPlay {
     };
 }
 
+/// Kit flags `0x4` and `0x10`, which become play flags `0x2` and `0x8` (`0x73b198`): either skips
+/// the Special remap from the held hands (`0x7386fc`).
+const KIT_RAW_SPECIAL: u32 = 0x4 | 0x10;
+
 fn play_kit(
     entity: Entity,
     spell_id: u32,
@@ -477,6 +481,7 @@ fn play_kit(
                 anim_id,
                 seq,
                 via_player: false,
+                remap_special: kit.flags & KIT_RAW_SPECIAL == 0,
             });
         }
     }

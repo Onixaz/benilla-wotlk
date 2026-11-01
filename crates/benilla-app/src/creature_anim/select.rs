@@ -530,14 +530,24 @@ pub(super) fn defense_anim(victim_state: u32, main: Option<(u8, u8)>) -> Option<
     }
 }
 
-/// The animation play's substitution: Special1H/2H (57/58) becomes SpecialUnarmed (118) when both
-/// hands are empty; a non-weapon in hand keeps the clip.
-pub(super) fn unarmed_special(id: u16, main: Option<(u8, u8)>, off: Option<(u8, u8)>) -> u16 {
-    if matches!(id, 57 | 58) && main.is_none() && off.is_none() {
-        118
-    } else {
-        id
+/// The animation play's Special remap (`0x7385c0`, `0x73870a`): Special1H/2H (57/58) becomes
+/// SpecialUnarmed (118) with both hands empty, Special2H with a two-handed mainhand and an empty
+/// offhand, else Special1H.
+pub(super) fn special_anim(id: u16, main: Option<(u8, u8)>, off: Option<(u8, u8)>) -> u16 {
+    if !matches!(id, 57 | 58) {
+        return id;
     }
+    match (main, off) {
+        (None, None) => 118,
+        (Some(m), None) if is_two_handed(m) => 58,
+        _ => 57,
+    }
+}
+
+/// A two-handed weapon (`0x714c80`, byte table `0x714cc0`): 2H axe, 2H mace, polearm, 2H sword,
+/// staff, 2H exotic, spear and fishing pole.
+fn is_two_handed((class, subclass): (u8, u8)) -> bool {
+    class == 2 && matches!(subclass, 1 | 5 | 6 | 8 | 10 | 12 | 17 | 20)
 }
 
 /// The melee swing one-shot ids, the only clips the whiff slow-down touches on the overlay.
@@ -864,6 +874,31 @@ pub(crate) fn unify(
     } else {
         0
     };
+    // A parabolic spline in flight falls (`0x6e96c0`): a knockback (fixed facing) enters Fall 40
+    // at once (`0x73eda7`), a jump JumpStart; its end stops the unit before the landing pick, so
+    // a knockback lands in JumpEnd 39 (`0x6eb0b0`, `0x73d383`).
+    if let Some(s) = spline.filter(|s| s.arc.is_some()) {
+        if let Some(vz) = s.airborne(std::time::Instant::now()) {
+            let far = if s.facing_fixed {
+                move_flags::FALLING_FAR
+            } else {
+                0
+            };
+            return MovementState {
+                vertical_speed: vz,
+                flags: granted | swim | move_flags::FALLING | far,
+                flying,
+                ..default()
+            };
+        }
+        if s.elapsed_frac() >= 1.0 {
+            return MovementState {
+                flags: granted | swim,
+                flying,
+                ..default()
+            };
+        }
+    }
     let s = spline.map(|s| s.speed()).filter(|s| *s > MOVING_EPSILON);
     MovementState {
         speed: s.unwrap_or(0.0),

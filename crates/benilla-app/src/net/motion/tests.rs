@@ -387,6 +387,8 @@ fn spline_interpolates_constant_speed_and_faces_travel() {
     let start = Instant::now();
     let s = Spline {
         deck: None,
+        arc: None,
+        facing_fixed: false,
         points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 0.0]],
         start,
         duration: Duration::from_secs(4),
@@ -427,6 +429,8 @@ fn spline_travel_pitch_is_the_segment_climb_angle() {
     let start = Instant::now();
     let s = Spline {
         deck: None,
+        arc: None,
+        facing_fixed: false,
         points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 10.0]],
         start,
         duration: Duration::from_secs(4),
@@ -450,8 +454,18 @@ fn monster_move_carries_every_waypoint() {
         [10.0, 10.0, 0.0],
         [10.0, 10.0, 5.0],
     ];
-    let s = monster_move_spline(path.clone(), 42, false, 2000, false, true, None)
-        .expect("a moving monster-move yields a spline");
+    let s = monster_move_spline(
+        path.clone(),
+        42,
+        false,
+        2000,
+        false,
+        true,
+        None,
+        None,
+        false,
+    )
+    .expect("a moving monster-move yields a spline");
     assert_eq!(
         s.points, path,
         "every waypoint survives, not just the endpoint"
@@ -518,6 +532,8 @@ fn monster_move_flying_spline_is_not_grounded() {
         true,
         true,
         None,
+        None,
+        false,
     )
     .expect("a flying monster-move still yields a spline");
     assert!(
@@ -536,7 +552,9 @@ fn monster_move_stop_clears_the_spline() {
             2000,
             false,
             true,
-            None
+            None,
+            None,
+            false,
         )
         .is_none(),
         "a Stop move snaps and clears, never builds a path"
@@ -553,7 +571,9 @@ fn monster_move_zero_duration_clears_the_spline() {
             0,
             false,
             true,
-            None
+            None,
+            None,
+            false,
         )
         .is_none(),
         "a zero-duration move would divide by ~0 when sampled; treat as stationary"
@@ -563,7 +583,18 @@ fn monster_move_zero_duration_clears_the_spline() {
 #[test]
 fn monster_move_without_a_travelable_path_clears_the_spline() {
     assert!(
-        monster_move_spline(vec![[1.0, 2.0, 3.0]], 0, false, 2000, false, true, None).is_none(),
+        monster_move_spline(
+            vec![[1.0, 2.0, 3.0]],
+            0,
+            false,
+            2000,
+            false,
+            true,
+            None,
+            None,
+            false
+        )
+        .is_none(),
         "a single point is nowhere to travel — no spline"
     );
 }

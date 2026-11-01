@@ -14,8 +14,9 @@ use crate::messages::{
     PetitionShowSignatures, PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept,
     QuestDetails, QuestGiverList, QuestOfferReward, QuestRequestItems, QuestShareMsg,
     QuestTemplate, SpellDamageLog, SpellEnergizeLog, SpellHealLog, SpellInstaKillLog,
-    SpellLogExecute, SpellLogMiss, SpellOutcomeLog, SpellRemoveLog, StabledPet, TaxiMask,
-    TradeStatus, TradeStatusExtended, TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
+    SpellLogExecute, SpellLogMiss, SpellOutcomeLog, SpellRemoveLog, SplineArc, StabledPet,
+    TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell, TransportPose, VendorItem,
+    WhoResults, XpGain,
 };
 
 /// Coarse entity classification, free of wire types, carried on [`SessionEvent::ObjectCreate`].
@@ -315,6 +316,10 @@ pub enum SessionEvent {
         flying: bool,
         /// `SPLINEFLAG_RUNMODE`; its absence forces `MOVEFLAG_WALK_MODE` on the moved unit.
         run_mode: bool,
+        /// `SPLINEFLAG_PARABOLIC`: a jump or a knockback's arc.
+        arc: Option<SplineArc>,
+        /// `SPLINEFLAG_ORIENTATION_FIXED`: the unit keeps its facing along the path.
+        facing_fixed: bool,
     },
     /// Same-map teleport (`MSG_MOVE_TELEPORT_ACK`): the app snaps our player and echoes the ack.
     Teleport {
