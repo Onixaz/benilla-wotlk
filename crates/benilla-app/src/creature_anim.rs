@@ -534,7 +534,7 @@ mod emote_queue;
 mod gesture;
 use emote_anim::emote_to_anim;
 pub(crate) use emote_anim::{local_play_eligible, LocalPlay};
-pub(crate) use emote_queue::SetEmoteQueue;
+pub(crate) use emote_queue::QueueNpcEmotes;
 pub(crate) use gesture::{select_gesture, Gesture, GestureQueue};
 
 /// The Bevy systems that execute the state machine `select` picks.
@@ -835,7 +835,7 @@ impl Plugin for CreatureAnimPlugin {
             .init_resource::<PlaySeq>()
             .init_resource::<gesture::GestureQueue>()
             .add_message::<EmoteAnim>()
-            .add_message::<SetEmoteQueue>()
+            .add_message::<QueueNpcEmotes>()
             .add_message::<BaseAnimRecompute>()
             .add_message::<MountFlourish>()
             .add_message::<WoundAnim>()

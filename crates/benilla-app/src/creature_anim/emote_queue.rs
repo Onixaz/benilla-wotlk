@@ -21,7 +21,7 @@ const SEQUENCE_GAP_MS: u64 = 500;
 
 /// The setter's ask: `(delay ms, Emotes.dbc id)` pairs for the unit `guid`, in wire order.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SetEmoteQueue {
+pub(crate) struct QueueNpcEmotes {
     pub(crate) guid: u64,
     pub(crate) emotes: Vec<(u32, u32)>,
 }
@@ -67,10 +67,10 @@ impl EmoteQueue {
     }
 }
 
-/// Each [`SetEmoteQueue`] onto its unit, replacing what was queued; a guid not streamed as a unit
+/// Each [`QueueNpcEmotes`] onto its unit, replacing what was queued; a guid not streamed as a unit
 /// or a player (the readers' type-mask 8 lookup) is dropped.
 pub(super) fn set_emote_queues(
-    mut asks: MessageReader<SetEmoteQueue>,
+    mut asks: MessageReader<QueueNpcEmotes>,
     mut commands: Commands,
     index: Res<GuidIndex>,
     kinds: Query<&NetEntity>,

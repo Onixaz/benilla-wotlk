@@ -8,7 +8,7 @@ use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
 use super::{QuestGiver, QuestLine, QuestLines};
-use crate::creature_anim::SetEmoteQueue;
+use crate::creature_anim::QueueNpcEmotes;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp};
 use crate::ui_action::UiError;
 use crate::ui_quest_log::QuestLog;
@@ -62,12 +62,12 @@ fn on_giver_status(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
 }
 
 /// The panel packets' emote writer; absent without the animation plugin.
-type EmoteOut<'w> = Option<MessageWriter<'w, SetEmoteQueue>>;
+type EmoteOut<'w> = Option<MessageWriter<'w, QueueNpcEmotes>>;
 
 /// The emote pairs a panel packet plays on its NPC: the greeting and progress readers queue their
 /// one pair (`0x6d0447`, `0x6d0a95`), the details reader its run unless a player shares it
 /// (`0x6d0740`), the reward reader its run (`0x6d0b8f`).
-fn panel_emotes(ev: &SessionEvent) -> Option<SetEmoteQueue> {
+fn panel_emotes(ev: &SessionEvent) -> Option<QueueNpcEmotes> {
     let (guid, emotes) = match ev {
         SessionEvent::QuestGreeting(l) => (l.npc, vec![(l.emote_delay, l.emote)]),
         SessionEvent::QuestDetail(d) if !benilla_protocol::guid::is_player(d.npc) => {
@@ -77,7 +77,7 @@ fn panel_emotes(ev: &SessionEvent) -> Option<SetEmoteQueue> {
         SessionEvent::QuestOffer(o) => (o.npc, o.emotes.clone()),
         _ => return None,
     };
-    Some(SetEmoteQueue { guid, emotes })
+    Some(QueueNpcEmotes { guid, emotes })
 }
 
 fn queue_panel_emotes(ev: &SessionEvent, out: &mut EmoteOut) {
