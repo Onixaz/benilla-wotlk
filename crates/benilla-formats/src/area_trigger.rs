@@ -192,14 +192,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_area_triggers_load_and_contain_their_own_centres() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_area_trigger_catalog(&mut chain).expect("load AreaTrigger");
-        assert_eq!(cat.len(), 432, "5875 ships 432 area triggers");
+        assert_eq!(cat.len(), 1220, "12340 ships 1220 area triggers");
 
-        // The Darnassus portal pair, 10-yd spheres on Kalimdor: vmangos's `areatrigger_teleport`
+        // The Darnassus portal pair, 10-yd spheres on Kalimdor: the server's `areatrigger_teleport`
         // sends 527 to (8785.79, 966.98, 30.20), trigger 542's position here, and 542 to 527's.
         let exit = *cat.get(527).expect("trigger 527 (Darnassus - Exit)");
         let entrance = *cat.get(542).expect("trigger 542 (Darnassus - Entrance)");
@@ -208,8 +207,13 @@ mod tests {
         assert!(entrance.contains([8799.0, 970.0, 30.0]), "{entrance:?}");
         assert!(!entrance.contains([8824.0, 970.0, 30.0]));
 
-        // Every volume contains its own centre, which a column shift breaks.
-        for t in cat.on_map(1) {
+        // Every volume contains its own centre, which a column shift breaks, but a box with a zero
+        // extent: 12340 ships 5049 on Kalimdor as all zeros, and the exclusive box test holds
+        // nothing, its centre included.
+        let degenerate = |t: &AreaTriggerRow| t.radius == 0.0 && t.box_size.contains(&0.0);
+        let empty = *cat.get(5049).expect("trigger 5049");
+        assert!(degenerate(&empty) && !empty.contains(empty.position));
+        for t in cat.on_map(1).iter().filter(|t| !degenerate(t)) {
             assert!(
                 t.contains(t.position),
                 "trigger {} does not contain its own centre: {t:?}",
@@ -224,6 +228,6 @@ mod tests {
         );
 
         assert!(cat.on_map(1).iter().all(|t| t.map_id == 1));
-        assert_eq!((cat.on_map(0).len(), cat.on_map(1).len()), (133, 121));
+        assert_eq!((cat.on_map(0).len(), cat.on_map(1).len()), (175, 182));
     }
 }

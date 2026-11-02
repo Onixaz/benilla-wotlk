@@ -183,9 +183,10 @@ pub fn load_emote_sound_catalog(chain: &mut Chain) -> Result<EmoteSoundCatalog> 
     let mut emote_flags = HashMap::with_capacity(rs.records().len());
     let mut spec_proc = HashMap::with_capacity(rs.records().len());
     let mut spec_proc_param = HashMap::with_capacity(rs.records().len());
-    // The client walks the rows from the last down with an else-if chain over the bits, so a row
-    // lands only in its first matching slot and a shared bit goes to the lowest index; iterating
-    // forward with the earlier row winning gives the same table.
+    // The client walks the rows from the last down with an else-if chain over the bits
+    // (`CacheEmoteRecords`, `0x7165d0`), so a row lands only in its first matching slot and a shared
+    // bit goes to the lowest index; iterating forward with the earlier row winning gives the same
+    // table.
     let mut gesture: [Option<u32>; GESTURE_FLAG_BITS.len()] = [None; GESTURE_FLAG_BITS.len()];
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
@@ -230,7 +231,6 @@ mod tests {
 
     /// The expected ids and anims are the table builds from the shipped data.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_five_gesture_slots_scan_to_the_shipped_rows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -246,15 +246,20 @@ mod tests {
             assert_eq!(cat.gesture(slot), Some(emote_id), "{what} slot -> emote id");
             assert_eq!(cat.anim(emote_id), Some(anim_id), "{what} emote -> AnimID");
         }
-        // One shipped row per bit, so the walk order cannot matter.
-        for bit in GESTURE_FLAG_BITS {
-            let carriers = cat
+        // Talk's bit is shared: 396, 412, 424 and 457 carry 0x8 too, and the backward walk leaves
+        // the earliest row in the slot.
+        let carriers = |bit: u32| {
+            let mut ids: Vec<u32> = cat
                 .emote_flags
                 .iter()
                 .filter(|(_, f)| *f & bit != 0)
-                .count();
-            assert_eq!(carriers, 1, "exactly one shipped row carries {bit:#x}");
-        }
+                .map(|(&id, _)| id)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        assert_eq!(carriers(0x08), [1, 396, 412, 424, 457]);
+        assert_eq!(carriers(0x100), [11, 439]);
     }
 
     #[test]

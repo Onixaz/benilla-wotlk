@@ -1,6 +1,6 @@
 //! `ItemGroupSounds.dbc`: an item's pickup, put-down and use sounds. A row is an id and four
 //! `SoundEntries` ids indexed by the client's gesture; no caller reads the fourth. An item reaches
-//! its group through `ItemDisplayInfo.field11`, and a 0 slot is silent.
+//! its group through `ItemDisplayInfo` column 12 (`GroupSoundIndex`), and a 0 slot is silent.
 
 use std::collections::HashMap;
 
@@ -79,7 +79,7 @@ mod tests {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_item_group_sounds(&mut chain).expect("load ItemGroupSounds");
-        assert_eq!(cat.len(), 24, "24 groups in build 5875");
+        assert_eq!(cat.len(), 24, "24 groups in build 12340");
         assert_eq!(cat.kit(1, ItemGesture::Pickup), Some(273));
         assert_eq!(cat.kit(1, ItemGesture::PutDown), Some(274));
         assert_eq!(cat.kit(1, ItemGesture::Use), Some(275));
@@ -90,7 +90,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_display_group_ids_all_resolve() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -106,7 +105,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(nonzero, 20513, "the nonzero field-11 count");
+        assert_eq!(nonzero, 40835, "the nonzero GroupSoundIndex count");
         assert_eq!(valid, nonzero, "every nonzero group id resolves");
     }
 }

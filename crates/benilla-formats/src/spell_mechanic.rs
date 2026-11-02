@@ -77,7 +77,6 @@ mod tests {
 
     /// Fear's `Mechanic` is 5, Frost Nova's `EffectMechanic[1]` 7, Polymorph's 17.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_spell_mechanic_names_the_crowd_control_rows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -85,11 +84,11 @@ mod tests {
 
         assert_eq!(cat.name(5), Some("fleeing"));
         assert_eq!(cat.name(7), Some("rooted"));
-        assert_eq!(cat.name(11), Some("ensnared"));
+        assert_eq!(cat.name(11), Some("snared"));
         assert_eq!(cat.name(12), Some("stunned"));
         assert_eq!(cat.name(17), Some("polymorphed"));
         assert_eq!(cat.name(0), None, "0 = no mechanic, and no line to fill");
         assert_eq!(cat.name(999), None);
-        assert_eq!(cat.len(), 27, "the 5875 file's full row count");
+        assert_eq!(cat.len(), 31, "the 12340 file's full row count");
     }
 }

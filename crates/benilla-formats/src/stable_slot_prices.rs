@@ -1,6 +1,6 @@
-//! `StableSlotPrices.dbc`: the copper price of each hunter stable slot, two rows (5 silver, 5 gold)
-//! with no sentinel tail, matching vmangos `MAX_PET_STABLES` (`Objects/Pet.h:37`) and the stock
-//! `NUM_PET_STABLE_SLOTS` (`PetStable.lua:1`). `CMSG_BUY_STABLE_SLOT` carries no index: the server
+//! `StableSlotPrices.dbc`: the copper price of each hunter stable slot, four rows in 12340 (5
+//! silver, 5, 50 and 150 gold) with no sentinel tail, matching the stock `NUM_PET_STABLE_SLOTS`
+//! (`PetStable.lua`). `CMSG_BUY_STABLE_SLOT` carries no index: the server
 //! buys `m_stableSlots + 1` itself (`NPCHandler.cpp:704-729`), so a row id is a slot number.
 
 use anyhow::{Context, Result};
@@ -16,8 +16,8 @@ const STABLE_SLOT_PRICES: &str = "DBFilesClient\\StableSlotPrices.dbc";
 pub struct StableSlotPrices(HashMap<u32, u32>);
 
 impl StableSlotPrices {
-    /// The price of slot `purchased_count + 1`; `None` once both are owned, where the stock UI
-    /// hides the purchase button (`PetStable.lua:196-199`).
+    /// The price of slot `purchased_count + 1`; `None` once all are owned, where the stock UI
+    /// hides the purchase button (`PetStable.lua`).
     pub fn next_slot_price(&self, purchased_count: u8) -> Option<u32> {
         self.0.get(&(u32::from(purchased_count) + 1)).copied()
     }
@@ -61,9 +61,9 @@ fn table_from(bytes: &[u8]) -> Result<StableSlotPrices> {
 mod tests {
     use super::*;
 
-    /// The shipped 37-byte file: a 20-byte header, two 8-byte records, a 1-byte string block.
+    /// The shipped 53-byte file: a 20-byte header, four 8-byte records, a 1-byte string block.
     fn synthesize() -> Vec<u8> {
-        let rows: &[[u32; 2]] = &[[1, 500], [2, 50_000]];
+        let rows: &[[u32; 2]] = &[[1, 500], [2, 50_000], [3, 500_000], [4, 1_500_000]];
         let mut dbc = Vec::new();
         dbc.extend_from_slice(b"WDBC");
         dbc.extend_from_slice(&(rows.len() as u32).to_le_bytes());
@@ -82,21 +82,22 @@ mod tests {
     #[test]
     fn the_shipped_ladder_prices_each_next_slot() {
         let t = table_from(&synthesize()).expect("parse");
-        assert_eq!(t.len(), 2, "5875 ships exactly two stable slots");
+        assert_eq!(t.len(), 4, "12340 ships exactly four stable slots");
         assert_eq!(t.next_slot_price(0), Some(500));
         assert_eq!(t.next_slot_price(1), Some(50_000));
-        assert_eq!(t.next_slot_price(2), None);
+        assert_eq!(t.next_slot_price(2), Some(500_000));
+        assert_eq!(t.next_slot_price(3), Some(1_500_000));
+        assert_eq!(t.next_slot_price(4), None);
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_golden_matches_the_installed_table() {
         let data = crate::wow_data_or_skip!();
         let mut chain = Chain::open(&data).expect("open patch chain");
         let real = load_stable_slot_prices(&mut chain).expect("load real StableSlotPrices.dbc");
         let golden = table_from(&synthesize()).expect("parse golden");
         assert_eq!(real.len(), golden.len());
-        for purchased in 0..3u8 {
+        for purchased in 0..5u8 {
             assert_eq!(
                 real.next_slot_price(purchased),
                 golden.next_slot_price(purchased),

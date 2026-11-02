@@ -69,9 +69,9 @@ struct DisplayRow {
     extended_id: u32,
     scale: f32,
     textures: [Option<String>; 3],
-    /// `BloodLevel` (field 10), a per-display `UnitBloodLevels` override; 0 names no row.
+    /// `BloodLevel` (field 11), a per-display `UnitBloodLevels` override; 0 names no row.
     blood_level: u32,
-    /// `SizeClass` (field 9, +0x24), the display's override, read signed: `−1` defers to the model.
+    /// `SizeClass` (field 10, +0x28), the display's override, read signed: `−1` defers to the model.
     size_class: i32,
     /// `CreatureModelAlpha` (field 5, +0x14), 0..=255: the `baseAlpha` of the reference's unit
     /// alpha product (× 1/255), which is a flat 1.0 for players.
@@ -354,8 +354,8 @@ impl CreatureCatalog {
     }
 }
 
-/// CreatureModelData.dbc: 16 fields in build 5875 (no `mountHeight`); 3.3.5a's further columns
-/// are unread.
+/// CreatureModelData.dbc: 28 fields in 12340; the first 16 are named, the rest read as raw words
+/// (`mountHeight`, the geo box, the scales and the missile collision).
 pub(crate) fn creature_model_data_schema(l: &dbc_layout::CreatureModelData) -> Schema {
     let mut s = Schema::new("CreatureModelData");
     for (name, ty) in [
@@ -384,7 +384,7 @@ pub(crate) fn creature_model_data_schema(l: &dbc_layout::CreatureModelData) -> S
     s
 }
 
-/// CreatureDisplayInfo.dbc: 12 fields in build 5875, 16 in 12340.
+/// CreatureDisplayInfo.dbc: 16 fields in 12340.
 pub(crate) fn creature_display_info_schema(l: &dbc_layout::CreatureDisplayInfo) -> Schema {
     let mut s = Schema::new("CreatureDisplayInfo");
     for (name, ty) in [
@@ -402,10 +402,10 @@ pub(crate) fn creature_display_info_schema(l: &dbc_layout::CreatureDisplayInfo) 
     }
     for i in s.fields.len()..l.fields {
         let name = match i {
-            // 5875 has no `PortraitTextureName` here: a signed size class, tested for -1.
+            // After `PortraitTextureName` at 9: a signed size class, tested for -1.
             _ if i == l.size_class => "SizeClass".into(),
             _ if i == l.blood_level => "BloodLevel".into(),
-            // Some maps label this BloodID, but its 5875 values (33..188) are NPC sound ids.
+            // Some maps label this BloodID, but its values are NPC sound ids.
             _ if i == l.npc_sound => "NPCSoundID".into(),
             _ if i == l.particle_color => "ParticleColorID".into(),
             _ => format!("c{i}"),
@@ -415,7 +415,7 @@ pub(crate) fn creature_display_info_schema(l: &dbc_layout::CreatureDisplayInfo) 
     s
 }
 
-/// CreatureDisplayInfoExtra.dbc: 19 fields, 76-byte records in 5875 (vmangos `DBCStructure.h`).
+/// CreatureDisplayInfoExtra.dbc: 21 fields, 84-byte records in 12340.
 pub(crate) fn creature_display_info_extra_schema(
     l: &dbc_layout::CreatureDisplayInfoExtra,
 ) -> Schema {
@@ -592,7 +592,6 @@ mod tests {
 
     /// `BloodID = −1` is a tier-2 miss, so 595 displays reach tier 3 and bleed red.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn blood_row_tiers_over_the_shipped_displays() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -620,15 +619,14 @@ mod tests {
         }
         assert_eq!(
             tiers,
-            [36, 9903, 595],
-            "tier 1 / tier 2 / tier 3 over the 10534 shipped displays"
+            [79, 22851, 1332],
+            "tier 1 / tier 2 / tier 3 over the 24262 shipped displays"
         );
         assert_eq!(tiers.iter().sum::<usize>(), cat.display.len());
     }
 
     /// Tier 3 is ordinary fauna, so its records base cannot mean no blood.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_tier_three_fallback_bleeds_red_on_ordinary_creatures() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -640,7 +638,6 @@ mod tests {
             r"Creature\Quillboar\QuillBoar.mdx",
             r"Creature\Crocodile\Crocodile.mdx",
             r"Creature\GnollMelee\GnollMelee.mdx",
-            r"Creature\MountainGiant\MountainGiant.mdx",
             r"Creature\NagaFemale\Siren.mdx",
             r"Creature\Troll\TrollMelee.mdx",
         ] {
@@ -679,7 +676,6 @@ mod tests {
     /// Nine models have two `CreatureModelData` rows that disagree about blood, eight with one side
     /// `−1`: the value is unfilled, which tier 3 handles.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_minus_one_blood_id_is_unfilled_data() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -700,12 +696,12 @@ mod tests {
         split.sort_unstable();
         assert_eq!(
             split.len(),
-            8,
+            48,
             "models whose duplicate rows disagree about blood, one of them −1: {split:?}"
         );
         assert!(
-            split.iter().any(|p| p.ends_with(r"murloc\babymurloc.mdx")),
-            "the Baby Murloc pair is the clearest case and must be among them: {split:?}"
+            split.iter().any(|p| p.ends_with(r"horse\horse.mdx")),
+            "the Horse pair (65 and 143) is the clearest case and must be among them: {split:?}"
         );
 
         // Within one creature family, one model says −1 and its siblings name a colour.
@@ -946,7 +942,6 @@ mod tests {
 
     /// The three arms: an override, a `−1` deferral and an agreeing row.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_size_class_column_resolves_its_three_arms() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -982,12 +977,11 @@ mod tests {
             );
             n += 1;
         }
-        assert_eq!(n, 10_534, "the whole shipped display table");
+        assert_eq!(n, 24_262, "the whole shipped display table");
     }
 
     /// Fields 11 and 12 are `CameraShakes.dbc` ids; 25 models, all heavy, carry a footstep shake.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_footstep_shake_columns_are_the_thumping_giants() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1015,7 +1009,7 @@ mod tests {
         assert_eq!(cat.footstep_shake(49), None, "HumanMale leaves no thump");
         assert_eq!(cat.death_thud_shake(49), None, "nor a thud");
 
-        // Every id a creature names lands on a row of the 24-row table.
+        // Every id a creature names lands on a row of the 78-row table.
         let shakes = crate::load_camera_shakes(&mut chain).expect("load CameraShakes.dbc");
         let mut footstep = 0;
         for (_, path, foot, thud) in cat.shaking_models() {
@@ -1027,7 +1021,7 @@ mod tests {
                 assert!(shakes.get(thud).is_some(), "{path} thud {thud} dangles");
             }
         }
-        assert_eq!(footstep, 25, "the shipped footstep-shake census");
+        assert_eq!(footstep, 67, "the shipped footstep-shake census");
     }
 
     #[test]
@@ -1050,7 +1044,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_breathless_models_are_the_ones_with_no_breath() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1058,8 +1051,8 @@ mod tests {
 
         assert_eq!(
             cat.models.values().filter(|m| m.flags & 0x2 != 0).count(),
-            99,
-            "the shipped census: 99 of {} models suppress breath",
+            246,
+            "the shipped census: 246 of {} models suppress breath",
             cat.models.len()
         );
         for (display_id, label) in [
@@ -1086,7 +1079,6 @@ mod tests {
 
     /// Every shipped model has `FoleyMaterialID` 0; a data file that grows one fails here.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn no_shipped_model_carries_a_foley() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1110,11 +1102,10 @@ mod tests {
             .values()
             .filter(|m| m.footstep_shake != 0)
             .count();
-        assert_eq!(shakers, 25, "footstep-shake rows (schema alignment guard)");
+        assert_eq!(shakers, 67, "footstep-shake rows (schema alignment guard)");
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn collision_height_is_the_m2_collision_box() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1124,9 +1115,9 @@ mod tests {
         let races: &[(u32, &str, f32)] = &[
             (49, "HumanMale", 2.031),
             (50, "HumanFemale", 1.913),
-            (51, "OrcMale", 2.361),
+            (51, "OrcMale", 2.031),
             (52, "OrcFemale", 2.051),
-            (53, "DwarfMale", 1.667),
+            (53, "DwarfMale", 1.607),
             (54, "DwarfFemale", 1.528),
             (55, "NightElfMale", 2.438),
             (56, "NightElfFemale", 2.250),
@@ -1135,9 +1126,9 @@ mod tests {
             (59, "TaurenMale", 1.653),
             (60, "TaurenFemale", 2.111),
             (1563, "GnomeMale", 1.056),
-            (1564, "GnomeFemale", 1.000),
-            (1478, "TrollMale", 2.083),
-            (1479, "TrollFemale", 1.839),
+            (1564, "GnomeFemale", 1.056),
+            (1478, "TrollMale", 2.031),
+            (1479, "TrollFemale", 2.427),
         ];
         for &(display_id, label, expect) in races {
             let m = cat
@@ -1195,10 +1186,9 @@ mod tests {
     }
 
     /// The prism comes from `UNIT_FIELD_NATIVEDISPLAYID`, so a druid in form keeps the druid's
-    /// depth lines, where the form's row would move the swim line up to 0.72 yd. A form scales
-    /// `SCALE_X` by 1.0 or 0.80 (vmangos `GetShapeshiftDisplayInfo`).
+    /// depth lines, where the form's row would move the swim line by up to 0.38 yd on 12340's
+    /// rows. Each form keeps the body's `SCALE_X`.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_shapeshift_moves_the_collision_prism_and_the_native_row_is_what_stops_it() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1210,16 +1200,15 @@ mod tests {
             col * scale_x.max(s)
         };
 
-        // (label, native display, form display, native SCALE_X, the form's scale factor)
-        let cases: &[(&str, u32, u32, f32, f32)] = &[
-            ("NElf M → cat", 55, 892, 1.0, 0.80),
-            ("NElf M → bear", 55, 2281, 1.0, 1.0),
-            ("Tauren M → moonkin", 59, 15375, 1.35, 1.0),
-            ("Tauren M → bear", 59, 2289, 1.35, 1.0),
+        // (label, native display, form display, SCALE_X)
+        let cases: &[(&str, u32, u32, f32)] = &[
+            ("NElf M → cat", 55, 892, 1.0),
+            ("NElf M → bear", 55, 2281, 1.0),
+            ("Tauren M → moonkin", 59, 15375, 1.35),
+            ("Tauren M → bear", 59, 2289, 1.35),
         ];
         let mut worst: f32 = 0.0;
-        for &(label, native, form, native_scale_x, factor) in cases {
-            let scale_x = native_scale_x * factor;
+        for &(label, native, form, scale_x) in cases {
             let (reference, ours_before) = (h(native, scale_x), h(form, scale_x));
             let swim_delta = 0.75 * (ours_before - reference);
             assert!(
@@ -1230,21 +1219,21 @@ mod tests {
             worst = worst.max(swim_delta.abs());
         }
         assert!(
-            (worst - 0.72).abs() < 0.02,
-            "worst swim-line divergence is {worst} yd, the doc says 0.72"
+            (worst - 0.38).abs() < 0.02,
+            "worst swim-line divergence is {worst} yd, the doc says 0.38"
         );
 
         // The sign flips with the form, so this is no constant offset.
-        assert!(h(892, 0.80) < h(55, 0.80), "NElf cat: form row is shorter");
+        assert!(h(892, 1.0) < h(55, 1.0), "NElf cat: form row is shorter");
         assert!(
             h(15375, 1.35) > h(59, 1.35),
             "Tauren moonkin: form row is taller"
         );
 
-        // The tauren bear value seen live: h = 2.083 × 1.35.
+        // The tauren bear's form row: h = 2.031 × 1.35.
         assert!(
-            (h(2289, 1.35) - 2.083 * 1.35).abs() < 5e-3,
-            "tauren bear form-derived h should reproduce the 2.812 seen live"
+            (h(2289, 1.35) - 2.031 * 1.35).abs() < 5e-3,
+            "tauren bear form-derived h is its 2.031 column at the body's scale"
         );
     }
 

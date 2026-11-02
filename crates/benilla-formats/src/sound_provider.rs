@@ -129,12 +129,11 @@ mod tests {
 
     /// PRESET_GENERIC (67) carries the published EAX SDK values; Underwater (11) cuts all highs.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_provider_table_decodes() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_sound_provider_catalog(&mut chain).expect("load providers");
-        assert_eq!(cat.len(), 38);
+        assert_eq!(cat.len(), 32, "12340 ships 32 providers");
 
         let generic = cat.get(67).expect("PRESET_GENERIC");
         assert_eq!(generic.name, "PRESET_GENERIC");
