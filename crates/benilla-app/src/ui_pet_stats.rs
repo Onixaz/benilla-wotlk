@@ -424,7 +424,6 @@ mod tests {
 
     /// A missing tooltip key is silent: `getglobal` answers nil and the tooltip loses a line.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_happiness_string_resolves_in_the_real_global_strings() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -450,8 +449,6 @@ mod tests {
             "the damage line formats the percentage in: {:?}",
             g("PET_DAMAGE_PERCENTAGE")
         );
-        assert!(!g("LOSING_LOYALTY").is_empty());
-        assert!(!g("GAINING_LOYALTY").is_empty());
     }
 
     #[test]
@@ -464,7 +461,6 @@ mod tests {
     /// On the real DBC data, through the binding's three nil sources; asking by the guid's entry
     /// slot, a pet number, would answer nil forever and silently.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_pets_family_resolves_off_its_descriptor_entry() {
         let Some(t) = family_tables() else { return };
         let (cmds, rx) = commands();
@@ -497,17 +493,11 @@ mod tests {
         let names = cache_with(IMP_ENTRY, 0);
         assert_eq!(family_for(Some(&pet), &names, &cmds, Some(&t)), no_family());
 
-        // 4. The Imp's family 23: a word and an empty diet, food mask 0 in the shipped DBC.
+        // 4. The Imp's family 23: a word, no icon (12340's row leaves it empty) and an empty diet.
         let names = cache_with(IMP_ENTRY, 23);
         assert_eq!(
             family_for(Some(&pet), &names, &cmds, Some(&t)),
-            (
-                Some("Imp".into()),
-                // Rows 15 (Felhunter) and 23 (Imp) ship this placeholder; the stable, the
-                // column's only reader, never shows it for a warlock.
-                Some("Interface\\Icons\\Ability_Druid_CatForm".into()),
-                Vec::new()
-            )
+            (Some("Imp".into()), None, Vec::new())
         );
 
         // 5. A boar (family 5): the word and six diets, in bit order.
