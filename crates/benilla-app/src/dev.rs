@@ -209,6 +209,10 @@ impl Plugin for DevProbesPlugin {
             if std::env::var("WOW_PROBE").as_deref() == Ok("crossing") {
                 app.add_plugins(crate::capture::ProbeCrossingPlugin);
             }
+            // `WOW_PROBE_INTERACT=<npc flag mask>`: right-clicks the nearest unit with the flag.
+            if std::env::var("WOW_PROBE_INTERACT").is_ok() {
+                app.add_plugins(crate::capture::ProbeInteractPlugin);
+            }
             // `WOW_PROBE=taxi`: flies Stormwind to Sentinel Hill on the real wire.
             if std::env::var("WOW_PROBE").as_deref() == Ok("taxi") {
                 app.add_plugins(crate::capture::ProbeTaxiPlugin);

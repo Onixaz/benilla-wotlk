@@ -135,12 +135,7 @@ fn a_pet_change_away_from_a_stable_raises_nothing() {
         .filter(|e| e.contains("PetStable"))
         .collect();
     assert!(stable.is_empty(), "runtime errors: {stable:#?}");
-    s.set_stable(Some(benilla_ui::script::StableState {
-        num_stable_slots: 0,
-        next_slot_cost: 0,
-        slots: Default::default(),
-        has_live_pet: false,
-    }));
+    s.set_stable(Some(benilla_ui::script::StableState::default()));
     assert_eq!(
         s.eval::<String>("local v = IsAtStableMaster() return type(v) .. ' ' .. tostring(v)")
             .unwrap(),

@@ -1011,8 +1011,8 @@ pub enum ServerPacket {
         error: u32,
     },
     /// `MSG_LIST_STABLED_PETS`: opens the stable unprompted and is its only refresh when we send
-    /// it. `num_stable_slots` is slots bought (0..=2); `pets` must be read by
-    /// [`StabledPet::slot`] (`0` = current), never by position, as the current pet may be absent.
+    /// it. `num_stable_slots` is slots bought (0..=4); `pets` is in wire order, the current pet
+    /// told by [`StabledPet::is_current`], and may lack it.
     ListStabledPets {
         npc: u64,
         num_stable_slots: u8,

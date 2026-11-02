@@ -46,31 +46,22 @@ fn stable_send_bodies_golden() {
     );
 }
 
-/// Appends one pet record in wire order; `wire_slot` is 1-based, unlike the decoded index.
-fn push_pet(
-    body: &mut Vec<u8>,
-    pet_number: u32,
-    entry: u32,
-    level: u32,
-    name: &str,
-    loyalty: u32,
-    wire_slot: u8,
-) {
+/// Appends one pet record in wire order (`0x5a1264`..`0x5a1290`).
+fn push_pet(body: &mut Vec<u8>, pet_number: u32, entry: u32, level: u32, name: &str, flags: u8) {
     body.extend_from_slice(&pet_number.to_le_bytes());
     body.extend_from_slice(&entry.to_le_bytes());
     body.extend_from_slice(&level.to_le_bytes());
     body.extend_from_slice(name.as_bytes());
     body.push(0);
-    body.extend_from_slice(&loyalty.to_le_bytes());
-    body.push(wire_slot);
+    body.push(flags);
 }
 
-fn list_body(num_stable_slots: u8, pets: &[(u32, u32, u32, &str, u32, u8)]) -> Vec<u8> {
+fn list_body(num_stable_slots: u8, pets: &[(u32, u32, u32, &str, u8)]) -> Vec<u8> {
     let mut body = NPC.to_le_bytes().to_vec();
     body.push(pets.len() as u8);
     body.push(num_stable_slots);
-    for &(n, e, l, name, loy, slot) in pets {
-        push_pet(&mut body, n, e, l, name, loy, slot);
+    for &(n, e, l, name, flags) in pets {
+        push_pet(&mut body, n, e, l, name, flags);
     }
     body
 }
@@ -86,24 +77,23 @@ fn parse_list(body: &[u8]) -> (u64, u8, Vec<StabledPet>) {
     }
 }
 
-/// Wire slots are 1-based (`SendStablePet` writes 1 for the current pet and `slot + 1` for a
-/// stabled one); decoded slots are 0-based.
+/// A 3.3.5a list as AzerothCore sends it: the current pet's row (flags 1) and stabled rows (flags
+/// 3), with no loyalty field. Every row reads whole, the last one too.
 #[test]
-fn a_full_stable_decodes_with_client_slot_indices() {
+fn a_full_stable_decodes_every_row_in_wire_order() {
     let body = list_body(
-        2,
+        4,
         &[
-            (7, 299, 41, "Rex", 6, 1),
-            (8, 1126, 38, "Bruiser", 4, 2),
-            (9, 883, 12, "Nibbles", 1, 3),
+            (7, 299, 41, "Rex", 1),
+            (8, 1126, 38, "Bruiser", 3),
+            (9, 883, 12, "Nibbles", 3),
+            (10, 3825, 70, "Ghost", 3),
         ],
     );
     let (npc, slots, pets) = parse_list(&body);
     assert_eq!(npc, NPC);
-    assert_eq!(slots, 2, "purchased slots, not occupied ones");
-    assert_eq!(pets.len(), 3);
-
-    // Wire 1 → client 0 (the current pet), wire 3 → client 2 (the second stable slot).
+    assert_eq!(slots, 4, "purchased slots, not occupied ones");
+    assert_eq!(pets.len(), 4);
     assert_eq!(
         pets[0],
         StabledPet {
@@ -111,30 +101,38 @@ fn a_full_stable_decodes_with_client_slot_indices() {
             creature_entry: 299,
             level: 41,
             name: "Rex".into(),
-            loyalty: 6,
-            slot: 0,
+            flags: 1,
         }
     );
-    assert_eq!(pets[1].slot, 1);
-    assert_eq!(pets[2].slot, 2);
+    assert!(pets[0].is_current());
+    assert!(pets[1..].iter().all(|p| !p.is_current()));
     // The name is a cstring mid-record; every later field depends on consuming it exactly.
-    assert_eq!(pets[2].name, "Nibbles");
-    assert_eq!((pets[2].loyalty, pets[2].creature_entry), (1, 883));
+    assert_eq!(
+        (
+            pets[3].pet_number,
+            pets[3].creature_entry,
+            pets[3].name.as_str()
+        ),
+        (10, 3825, "Ghost")
+    );
 }
 
-/// vmangos sends the slot-0 row only for a live or cached `HUNTER_PET`, so rows are read by slot,
-/// never by position.
+/// The current pet is told by its flags byte lacking `0x2`, wherever its row sits.
 #[test]
-fn an_absent_current_pet_leaves_no_slot_zero_row() {
-    let body = list_body(1, &[(8, 1126, 38, "Bruiser", 4, 2)]);
-    let (_, slots, pets) = parse_list(&body);
-    assert_eq!(slots, 1);
-    assert_eq!(pets.len(), 1);
+fn the_current_pet_is_the_row_without_bit_two() {
+    let body = list_body(2, &[(8, 1126, 38, "Bruiser", 3), (7, 299, 41, "Rex", 1)]);
+    let (_, _, pets) = parse_list(&body);
     assert_eq!(
-        pets[0].slot, 1,
-        "the lone row is stable slot 1, not current"
+        pets.iter().map(StabledPet::is_current).collect::<Vec<_>>(),
+        [false, true]
     );
-    assert!(!pets.iter().any(|p| p.slot == 0));
+
+    let (_, slots, pets) = parse_list(&list_body(1, &[(8, 1126, 38, "Bruiser", 3)]));
+    assert_eq!(slots, 1);
+    assert!(
+        !pets[0].is_current(),
+        "a petless hunter's lone row is stabled"
+    );
 }
 
 /// The purchased slot count and the row count are independent numbers.
@@ -149,7 +147,7 @@ fn an_empty_list_still_carries_the_purchased_slot_count() {
     assert!(pets.is_empty());
 }
 
-/// Each result byte parses as itself, and the codes are vmangos's `StableResultCode` values.
+/// Each result byte parses as itself, and the codes are the handler's cases (`0x5a17f0`).
 #[test]
 fn stable_result_codes_parse_as_their_vmangos_bytes() {
     for code in [
@@ -165,7 +163,6 @@ fn stable_result_codes_parse_as_their_vmangos_bytes() {
         }
     }
 
-    // vmangos's `StableResultCode` values (`NPCHandler.cpp:40-47`).
     assert_eq!(
         [
             stable_result::ERR_MONEY,

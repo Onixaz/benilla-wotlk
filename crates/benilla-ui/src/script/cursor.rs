@@ -89,9 +89,9 @@ pub struct CursorMerchantItem {
 /// A pet held on the cursor from the stable window, mode 10, set by the grab.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CursorStablePet {
-    /// In `PickupStablePet`'s index space: 0 the summoned pet, 1..=2 a stable slot.
+    /// In `PickupStablePet`'s index space: 0 the current pet, `1..=n` a stabled pet.
     pub slot: u8,
-    /// The family icon at the mouse, never empty: the grab refuses a pet without one.
+    /// The family icon at the mouse, empty while the pet's creature query is out.
     pub texture: String,
 }
 
