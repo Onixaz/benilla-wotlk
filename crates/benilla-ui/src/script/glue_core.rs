@@ -148,6 +148,16 @@ pub enum GlueRequest {
     /// `DeleteCharacter(index)` (`0x4e33a0`) for a row on the roster: the host's character delete
     /// with its guid.
     DeleteCharacter(u64),
+    /// `RenameCharacter(index, name)` past the client's checks (`0x4e3410` -> `0x4d8d20`): the
+    /// host's rename of the record's guid.
+    RenameCharacter { guid: u64, name: String },
+    /// `DeclineCharacter(index, ...)` (`0x4e3530` -> `0x4d9a40`): the record's guid and name and
+    /// its five declined forms.
+    DeclineCharacter {
+        guid: u64,
+        name: String,
+        cases: [String; 5],
+    },
     /// `SaveAddOns()` (`0x4dcac0`): the enable bits changed since the last load or save, for the
     /// host to write to each character's enable file.
     SaveAddOns(Vec<super::glue_addons::GlueAddonChange>),

@@ -1120,6 +1120,14 @@ pub enum SessionEvent {
     InebriationThreshold(crate::messages::InebriationThreshold),
     /// The learned dance moves' mask (`SMSG_LEARNED_DANCE_MOVES`).
     LearnedDanceMoves(u64),
+    /// A rename's result (`SMSG_CHAR_RENAME`).
+    CharRename(crate::messages::CharRenameResult),
+    /// A customize's result (`SMSG_CHAR_CUSTOMIZE`).
+    CharCustomize(crate::messages::CharChangeResult),
+    /// A race or faction change's result (`SMSG_CHAR_FACTION_CHANGE`).
+    CharFactionChange(crate::messages::CharChangeResult),
+    /// A declension's result (`SMSG_SET_PLAYER_DECLINED_NAMES_RESULT`).
+    DeclinedNamesResult(crate::messages::DeclinedNamesResult),
     /// The message of the day, a line each (`SMSG_MOTD`).
     Motd(Vec<String>),
     /// A GM's whois answer (`SMSG_WHOIS`).

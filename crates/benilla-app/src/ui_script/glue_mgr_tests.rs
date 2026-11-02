@@ -730,6 +730,205 @@ fn a_logout_keeps_the_link_for_the_screens_roster_ask() {
     assert!(!m.op.done, "and waits for its reply");
 }
 
+fn paid_change(existing: Option<(u64, u32)>) -> benilla_ui::script::GlueCharCreate {
+    benilla_ui::script::GlueCharCreate {
+        name: "Newname".into(),
+        race: 3,
+        class: 1,
+        sex: 1,
+        skin: 2,
+        face: 3,
+        hair_style: 4,
+        hair_color: 5,
+        facial_hair: 6,
+        existing,
+    }
+}
+
+/// `0x4e0380`: an existing character's customize flags pick the service, each state 9 with its
+/// `CANCEL` text, and the request carries the screen's look.
+#[test]
+fn a_paid_change_sends_the_service_its_flags_pick() {
+    use benilla_protocol::messages::opcode;
+    for (flags, op, key) in [
+        (
+            0x1,
+            opcode::CMSG_CHAR_CUSTOMIZE,
+            "CHAR_CUSTOMIZE_IN_PROGRESS",
+        ),
+        (
+            0x1_0000,
+            opcode::CMSG_CHAR_FACTION_CHANGE,
+            "FACTION_CHANGE_IN_PROGRESS",
+        ),
+        (
+            0x10_0000,
+            opcode::CMSG_CHAR_RACE_CHANGE,
+            "RACE_CHANGE_IN_PROGRESS",
+        ),
+    ] {
+        let mut m = accepted();
+        m.connected = true;
+        m.create_character(paid_change(Some((0x2A, flags))));
+        assert_eq!(m.state, ScreenState::CustomizeCharacter);
+        assert_eq!(m.outbox, [open("CANCEL", Some(key))]);
+        let (_, park) = m.take_asks();
+        let [ParkRequest::Char(CharRequest::Service { opcode: sent, body })] = &park[..] else {
+            panic!("one service request, got {}", park.len());
+        };
+        assert_eq!(*sent, op);
+        // guid, name, then gender, skin, hair colour, hair style, facial hair, face (and race).
+        let mut want = 0x2Au64.to_le_bytes().to_vec();
+        want.extend_from_slice(b"Newname\0");
+        want.extend_from_slice(&[1, 2, 5, 4, 6, 3]);
+        if op != opcode::CMSG_CHAR_CUSTOMIZE {
+            want.push(3);
+        }
+        assert_eq!(body, &want);
+    }
+}
+
+/// `0x4da090`: the dialog closes; a success renames the record, clears its rename and declension
+/// flags and enters the world for the selected record; a refusal answers `FORCE_RENAME_CHARACTER`.
+#[test]
+fn a_rename_answer_renames_the_record_or_asks_again() {
+    use benilla_protocol::messages::CharRenameResult;
+    let mut m = accepted();
+    m.connected = true;
+    let mut c = crate::char_select::test_character(0x2A, "Oldname");
+    c.flags = benilla_protocol::CHARACTER_FLAG_RENAME | 0x0200_0000 | 0x2;
+    m.roster = vec![c];
+    m.rename_character(0x2A, "Newname");
+    assert_eq!(m.state, ScreenState::RenameCharacter);
+    m.outbox.clear();
+    m.on_rename(CharRenameResult {
+        result: 0,
+        renamed: Some((0x2A, "Newname".into())),
+    });
+    assert_eq!(m.state, ScreenState::Idle);
+    assert_eq!(m.roster[0].name, "Newname");
+    assert_eq!(
+        m.roster[0].flags, 0x2,
+        "the rename and declension flags cleared"
+    );
+    assert_eq!(m.outbox, [Outgoing::Close, Outgoing::Updated(0x2A)]);
+    assert_eq!(m.enter_after, Some(0x2A));
+
+    for (code, key) in [
+        (0x32, "CHAR_CREATE_NAME_IN_USE"),
+        (0x31, "CHAR_RENAME_FAILED"),
+    ] {
+        let mut m = accepted();
+        m.on_rename(CharRenameResult {
+            result: code,
+            renamed: None,
+        });
+        assert_eq!(
+            m.outbox,
+            [Outgoing::Close, Outgoing::ForceRename(Text::Key(key))]
+        );
+        assert_eq!(m.enter_after, None);
+    }
+}
+
+/// `0x4d9190` and `0x4d92d0`: a success applies the look (and a race change's race), clears the
+/// paid-service flags and puts the character screen up; a refusal opens `OKAY` with its text.
+#[test]
+fn a_change_answer_applies_the_look_or_opens_its_refusal() {
+    use benilla_protocol::messages::{CharAppearance, CharChangeResult};
+    let mut m = accepted();
+    let mut c = crate::char_select::test_character(0x2A, "Oldname");
+    c.race = 1;
+    c.customize_flags = 0x0011_0001 | 0x8;
+    m.roster = vec![c];
+    let look = CharAppearance {
+        guid: 0x2A,
+        name: "Oldname".into(),
+        gender: 1,
+        skin: 2,
+        face: 3,
+        hair_style: 4,
+        hair_color: 5,
+        facial_hair: 6,
+        race: 0,
+    };
+    m.on_change(
+        CharChangeResult {
+            result: 0,
+            applied: Some(look.clone()),
+        },
+        false,
+    );
+    let c = &m.roster[0];
+    assert_eq!(
+        (
+            c.gender,
+            c.skin,
+            c.face,
+            c.hair_style,
+            c.hair_color,
+            c.facial_hair
+        ),
+        (1, 2, 3, 4, 5, 6)
+    );
+    assert_eq!(c.race, 1, "a customize keeps the race");
+    assert_eq!(c.customize_flags, 0x8);
+    assert_eq!(
+        m.outbox,
+        [
+            Outgoing::Updated(0x2A),
+            Outgoing::Close,
+            Outgoing::Screen("charselect")
+        ]
+    );
+    m.outbox.clear();
+    m.on_change(
+        CharChangeResult {
+            result: 0,
+            applied: Some(CharAppearance { race: 10, ..look }),
+        },
+        true,
+    );
+    assert_eq!(m.roster[0].race, 10);
+
+    for (code, faction, key) in [
+        (0x31, false, "CHAR_CUSTOMIZE_FAILED"),
+        (0x32, true, "CHAR_CREATE_NAME_IN_USE"),
+        (0x3d, true, "CHAR_FACTION_CHANGE_STILL_IN_GUILD"),
+        (0x45, true, "CHAR_FACTION_CHANGE_FORCE_LOGIN"),
+        (0x31, true, "CHAR_FACTION_CHANGE_FAILED"),
+    ] {
+        let mut m = accepted();
+        m.on_change(
+            CharChangeResult {
+                result: code,
+                applied: None,
+            },
+            faction,
+        );
+        assert_eq!(m.outbox, [open("OKAY", Some(key))], "{code:#x}");
+    }
+}
+
+/// `0x4da190`: the dialog closes; a refusal answers `FORCE_DECLINE_CHARACTER`, a success flags the
+/// record declined and enters the world for the selected one.
+#[test]
+fn a_declension_answer_flags_the_record_or_asks_again() {
+    use benilla_protocol::messages::DeclinedNamesResult;
+    let mut m = accepted();
+    m.roster = vec![crate::char_select::test_character(0x2A, "Name")];
+    m.on_declined(DeclinedNamesResult { result: 1, guid: 0 });
+    assert_eq!(m.outbox, [Outgoing::Close, Outgoing::ForceDecline]);
+    m.outbox.clear();
+    m.on_declined(DeclinedNamesResult {
+        result: 0,
+        guid: 0x2A,
+    });
+    assert_eq!(m.outbox, [Outgoing::Close]);
+    assert_eq!(m.roster[0].flags & 0x0200_0000, 0x0200_0000);
+    assert_eq!(m.enter_after, Some(0x2A));
+}
+
 /// `SMSG_REALM_SPLIT` (`0x4d8200`) fires `SERVER_SPLIT_NOTICE` with its two states as `%d` and
 /// the date, which `GlueParent.lua` stores for the character screen.
 #[test]

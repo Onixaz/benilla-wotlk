@@ -6,6 +6,17 @@ pub const SMSG_CHAR_ENUM: u16 = 0x003B;
 // Character delete: CMSG a full u64 guid, SMSG one result byte (`CHAR_DELETE_SUCCESS` = 0x39).
 pub const CMSG_CHAR_DELETE: u16 = 0x0038;
 pub const SMSG_CHAR_DELETE: u16 = 0x003C;
+// The paid character services at character select, each answered by its result (`0x4da090`,
+// `0x4d9190`, `0x4d92d0`, `0x4da190`); a race change is answered as a faction change.
+pub const CMSG_CHAR_RENAME: u16 = 0x02C7; // 711
+pub const SMSG_CHAR_RENAME: u16 = 0x02C8; // 712
+pub const CMSG_CHAR_CUSTOMIZE: u16 = 0x0473; // 1139
+pub const SMSG_CHAR_CUSTOMIZE: u16 = 0x0474; // 1140
+pub const CMSG_CHAR_FACTION_CHANGE: u16 = 0x04D9; // 1241
+pub const SMSG_CHAR_FACTION_CHANGE: u16 = 0x04DA; // 1242
+pub const CMSG_CHAR_RACE_CHANGE: u16 = 0x04F8; // 1272
+pub const CMSG_SET_PLAYER_DECLINED_NAMES: u16 = 0x0419; // 1049
+pub const SMSG_SET_PLAYER_DECLINED_NAMES_RESULT: u16 = 0x041A; // 1050
 /// The server's refusal of a `CMSG_PLAYER_LOGIN`: one result byte.
 pub const SMSG_CHARACTER_LOGIN_FAILED: u16 = 0x0041;
 pub const SMSG_NAME_QUERY_RESPONSE: u16 = 0x0051; // 81

@@ -823,6 +823,15 @@ fn world(
                             session.ready_for_account_data_times()?;
                             Parked::StayPut
                         }
+                        // A success renames the roster row the world entry logs in under.
+                        Ok(ParkRequest::Char(CharRequest::Service { opcode, body })) => {
+                            if let Some((guid, name)) = session.char_service(opcode, &body)? {
+                                if let Some(c) = characters.iter_mut().find(|c| c.guid == guid) {
+                                    c.name = name;
+                                }
+                            }
+                            Parked::StayPut
+                        }
                         Ok(ParkRequest::Char(CharRequest::RealmSplit(state))) => {
                             session.realm_split(state)?;
                             Parked::StayPut

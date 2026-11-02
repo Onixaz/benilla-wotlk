@@ -59,13 +59,17 @@ impl std::error::Error for WardenRequired {}
 
 /// The packets the glue acts on that can arrive on the link before the world stream starts: the
 /// server's cache version (sent after the authentication), which the `.wdb` files are checked
-/// against, and the account's account-data times and bytes and the realm split state, which the
-/// character screen asks for.
-const GLUE_KEPT: [u16; 4] = [
+/// against, and the account's account-data times and bytes, the realm split state and the paid
+/// character services' results, which the character screen asks for.
+const GLUE_KEPT: [u16; 8] = [
     opcode::SMSG_CLIENTCACHE_VERSION,
     opcode::SMSG_ACCOUNT_DATA_TIMES,
     opcode::SMSG_UPDATE_ACCOUNT_DATA,
     opcode::SMSG_REALM_SPLIT,
+    opcode::SMSG_CHAR_RENAME,
+    opcode::SMSG_CHAR_CUSTOMIZE,
+    opcode::SMSG_CHAR_FACTION_CHANGE,
+    opcode::SMSG_SET_PLAYER_DECLINED_NAMES_RESULT,
 ];
 
 /// An authenticated world-server session with header encryption active.
@@ -299,6 +303,20 @@ impl WorldSession {
             ServerPacket::RealmSplit(s) => {
                 self.glue_events.push(SessionEvent::RealmSplit(s.clone()));
             }
+            ServerPacket::CharRename(r) => {
+                self.glue_events.push(SessionEvent::CharRename(r.clone()))
+            }
+            ServerPacket::CharCustomize(r) => {
+                self.glue_events
+                    .push(SessionEvent::CharCustomize(r.clone()));
+            }
+            ServerPacket::CharFactionChange(r) => {
+                self.glue_events
+                    .push(SessionEvent::CharFactionChange(r.clone()));
+            }
+            ServerPacket::DeclinedNamesResult(r) => {
+                self.glue_events.push(SessionEvent::DeclinedNamesResult(*r));
+            }
             _ => {}
         }
     }
@@ -317,6 +335,49 @@ impl WorldSession {
         loop {
             if let Some(ServerPacket::RealmSplit(_)) = self.recv_parsed()? {
                 return Ok(());
+            }
+        }
+    }
+
+    /// A paid character service at character select: the request, then its answer read off the
+    /// link and kept for [`Self::take_glue_events`], as a create waits for its result. A
+    /// declension waits for nothing: AzerothCore drops it unanswered while declined names are off,
+    /// and a later read keeps an answer that does come. Returns a success's guid and name, which
+    /// the world entry that may follow logs in under.
+    pub fn char_service(&mut self, opcode: u16, body: &[u8]) -> Result<Option<(u64, String)>> {
+        if opcode == opcode::CMSG_SET_PLAYER_DECLINED_NAMES {
+            self.send(opcode, body)?;
+            return Ok(None);
+        }
+        let answer = match opcode {
+            opcode::CMSG_CHAR_RENAME => opcode::SMSG_CHAR_RENAME,
+            opcode::CMSG_CHAR_CUSTOMIZE => opcode::SMSG_CHAR_CUSTOMIZE,
+            opcode::CMSG_CHAR_FACTION_CHANGE | opcode::CMSG_CHAR_RACE_CHANGE => {
+                opcode::SMSG_CHAR_FACTION_CHANGE
+            }
+            _ => return Err(anyhow!("{opcode:#x} is no character service")),
+        };
+        self.send(opcode, body)?;
+        loop {
+            let renamed = |r: &messages::CharChangeResult| {
+                r.applied
+                    .as_ref()
+                    .filter(|_| r.result == 0)
+                    .map(|a| (a.guid, a.name.clone()))
+            };
+            match self.recv_parsed()? {
+                Some(ServerPacket::CharRename(r)) if answer == opcode::SMSG_CHAR_RENAME => {
+                    return Ok(r.renamed.filter(|_| r.result == 0));
+                }
+                Some(ServerPacket::CharCustomize(r)) if answer == opcode::SMSG_CHAR_CUSTOMIZE => {
+                    return Ok(renamed(&r));
+                }
+                Some(ServerPacket::CharFactionChange(r))
+                    if answer == opcode::SMSG_CHAR_FACTION_CHANGE =>
+                {
+                    return Ok(renamed(&r));
+                }
+                _ => {}
             }
         }
     }

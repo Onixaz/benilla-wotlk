@@ -1091,6 +1091,14 @@ pub enum ServerPacket {
     InebriationThreshold(crate::messages::InebriationThreshold),
     /// `SMSG_LEARNED_DANCE_MOVES`.
     LearnedDanceMoves(u64),
+    /// `SMSG_CHAR_RENAME`: a rename's result.
+    CharRename(crate::messages::CharRenameResult),
+    /// `SMSG_CHAR_CUSTOMIZE`: a customize's result.
+    CharCustomize(crate::messages::CharChangeResult),
+    /// `SMSG_CHAR_FACTION_CHANGE`: a race or faction change's result.
+    CharFactionChange(crate::messages::CharChangeResult),
+    /// `SMSG_SET_PLAYER_DECLINED_NAMES_RESULT`: a declension's result.
+    DeclinedNamesResult(crate::messages::DeclinedNamesResult),
     /// `SMSG_MOTD`: the message of the day, a line each.
     Motd(Vec<String>),
     /// `SMSG_CHANNEL_MEMBER_COUNT`: read and dropped.
@@ -1937,6 +1945,10 @@ impl ServerPacket {
             ServerPacket::UnlearnSpells(_) => "SMSG_SEND_UNLEARN_SPELLS".into(),
             ServerPacket::InebriationThreshold(_) => "SMSG_CROSSED_INEBRIATION_THRESHOLD".into(),
             ServerPacket::LearnedDanceMoves(_) => "SMSG_LEARNED_DANCE_MOVES".into(),
+            ServerPacket::CharRename(_) => "SMSG_CHAR_RENAME".into(),
+            ServerPacket::CharCustomize(_) => "SMSG_CHAR_CUSTOMIZE".into(),
+            ServerPacket::CharFactionChange(_) => "SMSG_CHAR_FACTION_CHANGE".into(),
+            ServerPacket::DeclinedNamesResult(_) => "SMSG_SET_PLAYER_DECLINED_NAMES_RESULT".into(),
             ServerPacket::Motd(_) => "SMSG_MOTD".into(),
             ServerPacket::ChannelMemberCount { .. } => "SMSG_CHANNEL_MEMBER_COUNT".into(),
             ServerPacket::Whois(_) => "SMSG_WHOIS".into(),

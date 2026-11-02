@@ -658,6 +658,10 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::UnlearnSpells(s) => vec![SessionEvent::UnlearnSpells(s)],
         ServerPacket::InebriationThreshold(p) => vec![SessionEvent::InebriationThreshold(p)],
         ServerPacket::LearnedDanceMoves(m) => vec![SessionEvent::LearnedDanceMoves(m)],
+        ServerPacket::CharRename(r) => vec![SessionEvent::CharRename(r)],
+        ServerPacket::CharCustomize(r) => vec![SessionEvent::CharCustomize(r)],
+        ServerPacket::CharFactionChange(r) => vec![SessionEvent::CharFactionChange(r)],
+        ServerPacket::DeclinedNamesResult(r) => vec![SessionEvent::DeclinedNamesResult(r)],
         ServerPacket::Motd(lines) => vec![SessionEvent::Motd(lines)],
         // `0x4fb540` reads the channel, flags and count, and does nothing with them.
         ServerPacket::ChannelMemberCount { .. } => Vec::new(),

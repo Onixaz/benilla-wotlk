@@ -497,6 +497,9 @@ pub(crate) enum CharRequest {
     /// `RequestRealmSplitInfo` (`0xFFFFFFFF`) or `SetRealmSplitState`: `CMSG_REALM_SPLIT`, whose
     /// answer the park reads and hands on.
     RealmSplit(u32),
+    /// A paid character service (rename, customize, race or faction change, declension): the
+    /// request, whose answer the park reads and hands on.
+    Service { opcode: u16, body: Vec<u8> },
     /// A barrier: answered once every request before it is on the wire.
     Flush(crossbeam_channel::Sender<()>),
 }

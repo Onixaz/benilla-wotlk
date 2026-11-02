@@ -94,9 +94,7 @@ use crate::net::{
 };
 
 /// The glue manager's `screenState`, named by the functions that set each value: the states the
-/// login, the realm list and the character list reach. The reference's others are create, delete
-/// and rename (5-7), `EnterWorld` (8) and the patch and survey downloads (10 and 11), each set by a
-/// verb these screens do not have yet.
+/// login, the realm list, the character list and the character services reach.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum ScreenState {
     /// No operation (and every terminal arm).
@@ -114,8 +112,14 @@ pub(crate) enum ScreenState {
     CreateCharacter = 5,
     /// A character delete, until its result.
     DeleteCharacter = 6,
+    /// A rename (`0x4d8d20`), until its result.
+    RenameCharacter = 7,
+    /// A declension (`0x4d9a40`), until its result.
+    DeclineCharacter = 8,
+    /// A customize, race or faction change (`0x4d8e10`, `0x4d9040`, `0x4d8f20`), until its result.
+    CustomizeCharacter = 9,
     /// The world entry (`0x4d9bd0`), until the world is up.
-    EnterWorld = 8,
+    EnterWorld = 10,
     /// A refused character login back at `charselect` (the game teardown stores 11 at `0x4066a0`),
     /// its `OKAY` up until pressed.
     WorldLogin = 11,
@@ -435,6 +439,12 @@ enum Outgoing {
     SelectFirst,
     /// `SHOW_SERVER_ALERT(text)` (event 21): the alert's text after its prefix.
     ServerAlert(String),
+    /// `FORCE_RENAME_CHARACTER(key)` (event 23), a rename's refusal.
+    ForceRename(Text),
+    /// `FORCE_DECLINE_CHARACTER("CHAR_DECLINE_FAILED")` (event 24).
+    ForceDecline,
+    /// The roster record with this guid redrawn from the manager's, then `CHARACTER_LIST_UPDATE`.
+    Updated(u64),
     /// `SERVER_SPLIT_NOTICE(clientState, splitState, date)` (event 32), `SMSG_REALM_SPLIT`'s
     /// fields as `%d%d%s` (`0x4d8200`).
     SplitNotice(benilla_protocol::messages::RealmSplit),
@@ -465,6 +475,11 @@ impl Default for LoginCells {
 #[derive(Resource, Default)]
 pub(crate) struct GlueMgr {
     pub(crate) state: ScreenState,
+    /// A rename's or a declension's success for this guid, which enters the world when it is the
+    /// selected record (`0x4da090`, `0x4da190`).
+    enter_after: Option<u64>,
+    /// Rows a character service's answer changed, for the app's roster ([`crate::char_select`]).
+    changed_rows: Vec<Character>,
     cells: LoginCells,
     /// Authenticated, waiting for the next tick.
     auth_final: bool,
@@ -639,7 +654,7 @@ impl GlueMgr {
                 self.state = ScreenState::Idle;
                 self.get_character_list();
             }
-            // (states 4, 5 and 8): the operation cancelled, state 0, nothing sent.
+            // (states 4, 5, 6 and 10): the operation cancelled, state 0, nothing sent.
             ScreenState::RealmList
             | ScreenState::CreateCharacter
             | ScreenState::DeleteCharacter
@@ -647,6 +662,10 @@ impl GlueMgr {
                 self.op.complete(false, STATUS_CANCELLED);
                 self.state = ScreenState::Idle;
             }
+            // (states 7, 8 and 9): state 0; the service's answer still lands.
+            ScreenState::RenameCharacter
+            | ScreenState::DeclineCharacter
+            | ScreenState::CustomizeCharacter => self.state = ScreenState::Idle,
         }
     }
 
@@ -679,9 +698,8 @@ impl GlueMgr {
     /// The glue character create (`0x4d8c60`): state 5, the `CHAR_CREATE_IN_PROGRESS` dialog and
     /// the request. A paid change of an existing character is not built: it fails in the dialog.
     fn create_character(&mut self, c: benilla_ui::script::GlueCharCreate) {
-        if c.existing.is_some() {
-            warn!("glue: paid character changes are not built; the request is refused");
-            self.open("OKAY", Some(Text::Key("CHAR_CUSTOMIZE_FAILED")));
+        if let Some((guid, flags)) = c.existing {
+            self.change_character(guid, flags, c);
             return;
         }
         self.state = ScreenState::CreateCharacter;
@@ -705,6 +723,184 @@ impl GlueMgr {
             })
             .into(),
         );
+    }
+
+    /// A paid change of an existing character (`0x4e0380`): its customize flags pick a race change
+    /// (`0x100000`), a faction change (`0x10000`) or a customize, each state 9, its `CANCEL` dialog
+    /// and the request, which carries the create screen's look.
+    fn change_character(&mut self, guid: u64, flags: u32, c: benilla_ui::script::GlueCharCreate) {
+        use benilla_protocol::messages::{self, opcode};
+        if guid == 0 || c.name.is_empty() {
+            return;
+        }
+        let (op, key) = if flags & 0x0010_0000 != 0 {
+            (opcode::CMSG_CHAR_RACE_CHANGE, "RACE_CHANGE_IN_PROGRESS")
+        } else if flags & 0x0001_0000 != 0 {
+            (
+                opcode::CMSG_CHAR_FACTION_CHANGE,
+                "FACTION_CHANGE_IN_PROGRESS",
+            )
+        } else {
+            (opcode::CMSG_CHAR_CUSTOMIZE, "CHAR_CUSTOMIZE_IN_PROGRESS")
+        };
+        let req = messages::CharChangeReq {
+            guid,
+            name: c.name,
+            gender: c.sex,
+            skin: c.skin,
+            face: c.face,
+            hair_style: c.hair_style,
+            hair_color: c.hair_color,
+            facial_hair: c.facial_hair,
+            race: c.race,
+        };
+        let body = if op == opcode::CMSG_CHAR_CUSTOMIZE {
+            messages::char_customize(&req)
+        } else {
+            messages::char_faction_change(&req)
+        };
+        self.service(ScreenState::CustomizeCharacter, key, op, body);
+    }
+
+    /// `RenameCharacter` past its checks (`0x4d8d20`): state 7, `CHAR_RENAME_IN_PROGRESS` and the
+    /// request.
+    fn rename_character(&mut self, guid: u64, name: &str) {
+        use benilla_protocol::messages::{self, opcode};
+        let body = messages::char_rename(guid, name);
+        self.service(
+            ScreenState::RenameCharacter,
+            "CHAR_RENAME_IN_PROGRESS",
+            opcode::CMSG_CHAR_RENAME,
+            body,
+        );
+    }
+
+    /// `DeclineCharacter` past its checks (`0x4d9a40`): state 8, `CHAR_DECLINE_IN_PROGRESS` and the
+    /// request.
+    fn decline_character(&mut self, guid: u64, name: &str, cases: &[String; 5]) {
+        use benilla_protocol::messages::{self, opcode};
+        let body = messages::set_player_declined_names(guid, name, cases);
+        self.service(
+            ScreenState::DeclineCharacter,
+            "CHAR_DECLINE_IN_PROGRESS",
+            opcode::CMSG_SET_PLAYER_DECLINED_NAMES,
+            body,
+        );
+    }
+
+    /// A character service's send: its state, the `CANCEL` dialog with its text, the request.
+    fn service(&mut self, state: ScreenState, key: &'static str, op: u16, body: Vec<u8>) {
+        self.state = state;
+        self.open("CANCEL", Some(Text::Key(key)));
+        if !self.connected {
+            self.state = ScreenState::Idle;
+            self.open("OKAY", Some(status_text(STATUS_FAILED_TO_CONNECT).0));
+            return;
+        }
+        self.park_out
+            .push(CharRequest::Service { opcode: op, body }.into());
+    }
+
+    /// `SMSG_CHAR_RENAME` (`0x4da090`): the dialog closed; a refusal answers
+    /// `FORCE_RENAME_CHARACTER`, the name-in-use code with its token, any other with
+    /// `CHAR_RENAME_FAILED`; a success renames the record and, for the selected one, enters the
+    /// world. Deviation: `CHAR_RENAME_FAILED` goes as its key, where the reference passes its text,
+    /// which the stock handler's `_G[message]` cannot read.
+    fn on_rename(&mut self, r: benilla_protocol::messages::CharRenameResult) {
+        debug!("glue: rename result {:#04x} {:?}", r.result, r.renamed);
+        self.state = ScreenState::Idle;
+        self.outbox.push(Outgoing::Close);
+        let Some((guid, name)) = r.renamed.filter(|_| r.result == 0) else {
+            let token = if r.result == 0x32 {
+                status_text(0x32).0
+            } else {
+                Text::Key("CHAR_RENAME_FAILED")
+            };
+            self.outbox.push(Outgoing::ForceRename(token));
+            return;
+        };
+        if let Some(c) = self.roster.iter_mut().find(|c| c.guid == guid) {
+            move_character_state(self.realm.as_ref(), &c.name, &name);
+            c.name = name;
+            c.flags &= !(benilla_protocol::CHARACTER_FLAG_RENAME | 0x0200_0000);
+            self.changed_rows.push(c.clone());
+            self.addons_stale = true;
+            self.outbox.push(Outgoing::Updated(guid));
+        }
+        self.enter_after = Some(guid);
+    }
+
+    /// `SMSG_CHAR_CUSTOMIZE` (`0x4d9190`) and `SMSG_CHAR_FACTION_CHANGE` (`0x4d92d0`): a refusal
+    /// opens `OKAY` with its text; a success applies the look (and a race) to the record, clears
+    /// its paid-service flags (`0x110001`), closes the dialog and puts the character screen up.
+    fn on_change(&mut self, r: benilla_protocol::messages::CharChangeResult, faction: bool) {
+        debug!(
+            "glue: {} result {:#04x} {:?}",
+            if faction {
+                "faction change"
+            } else {
+                "customize"
+            },
+            r.result,
+            r.applied
+        );
+        self.state = ScreenState::Idle;
+        let Some(a) = r.applied.filter(|_| r.result == 0) else {
+            let text = match (r.result, faction) {
+                (0x32, _) => status_text(0x32).0,
+                (_, false) => Text::Key("CHAR_CUSTOMIZE_FAILED"),
+                (0x3d, true) => Text::Key("CHAR_FACTION_CHANGE_STILL_IN_GUILD"),
+                (0x3e, true) => Text::Key("CHAR_FACTION_CHANGE_RACECLASS_RESTRICTED"),
+                (0x3f, true) => Text::Key("CHAR_FACTION_CHANGE_CHOOSE_RACE"),
+                (0x40, true) => Text::Key("CHAR_FACTION_CHANGE_ARENA_LEADER"),
+                (0x41, true) => Text::Key("CHAR_FACTION_CHANGE_DELETE_MAIL"),
+                (0x42, true) => Text::Key("CHAR_FACTION_CHANGE_SWAP_FACTION"),
+                (0x43, true) => Text::Key("CHAR_FACTION_CHANGE_RACE_ONLY"),
+                (0x44, true) => Text::Key("CHAR_FACTION_CHANGE_GOLD_LIMIT"),
+                (0x45, true) => Text::Key("CHAR_FACTION_CHANGE_FORCE_LOGIN"),
+                (_, true) => Text::Key("CHAR_FACTION_CHANGE_FAILED"),
+            };
+            self.open("OKAY", Some(text));
+            return;
+        };
+        if let Some(c) = self.roster.iter_mut().find(|c| c.guid == a.guid) {
+            if c.name != a.name {
+                move_character_state(self.realm.as_ref(), &c.name, &a.name);
+                c.name = a.name.clone();
+                self.addons_stale = true;
+            }
+            c.gender = a.gender;
+            c.skin = a.skin;
+            c.face = a.face;
+            c.hair_style = a.hair_style;
+            c.hair_color = a.hair_color;
+            c.facial_hair = a.facial_hair;
+            if a.race != 0 {
+                c.race = a.race;
+            }
+            c.customize_flags &= !0x0011_0001;
+            self.changed_rows.push(c.clone());
+            self.outbox.push(Outgoing::Updated(a.guid));
+        }
+        self.outbox.push(Outgoing::Close);
+        self.outbox.push(Outgoing::Screen("charselect"));
+    }
+
+    /// `SMSG_SET_PLAYER_DECLINED_NAMES_RESULT` (`0x4da190`): the dialog closed; a refusal answers
+    /// `FORCE_DECLINE_CHARACTER` with `CHAR_DECLINE_FAILED`; a success flags the record declined
+    /// (`0x2000000`) and, for the selected one, enters the world.
+    fn on_declined(&mut self, r: benilla_protocol::messages::DeclinedNamesResult) {
+        debug!("glue: declension result {} for {:#x}", r.result, r.guid);
+        self.state = ScreenState::Idle;
+        self.outbox.push(Outgoing::Close);
+        if r.result != 0 {
+            self.outbox.push(Outgoing::ForceDecline);
+            return;
+        }
+        if let Some(c) = self.roster.iter_mut().find(|c| c.guid == r.guid) {
+            c.flags |= 0x0200_0000;
+        }
+        self.enter_after = Some(r.guid);
     }
 
     /// The glue character delete: state 6, the `CHAR_DELETE_IN_PROGRESS` dialog and the request.
@@ -807,7 +1003,7 @@ impl GlueMgr {
     /// realm selected, no record there or no world link; a record locked for a transfer (flag
     /// `0x4`) or by billing (`0x1000000`) opens `OKAY` with its text, one flagged for a rename
     /// (`0x4000`) answers `FORCE_RENAME_CHARACTER`, neither entering. Otherwise
-    /// `lastCharacterIndex` takes the selection, the state goes to 8 and the pick leaves with the
+    /// `lastCharacterIndex` takes the selection, the state goes to 10 and the pick leaves with the
     /// park's other requests; a later call in the same frame replaces its guid.
     fn enter_world(&mut self, index: i32) -> EnterWorld {
         if self.selected.is_none() || !self.connected {
@@ -1208,9 +1404,12 @@ impl GlueMgr {
             }
             ScreenState::CharList => self.tick_char_list(),
             ScreenState::RealmList => self.tick_realm_list(),
-            // State 8's phases are the world entry's here; state 5 ends on its result.
+            // State 10's phases are the world entry's here; states 5 to 9 end on their results.
             ScreenState::CreateCharacter
             | ScreenState::DeleteCharacter
+            | ScreenState::RenameCharacter
+            | ScreenState::DeclineCharacter
+            | ScreenState::CustomizeCharacter
             | ScreenState::EnterWorld
             | ScreenState::Idle => {}
         }
@@ -1361,10 +1560,54 @@ fn status_text(code: u8) -> (Text, Option<u8>) {
 /// The manager's packet handlers.
 pub(super) fn register(app: &mut App) {
     use crate::net::NetHandlerApp;
-    app.net_handler(
-        benilla_protocol::SessionEventKind::RealmSplit,
-        on_realm_split,
-    );
+    use benilla_protocol::SessionEventKind as K;
+    app.net_handler(K::RealmSplit, on_realm_split)
+        .net_handler(K::CharRename, on_char_service)
+        .net_handler(K::CharCustomize, on_char_service)
+        .net_handler(K::CharFactionChange, on_char_service)
+        .net_handler(K::DeclinedNamesResult, on_char_service);
+}
+
+/// The paid character services' answers, read on the parked link.
+pub(crate) fn on_char_service(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    mut mgr: ResMut<GlueMgr>,
+) {
+    use benilla_protocol::SessionEvent;
+    match ev {
+        SessionEvent::CharRename(r) => mgr.on_rename(r),
+        SessionEvent::CharCustomize(r) => mgr.on_change(r, false),
+        SessionEvent::CharFactionChange(r) => mgr.on_change(r, true),
+        SessionEvent::DeclinedNamesResult(r) => mgr.on_declined(r),
+        _ => {}
+    }
+}
+
+/// A renamed character's local state moves with it (`0x4e2870`): its
+/// `WTF\Account\<ACCOUNT>\<Realm>\<Name>` folder and the realm-less `WTF\Account\<ACCOUNT>\<Name>`.
+fn move_character_state(realm: Option<&RealmInfo>, old: &str, new: &str) {
+    let (Some(account), Some(realm)) = (crate::local_state::account(), realm) else {
+        return;
+    };
+    let moves = [
+        (
+            crate::local_state::character_dir(&account, &realm.name, old),
+            crate::local_state::character_dir(&account, &realm.name, new),
+        ),
+        (
+            crate::local_state::account_dir(&account).map(|d| d.join(old)),
+            crate::local_state::account_dir(&account).map(|d| d.join(new)),
+        ),
+    ];
+    for (from, to) in moves {
+        if let (Some(from), Some(to)) = (from, to) {
+            if from.exists() {
+                if let Err(e) = std::fs::rename(&from, &to) {
+                    warn!("glue: moving {} to {}: {e}", from.display(), to.display());
+                }
+            }
+        }
+    }
 }
 
 /// `SMSG_REALM_SPLIT` (`0x4d8200`), read on the parked link, fires its glue event.
@@ -1554,7 +1797,19 @@ pub(crate) fn drive_glue_mgr(
     // The verbs the last tick's Lua called.
     if let Some(s) = script.as_deref_mut() {
         mgr.screen = s.glue_screen();
-        for request in s.take_glue_requests() {
+        if let Some(roster) = asks.roster.as_deref_mut() {
+            for row in std::mem::take(&mut mgr.changed_rows) {
+                roster.replace_row(row);
+            }
+        }
+        let mut requests = s.take_glue_requests();
+        // A rename's or a declension's success for the selected record enters the world.
+        if let Some(guid) = mgr.enter_after.take() {
+            if s.glue_selected_guid() == Some(guid) {
+                requests.insert(0, GlueRequest::EnterWorld);
+            }
+        }
+        for request in requests {
             match request {
                 GlueRequest::Login(c) => mgr.login(c.account, c.password, &mut logins),
                 GlueRequest::StatusDialogClick => mgr.status_dialog_click(&mut logins),
@@ -1623,6 +1878,10 @@ pub(crate) fn drive_glue_mgr(
                 GlueRequest::CancelLogin => logins.push(GlueLogin::Abandon),
                 GlueRequest::CreateCharacter(c) => mgr.create_character(c),
                 GlueRequest::DeleteCharacter(guid) => mgr.delete_character(guid),
+                GlueRequest::RenameCharacter { guid, name } => mgr.rename_character(guid, &name),
+                GlueRequest::DeclineCharacter { guid, name, cases } => {
+                    mgr.decline_character(guid, &name, &cases);
+                }
                 GlueRequest::SaveAddOns(changes) => {
                     let realm = s
                         .cvar(crate::realm_select::CVAR_REALM_NAME)
@@ -2001,6 +2260,22 @@ fn flush_one(
         Outgoing::SelectFirst => script.fire_event("SELECT_FIRST_CHARACTER", Vec::new()),
         Outgoing::ServerAlert(text) => {
             script.fire_event("SHOW_SERVER_ALERT", vec![ScriptValue::Str(text)]);
+        }
+        Outgoing::ForceRename(t) => {
+            let key = match t {
+                Text::Key(k) => k.to_string(),
+                Text::Raw(s) => s,
+            };
+            script.fire_event("FORCE_RENAME_CHARACTER", vec![ScriptValue::Str(key)]);
+        }
+        Outgoing::ForceDecline => script.fire_event(
+            "FORCE_DECLINE_CHARACTER",
+            vec![ScriptValue::Str("CHAR_DECLINE_FAILED".into())],
+        ),
+        Outgoing::Updated(guid) => {
+            if let Some(c) = mgr.roster.iter().find(|c| c.guid == guid) {
+                script.update_glue_character(glue_character(c, names));
+            }
         }
         Outgoing::SplitNotice(s) => script.fire_event(
             "SERVER_SPLIT_NOTICE",

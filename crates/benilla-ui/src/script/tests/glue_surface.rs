@@ -81,21 +81,15 @@ fn the_glue_tables_hold_their_rows() {
 
 /// Glue-table functions the glue VM does not answer yet, by registrar table. The list only
 /// shrinks: a verb is absent until built, never stubbed.
-const NOT_YET: &[(&str, &[&str])] = &[
-    (
-        "character select's rename and declension (table t025)",
-        &["RenameCharacter", "DeclineCharacter"],
-    ),
-    (
-        "the glue's credits text and its options defaults (table t022)",
-        &[
-            "GetCreditsText",
-            "RestoreVideoEffectsDefaults",
-            "RestoreVideoResolutionDefaults",
-            "RestoreVideoStereoDefaults",
-        ],
-    ),
-];
+const NOT_YET: &[(&str, &[&str])] = &[(
+    "the glue's credits text and its options defaults (table t022)",
+    &[
+        "GetCreditsText",
+        "RestoreVideoEffectsDefaults",
+        "RestoreVideoResolutionDefaults",
+        "RestoreVideoStereoDefaults",
+    ],
+)];
 
 /// The glue VM's globals by Lua type name.
 fn glue_globals() -> BTreeMap<String, String> {
