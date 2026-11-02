@@ -1594,7 +1594,7 @@ pub(super) mod tests {
         wav
     }
 
-    /// The install's bed header: 22050 Hz stereo, `nBlockAlign` 2.
+    /// 1.12.1's shipped bed header: 22050 Hz stereo, `nBlockAlign` 2.
     #[test]
     fn a_stereo_bed_streams_its_true_length() {
         let frames = 3000;
@@ -1664,11 +1664,10 @@ pub(super) mod tests {
         }
     }
 
-    /// Every bed in the install streams at its data chunk's length, the 79 under `Sound\Ambience`
-    /// whose stereo header stores a mono `nBlockAlign` (2) among them, the inn's `Tavern.wav` too:
-    /// symphonia 0.5 sized its frames from that field and counted them twice.
+    /// Every bed in the install streams at its data chunk's length. 1.12.1 shipped 79 whose stereo
+    /// header stored a mono `nBlockAlign` (2), which symphonia 0.5 sized its frames from and counted
+    /// twice; 12340's beds store their own, so that case is the synthetic file's above.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_beds_stream_their_data_chunks_frames() {
         use std::io::Read;
         let data = benilla_formats::wow_data_or_skip!();
@@ -1687,21 +1686,18 @@ pub(super) mod tests {
             })
             .collect();
         assert!(beds.len() > 100, "the install's beds: {}", beds.len());
-        let mut mono_align = 0;
         for path in &beds {
             let archive = chain.archive_for(path).expect("in the chain");
             let mut head = vec![0u8; 4096];
             let n = archive.open_file(path).unwrap().read(&mut head).unwrap();
             head.truncate(n);
-            let (frame, data_len, align) = wav_frame_and_data_len(&head).expect(path);
-            mono_align += usize::from(align < frame);
+            let (frame, data_len, _align) = wav_frame_and_data_len(&head).expect(path);
 
             let file = archive.open_file(path).expect("opens");
             let len = file.size();
             let streamed = stream_from_source(file, len).expect(path).num_frames();
             assert_eq!(streamed, data_len / frame, "{path}: streamed frames");
         }
-        assert!(mono_align > 0, "no bed carries the mono nBlockAlign");
 
         let forest = "Sound\\Ambience\\ZoneAmbience\\ForestNormalDay.wav";
         let decoded = sfx_from_bytes(chain.read(forest).unwrap()).unwrap();

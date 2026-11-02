@@ -2199,6 +2199,59 @@ mod loader_tests {
             "blank, not painted"
         );
     }
+
+    /// A level that redeclares a state texture or the label builds a fresh object, and the set
+    /// deletes the inherited one, its global included (`0x96f920`, `0x96f7b0`): the stock pet
+    /// buttons keep only `$parentNormalTexture2`, and an unnamed `<ButtonText>` names nothing.
+    #[test]
+    fn a_redeclared_state_texture_or_label_deletes_the_inherited_one() {
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(800.0, 600.0);
+        let doc = parse(
+            r#"<Ui>
+                <CheckButton name="RedeclareBase" virtual="true">
+                    <Size><AbsDimension x="36" y="36"/></Size>
+                    <NormalTexture name="$parentNormalTexture" file="Interface\Buttons\Base"/>
+                    <ButtonText name="$parentText"/>
+                </CheckButton>
+                <CheckButton name="RedeclaredButton" inherits="RedeclareBase">
+                    <NormalTexture name="$parentNormalTexture2" file="Interface\Buttons\Leaf"/>
+                    <ButtonText/>
+                </CheckButton>
+                <CheckButton name="SameNameButton" inherits="RedeclareBase">
+                    <NormalTexture name="$parentNormalTexture" file="Interface\Buttons\Leaf"/>
+                </CheckButton>
+            </Ui>"#,
+        );
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+
+        let yes = |lua: &str| s.eval::<bool>(lua).unwrap();
+        assert!(
+            yes("return RedeclaredButtonNormalTexture == nil"),
+            "the inherited global goes"
+        );
+        assert!(yes(
+            "return RedeclaredButton:GetNormalTexture() == RedeclaredButtonNormalTexture2"
+        ));
+        let texture = |lua: &str| s.eval::<String>(lua).unwrap();
+        assert_eq!(
+            texture("return RedeclaredButtonNormalTexture2:GetTexture()"),
+            r"Interface\Buttons\Leaf"
+        );
+        assert!(
+            yes("return RedeclaredButtonText == nil"),
+            "the named label goes"
+        );
+        assert!(yes("return RedeclaredButton:GetFontString() ~= nil \
+             and RedeclaredButton:GetFontString():GetName() == nil"));
+        // The new texture is made before the old is deleted, so a reused name ends unbound.
+        assert!(yes("return SameNameButtonNormalTexture == nil"));
+        assert_eq!(
+            texture("return SameNameButton:GetNormalTexture():GetTexture()"),
+            r"Interface\Buttons\Leaf"
+        );
+    }
 }
 
 mod layer_blend_tests {

@@ -1,8 +1,8 @@
-//! The 1.12 surface of the production load as a gate: every global and widget method an addon
-//! reaches once the core and benilla's layer have loaded is one the 1.12.1 client has
+//! The 3.3.5a surface of the production load as a gate: every global and widget method an addon
+//! reaches once the core and benilla's layer have loaded is one the 3.3.5a client has
 //! (`reference/3.3.5a-globals.tsv`), one the engine exposes, or a `Benilla`-prefixed name the layer
 //! defines. The engine's own surface is gated on a bare VM in `benilla-ui`, name by name against
-//! the same table (`script::tests::reference_surface`, whose commented `BEYOND_1_12` is the one
+//! the same table (`script::tests::reference_surface`, whose commented `BEYOND_REFERENCE` is the one
 //! allowlist) and method by method against each class's registrar tables
 //! (`script::tests::widget_surface`); so here the load itself may add nothing else.
 
@@ -64,7 +64,7 @@ fn layer_prefixed(n: &str) -> bool {
     n.starts_with("Benilla") || n.starts_with("BENILLA_") || n.starts_with("SLASH_BENILLA_")
 }
 
-/// What the production load adds past 1.12 and past the engine, and the layer's own names: the
+/// What the production load adds past 3.3.5a and past the engine, and the layer's own names: the
 /// globals (`Benilla`-prefixed ones the engine does not also define passing) and the methods.
 fn production_beyond(s: &UiScript, engine: &UiScript) -> (Vec<String>, Vec<String>) {
     let reference = reference_globals();
@@ -82,11 +82,10 @@ fn production_beyond(s: &UiScript, engine: &UiScript) -> (Vec<String>, Vec<Strin
     (globals, methods)
 }
 
-/// The production load, core and layer, adds no global past 1.12 but the layer's own
+/// The production load, core and layer, adds no global past 3.3.5a but the layer's own
 /// `Benilla`-prefixed names, and no widget method at all.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_production_load_stays_inside_the_1_12_surface() {
+fn the_production_load_stays_inside_the_reference_surface() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
         .lock()
@@ -105,8 +104,8 @@ fn the_production_load_stays_inside_the_1_12_surface() {
     let (globals, methods) = production_beyond(&s, &engine);
     assert!(
         globals.is_empty(),
-        "the production load exposes {} global(s) the 1.12.1 client does not:\n    {}\n\n\
-         A layer global takes the `Benilla` prefix; anything else gets its 1.12 spelling or goes.",
+        "the production load exposes {} global(s) the 3.3.5a client does not:\n    {}\n\n\
+         A layer global takes the `Benilla` prefix; anything else gets its 3.3.5a spelling or goes.",
         globals.len(),
         globals.join(" ")
     );
@@ -118,7 +117,7 @@ fn the_production_load_stays_inside_the_1_12_surface() {
     );
 }
 
-/// The gate bites: a global past 1.12 put back into the loaded VM, an unprefixed layer-style one,
+/// The gate bites: a global past 3.3.5a put back into the loaded VM, an unprefixed layer-style one,
 /// an engine-only prefixed one and a method on a class's table are each caught.
 #[test]
 fn the_production_gate_catches_a_name_put_back() {

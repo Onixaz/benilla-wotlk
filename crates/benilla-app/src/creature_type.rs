@@ -175,7 +175,6 @@ mod tests {
     /// The shipped `SpellShapeshiftForm.dbc` through the resolver: the forms of type 1 name a
     /// Beast, and every other row falls through to the race.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_forms_name_a_beast_or_fall_through_to_the_race() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -190,8 +189,11 @@ mod tests {
             assert_eq!(forms[&id].creature_type, 1, "form {id} is type 1");
             assert_eq!(sources.of(&store(0, 1, id)), 1, "form {id}");
         }
-        // Tree of Life and Battle Stance carry -1: the human race's type answers.
-        for id in [2, 17] {
+        // Tree of Life is an Elemental (4) in 12340.
+        assert_eq!(forms[&2].creature_type, 4, "Tree of Life");
+        assert_eq!(sources.of(&store(0, 1, 2)), 4);
+        // Battle Stance and Moonkin Form carry -1: the human race's type answers.
+        for id in [17, 31] {
             assert!(forms[&id].creature_type <= 0, "form {id} carries no type");
             assert_eq!(sources.of(&store(0, 1, id)), 7, "form {id}");
         }

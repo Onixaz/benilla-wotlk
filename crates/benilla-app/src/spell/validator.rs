@@ -467,11 +467,10 @@ mod tests {
         assert_eq!(cast_water_refusal(mf::SWIMMING, None), None);
     }
 
-    /// The shipped `Spell.dbc`: exactly five rows need water, Aquatic Form among them, while the
-    /// water-forbidden bit is broad (mounts, Travel Form, food and drink).
+    /// The shipped `Spell.dbc`: exactly seven rows need water, Aquatic Form among them, while the
+    /// water-forbidden bit marks food, drink and the campfire, and Fishing's channel.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn the_water_bits_split_the_5875_data_the_way_the_gate_assumes() {
+    fn the_water_bits_split_the_shipped_data_the_way_the_gate_assumes() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
         let catalog = benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc");
@@ -485,8 +484,9 @@ mod tests {
         needs_water.sort_unstable();
         assert_eq!(
             needs_water,
-            vec![1066, 16455, 16456, 24346, 24347],
-            "the water-required set: Aquatic Form, the Lava/Slime swim auras, Master Angler"
+            vec![1066, 16455, 16456, 24347, 44270, 48720, 58998],
+            "the water-required set: Aquatic Form, the Lava/Slime swim auras, Master Angler, \
+             Breathing Tube, a Food and Despawn Above Water"
         );
 
         let forbids_water = |id: u32| {
@@ -494,16 +494,19 @@ mod tests {
                 .get(id)
                 .is_some_and(|d| d.aura_interrupt_flags & INTERRUPT_UNDER_WATER != 0)
         };
-        assert!(forbids_water(783), "Travel Form");
-        assert!(forbids_water(458), "Brown Horse");
         assert!(forbids_water(433), "Food");
         assert!(forbids_water(430), "Drink");
         assert!(forbids_water(818), "Basic Campfire");
-
-        // Fishing rank 1 carries the bit in the aura column, ranks 2-4 only in the channel column.
+        // 12340's Travel Form and riding horse carry neither bit, so the gate passes them mid-swim.
         let swim = crate::creature_anim::move_flags::SWIMMING;
-        assert!(forbids_water(7620), "Fishing rank 1 — arm A");
-        for rank in [7731, 7732, 18248] {
+        for (id, name) in [(783, "Travel Form"), (458, "Brown Horse")] {
+            let d = catalog.get(id).unwrap_or_else(|| panic!("{name} missing"));
+            assert!(!forbids_water(id), "{name}");
+            assert_eq!(cast_water_refusal(swim, Some(d)), None, "{name} swimming");
+        }
+
+        // Every Fishing rank carries the bit in the channel column alone.
+        for rank in [7620, 7731, 7732, 18248, 33095, 51294] {
             let d = catalog
                 .get(rank)
                 .unwrap_or_else(|| panic!("Fishing {rank} missing"));

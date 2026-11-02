@@ -1,4 +1,4 @@
-//! The two 1.12 text filters: the `profanityFilter` masker over `ChatProfanity.dbc` and the
+//! The two text filters: the `profanityFilter` masker over `ChatProfanity.dbc` and the
 //! `spamFilter` predicate over `SpamMessages.dbc`, both PCRE lists compiled once at startup and
 //! never reloaded.
 //!
@@ -87,6 +87,11 @@ fn translate(pattern: &str) -> String {
         match chars.next() {
             // The patched escape table: both are `\b`.
             Some('<' | '>') => out.push_str("\\b"),
+            // No `PCRE_EXTRA` among `regcomp`'s options (`0x83df20`), so a letter PCRE 4.1 gives no
+            // meaning is the letter itself: the shipped `<\haschisch\>` reads `\h` as `h`.
+            Some(next) if next.is_ascii_alphabetic() && !PCRE_LETTER_ESCAPES.contains(next) => {
+                out.push(next.to_ascii_lowercase());
+            }
             Some(next) => {
                 out.push('\\');
                 out.push(next);
@@ -94,6 +99,48 @@ fn translate(pattern: &str) -> String {
             // A trailing backslash is a compile error in PCRE too.
             None => out.push('\\'),
         }
+    }
+    escape_literal_braces(&out)
+}
+
+/// The letters PCRE 4.1's escape table and `check_escape` give a meaning.
+const PCRE_LETTER_ESCAPES: &str = "AbBdDefnrsStwWzZGacxCEQ";
+
+/// PCRE reads a `{` that does not open `{n}`, `{n,}` or `{n,m}` as a literal (`is_counted_repeat`),
+/// as the shipped `{性}交` has it; `regex` refuses one, so it is escaped, its `}` with it.
+fn escape_literal_braces(pattern: &str) -> String {
+    let counted = |rest: &str| -> Option<usize> {
+        let body = rest.strip_prefix('{')?;
+        let end = body.find('}')?;
+        let inner = &body[..end];
+        let (lo, hi) = inner.split_once(',').unwrap_or((inner, ""));
+        let digits = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+        (digits(lo) && (hi.is_empty() || digits(hi))).then_some(end + 2)
+    };
+    let mut out = String::with_capacity(pattern.len() + 4);
+    let mut i = 0;
+    let mut escaped = false;
+    while i < pattern.len() {
+        let c = pattern[i..].chars().next().expect("in bounds");
+        if escaped {
+            escaped = false;
+            out.push(c);
+        } else if c == '\\' {
+            escaped = true;
+            out.push(c);
+        } else if c == '{' {
+            if let Some(len) = counted(&pattern[i..]) {
+                out.push_str(&pattern[i..i + len]);
+                i += len;
+                continue;
+            }
+            out.push_str("\\{");
+        } else if c == '}' {
+            out.push_str("\\}");
+        } else {
+            out.push(c);
+        }
+        i += c.len_utf8();
     }
     out
 }
@@ -287,6 +334,29 @@ mod tests {
         }
     }
 
+    /// The two shipped rows `regex` alone refuses compile as PCRE 4.1 reads them: an unknown letter
+    /// escape is the letter, and a `{` opening no counted repeat is a brace.
+    #[test]
+    fn unknown_letter_escapes_and_bare_braces_are_literals_as_in_pcre() {
+        assert_eq!(translate(r"<\haschisch\>"), "<haschisch\\b");
+        assert_eq!(translate("{性}交"), "\\{性\\}交");
+        assert_eq!(translate(r"a{2}b{1,}c{1,3}"), r"a{2}b{1,}c{1,3}");
+        assert_eq!(translate(r"x{,3}"), r"x\{,3\}");
+        assert_eq!(translate(r"\d\S\{"), r"\d\S\{");
+        let f = TextFilter::new(&list(&["{性}交", r"<\haschisch\>"]), &[]);
+        let mut copy = f;
+        let mut hit = "{性}交".to_string();
+        assert!(
+            copy.mask(true, &mut hit),
+            "the brace row matches its own literal"
+        );
+        // The row as shipped: a literal `<`, then `haschisch` to a word boundary.
+        let mut word = "a <haschisch b".to_string();
+        assert!(copy.mask(true, &mut word));
+        let mut bare = "a haschisch b".to_string();
+        assert!(!copy.mask(true, &mut bare), "no `<`, no match");
+    }
+
     /// A transcript of the reference's masker: in place, length-preserving, caseless, the phase
     /// carrying across calls, and list order giving the later word the earlier mask characters.
     #[test]
@@ -367,7 +437,6 @@ mod tests {
     /// Every shipped row compiles (the reference compiles all of them), and none matches the empty
     /// string, which `mask_uncached`'s zero-length break rests on.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_shipped_pattern_compiles_and_none_matches_empty() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

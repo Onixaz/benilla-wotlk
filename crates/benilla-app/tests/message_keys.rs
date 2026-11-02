@@ -67,14 +67,16 @@ fn every_error_key_in_the_source_is_a_catalog_row() {
 /// A named key must also resolve to text: a row's key is a `GlobalStrings.lua` lookup, and the
 /// shipped file has no entry for many rows, which the reference then never shows.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_error_key_in_the_source_resolves_to_real_text() {
-    /// Keys the shipped `GlobalStrings.lua` has no string for, so the reference shows nothing:
-    /// raised by `ui_items::equip_error` (errorId 362), `ui_action::cast_fail` (pet happiness)
-    /// and `ui_pet::net` (errorId 337). `PET_SPELL_NOPATH` exists but is not row 337's key and
-    /// nothing in the client raises it.
-    const SILENT_IN_5875: &[&str] = &[
+    /// Keys 12340's `GlobalStrings.lua` has no string for, so the reference shows nothing:
+    /// raised by `ui_items::equip_error` (errorId 362), `ui_action::cast_fail` (pet happiness),
+    /// `ui_pet::net` (errorId 337), `ui_battlefield` (join result -9, row 668) and the meeting
+    /// stone's kick (row 458). `PET_SPELL_NOPATH` exists but is not row 337's key and nothing in
+    /// the client raises it.
+    const SILENT_IN_12340: &[&str] = &[
+        "ERR_BATTLEGROUND_JOIN_XP_GAIN",
         "ERR_CANT_BE_DISENCHANTED",
+        "ERR_MEETING_STONE_PARTY_KICKED_FROM_QUEUE",
         "ERR_NOT_HAPPY_ENOUGH",
         "ERR_PET_SPELL_NOPATH",
     ];
@@ -96,7 +98,7 @@ fn every_error_key_in_the_source_resolves_to_real_text() {
     let silent: Vec<&String> = keys
         .iter()
         .filter(|k| !NOT_A_MESSAGE.contains(&k.as_str()))
-        .filter(|k| !SILENT_IN_5875.contains(&k.as_str()))
+        .filter(|k| !SILENT_IN_12340.contains(&k.as_str()))
         .filter(|k| {
             let text: String = vm.lua().globals().get(k.as_str()).unwrap_or_default();
             resolved += usize::from(!text.is_empty());
@@ -120,7 +122,6 @@ fn every_error_key_in_the_source_resolves_to_real_text() {
 /// `SoundEntries(sex)`. Every voiced key raised here must resolve audio for every playable race
 /// and both sexes, except the gaps in the shipped data listed below.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_voiced_key_the_source_raises_has_audio_for_every_playable_race() {
     use benilla_formats::VOCAL_UI_LINES;
 
