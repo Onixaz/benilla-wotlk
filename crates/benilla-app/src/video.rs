@@ -598,7 +598,7 @@ impl Plugin for VideoPlugin {
         );
         app.init_resource::<VideoConfig>()
             .init_resource::<GxRestarts>()
-            .add_systems(Startup, (log_display_session, check_window_pinned).chain())
+            .add_systems(Startup, log_display_session)
             // At the frame's end, after the tick and the CVar sync: the stock Okay handler calls
             // `SetCVar` per row, then `RestartGx()`, so the staged rows are registered before the
             // commit, and no reader of the window sees it change mid-frame.
@@ -609,6 +609,7 @@ impl Plugin for VideoPlugin {
                     validate_refresh,
                     apply_present_mode,
                     apply_window_mode,
+                    check_window_pinned,
                     apply_resize_lock,
                     apply_multisample,
                 )
@@ -848,11 +849,16 @@ pub(crate) fn seed_display_modes_for_vm(
     script.set_screen_modes(offered, current);
 }
 
-/// Check the window got the size `$WOW_WIN` asked for: the window manager may clamp it to the
-/// display (macOS does). Fatal under a capture, whose diffs assume the scenario's size; a warning
-/// otherwise.
+/// Frames after the boot window shows before [`check_window_pinned`] reads its size: a window
+/// manager's clamp reaches `Window` as a resize event a frame or two after the window appears.
+const PIN_CHECK_AFTER_SHOWN: u32 = 5;
+
+/// Check the window got the size `$WOW_WIN` asked for, once, [`PIN_CHECK_AFTER_SHOWN`] frames after
+/// it shows: the window manager may clamp it to the display (macOS does). Fatal under a capture,
+/// whose diffs assume the scenario's size; a warning otherwise.
 fn check_window_pinned(
     windows: Query<&Window, With<PrimaryWindow>>,
+    mut shown_for: Local<u32>,
     mut exit: MessageWriter<AppExit>,
 ) {
     let Some(want) = requested_window_size() else {
@@ -861,6 +867,13 @@ fn check_window_pinned(
     let Ok(window) = windows.single() else {
         return;
     };
+    if !window.visible || *shown_for > PIN_CHECK_AFTER_SHOWN {
+        return;
+    }
+    *shown_for += 1;
+    if *shown_for <= PIN_CHECK_AFTER_SHOWN {
+        return;
+    }
     // Under `$WOW_DPI`, `$WOW_WIN` is physical px, so compare the physical size.
     let res = &window.resolution;
     let got = match requested_dpi() {
@@ -1059,6 +1072,13 @@ fn fitted_window(
     fit_to_work_area(cfg.windowed(), frame, work, cfg.aspect)
 }
 
+/// The physical size a windowed window is set to: a run that sizes its own window (`$WOW_WIN`, a
+/// capture's scenario size) keeps its boot size `own`; otherwise `gxResolution` fitted to the
+/// monitor, or as asked before the monitor is known.
+fn windowed_target(own: Option<UVec2>, fitted: Option<UVec2>, cfg: &VideoConfig) -> UVec2 {
+    own.or(fitted).unwrap_or(cfg.windowed())
+}
+
 /// Frames the born-hidden window waits after the frame its boot mode settles, so the first frame
 /// it shows was presented at the fitted size.
 const SHOW_AFTER_SETTLE: u32 = 2;
@@ -1108,6 +1128,8 @@ fn apply_window_mode(
     mut last_restart: Local<u32>,
     mut saw_monitor: Local<bool>,
     mut reveal: Local<BootReveal>,
+    // The boot window's physical size on a run that sizes its own window, read once.
+    mut own_size: Local<Option<Option<UVec2>>>,
     // `WINIT_WINDOWS` is the main thread's.
     _main: bevy::ecs::system::NonSendMarker,
 ) {
@@ -1143,10 +1165,18 @@ fn apply_window_mode(
         _ => false,
     };
     // A run that sizes its own window keeps it where its instrument put it.
+    let own = *own_size.get_or_insert_with(|| {
+        windowed_env().then(|| {
+            UVec2::new(
+                window.resolution.physical_width(),
+                window.resolution.physical_height(),
+            )
+        })
+    });
     let fitted = monitor
-        .filter(|_| !windowed_env())
+        .filter(|_| own.is_none())
         .map(|(_, m)| fitted_window(&cfg, m, outer_frame(entity)));
-    let windowed_size = fitted.map_or(cfg.windowed(), |(_, size)| size);
+    let windowed_size = windowed_target(own, fitted.map(|(_, size)| size), &cfg);
     let size_moved = want == WindowMode::Windowed
         && (
             window.resolution.physical_width(),
@@ -1654,6 +1684,36 @@ mod tests {
             ),
             (1024, 768),
             "leaving fullscreen restores gxResolution, never the monitor's size"
+        );
+    }
+
+    /// A run that sizes its own window keeps its boot size over the fitted or default size;
+    /// otherwise the fitted `gxResolution` wins, and before the monitor is known the size asked.
+    #[test]
+    fn a_self_sized_run_keeps_its_window_size() {
+        let picked = VideoConfig {
+            resolution: Some(UVec2::new(1280, 720)),
+            ..VideoConfig::default()
+        };
+        let own = Some(UVec2::new(2048, 1536));
+        let fitted = Some(UVec2::new(1200, 675));
+        assert_eq!(
+            windowed_target(own, fitted, &picked),
+            UVec2::new(2048, 1536)
+        );
+        assert_eq!(
+            windowed_target(own, None, &VideoConfig::default()),
+            UVec2::new(2048, 1536),
+            "never the unpicked default"
+        );
+        assert_eq!(
+            windowed_target(None, fitted, &picked),
+            UVec2::new(1200, 675)
+        );
+        assert_eq!(windowed_target(None, None, &picked), UVec2::new(1280, 720));
+        assert_eq!(
+            windowed_target(None, None, &VideoConfig::default()),
+            DEFAULT_WINDOWED
         );
     }
 
