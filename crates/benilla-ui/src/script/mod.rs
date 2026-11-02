@@ -178,6 +178,7 @@ mod inspect;
 mod inventory_verbs;
 mod item_stats;
 mod item_text;
+mod kb_system;
 pub mod keybind;
 mod keyboard;
 mod layout;
@@ -342,8 +343,8 @@ pub use follow::FollowRequest;
 pub use gm_ticket::GmTicketIntent;
 pub use gossip::{GossipMenu, GossipOptionView, GossipQuestRow};
 pub use guild::{
-    GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState, LastOnline, UnitGuild,
-    MAX_RANKS, MIN_RANKS, RANK_RIGHT_BITS,
+    GuildEventView, GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState,
+    LastOnline, UnitGuild, MAX_RANKS, MIN_RANKS, RANK_RIGHT_BITS,
 };
 pub use guild_bank::{
     GuildBankLogView, GuildBankRequest, GuildBankSlotView, GuildBankTabView, GuildBankView,
@@ -552,7 +553,7 @@ pub(crate) const TEXTURE_ONLY_METHODS: [&str; 13] = [
 /// FontString-only: the font, text, justify and shadow block and the string metrics.
 /// `GetStringHeight`, `SetFormattedText` and `SetSize` are not 1.12 FontString methods; 3.3.5a's
 /// `SetFormattedText` goes into the leaf alone (`region::text::install_formatted`).
-pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 23] = [
+pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 24] = [
     "SetFont",
     "GetFont",
     "SetFontObject",
@@ -573,6 +574,7 @@ pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 23] = [
     "GetStringWidth",
     "SetNonSpaceWrap",
     "CanNonSpaceWrap",
+    "GetFieldSize",
     "SetAlphaGradient",
     "SetSpacing",
     "GetSpacing",
@@ -1096,6 +1098,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     loot::install(lua)?;
     loot_roll::install(lua)?;
     level_grant::install(lua)?;
+    kb_system::install(lua)?;
     quest::install(lua)?;
     quest_log::install(lua)?;
     quest_watch::install(lua)?;

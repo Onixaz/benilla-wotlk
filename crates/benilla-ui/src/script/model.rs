@@ -325,6 +325,8 @@ pub(crate) struct Model {
     pub(crate) guild_control: guild::GuildRankEdit,
     /// Guild calls (`GuildInvite`, `GuildSetMOTD`, `GuildControlSaveRank`, …) queued.
     pub(crate) guild_requests: Vec<guild::GuildRequest>,
+    /// The guild event log as the app pushes it, oldest first.
+    pub(crate) guild_event_log: Vec<guild::GuildEventView>,
     /// The guild bank as the app pushes it.
     pub(crate) guild_bank: super::guild_bank::GuildBankView,
     /// The current bank tab, 0-based (`0xc1dc0d`).
@@ -827,6 +829,8 @@ pub(crate) struct Model {
     pub(crate) level_grant_answers: Vec<bool>,
     /// The server's UI clock less the local clock, seconds; 0 until it is read.
     pub(crate) ui_time_offset: i32,
+    /// The message of the day, `KBSystem_GetMOTD`.
+    pub(crate) kb_motd: String,
 
     /// The item-text reader: the pushed page, then the close and page-turn calls.
     pub(crate) item_text: Option<item_text::ItemTextState>,
@@ -1358,6 +1362,7 @@ impl Model {
             guild: guild::GuildState::default(),
             guild_control: guild::GuildRankEdit::default(),
             guild_requests: Vec::new(),
+            guild_event_log: Vec::new(),
             guild_bank: Default::default(),
             guild_bank_tab: 0,
             guild_bank_locks: Vec::new(),
@@ -1596,6 +1601,7 @@ impl Model {
             loot_roll_confirms: Vec::new(),
             level_grant_answers: Vec::new(),
             ui_time_offset: 0,
+            kb_motd: String::new(),
             item_text: None,
             item_text_close: false,
             item_text_page_turns: Vec::new(),

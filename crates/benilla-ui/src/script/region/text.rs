@@ -326,6 +326,12 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GetFieldSize() (`0x48bc70`): the text buffer's size, the constant 8191 (`0x9ead70`).
+    m.set(
+        "GetFieldSize",
+        lua.create_function(|_, _this: Table| Ok(8191i64))?,
+    )?;
+
     // SetTextHeight: the scaled-string mode (alone clears the one-to-one bit `0x200`), the size
     // magnified from the raster, uncapped. The font is untouched, so GetFont keeps the face's own
     // height.

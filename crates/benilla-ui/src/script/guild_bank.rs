@@ -365,7 +365,7 @@ fn icon_path(icon: &str) -> String {
 
 /// A log row's age as `(years, months, days, hours)`, the reference's calendar of 8760-hour
 /// years and 720-hour months (`0x5a4e50`).
-fn age_parts(written_at: u32, now: u32) -> [i64; 4] {
+pub(super) fn age_parts(written_at: u32, now: u32) -> [i64; 4] {
     let age = i64::from(now.wrapping_sub(written_at) as i32);
     let years = age / 3600 / 8760;
     let hours = age / 3600 % 8760;
@@ -374,7 +374,7 @@ fn age_parts(written_at: u32, now: u32) -> [i64; 4] {
     [years, months, hours / 24, hours % 24]
 }
 
-fn unix_now() -> u32 {
+pub(super) fn unix_now() -> u32 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as u32)

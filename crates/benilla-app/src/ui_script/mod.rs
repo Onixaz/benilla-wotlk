@@ -421,6 +421,7 @@ impl Plugin for UiScriptPlugin {
         app.console_command("reloadUI", "Reload the interface.", console_reload_ui);
         // The quit root runs in `Last`: the close button's `AppExit` is written in `PostUpdate`.
         crate::shutdown::on_app_exit(app, shutdown_on_exit.into_configs());
+        glue_mgr::register(app);
         app.init_resource::<UiScaleCvar>()
             .init_resource::<UiScaleSetting>()
             // Before anything reads the scale: at boot after the file's rows land, then each frame

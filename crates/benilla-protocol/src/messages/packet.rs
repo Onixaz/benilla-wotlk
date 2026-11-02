@@ -1091,6 +1091,22 @@ pub enum ServerPacket {
     InebriationThreshold(crate::messages::InebriationThreshold),
     /// `SMSG_LEARNED_DANCE_MOVES`.
     LearnedDanceMoves(u64),
+    /// `SMSG_MOTD`: the message of the day, a line each.
+    Motd(Vec<String>),
+    /// `SMSG_CHANNEL_MEMBER_COUNT`: read and dropped.
+    ChannelMemberCount {
+        channel: String,
+        flags: u8,
+        count: u32,
+    },
+    /// `SMSG_WHOIS`: a GM's whois answer.
+    Whois(String),
+    /// `SMSG_REALM_SPLIT`: the realm split state.
+    RealmSplit(crate::messages::RealmSplit),
+    /// `SMSG_SERVER_FIRST_ACHIEVEMENT`: a realm-first award.
+    ServerFirstAchievement(crate::messages::ServerFirstAchievement),
+    /// `MSG_GUILD_EVENT_LOG_QUERY`: the guild's event log, oldest first.
+    GuildEventLog(Vec<crate::messages::GuildEventLogEntry>),
     /// `SMSG_LOOT_MASTER_LIST`: master-loot candidates; precedes its `SMSG_LOOT_RESPONSE`.
     LootMasterList {
         candidates: Vec<u64>,
@@ -1921,6 +1937,12 @@ impl ServerPacket {
             ServerPacket::UnlearnSpells(_) => "SMSG_SEND_UNLEARN_SPELLS".into(),
             ServerPacket::InebriationThreshold(_) => "SMSG_CROSSED_INEBRIATION_THRESHOLD".into(),
             ServerPacket::LearnedDanceMoves(_) => "SMSG_LEARNED_DANCE_MOVES".into(),
+            ServerPacket::Motd(_) => "SMSG_MOTD".into(),
+            ServerPacket::ChannelMemberCount { .. } => "SMSG_CHANNEL_MEMBER_COUNT".into(),
+            ServerPacket::Whois(_) => "SMSG_WHOIS".into(),
+            ServerPacket::RealmSplit(_) => "SMSG_REALM_SPLIT".into(),
+            ServerPacket::ServerFirstAchievement(_) => "SMSG_SERVER_FIRST_ACHIEVEMENT".into(),
+            ServerPacket::GuildEventLog(_) => "MSG_GUILD_EVENT_LOG_QUERY".into(),
             ServerPacket::LootMasterList { .. } => "SMSG_LOOT_MASTER_LIST".into(),
             ServerPacket::ItemPushResult(_) => "SMSG_ITEM_PUSH_RESULT".into(),
             ServerPacket::CorpseQuery(_) => "MSG_CORPSE_QUERY".into(),

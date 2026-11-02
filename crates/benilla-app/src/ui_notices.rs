@@ -1,10 +1,13 @@
 //! Small server notices and what they drive: the light override, the server's UI clock, the arena
-//! and refer-a-friend errors, the level grant offer and the inebriation lines. The dance moves are
-//! read and dropped: nothing built reads them, as `PlayDance` is not.
+//! and refer-a-friend errors, the level grant offer, the inebriation lines, the message of the day,
+//! a GM's whois answer and realm-first awards. The dance moves are read and dropped: nothing built
+//! reads them, as `PlayDance` is not.
 
 use std::time::{Duration, Instant};
 
-use benilla_protocol::messages::{InebriationThreshold, ObjectType};
+use benilla_protocol::messages::{
+    ChatMessage, InebriationThreshold, ObjectType, ServerFirstAchievement, CHAT_MSG_ACHIEVEMENT,
+};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{ScriptValue, UiScript};
 use bevy::prelude::*;
@@ -55,6 +58,19 @@ struct LevelGrant {
 #[derive(Resource, Default)]
 struct InebriationLines(Vec<(InebriationThreshold, u16)>);
 
+/// The message of the day (`0xbea7fc`), its lines joined by `\n`, bumped by each `SMSG_MOTD`, and
+/// the `KNOWLEDGE_BASE_SYSTEM_MOTD_UPDATED` fires owed.
+#[derive(Resource, Default)]
+struct KbMotd {
+    text: String,
+    generation: u64,
+    owed: u32,
+}
+
+/// Realm-first awards waiting for the VM's line templates.
+#[derive(Resource, Default)]
+struct ServerFirsts(Vec<ServerFirstAchievement>);
+
 pub(crate) struct NoticesPlugin;
 
 impl Plugin for NoticesPlugin {
@@ -63,6 +79,8 @@ impl Plugin for NoticesPlugin {
         app.init_resource::<UiClock>()
             .init_resource::<LevelGrant>()
             .init_resource::<InebriationLines>()
+            .init_resource::<KbMotd>()
+            .init_resource::<ServerFirsts>()
             .net_handler(K::OverrideLight, on_override_light)
             .net_handler(K::UiTime, on_ui_time)
             .net_handler(K::ArenaError, on_arena_error)
@@ -70,6 +88,9 @@ impl Plugin for NoticesPlugin {
             .net_handler(K::ProposeLevelGrant, on_propose_level_grant)
             .net_handler(K::InebriationThreshold, on_inebriation)
             .net_handler(K::LearnedDanceMoves, on_dance_moves)
+            .net_handler(K::Motd, on_motd)
+            .net_handler(K::Whois, on_whois)
+            .net_handler(K::ServerFirstAchievement, on_server_first)
             .net_handler(K::Disconnected, on_session_end)
             .add_systems(
                 Update,
@@ -183,16 +204,86 @@ fn on_dance_moves(In(ev): In<SessionEvent>) {
     }
 }
 
+/// `SMSG_MOTD` (`0x551660`): each line a `CHAT_MSG_SYSTEM` line whose arg6 is `"MOTD"`, the lines
+/// kept for `KBSystem_GetMOTD`, then `KNOWLEDGE_BASE_SYSTEM_MOTD_UPDATED`.
+fn on_motd(In(ev): In<SessionEvent>, mut motd: ResMut<KbMotd>, mut chat: ResMut<ChatLog>) {
+    if let SessionEvent::Motd(lines) = ev {
+        debug!("net: message of the day, {} line(s)", lines.len());
+        for line in &lines {
+            chat.push_event(motd_line(line));
+        }
+        motd.text = lines.join("\n");
+        motd.generation += 1;
+        motd.owed += 1;
+    }
+}
+
+fn motd_line(line: &str) -> ChatEvent {
+    ChatEvent {
+        flag: "MOTD".into(),
+        ..ChatEvent::text_only(ChatEventKind::System, line.to_string())
+    }
+}
+
+/// `SMSG_WHOIS` (`0x6b3280`) writes its text to the console, which prints to the log here.
+fn on_whois(In(ev): In<SessionEvent>, echo: Option<ResMut<crate::console::ConsoleEcho>>) {
+    if let SessionEvent::Whois(text) = ev {
+        match echo {
+            Some(mut echo) => echo.print(text),
+            None => info!("console: {text}"),
+        }
+    }
+}
+
+fn on_server_first(In(ev): In<SessionEvent>, mut firsts: ResMut<ServerFirsts>) {
+    if let SessionEvent::ServerFirstAchievement(a) = ev {
+        debug!(
+            "net: server first {} by {:?} (linked {})",
+            a.achievement, a.name, a.linked
+        );
+        firsts.0.push(a);
+    }
+}
+
+/// The realm-first line (`0x50b010`): `PLAYER_SERVER_FIRST_ACHIEVEMENT` with the name twice when
+/// it links, else `SERVER_FIRST_ACHIEVEMENT` with it once, as `CHAT_MSG_ACHIEVEMENT` from the
+/// earner to the earner, whose `$a` names the award.
+fn server_first_line(
+    get: &dyn Fn(&str) -> Option<String>,
+    a: &ServerFirstAchievement,
+) -> Option<ChatMessage> {
+    use benilla_ui::strings::{fill, Arg};
+    let name = Arg::S(&a.name);
+    let text = if a.linked {
+        fill(&get("PLAYER_SERVER_FIRST_ACHIEVEMENT")?, &[name, name])
+    } else {
+        fill(&get("SERVER_FIRST_ACHIEVEMENT")?, &[name])
+    };
+    Some(ChatMessage {
+        chat_type: CHAT_MSG_ACHIEVEMENT,
+        language: 0,
+        sender_guid: a.guid,
+        target_guid: a.guid,
+        sender_name: Some(a.name.clone()),
+        channel: None,
+        text,
+        chat_tag: 0,
+        achievement: a.achievement,
+    })
+}
+
 /// The session's end zeroes the clock (`0x548570`) and drops the offer (`0x528c30`).
 fn on_session_end(
     In(_): In<SessionEvent>,
     mut clock: ResMut<UiClock>,
     mut grant: ResMut<LevelGrant>,
     mut lines: ResMut<InebriationLines>,
+    mut firsts: ResMut<ServerFirsts>,
 ) {
     *clock = UiClock::default();
     *grant = LevelGrant::default();
     lines.0.clear();
+    firsts.0.clear();
 }
 
 /// `CMSG_WORLD_STATE_UI_TIMER_UPDATE` every 20 s in world, the first at once (`0x5488f0`).
@@ -236,29 +327,47 @@ fn inebriation_line(
     get(&key).map(|t| fill(&t, &args))
 }
 
-/// Push the UI clock offset, announce a pending level grant once its granter is named, and post
-/// the inebriation lines whose inputs have landed.
+/// Push the UI clock offset and the message of the day, announce a pending level grant once its
+/// granter is named, and post the realm-first lines and the inebriation lines whose inputs have
+/// landed.
 #[allow(clippy::too_many_arguments)]
 fn feed_notices(
     script: Option<NonSendMut<UiScript>>,
     clock: Res<UiClock>,
     mut grant: ResMut<LevelGrant>,
     mut lines: ResMut<InebriationLines>,
+    (mut motd, mut firsts): (ResMut<KbMotd>, ResMut<ServerFirsts>),
     names: Res<NameCache>,
     items: Res<Items>,
     net: Res<NetCommands>,
     self_guid: Res<SelfGuid>,
     objects: crate::net::Objects,
     mut chat: ResMut<ChatLog>,
-    mut pushed: Local<crate::ui_script::VmMemo<Option<i32>>>,
+    mut pushed: Local<crate::ui_script::VmMemo<(Option<i32>, u64)>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
     let pushed = pushed.get(&script);
-    if *pushed != Some(clock.offset) {
-        *pushed = Some(clock.offset);
+    if pushed.0 != Some(clock.offset) {
+        pushed.0 = Some(clock.offset);
         script.set_ui_time_offset(clock.offset);
+    }
+    if pushed.1 != motd.generation {
+        pushed.1 = motd.generation;
+        script.set_kb_motd(&motd.text);
+    }
+    for _ in 0..std::mem::take(&mut motd.owed) {
+        script.fire_event("KNOWLEDGE_BASE_SYSTEM_MOTD_UPDATED", Vec::new());
+    }
+    if !firsts.0.is_empty() {
+        let lua = script.lua();
+        let get = |key: &str| benilla_ui::strings::global(lua, key);
+        for a in std::mem::take(&mut firsts.0) {
+            if let Some(msg) = server_first_line(&get, &a) {
+                chat.push_wire(msg);
+            }
+        }
     }
 
     // `0x513fd0`: the event carries the granter's name, from its query's callback on a miss.
@@ -437,5 +546,55 @@ mod tests {
             "declined first, then none pending"
         );
         assert_eq!(w.resource::<LevelGrant>().granter, None);
+    }
+
+    /// `0x50b010`: the linked form fills the name twice, the plain form once; both keep `$a` for
+    /// the achievement lane's expansion, from and about the earner.
+    #[test]
+    fn a_server_first_formats_by_its_link_flag() {
+        let get = |key: &str| {
+            Some(
+                match key {
+                    "PLAYER_SERVER_FIRST_ACHIEVEMENT" => "[%s|%s] $a",
+                    "SERVER_FIRST_ACHIEVEMENT" => "<%s> $a",
+                    _ => return None,
+                }
+                .to_string(),
+            )
+        };
+        let mut a = ServerFirstAchievement {
+            name: "Bob".into(),
+            guid: 0x2A,
+            achievement: 457,
+            linked: true,
+        };
+        let msg = server_first_line(&get, &a).unwrap();
+        assert_eq!(msg.text, "[Bob|Bob] $a");
+        assert_eq!(msg.chat_type, CHAT_MSG_ACHIEVEMENT);
+        assert_eq!((msg.sender_guid, msg.target_guid), (0x2A, 0x2A));
+        assert_eq!(msg.sender_name.as_deref(), Some("Bob"));
+        assert_eq!(msg.achievement, 457);
+        a.linked = false;
+        assert_eq!(server_first_line(&get, &a).unwrap().text, "<Bob> $a");
+        assert!(server_first_line(&|_: &str| None, &a).is_none());
+    }
+
+    /// `0x551660`: a system line flagged `MOTD`, and the joined message for `KBSystem_GetMOTD`.
+    #[test]
+    fn the_motd_prints_each_line_and_keeps_the_whole() {
+        use bevy::ecs::system::RunSystemOnce;
+        let line = motd_line("Hello");
+        assert_eq!(line.kind, Some(ChatEventKind::System));
+        assert_eq!((line.text.as_str(), line.flag.as_str()), ("Hello", "MOTD"));
+        let mut w = World::new();
+        w.init_resource::<KbMotd>();
+        w.init_resource::<ChatLog>();
+        w.run_system_once_with(on_motd, SessionEvent::Motd(vec!["a".into(), "b".into()]))
+            .unwrap();
+        let motd = w.resource::<KbMotd>();
+        assert_eq!(
+            (motd.text.as_str(), motd.generation, motd.owed),
+            ("a\nb", 1, 1)
+        );
     }
 }
