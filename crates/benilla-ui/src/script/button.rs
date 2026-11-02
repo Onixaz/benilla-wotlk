@@ -294,10 +294,10 @@ fn swap_slot(
     Ok(outgoing)
 }
 
-/// Free the region a slot gave up, never the one that moved in.
+/// Delete the region a slot gave up, never the one that moved in.
 fn free_outgoing(lua: &Lua, outgoing: Option<RegionHandle>, incoming: RegionHandle) {
     if let Some(old) = outgoing.filter(|old| *old != incoming) {
-        super::region::free_region(&mut crate::script::model_mut_of(lua), old);
+        super::region::delete_region(lua, old);
     }
 }
 
@@ -336,7 +336,7 @@ fn set_slot_texture(
             let outgoing = swap_slot(&mut model, h, slot, None)?;
             drop(model);
             if let Some(old) = outgoing {
-                super::region::free_region(&mut crate::script::model_mut_of(lua), old);
+                super::region::delete_region(lua, old);
             }
             return Ok(());
         }
@@ -540,6 +540,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             let owner = frame_handle_of(lua, &this)?;
             with_button(lua, &this, |bs| bs.text = Some(rh))?;
+            if let Some(dead) = old {
+                super::region::unregister_region_name(lua, dead);
+            }
             let mut model = crate::script::model_mut_of(lua);
             // A node of the cached graph that dies or changes owner moves the graph's shape; a
             // label that was none is adopted by its anchor below.

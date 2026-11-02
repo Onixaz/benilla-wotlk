@@ -1064,7 +1064,6 @@ mod tests {
 
     /// The shipped `GlobalStrings.lua` run in a real VM and read by the drain's lookup.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_real_boot_resolves_the_real_strings() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -1112,7 +1111,7 @@ mod tests {
                 .text,
             "Can only use while swimming"
         );
-        // Keys 1.12 does not ship show nothing.
+        // Keys 12340 does not ship show nothing.
         assert_eq!(
             cast_fail_text(Caster::Player, 0x08, None, FailArgs::default(), &g),
             None
@@ -1129,7 +1128,7 @@ mod tests {
             (
                 0x33,
                 "Your pet must be behind its target.",
-                "You must be behind your target",
+                "You must be behind your target.",
             ),
             (0x59, "Your pet is out of range.", "Out of range."),
             (
@@ -1157,7 +1156,7 @@ mod tests {
         assert_eq!(
             cast_fail_text(Caster::Pet, 0x32, None, FailArgs::default(), &g),
             None,
-            "5875 ships no ERR_PET_SPELL_NOPATH, so the reference shows nothing"
+            "12340 ships no ERR_PET_SPELL_NOPATH, so the reference shows nothing"
         );
         assert!(
             g("PET_SPELL_NOPATH").is_some(),
@@ -1234,7 +1233,7 @@ mod tests {
             cast_fail_text(Caster::Player, 0x5D, None, args(1657), &g)
                 .unwrap()
                 .text,
-            "You need to be in Darnassus"
+            "You need to be in Darnassus."
         );
         // An unnamed id and an absent word both decline to the stem.
         assert_eq!(

@@ -13,7 +13,8 @@
 //!   differs from the subzone; an unnamed row resolves through its `AreaTableID`, a missing row
 //!   never overrides. Then the group's own row refills the subzone. Both are exact-key lookups.
 //! - `GetRealZoneText` reads the zone name before the indoor override.
-//! - `GetMinimapZoneText` is subzone-else-zone, with its own `MINIMAP_ZONE_CHANGED`.
+//! - `GetMinimapZoneText` is subzone-else-zone; 12340 has no event of its own for it, and the
+//!   stock minimap repaints on the zone events (`Minimap.xml`).
 //!
 //! On the first world entry the zone updater also sets the world map to the player's zone
 //! (`0x5204f9` into `0x547170`); that half is `crate::ui_world_map`'s first-entry sync.
@@ -99,8 +100,7 @@ fn territory_visible(realm_pvp: bool, zone_flags: u32) -> bool {
     realm_pvp || zone_flags & 0x10 != 0
 }
 
-/// Resolves the texts and PvP info, pushes the zone caches, then fires the elected zone event and,
-/// independently, `MINIMAP_ZONE_CHANGED`.
+/// Resolves the texts and PvP info, pushes the zone caches, then fires the elected zone event.
 fn feed_zone_events(
     script: Option<NonSendMut<UiScript>>,
     world: benilla_world::world_point::WorldPoint,
@@ -266,7 +266,6 @@ fn feed_zone_events(
         );
     }
     if minimap_changed {
-        script.fire_event("MINIMAP_ZONE_CHANGED", vec![]);
         debug!("area: minimap zone text → {minimap_text:?}");
     }
     cache.zone_id = Some(signal.zone_id);

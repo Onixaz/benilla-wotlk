@@ -511,6 +511,29 @@ pub(crate) fn free_region(model: &mut Model, rh: RegionHandle) {
     }
 }
 
+/// Delete a region a button gave up, as the reference's destructor does
+/// (`FrameScript_Object::UnregisterScriptObject`, `0x8199c0`): its name leaves `_G` whatever the
+/// global holds now, then [`free_region`].
+pub(crate) fn delete_region(lua: &mlua::Lua, rh: RegionHandle) {
+    unregister_region_name(lua, rh);
+    free_region(&mut crate::script::model_mut_of(lua), rh);
+}
+
+/// The `_G` half of [`delete_region`], for a caller that frees under its own model borrow.
+pub(crate) fn unregister_region_name(lua: &mlua::Lua, rh: RegionHandle) {
+    let name = {
+        let model = crate::script::model_mut_of(lua);
+        model
+            .region_to_id
+            .get(&rh)
+            .and_then(|id| model.region_name_by_id.get(id).cloned())
+    };
+    if let Some(name) = name {
+        // Best effort, as the reference's `lua_setglobal` is: a failing write leaves the name.
+        let _ = lua.globals().set(name, mlua::Value::Nil);
+    }
+}
+
 pub(super) fn region_owner_id(model: &mut Model, rh: RegionHandle) -> u32 {
     match model.arena.region(rh).map(|r| r.owner) {
         Some(owner) => model.frame_id(owner),

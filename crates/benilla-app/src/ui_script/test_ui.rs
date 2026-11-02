@@ -450,7 +450,7 @@ pub(crate) fn read(req: &str) -> Option<Vec<u8>> {
 pub(crate) const GOSSIP_UI: &[&str] = &[
     r"Interface\FrameXML\GlobalStrings.lua",
     r"Interface\FrameXML\BasicControls.xml",
-    r"Interface\FrameXML\LocaleProperties.lua",
+    r"Interface\FrameXML\Constants.lua",
     r"Interface\FrameXML\UIParent.xml",
     r"Interface\FrameXML\MoneyFrame.lua",
     r"Interface\FrameXML\MoneyFrame.xml",
@@ -468,7 +468,7 @@ pub(crate) const LOOT_UI: &[&str] = &[
     "Interface\\FrameXML\\GlobalStrings.lua",
     "Interface\\FrameXML\\Fonts.xml",
     "Interface\\FrameXML\\BasicControls.xml", // `TEXT`, which UnitPopup.lua reads at file scope
-    "Interface\\FrameXML\\LocaleProperties.lua",
+    "Interface\\FrameXML\\Constants.lua",
     r"Interface\FrameXML\UIParent.xml", // UIParent.lua: the panel slot manager and the fades
     r"Interface\FrameXML\MoneyFrame.lua",
     r"Interface\FrameXML\MoneyFrame.xml",
@@ -503,7 +503,7 @@ pub(super) const CHARACTER_UI: &[&str] = &[
     "Interface\\FrameXML\\Fonts.xml",
     "Interface\\FrameXML\\BasicControls.xml", // TEXT(), which those labels go through
     // `GetText`, the gendered-string helper `ReputationFrame.lua:65` calls for each standing.
-    r"Interface\FrameXML\LocaleProperties.lua",
+    r"Interface\FrameXML\Constants.lua",
     r"Interface\FrameXML\UIParent.xml", // Model_OnLoad/_Rotate*/_OnUpdate: the model turntable
     r"Interface\FrameXML\MoneyFrame.lua",
     r"Interface\FrameXML\MoneyFrame.xml",
@@ -573,7 +573,7 @@ pub(super) const BAG_UI: &[&str] = &[
     "Interface\\FrameXML\\Fonts.xml",
     // `TEXT()`, which the backpack button's OnEnter and `BagSlotButton_OnEnter` call.
     "Interface\\FrameXML\\BasicControls.xml",
-    "Interface\\FrameXML\\LocaleProperties.lua",
+    "Interface\\FrameXML\\Constants.lua",
     // `UIParent`: the twelve `ContainerFrame`s are its children, `updateContainerFrameAnchors`
     // anchors each open bag to its parent, and `OpenAllBags` returns unless `UIParent` is visible.
     r"Interface\FrameXML\UIParent.xml",
@@ -855,21 +855,20 @@ mod tests {
     /// The merged kit runs toc rows in the toc's order, a file a row includes just above it and a
     /// layer file after them all, each once.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_merged_kit_takes_the_production_order() {
         let _data = benilla_formats::wow_data_or_skip!();
         assert_eq!(
             super::production_order(&[
                 &["ScrollTemplates.xml", r"Interface\FrameXML\UIParent.xml"],
                 &[
-                    r"Interface\FrameXML\LocaleProperties.lua",
+                    r"Interface\FrameXML\Constants.lua",
                     r"Interface\FrameXML\GlobalStrings.lua",
                     r"Interface\FrameXML\UIParent.xml",
                 ],
             ]),
             [
                 r"Interface\FrameXML\GlobalStrings.lua",
-                r"Interface\FrameXML\LocaleProperties.lua",
+                r"Interface\FrameXML\Constants.lua",
                 r"Interface\FrameXML\UIParent.xml",
                 "ScrollTemplates.xml",
             ]

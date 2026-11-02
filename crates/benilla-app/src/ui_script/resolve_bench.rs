@@ -39,15 +39,7 @@ fn settled_default_ui() -> UiScript {
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1600.0, 900.0);
     // The UI loads on world entry, so a player always exists by then.
-    s.set_unit(
-        "player",
-        Some(benilla_ui::script::UnitState {
-            exists: true,
-            name: Some("Probefour".into()),
-            level: 60,
-            ..Default::default()
-        }),
-    );
+    super::test_ui::seat_login(&mut s);
     super::load_default_ui(&s);
     s.set_screen_size(1600.0, 900.0);
     for _ in 0..12 {
@@ -171,7 +163,6 @@ fn a_tooltip_content_change_costs_exactly_one_layout_solve() {
 /// shipped handler writing a layout input every frame. `WOW_LAYOUT_TOUCH_TRACE=<secs>:<n>` names
 /// the writer on a live run (`docs/CONTRIBUTING.md`, "Running it unattended").
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_settled_shipped_ui_costs_no_gate_walk_on_a_quiet_frame() {
     benilla_formats::wow_data_or_skip!();
     let mut s = settled_default_ui();
@@ -181,12 +172,12 @@ fn the_settled_shipped_ui_costs_no_gate_walk_on_a_quiet_frame() {
         app_frame_ticked(&mut s, 1.0 / 60.0);
     }
     // Positive control: zero walks means nothing unless the handlers ran, and
-    // `BuffFrame_OnUpdate` moves `BuffFrameUpdateTime` every frame (`BuffFrame.lua:29-33`).
-    s.run("__probe_bfut = BuffFrameUpdateTime")
+    // `BuffFrame_OnUpdate` moves the frame's `BuffFrameUpdateTime` every frame (`BuffFrame.lua`).
+    s.run("__probe_bfut = BuffFrame.BuffFrameUpdateTime")
         .expect("read the control");
     app_frame_ticked(&mut s, 1.0 / 60.0);
     s.run(
-        "if BuffFrameUpdateTime == __probe_bfut then \
+        "if BuffFrame.BuffFrameUpdateTime == __probe_bfut then \
          error('the VM tick ran no shipped OnUpdate — this test proves nothing') end",
     )
     .expect("the shipped UI's OnUpdate handlers must run under app_frame_ticked");

@@ -591,7 +591,6 @@ mod mount_error_tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_mount_key_resolves_in_the_real_global_strings() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");
@@ -611,7 +610,7 @@ mod mount_error_tests {
         }
         assert_eq!(
             g("ERR_MOUNT_ALREADYMOUNTED").unwrap(),
-            "You're already mounted!"
+            "You're already mounted."
         );
         assert_eq!(g("ERR_DISMOUNT_NOTMOUNTED").unwrap(), "You're not mounted!");
     }
