@@ -656,6 +656,18 @@ pub enum ServerPacket {
         model_id: u32,
         position: Vector3d,
     },
+    /// `SMSG_PET_LEARNED_SPELL`: the pet learned `spell_id`.
+    PetLearnedSpell {
+        spell_id: u32,
+    },
+    /// `SMSG_PET_UNLEARNED_SPELL`: the pet lost `spell_id`.
+    PetUnlearnedSpell {
+        spell_id: u32,
+    },
+    /// `SMSG_PET_RENAMEABLE`: empty body.
+    PetRenameable,
+    /// `SMSG_PET_GUIDS`: the controlled-pet list, in the server's order.
+    PetGuids(Vec<u64>),
     /// `SMSG_ATTACKSTART`: a unit began melee auto-attack, our own echo included.
     AttackStart {
         attacker: u64,
@@ -1756,6 +1768,10 @@ impl ServerPacket {
             ServerPacket::PetBroken => "SMSG_PET_BROKEN".into(),
             ServerPacket::PetActionSound { .. } => "SMSG_PET_ACTION_SOUND".into(),
             ServerPacket::PetDismissSound { .. } => "SMSG_PET_DISMISS_SOUND".into(),
+            ServerPacket::PetLearnedSpell { .. } => "SMSG_PET_LEARNED_SPELL".into(),
+            ServerPacket::PetUnlearnedSpell { .. } => "SMSG_PET_UNLEARNED_SPELL".into(),
+            ServerPacket::PetRenameable => "SMSG_PET_RENAMEABLE".into(),
+            ServerPacket::PetGuids(_) => "SMSG_PET_GUIDS".into(),
             ServerPacket::PetCastFailed { .. } => "SMSG_PET_CAST_FAILED".into(),
             ServerPacket::AttackStart { .. } => "SMSG_ATTACKSTART".into(),
             ServerPacket::AttackStop { .. } => "SMSG_ATTACKSTOP".into(),

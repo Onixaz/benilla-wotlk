@@ -114,4 +114,9 @@ impl WorldWriter {
     pub fn pet_unlearn(&mut self, trainer: u64) -> Result<()> {
         self.send(opcode::CMSG_PET_UNLEARN, &messages::pet_unlearn(trainer))
     }
+
+    /// `CMSG_REQUEST_PET_INFO`: the world-enter pet ask, empty; answered by `SMSG_PET_SPELLS`.
+    pub fn request_pet_info(&mut self) -> Result<()> {
+        self.send(opcode::CMSG_REQUEST_PET_INFO, &[])
+    }
 }

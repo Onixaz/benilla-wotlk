@@ -985,6 +985,15 @@ fn parse_server_body(
             let (model_id, position) = pet::read_pet_dismiss_sound(&mut r)?;
             ServerPacket::PetDismissSound { model_id, position }
         }
+        opcode::SMSG_PET_LEARNED_SPELL => ServerPacket::PetLearnedSpell {
+            spell_id: read_u32_le(&mut r)?,
+        },
+        opcode::SMSG_PET_UNLEARNED_SPELL => ServerPacket::PetUnlearnedSpell {
+            spell_id: read_u32_le(&mut r)?,
+        },
+        // The reference reads no body.
+        opcode::SMSG_PET_RENAMEABLE => ServerPacket::PetRenameable,
+        opcode::SMSG_PET_GUIDS => ServerPacket::PetGuids(pet::read_pet_guids(&mut r)?),
         opcode::SMSG_ATTACKSTART => {
             let (attacker, victim) = attack::read_attack_start(&mut r)?;
             ServerPacket::AttackStart { attacker, victim }

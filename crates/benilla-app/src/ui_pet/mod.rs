@@ -74,6 +74,35 @@ pub(crate) struct PetBar {
     /// The pet's pending cast, the spell a cast as the pet sent and its expiry: the per-caster
     /// pending list the cast ladder asks (`0x80d34b`), released by the pet's go or failure.
     pub(crate) pending_cast: Option<(u32, Instant)>,
+    /// The controlled-pet list (`[0xc23500]`, count `[0xc234fc]`), its head `spells.pet_guid`:
+    /// written by the pet setter and replaced whole by `SMSG_PET_GUIDS`.
+    pub(crate) pets: Vec<u64>,
+}
+
+/// `SMSG_PET_RENAMEABLE`s not yet fired as `PET_RENAMEABLE`.
+#[derive(Resource, Default)]
+pub(crate) struct PetRenameable(pub(crate) u32);
+
+/// The world-enter cascade's pet step (`0x5d6e60`): the pet setter cleared, then the bodyless
+/// `CMSG_REQUEST_PET_INFO` while our charm, else our summon, is set; the `SMSG_PET_SPELLS` it
+/// answers rebuilds the bar. The reference's entry waits out the loading screen, so the summon
+/// field has landed; ours rides the self create, which a login's `SMSG_PET_SPELLS` can beat while
+/// the field comes a frame later, so the bar drops only when the ask goes out.
+pub(crate) fn request_pet_info_on_world_enter(
+    mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
+    mut bar: ResMut<PetBar>,
+    player: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
+    commands: Res<crate::net::NetCommands>,
+) {
+    if cascades.read().next().is_none() {
+        return;
+    }
+    let Some(pet) = player.iter().next().and_then(|s| s.0.unit_pet_guid()) else {
+        return;
+    };
+    debug!("ui_pet: world entry with pet {pet:#x}, asking its bar");
+    bar.clear();
+    let _ = commands.0.send(crate::net::ClientCommand::RequestPetInfo);
 }
 
 impl PetBar {
@@ -99,53 +128,63 @@ pub(crate) struct UiPetPlugin;
 impl Plugin for UiPetPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<PetBar>().add_systems(
-            Update,
-            (
-                // Feeds ride the unit feed, before the VM ticks; drains run after the input pass so
-                // a click is sent that frame (a press is a script call, `PetPress`). The old-target
-                // clear precedes the bar feed so Attack
-                // goes dark the frame the selection moves.
-                pet_stop_on_old_target_clear
-                    .in_set(UnitFeed)
-                    .before(feed_pet_bar)
-                    .before(crate::ui_action::SlotIdentityFeed),
-                // After the pet snapshot: these feeds' events reach Lua at once, and their
-                // handlers read `HasPetUI()`, which `crate::ui_pet_stats` pushes. The bar pushes
-                // its cooldown triples before the cooldown events and the pet's flush fires after
-                // them, so the buttons it wakes read the new list.
-                feed_pet_bar
-                    .in_set(UnitFeed)
-                    .after(crate::ui_pet_stats::PetSnapshot)
-                    .before(CooldownEvents),
-                fire_pet_cooldown_events
-                    .in_set(UnitFeed)
-                    .after(CooldownEvents),
-                feed_pet_unit
-                    .in_set(UnitFeed)
-                    .after(crate::ui_pet_stats::PetSnapshot),
-                feed_pet_menu.in_set(UnitFeed),
-                possess::feed_possess_spell.in_set(UnitFeed),
-                // Before the slot feed, which shows the slots it writes.
-                temp_bar::update_pet_temp_bar
-                    .in_set(UnitFeed)
-                    .in_set(PetTempBar)
-                    .after(crate::ui_action::ActionRanks)
-                    .after(pet_stop_on_old_target_clear)
-                    .before(crate::ui_action::SlotIdentityFeed),
-                // After this frame's presses, as the one drain before it ran them ahead of the
-                // toggles, stops and writes.
-                drain_pet_actions
-                    .after(UiInput)
-                    .after(crate::script_calls::apply_script_calls),
-                // It fires `PET_DISMISS_START`, so it waits for the interface. An abandon re-lists
-                // the stable it reads before the stable's own verbs move it.
-                drain_pet_menu
-                    .after(UiInput)
-                    .before(crate::ui_stable::drain_stable)
-                    .run_if(crate::ui_script::ingame_ui_up),
-            ),
-        );
+        app.init_resource::<PetBar>()
+            .init_resource::<PetRenameable>()
+            .add_message::<crate::net::WorldEnterCascadeMessage>()
+            .add_systems(
+                Update,
+                (
+                    // Feeds ride the unit feed, before the VM ticks; drains run after the input pass so
+                    // a click is sent that frame (a press is a script call, `PetPress`). The old-target
+                    // clear precedes the bar feed so Attack
+                    // goes dark the frame the selection moves.
+                    pet_stop_on_old_target_clear
+                        .in_set(UnitFeed)
+                        .before(feed_pet_bar)
+                        .before(crate::ui_action::SlotIdentityFeed),
+                    // After the pet snapshot: these feeds' events reach Lua at once, and their
+                    // handlers read `HasPetUI()`, which `crate::ui_pet_stats` pushes. The bar pushes
+                    // its cooldown triples before the cooldown events and the pet's flush fires after
+                    // them, so the buttons it wakes read the new list.
+                    feed_pet_bar
+                        .in_set(UnitFeed)
+                        .after(crate::ui_pet_stats::PetSnapshot)
+                        .before(CooldownEvents),
+                    fire_pet_cooldown_events
+                        .in_set(UnitFeed)
+                        .after(CooldownEvents),
+                    feed_pet_unit
+                        .in_set(UnitFeed)
+                        .after(crate::ui_pet_stats::PetSnapshot),
+                    feed_pet_menu.in_set(UnitFeed),
+                    // The UI's world entry asks after the time and before the mail (`0x528010`);
+                    // its bar drop lands before the feeds read the bar.
+                    request_pet_info_on_world_enter
+                        .after(crate::net::send_query_time)
+                        .before(crate::ui_mail::send_query_next_mail_time_on_enter)
+                        .before(UnitFeed)
+                        .before(crate::ui_script::UiFeed),
+                    possess::feed_possess_spell.in_set(UnitFeed),
+                    // Before the slot feed, which shows the slots it writes.
+                    temp_bar::update_pet_temp_bar
+                        .in_set(UnitFeed)
+                        .in_set(PetTempBar)
+                        .after(crate::ui_action::ActionRanks)
+                        .after(pet_stop_on_old_target_clear)
+                        .before(crate::ui_action::SlotIdentityFeed),
+                    // After this frame's presses, as the one drain before it ran them ahead of the
+                    // toggles, stops and writes.
+                    drain_pet_actions
+                        .after(UiInput)
+                        .after(crate::script_calls::apply_script_calls),
+                    // It fires `PET_DISMISS_START`, so it waits for the interface. An abandon re-lists
+                    // the stable it reads before the stable's own verbs move it.
+                    drain_pet_menu
+                        .after(UiInput)
+                        .before(crate::ui_stable::drain_stable)
+                        .run_if(crate::ui_script::ingame_ui_up),
+                ),
+            );
     }
 }
 

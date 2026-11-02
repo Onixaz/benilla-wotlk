@@ -173,6 +173,19 @@ pub const SMSG_PET_ACTION_SOUND: u16 = 0x0324; // 804
 /// that model's `CreatureSoundData` column 29 there at `z + 1.0`, with no unit. vmangos never sends
 /// it.
 pub const SMSG_PET_DISMISS_SOUND: u16 = 0x0325; // 805
+/// The pet learned a spell mid-session: one `u32` spell id (`0x5d4c30`). The reference only
+/// prints the chat line; the bar follows the `SMSG_PET_SPELLS` the server sends after it.
+pub const SMSG_PET_LEARNED_SPELL: u16 = 0x0499; // 1177
+/// The pet lost a spell: one `u32` spell id, the same handler's other arm.
+pub const SMSG_PET_UNLEARNED_SPELL: u16 = 0x049A; // 1178
+/// Empty body: the reference fires `PET_RENAMEABLE` (`0x5d3140`), which opens the rename popup.
+pub const SMSG_PET_RENAMEABLE: u16 = 0x0475; // 1141
+/// The controlled-pet list: `u32 count`, then `count` `u64` guids (`0x5d6550`); its head is the
+/// pet every pet verb reads.
+pub const SMSG_PET_GUIDS: u16 = 0x04AA; // 1194
+/// Empty body, sent at each world entry while our charm or summon field is set (`0x5d6e60`);
+/// the server answers with a fresh `SMSG_PET_SPELLS`.
+pub const CMSG_REQUEST_PET_INFO: u16 = 0x0279; // 633
 
 /// Our own server-driven spline (Charge, taxi) finished: `MovementInfo` at the endpoint, the
 /// `splineId`, and a float the server skips (`MoveSplineDone::ReadFromWorldPacket`).

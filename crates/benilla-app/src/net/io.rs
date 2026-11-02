@@ -1611,6 +1611,7 @@ pub(super) fn writer_loop(
                     } => w.pet_spell_autocast(pet_guid, spell_id, enabled),
                     ClientCommand::PetAbandon { pet_guid } => w.pet_abandon(pet_guid),
                     ClientCommand::PetRename { pet_guid, name } => w.pet_rename(pet_guid, &name),
+                    ClientCommand::RequestPetInfo => w.request_pet_info(),
                     ClientCommand::AttackSwing { guid } => w.attack_swing(guid),
                     ClientCommand::AttackStop => w.attack_stop(),
                     ClientCommand::SetSheathed { state } => w.set_sheathed(state),

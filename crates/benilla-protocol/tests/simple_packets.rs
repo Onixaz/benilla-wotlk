@@ -625,6 +625,38 @@ fn pet_feedback_family_parses_and_decodes() {
         assert!(matches!(decode(p)[..], [SessionEvent::PetBroken]));
     }
 
+    // SMSG_PET_LEARNED_SPELL / SMSG_PET_UNLEARNED_SPELL: one u32 spell id each (0x5d4c30).
+    let p = messages::parse_server(opcode::SMSG_PET_LEARNED_SPELL, &hx("65430000")).unwrap();
+    assert!(matches!(
+        decode(p)[..],
+        [SessionEvent::PetLearnedSpell { spell_id: 17253 }]
+    ));
+    let p = messages::parse_server(opcode::SMSG_PET_UNLEARNED_SPELL, &hx("65430000")).unwrap();
+    assert!(matches!(
+        decode(p)[..],
+        [SessionEvent::PetUnlearnedSpell { spell_id: 17253 }]
+    ));
+    assert!(messages::parse_server(opcode::SMSG_PET_LEARNED_SPELL, &hx("6543")).is_err());
+
+    // SMSG_PET_RENAMEABLE: no body read (0x5d3140).
+    let p = messages::parse_server(opcode::SMSG_PET_RENAMEABLE, &[]).unwrap();
+    assert!(matches!(decode(p)[..], [SessionEvent::PetRenameable]));
+
+    // SMSG_PET_GUIDS: u32 count, then the u64 guids (0x5d6550); a short list is an error.
+    let body = hx(&("02000000".to_owned() + "2a00000000004010" + "9900000000004010"));
+    let p = messages::parse_server(opcode::SMSG_PET_GUIDS, &body).unwrap();
+    match &decode(p)[..] {
+        [SessionEvent::PetGuids(guids)] => {
+            assert_eq!(guids, &[0x1040_0000_0000_002A, 0x1040_0000_0000_0099]);
+        }
+        other => panic!("{other:?}"),
+    }
+    let p = messages::parse_server(opcode::SMSG_PET_GUIDS, &hx("00000000")).unwrap();
+    assert!(matches!(&decode(p)[..], [SessionEvent::PetGuids(g)] if g.is_empty()));
+    assert!(
+        messages::parse_server(opcode::SMSG_PET_GUIDS, &hx("020000002a00000000004010")).is_err()
+    );
+
     // SMSG_PET_ACTION_SOUND: u64 guid then the u32 talk selector.
     let body = hx("2a0000000000401001000000");
     let p = messages::parse_server(opcode::SMSG_PET_ACTION_SOUND, &body).unwrap();

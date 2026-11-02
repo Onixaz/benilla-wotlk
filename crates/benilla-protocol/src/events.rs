@@ -637,6 +637,15 @@ pub enum SessionEvent {
     PetActionSound { pet_guid: u64, talk: u32 },
     /// A dismissed pet's sound (`SMSG_PET_DISMISS_SOUND`): the `CreatureModelData` column-29 kit.
     PetDismissSound { model_id: u32, position: [f32; 3] },
+    /// The pet learned a spell (`SMSG_PET_LEARNED_SPELL`): only a chat line; the bar follows the
+    /// `SMSG_PET_SPELLS` behind it.
+    PetLearnedSpell { spell_id: u32 },
+    /// The pet lost a spell (`SMSG_PET_UNLEARNED_SPELL`): `ERR_PET_SPELL_UNLEARNED_S`.
+    PetUnlearnedSpell { spell_id: u32 },
+    /// The pet may be renamed (`SMSG_PET_RENAMEABLE`): `PET_RENAMEABLE`.
+    PetRenameable,
+    /// The controlled-pet list (`SMSG_PET_GUIDS`), replacing the client's whole.
+    PetGuids(Vec<u64>),
     /// `SMSG_ITEM_QUERY_SINGLE_RESPONSE`, by entry; `None` is unknown. Boxed, being wide.
     ItemTemplate {
         entry: u32,

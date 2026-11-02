@@ -1,6 +1,7 @@
 //! The world-enter sends wait for our own player's create, as the reference's do: none goes out on
 //! the login edge alone, which fires before the server seats the player; the create sends
-//! `CMSG_PLAYED_TIME` (`0x6e6e27`), `CMSG_SET_ACTIVE_MOVER`, then the cascade's `CMSG_QUERY_TIME`, `MSG_QUERY_NEXT_MAIL_TIME`,
+//! `CMSG_PLAYED_TIME` (`0x6e6e27`), `CMSG_SET_ACTIVE_MOVER`, then the cascade's `CMSG_QUERY_TIME`,
+//! `CMSG_REQUEST_PET_INFO` (with a pet out only), `MSG_QUERY_NEXT_MAIL_TIME`,
 //! `CMSG_BATTLEFIELD_STATUS` and the dungeon finder's `CMSG_LFG_GET_STATUS` and
 //! `CMSG_LFG_PLAYER_LOCK_INFO_REQUEST` (`0x557240`); a worldport's fresh create sends them all
 //! again.
@@ -32,6 +33,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
         .init_resource::<crate::ui_battlefield::BattlefieldQueue>()
         .init_resource::<crate::ui_dialog_verbs::MeetingStone>()
         .init_resource::<crate::ui_lfg::LfgFeed>()
+        .init_resource::<crate::ui_pet::PetBar>()
         .add_message::<EnteredWorldMessage>()
         .add_message::<WorldEnterCascadeMessage>()
         .add_systems(
@@ -40,6 +42,7 @@ fn app() -> (App, Receiver<ClientCommand>) {
                 super::tag_self_player,
                 super::enter_world_on_self_create,
                 crate::net::send_query_time,
+                crate::ui_pet::request_pet_info_on_world_enter,
                 crate::ui_mail::send_query_next_mail_time_on_enter,
                 crate::ui_battlefield::reset_on_world_enter,
                 crate::ui_dialog_verbs::meeting_stone_enter_world,
@@ -129,7 +132,48 @@ fn a_worldport_create_sends_them_again() {
     assert_eq!(sent(&rx), the_sends());
 }
 
-/// The production schedule: the self-create edge, then the time, mail, battlefield and dungeon
+/// With our summon field set the pet ask follows the time query (`0x5d6e60`, from `0x528010`),
+/// and the cascade drops the old bar first: the answer rebuilds it.
+#[test]
+fn a_create_with_a_pet_out_asks_its_bar() {
+    use benilla_protocol::field::FIELD_UNIT_SUMMON;
+    let (mut app, rx) = app();
+    app.world_mut()
+        .resource_mut::<crate::ui_pet::PetBar>()
+        .spells
+        .pet_guid = 0x2A;
+    log_in(&mut app);
+    app.world_mut().spawn((
+        Guid(ME),
+        crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            FIELD_UNIT_SUMMON,
+            0x2A,
+        )])),
+    ));
+    app.update();
+    let mut want = the_sends();
+    want.insert(3, "RequestPetInfo".into());
+    assert_eq!(sent(&rx), want);
+    assert!(!app.world().resource::<crate::ui_pet::PetBar>().has_bar());
+}
+
+/// A login's `SMSG_PET_SPELLS` can beat our create while the summon field comes later: with no
+/// field set, nothing is asked and that bar stays.
+#[test]
+fn a_create_with_no_pet_field_keeps_a_bar_that_beat_it() {
+    let (mut app, rx) = app();
+    app.world_mut()
+        .resource_mut::<crate::ui_pet::PetBar>()
+        .spells
+        .pet_guid = 0x2A;
+    log_in(&mut app);
+    self_create(&mut app);
+    app.update();
+    assert_eq!(sent(&rx), the_sends());
+    assert!(app.world().resource::<crate::ui_pet::PetBar>().has_bar());
+}
+
+/// The production schedule: the self-create edge, then the time, pet, mail, battlefield and dungeon
 /// finder sends (the UI's world entry `0x528010` runs the dungeon finder's after the
 /// battlefield's); and a `/reload` frame's sweep drops the stone's text before its cascade resets
 /// it.
@@ -150,6 +194,11 @@ fn the_client_schedules_the_sends_in_the_reference_order() {
     assert!(runs_before(
         &mut app,
         crate::net::send_query_time,
+        crate::ui_pet::request_pet_info_on_world_enter
+    ));
+    assert!(runs_before(
+        &mut app,
+        crate::ui_pet::request_pet_info_on_world_enter,
         crate::ui_mail::send_query_next_mail_time_on_enter
     ));
     assert!(runs_before(

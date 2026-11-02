@@ -136,6 +136,7 @@ pub(super) fn drive_emote_queues(
             anim_id: anim_of(emote) as u16,
             seq: play_seq.next(),
             via_player: false,
+            remap_special: true,
         });
     }
 }

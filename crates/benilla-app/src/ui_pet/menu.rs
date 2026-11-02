@@ -86,10 +86,16 @@ pub(super) fn drain_pet_menu(
     spells: Option<Res<crate::ui_action::Spells>>,
     summons: Option<Res<crate::spell::SummonSlots>>,
     stable: Option<Res<crate::ui_stable::StableOpen>>,
+    renameable: Option<ResMut<super::PetRenameable>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
+    // `SMSG_PET_RENAMEABLE` (`0x5d3140`) fires `PET_RENAMEABLE`, which the stock `PetFrame`
+    // answers with the `RENAME_PET` popup; held here until the interface is up.
+    for _ in 0..renameable.map_or(0, |mut r| std::mem::take(&mut r.0)) {
+        script.fire_event("PET_RENAMEABLE", vec![]);
+    }
     let (abandons, dismisses) = script.take_pet_gives_up();
     let renames = script.take_pet_renames();
     if abandons == 0 && dismisses == 0 && renames.is_empty() {

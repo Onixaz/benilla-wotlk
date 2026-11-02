@@ -1346,6 +1346,8 @@ pub(crate) enum ClientCommand {
         pet_guid: u64,
         name: String,
     },
+    /// `CMSG_REQUEST_PET_INFO`: the world-enter ask while we hold a charm or summon.
+    RequestPetInfo,
     /// `CMSG_ATTACKSWING`; echoed as `SMSG_ATTACKSTART`.
     AttackSwing {
         guid: u64,

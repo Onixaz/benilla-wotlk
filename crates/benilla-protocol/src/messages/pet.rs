@@ -312,6 +312,16 @@ pub(super) fn read_pet_dismiss_sound(r: &mut impl Read) -> io::Result<(u32, Vect
     Ok((read_u32_le(r)?, Vector3d::read(r)?))
 }
 
+/// Read `SMSG_PET_GUIDS`: `u32 count`, then that many `u64` guids (`0x5d6550`).
+pub(super) fn read_pet_guids(r: &mut impl Read) -> io::Result<Vec<u64>> {
+    let count = read_u32_le(r)?;
+    let mut guids = Vec::with_capacity(capacity_hint(count, 64));
+    for _ in 0..count {
+        guids.push(read_u64_le(r)?);
+    }
+    Ok(guids)
+}
+
 /// Body of `CMSG_PET_ACTION` (opcode 373, sent at `0x5d455e`): `u64` pet guid, the slot's `u32`
 /// word echoed verbatim, `u64` target guid (0 when the action needs none).
 pub fn pet_action(pet_guid: u64, packed: u32, target_guid: u64) -> Vec<u8> {
