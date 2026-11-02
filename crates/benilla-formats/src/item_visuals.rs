@@ -437,12 +437,11 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_item_visuals_join_their_effect_models() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_item_visual_catalog(&mut chain).expect("load ItemVisuals");
-        assert_eq!(cat.len(), 34, "34 ItemVisuals rows in build 5875");
+        assert_eq!(cat.len(), 80, "80 ItemVisuals rows in build 12340");
 
         let all_blue = ["Spells\\Enchantments\\BlueGlow_Med.mdx"; ITEM_VISUAL_SLOTS];
         let got = cat.effects(2).expect("visual 2");
@@ -454,12 +453,9 @@ mod tests {
 
         let one = cat.effects(1).expect("visual 1");
         assert_eq!(
-            one[3].as_deref(),
-            Some("Spells\\Enchantments\\SkullBalls.mdx")
-        );
-        assert!(
-            [0, 1, 2, 4].iter().all(|&i| one[i].is_none()),
-            "visual 1 authors only slot 3"
+            one.each_ref().map(|s| s.as_deref().unwrap_or("")),
+            ["Spells\\DeathKnight_FrozenRuneWeapon_State.mdx"; ITEM_VISUAL_SLOTS],
+            "visual 1 is the frozen rune weapon on every slot"
         );
 
         // A mixed row: slot 0 differs from the other four.
@@ -473,7 +469,7 @@ mod tests {
             Some("Spells\\Enchantments\\YellowGlow_Low.mdx")
         );
 
-        // Row 28: slots 0 and 3 hold 90148992 and 455344256, past the effect table's max id (152).
+        // Row 28: slots 0 and 3 hold 90148992 and 455344256, past the effect table's max id (215).
         let junk = cat.effects(28).expect("visual 28");
         assert_eq!(
             junk.each_ref().map(|s| s.is_some()),
@@ -492,7 +488,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_displays_carrying_a_visual_all_resolve() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -519,11 +514,11 @@ mod tests {
                 ),
             }
         }
-        assert_eq!(carried, 365, "displays carrying a nonzero ItemVisuals id");
-        assert_eq!(minus_one, 5, "…of which five are the skipped -1");
-        assert_eq!(resolved, 360);
+        assert_eq!(carried, 1633, "displays carrying a nonzero ItemVisuals id");
+        assert_eq!(minus_one, 250, "…of which 250 are the skipped -1");
+        assert_eq!(resolved, 1383);
         assert_eq!(
-            models, 1588,
+            models, 6256,
             "glow-model instances the shipped displays add up to"
         );
     }

@@ -123,12 +123,11 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_world_map_overlay_has_nonempty_textures_for_teldrassil() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_world_map_overlay_catalog(&mut chain).expect("load WorldMapOverlay");
-        assert_eq!(cat.len(), 526, "all 526 rows load");
+        assert_eq!(cat.len(), 988, "all 988 rows load");
 
         let teldrassil = cat.for_area(41);
         assert!(

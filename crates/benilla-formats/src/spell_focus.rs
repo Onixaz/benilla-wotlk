@@ -69,7 +69,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_spell_focus_names_the_profession_objects() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -79,6 +78,6 @@ mod tests {
         assert_eq!(cat.name(3), Some("Forge"));
         assert_eq!(cat.name(4), Some("Cooking Fire"));
         assert_eq!(cat.name(0), None, "0 = no requirement");
-        assert_eq!(cat.len(), 138, "the 5875 file's full row count");
+        assert_eq!(cat.len(), 379, "the 12340 file's full row count");
     }
 }

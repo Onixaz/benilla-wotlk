@@ -95,19 +95,18 @@ mod tests {
         assert_eq!(cat.tile("Azeroth", 99, 99), None);
     }
 
-    /// The 5875 file: an Azeroth tile resolves to a hash that reads as a 256×256 BLP.
+    /// The 12340 file: an Azeroth tile resolves to a hash that reads as a 256×256 BLP.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_md5translate_resolves_azeroth_tile_and_hash_is_readable() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_minimap_translate(&mut chain).expect("load md5translate.trs");
-        assert_eq!(cat.len(), 8401, "all 8401 data rows parse to unique keys");
+        assert_eq!(cat.len(), 18644, "all 18644 data rows parse to unique keys");
 
         let hash = cat
             .tile("Azeroth", 32, 48)
             .expect("Azeroth\\map32_48 resolves");
-        assert_eq!(hash, "ea283abc0bf9637c3fad5e840a65b38b.blp");
+        assert_eq!(hash, "b53fb722839e0c7a81bae678ea694f5c.blp");
 
         let tile_path = format!("textures\\Minimap\\{hash}");
         let (w, h, _rgba) =

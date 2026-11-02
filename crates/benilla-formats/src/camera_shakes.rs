@@ -1,5 +1,5 @@
-//! `CameraShakes.dbc`, the 24 shipped camera-shake presets, and `SpellEffectCameraShakes.dbc`,
-//! the 9 groups of up to three presets fired at one point.
+//! `CameraShakes.dbc`, 12340's 78 camera-shake presets, and `SpellEffectCameraShakes.dbc`, its 30
+//! groups of up to three presets fired at one point.
 //!
 //! Two id spaces, never conflated: the creature footstep and death-thud columns
 //! (`CreatureModelData` fields 11 and 12, read through
@@ -183,16 +183,15 @@ pub fn load_camera_shakes(chain: &mut Chain) -> Result<CameraShakeCatalog> {
 mod tests {
     use std::collections::BTreeSet;
 
-    /// The nine shipped groups, verbatim. The sparse ids expose a wrong column map; the duplicate
-    /// slots in groups 4 and 7 show the three are slots, not axes.
+    /// Shipped groups, verbatim. The sparse ids expose a wrong column map; the duplicate slots in
+    /// groups 4, 7 and 92 show the three are slots, not axes.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_spell_shake_groups_decode_as_shipped() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = super::load_camera_shakes(&mut chain).expect("load the camera-shake tables");
 
-        assert_eq!(cat.group_len(), 9, "the shipped group table");
+        assert_eq!(cat.group_len(), 30, "the shipped group table");
         for (id, slots) in [
             (1, [4, 5, 6]),
             (2, [7, 8, 9]),
@@ -203,6 +202,8 @@ mod tests {
             (7, [18, 17, 18]),
             (26, [36, 37, 38]),
             (66, [76, 77, 78]),
+            (80, [0, 0, 113]),
+            (92, [146, 146, 146]),
         ] {
             let g = cat
                 .group(id)
@@ -212,8 +213,12 @@ mod tests {
         assert!(cat.group(0).is_none(), "0 is the no-shake value, not a row");
         assert!(cat.group(8).is_none(), "the id space is sparse, not dense");
 
-        // Zeros are skipped, duplicates are not: group 3 fires one shake, group 4 fires three.
+        // Zeros are skipped, duplicates are not: groups 3 and 80 fire one shake, group 4 fires three.
         assert_eq!(cat.group(3).unwrap().shakes().count(), 1);
+        assert_eq!(
+            cat.group(80).unwrap().shakes().collect::<Vec<_>>(),
+            vec![113]
+        );
         assert_eq!(
             cat.group(4).unwrap().shakes().collect::<Vec<_>>(),
             vec![15, 14, 15],
@@ -223,31 +228,27 @@ mod tests {
 
     /// The check on the column map: a merely plausible one would leave group slots dangling.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_group_slot_resolves_to_a_preset() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = super::load_camera_shakes(&mut chain).expect("load the camera-shake tables");
 
-        assert_eq!(cat.len(), 24, "the shipped preset table");
+        assert_eq!(cat.len(), 78, "the shipped preset table");
         let named: BTreeSet<u32> = cat.groups().flat_map(|g| g.shakes()).collect();
         for id in &named {
             assert!(cat.get(*id).is_some(), "group slot {id} dangles");
         }
-        assert_eq!(
-            named.iter().copied().collect::<Vec<_>>(),
-            vec![1, 4, 5, 6, 7, 8, 9, 11, 14, 15, 17, 18, 36, 37, 38, 76, 77, 78],
-            "the 18 presets the spell side reaches"
-        );
+        assert_eq!(named.len(), 69, "the presets the spell side reaches");
+        assert!(named.contains(&146) && !named.contains(&16));
 
-        // The footstep column names {1, 2, 10} and the thud column {10, 11, 12, 38}.
-        let creature: BTreeSet<u32> = [1, 2, 10, 11, 12, 38].into_iter().collect();
+        // The footstep column names {1, 2, 10, 79, 82} and the thud column {10, 11, 12, 38}.
+        let creature: BTreeSet<u32> = [1, 2, 10, 11, 12, 38, 79, 82].into_iter().collect();
         let all: BTreeSet<u32> = cat.iter().map(|r| r.id).collect();
         let unreached: Vec<u32> = all.difference(&(&named | &creature)).copied().collect();
         assert_eq!(
             unreached,
-            vec![13, 16, 56],
-            "shipped presets no table names — each the direction-0 member of a named family"
+            vec![16, 56, 111, 112, 144, 145],
+            "shipped presets no table names"
         );
     }
 }

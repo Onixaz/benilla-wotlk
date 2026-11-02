@@ -30,7 +30,7 @@ pub struct VocalUiSound {
     /// The line's ordinary delivery, by sex (`0` male, `1` female). `0`/`-1` = none.
     pub normal: [u32; 2],
     /// The annoyed delivery by sex, played after four consecutive plays of the same line; no
-    /// shipped id is in `SoundEntries.dbc`, so it is never heard in 5875.
+    /// shipped id is in `SoundEntries.dbc`, so it is never heard in 12340.
     pub pissed: [u32; 2],
 }
 
@@ -113,13 +113,12 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_vocal_ui_sounds_decode_with_the_sexes_the_right_way_round() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let cat = load_vocal_ui_sounds(&mut chain).expect("load VocalUISounds");
         let kits = crate::load_sound_kit_catalog(&mut chain).expect("load SoundEntries");
-        assert_eq!(cat.len(), 533, "every shipped row is under the 0x44 bound");
+        assert_eq!(cat.len(), 641, "every shipped row is under the 0x44 bound");
 
         let lines: std::collections::BTreeSet<u32> = cat.rows().iter().map(|r| r.line).collect();
         assert_eq!(lines.iter().copied().max(), Some(67));
@@ -168,7 +167,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_annoyed_column_resolves_to_nothing_in_this_build() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -193,6 +191,6 @@ mod tests {
             .flatten()
             .filter(|k| kits.get(*k).is_some())
             .count();
-        assert_eq!(normal_live, 785);
+        assert_eq!(normal_live, 989);
     }
 }
