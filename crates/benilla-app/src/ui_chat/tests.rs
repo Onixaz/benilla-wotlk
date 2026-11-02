@@ -2222,30 +2222,24 @@ fn the_posture_emotes_carry_no_swim_suppression_flag() {
     }
 }
 
-/// `SMSG_LEVELUP_INFO`'s gains park on `ChatLog` until the level edge that matches them.
+/// `SMSG_LEVELUP_INFO`s park on `ChatLog` in arrival order and are taken once.
 #[test]
-fn level_up_gains_are_matched_by_level_and_a_miss_is_not_an_absence() {
+fn level_ups_park_in_order_and_are_taken_once() {
     use benilla_protocol::messages::LevelUpInfo;
 
     let mut log = super::feed::ChatLog::default();
-    let ding = LevelUpInfo {
-        level: 10,
+    assert!(!log.has_level_ups());
+    let ding = |level| LevelUpInfo {
+        level,
         health: 22,
-        powers: [15, 0, 0, 0, 0],
+        powers: [15, 0, 0, 0, 0, 0, 0],
         stats: [0, 1, 2, 3, 0],
     };
-    log.push_level_up_gains(&ding, 1);
-
-    // A level edge that is not this ding's leaves the entry parked...
-    assert!(log.take_level_up_gains(11).is_none(), "wrong level matched");
-    // ...and the right one takes it, exactly once.
-    let (got, talent_points) = log.take_level_up_gains(10).expect("parked for level 10");
-    assert_eq!(got, ding);
-    assert_eq!(talent_points, 1);
-    assert!(
-        log.take_level_up_gains(10).is_none(),
-        "the entry was taken, not copied"
-    );
+    log.push_level_up(ding(10));
+    log.push_level_up(ding(11));
+    assert!(log.has_level_ups());
+    assert_eq!(log.take_level_ups(), [ding(10), ding(11)]);
+    assert!(!log.has_level_ups(), "the entries were taken, not copied");
 }
 
 /// Fires `PLAYER_LEVEL_UP` with the nine reference args and returns every line the stock handler

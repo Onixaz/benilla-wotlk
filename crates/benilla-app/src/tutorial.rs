@@ -68,18 +68,27 @@ pub(crate) mod id {
     pub(crate) const THREAT: u32 = 0x35;
 }
 
-/// The level-gated arm of the `SMSG_LEVELUP_INFO` handler: in the handler's own order, each fires
-/// when the new level is at least its threshold.
-const LEVEL_TRIGGERS: [(u32, u32); 8] = [
-    (3, 0x16),  // Chatting
-    (4, 0x0d),  // Trainers
-    (4, 0x02),  // Cameras
-    (5, 0x26),  // Groups
-    (7, 0x15),  // Friends
-    (7, 0x25),  // Professions
-    (8, 0x20),  // Jumping
-    (10, 0x0c), // Learning Talents
+/// The level-gated arm of the `SMSG_LEVELUP_INFO` handler (`0x6e35d2`): in the handler's own
+/// order, each fires when the packet's level is at least its threshold.
+const LEVEL_TRIGGERS: [(u32, u32); 9] = [
+    (2, 0x36),
+    (4, 0x0d),
+    (6, 0x16),
+    (7, 0x15),
+    (7, 0x25),
+    (8, 0x20),
+    (10, 0x0c),
+    (12, 0x26),
+    (15, 0x32),
 ];
+
+/// The tutorials a level-up packet for `level` triggers, in the handler's order.
+pub(crate) fn level_triggers(level: u32) -> impl Iterator<Item = u32> {
+    LEVEL_TRIGGERS
+        .into_iter()
+        .filter(move |&(threshold, _)| level >= threshold)
+        .map(|(_, id)| id)
+}
 
 /// The Targeting popup's delay at its one site.
 pub(crate) const TARGETING_DELAY_MS: u32 = 10_000;
@@ -267,11 +276,10 @@ impl Tutorials {
     }
 }
 
-/// The self descriptor's last-seen fields, for the edge-triggered sites: the level-up arm, the
-/// ghost flag, the resting flag, the PvP flag, the rest state.
+/// The self descriptor's last-seen fields, for the edge-triggered sites: the ghost flag, the
+/// resting flag, the PvP flag, the rest state.
 #[derive(Default)]
 struct SelfWatch {
-    level: Option<u32>,
     player_flags: Option<u32>,
     unit_flags: Option<u32>,
     rest_state: Option<u8>,
@@ -354,8 +362,7 @@ fn feed_tutorials(
     }
 }
 
-/// The self descriptor's edge sites: the `SMSG_LEVELUP_INFO` arm on the level rising, the ghost and
-/// resting flags, the PvP flag, the rested table's one live row, and the mover entering water. Each
+/// The self descriptor's edge sites: the ghost and resting flags, the PvP flag, the rested table's one live row, and the mover entering water. Each
 /// fires on a change, never on the login descriptor; the bring-up resets the memory.
 fn watch_self(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -369,19 +376,9 @@ fn watch_self(
     }
     // The first sight of each field arms silently.
     if let Ok(store) = self_q.single() {
-        let level = store.0.unit_level();
         let player_flags = store.0.player_flags();
         let unit_flags = store.0.unit_flags();
         let rest_state = store.0.player_rest_state();
-        if let (Some(prev), Some(new)) = (watch.level, level) {
-            if new > prev {
-                for (threshold, id) in LEVEL_TRIGGERS {
-                    if new >= threshold {
-                        asks.write(TutorialEvent::trigger(id));
-                    }
-                }
-            }
-        }
         if let Some(prev) = watch.player_flags {
             let rose = |bit: u32| prev & bit == 0 && player_flags & bit != 0;
             if rose(PLAYER_FLAGS_GHOST) {
@@ -402,7 +399,6 @@ fn watch_self(
                 asks.write(TutorialEvent::trigger(id::RESTED));
             }
         }
-        watch.level = level;
         watch.player_flags = Some(player_flags);
         watch.unit_flags = Some(unit_flags);
         watch.rest_state = rest_state;
@@ -886,5 +882,17 @@ mod tests {
             app.world().resource::<Tutorials>().fired.is_empty(),
             "…and once there is an interface, it is published exactly once"
         );
+    }
+
+    /// The level-up packet's tutorials: every threshold at or below the level, in order.
+    #[test]
+    fn level_up_tutorials_follow_the_12340_thresholds() {
+        assert_eq!(level_triggers(1).count(), 0);
+        assert_eq!(level_triggers(2).collect::<Vec<_>>(), [0x36]);
+        assert_eq!(
+            level_triggers(10).collect::<Vec<_>>(),
+            [0x36, 0x0d, 0x16, 0x15, 0x25, 0x20, 0x0c]
+        );
+        assert_eq!(level_triggers(80).count(), 9);
     }
 }

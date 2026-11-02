@@ -75,12 +75,20 @@ pub(super) fn exploration_xp(
     }
 }
 
-/// `SMSG_LEVELUP_INFO`: the ding's chat lines. The talent-point arg is not on the wire; the client
-/// computes `(newLevel >= 10) ? 1 : 0`. The ding's visual rides the `UNIT_FIELD_LEVEL` change
-/// watcher, not this packet.
-pub(super) fn level_up(l: LevelUpInfo, chat_log: &mut ChatLog) {
-    let talent_points = u32::from(l.level >= 10);
-    // Parked for `ui_unit`'s `PLAYER_LEVEL_UP`, whose args the stock `ChatFrame_OnEvent` prints;
-    // nothing here prints the block itself, or it shows twice.
-    chat_log.push_level_up_gains(&l, talent_points);
+/// `SMSG_LEVELUP_INFO`: the level-gated tutorials, then `PLAYER_LEVEL_UP`, the event's one fire
+/// site (`0x6e3691`), parked for `ui_unit` to fire whatever the level field does. The ding's visual
+/// rides the `UNIT_FIELD_LEVEL` change watcher, not this packet.
+pub(super) fn level_up(
+    l: LevelUpInfo,
+    chat_log: &mut ChatLog,
+    tutorials: Option<&mut MessageWriter<crate::tutorial::TutorialEvent>>,
+) {
+    if let Some(t) = tutorials {
+        for id in crate::tutorial::level_triggers(l.level) {
+            t.write(crate::tutorial::TutorialEvent::trigger(id));
+        }
+    }
+    // Stock `ChatFrame_OnEvent` prints the block from the event; nothing here prints it, or it
+    // shows twice.
+    chat_log.push_level_up(l);
 }
