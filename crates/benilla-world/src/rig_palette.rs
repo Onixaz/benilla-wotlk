@@ -198,18 +198,28 @@ pub(crate) fn rig_rows(
     worlds: &[GlobalTransform],
     ibp: &[Mat4],
 ) -> Vec<[[f32; 4]; 3]> {
+    let mut rows = Vec::new();
+    rig_rows_into(rig, worlds, ibp, &mut rows);
+    rows
+}
+
+/// [`rig_rows`] appended to `out`, so a caller can keep one buffer across rigs and frames.
+pub(crate) fn rig_rows_into(
+    rig: &RigSkin,
+    worlds: &[GlobalTransform],
+    ibp: &[Mat4],
+    out: &mut Vec<[[f32; 4]; 3]>,
+) {
     let n = (worlds.len().min(ibp.len()) as u32).min(rig.len) as usize;
-    (0..n)
-        .map(|b| {
-            let m = worlds[b].affine() * Affine3A::from_mat4(ibp[b]);
-            let (m3, t) = (m.matrix3, m.translation);
-            [
-                [m3.x_axis.x, m3.y_axis.x, m3.z_axis.x, t.x],
-                [m3.x_axis.y, m3.y_axis.y, m3.z_axis.y, t.y],
-                [m3.x_axis.z, m3.y_axis.z, m3.z_axis.z, t.z],
-            ]
-        })
-        .collect()
+    out.extend((0..n).map(|b| {
+        let m = worlds[b].affine() * Affine3A::from_mat4(ibp[b]);
+        let (m3, t) = (m.matrix3, m.translation);
+        [
+            [m3.x_axis.x, m3.y_axis.x, m3.z_axis.x, t.x],
+            [m3.x_axis.y, m3.y_axis.y, m3.z_axis.y, t.y],
+            [m3.x_axis.z, m3.y_axis.z, m3.z_axis.z, t.z],
+        ]
+    }));
 }
 
 fn rebase(mut world: Affine3A, origin: Vec3) -> Affine3A {
