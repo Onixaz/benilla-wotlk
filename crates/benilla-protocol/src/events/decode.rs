@@ -136,6 +136,14 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 position: [position.x, position.y, position.z],
             }]
         }
+        ServerPacket::PetLearnedSpell { spell_id } => {
+            vec![SessionEvent::PetLearnedSpell { spell_id }]
+        }
+        ServerPacket::PetUnlearnedSpell { spell_id } => {
+            vec![SessionEvent::PetUnlearnedSpell { spell_id }]
+        }
+        ServerPacket::PetRenameable => vec![SessionEvent::PetRenameable],
+        ServerPacket::PetGuids(guids) => vec![SessionEvent::PetGuids(guids)],
         ServerPacket::ItemQueryResponse { entry, info } => {
             vec![SessionEvent::ItemTemplate { entry, info }]
         }

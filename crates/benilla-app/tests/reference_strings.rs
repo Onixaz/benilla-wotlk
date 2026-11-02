@@ -189,8 +189,8 @@ fn no_user_facing_sentence_is_written_in_rust_when_the_reference_ships_one() {
     let mut found: HashMap<String, Vec<String>> = HashMap::new();
 
     for path in &sources {
-        // Name every hit `<crate>/src/...`.
-        let raw = path.to_string_lossy().to_string();
+        // Name every hit `<crate>/src/...`, with `/` on every platform.
+        let raw = path.to_string_lossy().replace('\\', "/");
         let rel = match raw.strip_prefix("../") {
             Some(sibling) => sibling.to_string(),
             None => format!("benilla-app/{raw}"),
