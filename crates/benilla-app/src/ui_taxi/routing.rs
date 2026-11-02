@@ -26,6 +26,13 @@ pub(crate) struct TaxiCatalogs {
     continents: WorldMapContinentCatalog,
 }
 
+impl TaxiCatalogs {
+    /// The known-node mask's word count, `max TaxiNodes id / 64 + 1` (`0x593904`): 7 on 3.3.5a.
+    pub(super) fn mask_words(&self) -> usize {
+        (self.nodes.max_id() >> 6) as usize + 1
+    }
+}
+
 /// Load [`TaxiCatalogs`] once, when the patch chain is open; nothing reads them before a flight
 /// master opens the map.
 pub(super) fn load_taxi_catalogs(
@@ -284,9 +291,7 @@ mod tests {
     fn mask_of(ids: &[u32]) -> TaxiMask {
         let mut mask = TaxiMask::default();
         for &id in ids {
-            let word = ((id - 1) / 32) as usize;
-            let bit = (id - 1) % 32;
-            mask.0[word] |= 1 << bit;
+            mask.set(id);
         }
         mask
     }
@@ -502,7 +507,7 @@ mod tests {
         assert_eq!(resolved[sh_idx].cost, 110);
 
         // Every node known: the Horde-only stops (Grom'gol, Kargath) have no route from Stormwind.
-        let all_known = TaxiMask([u32::MAX; 8]);
+        let all_known = TaxiMask(vec![u64::MAX; 7]);
         let open = TaxiOpen {
             flightmaster: 0x42,
             nearest_node: 2,

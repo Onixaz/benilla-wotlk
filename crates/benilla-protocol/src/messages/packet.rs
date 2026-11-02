@@ -1471,8 +1471,8 @@ pub enum ServerPacket {
         mover: u64,
         allow_move: bool,
     },
-    /// `SMSG_SHOWTAXINODES` (`TaxiHandler.cpp:82-96`): the taxi map; vmangos always writes
-    /// `window` 1, and `nearest_node` is the flight master's own node.
+    /// `SMSG_SHOWTAXINODES` (`0x6d6050`): the taxi map when `window` is nonzero; `nearest_node` is
+    /// the flight master's own node.
     ShowTaxiNodes {
         window: u32,
         flightmaster: u64,

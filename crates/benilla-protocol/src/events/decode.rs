@@ -1301,7 +1301,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             nearest_node,
             known,
         } => {
-            // The reference parser gates on this word: zero carries no menu; vmangos sends 1.
+            // The show flag: zero opens nothing (`0x6d61af`); AzerothCore sends 1.
             if window == 0 {
                 vec![]
             } else {
