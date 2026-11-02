@@ -890,7 +890,6 @@ fn the_session_end_tears_the_pet_bar_down() {
 /// leg: the pet's own power in its type's colour, not the disconnected leg's maximum in grey
 /// (UnitFrame.lua:214-216).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_held_pet_reads_connected_and_its_stock_power_bar_shows_its_power() {
     use bevy::prelude::*;
     benilla_formats::wow_data_or_skip!();
@@ -909,8 +908,7 @@ fn a_held_pet_reads_connected_and_its_stock_power_bar_shows_its_power() {
 
     let mut script = benilla_ui::script::UiScript::new().unwrap();
     script.set_screen_size(1024.0, 768.0);
-    let failures = crate::ui_script::load_default_ui(&script);
-    assert!(failures.is_empty(), "load failures: {failures:?}");
+    crate::ui_script::test_ui::load_stock_ui(&mut script);
 
     let mut app = App::new();
     app.add_message::<crate::net::FieldChanged>()

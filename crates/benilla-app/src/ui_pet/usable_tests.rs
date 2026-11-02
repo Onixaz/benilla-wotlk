@@ -517,18 +517,11 @@ fn with_stock_ui(rig: &mut Rig) {
     let mut script = benilla_ui::script::UiScript::new().expect("a VM");
     script.set_screen_size(1024.0, 768.0);
     // The in-game UI loads on world entry, so a player exists.
-    script.set_unit(
-        "player",
-        Some(benilla_ui::script::UnitState {
-            exists: true,
-            name: Some("Probefour".into()),
-            level: 60,
-            ..Default::default()
-        }),
-    );
-    let failures = crate::ui_script::load_default_ui(&script);
-    assert!(failures.is_empty(), "manifest load errors: {failures:#?}");
+    crate::ui_script::test_ui::load_stock_ui(&mut script);
     rig.app.world_mut().insert_non_send_resource(script);
+    // The stock bar shows only while `UnitIsVisible("pet")` (`PetActionBarFrame.lua`), so the
+    // `"pet"` token's feed runs beside the bar's.
+    rig.feed.add_systems(super::unit::feed_pet_unit);
 }
 
 /// The feeds, then the VM's clock and layout, so the bar's slide and repaint have happened.
@@ -580,7 +573,6 @@ fn click_first_button(rig: &mut Rig) {
 /// greys, and clicking it sends nothing (`0x5d4210`), where the same click on the pet before it was
 /// stunned went out.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_bar_greys_a_stunned_pet_and_its_click_sends_nothing() {
     benilla_formats::wow_data_or_skip!();
     const ICON: &str = "Interface\\Icons\\Ability_Druid_Rake";
