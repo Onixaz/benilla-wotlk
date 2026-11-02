@@ -510,6 +510,21 @@ fn wow_combine(code: u32, t0: vec4<f32>, t1: vec4<f32>, pa: f32) -> Combined {
     return c;
 }
 
+// An M2's unlit program outputs `c28 + c29` (the tint·M2Color term folded into `c29` beside the
+// highlight), so the texel modulates `clamp(C·tint + highlight)`, C the M2Color. The constant
+// M2Color rides the vertex colour `vc`, which Bevy folded into `base_rgb`; white without one.
+fn wow_m2_unlit(
+    base_rgb: vec3<f32>,
+    vc: vec3<f32>,
+    anim_tint: vec3<f32>,
+    inst_tint: vec3<f32>,
+    highlight: vec3<f32>,
+) -> vec3<f32> {
+    let unlit_tex = base_rgb / max(vc, vec3<f32>(1.0 / 255.0));
+    let unlit_sum = vc * anim_tint * inst_tint + highlight;
+    return unlit_tex * clamp(unlit_sum, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 @fragment
 fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // The UI model tile's cell clip: the reference gives each `<Model>` pane its widget rect as the
@@ -523,13 +538,16 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
         }
     }
     // The far-clip wall: discard past `farclip` (`fog_params.w`, 0 = off) by planar eye depth, as
-    // terrain.wgsl does.
+    // terrain.wgsl does. Off-world (the rig lane) it is inert (`LightBlob::fog_span`), so compiled
+    // out.
+#ifndef WOW_RIG_LANE
     if (wow_light.fog_params.w > 0.0) {
         let clip_z = -(view.view_from_world * vec4<f32>(in.world_position.xyz, 1.0)).z;
         if (clip_z > wow_light.fog_params.w) {
             discard;
         }
     }
+#endif
 #ifdef WOW_WATER_CLIP
     // The straddle split: a translucent model crossing its water plane draws on each side of the
     // water pass (the far copy has `clutter_fade.z` bit 11) and each copy keeps its half, the
@@ -697,6 +715,21 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     let faded_alpha = select(base_color.a * obj_fade, base_color.a, alpha_has_fade);
     let base = alpha_discard(pbr_input.material, base_color);
 
+    // The fog colour's weight in the result: 1, but MOCV.a on a unified TRANS batch (below).
+    var fog_weight = 1.0;
+    let highlight = select(vec3<f32>(0.0), wow_light.light_ambient.rgb, highlighted);
+    let anim_tint = m.tint.rgb + wow_light.matanim[u32(m.anim_slots.y)].xyz;
+#ifdef WOW_UNLIT_M2
+    // An unlit M2 batch (`WowModelKey::unlit_m2`): the lit path's every term is discarded below
+    // (`select(lit_rgb, unlit_rgb, is_emissive)`, no unified drawer, no shadow), so the pipeline
+    // is compiled without it. Same pixels, a fraction of the ALU and registers.
+    let is_wmo = false;
+#ifdef VERTEX_COLORS
+    var rgb = wow_m2_unlit(base.rgb, in.color.rgb, anim_tint, inst_tint, highlight);
+#else
+    var rgb = wow_m2_unlit(base.rgb, vec3<f32>(1.0), anim_tint, inst_tint, highlight);
+#endif
+#else
     // --- Lighting --------------------------------------------------------------------------------
     let is_clutter = m.clutter_fade.w > 0.5;
     let L = -normalize(wow_light.light_sun.xyz);
@@ -801,11 +834,15 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     let lit_interior = select(lit_m2_interior, lit_wmo_interior, is_wmo);
     // The authored-rig lane (`ShadeSel::Rig`, glue scenes): the scene's lights are folded into
     // probe slot 0 of the material's own buffer, which `lit_m2_interior` already evaluated (tag 0).
+#ifdef WOW_RIG_LANE
+    // The rig lane's pipeline (`WowModelKey::rig`): the probe alone, the other lobes compiled out.
+    let lit = lit_m2_interior;
+#else
     let is_rig = m.sun_scale.x >= 1.5;
     let lit = select(select(lit_exterior, lit_interior, is_interior), lit_m2_interior, is_rig);
+#endif
     // Gamma-space albedo: lighting runs on the authored byte values. `m.tint` plus its mat-anim
-    // delta is the animated M2Color tint.
-    let anim_tint = m.tint.rgb + wow_light.matanim[u32(m.anim_slots.y)].xyz;
+    // delta (`anim_tint`, above) is the animated M2Color tint.
     let albedo = base.rgb * anim_tint;
     // An unlit batch replaces the lit path: fullbright, with only the highlight added (below).
     let is_emissive = m.model_flags.w > 0.5;
@@ -824,9 +861,8 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
 
     // The hover/target highlight (tag bit 31): the scene's committed ambient
     //Added to the batch colour inside the final clamp, lit or unlit
-    // (`c29`). Sampled live, where the reference holds the value sampled when the highlight
-    // began: a unit's tag has no slot to hold a colour, and the ambient moves slowly.
-    let highlight = select(vec3<f32>(0.0), wow_light.light_ambient.rgb, highlighted);
+    // (`c29`), `highlight` above. Sampled live, where the reference holds the value sampled when
+    // the highlight began: a unit's tag has no slot to hold a colour, and the ambient moves slowly.
     // The FFP combine: the light sum (lit, point lights, emission) clamps first and the texture
     // modulates it, `tex × clamp(C·sum + emission)`, with C the GL_COLOR_MATERIAL colour (MOCV on
     // WMO, the body tint on M2). The WMO branch divides Bevy's MOCV fold back out, guarded; a dim
@@ -870,25 +906,16 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     );
     lit_rgb = albedo * primary;
 #endif
-    // The unlit path: an M2's unlit program outputs `c28 + c29` (fold the
-    // tint·M2Color term into `c29` beside the highlight), so the texel modulates
-    // `clamp(C·tint + highlight)`, C the M2Color. A WMO keeps the plain modulate.
+    // The unlit path: an M2's is `wow_m2_unlit`; a WMO keeps the plain modulate.
     var unlit_rgb = albedo * inst_tint;
     if (!is_wmo) {
 #ifdef VERTEX_COLORS
-        // The constant M2Color rides the vertex colour, which Bevy folded into `base`.
-        let unlit_c = in.color.rgb * anim_tint;
-        let unlit_tex = base.rgb / max(in.color.rgb, vec3<f32>(1.0 / 255.0));
+        unlit_rgb = wow_m2_unlit(base.rgb, in.color.rgb, anim_tint, inst_tint, highlight);
 #else
-        let unlit_c = anim_tint;
-        let unlit_tex = base.rgb;
+        unlit_rgb = wow_m2_unlit(base.rgb, vec3<f32>(1.0), anim_tint, inst_tint, highlight);
 #endif
-        let unlit_sum = unlit_c * inst_tint + highlight;
-        unlit_rgb = unlit_tex * clamp(unlit_sum, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     var rgb = select(lit_rgb, unlit_rgb, is_emissive);
-    // The fog colour's weight in the result: 1, but MOCV.a on a unified TRANS batch (below).
-    var fog_weight = 1.0;
     // MOHD 0x2, the unified drawer (`0x7a9380`, `MapObjU.wfx`). Its vertex program
     // `MapObjUDiffuse_T1` adds the MOCV M to the light at 127/255 (c28 = `0xff7f7f7f`, `0x7a8940`)
     // beside the halved emission (c29), V(L) = clamp(L·127/255 + M + e/2), and `MapObjDiffuse`
@@ -934,13 +961,18 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
         rgb = clamp(2.0 * tex_u * v, vec3<f32>(0.0), vec3<f32>(1.0));
     }
     // The shadow maps on a lit, non-additive batch (the model and map-object pixel programs): the
-    // diffuse colour scaled by 0.7 + 0.3·shadow, the shadow eased off edge-on to the sun.
+    // diffuse colour scaled by 0.7 + 0.3·shadow, the shadow eased off edge-on to the sun. The
+    // rig lane is off-world (glue scenes, `<Model>` panes) and the reference's shadow cache is the
+    // world's, so its pipeline compiles the receive out: dead code that still costs registers.
+#ifndef WOW_RIG_LANE
     if (!is_emissive && (u32(m.clutter_fade.z) & 4u) == 0u) {
         let shadow = wow_shadow::shadow_term(in.world_position.xyz, is_interior);
         if (shadow < 1.0) {
             rgb = rgb * wow_shadow::shadow_scale(wow_shadow::grazing_fade(shadow, n_lit));
         }
     }
+#endif
+#endif // WOW_UNLIT_M2
     // An M2 Mod or Mod2x batch draws the bare texel: the reference zeroes its tint·M2Color term and
     // forces the primary colour to the blend identity, so neither the
     // animated M2Color nor the body tint reaches it. Its alpha still does, through the lerp below.

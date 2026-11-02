@@ -73,6 +73,12 @@ pub struct WowModelKey {
     /// The WMO-skybox lane (`clutter_fade.z` bit 13, `model_render::SKY_DEPTH_MARKER`), a key axis
     /// because only this model's depth is pinned.
     sky_depth: bool,
+    /// An unlit M2 batch (`model_flags.w` set, `x` clear): `WOW_UNLIT_M2` compiles the lit path
+    /// out, the fill cost of the glue scenes' blended sheets.
+    unlit_m2: bool,
+    /// The authored-rig lane (`sun_scale.x` ≥ 1.5, off-world models): `WOW_RIG_LANE` compiles out
+    /// the world lobes and the shadow receive.
+    rig: bool,
     // The WMO batch order is deliberately not a key axis (a pipeline per batch index stalls a
     // city's first sight): the file-order layering rides `sun_scale.y`.
 }
@@ -91,6 +97,8 @@ impl From<&WowModelExt> for WowModelKey {
             zfill: markers & 0x200 != 0,
             far_side: markers & 0x800 != 0,
             sky_depth: markers & 0x2000 != 0,
+            unlit_m2: e.model_flags.w > 0.5 && e.model_flags.x < 0.5,
+            rig: e.sun_scale.x >= 1.5,
         }
     }
 }
@@ -254,6 +262,14 @@ impl MaterialExtension for WowModelExt {
                 ds.bias.constant = 0;
             }
         }
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            if key.bind_group_data.unlit_m2 {
+                fragment.shader_defs.push("WOW_UNLIT_M2".into());
+            }
+            if key.bind_group_data.rig {
+                fragment.shader_defs.push("WOW_RIG_LANE".into());
+            }
+        }
         if key.bind_group_data.fade && !key.bind_group_data.sky_depth {
             // A fading model's near cards occlude its far ones; the sky never writes depth.
             if let Some(ds) = descriptor.depth_stencil.as_mut() {
@@ -310,10 +326,12 @@ impl MaterialExtension for WowModelExt {
             }
         }
         // The waterline clip (`benilla_world::straddle`) keys on the blend pass: no new pipelines.
-        if key
-            .mesh_key
-            .intersection(MeshPipelineKey::BLEND_RESERVED_BITS)
-            == MeshPipelineKey::BLEND_ALPHA
+        // Off-world (the rig lane) has no water plane; its light buffer's clip rows stay zero.
+        if !key.bind_group_data.rig
+            && key
+                .mesh_key
+                .intersection(MeshPipelineKey::BLEND_RESERVED_BITS)
+                == MeshPipelineKey::BLEND_ALPHA
         {
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.push("WOW_WATER_CLIP".into());
