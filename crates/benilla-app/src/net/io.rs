@@ -1840,14 +1840,18 @@ pub(super) fn writer_loop(
                         w.questgiver_choose_reward(npc, quest, choice)
                     }
                     ClientCommand::QuestQuery { quest } => w.quest_query(quest),
+                    ClientCommand::QueryQuestsCompleted => w.query_quests_completed(),
+                    ClientCommand::QuestgiverStatusMultipleQuery => {
+                        w.questgiver_status_multiple_query()
+                    }
                     ClientCommand::QuestPoiQuery { quests } => w.quest_poi_query(&quests),
                     ClientCommand::QuestgiverStatusQuery { npc } => w.questgiver_status_query(npc),
                     ClientCommand::QuestgiverHello { npc } => w.questgiver_hello(npc),
                     ClientCommand::QuestlogRemove { slot } => w.questlog_remove_quest(slot),
                     ClientCommand::PushQuestToParty { quest } => w.push_quest_to_party(quest),
                     ClientCommand::QuestConfirmAccept { quest } => w.quest_confirm_accept(quest),
-                    ClientCommand::QuestPushResult { sharer, msg } => {
-                        w.quest_push_result(sharer, msg)
+                    ClientCommand::QuestPushResult { sharer, quest, msg } => {
+                        w.quest_push_result(sharer, quest, msg)
                     }
                     ClientCommand::GetMailList { mailbox } => w.get_mail_list(mailbox),
                     ClientCommand::SendMail {

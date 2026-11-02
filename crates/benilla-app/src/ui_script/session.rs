@@ -160,6 +160,8 @@ mod tests {
     /// `Local`s in VM-holding systems that are not memory about the VM, keyed
     /// `(path under src/, parameter name)`.
     const EXEMPT: &[(&str, &str)] = &[
+        // The accept callback's count (`0xc9eb08`) is process-wide in the reference, not the VM's.
+        ("ui_quest/lines.rs", "accepts"),
         // The glue instruments' own progress, which crosses the glue VM's swaps by design.
         ("capture/glue_create.rs", "step"),
         ("capture/realm_list.rs", "step"),

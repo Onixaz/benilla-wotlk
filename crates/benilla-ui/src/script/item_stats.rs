@@ -152,9 +152,25 @@ pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
             })
         })
 }
-/// The client's item-usable predicate, whose answer the merchant getters push as `isUsable`, its
-/// legs in the reference's order. Proficiency tests the item's own subclass bit, with no alternate
-/// walk. A nonzero city rank always fails: it tests `PLAYER_FIELD_PVP_MEDALS`, which is never
+
+/// A quest item row's `quality` and `isUsable` as the giver and log readers answer them (`0x58d190`,
+/// `0x5e4490`, `0x5e4660`): quality -1 for a template whose inventory type is 0, and the can-use
+/// test clearing `isUsable`; a template not yet here keeps the row's own pair.
+pub(super) fn quest_item_quality_usable(
+    model: &super::Model,
+    item_id: u32,
+    quality: u32,
+    usable: bool,
+) -> (i64, bool) {
+    let quality = match model.item_templates.get(&item_id) {
+        Some(v) if v.inventory_type == 0 => -1,
+        _ => i64::from(quality),
+    };
+    (quality, usable && item_usable_by_id(model, item_id))
+}
+/// The client's item-usable predicate (`0x6dc3f0`), whose answer the merchant and quest item getters
+/// push as `isUsable`, its legs in the reference's order. Proficiency tests the item's own subclass
+/// bit, with no alternate walk, and only for a class below 17 with a nonzero mask. A nonzero city rank always fails: it tests `PLAYER_FIELD_PVP_MEDALS`, which is never
 /// written. Reputation compares ranks, equivalent to the reference's standing threshold; an unknown
 /// faction is rank 0. An unpushed state (level 0) declines to judge, answering usable.
 pub fn item_usable(
@@ -175,11 +191,12 @@ pub fn item_usable(
         return false;
     }
     if let Some(&mask) = req.proficiency.get(&v.class) {
-        if mask & (1 << v.subclass) == 0 {
+        if v.class < 17 && mask != 0 && mask & (1 << v.subclass) == 0 {
             return false;
         }
     }
-    if v.required_skill != 0 {
+    // Template flags `0x20040000` skip the skill leg (`0x6dc493`).
+    if v.required_skill != 0 && v.flags & 0x2004_0000 == 0 {
         match req.skills.get(&v.required_skill) {
             None => return false,
             Some(&val) => {
@@ -189,6 +206,8 @@ pub fn item_usable(
             }
         }
     }
+    // Deviation: a known higher rank of the spell, which the reference also accepts (`0x6dc4d2`),
+    // is not walked.
     if v.required_spell != 0 && !knows_spell(v.required_spell) {
         return false;
     }
@@ -681,6 +700,18 @@ mod tests {
         v.required_skill_rank = 100;
         assert!(!item_usable(&v, &req, knows_none));
         req.skills.insert(164, 100);
+        assert!(item_usable(&v, &req, knows_none));
+        // Template flags `0x20040000` skip the skill leg.
+        for flag in [0x4_0000, 0x2000_0000] {
+            let mut v = v.clone();
+            v.flags = flag;
+            assert!(item_usable(&v, &base_req, knows_none), "{flag:#x}");
+        }
+        // A zero mask never fires the proficiency leg.
+        let mut v = base_item.clone();
+        (v.class, v.subclass) = (4, 2); // leather
+        let mut req = base_req.clone();
+        req.proficiency.insert(4, 0);
         assert!(item_usable(&v, &req, knows_none));
 
         let mut v = base_item.clone();

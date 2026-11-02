@@ -35,7 +35,7 @@ pub struct QuestItemView {
     /// The item id the quest tooltips render by; 0 until the wire row resolves.
     pub item_id: u32,
     /// Whether the player can use the item, `isUsable` as 1 or nil; stock tints the row red when
-    /// not (`QuestFrame.lua:393`). The app always sends `true`.
+    /// not (`QuestFrame.lua:393`). The app sends `true` and the getters run the can-use test.
     pub usable: bool,
     /// The escaped item link `GetQuestItemLink` and `GetQuestLogItemLink` serve; `None` until the
     /// template lands, since it embeds the name and the quality.
@@ -504,15 +504,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let Some(list) = list else {
                     return Err(invalid());
                 };
-                list.get(row as usize).cloned()
+                list.get(row as usize).cloned().map(|it| {
+                    let verdict = super::item_stats::quest_item_quality_usable(
+                        &model, it.item_id, it.quality, it.usable,
+                    );
+                    (it, verdict)
+                })
             };
             let (name, texture, count, quality, usable) = match item {
-                Some(it) => (
+                Some((it, (quality, usable))) => (
                     it.name.unwrap_or_default(),
                     it.texture,
                     it.count,
-                    it.quality,
-                    it.usable,
+                    quality,
+                    usable,
                 ),
                 None => (String::new(), Some(EMPTY_ROW_ICON.to_string()), 0, 0, true),
             };
@@ -523,7 +528,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     None => Value::Nil,
                 },
                 Value::Integer(i64::from(count)),
-                Value::Integer(i64::from(quality)),
+                Value::Integer(quality),
                 super::binding_abi::flag(usable),
             ]))
         })?,
@@ -669,11 +674,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // it.
     g.set(
         "GetQuestReward",
-        lua.create_function(|lua, choice: Option<u32>| {
+        lua.create_function(|lua, choice: Option<Value>| {
+            // A missing or non-number choice reads -1 (`0x58d62b`); with choices on the reward
+            // panel, one out of range raises (`0x58cff1`-`0x58cff9`, `0x58d65c`).
+            let index = match choice {
+                Some(v) => lua.coerce_number(v)?.map_or(-1, |n| n as i64 - 1),
+                None => -1,
+            };
             let mut model = crate::script::model_mut_of(lua);
-            model.quest_actions.push(super::QuestAction::Reward(
-                choice.unwrap_or(0).saturating_sub(1),
-            ));
+            let choices = model
+                .quest
+                .as_ref()
+                .filter(|q| q.panel == QuestPanel::Reward)
+                .map_or(0, |q| q.choices.len() as i64);
+            if choices > 0 && !(0..choices).contains(&index) {
+                return Err(mlua::Error::RuntimeError(
+                    "Invalid reward choice in GetQuestReward([choice])".into(),
+                ));
+            }
+            model
+                .quest_actions
+                .push(super::QuestAction::Reward(index.max(0) as u32));
             Ok(())
         })?,
     )?;
@@ -761,6 +782,48 @@ mod tests {
             vec![crate::script::SoundRequest::KitName("igQuestFailed".into())],
             "row 0x98's cue plays with the message"
         );
+    }
+
+    /// The reader clears `isUsable` when the can-use test fails (`0x58d32c`) and answers quality -1
+    /// for a template with inventory type 0 (`0x58d29f`).
+    #[test]
+    fn a_reward_the_player_cannot_use_answers_unusable() {
+        let mut s = UiScript::new().unwrap();
+        s.set_quest(Some(detail()));
+        s.set_player_req_state(crate::script::PlayerReqState {
+            level: 10,
+            class_id: 1, // warrior
+            race_id: 1,
+            ..Default::default()
+        });
+        let boots = crate::script::ItemTemplateView {
+            quality: 2,
+            inventory_type: 8,
+            allowable_class: -1,
+            allowable_race: -1,
+            ..Default::default()
+        };
+        s.set_item_template(7278, boots.clone());
+        let row = r#"local _, _, _, q, u = GetQuestItemInfo("reward", 1) return q, u == 1"#;
+        assert_eq!(s.eval::<(i64, bool)>(row).unwrap(), (2, true));
+        // Rogue-only: the warrior cannot use it.
+        s.set_item_template(
+            7278,
+            crate::script::ItemTemplateView {
+                allowable_class: 1 << 3,
+                ..boots.clone()
+            },
+        );
+        assert_eq!(s.eval::<(i64, bool)>(row).unwrap(), (2, false));
+        // No inventory type: quality -1.
+        s.set_item_template(
+            7278,
+            crate::script::ItemTemplateView {
+                inventory_type: 0,
+                ..boots
+            },
+        );
+        assert_eq!(s.eval::<(i64, bool)>(row).unwrap(), (-1, true));
     }
 
     #[test]
@@ -920,6 +983,7 @@ mod tests {
                 },
                 crate::script::QuestLogEntryView {
                     quest_id: 63,
+                    no_objectives: true,
                     ..Default::default()
                 },
             ],
@@ -1002,6 +1066,33 @@ mod tests {
         assert_eq!(s.eval::<i64>("return GetNumQuestItems()").unwrap(), 1);
         assert_eq!(s.eval::<i64>("return GetQuestMoneyToGet()").unwrap(), 500);
         assert!(s.eval::<bool>("return IsQuestCompletable()").unwrap());
+    }
+
+    /// `0x58cff1`-`0x58cff9`: with choices on the reward panel, a choice out of range, or none,
+    /// raises; a panel with no choices takes any.
+    #[test]
+    fn get_quest_reward_refuses_a_choice_out_of_range() {
+        let mut s = UiScript::new().unwrap();
+        s.set_quest(Some(QuestState {
+            panel: QuestPanel::Reward,
+            choices: vec![QuestItemView::default(), QuestItemView::default()],
+            ..QuestState::default()
+        }));
+        for bad in ["GetQuestReward()", "GetQuestReward(0)", "GetQuestReward(3)"] {
+            let err = s.run(bad).unwrap_err().to_string();
+            assert!(
+                err.contains("Invalid reward choice in GetQuestReward([choice])"),
+                "{bad}: {err}"
+            );
+        }
+        s.run("GetQuestReward(2)").unwrap();
+        assert_eq!(s.take_quest_actions(), vec![QuestAction::Reward(1)]);
+        s.set_quest(Some(QuestState {
+            panel: QuestPanel::Reward,
+            ..QuestState::default()
+        }));
+        s.run("GetQuestReward()").unwrap();
+        assert_eq!(s.take_quest_actions(), vec![QuestAction::Reward(0)]);
     }
 
     #[test]

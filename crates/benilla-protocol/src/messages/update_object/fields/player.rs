@@ -198,6 +198,25 @@ impl ObjectFields {
     pub fn player_track_stealthed(&self) -> bool {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES).unwrap_or(0) & 0x2 != 0
     }
+    /// Each `PLAYER_QUEST_LOG` slot's quest id, 0 for an empty slot or a unit with no player
+    /// block, which `IsUnitOnQuest` (`0x5e4070`) scans.
+    pub fn player_quest_ids(&self) -> [u32; PLAYER_QUEST_LOG_SLOTS as usize] {
+        std::array::from_fn(|slot| {
+            self.get_u32(FIELD_PLAYER_QUEST_LOG_1_1 + QUEST_LOG_SLOT_FIELDS * slot as u16)
+                .unwrap_or(0)
+        })
+    }
+    /// A fingerprint of the whole `PLAYER_QUEST_LOG` window, ids, states, counters and timers,
+    /// which moves when any of its fields does.
+    pub fn player_quest_log_stamp(&self) -> u64 {
+        (0..QUEST_LOG_SLOT_FIELDS * u16::from(PLAYER_QUEST_LOG_SLOTS)).fold(
+            0xcbf2_9ce4_8422_2325,
+            |h, i| {
+                let v = self.get_u32(FIELD_PLAYER_QUEST_LOG_1_1 + i).unwrap_or(0);
+                (h ^ u64::from(v)).wrapping_mul(0x0100_0000_01b3)
+            },
+        )
+    }
     /// `PLAYER_QUEST_LOG_<slot+1>_*`: one quest-log slot, `quest_id == 0` when the server cleared
     /// it; the state, counters and timer are written with the id.
     pub fn player_quest_log(&self, slot: u8) -> Option<QuestLogSlot> {
@@ -222,6 +241,10 @@ impl ObjectFields {
             state: state as u8,
             timer,
         })
+    }
+    /// `PLAYER_FIELD_DAILY_QUESTS_1..25`, the day's completed daily quest ids, 0 for a free slot.
+    pub fn player_daily_quests(&self) -> impl Iterator<Item = u32> + '_ {
+        (0..25).map(|i| self.get_u32(FIELD_PLAYER_DAILY_QUESTS_1 + i).unwrap_or(0))
     }
     /// How many of the 25 daily-quest fields hold a quest: `GetDailyQuestsCompleted` (`0x58db30`).
     pub fn player_daily_quests_completed(&self) -> u32 {

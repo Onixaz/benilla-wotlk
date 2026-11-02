@@ -221,6 +221,8 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("trackerFilter", "7").per_character(),
     // `0x51f3ce`, "1" with flags 0x20: the quest POI switch the POI update (`0x5e5a50`) reads.
     same("questPOI", "1").per_character(),
+    // `0x5e7277`, "0.6" with no flags: the complete quests' icon spacing (`0x5e2eb0`).
+    same("POIShiftComplete", "0.6"),
     // `0x51f25c`, `0x51f282`, `0x51f2aa`, flags 0x120: the dungeon finder's roles ("0", a bit
     // mask) and its selected dungeons and collapsed headers ("", bit arrays), per character.
     same("lfgSelectedRoles", "0").per_character(),
@@ -485,7 +487,15 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("alwaysCompareItems", "0").per_account(),
     same("minimapPortalMax", "99").per_character(),
     same("showQuestTrackingTooltips", "1").per_character(),
-    same("questLogCollapseFilter", "0").per_character(),
+    // The quest log's header folds, a bit per sorted sort type (`0x5e0c00`): registered "0", then
+    // set to -1, every header open, at the register site (`0x51df3d`).
+    overridden(
+        "questLogCollapseFilter",
+        "-1",
+        "0",
+        "the register site sets -1 right after registering, so a fresh character starts with          every header open",
+    )
+    .per_character(),
     same("advancedWatchFrame", "0").per_account(),
     same("watchFrameIgnoreCursor", "0").per_account(),
     same("watchFrameBaseAlpha", "0").per_account(),

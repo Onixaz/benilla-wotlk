@@ -1334,6 +1334,16 @@ fn parse_server_body(
             let (item_id, count) = quest::read_quest_update_add_item(&mut r)?;
             ServerPacket::QuestUpdateAddItem { item_id, count }
         }
+        opcode::SMSG_QUESTUPDATE_ADD_PVP_KILL => {
+            let (quest_id, count) = quest::read_quest_update_add_pvp_kill(&mut r)?;
+            ServerPacket::QuestUpdateAddPvpKill { quest_id, count }
+        }
+        opcode::SMSG_QUEST_FORCE_REMOVE => ServerPacket::QuestForceRemove {
+            quest_id: quest::read_quest_force_remove(&mut r)?,
+        },
+        opcode::SMSG_QUERY_QUESTS_COMPLETED_RESPONSE => {
+            ServerPacket::QuestsCompleted(quest::read_quests_completed(&mut r)?)
+        }
         opcode::SMSG_GOSSIP_MESSAGE => {
             ServerPacket::GossipMessage(gossip::read_gossip_message(&mut r)?)
         }

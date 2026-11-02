@@ -1150,6 +1150,7 @@ fn seat_a_session(script: &mut UiScript) {
             text: text.into(),
             kind: "monster".into(),
             finished: cur >= req,
+            intermediate: false,
             cur,
             req,
         };
@@ -1179,7 +1180,6 @@ fn seat_a_session(script: &mut UiScript) {
         script.set_quest_log(QuestLogState {
             entries: vec![header, in_progress, done],
             num_quests: 2,
-            hidden_quest_ids: Vec::new(),
             daily_completed: 0,
         });
     }

@@ -88,7 +88,6 @@ fn one_quest() -> benilla_ui::script::QuestLogState {
     QuestLogState {
         entries: vec![header, quest],
         num_quests: 1,
-        hidden_quest_ids: Vec::new(),
         daily_completed: 0,
     }
 }

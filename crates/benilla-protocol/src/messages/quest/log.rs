@@ -46,6 +46,8 @@ pub mod quest_flags {
     /// `QuestFlagsPVP` (`0x58c3ec`): the quest flags the player for PvP.
     pub const FLAGS_PVP: u32 = 0x0000_2000;
     pub const WEEKLY: u32 = 0x0000_8000;
+    /// A quest-item push that makes the quest pass its completion test completes it (`0x6d7d1b`).
+    pub const AUTO_COMPLETE: u32 = 0x0001_0000;
     /// `QuestGetAutoAccept` (`0x58c433`).
     pub const AUTO_ACCEPT: u32 = 0x0008_0000;
 }
@@ -63,6 +65,10 @@ pub struct QuestTemplate {
     pub suggested_players: u32,
     pub rep_objective_faction: u32,
     pub rep_objective_value: u32,
+    /// Record `+0x24`, `+0x28`: a faction whose standing must stay at or below the value for the
+    /// quest to read complete (`0x5e1006`).
+    pub opposite_rep_faction: u32,
+    pub opposite_rep_value: u32,
     pub next_quest_in_chain: u32,
     pub xp_id: u32,
     pub money: i32,
@@ -133,8 +139,8 @@ pub(in crate::messages) fn read_quest_query_response(r: &mut &[u8]) -> io::Resul
         rep_objective_value: read_u32_le(r)?,
         ..Default::default()
     };
-    let _opposite_rep_faction = read_u32_le(r)?;
-    let _opposite_rep_value = read_u32_le(r)?;
+    q.opposite_rep_faction = read_u32_le(r)?;
+    q.opposite_rep_value = read_u32_le(r)?;
     q.next_quest_in_chain = read_u32_le(r)?;
     q.xp_id = read_u32_le(r)?;
     q.money = read_i32_le(r)?;
@@ -208,6 +214,35 @@ pub(in crate::messages) fn read_quest_update_add_item(r: &mut &[u8]) -> io::Resu
     Ok((read_u32_le(r)?, read_u32_le(r)?))
 }
 
+/// Read `SMSG_QUESTUPDATE_ADD_PVP_KILL` (`0x6d8030`): `u32 questId, u32 count`. The required
+/// count comes from the template (`+0x2098`); AzerothCore's trailing copy of it is left unread.
+pub(in crate::messages) fn read_quest_update_add_pvp_kill(r: &mut &[u8]) -> io::Result<(u32, u32)> {
+    let quest_id = read_u32_le(r)?;
+    let count = read_u32_le(r)?;
+    *r = &[];
+    Ok((quest_id, count))
+}
+
+/// Read `SMSG_QUEST_FORCE_REMOVE` (`0x6d8370`): the quest id.
+pub(in crate::messages) fn read_quest_force_remove(r: &mut &[u8]) -> io::Result<u32> {
+    read_u32_le(r)
+}
+
+/// Read `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE` (`0x5b5190`): a `u32` count, then the ids.
+pub(in crate::messages) fn read_quests_completed(r: &mut &[u8]) -> io::Result<Vec<u32>> {
+    let count = read_u32_le(r)?;
+    let mut ids = Vec::with_capacity((count as usize).min(r.len() / 4));
+    for _ in 0..count {
+        ids.push(read_u32_le(r)?);
+    }
+    Ok(ids)
+}
+
+/// Body of `CMSG_QUERY_QUESTS_COMPLETED`: empty.
+pub fn query_quests_completed() -> Vec<u8> {
+    Vec::new()
+}
+
 /// Read `SMSG_QUESTUPDATE_COMPLETE` (`0x6d8030`): the quest id, once every objective is done.
 pub(in crate::messages) fn read_quest_update_complete(r: &mut &[u8]) -> io::Result<u32> {
     read_u32_le(r)
@@ -275,7 +310,7 @@ mod tests {
         }
         push_i32(&mut b, -3); // zone or sort
                               // type, suggested, rep faction and value, opposite faction and value, next, xp id
-        for v in [2u32, 5, 169, 500, 0, 0, 777, 6] {
+        for v in [2u32, 5, 169, 500, 67, 900, 777, 6] {
             push_u32(&mut b, v);
         }
         push_i32(&mut b, 5000); // money
@@ -344,6 +379,7 @@ mod tests {
         assert_eq!(q.quest_type, 2);
         assert_eq!(q.suggested_players, 5);
         assert_eq!(q.rep_objective_faction, 169);
+        assert_eq!((q.opposite_rep_faction, q.opposite_rep_value), (67, 900));
         assert_eq!(q.next_quest_in_chain, 777);
         assert_eq!(q.xp_id, 6);
         assert_eq!(q.money, 5000);
@@ -420,5 +456,56 @@ mod tests {
             read_quest_update_add_item(&mut b2.as_slice()).unwrap(),
             (3000, 5)
         );
+    }
+
+    /// The three 12340 handles that had no arm: each now decodes, AzerothCore's trailing required
+    /// count on the PvP update included.
+    #[test]
+    fn pvp_kill_force_remove_and_completed_quests_decode() {
+        use crate::messages::{opcode, parse_server_with_tail, ServerPacket};
+
+        let mut b = Vec::new();
+        for v in [11_052, 3, 10] {
+            push_u32(&mut b, v);
+        }
+        let (p, tail) = parse_server_with_tail(opcode::SMSG_QUESTUPDATE_ADD_PVP_KILL, &b).unwrap();
+        assert!(matches!(
+            p,
+            ServerPacket::QuestUpdateAddPvpKill {
+                quest_id: 11_052,
+                count: 3
+            }
+        ));
+        assert_eq!(
+            tail, 0,
+            "the server's required count is consumed, not left as a tail"
+        );
+
+        let mut b = Vec::new();
+        push_u32(&mut b, 783);
+        let (p, tail) = parse_server_with_tail(opcode::SMSG_QUEST_FORCE_REMOVE, &b).unwrap();
+        assert!(matches!(
+            p,
+            ServerPacket::QuestForceRemove { quest_id: 783 }
+        ));
+        assert_eq!(tail, 0);
+
+        let mut b = Vec::new();
+        for v in [3, 7, 33, 783] {
+            push_u32(&mut b, v);
+        }
+        let (p, tail) =
+            parse_server_with_tail(opcode::SMSG_QUERY_QUESTS_COMPLETED_RESPONSE, &b).unwrap();
+        match p {
+            ServerPacket::QuestsCompleted(ids) => assert_eq!(ids, [7, 33, 783]),
+            other => panic!("expected QuestsCompleted, got {}", other.name()),
+        }
+        assert_eq!(tail, 0);
+        // A count past the body fails the read instead of inventing ids.
+        let mut b = Vec::new();
+        push_u32(&mut b, 2);
+        push_u32(&mut b, 7);
+        assert!(parse_server_with_tail(opcode::SMSG_QUERY_QUESTS_COMPLETED_RESPONSE, &b).is_err());
+        assert!(query_quests_completed().is_empty());
     }
 }

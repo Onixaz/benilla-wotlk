@@ -652,12 +652,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if s.start_quest == 0 {
                 return Ok((quest_item, Value::Nil, Value::Nil));
             }
-            let log = &model.quest_log;
-            let active = log
-                .entries
-                .iter()
-                .any(|e| !e.is_header && e.quest_id == s.start_quest)
-                || log.hidden_quest_ids.contains(&s.start_quest);
+            let active = model.quest_log.quest(s.start_quest).is_some();
             Ok((
                 quest_item,
                 Value::Integer(i64::from(s.start_quest)),

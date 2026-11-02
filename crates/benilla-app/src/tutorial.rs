@@ -51,7 +51,12 @@ pub(crate) mod id {
     pub(crate) const RESTING: u32 = 0x1d;
     pub(crate) const HEARTHSTONES: u32 = 0x1e;
     pub(crate) const PVP_COMBAT: u32 = 0x1f;
+    /// The questgiver turn-in verbs' tutorial (`0x58ccea`, `0x58cf74`, `0x58d00b`).
+    pub(crate) const QUEST_TURN_IN: u32 = 0x21;
     pub(crate) const TRAVEL: u32 = 0x22;
+    pub(crate) const GROUPS: u32 = 0x26;
+    /// Raised with [`GROUPS`] when an accepted quest's type is 1 (`0x6df448`).
+    pub(crate) const GROUP_QUEST: u32 = 0x28;
     pub(crate) const WELCOME: u32 = 0x29;
     pub(crate) const RANGED_WEAPONS: u32 = 0x2b;
     pub(crate) const RAID_GROUPS: u32 = 0x2d;
@@ -246,6 +251,14 @@ impl Tutorials {
     /// on the next feed with the item's template.
     pub(crate) fn item_received(&mut self, entry: u32, bag: u8, slot: u32) {
         self.pushes.push((entry, bag, slot));
+    }
+
+    /// The acknowledged bank's bit (`0x5222b0`); false before the packet lands.
+    pub(crate) fn is_flagged(&self, id: u32) -> bool {
+        self.acknowledged
+            .as_deref()
+            .and_then(|b| bank_bit(b, id))
+            .unwrap_or(false)
     }
 
     #[cfg(test)]

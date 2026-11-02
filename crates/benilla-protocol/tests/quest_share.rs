@@ -24,11 +24,14 @@ fn cmsg_bodies_golden() {
         "CMSG_QUEST_CONFIRM_ACCEPT body"
     );
 
-    // MSG_QUEST_PUSH_RESULT going up: the u64 guid of the sharer we answer, then the u8 verdict
-    // (`Quest.cpp:73-77`).
+    // MSG_QUEST_PUSH_RESULT going up: the u64 guid of the sharer we answer, the u32 quest, then
+    // the u8 verdict, 13 bytes (`0x58cab5`-`0x58cb13`).
+    let body =
+        messages::quest_push_result(0x1234_5678_9abc_def0, 0x1234, QuestShareMsg::DECLINE_QUEST);
+    assert_eq!(body.len(), 13);
     assert_eq!(
-        messages::quest_push_result(0x1234_5678_9abc_def0, QuestShareMsg::DECLINE_QUEST),
-        hx("f0debc9a7856341203"),
+        body,
+        hx("f0debc9a785634123412000003"),
         "MSG_QUEST_PUSH_RESULT (client) body"
     );
 }
@@ -59,13 +62,17 @@ fn push_result_decodes_member_and_verdict() {
 #[test]
 fn every_verdict_byte_round_trips() {
     for raw in 0..=u8::MAX {
-        let mut body = 1u64.to_le_bytes().to_vec();
-        body.push(raw);
+        let mut sent = 1u64.to_le_bytes().to_vec();
+        sent.extend_from_slice(&7u32.to_le_bytes());
+        sent.push(raw);
         assert_eq!(
-            messages::quest_push_result(1, QuestShareMsg(raw)),
-            body,
+            messages::quest_push_result(1, 7, QuestShareMsg(raw)),
+            sent,
             "verdict {raw} encodes"
         );
+        // The server's relay has no quest id.
+        let mut body = 1u64.to_le_bytes().to_vec();
+        body.push(raw);
         let p = messages::parse_server(opcode::MSG_QUEST_PUSH_RESULT, &body).unwrap();
         match &p {
             ServerPacket::QuestPushResult(r) => {
