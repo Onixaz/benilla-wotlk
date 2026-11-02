@@ -17,6 +17,7 @@ mod binder;
 mod broadcast;
 mod calendar;
 mod channel;
+mod char_services;
 mod chat;
 mod client;
 mod combat_log;
@@ -126,6 +127,10 @@ pub use calendar::{
     CalendarPacket, CalendarReset, CalendarSnapshot, CalendarStatusUpdate,
 };
 pub use channel::{channel_notice, ChannelNoticeTail, ChannelNotify};
+pub use char_services::{
+    char_customize, char_faction_change, char_rename, set_player_declined_names, CharAppearance,
+    CharChangeReq, CharChangeResult, CharRenameResult, DeclinedNamesResult,
+};
 pub use chat::{
     chat_tag, ChatMessage, CHAT_MSG_ACHIEVEMENT, CHAT_MSG_AFK, CHAT_MSG_BATTLEGROUND,
     CHAT_MSG_BATTLEGROUND_LEADER, CHAT_MSG_BG_SYSTEM_ALLIANCE, CHAT_MSG_BG_SYSTEM_HORDE,

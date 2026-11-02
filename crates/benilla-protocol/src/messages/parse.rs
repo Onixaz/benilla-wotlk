@@ -1501,6 +1501,18 @@ fn parse_server_body(
         opcode::SMSG_LEARNED_DANCE_MOVES => {
             ServerPacket::LearnedDanceMoves(super::notices::read_learned_dance_moves(&mut r)?)
         }
+        opcode::SMSG_CHAR_RENAME => {
+            ServerPacket::CharRename(super::char_services::read_char_rename(&mut r)?)
+        }
+        opcode::SMSG_CHAR_CUSTOMIZE => {
+            ServerPacket::CharCustomize(super::char_services::read_char_change(&mut r, false)?)
+        }
+        opcode::SMSG_CHAR_FACTION_CHANGE => {
+            ServerPacket::CharFactionChange(super::char_services::read_char_change(&mut r, true)?)
+        }
+        opcode::SMSG_SET_PLAYER_DECLINED_NAMES_RESULT => ServerPacket::DeclinedNamesResult(
+            super::char_services::read_declined_names_result(&mut r)?,
+        ),
         opcode::SMSG_MOTD => ServerPacket::Motd(super::notices::read_motd(&mut r)?),
         opcode::SMSG_CHANNEL_MEMBER_COUNT => {
             let (channel, flags, count) = super::notices::read_channel_member_count(&mut r)?;

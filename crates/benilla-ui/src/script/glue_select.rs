@@ -334,6 +334,28 @@ impl super::UiScript {
         false
     }
 
+    /// A paid service's answer applied to its record (`0x4e2870`, `0x4e29e0`): the record with the
+    /// same guid replaced and rebuilt, then `CHARACTER_LIST_UPDATE`; no record, nothing.
+    pub fn update_glue_character(&mut self, character: GlueCharacter) {
+        {
+            let mut model = self.model_mut();
+            let Some(record) = model
+                .glue
+                .roster
+                .records
+                .iter_mut()
+                .find(|r| r.character.guid == character.guid)
+            else {
+                return;
+            };
+            *record = Record {
+                character,
+                built: false,
+            };
+        }
+        self.fire_event("CHARACTER_LIST_UPDATE", Vec::new());
+    }
+
     /// The select from the host: the selection stored and `UPDATE_SELECTED_CHARACTER` fired.
     fn select_glue_character(&mut self, index: i32) {
         let arg = self.model_mut().glue.roster.select(index);
@@ -555,6 +577,102 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 super::glue_core::queue(lua, super::glue_core::GlueRequest::DeleteCharacter(guid));
             }
             Ok(())
+        })?,
+    )?;
+
+    // `RenameCharacter(index, name)` (`0x4e3410`): a number or the usage error; with a name, a
+    // record flagged for a rename (`0x4000`) asks the host for it, answering 1, unless the name is
+    // its own (`FORCE_RENAME_CHARACTER` with `CHAR_CREATE_NAME_IN_USE`) or fails the client's
+    // check (`0x4d8d20`: the check's token, answering nil).
+    g.set(
+        "RenameCharacter",
+        lua.create_function(|lua, args: MultiValue| {
+            let index = number_arg(lua, arg(&args, 0), "Usage: RenameCharacter(index, name)")?
+                .wrapping_sub(1);
+            let name = match arg(&args, 1) {
+                v @ (Value::String(_) | Value::Integer(_) | Value::Number(_)) => {
+                    lua.coerce_string(v)?.map(|s| s.to_string_lossy())
+                }
+                _ => None,
+            };
+            let Some(name) = name.filter(|n| !n.is_empty()) else {
+                return Ok(Value::Nil);
+            };
+            let record = usize::try_from(index).ok().and_then(|i| {
+                let m = model(lua);
+                m.glue.roster.records.get(i).map(|r| {
+                    (
+                        r.character.guid,
+                        r.character.name.clone(),
+                        r.character.flags,
+                    )
+                })
+            });
+            let Some((guid, own, flags)) = record else {
+                return Ok(Value::Nil);
+            };
+            if flags & 0x4000 == 0 {
+                return Ok(Value::Nil);
+            }
+            let fail = |token: &str| {
+                super::tick::fire_event_into(
+                    lua,
+                    "FORCE_RENAME_CHARACTER",
+                    vec![ScriptValue::Str(token.to_string())],
+                );
+            };
+            if own.to_lowercase() == name.to_lowercase() {
+                fail("CHAR_CREATE_NAME_IN_USE");
+                return Ok(Value::Nil);
+            }
+            if let Some(token) = super::glue_create::validate_character_name(&name) {
+                fail(token);
+                return Ok(Value::Nil);
+            }
+            queue(lua, GlueRequest::RenameCharacter { guid, name });
+            Ok(Value::Number(1.0))
+        })?,
+    )?;
+
+    // `DeclineCharacter(index, c1, c2, c3, c4, c5)` (`0x4e3530`): a number or the usage error; five
+    // non-empty forms for a record without flag `0x2000000` ask the host, answering 1. Deviation:
+    // the forms are not checked against the name's declension rules (`0x6b0fc0`), which benilla
+    // does not have; the server checks them.
+    g.set(
+        "DeclineCharacter",
+        lua.create_function(|lua, args: MultiValue| {
+            let index = number_arg(lua, arg(&args, 0), "Usage: DeclineCharacter(index, ...)")?
+                .wrapping_sub(1);
+            let mut cases: [String; 5] = Default::default();
+            for (i, case) in cases.iter_mut().enumerate() {
+                let form = match arg(&args, i + 1) {
+                    v @ (Value::String(_) | Value::Integer(_) | Value::Number(_)) => {
+                        lua.coerce_string(v)?.map(|s| s.to_string_lossy())
+                    }
+                    _ => None,
+                };
+                match form {
+                    Some(f) if !f.is_empty() => *case = f,
+                    _ => return Ok(Value::Nil),
+                }
+            }
+            let record = usize::try_from(index).ok().and_then(|i| {
+                let m = model(lua);
+                m.glue.roster.records.get(i).map(|r| {
+                    (
+                        r.character.guid,
+                        r.character.name.clone(),
+                        r.character.flags,
+                    )
+                })
+            });
+            match record {
+                Some((guid, name, flags)) if flags & 0x0200_0000 == 0 => {
+                    queue(lua, GlueRequest::DeclineCharacter { guid, name, cases });
+                    Ok(Value::Number(1.0))
+                }
+                _ => Ok(Value::Nil),
+            }
         })?,
     )?;
 
@@ -1149,5 +1267,94 @@ mod tests {
             ["UPDATE_SELECTED_CHARACTER 1", "CHARACTER_LIST_UPDATE nil"]
         );
         assert_eq!(s.glue_realm_cells().chosen, Some(4), "a choice stands");
+    }
+
+    /// `RenameCharacter` (`0x4e3410`): only a record flagged `0x4000` asks, its own name and a
+    /// failed check answer `FORCE_RENAME_CHARACTER` with the token, a request answers 1.
+    #[test]
+    fn rename_asks_only_for_a_flagged_record_with_a_valid_new_name() {
+        let mut roster = three();
+        roster[1].flags = 0x4000;
+        let mut s = vm(roster);
+        s.run(
+            "f = CreateFrame('Frame') f:RegisterEvent('FORCE_RENAME_CHARACTER') \
+             f:SetScript('OnEvent', function(self, event, arg1) table.insert(FIRED, arg1) end)",
+        )
+        .unwrap();
+        assert!(s
+            .eval::<Option<f64>>("return RenameCharacter(1, 'Zulu')")
+            .unwrap()
+            .is_none());
+        assert!(s.take_glue_requests().is_empty(), "record 1 is not flagged");
+        assert!(s
+            .eval::<Option<f64>>("return RenameCharacter(2, 'bravo')")
+            .unwrap()
+            .is_none());
+        assert!(s
+            .eval::<Option<f64>>("return RenameCharacter(2, 'Z')")
+            .unwrap()
+            .is_none());
+        assert!(s
+            .eval::<Option<f64>>("return RenameCharacter(2, 'Zzz9')")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            fired(&s),
+            [
+                "CHAR_CREATE_NAME_IN_USE",
+                "CHAR_NAME_TOO_SHORT",
+                "CHAR_NAME_INVALID_CHARACTER"
+            ]
+        );
+        assert!(s.take_glue_requests().is_empty());
+        assert_eq!(
+            s.eval::<Option<f64>>("return RenameCharacter(2, 'Zulu')")
+                .unwrap(),
+            Some(1.0)
+        );
+        assert!(matches!(
+            &s.take_glue_requests()[..],
+            [GlueRequest::RenameCharacter { guid: 2, name }] if name == "Zulu"
+        ));
+        assert!(s.eval::<()>("RenameCharacter('x', 'Zulu')").is_err());
+    }
+
+    /// `DeclineCharacter` (`0x4e3530`): five non-empty forms for a record not yet declined ask.
+    #[test]
+    fn decline_asks_with_five_forms_for_an_undeclined_record() {
+        let mut roster = three();
+        roster[2].flags = 0x0200_0000;
+        let mut s = vm(roster);
+        assert!(s
+            .eval::<Option<f64>>("return DeclineCharacter(1, 'a', 'b', 'c', 'd')")
+            .unwrap()
+            .is_none());
+        assert!(s
+            .eval::<Option<f64>>("return DeclineCharacter(3, 'a', 'b', 'c', 'd', 'e')")
+            .unwrap()
+            .is_none());
+        assert!(s.take_glue_requests().is_empty());
+        assert_eq!(
+            s.eval::<Option<f64>>("return DeclineCharacter(1, 'a', 'b', 'c', 'd', 'e')")
+                .unwrap(),
+            Some(1.0)
+        );
+        assert!(matches!(
+            &s.take_glue_requests()[..],
+            [GlueRequest::DeclineCharacter { guid: 1, name, cases }]
+                if name == "Alpha" && cases[4] == "e"
+        ));
+    }
+
+    /// `0x4e29e0`: an answer replaces the record with its guid and fires `CHARACTER_LIST_UPDATE`.
+    #[test]
+    fn an_update_replaces_its_record_and_redraws_the_list() {
+        let mut s = vm(three());
+        s.update_glue_character(character(2, "Zulu"));
+        assert_eq!(s.model_ref().glue.roster.records[1].character.name, "Zulu");
+        assert_eq!(fired(&s), ["CHARACTER_LIST_UPDATE nil"]);
+        s.run("FIRED = {}").unwrap();
+        s.update_glue_character(character(9, "Nobody"));
+        assert!(fired(&s).is_empty());
     }
 }
