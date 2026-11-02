@@ -269,7 +269,10 @@ impl Plugin for CursorPlugin {
                 (drive_displayed_cursor, macos::drive)
                     .chain()
                     // After the tick: a FrameXML `SetCursor` made this frame is read here.
-                    .after(crate::ui_script::UiInput),
+                    .after(crate::ui_script::UiInput)
+                    // After the controller's look grab and the loading cover, as the other
+                    // platforms' software cursor: the frame's last word on the pointer.
+                    .after(benilla_world::schedule::WorldStage::Present),
             );
         #[cfg(not(target_os = "macos"))]
         app.init_resource::<other::PayloadCursorImages>()
