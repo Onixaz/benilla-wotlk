@@ -332,6 +332,9 @@ pub(super) fn drain_guild(
             GuildRequest::Info => {
                 let _ = commands.0.send(ClientCommand::GuildInfoRequest);
             }
+            GuildRequest::QueryEventLog => {
+                let _ = commands.0.send(ClientCommand::GuildEventLogQuery);
+            }
             GuildRequest::Invite(name) => {
                 let _ = commands.0.send(ClientCommand::GuildInvite { name });
             }

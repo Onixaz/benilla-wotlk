@@ -823,6 +823,10 @@ fn world(
                             session.ready_for_account_data_times()?;
                             Parked::StayPut
                         }
+                        Ok(ParkRequest::Char(CharRequest::RealmSplit(state))) => {
+                            session.realm_split(state)?;
+                            Parked::StayPut
+                        }
                         Ok(ParkRequest::Char(CharRequest::AccountData(wire))) => {
                             match wire {
                                 crate::account_data::Wire::Request { slot } => {
@@ -2074,6 +2078,7 @@ pub(super) fn writer_loop(
                     ClientCommand::GuildAccept => w.guild_accept(),
                     ClientCommand::GuildDecline => w.guild_decline(),
                     ClientCommand::GuildInfoRequest => w.guild_info(),
+                    ClientCommand::GuildEventLogQuery => w.guild_event_log_query(),
                     ClientCommand::GuildBankMoneyWithdrawnRequest => w.guild_bank_money_withdrawn(),
                     ClientCommand::GuildBank(send) => w.guild_bank(&send),
                     ClientCommand::GuildPermissionsRequest => w.guild_permissions(),

@@ -435,6 +435,9 @@ enum Outgoing {
     SelectFirst,
     /// `SHOW_SERVER_ALERT(text)` (event 21): the alert's text after its prefix.
     ServerAlert(String),
+    /// `SERVER_SPLIT_NOTICE(clientState, splitState, date)` (event 32), `SMSG_REALM_SPLIT`'s
+    /// fields as `%d%d%s` (`0x4d8200`).
+    SplitNotice(benilla_protocol::messages::RealmSplit),
 }
 
 /// The logon's notification cells: the latest `(state, result)` and the pair last shown, -1 when
@@ -1355,6 +1358,23 @@ fn status_text(code: u8) -> (Text, Option<u8>) {
     }
 }
 
+/// The manager's packet handlers.
+pub(super) fn register(app: &mut App) {
+    use crate::net::NetHandlerApp;
+    app.net_handler(
+        benilla_protocol::SessionEventKind::RealmSplit,
+        on_realm_split,
+    );
+}
+
+/// `SMSG_REALM_SPLIT` (`0x4d8200`), read on the parked link, fires its glue event.
+pub(crate) fn on_realm_split(In(ev): In<benilla_protocol::SessionEvent>, mut mgr: ResMut<GlueMgr>) {
+    if let benilla_protocol::SessionEvent::RealmSplit(s) = ev {
+        debug!("glue: realm split {s:?}");
+        mgr.outbox.push(Outgoing::SplitNotice(s));
+    }
+}
+
 /// The native login's messages the manager reads, as one parameter.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct LoginNews<'w, 's> {
@@ -1627,7 +1647,14 @@ pub(crate) fn drive_glue_mgr(
                             .push(crate::net::CharRequest::AccountDataReady.into());
                     }
                 }
-                GlueRequest::Screenshot | GlueRequest::RealmSplit(_) => {}
+                // `0x4de2e0` and `0x4de250`: a `CMSG_REALM_SPLIT` on the world link.
+                GlueRequest::RealmSplit(state) => {
+                    if mgr.connected {
+                        mgr.park_out
+                            .push(crate::net::CharRequest::RealmSplit(state).into());
+                    }
+                }
+                GlueRequest::Screenshot => {}
             }
         }
         mgr.realm_cells = s.glue_realm_cells();
@@ -1975,6 +2002,14 @@ fn flush_one(
         Outgoing::ServerAlert(text) => {
             script.fire_event("SHOW_SERVER_ALERT", vec![ScriptValue::Str(text)]);
         }
+        Outgoing::SplitNotice(s) => script.fire_event(
+            "SERVER_SPLIT_NOTICE",
+            vec![
+                ScriptValue::Int(i64::from(s.client_state as i32)),
+                ScriptValue::Int(i64::from(s.split_state as i32)),
+                ScriptValue::Str(s.date),
+            ],
+        ),
         Outgoing::Roster => {
             let roster = mgr
                 .roster

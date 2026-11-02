@@ -730,6 +730,45 @@ fn a_logout_keeps_the_link_for_the_screens_roster_ask() {
     assert!(!m.op.done, "and waits for its reply");
 }
 
+/// `SMSG_REALM_SPLIT` (`0x4d8200`) fires `SERVER_SPLIT_NOTICE` with its two states as `%d` and
+/// the date, which `GlueParent.lua` stores for the character screen.
+#[test]
+fn a_realm_split_answer_fires_the_split_notice() {
+    use bevy::ecs::system::RunSystemOnce;
+    let mut w = World::new();
+    w.insert_resource(accepted());
+    let split = benilla_protocol::messages::RealmSplit {
+        client_state: 0xFFFF_FFFF,
+        split_state: 1,
+        date: "01/01/01".into(),
+    };
+    w.run_system_once_with(
+        on_realm_split,
+        benilla_protocol::SessionEvent::RealmSplit(split.clone()),
+    )
+    .unwrap();
+    let mut m = w.remove_resource::<GlueMgr>().unwrap();
+    assert_eq!(m.outbox, [Outgoing::SplitNotice(split)]);
+
+    let mut script = UiScript::new().unwrap();
+    script
+        .run(
+            "probe = CreateFrame('Frame') probe:RegisterEvent('SERVER_SPLIT_NOTICE')              probe:SetScript('OnEvent', function(self, event, a, b, c)              SPLIT = a .. ',' .. b .. ',' .. c end)",
+        )
+        .unwrap();
+    let names = RosterNames {
+        areas: None,
+        create: None,
+        classes: None,
+        creatures: None,
+    };
+    flush(&mut m, &mut script, 0, &names);
+    assert_eq!(
+        script.eval::<String>("return SPLIT").unwrap(),
+        "-1,1,01/01/01"
+    );
+}
+
 // ── The stock screens over the native login, end to end ─────────────────────────────────────────
 
 /// An app with the manager, the native login's glue asks and the stock glue VM on the login

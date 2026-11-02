@@ -425,7 +425,8 @@ impl World {
 
 /// A world server whose account has no characters: it admits each session under the latest key
 /// realmd made, answers every `CMSG_CHAR_ENUM` with its roster (empty until [`World::set_roster`]),
-/// a `CMSG_CHAR_CREATE` with success, a `CMSG_LOGOUT_REQUEST` with `SMSG_LOGOUT_COMPLETE` and a
+/// a `CMSG_CHAR_CREATE` with success, a `CMSG_REALM_SPLIT` with its state echoed and no split, as
+/// AzerothCore answers it, a `CMSG_LOGOUT_REQUEST` with `SMSG_LOGOUT_COMPLETE` and a
 /// `CMSG_PLAYER_LOGIN` with nothing (or a refusal, [`World::refuse_logins`]), and logs every opcode
 /// the client sends.
 pub(crate) fn world(listener: TcpListener, keys: Receiver<Key>) -> World {
@@ -522,6 +523,14 @@ pub(crate) fn world(listener: TcpListener, keys: Receiver<Key>) -> World {
                             opcode::SMSG_CHAR_CREATE,
                             &[messages::CHAR_CREATE_SUCCESS],
                         ),
+                        opcode::CMSG_REALM_SPLIT => {
+                            let mut body = session_log.lock().unwrap()[index]
+                                .last()
+                                .map_or_else(Vec::new, |p| p[6..10].to_vec());
+                            body.extend_from_slice(&0u32.to_le_bytes());
+                            body.extend_from_slice(b"01/01/01\0");
+                            send(&mut s, Some(&mut crypto), opcode::SMSG_REALM_SPLIT, &body);
+                        }
                         opcode::CMSG_PLAYER_LOGIN if refuse_flag.load(Ordering::SeqCst) => send(
                             &mut s,
                             Some(&mut crypto),

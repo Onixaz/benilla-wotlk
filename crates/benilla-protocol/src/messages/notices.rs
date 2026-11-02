@@ -1,5 +1,6 @@
 //! Small server notices: the light override, the UI clock, arena and refer-a-friend errors, the
-//! level grant offer, the unlearn list, the inebriation threshold and the dance moves.
+//! level grant offer, the unlearn list, the inebriation threshold, the dance moves, the message of
+//! the day, a channel's member count, a whois answer, the realm split and realm-first awards.
 
 use std::io;
 
@@ -80,6 +81,67 @@ pub(super) fn read_inebriation_threshold(r: &mut &[u8]) -> io::Result<Inebriatio
 /// `SMSG_LEARNED_DANCE_MOVES` (`0x5758a0`): one 64-bit mask of learned moves.
 pub(super) fn read_learned_dance_moves(r: &mut &[u8]) -> io::Result<u64> {
     read_u64_le(r)
+}
+
+/// `SMSG_MOTD` (`0x551660`): a line count, then that many lines. Deviation: no line is cut at the
+/// handler's 100-byte buffer.
+pub(super) fn read_motd(r: &mut &[u8]) -> io::Result<Vec<String>> {
+    let count = read_u32_le(r)?;
+    let mut lines = Vec::with_capacity(crate::wire::capacity_hint(count, 16));
+    for _ in 0..count {
+        lines.push(read_cstring(r)?);
+    }
+    Ok(lines)
+}
+
+/// `SMSG_CHANNEL_MEMBER_COUNT` (`0x4fb540`): the channel, its flags and its count, which the
+/// handler reads and drops.
+pub(super) fn read_channel_member_count(r: &mut &[u8]) -> io::Result<(String, u8, u32)> {
+    Ok((read_cstring(r)?, read_u8(r)?, read_u32_le(r)?))
+}
+
+/// `SMSG_REALM_SPLIT` (`0x4d8200`): the client's state, the realm's split state and the date the
+/// choice closes; an empty body reads 0, 0 and `""`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RealmSplit {
+    pub client_state: u32,
+    pub split_state: u32,
+    pub date: String,
+}
+
+pub(super) fn read_realm_split(r: &mut &[u8]) -> io::Result<RealmSplit> {
+    if r.is_empty() {
+        return Ok(RealmSplit::default());
+    }
+    Ok(RealmSplit {
+        client_state: read_u32_le(r)?,
+        split_state: read_u32_le(r)?,
+        date: read_cstring(r)?,
+    })
+}
+
+/// `SMSG_SERVER_FIRST_ACHIEVEMENT` (`0x50b010`): the earner's name and guid, the achievement, and
+/// whether the name prints as a player link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerFirstAchievement {
+    pub name: String,
+    pub guid: u64,
+    pub achievement: u32,
+    pub linked: bool,
+}
+
+pub(super) fn read_server_first_achievement(r: &mut &[u8]) -> io::Result<ServerFirstAchievement> {
+    Ok(ServerFirstAchievement {
+        name: read_cstring(r)?,
+        guid: read_u64_le(r)?,
+        achievement: read_u32_le(r)?,
+        linked: read_u32_le(r)? != 0,
+    })
+}
+
+/// `CMSG_REALM_SPLIT` body: the state, `0xFFFFFFFF` to ask (`0x4de2e0`).
+pub fn realm_split(state: u32) -> Vec<u8> {
+    state.to_le_bytes().to_vec()
 }
 
 /// `CMSG_ACCEPT_LEVEL_GRANT` body: the granter's packed guid (`0x521b00`).
@@ -168,5 +230,66 @@ mod tests {
             ServerPacket::LearnedDanceMoves(0)
         ));
         assert_eq!(accept_level_grant(0x2A), vec![0x01, 0x2A]);
+    }
+
+    #[test]
+    fn the_639_notices_decode_their_12340_bodies() {
+        let mut b = 2u32.to_le_bytes().to_vec();
+        b.extend_from_slice(b"Welcome\0to the realm\0");
+        match parse(opcode::SMSG_MOTD, &b) {
+            ServerPacket::Motd(lines) => assert_eq!(lines, ["Welcome", "to the realm"]),
+            other => panic!("{}", other.name()),
+        }
+        let mut b = b"world\0".to_vec();
+        b.push(0x18);
+        b.extend_from_slice(&42u32.to_le_bytes());
+        assert!(matches!(
+            parse(opcode::SMSG_CHANNEL_MEMBER_COUNT, &b),
+            ServerPacket::ChannelMemberCount {
+                flags: 0x18,
+                count: 42,
+                ..
+            }
+        ));
+        match parse(opcode::SMSG_WHOIS, b"Account: X\0") {
+            ServerPacket::Whois(text) => assert_eq!(text, "Account: X"),
+            other => panic!("{}", other.name()),
+        }
+        let mut b = 0xFFFF_FFFFu32.to_le_bytes().to_vec();
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(b"01/01/01\0");
+        match parse(opcode::SMSG_REALM_SPLIT, &b) {
+            ServerPacket::RealmSplit(s) => {
+                assert_eq!((s.client_state, s.split_state), (0xFFFF_FFFF, 1));
+                assert_eq!(s.date, "01/01/01");
+            }
+            other => panic!("{}", other.name()),
+        }
+        // The handler's empty-body arm fires zeros.
+        assert!(matches!(
+            parse(opcode::SMSG_REALM_SPLIT, &[]),
+            ServerPacket::RealmSplit(RealmSplit {
+                client_state: 0,
+                split_state: 0,
+                ..
+            })
+        ));
+        let mut b = b"Bob\0".to_vec();
+        b.extend_from_slice(&0x2Au64.to_le_bytes());
+        b.extend_from_slice(&457u32.to_le_bytes());
+        b.extend_from_slice(&1u32.to_le_bytes());
+        match parse(opcode::SMSG_SERVER_FIRST_ACHIEVEMENT, &b) {
+            ServerPacket::ServerFirstAchievement(a) => assert_eq!(
+                a,
+                ServerFirstAchievement {
+                    name: "Bob".into(),
+                    guid: 0x2A,
+                    achievement: 457,
+                    linked: true
+                }
+            ),
+            other => panic!("{}", other.name()),
+        }
+        assert_eq!(realm_split(0xFFFF_FFFF), vec![0xFF; 4]);
     }
 }

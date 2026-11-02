@@ -420,6 +420,14 @@ pub const SMSG_ZONE_UNDER_ATTACK: u16 = 0x0254; // 596
 pub const SMSG_SERVER_MESSAGE: u16 = 0x0291; // 657
 /// A trial account hit its whisper cap: empty body; the client shows error `0x1c3`.
 pub const SMSG_CHAT_RESTRICTED: u16 = 0x02FD; // 765
+/// The message of the day: `u32` line count, then the lines (`0x551660`).
+pub const SMSG_MOTD: u16 = 0x033D; // 829
+/// A channel's member count: name, flags, count, read and dropped (`0x4fb540`).
+pub const SMSG_CHANNEL_MEMBER_COUNT: u16 = 0x03D5; // 981
+/// A GM's `.whois` answer: one string to the console (`0x6b3280`).
+pub const SMSG_WHOIS: u16 = 0x0065; // 101
+/// A realm-first award, announced to the realm (`0x50b010`).
+pub const SMSG_SERVER_FIRST_ACHIEVEMENT: u16 = 0x0498; // 1176
 /// A defense broadcast (the Eastern Plaguelands towers): `u32 zoneId`, `u32 length`, the text
 /// (`Map.cpp:1868-1884`); 12340 reads it at `0x50c850`.
 pub const SMSG_DEFENSE_MESSAGE: u16 = 0x033A; // 826
@@ -771,6 +779,10 @@ pub const SMSG_UPDATE_ACCOUNT_DATA: u16 = 0x020C;
 pub const SMSG_UPDATE_ACCOUNT_DATA_COMPLETE: u16 = 0x0463;
 /// The character screen is up: send the account's times (`ReadyForAccountDataTimes` `0x4de390`).
 pub const CMSG_READY_FOR_ACCOUNT_DATA_TIMES: u16 = 0x04FF;
+/// The realm split ask or choice: one `u32`, `0xFFFFFFFF` to ask (`0x4de2e0`, `0x4de250`).
+pub const CMSG_REALM_SPLIT: u16 = 0x038C; // 908
+/// The realm split answer: client state, split state, the date (`0x4d8200`).
+pub const SMSG_REALM_SPLIT: u16 = 0x038B; // 907
 /// 3.3.5a only: drop one completed achievement (`0x5b3610`).
 pub const SMSG_ACHIEVEMENT_DELETED: u16 = 0x049F;
 /// 3.3.5a only: the player's completed achievements and criteria at login (`0x5b32f0`).
@@ -1110,6 +1122,8 @@ pub const CMSG_GUILD_BANK_DEPOSIT_MONEY: u16 = 0x03EC; // 1004
 pub const CMSG_GUILD_BANK_WITHDRAW_MONEY: u16 = 0x03ED; // 1005
 /// Both ways: our tab ask, and the tab's log (`0x5a4800`).
 pub const MSG_GUILD_BANK_LOG_QUERY: u16 = 0x03EE; // 1006
+/// Both ways: our empty ask (`0x5cc470`), and the guild's event log (`0x5ca6a0`).
+pub const MSG_GUILD_EVENT_LOG_QUERY: u16 = 0x03FF; // 1023
 /// Both ways: our tab ask, and the tab's text (`0x5a4ae0`).
 pub const MSG_QUERY_GUILD_BANK_TEXT: u16 = 0x040A; // 1034
 pub const CMSG_SET_GUILD_BANK_TEXT: u16 = 0x040B; // 1035

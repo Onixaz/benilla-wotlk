@@ -1120,6 +1120,16 @@ pub enum SessionEvent {
     InebriationThreshold(crate::messages::InebriationThreshold),
     /// The learned dance moves' mask (`SMSG_LEARNED_DANCE_MOVES`).
     LearnedDanceMoves(u64),
+    /// The message of the day, a line each (`SMSG_MOTD`).
+    Motd(Vec<String>),
+    /// A GM's whois answer (`SMSG_WHOIS`).
+    Whois(String),
+    /// The realm split state (`SMSG_REALM_SPLIT`), an answer to `CMSG_REALM_SPLIT`.
+    RealmSplit(crate::messages::RealmSplit),
+    /// A realm-first award (`SMSG_SERVER_FIRST_ACHIEVEMENT`).
+    ServerFirstAchievement(crate::messages::ServerFirstAchievement),
+    /// The guild's event log (`MSG_GUILD_EVENT_LOG_QUERY`), oldest first.
+    GuildEventLog(Vec<crate::messages::GuildEventLogEntry>),
     /// Master-loot candidates (`SMSG_LOOT_MASTER_LIST`), sent by `SendLoot` before its response.
     LootMasterList { candidates: Vec<u64> },
     /// An item landed in our bags (`SMSG_ITEM_PUSH_RESULT`): the "You receive loot" line.

@@ -149,7 +149,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "MoveAndSteerStop",
     "OpenTrainer",
     "PlayDance",
-    "QueryGuildEventLog",
     "QuestIsDaily",
     "QuestIsWeekly",
     "QuestPOIGetQuestIDByIndex",

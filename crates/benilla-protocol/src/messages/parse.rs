@@ -1501,6 +1501,25 @@ fn parse_server_body(
         opcode::SMSG_LEARNED_DANCE_MOVES => {
             ServerPacket::LearnedDanceMoves(super::notices::read_learned_dance_moves(&mut r)?)
         }
+        opcode::SMSG_MOTD => ServerPacket::Motd(super::notices::read_motd(&mut r)?),
+        opcode::SMSG_CHANNEL_MEMBER_COUNT => {
+            let (channel, flags, count) = super::notices::read_channel_member_count(&mut r)?;
+            ServerPacket::ChannelMemberCount {
+                channel,
+                flags,
+                count,
+            }
+        }
+        opcode::SMSG_WHOIS => ServerPacket::Whois(crate::wire::read_cstring(&mut r)?),
+        opcode::SMSG_REALM_SPLIT => {
+            ServerPacket::RealmSplit(super::notices::read_realm_split(&mut r)?)
+        }
+        opcode::SMSG_SERVER_FIRST_ACHIEVEMENT => ServerPacket::ServerFirstAchievement(
+            super::notices::read_server_first_achievement(&mut r)?,
+        ),
+        opcode::MSG_GUILD_EVENT_LOG_QUERY => {
+            ServerPacket::GuildEventLog(guild::read_guild_event_log(&mut r)?)
+        }
         opcode::SMSG_LOOT_SLOT_CHANGED => {
             ServerPacket::LootSlotChanged(loot::read_loot_slot_changed(&mut r)?)
         }

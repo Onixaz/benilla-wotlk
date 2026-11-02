@@ -59,11 +59,13 @@ impl std::error::Error for WardenRequired {}
 
 /// The packets the glue acts on that can arrive on the link before the world stream starts: the
 /// server's cache version (sent after the authentication), which the `.wdb` files are checked
-/// against, and the account's account-data times and bytes, which the character screen asks for.
-const GLUE_KEPT: [u16; 3] = [
+/// against, and the account's account-data times and bytes and the realm split state, which the
+/// character screen asks for.
+const GLUE_KEPT: [u16; 4] = [
     opcode::SMSG_CLIENTCACHE_VERSION,
     opcode::SMSG_ACCOUNT_DATA_TIMES,
     opcode::SMSG_UPDATE_ACCOUNT_DATA,
+    opcode::SMSG_REALM_SPLIT,
 ];
 
 /// An authenticated world-server session with header encryption active.
@@ -294,6 +296,9 @@ impl WorldSession {
                 self.glue_events
                     .push(SessionEvent::AccountDataUpdate(u.clone()));
             }
+            ServerPacket::RealmSplit(s) => {
+                self.glue_events.push(SessionEvent::RealmSplit(s.clone()));
+            }
             _ => {}
         }
     }
@@ -302,6 +307,18 @@ impl WorldSession {
     /// them next ([`Self::take_glue_events`]), as nothing here waits on a reply.
     pub fn ready_for_account_data_times(&mut self) -> Result<()> {
         self.send(opcode::CMSG_READY_FOR_ACCOUNT_DATA_TIMES, &[])
+    }
+
+    /// `CMSG_REALM_SPLIT` with `state`, then its answer read off the link, kept for
+    /// [`Self::take_glue_events`]: the character screen asks as it shows, with nothing after it to
+    /// read the answer in.
+    pub fn realm_split(&mut self, state: u32) -> Result<()> {
+        self.send(opcode::CMSG_REALM_SPLIT, &messages::realm_split(state))?;
+        loop {
+            if let Some(ServerPacket::RealmSplit(_)) = self.recv_parsed()? {
+                return Ok(());
+            }
+        }
     }
 
     /// `CMSG_REQUEST_ACCOUNT_DATA`; the slot's bytes are kept as the times are.

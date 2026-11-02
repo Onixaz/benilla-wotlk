@@ -202,6 +202,20 @@ pub struct GuildRankEdit {
     pub staged: [bool; 17],
 }
 
+/// One guild event log row, its names resolved for display.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GuildEventView {
+    /// 1 invite, 2 join, 3 promote, 4 demote, 5 remove, 6 quit.
+    pub kind: u8,
+    /// `None` until the name cache answers.
+    pub player1: Option<String>,
+    pub player2: Option<String>,
+    /// The rank a promote or demote reached, 0-based; 0 for the other kinds.
+    pub rank: u8,
+    /// Unix seconds when the event happened: arrival time less its age (`0x5ca6a0`).
+    pub written_at: u32,
+}
+
 /// Outbound guild intents, drained by the app ([`UiScript::take_guild_requests`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GuildRequest {
@@ -211,6 +225,8 @@ pub enum GuildRequest {
     Roster,
     /// `GuildInfo()`, the `/ginfo` query (`CMSG_GUILD_INFO`), answered as a chat line.
     Info,
+    /// `QueryGuildEventLog()` in a guild (`MSG_GUILD_EVENT_LOG_QUERY`).
+    QueryEventLog,
     /// `GuildInvite(name)` (`CMSG_GUILD_INVITE`).
     Invite(String),
     /// `GuildUninvite(name)` (`CMSG_GUILD_REMOVE`).
@@ -267,6 +283,12 @@ impl super::UiScript {
     /// `PLAYER_GUILD_UPDATE` and `GUILD_MOTD` on the edges.
     pub fn set_guild(&mut self, state: GuildState) {
         set_field!(self, guild, state);
+    }
+
+    /// Push the guild event log, oldest first, replacing it; the app fires
+    /// `GUILD_EVENT_LOG_UPDATE`.
+    pub fn set_guild_event_log(&mut self, rows: Vec<GuildEventView>) {
+        set_field!(self, guild_event_log, rows);
     }
 
     /// Drain the guild intents queued since the last call.
@@ -990,6 +1012,80 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // ── The event log ────────────────────────────────────────────────────────────────────────
+    // QueryGuildEventLog() (`0x5cc470`): the empty ask, sent only from inside a guild.
+    g.set(
+        "QueryGuildEventLog",
+        lua.create_function(|lua, ()| {
+            let mut model = crate::script::model_mut_of(lua);
+            if model.guild.in_guild {
+                model.guild_requests.push(GuildRequest::QueryEventLog);
+            }
+            Ok(())
+        })?,
+    )?;
+    // GetNumGuildEvents() (`0x5ca350`).
+    g.set(
+        "GetNumGuildEvents",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(model.guild_event_log.len() as i64)
+        })?,
+    )?;
+    // GetGuildEventInfo(index) (`0x5ccd90`) -> type, player1, player2, rank, year, month, day,
+    // hour; a name not cached is nil, and an index past the log answers nil, nil, nil, nil, 0, 0,
+    // 0, 0. The rank is our guild's rank name while the guild record is cached. Deviation: a rank
+    // past the guild's ranks answers nil, where the reference pushes nothing and shifts the
+    // returns.
+    g.set(
+        "GetGuildEventInfo",
+        lua.create_function(|lua, index: Value| {
+            let index = binding_abi::number_arg(lua, index, "Usage: GetGuildEventInfo(index)")?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let Some(row) = usize::try_from(index - 1)
+                .ok()
+                .and_then(|i| model.guild_event_log.get(i))
+            else {
+                let mut out = vec![Value::Nil; 4];
+                out.extend(std::iter::repeat_n(Value::Integer(0), 4));
+                return Ok(MultiValue::from_vec(out));
+            };
+            let kind = match row.kind {
+                1 => "invite",
+                2 => "join",
+                3 => "promote",
+                4 => "demote",
+                5 => "remove",
+                6 => "quit",
+                _ => "none",
+            };
+            let name = |n: &Option<String>| -> mlua::Result<Value> {
+                n.as_deref()
+                    .map_or(Ok(Value::Nil), |n| lua.create_string(n).map(Value::String))
+            };
+            let rank = model
+                .guild
+                .ranks
+                .get(usize::from(row.rank))
+                .map_or(Ok(Value::Nil), |r| string_or_nil(lua, &r.name))?;
+            let mut out = vec![
+                Value::String(lua.create_string(kind)?),
+                name(&row.player1)?,
+                name(&row.player2)?,
+                rank,
+            ];
+            out.extend(
+                super::guild_bank::age_parts(row.written_at, super::guild_bank::unix_now())
+                    .map(Value::Integer),
+            );
+            Ok(MultiValue::from_vec(out))
+        })?,
+    )?;
+
     Ok(())
 }
 
@@ -1012,6 +1108,79 @@ mod tests {
         assert!(s
             .eval::<i64>(r#"return GetGuildInfo("nosuchunit")"#)
             .is_err());
+    }
+
+    /// `GetGuildEventInfo` (`0x5ccd90`): the kind's token, the cached names, the rank's name, and
+    /// the age as 8760-hour years, 720-hour months, days and hours.
+    #[test]
+    fn the_event_log_verbs_read_the_pushed_rows() {
+        let mut s = crate::script::UiScript::new().unwrap();
+        s.run("QueryGuildEventLog()").unwrap();
+        assert!(
+            s.take_guild_requests().is_empty(),
+            "no ask from outside a guild"
+        );
+        let rank = |name: &str| GuildRankInfo {
+            name: name.into(),
+            ..Default::default()
+        };
+        s.set_guild(GuildState {
+            in_guild: true,
+            ranks: vec![rank("Guild Master"), rank("Officer"), rank("Member")],
+            ..Default::default()
+        });
+        s.run("QueryGuildEventLog()").unwrap();
+        assert_eq!(s.take_guild_requests(), vec![GuildRequest::QueryEventLog]);
+
+        let now = super::super::guild_bank::unix_now();
+        // 1 year, 2 months, 3 days and 4 hours ago.
+        let age = ((8760 + 2 * 720 + 3 * 24 + 4) * 3600) as u32;
+        s.set_guild_event_log(vec![
+            GuildEventView {
+                kind: 3,
+                player1: Some("Alice".into()),
+                player2: Some("Bob".into()),
+                rank: 1,
+                written_at: now - age,
+            },
+            GuildEventView {
+                kind: 6,
+                player1: None,
+                written_at: now,
+                ..Default::default()
+            },
+        ]);
+        assert_eq!(s.eval::<i64>("return GetNumGuildEvents()").unwrap(), 2);
+        let row: (String, String, String, String, i64, i64, i64, i64) =
+            s.eval("return GetGuildEventInfo(1)").unwrap();
+        assert_eq!(
+            row,
+            (
+                "promote".into(),
+                "Alice".into(),
+                "Bob".into(),
+                "Officer".into(),
+                1,
+                2,
+                3,
+                4
+            )
+        );
+        let quit: (String, Option<String>, Option<String>, Option<String>) =
+            s.eval("return GetGuildEventInfo(2)").unwrap();
+        assert_eq!(
+            quit,
+            ("quit".into(), None, None, Some("Guild Master".into()))
+        );
+        let past: (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i64,
+        ) = s.eval("return GetGuildEventInfo(3)").unwrap();
+        assert_eq!(past, (None, None, None, None, 0));
+        assert!(s.eval::<i64>("return GetGuildEventInfo('x')").is_err());
     }
 
     /// `CanGuildBankRepair` (`0x5cc200`) is our rank's Withdraw Repair while in a guild; the two

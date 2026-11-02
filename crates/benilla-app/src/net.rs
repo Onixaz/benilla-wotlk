@@ -494,6 +494,9 @@ pub(crate) enum CharRequest {
     AccountDataReady,
     /// An account-data request or upload from the character screen ([`crate::account_data`]).
     AccountData(crate::account_data::Wire),
+    /// `RequestRealmSplitInfo` (`0xFFFFFFFF`) or `SetRealmSplitState`: `CMSG_REALM_SPLIT`, whose
+    /// answer the park reads and hands on.
+    RealmSplit(u32),
     /// A barrier: answered once every request before it is on the wire.
     Flush(crossbeam_channel::Sender<()>),
 }
@@ -2354,6 +2357,8 @@ pub(crate) enum ClientCommand {
     GuildDecline,
     /// `CMSG_GUILD_INFO`: founding date and counts.
     GuildInfoRequest,
+    /// `MSG_GUILD_EVENT_LOG_QUERY`: the guild's event log.
+    GuildEventLogQuery,
     /// `MSG_GUILD_BANK_MONEY_WITHDRAWN`: today's remaining guild-bank withdrawal.
     GuildBankMoneyWithdrawnRequest,
     /// Any other guild bank send.

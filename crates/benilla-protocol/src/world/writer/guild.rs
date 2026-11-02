@@ -60,6 +60,14 @@ impl WorldWriter {
         )
     }
 
+    /// `MSG_GUILD_EVENT_LOG_QUERY`, empty: answered in kind with the guild's event log.
+    pub fn guild_event_log_query(&mut self) -> Result<()> {
+        self.send(
+            opcode::MSG_GUILD_EVENT_LOG_QUERY,
+            &messages::guild_event_log_query(),
+        )
+    }
+
     /// `CMSG_GUILD_PROMOTE`: the server moves the member to `rank - 1`, toward guild master.
     pub fn guild_promote(&mut self, name: &str) -> Result<()> {
         self.send(opcode::CMSG_GUILD_PROMOTE, &messages::guild_promote(name))

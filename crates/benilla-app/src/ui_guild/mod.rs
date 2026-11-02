@@ -16,6 +16,7 @@ use crate::net::{ClientCommand, NetCommands};
 use crate::query_cache::QueryCache;
 use crate::ui_script::{UiFeed, UiInput};
 
+mod event_log;
 mod feed;
 mod lines;
 mod sort;
@@ -791,6 +792,7 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut notify: ResMut<Guil
 impl Plugin for UiGuildPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
+        event_log::register(app);
         app.add_observer(on_cvar);
         crate::query_cache::register::<GuildState>(app);
         app.init_resource::<GuildState>()
@@ -799,6 +801,10 @@ impl Plugin for UiGuildPlugin {
                 Update,
                 (
                     feed::feed_guild.in_set(UiFeed).in_set(GuildFeed),
+                    // After the roster's push, whose rank names `GetGuildEventInfo` reads.
+                    event_log::feed_guild_event_log
+                        .in_set(UiFeed)
+                        .after(feed::feed_guild),
                     feed::drain_guild.after(UiInput).in_set(GuildDrain),
                 )
                     // Never against the boot VM: the feed's edge memo survives the entry load, so

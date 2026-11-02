@@ -189,13 +189,14 @@ pub use group::{
 pub use guild::{
     guild_accept, guild_add_rank, guild_bank_money_param, guild_bank_money_withdrawn,
     guild_command, guild_command_error, guild_create, guild_decline, guild_default_rank,
-    guild_del_rank, guild_demote, guild_disband, guild_event, guild_info, guild_info_text,
-    guild_invite, guild_leader, guild_leave, guild_motd, guild_permissions, guild_presence,
-    guild_promote, guild_query, guild_rank, guild_rank_right, guild_remove, guild_roster,
-    guild_set_officer_note, guild_set_public_note, GuildCommandResult, GuildEventNotice, GuildInfo,
-    GuildPermissions, GuildQueryResponse, GuildRankBank, GuildRoster, GuildRosterMember,
-    GUILD_BANK_TABS, GUILD_INFO_MAX_LENGTH, GUILD_MOTD_MAX_LENGTH, GUILD_NAME_MAX_LENGTH,
-    GUILD_NOTE_MAX_LENGTH, GUILD_RANKS_MAX_COUNT, GUILD_RANKS_MIN_COUNT, GUILD_RANK_MAX_LENGTH,
+    guild_del_rank, guild_demote, guild_disband, guild_event, guild_event_log_query, guild_info,
+    guild_info_text, guild_invite, guild_leader, guild_leave, guild_motd, guild_permissions,
+    guild_presence, guild_promote, guild_query, guild_rank, guild_rank_right, guild_remove,
+    guild_roster, guild_set_officer_note, guild_set_public_note, GuildCommandResult,
+    GuildEventLogEntry, GuildEventNotice, GuildInfo, GuildPermissions, GuildQueryResponse,
+    GuildRankBank, GuildRoster, GuildRosterMember, GUILD_BANK_TABS, GUILD_EVENT_LOG_ROWS,
+    GUILD_INFO_MAX_LENGTH, GUILD_MOTD_MAX_LENGTH, GUILD_NAME_MAX_LENGTH, GUILD_NOTE_MAX_LENGTH,
+    GUILD_RANKS_MAX_COUNT, GUILD_RANKS_MIN_COUNT, GUILD_RANK_MAX_LENGTH,
 };
 pub use guild_bank::{
     guild_bank_activate, guild_bank_buy_tab, guild_bank_log, guild_bank_money,
@@ -248,7 +249,10 @@ pub use movement::{
     CLASSIC_ASCENDING, CLASSIC_CAN_FLY, CLASSIC_DESCENDING, CLASSIC_DISABLE_GRAVITY,
     CLASSIC_FLYING,
 };
-pub use notices::{accept_level_grant, InebriationThreshold, OverrideLight};
+pub use notices::{
+    accept_level_grant, realm_split, InebriationThreshold, OverrideLight, RealmSplit,
+    ServerFirstAchievement,
+};
 pub use opcode_names::opcode_name;
 pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket, SplineArc};
 pub use page_text::page_text_query;
