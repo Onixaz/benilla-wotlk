@@ -1,6 +1,6 @@
 //! The zone-text family, `GetZoneText`, `GetRealZoneText`, `GetSubZoneText`,
 //! `GetMinimapZoneText` and `GetZonePVPInfo`: readers of the zone caches the host pushes on an
-//! area change, before it fires `MINIMAP_ZONE_CHANGED` or the `ZONE_CHANGED` family. The caches
+//! area change, before it fires the `ZONE_CHANGED` family. The caches
 //! live in the [`Model`], out of an addon's reach, as the reference's live in the client's BSS.
 
 use mlua::{Lua, MultiValue, Value};

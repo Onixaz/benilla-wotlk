@@ -1168,8 +1168,8 @@ fn feed_game_time(
     script.set_calendar_clock(gt.calendar_now());
 }
 
-/// The app half of the `<Minimap>` widget. The zone label feed is `crate::area`'s: the reference
-/// fires `MINIMAP_ZONE_CHANGED` from the same area-update pass as the `ZONE_CHANGED` family.
+/// The app half of the `<Minimap>` widget. The zone label feed is `crate::area`'s: the stock label
+/// repaints on the `ZONE_CHANGED` family that pass fires.
 pub(crate) struct MinimapPlugin;
 
 impl Plugin for MinimapPlugin {

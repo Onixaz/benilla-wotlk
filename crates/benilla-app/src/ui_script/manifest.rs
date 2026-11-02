@@ -443,7 +443,6 @@ mod tests {
     /// `ExhaustionTick` (`MainMenuBar.lua:13`) and `PlayerFrame` (`PlayerFrame.lua:17`) both take
     /// `PLAYER_UPDATE_RESTING`, and the toc lists `MainMenuBar.xml` above `PlayerFrame.xml`.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn two_stock_frames_on_one_event_run_in_the_tocs_order() {
         let _data = benilla_formats::wow_data_or_skip!();
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -583,15 +582,15 @@ mod tests {
     /// are skipped, the Mac rows among them for the Mac build alone; the six `MOVEVIEW*` rows sit
     /// in an XML comment.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_installs_bindings_xml_reads_as_the_loader_reads_it() {
         benilla_formats::wow_data_or_skip!();
         let binds = benilla_ui::bindings_xml::parse(&stock_bindings_file().unwrap()).unwrap();
-        assert_eq!(binds.len(), 219);
-        assert_eq!(binds.iter().filter(|b| b.run_on_up).count(), 94);
-        assert_eq!(binds.iter().filter(|b| b.header.is_some()).count(), 13);
-        assert_eq!(binds.iter().filter(|b| b.hidden).count(), 3);
-        assert_eq!(binds.iter().filter(|b| b.platform.is_some()).count(), 5);
+        // 12340's 273 rows less its 11 `debug` ones, which the loader skips.
+        assert_eq!(binds.len(), 262);
+        assert_eq!(binds.iter().filter(|b| b.run_on_up).count(), 101);
+        assert_eq!(binds.iter().filter(|b| b.header.is_some()).count(), 19);
+        assert_eq!(binds.iter().filter(|b| b.hidden).count(), 2);
+        assert_eq!(binds.iter().filter(|b| b.platform.is_some()).count(), 9);
         let names: Vec<&str> = binds.iter().map(|b| b.name.as_str()).collect();
         for gone in ["TOGGLESTATS", "RESETPERFORMANCEVALUES", "MOVEVIEWIN"] {
             assert!(!names.contains(&gone), "{gone}");
@@ -607,11 +606,12 @@ mod tests {
         }
         assert_eq!(binds[0].header.as_deref(), Some("MOVEMENT"));
 
-        // Registered on this client, the PC build: every row but the five Mac ones, so the list
-        // walks 211 visible commands and 12 headers, `ITUNES_REMOTE` riding on a Mac row.
+        // Registered on this client, the PC build: every row but the nine Mac ones, so the list
+        // walks 251 visible commands and 17 headers, `ITUNES_REMOTE` and `MOVIE_RECORDING` riding
+        // on Mac rows.
         let mut s = UiScript::new().unwrap();
         load_stock_bindings(&mut s);
-        assert_eq!(s.eval::<i64>("return GetNumBindings()").unwrap(), 223);
+        assert_eq!(s.eval::<i64>("return GetNumBindings()").unwrap(), 268);
         assert!(!s.execute_binding("ITUNES_PLAYPAUSE", true).unwrap());
     }
 }

@@ -202,8 +202,6 @@ fn feed_pet_stats(
     // The pet page's other repaint events (`PetPaperDollFrame.lua:9,21`), each fired off its own
     // values so happiness drift leaves them alone; `UNIT_PET_EXPERIENCE` repaints only the XP bar.
     let xp_moved = last.as_ref().map(|(_, s)| s.experience) != Some(fresh.1.experience);
-    let training_moved =
-        last.as_ref().map(|(_, s)| s.training_points) != Some(fresh.1.training_points);
     if happiness_moved {
         debug!(
             "ui_pet_stats: happiness {:?} ({}% damage), loyalty {:?}",
@@ -226,17 +224,10 @@ fn feed_pet_stats(
         // `arg1` is the unit token, as on every 1.12 `UNIT_*` event; its handlers gate on it.
         script.fire_event("UNIT_HAPPINESS", vec![ScriptValue::Str("pet".into())]);
     }
-    // Fields 141/142 and 149 fire through the same token fan-out (one `%s` argument, the token);
-    // `UNIT_PET_TRAINING_POINTS` reaches the page only through its `arg1 == "pet"` arm
-    // (`PetPaperDollFrame.lua:45`).
+    // The XP fields fire through the same token fan-out (one `%s` argument, the token); 12340 has
+    // no training points and no `UNIT_PET_TRAINING_POINTS`.
     if xp_moved {
         script.fire_event("UNIT_PET_EXPERIENCE", vec![ScriptValue::Str("pet".into())]);
-    }
-    if training_moved {
-        script.fire_event(
-            "UNIT_PET_TRAINING_POINTS",
-            vec![ScriptValue::Str("pet".into())],
-        );
     }
 }
 

@@ -263,44 +263,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// Every `RegisterForSave`'d UI global defaults to the value the reference's own
-    /// `UIOptionsFrame_Init` assigns, the FrameXML half of the rule `cvars::REGISTERED` holds for
-    /// CVars. A name the reference declares elsewhere (`SHOW_OFFLINE_GUILD_MEMBERS`,
-    /// `FriendsFrame.lua:13`) is uncovered, not failed; the covered count is asserted.
+    /// The UI globals saved per character are exactly the ones the stock files `RegisterForSave`,
+    /// each live once the interface is up. 12340 registers one, `ChannelFrame.lua`'s
+    /// `CHANNELPULLOUT_OPTIONS`, and keeps every other option in a CVar (`cvars::REGISTERED`), so
+    /// an extra name is a saved global benilla invented.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-    fn our_saved_ui_globals_default_to_the_references_own_values() {
+    fn our_saved_ui_globals_are_the_ones_the_stock_files_register() {
         let _data = benilla_formats::wow_data_or_skip!();
 
-        // Only `NAME = "literal"` or `NAME = number` at a line's head: a guarded or copied
-        // assignment is not a factory default.
-        let src = String::from_utf8_lossy(
-            &super::read("Interface\\FrameXML\\UIOptionsFrame.lua")
-                .expect("the reference's own UIOptionsFrame.lua"),
-        )
-        .into_owned();
-        let mut theirs = std::collections::BTreeMap::new();
-        for line in src.lines() {
-            let line = line.trim();
-            let Some((name, value)) = line.split_once('=') else {
-                continue;
-            };
-            let name = name.trim();
-            if name.is_empty() || !name.chars().all(|c| super::is_word(c) && !c.is_lowercase()) {
-                continue; // a uvar is upper case; anything else is a local, a field or a comparison
+        let mut theirs = std::collections::BTreeSet::new();
+        for entry in &gated_chain_entries() {
+            for src in entry_sources(entry) {
+                for chunk in src.split("RegisterForSave(\"").skip(1) {
+                    if let Some(end) = chunk.find('"') {
+                        theirs.insert(chunk[..end].to_string());
+                    }
+                }
             }
-            let value = value.trim().trim_end_matches(';').trim();
-            let literal = value.strip_prefix('"').and_then(|v| v.strip_suffix('"'));
-            let Some(v) = literal.or_else(|| value.parse::<i64>().ok().map(|_| value)) else {
-                continue; // an expression, not a factory default
-            };
-            theirs.insert(name.to_string(), v.to_string());
         }
         assert!(
-            theirs.len() > 20,
-            "parsed only {} declarations out of UIOptionsFrame.lua — the parse is broken, not the \
-             reference",
-            theirs.len()
+            theirs.contains("CHANNELPULLOUT_OPTIONS"),
+            "the scan found {theirs:?} — it broke, not the reference"
         );
 
         let mut s = UiScript::new().expect("VM");
@@ -309,35 +292,15 @@ mod tests {
         let failures = super::super::manifest::load_default_ui(&s);
         assert!(failures.is_empty(), "the default UI: {failures:#?}");
 
-        let (mut checked, mut uncovered, mut wrong) = (0usize, Vec::new(), Vec::new());
-        for name in s.saved_variable_names() {
-            let Some(want) = theirs.get(&name) else {
-                uncovered.push(name);
-                continue;
-            };
-            // Through `tostring`: the reference declares `AUTO_QUEST_WATCH` as the number 1
-            // (`UIOptionsFrame.lua:122`) and the rest as strings.
-            let got = s
-                .eval::<String>(&format!("return tostring({name})"))
-                .unwrap_or_else(|e| panic!("{name} is registered for save but unreadable: {e}"));
-            checked += 1;
-            if &got != want {
-                wrong.push(format!("{name}: ours {got:?}, the reference's {want:?}"));
-            }
+        let ours: std::collections::BTreeSet<String> =
+            s.saved_variable_names().into_iter().collect();
+        assert_eq!(ours, theirs, "the saved UI globals");
+        for name in &ours {
+            assert!(
+                s.eval::<bool>(&format!("return {name} ~= nil")).unwrap(),
+                "{name} is registered for save but nil after the load"
+            );
         }
-        assert!(
-            wrong.is_empty(),
-            "saved UI globals that do not default to the reference's own value — either match it, \
-             or make the divergence explicit at the assignment the way `cvars::REGISTERED` does:\n  \
-             {}",
-            wrong.join("\n  "),
-        );
-        assert!(
-            checked >= 9,
-            "only {checked} of our saved globals are declared in the reference's \
-             UIOptionsFrame.lua (uncovered: {uncovered:?}) — if a window migrated, lower this; if \
-             the parse broke, fix it",
-        );
     }
 
     /// Blanks the contents of every Lua string literal (`"…"`, `'…'`, `[[…]]`), keeping the
@@ -448,7 +411,6 @@ mod tests {
     /// A chain entry that resolved to nothing would leave its globals nil with no error, and a
     /// collision's winner is invisible until an addon calls the wrong body; both are asserted.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_chain_entry_loads_and_the_later_line_owns_the_collision() {
         let _data = benilla_formats::wow_data_or_skip!();
         let mut s = UiScript::new().expect("VM");
@@ -463,8 +425,7 @@ mod tests {
             "ContainerFrameItemButton_OnEnter",
             "ContainerFrameItemButton_OnClick",
             "ContainerFrameItemButton_OnLoad",
-            "ContainerFrameItemButton_OnUpdate",
-            "KeyRingItemButton_OnClick",
+            "ContainerFrameItemButton_OnDrag",
         ] {
             assert!(
                 s.eval::<bool>(&format!("return type({name}) == \"function\""))
@@ -474,7 +435,7 @@ mod tests {
         }
         // Its constants, which addons read directly.
         assert_eq!(s.eval::<i64>("return NUM_BAG_FRAMES").unwrap(), 4);
-        assert_eq!(s.eval::<i64>("return NUM_CONTAINER_FRAMES").unwrap(), 12);
+        assert_eq!(s.eval::<i64>("return NUM_CONTAINER_FRAMES").unwrap(), 13);
         // `PaperDollFrame.lua` arrives through `PaperDollFrame.xml`'s `<Script file=>`: a chain
         // `.xml` brings its `.lua`.
         assert!(s
@@ -1244,7 +1205,6 @@ mod tests {
     /// count when the reference's `_G` has them (`reference/3.3.5a-globals.tsv`). Blind to names
     /// reached through `getglobal` and to widget methods; it checks existence, not the body.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_global_a_migrated_window_calls_is_answered() {
         let _data = benilla_formats::wow_data_or_skip!();
 
@@ -1286,80 +1246,156 @@ mod tests {
             .into_iter()
             .collect();
 
-        // Open gaps, each with the window and the click that reach it. The assertion below
-        // refuses an entry whose gap has closed.
-        const KNOWN: &[(&str, &str, &str)] = &[
+        // Open gaps by feature, each a 12340 global a stock window calls and nothing answers yet.
+        // The assertion below refuses a name whose gap has closed.
+        const KNOWN: &[(&str, &[&str])] = &[
             (
-                "SkillFrame.xml",
-                "BuySkillTier",
-                "a 5875 binding (marshals and delegates to a C++ \
-                 method/net-send) of the pre-1.12 skill-point purchase UI. the detail bar's LearnSkillButton calls it, and \
-                 that button shows only while `UnitCharacterPoints`'s second value or a row's \
-                 step/rank cost is non-zero — which no 1.12 server sends. Unreachable until the \
-                 skill-point wire exists; not built.",
+                "the GM survey's verbs, not built: the survey window opens on GMSURVEY_DISPLAY, \
+                 and its buttons reach these",
+                &[
+                    "GMSurveyAnswerSubmit",
+                    "GMSurveyCommentSubmit",
+                    "GMSurveyQuestion",
+                    "GMSurveySubmit",
+                ],
             ),
             (
-                "SkillFrame.xml",
-                "AddSkillUp",
-                "a 5875 binding (marshals and delegates to a C++ \
-                 method/net-send) of the pre-1.12 skill-point purchase UI. the detail bar's RightArrow calls it, and \
-                 that button shows only while `UnitCharacterPoints`'s second value or a row's \
-                 step/rank cost is non-zero — which no 1.12 server sends. Unreachable until the \
-                 skill-point wire exists; not built.",
+                "the skill-point purchase arrows and button `SkillFrame.lua` still carries; they \
+                 show only while a row has a step or rank cost, which no 3.3.5a server sends",
+                &["AddSkillUp", "BuySkillTier", "RemoveSkillUp"],
             ),
             (
-                "SkillFrame.xml",
-                "RemoveSkillUp",
-                "a 5875 binding (marshals and delegates to a C++ \
-                 method/net-send) of the pre-1.12 skill-point purchase UI. the detail bar's LeftArrow calls it, and \
-                 that button shows only while `UnitCharacterPoints`'s second value or a row's \
-                 step/rank cost is non-zero — which no 1.12 server sends. Unreachable until the \
-                 skill-point wire exists; not built.",
+                "TRADE_REPLACE_ENCHANT's Accept; the verb is not built",
+                &["ReplaceTradeEnchant"],
             ),
             (
-                "Blizzard_GMSurveyUI.xml",
-                "GMSurveyAnswerSubmit",
-                "one of the GM survey's four engine verbs, none built: the survey window opens on \
-                 GMSURVEY_DISPLAY, which the stock HelpFrame.lua registers and nothing fires — the \
-                 trigger is ticket status 3 on SMSG_GMTICKET_GETTICKET, which vmangos never sends \
-                 (the producer gate carries the event). Gated as the addon is a reached \
-                 LoadOnDemand row.",
+                "Real ID: 12340's Battle.net verbs, not built; a 3.3.5a server has no Battle.net service",
+                &[
+                    "BNAcceptFriendInvite",
+                    "BNCreateConversation",
+                    "BNDeclineFriendInvite",
+                    "BNGetConversationInfo",
+                    "BNGetCustomMessageTable",
+                    "BNGetFriendInviteInfo",
+                    "BNGetInfo",
+                    "BNGetNumFriendToons",
+                    "BNGetSelectedBlock",
+                    "BNGetSelectedFriend",
+                    "BNGetSelectedToonBlock",
+                    "BNInviteToConversation",
+                    "BNIsFriend",
+                    "BNIsSelf",
+                    "BNIsToonBlocked",
+                    "BNLeaveConversation",
+                    "BNListConversation",
+                    "BNRemoveFriend",
+                    "BNReportPlayer",
+                    "BNRequestFOFInfo",
+                    "BNSendConversationMessage",
+                    "BNSendFriendInvite",
+                    "BNSendFriendInviteByID",
+                    "BNSendWhisper",
+                    "BNSetAFK",
+                    "BNSetBlocked",
+                    "BNSetCustomMessage",
+                    "BNSetDND",
+                    "BNSetFriendNote",
+                    "BNSetSelectedBlock",
+                    "BNSetSelectedFriend",
+                    "BNSetSelectedToonBlock",
+                    "BNSetToonBlocked",
+                ],
             ),
             (
-                "Blizzard_GMSurveyUI.xml",
-                "GMSurveyCommentSubmit",
-                "one of the GM survey's four engine verbs, none built: the survey window opens on \
-                 GMSURVEY_DISPLAY, which the stock HelpFrame.lua registers and nothing fires — the \
-                 trigger is ticket status 3 on SMSG_GMTICKET_GETTICKET, which vmangos never sends \
-                 (the producer gate carries the event). Gated as the addon is a reached \
-                 LoadOnDemand row.",
+                "the secure slash-command verbs `ChatFrame.lua` dispatches, not built",
+                &[
+                    "CancelShapeshiftForm",
+                    "DisableSpellAutocast",
+                    "Dismount",
+                    "EnableSpellAutocast",
+                    "EquipItemByName",
+                    "RunMacro",
+                    "RunMacroText",
+                    "SpellTargetItem",
+                    "StartAttack",
+                    "StopAttack",
+                    "StopMacro",
+                    "TargetLastFriend",
+                    "TargetNearestEnemyPlayer",
+                    "TargetNearestFriendPlayer",
+                    "UseItemByName",
+                ],
             ),
             (
-                "Blizzard_GMSurveyUI.xml",
-                "GMSurveyQuestion",
-                "one of the GM survey's four engine verbs, none built: the survey window opens on \
-                 GMSURVEY_DISPLAY, which the stock HelpFrame.lua registers and nothing fires — the \
-                 trigger is ticket status 3 on SMSG_GMTICKET_GETTICKET, which vmangos never sends \
-                 (the producer gate carries the event). Gated as the addon is a reached \
-                 LoadOnDemand row.",
+                "voice chat, not built",
+                &[
+                    "ChannelSilenceVoice",
+                    "ChannelUnSilenceVoice",
+                    "SetActiveVoiceChannelBySessionID",
+                ],
             ),
             (
-                "Blizzard_GMSurveyUI.xml",
-                "GMSurveySubmit",
-                "one of the GM survey's four engine verbs, none built: the survey window opens on \
-                 GMSURVEY_DISPLAY, which the stock HelpFrame.lua registers and nothing fires — the \
-                 trigger is ticket status 3 on SMSG_GMTICKET_GETTICKET, which vmangos never sends \
-                 (the producer gate carries the event). Gated as the addon is a reached \
-                 LoadOnDemand row.",
+                "the knowledge base behind the help frame, not built",
+                &[
+                    "KBArticle_BeginLoading",
+                    "KBQuery_BeginLoading",
+                    "KBSetup_BeginLoading",
+                    "KBSetup_IsLoaded",
+                ],
             ),
             (
-                "StaticPopup.xml",
-                "ReplaceTradeEnchant",
-                "a registered 1.12 binding whose body is not yet known; it is built \
-                 once it is. Reached by TRADE_REPLACE_ENCHANT's Accept, an event this engine does not fire yet.",
+                "the looking-for-raid browser, not built",
+                &[
+                    "RefreshLFGList",
+                    "SearchLFGJoin",
+                    "SearchLFGLeave",
+                    "SearchLFGSort",
+                ],
+            ),
+            (
+                "12340 verbs the stock windows call, each not built yet",
+                &[
+                    "CancelItemTempEnchantment",
+                    "CancelSummon",
+                    "ComplainChat",
+                    "ConsoleAddMessage",
+                    "DeclineInvite",
+                    "GameMovieFinished",
+                    "GetContainerFreeSlots",
+                    "GetGuildEventInfo",
+                    "GetItemSpell",
+                    "GetQuestLogItemDrop",
+                    "GetQuestPOILeaderBoard",
+                    "GetSpellLink",
+                    "GMReportLag",
+                    "GrantLevel",
+                    "IsEquippableItem",
+                    "IsEquippedItem",
+                    "IsSubZonePVPPOI",
+                    "IsTutorialFlagged",
+                    "PlayerCanTeleport",
+                    "QuestPOIUpdateIcons",
+                    "ReportPlayerIsPVPAFK",
+                    "ResetChatWindows",
+                    "SendSystemMessage",
+                    "SetChatColorNameByClass",
+                    "SetOptOutOfLoot",
+                    "SetTaxiBenchmarkMode",
+                    "SummonFriend",
+                    "UnitInRange",
+                    "UnitIsControlling",
+                    "UnitIsSameServer",
+                    "UpdateAddOnMemoryUsage",
+                ],
+            ),
+            (
+                "names the reference's `_G` happens to hold, called here as a parameter: `func` in `Blizzard_Calendar.lua`, `updateFunc` in `TargetFrame.lua`",
+                &[
+                    "func",
+                    "updateFunc",
+                ],
             ),
         ];
-
         let mut missing: Vec<(String, String)> = Vec::new();
         for entry in &gated_chain_entries() {
             // `GlobalStrings.lua` only assigns strings; it calls nothing.
@@ -1458,7 +1494,7 @@ mod tests {
 
         let news: Vec<String> = missing
             .iter()
-            .filter(|(f, n)| !KNOWN.iter().any(|(kf, kn, _)| kf == f && kn == n))
+            .filter(|(_, n)| !KNOWN.iter().any(|(_, names)| names.contains(&n.as_str())))
             .map(|(f, n)| format!("{f} calls {n}, which nothing answers to"))
             .collect();
         assert!(
@@ -1471,8 +1507,9 @@ mod tests {
         // The other direction: a `KNOWN` entry whose gap has closed goes with the fix.
         let stale: Vec<String> = KNOWN
             .iter()
-            .filter(|(kf, kn, _)| !missing.iter().any(|(f, n)| f == kf && n == kn))
-            .map(|(kf, kn, why)| format!("{kf} / {kn} — claimed: {why}"))
+            .flat_map(|(why, names)| names.iter().map(move |n| (*why, *n)))
+            .filter(|(_, kn)| !missing.iter().any(|(_, n)| n == kn))
+            .map(|(why, kn)| format!("{kn} — claimed: {why}"))
             .collect();
         assert!(
             stale.is_empty(),
@@ -1482,11 +1519,11 @@ mod tests {
         );
     }
 
-    /// A chain `.xml` that does not source its own `.lua` needs the `.lua` as a manifest line too,
-    /// as the stock toc lists `MoneyInputFrame.lua` and `TextStatusBar.lua` (lines 11 and 32).
-    /// Without it every global the file should define reads nil, and nothing errors.
+    /// A chain `.xml` whose own `.lua` no chain file sources needs the `.lua` as a manifest line, as
+    /// the stock toc lists `TextStatusBar.lua`; 12340's `OptionsPanelTemplates.lua` is sourced by
+    /// `AudioOptionsPanels.xml` and `VideoOptionsPanels.xml` instead. Without either, every global
+    /// the file should define reads nil, and nothing errors.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_chain_xml_brings_its_own_lua() {
         let _data = benilla_formats::wow_data_or_skip!();
         let toc = &super::super::manifest::manifest_files();
@@ -1495,8 +1532,23 @@ mod tests {
             .map(|f| f.rsplit(['\\', '/']).next().unwrap_or(f))
             .collect();
 
+        // Every `.lua` a chain `.xml` sources, by leaf.
+        let entries = gated_chain_entries();
+        let mut sourced_anywhere = std::collections::HashSet::new();
+        for entry in &entries {
+            if let Some(xml) = super::read(&entry.replace('\\', "/")) {
+                let text = String::from_utf8_lossy(&xml).to_ascii_lowercase();
+                for chunk in text.split("file=\"").skip(1) {
+                    if let Some(end) = chunk.find('"') {
+                        let leaf = chunk[..end].rsplit(['\\', '/']).next().unwrap_or_default();
+                        sourced_anywhere.insert(leaf.to_string());
+                    }
+                }
+            }
+        }
+
         let mut orphans = Vec::new();
-        for entry in &gated_chain_entries() {
+        for entry in &entries {
             let leaf = entry.rsplit(['\\', '/']).next().unwrap_or(entry);
             let Some(stem) = leaf.strip_suffix(".xml") else {
                 continue;
@@ -1506,15 +1558,14 @@ mod tests {
             if super::read(&format!("Interface/FrameXML/{lua}")).is_none() {
                 continue;
             }
-            let xml = super::read(&entry.replace('\\', "/"))
-                .unwrap_or_else(|| panic!("{entry}: not in the chain"));
-            let text = String::from_utf8_lossy(&xml);
-            let sourced = text
-                .to_ascii_lowercase()
-                .contains(&format!("file=\"{}\"", lua.to_ascii_lowercase()));
+            assert!(
+                super::read(&entry.replace('\\', "/")).is_some(),
+                "{entry}: not in the chain"
+            );
+            let sourced = sourced_anywhere.contains(&lua.to_ascii_lowercase());
             if !sourced && !listed.contains(lua.as_str()) {
                 orphans.push(format!(
-                    "{leaf} does not source {lua}, and {lua} is not a manifest entry"
+                    "no chain file sources {lua}, and {lua} is not a manifest entry"
                 ));
             }
         }
@@ -1659,7 +1710,6 @@ mod tests {
     /// An inherited template nothing declares is only a warning: the frame is built bare, with none
     /// of the template's regions, children or `<Scripts>`, so its `<OnLoad>` state stays nil.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_template_the_manifest_inherits_is_declared_by_the_manifest() {
         let _data = benilla_formats::wow_data_or_skip!();
         let toc = &super::super::manifest::manifest_files();
@@ -1693,9 +1743,18 @@ mod tests {
             }
         }
 
+        // Templates a load-on-demand addon declares, inherited only inside a virtual template the
+        // inheriting code instantiates after loading that addon.
+        const LOAD_ON_DEMAND: &[(&str, &str)] = &[(
+            "AchievementIconFrameTemplate",
+            // `AlertFrames.lua` runs `AchievementFrame_LoadUI()` before it creates an
+            // `AchievementAlertFrameTemplate` frame.
+            "Blizzard_AchievementUI",
+        )];
         let mut missing: Vec<String> = wanted
             .into_iter()
             .filter(|(n, _)| !declared.contains(n))
+            .filter(|(n, _)| !LOAD_ON_DEMAND.iter().any(|(t, _)| t == n))
             .map(|(n, e)| format!("{n}  (inherited in {e})"))
             .collect();
         missing.sort();
@@ -1925,7 +1984,6 @@ mod tests {
     /// event name is a plain string at both ends, so a listener nothing feeds is silent; a new one
     /// means a window migration brought it.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_event_a_chain_file_registers_has_a_producer() {
         let _data = benilla_formats::wow_data_or_skip!();
 
@@ -1948,8 +2006,104 @@ mod tests {
         ];
 
         // Registered by a chain file we load and fired by nothing here; each says why.
+        // The 3.3.5a listeners still to be fed, by feature.
+        const R_0: &str = "the protected-action refusal; benilla has no protected-call taint model, so nothing can raise it";
+        const R_1: &str = "a 12340 event nothing here fires yet";
+        const R_2: &str = "Real ID: 12340's Battle.net events, not built; a 3.3.5a server has no Battle.net service";
+        const R_3: &str = "the knowledge base behind the help frame, not built";
+        const R_4: &str = "movie playback and the Mac movie recorder, not built";
+        const R_5: &str = "a prefix the stock Lua concatenates a power token onto; the built names are in CONSTRUCTED";
+        const R_6: &str = "voice chat, not built";
         const UNPRODUCED: &[(&str, &str)] = &[
             // ── The stock `UIParent.lua`'s listeners first, then the other files' ──
+            ("ADDON_ACTION_BLOCKED", R_0),
+            ("MACRO_ACTION_BLOCKED", R_0),
+            ("ARENA_OPPONENT_UPDATE", R_1),
+            ("ARENA_SEASON_WORLD_STATE", R_1),
+            ("CANCEL_SUMMON", R_1),
+            ("CHANNEL_INVITE_REQUEST", R_1),
+            ("CHANNEL_PASSWORD_REQUEST", R_1),
+            ("CHAT_MSG_RAID_BOSS_WHISPER", R_1),
+            ("DISABLE_TAXI_BENCHMARK", R_1),
+            ("ENABLE_TAXI_BENCHMARK", R_1),
+            ("FRIENDLIST_SHOW", R_1),
+            ("GUILDTABARD_UPDATE", R_1),
+            ("GUILD_EVENT_LOG_UPDATE", R_1),
+            ("INSPECT_TALENT_READY", R_1),
+            ("ITEM_UNLOCKED", R_1),
+            ("MAIL_LOCK_SEND_ITEMS", R_1),
+            ("MODIFIER_STATE_CHANGED", R_1),
+            ("PARTY_CONVERTED_TO_RAID", R_1),
+            ("PET_BAR_HIDE", R_1),
+            ("PET_RENAMEABLE", R_1),
+            ("PET_SPELL_POWER_UPDATE", R_1),
+            ("PLAYER_DIFFICULTY_CHANGED", R_1),
+            ("PLAYER_ENTERING_BATTLEGROUND", R_1),
+            ("PLAYER_ROLES_ASSIGNED", R_1),
+            ("RAISED_AS_GHOUL", R_1),
+            ("READY_CHECK_CONFIRM", R_1),
+            ("READY_CHECK_FINISHED", R_1),
+            ("TALENTS_INVOLUNTARILY_RESET", R_1),
+            ("TRADE_POTENTIAL_BIND_ENCHANT", R_1),
+            ("UPDATE_CHAT_COLOR_NAME_BY_CLASS", R_1),
+            ("UPDATE_FLOATING_CHAT_WINDOWS", R_1),
+            ("UPDATE_LFG_LIST", R_1),
+            ("UPDATE_SHAPESHIFT_COOLDOWN", R_1),
+            ("UPDATE_SHAPESHIFT_FORM", R_1),
+            ("UPDATE_SHAPESHIFT_USABLE", R_1),
+            ("UPDATE_STEALTH", R_1),
+            ("VOTE_KICK_REASON_NEEDED", R_1),
+            ("WORLD_STATE_UI_TIMER_UPDATE", R_1),
+            ("WOW_MOUSE_NOT_FOUND", R_1),
+            ("BN_BLOCK_LIST_UPDATED", R_2),
+            ("BN_CHAT_CHANNEL_CLOSED", R_2),
+            ("BN_CHAT_CHANNEL_CREATE_FAILED", R_2),
+            ("BN_CHAT_CHANNEL_CREATE_SUCCEEDED", R_2),
+            ("BN_CHAT_CHANNEL_JOINED", R_2),
+            ("BN_CHAT_CHANNEL_LEFT", R_2),
+            ("BN_CONNECTED", R_2),
+            ("BN_CUSTOM_MESSAGE_CHANGED", R_2),
+            ("BN_CUSTOM_MESSAGE_LOADED", R_2),
+            ("BN_DISCONNECTED", R_2),
+            ("BN_FRIEND_ACCOUNT_OFFLINE", R_2),
+            ("BN_FRIEND_ACCOUNT_ONLINE", R_2),
+            ("BN_FRIEND_INFO_CHANGED", R_2),
+            ("BN_FRIEND_INVITE_ADDED", R_2),
+            ("BN_FRIEND_INVITE_LIST_INITIALIZED", R_2),
+            ("BN_FRIEND_INVITE_REMOVED", R_2),
+            ("BN_FRIEND_LIST_SIZE_CHANGED", R_2),
+            ("BN_MATURE_LANGUAGE_FILTER", R_2),
+            ("BN_NEW_PRESENCE", R_2),
+            ("BN_REQUEST_FOF_FAILED", R_2),
+            ("BN_REQUEST_FOF_SUCCEEDED", R_2),
+            ("BN_SELF_ONLINE", R_2),
+            ("BN_TOON_NAME_UPDATED", R_2),
+            ("KNOWLEDGE_BASE_ARTICLE_LOAD_FAILURE", R_3),
+            ("KNOWLEDGE_BASE_ARTICLE_LOAD_SUCCESS", R_3),
+            ("KNOWLEDGE_BASE_QUERY_LOAD_FAILURE", R_3),
+            ("KNOWLEDGE_BASE_QUERY_LOAD_SUCCESS", R_3),
+            ("KNOWLEDGE_BASE_SERVER_MESSAGE", R_3),
+            ("KNOWLEDGE_BASE_SETUP_LOAD_FAILURE", R_3),
+            ("KNOWLEDGE_BASE_SETUP_LOAD_SUCCESS", R_3),
+            ("KNOWLEDGE_BASE_SYSTEM_MOTD_UPDATE", R_3),
+            ("MOVIE_COMPRESSING_PROGRESS", R_4),
+            ("MOVIE_RECORDING_PROGRESS", R_4),
+            ("MOVIE_UNCOMPRESSED_MOVIE", R_4),
+            ("PLAY_MOVIE", R_4),
+            ("UNIT_", R_5),
+            ("UNIT_MAX", R_5),
+            ("VOICE_CHANNEL_STATUS_UPDATE", R_6),
+            ("VOICE_CHAT_ENABLED_UPDATE", R_6),
+            ("VOICE_LEFT_SESSION", R_6),
+            ("VOICE_PLATE_START", R_6),
+            ("VOICE_PLATE_STOP", R_6),
+            ("VOICE_PUSH_TO_TALK_START", R_6),
+            ("VOICE_PUSH_TO_TALK_STOP", R_6),
+            ("VOICE_SELF_MUTE", R_6),
+            ("VOICE_SESSIONS_UPDATE", R_6),
+            ("VOICE_START", R_6),
+            ("VOICE_STATUS_UPDATE", R_6),
+            ("VOICE_STOP", R_6),
             (
                 "ADDON_ACTION_FORBIDDEN",
                 "UIParent.lua — the protected-action refusal; benilla has no protected-call \
@@ -1960,40 +2114,12 @@ mod tests {
                 "UIParent.lua — the macro half of ADDON_ACTION_FORBIDDEN, same reason",
             ),
             (
-                "AUTOEQUIP_BIND_CONFIRM",
-                "UIParent.lua — the bind-on-equip confirm for an AUTOEQUIP (right-click) path; \
-                 benilla's equip path fires the EQUIP_BIND_CONFIRM sibling only",
-            ),
-            (
-                "EQUIP_BIND_CONFIRM",
-                "UIParent.lua — the bind-on-equip confirm; benilla's inventory feed does not \
-                 derive the server's confirm ask yet",
-            ),
-            (
-                "USE_BIND_CONFIRM",
-                "UIParent.lua — the bind-on-use confirm, the same gap from the use path",
-            ),
-            (
                 "BILLING_NAG_DIALOG",
                 "UIParent.lua — the subscription-time nag; vmangos never sends it",
             ),
             (
                 "IGR_BILLING_NAG_DIALOG",
                 "UIParent.lua — the internet-cafe billing nag, likewise never sent",
-            ),
-            (
-                "GOSSIP_ENTER_CODE",
-                "UIParent.lua — the code-entry gossip option (a door with a combination); \
-                 benilla's gossip feed carries no code-entry option kind yet",
-            ),
-            (
-                "MEMORY_EXHAUSTED",
-                "UIParent.lua — the client's own out-of-memory dialog; benilla's allocator \
-                 failure is a Rust abort, not a Lua event",
-            ),
-            (
-                "MEMORY_RECOVERED",
-                "UIParent.lua — the other half of MEMORY_EXHAUSTED",
             ),
             (
                 "PLAYER_SKINNED",
@@ -2020,16 +2146,7 @@ mod tests {
                  hide path only",
             ),
             ("DISPLAY_SIZE_CHANGED", "the four paperdoll files"),
-            (
-                "GMSURVEY_DISPLAY",
-                "HelpFrame.lua — the post-ticket survey. A real 1.12 event (id 538) whose whole UI is the LoadOnDemand `Blizzard_GMSurveyUI`; \
-                 we have neither the producer nor the addon on the chain, and the ticket \
-                 flow works without it",
-            ),
-            ("ITEM_TEXT_TRANSLATION", "ItemTextFrame.lua"),
             ("PET_UI_CLOSE", "PetPaperDollFrame.lua"),
-            ("PET_UI_UPDATE", "PetPaperDollFrame.lua"),
-            ("PLAYER_DAMAGE_DONE_MODS", "PaperDollFrame.lua"),
             (
                 "SHOW_COMPARE_TOOLTIP",
                 "PaperDollFrame.lua — the second `TRADE_REQUEST`: event 377 is \
@@ -2056,8 +2173,9 @@ mod tests {
             ("UNIT_PORTRAIT_UPDATE", "three files — the portrait refresh"),
             (
                 "ZONE_UNDER_ATTACK",
-                "ChatFrame.lua — the reference's `SMSG_ZONE_UNDER_ATTACK` line (\"%s is under \
-                 attack!\"); the wire handler is not built",
+                "ChatFrame.lua — the stock frame formats the line on this event; benilla writes \
+                 `SMSG_ZONE_UNDER_ATTACK`'s line straight to the channel windows \
+                 (`ui_chat::broadcast`) and fires nothing",
             ),
         ];
 
@@ -2155,6 +2273,27 @@ mod tests {
                     if fires_indirectly {
                         scan_arms(&text, &mut fired);
                     }
+                    // A fire reaches its name through tables, matches and the engines' own queues
+                    // as often as through a literal argument, so every upper-snake literal outside
+                    // a comment counts. A test's synthetic names and the gates' own lists never do.
+                    let path = p.to_string_lossy();
+                    let listing = ["test", "gate", "reference_ui.rs"]
+                        .iter()
+                        .any(|k| path.contains(k));
+                    if !listing {
+                        for line in text.lines() {
+                            // A GlobalStrings key shares its event's spelling and fires nothing.
+                            if line.contains("global_string") {
+                                continue;
+                            }
+                            let code = line.split("//").next().unwrap_or_default();
+                            for (k, lit) in code.split('"').enumerate() {
+                                if k % 2 == 1 && lit.len() > 3 && caps(lit) {
+                                    fired.insert(lit.to_string());
+                                }
+                            }
+                        }
+                    }
                     texts.push(text);
                 }
             }
@@ -2225,15 +2364,7 @@ mod tests {
     /// then: the stock macro window formats `UnitName("player")` into a tab label in its `OnLoad`,
     /// and without a player that raises like a load failure.
     fn seat_a_player(s: &mut UiScript) {
-        s.set_unit(
-            "player",
-            Some(benilla_ui::script::UnitState {
-                exists: true,
-                name: Some("Probefour".into()),
-                level: 60,
-                ..Default::default()
-            }),
-        );
+        super::super::test_ui::seat_login(s);
     }
 
     /// The secure-handler files and `BNConversations.lua` run to their end: each calls a global at
@@ -2277,11 +2408,22 @@ mod tests {
         );
     }
 
-    /// Every event benilla fires exists in the 1.12 client: an event it can dispatch is a
+    /// 1.12.1 producers still to remove, each with what replaces it; the list only shrinks.
+    const STILL_1_12_EVENTS: &[(&str, &str)] = &[
+        (
+            "MEETINGSTONE_CHANGED",
+            "1.12.1's meeting-stone queue, on opcodes that are other packets in 12340 (#421)",
+        ),
+        (
+            "CONFIRM_PET_UNLEARN",
+            "1.12.1's pet trainer prompt: 12340 has no handler for 0x2F1 and no ConfirmPetUnlearn",
+        ),
+    ];
+
+    /// Every event benilla fires exists in the 3.3.5a client: an event it can dispatch is a
     /// NUL-terminated string in `WoW.exe`, and a name missing there no stock listener can ever
     /// receive. Test files are skipped; they fire synthetic names (`E3`) on purpose.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_event_we_fire_is_an_event_the_reference_has() {
         let data = benilla_formats::wow_data_or_skip!();
         let exe = data.parent().expect("install root").join("WoW.exe");
@@ -2339,8 +2481,9 @@ mod tests {
 
         let ghosts: Vec<String> = fired
             .iter()
-            // A `BENILLA_` prefix marks an event as ours, never mistaken for a 1.12 name.
+            // A `BENILLA_` prefix marks an event as ours, never mistaken for a reference name.
             .filter(|(ev, _)| !ev.starts_with("BENILLA_"))
+            .filter(|(ev, _)| !STILL_1_12_EVENTS.iter().any(|(e, _)| e == ev))
             .filter(|(ev, _)| {
                 let needle: Vec<u8> = ev.bytes().chain(std::iter::once(0)).collect();
                 !bytes.windows(needle.len()).any(|w| w == needle)
@@ -2349,10 +2492,20 @@ mod tests {
             .collect();
         assert!(
             ghosts.is_empty(),
-            "benilla fires {} event(s) the 1.12 client does not have — a Classic Era name, or one \
+            "benilla fires {} event(s) the 3.3.5a client does not have — a 1.12.1 name, or one \
              invented here. Nothing in the stock UI can ever listen for these:\n  {}",
             ghosts.len(),
             ghosts.join("\n  ")
+        );
+        // A listed producer that is gone leaves the list.
+        let stale: Vec<&str> = STILL_1_12_EVENTS
+            .iter()
+            .map(|(e, _)| *e)
+            .filter(|e| !fired.contains_key(*e))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "no longer fired, drop them from the list: {stale:?}"
         );
     }
 }

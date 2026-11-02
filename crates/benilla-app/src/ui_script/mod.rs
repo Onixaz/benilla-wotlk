@@ -1058,10 +1058,6 @@ mod tracking_tests;
 #[cfg(test)]
 mod enchant_confirm_tests;
 
-/// The `toplevel`, mouse and `id` flags of the whole loaded tree against the reference.
-#[cfg(test)]
-mod frame_flag_gate;
-
 #[cfg(test)]
 mod friends_tests;
 

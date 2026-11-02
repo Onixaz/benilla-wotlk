@@ -78,11 +78,26 @@ impl Loader<'_> {
                 // so a `<Color>` is the region's own colour fill; the Lua setter has no colour
                 // form. `""` creates the slot unpainted.
                 let color = children_named(t, "Color").next().map(color_of);
+                let getter = method.replacen("Set", "Get", 1);
+                // Each element is a fresh texture (`LoadXML_Texture`, `0x815f40`), and the set
+                // deletes the one an inherited level made, name and all (`0x96f920`): the pet
+                // buttons' `$parentNormalTexture2` leaves no `PetActionButton1NormalTexture`. The
+                // path setter below builds the fresh slot region.
+                let old_name = match wrapper.call_method::<Option<Table>>(getter.as_str(), ()) {
+                    Ok(Some(old)) => {
+                        let name = old
+                            .call_method::<Option<String>>("GetName", ())
+                            .ok()
+                            .flatten();
+                        this.call(wrapper, method, mlua::Value::Nil, dbg);
+                        name
+                    }
+                    _ => None,
+                };
                 match t.attr("file") {
                     Some(file) => this.call(wrapper, method, file.to_string(), dbg),
                     None => this.call(wrapper, method, String::new(), dbg),
                 }
-                let getter = method.replacen("Set", "Get", 1);
                 if let Ok(region) = wrapper.call_method::<Table>(getter.as_str(), ()) {
                     this.bind_parent_key(t, wrapper, &region);
                     if let (None, Some(c)) = (t.attr("file"), color) {
@@ -109,7 +124,11 @@ impl Loader<'_> {
                     if let Some(rname) = t.name().map(|raw| framexml::resolve_name(raw, self_name))
                     {
                         crate::script::region::publish_region_name(this.lua(), &rname, &region);
-                        if let Err(e) = this.lua().globals().set(rname.clone(), region) {
+                        // The reference makes the new texture before it deletes the old, so a
+                        // level reusing the name ends with no global.
+                        let global =
+                            (old_name.as_deref() != Some(rname.as_str())).then_some(region);
+                        if let Err(e) = this.lua().globals().set(rname.clone(), global) {
                             this.report
                                 .warnings
                                 .push(format!("{dbg}: state-texture global '{rname}': {e}"));
@@ -127,19 +146,28 @@ impl Loader<'_> {
                 Some(raw) => self.resolve_text(raw, dbg),
                 None => String::new(),
             };
-            // A named label is created as a named region, not aliased after `SetText`, so its
-            // `GetName()` answers.
+            // Each element is a fresh label (`LoadXML_String`), named or not, and `SetFontString`
+            // deletes the one an inherited level made, name and all: `TradeFrameTradeButton`'s
+            // unnamed `<ButtonText>` leaves no `TradeFrameTradeButtonText`.
             let bt_name = bt.name().map(|raw| framexml::resolve_name(raw, self_name));
-            if let Some(rname) = bt_name.clone() {
-                match wrapper
-                    .call_method::<Table>("CreateFontString", (rname, Option::<String>::None))
-                {
-                    Ok(fs) => self.call(wrapper, "SetFontString", fs, dbg),
-                    Err(e) => self
-                        .report
-                        .warnings
-                        .push(format!("{dbg}: ButtonText CreateFontString: {e}")),
-                }
+            let old_name = wrapper
+                .call_method::<Option<Table>>("GetFontString", ())
+                .ok()
+                .flatten()
+                .and_then(|old| {
+                    old.call_method::<Option<String>>("GetName", ())
+                        .ok()
+                        .flatten()
+                });
+            match wrapper.call_method::<Table>(
+                "CreateFontString",
+                (bt_name.clone(), Option::<String>::None),
+            ) {
+                Ok(fs) => self.call(wrapper, "SetFontString", fs, dbg),
+                Err(e) => self
+                    .report
+                    .warnings
+                    .push(format!("{dbg}: ButtonText CreateFontString: {e}")),
             }
             self.call(wrapper, "SetText", label, dbg);
             if let Ok(region) = wrapper.call_method::<Table>("GetFontString", ()) {
@@ -158,10 +186,12 @@ impl Loader<'_> {
                         .errors
                         .push(format!("{dbg}: implicit anchor: {e}"));
                 }
-                // Published both ways, like a named state texture.
+                // Published both ways, like a named state texture, and as there a name the
+                // deleted label also held ends with no global.
                 if let Some(rname) = bt_name {
                     crate::script::region::publish_region_name(self.lua(), &rname, &region);
-                    if let Err(e) = self.lua().globals().set(rname.clone(), region) {
+                    let global = (old_name.as_deref() != Some(rname.as_str())).then_some(region);
+                    if let Err(e) = self.lua().globals().set(rname.clone(), global) {
                         self.report
                             .warnings
                             .push(format!("{dbg}: ButtonText global '{rname}': {e}"));
