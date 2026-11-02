@@ -271,17 +271,17 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_shipped_word_pools_cover_every_language_and_index_by_length() {
         let data = crate::wow_data_or_skip!();
         let mut chain = Chain::open(&data).expect("open patch chain");
         let words = load_language_words(&mut chain).expect("load");
 
         // One pool per `Languages.dbc` row, so no spoken language lacks one.
-        assert_eq!(words.len(), 13, "one pool per language");
+        const SPOKEN: [u32; 17] = [1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 33, 35, 36, 37, 38];
+        assert_eq!(words.len(), 17, "one pool per language");
         let langs = load_default_languages(&mut chain).expect("load languages");
         let _ = &langs; // the join test asserts this table
-        for id in [1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 33] {
+        for id in SPOKEN {
             assert!(words.pool(id).is_some(), "language {id} has no word pool");
         }
         // Universal (0) has no pool: it is never garbled.
@@ -300,15 +300,15 @@ mod tests {
         assert_eq!(orcish.count_of_len(0), 0);
         assert_eq!(orcish.count_of_len(99), 0);
 
-        // Every pool holds at least 79 words, all of them in its length index.
+        // Every pool holds words, all of them in its length index; Zombie's nine are the fewest.
         let mut total = 0;
-        for id in [1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 33] {
+        for id in SPOKEN {
             let p = words.pool(id).expect("pool");
-            assert!(p.words().len() >= 79, "language {id} pool is thin");
+            assert!(p.words().len() >= 9, "language {id} pool is thin");
             let indexed: usize = (0..=p.max_len()).map(|n| p.count_of_len(n)).sum();
             assert_eq!(indexed, p.words().len(), "language {id} length index");
             total += p.words().len();
         }
-        assert_eq!(total, 1481, "every LanguageWords row landed in a pool");
+        assert_eq!(total, 1663, "every LanguageWords row landed in a pool");
     }
 }

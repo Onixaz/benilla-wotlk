@@ -50,7 +50,6 @@ fn real_skill_line_catalog_resolves_known_spells() {
 
 /// A human warrior against a human mage: one Fireball is General for the first, Fire for the other.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_tab_collapses_general_by_race_and_class() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -69,10 +68,10 @@ fn real_spell_tab_collapses_general_by_race_and_class() {
         );
     }
 
-    // Perception, on line 754 `Racial - Human`.
-    assert_eq!(cat.spell_to_line(20600, 0, 0), Some(754));
+    // Every Man for Himself, on line 754 `Racial - Human`.
+    assert_eq!(cat.spell_to_line(59752, 0, 0), Some(754));
     assert_eq!(
-        cat.spell_tab(20600, HUMAN, WARRIOR),
+        cat.spell_tab(59752, HUMAN, WARRIOR),
         0,
         "a human racial routes to General"
     );
@@ -238,21 +237,20 @@ fn real_abandonable_split_professions_yes_weapons_no() {
 
 /// `flags & 0x400` for a night-elf hunter (race 4, class 3).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_mono_value_split_class_lines_yes_weapons_no() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = load_skill_line_catalog(&mut chain).expect("load skill lines");
 
-    // Beast Mastery / Survival / Marksmanship (0x410), Dual Wield / Night Elf Racial / the
-    // Tiger Riding mount line / GENERIC (DND) (0x492).
-    for line in [50u32, 51, 163, 118, 126, 150, 183] {
+    // Beast Mastery / Survival / Marksmanship (0x410), Night Elf Racial / the Tiger Riding mount
+    // line / GENERIC (DND) (0x492).
+    for line in [50u32, 51, 163, 126, 150, 183] {
         assert!(cat.mono_value(line, 4, 3), "line {line} is single-rank");
     }
-    // Weapon lines (Axes/Bows/Daggers/Crossbows/Unarmed/Defense), armor proficiencies
-    // (Cloth/Leather/Mail), languages (Common/Darnassian), Riding, First Aid.
+    // Weapon lines (Axes/Bows/Daggers/Crossbows/Unarmed/Defense), Dual Wield (0x92 in 12340),
+    // armor proficiencies (Cloth/Leather/Mail), languages (Common/Darnassian), Riding, First Aid.
     for line in [
-        44u32, 45, 173, 226, 162, 95, 415, 414, 413, 98, 113, 762, 129,
+        44u32, 45, 173, 226, 162, 95, 118, 415, 414, 413, 98, 113, 762, 129,
     ] {
         assert!(!cat.mono_value(line, 4, 3), "line {line} keeps its rank");
     }
@@ -293,14 +291,15 @@ fn real_hidden_lines_are_the_ones_the_reference_client_never_lists() {
 
 /// The `forward_spellid` chains the action bar normalises ranks along.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_rank_chains_resolve_the_highest_known_rank() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = load_skill_line_catalog(&mut chain).expect("load skill lines");
 
-    // Sinister Strike ranks 1 to 8: a saved bar can hold rank 1 while the book holds rank 8.
-    const SS: [u32; 8] = [1752, 1757, 1758, 1759, 1760, 8621, 11293, 11294];
+    // Sinister Strike ranks 1 to 12: a saved bar can hold rank 1 while the book holds rank 12.
+    const SS: [u32; 12] = [
+        1752, 1757, 1758, 1759, 1760, 8621, 11293, 11294, 26861, 26862, 48637, 48638,
+    ];
     for pair in SS.windows(2) {
         assert_eq!(
             cat.rank_successor(pair[0]),
@@ -310,20 +309,20 @@ fn real_rank_chains_resolve_the_highest_known_rank() {
             pair[1]
         );
     }
-    assert_eq!(cat.rank_successor(11294), None, "rank 8 tops the chain");
+    assert_eq!(cat.rank_successor(48638), None, "rank 12 tops the chain");
     // Charge (100, 6178, 11578) and Heroic Strike's last link.
     assert_eq!(cat.rank_successor(100), Some(6178));
     assert_eq!(cat.rank_successor(6178), Some(11578));
     assert_eq!(cat.rank_successor(11567), Some(25286));
 
-    // Knowing only rank 8, every rank resolves to it: the walk starts at the chain head.
-    let top: std::collections::BTreeSet<u32> = [11294].into_iter().collect();
+    // Knowing only rank 12, every rank resolves to it: the walk starts at the chain head.
+    let top: std::collections::BTreeSet<u32> = [48638].into_iter().collect();
     for id in SS {
-        assert_eq!(cat.highest_known_rank(id, &top), Some(11294), "from {id}");
+        assert_eq!(cat.highest_known_rank(id, &top), Some(48638), "from {id}");
     }
     let mid: std::collections::BTreeSet<u32> = [1759].into_iter().collect();
     assert_eq!(cat.highest_known_rank(1752, &mid), Some(1759));
-    assert_eq!(cat.highest_known_rank(11294, &mid), Some(1759));
+    assert_eq!(cat.highest_known_rank(48638, &mid), Some(1759));
     assert_eq!(cat.highest_known_rank(1752, &Default::default()), None);
 
     // Caster spells carry no forward link: Fireball ranks 1 and 2, and rank 1 of Frostbolt,

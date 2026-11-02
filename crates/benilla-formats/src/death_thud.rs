@@ -2,7 +2,7 @@
 //! event's camera shake). `DeathThudLookups.dbc` joins the creature's size class (0 Small to 4
 //! Colossal; the display's, else the model's) with the footsteps' terrain sound to a land and a
 //! water `SoundEntries` kit, so every creature with a `$DTH` key thuds. `TerrainTypeSounds.dbc` is
-//! read for its id domain, `1..=9`, which the reference sizes its baked array by and bounds-checks
+//! read for its id domain, `1..=10` in 12340, which the reference sizes its baked array by and bounds-checks
 //! against.
 
 use std::collections::{BTreeSet, HashMap};
@@ -107,7 +107,6 @@ mod tests {
 
     /// The 5875 tables; the spot rows pin the column order, as a swapped pair still counts 45.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_death_thud_chain_resolves() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -116,8 +115,8 @@ mod tests {
         assert_eq!(cat.len(), 45, "all DeathThudLookups rows load");
         assert_eq!(
             cat.terrain_sounds().collect::<Vec<_>>(),
-            (1..=9).collect::<Vec<_>>(),
-            "TerrainTypeSounds is the bare 1..=9 enum"
+            (1..=10).collect::<Vec<_>>(),
+            "TerrainTypeSounds is the bare 1..=10 enum"
         );
         assert_eq!(cat.size_classes(), (0..=4).collect(), "Small..Colossal");
 
@@ -136,8 +135,9 @@ mod tests {
         assert_eq!(cat.kit(0, 2, true), None, "and nothing in water");
         assert_eq!(cat.kit(0, 2, false), Some(910));
 
-        // Terrain sound 0 (`TerrainType` "None") and size class 5 have no rows.
+        // Terrain sound 0 (`TerrainType` "None"), 10 (no lookup row) and size class 5 have no rows.
         assert_eq!(cat.resolve(0, 0), None);
+        assert_eq!(cat.resolve(0, 10), None);
         assert_eq!(cat.resolve(5, 1), None);
     }
 
