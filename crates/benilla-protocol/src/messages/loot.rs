@@ -402,6 +402,9 @@ pub struct ItemPushResult {
     pub suffix_factor: u32,
     pub random_property_id: u32,
     pub count: u32,
+    /// The bags' count of the entry after the push, which the quest-item toast reads
+    /// (`0x6d7de0`).
+    pub total_count: u32,
 }
 
 pub(super) fn read_item_push_result(r: &mut &[u8]) -> io::Result<ItemPushResult> {
@@ -415,6 +418,7 @@ pub(super) fn read_item_push_result(r: &mut &[u8]) -> io::Result<ItemPushResult>
     let suffix_factor = read_u32_le(r)?;
     let random_property_id = read_u32_le(r)?;
     let count = read_u32_le(r)?;
+    let total_count = read_u32_le(r)?;
     Ok(ItemPushResult {
         player_guid,
         from_npc: received != 0,
@@ -426,6 +430,7 @@ pub(super) fn read_item_push_result(r: &mut &[u8]) -> io::Result<ItemPushResult>
         suffix_factor,
         random_property_id,
         count,
+        total_count,
     })
 }
 
@@ -793,6 +798,7 @@ mod tests {
         body.extend_from_slice(&0u32.to_le_bytes()); // suffixFactor
         body.extend_from_slice(&0u32.to_le_bytes()); // randomPropertyId
         body.extend_from_slice(&5u32.to_le_bytes()); // count
+        body.extend_from_slice(&12u32.to_le_bytes()); // totalCount
 
         match parse_server(opcode::SMSG_ITEM_PUSH_RESULT, &body).unwrap() {
             ServerPacket::ItemPushResult(p) => {
@@ -809,6 +815,7 @@ mod tests {
                         suffix_factor: 0,
                         random_property_id: 0,
                         count: 5,
+                        total_count: 12,
                     }
                 );
             }

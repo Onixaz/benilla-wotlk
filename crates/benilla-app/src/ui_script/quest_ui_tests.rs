@@ -43,6 +43,7 @@ fn model() -> QuestLogState {
             text: "Kobold Vermin slain: 3/8".into(),
             kind: "monster".into(),
             finished: false,
+            intermediate: false,
             cur: 3,
             req: 8,
         }],
@@ -60,7 +61,6 @@ fn model() -> QuestLogState {
     QuestLogState {
         entries: vec![header, kill, done],
         num_quests: 2,
-        hidden_quest_ids: Vec::new(),
         daily_completed: 0,
     }
 }

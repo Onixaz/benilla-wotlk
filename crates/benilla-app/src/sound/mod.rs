@@ -59,6 +59,7 @@ pub(crate) use kit::SoundKits;
 pub(crate) use message::MessageSounds;
 pub(crate) use mixer::Mixer;
 pub(crate) use ui::{AutoEquipSound, LootPickupSound};
+pub(crate) use zone::AreaSounds;
 pub(crate) use zone::ExplorationSounds;
 
 /// The sound CVars. Defaults are the reference's registrations: `MusicVolume` 0.4 and

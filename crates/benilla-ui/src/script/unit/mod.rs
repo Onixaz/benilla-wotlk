@@ -217,6 +217,12 @@ pub struct UnitState {
     /// `OBJECT_FIELD_GUID`, which `UnitIsUnit` and `UnitInParty` compare; 0 is unresolved, and
     /// two zeros never match.
     pub guid: u64,
+    /// A held player's 25 `PLAYER_QUEST_LOG` slot quest ids, which `IsUnitOnQuest` scans; the
+    /// server sends them for the player and its group alone, so a stranger's read 0.
+    pub quest_ids: [u32; 25],
+    /// A fingerprint of the same player's whole quest-log window, so a counter or state edit
+    /// moves the snapshot that `UNIT_QUEST_LOG_CHANGED` rides; 0 for no player block.
+    pub quest_log_stamp: u64,
     /// A creature or vehicle whose template has type flag `0x4000`: `UnitGUID` (`0x60e630`)
     /// shows its guid with the spawn counter, the low 24 bits, zeroed.
     pub counter_hidden: bool,

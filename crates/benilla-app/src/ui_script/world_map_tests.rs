@@ -165,3 +165,84 @@ fn the_stock_buttons_walk_every_level() {
     let errors = map_errors(s.take_errors());
     assert!(errors.is_empty(), "map errors: {errors:#?}");
 }
+
+/// The stock map's quest pass and its Show Map path: `WorldMapFrame_UpdateQuests` places the
+/// quest's icon through `QuestPOIUpdateIcons` and reads it back, and `WorldMap_OpenToQuest` asks
+/// `GetQuestWorldMapAreaID`; neither raises, and the icon sits on Elwynn.
+#[test]
+fn the_stock_map_places_and_opens_a_quest_poi() {
+    use benilla_ui::script::{
+        QuestLogEntryView, QuestLogState, QuestPoiLines, QuestPoiRegion, QuestPoiView,
+    };
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = session();
+    let _ = s.take_errors();
+    const QUEST: u32 = 33;
+    s.set_quest_log(QuestLogState {
+        num_quests: 1,
+        entries: vec![
+            QuestLogEntryView {
+                title: "Elwynn Forest".into(),
+                is_header: true,
+                ..Default::default()
+            },
+            QuestLogEntryView {
+                quest_id: QUEST,
+                title: "Wolves Across the Border".into(),
+                level: 2,
+                complete: 1,
+                poi_objectives: u32::MAX,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    });
+    s.apply_quest_pois(vec![QuestPoiView {
+        quest_id: QUEST,
+        regions: vec![QuestPoiRegion {
+            objective: -1,
+            map: 0,
+            area: 30,
+            floor: 0,
+            flags: 0,
+            center: (-9464, 62),
+            points: 1,
+            priority: 0,
+        }],
+    }]);
+    s.set_quest_poi_lines(
+        [(
+            QUEST,
+            QuestPoiLines {
+                top_area: 12,
+                ..Default::default()
+            },
+        )]
+        .into(),
+    );
+    s.run("ToggleFrame(WorldMapFrame) WorldMapFrame_UpdateQuests()")
+        .unwrap();
+    let errors = map_errors(s.take_errors());
+    assert!(errors.is_empty(), "quest pass errors: {errors:#?}");
+    let (complete, u, v, objective) = s
+        .eval::<(bool, f64, f64, i64)>(&format!("return QuestPOIGetIconInfo({QUEST})"))
+        .unwrap();
+    assert!(complete, "an all-ones mask is the turn-in icon");
+    assert!(
+        u > 0.0 && u < 1.0 && v > 0.0 && v < 1.0,
+        "on Elwynn: {u} {v}"
+    );
+    assert_eq!(objective, -1);
+    assert_eq!(
+        s.eval::<(i64, i64)>(&format!("return GetQuestWorldMapAreaID({QUEST})"))
+            .unwrap(),
+        (30, 0),
+        "the turn-in region's own row"
+    );
+    s.run(&format!("WorldMap_OpenToQuest({QUEST})")).unwrap();
+    let errors = map_errors(s.take_errors());
+    assert!(errors.is_empty(), "open-to-quest errors: {errors:#?}");
+}

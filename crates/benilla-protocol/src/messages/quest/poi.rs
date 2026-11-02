@@ -26,8 +26,8 @@ pub struct QuestPoiBlob {
     pub area: u32,
     /// Dword 4, the `DungeonMap` floor.
     pub floor: u32,
-    /// Dword 5, kept at record `+0x30` and read nowhere the tracker reaches.
-    pub unknown: u32,
+    /// Dword 5, record `+0x30`: the icon placement's priority, the lowest winning (`0x5e2eb0`).
+    pub priority: u32,
     /// Dword 6, record `+0x2c`: bit `0x4` binds the region to its own `area` (`0x5e5ba1`).
     pub flags: u32,
     /// The outline in world `(x, y)` yards.
@@ -61,7 +61,7 @@ pub(in crate::messages) fn read_quest_poi_query_response(
                 map: read_u32_le(r)?,
                 area: read_u32_le(r)?,
                 floor: read_u32_le(r)?,
-                unknown: read_u32_le(r)?,
+                priority: read_u32_le(r)?,
                 flags: read_u32_le(r)?,
                 points: Vec::new(),
             };
@@ -115,7 +115,7 @@ mod tests {
                     map: 0,
                     area: 12,
                     floor: 0,
-                    unknown: 1,
+                    priority: 1,
                     flags: 4,
                     points: vec![(-8900, -120), (-8910, -130)],
                 }],

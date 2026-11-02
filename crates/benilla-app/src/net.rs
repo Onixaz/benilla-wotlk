@@ -301,6 +301,10 @@ impl FieldEdges {
     pub fn moved(&self, guid: u64, index: u16) -> bool {
         self.0.contains(&(guid, index))
     }
+    /// Whether any index in `range` moved on `guid`: one watch over a field window.
+    pub fn moved_in(&self, guid: u64, range: std::ops::Range<u16>) -> bool {
+        self.0.iter().any(|&(g, i)| g == guid && range.contains(&i))
+    }
     #[cfg(test)]
     pub fn of(edges: &[(u64, u16)]) -> Self {
         Self(edges.iter().copied().collect())
@@ -1772,6 +1776,10 @@ pub(crate) enum ClientCommand {
     QuestQuery {
         quest: u32,
     },
+    /// `CMSG_QUERY_QUESTS_COMPLETED`, from `QueryQuestsCompleted()`.
+    QueryQuestsCompleted,
+    /// `CMSG_QUESTGIVER_STATUS_MULTIPLE_QUERY`, the marker sweep's one ask.
+    QuestgiverStatusMultipleQuery,
     /// `CMSG_QUEST_POI_QUERY`: the quests the log holds no POI for.
     QuestPoiQuery {
         quests: Vec<u32>,
@@ -1797,9 +1805,11 @@ pub(crate) enum ClientCommand {
     QuestConfirmAccept {
         quest: u32,
     },
-    /// `MSG_QUEST_PUSH_RESULT`: our decline of a shared quest, to `sharer`.
+    /// `MSG_QUEST_PUSH_RESULT`: our decline of a shared quest, to `sharer`; `quest` is 0 from a
+    /// walk-away.
     QuestPushResult {
         sharer: u64,
+        quest: u32,
         msg: benilla_protocol::messages::QuestShareMsg,
     },
     // ── Mail ──

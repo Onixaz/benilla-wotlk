@@ -510,6 +510,13 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             quest_id,
             timed: true,
         }],
+        ServerPacket::QuestUpdateAddPvpKill { quest_id, count } => {
+            vec![SessionEvent::QuestObjectivePvpKill { quest_id, count }]
+        }
+        ServerPacket::QuestForceRemove { quest_id } => {
+            vec![SessionEvent::QuestForceRemoved { quest_id }]
+        }
+        ServerPacket::QuestsCompleted(ids) => vec![SessionEvent::QuestsCompleted(ids)],
         ServerPacket::QuestLogFull => vec![SessionEvent::QuestLogFull],
         ServerPacket::QuestPushResult(r) => vec![SessionEvent::QuestPushResult {
             member: r.member,

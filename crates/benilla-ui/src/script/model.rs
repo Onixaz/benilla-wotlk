@@ -926,6 +926,12 @@ pub(crate) struct Model {
     pub(crate) quest_log_pushes: Vec<u32>,
     /// `ConfirmAcceptQuest()` calls, the escort confirm; the app holds the pending quest.
     pub(crate) quest_confirms: u32,
+    /// The world map's quest POI lines and icon spacing.
+    pub(crate) quest_poi: super::quest_poi::QuestPoiState,
+    /// `QueryQuestsCompleted()` calls, one `CMSG_QUERY_QUESTS_COMPLETED` each.
+    pub(crate) quests_completed_queries: u32,
+    /// The last `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`'s ids, which `GetQuestsCompleted` keys.
+    pub(crate) quests_completed: Vec<u32>,
     /// Item id to its tooltip view.
     pub(crate) item_templates: HashMap<u32, ItemTemplateView>,
     /// Item ids asked for and missing, for the app to answer.
@@ -953,8 +959,11 @@ pub(crate) struct Model {
     pub(crate) item_tooltip_waits: HashMap<FrameHandle, super::tooltip_item::ItemWait>,
     /// The item setter call running, collecting what it misses.
     pub(crate) item_render: Option<super::tooltip_item::ItemRender>,
-    /// `CollapseQuestHeader`/`ExpandQuestHeader` as `(1-based entry, collapse)`, entry 0 for all.
-    pub(crate) quest_log_collapses: Vec<(u32, bool)>,
+    /// The collapse filter where no `questLogCollapseFilter` CVar is registered; -1, every header
+    /// open, as the register site sets it (`0x51df3d`).
+    pub(crate) quest_log_collapse_filter: i32,
+    /// Quests `GetQuestTimers` marked expired, for the app to keep, announce and re-ask.
+    pub(crate) quest_log_expiries: Vec<u32>,
     /// The quest watches, the POI store and the special items the objective tracker reads.
     pub(crate) quest_watch: super::quest_watch::QuestWatchState,
     /// The animation groups and animations, and the translation each region draws at.
@@ -1646,6 +1655,9 @@ impl Model {
             quest_log_abandons: Vec::new(),
             quest_log_pushes: Vec::new(),
             quest_confirms: 0,
+            quest_poi: Default::default(),
+            quests_completed_queries: 0,
+            quests_completed: Vec::new(),
             item_templates: HashMap::new(),
             item_sets: HashMap::new(),
             item_set_asks: HashSet::new(),
@@ -1660,7 +1672,8 @@ impl Model {
             spell_tooltip_waits: HashMap::new(),
             item_tooltip_waits: HashMap::new(),
             item_render: None,
-            quest_log_collapses: Vec::new(),
+            quest_log_collapse_filter: -1,
+            quest_log_expiries: Vec::new(),
             quest_watch: Default::default(),
             anims: Default::default(),
             server_unix_time: std::cell::Cell::new(None),

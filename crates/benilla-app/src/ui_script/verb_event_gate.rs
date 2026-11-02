@@ -52,17 +52,6 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "MAIL_INBOX_UPDATE",
         "benilla-app/src/ui_mail/mod.rs",
     ),
-    // `take_quest_log_collapses`: the app owns the collapse set, re-feeds the list, fires.
-    (
-        "CollapseQuestHeader",
-        "QUEST_LOG_UPDATE",
-        "benilla-app/src/ui_quest_log.rs",
-    ),
-    (
-        "ExpandQuestHeader",
-        "QUEST_LOG_UPDATE",
-        "benilla-app/src/ui_quest_log.rs",
-    ),
     // `take_loot_roll_confirms`: a Need/Greed on a bind-on-pickup roll is diverted to the popup.
     (
         "ConfirmLootRoll",

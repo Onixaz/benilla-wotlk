@@ -9,7 +9,10 @@ use bevy::prelude::*;
 use benilla_formats::RangeTargets;
 use benilla_protocol::messages::QuestPoi;
 use benilla_protocol::{SessionEvent, SessionEventKind};
-use benilla_ui::script::{QuestPoiRegion, QuestPoiView, QuestSpecialItemView, UiScript};
+use benilla_ui::script::{
+    QuestLogObjectiveView, QuestPoiLines, QuestPoiRegion, QuestPoiView, QuestSpecialItemView,
+    UiScript,
+};
 
 use crate::items::Items;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp, ObjectStore, SelfPlayer};
@@ -34,7 +37,7 @@ impl Plugin for UiQuestWatchPlugin {
             .net_handler(SessionEventKind::Disconnected, on_session_end)
             .add_systems(
                 Update,
-                (feed_quest_pois, feed_special_items)
+                (feed_quest_pois, feed_special_items, feed_quest_poi_lines)
                     .in_set(UnitFeed)
                     .after(crate::ui_quest_log::feed_quest_log),
             );
@@ -76,10 +79,203 @@ fn view(poi: QuestPoi) -> QuestPoiView {
                     floor: b.floor as i32,
                     flags: b.flags,
                     center,
+                    points: n as u32,
+                    priority: b.priority as i32,
                 }
             })
             .collect(),
     }
+}
+
+/// A GameObject objective's entry bit (`0x5e2370`'s sign test).
+const GO_OBJECTIVE_BIT: u32 = 0x8000_0000;
+/// Deviation: an uncached name reads `...` where the reference prints `" "`, as the quest log's
+/// lines do.
+const NAME_PLACEHOLDER: &str = "...";
+
+/// One POI line from its `%s`/`%d`/`%d` key.
+fn poi_line(
+    get: &dyn Fn(&str) -> Option<String>,
+    key: &str,
+    kind: &str,
+    name: &str,
+    (cur, req): (u32, u32),
+) -> QuestLogObjectiveView {
+    use benilla_ui::strings::{fill, Arg};
+    QuestLogObjectiveView {
+        text: get(key).map_or_else(String::new, |f| {
+            fill(
+                &f,
+                &[Arg::S(name), Arg::D(i64::from(cur)), Arg::D(i64::from(req))],
+            )
+        }),
+        kind: kind.into(),
+        finished: cur >= req,
+        cur,
+        req,
+        intermediate: false,
+    }
+}
+
+/// Each logged quest's POI lines (`0x5e58c0`, `0x5e20a0`, `0x5e1ff0`): the objectives by entry
+/// with their raw counters (`0x5e2370`), the items by id with the bag count capped (`0x5e2630`),
+/// the drops, and the header zone's top area. Rebuilt only when an input moved.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // one Bevy system's full input set
+fn feed_quest_poi_lines(
+    script: Option<NonSendMut<UiScript>>,
+    me: Query<Ref<ObjectStore>, With<SelfPlayer>>,
+    quest_log: Res<QuestLog>,
+    names: Res<crate::names::NameCache>,
+    gos: Option<Res<crate::go_templates::GameObjectTemplates>>,
+    items: Res<Items>,
+    objects: crate::net::Objects,
+    (commands, areas, stirred_items): (
+        Res<NetCommands>,
+        Option<Res<crate::sound::AreaSounds>>,
+        Query<(), (Changed<ObjectStore>, Without<crate::net::NetEntity>)>,
+    ),
+) {
+    use crate::ui_items::{count_of, InventoryScope};
+    let Some(mut script) = script else {
+        return;
+    };
+    let Some(store) = me.iter().next() else {
+        return;
+    };
+    let stirred = store.is_changed()
+        || quest_log.is_changed()
+        || names.is_changed()
+        || items.is_changed()
+        || gos.as_ref().is_some_and(|g| g.is_changed())
+        || !stirred_items.is_empty();
+    if !stirred {
+        return;
+    }
+    let get = |key: &str| {
+        script
+            .lua()
+            .globals()
+            .get::<String>(key)
+            .ok()
+            .filter(|t| !t.is_empty())
+    };
+    let bags = |item: u32| count_of(&store.0, &objects, item, InventoryScope::QUEST_ITEMS);
+    let item_name = |item: u32| {
+        items
+            .template(item, 0, &commands)
+            .map_or_else(|| NAME_PLACEHOLDER.to_string(), |t| t.name.clone())
+    };
+    let mut lines = HashMap::new();
+    for slot in 0..benilla_protocol::messages::PLAYER_QUEST_LOG_SLOTS {
+        let Some(log) = store.0.player_quest_log(slot).filter(|l| l.quest_id != 0) else {
+            continue;
+        };
+        let Some(t) = quest_log.template(log.quest_id, &commands) else {
+            continue;
+        };
+        // An objective by its entry, its first match and counter (`0x5e2370`).
+        let by_object = |entry: u32| -> Option<QuestLogObjectiveView> {
+            if entry == 0 {
+                return None;
+            }
+            let j = t
+                .objectives
+                .iter()
+                .position(|o| o.creature_or_go == entry)?;
+            let o = &t.objectives[j];
+            let count = (u32::from(log.counters[j]), o.required_count);
+            let is_go = entry & GO_OBJECTIVE_BIT != 0;
+            let kind = if is_go { "object" } else { "monster" };
+            Some(if !o.text.is_empty() {
+                poi_line(&get, "QUEST_OBJECTS_FOUND", kind, &o.text, count)
+            } else if is_go {
+                let name = gos
+                    .as_deref()
+                    .and_then(|g| g.name_by_entry(entry & !GO_OBJECTIVE_BIT, &commands))
+                    .unwrap_or(NAME_PLACEHOLDER);
+                poi_line(&get, "QUEST_OBJECTS_FOUND", kind, name, count)
+            } else {
+                let name = names
+                    .resolve_creature(entry, 0, &commands)
+                    .unwrap_or(NAME_PLACEHOLDER);
+                poi_line(&get, "QUEST_MONSTERS_KILLED", kind, name, count)
+            })
+        };
+        // An item by id among the required items, the lone source item skipped (`0x5e2630`).
+        let by_item = |item: u32| -> Option<QuestLogObjectiveView> {
+            if item == 0 {
+                return None;
+            }
+            let &(_, req) = t
+                .required_items
+                .iter()
+                .find(|&&(id, n)| id == item && !(id == t.src_item_id && n <= 1))?;
+            let have = bags(item).min(req);
+            Some(poi_line(
+                &get,
+                "QUEST_ITEMS_NEEDED",
+                "item",
+                &item_name(item),
+                (have, req),
+            ))
+        };
+        let mut board: Vec<Option<QuestLogObjectiveView>> = Vec::with_capacity(18);
+        board.extend(t.objectives.iter().map(|o| by_object(o.creature_or_go)));
+        board.extend(t.required_items.iter().map(|&(id, _)| by_item(id)));
+        board.extend(t.objectives.iter().map(|o| by_item(o.item_drop)));
+        let event = (!t.end_text.is_empty()).then(|| {
+            let done = log.state & benilla_protocol::messages::quest_slot_state::COMPLETE != 0;
+            QuestLogObjectiveView {
+                text: t.end_text.clone(),
+                kind: "event".into(),
+                finished: done,
+                cur: u32::from(done),
+                req: 1,
+                intermediate: false,
+            }
+        });
+        board.push(event.clone());
+        board.push(event);
+        let drops = t
+            .objectives
+            .iter()
+            .filter(|o| o.item_drop as i32 > 0)
+            .map(|o| {
+                let have = bags(o.item_drop).min(o.item_drop_count);
+                poi_line(
+                    &get,
+                    "QUEST_ITEMS_NEEDED",
+                    "item",
+                    &item_name(o.item_drop),
+                    (have, o.item_drop_count),
+                )
+            })
+            .collect();
+        let drops_needed = t
+            .objectives
+            .iter()
+            .filter(|o| {
+                o.item_drop as i32 > 0
+                    && (o.item_drop != t.src_item_id || o.item_drop_count as i32 > 1)
+                    && bags(o.item_drop) == 0
+            })
+            .count() as u32;
+        let top_area = u32::try_from(t.zone_or_sort)
+            .ok()
+            .filter(|&z| z != 0)
+            .and_then(|z| areas.as_ref()?.0.top_area(z))
+            .unwrap_or(0);
+        lines.insert(
+            log.quest_id,
+            QuestPoiLines {
+                board,
+                drops,
+                drops_needed,
+                top_area,
+            },
+        );
+    }
+    script.set_quest_poi_lines(lines);
 }
 
 /// Hand the VM its POI responses and send the queries it raised, at most 25 ids each, as the

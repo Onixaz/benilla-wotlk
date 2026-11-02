@@ -55,6 +55,10 @@ pub struct QuestPoiRegion {
     pub flags: u32,
     /// The outline's mean point in world yards, integer-divided as the reference sums it.
     pub center: (i32, i32),
+    /// The outline's point count; a one-point region's icon is never pushed aside (`0x5e3165`).
+    pub points: u32,
+    /// The icon placement's priority, the lowest winning (`0x5e2eb0`).
+    pub priority: i32,
 }
 
 /// One quest's POI as the response delivers it.
@@ -65,11 +69,13 @@ pub struct QuestPoiView {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-struct PoiSlot {
-    quest_id: u32,
-    regions: Vec<QuestPoiRegion>,
+pub(super) struct PoiSlot {
+    pub(super) quest_id: u32,
+    pub(super) regions: Vec<QuestPoiRegion>,
     /// `+0x28`: a region shows on the displayed map, set by the last count.
     shown: bool,
+    /// The icon `QuestPOIUpdateIcons` placed, `None` for none (`0x5e2eb0`).
+    pub(super) icon: Option<super::quest_poi::PoiIcon>,
 }
 
 /// The tracker's model.
@@ -79,7 +85,7 @@ pub(crate) struct QuestWatchState {
     /// Whether the tracked quests loaded: the CVar is read once, on the first log that holds a
     /// quest.
     loaded: bool,
-    pois: Vec<PoiSlot>,
+    pub(super) pois: Vec<PoiSlot>,
     /// Quests asked for and not yet answered, so a rebuild does not re-send.
     poi_asked: HashSet<u32>,
     /// `CMSG_QUEST_POI_QUERY` ids for the app to send.
@@ -88,12 +94,13 @@ pub(crate) struct QuestWatchState {
 }
 
 impl QuestWatchState {
-    fn poi(&self, quest_id: u32) -> Option<&PoiSlot> {
+    pub(super) fn poi(&self, quest_id: u32) -> Option<&PoiSlot> {
         self.pois.iter().find(|p| p.quest_id == quest_id)
     }
 }
 
-/// The 1-based log row of a quest, 0 when it is not a visible quest row (`0x5deeb0`).
+/// The 1-based log row of a quest, a folded one included, 0 when it is not in the log
+/// (`0x5deeb0`).
 fn quest_index(model: &Model, quest_id: u32) -> usize {
     model
         .quest_log
@@ -113,12 +120,7 @@ fn quest_at(model: &Model, index: i64) -> Option<&QuestLogEntryView> {
 
 /// A quest in the log, a folded one included, as `AddQuestWatch` searches (`0x5e64f8`).
 fn in_log(model: &Model, quest_id: u32) -> bool {
-    model
-        .quest_log
-        .entries
-        .iter()
-        .any(|e| !e.is_header && e.quest_id == quest_id)
-        || model.quest_log.hidden_quest_ids.contains(&quest_id)
+    model.quest_log.quest(quest_id).is_some()
 }
 
 /// The quest a watch verb names: the row at the numeric argument, else the selection (`0x5e67c0`).
@@ -180,12 +182,21 @@ fn save(model: &mut Model) {
     super::cvars::set_from_engine(model, "trackedQuests", value);
 }
 
-fn cvar_int(model: &Model, name: &str) -> i64 {
+pub(super) fn cvar_int(model: &Model, name: &str) -> i64 {
     model
         .cvars
         .get(name)
         .and_then(|c| c.value.trim().parse().ok())
         .unwrap_or(0)
+}
+
+/// A float CVar by lowercased name, 0 when unset.
+pub(super) fn cvar_float(model: &Model, name: &str) -> f32 {
+    model
+        .cvars
+        .get(name)
+        .and_then(|c| c.value.trim().parse().ok())
+        .unwrap_or(0.0)
 }
 
 /// The watch sort behind `SortQuestWatches` (`0x5e5c10`): by `trackerSorting`, 0 manual
@@ -261,7 +272,7 @@ fn poi_distance(model: &Model, quest_id: u32) -> (i32, f32) {
 }
 
 /// The quest's objective mask (`0x5e2950`), which the app computes per row.
-fn objective_mask(model: &Model, quest_id: u32) -> u32 {
+pub(super) fn objective_mask(model: &Model, quest_id: u32) -> u32 {
     model
         .quest_log
         .entries
@@ -272,7 +283,7 @@ fn objective_mask(model: &Model, quest_id: u32) -> u32 {
 
 /// A region counts for a complete quest (mask all ones) only as the turn-in, else when it serves
 /// an objective still open (`0x5e5b46`-`0x5e5b7b`).
-fn serves(r: &QuestPoiRegion, mask: u32) -> bool {
+pub(super) fn serves(r: &QuestPoiRegion, mask: u32) -> bool {
     if mask == u32::MAX {
         r.objective == -1
     } else {
@@ -280,7 +291,7 @@ fn serves(r: &QuestPoiRegion, mask: u32) -> bool {
     }
 }
 
-fn place(r: &QuestPoiRegion) -> QuestPoiPlace {
+pub(super) fn place(r: &QuestPoiRegion) -> QuestPoiPlace {
     QuestPoiPlace {
         map: r.map,
         area: r.area,
@@ -332,14 +343,7 @@ fn update_all_pois(model: &mut Model) -> i64 {
 /// quests in slot order, then the watched open ones in watch order, then the rest.
 fn poi_by_visible_index(model: &Model, index: usize) -> Option<u32> {
     let pois = &model.quest_watch.pois;
-    let settled = |id: u32| {
-        model
-            .quest_log
-            .entries
-            .iter()
-            .find(|e| !e.is_header && e.quest_id == id)
-            .is_none_or(|e| e.complete == 1 || e.objectives.is_empty())
-    };
+    let settled = |id: u32| super::quest_log::quest_complete_at(&model.quest_log, id);
     let shown = |id: u32| pois.iter().any(|p| p.quest_id == id && p.shown);
     let watched = |id: u32| model.quest_watch.watches.iter().any(|w| w.quest_id == id);
     pois.iter()
@@ -381,8 +385,8 @@ impl super::UiScript {
             .collect()
     }
 
-    /// A quest's 1-based log row, 0 when it is not a visible quest row (`0x5deeb0`), the
-    /// `QUEST_ACCEPTED` argument.
+    /// A quest's 1-based log row, a folded one included, 0 when it is not in the log
+    /// (`0x5deeb0`): the `QUEST_ACCEPTED` and `QUEST_WATCH_UPDATE` argument.
     pub fn quest_log_index(&self, quest_id: u32) -> usize {
         quest_index(&self.model_ref(), quest_id)
     }
@@ -426,6 +430,7 @@ impl super::UiScript {
                     quest_id: poi.quest_id,
                     regions: poi.regions,
                     shown: false,
+                    icon: None,
                 };
             }
         }
@@ -466,8 +471,7 @@ impl super::UiScript {
 /// After a log push: load the saved watches once the log holds a quest (`0x5e6c2b`), prune the
 /// watches of quests that left it, and queue the POI asks for quests the store lacks.
 pub(crate) fn on_quest_log(model: &mut Model) {
-    let has_quest = model.quest_log.entries.iter().any(|e| !e.is_header)
-        || !model.quest_log.hidden_quest_ids.is_empty();
+    let has_quest = model.quest_log.entries.iter().any(|e| !e.is_header);
     if !model.quest_watch.loaded && has_quest {
         model.quest_watch.loaded = true;
         let saved = model
@@ -966,6 +970,7 @@ mod tests {
                     quest_id: id,
                     regions: Vec::new(),
                     shown: true,
+                    icon: None,
                 });
             }
         }

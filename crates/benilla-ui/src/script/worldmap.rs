@@ -1026,7 +1026,7 @@ fn queue_update(model: &mut Model) {
 
 /// Runs the setter from a Lua verb and fires `WORLD_MAP_UPDATE` before the verb returns, as
 /// `0x546310` signals synchronously.
-fn set_map_now(lua: &Lua, c: i32, z: i32, d: i32) {
+pub(super) fn set_map_now(lua: &Lua, c: i32, z: i32, d: i32) {
     crate::script::model_mut_of(lua).worldmap.set_map(c, z, d);
     super::tick::fire_event_into(lua, "WORLD_MAP_UPDATE", Vec::new());
 }
@@ -1082,6 +1082,72 @@ impl WorldMapState {
             .map_or(0, |d| d.floor_index);
         let (dx, dy) = (player.pos.x - poi.x, player.pos.y - poi.y);
         Some(((floor - poi.floor).abs(), dx * dx + dy * dy))
+    }
+}
+
+/// The displayed map as the quest icon update reads it (`0x5e2eb0`): a dungeon floor, else an
+/// area row with its loc rect.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum QuestIconFrame {
+    Dungeon,
+    Area { loc_rect: (f32, f32, f32, f32) },
+}
+
+impl WorldMapState {
+    /// The icon update's frame, `None` with no dungeon floor and no area row displayed.
+    pub(crate) fn quest_icon_frame(&self) -> Option<QuestIconFrame> {
+        if self.dungeon(self.current_dungeon()).is_some() {
+            return Some(QuestIconFrame::Dungeon);
+        }
+        let row = self.row(self.current_id())?;
+        Some(QuestIconFrame::Area {
+            loc_rect: row.loc_rect,
+        })
+    }
+
+    /// A world point on the displayed map as `(u, v)`, and the Outland flag (`0x544140`).
+    pub(crate) fn quest_project(&self, map: u32, x: f32, y: f32) -> ((f32, f32), bool) {
+        self.project(WorldMapPoint { map, x, y })
+    }
+
+    /// The player's map position, the icon update's distance origin.
+    pub(crate) fn player_point(&self) -> Option<WorldMapPoint> {
+        self.feed.player.map(|p| p.pos)
+    }
+
+    /// `GetQuestWorldMapAreaID`'s move to the player's zone (`0x5e2b9c`); the caller fires the
+    /// setter's `WORLD_MAP_UPDATE`.
+    pub(crate) fn set_to_player_zone(&mut self) {
+        let (c, z, d) = self.current_zone();
+        self.set_map(c, z, d);
+    }
+
+    /// The displayed row's `(id, map)` and the displayed floor, 0 off a dungeon floor
+    /// (`0x5e2b80`-`0x5e2bc6`).
+    pub(crate) fn quest_area_here(&self) -> Option<(u32, u32, i32)> {
+        let row = self.row(self.current_id())?;
+        let floor = self
+            .dungeon(self.current_dungeon())
+            .map_or(0, |d| d.floor_index);
+        Some((row.id, row.map_id, floor))
+    }
+
+    /// A `WorldMapArea` row's map by id.
+    pub(crate) fn area_map(&self, id: u32) -> Option<u32> {
+        self.row(i32::try_from(id).ok()?).map(|r| r.map_id)
+    }
+
+    /// The first `WorldMapArea` row whose `AreaTable` id is `area`, the lowest id, as the table
+    /// walk meets it.
+    pub(crate) fn area_row_for(&self, area: u32) -> Option<u32> {
+        self.catalog
+            .continents
+            .iter()
+            .flat_map(|c| std::iter::once(c.row()).chain(c.zones.iter().cloned()))
+            .chain(self.catalog.orphans.iter().cloned())
+            .filter(|r| r.area_id == area)
+            .map(|r| r.id)
+            .min()
     }
 }
 

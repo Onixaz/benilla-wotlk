@@ -920,6 +920,17 @@ pub enum ServerPacket {
         item_id: u32,
         count: u32,
     },
+    /// `SMSG_QUESTUPDATE_ADD_PVP_KILL`: a player-kill objective's new count.
+    QuestUpdateAddPvpKill {
+        quest_id: u32,
+        count: u32,
+    },
+    /// `SMSG_QUEST_FORCE_REMOVE`: the server took the quest out of the log.
+    QuestForceRemove {
+        quest_id: u32,
+    },
+    /// `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`: every quest the character has turned in.
+    QuestsCompleted(Vec<u32>),
     /// `SMSG_GOSSIP_MESSAGE`: an NPC's gossip menu and quest rows.
     GossipMessage(GossipMenu),
     /// `SMSG_GOSSIP_COMPLETE`: the gossip window closes; empty body (`Npc.cpp:90`).
@@ -1855,6 +1866,9 @@ impl ServerPacket {
             ServerPacket::QuestUpdateFailedTimer { .. } => "SMSG_QUESTUPDATE_FAILEDTIMER".into(),
             ServerPacket::QuestUpdateAddKill { .. } => "SMSG_QUESTUPDATE_ADD_KILL".into(),
             ServerPacket::QuestUpdateAddItem { .. } => "SMSG_QUESTUPDATE_ADD_ITEM".into(),
+            ServerPacket::QuestUpdateAddPvpKill { .. } => "SMSG_QUESTUPDATE_ADD_PVP_KILL".into(),
+            ServerPacket::QuestForceRemove { .. } => "SMSG_QUEST_FORCE_REMOVE".into(),
+            ServerPacket::QuestsCompleted(_) => "SMSG_QUERY_QUESTS_COMPLETED_RESPONSE".into(),
             ServerPacket::GossipMessage(_) => "SMSG_GOSSIP_MESSAGE".into(),
             ServerPacket::GossipComplete => "SMSG_GOSSIP_COMPLETE".into(),
             ServerPacket::GossipPoi(..) => "SMSG_GOSSIP_POI".into(),

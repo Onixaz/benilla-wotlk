@@ -120,6 +120,8 @@ pub struct QuestDetails {
     pub choices: Vec<QuestRewardItem>,
     pub rewards: Vec<QuestRewardItem>,
     pub extra: QuestExtraRewards,
+    /// `(delay ms, Emotes.dbc id)` pairs the NPC plays (`0x6d0748`).
+    pub emotes: Vec<(u32, u32)>,
 }
 
 /// `SMSG_QUESTGIVER_OFFER_REWARD`: the reward panel.
@@ -135,6 +137,8 @@ pub struct QuestOfferReward {
     pub choices: Vec<QuestRewardItem>,
     pub rewards: Vec<QuestRewardItem>,
     pub extra: QuestExtraRewards,
+    /// `(delay ms, Emotes.dbc id)` pairs the NPC plays (`0x6d0b8f`).
+    pub emotes: Vec<(u32, u32)>,
 }
 
 /// `SMSG_QUESTGIVER_REQUEST_ITEMS`: the progress panel. Continue is enabled only when all four
@@ -145,6 +149,8 @@ pub struct QuestRequestItems {
     pub quest_id: u32,
     pub title: String,
     pub request_text: String,
+    /// The one emote pair the NPC queues (`0x6d0a95`).
+    pub emote_delay: u32,
     pub emote: u32,
     pub close_on_cancel: u32,
     pub quest_flags: u32,
@@ -355,9 +361,11 @@ pub(in crate::messages) fn read_questgiver_quest_details(
     let rewards = read_item_block(r)?;
     let extra = read_extra_rewards(r, false)?;
     let emote_count = read_u32_le(r)?;
+    let mut emotes = Vec::with_capacity(capacity_hint(emote_count, QUEST_EMOTE_COUNT as usize));
     for _ in 0..emote_count {
-        let _emote = read_u32_le(r)?;
-        let _delay = read_u32_le(r)?;
+        let emote = read_u32_le(r)?;
+        let delay = read_u32_le(r)?;
+        emotes.push((delay, emote));
     }
     Ok(QuestDetails {
         npc,
@@ -373,6 +381,7 @@ pub(in crate::messages) fn read_questgiver_quest_details(
         choices,
         rewards,
         extra,
+        emotes,
     })
 }
 
@@ -390,9 +399,11 @@ pub(in crate::messages) fn read_questgiver_offer_reward(
     let quest_flags = read_u32_le(r)?;
     let suggested_players = read_u32_le(r)?;
     let emote_count = read_u32_le(r)?;
+    let mut emotes = Vec::with_capacity(capacity_hint(emote_count, QUEST_EMOTE_COUNT as usize));
     for _ in 0..emote_count {
-        let _delay = read_u32_le(r)?;
-        let _emote = read_u32_le(r)?;
+        let delay = read_u32_le(r)?;
+        let emote = read_u32_le(r)?;
+        emotes.push((delay, emote));
     }
     let choices = read_item_block(r)?;
     let rewards = read_item_block(r)?;
@@ -408,6 +419,7 @@ pub(in crate::messages) fn read_questgiver_offer_reward(
         choices,
         rewards,
         extra,
+        emotes,
     })
 }
 
@@ -421,7 +433,7 @@ pub(in crate::messages) fn read_questgiver_request_items(
     let quest_id = read_u32_le(r)?;
     let title = read_cstring(r)?;
     let request_text = read_cstring(r)?;
-    let _emote_delay = read_u32_le(r)?;
+    let emote_delay = read_u32_le(r)?;
     let emote = read_u32_le(r)?;
     let close_on_cancel = read_u32_le(r)?;
     let quest_flags = read_u32_le(r)?;
@@ -437,6 +449,7 @@ pub(in crate::messages) fn read_questgiver_request_items(
         quest_id,
         title,
         request_text,
+        emote_delay,
         emote,
         close_on_cancel,
         quest_flags,
@@ -693,6 +706,8 @@ mod tests {
         );
         assert_eq!(d.rewards[0].item_id, 3000);
         assert_extra(&d.extra);
+        // Each pair is `{emote, delay}` on this packet.
+        assert_eq!(d.emotes, [(100, 10), (101, 11), (102, 12), (103, 13)]);
     }
 
     #[test]
@@ -747,6 +762,8 @@ mod tests {
         assert!(o.choices.is_empty());
         assert_eq!(o.rewards[0].display_id, 888);
         assert_extra(&o.extra);
+        // Each pair is `{delay, emote}` on this one.
+        assert_eq!(o.emotes, [(500, 1), (0, 2)]);
     }
 
     #[test]
@@ -756,7 +773,7 @@ mod tests {
         push_u32(&mut b, 100);
         push_cstr(&mut b, "A Threat Within");
         push_cstr(&mut b, "Bring me the tusks.");
-        push_u32(&mut b, 0); // emoteDelay
+        push_u32(&mut b, 250); // emoteDelay
         push_u32(&mut b, 1); // emote
         push_u32(&mut b, 1); // closeOnCancel
         push_u32(&mut b, 0x8); // flags
@@ -771,6 +788,7 @@ mod tests {
         let ri = read_questgiver_request_items(&mut r).unwrap();
         assert!(r.is_empty());
         assert_eq!(ri.request_text, "Bring me the tusks.");
+        assert_eq!((ri.emote_delay, ri.emote), (250, 1));
         assert_eq!(ri.close_on_cancel, 1);
         assert_eq!(ri.quest_flags, 0x8);
         assert_eq!(ri.required_items[0].count, 8);

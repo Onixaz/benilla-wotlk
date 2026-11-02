@@ -227,12 +227,12 @@ fn set_faction_standing_parses_and_decodes() {
 /// An opcode with no parse arm decodes to `PacketDropped`, not silence, so the app can tally it.
 #[test]
 fn unknown_opcode_decodes_to_packet_dropped() {
-    // Sentinel: SMSG_QUEST_FORCE_REMOVE (0x021E) has no parse arm; swap in another if it gains one.
-    let packet = messages::parse_server(0x021E, &hx("0102030405")).unwrap();
-    assert!(matches!(packet, ServerPacket::Other { opcode: 0x021E }));
+    // Sentinel: CMSG_BOOTME (0x0001) has no parse arm; swap in another if it gains one.
+    let packet = messages::parse_server(0x0001, &hx("0102030405")).unwrap();
+    assert!(matches!(packet, ServerPacket::Other { opcode: 0x0001 }));
     match decode(packet).as_slice() {
         [SessionEvent::PacketDropped {
-            opcode: 0x021E,
+            opcode: 0x0001,
             unparseable: false,
         }] => {}
         other => panic!("expected one PacketDropped event, got {other:?}"),
