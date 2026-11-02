@@ -100,8 +100,7 @@ pub(crate) struct Engaged(pub(crate) u64);
 
 /// The local player's auto-repeat is armed: the reference's `[+0xd58] & 0x200`, set only by the
 /// local cast-send; with the ranged sheath drawn a standing unit idles on the Load clip. Cleared
-/// only through `cancel_auto_repeat_local`, including on `SMSG_CANCEL_AUTO_REPEAT`, which vmangos
-/// sends when a volley's target dies (`SpellCaster.cpp:1829`). A remote shooter plays LoadBow once
+/// by the auto-repeat cancel, and by `SMSG_CANCEL_AUTO_REPEAT` for the unit it names. A remote shooter plays LoadBow once
 /// at its `SMSG_SPELL_START` (`CastHold`), then the fire clip per GO; the reference holds HoldBow
 /// (109) from the end of the Load until the first GO.
 #[derive(Component)]
@@ -161,9 +160,21 @@ pub(crate) fn cancel_auto_repeat_local(
     commands: &mut Commands,
     net: &crate::net::NetCommands,
 ) {
+    if clear_auto_repeat(entity, auto_repeat, commands) {
+        let _ = net.0.send(crate::net::ClientCommand::CancelAutoRepeat);
+    }
+}
+
+/// The cancel without its send, the server-ordered form (`0x807560` with argument 0): `false`, and
+/// nothing touched, when no auto-repeat runs.
+pub(crate) fn clear_auto_repeat(
+    entity: Option<Entity>,
+    auto_repeat: &mut crate::spell::AutoRepeatActive,
+    commands: &mut Commands,
+) -> bool {
     if auto_repeat.0.is_none() {
         // The reference's early-out: nothing running, nothing sent.
-        return;
+        return false;
     }
     auto_repeat.0 = None;
     if let Some(e) = entity {
@@ -171,7 +182,15 @@ pub(crate) fn cancel_auto_repeat_local(
             .entity(e)
             .remove::<(AutoRepeatArmed, RangedHold, NockedAmmo, NockLatch)>();
     }
-    let _ = net.0.send(crate::net::ClientCommand::CancelAutoRepeat);
+    true
+}
+
+/// A unit's ranged mode ends (`0x72afe0`), with its auto-repeat bit (`0x72d187`): the nock latch
+/// and the nocked ammo model drop.
+pub(crate) fn end_ranged_mode(entity: Entity, commands: &mut Commands) {
+    commands
+        .entity(entity)
+        .try_remove::<(AutoRepeatArmed, NockedAmmo, NockLatch)>();
 }
 
 /// The local StopAttack, as in the reference: when attacking, `CMSG_ATTACKSTOP`, then the

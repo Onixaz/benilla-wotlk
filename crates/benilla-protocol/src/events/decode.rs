@@ -306,7 +306,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             spell_id,
             reason,
         }],
-        ServerPacket::CancelAutoRepeat => vec![SessionEvent::CancelAutoRepeat],
+        ServerPacket::CancelAutoRepeat { guid } => vec![SessionEvent::CancelAutoRepeat { guid }],
         ServerPacket::SpellCooldownList {
             caster,
             flags,

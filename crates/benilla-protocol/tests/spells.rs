@@ -316,3 +316,17 @@ fn spell_modifier_wire() {
     )
     .is_err());
 }
+
+/// `SMSG_CANCEL_AUTO_REPEAT` (`0x72d130`): one packed guid, the unit whose auto-repeat ended.
+#[test]
+fn cancel_auto_repeat_names_its_unit() {
+    let guid = 0x0000_0000_0000_2A01u64;
+    let mut body = Vec::new();
+    benilla_protocol::wire::write_packed_guid(guid, &mut body).unwrap();
+    let packet = messages::parse_server(messages::opcode::SMSG_CANCEL_AUTO_REPEAT, &body).unwrap();
+    assert!(matches!(packet, ServerPacket::CancelAutoRepeat { guid: g } if g == guid));
+    match decode(packet).pop().unwrap() {
+        SessionEvent::CancelAutoRepeat { guid: g } => assert_eq!(g, guid),
+        other => panic!("cancel auto-repeat event, got {other:?}"),
+    }
+}

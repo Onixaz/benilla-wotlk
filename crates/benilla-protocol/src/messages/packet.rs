@@ -713,9 +713,11 @@ pub enum ServerPacket {
         caster: u64,
         delay_ms: u32,
     },
-    /// `SMSG_CANCEL_AUTO_REPEAT` (self-only, empty): stop our ranged auto-repeat; vmangos sends it
-    /// on every autorepeat interrupt, target death included (`Player::SendAutoRepeatCancel`).
-    CancelAutoRepeat,
+    /// `SMSG_CANCEL_AUTO_REPEAT` (`0x72d130`): a packed unit guid whose ranged auto-repeat ended;
+    /// AzerothCore broadcasts it to everyone in range, target death included.
+    CancelAutoRepeat {
+        guid: u64,
+    },
     /// `SMSG_SPELL_COOLDOWN`: server-pushed cooldowns for the player or pet, by caster guid.
     SpellCooldownList {
         caster: u64,
@@ -1817,7 +1819,7 @@ impl ServerPacket {
             ServerPacket::SpellFailed { other: true, .. } => "SMSG_SPELL_FAILED_OTHER".into(),
             ServerPacket::SpellFailed { other: false, .. } => "SMSG_SPELL_FAILURE".into(),
             ServerPacket::SpellDelayed { .. } => "SMSG_SPELL_DELAYED".into(),
-            ServerPacket::CancelAutoRepeat => "SMSG_CANCEL_AUTO_REPEAT".into(),
+            ServerPacket::CancelAutoRepeat { .. } => "SMSG_CANCEL_AUTO_REPEAT".into(),
             ServerPacket::SpellCooldownList { .. } => "SMSG_SPELL_COOLDOWN".into(),
             ServerPacket::ItemCooldown { .. } => "SMSG_ITEM_COOLDOWN".into(),
             ServerPacket::InspectItems { .. } => "SMSG_INSPECT_TALENT".into(),

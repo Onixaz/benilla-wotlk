@@ -1042,7 +1042,9 @@ fn parse_server_body(
             let (caster, delay_ms) = spells::read_spell_delayed(&mut r)?;
             ServerPacket::SpellDelayed { caster, delay_ms }
         }
-        opcode::SMSG_CANCEL_AUTO_REPEAT => ServerPacket::CancelAutoRepeat,
+        opcode::SMSG_CANCEL_AUTO_REPEAT => ServerPacket::CancelAutoRepeat {
+            guid: read_packed_guid(&mut r)?,
+        },
         opcode::SMSG_SPELL_COOLDOWN => {
             let (caster, flags, cooldowns) = spellbook::read_spell_cooldown(&mut r)?;
             ServerPacket::SpellCooldownList {
