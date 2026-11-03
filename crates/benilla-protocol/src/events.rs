@@ -788,8 +788,8 @@ pub enum SessionEvent {
     /// A unit's cast was pushed back by damage (`SMSG_SPELL_DELAYED`); its end moves out by
     /// `delay_ms`.
     SpellDelayed { caster: u64, delay_ms: u32 },
-    /// Stop our own ranged auto-repeat (`SMSG_CANCEL_AUTO_REPEAT`, self-only).
-    CancelAutoRepeat,
+    /// A unit's ranged auto-repeat ended (`SMSG_CANCEL_AUTO_REPEAT`); ours when `guid` is ours.
+    CancelAutoRepeat { guid: u64 },
     /// `SMSG_SPELL_COOLDOWN` for the player or pet: `(spell_id, cooldown_ms)`, 0 ms meaning the
     /// spell's own `Spell.dbc` recovery; a normal cast's cooldown is client-tracked.
     SpellCooldowns {

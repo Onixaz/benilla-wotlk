@@ -503,13 +503,13 @@ fn on_spell_delayed(In(ev): In<SessionEvent>, mut l: Lifecycle) {
 }
 
 fn on_cancel_auto_repeat(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
-    if let SessionEvent::CancelAutoRepeat = ev {
+    if let SessionEvent::CancelAutoRepeat { guid } = ev {
         cancel_auto_repeat(
+            guid,
             &mut l.auto_repeat,
             &l.self_guid,
             &l.index,
             &mut sc.commands,
-            &l.net,
         );
     }
 }
@@ -1366,26 +1366,29 @@ fn spell_delayed(
     }
 }
 
-/// `SMSG_CANCEL_AUTO_REPEAT`: the handler clears the autorepeat key, which the button's checked
-/// state reads (`STOP_AUTOREPEAT_SPELL`), and both shooting-idle bits of `[+0xd58]`, so the
-/// Load/Hold idle drops ([`crate::creature_anim::AutoRepeatArmed`] and `RangedHold`). Nothing
-/// sheathes.
+/// `SMSG_CANCEL_AUTO_REPEAT` (`0x72d130`), for the unit its guid names, ignored when it is not
+/// streamed. For us the auto-repeat cancel runs without its CMSG (`0x72d17d`): the key drops, which
+/// the button's checked state reads (`STOP_AUTOREPEAT_SPELL`), and with it the Load/Hold idle.
+/// For any unit, ourselves included, the ranged mode ends. Nothing sheathes.
 ///
-/// vmangos sends it on every player autorepeat interrupt (`SpellCaster.cpp:1826`), which is how
-/// target death stops a volley (`Unit::_UpdateAutoRepeatSpell` → `CheckCast(true)` fails →
-/// `InterruptSpell`). Moving interrupts only Category 351, the wand, so Auto Shot stays armed
-/// across a run.
+/// AzerothCore sends it on every player autorepeat interrupt, target death included, to everyone
+/// in range, so a nearby hunter's cancel names that hunter, not us.
 fn cancel_auto_repeat(
+    guid: u64,
     auto_repeat: &mut AutoRepeatActive,
     self_guid: &SelfGuid,
     index: &GuidIndex,
     commands: &mut Commands,
-    net: &crate::net::NetCommands,
 ) {
-    debug!("net: cancel auto-repeat");
-    // The same cancel as every local trigger, its unconditional CMSG ack included.
-    let self_e = self_guid.0.and_then(|g| index.0.get(&g)).copied();
-    crate::creature_anim::cancel_auto_repeat_local(self_e, auto_repeat, commands, net);
+    let Some(&e) = index.0.get(&guid) else {
+        debug!("net: cancel auto-repeat for {guid:#x}, not streamed — ignored");
+        return;
+    };
+    debug!("net: cancel auto-repeat for {guid:#x}");
+    if self_guid.0 == Some(guid) {
+        crate::creature_anim::clear_auto_repeat(Some(e), auto_repeat, commands);
+    }
+    crate::creature_anim::end_ranged_mode(e, commands);
 }
 
 /// Whether this `SMSG_SPELL_GO` arms the pet's cooldown bank. The GO handler inserts into two banks
@@ -1569,6 +1572,63 @@ fn spell_chain_targets(
 mod tests {
     use super::*;
     use crate::spell::learn_place::Learner;
+
+    /// Another unit's cancel ends only its ranged mode; ours clears our auto-repeat, sending
+    /// nothing back.
+    #[test]
+    fn a_cancel_acts_on_the_unit_its_guid_names() {
+        use crate::creature_anim::{AutoRepeatArmed, NockLatch, NockedAmmo};
+        use bevy::ecs::system::RunSystemOnce;
+
+        let mut world = World::new();
+        let ranged = || (AutoRepeatArmed, NockedAmmo { display_id: 5 }, NockLatch);
+        let me = world.spawn(ranged()).id();
+        let other = world.spawn(ranged()).id();
+        world.insert_resource(GuidIndex([(1, me), (2, other)].into_iter().collect()));
+        world.insert_resource(SelfGuid(Some(1)));
+        world.insert_resource(AutoRepeatActive(Some(75)));
+        let cancel = |world: &mut World, guid: u64| {
+            world
+                .run_system_once(
+                    move |mut auto_repeat: ResMut<AutoRepeatActive>,
+                          self_guid: Res<SelfGuid>,
+                          index: Res<GuidIndex>,
+                          mut commands: Commands| {
+                        cancel_auto_repeat(
+                            guid,
+                            &mut auto_repeat,
+                            &self_guid,
+                            &index,
+                            &mut commands,
+                        );
+                    },
+                )
+                .unwrap();
+        };
+
+        cancel(&mut world, 2);
+        assert_eq!(
+            world.resource::<AutoRepeatActive>().0,
+            Some(75),
+            "ours runs on"
+        );
+        assert!(world.entity(me).contains::<AutoRepeatArmed>());
+        assert!(!world.entity(other).contains::<NockedAmmo>());
+        assert!(!world.entity(other).contains::<NockLatch>());
+        assert!(!world.entity(other).contains::<AutoRepeatArmed>());
+
+        cancel(&mut world, 3);
+        assert_eq!(
+            world.resource::<AutoRepeatActive>().0,
+            Some(75),
+            "unknown guid"
+        );
+
+        cancel(&mut world, 1);
+        assert_eq!(world.resource::<AutoRepeatActive>().0, None);
+        assert!(!world.entity(me).contains::<AutoRepeatArmed>());
+        assert!(!world.entity(me).contains::<NockedAmmo>());
+    }
 
     /// A streamed level-1 mage, so the registrar runs its live arms.
     fn live() -> Option<Learner> {
