@@ -2,15 +2,16 @@
 //! server sends unprompted for the gossip stable option, [`feed_stable`] pushes them and
 //! [`drain_stable`] sends the four stable verbs.
 //!
-//! A row's family, and with it the icon and diet, is not on the wire: it comes from the creature
-//! query, so those fill in a frame or two after the name and level, as on a reference cache miss.
-//! Slot 0 is read from the wire like every row, because a dismissed pet still has one; stock
-//! `PetStable.lua:123-138` prefers the live pet and falls back to it.
+//! A row's family, and with it the icon, talent tree and diet, is not on the wire: it comes from
+//! the creature query, so those fill in a frame or two after the name and level, as on a reference
+//! cache miss. The current pet's record is read from the wire like every row, because a dismissed
+//! pet still has one; the stock window prefers the live pet and falls back to it.
 
+use benilla_formats::TalentCatalog;
 use benilla_protocol::messages::StabledPet;
 use bevy::prelude::*;
 
-use benilla_ui::script::{StableIntent, StablePetSlot, StableState, UiScript, NUM_STABLE_SLOTS};
+use benilla_ui::script::{StableIntent, StablePetSlot, StableState, UiScript};
 
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
@@ -58,9 +59,9 @@ impl Plugin for UiStablePlugin {
 #[derive(Resource, Default)]
 pub(crate) struct StableOpen {
     pub(crate) npc: Option<u64>,
-    /// Slots bought (0..=2), not slots occupied.
+    /// Slots bought (0..=4), not slots occupied.
     pub(crate) num_stable_slots: u8,
-    /// The wire rows, each with its client slot index.
+    /// The wire rows in wire order.
     pub(crate) pets: Vec<StabledPet>,
     /// A list landed and `PET_STABLE_SHOW` is owed: the reference fires it after every list, and
     /// `PET_STABLE_UPDATE`/`_PAPERDOLL` only from its creature-cache callbacks.
@@ -81,6 +82,17 @@ impl StableOpen {
         self.pets.clear();
         self.fresh_list = false;
     }
+
+    /// The current pet's record: each current row is copied into it, so the last one stands
+    /// (`0x5a12c6`).
+    pub(crate) fn current(&self) -> Option<&StabledPet> {
+        self.pets.iter().rfind(|p| p.is_current())
+    }
+
+    /// The stabled rows, in wire order: Lua indices `1..`.
+    pub(crate) fn stabled(&self) -> impl Iterator<Item = &StabledPet> {
+        self.pets.iter().filter(|p| !p.is_current())
+    }
 }
 
 /// The range guard closes the stable when its master is out of range or gone; the server checks
@@ -95,11 +107,13 @@ impl NpcSession for StableOpen {
     }
 }
 
-/// One wire row as a Lua slot; icon, family and diet stay `None` until the creature query answers.
+/// One wire row as a Lua record; icon, family, talent tree and diet stay empty until the creature
+/// query answers.
 fn resolve_pet(
     wire: &StabledPet,
     names: &NameCache,
     families: Option<&PetFamilyTables>,
+    talents: Option<&TalentCatalog>,
     commands: &NetCommands,
 ) -> StablePetSlot {
     // Guid 0 asks for the template alone: a stabled pet has no spawn.
@@ -119,9 +133,10 @@ fn resolve_pet(
         name: wire.name.clone(),
         level: wire.level,
         family: family_row.map(|f| f.name.clone()),
-        // 12340 has no `PetLoyalty.dbc`: the 1.12 loyalty column, until #52 removes it, stays
-        // empty, as `GetPetLoyalty` does for the live pet.
-        loyalty: None,
+        // The first `TalentTab.dbc` row admitting the family's talent type, in file order.
+        talent_tree: family_row
+            .zip(talents)
+            .and_then(|(f, t)| Some(t.tabs_for_pet(f.pet_talent_type).first()?.name.clone())),
         // The food mask as diet names, as `GetPetFoodTypes` gives them; empty for a zero mask.
         diet: family_row
             .map(|f| {
@@ -143,26 +158,18 @@ fn snapshot(
     open: &StableOpen,
     names: &NameCache,
     families: Option<&PetFamilyTables>,
+    talents: Option<&TalentCatalog>,
     next_slot_cost: u32,
     has_live_pet: bool,
     commands: &NetCommands,
 ) -> Option<StableState> {
     open.npc?;
-    let mut slots: [Option<StablePetSlot>; NUM_STABLE_SLOTS] = Default::default();
-    for wire in &open.pets {
-        // Seat rows by their slot, not position: a petless hunter's list has no slot-0 row.
-        match slots.get_mut(usize::from(wire.slot)) {
-            Some(seat) => *seat = Some(resolve_pet(wire, names, families, commands)),
-            None => debug!(
-                "ui_stable: pet {} arrived in slot {} — past the {NUM_STABLE_SLOTS} the window has, dropped",
-                wire.pet_number, wire.slot
-            ),
-        }
-    }
+    let resolve = |wire| resolve_pet(wire, names, families, talents, commands);
     Some(StableState {
         num_stable_slots: u32::from(open.num_stable_slots),
         next_slot_cost,
-        slots,
+        current: open.current().map(resolve),
+        stabled: open.stabled().map(resolve).collect(),
         has_live_pet,
     })
 }
@@ -174,6 +181,7 @@ fn feed_stable(
     mut open: ResMut<StableOpen>,
     bar: Res<crate::ui_pet::PetBar>,
     families: Option<Res<PetFamilyTables>>,
+    talents: Option<Res<crate::ui_talent::Talents>>,
     prices: Option<Res<StableSlotPrices>>,
     commands: Res<NetCommands>,
     names: Res<NameCache>,
@@ -210,6 +218,7 @@ fn feed_stable(
         &open,
         &names,
         families.as_deref(),
+        talents.as_deref().map(|t| &t.catalog),
         next_slot_cost,
         has_live_pet,
         &commands,
@@ -294,7 +303,7 @@ fn feed_stable_booth(
     // Every frame, so a stale yaw cannot snap the model when a pet is picked.
     booth.yaw = script.model_pane_facing("PetStableModel");
 
-    // `GetSelectedStablePet()`: 0 the summoned pet, 1..=2 a stable slot, -1 nothing, including a
+    // `GetSelectedStablePet()`: 0 the current pet, `1..=n` a stabled pet, -1 nothing, including a
     // pet the latest list no longer holds.
     let slot = script.stable_selection();
 
@@ -302,7 +311,7 @@ fn feed_stable_booth(
     let (unit, display_id) = stable_subject(
         slot,
         (live_pet != 0).then(|| pet.entity(live_pet)).flatten(),
-        &open.pets,
+        &open,
         |entry| names.creature_record(entry).map(|r| r.display_id),
     );
     booth.unit = unit;
@@ -315,13 +324,17 @@ fn feed_stable_booth(
 fn stable_subject(
     slot: i32,
     live_pet: Option<Entity>,
-    pets: &[StabledPet],
+    open: &StableOpen,
     display_of: impl Fn(u32) -> Option<u32>,
 ) -> (Option<Entity>, Option<u32>) {
     let unit = if slot == 0 { live_pet } else { None };
-    let display = u8::try_from(slot)
-        .ok()
-        .and_then(|slot| pets.iter().find(|p| p.slot == slot))
+    let row = match slot {
+        0 => open.current(),
+        k => usize::try_from(k - 1)
+            .ok()
+            .and_then(|k| open.stabled().nth(k)),
+    };
+    let display = row
         .and_then(|row| display_of(row.creature_entry))
         .filter(|&d| d != 0);
     (unit, display)
@@ -340,15 +353,21 @@ pub(crate) struct StableSlotPrices(pub(crate) benilla_formats::StableSlotPrices)
 mod tests {
     use super::*;
 
-    fn row(slot: u8, entry: u32) -> StabledPet {
+    /// A wire row: `current` clears flags bit `0x2`, as for the current pet.
+    fn row(n: u32, entry: u32, current: bool) -> StabledPet {
         StabledPet {
-            pet_number: u32::from(slot) + 100,
+            pet_number: n + 100,
             creature_entry: entry,
             level: 30,
-            name: format!("pet{slot}"),
-            loyalty: 6,
-            slot,
+            name: format!("pet{n}"),
+            flags: if current { 1 } else { 3 },
         }
+    }
+
+    fn open_with(pets: Vec<StabledPet>) -> StableOpen {
+        let mut open = StableOpen::default();
+        open.open(0x42, 4, pets);
+        open
     }
 
     /// One display per entry; entry `9` is the template that ships none.
@@ -363,7 +382,8 @@ mod tests {
 
     #[test]
     fn the_selection_forks_between_a_live_body_and_a_bare_display() {
-        let pets = [row(0, 1), row(1, 2)];
+        // The stabled row first on the wire: indices follow the flags, not the position.
+        let pets = open_with(vec![row(1, 2, false), row(0, 1, true)]);
         let live = Entity::from_raw_u32(7).expect("a test entity id");
 
         // Nothing selected: neither source, so the pane empties.
@@ -390,7 +410,7 @@ mod tests {
             (None, Some(822))
         );
 
-        // A slot with no row (never bought, or empty) and a slot past the window: nothing.
+        // An index past the stabled pets: nothing.
         assert_eq!(
             stable_subject(2, Some(live), &pets, display_of),
             (None, None)
@@ -400,12 +420,12 @@ mod tests {
     #[test]
     fn an_unanswered_or_display_less_template_empties_the_pane() {
         assert_eq!(
-            stable_subject(1, None, &[row(1, 404)], display_of),
+            stable_subject(1, None, &open_with(vec![row(1, 404, false)]), display_of),
             (None, None),
             "the query has not landed yet"
         );
         assert_eq!(
-            stable_subject(1, None, &[row(1, 9)], display_of),
+            stable_subject(1, None, &open_with(vec![row(1, 9, false)]), display_of),
             (None, None),
             "the template ships no display"
         );

@@ -259,6 +259,11 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
         wall_clock: true,
     },
     ProbeVar {
+        name: "WOW_PROBE_INTERACT",
+        purpose: "<npc flag mask> — hop beside the nearest unit carrying any of the flags and right-click it through the service ladder",
+        wall_clock: true,
+    },
+    ProbeVar {
         name: "WOW_PROBE_SERVICE",
         purpose: "1 — right-click four real NPCs, one per UNIT_NPC_FLAGS shape, and report the service-ladder arm and the window that opened",
         wall_clock: true,

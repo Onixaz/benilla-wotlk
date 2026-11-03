@@ -1032,7 +1032,7 @@ pub enum SessionEvent {
     /// Forget a player's cached name (`SMSG_INVALIDATE_PLAYER`), the cache's only eviction.
     InvalidatePlayer { guid: u64 },
     /// The stable list (`MSG_LIST_STABLED_PETS`), unasked on the gossip option and on refresh;
-    /// slots are rebased, 0 the current pet. Read by slot: a petless hunter has no slot-0 row.
+    /// rows in wire order, the current pet told by [`StabledPet::is_current`].
     ListStabledPets {
         npc: u64,
         num_stable_slots: u8,
