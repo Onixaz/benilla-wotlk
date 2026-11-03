@@ -155,6 +155,7 @@ tables! {
         "QuestInfo" => quest_info::quest_info_schema(),
         "QuestSort" => quest_headers::quest_sort_schema(),
         "QuestXP" => quest_rewards::quest_xp_schema(),
+        "Resistances" => spells::resistances_schema(),
         "ServerMessages" => server_messages::schema(&LAYOUTS.server_messages),
         "SkillLine" => skill_lines::skill_line_schema(),
         "SkillLineAbility" => skill_lines::skill_line_ability_schema(),

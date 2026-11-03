@@ -12,7 +12,7 @@ pub(super) fn read_attack_start(r: &mut impl Read) -> io::Result<(u64, u64)> {
 
 /// The 3.3.5a `HitInfo` bits of `SMSG_ATTACKERSTATEUPDATE`, each with the 12340 site reading it.
 pub mod hit_info {
-    /// A trailing block of one `u32`, ten `f32` and one `u32` follows (`0x755630`).
+    /// A trailing block of one `u32`, twelve `f32` and one `u32` follows (`0x755767`-`0x75580c`).
     pub const TRAILING_BLOCK: u32 = 0x1;
     /// The swing reached the victim: blood, flinch and the hit vocal need it (`0x755e40`).
     pub const AFFECTS_VICTIM: u32 = 0x2;
@@ -121,9 +121,10 @@ pub(super) fn read_attacker_state(r: &mut impl Read) -> io::Result<AttackerState
     if hit_info & hit_info::RAGE_GAIN != 0 {
         let _rage = read_u32_le(r)?;
     }
+    // Eight floats, then two pairs (`0x7557e0`).
     if hit_info & hit_info::TRAILING_BLOCK != 0 {
         let _ = read_u32_le(r)?;
-        for _ in 0..10 {
+        for _ in 0..12 {
             let _ = read_f32_le(r)?;
         }
         let _ = read_u32_le(r)?;
@@ -162,13 +163,13 @@ pub enum AttackSwingError {
     DeadOrUnattackable,
 }
 
-/// `SMSG_ATTACKSTOP` (`AttackStop::AppendBodyTo`): two packed guids and a `u32` victim-is-dead
-/// word, dropped because death arrives through the descriptor.
-pub(super) fn read_attack_stop(r: &mut impl Read) -> io::Result<(u64, u64)> {
+/// `SMSG_ATTACKSTOP` and `SMSG_COMBAT_EVENT_FAILED` (`0x756b21`): two packed guids and a `u32`;
+/// nonzero holds the attacker's facing toward the victim (`0x7567a5`).
+pub(super) fn read_attack_stop(r: &mut impl Read) -> io::Result<(u64, u64, bool)> {
     let attacker = read_packed_guid(r)?;
     let victim = read_packed_guid(r)?;
-    let _is_dead = read_u32_le(r)?;
-    Ok((attacker, victim))
+    let face_victim = read_u32_le(r)? != 0;
+    Ok((attacker, victim, face_victim))
 }
 
 /// `SMSG_AI_REACTION` (`Server/Packets/Misc.cpp:445-449`): a raw `u64` guid and a `u32` reaction,
@@ -244,7 +245,7 @@ mod tests {
             }
             if self.hit_info & hit_info::TRAILING_BLOCK != 0 {
                 b.extend_from_slice(&0u32.to_le_bytes());
-                for _ in 0..10 {
+                for _ in 0..12 {
                     b.extend_from_slice(&1.5f32.to_le_bytes());
                 }
                 b.extend_from_slice(&0u32.to_le_bytes());

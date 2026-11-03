@@ -50,6 +50,8 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::ItemCooldown, on_item_cooldown)
         .net_handler(K::ChannelStart, on_channel)
         .net_handler(K::ChannelUpdate, on_channel)
+        .net_handler(K::ResumeCastBar, on_resume_cast_bar)
+        .net_handler(K::ResetRangedCombatTimer, on_reset_ranged_combat_timer)
         .net_handler(K::SpellModifier, on_spell_modifier);
 }
 
@@ -97,13 +99,33 @@ pub(crate) struct Scene<'w, 's> {
 }
 
 /// `SMSG_INITIAL_SPELLS`, once at login, into the action store the UI feed reads.
-fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle) {
+fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
     if let SessionEvent::SpellBook {
         spell_ids,
         cooldowns,
     } = ev
     {
-        spell_book(spell_ids, cooldowns, &mut l.actions, &mut l.cooldowns);
+        // The ranged swing time the category adjustment adds, off our own store when streamed.
+        let ranged_ms = l
+            .self_guid
+            .0
+            .and_then(|g| l.index.0.get(&g))
+            .and_then(|&e| sc.stores.get(e).ok())
+            .and_then(|s| s.0.unit_ranged_attack_time())
+            .unwrap_or(0);
+        spell_book(
+            spell_ids,
+            cooldowns,
+            &mut l.actions,
+            &mut l.cooldowns,
+            InitialCooldownInputs {
+                spells: l.spells.as_deref(),
+                items: &mut sc.items,
+                net: &l.net,
+                mods: &l.spell_mods,
+                ranged_ms,
+            },
+        );
         // The book load files the totems without a refill (`0x6e7f73`).
         l.multicast.lists = Default::default();
         if let Some(spells) = l.spells.as_deref() {
@@ -457,7 +479,12 @@ fn on_spell_chain_targets(In(ev): In<SessionEvent>, l: Lifecycle, mut sc: Scene)
     }
 }
 
-fn on_spell_failed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
+fn on_spell_failed(
+    In(ev): In<SessionEvent>,
+    mut l: Lifecycle,
+    mut sc: Scene,
+    mut sounds: MessageWriter<crate::net::ServerSoundMessage>,
+) {
     if let SessionEvent::SpellFailed {
         other,
         caster,
@@ -466,6 +493,20 @@ fn on_spell_failed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
         reason,
     } = ev
     {
+        if !other {
+            spell_failure(
+                caster,
+                spell_id,
+                reason,
+                l.spells.as_deref(),
+                &l.index,
+                &l.self_guid,
+                &mut l.auto_repeat,
+                &mut sc.commands,
+                &l.net,
+                &mut sounds,
+            );
+        }
         // Both handlers end the cast through `0x7fecc0` with the packet's reason (`0x809db3`,
         // `0x806bb0`).
         l.cast_bar.0.push(CastBarEdge::Failed {
@@ -514,7 +555,9 @@ fn on_cancel_auto_repeat(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Sce
     }
 }
 
-/// The five cooldown packets, each routed through [`addressed_store`] by the caster guid.
+/// The five cooldown packets, routed by the caster guid: `SMSG_SPELL_COOLDOWN` and
+/// `SMSG_COOLDOWN_CHEAT` through [`addressed_store`], the other three through
+/// [`pet_or_player_store`].
 fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     let Lifecycle {
         self_guid,
@@ -535,14 +578,12 @@ fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
             }
         }
         SessionEvent::CooldownEvent { spell_id, caster } => {
-            if let Some(store) = addressed_store(caster, self_guid, cooldowns, pet_bar) {
-                cooldown_event(spell_id, caster, store);
-            }
+            let store = pet_or_player_store(caster, cooldowns, pet_bar);
+            cooldown_event(spell_id, caster, store);
         }
         SessionEvent::ClearCooldown { spell_id, caster } => {
-            if let Some(store) = addressed_store(caster, self_guid, cooldowns, pet_bar) {
-                clear_cooldown(spell_id, caster, store);
-            }
+            let store = pet_or_player_store(caster, cooldowns, pet_bar);
+            clear_cooldown(spell_id, caster, store);
         }
         SessionEvent::CooldownCheat { caster } => {
             if let Some(store) = addressed_store(caster, self_guid, cooldowns, pet_bar) {
@@ -555,19 +596,18 @@ fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
             caster,
             delay_ms,
         } if spell_id != 0 => {
-            if let Some(store) = addressed_store(caster, self_guid, cooldowns, pet_bar) {
-                let now = Instant::now();
-                // The row, so a category-held cooldown (Elemental Mastery) reads too.
-                let row = spells.as_deref().and_then(|s| s.catalog.get(spell_id));
-                let left = |store: &Cooldowns| store.info(spell_id, 0, row, now).remaining_ms;
-                let before = left(store);
-                store.delay(spell_id, delay_ms, now);
-                let after = left(store);
-                debug!(
-                    "net: modify cooldown — spell {spell_id} by {delay_ms} ms on {caster:#x}: \
-                     {before} → {after} ms left"
-                );
-            }
+            let store = pet_or_player_store(caster, cooldowns, pet_bar);
+            let now = Instant::now();
+            // The row, so a category-held cooldown (Elemental Mastery) reads too.
+            let row = spells.as_deref().and_then(|s| s.catalog.get(spell_id));
+            let left = |store: &Cooldowns| store.info(spell_id, 0, row, now).remaining_ms;
+            let before = left(store);
+            store.delay(spell_id, delay_ms, now);
+            let after = left(store);
+            debug!(
+                "net: modify cooldown — spell {spell_id} by {delay_ms} ms on {caster:#x}: \
+                 {before} → {after} ms left"
+            );
         }
         _ => {}
     }
@@ -591,9 +631,11 @@ fn on_channel(In(ev): In<SessionEvent>, mut l: Lifecycle) {
             duration_ms,
         } => {
             let own = l.self_guid.0 == Some(caster);
+            let streamed = l.index.0.contains_key(&caster);
             channel_start(
                 caster,
                 own,
+                streamed,
                 spell_id,
                 duration_ms,
                 &mut l.channel,
@@ -611,6 +653,102 @@ fn on_channel(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     }
 }
 
+/// `SMSG_RESUME_CAST_BAR` (`0x8020c0`): a cast or channel already running on a streamed unit,
+/// into the cast-bar feed with its back-dated window.
+fn on_resume_cast_bar(In(ev): In<SessionEvent>, mut l: Lifecycle) {
+    if let SessionEvent::ResumeCastBar(r) = ev {
+        debug!(
+            "net: resume cast bar — spell {} on {:#x}, {} of {} ms left",
+            r.spell_id, r.caster, r.remaining_ms, r.total_ms
+        );
+        // The caster must be a streamed unit (`0x802150`).
+        if l.index.0.contains_key(&r.caster) {
+            l.cast_bar.0.push(CastBarEdge::Resume {
+                caster: r.caster,
+                spell_id: r.spell_id,
+                remaining_ms: r.remaining_ms,
+                total_ms: r.total_ms,
+            });
+        }
+    }
+}
+
+fn on_reset_ranged_combat_timer(In(ev): In<SessionEvent>, mut l: Lifecycle) {
+    if let SessionEvent::ResetRangedCombatTimer { time_ms } = ev {
+        reset_ranged_combat_timer(
+            time_ms,
+            &l.actions,
+            l.spells.as_deref(),
+            &l.summons.0,
+            &mut l.cooldowns,
+        );
+    }
+}
+
+/// `SMSG_RESET_RANGED_COMBAT_TIMER` (`0x8071c0`): every book spell with Attributes `0x2`, without
+/// AttributesEx2 `0x20000` and AttributesEx4 `0x10000000`, adds a record starting now with
+/// `time_ms` as its recovery and no category (`0x80734f`).
+fn reset_ranged_combat_timer(
+    time_ms: u32,
+    actions: &PlayerActions,
+    spells: Option<&Spells>,
+    summons: &benilla_formats::SummonPropertiesCatalog,
+    cooldowns: &mut Cooldowns,
+) {
+    debug!("net: reset ranged combat timer — {time_ms} ms");
+    let Some(spells) = spells else {
+        return;
+    };
+    let now = Instant::now();
+    for &id in &actions.spells {
+        let Some(d) = spells.catalog.get(id) else {
+            continue;
+        };
+        if d.in_spellbook(summons)
+            && d.ranged_speed_cooldown()
+            && d.attributes_ex4 & 0x1000_0000 == 0
+        {
+            cooldowns.start_recovery(id, time_ms, now);
+        }
+    }
+}
+
+/// `SMSG_SPELL_FAILURE`'s own legs (`0x809c70`), on a streamed caster with a `Spell.dbc` row: the
+/// school's fizzle sound on the caster (`0x809d45`), and for our own cast failing for ammo
+/// (wire `0x34`-`0x36`, NEED_AMMO, NEED_AMMO_POUCH, NEED_EXOTIC_AMMO) the local auto-repeat
+/// cancel with its send (`0x809d5b`-`0x809d69`).
+fn spell_failure(
+    caster: u64,
+    spell_id: u32,
+    reason: u8,
+    spells: Option<&Spells>,
+    index: &GuidIndex,
+    self_guid: &SelfGuid,
+    auto_repeat: &mut AutoRepeatActive,
+    commands: &mut Commands,
+    net: &crate::net::NetCommands,
+    sounds: &mut MessageWriter<crate::net::ServerSoundMessage>,
+) {
+    let Some(spells) = spells else {
+        return;
+    };
+    let (Some(d), Some(&e)) = (spells.catalog.get(spell_id), index.0.get(&caster)) else {
+        return;
+    };
+    if let Some(sound_id) = spells.catalog.fizzle_sound(d) {
+        debug!("net: spell failure {spell_id} on {caster:#x} fizzles sound {sound_id}");
+        sounds.write(crate::net::ServerSoundMessage {
+            kind: crate::net::ServerSoundKind::ObjectSound,
+            sound_id,
+            source: Some(e),
+        });
+    }
+    // The shared numbering of wire 0x34-0x36.
+    if self_guid.0 == Some(caster) && matches!(reason, 0x2f..=0x31) {
+        crate::creature_anim::cancel_auto_repeat_local(Some(e), auto_repeat, commands, net);
+    }
+}
+
 fn on_spell_modifier(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     if let SessionEvent::SpellModifier {
         flat,
@@ -623,9 +761,9 @@ fn on_spell_modifier(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     }
 }
 
-/// Which cooldown store a cooldown packet's caster guid addresses: ours or our pet's (the server
-/// sends a pet's cooldowns on the pet's guid). Any other guid is dropped, as the reference drops
-/// it; its `SMSG_COOLDOWN_CHEAT` handler wipes the self or pet list on this same test.
+/// Which cooldown store `SMSG_SPELL_COOLDOWN` (`0x80704d`) and `SMSG_COOLDOWN_CHEAT` (`0x804110`)
+/// address: ours or our pet's (the server sends a pet's cooldowns on the pet's guid). Any other
+/// guid is dropped, as the reference drops it.
 fn addressed_store<'a>(
     caster: u64,
     self_guid: &SelfGuid,
@@ -641,6 +779,31 @@ fn addressed_store<'a>(
     }
 }
 
+/// The store `SMSG_COOLDOWN_EVENT`, `SMSG_CLEAR_COOLDOWN` and `SMSG_MODIFY_COOLDOWN` act on
+/// (`0x804010`): the pet's for the pet's guid (`0x804033`), the player's for any other
+/// (`0x804050`).
+fn pet_or_player_store<'a>(
+    caster: u64,
+    player: &'a mut crate::spell::Cooldowns,
+    pet: &'a mut crate::ui_pet::PetBar,
+) -> &'a mut crate::spell::Cooldowns {
+    if pet.has_bar() && pet.spells.pet_guid == caster {
+        &mut pet.cooldowns
+    } else {
+        player
+    }
+}
+
+/// What [`Cooldowns::seed_initial`] reads for each `SMSG_INITIAL_SPELLS` cooldown: the spell's
+/// row, the item's template, the op-11 tables and our ranged swing time.
+struct InitialCooldownInputs<'a> {
+    spells: Option<&'a Spells>,
+    items: &'a mut crate::items::Items,
+    net: &'a crate::net::NetCommands,
+    mods: &'a crate::spell::SpellModifiers,
+    ranged_ms: u32,
+}
+
 /// `SMSG_INITIAL_SPELLS`: the book into the action store, and the active cooldowns, whose wire
 /// value is remaining ms, into the cooldown store ([`Cooldowns::seed_initial`]).
 fn spell_book(
@@ -648,6 +811,7 @@ fn spell_book(
     initial_cooldowns: Vec<SpellCooldown>,
     actions: &mut PlayerActions,
     cooldowns: &mut Cooldowns,
+    inputs: InitialCooldownInputs,
 ) {
     debug!(
         "net: spell book — {} spells, {} active cooldown(s)",
@@ -658,7 +822,25 @@ fn spell_book(
     actions.dirty = true;
     let now = Instant::now();
     for cd in &initial_cooldowns {
-        cooldowns.seed_initial(cd, now);
+        debug!(
+            "net: initial cooldown — spell {} item {} category {}: {} / {:#x} ms left",
+            cd.spell_id, cd.item_id, cd.category, cd.spell_cd_ms, cd.category_cd_ms
+        );
+        let spell = inputs.spells.and_then(|s| s.catalog.get(cd.spell_id));
+        // The item's slot naming the spell (`0x805b9b`); a template not cached falls back to the
+        // spell, as the reference's cache miss does.
+        let use_spell = (cd.item_id != 0)
+            .then(|| {
+                inputs
+                    .items
+                    .template(u32::from(cd.item_id), 0, inputs.net)
+                    .and_then(|t| t.use_spell)
+            })
+            .flatten();
+        let ranged_ms = spell
+            .filter(|d| d.ranged_speed_cooldown())
+            .map_or(0, |_| inputs.ranged_ms);
+        cooldowns.seed_initial(cd, spell, use_spell.as_ref(), inputs.mods, ranged_ms, now);
     }
 }
 
@@ -856,15 +1038,16 @@ fn cast_result(
         let dont_report = reason == Some(0x17);
         if !dont_report {
             cooldowns.clear_gcd(spell_id, now);
-            // The bit-25 revert: a non-0x3c failure of a cooldown-on-event spell removes its parked
-            // record (a failed Feign Death or Stealth).
-            if reason != Some(0x3c)
-                && spells
-                    .and_then(|s| s.catalog.get(spell_id))
-                    .is_some_and(|d| d.cooldown_on_event())
-            {
-                cooldowns.clear_spell(spell_id);
-            }
+        }
+        // The bit-25 revert, past the failure routine and so for DONT_REPORT too: a non-0x3c
+        // failure of a cooldown-on-event spell removes its parked record, a failed Feign Death or
+        // Stealth (`0x809bd5`-`0x809bf6`).
+        if reason != Some(0x3c)
+            && spells
+                .and_then(|s| s.catalog.get(spell_id))
+                .is_some_and(|d| d.cooldown_on_event())
+        {
+            cooldowns.clear_spell(spell_id);
         }
         let self_e = self_guid.0.and_then(|g| index.0.get(&g)).copied();
         if auto_repeat.0 == Some(spell_id) && reason != Some(0x17) {
@@ -1478,16 +1661,23 @@ fn cooldown_cheat(caster: u64, cooldowns: &mut Cooldowns) {
     cooldowns.wipe();
 }
 
-/// `MSG_CHANNEL_START` (`0x801c90`): any caster's channel reaches the unit-cast feed; our own also
-/// arms [`ActiveChannel`]. The channel animation rides the unit-field pair instead.
+/// `MSG_CHANNEL_START` (`0x801c90`): a streamed caster's channel reaches the unit-cast feed; our
+/// own also arms [`ActiveChannel`]. A duration not above 0 as a signed value (`0x801cc4`), so an
+/// infinite one too, or an unstreamed caster (`0x801d5e`), does nothing. The channel animation
+/// rides the unit-field pair instead.
 fn channel_start(
     caster: u64,
     own: bool,
+    streamed: bool,
     spell_id: u32,
     duration_ms: u32,
     channel: &mut ActiveChannel,
     feed: &mut CastBarFeed,
 ) {
+    if duration_ms as i32 <= 0 || !streamed {
+        debug!("net: channel start {spell_id} on {caster:#x} for {duration_ms} ms dropped");
+        return;
+    }
     if own {
         channel.start(spell_id, duration_ms, Instant::now());
     }
@@ -2284,7 +2474,7 @@ mod tests {
         let t0 = Instant::now();
         let mut feed = CastBarFeed::default();
         let mut channel = ActiveChannel::default();
-        channel_start(10, true, BLIZZARD, 8_000, &mut channel, &mut feed);
+        channel_start(10, true, true, BLIZZARD, 8_000, &mut channel, &mut feed);
         assert_eq!(
             channel.current(t0 + Duration::from_secs(1)),
             Some(BLIZZARD),
@@ -2296,7 +2486,7 @@ mod tests {
             None,
             "update 0 closes the mirror, so the action button unlights"
         );
-        channel_start(0x42, false, BLIZZARD, 8_000, &mut channel, &mut feed);
+        channel_start(0x42, false, true, BLIZZARD, 8_000, &mut channel, &mut feed);
         assert_eq!(channel.current(t0 + Duration::from_secs(1)), None);
         assert_eq!(
             feed.0,
@@ -3239,5 +3429,265 @@ mod tests {
             None,
             "a reply for a spell we do not have in flight chains nothing"
         );
+    }
+
+    /// `0x801cc4`, `0x801d5e`: a zero, an infinite (`0xFFFFFFFF`) or an unstreamed caster's
+    /// channel opens nothing, ours or another's.
+    #[test]
+    fn a_channel_with_no_positive_duration_or_no_unit_opens_nothing() {
+        let t0 = Instant::now();
+        let mut feed = CastBarFeed::default();
+        let mut channel = ActiveChannel::default();
+        channel_start(10, true, true, 10, 0, &mut channel, &mut feed);
+        channel_start(10, true, true, 10, u32::MAX, &mut channel, &mut feed);
+        channel_start(0x42, false, false, 10, 8_000, &mut channel, &mut feed);
+        assert!(feed.0.is_empty());
+        assert_eq!(channel.current(t0), None);
+    }
+
+    /// `0x804010`: the pet's guid picks the pet's list, any other guid the player's; only the
+    /// cheat and `SMSG_SPELL_COOLDOWN` drop a stranger.
+    #[test]
+    fn event_clear_and_modify_route_a_stranger_to_the_player() {
+        let mut player = Cooldowns::default();
+        let mut pet = crate::ui_pet::PetBar::default();
+        let t0 = Instant::now();
+        player.start_recovery(1, 10_000, t0);
+        pet_or_player_store(0xF140_0000_0000_0001, &mut player, &mut pet).clear_spell(1);
+        assert_eq!(
+            player.record_count(),
+            0,
+            "a stranger's clear reaches the player"
+        );
+        assert!(addressed_store(
+            0xF140_0000_0000_0001,
+            &SelfGuid(Some(10)),
+            &mut player,
+            &mut pet
+        )
+        .is_none());
+    }
+
+    /// `0x8071c0`: each book spell with Attributes `0x2`, lacking AttributesEx2 `0x20000` and
+    /// AttributesEx4 `0x10000000`, gets a bare recovery; any other spell nothing.
+    #[test]
+    fn a_ranged_reset_starts_each_ranged_book_spells_recovery() {
+        let ranged = |ex2: u32, ex4: u32| benilla_formats::SpellDisplay {
+            attributes: 0x2,
+            attributes_ex2: ex2,
+            attributes_ex4: ex4,
+            ..Default::default()
+        };
+        let spells = crate::ui_action::Spells {
+            catalog: benilla_formats::SpellCatalog::from_displays(
+                [
+                    (75, ranged(0, 0)),
+                    (76, ranged(0x2_0000, 0)),
+                    (77, ranged(0, 0x1000_0000)),
+                    (78, benilla_formats::SpellDisplay::default()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            forms: Default::default(),
+            ranges: Default::default(),
+            cast_times: Default::default(),
+            durations: Default::default(),
+            radii: Default::default(),
+        };
+        let actions = PlayerActions {
+            spells: [75, 76, 77, 78].into_iter().collect(),
+            ..Default::default()
+        };
+        let mut cds = Cooldowns::default();
+        let summons = benilla_formats::SummonPropertiesCatalog::default();
+        reset_ranged_combat_timer(500, &actions, Some(&spells), &summons, &mut cds);
+        let now = Instant::now();
+        let left =
+            |cds: &Cooldowns, id| cds.info(id, 0, spells.catalog.get(id), now).remaining_ms > 0;
+        assert_eq!(
+            [75, 76, 77, 78].map(|id| left(&cds, id)),
+            [true, false, false, false]
+        );
+        let mut cds = Cooldowns::default();
+        reset_ranged_combat_timer(0, &actions, Some(&spells), &summons, &mut cds);
+        assert_eq!(cds.record_count(), 0, "a zero time stores nothing");
+    }
+
+    /// `0x809bd5`-`0x809bf6`: a DONT_REPORT failure of a cooldown-on-event spell removes its
+    /// parked record too; NOT_READY (shared 0x3c) keeps it.
+    #[test]
+    fn a_dont_report_failure_reverts_a_parked_on_event_record() {
+        use bevy::ecs::system::RunSystemOnce;
+        const STEALTH: u32 = 1784;
+        let spells = crate::ui_action::Spells {
+            catalog: benilla_formats::SpellCatalog::from_displays(
+                [(
+                    STEALTH,
+                    benilla_formats::SpellDisplay {
+                        recovery_ms: 10_000,
+                        attributes: 0x0200_0000,
+                        ..Default::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            forms: Default::default(),
+            ranges: Default::default(),
+            cast_times: Default::default(),
+            durations: Default::default(),
+            radii: Default::default(),
+        };
+        let mut app = App::new();
+        app.add_message::<CastEvent>()
+            .init_resource::<GuidIndex>()
+            .init_resource::<SelfGuid>()
+            .init_resource::<CastErrors>()
+            .init_resource::<PendingCast>()
+            .init_resource::<QueuedMeleeSpell>()
+            .init_resource::<Cooldowns>()
+            .init_resource::<AutoRepeatActive>()
+            .insert_resource(spells);
+        let fail = |app: &mut App, reason: u8| {
+            let (tx, _rx) = crossbeam_channel::unbounded();
+            let mods = crate::spell::SpellModifiers::default();
+            app.world_mut()
+                .run_system_once(
+                    move |mut commands: Commands,
+                          self_guid: Res<SelfGuid>,
+                          index: Res<GuidIndex>,
+                          mut cast_errors: ResMut<CastErrors>,
+                          casting: Query<&Casting>,
+                          mut cast_events: MessageWriter<CastEvent>,
+                          mut pending: ResMut<PendingCast>,
+                          mut queued_melee: ResMut<QueuedMeleeSpell>,
+                          mut cooldowns: ResMut<Cooldowns>,
+                          mut auto_repeat: ResMut<AutoRepeatActive>,
+                          spells: Res<Spells>| {
+                        let row = spells.catalog.get(STEALTH);
+                        cooldowns.apply_wire_cooldown(STEALTH, 0, 0, row, &mods, Instant::now());
+                        assert!(cooldowns.has_on_hold_record(STEALTH, 0, 0));
+                        cast_result(
+                            STEALTH,
+                            false,
+                            Some(reason),
+                            [None; 2],
+                            &mut commands,
+                            &self_guid,
+                            &index,
+                            &mut cast_errors,
+                            &casting,
+                            &mut cast_events,
+                            &mut pending,
+                            &mut queued_melee,
+                            &mut cooldowns,
+                            &mut auto_repeat,
+                            Some(&spells),
+                            &crate::net::NetCommands(tx.clone()),
+                            1,
+                        );
+                    },
+                )
+                .unwrap();
+            let parked = app
+                .world()
+                .resource::<Cooldowns>()
+                .has_on_hold_record(STEALTH, 0, 0);
+            app.world_mut().resource_mut::<Cooldowns>().wipe();
+            parked
+        };
+        assert!(!fail(&mut app, 0x17), "DONT_REPORT reverts");
+        assert!(fail(&mut app, 0x3c), "NOT_READY keeps the parked record");
+    }
+
+    /// `0x809c70`: `SMSG_SPELL_FAILURE` plays the first school with a `Resistances.dbc` row's
+    /// fizzle on the caster, and our own ammo failure cancels Auto Shot with its send.
+    #[test]
+    fn a_spell_failure_fizzles_and_an_ammo_failure_cancels_auto_shot() {
+        use crate::net::{Guid, SelfPlayer, ServerSoundMessage};
+        use bevy::ecs::system::RunSystemOnce;
+        const SHOT: u32 = 75;
+        let spells = crate::ui_action::Spells {
+            catalog: benilla_formats::SpellCatalog::from_displays(
+                [(
+                    SHOT,
+                    benilla_formats::SpellDisplay {
+                        // Holy and Fire: Holy (index 1) has no row here.
+                        school_mask: 0x2 | 0x4,
+                        ..Default::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            )
+            .with_fizzle_sounds([Some(1), None, Some(1103), None, None, None, None]),
+            forms: Default::default(),
+            ranges: Default::default(),
+            cast_times: Default::default(),
+            durations: Default::default(),
+            radii: Default::default(),
+        };
+        let mut app = App::new();
+        app.add_message::<ServerSoundMessage>()
+            .init_resource::<GuidIndex>()
+            .init_resource::<SelfGuid>()
+            .init_resource::<AutoRepeatActive>()
+            .insert_resource(spells);
+        let me = app.world_mut().spawn((Guid(10), SelfPlayer)).id();
+        let other = app.world_mut().spawn(Guid(0x42)).id();
+        {
+            let mut index = app.world_mut().resource_mut::<GuidIndex>();
+            index.0.insert(10, me);
+            index.0.insert(0x42, other);
+        }
+        app.world_mut().resource_mut::<SelfGuid>().0 = Some(10);
+        app.world_mut().resource_mut::<AutoRepeatActive>().0 = Some(SHOT);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let fail = |app: &mut App, caster: u64, reason: u8| {
+            let tx = tx.clone();
+            app.world_mut()
+                .run_system_once(
+                    move |mut commands: Commands,
+                          spells: Res<Spells>,
+                          index: Res<GuidIndex>,
+                          self_guid: Res<SelfGuid>,
+                          mut auto_repeat: ResMut<AutoRepeatActive>,
+                          mut sounds: MessageWriter<ServerSoundMessage>| {
+                        spell_failure(
+                            caster,
+                            SHOT,
+                            reason,
+                            Some(&spells),
+                            &index,
+                            &self_guid,
+                            &mut auto_repeat,
+                            &mut commands,
+                            &crate::net::NetCommands(tx.clone()),
+                            &mut sounds,
+                        );
+                    },
+                )
+                .unwrap();
+            app.world_mut()
+                .resource_mut::<Messages<ServerSoundMessage>>()
+                .drain()
+                .map(|m| (m.sound_id, m.source))
+                .collect::<Vec<_>>()
+        };
+        // Another unit's ammo failure: its fizzle, our Auto Shot untouched.
+        assert_eq!(fail(&mut app, 0x42, 0x2f), vec![(1103, Some(other))]);
+        assert_eq!(app.world().resource::<AutoRepeatActive>().0, Some(SHOT));
+        // Our interrupt: the fizzle alone.
+        assert_eq!(fail(&mut app, 10, 0x1e), vec![(1103, Some(me))]);
+        assert_eq!(app.world().resource::<AutoRepeatActive>().0, Some(SHOT));
+        // Our NEED_AMMO_POUCH: Auto Shot cancels and the server hears it.
+        fail(&mut app, 10, 0x30);
+        assert_eq!(app.world().resource::<AutoRepeatActive>().0, None);
+        assert!(rx
+            .try_iter()
+            .any(|c| matches!(c, crate::net::ClientCommand::CancelAutoRepeat)));
+        // An unstreamed caster: nothing.
+        assert!(fail(&mut app, 0x99, 0x2f).is_empty());
     }
 }

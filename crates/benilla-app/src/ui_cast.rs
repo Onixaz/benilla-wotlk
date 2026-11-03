@@ -64,6 +64,14 @@ pub(crate) enum CastBarEdge {
     },
     /// `MSG_CHANNEL_UPDATE`: the time left, 0 when the channel is over.
     ChannelUpdate { caster: u64, remaining_ms: u32 },
+    /// `SMSG_RESUME_CAST_BAR`: a cast or channel already running, ending `remaining_ms` from now
+    /// after `total_ms` in all.
+    Resume {
+        caster: u64,
+        spell_id: u32,
+        remaining_ms: u32,
+        total_ms: u32,
+    },
 }
 
 /// The queue of [`CastBarEdge`]s, drained by [`feed_cast_bar`].
@@ -553,6 +561,58 @@ pub(crate) fn feed_cast_bar(
                 script.fire_unit_event(
                     caster,
                     "UNIT_SPELLCAST_CHANNEL_START",
+                    spell_args(spells, spell_id, 0),
+                );
+            }
+            // `0x8020c0`: no attribute gate; a channel by AttributesEx `0x4` (`0x80215e`), each
+            // setter clearing the other's window (`0x72ac50`, `0x72ae00`), with cast count 0.
+            CastBarEdge::Resume {
+                caster,
+                spell_id,
+                remaining_ms,
+                total_ms,
+            } => {
+                let Some(d) = spells.and_then(|s| s.catalog.get(spell_id)) else {
+                    continue;
+                };
+                let channel = d.tooltip_channeled();
+                let end_ms = now_ms + f64::from(remaining_ms);
+                let run = Running {
+                    spell_id,
+                    cast_count: 0,
+                    start_ms: end_ms - f64::from(total_ms),
+                    end_ms,
+                };
+                let u = &mut *units;
+                let (mine, other) = if channel {
+                    (&mut u.channels, &mut u.casts)
+                } else {
+                    (&mut u.casts, &mut u.channels)
+                };
+                mine.insert(caster, run);
+                if other.remove(&caster).is_some() {
+                    script.set_unit_cast(caster, !channel, None);
+                }
+                if watched.contains(&Some(caster)) {
+                    shield.evaluate(
+                        &mut units,
+                        spells,
+                        &index,
+                        self_guid.0.is_some(),
+                        caster,
+                        spell_id,
+                    );
+                }
+                let not = units.reads_not_interruptible(caster);
+                let cast = unit_cast(&script, spells, run, channel, not);
+                script.set_unit_cast(caster, channel, Some(cast));
+                script.fire_unit_event(
+                    caster,
+                    if channel {
+                        "UNIT_SPELLCAST_CHANNEL_START"
+                    } else {
+                        "UNIT_SPELLCAST_START"
+                    },
                     spell_args(spells, spell_id, 0),
                 );
             }
@@ -1103,5 +1163,77 @@ mod tests {
             .insert(crate::unit_auras::UnitAuras::default());
         assert_eq!(run(&mut app, vec![]), "INTERRUPTIBLE:target:nil:nil");
         assert!(!shield(&mut app));
+    }
+
+    /// `0x8020c0`: a running cast reopens with its back-dated window and cast count 0; a channel
+    /// (AttributesEx `0x4`) opens as one and clears the cast's window.
+    #[test]
+    fn a_resumed_cast_bar_opens_back_dated() {
+        const BLIZZARD: u32 = 10;
+        let mut app = feed_app();
+        let catalog = benilla_formats::SpellCatalog::from_displays(
+            [
+                (
+                    HEAL,
+                    SpellDisplay {
+                        name: "Lesser Heal".into(),
+                        ..Default::default()
+                    },
+                ),
+                (
+                    BLIZZARD,
+                    SpellDisplay {
+                        name: "Blizzard".into(),
+                        attributes_ex: 0x4,
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        app.world_mut().resource_mut::<Spells>().catalog = catalog;
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .run(
+                "local f = CreateFrame('Frame') f:RegisterEvent('UNIT_SPELLCAST_CHANNEL_START')
+                 f:SetScript('OnEvent', function(self, e, u, n, r, c)
+                     table.insert(SEEN, e:sub(16) .. ':' .. u .. ':' .. n .. ':' .. c) end)",
+            )
+            .unwrap();
+        let resume = |spell_id, remaining_ms, total_ms| CastBarEdge::Resume {
+            caster: ME,
+            spell_id,
+            remaining_ms,
+            total_ms,
+        };
+        let window = |app: &mut App, verb: &str| {
+            app.world_mut()
+                .non_send_resource::<UiScript>()
+                .eval::<String>(&format!(
+                    "local n, r, t, i, a, b = {verb}('player') return a .. '|' .. b"
+                ))
+                .unwrap()
+        };
+        assert_eq!(
+            run(&mut app, vec![resume(HEAL, 1_000, 1_500)]),
+            "START:player:Lesser Heal:0"
+        );
+        assert_eq!(window(&mut app, "UnitCastingInfo"), "99500|101000");
+        assert_eq!(
+            run(&mut app, vec![resume(BLIZZARD, 3_000, 8_000)]),
+            "CHANNEL_START:player:Blizzard:0"
+        );
+        assert_eq!(window(&mut app, "UnitChannelInfo"), "95000|103000");
+        assert_eq!(
+            app.world_mut()
+                .non_send_resource::<UiScript>()
+                .arity("UnitCastingInfo('player')")
+                .unwrap(),
+            0,
+            "the channel setter clears the cast"
+        );
+        // No `Spell.dbc` row: nothing.
+        assert_eq!(run(&mut app, vec![resume(99, 1_000, 2_000)]), "");
     }
 }

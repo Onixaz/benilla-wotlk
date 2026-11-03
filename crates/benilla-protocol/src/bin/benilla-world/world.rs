@@ -412,7 +412,9 @@ impl World {
             SessionEvent::AttackStart { attacker, victim } => {
                 println!("SMSG_ATTACKSTART: {attacker:#x} → {victim:#x}");
             }
-            SessionEvent::AttackStop { attacker, victim } => {
+            SessionEvent::AttackStop {
+                attacker, victim, ..
+            } => {
                 println!("SMSG_ATTACKSTOP: {attacker:#x} → {victim:#x}");
             }
             SessionEvent::AttackerState(s) => {

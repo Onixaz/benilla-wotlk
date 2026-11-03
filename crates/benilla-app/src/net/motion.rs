@@ -18,7 +18,9 @@ mod tests;
 pub(in crate::net) use facing::resolve_facing;
 pub(in crate::net) use facing::DisplayFacing;
 pub(crate) use facing::FacingStep;
-pub(crate) use facing::{apply_walk_end_facing, drive_display_facing};
+pub(crate) use facing::{
+    apply_walk_end_facing, bearing as facing_bearing, drive_display_facing, FacingHold,
+};
 pub(crate) use modes::UnitMoveModes;
 pub(in crate::net) use modes::ROOT_APPLY_WIPE;
 pub(crate) use relay::{PendingMove, RelayMove};

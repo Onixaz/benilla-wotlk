@@ -336,6 +336,8 @@ pub struct CatalogTables {
     description_variables: SpellDescriptionVariablesCatalog,
     /// `SpellIcon.dbc` texture paths by row id, for icons a binding names by row.
     icons: HashMap<u32, String>,
+    /// `Resistances.dbc`'s `FizzleSoundID` by school index, `None` where the file has no row.
+    fizzle_sounds: [Option<u32>; 7],
 }
 
 impl std::ops::Deref for SpellCatalog {
@@ -375,6 +377,7 @@ impl SpellCatalog {
             dispel_types: SpellDispelTypes::default(),
             description_variables: SpellDescriptionVariablesCatalog::default(),
             icons: HashMap::new(),
+            fizzle_sounds: [None; 7],
         }))
     }
 
@@ -386,6 +389,20 @@ impl SpellCatalog {
     /// The tables of a catalog no clone shares yet, for the test builders.
     fn tables_mut(&mut self) -> &mut CatalogTables {
         std::sync::Arc::get_mut(&mut self.0).expect("a catalog shared before its builder ran")
+    }
+
+    /// The catalog with `fizzle_sounds` as its `Resistances.dbc` sounds, for tests.
+    pub fn with_fizzle_sounds(mut self, fizzle_sounds: [Option<u32>; 7]) -> Self {
+        Self::tables_mut(&mut self).fizzle_sounds = fizzle_sounds;
+        self
+    }
+
+    /// The `SoundEntries` id a failed cast of `display` plays (`0x4cff30`): the first school in
+    /// its mask with a `Resistances.dbc` row gives its fizzle sound.
+    pub fn fizzle_sound(&self, display: &SpellDisplay) -> Option<u32> {
+        (0..7)
+            .filter(|i| display.school_mask & (1 << i) != 0)
+            .find_map(|i| self.fizzle_sounds[i])
     }
 
     /// The catalog with `icons` as its `SpellIcon.dbc` rows, for tests.
@@ -462,6 +479,19 @@ impl SpellCatalog {
     pub fn is_empty(&self) -> bool {
         self.spells.is_empty()
     }
+}
+
+/// `Resistances.dbc`: `ID` (the school index), `Flags`, `FizzleSoundID` and the name.
+pub(crate) fn resistances_schema() -> Schema {
+    let mut s = Schema::new("Resistances");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    s.add_field(SchemaField::new("Flags", FieldType::UInt32));
+    s.add_field(SchemaField::new("FizzleSoundID", FieldType::UInt32));
+    s.add_field(SchemaField::new("NameEnUs", FieldType::String));
+    for i in 1..17 {
+        s.add_field(SchemaField::new(format!("Name{i}"), FieldType::UInt32));
+    }
+    s
 }
 
 /// `SpellCategory.dbc`: `ID` and the `Flags` whose `0x2` makes a wildcard cooldown category.
@@ -784,6 +814,16 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
             d.flies_aim = missiles.get(&d.missile).is_some_and(|m| m.flags & 0x1 != 0);
         }
     }
+    let mut fizzle_sounds = [None; 7];
+    let bytes = chain
+        .read_file("DBFilesClient\\Resistances.dbc")
+        .context("reading Resistances.dbc")?;
+    let rs = parse(&bytes, resistances_schema(), "Resistances.dbc")?;
+    for r in rs.records() {
+        if let Some(slot) = u32_at(r, 0).and_then(|id| fizzle_sounds.get_mut(id as usize)) {
+            *slot = Some(u32_at(r, 2).unwrap_or(0));
+        }
+    }
     Ok(SpellCatalog(std::sync::Arc::new(CatalogTables {
         spells,
         learned_spell,
@@ -792,6 +832,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
         dispel_types,
         description_variables,
         icons,
+        fizzle_sounds,
     })))
 }
 

@@ -215,6 +215,8 @@ pub const CMSG_TIME_SYNC_RESP: u16 = 0x0391; // 913
 pub const MSG_MOVE_TIME_SKIPPED: u16 = 0x0319; // 793
 pub const SMSG_ATTACKSTART: u16 = 0x0143; // 323
 pub const SMSG_ATTACKSTOP: u16 = 0x0144; // 324
+/// [`SMSG_ATTACKSTOP`]'s body, read by the same arm (`0x756aed`).
+pub const SMSG_COMBAT_EVENT_FAILED: u16 = 0x0261; // 609
 pub const SMSG_ATTACKERSTATEUPDATE: u16 = 0x014A; // 330
 
 // The server's refusals of a `CMSG_ATTACKSWING`, all with empty bodies (`Combat.cpp`). `0x147` is
@@ -278,6 +280,9 @@ pub const SMSG_SPELL_DELAYED: u16 = 0x01E2; // 482
 // `u32 remaining_ms`, 0 when the channel is over.
 pub const MSG_CHANNEL_START: u16 = 0x0139; // 313
 pub const MSG_CHANNEL_UPDATE: u16 = 0x013A; // 314
+/// A cast or channel already running: packed caster and target, `u32 spell`, `u32` ms left, `u32`
+/// total ms (`0x8020c0`).
+pub const SMSG_RESUME_CAST_BAR: u16 = 0x014D; // 333
 
 /// Our own aura's remaining time: `u8 slot`, `u32 remaining_ms`; never for others' or permanent
 /// auras (`SpellAuras.cpp:7511-7523`). It arrives before the `UNIT_FIELD_AURA` delta for the slot.
@@ -931,8 +936,8 @@ pub const CMSG_MEETINGSTONE_LEAVE: u16 = 0x0293; // 659
 pub const SMSG_MEETINGSTONE_SETQUEUE: u16 = 0x0295; // 661
 /// `u64` mailbox guid: the server opens the mail window on it (`0x56dbc0`).
 pub const SMSG_SHOW_MAILBOX: u16 = 0x0297; // 663
-/// Display only: empty; `ERR_MEETING_STONE_IN_PROGRESS`.
-pub const SMSG_MEETINGSTONE_IN_PROGRESS: u16 = 0x0298; // 664
+/// `u32` ms: each ranged book spell starts that recovery (`0x8071c0`).
+pub const SMSG_RESET_RANGED_COMBAT_TIMER: u16 = 0x0298; // 664
 /// Display only: `u64 guid`; `ERR_MEETING_STONE_MEMBER_ADDED_S` once the name resolves.
 pub const SMSG_MEETINGSTONE_MEMBER_ADDED: u16 = 0x0299; // 665
 /// `ConfirmPetUnlearn()`: the latched `u64 trainerGuid`, never an argument.

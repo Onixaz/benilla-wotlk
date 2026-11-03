@@ -576,6 +576,30 @@ pub(super) fn read_channel_start(r: &mut impl Read) -> io::Result<(u64, u32, u32
     Ok((caster, spell_id, duration_ms))
 }
 
+/// `SMSG_RESUME_CAST_BAR` (`0x8020c0`): a cast or channel already running on a unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResumeCastBar {
+    pub caster: u64,
+    pub target: u64,
+    pub spell_id: u32,
+    /// Ms until the cast ends.
+    pub remaining_ms: u32,
+    /// The cast's whole length in ms; its start is `total_ms` before the end (`0x802114`).
+    pub total_ms: u32,
+}
+
+/// Read `SMSG_RESUME_CAST_BAR` (`0x8020d3`-`0x802101`): packed caster, packed target, `u32 spell`,
+/// `u32` ms left, `u32` total ms.
+pub(super) fn read_resume_cast_bar(r: &mut impl Read) -> io::Result<ResumeCastBar> {
+    Ok(ResumeCastBar {
+        caster: read_packed_guid(r)?,
+        target: read_packed_guid(r)?,
+        spell_id: read_u32_le(r)?,
+        remaining_ms: read_u32_le(r)?,
+        total_ms: read_u32_le(r)?,
+    })
+}
+
 /// Read `MSG_CHANNEL_UPDATE` (`0x801db0`): packed caster, ms left; 0 ends the channel, whether it
 /// finished or was interrupted.
 pub(super) fn read_channel_update(r: &mut impl Read) -> io::Result<(u64, u32)> {

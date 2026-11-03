@@ -395,7 +395,7 @@ pub enum ServerPacket {
         area: u32,
         status: u8,
     },
-    /// `0x297`/`0x298`/`0x299`/`0x2BB`: the meeting stone's display-only replies.
+    /// `0x299`: the meeting stone's display-only reply.
     MeetingStoneNotice(crate::messages::MeetingStoneNotice),
     /// `SMSG_TUTORIAL_FLAGS`: the account's tutorial bank.
     TutorialFlags(crate::messages::TutorialFlags),
@@ -705,10 +705,12 @@ pub enum ServerPacket {
         attacker: u64,
         victim: u64,
     },
-    /// `SMSG_ATTACKSTOP`: a unit stopped melee auto-attack.
+    /// `SMSG_ATTACKSTOP` or `SMSG_COMBAT_EVENT_FAILED`: a unit stopped melee auto-attack;
+    /// `face_victim` is the wire's nonzero `u32`.
     AttackStop {
         attacker: u64,
         victim: u64,
+        face_victim: bool,
     },
     /// `SMSG_ATTACKERSTATEUPDATE`: one completed melee swing, the attacker's swing-animation cue.
     AttackerState(AttackerState),
@@ -846,6 +848,12 @@ pub enum ServerPacket {
         caster: u64,
         spell_id: u32,
         duration_ms: u32,
+    },
+    /// `SMSG_RESUME_CAST_BAR` (`0x8020c0`): a cast or channel already running on a unit.
+    ResumeCastBar(super::ResumeCastBar),
+    /// `SMSG_RESET_RANGED_COMBAT_TIMER` (`0x8071c0`): a recovery in ms for each ranged book spell.
+    ResetRangedCombatTimer {
+        time_ms: u32,
     },
     /// `MSG_CHANNEL_UPDATE` (`0x801db0`): a unit's channel time left; `0` ends it, end or
     /// interrupt.
@@ -1761,12 +1769,11 @@ impl ServerPacket {
                 "SMSG_BATTLEGROUND_PLAYER_LEFT".into()
             }
             ServerPacket::MeetingStoneSetQueue { .. } => "SMSG_MEETINGSTONE_SETQUEUE".into(),
-            ServerPacket::MeetingStoneNotice(crate::messages::MeetingStoneNotice::InProgress) => {
-                "SMSG_MEETINGSTONE_IN_PROGRESS".into()
-            }
             ServerPacket::MeetingStoneNotice(
                 crate::messages::MeetingStoneNotice::MemberAdded { .. },
             ) => "SMSG_MEETINGSTONE_MEMBER_ADDED".into(),
+            ServerPacket::ResetRangedCombatTimer { .. } => "SMSG_RESET_RANGED_COMBAT_TIMER".into(),
+            ServerPacket::ResumeCastBar(_) => "SMSG_RESUME_CAST_BAR".into(),
             ServerPacket::TutorialFlags(_) => "SMSG_TUTORIAL_FLAGS".into(),
             ServerPacket::SetProficiency { .. } => "SMSG_SET_PROFICIENCY".into(),
             ServerPacket::InitializeFactions { .. } => "SMSG_INITIALIZE_FACTIONS".into(),

@@ -497,7 +497,7 @@ pub enum SessionEvent {
     BattlegroundPlayer { guid: u64, joined: bool },
     /// The meeting-stone queue state (`SMSG 0x295`): the area queued for and a status byte.
     MeetingStoneSetQueue { area: u32, status: u8 },
-    /// One of the meeting stone's four chat-line-only replies (`0x297/0x298/0x299/0x2BB`).
+    /// The meeting stone's chat-line-only reply (`0x299`).
     MeetingStoneNotice(crate::messages::MeetingStoneNotice),
     /// The tutorial bank bytes (`SMSG_TUTORIAL_FLAGS`); the client copies both its banks from them.
     TutorialFlags(Vec<u8>),
@@ -739,8 +739,13 @@ pub enum SessionEvent {
     },
     /// A unit began melee auto-attack (`SMSG_ATTACKSTART`), our own included.
     AttackStart { attacker: u64, victim: u64 },
-    /// A unit stopped melee auto-attack (`SMSG_ATTACKSTOP`).
-    AttackStop { attacker: u64, victim: u64 },
+    /// A unit stopped melee auto-attack (`SMSG_ATTACKSTOP`, `SMSG_COMBAT_EVENT_FAILED`);
+    /// `face_victim` holds its facing toward the victim.
+    AttackStop {
+        attacker: u64,
+        victim: u64,
+        face_victim: bool,
+    },
     /// One melee swing (`SMSG_ATTACKERSTATEUPDATE`): one packet is one swing, no client timer.
     AttackerState(AttackerState),
     /// Our melee swing was refused (`SMSG_ATTACKSWING_*`); sent to the swinger alone.
@@ -926,6 +931,10 @@ pub enum SessionEvent {
         spell_id: u32,
         duration_ms: u32,
     },
+    /// A cast or channel already running on a unit (`SMSG_RESUME_CAST_BAR`).
+    ResumeCastBar(crate::messages::ResumeCastBar),
+    /// Each ranged book spell starts `time_ms` of recovery (`SMSG_RESET_RANGED_COMBAT_TIMER`).
+    ResetRangedCombatTimer { time_ms: u32 },
     /// A unit's channel time left (`MSG_CHANNEL_UPDATE`); 0 is over, natural or interrupted.
     ChannelUpdate { caster: u64, remaining_ms: u32 },
     /// A unit's aura slots (`SMSG_AURA_UPDATE_ALL` / `SMSG_AURA_UPDATE`).

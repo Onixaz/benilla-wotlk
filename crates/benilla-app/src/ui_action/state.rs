@@ -30,7 +30,6 @@ use crate::spell::AutoRepeatActive;
 pub(super) struct StateMemory {
     pushed: HashMap<u32, ActionState>,
     last_generation: Option<u64>,
-    engaged: bool,
     auto_repeat: Option<u32>,
     last_cd_trace: Option<Instant>,
     /// The reactive spells and whether each was ready last frame ([`reactive_spells`]); `None`
@@ -491,17 +490,6 @@ pub(super) fn feed_action_state(
             *was_ready = ready;
         }
     }
-    if engaged != memory.engaged {
-        memory.engaged = engaged;
-        script.fire_event(
-            if engaged {
-                "PLAYER_ENTER_COMBAT"
-            } else {
-                "PLAYER_LEAVE_COMBAT"
-            },
-            vec![],
-        );
-    }
     if auto_repeat.0 != memory.auto_repeat {
         memory.auto_repeat = auto_repeat.0;
         script.fire_event(
@@ -509,6 +497,27 @@ pub(super) fn feed_action_state(
                 "START_AUTOREPEAT_SPELL"
             } else {
                 "STOP_AUTOREPEAT_SPELL"
+            },
+            vec![],
+        );
+    }
+}
+
+/// `PLAYER_ENTER_COMBAT` and `PLAYER_LEAVE_COMBAT`, one per attack start and stop of ours, in
+/// packet order: a new victim enters again, a stop and a start in one frame leave then enter.
+pub(super) fn fire_combat_edges(
+    script: Option<NonSendMut<UiScript>>,
+    edges: Option<ResMut<crate::creature_anim::PlayerCombatEdges>>,
+) {
+    let (Some(mut script), Some(mut edges)) = (script, edges) else {
+        return;
+    };
+    for enter in edges.0.drain(..) {
+        script.fire_event(
+            if enter {
+                "PLAYER_ENTER_COMBAT"
+            } else {
+                "PLAYER_LEAVE_COMBAT"
             },
             vec![],
         );
