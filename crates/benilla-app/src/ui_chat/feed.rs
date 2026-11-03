@@ -144,9 +144,8 @@ pub(super) fn text_emote_event(
 pub(crate) struct ChatLog {
     pending: Vec<Pending>,
     broadcasts: Vec<super::broadcast::Broadcast>,
-    /// A level-up's gains for `ui_unit`'s `PLAYER_LEVEL_UP` fire, matched by level: the fire
-    /// follows a descriptor change and the gains a packet.
-    level_up_gains: Vec<(LevelUpInfo, u32)>,
+    /// `SMSG_LEVELUP_INFO`s for `ui_unit`'s `PLAYER_LEVEL_UP` fire, oldest first.
+    level_ups: Vec<LevelUpInfo>,
 }
 
 impl ChatLog {
@@ -165,18 +164,19 @@ impl ChatLog {
         std::mem::take(&mut self.broadcasts)
     }
 
-    /// Park a level-up's gains for the `PLAYER_LEVEL_UP` fire.
-    pub(crate) fn push_level_up_gains(&mut self, info: &LevelUpInfo, talent_points: u32) {
-        self.level_up_gains.push((*info, talent_points));
+    /// Park a level-up for the `PLAYER_LEVEL_UP` fire.
+    pub(crate) fn push_level_up(&mut self, info: LevelUpInfo) {
+        self.level_ups.push(info);
     }
 
-    /// Take the parked gains for `level`; with none (a GM's level write), the caller fires zeros.
-    pub(crate) fn take_level_up_gains(&mut self, level: u32) -> Option<(LevelUpInfo, u32)> {
-        let i = self
-            .level_up_gains
-            .iter()
-            .position(|(l, _)| l.level == level)?;
-        Some(self.level_up_gains.remove(i))
+    /// Whether a level-up is parked; read first, so an empty take leaves the resource unchanged.
+    pub(crate) fn has_level_ups(&self) -> bool {
+        !self.level_ups.is_empty()
+    }
+
+    /// Take every parked level-up, oldest first.
+    pub(crate) fn take_level_ups(&mut self) -> Vec<LevelUpInfo> {
+        std::mem::take(&mut self.level_ups)
     }
 }
 

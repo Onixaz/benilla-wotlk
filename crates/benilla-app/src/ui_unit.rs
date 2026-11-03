@@ -1309,6 +1309,27 @@ fn feed_units(
     {
         script.set_billing_time_rested(entered);
     }
+    // Ahead of the gate too: `PLAYER_LEVEL_UP` from `SMSG_LEVELUP_INFO` alone (`0x6e3691`), its
+    // nine `%d`s: level, health, the first power gain, a talent point at level 10 or more, the
+    // five stats.
+    let level_ups = if sink.chat.has_level_ups() {
+        sink.chat.take_level_ups()
+    } else {
+        Vec::new()
+    };
+    for l in level_ups {
+        let args = [
+            l.level as i32,
+            l.health,
+            l.powers[0],
+            i32::from(l.level >= 10),
+        ]
+        .into_iter()
+        .chain(l.stats)
+        .map(|v| ScriptValue::Int(i64::from(v)))
+        .collect();
+        script.fire_event("PLAYER_LEVEL_UP", args);
+    }
     let chr = tables.classes();
     let types = tables.types(&names);
     let (memo, vm_reset) = feed.vm.get_reset(&script);
@@ -1594,35 +1615,12 @@ fn feed_units(
         }
     }
 
-    // `PLAYER_LEVEL_UP` on any level change off the descriptor, demotions included (vmangos
-    // `GiveLevel` sends `SMSG_LEVELUP_INFO` for those too); the reference's trigger is untraced.
+    // The player's level watch (`0x6d66e0`): the battleground types' `canEnter` moved.
     if let Some((store, _)) = self_q.iter().next() {
         if let Some(level) = store.0.unit_level() {
             let prev = memo.last_level.replace(level);
             if prev.is_some_and(|p| level != p) {
                 gate.audit("feed_units", "the level edge");
-                // All nine, as the reference formats them (`%d` nine times) and
-                // `ChatFrame.lua:1283-1320` reads them; missing gains are zeros, since stock's
-                // `if ( argN > 0 )` raises on nil.
-                let (info, talent_points) = sink.chat.take_level_up_gains(level).unzip();
-                let gain = |f: fn(&benilla_protocol::messages::LevelUpInfo) -> i32| {
-                    ScriptValue::Int(i64::from(info.as_ref().map_or(0, f)))
-                };
-                script.fire_event(
-                    "PLAYER_LEVEL_UP",
-                    vec![
-                        ScriptValue::Int(i64::from(level)),
-                        gain(|l| l.health),
-                        gain(|l| l.powers[0]),
-                        ScriptValue::Int(i64::from(talent_points.unwrap_or(0))),
-                        gain(|l| l.stats[0]),
-                        gain(|l| l.stats[1]),
-                        gain(|l| l.stats[2]),
-                        gain(|l| l.stats[3]),
-                        gain(|l| l.stats[4]),
-                    ],
-                );
-                // The player's level watch (`0x6d66e0`): the battleground types' `canEnter` moved.
                 script.fire_event("PVPQUEUE_ANYWHERE_UPDATE_AVAILABLE", vec![]);
             }
         }

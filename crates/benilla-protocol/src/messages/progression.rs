@@ -87,28 +87,28 @@ pub fn talent_wipe_confirm(trainer_guid: u64) -> Vec<u8> {
     trainer_guid.to_le_bytes().to_vec()
 }
 
-/// `SMSG_LEVELUP_INFO`: our own level-up, sent only to us with no guid (`Player.cpp:3210-3218`).
+/// `SMSG_LEVELUP_INFO`: our own level-up, sent only to us with no guid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LevelUpInfo {
     /// The level just reached.
     pub level: u32,
     /// Hit points gained, negative on a loss.
     pub health: i32,
-    /// Power gains: mana, rage, focus, energy, happiness. The server fills only mana, which is
-    /// the reference chat line's mana argument.
-    pub powers: [i32; 5],
+    /// Power gains in power-type order: mana, rage, focus, energy, happiness, runes, runic
+    /// power. `PLAYER_LEVEL_UP` passes only the first (`0x6e367c`).
+    pub powers: [i32; 7],
     /// Stat gains in `SPELL_STAT0..4` order (str, agi, stam, int, spirit), one chat line per
     /// positive entry.
     pub stats: [i32; 5],
 }
 
-/// Read `SMSG_LEVELUP_INFO`: `u32` level, `i32` health, 5 powers, 5 stats (`Misc.cpp:524-532`). The
-/// reference fires the gains as `%d`, so a loss the server wraps into its `u32` (vmangos
-/// `Player.cpp:3203-3215`) reads negative.
+/// Read `SMSG_LEVELUP_INFO` (`0x6e3571`): `u32` level, `i32` health, 7 powers (`0x6e358a`), 5
+/// stats. The reference fires the gains as `%d`, so a loss the server wraps into its `u32` reads
+/// negative.
 pub(super) fn read_level_up_info(r: &mut impl Read) -> io::Result<LevelUpInfo> {
     let level = read_u32_le(r)?;
     let health = read_i32_le(r)?;
-    let mut powers = [0; 5];
+    let mut powers = [0; 7];
     for p in &mut powers {
         *p = read_i32_le(r)?;
     }

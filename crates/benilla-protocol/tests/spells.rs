@@ -143,13 +143,13 @@ fn progression_wire_golden() {
         other => panic!("exploration xp event, got {other:?}"),
     }
 
-    // SMSG_LEVELUP_INFO: u32 level, then the i32 gains, healthGain, powerGains[5] (mana..happiness)
-    // and statGains[5] (str..spirit), no guid (vmangos `Misc.cpp:524-532`).
+    // SMSG_LEVELUP_INFO (`0x6e3571`): u32 level, then the i32 gains, healthGain, powerGains[7]
+    // (mana..runic power) and statGains[5] (str..spirit), no guid.
     let mut body = Vec::new();
-    for v in [7u32, 22, 15, 0, 0, 0, 0, 1, 0, 1, 2, 1] {
+    for v in [7u32, 22, 15, 0, 0, 0, 0, 0, 0, 1, 0, 1, 2, 1] {
         body.extend_from_slice(&v.to_le_bytes());
     }
-    assert_eq!(body.len(), 48);
+    assert_eq!(body.len(), 56);
     let packet = messages::parse_server(messages::opcode::SMSG_LEVELUP_INFO, &body).unwrap();
     match &packet {
         ServerPacket::LevelUp(l) => {
@@ -158,7 +158,7 @@ fn progression_wire_golden() {
                 &LevelUpInfo {
                     level: 7,
                     health: 22,
-                    powers: [15, 0, 0, 0, 0],
+                    powers: [15, 0, 0, 0, 0, 0, 0],
                     stats: [1, 0, 1, 2, 1],
                 }
             );
@@ -173,11 +173,12 @@ fn progression_wire_golden() {
     // A loss the server wraps into its u32 reads negative, as the reference's `%d` fire prints it.
     let mut body = Vec::new();
     for v in [
-        7u32, 0xFFFFFFFE, 0xFFFFFFFD, 0, 0, 0, 0, 0xFFFFFFFE, 0, 0xFFFFFFFB, 0xFFFFFFFA, 0xFFFFFFF9,
+        7u32, 0xFFFFFFFE, 0xFFFFFFFD, 0, 0, 0, 0, 0, 0, 0xFFFFFFFE, 0, 0xFFFFFFFB, 0xFFFFFFFA,
+        0xFFFFFFF9,
     ] {
         body.extend_from_slice(&v.to_le_bytes());
     }
-    assert_eq!(body.len(), 48);
+    assert_eq!(body.len(), 56);
     let packet = messages::parse_server(messages::opcode::SMSG_LEVELUP_INFO, &body).unwrap();
     match &packet {
         ServerPacket::LevelUp(l) => {
@@ -186,7 +187,7 @@ fn progression_wire_golden() {
                 &LevelUpInfo {
                     level: 7,
                     health: -2,
-                    powers: [-3, 0, 0, 0, 0],
+                    powers: [-3, 0, 0, 0, 0, 0, 0],
                     stats: [-2, 0, -5, -6, -7],
                 }
             );

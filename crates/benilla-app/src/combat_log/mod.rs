@@ -370,9 +370,13 @@ fn on_exploration_xp(
     }
 }
 
-fn on_level_up(In(ev): In<SessionEvent>, mut p: Progress) {
+fn on_level_up(
+    In(ev): In<SessionEvent>,
+    mut chat: ResMut<ChatLog>,
+    mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
+) {
     if let SessionEvent::LevelUp(lv) = ev {
-        progress::level_up(lv, &mut p.chat);
+        progress::level_up(lv, &mut chat, tutorials.as_mut());
     }
 }
 
