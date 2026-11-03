@@ -25,6 +25,7 @@ const USE_MODEL_COLLISION: u32 = 0x2_0000;
 
 /// A unit's model scales: the render factor of its true scale and its collision box's factor.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[component(storage = "SparseSet")]
 pub(crate) struct ModelScale {
     /// `[unit+0xb3c]`, of the rendered display (`0x722ae0`).
     pub(crate) render: f32,

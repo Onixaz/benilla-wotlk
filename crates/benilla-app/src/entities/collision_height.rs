@@ -17,6 +17,7 @@ use super::Creatures;
 /// The display is the native one (`UNIT_FIELD_NATIVEDISPLAYID`), so a transform keeps the unit's
 /// own depth lines. Not the movement capsule, [`crate::player::CAPSULE_HEIGHT`].
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[component(storage = "SparseSet")]
 pub(crate) struct CollisionHeight(pub(crate) f32);
 
 impl Default for CollisionHeight {

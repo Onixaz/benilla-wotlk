@@ -489,6 +489,7 @@ struct FxInstance {
 
 /// A unit's effect instances (the client's per-unit `+0xb4` effect list).
 #[derive(Component, Default)]
+#[component(storage = "SparseSet")]
 pub(super) struct FxAttached {
     instances: Vec<FxInstance>,
 }

@@ -73,6 +73,7 @@ pub(crate) enum AuraEdge {
 /// effect bit is an empty slot to every reader the client has (`0x72f7a5`, `0x72c5e6`), so it is
 /// not kept.
 #[derive(Component, Debug, Default, Clone, PartialEq)]
+#[component(storage = "SparseSet")]
 pub(crate) struct UnitAuras {
     by_slot: BTreeMap<u8, UnitAura>,
     /// `(slot, spell)` in display order, the index the aura finder walks (`unit+0xdd4`, rebuilt

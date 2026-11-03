@@ -193,6 +193,10 @@ fn population_pulse(index: Res<GuidIndex>, time: Res<Time>, mut last: Local<f32>
 
 // ── ECS state: components ────────────────────────────────────────────────────────────────────────
 
+// A component only streamed entities carry is a sparse set, past the spawn's own three (`Guid`,
+// `NetEntity`, `ObjectStore`): each dense one gained in a new order mints a table, an empty
+// table outlives every unit that made it, and every dense query walks them all.
+
 /// The server guid of a streamed entity.
 #[derive(Component, Clone, Copy)]
 pub(crate) struct Guid(pub(crate) u64);
@@ -217,6 +221,7 @@ pub(crate) struct FreshSpawn;
 /// A unit's movement speeds (yd/s) from its `LIVING` movement block. The animation selector runs
 /// above 2x `walk`.
 #[derive(Component, Clone, Copy)]
+#[component(storage = "SparseSet")]
 pub(crate) struct UnitSpeeds(pub(crate) MoveSpeeds);
 
 /// A mover's speed from its move flags, as the movement object's current-speed getter picks it.
@@ -371,6 +376,7 @@ pub(crate) fn apply_fields_for_test(world: &mut World, entity: Entity, delta: Ob
 
 /// Our own character's entity (guid == [`SelfGuid`]): identity, not what we steer ([`Embodied`]).
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(crate) struct SelfPlayer;
 
 /// The body this client is attached to: the reference's camera anchor (`camera+0x88`), written only
@@ -381,6 +387,7 @@ pub(crate) struct SelfPlayer;
 /// `MSG_MOVE_*` carry no guid, so a fallback to our body would write our pose onto the creature.
 /// Whether it may move is [`ActiveMover`]. [`crate::player`] owns the placement.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(crate) struct Embodied;
 
 /// The unit this client authors motion for: the reference's active-mover global (written only by
@@ -390,6 +397,7 @@ pub(crate) struct Embodied;
 /// The server-replay lanes filter `Without<ActiveMover>`, not `Without<Embodied>`, so a body we
 /// are attached to but lost control of still follows the server.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(crate) struct ActiveMover;
 
 // ── ECS state: resources ─────────────────────────────────────────────────────────────────────────

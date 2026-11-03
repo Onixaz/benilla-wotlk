@@ -31,6 +31,7 @@ mod lod;
 /// Wielded `(item class, subclass)` per hand as worn (the weapon getter's worn read, what the
 /// paperdoll shows); behaviour reads `armed_main`/`armed_off`, which apply the disarm ladder.
 #[derive(Component, Clone, Copy, Default, PartialEq, Eq)]
+#[component(storage = "SparseSet")]
 pub(crate) struct Wielded {
     pub(crate) main: Option<(u8, u8)>,
     pub(crate) off: Option<(u8, u8)>,
@@ -416,6 +417,7 @@ pub(crate) struct CastHold {
 /// A hand's fingers close (`HandsClosed`, 15) purely because a weapon occupies its attach point,
 /// not on combat or sheath; a shield or empty hand stays open.
 #[derive(Component, Default, Clone, Copy, PartialEq, Eq)]
+#[component(storage = "SparseSet")]
 pub(crate) struct HandGrip {
     /// A weapon on the right-hand attach point (id 1).
     pub(crate) right: bool,
@@ -610,6 +612,7 @@ pub(crate) use spell_visual::{
 /// The unit's own variation stream ([`benilla_assets::AnimRng::stream`]), cut on its first frame
 /// from the session seed and the entity, so the driver's rolls do not depend on the unit order.
 #[derive(Component, Default)]
+#[component(storage = "SparseSet")]
 pub(crate) struct UnitAnimRng(Option<benilla_assets::AnimRng>);
 
 impl UnitAnimRng {
@@ -627,6 +630,7 @@ impl UnitAnimRng {
 /// The per-unit animation state machine; `Transform` is required, its scale divides the rate.
 #[derive(Component)]
 #[require(Transform, UnitAnimRng)]
+#[component(storage = "SparseSet")]
 pub(crate) struct AnimDriver {
     mode: Mode,
     /// The targeted gait id, to cross-fade only on a change; `None` forces a fresh pick.

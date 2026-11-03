@@ -12,6 +12,7 @@ use bevy::prelude::*;
 /// A unit body the world can act on: it wades, takes ground shade, claims a WMO room and holds a
 /// rig palette slot. Every field is an engine fact; `benilla-protocol` is not a dependency here.
 #[derive(Component, Clone, Copy, Debug)]
+#[component(storage = "SparseSet")]
 pub struct WorldUnit {
     /// Whether this body displaces water (a ripple ring and a wake): a creature or a player does,
     /// a chest or a spell's ground anchor does not. A field, so no spawn can leave it unstated.
@@ -32,4 +33,5 @@ pub struct WorldUnit {
 
 /// The viewer's own body; a marker because every use is a query filter.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub struct ViewerUnit;

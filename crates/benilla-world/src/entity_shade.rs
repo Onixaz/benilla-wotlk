@@ -45,6 +45,7 @@ const RAMP_EPS: f32 = 1.0 / 640.0;
 /// An entity root's light node, the chase pair the reference steps each frame: intensity (`[+0xa4]`
 /// → `[+0xf8]`, held as `t`) and the ambient word (`[+0x9c]` → `[+0xf4]`).
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub struct GroundShade {
     /// The mix, 1 being intensity 0.5: the parts' tag byte and the bake fold's diffuse scale.
     t: f32,

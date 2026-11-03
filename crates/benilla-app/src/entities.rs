@@ -136,11 +136,13 @@ const OVERHEAD_FALLBACK_FACTOR: f32 = 1.25;
 /// reference reads it from the model file's header with no pose, once per chat line (cached at
 /// bubble `+0x354`), while the name's anchor is the posed attachment.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(crate) struct StandBoxHeight(pub(crate) f32);
 
 /// The model's bbox z-extent (model-local, pre-scale) for [`overhead_anchor`]'s fallback; `0.0`
 /// until the model loads, which anchors at the feet as the client does with no model.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(crate) struct OverheadFallback(pub(crate) f32);
 
 /// The client's per-attachment z-bias table (ids `0..=0x24`): how far above the unit's position a
@@ -423,6 +425,7 @@ pub(crate) struct CharCreate(pub(crate) CharCreateCatalog);
 /// however long the visual waits. A mount child carries its rider's, as the reference writes the
 /// unit's one fade onto the mount model.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[component(storage = "SparseSet")]
 pub(crate) struct Arrival(pub(crate) f32);
 
 /// Stamp each net entity's [`Arrival`] the frame it streams in.
@@ -516,6 +519,7 @@ fn scope_entity_art(
 /// A built body's armed-idle box in model space, which [`publish_world_units`] restates as
 /// `WorldUnit::bound`; absent until the model resolves.
 #[derive(Component, Clone, Copy)]
+#[component(storage = "SparseSet")]
 pub(crate) struct ModelBound(pub(crate) bevy::camera::primitives::Aabb);
 
 /// What [`publish_world_units`] reads to restate one body.

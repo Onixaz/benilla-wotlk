@@ -47,6 +47,7 @@ pub(super) struct WmoPropsResolved;
 
 /// A WMO GameObject's props still waiting on their M2s; removed when the list drains.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(super) struct WmoProps(Vec<WmoProp>);
 
 /// One pending prop, with its WMO-local placement.

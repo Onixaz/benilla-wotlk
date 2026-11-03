@@ -74,6 +74,7 @@ pub(crate) struct MountChild(pub(crate) Entity);
 /// On the unit: the mount display its rig is seated on (`0` standing), [`reseat_mounts`]' diff
 /// key; it lags the field while a mount model loads.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(super) struct AppliedMount(pub(super) u32);
 
 /// Spawn a unit's mount child, built as an ordinary creature. `scale` is the
