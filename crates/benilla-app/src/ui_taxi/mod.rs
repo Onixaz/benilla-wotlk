@@ -34,6 +34,9 @@ pub(crate) struct TaxiState {
     pub(crate) reply: Option<u32>,
     /// A first-visit learn (`SMSG_NEW_TAXI_PATH`) for [`feed_taxi`] to announce.
     pub(crate) discovered: bool,
+    /// A map refused for knowing fewer than two nodes, for [`feed_taxi`] to show
+    /// `ERR_TAXINOPATHS`.
+    pub(crate) no_paths: bool,
 }
 
 impl TaxiState {
@@ -55,6 +58,7 @@ impl TaxiState {
         self.open = None;
         self.reply = None;
         self.discovered = false;
+        self.no_paths = false;
     }
 }
 
@@ -122,6 +126,23 @@ fn feed_taxi(
                 }
             }
             None => state.open = None,
+        }
+    }
+
+    // A map with fewer than two known nodes: message `0xc4` instead of the map (`0x6d61bb`).
+    if std::mem::take(&mut state.no_paths) {
+        let text = script
+            .lua()
+            .globals()
+            .get::<String>("ERR_TAXINOPATHS")
+            .unwrap_or_default();
+        if !text.is_empty() {
+            crate::ui_action::show_messages(
+                &mut script,
+                &mut sink,
+                "ui_taxi",
+                [crate::ui_action::Shown::keyed("ERR_TAXINOPATHS", text)],
+            );
         }
     }
 
@@ -404,11 +425,9 @@ mod tests {
             .0
             .insert(MASTER, master);
         // At Stormwind (2), knowing Sentinel Hill (4), Ironforge (6) and Thelsamar (8).
-        app.world_mut().resource_mut::<TaxiState>().open(
-            MASTER,
-            2,
-            TaxiMask([0b1010_1010, 0, 0, 0, 0, 0, 0, 0]),
-        );
+        app.world_mut()
+            .resource_mut::<TaxiState>()
+            .open(MASTER, 2, TaxiMask(vec![0b1010_1010]));
 
         let node = |app: &mut App, name: &str| -> (i64, i64) {
             app.world_mut()
@@ -463,7 +482,7 @@ mod tests {
         let mut state = TaxiState::default();
         assert_eq!(state.npc(), None);
 
-        state.open(0x42, 2, TaxiMask([0xA, 0, 0, 0, 0, 0, 0, 0]));
+        state.open(0x42, 2, TaxiMask(vec![0xA]));
         assert_eq!(state.npc(), Some(0x42));
         assert_eq!(state.open.as_ref().unwrap().nearest_node, 2);
 

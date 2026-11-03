@@ -5,19 +5,42 @@ use std::io;
 
 use crate::wire::{read_u32_le, read_u64_le, read_u8};
 
-/// The known-node bitmask (vmangos `PlayerTaxi::AppendTaximaskTo`, `PlayerTaxi.cpp:53-65`). Node
-/// ids are 1-based: node `id` is bit `(id-1) % 32` of word `(id-1) / 32` (`PlayerTaxi.h:37-49`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct TaxiMask(pub [u32; 8]);
+/// The known-node bitmask, in `u64` words (`0x6d6104`). Node ids are 1-based: node `id` is bit
+/// `(id-1) % 64` of word `(id-1) / 64`. 12340 reads `max TaxiNodes id / 64 + 1` words (`0x593904`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TaxiMask(pub Vec<u64>);
 
 impl TaxiMask {
-    /// Whether `node_id` is known; 0 and ids past 256 read unknown (1.12 ships 85 nodes).
+    /// Whether `node_id` is known; 0 and ids past the mask read unknown.
     pub fn is_known(&self, node_id: u32) -> bool {
         node_id != 0
             && self
                 .0
-                .get(((node_id - 1) / 32) as usize)
-                .is_some_and(|word| word & (1 << ((node_id - 1) % 32)) != 0)
+                .get(((node_id - 1) / 64) as usize)
+                .is_some_and(|word| word & (1 << ((node_id - 1) % 64)) != 0)
+    }
+
+    /// Mark `node_id` known, growing the mask to hold it; 0 is ignored.
+    pub fn set(&mut self, node_id: u32) {
+        let Some(bit) = node_id.checked_sub(1) else {
+            return;
+        };
+        let word = (bit / 64) as usize;
+        if self.0.len() <= word {
+            self.0.resize(word + 1, 0);
+        }
+        self.0[word] |= 1 << (bit % 64);
+    }
+
+    /// The number of known nodes.
+    pub fn count(&self) -> u32 {
+        self.0.iter().map(|w| w.count_ones()).sum()
+    }
+
+    /// Size the mask to `words` words, as 12340 reads exactly that many: extra words drop, missing
+    /// ones read zero.
+    pub fn resize(&mut self, words: usize) {
+        self.0.resize(words, 0);
     }
 }
 
@@ -75,18 +98,19 @@ pub fn activate_taxi_express(flightmaster_guid: u64, total_cost: u32, nodes: &[u
     body
 }
 
-/// Read `SMSG_SHOWTAXINODES` (vmangos `TaxiHandler.cpp:82-96`): a `u32` gate, then, only when it is
-/// nonzero, the flight master, the nearest node and the [`TaxiMask`]. vmangos always sends 1.
+/// Read `SMSG_SHOWTAXINODES` (`0x6d6050`): a `u32` show flag, then, only when it is nonzero, the
+/// flight master and the current node, then the [`TaxiMask`] words whatever the flag. The word count
+/// is the client's `TaxiNodes.dbc` size, which the protocol does not know, so every whole word the
+/// body carries is read and the app sizes the mask (AzerothCore sends 7).
 pub(super) fn read_show_taxi_nodes(r: &mut &[u8]) -> io::Result<(u32, u64, u32, TaxiMask)> {
     let window = read_u32_le(r)?;
-    if window == 0 {
-        return Ok((0, 0, 0, TaxiMask::default()));
-    }
-    let flightmaster = read_u64_le(r)?;
-    let nearest_node = read_u32_le(r)?;
-    let mut mask = [0u32; 8];
-    for word in &mut mask {
-        *word = read_u32_le(r)?;
+    let (flightmaster, nearest_node) = match window {
+        0 => (0, 0),
+        _ => (read_u64_le(r)?, read_u32_le(r)?),
+    };
+    let mut mask = Vec::with_capacity(r.len() / 8);
+    while r.len() >= 8 {
+        mask.push(read_u64_le(r)?);
     }
     Ok((window, flightmaster, nearest_node, TaxiMask(mask)))
 }

@@ -4,7 +4,7 @@
 //! destination node's DBC position, the flight time against the path length over 32 yd/s, the
 //! in-flight anims and the flying pitch and bank; then it holds `W` and logs when movement starts.
 //!
-//! Non-combat. `.taxicheat on` lets a fresh character fly to an unvisited node; the ~110-copper
+//! Non-combat. `.cheat taxi on` lets a fresh character fly to an unvisited node; the ~110-copper
 //! fare comes from the character's own purse. The switches are `docs/CONTRIBUTING.md`, "Running
 //! it unattended".
 
@@ -163,7 +163,7 @@ fn taxi_probe(
                 .0
                 .send(ClientCommand::SetSelection { guid: self_guid.0 });
             for text in [
-                ".taxicheat on".to_string(),
+                ".cheat taxi on".to_string(),
                 format!(".go xyz {x} {y} {z} 0"),
             ] {
                 let _ = net.0.send(ClientCommand::Chat {
@@ -208,11 +208,16 @@ fn taxi_probe(
             retried,
         } => {
             if let Some(open) = &taxi.open {
-                let known = (1..=256).filter(|&id| open.known.is_known(id)).count();
+                let known = open.known.count();
+                let past_256 = (257..=64 * open.known.0.len() as u32)
+                    .filter(|&id| open.known.is_known(id))
+                    .count();
                 info!(
                     "PROBE taxi: map open — flight master {:#x}, nearest node {}, {known} known \
-                     nodes",
-                    open.flightmaster, open.nearest_node
+                     nodes ({past_256} past id 256) in {} mask words",
+                    open.flightmaster,
+                    open.nearest_node,
+                    open.known.0.len()
                 );
                 if open.nearest_node != SRC_NODE {
                     warn!(

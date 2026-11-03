@@ -54,27 +54,40 @@ fn taxi_send_bodies_golden() {
 
 #[test]
 fn taxi_mask_bit_law() {
-    // Node ids are 1-based: field (id-1)/32, bit (id-1)%32 (vmangos `PlayerTaxi.h`).
-    let mask = TaxiMask([0x0000_000A, 0x0000_0001, 0, 0, 0, 0, 0, 0]);
+    // Node ids are 1-based: word (id-1)/64, bit (id-1)%64 (`0x6d6104`).
+    let mut mask = TaxiMask(vec![0x0000_0001_0000_000A, 0, 0, 0, 0, 0, 1 << 55]);
     assert!(mask.is_known(2));
     assert!(mask.is_known(4));
     assert!(mask.is_known(33));
+    assert!(mask.is_known(440), "the highest 3.3.5a node, word 6");
     assert!(!mask.is_known(3), "bit not set for node 3");
-    assert!(!mask.is_known(65), "field 2 is all-zero");
+    assert!(!mask.is_known(65), "word 1 is all-zero");
+    assert!(!mask.is_known(449), "past the mask");
     assert!(!mask.is_known(0), "node id 0 is never valid");
+    assert_eq!(mask.count(), 4);
+    mask.set(65);
+    mask.set(500);
+    assert!(mask.is_known(65) && mask.is_known(500));
+    assert_eq!(mask.0.len(), 8, "set grows the mask");
+    mask.resize(7);
+    assert!(
+        !mask.is_known(500),
+        "resize drops the words past the client's count"
+    );
 }
 
 #[test]
 fn show_taxi_nodes_wire() {
-    // SMSG_SHOWTAXINODES (vmangos `TaxiHandler.cpp:82-96`): window always 1, guid not packed.
-    let mut body = 1u32.to_le_bytes().to_vec(); // window constant
+    // SMSG_SHOWTAXINODES (`0x6d6050`): flag, guid not packed, current node, then 7 u64 words for
+    // the 3.3.5a TaxiNodes.dbc (highest id 440), as AzerothCore sends 14 u32.
+    let mut body = 1u32.to_le_bytes().to_vec(); // show flag
     body.extend_from_slice(&0xCCu64.to_le_bytes()); // flightmaster guid
     body.extend_from_slice(&2u32.to_le_bytes()); // nearest node
-    let mask_words = [0x0000_0002u32, 0x0000_0001, 0, 0, 0, 0, 0, 0];
-    for w in mask_words {
+    let mask_words = vec![0x0000_0001_0000_0002u64, 0, 0, 0, 0, 0, 1 << 55];
+    for w in &mask_words {
         body.extend_from_slice(&w.to_le_bytes());
     }
-    assert_eq!(body.len(), 4 + 8 + 4 + 8 * 4, "48-byte fixed body");
+    assert_eq!(body.len(), 4 + 8 + 4 + 7 * 8, "72-byte body");
 
     match messages::parse_server(messages::opcode::SMSG_SHOWTAXINODES, &body).unwrap() {
         ServerPacket::ShowTaxiNodes {
@@ -84,9 +97,10 @@ fn show_taxi_nodes_wire() {
             known,
         } => {
             assert_eq!((window, flightmaster, nearest_node), (1, 0xCC, 2));
-            assert_eq!(known, TaxiMask(mask_words));
+            assert_eq!(known, TaxiMask(mask_words.clone()));
             assert!(known.is_known(2));
             assert!(known.is_known(33));
+            assert!(known.is_known(440), "a Northrend-range node reads known");
             assert!(!known.is_known(3));
         }
         other => panic!("show taxi nodes, got {}", other.name()),
@@ -100,13 +114,20 @@ fn show_taxi_nodes_wire() {
             known_mask,
         } => {
             assert_eq!((flightmaster, nearest_node), (0xCC, 2));
-            assert_eq!(known_mask, TaxiMask(mask_words));
+            assert_eq!(known_mask, TaxiMask(mask_words.clone()));
         }
         other => panic!("taxi nodes shown event, got {other:?}"),
     }
 
-    // The leading word gates the reference's parse: 0 ends the body (vmangos never sends 0).
-    let gated = 0u32.to_le_bytes().to_vec();
+    // A zero flag skips the guid and the node; the mask words still follow (`0x6d6078`).
+    let mut gated = 0u32.to_le_bytes().to_vec();
+    gated.extend_from_slice(&3u64.to_le_bytes());
+    match messages::parse_server(messages::opcode::SMSG_SHOWTAXINODES, &gated).unwrap() {
+        ServerPacket::ShowTaxiNodes { window, known, .. } => {
+            assert_eq!((window, known), (0, TaxiMask(vec![3])));
+        }
+        other => panic!("show taxi nodes, got {}", other.name()),
+    }
     let packet = messages::parse_server(messages::opcode::SMSG_SHOWTAXINODES, &gated).unwrap();
     assert!(
         decode(packet).is_empty(),

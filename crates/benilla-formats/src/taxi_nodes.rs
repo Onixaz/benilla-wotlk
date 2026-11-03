@@ -41,6 +41,11 @@ impl TaxiNodes {
         self.rows.get(&id)
     }
 
+    /// The highest node id, which sizes the client's known-node mask; 0 when empty.
+    pub fn max_id(&self) -> u32 {
+        self.rows.keys().copied().max().unwrap_or(0)
+    }
+
     /// Every row, in no particular order.
     pub fn rows(&self) -> impl Iterator<Item = &TaxiNode> {
         self.rows.values()
