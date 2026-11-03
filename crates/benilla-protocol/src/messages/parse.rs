@@ -15,8 +15,20 @@ use super::{
     pet, petition, pose, progression, pvp, quest, rune, social, spellbook, spells, stable, summon,
     tabard, talents, taxi, threat, totem, trade, trainer, tutorial, unit_state, update_object,
     vehicle, vendor, world_state, AttackSwingError, CalendarPacket, Character, CreatureQueryInfo,
-    DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
+    DifficultySet, GameClock, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
 };
+
+/// The game clock handlers drop a body they have not read to the end (`0x7e285f`, `0x7e2915`,
+/// `0x7e29ee`, `0x7e2b67`).
+fn read_to_end(r: &[u8], what: &str) -> io::Result<()> {
+    if r.is_empty() {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("{what} with {} bytes past its fields", r.len()),
+    ))
+}
 
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`
 /// before the speed for the run kind alone: 12340's shared handler (`0x7307a0`) reads it only on
@@ -436,25 +448,36 @@ fn parse_server_body(
             ServerPacket::TransferAborted { map, reason, arg }
         }
         opcode::SMSG_LOGIN_SETTIMESPEED => {
-            // Packed DateTime, LSB up: minute:6, hour:5, weekday:3, day:6, month:4, year:5. The
-            // day serial assumes 31-day months and 372-day years, monotonic but not calendar-true.
             let datetime = read_u32_le(&mut r)?;
             let timescale = read_f32_le(&mut r)?;
             // The server's zone offset in hours (`0x7e28e0`); AzerothCore sends 0.
             let zone = read_u32_le(&mut r)?;
-            let (day, month, year) = (
-                (datetime >> 14) & 0x3F,
-                (datetime >> 20) & 0x0F,
-                (datetime >> 24) & 0x1F,
-            );
+            read_to_end(r, "game time and speed")?;
+            let clock = GameClock::new(datetime, zone);
             ServerPacket::TimeSpeed {
-                hours: ((datetime >> 6) & 0x1F) as u8,
-                minutes: (datetime & 0x3F) as u8,
-                day_serial: year * 372 + month * 31 + day,
+                hours: clock.hours,
+                minutes: clock.minutes,
+                day_serial: clock.day_serial,
                 timescale,
-                packed: datetime,
-                zone: zone as i32,
+                packed: clock.packed,
+                zone: clock.zone,
             }
+        }
+        // SETTIMESPEED's first and third fields (`0x7e29d7`/`0x7e29e2`, `0x7e2b50`/`0x7e2b5b`).
+        opcode::SMSG_GAMETIME_UPDATE | opcode::SMSG_GAMETIME_SET => {
+            let datetime = read_u32_le(&mut r)?;
+            let clock = GameClock::new(datetime, read_u32_le(&mut r)?);
+            read_to_end(r, "game time")?;
+            if opcode == opcode::SMSG_GAMETIME_UPDATE {
+                ServerPacket::GameTimeUpdate(clock)
+            } else {
+                ServerPacket::GameTimeSet(clock)
+            }
+        }
+        opcode::SMSG_GAMESPEED_SET => {
+            let timescale = read_f32_le(&mut r)?;
+            read_to_end(r, "game speed")?;
+            ServerPacket::GameSpeed { timescale }
         }
         // Wall-clock unix seconds (`QueryHandler.cpp:418-423`), not the game clock above.
         opcode::SMSG_QUERY_TIME_RESPONSE => ServerPacket::QueryTimeResponse {

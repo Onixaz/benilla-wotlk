@@ -650,9 +650,17 @@ pub(crate) struct DropTally {
     pub(crate) unparseable: u64,
 }
 
-/// The in-game clock (`SMSG_LOGIN_SETTIMESPEED`), advanced by its timescale.
-#[derive(Resource, Default)]
-pub(crate) struct ServerTime(pub(crate) Option<GameTime>);
+/// The in-game clock (`SMSG_LOGIN_SETTIMESPEED`), advanced by its timescale, and the speed a
+/// clock set later runs at: 12340's clock holds a speed before any time, 1/60 from its
+/// constructor (`0x76d608`).
+#[derive(Resource)]
+pub(crate) struct ServerTime(pub(crate) Option<GameTime>, pub(crate) f32);
+
+impl Default for ServerTime {
+    fn default() -> Self {
+        Self(None, GameTime::MIN_SPEED)
+    }
+}
 
 /// Publish the session clock into [`benilla_world::lighting::WorldTime`] each frame; with no
 /// server, its default (noon).
@@ -794,19 +802,54 @@ pub(crate) struct GameTime {
     base_day: u32,
     timescale: f32,
     received: Instant,
+    /// Game minutes the clock had already run at `received`, at the speeds before this one.
+    carried: f64,
     /// The packed date and clock at `received`, the client game clock's seed (`0x7e28e0`).
     base: benilla_ui::script::WowTime,
 }
 
 impl GameTime {
+    /// The speed bounds every speed is clamped to (`0x76cfa0`: `0xa393e4`, `0xa393e0`).
+    pub(crate) const MIN_SPEED: f32 = 1.0 / 60.0;
+    pub(crate) const MAX_SPEED: f32 = 60.0;
+
     pub(crate) fn new(hours: u8, minutes: u8, day_serial: u32, timescale: f32) -> Self {
         Self {
             base_minute: hours as u32 * 60 + minutes as u32,
             base_day: day_serial,
-            timescale,
+            timescale: timescale.clamp(Self::MIN_SPEED, Self::MAX_SPEED),
             received: Instant::now(),
+            carried: 0.0,
             base: benilla_ui::script::WowTime::default(),
         }
+    }
+
+    pub(crate) fn timescale(&self) -> f32 {
+        self.timescale
+    }
+
+    /// Run on at `timescale` from the current time, as `SMSG_GAMESPEED_SET` sets the speed alone
+    /// (`0x7e2893`).
+    pub(crate) fn set_timescale(&mut self, timescale: f32) {
+        self.carried = self.elapsed_minutes();
+        self.received = Instant::now();
+        self.timescale = timescale.clamp(Self::MIN_SPEED, Self::MAX_SPEED);
+    }
+
+    /// `SMSG_GAMETIME_UPDATE`'s sync to `next` (`0x76d9a0`, not forced): a clock behind takes its
+    /// time, one ahead takes it run on by the whole minutes it leads, within a day.
+    pub(crate) fn synced(&self, mut next: GameTime) -> GameTime {
+        let now = i64::from(self.base_day) * 1440
+            + i64::from(self.base_minute)
+            + self.elapsed_minutes().floor() as i64;
+        let then = i64::from(next.base_day) * 1440 + i64::from(next.base_minute);
+        next.carried = ((now - then) % 1440).max(0) as f64;
+        next
+    }
+
+    /// Game minutes run since the seed.
+    fn elapsed_minutes(&self) -> f64 {
+        self.carried + self.received.elapsed().as_secs_f64() * f64::from(self.timescale)
     }
 
     /// Seat the packed date and the zone offset the calendar reads.
@@ -821,9 +864,8 @@ impl GameTime {
     /// The client game clock: the seed advanced a minute per elapsed game minute, its date carried
     /// across midnight (`0x76d740`).
     pub(crate) fn calendar_now(&self) -> benilla_ui::script::WowTime {
-        let elapsed = self.received.elapsed().as_secs_f64() * f64::from(self.timescale);
         let mut now = self.base;
-        now.add_minutes(elapsed.floor() as i32);
+        now.add_minutes(self.elapsed_minutes().floor() as i32);
         now
     }
 
@@ -834,8 +876,7 @@ impl GameTime {
 
     /// Current fractional minute of the game day, so the sky bodies move without steps.
     pub(crate) fn minute_of_day_f32(&self) -> f32 {
-        let elapsed = self.received.elapsed().as_secs_f32() * self.timescale;
-        (self.base_minute as f32 + elapsed).rem_euclid(1440.0)
+        (f64::from(self.base_minute) + self.elapsed_minutes()).rem_euclid(1440.0) as f32
     }
 
     /// Today's game date as the packed fields hold it: 0-based month and day, years since 2000.
@@ -848,8 +889,7 @@ impl GameTime {
     /// Days and day fraction since the serial epoch, unwrapped, for the moon phase
     /// `(dayCounter + todPhase) mod 1.7`; `f64` for sub-minute grain at ~12k days.
     pub(crate) fn day_continuous(&self) -> f64 {
-        let elapsed = self.received.elapsed().as_secs_f64() * self.timescale as f64;
-        self.base_day as f64 + (self.base_minute as f64 + elapsed) / 1440.0
+        f64::from(self.base_day) + (f64::from(self.base_minute) + self.elapsed_minutes()) / 1440.0
     }
 }
 
@@ -2825,6 +2865,48 @@ pub(crate) struct PetDismissSoundMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A clock that has run an hour.
+    fn clock_an_hour_in() -> GameTime {
+        let mut clock = GameTime::new(10, 0, 100, GameTime::MIN_SPEED);
+        clock.carried = 60.0;
+        clock
+    }
+
+    /// A new speed keeps the time the clock has reached and runs on from there.
+    #[test]
+    fn a_speed_change_keeps_the_current_time() {
+        let mut clock = clock_an_hour_in();
+        assert_eq!(clock.minute_of_day(), 11 * 60);
+        clock.set_timescale(0.5);
+        assert_eq!(clock.timescale(), 0.5);
+        assert_eq!(clock.minute_of_day(), 11 * 60);
+        assert!((clock.day_continuous() - (100.0 + 660.0 / 1440.0)).abs() < 1e-4);
+    }
+
+    /// Every speed lands in 12340's `[1/60, 60]` (`0x76cfa0`).
+    #[test]
+    fn a_speed_is_clamped_to_the_reference_bounds() {
+        assert_eq!(GameTime::new(0, 0, 0, 0.0).timescale(), GameTime::MIN_SPEED);
+        let mut clock = GameTime::new(0, 0, 0, 1000.0);
+        assert_eq!(clock.timescale(), GameTime::MAX_SPEED);
+        clock.set_timescale(-1.0);
+        assert_eq!(clock.timescale(), GameTime::MIN_SPEED);
+    }
+
+    /// A sync moves a clock forward to the packet, never back (`0x76d9a0`).
+    #[test]
+    fn a_sync_never_runs_the_clock_back() {
+        let clock = GameTime::new(14, 5, 100, GameTime::MIN_SPEED);
+        let at = |h, m, day| GameTime::new(h, m, day, GameTime::MIN_SPEED);
+        assert_eq!(clock.synced(at(14, 2, 100)).minute_of_day(), 14 * 60 + 5);
+        assert_eq!(clock.synced(at(14, 8, 100)).minute_of_day(), 14 * 60 + 8);
+        let midnight = GameTime::new(23, 59, 100, GameTime::MIN_SPEED);
+        let next = midnight.synced(at(0, 1, 101));
+        assert_eq!((next.minute_of_day(), next.base_day), (1, 101));
+        let held = GameTime::new(0, 1, 101, GameTime::MIN_SPEED).synced(at(23, 59, 100));
+        assert_eq!(held.minute_of_day(), 1);
+    }
 
     /// A re-create of a live object notifies like a delta.
     #[test]

@@ -68,6 +68,38 @@ pub struct SplineArc {
     pub effect_start_ms: u32,
 }
 
+/// The game clock the clock packets carry: the packed time and the zone `u32` read after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameClock {
+    pub hours: u8,
+    pub minutes: u8,
+    /// Day count from the packed date, `year·372 + month·31 + day`; drives the moon phase.
+    pub day_serial: u32,
+    /// The packed `WowTime` word whole, the calendar's date.
+    pub packed: u32,
+    /// The server's zone offset in hours.
+    pub zone: i32,
+}
+
+impl GameClock {
+    /// Packed DateTime, LSB up: minute:6, hour:5, weekday:3, day:6, month:4, year:5. The day
+    /// serial assumes 31-day months and 372-day years, monotonic but not calendar-true.
+    pub fn new(packed: u32, zone: u32) -> Self {
+        let (day, month, year) = (
+            (packed >> 14) & 0x3F,
+            (packed >> 20) & 0x0F,
+            (packed >> 24) & 0x1F,
+        );
+        Self {
+            hours: ((packed >> 6) & 0x1F) as u8,
+            minutes: (packed & 0x3F) as u8,
+            day_serial: year * 372 + month * 31 + day,
+            packed,
+            zone: zone as i32,
+        }
+    }
+}
+
 /// One creature template's UI-visible head, from `SMSG_CREATURE_QUERY_RESPONSE`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreatureQueryInfo {
@@ -231,6 +263,14 @@ pub enum ServerPacket {
         /// The packed `WowTime` word whole, the calendar's date.
         packed: u32,
         zone: i32,
+    },
+    /// `SMSG_GAMETIME_UPDATE`: the game clock re-synced, its speed kept.
+    GameTimeUpdate(GameClock),
+    /// `SMSG_GAMETIME_SET`: the game clock set, its speed kept.
+    GameTimeSet(GameClock),
+    /// `SMSG_GAMESPEED_SET`: the game clock's speed, in game minutes per real second.
+    GameSpeed {
+        timescale: f32,
     },
     /// `SMSG_QUERY_TIME_RESPONSE` (`0x5e08a0`): wall-clock unix seconds, the base of absolute
     /// descriptor stamps, then the seconds to the daily quest reset.
@@ -1736,6 +1776,9 @@ impl ServerPacket {
             ServerPacket::TransferAborted { .. } => "SMSG_TRANSFER_ABORTED".into(),
             ServerPacket::LoginVerifyWorld { .. } => "SMSG_LOGIN_VERIFY_WORLD".into(),
             ServerPacket::TimeSpeed { .. } => "SMSG_LOGIN_SETTIMESPEED".into(),
+            ServerPacket::GameTimeUpdate(_) => "SMSG_GAMETIME_UPDATE".into(),
+            ServerPacket::GameTimeSet(_) => "SMSG_GAMETIME_SET".into(),
+            ServerPacket::GameSpeed { .. } => "SMSG_GAMESPEED_SET".into(),
             ServerPacket::QueryTimeResponse { .. } => "SMSG_QUERY_TIME_RESPONSE".into(),
             ServerPacket::BindPoint { .. } => "SMSG_BINDPOINTUPDATE".into(),
             ServerPacket::GmTicketAnswer { .. } => "SMSG_GMTICKET_GETTICKET".into(),

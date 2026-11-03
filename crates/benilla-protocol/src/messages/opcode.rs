@@ -42,6 +42,12 @@ pub const SMSG_NEW_WORLD: u16 = 0x003E;
 pub const SMSG_TRANSFER_PENDING: u16 = 0x003F;
 pub const SMSG_TRANSFER_ABORTED: u16 = 0x0040;
 pub const SMSG_LOGIN_SETTIMESPEED: u16 = 0x0042;
+/// The game clock re-synced at the current speed: the packed time and the zone `u32` (`0x7e29c0`).
+pub const SMSG_GAMETIME_UPDATE: u16 = 0x0043;
+/// The game clock set at the current speed: the packed time and the zone `u32` (`0x7e2b40`).
+pub const SMSG_GAMETIME_SET: u16 = 0x0045;
+/// The game clock's speed alone: one `f32` of game minutes per real second (`0x7e2840`).
+pub const SMSG_GAMESPEED_SET: u16 = 0x0047;
 pub const SMSG_BINDPOINTUPDATE: u16 = 0x0155;
 /// The proficiency mask for one item class (vmangos `Skill.h`).
 pub const SMSG_SET_PROFICIENCY: u16 = 0x0127;

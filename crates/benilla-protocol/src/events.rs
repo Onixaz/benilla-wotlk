@@ -4,19 +4,19 @@ use crate::messages::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
     AuctionListPage, AuctionOwnerNotification, AuctionPendingSale, ChannelNoticeTail, Character,
     ContactList, CreateSpline, DamageShield, DifficultySet, DispelFailed, EnchantmentLog,
-    EnvironmentalDamageLog, ExplorationXp, FriendStatusUpdate, GmResponse, GmTicket, GossipMenu,
-    GroupDifficulties, GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice,
-    GuildInfo, GuildQueryResponse, GuildRoster, InspectHonorStats, ItemInfo, ItemPushResult,
-    JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootList, LootRoll, LootRollWon,
-    LootSlotChanged, LootStartRoll, MailList, MailResult, MailSender, MirrorTimerStart,
-    MonsterMoveFacing, MoverState, ObjectFields, PartyKillLog, PartyMemberStatsInfo,
-    PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList,
-    PetitionShowSignatures, PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept,
-    QuestDetails, QuestGiverList, QuestOfferReward, QuestRequestItems, QuestShareMsg,
-    QuestTemplate, SpellDamageLog, SpellEnergizeLog, SpellHealLog, SpellInstaKillLog,
-    SpellLogExecute, SpellLogMiss, SpellOutcomeLog, SpellRemoveLog, SplineArc, StabledPet,
-    TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell, TransportPose, VendorItem,
-    WhoResults, XpGain,
+    EnvironmentalDamageLog, ExplorationXp, FriendStatusUpdate, GameClock, GmResponse, GmTicket,
+    GossipMenu, GroupDifficulties, GroupLootInfo, GroupMemberEntry, GuildCommandResult,
+    GuildEventNotice, GuildInfo, GuildQueryResponse, GuildRoster, InspectHonorStats, ItemInfo,
+    ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootList, LootRoll,
+    LootRollWon, LootSlotChanged, LootStartRoll, MailList, MailResult, MailSender,
+    MirrorTimerStart, MonsterMoveFacing, MoverState, ObjectFields, PartyKillLog,
+    PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
+    PetitionRename, PetitionShowList, PetitionShowSignatures, PetitionSignResults, PvpCredit,
+    QuestComplete, QuestConfirmAccept, QuestDetails, QuestGiverList, QuestOfferReward,
+    QuestRequestItems, QuestShareMsg, QuestTemplate, SpellDamageLog, SpellEnergizeLog,
+    SpellHealLog, SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog,
+    SpellRemoveLog, SplineArc, StabledPet, TaxiMask, TradeStatus, TradeStatusExtended,
+    TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
 };
 
 /// Coarse entity classification, free of wire types, carried on [`SessionEvent::ObjectCreate`].
@@ -372,6 +372,15 @@ pub enum SessionEvent {
         /// The server's zone offset in hours.
         zone: i32,
     },
+    /// `SMSG_GAMETIME_SET`: the game clock set to the packet's time at its current speed
+    /// (`0x7e2bb0`).
+    GameTimeSet(GameClock),
+    /// `SMSG_GAMETIME_UPDATE`: the game clock synced to the packet's time at its current speed, a
+    /// clock ahead of it keeping its lead (`0x7e2a37`).
+    GameTimeSync(GameClock),
+    /// The game clock's speed (`SMSG_GAMESPEED_SET`), game minutes per real second; the time runs
+    /// on from where it is.
+    GameSpeed { timescale: f32 },
     /// The server's wall clock in unix seconds (`SMSG_QUERY_TIME_RESPONSE`), the base of absolute
     /// descriptor stamps: a timed quest's deadline is `time(nullptr) + limitTime`. `reset_in` is the
     /// seconds to the daily quest reset (the quest log's server-time set, `0x5dff40`).
