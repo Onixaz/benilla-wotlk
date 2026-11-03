@@ -1149,6 +1149,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             gender,
             class,
         }],
+        ServerPacket::NameQueryMiss { guid, miss } => {
+            vec![SessionEvent::PlayerNameMiss { guid, miss }]
+        }
         ServerPacket::PetNameQueryResponse { pet_number, name } => {
             vec![SessionEvent::PetName { pet_number, name }]
         }

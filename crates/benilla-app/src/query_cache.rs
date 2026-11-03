@@ -71,7 +71,6 @@ impl<K: Copy + Eq + Hash, V> QueryCache<K, V> {
         self.answered.get(&key).is_some_and(Option::is_none)
     }
 
-    #[cfg(test)]
     /// Whether an ask for `key` is in flight.
     pub(crate) fn is_pending(&self, key: K) -> bool {
         self.pending.lock_recover().contains(&key)

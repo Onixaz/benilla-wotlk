@@ -501,14 +501,18 @@ pub enum SessionEvent {
     ReputationDelta { standings: Vec<(u32, i32)> },
     /// `SMSG_SET_FACTION_VISIBLE`: sets the slot's visible flag, which decides if it is listed.
     ReputationVisible { list_id: u32 },
-    /// `SMSG_NAME_QUERY_RESPONSE`: names are never descriptor fields in 1.12, only query answers.
-    /// An unknown guid answers with an empty `name`.
+    /// `SMSG_NAME_QUERY_RESPONSE`: names are never descriptor fields, only query answers.
     PlayerName {
         guid: u64,
         name: String,
         race: u32,
         gender: u32,
         class: u32,
+    },
+    /// `SMSG_NAME_QUERY_RESPONSE` with no name: retry, cache a placeholder, or deny.
+    PlayerNameMiss {
+        guid: u64,
+        miss: crate::messages::NameQueryMiss,
     },
     /// `SMSG_PET_NAME_QUERY_RESPONSE`, keyed by the pet number its guid carries in place of an
     /// entry ([`crate::guid::pet_number`]). An empty `name` is the negative answer.
