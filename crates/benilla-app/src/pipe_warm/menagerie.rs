@@ -321,8 +321,25 @@ pub(super) fn spawn_menagerie(
     // `far_twin_of`, a distinct pipeline key the cache never dedups against the near one.
     let far_mats = far_twins_of(materials, &mats);
     let far_shard_mats = far_twins_of(materials, &shard_mats);
+    // The far-wall twins: `far_wall` draws a world part wholly inside the wall through its opaque
+    // material's wall-free twin, on the world camera only.
+    let wall_mats = wall_twins_of(materials, &mats);
+    let wall_sky_mats = wall_twins_of(materials, &sky_mats);
 
     let mut count = 0;
+    for (mesh, aabb, skinned) in layouts.iter().chain(&uv2_layouts) {
+        for mat in &wall_mats {
+            spawn_model_rig(commands, cam, None, mesh, aabb, *skinned, mat);
+            count += 1;
+        }
+    }
+    {
+        let (mesh, aabb, _) = &layouts[0];
+        for mat in &wall_sky_mats {
+            spawn_model_rig(commands, cam, None, mesh, aabb, false, mat);
+            count += 1;
+        }
+    }
     for (mesh, aabb, skinned) in &uv2_layouts {
         for mat in &mats {
             spawn_model_rig(commands, cam, None, mesh, aabb, *skinned, mat);
@@ -610,6 +627,22 @@ fn far_twins_of(
         .filter_map(|h| materials.get(h))
         .filter(|m| matches!(m.base.alpha_mode, AlphaMode::Blend))
         .map(far_twin_of)
+        .collect();
+    twins.into_iter().map(|m| materials.add(m)).collect()
+}
+
+/// The far-wall twins of every material in `src` that takes one, by `far_wall`'s own predicate and
+/// builder.
+fn wall_twins_of(
+    materials: &mut Assets<WowModelMaterial>,
+    src: &[Handle<WowModelMaterial>],
+) -> Vec<Handle<WowModelMaterial>> {
+    benilla_world::model_render::lazy::realize_all(materials);
+    let twins: Vec<WowModelMaterial> = src
+        .iter()
+        .filter_map(|h| materials.get(h))
+        .filter(|m| benilla_world::far_wall::takes_twin(m))
+        .map(benilla_world::far_wall::twin_of)
         .collect();
     twins.into_iter().map(|m| materials.add(m)).collect()
 }

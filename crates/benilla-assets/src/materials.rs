@@ -79,6 +79,14 @@ pub struct WowModelKey {
     /// The authored-rig lane (`sun_scale.x` ≥ 1.5, off-world models): `WOW_RIG_LANE` compiles out
     /// the world lobes and the shadow receive.
     rig: bool,
+    /// The blend twin's re-applied cutout (`clutter_fade.z` bit 10).
+    twin_cutout: bool,
+    /// The far-clip wall compiled out (`clutter_fade.z` bit 14): a twin for a part wholly inside
+    /// `farclip`, where the wall cannot cut. A reachable `discard` turns off a tile GPU's
+    /// hidden-surface removal for the whole draw.
+    no_far_wall: bool,
+    /// The UI model tile's cell scissor (`anim_slots.w`).
+    ui_cell: bool,
     // The WMO batch order is deliberately not a key axis (a pipeline per batch index stalls a
     // city's first sight): the file-order layering rides `sun_scale.y`.
 }
@@ -99,6 +107,9 @@ impl From<&WowModelExt> for WowModelKey {
             sky_depth: markers & 0x2000 != 0,
             unlit_m2: e.model_flags.w > 0.5 && e.model_flags.x < 0.5,
             rig: e.sun_scale.x >= 1.5,
+            twin_cutout: markers & 0x400 != 0,
+            no_far_wall: markers & 0x4000 != 0,
+            ui_cell: e.anim_slots.w > 0.5,
         }
     }
 }
@@ -338,6 +349,20 @@ impl MaterialExtension for WowModelExt {
             }
         }
         let key = &key.bind_group_data;
+        // Each `discard` the batch can reach, and only those: one compiled in costs the draw its
+        // hidden-surface removal on a tile GPU even where it never fires.
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            for (on, def) in [
+                // The rig lane's wall is inert (`LightBlob::fog_span`).
+                (!key.no_far_wall && !key.rig, "WOW_FAR_WALL"),
+                (key.twin_cutout, "WOW_TWIN_CUTOUT"),
+                (key.ui_cell, "WOW_UI_CELL"),
+            ] {
+                if on {
+                    fragment.shader_defs.push(def.into());
+                }
+            }
+        }
         if key.modulate || key.modulate2x {
             // Mod (M2 mode 5, WMO 4) is `DST_COLOR/ZERO`, Mod2x (M2 6, WMO 5)
             // `DST_COLOR/SRC_COLOR`; on a gamma framebuffer this is the reference's byte math.

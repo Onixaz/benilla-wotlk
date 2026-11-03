@@ -530,17 +530,17 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // The UI model tile's cell clip: the reference gives each `<Model>` pane its widget rect as the
     // viewport; our panes share an atlas, so the tile passes its cell as a mat-anim row
     // (`anim_slots.w`, `[min.x, min.y, max.x, max.y]` in atlas texels) and this is the scissor.
-    if (m.anim_slots.w > 0.5) {
-        let r = wow_light.matanim[u32(m.anim_slots.w)];
-        if (in.position.x < r.x || in.position.y < r.y
-            || in.position.x > r.z || in.position.y > r.w) {
-            discard;
-        }
+#ifdef WOW_UI_CELL
+    let r = wow_light.matanim[u32(m.anim_slots.w)];
+    if (in.position.x < r.x || in.position.y < r.y
+        || in.position.x > r.z || in.position.y > r.w) {
+        discard;
     }
+#endif
     // The far-clip wall: discard past `farclip` (`fog_params.w`, 0 = off) by planar eye depth, as
-    // terrain.wgsl does. Off-world (the rig lane) it is inert (`LightBlob::fog_span`), so compiled
-    // out.
-#ifndef WOW_RIG_LANE
+    // terrain.wgsl does. Off on a part wholly inside the wall (`benilla_world::far_wall`) and
+    // off-world (the rig lane), where it is inert (`LightBlob::fog_span`).
+#ifdef WOW_FAR_WALL
     if (wow_light.fog_params.w > 0.0) {
         let clip_z = -(view.view_from_world * vec4<f32>(in.world_position.xyz, 1.0)).z;
         if (clip_z > wow_light.fog_params.w) {
@@ -706,9 +706,11 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // The blend twin re-applies its source's cutout: the reference scales ALPHAREF with the fade,
     // so the cutoff stays tex.a < 224/255 on the unfaded alpha. Only for a source batch that
     // alpha-tests (bit 10): ALPHAREF keys on the stored blend mode.
-    if ((u32(m.clutter_fade.z) & 1024u) != 0u && base_color.a < VANILLA_ALPHA_KEY) {
+#ifdef WOW_TWIN_CUTOUT
+    if (base_color.a < VANILLA_ALPHA_KEY) {
         discard;
     }
+#endif
     // The depth-prime twin (`M2UseZFill`) masks colour writes, so only the discards above shape its
     // depth. No early return: naga's MSL backend miscompiles the dead tail ("redefinition of
     // '_tmp'").
