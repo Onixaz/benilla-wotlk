@@ -94,84 +94,93 @@ pub(super) fn spawn_menagerie(
     let mut mats: Vec<Handle<WowModelMaterial>> = Vec::new();
     // The sky lane stays apart: static layout only, never far-twinned or on a booth.
     let mut sky_mats: Vec<Handle<WowModelMaterial>> = Vec::new();
+    // M2 UNLIT 0x01 over the lit blends (`WOW_UNLIT_M2`): the world camera only, every layout.
+    let mut unlit_mats: Vec<Handle<WowModelMaterial>> = Vec::new();
     for two_sided in [false, true] {
-        for blend in [
-            ModelBlend::Opaque,
-            ModelBlend::AlphaTest,
-            ModelBlend::Blend,
-            ModelBlend::Mod,
-            ModelBlend::Mod2x,
-        ] {
-            for no_depth_write in [false, true] {
-                for no_depth_test in [false, true] {
-                    mats.push(model_material(
-                        cache,
-                        materials,
-                        None,
-                        blend,
-                        two_sided,
-                        false,
-                        false,
-                        false,
-                        false,
-                        false,
-                        no_depth_write,
-                        no_depth_test,
-                        FogPolicy::Scene,
-                        // Not a `WowModelKey` axis: it swaps a sampled UV, not pipeline state.
-                        false,
-                        ShadeSel::Lit,
-                        0,
-                        None,
-                        None,
-                        None,
-                        None,
-                        false,
-                        None,
-                        false, // the world lane
-                        light,
-                        // The shared batch material; a per-placement clone has the same
-                        // pipeline.
-                        None,
-                        None,
-                    ));
+        for emissive in [false, true] {
+            for blend in [
+                ModelBlend::Opaque,
+                ModelBlend::AlphaTest,
+                ModelBlend::Blend,
+                ModelBlend::Mod,
+                ModelBlend::Mod2x,
+            ] {
+                // M2 Mod/Mod2x are unlit already (`WOW_UNLIT_M2`), so an M2 UNLIT 0x01 copy is the
+                // same pipeline.
+                if emissive && matches!(blend, ModelBlend::Mod | ModelBlend::Mod2x) {
+                    continue;
+                }
+                for no_depth_write in [false, true] {
+                    for no_depth_test in [false, true] {
+                        if emissive { &mut unlit_mats } else { &mut mats }.push(model_material(
+                            cache,
+                            materials,
+                            None,
+                            blend,
+                            two_sided,
+                            false,
+                            false,
+                            emissive,
+                            false,
+                            false,
+                            no_depth_write,
+                            no_depth_test,
+                            FogPolicy::Scene,
+                            // Not a `WowModelKey` axis: it swaps a sampled UV, not pipeline state.
+                            false,
+                            ShadeSel::Lit,
+                            0,
+                            None,
+                            None,
+                            None,
+                            None,
+                            false,
+                            None,
+                            false, // the world lane
+                            light,
+                            // The shared batch material; a per-placement clone has the same
+                            // pipeline.
+                            None,
+                            None,
+                        ));
+                    }
                 }
             }
-        }
-        // The additive glow-card blend and the distance-fade blend, each over the full
-        // depth-flag cross: the builders forward the batch's 0x10/0x08 flags into both.
-        for additive_not_fade in [true, false] {
-            for no_depth_write in [false, true] {
-                for no_depth_test in [false, true] {
-                    mats.push(model_material(
-                        cache,
-                        materials,
-                        None,
-                        ModelBlend::Blend,
-                        two_sided,
-                        false,
-                        false,
-                        false,
-                        additive_not_fade,
-                        !additive_not_fade,
-                        no_depth_write,
-                        no_depth_test,
-                        FogPolicy::Scene,
-                        // Not a `WowModelKey` axis: it swaps a sampled UV, not pipeline state.
-                        false,
-                        ShadeSel::Lit,
-                        0,
-                        None,
-                        None,
-                        None,
-                        None,
-                        false,
-                        None,
-                        false, // the world lane
-                        light,
-                        None,
-                        None,
-                    ));
+            // The additive glow-card blend and the distance-fade blend, each over the full
+            // depth-flag cross: the builders forward the batch's 0x10/0x08 flags into both.
+            for additive_not_fade in [true, false] {
+                for no_depth_write in [false, true] {
+                    for no_depth_test in [false, true] {
+                        if emissive { &mut unlit_mats } else { &mut mats }.push(model_material(
+                            cache,
+                            materials,
+                            None,
+                            ModelBlend::Blend,
+                            two_sided,
+                            false,
+                            false,
+                            emissive,
+                            additive_not_fade,
+                            !additive_not_fade,
+                            no_depth_write,
+                            no_depth_test,
+                            FogPolicy::Scene,
+                            // Not a `WowModelKey` axis: it swaps a sampled UV, not pipeline state.
+                            false,
+                            ShadeSel::Lit,
+                            0,
+                            None,
+                            None,
+                            None,
+                            None,
+                            false,
+                            None,
+                            false, // the world lane
+                            light,
+                            None,
+                            None,
+                        ));
+                    }
                 }
             }
         }
@@ -325,8 +334,22 @@ pub(super) fn spawn_menagerie(
     // material's wall-free twin, on the world camera only.
     let wall_mats = wall_twins_of(materials, &mats);
     let wall_sky_mats = wall_twins_of(materials, &sky_mats);
+    let far_unlit_mats = far_twins_of(materials, &unlit_mats);
+    let wall_unlit_mats = wall_twins_of(materials, &unlit_mats);
 
     let mut count = 0;
+    for (mesh, aabb, skinned) in layouts.iter().chain(&uv2_layouts) {
+        for mat in unlit_mats.iter().chain(&wall_unlit_mats) {
+            spawn_model_rig(commands, cam, None, mesh, aabb, *skinned, mat);
+            count += 1;
+        }
+    }
+    for (mesh, aabb, skinned) in &layouts {
+        for mat in &far_unlit_mats {
+            spawn_model_rig(commands, cam, None, mesh, aabb, *skinned, mat);
+            count += 1;
+        }
+    }
     for (mesh, aabb, skinned) in layouts.iter().chain(&uv2_layouts) {
         for mat in &wall_mats {
             spawn_model_rig(commands, cam, None, mesh, aabb, *skinned, mat);
