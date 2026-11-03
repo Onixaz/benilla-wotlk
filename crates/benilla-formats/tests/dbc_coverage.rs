@@ -65,7 +65,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "#240 alternate power display: UnitPowerType",
     ),
     ("RandPropPoints", "#239 random property and suffix stats"),
-    ("Resistances", "#233 resistance names"),
     ("ScalingStatDistribution", "#239 heirloom stat scaling"),
     ("ScalingStatValues", "#239 heirloom stat scaling"),
     ("ScreenEffect", "#243 screen effects"),

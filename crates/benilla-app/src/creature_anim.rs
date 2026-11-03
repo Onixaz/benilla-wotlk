@@ -98,6 +98,11 @@ impl Wielded {
 #[derive(Component)]
 pub(crate) struct Engaged(pub(crate) u64);
 
+/// Our player's attack starts (`true`) and stops (`false`) in packet order, each one
+/// `PLAYER_ENTER_COMBAT` or `PLAYER_LEAVE_COMBAT` for the UI to fire (`0x756800`).
+#[derive(Resource, Default)]
+pub(crate) struct PlayerCombatEdges(pub(crate) Vec<bool>);
+
 /// The local player's auto-repeat is armed: the reference's `[+0xd58] & 0x200`, set only by the
 /// local cast-send; with the ranged sheath drawn a standing unit idles on the Load clip. Cleared
 /// by the auto-repeat cancel, and by `SMSG_CANCEL_AUTO_REPEAT` for the unit it names. A remote shooter plays LoadBow once
@@ -855,6 +860,7 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<DefenseAnim>()
             .add_message::<SwingSlowdown>()
             .init_resource::<PendingImpacts>()
+            .init_resource::<PlayerCombatEdges>()
             .init_resource::<PlaySeq>()
             .init_resource::<gesture::GestureQueue>()
             .add_message::<EmoteAnim>()

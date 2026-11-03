@@ -228,9 +228,15 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::AttackStart { attacker, victim } => {
             vec![SessionEvent::AttackStart { attacker, victim }]
         }
-        ServerPacket::AttackStop { attacker, victim } => {
-            vec![SessionEvent::AttackStop { attacker, victim }]
-        }
+        ServerPacket::AttackStop {
+            attacker,
+            victim,
+            face_victim,
+        } => vec![SessionEvent::AttackStop {
+            attacker,
+            victim,
+            face_victim,
+        }],
         ServerPacket::AttackerState(s) => vec![SessionEvent::AttackerState(s)],
         ServerPacket::AttackSwingError(e) => vec![SessionEvent::AttackSwingError(e)],
         ServerPacket::CancelCombat => vec![SessionEvent::CancelCombat],
@@ -442,6 +448,10 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             spell_id,
             duration_ms,
         }],
+        ServerPacket::ResumeCastBar(r) => vec![SessionEvent::ResumeCastBar(r)],
+        ServerPacket::ResetRangedCombatTimer { time_ms } => {
+            vec![SessionEvent::ResetRangedCombatTimer { time_ms }]
+        }
         ServerPacket::ChannelUpdate {
             caster,
             remaining_ms,

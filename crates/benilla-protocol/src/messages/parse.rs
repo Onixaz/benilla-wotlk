@@ -669,9 +669,9 @@ fn parse_server_body(
                 status: q.status,
             }
         }
-        opcode::SMSG_MEETINGSTONE_IN_PROGRESS => {
-            ServerPacket::MeetingStoneNotice(crate::messages::MeetingStoneNotice::InProgress)
-        }
+        opcode::SMSG_RESET_RANGED_COMBAT_TIMER => ServerPacket::ResetRangedCombatTimer {
+            time_ms: read_u32_le(&mut r)?,
+        },
         opcode::SMSG_MEETINGSTONE_MEMBER_ADDED => ServerPacket::MeetingStoneNotice(
             meeting_stone::read_meeting_stone_member_added(&mut r)?,
         ),
@@ -998,9 +998,13 @@ fn parse_server_body(
             let (attacker, victim) = attack::read_attack_start(&mut r)?;
             ServerPacket::AttackStart { attacker, victim }
         }
-        opcode::SMSG_ATTACKSTOP => {
-            let (attacker, victim) = attack::read_attack_stop(&mut r)?;
-            ServerPacket::AttackStop { attacker, victim }
+        opcode::SMSG_ATTACKSTOP | opcode::SMSG_COMBAT_EVENT_FAILED => {
+            let (attacker, victim, face_victim) = attack::read_attack_stop(&mut r)?;
+            ServerPacket::AttackStop {
+                attacker,
+                victim,
+                face_victim,
+            }
         }
         opcode::SMSG_ATTACKERSTATEUPDATE => {
             ServerPacket::AttackerState(attack::read_attacker_state(&mut r)?)
@@ -1199,6 +1203,9 @@ fn parse_server_body(
                 spell_id,
                 duration_ms,
             }
+        }
+        opcode::SMSG_RESUME_CAST_BAR => {
+            ServerPacket::ResumeCastBar(spells::read_resume_cast_bar(&mut r)?)
         }
         opcode::MSG_CHANNEL_UPDATE => {
             let (caster, remaining_ms) = spells::read_channel_update(&mut r)?;
@@ -2302,5 +2309,58 @@ mod tests {
             .err()
             .expect("the second row is missing, so the read is short");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    /// `0x756aed`: `SMSG_COMBAT_EVENT_FAILED` takes `SMSG_ATTACKSTOP`'s arm, and both keep the
+    /// trailing `u32` as the facing hold.
+    #[test]
+    fn combat_event_failed_reads_as_an_attack_stop_with_its_flag() {
+        let body = [0x01, 0x11, 0x01, 0x22, 1, 0, 0, 0];
+        for op in [opcode::SMSG_ATTACKSTOP, opcode::SMSG_COMBAT_EVENT_FAILED] {
+            assert!(matches!(
+                parse_server_with_tail(op, &body).unwrap(),
+                (
+                    ServerPacket::AttackStop {
+                        attacker: 0x11,
+                        victim: 0x22,
+                        face_victim: true,
+                    },
+                    0
+                )
+            ));
+        }
+    }
+
+    /// `0x8020c0` and `0x8071c0`: the resumed cast's five fields, and the ranged reset's one
+    /// `u32`, not the meeting stone's empty notice.
+    #[test]
+    fn the_resume_and_ranged_reset_bodies_read_whole() {
+        let mut body = vec![0x01, 0x11, 0x01, 0x22];
+        for v in [133u32, 1_000, 3_500] {
+            body.extend_from_slice(&v.to_le_bytes());
+        }
+        let (packet, tail) = parse_server_with_tail(opcode::SMSG_RESUME_CAST_BAR, &body).unwrap();
+        assert_eq!(tail, 0);
+        let ServerPacket::ResumeCastBar(r) = packet else {
+            panic!("not a resume");
+        };
+        assert_eq!(
+            r,
+            crate::messages::ResumeCastBar {
+                caster: 0x11,
+                target: 0x22,
+                spell_id: 133,
+                remaining_ms: 1_000,
+                total_ms: 3_500,
+            }
+        );
+        assert!(matches!(
+            parse_server_with_tail(
+                opcode::SMSG_RESET_RANGED_COMBAT_TIMER,
+                &500u32.to_le_bytes()
+            )
+            .unwrap(),
+            (ServerPacket::ResetRangedCombatTimer { time_ms: 500 }, 0)
+        ));
     }
 }

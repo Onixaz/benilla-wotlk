@@ -26,6 +26,30 @@ pub(crate) const WIRE_INCLUDE_GCD: u8 = 0x1;
 /// `SMSG_SPELL_COOLDOWN` flag bit 1: no entry parks for `SMSG_COOLDOWN_EVENT` (`0x806ee8`).
 pub(crate) const WIRE_IGNORE_ON_EVENT: u8 = 0x2;
 
+/// A `full` ms timer with `left` ms to run: started `full - left` ago, or later when op 11 cut
+/// `full` below `left` (`0x805c1a`).
+fn back_dated(full: i32, left: i32, now: Instant) -> Timer {
+    let full = full.max(0);
+    let ago = i64::from(full) - i64::from(left);
+    let by = Duration::from_millis(ago.unsigned_abs());
+    let start = if ago >= 0 {
+        now.checked_sub(by)
+    } else {
+        now.checked_add(by)
+    };
+    match start {
+        Some(start) => Timer {
+            start,
+            duration: Duration::from_millis(full as u64),
+        },
+        // A start before the process clock: the same remainder, from a shorter duration.
+        None => Timer {
+            start: now,
+            duration: Duration::from_millis(left.max(0) as u64),
+        },
+    }
+}
+
 /// One timer; a zero duration is untracked.
 #[derive(Clone, Copy, Debug)]
 struct Timer {
@@ -551,6 +575,26 @@ impl Cooldowns {
         );
     }
 
+    /// A bare recovery of `recovery_ms` starting now, with no category and no GCD: one ranged
+    /// spell's record from `SMSG_RESET_RANGED_COMBAT_TIMER` (`0x80734f`). Zero stores nothing.
+    pub(crate) fn start_recovery(&mut self, spell_id: u32, recovery_ms: u32, now: Instant) {
+        self.add(
+            now,
+            spell_id,
+            0,
+            Timer {
+                start: now,
+                duration: Duration::from_millis(u64::from(recovery_ms)),
+            },
+            0,
+            false,
+            Timer::none(now),
+            false,
+            0,
+            Timer::none(now),
+        );
+    }
+
     /// `SMSG_ITEM_COOLDOWN`: the client's hardcoded 30 s on the item's on-use spell.
     pub(crate) fn apply_wire_item_cooldown(
         &mut self,
@@ -575,30 +619,59 @@ impl Cooldowns {
         );
     }
 
-    /// One `SMSG_INITIAL_SPELLS` cooldown: the wire carries the remainder, so the record starts
-    /// now. A permanent cooldown arrives as 1 ms with the category time's top bit set, which the
-    /// client masks off (`0x6df16d`).
+    /// One `SMSG_INITIAL_SPELLS` cooldown (`0x805b10`): the wire carries each timer's remainder,
+    /// and the record holds the full recovery started that much ago. Bit 31 of the category time
+    /// is the on-hold flag (`0x6df16d`). No `Spell.dbc` row stores nothing.
+    ///
+    /// - Recovery: the item's per-spell cooldown when `use_spell` names the spell, else the
+    ///   spell's, raised to the remainder, then op 11 (`0x805bbe`-`0x805c1a`).
+    /// - Category: the item's category cooldown, else the spell's after the category adjustment
+    ///   (`0x7fef60`), raised to the remainder (`0x805c2a`-`0x805c67`).
     pub(crate) fn seed_initial(
         &mut self,
         cd: &benilla_protocol::messages::SpellCooldown,
+        spell: Option<&SpellDisplay>,
+        use_spell: Option<&ItemUseSpell>,
+        mods: &SpellModifiers,
+        ranged_attack_time_ms: u32,
         now: Instant,
     ) {
+        let Some(spell) = spell else {
+            return;
+        };
+        let use_spell = use_spell.filter(|u| u.spell_id == cd.spell_id);
+        let on_hold = cd.category_cd_ms & 0x8000_0000 != 0;
+        let category_left = (cd.category_cd_ms & 0x7FFF_FFFF) as i32;
+        let spell_left = cd.spell_cd_ms as i32;
+        let recovery = if spell_left > 0 {
+            let base = use_spell
+                .map(|u| u.cooldown_ms)
+                .filter(|&ms| ms >= 0)
+                .unwrap_or(spell.recovery_ms as i32);
+            let full = mods.apply(spell, super::mods::OP_COOLDOWN, base.max(spell_left));
+            back_dated(full, spell_left, now)
+        } else {
+            Timer::none(now)
+        };
+        let category_recovery = if category_left > 0 {
+            let full = use_spell
+                .map(|u| u.category_cooldown_ms)
+                .filter(|&ms| ms >= 0)
+                .unwrap_or_else(|| mods.spell_cooldowns(spell, ranged_attack_time_ms).1 as i32);
+            back_dated(full.max(category_left), category_left, now)
+        } else {
+            Timer::none(now)
+        };
+        let category = u32::from(cd.category);
         self.add(
             now,
             cd.spell_id,
             u32::from(cd.item_id),
-            Timer {
-                start: now,
-                duration: Duration::from_millis(u64::from(cd.spell_cd_ms)),
-            },
-            u32::from(cd.category),
-            // No catalog here; the wildcard category 351 never arrives in this list.
-            false,
-            Timer {
-                start: now,
-                duration: Duration::from_millis(u64::from(cd.category_cd_ms & 0x7FFF_FFFF)),
-            },
-            false,
+            recovery,
+            category,
+            spell.category == category && spell.category_wildcard,
+            category_recovery,
+            on_hold,
             0,
             Timer::none(now),
         );
@@ -1043,25 +1116,119 @@ mod tests {
             spell_cd_ms: ms,
             category_cd_ms: 0,
         };
+        let last_stand = spell(0, 600_000, 0, (0, 0), 0);
+        let mods = SpellModifiers::default();
         let t0 = Instant::now();
         let mut cds = Cooldowns::default();
 
         // Login one: 600 s still to run.
-        cds.seed_initial(&wire(600_000), t0);
+        cds.seed_initial(&wire(600_000), Some(&last_stand), None, &mods, 0, t0);
         assert_eq!(cds.info(12975, 0, None, t0).duration_ms, 600_000);
 
         // Relog six seconds later: the server now says 594 s.
         let t1 = t0 + Duration::from_secs(6);
         cds.clear_session();
         assert!(cds.records.is_empty(), "the list dies with the session");
-        cds.seed_initial(&wire(594_000), t1);
+        cds.seed_initial(&wire(594_000), Some(&last_stand), None, &mods, 0, t1);
 
         let read = cds.info(12975, 0, None, t1);
         assert_eq!(
             (cds.records.len(), read.duration_ms, read.remaining_ms),
-            (1, 594_000, 594_000),
+            (1, 600_000, 594_000),
             "one record, the second login's — a surviving first-login record would answer 600 s \
-             and go on answering it for the whole cooldown"
+             left and go on answering it for the whole cooldown"
+        );
+    }
+
+    /// `0x805b10`: the remainder becomes a full recovery started that long ago; the item's own
+    /// cooldown, when its slot names the spell, replaces the spell's; a remainder above the full
+    /// recovery raises it; bit 31 of the category time parks the record.
+    #[test]
+    fn an_initial_cooldown_is_back_dated_to_its_full_recovery_and_keeps_its_hold() {
+        use benilla_protocol::messages::SpellCooldown;
+        let wire = |spell_cd_ms, category, category_cd_ms| SpellCooldown {
+            spell_id: 100,
+            item_id: 0,
+            category,
+            spell_cd_ms,
+            category_cd_ms,
+        };
+        let mods = SpellModifiers::default();
+        let t0 = Instant::now() + Duration::from_secs(3600);
+        let read = |cds: &Cooldowns, d: &SpellDisplay| {
+            let i = cds.info(100, 0, Some(d), t0);
+            (i.duration_ms, i.remaining_ms, i.enabled)
+        };
+
+        // Spell leg: 60 s of a 600 s recovery, started 540 s ago.
+        let d = spell(0, 600_000, 0, (0, 0), 0);
+        let mut cds = Cooldowns::default();
+        cds.seed_initial(&wire(60_000, 0, 0), Some(&d), None, &mods, 0, t0);
+        assert_eq!(read(&cds, &d), (600_000, 60_000, true));
+        assert_eq!(
+            cds.info(100, 0, Some(&d), t0).start,
+            t0 - Duration::from_secs(540)
+        );
+
+        // Category leg: the spell's category recovery, back-dated the same way.
+        let potion = spell(4, 0, 120_000, (0, 0), 0);
+        let mut cds = Cooldowns::default();
+        cds.seed_initial(&wire(0, 4, 30_000), Some(&potion), None, &mods, 0, t0);
+        assert_eq!(read(&cds, &potion), (120_000, 30_000, true));
+
+        // The item's per-spell cooldown wins over the spell's when its slot names the spell.
+        let use_spell = ItemUseSpell {
+            spell_id: 100,
+            cooldown_ms: 300_000,
+            category: 0,
+            category_cooldown_ms: -1,
+        };
+        let mut cds = Cooldowns::default();
+        cds.seed_initial(
+            &wire(60_000, 0, 0),
+            Some(&d),
+            Some(&use_spell),
+            &mods,
+            0,
+            t0,
+        );
+        assert_eq!(read(&cds, &d), (300_000, 60_000, true));
+
+        // A remainder past the full recovery is the full recovery.
+        let short = spell(0, 10_000, 0, (0, 0), 0);
+        let mut cds = Cooldowns::default();
+        cds.seed_initial(&wire(20_000, 0, 0), Some(&short), None, &mods, 0, t0);
+        assert_eq!(read(&cds, &short), (20_000, 20_000, true));
+
+        // The hold bit parks the record: full duration, disabled, not a 1 ms cooldown.
+        let stealth = spell(0, 10_000, 0, (0, 0), 0x0200_0000);
+        let mut cds = Cooldowns::default();
+        cds.seed_initial(&wire(1, 0, 0x8000_0000), Some(&stealth), None, &mods, 0, t0);
+        assert!(cds.has_on_hold_record(100, 0, 0));
+        assert_eq!(read(&cds, &stealth), (10_000, 10_000, false));
+
+        // No `Spell.dbc` row stores nothing.
+        let mut cds = Cooldowns::default();
+        cds.seed_initial(&wire(60_000, 0, 0), None, None, &mods, 0, t0);
+        assert_eq!(cds.record_count(), 0);
+    }
+
+    /// `SMSG_RESET_RANGED_COMBAT_TIMER`'s record: a bare recovery, no category, no GCD.
+    #[test]
+    fn a_ranged_reset_starts_a_bare_recovery() {
+        let shoot = spell(76, 0, 0, (133, 1500), 0x2);
+        let t0 = Instant::now();
+        let mut cds = Cooldowns::default();
+        cds.start_recovery(5019, 0, t0);
+        assert_eq!(cds.record_count(), 0, "zero stores nothing");
+        cds.start_recovery(5019, 2_000, t0);
+        let i = cds.info(5019, 0, Some(&shoot), t0);
+        assert_eq!((i.duration_ms, i.remaining_ms), (2_000, 2_000));
+        let sibling = spell(76, 0, 0, (133, 1500), 0x2);
+        assert_eq!(
+            cds.info(5020, 0, Some(&sibling), t0).remaining_ms,
+            0,
+            "no category timer reaches a sibling"
         );
     }
 

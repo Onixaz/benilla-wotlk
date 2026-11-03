@@ -7,8 +7,8 @@ use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
 use super::{
-    Engaged, EnvDamageTable, KitPush, MountFlourish, PlaySeq, RangedHold, SheathRequest,
-    SwingFlush, SwingImpact, SwingMessage,
+    Engaged, EnvDamageTable, KitPush, MountFlourish, PlaySeq, PlayerCombatEdges, RangedHold,
+    SheathRequest, SwingFlush, SwingImpact, SwingMessage,
 };
 use crate::net::{AiReactionMessage, EmoteKind, EmoteMessage, GuidIndex, NetHandlerApp, SelfGuid};
 use crate::swing_refusal::SwingRefusalEdge;
@@ -33,9 +33,22 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::AchievementEarned, on_achievement_earned);
 }
 
-fn on_attack_start(In(ev): In<SessionEvent>, mut commands: Commands, index: Res<GuidIndex>) {
+fn on_attack_start(
+    In(ev): In<SessionEvent>,
+    mut commands: Commands,
+    index: Res<GuidIndex>,
+    self_guid: Res<SelfGuid>,
+    mut edges: ResMut<PlayerCombatEdges>,
+) {
     if let SessionEvent::AttackStart { attacker, victim } = ev {
-        attack_start(attacker, victim, &mut commands, &index);
+        attack_start(
+            attacker,
+            victim,
+            &mut commands,
+            &index,
+            &self_guid,
+            &mut edges,
+        );
     }
 }
 
@@ -43,10 +56,30 @@ fn on_attack_stop(
     In(ev): In<SessionEvent>,
     mut commands: Commands,
     index: Res<GuidIndex>,
+    self_guid: Res<SelfGuid>,
+    transforms: Query<&Transform>,
+    mut edges: ResMut<PlayerCombatEdges>,
     mut flushes: MessageWriter<SwingFlush>,
 ) {
-    if let SessionEvent::AttackStop { attacker, victim } = ev {
-        attack_stop(attacker, victim, &mut commands, &index, &mut flushes);
+    if let SessionEvent::AttackStop {
+        attacker,
+        victim,
+        face_victim,
+    } = ev
+    {
+        attack_stop(
+            AttackStop {
+                attacker,
+                victim,
+                face_victim,
+            },
+            &mut commands,
+            &index,
+            &self_guid,
+            &transforms,
+            &mut edges,
+            &mut flushes,
+        );
     }
 }
 
@@ -172,33 +205,80 @@ fn on_play_spell_visual(
     }
 }
 
-/// A unit began melee auto-attack (`SMSG_ATTACKSTART`, including our own echo).
-fn attack_start(attacker: u64, victim: u64, commands: &mut Commands, index: &GuidIndex) {
-    // The Ready idle rides this window: the client's gate is the auto-attack target being set.
-    debug!("net: attack start {attacker:#x} → {victim:#x}");
-    if let Some(&e) = index.0.get(&attacker) {
-        // Melee start drops the `0x400` weapon-visual hold: a shooter closing to melee leaves the
-        // drawn idle.
-        commands
-            .entity(e)
-            .insert(Engaged(victim))
-            .remove::<RangedHold>();
-    }
-}
-
-/// A unit stopped melee auto-attack (`SMSG_ATTACKSTOP`).
-fn attack_stop(
+/// A unit began melee auto-attack (`SMSG_ATTACKSTART`, including our own echo). Ours fires
+/// `PLAYER_ENTER_COMBAT` on every packet, a new victim's too (`0x756897`).
+fn attack_start(
     attacker: u64,
     victim: u64,
     commands: &mut Commands,
     index: &GuidIndex,
+    self_guid: &SelfGuid,
+    edges: &mut PlayerCombatEdges,
+) {
+    // The Ready idle rides this window: the client's gate is the auto-attack target being set.
+    debug!("net: attack start {attacker:#x} → {victim:#x}");
+    // An unstreamed attacker does nothing (`0x75686c`).
+    let Some(&e) = index.0.get(&attacker) else {
+        return;
+    };
+    // Melee start drops the `0x400` weapon-visual hold: a shooter closing to melee leaves the
+    // drawn idle.
+    commands
+        .entity(e)
+        .insert(Engaged(victim))
+        .remove::<RangedHold>();
+    if self_guid.0 == Some(attacker) {
+        edges.0.push(true);
+    }
+}
+
+/// One `SMSG_ATTACKSTOP` or `SMSG_COMBAT_EVENT_FAILED`.
+struct AttackStop {
+    attacker: u64,
+    victim: u64,
+    face_victim: bool,
+}
+
+/// A unit stopped melee auto-attack (`0x756770`): the swing ends, a set `face_victim` holds the
+/// attacker's facing toward a streamed victim, and ours fires `PLAYER_LEAVE_COMBAT` on every packet
+/// (`0x756b86`).
+fn attack_stop(
+    stop: AttackStop,
+    commands: &mut Commands,
+    index: &GuidIndex,
+    self_guid: &SelfGuid,
+    transforms: &Query<&Transform>,
+    edges: &mut PlayerCombatEdges,
     flushes: &mut MessageWriter<SwingFlush>,
 ) {
-    debug!("net: attack stop {attacker:#x} → {victim:#x}");
-    if let Some(&e) = index.0.get(&attacker) {
-        commands.entity(e).remove::<Engaged>();
-        // A pending swing flushes as text only; death and stun arrive as this packet.
-        flushes.write(SwingFlush(e));
+    let AttackStop {
+        attacker,
+        victim,
+        face_victim,
+    } = stop;
+    debug!("net: attack stop {attacker:#x} → {victim:#x} face={face_victim}");
+    let Some(&e) = index.0.get(&attacker) else {
+        return;
+    };
+    commands.entity(e).remove::<Engaged>();
+    // A pending swing flushes as text only; death and stun arrive as this packet.
+    flushes.write(SwingFlush(e));
+    // `0x7567a5`-`0x7567ec`: the bearing from the attacker to the victim.
+    let held = (face_victim && victim != 0)
+        .then(|| index.0.get(&victim))
+        .flatten()
+        .and_then(|&v| Some((transforms.get(e).ok()?, transforms.get(v).ok()?)))
+        .and_then(|(a, v)| {
+            crate::net::facing_bearing(
+                benilla_assets::coords::bevy_to_wow(a.translation),
+                benilla_assets::coords::bevy_to_wow(v.translation),
+            )
+        });
+    if let Some(yaw) = held {
+        commands.entity(e).insert(crate::net::FacingHold::new(yaw));
+    }
+    if self_guid.0 == Some(attacker) {
+        edges.0.push(false);
     }
 }
 
@@ -476,5 +556,61 @@ mod tests {
             [(e, 362, 1), (e, 179, 0)],
             "the impact is stage 1, the visual stage 0, and an unstreamed unit plays nothing"
         );
+    }
+
+    /// `0x756800`: every start and stop of ours queues its combat event, a new victim's start
+    /// too; a stop with its flag set holds the attacker's facing toward a streamed victim
+    /// (`0x7567a5`); an unstreamed attacker does nothing.
+    #[test]
+    fn each_attack_start_and_stop_of_ours_queues_its_event_and_a_flagged_stop_holds_the_facing() {
+        use benilla_assets::coords::wow_to_bevy;
+        const ME: u64 = 10;
+        let mut world = World::new();
+        world.init_resource::<GuidIndex>();
+        world.init_resource::<SelfGuid>();
+        world.init_resource::<PlayerCombatEdges>();
+        world.init_resource::<Messages<SwingFlush>>();
+        world.resource_mut::<SelfGuid>().0 = Some(ME);
+        let me = world.spawn(Transform::default()).id();
+        let mob = world.spawn(Transform::default()).id();
+        let victim = world
+            .spawn(Transform::from_translation(wow_to_bevy([0.0, 5.0, 0.0])))
+            .id();
+        for (g, e) in [(ME, me), (0x42, mob), (0x43, victim)] {
+            world.resource_mut::<GuidIndex>().0.insert(g, e);
+        }
+        let start = |attacker, victim| SessionEvent::AttackStart { attacker, victim };
+        let stop = |attacker, victim, face_victim| SessionEvent::AttackStop {
+            attacker,
+            victim,
+            face_victim,
+        };
+        for ev in [
+            start(ME, 0x42),
+            start(ME, 0x43),
+            stop(ME, 0x43, false),
+            start(ME, 0x42),
+            start(0x42, ME),
+            stop(0x42, 0x43, true),
+            stop(0x99, 0x43, true),
+            stop(0x43, 0x99, true),
+        ] {
+            match ev {
+                SessionEvent::AttackStart { .. } => world.run_system_once_with(on_attack_start, ev),
+                _ => world.run_system_once_with(on_attack_stop, ev),
+            }
+            .expect("the handler runs as a one-shot system");
+        }
+        assert_eq!(
+            world.resource::<PlayerCombatEdges>().0,
+            [true, true, false, true],
+            "ENTER per start, a new victim's too, LEAVE per stop; another unit's fire nothing"
+        );
+        assert!(world.entity(mob).contains::<crate::net::FacingHold>());
+        assert!(
+            !world.entity(victim).contains::<crate::net::FacingHold>(),
+            "an unstreamed victim holds nothing"
+        );
+        assert!(!world.entity(me).contains::<crate::net::FacingHold>());
     }
 }

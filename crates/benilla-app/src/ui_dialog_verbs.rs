@@ -352,12 +352,6 @@ fn feed_meeting_stone(
 
     for notice in std::mem::take(&mut stone.notices) {
         match notice {
-            MeetingStoneNotice::InProgress => {
-                lines.extend(crate::ui_action::keyed_line(
-                    &script,
-                    "ERR_MEETING_STONE_IN_PROGRESS",
-                ));
-            }
             MeetingStoneNotice::MemberAdded { guid } => stone.pending_members.push(guid),
         }
     }

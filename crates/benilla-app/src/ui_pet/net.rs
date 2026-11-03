@@ -70,6 +70,8 @@ fn on_cast_failed(
     } = ev
     {
         bar.pending_cast = None;
+        // The start cooldown the press armed clears, then the pet bar refreshes (`0x806d41`).
+        bar.cooldowns.clear_gcd(spell_id, std::time::Instant::now());
         pet_cast_failed(spell_id, reason, arg, &mut errors);
     }
 }
