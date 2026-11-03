@@ -144,7 +144,9 @@ mod tests {
             .iter()
             .map(|a| match a {
                 crate::ui_action::FillArg::S(s) => s.as_str(),
-                crate::ui_action::FillArg::D(_) | crate::ui_action::FillArg::Global(_) => {
+                crate::ui_action::FillArg::D(_)
+                | crate::ui_action::FillArg::Global(_)
+                | crate::ui_action::FillArg::Duration(_) => {
                     unreachable!("guild lines push plain strings only")
                 }
             })

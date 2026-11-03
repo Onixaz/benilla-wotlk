@@ -288,6 +288,48 @@ pub fn plural(
     get(token).filter(|s| !s.is_empty())
 }
 
+/// The client's duration string (`0x61a9e0`): days, hours, minutes or seconds by threshold, over
+/// `<token>_DAYS` to `<token>_SEC`. `round_up` ceils every arm but seconds, and a count that rounds
+/// up to the next unit reads as one of it: 60 minutes is one hour, 24 hours one day
+/// (`0x61aaad`, `0x61ab14`). The text is the bare token, looked up with no ordinal (`0x61ab96`);
+/// an absent or empty one is `None`.
+pub fn duration(
+    ms: u64,
+    token: &str,
+    round_up: bool,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    const MINUTE: u64 = 60_000;
+    const HOUR: u64 = 60 * MINUTE;
+    const DAY: u64 = 24 * HOUR;
+    // Every arm but seconds is reached with `ms` at least a minute, so `ms - 1` holds.
+    let count = |unit: u64| {
+        if round_up {
+            (ms - 1) / unit + 1
+        } else {
+            ms / unit
+        }
+    };
+    let (suffix, n) = if ms >= DAY {
+        ("DAYS", count(DAY))
+    } else if ms >= HOUR {
+        match count(HOUR) {
+            24 => ("DAYS", 1),
+            n => ("HOURS", n),
+        }
+    } else if ms >= MINUTE {
+        match count(MINUTE) {
+            60 => ("HOURS", 1),
+            n => ("MIN", n),
+        }
+    } else {
+        ("SEC", ms / 1000)
+    };
+    let template = get(&format!("{token}_{suffix}")).filter(|s| !s.is_empty())?;
+    // The count is a `u32`, printed by `%d`.
+    Some(fill(&template, &[Arg::D(i64::from(n as u32 as i32))]))
+}
+
 /// Append `piece` padded to the specifier's width: zeros go after a number's sign.
 fn pad(out: &mut String, piece: &str, spec: &Spec) {
     let short = spec.width.saturating_sub(piece.chars().count());

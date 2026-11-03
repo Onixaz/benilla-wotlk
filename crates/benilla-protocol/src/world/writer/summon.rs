@@ -1,5 +1,4 @@
-//! The summon accept, the client's one summon send. Declining sends nothing: the server's
-//! two-minute window lapses.
+//! The summon answer, the client's one summon send.
 
 use anyhow::Result;
 
@@ -8,12 +7,12 @@ use crate::messages::{self, opcode};
 use super::WorldWriter;
 
 impl WorldWriter {
-    /// `CMSG_SUMMON_RESPONSE`: the `CONFIRM_SUMMON` Accept. vmangos ignores the guid and teleports
-    /// us unless its own `m_summon_expire` has passed (`Player::SummonIfPossible`).
-    pub fn summon_response(&mut self, summoner_guid: u64) -> Result<()> {
+    /// `CMSG_SUMMON_RESPONSE`: the `CONFIRM_SUMMON` answer, `agree` for Accept, not for Cancel or a
+    /// dead player's refusal.
+    pub fn summon_response(&mut self, summoner_guid: u64, agree: bool) -> Result<()> {
         self.send(
             opcode::CMSG_SUMMON_RESPONSE,
-            &messages::summon_response(summoner_guid),
+            &messages::summon_response(summoner_guid, agree),
         )
     }
 }

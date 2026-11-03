@@ -751,6 +751,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             inviter,
         }],
         ServerPacket::GroupDecline { name } => vec![SessionEvent::GroupDecline { name }],
+        ServerPacket::GroupCancel { inviter } => vec![SessionEvent::GroupCancel { inviter }],
+        ServerPacket::GroupActionThrottled => vec![SessionEvent::GroupActionThrottled],
         ServerPacket::GroupUninvited => vec![SessionEvent::GroupUninvited],
         ServerPacket::GroupLeaderChanged { name } => {
             vec![SessionEvent::GroupLeaderChanged { name }]
@@ -768,6 +770,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             lfg_status,
             lfg_slot,
             battleground,
+            group_guid,
+            counter,
         } => vec![SessionEvent::GroupList {
             group_type,
             own_flags,
@@ -780,6 +784,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             lfg_status,
             lfg_slot,
             battleground,
+            group_guid,
+            counter,
         }],
         ServerPacket::RealGroupUpdate {
             flags,
@@ -794,10 +800,12 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             operation,
             member,
             result,
+            value,
         } => vec![SessionEvent::PartyCommandResult {
             operation,
             member,
             result,
+            value,
         }],
         ServerPacket::PartyMemberStats { guid, full, info } => {
             vec![SessionEvent::PartyMemberStats { guid, full, info }]
@@ -805,13 +813,18 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::MinimapPing { guid, x, y } => {
             vec![SessionEvent::MinimapPing { guid, x, y }]
         }
-        ServerPacket::RaidTargetSet { icon, guid } => {
-            vec![SessionEvent::RaidTargetSet { icon, guid }]
+        ServerPacket::RaidTargetSet { setter, marks } => {
+            vec![SessionEvent::RaidTargetSet { setter, marks }]
         }
         ServerPacket::RaidTargetList { entries } => {
             vec![SessionEvent::RaidTargetList { entries }]
         }
         ServerPacket::ReadyCheckRequest => vec![SessionEvent::ReadyCheckRequest],
+        ServerPacket::ReadyCheckError => vec![SessionEvent::ReadyCheckError],
+        ServerPacket::PartySquelch { silenced } => vec![SessionEvent::PartySquelch { silenced }],
+        ServerPacket::EchoPartySquelch { guid, silenced } => {
+            vec![SessionEvent::EchoPartySquelch { guid, silenced }]
+        }
         ServerPacket::RaidInstanceInfo { entries } => {
             vec![SessionEvent::RaidInstanceInfo { entries }]
         }
@@ -1066,6 +1079,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             zone,
             delay_ms,
         }],
+        ServerPacket::SummonCancel => vec![SessionEvent::SummonCancel],
         ServerPacket::TalentsInfo(info) => vec![SessionEvent::TalentsInfo(info)],
         ServerPacket::AllAchievementData(d) => vec![SessionEvent::AllAchievementData(d)],
         ServerPacket::TotemCreated(t) => vec![SessionEvent::TotemCreated(t)],

@@ -1478,9 +1478,10 @@ pub(crate) enum ClientCommand {
     BinderActivate {
         binder: u64,
     },
-    /// `CMSG_SUMMON_RESPONSE`, the `CONFIRM_SUMMON` Accept; there is no decline opcode.
+    /// `CMSG_SUMMON_RESPONSE`: the `CONFIRM_SUMMON` answer, `agree` for Accept.
     SummonResponse {
         summoner: u64,
+        agree: bool,
     },
     /// `MSG_TALENT_WIPE_CONFIRM`, the `CONFIRM_TALENT_WIPE` Accept: the only packet in the flow
     /// that resets. Declining sends nothing.
@@ -2229,6 +2230,8 @@ pub(crate) enum ClientCommand {
         icon: u8,
         guid: u64,
     },
+    /// `MSG_RAID_TARGET_UPDATE` with `0xff` alone: ask for the whole icon board.
+    RequestRaidTargets,
     /// `MSG_MINIMAP_PING`, raw world `(x, y)`. The server relays it to the rest of the group and
     /// ignores it solo, so our own marker is drawn locally.
     MinimapPing {

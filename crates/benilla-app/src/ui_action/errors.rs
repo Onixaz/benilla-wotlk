@@ -124,6 +124,8 @@ pub(crate) enum FillArg {
     /// A GlobalStrings key whose text fills a `%s`, as the VM's string lookup (`0x819d40`) reads
     /// it; a missing key shows the key itself.
     Global(String),
+    /// Milliseconds that fill a `%s` as the rounded-up `INT_SPELL_DURATION` string (`0x61a9e0`).
+    Duration(u64),
 }
 
 /// One error-display message, whatever its surface: a GlobalStrings key and the argText the
@@ -170,7 +172,7 @@ impl UiError {
     pub(crate) fn arg_s(&self) -> Option<&str> {
         self.args.iter().find_map(|a| match a {
             FillArg::S(s) => Some(s.as_str()),
-            FillArg::D(_) | FillArg::Global(_) => None,
+            FillArg::D(_) | FillArg::Global(_) | FillArg::Duration(_) => None,
         })
     }
 
@@ -179,7 +181,7 @@ impl UiError {
     pub(crate) fn arg_d(&self) -> Option<i64> {
         self.args.iter().find_map(|a| match a {
             FillArg::D(d) => Some(*d),
-            FillArg::S(_) | FillArg::Global(_) => None,
+            FillArg::S(_) | FillArg::Global(_) | FillArg::Duration(_) => None,
         })
     }
 }
@@ -217,6 +219,10 @@ pub(crate) fn ui_error_text(e: &UiError, get: &dyn Fn(&str) -> Option<String>) -
         .iter()
         .map(|a| match a {
             FillArg::Global(key) => Some(get(key).unwrap_or_else(|| key.clone())),
+            FillArg::Duration(ms) => Some(
+                benilla_ui::strings::duration(*ms, "INT_SPELL_DURATION", true, get)
+                    .unwrap_or_default(),
+            ),
             FillArg::S(_) | FillArg::D(_) => None,
         })
         .collect();
@@ -227,7 +233,9 @@ pub(crate) fn ui_error_text(e: &UiError, get: &dyn Fn(&str) -> Option<String>) -
         .map(|(a, text)| match a {
             FillArg::S(s) => benilla_ui::strings::Arg::S(s),
             FillArg::D(d) => benilla_ui::strings::Arg::D(*d),
-            FillArg::Global(_) => benilla_ui::strings::Arg::S(text.as_deref().unwrap_or_default()),
+            FillArg::Global(_) | FillArg::Duration(_) => {
+                benilla_ui::strings::Arg::S(text.as_deref().unwrap_or_default())
+            }
         })
         .collect();
     let text = benilla_ui::strings::fill(&get(e.key)?, &args);

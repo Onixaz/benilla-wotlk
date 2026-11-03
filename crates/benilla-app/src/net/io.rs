@@ -1679,7 +1679,9 @@ pub(super) fn writer_loop(
                     ClientCommand::GmTicketDelete => w.gm_ticket_delete(),
                     ClientCommand::GmTicketSystemStatus => w.gm_ticket_system_status(),
                     ClientCommand::BinderActivate { binder } => w.binder_activate(binder),
-                    ClientCommand::SummonResponse { summoner } => w.summon_response(summoner),
+                    ClientCommand::SummonResponse { summoner, agree } => {
+                        w.summon_response(summoner, agree)
+                    }
                     ClientCommand::TalentWipeConfirm { trainer } => w.talent_wipe_confirm(trainer),
                     ClientCommand::ForceLogout => w.player_logout(),
                     ClientCommand::AreaSpiritHealerQueue { healer } => {
@@ -2030,6 +2032,7 @@ pub(super) fn writer_loop(
                         threshold,
                     } => w.loot_method(method, master, threshold),
                     ClientCommand::SetRaidTarget { icon, guid } => w.raid_target_set(icon, guid),
+                    ClientCommand::RequestRaidTargets => w.raid_target_request(),
                     ClientCommand::MinimapPing { x, y } => w.minimap_ping(x, y),
                     ClientCommand::GroupChangeSubGroup { name, group } => {
                         w.group_change_sub_group(&name, group)

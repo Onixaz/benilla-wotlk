@@ -38,7 +38,7 @@ fn setup() -> UiScript {
 }
 
 /// `StaticPopup_Show` writes " " for a countdown kind (`StaticPopup.lua:1567`) and each tick
-/// composes the line; Accept's `ConfirmSummon()` becomes `CMSG_SUMMON_RESPONSE`.
+/// composes the line; Accept's `ConfirmSummon()` becomes an agreeing `CMSG_SUMMON_RESPONSE`.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_confirm_names_the_summoner_and_accept_queues_the_response() {
@@ -65,7 +65,7 @@ fn the_confirm_names_the_summoner_and_accept_queues_the_response() {
     );
 
     s.run("StaticPopup_OnClick(StaticPopup1, 1)").unwrap();
-    assert_eq!(s.take_summon_confirms(), 1);
+    assert_eq!(s.take_summon_answers(), [true]);
     assert!(
         !s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
         "accepting closes it"
@@ -178,18 +178,19 @@ fn combat_locks_accept_without_taking_the_dialog_down() {
         "leaving combat re-arms it, with the same dialog still up"
     );
     s.run("StaticPopup_OnClick(StaticPopup1, 1)").unwrap();
-    assert_eq!(s.take_summon_confirms(), 1);
+    assert_eq!(s.take_summon_answers(), [true]);
 }
 
-/// 1.12 has no decline opcode and no `CancelSummon`: only Accept sends.
+/// The dialog's `OnCancel` is `CancelSummon` (`StaticPopup.lua:2544`), which Cancel, Escape and the
+/// timeout all run: each sends a declining `CMSG_SUMMON_RESPONSE`.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn declining_and_expiring_both_send_nothing() {
+fn declining_escaping_and_expiring_each_send_a_decline() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     s.fire_event("CONFIRM_SUMMON", Vec::new());
     s.run("StaticPopup_OnClick(StaticPopup1, 2)").unwrap();
-    assert_eq!(s.take_summon_confirms(), 0, "Cancel is silent");
+    assert_eq!(s.take_summon_answers(), [false], "Cancel declines");
 
     s.fire_event("CONFIRM_SUMMON", Vec::new());
     s.run("ToggleGameMenu()").unwrap();
@@ -197,9 +198,9 @@ fn declining_and_expiring_both_send_nothing() {
         !s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
         "hideOnEscape takes it down"
     );
-    assert_eq!(s.take_summon_confirms(), 0, "ESC is silent");
+    assert_eq!(s.take_summon_answers(), [false], "Escape declines");
 
-    // Expiry hides the dialog, and the entry has no OnCancel.
+    // Expiry runs the entry's OnCancel, then hides the dialog.
     s.set_summon_confirm(SummonConfirmUiState {
         summoner: "Twomage".into(),
         area: "Stormwind City".into(),
@@ -211,7 +212,7 @@ fn declining_and_expiring_both_send_nothing() {
         !s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
         "the offer expires off the screen by itself"
     );
-    assert_eq!(s.take_summon_confirms(), 0, "and expiring is silent too");
+    assert_eq!(s.take_summon_answers(), [false], "and so does the timeout");
 }
 
 /// With no offer the getters answer "", "" and 0, as the reference does, never nil.

@@ -946,10 +946,12 @@ pub const CMSG_PET_UNLEARN: u16 = 0x02F0; // 752
 /// `CONFIRM_PET_UNLEARN`; a zero guid shows `ERR_TALENT_WIPE_ERROR` instead.
 pub const SMSG_PET_UNLEARN_CONFIRM: u16 = 0x02F1; // 753
 
-/// A summon offer (warlock, meeting stone, GM). The client can only accept, with
-/// `CMSG_SUMMON_RESPONSE`; a decline is silence until the two-minute timeout.
+/// A summon offer (warlock, meeting stone, GM), answered by `CMSG_SUMMON_RESPONSE` with an agree
+/// byte: `ConfirmSummon` 1, `CancelSummon` and a dead player's refusal 0.
 pub const SMSG_SUMMON_REQUEST: u16 = 0x02AB; // 683
 pub const CMSG_SUMMON_RESPONSE: u16 = 0x02AC; // 684
+/// The summon withdrawn: empty body, `CANCEL_SUMMON` (`0x6cbcf0`).
+pub const SMSG_SUMMON_CANCEL: u16 = 0x0424; // 1060
 
 /// Abandon a skill line; no ack, the removal arrives as a `PLAYER_SKILL_INFO` update.
 pub const CMSG_UNLEARN_SKILL: u16 = 0x0202; // 514
@@ -1182,6 +1184,8 @@ pub const MSG_PETITION_RENAME: u16 = 0x02C1; // 705
 
 pub const CMSG_GROUP_INVITE: u16 = 0x006E; // 110
 pub const SMSG_GROUP_INVITE: u16 = 0x006F; // 111
+/// The inviter withdrew the invite: their name, then `PARTY_INVITE_CANCEL` (`0x6cbd10`).
+pub const SMSG_GROUP_CANCEL: u16 = 0x0071; // 113
 pub const CMSG_GROUP_ACCEPT: u16 = 0x0072; // 114
 pub const CMSG_GROUP_DECLINE: u16 = 0x0073; // 115
 pub const SMSG_GROUP_DECLINE: u16 = 0x0074; // 116
@@ -1204,11 +1208,19 @@ pub const CMSG_GROUP_SWAP_SUB_GROUP: u16 = 0x0280; // 640
 pub const CMSG_GROUP_RAID_CONVERT: u16 = 0x028E; // 654
 pub const CMSG_GROUP_ASSISTANT_LEADER: u16 = 0x028F; // 655
 pub const SMSG_PARTY_MEMBER_STATS_FULL: u16 = 0x02F2; // 754
-/// Both ways; the server's side is mode-prefixed (`Packets/Group.cpp:77-82` read, `:132-147`
-/// write).
+/// Both ways; the server's side is mode-prefixed, and its one-mark mode names the setter
+/// (`0x5743b0`).
 pub const MSG_RAID_TARGET_UPDATE: u16 = 0x0321; // 801
 /// Both ways: an empty body starts a check, a non-empty one answers (`Packets/Group.cpp:84-96`).
 pub const MSG_RAID_READY_CHECK: u16 = 0x0322; // 802
+/// A ready check refused as too soon: empty body (`0x5725a0`).
+pub const SMSG_RAID_READY_CHECK_ERROR: u16 = 0x0408; // 1032
+/// Too many group commands: empty body (`0x6cbe80`).
+pub const SMSG_GROUPACTION_THROTTLED: u16 = 0x0411; // 1041
+/// Our voice privileges set by a leader: `u32` silenced (`0x5725c0`).
+pub const MSG_NOTIFY_PARTY_SQUELCH: u16 = 0x03DF; // 991
+/// The echo of our silencing a member: `u64` member, `u32` silenced (`0x572610`).
+pub const SMSG_ECHO_PARTY_SQUELCH: u16 = 0x03F6; // 1014
 /// Ask for our raid lockouts: empty body, sent by `RequestRaidInfo()` on every RaidFrame show.
 pub const CMSG_REQUEST_RAID_INFO: u16 = 0x02CD; // 717
 /// Our permanent binds: `u32 count`, count × `{u32 mapId, u32 secondsUntilReset, u32 instanceId}`.

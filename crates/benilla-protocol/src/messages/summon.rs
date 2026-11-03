@@ -1,5 +1,5 @@
-//! The player summon: `SMSG_SUMMON_REQUEST` (0x2ab) and the accept, `CMSG_SUMMON_RESPONSE` (0x2ac,
-//! `ConfirmSummon`). There is no decline packet: the server declines on its own timer.
+//! The player summon: `SMSG_SUMMON_REQUEST` (0x2ab) and its answer, `CMSG_SUMMON_RESPONSE` (0x2ac),
+//! which `ConfirmSummon` sends agreeing and `CancelSummon` declining.
 
 use std::io;
 
@@ -26,10 +26,12 @@ pub(super) fn read_summon_request(r: &mut &[u8]) -> io::Result<SummonRequest> {
     })
 }
 
-/// Body of `CMSG_SUMMON_RESPONSE`: the summoner's guid, nothing else. vmangos ignores it and
-/// relies on its own expiry timer.
-pub fn summon_response(summoner_guid: u64) -> Vec<u8> {
-    summoner_guid.to_le_bytes().to_vec()
+/// Body of `CMSG_SUMMON_RESPONSE`: the summoner's guid, then the agree byte, 1 from `ConfirmSummon`
+/// (`0x51b0dc`) and 0 from `CancelSummon` (`0x51b16a`).
+pub fn summon_response(summoner_guid: u64, agree: bool) -> Vec<u8> {
+    let mut body = summoner_guid.to_le_bytes().to_vec();
+    body.push(u8::from(agree));
+    body
 }
 
 #[cfg(test)]
@@ -58,10 +60,14 @@ mod tests {
     }
 
     #[test]
-    fn the_response_body_is_one_little_endian_guid_and_nothing_else() {
+    fn the_response_body_is_the_guid_then_the_agree_byte() {
         assert_eq!(
-            summon_response(0x0000_0000_0000_2a01),
-            vec![0x01, 0x2a, 0, 0, 0, 0, 0, 0]
+            summon_response(0x0000_0000_0000_2a01, true),
+            vec![0x01, 0x2a, 0, 0, 0, 0, 0, 0, 1]
+        );
+        assert_eq!(
+            summon_response(0x0000_0000_0000_2a01, false),
+            vec![0x01, 0x2a, 0, 0, 0, 0, 0, 0, 0]
         );
     }
 }

@@ -65,6 +65,8 @@ pub(crate) enum ChatEventKind {
     PetInfo,
     /// `CHAT_MSG_OPENING`, a lock opened (`0x50dde0`).
     Opening,
+    /// `CHAT_MSG_TARGETICONS`, a raid mark set (`0x50b0f0`).
+    TargetIcons,
 }
 
 impl ChatEventKind {
@@ -127,6 +129,7 @@ impl ChatEventKind {
             K::Tradeskills,
             K::PetInfo,
             K::Opening,
+            K::TargetIcons,
         ]
     };
 }
@@ -283,6 +286,7 @@ pub(crate) fn event_name(kind: ChatEventKind) -> &'static str {
         K::Tradeskills => "CHAT_MSG_TRADESKILLS",
         K::PetInfo => "CHAT_MSG_PET_INFO",
         K::Opening => "CHAT_MSG_OPENING",
+        K::TargetIcons => "CHAT_MSG_TARGETICONS",
     }
 }
 

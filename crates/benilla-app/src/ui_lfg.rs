@@ -38,10 +38,15 @@ pub(crate) struct LfgCatalog(pub(crate) Arc<LfgCatalogView>);
 
 /// What waits for the VM, in wire order.
 enum Pending {
-    Packet { packet: LfgPacket, grouped: bool },
+    Packet {
+        packet: LfgPacket,
+        grouped: bool,
+    },
     JoiningParty,
     ClearPartyInfo,
     EnterWorld,
+    /// `VOTE_KICK_REASON_NEEDED` with the member's name (`0x6cc274`).
+    VoteKickReasonNeeded(String),
 }
 
 /// The feed's session state: the waiting work and the group and instance facts the packets read.
@@ -81,6 +86,7 @@ impl Plugin for UiLfgPlugin {
             .net_handler(K::GroupUninvited, on_group_left)
             .net_handler(K::GroupDestroyed, on_group_left)
             .net_handler(K::PartyCommandResult, on_group_left)
+            .net_handler(K::PartyCommandResult, on_vote_kick_reason)
             .net_handler(K::InstanceDifficulty, on_instance_difficulty);
     }
 }
@@ -266,6 +272,15 @@ fn on_group_left(In(ev): In<SessionEvent>, mut feed: ResMut<LfgFeed>) {
     }
 }
 
+/// `SMSG_PARTY_COMMAND_RESULT` result 27: the kick vote asks us for a reason, naming the member.
+fn on_vote_kick_reason(In(ev): In<SessionEvent>, mut feed: ResMut<LfgFeed>) {
+    if let SessionEvent::PartyCommandResult { member, result, .. } = ev {
+        if result == benilla_protocol::messages::party_result::VOTE_KICK_REASON_NEEDED {
+            feed.pending.push(Pending::VoteKickReasonNeeded(member));
+        }
+    }
+}
+
 fn on_instance_difficulty(In(ev): In<SessionEvent>, mut feed: ResMut<LfgFeed>) {
     if let SessionEvent::InstanceDifficulty {
         difficulty,
@@ -353,6 +368,13 @@ fn feed_lfg(
             }
             Pending::ClearPartyInfo => {
                 script.lfg_clear_party_info();
+                Vec::new()
+            }
+            Pending::VoteKickReasonNeeded(name) => {
+                script.fire_event(
+                    "VOTE_KICK_REASON_NEEDED",
+                    vec![benilla_ui::script::ScriptValue::Str(name)],
+                );
                 Vec::new()
             }
             Pending::Packet { packet, grouped } => {
