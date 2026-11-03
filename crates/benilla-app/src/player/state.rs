@@ -159,6 +159,10 @@ pub(crate) struct MoveModes {
     /// 3.3.5a's `CAN_FLY` (`SMSG_MOVE_SET_CAN_FLY`, a flying mount or `.gm fly on`): the jump key
     /// takes flight and a fall off a ledge becomes one ([`super::flight`]).
     pub(crate) can_fly: bool,
+    /// The second flags word's swim-to-fly bit (`SMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY`,
+    /// `0x6ed68d`). Held and acked; its one reader, the flight collision query's facet flag
+    /// `0x20000` (`0x75e441`), has no counterpart in our collision.
+    pub(crate) swim_fly_transition: bool,
 }
 
 impl MoveModes {
@@ -182,6 +186,7 @@ impl MoveModes {
             MoveMode::FeatherFall => self.feather_fall = apply,
             MoveMode::Hover => self.hover = apply,
             MoveMode::CanFly => self.can_fly = apply,
+            MoveMode::SwimFlyTransition => self.swim_fly_transition = apply,
         }
     }
 

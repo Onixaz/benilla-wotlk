@@ -126,7 +126,8 @@ fn knock_back_parses_and_ack_body_golden() {
     }
 
     // The ack: the packed guid, the counter, and a MovementInfo with the shared JUMPING bit
-    // (0x2000), written as 3.3.5a's FALLING (0x1000), without which no jump tail is written.
+    // (0x2000), written as 3.3.5a's FALLING (0x1000), without which no jump tail is written. The
+    // tail is zspeed, cos, sin, xy speed (`0x4f4e82`-`0x4f4eab`).
     let info = MovementInfo {
         flags: 0x2000,
         timestamp: 12345,
@@ -144,7 +145,7 @@ fn knock_back_parses_and_ack_body_golden() {
     };
     assert_eq!(
         messages::knock_back_ack(8, 7, &info),
-        hx("010807000000001000000000393000000000803f00000040000040400000003f00000000000040c1cdcc4c3f9a99193f0000c841"),
+        hx("010807000000001000000000393000000000803f00000040000040400000003f00000000000040c19a99193fcdcc4c3f0000c841"),
         "CMSG_MOVE_KNOCK_BACK_ACK body"
     );
     assert_eq!(messages::opcode::SMSG_MOVE_KNOCK_BACK, 0x00EF);

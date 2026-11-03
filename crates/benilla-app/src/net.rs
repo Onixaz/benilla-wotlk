@@ -44,7 +44,7 @@ use motion::{
 pub(crate) use motion::{apply_walk_end_facing, drive_display_facing, facing_bearing, FacingHold};
 pub(crate) use motion::{
     ground_derived, grounded_y, jump_seed, CreatureSwimming, FacingStep, RemoteMotion, Spline,
-    SplineStopped, UnitMoveModes,
+    SplineStopped, SwimFlyTransition, UnitMoveModes,
 };
 // Only the ground-census probe reads this, so a build without the instruments leaves it unused.
 // Not a `cfg`: seam knowledge lives in three fixed places, and this file is not one of them.

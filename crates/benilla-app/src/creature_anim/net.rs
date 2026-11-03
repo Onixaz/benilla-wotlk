@@ -111,10 +111,25 @@ fn on_mount_special(
     In(ev): In<SessionEvent>,
     self_guid: Res<SelfGuid>,
     index: Res<GuidIndex>,
+    // Absent before a world streams, which reads as dry.
+    world: Option<benilla_world::world_point::WorldPoint>,
+    units: Query<(&GlobalTransform, Option<&crate::entities::CollisionHeight>)>,
     mut out: MessageWriter<MountFlourish>,
 ) {
     if let SessionEvent::MountSpecial { guid } = ev {
-        mount_special(guid, &self_guid, &index, &mut out);
+        let deep = |e: Entity| {
+            let Ok((tf, height)) = units.get(e) else {
+                return false;
+            };
+            let wow = benilla_assets::coords::bevy_to_wow(tf.translation());
+            let surface = world
+                .as_ref()
+                .and_then(|w| w.liquid_at(benilla_world::world_point::Subject::Unit(e), wow))
+                .map(|hit| hit.surface_z);
+            let h = height.copied().unwrap_or_default().0;
+            deep_in_liquid(surface, wow[2], h)
+        };
+        mount_special(guid, &self_guid, &index, deep, &mut out);
     }
 }
 
@@ -467,20 +482,31 @@ fn environmental_damage_log(
     }
 }
 
-/// `SMSG_MOUNTSPECIAL_ANIM`: a nearby rider rears their mount (MountSpecial, 94). Our own guid is
-/// dropped, as we played it at send: vmangos asks for no echo (`MovementHandler.cpp:972`) but
-/// delivers one anyway unless its per-player broadcaster is on (`Object.cpp:2274`).
+/// `SMSG_MOUNTSPECIAL_ANIM`: a nearby rider rears their mount (MountSpecial, 94), unless the rider
+/// is deep in liquid (`0x71cb67`). Our own guid is dropped, as we played it at send
+/// (`0x71cb70`-`0x71cb81`): vmangos asks for no echo (`MovementHandler.cpp:972`) but delivers one
+/// anyway unless its per-player broadcaster is on (`Object.cpp:2274`).
 fn mount_special(
     guid: u64,
     self_guid: &SelfGuid,
     index: &GuidIndex,
+    deep: impl Fn(Entity) -> bool,
     out: &mut MessageWriter<MountFlourish>,
 ) {
     if self_guid.0 != Some(guid) {
         if let Some(&e) = index.0.get(&guid) {
-            out.write(MountFlourish { unit: e });
+            if !deep(e) {
+                out.write(MountFlourish { unit: e });
+            }
         }
     }
+}
+
+/// The deep-in-liquid test (`0x718a20`): the liquid surface over the unit's feet stands higher
+/// than half its collision height (`0x718a65`-`0x718a6c`); no liquid is a depth of 0.
+pub(crate) fn deep_in_liquid(surface_z: Option<f32>, feet_z: f32, collision_height: f32) -> bool {
+    let depth = surface_z.map_or(0.0, |s| s - feet_z);
+    collision_height * 0.5 < depth
 }
 
 /// `SMSG_ACHIEVEMENT_EARNED`'s earn effect on the earning player, any player in view (`0x5b3020`).
@@ -515,6 +541,51 @@ pub(super) fn on_achievement_earned(
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
+
+    /// `0x718a20`: deep once the surface stands more than half the collision height over the feet.
+    #[test]
+    fn a_rider_is_deep_past_half_its_height_under_a_surface() {
+        assert!(
+            !deep_in_liquid(None, 10.0, 2.0),
+            "no liquid is a depth of 0"
+        );
+        assert!(
+            !deep_in_liquid(Some(11.0), 10.0, 2.0),
+            "exactly half is not deep"
+        );
+        assert!(deep_in_liquid(Some(11.01), 10.0, 2.0));
+        assert!(
+            !deep_in_liquid(Some(9.0), 10.0, 2.0),
+            "a surface below the feet"
+        );
+    }
+
+    /// `0x71cb67`: a rider deep in liquid does not rear; one on land does; our own echo never.
+    #[test]
+    fn a_deep_rider_does_not_rear_its_mount() {
+        const ME: u64 = 0x7;
+        const RIDER: u64 = 0x8;
+        let mut world = World::new();
+        world.init_resource::<GuidIndex>();
+        world.insert_resource(SelfGuid(Some(ME)));
+        world.init_resource::<Messages<MountFlourish>>();
+        let rider = world.spawn_empty().id();
+        let me = world.spawn_empty().id();
+        world.resource_mut::<GuidIndex>().0.insert(RIDER, rider);
+        world.resource_mut::<GuidIndex>().0.insert(ME, me);
+        for (guid, deep) in [(RIDER, true), (RIDER, false), (ME, false)] {
+            world
+                .run_system_once(
+                    move |s: Res<SelfGuid>,
+                          i: Res<GuidIndex>,
+                          mut out: MessageWriter<MountFlourish>| {
+                        mount_special(guid, &s, &i, |_| deep, &mut out);
+                    },
+                )
+                .unwrap();
+        }
+        assert_eq!(world.resource::<Messages<MountFlourish>>().len(), 1);
+    }
 
     /// `0x8006c0` and `0x800610` both play on a streamed unit only, and AzerothCore's trainer buy
     /// sends kit 362 on the buyer through the impact.

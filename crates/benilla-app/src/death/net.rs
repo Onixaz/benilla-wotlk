@@ -314,6 +314,15 @@ fn unit_move_mode(
     let Some(&e) = index.0.get(&guid) else {
         return;
     };
+    // The swim-to-fly bit is in the second word, which `UnitMoveModes` does not hold.
+    if mode == MoveMode::SwimFlyTransition {
+        if apply {
+            commands.entity(e).insert(crate::net::SwimFlyTransition);
+        } else {
+            commands.entity(e).remove::<crate::net::SwimFlyTransition>();
+        }
+        return;
+    }
     let set = |word: &mut UnitMoveModes| {
         if apply {
             word.0 |= mode.flag();
@@ -427,10 +436,18 @@ mod tests {
             "the controller decides whether it drives the unit"
         );
 
+        // The swim-to-fly bit is the second word's, kept beside the first.
+        send(&mut w, EYE, MoveMode::SwimFlyTransition, true);
+        assert!(w.entity(eye).contains::<crate::net::SwimFlyTransition>());
+        assert_eq!(w.entity(eye).get::<UnitMoveModes>().unwrap().0, word);
+        send(&mut w, EYE, MoveMode::SwimFlyTransition, false);
+        assert!(!w.entity(eye).contains::<crate::net::SwimFlyTransition>());
+        assert_eq!(w.resource::<Messages<MoveModeMessage>>().len(), 4);
+
         send(&mut w, 0xDEAD, MoveMode::Root, true);
         assert_eq!(
             w.resource::<Messages<MoveModeMessage>>().len(),
-            2,
+            4,
             "an unknown unit drops"
         );
         send(&mut w, ME, MoveMode::WaterWalk, true);

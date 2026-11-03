@@ -1249,6 +1249,11 @@ pub enum SessionEvent {
         counter: u32,
         height: f32,
     },
+    /// A unit's collision height relayed (`MSG_MOVE_SET_COLLISION_HGT`), no ack: the active mover
+    /// takes the height alone (`0x740833`), another unit with its pose (`0x74099f`).
+    CollisionHeightChanged { guid: u64, height: f32 },
+    /// `SMSG_FLIGHT_SPLINE_SYNC`: where along its cyclic path the server has the unit, `0..1`.
+    FlightSplineSync { guid: u64, progress: f32 },
     /// Our root, water-walk, feather-fall, hover, can-fly or gravity changed. Ack with `counter`
     /// and our `MovementInfo`, or the server never applies it and observers never see it.
     MoveMode {

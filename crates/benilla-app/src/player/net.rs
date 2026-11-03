@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use super::{Player, ServerStandState};
 use crate::creature_anim::move_flags;
 use crate::entities::CollisionHeight;
-use crate::net::{ClientCommand, NetCommands, NetHandlerApp, SelfGuid, SelfPlayer};
+use crate::net::{ClientCommand, GuidIndex, NetCommands, NetHandlerApp, SelfGuid, SelfPlayer};
 
 /// Registers the handlers; called from [`super::PlayerPlugin`].
 pub(super) fn register(app: &mut App) {
@@ -17,6 +17,10 @@ pub(super) fn register(app: &mut App) {
         .net_handler(
             SessionEventKind::MoveSetCollisionHeight,
             on_set_collision_height,
+        )
+        .net_handler(
+            SessionEventKind::CollisionHeightChanged,
+            on_collision_height_changed,
         );
 }
 
@@ -78,6 +82,30 @@ fn on_set_collision_height(
         pos: benilla_assets::coords::bevy_to_wow(player.pos),
         orientation: player.face_yaw.rem_euclid(std::f32::consts::TAU),
     });
+}
+
+/// `MSG_MOVE_SET_COLLISION_HGT`, no ack: any unit's collision height becomes the server's until its
+/// model sets it again. The active mover takes the height alone (`0x740833`), another unit with the
+/// pose its relay carries (`0x74099f`).
+fn on_collision_height_changed(
+    In(ev): In<SessionEvent>,
+    index: Res<GuidIndex>,
+    mut heights: Query<&mut CollisionHeight>,
+    mut commands: Commands,
+) {
+    let SessionEvent::CollisionHeightChanged { guid, height } = ev else {
+        return;
+    };
+    let Some(&e) = index.0.get(&guid) else {
+        return;
+    };
+    match heights.get_mut(e) {
+        Ok(mut h) => h.0 = height,
+        // Not stamped yet: the stamp skips a unit that already has one.
+        Err(_) => {
+            commands.entity(e).insert(CollisionHeight(height));
+        }
+    }
 }
 
 fn on_stand_state_update(In(ev): In<SessionEvent>, mut out: MessageWriter<ServerStandState>) {

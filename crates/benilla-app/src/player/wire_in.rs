@@ -595,6 +595,7 @@ mod session_end_tests {
             hover: true,
             levitating: true,
             can_fly: true,
+            swim_fly_transition: true,
         };
         p.autorun = true;
         p.control_lost = true;

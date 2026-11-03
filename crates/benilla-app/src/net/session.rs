@@ -236,7 +236,12 @@ fn on_disconnected(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
 
 /// Teleport, knockback and client control, forwarded unjudged to the controller, which applies
 /// and answers them.
-fn on_mover_edge(In(ev): In<SessionEvent>, mut e: Edges, b: Bridge) {
+fn on_mover_edge(
+    In(ev): In<SessionEvent>,
+    mut e: Edges,
+    b: Bridge,
+    movers: Query<&super::Guid, With<super::ActiveMover>>,
+) {
     match ev {
         SessionEvent::Teleport {
             guid,
@@ -255,7 +260,14 @@ fn on_mover_edge(In(ev): In<SessionEvent>, mut e: Edges, b: Bridge) {
             guid,
             counter,
             launch,
-        } => knock_back(guid, counter, launch, &b.self_guid, &mut e.knockbacks),
+        } => knock_back(
+            guid,
+            counter,
+            launch,
+            &b.self_guid,
+            movers.single().ok().map(|g| g.0),
+            &mut e.knockbacks,
+        ),
         SessionEvent::ClientControl { mover, allow_move } => {
             e.client_control
                 .write(ClientControlMessage { mover, allow_move });
@@ -601,17 +613,18 @@ fn teleport(
     }
 }
 
-/// `SMSG_MOVE_KNOCK_BACK`: a ballistic launch our controller flies and acks. The reference handles
-/// it for the controller only; observers get `MSG_MOVE_KNOCK_BACK`, so one naming another unit is
-/// dropped.
+/// `SMSG_MOVE_KNOCK_BACK`: a ballistic launch our controller flies and acks, for our body or the
+/// unit we drive (`0x72d1b0`); AzerothCore names a possessed unit when it is our mover. Observers
+/// get `MSG_MOVE_KNOCK_BACK`, so one naming any other unit is dropped.
 fn knock_back(
     guid: u64,
     counter: u32,
     launch: JumpInfo,
     self_guid: &SelfGuid,
+    active_mover: Option<u64>,
     knockbacks: &mut MessageWriter<KnockBackMessage>,
 ) {
-    if self_guid.0 == Some(guid) {
+    if self_guid.0 == Some(guid) || active_mover == Some(guid) {
         knockbacks.write(KnockBackMessage {
             guid,
             counter,
@@ -882,6 +895,45 @@ mod game_clock_tests {
         game_speed(0.0, &mut server_time);
         assert_eq!(server_time.0.unwrap().timescale(), GameTime::MIN_SPEED);
         assert_eq!(server_time.1, GameTime::MIN_SPEED);
+    }
+}
+
+#[cfg(test)]
+mod knock_back_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    const ME: u64 = 0x7;
+    const EYE: u64 = 0xF130_006F_5F29_221A;
+
+    fn knocked(guid: u64, active_mover: Option<u64>) -> usize {
+        let mut world = World::new();
+        world.init_resource::<Messages<KnockBackMessage>>();
+        world
+            .run_system_once(move |mut out: MessageWriter<KnockBackMessage>| {
+                knock_back(
+                    guid,
+                    1,
+                    JumpInfo::default(),
+                    &SelfGuid(Some(ME)),
+                    active_mover,
+                    &mut out,
+                );
+            })
+            .unwrap();
+        world.resource::<Messages<KnockBackMessage>>().len()
+    }
+
+    /// `0x72d1b0` launches the unit named: our body, or the unit we drive.
+    #[test]
+    fn a_knockback_lands_on_our_body_or_the_unit_we_drive() {
+        assert_eq!(knocked(ME, Some(ME)), 1);
+        assert_eq!(knocked(EYE, Some(EYE)), 1, "a possessed mover is launched");
+        assert_eq!(
+            knocked(EYE, Some(ME)),
+            0,
+            "a unit we only watch is not ours to fly"
+        );
     }
 }
 

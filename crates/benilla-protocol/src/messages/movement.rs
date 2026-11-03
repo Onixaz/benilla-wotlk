@@ -8,8 +8,9 @@ use crate::wire::{read_f32_le, read_u32_le, Vector3d};
 // (`MovementInfo.h:56`), not TBC's 0x200, which 1.12 names `MOVEFLAG_UNUSED10`.
 pub(super) const MOVEMENT_FLAG_ON_TRANSPORT: u32 = 0x0200_0000;
 pub(super) const MOVEMENT_FLAG_JUMPING: u32 = 0x2000;
-#[cfg(test)]
 pub(super) const MOVEMENT_FLAG_SWIMMING: u32 = 0x20_0000;
+/// 1.12.1's root bit, 3.3.5a's `ROOT` (`0x800`) once mapped.
+const MOVEMENT_FLAG_ROOT: u32 = 0x1000;
 pub(super) const MOVEMENT_FLAG_SPLINE_ENABLED: u32 = 0x40_0000;
 /// 1.12.1's flying bit, 3.3.5a's `FLYING` (`0x200_0000`) once mapped.
 pub const CLASSIC_FLYING: u32 = 0x100_0000;
@@ -22,6 +23,13 @@ pub const CLASSIC_DESCENDING: u32 = 0x80_0000;
 pub const CLASSIC_CAN_FLY: u32 = 0x800_0000;
 /// 3.3.5a's `DISABLE_GRAVITY` (`0x400`) in the 1.12.1 word: the same bit, 1.12.1's levitating.
 pub const CLASSIC_DISABLE_GRAVITY: u32 = 0x400;
+
+/// The 1.12.1-bit flags a launch leaves (`0x6f0e30`): a swim or flight ends, the root becomes a
+/// pending root, `CAN_FLY` clears, and the unit falls.
+pub(super) fn launch_flags(classic: u32) -> u32 {
+    let ended = MOVEMENT_FLAG_SWIMMING | CLASSIC_FLYING | MOVEMENT_FLAG_ROOT | CLASSIC_CAN_FLY;
+    (classic & !ended) | MOVEMENT_FLAG_JUMPING
+}
 
 /// `MSG_MOVE_TIME_SKIPPED` inbound: a packed guid and the ms that mover's client skipped. Our own
 /// `CMSG_MOVE_TIME_SKIPPED` has the same shape.
@@ -50,7 +58,14 @@ mod wotlk_flag {
     pub const FLAG2_INTERPOLATED_MOVEMENT: u16 = 0x400;
     /// `MovementFlags2`: pitch is on the wire without swimming or flying.
     pub const FLAG2_ALWAYS_ALLOW_PITCHING: u16 = 0x20;
+    /// `MovementFlags2`: a flyer may pass into swimming; without it the flight collision query
+    /// adds facet flag `0x20000` (`0x75e441`).
+    pub const FLAG2_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY: u16 = 0x4000;
 }
+
+/// The second flags word's swim-to-fly bit, as [`MovementInfo::flags2`] carries it.
+pub const FLAG2_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY: u16 =
+    wotlk_flag::FLAG2_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY;
 
 /// 3.3.5a's movement flags in 1.12.1's bits. 3.3.5a moved transport to `0x200` and spline to
 /// `0x0800_0000`, shifted root through the pending bits down by one and added ascending,
@@ -158,8 +173,8 @@ pub(crate) fn read_movement_info_wotlk(r: &mut impl Read) -> io::Result<Movement
     let fall_time = read_u32_le(r)?;
     let jump = if flags & wotlk_flag::FALLING != 0 {
         let zspeed = read_f32_le(r)?;
-        let sin_angle = read_f32_le(r)?;
         let cos_angle = read_f32_le(r)?;
+        let sin_angle = read_f32_le(r)?;
         Some(JumpInfo {
             zspeed,
             cos_angle,
@@ -237,10 +252,14 @@ pub enum MoveMode {
     /// 3.3.5a's `DISABLE_GRAVITY`, 1.12.1's levitating bit once mapped: `apply` turns gravity off
     /// (`SMSG_MOVE_GRAVITY_DISABLE`), and the two directions ack on their own opcodes.
     DisableGravity,
+    /// The second flags word's swim-to-fly bit (`0x4000`, set `0x6ed68d`, cleared `0x6ed6b2`), by
+    /// `SMSG_MOVE_SET/UNSET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY`; it has no `MOVEMENTFLAGS` bit.
+    SwimFlyTransition,
 }
 
 impl MoveMode {
-    /// This mode's `MOVEMENTFLAGS` bit.
+    /// This mode's `MOVEMENTFLAGS` bit; `0` for [`MoveMode::SwimFlyTransition`], whose bit is in the
+    /// second word.
     pub fn flag(self) -> u32 {
         match self {
             MoveMode::Root => 0x0000_1000,
@@ -249,6 +268,7 @@ impl MoveMode {
             MoveMode::Hover => 0x4000_0000,
             MoveMode::CanFly => CLASSIC_CAN_FLY,
             MoveMode::DisableGravity => CLASSIC_DISABLE_GRAVITY,
+            MoveMode::SwimFlyTransition => 0,
         }
     }
 
@@ -265,6 +285,10 @@ impl MoveMode {
             (MoveMode::CanFly, _) => opcode::CMSG_MOVE_SET_CAN_FLY_ACK,
             (MoveMode::DisableGravity, true) => opcode::CMSG_MOVE_GRAVITY_DISABLE_ACK,
             (MoveMode::DisableGravity, false) => opcode::CMSG_MOVE_GRAVITY_ENABLE_ACK,
+            // Both directions ack on `0x340` (`0x6ed6ab`, `0x6ed6d0`).
+            (MoveMode::SwimFlyTransition, _) => {
+                opcode::CMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY_ACK
+            }
         }
     }
 
@@ -332,25 +356,36 @@ pub enum RelayVerb {
     /// decides. The client then roots (also wiping motion) or unroots the mover unconditionally;
     /// vmangos's flags already agree (`MovementHandler.cpp:1064`).
     Root(bool),
+    /// `MSG_MOVE_SET_*_SPEED` and `MSG_MOVE_SET_COLLISION_HGT`: the value rides its own event, and
+    /// the active mover takes that value alone, never the pose (`0x7406da`, `0x74072c`).
+    Value,
+    /// `MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY`: the second flags word's swim-to-fly
+    /// bit, set or cleared on the unit (`0x6ef1f5`-`0x6ef20a`).
+    SwimFlyTransition(bool),
 }
 
 impl RelayVerb {
-    /// The verb a relay opcode carries.
-    pub fn of(opcode: u16) -> Self {
+    /// The verb a relay opcode carries, with its second flags word.
+    pub fn of(opcode: u16, flags2: u16) -> Self {
         use super::opcode as op;
         match opcode {
             op::MSG_MOVE_HEARTBEAT => Self::Heartbeat,
             op::MSG_MOVE_TELEPORT => Self::Teleport,
             op::MSG_MOVE_ROOT => Self::Root(true),
             op::MSG_MOVE_UNROOT => Self::Root(false),
+            op::MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY => Self::SwimFlyTransition(
+                flags2 & wotlk_flag::FLAG2_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY != 0,
+            ),
             _ => Self::Pose,
         }
     }
 }
 
-/// The jump tail: `zspeed, sinAngle, cosAngle, xyspeed` in 3.3.5a's `MovementInfo` under `FALLING`
-/// (AzerothCore `ReadMovementInfo`). The launch is `(cos, sin) * xy_speed` in world XY, frozen at take-off,
-/// so a receiver can replay the arc under `g = 19.291105` (vmangos `ExtrapolateMovement`).
+/// The jump tail: `zspeed, cos, sin, xyspeed` in 3.3.5a's `MovementInfo` under `FALLING`, the
+/// direction's x before its y (read `0x4f4e82`-`0x4f4eab`, written from the direction at
+/// `0x987269`). AzerothCore names the second float `sinAngle`. The launch is `(cos, sin) *
+/// xy_speed` in world XY, frozen at take-off, so a receiver can replay the arc under
+/// `g = 19.291105` (vmangos `ExtrapolateMovement`).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct JumpInfo {
     /// Take-off vertical speed (yd/s), down-positive: the 1.12 client sends `-7.955547` for a
@@ -445,8 +480,8 @@ impl MovementInfo {
         if flags & wotlk_flag::FALLING != 0 {
             let j = self.jump.unwrap_or_default();
             w.extend_from_slice(&j.zspeed.to_le_bytes());
-            w.extend_from_slice(&j.sin_angle.to_le_bytes());
             w.extend_from_slice(&j.cos_angle.to_le_bytes());
+            w.extend_from_slice(&j.sin_angle.to_le_bytes());
             w.extend_from_slice(&j.xy_speed.to_le_bytes());
         }
         if flags & wotlk_flag::SPLINE_ELEVATION != 0 {
@@ -609,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn the_jump_tail_rides_falling_in_sin_cos_order() {
+    fn the_jump_tail_rides_falling_in_cos_sin_order() {
         let mut jumping = info(MOVEMENT_FLAG_JUMPING);
         jumping.jump = Some(JumpInfo {
             zspeed: -7.955547,
@@ -621,7 +656,7 @@ mod tests {
         jumping.write(MOVER, &mut bytes);
         assert_eq!(&bytes[3..7], &0x1000u32.to_le_bytes(), "FALLING is 0x1000");
         let tail = &bytes[bytes.len() - 16..];
-        assert_eq!(&tail[4..8], &0.8f32.to_le_bytes(), "sin before cos");
+        assert_eq!(&tail[4..8], &0.6f32.to_le_bytes(), "cos before sin");
         let (_, back, _) = round_trip(&jumping);
         assert_eq!(back.jump, jumping.jump);
     }

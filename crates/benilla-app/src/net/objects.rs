@@ -76,7 +76,8 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::GameObjectResetState, on_gameobject_anim)
         .net_handler(K::SplineMoveMode, on_spline_move_mode)
         .net_handler(K::ForceSpeedChange, on_speed)
-        .net_handler(K::SpeedChanged, on_speed);
+        .net_handler(K::SpeedChanged, on_speed)
+        .net_handler(K::FlightSplineSync, on_flight_spline_sync);
 }
 
 /// The streamed world as one parameter: the components, caches, lifecycle hooks and edges the
@@ -482,6 +483,17 @@ fn on_unit_move(In(ev): In<SessionEvent>, mut sc: Scene) {
     } = ev
     {
         let now_ms = sc.real.elapsed_secs_f64() * 1000.0;
+        // The active mover takes a speed or height relay's value alone (`0x7406da`): the status it
+        // carries is never applied, so our pose stays ours.
+        let active = sc.self_guid.0 == Some(guid)
+            || sc
+                .index
+                .0
+                .get(&guid)
+                .is_some_and(|&e| sc.active_movers.contains(e));
+        if verb == benilla_protocol::RelayVerb::Value && active {
+            return;
+        }
         unit_move(
             guid,
             crate::net::motion::RelayMove {
@@ -646,6 +658,46 @@ fn on_gameobject_anim(In(ev): In<SessionEvent>, mut sc: Scene) {
         }
         _ => {}
     }
+}
+
+/// `SMSG_FLIGHT_SPLINE_SYNC` (`0x716940`): the next lap's duration modifier for the unit's spline,
+/// toward the server's progress (`0x98b5d0`). The reference adopts it when a cyclic spline wraps
+/// (`0x98ca00`); ours run one lap and never wrap, so it is traced, not applied.
+fn on_flight_spline_sync(
+    In(ev): In<SessionEvent>,
+    index: Res<GuidIndex>,
+    splines: Query<&super::motion::Spline>,
+) {
+    let SessionEvent::FlightSplineSync { guid, progress } = ev else {
+        return;
+    };
+    let Some(spline) = index.0.get(&guid).and_then(|&e| splines.get(e).ok()) else {
+        return;
+    };
+    let elapsed = std::time::Instant::now().saturating_duration_since(spline.start);
+    let next = next_lap_modifier(
+        progress,
+        elapsed.as_secs_f32(),
+        spline.duration.as_secs_f32(),
+    );
+    debug!("net: flight spline sync {guid:#x} at {progress:.3}: next lap x{next:.3} (not applied)");
+}
+
+/// `0x98b5d0` with the running lap's modifier at 1: the progress gap to the server's, wrapped into
+/// half a lap, shortens or stretches the next lap by that much, clamped to `0.5..=2`; a lap under
+/// 10 ms keeps 1.
+fn next_lap_modifier(progress: f32, elapsed_s: f32, duration_s: f32) -> f32 {
+    if duration_s < 0.01 {
+        return 1.0;
+    }
+    let mut delta = progress - elapsed_s / duration_s;
+    if delta > 0.5 {
+        delta -= 1.0;
+    }
+    if delta < -0.5 {
+        delta += 1.0;
+    }
+    ((duration_s - delta * duration_s) / duration_s).clamp(0.5, 2.0)
 }
 
 /// The observer movement-mode family: no ack.
@@ -1855,5 +1907,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod relay_tests;
 #[cfg(test)]
 mod update_tests;

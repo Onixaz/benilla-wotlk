@@ -47,16 +47,31 @@ fn read_force_speed(kind: SpeedKind, r: &mut impl Read) -> io::Result<ServerPack
     })
 }
 
-/// Read an `SMSG_COMPRESSED_MOVES` body: `u32` uncompressed size, then deflated
-/// `[u8 size][u16 opcode][body]` records, `size` counting the opcode (`MovementData::AddPacket`).
-/// Each record goes back through [`parse_server`], and one bad record fails the whole batch; only
-/// the `MSG_MOVE_*` relays can appear (vmangos `ObjectViewersMovementDeliverer`).
+/// Read an `SMSG_COMPRESSED_MOVES` body: `u32` uncompressed size (`0x7169b1`), then the records
+/// deflated (`0x7169f0`).
 fn read_compressed_moves(r: &mut &[u8]) -> io::Result<Vec<ServerPacket>> {
     let uncompressed = read_u32_le(r)? as usize;
     let mut buf = Vec::with_capacity(uncompressed.min(64 * 1024));
     // `bufread`, not `read`: the cursor must stop at the stream's end for the tail to be seen.
     flate2::bufread::ZlibDecoder::new(r).read_to_end(&mut buf)?;
-    let mut rest = buf.as_slice();
+    read_move_records(&buf)
+}
+
+/// Read an `SMSG_MULTIPLE_MOVES` body: a `u32` the reader skips (`0x7169b1`), then the records as
+/// they stand (`0x7169f9`).
+fn read_multiple_moves(r: &mut &[u8]) -> io::Result<Vec<ServerPacket>> {
+    let _size = read_u32_le(r)?;
+    let packets = read_move_records(r)?;
+    *r = &[];
+    Ok(packets)
+}
+
+/// The move batches' records (`0x716a32`): `[u8 size][u16 opcode][body]`, `size` counting the
+/// opcode (`0x716a39`, `0x716a4a`), each dispatched as its own packet (`0x716a78`). One bad record
+/// fails the whole batch; only the `MSG_MOVE_*` relays appear (vmangos
+/// `ObjectViewersMovementDeliverer`).
+fn read_move_records(buf: &[u8]) -> io::Result<Vec<ServerPacket>> {
+    let mut rest = buf;
     let mut packets = Vec::new();
     while !rest.is_empty() {
         let size = read_u8(&mut rest)? as usize;
@@ -80,10 +95,10 @@ fn read_compressed_moves(r: &mut &[u8]) -> io::Result<Vec<ServerPacket>> {
         let (body, tail) = rest.split_at(body_len);
         rest = tail;
         // A batch inside a batch would recurse without bound; vmangos never nests one.
-        if opcode == opcode::SMSG_COMPRESSED_MOVES {
+        if is_batch(opcode) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "compressed-moves nested inside compressed-moves",
+                "a packet batch nested inside a move batch",
             ));
         }
         packets.push(parse_server(opcode, body).map_err(|e| {
@@ -95,6 +110,47 @@ fn read_compressed_moves(r: &mut &[u8]) -> io::Result<Vec<ServerPacket>> {
                 ),
             )
         })?);
+    }
+    Ok(packets)
+}
+
+/// The opcodes whose body is a run of other packets.
+const fn is_batch(o: u16) -> bool {
+    matches!(
+        o,
+        opcode::SMSG_COMPRESSED_MOVES | opcode::SMSG_MULTIPLE_MOVES | opcode::SMSG_MULTIPLE_PACKETS
+    )
+}
+
+/// Read an `SMSG_MULTIPLE_PACKETS` body: `[u16 opcode][body]` records with no length, while bytes
+/// remain (`0x714ae8`), each handed to the dispatcher (`0x714af4`), which reads the opcode
+/// (`0x631ff8`) and lets that handler read its own body. A record therefore ends where its decoder
+/// stops, and one with no decoder cannot be framed past.
+fn read_multiple_packets(r: &mut &[u8]) -> io::Result<Vec<ServerPacket>> {
+    let mut packets = Vec::new();
+    while !r.is_empty() {
+        let opcode = read_u16_le(r)?;
+        let name = super::opcode_name(opcode).unwrap_or("?");
+        if is_batch(opcode) || UNDECODED.contains(&opcode) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("multiple-packets record {opcode:#06x} ({name}) cannot be read in place"),
+            ));
+        }
+        let mut inner_tail = 0;
+        let packet = parse_server_body(opcode, r, &mut inner_tail).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("multiple-packets record {opcode:#06x} ({name}): {e}"),
+            )
+        })?;
+        if matches!(packet, ServerPacket::Other { .. }) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("multiple-packets record {opcode:#06x} ({name}) has no decoder"),
+            ));
+        }
+        packets.push(packet);
     }
     Ok(packets)
 }
@@ -129,6 +185,55 @@ fn read_move_set_speed(kind: SpeedKind, r: &mut impl Read) -> io::Result<ServerP
     })
 }
 
+/// Read a `MSG_MOVE_SET_COLLISION_HGT` body: `[packed guid][MovementInfo][f32 height]`, the speed
+/// relays' shape (`0x7406bb`, `0x7406d0`).
+fn read_move_set_collision_height(r: &mut impl Read) -> io::Result<ServerPacket> {
+    let guid = read_packed_guid(r)?;
+    let info = movement::read_movement_info_wotlk(r)?;
+    Ok(ServerPacket::MoveCollisionHeight {
+        guid,
+        flags: info.flags,
+        position: info.position,
+        orientation: info.orientation,
+        pitch: info.pitch,
+        time: info.timestamp,
+        fall_time: info.fall_time,
+        jump: info.jump,
+        transport: info.transport,
+        height: read_f32_le(r)?,
+    })
+}
+
+/// Read a `MSG_MOVE_KNOCK_BACK` body: the relay, then the launch's direction x and y, horizontal
+/// and vertical speed (`0x71880b`-`0x71882c`). The unit is launched from those four, not from the
+/// block's jump tail (`0x718853`): a swim or flight ends and the fall restarts (`0x6f0e30`).
+fn read_move_knock_back(r: &mut impl Read) -> io::Result<ServerPacket> {
+    let guid = read_packed_guid(r)?;
+    let info = movement::read_movement_info_wotlk(r)?;
+    let cos_angle = read_f32_le(r)?;
+    let sin_angle = read_f32_le(r)?;
+    let xy_speed = read_f32_le(r)?;
+    let zspeed = read_f32_le(r)?;
+    Ok(ServerPacket::PlayerMove {
+        guid,
+        opcode: opcode::MSG_MOVE_KNOCK_BACK,
+        flags: movement::launch_flags(info.flags),
+        flags2: info.flags2,
+        position: info.position,
+        orientation: info.orientation,
+        pitch: info.pitch,
+        time: info.timestamp,
+        fall_time: 0,
+        jump: Some(JumpInfo {
+            zspeed,
+            cos_angle,
+            sin_angle,
+            xy_speed,
+        }),
+        transport: info.transport,
+    })
+}
+
 /// True for an opcode the server relays as `[packed guid][MovementInfo]`, one client handler: the
 /// echoed input stream (vmangos `HandleMovementOpcodes`), and the observer leg of root, hover,
 /// feather-fall, water-walk and teleport, with no ack and its direction in the flags word.
@@ -154,15 +259,14 @@ const fn is_movement_relay(o: u16) -> bool {
             | opcode::MSG_MOVE_FALL_LAND
             | opcode::MSG_MOVE_START_SWIM
             | opcode::MSG_MOVE_STOP_SWIM
+            | opcode::MSG_MOVE_START_SWIM_CHEAT
+            | opcode::MSG_MOVE_STOP_SWIM_CHEAT
             | opcode::MSG_MOVE_SET_FACING
             | opcode::MSG_MOVE_SET_PITCH
             | opcode::MSG_MOVE_HEARTBEAT
             | opcode::MSG_MOVE_START_ASCEND
             | opcode::MSG_MOVE_STOP_ASCEND
             | opcode::MSG_MOVE_START_DESCEND
-            // Another unit's knockback: the four trailing launch floats go unread, since the
-            // `MovementInfo` comes from the victim's ack and its jump tail already is that quad.
-            | opcode::MSG_MOVE_KNOCK_BACK
             // Another unit's mode change: the mode rides the `MovementInfo` flags word.
             | opcode::MSG_MOVE_ROOT
             | opcode::MSG_MOVE_UNROOT
@@ -170,6 +274,7 @@ const fn is_movement_relay(o: u16) -> bool {
             | opcode::MSG_MOVE_FEATHER_FALL
             | opcode::MSG_MOVE_WATER_WALK
             | opcode::MSG_MOVE_UPDATE_CAN_FLY
+            | opcode::MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY
             | opcode::MSG_MOVE_GRAVITY_CHNG
             | opcode::MSG_MOVE_TELEPORT
     )
@@ -316,9 +421,8 @@ pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPac
 }
 
 /// The opcodes whose 3.3.5a body is known to differ from the layout their arm reads and has no
-/// 3.3.5a decoder yet: each failed or left bytes unread against AzerothCore, and
-/// `SMSG_COMPRESSED_MOVES`, which AzerothCore never sends, frames its records unverified.
-const UNDECODED: [u16; 1] = [opcode::SMSG_COMPRESSED_MOVES];
+/// 3.3.5a decoder yet: each failed or left bytes unread against AzerothCore.
+const UNDECODED: [u16; 0] = [];
 
 /// The opcode dispatch; `cursor` advances past what the arm read only on success.
 fn parse_server_body(
@@ -383,6 +487,22 @@ fn parse_server_body(
         opcode::SMSG_COMPRESSED_MOVES => ServerPacket::CompressedMoves {
             packets: read_compressed_moves(&mut r)?,
         },
+        opcode::SMSG_MULTIPLE_MOVES => ServerPacket::PacketBatch {
+            opcode,
+            packets: read_multiple_moves(&mut r)?,
+        },
+        opcode::SMSG_MULTIPLE_PACKETS => ServerPacket::PacketBatch {
+            opcode,
+            packets: read_multiple_packets(&mut r)?,
+        },
+        // `f32` progress (`0x716950`), then the unit's packed guid (`0x71695a`).
+        opcode::SMSG_FLIGHT_SPLINE_SYNC => {
+            let progress = read_f32_le(&mut r)?;
+            ServerPacket::FlightSplineSync {
+                progress,
+                guid: read_packed_guid(&mut r)?,
+            }
+        }
         opcode::MSG_MOVE_TIME_SKIPPED => {
             let (guid, lag_ms) = movement::read_move_time_skipped(&mut r)?;
             ServerPacket::MoveTimeSkipped { guid, lag_ms }
@@ -1602,8 +1722,8 @@ fn parse_server_body(
         opcode::SMSG_SPIRIT_HEALER_CONFIRM => ServerPacket::SpiritHealerConfirm {
             npc: death::read_spirit_healer_confirm(&mut r)?,
         },
-        // The acked mode family, all twelve `packed guid, u32 counter` (`0x732450`, then `0x7307a0`
-        // reads the counter); unacked, the server never applies the change.
+        // The acked mode family, all fourteen `packed guid, u32 counter` (`0x732450`, then
+        // `0x7307a0` reads the counter); unacked, the server never applies the change.
         opcode::SMSG_FORCE_MOVE_ROOT
         | opcode::SMSG_FORCE_MOVE_UNROOT
         | opcode::SMSG_MOVE_WATER_WALK
@@ -1615,7 +1735,9 @@ fn parse_server_body(
         | opcode::SMSG_MOVE_SET_CAN_FLY
         | opcode::SMSG_MOVE_UNSET_CAN_FLY
         | opcode::SMSG_MOVE_GRAVITY_DISABLE
-        | opcode::SMSG_MOVE_GRAVITY_ENABLE => {
+        | opcode::SMSG_MOVE_GRAVITY_ENABLE
+        | opcode::SMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY
+        | opcode::SMSG_MOVE_UNSET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY => {
             let (mode, apply) = match opcode {
                 opcode::SMSG_FORCE_MOVE_ROOT => (MoveMode::Root, true),
                 opcode::SMSG_FORCE_MOVE_UNROOT => (MoveMode::Root, false),
@@ -1628,7 +1750,11 @@ fn parse_server_body(
                 opcode::SMSG_MOVE_SET_CAN_FLY => (MoveMode::CanFly, true),
                 opcode::SMSG_MOVE_UNSET_CAN_FLY => (MoveMode::CanFly, false),
                 opcode::SMSG_MOVE_GRAVITY_DISABLE => (MoveMode::DisableGravity, true),
-                _ => (MoveMode::DisableGravity, false),
+                opcode::SMSG_MOVE_GRAVITY_ENABLE => (MoveMode::DisableGravity, false),
+                opcode::SMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY => {
+                    (MoveMode::SwimFlyTransition, true)
+                }
+                _ => (MoveMode::SwimFlyTransition, false),
             };
             let guid = read_packed_guid(&mut r)?;
             let counter = read_u32_le(&mut r)?;
@@ -2117,6 +2243,8 @@ fn parse_server_body(
             read_move_set_speed(SpeedKind::FlightBack, &mut r)?
         }
         opcode::MSG_MOVE_SET_PITCH_RATE => read_move_set_speed(SpeedKind::PitchRate, &mut r)?,
+        opcode::MSG_MOVE_SET_COLLISION_HGT => read_move_set_collision_height(&mut r)?,
+        opcode::MSG_MOVE_KNOCK_BACK => read_move_knock_back(&mut r)?,
         opcode::SMSG_MOUNTRESULT => ServerPacket::MountResult {
             mount: true,
             code: read_u32_le(&mut r)?,
@@ -2241,6 +2369,7 @@ fn parse_server_body(
                 guid,
                 opcode: o,
                 flags: info.flags,
+                flags2: info.flags2,
                 position: info.position,
                 orientation: info.orientation,
                 pitch: info.pitch,

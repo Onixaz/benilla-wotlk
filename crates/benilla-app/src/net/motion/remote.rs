@@ -91,11 +91,22 @@ pub(in crate::net) fn trace_relay(
         benilla_protocol::RelayVerb::Teleport => "tp",
         benilla_protocol::RelayVerb::Root(_) => "rt",
         benilla_protocol::RelayVerb::Pose => "tr",
+        benilla_protocol::RelayVerb::Value => "vl",
+        benilla_protocol::RelayVerb::SwimFlyTransition(_) => "sf",
     };
+    // The jump tail's horizontal launch in world XY, and the pose's facing beside it.
+    let jump = mv.jump.map_or(String::new(), |j| {
+        format!(
+            " o={:.3} jump=[{:+.2},{:+.2}]",
+            mv.orientation,
+            j.cos_angle * j.xy_speed,
+            j.sin_angle * j.xy_speed
+        )
+    });
     benilla_assets::trace::line(
         "rly",
         &format!(
-            "guid={guid:#x} {kind} wire={} flags={:#x} pitch={:+.3} out={} lead={lead:7.1} q={queued}",
+            "guid={guid:#x} {kind} wire={} flags={:#x} pitch={:+.3} out={} lead={lead:7.1} q={queued}{jump}",
             mv.wire_ms,
             mv.flags,
             mv.pitch,
@@ -292,6 +303,15 @@ pub(in crate::net) fn apply_move(
             rm.flags = (rm.flags | move_flags::ROOT) & super::modes::ROOT_APPLY_WIPE;
         }
         benilla_protocol::RelayVerb::Root(false) => rm.flags &= !move_flags::ROOT,
+        // The second word's swim-to-fly bit follows the relay's (`0x6ef1f5`-`0x6ef20a`).
+        benilla_protocol::RelayVerb::SwimFlyTransition(true) => {
+            commands.entity(e).insert(super::modes::SwimFlyTransition);
+        }
+        benilla_protocol::RelayVerb::SwimFlyTransition(false) => {
+            commands
+                .entity(e)
+                .remove::<super::modes::SwimFlyTransition>();
+        }
         _ => {}
     }
     rm.pitch = ev.pitch;
