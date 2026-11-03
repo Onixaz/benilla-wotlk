@@ -253,15 +253,15 @@ fn read_auth_response(r: &mut &[u8]) -> io::Result<ServerPacket> {
 /// 3.3.5a's `SMSG_NAME_QUERY_RESPONSE`, as the 12340 client reads it (`0x6357d0`): a packed
 /// guid, `u8` status, then on status 0 the name, the realm name (empty on one realm), `u8` race,
 /// gender and class, and a `u8` flag that adds the five declined-name cstrings. Any other status
-/// carries no name and is refused.
+/// ends the body: a [`super::NameQueryMiss`].
 fn read_name_query_response_wotlk(r: &mut &[u8]) -> io::Result<ServerPacket> {
     let guid = crate::wire::read_packed_guid(r)?;
     let status = read_u8(r)?;
     if status != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("name query for {guid:#x} answered status {status}, no name"),
-        ));
+        return Ok(ServerPacket::NameQueryMiss {
+            guid,
+            miss: super::NameQueryMiss::from_status(status),
+        });
     }
     let name = read_cstring(r)?;
     let _realm = read_cstring(r)?;

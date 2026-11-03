@@ -334,7 +334,33 @@ impl crate::query_cache::AskOnce for NameCache {
     }
 }
 
+/// The name a status-3 answer caches (`0x635849`).
+const PLACEHOLDER_NAME: &str = "?";
+
 impl NameCache {
+    /// A name query answered with no name (`0x635817`). A retry asks again while the ask is still
+    /// in flight (`0x67a360`); a placeholder caches `"?"`; a deny caches the negative answer, where
+    /// the reference drops the pending record so a later lookup asks again (`0x67a2d0`): names
+    /// here are polled every frame, so that would ask every frame.
+    pub(crate) fn player_name_miss(
+        &mut self,
+        guid: u64,
+        miss: benilla_protocol::messages::NameQueryMiss,
+        commands: &NetCommands,
+    ) {
+        use benilla_protocol::messages::NameQueryMiss as M;
+        debug!("names: player {guid:#x} answered {miss:?}");
+        match miss {
+            M::Retry => {
+                if self.players.is_pending(guid) {
+                    let _ = commands.0.send(ClientCommand::NameQuery { guid });
+                }
+            }
+            M::Placeholder => self.insert_player(guid, PLACEHOLDER_NAME.into(), None),
+            M::Deny => self.insert_player(guid, String::new(), None),
+        }
+    }
+
     /// Drop a player's cached name and traits so the next resolve re-asks: the reference's
     /// remove-by-key for `SMSG_INVALIDATE_PLAYER`.
     pub(crate) fn invalidate_player(&mut self, guid: u64) {
@@ -350,12 +376,13 @@ pub(crate) mod net {
     use bevy::prelude::*;
 
     use super::{CreatureRecord, NameCache};
-    use crate::net::NetHandlerApp;
+    use crate::net::{NetCommands, NetHandlerApp};
 
-    /// Register the four handlers.
+    /// Register the five handlers.
     pub(crate) fn register(app: &mut App) {
         use SessionEventKind as K;
         app.net_handler(K::PlayerName, on_player_name)
+            .net_handler(K::PlayerNameMiss, on_player_name_miss)
             .net_handler(K::PetName, on_pet_name)
             .net_handler(K::CreatureName, on_creature_name)
             .net_handler(K::InvalidatePlayer, on_invalidate_player);
@@ -371,6 +398,16 @@ pub(crate) mod net {
         } = ev
         {
             player_name(guid, name, race, class, gender, &mut names);
+        }
+    }
+
+    fn on_player_name_miss(
+        In(ev): In<SessionEvent>,
+        mut names: ResMut<NameCache>,
+        commands: Res<NetCommands>,
+    ) {
+        if let SessionEvent::PlayerNameMiss { guid, miss } = ev {
+            names.player_name_miss(guid, miss, &commands);
         }
     }
 
@@ -656,6 +693,44 @@ mod tests {
             rx.try_recv(),
             Ok(ClientCommand::NameQuery { guid: 0x11 })
         ));
+    }
+
+    /// The three no-name answers: a retry re-sends while in flight, a placeholder names the guid
+    /// `"?"`, a deny answers unknown and asks no more.
+    #[test]
+    fn a_name_miss_retries_names_a_placeholder_or_denies() {
+        use benilla_protocol::messages::NameQueryMiss;
+
+        let (cmds, rx) = commands();
+        let mut cache = NameCache::default();
+        assert_eq!(cache.resolve(0x11, &cmds), None);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientCommand::NameQuery { guid: 0x11 })
+        ));
+
+        cache.player_name_miss(0x11, NameQueryMiss::Retry, &cmds);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientCommand::NameQuery { guid: 0x11 })
+        ));
+        cache.player_name_miss(0x12, NameQueryMiss::Retry, &cmds);
+        assert!(
+            matches!(rx.try_recv(), Err(TryRecvError::Empty)),
+            "nothing in flight for 0x12: no retry"
+        );
+
+        cache.player_name_miss(0x11, NameQueryMiss::Placeholder, &cmds);
+        assert_eq!(cache.resolve(0x11, &cmds), Some("?"));
+
+        assert_eq!(cache.resolve(0x13, &cmds), None);
+        let _ = rx.try_recv();
+        cache.player_name_miss(0x13, NameQueryMiss::Deny, &cmds);
+        assert_eq!(cache.answer(NameKey::Player(0x13), 0x13, &cmds), Some(None));
+        assert!(
+            matches!(rx.try_recv(), Err(TryRecvError::Empty)),
+            "a denied guid is not asked again"
+        );
     }
 
     #[test]

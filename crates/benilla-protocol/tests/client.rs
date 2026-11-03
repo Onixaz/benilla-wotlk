@@ -537,6 +537,27 @@ fn name_and_creature_query_roundtrip() {
         _ => panic!("name query response"),
     }
 
+    // A non-zero status ends the body (`0x635817`): 2 retries, 3 a placeholder, any other (1 is
+    // AzerothCore's unknown guid) denies.
+    for (status, miss) in [
+        (1u8, messages::NameQueryMiss::Deny),
+        (2, messages::NameQueryMiss::Retry),
+        (3, messages::NameQueryMiss::Placeholder),
+        (9, messages::NameQueryMiss::Deny),
+    ] {
+        let body = [0x01, 0x07, status];
+        let (packet, tail) =
+            messages::parse_server_with_tail(messages::opcode::SMSG_NAME_QUERY_RESPONSE, &body)
+                .unwrap();
+        assert_eq!(tail, 0, "status {status} has no body");
+        match packet {
+            ServerPacket::NameQueryMiss { guid, miss: got } => {
+                assert_eq!((guid, got), (7, miss), "status {status}");
+            }
+            _ => panic!("name query miss for status {status}"),
+        }
+    }
+
     // A hit, in the creature record unpack's layout (`0x98d4c0`). Family, rank and display id get
     // distinct non-zero values so a one-dword slip between adjacent fields cannot read as
     // plausible data.

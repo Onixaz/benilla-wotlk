@@ -24,6 +24,29 @@ use super::{
 
 /// The final facing a `SMSG_MONSTER_MOVE` dictates (`moveType`), applied as a hard snap, not a
 /// turn; `Spot` and `Target` resolve once, from positions at receipt.
+/// A `SMSG_NAME_QUERY_RESPONSE` that carries no name: the status byte's three other arms
+/// (`0x635817`), none with a body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameQueryMiss {
+    /// Status 2: the query goes out again (`0x6358b3`).
+    Retry,
+    /// Status 3: a fixed `"?"` name is cached for the guid (`0x635849`).
+    Placeholder,
+    /// Any other status: the guid is denied, its lookups told there is no name (`0x63583f`).
+    Deny,
+}
+
+impl NameQueryMiss {
+    /// The arm for a non-zero status.
+    pub fn from_status(status: u8) -> Self {
+        match status {
+            2 => Self::Retry,
+            3 => Self::Placeholder,
+            _ => Self::Deny,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum MonsterMoveFacing {
     /// `moveType` 0 or a stop: the unit faces its travel direction.
@@ -415,6 +438,11 @@ pub enum ServerPacket {
         race: u32,
         gender: u32,
         class: u32,
+    },
+    /// `SMSG_NAME_QUERY_RESPONSE` with a non-zero status: no name, and what to do instead.
+    NameQueryMiss {
+        guid: u64,
+        miss: NameQueryMiss,
     },
     /// `SMSG_CREATURE_QUERY_RESPONSE`: a template's UI head; `unk` and the pet spell-list id are
     /// read and dropped. A miss is a lone `entry | 0x8000_0000` (`HandleCreatureQueryOpcode`).
@@ -1740,7 +1768,9 @@ impl ServerPacket {
             ServerPacket::InitializeFactions { .. } => "SMSG_INITIALIZE_FACTIONS".into(),
             ServerPacket::SetFactionStanding { .. } => "SMSG_SET_FACTION_STANDING".into(),
             ServerPacket::SetFactionVisible { .. } => "SMSG_SET_FACTION_VISIBLE".into(),
-            ServerPacket::NameQueryResponse { .. } => "SMSG_NAME_QUERY_RESPONSE".into(),
+            ServerPacket::NameQueryResponse { .. } | ServerPacket::NameQueryMiss { .. } => {
+                "SMSG_NAME_QUERY_RESPONSE".into()
+            }
             ServerPacket::CreatureQueryResponse { .. } => "SMSG_CREATURE_QUERY_RESPONSE".into(),
             ServerPacket::PetNameQueryResponse { .. } => "SMSG_PET_NAME_QUERY_RESPONSE".into(),
             ServerPacket::GameObjectQueryResponse { .. } => "SMSG_GAMEOBJECT_QUERY_RESPONSE".into(),
