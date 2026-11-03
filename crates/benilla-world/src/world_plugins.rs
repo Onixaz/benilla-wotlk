@@ -74,6 +74,8 @@ impl PluginGroup for WorldPlugins {
             .add(crate::zfill::plugin)
             // The straddle split, beside the two lanes it composes with.
             .add(crate::straddle::plugin)
+            // The far-clip wall's opaque twins, swapped in at extract.
+            .add(crate::far_wall::plugin)
             // Within-map art residency: the dedup caches expire by distance.
             .add(crate::art_scope::ArtScopePlugin)
             // Opens the patch chain (`AssetSet::Open`), which every other startup runs after.
