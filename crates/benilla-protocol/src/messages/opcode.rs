@@ -1058,6 +1058,22 @@ pub const SMSG_SEND_UNLEARN_SPELLS: u16 = 0x041E; // 1054
 pub const SMSG_CROSSED_INEBRIATION_THRESHOLD: u16 = 0x03C1; // 961
 /// The learned dance moves' mask (`0x5758a0`).
 pub const SMSG_LEARNED_DANCE_MOVES: u16 = 0x0455; // 1109
+/// Binding at the innkeeper already bound to (`0x6e3492`).
+pub const SMSG_PLAYERBINDERROR: u16 = 0x01B6; // 438
+/// Removed from the PvP queues, by reason (`0x526569`).
+pub const SMSG_REMOVED_FROM_PVP_QUEUE: u16 = 0x0170; // 368
+/// A refused promotion code (`0x52654a`).
+pub const SMSG_INVALID_PROMOTION_CODE: u16 = 0x01E7; // 487
+/// A charter offered to a player already in an arena team (`0x5cea00`).
+pub const SMSG_OFFER_PETITION_ERROR: u16 = 0x038F; // 911
+/// An arena team change refused while queued (`0x6e40a8`).
+pub const SMSG_ARENA_TEAM_CHANGE_FAILED_QUEUED: u16 = 0x04C8; // 1224
+/// Battleground info asked for too often (`0x6cbea0`).
+pub const SMSG_BATTLEGROUND_INFO_THROTTLED: u16 = 0x04A6; // 1190
+/// A play-time limit approaching (`0x6cd270`).
+pub const SMSG_PLAY_TIME_WARNING: u16 = 0x02F5; // 757
+/// The PvP AFK-report system switched on or off (`0x6e3fb5`).
+pub const SMSG_REPORT_PVP_AFK_RESULT: u16 = 0x03E5; // 997
 
 // Mover modes, acked (`IsFlagAckOpcode`): the SMSG is a packed guid and `u32 counter`; the ack
 // echoes the packed guid, the counter and a `MovementInfo`, plus an `f32` apply for all but root

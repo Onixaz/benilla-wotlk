@@ -1702,6 +1702,7 @@ mod tests {
                 gem_properties: 0,
                 flags2: 0,
                 required_disenchant_skill: -1,
+                item_limit_category: 0,
             }),
         );
         let resolved = resolve_item(&row(2129, 1, 3), &items, None, None, &commands);

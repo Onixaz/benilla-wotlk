@@ -69,9 +69,13 @@ pub use vehicle::{
 mod glyphs;
 pub use glyphs::{load_glyph_catalog, GlyphCatalog, GlyphProperty, GlyphSlot};
 mod gem_properties;
+mod item_limit_category;
 mod spell_rune_cost;
 mod totem_category;
 pub use gem_properties::{load_gem_properties, GemPropertiesCatalog};
+pub use item_limit_category::{
+    load_item_limit_categories, ItemLimitCategory, ItemLimitCategoryCatalog,
+};
 pub use spell_rune_cost::{load_spell_rune_costs, SpellRuneCost, SpellRuneCostCatalog};
 pub use totem_category::{load_totem_categories, TotemCategory, TotemCategoryCatalog};
 mod cfg_categories;

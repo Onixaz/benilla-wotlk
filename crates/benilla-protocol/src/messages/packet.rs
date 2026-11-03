@@ -656,8 +656,10 @@ pub enum ServerPacket {
         difficulty: u32,
         dynamic: u32,
     },
-    /// `SMSG_CHAT_RESTRICTED`: a trial account hit its whisper cap; empty body.
-    ChatRestricted,
+    /// `SMSG_CHAT_RESTRICTED`: the restriction's kind (`0x6e3cbf`).
+    ChatRestricted {
+        kind: u8,
+    },
     /// `SMSG_PLAYED_TIME` (`/played`): total and this-level played time, in seconds, and whether
     /// the request asked to show it.
     PlayedTime {
@@ -1146,9 +1148,11 @@ pub enum ServerPacket {
     LootRemoved {
         slot: u8,
     },
-    /// `SMSG_LOOT_MONEY_NOTIFY`: our share of the loot's coin pile, answering `CMSG_LOOT_MONEY`.
+    /// `SMSG_LOOT_MONEY_NOTIFY`: our share of the loot's coin pile, answering `CMSG_LOOT_MONEY`,
+    /// and whether we looted it alone.
     LootMoneyNotify {
         amount: u32,
+        solo: bool,
     },
     /// `SMSG_LOOT_CLEAR_MONEY`: the coin line disappears for every current looter; empty body.
     LootClearMoney,
@@ -1182,6 +1186,8 @@ pub enum ServerPacket {
         error: u32,
         name: String,
     },
+    /// A one-line world notice.
+    Notice(crate::messages::WorldNotice),
     /// `SMSG_SEND_UNLEARN_SPELLS`.
     UnlearnSpells(Vec<u32>),
     /// `SMSG_CROSSED_INEBRIATION_THRESHOLD`.
@@ -1919,7 +1925,7 @@ impl ServerPacket {
             ServerPacket::Lfg(p) => p.name().into(),
             ServerPacket::Calendar(p) => p.name().into(),
             ServerPacket::InstanceDifficulty { .. } => "SMSG_INSTANCE_DIFFICULTY".into(),
-            ServerPacket::ChatRestricted => "SMSG_CHAT_RESTRICTED".into(),
+            ServerPacket::ChatRestricted { .. } => "SMSG_CHAT_RESTRICTED".into(),
             ServerPacket::PlayedTime { .. } => "SMSG_PLAYED_TIME".into(),
             ServerPacket::RandomRoll { .. } => "MSG_RANDOM_ROLL".into(),
             ServerPacket::InitialSpells { .. } => "SMSG_INITIAL_SPELLS".into(),
@@ -2086,6 +2092,7 @@ impl ServerPacket {
             ServerPacket::ArenaError { .. } => "SMSG_ARENA_ERROR".into(),
             ServerPacket::ProposeLevelGrant { .. } => "SMSG_PROPOSE_LEVEL_GRANT".into(),
             ServerPacket::ReferAFriendFailure { .. } => "SMSG_REFER_A_FRIEND_FAILURE".into(),
+            ServerPacket::Notice(n) => n.opcode_name().into(),
             ServerPacket::UnlearnSpells(_) => "SMSG_SEND_UNLEARN_SPELLS".into(),
             ServerPacket::InebriationThreshold(_) => "SMSG_CROSSED_INEBRIATION_THRESHOLD".into(),
             ServerPacket::LearnedDanceMoves(_) => "SMSG_LEARNED_DANCE_MOVES".into(),

@@ -152,6 +152,7 @@ fn starting_pants_decode_whole() {
             gem_properties: 0,
             flags2: 0,
             required_disenchant_skill: -1,
+            item_limit_category: 0,
         }))
     );
 }

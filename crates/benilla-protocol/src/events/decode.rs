@@ -200,7 +200,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::DefenseMessage { zone_id, text } => {
             vec![SessionEvent::DefenseMessage { zone_id, text }]
         }
-        ServerPacket::ChatRestricted => vec![SessionEvent::ChatRestricted],
+        ServerPacket::ChatRestricted { kind } => vec![SessionEvent::ChatRestricted { kind }],
         ServerPacket::PlayedTime { total, level, show } => {
             vec![SessionEvent::PlayedTime { total, level, show }]
         }
@@ -649,8 +649,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::LootReleaseResponse { guid, result }]
         }
         ServerPacket::LootRemoved { slot } => vec![SessionEvent::LootRemoved { slot }],
-        ServerPacket::LootMoneyNotify { amount } => {
-            vec![SessionEvent::LootMoneyNotify { amount }]
+        ServerPacket::LootMoneyNotify { amount, solo } => {
+            vec![SessionEvent::LootMoneyNotify { amount, solo }]
         }
         ServerPacket::LootClearMoney => vec![SessionEvent::LootClearMoney],
         ServerPacket::LootStartRoll(p) => vec![SessionEvent::LootStartRoll(p)],
@@ -670,6 +670,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::ReferAFriendFailure { error, name } => {
             vec![SessionEvent::ReferAFriendFailure { error, name }]
         }
+        ServerPacket::Notice(n) => vec![SessionEvent::Notice(n)],
         ServerPacket::UnlearnSpells(s) => vec![SessionEvent::UnlearnSpells(s)],
         ServerPacket::InebriationThreshold(p) => vec![SessionEvent::InebriationThreshold(p)],
         ServerPacket::LearnedDanceMoves(m) => vec![SessionEvent::LearnedDanceMoves(m)],

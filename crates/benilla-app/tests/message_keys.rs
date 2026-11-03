@@ -70,8 +70,8 @@ fn every_error_key_in_the_source_is_a_catalog_row() {
 fn every_error_key_in_the_source_resolves_to_real_text() {
     /// Keys 12340's `GlobalStrings.lua` has no string for, so the reference shows nothing:
     /// raised by `ui_items::equip_error` (errorId 362), `ui_action::cast_fail` (pet happiness),
-    /// `ui_pet::net` (errorId 337), `ui_battlefield` (join result -9, row 668) and the meeting
-    /// stone's kick (row 458). `PET_SPELL_NOPATH` exists but is not row 337's key and nothing in
+    /// `ui_pet::net` (errorId 337), `ui_battlefield` (join result -9, row 668), the meeting
+    /// stone's kick (row 458) and the PvP queue removal's reason 2 (row 0x2a3, `0x522195`). `PET_SPELL_NOPATH` exists but is not row 337's key and nothing in
     /// the client raises it.
     const SILENT_IN_12340: &[&str] = &[
         "ERR_BATTLEGROUND_JOIN_XP_GAIN",
@@ -79,6 +79,7 @@ fn every_error_key_in_the_source_resolves_to_real_text() {
         "ERR_MEETING_STONE_PARTY_KICKED_FROM_QUEUE",
         "ERR_NOT_HAPPY_ENOUGH",
         "ERR_PET_SPELL_NOPATH",
+        "ERR_REMOVE_FROM_PVP_QUEUE_FACTION_CHANGE",
     ];
 
     let data = benilla_formats::wow_data_or_skip!();

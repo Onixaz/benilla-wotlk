@@ -7,8 +7,9 @@ use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
 use super::{NamedLine, OfferUpdate, TradeSession};
+use crate::items::Items;
 use crate::net::{ClientCommand, NetCommands, NetHandlerApp};
-use crate::ui_action::{UiError, UiErrorKeys};
+use crate::ui_action::{FillArg, UiError, UiErrorKeys};
 
 /// Register the trade's handlers: one per kind, plus the session-end listener.
 pub(super) fn register(app: &mut App) {
@@ -23,10 +24,66 @@ fn on_trade_status(
     mut trade: ResMut<TradeSession>,
     mut errors: ResMut<UiErrorKeys>,
     commands: Res<NetCommands>,
+    items: Option<Res<Items>>,
+    limits: Option<Res<super::ItemLimitCategories>>,
 ) {
     if let SessionEvent::TradeStatus { status } = ev {
+        if let TradeStatus::CloseWindow {
+            result,
+            target,
+            item,
+        } = status
+        {
+            // The item cache alone, never asked (`0x58757c`).
+            let limit = |entry: u32| {
+                let category = items
+                    .as_deref()?
+                    .template_cached(entry)?
+                    .item_limit_category;
+                let row = limits.as_deref()?.0.get(category)?;
+                Some((row.quantity, row.name.clone()))
+            };
+            errors
+                .0
+                .extend(close_window_line(result, target, item, &limit));
+        }
         trade_status(status, &mut trade, &mut errors, &commands);
     }
+}
+
+/// `CLOSE_WINDOW`'s line (`0x58754f`-`0x5875bd`): result `0x54` with an item names the item's
+/// limit category, quantity then name, and shows nothing when the item or its row is not cached.
+fn close_window_line(
+    result: u32,
+    target: bool,
+    item: u32,
+    limit: &dyn Fn(u32) -> Option<(u32, String)>,
+) -> Option<UiError> {
+    let key = trade_error_key(result, target)?;
+    if result == 0x54 && item != 0 {
+        let (quantity, name) = limit(item)?;
+        return Some(UiError::args(
+            key,
+            vec![FillArg::D(i64::from(quantity)), FillArg::S(name)],
+        ));
+    }
+    Some(UiError::key(key))
+}
+
+/// The close's error id (`0x586520`): results 4, 17, 28 and 84 pick by the byte (`0x58659c`), every
+/// other goes through the inventory table. The byte's reagent id, `0x2da`, is past the catalog.
+fn trade_error_key(result: u32, target: bool) -> Option<&'static str> {
+    Some(match (result, target) {
+        (4, true) => "ERR_TRADE_BAG_FULL",
+        (4, false) => "ERR_TRADE_TARGET_BAG_FULL",
+        (17, false) => "ERR_TRADE_MAX_COUNT_EXCEEDED",
+        (17, true) => "ERR_TRADE_TARGET_MAX_COUNT_EXCEEDED",
+        (28, false) => "ERR_SPELL_FAILED_REAGENTS_GENERIC",
+        (28, true) => return None,
+        (84, false) => "ERR_ITEM_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS",
+        (84, true) => "ERR_TRADE_TARGET_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS",
+        _ => return crate::ui_items::inventory_error_key(result),
+    })
 }
 
 fn on_trade_status_extended(
@@ -131,9 +188,7 @@ enum Line {
 /// The `GlobalStrings` key each status arm raises through the error display, or `None`. The catalog
 /// row's `+0x04`, not the key, decides chat, yellow or red: the two successful outcomes are the
 /// yellow ones, and `ERR_TRADE_WRONG_REALM`'s text is the conjured-items sentence.
-///
-/// Not built: `CLOSE_WINDOW` (12) prints an id computed from `result` (61 ids, `0x1d1` printing
-/// nothing); vmangos never sends 12, so it closes silently.
+/// `CLOSE_WINDOW`'s line is [`close_window_line`], from the handler.
 fn status_message(status: TradeStatus) -> Option<Line> {
     Some(match status {
         TradeStatus::Busy | TradeStatus::Busy2 => Line::Naming("ERR_PLAYER_BUSY_S"),
@@ -152,7 +207,7 @@ fn status_message(status: TradeStatus) -> Option<Line> {
         TradeStatus::TrialAccount => Line::Plain("ERR_RESTRICTED_ACCOUNT"),
         TradeStatus::OnlyConjured { .. } => Line::Plain("ERR_TRADE_WRONG_REALM"),
         TradeStatus::NotEligible { .. } => Line::Plain("ERR_TRADE_NOT_ON_TAPLIST"),
-        // Silent, plus `BEGIN_TRADE` (the ladder's line) and `CLOSE_WINDOW` (not built).
+        // Silent, plus `BEGIN_TRADE` (the ladder's line) and `CLOSE_WINDOW` (its own line).
         TradeStatus::BeginTrade { .. }
         | TradeStatus::OpenWindow { .. }
         | TradeStatus::Accept
@@ -207,7 +262,8 @@ mod tests {
             TradeStatus::WrongFaction,
             TradeStatus::CloseWindow {
                 result: 0,
-                item_limit_category: 0,
+                target: false,
+                item: 0,
             },
             TradeStatus::Unknown13,
             TradeStatus::IgnoreYou,
@@ -468,5 +524,51 @@ mod tests {
         trade.take_named_lines_for_test();
         trade_status(TradeStatus::TargetDead, &mut trade, &mut errors, &commands);
         assert_eq!(errors.0, vec![UiError::key("ERR_TRADE_TARGET_DEAD")]);
+    }
+
+    /// `0x586520`: the byte picks within each of the four pairs, every other result takes the
+    /// inventory table (0 shows nothing), and `0x54` with an item names its cached category.
+    #[test]
+    fn a_close_window_shows_its_results_line() {
+        let limit = |entry: u32| (entry == 7).then(|| (2, "Stones".to_string()));
+        let line = |result, target| close_window_line(result, target, 0, &limit);
+        assert_eq!(line(0, false), None);
+        assert_eq!(line(4, true), Some(UiError::key("ERR_TRADE_BAG_FULL")));
+        assert_eq!(
+            line(4, false),
+            Some(UiError::key("ERR_TRADE_TARGET_BAG_FULL"))
+        );
+        assert_eq!(
+            line(17, false),
+            Some(UiError::key("ERR_TRADE_MAX_COUNT_EXCEEDED"))
+        );
+        assert_eq!(
+            line(17, true),
+            Some(UiError::key("ERR_TRADE_TARGET_MAX_COUNT_EXCEEDED"))
+        );
+        assert_eq!(
+            line(28, false),
+            Some(UiError::key("ERR_SPELL_FAILED_REAGENTS_GENERIC"))
+        );
+        assert_eq!(line(28, true), None);
+        assert_eq!(line(50, true), Some(UiError::key("ERR_INV_FULL")));
+        assert_eq!(
+            line(84, true),
+            Some(UiError::key(
+                "ERR_TRADE_TARGET_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS"
+            ))
+        );
+        assert_eq!(
+            close_window_line(84, false, 7, &limit),
+            Some(UiError::args(
+                "ERR_ITEM_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS",
+                vec![FillArg::D(2), FillArg::S("Stones".into())]
+            ))
+        );
+        assert_eq!(
+            close_window_line(84, false, 8, &limit),
+            None,
+            "an uncached item shows nothing"
+        );
     }
 }

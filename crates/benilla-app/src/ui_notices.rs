@@ -1,12 +1,13 @@
 //! Small server notices and what they drive: the light override, the server's UI clock, the arena
 //! and refer-a-friend errors, the level grant offer, the inebriation lines, the message of the day,
-//! a GM's whois answer and realm-first awards. The dance moves are read and dropped: nothing built
-//! reads them, as `PlayDance` is not.
+//! a GM's whois answer, realm-first awards and the one-line [`WorldNotice`]s. The dance moves are
+//! read and dropped: nothing built reads them, as `PlayDance` is not.
 
 use std::time::{Duration, Instant};
 
 use benilla_protocol::messages::{
-    ChatMessage, InebriationThreshold, ObjectType, ServerFirstAchievement, CHAT_MSG_ACHIEVEMENT,
+    ChatMessage, InebriationThreshold, ObjectType, ServerFirstAchievement, WorldNotice,
+    CHAT_MSG_ACHIEVEMENT,
 };
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{ScriptValue, UiScript};
@@ -91,6 +92,7 @@ impl Plugin for NoticesPlugin {
             .net_handler(K::Motd, on_motd)
             .net_handler(K::Whois, on_whois)
             .net_handler(K::ServerFirstAchievement, on_server_first)
+            .net_handler(K::Notice, on_notice)
             .net_handler(K::Disconnected, on_session_end)
             .add_systems(
                 Update,
@@ -177,6 +179,94 @@ fn on_refer_a_friend_failure(In(ev): In<SessionEvent>, mut errors: ResMut<UiErro
     if let SessionEvent::ReferAFriendFailure { error, name } = ev {
         errors.0.extend(refer_a_friend_error(error, &name));
     }
+}
+
+/// The line a [`WorldNotice`] shows, if any. The petition offer's name comes from the cache alone,
+/// never asked for (`0x5cea37`); the AFK report shows none here ([`afk_report`]).
+fn notice_line(notice: WorldNotice, names: &NameCache) -> Option<UiError> {
+    Some(match notice {
+        WorldNotice::PlayerBindError => UiError::key("ERR_DEATHBINDALREADYBOUND"),
+        // `0x522180`: reasons 0-2, any other silent.
+        WorldNotice::RemovedFromPvpQueue { reason } => UiError::key(match reason {
+            0 => "ERR_REMOVE_FROM_PVP_QUEUE_GRANT_LEVEL",
+            1 => "ERR_REMOVE_FROM_PVP_QUEUE_XP_GAIN",
+            2 => "ERR_REMOVE_FROM_PVP_QUEUE_FACTION_CHANGE",
+            _ => return None,
+        }),
+        WorldNotice::InvalidPromotionCode => UiError::key("ERR_INVALID_PROMOTION_CODE"),
+        WorldNotice::OfferPetitionError { player } => {
+            UiError::s("ERR_ALREADY_IN_ARENA_TEAM_S", names.peek(player)?)
+        }
+        WorldNotice::ArenaTeamChangeFailedQueued { failed } => {
+            if failed == 0 {
+                return None;
+            }
+            UiError::key("ERR_ARENA_TEAM_CHANGE_FAILED_QUEUED")
+        }
+        WorldNotice::BattlegroundInfoThrottled => UiError::key("ERR_BATTLEGROUND_INFO_THROTTLED"),
+        WorldNotice::PlayTimeWarning { flags, seconds } => play_time_warning(flags, seconds)?,
+        WorldNotice::ReportPvpAfkResult { .. } => return None,
+    })
+}
+
+/// `SMSG_PLAY_TIME_WARNING` (`0x6cd2de`-`0x6cd367`): the first warning flag set names the time left
+/// as `"%2d:%02d"` hours and minutes (`0x6cd2d3`); with none, the sign bit is the bare unhealthy
+/// line.
+fn play_time_warning(flags: u32, seconds: i32) -> Option<UiError> {
+    let minutes = seconds / 60;
+    let left = format!("{:2}:{:02}", minutes / 60, minutes % 60);
+    for (bit, key) in [
+        (0x1000, "ERR_APPROACHING_PARTIAL_PLAY_TIME"),
+        (0x4000_0000, "ERR_APPROACHING_PARTIAL_PLAY_TIME_2"),
+        (0x2000, "ERR_APPROACHING_NO_PLAY_TIME"),
+        (0x2000_0000, "ERR_APPROACHING_NO_PLAY_TIME_2"),
+    ] {
+        if flags & bit != 0 {
+            return Some(UiError::s(key, left));
+        }
+    }
+    ((flags as i32) < 0).then(|| UiError::key("ERR_UNHEALTHY_TIME"))
+}
+
+/// `SMSG_REPORT_PVP_AFK_RESULT` (`0x6e3fe5`): result 5 turns `enablePVPNotifyAFK` on and 6 off,
+/// each only from the other state, and the switch prints its system line's key.
+fn afk_report(result: u8, enabled: bool) -> Option<(&'static str, &'static str)> {
+    match (result, enabled) {
+        (5, false) => Some(("1", "PVP_REPORT_AFK_SYSTEM_ENABLED")),
+        (6, true) => Some(("0", "PVP_REPORT_AFK_SYSTEM_DISABLED")),
+        _ => None,
+    }
+}
+
+fn on_notice(
+    In(ev): In<SessionEvent>,
+    mut errors: ResMut<UiErrorKeys>,
+    names: Res<NameCache>,
+    cvars: Option<ResMut<crate::cvars::Cvars>>,
+    script: Option<NonSend<UiScript>>,
+    mut chat: ResMut<ChatLog>,
+) {
+    let SessionEvent::Notice(notice) = ev else {
+        return;
+    };
+    debug!("net: {notice:?}");
+    if let WorldNotice::ReportPvpAfkResult { result } = notice {
+        let Some(mut cvars) = cvars else {
+            return;
+        };
+        let enabled = cvars.flag("enablePVPNotifyAFK") == Some(true);
+        if let Some((value, key)) = afk_report(result, enabled) {
+            cvars.set("enablePVPNotifyAFK", value);
+            // The VM's text lookup shows a missing key as itself (`0x819d40`).
+            let text = script
+                .as_deref()
+                .and_then(|s| crate::ui_chat::combat::global_string(s, key))
+                .unwrap_or_else(|| key.to_string());
+            crate::ui_chat::away::push_system(&mut chat, text);
+        }
+        return;
+    }
+    errors.0.extend(notice_line(notice, &names));
 }
 
 /// `SMSG_PROPOSE_LEVEL_GRANT` (`0x513fd0`): an offer while one is pending is ignored.
@@ -484,6 +574,93 @@ mod tests {
         );
         assert!(refer_a_friend_error(0, "").is_none());
         assert!(refer_a_friend_error(14, "").is_none());
+    }
+
+    /// `0x6e3492`, `0x522180`, `0x526656`, `0x5cea46`, `0x6e40b7`, `0x6cbea0`: each notice's line,
+    /// the petition offer's only with a cached name and the queue removal's only for reasons 0-2.
+    #[test]
+    fn each_world_notice_shows_its_line() {
+        let mut names = NameCache::default();
+        names.insert_player(0x2A, "Brisca".into(), None);
+        let line = |n| notice_line(n, &names);
+        use WorldNotice as N;
+        assert_eq!(
+            line(N::PlayerBindError),
+            Some(UiError::key("ERR_DEATHBINDALREADYBOUND"))
+        );
+        for (reason, key) in [
+            (0, "ERR_REMOVE_FROM_PVP_QUEUE_GRANT_LEVEL"),
+            (1, "ERR_REMOVE_FROM_PVP_QUEUE_XP_GAIN"),
+            (2, "ERR_REMOVE_FROM_PVP_QUEUE_FACTION_CHANGE"),
+        ] {
+            assert_eq!(
+                line(N::RemovedFromPvpQueue { reason }),
+                Some(UiError::key(key))
+            );
+        }
+        assert_eq!(line(N::RemovedFromPvpQueue { reason: 3 }), None);
+        assert_eq!(
+            line(N::InvalidPromotionCode),
+            Some(UiError::key("ERR_INVALID_PROMOTION_CODE"))
+        );
+        assert_eq!(
+            line(N::OfferPetitionError { player: 0x2A }),
+            Some(UiError::s("ERR_ALREADY_IN_ARENA_TEAM_S", "Brisca"))
+        );
+        assert_eq!(line(N::OfferPetitionError { player: 0x2B }), None);
+        assert_eq!(
+            line(N::ArenaTeamChangeFailedQueued { failed: 1 }),
+            Some(UiError::key("ERR_ARENA_TEAM_CHANGE_FAILED_QUEUED"))
+        );
+        assert_eq!(line(N::ArenaTeamChangeFailedQueued { failed: 0 }), None);
+        assert_eq!(
+            line(N::BattlegroundInfoThrottled),
+            Some(UiError::key("ERR_BATTLEGROUND_INFO_THROTTLED"))
+        );
+        assert_eq!(line(N::ReportPvpAfkResult { result: 5 }), None);
+    }
+
+    /// `0x6cd2de`-`0x6cd367`: the first flag in the handler's order wins, the seconds read as
+    /// `"%2d:%02d"`, and the sign bit alone is the bare unhealthy line.
+    #[test]
+    fn a_play_time_warning_names_the_time_left_by_its_first_flag() {
+        assert_eq!(
+            play_time_warning(0x1000 | 0x2000, 3_900),
+            Some(UiError::s("ERR_APPROACHING_PARTIAL_PLAY_TIME", " 1:05"))
+        );
+        assert_eq!(
+            play_time_warning(0x4000_0000, 45_000),
+            Some(UiError::s("ERR_APPROACHING_PARTIAL_PLAY_TIME_2", "12:30"))
+        );
+        assert_eq!(
+            play_time_warning(0x2000, 59),
+            Some(UiError::s("ERR_APPROACHING_NO_PLAY_TIME", " 0:00"))
+        );
+        assert_eq!(
+            play_time_warning(0x2000_0000 | 0x8000_0000, 600),
+            Some(UiError::s("ERR_APPROACHING_NO_PLAY_TIME_2", " 0:10"))
+        );
+        assert_eq!(
+            play_time_warning(0x8000_0000, 600),
+            Some(UiError::key("ERR_UNHEALTHY_TIME"))
+        );
+        assert_eq!(play_time_warning(0x1, 600), None);
+    }
+
+    /// `0x6e3fe5`-`0x6e4040`: each result flips the CVar only from the other state.
+    #[test]
+    fn the_afk_report_result_switches_the_cvar_once() {
+        assert_eq!(
+            afk_report(5, false),
+            Some(("1", "PVP_REPORT_AFK_SYSTEM_ENABLED"))
+        );
+        assert_eq!(afk_report(5, true), None);
+        assert_eq!(
+            afk_report(6, true),
+            Some(("0", "PVP_REPORT_AFK_SYSTEM_DISABLED"))
+        );
+        assert_eq!(afk_report(6, false), None);
+        assert_eq!(afk_report(4, false), None);
     }
 
     /// `0x6cfff0`'s four forms.

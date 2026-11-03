@@ -117,9 +117,20 @@ fn on_slot_changed(In(ev): In<SessionEvent>, mut loot: ResMut<LootState>) {
     }
 }
 
-fn on_money_notify(In(ev): In<SessionEvent>) {
-    if let SessionEvent::LootMoneyNotify { amount } = ev {
-        loot_money_notify(amount);
+fn on_money_notify(
+    In(ev): In<SessionEvent>,
+    script: Option<NonSend<benilla_ui::script::UiScript>>,
+    mut chat: ResMut<crate::ui_chat::ChatLog>,
+) {
+    if let SessionEvent::LootMoneyNotify { amount, solo } = ev {
+        let get = |key: &str| {
+            script
+                .as_deref()
+                .and_then(|s| crate::ui_chat::combat::global_string(s, key))
+        };
+        if let Some(line) = loot_money_line(amount, solo, &get) {
+            chat.push_event(line);
+        }
     }
 }
 
@@ -308,11 +319,29 @@ fn loot_removed(slot: u8, loot: &mut LootState) {
     loot.remove_slot(slot);
 }
 
-/// `SMSG_LOOT_MONEY_NOTIFY`, our share of a group's coin: only logged, as the coin row drops on
-/// `SMSG_LOOT_CLEAR_MONEY` and the purse rides the coinage field. vmangos sends none for a solo
-/// loot (`LootHandler.cpp:331`).
-fn loot_money_notify(amount: u32) {
-    debug!("net: loot money {amount}");
+/// `SMSG_LOOT_MONEY_NOTIFY` (`0x6ceca0`): no coin, no line (`0x6cecc9`); else the coin text
+/// (`0x6cece1`) fills `YOU_LOOT_MONEY` looted alone or `LOOT_MONEY_SPLIT` shared, a
+/// `CHAT_MSG_MONEY` line (`0x6ced63`). The coin row itself drops on `SMSG_LOOT_CLEAR_MONEY`.
+fn loot_money_line(
+    amount: u32,
+    solo: bool,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Option<crate::ui_chat::ChatEvent> {
+    debug!("net: loot money {amount} (solo {solo})");
+    if amount == 0 {
+        return None;
+    }
+    let coins = crate::ui_quest::coin_text(amount, &|k| get(k).unwrap_or_default());
+    let key = if solo {
+        "YOU_LOOT_MONEY"
+    } else {
+        "LOOT_MONEY_SPLIT"
+    };
+    let text = benilla_ui::strings::fill(&get(key)?, &[benilla_ui::strings::Arg::S(&coins)]);
+    Some(crate::ui_chat::ChatEvent::text_only(
+        crate::ui_chat::ChatEventKind::Money,
+        text,
+    ))
 }
 
 /// `SMSG_LOOT_CLEAR_MONEY`: the coin row goes, for every looter.
@@ -381,6 +410,33 @@ fn item_push_result(
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
+
+    /// `0x6ceca0`: no coin, no line; the solo byte picks `YOU_LOOT_MONEY` over `LOOT_MONEY_SPLIT`,
+    /// filled with the coin text, on the money lane.
+    #[test]
+    fn a_money_notify_writes_its_loot_money_line() {
+        let get = |key: &str| {
+            Some(
+                match key {
+                    "YOU_LOOT_MONEY" => "You loot %s",
+                    "LOOT_MONEY_SPLIT" => "Your share of the loot is %s.",
+                    "GOLD_AMOUNT" => "%d Gold",
+                    "SILVER_AMOUNT" => "%d Silver",
+                    "COPPER_AMOUNT" => "%d Copper",
+                    _ => return None,
+                }
+                .to_string(),
+            )
+        };
+        assert!(loot_money_line(0, true, &get).is_none());
+        let solo = loot_money_line(10_203, true, &get).expect("a line");
+        assert_eq!(solo.kind, Some(crate::ui_chat::ChatEventKind::Money));
+        assert_eq!(solo.text, "You loot 1 Gold, 2 Silver, 3 Copper");
+        assert_eq!(
+            loot_money_line(5, false, &get).expect("a line").text,
+            "Your share of the loot is 5 Copper."
+        );
+    }
 
     use crate::pending_item_ops::{LockTransitions, PendingItemOps};
 

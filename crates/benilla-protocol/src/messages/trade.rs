@@ -39,10 +39,12 @@ pub enum TradeStatus {
     TargetTooFar,
     /// Cross-faction, unless the server allows two-side interaction.
     WrongFaction,
-    /// The tail is usually zero; the `u8` vmangos writes between the two fields is dropped.
+    /// The close's inventory result, whether it is the partner's (`0x7045c1`), and an item entry
+    /// the reference looks up in the item cache for result `0x54` (`0x58757c`).
     CloseWindow {
         result: u32,
-        item_limit_category: u32,
+        target: bool,
+        item: u32,
     },
     /// Per a vmangos note, handled as `Canceled`; kept distinct so the code round-trips.
     Unknown13,
@@ -199,11 +201,12 @@ pub(super) fn read_trade_status(r: &mut &[u8]) -> io::Result<TradeStatus> {
         11 => TradeStatus::WrongFaction,
         12 => {
             let result = read_u32_le(r)?;
-            let _unk = read_u8(r)?;
-            let item_limit_category = read_u32_le(r)?;
+            let target = read_u8(r)? != 0;
+            let item = read_u32_le(r)?;
             TradeStatus::CloseWindow {
                 result,
-                item_limit_category,
+                target,
+                item,
             }
         }
         13 => TradeStatus::Unknown13,
@@ -384,14 +387,15 @@ mod tests {
         let mut buf = Vec::new();
         buf.extend_from_slice(&12u32.to_le_bytes()); // CLOSE_WINDOW
         buf.extend_from_slice(&7u32.to_le_bytes()); // result
-        buf.push(0); // unk (dropped)
-        buf.extend_from_slice(&3u32.to_le_bytes()); // itemLimitCategory
+        buf.push(1); // the partner's result
+        buf.extend_from_slice(&3u32.to_le_bytes()); // item
         let mut r = &buf[..];
         assert_eq!(
             read_trade_status(&mut r).unwrap(),
             TradeStatus::CloseWindow {
                 result: 7,
-                item_limit_category: 3
+                target: true,
+                item: 3
             }
         );
         assert!(r.is_empty(), "the full u32+u8+u32 tail must be consumed");
