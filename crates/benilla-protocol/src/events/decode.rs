@@ -27,7 +27,12 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
     match packet {
         ServerPacket::UpdateObject { objects } => decode_objects(objects),
         // In order, each move as if alone: the app rebuilds a mover's arc from packet order.
-        ServerPacket::CompressedMoves { packets } => packets.into_iter().flat_map(decode).collect(),
+        ServerPacket::CompressedMoves { packets } | ServerPacket::PacketBatch { packets, .. } => {
+            packets.into_iter().flat_map(decode).collect()
+        }
+        ServerPacket::FlightSplineSync { guid, progress } => {
+            vec![SessionEvent::FlightSplineSync { guid, progress }]
+        }
         ServerPacket::CharEnum { characters } => vec![SessionEvent::CharacterList {
             characters,
             realm: None,
@@ -962,6 +967,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             guid,
             opcode,
             flags,
+            flags2,
             position,
             orientation,
             pitch,
@@ -976,7 +982,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             flags,
             pitch,
             time,
-            verb: crate::messages::RelayVerb::of(opcode),
+            verb: crate::messages::RelayVerb::of(opcode, flags2),
             fall_time,
             jump,
             transport,
@@ -1311,13 +1317,39 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 flags,
                 pitch,
                 time,
-                // The opcode's meaning is the speed, carried by its own event: the pose is plain.
-                verb: crate::messages::RelayVerb::Pose,
+                // The opcode's meaning is the speed, carried by its own event.
+                verb: crate::messages::RelayVerb::Value,
                 fall_time,
                 jump,
                 transport,
             },
             SessionEvent::SpeedChanged { guid, kind, speed },
+        ],
+        ServerPacket::MoveCollisionHeight {
+            guid,
+            flags,
+            position,
+            orientation,
+            pitch,
+            time,
+            fall_time,
+            jump,
+            transport,
+            height,
+        } => vec![
+            SessionEvent::UnitMove {
+                guid,
+                position: v3(position),
+                orientation,
+                flags,
+                pitch,
+                time,
+                verb: crate::messages::RelayVerb::Value,
+                fall_time,
+                jump,
+                transport,
+            },
+            SessionEvent::CollisionHeightChanged { guid, height },
         ],
         ServerPacket::MountResult { mount, code } => {
             vec![SessionEvent::MountResult { mount, code }]

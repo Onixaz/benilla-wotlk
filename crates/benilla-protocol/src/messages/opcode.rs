@@ -91,6 +91,15 @@ pub const SMSG_COMPRESSED_UPDATE_OBJECT: u16 = 0x01F6;
 /// A zlib envelope of whole movement packets. Routine: vmangos switches a session to it after 300
 /// movement packets in ten seconds (`Compression.Movement.Count`).
 pub const SMSG_COMPRESSED_MOVES: u16 = 0x02FB;
+/// [`SMSG_COMPRESSED_MOVES`] without the deflate: a `u32` the reader skips, then the same records
+/// (`0x7169a0` with its flag clear).
+pub const SMSG_MULTIPLE_MOVES: u16 = 0x051E; // 1310
+/// A run of `[u16 opcode][body]` records with no length, each body read by its own handler
+/// (`0x714ad0`).
+pub const SMSG_MULTIPLE_PACKETS: u16 = 0x04CD; // 1229
+/// `f32` progress, then a unit's packed guid: its cyclic spline's next lap is re-timed toward that
+/// point (`0x716940`).
+pub const SMSG_FLIGHT_SPLINE_SYNC: u16 = 0x0388; // 904
 pub const SMSG_LOGIN_VERIFY_WORLD: u16 = 0x0236;
 /// The account's tutorial bits: the whole body (32 bytes from vmangos after login), copied into
 /// both of the client's banks. No tutorial fires before it arrives.
@@ -621,6 +630,10 @@ pub const MSG_MOVE_TELEPORT_ACK: u16 = 0x00C7; // 199
 pub const MSG_MOVE_FALL_LAND: u16 = 0x00C9; // 201
 pub const MSG_MOVE_START_SWIM: u16 = 0x00CA; // 202
 pub const MSG_MOVE_STOP_SWIM: u16 = 0x00CB; // 203
+/// Another unit's start and stop swim under their cheat opcodes, sent to the same arms as
+/// [`MSG_MOVE_START_SWIM`] and [`MSG_MOVE_STOP_SWIM`] (`0x740fa9`, `0x740fbe`).
+pub const MSG_MOVE_START_SWIM_CHEAT: u16 = 0x0341; // 833
+pub const MSG_MOVE_STOP_SWIM_CHEAT: u16 = 0x0342; // 834
 pub const MSG_MOVE_WORLDPORT_ACK: u16 = 0x00DC; // 220
 pub const MSG_MOVE_SET_FACING: u16 = 0x00DA; // 218
 pub const MSG_MOVE_SET_PITCH: u16 = 0x00DB; // 219
@@ -1078,6 +1091,14 @@ pub const SMSG_MOVE_SET_COLLISION_HGT: u16 = 0x0516; // 1302
 pub const CMSG_MOVE_SET_COLLISION_HGT_ACK: u16 = 0x0517; // 1303
 /// 3.3.5a only: our mover's flight start or stop, a plain `MovementInfo` report (`0x6ef860`).
 pub const CMSG_MOVE_SET_FLY: u16 = 0x0346; // 838
+/// 3.3.5a only: the second flags word's swim-to-fly bit set and cleared on a unit, `u32 counter`
+/// (handler `0x732450`, arms `0x730ad1`, `0x730af1`), one ack for both.
+pub const SMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY: u16 = 0x033E; // 830
+pub const SMSG_MOVE_UNSET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY: u16 = 0x033F; // 831
+pub const CMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY_ACK: u16 = 0x0340; // 832
+/// 3.3.5a only: another unit's collision height, `MSG_MOVE_SET_*_SPEED`'s shape with the height
+/// for the speed (`0x7406a0`).
+pub const MSG_MOVE_SET_COLLISION_HGT: u16 = 0x0518; // 1304
 
 // The observers' leg of those modes and of teleports (`MovementPacketSender.h:30-60`): the relay
 // shape `[packed guid][MovementInfo]`, handled like the relay opcodes. Only root has two opcodes;
@@ -1091,6 +1112,8 @@ pub const MSG_MOVE_FEATHER_FALL: u16 = 0x02B0; // 688
 pub const MSG_MOVE_WATER_WALK: u16 = 0x02B1; // 689
 /// 3.3.5a only: another unit's can-fly change, the relay shape (`0x741b60`).
 pub const MSG_MOVE_UPDATE_CAN_FLY: u16 = 0x03AD; // 941
+/// 3.3.5a only: another unit's swim-to-fly bit, the relay shape (`0x741b60`, arm `0x740fe8`).
+pub const MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY: u16 = 0x034A; // 842
 /// 3.3.5a only: another unit's gravity change, the relay shape (`0x741b60`).
 pub const MSG_MOVE_GRAVITY_CHNG: u16 = 0x04D2; // 1234
 

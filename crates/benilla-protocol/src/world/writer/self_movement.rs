@@ -237,7 +237,7 @@ impl WorldWriter {
         )
     }
 
-    /// Ack a granted root, water-walk, feather-fall, hover or can-fly: guid, echoed counter and
+    /// Ack a granted root, water-walk, feather-fall, hover, can-fly or swim-to-fly: guid, echoed counter and
     /// our pose, plus a trailing `f32` apply for all but root. Unacked, the server never applies it.
     /// `flags` must carry the mode's bit (a root apply-ack without it is a kick, vmangos
     /// `MovementHandler.cpp:715-722`) and no moving bit beside `MOVEFLAG_ROOT`; turn bits are fine.
@@ -250,7 +250,11 @@ impl WorldWriter {
         flags: u32,
         pose: ([f32; 3], f32),
     ) -> Result<()> {
-        let info = movement_info(pose.0, pose.1, flags);
+        let mut info = movement_info(pose.0, pose.1, flags);
+        // The swim-to-fly event sets or clears its bit before the ack takes the live status.
+        if mode == MoveMode::SwimFlyTransition && apply {
+            info.flags2 |= crate::messages::FLAG2_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY;
+        }
         let trailing = mode.ack_carries_apply().then_some(apply);
         self.send(
             mode.ack_opcode(apply),

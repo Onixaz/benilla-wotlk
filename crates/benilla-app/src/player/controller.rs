@@ -69,6 +69,9 @@ pub(super) fn control(
         MessageReader<crate::net::SelfCreateMover>,
         // The driven body's guid and own modes, for the hand-over (`wire_in`).
         Query<(&crate::net::Guid, Option<&crate::net::UnitMoveModes>), With<Embodied>>,
+        // The one auto-move cell, follow or a Click to Move walk, which a knockback clears.
+        ResMut<super::follow::FollowState>,
+        ResMut<super::approach::Approach>,
     ),
     mut commands: Commands,
     mut player: ResMut<Player>,
@@ -605,6 +608,16 @@ pub(super) fn control(
         // The knockback: horizontal `(cos, sin) · xy_speed` in absolute world XY, vertical
         // `−zspeed`, since the wire's take-off speed is down-positive, as in the jump tail.
         let knockback = player.take_knockback();
+        // A knockback opens with the movement-start teardown (`0x72d1be`-`0x72d236`): the auto-move
+        // ends (AUTOFOLLOW_END for a follow) and the loot window closes as on a step,
+        // `CloseLoot(1, 1, 0)`.
+        if knockback.is_some() {
+            if speed_capsule.12.stop() {
+                info!("follow: ended by a knockback");
+            }
+            speed_capsule.13.stop();
+            net.14 .0 = true;
+        }
         let knock_launch = knockback.map(|k| {
             let (c, sn, xy) = (k.launch.cos_angle, k.launch.sin_angle, k.launch.xy_speed);
             wow_to_bevy([c * xy, sn * xy, -k.launch.zspeed])

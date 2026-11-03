@@ -42,6 +42,13 @@ impl UnitMoveModes {
     }
 }
 
+/// A unit we do not control holds the second flags word's swim-to-fly bit (`0x4000`): from
+/// `MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY` (`0x6ef1c0`) or its acked grant. Only the
+/// active mover's collision query reads it (`0x75e3d0`), so it is kept, not used.
+#[derive(Component, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[component(storage = "SparseSet")]
+pub(crate) struct SwimFlyTransition;
+
 // `MOVEFLAG_SAFE_FALL` has no accessor: only our mover (`MoveModes::feather_fall`) and relayed
 // players (their own pose flags) fall; a creature rides its spline and never does.
 

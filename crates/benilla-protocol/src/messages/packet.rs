@@ -168,6 +168,17 @@ pub enum ServerPacket {
     CompressedMoves {
         packets: Vec<ServerPacket>,
     },
+    /// `SMSG_MULTIPLE_MOVES` (the move records undeflated) or `SMSG_MULTIPLE_PACKETS` (records
+    /// with no length), by `opcode`: each inner packet is handled as if it came alone.
+    PacketBatch {
+        opcode: u16,
+        packets: Vec<ServerPacket>,
+    },
+    /// `SMSG_FLIGHT_SPLINE_SYNC`: where along its cyclic path the server has the unit, `0..1`.
+    FlightSplineSync {
+        guid: u64,
+        progress: f32,
+    },
     /// `SMSG_DESTROY_OBJECT`: a plain `u64` guid that ceased to exist server-side. The client frees
     /// it outright, unlike an `OutOfRange` block, whose objects it keeps staged.
     DestroyObject {
@@ -214,6 +225,8 @@ pub enum ServerPacket {
         guid: u64,
         opcode: u16,
         flags: u32,
+        /// The second flags word, raw.
+        flags2: u16,
         position: Vector3d,
         orientation: f32,
         /// Swim pitch (radians, +up) while `MOVEFLAG_SWIMMING`, else `0.0`: observers integrate the
@@ -1561,6 +1574,19 @@ pub enum ServerPacket {
         transport: Option<TransportPose>,
         speed: f32,
     },
+    /// `MSG_MOVE_SET_COLLISION_HGT`: another unit's collision height, with the speed relays' pose.
+    MoveCollisionHeight {
+        guid: u64,
+        flags: u32,
+        position: Vector3d,
+        orientation: f32,
+        pitch: f32,
+        time: u32,
+        fall_time: u32,
+        jump: Option<JumpInfo>,
+        transport: Option<TransportPose>,
+        height: f32,
+    },
     /// `SMSG_MOUNTRESULT` / `SMSG_DISMOUNTRESULT` (by `mount`): a raw `UnitMountResult` (OK = 10)
     /// or `UnitDismountResult` (OK = 3).
     MountResult {
@@ -1759,6 +1785,10 @@ impl ServerPacket {
             ServerPacket::CharacterLoginFailed { .. } => "SMSG_CHARACTER_LOGIN_FAILED".into(),
             ServerPacket::UpdateObject { .. } => "SMSG_UPDATE_OBJECT".into(),
             ServerPacket::CompressedMoves { .. } => "SMSG_COMPRESSED_MOVES".into(),
+            ServerPacket::PacketBatch { opcode, .. } => {
+                crate::messages::opcode_name(*opcode).unwrap_or("?").into()
+            }
+            ServerPacket::FlightSplineSync { .. } => "SMSG_FLIGHT_SPLINE_SYNC".into(),
             ServerPacket::DestroyObject { .. } => "SMSG_DESTROY_OBJECT".into(),
             ServerPacket::TriggerCinematic { .. } => "SMSG_TRIGGER_CINEMATIC".into(),
             ServerPacket::MoveTimeSkipped { .. } => "MSG_MOVE_TIME_SKIPPED".into(),
@@ -2096,6 +2126,12 @@ impl ServerPacket {
                 (MoveMode::CanFly, false) => "SMSG_MOVE_UNSET_CAN_FLY".into(),
                 (MoveMode::DisableGravity, true) => "SMSG_MOVE_GRAVITY_DISABLE".into(),
                 (MoveMode::DisableGravity, false) => "SMSG_MOVE_GRAVITY_ENABLE".into(),
+                (MoveMode::SwimFlyTransition, true) => {
+                    "SMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY".into()
+                }
+                (MoveMode::SwimFlyTransition, false) => {
+                    "SMSG_MOVE_UNSET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY".into()
+                }
             },
             ServerPacket::SplineMoveMode { mode, apply, .. } => match (mode, apply) {
                 (SplineMode::Root, true) => "SMSG_SPLINE_MOVE_ROOT".into(),
@@ -2198,6 +2234,7 @@ impl ServerPacket {
                 format!("SMSG_SPLINE_SET_{kind:?}_SPEED")
             }
             ServerPacket::MoveSetSpeed { kind, .. } => format!("MSG_MOVE_SET_{kind:?}_SPEED"),
+            ServerPacket::MoveCollisionHeight { .. } => "MSG_MOVE_SET_COLLISION_HGT".into(),
             ServerPacket::MountResult { mount: true, .. } => "SMSG_MOUNTRESULT".into(),
             ServerPacket::MountResult { mount: false, .. } => "SMSG_DISMOUNTRESULT".into(),
             ServerPacket::MountSpecialAnim { .. } => "SMSG_MOUNTSPECIAL_ANIM".into(),

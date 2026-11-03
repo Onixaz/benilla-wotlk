@@ -294,9 +294,224 @@ fn a_3_3_5a_move_relay_carries_its_pitch_and_1_12_1_flags() {
     assert!(transport.is_none() && jump.is_none());
 }
 
+/// A relay body for `guid`: `flags` (3.3.5a bits), `flags2`, a pose, a pitch when swimming or
+/// flying, fall time 0, and with `FALLING` the jump tail `zspeed, cos, sin, xy`.
+fn relay(b: &mut Body, guid: u64, flags: u32, flags2: u16) -> &mut Body {
+    b.guid(guid);
+    b.u32(flags).u16(flags2).u32(3_000);
+    b.xyz([1.0, 2.0, 3.0]).f32(0.75);
+    if flags & (0x20_0000 | 0x200_0000) != 0 {
+        b.f32(-0.2);
+    }
+    b.u32(0);
+    if flags & 0x1000 != 0 {
+        b.f32(-7.955547).f32(0.6).f32(0.8).f32(7.0);
+    }
+    b
+}
+
 #[test]
-fn a_3_3_5a_body_with_no_decoder_yet_is_refused_not_read_as_1_12_1() {
-    assert!(messages::parse_server_with_tail(opcode::SMSG_COMPRESSED_MOVES, &[0; 64]).is_err());
+fn the_jump_tail_reads_the_direction_x_before_y() {
+    let mut b = Body::default();
+    relay(&mut b, PLAYER, 0x1000 | 0x1, 0);
+    let ServerPacket::PlayerMove { jump, .. } = parse(opcode::MSG_MOVE_JUMP, &b.0) else {
+        panic!("not a relay")
+    };
+    let j = jump.expect("FALLING carries the tail");
+    assert_eq!(
+        (j.cos_angle, j.sin_angle),
+        (0.6, 0.8),
+        "x (cos) is the second float"
+    );
+    assert_eq!((j.zspeed, j.xy_speed), (-7.955547, 7.0));
+}
+
+#[test]
+fn an_observed_knockback_launches_from_its_trailing_quad() {
+    // AzerothCore: the victim's ack block (swimming, a stale tail), then the quad.
+    let mut b = Body::default();
+    relay(&mut b, PLAYER, 0x1000 | 0x20_0000, 0);
+    b.f32(0.0).f32(-1.0).f32(12.0).f32(-9.0);
+    let ServerPacket::PlayerMove {
+        flags,
+        fall_time,
+        jump,
+        ..
+    } = parse(opcode::MSG_MOVE_KNOCK_BACK, &b.0)
+    else {
+        panic!("not a relay")
+    };
+    let j = jump.expect("the launch");
+    assert_eq!(
+        (j.cos_angle, j.sin_angle, j.xy_speed, j.zspeed),
+        (0.0, -1.0, 12.0, -9.0)
+    );
+    assert_eq!(flags & 0x2000, 0x2000, "falling");
+    assert_eq!(flags & 0x20_0000, 0, "the launch ends the swim");
+    assert_eq!(fall_time, 0, "the fall restarts");
+}
+
+#[test]
+fn a_speed_or_height_relay_marks_its_pose_value_only() {
+    use messages::RelayVerb;
+    let mut b = Body::default();
+    relay(&mut b, PLAYER, 0, 0);
+    b.f32(14.0);
+    let events = decode(parse(opcode::MSG_MOVE_SET_RUN_SPEED, &b.0));
+    assert!(matches!(
+        events.as_slice(),
+        [
+            SessionEvent::UnitMove {
+                verb: RelayVerb::Value,
+                ..
+            },
+            SessionEvent::SpeedChanged { speed: 14.0, .. }
+        ]
+    ));
+
+    let mut b = Body::default();
+    relay(&mut b, CREATURE, 0, 0);
+    b.f32(3.5);
+    let events = decode(parse(opcode::MSG_MOVE_SET_COLLISION_HGT, &b.0));
+    assert!(matches!(
+        events.as_slice(),
+        [
+            SessionEvent::UnitMove {
+                verb: RelayVerb::Value,
+                guid: CREATURE,
+                ..
+            },
+            SessionEvent::CollisionHeightChanged {
+                guid: CREATURE,
+                height: 3.5
+            }
+        ]
+    ));
+}
+
+#[test]
+fn the_swim_to_fly_relay_carries_the_second_word_bit() {
+    use messages::RelayVerb;
+    for (flags2, set) in [(0x4000, true), (0, false)] {
+        let mut b = Body::default();
+        relay(&mut b, PLAYER, 0, flags2);
+        let events = decode(parse(
+            opcode::MSG_MOVE_UPDATE_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY,
+            &b.0,
+        ));
+        let [SessionEvent::UnitMove { verb, .. }] = events.as_slice() else {
+            panic!("one move")
+        };
+        assert_eq!(*verb, RelayVerb::SwimFlyTransition(set));
+    }
+}
+
+#[test]
+fn the_swim_cheat_relays_decode_as_moves() {
+    for op in [
+        opcode::MSG_MOVE_START_SWIM_CHEAT,
+        opcode::MSG_MOVE_STOP_SWIM_CHEAT,
+    ] {
+        let mut b = Body::default();
+        relay(&mut b, PLAYER, 0x20_0000, 0);
+        assert!(matches!(
+            parse(op, &b.0),
+            ServerPacket::PlayerMove { guid: PLAYER, .. }
+        ));
+    }
+}
+
+#[test]
+fn the_swim_to_fly_grant_is_an_acked_mode_on_0x340() {
+    use messages::MoveMode;
+    for (op, apply) in [
+        (
+            opcode::SMSG_MOVE_SET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY,
+            true,
+        ),
+        (
+            opcode::SMSG_MOVE_UNSET_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY,
+            false,
+        ),
+    ] {
+        let mut b = Body::default();
+        b.guid(PLAYER).u32(9);
+        let ServerPacket::MoveMode {
+            guid: PLAYER,
+            counter: 9,
+            mode: MoveMode::SwimFlyTransition,
+            apply: got,
+        } = parse(op, &b.0)
+        else {
+            panic!("not the mode")
+        };
+        assert_eq!(got, apply);
+        assert_eq!(MoveMode::SwimFlyTransition.ack_opcode(apply), 0x340);
+        assert!(MoveMode::SwimFlyTransition.ack_carries_apply());
+    }
+}
+
+/// Two heartbeat records in the move batches' framing: `[u8 size][u16 opcode][body]`.
+fn move_records() -> Vec<u8> {
+    let mut out = Vec::new();
+    for guid in [PLAYER, CREATURE] {
+        let mut b = Body::default();
+        relay(&mut b, guid, 0x1, 0);
+        out.push((b.0.len() + 2) as u8);
+        out.extend_from_slice(&opcode::MSG_MOVE_HEARTBEAT.to_le_bytes());
+        out.extend(b.0);
+    }
+    out
+}
+
+#[test]
+fn the_move_batches_decode_their_records_deflated_or_not() {
+    use std::io::Write;
+    let records = move_records();
+    let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    z.write_all(&records).unwrap();
+    let mut compressed = (records.len() as u32).to_le_bytes().to_vec();
+    compressed.extend(z.finish().unwrap());
+    let events = decode(parse(opcode::SMSG_COMPRESSED_MOVES, &compressed));
+    assert_eq!(events.len(), 2);
+
+    let mut plain = (records.len() as u32).to_le_bytes().to_vec();
+    plain.extend(&records);
+    let events = decode(parse(opcode::SMSG_MULTIPLE_MOVES, &plain));
+    let guids: Vec<u64> = events
+        .iter()
+        .map(|e| match e {
+            SessionEvent::UnitMove { guid, .. } => *guid,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(guids, [PLAYER, CREATURE]);
+}
+
+#[test]
+fn multiple_packets_frames_each_record_by_its_own_decoder() {
+    let mut b = Body::default();
+    b.u16(opcode::SMSG_FLIGHT_SPLINE_SYNC)
+        .f32(0.25)
+        .guid(CREATURE);
+    b.u16(opcode::MSG_MOVE_HEARTBEAT);
+    relay(&mut b, PLAYER, 0x1, 0);
+    let events = decode(parse(opcode::SMSG_MULTIPLE_PACKETS, &b.0));
+    assert!(matches!(
+        events.as_slice(),
+        [
+            SessionEvent::FlightSplineSync {
+                guid: CREATURE,
+                progress: 0.25
+            },
+            SessionEvent::UnitMove { guid: PLAYER, .. }
+        ]
+    ));
+
+    // A record with no decoder leaves the next one unframed: the batch fails.
+    let mut b = Body::default();
+    b.u16(0x0001).u32(0);
+    assert!(messages::parse_server(opcode::SMSG_MULTIPLE_PACKETS, &b.0).is_err());
 }
 
 #[test]
