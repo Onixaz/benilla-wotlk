@@ -159,9 +159,13 @@ pub(in crate::entities) struct MergedForms {
 }
 
 /// Merged forms keyed by (the first member's geometry `Arc`, the member set): one model's one
-/// silhouette, shared by every unit of that display. Cleared whole past [`MERGED_FORMS_CAP`].
+/// silhouette, shared by every unit of that display. Each entry holds that geometry weakly: it
+/// hits only while the same model is resident, and goes once the model unloads, so a freed
+/// address reused by another model never answers. Cleared whole past [`MERGED_FORMS_CAP`].
 #[derive(Resource, Default)]
-pub(crate) struct MergedFormsCache(HashMap<(usize, Vec<u32>), MergedForms>);
+pub(crate) struct MergedFormsCache(
+    HashMap<(usize, Vec<u32>), (std::sync::Weak<RenderSubmesh>, MergedForms)>,
+);
 
 const MERGED_FORMS_CAP: usize = 1024;
 
@@ -183,9 +187,12 @@ impl MergedFormsCache {
             };
         }
         let key = (Arc::as_ptr(&first.geometry) as usize, group.members.clone());
-        if let Some(f) = self.0.get(&key) {
+        // The key's address is the live geometry's own while the weak still upgrades.
+        if let Some((_, f)) = self.0.get(&key).filter(|(m, _)| m.strong_count() > 0) {
             return f.clone();
         }
+        // A miss is a new display's first spawn: drop the forms of models that have unloaded.
+        self.0.retain(|_, (model, _)| model.strong_count() > 0);
         if self.0.len() >= MERGED_FORMS_CAP {
             self.0.clear();
         }
@@ -209,7 +216,8 @@ impl MergedFormsCache {
             skinned_mesh: skinned,
             aabb,
         };
-        self.0.insert(key, forms.clone());
+        self.0
+            .insert(key, (Arc::downgrade(&first.geometry), forms.clone()));
         forms
     }
 }
