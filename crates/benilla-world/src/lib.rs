@@ -123,6 +123,7 @@ pub mod doodad_anim;
 pub mod entity_shade;
 pub mod ext_shadow;
 pub mod exterior_cull;
+pub mod fanout;
 pub mod ffx_glow;
 pub mod final_pass;
 pub mod frame_pace;

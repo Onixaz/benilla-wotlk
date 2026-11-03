@@ -71,17 +71,15 @@ pub(super) fn apply_model_visibility(
     // `projectedTextures`, and the effect roots that draw their projected batches regardless.
     projected: Res<crate::view::ProjectedTextures>,
     forced_roots: Query<(), With<super::ForcedProjection>>,
-    // The parts, split at parking: the unparked walk in parallel every frame; the parked (most of
-    // a city's, in tables of their own) only when a scene input moved, else only the rows whose
-    // own input moved, which a tick scan finds without fetching a row.
-    (mut active, mut parked, parked_moved): (
+    // The parts, split at parking. Both walk whole only when a scene input moved, else only the
+    // rows whose own input moved, which a tick scan finds without fetching a row.
+    (mut active, mut parked, moved_rows): (
         Query<PartRow, Without<super::park::ParkedMesh>>,
         Query<PartRow, With<super::park::ParkedMesh>>,
         Query<
-            Entity,
+            (Entity, Has<super::park::ParkedMesh>),
             (
                 With<ModelPart>,
-                With<super::park::ParkedMesh>,
                 Or<(
                     Changed<GlobalTransform>,
                     Changed<WmoGroupVis>,
@@ -298,17 +296,37 @@ pub(super) fn apply_model_visibility(
             }
         }
     };
-    active.par_iter_mut().for_each(judge);
     if scene_still {
-        // The few parked rows whose own input moved (a hidden unit's step, a hidden part's
-        // animated alpha), judged in parallel like the rest.
-        let moved: bevy::ecs::entity::EntityHashSet = parked_moved
-            .iter()
-            .chain(unmarked.iter().copied().filter(|e| parked.contains(*e)))
-            .collect();
-        let moved: bevy::ecs::entity::UniqueEntityVec = moved.into_iter().collect();
-        parked.par_iter_many_unique_mut(moved).for_each(judge);
+        // The few rows whose own input moved (a unit's step, a part's animated alpha), judged in
+        // parallel like the rest: a still city skips its ~5k unparked rows without a fetch.
+        let (mut moved_active, mut moved_parked) = (
+            bevy::ecs::entity::EntityHashSet::default(),
+            bevy::ecs::entity::EntityHashSet::default(),
+        );
+        for (entity, is_parked) in &moved_rows {
+            if is_parked {
+                moved_parked.insert(entity);
+            } else {
+                moved_active.insert(entity);
+            }
+        }
+        for &entity in unmarked {
+            if parked.contains(entity) {
+                moved_parked.insert(entity);
+            } else if active.contains(entity) {
+                moved_active.insert(entity);
+            }
+        }
+        let moved_active: bevy::ecs::entity::UniqueEntityVec = moved_active.into_iter().collect();
+        let moved_parked: bevy::ecs::entity::UniqueEntityVec = moved_parked.into_iter().collect();
+        active
+            .par_iter_many_unique_mut(moved_active)
+            .for_each(judge);
+        parked
+            .par_iter_many_unique_mut(moved_parked)
+            .for_each(judge);
     } else {
+        active.par_iter_mut().for_each(judge);
         parked.par_iter_mut().for_each(judge);
     }
 

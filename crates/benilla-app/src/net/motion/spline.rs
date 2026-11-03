@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_protocol::{CreateSpline, EntityKind, MonsterMoveFacing, SplineArc};
 use bevy::prelude::*;
-use bevy::tasks::{ComputeTaskPool, ParallelSliceMut};
 use bevy::utils::Parallel;
 
 use crate::entities::CollisionHeight;
@@ -670,7 +669,7 @@ pub(in crate::net) fn ground_clamp_creatures(
         }
     }
     drop(gated);
-    casts.par_chunk_map_mut(ComputeTaskPool::get(), CLAMP_BATCH, |_, chunk| {
+    benilla_world::fanout::for_each_chunk_mut(&mut casts, CLAMP_BATCH, |chunk| {
         let mut s = stats.borrow_local_mut();
         for row in chunk.iter_mut() {
             if let Some(first) = clamp_unit(&world, &points, &capsule.0, epoch, legacy, row, &mut s)
