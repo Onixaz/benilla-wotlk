@@ -2,7 +2,7 @@
 //! server clocks, reputations and the player's login-scoped stores. Registered ahead of every
 //! window plugin, so the teardown runs before the windows' own `Disconnected` listeners.
 
-use benilla_protocol::messages::Character;
+use benilla_protocol::messages::{Character, GameClock};
 use benilla_protocol::JumpInfo;
 use bevy::prelude::*;
 
@@ -47,6 +47,8 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::TransferPending, on_transfer)
         .net_handler(K::TransferAborted, on_transfer)
         .net_handler(K::TimeSpeed, on_clock)
+        .net_handler(K::GameTime, on_clock)
+        .net_handler(K::GameSpeed, on_clock)
         .net_handler(K::ServerUnixTime, on_clock)
         .net_handler(K::Reputations, on_reputations)
         .net_handler(K::ReputationDelta, on_reputation_delta)
@@ -320,6 +322,8 @@ fn on_clock(In(ev): In<SessionEvent>, mut b: Bridge) {
             (packed, zone),
             &mut b.server_time,
         ),
+        SessionEvent::GameTime(clock) => game_time(clock, &mut b.server_time),
+        SessionEvent::GameSpeed { timescale } => game_speed(timescale, &mut b.server_time),
         SessionEvent::ServerUnixTime {
             unix_time,
             reset_in,
@@ -691,6 +695,34 @@ fn time_speed(
     server_time.0 = Some(GameTime::new(hours, minutes, day_serial, timescale).dated(packed, zone));
 }
 
+/// The speed of a clock set before any speed arrived: real time, a game minute per real minute.
+const REAL_TIME_SCALE: f32 = 1.0 / 60.0;
+
+/// `SMSG_GAMETIME_SET` and `SMSG_GAMETIME_UPDATE`: the date and time re-seeded from the packet at
+/// the speed the clock already runs at (`0x7e2bb0`, `0x7e2a37`).
+fn game_time(clock: GameClock, server_time: &mut ServerTime) {
+    let timescale = server_time
+        .0
+        .as_ref()
+        .map_or(REAL_TIME_SCALE, GameTime::timescale);
+    debug!(
+        "net: server game-time set to {:02}:{:02}",
+        clock.hours, clock.minutes
+    );
+    server_time.0 = Some(
+        GameTime::new(clock.hours, clock.minutes, clock.day_serial, timescale)
+            .dated(clock.packed, clock.zone),
+    );
+}
+
+/// `SMSG_GAMESPEED_SET`: the clock runs on from its current time at the new speed (`0x7e2893`).
+fn game_speed(timescale: f32, server_time: &mut ServerTime) {
+    match server_time.0.as_mut() {
+        Some(clock) => clock.set_timescale(timescale),
+        None => debug!("net: game speed {timescale} before any game time, dropped"),
+    }
+}
+
 /// `SMSG_QUERY_TIME_RESPONSE`: the server wall clock that absolute descriptor stamps (the
 /// timed-quest timer) are dated in; its skew against ours is logged once per session.
 fn server_unix_time(unix_time: u32, reset_in: u32, clock: &mut ServerWallClock) {
@@ -782,6 +814,43 @@ fn packet_dropped(opcode: u16, unparseable: bool, dropped: &mut DroppedOpcodes) 
         tally.unparseable += 1;
     } else {
         tally.unknown += 1;
+    }
+}
+
+#[cfg(test)]
+mod game_clock_tests {
+    use super::*;
+
+    fn clock(hours: u8, minutes: u8) -> GameClock {
+        GameClock::new(((hours as u32) << 6) | minutes as u32, 0)
+    }
+
+    /// `SMSG_GAMETIME_SET` and `SMSG_GAMETIME_UPDATE` move the time and keep the speed.
+    #[test]
+    fn a_game_time_keeps_the_running_speed() {
+        let mut server_time = ServerTime(Some(GameTime::new(6, 0, 0, 0.5)));
+        game_time(clock(21, 15), &mut server_time);
+        let now = server_time.0.unwrap();
+        assert_eq!(now.timescale(), 0.5);
+        assert!((21 * 60 + 15..21 * 60 + 17).contains(&now.minute_of_day()));
+    }
+
+    /// A time with no clock yet runs at real time; a speed with no clock has nothing to move.
+    #[test]
+    fn a_clock_packet_before_settimespeed() {
+        let mut server_time = ServerTime(None);
+        game_speed(2.0, &mut server_time);
+        assert!(server_time.0.is_none());
+        game_time(clock(8, 0), &mut server_time);
+        assert_eq!(server_time.0.unwrap().timescale(), REAL_TIME_SCALE);
+    }
+
+    /// `SMSG_GAMESPEED_SET` sets the speed of the running clock.
+    #[test]
+    fn a_game_speed_sets_the_running_clock() {
+        let mut server_time = ServerTime(Some(GameTime::new(6, 0, 0, REAL_TIME_SCALE)));
+        game_speed(0.25, &mut server_time);
+        assert_eq!(server_time.0.unwrap().timescale(), 0.25);
     }
 }
 

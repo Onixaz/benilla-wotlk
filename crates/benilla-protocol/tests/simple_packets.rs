@@ -68,6 +68,44 @@ fn simple_server_bodies_parse() {
     }
 }
 
+/// `SMSG_GAMETIME_UPDATE` and `SMSG_GAMETIME_SET` carry SETTIMESPEED's clock and zone without the
+/// speed; `SMSG_GAMESPEED_SET` carries the speed alone, and a longer body is dropped (`0x7e2878`).
+#[test]
+fn the_game_clock_packets_decode_their_time_or_their_speed() {
+    let datetime: u32 = (26 << 24) | (6 << 20) | (17 << 14) | (3 << 11) | (14 << 6) | 30;
+    let mut body = datetime.to_le_bytes().to_vec();
+    body.extend_from_slice(&3u32.to_le_bytes());
+    let clock = messages::GameClock {
+        hours: 14,
+        minutes: 30,
+        day_serial: 26 * 372 + 6 * 31 + 17,
+        packed: datetime,
+        zone: 3,
+    };
+    for (opcode, name) in [
+        (
+            messages::opcode::SMSG_GAMETIME_UPDATE,
+            "SMSG_GAMETIME_UPDATE",
+        ),
+        (messages::opcode::SMSG_GAMETIME_SET, "SMSG_GAMETIME_SET"),
+    ] {
+        let (p, tail) = messages::parse_server_with_tail(opcode, &body).unwrap();
+        assert_eq!(tail, 0, "{name} reads both u32s");
+        assert_eq!(p.name(), name);
+        match decode(p)[..] {
+            [SessionEvent::GameTime(c)] => assert_eq!(c, clock, "{name}"),
+            ref other => panic!("{name}: {other:?}"),
+        }
+    }
+
+    let speed = 0.05f32.to_le_bytes();
+    let p = messages::parse_server(messages::opcode::SMSG_GAMESPEED_SET, &speed).unwrap();
+    assert!(matches!(decode(p)[..], [SessionEvent::GameSpeed { timescale }] if timescale == 0.05));
+    let mut long = speed.to_vec();
+    long.push(0);
+    assert!(messages::parse_server(messages::opcode::SMSG_GAMESPEED_SET, &long).is_err());
+}
+
 /// The response is one u32 of unix-epoch seconds (vmangos `Handlers/QueryHandler.cpp:418-423`).
 #[test]
 fn query_time_asks_empty_and_decodes_the_server_wall_clock() {

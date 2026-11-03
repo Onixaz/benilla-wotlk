@@ -1021,6 +1021,10 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             packed,
             zone,
         }],
+        ServerPacket::GameTimeUpdate(clock) | ServerPacket::GameTimeSet(clock) => {
+            vec![SessionEvent::GameTime(clock)]
+        }
+        ServerPacket::GameSpeed { timescale } => vec![SessionEvent::GameSpeed { timescale }],
         ServerPacket::QueryTimeResponse {
             unix_time,
             reset_in,

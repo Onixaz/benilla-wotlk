@@ -794,6 +794,8 @@ pub(crate) struct GameTime {
     base_day: u32,
     timescale: f32,
     received: Instant,
+    /// Game minutes the clock had already run at `received`, at the speeds before this one.
+    carried: f64,
     /// The packed date and clock at `received`, the client game clock's seed (`0x7e28e0`).
     base: benilla_ui::script::WowTime,
 }
@@ -805,8 +807,26 @@ impl GameTime {
             base_day: day_serial,
             timescale,
             received: Instant::now(),
+            carried: 0.0,
             base: benilla_ui::script::WowTime::default(),
         }
+    }
+
+    pub(crate) fn timescale(&self) -> f32 {
+        self.timescale
+    }
+
+    /// Run on at `timescale` from the current time, as `SMSG_GAMESPEED_SET` sets the speed alone
+    /// (`0x7e2893`).
+    pub(crate) fn set_timescale(&mut self, timescale: f32) {
+        self.carried = self.elapsed_minutes();
+        self.received = Instant::now();
+        self.timescale = timescale;
+    }
+
+    /// Game minutes run since the seed.
+    fn elapsed_minutes(&self) -> f64 {
+        self.carried + self.received.elapsed().as_secs_f64() * f64::from(self.timescale)
     }
 
     /// Seat the packed date and the zone offset the calendar reads.
@@ -821,9 +841,8 @@ impl GameTime {
     /// The client game clock: the seed advanced a minute per elapsed game minute, its date carried
     /// across midnight (`0x76d740`).
     pub(crate) fn calendar_now(&self) -> benilla_ui::script::WowTime {
-        let elapsed = self.received.elapsed().as_secs_f64() * f64::from(self.timescale);
         let mut now = self.base;
-        now.add_minutes(elapsed.floor() as i32);
+        now.add_minutes(self.elapsed_minutes().floor() as i32);
         now
     }
 
@@ -834,8 +853,7 @@ impl GameTime {
 
     /// Current fractional minute of the game day, so the sky bodies move without steps.
     pub(crate) fn minute_of_day_f32(&self) -> f32 {
-        let elapsed = self.received.elapsed().as_secs_f32() * self.timescale;
-        (self.base_minute as f32 + elapsed).rem_euclid(1440.0)
+        (f64::from(self.base_minute) + self.elapsed_minutes()).rem_euclid(1440.0) as f32
     }
 
     /// Today's game date as the packed fields hold it: 0-based month and day, years since 2000.
@@ -848,8 +866,7 @@ impl GameTime {
     /// Days and day fraction since the serial epoch, unwrapped, for the moon phase
     /// `(dayCounter + todPhase) mod 1.7`; `f64` for sub-minute grain at ~12k days.
     pub(crate) fn day_continuous(&self) -> f64 {
-        let elapsed = self.received.elapsed().as_secs_f64() * self.timescale as f64;
-        self.base_day as f64 + (self.base_minute as f64 + elapsed) / 1440.0
+        f64::from(self.base_day) + (f64::from(self.base_minute) + self.elapsed_minutes()) / 1440.0
     }
 }
 
@@ -2822,6 +2839,26 @@ pub(crate) struct PetDismissSoundMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A clock that has run an hour at a game minute per real second.
+    fn clock_an_hour_in() -> GameTime {
+        let mut clock = GameTime::new(10, 0, 100, 1.0);
+        clock.received -= std::time::Duration::from_secs(60);
+        clock
+    }
+
+    /// A new speed keeps the time the clock has reached and runs on from there.
+    #[test]
+    fn a_speed_change_keeps_the_current_time() {
+        let mut clock = clock_an_hour_in();
+        assert_eq!(clock.minute_of_day(), 11 * 60);
+        clock.set_timescale(0.0);
+        assert_eq!(clock.timescale(), 0.0);
+        assert_eq!(clock.minute_of_day(), 11 * 60);
+        assert!((clock.day_continuous() - (100.0 + 660.0 / 1440.0)).abs() < 1e-6);
+        clock.received -= std::time::Duration::from_secs(3600);
+        assert_eq!(clock.minute_of_day(), 11 * 60, "a stopped clock stays put");
+    }
 
     /// A re-create of a live object notifies like a delta.
     #[test]
