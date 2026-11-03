@@ -56,7 +56,7 @@ pub(super) struct CompositeRig {
     pub(super) image: Handle<Image>,
     camera: Entity,
     quad: Handle<Mesh>,
-    /// Materials by tile texture; a building's tile set is small, so this fills once per building.
+    /// Materials by tile texture, for the building the player is in: emptied outdoors.
     materials: bevy::platform::collections::HashMap<AssetId<Image>, Handle<UiQuadMaterial>>,
     pool: Vec<Entity>,
 }
@@ -151,6 +151,8 @@ pub(super) fn drive_composite(
             commands.entity(e).despawn();
         }
         composite.tiles.clear();
+        // Each material holds its tile texture strongly: outdoors, the last building's go.
+        rig.materials.clear();
         return;
     }
 

@@ -826,6 +826,31 @@ mod tests {
         );
     }
 
+    /// A tile's release leaves no shell behind once its cell bakes empty: travel does not pile up
+    /// cells for every frame's walks.
+    #[test]
+    fn a_released_cell_goes_once_it_bakes_empty() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Assets<Mesh>>();
+        let mut gx = StaticGx::default();
+        let g = tri([0.0; 3]);
+        let mut a = batch(&g, Vec3::ZERO, None, ModelBlend::Opaque);
+        a.owner = (1, 1);
+        assert!(gx.divert(a));
+        gx.flush_now = true;
+        world.insert_resource(gx);
+        world.run_system_once(bake::flush_static_gx).unwrap();
+        assert_eq!(world.resource::<StaticGx>().world.cells.len(), 1);
+        let mut gx = world.resource_mut::<StaticGx>();
+        gx.release_owner((1, 1));
+        gx.flush_now = true;
+        world.run_system_once(bake::flush_static_gx).unwrap();
+        let gx = world.resource::<StaticGx>();
+        assert!(gx.world.cells.is_empty(), "the empty bake unpublishes");
+        assert!(gx.cells.is_empty(), "and the shell is gone");
+    }
+
     #[test]
     fn a_collected_region_is_undrawn_until_it_publishes() {
         let mut gx = StaticGx::default();

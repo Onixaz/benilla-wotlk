@@ -63,6 +63,7 @@ pub(super) fn flush_static_gx(mut gx: ResMut<StaticGx>, mut meshes: ResMut<Asset
         draw_epoch,
         ..
     } = &mut *gx;
+    let mut emptied = Vec::new();
     for (&cell, state) in cells.iter_mut() {
         if !bake_due(state, world.cells.contains_key(&cell), frame, now) {
             continue;
@@ -71,6 +72,10 @@ pub(super) fn flush_static_gx(mut gx: ResMut<StaticGx>, mut meshes: ResMut<Asset
         *draw_epoch += 1;
         if state.items.is_empty() {
             world.cells.remove(&cell);
+            // Its tile released it: the shell goes too, or travel piles them up for every walk.
+            if state.faders.is_empty() {
+                emptied.push(cell);
+            }
             continue;
         }
         // Sorted by (bucket, texture) so the node draws one range per run, not one per item.
@@ -87,6 +92,9 @@ pub(super) fn flush_static_gx(mut gx: ResMut<StaticGx>, mut meshes: ResMut<Asset
             baked.draws.last().map_or(0, |d| d.vertex_range.end),
         );
         world.cells.insert(cell, std::sync::Arc::new(baked));
+    }
+    for cell in emptied {
+        cells.remove(&cell);
     }
     for (&instance, state) in wmos.iter_mut() {
         if !bake_due(state, world.wmos.contains_key(&instance), frame, now) {
