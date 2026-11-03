@@ -18,6 +18,18 @@ use super::{
     DifficultySet, GameClock, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
 };
 
+/// The game clock handlers drop a body they have not read to the end (`0x7e285f`, `0x7e2915`,
+/// `0x7e29ee`, `0x7e2b67`).
+fn read_to_end(r: &[u8], what: &str) -> io::Result<()> {
+    if r.is_empty() {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("{what} with {} bytes past its fields", r.len()),
+    ))
+}
+
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`
 /// before the speed for the run kind alone: 12340's shared handler (`0x7307a0`) reads it only on
 /// `0xe2`'s arm (`0x7307fd`) and the float alone on the others (`0x730844`).
@@ -440,6 +452,7 @@ fn parse_server_body(
             let timescale = read_f32_le(&mut r)?;
             // The server's zone offset in hours (`0x7e28e0`); AzerothCore sends 0.
             let zone = read_u32_le(&mut r)?;
+            read_to_end(r, "game time and speed")?;
             let clock = GameClock::new(datetime, zone);
             ServerPacket::TimeSpeed {
                 hours: clock.hours,
@@ -450,25 +463,20 @@ fn parse_server_body(
                 zone: clock.zone,
             }
         }
-        // SETTIMESPEED's first and third fields, no speed (`0x7e29d7`, `0x7e29e2`).
-        opcode::SMSG_GAMETIME_UPDATE => {
+        // SETTIMESPEED's first and third fields (`0x7e29d7`/`0x7e29e2`, `0x7e2b50`/`0x7e2b5b`).
+        opcode::SMSG_GAMETIME_UPDATE | opcode::SMSG_GAMETIME_SET => {
             let datetime = read_u32_le(&mut r)?;
-            ServerPacket::GameTimeUpdate(GameClock::new(datetime, read_u32_le(&mut r)?))
+            let clock = GameClock::new(datetime, read_u32_le(&mut r)?);
+            read_to_end(r, "game time")?;
+            if opcode == opcode::SMSG_GAMETIME_UPDATE {
+                ServerPacket::GameTimeUpdate(clock)
+            } else {
+                ServerPacket::GameTimeSet(clock)
+            }
         }
-        // The same two fields (`0x7e2b50`, `0x7e2b5b`).
-        opcode::SMSG_GAMETIME_SET => {
-            let datetime = read_u32_le(&mut r)?;
-            ServerPacket::GameTimeSet(GameClock::new(datetime, read_u32_le(&mut r)?))
-        }
-        // The handler drops a body it has not read to the end (`0x7e2878`).
         opcode::SMSG_GAMESPEED_SET => {
             let timescale = read_f32_le(&mut r)?;
-            if !r.is_empty() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("game speed with {} bytes past its f32", r.len()),
-                ));
-            }
+            read_to_end(r, "game speed")?;
             ServerPacket::GameSpeed { timescale }
         }
         // Wall-clock unix seconds (`QueryHandler.cpp:418-423`), not the game clock above.

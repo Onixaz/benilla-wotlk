@@ -372,9 +372,12 @@ pub enum SessionEvent {
         /// The server's zone offset in hours.
         zone: i32,
     },
-    /// The game clock re-seeded at its current speed: `SMSG_GAMETIME_SET` sets it and
-    /// `SMSG_GAMETIME_UPDATE` re-syncs it, both re-seeding the clock from the packet.
-    GameTime(GameClock),
+    /// `SMSG_GAMETIME_SET`: the game clock set to the packet's time at its current speed
+    /// (`0x7e2bb0`).
+    GameTimeSet(GameClock),
+    /// `SMSG_GAMETIME_UPDATE`: the game clock synced to the packet's time at its current speed, a
+    /// clock ahead of it keeping its lead (`0x7e2a37`).
+    GameTimeSync(GameClock),
     /// The game clock's speed (`SMSG_GAMESPEED_SET`), game minutes per real second; the time runs
     /// on from where it is.
     GameSpeed { timescale: f32 },

@@ -69,7 +69,7 @@ fn simple_server_bodies_parse() {
 }
 
 /// `SMSG_GAMETIME_UPDATE` and `SMSG_GAMETIME_SET` carry SETTIMESPEED's clock and zone without the
-/// speed; `SMSG_GAMESPEED_SET` carries the speed alone, and a longer body is dropped (`0x7e2878`).
+/// speed; `SMSG_GAMESPEED_SET` carries the speed alone; a longer body is dropped (`0x7e285f`).
 #[test]
 fn the_game_clock_packets_decode_their_time_or_their_speed() {
     let datetime: u32 = (26 << 24) | (6 << 20) | (17 << 14) | (3 << 11) | (14 << 6) | 30;
@@ -82,20 +82,29 @@ fn the_game_clock_packets_decode_their_time_or_their_speed() {
         packed: datetime,
         zone: 3,
     };
-    for (opcode, name) in [
+    for (opcode, name, sync) in [
         (
             messages::opcode::SMSG_GAMETIME_UPDATE,
             "SMSG_GAMETIME_UPDATE",
+            true,
         ),
-        (messages::opcode::SMSG_GAMETIME_SET, "SMSG_GAMETIME_SET"),
+        (
+            messages::opcode::SMSG_GAMETIME_SET,
+            "SMSG_GAMETIME_SET",
+            false,
+        ),
     ] {
         let (p, tail) = messages::parse_server_with_tail(opcode, &body).unwrap();
         assert_eq!(tail, 0, "{name} reads both u32s");
         assert_eq!(p.name(), name);
         match decode(p)[..] {
-            [SessionEvent::GameTime(c)] => assert_eq!(c, clock, "{name}"),
+            [SessionEvent::GameTimeSync(c)] if sync => assert_eq!(c, clock, "{name}"),
+            [SessionEvent::GameTimeSet(c)] if !sync => assert_eq!(c, clock, "{name}"),
             ref other => panic!("{name}: {other:?}"),
         }
+        let mut long = body.clone();
+        long.push(0);
+        assert!(messages::parse_server(opcode, &long).is_err(), "{name}");
     }
 
     let speed = 0.05f32.to_le_bytes();
