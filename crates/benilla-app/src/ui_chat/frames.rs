@@ -66,6 +66,7 @@ pub(crate) fn compose(
         | K::Loot
         | K::Money
         | K::Opening
+        | K::TargetIcons
         | K::Tradeskills
         | K::PetInfo
         | K::CombatXpGain

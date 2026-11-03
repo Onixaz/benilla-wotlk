@@ -505,7 +505,7 @@ fn parse_server_body(
         opcode::SMSG_BINDER_CONFIRM => ServerPacket::BinderConfirm {
             binder: binder::read_binder_confirm(&mut r)?,
         },
-        // The summon question; the client's whole answer is the guid back.
+        // The summon question; the answer is the guid back and an agree byte.
         opcode::SMSG_SUMMON_REQUEST => {
             let ask = summon::read_summon_request(&mut r)?;
             ServerPacket::SummonRequest {
@@ -1849,6 +1849,12 @@ fn parse_server_body(
         opcode::SMSG_GROUP_DECLINE => ServerPacket::GroupDecline {
             name: group::read_group_decline(&mut r)?,
         },
+        // The inviter's name, which the handler reads and drops (`0x6cbd1f`).
+        opcode::SMSG_GROUP_CANCEL => ServerPacket::GroupCancel {
+            inviter: read_cstring(&mut r)?,
+        },
+        opcode::SMSG_GROUPACTION_THROTTLED => ServerPacket::GroupActionThrottled,
+        opcode::SMSG_SUMMON_CANCEL => ServerPacket::SummonCancel,
         opcode::SMSG_GROUP_UNINVITE => ServerPacket::GroupUninvited,
         opcode::SMSG_GROUP_SET_LEADER => ServerPacket::GroupLeaderChanged {
             name: group::read_group_set_leader(&mut r)?,
@@ -1868,6 +1874,8 @@ fn parse_server_body(
                 lfg_status: list.lfg_status,
                 lfg_slot: list.lfg_slot,
                 battleground: list.battleground,
+                group_guid: list.group_guid,
+                counter: list.counter,
             }
         }
         // `u8` flags (`0x2` a raid), `u32` count, `u64` leader (`0x6cc300`).
@@ -1877,11 +1885,12 @@ fn parse_server_body(
             leader: read_u64_le(&mut r)?,
         },
         opcode::SMSG_PARTY_COMMAND_RESULT => {
-            let (operation, member, result) = group::read_party_command_result(&mut r)?;
+            let (operation, member, result, value) = group::read_party_command_result(&mut r)?;
             ServerPacket::PartyCommandResult {
                 operation,
                 member,
                 result,
+                value,
             }
         }
         opcode::SMSG_PARTY_MEMBER_STATS | opcode::SMSG_PARTY_MEMBER_STATS_FULL => {
@@ -1898,8 +1907,8 @@ fn parse_server_body(
             ServerPacket::MinimapPing { guid, x, y }
         }
         opcode::MSG_RAID_TARGET_UPDATE => match group::read_raid_target_update(&mut r)? {
-            group::RaidTargetUpdate::Delta { icon, guid } => {
-                ServerPacket::RaidTargetSet { icon, guid }
+            group::RaidTargetUpdate::Delta { setter, marks } => {
+                ServerPacket::RaidTargetSet { setter, marks }
             }
             group::RaidTargetUpdate::List(entries) => ServerPacket::RaidTargetList { entries },
         },
@@ -1911,6 +1920,16 @@ fn parse_server_body(
             group::ReadyCheck::Answer { guid, ready } => {
                 ServerPacket::ReadyCheckAnswer { guid, ready }
             }
+        },
+        opcode::SMSG_RAID_READY_CHECK_ERROR => ServerPacket::ReadyCheckError,
+        // `u32` silenced, any nonzero value (`0x5725cb`).
+        opcode::MSG_NOTIFY_PARTY_SQUELCH => ServerPacket::PartySquelch {
+            silenced: read_u32_le(&mut r)? != 0,
+        },
+        // `u64` member, `u32` silenced (`0x572620`, `0x57262b`).
+        opcode::SMSG_ECHO_PARTY_SQUELCH => ServerPacket::EchoPartySquelch {
+            guid: read_u64_le(&mut r)?,
+            silenced: read_u32_le(&mut r)? != 0,
         },
         // The lockout family, read in the client's own field order.
         opcode::SMSG_RAID_INSTANCE_MESSAGE => ServerPacket::RaidInstanceMessage {

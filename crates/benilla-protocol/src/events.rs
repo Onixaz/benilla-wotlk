@@ -403,12 +403,14 @@ pub enum SessionEvent {
     /// `SMSG_BINDER_CONFIRM`, the `CONFIRM_BINDER` dialog; echo `binder` in `CMSG_BINDER_ACTIVATE`.
     BinderConfirm { binder: u64 },
     /// `SMSG_SUMMON_REQUEST`: `zone` is the summoner's AreaTable id, `delay_ms` the auto-decline
-    /// hold. Accepting sends `CMSG_SUMMON_RESPONSE`; there is no decline opcode.
+    /// hold. The answer is `CMSG_SUMMON_RESPONSE`, agreeing or not.
     SummonRequest {
         summoner: u64,
         zone: u32,
         delay_ms: u32,
     },
+    /// The summon was withdrawn (`SMSG_SUMMON_CANCEL`, empty body).
+    SummonCancel,
     /// `MSG_TALENT_WIPE_CONFIRM`, `cost` in copper; accepting echoes it, declining sends nothing.
     TalentWipeConfirm { trainer: u64, cost: u32 },
     /// The talent groups (`SMSG_TALENTS_INFO`): the player's, or the pet's.
@@ -1266,6 +1268,10 @@ pub enum SessionEvent {
     GroupInvite { can_accept: bool, inviter: String },
     /// An invite we sent was declined (`SMSG_GROUP_DECLINE`).
     GroupDecline { name: String },
+    /// The inviter withdrew our invite (`SMSG_GROUP_CANCEL`).
+    GroupCancel { inviter: String },
+    /// Too many group commands (`SMSG_GROUPACTION_THROTTLED`, empty body).
+    GroupActionThrottled,
     /// We were removed from our group (`SMSG_GROUP_UNINVITE`, empty body), kicked or left.
     GroupUninvited,
     /// The group's leader changed (`SMSG_GROUP_SET_LEADER`).
@@ -1291,6 +1297,9 @@ pub enum SessionEvent {
         lfg_slot: u32,
         /// Group-type bit `0x01`: a battleground's group.
         battleground: bool,
+        /// The group's guid and the list's update counter, which tell a stale list apart.
+        group_guid: u64,
+        counter: u32,
     },
     /// The group outside the battleground (`SMSG_REAL_GROUP_UPDATE`): `0x2` in `flags` a raid.
     RealGroupUpdate { flags: u8, count: u32, leader: u64 },
@@ -1300,6 +1309,8 @@ pub enum SessionEvent {
         operation: u32,
         member: String,
         result: u32,
+        /// The seconds an LFG boot result names, signed.
+        value: i32,
     },
     /// A member's stats (`SMSG_PARTY_MEMBER_STATS`, or the asked-for `_FULL` form when `full`).
     PartyMemberStats {
@@ -1309,12 +1320,19 @@ pub enum SessionEvent {
     },
     /// Someone pinged the minimap (`MSG_MINIMAP_PING`): the group ping marker.
     MinimapPing { guid: u64, x: f32, y: f32 },
-    /// One raid-target icon changed (`MSG_RAID_TARGET_UPDATE`, delta shape); `guid == 0` clears it.
-    RaidTargetSet { icon: u8, guid: u64 },
+    /// Raid-target icons changed (`MSG_RAID_TARGET_UPDATE`, delta shape): who set them, then each
+    /// icon and its target, 0 clearing it.
+    RaidTargetSet { setter: u64, marks: Vec<(u8, u64)> },
     /// The set raid-target icons (`MSG_RAID_TARGET_UPDATE`, full-list shape).
     RaidTargetList { entries: Vec<(u8, u64)> },
     /// The raid leader started a ready check (`MSG_RAID_READY_CHECK`, empty body).
     ReadyCheckRequest,
+    /// Our ready check came too soon (`SMSG_RAID_READY_CHECK_ERROR`, empty body).
+    ReadyCheckError,
+    /// A leader silenced or restored our voice (`MSG_NOTIFY_PARTY_SQUELCH`).
+    PartySquelch { silenced: bool },
+    /// We silenced or restored a member's voice (`SMSG_ECHO_PARTY_SQUELCH`).
+    EchoPartySquelch { guid: u64, silenced: bool },
     /// A member's ready-check answer, to the leader only (`MSG_RAID_READY_CHECK`, with a body).
     ReadyCheckAnswer { guid: u64, ready: u8 },
     /// Our saved raid lockouts (`SMSG_RAID_INSTANCE_INFO`), replacing the list; empty is normal.

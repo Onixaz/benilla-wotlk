@@ -9,13 +9,15 @@ use bevy::prelude::*;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 
 use super::difficulty::RaidMap;
-use super::{GroupState, GROUPTYPE_RAID};
+use super::{GroupNotices, GroupState, TargetIconNotice, GROUPTYPE_RAID};
 use crate::names::NameCache;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, NetHandlerApp, ObjectStore, SelfGuid};
 use crate::sound::MessageSounds;
 use crate::ui_action::{UiError, UiErrorKeys};
 use crate::ui_quest::QuestGiver;
+use crate::ui_summon::SummonState;
 use crate::unit_auras::UnitAuras;
+use benilla_protocol::messages::{party_operation, party_result};
 
 /// The join chime, played by name.
 const INVITE_ACCEPT_SOUND: &str = "igPlayerInviteAccept";
@@ -25,6 +27,11 @@ pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::GroupInvite, on_invite)
         .net_handler(K::GroupDecline, on_decline)
+        .net_handler(K::GroupCancel, on_cancel)
+        .net_handler(K::GroupActionThrottled, on_keyed_notice)
+        .net_handler(K::ReadyCheckError, on_keyed_notice)
+        .net_handler(K::PartySquelch, on_keyed_notice)
+        .net_handler(K::EchoPartySquelch, on_echo_squelch)
         .net_handler(K::GroupUninvited, on_uninvited)
         .net_handler(K::GroupLeaderChanged, on_leader_changed)
         .net_handler(K::GroupDestroyed, on_destroyed)
@@ -94,16 +101,61 @@ fn on_decline(
     }
 }
 
+/// `SMSG_GROUP_CANCEL` (`0x6cbd10`): the invite is gone, and the invite edge fires
+/// `PARTY_INVITE_CANCEL`, which hides the popup.
+fn on_cancel(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
+    if let SessionEvent::GroupCancel { .. } = ev {
+        group.pending_invite = None;
+    }
+}
+
+/// The notices that read at most a flag and show one line: the throttles `0x6cbe80` and
+/// `0x5725a0`, and our own silencing, `0x5725c0` (nonzero silenced).
+fn on_keyed_notice(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
+    let key = match ev {
+        SessionEvent::GroupActionThrottled => "ERR_GROUP_ACTION_THROTTLED",
+        SessionEvent::ReadyCheckError => "ERR_READY_CHECK_THROTTLED",
+        SessionEvent::PartySquelch { silenced: true } => "ERR_PLAYER_SILENCED",
+        SessionEvent::PartySquelch { silenced: false } => "ERR_PLAYER_UNSILENCED",
+        _ => return,
+    };
+    errors.0.push(UiError::key(key));
+}
+
+/// `SMSG_ECHO_PARTY_SQUELCH` (`0x572610`): the member's cached name, never queried (`0x57264c`),
+/// fills the echo; with none cached nothing shows.
+fn on_echo_squelch(
+    In(ev): In<SessionEvent>,
+    mut errors: ResMut<UiErrorKeys>,
+    names: Res<NameCache>,
+) {
+    if let SessionEvent::EchoPartySquelch { guid, silenced } = ev {
+        let Some(name) = names.peek(guid) else {
+            return;
+        };
+        let key = if silenced {
+            "ERR_PLAYER_SILENCED_ECHO"
+        } else {
+            "ERR_PLAYER_UNSILENCED_ECHO"
+        };
+        errors.0.push(UiError::s(key, name));
+    }
+}
+
+/// `SMSG_GROUP_UNINVITE` (`0x6cbe10`): the party clear-all, its line, then `CANCEL_SUMMON`.
 fn on_uninvited(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
     mut errors: ResMut<UiErrorKeys>,
+    mut summon: ResMut<SummonState>,
     map: CurrentRaidMap,
 ) {
     if let SessionEvent::GroupUninvited = ev {
         let before = removal_start(&group);
-        uninvited(&mut group, &mut errors);
+        let lines = group.apply_uninvited();
         removal_end(&mut group, &mut errors, before, map.kind());
+        push_group_lines(&mut errors, lines);
+        summon.cancel();
     }
 }
 
@@ -148,16 +200,19 @@ fn on_leader_changed(
     }
 }
 
+/// `SMSG_GROUP_DESTROYED` (`0x6cbe40`): its line, the party clear-all, then `CANCEL_SUMMON`.
 fn on_destroyed(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
     mut errors: ResMut<UiErrorKeys>,
+    mut summon: ResMut<SummonState>,
     map: CurrentRaidMap,
 ) {
     if let SessionEvent::GroupDestroyed = ev {
         let before = removal_start(&group);
         destroyed(&mut group, &mut errors);
         removal_end(&mut group, &mut errors, before, map.kind());
+        summon.cancel();
     }
 }
 
@@ -171,6 +226,8 @@ fn on_list(
     names: Res<NameCache>,
     index: Res<GuidIndex>,
     commands: Res<NetCommands>,
+    // Real: the stale window is wall-clock seconds (`0x6d8945`).
+    clock: Res<Time<Real>>,
 ) {
     if let SessionEvent::GroupList {
         group_type,
@@ -182,9 +239,15 @@ fn on_list(
         difficulties,
         lfg_restricted,
         battleground,
+        group_guid,
+        counter,
         ..
     } = ev
     {
+        if group.list_is_stale(battleground, group_guid, counter, clock.elapsed_secs_f64()) {
+            debug!("ui_party: stale group list {group_guid:#x} #{counter} skipped");
+            return;
+        }
         group.own_roles = own_roles;
         group.apply_list_tail(difficulties, lfg_restricted);
         let rows = members.len();
@@ -215,18 +278,30 @@ fn on_real_group_update(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>)
     }
 }
 
+/// `SMSG_PARTY_COMMAND_RESULT` (`0x6cbec0`); our leave's ack runs the party clear-all before its
+/// line and ends in `CANCEL_SUMMON` (`0x6cbf14`-`0x6cbf2e`).
 fn on_command_result(
     In(ev): In<SessionEvent>,
     mut group: ResMut<GroupState>,
     mut errors: ResMut<UiErrorKeys>,
+    mut summon: ResMut<SummonState>,
+    map: CurrentRaidMap,
 ) {
     if let SessionEvent::PartyCommandResult {
         operation,
         member,
         result,
+        value,
     } = ev
     {
-        command_result(&mut group, &mut errors, operation, &member, result);
+        let before = removal_start(&group);
+        let line = group.apply_command_result(operation, &member, result, value);
+        if operation == party_operation::LEAVE && result == party_result::OK {
+            removal_end(&mut group, &mut errors, before, map.kind());
+            summon.cancel();
+        }
+        // By key, so the catalog row picks the surface; `None` is the reference's silence.
+        errors.0.extend(line);
     }
 }
 
@@ -236,9 +311,42 @@ fn on_member_stats(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
     }
 }
 
-fn on_raid_target(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
+/// `MSG_RAID_TARGET_UPDATE` (`0x5743b0`). After a one-mark update naming its setter, the last pair's
+/// target, when nonzero, gets the chat notice (`0x5744cf`): only for a target we hold, and only
+/// with the setter's name cached, never queried (`0x50b0f0`).
+fn on_raid_target(
+    In(ev): In<SessionEvent>,
+    mut group: ResMut<GroupState>,
+    mut notices: ResMut<GroupNotices>,
+    names: Res<NameCache>,
+    index: Res<GuidIndex>,
+    stores: Query<&ObjectStore>,
+    commands: Res<NetCommands>,
+) {
     match ev {
-        SessionEvent::RaidTargetSet { icon, guid } => group.apply_raid_target(icon, guid),
+        SessionEvent::RaidTargetSet { setter, marks } => {
+            group.apply_raid_targets(&marks);
+            let Some(&(icon, target)) = marks.last() else {
+                return;
+            };
+            if setter == 0 || target == 0 {
+                return;
+            }
+            let Some(store) = index.0.get(&target).and_then(|e| stores.get(*e).ok()) else {
+                return;
+            };
+            let Some(setter_name) = names.peek(setter) else {
+                return;
+            };
+            let target_name = names
+                .resolve_unit(target, Some(store), &commands)
+                .map(str::to_string);
+            notices.target_icons.push(TargetIconNotice {
+                setter: setter_name.to_string(),
+                icon,
+                target: target_name,
+            });
+        }
         SessionEvent::RaidTargetList { entries } => group.apply_raid_target_list(&entries),
         _ => {}
     }
@@ -291,10 +399,6 @@ fn declined(group: &mut GroupState, errors: &mut UiErrorKeys, name: &str) {
     push_group_lines(errors, group.apply_declined(name));
 }
 
-fn uninvited(group: &mut GroupState, errors: &mut UiErrorKeys) {
-    push_group_lines(errors, group.apply_uninvited());
-}
-
 fn destroyed(group: &mut GroupState, errors: &mut UiErrorKeys) {
     push_group_lines(errors, group.apply_destroyed());
 }
@@ -343,6 +447,11 @@ fn list(
             names_pending |= names.resolve(own, net_commands).is_none();
         }
     }
+    // A party list with members onto no held group asks for the icon board (`0x6d9091`-`0x6d90d6`);
+    // held is a party slot or a raid roster, as the list finds them (`0x6d8b21`, `0x6d8b53`).
+    let ask_raid_targets = group_type != GROUPTYPE_RAID
+        && !members.is_empty()
+        && !(group.in_party() || group.in_raid());
     // Taken before `apply_list` consumes the list; `seat_new_records` then treats a member with
     // no record as new, the reference's `srcRec == 0`.
     let seats: Vec<(u64, bool)> = members
@@ -361,6 +470,9 @@ fn list(
     push_group_lines(errors, shown.lines);
     if shown.invite_accept {
         sounds.push_cue(INVITE_ACCEPT_SOUND);
+    }
+    if ask_raid_targets {
+        let _ = net_commands.0.send(ClientCommand::RequestRaidTargets);
     }
     seat_new_records(group, &seats, index, net_commands);
     quest.bump_reask();
@@ -455,19 +567,6 @@ pub(crate) fn held_member<'a>(
 ) -> Option<(&'a ObjectStore, Option<&'a UnitAuras>)> {
     let &entity = index.0.get(&guid)?;
     Some((stores.get(entity).ok()?, auras.get(entity).ok()))
-}
-
-fn command_result(
-    group: &mut GroupState,
-    errors: &mut crate::ui_action::UiErrorKeys,
-    operation: u32,
-    member: &str,
-    result: u32,
-) {
-    // By key, so the catalog row picks the surface; `None` is the reference's silence.
-    errors
-        .0
-        .extend(group.apply_command_result(operation, member, result));
 }
 
 #[cfg(test)]
@@ -951,5 +1050,218 @@ mod tests {
 
         send(&mut group, member_status::ONLINE);
         assert!(group.stats[&far].is_online());
+    }
+
+    // ── The packets' handlers ────────────────────────────────────────────────────────────
+
+    fn handler_world() -> bevy::ecs::world::World {
+        let mut world = bevy::ecs::world::World::new();
+        world.init_resource::<GroupState>();
+        world.init_resource::<GroupNotices>();
+        world.init_resource::<UiErrorKeys>();
+        world.init_resource::<SummonState>();
+        world.init_resource::<NameCache>();
+        world.init_resource::<GuidIndex>();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        world.insert_resource(NetCommands(tx));
+        world
+    }
+
+    fn player_guid(counter: u64) -> u64 {
+        counter | (u64::from(guid::HIGH_PLAYER) << 48)
+    }
+
+    fn command_result(operation: u32, result: u32) -> SessionEvent {
+        SessionEvent::PartyCommandResult {
+            operation,
+            member: String::new(),
+            result,
+            value: 0,
+        }
+    }
+
+    /// `0x6cbe2a`, `0x6cbe66`, `0x6cbf2e`: the kick, the disband and our leave's ack each owe
+    /// `CANCEL_SUMMON`; another command result does not.
+    #[test]
+    fn the_three_ways_out_of_a_group_owe_cancel_summon() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = handler_world();
+        world
+            .run_system_once_with(on_uninvited, SessionEvent::GroupUninvited)
+            .unwrap();
+        world
+            .run_system_once_with(on_destroyed, SessionEvent::GroupDestroyed)
+            .unwrap();
+        for (operation, result) in [
+            (party_operation::LEAVE, party_result::OK),
+            (party_operation::INVITE, party_result::OK),
+            (party_operation::LEAVE, party_result::NOT_IN_GROUP),
+        ] {
+            world
+                .run_system_once_with(on_command_result, command_result(operation, result))
+                .unwrap();
+        }
+        assert_eq!(world.resource::<SummonState>().cancels_owed(), 3);
+    }
+
+    /// `0x6cbf14`: our leave's ack runs the party clear-all, whose difficulty line comes first, and
+    /// then shows `ERR_LEFT_GROUP_YOU`.
+    #[test]
+    fn the_leave_ack_prints_the_difficulty_change_before_its_own_line() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = handler_world();
+        {
+            let mut g = world.resource_mut::<GroupState>();
+            g.apply_list(0, 0, vec![member(0x11, "Aldwyn")], 0x11, None, None);
+            g.difficulties.dungeon = 1;
+        }
+        let leave = command_result(party_operation::LEAVE, party_result::OK);
+        world
+            .run_system_once_with(on_command_result, leave)
+            .unwrap();
+        let keys: Vec<&str> = world
+            .resource::<UiErrorKeys>()
+            .0
+            .iter()
+            .map(|e| e.key)
+            .collect();
+        assert_eq!(
+            keys,
+            ["ERR_DUNGEON_DIFFICULTY_CHANGED_S", "ERR_LEFT_GROUP_YOU"]
+        );
+    }
+
+    /// `0x6cbd10`: the withdrawn invite clears the popup's inviter, which the invite edge answers
+    /// with `PARTY_INVITE_CANCEL`.
+    #[test]
+    fn a_withdrawn_invite_clears_the_pending_inviter() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = handler_world();
+        world
+            .resource_mut::<GroupState>()
+            .apply_invited(true, "Bob");
+        let cancel = SessionEvent::GroupCancel {
+            inviter: "Bob".into(),
+        };
+        world.run_system_once_with(on_cancel, cancel).unwrap();
+        assert_eq!(world.resource::<GroupState>().pending_invite, None);
+    }
+
+    /// `0x5744cf`, `0x50b0f0`: a one-mark update owes the notice for a cached setter and a held,
+    /// nonzero target only, and every packet moves the board.
+    #[test]
+    fn a_one_mark_update_owes_the_notice_only_for_a_named_setter_and_a_held_target() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = handler_world();
+        let (setter, target, stranger, away) = (
+            player_guid(1),
+            player_guid(2),
+            player_guid(3),
+            player_guid(4),
+        );
+        {
+            let mut names = world.resource_mut::<NameCache>();
+            names.insert_player(setter, "Aldwyn".into(), None);
+            names.insert_player(target, "Brisca".into(), None);
+        }
+        let held = world.spawn(ObjectStore::default()).id();
+        world.resource_mut::<GuidIndex>().0.insert(target, held);
+        let mark = |setter, marks: Vec<(u8, u64)>| SessionEvent::RaidTargetSet { setter, marks };
+        for ev in [
+            mark(setter, vec![(7, target)]),
+            mark(stranger, vec![(6, target)]),
+            mark(setter, vec![(5, away)]),
+            mark(setter, vec![(4, 0)]),
+            mark(0, vec![(3, target)]),
+            mark(setter, vec![]),
+        ] {
+            world.run_system_once_with(on_raid_target, ev).unwrap();
+        }
+        let notices = &world.resource::<GroupNotices>().target_icons;
+        assert_eq!(notices.len(), 1, "the named setter's mark on a held unit");
+        let n = &notices[0];
+        assert_eq!(
+            (n.setter.as_str(), n.icon, n.target.as_deref()),
+            ("Aldwyn", 7, Some("Brisca"))
+        );
+        let g = world.resource::<GroupState>();
+        assert_eq!(g.raid_targets[3], target);
+        assert_eq!(g.raid_target_updates, 6, "every packet signals");
+    }
+
+    /// `0x6cbe80`, `0x5725a0`, `0x5725c0`: one line each; `0x57264c`: the echo names a cached
+    /// member and shows nothing for an uncached one.
+    #[test]
+    fn the_notices_show_their_lines_and_the_echo_needs_a_cached_name() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = handler_world();
+        let member = player_guid(7);
+        world
+            .resource_mut::<NameCache>()
+            .insert_player(member, "Brisca".into(), None);
+        for ev in [
+            SessionEvent::GroupActionThrottled,
+            SessionEvent::ReadyCheckError,
+            SessionEvent::PartySquelch { silenced: true },
+            SessionEvent::PartySquelch { silenced: false },
+        ] {
+            world.run_system_once_with(on_keyed_notice, ev).unwrap();
+        }
+        for (guid, silenced) in [(member, true), (player_guid(8), true), (member, false)] {
+            let ev = SessionEvent::EchoPartySquelch { guid, silenced };
+            world.run_system_once_with(on_echo_squelch, ev).unwrap();
+        }
+        assert_eq!(
+            world.resource::<UiErrorKeys>().0,
+            vec![
+                UiError::key("ERR_GROUP_ACTION_THROTTLED"),
+                UiError::key("ERR_READY_CHECK_THROTTLED"),
+                UiError::key("ERR_PLAYER_SILENCED"),
+                UiError::key("ERR_PLAYER_UNSILENCED"),
+                UiError::s("ERR_PLAYER_SILENCED_ECHO", "Brisca"),
+                UiError::s("ERR_PLAYER_UNSILENCED_ECHO", "Brisca"),
+            ]
+        );
+    }
+
+    /// `0x6d9091`-`0x6d90d6`: a party list with members onto no held group asks for the icon
+    /// board; a list onto a held group, a raid's list and an empty list do not.
+    #[test]
+    fn joining_a_party_asks_for_the_raid_target_board() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let net = NetCommands(tx);
+        let (mut group, mut errors, mut quest) = (
+            GroupState::default(),
+            UiErrorKeys::default(),
+            QuestGiver::default(),
+        );
+        let names = NameCache::default();
+        let mut send = |group: &mut GroupState, group_type, members, leader| {
+            list(
+                group,
+                &mut errors,
+                &mut MessageSounds::default(),
+                &mut quest,
+                group_type,
+                0,
+                members,
+                leader,
+                None,
+                &SelfGuid(Some(9)),
+                &names,
+                &GuidIndex::default(),
+                &net,
+            );
+            rx.try_iter()
+                .filter(|c| matches!(c, ClientCommand::RequestRaidTargets))
+                .count()
+        };
+        let party = || vec![member(7, "Aldwyn")];
+        assert_eq!(send(&mut group, 0, party(), 7), 1, "joining a party");
+        assert_eq!(send(&mut group, 0, party(), 7), 0, "a resync");
+        assert_eq!(send(&mut group, 0, vec![], 0), 0, "leaving");
+        assert_eq!(send(&mut group, 1, party(), 7), 0, "joining a raid");
+        assert_eq!(send(&mut group, 0, vec![], 0), 0);
+        assert_eq!(send(&mut group, 0, vec![], 9), 0, "a list of nobody");
     }
 }

@@ -1124,8 +1124,9 @@ pub(crate) struct Model {
     pub(crate) binder_pending: bool,
     /// The summon getters' answers, defaulting to the reference's `""`, `""`, 0 with none pending.
     pub(crate) summon_confirm: super::summon::SummonConfirmUiState,
-    /// `ConfirmSummon()` calls, one `CMSG_SUMMON_RESPONSE` each; the app holds the summoner.
-    pub(crate) summon_confirms: u32,
+    /// `ConfirmSummon()` (true) and `CancelSummon()` (false) calls in order, one
+    /// `CMSG_SUMMON_RESPONSE` each; the app holds the summoner.
+    pub(crate) summon_answers: Vec<bool>,
     /// `GetFramerate()`, pushed each tick.
     /// A `Cell`: pushed every frame, read by `GetFramerate()` alone (`ModelCell`).
     pub(crate) framerate: std::cell::Cell<f64>,
@@ -1705,7 +1706,7 @@ impl Model {
             binder_confirms: 0,
             binder_pending: false,
             summon_confirm: super::summon::SummonConfirmUiState::default(),
-            summon_confirms: 0,
+            summon_answers: Vec::new(),
             framerate: std::cell::Cell::new(0.0),
             modifiers: (false, false, false),
             click_button: None,

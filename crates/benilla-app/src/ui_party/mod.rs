@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::ui_action::UiError;
+use crate::ui_action::{FillArg, UiError};
 use benilla_protocol::messages::{
     party_operation, party_result, patch_auras, GroupLootInfo, GroupMemberEntry,
     PartyMemberStatsInfo,
@@ -31,11 +31,20 @@ impl Plugin for UiPartyPlugin {
         net::register(app);
         // A UI-only harness has no sound stack; the list handler queues the join chime.
         app.init_resource::<GroupState>()
+            .init_resource::<GroupNotices>()
             .init_resource::<crate::sound::MessageSounds>()
+            // The leave paths owe `CANCEL_SUMMON`, which the summon feed fires.
+            .init_resource::<crate::ui_summon::SummonState>()
             .add_systems(
                 Update,
                 (
                     feed::feed_party.in_set(UiFeed),
+                    // Gated: a notice drained into the boot VM would be lost.
+                    feed::feed_marks
+                        .in_set(UiFeed)
+                        .after(feed::feed_party)
+                        .after(crate::ui_unit::UnitFeed)
+                        .run_if(crate::ui_script::ingame_ui_up),
                     difficulty::feed_menu_gates.in_set(UiFeed),
                     feed::drain_party.after(UiInput),
                 ),
@@ -106,6 +115,34 @@ pub struct GroupState {
     /// (`0x52bd60`, `0x572530`), kept across groups like the difficulties.
     pub real_party_members: u32,
     pub real_raid_members: u32,
+    /// The last list taken per group kind, the real group's and the battleground's
+    /// (`0x6d8991`, `0x6d891e`): its group, counter and arrival, which a stale list repeats.
+    pub list_stamps: [Option<ListStamp>; 2],
+    /// Each `MSG_RAID_TARGET_UPDATE`, one `RAID_TARGET_UPDATE` apiece (`0x57449b`).
+    pub raid_target_updates: u32,
+}
+
+/// One list's identity and arrival, in [`Time<Real>`] seconds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ListStamp {
+    pub group: u64,
+    pub counter: u32,
+    pub at: f64,
+}
+
+/// The mark notices the raid-target handler composes, which [`feed::feed_marks`] prints after the
+/// board's `RAID_TARGET_UPDATE`.
+#[derive(Resource, Default)]
+pub(crate) struct GroupNotices {
+    pub(crate) target_icons: Vec<TargetIconNotice>,
+}
+
+/// One mark notice's fills (`0x50b0f0`): the setter's cached name, the wire icon, and the target's
+/// name, `None` while it resolves.
+pub(crate) struct TargetIconNotice {
+    pub(crate) setter: String,
+    pub(crate) icon: u8,
+    pub(crate) target: Option<String>,
 }
 
 /// What one `SMSG_GROUP_LIST` shows: its lines, and whether it plays `igPlayerInviteAccept`, the
@@ -117,6 +154,33 @@ pub struct ListOutcome {
 }
 
 impl GroupState {
+    /// Whether a list repeats the last one of its kind (`0x6d8907`-`0x6d8958`): the same nonzero
+    /// group with a counter not above the stored one, within 60 seconds of it. Such a list is
+    /// skipped whole; any other list with a group and a counter is stored as the last.
+    pub fn list_is_stale(
+        &mut self,
+        battleground: bool,
+        group: u64,
+        counter: u32,
+        now: f64,
+    ) -> bool {
+        if group == 0 || counter == 0 {
+            return false;
+        }
+        let stamp = &mut self.list_stamps[usize::from(battleground)];
+        if let Some(last) = stamp {
+            if last.group == group && last.counter >= counter && now - last.at < 60.0 {
+                return true;
+            }
+        }
+        *stamp = Some(ListStamp {
+            group,
+            counter,
+            at: now,
+        });
+        false
+    }
+
     /// Apply one `SMSG_GROUP_LIST` and return what it shows, in the reference's order: the party
     /// slots' joins, the new-group line, the party slots' leaves, then the raid roster's lines.
     /// Kick, leave and disband lines come from their opcodes. Every name is taken as held:
@@ -342,10 +406,10 @@ impl GroupState {
         vec![UiError::key("ERR_UNINVITE_YOU")]
     }
 
-    /// `SMSG_GROUP_DESTROYED`: prints only while grouped, then empties the slots. vmangos's
-    /// two-member collapse sends none (`Group/Group.cpp:533`).
+    /// `SMSG_GROUP_DESTROYED`: prints only while a party slot is held (`0x6cbe40`), so not in a
+    /// raid whose subgroup holds nobody else, then empties the slots.
     pub fn apply_destroyed(&mut self) -> Vec<UiError> {
-        let lines = if self.in_group {
+        let lines = if self.in_party() {
             vec![UiError::key("ERR_GROUP_DISBANDED")]
         } else {
             Vec::new()
@@ -354,27 +418,38 @@ impl GroupState {
         lines
     }
 
-    /// `SMSG_GROUP_SET_LEADER`; vmangos sends the full list right after (`Group::ChangeLeader`).
+    /// `SMSG_GROUP_SET_LEADER` (`0x6cbd70`): our own name, compared without case (`0x6cbd93`),
+    /// takes the `_YOU` line, and a dungeon finder group (`[0xbd19a8]`) names a guide.
     pub fn apply_leader_changed(&mut self, name: &str, own_name: Option<&str>) -> Vec<UiError> {
-        if own_name == Some(name) {
-            vec![UiError::key("ERR_NEW_LEADER_YOU")]
-        } else {
-            vec![UiError::s("ERR_NEW_LEADER_S", name)]
+        let ours = own_name.is_some_and(|own| own.to_lowercase() == name.to_lowercase());
+        match (ours, self.lfg_restricted) {
+            (true, true) => vec![UiError::key("ERR_NEW_GUIDE_YOU")],
+            (true, false) => vec![UiError::key("ERR_NEW_LEADER_YOU")],
+            (false, true) => vec![UiError::s("ERR_NEW_GUIDE_S", name)],
+            (false, false) => vec![UiError::s("ERR_NEW_LEADER_S", name)],
         }
     }
 
     /// `SMSG_PARTY_COMMAND_RESULT` through 12340's switch (`0x6cbec0`): one message per result,
     /// its catalog row giving text, surface and sound. Silent, as in the reference: 10, 11, 27
-    /// (`VOTE_KICK_REASON_NEEDED`, an event) and past 30, `OK` for an operation other than invite
-    /// or leave, and an invite ack with no name. The leave ack also empties the slots. Not built:
-    /// 21 and 24, whose `%s` is the packet's trailing seconds as a spell duration.
+    /// (`VOTE_KICK_REASON_NEEDED`, the dungeon finder's event) and past 30, `OK` for an operation
+    /// other than invite or leave, and an invite ack with no name. The leave ack also empties the
+    /// slots, and a failed swap signals `RAID_ROSTER_UPDATE` after its line (`0x6cc255`).
     pub fn apply_command_result(
         &mut self,
         operation: u32,
         member: &str,
         result: u32,
+        value: i32,
     ) -> Option<UiError> {
         let named = |key: &'static str| UiError::s(key, member);
+        // 21 and 24 name the value as a duration, a negative one as 1 s (`0x6cc107`, `0x6cc158`).
+        let lasting = |key: &'static str| {
+            let secs = if value < 0 { 1 } else { value };
+            // The product is an `i32`, widened with its sign (`0x6cc111`, `cdq`).
+            let ms = i64::from(secs.wrapping_mul(1000)) as u64;
+            UiError::args(key, vec![FillArg::Duration(ms)])
+        };
         match result {
             party_result::OK => match operation {
                 // The reference's guard: an invite ack with no name prints nothing.
@@ -397,6 +472,7 @@ impl GroupState {
             party_result::LFG_PENDING => Some(UiError::key("ERR_LFG_PENDING")),
             party_result::INVITE_RESTRICTED => Some(UiError::key("ERR_INVITE_RESTRICTED")),
             party_result::IN_COMBAT_OR_SWAP_FAILED if operation == party_operation::SWAP => {
+                self.count_roster_update();
                 Some(UiError::key("ERR_GROUP_SWAP_FAILED"))
             }
             party_result::IN_COMBAT_OR_SWAP_FAILED => Some(UiError::key("ERR_INVITE_IN_COMBAT")),
@@ -408,11 +484,15 @@ impl GroupState {
             party_result::TARGET_AMBIGUOUS => Some(UiError::key("ERR_PARTY_TARGET_AMBIGUOUS")),
             party_result::LFG_INVITE_RAID_LOCKED => Some(named("ERR_PARTY_LFG_INVITE_RAID_LOCKED")),
             party_result::LFG_BOOT_LIMIT => Some(UiError::key("ERR_PARTY_LFG_BOOT_LIMIT")),
+            party_result::LFG_BOOT_COOLDOWN => Some(lasting("ERR_PARTY_LFG_BOOT_COOLDOWN_S")),
             party_result::LFG_BOOT_IN_PROGRESS => {
                 Some(UiError::key("ERR_PARTY_LFG_BOOT_IN_PROGRESS"))
             }
             party_result::LFG_BOOT_TOO_FEW_PLAYERS => {
                 Some(UiError::key("ERR_PARTY_LFG_BOOT_TOO_FEW_PLAYERS"))
+            }
+            party_result::LFG_BOOT_NOT_ELIGIBLE => {
+                Some(lasting("ERR_PARTY_LFG_BOOT_NOT_ELIGIBLE_S"))
             }
             party_result::RAID_DISALLOWED_BY_LEVEL => {
                 Some(UiError::key("ERR_RAID_DISALLOWED_BY_LEVEL"))
@@ -476,7 +556,15 @@ impl GroupState {
         }
     }
 
-    /// `MSG_RAID_TARGET_UPDATE` mode 0: one icon, cleared by guid 0.
+    /// `MSG_RAID_TARGET_UPDATE` mode 0: each named icon below 8 (`0x574485`), cleared by guid 0.
+    pub fn apply_raid_targets(&mut self, marks: &[(u8, u64)]) {
+        for (icon, guid) in marks {
+            self.apply_raid_target(*icon, *guid);
+        }
+        self.raid_target_updates = self.raid_target_updates.wrapping_add(1);
+    }
+
+    /// One icon of a mark, cleared by guid 0; an icon past 7 is ignored.
     pub fn apply_raid_target(&mut self, icon: u8, guid: u64) {
         if let Some(slot) = self.raid_targets.get_mut(icon as usize) {
             *slot = guid;
@@ -486,9 +574,7 @@ impl GroupState {
     /// `MSG_RAID_TARGET_UPDATE` mode 1: the whole board; an absent icon is unset.
     pub fn apply_raid_target_list(&mut self, entries: &[(u8, u64)]) {
         self.raid_targets = [0; 8];
-        for (icon, guid) in entries {
-            self.apply_raid_target(*icon, *guid);
-        }
+        self.apply_raid_targets(entries);
     }
 
     /// The party-or-raid member test (`0x512a30`) past the player's own pet: a member, or a
@@ -546,6 +632,9 @@ impl GroupState {
             lfg_signals: _,
             real_party_members: _,
             real_raid_members: _,
+            // The client's statics, which outlive a group (`[0xc9eae4]`..`[0xc9eb00]`).
+            list_stamps: _,
+            raid_target_updates: _,
         } = self;
         *in_group = false;
         *group_type = 0;
@@ -953,7 +1042,7 @@ mod tests {
         let endings: [(Ending, &str); 3] = [
             (
                 |g| {
-                    g.apply_command_result(party_operation::LEAVE, "Us", party_result::OK)
+                    g.apply_command_result(party_operation::LEAVE, "Us", party_result::OK, 0)
                         .into_iter()
                         .collect()
                 },
@@ -1052,7 +1141,7 @@ mod tests {
         let mut g = GroupState::default();
         g.apply_list(1, 0, raid.clone(), 1, None, None);
         assert_eq!(
-            g.apply_command_result(party_operation::LEAVE, "Us", party_result::OK),
+            g.apply_command_result(party_operation::LEAVE, "Us", party_result::OK, 0),
             Some(UiError::key("ERR_LEFT_GROUP_YOU"))
         );
         assert_eq!(
@@ -1124,19 +1213,25 @@ mod tests {
         );
         assert_eq!(g.pending_invite.as_deref(), Some("Bob"));
         assert_eq!(
-            g.apply_command_result(party_operation::INVITE, "Carol", party_result::OK),
+            g.apply_command_result(party_operation::INVITE, "Carol", party_result::OK, 0),
             Some(UiError::s("ERR_INVITE_PLAYER_S", "Carol"))
         );
         assert_eq!(
             g.apply_command_result(
                 party_operation::INVITE,
                 "Carol",
-                party_result::ALREADY_IN_GROUP
+                party_result::ALREADY_IN_GROUP,
+                0
             ),
             Some(UiError::s("ERR_ALREADY_IN_GROUP_S", "Carol"))
         );
         assert_eq!(
-            g.apply_command_result(party_operation::INVITE, "Xz", party_result::BAD_PLAYER_NAME),
+            g.apply_command_result(
+                party_operation::INVITE,
+                "Xz",
+                party_result::BAD_PLAYER_NAME,
+                0
+            ),
             Some(UiError::s("ERR_BAD_PLAYER_NAME_S", "Xz"))
         );
         assert_eq!(
@@ -1350,7 +1445,7 @@ mod tests {
         let mut g = GroupState::default();
         for &(result, id, takes_name) in TABLE {
             let msg = g
-                .apply_command_result(party_operation::INVITE, "Zed", result)
+                .apply_command_result(party_operation::INVITE, "Zed", result, 0)
                 .unwrap_or_else(|| panic!("result {result} showed nothing"));
             let row = benilla_ui::messages::by_key(msg.key)
                 .unwrap_or_else(|| panic!("result {result} named {}, not a catalog row", msg.key));
@@ -1366,14 +1461,15 @@ mod tests {
             g.apply_command_result(
                 party_operation::SWAP,
                 "Zed",
-                party_result::IN_COMBAT_OR_SWAP_FAILED
+                party_result::IN_COMBAT_OR_SWAP_FAILED,
+                0
             )
             .map(|m| m.key),
             Some("ERR_GROUP_SWAP_FAILED")
         );
 
         // The two `OK` arms, where the operation decides.
-        let mut ok = |op| g.apply_command_result(op, "Zed", party_result::OK);
+        let mut ok = |op| g.apply_command_result(op, "Zed", party_result::OK, 0);
         assert_eq!(
             benilla_ui::messages::by_key(ok(party_operation::INVITE).unwrap().key)
                 .unwrap()
@@ -1394,7 +1490,7 @@ mod tests {
         let mut g = GroupState::default();
         let mut kind = |r| {
             benilla_ui::messages::kind_of(
-                g.apply_command_result(party_operation::INVITE, "Zed", r)
+                g.apply_command_result(party_operation::INVITE, "Zed", r, 0)
                     .unwrap()
                     .key,
             )
@@ -1418,9 +1514,9 @@ mod tests {
     fn the_silent_inputs_show_nothing() {
         let mut g = GroupState::default();
         // 1: the gaps and every result past the switch.
-        for r in [10u32, 11, 21, 24, 27, 31, 42, u32::MAX] {
+        for r in [10u32, 11, 27, 31, 42, u32::MAX] {
             assert!(
-                g.apply_command_result(party_operation::INVITE, "Zed", r)
+                g.apply_command_result(party_operation::INVITE, "Zed", r, 0)
                     .is_none(),
                 "result {r} must be silent"
             );
@@ -1428,16 +1524,16 @@ mod tests {
         // 2: `OK` for an operation other than invite or leave.
         for op in [1u32, 3, 99] {
             assert!(g
-                .apply_command_result(op, "Zed", party_result::OK)
+                .apply_command_result(op, "Zed", party_result::OK, 0)
                 .is_none());
         }
         // 3: an invite ack with no name.
         assert!(g
-            .apply_command_result(party_operation::INVITE, "", party_result::OK)
+            .apply_command_result(party_operation::INVITE, "", party_result::OK, 0)
             .is_none());
         // A named one still prints: the guard is the name.
         assert!(g
-            .apply_command_result(party_operation::INVITE, "Zed", party_result::OK)
+            .apply_command_result(party_operation::INVITE, "Zed", party_result::OK, 0)
             .is_some());
     }
 
@@ -1463,7 +1559,7 @@ mod tests {
             party_result::IGNORING_YOU,
         ] {
             let msg = g
-                .apply_command_result(party_operation::INVITE, "Zed", r)
+                .apply_command_result(party_operation::INVITE, "Zed", r, 0)
                 .unwrap();
             let text: String = s.lua().globals().get(msg.key).expect(msg.key);
             assert!(!text.is_empty(), "{} resolves empty", msg.key);
@@ -1507,8 +1603,11 @@ mod tests {
         lines.extend(g.apply_declined("Carol"));
         lines.extend(g.apply_leader_changed("Alice", Some("Us")));
         lines.extend(g.apply_leader_changed("Us", Some("Us")));
-        lines.extend(g.apply_uninvited());
+        g.lfg_restricted = true;
+        lines.extend(g.apply_leader_changed("Alice", Some("Us")));
+        lines.extend(g.apply_leader_changed("Us", Some("Us")));
         lines.extend(g.apply_destroyed());
+        lines.extend(g.apply_uninvited());
         g.leader = 1;
         lines.extend(g.apply_ready_check_request(false));
         lines.extend(g.apply_list(0, 0, Vec::new(), 0, None, None).lines);
@@ -1524,6 +1623,8 @@ mod tests {
                 "ERR_INVITED_TO_GROUP_SS",
                 "ERR_JOINED_GROUP_S",
                 "ERR_LEFT_GROUP_S",
+                "ERR_NEW_GUIDE_S",
+                "ERR_NEW_GUIDE_YOU",
                 "ERR_NEW_LEADER_S",
                 "ERR_NEW_LEADER_YOU",
                 "ERR_RAID_LEADER_READY_CHECK_START_S",
@@ -1533,7 +1634,7 @@ mod tests {
                 "ERR_RAID_YOU_LEFT",
                 "ERR_UNINVITE_YOU",
             ],
-            "all thirteen keys this window can raise are exercised below"
+            "all fifteen keys this window can raise are exercised below"
         );
 
         for msg in &lines {
@@ -1556,5 +1657,143 @@ mod tests {
             Some("igPlayerInviteDecline"),
             "the cue the chat-log path was dropping"
         );
+    }
+
+    /// `0x6d8907`-`0x6d8958`: a list repeating its group's counter within 60 s is stale; a newer
+    /// counter, another group, a late list, or one with no group or counter is not, and the
+    /// battleground's lists keep their own stamp.
+    #[test]
+    fn a_list_that_repeats_its_counter_within_a_minute_is_stale() {
+        let mut g = GroupState::default();
+        assert!(!g.list_is_stale(false, 0x1f, 5, 100.0), "the first list");
+        assert!(g.list_is_stale(false, 0x1f, 5, 110.0), "the same counter");
+        assert!(g.list_is_stale(false, 0x1f, 4, 110.0), "an older counter");
+        assert!(!g.list_is_stale(false, 0x1f, 6, 110.0), "a newer counter");
+        assert!(
+            !g.list_is_stale(false, 0x1f, 6, 170.0),
+            "a minute after the last"
+        );
+        assert!(!g.list_is_stale(false, 0x2f, 1, 171.0), "another group");
+        assert!(
+            !g.list_is_stale(true, 0x2f, 1, 172.0),
+            "the battleground's own stamp"
+        );
+        assert!(g.list_is_stale(true, 0x2f, 1, 173.0));
+        assert!(!g.list_is_stale(false, 0, 0, 174.0), "no group, no check");
+        assert!(
+            !g.list_is_stale(false, 0x2f, 0, 174.0),
+            "no counter, no check"
+        );
+        g.leave_group();
+        assert!(
+            g.list_is_stale(false, 0x2f, 1, 175.0),
+            "the stamp outlives the group"
+        );
+    }
+
+    /// `0x6cbd93`: our own name matches in any case; a dungeon finder group (`[0xbd19a8]`) names a
+    /// guide.
+    #[test]
+    fn a_dungeon_finder_group_names_a_guide_and_our_name_matches_in_any_case() {
+        let mut g = GroupState::default();
+        assert_eq!(
+            g.apply_leader_changed("BENILLA", Some("Benilla")),
+            vec![UiError::key("ERR_NEW_LEADER_YOU")]
+        );
+        g.lfg_restricted = true;
+        assert_eq!(
+            g.apply_leader_changed("benilla", Some("Benilla")),
+            vec![UiError::key("ERR_NEW_GUIDE_YOU")]
+        );
+        assert_eq!(
+            g.apply_leader_changed("Alice", Some("Benilla")),
+            vec![UiError::s("ERR_NEW_GUIDE_S", "Alice")]
+        );
+        assert_eq!(
+            g.apply_leader_changed("Alice", None),
+            vec![UiError::s("ERR_NEW_GUIDE_S", "Alice")]
+        );
+    }
+
+    /// `0x6cbe40`: the disband line needs a held party slot, which a raid whose subgroup holds
+    /// nobody else lacks.
+    #[test]
+    fn the_disband_line_needs_a_held_party_slot() {
+        let mut g = GroupState::default();
+        g.apply_list(
+            1,
+            0,
+            vec![sub("Alice", 1, 1), sub("Bob", 2, 2)],
+            1,
+            None,
+            None,
+        );
+        assert!(g.apply_destroyed().is_empty(), "alone in our subgroup");
+
+        let mut g = GroupState::default();
+        g.apply_list(1, 0, vec![sub("Alice", 1, 0)], 1, None, None);
+        assert_eq!(
+            g.apply_destroyed(),
+            vec![UiError::key("ERR_GROUP_DISBANDED")]
+        );
+    }
+
+    /// Results 21 and 24 (`0x6cc131`, `0x6cc182`): the value's seconds as the rounded-up duration,
+    /// a negative one as one second.
+    #[test]
+    fn the_boot_refusals_name_their_duration() {
+        let get = |k: &str| {
+            let text = match k {
+                "ERR_PARTY_LFG_BOOT_COOLDOWN_S" => "wait %s",
+                "ERR_PARTY_LFG_BOOT_NOT_ELIGIBLE_S" => "another %s",
+                "INT_SPELL_DURATION_SEC" => "%d sec",
+                "INT_SPELL_DURATION_MIN" => "%d min",
+                "INT_SPELL_DURATION_HOURS" => "%d |4hour:hrs;",
+                _ => return None,
+            };
+            Some(text.to_string())
+        };
+        let mut g = GroupState::default();
+        let mut text = |result, value| {
+            let line = g
+                .apply_command_result(party_operation::INVITE, "Zed", result, value)
+                .expect("a line");
+            crate::ui_action::ui_error_text(&line, &get)
+        };
+        let cooldown = party_result::LFG_BOOT_COOLDOWN;
+        assert_eq!(text(cooldown, 90), Some("wait 2 min".into()));
+        assert_eq!(
+            text(party_result::LFG_BOOT_NOT_ELIGIBLE, 3599),
+            Some("another 1 |4hour:hrs;".into()),
+            "sixty rounded-up minutes read as one hour"
+        );
+        assert_eq!(text(cooldown, 0), Some("wait 0 sec".into()));
+        assert_eq!(text(cooldown, -7), Some("wait 1 sec".into()));
+    }
+
+    /// `0x6cc244`, `0x6cc255`: a refused swap's line, then `RAID_ROSTER_UPDATE`; the invite arm of
+    /// the same result signals nothing.
+    #[test]
+    fn a_failed_swap_signals_the_raid_roster() {
+        let mut g = GroupState::default();
+        let failed = party_result::IN_COMBAT_OR_SWAP_FAILED;
+        g.apply_command_result(party_operation::SWAP, "Zed", failed, 0);
+        assert_eq!(g.roster_updates, 1);
+        g.apply_command_result(party_operation::INVITE, "Zed", failed, 0);
+        assert_eq!(g.roster_updates, 1);
+    }
+
+    /// `0x574485`, `0x57449b`: every packet counts once, an unchanged board too, and an icon past 7
+    /// is ignored.
+    #[test]
+    fn each_raid_target_packet_counts_and_skips_icons_past_seven() {
+        let mut g = GroupState::default();
+        g.apply_raid_targets(&[(2, 0x11), (8, 0x22)]);
+        assert_eq!(g.raid_targets[2], 0x11);
+        assert!(!g.raid_targets.contains(&0x22));
+        g.apply_raid_targets(&[(2, 0x11)]);
+        assert_eq!(g.raid_target_updates, 2, "an unchanged board still counts");
+        g.apply_raid_target_list(&[]);
+        assert_eq!(g.raid_target_updates, 3);
     }
 }

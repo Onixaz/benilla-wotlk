@@ -415,6 +415,7 @@ fn chat_type_info_matches_the_host_color_table() {
         ("TRADESKILLS", K::Tradeskills, 31),
         ("PET_INFO", K::PetInfo, 32),
         ("OPENING", K::Opening, 30),
+        ("TARGETICONS", K::TargetIcons, 53),
     ];
     assert_eq!(PAIRS.len(), K::ALL.len(), "every kind is listed");
 

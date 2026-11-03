@@ -1,7 +1,6 @@
-//! The four summon globals the `CONFIRM_SUMMON` dialog calls (`StaticPopup.lua:1336-1357`); 1.12
-//! has no `CancelSummon`, as declining sends nothing. The reference resolves the summoner, zone and
-//! deadline at call time; the app pushes the answers each frame, so a name still in flight reads
-//! `""` and fills in on a later tick.
+//! The five summon globals the `CONFIRM_SUMMON` dialog calls (`StaticPopup.lua:2534-2557`). The
+//! reference resolves the summoner, zone and deadline at call time; the app pushes the answers each
+//! frame, so a name still in flight reads `""` and fills in on a later tick.
 
 use mlua::Lua;
 
@@ -27,9 +26,10 @@ impl super::UiScript {
         }
     }
 
-    /// Drain the `ConfirmSummon()` calls, each a `CMSG_SUMMON_RESPONSE`.
-    pub fn take_summon_confirms(&mut self) -> u32 {
-        drain_field!(self, summon_confirms)
+    /// Drain the `ConfirmSummon()` (true) and `CancelSummon()` (false) calls in order, each a
+    /// `CMSG_SUMMON_RESPONSE`.
+    pub fn take_summon_answers(&mut self) -> Vec<bool> {
+        drain_field!(self, summon_answers)
     }
 }
 
@@ -71,12 +71,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The dialog's Accept, the only packet in the flow.
+    // The dialog's Accept (`0x51b050`), which the app gates on the player's state.
     g.set(
         "ConfirmSummon",
         lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.summon_confirms += 1;
+            crate::script::model_mut_of(lua).summon_answers.push(true);
+            Ok(())
+        })?,
+    )?;
+
+    // The dialog's `OnCancel`, run by Cancel, Escape and the timeout (`0x51b110`).
+    g.set(
+        "CancelSummon",
+        lua.create_function(|lua, ()| {
+            crate::script::model_mut_of(lua).summon_answers.push(false);
             Ok(())
         })?,
     )?;

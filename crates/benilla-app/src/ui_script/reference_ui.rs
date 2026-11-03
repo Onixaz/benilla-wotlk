@@ -1356,7 +1356,6 @@ mod tests {
                 "12340 verbs the stock windows call, each not built yet",
                 &[
                     "CancelItemTempEnchantment",
-                    "CancelSummon",
                     "ComplainChat",
                     "ConsoleAddMessage",
                     "DeclineInvite",
@@ -2016,7 +2015,6 @@ mod tests {
             ("MACRO_ACTION_BLOCKED", R_0),
             ("ARENA_OPPONENT_UPDATE", R_1),
             ("ARENA_SEASON_WORLD_STATE", R_1),
-            ("CANCEL_SUMMON", R_1),
             ("CHANNEL_INVITE_REQUEST", R_1),
             ("CHANNEL_PASSWORD_REQUEST", R_1),
             ("CHAT_MSG_RAID_BOSS_WHISPER", R_1),
@@ -2046,7 +2044,6 @@ mod tests {
             ("UPDATE_SHAPESHIFT_FORM", R_1),
             ("UPDATE_SHAPESHIFT_USABLE", R_1),
             ("UPDATE_STEALTH", R_1),
-            ("VOTE_KICK_REASON_NEEDED", R_1),
             ("WORLD_STATE_UI_TIMER_UPDATE", R_1),
             ("WOW_MOUSE_NOT_FOUND", R_1),
             ("BN_BLOCK_LIST_UPDATED", R_2),

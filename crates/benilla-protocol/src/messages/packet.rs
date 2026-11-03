@@ -400,12 +400,14 @@ pub enum ServerPacket {
     /// `SMSG_TUTORIAL_FLAGS`: the account's tutorial bank.
     TutorialFlags(crate::messages::TutorialFlags),
     /// `SMSG_SUMMON_REQUEST`: someone asks to pull us to them; nothing moves until
-    /// `CMSG_SUMMON_RESPONSE`, and with no decline opcode the offer just expires.
+    /// `CMSG_SUMMON_RESPONSE` agrees.
     SummonRequest {
         summoner: u64,
         zone: u32,
         delay_ms: u32,
     },
+    /// `SMSG_SUMMON_CANCEL`: the summon was withdrawn; empty body.
+    SummonCancel,
     /// `SMSG_PLAYERBOUND`: the bind took (the "now your home" line), beside [`Self::BindPoint`].
     PlayerBound {
         binder: u64,
@@ -1256,6 +1258,12 @@ pub enum ServerPacket {
     GroupDecline {
         name: String,
     },
+    /// `SMSG_GROUP_CANCEL`: the inviter withdrew our invite.
+    GroupCancel {
+        inviter: String,
+    },
+    /// `SMSG_GROUPACTION_THROTTLED`: too many group commands; empty body.
+    GroupActionThrottled,
     /// `SMSG_GROUP_UNINVITE`: we were removed from our group (kicked or left); empty body.
     GroupUninvited,
     /// `SMSG_GROUP_SET_LEADER`: the group's leader changed.
@@ -1284,6 +1292,10 @@ pub enum ServerPacket {
         lfg_slot: u32,
         /// Group-type bit `0x01`: a battleground's group, which leaves the real group's counts.
         battleground: bool,
+
+        /// The group's guid and the list's update counter, which tell a stale list apart.
+        group_guid: u64,
+        counter: u32,
     },
     /// `SMSG_REAL_GROUP_UPDATE`: the group outside the battleground, while in one.
     RealGroupUpdate {
@@ -1297,6 +1309,8 @@ pub enum ServerPacket {
         operation: u32,
         member: String,
         result: u32,
+        /// The seconds an LFG boot result names, signed.
+        value: i32,
     },
     /// `SMSG_PARTY_MEMBER_STATS` (delta) or `_FULL` (answering our request, or an offline miss).
     PartyMemberStats {
@@ -1310,10 +1324,11 @@ pub enum ServerPacket {
         x: f32,
         y: f32,
     },
-    /// `MSG_RAID_TARGET_UPDATE`, delta shape: one raid-target icon changed; `guid == 0` clears it.
+    /// `MSG_RAID_TARGET_UPDATE`, delta shape: who set the marks, then each changed icon and its
+    /// target, 0 clearing it.
     RaidTargetSet {
-        icon: u8,
-        guid: u64,
+        setter: u64,
+        marks: Vec<(u8, u64)>,
     },
     /// `MSG_RAID_TARGET_UPDATE`, full shape: every icon currently set.
     RaidTargetList {
@@ -1321,6 +1336,17 @@ pub enum ServerPacket {
     },
     /// `MSG_RAID_READY_CHECK`, empty body: the raid leader started a ready check.
     ReadyCheckRequest,
+    /// `SMSG_RAID_READY_CHECK_ERROR`: our ready check came too soon; empty body.
+    ReadyCheckError,
+    /// `MSG_NOTIFY_PARTY_SQUELCH`: a leader silenced or restored our voice.
+    PartySquelch {
+        silenced: bool,
+    },
+    /// `SMSG_ECHO_PARTY_SQUELCH`: we silenced or restored a member's voice.
+    EchoPartySquelch {
+        guid: u64,
+        silenced: bool,
+    },
     /// `MSG_RAID_READY_CHECK`, non-empty body: one member's answer, forwarded to the leader only.
     ReadyCheckAnswer {
         guid: u64,
@@ -1724,6 +1750,7 @@ impl ServerPacket {
             ServerPacket::BinderConfirm { .. } => "SMSG_BINDER_CONFIRM".into(),
             ServerPacket::PlayerBound { .. } => "SMSG_PLAYERBOUND".into(),
             ServerPacket::SummonRequest { .. } => "SMSG_SUMMON_REQUEST".into(),
+            ServerPacket::SummonCancel => "SMSG_SUMMON_CANCEL".into(),
             ServerPacket::TalentWipeConfirm { .. } => "MSG_TALENT_WIPE_CONFIRM".into(),
             ServerPacket::TalentsInfo(_) => "SMSG_TALENTS_INFO".into(),
             ServerPacket::AllAchievementData(_) => "SMSG_ALL_ACHIEVEMENT_DATA".into(),
@@ -2056,6 +2083,8 @@ impl ServerPacket {
             }
             ServerPacket::GroupInvite { .. } => "SMSG_GROUP_INVITE".into(),
             ServerPacket::GroupDecline { .. } => "SMSG_GROUP_DECLINE".into(),
+            ServerPacket::GroupCancel { .. } => "SMSG_GROUP_CANCEL".into(),
+            ServerPacket::GroupActionThrottled => "SMSG_GROUPACTION_THROTTLED".into(),
             ServerPacket::GroupUninvited => "SMSG_GROUP_UNINVITE".into(),
             ServerPacket::GroupLeaderChanged { .. } => "SMSG_GROUP_SET_LEADER".into(),
             ServerPacket::GroupDestroyed => "SMSG_GROUP_DESTROYED".into(),
@@ -2073,6 +2102,9 @@ impl ServerPacket {
             ServerPacket::ReadyCheckRequest | ServerPacket::ReadyCheckAnswer { .. } => {
                 "MSG_RAID_READY_CHECK".into()
             }
+            ServerPacket::ReadyCheckError => "SMSG_RAID_READY_CHECK_ERROR".into(),
+            ServerPacket::PartySquelch { .. } => "MSG_NOTIFY_PARTY_SQUELCH".into(),
+            ServerPacket::EchoPartySquelch { .. } => "SMSG_ECHO_PARTY_SQUELCH".into(),
             ServerPacket::RaidInstanceInfo { .. } => "SMSG_RAID_INSTANCE_INFO".into(),
             ServerPacket::DuelRequested { .. } => "SMSG_DUEL_REQUESTED".into(),
             ServerPacket::RaidInstanceMessage { .. } => "SMSG_RAID_INSTANCE_MESSAGE".into(),
