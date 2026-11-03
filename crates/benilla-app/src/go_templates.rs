@@ -5,6 +5,8 @@
 use benilla_formats::{LockCatalog, LockTypeCatalog};
 use benilla_protocol::guid;
 use bevy::prelude::*;
+use std::collections::HashMap;
+use std::sync::RwLock;
 
 use crate::net::{ClientCommand, NetCommands};
 use crate::query_cache::QueryCache;
@@ -81,6 +83,9 @@ pub(crate) struct TextPage {
 #[derive(Resource, Default)]
 pub(crate) struct GameObjectTemplates {
     templates: QueryCache<u32, GoTemplate>,
+    /// Spawns whose descriptor entry is not in their guid: an AzerothCore boat's low word is a
+    /// counter (`Transport.cpp:58`).
+    entry_of: RwLock<HashMap<u64, u32>>,
 }
 
 /// `gameobjectcache.wdb`.
@@ -93,14 +98,26 @@ impl crate::wdb::Persisted for GameObjectTemplates {
 impl crate::query_cache::AskOnce for GameObjectTemplates {
     fn clear_pending(&mut self) {
         self.templates.clear_pending();
+        // Guids are the connection's own.
+        self.entry_of.get_mut().unwrap().clear();
     }
 }
 
 impl GameObjectTemplates {
-    /// Asks for a template once per entry; every spawn of a template shares the one query.
-    pub(crate) fn request(&self, guid: u64, commands: &NetCommands) {
-        let Some(entry) = guid::entry(guid) else {
-            return;
+    /// Asks for a template once per entry; every spawn of a template shares the one query. The
+    /// descriptor's entry is the key: an AzerothCore boat guid carries none.
+    pub(crate) fn request(&self, guid: u64, entry: Option<u32>, commands: &NetCommands) {
+        let entry = match entry.filter(|&e| e != 0) {
+            Some(e) => {
+                if guid::entry(guid) != Some(e) {
+                    self.entry_of.write().unwrap().insert(guid, e);
+                }
+                e
+            }
+            None => match self.entry(guid) {
+                Some(e) => e,
+                None => return,
+            },
         };
         self.templates.get_or_ask(entry, || {
             debug!("go: asking template (entry {entry}, guid {guid:#x})");
@@ -182,7 +199,13 @@ impl GameObjectTemplates {
 
     /// The cached template for a GameObject guid.
     pub(crate) fn get(&self, guid: u64) -> Option<&GoTemplate> {
-        guid::entry(guid).and_then(|e| self.templates.get(e))
+        self.entry(guid).and_then(|e| self.templates.get(e))
+    }
+
+    /// The spawn's template entry: the descriptor's where it was recorded, else the guid's.
+    fn entry(&self, guid: u64) -> Option<u32> {
+        let recorded = self.entry_of.read().unwrap().get(&guid).copied();
+        recorded.or_else(|| guid::entry(guid))
     }
 }
 
@@ -322,6 +345,33 @@ mod tests {
         // A chest doesn't.
         t.insert(2, 3, "Chest".into(), &data);
         assert!(t.templates.get(2).unwrap().mo_transport.is_none());
+    }
+
+    /// An AzerothCore boat guid's low word is a counter: the query and the lookup key on the
+    /// descriptor's entry, not the guid's.
+    #[test]
+    fn a_boat_template_keys_on_the_descriptor_entry() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let commands = NetCommands(tx);
+        let mut t = GameObjectTemplates::default();
+        const BOAT: u64 = 0x1FC0_0000_0000_0007;
+        t.request(BOAT, Some(176231), &commands);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientCommand::GameObjectQuery {
+                entry: 176231,
+                guid: BOAT
+            })
+        ));
+        let mut data = [0i32; 24];
+        data[0] = 292;
+        t.insert(176231, 15, "Proudmore's Treasure".into(), &data);
+        assert_eq!(
+            t.get(BOAT)
+                .and_then(|g| g.mo_transport)
+                .map(|m| m.taxi_path_id),
+            Some(292)
+        );
     }
 
     #[test]

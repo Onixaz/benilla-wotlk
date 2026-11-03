@@ -1235,6 +1235,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::GameObjectDespawnAnim { guid } => {
             vec![SessionEvent::GameObjectDespawnAnim { guid }]
         }
+        ServerPacket::GameObjectResetState { guid } => {
+            vec![SessionEvent::GameObjectResetState { guid }]
+        }
         ServerPacket::OpenContainer { item } => vec![SessionEvent::OpenContainer { item }],
         ServerPacket::TimeSyncReq { counter } => vec![SessionEvent::TimeSyncReq { counter }],
         ServerPacket::StandStateUpdate { state } => {
@@ -1414,6 +1417,7 @@ fn decode_objects(objects: Vec<Object>) -> Vec<SessionEvent> {
                 object_type,
                 movement,
                 mask,
+                spawned,
             } => {
                 // Items have no pose: route them before the placement gate, which would drop them.
                 if matches!(object_type, ObjectType::Item | ObjectType::Container) {
@@ -1443,16 +1447,24 @@ fn decode_objects(objects: Vec<Object>) -> Vec<SessionEvent> {
                         transport: movement.transport,
                         spline: movement.spline,
                         vehicle: movement.vehicle,
+                        attack_target: movement.attack_target,
+                        spawned,
                         fields: mask,
                     });
                 }
             }
             Object::Movement { guid, movement } => {
-                if let Some((position, orientation)) = movement.position {
+                if let (Some((position, orientation)), Some(mover), Some(speeds)) =
+                    (movement.position, movement.mover, movement.speeds)
+                {
                     out.push(SessionEvent::ObjectMove {
                         guid,
                         position: v3(position),
                         orientation,
+                        mover,
+                        speeds: MoveSpeeds::from_wire(speeds),
+                        transport: movement.transport,
+                        spline: movement.spline,
                     });
                 }
             }
@@ -1465,8 +1477,9 @@ fn decode_objects(objects: Vec<Object>) -> Vec<SessionEvent> {
                     out.push(SessionEvent::ObjectValues { guid, fields: mask });
                 }
             }
-            // `Near` is a guid pre-announce; no state.
-            Object::Near { .. } => {}
+            Object::Near { guids } => {
+                out.push(SessionEvent::ObjectsNear(guids));
+            }
         }
     }
     out

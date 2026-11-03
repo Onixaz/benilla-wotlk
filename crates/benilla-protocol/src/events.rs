@@ -242,12 +242,17 @@ pub enum SessionEvent {
         /// `UPDATE_FLAG_TRANSPORT`'s path progress in ms, only on a type-11/15 transport create;
         /// progress is this plus elapsed ms; position is `timetable(progress % period)`.
         transport_progress: Option<u32>,
-        /// Its rider pose, local to the transport, when created with `MOVEFLAG_ON_TRANSPORT`.
+        /// Its pose local to a transport: a unit's `MOVEFLAG_ON_TRANSPORT` rider tail, or a
+        /// GameObject's, corpse's or dynamic object's `POSITION` passenger pose.
         transport: Option<TransportPose>,
         /// The path it was already walking (`MOVEFLAG_SPLINE_ENABLED`), with the ms already ridden.
         spline: Option<CreateSpline>,
         /// `UPDATEFLAG_VEHICLE`: the unit's `Vehicle.dbc` id and its facing at create.
         vehicle: Option<(u32, f32)>,
+        /// `UPDATEFLAG_HAS_TARGET`: the attack target unit init seeds (`0x73c274`).
+        attack_target: Option<u64>,
+        /// `CREATE_OBJECT2`, the newly spawned object the type's init is told about.
+        spawned: bool,
         /// The full descriptor from the create mask; later [`Self::ObjectValues`] merge into it.
         fields: ObjectFields,
     },
@@ -259,11 +264,16 @@ pub enum SessionEvent {
         /// The full descriptor; `OBJECT_FIELD_ENTRY` is the template for `CMSG_ITEM_QUERY_SINGLE`.
         fields: ObjectFields,
     },
-    /// An update-object movement block: a one-off authoritative pose that supersedes any path.
+    /// An update-object `MOVEMENT` block: a mover's whole status, speeds and any spline, applied
+    /// as a create's `LIVING` block is (`0x6f1520`); the reference ignores one for its own mover.
     ObjectMove {
         guid: u64,
         position: [f32; 3],
         orientation: f32,
+        mover: MoverState,
+        speeds: MoveSpeeds,
+        transport: Option<TransportPose>,
+        spline: Option<CreateSpline>,
     },
     /// A relayed player move (`MSG_MOVE_*`, about 2 Hz): `fall_time` is ms airborne, `jump` rides
     /// with `JUMPING`, `transport` is deck-local with `MOVEFLAG_ON_TRANSPORT`.
@@ -288,6 +298,8 @@ pub enum SessionEvent {
     ObjectValues { guid: u64, fields: ObjectFields },
     /// Left view range (`OutOfRange`); the reference keeps them in a staging table for re-create.
     ObjectsRemoved(Vec<u64>),
+    /// `NEAR_OBJECTS`: guids back in range, which revive from the staging table (`0x4d6f40`).
+    ObjectsNear(Vec<u64>),
     /// `SMSG_DESTROY_OBJECT`: the reference frees it at once, no fade; a respawn is a fresh create.
     ObjectDestroyed(u64),
     /// `SMSG_TRIGGER_CINEMATIC`. Until `CMSG_COMPLETE_CINEMATIC` vmangos anchors visibility to the
@@ -557,6 +569,9 @@ pub enum SessionEvent {
     /// `SMSG_GAMEOBJECT_DESPAWN_ANIM`: the reference arms substate 12 (AnimationData 157 Despawn)
     /// and keeps the object alive through the same-tick `SMSG_DESTROY_OBJECT` while it plays.
     GameObjectDespawnAnim { guid: u64 },
+    /// `SMSG_GAMEOBJECT_RESET_STATE`: the reference shows the descriptor's `GAMEOBJECT_STATE` again
+    /// when its shown state differs, or always on a type-15 transport (`0x70f810`).
+    GameObjectResetState { guid: u64 },
     /// `SMSG_OPEN_CONTAINER`: the reference fires `BAG_OPEN` with 0 for our own guid (the
     /// backpack), 1..10 for a bag-cache slot, and nothing for a miss.
     OpenContainer { item: u64 },

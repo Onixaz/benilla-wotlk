@@ -36,6 +36,10 @@ const GO_STATE_READY: u32 = 1;
 /// goes.
 const ANIM_DESPAWN: u16 = 157;
 
+/// `AnimationData.dbc` 145 Spawn, the one-shot channel's code 1: an animated type plays it once
+/// when created by update type 3 (`0x70c370`).
+const ANIM_SPAWN: u16 = 145;
+
 /// An animated GameObject's client-side state, tagged by [`crate::entities::attach`] in place of a
 /// creature's `AnimDriver`, and driven by [`drive_go_anim`].
 #[derive(Component, Default)]
@@ -47,7 +51,7 @@ pub(crate) struct GoAnim {
     /// door that streams in open does not swing.
     shown: Option<u32>,
     /// A pending one-shot (an `AnimationData.dbc` id) on the reference's one slot (slot 15), fed by
-    /// a code: 1 Spawn on an update type 3 create (not built), 2..5 Custom0..3 from opcode `0xb3`,
+    /// a code: 1 Spawn on an update type 3 create, 2..5 Custom0..3 from opcode `0xb3`,
     /// 6 Despawn from opcode `0x215`.
     one_shot: Option<u16>,
     /// The armed transient substate (a motion, or Custom0..3), the reference's one
@@ -310,6 +314,45 @@ fn queue_custom_anim(
 /// `anim_id >= 4` and plays substate `8 + n`.
 fn custom_anim_id(anim_id: u32) -> Option<u16> {
     (anim_id < 4).then(|| 153 + anim_id as u16)
+}
+
+/// `SMSG_GAMEOBJECT_RESET_STATE`, bridged from the net layer.
+#[derive(Message, Clone, Copy)]
+pub(crate) struct GoResetState {
+    pub(crate) go_guid: u64,
+}
+
+/// The reset-state opcode (`0x70f810`): the shown state takes the descriptor's again, so a lid or
+/// door the client moved on its own plays back; the same state plays nothing.
+fn reset_go_state(
+    mut resets: MessageReader<GoResetState>,
+    index: Res<GuidIndex>,
+    mut gos: Query<(&ObjectStore, &mut GoAnim)>,
+) {
+    for GoResetState { go_guid } in resets.read() {
+        let Some(&e) = index.0.get(go_guid) else {
+            continue;
+        };
+        if let Ok((store, mut anim)) = gos.get_mut(e) {
+            let wire = store.0.gameobject_state().unwrap_or(GO_STATE_ACTIVE);
+            if anim.state != Some(wire) {
+                anim.state = Some(wire);
+            }
+        }
+    }
+}
+
+/// A GameObject's first frame with its anim state, from a create of update type 3.
+type FreshGoAnim = (Added<GoAnim>, With<crate::net::FreshSpawn>);
+
+/// Caller 1's spawn leg: a GameObject created by update type 3 queues Spawn once its model is in,
+/// as the reference defers it to the load (`0x70c370`).
+fn arm_spawn_anim(mut commands: Commands, mut gos: Query<(Entity, &mut GoAnim), FreshGoAnim>) {
+    for (e, mut go) in &mut gos {
+        debug!("go anim: {e} created by update type 3 queues Spawn ({ANIM_SPAWN})");
+        go.one_shot = Some(ANIM_SPAWN);
+        commands.entity(e).remove::<crate::net::FreshSpawn>();
+    }
 }
 
 /// `SMSG_GAMEOBJECT_DESPAWN_ANIM` arrived: a component inserted at packet time, so it is on the
@@ -689,10 +732,13 @@ fn fire_go_anim_events(
 pub(crate) fn plugin(app: &mut App) {
     app.add_message::<GoLidOpen>()
         .add_message::<GoCustomAnim>()
+        .add_message::<GoResetState>()
         .add_message::<GoStateDispatch>()
         .add_systems(
             Update,
             (
+                // The wire's own state and Spawn first; a lid or custom anim this frame wins.
+                (reset_go_state, arm_spawn_anim).chain(),
                 (
                     sync_wire_go_state,
                     open_go_lid,
@@ -1184,6 +1230,47 @@ mod tests {
             Some((0x93, RepeatAnimation::Never)),
             "one Custom window, then the state pose — never a churning loop"
         );
+    }
+
+    /// The reset-state opcode re-shows the descriptor's state over a client-side one; a create of
+    /// update type 3 queues Spawn once.
+    #[test]
+    fn reset_state_reshows_the_wire_state_and_a_create2_queues_spawn() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<GuidIndex>()
+            .add_message::<GoResetState>()
+            .add_systems(Update, (reset_go_state, arm_spawn_anim));
+        const LID: u64 = 0xF110_0000_0000_0001;
+        let store = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_GAMEOBJECT_STATE,
+            GO_STATE_READY,
+        )]));
+        let lid = app
+            .world_mut()
+            .spawn((
+                store,
+                GoAnim {
+                    state: Some(GO_STATE_ACTIVE),
+                    ..Default::default()
+                },
+                crate::net::FreshSpawn,
+            ))
+            .id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(LID, lid);
+        app.world_mut().write_message(GoResetState { go_guid: LID });
+        app.update();
+        let go = app.world().entity(lid).get::<GoAnim>().unwrap();
+        assert_eq!(go.state, Some(GO_STATE_READY), "the lid closes back");
+        assert_eq!(go.one_shot, Some(ANIM_SPAWN));
+        assert!(app
+            .world()
+            .entity(lid)
+            .get::<crate::net::FreshSpawn>()
+            .is_none());
     }
 
     /// UBRS's Rookery Eggs: vmangos sends `SMSG_GAMEOBJECT_DESPAWN_ANIM` then `SMSG_DESTROY_OBJECT`

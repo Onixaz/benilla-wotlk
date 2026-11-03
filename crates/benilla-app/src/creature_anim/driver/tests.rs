@@ -4971,3 +4971,88 @@ fn a_cast_during_the_latch_does_not_pick_its_kit_anim() {
     assert_eq!(pick(0), Some(0));
     assert_eq!(pick(1), Some(51));
 }
+
+/// A synthetic creature model: Stand, the sit pose's three clips, and Birth when asked.
+fn spawner_model(birth: bool) -> ModelAnimations {
+    let mut clips = vec![
+        clip(0, 1, true),   // Stand
+        clip(96, 2, false), // SitGroundDown
+        clip(97, 3, true),  // SitGround
+        clip(98, 4, false), // SitGroundUp
+    ];
+    // The authored-id table `owns` reads (`0x825e00`).
+    let mut animation_lookup = vec![0xffff; 128];
+    for (slot, id) in [0usize, 96, 97, 98].into_iter().enumerate() {
+        animation_lookup[id] = slot as u16;
+    }
+    if birth {
+        clips.push(clip(127, 5, false));
+        animation_lookup[127] = 4;
+    }
+    ModelAnimations {
+        graph: Handle::default(),
+        clips,
+        hand_close: [None, None],
+        playable_animation_lookup: Vec::new(),
+        animation_lookup,
+        global_bones: Vec::new(),
+        first_seq: None,
+        pose: Default::default(),
+    }
+}
+
+fn spawner(app: &mut App, birth: bool, stand_state: u32, fresh: bool) -> Entity {
+    let mut e = app.world_mut().spawn((
+        spawner_model(birth),
+        AnimationPlayer::default(),
+        AnimationTransitions::new(),
+        AnimDriver::default(),
+        crate::net::ObjectStore(ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (benilla_protocol::field::FIELD_UNIT_BYTES_1, stand_state),
+        ])),
+    ));
+    if fresh {
+        e.insert(crate::net::FreshSpawn);
+    }
+    e.id()
+}
+
+/// A CREATE_OBJECT2 creature whose model owns Birth plays it first (`0x716fe5`); the seed lasts
+/// one pass, and a plain create stands.
+#[test]
+fn a_create2_creature_streams_in_on_its_birth() {
+    use super::super::select::Mode;
+    let mut app = app();
+    let born = spawner(&mut app, true, 0, true);
+    let plain = spawner(&mut app, true, 0, false);
+    app.update();
+    let mode = |app: &App, e: Entity| app.world().entity(e).get::<AnimDriver>().unwrap().mode;
+    assert_eq!(
+        mode(&app, born),
+        Mode::Swing {
+            id: 127,
+            under: None
+        }
+    );
+    assert!(app
+        .world()
+        .entity(born)
+        .get::<crate::net::FreshSpawn>()
+        .is_none());
+    assert_eq!(mode(&app, plain), Mode::Gait, "a CREATE_OBJECT stands");
+}
+
+/// Without Birth, a CREATE_OBJECT2 sitter starts on its sit loop (`0x71e22a`, the seed past the
+/// last stand state); a CREATE_OBJECT one sits down first, its seed being Stand.
+#[test]
+fn a_create2_sitter_starts_on_its_loop_where_a_create_sits_down() {
+    use super::super::select::{Mode, Special};
+    let mut app = app();
+    let seeded = spawner(&mut app, false, 1, true);
+    let plain = spawner(&mut app, false, 1, false);
+    app.update();
+    let mode = |app: &App, e: Entity| app.world().entity(e).get::<AnimDriver>().unwrap().mode;
+    assert_eq!(mode(&app, seeded), Mode::Looping(Special::Pose(1)));
+    assert_eq!(mode(&app, plain), Mode::Entering(Special::Pose(1)));
+}

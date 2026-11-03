@@ -243,6 +243,7 @@ impl World {
                 guid,
                 position,
                 orientation,
+                ..
             } => {
                 if let Some(t) = self.tracked.get_mut(guid) {
                     t.position = *position;

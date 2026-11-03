@@ -273,6 +273,8 @@ type UnitData = (
         &'static mut UnitAnimRng,
         // A seated passenger's ride pose (`0x747b20`).
         Option<&'static crate::vehicle::SeatPose>,
+        // Created by update type 3: the stand-state seed its first pass reads.
+        Has<crate::net::FreshSpawn>,
     ),
 );
 
@@ -525,6 +527,13 @@ struct UnitCx<'a, 'w, 's> {
     anim_trace_last: &'a Mutex<HashMap<Entity, String>>,
 }
 
+/// The `fct` trace's line for a CREATE_OBJECT2 creature's first pass.
+fn trace_spawn_seed(entity: Entity, what: &str) {
+    if benilla_assets::trace::enabled_for("fct") {
+        benilla_assets::trace::line("fct", &format!("anim spawn seed unit={entity} {what}"));
+    }
+}
+
 /// One unit's frame of [`drive_animations`], in the reference's phase order.
 fn drive_unit(
     cx: &UnitCx,
@@ -580,6 +589,7 @@ fn drive_unit(
             aura_nodes,
             mut unit_rng,
             seat_pose,
+            fresh_spawn,
         ),
     ) = item;
     let rng = unit_rng
@@ -713,6 +723,11 @@ fn drive_unit(
     let relaxed = !select::arm_forces_head(engaged, cast_hold.is_some(), outgoing);
 
     wound_upkeep(entity, &mut drv, &mut player);
+
+    // The stand-state seed lasts one pass (`0x73acf1`), this one.
+    if fresh_spawn {
+        commands.entity(entity).remove::<crate::net::FreshSpawn>();
+    }
 
     // Death overrides every state: play Death and hold.
     if dead {
@@ -1199,6 +1214,54 @@ fn drive_unit(
         && (mv.flags != drv.gait_flags || !matches!(drv.mode, Mode::Gait | Mode::Swing { .. }))
     {
         drv.interact_hold = false;
+    }
+
+    // A CREATE_OBJECT2 creature's first pass, its previous stand state seeded past the last
+    // (`0x740068`): Birth when the model owns it (`0x716fe5`), else a pose it streams in with
+    // starts at its loop, not its way down (`0x71e22a`). Death and a mount outrank both.
+    if fresh_spawn && !mounted && matches!(drv.mode, Mode::Gait) {
+        let drv = &mut *drv;
+        if anims.owns(select::BIRTH) {
+            play::play(
+                &mut drv.base_lock,
+                &mut tr,
+                &mut player,
+                anims,
+                select::BIRTH,
+                false,
+                false,
+                1.0,
+                catalog,
+                rng,
+                &mut drv.loop_window,
+            );
+            drv.mode = Mode::Swing {
+                id: select::BIRTH,
+                under: None,
+            };
+            drv.gait = None;
+            drv.gait_flags = mv.flags;
+            trace_spawn_seed(entity, "birth");
+        } else if let Some(sp @ select::Special::Pose(_)) = special {
+            play::play(
+                &mut drv.base_lock,
+                &mut tr,
+                &mut player,
+                anims,
+                sp.loop_id(),
+                true,
+                relaxed,
+                1.0,
+                catalog,
+                rng,
+                &mut drv.loop_window,
+            );
+            drv.mode = Mode::Looping(sp);
+            drv.gait = None;
+            trace_spawn_seed(entity, "pose loop");
+        } else {
+            trace_spawn_seed(entity, "no birth, no pose");
+        }
     }
 
     // ── The mode machine: the base track's decision.

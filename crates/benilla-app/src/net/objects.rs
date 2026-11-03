@@ -20,10 +20,13 @@ use super::motion::{
     create_spline, gameobject_rotation, monster_move_spline, pose_transform, resolve_facing,
     trace_create_spline, trace_move_snap, wire_yaw, write_pose, SplineStopped, ROOT_APPLY_WIPE,
 };
+use super::parked::{self, ParkedObjects, ALLOC_EXPIRE, PARK_EXPIRE};
 use super::{
-    merge_store_fields, FieldChanged, Guid, GuidIndex, NetCommands, NetEntity, NetHandlerApp,
-    ObjectStore, RemoteMotion, SelfGuid, SpeedChangeMessage, Spline, UnitMoveModes, UnitSpeeds,
+    merge_store_fields, ActiveMover, FieldChanged, FreshSpawn, Guid, GuidIndex, NetCommands,
+    NetEntity, NetHandlerApp, ObjectStore, RemoteMotion, SelfGuid, SpeedChangeMessage, Spline,
+    UnitMoveModes, UnitSpeeds,
 };
+use benilla_protocol::{CreateSpline, MoverState, TransportPose};
 
 /// `SMSG_GAMEOBJECT_CUSTOM_ANIM`, bridged to [`crate::go_anim`], which rejects `anim_id >= 4` and
 /// maps the rest to AnimationData 153..156; the fishing bobber's splash is `anim_id` 0.
@@ -65,10 +68,12 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::ObjectValues, on_object_values)
         .net_handler(K::ObjectDestroyed, on_object_destroyed)
         .net_handler(K::ObjectsRemoved, on_objects_removed)
+        .net_handler(K::ObjectsNear, on_objects_near)
         .net_handler(K::MonsterMove, on_monster_move)
         .net_handler(K::GameObjectInfo, on_gameobject_info)
         .net_handler(K::GameObjectCustomAnim, on_gameobject_anim)
         .net_handler(K::GameObjectDespawnAnim, on_gameobject_anim)
+        .net_handler(K::GameObjectResetState, on_gameobject_anim)
         .net_handler(K::SplineMoveMode, on_spline_move_mode)
         .net_handler(K::ForceSpeedChange, on_speed)
         .net_handler(K::SpeedChanged, on_speed);
@@ -81,7 +86,9 @@ pub(crate) struct Scene<'w, 's> {
     commands: Commands<'w, 's>,
     net: Res<'w, NetCommands>,
     index: ResMut<'w, GuidIndex>,
+    parked: ResMut<'w, ParkedObjects>,
     self_guid: Res<'w, SelfGuid>,
+    active_movers: Query<'w, 's, (), With<ActiveMover>>,
     real: Res<'w, Time<Real>>,
     transforms: Query<'w, 's, &'static mut Transform>,
     stores: Query<'w, 's, &'static mut ObjectStore>,
@@ -96,6 +103,7 @@ pub(crate) struct Scene<'w, 's> {
     self_creates: MessageWriter<'w, super::SelfCreateMover>,
     hard_landings: MessageWriter<'w, crate::creature_anim::HardLanding>,
     go_custom_anims: MessageWriter<'w, crate::go_anim::GoCustomAnim>,
+    go_resets: MessageWriter<'w, crate::go_anim::GoResetState>,
     names: Res<'w, NameCache>,
     items: ResMut<'w, Items>,
     go_templates: ResMut<'w, GameObjectTemplates>,
@@ -119,15 +127,75 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         spline,
         fields,
         vehicle: _,
+        attack_target,
+        spawned,
     } = ev
     {
+        sc.parked
+            .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
         crate::death::net::note_corpse(guid, kind, &fields, &sc.self_guid, &mut sc.death_net);
+        // A live object takes the create's fields alone: its movement block is skipped
+        // (`0x4d6c4d`) and pass 2 runs only the field handlers (`0x4d64be`).
+        if let Some(&e) = sc.index.0.get(&guid) {
+            trace_create(guid, "live");
+            merge_fields(
+                &mut sc.commands,
+                &mut sc.stores,
+                &mut sc.field_changes,
+                e,
+                guid,
+                fields,
+            );
+            return;
+        }
         if let Some(m) = mover.filter(|_| sc.self_guid.0 == Some(guid)) {
             sc.self_creates.write(super::SelfCreateMover {
                 flags: m.flags,
                 pitch: m.pitch,
             });
         }
+        // A parked object revives with its fields replaced and, a unit, its movement and attack
+        // target re-applied (`0x4d645d` → `0x73c260`); nothing else re-inits.
+        let unit = matches!(kind, EntityKind::Unit | EntityKind::Player);
+        let pose = unit.then(|| pose_transform(position, mover_placement(orientation, mover)));
+        if sc.parked.contains(guid) {
+            let Some(e) = revive(&mut sc, guid, Some(fields), pose) else {
+                return;
+            };
+            trace_create(guid, &format!("revived target={attack_target:?}"));
+            if unit {
+                if let (Some(m), Some(s)) = (mover, speeds) {
+                    apply_mover(
+                        e,
+                        guid,
+                        kind,
+                        position,
+                        orientation,
+                        m,
+                        s,
+                        transport,
+                        spline,
+                        &mut sc.commands,
+                        &mut sc.transforms,
+                    );
+                }
+                seed_attack_target(e, attack_target, &mut sc.commands);
+            }
+            return;
+        }
+        trace_create(
+            guid,
+            &format!(
+                "fresh{} kind={kind:?} target={attack_target:?} transport={:?}",
+                if spawned { " spawned" } else { "" },
+                transport.map(|t| t.guid),
+            ),
+        );
+        sc.parked.expire_oldest_of(
+            parked::park_type_of(kind),
+            std::time::Instant::now(),
+            ALLOC_EXPIRE,
+        );
         object_create(
             guid,
             kind,
@@ -143,13 +211,132 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
             fields,
             &mut sc.commands,
             &mut sc.index,
-            &mut sc.transforms,
-            &mut sc.stores,
-            &mut sc.field_changes,
             &sc.names,
             &sc.go_templates,
             &sc.net,
         );
+        let Some(&e) = sc.index.0.get(&guid) else {
+            return;
+        };
+        if matches!(kind, EntityKind::Unit | EntityKind::Player) {
+            seed_attack_target(e, attack_target, &mut sc.commands);
+        }
+        // The bool reaches a creature's stand-state seed and an animated GameObject's Spawn.
+        if spawned && matches!(kind, EntityKind::Unit | EntityKind::GameObject) {
+            sc.commands.entity(e).insert(FreshSpawn);
+        }
+    }
+}
+
+/// Revives a parked guid (`0x4d6ae0`): its entity back with the state it parked with, `delta`
+/// merged into its fields with their edges, and `pose` in place of the parked one.
+fn revive(
+    sc: &mut Scene,
+    guid: u64,
+    delta: Option<ObjectFields>,
+    pose: Option<Transform>,
+) -> Option<Entity> {
+    let parked = sc.parked.take(guid)?;
+    let mut store = parked.store().clone();
+    let e = parked::respawn(guid, parked, pose, &mut sc.commands, &mut sc.index);
+    if let Some(delta) = delta {
+        merge_store_fields(&mut store, delta, e, guid, |edge| {
+            sc.field_changes.write(edge);
+        });
+    }
+    sc.commands.entity(e).insert(ObjectStore(store));
+    Some(e)
+}
+
+/// `UPDATEFLAG_HAS_TARGET`'s guid is the unit's attack target from init (`0x98e560`), the state
+/// `SMSG_ATTACKSTART` sets; none clears it.
+fn seed_attack_target(e: Entity, target: Option<u64>, commands: &mut Commands) {
+    match target {
+        Some(t) => {
+            commands.entity(e).insert(crate::creature_anim::Engaged(t));
+        }
+        None => {
+            commands.entity(e).remove::<crate::creature_anim::Engaged>();
+        }
+    }
+}
+
+/// A mover's rotation: its flags and pitch tilt a swimmer at once, else the plain yaw.
+fn mover_placement(orientation: f32, mover: Option<MoverState>) -> Quat {
+    mover.map_or_else(
+        || wire_yaw(orientation),
+        |m| crate::creature_anim::swim_body_rotation(orientation, m.flags, m.pitch),
+    )
+}
+
+/// A mover's whole state from a `LIVING` create or a `MOVEMENT` block (`0x6f1520`): its speeds,
+/// the path it walks or none, its transport, and its pose; a relayed extrapolation restarts.
+fn apply_mover(
+    e: Entity,
+    guid: u64,
+    kind: EntityKind,
+    position: [f32; 3],
+    orientation: f32,
+    mover: MoverState,
+    speeds: MoveSpeeds,
+    transport: Option<TransportPose>,
+    spline: Option<CreateSpline>,
+    commands: &mut Commands,
+    transforms: &mut Query<&mut Transform>,
+) {
+    commands
+        .entity(e)
+        .remove::<RemoteMotion>()
+        .insert(UnitSpeeds(speeds));
+    match unit_rider(kind, transport) {
+        Some(r) => {
+            commands.entity(e).insert(r);
+        }
+        None => {
+            commands
+                .entity(e)
+                .remove::<crate::transport::TransportRider>();
+        }
+    }
+    trace_create_spline(guid, spline.as_ref());
+    match spline.and_then(create_spline) {
+        Some(s) => {
+            commands.entity(e).insert(s);
+        }
+        None => {
+            commands.entity(e).remove::<Spline>();
+        }
+    }
+    write_pose(
+        commands,
+        transforms,
+        e,
+        position,
+        mover_placement(orientation, Some(mover)),
+    );
+}
+
+/// A unit's rider pose on its transport, `compose_riders`' input.
+fn unit_rider(
+    kind: EntityKind,
+    transport: Option<TransportPose>,
+) -> Option<crate::transport::TransportRider> {
+    matches!(kind, EntityKind::Unit | EntityKind::Player)
+        .then_some(transport)
+        .flatten()
+        .map(|t| crate::transport::TransportRider {
+            transport_guid: t.guid,
+            local_pos: [t.pos.x, t.pos.y, t.pos.z],
+            local_orientation: t.orientation,
+            seat: t.seat,
+        })
+}
+
+/// The `ucr` trace tag: which path a create block took (fresh, revived, or a live object's
+/// fields only).
+fn trace_create(guid: u64, path: &str) {
+    if benilla_assets::trace::enabled_for("ucr") {
+        benilla_assets::trace::line("ucr", &format!("{guid:#x} {path}"));
     }
 }
 
@@ -162,16 +349,24 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             guid,
             container,
             fields,
-        } => item_create(
-            guid,
-            container,
-            fields,
-            &mut sc.commands,
-            &mut sc.index,
-            &mut sc.stores,
-            &mut sc.field_changes,
-            &mut sc.items,
-        ),
+        } => {
+            sc.parked
+                .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
+            if !sc.index.0.contains_key(&guid) && sc.parked.contains(guid) {
+                revive(&mut sc, guid, Some(fields), None);
+                return;
+            }
+            item_create(
+                guid,
+                container,
+                fields,
+                &mut sc.commands,
+                &mut sc.index,
+                &mut sc.stores,
+                &mut sc.field_changes,
+                &mut sc.items,
+            );
+        }
         SessionEvent::ItemTemplate { entry, info } => {
             let info = info.map(|b| *b);
             debug!("net: item template {entry} → {info:?}");
@@ -218,19 +413,40 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
     }
 }
 
+/// An `SMSG_UPDATE_OBJECT` movement block: ignored for the mover we control (`0x4d6de5`), else
+/// applied whole to the unit (`0x4d6e5c`), a parked one revived first.
 fn on_object_move(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::ObjectMove {
         guid,
         position,
         orientation,
+        mover,
+        speeds,
+        transport,
+        spline,
     } = ev
     {
-        object_move(
+        sc.parked
+            .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
+        let live = sc.index.0.get(&guid).copied();
+        if sc.self_guid.0 == Some(guid) || live.is_some_and(|e| sc.active_movers.contains(e)) {
+            return;
+        }
+        let pose = pose_transform(position, mover_placement(orientation, Some(mover)));
+        let Some(e) = live.or_else(|| revive(&mut sc, guid, None, Some(pose))) else {
+            return;
+        };
+        apply_mover(
+            e,
             guid,
+            EntityKind::Unit,
             position,
             orientation,
+            mover,
+            speeds,
+            transport,
+            spline,
             &mut sc.commands,
-            &sc.index,
             &mut sc.transforms,
         );
     }
@@ -296,14 +512,22 @@ fn on_unit_move(In(ev): In<SessionEvent>, mut sc: Scene) {
 fn on_object_values(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::ObjectValues { guid, fields } = ev {
         crate::death::net::recheck_corpse(guid, &fields, &sc.self_guid, &mut sc.death_net);
-        object_values(
-            guid,
-            fields,
-            &mut sc.commands,
-            &sc.index,
-            &mut sc.stores,
-            &mut sc.field_changes,
-        );
+        sc.parked
+            .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
+        match sc.index.0.get(&guid).copied() {
+            Some(e) => merge_fields(
+                &mut sc.commands,
+                &mut sc.stores,
+                &mut sc.field_changes,
+                e,
+                guid,
+                fields,
+            ),
+            // A parked object revives with the delta (`0x4d6e80`); an unknown guid drops.
+            None => {
+                revive(&mut sc, guid, Some(fields), None);
+            }
+        }
     }
 }
 
@@ -318,14 +542,31 @@ fn on_object_destroyed(In(ev): In<SessionEvent>, mut sc: Scene) {
 }
 
 /// OUT_OF_RANGE takes the same deactivate as DESTROY in the reference, so a member walking out of
-/// range also gets the snapshot and `CMSG_REQUEST_PARTY_MEMBER_STATS`.
+/// range also gets the snapshot and `CMSG_REQUEST_PARTY_MEMBER_STATS`. Our own guid is skipped in
+/// both of its loops (`0x4d7278`, `0x4d733b`).
 fn on_objects_removed(In(ev): In<SessionEvent>, mut sc: Scene) {
-    if let SessionEvent::ObjectsRemoved(guids) = ev {
+    if let SessionEvent::ObjectsRemoved(mut guids) = ev {
+        sc.parked
+            .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
+        guids.retain(|&g| sc.self_guid.0 != Some(g));
         for &guid in &guids {
             let held = crate::ui_party::net::held_member(&sc.index, &sc.stores, &sc.auras, guid);
             crate::ui_party::net::member_deactivated(guid, &mut sc.group, held, &sc.net);
         }
         objects_removed(guids, &mut sc.commands, &mut sc.index);
+    }
+}
+
+/// `NEAR_OBJECTS`: each parked guid but ours revives as it parked (`0x4d6f40`).
+fn on_objects_near(In(ev): In<SessionEvent>, mut sc: Scene) {
+    if let SessionEvent::ObjectsNear(guids) = ev {
+        sc.parked
+            .expire_oldest(std::time::Instant::now(), PARK_EXPIRE);
+        for guid in guids {
+            if sc.self_guid.0 != Some(guid) && !sc.index.0.contains_key(&guid) {
+                revive(&mut sc, guid, None, None);
+            }
+        }
     }
 }
 
@@ -398,6 +639,11 @@ fn on_gameobject_anim(In(ev): In<SessionEvent>, mut sc: Scene) {
         SessionEvent::GameObjectDespawnAnim { guid } => {
             gameobject_despawn_anim(guid, &mut sc.commands, &sc.index)
         }
+        SessionEvent::GameObjectResetState { guid } => {
+            debug!("net: gameobject {guid:#x} reset state");
+            sc.go_resets
+                .write(crate::go_anim::GoResetState { go_guid: guid });
+        }
         _ => {}
     }
 }
@@ -441,8 +687,8 @@ fn on_speed(In(ev): In<SessionEvent>, mut sc: Scene) {
     }
 }
 
-/// An `SMSG_UPDATE_OBJECT` create block: spawns or refreshes the entity, warms the ask-once
-/// caches and seeds its descriptor store.
+/// A fresh `SMSG_UPDATE_OBJECT` create block: spawns the entity, warms the ask-once caches and
+/// seeds its descriptor store.
 fn object_create(
     guid: u64,
     kind: EntityKind,
@@ -451,16 +697,13 @@ fn object_create(
     orientation: f32,
     scale: f32,
     speeds: Option<MoveSpeeds>,
-    mover: Option<benilla_protocol::MoverState>,
+    mover: Option<MoverState>,
     transport_progress: Option<u32>,
-    transport: Option<benilla_protocol::TransportPose>,
-    spline: Option<benilla_protocol::CreateSpline>,
+    transport: Option<TransportPose>,
+    spline: Option<CreateSpline>,
     fields: ObjectFields,
     commands: &mut Commands,
     index: &mut GuidIndex,
-    transforms: &mut Query<&mut Transform>,
-    stores: &mut Query<&mut ObjectStore>,
-    edges: &mut MessageWriter<FieldChanged>,
     names: &NameCache,
     go_templates: &GameObjectTemplates,
     net_commands: &NetCommands,
@@ -471,7 +714,7 @@ fn object_create(
         scale,
     };
     // A transport's cycle anchor: the create block's `UPDATE_FLAG_TRANSPORT` u32 and when it
-    // landed; a re-create re-anchors. The reference's per-frame tick runs types 15 (boats, a
+    // landed. The reference's per-frame tick runs types 15 (boats, a
     // path-progress clock) and 11 (lifts, `time-since-create % period`, `GameObject.cpp:246`).
     let go_type = (kind == EntityKind::GameObject).then(|| fields.gameobject_type_id());
     let transport_anchor = matches!(go_type, Some(11 | 15))
@@ -501,21 +744,22 @@ fn object_create(
     // nose-down is drawn nose-down from the first frame.
     let placement = match kind {
         EntityKind::GameObject => gameobject_rotation(go_quat, orientation),
-        _ => mover.map_or_else(
-            || wire_yaw(orientation),
-            |m| crate::creature_anim::swim_body_rotation(orientation, m.flags, m.pitch),
-        ),
+        _ => mover_placement(orientation, mover),
     };
     // A unit created on a transport: the living block's rider tail is its local pose, which
     // `compose_riders` carries through the boat each frame; the world `position` is the fallback.
-    let rider = matches!(kind, EntityKind::Unit | EntityKind::Player)
-        .then_some(transport)
-        .flatten()
-        .map(|t| crate::transport::TransportRider {
+    let rider = unit_rider(kind, transport);
+    // Any other object created on a transport rides it from its `POSITION` block's local pose; a
+    // GameObject keeps its own rotation in the deck's frame (`0x714250`).
+    let deck = transport
+        .filter(|_| rider.is_none())
+        .map(|t| crate::transport::DeckPassenger {
             transport_guid: t.guid,
             local_pos: [t.pos.x, t.pos.y, t.pos.z],
-            local_orientation: t.orientation,
-            seat: t.seat,
+            local_rotation: match kind {
+                EntityKind::GameObject => gameobject_rotation(go_quat, t.orientation),
+                _ => wire_yaw(t.orientation),
+            },
         });
     // Warm the name cache as a unit streams in, the reference's timing: its create path queries
     // every creature, whose name is the record's field 0. Its `CreatureCache.wdb` answers without
@@ -531,7 +775,7 @@ fn object_create(
     // Warm the template cache as a GameObject streams in: only the query carries its lockId,
     // which decides use-vs-cast on a right-click.
     if matches!(kind, EntityKind::GameObject) {
-        go_templates.request(guid, net_commands);
+        go_templates.request(guid, fields.object_entry(), net_commands);
         // Where and how big, under `RUST_LOG=benilla_app::net::objects=debug`.
         debug!(
             "gameobject spawn: entry {:?} display {display_id:?} type {go_type:?} \
@@ -546,78 +790,43 @@ fn object_create(
     // `WOW_CREATE_SPLINE=off` run still records what the wire offered.
     trace_create_spline(guid, spline.as_ref());
     let walk = spline.and_then(create_spline);
-    if let Some(&e) = index.0.get(&guid) {
-        // A re-create is a fresh snapshot: refresh identity and pose, drop any extrapolation.
-        commands.entity(e).insert(net).remove::<RemoteMotion>();
-        // The set is replaced whole; a `SMSG_FORCE_*_SPEED_CHANGE` in the same tick lands on top,
-        // since this insert applies before the next packet's handler (`apply::seam_tests`).
-        if let Some(s) = speeds {
-            commands.entity(e).insert(UnitSpeeds(s));
-        }
-        if let Some(anchor) = transport_anchor {
-            commands.entity(e).insert(anchor);
-        }
-        if let Some(seed) = elevator_seed {
-            commands.entity(e).insert(seed);
-        }
-        match rider {
-            Some(r) => {
-                commands.entity(e).insert(r);
-            }
-            None => {
-                commands
-                    .entity(e)
-                    .remove::<crate::transport::TransportRider>();
-            }
-        }
-        // A create without a path says the unit stands still, so a stale path goes.
-        match walk {
-            Some(s) => {
-                commands.entity(e).insert(s);
-            }
-            None => {
-                commands.entity(e).remove::<Spline>();
-            }
-        }
-        write_pose(commands, transforms, e, position, placement);
-        // The reference refreshes a live guid in place, notifying field watchers like any delta.
-        merge_fields(commands, stores, edges, e, guid, fields);
+    // A transport spawns hidden: its create pose is the spawn point, not where it is in its
+    // cycle; the transport tick unhides it at the first sampled pose.
+    let visibility = if transport_anchor.is_some() {
+        Visibility::Hidden
     } else {
-        // A transport spawns hidden: its create pose is the spawn point, not where it is in its
-        // cycle; the transport tick unhides it at the first sampled pose.
-        let visibility = if transport_anchor.is_some() {
-            Visibility::Hidden
-        } else {
-            Visibility::default()
-        };
-        let mut entity = commands.spawn((
-            Guid(guid),
-            net,
-            pose_transform(position, placement),
-            visibility,
-        ));
-        // Chain-only visibility: the root renders nothing itself, and culling flips its
-        // `Visibility` through `Mut` writes, which do not re-add the sweep row.
-        entity.vis_chain_only();
-        if let Some(s) = speeds {
-            entity.insert(UnitSpeeds(s));
-        }
-        if let Some(anchor) = transport_anchor {
-            entity.insert(anchor);
-        }
-        if let Some(seed) = elevator_seed {
-            entity.insert(seed);
-        }
-        if let Some(r) = rider {
-            entity.insert(r);
-        }
-        if let Some(s) = walk {
-            entity.insert(s);
-        }
-        // The seed is not merged: the reference does not notify on create.
-        entity.insert(ObjectStore(fields));
-        index.0.insert(guid, entity.id());
+        Visibility::default()
+    };
+    let mut entity = commands.spawn((
+        Guid(guid),
+        net,
+        pose_transform(position, placement),
+        visibility,
+    ));
+    // Chain-only visibility: the root renders nothing itself, and culling flips its
+    // `Visibility` through `Mut` writes, which do not re-add the sweep row.
+    entity.vis_chain_only();
+    if let Some(s) = speeds {
+        entity.insert(UnitSpeeds(s));
     }
+    if let Some(anchor) = transport_anchor {
+        entity.insert(anchor);
+    }
+    if let Some(seed) = elevator_seed {
+        entity.insert(seed);
+    }
+    if let Some(r) = rider {
+        entity.insert(r);
+    }
+    if let Some(d) = deck {
+        entity.insert(d);
+    }
+    if let Some(s) = walk {
+        entity.insert(s);
+    }
+    // The seed is not merged: the reference does not notify on create.
+    entity.insert(ObjectStore(fields));
+    index.0.insert(guid, entity.id());
 }
 
 /// A descriptor-only item or container create: an indexed entity with a store and no pose or
@@ -648,22 +857,6 @@ fn item_create(
             }
             commands.entity(e).insert(countdowns);
         }
-    }
-}
-
-/// An `SMSG_UPDATE_OBJECT` movement block: a new pose that supersedes any active path.
-fn object_move(
-    guid: u64,
-    position: [f32; 3],
-    orientation: f32,
-    commands: &mut Commands,
-    index: &GuidIndex,
-    transforms: &mut Query<&mut Transform>,
-) {
-    if let Some(&e) = index.0.get(&guid) {
-        commands.entity(e).remove::<Spline>();
-        // A yaw only: the GameObjects that get one are transports, which their tick then owns.
-        write_pose(commands, transforms, e, position, wire_yaw(orientation));
     }
 }
 
@@ -777,20 +970,6 @@ fn unit_move(
     }
 }
 
-/// An `SMSG_UPDATE_OBJECT` values block, merged into any object's store; an unknown guid drops.
-fn object_values(
-    guid: u64,
-    fields: ObjectFields,
-    commands: &mut Commands,
-    index: &GuidIndex,
-    stores: &mut Query<&mut ObjectStore>,
-    edges: &mut MessageWriter<FieldChanged>,
-) {
-    if let Some(&e) = index.0.get(&guid) {
-        merge_fields(commands, stores, edges, e, guid, fields);
-    }
-}
-
 /// `SMSG_DESTROY_OBJECT`: corpse decay ahead of respawn, or a despawn.
 fn object_destroyed(guid: u64, commands: &mut Commands, index: &mut GuidIndex) {
     // The object is freed now and its model fades out, as the reference's object deactivation (on
@@ -821,13 +1000,21 @@ fn object_destroyed(guid: u64, commands: &mut Commands, index: &mut GuidIndex) {
     }
 }
 
-/// The `OutOfRange` block: the object still exists, out of our range.
+/// The `OutOfRange` block: each object is disabled, its model faded out as DESTROY's is
+/// ([`tear_down`]), and parked for a revive (`0x4d7305`, `0x4d737f`). A transport is torn down
+/// unparked: its cycle clock lives on components a revive does not rebuild.
 fn objects_removed(guids: Vec<u64>, commands: &mut Commands, index: &mut GuidIndex) {
-    // Faded, not popped: OUT_OF_RANGE reaches the same teardown as DESTROY, and the object ends now
-    // while its model fades ([`tear_down`]).
+    let now = std::time::Instant::now();
     for g in guids {
         if let Some(e) = index.0.remove(&g) {
-            commands.entity(e).queue(tear_down);
+            commands.queue(move |world: &mut bevy::ecs::world::World| {
+                if world.get::<crate::transport::Transport>(e).is_none() {
+                    parked::park_entity(world, g, e, now);
+                }
+                if let Ok(ent) = world.get_entity_mut(e) {
+                    tear_down(ent);
+                }
+            });
         }
     }
 }
@@ -986,6 +1173,7 @@ fn monster_move(
             transport,
             arc,
             facing_fixed,
+            facing,
         ) {
             Some(spline) => {
                 commands.entity(e).insert(spline).remove::<SplineStopped>();
@@ -1666,3 +1854,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod update_tests;

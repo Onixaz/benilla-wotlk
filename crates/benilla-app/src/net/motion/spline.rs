@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
-use benilla_protocol::{CreateSpline, EntityKind, SplineArc};
+use benilla_protocol::{CreateSpline, EntityKind, MonsterMoveFacing, SplineArc};
 use bevy::prelude::*;
 use bevy::tasks::{ComputeTaskPool, ParallelSliceMut};
 use bevy::utils::Parallel;
@@ -43,6 +43,10 @@ pub(crate) struct Spline {
     /// `SPLINEFLAG_ORIENTATION_FIXED` (`0x4000`): the facing is not taken from the path tangent
     /// (`0x98cbd8`), so a knockback flies backwards.
     pub(crate) facing_fixed: bool,
+    /// Catmull-Rom evaluation, else straight segments: `flags & 0x42000` (`0x6f15c3`, `0x98c7b0`).
+    pub(crate) catmull_rom: bool,
+    /// The facing the unit takes when the walk ends (`0x6eb0b0`'s done branch).
+    pub(crate) end_facing: MonsterMoveFacing,
 }
 
 /// The id of a spline the server ended with a stop, owed in `CMSG_MOVE_SPLINE_DONE`. vmangos arms
@@ -110,8 +114,8 @@ impl Spline {
 
     /// Raw-WoW position, facing (`None` when vertical) and pitch `asin(dz/len)` at `now`, at
     /// constant speed. Segments are located by chord length here in both modes; the reference uses
-    /// the chord on a ground path only and a flying segment's Catmull-Rom length in 20 steps. The
-    /// evaluator lerps a ground path and runs a uniform Catmull-Rom on a flying one.
+    /// the chord on a linear path only and a Catmull-Rom segment's length in 20 steps. The evaluator
+    /// lerps a linear path and runs a uniform Catmull-Rom on a [`Spline::catmull_rom`] one.
     pub(crate) fn sample(&self, now: Instant) -> ([f32; 3], Option<f32>, f32) {
         let pts = self.points.as_slice();
         if pts.len() < 2 {
@@ -137,7 +141,7 @@ impl Spline {
                 } else {
                     0.0
                 };
-                let (pos, dir) = if self.grounded {
+                let (pos, dir) = if !self.catmull_rom {
                     let (a, b) = (pts[i], pts[i + 1]);
                     let pos = [
                         a[0] + (b[0] - a[0]) * t,
@@ -230,6 +234,7 @@ pub(in crate::net) fn monster_move_spline(
     deck: Option<u64>,
     arc: Option<SplineArc>,
     facing_fixed: bool,
+    end_facing: MonsterMoveFacing,
 ) -> Option<Spline> {
     if stop || duration_ms == 0 || path.len() < 2 {
         return None;
@@ -239,9 +244,10 @@ pub(in crate::net) fn monster_move_spline(
         start: Instant::now(),
         duration: Duration::from_millis(u64::from(duration_ms)),
         id: spline_id,
-        // `grounded` also picks the sampler (lerp or Catmull-Rom); the clamp skips a deck path on
-        // `deck`.
+        // `flying` is the decoder's `Flying | Catmullrom`; the clamp skips a deck path on `deck`.
         grounded: !flying,
+        catmull_rom: flying,
+        end_facing,
         run_mode,
         deck,
         arc,
@@ -270,6 +276,8 @@ pub(in crate::net) fn create_spline(spline: CreateSpline) -> Option<Spline> {
         duration: Duration::from_millis(u64::from(spline.duration_ms)),
         id: spline.id,
         grounded: !spline.flying,
+        catmull_rom: spline.catmull_rom,
+        end_facing: spline.final_facing,
         run_mode: spline.run_mode,
         // The create block's spline tail names no transport; its path is in world coordinates.
         deck: None,
@@ -298,10 +306,12 @@ pub(in crate::net) fn trace_create_spline(guid: u64, spline: Option<&CreateSplin
     benilla_assets::trace::line(
         "csp",
         &format!(
-            "{guid:#x} nodes={} len={length:.2} left={left:.2} t={}/{} world{}{}{}",
+            "{guid:#x} nodes={} len={length:.2} left={left:.2} t={}/{} world {} end={:?}{}{}{}",
             s.path.len(),
             s.time_passed_ms,
             s.duration_ms,
+            if s.catmull_rom { "catmull" } else { "linear" },
+            s.final_facing,
             if s.flying { " flying" } else { "" },
             if s.cyclic { " cyclic" } else { "" },
             if create_spline_enabled() {
@@ -388,13 +398,18 @@ pub(in crate::net) fn sample_splines(
         if let Some(deck) = spline.deck {
             // Written as a world pose it would sit near the map origin, so a missing or mismatched
             // rider freezes the unit for the frame instead.
+            let done = now.saturating_duration_since(spline.start) >= spline.duration;
             if let Some(mut rider) = rider.filter(|r| r.transport_guid == deck) {
                 rider.local_pos = wow_pos;
                 if let Some(f) = facing {
                     rider.local_orientation = f;
                 }
+                // A deck path's end angle is deck-local, like its points.
+                if let (true, MonsterMoveFacing::Angle(a)) = (done, spline.end_facing) {
+                    rider.local_orientation = a;
+                }
             }
-            if now.saturating_duration_since(spline.start) >= spline.duration {
+            if done {
                 commands.entity(entity).remove::<Spline>();
             }
             continue;
@@ -433,6 +448,11 @@ pub(in crate::net) fn sample_splines(
                 );
             }
             commands.entity(entity).remove::<Spline>();
+            if !matches!(spline.end_facing, MonsterMoveFacing::None) {
+                commands
+                    .entity(entity)
+                    .insert(super::facing::WalkEndFacing(spline.end_facing));
+            }
         }
     }
 }
@@ -1447,6 +1467,8 @@ mod tests {
             duration: Duration::from_secs(10),
             id: 7,
             grounded,
+            catmull_rom: !grounded,
+            end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
         };
         let now = Instant::now();
@@ -1531,6 +1553,70 @@ mod tests {
         );
     }
 
+    /// The sampler follows the spline's mode, not its Flying bit: a ground walk sent Catmull-Rom
+    /// (`0x40000`) curves, and stays terrain-clamped (`0x6f15c3`).
+    #[test]
+    fn a_catmull_rom_ground_walk_curves() {
+        let pts = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 0.0]];
+        let (mut s, now) = spline_at(pts, true, 0.25);
+        assert!(s.sample(now).0[1].abs() < 1e-4, "linear stays on the chord");
+        s.catmull_rom = true;
+        assert!(s.sample(now).0[1].abs() > 0.1, "Catmull-Rom bends off it");
+        assert!(s.grounded);
+    }
+
+    /// A create spline's mode is `Flying | Catmullrom`, and its final facing rides to the walk.
+    #[test]
+    fn a_create_spline_keeps_its_mode_and_final_facing() {
+        let s = create_spline(CreateSpline {
+            path: vec![[0.0, 0.0, 0.0], [20.0, 0.0, 0.0]],
+            id: 7,
+            time_passed_ms: 0,
+            duration_ms: 12_000,
+            flying: false,
+            cyclic: false,
+            run_mode: true,
+            arc: None,
+            facing_fixed: false,
+            final_facing: MonsterMoveFacing::Angle(2.0),
+            catmull_rom: true,
+        })
+        .expect("a live walk");
+        assert!(s.catmull_rom && s.grounded);
+        assert!(matches!(s.end_facing, MonsterMoveFacing::Angle(a) if a == 2.0));
+    }
+
+    /// A walk that ends hands its final facing on; one with none leaves nothing.
+    #[test]
+    fn a_finished_walk_leaves_its_final_facing() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_systems(Update, sample_splines);
+        let walk = |end_facing| {
+            let (mut s, _) = spline_at(vec![[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], true, 2.0);
+            s.end_facing = end_facing;
+            s
+        };
+        let faced = app
+            .world_mut()
+            .spawn((Transform::default(), walk(MonsterMoveFacing::Angle(1.0))))
+            .id();
+        let plain = app
+            .world_mut()
+            .spawn((Transform::default(), walk(MonsterMoveFacing::None)))
+            .id();
+        app.update();
+        let w = app.world();
+        assert!(w.get::<Spline>(faced).is_none(), "the walk is over");
+        assert!(matches!(
+            w.get::<super::super::facing::WalkEndFacing>(faced).map(|f| f.0),
+            Some(MonsterMoveFacing::Angle(a)) if a == 1.0
+        ));
+        assert!(w
+            .get::<super::super::facing::WalkEndFacing>(plain)
+            .is_none());
+    }
+
     /// A straight climb pitches by the tangent (45° here) and never banks: θ = 2·acos(1) = 0.
     #[test]
     fn a_straight_climb_pitches_by_the_tangent_and_never_banks() {
@@ -1576,6 +1662,8 @@ mod tests {
             run_mode: true,
             arc: None,
             facing_fixed: false,
+            final_facing: benilla_protocol::MonsterMoveFacing::None,
+            catmull_rom: false,
         })
         .expect("a live walk");
         let (pos, facing, _) = s.sample(Instant::now());
@@ -1600,6 +1688,8 @@ mod tests {
             run_mode: true,
             arc: None,
             facing_fixed: false,
+            final_facing: benilla_protocol::MonsterMoveFacing::None,
+            catmull_rom: false,
         };
         let straight = vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]];
         assert!(create_spline(spline(5_000, 5_000, straight.clone())).is_none());
@@ -1823,6 +1913,8 @@ mod server_moved_players {
             duration: Duration::from_secs(4),
             id: 77,
             grounded: true,
+            catmull_rom: false,
+            end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
         });
     }
@@ -1903,6 +1995,8 @@ mod server_moved_players {
             duration: Duration::from_secs(4),
             id: 78,
             grounded: false,
+            catmull_rom: true,
+            end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
         });
         clamp(&mut app);
@@ -2226,6 +2320,8 @@ mod inside_a_hull {
             duration: Duration::from_secs(secs),
             id,
             grounded: true,
+            catmull_rom: false,
+            end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
         });
     }

@@ -50,6 +50,9 @@ pub(super) const UNIT_FLAG_LOOTING: u32 = 0x400;
 /// name and role are inferred. vmangos never sets it (`UNIT_FLAG_UNK_28`).
 pub(super) const UNIT_FLAG_LOOT_SUPPRESS: u32 = 0x1000_0000;
 
+/// Birth (127), a CREATE_OBJECT2 creature's first animation when its model has it.
+pub(super) const BIRTH: u16 = 127;
+
 /// MountSpecial (94), the mount rearing: a one-shot on the mount model.
 pub(crate) const MOUNT_SPECIAL: u16 = 94;
 

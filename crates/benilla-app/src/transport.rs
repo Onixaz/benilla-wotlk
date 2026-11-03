@@ -57,6 +57,7 @@ impl Plugin for TransportPlugin {
                     watch_ridden_transport_map,
                     republish_moved_collider_aabbs,
                     compose_riders,
+                    compose_deck_passengers,
                     ground_deck_riders,
                 )
                     .chain()
@@ -381,11 +382,14 @@ fn tick_transports(
         if sample.moving != transport.was_moving {
             transport.was_moving = sample.moving;
             debug!(
-                "transport {:#x}: {} at cycle {cycle} ms (period {}, map {})",
+                "transport {:#x}: {} at cycle {cycle} ms (period {}, map {}) at [{:.1}, {:.1}, {:.1}]",
                 guid.0,
                 if sample.moving { "departed" } else { "docked" },
                 transport.period_ms(),
                 sample.map,
+                sample.pos[0],
+                sample.pos[1],
+                sample.pos[2],
             );
         }
         // Write on change only: a docked deck samples the same pose every frame.
@@ -552,7 +556,7 @@ fn watch_ridden_transport_map(
 /// An observed mover's pose in a transport's frame, the `MOVEFLAG_ONTRANSPORT` tail of its
 /// `LIVING` create block or `MSG_MOVE_*` relay. [`compose_riders`] carries it every frame; the
 /// local pose changes only per packet, with no extrapolation in the deck frame.
-#[derive(Component)]
+#[derive(Component, Clone, Copy)]
 pub(crate) struct TransportRider {
     pub(crate) transport_guid: u64,
     /// Position in the transport's frame, raw WoW coords.
@@ -594,6 +598,62 @@ fn compose_riders(
         if let Some(mut rm) = motion {
             rm.wow_pos = benilla_assets::coords::bevy_to_wow(world);
             rm.orientation = yaw;
+        }
+    }
+}
+
+/// A GameObject, corpse or dynamic object created on a transport: its `POSITION` block's transport
+/// guid and local position (`0x714250`, `0x706430`, `0x7053a0`), and its rotation in the deck's
+/// frame, the facing the reference adds the transport's to (`0x4f42a0`).
+#[derive(Component, Clone, Copy)]
+pub(crate) struct DeckPassenger {
+    pub(crate) transport_guid: u64,
+    /// Position in the transport's frame, raw WoW coords.
+    pub(crate) local_pos: [f32; 3],
+    pub(crate) local_rotation: Quat,
+}
+
+/// Compose each deck passenger's world pose through its transport's this-frame pose, as
+/// [`compose_riders`] does a unit's; one whose transport is not streamed keeps its create pose, as
+/// the reference's attach falls back to it (`0x4f4230`).
+fn compose_deck_passengers(
+    guid_index: Res<crate::net::GuidIndex>,
+    boats: Query<&Transform, (With<Transport>, Without<DeckPassenger>)>,
+    mut passengers: Query<(&DeckPassenger, &mut Transform), Without<Transport>>,
+) {
+    let tracing = benilla_assets::trace::enabled_for("deck");
+    for (p, mut transform) in &mut passengers {
+        let Some(boat) = guid_index
+            .0
+            .get(&p.transport_guid)
+            .and_then(|&e| boats.get(e).ok())
+        else {
+            continue;
+        };
+        let local = benilla_assets::coords::wow_to_bevy(p.local_pos);
+        transform.translation = boat.translation + boat.rotation * local;
+        transform.rotation = boat.rotation * p.local_rotation;
+        if tracing {
+            let (w, b) = (
+                benilla_assets::coords::bevy_to_wow(transform.translation),
+                benilla_assets::coords::bevy_to_wow(boat.translation),
+            );
+            benilla_assets::trace::line(
+                "deck",
+                &format!(
+                    "on {:#x} local=[{:.2},{:.2},{:.2}] world=[{:.2},{:.2},{:.2}] ship=[{:.2},{:.2},{:.2}]",
+                    p.transport_guid,
+                    p.local_pos[0],
+                    p.local_pos[1],
+                    p.local_pos[2],
+                    w[0],
+                    w[1],
+                    w[2],
+                    b[0],
+                    b[1],
+                    b[2],
+                ),
+            );
         }
     }
 }
@@ -660,15 +720,20 @@ fn stamp_ride_frames(
     guid_index: Res<crate::net::GuidIndex>,
     body: Query<Entity, With<crate::net::Embodied>>,
     riders: Query<(Entity, &TransportRider)>,
+    passengers: Query<(Entity, &DeckPassenger)>,
     stamped: Query<(Entity, &RideFrame)>,
 ) {
     let mut want: HashMap<Entity, Entity> = HashMap::new();
     if let (Ok(me), Some(deck)) = (body.single(), player.ride_entity()) {
         want.insert(me, deck);
     }
-    for (rider, on) in &riders {
+    let aboard = riders
+        .iter()
+        .map(|(e, r)| (e, r.transport_guid))
+        .chain(passengers.iter().map(|(e, p)| (e, p.transport_guid)));
+    for (rider, transport) in aboard {
         // A rider whose transport is not streamed in keeps no frame.
-        if let Some(&deck) = guid_index.0.get(&on.transport_guid) {
+        if let Some(&deck) = guid_index.0.get(&transport) {
             want.insert(rider, deck);
         }
     }

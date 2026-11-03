@@ -300,7 +300,7 @@ fn drive_mouseover_tooltip(
         }
         let Some(template) = go_inputs.templates.get(guid).cloned() else {
             // Template in flight: ask once, and show it when it lands.
-            go_inputs.templates.request(guid, &commands);
+            go_inputs.templates.request(guid, None, &commands);
             return;
         };
         // "Locked" iff `GO_FLAG_LOCKED`, then `Lock.dbc` slot 0's line past its gate (`0x62689d`).
