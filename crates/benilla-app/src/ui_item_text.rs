@@ -373,7 +373,7 @@ pub(crate) fn object_material(
         return match go_templates.get(guid) {
             Some(go) => go.quest_material.and_then(name),
             None => {
-                go_templates.request(guid, commands);
+                go_templates.request(guid, None, commands);
                 None
             }
         };

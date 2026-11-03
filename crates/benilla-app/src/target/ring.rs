@@ -1290,6 +1290,8 @@ mod tests {
                 transport: None,
                 spline: None,
                 vehicle: None,
+                attack_target: None,
+                spawned: false,
                 // `OBJECT_FIELD_TYPE` (2) 0x9, object and unit, as a creature's create carries it:
                 // the selection set's selectable test refuses any other type.
                 fields: ObjectFields::from_pairs(&[

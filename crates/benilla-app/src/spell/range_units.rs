@@ -171,6 +171,8 @@ mod tests {
             duration: std::time::Duration::from_secs(secs),
             id: 1,
             grounded: true,
+            catmull_rom: false,
+            end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
             deck: None,
             arc: None,

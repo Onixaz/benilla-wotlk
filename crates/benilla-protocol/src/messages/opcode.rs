@@ -375,6 +375,8 @@ pub const SMSG_GAMEOBJECT_CUSTOM_ANIM: u16 = 0x00B3; // 179
 /// The client arms substate 12 (AnimationData 157) and the object outlives its
 /// `SMSG_DESTROY_OBJECT` for that play.
 pub const SMSG_GAMEOBJECT_DESPAWN_ANIM: u16 = 0x0215; // 533
+/// A GameObject's shown state reset to its descriptor's: a raw `u64` guid (handler `0x7fd900`).
+pub const SMSG_GAMEOBJECT_RESET_STATE: u16 = 0x02A7; // 679
 /// We walked into an area trigger: its `AreaTrigger.dbc` id (reference `0x6dbe30`).
 pub const CMSG_AREATRIGGER: u16 = 0x00B4; // 180
 /// An area trigger's refusal (level, ghost, faction), shown like `SMSG_NOTIFICATION`.

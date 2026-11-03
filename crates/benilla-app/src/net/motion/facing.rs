@@ -94,6 +94,41 @@ pub(in crate::net) fn resolve_facing(
     }
 }
 
+/// A finished walk's final facing (`0x6eb0b0`'s done branch), resolved where the walk ended and
+/// handed to [`drive_display_facing`] as the raw goal it turns toward.
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub(crate) struct WalkEndFacing(pub(crate) MonsterMoveFacing);
+
+/// Sets each finished walk's raw facing: an angle as is, a point or a unit as the bearing to it; a
+/// target not streamed in leaves the facing alone, as the reference's lookup miss does.
+pub(crate) fn apply_walk_end_facing(
+    mut commands: Commands,
+    index: Res<GuidIndex>,
+    ends: Query<(Entity, &WalkEndFacing)>,
+    transforms: Query<&Transform>,
+) {
+    for (e, end) in &ends {
+        commands.entity(e).remove::<WalkEndFacing>();
+        let Ok(t) = transforms.get(e) else {
+            continue;
+        };
+        let target = |g: u64| {
+            index
+                .0
+                .get(&g)
+                .and_then(|&te| transforms.get(te).ok())
+                .map(|t| bevy_to_wow(t.translation))
+        };
+        if let Some(wire) = resolve_facing(end.0, bevy_to_wow(t.translation), target) {
+            commands.entity(e).insert(DisplayFacing {
+                wire: wire.rem_euclid(std::f32::consts::TAU),
+                hist: [0.0; 4],
+            });
+        }
+    }
+}
+
 /// The horizontal bearing from `from` to `to`, `None` when they coincide.
 fn bearing(from: [f32; 3], to: [f32; 3]) -> Option<f32> {
     let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
@@ -381,6 +416,55 @@ mod tests {
             !emote_suppresses_facing(7, |_| Some(EMOTE_PERMITS_FACING)),
             "the bit permits the facing"
         );
+    }
+
+    /// A finished walk's final facing is the pump's raw goal: an angle as is, a unit as the
+    /// bearing to it, turned toward rather than snapped.
+    #[test]
+    fn a_walk_end_facing_becomes_the_raw_goal() {
+        let mut app = App::new();
+        app.init_resource::<GuidIndex>().add_systems(
+            Update,
+            (apply_walk_end_facing, drive_display_facing).chain(),
+        );
+        let unit = |app: &mut App, facing| {
+            app.world_mut()
+                .spawn((
+                    NetEntity {
+                        kind: EntityKind::Unit,
+                        display_id: None,
+                        scale: 1.0,
+                    },
+                    ObjectStore::default(),
+                    Transform::default(),
+                    WalkEndFacing(facing),
+                ))
+                .id()
+        };
+        let angled = unit(&mut app, MonsterMoveFacing::Angle(FRAC_PI_2));
+        let target = app
+            .world_mut()
+            .spawn(Transform::from_translation(wow_to_bevy([0.0, -5.0, 0.0])))
+            .id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(0x42, target);
+        let facing_it = unit(&mut app, MonsterMoveFacing::Target(0x42));
+        app.update();
+        let wire =
+            |app: &App, e: Entity| app.world().entity(e).get::<DisplayFacing>().unwrap().wire;
+        assert!((wire(&app, angled) - FRAC_PI_2).abs() < 1e-6);
+        assert!((wire(&app, facing_it) - 1.5 * PI).abs() < 1e-5, "due -y");
+        let yaw = |app: &App, e: Entity| {
+            yaw_of(app.world().entity(e).get::<Transform>().unwrap().rotation)
+        };
+        let first = yaw(&app, angled);
+        assert!(
+            first > 0.0 && first < FRAC_PI_2,
+            "the pump turns part way, no snap: {first}"
+        );
+        assert!(app.world().entity(angled).get::<WalkEndFacing>().is_none());
     }
 
     #[test]

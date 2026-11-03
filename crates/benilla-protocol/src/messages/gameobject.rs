@@ -93,6 +93,11 @@ pub(super) fn read_gameobject_despawn_anim(r: &mut &[u8]) -> io::Result<u64> {
     read_u64_le(r)
 }
 
+/// Read `SMSG_GAMEOBJECT_RESET_STATE`: a raw `u64` guid (`0x7fd90d`), not packed.
+pub(super) fn read_gameobject_reset_state(r: &mut &[u8]) -> io::Result<u64> {
+    read_u64_le(r)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +210,17 @@ mod tests {
                 assert_eq!(guid, 0x1234_5678_9abc_def0);
             }
             other => panic!("expected GameObjectDespawnAnim, got {}", other.name()),
+        }
+    }
+
+    #[test]
+    fn gameobject_reset_state_decodes_a_raw_guid() {
+        let body = hx("f0debc9a78563412");
+        match parse_server(opcode::SMSG_GAMEOBJECT_RESET_STATE, &body).unwrap() {
+            ServerPacket::GameObjectResetState { guid } => {
+                assert_eq!(guid, 0x1234_5678_9abc_def0);
+            }
+            other => panic!("expected GameObjectResetState, got {}", other.name()),
         }
     }
 

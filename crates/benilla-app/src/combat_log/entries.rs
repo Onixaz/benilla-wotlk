@@ -379,7 +379,7 @@ impl NameSources<'_> {
                 match objects.get(guid) {
                     Some(t) => Some(Some(t.name.clone())),
                     None => {
-                        objects.request(guid, &self.net);
+                        objects.request(guid, None, &self.net);
                         None
                     }
                 }

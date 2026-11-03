@@ -24,7 +24,9 @@ pub(crate) mod handlers;
 pub(crate) mod io;
 mod motion;
 mod objects;
+mod parked;
 pub(crate) use objects::tear_down;
+pub(crate) use parked::ParkedObjects;
 mod session;
 mod world;
 
@@ -39,7 +41,7 @@ use motion::{
     sample_splines,
 };
 // `pub(crate)`: `creature_anim` reads the shuffle latch it produces, and a test runs both.
-pub(crate) use motion::drive_display_facing;
+pub(crate) use motion::{apply_walk_end_facing, drive_display_facing};
 pub(crate) use motion::{
     ground_derived, grounded_y, jump_seed, CreatureSwimming, FacingStep, RemoteMotion, Spline,
     SplineStopped, UnitMoveModes,
@@ -89,6 +91,7 @@ impl Plugin for NetPlugin {
             .insert_resource(LoginAbandon(handles.login_abandon))
             .insert_resource(PingShared(handles.ping))
             .init_resource::<GuidIndex>()
+            .init_resource::<ParkedObjects>()
             .init_resource::<SelfGuid>()
             .init_resource::<AddonInfoReply>()
             .init_resource::<AccountExpansion>()
@@ -151,6 +154,8 @@ impl Plugin for NetPlugin {
                     // Due relays fire before the extrapolator advances the fresh state.
                     drain_pending_moves,
                     extrapolate_remote_units,
+                    // A finished walk's final facing becomes the pump's raw goal.
+                    apply_walk_end_facing,
                     // After the movers, so a turn reads the goal's position this frame.
                     drive_display_facing,
                 )
@@ -193,7 +198,7 @@ fn population_pulse(index: Res<GuidIndex>, time: Res<Time>, mut last: Local<f32>
 pub(crate) struct Guid(pub(crate) u64);
 
 /// A streamed entity's kind and display id, from which [`crate::entities`] builds its visual.
-#[derive(Component)]
+#[derive(Component, Clone, Copy)]
 pub(crate) struct NetEntity {
     pub(crate) kind: EntityKind,
     pub(crate) display_id: Option<u32>,
@@ -202,6 +207,12 @@ pub(crate) struct NetEntity {
     /// through `entities::live_display`.
     pub(crate) scale: f32,
 }
+
+/// A `CREATE_OBJECT2` creature or GameObject: the bool the reference's init takes, read once by its
+/// first animation pass (`0x740054`, `0x70c370`).
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub(crate) struct FreshSpawn;
 
 /// A unit's movement speeds (yd/s) from its `LIVING` movement block. The animation selector runs
 /// above 2x `walk`.

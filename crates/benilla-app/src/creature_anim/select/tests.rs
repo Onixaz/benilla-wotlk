@@ -951,6 +951,8 @@ fn unify_stamps_flying_from_the_live_spline_on_every_leg() {
         duration: Duration::from_secs(10),
         id: 1,
         grounded,
+        catmull_rom: !grounded,
+        end_facing: benilla_protocol::MonsterMoveFacing::None,
         run_mode: true,
     };
     // Self leg: the live spline says flying, not the stored state, as the client reads the
@@ -981,6 +983,8 @@ fn unify_reads_a_flying_arc_as_falling_and_its_end_as_stopped() {
         duration: Duration::from_secs(1),
         id: 1,
         grounded: true,
+        catmull_rom: false,
+        end_facing: benilla_protocol::MonsterMoveFacing::None,
         run_mode: true,
     };
     let v = unify(None, None, Some(&arc(0.1, true)), false, None);
@@ -1041,6 +1045,8 @@ fn the_granted_modes_fold_into_the_flags_word_on_every_leg_but_our_own() {
         duration: Duration::from_secs(10),
         id: 1,
         grounded: true,
+        catmull_rom: false,
+        end_facing: benilla_protocol::MonsterMoveFacing::None,
         run_mode: true,
     };
     let v = unify(None, None, Some(&spline), false, Some(&walking));

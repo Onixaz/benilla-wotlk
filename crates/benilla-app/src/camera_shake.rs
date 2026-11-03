@@ -670,6 +670,8 @@ mod tests {
             duration: std::time::Duration::from_secs(1),
             id: 1,
             grounded,
+            catmull_rom: !grounded,
+            end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
         };
 

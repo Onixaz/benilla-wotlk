@@ -925,9 +925,14 @@ pub(crate) mod schedule_tests {
     ///   writer, against the other writers of that queue (whose events commute) and the feeds it
     ///   shares the VM with; and `ui_quest_watch::feed_quest_poi_lines` against `feed_item_stats`
     ///   over `Items`: it only reads templates.
+    /// - The update-object deck passengers (#902) add 25: `transport::compose_deck_passengers`
+    ///   against the same 24 `Transform` readers `compose_riders` pairs with (the range, reach,
+    ///   threat and NPC-session feeds, the art scope, the WDL stream and the booth billboards),
+    ///   one frame late at worst, as the rider poses; and `net::motion::facing::
+    ///   apply_walk_end_facing` against `face_booth_billboards`, which turns only booth quads.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_875;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_900;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

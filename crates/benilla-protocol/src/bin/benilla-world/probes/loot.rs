@@ -179,6 +179,7 @@ impl Probe for Loot {
                             guid: g,
                             position,
                             orientation,
+                            ..
                         } => {
                             if let Some(t) = world.tracked.get_mut(&g) {
                                 t.position = position;

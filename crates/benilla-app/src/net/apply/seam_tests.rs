@@ -33,6 +33,8 @@ fn create() -> SessionEvent {
         transport: None,
         spline: None,
         vehicle: None,
+        attack_target: None,
+        spawned: false,
         fields: ObjectFields::from_pairs(&[
             (FIELD_UNIT_HEALTH, 100),
             (FIELD_UNIT_MAXHEALTH, 100),
@@ -147,6 +149,8 @@ fn create_with_speeds(speeds: Option<MoveSpeeds>) -> SessionEvent {
             spline,
             vehicle,
             fields,
+            attack_target,
+            spawned,
             ..
         } => SessionEvent::ObjectCreate {
             guid,
@@ -162,6 +166,8 @@ fn create_with_speeds(speeds: Option<MoveSpeeds>) -> SessionEvent {
             spline,
             vehicle,
             fields,
+            attack_target,
+            spawned,
         },
         _ => unreachable!(),
     }
@@ -216,9 +222,9 @@ fn a_force_change_beats_a_create_from_the_same_frame() {
     );
 }
 
-/// A create block is the server's newest snapshot of the mover, so one after a change replaces it.
+/// A create for a guid already live skips its movement block (`0x4d6c4d`), so the change stands.
 #[test]
-fn a_create_after_a_change_replaces_it() {
+fn a_create_for_a_live_mover_keeps_the_change() {
     let on_foot = MoveSpeeds {
         walk: 2.5,
         run: 7.0,
@@ -238,7 +244,7 @@ fn a_create_after_a_change_replaces_it() {
         create_with_speeds(Some(mounted)),
     ])
     .expect("the create landed a speed set");
-    assert_eq!(s.run, 11.2);
+    assert_eq!(s.run, 9.0);
 }
 
 /// A one-slot change on a mover that already exists keeps every other slot it isn't addressing.

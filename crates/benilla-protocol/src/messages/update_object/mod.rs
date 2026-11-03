@@ -24,6 +24,7 @@ pub enum Object {
         guid: u64,
         mask: ObjectFields,
     },
+    /// A mover's whole state: status, nine speeds and any spline, with no update flags.
     Movement {
         guid: u64,
         movement: MovementBlock,
@@ -34,6 +35,8 @@ pub enum Object {
         object_type: ObjectType,
         movement: MovementBlock,
         mask: ObjectFields,
+        /// `CREATE_OBJECT2`: the bool the reference passes to the type's init (`0x4d712f`).
+        spawned: bool,
     },
     OutOfRange {
         guids: Vec<u64>,
