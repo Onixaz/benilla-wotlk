@@ -183,6 +183,7 @@ impl PluginGroup for GamePlugins {
             .add(UiDialogVerbsPlugin)
             .add(BattlefieldScorePlugin)
             .add(BattlefieldPlugin)
+            .add(crate::ui_arena::UiArenaPlugin)
             .add(BattlefieldPositionsPlugin)
             .add(crate::game_tip::GameTipPlugin)
             .add(crate::text_filter::TextFilterPlugin)

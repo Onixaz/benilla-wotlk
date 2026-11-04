@@ -1041,8 +1041,9 @@ pub(crate) struct Model {
     pub(crate) inspect: Option<inspect::InspectView>,
     /// `NotifyInspect` unit tokens, sent as `CMSG_INSPECT`.
     pub(crate) inspect_notifies: Vec<String>,
-    /// `ClearInspectPlayer` ran; the app drops its inspect target.
-    pub(crate) inspect_clear: bool,
+    /// `ClearInspectPlayer` ran, after this many of [`Self::inspect_notifies`]: the app drops its
+    /// inspect target there, keeping the call order.
+    pub(crate) inspect_clear: Option<usize>,
     /// `DressUpModel` `SetUnit`, `Dress`, `Undress` and `TryOn` calls, applied in call order.
     pub(crate) dressup_intents: Vec<super::dressup::DressUpIntent>,
     /// Tabard designs per `TabardModel`, the app's preview five, the host facts and queued calls.
@@ -1747,7 +1748,7 @@ impl Model {
             weapon_enchants: [None; 2],
             inspect: None,
             inspect_notifies: Vec::new(),
-            inspect_clear: false,
+            inspect_clear: None,
             dressup_intents: Vec::new(),
             tabard_designs: HashMap::new(),
             tabard_preview: None,

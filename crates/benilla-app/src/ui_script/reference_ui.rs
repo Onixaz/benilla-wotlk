@@ -2013,8 +2013,6 @@ mod tests {
             // ── The stock `UIParent.lua`'s listeners first, then the other files' ──
             ("ADDON_ACTION_BLOCKED", R_0),
             ("MACRO_ACTION_BLOCKED", R_0),
-            ("ARENA_OPPONENT_UPDATE", R_1),
-            ("ARENA_SEASON_WORLD_STATE", R_1),
             ("DISABLE_TAXI_BENCHMARK", R_1),
             ("ENABLE_TAXI_BENCHMARK", R_1),
             ("FRIENDLIST_SHOW", R_1),

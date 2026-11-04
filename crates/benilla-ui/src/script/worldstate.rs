@@ -31,18 +31,10 @@ pub(crate) struct WorldStateUiState {
 }
 
 impl super::UiScript {
-    /// Push the readout's rows, queuing `UPDATE_WORLD_STATES` (event `0x20e`) on any change.
-    /// Deviation: the reference fires it only after an init rebuild or a zone-defense channel flip;
-    /// we fire on a value change too, because our rows are resolved values its Lua would re-read
-    /// live.
+    /// Push the readout's rows. The app owes `UPDATE_WORLD_STATES` per packet, as the reference's
+    /// handler fires it (`0x526530`), so a push fires nothing.
     pub fn set_world_state_ui(&mut self, rows: Vec<WorldStateUiView>) {
-        let mut model = self.model_mut();
-        if model.worldstate.rows != rows {
-            model.worldstate.rows = rows;
-            model
-                .pending_events
-                .push(("UPDATE_WORLD_STATES".to_string(), Vec::new()));
-        }
+        self.model_mut().worldstate.rows = rows;
     }
 }
 

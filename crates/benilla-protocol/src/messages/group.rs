@@ -315,6 +315,9 @@ pub struct RecordAura {
 /// present. The plain opcode carries what changed; `_FULL` everything the server has.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PartyMemberStatsInfo {
+    /// `_FULL`'s leading byte: nonzero makes the unit an arena opponent (`0x6cf9fa`), and its
+    /// pet guid an opponent's pet (`0x6cfc45`). Always false on the plain opcode.
+    pub arena_opponent: bool,
     /// [`member_status`] bits; the record holds a `u16` (`0x6cfa96`).
     pub status: Option<u16>,
     pub cur_hp: Option<u32>,
@@ -526,13 +529,13 @@ pub(super) fn read_party_member_stats(
     r: &mut impl Read,
     full: bool,
 ) -> io::Result<(u64, PartyMemberStatsInfo)> {
-    if full {
-        // benilla keeps no arena opponent list for the byte to add to (`0x6cf9fa`).
-        let _arena = read_u8(r)?;
-    }
+    let arena_opponent = full && read_u8(r)? != 0;
     let guid = read_packed_guid(r)?;
     let mask = read_u32_le(r)?;
-    let mut info = PartyMemberStatsInfo::default();
+    let mut info = PartyMemberStatsInfo {
+        arena_opponent,
+        ..Default::default()
+    };
 
     if mask & party_member_mask::STATUS != 0 {
         info.status = Some(read_u16_le(r)?);

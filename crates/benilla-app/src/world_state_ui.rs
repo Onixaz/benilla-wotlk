@@ -132,22 +132,30 @@ fn resolve(row: &WorldStateUiRow, states: &WorldStates) -> WorldStateUiView {
     }
 }
 
-/// Pushes the readout when a world-state packet arrives, the reference's rebuild trigger.
-fn feed_world_state_ui(
+/// Pushes the readout when a world-state packet arrives, the reference's rebuild trigger, then the
+/// events the packets owe, in their order.
+pub(crate) fn feed_world_state_ui(
     script: Option<NonSendMut<UiScript>>,
     catalog: Option<Res<WorldStateUiRes>>,
-    states: Res<WorldStates>,
+    mut states: ResMut<WorldStates>,
     mut last: Local<crate::ui_script::VmMemo<Option<u64>>>,
 ) {
-    let (Some(mut script), Some(catalog)) = (script, catalog) else {
+    let Some(mut script) = script else {
         return;
     };
     let key = states.generation();
-    if *last.get(&script) == Some(key) {
-        return;
+    if let Some(catalog) = catalog {
+        if *last.get(&script) != Some(key) {
+            *last.get(&script) = Some(key);
+            script.set_world_state_ui(build(&catalog.0, &states));
+        }
     }
-    *last.get(&script) = Some(key);
-    script.set_world_state_ui(build(&catalog.0, &states));
+    // The drain leaves change detection alone: readers rebuild on the table, not on the queue.
+    if states.has_owed() {
+        for event in states.bypass_change_detection().take_owed() {
+            script.queue_event(event.name(), Vec::new());
+        }
+    }
 }
 
 pub(crate) struct WorldStateUiPlugin;

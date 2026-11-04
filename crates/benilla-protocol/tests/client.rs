@@ -526,12 +526,14 @@ fn name_and_creature_query_roundtrip() {
         ServerPacket::NameQueryResponse {
             guid,
             name,
+            realm,
             race,
             gender,
             class,
         } => {
             assert_eq!(guid, 7);
             assert_eq!(name, "Benilla");
+            assert_eq!(realm, "");
             assert_eq!((race, gender, class), (1, 0, 1));
         }
         _ => panic!("name query response"),

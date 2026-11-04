@@ -515,7 +515,10 @@ impl Plugin for WorldMapUiPlugin {
         app.add_systems(
             Update,
             (
-                feed_world_map.after(UiInput),
+                // Ahead of the world-state event, as the handler refreshes the map first (`0x5269c5`).
+                feed_world_map
+                    .after(UiInput)
+                    .before(crate::world_state_ui::feed_world_state_ui),
                 // After the script tick, so the jump hit-tests this tick's frame rects.
                 dev_map_jump.after(UiInput),
             ),

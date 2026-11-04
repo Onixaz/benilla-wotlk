@@ -1238,12 +1238,14 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::NameQueryResponse {
             guid,
             name,
+            realm,
             race,
             gender,
             class,
         } => vec![SessionEvent::PlayerName {
             guid,
             name,
+            realm,
             race,
             gender,
             class,

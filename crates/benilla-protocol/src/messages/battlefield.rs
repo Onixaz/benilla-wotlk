@@ -286,7 +286,8 @@ pub struct BattlefieldPosition {
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct BattlefieldPositions {
     pub players: Vec<BattlefieldPosition>,
-    /// The carriers in wire order; the client fills its two slots from the last down.
+    /// The carriers by flag slot: the handler reads the wire's carriers into slots count-1 down to
+    /// 0 (`0x54b480`-`0x54b4be`), so the last carrier on the wire is slot 0, flag 1.
     pub carriers: Vec<BattlefieldPosition>,
 }
 
@@ -302,7 +303,8 @@ fn read_position(r: &mut impl Read) -> io::Result<BattlefieldPosition> {
     })
 }
 
-/// Deviation: past two carriers the rest are dropped, where the reference writes past its pair.
+/// Deviation: a carrier whose slot is past the pair is dropped, where the reference writes it past
+/// its pair.
 pub(super) fn read_battlefield_positions(r: &mut impl Read) -> io::Result<BattlefieldPositions> {
     let count = read_u32_le(r)?;
     let mut players = Vec::with_capacity(capacity_hint(count, BATTLEFIELD_POSITIONS_MAX));
@@ -316,10 +318,12 @@ pub(super) fn read_battlefield_positions(r: &mut impl Read) -> io::Result<Battle
     let mut carriers = Vec::new();
     for i in 0..flags.max(0) {
         let p = read_position(r)?;
-        if i < 2 {
+        // Wire carrier `i` lands in slot `flags - 1 - i`: only the last two reach the pair.
+        if flags - i <= 2 {
             carriers.push(p);
         }
     }
+    carriers.reverse();
     Ok(BattlefieldPositions { players, carriers })
 }
 
@@ -693,8 +697,28 @@ mod tests {
         assert_eq!(p.players.len(), 1);
         assert_eq!(
             p.carriers.iter().map(|c| c.guid).collect::<Vec<_>>(),
-            [0x20, 0x21]
+            [0x21, 0x20],
+            "the second carrier on the wire is slot 0, flag 1"
         );
+    }
+
+    /// Slots fill from count-1 down (`0x54b480`): a lone carrier is slot 0, and of three only the
+    /// last two land in the pair.
+    #[test]
+    fn carriers_fill_their_slots_last_first() {
+        let read = |guids: &[u64]| {
+            let mut b = 0u32.to_le_bytes().to_vec();
+            b.extend_from_slice(&(guids.len() as u32).to_le_bytes());
+            for g in guids {
+                b.extend_from_slice(&g.to_le_bytes());
+                b.extend_from_slice(&[0u8; 8]);
+            }
+            let p = read_battlefield_positions(&mut b.as_slice()).unwrap();
+            p.carriers.iter().map(|c| c.guid).collect::<Vec<_>>()
+        };
+        assert_eq!(read(&[0x20]), [0x20]);
+        assert_eq!(read(&[0x20, 0x21, 0x22]), [0x22, 0x21]);
+        assert_eq!(read(&[]), Vec::<u64>::new());
     }
 
     #[test]

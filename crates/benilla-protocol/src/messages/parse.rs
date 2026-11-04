@@ -381,7 +381,7 @@ fn read_name_query_response_wotlk(r: &mut &[u8]) -> io::Result<ServerPacket> {
         });
     }
     let name = read_cstring(r)?;
-    let _realm = read_cstring(r)?;
+    let realm = read_cstring(r)?;
     let race = u32::from(read_u8(r)?);
     let gender = u32::from(read_u8(r)?);
     let class = u32::from(read_u8(r)?);
@@ -393,6 +393,7 @@ fn read_name_query_response_wotlk(r: &mut &[u8]) -> io::Result<ServerPacket> {
     Ok(ServerPacket::NameQueryResponse {
         guid,
         name,
+        realm,
         race,
         gender,
         class,

@@ -83,8 +83,9 @@ impl super::UiScript {
         drain_field!(self, inspect_notifies)
     }
 
-    /// Whether `ClearInspectPlayer` was called since the last drain; the app drops its target.
-    pub fn take_inspect_clear(&mut self) -> bool {
+    /// Where `ClearInspectPlayer` last ran since the drain, as a count of the notifies queued before
+    /// it; the app drops its target there.
+    pub fn take_inspect_clear(&mut self) -> Option<usize> {
         drain_field!(self, inspect_clear)
     }
 }
@@ -160,11 +161,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ClearInspectPlayer(): called from `InspectFrame_OnHide` (`Blizzard_InspectUI.lua:58`).
+    // ClearInspectPlayer(): called from `InspectFrame_OnHide` (`Blizzard_InspectUI.lua:58`). The
+    // honor latch and its pending flag clear at once (`0x5e78b8`), so a `RequestInspectHonorData`
+    // in the same chunk asks again; the target itself clears in the app.
     g.set(
         "ClearInspectPlayer",
         lua.create_function(|lua, ()| {
-            crate::script::model_mut_of(lua).inspect_clear = true;
+            let mut model = crate::script::model_mut_of(lua);
+            model.inspect_clear = Some(model.inspect_notifies.len());
+            model.inspect_honor = None;
+            model.inspect_honor_pending = false;
             Ok(())
         })?,
     )?;

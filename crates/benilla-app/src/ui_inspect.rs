@@ -186,7 +186,16 @@ fn feed_inspect(
     let memo = feed.vm.get(&script);
 
     // `NotifyInspect(unit)`: send `CMSG_INSPECT` for the unit's guid and latch its token.
-    for token in script.take_inspect_notifies() {
+    // `ClearInspectPlayer()`, from `InspectFrame_OnHide`: the resolve stops and the booth empties,
+    // in call order among the notifies, so a clear then a notify in one chunk keeps the target.
+    let notifies = script.take_inspect_notifies();
+    let clear_at = script.take_inspect_clear();
+    let notified = notifies.len();
+    for (i, token) in notifies.into_iter().enumerate() {
+        if clear_at == Some(i) {
+            target.token = None;
+            target.guid = 0;
+        }
         match crate::ui_unit::player_token_guid(&token, &selection, &group) {
             Some(guid) => {
                 debug!("inspect: {token:?} -> {guid:#x}; sending CMSG_INSPECT");
@@ -199,8 +208,7 @@ fn feed_inspect(
             }
         }
     }
-    // `ClearInspectPlayer()`, from `InspectFrame_OnHide`: the resolve stops and the booth empties.
-    if script.take_inspect_clear() {
+    if clear_at.is_some_and(|at| at >= notified) {
         target.token = None;
         target.guid = 0;
     }

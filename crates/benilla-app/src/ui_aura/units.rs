@@ -11,6 +11,7 @@ use benilla_ui::script::{AuraState, UiScript, UnitGuids};
 
 use super::{aura_list, record_inputs, table_inputs, AuraInput, ListCtx};
 use crate::net::ObjectStore;
+use crate::ui_arena::{ARENA_PET_TOKENS, ARENA_TOKENS};
 use crate::ui_instance::BOSS_TOKENS;
 use crate::ui_party::{
     raid_row_guids, GroupState, PARTY_PET_TOKENS, PARTY_TOKENS, RAID_PET_TOKENS, RAID_TOKENS,
@@ -18,7 +19,7 @@ use crate::ui_party::{
 use crate::unit_auras::UnitAuras as AuraTable;
 
 /// The tokens `UNIT_AURA` fires for besides `"player"`, in firing order: [`EVENT_UNITS`], then the
-/// group's and the encounter's, each resolved by [`event_guid`].
+/// group's, the arena's and the encounter's, each resolved by [`event_guid`].
 const EVENT_UNITS: [&str; 4] = ["pet", "target", "targettarget", "focus"];
 
 const EVENT_TOKEN_COUNT: usize = EVENT_UNITS.len()
@@ -26,6 +27,8 @@ const EVENT_TOKEN_COUNT: usize = EVENT_UNITS.len()
     + PARTY_PET_TOKENS.len()
     + RAID_TOKENS.len()
     + RAID_PET_TOKENS.len()
+    + ARENA_TOKENS.len()
+    + ARENA_PET_TOKENS.len()
     + BOSS_TOKENS.len();
 
 fn event_tokens() -> impl Iterator<Item = &'static str> {
@@ -35,6 +38,8 @@ fn event_tokens() -> impl Iterator<Item = &'static str> {
         .chain(PARTY_PET_TOKENS)
         .chain(RAID_TOKENS)
         .chain(RAID_PET_TOKENS)
+        .chain(ARENA_TOKENS)
+        .chain(ARENA_PET_TOKENS)
         .chain(BOSS_TOKENS)
 }
 
@@ -51,7 +56,11 @@ fn event_guid(g: &UnitGuids, i: usize) -> u64 {
         8..=11 => g.party_pets[i - 8],
         12..=51 => at(&g.raid, i - 12),
         52..=91 => at(&g.raid_pets, i - 52),
-        _ => at(&g.boss, i - 92),
+        // The fan-out walks the counted opponent slots only (`0x60bb70`).
+        92..=96 if i - 92 < g.arena_count => g.arena[i - 92],
+        97..=101 if i - 97 < g.arena_count => g.arena_pets[i - 97],
+        92..=101 => 0,
+        _ => at(&g.boss, i - 102),
     }
 }
 
@@ -100,6 +109,8 @@ pub(super) struct Inputs<'g, 'a, H, T, V> {
     pub(super) vehicle: u64,
     /// `bossN`'s guids, one per encounter slot.
     pub(super) boss: &'g [u64],
+    /// `arenaN`'s and `arenapetN`'s guids and `GetNumArenaOpponents`.
+    pub(super) arena: ([u64; 5], [u64; 5], usize),
     /// The object manager's lookup.
     pub(super) held: H,
     /// A held unit's aura table, by guid.
@@ -168,6 +179,7 @@ impl UnitAuras {
             focus,
             vehicle,
             boss,
+            arena,
             held,
             table_of,
             buffs_visible,
@@ -202,10 +214,12 @@ impl UnitAuras {
         fill_group(&mut g, group, me, &held);
         g.boss.clear();
         g.boss.extend_from_slice(boss);
+        (g.arena, g.arena_pets, g.arena_count) = arena;
         g.held.clear();
         walk.clear();
         walk.extend([me, pet, vehicle, target, mouseover, npc, focus].map(|g| (g, false)));
         walk.extend(boss.iter().map(|&g| (g, false)));
+        walk.extend(arena.0.iter().chain(&arena.1).map(|&g| (g, false)));
         walk.extend(g.party.iter().chain(&g.party_pets).map(|&g| (g, true)));
         walk.extend(g.raid.iter().chain(&g.raid_pets).map(|&g| (g, true)));
         while let Some((guid, record_ok)) = walk.pop() {

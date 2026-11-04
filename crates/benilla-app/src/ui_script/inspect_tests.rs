@@ -432,7 +432,7 @@ fn shipped_inspect_frame_drives_end_to_end() {
 
     // Closing plays its sound and calls `ClearInspectPlayer`, which stops the app's inspect feed.
     assert!(
-        !s.take_inspect_clear(),
+        s.take_inspect_clear().is_none(),
         "ClearInspectPlayer not called while open"
     );
     s.run(r#"HideUIPanel(InspectFrame)"#).unwrap();
@@ -443,7 +443,7 @@ fn shipped_inspect_frame_drives_end_to_end() {
         "closing plays igCharacterInfoClose"
     );
     assert!(
-        s.take_inspect_clear(),
+        s.take_inspect_clear().is_some(),
         "closing called ClearInspectPlayer (the ref's InspectFrame_OnHide)"
     );
     assert!(s.errors().is_empty(), "close errors: {:?}", s.errors());

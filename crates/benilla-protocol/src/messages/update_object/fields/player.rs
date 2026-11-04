@@ -595,6 +595,12 @@ impl ObjectFields {
         self.get_u32(FIELD_PLAYER_BYTES_3)
             .map(|b| ((b >> 24) & 0xff) as u8)
     }
+    /// `PLAYER_BYTES_3` byte 3 as 12340 reads it: the arena team side, which a player streamed
+    /// into an arena is compared against our own to make it an opponent (`0x6e830f`).
+    pub fn player_arena_faction(&self) -> Option<u8> {
+        self.get_u32(FIELD_PLAYER_BYTES_3)
+            .map(|b| ((b >> 24) & 0xff) as u8)
+    }
     /// `PLAYER_BYTES_3` byte 2 (public): the city-protector title, a race id (`Player.h:354`);
     /// `UnitPVPName` appends `PVP_MEDAL<n>` when nonzero. vmangos never writes it.
     pub fn player_pvp_medal(&self) -> Option<u8> {

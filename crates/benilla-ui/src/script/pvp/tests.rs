@@ -827,6 +827,12 @@ fn the_intent_queues_drain_and_the_honor_query_refuses_to_double_up() {
     s.eval::<()>("RequestInspectHonorData()").unwrap();
     assert_eq!(s.take_inspect_honor_requests(), 1);
 
+    // `ClearInspectPlayer` drops the latch at once (`0x5e78b8`), so the same chunk asks again.
+    s.set_inspect_honor(Some(inspect_state()));
+    s.eval::<()>("ClearInspectPlayer() RequestInspectHonorData()")
+        .unwrap();
+    assert_eq!(s.take_inspect_honor_requests(), 1);
+
     // The binding answers zero Lua values on every one of those paths.
     assert_eq!(s.arity("RequestInspectHonorData()").unwrap(), 0);
 

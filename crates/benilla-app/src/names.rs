@@ -55,6 +55,9 @@ pub(crate) struct NameCache {
     /// for an unstreamed subject. Present only when the server answered: a name learned otherwise
     /// (our own, seeded at login) has no entry, never a zero triple.
     player_traits: HashMap<u64, (u8, u8, u8)>,
+    /// A non-empty realm from `SMSG_NAME_QUERY_RESPONSE` (the record's `+0x34`): a player from
+    /// another realm of the battlegroup.
+    player_realms: HashMap<u64, String>,
     /// A `None` answer is an entry the server flagged unknown.
     creatures: QueryCache<u32, CreatureRecord>,
     /// No negative entry: the server answers for a live pet or says nothing.
@@ -247,6 +250,7 @@ impl NameCache {
             Some(t) => self.player_traits.insert(guid, t),
             None => self.player_traits.remove(&guid),
         };
+        self.player_realms.remove(&guid);
         self.players
             .insert(guid, (!name.is_empty()).then_some(name));
         self.generation = self.generation.wrapping_add(1);
@@ -258,6 +262,7 @@ impl NameCache {
     pub(crate) fn clear_world_session(&mut self) {
         self.players.clear();
         self.player_traits.clear();
+        self.player_realms.clear();
         self.pets.clear();
         self.generation = self.generation.wrapping_add(1);
     }
@@ -366,7 +371,25 @@ impl NameCache {
     pub(crate) fn invalidate_player(&mut self, guid: u64) {
         self.players.evict(guid);
         self.player_traits.remove(&guid);
+        self.player_realms.remove(&guid);
         self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// Files the answer's realm after [`Self::insert_player`]; an empty one is our own realm.
+    pub(crate) fn set_player_realm(&mut self, guid: u64, realm: String) {
+        if !realm.is_empty() {
+            self.player_realms.insert(guid, realm);
+        }
+    }
+
+    /// A player's name as the reference's realm-aware callers format it: `name-realm` when the
+    /// record holds a realm (`"%s-%s"`, `0x54b58a`), else the bare name. Asks once on a miss.
+    pub(crate) fn full_name(&self, guid: u64, commands: &NetCommands) -> Option<String> {
+        let name = self.resolve(guid, commands)?;
+        Some(match self.player_realms.get(&guid) {
+            Some(realm) => format!("{name}-{realm}"),
+            None => name.to_string(),
+        })
     }
 }
 
@@ -392,12 +415,14 @@ pub(crate) mod net {
         if let SessionEvent::PlayerName {
             guid,
             name,
+            realm,
             race,
             class,
             gender,
         } = ev
         {
             player_name(guid, name, race, class, gender, &mut names);
+            names.set_player_realm(guid, realm);
         }
     }
 
@@ -668,6 +693,30 @@ mod tests {
             rx.try_recv(),
             Ok(ClientCommand::NameQuery { guid: 0x11 })
         ));
+    }
+
+    /// `"%s-%s"` (`0x54b58a`): a realm from the answer suffixes the name, an empty one does not,
+    /// and a name learned otherwise drops the old realm.
+    #[test]
+    fn the_full_name_carries_the_answers_realm() {
+        let (cmds, _rx) = commands();
+        let mut cache = NameCache::default();
+        cache.insert_player(0x11, "Moamtester".into(), Some((1, 2, 0)));
+        cache.set_player_realm(0x11, String::new());
+        assert_eq!(cache.full_name(0x11, &cmds).as_deref(), Some("Moamtester"));
+        cache.insert_player(0x12, "Aldric".into(), Some((1, 2, 0)));
+        cache.set_player_realm(0x12, "Icecrown".into());
+        assert_eq!(
+            cache.full_name(0x12, &cmds).as_deref(),
+            Some("Aldric-Icecrown")
+        );
+        cache.insert_player(0x12, "Aldric".into(), None);
+        assert_eq!(cache.full_name(0x12, &cmds).as_deref(), Some("Aldric"));
+        assert_eq!(
+            cache.full_name(0x13, &cmds),
+            None,
+            "unknown: asked, not named"
+        );
     }
 
     #[test]

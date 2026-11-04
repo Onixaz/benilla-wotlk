@@ -144,9 +144,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetNumBattlefieldVehicles",
         lua.create_function(|_, ()| Ok(0))?,
     )?;
-    // GetNumArenaOpponents() (`0x54a2c0`): the opponent slots filled; benilla tracks no arena
-    // opponent yet (#90), so 0.
-    g.set("GetNumArenaOpponents", lua.create_function(|_, ()| Ok(0))?)?;
+    // GetNumArenaOpponents() (`0x54a2c0`): the leading opponent slots holding an opponent or a pet
+    // (`0x549630`), pushed with the unit tokens.
+    g.set(
+        "GetNumArenaOpponents",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(model.unit_guids.arena_count as i64)
+        })?,
+    )?;
     g.set(
         "GetBattlefieldVehicleInfo",
         lua.create_function(|lua, index: Value| {

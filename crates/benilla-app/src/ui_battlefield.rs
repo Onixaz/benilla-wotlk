@@ -140,6 +140,11 @@ impl BattlefieldQueue {
         self.active.map(|_| self.active_map)
     }
 
+    /// Our arena side from the active status, which a streamed player's is compared against.
+    pub(crate) fn arena_faction(&self) -> u8 {
+        self.arena_faction
+    }
+
     /// The active slot's queue word, `LeaveBattlefield`'s payload, 0 with none (`0x54c26c`).
     fn active_queue(&self) -> u64 {
         self.active
@@ -526,7 +531,7 @@ fn feed_battlemaster_rows(
 
 /// The VM's pushes and the handlers' lines and events.
 #[allow(clippy::too_many_arguments)]
-fn feed_battlefield(
+pub(crate) fn feed_battlefield(
     script: Option<NonSendMut<UiScript>>,
     mut state: ResMut<Battlefield>,
     mut queue: ResMut<BattlefieldQueue>,
@@ -643,7 +648,8 @@ fn feed_battlefield(
     }
     let pending = std::mem::take(&mut state.players);
     for (guid, joined) in pending {
-        let Some(name) = names.resolve(guid, &commands).map(str::to_string) else {
+        // `name-realm` for a player from another realm (`0x54b55a`-`0x54b58a`).
+        let Some(name) = names.full_name(guid, &commands) else {
             state.players.push((guid, joined));
             continue;
         };
@@ -852,17 +858,7 @@ mod net {
             .net_handler(K::BattlegroundPlayer, on_packet)
             .net_handler(K::BattlefieldPortDenied, on_packet)
             .net_handler(K::BattlefieldMgr, on_packet)
-            .net_handler(K::ArenaUnitDestroyed, on_arena_unit_destroyed)
             .net_handler(K::Disconnected, on_session_end);
-    }
-
-    /// `SMSG_ARENA_UNIT_DESTROYED` (`0x54b5e0`), in an arena, fires `ARENA_OPPONENT_UPDATE` for the
-    /// opponent or pet slot holding the guid. No opponent slot is tracked (the `arenaN` tokens, #90), so no
-    /// slot matches and nothing fires, as the reference does for an unknown guid.
-    fn on_arena_unit_destroyed(In(ev): In<SessionEvent>) {
-        if let SessionEvent::ArenaUnitDestroyed(guid) = ev {
-            debug!("ui_battlefield: arena unit {guid:#x} destroyed — no opponent slot holds it");
-        }
     }
 
     /// The queue and the session end with the session, as the game's start (`0x54e720`) zeroes them

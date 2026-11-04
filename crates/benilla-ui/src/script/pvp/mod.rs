@@ -507,8 +507,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // The reference bails silently if data is held, if a query is in flight (`pending`) or if the
     // target guid is 0. The first two are here; the guid is the app's, which drops a request with
     // no target. Our `pending` latches on queue, not send, so a dropped request holds it until the
-    // next `set_inspect_honor`, which `ClearInspectPlayer` calls as the reference clears the
-    // engine's.
+    // next `set_inspect_honor` or `ClearInspectPlayer`, which clears both at once as the
+    // reference's does.
     g.set(
         "RequestInspectHonorData",
         lua.create_function(|lua, ()| {

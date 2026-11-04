@@ -511,6 +511,8 @@ pub enum ServerPacket {
     NameQueryResponse {
         guid: u64,
         name: String,
+        /// The player's realm, empty for one on ours; the name cache keeps it (record `+0x34`).
+        realm: String,
         race: u32,
         gender: u32,
         class: u32,
