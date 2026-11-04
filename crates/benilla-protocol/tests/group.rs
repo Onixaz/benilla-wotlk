@@ -746,9 +746,30 @@ fn party_member_stats_offline_miss_is_status_only() {
         ServerPacket::PartyMemberStats { guid, full, info } => {
             assert_eq!(*guid, 0x5C);
             assert!(*full);
+            assert!(!info.arena_opponent);
             assert_eq!(info.status, Some(member_status::OFFLINE.into()));
             assert_eq!(info.cur_hp, None);
         }
+        other => panic!("expected PartyMemberStats, got {}", other.name()),
+    }
+}
+
+/// `_FULL`'s leading byte (`0x6cf9d2`): any nonzero value marks an arena opponent; the plain
+/// opcode has no such byte.
+#[test]
+fn party_member_stats_full_keeps_the_arena_byte() {
+    let body = hx(concat!("02", "015c", "01000000", "0100"));
+    match parse_stats(opcode::SMSG_PARTY_MEMBER_STATS_FULL, &body) {
+        ServerPacket::PartyMemberStats { guid, info, .. } => {
+            assert_eq!(guid, 0x5C);
+            assert!(info.arena_opponent);
+            assert_eq!(info.status, Some(1));
+        }
+        other => panic!("expected PartyMemberStats, got {}", other.name()),
+    }
+    let body = hx(concat!("015c", "01000000", "0100"));
+    match parse_stats(opcode::SMSG_PARTY_MEMBER_STATS, &body) {
+        ServerPacket::PartyMemberStats { info, .. } => assert!(!info.arena_opponent),
         other => panic!("expected PartyMemberStats, got {}", other.name()),
     }
 }

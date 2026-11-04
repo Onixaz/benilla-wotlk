@@ -605,6 +605,7 @@ pub(crate) struct UnitTokens<'w, 's> {
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
     quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
     encounter: Option<Res<'w, crate::ui_instance::EncounterUnits>>,
+    arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
     group: Res<'w, crate::ui_party::GroupState>,
     pub(crate) stores: Query<'w, 's, &'static ObjectStore>,
     me: Query<'w, 's, (Entity, &'static Guid), With<SelfPlayer>>,
@@ -666,12 +667,22 @@ impl UnitTokens<'_, '_> {
                 let guid = self.encounter.as_ref()?.boss(usize::try_from(row).ok()?);
                 (guid != 0).then(|| self.held(guid)).flatten()
             }
+            // The opponent slot (`0x608180`), and its pet (`0x60a2f0`).
+            UnitBase::Arena(row) | UnitBase::ArenaPet(row) => {
+                let arena = self.arena.as_ref()?;
+                let row = usize::try_from(row).ok()?;
+                let guid = if matches!(base, UnitBase::Arena(_)) {
+                    *arena.opponents().get(row)?
+                } else {
+                    let index = self.index.as_ref()?;
+                    *arena
+                        .pets(&crate::ui_arena::pet_of(index, &self.stores))
+                        .get(row)?
+                };
+                (guid != 0).then(|| self.held(guid)).flatten()
+            }
             // 12340's bases the app has no unit for yet (#90).
-            UnitBase::Vehicle
-            | UnitBase::Focus
-            | UnitBase::Arena(_)
-            | UnitBase::ArenaPet(_)
-            | UnitBase::Commentator(_) => None,
+            UnitBase::Vehicle | UnitBase::Focus | UnitBase::Commentator(_) => None,
         }
     }
 
@@ -1272,12 +1283,13 @@ pub(crate) fn fire_transitions(
 }
 
 /// The sources `feed_units` snapshots besides the selection: the `"npc"` and `"questnpc"` units,
-/// and the encounter's `"bossN"`.
+/// the encounter's `"bossN"` and the arena's `"arenaN"` and `"arenapetN"`.
 #[derive(bevy::ecs::system::SystemParam)]
 struct Interactions<'w> {
     npc: Option<Res<'w, crate::ui_session::InteractNpc>>,
     quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
     encounter: Option<ResMut<'w, crate::ui_instance::EncounterUnits>>,
+    arena: Option<Res<'w, crate::ui_arena::ArenaOpponents>>,
 }
 
 fn feed_units(
@@ -1353,7 +1365,8 @@ fn feed_units(
     // The interaction NPC moves when nothing else does, and `MERCHANT_SHOW` reads `"npc"`.
     let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
         || interact.quest.as_ref().is_some_and(|r| r.is_changed())
-        || interact.encounter.as_ref().is_some_and(|r| r.is_changed());
+        || interact.encounter.as_ref().is_some_and(|r| r.is_changed())
+        || interact.arena.as_ref().is_some_and(|r| r.is_changed());
     gate::trace(
         "feed_units",
         &[
@@ -1677,14 +1690,40 @@ fn feed_units(
             Some(held.state(stores.all.get(entity).ok()?, guid))
         })
         .collect();
-    for (token, snap) in crate::ui_instance::BOSS_TOKENS.iter().zip(&bosses) {
-        let dirty = match (snap, memo.last.get(*token)) {
+    // `"arenaN"` then `"arenapetN"`: each slot's unit while held, read as `"bossN"` is.
+    let arena_guids = match (interact.arena.as_deref(), index.as_deref()) {
+        (Some(arena), Some(index)) => {
+            let pets = arena.pets(&crate::ui_arena::pet_of(index, &stores.all));
+            let mut guids = arena.opponents().to_vec();
+            guids.extend(pets);
+            guids
+        }
+        _ => vec![0; 2 * crate::ui_arena::ARENA_SLOTS],
+    };
+    let arenas: Vec<Option<UnitState>> = arena_guids
+        .iter()
+        .map(|&guid| {
+            let entity = *index.as_ref()?.0.get(&guid)?;
+            Some(held.state(stores.all.get(entity).ok()?, guid))
+        })
+        .collect();
+    let arena_tokens = || {
+        crate::ui_arena::ARENA_TOKENS
+            .into_iter()
+            .chain(crate::ui_arena::ARENA_PET_TOKENS)
+    };
+    for (token, snap) in crate::ui_instance::BOSS_TOKENS
+        .into_iter()
+        .zip(&bosses)
+        .chain(arena_tokens().zip(&arenas))
+    {
+        let dirty = match (snap, memo.last.get(token)) {
             (Some(cur), Some(prev)) => cur != prev,
             (None, None) => false,
             _ => true,
         };
         if dirty {
-            gate.audit("feed_units", "a boss snapshot");
+            gate.audit("feed_units", "a boss or arena snapshot");
             script.set_unit(token, snap.clone());
         }
     }
@@ -1697,6 +1736,7 @@ fn feed_units(
     ]
     .into_iter()
     .chain(crate::ui_instance::BOSS_TOKENS.into_iter().zip(&bosses))
+    .chain(arena_tokens().zip(&arenas))
     {
         match snap {
             Some(cur) => {

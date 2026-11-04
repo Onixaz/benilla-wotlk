@@ -540,6 +540,8 @@ pub enum SessionEvent {
     PlayerName {
         guid: u64,
         name: String,
+        /// Empty for a player on our realm.
+        realm: String,
         race: u32,
         gender: u32,
         class: u32,

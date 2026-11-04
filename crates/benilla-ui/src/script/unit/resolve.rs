@@ -3,9 +3,9 @@
 //! `UNIT_FIELD_TARGET`. Every compare folds ASCII case. The bases are 12340's (`0x60abf0`, in its
 //! compare order): `player`, `vehicle`, `pet`, `target`, `partypetN`, `partyN`, `raidpetN`,
 //! `raidN`, `bossN`, `arenapetN`, `arenaN`, `commentatorN`, `mouseover`, `focus`, then the exact
-//! `npc`, `questnpc` and `none`. The app pushes no guid for `arenaN`, `arenapetN`,
-//! `commentatorN` or `questnpc` yet, so they name nobody (#90); 12340's
-//! `pet` and `-` suffixes and its name lookup (`0x60aaa0`, `0x60a630`) are not built.
+//! `npc`, `questnpc` and `none`. The app pushes no guid for `commentatorN` or `questnpc` yet, so
+//! they name nobody (#90); 12340's `pet` and `-` suffixes and its name lookup (`0x60aaa0`,
+//! `0x60a630`) are not built.
 
 use std::collections::HashMap;
 
@@ -37,6 +37,13 @@ pub struct UnitGuids {
     pub raid_pets: Vec<u64>,
     /// `bossN`'s guid, the encounter's slot N-1 (`0x5ed710`); a slot past the end is nobody.
     pub boss: Vec<u64>,
+    /// `arenaN`'s guid, opponent slot N-1 (`0x608180`), whatever the count.
+    pub arena: [u64; 5],
+    /// `arenapetN`'s guid (`0x60a2f0`): the held opponent's pet, else the slot's pet entry.
+    pub arena_pets: [u64; 5],
+    /// `GetNumArenaOpponents` (`0x549630`), the leading slots holding an opponent or a pet; the
+    /// fan-out walks only these.
+    pub arena_count: usize,
     /// Each held unit a token can reach, to its `UNIT_FIELD_TARGET` (0 for none): the object
     /// manager's lookup with the unit typemask (`ecx = 8`) and the descriptor read a `target` hop
     /// makes. A guid missing here is not held.
@@ -222,6 +229,9 @@ impl UnitGuids {
             raid,
             raid_pets,
             boss,
+            arena,
+            arena_pets,
+            arena_count,
             held,
         } = self;
         *player == other.player
@@ -235,6 +245,9 @@ impl UnitGuids {
             && *raid == other.raid
             && *raid_pets == other.raid_pets
             && *boss == other.boss
+            && *arena == other.arena
+            && *arena_pets == other.arena_pets
+            && *arena_count == other.arena_count
             && *held == other.held
     }
 
@@ -278,11 +291,11 @@ impl UnitGuids {
             UnitBase::Mouseover => self.mouseover,
             UnitBase::Focus => self.focus,
             UnitBase::Vehicle => self.vehicle,
+            // Bounded by the five slots only (`0x608180`, `0x60a2f0`).
+            UnitBase::Arena(row) => at(&self.arena, row),
+            UnitBase::ArenaPet(row) => at(&self.arena_pets, row),
             // No guid pushed for these yet (#90).
-            UnitBase::QuestNpc
-            | UnitBase::Arena(_)
-            | UnitBase::ArenaPet(_)
-            | UnitBase::Commentator(_) => return None,
+            UnitBase::QuestNpc | UnitBase::Commentator(_) => return None,
         };
         self.follow(guid, hops)
     }
@@ -308,9 +321,8 @@ impl UnitGuids {
     }
 
     /// Every token naming `guid`, in the order 12340's unit-event fan-out lists them (`0x60bb70`):
-    /// `player`, `vehicle`, `pet`, `partyN`, `partypetN`, `raidN`, `raidpetN`, `bossN`, `target`,
-    /// `focus`, `npc`. No `target` hop and no `mouseover`. The reference also lists `arenaN` and
-    /// `arenapetN`, which this resolver has no guid for.
+    /// `player`, `vehicle`, `pet`, `partyN`, `partypetN`, `raidN`, `raidpetN`, `arenaN` or
+    /// `arenapetN`, `bossN`, `target`, `focus`, `npc`. No `target` hop and no `mouseover`.
     pub(crate) fn tokens_naming(&self, guid: u64) -> Vec<String> {
         let mut out = Vec::new();
         if guid == 0 {
@@ -335,6 +347,17 @@ impl UnitGuids {
                 if g == guid {
                     out.push(format!("{prefix}{}", i + 1));
                 }
+            }
+        }
+        // Over the counted slots, an opponent tested before its pet, the first match ending it.
+        for i in 0..self.arena_count.min(self.arena.len()) {
+            if self.arena[i] == guid {
+                out.push(format!("arena{}", i + 1));
+                break;
+            }
+            if self.arena_pets[i] == guid {
+                out.push(format!("arenapet{}", i + 1));
+                break;
             }
         }
         // The first slot only, as the reference's loop breaks on a match.
@@ -431,6 +454,37 @@ mod tests {
         assert_eq!(g.tokens_naming(MOB), ["boss1", "target", "npc"]);
     }
 
+    /// `arenaN` reads opponent slot N-1 whatever the count (`0x608180`); the fan-out lists the
+    /// counted slots after the raid tables and before `bossN`, an opponent ahead of its pet
+    /// (`0x60bb70`).
+    #[test]
+    fn arena_tokens_read_the_opponent_slots() {
+        const FOE: u64 = 0x55;
+        const FOE_PET: u64 = 0xF140_0000_0000_0055;
+        let mut g = guids();
+        assert_eq!(g.guid_of("arena1"), None, "no opponents");
+        g.arena = [FOE, 0, MOB, 0, 0];
+        g.arena_pets = [FOE_PET, 0, 0, 0, 0];
+        g.arena_count = 1;
+        g.held.insert(FOE, ME);
+        assert_eq!(g.guid_of("arena1"), Some(FOE));
+        assert_eq!(
+            g.guid_of("ARENA1target"),
+            Some(ME),
+            "a hop off the opponent"
+        );
+        assert_eq!(g.guid_of("arenapet1"), Some(FOE_PET));
+        assert_eq!(g.guid_of("arena3"), Some(MOB), "past the count, still read");
+        assert_eq!(g.guid_of("arena6"), None, "past the slots");
+        assert_eq!(g.tokens_naming(FOE), ["arena1"]);
+        assert_eq!(g.tokens_naming(FOE_PET), ["arenapet1"]);
+        assert_eq!(
+            g.tokens_naming(MOB),
+            ["target", "npc"],
+            "slot 3 is past the count"
+        );
+    }
+
     fn guids() -> UnitGuids {
         UnitGuids {
             player: ME,
@@ -445,6 +499,9 @@ mod tests {
             raid: vec![ME, P1, R3],
             raid_pets: vec![PET, P1_PET, 0],
             boss: Vec::new(),
+            arena: [0; 5],
+            arena_pets: [0; 5],
+            arena_count: 0,
             held: HashMap::from([
                 (ME, MOB),
                 (PET, 0),

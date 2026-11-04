@@ -45,7 +45,8 @@ pub(crate) struct DuelState {
     pub(crate) arbiter: u64,
     /// Set while the challenge popup is owed; the challenger never gets one.
     challenger: Option<u64>,
-    out_of_bounds: bool,
+    /// One bounds event per packet, in packet order: `true` for `DUEL_OUTOFBOUNDS`.
+    bounds: Vec<bool>,
     countdown: Option<Countdown>,
 }
 
@@ -80,7 +81,6 @@ impl DuelState {
         }
         self.arbiter = 0;
         self.challenger = None;
-        self.out_of_bounds = false;
         !started
     }
 
@@ -249,8 +249,9 @@ pub(crate) mod net {
         duel.apply_countdown(seconds);
     }
 
+    /// Each packet owes its event and nothing else (`0x5cf910`, `0x5cf930`).
     pub(crate) fn bounds(duel: &mut DuelState, outside: bool) {
-        duel.out_of_bounds = outside;
+        duel.bounds.push(outside);
     }
 }
 
@@ -290,30 +291,36 @@ fn feed_duel(
         }
     }
 
-    // `DUEL_FINISHED` when the arbiter clears (`0x5cfad8`).
-    let held = duel.arbiter != 0;
-    if fed.held && !held {
-        script.fire_event("DUEL_FINISHED", Vec::new());
-    }
-    fed.held = held;
-
-    // The bounds pair (`0x5cf917`, `0x5cf937`).
-    if fed.out_of_bounds != duel.out_of_bounds {
-        fed.out_of_bounds = duel.out_of_bounds;
-        let event = if duel.out_of_bounds {
-            "DUEL_OUTOFBOUNDS"
-        } else {
-            "DUEL_INBOUNDS"
-        };
+    for event in owed_events(&mut duel, fed) {
         script.fire_event(event, Vec::new());
     }
+}
+
+/// The bounds pair, one per packet (`0x5cf917`, `0x5cf937`), ahead of the completion that follows
+/// them on the wire, then `DUEL_FINISHED` when the arbiter clears (`0x5cfad8`).
+fn owed_events(duel: &mut DuelState, fed: &mut FedDuel) -> Vec<&'static str> {
+    let mut events: Vec<&'static str> = std::mem::take(&mut duel.bounds)
+        .into_iter()
+        .map(|outside| {
+            if outside {
+                "DUEL_OUTOFBOUNDS"
+            } else {
+                "DUEL_INBOUNDS"
+            }
+        })
+        .collect();
+    let held = duel.arbiter != 0;
+    if fed.held && !held {
+        events.push("DUEL_FINISHED");
+    }
+    fed.held = held;
+    events
 }
 
 /// What [`feed_duel`] last announced.
 #[derive(Default)]
 struct FedDuel {
     held: bool,
-    out_of_bounds: bool,
 }
 
 /// The duel countdown (`0x5cf870`, armed by `0x5cfa50`): a `DUEL_COUNTDOWN` system chat line on
@@ -472,6 +479,33 @@ mod tests {
             !duel.apply_complete(true),
             "a real duel ending is silent here"
         );
+    }
+
+    /// Each bounds packet fires its own event, repeats included, and a duel ending out of bounds
+    /// fires no `DUEL_INBOUNDS` (`0x5cfa90` touches no bounds state).
+    #[test]
+    fn bounds_fire_once_per_packet_and_completion_adds_none() {
+        let mut duel = DuelState::default();
+        let mut fed = FedDuel::default();
+        duel.apply_requested(0xA1, 9, Some(7));
+        assert!(owed_events(&mut duel, &mut fed).is_empty());
+
+        net::bounds(&mut duel, true);
+        net::bounds(&mut duel, true);
+        net::bounds(&mut duel, false);
+        assert_eq!(
+            owed_events(&mut duel, &mut fed),
+            ["DUEL_OUTOFBOUNDS", "DUEL_OUTOFBOUNDS", "DUEL_INBOUNDS"]
+        );
+
+        net::bounds(&mut duel, true);
+        duel.apply_complete(true);
+        assert_eq!(
+            owed_events(&mut duel, &mut fed),
+            ["DUEL_OUTOFBOUNDS", "DUEL_FINISHED"],
+            "fled: out of bounds, then the finish, and no inbounds"
+        );
+        assert!(owed_events(&mut duel, &mut fed).is_empty());
     }
 
     #[test]

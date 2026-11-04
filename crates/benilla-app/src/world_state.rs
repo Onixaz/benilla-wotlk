@@ -21,6 +21,7 @@ pub(crate) struct WorldStates {
     values: HashMap<u32, u32>,
     generation: u64,
     scope: Option<(u32, u32, u32)>,
+    owed: Vec<WorldStateEvent>,
 }
 
 impl WorldStates {
@@ -49,18 +50,65 @@ impl WorldStates {
     }
 
     /// An init's leading half (`0x548970`): records the filter and keeps every entry. The caller
-    /// applies the pairs after.
-    pub(crate) fn init_scope(&mut self, map: u32, zone: u32, area: u32) {
+    /// applies the pairs after. True when the filter moved, the only case the reference rebuilds.
+    pub(crate) fn init_scope(&mut self, map: u32, zone: u32, area: u32) -> bool {
+        let moved = self.scope != Some((map, zone, area));
         self.scope = Some((map, zone, area));
         self.generation = self.generation.wrapping_add(1);
+        moved
     }
 
     /// Writes `(id, value)` pairs, the reference's setter for both opcodes. Init's trailing
     /// `(0, 0)` is written as data; a zero value is stored, not deleted (`edx` is never tested); a
-    /// repeated key overwrites in place.
-    pub(crate) fn write(&mut self, states: &[(u32, u32)]) {
-        self.values.extend(states.iter().copied());
+    /// repeated key overwrites in place. True when any value moved (`0x549440` returns 1 only
+    /// then; a new key starts at 0), and a moved arena season owes its event (`0x5494c9`).
+    pub(crate) fn write(&mut self, states: &[(u32, u32)]) -> bool {
+        let mut moved = false;
+        for &(key, value) in states {
+            if self.values.insert(key, value).unwrap_or(0) != value {
+                moved = true;
+                if key == ARENA_SEASON {
+                    self.owed.push(WorldStateEvent::ArenaSeason);
+                }
+            }
+        }
         self.generation = self.generation.wrapping_add(1);
+        moved
+    }
+
+    /// Owes `UPDATE_WORLD_STATES`, which the packet handler fires after its writes.
+    pub(crate) fn owe_update(&mut self) {
+        self.owed.push(WorldStateEvent::Update);
+    }
+
+    pub(crate) fn has_owed(&self) -> bool {
+        !self.owed.is_empty()
+    }
+
+    /// The events owed, in packet order.
+    pub(crate) fn take_owed(&mut self) -> Vec<WorldStateEvent> {
+        std::mem::take(&mut self.owed)
+    }
+}
+
+/// The arena season's world state, `0xc77`, whose change fires `ARENA_SEASON_WORLD_STATE`.
+const ARENA_SEASON: u32 = 0xc77;
+
+/// An event a world-state packet owes the UI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorldStateEvent {
+    /// `UPDATE_WORLD_STATES`: every update, and an init that moved anything (`0x526530`).
+    Update,
+    /// `ARENA_SEASON_WORLD_STATE`, from the setter when state `0xc77` moves.
+    ArenaSeason,
+}
+
+impl WorldStateEvent {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Update => "UPDATE_WORLD_STATES",
+            Self::ArenaSeason => "ARENA_SEASON_WORLD_STATE",
+        }
     }
 }
 

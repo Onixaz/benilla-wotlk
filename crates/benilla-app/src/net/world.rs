@@ -84,18 +84,56 @@ fn weather(
 
 /// `SMSG_INIT_WORLD_STATES` and `SMSG_UPDATE_WORLD_STATE` share one setter, as in the reference.
 /// An init first records `(map, zone, area)` as the UI's display filter, then writes its pairs
-/// (`0x526530`).
+/// (`0x526530`). An update owes `UPDATE_WORLD_STATES` whatever it wrote (`0x526a17`); an init
+/// only when its filter or any pair moved (`0x5269bd`).
 fn world_states(
     scope: Option<(u32, u32, u32)>,
     states: Vec<(u32, u32)>,
     world_states: &mut WorldStates,
 ) {
+    let mut moved = scope.is_none();
     if let Some((map, zone, area)) = scope {
         debug!(
             "world states: map {map} zone {zone} area {area}, {} entries",
             states.len()
         );
-        world_states.init_scope(map, zone, area);
+        moved |= world_states.init_scope(map, zone, area);
     }
-    world_states.write(&states);
+    moved |= world_states.write(&states);
+    if moved {
+        world_states.owe_update();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world_state::WorldStateEvent::{ArenaSeason, Update};
+
+    /// `0x526530`: an update owes `UPDATE_WORLD_STATES` every time, an init only when its filter or
+    /// a value moved, and a moved arena season fires its own event from the setter first.
+    #[test]
+    fn updates_always_fire_and_inits_fire_on_a_move() {
+        let mut t = WorldStates::default();
+        world_states(Some((489, 3277, 3277)), vec![(1581, 0)], &mut t);
+        assert_eq!(t.take_owed(), [Update], "a first init moves the filter");
+        world_states(Some((489, 3277, 3277)), vec![(1581, 0)], &mut t);
+        assert_eq!(t.take_owed(), [], "the same init again moves nothing");
+        world_states(Some((489, 3277, 3277)), vec![(1581, 2)], &mut t);
+        assert_eq!(t.take_owed(), [Update], "a moved value");
+        world_states(None, vec![(1581, 2)], &mut t);
+        world_states(None, vec![(1581, 2)], &mut t);
+        assert_eq!(
+            t.take_owed(),
+            [Update, Update],
+            "one per update, moved or not"
+        );
+        world_states(None, vec![(0xc77, 8)], &mut t);
+        world_states(None, vec![(0xc77, 8)], &mut t);
+        assert_eq!(
+            t.take_owed(),
+            [ArenaSeason, Update, Update],
+            "the season fires only when it moves"
+        );
+    }
 }

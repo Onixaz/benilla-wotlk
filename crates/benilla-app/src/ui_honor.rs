@@ -20,9 +20,13 @@ use benilla_ui::script::{HonorState, InspectHonorData, ScriptValue, UiScript};
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
 use crate::ui_script::{UiFeed, VmMemo};
 
-/// The inspect-honor reply held: one slot, like the reference's `HasInspectHonorData` latch.
+/// The inspect-honor replies: the one held, like the reference's `HasInspectHonorData` latch, and
+/// those arrived since the last feed, in wire order.
 #[derive(Resource, Default)]
-pub(crate) struct InspectHonor(pub(crate) Option<benilla_protocol::messages::InspectHonorStats>);
+pub(crate) struct InspectHonor {
+    pub(crate) held: Option<benilla_protocol::messages::InspectHonorStats>,
+    arrived: Vec<benilla_protocol::messages::InspectHonorStats>,
+}
 
 /// What the last push told this VM, keyed on the VM so a `/reload`'s fresh VM is told again.
 #[derive(Resource, Default)]
@@ -37,6 +41,20 @@ struct HonorFeedMemo {
     last_inspect: Option<u64>,
 }
 
+/// Each arrived reply in turn (`0x5e7a50`): one for anyone but `inspected` is dropped
+/// (`0x5e7a68`), any other is held. Returns how many were held, each one an
+/// `INSPECT_HONOR_UPDATE` (`0x5e7aee`), repeats included.
+fn take_replies(inspect: &mut InspectHonor, inspected: Option<u64>) -> usize {
+    let mut held = 0;
+    for reply in std::mem::take(&mut inspect.arrived) {
+        if Some(reply.player_guid) == inspected {
+            inspect.held = Some(reply);
+            held += 1;
+        }
+    }
+    held
+}
+
 /// The inspect-honor reply's handler; the honor award, `SMSG_PVP_CREDIT`, is the chat family's.
 mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
@@ -49,10 +67,10 @@ mod net {
         app.net_handler(SessionEventKind::InspectHonorStats, on_inspect_stats);
     }
 
-    /// A reply replaces whatever is held, whoever it is for: the reference's latch is one slot.
+    /// Queued for the feed, which matches it to the inspected player.
     fn on_inspect_stats(In(ev): In<SessionEvent>, mut inspect: ResMut<InspectHonor>) {
         if let SessionEvent::InspectHonorStats(stats) = ev {
-            inspect.0 = Some(stats);
+            inspect.arrived.push(stats);
         }
     }
 }
@@ -259,16 +277,23 @@ fn feed_honor(
         .as_deref()
         .and_then(|t| crate::ui_unit::player_token_guid(t, &selection, &group));
     if inspect_honor
-        .0
+        .held
         .as_ref()
         .is_some_and(|reply| Some(reply.player_guid) != inspected)
     {
         // Dropped from the resource, so `HasInspectHonorData` and this store agree.
-        inspect_honor.0 = None;
+        inspect_honor.held = None;
     }
-    let held = inspect_honor.0.as_ref().map(|r| r.player_guid);
-    if memo.last_inspect != held {
-        script.set_inspect_honor(inspect_honor.0.as_ref().map(|r| InspectHonorData {
+    let replies = take_replies(&mut inspect_honor, inspected);
+    let held = inspect_honor.held.as_ref().map(|r| r.player_guid);
+    // A held reply's push goes ahead of its events; a clear fires once.
+    let fires = if replies > 0 {
+        replies
+    } else {
+        usize::from(memo.last_inspect != held)
+    };
+    if fires > 0 {
+        script.set_inspect_honor(inspect_honor.held.as_ref().map(|r| InspectHonorData {
             guid: r.player_guid,
             today_hk: r.today_hk,
             today_honor: r.today_honor,
@@ -279,7 +304,9 @@ fn feed_honor(
         }));
         memo.last_inspect = held;
         // Fired on a clear too, so the pane stops showing the previous player's numbers.
-        script.fire_event("INSPECT_HONOR_UPDATE", Vec::<ScriptValue>::new());
+        for _ in 0..fires {
+            script.fire_event("INSPECT_HONOR_UPDATE", Vec::<ScriptValue>::new());
+        }
     }
 
     // --- the pane's request ------------------------------------------------------------------
@@ -377,6 +404,42 @@ mod tests {
         t.enter(PVP_TIMER, now);
         t.flags = Some(PVP_TIMER);
         assert_eq!(t.toggle_timer(now), -1);
+    }
+
+    fn reply(guid: u64, today_hk: u16) -> benilla_protocol::messages::InspectHonorStats {
+        benilla_protocol::messages::InspectHonorStats {
+            player_guid: guid,
+            highest_rank: 0,
+            today_hk,
+            yesterday_hk: 0,
+            today_honor: 0,
+            yesterday_honor: 0,
+            lifetime_hk: 0,
+        }
+    }
+
+    /// `0x5e7a50`: a reply for the inspected player is held and fires every time, a second one
+    /// for the same player included; one for anyone else is dropped.
+    #[test]
+    fn every_reply_for_the_inspected_player_is_held_and_fires() {
+        let mut inspect = InspectHonor::default();
+        inspect.arrived.push(reply(0x21, 3));
+        assert_eq!(take_replies(&mut inspect, Some(0x21)), 1);
+        inspect.arrived.push(reply(0x21, 5));
+        assert_eq!(
+            take_replies(&mut inspect, Some(0x21)),
+            1,
+            "the same player again"
+        );
+        assert_eq!(inspect.held.as_ref().map(|r| r.today_hk), Some(5));
+        inspect.arrived.push(reply(0x99, 7));
+        assert_eq!(
+            take_replies(&mut inspect, Some(0x21)),
+            0,
+            "not the inspect target"
+        );
+        assert_eq!(inspect.held.as_ref().map(|r| r.today_hk), Some(5));
+        assert!(inspect.arrived.is_empty());
     }
 
     #[test]
