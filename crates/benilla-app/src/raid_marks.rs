@@ -44,8 +44,9 @@ pub(crate) struct RaidMarks {
     live: [Option<LiveMark>; 8],
 }
 
-/// A root-level mark billboard, following its unit.
+/// A root-level mark billboard, following its unit. Like the names it casts no shadow-map shadow.
 #[derive(Component)]
+#[require(bevy::light::NotShadowCaster)]
 struct RaidMarkBillboard;
 
 /// The marker quad for one wire icon: the LUT, the atlas cell, the index list.
@@ -266,6 +267,14 @@ impl Plugin for RaidMarksPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A mark spawns out of the shadow maps, as the names do.
+    #[test]
+    fn a_mark_casts_no_shadow() {
+        let mut world = World::new();
+        let mark = world.spawn(RaidMarkBillboard).id();
+        assert!(world.get::<bevy::light::NotShadowCaster>(mark).is_some());
+    }
 
     /// Skull is Lua index 8, wire icon 7.
     #[test]

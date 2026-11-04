@@ -360,8 +360,11 @@ impl Nameplates {
     }
 }
 
-/// Marker on a plate entity (a world-pass billboard mesh, root-level, following its unit).
+/// Marker on a plate entity (a world-pass billboard mesh, root-level, following its unit). It casts
+/// no shadow-map shadow: world text draws in its own pass after the scene, in no caster query of
+/// the reference's (`0x7bb9d0`, `0x875f80`).
 #[derive(Component)]
+#[require(bevy::light::NotShadowCaster)]
 struct NamePlate;
 
 /// Deviation: a mounted plate keeps only this fraction of its seat's oscillation about a slow
@@ -926,6 +929,14 @@ fn evict_name_meshes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A plate spawns out of the shadow maps (#919): world text is no caster of the reference's.
+    #[test]
+    fn a_plate_casts_no_shadow() {
+        let mut world = World::new();
+        let plate = world.spawn(NamePlate).id();
+        assert!(world.get::<bevy::light::NotShadowCaster>(plate).is_some());
+    }
 
     /// `>` not `>=` at the knee and `0.075*d` beyond: the jump at the knee is the reference's.
     #[test]
