@@ -214,6 +214,7 @@ pub const TEARDOWN_MIN_ALPHA: f32 = 0.01;
 /// `+0x180` is `obj+0x100 · obj+0xf4` for a game object and the distance fade for a doodad), for
 /// the consumers that cannot read a `MeshTag`: particles and ribbons. Missing reads `1.0`.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[component(storage = "SparseSet")]
 pub struct ModelAlpha(pub f32);
 
 /// A fade the game declares on an instance root (an aura's ramp, stealth, a ghost form); the engine

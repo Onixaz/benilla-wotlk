@@ -96,6 +96,7 @@ fn resolve_glow(
 /// The resolve inputs outside the descriptor and global caches. Skipping a unit on them is sound
 /// only while every other input of the rebuild is a store field or a catalog fixed after load.
 #[derive(Component, Clone, Copy, PartialEq)]
+#[component(storage = "SparseSet")]
 pub(in crate::entities) struct ResolveKey {
     committed_sheath: u8,
     visual_sheath: Option<[u8; 2]>,
@@ -108,6 +109,7 @@ pub(in crate::entities) struct ResolveKey {
 /// or hides one does not move it. Left out: the nocked ammo and quiver, which raise no model event,
 /// and what no sheath moves, read off the mirrored geometry.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+#[component(storage = "SparseSet")]
 pub(crate) struct DressKey {
     /// The body the widget duplicates.
     pub(crate) display_id: Option<u32>,

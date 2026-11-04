@@ -52,6 +52,7 @@ pub struct PlayerWmoRoom(pub Option<WmoRoom>);
 /// The WMO room a remote unit stands in, its own liquid claim, re-rayed only when the unit moves
 /// or a building streams in or out.
 #[derive(Component, Clone, Copy, Default, PartialEq)]
+#[component(storage = "SparseSet")]
 pub struct UnitWmoRoom {
     room: Option<WmoRoom>,
     /// Where the claim was last sampled, and the WMO-residency generation then: the re-test gate.

@@ -1034,6 +1034,7 @@ pub(crate) struct CreatureSwimming;
 
 /// The last ground clamp this unit took: its seat and the cast gate's inputs, each compared by bit.
 #[derive(Component, Clone, Copy)]
+#[component(storage = "SparseSet")]
 pub(crate) struct GroundClamped {
     /// Where the last cast stood.
     xz: [f32; 2],

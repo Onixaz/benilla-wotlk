@@ -45,6 +45,7 @@ pub(crate) enum AuraNode {
 /// and its alpha ramp. On the net entity root: the reference keeps one per unit object, and every
 /// attached model renders off its owner's.
 #[derive(Component, Debug, Default)]
+#[component(storage = "SparseSet")]
 pub(crate) struct AuraNodes {
     /// Proc-14 `(spell id, factor)` nodes, newest first, as the reference links at the head.
     alpha: Vec<(u32, f32)>,

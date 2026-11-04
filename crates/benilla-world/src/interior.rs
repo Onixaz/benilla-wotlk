@@ -109,12 +109,14 @@ enum AppliedLaw {
 /// light collector (`[item+0x3b8]=[wearer+0x3b8]`). For a [`ContainmentAttach`] anchor it is also
 /// the attach point, the reference's `[node+0x5c]`.
 #[derive(Component, Clone, Copy)]
+#[component(storage = "SparseSet")]
 pub struct BodyBakeCenter(pub Vec3);
 
 /// This anchor's node takes the containment attach from its bounding-box centre, not the down-ray
 /// from its position: `[node+0x90]` bit 13, set from the TYPEMASK at node creation for GameObjects
 /// alone, which the attach forks on. A GameObject's origin often sits at or under its own floor.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub struct ContainmentAttach;
 
 /// A part's net entity root, its anchor; bevy keeps the anchor's [`LitParts`] in step.
@@ -125,6 +127,7 @@ pub struct ClassifiedBy(pub Entity);
 /// An anchor's parts, maintained by [`ClassifiedBy`]; never edited by hand.
 #[derive(Component)]
 #[relationship_target(relationship = ClassifiedBy)]
+#[component(storage = "SparseSet")]
 pub struct LitParts(Vec<Entity>);
 
 /// A lit particle emitter's anchor, the net entity root whose light node it draws under. The
@@ -138,22 +141,26 @@ pub struct EmitterLitBy(pub Entity);
 /// An anchor's lit emitters, maintained by [`EmitterLitBy`]; never edited by hand.
 #[derive(Component)]
 #[relationship_target(relationship = EmitterLitBy)]
+#[component(storage = "SparseSet")]
 pub struct LitEmitters(Vec<Entity>);
 
 /// The constant a lit particle of this anchor multiplies by: the anchor's whole committed term
 /// (`ambient + 0.9·diffuse + Σ lamps`) along world up, a particle quad's only normal (one constant
 /// per draw). Present only on the Bake law; absent, the scene's light.
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
+#[component(storage = "SparseSet")]
 pub struct ParticleLight(pub [f32; 3]);
 
 /// The ambient word alone (`GroundShade::ambient`, ramping toward `cap96(MOCV)`), for a draw whose
 /// vertex format has no normal and so evaluates only `Σ ambient × colour`: the weapon trail, lit by
 /// its wearer's node. Present only on the Bake law; outdoors the day/night ambient applies.
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
+#[component(storage = "SparseSet")]
 pub struct NodeAmbient(pub [f32; 3]);
 
 /// An anchor's classification: its parts' law and room, and the movement/residency re-test gate.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub struct InteriorAnchor {
     law: AppliedLaw,
     /// The attach's room, `None` outside; kept while settled, as its fog gate tracks the camera.
@@ -293,6 +300,7 @@ impl Plugin for InteriorPlugin {
 /// The bake fold's ray products on the anchor, refolded without a new ray while the node's ramps
 /// still move and the entity does not.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub struct BakeState {
     /// floor-168 of the footprint MOCV (0..1): the fold's diffuse, before the node intensity.
     word: Vec3,

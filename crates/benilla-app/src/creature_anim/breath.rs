@@ -56,6 +56,7 @@ enum Breath {
 
 /// A unit's cached classification and its `[unit+0xc18]` expiry.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(crate) struct BreathEnv {
     kind: Breath,
     stale_at: f32,

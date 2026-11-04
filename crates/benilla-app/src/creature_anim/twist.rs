@@ -8,6 +8,7 @@ use bevy::prelude::*;
 /// The twist state, on a unit's root when its model has either key bone (the client's
 /// `[+0xd58] & 0x80`/`0x100`).
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(crate) struct BodyTwist {
     /// `wrap(aim − rendered root yaw)` in radians; zero while the body faces its aim.
     pub(crate) yaw_gap: f32,

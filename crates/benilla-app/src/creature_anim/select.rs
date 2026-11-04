@@ -190,6 +190,7 @@ pub(crate) fn swim_body_rotation(yaw: f32, flags: u32, pitch: f32) -> Quat {
 
 /// The per-frame movement state the selector reads.
 #[derive(Component, Clone, Copy, Default)]
+#[component(storage = "SparseSet")]
 pub(crate) struct MovementState {
     /// Live directional speed (yd/s); for a swimmer the flag-scalar swim speed whatever its pitch.
     pub(crate) speed: f32,

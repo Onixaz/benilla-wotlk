@@ -22,6 +22,7 @@ const SCALE_EASE_SECS: f32 = 2.0;
 
 /// The display id the visual was built with, cube included: [`refresh_live_display`]'s diff key.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(super) struct AppliedDisplay(pub(super) Option<u32>);
 
 /// A live display swap tore this entity's visual down. The reference's rebuild ends by replaying

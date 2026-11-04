@@ -61,6 +61,7 @@ const MAX_SUBDIVISIONS: usize = 256;
 /// `SMSG_SPELL_GO` fill on a predicate still untraced; here it always fills. Unstreamed targets are
 /// left out, as the reference hides a hop it cannot place.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(crate) struct ChainHops(pub(crate) Vec<Entity>);
 
 /// One hop of a live beam, the reference's 16-byte `Bolt`, whose `idxA`/`idxB` are always
