@@ -11,22 +11,40 @@
 //!   its depth range [1, 4000] (`0x7bac10`). The shadow sun is the map light's direction with its
 //!   z scaled by 5 and clamped at −1.2, then normalised (`0x7bb570`).
 //!
+//! - What casts (`0x7bb9d0`, `0x7bc890`, `0x7bcf20`; `0x7bbc50` draws map-object groups and M2
+//!   batches alone, so terrain never casts): a map entity (a unit or GameObject) whose bounding
+//!   sphere reaches the band's floor of 0.25, 2 or 10 yd; a WMO group flagged exterior; doodads.
+//!   Modes 3 and 4 keep units out of the bands (query flags 8); mode 5 lets each band skip what
+//!   lies wholly inside the next-inner map's box, which holds it already.
+//! - Modes 3 and 4 keep each band's map until its viewer moves past the update distance, double
+//!   buffered and redrawn over 9 or 25 frames; mode 5 redraws every band every frame.
+//!
 //! Here one `DirectionalLight` carries the maps as cascades: cascade 0 the dynamic map, cascades
 //! 1 to 3 the bands. Bevy fits cascades to the camera frustum; [`place_cascades`] replaces them with
 //! the reference's viewer-centred boxes. The receivers (`wow_shadow.wgsl`) read the cascades
 //! themselves, so nothing of Bevy's PBR shadow lookup runs. At mode 0 no light exists, and Bevy's
 //! light passes stay gated off (`world_plugins`).
+//!
+//! A held band ([`ShadowPlan`]) takes no casters and its layer is loaded, not cleared, so it keeps
+//! the map it last drew under the matrix it drew it with. One held band redraws per frame at most,
+//! whole, in place of the reference's tiles into a back buffer. Deviation: a still viewer's band
+//! also redraws every [`BAND_REFRESH_SECS`], so casters that stream in or leave after the band was
+//! drawn reach it; the reference redraws on movement alone.
 
-use bevy::camera::primitives::CascadesFrusta;
+use bevy::camera::primitives::{Aabb, CascadesFrusta, Frustum, HalfSpace};
+use bevy::camera::visibility::CascadesVisibleEntities;
 use bevy::light::cascade::{build_directional_light_cascades, Cascade};
 use bevy::light::{
     CascadeShadowConfig, Cascades, DirectionalLightShadowMap, NotShadowCaster,
     SimulationLightSystems,
 };
 use bevy::prelude::*;
+use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
+use benilla_formats::ModelBlend;
 
+use crate::model_render::{ModelKind, ModelPart};
 use crate::view::{Viewer, WorldCamera};
 use crate::world_unit::WorldUnit;
 
@@ -57,6 +75,15 @@ pub const BAND_RADIUS: [f32; 3] = [40.0, 160.0, 640.0];
 pub const BAND_UPDATE_DIST_SQ: [f32; 3] = [4.0, 16.0, 1024.0];
 /// The world grid each band snaps to at mode 5 (`0x874890`).
 pub const BAND_CELL: [f32; 3] = [2.0, 4.0, 16.0];
+/// The smallest bounding-sphere radius a map entity casts with into the dynamic map and each band
+/// (`0x7bb9d0`, `0x7ba8f0`); doodads and map objects take no floor.
+pub(crate) const DYN_MIN_RADIUS: f32 = 0.25;
+pub(crate) const BAND_MIN_RADIUS: [f32; 3] = [0.25, 2.0, 10.0];
+/// The longest a held band goes undrawn at modes 3 and 4 (module note, "Deviation").
+pub(crate) const BAND_REFRESH_SECS: [f32; 3] = [0.25, 0.5, 1.0];
+/// A held band redraws once the shadow sun turns more than about half a degree from the one it was
+/// drawn under.
+const BAND_SUN_COS: f32 = 0.99996;
 /// The map eye's distance back along the shadow sun, and the depth range (`0x7bac10`).
 const EYE_BACK: f32 = 2000.0;
 const DEPTH_NEAR: f32 = 1.0;
@@ -146,21 +173,71 @@ pub fn map_cascade(center: Vec3, radius: f32, dir: Vec3, size: usize) -> Cascade
     }
 }
 
+/// Whether a world-space box (centre, half extents) lies wholly inside a map's box across the
+/// light: the band out from it leaves such a caster to this map (`CullInv`, `0x874890`).
+pub(crate) fn inside_map(clip_from_world: &Mat4, center: Vec3, half: Vec3) -> bool {
+    let c = clip_from_world.project_point3(center);
+    // The map is orthographic: clip xy is affine in world, so the box's reach is |M₃ₓ₃|·h.
+    let m = clip_from_world.to_cols_array_2d();
+    let reach =
+        |row: usize| m[0][row].abs() * half.x + m[1][row].abs() * half.y + m[2][row].abs() * half.z;
+    c.x.abs() + reach(0) <= 1.0 && c.y.abs() + reach(1) <= 1.0
+}
+
 /// The light carrying the maps, while a mode past 0 is set.
 #[derive(Component)]
 struct ShadowLight;
 
-/// The bands' held centres at modes 3 and 4.
+/// A band as last drawn at modes 3 and 4: its centre, the shadow sun and when.
+#[derive(Clone, Copy)]
+struct HeldBand {
+    center: Vec3,
+    dir: Vec3,
+    at: f32,
+}
+
+/// The bands' held maps at modes 3 and 4; `None` until drawn.
 #[derive(Resource, Default)]
-struct HeldBands([Option<Vec3>; 3]);
+struct HeldBands([Option<HeldBand>; 3]);
+
+/// What the maps take this frame, set with the cascades and read by every caster pass.
+#[derive(Resource, Clone, Copy, PartialEq, ExtractResource)]
+pub(crate) struct ShadowPlan {
+    /// Per cascade, drawn this frame; a held band keeps the map it drew last.
+    draw: [bool; 4],
+    /// Mode 5: a band skips a caster wholly inside the next-inner map's box (`0x874890`).
+    pub(crate) exclude_inner: bool,
+    /// Modes 3 and 4: the bands take no map entity (query flags 8).
+    bands_static: bool,
+}
+
+impl Default for ShadowPlan {
+    fn default() -> Self {
+        Self {
+            draw: [true; 4],
+            exclude_inner: false,
+            bands_static: false,
+        }
+    }
+}
+
+impl ShadowPlan {
+    /// Whether cascade `i` is drawn this frame.
+    pub(crate) fn draws(&self, i: usize) -> bool {
+        self.draw.get(i).copied().unwrap_or(true)
+    }
+}
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<ExtShadowQuality>()
         .init_resource::<HeldBands>()
+        .init_resource::<ShadowPlan>()
+        .add_plugins(ExtractResourcePlugin::<ShadowPlan>::default())
         .add_systems(
             PostUpdate,
             (
                 sync_shadow_light.run_if(resource_changed::<ExtShadowQuality>),
+                mute_blended_parts,
                 mute_world_casters.run_if(caster_set_due),
                 aim_shadow_light.run_if(light_exists),
             )
@@ -180,7 +257,39 @@ pub(crate) fn plugin(app: &mut App) {
                 .run_if(light_exists)
                 .after(SimulationLightSystems::UpdateLightFrusta)
                 .before(SimulationLightSystems::CheckLightVisibility),
+        )
+        .add_systems(
+            PostUpdate,
+            trim_band_casters
+                .run_if(light_exists)
+                .after(SimulationLightSystems::CheckLightVisibility),
         );
+    if let Some(render_app) = app.get_sub_app_mut(bevy::render::RenderApp) {
+        render_app.add_systems(
+            bevy::render::Render,
+            keep_held_maps.in_set(bevy::render::RenderSystems::PrepareResources),
+        );
+    }
+}
+
+/// A held band's layer loads instead of clearing, so the map it drew last survives the frame.
+/// Bevy hands the light the same cached array texture each frame while its shape holds; a new
+/// shape comes with a mode change, which redraws every band.
+fn keep_held_maps(
+    plan: Option<Res<ShadowPlan>>,
+    mut views: Query<(&mut bevy::pbr::ShadowView, &bevy::pbr::LightEntity)>,
+) {
+    let Some(plan) = plan else {
+        return;
+    };
+    for (mut view, light) in &mut views {
+        if let bevy::pbr::LightEntity::Directional { cascade_index, .. } = light {
+            if !plan.draws(*cascade_index) {
+                let target = view.depth_attachment.view.clone();
+                view.depth_attachment = bevy::render::texture::DepthAttachment::new(target, None);
+            }
+        }
+    }
 }
 
 fn light_exists(lights: Query<(), With<ShadowLight>>) -> bool {
@@ -244,13 +353,17 @@ fn aim_shadow_light(
     }
 }
 
-/// Replace Bevy's frustum-fitted cascades with the reference's maps about the viewer.
+/// Replace Bevy's frustum-fitted cascades with the reference's maps about the viewer, and decide
+/// which maps draw this frame.
+#[allow(clippy::too_many_arguments)]
 fn place_cascades(
     quality: Res<ExtShadowQuality>,
     lighting: Res<crate::lighting::WowLighting>,
     viewer: Res<Viewer>,
+    time: Res<Time<Real>>,
     camera: Query<&GlobalTransform, With<WorldCamera>>,
     mut held: ResMut<HeldBands>,
+    mut plan: ResMut<ShadowPlan>,
     mut lights: Query<&mut Cascades, With<ShadowLight>>,
 ) {
     let mode = quality.0.min(SHADOW_MODE_MAX);
@@ -262,25 +375,65 @@ fn place_cascades(
     };
     let size = shadow_map_size(mode);
     let dir = shadow_light_dir(lighting.sun_dir);
+    let now = time.elapsed_secs();
+    let mut next = ShadowPlan {
+        draw: [true; 4],
+        exclude_inner: mode >= 5,
+        bands_static: has_bands(mode) && mode < 5,
+    };
     let mut maps = Vec::with_capacity(4);
     maps.push(map_cascade(dyn_center(at, size), DYN_RADIUS, dir, size));
     if has_bands(mode) {
+        let redraw = if mode >= 5 {
+            [true; 3]
+        } else {
+            bands_to_draw(&held.0, at, dir, now)
+        };
         for (band, &radius) in BAND_RADIUS.iter().enumerate() {
-            let center = if mode >= 5 {
-                snapped_band_center(at, band)
+            let (center, band_dir) = if mode >= 5 {
+                (snapped_band_center(at, band), dir)
             } else {
-                let c = held_band_center(held.0[band], at, band);
-                held.0[band] = Some(c);
-                c
+                if redraw[band] {
+                    let center = held_band_center(held.0[band].map(|h| h.center), at, band);
+                    held.0[band] = Some(HeldBand {
+                        center,
+                        dir,
+                        at: now,
+                    });
+                }
+                let h = held.0[band].expect("a band is drawn before it is held");
+                (h.center, h.dir)
             };
-            maps.push(map_cascade(center, radius, dir, size));
+            next.draw[band + 1] = redraw[band];
+            maps.push(map_cascade(center, radius, band_dir, size));
         }
     }
+    plan.set_if_neq(next);
     for mut cascades in &mut lights {
         for view in cascades.cascades.values_mut() {
             view.clone_from(&maps);
         }
     }
+}
+
+/// Which held bands draw this frame at modes 3 and 4: every band not yet drawn, and at most one
+/// more, the innermost whose viewer moved past its update distance (`0x874890`) or whose sun
+/// turned, else the innermost due its refresh.
+fn bands_to_draw(held: &[Option<HeldBand>; 3], at: Vec3, dir: Vec3, now: f32) -> [bool; 3] {
+    let mut draw = held.map(|h| h.is_none());
+    let moved = |b: usize| {
+        held[b].is_some_and(|h| {
+            h.center.distance_squared(at) > BAND_UPDATE_DIST_SQ[b] || h.dir.dot(dir) < BAND_SUN_COS
+        })
+    };
+    let stale = |b: usize| held[b].is_some_and(|h| now - h.at >= BAND_REFRESH_SECS[b]);
+    if let Some(b) = (0..3)
+        .find(|&b| moved(b))
+        .or_else(|| (0..3).find(|&b| stale(b)))
+    {
+        draw[b] = true;
+    }
+    draw
 }
 
 /// Texels of padding around a narrowed cull rect, for the receivers' filter taps.
@@ -291,8 +444,12 @@ const CULL_PAD_TEXELS: f32 = 4.0;
 /// the rect of it the camera's frustum covers along the light gathers casters, since a receiver on
 /// screen samples only there. Bevy culls with `CascadesFrusta` and renders with `Cascades`, so this
 /// rewrites the former after Bevy builds it.
+///
+/// A held band takes nothing: its frustum admits no caster. A band drawn at modes 3 and 4 is kept
+/// for later frames, so it gathers its whole box, as the reference's flag-8 queries do.
 fn narrow_cascade_frusta(
     quality: Res<ExtShadowQuality>,
+    plan: Res<ShadowPlan>,
     cam: Query<(&GlobalTransform, &Projection), With<WorldCamera>>,
     mut lights: Query<(&Cascades, &mut CascadesFrusta), With<ShadowLight>>,
 ) {
@@ -308,12 +465,24 @@ fn narrow_cascade_frusta(
             let Some(view_frusta) = frusta.frusta.get_mut(view) else {
                 continue;
             };
-            for (map, frustum) in maps.iter().zip(view_frusta.iter_mut()) {
-                if let Some(narrowed) = narrowed_cull(&map.clip_from_world, &corners, pad) {
+            for (i, (map, frustum)) in maps.iter().zip(view_frusta.iter_mut()).enumerate() {
+                if !plan.draws(i) {
+                    *frustum = empty_frustum();
+                } else if i > 0 && plan.bands_static {
+                    continue;
+                } else if let Some(narrowed) = narrowed_cull(&map.clip_from_world, &corners, pad) {
                     *frustum = narrowed;
                 }
             }
         }
+    }
+}
+
+/// A frustum no box meets: every half-space lies beyond any finite box, up a unit normal (a zero
+/// normal would normalise to NaN and admit everything).
+fn empty_frustum() -> Frustum {
+    Frustum {
+        half_spaces: [HalfSpace::new(Vec4::new(0.0, 1.0, 0.0, f32::MIN)); 6],
     }
 }
 
@@ -349,6 +518,91 @@ fn narrowed_cull(
     ))
 }
 
+/// Drop from each band the casters the reference's gather leaves out of it (`0x7bb9d0`): every one
+/// in a held band; a map entity's part under the band's radius floor (the dynamic map's too) or,
+/// at modes 3 and 4, any; at mode 5 one wholly inside the next-inner map's box.
+#[allow(clippy::type_complexity)]
+fn trim_band_casters(
+    plan: Res<ShadowPlan>,
+    mut lights: Query<(&Cascades, &mut CascadesVisibleEntities), With<ShadowLight>>,
+    parts: Query<(&Aabb, &GlobalTransform, Option<&ModelPart>)>,
+    parents: Query<&ChildOf>,
+    units: Query<(&WorldUnit, &GlobalTransform)>,
+) {
+    // The map entity owning a part, and its bounding-sphere radius when its box is known.
+    let owner = |mut e: Entity, part: Option<&ModelPart>| -> Option<Option<f32>> {
+        if part.is_some_and(|p| matches!(p.kind, ModelKind::Doodad | ModelKind::Wmo)) {
+            return None;
+        }
+        loop {
+            if let Ok((unit, t)) = units.get(e) {
+                let scale = t.affine().matrix3.col(0).length();
+                return Some(
+                    unit.bound
+                        .map(|b| Vec3::from(b.half_extents).length() * unit.scale * scale),
+                );
+            }
+            e = parents.get(e).ok()?.parent();
+        }
+    };
+    for (cascades, mut visible) in &mut lights {
+        for (view, per_map) in visible.entities.iter_mut() {
+            let Some(maps) = cascades.cascades.get(view) else {
+                continue;
+            };
+            for (i, list) in per_map.iter_mut().enumerate() {
+                if !plan.draws(i) {
+                    list.entities.clear();
+                    continue;
+                }
+                let floor = i
+                    .checked_sub(1)
+                    .map_or(DYN_MIN_RADIUS, |b| BAND_MIN_RADIUS[b]);
+                let inner = (plan.exclude_inner && i > 0).then(|| maps[i - 1].clip_from_world);
+                let units_out = plan.bands_static && i > 0;
+                list.entities.retain(|&e| {
+                    let Ok((aabb, t, part)) = parts.get(e) else {
+                        return true;
+                    };
+                    if let Some(radius) = owner(e, part) {
+                        if units_out || radius.is_some_and(|r| r < floor) {
+                            return false;
+                        }
+                    }
+                    let Some(inner) = inner else {
+                        return true;
+                    };
+                    let m = t.affine().matrix3;
+                    let h = Vec3::from(aabb.half_extents);
+                    let half = Vec3::new(
+                        m.row(0).abs().dot(h.into()),
+                        m.row(1).abs().dot(h.into()),
+                        m.row(2).abs().dot(h.into()),
+                    );
+                    !inside_map(&inner, t.transform_point(aabb.center.into()), half)
+                });
+            }
+        }
+    }
+}
+
+/// A blended, Mod or Mod2x model part never casts: the reference gathers opaque and alpha-key
+/// batches alone (`0x834660`), which the caster shader also holds.
+#[allow(clippy::type_complexity)]
+fn mute_blended_parts(
+    mut commands: Commands,
+    parts: Query<(Entity, &ModelPart), (Added<ModelPart>, Without<NotShadowCaster>)>,
+) {
+    for (e, part) in &parts {
+        if matches!(
+            part.blend,
+            ModelBlend::Blend | ModelBlend::Mod | ModelBlend::Mod2x
+        ) {
+            commands.entity(e).insert(NotShadowCaster);
+        }
+    }
+}
+
 /// The caster set needs work: the mode moved, or modes 1 and 2 are keeping new meshes out.
 fn caster_set_due(quality: Res<ExtShadowQuality>) -> bool {
     quality.is_changed() || units_only(quality.0)
@@ -365,8 +619,15 @@ fn mute_world_casters(
     mut commands: Commands,
     quality: Res<ExtShadowQuality>,
     mut was_units_only: Local<bool>,
-    added: Query<Entity, (Added<Mesh3d>, Without<MutedCaster>)>,
-    unmuted: Query<Entity, (With<Mesh3d>, Without<MutedCaster>)>,
+    added: Query<
+        Entity,
+        (
+            Added<Mesh3d>,
+            Without<MutedCaster>,
+            Without<NotShadowCaster>,
+        ),
+    >,
+    unmuted: Query<Entity, (With<Mesh3d>, Without<MutedCaster>, Without<NotShadowCaster>)>,
     muted: Query<Entity, With<MutedCaster>>,
     parents: Query<&ChildOf>,
     units: Query<&WorldUnit>,
@@ -473,6 +734,52 @@ mod tests {
         // Toward the light is nearer, so deeper in reverse Z.
         assert!(ndc(center - dir * 10.0).z > mid.z);
         assert!((c.texel_size - 40.0 / 1024.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn held_bands_redraw_one_at_a_time() {
+        let dir = Vec3::NEG_Y;
+        let at = Vec3::new(10.0, 0.0, 10.0);
+        let held = |center: Vec3, t: f32| Some(HeldBand { center, dir, at: t });
+        // Nothing drawn yet: every band draws at once.
+        assert_eq!(bands_to_draw(&[None; 3], at, dir, 0.0), [true; 3]);
+        // All held and fresh: none draws.
+        let still = [held(at, 0.0); 3];
+        assert_eq!(bands_to_draw(&still, at, dir, 0.1), [false; 3]);
+        // Moved 5 yd: bands 0 and 1 are past their 2 and 4 yd, the innermost goes first.
+        let moved = at + Vec3::X * 5.0;
+        assert_eq!(bands_to_draw(&still, moved, dir, 0.1), [true, false, false]);
+        // A turned sun redraws too.
+        let turned = Vec3::new(0.1, -1.0, 0.0).normalize();
+        assert_eq!(bands_to_draw(&still, at, turned, 0.1), [true, false, false]);
+        // Still, past band 1's refresh but not band 0's (it drew later): band 1.
+        let aged = [held(at, 0.5), held(at, 0.0), held(at, 0.5)];
+        assert_eq!(bands_to_draw(&aged, at, dir, 0.6), [false, true, false]);
+    }
+
+    #[test]
+    fn inside_a_map_means_wholly_inside_its_box() {
+        let dir = shadow_light_dir(Vec3::new(0.3, -0.8, 0.2));
+        let center = Vec3::new(100.0, 20.0, -50.0);
+        let m = map_cascade(center, BAND_RADIUS[0], dir, 2048).clip_from_world;
+        assert!(inside_map(&m, center, Vec3::splat(2.0)));
+        // Any depth along the light stays inside: the box is a prism.
+        assert!(inside_map(&m, center - dir * 300.0, Vec3::splat(2.0)));
+        // Straddling the box's edge is not inside.
+        let side = map_cascade(center, BAND_RADIUS[0], dir, 2048)
+            .world_from_cascade
+            .x_axis
+            .truncate();
+        assert!(inside_map(&m, center + side * 30.0, Vec3::splat(2.0)));
+        assert!(!inside_map(&m, center + side * 39.0, Vec3::splat(2.0)));
+        assert!(!inside_map(&m, center, Vec3::splat(45.0)));
+    }
+
+    #[test]
+    fn the_empty_frustum_admits_nothing() {
+        let f = empty_frustum();
+        let aabb = Aabb::from_min_max(Vec3::splat(-1e4), Vec3::splat(1e4));
+        assert!(!f.intersects_obb(&aabb, &bevy::math::Affine3A::IDENTITY, false, true));
     }
 
     #[test]

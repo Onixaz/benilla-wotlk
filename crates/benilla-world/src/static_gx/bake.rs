@@ -285,6 +285,7 @@ fn bake_cell(items: &[GxItem], meshes: &mut Assets<Mesh>) -> render::GxCellDraw 
             sidn: item.wmo.as_ref().map_or([0; 3], |w| w.sidn),
             unified: item.wmo.as_ref().and_then(|w| w.unified),
             slot: item.prop.as_ref().and_then(|p| p.slot).unwrap_or(0),
+            casts: item.wmo.as_ref().is_none_or(|w| !w.interior),
         });
     }
     // The shader rebuilds world = v + origin. The origin is the f32-rounded centre and the

@@ -53,6 +53,9 @@ pub(crate) struct GxItemDraw {
     pub unified: Option<[u8; 3]>,
     /// The interior prop's SH-probe slot, record column w bits 1..=13; 0 elsewhere.
     pub slot: u16,
+    /// Whether the item enters the shadow maps: a WMO group's only when the group is exterior
+    /// (`MOGP & 0x48`, `0x7bc890`), every cell and prop item.
+    pub casts: bool,
 }
 
 /// One baked cell or region, published by the main-world flush.
@@ -137,6 +140,8 @@ struct GxRun {
     index_range: Range<u32>,
     /// The run's selection key; `None` for a cell run, which always draws.
     group: Option<u16>,
+    /// The items enter the shadow maps ([`GxItemDraw::casts`]).
+    casts: bool,
 }
 
 /// A region's assembled GPU state, cached until its bake (mesh handle) changes.
@@ -683,6 +688,7 @@ fn build_runs(draws: &[GxItemDraw], item_slot: &[u16], killed: &[u64]) -> Vec<Gx
                     && r.cutout == item.cutout
                     && r.two_sided == item.two_sided
                     && r.group == item.group
+                    && r.casts == item.casts
                     && r.index_range.end == item.index_range.start =>
             {
                 r.index_range.end = item.index_range.end;
@@ -693,6 +699,7 @@ fn build_runs(draws: &[GxItemDraw], item_slot: &[u16], killed: &[u64]) -> Vec<Gx
                 two_sided: item.two_sided,
                 index_range: item.index_range.clone(),
                 group: item.group,
+                casts: item.casts,
             }),
         }
     }
@@ -885,7 +892,8 @@ impl ViewNode for StaticGxNode {
 struct StaticGxShadowLabel;
 
 /// The retained statics into each shadow-map cascade of the world view, after bevy's own casters
-/// and onto their depth: every resident region whose bound meets the cascade, all its runs.
+/// and onto their depth, as the reference's map-object gather (`0x7bc890`): per region, then per
+/// group or prop set, against the cascade's cull frustum, an exterior group's runs only.
 #[derive(Default)]
 struct StaticGxShadowNode;
 
@@ -908,6 +916,10 @@ impl ViewNode for StaticGxShadowNode {
         let cache = world.resource::<GxGpuCache>();
         let pipes = world.resource::<GxPipelines>();
         let pipeline_cache = world.resource::<PipelineCache>();
+        let plan = world
+            .get_resource::<crate::ext_shadow::ShadowPlan>()
+            .copied()
+            .unwrap_or_default();
         let Some(view_bind) = world.get_resource::<GxShadowViewBind>() else {
             return Ok(());
         };
@@ -937,6 +949,20 @@ impl ViewNode for StaticGxShadowNode {
                     .filter_map(|(k, d)| cache.props.get(k).map(|g| (g, d.as_ref()))),
             )
             .collect();
+        // Each cascade's full map, the box the next band out leaves to it at mode 5.
+        let mut maps: [Option<Mat4>; 4] = [None; 4];
+        for &light_view in &lights.lights {
+            if let (Some(bevy::pbr::LightEntity::Directional { cascade_index, .. }), Some(v)) = (
+                world.get::<bevy::pbr::LightEntity>(light_view),
+                world.get::<ExtractedView>(light_view),
+            ) {
+                if let Some(slot) = maps.get_mut(*cascade_index) {
+                    *slot = v.clip_from_world;
+                }
+            }
+        }
+        // Per selection key, drawn into this cascade: scratch reused across regions.
+        let mut keys: Vec<bool> = Vec::new();
         for &light_view in &lights.lights {
             let (Some(shadow_view), Some(extracted), Some(offset)) = (
                 world.get::<bevy::pbr::ShadowView>(light_view),
@@ -945,10 +971,27 @@ impl ViewNode for StaticGxShadowNode {
             ) else {
                 continue;
             };
-            let Some(clip_from_world) = extracted.clip_from_world else {
-                continue;
+            let cascade = match world.get::<bevy::pbr::LightEntity>(light_view) {
+                Some(bevy::pbr::LightEntity::Directional { cascade_index, .. }) => *cascade_index,
+                _ => continue,
             };
-            let frustum = bevy::camera::primitives::Frustum::from_clip_from_world(&clip_from_world);
+            // A held band keeps last frame's map (`ext_shadow::ShadowPlan`).
+            if !plan.draws(cascade) {
+                continue;
+            }
+            // The cull frustum: the map narrowed to the camera (`ext_shadow`), its near plane
+            // pushed out, as a caster nearer the sun than the map's eye still casts.
+            let frustum = match world.get::<bevy::camera::primitives::Frustum>(light_view) {
+                Some(f) => *f,
+                None => match extracted.clip_from_world {
+                    Some(m) => bevy::camera::primitives::Frustum::from_clip_from_world(&m),
+                    None => continue,
+                },
+            };
+            let inner = plan
+                .exclude_inner
+                .then(|| cascade.checked_sub(1).and_then(|i| maps[i]))
+                .flatten();
             let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
                 label: Some("static_gx_shadow"),
                 color_attachments: &[],
@@ -960,9 +1003,35 @@ impl ViewNode for StaticGxShadowNode {
             });
             pass.set_bind_group(0, &view_bind.0, &[offset.offset]);
             for (gpu, draw) in &regions {
-                // A caster nearer the sun than the map's eye still casts: no near-plane test.
                 let at = bevy::math::Affine3A::from_translation(draw.origin);
-                if !frustum.intersects_obb(&draw.aabb, &at, false, true) {
+                let wanted = |aabb: &Aabb| {
+                    frustum.intersects_obb(aabb, &at, false, true)
+                        && !inner.is_some_and(|m| {
+                            crate::ext_shadow::inside_map(
+                                &m,
+                                draw.origin + Vec3::from(aabb.center),
+                                aabb.half_extents.into(),
+                            )
+                        })
+                };
+                if !wanted(&draw.aabb) {
+                    continue;
+                }
+                keys.clear();
+                for (key, aabb) in &draw.groups {
+                    let k = usize::from(*key);
+                    if keys.len() <= k {
+                        keys.resize(k + 1, false);
+                    }
+                    keys[k] = wanted(aabb);
+                }
+                let drawn = |run: &GxRun| {
+                    run.casts
+                        && run
+                            .group
+                            .is_none_or(|g| keys.get(usize::from(g)).copied().unwrap_or(true))
+                };
+                if !gpu.runs.iter().any(drawn) {
                     continue;
                 }
                 let Some(mesh) = meshes.get(draw.mesh.id()) else {
@@ -981,7 +1050,7 @@ impl ViewNode for StaticGxShadowNode {
                 };
                 pass.set_vertex_buffer(0, vslice.buffer.slice(..));
                 pass.set_index_buffer(islice.buffer.slice(..), *index_format);
-                for run in &gpu.runs {
+                for run in gpu.runs.iter().filter(|r| drawn(r)) {
                     pass.set_render_pipeline(if run.cutout { cutout } else { opaque });
                     pass.set_bind_group(1, &gpu.bind_groups[run.slot].1, &[]);
                     pass.draw_indexed(
@@ -1087,6 +1156,7 @@ mod tests {
             sidn: [0; 3],
             unified: None,
             slot: 0,
+            casts: true,
         }
     }
 
@@ -1113,5 +1183,17 @@ mod tests {
         assert_eq!(runs[1].index_range, 6..9);
         // Kill everything: nothing is submitted.
         assert!(build_runs(&draws, &slots, &[0b11111u64]).is_empty());
+    }
+
+    /// An interior WMO group's items run apart from the exterior ones, so the caster pass can
+    /// leave them out (`MOGP & 0x48`, `0x7bc890`).
+    #[test]
+    fn interior_items_run_apart_and_cast_nothing() {
+        let mut inner = item(3..6, false);
+        inner.casts = false;
+        let draws = vec![item(0..3, false), inner, item(6..9, false)];
+        let runs = build_runs(&draws, &[0, 0, 0], &[]);
+        let casts: Vec<bool> = runs.iter().map(|r| r.casts).collect();
+        assert_eq!(casts, [true, false, true]);
     }
 }
