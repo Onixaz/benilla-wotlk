@@ -16,7 +16,13 @@ impl Plugin for AssetPlugin {
         app.add_systems(Startup, open_world_assets.in_set(AssetSet::Open));
         app.add_systems(
             Update,
-            (evict_world_art, scope_world_art, release_unshown_sprites),
+            (
+                evict_world_art,
+                scope_world_art,
+                // After the frame's world stages, whose net drain and collider finish are
+                // exclusive systems it would otherwise race.
+                release_unshown_sprites.after(crate::schedule::WorldStage::Present),
+            ),
         );
     }
 }
