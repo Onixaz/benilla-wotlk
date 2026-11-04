@@ -129,7 +129,7 @@ pub(crate) fn apply_walk_end_facing(
     transforms: Query<&Transform>,
 ) {
     for (e, end) in &ends {
-        commands.entity(e).remove::<WalkEndFacing>();
+        commands.entity(e).try_remove::<WalkEndFacing>();
         let Ok(t) = transforms.get(e) else {
             continue;
         };
