@@ -53,6 +53,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::ServerUnixTime, on_clock)
         .net_handler(K::Reputations, on_reputations)
         .net_handler(K::ReputationDelta, on_reputation_delta)
+        .net_handler(K::ReputationAtWar, on_reputation_at_war)
         .net_handler(K::ReputationVisible, on_reputations)
         .net_handler(K::ForcedReactions, on_reputations)
         .add_systems(
@@ -377,15 +378,55 @@ fn on_reputation_delta(
     mut center: MessageWriter<crate::ui_unit::CombatTextEvent>,
     mut quest: ResMut<QuestGiver>,
 ) {
-    if let SessionEvent::ReputationDelta { standings } = ev {
-        crate::combat_log::chat::faction_standing(
-            &standings,
-            &b.reputations,
-            factions.as_deref(),
-            &mut chat_log,
-            &mut center,
-        );
-        reputation_delta(standings, &mut b.reputations, &mut quest);
+    if let SessionEvent::ReputationDelta {
+        bonus,
+        show_effect: _,
+        standings,
+    } = ev
+    {
+        // Our race and class pick each faction's base, our gender the rank labels.
+        let me = b
+            .self_guid
+            .0
+            .and_then(|g| b.index.0.get(&g).copied())
+            .and_then(|e| b.stores.get(e).ok())
+            .map(|s| {
+                (
+                    s.0.unit_race().unwrap_or(0),
+                    s.0.unit_class().unwrap_or(0),
+                    s.0.unit_gender() == Some(1),
+                )
+            })
+            .unwrap_or((0, 0, false));
+        let mut lines = FactionLines {
+            catalog: factions.as_deref().map(|f| f.catalog()),
+            me,
+            bonus,
+            log: &mut chat_log,
+            texts: Vec::new(),
+        };
+        reputation_delta(standings, &mut b.reputations, &mut quest, &mut lines);
+        center.write_batch(lines.texts);
+    }
+}
+
+/// `SMSG_SET_FACTION_ATWAR` (`0x5d0850`): the slot's at-war bit set or cleared (`0x5d0896`); the
+/// reputation pane's `UPDATE_FACTION` and the unit reactions read the store.
+fn on_reputation_at_war(In(ev): In<SessionEvent>, mut b: Bridge) {
+    if let SessionEvent::ReputationAtWar { list_id, at_war } = ev {
+        let Some(i) = reputation_slot(list_id, "SMSG_SET_FACTION_ATWAR") else {
+            return;
+        };
+        let reps = &mut b.reputations;
+        if reps.0.len() <= i {
+            reps.0.resize(i + 1, (0, 0));
+        }
+        let flags = &mut reps.0[i].0;
+        if at_war {
+            *flags |= benilla_formats::faction_flags::AT_WAR;
+        } else {
+            *flags &= !benilla_formats::faction_flags::AT_WAR;
+        }
     }
 }
 
@@ -761,24 +802,95 @@ fn reputations(standings: Vec<(u8, i32)>, reputations: &mut Reputations) {
     reputations.0 = standings;
 }
 
-/// `SMSG_SET_FACTION_STANDING`: overwrites the changed slots, growing the store with flags 0, and
-/// makes each visible unless it is `HIDDEN`, as the reference's handler does.
+/// What a standing change prints through: the faction table, our race, class and gender, the
+/// packet's bonus, the chat log, and the combat texts owed.
+struct FactionLines<'a> {
+    catalog: Option<&'a benilla_formats::FactionCatalog>,
+    me: (u8, u8, bool),
+    bonus: f32,
+    log: &'a mut crate::ui_chat::ChatLog,
+    texts: Vec<crate::ui_unit::CombatTextEvent>,
+}
+
+/// The stored flag `0x40` whose rows always print their change (`0x5d211d`).
+const FACTION_FLAG_ALWAYS_LOGGED: u8 = 0x40;
+/// The stored flag `0x80` that lets an invisible faction print its rank change (`0x5d2236`).
+const FACTION_FLAG_RANK_SHOWN: u8 = 0x80;
+
+/// `SMSG_SET_FACTION_STANDING` (`0x5d20a0`), row by row:
+///
+/// - The line (`0x5d211d`-`0x5d2142`): a faction with flag `0x40` always, in the generic form
+///   with `HIDDEN`; any other only as the packet's first row and not `HIDDEN`.
+/// - A new standing is stored and its delta printed (`0x5d217b`, `0x5d21b2`).
+/// - A faction neither `VISIBLE` nor `HIDDEN` is revealed (`0x5d21d9`).
+/// - A rank below Unfriendly sets `AT_WAR` (`0x5d21f7`); a rise in rank clears it (`0x5d2200`).
+/// - A rank change prints `FACTION_STANDING_CHANGED` (`0x5d2243`) unless the faction is `HIDDEN`,
+///   a header without `0x80`, or revealed by this row.
 fn reputation_delta(
     standings: Vec<(u32, i32)>,
     reputations: &mut Reputations,
     quest: &mut QuestGiver,
+    lines: &mut FactionLines,
 ) {
     use benilla_formats::faction_flags as flag;
-    for (list_id, standing) in standings {
+    let (race, class, female) = lines.me;
+    for (row, (list_id, standing)) in standings.into_iter().enumerate() {
         let Some(i) = reputation_slot(list_id, "SMSG_SET_FACTION_STANDING") else {
             continue;
         };
         if reputations.0.len() <= i {
             reputations.0.resize(i + 1, (0, 0));
         }
+        let (mut flags, old) = reputations.0[i];
+        let mode = if flags & FACTION_FLAG_ALWAYS_LOGGED != 0 {
+            Some(flags & flag::HIDDEN != 0)
+        } else if row == 0 && flags & flag::HIDDEN == 0 {
+            Some(false)
+        } else {
+            None
+        };
+        // The wire's list id is `Faction.dbc`'s `rep_index`.
+        let faction = lines.catalog.and_then(|c| {
+            c.reputation_factions()
+                .find(|(_, f)| i32::try_from(list_id).is_ok_and(|l| f.rep_index == l))
+                .map(|(id, f)| {
+                    (
+                        c.faction_name(id).unwrap_or_default(),
+                        f.base_for(race, class),
+                    )
+                })
+        });
+        let base = faction.map_or(0, |(_, base)| base);
+        let old_rank = benilla_formats::reputation_rank(base + old);
         reputations.0[i].1 = standing;
-        if reputations.0[i].0 & flag::HIDDEN == 0 {
-            reputations.0[i].0 |= flag::VISIBLE;
+        if let (Some(generic), Some((name, _))) = (mode, faction) {
+            lines
+                .texts
+                .extend(crate::combat_log::chat::faction_change_line(
+                    name,
+                    standing - old,
+                    generic,
+                    lines.bonus,
+                    lines.log,
+                ));
+        }
+        let new_rank = benilla_formats::reputation_rank(base + standing);
+        let revealed = flags & (flag::VISIBLE | flag::HIDDEN) == 0;
+        if revealed {
+            flags |= flag::VISIBLE;
+        }
+        if new_rank < 2 {
+            flags |= flag::AT_WAR;
+        } else if new_rank > old_rank {
+            flags &= !flag::AT_WAR;
+        }
+        reputations.0[i].0 = flags;
+        let shown = flags & flag::HIDDEN == 0
+            && (flags & flag::HEADER == 0 || flags & FACTION_FLAG_RANK_SHOWN != 0);
+        if new_rank != old_rank && shown && !revealed {
+            if let Some((name, _)) = faction {
+                crate::combat_log::chat::faction_rank_line(name, new_rank, female, lines.log);
+            }
         }
     }
     // Standing feeds questgiver status (`SatisfyQuestReputation`); the reference re-asks here too.
@@ -1014,5 +1126,102 @@ mod teardown_tests {
         assert_eq!(guid, Some(7));
         assert!(reason.is_some());
         assert!(avatar);
+    }
+}
+
+#[cfg(test)]
+mod reputation_delta_tests {
+    use super::*;
+
+    /// One `SMSG_SET_FACTION_STANDING` through the row rule against the install's `Faction.dbc`,
+    /// as a Human Warrior (Stormwind's base 4000, Friendly).
+    #[test]
+    fn the_rows_pick_their_lines_and_the_rank_moves_the_war_flag() {
+        use benilla_formats::faction_flags as flag;
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let catalog = benilla_formats::load_faction_catalog(&mut chain).expect("dbc");
+        let slot = |name: &str| {
+            catalog
+                .reputation_factions()
+                .find(|(id, _)| catalog.faction_name(*id) == Some(name))
+                .map(|(_, f)| f.rep_index as u32)
+                .unwrap_or_else(|| panic!("{name} has a reputation slot"))
+        };
+        let (stormwind, darnassus) = (slot("Stormwind"), slot("Darnassus"));
+        let mut reps = Reputations::default();
+        reps.0.resize(128, (0, 0));
+        reps.0[stormwind as usize].0 = flag::VISIBLE;
+        reps.0[darnassus as usize].0 = flag::VISIBLE | flag::AT_WAR;
+        let mut quest = QuestGiver::default();
+        let mut log = crate::ui_chat::ChatLog::default();
+        let mut lines = FactionLines {
+            catalog: Some(&catalog),
+            me: (1, 1, false),
+            bonus: 0.0,
+            log: &mut log,
+            texts: Vec::new(),
+        };
+        // Stormwind first, up to Honored: its change line and text, and the rank line. Darnassus
+        // second changes silently but still prints its rank and drops below Unfriendly.
+        let darnassus_base = catalog
+            .reputation_factions()
+            .find(|(_, f)| f.rep_index == darnassus as i32)
+            .map(|(_, f)| f.base_for(1, 1))
+            .unwrap();
+        reputation_delta(
+            vec![(stormwind, 5100), (darnassus, -9000 - darnassus_base)],
+            &mut reps,
+            &mut quest,
+            &mut lines,
+        );
+        assert_eq!(lines.texts.len(), 1, "one FACTION text, the first row's");
+        assert_eq!(
+            log.pending_len(),
+            3,
+            "change + rank for Stormwind, rank for Darnassus"
+        );
+        assert_eq!(reps.0[stormwind as usize], (flag::VISIBLE, 5100));
+        assert_ne!(
+            reps.0[darnassus as usize].0 & flag::AT_WAR,
+            0,
+            "Hated sets war"
+        );
+
+        // Back up past Hostile: a rise in rank clears the war flag.
+        let mut log = crate::ui_chat::ChatLog::default();
+        let mut lines = FactionLines {
+            catalog: Some(&catalog),
+            me: (1, 1, false),
+            bonus: 0.0,
+            log: &mut log,
+            texts: Vec::new(),
+        };
+        reputation_delta(
+            vec![(darnassus, -darnassus_base)],
+            &mut reps,
+            &mut quest,
+            &mut lines,
+        );
+        assert_eq!(
+            reps.0[darnassus as usize].0 & flag::AT_WAR,
+            0,
+            "a rise clears war"
+        );
+
+        // A hidden faction prints nothing, first row or not, and is not revealed.
+        reps.0[stormwind as usize].0 = flag::HIDDEN;
+        let mut log = crate::ui_chat::ChatLog::default();
+        let mut lines = FactionLines {
+            catalog: Some(&catalog),
+            me: (1, 1, false),
+            bonus: 0.0,
+            log: &mut log,
+            texts: Vec::new(),
+        };
+        reputation_delta(vec![(stormwind, 40000)], &mut reps, &mut quest, &mut lines);
+        assert!(lines.texts.is_empty());
+        assert_eq!(log.pending_len(), 0);
+        assert_eq!(reps.0[stormwind as usize].0 & flag::VISIBLE, 0);
     }
 }

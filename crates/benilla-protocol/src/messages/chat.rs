@@ -44,6 +44,27 @@ pub const CHAT_MSG_ACHIEVEMENT: u8 = 0x5E;
 pub const CHAT_MSG_GUILD_ACHIEVEMENT: u8 = 0x5F;
 /// 3.3.5a's party leader's own party line, `CHAT_MSG_PARTY_LEADER`, past the shared numbering.
 pub const CHAT_MSG_PARTY_LEADER: u8 = 0x60;
+/// The rest of 3.3.5a's wire lanes, numbered past the shared numbering; each fires its own
+/// `CHAT_MSG_*` from the type-indexed event table (`0x4fdd4f`, `0x9fbe80`).
+pub const CHAT_MSG_MONSTER_PARTY: u8 = 0x61;
+pub const CHAT_MSG_RESTRICTED: u8 = 0x62;
+pub const CHAT_MSG_TEXT_EMOTE: u8 = 0x63;
+pub const CHAT_MSG_CHANNEL_JOIN: u8 = 0x64;
+pub const CHAT_MSG_CHANNEL_LEAVE: u8 = 0x65;
+pub const CHAT_MSG_CHANNEL_LIST: u8 = 0x66;
+pub const CHAT_MSG_CHANNEL_NOTICE: u8 = 0x67;
+pub const CHAT_MSG_CHANNEL_NOTICE_USER: u8 = 0x68;
+pub const CHAT_MSG_SKILL: u8 = 0x69;
+pub const CHAT_MSG_LOOT: u8 = 0x6A;
+pub const CHAT_MSG_MONEY: u8 = 0x6B;
+pub const CHAT_MSG_OPENING: u8 = 0x6C;
+pub const CHAT_MSG_TRADESKILLS: u8 = 0x6D;
+pub const CHAT_MSG_PET_INFO: u8 = 0x6E;
+pub const CHAT_MSG_COMBAT_MISC_INFO: u8 = 0x6F;
+pub const CHAT_MSG_COMBAT_XP_GAIN: u8 = 0x70;
+pub const CHAT_MSG_COMBAT_HONOR_GAIN: u8 = 0x71;
+pub const CHAT_MSG_COMBAT_FACTION_CHANGE: u8 = 0x72;
+pub const CHAT_MSG_TARGETICONS: u8 = 0x73;
 
 /// The only chat types the 1.12 client runs its `$`-macro expander over; the rest reach the frame
 /// verbatim. This is the wire gate; the re-expansion after a name query omits `0x5A`.
@@ -133,15 +154,31 @@ pub mod wotlk_chat_type {
     pub const WHISPER_FOREIGN: u8 = 0x08;
     pub const WHISPER_INFORM: u8 = 0x09;
     pub const EMOTE: u8 = 0x0A;
+    pub const TEXT_EMOTE: u8 = 0x0B;
     pub const MONSTER_SAY: u8 = 0x0C;
     pub const MONSTER_PARTY: u8 = 0x0D;
     pub const MONSTER_YELL: u8 = 0x0E;
     pub const MONSTER_WHISPER: u8 = 0x0F;
     pub const MONSTER_EMOTE: u8 = 0x10;
     pub const CHANNEL: u8 = 0x11;
+    pub const CHANNEL_JOIN: u8 = 0x12;
+    pub const CHANNEL_LEAVE: u8 = 0x13;
+    pub const CHANNEL_LIST: u8 = 0x14;
+    pub const CHANNEL_NOTICE: u8 = 0x15;
+    pub const CHANNEL_NOTICE_USER: u8 = 0x16;
     pub const AFK: u8 = 0x17;
     pub const DND: u8 = 0x18;
     pub const IGNORED: u8 = 0x19;
+    pub const SKILL: u8 = 0x1A;
+    pub const LOOT: u8 = 0x1B;
+    pub const MONEY: u8 = 0x1C;
+    pub const OPENING: u8 = 0x1D;
+    pub const TRADESKILLS: u8 = 0x1E;
+    pub const PET_INFO: u8 = 0x1F;
+    pub const COMBAT_MISC_INFO: u8 = 0x20;
+    pub const COMBAT_XP_GAIN: u8 = 0x21;
+    pub const COMBAT_HONOR_GAIN: u8 = 0x22;
+    pub const COMBAT_FACTION_CHANGE: u8 = 0x23;
     pub const BG_SYSTEM_NEUTRAL: u8 = 0x24;
     pub const BG_SYSTEM_ALLIANCE: u8 = 0x25;
     pub const BG_SYSTEM_HORDE: u8 = 0x26;
@@ -152,14 +189,19 @@ pub mod wotlk_chat_type {
     pub const FILTERED: u8 = 0x2B;
     pub const BATTLEGROUND: u8 = 0x2C;
     pub const BATTLEGROUND_LEADER: u8 = 0x2D;
+    pub const RESTRICTED: u8 = 0x2E;
     pub const BATTLENET: u8 = 0x2F;
     pub const ACHIEVEMENT: u8 = 0x30;
     pub const GUILD_ACHIEVEMENT: u8 = 0x31;
+    pub const ARENA_POINTS: u8 = 0x32;
     pub const PARTY_LEADER: u8 = 0x33;
+    pub const TARGETICONS: u8 = 0x34;
 }
 
-/// The shared [`ChatMessage::chat_type`], 1.12.1's numbering, of a 3.3.5a type byte; `None` for a
-/// 3.3.5a lane with no shared one yet (`PARTY_LEADER`, `WHISPER_FOREIGN`, …).
+/// The shared [`ChatMessage::chat_type`] of a 3.3.5a type byte. `None` for a lane that fires no
+/// event a handler can hear: `BATTLENET` and `ARENA_POINTS` signal unnamed event ids 237 and 658
+/// (`0x9fbe80`, name "" at `0x608e1f`), and the Battle.net lanes from `0x35` need a presence a
+/// realm server never has.
 pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
     use wotlk_chat_type as w;
     Some(match wire {
@@ -170,17 +212,35 @@ pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
         w::GUILD => CHAT_MSG_GUILD,
         w::OFFICER => CHAT_MSG_OFFICER,
         w::YELL => CHAT_MSG_YELL,
-        w::WHISPER => CHAT_MSG_WHISPER,
+        // A foreign whisper fires the plain whisper's event (`0x9fbe80` slots 7 and 8).
+        w::WHISPER | w::WHISPER_FOREIGN => CHAT_MSG_WHISPER,
         w::WHISPER_INFORM => CHAT_MSG_WHISPER_INFORM,
         w::EMOTE => CHAT_MSG_EMOTE,
+        w::TEXT_EMOTE => CHAT_MSG_TEXT_EMOTE,
         w::MONSTER_SAY => CHAT_MSG_MONSTER_SAY,
+        w::MONSTER_PARTY => CHAT_MSG_MONSTER_PARTY,
         w::MONSTER_YELL => CHAT_MSG_MONSTER_YELL,
         w::MONSTER_WHISPER => CHAT_MSG_MONSTER_WHISPER,
         w::MONSTER_EMOTE => CHAT_MSG_MONSTER_EMOTE,
         w::CHANNEL => CHAT_MSG_CHANNEL,
+        w::CHANNEL_JOIN => CHAT_MSG_CHANNEL_JOIN,
+        w::CHANNEL_LEAVE => CHAT_MSG_CHANNEL_LEAVE,
+        w::CHANNEL_LIST => CHAT_MSG_CHANNEL_LIST,
+        w::CHANNEL_NOTICE => CHAT_MSG_CHANNEL_NOTICE,
+        w::CHANNEL_NOTICE_USER => CHAT_MSG_CHANNEL_NOTICE_USER,
         w::AFK => CHAT_MSG_AFK,
         w::DND => CHAT_MSG_DND,
         w::IGNORED => CHAT_MSG_IGNORED,
+        w::SKILL => CHAT_MSG_SKILL,
+        w::LOOT => CHAT_MSG_LOOT,
+        w::MONEY => CHAT_MSG_MONEY,
+        w::OPENING => CHAT_MSG_OPENING,
+        w::TRADESKILLS => CHAT_MSG_TRADESKILLS,
+        w::PET_INFO => CHAT_MSG_PET_INFO,
+        w::COMBAT_MISC_INFO => CHAT_MSG_COMBAT_MISC_INFO,
+        w::COMBAT_XP_GAIN => CHAT_MSG_COMBAT_XP_GAIN,
+        w::COMBAT_HONOR_GAIN => CHAT_MSG_COMBAT_HONOR_GAIN,
+        w::COMBAT_FACTION_CHANGE => CHAT_MSG_COMBAT_FACTION_CHANGE,
         w::BG_SYSTEM_NEUTRAL => CHAT_MSG_BG_SYSTEM_NEUTRAL,
         w::BG_SYSTEM_ALLIANCE => CHAT_MSG_BG_SYSTEM_ALLIANCE,
         w::BG_SYSTEM_HORDE => CHAT_MSG_BG_SYSTEM_HORDE,
@@ -191,9 +251,12 @@ pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
         w::FILTERED => CHAT_MSG_FILTERED,
         w::BATTLEGROUND => CHAT_MSG_BATTLEGROUND,
         w::BATTLEGROUND_LEADER => CHAT_MSG_BATTLEGROUND_LEADER,
+        w::RESTRICTED => CHAT_MSG_RESTRICTED,
         w::ACHIEVEMENT => CHAT_MSG_ACHIEVEMENT,
         w::GUILD_ACHIEVEMENT => CHAT_MSG_GUILD_ACHIEVEMENT,
         w::PARTY_LEADER => CHAT_MSG_PARTY_LEADER,
+        w::TARGETICONS => CHAT_MSG_TARGETICONS,
+        w::BATTLENET | w::ARENA_POINTS => return None,
         _ => return None,
     })
 }
@@ -213,8 +276,8 @@ pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
 ///   on `CHANNEL`; then the receiver guid.
 ///
 /// 1.12.1's per-type sender prefix and channel `playerRank` are gone. The type is returned in
-/// the shared numbering ([`wotlk_chat_type_shared`]); a lane with none is an `Unsupported` error.
-pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<ChatMessage> {
+/// the shared numbering ([`wotlk_chat_type_shared`]); a lane with none reads whole and is `None`.
+pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Option<ChatMessage>> {
     use wotlk_chat_type as w;
     let wire_type = read_u8(r)?;
     let language = read_u32_le(r)?;
@@ -269,12 +332,9 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Cha
         0
     };
     let Some(chat_type) = wotlk_chat_type_shared(wire_type) else {
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("3.3.5a chat type {wire_type:#04x} has no shared chat lane yet"),
-        ));
+        return Ok(None);
     };
-    Ok(ChatMessage {
+    Ok(Some(ChatMessage {
         chat_type,
         language,
         sender_guid,
@@ -284,7 +344,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Cha
         text,
         chat_tag,
         achievement,
-    })
+    }))
 }
 
 /// Whether a monster-shape receiver guid is followed by its name: set, and neither a player nor a
@@ -298,6 +358,17 @@ fn names_receiver(guid: u64) -> bool {
 /// 54 to 52 of the high word, non-zero (`and 0xf0000000`, `and 0xf07fffff`).
 fn client_is_player(guid: u64) -> bool {
     guid >> 60 == 0 && guid & 0xf07f_ffff_ffff_ffff != 0
+}
+
+/// Read `SMSG_EXPECTED_SPAM_RECORDS` (`0x501c70`): a `u32` count (`0x501c83`), then that many
+/// cstrings (`0x501cff`).
+pub(super) fn read_expected_spam_records(r: &mut &[u8]) -> io::Result<Vec<String>> {
+    let count = read_u32_le(r)?;
+    let mut patterns = Vec::with_capacity(crate::wire::capacity_hint(count, 64));
+    for _ in 0..count {
+        patterns.push(read_cstring(r)?);
+    }
+    Ok(patterns)
 }
 
 /// Read `SMSG_CHAT_PLAYER_NOT_FOUND`: one cstring, the unnormalized name of an offline or
@@ -347,9 +418,60 @@ mod tests {
         body.extend_from_slice(&6u32.to_le_bytes());
         body.extend_from_slice(b"pull!\0");
         body.push(0);
-        let msg = read_message_chat_wotlk(&mut body.as_slice(), false).expect("parses");
+        let msg = read_message_chat_wotlk(&mut body.as_slice(), false)
+            .expect("parses")
+            .expect("a lane");
         assert_eq!(msg.chat_type, CHAT_MSG_PARTY_LEADER);
         assert_eq!(msg.sender_guid, 0x77);
         assert_eq!(msg.text, "pull!");
+    }
+
+    fn line(wire: u8) -> Vec<u8> {
+        let mut body = vec![wire];
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&0x77u64.to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body
+    }
+
+    /// Every 3.3.5a lane reads; the monster party line takes the monster shape, a restricted
+    /// trial line the default one, and the unnamed lanes read whole to nothing.
+    #[test]
+    fn every_lane_reads_and_only_the_unnamed_ones_are_dropped() {
+        use wotlk_chat_type as w;
+        let mut monster = line(w::MONSTER_PARTY);
+        monster.extend_from_slice(&4u32.to_le_bytes());
+        monster.extend_from_slice(b"Imp\0");
+        monster.extend_from_slice(&0u64.to_le_bytes());
+        monster.extend_from_slice(&3u32.to_le_bytes());
+        monster.extend_from_slice(b"hi\0");
+        monster.push(0);
+        let msg = read_message_chat_wotlk(&mut monster.as_slice(), false)
+            .expect("parses")
+            .expect("a lane");
+        assert_eq!(msg.chat_type, CHAT_MSG_MONSTER_PARTY);
+        assert_eq!(msg.sender_name.as_deref(), Some("Imp"));
+
+        let plain = |wire| {
+            let mut body = line(wire);
+            body.extend_from_slice(&0u64.to_le_bytes());
+            body.extend_from_slice(&1u32.to_le_bytes());
+            body.push(0);
+            body.push(0);
+            let mut r = body.as_slice();
+            let msg = read_message_chat_wotlk(&mut r, false).expect("parses");
+            assert!(r.is_empty(), "{wire:#04x} reads whole");
+            msg.map(|m| m.chat_type)
+        };
+        assert_eq!(plain(w::RESTRICTED), Some(CHAT_MSG_RESTRICTED));
+        assert_eq!(plain(w::LOOT), Some(CHAT_MSG_LOOT));
+        assert_eq!(plain(w::TARGETICONS), Some(CHAT_MSG_TARGETICONS));
+        assert_eq!(plain(w::ARENA_POINTS), None);
+        assert_eq!(plain(0x35), None);
+        for wire in 0..0x35u8 {
+            if ![w::BATTLENET, w::ARENA_POINTS].contains(&wire) {
+                assert!(wotlk_chat_type_shared(wire).is_some(), "{wire:#04x}");
+            }
+        }
     }
 }

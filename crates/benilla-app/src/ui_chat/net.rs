@@ -173,13 +173,27 @@ fn on_played_time(
     }
 }
 
-fn on_channel_notify(In(ev): In<SessionEvent>, mut chat_log: ResMut<ChatLog>) {
+fn on_channel_notify(
+    In(ev): In<SessionEvent>,
+    mut chat_log: ResMut<ChatLog>,
+    social: Res<SocialState>,
+) {
     if let SessionEvent::ChannelNotify {
         notice,
         channel,
         tail,
     } = ev
     {
+        // An invite from an ignored or non-player guid is dropped whole (`0x50e76b`,
+        // `0x50e778`-`0x50e798`).
+        if notice == benilla_protocol::messages::channel_notice::INVITE {
+            if let benilla_protocol::messages::ChannelNoticeTail::Actor(g) = tail {
+                let player = g >> 60 == 0 && g & 0xf07f_ffff_ffff_ffff != 0;
+                if social.is_ignored(g) || !player {
+                    return;
+                }
+            }
+        }
         chat_log.push_channel_notice(notice, channel, &tail);
     }
 }
@@ -257,14 +271,24 @@ fn chat(
         );
     }
     // An ignored speaker is dropped silently (the ignore list); a dropped whisper also
-    // sends `CMSG_CHAT_IGNORED`, so the sender hears "is ignoring you".
+    // sends `CMSG_CHAT_IGNORED`, so the sender hears "is ignoring you". Whisper echoes, ignore
+    // notices and restricted lines still post (`0x50c195`-`0x50c19d`).
     if social.is_ignored(m.sender_guid) {
         if m.chat_type == CHAT_MSG_WHISPER {
             let _ = net_commands.0.send(ClientCommand::ChatIgnored {
                 guid: m.sender_guid,
             });
         }
-        return;
+        use benilla_protocol::messages as msg;
+        if ![
+            msg::CHAT_MSG_WHISPER_INFORM,
+            msg::CHAT_MSG_IGNORED,
+            msg::CHAT_MSG_RESTRICTED,
+        ]
+        .contains(&m.chat_type)
+        {
+            return;
+        }
     }
     chat_log.push_wire(m);
 }

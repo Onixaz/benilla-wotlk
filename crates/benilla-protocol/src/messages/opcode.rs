@@ -1497,6 +1497,10 @@ pub const SMSG_REAL_GROUP_UPDATE: u16 = 0x0397; // 919
 pub const SMSG_POWER_UPDATE: u16 = 0x0480; // 1152
 /// A unit's health, set as its predicted copy (`0x716d20`).
 pub const SMSG_HEALTH_UPDATE: u16 = 0x047F; // 1151
+/// The server's chat spam patterns, replacing the last list (`0x501c70`).
+pub const SMSG_EXPECTED_SPAM_RECORDS: u16 = 0x0332; // 818
+/// One reputation slot's at-war flag, set or cleared (`0x5d0850`).
+pub const SMSG_SET_FACTION_ATWAR: u16 = 0x0313; // 787
 /// Our combo points and the unit they sit on (the game UI's message handler, `0x526530`).
 pub const SMSG_UPDATE_COMBO_POINTS: u16 = 0x039D; // 925
 /// The pet's combo points (`0x5d36a0`).

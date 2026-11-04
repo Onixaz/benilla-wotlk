@@ -103,6 +103,13 @@ enum Pending {
     Combat(Box<super::combat::PendingCombat>),
     /// A ready event (client-composed lines; name-carrying notices).
     Event(ChatEvent),
+    /// A member's channel flags changing (`MODE_CHANGE`), printed once the name is cached.
+    Mode {
+        channel: String,
+        guid: u64,
+        old_flags: u8,
+        new_flags: u8,
+    },
 }
 
 /// Fire `CHAT_MSG_ADDON(prefix, message, distribution, sender)`, not through [`route`]: it is no
@@ -146,6 +153,8 @@ pub(crate) struct ChatLog {
     broadcasts: Vec<super::broadcast::Broadcast>,
     /// `SMSG_LEVELUP_INFO`s for `ui_unit`'s `PLAYER_LEVEL_UP` fire, oldest first.
     level_ups: Vec<LevelUpInfo>,
+    /// A channel invite waits on its inviter's name; another is dropped meanwhile (`0x50e79e`).
+    invite_waiting: bool,
 }
 
 impl ChatLog {
@@ -203,12 +212,33 @@ impl ChatLog {
         channel: String,
         tail: &ChannelNoticeTail,
     ) {
+        if notice_byte == channel_notice::INVITE && self.invite_waiting {
+            return;
+        }
+        // The voice flag's set prints nothing, and benilla's channel pane has no voice column.
+        if notice_byte == channel_notice::VOICE_ENABLED {
+            return;
+        }
         let (a_guid, b_guid, name) = match tail {
             ChannelNoticeTail::Guid(g) | ChannelNoticeTail::Actor(g) => (*g, 0, None),
             ChannelNoticeTail::Actors { target, source } => (*target, *source, None),
             ChannelNoticeTail::Name(n) => (0, 0, Some(n.clone())),
-            ChannelNoticeTail::YouJoined { .. } | ChannelNoticeTail::Empty => (0, 0, None),
-            ChannelNoticeTail::ModeChange { .. } => return, // silent in the 1.12 UI (no string)
+            ChannelNoticeTail::YouJoined { .. }
+            | ChannelNoticeTail::YouLeft { .. }
+            | ChannelNoticeTail::Empty => (0, 0, None),
+            ChannelNoticeTail::ModeChange {
+                guid,
+                old_flags,
+                new_flags,
+            } => {
+                self.pending.push(Pending::Mode {
+                    channel,
+                    guid: *guid,
+                    old_flags: *old_flags,
+                    new_flags: *new_flags,
+                });
+                return;
+            }
         };
         if a_guid != 0 {
             self.pending.push(Pending::Notice {
@@ -219,8 +249,25 @@ impl ChatLog {
                 tries: 0,
             });
         } else {
-            if let Some(event) = notice_event(notice_byte, channel, name, None) {
+            let second = match tail {
+                ChannelNoticeTail::YouJoined {
+                    text: Some(text), ..
+                } if !text.is_empty() => Some(text.clone()),
+                _ => None,
+            };
+            let wire_channel = channel.clone();
+            if let Some(mut event) = notice_event(notice_byte, channel, name, None) {
+                event.left_constant = matches!(tail, ChannelNoticeTail::YouLeft { constant: true });
                 self.pending.push(Pending::Event(event));
+            }
+            // A join's trailing text is a second notice line on the channel (`0x50eae3`).
+            if let Some(text) = second {
+                self.pending.push(Pending::Event(ChatEvent {
+                    kind: Some(ChatEventKind::ChannelNotice),
+                    text,
+                    channel: wire_channel,
+                    ..Default::default()
+                }));
             }
         }
     }
@@ -457,6 +504,24 @@ pub(super) fn exploration_line(
     )
 }
 
+/// A member's mode change as its notice tokens, in the reference's order: moderator `0x02`
+/// (`0x50d05f`, `0x50d089`), voice `0x04` (`0x50d0be`, `0x50d0e8`), speak `0x10` (`0x50d11e`,
+/// `0x50d152`).
+pub(super) fn mode_change_tokens(old: u8, new: u8) -> Vec<&'static str> {
+    [
+        (0x02, "SET_MODERATOR", "UNSET_MODERATOR"),
+        (0x04, "SET_VOICE", "UNSET_VOICE"),
+        (0x10, "SET_SPEAK", "UNSET_SPEAK"),
+    ]
+    .into_iter()
+    .filter_map(|(bit, set, unset)| match (old & bit != 0, new & bit != 0) {
+        (false, true) => Some(set),
+        (true, false) => Some(unset),
+        _ => None,
+    })
+    .collect()
+}
+
 /// The event a channel notice becomes; [`super::frames::compose_notice`] reads its `notice`.
 pub(super) fn notice_event(
     notice_byte: u8,
@@ -535,6 +600,16 @@ pub(super) fn deliver(
     // Read first: the reference picks the token from `slot+0x9c` before writing it, and the renamed
     // and suspended tokens keep the window's registration.
     event.slot_state = channels.slot_state(&event.channel);
+    event.suspended = notice == Some(channel_notice::YOU_LEFT)
+        && event.left_constant
+        && channels.leave_asked(&event.channel) == Some(false);
+    if notice == Some(channel_notice::WRONG_PASSWORD) {
+        // Ahead of the line, with the wire name (`0x50e3aa`).
+        script.fire_event(
+            "CHANNEL_PASSWORD_REQUEST",
+            vec![benilla_ui::script::ScriptValue::Str(event.channel.clone())],
+        );
+    }
     if let Some(byte) = notice {
         // The server's half of every join and leave, for a log to tell a request from its answer.
         debug!(
@@ -587,9 +662,9 @@ pub(super) fn deliver(
     channels.stamp_channel(event);
     route(script, windows, event);
     if let Some(name) = leaving {
-        // A suspended slot (state 3) survives its leave: the reference skips the teardown, so
-        // leaving a capital keeps Trade's number for the re-join.
-        if event.slot_state == Some(super::edit::SlotState::Suspended) {
+        // A suspended leave keeps the record: the reference skips the teardown, so leaving a
+        // capital keeps Trade's number for the re-join.
+        if event.suspended {
             debug!("chat: channel {name:?} suspended — the record and its number stay");
         } else {
             // Cleared in place, never compacted: slot 3 stays 3 when slot 2 empties.
@@ -846,7 +921,9 @@ pub(super) fn feed_chat(
                 } else {
                     Some(String::new())
                 };
+                let invite = notice == channel_notice::INVITE;
                 if (a.is_none() || b.is_none()) && tries < NAME_MAX_TRIES {
+                    log.invite_waiting |= invite;
                     still.push(Pending::Notice {
                         notice,
                         channel,
@@ -855,6 +932,19 @@ pub(super) fn feed_chat(
                         tries: tries + 1,
                     });
                     continue;
+                }
+                if invite {
+                    log.invite_waiting = false;
+                    // A named inviter asks the player first (`0x50e7fb`, `0x4fb606`).
+                    if let Some(name) = &a {
+                        script.fire_event(
+                            "CHANNEL_INVITE_REQUEST",
+                            vec![
+                                benilla_ui::script::ScriptValue::Str(channel.clone()),
+                                benilla_ui::script::ScriptValue::Str(name.clone()),
+                            ],
+                        );
+                    }
                 }
                 // Stamped against the channel list as it stands at delivery: the reference hands
                 // the composer the notice's channel name, directly when the names are cached, else
@@ -867,6 +957,27 @@ pub(super) fn feed_chat(
                     Some(a.unwrap_or_else(|| "Unknown".into())),
                     b,
                 ) {
+                    deliver(&mut script, &mut windows, &mut channels, &mut event);
+                }
+            }
+            Pending::Mode {
+                channel,
+                guid,
+                old_flags,
+                new_flags,
+            } => {
+                // Only a cached name prints; a miss asks for it and prints nothing (`0x50cfe7`).
+                let Some(name) = names.resolve(guid, &commands).map(str::to_string) else {
+                    continue;
+                };
+                for token in mode_change_tokens(old_flags, new_flags) {
+                    let mut event = ChatEvent {
+                        kind: Some(ChatEventKind::ChannelNoticeUser),
+                        text: token.to_string(),
+                        sender: name.clone(),
+                        channel: channel.clone(),
+                        ..Default::default()
+                    };
                     deliver(&mut script, &mut windows, &mut channels, &mut event);
                 }
             }

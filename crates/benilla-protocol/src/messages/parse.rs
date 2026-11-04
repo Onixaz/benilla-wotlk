@@ -909,12 +909,13 @@ fn parse_server_body(
             read_u32_le(&mut r)?;
             ServerPacket::Other { opcode }
         }
-        opcode::SMSG_MESSAGECHAT => {
-            ServerPacket::MessageChat(chat::read_message_chat_wotlk(&mut r, false)?)
-        }
-        // A GM-tagged speaker's line.
-        opcode::SMSG_GM_MESSAGECHAT => {
-            ServerPacket::MessageChat(chat::read_message_chat_wotlk(&mut r, true)?)
+        // A GM-tagged speaker's line on the second; a lane with no named event is read and dropped.
+        opcode::SMSG_MESSAGECHAT | opcode::SMSG_GM_MESSAGECHAT => {
+            let gm = opcode == opcode::SMSG_GM_MESSAGECHAT;
+            match chat::read_message_chat_wotlk(&mut r, gm)? {
+                Some(msg) => ServerPacket::MessageChat(msg),
+                None => ServerPacket::Other { opcode },
+            }
         }
         opcode::SMSG_CHANNEL_NOTIFY => {
             ServerPacket::ChannelNotify(channel::read_channel_notify_wotlk(&mut r)?)
@@ -1115,9 +1116,10 @@ fn parse_server_body(
         }
         opcode::SMSG_PET_SPELLS => ServerPacket::PetSpells(pet::read_pet_spells(&mut r)?),
         opcode::SMSG_PET_MODE => ServerPacket::PetMode(pet::read_pet_mode(&mut r)?),
-        opcode::SMSG_PET_ACTION_FEEDBACK => ServerPacket::PetActionFeedback {
-            reason: pet::read_pet_action_feedback(&mut r)?,
-        },
+        opcode::SMSG_PET_ACTION_FEEDBACK => {
+            let (reason, spell) = pet::read_pet_action_feedback(&mut r)?;
+            ServerPacket::PetActionFeedback { reason, spell }
+        }
         // The 12340 handler (`0x806c30`) reads `SMSG_CAST_FAILED`'s body; the pet's own cast
         // count is not ours to match.
         opcode::SMSG_PET_CAST_FAILED => {
@@ -1127,9 +1129,14 @@ fn parse_server_body(
         opcode::SMSG_PET_TAME_FAILURE => ServerPacket::PetTameFailure {
             reason: pet::read_pet_tame_failure(&mut r)?,
         },
-        opcode::SMSG_PET_NAME_INVALID => ServerPacket::PetNameInvalid {
-            code: pet::read_pet_name_invalid(&mut r)?,
-        },
+        opcode::SMSG_PET_NAME_INVALID => {
+            let (code, name, declensions) = pet::read_pet_name_invalid(&mut r)?;
+            ServerPacket::PetNameInvalid {
+                code,
+                name,
+                declensions,
+            }
+        }
         // An empty body on both sides: vmangos writes nothing and the reference reads nothing.
         opcode::SMSG_PET_BROKEN => ServerPacket::PetBroken,
         opcode::SMSG_PET_ACTION_SOUND => {
@@ -1904,9 +1911,10 @@ fn parse_server_body(
             ServerPacket::InitializeFactions { standings }
         }
         opcode::SMSG_SET_FACTION_STANDING => {
-            // A spillover bonus and a show-effect byte precede the rows (`0x5d20c5`); unread here.
-            let _bonus = read_f32_le(&mut r)?;
-            let _show_effect = read_u8(&mut r)?;
+            // The Refer-A-Friend bonus and the rank-up effect byte precede the rows (`0x5d20c5`,
+            // `0x5d20d0`).
+            let bonus = read_f32_le(&mut r)?;
+            let show_effect = read_u8(&mut r)? != 0;
             let count = read_u32_le(&mut r)?;
             // At most one row per reputation-list slot (`FACTION_LIST_LEN`).
             let mut standings =
@@ -1916,7 +1924,19 @@ fn parse_server_body(
                 let standing = read_u32_le(&mut r)? as i32;
                 standings.push((list_id, standing));
             }
-            ServerPacket::SetFactionStanding { standings }
+            ServerPacket::SetFactionStanding {
+                bonus,
+                show_effect,
+                standings,
+            }
+        }
+        // `u32` list index (`0x5d0860`), then flags whose `0x2` is the at-war bit (`0x5d086b`).
+        opcode::SMSG_SET_FACTION_ATWAR => ServerPacket::SetFactionAtWar {
+            list_id: read_u32_le(&mut r)?,
+            at_war: read_u8(&mut r)? & 0x2 != 0,
+        },
+        opcode::SMSG_EXPECTED_SPAM_RECORDS => {
+            ServerPacket::ExpectedSpamRecords(super::chat::read_expected_spam_records(&mut r)?)
         }
         opcode::SMSG_SET_FACTION_VISIBLE => ServerPacket::SetFactionVisible {
             list_id: read_u32_le(&mut r)?,

@@ -533,6 +533,7 @@ mod tests {
         Some(crate::ui_chat::edit::ChannelSlot {
             name: name.into(),
             state: SlotState::Suspended,
+            leave_asked: false,
         })
     }
 

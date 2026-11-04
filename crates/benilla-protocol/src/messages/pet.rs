@@ -227,13 +227,16 @@ pub(super) fn read_pet_mode(r: &mut impl Read) -> io::Result<PetMode> {
 }
 
 /// Read `SMSG_PET_ACTION_FEEDBACK` (`0x5d4da0`): one reason byte. After reasons 2 and 3 the
-/// handler reads a `u32` spell for its cooldown refund, read and dropped here when sent.
-pub(super) fn read_pet_action_feedback(r: &mut &[u8]) -> io::Result<u8> {
+/// handler reads a `u32` spell for its cooldown refund (`0x5d4df4`, `0x5d4e7a`), 0 when absent as
+/// the handler's zeroed local reads it.
+pub(super) fn read_pet_action_feedback(r: &mut &[u8]) -> io::Result<(u8, u32)> {
     let reason = read_u8(r)?;
-    if matches!(reason, 2 | 3) && r.len() >= 4 {
-        read_u32_le(r)?;
-    }
-    Ok(reason)
+    let spell = if matches!(reason, 2 | 3) && r.len() >= 4 {
+        read_u32_le(r)?
+    } else {
+        0
+    };
+    Ok((reason, spell))
 }
 
 /// Read `SMSG_PET_TAME_FAILURE` (`0x802090`): one reason byte.
@@ -243,13 +246,23 @@ pub(super) fn read_pet_tame_failure(r: &mut impl Read) -> io::Result<u8> {
 
 /// Read `SMSG_PET_NAME_INVALID` as 12340's arm does (`0x6e2fb1`): the `u32` name code it hands
 /// the name-error display, the refused name, a `u8` declension flag and, when set, five declined
-/// forms. Only the code is kept; the declensions feed `PET_FORCE_NAME_DECLENSION`, which the
-/// ruRU client alone asks for.
-pub(super) fn read_pet_name_invalid(r: &mut impl Read) -> io::Result<u32> {
+/// forms, which feed `PET_FORCE_NAME_DECLENSION` (`0x6e303d`).
+#[allow(clippy::type_complexity)]
+pub(super) fn read_pet_name_invalid(
+    r: &mut impl Read,
+) -> io::Result<(u32, String, Option<[String; 5]>)> {
     let code = read_u32_le(r)?;
-    read_cstring(r)?;
-    skip_declined_names(r)?;
-    Ok(code)
+    let name = read_cstring(r)?;
+    let declensions = if read_u8(r)? != 0 {
+        let mut forms: [String; 5] = Default::default();
+        for form in &mut forms {
+            *form = read_cstring(r)?;
+        }
+        Some(forms)
+    } else {
+        None
+    };
+    Ok((code, name, declensions))
 }
 
 /// The declension block the pet-name packets share: a `u8` flag and, when set, five declined

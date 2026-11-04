@@ -584,9 +584,10 @@ fn a_channel_notice_fires_its_token_and_the_reference_reads_arg7_and_arg10_bare(
     assert_eq!(lines_in_window(&s), 1);
 }
 
-/// The notice switch's MODE_CHANGE arm calls and returns before the fire.
+/// The notice switch's MODE_CHANGE arm prints its own lines (`0x50e559` -> `0x50cfc0`), so the
+/// notice parks as a mode change, not as a notice event.
 #[test]
-fn a_mode_change_notice_never_becomes_an_event() {
+fn a_mode_change_notice_parks_for_its_member_lines() {
     let _data = benilla_formats::wow_data_or_skip!();
     use benilla_protocol::messages::{channel_notice, ChannelNoticeTail};
 
@@ -602,17 +603,20 @@ fn a_mode_change_notice_never_becomes_an_event() {
     );
     assert_eq!(
         log.pending_len(),
-        0,
-        "MODE_CHANGE is dropped at the feed — the reference's 0x0C arm fires nothing"
+        1,
+        "one mode change waits on the member's name"
     );
 
     // The control: a notice that fires is queued.
     log.push_channel_notice(
         channel_notice::YOU_JOINED,
         "World".into(),
-        &ChannelNoticeTail::YouJoined { flags: 0 },
+        &ChannelNoticeTail::YouJoined {
+            flags: 0,
+            text: None,
+        },
     );
-    assert_eq!(log.pending_len(), 1);
+    assert_eq!(log.pending_len(), 2);
 }
 
 /// arg4, arg7, arg8 and arg9 are one channel record in the reference, defaulted together.
@@ -854,7 +858,10 @@ fn leaving_a_capital_suspends_trade_rather_than_deregistering_it() {
         &mut s,
         &mut windows,
         &mut channels,
-        &mut notice("Trade - City", "3"), // YOU_LEFT
+        &mut ChatEvent {
+            left_constant: true,           // the constant channel's byte
+            ..notice("Trade - City", "3")  // YOU_LEFT
+        },
     );
     s.resolve();
 
@@ -1070,7 +1077,7 @@ fn every_notice_token_resolves_and_the_tokenless_bytes_stay_silent() {
                 s.lua().globals().get::<String>(key).ok()
             })
         });
-        match super::event::notice_token(byte, None) {
+        match super::event::notice_token(byte, None, false) {
             Some(token) => assert!(
                 rendered.is_some(),
                 "notice {byte:#04x} has token {token} but CHAT_{token}_NOTICE resolves to nothing"
@@ -1116,7 +1123,7 @@ fn every_kind_is_in_all() {
     seen.sort_unstable();
     seen.dedup();
     assert_eq!(seen.len(), before, "a kind is listed twice in ALL");
-    assert_eq!(before, 47, "47 kinds — update this when the kind set grows");
+    assert_eq!(before, 50, "50 kinds — update this when the kind set grows");
 }
 
 #[test]
@@ -2630,6 +2637,7 @@ fn a_channel_send_carries_the_numbered_slots_name() {
             Some(ChannelSlot {
                 name: "LocalDefense - Elwynn Forest".into(),
                 state: SlotState::Suspended,
+                leave_asked: false,
             }),
         ],
         ..Default::default()

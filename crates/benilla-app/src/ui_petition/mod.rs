@@ -129,6 +129,8 @@ pub(crate) struct PetitionState {
     records_epoch: u64,
     /// Lines composed at apply time, shown by the feed, which holds the `script` handle.
     lines: Vec<lines::Line>,
+    /// A rename patched a record: `PETITION_SHOW` fires whether or not a charter is shown.
+    show_owed: bool,
 }
 
 /// The charter the petition window is showing.
@@ -446,9 +448,27 @@ pub(crate) mod net {
         }
     }
 
-    fn on_renamed(In(ev): In<SessionEvent>, mut petition: ResMut<PetitionState>) {
+    fn on_renamed(
+        In(ev): In<SessionEvent>,
+        mut petition: ResMut<PetitionState>,
+        objects: crate::net::Objects,
+        items: Res<crate::items::Items>,
+    ) {
         if let SessionEvent::PetitionRenamed(rename) = ev {
-            renamed(&mut petition, rename);
+            // A streamed item with the charter flag, bit 13 (`0x6dd2d4`), names its petition in
+            // enchantment slot 0 (`0x6dd2de`).
+            let petition_id = objects
+                .object(rename.item)
+                .filter(|f| {
+                    f.object_entry()
+                        .and_then(|e| items.template_cached(e))
+                        .is_some_and(|t| {
+                            t.flags & benilla_protocol::messages::ITEM_FLAG_CHARTER != 0
+                        })
+                })
+                .and_then(|f| f.item_enchant(0))
+                .map(|id| id as u32);
+            renamed(&mut petition, rename, petition_id);
         }
     }
 
@@ -550,25 +570,25 @@ pub(crate) mod net {
         }
     }
 
-    /// `MSG_PETITION_RENAME` inbound: the echo's name overwrites the cached title in place, with no
-    /// re-query (which then fires `PETITION_SHOW`).
-    pub(crate) fn renamed(petition: &mut PetitionState, rename: PetitionRename) {
-        let Some(id) = petition
-            .open
-            .as_ref()
-            .filter(|o| o.item == rename.item)
-            .map(|o| o.petition_id)
-        else {
+    /// `MSG_PETITION_RENAME` inbound: the echo's name overwrites the charter's cached record, open
+    /// or not, with no re-query, then `PETITION_SHOW` fires (`0x6dd333`, `0x6dd33f`). An empty
+    /// name (`0x6dd292`), an item naming no petition, or an uncached record (`0x6dd31d`) does
+    /// nothing.
+    pub(crate) fn renamed(
+        petition: &mut PetitionState,
+        rename: PetitionRename,
+        petition_id: Option<u32>,
+    ) {
+        if rename.name.is_empty() {
+            return;
+        }
+        let Some(record) = petition_id.and_then(|id| petition.records.get_mut(id)) else {
             return;
         };
-        if !petition.records.answered(id) {
-            petition.records.insert(id, Some(Record::default()));
-        }
-        if let Some(record) = petition.records.get_mut(id) {
-            record.name = rename.name;
-        }
+        record.name = rename.name;
         // A patched title is a changed record: the tooltip's line 3 reads it too.
         petition.records_epoch = petition.records_epoch.wrapping_add(1);
+        petition.show_owed = true;
     }
 }
 
@@ -721,18 +741,53 @@ mod tests {
                 item: 0x99,
                 name: "Second".into(),
             },
+            Some(7),
         );
         assert_eq!(open_title(&petition), Some("Second"));
+        assert!(
+            std::mem::take(&mut petition.show_owed),
+            "PETITION_SHOW is owed"
+        );
 
-        // An echo for a charter we do not have open is not ours to apply.
+        // An empty name, an item with no petition and an uncached record change nothing.
+        for (name, id) in [("", Some(7)), ("Wrong", None), ("Wrong", Some(8))] {
+            net::renamed(
+                &mut petition,
+                PetitionRename {
+                    item: 0x99,
+                    name: name.into(),
+                },
+                id,
+            );
+        }
+        assert_eq!(open_title(&petition), Some("Second"));
+        assert!(!petition.show_owed);
+        assert!(!petition.records.answered(8), "no record is invented");
+    }
+
+    /// A charter in the bags that is not open still takes its rename (`0x6dd31d`).
+    #[test]
+    fn a_rename_patches_a_cached_charter_that_is_not_open() {
+        let mut petition = PetitionState::default();
+        petition.apply_record(PetitionQueryResponse {
+            petition_id: 9,
+            name: "Old".into(),
+            min_signatures: 9,
+            ..Default::default()
+        });
         net::renamed(
             &mut petition,
             PetitionRename {
-                item: 0xdead,
-                name: "Wrong".into(),
+                item: 0x55,
+                name: "New".into(),
             },
+            Some(9),
         );
-        assert_eq!(open_title(&petition), Some("Second"));
+        assert_eq!(
+            petition.records.get(9).map(|r| r.name.as_str()),
+            Some("New")
+        );
+        assert!(petition.show_owed);
     }
 
     /// Through the real registration: a new login's VM never runs the old one's `OnHide`.

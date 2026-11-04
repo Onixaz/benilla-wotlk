@@ -14,7 +14,8 @@
 //! advancing the index.
 //!
 //! The predicate has one call site, in the chat chokepoint; it never edits the text, and a hit
-//! drops the line silently.
+//! drops the line silently. It tests the shipped list, then the server's (`SMSG_EXPECTED_SPAM_RECORDS`),
+//! compiled the same way (`0x501d17`).
 //!
 //! Two PCRE translations are the reference's own behaviour. `\<` and `\>` are the non-directional
 //! `\b`: the client's patched escape table (`.rdata`) gives all three the code -4. CASELESS folds
@@ -190,11 +191,13 @@ pub(crate) const PROFANITY_MASKED_CHAT_TYPES: &[u8] = &[
     0x5c, // BATTLEGROUND
 ];
 
-/// The two compiled lists and the rotating mask index.
+/// The compiled lists and the rotating mask index.
 #[derive(Resource)]
 pub(crate) struct TextFilter {
     profanity: PatternList,
     spam: PatternList,
+    /// The server's spam patterns, each packet replacing the last (`0x501c70`).
+    server_spam: PatternList,
     /// Zero-initialized, advanced mod 8, never reset.
     mask_index: usize,
 }
@@ -205,6 +208,7 @@ impl Default for TextFilter {
         TextFilter {
             profanity: PatternList::empty(),
             spam: PatternList::empty(),
+            server_spam: PatternList::empty(),
             mask_index: 0,
         }
     }
@@ -215,8 +219,23 @@ impl TextFilter {
         TextFilter {
             profanity: PatternList::compile(profanity, "chat profanity filter"),
             spam: PatternList::compile(spam, "chat spam filter"),
+            server_spam: PatternList::empty(),
             mask_index: 0,
         }
+    }
+
+    /// Replace the server's spam list; a row that will not compile is skipped (`0x501d21`) and an
+    /// empty list clears it.
+    pub(crate) fn set_server_spam(&mut self, patterns: &[String]) {
+        let rows: Vec<FilterPattern> = patterns
+            .iter()
+            .enumerate()
+            .map(|(i, pattern)| FilterPattern {
+                id: i as u32,
+                pattern: pattern.clone(),
+            })
+            .collect();
+        self.server_spam = PatternList::compile(&rows, "server spam filter");
     }
 
     pub(crate) fn profanity_len(&self) -> usize {
@@ -227,14 +246,14 @@ impl TextFilter {
         self.spam.len()
     }
 
-    /// Whether the text matches the spam list. The reference also scans a server-pushed list (SMSG
-    /// `0x332`) that vmangos never sends. `enabled` is `spamFilter`, which the reference tests at
-    /// the call site.
+    /// Whether the text matches the shipped spam list or the server's (`0x509cc9`, `0x509d37`).
+    /// `enabled` is `spamFilter`, which the reference tests at the call site.
     pub(crate) fn is_spam(&self, enabled: bool, text: &str) -> bool {
-        if !enabled || text.is_empty() || self.spam.len() == 0 {
+        if !enabled || text.is_empty() || self.spam.len() + self.server_spam.len() == 0 {
             return false;
         }
-        self.spam.set.is_match(&ascii_lower(text))
+        let subject = ascii_lower(text);
+        self.spam.set.is_match(&subject) || self.server_spam.set.is_match(&subject)
     }
 
     /// The masker with `dl = 0`: mask in place, return whether anything matched. `enabled` is
@@ -413,6 +432,25 @@ mod tests {
 
     /// The predicate never edits, and it is off when the switch is.
     #[test]
+    fn the_servers_list_adds_to_the_shipped_one_and_is_replaced_whole() {
+        let mut f = TextFilter::new(&[], &list(&["itembay"]));
+        assert!(!f.is_spam(true, "cheap GOLD here"));
+        // A row that will not compile is skipped, the rest kept.
+        f.set_server_spam(&["gold".to_string(), "(".to_string()]);
+        assert!(
+            f.is_spam(true, "cheap GOLD here"),
+            "caseless, as the shipped list"
+        );
+        assert!(
+            f.is_spam(true, "www.itembay.ca"),
+            "the shipped list still applies"
+        );
+        assert!(!f.is_spam(false, "cheap gold"), "behind spamFilter");
+        f.set_server_spam(&[]);
+        assert!(!f.is_spam(true, "cheap gold"), "an empty list clears it");
+    }
+
+    #[test]
     fn the_spam_predicate_is_a_boolean_over_the_untouched_text() {
         let spam = list(&[
             r"(w\s*w\s*w\s*\.)?\s*i\s*t\s*e\s*m\s*b\s*a\s*y\s*(\.\s*c\s*a)",
@@ -551,6 +589,17 @@ fn load_text_filter_lists(
 
 pub(crate) struct TextFilterPlugin;
 
+/// `SMSG_EXPECTED_SPAM_RECORDS`: the server's patterns replace the last list.
+fn on_expected_spam_records(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    mut filter: ResMut<TextFilter>,
+) {
+    if let benilla_protocol::SessionEvent::ExpectedSpamRecords(patterns) = ev {
+        info!("chat filters: {} server spam expressions", patterns.len());
+        filter.set_server_spam(&patterns);
+    }
+}
+
 /// The two switches' change callback, as the reference's callbacks mirror the new value, read as an
 /// integer, into a global.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut switches: ResMut<TextFilterSwitches>) {
@@ -563,7 +612,12 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut switches: ResMut<Te
 
 impl Plugin for TextFilterPlugin {
     fn build(&self, app: &mut App) {
+        use crate::net::NetHandlerApp;
         app.add_observer(on_cvar);
+        app.net_handler(
+            benilla_protocol::SessionEventKind::ExpectedSpamRecords,
+            on_expected_spam_records,
+        );
         app.init_resource::<TextFilterSwitches>()
             .init_resource::<TextFilter>()
             .add_systems(

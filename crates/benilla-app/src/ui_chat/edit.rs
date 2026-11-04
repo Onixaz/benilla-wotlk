@@ -121,6 +121,8 @@ pub(crate) struct ChannelSlot {
     pub name: String,
     /// `+0x9c`, the slot's state.
     pub state: SlotState,
+    /// `+0xa0`: we asked to leave (`0x509628`); a join request clears it (`0x5077b4`).
+    pub leave_asked: bool,
 }
 
 /// The reference's per-slot state (`+0x9c`), in the values whose notice token differs: the stock
@@ -146,6 +148,7 @@ impl ChannelSlot {
         ChannelSlot {
             name: name.to_string(),
             state: SlotState::Joined,
+            leave_asked: false,
         }
     }
 }
@@ -309,6 +312,22 @@ impl ChannelState {
         }
     }
 
+    /// Mark the slot holding `name` as left by our own ask, the explicit leave's (`0x509628`).
+    pub(crate) fn note_leave_asked(&mut self, name: &str) {
+        if let Some(n) = self.number_of(name) {
+            if let Some(slot) = self.joined[n as usize - 1].as_mut() {
+                slot.leave_asked = true;
+            }
+        }
+    }
+
+    /// Whether we asked to leave the slot holding `name`; `None` when no slot holds it.
+    pub(crate) fn leave_asked(&self, name: &str) -> Option<bool> {
+        self.number_of(name)
+            .and_then(|n| self.joined[n as usize - 1].as_ref())
+            .map(|s| s.leave_asked)
+    }
+
     /// The state of the slot holding `name`; `None` is the reference's no-record leg.
     pub(crate) fn slot_state(&self, name: &str) -> Option<SlotState> {
         self.number_of(name)
@@ -368,6 +387,7 @@ impl ChannelState {
             // bypass.
             if let Some(slot) = self.joined[n as usize - 1].as_mut() {
                 slot.state = SlotState::Joined;
+                slot.leave_asked = false;
             }
             return Some(n);
         }

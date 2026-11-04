@@ -118,8 +118,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         }],
         ServerPacket::PetSpells(spells) => vec![SessionEvent::PetSpells(Box::new(spells))],
         ServerPacket::PetMode(mode) => vec![SessionEvent::PetMode(mode)],
-        ServerPacket::PetActionFeedback { reason } => {
-            vec![SessionEvent::PetActionFeedback { reason }]
+        ServerPacket::PetActionFeedback { reason, spell } => {
+            vec![SessionEvent::PetActionFeedback { reason, spell }]
         }
         ServerPacket::PetCastFailed { spell_id, outcome } => match outcome {
             CastOutcome::Ok => Vec::new(),
@@ -130,7 +130,15 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             }],
         },
         ServerPacket::PetTameFailure { reason } => vec![SessionEvent::PetTameFailure { reason }],
-        ServerPacket::PetNameInvalid { code } => vec![SessionEvent::PetNameInvalid { code }],
+        ServerPacket::PetNameInvalid {
+            code,
+            name,
+            declensions,
+        } => vec![SessionEvent::PetNameInvalid {
+            code,
+            name,
+            declensions,
+        }],
         ServerPacket::PetBroken => vec![SessionEvent::PetBroken],
         ServerPacket::PetActionSound { pet_guid, talk } => {
             vec![SessionEvent::PetActionSound { pet_guid, talk }]
@@ -1209,8 +1217,20 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::InitializeFactions { standings } => {
             vec![SessionEvent::Reputations { standings }]
         }
-        ServerPacket::SetFactionStanding { standings } => {
-            vec![SessionEvent::ReputationDelta { standings }]
+        ServerPacket::SetFactionStanding {
+            bonus,
+            show_effect,
+            standings,
+        } => vec![SessionEvent::ReputationDelta {
+            bonus,
+            show_effect,
+            standings,
+        }],
+        ServerPacket::SetFactionAtWar { list_id, at_war } => {
+            vec![SessionEvent::ReputationAtWar { list_id, at_war }]
+        }
+        ServerPacket::ExpectedSpamRecords(patterns) => {
+            vec![SessionEvent::ExpectedSpamRecords(patterns)]
         }
         ServerPacket::SetFactionVisible { list_id } => {
             vec![SessionEvent::ReputationVisible { list_id }]

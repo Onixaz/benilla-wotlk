@@ -174,6 +174,8 @@ pub(super) fn feed_petition(
     // ── The petition window's edges, once the record and every signer name have landed.
     let ready = record.is_some() && signers.iter().all(Option::is_some);
     let now_charter = open.as_ref().map(|o| o.item).filter(|_| ready);
+    // A rename fires `PETITION_SHOW` itself (`0x6dd33f`), once, whatever the window shows.
+    let mut show_owed = std::mem::take(&mut petition.show_owed);
     match (fed.shown_charter, now_charter) {
         (Some(a), Some(b)) if a != b => {
             // Another charter while one is shown: drop the queued close intent, or the drain would
@@ -187,9 +189,12 @@ pub(super) fn feed_petition(
         (Some(_), None) => script.fire_event("PETITION_CLOSED", vec![]),
         // A rename echo, or a name resolving after the window was already up.
         (Some(_), Some(_)) if fed.shown != record || fed.shown_signers != signers => {
-            script.fire_event("PETITION_SHOW", vec![])
+            show_owed = true;
         }
         _ => {}
+    }
+    if show_owed {
+        script.fire_event("PETITION_SHOW", vec![]);
     }
     fed.shown_charter = now_charter;
     fed.shown = record;

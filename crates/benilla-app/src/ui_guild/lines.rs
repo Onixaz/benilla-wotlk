@@ -58,8 +58,10 @@ pub(super) fn event_line(notice: &GuildEventNotice, announce_signon: bool) -> Op
         // nothing, and neither does a refused sign-on.
         guild_event::MOTD | guild_event::UPDATE_RANK_NAME | guild_event::UPDATE_ROSTER => None,
         guild_event::SIGNED_ON | guild_event::SIGNED_OFF => None,
-        // `0x09` and every id past `0x0d` share the default arm, which prints `0x69`,
-        // `ERR_GUILD_INTERNAL`, through the shared tail.
+        // The bank arms `0x0e`-`0x13` act and return without a line (`0x6d96f6`-`0x6d9853`).
+        0x0e..=0x13 => None,
+        // `0x09` and every id past `0x13` share the default arm, which prints `0x69`,
+        // `ERR_GUILD_INTERNAL`, through the shared tail (`0x6d988b`).
         _ => shared("ERR_GUILD_INTERNAL"),
     }
 }
@@ -212,8 +214,16 @@ mod tests {
                 "{event:#04x}"
             );
         }
-        // `0x09` and every id past `0x0d` share the default arm, which pushes `0x69`.
-        for event in [guild_event::TABARD_CHANGE, 0x0e, 0x77, 0xff] {
+        // The bank arms print nothing.
+        for event in 0x0e..=0x13 {
+            assert_eq!(
+                event_line(&notice(event, &["x"]), false),
+                None,
+                "{event:#04x}"
+            );
+        }
+        // `0x09` and every id past `0x13` share the default arm, which pushes `0x69`.
+        for event in [guild_event::TABARD_CHANGE, 0x14, 0x77, 0xff] {
             let e = event_line(&notice(event, &["x"]), false).expect("the default arm prints");
             assert_eq!(e.key, "ERR_GUILD_INTERNAL", "{event:#04x}");
         }

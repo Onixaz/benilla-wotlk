@@ -211,6 +211,7 @@ pub(super) fn guild_recruitment_cascade(
 fn cascade_leave(channels: &mut ChannelState, commands: &NetCommands, name: String) {
     let _ = commands.0.send(channels.leave_command(name.clone()));
     channels.note_zone_channel_left(&name);
+    channels.note_leave_asked(&name);
 }
 
 #[cfg(test)]

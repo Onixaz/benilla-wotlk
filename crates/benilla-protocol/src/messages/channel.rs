@@ -43,6 +43,9 @@ pub mod channel_notice {
     pub const NOT_IN_LFG: u8 = 0x21;
     pub const VOICE_ON: u8 = 0x22;
     pub const VOICE_OFF: u8 = 0x23;
+    /// A member guid, then the channel's voice flag (`+0x90` bit `0x80`) set with no line
+    /// (`0x50e9f2`).
+    pub const VOICE_ENABLED: u8 = 0x24;
 }
 
 /// What follows the notice byte and channel name, by notice (`Chat/Channel.cpp:804-1008`).
@@ -50,8 +53,11 @@ pub mod channel_notice {
 pub enum ChannelNoticeTail {
     /// The member who joined or left.
     Guid(u64),
-    /// Our channel flags; the `u32` after them is always 0.
-    YouJoined { flags: u32 },
+    /// Our channel flags; the `u32` after them is always 0. 3.3.5a may append a second line's
+    /// text (`0x50e220`).
+    YouJoined { flags: u32, text: Option<String> },
+    /// 3.3.5a's leave: whether the channel is a constant one, the `SUSPENDED` gate (`0x50e324`).
+    YouLeft { constant: bool },
     /// Nothing follows the channel name.
     Empty,
     /// The player who made the change or sent the invite.
@@ -87,7 +93,7 @@ pub(super) fn read_channel_notify(r: &mut &[u8]) -> io::Result<ChannelNotify> {
         n::YOU_JOINED => {
             let flags = read_u32_le(r)?;
             let _reserved = read_u32_le(r)?; // always 0 on the wire
-            ChannelNoticeTail::YouJoined { flags }
+            ChannelNoticeTail::YouJoined { flags, text: None }
         }
         n::YOU_LEFT
         | n::WRONG_PASSWORD
@@ -138,10 +144,10 @@ pub(super) fn read_channel_notify(r: &mut &[u8]) -> io::Result<ChannelNotify> {
 }
 
 /// 3.3.5a's `SMSG_CHANNEL_NOTIFY` (AzerothCore `Channel::Make*`, the 12340 client's `0x50e120`):
-/// 1.12.1's tails, but `YOU_JOINED` is `u8 flags, u32 channelId, u32 0` and `YOU_LEFT` is
-/// `u32 channelId, u8 isConstant`. Of the notices past `THROTTLED`, `NOT_IN_AREA` and
-/// `NOT_IN_LFG` carry nothing and `VOICE_ON` and `VOICE_OFF` the actor's guid; `0x24`, which the
-/// client reads a guid for and prints nothing, is refused.
+/// 1.12.1's tails, but `YOU_JOINED` is `u8 flags, u32 channelId, u32 0` and an optional cstring
+/// read while bytes remain (`0x50e205`), and `YOU_LEFT` is `u32 channelId, u8 isConstant`. Of the
+/// notices past `THROTTLED`, `NOT_IN_AREA` and `NOT_IN_LFG` carry nothing and `VOICE_ON`,
+/// `VOICE_OFF` and `VOICE_ENABLED` a guid.
 pub(super) fn read_channel_notify_wotlk(r: &mut &[u8]) -> io::Result<ChannelNotify> {
     use channel_notice as n;
 
@@ -153,24 +159,23 @@ pub(super) fn read_channel_notify_wotlk(r: &mut &[u8]) -> io::Result<ChannelNoti
             let flags = u32::from(read_u8(&mut body)?);
             let _channel_id = read_u32_le(&mut body)?;
             let _reserved = read_u32_le(&mut body)?;
-            (channel, ChannelNoticeTail::YouJoined { flags })
+            let text = if body.is_empty() {
+                None
+            } else {
+                Some(read_cstring(&mut body)?)
+            };
+            (channel, ChannelNoticeTail::YouJoined { flags, text })
         }
         n::YOU_LEFT => {
             let channel = read_cstring(&mut body)?;
             let _channel_id = read_u32_le(&mut body)?;
-            let _is_constant = read_u8(&mut body)?;
-            (channel, ChannelNoticeTail::Empty)
+            let constant = read_u8(&mut body)? != 0;
+            (channel, ChannelNoticeTail::YouLeft { constant })
         }
         n::NOT_IN_AREA | n::NOT_IN_LFG => (read_cstring(&mut body)?, ChannelNoticeTail::Empty),
-        n::VOICE_ON | n::VOICE_OFF => {
+        n::VOICE_ON | n::VOICE_OFF | n::VOICE_ENABLED => {
             let channel = read_cstring(&mut body)?;
             (channel, ChannelNoticeTail::Actor(read_u64_le(&mut body)?))
-        }
-        0x24 => {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                format!("3.3.5a channel notice {notice:#04x} has no shared notice yet"),
-            ))
         }
         _ => return read_channel_notify(r),
     };
@@ -199,4 +204,57 @@ pub(super) fn read_channel_list(r: &mut &[u8]) -> io::Result<(bool, String, u8, 
         members.push((guid, member_flags));
     }
     Ok((display, channel, flags, members))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(notice: u8, tail: &[u8]) -> Vec<u8> {
+        let mut b = vec![notice];
+        b.extend_from_slice(b"Trade - City\0");
+        b.extend_from_slice(tail);
+        b
+    }
+
+    /// `YOU_JOINED`'s second line is read only while bytes remain; `YOU_LEFT` keeps its constant
+    /// byte; `0x24` reads its guid.
+    #[test]
+    fn the_wotlk_tails_carry_the_join_text_the_leave_byte_and_the_voice_guid() {
+        use channel_notice as n;
+        let mut joined = vec![0x0a];
+        joined.extend_from_slice(&2u32.to_le_bytes());
+        joined.extend_from_slice(&0u32.to_le_bytes());
+        let plain = read_channel_notify_wotlk(&mut body(n::YOU_JOINED, &joined).as_slice())
+            .expect("parses");
+        assert_eq!(
+            plain.tail,
+            ChannelNoticeTail::YouJoined {
+                flags: 0x0a,
+                text: None
+            }
+        );
+        joined.extend_from_slice(b"Welcome\0");
+        let mut r = &body(n::YOU_JOINED, &joined)[..];
+        let tailed = read_channel_notify_wotlk(&mut r).expect("parses");
+        assert!(r.is_empty());
+        assert_eq!(
+            tailed.tail,
+            ChannelNoticeTail::YouJoined {
+                flags: 0x0a,
+                text: Some("Welcome".into())
+            }
+        );
+
+        let mut left = 2u32.to_le_bytes().to_vec();
+        left.push(1);
+        let leave =
+            read_channel_notify_wotlk(&mut body(n::YOU_LEFT, &left).as_slice()).expect("parses");
+        assert_eq!(leave.tail, ChannelNoticeTail::YouLeft { constant: true });
+
+        let voice =
+            read_channel_notify_wotlk(&mut body(n::VOICE_ENABLED, &7u64.to_le_bytes()).as_slice())
+                .expect("parses");
+        assert_eq!(voice.tail, ChannelNoticeTail::Actor(7));
+    }
 }

@@ -259,14 +259,20 @@ fn set_faction_standing_parses_and_decodes() {
     let body = hx("0000000001020000002e000000b80b00005900000090e8ffff");
     let p = messages::parse_server(messages::opcode::SMSG_SET_FACTION_STANDING, &body).unwrap();
     match p {
-        ServerPacket::SetFactionStanding { ref standings } => {
+        ServerPacket::SetFactionStanding {
+            bonus,
+            show_effect,
+            ref standings,
+        } => {
+            assert_eq!(bonus, 0.0);
+            assert!(show_effect, "the rank-up effect byte");
             assert_eq!(standings[..], [(46, 3000), (89, -6000)]);
         }
         _ => panic!("set faction standing"),
     }
     assert!(matches!(
         decode(p)[..],
-        [SessionEvent::ReputationDelta { ref standings }]
+        [SessionEvent::ReputationDelta { ref standings, .. }]
             if standings[..] == [(46, 3000), (89, -6000)]
     ));
 }
@@ -650,18 +656,32 @@ fn pet_feedback_family_parses_and_decodes() {
 
     // SMSG_PET_NAME_INVALID: the name code, the name ("Bruce") and the declension flag, then with
     // the flag set its five declined forms (here empty).
-    for (body, want) in [
-        ("0c000000".to_owned() + "427275636500" + "00", 12),
-        ("10000000".to_owned() + "00" + "01" + "0000000000", 16),
+    for (body, want, name, forms) in [
+        (
+            "0c000000".to_owned() + "427275636500" + "00",
+            12,
+            "Bruce",
+            false,
+        ),
+        (
+            "10000000".to_owned() + "00" + "01" + "0000000000",
+            16,
+            "",
+            true,
+        ),
     ] {
         let p = messages::parse_server(opcode::SMSG_PET_NAME_INVALID, &hx(&body)).unwrap();
         assert!(
-            matches!(p, ServerPacket::PetNameInvalid { code } if code == want),
+            matches!(
+                p,
+                ServerPacket::PetNameInvalid { code, name: ref n, ref declensions }
+                    if code == want && n == name && declensions.is_some() == forms
+            ),
             "body {body:?}"
         );
         assert!(matches!(
             decode(p)[..],
-            [SessionEvent::PetNameInvalid { code }] if code == want
+            [SessionEvent::PetNameInvalid { code, .. }] if code == want
         ));
     }
 
@@ -871,5 +891,36 @@ fn gravity_collision_height_and_spline_flight_parse_and_ack() {
         p,
         ServerPacket::PlayerMove { guid: 0x2A, flags, .. }
             if flags & messages::CLASSIC_DISABLE_GRAVITY != 0
+    ));
+}
+
+/// `SMSG_SET_FACTION_ATWAR` (`0x5d0850`): a list index and flags whose `0x2` is the war bit;
+/// `SMSG_EXPECTED_SPAM_RECORDS` (`0x501c70`): a count and that many cstrings.
+#[test]
+fn faction_at_war_and_spam_records_parse() {
+    let p = messages::parse_server(messages::opcode::SMSG_SET_FACTION_ATWAR, &hx("2e00000003"))
+        .unwrap();
+    assert!(matches!(
+        decode(p)[..],
+        [SessionEvent::ReputationAtWar {
+            list_id: 46,
+            at_war: true
+        }]
+    ));
+    let p = messages::parse_server(messages::opcode::SMSG_SET_FACTION_ATWAR, &hx("2e00000001"))
+        .unwrap();
+    assert!(matches!(
+        decode(p)[..],
+        [SessionEvent::ReputationAtWar { at_war: false, .. }]
+    ));
+    // Two patterns, "gold" and "w+": the second a regular expression.
+    let p = messages::parse_server(
+        messages::opcode::SMSG_EXPECTED_SPAM_RECORDS,
+        &hx("02000000676f6c6400772b00"),
+    )
+    .unwrap();
+    assert!(matches!(
+        decode(p)[..],
+        [SessionEvent::ExpectedSpamRecords(ref v)] if v[..] == ["gold", "w+"]
     ));
 }
