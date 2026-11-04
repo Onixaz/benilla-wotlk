@@ -141,7 +141,7 @@ pub(crate) fn apply_walk_end_facing(
                 .map(|t| bevy_to_wow(t.translation))
         };
         if let Some(wire) = resolve_facing(end.0, bevy_to_wow(t.translation), target) {
-            commands.entity(e).insert(DisplayFacing {
+            commands.entity(e).try_insert(DisplayFacing {
                 wire: wire.rem_euclid(std::f32::consts::TAU),
                 hist: [0.0; 4],
             });
@@ -319,7 +319,7 @@ pub(crate) fn drive_display_facing(
         let Ok(mut state) = facings.get_mut(e) else {
             // First frame governed: the transform still holds the wire's facing, so seed from it
             // with a clean ring.
-            commands.entity(e).insert(DisplayFacing {
+            commands.entity(e).try_insert(DisplayFacing {
                 wire: cur,
                 hist: [0.0; 4],
             });

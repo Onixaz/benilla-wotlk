@@ -1618,6 +1618,49 @@ mod tests {
             .is_none());
     }
 
+    /// A walk that ends in the frame its unit despawns, the despawn applied first, does not panic
+    /// (#924); neither does the end-facing pass on a unit despawned the same way.
+    #[test]
+    fn a_walk_ending_as_its_unit_despawns_does_not_panic() {
+        use super::super::facing::{apply_walk_end_facing, WalkEndFacing};
+        use bevy::ecs::schedule::ScheduleBuildSettings;
+        #[derive(Resource)]
+        struct Doomed(Vec<Entity>);
+        fn despawn(mut commands: Commands, doomed: Res<Doomed>) {
+            for &e in &doomed.0 {
+                commands.entity(e).despawn();
+            }
+        }
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<crate::net::GuidIndex>()
+            .add_systems(
+                Update,
+                (despawn, sample_splines, apply_walk_end_facing).chain(),
+            );
+        // One sync point at the schedule's end applies the despawn ahead of the walk's commands.
+        app.edit_schedule(Update, |s| {
+            s.set_build_settings(ScheduleBuildSettings {
+                auto_insert_apply_deferred: false,
+                ..default()
+            });
+        });
+        let (mut walk, _) = spline_at(vec![[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], true, 2.0);
+        walk.end_facing = MonsterMoveFacing::Angle(1.0);
+        let walking = app.world_mut().spawn((Transform::default(), walk)).id();
+        let facing = app
+            .world_mut()
+            .spawn((
+                Transform::default(),
+                WalkEndFacing(MonsterMoveFacing::Angle(1.0)),
+            ))
+            .id();
+        app.insert_resource(Doomed(vec![walking, facing]));
+        app.update();
+        assert!(app.world().get_entity(walking).is_err());
+        assert!(app.world().get_entity(facing).is_err());
+    }
+
     /// A straight climb pitches by the tangent (45° here) and never banks: θ = 2·acos(1) = 0.
     #[test]
     fn a_straight_climb_pitches_by_the_tangent_and_never_banks() {
