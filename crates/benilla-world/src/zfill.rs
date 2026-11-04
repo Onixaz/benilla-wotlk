@@ -22,6 +22,8 @@ use crate::model_fade::FadeMaterials;
 
 /// On a fadeable part: its live twin, present exactly while the part draws translucent.
 #[derive(Component)]
+// Sparse: it comes and goes with each fade, and a column would move the part between tables.
+#[component(storage = "SparseSet")]
 pub(crate) struct ZfillTwin(Entity);
 
 /// On a twin: the part it primes, and the marker that keeps twins out of part queries.
