@@ -14,12 +14,15 @@ pub(crate) struct AssetPlugin;
 impl Plugin for AssetPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, open_world_assets.in_set(AssetSet::Open));
-        app.add_systems(Update, (evict_world_art, scope_world_art));
+        app.add_systems(
+            Update,
+            (evict_world_art, scope_world_art, release_unshown_sprites),
+        );
     }
 }
 
 /// Clears `textures` and `model_materials` on a map change, or they pin every map's art forever.
-/// The UI sprite caches stay: they are global, and their negative entries stop per-frame re-walks.
+/// The UI sprite caches are global and go by use instead ([`release_unshown_sprites`]).
 fn evict_world_art(
     mut changes: MessageReader<crate::world_map::MapChange>,
     assets: Option<ResMut<WorldAssets>>,
@@ -35,11 +38,32 @@ fn evict_world_art(
 }
 
 /// Expires the world-art caches by distance within a map: a cached material pins the decoded BLP it
-/// samples, so `textures` is what frees VRAM. The UI sprite caches stay, as on a map change.
+/// samples, so `textures` is what frees VRAM. The UI sprite caches go by use, not by distance.
 fn scope_world_art(mut scope: ArtScope, assets: Option<ResMut<WorldAssets>>) {
     if let Some(mut a) = assets {
         scope.apply(&mut a.model_materials, ArtSlot::ClutterMats);
         scope.apply(&mut a.textures, ArtSlot::Textures);
+    }
+}
+
+/// How often [`release_unshown_sprites`] runs: a sprite goes one to two of these after its last
+/// frame on screen, where the reference frees it at once and decodes it again on the next show.
+const SPRITE_SWEEP_SECS: f32 = 1.0;
+
+/// Releases the UI sprites nothing showed since the last pass: the reference frees a texture at
+/// its last region's `SetTexture`, so an icon seen once does not stay for the session.
+fn release_unshown_sprites(
+    time: Res<Time<Real>>,
+    mut next: Local<f32>,
+    assets: Option<ResMut<WorldAssets>>,
+) {
+    let now = time.elapsed_secs();
+    if now < *next {
+        return;
+    }
+    *next = now + SPRITE_SWEEP_SECS;
+    if let Some(mut a) = assets {
+        a.release_unshown_sprites();
     }
 }
 
