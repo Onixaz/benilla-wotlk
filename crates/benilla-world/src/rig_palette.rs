@@ -695,16 +695,32 @@ pub struct RigPart(pub Entity);
 /// every rig with a joint whose `GlobalTransform` changed.
 fn compute_rig_palettes(
     changed: Query<&RigJoint, Changed<GlobalTransform>>,
-    rigs: Query<&RigSkin>,
+    rigs: Query<(&RigSkin, Option<&InheritedVisibility>)>,
+    revealed: Query<Entity, (With<RigSkin>, Changed<InheritedVisibility>)>,
+    mut gone: RemovedComponents<RigSkin>,
     worlds: Query<Ref<GlobalTransform>>,
     ibps: Res<Assets<SkinnedMeshInverseBindposes>>,
     mut palettes: ResMut<RigPalettes>,
+    // Rigs that moved while hidden: written on the frame they show, from that frame's joints.
+    mut stale: Local<bevy::ecs::entity::EntityHashSet>,
 ) {
-    let dirty_rigs: HashSet<Entity> = changed.iter().map(|j| j.0).collect();
+    for root in gone.read() {
+        stale.remove(&root);
+    }
+    let mut dirty_rigs: HashSet<Entity> = changed.iter().map(|j| j.0).collect();
+    dirty_rigs.extend(revealed.iter().filter(|e| stale.contains(e)));
     for root in dirty_rigs {
-        let Ok(rig) = rigs.get(root) else {
+        let Ok((rig, shown)) = rigs.get(root) else {
             continue; // allocation failed at spawn (bind-pose fallback) or already torn down
         };
+        // A hidden rig's palette feeds no draw: a crowd's walking bodies out of view would
+        // rewrite and upload every attachment each frame. A holder outside the visibility tree
+        // (a booth's) counts as shown.
+        if shown.is_some_and(|v| !v.get()) {
+            stale.insert(root);
+            continue;
+        }
+        stale.remove(&root);
         let Some(ibp) = ibps.get(&rig.ibp) else {
             continue;
         };
@@ -1001,8 +1017,10 @@ pub fn plugin(app: &mut App) {
             )
                 .chain()
                 // After the last joint-world writer: propagation, then the billboard joint pass,
-                // which rewrites joint `GlobalTransform`s in place.
-                .after(crate::billboard::BillboardPlace),
+                // which rewrites joint `GlobalTransform`s in place. After this frame's inherited
+                // visibility too, so a rig revealed this frame is written before it draws.
+                .after(crate::billboard::BillboardPlace)
+                .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
         );
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
         render.add_systems(
@@ -1050,6 +1068,60 @@ pub fn spawn_joints(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hidden rig's moving joint writes nothing; the frame its holder shows writes the joint's
+    /// pose of that frame, not the one it hid with.
+    #[test]
+    fn a_hidden_rig_is_written_on_the_frame_it_shows() {
+        let mut app = App::new();
+        app.init_resource::<RigPalettes>()
+            .init_resource::<Assets<SkinnedMeshInverseBindposes>>()
+            .add_systems(Update, compute_rig_palettes);
+        let ibp = app
+            .world_mut()
+            .resource_mut::<Assets<SkinnedMeshInverseBindposes>>()
+            .add(SkinnedMeshInverseBindposes::from(vec![Mat4::IDENTITY]));
+        let joint = app.world_mut().spawn(GlobalTransform::IDENTITY).id();
+        let skin = {
+            let mut p = app.world_mut().resource_mut::<RigPalettes>();
+            RigSkin::allocate(&mut p, vec![joint], ibp).unwrap()
+        };
+        let slot = skin.slot;
+        let holder = app
+            .world_mut()
+            .spawn((skin, GlobalTransform::IDENTITY, InheritedVisibility::HIDDEN))
+            .id();
+        app.world_mut().entity_mut(joint).insert(RigJoint(holder));
+        let at = |x: f32| GlobalTransform::from_translation(Vec3::new(x, 0.0, 0.0));
+        let row_x = |app: &App| {
+            app.world()
+                .resource::<RigPalettes>()
+                .world_palette(slot, 1)
+                .unwrap()[0]
+                .w_axis
+                .x
+        };
+
+        app.update();
+        *app.world_mut().get_mut::<GlobalTransform>(joint).unwrap() = at(3.0);
+        app.world_mut().resource_mut::<RigPalettes>().dirty.clear();
+        app.update();
+        assert!(
+            app.world().resource::<RigPalettes>().dirty.is_empty(),
+            "hidden: a moving joint writes nothing"
+        );
+
+        *app.world_mut().get_mut::<GlobalTransform>(joint).unwrap() = at(5.0);
+        app.update();
+        app.world_mut()
+            .entity_mut(holder)
+            .insert(InheritedVisibility::VISIBLE);
+        app.update();
+        assert!(
+            (row_x(&app) - 5.0).abs() < 1e-3,
+            "shown: written at this frame's pose"
+        );
+    }
 
     #[test]
     fn alloc_free_coalesce_roundtrip() {
