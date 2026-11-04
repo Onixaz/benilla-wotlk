@@ -131,10 +131,8 @@ mod tests {
             npc: Some(0x42),
             ..Default::default()
         };
-        let mut quest = QuestGiver {
-            npc: Some(0x42),
-            ..Default::default()
-        };
+        let mut quest = QuestGiver::default();
+        quest.npc = Some(0x42);
         gossip_complete(&mut gossip);
         assert_eq!(gossip.npc, None);
         assert_eq!(quest.npc, Some(0x42), "the quest-giver dialog stays");
