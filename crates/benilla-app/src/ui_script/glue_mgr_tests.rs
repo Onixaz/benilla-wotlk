@@ -692,21 +692,25 @@ fn status_dialog_click_cancels_by_state() {
 #[test]
 fn a_lost_session_fires_disconnected() {
     let mut m = accepted();
-    m.on_disconnected(SessionEnd::Lost, false);
+    m.on_disconnected(SessionEnd::Lost, false, 0);
     assert!(m.outbox.is_empty());
-    m.on_disconnected(SessionEnd::Lost, true);
-    assert_eq!(m.outbox, [Outgoing::Disconnected]);
+    m.on_disconnected(SessionEnd::Lost, true, 5);
+    assert_eq!(
+        m.outbox,
+        [Outgoing::Disconnected(5)],
+        "the stored kick reason rides along"
+    );
 
     let mut m = accepted();
     m.state = ScreenState::Connect;
     m.op = Operation::begin(OpKind::Connect, STATUS_CONNECTING);
-    m.on_disconnected(SessionEnd::Lost, true);
-    assert_eq!(m.outbox, [Outgoing::Disconnected]);
+    m.on_disconnected(SessionEnd::Lost, true, 0);
+    assert_eq!(m.outbox, [Outgoing::Disconnected(0)]);
 
     let mut m = accepted();
     m.state = ScreenState::Connect;
     m.op.complete(false, STATUS_FAILED_TO_CONNECT);
-    m.on_disconnected(SessionEnd::Lost, true);
+    m.on_disconnected(SessionEnd::Lost, true, 0);
     assert_eq!(m.outbox, [open("OKAY", Some("RESPONSE_FAILED_TO_CONNECT"))]);
     assert_eq!(m.state, ScreenState::Idle);
 }
@@ -718,7 +722,7 @@ fn a_lost_session_fires_disconnected() {
 fn a_logout_keeps_the_link_for_the_screens_roster_ask() {
     let mut m = accepted();
     m.connected = true;
-    m.on_disconnected(SessionEnd::LoggedOut, false);
+    m.on_disconnected(SessionEnd::LoggedOut, false, 0);
     assert!(m.connected, "the link is kept");
     assert!(m.outbox.is_empty());
     m.get_character_list();

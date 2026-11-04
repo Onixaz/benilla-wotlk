@@ -422,8 +422,8 @@ enum Outgoing {
     Queue,
     /// `SET_GLUE_SCREEN(name)` (event 0).
     Screen(&'static str),
-    /// `DISCONNECTED_FROM_SERVER` (event 2).
-    Disconnected,
+    /// `DISCONNECTED_FROM_SERVER` (event 2), with the stored kick reason (`0x4dab0c`).
+    Disconnected(u8),
     /// `CLOSE_STATUS_DIALOG` (event 5).
     Close,
     /// The realm list rebuild over the holder, which fires `OPEN_REALM_LIST` or
@@ -1328,7 +1328,12 @@ impl GlueMgr {
     /// with its text instead. The handler's first test, that the dropped connection is
     /// client services' current one (else "Invalid disconnect"), has no native counterpart: the IO
     /// thread holds one session and reports only its own end.
-    fn on_disconnected(&mut self, end: benilla_protocol::SessionEnd, session_over: bool) {
+    fn on_disconnected(
+        &mut self,
+        end: benilla_protocol::SessionEnd,
+        session_over: bool,
+        kick_reason: u8,
+    ) {
         if end == benilla_protocol::SessionEnd::LoggedOut {
             return;
         }
@@ -1341,7 +1346,7 @@ impl GlueMgr {
         let op = std::mem::take(&mut self.op);
         match op.text() {
             Some(text) if was_connect && !op.ok => self.open("OKAY", Some(text)),
-            _ => self.outbox.push(Outgoing::Disconnected),
+            _ => self.outbox.push(Outgoing::Disconnected(kick_reason)),
         }
     }
 
@@ -1971,7 +1976,7 @@ pub(crate) fn drive_glue_mgr(
         mgr.on_roster(msg.characters.clone(), msg.cause, msg.epoch);
     }
     for msg in news.disconnects.read() {
-        mgr.on_disconnected(msg.end, msg.session_over);
+        mgr.on_disconnected(msg.end, msg.session_over, msg.kick_reason);
     }
     for msg in news.char_login_failures.read() {
         mgr.on_char_login_failed(msg.result);
@@ -2249,7 +2254,10 @@ fn flush_one(
         Outgoing::Screen(name) => {
             script.fire_event("SET_GLUE_SCREEN", vec![ScriptValue::Str(name.to_string())]);
         }
-        Outgoing::Disconnected => script.fire_event("DISCONNECTED_FROM_SERVER", Vec::new()),
+        Outgoing::Disconnected(reason) => script.fire_event(
+            "DISCONNECTED_FROM_SERVER",
+            vec![ScriptValue::Int(i64::from(reason))],
+        ),
         Outgoing::Close => script.fire_event("CLOSE_STATUS_DIALOG", Vec::new()),
         Outgoing::Rebuild => {
             script.rebuild_glue_realms();

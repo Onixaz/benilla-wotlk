@@ -687,6 +687,12 @@ pub enum ServerPacket {
         difficulty: u32,
         dynamic: u32,
     },
+    /// `SMSG_CHANGEPLAYER_DIFFICULTY_RESULT`: a dynamic-difficulty change's step.
+    DifficultyChangeResult(crate::messages::DifficultyChangeResult),
+    /// `SMSG_KICK_REASON`: the reason the next disconnect reports.
+    KickReason {
+        reason: u8,
+    },
     /// `SMSG_CHAT_RESTRICTED`: the restriction's kind (`0x6e3cbf`).
     ChatRestricted {
         kind: u8,
@@ -1759,11 +1765,14 @@ pub enum ServerPacket {
         value: u32,
     },
     /// `SMSG_ADDON_INFO` (`0x2ef`): one record per addon we sent in `CMSG_AUTH_SESSION`, in that
-    /// order with no count or names, so record i is `STOCK_SECURE_ADDONS[i]`. Status 2 drops the
-    /// addon from the client's Lua index, which hides Blizzard's addons from the AddOns list.
+    /// order with no count or names, so record i is `STOCK_SECURE_ADDONS_WOTLK[i]`, then the
+    /// banned-addon list. Status 2 drops the addon from the client's Lua index, which hides
+    /// Blizzard's addons from the AddOns list.
     AddonInfo {
         /// One status per record, in arrival order.
         statuses: Vec<u8>,
+        /// The trailing banned list, read whole; nothing applies it.
+        banned: Vec<crate::messages::BannedAddon>,
     },
     /// `SMSG_HEALTH_UPDATE`: a unit's predicted health.
     HealthUpdate {
@@ -2009,6 +2018,8 @@ impl ServerPacket {
             ServerPacket::Lfg(p) => p.name().into(),
             ServerPacket::Calendar(p) => p.name().into(),
             ServerPacket::InstanceDifficulty { .. } => "SMSG_INSTANCE_DIFFICULTY".into(),
+            ServerPacket::DifficultyChangeResult(_) => "SMSG_CHANGEPLAYER_DIFFICULTY_RESULT".into(),
+            ServerPacket::KickReason { .. } => "SMSG_KICK_REASON".into(),
             ServerPacket::ChatRestricted { .. } => "SMSG_CHAT_RESTRICTED".into(),
             ServerPacket::PlayedTime { .. } => "SMSG_PLAYED_TIME".into(),
             ServerPacket::RandomRoll { .. } => "MSG_RANDOM_ROLL".into(),

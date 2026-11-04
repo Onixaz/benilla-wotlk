@@ -416,7 +416,7 @@ impl WorldSession {
                 .map_err(|e| anyhow!("parsing SMSG_CHAR_ENUM: {e}")),
             // Kept for every login on the link; a body that does not parse is skipped.
             opcode::SMSG_ADDON_INFO => {
-                if let Ok(ServerPacket::AddonInfo { statuses }) =
+                if let Ok(ServerPacket::AddonInfo { statuses, .. }) =
                     messages::parse_server(opcode, &body)
                 {
                     self.link.addon_info = Some(statuses);
@@ -438,7 +438,7 @@ impl WorldSession {
         let packet = recv_packet(&mut self.stream, Some(&mut self.crypto.decrypter))?;
         self.keep_glue(&packet);
         // `SMSG_ADDON_INFO` can reach any of the handshake's read loops, so it is caught here.
-        if let ServerPacket::AddonInfo { statuses } = &packet {
+        if let ServerPacket::AddonInfo { statuses, .. } = &packet {
             self.link.addon_info = Some(statuses.clone());
         }
         Ok(packet)

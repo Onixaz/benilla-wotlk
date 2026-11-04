@@ -475,6 +475,7 @@ mod tests {
                 reason: "disconnected: world stream closed: failed to fill whole buffer".into(),
                 end: benilla_protocol::SessionEnd::Lost,
                 session_over: true,
+                kick_reason: 0,
             });
         app.update();
         app.update(); // `StateTransition` applies the pending state at the next frame
@@ -516,6 +517,7 @@ mod tests {
                 reason: "logged out".into(),
                 end: benilla_protocol::SessionEnd::LoggedOut,
                 session_over: false,
+                kick_reason: 0,
             });
         app.update();
         app.update();

@@ -99,6 +99,17 @@ pub const STOCK_SECURE_ADDONS_WOTLK: [SecureAddon<'static>; 23] = [
     SecureAddon::stock("Blizzard_TrainerUI"),
 ];
 
+/// One `SMSG_ADDON_INFO` banned-addon entry (`0x5f7bb1`-`0x5f7bea`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BannedAddon {
+    pub id: u32,
+    pub name_md5: [u8; 16],
+    pub version_md5: [u8; 16],
+    pub timestamp: u32,
+    /// 1 for a banned addon on AzerothCore.
+    pub banned: u32,
+}
+
 /// The uncompressed addon buffer: the records concatenated, nothing else.
 pub fn addon_block(addons: &[SecureAddon]) -> Vec<u8> {
     let mut out = Vec::with_capacity(addons.iter().map(|a| a.name.len() + 10).sum());

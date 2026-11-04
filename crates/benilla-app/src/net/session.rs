@@ -40,6 +40,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Connected, on_connected)
         .net_handler(K::LoggedOut, on_logged_out)
         .net_handler(K::Disconnected, on_disconnected)
+        .net_handler(K::KickReason, on_kick_reason)
         .net_handler(K::Teleport, on_mover_edge)
         .net_handler(K::KnockBack, on_mover_edge)
         .net_handler(K::ClientControl, on_mover_edge)
@@ -217,11 +218,26 @@ fn on_logged_out(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
 }
 
 /// The bridge's half of the session end; each window's own listener runs after it.
-fn on_disconnected(In(ev): In<SessionEvent>, mut e: Edges, mut b: Bridge) {
+/// `SMSG_KICK_REASON` in the world: stored for the disconnect to report (`0x4d9572`). The glue's
+/// authenticator-seed arm (`0x4d9543`) never reaches the world stream.
+fn on_kick_reason(In(ev): In<SessionEvent>, mut kick: ResMut<super::KickReason>) {
+    if let SessionEvent::KickReason { reason } = ev {
+        info!("net: kick reason {reason}");
+        kick.0 = reason;
+    }
+}
+
+fn on_disconnected(
+    In(ev): In<SessionEvent>,
+    mut e: Edges,
+    mut b: Bridge,
+    kick: Res<super::KickReason>,
+) {
     if let SessionEvent::Disconnected { reason, end } = ev {
         disconnected(
             reason,
             end,
+            kick.0,
             &mut b.commands,
             &mut b.index,
             &mut b.self_guid,
@@ -587,6 +603,7 @@ fn logged_out(
 fn disconnected(
     reason: String,
     end: benilla_protocol::SessionEnd,
+    kick_reason: u8,
     commands: &mut Commands,
     index: &mut GuidIndex,
     self_guid: &mut SelfGuid,
@@ -598,7 +615,10 @@ fn disconnected(
     disconnects: &mut MessageWriter<DisconnectedMessage>,
 ) {
     // Whether the session is over is settled once, here, and carried to every reader.
-    let msg = DisconnectedMessage::new(reason.clone(), end);
+    let msg = DisconnectedMessage {
+        kick_reason,
+        ..DisconnectedMessage::new(reason.clone(), end)
+    };
     let over = msg.session_over;
     disconnects.write(msg);
     warn!("net: {reason} — tearing down the streamed world");
@@ -1085,6 +1105,7 @@ mod teardown_tests {
                     disconnected(
                         "character login refused".into(),
                         end,
+                        0,
                         &mut commands,
                         &mut index,
                         &mut self_guid,

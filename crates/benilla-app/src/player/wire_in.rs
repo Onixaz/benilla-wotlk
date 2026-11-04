@@ -641,6 +641,7 @@ mod session_end_tests {
             reason: "world stream closed".into(),
             end: SessionEnd::Lost,
             session_over: true,
+            kick_reason: 0,
         });
         app.update();
 
@@ -656,6 +657,7 @@ mod session_end_tests {
             reason: "logged out".into(),
             end: SessionEnd::LoggedOut,
             session_over: false,
+            kick_reason: 0,
         });
         app.update();
 

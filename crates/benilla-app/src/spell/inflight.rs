@@ -249,8 +249,16 @@ pub(crate) struct LocalMoveStart(pub(crate) bool);
 /// `STOP` fire before the server's `SMSG_SPELL_FAILURE` echo, which the bar then ignores.
 pub(super) fn local_self_cancel(mut moved: ResMut<LocalMoveStart>, mut cancel: SelfCancel) {
     if std::mem::take(&mut moved.0) {
-        cancel.cancel(false, true);
+        cancel.cancel(CancelBy::Moved);
     }
+}
+
+/// What asked [`SelfCancel`] to cancel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CancelBy {
+    Esc,
+    Moved,
+    Controls,
 }
 
 /// What [`local_self_cancel`] reads and writes, shared with the Esc cancel, which is a script call
@@ -275,10 +283,17 @@ pub(crate) struct SelfCancel<'w, 's> {
 impl SelfCancel<'_, '_> {
     /// `SpellStopCasting()`, the ESC chain's cast rung.
     pub(crate) fn stop_casting(&mut self) {
-        self.cancel(true, false);
+        self.cancel(CancelBy::Esc);
     }
 
-    fn cancel(&mut self, esc: bool, moved: bool) {
+    /// The client-controls clear's cancel of our casts (`0x5194cc` → `0x806390`): each ends through
+    /// `0x806200` with its send set, as Esc's cast rung does, with no auto-repeat rung and no
+    /// interrupt-flag test.
+    pub(crate) fn cancel_player_spells(&mut self) {
+        self.cancel(CancelBy::Controls);
+    }
+
+    fn cancel(&mut self, by: CancelBy) {
         let Self {
             pending,
             queued_melee,
@@ -296,7 +311,9 @@ impl SelfCancel<'_, '_> {
         } = self;
         let now = Instant::now();
         let self_e = self_guid.0.as_ref().and_then(|g| index.0.get(g)).copied();
+        let moved = by == CancelBy::Moved;
         // Esc stops one thing, auto-repeat first.
+        let esc = by == CancelBy::Esc;
         let esc = if esc && auto_repeat.0.is_some() {
             if *crate::net::CAST_TRACE {
                 info!("cast-trace: LOCAL auto-repeat self-cancel (esc), CMSG_CANCEL_AUTO_REPEAT_SPELL");
@@ -306,7 +323,8 @@ impl SelfCancel<'_, '_> {
         } else {
             esc
         };
-        if !esc && !moved {
+        let forced = esc || by == CancelBy::Controls;
+        if !forced && !moved {
             return;
         }
         let flags_open = |pick: fn(&benilla_formats::SpellDisplay) -> bool, spell_id: u32| {
@@ -322,17 +340,14 @@ impl SelfCancel<'_, '_> {
             let spell_id = slot.spell_id();
             // Movement tests `InterruptFlags`, which spares a queued strike: Heroic Strike 78,
             // Cleave 845 and Raptor Strike 2973 ship 0 (Fireball `0xf`).
-            if esc
+            if forced
                 || flags_open(
                     |d| d.interrupt_flags & SPELL_INTERRUPT_MOVEMENT != 0,
                     spell_id,
                 )
             {
                 if *crate::net::CAST_TRACE {
-                    info!(
-                        "cast-trace: LOCAL self-cancel — {slot:?} ({}), CMSG_CANCEL_CAST",
-                        if esc { "esc" } else { "moved" }
-                    );
+                    info!("cast-trace: LOCAL self-cancel — {slot:?} ({by:?}), CMSG_CANCEL_CAST");
                 }
                 let _ = net.0.send(ClientCommand::CancelCast { spell_id });
                 match slot {
@@ -795,6 +810,42 @@ mod tests {
                     Ok(crate::net::ClientCommand::CancelCast { spell_id: FIREBALL })
                 ),
                 "the second press reaches the cast half"
+            );
+        }
+
+        /// The client-controls clear cancels the cast whatever its `InterruptFlags`, and leaves a
+        /// running auto-repeat alone.
+        #[test]
+        fn the_controls_clear_cancels_the_cast_past_auto_repeat_and_flags() {
+            const AUTO_SHOT: u32 = 75;
+            let (mut app, rx) = harness(HashMap::from([(
+                FIREBALL,
+                SpellDisplay {
+                    interrupt_flags: 0,
+                    ..Default::default()
+                },
+            )]));
+            app.world_mut().resource_mut::<AutoRepeatActive>().0 = Some(AUTO_SHOT);
+            app.world_mut()
+                .resource_mut::<PendingCast>()
+                .arm(FIREBALL, Instant::now(), true);
+            mark_casting(&mut app, FIREBALL);
+
+            app.world_mut()
+                .run_system_once(|mut cancel: SelfCancel| cancel.cancel_player_spells())
+                .unwrap();
+            assert!(matches!(
+                rx.try_recv(),
+                Ok(crate::net::ClientCommand::CancelCast { spell_id: FIREBALL })
+            ));
+            assert!(rx.try_recv().is_err(), "no auto-repeat cancel");
+            assert_eq!(
+                app.world().resource::<AutoRepeatActive>().0,
+                Some(AUTO_SHOT)
+            );
+            assert_eq!(
+                app.world().resource::<CastBarFeed>().0,
+                vec![CastBarEdge::Cancelled { caster: 10 }]
             );
         }
 

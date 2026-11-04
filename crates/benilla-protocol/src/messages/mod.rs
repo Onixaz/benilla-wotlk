@@ -87,7 +87,7 @@ pub use action_bar::{
     ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL,
 };
 pub use addons::{
-    hidden_from_reply, SecureAddon, STANDARD_MODULUS_CRC, STOCK_SECURE_ADDONS,
+    hidden_from_reply, BannedAddon, SecureAddon, STANDARD_MODULUS_CRC, STOCK_SECURE_ADDONS,
     STOCK_SECURE_ADDONS_WOTLK,
 };
 pub use area_trigger::area_trigger;
@@ -217,9 +217,9 @@ pub use guild_bank::{
     GuildBankSlot, GuildBankSwap, GuildBankTab, GUILD_BANK_MONEY_LOG_TAB, GUILD_BANK_TAB_SLOTS,
 };
 pub use instance::{
-    instance_lock_response, reset_instances, set_difficulty, EncounterUnitUpdate,
-    InstanceLockWarning, InstanceResetFailed, InstanceResetFailure, RaidGroupOnly,
-    RaidInstanceMessage, RaidInstanceWarning,
+    instance_lock_response, reset_instances, set_difficulty, DifficultyChangeResult,
+    EncounterUnitUpdate, InstanceLockWarning, InstanceResetFailed, InstanceResetFailure,
+    RaidGroupOnly, RaidInstanceMessage, RaidInstanceWarning,
 };
 pub use item_ops::{
     item_guid_body, item_name_query, read_item, socket_gems, InspectItem, PurchaseCost,
