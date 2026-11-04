@@ -27,9 +27,13 @@
 //!
 //! A held band ([`ShadowPlan`]) takes no casters and its layer is loaded, not cleared, so it keeps
 //! the map it last drew under the matrix it drew it with. One held band redraws per frame at most,
-//! whole, in place of the reference's tiles into a back buffer. Deviation: a still viewer's band
-//! also redraws every [`BAND_REFRESH_SECS`], so casters that stream in or leave after the band was
-//! drawn reach it; the reference redraws on movement alone.
+//! whole, in place of the reference's tiles into a back buffer. The reference also clears every
+//! band on a map preload and whenever the loaded chunk rect changes (`s_needsRebuild`), but samples
+//! a held band under the current sun (`0x8750b0`), so a still viewer's shadows slide off their
+//! casters as the sun turns. Here a held band is sampled under the sun it was drawn with, and
+//! redraws once the sun turns past [`BAND_SUN_COS`]. Deviation: a still viewer's band also redraws
+//! every [`BAND_REFRESH_SECS`], so casters that stream in after it was drawn reach it, where the
+//! reference waits for its chunk rect to move.
 
 use bevy::camera::primitives::{Aabb, CascadesFrusta, Frustum, HalfSpace};
 use bevy::camera::visibility::CascadesVisibleEntities;
@@ -83,7 +87,7 @@ pub(crate) const BAND_MIN_RADIUS: [f32; 3] = [0.25, 2.0, 10.0];
 pub(crate) const BAND_REFRESH_SECS: [f32; 3] = [0.25, 0.5, 1.0];
 /// A held band redraws once the shadow sun turns more than about half a degree from the one it was
 /// drawn under.
-const BAND_SUN_COS: f32 = 0.99996;
+pub(crate) const BAND_SUN_COS: f32 = 0.99996;
 /// The map eye's distance back along the shadow sun, and the depth range (`0x7bac10`).
 const EYE_BACK: f32 = 2000.0;
 const DEPTH_NEAR: f32 = 1.0;
