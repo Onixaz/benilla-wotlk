@@ -84,11 +84,13 @@ fn defense_message_decodes() {
     }
 }
 
-/// `SMSG_CHAT_RESTRICTED` (vmangos `Server/Packets/Chat.cpp:21-23`) has an empty body; the
-/// reference's handler reads nothing either.
+/// `SMSG_CHAT_RESTRICTED` carries the restriction's `u8` kind (`0x6e3cbf`).
 #[test]
-fn chat_restricted_is_bodyless() {
-    let p = messages::parse_server(messages::opcode::SMSG_CHAT_RESTRICTED, &[]).unwrap();
-    assert!(matches!(p, ServerPacket::ChatRestricted));
-    assert!(matches!(decode(p)[..], [SessionEvent::ChatRestricted]));
+fn chat_restricted_reads_its_kind() {
+    let p = messages::parse_server(messages::opcode::SMSG_CHAT_RESTRICTED, &[1]).unwrap();
+    assert!(matches!(p, ServerPacket::ChatRestricted { kind: 1 }));
+    assert!(matches!(
+        decode(p)[..],
+        [SessionEvent::ChatRestricted { kind: 1 }]
+    ));
 }

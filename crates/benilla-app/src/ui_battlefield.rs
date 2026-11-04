@@ -186,10 +186,16 @@ struct WorldPvpQueue {
 }
 
 impl WorldPvpQueue {
+    /// Whether the slot search finds this slot for `queue_id`: it holds the queue, or it is free,
+    /// a zero area or status word (`0x549534`-`0x54953a`).
+    fn takes(&self, queue_id: u32) -> bool {
+        self.queue_id == queue_id || self.area_id == 0 || self.status == 0
+    }
+
     /// The world PvP queue's write (`0x549500`): the slot holding the queue, else a free one; a
     /// zero area or expiry keeps the old.
     fn set(&mut self, queue_id: u32, status: u32, area_id: u32, expire: u32) {
-        if self.queue_id != queue_id && self.queue_id != 0 && self.status != 0 {
+        if !self.takes(queue_id) {
             return;
         }
         if area_id != 0 {
@@ -258,7 +264,8 @@ impl Battlefield {
                 if cleared_afk {
                     self.cleared_afk += 1;
                 }
-                if self.world_pvp.queue_id == queue_id || self.world_pvp.status == 0 {
+                // `0x54993d`-`0x54998a`.
+                if self.world_pvp.takes(queue_id) {
                     self.world_pvp.queue_id = queue_id;
                     self.world_pvp.status = 0;
                 }
@@ -299,9 +306,8 @@ impl Battlefield {
                 battle_status,
                 relocated,
             } => {
-                if matches!(reason, 1 | 2 | 4 | 5 | 7..=11)
-                    && (self.world_pvp.queue_id == queue_id || self.world_pvp.status == 0)
-                {
+                // `0x549a15`-`0x549a6a`.
+                if matches!(reason, 1 | 2 | 4 | 5 | 7..=11) && self.world_pvp.takes(queue_id) {
                     self.world_pvp.queue_id = queue_id;
                     self.world_pvp.status = 0;
                 }
@@ -616,6 +622,13 @@ fn feed_battlefield(
             "UPDATE_BATTLEFIELD_STATUS",
             vec![ScriptValue::Int(i64::from(slot))],
         );
+    }
+    // `SMSG_BATTLEFIELD_MGR_ENTERED`'s third byte: `CLEARED_AFK` as a system line before the
+    // queue write and the event (`0x5498f6`-`0x54992b`).
+    for _ in 0..std::mem::take(&mut state.cleared_afk) {
+        let text = crate::ui_chat::combat::global_string(&script, "CLEARED_AFK")
+            .unwrap_or_else(|| "CLEARED_AFK".to_string());
+        crate::ui_chat::away::push_system(&mut sink.chat, text);
     }
     for (name, args) in std::mem::take(&mut state.mgr_events) {
         script.fire_event(name, args);
@@ -1016,5 +1029,34 @@ mod tests {
         );
         w.set(2, 1, 99, 0);
         assert_eq!(w.queue_id, 1, "a busy slot keeps its queue");
+    }
+
+    /// `0x549534`-`0x54953a`: a slot with no area is free though its status is set; the entered
+    /// arm skips a busy slot and still owes the `CLEARED_AFK` line its third byte asks for.
+    #[test]
+    fn a_slot_with_no_area_is_free_and_entered_owes_its_afk_line() {
+        let mut b = Battlefield::default();
+        b.world_pvp.set(1, 1, 0, 0);
+        b.world_pvp.set(2, 1, 4197, 0);
+        assert_eq!(
+            (b.world_pvp.queue_id, b.world_pvp.area_id),
+            (2, 4197),
+            "no area: the slot was free"
+        );
+        b.apply_mgr(
+            BattlefieldMgrNotice::Entered {
+                queue_id: 3,
+                invited: true,
+                on_offense: false,
+                cleared_afk: true,
+            },
+            (0, 0),
+        );
+        assert_eq!(
+            (b.world_pvp.queue_id, b.world_pvp.status),
+            (2, 1),
+            "an area and a status: busy"
+        );
+        assert_eq!(b.cleared_afk, 1);
     }
 }

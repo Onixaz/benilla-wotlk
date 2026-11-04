@@ -9,8 +9,7 @@
 //! whole map (`Map.cpp:1868`), but only rows 1, 2 and 22 carry `INITIAL`, so the auto-join never
 //! joins WorldDefense and in practice only LocalDefense, in the broadcast's zone, hears them.
 //!
-//! `SMSG_SERVER_MESSAGE` is one `CHAT_MSG_SYSTEM` line. `SMSG_CHAT_RESTRICTED` carries nothing and
-//! is error 451, `ERR_CHAT_RESTRICTED`, a chat row, not a red toast; vmangos never sends it.
+//! `SMSG_SERVER_MESSAGE` is one `CHAT_MSG_SYSTEM` line.
 
 use bevy::prelude::*;
 
@@ -36,8 +35,6 @@ pub(crate) enum Broadcast {
     Defense { zone_id: u32, text: String },
     /// `SMSG_SERVER_MESSAGE`: a `ServerMessages.dbc` row id and the text for its `%s`.
     Server { message_type: u32, text: String },
-    /// `SMSG_CHAT_RESTRICTED`, which carries nothing.
-    ChatRestricted,
 }
 
 /// Load `ServerMessages.dbc`; it must run after `benilla_assets::AssetSet::Open`, or it finds no
@@ -140,14 +137,6 @@ pub(super) fn feed_broadcasts(
                     .unwrap_or(zone_id);
                 push_channel_lines(&mut log, &channels, zone, player_zone, &text);
             }
-            Broadcast::ChatRestricted => {
-                // Its row is a chat row (tested below), so it is written as a system line here.
-                // Deviation: a missing global prints nothing, where the reference prints an empty
-                // line, because benilla's other error-display routes do the same.
-                if let Some(text) = super::combat::global_string(&script, "ERR_CHAT_RESTRICTED") {
-                    log.push_event(ChatEvent::text_only(ChatEventKind::System, text));
-                }
-            }
             Broadcast::Server { message_type, text } => {
                 let Some(messages) = messages.as_ref() else {
                     debug!("chat: SMSG_SERVER_MESSAGE {message_type} dropped: no catalog");
@@ -183,14 +172,6 @@ fn push_channel_lines(
 
 #[cfg(test)]
 mod tests {
-    /// `ERR_CHAT_RESTRICTED` (495) is a chat row, so the arm above writes a system line.
-    #[test]
-    fn chat_restricted_is_a_chat_row() {
-        use benilla_ui::messages::{by_key, kind_of, MsgKind};
-        assert_eq!(by_key("ERR_CHAT_RESTRICTED").expect("a real row").id, 495);
-        assert_eq!(kind_of("ERR_CHAT_RESTRICTED"), MsgKind::Chat);
-    }
-
     use super::*;
     use benilla_formats::{ChatChannelRow, ChatChannelsCatalog};
 

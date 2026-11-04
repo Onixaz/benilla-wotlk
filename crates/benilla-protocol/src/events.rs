@@ -727,8 +727,9 @@ pub enum SessionEvent {
     Calendar(crate::messages::CalendarPacket),
     /// `SMSG_INSTANCE_DIFFICULTY`: the entered map's difficulty, 0-based, and the dynamic one.
     InstanceDifficulty { difficulty: u32, dynamic: u32 },
-    /// A trial account's whisper cap (`SMSG_CHAT_RESTRICTED`, empty body): error id `0x1c3`.
-    ChatRestricted,
+    /// A chat restriction (`SMSG_CHAT_RESTRICTED`): 0 restricted, 1 throttled, 2 squelched, 3 yell
+    /// restricted (`0x6e44d0`).
+    ChatRestricted { kind: u8 },
     /// `/played` (`SMSG_PLAYED_TIME`): total and this-level played time, in seconds. The player's
     /// played clock always takes `total` (`0x6cf470`); only `show` prints it and fires
     /// `TIME_PLAYED_MSG` (`0x4013f6`).
@@ -1124,8 +1125,9 @@ pub enum SessionEvent {
     LootError { guid: u64, error: u8 },
     /// A loot row was taken, by anyone (`SMSG_LOOT_REMOVED`).
     LootRemoved { slot: u8 },
-    /// Our share of the coin (`SMSG_LOOT_MONEY_NOTIFY`), answering `CMSG_LOOT_MONEY`.
-    LootMoneyNotify { amount: u32 },
+    /// Our share of the coin (`SMSG_LOOT_MONEY_NOTIFY`), answering `CMSG_LOOT_MONEY`, and whether
+    /// we looted it alone.
+    LootMoneyNotify { amount: u32, solo: bool },
     /// The coin line disappears for every current looter (`SMSG_LOOT_CLEAR_MONEY`).
     LootClearMoney,
     /// The loot window closes (`SMSG_LOOT_RELEASE_RESPONSE`), answering our `CMSG_LOOT_RELEASE`;
@@ -1153,6 +1155,8 @@ pub enum SessionEvent {
     ProposeLevelGrant { granter: u64 },
     /// A refer-a-friend error (`SMSG_REFER_A_FRIEND_FAILURE`): the code, and a name for code 9.
     ReferAFriendFailure { error: u32, name: String },
+    /// A one-line world notice ([`crate::messages::WorldNotice`]).
+    Notice(crate::messages::WorldNotice),
     /// The spells the trainer shows as used (`SMSG_SEND_UNLEARN_SPELLS`).
     UnlearnSpells(Vec<u32>),
     /// A player's drunk state crossed a threshold (`SMSG_CROSSED_INEBRIATION_THRESHOLD`).

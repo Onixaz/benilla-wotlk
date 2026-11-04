@@ -29,11 +29,12 @@ pub(super) fn xp_gain(
     chat_log.push_xp_gain(&x);
 }
 
-/// `SMSG_EXPLORATION_EXPERIENCE`: the ERR_ZONE_EXPLORED toast and, when xp > 0, the
-/// ERR_ZONE_EXPLORED_XP chat line, via [`ChatLog::push_exploration`]; an `AreaTable.dbc` id with
-/// no name shows no message. The race's discovery jingle (`ChrRaces.dbc` col 3 to SoundEntries)
-/// plays even when the area resolves to nothing, through the same 2D path as `SMSG_PLAY_SOUND`.
-/// No floating text: the XP arrives separately as `SMSG_LOG_XPGAIN`.
+/// `SMSG_EXPLORATION_EXPERIENCE` (`0x6e36ea`): an area with no `AreaTable.dbc` row shows and plays
+/// nothing (`0x6e3712`). Otherwise the ERR_ZONE_EXPLORED toast, then, when xp > 0 and
+/// `PLAYER_FLAGS` lacks no-XP-gain (`0x6e3748`), the ERR_ZONE_EXPLORED_XP chat line, via
+/// [`ChatLog::push_exploration`]; then the race's discovery jingle (`ChrRaces.dbc` col 3 to
+/// SoundEntries, `0x6e379b`), through the same 2D path as `SMSG_PLAY_SOUND`. No floating text:
+/// the XP arrives separately as `SMSG_LOG_XPGAIN`.
 pub(super) fn exploration_xp(
     x: ExplorationXp,
     area_table: Option<&crate::area::AreaTableRes>,
@@ -44,13 +45,28 @@ pub(super) fn exploration_xp(
     sound_out: &mut MessageWriter<crate::net::ServerSoundMessage>,
     chat_log: &mut ChatLog,
 ) {
-    let race = self_guid
+    let Some(name) = area_table.and_then(|t| t.0.name(x.area_id)) else {
+        warn!(
+            "exploration: discovered area {} has no AreaTable row — no message, no sound",
+            x.area_id
+        );
+        return;
+    };
+    let me = self_guid
         .0
         .as_ref()
         .and_then(|g| index.0.get(g))
-        .and_then(|&e| stores.get(e).ok())
-        .and_then(|s| s.0.unit_race());
+        .and_then(|&e| stores.get(e).ok());
+    let race = me.and_then(|s| s.0.unit_race());
     let kit = race.and_then(|r| sounds.and_then(|s| s.0.kit(u32::from(r))));
+    let xp = exploration_line_xp(x.xp, me.map(|s| s.0.player_flags()));
+    info!(
+        "exploration: discovered {name} (area {}, {} xp, line xp {xp}, jingle kit {})",
+        x.area_id,
+        x.xp,
+        kit.unwrap_or(0)
+    );
+    chat_log.push_exploration(name, xp);
     if let Some(kit) = kit {
         sound_out.write(crate::net::ServerSoundMessage {
             kind: crate::net::ServerSoundKind::Sound2d,
@@ -58,20 +74,17 @@ pub(super) fn exploration_xp(
             source: None,
         });
     }
-    match area_table.and_then(|t| t.0.name(x.area_id)) {
-        Some(name) => {
-            info!(
-                "exploration: discovered {name} (area {}, {} xp, jingle kit {})",
-                x.area_id,
-                x.xp,
-                kit.unwrap_or(0)
-            );
-            chat_log.push_exploration(name, x.xp);
-        }
-        None => warn!(
-            "exploration: discovered area {} has no AreaTable name — no message (sound only)",
-            x.area_id
-        ),
+}
+
+/// `PLAYER_FLAGS` bit 25, no XP gain.
+const PLAYER_FLAGS_NO_XP_GAIN: u32 = 0x0200_0000;
+
+/// The XP the exploration line shows, 0 for none: a signed positive award to a resolved player
+/// without no-XP-gain (`0x6e3733`-`0x6e374e`).
+fn exploration_line_xp(xp: u32, player_flags: Option<u32>) -> u32 {
+    match player_flags {
+        Some(flags) if (xp as i32) > 0 && flags & PLAYER_FLAGS_NO_XP_GAIN == 0 => xp,
+        _ => 0,
     }
 }
 
@@ -91,4 +104,24 @@ pub(super) fn level_up(
     // Stock `ChatFrame_OnEvent` prints the block from the event; nothing here prints it, or it
     // shows twice.
     chat_log.push_level_up(l);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `0x6e3733`-`0x6e374e`: the XP line needs a signed positive award, a resolved player and no
+    /// no-XP-gain flag.
+    #[test]
+    fn the_exploration_xp_line_honours_no_xp_gain() {
+        assert_eq!(exploration_line_xp(250, Some(0)), 250);
+        assert_eq!(exploration_line_xp(250, Some(PLAYER_FLAGS_NO_XP_GAIN)), 0);
+        assert_eq!(exploration_line_xp(0, Some(0)), 0);
+        assert_eq!(
+            exploration_line_xp(u32::MAX, Some(0)),
+            0,
+            "signed: -1 is no award"
+        );
+        assert_eq!(exploration_line_xp(250, None), 0);
+    }
 }

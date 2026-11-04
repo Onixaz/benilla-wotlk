@@ -117,6 +117,7 @@ tables! {
         "ItemClass" => itemclass::item_class_schema(),
         "ItemDisplayInfo" => items::item_display_info_schema(&LAYOUTS.item_display_info),
         "ItemExtendedCost" => item_extended_cost::schema(),
+        "ItemLimitCategory" => item_limit_category::item_limit_category_schema(),
         "ItemGroupSounds" => item_sounds::item_group_sounds_schema(),
         "ItemPetFood" => creature_families::food_schema(),
         "ItemRandomProperties" => item_random_properties::item_random_properties_schema(),

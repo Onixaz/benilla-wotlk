@@ -378,9 +378,10 @@ pub(super) fn read_loot_removed(r: &mut &[u8]) -> io::Result<u8> {
     read_u8(r)
 }
 
-/// `SMSG_LOOT_MONEY_NOTIFY` (`Loot.h:69-76`): our share of the coin, split equally among looters.
-pub(super) fn read_loot_money_notify(r: &mut &[u8]) -> io::Result<u32> {
-    read_u32_le(r)
+/// `SMSG_LOOT_MONEY_NOTIFY` (`0x6ceca0`): our share of the coin, then whether we looted it alone
+/// (`0x6cecbe`).
+pub(super) fn read_loot_money_notify(r: &mut &[u8]) -> io::Result<(u32, bool)> {
+    Ok((read_u32_le(r)?, read_u8(r)? != 0))
 }
 
 /// `SMSG_ITEM_PUSH_RESULT` (vmangos `Server/Packets/Item.cpp:211-224`, both post-1.10.2 fields
@@ -771,9 +772,12 @@ mod tests {
 
     #[test]
     fn loot_money_notify_wire() {
-        let body = 777u32.to_le_bytes().to_vec();
+        let mut body = 777u32.to_le_bytes().to_vec();
+        body.push(1);
         match parse_server(opcode::SMSG_LOOT_MONEY_NOTIFY, &body).unwrap() {
-            ServerPacket::LootMoneyNotify { amount } => assert_eq!(amount, 777),
+            ServerPacket::LootMoneyNotify { amount, solo } => {
+                assert_eq!((amount, solo), (777, true))
+            }
             other => panic!("expected LootMoneyNotify, got {}", other.name()),
         }
     }

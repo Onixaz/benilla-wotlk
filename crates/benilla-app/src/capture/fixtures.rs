@@ -146,6 +146,7 @@ pub(super) fn seed_ui_fixture(
         gem_properties: 0,
         flags2: 0,
         required_disenchant_skill: -1,
+        item_limit_category: 0,
     };
 
     match fixture {

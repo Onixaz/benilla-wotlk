@@ -39,10 +39,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "Item",
         "#239 item class, display and sheath by id: GetItemIcon, PickupItem",
     ),
-    (
-        "ItemLimitCategory",
-        "#239 unique-equipped limits: GetItemUniqueness",
-    ),
     ("ItemPurchaseGroup", "#239 merchant purchase groups"),
     ("LoadingScreenTaxiSplines", "#243 the taxi loading screen"),
     ("MailTemplate", "#245 templated mail text: GetInboxText"),

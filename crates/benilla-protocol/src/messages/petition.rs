@@ -43,6 +43,13 @@ pub mod petition_result {
     pub const NEED_MORE: u32 = 4;
     /// Not on the same realm (`ERR_PETITION_NOT_SAME_SERVER`); vmangos never sends it.
     pub const NOT_SERVER: u32 = 5;
+    /// Sign only: the charter has every signature it can take (`ERR_PETITION_FULL`, `0x6cf0ce`).
+    pub const FULL: u32 = 8;
+    /// Sign only: signed on another character (`ERR_PETITION_ALREADY_SIGNED_OTHER`, `0x6cf0eb`).
+    pub const ALREADY_SIGNED_OTHER: u32 = 10;
+    /// Sign only: a restricted account (`ERR_PETITION_RESTRICTED_ACCOUNT`, `0x6cf108`); the
+    /// turn-in reads 11 as [`NOT_AUTHORIZED`].
+    pub const RESTRICTED_ACCOUNT: u32 = 11;
     /// Turn-in only: the charter is not ours to turn in (`ERR_GUILD_PERMISSIONS`, `0x6cf203`).
     pub const NOT_AUTHORIZED: u32 = 11;
 }

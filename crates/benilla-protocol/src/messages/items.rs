@@ -127,6 +127,8 @@ pub struct ItemInfo {
     pub flags2: u32,
     /// `RequiredDisenchantSkill`, -1 when the item cannot be disenchanted.
     pub required_disenchant_skill: i32,
+    /// The `ItemLimitCategory.dbc` row whose carry limit the item shares, 0 none (`ItemRec+0x1ec`).
+    pub item_limit_category: u32,
 }
 
 impl ItemInfo {
@@ -398,10 +400,10 @@ pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, 
     let socket_bonus = read_u32_le(r)?;
     let gem_properties = read_u32_le(r)?;
     let required_disenchant_skill = read_i32_le(r)?;
-    // Armor modifier, duration, limit category, holiday.
-    for _ in 0..4 {
-        let _ = read_u32_le(r)?;
-    }
+    let _armor_damage_modifier = read_u32_le(r)?;
+    let _duration = read_u32_le(r)?;
+    let item_limit_category = read_u32_le(r)?;
+    let _holiday = read_u32_le(r)?;
 
     Ok((
         entry,
@@ -464,6 +466,7 @@ pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, 
             gem_properties,
             flags2,
             required_disenchant_skill,
+            item_limit_category,
         }),
     ))
 }

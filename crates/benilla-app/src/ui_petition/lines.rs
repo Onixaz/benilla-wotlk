@@ -21,7 +21,10 @@ pub(super) fn my_sign_line(result: u32) -> Option<Line> {
         petition_result::ALREADY_IN_GUILD => "ERR_PETITION_IN_GUILD",
         petition_result::CANT_SIGN_OWN => "ERR_PETITION_CREATOR",
         petition_result::NOT_SERVER => "ERR_PETITION_NOT_SAME_SERVER",
-        // `NEED_MORE` (4) and >= 6: the default arm, debug console only.
+        petition_result::FULL => "ERR_PETITION_FULL",
+        petition_result::ALREADY_SIGNED_OTHER => "ERR_PETITION_ALREADY_SIGNED_OTHER",
+        petition_result::RESTRICTED_ACCOUNT => "ERR_PETITION_RESTRICTED_ACCOUNT",
+        // 4, 6, 7, 9 and past 11: the default arm, debug console only (`0x6cf125`).
         _ => return None,
     }))
 }
@@ -118,6 +121,15 @@ mod tests {
             (petition_result::ALREADY_IN_GUILD, "ERR_PETITION_IN_GUILD"),
             (petition_result::CANT_SIGN_OWN, "ERR_PETITION_CREATOR"),
             (petition_result::NOT_SERVER, "ERR_PETITION_NOT_SAME_SERVER"),
+            (petition_result::FULL, "ERR_PETITION_FULL"),
+            (
+                petition_result::ALREADY_SIGNED_OTHER,
+                "ERR_PETITION_ALREADY_SIGNED_OTHER",
+            ),
+            (
+                petition_result::RESTRICTED_ACCOUNT,
+                "ERR_PETITION_RESTRICTED_ACCOUNT",
+            ),
         ] {
             assert_eq!(
                 my_sign_line(code).map(shown),
@@ -138,6 +150,9 @@ mod tests {
             None,
             "the sign switch's default arm reaches only the debug console"
         );
+        for code in [6, 7, 9, 12] {
+            assert_eq!(my_sign_line(code), None, "code {code}");
+        }
         assert_eq!(
             turn_in_line(petition_result::NEED_MORE).map(shown),
             Some(("ERR_PETITION_NOT_ENOUGH_SIGNATURES", MsgKind::Error))
@@ -171,7 +186,7 @@ mod tests {
             self_offer_line(),
             no_charter_line(),
         ];
-        lines.extend((0..8).filter_map(my_sign_line));
+        lines.extend((0..12).filter_map(my_sign_line));
         lines.extend((0..8).filter_map(turn_in_line));
         lines.extend((0..=16).map(|code| name_refused_line(NameError(code).key())));
 

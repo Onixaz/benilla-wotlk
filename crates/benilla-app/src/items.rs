@@ -734,6 +734,7 @@ pub(crate) fn test_template(name: &str) -> ItemInfo {
         gem_properties: 0,
         flags2: 0,
         required_disenchant_skill: -1,
+        item_limit_category: 0,
     }
 }
 

@@ -1,6 +1,7 @@
 //! Small server notices: the light override, the UI clock, arena and refer-a-friend errors, the
 //! level grant offer, the unlearn list, the inebriation threshold, the dance moves, the message of
-//! the day, a channel's member count, a whois answer, the realm split and realm-first awards.
+//! the day, a channel's member count, a whois answer, the realm split, realm-first awards and the
+//! one-line [`WorldNotice`]s.
 
 use std::io;
 
@@ -98,6 +99,79 @@ pub(super) fn read_motd(r: &mut &[u8]) -> io::Result<Vec<String>> {
 /// handler reads and drops.
 pub(super) fn read_channel_member_count(r: &mut &[u8]) -> io::Result<(String, u8, u32)> {
     Ok((read_cstring(r)?, read_u8(r)?, read_u32_le(r)?))
+}
+
+/// The notices that read a fixed body and show at most one line, or flip one CVar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldNotice {
+    /// `SMSG_PLAYERBINDERROR` (`0x6e3492`): no body.
+    PlayerBindError,
+    /// `SMSG_REMOVED_FROM_PVP_QUEUE` (`0x52656c`): the reason.
+    RemovedFromPvpQueue { reason: u32 },
+    /// `SMSG_INVALID_PROMOTION_CODE` (`0x52654a`): no body.
+    InvalidPromotionCode,
+    /// `SMSG_OFFER_PETITION_ERROR` (`0x5cea0d`): the player offered to, a full guid.
+    OfferPetitionError { player: u64 },
+    /// `SMSG_ARENA_TEAM_CHANGE_FAILED_QUEUED` (`0x6e40aa`): nonzero shows the line.
+    ArenaTeamChangeFailedQueued { failed: u32 },
+    /// `SMSG_BATTLEGROUND_INFO_THROTTLED` (`0x6cbea0`): no body.
+    BattlegroundInfoThrottled,
+    /// `SMSG_PLAY_TIME_WARNING` (`0x6cd280`, `0x6cd28b`): the warning flags and the seconds left,
+    /// signed as the handler divides them.
+    PlayTimeWarning { flags: u32, seconds: i32 },
+    /// `SMSG_REPORT_PVP_AFK_RESULT` (`0x6e3fbb`): the result; two bytes and a guid follow, unused.
+    ReportPvpAfkResult { result: u8 },
+}
+
+impl WorldNotice {
+    pub fn opcode_name(self) -> &'static str {
+        match self {
+            WorldNotice::PlayerBindError => "SMSG_PLAYERBINDERROR",
+            WorldNotice::RemovedFromPvpQueue { .. } => "SMSG_REMOVED_FROM_PVP_QUEUE",
+            WorldNotice::InvalidPromotionCode => "SMSG_INVALID_PROMOTION_CODE",
+            WorldNotice::OfferPetitionError { .. } => "SMSG_OFFER_PETITION_ERROR",
+            WorldNotice::ArenaTeamChangeFailedQueued { .. } => {
+                "SMSG_ARENA_TEAM_CHANGE_FAILED_QUEUED"
+            }
+            WorldNotice::BattlegroundInfoThrottled => "SMSG_BATTLEGROUND_INFO_THROTTLED",
+            WorldNotice::PlayTimeWarning { .. } => "SMSG_PLAY_TIME_WARNING",
+            WorldNotice::ReportPvpAfkResult { .. } => "SMSG_REPORT_PVP_AFK_RESULT",
+        }
+    }
+}
+
+/// Read one [`WorldNotice`] body; a byte the server appends is left unread.
+pub(super) fn read_world_notice(opcode: u16, r: &mut &[u8]) -> io::Result<WorldNotice> {
+    use super::opcode as op;
+    Ok(match opcode {
+        op::SMSG_PLAYERBINDERROR => WorldNotice::PlayerBindError,
+        op::SMSG_REMOVED_FROM_PVP_QUEUE => WorldNotice::RemovedFromPvpQueue {
+            reason: read_u32_le(r)?,
+        },
+        op::SMSG_INVALID_PROMOTION_CODE => WorldNotice::InvalidPromotionCode,
+        op::SMSG_OFFER_PETITION_ERROR => WorldNotice::OfferPetitionError {
+            player: read_u64_le(r)?,
+        },
+        op::SMSG_ARENA_TEAM_CHANGE_FAILED_QUEUED => WorldNotice::ArenaTeamChangeFailedQueued {
+            failed: read_u32_le(r)?,
+        },
+        op::SMSG_BATTLEGROUND_INFO_THROTTLED => WorldNotice::BattlegroundInfoThrottled,
+        op::SMSG_PLAY_TIME_WARNING => WorldNotice::PlayTimeWarning {
+            flags: read_u32_le(r)?,
+            seconds: read_u32_le(r)? as i32,
+        },
+        op::SMSG_REPORT_PVP_AFK_RESULT => {
+            let result = read_u8(r)?;
+            let (_, _, _) = (read_u8(r)?, read_u8(r)?, read_u64_le(r)?);
+            WorldNotice::ReportPvpAfkResult { result }
+        }
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "not a world notice",
+            ))
+        }
+    })
 }
 
 /// `SMSG_REALM_SPLIT` (`0x4d8200`): the client's state, the realm's split state and the date the
@@ -291,5 +365,62 @@ mod tests {
             other => panic!("{}", other.name()),
         }
         assert_eq!(realm_split(0xFFFF_FFFF), vec![0xFF; 4]);
+    }
+
+    /// Each one-line notice reads its 12340 body, and a byte past an empty body is ignored.
+    #[test]
+    fn the_world_notices_decode_their_12340_bodies() {
+        let notice = |op, body: &[u8]| match parse(op, body) {
+            ServerPacket::Notice(n) => n,
+            other => panic!("{}", other.name()),
+        };
+        use WorldNotice as N;
+        assert_eq!(
+            notice(opcode::SMSG_PLAYERBINDERROR, &[]),
+            N::PlayerBindError
+        );
+        assert_eq!(
+            notice(opcode::SMSG_PLAYERBINDERROR, &[7]),
+            N::PlayerBindError
+        );
+        assert_eq!(
+            notice(opcode::SMSG_REMOVED_FROM_PVP_QUEUE, &2u32.to_le_bytes()),
+            N::RemovedFromPvpQueue { reason: 2 }
+        );
+        assert_eq!(
+            notice(opcode::SMSG_INVALID_PROMOTION_CODE, &[]),
+            N::InvalidPromotionCode
+        );
+        assert_eq!(
+            notice(opcode::SMSG_OFFER_PETITION_ERROR, &0x2Au64.to_le_bytes()),
+            N::OfferPetitionError { player: 0x2A }
+        );
+        assert_eq!(
+            notice(
+                opcode::SMSG_ARENA_TEAM_CHANGE_FAILED_QUEUED,
+                &1u32.to_le_bytes()
+            ),
+            N::ArenaTeamChangeFailedQueued { failed: 1 }
+        );
+        assert_eq!(
+            notice(opcode::SMSG_BATTLEGROUND_INFO_THROTTLED, &[]),
+            N::BattlegroundInfoThrottled
+        );
+        let mut b = 0x1000u32.to_le_bytes().to_vec();
+        b.extend_from_slice(&3_900u32.to_le_bytes());
+        assert_eq!(
+            notice(opcode::SMSG_PLAY_TIME_WARNING, &b),
+            N::PlayTimeWarning {
+                flags: 0x1000,
+                seconds: 3_900
+            }
+        );
+        let mut b = vec![5u8, 1, 2];
+        b.extend_from_slice(&0x2Au64.to_le_bytes());
+        assert_eq!(
+            notice(opcode::SMSG_REPORT_PVP_AFK_RESULT, &b),
+            N::ReportPvpAfkResult { result: 5 }
+        );
+        assert!(parse_server(opcode::SMSG_REPORT_PVP_AFK_RESULT, &[5]).is_err());
     }
 }

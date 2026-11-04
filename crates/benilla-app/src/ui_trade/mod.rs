@@ -351,12 +351,37 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut block: ResMut<Block
     }
 }
 
+/// `ItemLimitCategory.dbc`, which names a limit-category close; empty without client data.
+#[derive(Resource, Default)]
+pub(crate) struct ItemLimitCategories(pub(crate) benilla_formats::ItemLimitCategoryCatalog);
+
+fn load_item_limit_categories(
+    mut commands: Commands,
+    assets: Option<Res<benilla_assets::WorldAssets>>,
+) {
+    use benilla_assets::LockRecover;
+    let Some(assets) = assets else { return };
+    let loaded = {
+        let mut chain = assets.chain.lock_recover();
+        benilla_formats::load_item_limit_categories(&mut chain)
+    };
+    match loaded {
+        Ok(catalog) => commands.insert_resource(ItemLimitCategories(catalog)),
+        Err(e) => warn!("ui_trade: ItemLimitCategory.dbc failed — no limit line names one: {e:#}"),
+    }
+}
+
 impl Plugin for UiTradePlugin {
     fn build(&self, app: &mut App) {
         app.add_observer(on_cvar);
         net::register(app);
         app.init_resource::<TradeSession>()
             .init_resource::<BlockTrades>()
+            .init_resource::<ItemLimitCategories>()
+            .add_systems(
+                Startup,
+                load_item_limit_categories.after(benilla_assets::AssetSet::Open),
+            )
             .add_systems(
                 Update,
                 (

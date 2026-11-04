@@ -1045,7 +1045,9 @@ fn parse_server_body(
         opcode::SMSG_CALENDAR_CLEAR_PENDING_ACTION => {
             ServerPacket::Calendar(CalendarPacket::ClearPendingAction)
         }
-        opcode::SMSG_CHAT_RESTRICTED => ServerPacket::ChatRestricted,
+        opcode::SMSG_CHAT_RESTRICTED => ServerPacket::ChatRestricted {
+            kind: read_u8(&mut r)?,
+        },
         opcode::SMSG_PLAYED_TIME => {
             let (total, level, show) = chat::read_played_time(&mut r)?;
             ServerPacket::PlayedTime { total, level, show }
@@ -1618,9 +1620,10 @@ fn parse_server_body(
         opcode::SMSG_LOOT_REMOVED => ServerPacket::LootRemoved {
             slot: loot::read_loot_removed(&mut r)?,
         },
-        opcode::SMSG_LOOT_MONEY_NOTIFY => ServerPacket::LootMoneyNotify {
-            amount: loot::read_loot_money_notify(&mut r)?,
-        },
+        opcode::SMSG_LOOT_MONEY_NOTIFY => {
+            let (amount, solo) = loot::read_loot_money_notify(&mut r)?;
+            ServerPacket::LootMoneyNotify { amount, solo }
+        }
         opcode::SMSG_LOOT_CLEAR_MONEY => ServerPacket::LootClearMoney,
         opcode::SMSG_LOOT_START_ROLL => {
             ServerPacket::LootStartRoll(loot::read_loot_start_roll(&mut r)?)
@@ -1643,6 +1646,16 @@ fn parse_server_body(
         opcode::SMSG_REFER_A_FRIEND_FAILURE => {
             let (error, name) = super::notices::read_refer_a_friend_failure(&mut r)?;
             ServerPacket::ReferAFriendFailure { error, name }
+        }
+        opcode::SMSG_PLAYERBINDERROR
+        | opcode::SMSG_REMOVED_FROM_PVP_QUEUE
+        | opcode::SMSG_INVALID_PROMOTION_CODE
+        | opcode::SMSG_OFFER_PETITION_ERROR
+        | opcode::SMSG_ARENA_TEAM_CHANGE_FAILED_QUEUED
+        | opcode::SMSG_BATTLEGROUND_INFO_THROTTLED
+        | opcode::SMSG_PLAY_TIME_WARNING
+        | opcode::SMSG_REPORT_PVP_AFK_RESULT => {
+            ServerPacket::Notice(super::notices::read_world_notice(opcode, &mut r)?)
         }
         opcode::SMSG_SEND_UNLEARN_SPELLS => {
             ServerPacket::UnlearnSpells(super::notices::read_unlearn_spells(&mut r)?)

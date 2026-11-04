@@ -6,16 +6,22 @@
 //! empty-string guard drops. Reason 0, the one coded suppression, is dropped earlier, by
 //! `benilla_protocol::events`.
 
-/// A refusal reason's key, total like the reference's errorId table. Positions are vmangos
-/// `ItemDefines.h` with every band up to 5875 (stunned 37, dead 38, inventory full 50). Reason 1's
-/// string carries a `%d` for the required level.
+/// A refusal reason's key, total: [`inventory_error_key`], with a result that shows nothing as
+/// the empty key the error sink drops. Reason 1's string carries a `%d` for the required level.
 pub(crate) fn equip_error_key(reason: u8) -> &'static str {
-    match reason {
+    inventory_error_key(u32::from(reason)).unwrap_or("")
+}
+
+/// An `InventoryResult`'s key in 12340's table (`0x753bb0`): `None` for the results it maps to id
+/// `0x2da`, one past the catalog, which shows nothing (`0x5216fc`); `ERR_BAG_FULL` past 91.
+pub(crate) fn inventory_error_key(result: u32) -> Option<&'static str> {
+    Some(match result {
+        0 | 81 | 83 => return None,
         1 => "ERR_CANT_EQUIP_LEVEL_I",
         2 => "ERR_CANT_EQUIP_SKILL",
         3 => "ERR_WRONG_SLOT",
         // BAG_FULL and its BAG_FULL3/4/6 aliases; 51 is not one.
-        4 | 53 | 56 | 62 => "ERR_BAG_FULL",
+        4 | 53 | 56 | 62 | 74 => "ERR_BAG_FULL",
         5 => "ERR_BAG_IN_BAG",
         6 => "ERR_TRADE_EQUIPPED_BAG",
         7 => "ERR_AMMO_ONLY",
@@ -47,7 +53,7 @@ pub(crate) fn equip_error_key(reason: u8) -> &'static str {
         37 => "ERR_GENERIC_STUNNED",
         38 => "ERR_PLAYER_DEAD",
         39 => "ERR_CLIENT_LOCKED_OUT",
-        40 => "ERR_INTERNAL_BAG_ERROR",
+        40 | 73 => "ERR_INTERNAL_BAG_ERROR",
         // ERR_ONLY_ONE_BOLT's 1.12 string also says "quiver".
         41 => "ERR_ONLY_ONE_BOLT",
         42 => "ERR_ONLY_ONE_AMMO",
@@ -72,14 +78,35 @@ pub(crate) fn equip_error_key(reason: u8) -> &'static str {
         64 => "ERR_CANT_EQUIP_REPUTATION",
         65 => "ERR_TOO_MANY_SPECIAL_BAGS",
         66 => "ERR_LOOT_CANT_LOOT_THAT_NOW",
-        // The reference's default past 66: errorId 9, `ERR_BAG_FULL`.
+        67 => "ERR_ITEM_UNIQUE_EQUIPPABLE",
+        68 => "ERR_VENDOR_MISSING_TURNINS",
+        69 => "ERR_NOT_ENOUGH_HONOR_POINTS",
+        70 => "ERR_NOT_ENOUGH_ARENA_POINTS",
+        71 => "ERR_ITEM_MAX_COUNT_SOCKETED",
+        72 => "ERR_MAIL_BOUND_ITEM",
+        75 => "ERR_ITEM_MAX_COUNT_EQUIPPED_SOCKETED",
+        76 => "ERR_ITEM_UNIQUE_EQUIPPABLE_SOCKETED",
+        77 => "ERR_TOO_MUCH_GOLD",
+        78 => "ERR_NOT_DURING_ARENA_MATCH",
+        79 => "ERR_TRADE_BOUND_ITEM",
+        80 => "ERR_CANT_EQUIP_RATING",
+        82 => "ERR_NOT_SAME_ACCOUNT",
+        84 => "ERR_ITEM_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS",
+        85 => "ERR_ITEM_MAX_LIMIT_CATEGORY_SOCKETED_EXCEEDED_IS",
+        86 => "ERR_SCALING_STAT_ITEM_LEVEL_EXCEEDED",
+        87 => "ERR_PURCHASE_LEVEL_TOO_LOW",
+        88 => "ERR_CANT_EQUIP_NEED_TALENT",
+        89 => "ERR_ITEM_MAX_LIMIT_CATEGORY_EQUIPPED_EXCEEDED_IS",
+        90 => "ERR_SHAPESHIFT_FORM_CANNOT_EQUIP",
+        91 => "ERR_ITEM_INVENTORY_FULL_SATCHEL",
+        // The default arm (`0x753dde`).
         _ => "ERR_BAG_FULL",
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::equip_error_key;
+    use super::{equip_error_key, inventory_error_key};
 
     /// Stunned and dead are 37 and 38 at 5875; 39 and 40 are "right now" and the bag error.
     #[test]
@@ -115,9 +142,20 @@ mod tests {
         assert_eq!(equip_error_key(16), "ERR_WRONG_BAG_TYPE");
     }
 
+    /// `0x753de8`: 3.3.5a's rows past 66, the three that show nothing, and the default past 91.
     #[test]
-    fn codes_past_the_enum_clamp_to_the_bag_full_default() {
-        assert_eq!(equip_error_key(67), "ERR_BAG_FULL");
+    fn the_table_runs_to_91_and_clamps_past_it() {
+        assert_eq!(equip_error_key(67), "ERR_ITEM_UNIQUE_EQUIPPABLE");
+        assert_eq!(equip_error_key(79), "ERR_TRADE_BOUND_ITEM");
+        assert_eq!(
+            equip_error_key(84),
+            "ERR_ITEM_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS"
+        );
+        assert_eq!(equip_error_key(91), "ERR_ITEM_INVENTORY_FULL_SATCHEL");
+        for shows_nothing in [0, 81, 83] {
+            assert_eq!(inventory_error_key(shows_nothing), None);
+        }
+        assert_eq!(equip_error_key(92), "ERR_BAG_FULL");
         assert_eq!(equip_error_key(0xFF), "ERR_BAG_FULL");
     }
 
@@ -134,8 +172,8 @@ mod tests {
         s.run(&String::from_utf8_lossy(&src)).expect("runs clean");
         let g = |key: &str| s.lua().globals().get::<String>(key).ok();
 
-        // Reason 0 never reaches this table (gated at `events::decode`).
-        for reason in 1..=66u8 {
+        // Reason 0 never reaches this table (gated at `events::decode`); 81 and 83 show nothing.
+        for reason in (1..=91u8).filter(|r| ![81, 83].contains(r)) {
             let key = equip_error_key(reason);
             let text = g(key).unwrap_or_default();
             if reason == 59 {
@@ -155,7 +193,7 @@ mod tests {
             "You must reach level 30 to use that item."
         );
         assert_eq!(g(equip_error_key(51)).unwrap(), "Your bank is full");
-        assert_eq!(g(equip_error_key(67)).unwrap(), "That bag is full.");
+        assert_eq!(g(equip_error_key(92)).unwrap(), "That bag is full.");
         // Reason 16's generic line, and the bag-family one the drain substitutes.
         assert_eq!(
             g(equip_error_key(16)).unwrap(),
