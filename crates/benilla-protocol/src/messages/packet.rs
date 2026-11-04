@@ -711,21 +711,17 @@ pub enum ServerPacket {
         roll: u32,
         guid: u64,
     },
-    /// `SMSG_INVENTORY_CHANGE_FAILURE`: an `InventoryResult`; `required_level` rides only reason 1.
-    InventoryChangeFailure {
-        reason: u8,
-        required_level: Option<u32>,
-        item_guid: u64,
-        /// The destination bag's absolute player slot (255 = the player's own array).
-        bag_slot: u8,
-    },
+    /// `SMSG_INVENTORY_CHANGE_FAILURE`: an `InventoryResult` and its tail.
+    InventoryChangeFailure(super::items::InventoryFailure),
     /// `SMSG_INITIAL_SPELLS`: the spell book and active cooldowns, once at login.
     InitialSpells {
         spell_ids: Vec<u32>,
         cooldowns: Vec<SpellCooldown>,
     },
-    /// `SMSG_ACTION_BUTTONS` (login): the occupied slots of the 120-slot action bar array.
+    /// `SMSG_ACTION_BUTTONS`: the state byte (an `ACTION_BUTTONS_*`) and the occupied slots of
+    /// the 144-slot table.
     ActionButtons {
+        state: u8,
         buttons: Vec<ActionButton>,
     },
     /// `SMSG_LEARNED_SPELL`: a spell joined the book after login.
@@ -2004,7 +2000,7 @@ impl ServerPacket {
             ServerPacket::ClientCacheVersion { .. } => "SMSG_CLIENTCACHE_VERSION".into(),
             ServerPacket::AccountDataTimes(_) => "SMSG_ACCOUNT_DATA_TIMES".into(),
             ServerPacket::AccountDataUpdate(_) => "SMSG_UPDATE_ACCOUNT_DATA".into(),
-            ServerPacket::InventoryChangeFailure { .. } => "SMSG_INVENTORY_CHANGE_FAILURE".into(),
+            ServerPacket::InventoryChangeFailure(_) => "SMSG_INVENTORY_CHANGE_FAILURE".into(),
             ServerPacket::MessageChat(_) => "SMSG_MESSAGECHAT".into(),
             ServerPacket::ChannelNotify(_) => "SMSG_CHANNEL_NOTIFY".into(),
             ServerPacket::ChannelList { .. } => "SMSG_CHANNEL_LIST".into(),

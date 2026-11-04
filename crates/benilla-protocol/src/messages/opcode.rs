@@ -1078,6 +1078,10 @@ pub const SMSG_BATTLEGROUND_INFO_THROTTLED: u16 = 0x04A6; // 1190
 pub const SMSG_PLAY_TIME_WARNING: u16 = 0x02F5; // 757
 /// The PvP AFK-report system switched on or off (`0x6e3fb5`).
 pub const SMSG_REPORT_PVP_AFK_RESULT: u16 = 0x03E5; // 997
+/// A refer-a-friend link ended (`0x5265fb`).
+pub const SMSG_REFER_A_FRIEND_EXPIRED: u16 = 0x001E; // 30
+/// The server reset the talents (`0x526eb0`).
+pub const SMSG_TALENTS_INVOLUNTARILY_RESET: u16 = 0x04FA; // 1274
 /// A count of item records, each `SMSG_ITEM_QUERY_SINGLE_RESPONSE`'s body (`0x6351f0`).
 pub const SMSG_ITEM_QUERY_MULTIPLE_RESPONSE: u16 = 0x0059; // 89
 /// A debug item dump: one `SMSG_ITEM_QUERY_SINGLE_RESPONSE` record (`0x6354d0`).

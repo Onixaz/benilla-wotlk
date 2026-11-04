@@ -66,7 +66,7 @@ fn attack_swing_refusal_wire() {
     ));
 }
 
-/// The XP, exploration and level-up bodies (vmangos `Server/Packets/Misc.cpp:512-532`).
+/// The XP (`0x50c720`), exploration and level-up bodies.
 #[test]
 fn progression_wire_golden() {
     use benilla_protocol::messages::{ExplorationXp, LevelUpInfo, XpGain};
@@ -74,8 +74,9 @@ fn progression_wire_golden() {
     let mut body = 0xCCu64.to_le_bytes().to_vec(); // victim
     body.extend_from_slice(&250u32.to_le_bytes()); // total
     body.push(0); // xpType: kill
-    body.extend_from_slice(&200u32.to_le_bytes()); // base xp (kept: rested bonus = total − base)
-    body.extend_from_slice(&1.25f32.to_le_bytes()); // group bonus (dropped)
+    body.extend_from_slice(&200u32.to_le_bytes()); // base xp (rested bonus = total − base)
+    body.extend_from_slice(&1.25f32.to_le_bytes()); // group rate
+    body.push(1); // refer-a-friend
     let packet = messages::parse_server(messages::opcode::SMSG_LOG_XPGAIN, &body).unwrap();
     match &packet {
         ServerPacket::XpGain(x) => {
@@ -84,21 +85,24 @@ fn progression_wire_golden() {
                 &XpGain {
                     victim: 0xCC,
                     total: 250,
+                    xp_type: 0,
                     base: 200,
-                    kill: true,
+                    group_rate: 1.25,
+                    refer_a_friend: true,
                 }
             );
         }
         other => panic!("xp gain (kill), got {}", other.name()),
     }
     match decode(packet).pop().unwrap() {
-        SessionEvent::XpGain(x) => assert_eq!((x.victim, x.total, x.kill), (0xCC, 250, true)),
+        SessionEvent::XpGain(x) => assert_eq!((x.victim, x.total, x.xp_type), (0xCC, 250, 0)),
         other => panic!("xp gain event, got {other:?}"),
     }
 
     let mut body = 0u64.to_le_bytes().to_vec(); // victim: 0 (non-kill xp has no victim)
     body.extend_from_slice(&50u32.to_le_bytes()); // total
-    body.push(1); // xpType: non-kill, nothing trails
+    body.push(1); // xpType: non-kill, only the refer-a-friend byte trails
+    body.push(0);
     let packet = messages::parse_server(messages::opcode::SMSG_LOG_XPGAIN, &body).unwrap();
     match &packet {
         ServerPacket::XpGain(x) => {
@@ -107,15 +111,17 @@ fn progression_wire_golden() {
                 &XpGain {
                     victim: 0,
                     total: 50,
-                    base: 50, // non-kill carries no base on the wire; base = total
-                    kill: false,
+                    xp_type: 1,
+                    base: 0, // non-kill carries no base; the handler zeroes it
+                    group_rate: 1.0,
+                    refer_a_friend: false,
                 }
             );
         }
         other => panic!("xp gain (non-kill), got {}", other.name()),
     }
     match decode(packet).pop().unwrap() {
-        SessionEvent::XpGain(x) => assert_eq!((x.victim, x.total, x.kill), (0, 50, false)),
+        SessionEvent::XpGain(x) => assert_eq!((x.victim, x.total, x.xp_type), (0, 50, 1)),
         other => panic!("xp gain event, got {other:?}"),
     }
 

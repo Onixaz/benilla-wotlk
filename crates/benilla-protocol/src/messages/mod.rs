@@ -83,7 +83,8 @@ pub use achievement::{
     InspectAchievements,
 };
 pub use action_bar::{
-    set_action_button, set_actionbar_toggles, ActionButton, ACTION_KIND_EQUIPMENT_SET,
+    set_action_button, set_actionbar_toggles, ActionButton, ACTION_BUTTONS_INIT,
+    ACTION_BUTTONS_LOCK, ACTION_BUTTONS_SET, ACTION_BUTTON_SLOTS, ACTION_KIND_EQUIPMENT_SET,
     ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL,
 };
 pub use addons::{
@@ -227,11 +228,11 @@ pub use item_ops::{
 };
 pub use items::{
     auto_equip_item, auto_store_bag_item, decode_item_query_response, destroy_item, item_query,
-    open_item, set_ammo, split_item, swap_inv_item, swap_item, use_item, wrap_item, ItemDamage,
-    ItemInfo, ItemSpellEntry, ItemUseSpell, UseItemTarget, BAG_PLAYER_INVENTORY, BANK_BAGS,
-    BANK_SLOTS, ITEM_DYNFLAG_UNLOCKED, ITEM_DYNFLAG_WRAPPED, ITEM_FLAG_LOOTABLE, ITEM_FLAG_WRAPPER,
-    KEYRING_SLOTS, SLOT_BAG_FIRST, SLOT_BANK_BAG_FIRST, SLOT_BANK_FIRST, SLOT_KEYRING_FIRST,
-    SLOT_PACK_FIRST,
+    open_item, set_ammo, split_item, swap_inv_item, swap_item, use_item, wrap_item,
+    InventoryFailure, InventoryFailureTail, ItemDamage, ItemInfo, ItemSpellEntry, ItemUseSpell,
+    UseItemTarget, BAG_PLAYER_INVENTORY, BANK_BAGS, BANK_SLOTS, ITEM_DYNFLAG_UNLOCKED,
+    ITEM_DYNFLAG_WRAPPED, ITEM_FLAG_LOOTABLE, ITEM_FLAG_WRAPPER, KEYRING_SLOTS, SLOT_BAG_FIRST,
+    SLOT_BANK_BAG_FIRST, SLOT_BANK_FIRST, SLOT_KEYRING_FIRST, SLOT_PACK_FIRST,
 };
 pub use lfg::{
     lfg_comment, lfg_join, lfg_proposal_result, LfgBootProposal, LfgCompletionReward,

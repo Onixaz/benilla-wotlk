@@ -102,7 +102,7 @@ pub(crate) fn wire_pos(bag: i64, slot1: u32) -> Option<(u8, u8)> {
 pub(crate) struct EquipError {
     /// The wire `InventoryResult`.
     pub reason: u8,
-    /// Reason 1's `%d`, the packet's `requiredLevel`.
+    /// Reasons 1 and `0x57`'s `%d`, the packet's required level.
     pub required_level: Option<u32>,
     /// Reason 16's `%s` source: the destination bag's player slot (255 names no bag), which the
     /// drain resolves to the bag's `BagFamily` name.

@@ -1578,10 +1578,22 @@ pub(super) fn earn_effect_plays(
             .is_some_and(|a| a.flags & 0x4 == 0)
 }
 
+/// `SMSG_TITLE_EARNED`'s earn effect, hardcoded index 9 (`0x50c681`, name at `0xa329dc`).
+const TITLE_EFFECT: &str = "HARDCODED Reputation";
+
 /// The earn effect on `entity` (`0x5b30d5`-`0x5b311e`): a one-shot at `0x13` (`[0xa32b20]`),
 /// replacing an earlier one through the same-slot replace (`0x6f8a60`).
 pub(crate) fn achievement_earn_fx(visuals: &SpellVisuals, entity: Entity) -> Option<SpellKitFx> {
-    let (effect, path) = visuals.0.hardcoded_effect(ACHIEVEMENT_EFFECT)?;
+    hardcoded_one_shot(visuals, entity, ACHIEVEMENT_EFFECT)
+}
+
+/// The earned title's effect on our player, the same one-shot (`0x50c643`-`0x50c690`).
+pub(crate) fn title_earn_fx(visuals: &SpellVisuals, entity: Entity) -> Option<SpellKitFx> {
+    hardcoded_one_shot(visuals, entity, TITLE_EFFECT)
+}
+
+fn hardcoded_one_shot(visuals: &SpellVisuals, entity: Entity, name: &str) -> Option<SpellKitFx> {
+    let (effect, path) = visuals.0.hardcoded_effect(name)?;
     Some(SpellKitFx::Begin {
         entity,
         spell_id: 0,

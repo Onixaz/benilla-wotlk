@@ -98,6 +98,11 @@ pub(crate) struct PlayerActions {
     /// landed item template ([`crate::items::Items::template_epoch`]) also triggers. Item counts
     /// refresh every frame regardless.
     pub dirty: bool,
+    /// The last `SMSG_ACTION_BUTTONS` table (`0xad9f6c`), which the player's init puts on the bar.
+    pub table: Option<Vec<ActionButton>>,
+    /// `SMSG_ACTION_BUTTONS` state 2's lock (`[player+0x1954]`): the slot writers refuse until the
+    /// next state 1 (`0x5aaac2`, `0x5aaec1`).
+    pub locked: bool,
 }
 
 impl PlayerActions {
@@ -129,6 +134,10 @@ impl PlayerActions {
     /// `ACTIONBAR_SLOT_CHANGED`), and the send. `packed == 0` clears; vmangos and AzerothCore
     /// store the slot without a reply.
     pub(crate) fn write_slot(&mut self, slot: u8, packed: u32, net: &crate::net::NetCommands) {
+        if self.locked {
+            debug!("ui_action: bar locked — slot {slot} write refused");
+            return;
+        }
         if packed == 0 {
             self.buttons.remove(&slot);
         } else {

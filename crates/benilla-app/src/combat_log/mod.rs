@@ -350,9 +350,27 @@ struct Progress<'w, 's> {
     center: MessageWriter<'w, CombatTextEvent>,
 }
 
-fn on_xp_gain(In(ev): In<SessionEvent>, mut p: Progress) {
+fn on_xp_gain(
+    In(ev): In<SessionEvent>,
+    mut p: Progress,
+    rest_states: Option<Res<crate::ui_unit::RestStates>>,
+) {
     if let SessionEvent::XpGain(x) = ev {
-        progress::xp_gain(x, &p.index, &p.self_guid, &mut p.text, &mut p.chat);
+        let me = p.self_guid.0.and_then(|g| p.index.0.get(&g).copied());
+        let line = progress::xp_line(
+            &x,
+            p.self_guid.0,
+            me.and_then(|e| p.stores.get(e).ok()),
+            |guid| {
+                p.index
+                    .0
+                    .get(&guid)
+                    .and_then(|&e| p.stores.get(e).ok())
+                    .is_some_and(|s| s.0.is_unit())
+            },
+            rest_states.as_deref(),
+        );
+        progress::xp_gain(x, me, line, &mut p.text, &mut p.chat);
     }
 }
 

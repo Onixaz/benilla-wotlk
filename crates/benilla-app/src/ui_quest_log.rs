@@ -58,6 +58,8 @@ pub(crate) struct QuestLog {
     expired: HashSet<u32>,
     /// The last `SMSG_QUERY_QUESTS_COMPLETED_RESPONSE`, not yet pushed.
     completed_answer: Option<Vec<u32>>,
+    /// The `SMSG_QUERY_TIME_RESPONSE` count the last `QUEST_LOG_UPDATE` covered.
+    clock_answers: u64,
 }
 
 /// `questcache.wdb`.
@@ -834,7 +836,7 @@ pub(crate) fn feed_quest_log(
         Query<(), (Changed<ObjectStore>, Without<crate::net::NetEntity>)>,
         // The GameObject objectives' names.
         Option<Res<crate::go_templates::GameObjectTemplates>>,
-        // The server clock a timer runs out on; read, never a rebuild's cause.
+        // The server clock a timer runs out on; each of its answers owes a `QUEST_LOG_UPDATE`.
         Option<Res<crate::net::ServerWallClock>>,
     ),
     states: Res<crate::world_state::WorldStates>,
@@ -854,9 +856,13 @@ pub(crate) fn feed_quest_log(
     let Some((store, _)) = self_q.iter().next() else {
         return;
     };
+    // `SMSG_QUERY_TIME_RESPONSE` signals the update whatever moved (`0x5dff89`).
+    let answers = clock.as_ref().map_or(0, |c| c.1);
+    let answered = answers != quest_log.clock_answers;
     // Every row reads only these, so an unmoved set rebuilds the state the diff below would drop;
     // a fresh VM takes its first push whatever moved.
     let stirred = fresh
+        || answered
         || !stirred_self.is_empty()
         || !stirred_items.is_empty()
         || quest_log.is_changed()
@@ -1137,7 +1143,8 @@ pub(crate) fn feed_quest_log(
         num_quests: rows.len() as u32,
         daily_completed: store.0.player_daily_quests_completed(),
     };
-    if fresh == *last {
+    quest_log.clock_answers = answers;
+    if fresh == *last && !answered {
         return;
     }
     script.set_quest_log(fresh.clone());

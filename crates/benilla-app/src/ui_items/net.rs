@@ -1,6 +1,7 @@
 //! The item packet handlers: `SMSG_INVENTORY_CHANGE_FAILURE` onto the error line, the pending
 //! item locks and the loot latch, and `SMSG_OPEN_CONTAINER` onto the `BAG_OPEN` queue.
 
+use benilla_protocol::messages::{InventoryFailure, InventoryFailureTail};
 use benilla_protocol::{ObjectFields, SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
@@ -76,51 +77,143 @@ fn on_inventory_failure(
     mut latch: ResMut<LootLatch>,
     mut loot: ResMut<crate::ui_loot::LootState>,
     net: Res<crate::net::NetCommands>,
+    (limits, mut errors): (
+        Option<Res<crate::ui_trade::ItemLimitCategories>>,
+        ResMut<crate::ui_action::UiErrorKeys>,
+    ),
 ) {
-    if let SessionEvent::InventoryFailure {
-        reason,
-        required_level,
-        item_guid,
-        bag_slot,
-    } = ev
-    {
-        inventory_failure(
-            reason,
-            required_level,
-            item_guid,
-            bag_slot,
-            &mut equip_errors,
-            &mut pending,
-            &mut lock_cleared,
-        );
-        loot.inventory_failed(item_guid, &mut latch, &net);
+    if let SessionEvent::InventoryFailure(f) = ev {
+        let limit = |id| {
+            limits
+                .as_ref()
+                .and_then(|l| l.0.get(id))
+                .map(|r| (r.quantity, r.name.clone()))
+        };
+        if let Some(line) = limit_line(f, limit) {
+            errors.0.push(line);
+        }
+        inventory_failure(f, &mut equip_errors, &mut pending, &mut lock_cleared);
+        loot.inventory_failed(f.item, &mut latch, &net);
     }
 }
 
 /// A refused inventory operation (reason 0 never arrives: `benilla_protocol::events` drops it):
-/// queues the error line and clears the item's pending lock, the unlocked slots waiting in
-/// [`LockTransitions`] for [`super::feed::feed_containers`], since this site has no `UiScript`.
+/// queues the error line and clears both items' pending locks (`0x6e3259`, `0x6e326f`), the
+/// unlocked slots waiting in [`LockTransitions`] for [`super::feed::feed_containers`], since this
+/// site has no `UiScript`.
+///
+/// Not built: the item's client-side spell cancel (`0x6e3249`), as no spell is kept by its casting
+/// item, and reason `0x51`'s bind confirm, which needs the named item held (`0x6e1a70`); AzerothCore
+/// sends that item as 0.
 fn inventory_failure(
-    reason: u8,
-    required_level: Option<u32>,
-    item_guid: u64,
-    bag_slot: u8,
+    f: InventoryFailure,
     equip_errors: &mut EquipErrors,
     pending: &mut PendingItemOps,
     lock_cleared: &mut LockTransitions,
 ) {
-    debug!("net: inventory failure {reason:#04x} (item {item_guid:#x}, bag slot {bag_slot})");
+    debug!(
+        "net: inventory failure {:#04x} (items {:#x} {:#x}, bag {}, {:?})",
+        f.reason, f.item, f.item2, f.bag_slot, f.tail
+    );
+    let required_level = match f.tail {
+        InventoryFailureTail::RequiredLevel(level) => Some(level),
+        // `0x6e3192` and [`limit_line`] replace the plain line.
+        InventoryFailureTail::BindConfirm { .. } | InventoryFailureTail::LimitCategory(_) => {
+            return unlock(f, pending, lock_cleared);
+        }
+        InventoryFailureTail::None => None,
+    };
     equip_errors.0.push(EquipError {
-        reason,
+        reason: f.reason,
         required_level,
-        bag_slot,
+        bag_slot: f.bag_slot,
     });
-    lock_cleared.0.extend(pending.clear_by_failure(item_guid));
+    unlock(f, pending, lock_cleared);
+}
+
+/// A limit-category refusal's line: the row's quantity then its name (`0x6e31c1`-`0x6e31cd`). A
+/// row the table lacks shows nothing, where the reference stops on a fatal error (`0x6e31e3`).
+fn limit_line(
+    f: InventoryFailure,
+    limit: impl FnOnce(u32) -> Option<(u32, String)>,
+) -> Option<crate::ui_action::UiError> {
+    let InventoryFailureTail::LimitCategory(id) = f.tail else {
+        return None;
+    };
+    let key = super::equip_error::inventory_error_key(u32::from(f.reason))?;
+    let (quantity, name) = limit(id)?;
+    Some(crate::ui_action::UiError::args(
+        key,
+        vec![
+            crate::ui_action::FillArg::D(i64::from(quantity)),
+            crate::ui_action::FillArg::S(name),
+        ],
+    ))
+}
+
+fn unlock(f: InventoryFailure, pending: &mut PendingItemOps, lock_cleared: &mut LockTransitions) {
+    lock_cleared.0.extend(pending.clear_by_failure(f.item));
+    lock_cleared.0.extend(pending.clear_by_guid(f.item2));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn failure(reason: u8, tail: InventoryFailureTail) -> InventoryFailure {
+        InventoryFailure {
+            reason,
+            item: 0x4000_0000_0000_0007,
+            item2: 0x4000_0000_0000_0008,
+            bag_slot: 255,
+            tail,
+        }
+    }
+
+    /// Both items unlock (`0x6e3259`, `0x6e326f`), and the level fills the plain line.
+    #[test]
+    fn a_failure_unlocks_both_items_and_keeps_the_level() {
+        let mut errors = EquipErrors::default();
+        let mut pending = PendingItemOps::default();
+        let mut cleared = LockTransitions::default();
+        pending.add([
+            (0, 3, 0x4000_0000_0000_0007, 1),
+            (0, 4, 0x4000_0000_0000_0008, 1),
+        ]);
+        inventory_failure(
+            failure(0x57, InventoryFailureTail::RequiredLevel(40)),
+            &mut errors,
+            &mut pending,
+            &mut cleared,
+        );
+        assert!(pending.is_empty());
+        assert_eq!(cleared.0.len(), 2);
+        assert_eq!(errors.0[0].required_level, Some(40));
+    }
+
+    /// `0x6e31cd`: the limit lines take the row's quantity then its name, and no plain line.
+    #[test]
+    fn a_limit_category_refusal_names_the_row() {
+        let f = failure(84, InventoryFailureTail::LimitCategory(12));
+        let line = limit_line(f, |id| (id == 12).then(|| (2, "Healthstone".into()))).unwrap();
+        assert_eq!(line.key, "ERR_ITEM_MAX_LIMIT_CATEGORY_COUNT_EXCEEDED_IS");
+        assert_eq!(
+            line.args,
+            vec![
+                crate::ui_action::FillArg::D(2),
+                crate::ui_action::FillArg::S("Healthstone".into())
+            ]
+        );
+        assert!(limit_line(f, |_| None).is_none(), "no row, no line");
+        let mut errors = EquipErrors::default();
+        inventory_failure(
+            f,
+            &mut errors,
+            &mut PendingItemOps::default(),
+            &mut LockTransitions::default(),
+        );
+        assert!(errors.0.is_empty());
+    }
 
     /// `0x6e321c`-`0x6e3232`: a failure on the latched item takes `CloseLoot(1, 0, 0)`.
     #[test]

@@ -634,8 +634,12 @@ pub enum SessionEvent {
         spell_ids: Vec<u32>,
         cooldowns: Vec<crate::messages::SpellCooldown>,
     },
-    /// The saved action bar at login (`SMSG_ACTION_BUTTONS`): slots 0..119, 0..11 the main bar.
-    ActionButtons { buttons: Vec<ActionButton> },
+    /// The saved action bar (`SMSG_ACTION_BUTTONS`): its state byte and the occupied slots
+    /// 0..143, 0..11 the main bar.
+    ActionButtons {
+        state: u8,
+        buttons: Vec<ActionButton>,
+    },
     /// A spell learned after login (`SMSG_LEARNED_SPELL`), widened from the wire `u16`.
     SpellLearned { spell_id: u32 },
     /// A spell unlearned (`SMSG_REMOVED_SPELL`), widened from `u16`; a respec sends one per rank.
@@ -766,13 +770,7 @@ pub enum SessionEvent {
         guid: u64,
     },
     /// A refused inventory operation (`SMSG_INVENTORY_CHANGE_FAILURE`), never `EQUIP_ERR_OK`.
-    InventoryFailure {
-        reason: u8,
-        required_level: Option<u32>,
-        item_guid: u64,
-        /// The destination bag's absolute player slot, reason 16's `%s`; 255 is the player's own.
-        bag_slot: u8,
-    },
+    InventoryFailure(crate::messages::InventoryFailure),
     /// A unit began melee auto-attack (`SMSG_ATTACKSTART`), our own included.
     AttackStart { attacker: u64, victim: u64 },
     /// A unit stopped melee auto-attack (`SMSG_ATTACKSTOP`, `SMSG_COMBAT_EVENT_FAILED`);
