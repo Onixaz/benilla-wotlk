@@ -59,6 +59,12 @@ impl PageTexts {
         self.pages.insert(page_id, Some(PageText { text, next }));
     }
 
+    /// The server has no such page: its callback does nothing (`0x58a453`), so the page stays
+    /// blank, and the negative keeps the per-frame read from asking again.
+    pub(crate) fn insert_miss(&mut self, page_id: u32) {
+        self.pages.insert(page_id, None);
+    }
+
     /// The cached page, asked for once; `guid` is the reading object, which vmangos discards.
     fn get_or_ask(&self, page_id: u32, guid: u64, commands: &NetCommands) -> Option<&PageText> {
         self.pages.get_or_ask(page_id, || {
@@ -215,6 +221,7 @@ mod net {
 
     pub(super) fn register(app: &mut App) {
         app.net_handler(SessionEventKind::PageText, on_page_text)
+            .net_handler(SessionEventKind::PageTextMiss, on_page_text_miss)
             .net_handler(SessionEventKind::ItemText, on_item_text)
             .net_handler(SessionEventKind::ReadItemOk, on_read_item_ok)
             .net_handler(SessionEventKind::ReadItemFailed, on_read_item_failed)
@@ -302,6 +309,13 @@ mod net {
                 text.len()
             );
             texts.insert(item_guid, text);
+        }
+    }
+
+    fn on_page_text_miss(In(ev): In<SessionEvent>, mut pages: ResMut<PageTexts>) {
+        if let SessionEvent::PageTextMiss { page_id } = ev {
+            debug!("page text: no page {page_id}");
+            pages.insert_miss(page_id);
         }
     }
 

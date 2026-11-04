@@ -1,7 +1,7 @@
 //! Small server notices: the light override, the UI clock, arena and refer-a-friend errors, the
-//! level grant offer, the unlearn list, the inebriation threshold, the dance moves, the message of
-//! the day, a channel's member count, a whois answer, the realm split, realm-first awards and the
-//! one-line [`WorldNotice`]s.
+//! level grant offer, the unlearn list, the inebriation threshold, the dance moves and dance cache,
+//! the message of the day, a channel's member count, the whois and rwhois answers, the realm split,
+//! realm-first awards, the bot check and the one-line [`WorldNotice`]s.
 
 use std::io;
 
@@ -213,6 +213,89 @@ pub(super) fn read_server_first_achievement(r: &mut &[u8]) -> io::Result<ServerF
     })
 }
 
+/// One dance-cache record (`0x98d300`): a packed guid, a name, a run of `u32`s and a `u32`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DanceRecord {
+    pub guid: u64,
+    pub name: String,
+    pub data: Vec<u32>,
+    pub tail: u32,
+}
+
+/// `SMSG_DANCE_QUERY_RESPONSE` (`0x635ab0`): the id, then the record unless its top bit marks a
+/// miss (`0x98d312`).
+pub(super) fn read_dance_query_response(r: &mut &[u8]) -> io::Result<(u32, Option<DanceRecord>)> {
+    let id = read_u32_le(r)?;
+    if id & 0x8000_0000 != 0 {
+        return Ok((id & 0x7FFF_FFFF, None));
+    }
+    let guid = read_packed_guid(r)?;
+    let name = read_cstring(r)?;
+    let count = read_u32_le(r)?;
+    let data = (0..count)
+        .map(|_| read_u32_le(r))
+        .collect::<io::Result<_>>()?;
+    let tail = read_u32_le(r)?;
+    Ok((
+        id,
+        Some(DanceRecord {
+            guid,
+            name,
+            data,
+            tail,
+        }),
+    ))
+}
+
+/// `SMSG_RWHOIS` (`0x6b32c0`): a signed count; -1 failed, 0 found nothing, a negative other count
+/// shows nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RWhois {
+    Failed,
+    NotFound,
+    Accounts(Vec<RWhoisAccount>),
+}
+
+/// One `SMSG_RWHOIS` record: the account, its lines, and the line printed in the other colour.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RWhoisAccount {
+    pub account: String,
+    pub lines: Vec<String>,
+    pub highlight: u32,
+}
+
+pub(super) fn read_rwhois(r: &mut &[u8]) -> io::Result<RWhois> {
+    let count = read_u32_le(r)? as i32;
+    Ok(match count {
+        -1 => RWhois::Failed,
+        0 => RWhois::NotFound,
+        n => RWhois::Accounts(
+            (0..n.max(0))
+                .map(|_| {
+                    let account = read_cstring(r)?;
+                    let n = read_u32_le(r)? as i32;
+                    let highlight = read_u32_le(r)?;
+                    let lines = (0..n.max(0))
+                        .map(|_| read_cstring(r))
+                        .collect::<io::Result<_>>()?;
+                    Ok(RWhoisAccount {
+                        account,
+                        lines,
+                        highlight,
+                    })
+                })
+                .collect::<io::Result<_>>()?,
+        ),
+    })
+}
+
+/// `SMSG_CHECK_FOR_BOTS` (`0x6b9682`): the 16-byte challenge.
+pub(super) fn read_check_for_bots(r: &mut &[u8]) -> io::Result<[u8; 16]> {
+    let mut key = [0u8; 16];
+    io::Read::read_exact(r, &mut key)?;
+    Ok(key)
+}
+
 /// `CMSG_REALM_SPLIT` body: the state, `0xFFFFFFFF` to ask (`0x4de2e0`).
 pub fn realm_split(state: u32) -> Vec<u8> {
     state.to_le_bytes().to_vec()
@@ -365,6 +448,88 @@ mod tests {
             other => panic!("{}", other.name()),
         }
         assert_eq!(realm_split(0xFFFF_FFFF), vec![0xFF; 4]);
+    }
+
+    #[test]
+    fn the_dance_cache_packets_decode_their_12340_bodies() {
+        let mut b = 9u32.to_le_bytes().to_vec();
+        b.extend_from_slice(&[0x01, 0x2A]); // packed guid 0x2A
+        b.extend_from_slice(b"Jig\0");
+        b.extend_from_slice(&2u32.to_le_bytes());
+        b.extend_from_slice(&5u32.to_le_bytes());
+        b.extend_from_slice(&6u32.to_le_bytes());
+        b.extend_from_slice(&7u32.to_le_bytes());
+        match parse(opcode::SMSG_DANCE_QUERY_RESPONSE, &b) {
+            ServerPacket::DanceQueryResponse { id, record } => {
+                assert_eq!(id, 9);
+                assert_eq!(
+                    record,
+                    Some(DanceRecord {
+                        guid: 0x2A,
+                        name: "Jig".into(),
+                        data: vec![5, 6],
+                        tail: 7
+                    })
+                );
+            }
+            other => panic!("{}", other.name()),
+        }
+        assert!(matches!(
+            parse(
+                opcode::SMSG_DANCE_QUERY_RESPONSE,
+                &(9u32 | 0x8000_0000).to_le_bytes()
+            ),
+            ServerPacket::DanceQueryResponse {
+                id: 9,
+                record: None
+            }
+        ));
+        assert!(matches!(
+            parse(opcode::SMSG_INVALIDATE_DANCE, &9u32.to_le_bytes()),
+            ServerPacket::InvalidateDance { id: 9 }
+        ));
+    }
+
+    #[test]
+    fn rwhois_reads_its_count_arms_and_records() {
+        assert!(matches!(
+            parse(opcode::SMSG_RWHOIS, &(-1i32).to_le_bytes()),
+            ServerPacket::RWhois(RWhois::Failed)
+        ));
+        assert!(matches!(
+            parse(opcode::SMSG_RWHOIS, &0u32.to_le_bytes()),
+            ServerPacket::RWhois(RWhois::NotFound)
+        ));
+        match parse(opcode::SMSG_RWHOIS, &(-2i32).to_le_bytes()) {
+            ServerPacket::RWhois(RWhois::Accounts(a)) => assert!(a.is_empty()),
+            other => panic!("{}", other.name()),
+        }
+        let mut b = 1u32.to_le_bytes().to_vec();
+        b.extend_from_slice(b"ACC\0");
+        b.extend_from_slice(&2u32.to_le_bytes());
+        b.extend_from_slice(&1u32.to_le_bytes());
+        b.extend_from_slice(b"one\0two\0");
+        match parse(opcode::SMSG_RWHOIS, &b) {
+            ServerPacket::RWhois(RWhois::Accounts(a)) => assert_eq!(
+                a,
+                [RWhoisAccount {
+                    account: "ACC".into(),
+                    lines: vec!["one".into(), "two".into()],
+                    highlight: 1
+                }]
+            ),
+            other => panic!("{}", other.name()),
+        }
+    }
+
+    #[test]
+    fn the_bot_check_reads_sixteen_bytes() {
+        let key: [u8; 16] = std::array::from_fn(|i| i as u8);
+        assert!(matches!(
+            parse(opcode::SMSG_CHECK_FOR_BOTS, &key),
+            ServerPacket::CheckForBots { key: k } if k == key
+        ));
+        assert!(crate::messages::parse_server(opcode::SMSG_CHECK_FOR_BOTS, &key[..15]).is_err());
     }
 
     /// Each one-line notice reads its 12340 body, and a byte past an empty body is ignored.

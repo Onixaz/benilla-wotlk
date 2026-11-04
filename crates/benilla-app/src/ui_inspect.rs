@@ -25,6 +25,9 @@ use crate::ui_script::UiFeed;
 #[derive(Resource, Default)]
 pub(crate) struct InspectTarget {
     pub(crate) token: Option<String>,
+    /// The guid `NotifyInspect` set (`0x52291a`), 0 after `ClearInspectPlayer`; the inspect
+    /// packets read their items only for it (`0x6ce08a`, `0x6ce0da`).
+    pub(crate) guid: u64,
 }
 
 /// `SMSG_INSPECT_TALENT`'s worn items of the last player inspected (`0x6cdf30`): their twelve
@@ -62,10 +65,18 @@ impl Plugin for InspectUiPlugin {
     }
 }
 
-fn on_inspect_items(In(ev): In<SessionEvent>, mut worn: ResMut<InspectWorn>) {
+fn on_inspect_items(
+    In(ev): In<SessionEvent>,
+    mut worn: ResMut<InspectWorn>,
+    target: Res<InspectTarget>,
+) {
     let SessionEvent::InspectItems { guid, items } = ev else {
         return;
     };
+    if guid != target.guid {
+        debug!("inspect: items for {guid:#x}, not the inspected player — skipped");
+        return;
+    }
     debug!("inspect: {} worn items for {guid:#x}", items.len());
     *worn = InspectWorn { guid, items };
 }
@@ -181,6 +192,7 @@ fn feed_inspect(
                 debug!("inspect: {token:?} -> {guid:#x}; sending CMSG_INSPECT");
                 let _ = commands.0.send(ClientCommand::Inspect { target: guid });
                 target.token = Some(token);
+                target.guid = guid;
             }
             None => {
                 debug!("inspect: {token:?} did not resolve to a player guid — nothing sent");
@@ -190,6 +202,7 @@ fn feed_inspect(
     // `ClearInspectPlayer()`, from `InspectFrame_OnHide`: the resolve stops and the booth empties.
     if script.take_inspect_clear() {
         target.token = None;
+        target.guid = 0;
     }
 
     // Re-resolve the latched token every frame, so the window follows a retarget as the

@@ -450,9 +450,13 @@ pub(crate) mod net {
         }
     }
 
-    fn on_invalidate_player(In(ev): In<SessionEvent>, mut names: ResMut<NameCache>) {
+    fn on_invalidate_player(
+        In(ev): In<SessionEvent>,
+        mut names: ResMut<NameCache>,
+        commands: Res<NetCommands>,
+    ) {
         if let SessionEvent::InvalidatePlayer { guid } = ev {
-            invalidate_player(guid, &mut names);
+            invalidate_player(guid, &mut names, &commands);
         }
     }
 
@@ -476,9 +480,15 @@ pub(crate) mod net {
     /// `SMSG_INVALIDATE_PLAYER`, which vmangos sends after a rename (`CharacterHandler.cpp:839`):
     /// the reference's eviction in a name cache with no TTL; its other, an empty-name answer, is a
     /// cached negative here.
-    fn invalidate_player(guid: u64, names: &mut NameCache) {
+    /// A guild guid is the guild cache's (`0x635442`). The autocomplete refresh reads the name
+    /// back at once, which re-asks it (`0x57b5fe`).
+    fn invalidate_player(guid: u64, names: &mut NameCache, commands: &NetCommands) {
+        if benilla_protocol::guid::is_guild(guid) {
+            return;
+        }
         debug!("net: invalidating cached name for player {guid:#x}");
         names.invalidate_player(guid);
+        let _ = names.resolve(guid, commands);
     }
 
     /// `SMSG_CREATURE_QUERY_RESPONSE`; a `None` name is the server's "no such entry".

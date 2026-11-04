@@ -192,8 +192,7 @@ pub(super) fn feed_guild(
 
 /// `SMSG_GUILD_INFO`'s chat lines, `GUILD_NAME_TEMPLATE` then `GUILD_INFO_TEMPLATE`. Not message
 /// records: the handler reads each template from the script VM and prints chat itself, so a missing
-/// template prints nothing. It passes wire fields 2, 1, 3, 4, 5: month first, where the wire has
-/// day first.
+/// template prints nothing.
 fn ginfo_lines(script: &UiScript, info: &GuildInfo) -> Vec<crate::ui_action::Shown> {
     use benilla_ui::strings::Arg;
     let get = |key: &str| script.lua().globals().get::<String>(key).ok();
@@ -203,14 +202,15 @@ fn ginfo_lines(script: &UiScript, info: &GuildInfo) -> Vec<crate::ui_action::Sho
             .then(|| crate::ui_action::Shown::unkeyed(benilla_ui::messages::MsgKind::Chat, text))
     };
     let d = |v: u32| Arg::D(i64::from(v));
+    let [month, day, year] = ginfo_date(info.created).map(Arg::D);
     [
         line(get("GUILD_NAME_TEMPLATE"), &[Arg::S(&info.name)]),
         line(
             get("GUILD_INFO_TEMPLATE"),
             &[
-                d(info.created_month),
-                d(info.created_day),
-                d(info.created_year),
+                month,
+                day,
+                year,
                 d(info.member_count),
                 d(info.account_count),
             ],
@@ -219,6 +219,13 @@ fn ginfo_lines(script: &UiScript, info: &GuildInfo) -> Vec<crate::ui_action::Sho
     .into_iter()
     .flatten()
     .collect()
+}
+
+/// The packed creation date as `GUILD_INFO_TEMPLATE` takes it: month + 1, day + 1, year + 2000
+/// (`0x6cc4ee`-`0x6cc4fb`), an unset field reading -1 first.
+fn ginfo_date(created: u32) -> [i64; 3] {
+    let t = benilla_ui::script::WowTime::decode(created);
+    [t.month + 1, t.month_day + 1, t.year + 2000].map(i64::from)
 }
 
 /// The roster in display order: every member, sorted, never filtered. Until the guild query
@@ -446,6 +453,13 @@ fn set_note(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_creation_date_is_one_packed_word_shown_one_based_from_2000() {
+        let created = (10 << 14) | (8 << 20) | (4 << 24) | (3 << 11) | (5 << 6) | 30;
+        assert_eq!(ginfo_date(created), [9, 11, 2004]);
+        assert_eq!(ginfo_date(u32::MAX), [0, 0, 1999], "unset fields read -1");
+    }
 
     #[test]
     fn dnd_wins_over_afk_and_the_tag_is_always_a_string() {

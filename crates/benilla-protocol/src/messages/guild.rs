@@ -240,10 +240,12 @@ pub struct GuildQueryResponse {
     pub border_color: i32,
     /// Tabard background colour index. Signed, `-1` = no tabard designed.
     pub background_color: i32,
+    /// The record's last word (`0x75b472`), which AzerothCore fills with the ranks in use.
+    pub rank_count: u32,
 }
 
-/// Read `SMSG_GUILD_QUERY_RESPONSE` (`Server/Packets/Guild.cpp:118-131`): `u32` id, name, exactly
-/// ten rank-name cstrings with no count, then five `i32` tabard fields.
+/// Read `SMSG_GUILD_QUERY_RESPONSE` (`0x75b3e0`): `u32` id, name, exactly ten rank-name cstrings
+/// with no count, five `i32` tabard fields, then a `u32`.
 pub(super) fn read_guild_query_response(r: &mut impl Read) -> io::Result<GuildQueryResponse> {
     let guild_id = read_u32_le(r)?;
     let name = read_cstring(r)?;
@@ -260,6 +262,7 @@ pub(super) fn read_guild_query_response(r: &mut impl Read) -> io::Result<GuildQu
         border_style: read_u32_le(r)? as i32,
         border_color: read_u32_le(r)? as i32,
         background_color: read_u32_le(r)? as i32,
+        rank_count: read_u32_le(r)?,
     })
 }
 
@@ -535,21 +538,19 @@ pub(super) fn read_guild_command_result(r: &mut impl Read) -> io::Result<GuildCo
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GuildInfo {
     pub name: String,
-    pub created_day: u32,
-    pub created_month: u32,
-    pub created_year: u32,
+    /// The creation date, one packed date-time word (`0x76cb60`).
+    pub created: u32,
     pub member_count: u32,
     /// How many distinct accounts the members belong to.
     pub account_count: u32,
 }
 
-/// Read `SMSG_GUILD_INFO` (`Server/Packets/Guild.cpp:103-111`): the name, then five `u32`s.
+/// Read `SMSG_GUILD_INFO` (`0x6cc440`): the name, the packed creation date, the member and
+/// account counts.
 pub(super) fn read_guild_info(r: &mut impl Read) -> io::Result<GuildInfo> {
     Ok(GuildInfo {
         name: read_cstring(r)?,
-        created_day: read_u32_le(r)?,
-        created_month: read_u32_le(r)?,
-        created_year: read_u32_le(r)?,
+        created: read_u32_le(r)?,
         member_count: read_u32_le(r)?,
         account_count: read_u32_le(r)?,
     })

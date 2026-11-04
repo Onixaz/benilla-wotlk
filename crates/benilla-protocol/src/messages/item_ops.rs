@@ -169,6 +169,18 @@ pub struct InspectItem {
 pub(super) fn read_inspect_talent(r: &mut &[u8]) -> io::Result<(u64, Vec<InspectItem>)> {
     let guid = crate::wire::read_packed_guid(r)?;
     super::talents::read_player_talents(r)?;
+    Ok((guid, read_inspect_items(r)?))
+}
+
+/// Read `SMSG_INSPECT_RESULTS_UPDATE` (`0x6ce070`): the packed guid, then the worn items as
+/// `SMSG_INSPECT_TALENT` ends.
+pub(super) fn read_inspect_results_update(r: &mut &[u8]) -> io::Result<(u64, Vec<InspectItem>)> {
+    let guid = crate::wire::read_packed_guid(r)?;
+    Ok((guid, read_inspect_items(r)?))
+}
+
+/// The worn-items block both inspect packets carry (`0x6cdf30`).
+fn read_inspect_items(r: &mut &[u8]) -> io::Result<Vec<InspectItem>> {
     let mask = read_u32_le(r)?;
     let mut items = Vec::new();
     for slot in 0..19u8 {
@@ -196,13 +208,37 @@ pub(super) fn read_inspect_talent(r: &mut &[u8]) -> io::Result<(u64, Vec<Inspect
             seed,
         });
     }
-    Ok((guid, items))
+    Ok(items)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::messages::{opcode, parse_server, ServerPacket};
+
+    /// The packed guid, then the slot mask with one item in slot 4 and one enchant in slot 0.
+    #[test]
+    fn inspect_results_update_reads_the_packed_guid_and_the_worn_items() {
+        let mut body = vec![0x01, 0x2A]; // packed guid 0x2A
+        body.extend_from_slice(&(1u32 << 4).to_le_bytes());
+        body.extend_from_slice(&(-25i32).to_le_bytes()); // entry 25, counts gems
+        body.extend_from_slice(&1u16.to_le_bytes()); // enchant mask
+        body.extend_from_slice(&3000u16.to_le_bytes());
+        body.extend_from_slice(&(-7i16).to_le_bytes()); // random property
+        body.push(0); // creator, packed 0
+        body.extend_from_slice(&99u32.to_le_bytes()); // seed
+        match parse_server(opcode::SMSG_INSPECT_RESULTS_UPDATE, &body).unwrap() {
+            ServerPacket::InspectResultsUpdate { guid, items } => {
+                assert_eq!(guid, 0x2A);
+                assert_eq!(items.len(), 1);
+                let item = &items[0];
+                assert_eq!((item.slot, item.entry, item.counts_gems), (4, 25, true));
+                assert_eq!(item.enchants[0], 3000);
+                assert_eq!((item.random_property, item.creator, item.seed), (-7, 0, 99));
+            }
+            other => panic!("expected InspectResultsUpdate, got {}", other.name()),
+        }
+    }
 
     #[test]
     fn socket_gems_is_the_item_then_three_gems() {

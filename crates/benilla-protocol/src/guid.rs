@@ -59,6 +59,11 @@ pub fn is_gameobject(guid: u64) -> bool {
     high(guid) == HIGH_GAMEOBJECT
 }
 
+/// A guild guid, its top 12 bits `0x1FF` (`0x635417`-`0x635437`); the guild id is the low word.
+pub fn is_guild(guid: u64) -> bool {
+    high(guid) & 0xFFF0 == 0x1FF0
+}
+
 /// The template entry: bits 24-47 for creatures, gameobjects and elevators (`HasEntry`,
 /// `ObjectGuid.h:223-240`; `GameObject.cpp:207`), the full low 32 bits for boats and zeppelins,
 /// whose template entry is passed as the counter (`Transport.cpp:65`, `ObjectGuid.h:123`). `None`

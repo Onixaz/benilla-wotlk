@@ -1,12 +1,13 @@
 //! Small server notices and what they drive: the light override, the server's UI clock, the arena
 //! and refer-a-friend errors, the level grant offer, the inebriation lines, the message of the day,
-//! a GM's whois answer, realm-first awards and the one-line [`WorldNotice`]s. The dance moves are
-//! read and dropped: nothing built reads them, as `PlayDance` is not.
+//! a GM's whois and rwhois answers, realm-first awards and the one-line [`WorldNotice`]s. The dance
+//! moves and dance-cache answers are read and dropped: nothing built reads them, as `PlayDance` is
+//! not.
 
 use std::time::{Duration, Instant};
 
 use benilla_protocol::messages::{
-    ChatMessage, InebriationThreshold, ObjectType, ServerFirstAchievement, WorldNotice,
+    ChatMessage, InebriationThreshold, ObjectType, RWhois, ServerFirstAchievement, WorldNotice,
     CHAT_MSG_ACHIEVEMENT,
 };
 use benilla_protocol::{SessionEvent, SessionEventKind};
@@ -89,8 +90,11 @@ impl Plugin for NoticesPlugin {
             .net_handler(K::ProposeLevelGrant, on_propose_level_grant)
             .net_handler(K::InebriationThreshold, on_inebriation)
             .net_handler(K::LearnedDanceMoves, on_dance_moves)
+            .net_handler(K::DanceRecord, on_dance_cache)
+            .net_handler(K::InvalidateDance, on_dance_cache)
             .net_handler(K::Motd, on_motd)
             .net_handler(K::Whois, on_whois)
+            .net_handler(K::RWhois, on_rwhois)
             .net_handler(K::ServerFirstAchievement, on_server_first)
             .net_handler(K::Notice, on_notice)
             .net_handler(K::Disconnected, on_session_end)
@@ -294,6 +298,27 @@ fn on_dance_moves(In(ev): In<SessionEvent>) {
     }
 }
 
+/// `SMSG_DANCE_QUERY_RESPONSE` (`0x635ab0`) and `SMSG_INVALIDATE_DANCE` (`0x6354f0`) fill and trim
+/// the cache only the unbuilt dance studio reads.
+fn on_dance_cache(In(ev): In<SessionEvent>) {
+    match ev {
+        SessionEvent::DanceRecord { id, record } => {
+            debug!(
+                "net: dance {id} {} — no dance studio, dropped",
+                if record.is_some() {
+                    "answered"
+                } else {
+                    "unknown"
+                }
+            );
+        }
+        SessionEvent::InvalidateDance { id } => {
+            debug!("net: dance {id} invalidated — no dance studio, nothing cached");
+        }
+        _ => {}
+    }
+}
+
 /// `SMSG_MOTD` (`0x551660`): each line a `CHAT_MSG_SYSTEM` line whose arg6 is `"MOTD"`, the lines
 /// kept for `KBSystem_GetMOTD`, then `KNOWLEDGE_BASE_SYSTEM_MOTD_UPDATED`.
 fn on_motd(In(ev): In<SessionEvent>, mut motd: ResMut<KbMotd>, mut chat: ResMut<ChatLog>) {
@@ -322,6 +347,38 @@ fn on_whois(In(ev): In<SessionEvent>, echo: Option<ResMut<crate::console::Consol
             Some(mut echo) => echo.print(text),
             None => info!("console: {text}"),
         }
+    }
+}
+
+/// `SMSG_RWHOIS` (`0x6b32c0`) goes to the console alone.
+fn on_rwhois(In(ev): In<SessionEvent>, mut echo: Option<ResMut<crate::console::ConsoleEcho>>) {
+    if let SessionEvent::RWhois(answer) = ev {
+        for line in rwhois_lines(&answer) {
+            match echo.as_mut() {
+                Some(echo) => echo.print(line),
+                None => info!("console: {line}"),
+            }
+        }
+    }
+}
+
+/// The rwhois console lines: one for a failure or no match, else per account its name, then each
+/// line. Deviation: the wording is benilla's own, and the highlighted line (`0x6b33a5`) is marked
+/// with `>` where the reference colours it, the echo having no colour.
+fn rwhois_lines(answer: &RWhois) -> Vec<String> {
+    match answer {
+        RWhois::Failed => vec!["rwhois: the lookup failed".into()],
+        RWhois::NotFound => vec!["rwhois: no account found".into()],
+        RWhois::Accounts(accounts) => accounts
+            .iter()
+            .flat_map(|a| {
+                let lines = a.lines.iter().enumerate().map(|(i, line)| {
+                    let mark = if i as u32 == a.highlight { '>' } else { ' ' };
+                    format!("{mark} {line}")
+                });
+                std::iter::once(format!("rwhois: account {}", a.account)).chain(lines)
+            })
+            .collect(),
     }
 }
 
@@ -537,6 +594,22 @@ fn drain_level_grant(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rwhois_prints_its_arms_and_marks_the_highlighted_line() {
+        assert_eq!(rwhois_lines(&RWhois::Failed).len(), 1);
+        assert_eq!(rwhois_lines(&RWhois::NotFound).len(), 1);
+        assert!(rwhois_lines(&RWhois::Accounts(Vec::new())).is_empty());
+        let account = benilla_protocol::messages::RWhoisAccount {
+            account: "ACC".into(),
+            lines: vec!["one".into(), "two".into()],
+            highlight: 1,
+        };
+        assert_eq!(
+            rwhois_lines(&RWhois::Accounts(vec![account])),
+            ["rwhois: account ACC", "  one", "> two"]
+        );
+    }
 
     fn text(e: &UiError) -> Option<String> {
         let get = |key: &str| {

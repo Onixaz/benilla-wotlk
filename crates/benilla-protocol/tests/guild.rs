@@ -166,8 +166,9 @@ fn guild_motd_clears_with_an_empty_cstring_not_an_empty_body() {
     assert_eq!(messages::guild_motd("").len(), 1, "one NUL, not zero bytes");
 }
 
-/// `SMSG_GUILD_QUERY_RESPONSE` always carries ten rank-name cstrings, not a counted list (vmangos
-/// `Server/Packets/Guild.cpp:118-131`); the distinct emblem values after them catch a short read.
+/// `SMSG_GUILD_QUERY_RESPONSE` always carries ten rank-name cstrings, not a counted list
+/// (`0x75b3e0`); the distinct emblem values after them catch a short read, and the last word is
+/// read too (`0x75b472`).
 #[test]
 fn guild_query_response_always_carries_ten_rank_names() {
     let mut body = Vec::new();
@@ -190,8 +191,11 @@ fn guild_query_response_always_carries_ten_rank_names() {
     body.extend_from_slice(&3u32.to_le_bytes()); // borderStyle
     body.extend_from_slice(&4u32.to_le_bytes()); // borderColor
     body.extend_from_slice(&5u32.to_le_bytes()); // backgroundColor
+    body.extend_from_slice(&5u32.to_le_bytes()); // ranks in use
 
-    let packet = messages::parse_server(opcode::SMSG_GUILD_QUERY_RESPONSE, &body).unwrap();
+    let (packet, tail) =
+        messages::parse_server_with_tail(opcode::SMSG_GUILD_QUERY_RESPONSE, &body).unwrap();
+    assert_eq!(tail, 0, "no byte left unread");
     let response = match &packet {
         ServerPacket::GuildQueryResponse(r) => r.clone(),
         other => panic!("expected GuildQueryResponse, got {}", other.name()),
@@ -210,6 +214,7 @@ fn guild_query_response_always_carries_ten_rank_names() {
     assert_eq!(response.border_style, 3);
     assert_eq!(response.border_color, 4);
     assert_eq!(response.background_color, 5);
+    assert_eq!(response.rank_count, 5);
 
     match decode(packet).as_slice() {
         [SessionEvent::GuildQueryResponse(r)] => assert_eq!(r.name, "Legacy of Steel"),
@@ -225,8 +230,8 @@ fn guild_query_response_reports_no_such_guild_as_an_empty_name() {
     body.extend_from_slice(&404u32.to_le_bytes()); // the id we asked about
     body.push(0); // guildName: empty == "this id names nothing"
     body.extend_from_slice(&[0u8; GUILD_RANKS_MAX_COUNT]); // ten empty rank names, still sent
-    for _ in 0..5 {
-        body.extend_from_slice(&0u32.to_le_bytes()); // the emblem block, still sent
+    for _ in 0..6 {
+        body.extend_from_slice(&0u32.to_le_bytes()); // the emblem block and the rank count, still sent
     }
 
     match &messages::parse_server(opcode::SMSG_GUILD_QUERY_RESPONSE, &body).unwrap() {
@@ -458,15 +463,14 @@ fn guild_command_result_wire() {
     }
 }
 
-/// `SMSG_GUILD_INFO` (Server/Packets/Guild.cpp:103-111): the guild name, then day/month/year and
-/// the member and account counts, five `u32`s in that order.
+/// `SMSG_GUILD_INFO` (`0x6cc440`): the guild name, one packed creation date, then the member and
+/// account counts.
 #[test]
 fn guild_info_wire() {
+    let created: u32 = (10 << 14) | (8 << 20) | (4 << 24); // 2004-09-11, 0-based
     let mut body = Vec::new();
     body.extend_from_slice(b"Legacy of Steel\0");
-    body.extend_from_slice(&11u32.to_le_bytes()); // createdDay
-    body.extend_from_slice(&9u32.to_le_bytes()); // createdMonth
-    body.extend_from_slice(&2004u32.to_le_bytes()); // createdYear
+    body.extend_from_slice(&created.to_le_bytes());
     body.extend_from_slice(&57u32.to_le_bytes()); // memberCount
     body.extend_from_slice(&41u32.to_le_bytes()); // accountCount
 
@@ -474,9 +478,7 @@ fn guild_info_wire() {
     match &packet {
         ServerPacket::GuildInfo(info) => {
             assert_eq!(info.name, "Legacy of Steel");
-            assert_eq!(info.created_day, 11);
-            assert_eq!(info.created_month, 9);
-            assert_eq!(info.created_year, 2004);
+            assert_eq!(info.created, created);
             assert_eq!(info.member_count, 57);
             assert_eq!(
                 info.account_count, 41,

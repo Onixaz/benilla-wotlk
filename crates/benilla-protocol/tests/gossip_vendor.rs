@@ -299,6 +299,14 @@ fn npc_text_update_greeting_extraction() {
         other => panic!("npc text update, got {}", other.name()),
     }
 
+    let miss = (321u32 | 0x8000_0000).to_le_bytes();
+    match decode(messages::parse_server(messages::opcode::SMSG_NPC_TEXT_UPDATE, &miss).unwrap())
+        .as_slice()
+    {
+        [SessionEvent::NpcTextMiss { text_id: 321 }] => {}
+        other => panic!("a top-bit id is a miss with no body, got {other:?}"),
+    }
+
     let packet = messages::parse_server(messages::opcode::SMSG_NPC_TEXT_UPDATE, &body).unwrap();
     match decode(packet).pop().unwrap() {
         SessionEvent::NpcGreeting { text_id, blocks } => {
