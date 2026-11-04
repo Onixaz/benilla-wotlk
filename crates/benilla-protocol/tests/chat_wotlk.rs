@@ -96,10 +96,10 @@ fn an_achievement_line_keeps_its_id() {
     assert_eq!((m.target_guid, m.achievement), (0x21, 6));
 }
 
-/// A 3.3.5a-only lane with no shared type yet (here `ARENA_POINTS`, `0x32`) is read through and
-/// then refused, never handed on under a guessed 1.12.1 type.
+/// `ARENA_POINTS` (`0x32`) signals an event with no name (`0x9fbe80` slot 658), so the line is
+/// read whole and dropped, never handed on under a guessed type.
 #[test]
-fn a_lane_without_a_shared_type_fails_visibly() {
+fn a_lane_with_no_named_event_reads_whole_and_drops() {
     let mut body = vec![0x32];
     body.extend(0u32.to_le_bytes());
     body.extend(0x21u64.to_le_bytes());
@@ -108,8 +108,8 @@ fn a_lane_without_a_shared_type_fails_visibly() {
     body.extend(3u32.to_le_bytes());
     body.extend(b"hi\0");
     body.push(0);
-    let Err(err) = messages::parse_server_with_tail(opcode::SMSG_MESSAGECHAT, &body) else {
-        panic!("a 3.3.5a-only lane must not decode");
-    };
-    assert_eq!(err.kind(), std::io::ErrorKind::Unsupported);
+    let (packet, tail) =
+        messages::parse_server_with_tail(opcode::SMSG_MESSAGECHAT, &body).expect("reads whole");
+    assert_eq!(tail, 0);
+    assert!(matches!(packet, ServerPacket::Other { .. }));
 }

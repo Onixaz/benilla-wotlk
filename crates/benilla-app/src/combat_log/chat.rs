@@ -1,11 +1,9 @@
 //! The chat lines 3.3.5a still prints beside its combat log, queued for their names; the wording
 //! law is [`crate::ui_chat::combat`].
 
-use crate::net::Reputations;
 use crate::ui_chat::combat::{self, Fills, Named, PendingCombat};
 use crate::ui_chat::{ChatEventKind, ChatLog};
 use benilla_ui::script::ScriptValue;
-use bevy::prelude::MessageWriter;
 
 /// A line whose subject is `subject`, keyed on it being the player.
 fn line(
@@ -120,58 +118,60 @@ pub(crate) fn open_lock(
     ));
 }
 
-/// `SMSG_SET_FACTION_STANDING` through the faction-change line (`0x50b8c0`): the faction and the
-/// delta, then `FACTION` to the combat text. The wire carries the new total, so this runs before
-/// the store is overwritten, and an unchanged value prints nothing. The wire's list id is
-/// `Faction.dbc`'s `rep_index`.
-pub(crate) fn faction_standing(
-    deltas: &[(u32, i32)],
-    reputations: &Reputations,
-    factions: Option<&crate::target::ring::Factions>,
+/// The faction-change line (`0x50b8c0`). The generic form (`0x50b90c`) names the faction alone
+/// and sends no combat text; otherwise a rise with a bonus above 0 takes the bonus form
+/// (`0x50b96f`), and the line is followed by the `FACTION` combat text (`0x50b9f4`), returned.
+pub(crate) fn faction_change_line(
+    name: &str,
+    delta: i32,
+    generic: bool,
+    bonus: f32,
     log: &mut ChatLog,
-    center: &mut MessageWriter<crate::ui_unit::CombatTextEvent>,
-) {
-    let Some(catalog) = factions.map(|f| f.catalog()) else {
-        return;
-    };
-    for &(list_id, standing) in deltas {
-        let old = reputations
-            .0
-            .get(list_id as usize)
-            .map_or(0, |(_, standing)| *standing);
-        let delta = standing - old;
-        if delta == 0 {
-            continue;
-        }
-        let Ok(index) = i32::try_from(list_id) else {
-            continue;
-        };
-        let Some(name) = catalog
-            .reputation_factions()
-            .find(|(_, f)| f.rep_index == index)
-            .and_then(|(id, _)| catalog.faction_name(id))
-        else {
-            continue;
-        };
-        log.push_combat(combat::ready(
-            ChatEventKind::CombatFactionChange,
-            if delta > 0 {
-                combat::FACTION_STANDING_INCREASED
-            } else {
-                combat::FACTION_STANDING_DECREASED
-            },
-            Fills {
-                named: name.to_string(),
-                amount: i64::from(delta.abs()),
-                ..Fills::default()
-            },
-        ));
-        center.write(crate::ui_unit::CombatTextEvent {
-            message_type: "FACTION",
-            args: vec![
-                ScriptValue::Str(name.to_string()),
-                ScriptValue::Int(i64::from(delta)),
-            ],
-        });
+) -> Option<crate::ui_unit::CombatTextEvent> {
+    if delta == 0 {
+        return None;
     }
+    let family = match (generic, delta > 0) {
+        (true, true) => combat::FACTION_STANDING_INCREASED_GENERIC,
+        (true, false) => combat::FACTION_STANDING_DECREASED_GENERIC,
+        (false, true) if bonus > 0.0 => combat::FACTION_STANDING_INCREASED_BONUS,
+        (false, true) => combat::FACTION_STANDING_INCREASED,
+        (false, false) => combat::FACTION_STANDING_DECREASED,
+    };
+    log.push_combat(combat::ready(
+        ChatEventKind::CombatFactionChange,
+        family,
+        Fills {
+            named: name.to_string(),
+            amount: i64::from(delta.abs()),
+            bonus: f64::from(bonus),
+            ..Fills::default()
+        },
+    ));
+    (!generic).then(|| crate::ui_unit::CombatTextEvent {
+        message_type: "FACTION",
+        args: vec![
+            ScriptValue::Str(name.to_string()),
+            ScriptValue::Int(i64::from(delta)),
+        ],
+    })
+}
+
+/// The rank-change line (`0x50ba10`), a system line: `FACTION_STANDING_LABEL<rank + 1>` in the
+/// player's gender (`0x50ba8e`), then the faction.
+pub(crate) fn faction_rank_line(name: &str, rank: u8, female: bool, log: &mut ChatLog) {
+    let label = format!(
+        "FACTION_STANDING_LABEL{}{}",
+        rank + 1,
+        if female { "_FEMALE" } else { "" }
+    );
+    log.push_combat(combat::ready(
+        ChatEventKind::System,
+        combat::FACTION_STANDING_CHANGED,
+        Fills {
+            named: name.to_string(),
+            label,
+            ..Fills::default()
+        },
+    ));
 }

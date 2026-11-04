@@ -52,9 +52,23 @@ fn on_mode(In(ev): In<SessionEvent>, mut bar: ResMut<PetBar>) {
     }
 }
 
-fn on_action_feedback(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
-    if let SessionEvent::PetActionFeedback { reason } = ev {
-        pet_action_feedback(reason, &mut errors);
+fn on_action_feedback(
+    In(ev): In<SessionEvent>,
+    mut errors: ResMut<UiErrorKeys>,
+    catalog: Option<Res<Spells>>,
+    mut bar: ResMut<PetBar>,
+) {
+    if let SessionEvent::PetActionFeedback { reason, spell } = ev {
+        let helpful = catalog
+            .as_deref()
+            .and_then(|c| c.catalog.get(spell))
+            .is_some_and(|d| d.is_helpful());
+        pet_action_feedback(reason, helpful, &mut errors);
+        // A refused target refunds the spell's start cooldown and refreshes the pet's
+        // (`0x5d4e42`, `0x5d4e83` -> `0x804780`).
+        if matches!(reason, 2 | 3) {
+            bar.cooldowns.clear_gcd(spell, std::time::Instant::now());
+        }
     }
 }
 
@@ -82,9 +96,22 @@ fn on_tame_failure(In(ev): In<SessionEvent>, mut failures: ResMut<PetTameFailure
     }
 }
 
-fn on_refusal_line(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
+fn on_refusal_line(
+    In(ev): In<SessionEvent>,
+    mut errors: ResMut<UiErrorKeys>,
+    mut declensions: ResMut<super::PetDeclensions>,
+) {
     match ev {
-        SessionEvent::PetNameInvalid { code } => pet_name_invalid(code, &mut errors),
+        SessionEvent::PetNameInvalid {
+            code,
+            name,
+            declensions: forms,
+        } => {
+            pet_name_invalid(code, &mut errors);
+            if let Some(forms) = forms {
+                declensions.0.push((name, forms));
+            }
+        }
         SessionEvent::PetBroken => pet_broken(&mut errors),
         _ => {}
     }
@@ -259,25 +286,29 @@ fn pet_mode(mode: PetMode, bar: &mut PetBar) {
         return;
     }
     debug!("net: pet mode — state {:#010x}", mode.state);
-    // The whole dword, as the client stores both packets' state.
+    // The whole dword, as the client stores both packets' state, and `PET_BAR_UPDATE` whatever
+    // changed (`0x5d3689`).
     bar.spells.state = mode.state;
+    bar.bar_signals = bar.bar_signals.wrapping_add(1);
 }
 
-/// `SMSG_PET_ACTION_FEEDBACK`: a refused order's reason byte, onto the red line.
-fn pet_action_feedback(reason: u8, errors: &mut UiErrorKeys) {
+/// `SMSG_PET_ACTION_FEEDBACK`: a refused order's reason byte, onto the red line; `helpful` is
+/// the refused spell's helpful-or-harmful answer, which reason 2 reads.
+fn pet_action_feedback(reason: u8, helpful: bool, errors: &mut UiErrorKeys) {
     debug!("net: pet action feedback {reason}");
-    if let Some(key) = pet_feedback_key(reason) {
+    if let Some(key) = pet_feedback_key(reason, helpful) {
         errors.0.push(UiError::key(key));
     }
 }
 
-/// The reference's map: vmangos `FEEDBACK_PET_DEAD`, `FEEDBACK_NOTHING_TO_ATT`,
-/// `FEEDBACK_CANT_ATT_TARGET` and `FEEDBACK_NO_PATH_TO` (1-4) raise errorIds `0x150`, `0xa0`,
-/// `0xa1` and `0x151`; other bytes show nothing. `ERR_PET_SPELL_NOPATH` has no 1.12 string, so a
-/// no-path order is silent in the reference too.
-fn pet_feedback_key(reason: u8) -> Option<&'static str> {
+/// The reference's switch (`0x5d4dc8`): 1 `ERR_PET_SPELL_DEAD` (`0x5d4dcf`), 2
+/// `ERR_NO_ATTACK_TARGET` or, for a helpful spell, `ERR_GENERIC_NO_VALID_TARGETS` (`0x5d4e29`,
+/// `0x5d4e36`), 3 `ERR_INVALID_ATTACK_TARGET` (`0x5d4e60`), 4 `ERR_PET_SPELL_NOPATH`
+/// (`0x5d4e95`); other bytes show nothing.
+fn pet_feedback_key(reason: u8, helpful: bool) -> Option<&'static str> {
     Some(match reason {
         1 => "ERR_PET_SPELL_DEAD",
+        2 if helpful => "ERR_GENERIC_NO_VALID_TARGETS",
         2 => "ERR_NO_ATTACK_TARGET",
         3 => "ERR_INVALID_ATTACK_TARGET",
         4 => "ERR_PET_SPELL_NOPATH",
@@ -516,11 +547,14 @@ mod tests {
     }
 
     #[test]
-    fn the_feedback_map_is_the_jump_table_at_0x4bdbe8() {
+    fn the_feedback_map_is_the_switch_at_0x5d4dc8() {
         let mut errors = UiErrorKeys::default();
         for reason in [0u8, 1, 2, 3, 4, 5, 200] {
-            pet_action_feedback(reason, &mut errors);
+            pet_action_feedback(reason, false, &mut errors);
         }
+        // A helpful spell's refusal reads as no valid targets; reason 3 ignores the spell.
+        pet_action_feedback(2, true, &mut errors);
+        pet_action_feedback(3, true, &mut errors);
         assert_eq!(
             errors.0.iter().map(|e| e.key).collect::<Vec<_>>(),
             [
@@ -528,14 +562,34 @@ mod tests {
                 "ERR_NO_ATTACK_TARGET",
                 "ERR_INVALID_ATTACK_TARGET",
                 "ERR_PET_SPELL_NOPATH",
+                "ERR_GENERIC_NO_VALID_TARGETS",
+                "ERR_INVALID_ATTACK_TARGET",
             ]
         );
     }
 
+    /// `SMSG_PET_MODE` signals `PET_BAR_UPDATE` on every packet for the bar's pet (`0x5d3689`).
+    #[test]
+    fn a_repeated_pet_mode_still_signals_the_bar() {
+        let mut bar = PetBar::default();
+        bar.spells.pet_guid = 0xF14;
+        let mode = |pet_guid| PetMode {
+            pet_guid,
+            state: 0x0100,
+        };
+        pet_mode(mode(0xF14), &mut bar);
+        let first = bar.bar_signals;
+        pet_mode(mode(0xF14), &mut bar);
+        assert_ne!(bar.bar_signals, first, "the same state signals again");
+        let before = bar.bar_signals;
+        pet_mode(mode(0xABC), &mut bar);
+        assert_eq!(bar.bar_signals, before, "another pet's mode is not ours");
+    }
+
     #[test]
     fn every_feedback_arm_is_a_catalog_row() {
-        for reason in 1..=4u8 {
-            let key = pet_feedback_key(reason).expect("an arm");
+        for (reason, helpful) in [(1u8, false), (2, false), (2, true), (3, false), (4, false)] {
+            let key = pet_feedback_key(reason, helpful).expect("an arm");
             let row = benilla_ui::messages::by_key(key)
                 .unwrap_or_else(|| panic!("{key} is not a message-catalog row"));
             assert_eq!(

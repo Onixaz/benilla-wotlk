@@ -28,8 +28,8 @@ impl Feed {
         s.run(SPY).unwrap();
         s.run(
             r#"
-            for _, e in { "CHAT_MSG_CHANNEL_JOIN", "CHAT_MSG_CHANNEL_LEAVE",
-                          "CHAT_MSG_CHANNEL_NOTICE", "CHAT_MSG_CHANNEL_NOTICE_USER" } do
+            for _, e in ipairs({ "CHAT_MSG_CHANNEL_JOIN", "CHAT_MSG_CHANNEL_LEAVE",
+                          "CHAT_MSG_CHANNEL_NOTICE", "CHAT_MSG_CHANNEL_NOTICE_USER" }) do
                 BenillaChatSpy:RegisterEvent(e)
             end
             -- The text the stock handler hands the window, links and all.
@@ -67,6 +67,7 @@ impl Feed {
         world.insert_resource(crate::items::Items::default());
         world.insert_resource(crate::text_filter::TextFilter::default());
         world.insert_resource(crate::text_filter::TextFilterSwitches::default());
+        world.insert_resource(crate::net::ServerTime::default());
         Feed { world, sent }
     }
 
@@ -242,7 +243,10 @@ fn our_own_join_notice_is_unchanged() {
     f.push(
         n::YOU_JOINED,
         "Mychan",
-        ChannelNoticeTail::YouJoined { flags: 0 },
+        ChannelNoticeTail::YouJoined {
+            flags: 0,
+            text: None,
+        },
     );
     f.drain();
     assert_eq!(
@@ -254,4 +258,160 @@ fn our_own_join_notice_is_unchanged() {
     );
     assert_eq!(f.lines(), before + 1);
     assert_eq!(f.last_added(), "Joined Channel: [3. Mychan]");
+}
+
+/// 3.3.5a's notice arms through the drain to the stock VM: the password and invite requests ahead
+/// of their lines (`0x50e3aa`, `0x50e7fb`), a mode change's per-bit lines (`0x50cfc0`), and
+/// `YOU_LEFT` reading `SUSPENDED` from its constant byte unless we asked to leave (`0x50e31b`).
+#[test]
+fn the_wotlk_notice_arms_fire_their_requests_lines_and_suspension() {
+    let _data = benilla_formats::wow_data_or_skip!();
+    let mut f = Feed::new();
+    f.script()
+        .run(
+            r#"
+            NoticeLog = {}
+            local log = CreateFrame("Frame")
+            for _, e in ipairs({ "CHANNEL_PASSWORD_REQUEST", "CHANNEL_INVITE_REQUEST",
+                          "CHAT_MSG_CHANNEL_NOTICE", "CHAT_MSG_CHANNEL_NOTICE_USER" }) do
+                log:RegisterEvent(e)
+            end
+            log:SetScript("OnEvent", function(self, event, a1, a2)
+                NoticeLog[#NoticeLog + 1] = event .. ":" .. tostring(a1) .. ":" .. tostring(a2)
+            end)
+        "#,
+        )
+        .unwrap();
+    let take = |f: &Feed| -> Vec<String> {
+        let v = f
+            .script()
+            .eval::<Vec<String>>("local t = NoticeLog; NoticeLog = {}; return t")
+            .unwrap();
+        v
+    };
+
+    f.push(n::WRONG_PASSWORD, "Mychan", ChannelNoticeTail::Empty);
+    f.drain();
+    assert_eq!(
+        take(&f),
+        [
+            "CHANNEL_PASSWORD_REQUEST:Mychan:nil",
+            "CHAT_MSG_CHANNEL_NOTICE:WRONG_PASSWORD:"
+        ]
+    );
+
+    f.name(ANN, "Ann");
+    f.push(n::INVITE, "Secret", ChannelNoticeTail::Actor(ANN));
+    f.drain();
+    assert_eq!(
+        take(&f),
+        [
+            "CHANNEL_INVITE_REQUEST:Secret:Ann",
+            "CHAT_MSG_CHANNEL_NOTICE_USER:INVITE:Ann"
+        ]
+    );
+    // An invite waiting on its inviter's name holds off the next (`0x50e79e`).
+    f.push(n::INVITE, "Secret", ChannelNoticeTail::Actor(BOB));
+    f.drain();
+    let pending = |f: &Feed| f.world.resource::<super::ChatLog>().pending_len();
+    assert_eq!(pending(&f), 1, "the uncached invite waits");
+    f.push(n::INVITE, "Other", ChannelNoticeTail::Actor(ANN));
+    assert_eq!(
+        pending(&f),
+        1,
+        "the second invite is dropped while the first waits"
+    );
+    f.name(BOB, "Bob");
+    f.drain();
+    assert_eq!(
+        take(&f),
+        [
+            "CHANNEL_INVITE_REQUEST:Secret:Bob",
+            "CHAT_MSG_CHANNEL_NOTICE_USER:INVITE:Bob"
+        ]
+    );
+    let _ = f.sent.try_iter().count();
+
+    f.push(
+        n::MODE_CHANGE,
+        "Mychan",
+        ChannelNoticeTail::ModeChange {
+            guid: ANN,
+            old_flags: 0x10,
+            new_flags: 0x06,
+        },
+    );
+    f.drain();
+    assert_eq!(
+        take(&f),
+        [
+            "CHAT_MSG_CHANNEL_NOTICE_USER:SET_MODERATOR:Ann",
+            "CHAT_MSG_CHANNEL_NOTICE_USER:SET_VOICE:Ann",
+            "CHAT_MSG_CHANNEL_NOTICE_USER:UNSET_SPEAK:Ann",
+        ]
+    );
+    // An uncached member prints nothing and asks for the name.
+    f.push(
+        n::MODE_CHANGE,
+        "Mychan",
+        ChannelNoticeTail::ModeChange {
+            guid: 0x13,
+            old_flags: 0,
+            new_flags: 0x02,
+        },
+    );
+    f.drain();
+    f.drain();
+    assert!(take(&f).is_empty());
+    assert!(
+        f.sent.try_iter().next().is_some(),
+        "the name query went out"
+    );
+
+    // The server leaving us from a constant channel keeps its record; our own leave drops it.
+    f.push(
+        n::YOU_LEFT,
+        "Trade - City",
+        ChannelNoticeTail::YouLeft { constant: true },
+    );
+    f.drain();
+    assert_eq!(take(&f), ["CHAT_MSG_CHANNEL_NOTICE:SUSPENDED:"]);
+    let channels = |f: &Feed| {
+        f.world
+            .resource::<super::edit::ChannelState>()
+            .number_of("Trade - City")
+    };
+    assert_eq!(channels(&f), Some(2), "a suspended leave keeps the number");
+    f.world
+        .resource_mut::<super::edit::ChannelState>()
+        .note_leave_asked("Trade - City");
+    f.push(
+        n::YOU_LEFT,
+        "Trade - City",
+        ChannelNoticeTail::YouLeft { constant: true },
+    );
+    f.drain();
+    assert_eq!(take(&f), ["CHAT_MSG_CHANNEL_NOTICE:YOU_LEFT:"]);
+    assert_eq!(channels(&f), None, "our own leave frees the slot");
+}
+
+/// A join's trailing text queues a second notice line; the voice flag's set queues nothing.
+#[test]
+fn the_join_text_queues_a_second_line_and_the_voice_flag_nothing() {
+    let mut log = super::ChatLog::default();
+    log.push_channel_notice(
+        n::YOU_JOINED,
+        "Mychan".into(),
+        &ChannelNoticeTail::YouJoined {
+            flags: 0,
+            text: Some("Welcome".into()),
+        },
+    );
+    assert_eq!(log.pending_len(), 2);
+    log.push_channel_notice(
+        n::VOICE_ENABLED,
+        "Mychan".into(),
+        &ChannelNoticeTail::Actor(ANN),
+    );
+    assert_eq!(log.pending_len(), 2, "the voice flag prints nothing");
 }

@@ -30,6 +30,10 @@ pub(crate) enum Slot {
     Named,
     /// `%d`.
     Amount,
+    /// `%s`: another GlobalString, resolved by its key in [`Fills::label`].
+    Label,
+    /// `%.1f`: [`Fills::bonus`].
+    Bonus,
 }
 
 /// A line family: the stem its keys are built from, and the ordered slots its templates consume.
@@ -57,6 +61,9 @@ pub(crate) struct Fills {
     pub spell: String,
     pub amount: i64,
     pub named: String,
+    /// The GlobalString key a [`Slot::Label`] resolves.
+    pub label: String,
+    pub bonus: f64,
 }
 
 /// Resolve a family to a finished line; `None` when the key is absent or its template disagrees
@@ -72,6 +79,12 @@ pub(crate) fn compose_line(
     if family.slots.is_empty() {
         return Some(template);
     }
+    let label = family
+        .slots
+        .contains(&Slot::Label)
+        .then(|| global_string(script, &fills.label))
+        .flatten()
+        .unwrap_or_default();
     let args: Vec<Arg> = family
         .slots
         .iter()
@@ -82,6 +95,8 @@ pub(crate) fn compose_line(
             Slot::Spell => Some(Arg::Str(&fills.spell)),
             Slot::Named => Some(Arg::Str(&fills.named)),
             Slot::Amount => Some(Arg::Num(fills.amount)),
+            Slot::Label => Some(Arg::Str(&label)),
+            Slot::Bonus => Some(Arg::Float(fills.bonus)),
         })
         .collect();
     let line = fill(&template, &args);
@@ -98,9 +113,11 @@ pub(crate) fn compose_line(
 enum Arg<'a> {
     Str(&'a str),
     Num(i64),
+    Float(f64),
 }
 
-/// The reference's formatter over the `%s`/`%d` subset these templates use; `None` on any mismatch.
+/// The reference's formatter over the `%s`/`%d`/`%.Nf` subset these templates use; `None` on any
+/// mismatch.
 fn fill(template: &str, args: &[Arg<'_>]) -> Option<String> {
     let mut out = String::with_capacity(template.len() + 32);
     let mut next = args.iter();
@@ -114,12 +131,24 @@ fn fill(template: &str, args: &[Arg<'_>]) -> Option<String> {
             Some('%') => out.push('%'),
             Some('s') => match next.next()? {
                 Arg::Str(s) => out.push_str(s),
-                Arg::Num(_) => return None,
+                _ => return None,
             },
             Some('d') => match next.next()? {
                 Arg::Num(n) => out.push_str(&n.to_string()),
-                Arg::Str(_) => return None,
+                _ => return None,
             },
+            Some('.') => {
+                let precision: usize = chars
+                    .by_ref()
+                    .take_while(|c| *c != 'f')
+                    .collect::<String>()
+                    .parse()
+                    .ok()?;
+                match next.next()? {
+                    Arg::Float(v) => out.push_str(&format!("{v:.precision$}")),
+                    _ => return None,
+                }
+            }
             _ => return None,
         }
     }
@@ -231,6 +260,31 @@ single!(
     "The faction-change line (`0x50b8c0`): the faction, the delta."
 );
 
+single!(
+    FACTION_STANDING_INCREASED_BONUS,
+    "FACTION_STANDING_INCREASED_BONUS",
+    [Named, Amount, Bonus],
+    "The faction-change line with a Refer-A-Friend bonus (`0x50b96f`)."
+);
+single!(
+    FACTION_STANDING_INCREASED_GENERIC,
+    "FACTION_STANDING_INCREASED_GENERIC",
+    [Named],
+    "The faction-change line's generic form (`0x50b90c`): the faction alone."
+);
+single!(
+    FACTION_STANDING_DECREASED_GENERIC,
+    "FACTION_STANDING_DECREASED_GENERIC",
+    [Named],
+    "The faction-change line's generic form (`0x50b90c`): the faction alone."
+);
+single!(
+    FACTION_STANDING_CHANGED,
+    "FACTION_STANDING_CHANGED",
+    [Label, Named],
+    "The rank-change line (`0x50ba10`): the new rank's label, then the faction."
+);
+
 /// Every family, for the sweep against the shipped templates.
 #[cfg(test)]
 pub(crate) const ALL_FAMILIES: &[Family] = &[
@@ -242,6 +296,10 @@ pub(crate) const ALL_FAMILIES: &[Family] = &[
     DURABILITYDAMAGE_DEATH,
     FACTION_STANDING_INCREASED,
     FACTION_STANDING_DECREASED,
+    FACTION_STANDING_INCREASED_BONUS,
+    FACTION_STANDING_INCREASED_GENERIC,
+    FACTION_STANDING_DECREASED_GENERIC,
+    FACTION_STANDING_CHANGED,
 ];
 
 /// A line waiting on its names: the subject's, and the `Named` slot's when it is a lookup.

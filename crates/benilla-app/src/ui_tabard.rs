@@ -26,6 +26,8 @@ pub(crate) struct TabardOpen {
     open_event: bool,
     close_event: bool,
     pending_events: u32,
+    /// Successful saves owed a `GUILDTABARD_UPDATE`.
+    saved_events: u32,
     lines: Vec<&'static str>,
 }
 
@@ -44,7 +46,8 @@ impl TabardOpen {
         }
     }
 
-    /// `MSG_SAVE_GUILD_EMBLEM`, true on success; a failure re-fires `TABARD_SAVE_PENDING`.
+    /// `MSG_SAVE_GUILD_EMBLEM`, true on success, which fires `GUILDTABARD_UPDATE` (`0x6d92a7`);
+    /// a failure re-fires `TABARD_SAVE_PENDING` (`0x6d92bf`).
     pub(crate) fn apply_result(&mut self, result: u32) -> bool {
         let Some(row) = usize::try_from(result)
             .ok()
@@ -58,6 +61,8 @@ impl TabardOpen {
         }
         if result != 0 {
             self.pending_events += 1;
+        } else {
+            self.saved_events += 1;
         }
         result == 0
     }
@@ -158,6 +163,9 @@ fn feed_tabard(
     }
     for _ in 0..std::mem::take(&mut open.pending_events) {
         script.fire_event("TABARD_SAVE_PENDING", vec![]);
+    }
+    for _ in 0..std::mem::take(&mut open.saved_events) {
+        script.fire_event("GUILDTABARD_UPDATE", vec![]);
     }
     // `TABARD_CANSAVE_CHANGED` fires when a guild record arrives; here, when our identity cache
     // moves.
@@ -278,7 +286,7 @@ mod net {
         }
     }
 
-    /// A saved emblem evicts our guild's cached record, with no event or packet; the next query
+    /// A saved emblem evicts our guild's cached record (`0x6d929b`), with no packet; the next query
     /// re-fetches it.
     fn on_save_result(
         In(ev): In<SessionEvent>,

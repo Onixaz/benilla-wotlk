@@ -912,6 +912,7 @@ pub(super) fn drain_chat_input(
                         manual_join_or_leave(&channels, &mut script, &name);
                         channels.note_zone_channel_left(&name);
                         channels.note_custom_channel_left(&name);
+                        channels.note_leave_asked(&name);
                         channels.leave_command(name)
                     }
                     C::List { name } => ClientCommand::ChannelList { name },

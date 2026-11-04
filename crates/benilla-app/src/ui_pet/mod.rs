@@ -83,6 +83,11 @@ pub(crate) struct PetBar {
 #[derive(Resource, Default)]
 pub(crate) struct PetRenameable(pub(crate) u32);
 
+/// Refused pet names with their five declined forms, not yet fired as
+/// `PET_FORCE_NAME_DECLENSION`.
+#[derive(Resource, Default)]
+pub(crate) struct PetDeclensions(pub(crate) Vec<(String, [String; 5])>);
+
 /// The world-enter cascade's pet step (`0x5d6e60`): the pet setter cleared, then the bodyless
 /// `CMSG_REQUEST_PET_INFO` while our charm, else our summon, is set; the `SMSG_PET_SPELLS` it
 /// answers rebuilds the bar. The reference's entry waits out the loading screen, so the summon
@@ -130,6 +135,7 @@ impl Plugin for UiPetPlugin {
         net::register(app);
         app.init_resource::<PetBar>()
             .init_resource::<PetRenameable>()
+            .init_resource::<PetDeclensions>()
             .add_message::<crate::net::WorldEnterCascadeMessage>()
             .add_systems(
                 Update,

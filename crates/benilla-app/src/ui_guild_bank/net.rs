@@ -125,16 +125,29 @@ fn on_event(
     In(ev): In<SessionEvent>,
     mut state: ResMut<GuildBankState>,
     commands: Res<NetCommands>,
+    guild: Res<GuildState>,
 ) {
     if let SessionEvent::GuildEvent(notice) = ev {
-        apply_event(&mut state, &commands, &notice);
+        apply_event(&mut state, &commands, &notice, guild.rank_index());
     }
 }
 
 /// The guild events' bank arms (`SMSG_GUILD_EVENT`'s handler); the money event is the guild
 /// mirror's.
-fn apply_event(state: &mut GuildBankState, commands: &NetCommands, notice: &GuildEventNotice) {
+fn apply_event(
+    state: &mut GuildBankState,
+    commands: &NetCommands,
+    notice: &GuildEventNotice,
+    own_rank: u32,
+) {
     match notice.event {
+        // Our rank renamed: the open banker's current tab again (`0x6d9543`).
+        guild_event::UPDATE_RANK_NAME => {
+            let rank = notice.params.first().and_then(|p| p.parse::<u32>().ok());
+            if rank == Some(own_rank) {
+                state.requery = true;
+            }
+        }
         guild_event::DISBANDED => {
             state.close();
             for t in &mut state.tabs {
@@ -296,7 +309,12 @@ mod tests {
             params: params.iter().map(|s| s.to_string()).collect(),
             guid: None,
         };
-        apply_event(&mut state, &net, &ev(guild_event::BANK_TAB_PURCHASED, &[]));
+        apply_event(
+            &mut state,
+            &net,
+            &ev(guild_event::BANK_TAB_PURCHASED, &[]),
+            0,
+        );
         assert_eq!(state.num_tabs, 1);
         apply_event(
             &mut state,
@@ -305,6 +323,7 @@ mod tests {
                 guild_event::BANK_TAB_UPDATED,
                 &["0", "Ore", "INV_Ore_Iron_01"],
             ),
+            0,
         );
         assert_eq!(state.tabs[0].name, "Ore");
         state.tabs[0].text_stale = false;
@@ -312,6 +331,7 @@ mod tests {
             &mut state,
             &net,
             &ev(guild_event::BANK_TEXT_CHANGED, &["0"]),
+            0,
         );
         assert!(state.tabs[0].text_stale);
         assert_eq!(state.owe_text_changed, vec![0]);
@@ -319,11 +339,28 @@ mod tests {
             &mut state,
             &net,
             &ev(guild_event::BANK_TAB_AND_MONEY_UPDATED, &[]),
+            0,
         );
         assert!(state.requery);
         assert!(matches!(
             rx.try_recv(),
             Ok(ClientCommand::GuildBankMoneyWithdrawnRequest)
         ));
+        // A rank rename re-asks the tab only for our own rank (`0x6d951b`).
+        state.requery = false;
+        apply_event(
+            &mut state,
+            &net,
+            &ev(guild_event::UPDATE_RANK_NAME, &["2", "Veteran", "5"]),
+            3,
+        );
+        assert!(!state.requery);
+        apply_event(
+            &mut state,
+            &net,
+            &ev(guild_event::UPDATE_RANK_NAME, &["3", "Member", "5"]),
+            3,
+        );
+        assert!(state.requery);
     }
 }

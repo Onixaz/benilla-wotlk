@@ -21,6 +21,8 @@ pub(crate) enum ChatEventKind {
     TextEmote,
     System,
     MonsterSay,
+    /// 3.3.5a's creature line to the party (`0x0D`).
+    MonsterParty,
     MonsterYell,
     MonsterEmote,
     MonsterWhisper,
@@ -43,11 +45,15 @@ pub(crate) enum ChatEventKind {
     RaidLeader,
     RaidWarning,
     RaidBossEmote,
+    /// A boss's whisper (`0x2A`), its own event in 12340's table (`0x9fbe80`).
+    RaidBossWhisper,
     /// `CHAT_MSG_FILTERED` (`0x5B`), the server's "your message was filtered" notice; `arg2` is the
     /// addressee the stock frame formats `CHAT_FILTERED` over (`ChatFrame.lua:1406`).
     Filtered,
     Battleground,
     BattlegroundLeader,
+    /// 3.3.5a's trial-account refusal (`0x2E`), printed as `CHAT_RESTRICTED`.
+    Restricted,
     BgSystemNeutral,
     BgSystemAlliance,
     BgSystemHorde,
@@ -96,6 +102,7 @@ impl ChatEventKind {
             K::TextEmote,
             K::System,
             K::MonsterSay,
+            K::MonsterParty,
             K::MonsterYell,
             K::MonsterEmote,
             K::MonsterWhisper,
@@ -116,9 +123,11 @@ impl ChatEventKind {
             K::RaidLeader,
             K::RaidWarning,
             K::RaidBossEmote,
+            K::RaidBossWhisper,
             K::Filtered,
             K::Battleground,
             K::BattlegroundLeader,
+            K::Restricted,
             K::BgSystemNeutral,
             K::BgSystemAlliance,
             K::BgSystemHorde,
@@ -174,6 +183,11 @@ pub(crate) struct ChatEvent {
     /// [`super::feed::deliver`] changes it: the reference's notice arms read `slot+0x9c` for the
     /// token before they write it.
     pub slot_state: Option<super::edit::SlotState>,
+    /// `YOU_LEFT`'s wire byte: the channel is a constant one.
+    pub left_constant: bool,
+    /// `YOU_LEFT` reads `SUSPENDED`: a slot we did not ask to leave, on a constant channel
+    /// (`0x50e31b`, `0x50e324`); set in [`super::feed::deliver`].
+    pub suspended: bool,
 }
 
 impl ChatEvent {
@@ -193,10 +207,11 @@ impl ChatEvent {
 
     /// This event's `arg1..arg10` in the reference's order and types; ten values, never nil.
     pub(crate) fn script_args(&self) -> Vec<ScriptValue> {
-        // arg1 is the token for a channel notice, else the body.
+        // arg1 is the token for a channel notice, else the body: a notice with no byte (a mode
+        // change's token, a join's second line) carries its arg1 as text.
         let arg1 = match (self.kind, self.notice_byte()) {
             (Some(ChatEventKind::ChannelNotice | ChatEventKind::ChannelNoticeUser), Some(byte)) => {
-                notice_token(byte, self.slot_state)
+                notice_token(byte, self.slot_state, self.suspended)
                     .unwrap_or_default()
                     .to_string()
             }
@@ -253,6 +268,7 @@ pub(crate) fn event_name(kind: ChatEventKind) -> &'static str {
         K::TextEmote => "CHAT_MSG_TEXT_EMOTE",
         K::System => "CHAT_MSG_SYSTEM",
         K::MonsterSay => "CHAT_MSG_MONSTER_SAY",
+        K::MonsterParty => "CHAT_MSG_MONSTER_PARTY",
         K::MonsterYell => "CHAT_MSG_MONSTER_YELL",
         K::MonsterEmote => "CHAT_MSG_MONSTER_EMOTE",
         K::MonsterWhisper => "CHAT_MSG_MONSTER_WHISPER",
@@ -273,9 +289,11 @@ pub(crate) fn event_name(kind: ChatEventKind) -> &'static str {
         K::RaidLeader => "CHAT_MSG_RAID_LEADER",
         K::RaidWarning => "CHAT_MSG_RAID_WARNING",
         K::RaidBossEmote => "CHAT_MSG_RAID_BOSS_EMOTE",
+        K::RaidBossWhisper => "CHAT_MSG_RAID_BOSS_WHISPER",
         K::Filtered => "CHAT_MSG_FILTERED",
         K::Battleground => "CHAT_MSG_BATTLEGROUND",
         K::BattlegroundLeader => "CHAT_MSG_BATTLEGROUND_LEADER",
+        K::Restricted => "CHAT_MSG_RESTRICTED",
         K::BgSystemNeutral => "CHAT_MSG_BG_SYSTEM_NEUTRAL",
         K::BgSystemAlliance => "CHAT_MSG_BG_SYSTEM_ALLIANCE",
         K::BgSystemHorde => "CHAT_MSG_BG_SYSTEM_HORDE",
@@ -292,12 +310,13 @@ pub(crate) fn event_name(kind: ChatEventKind) -> &'static str {
 
 /// The `arg1` token for a `SMSG_CHANNEL_NOTIFY` byte, read as `CHAT_<token>_NOTICE`
 /// (`GlobalStrings.lua:494-745`), matching the client's jump table. `None`: the member-line bytes
-/// `0x00`/`0x01`, MODE_CHANGE `0x0C`, which fires no event, and anything past `0x1F`. `0x02`
-/// answers `YOU_CHANGED` in state 2; `0x03` answers `SUSPENDED` in state 3, where `YOU_LEFT` would
-/// delete the window's channel.
+/// `0x00`/`0x01`, MODE_CHANGE `0x0C`, whose lines carry their own tokens, and anything past
+/// `0x1F`. `0x02` answers `YOU_CHANGED` in state 2; `0x03` answers `SUSPENDED` when `suspended`,
+/// where `YOU_LEFT` would delete the window's channel.
 pub(crate) fn notice_token(
     byte: u8,
     state: Option<super::edit::SlotState>,
+    suspended: bool,
 ) -> Option<&'static str> {
     use super::edit::SlotState;
     use benilla_protocol::messages::channel_notice as n;
@@ -306,7 +325,7 @@ pub(crate) fn notice_token(
         n::YOU_JOINED if state == Some(SlotState::Renamed) => "YOU_CHANGED",
         n::YOU_JOINED => "YOU_JOINED",
         // Walking out of a capital keeps the record, so not the token that deletes it.
-        n::YOU_LEFT if state == Some(SlotState::Suspended) => "SUSPENDED",
+        n::YOU_LEFT if suspended => "SUSPENDED",
         n::YOU_LEFT => "YOU_LEFT",
         n::WRONG_PASSWORD => "WRONG_PASSWORD",
         n::NOT_MEMBER => "NOT_MEMBER",
@@ -370,15 +389,35 @@ pub(crate) fn kind_of_wire(chat_type: u8) -> Option<ChatEventKind> {
         m::CHAT_MSG_WHISPER => K::Whisper,
         m::CHAT_MSG_WHISPER_INFORM => K::WhisperInform,
         m::CHAT_MSG_EMOTE => K::Emote,
+        m::CHAT_MSG_TEXT_EMOTE => K::TextEmote,
         m::CHAT_MSG_SYSTEM => K::System,
         m::CHAT_MSG_MONSTER_SAY => K::MonsterSay,
+        m::CHAT_MSG_MONSTER_PARTY => K::MonsterParty,
         m::CHAT_MSG_MONSTER_YELL => K::MonsterYell,
         m::CHAT_MSG_MONSTER_EMOTE => K::MonsterEmote,
         m::CHAT_MSG_CHANNEL => K::Channel,
+        m::CHAT_MSG_CHANNEL_JOIN => K::ChannelJoin,
+        m::CHAT_MSG_CHANNEL_LEAVE => K::ChannelLeave,
+        m::CHAT_MSG_CHANNEL_LIST => K::ChannelList,
+        m::CHAT_MSG_CHANNEL_NOTICE => K::ChannelNotice,
+        m::CHAT_MSG_CHANNEL_NOTICE_USER => K::ChannelNoticeUser,
         m::CHAT_MSG_AFK => K::Afk,
         m::CHAT_MSG_DND => K::Dnd,
         m::CHAT_MSG_IGNORED => K::Ignored,
-        m::CHAT_MSG_MONSTER_WHISPER | m::CHAT_MSG_RAID_BOSS_WHISPER => K::MonsterWhisper,
+        m::CHAT_MSG_SKILL => K::Skill,
+        m::CHAT_MSG_LOOT => K::Loot,
+        m::CHAT_MSG_MONEY => K::Money,
+        m::CHAT_MSG_OPENING => K::Opening,
+        m::CHAT_MSG_TRADESKILLS => K::Tradeskills,
+        m::CHAT_MSG_PET_INFO => K::PetInfo,
+        m::CHAT_MSG_COMBAT_MISC_INFO => K::CombatMiscInfo,
+        m::CHAT_MSG_COMBAT_XP_GAIN => K::CombatXpGain,
+        m::CHAT_MSG_COMBAT_HONOR_GAIN => K::CombatHonorGain,
+        m::CHAT_MSG_COMBAT_FACTION_CHANGE => K::CombatFactionChange,
+        m::CHAT_MSG_RESTRICTED => K::Restricted,
+        m::CHAT_MSG_TARGETICONS => K::TargetIcons,
+        m::CHAT_MSG_MONSTER_WHISPER => K::MonsterWhisper,
+        m::CHAT_MSG_RAID_BOSS_WHISPER => K::RaidBossWhisper,
         m::CHAT_MSG_RAID_LEADER => K::RaidLeader,
         m::CHAT_MSG_RAID_WARNING => K::RaidWarning,
         m::CHAT_MSG_RAID_BOSS_EMOTE => K::RaidBossEmote,

@@ -2,13 +2,13 @@
 
 use super::*;
 
-/// A template's `%s`/`%d` conversions in order.
+/// A template's conversions in order, a precision skipped (`%.1f` reads `f`).
 fn signature(template: &str) -> Vec<char> {
     let mut out = Vec::new();
     let mut chars = template.chars();
     while let Some(c) = chars.next() {
         if c == '%' {
-            match chars.next() {
+            match chars.by_ref().find(|k| !k.is_ascii_digit() && *k != '.') {
                 Some('%') | None => {}
                 Some(k) => out.push(k),
             }
@@ -24,8 +24,9 @@ fn declared_signature(family: Family, me: bool) -> Vec<char> {
         .iter()
         .filter_map(|slot| match slot {
             Slot::Subject => (!me && family.keying != Keying::Single).then_some('s'),
-            Slot::Spell | Slot::Named => Some('s'),
+            Slot::Spell | Slot::Named | Slot::Label => Some('s'),
             Slot::Amount => Some('d'),
+            Slot::Bonus => Some('f'),
         })
         .collect()
 }
@@ -70,6 +71,15 @@ fn every_family_matches_the_shipped_template() {
             );
         }
     }
+}
+
+#[test]
+fn the_fill_takes_a_precision_float() {
+    assert_eq!(
+        fill("by %d. (+%.1f bonus)", &[Arg::Num(250), Arg::Float(62.5)]).as_deref(),
+        Some("by 250. (+62.5 bonus)")
+    );
+    assert_eq!(fill("%.1f", &[Arg::Num(1)]), None);
 }
 
 #[test]

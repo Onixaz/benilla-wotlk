@@ -523,8 +523,17 @@ pub enum SessionEvent {
     /// `SMSG_INITIALIZE_FACTIONS` at login: `(flags, standing)` per `Faction.dbc`
     /// `reputationIndex`. The standing excludes the DBC race/class base; add it before ranking.
     Reputations { standings: Vec<(u8, i32)> },
-    /// `SMSG_SET_FACTION_STANDING`: `(reputationListId, standing)` per slot, base excluded.
-    ReputationDelta { standings: Vec<(u32, i32)> },
+    /// `SMSG_SET_FACTION_STANDING`: the Refer-A-Friend bonus, the rank-up effect switch, and
+    /// `(reputationListId, standing)` per slot, base excluded.
+    ReputationDelta {
+        bonus: f32,
+        show_effect: bool,
+        standings: Vec<(u32, i32)>,
+    },
+    /// `SMSG_SET_FACTION_ATWAR`: one slot's at-war flag, set or cleared.
+    ReputationAtWar { list_id: u32, at_war: bool },
+    /// `SMSG_EXPECTED_SPAM_RECORDS`: the server's chat spam patterns, replacing the last list.
+    ExpectedSpamRecords(Vec<String>),
     /// `SMSG_SET_FACTION_VISIBLE`: sets the slot's visible flag, which decides if it is listed.
     ReputationVisible { list_id: u32 },
     /// `SMSG_NAME_QUERY_RESPONSE`: names are never descriptor fields, only query answers.
@@ -649,8 +658,9 @@ pub enum SessionEvent {
     PetSpells(Box<PetSpells>),
     /// The pet's react/command state alone (`SMSG_PET_MODE`), with no bar edit.
     PetMode(PetMode),
-    /// A refused pet order (`SMSG_PET_ACTION_FEEDBACK`): one reason code for the red error line.
-    PetActionFeedback { reason: u8 },
+    /// A refused pet order (`SMSG_PET_ACTION_FEEDBACK`): one reason code for the red error line,
+    /// and the refused spell for reasons 2 and 3 (0 when absent).
+    PetActionFeedback { reason: u8, spell: u32 },
     /// The pet's cast refusal (`SMSG_PET_CAST_FAILED`); it never touches our own cast state.
     /// `reason` is in the shared numbering, `arg` the first argument word when sent.
     PetCastFailed {
@@ -662,8 +672,12 @@ pub enum SessionEvent {
     /// `PETTAME_*` string fills `ERR_TAME_FAILED`.
     PetTameFailure { reason: u8 },
     /// A refused pet rename (`SMSG_PET_NAME_INVALID`): `code` is the name code the reference's
-    /// name-error display shows.
-    PetNameInvalid { code: u32 },
+    /// name-error display shows; the declined forms come with a declension request.
+    PetNameInvalid {
+        code: u32,
+        name: String,
+        declensions: Option<[String; 5]>,
+    },
     /// The pet ran away at zero loyalty (`SMSG_PET_BROKEN`, empty body): `ERR_PET_BROKEN`.
     PetBroken,
     /// The pet's voice (`SMSG_PET_ACTION_SOUND`): a talk selector into its `CreatureSoundData` row.

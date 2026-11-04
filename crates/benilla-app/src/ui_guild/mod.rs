@@ -358,6 +358,10 @@ impl GuildState {
                         self.dirty = true;
                     }
                 }
+                // Our own rank changed: its rights again (`0x6d951b`, `0x6d9524`).
+                if rank.is_some_and(|r| r as u64 == u64::from(self.rank_index)) {
+                    self.permissions_ask = true;
+                }
             }
             _ => {}
         }
@@ -459,6 +463,11 @@ impl GuildState {
     /// Our `PLAYER_GUILDID`, 0 when guildless.
     pub(crate) fn guild_id(&self) -> u32 {
         self.guild_id
+    }
+
+    /// Our `PLAYER_GUILDRANK`.
+    pub(crate) fn rank_index(&self) -> u32 {
+        self.rank_index
     }
 
     /// `SMSG_GUILD_BANK_LIST`'s money, stored with no event (`0x5a7250`).

@@ -488,10 +488,20 @@ pub enum ServerPacket {
     InitializeFactions {
         standings: Vec<(u8, i32)>,
     },
-    /// `SMSG_SET_FACTION_STANDING`: `(reputationListId, standing)` per changed slot, base excluded.
+    /// `SMSG_SET_FACTION_STANDING`: the Refer-A-Friend bonus, the rank-up effect switch, then
+    /// `(reputationListId, standing)` per changed slot, base excluded.
     SetFactionStanding {
+        bonus: f32,
+        show_effect: bool,
         standings: Vec<(u32, i32)>,
     },
+    /// `SMSG_SET_FACTION_ATWAR`: one slot's at-war flag (`flags & 0x2`).
+    SetFactionAtWar {
+        list_id: u32,
+        at_war: bool,
+    },
+    /// `SMSG_EXPECTED_SPAM_RECORDS`: the server's spam patterns; empty clears them.
+    ExpectedSpamRecords(Vec<String>),
     /// `SMSG_SET_FACTION_VISIBLE`: sets `FACTION_FLAG_VISIBLE` on one slot; it carries no standing.
     SetFactionVisible {
         list_id: u32,
@@ -734,9 +744,11 @@ pub enum ServerPacket {
     PetSpells(PetSpells),
     /// `SMSG_PET_MODE`: the pet's react and command state alone.
     PetMode(PetMode),
-    /// `SMSG_PET_ACTION_FEEDBACK`: one reason byte for a refused pet order.
+    /// `SMSG_PET_ACTION_FEEDBACK`: one reason byte for a refused pet order, and for reasons 2
+    /// and 3 the refused spell when sent.
     PetActionFeedback {
         reason: u8,
+        spell: u32,
     },
     /// `SMSG_PET_CAST_FAILED`: the pet's cast refusal, in `SMSG_CAST_RESULT`'s body and vocabulary.
     PetCastFailed {
@@ -747,9 +759,12 @@ pub enum ServerPacket {
     PetTameFailure {
         reason: u8,
     },
-    /// `SMSG_PET_NAME_INVALID`: the rename was refused, with the name code that picks the message.
+    /// `SMSG_PET_NAME_INVALID`: the rename was refused, with the name code that picks the message,
+    /// the refused name and its five declined forms when the server asks for them.
     PetNameInvalid {
         code: u32,
+        name: String,
+        declensions: Option<[String; 5]>,
     },
     /// `SMSG_PET_BROKEN`: the pet's loyalty hit zero and it ran away; empty body.
     PetBroken,
@@ -1947,6 +1962,8 @@ impl ServerPacket {
             ServerPacket::InitializeFactions { .. } => "SMSG_INITIALIZE_FACTIONS".into(),
             ServerPacket::SetFactionStanding { .. } => "SMSG_SET_FACTION_STANDING".into(),
             ServerPacket::SetFactionVisible { .. } => "SMSG_SET_FACTION_VISIBLE".into(),
+            ServerPacket::SetFactionAtWar { .. } => "SMSG_SET_FACTION_ATWAR".into(),
+            ServerPacket::ExpectedSpamRecords(_) => "SMSG_EXPECTED_SPAM_RECORDS".into(),
             ServerPacket::NameQueryResponse { .. } | ServerPacket::NameQueryMiss { .. } => {
                 "SMSG_NAME_QUERY_RESPONSE".into()
             }
