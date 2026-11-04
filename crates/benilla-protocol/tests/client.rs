@@ -690,47 +690,72 @@ fn ping_body_golden_and_pong_roundtrip() {
     }
 }
 
-/// `SMSG_ADDON_INFO` has no count or names: the client reads one record per addon it sent. A retail
-/// capture is 12 records of `{status 2, info 1, key 0, u32 revision 0, url 0}`; status 2 hides the
-/// addon from the Lua index.
+/// `SMSG_ADDON_INFO` has no count or names: the client reads one record per addon it sent, then
+/// the banned list (`0x5f79a0`). AzerothCore's reply is 23 records of `{status 2, info 1, key 0,
+/// u32 revision 0, url 0}` and a `u32` 0 banned count; status 2 hides the addon from the Lua index.
 #[test]
 fn the_addon_info_reply_pairs_its_statuses_back_against_what_we_sent() {
-    let capture: Vec<u8> = std::iter::repeat_n(hx("0201000000000000"), 12)
+    let listed = messages::STOCK_SECURE_ADDONS_WOTLK.len();
+    let mut capture: Vec<u8> = std::iter::repeat_n(hx("0201000000000000"), listed)
         .flatten()
         .collect();
-    assert_eq!(capture.len(), 96, "the capture is 12 x 8 bytes");
-    let packet = messages::parse_server(messages::opcode::SMSG_ADDON_INFO, &capture).unwrap();
-    let ServerPacket::AddonInfo { statuses } = packet else {
+    capture.extend([0u8; 4]); // no banned addons
+    let (packet, tail) =
+        messages::parse_server_with_tail(messages::opcode::SMSG_ADDON_INFO, &capture).unwrap();
+    assert_eq!(tail, 0, "the banned count is read, not taken for a record");
+    let ServerPacket::AddonInfo { statuses, banned } = packet else {
         panic!("expected AddonInfo");
     };
-    assert_eq!(statuses, vec![2u8; 12]);
+    assert_eq!(statuses, vec![2u8; listed]);
+    assert!(banned.is_empty());
 
     // Every stock addon comes back hidden, so the reference's AddOns list shows none of Blizzard's.
-    let hidden = messages::hidden_from_reply(&statuses, &messages::STOCK_SECURE_ADDONS);
-    assert_eq!(hidden.len(), 12);
+    let hidden = messages::hidden_from_reply(&statuses, &messages::STOCK_SECURE_ADDONS_WOTLK);
+    assert_eq!(hidden.len(), listed);
     assert!(
         hidden.iter().all(|n| n.starts_with("Blizzard_")),
         "{hidden:?}"
     );
+}
 
-    // A record with a key and a url is 8 + 256 + 256 bytes; status 1 leaves the addon visible,
-    // only status 2 hides it.
-    let mut fat = vec![1u8, 1, 1];
-    fat.extend(std::iter::repeat_n(0xABu8, 256)); // modulus
-    fat.extend([0u8; 4]); // revision
-    fat.push(1); // urlProvided
-    fat.extend(std::iter::repeat_n(b'x', 256)); // url
-    let packet = messages::parse_server(messages::opcode::SMSG_ADDON_INFO, &fat).unwrap();
-    let ServerPacket::AddonInfo { statuses } = packet else {
+/// A record with a key and a URL: the 256-byte key, then the URL as a cstring (`0x5f7a60`), not a
+/// fixed 256 bytes; the banned entries follow the records, 44 bytes each.
+#[test]
+fn the_addon_info_url_is_a_cstring_and_the_banned_list_follows() {
+    let listed = messages::STOCK_SECURE_ADDONS_WOTLK.len();
+    let mut body = vec![1u8, 1, 1];
+    body.extend(std::iter::repeat_n(0xABu8, 256)); // key
+    body.extend([0u8; 4]); // revision
+    body.push(1); // URL flag
+    body.extend(b"http://example");
+    body.push(0);
+    for _ in 1..listed {
+        body.extend(hx("0201000000000000"));
+    }
+    body.extend(1u32.to_le_bytes());
+    body.extend(7u32.to_le_bytes()); // id
+    body.extend([0x11u8; 16]); // name hash
+    body.extend([0x22u8; 16]); // version hash
+    body.extend(1_234u32.to_le_bytes()); // timestamp
+    body.extend(1u32.to_le_bytes()); // banned
+    let (packet, tail) =
+        messages::parse_server_with_tail(messages::opcode::SMSG_ADDON_INFO, &body).unwrap();
+    assert_eq!(tail, 0);
+    let ServerPacket::AddonInfo { statuses, banned } = packet else {
         panic!("expected AddonInfo");
     };
-    assert_eq!(statuses, vec![1u8], "the fat record parsed whole");
-    assert!(messages::hidden_from_reply(&statuses, &messages::STOCK_SECURE_ADDONS).is_empty());
+    assert_eq!(statuses.len(), listed);
+    assert_eq!(statuses[0], 1, "status 1 leaves the addon visible");
+    assert_eq!(&statuses[1..], &vec![2u8; listed - 1][..]);
+    assert_eq!(banned.len(), 1);
+    assert_eq!((banned[0].id, banned[0].timestamp), (7, 1_234));
+    assert_eq!(banned[0].name_md5, [0x11; 16]);
 
+    // A reply cut mid-record keeps the whole records before it.
     let mut short = hx("0201000000000000").to_vec();
-    short.extend([2u8, 1]); // a second record that stops mid-way
+    short.extend([2u8, 1]);
     let packet = messages::parse_server(messages::opcode::SMSG_ADDON_INFO, &short).unwrap();
-    let ServerPacket::AddonInfo { statuses } = packet else {
+    let ServerPacket::AddonInfo { statuses, .. } = packet else {
         panic!("expected AddonInfo");
     };
     assert_eq!(statuses, vec![2u8], "only the whole record counted");

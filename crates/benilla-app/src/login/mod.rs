@@ -440,6 +440,7 @@ mod tests {
             reason: "disconnected: world stream closed: failed to fill whole buffer".into(),
             end: benilla_protocol::SessionEnd::Lost,
             session_over: true,
+            kick_reason: 0,
         });
         app.update();
 
@@ -466,6 +467,7 @@ mod tests {
             reason: "logged out".into(),
             end: benilla_protocol::SessionEnd::LoggedOut,
             session_over: false,
+            kick_reason: 0,
         });
         app.update();
         app.update();
@@ -570,6 +572,7 @@ mod tests {
             reason: "disconnected: connection reset".into(),
             end: benilla_protocol::SessionEnd::Lost,
             session_over: false,
+            kick_reason: 0,
         });
         app.update();
 

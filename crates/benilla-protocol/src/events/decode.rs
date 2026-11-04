@@ -221,6 +221,10 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             difficulty,
             dynamic,
         }],
+        ServerPacket::DifficultyChangeResult(result) => {
+            vec![SessionEvent::DifficultyChangeResult(result)]
+        }
+        ServerPacket::KickReason { reason } => vec![SessionEvent::KickReason { reason }],
         ServerPacket::DefenseMessage { zone_id, text } => {
             vec![SessionEvent::DefenseMessage { zone_id, text }]
         }

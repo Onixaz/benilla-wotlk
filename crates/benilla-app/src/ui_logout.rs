@@ -76,12 +76,14 @@ impl LogoutState {
         });
     }
 
-    /// `SMSG_LOGOUT_CANCEL_ACK`: fires `LOGOUT_CANCEL` on every ack. The reference fires it only
-    /// while the pending byte is set, and its own `CancelLogout` clears that byte when it sends.
+    /// `SMSG_LOGOUT_CANCEL_ACK` (`0x6b0900`): `LOGOUT_CANCEL` only while the pending byte is set
+    /// (`0x6b0903`), which it then clears. `CancelLogout` clears the byte as it sends (`0x6b1902`),
+    /// so only a cancel from the server's side fires.
     pub(crate) fn apply_cancelled(&mut self) {
         self.quitting = false;
-        self.pending = false;
-        self.signals.push(LogoutSignal::Cancelled);
+        if std::mem::take(&mut self.pending) {
+            self.signals.push(LogoutSignal::Cancelled);
+        }
     }
 }
 
@@ -279,6 +281,26 @@ mod tests {
             "the refusal arm clears the pending byte — otherwise a logout refused in combat \
              would never be retryable"
         );
+    }
+
+    /// The ack fires `LOGOUT_CANCEL` only while a logout is pending: the player's own cancel has
+    /// cleared the byte, so only a server-side cancel reaches the event, once.
+    #[test]
+    fn the_cancel_ack_fires_only_while_a_logout_is_pending() {
+        let mut s = LogoutState::default();
+        s.apply_cancelled();
+        assert!(s.signals.is_empty(), "no logout pending, no event");
+
+        let mut s = LogoutState {
+            quitting: true,
+            pending: true,
+            signals: Vec::new(),
+        };
+        s.apply_cancelled();
+        assert_eq!(s.signals, vec![LogoutSignal::Cancelled]);
+        assert!(!s.pending && !s.quitting);
+        s.apply_cancelled();
+        assert_eq!(s.signals.len(), 1, "the byte is spent");
     }
 
     /// Driven through [`drain_logout`], where the bail lives.

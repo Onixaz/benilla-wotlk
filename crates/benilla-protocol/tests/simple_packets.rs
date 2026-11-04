@@ -924,3 +924,55 @@ fn faction_at_war_and_spam_records_parse() {
         [SessionEvent::ExpectedSpamRecords(ref v)] if v[..] == ["gold", "w+"]
     ));
 }
+
+/// `SMSG_KICK_REASON` (`0x4d9500`): a `u8` reason, 0 for an empty body; the glue's 16-byte
+/// authenticator seed after it is read past.
+#[test]
+fn kick_reason_parses_with_and_without_its_seed() {
+    let kick = |body: &[u8]| {
+        let (pkt, tail) =
+            messages::parse_server_with_tail(messages::opcode::SMSG_KICK_REASON, body).unwrap();
+        assert_eq!(tail, 0);
+        match decode(pkt).as_slice() {
+            [SessionEvent::KickReason { reason }] => *reason,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(kick(&[3]), 3);
+    assert_eq!(kick(&[]), 0);
+    let mut seeded = vec![5u8];
+    seeded.extend([0xEE; 16]);
+    assert_eq!(kick(&seeded), 5);
+}
+
+/// `SMSG_CHANGEPLAYER_DIFFICULTY_RESULT` (`0x52c460`): each result reads its own tail.
+#[test]
+fn difficulty_change_results_read_their_tails() {
+    use messages::DifficultyChangeResult as R;
+    let result = |body: Vec<u8>| {
+        let (pkt, tail) = messages::parse_server_with_tail(
+            messages::opcode::SMSG_CHANGEPLAYER_DIFFICULTY_RESULT,
+            &body,
+        )
+        .unwrap();
+        assert_eq!(tail, 0, "{body:?}");
+        match decode(pkt).as_slice() {
+            [SessionEvent::DifficultyChangeResult(r)] => *r,
+            other => panic!("{other:?}"),
+        }
+    };
+    let with = |code: u32, tail: &[u8]| {
+        let mut body = code.to_le_bytes().to_vec();
+        body.extend_from_slice(tail);
+        body
+    };
+    assert_eq!(result(with(0, &[1])), R::Stored(1));
+    assert_eq!(result(with(1, &90u32.to_le_bytes())), R::Cooldown(90));
+    for code in [2, 3, 4, 5, 7] {
+        assert_eq!(result(with(code, &[])), R::Refused(code));
+    }
+    assert_eq!(result(with(6, &300u32.to_le_bytes())), R::Started(300));
+    assert_eq!(result(with(8, &42u32.to_le_bytes())), R::MapMessage(42));
+    assert_eq!(result(with(9, &[])), R::Done);
+    assert_eq!(result(with(12, &[])), R::Other(12));
+}

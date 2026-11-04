@@ -212,6 +212,18 @@ impl LoadingScreen {
         info!("loading screen: up ({reason}, map {map:?})");
     }
 
+    /// `SMSG_CHANGEPLAYER_DIFFICULTY_RESULT` 6 (`0x52c57b`): up over the current map, held until
+    /// [`Self::release_difficulty_change`].
+    pub(crate) fn raise_for_difficulty_change(&mut self, map: Option<u32>, now: f32) {
+        self.raise("difficulty change", true, map, now);
+    }
+
+    /// Result 9's hide (`0x52c58d`): the hold ends, and the screen clears once the world under the
+    /// body is ready, as every clear here does.
+    pub(crate) fn release_difficulty_change(&mut self) {
+        self.snap_landed(None);
+    }
+
     /// The destination snap (`SMSG_NEW_WORLD` or `SMSG_LOGIN_VERIFY_WORLD`) landed: it ends the
     /// raise's wait and nothing else, not the art, the tip or the bar. The reference's handlers
     /// never touch the screen: the raise has three call sites, all inside the loading screen's own
@@ -466,17 +478,15 @@ fn drive_loading_screen(
         // entry, which neither `SMSG_TRANSFER_PENDING` arm reaches.
         screen.tip_edge = Some(TipEdge::Pick);
     }
-    // A portal (`SMSG_TRANSFER_PENDING`, no transport): cover now, before the server unloads us, as
-    // the reference does. A transport crossing rides visibly until its worldport lands.
+    // `SMSG_TRANSFER_PENDING`: cover now, before the server unloads us, as both arms of the
+    // reference do (`0x4014ef`, `0x401509`). Deviation: a transport crossing shows the map's art,
+    // not the ship-route background the reference builds for it (`0x40adef`).
     if let Some(t) = transfer.as_ref().filter(|t| t.is_changed()) {
         match &t.0 {
-            Some(info) if info.transport_entry.is_none() => {
-                screen.raise("transfer pending", true, Some(info.map_id), now);
-            }
+            Some(info) => screen.raise("transfer pending", true, Some(info.map_id), now),
             // Cleared with no snap in flight is `SMSG_TRANSFER_ABORTED` (a worldport lands below
             // this frame): stop waiting, and the resident old world clears the screen.
             None => screen.awaiting_snap = false,
-            Some(_) => {}
         }
     }
     // A snap never re-raises a live screen ([`LoadingScreen::far_snap`]).

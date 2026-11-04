@@ -55,6 +55,11 @@ pub const SMSG_LOGOUT_RESPONSE: u16 = 0x004C;
 pub const SMSG_LOGOUT_COMPLETE: u16 = 0x004D;
 /// The ack for [`CMSG_LOGOUT_CANCEL`]; empty body.
 pub const SMSG_LOGOUT_CANCEL_ACK: u16 = 0x004F;
+/// Why the server is about to drop the session: `u8` reason, and at the glue a 16-byte
+/// authenticator seed (`0x4d9500`).
+pub const SMSG_KICK_REASON: u16 = 0x03C5; // 965
+/// A dynamic-difficulty change's progress: `u32` result and its tail (`0x52c460`).
+pub const SMSG_CHANGEPLAYER_DIFFICULTY_RESULT: u16 = 0x020E; // 526
 pub const SMSG_UPDATE_OBJECT: u16 = 0x00A9;
 pub const SMSG_DESTROY_OBJECT: u16 = 0x00AA;
 // Cinematics: a first login's race intro, or a type-13 GameObject camera. Until the COMPLETE ack,

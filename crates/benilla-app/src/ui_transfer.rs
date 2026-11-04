@@ -1,19 +1,35 @@
-//! The refusal line of `SMSG_TRANSFER_ABORTED` (12340 `0x403910`): a `TRANSFER_ABORT_*`
-//! GlobalString for the reason, filled with the map's name and shown as `CHAT_MSG_SYSTEM`.
+//! The transfer packets' client side: `SMSG_TRANSFER_PENDING`'s control clear, the refusal line of
+//! `SMSG_TRANSFER_ABORTED` (12340 `0x403910`, a `TRANSFER_ABORT_*` GlobalString for the reason,
+//! filled with the map's name and shown as `CHAT_MSG_SYSTEM`), and the steps of a dynamic-difficulty
+//! change (`SMSG_CHANGEPLAYER_DIFFICULTY_RESULT`, `0x52c460`).
 
 use bevy::prelude::*;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_formats::MapDifficulty;
+use benilla_protocol::messages::DifficultyChangeResult;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::UiScript;
 
 use crate::net::NetHandlerApp;
+use crate::ui_action::{FillArg, UiError, UiErrorKeys};
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
 
 /// The refusals waiting for the feed: `(map, reason, arg)`.
 #[derive(Resource, Default)]
 struct TransferAborts(Vec<(u32, u8, Option<u8>)>);
+
+/// What a difficulty change owes the interface, in wire order.
+#[derive(Debug, PartialEq, Eq)]
+enum DifficultyNotice {
+    /// Result 8's `MapDifficulty.dbc` message, a system line (`0x52c641`).
+    Line(String),
+    /// Result 9: `PLAYER_DIFFICULTY_CHANGED`, then the success line for the stored difficulty.
+    Changed(u32),
+}
+
+#[derive(Resource, Default)]
+struct DifficultyNotices(Vec<DifficultyNotice>);
 
 /// `MapDifficulty.dbc`, for the difficulty refusal's own message; empty without client data.
 #[derive(Resource, Default)]
@@ -24,13 +40,19 @@ pub(crate) struct UiTransferPlugin;
 impl Plugin for UiTransferPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TransferAborts>()
+            .init_resource::<DifficultyNotices>()
             .init_resource::<MapDifficulties>()
+            .net_handler(SessionEventKind::TransferPending, on_transfer_pending)
             .net_handler(SessionEventKind::TransferAborted, on_transfer_aborted)
+            .net_handler(
+                SessionEventKind::DifficultyChangeResult,
+                on_difficulty_change,
+            )
             .add_systems(Startup, load_map_difficulties.after(AssetSet::Open))
             .add_systems(
                 Update,
                 // A refusal before the interface is up waits for it, as the chat line needs it.
-                feed_transfer_aborts
+                (feed_transfer_aborts, feed_difficulty_notices)
                     .in_set(crate::ui_script::UiFeed)
                     .run_if(crate::ui_script::ingame_ui_up),
             );
@@ -47,6 +69,115 @@ fn load_map_difficulties(mut commands: Commands, assets: Option<Res<WorldAssets>
         Ok(rows) => commands.insert_resource(MapDifficulties(rows)),
         Err(e) => {
             warn!("ui_transfer: MapDifficulty.dbc failed — difficulty refusals fall back: {e:#}")
+        }
+    }
+}
+
+/// `SMSG_TRANSFER_PENDING` clears the client controls first (`0x4014ce` → `0x5194c0`): the cursor
+/// (`ClearCursor(1, 1)`, `0x5194c4`) and our casts (`0x5194cc`). The screen is
+/// [`crate::loading_screen`]'s, off the same latch.
+fn on_transfer_pending(
+    In(ev): In<SessionEvent>,
+    script: Option<NonSendMut<UiScript>>,
+    mut cancel: crate::spell::SelfCancel,
+) {
+    if !matches!(ev, SessionEvent::TransferPending { .. }) {
+        return;
+    }
+    if let Some(mut script) = script {
+        script.clear_cursor_payload();
+    }
+    cancel.cancel_player_spells();
+}
+
+/// `SMSG_CHANGEPLAYER_DIFFICULTY_RESULT` by its jump table (`0x52c484`). Not kept: result 6's next
+/// allowed change time (`[0xbd1984]`), which only `CanChangePlayerDifficulty` reads, unbuilt.
+#[allow(clippy::too_many_arguments)]
+fn on_difficulty_change(
+    In(ev): In<SessionEvent>,
+    mut group: ResMut<crate::ui_party::GroupState>,
+    mut lfg: ResMut<crate::ui_lfg::LfgFeed>,
+    mut errors: ResMut<UiErrorKeys>,
+    mut notices: ResMut<DifficultyNotices>,
+    mut screen: ResMut<crate::loading_screen::LoadingScreen>,
+    map: Option<Res<benilla_world::world_map::CurrentMap>>,
+    difficulties: Res<MapDifficulties>,
+    time: Res<Time<Real>>,
+) {
+    let SessionEvent::DifficultyChangeResult(result) = ev else {
+        return;
+    };
+    debug!("ui_transfer: difficulty change result {result:?}");
+    match result {
+        DifficultyChangeResult::Stored(dynamic) => {
+            group.difficulties.dynamic = dynamic;
+            lfg.set_dynamic_difficulty(u32::from(dynamic));
+        }
+        DifficultyChangeResult::Started(_) => {
+            screen.raise_for_difficulty_change(map.map(|m| m.0), time.elapsed_secs());
+        }
+        DifficultyChangeResult::Done => {
+            screen.release_difficulty_change();
+            notices.0.push(DifficultyNotice::Changed(u32::from(
+                group.difficulties.dynamic,
+            )));
+        }
+        DifficultyChangeResult::MapMessage(id) => {
+            let message = difficulties
+                .0
+                .iter()
+                .find(|row| row.id as u32 == id)
+                .map(|row| row.message.clone())
+                .filter(|m| !m.is_empty());
+            if let Some(message) = message {
+                notices.0.push(DifficultyNotice::Line(message));
+            }
+        }
+        other => errors.0.extend(difficulty_refusal(other)),
+    }
+}
+
+/// The refusal arms' error-display messages (`0x52c4e9`-`0x52c5e9`).
+fn difficulty_refusal(result: DifficultyChangeResult) -> Option<UiError> {
+    let key = match result {
+        DifficultyChangeResult::Cooldown(seconds) => {
+            return Some(UiError::args(
+                "ERR_DIFFICULTY_CHANGE_COOLDOWN_S",
+                vec![FillArg::Duration(u64::from(seconds) * 1000)],
+            ));
+        }
+        DifficultyChangeResult::Refused(2) => "ERR_DIFFICULTY_CHANGE_WORLDSTATE",
+        DifficultyChangeResult::Refused(3) => "ERR_DIFFICULTY_CHANGE_ENCOUNTER",
+        DifficultyChangeResult::Refused(4) => "ERR_DIFFICULTY_CHANGE_COMBAT",
+        DifficultyChangeResult::Refused(5) => "ERR_DIFFICULTY_CHANGE_PLAYER_BUSY",
+        DifficultyChangeResult::Refused(7) => "ERR_DIFFICULTY_CHANGE_ALREADY_STARTED",
+        _ => return None,
+    };
+    Some(UiError::key(key))
+}
+
+/// Result 9 fires `PLAYER_DIFFICULTY_CHANGED` (`0x52c5a5`), then `ERR_PLAYER_DIFFICULTY_CHANGED_S`
+/// with `PLAYER_DIFFICULTYn`, one past the stored difficulty (`0x52c5d7`); result 8's line is
+/// system chat.
+fn feed_difficulty_notices(
+    script: Option<NonSendMut<UiScript>>,
+    mut notices: ResMut<DifficultyNotices>,
+    mut errors: ResMut<UiErrorKeys>,
+    mut chat: ResMut<ChatLog>,
+) {
+    let Some(mut script) = script else { return };
+    for notice in std::mem::take(&mut notices.0) {
+        match notice {
+            DifficultyNotice::Line(text) => {
+                chat.push_event(ChatEvent::text_only(ChatEventKind::System, text));
+            }
+            DifficultyNotice::Changed(dynamic) => {
+                script.fire_event("PLAYER_DIFFICULTY_CHANGED", Vec::new());
+                errors.0.push(UiError::args(
+                    "ERR_PLAYER_DIFFICULTY_CHANGED_S",
+                    vec![FillArg::Global(format!("PLAYER_DIFFICULTY{}", dynamic + 1))],
+                ));
+            }
         }
     }
 }
@@ -169,6 +300,40 @@ mod tests {
         );
         for reason in [0, 5, 17, 255] {
             assert_eq!(abort_text(reason, None, none), None, "{reason}");
+        }
+    }
+
+    /// The refusal arms name their texts; the cooldown fills a duration, the steps none.
+    #[test]
+    fn each_difficulty_refusal_names_its_message() {
+        use DifficultyChangeResult as R;
+        let key = |r| difficulty_refusal(r).map(|e| e.key);
+        assert_eq!(key(R::Refused(2)), Some("ERR_DIFFICULTY_CHANGE_WORLDSTATE"));
+        assert_eq!(key(R::Refused(3)), Some("ERR_DIFFICULTY_CHANGE_ENCOUNTER"));
+        assert_eq!(key(R::Refused(4)), Some("ERR_DIFFICULTY_CHANGE_COMBAT"));
+        assert_eq!(
+            key(R::Refused(5)),
+            Some("ERR_DIFFICULTY_CHANGE_PLAYER_BUSY")
+        );
+        assert_eq!(
+            key(R::Refused(7)),
+            Some("ERR_DIFFICULTY_CHANGE_ALREADY_STARTED")
+        );
+        assert_eq!(
+            difficulty_refusal(R::Cooldown(90)),
+            Some(UiError::args(
+                "ERR_DIFFICULTY_CHANGE_COOLDOWN_S",
+                vec![FillArg::Duration(90_000)]
+            ))
+        );
+        for step in [
+            R::Stored(1),
+            R::Started(5),
+            R::Done,
+            R::MapMessage(3),
+            R::Other(10),
+        ] {
+            assert_eq!(key(step), None, "{step:?}");
         }
     }
 

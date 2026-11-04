@@ -47,6 +47,40 @@ impl RaidInstanceWarning {
     }
 }
 
+/// `SMSG_CHANGEPLAYER_DIFFICULTY_RESULT` (`0x52c460`): the `u32` result and its tail, by the jump
+/// table at `0x52c484`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DifficultyChangeResult {
+    /// 0: the `u8` dynamic difficulty, stored for the success line (`0x52c49a`).
+    Stored(u8),
+    /// 1: refused, the change allowed again in `u32` seconds (`0x52c4b0`).
+    Cooldown(u32),
+    /// 2-5 and 7: refused, the result alone.
+    Refused(u32),
+    /// 6: the change starts, the next allowed in `u32` seconds (`0x52c55d`).
+    Started(u32),
+    /// 8: a `MapDifficulty.dbc` id whose message shows (`0x52c606`).
+    MapMessage(u32),
+    /// 9: the change is done (`0x52c58d`).
+    Done,
+    /// Past 9: nothing (`0x52c47e`).
+    Other(u32),
+}
+
+pub(crate) fn read_difficulty_change_result(r: &mut &[u8]) -> io::Result<DifficultyChangeResult> {
+    use DifficultyChangeResult as R;
+    let result = read_u32_le(r)?;
+    Ok(match result {
+        0 => R::Stored(read_u8(r)?),
+        1 => R::Cooldown(read_u32_le(r)?),
+        2..=5 | 7 => R::Refused(result),
+        6 => R::Started(read_u32_le(r)?),
+        8 => R::MapMessage(read_u32_le(r)?),
+        9 => R::Done,
+        other => R::Other(other),
+    })
+}
+
 /// `SMSG_RAID_INSTANCE_MESSAGE` (`0x50ca80`): a raid lockout's countdown, welcome or expiry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RaidInstanceMessage {

@@ -297,27 +297,65 @@ const fn is_movement_relay(o: u16) -> bool {
 ///
 /// Retail sends the minimal form, 12 records of `{2, 1, 0, 0u32, 0}`. A truncated record ends the
 /// walk and keeps the whole records before it, so `statuses[i]` is always record i's.
-fn read_addon_info(r: &mut &[u8]) -> Vec<u8> {
+/// `SMSG_ADDON_INFO` as `0x5f79a0` walks it: one record per addon the request listed
+/// (`0x5f79d1`), `u8` status, `u8` info flag, with it a `u8` key flag, the 256-byte key when set and
+/// a `u32` revision (`0x5f7a02`-`0x5f7a2d`), then a `u8` URL flag and with it a cstring URL
+/// (`0x5f7a60`); then a `u32` banned count and its entries (`0x5f7b95`). A record cut short ends the
+/// walk with the statuses so far and no banned list.
+fn read_addon_info(r: &mut &[u8], listed: usize) -> (Vec<u8>, Vec<super::BannedAddon>) {
     let mut statuses = Vec::new();
-    while !r.is_empty() {
-        let Ok(status) = read_u8(r) else { break };
-        let Ok(info_provided) = read_u8(r) else { break };
-        if info_provided != 0 {
-            let Ok(key_provided) = read_u8(r) else { break };
-            if key_provided != 0 && skip(r, 256).is_none() {
-                break;
-            }
-            if read_u32_le(r).is_err() {
-                break;
-            }
-        }
-        let Ok(url_provided) = read_u8(r) else { break };
-        if url_provided != 0 && skip(r, 256).is_none() {
-            break;
-        }
+    for _ in 0..listed {
+        let Some(status) = read_addon_record(r) else {
+            return (statuses, Vec::new());
+        };
         statuses.push(status);
     }
-    statuses
+    let banned = read_banned_addons(r).unwrap_or_default();
+    (statuses, banned)
+}
+
+fn read_addon_record(r: &mut &[u8]) -> Option<u8> {
+    let status = read_u8(r).ok()?;
+    if read_u8(r).ok()? != 0 {
+        if read_u8(r).ok()? != 0 {
+            skip(r, 256)?;
+        }
+        read_u32_le(r).ok()?;
+    }
+    if read_u8(r).ok()? != 0 {
+        read_cstring(r).ok()?;
+    }
+    Some(status)
+}
+
+/// The banned list: per entry a `u32` id, two 16-byte hashes, a `u32` timestamp and a `u32`
+/// (`0x5f7bb1`-`0x5f7bea`).
+fn read_banned_addons(r: &mut &[u8]) -> io::Result<Vec<super::BannedAddon>> {
+    let count = read_u32_le(r)?;
+    let mut banned = Vec::new();
+    for _ in 0..count {
+        let id = read_u32_le(r)?;
+        let mut name_md5 = [0u8; 16];
+        let mut version_md5 = [0u8; 16];
+        io::Read::read_exact(r, &mut name_md5)?;
+        io::Read::read_exact(r, &mut version_md5)?;
+        banned.push(super::BannedAddon {
+            id,
+            name_md5,
+            version_md5,
+            timestamp: read_u32_le(r)?,
+            banned: read_u32_le(r)?,
+        });
+    }
+    Ok(banned)
+}
+
+/// `SMSG_KICK_REASON` (`0x4d9500`): the `u8` reason, 0 for an empty body (`0x4d9511`). A 16-byte
+/// authenticator seed may follow at the glue (`0x4d954b`); it is read past.
+fn read_kick_reason(r: &mut &[u8]) -> u8 {
+    let reason = read_u8(r).unwrap_or(0);
+    let _ = skip(r, 16);
+    reason
 }
 
 fn skip(r: &mut &[u8], n: usize) -> Option<()> {
@@ -954,6 +992,12 @@ fn parse_server_body(
         opcode::SMSG_INSTANCE_DIFFICULTY => ServerPacket::InstanceDifficulty {
             difficulty: read_u32_le(&mut r)?,
             dynamic: read_u32_le(&mut r)?,
+        },
+        opcode::SMSG_CHANGEPLAYER_DIFFICULTY_RESULT => {
+            ServerPacket::DifficultyChangeResult(instance::read_difficulty_change_result(&mut r)?)
+        }
+        opcode::SMSG_KICK_REASON => ServerPacket::KickReason {
+            reason: read_kick_reason(&mut r),
         },
         opcode::SMSG_LFG_UPDATE_PLAYER => {
             ServerPacket::Lfg(LfgPacket::UpdatePlayer(lfg::read_update_player(&mut r)?))
@@ -2454,9 +2498,11 @@ fn parse_server_body(
                 transport: info.transport,
             }
         }
-        opcode::SMSG_ADDON_INFO => ServerPacket::AddonInfo {
-            statuses: read_addon_info(&mut r),
-        },
+        opcode::SMSG_ADDON_INFO => {
+            let (statuses, banned) =
+                read_addon_info(&mut r, super::STOCK_SECURE_ADDONS_WOTLK.len());
+            ServerPacket::AddonInfo { statuses, banned }
+        }
         other => ServerPacket::Other { opcode: other },
     };
     *cursor = r;

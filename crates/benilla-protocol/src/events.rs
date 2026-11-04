@@ -747,6 +747,10 @@ pub enum SessionEvent {
     Calendar(crate::messages::CalendarPacket),
     /// `SMSG_INSTANCE_DIFFICULTY`: the entered map's difficulty, 0-based, and the dynamic one.
     InstanceDifficulty { difficulty: u32, dynamic: u32 },
+    /// `SMSG_CHANGEPLAYER_DIFFICULTY_RESULT`: a dynamic-difficulty change's step.
+    DifficultyChangeResult(crate::messages::DifficultyChangeResult),
+    /// `SMSG_KICK_REASON`: the reason `DISCONNECTED_FROM_SERVER` reports.
+    KickReason { reason: u8 },
     /// A chat restriction (`SMSG_CHAT_RESTRICTED`): 0 restricted, 1 throttled, 2 squelched, 3 yell
     /// restricted (`0x6e44d0`).
     ChatRestricted { kind: u8 },

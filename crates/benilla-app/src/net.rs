@@ -96,6 +96,7 @@ impl Plugin for NetPlugin {
             .init_resource::<AddonInfoReply>()
             .init_resource::<AccountExpansion>()
             .init_resource::<PendingTransfer>()
+            .init_resource::<KickReason>()
             .init_resource::<NetStatus>()
             .init_resource::<DroppedOpcodes>()
             .init_resource::<ServerTime>()
@@ -2683,6 +2684,8 @@ pub(crate) struct DisconnectedMessage {
     /// Decided once in [`Self::new`], so its four readers (teardown, screen, cover, credentials)
     /// cannot disagree.
     pub(crate) session_over: bool,
+    /// The last [`KickReason`], `DISCONNECTED_FROM_SERVER`'s argument.
+    pub(crate) kick_reason: u8,
 }
 
 impl DisconnectedMessage {
@@ -2697,6 +2700,7 @@ impl DisconnectedMessage {
             reason,
             end,
             session_over,
+            kick_reason: 0,
         }
     }
 }
@@ -2800,6 +2804,11 @@ pub(crate) struct WorldportMessage {
     /// means the server detached us and any ride is stale.
     pub(crate) transport_entry: Option<u32>,
 }
+
+/// `SMSG_KICK_REASON`'s reason (`[0xb6af98]`, `0x4d9572`), which every later disconnect reports
+/// as `DISCONNECTED_FROM_SERVER`'s argument (`0x4dab0c`); never cleared, as the reference's global.
+#[derive(Resource, Default)]
+pub(crate) struct KickReason(pub(crate) u8);
 
 /// The `SMSG_TRANSFER_PENDING` latch: whether the coming worldport rides a transport. Cleared
 /// on abort and disconnect.

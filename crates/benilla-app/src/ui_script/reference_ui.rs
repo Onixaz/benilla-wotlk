@@ -2023,7 +2023,6 @@ mod tests {
             ("PARTY_CONVERTED_TO_RAID", R_1),
             ("PET_BAR_HIDE", R_1),
             ("PET_SPELL_POWER_UPDATE", R_1),
-            ("PLAYER_DIFFICULTY_CHANGED", R_1),
             ("PLAYER_ENTERING_BATTLEGROUND", R_1),
             ("PLAYER_ROLES_ASSIGNED", R_1),
             ("RAISED_AS_GHOUL", R_1),

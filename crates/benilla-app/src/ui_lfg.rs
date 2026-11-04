@@ -58,6 +58,13 @@ pub(crate) struct LfgFeed {
     difficulty: (u32, u32),
 }
 
+impl LfgFeed {
+    /// `[0xbd1980]` written by `SMSG_CHANGEPLAYER_DIFFICULTY_RESULT` 0 (`0x52c49a`).
+    pub(crate) fn set_dynamic_difficulty(&mut self, dynamic: u32) {
+        self.difficulty.1 = dynamic;
+    }
+}
+
 pub(crate) struct UiLfgPlugin;
 
 impl Plugin for UiLfgPlugin {
