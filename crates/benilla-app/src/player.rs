@@ -244,7 +244,9 @@ impl Plugin for PlayerPlugin {
         app.init_resource::<camera_dynamics::CameraOptions>();
         // Far sight resolves `PLAYER_FARSIGHT` to a pose before `control` seats the camera: a
         // separate system, as `control` holds our `Transform` mutably and cannot read another's.
+        view_subject::register(app);
         app.init_resource::<view_subject::ViewSubject>()
+            .init_resource::<view_subject::FarSightClear>()
             .init_resource::<view_subject::VehicleFocus>()
             .init_resource::<scoped_view::ScopedView>()
             .add_systems(

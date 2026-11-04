@@ -179,6 +179,10 @@ impl Plugin for UiUnitPlugin {
             benilla_protocol::SessionEventKind::PowerUpdate,
             on_power_update,
         )
+        .net_handler(
+            benilla_protocol::SessionEventKind::HealthUpdate,
+            on_health_update,
+        )
         .add_systems(Update, drain_worn_display_toggles.after(UiInput))
         .add_systems(Update, drain_action_bar_toggles.after(UiInput))
         .add_systems(Update, feed_default_language.in_set(UnitFeed))
@@ -1854,6 +1858,30 @@ fn on_power_update(
         .bypass_change_detection()
         .0
         .set_predicted_power(power_type, value)
+    {
+        store.set_changed();
+    }
+}
+
+/// `SMSG_HEALTH_UPDATE` (`0x716d20`): the unit's predicted health, which `UnitHealth` reads
+/// until the health field moves ([`benilla_protocol::ObjectFields::set_predicted_health`]). The
+/// reference fires no event here; the feed's diff fires `UNIT_HEALTH` on the read's move. The
+/// `predictedHealth` gate (`0x71c2c5`) is not read, as `predictedPower`'s is not: both boot on.
+fn on_health_update(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    index: Res<crate::net::GuidIndex>,
+    mut stores: Query<&mut ObjectStore>,
+) {
+    let benilla_protocol::SessionEvent::HealthUpdate { guid, value } = ev else {
+        return;
+    };
+    let Some(mut store) = index.0.get(&guid).and_then(|&e| stores.get_mut(e).ok()) else {
+        return;
+    };
+    if store
+        .bypass_change_detection()
+        .0
+        .set_predicted_health(value)
     {
         store.set_changed();
     }

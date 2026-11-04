@@ -88,6 +88,13 @@ pub(crate) struct DeathNet {
     /// A world-enter cascade the feed has not run yet; it clears the release point and re-asks the
     /// corpse as `0x528010` does.
     pub(crate) world_entered: bool,
+    /// `SMSG_FORCED_DEATH_UPDATE` waiting for the feed to derive the release timer again.
+    pub(crate) repop_forced: bool,
+    /// The active-player refresh waiting for the feed ([`active_player_refresh`]).
+    pub(crate) refresh_pending: bool,
+    /// `SMSG_PLAYER_SKINNED`'s flag waiting for the feed, fired as `PLAYER_SKINNED` with 1 or 0
+    /// (`0x6cdf00` → `0x512536`).
+    pub(crate) skinned: Option<bool>,
 }
 
 impl DeathNet {
@@ -105,9 +112,9 @@ impl DeathNet {
 struct DeathFeedState {
     /// World-scoped: the last `(guid, dead, ghost)` the self body showed.
     mirror: Option<(u64, bool, bool)>,
-    /// World-scoped: the death edge, anchoring the release window. The wire carries only the timer
-    /// bit; the 1.12 client arms `now + 360000 ms` at its own death edge.
-    died_at: Option<f64>,
+    /// World-scoped: when the release timer runs out, `None` for no timer. Set at the death edge
+    /// and by `SMSG_FORCED_DEATH_UPDATE`, the reference's two callers of [`repop_deadline`].
+    repop_at: Option<f64>,
     /// VM-scoped: the announce latches.
     vm: crate::ui_script::VmMemo<DeathAnnounced>,
 }
@@ -137,8 +144,33 @@ enum CorpseRange {
     InInstance,
 }
 
-/// The forced-release window, vmangos `CORPSE_REPOP_TIME` (`Player.h:71`); never on the wire.
+/// The forced-release window, 360000 ms (`0x6dc0b6`); never on the wire.
 const RELEASE_WINDOW_SECS: f64 = 360.0;
+
+/// The release timer's derivation (`0x6dc070`): no release window reads 0 at once, the timer bit
+/// arms the window unless out of bounds, anything else clears it (`GetReleaseTimeRemaining()` is
+/// then -1).
+fn repop_deadline(fields: &benilla_protocol::messages::ObjectFields, now: f64) -> Option<f64> {
+    if fields.player_no_release_window() {
+        Some(now)
+    } else if fields.player_release_timer_running()
+        && fields.player_flags() & PLAYER_FLAGS_OUT_OF_BOUNDS == 0
+    {
+        Some(now + RELEASE_WINDOW_SECS)
+    } else {
+        None
+    }
+}
+
+/// The active-player refresh (`0x520f70`): `PLAYER_DEAD` at or below 0 health, with a cursor clear
+/// (`0x520fab`), else `PLAYER_ALIVE`.
+fn active_player_refresh(health: u32) -> (&'static str, bool) {
+    if health == 0 {
+        ("PLAYER_DEAD", true)
+    } else {
+        ("PLAYER_ALIVE", false)
+    }
+}
 
 /// The corpse-range dialog radius, 40 yd inclusive: the 1.12 client compares d² ≤ 1600.0 against
 /// the corpse-query position. The server's reclaim gate, `CORPSE_RECLAIM_RADIUS` 39
@@ -219,13 +251,14 @@ fn feed_death(
     let dead = store.0.unit_is_dead();
     let ghost = store.0.player_is_ghost();
 
+    // `SMSG_FORCED_DEATH_UPDATE` derives the timer again (`0x6e3f13`).
+    if std::mem::take(&mut death_net.repop_forced) {
+        feed.repop_at = repop_deadline(&store.0, now);
+    }
+
     // ── The snapshot, set before the events fire so their handlers read current values ──
-    let release_remaining = if store.0.player_release_timer_running() {
-        feed.died_at
-            .map(|t| ((t + RELEASE_WINDOW_SECS - now).max(0.0)) as f32)
-    } else {
-        None // GetReleaseTimeRemaining() == -1, the no-timer DEATH text
-    };
+    // `None` is `GetReleaseTimeRemaining() == -1`, the no-timer DEATH text.
+    let release_remaining = feed.repop_at.map(|t| (t - now).max(0.0) as f32);
     let recovery_delay = death_net
         .reclaim_at
         .map_or(0.0, |at| (at - now).max(0.0) as f32);
@@ -283,11 +316,11 @@ fn feed_death(
     match (prev, dead, ghost) {
         // Alive to dead, or logging in dead: arm the release window.
         (Some((_, false, false)) | None, true, false) => {
-            feed.died_at = Some(now);
+            feed.repop_at = repop_deadline(&store.0, now);
         }
         // Dead to ghost (released), or to alive (a pre-release res).
         (Some((_, true, false)), d, g) if g || !d => {
-            feed.died_at = None;
+            feed.repop_at = None;
             if g {
                 // The ghost bit's watcher (`0x6df710`): drop the corpse and ask where it is.
                 update_corpse_location(true, &mut death_net, &net);
@@ -296,7 +329,7 @@ fn feed_death(
         // Ghost to alive: reclaim, spirit healer or an accepted res. The ghost bit's watcher
         // drops the release point and the corpse, and asks nothing (`0x6df710`).
         (Some((_, _, true)), false, false) => {
-            feed.died_at = None;
+            feed.repop_at = None;
             death_net.release = None;
             update_corpse_location(false, &mut death_net, &net);
         }
@@ -318,6 +351,17 @@ fn feed_death(
             script.fire_event("PLAYER_UNGHOST", vec![]);
         }
         _ => {}
+    }
+    if let Some(flag) = death_net.skinned.take() {
+        script.fire_event("PLAYER_SKINNED", vec![ScriptValue::Int(i64::from(flag))]);
+    }
+    // `SMSG_RESURRECT_FAILED` and `SMSG_FORCED_DEATH_UPDATE` re-send the dead or alive signal.
+    if std::mem::take(&mut death_net.refresh_pending) {
+        let (event, clear_cursor) = active_player_refresh(store.0.unit_health().unwrap_or(0));
+        script.fire_event(event, vec![]);
+        if clear_cursor {
+            script.clear_cursor_payload();
+        }
     }
 
     // ── The offer and confirm announcements ──
@@ -847,6 +891,25 @@ mod tests {
         );
     }
 
+    /// The release timer's three arms (`0x6dc070`): no window reads 0 at once, the timer bit arms
+    /// 360 s unless out of bounds, and anything else is no timer.
+    #[test]
+    fn the_release_timer_derives_from_the_window_bits_and_the_bounds_flag() {
+        use benilla_protocol::messages::ObjectFields;
+        // `PLAYER_FIELD_BYTES` and `PLAYER_FLAGS`.
+        let player =
+            |bytes: u32, flags: u32| ObjectFields::from_pairs(&[(1222, bytes), (190, flags)]);
+        assert_eq!(repop_deadline(&player(0x10 | 0x08, 0), 5.0), Some(5.0));
+        assert_eq!(repop_deadline(&player(0x08, 0), 5.0), Some(365.0));
+        assert_eq!(
+            repop_deadline(&player(0x08, PLAYER_FLAGS_OUT_OF_BOUNDS), 5.0),
+            None
+        );
+        assert_eq!(repop_deadline(&player(0, 0), 5.0), None);
+        assert_eq!(active_player_refresh(0), ("PLAYER_DEAD", true));
+        assert_eq!(active_player_refresh(1), ("PLAYER_ALIVE", false));
+    }
+
     /// A `/reload` must not restart the release window; a relog must clear it.
     #[test]
     fn the_session_edge_clears_the_world_scoped_death_memory_and_nothing_else_does() {
@@ -854,7 +917,7 @@ mod tests {
         app.add_message::<crate::net::DisconnectedMessage>()
             .insert_resource(DeathFeedState {
                 mirror: Some((0x1234, true, true)),
-                died_at: Some(12.0),
+                repop_at: Some(12.0),
                 vm: crate::ui_script::VmMemo::default(),
             });
 
@@ -883,7 +946,7 @@ mod tests {
             "a relog must find no mirror, or the login-while-ghost arm cannot fire"
         );
         assert!(
-            feed.died_at.is_none(),
+            feed.repop_at.is_none(),
             "the release window is the dead session's, and re-arms at the next login"
         );
     }

@@ -1,12 +1,13 @@
 //! What the camera orbits: our body, or a far-sight subject elsewhere. Far sight moves only the
 //! eye, so the subject is published for the camera, not made a control branch like free-fly.
 //!
-//! The server's only signal is `PLAYER_FARSIGHT` (player field 712) on our own object: non-zero
+//! The server's signal is `PLAYER_FARSIGHT` (player field 712) on our own object: non-zero
 //! looks through that guid, zero comes home. vmangos defers the set by 400 ms
 //! (`Player::ScheduleCameraUpdate`, `Player.cpp:19136`), so the subject has streamed first, and
 //! sends the clear at once to every client in range (`DirectSendPublicValueUpdate`), so only our
-//! [`SelfPlayer`] store is read; it never sends `SMSG_CLEAR_FAR_SIGHT_IMMEDIATE`. Mind Control
-//! sets the same field (`SpellAuras.cpp:2975`).
+//! [`SelfPlayer`] store is read. Mind Control sets the same field (`SpellAuras.cpp:2975`).
+//! `SMSG_CLEAR_FAR_SIGHT_IMMEDIATE` ends far sight while the field still names the subject
+//! ([`FarSightClear`]).
 
 use bevy::prelude::*;
 
@@ -45,6 +46,35 @@ impl RemoteView {
     }
 }
 
+/// `SMSG_CLEAR_FAR_SIGHT_IMMEDIATE` (`0x6e2b00`): far sight ends at once, sending
+/// `CMSG_FAR_SIGHT` 0 (`0x6e2a92`), though the field still names the subject. The field's value at
+/// the clear stays ignored until the field moves, whose watcher then finds far sight already off.
+#[derive(Resource, Default)]
+pub(crate) struct FarSightClear {
+    /// A clear the next resolve takes.
+    pending: bool,
+    /// The field value the clear ended.
+    held: Option<u64>,
+}
+
+/// Registers the `SMSG_CLEAR_FAR_SIGHT_IMMEDIATE` handler.
+pub(super) fn register(app: &mut App) {
+    use crate::net::NetHandlerApp;
+    app.net_handler(
+        benilla_protocol::SessionEventKind::ClearFarSight,
+        on_clear_far_sight,
+    );
+}
+
+fn on_clear_far_sight(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    mut clear: ResMut<FarSightClear>,
+) {
+    if let benilla_protocol::SessionEvent::ClearFarSight = ev {
+        clear.pending = true;
+    }
+}
+
 /// Resolves our `PLAYER_FARSIGHT` into a pose, before the controller runs; a subject not yet
 /// streamed leaves the camera on the body.
 pub(super) fn publish_view_subject(
@@ -59,12 +89,20 @@ pub(super) fn publish_view_subject(
     )>,
     net: Res<NetCommands>,
     vehicle: Option<Res<VehicleFocus>>,
+    mut clear: ResMut<FarSightClear>,
     mut engaged: Local<Option<u64>>,
 ) {
-    let anchor = self_store
+    let field = self_store
         .iter()
         .next()
         .and_then(|store| store.0.player_farsight());
+    if std::mem::take(&mut clear.pending) {
+        clear.held = field;
+    }
+    if clear.held != field {
+        clear.held = None;
+    }
+    let anchor = field.filter(|_| clear.held.is_none());
     subject.remote = anchor
         .and_then(|guid| index.0.get(&guid).copied())
         .and_then(|entity| Some((entity, poses.get(entity).ok()?)))
@@ -97,6 +135,7 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
         app.init_resource::<ViewSubject>()
+            .init_resource::<FarSightClear>()
             .init_resource::<GuidIndex>()
             .insert_resource(NetCommands(tx))
             .add_systems(Update, publish_view_subject);
@@ -189,8 +228,33 @@ mod tests {
         app.update();
         assert!(
             app.world().resource::<ViewSubject>().remote.is_none(),
-            "a zeroed field is the ONLY teardown signal there is — no CLEAR_FAR_SIGHT_IMMEDIATE"
+            "a zeroed field comes home"
         );
         assert_eq!(votes(&rx), [false], "and the release votes 0, once");
+
+        // `SMSG_CLEAR_FAR_SIGHT_IMMEDIATE` while the field still names the subject: home at once,
+        // one vote, and the stale field stays ignored until it moves.
+        set(&mut app, 0x1234);
+        app.update();
+        assert_eq!(votes(&rx), [true]);
+        app.world_mut().resource_mut::<FarSightClear>().pending = true;
+        app.update();
+        assert!(app.world().resource::<ViewSubject>().remote.is_none());
+        assert_eq!(votes(&rx), [false], "the clear sends the release itself");
+        app.update();
+        assert!(app.world().resource::<ViewSubject>().remote.is_none());
+        set(&mut app, 0);
+        app.update();
+        assert!(
+            votes(&rx).is_empty(),
+            "the field's later zero sends nothing more"
+        );
+        set(&mut app, 0x1234);
+        app.update();
+        assert!(
+            app.world().resource::<ViewSubject>().remote.is_some(),
+            "a fresh set looks again"
+        );
+        assert_eq!(votes(&rx), [true]);
     }
 }

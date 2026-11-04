@@ -48,6 +48,7 @@ use law::{
 };
 pub(crate) use law::{
     damage_color, melee_styled, miss_word, DamageSource, DamageTextGates, COLOR_MECHANIC,
+    COLOR_PET_MELEE_ORANGE,
 };
 
 use bevy::prelude::*;

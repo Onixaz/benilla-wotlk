@@ -253,6 +253,39 @@ pub(super) fn heal_rig_starved(
     }
 }
 
+/// Registers the `SMSG_FORCE_DISPLAY_UPDATE` handler.
+pub(super) fn register(app: &mut App) {
+    use crate::net::NetHandlerApp;
+    app.net_handler(
+        benilla_protocol::SessionEventKind::ForceDisplayUpdate,
+        on_force_display_update,
+    );
+}
+
+/// `SMSG_FORCE_DISPLAY_UPDATE` (`0x716cd0`): the unit's display update with force set
+/// (`0x716d0a`), which rebuilds even when no display field moved (`0x73e41d`), as a swap does.
+fn on_force_display_update(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    mut commands: Commands,
+    index: Res<crate::net::GuidIndex>,
+    units: Query<&NetEntity, With<VisualAttached>>,
+    mut swapped: MessageWriter<DisplaySwapped>,
+) {
+    let benilla_protocol::SessionEvent::ForceDisplayUpdate { guid } = ev else {
+        return;
+    };
+    let Some(&entity) = index.0.get(&guid) else {
+        return;
+    };
+    let is_unit = units
+        .get(entity)
+        .is_ok_and(|n| matches!(n.kind, EntityKind::Unit | EntityKind::Player));
+    if is_unit {
+        swapped.write(DisplaySwapped { entity });
+        rebuild_visual(&mut commands, entity);
+    }
+}
+
 /// Tear a unit's visual down for `attach_entity_visuals` to rebuild from scratch, fade-skipped by
 /// `Reattached`: the rebuild of a display swap and of a clone's look landing.
 pub(super) fn rebuild_visual(commands: &mut Commands, entity: Entity) {

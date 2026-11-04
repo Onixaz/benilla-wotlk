@@ -10,6 +10,16 @@ pub(super) fn read_power_update(r: &mut &[u8]) -> io::Result<(u64, u8, u32)> {
     Ok((read_packed_guid(r)?, read_u8(r)?, read_u32_le(r)?))
 }
 
+/// `SMSG_HEALTH_UPDATE` (`0x716d20`): `[packed guid][u32 health]`.
+pub(super) fn read_health_update(r: &mut &[u8]) -> io::Result<(u64, u32)> {
+    Ok((read_packed_guid(r)?, read_u32_le(r)?))
+}
+
+/// `SMSG_CAMERA_SHAKE` (`0x6e40f3`): `[u32 shake group][u32 sound kit]`.
+pub(super) fn read_camera_shake(r: &mut &[u8]) -> io::Result<(u32, u32)> {
+    Ok((read_u32_le(r)?, read_u32_le(r)?))
+}
+
 /// `SMSG_UPDATE_COMBO_POINTS` (`0x526530`'s `0x39d` arm): `[packed target][u8 points]`.
 pub(super) fn read_combo_points(r: &mut &[u8]) -> io::Result<(u64, u8)> {
     Ok((read_packed_guid(r)?, read_u8(r)?))
@@ -128,6 +138,26 @@ mod tests {
             read_power_update(&mut body.as_slice()).unwrap(),
             (0xF130_0000_0000_0042, 3, 95)
         );
+    }
+
+    #[test]
+    fn a_health_update_reads_guid_and_value() {
+        let mut body = packed(0xF130_0000_0000_0042);
+        body.extend(1234u32.to_le_bytes());
+        let mut r = body.as_slice();
+        assert_eq!(
+            read_health_update(&mut r).unwrap(),
+            (0xF130_0000_0000_0042, 1234)
+        );
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn a_camera_shake_reads_group_then_sound_kit() {
+        let mut body = 7u32.to_le_bytes().to_vec();
+        body.extend(8u32.to_le_bytes());
+        assert_eq!(read_camera_shake(&mut body.as_slice()).unwrap(), (7, 8));
+        assert!(read_camera_shake(&mut &body[..7]).is_err());
     }
 
     #[test]

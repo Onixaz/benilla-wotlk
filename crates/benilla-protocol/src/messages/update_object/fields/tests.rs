@@ -929,6 +929,31 @@ fn a_predicted_power_reads_until_its_field_moves() {
     assert!(!f.set_predicted_power(7, 1), "seven slots");
 }
 
+/// A predicted health reads through `UnitHealth`'s getter until the health field moves
+/// (`0x73f35c`); the raw field and the maximum are left alone.
+#[test]
+fn a_predicted_health_reads_until_the_health_field_moves() {
+    let mut f = ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 400), (FIELD_UNIT_MAXHEALTH, 500)])
+        .into_created(ObjectType::Unit);
+    assert!(f.set_predicted_health(350));
+    assert_eq!(f.unit_shown_health(), Some(350));
+    assert_eq!(f.unit_health(), Some(400), "the field itself is untouched");
+    assert!(!f.set_predicted_health(350), "the same value moves nothing");
+
+    f.merge(ObjectFields::from_pairs(&[(FIELD_UNIT_MAXHEALTH, 600)]));
+    assert_eq!(
+        f.unit_shown_health(),
+        Some(350),
+        "a maximum change keeps it"
+    );
+    f.merge(ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, 420)]));
+    assert_eq!(
+        f.unit_shown_health(),
+        Some(420),
+        "the field moved: it reads again"
+    );
+}
+
 /// A dropped mount reads 0 until the mount field moves, a re-create included (`0x741a40`).
 #[test]
 fn a_dropped_mount_reads_zero_until_its_field_moves() {

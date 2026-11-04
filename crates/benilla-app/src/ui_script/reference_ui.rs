@@ -2113,10 +2113,6 @@ mod tests {
                 "UIParent.lua — the internet-cafe billing nag, likewise never sent",
             ),
             (
-                "PLAYER_SKINNED",
-                "UIParent.lua — the corpse-skinned notice; benilla's loot feed does not derive it",
-            ),
-            (
                 "TRADE_REQUEST",
                 "UIParent.lua — the trade ASK dialog, and the one entry on this list that is \
                  UNPRODUCEABLE rather than unbuilt: the 5875 client registers the event and \

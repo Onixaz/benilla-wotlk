@@ -568,6 +568,11 @@ impl ObjectFields {
     pub fn player_release_timer_running(&self) -> bool {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES).unwrap_or(0) & 0x08 != 0
     }
+    /// `PLAYER_FIELD_BYTES` byte 0 bit `0x10`: no release window, so the timer reads 0 at once
+    /// (`0x6dc096`).
+    pub fn player_no_release_window(&self) -> bool {
+        self.get_u32(FIELD_PLAYER_FIELD_BYTES).unwrap_or(0) & 0x10 != 0
+    }
     /// `PLAYER_FIELD_BYTES` byte 2 (private, field 1222): the four extra action bars' toggles, bits
     /// `0x01..0x08` (`Player.h:360-363`), read by `GetActionBarToggles` at
     /// `[[player+0xe68]+0x102a]`. The client never writes it and no event fires when it moves.

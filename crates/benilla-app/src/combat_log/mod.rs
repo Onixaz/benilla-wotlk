@@ -76,6 +76,7 @@ impl Plugin for CombatLogPlugin {
             .net_handler(K::SpellLogExecute, on_spell_log_execute)
             .net_handler(K::EnvironmentalDamageLog, on_environmental_damage_log)
             .net_handler(K::BuildingDamage, on_building_damage)
+            .net_handler(K::DestroyedOnDeath, on_destroyed_on_death)
             .net_handler(K::SpellStart, on_spell_start)
             .net_handler(K::SpellGo, on_spell_go)
             .net_handler(K::AuraUpdate, on_aura_update)
@@ -198,6 +199,12 @@ fn on_environmental_damage_log(In(ev): In<SessionEvent>, mut log: Log) {
 fn on_building_damage(In(ev): In<SessionEvent>, mut log: Log) {
     if let SessionEvent::BuildingDamage(b) = ev {
         log.building_damage(&b);
+    }
+}
+
+fn on_destroyed_on_death(In(ev): In<SessionEvent>, mut log: Log) {
+    if let SessionEvent::DestroyedOnDeath(guid) = ev {
+        log.destroyed_on_death(guid);
     }
 }
 

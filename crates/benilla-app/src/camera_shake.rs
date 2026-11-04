@@ -155,6 +155,11 @@ pub(crate) struct CameraShakePlugin;
 
 impl Plugin for CameraShakePlugin {
     fn build(&self, app: &mut App) {
+        use crate::net::NetHandlerApp;
+        app.net_handler(
+            benilla_protocol::SessionEventKind::CameraShake,
+            on_camera_shake,
+        );
         app.init_resource::<CameraShakes>()
             .add_systems(Startup, load_shakes.after(AssetSet::Open))
             // Capture-gated with the applier (in `crate::player`), which is what retires
@@ -281,6 +286,30 @@ fn fire_shakes(
             continue;
         }
         live.add(*row, foot, now);
+    }
+}
+
+/// `SMSG_CAMERA_SHAKE` (`0x6e40f3`): the group's shakes at the player's position (`0x6e414e`), the
+/// way a kit's group plays, and a nonzero sound kit there too (`0x6e4172`).
+fn on_camera_shake(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    me: Query<Entity, With<crate::net::SelfPlayer>>,
+    mut shakes: MessageWriter<SpellKitShake>,
+    mut sounds: MessageWriter<crate::net::ServerSoundMessage>,
+) {
+    let benilla_protocol::SessionEvent::CameraShake { group, sound_kit } = ev else {
+        return;
+    };
+    let Ok(entity) = me.single() else {
+        return;
+    };
+    shakes.write(SpellKitShake::Play { entity, group });
+    if sound_kit != 0 {
+        sounds.write(crate::net::ServerSoundMessage {
+            kind: crate::net::ServerSoundKind::ObjectSound,
+            sound_id: sound_kit,
+            source: Some(entity),
+        });
     }
 }
 
