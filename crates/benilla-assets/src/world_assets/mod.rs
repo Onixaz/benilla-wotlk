@@ -16,7 +16,10 @@ use benilla_formats::{blp_to_rgba, read_texture_native_chain, tga_to_rgba, Chain
 
 /// BLP and RGBA to `Image` helpers, re-exported.
 mod images;
+mod sprite_cache;
+
 pub use images::*;
+use sprite_cache::SpriteCache;
 
 /// The shared asset store: the one open patch chain and the dedup caches, so each BLP decodes once
 /// and submeshes sharing a texture and blend share a material that Bevy batches.
@@ -28,17 +31,16 @@ pub struct WorldAssets {
     /// Decoded GPU textures by `(normalized path, wrap_u, wrap_v)`: one BLP can be sampled both
     /// ways (tiled on a wall, clamped on a cutout card), and the address mode lives on the sampler.
     pub textures: SpatialCache<(String, bool, bool), Handle<Image>>,
-    /// UI sprites by resolved path, misses cached as `None` so a bad path never re-walks the chain
-    /// per frame.
-    sprites: HashMap<String, Option<Handle<Image>>>,
+    /// UI sprites by resolved path, released once nothing shows them ([`SpriteCache`]).
+    sprites: SpriteCache<String>,
     /// UI sprites by path and per-axis wrap, since the sampler bakes into the `Image`.
-    tiled_sprites: HashMap<(String, bool, bool), Option<Handle<Image>>>,
+    tiled_sprites: SpriteCache<(String, bool, bool)>,
     /// Sprites resampled to an exact physical size, by `(path, w, h)`.
     resampled_sprites: HashMap<(String, u32, u32), Option<Handle<Image>>>,
     /// The decoded pixels behind [`Self::resampled_sprites`], so a resize does not re-decode.
     resample_sources: HashMap<String, Option<(u32, u32, Vec<u8>)>>,
     /// Portrait sprites, the circular mask baked in ([`portrait_image`]).
-    portraits: HashMap<String, Option<Handle<Image>>>,
+    portraits: SpriteCache<String>,
     /// Coverage masks ([`mask_image`]): the minimap's circular clip.
     masks: HashMap<String, Option<Handle<Image>>>,
     /// UI sprites whose pixels the client computes ([`Self::generated_sprite`]).
@@ -261,11 +263,11 @@ impl WorldAssets {
         Self {
             chain: Arc::new(Mutex::new(chain)),
             textures: SpatialCache::default(),
-            sprites: HashMap::new(),
+            sprites: SpriteCache::default(),
             resampled_sprites: HashMap::new(),
             resample_sources: HashMap::new(),
-            tiled_sprites: HashMap::new(),
-            portraits: HashMap::new(),
+            tiled_sprites: SpriteCache::default(),
+            portraits: SpriteCache::default(),
             masks: HashMap::new(),
             generated: HashMap::new(),
             loose_root: None,
@@ -287,10 +289,18 @@ impl WorldAssets {
             return;
         }
         self.loose_root = root;
-        self.sprites.retain(|_, v| v.is_some());
-        self.tiled_sprites.retain(|_, v| v.is_some());
-        self.portraits.retain(|_, v| v.is_some());
+        self.sprites.forget_misses();
+        self.tiled_sprites.forget_misses();
+        self.portraits.forget_misses();
         self.masks.retain(|_, v| v.is_some());
+    }
+
+    /// Release the UI sprites nothing showed since the last call ([`SpriteCache::release_unused`]);
+    /// how many went.
+    pub fn release_unshown_sprites(&mut self) -> usize {
+        self.sprites.release_unused()
+            + self.tiled_sprites.release_unused()
+            + self.portraits.release_unused()
     }
 
     /// Decode and upload a BLP once per path and wrap; later requests share the handle.
@@ -321,7 +331,7 @@ impl WorldAssets {
         // Hits and misses are cached: the UI extractor asks per quad per frame, and a fresh handle
         // would defeat its dirty check.
         if let Some(cached) = self.sprites.get(&key) {
-            return cached.clone();
+            return cached;
         }
         let loaded = decode_sprite(&self.chain, self.loose_root.as_deref(), path)
             .map(|(w, h, rgba)| images.add(sprite_image(w, h, rgba)));
@@ -376,7 +386,7 @@ impl WorldAssets {
     ) -> Option<Handle<Image>> {
         let key = (sprite_key(path), wrap.0, wrap.1);
         if let Some(cached) = self.tiled_sprites.get(&key) {
-            return cached.clone();
+            return cached;
         }
         let loaded = decode_sprite(&self.chain, self.loose_root.as_deref(), path)
             .map(|(w, h, rgba)| images.add(sprite_image_wrapped(w, h, rgba, wrap)));
@@ -409,7 +419,7 @@ impl WorldAssets {
     ) -> Option<Handle<Image>> {
         let key = sprite_key(path);
         if let Some(cached) = self.portraits.get(&key) {
-            return cached.clone();
+            return cached;
         }
         let loaded = decode_sprite(&self.chain, self.loose_root.as_deref(), path)
             .map(|(w, h, rgba)| images.add(portrait_image(w, h, rgba)));
@@ -427,7 +437,7 @@ impl WorldAssets {
     ) -> Option<Handle<Image>> {
         let key = format!("emblem-mask:{}", sprite_key(path));
         if let Some(cached) = self.sprites.get(&key) {
-            return cached.clone();
+            return cached;
         }
         let loaded =
             decode_sprite(&self.chain, self.loose_root.as_deref(), path).map(|(w, h, mut rgba)| {
