@@ -409,7 +409,7 @@ pub(in crate::net) fn sample_splines(
                 }
             }
             if done {
-                commands.entity(entity).remove::<Spline>();
+                commands.entity(entity).try_remove::<Spline>();
             }
             continue;
         }
@@ -446,11 +446,12 @@ pub(in crate::net) fn sample_splines(
                     &format!("{:#x} DONE — spline dropped", guid.map_or(0, |g| g.0)),
                 );
             }
-            commands.entity(entity).remove::<Spline>();
+            // try_: a streamed unit can despawn in the same frame, before the commands apply.
+            commands.entity(entity).try_remove::<Spline>();
             if !matches!(spline.end_facing, MonsterMoveFacing::None) {
                 commands
                     .entity(entity)
-                    .insert(super::facing::WalkEndFacing(spline.end_facing));
+                    .try_insert(super::facing::WalkEndFacing(spline.end_facing));
             }
         }
     }
