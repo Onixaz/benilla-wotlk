@@ -24,6 +24,15 @@ use super::{
 
 /// The final facing a `SMSG_MONSTER_MOVE` dictates (`moveType`), applied as a hard snap, not a
 /// turn; `Spot` and `Target` resolve once, from positions at receipt.
+/// One item-cache record of `SMSG_ITEM_QUERY_MULTIPLE_RESPONSE`; `info` `None` is a miss, and
+/// `wire` is the record's bytes, a whole `SMSG_ITEM_QUERY_SINGLE_RESPONSE` body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemQueryRecord {
+    pub entry: u32,
+    pub info: Option<Box<ItemInfo>>,
+    pub wire: Vec<u8>,
+}
+
 /// A `SMSG_NAME_QUERY_RESPONSE` that carries no name: the status byte's three other arms
 /// (`0x635817`), none with a body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -524,6 +533,10 @@ pub enum ServerPacket {
         text: String,
         next_page_id: u32,
     },
+    /// `SMSG_PAGE_TEXT_QUERY_RESPONSE` for a page the server does not have.
+    PageTextMiss {
+        page_id: u32,
+    },
     /// `SMSG_GAMEOBJECT_CUSTOM_ANIM`: `u64 guid, u32 animId`; the client arms substate
     /// `8 + animId` (AnimationData 153..156, `animId >= 4` rejected). The bobber's bite is 0.
     GameObjectCustomAnim {
@@ -534,9 +547,10 @@ pub enum ServerPacket {
     OpenContainer {
         item: u64,
     },
-    /// `SMSG_INSPECT`: the target's raw `u64` guid, ignored, as the reference ignores it.
-    Inspect {
+    /// `SMSG_INSPECT_RESULTS_UPDATE`: the inspected player's worn items.
+    InspectResultsUpdate {
         guid: u64,
+        items: Vec<super::InspectItem>,
     },
     /// `SMSG_TIME_SYNC_REQ`: the server asks for our movement clock under `counter`.
     TimeSyncReq {
@@ -597,6 +611,9 @@ pub enum ServerPacket {
         entry: u32,
         info: Option<Box<ItemInfo>>,
     },
+    /// `SMSG_ITEM_QUERY_MULTIPLE_RESPONSE`, and `SMSG_CHEAT_DUMP_ITEMS_DEBUG_ONLY_RESPONSE` as one
+    /// record: each record with its own bytes, for the item cache's file.
+    ItemQueryMultiple(Vec<ItemQueryRecord>),
     /// `SMSG_CLIENTCACHE_VERSION`: the server's cache version, which the `.wdb` files carry.
     ClientCacheVersion {
         version: u32,
@@ -1054,6 +1071,10 @@ pub enum ServerPacket {
         text_id: u32,
         blocks: Vec<super::gossip::NpcTextBlock>,
     },
+    /// `SMSG_NPC_TEXT_UPDATE` for a text the server does not have.
+    NpcTextMiss {
+        text_id: u32,
+    },
     /// `SMSG_LIST_INVENTORY`: a vendor's stock (`0x6d9960`); an empty stock carries its reason.
     VendorList {
         vendor: u64,
@@ -1194,6 +1215,21 @@ pub enum ServerPacket {
     InebriationThreshold(crate::messages::InebriationThreshold),
     /// `SMSG_LEARNED_DANCE_MOVES`.
     LearnedDanceMoves(u64),
+    /// `SMSG_DANCE_QUERY_RESPONSE`; `None` is a miss.
+    DanceQueryResponse {
+        id: u32,
+        record: Option<crate::messages::DanceRecord>,
+    },
+    /// `SMSG_INVALIDATE_DANCE`.
+    InvalidateDance {
+        id: u32,
+    },
+    /// `SMSG_RWHOIS`.
+    RWhois(crate::messages::RWhois),
+    /// `SMSG_CHECK_FOR_BOTS`: the challenge.
+    CheckForBots {
+        key: [u8; 16],
+    },
     /// `SMSG_CHAR_RENAME`: a rename's result.
     CharRename(crate::messages::CharRenameResult),
     /// `SMSG_CHAR_CUSTOMIZE`: a customize's result.
@@ -1891,12 +1927,14 @@ impl ServerPacket {
             ServerPacket::CreatureQueryResponse { .. } => "SMSG_CREATURE_QUERY_RESPONSE".into(),
             ServerPacket::PetNameQueryResponse { .. } => "SMSG_PET_NAME_QUERY_RESPONSE".into(),
             ServerPacket::GameObjectQueryResponse { .. } => "SMSG_GAMEOBJECT_QUERY_RESPONSE".into(),
-            ServerPacket::PageTextQueryResponse { .. } => "SMSG_PAGE_TEXT_QUERY_RESPONSE".into(),
+            ServerPacket::PageTextQueryResponse { .. } | ServerPacket::PageTextMiss { .. } => {
+                "SMSG_PAGE_TEXT_QUERY_RESPONSE".into()
+            }
             ServerPacket::GameObjectCustomAnim { .. } => "SMSG_GAMEOBJECT_CUSTOM_ANIM".into(),
             ServerPacket::GameObjectDespawnAnim { .. } => "SMSG_GAMEOBJECT_DESPAWN_ANIM".into(),
             ServerPacket::GameObjectResetState { .. } => "SMSG_GAMEOBJECT_RESET_STATE".into(),
             ServerPacket::OpenContainer { .. } => "SMSG_OPEN_CONTAINER".into(),
-            ServerPacket::Inspect { .. } => "SMSG_INSPECT".into(),
+            ServerPacket::InspectResultsUpdate { .. } => "SMSG_INSPECT_RESULTS_UPDATE".into(),
             ServerPacket::TimeSyncReq { .. } => "SMSG_TIME_SYNC_REQ".into(),
             ServerPacket::StandStateUpdate { .. } => "SMSG_STANDSTATE_UPDATE".into(),
             ServerPacket::FishNotHooked => "SMSG_FISH_NOT_HOOKED".into(),
@@ -1908,6 +1946,7 @@ impl ServerPacket {
             ServerPacket::TextEmote { .. } => "SMSG_TEXT_EMOTE".into(),
             ServerPacket::Emote { .. } => "SMSG_EMOTE".into(),
             ServerPacket::ItemQueryResponse { .. } => "SMSG_ITEM_QUERY_SINGLE_RESPONSE".into(),
+            ServerPacket::ItemQueryMultiple(_) => "SMSG_ITEM_QUERY_MULTIPLE_RESPONSE".into(),
             ServerPacket::ClientCacheVersion { .. } => "SMSG_CLIENTCACHE_VERSION".into(),
             ServerPacket::AccountDataTimes(_) => "SMSG_ACCOUNT_DATA_TIMES".into(),
             ServerPacket::AccountDataUpdate(_) => "SMSG_UPDATE_ACCOUNT_DATA".into(),
@@ -2062,7 +2101,9 @@ impl ServerPacket {
             ServerPacket::GossipMessage(_) => "SMSG_GOSSIP_MESSAGE".into(),
             ServerPacket::GossipComplete => "SMSG_GOSSIP_COMPLETE".into(),
             ServerPacket::GossipPoi(..) => "SMSG_GOSSIP_POI".into(),
-            ServerPacket::NpcText { .. } => "SMSG_NPC_TEXT_UPDATE".into(),
+            ServerPacket::NpcText { .. } | ServerPacket::NpcTextMiss { .. } => {
+                "SMSG_NPC_TEXT_UPDATE".into()
+            }
             ServerPacket::VendorList { .. } => "SMSG_LIST_INVENTORY".into(),
             ServerPacket::BuyItem { .. } => "SMSG_BUY_ITEM".into(),
             ServerPacket::SellItemResult { .. } => "SMSG_SELL_ITEM".into(),
@@ -2096,6 +2137,10 @@ impl ServerPacket {
             ServerPacket::UnlearnSpells(_) => "SMSG_SEND_UNLEARN_SPELLS".into(),
             ServerPacket::InebriationThreshold(_) => "SMSG_CROSSED_INEBRIATION_THRESHOLD".into(),
             ServerPacket::LearnedDanceMoves(_) => "SMSG_LEARNED_DANCE_MOVES".into(),
+            ServerPacket::DanceQueryResponse { .. } => "SMSG_DANCE_QUERY_RESPONSE".into(),
+            ServerPacket::InvalidateDance { .. } => "SMSG_INVALIDATE_DANCE".into(),
+            ServerPacket::RWhois(_) => "SMSG_RWHOIS".into(),
+            ServerPacket::CheckForBots { .. } => "SMSG_CHECK_FOR_BOTS".into(),
             ServerPacket::CharRename(_) => "SMSG_CHAR_RENAME".into(),
             ServerPacket::CharCustomize(_) => "SMSG_CHAR_CUSTOMIZE".into(),
             ServerPacket::CharFactionChange(_) => "SMSG_CHAR_FACTION_CHANGE".into(),

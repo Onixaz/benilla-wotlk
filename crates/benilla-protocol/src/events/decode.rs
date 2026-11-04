@@ -152,6 +152,22 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::ItemQueryResponse { entry, info } => {
             vec![SessionEvent::ItemTemplate { entry, info }]
         }
+        // Each record lands in the item cache (`0x67cbd0`) and its file, as a single answer does.
+        ServerPacket::ItemQueryMultiple(records) => records
+            .into_iter()
+            .flat_map(|r| {
+                [
+                    SessionEvent::QueryAnswer {
+                        opcode: crate::messages::opcode::SMSG_ITEM_QUERY_SINGLE_RESPONSE,
+                        body: r.wire,
+                    },
+                    SessionEvent::ItemTemplate {
+                        entry: r.entry,
+                        info: r.info,
+                    },
+                ]
+            })
+            .collect(),
         ServerPacket::ClientCacheVersion { version } => {
             vec![SessionEvent::ClientCacheVersion { version }]
         }
@@ -557,6 +573,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::NpcText { text_id, blocks } => {
             vec![SessionEvent::NpcGreeting { text_id, blocks }]
         }
+        ServerPacket::NpcTextMiss { text_id } => vec![SessionEvent::NpcTextMiss { text_id }],
         ServerPacket::VendorList {
             vendor,
             items,
@@ -674,6 +691,14 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::UnlearnSpells(s) => vec![SessionEvent::UnlearnSpells(s)],
         ServerPacket::InebriationThreshold(p) => vec![SessionEvent::InebriationThreshold(p)],
         ServerPacket::LearnedDanceMoves(m) => vec![SessionEvent::LearnedDanceMoves(m)],
+        ServerPacket::DanceQueryResponse { id, record } => {
+            vec![SessionEvent::DanceRecord { id, record }]
+        }
+        ServerPacket::InvalidateDance { id } => vec![SessionEvent::InvalidateDance { id }],
+        ServerPacket::RWhois(w) => vec![SessionEvent::RWhois(w)],
+        // 12340 answers after running its own built-in check on the key (`0x86faf0`); that belongs
+        // with the Warden work, so the challenge goes unanswered.
+        ServerPacket::CheckForBots { .. } => Vec::new(),
         ServerPacket::CharRename(r) => vec![SessionEvent::CharRename(r)],
         ServerPacket::CharCustomize(r) => vec![SessionEvent::CharCustomize(r)],
         ServerPacket::CharFactionChange(r) => vec![SessionEvent::CharFactionChange(r)],
@@ -1244,6 +1269,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             text,
             next_page_id,
         }],
+        ServerPacket::PageTextMiss { page_id } => vec![SessionEvent::PageTextMiss { page_id }],
         ServerPacket::GameObjectQueryResponse { entry, info } => {
             let event = match info {
                 Some(i) => SessionEvent::GameObjectInfo {
@@ -1279,7 +1305,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         }
         // Nothing: the reference's discards the echoed guid, and the inspect window reads the
         // target's `PLAYER_VISIBLE_ITEM_*` fields. Parsed so no tally calls it dropped.
-        ServerPacket::Inspect { .. } => Vec::new(),
+        ServerPacket::InspectResultsUpdate { guid, items } => {
+            vec![SessionEvent::InspectItems { guid, items }]
+        }
         ServerPacket::FishNotHooked => vec![SessionEvent::FishNotHooked],
         ServerPacket::FishEscaped => vec![SessionEvent::FishEscaped],
         ServerPacket::Pong { sequence } => vec![SessionEvent::Pong { sequence }],

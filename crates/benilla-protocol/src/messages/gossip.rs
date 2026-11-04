@@ -154,9 +154,13 @@ pub const NPC_TEXT_BLOCKS: usize = 8;
 /// greeting is picked when the frame opens, by [`select_greeting`].
 ///
 /// The language is parsed and dropped: the 1.12 client garbles a block in a non-zero language,
-/// which is not built, and no 1.12 record is known to set one.
-pub(super) fn read_npc_text_update(r: &mut &[u8]) -> io::Result<(u32, Vec<NpcTextBlock>)> {
+/// which is not built, and no 1.12 record is known to set one. An id with the top bit set is a
+/// miss with no body (`0x67d2b6`), `None`.
+pub(super) fn read_npc_text_update(r: &mut &[u8]) -> io::Result<(u32, Option<Vec<NpcTextBlock>>)> {
     let text_id = read_u32_le(r)?;
+    if text_id & 0x8000_0000 != 0 {
+        return Ok((text_id & 0x7FFF_FFFF, None));
+    }
     let mut blocks = Vec::with_capacity(NPC_TEXT_BLOCKS);
     for _ in 0..NPC_TEXT_BLOCKS {
         let probability = read_f32_le(r)?;
@@ -173,7 +177,7 @@ pub(super) fn read_npc_text_update(r: &mut &[u8]) -> io::Result<(u32, Vec<NpcTex
             female,
         });
     }
-    Ok((text_id, blocks))
+    Ok((text_id, Some(blocks)))
 }
 
 /// `SMSG_GOSSIP_POI`, the map flag a guard drops when asked for directions; the server sends it

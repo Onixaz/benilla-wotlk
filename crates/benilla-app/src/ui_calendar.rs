@@ -142,8 +142,11 @@ fn on_calendar(In(ev): In<SessionEvent>, mut feed: ResMut<CalendarFeed>) {
 }
 
 fn on_invalidate_player(In(ev): In<SessionEvent>, mut feed: ResMut<CalendarFeed>) {
+    // A guild guid reaches only the guild cache (`0x635442`).
     if let SessionEvent::InvalidatePlayer { guid } = ev {
-        feed.pending.push(Pending::InvalidatePlayer(guid));
+        if !benilla_protocol::guid::is_guild(guid) {
+            feed.pending.push(Pending::InvalidatePlayer(guid));
+        }
     }
 }
 

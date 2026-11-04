@@ -495,11 +495,11 @@ pub const CMSG_DISMISS_CRITTER: u16 = 0x048D; // 1165
 pub const CMSG_REMOVE_GLYPH: u16 = 0x048A; // 1162
 /// Cancel our channel: a `u32` spell id the server ignores (`Spell.h:69`) and 1.12 still sends.
 pub const CMSG_CANCEL_CHANNELLING: u16 = 0x013B; // 315
-/// Inspect a player: a raw 8-byte guid. The server selects it, then answers `SMSG_INSPECT` unless
-/// it is beyond 10 yd or attackable (`MiscHandler.cpp:943-960`).
+/// Inspect a player: a raw 8-byte guid. The server selects it, then answers
+/// `SMSG_INSPECT_TALENT` unless it is beyond 10 yd or attackable (`MiscHandler.cpp:943-960`).
 pub const CMSG_INSPECT: u16 = 0x0114; // 276
-/// The inspect reply, the echoed `u64` guid; the reference discards it, so we drop it.
-pub const SMSG_INSPECT: u16 = 0x0115; // 277
+/// The inspected player's worn items after a change: a packed guid and the items (`0x6ce070`).
+pub const SMSG_INSPECT_RESULTS_UPDATE: u16 = 0x0115; // 277
 /// The inspect Honor tab, both ways: we send a raw 8-byte guid, the reply is a 50-byte body.
 /// Refused silently like [`CMSG_INSPECT`], but without selecting (`MiscHandler.cpp:962-972`).
 pub const MSG_INSPECT_HONOR_STATS: u16 = 0x02D6; // 726
@@ -774,8 +774,7 @@ pub const SMSG_BUY_BANK_SLOT_RESULT: u16 = 0x01BA; // 442
 pub const CMSG_AUTOSTORE_BANK_ITEM: u16 = 0x0282; // 642
 pub const CMSG_AUTOBANK_ITEM: u16 = 0x0283; // 643
 
-/// Forget a cached player name: `u64 guid`, the cache's only eviction for a player (it has no TTL).
-/// vmangos never sends it.
+/// Forget a cached player name, or a guild record for a guild guid (`0x635400`).
 pub const SMSG_INVALIDATE_PLAYER: u16 = 0x031C; // 796
 
 // The pet stable. `MSG_LIST_STABLED_PETS` runs both ways: the server sends the list to open the
@@ -1074,6 +1073,18 @@ pub const SMSG_BATTLEGROUND_INFO_THROTTLED: u16 = 0x04A6; // 1190
 pub const SMSG_PLAY_TIME_WARNING: u16 = 0x02F5; // 757
 /// The PvP AFK-report system switched on or off (`0x6e3fb5`).
 pub const SMSG_REPORT_PVP_AFK_RESULT: u16 = 0x03E5; // 997
+/// A count of item records, each `SMSG_ITEM_QUERY_SINGLE_RESPONSE`'s body (`0x6351f0`).
+pub const SMSG_ITEM_QUERY_MULTIPLE_RESPONSE: u16 = 0x0059; // 89
+/// A debug item dump: one `SMSG_ITEM_QUERY_SINGLE_RESPONSE` record (`0x6354d0`).
+pub const SMSG_CHEAT_DUMP_ITEMS_DEBUG_ONLY_RESPONSE: u16 = 0x039B; // 923
+/// One dance-cache record, or a miss (`0x635ab0`).
+pub const SMSG_DANCE_QUERY_RESPONSE: u16 = 0x0452; // 1106
+/// Drop one dance from the dance cache (`0x6354f0`).
+pub const SMSG_INVALIDATE_DANCE: u16 = 0x0453; // 1107
+/// A GM's account lookup, printed to the console (`0x6b32c0`).
+pub const SMSG_RWHOIS: u16 = 0x01FE; // 510
+/// A 16-byte anti-cheat challenge (`0x6b9670`).
+pub const SMSG_CHECK_FOR_BOTS: u16 = 0x0015; // 21
 
 // Mover modes, acked (`IsFlagAckOpcode`): the SMSG is a packed guid and `u32 counter`; the ack
 // echoes the packed guid, the counter and a `MovementInfo`, plus an `f32` apply for all but root

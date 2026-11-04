@@ -92,6 +92,16 @@ impl GossipState {
         }
     }
 
+    /// `SMSG_NPC_TEXT_UPDATE`'s miss: the menu waiting on that text ends, as the reference's
+    /// callback clears the gossip NPC when told the text does not exist (`0x58aafd`). Nothing is
+    /// cached, so the next open asks again.
+    pub(crate) fn text_missing(&mut self, text_id: u32) {
+        if self.npc.is_some() && self.text_id == text_id && self.greeting.is_none() {
+            debug!("ui_gossip: no such gossip text (id {text_id}) — ending the interaction");
+            self.clear();
+        }
+    }
+
     /// Draw the open menu's greeting, or end the interaction when the record has no line for the
     /// NPC's gender: the reference's missing-text path (`0x58adc7`) logs "Missing gossip text!"
     /// and fires `GOSSIP_CLOSED`. Here the clear makes the feed fire it if a menu was showing.
@@ -540,6 +550,17 @@ mod tests {
     }
 
     const GUARD: u64 = 0xF130_0000_0000_0007; // HIGHGUID_UNIT
+
+    #[test]
+    fn a_missing_text_ends_only_the_menu_waiting_on_it() {
+        let mut st = GossipState::default();
+        assert!(st.open_menu(wire(GUARD, 50, option("The bank")), 0));
+        st.text_missing(51);
+        assert_eq!(st.npc, Some(GUARD), "another text's miss leaves the menu");
+        st.text_missing(50);
+        assert_eq!(st.npc, None);
+        assert!(st.cached_record(50).is_none(), "and nothing is cached");
+    }
 
     /// A guard's sub-menu on a first-visit text: nothing fires while the query is out, the old menu
     /// stays with its selects refused, and the text repaints in place, as the reference's exit

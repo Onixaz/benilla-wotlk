@@ -676,7 +676,8 @@ pub enum SessionEvent {
     PetRenameable,
     /// The controlled-pet list (`SMSG_PET_GUIDS`), replacing the client's whole.
     PetGuids(Vec<u64>),
-    /// `SMSG_ITEM_QUERY_SINGLE_RESPONSE`, by entry; `None` is unknown. Boxed, being wide.
+    /// `SMSG_ITEM_QUERY_SINGLE_RESPONSE`, by entry; `None` is unknown. Boxed, being wide. Each
+    /// record of `SMSG_ITEM_QUERY_MULTIPLE_RESPONSE` arrives as one.
     ItemTemplate {
         entry: u32,
         info: Option<Box<ItemInfo>>,
@@ -839,7 +840,7 @@ pub enum SessionEvent {
     /// `SMSG_ITEM_TIME_UPDATE`: seconds left on a timed item, 0 when expired. The client shows
     /// this, not `ITEM_FIELD_DURATION` (vmangos `Item::SendTimeUpdate`, `Objects/Item.cpp:1094`).
     ItemTime { item_guid: u64, seconds: u32 },
-    /// `SMSG_INSPECT_TALENT`'s worn items of the inspected player.
+    /// The inspected player's worn items (`SMSG_INSPECT_TALENT`, `SMSG_INSPECT_RESULTS_UPDATE`).
     InspectItems {
         guid: u64,
         items: Vec<crate::messages::InspectItem>,
@@ -1055,6 +1056,8 @@ pub enum SessionEvent {
         text_id: u32,
         blocks: Vec<crate::messages::NpcTextBlock>,
     },
+    /// The server has no such NPC text (`SMSG_NPC_TEXT_UPDATE`, a top-bit id).
+    NpcTextMiss { text_id: u32 },
     /// A vendor's stock (`SMSG_LIST_INVENTORY`); `current_count == 0xFFFF_FFFF` is unlimited. An
     /// empty stock carries its `error` reason, and only reason 0 opens the window (`0x6d9ad0`).
     VendorInventory {
@@ -1163,6 +1166,15 @@ pub enum SessionEvent {
     InebriationThreshold(crate::messages::InebriationThreshold),
     /// The learned dance moves' mask (`SMSG_LEARNED_DANCE_MOVES`).
     LearnedDanceMoves(u64),
+    /// One dance-cache answer (`SMSG_DANCE_QUERY_RESPONSE`); `None` is a miss.
+    DanceRecord {
+        id: u32,
+        record: Option<crate::messages::DanceRecord>,
+    },
+    /// Drop a dance-cache record (`SMSG_INVALIDATE_DANCE`).
+    InvalidateDance { id: u32 },
+    /// A GM's account lookup (`SMSG_RWHOIS`), for the console.
+    RWhois(crate::messages::RWhois),
     /// A rename's result (`SMSG_CHAR_RENAME`).
     CharRename(crate::messages::CharRenameResult),
     /// A customize's result (`SMSG_CHAR_CUSTOMIZE`).
@@ -1501,6 +1513,8 @@ pub enum SessionEvent {
         text: String,
         next_page_id: u32,
     },
+    /// The server has no such page (`SMSG_PAGE_TEXT_QUERY_RESPONSE`, a top-bit id).
+    PageTextMiss { page_id: u32 },
     /// A copied letter's text (`SMSG_ITEM_TEXT_QUERY_RESPONSE`), keyed by the letter item's guid.
     ItemText { item_guid: u64, text: String },
     /// A mail arrived (`SMSG_RECEIVED_MAIL`); `seconds` until it is delivered.

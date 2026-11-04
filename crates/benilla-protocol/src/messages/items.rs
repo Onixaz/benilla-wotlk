@@ -288,6 +288,18 @@ pub fn decode_item_query_response(mut body: &[u8]) -> io::Result<(u32, Option<It
     read_item_query_response_wotlk(&mut body)
 }
 
+/// One item-cache record with the bytes it was read from, which the item cache's file stores as
+/// a single response.
+pub(super) fn read_item_query_record(r: &mut &[u8]) -> io::Result<super::ItemQueryRecord> {
+    let start = *r;
+    let (entry, info) = read_item_query_response_wotlk(r)?;
+    Ok(super::ItemQueryRecord {
+        entry,
+        info: info.map(Box::new),
+        wire: start[..start.len() - r.len()].to_vec(),
+    })
+}
+
 pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, Option<ItemInfo>)> {
     let entry = read_u32_le(r)?;
     if entry & 0x8000_0000 != 0 {
@@ -685,12 +697,6 @@ pub(super) fn read_open_container(r: &mut &[u8]) -> io::Result<u64> {
     read_u64_le(r)
 }
 
-/// Read `SMSG_INSPECT`, the echoed target guid (`MiscHandler.cpp:957`); the reference's handler
-/// ignores it.
-pub(super) fn read_inspect(r: &mut &[u8]) -> io::Result<u64> {
-    read_u64_le(r)
-}
-
 /// Read `SMSG_ITEM_ENCHANT_TIME_UPDATE` (`Server/Packets/Item.cpp:161-169`): item guid, slot,
 /// seconds, then our own guid, left unread. The reference stores 0 seconds as no timer, not as a
 /// timer at zero.
@@ -720,18 +726,6 @@ mod tests {
             }
             other => panic!("expected OpenContainer, got {}", other.name()),
         }
-    }
-
-    #[test]
-    fn inspect_decodes_and_is_ignored() {
-        let body = 0x0000_0000_0000_0007u64.to_le_bytes();
-        let packet =
-            crate::messages::parse_server(crate::messages::opcode::SMSG_INSPECT, &body).unwrap();
-        assert!(matches!(
-            packet,
-            crate::messages::ServerPacket::Inspect { guid: 7 }
-        ));
-        assert!(crate::events::decode(packet).is_empty());
     }
 
     /// The fixed head every use body starts with: backpack slot 24, castCount 7, spell 0x1234,

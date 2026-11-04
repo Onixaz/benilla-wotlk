@@ -255,12 +255,13 @@ pub use movement::{
     CLASSIC_FLYING, FLAG2_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY,
 };
 pub use notices::{
-    accept_level_grant, realm_split, InebriationThreshold, OverrideLight, RealmSplit,
-    ServerFirstAchievement, WorldNotice,
+    accept_level_grant, realm_split, DanceRecord, InebriationThreshold, OverrideLight, RWhois,
+    RWhoisAccount, RealmSplit, ServerFirstAchievement, WorldNotice,
 };
 pub use opcode_names::opcode_name;
 pub use packet::{
-    CreatureQueryInfo, GameClock, MonsterMoveFacing, NameQueryMiss, ServerPacket, SplineArc,
+    CreatureQueryInfo, GameClock, ItemQueryRecord, MonsterMoveFacing, NameQueryMiss, ServerPacket,
+    SplineArc,
 };
 pub use page_text::page_text_query;
 pub use parse::{parse_auth_response_wotlk, parse_server, parse_server_with_tail};

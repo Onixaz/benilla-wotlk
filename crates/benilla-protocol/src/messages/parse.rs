@@ -884,6 +884,18 @@ fn parse_server_body(
                 info: info.map(Box::new),
             }
         }
+        // A `u8` count of single-response records (`0x67cbef`); the debug dump is one record.
+        opcode::SMSG_ITEM_QUERY_MULTIPLE_RESPONSE
+        | opcode::SMSG_CHEAT_DUMP_ITEMS_DEBUG_ONLY_RESPONSE => {
+            let count = match opcode {
+                opcode::SMSG_ITEM_QUERY_MULTIPLE_RESPONSE => read_u8(&mut r)?,
+                _ => 1,
+            };
+            let records = (0..count)
+                .map(|_| items::read_item_query_record(&mut r))
+                .collect::<io::Result<_>>()?;
+            ServerPacket::ItemQueryMultiple(records)
+        }
         opcode::SMSG_CLIENTCACHE_VERSION => ServerPacket::ClientCacheVersion {
             version: read_u32_le(&mut r)?,
         },
@@ -1512,10 +1524,10 @@ fn parse_server_body(
         }
         opcode::SMSG_GOSSIP_COMPLETE => ServerPacket::GossipComplete,
         opcode::SMSG_GOSSIP_POI => ServerPacket::GossipPoi(gossip::read_gossip_poi(&mut r)?),
-        opcode::SMSG_NPC_TEXT_UPDATE => {
-            let (text_id, blocks) = gossip::read_npc_text_update(&mut r)?;
-            ServerPacket::NpcText { text_id, blocks }
-        }
+        opcode::SMSG_NPC_TEXT_UPDATE => match gossip::read_npc_text_update(&mut r)? {
+            (text_id, Some(blocks)) => ServerPacket::NpcText { text_id, blocks },
+            (text_id, None) => ServerPacket::NpcTextMiss { text_id },
+        },
         opcode::SMSG_LIST_INVENTORY => {
             let vendor::VendorList {
                 vendor,
@@ -1666,6 +1678,17 @@ fn parse_server_body(
         opcode::SMSG_LEARNED_DANCE_MOVES => {
             ServerPacket::LearnedDanceMoves(super::notices::read_learned_dance_moves(&mut r)?)
         }
+        opcode::SMSG_DANCE_QUERY_RESPONSE => {
+            let (id, record) = super::notices::read_dance_query_response(&mut r)?;
+            ServerPacket::DanceQueryResponse { id, record }
+        }
+        opcode::SMSG_INVALIDATE_DANCE => ServerPacket::InvalidateDance {
+            id: read_u32_le(&mut r)?,
+        },
+        opcode::SMSG_RWHOIS => ServerPacket::RWhois(super::notices::read_rwhois(&mut r)?),
+        opcode::SMSG_CHECK_FOR_BOTS => ServerPacket::CheckForBots {
+            key: super::notices::read_check_for_bots(&mut r)?,
+        },
         opcode::SMSG_CHAR_RENAME => {
             ServerPacket::CharRename(super::char_services::read_char_rename(&mut r)?)
         }
@@ -1949,11 +1972,13 @@ fn parse_server_body(
             ServerPacket::GameObjectQueryResponse { entry, info }
         }
         opcode::SMSG_PAGE_TEXT_QUERY_RESPONSE => {
-            let (page_id, text, next_page_id) = page_text::read_page_text_query_response(&mut r)?;
-            ServerPacket::PageTextQueryResponse {
-                page_id,
-                text,
-                next_page_id,
+            match page_text::read_page_text_query_response(&mut r)? {
+                (page_id, Some((text, next_page_id))) => ServerPacket::PageTextQueryResponse {
+                    page_id,
+                    text,
+                    next_page_id,
+                },
+                (page_id, None) => ServerPacket::PageTextMiss { page_id },
             }
         }
         opcode::SMSG_GAMEOBJECT_CUSTOM_ANIM => {
@@ -1970,9 +1995,10 @@ fn parse_server_body(
         opcode::SMSG_OPEN_CONTAINER => ServerPacket::OpenContainer {
             item: items::read_open_container(&mut r)?,
         },
-        opcode::SMSG_INSPECT => ServerPacket::Inspect {
-            guid: items::read_inspect(&mut r)?,
-        },
+        opcode::SMSG_INSPECT_RESULTS_UPDATE => {
+            let (guid, items) = item_ops::read_inspect_results_update(&mut r)?;
+            ServerPacket::InspectResultsUpdate { guid, items }
+        }
         opcode::SMSG_TIME_SYNC_REQ => ServerPacket::TimeSyncReq {
             counter: read_u32_le(&mut r)?,
         },

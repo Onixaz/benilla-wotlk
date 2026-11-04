@@ -13,6 +13,7 @@ pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::GossipMenu, on_gossip_menu)
         .net_handler(K::NpcGreeting, on_npc_greeting)
+        .net_handler(K::NpcTextMiss, on_npc_text_miss)
         .net_handler(K::GossipComplete, on_gossip_complete)
         .net_handler(K::Disconnected, on_session_end);
 }
@@ -37,6 +38,12 @@ fn on_npc_greeting(
 ) {
     if let SessionEvent::NpcGreeting { text_id, blocks } = ev {
         npc_greeting(text_id, blocks, &mut gossip, &index, &stores);
+    }
+}
+
+fn on_npc_text_miss(In(ev): In<SessionEvent>, mut gossip: ResMut<GossipState>) {
+    if let SessionEvent::NpcTextMiss { text_id } = ev {
+        gossip.text_missing(text_id);
     }
 }
 

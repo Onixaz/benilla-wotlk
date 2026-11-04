@@ -20,9 +20,16 @@ pub fn page_text_query(page_id: u32, guid: u64) -> Vec<u8> {
 /// Read `SMSG_PAGE_TEXT_QUERY_RESPONSE`: `u32 pageId, cstr text, u32 nextPageId`
 /// (`PageTextQueryResponse::AppendBodyTo`). vmangos answers one query with the whole chain, one
 /// packet per page (`HandlePageTextQueryOpcode`), and an unknown page with `"Item page missing."`
-/// and `nextPageId = 0`.
-pub(super) fn read_page_text_query_response(r: &mut &[u8]) -> io::Result<(u32, String, u32)> {
-    Ok((read_u32_le(r)?, read_cstring(r)?, read_u32_le(r)?))
+/// and `nextPageId = 0`. A page id with the top bit set is a miss with no body (`0x67e5b6`),
+/// `None`.
+pub(super) fn read_page_text_query_response(
+    r: &mut &[u8],
+) -> io::Result<(u32, Option<(String, u32)>)> {
+    let page_id = read_u32_le(r)?;
+    if page_id & 0x8000_0000 != 0 {
+        return Ok((page_id & 0x7FFF_FFFF, None));
+    }
+    Ok((page_id, Some((read_cstring(r)?, read_u32_le(r)?))))
 }
 
 #[cfg(test)]
@@ -57,6 +64,15 @@ mod tests {
                 assert_eq!(next_page_id, 334);
             }
             other => panic!("expected PageTextQueryResponse, got {}", other.name()),
+        }
+    }
+
+    #[test]
+    fn a_top_bit_page_id_is_a_miss_with_no_body() {
+        let body = (77u32 | 0x8000_0000).to_le_bytes();
+        match parse_server(opcode::SMSG_PAGE_TEXT_QUERY_RESPONSE, &body).unwrap() {
+            ServerPacket::PageTextMiss { page_id } => assert_eq!(page_id, 77),
+            other => panic!("expected PageTextMiss, got {}", other.name()),
         }
     }
 
