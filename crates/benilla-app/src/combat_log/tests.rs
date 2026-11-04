@@ -439,6 +439,72 @@ fn deaths_log_for_known_units() {
     assert_eq!((all[0].source.guid, all[0].dest.guid), (0, ME));
 }
 
+/// A destroy with the death byte logs a living unit's death; one already at 0 health logged its
+/// death when it fell and logs nothing more.
+#[test]
+fn a_destroy_on_death_logs_only_a_living_unit() {
+    let mut app = rig();
+    run(&mut app, |log| log.destroyed_on_death(ME));
+    assert_eq!(events(&app), [CombatLogEvent::UnitDied]);
+
+    let me = app.world_mut().resource::<GuidIndex>().0[&ME];
+    app.world_mut()
+        .entity_mut(me)
+        .insert(unit(ObjectType::Player, 0));
+    run(&mut app, |log| log.destroyed_on_death(ME));
+    assert_eq!(entries(&app).len(), 1, "a dead unit does not die again");
+}
+
+/// The owner's client floats a building's hit in orange (category 8) and its repair as `+%d`
+/// (category 9); anyone else's, or a game object of another type, floats nothing.
+#[test]
+fn a_building_floats_its_hit_and_repair_for_its_owner() {
+    use benilla_protocol::messages::BuildingDamage;
+    const BUILDING: u64 = 0xF110_0000_0000_0099;
+    const WALL: u64 = 0xF110_0000_0000_009A;
+    let mut app = rig();
+    // `GAMEOBJECT_TYPE_ID`: 33 is a destructible building, 0 a door.
+    for (guid, go_type) in [(BUILDING, 33), (WALL, 0)] {
+        let store = ObjectStore(
+            ObjectFields::from_pairs(&[(21, go_type)]).into_created(ObjectType::GameObject),
+        );
+        let e = app
+            .world_mut()
+            .spawn((Guid(guid), store, Transform::default()))
+            .id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(guid, e);
+    }
+    let hit = |building, owner, damage| BuildingDamage {
+        building,
+        caster: MOB,
+        owner,
+        damage,
+        spell_id: FIREBALL,
+    };
+    run(&mut app, move |log| {
+        log.building_damage(&hit(BUILDING, ME, 500));
+        log.building_damage(&hit(BUILDING, ME, -200));
+        log.building_damage(&hit(BUILDING, ME, 0));
+        log.building_damage(&hit(BUILDING, MOB, 500));
+        log.building_damage(&hit(WALL, ME, 500));
+    });
+    assert_eq!(entries(&app).len(), 5, "every one logs");
+    assert_eq!(
+        floated(&mut app),
+        [
+            (
+                "500".to_string(),
+                8,
+                Some(crate::combat_text::COLOR_PET_MELEE_ORANGE)
+            ),
+            ("+200".to_string(), 9, None),
+        ]
+    );
+}
+
 /// A dispel names the removed aura second; a break by damage names no breaking spell.
 #[test]
 fn dispels_and_breaks() {

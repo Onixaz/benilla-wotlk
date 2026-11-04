@@ -624,6 +624,7 @@ impl Plugin for EntitiesPlugin {
         app.add_message::<mount::MountDropped>();
         mount::register(app);
         mirror_image::register(app);
+        live_display::register(app);
         missile::register(app);
         app.add_systems(
             Update,

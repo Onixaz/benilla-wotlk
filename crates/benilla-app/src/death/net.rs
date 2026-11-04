@@ -21,6 +21,9 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::SpiritHealerConfirm, on_spirit_healer_confirm)
         .net_handler(K::DurabilityDamageDeath, on_durability_damage_death)
         .net_handler(K::MoveMode, on_move_mode)
+        .net_handler(K::PlayerSkinned, on_death_refresh)
+        .net_handler(K::ResurrectFailed, on_death_refresh)
+        .net_handler(K::ForcedDeathUpdate, on_death_refresh)
         .net_handler(K::Disconnected, on_session_end);
 }
 
@@ -66,6 +69,21 @@ fn on_death_release_loc(
 fn on_corpse_map_position(In(ev): In<SessionEvent>, mut death_net: ResMut<DeathNet>) {
     if let SessionEvent::CorpseMapPosition { position, facing } = ev {
         death_net.corpse_transport_frame = Some((position, facing));
+    }
+}
+
+/// `SMSG_RESURRECT_FAILED` (`0x6ce470`) re-sends the dead or alive signal; `SMSG_FORCED_DEATH_UPDATE`
+/// derives the release timer first (`0x6e3f13`, `0x6e3f18`); `SMSG_PLAYER_SKINNED` carries its
+/// event's flag. The feed fires all three.
+fn on_death_refresh(In(ev): In<SessionEvent>, mut death_net: ResMut<DeathNet>) {
+    match ev {
+        SessionEvent::PlayerSkinned { flag } => death_net.skinned = Some(flag),
+        SessionEvent::ResurrectFailed => death_net.refresh_pending = true,
+        SessionEvent::ForcedDeathUpdate => {
+            death_net.repop_forced = true;
+            death_net.refresh_pending = true;
+        }
+        _ => {}
     }
 }
 

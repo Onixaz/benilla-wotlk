@@ -11,7 +11,9 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use super::entries::{self, CombatLogClock, FlagInputs, NewEntry, PendingEntries};
-use crate::combat_text::{damage_color, miss_word, CombatTextSpawn, DamageSource, DamageTextGates};
+use crate::combat_text::{
+    damage_color, miss_word, CombatTextSpawn, DamageSource, DamageTextGates, COLOR_PET_MELEE_ORANGE,
+};
 use crate::names::NameCache;
 use crate::net::{GuidIndex, NetCommands, ObjectStore, Reputations, SelfGuid};
 use crate::target::ring::Factions;
@@ -1204,6 +1206,18 @@ impl Log<'_, '_> {
         }
     }
 
+    /// `SMSG_DESTROY_OBJECT`'s death byte (`0x4d7661`-`0x4d7682`): a unit still above 0 health
+    /// dies before it goes, which logs its death.
+    pub(crate) fn destroyed_on_death(&mut self, guid: u64) {
+        let alive = self
+            .ctx
+            .store(guid)
+            .is_some_and(|s| s.is_unit() && s.0.unit_health().unwrap_or(0) > 0);
+        if alive {
+            self.unit_dead(guid);
+        }
+    }
+
     /// The unit-dead entry (`0x752ed0`) from the death animation (`0x7561e0`): a creature that
     /// does not log its death (`0x718a90`: type flag `0x400`, or no template yet) logs nothing,
     /// and a gas cloud dissipates.
@@ -1905,5 +1919,39 @@ impl Log<'_, '_> {
             CombatLogEvent::SpellBuildingDamage
         };
         self.queue(event, b.caster, b.building, Some(b.spell_id), info);
+        // Only the owner's client floats the number (`0x753094`, `0x753189`).
+        if self.ctx.me() == Some(b.owner) {
+            self.building_text(b.building, b.damage);
+        }
+    }
+
+    /// The number over a streamed destructible building (type 33, `0x70f8a2`): a hit under
+    /// `CombatDamage` in the fixed orange, category 8 (`0x70f880`); a repair `+%d` under
+    /// `CombatHealing`, category 9 (`0x70f8e0`). Zero floats nothing.
+    fn building_text(&mut self, building: u64, damage: i32) {
+        const DESTRUCTIBLE_BUILDING: i32 = 33;
+        let amount = damage.unsigned_abs();
+        let (shown, text, category, color) = if damage > 0 {
+            let color = Some(COLOR_PET_MELEE_ORANGE);
+            (self.out.gates.combat_damage, amount.to_string(), 8, color)
+        } else {
+            (self.out.gates.healing, format!("+{amount}"), 9, None)
+        };
+        if amount == 0 || !shown {
+            return;
+        }
+        let is_building = |s: &ObjectStore| s.0.gameobject_type_id() == DESTRUCTIBLE_BUILDING;
+        if !self.ctx.store(building).is_some_and(is_building) {
+            return;
+        }
+        let Some(anchor) = self.ctx.entity(building) else {
+            return;
+        };
+        self.out.text.write(CombatTextSpawn {
+            anchor,
+            text,
+            category,
+            color,
+        });
     }
 }

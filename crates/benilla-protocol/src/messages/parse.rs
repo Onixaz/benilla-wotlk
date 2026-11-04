@@ -463,10 +463,8 @@ fn parse_server_body(
         },
         opcode::SMSG_DESTROY_OBJECT => {
             let guid = read_u64_le(&mut r)?;
-            // `u8 onDeath`, which plays the death on the way out (AzerothCore
-            // `Object::DestroyForPlayer`); not read yet.
-            let _on_death = read_u8(&mut r)?;
-            ServerPacket::DestroyObject { guid }
+            let on_death = read_u8(&mut r)? != 0;
+            ServerPacket::DestroyObject { guid, on_death }
         }
         opcode::SMSG_TRIGGER_CINEMATIC => ServerPacket::TriggerCinematic {
             cinematic_id: read_u32_le(&mut r)?,
@@ -1289,6 +1287,17 @@ fn parse_server_body(
                 value,
             }
         }
+        opcode::SMSG_HEALTH_UPDATE => {
+            let (guid, value) = unit_state::read_health_update(&mut r)?;
+            ServerPacket::HealthUpdate { guid, value }
+        }
+        opcode::SMSG_FORCE_DISPLAY_UPDATE => ServerPacket::ForceDisplayUpdate {
+            guid: read_packed_guid(&mut r)?,
+        },
+        opcode::SMSG_CAMERA_SHAKE => {
+            let (group, sound_kit) = unit_state::read_camera_shake(&mut r)?;
+            ServerPacket::CameraShake { group, sound_kit }
+        }
         opcode::SMSG_UPDATE_COMBO_POINTS => {
             let (target, points) = unit_state::read_combo_points(&mut r)?;
             ServerPacket::ComboPoints { target, points }
@@ -1749,6 +1758,12 @@ fn parse_server_body(
             ServerPacket::CorpseMapPosition { position, facing }
         }
         opcode::SMSG_CORPSE_NOT_IN_INSTANCE => ServerPacket::CorpseNotInInstance,
+        opcode::SMSG_PLAYER_SKINNED => ServerPacket::PlayerSkinned {
+            flag: read_u8(&mut r)? != 0,
+        },
+        opcode::SMSG_RESURRECT_FAILED => ServerPacket::ResurrectFailed,
+        opcode::SMSG_FORCED_DEATH_UPDATE => ServerPacket::ForcedDeathUpdate,
+        opcode::SMSG_CLEAR_FAR_SIGHT_IMMEDIATE => ServerPacket::ClearFarSightImmediate,
         opcode::SMSG_CORPSE_RECLAIM_DELAY => ServerPacket::CorpseReclaimDelay {
             delay_ms: death::read_corpse_reclaim_delay(&mut r)?,
         },

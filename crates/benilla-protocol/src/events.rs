@@ -302,6 +302,9 @@ pub enum SessionEvent {
     ObjectsNear(Vec<u64>),
     /// `SMSG_DESTROY_OBJECT`: the reference frees it at once, no fade; a respawn is a fresh create.
     ObjectDestroyed(u64),
+    /// `SMSG_DESTROY_OBJECT` with its `onDeath` byte set, just ahead of that guid's
+    /// [`Self::ObjectDestroyed`]: a unit still above 0 health dies first (`0x4d7661`-`0x4d7682`).
+    DestroyedOnDeath(u64),
     /// `SMSG_TRIGGER_CINEMATIC`. Until `CMSG_COMPLETE_CINEMATIC` vmangos anchors visibility to the
     /// cinematic camera (`Player::UpdateCinematic`), despawning the world around the body.
     CinematicTriggered { cinematic_id: u32 },
@@ -900,6 +903,20 @@ pub enum SessionEvent {
         caster: u64,
         delay_ms: i32,
     },
+    /// A unit's predicted health (`SMSG_HEALTH_UPDATE`).
+    HealthUpdate { guid: u64, value: u32 },
+    /// Rebuild a unit's model from its current fields (`SMSG_FORCE_DISPLAY_UPDATE`).
+    ForceDisplayUpdate { guid: u64 },
+    /// A `SpellEffectCameraShakes` group and a sound kit at the player (`SMSG_CAMERA_SHAKE`).
+    CameraShake { group: u32, sound_kit: u32 },
+    /// Our corpse's insignia was taken (`SMSG_PLAYER_SKINNED`); `PLAYER_SKINNED`'s argument.
+    PlayerSkinned { flag: bool },
+    /// A resurrection failed (`SMSG_RESURRECT_FAILED`): the dead or alive event again.
+    ResurrectFailed,
+    /// The release timer is derived again (`SMSG_FORCED_DEATH_UPDATE`).
+    ForcedDeathUpdate,
+    /// Far sight ends at once (`SMSG_CLEAR_FAR_SIGHT_IMMEDIATE`).
+    ClearFarSight,
     /// A unit's power of one type, set outright (`SMSG_POWER_UPDATE`).
     PowerUpdate {
         guid: u64,

@@ -514,13 +514,71 @@ fn multiple_packets_frames_each_record_by_its_own_decoder() {
     assert!(messages::parse_server(opcode::SMSG_MULTIPLE_PACKETS, &b.0).is_err());
 }
 
+/// The death byte puts the dying unit's death ahead of its removal; a plain destroy only removes.
+#[test]
+fn a_destroy_on_death_dies_before_it_goes() {
+    let mut b = Body::default();
+    b.u64(CREATURE).u8(1);
+    let events = decode(parse(opcode::SMSG_DESTROY_OBJECT, &b.0));
+    assert!(matches!(
+        events.as_slice(),
+        [
+            SessionEvent::DestroyedOnDeath(CREATURE),
+            SessionEvent::ObjectDestroyed(CREATURE)
+        ]
+    ));
+    let mut b = Body::default();
+    b.u64(CREATURE).u8(0);
+    let events = decode(parse(opcode::SMSG_DESTROY_OBJECT, &b.0));
+    assert!(matches!(
+        events.as_slice(),
+        [SessionEvent::ObjectDestroyed(CREATURE)]
+    ));
+}
+
+/// The unit and death notices: the empty bodies, the skinned flag, the forced display's packed guid.
+#[test]
+fn the_unit_and_death_notices_decode() {
+    for (op, event) in [
+        (opcode::SMSG_RESURRECT_FAILED, "ResurrectFailed"),
+        (opcode::SMSG_FORCED_DEATH_UPDATE, "ForcedDeathUpdate"),
+        (opcode::SMSG_CLEAR_FAR_SIGHT_IMMEDIATE, "ClearFarSight"),
+    ] {
+        let events = decode(parse(op, &[]));
+        assert_eq!(events.len(), 1);
+        assert!(format!("{:?}", events[0]).starts_with(event), "{op:#x}");
+    }
+    assert!(matches!(
+        decode(parse(opcode::SMSG_PLAYER_SKINNED, &[1])).as_slice(),
+        [SessionEvent::PlayerSkinned { flag: true }]
+    ));
+    let mut b = Body::default();
+    b.guid(CREATURE);
+    assert!(matches!(
+        decode(parse(opcode::SMSG_FORCE_DISPLAY_UPDATE, &b.0)).as_slice(),
+        [SessionEvent::ForceDisplayUpdate { guid: CREATURE }]
+    ));
+    let mut b = Body::default();
+    b.guid(CREATURE).u32(77);
+    assert!(matches!(
+        decode(parse(opcode::SMSG_HEALTH_UPDATE, &b.0)).as_slice(),
+        [SessionEvent::HealthUpdate {
+            guid: CREATURE,
+            value: 77
+        }]
+    ));
+}
+
 #[test]
 fn destroy_and_time_speed_read_their_3_3_5a_tails() {
     let mut b = Body::default();
     b.u64(CREATURE).u8(1);
     assert!(matches!(
         parse(opcode::SMSG_DESTROY_OBJECT, &b.0),
-        ServerPacket::DestroyObject { guid: CREATURE }
+        ServerPacket::DestroyObject {
+            guid: CREATURE,
+            on_death: true
+        }
     ));
     let mut b = Body::default();
     b.u32(0).f32(0.016_666_67).u32(0);

@@ -425,14 +425,16 @@ pub struct ObjectFields {
 }
 
 /// What the client keeps beside a unit's descriptor and reads in its place: the power
-/// `SMSG_POWER_UPDATE` sets (the predicted-power set `0x722c50`, `[unit+0xfb4]`) and the mount
-/// `SMSG_DISMOUNT` drops ahead of the field (`0x741a40`). A move of the shadowed field drops the
+/// `SMSG_POWER_UPDATE` sets (the predicted-power set `0x722c50`, `[unit+0xfb4]`), the health
+/// `SMSG_HEALTH_UPDATE` sets (`[unit+0xfb0]`, `0x716d66`) and the mount `SMSG_DISMOUNT` drops ahead
+/// of the field (`0x741a40`). A move of the shadowed field drops the
 /// copy, as its field handler re-seeds it (`0x7234d0`, `0x7235c0`, `0x723620`). benilla predicts no
 /// spend, so the handler's keep-a-lower-prediction leg for our own unit never differs.
 #[derive(Debug, Clone, Default)]
 struct Shadow {
     /// By power type, 0..7.
     power: [Option<u32>; 7],
+    health: Option<u32>,
     dismounted: bool,
 }
 
@@ -728,6 +730,21 @@ impl ObjectFields {
         true
     }
 
+    /// `SMSG_HEALTH_UPDATE` (`0x716d20`): `UnitHealth` reads `value`, uncapped, until the health
+    /// field next moves and its watcher re-seeds the copy (`0x73f35c`). Whether the read moved.
+    pub fn set_predicted_health(&mut self, value: u32) -> bool {
+        if self.unit_shown_health() == Some(value) {
+            return false;
+        }
+        self.shadow.get_or_insert_default().health = Some(value);
+        true
+    }
+
+    /// The predicted health while one stands.
+    fn predicted_health(&self) -> Option<u32> {
+        self.shadow.as_deref()?.health
+    }
+
     /// `SMSG_DISMOUNT` (`0x741a40`): the mount reads 0 until its field next moves. Whether it
     /// dropped one; an unmounted unit is left alone.
     pub fn drop_mount(&mut self) -> bool {
@@ -771,6 +788,9 @@ fn follow_shadow(shadow: &mut Option<Box<Shadow>>, index: u16, new: u32) {
     }
     if index == FIELD_UNIT_MOUNTDISPLAYID {
         s.dismounted = false;
+    }
+    if index == FIELD_UNIT_HEALTH {
+        s.health = None;
     }
 }
 

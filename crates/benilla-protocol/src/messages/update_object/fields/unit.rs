@@ -151,13 +151,14 @@ impl ObjectFields {
             || self.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0
             || self.unit_stand_state() == STAND_STATE_DEAD
     }
-    /// Health as `UnitHealth` reads it: 0 under `UNIT_DYNFLAG_DEAD`, else raw. `UnitHealthMax` has
-    /// no such gate, so a feigning unit's bar shows empty.
+    /// Health as `UnitHealth` reads it: 0 under `UNIT_DYNFLAG_DEAD`, else the predicted copy
+    /// `SMSG_HEALTH_UPDATE` set (`0x71c2cb`), else raw. `UnitHealthMax` has no such gate, so a
+    /// feigning unit's bar shows empty.
     pub fn unit_shown_health(&self) -> Option<u32> {
         if self.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0 {
             return Some(0);
         }
-        self.unit_health()
+        self.predicted_health().or_else(|| self.unit_health())
     }
     /// Power as `UnitMana` reads it: 0 under `UNIT_DYNFLAG_DEAD`, else divided by
     /// [`power_display_scale`]. Its `POWER_HEALTH` leg compares a zero-extended byte with -2, so it

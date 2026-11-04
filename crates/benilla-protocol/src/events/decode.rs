@@ -423,6 +423,19 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::ComboPoints { target, points } => {
             vec![SessionEvent::ComboPoints { target, points }]
         }
+        ServerPacket::HealthUpdate { guid, value } => {
+            vec![SessionEvent::HealthUpdate { guid, value }]
+        }
+        ServerPacket::ForceDisplayUpdate { guid } => {
+            vec![SessionEvent::ForceDisplayUpdate { guid }]
+        }
+        ServerPacket::CameraShake { group, sound_kit } => {
+            vec![SessionEvent::CameraShake { group, sound_kit }]
+        }
+        ServerPacket::PlayerSkinned { flag } => vec![SessionEvent::PlayerSkinned { flag }],
+        ServerPacket::ResurrectFailed => vec![SessionEvent::ResurrectFailed],
+        ServerPacket::ForcedDeathUpdate => vec![SessionEvent::ForcedDeathUpdate],
+        ServerPacket::ClearFarSightImmediate => vec![SessionEvent::ClearFarSight],
         ServerPacket::PetComboPoints {
             pet,
             target,
@@ -953,7 +966,14 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::PetitionDeclined { player }]
         }
         ServerPacket::PetitionRenamed(rename) => vec![SessionEvent::PetitionRenamed(rename)],
-        ServerPacket::DestroyObject { guid } => vec![SessionEvent::ObjectDestroyed(guid)],
+        ServerPacket::DestroyObject { guid, on_death } => {
+            let mut events = Vec::with_capacity(2);
+            if on_death {
+                events.push(SessionEvent::DestroyedOnDeath(guid));
+            }
+            events.push(SessionEvent::ObjectDestroyed(guid));
+            events
+        }
         ServerPacket::TriggerCinematic { cinematic_id } => {
             vec![SessionEvent::CinematicTriggered { cinematic_id }]
         }

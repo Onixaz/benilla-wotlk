@@ -189,9 +189,11 @@ pub enum ServerPacket {
         progress: f32,
     },
     /// `SMSG_DESTROY_OBJECT`: a plain `u64` guid that ceased to exist server-side. The client frees
-    /// it outright, unlike an `OutOfRange` block, whose objects it keeps staged.
+    /// it outright, unlike an `OutOfRange` block, whose objects it keeps staged. `on_death` runs a
+    /// live unit's death first (`0x4d762b`).
     DestroyObject {
         guid: u64,
+        on_death: bool,
     },
     /// `SMSG_TRIGGER_CINEMATIC`: a `CinematicSequences.dbc` id, sent at first login and by type-13
     /// camera objects. vmangos anchors visibility to the camera until `CMSG_COMPLETE_CINEMATIC`.
@@ -1746,6 +1748,30 @@ pub enum ServerPacket {
         /// One status per record, in arrival order.
         statuses: Vec<u8>,
     },
+    /// `SMSG_HEALTH_UPDATE`: a unit's predicted health.
+    HealthUpdate {
+        guid: u64,
+        value: u32,
+    },
+    /// `SMSG_FORCE_DISPLAY_UPDATE`: rebuild the unit's model from its fields.
+    ForceDisplayUpdate {
+        guid: u64,
+    },
+    /// `SMSG_CAMERA_SHAKE`: a `SpellEffectCameraShakes` group and a sound kit, at the player.
+    CameraShake {
+        group: u32,
+        sound_kit: u32,
+    },
+    /// `SMSG_PLAYER_SKINNED`: our corpse's insignia was taken; the flag is the event's argument.
+    PlayerSkinned {
+        flag: bool,
+    },
+    /// `SMSG_RESURRECT_FAILED` (empty).
+    ResurrectFailed,
+    /// `SMSG_FORCED_DEATH_UPDATE` (empty).
+    ForcedDeathUpdate,
+    /// `SMSG_CLEAR_FAR_SIGHT_IMMEDIATE` (empty).
+    ClearFarSightImmediate,
     /// `SMSG_POWER_UPDATE`: a unit's power of one type, set outright.
     PowerUpdate {
         guid: u64,
@@ -2162,6 +2188,13 @@ impl ServerPacket {
                 "SMSG_CORPSE_MAP_POSITION_QUERY_RESPONSE".into()
             }
             ServerPacket::CorpseNotInInstance => "SMSG_CORPSE_NOT_IN_INSTANCE".into(),
+            ServerPacket::HealthUpdate { .. } => "SMSG_HEALTH_UPDATE".into(),
+            ServerPacket::ForceDisplayUpdate { .. } => "SMSG_FORCE_DISPLAY_UPDATE".into(),
+            ServerPacket::CameraShake { .. } => "SMSG_CAMERA_SHAKE".into(),
+            ServerPacket::PlayerSkinned { .. } => "SMSG_PLAYER_SKINNED".into(),
+            ServerPacket::ResurrectFailed => "SMSG_RESURRECT_FAILED".into(),
+            ServerPacket::ForcedDeathUpdate => "SMSG_FORCED_DEATH_UPDATE".into(),
+            ServerPacket::ClearFarSightImmediate => "SMSG_CLEAR_FAR_SIGHT_IMMEDIATE".into(),
             ServerPacket::ResurrectRequest(_) => "SMSG_RESURRECT_REQUEST".into(),
             ServerPacket::SpiritHealerConfirm { .. } => "SMSG_SPIRIT_HEALER_CONFIRM".into(),
             ServerPacket::MoveSetCollisionHeight { .. } => "SMSG_MOVE_SET_COLLISION_HGT".into(),

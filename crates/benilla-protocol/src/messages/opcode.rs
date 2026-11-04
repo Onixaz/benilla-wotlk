@@ -1085,6 +1085,18 @@ pub const SMSG_INVALIDATE_DANCE: u16 = 0x0453; // 1107
 pub const SMSG_RWHOIS: u16 = 0x01FE; // 510
 /// A 16-byte anti-cheat challenge (`0x6b9670`).
 pub const SMSG_CHECK_FOR_BOTS: u16 = 0x0015; // 21
+/// The insignia was taken from our corpse: a `u8` flag, `PLAYER_SKINNED`'s argument (`0x6cdf00`).
+pub const SMSG_PLAYER_SKINNED: u16 = 0x02BC; // 700
+/// A resurrection failed: no body; the dead or alive event is re-sent (`0x6ce470`).
+pub const SMSG_RESURRECT_FAILED: u16 = 0x0252; // 594
+/// Far sight ends now: no body (`0x6e38d4`).
+pub const SMSG_CLEAR_FAR_SIGHT_IMMEDIATE: u16 = 0x020D; // 525
+/// The release timer is derived again: no body (`0x6e3f08`).
+pub const SMSG_FORCED_DEATH_UPDATE: u16 = 0x037A; // 890
+/// A camera-shake group and a sound kit, played at the player (`0x6e40f3`).
+pub const SMSG_CAMERA_SHAKE: u16 = 0x050A; // 1290
+/// A unit's model is rebuilt from its fields: a packed guid (`0x716cd0`).
+pub const SMSG_FORCE_DISPLAY_UPDATE: u16 = 0x0403; // 1027
 
 // Mover modes, acked (`IsFlagAckOpcode`): the SMSG is a packed guid and `u32 counter`; the ack
 // echoes the packed guid, the counter and a `MovementInfo`, plus an `f32` apply for all but root
@@ -1483,6 +1495,8 @@ pub const SMSG_REAL_GROUP_UPDATE: u16 = 0x0397; // 919
 
 /// A unit's power, set outright (`0x7236c0`).
 pub const SMSG_POWER_UPDATE: u16 = 0x0480; // 1152
+/// A unit's health, set as its predicted copy (`0x716d20`).
+pub const SMSG_HEALTH_UPDATE: u16 = 0x047F; // 1151
 /// Our combo points and the unit they sit on (the game UI's message handler, `0x526530`).
 pub const SMSG_UPDATE_COMBO_POINTS: u16 = 0x039D; // 925
 /// The pet's combo points (`0x5d36a0`).
