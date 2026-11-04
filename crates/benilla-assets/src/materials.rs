@@ -549,6 +549,13 @@ impl MaterialExtension for TerrainExtension {
         "embedded://benilla_assets/shaders/terrain.wgsl".into()
     }
 
+    /// Terrain casts no shadow-map shadow: the reference's caster pass draws map-object groups and
+    /// M2 batches alone (`0x7bbc50`), and its terrain query gathers a chunk's doodads, never the
+    /// chunk (`0x7bcf20`). Its own shade is the baked MCSH map.
+    fn enable_shadows() -> bool {
+        false
+    }
+
     /// A vertex-colour map's cells carry MCCV: appended to whichever layout the pass built, at
     /// location 14, which only `terrain.wgsl`'s `TERRAIN_MCCV` path reads.
     fn specialize(
