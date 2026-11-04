@@ -50,7 +50,14 @@ type ZfillParts<'w, 's> = Query<
 pub(crate) fn sync_zfill_twins(
     mut commands: Commands,
     parts: ZfillParts,
-    mut twins: Query<(&ZfillTwinOf, &mut MeshTag, &mut Mesh3d), Without<FadeMaterials>>,
+    mut twins: Query<(Entity, &ZfillTwinOf, &mut MeshTag, &mut Mesh3d), Without<FadeMaterials>>,
+    parked: Query<
+        (),
+        (
+            With<FadeMaterials>,
+            With<crate::model_render::park::ParkedMesh>,
+        ),
+    >,
 ) {
     for (part, fm, tag, mesh, twin, layers) in &parts {
         let Some(mat) = fm.zfill.as_ref() else {
@@ -82,10 +89,17 @@ pub(crate) fn sync_zfill_twins(
             _ => {}
         }
     }
-    for (of, mut tag, mut mesh) in &mut twins {
+    for (twin, of, mut tag, mut mesh) in &mut twins {
         // Mirroring the part's tag and mesh keeps the rig slot right across a redress or reslot.
         let Ok((_, _, ptag, pmesh, _, _)) = parts.get(of.0) else {
-            continue; // the part is going away; the child despawns with it
+            // A parked part has put its mesh down and draws nothing, so its twin goes with it, or
+            // a body parked mid-fade keeps one per part; the unpark re-arms it if the fade runs on.
+            if parked.contains(of.0) {
+                commands.entity(twin).despawn();
+                commands.entity(of.0).remove::<ZfillTwin>();
+                trace("park", of.0, tag.0);
+            }
+            continue; // else the part is going away; the child despawns with it
         };
         if tag.0 != ptag.0 {
             tag.0 = ptag.0;
@@ -112,6 +126,53 @@ pub fn plugin(app: &mut App) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::model_render::park::ParkedMesh;
+
+    /// A part parked mid-fade (a body that faded in out of view) drops its twin, and unparking it
+    /// while still translucent arms a fresh one.
+    #[test]
+    fn a_parked_part_keeps_no_twin_and_rearms_on_unpark() {
+        let mut app = App::new();
+        app.add_systems(Update, sync_zfill_twins);
+        let part = app
+            .world_mut()
+            .spawn((
+                FadeMaterials {
+                    cutout: Handle::default(),
+                    blend: Handle::default(),
+                    bake_blend: None,
+                    zfill: Some(Handle::default()),
+                },
+                MeshTag(crate::mesh_tag::with_alpha(0, 0.5)),
+                Mesh3d(Handle::default()),
+            ))
+            .id();
+        let twins = |app: &mut App| {
+            app.world_mut()
+                .query::<&ZfillTwinOf>()
+                .iter(app.world())
+                .count()
+        };
+        app.update();
+        assert_eq!(twins(&mut app), 1, "mid-fade: armed");
+
+        let mesh = app.world_mut().entity_mut(part).take::<Mesh3d>().unwrap();
+        app.world_mut().entity_mut(part).insert(ParkedMesh(mesh.0));
+        app.update();
+        assert_eq!(twins(&mut app), 0, "parked: the twin goes with the mesh");
+        assert!(app.world().entity(part).get::<ZfillTwin>().is_none());
+
+        let parked = app
+            .world_mut()
+            .entity_mut(part)
+            .take::<ParkedMesh>()
+            .unwrap();
+        app.world_mut().entity_mut(part).insert(Mesh3d(parked.0));
+        app.update();
+        assert_eq!(twins(&mut app), 1, "unparked mid-fade: re-armed");
+    }
+
     #[test]
     fn the_twin_arms_exactly_on_the_translucent_band() {
         use crate::mesh_tag;
