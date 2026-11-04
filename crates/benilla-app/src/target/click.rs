@@ -154,6 +154,8 @@ pub(crate) struct ServiceArms<'w> {
     pub(crate) script: Option<NonSendMut<'w, benilla_ui::script::UiScript>>,
     /// `autoLootDefault`, which a loot interact arms the auto-loot flag from.
     pub(crate) loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
+    /// The trainer arm's ask, which its list must answer.
+    pub(crate) trainer_asked: ResMut<'w, crate::ui_trainer::TrainerAsked>,
 }
 
 /// The re-click gate, before the ladder: a right-click on the NPC whose window is open does
@@ -715,6 +717,9 @@ impl Dispatch<'_, '_> {
         match service_action(arm, guid, ghost, cursor_sale) {
             ServiceAction::Send(cmd) => {
                 debug!("right-click interact: {guid:#x} ({arm:?})");
+                if let ClientCommand::TrainerList { trainer } = cmd {
+                    self.service.trainer_asked.0 = Some(trainer);
+                }
                 let _ = self.seam.net.0.send(cmd);
             }
             ServiceAction::SellFromCursor(cmd) => {
@@ -2297,6 +2302,7 @@ mod tests {
         world.init_resource::<Messages<Interact>>();
         world.init_resource::<crate::net::Reputations>();
         world.init_resource::<crate::ui_loot::LootConfig>();
+        world.init_resource::<crate::ui_trainer::TrainerAsked>();
         world.init_resource::<Messages<DeselectGuid>>();
         world.init_resource::<ButtonInput<KeyCode>>();
         world.spawn((SelfPlayer, Guid(ME)));
