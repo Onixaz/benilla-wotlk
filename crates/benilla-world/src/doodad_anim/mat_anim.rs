@@ -9,6 +9,8 @@ use benilla_assets::ModelAnimations;
 /// sampled into [`Self::current`]. The visibility authority multiplies that into the render-alpha
 /// `MeshTag` and hides the batch at 0, the reference's `A ≤ 0` cull.
 #[derive(Component)]
+// Sparse: only alpha-animated batches carry it, and a column would split every part layout in two.
+#[component(storage = "SparseSet")]
 pub struct MatAnim {
     anim: std::sync::Arc<benilla_formats::AlphaAnim>,
     /// The entity whose `AnimationPlayer` names the sequence to read, re-resolved every frame (the
@@ -179,6 +181,8 @@ fn sample_one(
 /// The scan marker: a part whose material can be a [`UvAnimMaterials`] or [`TintAnimMaterials`]
 /// key, inserted at spawn beside the registration, so the draw scan visits only animated parts.
 #[derive(bevy::prelude::Component)]
+// Sparse: a filter-only marker on the animated parts, and a column would split their tables.
+#[component(storage = "SparseSet")]
 pub struct AnimMatPart;
 
 /// Which loop a registered UV material animates on. A material-keyed row serves every instance of

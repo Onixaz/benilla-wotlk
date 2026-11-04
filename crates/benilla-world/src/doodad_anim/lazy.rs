@@ -31,6 +31,8 @@ pub(crate) struct LazyRig {
 
 /// A part's static and skinned meshes, swapped by promote and demote and kept resident here.
 #[derive(Component)]
+// Sparse: only lazily skinned doodad parts carry it, and a column would split their tables.
+#[component(storage = "SparseSet")]
 pub(crate) struct SkinnedTwin {
     pub(crate) skinned: Handle<Mesh>,
     pub(crate) stat: Handle<Mesh>,
