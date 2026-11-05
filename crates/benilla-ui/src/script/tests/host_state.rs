@@ -184,6 +184,7 @@ fn the_getters_answer_the_pushed_state_in_their_reference_shapes() {
         pvp_type: Some("friendly".into()),
         pvp_faction: Some("Alliance".into()),
         pvp_subzone: false,
+        pvp_poi: false,
     });
     s.set_game_time(21, 7);
     assert_eq!(
@@ -209,6 +210,7 @@ fn the_getters_answer_the_pushed_state_in_their_reference_shapes() {
         pvp_type: Some("arena".into()),
         pvp_faction: None,
         pvp_subzone: true,
+        pvp_poi: false,
         ..Default::default()
     });
     assert_eq!(

@@ -255,7 +255,7 @@ fn queue_delete_item_confirm(model: &mut Model, item: &CursorItem) {
 }
 
 /// An item link's name, from its `|h[Name]|h` segment; empty for no link or another shape.
-pub(super) fn item_link_name(link: Option<&str>) -> String {
+pub(crate) fn item_link_name(link: Option<&str>) -> String {
     link.and_then(|l| l.split_once('['))
         .and_then(|(_, rest)| rest.split_once(']'))
         .map(|(name, _)| name.to_string())

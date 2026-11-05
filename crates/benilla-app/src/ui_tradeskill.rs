@@ -414,7 +414,7 @@ struct BookData<'w> {
 
 /// `GetTradeSkillListLink` (`0x5db060`): the opener's `|Htrade:` link, one bit per row of the
 /// line's link run, set for a known spell the player's race and class may learn.
-fn list_link(
+pub(crate) fn list_link(
     opener: &SpellDisplay,
     line: u32,
     skill_lines: &benilla_formats::SkillLineCatalog,

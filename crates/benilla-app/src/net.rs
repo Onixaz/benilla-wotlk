@@ -1954,6 +1954,15 @@ pub(crate) enum ClientCommand {
     SkillBuyStep {
         line: u32,
     },
+    /// `CMSG_CANCEL_TEMP_ENCHANTMENT`: `CancelItemTempEnchantment(slot)`.
+    CancelTempEnchantment {
+        slot: u32,
+    },
+    /// `CMSG_AUTOEQUIP_ITEM_SLOT`: `EquipItemByName(item, slot)`.
+    AutoEquipItemSlot {
+        item: u64,
+        slot: u8,
+    },
     /// `CMSG_GRANT_LEVEL`: `GrantLevel(unit)`.
     GrantLevel {
         friend: u64,

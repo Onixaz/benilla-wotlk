@@ -1914,6 +1914,12 @@ pub(super) fn writer_loop(
                     ClientCommand::SetTaxiBenchmarkMode { on } => w.set_taxi_benchmark_mode(on),
                     ClientCommand::SkillBuyRank { lines } => w.skill_buy_rank(&lines),
                     ClientCommand::SkillBuyStep { line } => w.skill_buy_step(line),
+                    ClientCommand::CancelTempEnchantment { slot } => {
+                        w.cancel_temp_enchantment(slot)
+                    }
+                    ClientCommand::AutoEquipItemSlot { item, slot } => {
+                        w.auto_equip_item_slot(item, slot)
+                    }
                     ClientCommand::GrantLevel { friend } => w.grant_level(friend),
                     ClientCommand::DeclineChannelInvite { name } => {
                         w.decline_channel_invite(&name)

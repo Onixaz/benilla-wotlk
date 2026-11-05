@@ -90,6 +90,8 @@ pub struct EnchantView {
     /// Ms left on a temporary enchant, from `SMSG_ITEM_ENCHANT_TIME_UPDATE`, never the item's own
     /// duration field; `Some` prints the countdown form.
     pub remaining_ms: Option<u64>,
+    /// The spell an enchant's use effect (7) casts, 0 for none (`0x708c9f`).
+    pub use_spell: u32,
     /// The sockets a prismatic enchant (slot 6) adds, its effect 8's points (`0x708140`).
     pub prismatic_sockets: u32,
     /// A gem enchant's activation condition, a meta gem's.

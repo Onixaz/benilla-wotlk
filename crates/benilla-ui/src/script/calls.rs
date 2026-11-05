@@ -67,6 +67,15 @@ pub enum ScriptCall {
     /// `UseQuestLogSpecialItem(index)`: the bag item's own use (`0x708c20`), past the right-click's
     /// merchant, bank and equip arms.
     UseItem { bag: i64, slot: u32 },
+    /// `UseItemByName(item [, unit])` (`0x51cd00`): the found item's own use, at `at`; `bag` is
+    /// [`super::cursor::EQUIPMENT_BAG`] for a worn item.
+    UseItemAt { bag: i64, slot: u32, at: CastAt },
+    /// `EquipItemByName(item [, slot])` (`0x51cdb0`): to wire slot `dst`, else where it fits.
+    EquipItem {
+        bag: i64,
+        slot: u32,
+        dst: Option<u8>,
+    },
     /// `UseInventoryItem(id)` outside repair mode.
     UseInventoryItem(u32),
     /// `CastPetAction(slot)`, a 1-based pet bar slot.

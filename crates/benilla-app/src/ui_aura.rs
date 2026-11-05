@@ -621,6 +621,9 @@ fn drain_aura_cancels(script: Option<NonSendMut<UiScript>>, net: Res<NetCommands
     for spell_id in script.take_cancel_aura_requests() {
         let _ = net.0.send(ClientCommand::CancelAura { spell_id });
     }
+    for slot in script.take_temp_enchant_cancels() {
+        let _ = net.0.send(ClientCommand::CancelTempEnchantment { slot });
+    }
 }
 
 #[cfg(test)]

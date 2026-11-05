@@ -181,6 +181,7 @@ mod cooldown_widget;
 mod input_verbs;
 mod inspect;
 mod inventory_verbs;
+mod item_search;
 mod item_stats;
 mod item_text;
 mod kb_system;
@@ -1005,6 +1006,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     chat_types::install(lua)?;
     chat_misc::install(lua)?;
     chat_record::install(lua)?;
+    item_search::install(lua)?;
     name_records::install(lua)?;
     channel::install(lua)?;
     channel_pane::install(lua)?;

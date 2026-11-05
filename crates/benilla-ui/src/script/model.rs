@@ -371,6 +371,8 @@ pub(crate) struct Model {
     pub(crate) emote_requests: Vec<super::chat_misc::EmoteRequest>,
     /// `SetTaxiBenchmarkMode` calls queued.
     pub(crate) taxi_benchmark_requests: Vec<bool>,
+    /// `CancelItemTempEnchantment` calls queued, as inventory slots.
+    pub(crate) temp_enchant_cancels: Vec<u32>,
     /// `RandomRoll` calls queued.
     pub(crate) roll_requests: Vec<(u32, u32)>,
     /// The recorded chat lines and the complaints filed from them.
@@ -1422,6 +1424,7 @@ impl Model {
             emote_requests: Vec::new(),
             roll_requests: Vec::new(),
             taxi_benchmark_requests: Vec::new(),
+            temp_enchant_cancels: Vec::new(),
             console_lines: Vec::new(),
             console_prints: Vec::new(),
             chat_records: Default::default(),

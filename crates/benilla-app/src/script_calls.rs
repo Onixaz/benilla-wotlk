@@ -95,6 +95,14 @@ pub(crate) fn apply_script_calls(
                 appliers.p5().use_container_item(script, bag, slot);
             }
             ScriptCall::UseInventoryItem(id) => appliers.p5().use_inventory_item(script, id),
+            ScriptCall::UseItemAt { bag, slot, at } => {
+                let cast = appliers.p3();
+                let aim = cast.targeting.aim(&cast.tokens, &at);
+                appliers.p5().use_item_at(script, bag, slot, aim);
+            }
+            ScriptCall::EquipItem { bag, slot, dst } => {
+                appliers.p5().equip_item(script, bag, slot, dst);
+            }
             ScriptCall::CastPetSpell { spell_id, on_self } => {
                 let out = crate::ui_pet_book::cast_pet_spell(&mut appliers.p6(), spell_id, on_self);
                 cast_as_pet(&mut appliers.p3(), out);

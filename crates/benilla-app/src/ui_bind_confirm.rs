@@ -32,6 +32,8 @@ pub(crate) enum PendingEquip {
         dst_bag: i64,
         dst_slot: u32,
     },
+    /// `EQUIP_BIND_CONFIRM` for `EquipItemByName`'s slotted send (`0x6dff90`).
+    Slot { bag: i64, slot: u32, dst: u8 },
     /// `AUTOEQUIP_BIND_CONFIRM`, in wire space: the action bar's sender resolves an item entry to
     /// a position and has no Lua pair. The guid lets the re-issue re-take the ammo fork.
     AutoEquip { bag_index: u8, slot: u8, guid: u64 },
@@ -152,7 +154,7 @@ impl BindGate<'_> {
     pub(crate) fn defer_equip(&mut self, script: &mut UiScript, rec: PendingEquip) {
         let index = self.equips.add(rec);
         let event = match rec {
-            PendingEquip::Swap { .. } => "EQUIP_BIND_CONFIRM",
+            PendingEquip::Swap { .. } | PendingEquip::Slot { .. } => "EQUIP_BIND_CONFIRM",
             PendingEquip::AutoEquip { .. } => "AUTOEQUIP_BIND_CONFIRM",
         };
         debug!("ui_bind_confirm: {event} index {index} for {rec:?}");
