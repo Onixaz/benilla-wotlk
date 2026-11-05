@@ -614,11 +614,18 @@ fn drain_level_grant(
     mut errors: ResMut<UiErrorKeys>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
     mut waiting: Local<crate::ui_script::VmMemo<Vec<(u8, u64)>>>,
+    mut echo: Option<ResMut<crate::console::ConsoleEcho>>,
 ) {
     use benilla_ui::script::UnitRequest as R;
     let Some(mut script) = script else {
         return;
     };
+    // `ConsoleAddMessage`'s lines (`0x512090`).
+    for line in script.take_console_prints() {
+        if let Some(echo) = echo.as_mut() {
+            echo.print(line);
+        }
+    }
     let waiting = waiting.get(&script);
     for request in script.take_unit_requests() {
         match request {
