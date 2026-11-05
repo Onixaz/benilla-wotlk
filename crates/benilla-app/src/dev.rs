@@ -4,7 +4,7 @@
 //! through a `use` from gameplay.
 //!
 //! Not here, because they ship: `benilla_world::dev_state` (its defaults are the player behaviour),
-//! `pipe_warm` (without it a player on macOS eats every synchronous pipeline stall) and `art_scope`
+//! `pipe_warm` (without it every variant pops in on its first draw) and `art_scope`
 //! (engine, it travels with `WorldPlugins`).
 
 use bevy::prelude::*;

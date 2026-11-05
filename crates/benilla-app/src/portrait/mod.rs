@@ -471,8 +471,8 @@ struct Booth {
     pending: Vec<Handle<Image>>,
     /// When the `pending` hold began (wall secs), released at [`PENDING_LANDING_SECS`].
     pending_since: Option<f64>,
-    /// The bake has not yet drawn with every pipeline compiled: off macOS a batch whose variant
-    /// is still building is skipped silently, and a still that slept then would keep the hole.
+    /// The bake has not yet drawn with every pipeline compiled: a batch whose variant is still
+    /// building is skipped silently, and a still that slept then would keep the hole.
     pipes_settling: bool,
     /// When the `pipes_settling` hold began (wall secs), bounded at [`PIPELINE_SETTLING_SECS`].
     pipes_since: Option<f64>,
@@ -2919,7 +2919,7 @@ mod tests {
         );
     }
 
-    /// Off macOS a not-yet-built variant draws nothing, so a still committed then keeps the hole.
+    /// A not-yet-built variant draws nothing, so a still committed then keeps the hole.
     #[test]
     fn a_bake_holds_its_camera_awake_while_pipelines_are_still_building() {
         assert_eq!(pipe_settle(true, true, 0.0), PipeSettle::Hold);

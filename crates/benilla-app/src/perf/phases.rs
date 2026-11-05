@@ -6,8 +6,8 @@
 //!   perturbs `Update`'s parallelism, which is why the instrument is opt-in.
 //!
 //! The total runs frame start to frame start, and the remainder after `Last` prints as
-//! `render+present`: the render sub-app, including pipelines compiled inline on the render
-//! thread, is invisible to every stamp inside `Main`.
+//! `render+present`: the render sub-app, which runs on its own thread, is invisible to every stamp
+//! inside `Main`.
 //!
 //! One line per slow frame, spans in the order they closed:
 //!
