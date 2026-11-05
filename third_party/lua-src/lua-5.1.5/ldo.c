@@ -368,6 +368,7 @@ int luaD_poscall (lua_State *L, StkId firstResult) {
 ** function position.
 */
 void luaD_call (lua_State *L, StkId func, int nResults) {
+  if (L->nCcalls == 0) lua_gcowner = lua_gcbaseowner;
   if (++L->nCcalls >= LUAI_MAXCCALLS) {
     if (L->nCcalls == LUAI_MAXCCALLS)
       luaG_runerror(L, "C stack overflow");

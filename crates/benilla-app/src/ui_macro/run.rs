@@ -38,10 +38,7 @@ pub(crate) enum BoundSpell {
     Spell(u32),
 }
 
-/// A macro body's runnable lines: the reference's tokenizer splits on either `\r` or `\n` and skips
-/// empty tokens. Deviation: each line is trimmed, because the reference sends an indented
-/// `" /say hi"` as plain chat, never as the command meant. A whitespace-only line is fired there
-/// and dropped by `ChatEdit_SendText`, the same observable.
+/// A macro body's non-empty lines, as the bound-spell scan reads them, each trimmed.
 pub(crate) fn macro_lines(body: &str) -> impl Iterator<Item = &str> {
     body.split(['\r', '\n'])
         .map(str::trim)

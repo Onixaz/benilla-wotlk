@@ -85,6 +85,7 @@ mod battlefield_score;
 mod bind_confirm;
 mod binder;
 mod binding_abi;
+mod binding_commands;
 mod dialog_verbs;
 pub mod focus;
 mod secure_call;
@@ -1006,6 +1007,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     chat_types::install(lua)?;
     chat_misc::install(lua)?;
     chat_record::install(lua)?;
+    binding_commands::install(lua)?;
     item_search::install(lua)?;
     name_records::install(lua)?;
     channel::install(lua)?;

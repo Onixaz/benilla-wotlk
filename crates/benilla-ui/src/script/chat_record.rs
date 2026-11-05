@@ -58,7 +58,7 @@ pub(crate) struct ChatRecords {
 }
 
 /// `SStrCopy` into a `size`-byte buffer: at most `size - 1` bytes, cut on a character boundary.
-fn clipped(s: &str, size: usize) -> String {
+pub(super) fn clipped(s: &str, size: usize) -> String {
     let mut end = s.len().min(size - 1);
     while !s.is_char_boundary(end) {
         end -= 1;

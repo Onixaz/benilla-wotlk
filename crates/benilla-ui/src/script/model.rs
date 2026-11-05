@@ -373,6 +373,16 @@ pub(crate) struct Model {
     pub(crate) taxi_benchmark_requests: Vec<bool>,
     /// `CancelItemTempEnchantment` calls queued, as inventory slots.
     pub(crate) temp_enchant_cancels: Vec<u32>,
+    /// The override bindings (`0xc1f0ec`), filed by frame.
+    pub(crate) override_bindings: super::binding_commands::OverrideBindings,
+    /// A macro is running (`[0xbea8e0]`); `StopMacro` clears it.
+    pub(crate) macro_running: bool,
+    /// The addons that hold a GC owner tag, a tag being the position here plus one.
+    pub(crate) addon_owners: Vec<String>,
+    /// The running tag, restored as a nested load ends.
+    pub(crate) addon_owner: u8,
+    /// Bytes per tag at the last `UpdateAddOnMemoryUsage`.
+    pub(crate) addon_memory: Vec<usize>,
     /// `RandomRoll` calls queued.
     pub(crate) roll_requests: Vec<(u32, u32)>,
     /// The recorded chat lines and the complaints filed from them.
@@ -1423,6 +1433,11 @@ impl Model {
             guild_recruitment_changed: false,
             emote_requests: Vec::new(),
             roll_requests: Vec::new(),
+            override_bindings: Default::default(),
+            macro_running: false,
+            addon_owners: Vec::new(),
+            addon_owner: 0,
+            addon_memory: Vec::new(),
             taxi_benchmark_requests: Vec::new(),
             temp_enchant_cancels: Vec::new(),
             console_lines: Vec::new(),

@@ -687,7 +687,73 @@ void luaC_link (lua_State *L, GCObject *o, lu_byte tt) {
   o->gch.next = g->rootgc;
   g->rootgc = o;
   o->gch.marked = luaC_white(g);
+  o->gch.owner = lua_gcowner;
   o->gch.tt = tt;
+}
+
+
+LUA_GCOWNER_TLS lu_byte lua_gcowner = 0;
+LUA_GCOWNER_TLS lu_byte lua_gcbaseowner = 0;
+
+
+LUA_API void lua_setgcowner (int owner) {
+  lua_gcowner = lua_gcbaseowner = cast_byte(owner);
+}
+
+
+static size_t sizeobj (GCObject *o) {
+  switch (o->gch.tt) {
+    case LUA_TSTRING:
+      return sizestring(gco2ts(o));
+    case LUA_TTABLE: {
+      Table *h = gco2h(o);
+      return sizeof(Table) + sizeof(TValue) * h->sizearray +
+             sizeof(Node) * sizenode(h);
+    }
+    case LUA_TFUNCTION: {
+      Closure *cl = gco2cl(o);
+      return cl->c.isC ? sizeCclosure(cl->c.nupvalues)
+                       : sizeLclosure(cl->l.nupvalues);
+    }
+    case LUA_TUSERDATA:
+      return sizeudata(gco2u(o));
+    case LUA_TTHREAD: {
+      lua_State *th = gco2th(o);
+      return sizeof(lua_State) + sizeof(TValue) * th->stacksize +
+             sizeof(CallInfo) * th->size_ci;
+    }
+    case LUA_TPROTO: {
+      Proto *p = gco2p(o);
+      return sizeof(Proto) + sizeof(Instruction) * p->sizecode +
+             sizeof(Proto *) * p->sizep + sizeof(TValue) * p->sizek +
+             sizeof(int) * p->sizelineinfo + sizeof(LocVar) * p->sizelocvars +
+             sizeof(TString *) * p->sizeupvalues;
+    }
+    case LUA_TUPVAL:
+      return sizeof(UpVal);
+    default:
+      return 0;
+  }
+}
+
+
+static void addsizes (GCObject *o, size_t *usage, int count) {
+  for (; o; o = o->gch.next) {
+    int owner = o->gch.owner;
+    if (owner && owner < count)
+      usage[owner] += sizeobj(o);
+  }
+}
+
+
+/* the bytes each owner holds, the reference's whole-heap walk (0x85b4e0) */
+LUA_API void lua_gcupdatesizes (lua_State *L, size_t *usage, int count) {
+  global_State *g = G(L);
+  int i;
+  memset(usage, 0, sizeof(size_t) * count);
+  addsizes(g->rootgc, usage, count);
+  for (i = 0; i < g->strt.size; i++)
+    addsizes(g->strt.hash[i], usage, count);
 }
 
 

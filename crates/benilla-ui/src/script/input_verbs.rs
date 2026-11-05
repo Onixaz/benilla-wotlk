@@ -111,10 +111,11 @@ impl UiScript {
     /// The binding executor once the chord has resolved to `command`: its command run with the
     /// hardware-event gate raised, a press when `down`, else the release, which runs only a
     /// `runOnUp` body. `Ok(false)` when nothing ran: no such command, or a release of one that is
-    /// not `runOnUp`.
+    /// not `runOnUp`. A `SPELL`, `ITEM`, `MACRO` or `CLICK` command runs its own arm.
     pub fn execute_binding(&self, command: &str, down: bool) -> mlua::Result<bool> {
         self.model_mut().input.binding_depth += 1;
-        let result = super::keybind::run_command(&self.lua, command, down);
+        let result = super::binding_commands::run_special(&self.lua, command, down)
+            .unwrap_or_else(|| super::keybind::run_command(&self.lua, command, down));
         self.model_mut().input.binding_depth -= 1;
         result
     }

@@ -213,6 +213,25 @@ fn item_id_of(lua: &Lua, model: &Model, v: &Value) -> mlua::Result<u32> {
     })
 }
 
+/// `PickupItem(item)` (`0x522fb0`): the cursor clears, then holds the id as an action-bar item, no
+/// bag slot behind it.
+fn pickup_item(model: &mut Model, id: u32) {
+    let texture = model.item_templates.get(&id).and_then(|t| t.icon.clone());
+    super::cursor::clear_cursor(model);
+    if id == 0 {
+        return;
+    }
+    model.cursor = Some(super::cursor::CursorPayload::Action(
+        super::cursor::CursorAction {
+            src_slot: 0,
+            kind: super::action::ACTION_KIND_ITEM,
+            action: id,
+            texture,
+        },
+    ));
+    super::cursor::queue_cursor_update(model);
+}
+
 /// The first on-use spell a template names (`0x708a60`).
 fn use_spell(model: &Model, item_id: u32) -> Option<u32> {
     let view = model.item_templates.get(&item_id)?;
@@ -321,6 +340,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     dst: dst.map(|d| d as u8),
                 });
             }
+            Ok(())
+        })?,
+    )?;
+
+    // PickupItem(item) (`0x522fb0`).
+    g.set(
+        "PickupItem",
+        lua.create_function(|lua, item: Value| {
+            let id = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                item_id_of(lua, &model, &item)?
+            };
+            pickup_item(&mut crate::script::model_mut_of(lua), id);
             Ok(())
         })?,
     )?;
