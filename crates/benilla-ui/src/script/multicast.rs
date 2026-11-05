@@ -157,20 +157,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(if is_pet {
-                model.pet_book.slots.iter().any(|s| s.spell_id == id)
-                    || model
-                        .pet_bar
-                        .slots
-                        .iter()
-                        .any(|s| !s.view.is_token && s.view.spell_id == Some(id))
-            } else {
-                model.spellbook.slots.iter().any(|s| s.spell_id == id)
-            })
+            Ok(has_spell(&model, id, is_pet))
         })?,
     )?;
 
     Ok(())
+}
+
+/// The known-spell test (`0x53b930`): the player's book, or the pet's book then its bar.
+pub(super) fn has_spell(model: &Model, id: u32, is_pet: bool) -> bool {
+    if is_pet {
+        model.pet_book.slots.iter().any(|s| s.spell_id == id)
+            || model
+                .pet_bar
+                .slots
+                .iter()
+                .any(|s| !s.view.is_token && s.view.spell_id == Some(id))
+    } else {
+        model.spellbook.slots.iter().any(|s| s.spell_id == id)
+    }
 }
 
 #[cfg(test)]
