@@ -1,19 +1,18 @@
 # Deviations
 
-What 12340 does that benilla leaves out on purpose, and the gaps still open next to them. Every
-other deviation is written where it lives, in the code beside the reference fact (a CVar's
-`Deviates` row, a comment).
+What 12340 does that benilla leaves out on purpose. Work not done yet is tracked in issues, not
+here. Every other deviation is written where it lives, in the code beside the reference fact (a
+CVar's `Deviates` row, a comment).
 
-The first two sections cover the 610 incoming world opcodes 12340 registers a handler for
-(`reference/3.3.5a-opcodes.tsv`): each one benilla reads to no effect or does not decode, and
-why. Every other opcode has a decoder that does what 12340 does. The last section covers the
-engine verbs the stock interface calls that benilla leaves out.
+## Opcodes
 
-`crates/benilla-protocol/tests/deviations.rs` holds this page to the code: an opcode with no
-parse arm must be listed under "Not decoded", and a listed one must still have none. Give an
-opcode a decoder and its row goes; drop one and it needs a row.
+Of the 610 incoming world opcodes 12340 registers a handler for (`reference/3.3.5a-opcodes.tsv`),
+the ones benilla reads to no effect or leaves undecoded on purpose. A test
+(`crates/benilla-protocol/tests/deviations.rs`) holds these tables to the decoder: an opcode with
+no parse arm must be listed under "Not decoded" or be a known gap with an open issue, and a listed
+one must still have none.
 
-## Read and dropped
+### Read and dropped
 
 These have a decoder that reads the whole 12340 body and does nothing more. 12340 does nothing
 more either, except the rows marked **console**: 12340 prints those to its developer console, and
@@ -37,13 +36,10 @@ benilla has no console. That is the deviation.
 | `0x4ed` | `SMSG_TOGGLE_XP_GAIN` | **console**: "XP Gain Enabled/Disabled" (`0x6e40d6`) | no console |
 | `0x4fc` | `SMSG_DEBUG_SERVER_GEO` | reads nothing (`0x8c8de0`) | no effect in 12340 |
 
-## Not decoded
-
-### Left out by decision
+### Not decoded
 
 | Opcode | Name | Why |
 |---|---|---|
-| `0x2e6` | `SMSG_WARDEN_DATA` | Warden is not built: a server that requires it is refused at the handshake |
 | `0x39e` | `SMSG_VOICE_SESSION_ROSTER_UPDATE` | no voice chat |
 | `0x39f` | `SMSG_VOICE_SESSION_LEAVE` | no voice chat |
 | `0x3a2` | `SMSG_VOICE_SET_TALKER_MUTED` | no voice chat |
@@ -65,63 +61,81 @@ benilla has no console. That is the deviation.
 | `0x44c` | `SMSG_PLAY_DANCE` | dance studio not planned (#801) |
 | `0x44f` | `SMSG_STOP_DANCE` | dance studio not planned (#800) |
 
-### Not built yet
+## Engine verbs
 
-These are gaps, not decisions. Each has an open issue.
+Engine verbs the stock interface calls that benilla does not build, because no 3.3.5a server can
+serve what they ask for.
 
-| Opcode | Name | Issue |
+- **Battle.net (Real ID).** 12340 talks to Battle.net over its own login, apart from the realm. A
+  3.3.5a server has no Battle.net service, so 12340 itself answers as disconnected. benilla builds
+  the verbs the stock interface reads unguarded with those answers: `BNConnected`,
+  `BNFeaturesEnabled` and `BNFeaturesEnabledAndConnected` are false, and the friend, invite and
+  block counts are 0 (`crates/benilla-ui/src/script/battle_net.rs`). The rest act on a Real ID
+  friend, invite, conversation or block row, and with every count at 0 no such row exists.
+- **Knowledge base.** The help frame downloads its articles over HTTP from a Blizzard web
+  service, not from the realm: the setup request builds a `getKBSetup.xml` address for the locale
+  (`0x550e10`). That service is gone and no 3.3.5a server stands in for it.
+- **Voice chat.** benilla has no voice chat (see the voice opcodes above).
+
+| Verb | 12340 | Why |
 |---|---|---|
-| `0x360` | `SMSG_UPDATE_LFG_LIST` | #420 |
-| `0x3ae` | `MSG_RAID_READY_CHECK_CONFIRM` | #361 |
-| `0x3c6` | `MSG_RAID_READY_CHECK_FINISHED` | #361 |
-| `0x3c8` | `SMSG_COMPLAIN_RESULT` | #496 |
-| `0x3c9` | `SMSG_FEATURE_SYSTEM_STATUS` | #496 |
-| `0x3f0` | `SMSG_USERLIST_ADD` | #597 |
-| `0x3f1` | `SMSG_USERLIST_REMOVE` | #597 |
-| `0x3f2` | `SMSG_USERLIST_UPDATE` | #597 |
-| `0x47c` | `SMSG_SET_PHASE_SHIFT` | #456 |
-| `0x514` | `SMSG_SEND_ALL_COMBAT_LOG` | #442 |
-
-## Engine verbs left out
-
-Verbs the stock interface calls that benilla does not build, because no 3.3.5a server can serve
-what they ask for. The open gaps, the verbs still to build, are tracked in #668 and listed in the
-stock-UI test's known-gap list (`crates/benilla-app/src/ui_script/reference_ui.rs`).
-
-### Battle.net (Real ID)
-
-12340 talks to Battle.net over its own login, apart from the realm. A 3.3.5a server has no
-Battle.net service, so 12340 itself answers every one of these as if disconnected. benilla builds
-the ones the stock interface reads unguarded with those answers: `BNConnected`,
-`BNFeaturesEnabled` and `BNFeaturesEnabledAndConnected` are false, and the friend, invite and
-block counts are 0 (`crates/benilla-ui/src/script/battle_net.rs`). Each verb below acts on a
-Real ID friend, invite, conversation or block row, and with every count at 0 no such row exists.
-
-`BNAcceptFriendInvite`, `BNCreateConversation`, `BNDeclineFriendInvite`, `BNGetBlockedInfo`,
-`BNGetBlockedToonInfo`, `BNGetConversationInfo`, `BNGetConversationMemberInfo`,
-`BNGetCustomMessageTable`, `BNGetFOFInfo`, `BNGetFriendInfo`, `BNGetFriendInfoByID`,
-`BNGetFriendInviteInfo`, `BNGetFriendToonInfo`, `BNGetInfo`, `BNGetNumConversationMembers`,
-`BNGetNumFOF`, `BNGetNumFriendToons`, `BNGetSelectedBlock`, `BNGetSelectedFriend`,
-`BNGetSelectedToonBlock`, `BNGetToonInfo`, `BNInviteToConversation`, `BNIsFriend`, `BNIsSelf`,
-`BNIsToonBlocked`, `BNLeaveConversation`, `BNListConversation`, `BNRemoveFriend`,
-`BNReportPlayer`, `BNRequestFOFInfo`, `BNSendConversationMessage`, `BNSendFriendInvite`,
-`BNSendFriendInviteByID`, `BNSendWhisper`, `BNSetAFK`, `BNSetBlocked`, `BNSetCustomMessage`,
-`BNSetDND`, `BNSetFriendNote`, `BNSetSelectedBlock`, `BNSetSelectedFriend`,
-`BNSetSelectedToonBlock`, `BNSetToonBlocked`.
-
-### Knowledge base
-
-The help frame's knowledge base is downloaded over HTTP from a Blizzard web service, not asked of
-the realm: the setup request builds a `getKBSetup.xml` address for the locale (`0x550e10`). That
-service is gone and no 3.3.5a server stands in for it.
-
-`KBArticle_BeginLoading`, `KBArticle_GetData`, `KBQuery_BeginLoading`,
-`KBQuery_GetArticleHeaderCount`, `KBQuery_GetTotalArticleCount`, `KBSetup_BeginLoading`,
-`KBSetup_GetArticleHeaderCount`, `KBSetup_GetCategoryCount`, `KBSetup_GetCategoryData`,
-`KBSetup_GetSubCategoryCount`, `KBSetup_GetSubCategoryData`, `KBSetup_GetTotalArticleCount`,
-`KBSetup_IsLoaded`, `KBSystem_GetServerNotice`.
-
-### Voice chat
-
-benilla has no voice chat (see the voice opcodes above): `ChannelSilenceVoice`,
-`ChannelUnSilenceVoice`, `SetActiveVoiceChannelBySessionID`.
+| `BNAcceptFriendInvite` | `0x5355c0` | no Battle.net |
+| `BNCreateConversation` | `0x535ce0` | no Battle.net |
+| `BNDeclineFriendInvite` | `0x535660` | no Battle.net |
+| `BNGetBlockedInfo` | `0x53a540` | no Battle.net |
+| `BNGetBlockedToonInfo` | `0x536970` | no Battle.net |
+| `BNGetConversationInfo` | `0x536330` | no Battle.net |
+| `BNGetConversationMemberInfo` | `0x53a150` | no Battle.net |
+| `BNGetCustomMessageTable` | `0x535aa0` | no Battle.net |
+| `BNGetFOFInfo` | `0x537240` | no Battle.net |
+| `BNGetFriendInfo` | `0x539bf0` | no Battle.net |
+| `BNGetFriendInfoByID` | `0x539cc0` | no Battle.net |
+| `BNGetFriendInviteInfo` | `0x535180` | no Battle.net |
+| `BNGetFriendToonInfo` | `0x539d70` | no Battle.net |
+| `BNGetInfo` | `0x5343f0` | no Battle.net |
+| `BNGetNumConversationMembers` | `0x536220` | no Battle.net |
+| `BNGetNumFOF` | `0x5370d0` | no Battle.net |
+| `BNGetNumFriendToons` | `0x5349f0` | no Battle.net |
+| `BNGetSelectedBlock` | `0x536790` | no Battle.net |
+| `BNGetSelectedFriend` | `0x537600` | no Battle.net |
+| `BNGetSelectedToonBlock` | `0x536d40` | no Battle.net |
+| `BNGetToonInfo` | `0x539f90` | no Battle.net |
+| `BNInviteToConversation` | `0x535eb0` | no Battle.net |
+| `BNIsFriend` | `0x537950` | no Battle.net |
+| `BNIsSelf` | `0x5378a0` | no Battle.net |
+| `BNIsToonBlocked` | `0x536a90` | no Battle.net |
+| `BNLeaveConversation` | `0x536030` | no Battle.net |
+| `BNListConversation` | `0x53a300` | no Battle.net |
+| `BNRemoveFriend` | `0x534ed0` | no Battle.net |
+| `BNReportPlayer` | `0x536e40` | no Battle.net |
+| `BNRequestFOFInfo` | `0x53a660` | no Battle.net |
+| `BNSendConversationMessage` | `0x536110` | no Battle.net |
+| `BNSendFriendInvite` | `0x535380` | no Battle.net |
+| `BNSendFriendInviteByID` | `0x535490` | no Battle.net |
+| `BNSendWhisper` | `0x53a030` | no Battle.net |
+| `BNSetAFK` | `0x5357a0` | no Battle.net |
+| `BNSetBlocked` | `0x5365b0` | no Battle.net |
+| `BNSetCustomMessage` | `0x535920` | no Battle.net |
+| `BNSetDND` | `0x535860` | no Battle.net |
+| `BNSetFriendNote` | `0x534f80` | no Battle.net |
+| `BNSetSelectedBlock` | `0x5366a0` | no Battle.net |
+| `BNSetSelectedFriend` | `0x537510` | no Battle.net |
+| `BNSetSelectedToonBlock` | `0x536c50` | no Battle.net |
+| `BNSetToonBlocked` | `0x536b60` | no Battle.net |
+| `KBArticle_BeginLoading` | `0x551d60` | no knowledge-base service |
+| `KBArticle_GetData` | `0x551dd0` | no knowledge-base service |
+| `KBQuery_BeginLoading` | `0x552580` | no knowledge-base service |
+| `KBQuery_GetArticleHeaderCount` | `0x551bc0` | no knowledge-base service |
+| `KBQuery_GetTotalArticleCount` | `0x551d10` | no knowledge-base service |
+| `KBSetup_BeginLoading` | `0x551720` | no knowledge-base service |
+| `KBSetup_GetArticleHeaderCount` | `0x5519f0` | no knowledge-base service |
+| `KBSetup_GetCategoryCount` | `0x5518c0` | no knowledge-base service |
+| `KBSetup_GetCategoryData` | `0x551900` | no knowledge-base service |
+| `KBSetup_GetSubCategoryCount` | `0x5523a0` | no knowledge-base service |
+| `KBSetup_GetSubCategoryData` | `0x552440` | no knowledge-base service |
+| `KBSetup_GetTotalArticleCount` | `0x551b40` | no knowledge-base service |
+| `KBSetup_IsLoaded` | `0x551760` | no knowledge-base service |
+| `KBSystem_GetServerNotice` | `0x551ff0` | no knowledge-base service |
+| `ChannelSilenceVoice` | `0x501140` | no voice chat |
+| `ChannelUnSilenceVoice` | `0x5012f0` | no voice chat |
+| `SetActiveVoiceChannelBySessionID` | `0x7db280` | no voice chat |

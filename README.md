@@ -151,6 +151,8 @@ repository root for `cargo dev`.
 - [`docs/MAP.md`](docs/MAP.md) is the generated map of what is currently implemented.
 - [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) covers development setup, validation, and pull
   requests.
+- [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md) lists what benilla leaves out of 3.3.5a on purpose
+  (opcodes and engine verbs no 3.3.5a server can serve) and why.
 
 Issues and pull requests are welcome. Bugs, questions, and ideas can also be discussed on
 [Discord](https://discord.gg/wJSJx467G4).
