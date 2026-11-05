@@ -12,54 +12,57 @@ the ones benilla reads to no effect or leaves undecoded on purpose. A test
 no parse arm must be listed under "Not decoded" or be a known gap with an open issue, and a listed
 one must still have none.
 
+The "AC sends" column says whether AzerothCore sends the opcode at all: "no" means it names it in
+its opcode table and nowhere else, so no AzerothCore server ever sends it.
+
 ### Read and dropped
 
 These have a decoder that reads the whole 12340 body and does nothing more. 12340 does nothing
 more either, except the rows marked **console**: 12340 prints those to its developer console, and
 benilla has no console. That is the deviation.
 
-| Opcode | Name | 12340 | Why benilla drops it |
-|---|---|---|---|
-| `0x01b` | `SMSG_FORCEACTIONSHOW` | reads two `u32` (`0x6e2f1c`) | no effect in 12340 |
-| `0x01d` | `SMSG_PETGODMODE` | **console**: "Pet Godmode enabled/disabled" (`0x6e2f00`) | no console |
-| `0x023` | `SMSG_GODMODE` | **console**: "Godmode enabled/disabled" (`0x6e2ed0`) | no console |
-| `0x049` | `SMSG_SERVERTIME` | **console**: server time and last tick (`0x7e2a50`) | no console |
-| `0x0d9` | `MSG_MOVE_TOGGLE_COLLISION_CHEAT` | the movement relay (`0x741b60`); no movement state changes | no effect in 12340 |
-| `0x157` | `SMSG_BINDZONEREPLY` | reads two `u32` (`0x6e308c`) | no effect in 12340 |
-| `0x164` | `SMSG_LOOT_ITEM_NOTIFY` | reads guid, slot, item and name (`0x6ced80`) | no effect in 12340 |
-| `0x22f` | `CMSG_GM_REQUEST_PLAYER_INFO` | reads nothing (`0x52664a`) | no effect in 12340 |
-| `0x230` | `SMSG_GM_PLAYER_INFO` | reads nothing (`0x52664a`) | no effect in 12340 |
-| `0x27c` | `SMSG_DAMAGE_CALC_LOG` | **console**: a "DMG:" damage breakdown (`0x6d3f10`) | no console |
-| `0x3a9` | `SMSG_IGNORE_REQUIREMENTS_CHEAT` | reads nothing (`0x6e4186`) | no effect in 12340 |
-| `0x406` | `SMSG_IGNORE_DIMINISHING_RETURNS_CHEAT` | reads nothing (`0x6e4186`) | no effect in 12340 |
-| `0x4d8` | `SMSG_FORCE_ANIM` | reads a guid and a string (`0x714b20`) | no effect in 12340 |
-| `0x4ed` | `SMSG_TOGGLE_XP_GAIN` | **console**: "XP Gain Enabled/Disabled" (`0x6e40d6`) | no console |
-| `0x4fc` | `SMSG_DEBUG_SERVER_GEO` | reads nothing (`0x8c8de0`) | no effect in 12340 |
+| Opcode | Name | 12340 | Why benilla drops it | AC sends |
+|---|---|---|---|---|
+| `0x01b` | `SMSG_FORCEACTIONSHOW` | reads two `u32` (`0x6e2f1c`) | no effect in 12340 | no |
+| `0x01d` | `SMSG_PETGODMODE` | **console**: "Pet Godmode enabled/disabled" (`0x6e2f00`) | no console | no |
+| `0x023` | `SMSG_GODMODE` | **console**: "Godmode enabled/disabled" (`0x6e2ed0`) | no console | no |
+| `0x049` | `SMSG_SERVERTIME` | **console**: server time and last tick (`0x7e2a50`) | no console | no |
+| `0x0d9` | `MSG_MOVE_TOGGLE_COLLISION_CHEAT` | the movement relay (`0x741b60`); no movement state changes | no effect in 12340 | no |
+| `0x157` | `SMSG_BINDZONEREPLY` | reads two `u32` (`0x6e308c`) | no effect in 12340 | no |
+| `0x164` | `SMSG_LOOT_ITEM_NOTIFY` | reads guid, slot, item and name (`0x6ced80`) | no effect in 12340 | no |
+| `0x22f` | `CMSG_GM_REQUEST_PLAYER_INFO` | reads nothing (`0x52664a`) | no effect in 12340 | no |
+| `0x230` | `SMSG_GM_PLAYER_INFO` | reads nothing (`0x52664a`) | no effect in 12340 | no |
+| `0x27c` | `SMSG_DAMAGE_CALC_LOG` | **console**: a "DMG:" damage breakdown (`0x6d3f10`) | no console | no |
+| `0x3a9` | `SMSG_IGNORE_REQUIREMENTS_CHEAT` | reads nothing (`0x6e4186`) | no effect in 12340 | no |
+| `0x406` | `SMSG_IGNORE_DIMINISHING_RETURNS_CHEAT` | reads nothing (`0x6e4186`) | no effect in 12340 | no |
+| `0x4d8` | `SMSG_FORCE_ANIM` | reads a guid and a string (`0x714b20`) | no effect in 12340 | no |
+| `0x4ed` | `SMSG_TOGGLE_XP_GAIN` | **console**: "XP Gain Enabled/Disabled" (`0x6e40d6`) | no console | no |
+| `0x4fc` | `SMSG_DEBUG_SERVER_GEO` | reads nothing (`0x8c8de0`) | no effect in 12340 | no |
 
 ### Not decoded
 
-| Opcode | Name | Why |
-|---|---|---|
-| `0x39e` | `SMSG_VOICE_SESSION_ROSTER_UPDATE` | no voice chat |
-| `0x39f` | `SMSG_VOICE_SESSION_LEAVE` | no voice chat |
-| `0x3a2` | `SMSG_VOICE_SET_TALKER_MUTED` | no voice chat |
-| `0x3b1` | `SMSG_VOICE_PARENTAL_CONTROLS` | no voice chat |
-| `0x3da` | `SMSG_AVAILABLE_VOICE_CHANNEL` | no voice chat |
-| `0x3e0` | `SMSG_COMSAT_RECONNECT_TRY` | no voice chat |
-| `0x3e1` | `SMSG_COMSAT_DISCONNECT` | no voice chat |
-| `0x3e2` | `SMSG_COMSAT_CONNECT_FAIL` | no voice chat |
-| `0x3e3` | `SMSG_VOICE_CHAT_STATUS` | no voice chat |
-| `0x3fc` | `SMSG_VOICESESSION_FULL` | no voice chat |
-| `0x2f6` | `SMSG_MINIGAME_SETUP` | minigames not planned (#806) |
-| `0x2f7` | `SMSG_MINIGAME_STATE` | minigames not planned (#806) |
-| `0x3b6` | `SMSG_COMMENTATOR_STATE_CHANGED` | arena spectating not planned (#795) |
-| `0x3b8` | `SMSG_COMMENTATOR_MAP_INFO` | arena spectating not planned (#795) |
-| `0x3bb` | `SMSG_COMMENTATOR_PLAYER_INFO` | arena spectating not planned (#795) |
-| `0x51c` | `SMSG_COMMENTATOR_SKIRMISH_QUEUE_RESULT1` | arena spectating not planned (#795) |
-| `0x51d` | `SMSG_COMMENTATOR_SKIRMISH_QUEUE_RESULT2` | arena spectating not planned (#795) |
-| `0x44a` | `SMSG_NOTIFY_DANCE` | dance studio not planned (#802) |
-| `0x44c` | `SMSG_PLAY_DANCE` | dance studio not planned (#801) |
-| `0x44f` | `SMSG_STOP_DANCE` | dance studio not planned (#800) |
+| Opcode | Name | Why | AC sends |
+|---|---|---|---|
+| `0x39e` | `SMSG_VOICE_SESSION_ROSTER_UPDATE` | no voice chat | no |
+| `0x39f` | `SMSG_VOICE_SESSION_LEAVE` | no voice chat | no |
+| `0x3a2` | `SMSG_VOICE_SET_TALKER_MUTED` | no voice chat | no |
+| `0x3b1` | `SMSG_VOICE_PARENTAL_CONTROLS` | no voice chat | no |
+| `0x3da` | `SMSG_AVAILABLE_VOICE_CHANNEL` | no voice chat | no |
+| `0x3e0` | `SMSG_COMSAT_RECONNECT_TRY` | no voice chat | no |
+| `0x3e1` | `SMSG_COMSAT_DISCONNECT` | no voice chat | no |
+| `0x3e2` | `SMSG_COMSAT_CONNECT_FAIL` | no voice chat | no |
+| `0x3e3` | `SMSG_VOICE_CHAT_STATUS` | no voice chat | no |
+| `0x3fc` | `SMSG_VOICESESSION_FULL` | no voice chat | no |
+| `0x2f6` | `SMSG_MINIGAME_SETUP` | minigames not planned (#806) | no |
+| `0x2f7` | `SMSG_MINIGAME_STATE` | minigames not planned (#806) | no |
+| `0x3b6` | `SMSG_COMMENTATOR_STATE_CHANGED` | arena spectating not planned (#795) | no |
+| `0x3b8` | `SMSG_COMMENTATOR_MAP_INFO` | arena spectating not planned (#795) | no |
+| `0x3bb` | `SMSG_COMMENTATOR_PLAYER_INFO` | arena spectating not planned (#795) | no |
+| `0x51c` | `SMSG_COMMENTATOR_SKIRMISH_QUEUE_RESULT1` | arena spectating not planned (#795) | no |
+| `0x51d` | `SMSG_COMMENTATOR_SKIRMISH_QUEUE_RESULT2` | arena spectating not planned (#795) | no |
+| `0x44a` | `SMSG_NOTIFY_DANCE` | dance studio not planned (#802) | no |
+| `0x44c` | `SMSG_PLAY_DANCE` | dance studio not planned (#801) | no |
+| `0x44f` | `SMSG_STOP_DANCE` | dance studio not planned (#800) | no |
 
 ## Engine verbs
 
