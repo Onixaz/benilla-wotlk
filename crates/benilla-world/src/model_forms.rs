@@ -183,8 +183,18 @@ impl ModelForms {
     }
 }
 
+/// The furnisher's per-frame `(submesh, vertex)` caps: [`MESH_BUDGET`] and [`VERT_BUDGET`] while
+/// live, both unbounded behind the loading cover, which absorbs the burst.
+fn frame_caps(paced: bool) -> (usize, usize) {
+    if paced {
+        (MESH_BUDGET, VERT_BUDGET)
+    } else {
+        (usize::MAX, usize::MAX)
+    }
+}
+
 /// Advance one entry's builds within `budget` submeshes and `vert_cap` vertices (the furnisher's
-/// [`VERT_BUDGET`]); returns the count.
+/// [`frame_caps`]); returns the count.
 fn build_entry(
     e: &mut Entry,
     kinds: u8,
@@ -256,7 +266,7 @@ pub(crate) fn furnish_model_forms(
         }
     }
 
-    let cap = if focus.paced { MESH_BUDGET } else { usize::MAX };
+    let (cap, vert_cap) = frame_caps(focus.paced);
 
     let mut pending: Vec<(i32, ModelKey)> = forms
         .entries
@@ -272,7 +282,7 @@ pub(crate) fn furnish_model_forms(
     let mut built = 0usize;
     let mut verts = 0usize;
     for (_, key) in pending {
-        if built >= cap || verts >= VERT_BUDGET {
+        if built >= cap || verts >= vert_cap {
             break;
         }
         // An asset still decoding or already dropped skips: it builds on landing or frees above.
@@ -297,7 +307,7 @@ pub(crate) fn furnish_model_forms(
             &mut meshes,
             cap - built,
             &mut verts,
-            VERT_BUDGET,
+            vert_cap,
         );
         e.priority = i32::MAX; // re-asserted by next frame's require() calls
     }
@@ -413,5 +423,16 @@ mod tests {
             super::VERT_BUDGET,
         );
         assert_eq!((paced.stat.len(), paced.skin.len()), (2, 0));
+    }
+
+    /// Behind the cover neither cap holds, so a city's WMO group batches build in the frame they
+    /// land.
+    #[test]
+    fn the_cover_lifts_both_furnisher_caps() {
+        assert_eq!(super::frame_caps(false), (usize::MAX, usize::MAX));
+        assert_eq!(
+            super::frame_caps(true),
+            (super::MESH_BUDGET, super::VERT_BUDGET)
+        );
     }
 }
