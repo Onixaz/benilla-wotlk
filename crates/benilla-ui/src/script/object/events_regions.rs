@@ -305,8 +305,15 @@ fn get_script(lua: &Lua, this: &Table, name: &str) -> mlua::Result<Value> {
 /// node loads into the region; a name in neither raises.
 fn apply_region_inherits(lua: &Lua, wrapper: &Table, tag: &str, from: &str) -> mlua::Result<()> {
     use mlua::ObjectLike;
-    // Through `SetFontObject`, the binding the XML `inherits=` path uses.
-    if wrapper.call_method::<()>("SetFontObject", from).is_ok() {
+    // Through `SetFontObject`, the binding the XML `inherits=` path uses. It raises on a name no
+    // font object holds, and a raised callback error costs mlua a full Lua traceback, so a
+    // template name is tested against the registry instead of tried.
+    let is_font = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model")
+        .font_object(from)
+        .is_some();
+    if is_font && wrapper.call_method::<()>("SetFontObject", from).is_ok() {
         return Ok(());
     }
     let is_template = {
