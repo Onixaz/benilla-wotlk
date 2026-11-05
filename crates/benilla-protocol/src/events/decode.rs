@@ -358,9 +358,15 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             item_guid,
             spell_id,
         }],
-        ServerPacket::InspectItems { guid, items } => {
-            vec![SessionEvent::InspectItems { guid, items }]
-        }
+        // The talents first: 12340 reads them and fires `INSPECT_TALENT_READY` before the items.
+        ServerPacket::InspectTalent {
+            guid,
+            talents,
+            items,
+        } => vec![
+            SessionEvent::InspectTalents { guid, talents },
+            SessionEvent::InspectItems { guid, items },
+        ],
         ServerPacket::SocketGemsResult { item, enchants } => {
             vec![SessionEvent::SocketGemsResult { item, enchants }]
         }

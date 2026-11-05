@@ -9,8 +9,9 @@
 //! sees rank + 1. Tiers and columns are 1-based, as the stock frame indexes
 //! `TALENT_BRANCH_ARRAY[tier][column]`. A group is the caller's `groupIndex`, else the player's
 //! active one, for the pet too (`0x5c57d0`); the pet has only group 1. A verb's `isPet` picks the
-//! pet's set, whose tiers take 3 points (`0x5c73d0`, `0x6226ea`). Inspect talents are not
-//! modelled: their counts answer 0 and their tabs nothing.
+//! pet's set, whose tiers take 3 points (`0x5c73d0`, `0x6226ea`). A verb's `isInspect` picks the
+//! inspected player's set ([`UiScript::set_inspect_talents`]), and with `isPet` too nothing
+//! (`0x5c5c60`, `0x5c6080`).
 //!
 //! `GameTooltip:SetTalent` (`0x62f740` → `0x626e20`) shows the group's rank, or its preview rank
 //! with `isPreview`: the rank line (`TOOLTIP_TALENT_RANK`), the current rank's spell body, the next
@@ -109,11 +110,12 @@ pub struct TalentUiState {
     pub points: (u32, u32),
 }
 
-/// Which set a call reads: the player's groups or the pet's.
+/// Which set a call reads: the player's groups, the pet's or the inspected player's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Side {
     Player,
     Pet,
+    Inspect,
 }
 
 impl Side {
@@ -125,11 +127,23 @@ impl Side {
         }
     }
 
+    /// A verb's `(isInspect, isPet)` pair: an inspected pet has no set (`0x5c5c60`).
+    fn of_args(args: &MultiValue, inspect_at: usize) -> Option<Self> {
+        match (
+            flag_arg(args.get(inspect_at)),
+            flag_arg(args.get(inspect_at + 1)),
+        ) {
+            (true, true) => None,
+            (true, false) => Some(Side::Inspect),
+            (false, pet) => Some(Side::of(pet)),
+        }
+    }
+
     /// Points per tier a tab needs before the next unlocks: `(isPet == 0) * 2 + 3`
     /// (`PLAYER_TALENTS_PER_TIER` 5, `PET_TALENTS_PER_TIER` 3; `0x5c73d0`, `0x6226ea`).
     fn per_tier(self) -> i32 {
         match self {
-            Side::Player => 5,
+            Side::Player | Side::Inspect => 5,
             Side::Pet => 3,
         }
     }
@@ -137,7 +151,7 @@ impl Side {
     /// The preview event a move or reset fires: the pet's is the next event id (`0x5c7200`).
     fn preview_event(self) -> &'static str {
         match self {
-            Side::Player => "PREVIEW_TALENT_POINTS_CHANGED",
+            Side::Player | Side::Inspect => "PREVIEW_TALENT_POINTS_CHANGED",
             Side::Pet => "PREVIEW_PET_TALENT_POINTS_CHANGED",
         }
     }
@@ -156,6 +170,14 @@ impl super::UiScript {
         let mut model = self.model_mut();
         model.pet_talent_preview = state.groups.iter().map(|g| g.ranks.clone()).collect();
         model.pet_talents = state;
+    }
+
+    /// Push the inspected player's talent snapshot: its class's tabs (`0x5c9f70`) and the inspect
+    /// packet's groups (`0x5c9ff0`), whose preview ranks are the learned ones.
+    pub fn set_inspect_talents(&mut self, state: TalentUiState) {
+        let mut model = self.model_mut();
+        model.inspect_talent_preview = state.groups.iter().map(|g| g.ranks.clone()).collect();
+        model.inspect_talents = state;
     }
 
     /// Drain the `LearnTalent` sends as `(talentId, rank)`, the 0-based rank to learn
@@ -203,6 +225,7 @@ fn state(model: &Model, side: Side) -> &TalentUiState {
     match side {
         Side::Player => &model.talents,
         Side::Pet => &model.pet_talents,
+        Side::Inspect => &model.inspect_talents,
     }
 }
 
@@ -211,6 +234,7 @@ fn previews(model: &Model, side: Side) -> &Vec<Vec<Vec<i32>>> {
     match side {
         Side::Player => &model.talent_preview,
         Side::Pet => &model.pet_talent_preview,
+        Side::Inspect => &model.inspect_talent_preview,
     }
 }
 
@@ -218,6 +242,7 @@ fn previews_mut(model: &mut Model, side: Side) -> &mut Vec<Vec<Vec<i32>>> {
     match side {
         Side::Player => &mut model.talent_preview,
         Side::Pet => &mut model.pet_talent_preview,
+        Side::Inspect => &mut model.inspect_talent_preview,
     }
 }
 
@@ -236,11 +261,13 @@ pub(super) fn group_arg(model: &Model, v: &Value) -> usize {
     }
 }
 
-/// The group a learn verb reads: the player's active one, the pet's only one (`0x5c8246`).
-fn learn_group(model: &Model, side: Side) -> usize {
+/// The group a learn verb reads: the player's active one, the pet's only one (`0x5c8246`); the
+/// inspected player's none, so its tooltip offers no learn line (`0x622800`).
+fn learn_group(model: &Model, side: Side) -> Option<usize> {
     match side {
-        Side::Player => model.talents.active_group,
-        Side::Pet => 0,
+        Side::Player => Some(model.talents.active_group),
+        Side::Pet => Some(0),
+        Side::Inspect => None,
     }
 }
 
@@ -430,16 +457,15 @@ fn placeholder() -> MultiValue {
     ])
 }
 
-/// `GetTalentInfo`'s ten values for one talent, or its placeholder: an inspect call, a talent
-/// not there, or a pet talent the pet may not take (`0x5c7902`).
+/// `GetTalentInfo`'s ten values for one talent, or its placeholder: an inspected pet, a talent
+/// not there, or a pet talent the pet may not take (`0x5c7902`). An inspected talent meets its
+/// prerequisite once it holds a rank, and its preview once that holds one (`0x5c7b93`).
 fn talent_info(lua: &Lua, model: &Model, args: &MultiValue) -> mlua::Result<MultiValue> {
     let (tab, index) = (int_arg(args, 0).unwrap_or(0), int_arg(args, 1).unwrap_or(0));
-    let inspect = flag_arg(args.get(2));
-    let side = Side::of(flag_arg(args.get(3)));
-    let t = (!inspect)
-        .then(|| talent_at(model, side, tab, index))
-        .flatten()
-        .filter(|t| side == Side::Player || t.available);
+    let Some(side) = Side::of_args(args, 2) else {
+        return Ok(placeholder());
+    };
+    let t = talent_at(model, side, tab, index).filter(|t| side != Side::Pet || t.available);
     let Some(t) = t else {
         return Ok(placeholder());
     };
@@ -448,6 +474,10 @@ fn talent_info(lua: &Lua, model: &Model, args: &MultiValue) -> mlua::Result<Mult
     let rank = learned(model, side, group, tab, index);
     let preview_rank = preview(model, side, group, tab, index);
     let shown = t.rank_view(rank);
+    let (meets, meets_preview) = match side {
+        Side::Inspect => (rank >= 0, preview_rank >= 0),
+        _ => (t.required_spell_known, t.required_spell_known),
+    };
     Ok(MultiValue::from_vec(vec![
         match shown {
             Some(r) => Value::String(lua.create_string(&r.name)?),
@@ -462,9 +492,9 @@ fn talent_info(lua: &Lua, model: &Model, args: &MultiValue) -> mlua::Result<Mult
         Value::Integer(i64::from(rank + 1)),
         Value::Integer(i64::from(t.max_rank())),
         one_or_nil(t.exceptional),
-        one_or_nil(t.required_spell_known),
+        one_or_nil(meets),
         Value::Integer(i64::from(preview_rank + 1)),
-        one_or_nil(t.required_spell_known),
+        one_or_nil(meets_preview),
     ]))
 }
 
@@ -555,7 +585,8 @@ fn tooltip_lines(
             }),
         );
     }
-    if !t.required_spell_known {
+    // An inspected player knows every required spell (`0x5c60c0`).
+    if side != Side::Inspect && !t.required_spell_known {
         if let Some(name) = &t.required_spell_name {
             reqs.extend(
                 get("ITEM_REQ_SKILL")
@@ -563,25 +594,23 @@ fn tooltip_lines(
             );
         }
     }
-    // The closing hints (`0x622800`): the talent can be learned when it holds a rank or every
-    // requirement line is met (`0x6224f0`); then, without preview, the learning group with
-    // points unspent and a rank to go shows the learn line, and with preview each move that
-    // would pass.
+    // The closing hints (`0x622800`), for the learning group alone: the talent can be learned when
+    // it holds a rank or every requirement line is met (`0x6224f0`); then, without preview, points
+    // unspent and a rank to go show the learn line, and with preview each move that would pass.
     let can_learn = rank >= 0 || reqs.is_empty();
     let mut hints = Vec::new();
-    if can_learn && !use_preview {
-        if group == learn_group(model, side)
-            && group_unspent(model, side, group) != 0
-            && rank + 1 < max
-        {
-            hints.push(TalentHint::Learn);
-        }
-    } else if can_learn {
-        if preview_step(model, side, group, tab, index, 1) != 0 {
-            hints.push(TalentHint::AddPreview);
-        }
-        if preview_step(model, side, group, tab, index, -1) != 0 {
-            hints.push(TalentHint::RemovePreview);
+    if can_learn && learn_group(model, side) == Some(group) {
+        if !use_preview {
+            if group_unspent(model, side, group) != 0 && rank + 1 < max {
+                hints.push(TalentHint::Learn);
+            }
+        } else {
+            if preview_step(model, side, group, tab, index, 1) != 0 {
+                hints.push(TalentHint::AddPreview);
+            }
+            if preview_step(model, side, group, tab, index, -1) != 0 {
+                hints.push(TalentHint::RemovePreview);
+            }
         }
     }
     (
@@ -608,11 +637,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if flag_arg(args.front()) {
-                return Ok(0);
-            }
-            let side = Side::of(flag_arg(args.get(1)));
-            Ok(state(&model, side).tabs.len() as i64)
+            Ok(Side::of_args(&args, 0).map_or(0, |side| state(&model, side).tabs.len() as i64))
         })?,
     )?;
 
@@ -629,16 +654,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: GetTalentTabInfo(tabIndex[, isInspect[, isPet[, groupIndex]]])".into(),
                 ));
             };
-            let inspect = flag_arg(args.get(1));
-            let side = Side::of(flag_arg(args.get(2)));
-            let view = (!inspect)
-                .then(|| {
-                    usize::try_from(tab - 1)
-                        .ok()
-                        .and_then(|t| state(&model, side).tabs.get(t).map(|v| (t, v)))
-                })
-                .flatten();
-            let Some((t, view)) = view else {
+            let side = Side::of_args(&args, 1);
+            let view = side.and_then(|side| {
+                let t = usize::try_from(tab - 1).ok()?;
+                state(&model, side).tabs.get(t).map(|v| (side, t, v))
+            });
+            let Some((side, t, view)) = view else {
                 return Ok(MultiValue::from_vec(vec![
                     Value::Nil,
                     Value::Nil,
@@ -674,13 +695,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: GetNumTalents(tabIndex[, isInspect[, isPet]])".into(),
                 ));
             };
-            if flag_arg(args.get(1)) {
-                return Ok(0);
-            }
-            let side = Side::of(flag_arg(args.get(2)));
-            let n = usize::try_from(tab - 1)
-                .ok()
-                .and_then(|t| state(&model, side).talents.get(t))
+            let n = Side::of_args(&args, 1)
+                .zip(usize::try_from(tab - 1).ok())
+                .and_then(|(side, t)| state(&model, side).talents.get(t))
                 .map_or(0, Vec::len);
             Ok(n as i64)
         })?,
@@ -717,10 +734,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 int_arg(&args, 1).unwrap_or(0),
             );
             let mut out = Vec::new();
-            if flag_arg(args.get(2)) {
+            let Some(side) = Side::of_args(&args, 2) else {
                 return Ok(MultiValue::from_vec(out));
-            }
-            let side = Side::of(flag_arg(args.get(3)));
+            };
             let Some(t) = talent_at(&model, side, tab, index) else {
                 return Ok(MultiValue::from_vec(out));
             };
@@ -762,13 +778,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 int_arg(&args, 0).unwrap_or(0),
                 int_arg(&args, 1).unwrap_or(0),
             );
-            if flag_arg(args.get(2)) {
+            let Some(side) = Side::of_args(&args, 2) else {
                 return Ok(Value::Nil);
-            }
-            let side = Side::of(flag_arg(args.get(3)));
+            };
             // A pet talent the pet may not take has no link (`0x5c7ddf`).
             let Some(t) =
-                talent_at(&model, side, tab, index).filter(|t| side == Side::Player || t.available)
+                talent_at(&model, side, tab, index).filter(|t| side != Side::Pet || t.available)
             else {
                 return Ok(Value::Nil);
             };
@@ -787,31 +802,38 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetActiveTalentGroup([isInspect[, isPet]]) (`0x5c5810`): the pet's is always its one.
+    // GetActiveTalentGroup([isInspect[, isPet]]) (`0x5c5810`): the inspected player's whatever
+    // `isPet`, the pet's always its one.
     g.set(
         "GetActiveTalentGroup",
         lua.create_function(|lua, args: MultiValue| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if flag_arg(args.front()) || flag_arg(args.get(1)) {
-                return Ok(1);
-            }
-            Ok(model.talents.active_group as i64 + 1)
+            let group = if flag_arg(args.front()) {
+                model.inspect_talents.active_group
+            } else if flag_arg(args.get(1)) {
+                0
+            } else {
+                model.talents.active_group
+            };
+            Ok(group as i64 + 1)
         })?,
     )?;
 
-    // GetNumTalentGroups([isInspect[, isPet]]) (`0x5c5df0`): the pet's is 1 while it has a tree.
+    // GetNumTalentGroups([isInspect[, isPet]]) (`0x5c5df0`): the inspected player's whatever
+    // `isPet`, the pet's 1 while it has a tree.
     g.set(
         "GetNumTalentGroups",
         lua.create_function(|lua, args: MultiValue| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if flag_arg(args.front()) {
-                return Ok(0);
-            }
-            let side = Side::of(flag_arg(args.get(1)));
+            let side = if flag_arg(args.front()) {
+                Side::Inspect
+            } else {
+                Side::of(flag_arg(args.get(1)))
+            };
             Ok(state(&model, side).groups.len() as i64)
         })?,
     )?;
@@ -850,10 +872,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            if flag_arg(args.front()) {
+            let Some(side) = Side::of_args(&args, 0) else {
                 return Ok(0);
-            }
-            let side = Side::of(flag_arg(args.get(1)));
+            };
             let group = group_arg(&model, &arg(&args, 2));
             Ok(i64::from(group_unspent(&model, side, group)))
         })?,
@@ -958,7 +979,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, args: MultiValue| {
             let side = Side::of(flag_arg(args.front()));
             let mut model = crate::script::model_mut_of(lua);
-            let group = learn_group(&model, side);
+            let Some(group) = learn_group(&model, side) else {
+                return Ok(());
+            };
             if group >= state(&model, side).groups.len()
                 || group_preview_spent(&model, side, group) <= 0
             {
@@ -977,6 +1000,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 match side {
                     Side::Player => model.talent_preview_learns.push(sends),
                     Side::Pet => model.pet_talent_preview_learns.push(sends),
+                    Side::Inspect => {}
                 }
             }
             Ok(())
@@ -1003,12 +1027,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             }
             let (id, max) = (t.id, t.max_rank());
-            let group = learn_group(&model, side);
+            let Some(group) = learn_group(&model, side) else {
+                return Ok(());
+            };
             let rank = learned(&model, side, group, tab as usize - 1, index as usize - 1);
             if rank < max - 1 {
                 match side {
                     Side::Player => model.talent_learns.push((id, (rank + 1) as u32)),
                     Side::Pet => model.pet_talent_learns.push((id, (rank + 1) as u32)),
+                    Side::Inspect => {}
                 }
             }
             Ok(())
@@ -1093,10 +1120,9 @@ pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     int_arg(&args, 0).unwrap_or(0),
                     int_arg(&args, 1).unwrap_or(0),
                 );
-                if flag_arg(args.get(2)) {
+                let Some(side) = Side::of_args(&args, 2) else {
                     return Ok(());
-                }
-                let side = Side::of(flag_arg(args.get(3)));
+                };
                 let Some(t) = talent_at(&model, side, tab, index) else {
                     return Ok(());
                 };
@@ -1244,6 +1270,81 @@ mod tests {
             s.eval::<i64>("return GetUnspentTalentPoints(false, false, 2)")
                 .unwrap(),
             5
+        );
+    }
+
+    /// `isInspect` reads the inspected player's set: its own groups and active one whatever the
+    /// player's, a talent meeting its prerequisite once it holds a rank, no learn line, and nothing
+    /// for an inspected pet (`0x5c5c60`, `0x5c6080`, `0x5c7b93`).
+    #[test]
+    fn the_inspect_set_answers_the_inspected_players_groups() {
+        let mut s = script();
+        assert_eq!(s.eval::<i64>("return GetNumTalentTabs(true)").unwrap(), 0);
+        let mut inspected = state();
+        inspected.tabs[0].name = "Arcane".into();
+        inspected.groups[0].ranks[0] = vec![2, -1, 0];
+        inspected.groups.truncate(1);
+        inspected.groups[0].unspent = 7;
+        s.set_inspect_talents(inspected);
+
+        assert_eq!(s.eval::<i64>("return GetNumTalentTabs(true)").unwrap(), 1);
+        assert_eq!(
+            s.eval::<i64>("return GetNumTalentTabs(true, true)")
+                .unwrap(),
+            0
+        );
+        assert_eq!(s.eval::<i64>("return GetNumTalents(1, true)").unwrap(), 3);
+        assert_eq!(
+            s.eval::<i64>("return GetNumTalents(1, true, true)")
+                .unwrap(),
+            0
+        );
+        assert_eq!(s.eval::<i64>("return GetNumTalentGroups(true)").unwrap(), 1);
+        assert_eq!(
+            s.eval::<i64>("return GetNumTalentGroups(true, true)")
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            s.eval::<i64>("return GetActiveTalentGroup(true)").unwrap(),
+            1
+        );
+        assert_eq!(
+            s.eval::<i64>("return GetUnspentTalentPoints(true)")
+                .unwrap(),
+            7
+        );
+        assert_eq!(
+            s.eval::<i64>("return GetUnspentTalentPoints(true, true)")
+                .unwrap(),
+            0
+        );
+        let tab: (String, i64) = s
+            .eval("local n, _, spent = GetTalentTabInfo(1, true) return n, spent")
+            .unwrap();
+        assert_eq!(tab, ("Arcane".into(), 4));
+        let a: (i64, Option<i64>, i64, Option<i64>) = s
+            .eval("local _,_,_,_,r,_,_,p,pr,pp = GetTalentInfo(1, 1, true) return r, p, pr, pp")
+            .unwrap();
+        assert_eq!(a, (3, Some(1), 3, Some(1)));
+        let b: (i64, Option<i64>) = s
+            .eval("local _,_,_,_,r,_,_,p = GetTalentInfo(1, 2, true) return r, p")
+            .unwrap();
+        assert_eq!(b, (0, None), "no rank: the prerequisite reads unmet");
+        assert!(s
+            .eval::<bool>("return GetTalentInfo(1, 1, true, true) == nil")
+            .unwrap());
+        let q: (i64, i64, Option<i64>) = s.eval("return GetTalentPrereqs(1, 3, true)").unwrap();
+        assert_eq!(q, (1, 1, Some(1)), "A holds rank 3 here");
+        assert_eq!(
+            s.eval::<String>("return GetTalentLink(1, 1, true)")
+                .unwrap(),
+            "|cff4e96f7|Htalent:10:2|h[A]|h|r"
+        );
+        // The player's own set is untouched.
+        assert_eq!(
+            s.eval::<String>("return (GetTalentTabInfo(1))").unwrap(),
+            "Fire"
         );
     }
 

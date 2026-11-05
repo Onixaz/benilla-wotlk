@@ -2006,7 +2006,6 @@ mod tests {
             ("DISABLE_TAXI_BENCHMARK", R_1),
             ("ENABLE_TAXI_BENCHMARK", R_1),
             ("FRIENDLIST_SHOW", R_1),
-            ("INSPECT_TALENT_READY", R_1),
             ("ITEM_UNLOCKED", R_1),
             ("MAIL_LOCK_SEND_ITEMS", R_1),
             ("MODIFIER_STATE_CHANGED", R_1),

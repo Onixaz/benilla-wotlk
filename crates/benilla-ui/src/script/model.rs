@@ -561,6 +561,10 @@ pub(crate) struct Model {
     pub(crate) pet_talent_preview: Vec<Vec<Vec<i32>>>,
     /// `LearnTalent(.., true)` sends queued, `(talentId, rank)`.
     pub(crate) pet_talent_learns: Vec<(u32, u32)>,
+    /// The inspected player's talent snapshot: its class's tabs and the inspect packet's groups.
+    pub(crate) inspect_talents: super::talent::TalentUiState,
+    /// The inspected groups' preview ranks, which the packet sets to the learned ones.
+    pub(crate) inspect_talent_preview: Vec<Vec<Vec<i32>>>,
     /// `LearnPreviewTalents(true)` sends queued.
     pub(crate) pet_talent_preview_learns: Vec<Vec<(u32, u32)>>,
     /// `ConfirmTalentWipe()` calls, one `MSG_TALENT_WIPE_CONFIRM` each; the app holds the trainer.
@@ -1469,6 +1473,8 @@ impl Model {
             pet_talents: Default::default(),
             pet_talent_preview: Vec::new(),
             pet_talent_learns: Vec::new(),
+            inspect_talents: Default::default(),
+            inspect_talent_preview: Vec::new(),
             pet_talent_preview_learns: Vec::new(),
             talent_wipe_confirms: 0,
             talent_master_pending: false,

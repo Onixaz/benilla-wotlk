@@ -867,6 +867,11 @@ pub enum SessionEvent {
     /// `SMSG_ITEM_TIME_UPDATE`: seconds left on a timed item, 0 when expired. The client shows
     /// this, not `ITEM_FIELD_DURATION` (vmangos `Item::SendTimeUpdate`, `Objects/Item.cpp:1094`).
     ItemTime { item_guid: u64, seconds: u32 },
+    /// The inspected player's talent groups (`SMSG_INSPECT_TALENT`).
+    InspectTalents {
+        guid: u64,
+        talents: crate::messages::TalentsInfo,
+    },
     /// The inspected player's worn items (`SMSG_INSPECT_TALENT`, `SMSG_INSPECT_RESULTS_UPDATE`).
     InspectItems {
         guid: u64,

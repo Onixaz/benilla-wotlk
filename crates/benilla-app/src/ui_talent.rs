@@ -8,6 +8,10 @@
 //! family's `petTalentType`, picked by the family `SMSG_PET_SPELLS` carries (`0x5d6ab6` into
 //! `0x5c9df0`), and the pet body's ranks, which fire `PET_TALENT_UPDATE`
 //! (`0x5c9f10`). A pet talent outside its family's category reads as no talent (`0x5c5a20`).
+//!
+//! The inspected player's set is its class's tabs, built when the inspect target is set
+//! (`0x5c9f70`), and the groups of `SMSG_INSPECT_TALENT` for that target (`0x5c9ff0`), which then
+//! fires `INSPECT_TALENT_READY` (`0x6ce0c0`).
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -59,7 +63,63 @@ pub(crate) struct PetTalentGroup {
     pub(crate) pending_update: bool,
 }
 
+/// The inspected player's talents: the `(race, class)` its tabs come from, set with the inspect
+/// target and `None` without a player object, and the groups the inspect packet named.
+#[derive(Resource, Default)]
+pub(crate) struct InspectTalents {
+    pub(crate) class: Option<(u8, u8)>,
+    pub(crate) groups: PlayerTalentGroups,
+    /// `INSPECT_TALENT_READY`s owed, fired after the snapshot they describe.
+    pub(crate) ready: u32,
+}
+
+impl InspectTalents {
+    /// The inspect target changed (`0x5c9f70`): the tabs follow its class, the groups stay until
+    /// the packet replaces them.
+    pub(crate) fn set_target(&mut self, class: Option<(u8, u8)>) {
+        self.class = class;
+    }
+
+    /// `SMSG_INSPECT_TALENT` for the target: the groups replaced whole (`0x5c9ad0`), then the event.
+    pub(crate) fn apply(&mut self, info: TalentsInfo) {
+        if let TalentsInfo::Player {
+            unspent,
+            active_group,
+            groups,
+        } = info
+        {
+            self.groups.fill(unspent, active_group, &groups);
+        }
+        self.ready += 1;
+    }
+}
+
 impl PlayerTalentGroups {
+    /// A player talent body's groups, replacing the held ones (`0x5c9740`).
+    fn fill(
+        &mut self,
+        unspent: u32,
+        active_group: u8,
+        groups: &[benilla_protocol::messages::TalentGroupInfo],
+    ) {
+        self.unspent = unspent;
+        self.active = active_group.into();
+        self.ranks = groups
+            .iter()
+            .map(|g| g.talents.iter().map(|t| (t.talent_id, t.rank)).collect())
+            .collect();
+        self.glyphs = groups
+            .iter()
+            .map(|g| {
+                let mut six = [0u32; 6];
+                for (slot, &glyph) in six.iter_mut().zip(&g.glyphs) {
+                    *slot = u32::from(glyph);
+                }
+                six
+            })
+            .collect();
+    }
+
     /// One group, nothing learned and `unspent` points: a fresh character's state.
     pub(crate) fn fresh(unspent: u32) -> Self {
         PlayerTalentGroups {
@@ -82,6 +142,7 @@ impl Plugin for UiTalentPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerTalentGroups>()
             .init_resource::<PetTalentGroup>()
+            .init_resource::<InspectTalents>()
             .net_handler(SessionEventKind::TalentsInfo, on_talents_info)
             .add_systems(Startup, load_talents.after(AssetSet::Open))
             .add_systems(
@@ -90,6 +151,7 @@ impl Plugin for UiTalentPlugin {
                     // Feed before the input pass, so an open this frame sees a populated
                     // window; drain after it, so a click sends the same frame.
                     feed_talents.in_set(UnitFeed).in_set(TalentFeed),
+                    feed_inspect_talents.in_set(UnitFeed),
                     drain_talent_learns.after(UiInput),
                 ),
             );
@@ -144,22 +206,7 @@ fn on_talents_info(
         groups.len()
     );
     let (old_active, old_count) = (held.active, held.ranks.len());
-    held.unspent = unspent;
-    held.active = active_group.into();
-    held.ranks = groups
-        .iter()
-        .map(|g| g.talents.iter().map(|t| (t.talent_id, t.rank)).collect())
-        .collect();
-    held.glyphs = groups
-        .iter()
-        .map(|g| {
-            let mut six = [0u32; 6];
-            for (slot, &glyph) in six.iter_mut().zip(&g.glyphs) {
-                *slot = u32::from(glyph);
-            }
-            six
-        })
-        .collect();
+    held.fill(unspent, active_group, &groups);
     held.pending_events
         .push(("PLAYER_TALENT_UPDATE", Vec::new()));
     // `ACTIVE_TALENT_GROUP_CHANGED(new, old)`, 1-based, a side with no groups reading 0
@@ -369,6 +416,51 @@ fn feed_talents(
                 ScriptValue::Int(profession_delta),
             ],
         );
+    }
+}
+
+/// The inspected player's snapshot, pushed when its class, its groups or a catalog moved, then the
+/// `INSPECT_TALENT_READY`s owed; a `/reload`'s new VM gets the snapshot again.
+fn feed_inspect_talents(
+    script: Option<NonSendMut<UiScript>>,
+    talents: Option<Res<Talents>>,
+    spells: Option<Res<Spells>>,
+    mut inspect: ResMut<InspectTalents>,
+    mut memory: Local<crate::ui_script::VmMemo<Option<TalentUiState>>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let (pushed, vm_reset) = memory.get_reset(&script);
+    let catalogs_changed = talents.as_ref().is_some_and(|r| r.is_changed())
+        || spells.as_ref().is_some_and(|r| r.is_changed());
+    if !(vm_reset || catalogs_changed || inspect.is_changed()) {
+        return;
+    }
+    let (Some(talents), Some(spells)) = (talents.as_deref(), spells.as_deref()) else {
+        return;
+    };
+    let (race, class) = inspect.class.unwrap_or((0, 0));
+    let fresh = build_pages(
+        &talents.catalog,
+        &BTreeSet::new(),
+        &spells.catalog,
+        race,
+        class,
+        (0, 0),
+        &inspect.groups,
+    );
+    if pushed.as_ref() != Some(&fresh) {
+        debug!(
+            "ui_talent: fed the inspected player {} tab(s), {} group(s)",
+            fresh.tabs.len(),
+            fresh.groups.len()
+        );
+        script.set_inspect_talents(fresh.clone());
+        *pushed = Some(fresh);
+    }
+    for _ in 0..std::mem::take(&mut inspect.bypass_change_detection().ready) {
+        script.fire_event("INSPECT_TALENT_READY", Vec::new());
     }
 }
 
@@ -631,6 +723,36 @@ mod tests {
             vec![ScriptValue::Int(2), ScriptValue::Int(0)],
             "new 2, old 0: there were no groups before"
         );
+    }
+
+    /// The inspect packet replaces the inspected groups whole and owes one `INSPECT_TALENT_READY`;
+    /// a new target keeps them until its own packet lands (`0x5c9f70`, `0x5c9ff0`).
+    #[test]
+    fn the_inspect_packet_replaces_the_groups_and_owes_the_event() {
+        use benilla_protocol::messages::{LearnedTalent, TalentGroupInfo};
+        let body = |talent_id: u32, rank: u8| TalentsInfo::Player {
+            unspent: 4,
+            active_group: 1,
+            groups: vec![
+                TalentGroupInfo::default(),
+                TalentGroupInfo {
+                    talents: vec![LearnedTalent { talent_id, rank }],
+                    glyphs: vec![7],
+                },
+            ],
+        };
+        let mut inspect = InspectTalents::default();
+        inspect.set_target(Some((1, 2)));
+        inspect.apply(body(1403, 2));
+        assert_eq!((inspect.groups.unspent, inspect.groups.active), (4, 1));
+        assert_eq!(inspect.groups.ranks[1].get(&1403), Some(&2));
+        assert_eq!(inspect.groups.glyphs[1][0], 7);
+        assert_eq!(inspect.ready, 1);
+        inspect.set_target(Some((3, 3)));
+        assert_eq!(inspect.groups.ranks.len(), 2, "kept until the next packet");
+        inspect.apply(body(1500, 0));
+        assert_eq!(inspect.groups.ranks[1].get(&1403), None);
+        assert_eq!(inspect.ready, 2);
     }
 
     #[test]

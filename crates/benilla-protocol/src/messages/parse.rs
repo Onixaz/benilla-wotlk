@@ -1276,8 +1276,12 @@ fn parse_server_body(
             }
         }
         opcode::SMSG_INSPECT_TALENT => {
-            let (guid, items) = item_ops::read_inspect_talent(&mut r)?;
-            ServerPacket::InspectItems { guid, items }
+            let (guid, talents, items) = item_ops::read_inspect_talent(&mut r)?;
+            ServerPacket::InspectTalent {
+                guid,
+                talents,
+                items,
+            }
         }
         opcode::SMSG_SOCKET_GEMS_RESULT => {
             let (item, enchants) = item_ops::read_socket_gems_result(&mut r)?;

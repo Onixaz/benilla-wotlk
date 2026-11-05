@@ -865,9 +865,10 @@ pub enum ServerPacket {
         item_guid: u64,
         spell_id: u32,
     },
-    /// `SMSG_INSPECT_TALENT`'s worn items; its talent body is read past.
-    InspectItems {
+    /// `SMSG_INSPECT_TALENT`: the inspected player's talent groups and worn items.
+    InspectTalent {
         guid: u64,
+        talents: super::TalentsInfo,
         items: Vec<super::item_ops::InspectItem>,
     },
     /// `SMSG_SOCKET_GEMS_RESULT`: the socketed item's enchants for sockets 1-3 and the bonus.
@@ -2090,7 +2091,7 @@ impl ServerPacket {
             ServerPacket::CancelAutoRepeat { .. } => "SMSG_CANCEL_AUTO_REPEAT".into(),
             ServerPacket::SpellCooldownList { .. } => "SMSG_SPELL_COOLDOWN".into(),
             ServerPacket::ItemCooldown { .. } => "SMSG_ITEM_COOLDOWN".into(),
-            ServerPacket::InspectItems { .. } => "SMSG_INSPECT_TALENT".into(),
+            ServerPacket::InspectTalent { .. } => "SMSG_INSPECT_TALENT".into(),
             ServerPacket::SocketGemsResult { .. } => "SMSG_SOCKET_GEMS_RESULT".into(),
             ServerPacket::ItemRefundInfo { .. } => "SMSG_ITEM_REFUND_INFO_RESPONSE".into(),
             ServerPacket::ItemRefundResult { .. } => "SMSG_ITEM_REFUND_RESULT".into(),
