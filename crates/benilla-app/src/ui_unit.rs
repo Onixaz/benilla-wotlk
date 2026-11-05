@@ -535,11 +535,12 @@ fn taxi_benchmark(
     script: Option<NonSendMut<UiScript>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     commands: Res<crate::net::NetCommands>,
-    mut was_on: Local<Option<bool>>,
+    mut was_on: Local<crate::ui_script::VmMemo<Option<bool>>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
+    let was_on = was_on.get(&script);
     for on in script.take_taxi_benchmark_requests() {
         let _ = commands
             .0
@@ -564,15 +565,13 @@ fn taxi_benchmark(
 /// send `GetPlayerInfoByGUID`'s asks.
 fn feed_name_records(
     script: Option<NonSendMut<UiScript>>,
-    mut names: ResMut<crate::names::NameCache>,
+    names: Res<crate::names::NameCache>,
     commands: Res<crate::net::NetCommands>,
     mut fed: Local<crate::ui_script::VmMemo<bool>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    // The drain is bookkeeping: the feeds gate on the generation, not on change detection.
-    let names = names.bypass_change_detection();
     let (wiped, changed) = names.take_player_changes();
     if wiped {
         script.clear_name_records();

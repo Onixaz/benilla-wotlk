@@ -10,6 +10,8 @@
 
 use std::collections::HashMap;
 
+use benilla_assets::LockRecover;
+
 use bevy::prelude::*;
 
 use benilla_protocol::guid;
@@ -65,10 +67,9 @@ pub(crate) struct NameCache {
     /// Bumped by every landed answer and the pet-rename eviction, never by an ask: the gated
     /// feeds re-run when it moves.
     generation: u64,
-    /// The player guids changed since the VM's mirror last read them.
-    changed_players: Vec<u64>,
-    /// The session wipe ran since the VM's mirror last read.
-    players_wiped: bool,
+    /// What moved since the VM's mirror last read, behind a lock so the read takes no write on the
+    /// cache every feed reads: the session wipe, and the player guids.
+    changed_players: std::sync::Mutex<(bool, Vec<u64>)>,
 }
 
 /// One cached creature template head.
@@ -257,7 +258,7 @@ impl NameCache {
         self.player_realms.remove(&guid);
         self.players
             .insert(guid, (!name.is_empty()).then_some(name));
-        self.changed_players.push(guid);
+        self.note_changed(guid);
         self.generation = self.generation.wrapping_add(1);
     }
 
@@ -266,12 +267,13 @@ impl NameCache {
         self.players.answered_unknown(guid)
     }
 
-    /// The guids changed and whether the session wipe ran, since the last call.
-    pub(crate) fn take_player_changes(&mut self) -> (bool, Vec<u64>) {
-        (
-            std::mem::take(&mut self.players_wiped),
-            std::mem::take(&mut self.changed_players),
-        )
+    fn note_changed(&self, guid: u64) {
+        self.changed_players.lock_recover().1.push(guid);
+    }
+
+    /// Whether the session wipe ran and the guids changed, since the last call.
+    pub(crate) fn take_player_changes(&self) -> (bool, Vec<u64>) {
+        std::mem::take(&mut *self.changed_players.lock_recover())
     }
 
     /// Every answered player guid.
@@ -300,8 +302,7 @@ impl NameCache {
         self.player_traits.clear();
         self.player_realms.clear();
         self.pets.clear();
-        self.changed_players.clear();
-        self.players_wiped = true;
+        *self.changed_players.lock_recover() = (true, Vec::new());
         self.generation = self.generation.wrapping_add(1);
     }
 
@@ -410,7 +411,7 @@ impl NameCache {
         self.players.evict(guid);
         self.player_traits.remove(&guid);
         self.player_realms.remove(&guid);
-        self.changed_players.push(guid);
+        self.note_changed(guid);
         self.generation = self.generation.wrapping_add(1);
     }
 
@@ -418,7 +419,7 @@ impl NameCache {
     pub(crate) fn set_player_realm(&mut self, guid: u64, realm: String) {
         if !realm.is_empty() {
             self.player_realms.insert(guid, realm);
-            self.changed_players.push(guid);
+            self.note_changed(guid);
         }
     }
 

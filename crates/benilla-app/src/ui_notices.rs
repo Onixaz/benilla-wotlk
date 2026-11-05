@@ -613,12 +613,13 @@ fn drain_level_grant(
     names: Res<NameCache>,
     mut errors: ResMut<UiErrorKeys>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
-    mut waiting: Local<Vec<(u8, u64)>>,
+    mut waiting: Local<crate::ui_script::VmMemo<Vec<(u8, u64)>>>,
 ) {
     use benilla_ui::script::UnitRequest as R;
     let Some(mut script) = script else {
         return;
     };
+    let waiting = waiting.get(&script);
     for request in script.take_unit_requests() {
         match request {
             R::GrantLevel(friend) => {
@@ -869,6 +870,9 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut w = World::new();
         w.init_resource::<LevelGrant>();
+        w.init_resource::<NameCache>();
+        w.init_resource::<UiErrorKeys>();
+        w.init_resource::<crate::ui_chat::ChatLog>();
         w.insert_resource(NetCommands(tx));
         for granter in [0x2A, 0x2B] {
             w.run_system_once_with(

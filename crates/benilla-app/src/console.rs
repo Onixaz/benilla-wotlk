@@ -93,7 +93,7 @@ impl Plugin for ConsolePlugin {
                 cvarlist,
             )
             .console_command("help", "List the console commands, or describe one.", help)
-            .add_systems(Update, print_script_lines);
+            .add_systems(Update, print_script_lines.after(crate::ui_script::UiInput));
     }
 }
 

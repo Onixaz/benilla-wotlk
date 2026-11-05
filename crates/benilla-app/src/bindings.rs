@@ -1178,9 +1178,9 @@ mod tests {
     /// The two-probe lookup: the exact chord, then one retry with the leftmost modifier dropped,
     /// never a third.
     #[test]
-    fn a_press_probes_its_chord_then_falls_back_once() {
-        // Shift held, W pressed: `SHIFT-W` is unbound, so the retry drops SHIFT and MOVEFORWARD
-        // runs (the reference's `strchr` step).
+    fn a_press_probes_its_chord_then_its_modifier_reductions() {
+        // Shift held, W pressed: `SHIFT-W` is unbound, so the reduction drops SHIFT and
+        // MOVEFORWARD runs.
         let mut app = harness();
         press_key(&mut app, KeyCode::ShiftLeft);
         press_key(&mut app, KeyCode::KeyW);
@@ -1195,7 +1195,7 @@ mod tests {
         app.update();
         assert!(!state(&app).pressed(Input::MoveForward));
         // Bare Z is the sheath toggle, ALT-Z is TOGGLEUI: the exact probe runs first, so a
-        // fallback never overrides a real entry.
+        // reduction never overrides a real entry.
         let mut app = harness();
         press_key(&mut app, KeyCode::KeyZ);
         app.update();
@@ -1211,15 +1211,14 @@ mod tests {
             "ALT-Z is TOGGLEUI: the exact chord probes first"
         );
         assert!(!state(&app).fired(Input::ToggleSheath));
-        // CTRL-ALT-Z runs nothing: the single strip drops the leftmost modifier (`ALT-CTRL-Z`
-        // to `CTRL-Z`, unbound) and stops, never reaching ALT-Z or Z.
+        // CTRL-ALT-Z reduces to `CTRL-Z`, unbound, then `ALT-Z` (`0x5622e0`).
         release_key(&mut app, KeyCode::KeyZ);
         press_key(&mut app, KeyCode::ControlLeft);
         press_key(&mut app, KeyCode::KeyZ);
         app.update();
         assert!(
-            lua_count(&app, "UITOGGLES") == 1 && !state(&app).fired(Input::ToggleSheath),
-            "ALT-CTRL-Z probes CTRL-Z and stops — no second strip to ALT-Z or Z"
+            lua_count(&app, "UITOGGLES") == 2 && !state(&app).fired(Input::ToggleSheath),
+            "ALT-CTRL-Z runs on through CTRL-Z to ALT-Z, short of the bare Z"
         );
         // TAB and SHIFT-TAB are both bound, so each resolves exactly.
         let mut app = harness();

@@ -1945,7 +1945,6 @@ mod tests {
             ("PLAYER_ROLES_ASSIGNED", R_1),
             ("RAISED_AS_GHOUL", R_1),
             ("TRADE_POTENTIAL_BIND_ENCHANT", R_1),
-            ("UPDATE_CHAT_COLOR_NAME_BY_CLASS", R_1),
             ("UPDATE_FLOATING_CHAT_WINDOWS", R_1),
             ("UPDATE_SHAPESHIFT_COOLDOWN", R_1),
             ("UPDATE_SHAPESHIFT_FORM", R_1),
@@ -2026,11 +2025,6 @@ mod tests {
                  `0x11d`), so StaticPopupDialogs[\"TRADE\"] is \
                  dead code THERE too, and benilla leaves it unproduced: \
                  producing this would be a divergence, not a fix",
-            ),
-            (
-                "TRADE_REPLACE_ENCHANT",
-                "UIParent.lua — the enchant-replacement confirm inside a trade; benilla's trade \
-                 feed does not derive it",
             ),
             (
                 "CLOSE_WORLD_MAP",
