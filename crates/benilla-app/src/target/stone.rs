@@ -3,8 +3,6 @@
 //! which summons the selected party member. Its refusals read the roster, so the click hands the
 //! stone here and the shared use, `CMSG_GAMEOBJ_USE`, follows a pass.
 
-use benilla_ui::script::UiScript;
-use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
 
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
@@ -61,7 +59,6 @@ pub(crate) fn meeting_stone_refusal(
 /// The stone's use, run with the click's guid: a refusal line, or `CMSG_GAMEOBJ_USE`. The shared
 /// use's lock arms never apply, as the type has no lock slot.
 pub(crate) fn drain_meeting_stone_uses(
-    script: Option<NonSendMut<UiScript>>,
     mut uses: MessageReader<MeetingStoneUse>,
     group: Option<Res<GroupState>>,
     selection: Res<super::Selection>,
@@ -69,12 +66,8 @@ pub(crate) fn drain_meeting_stone_uses(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     stores: Query<&ObjectStore>,
     commands: Res<NetCommands>,
-    mut sink: crate::ui_action::MessageSink,
+    mut errors: ResMut<crate::ui_action::UiErrorKeys>,
 ) {
-    let Some(mut script) = script else {
-        uses.clear();
-        return;
-    };
     let Some(level) = self_q.single().ok().and_then(|s| s.0.unit_level()) else {
         uses.clear();
         return;
@@ -86,22 +79,18 @@ pub(crate) fn drain_meeting_stone_uses(
             .and_then(|e| stores.get(e).ok())
             .and_then(|s| s.0.unit_level()),
     };
-    let mut lines = Vec::new();
     for &MeetingStoneUse { go_guid } in uses.read() {
         let stone = templates.get(go_guid).and_then(|t| t.meeting_stone);
         match meeting_stone_refusal(group.as_deref(), target, level, stone) {
             Some(key) => {
                 trace_use(&format!("meeting stone {go_guid:#x} refused: {key}"));
-                lines.extend(crate::ui_action::keyed_line(&script, key));
+                errors.0.push(crate::ui_action::UiError::key(key));
             }
             None => {
                 trace_use(&format!("SEND CMSG_GAMEOBJ_USE guid={go_guid:#x}"));
                 let _ = commands.0.send(ClientCommand::GameObjUse { guid: go_guid });
             }
         }
-    }
-    if !lines.is_empty() {
-        crate::ui_action::show_messages(&mut script, &mut sink, "target::stone", lines);
     }
 }
 
