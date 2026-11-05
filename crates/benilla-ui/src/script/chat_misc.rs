@@ -124,7 +124,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SendSystemMessage(text) (`0x50d8a0`): one `CHAT_MSG_SYSTEM` line.
+    // SendSystemMessage(text) (`0x50d8a0`): one `CHAT_MSG_SYSTEM` line, through the chat log the
+    // line ids live in, so it fires at that frame's feed where the reference fires inside the call.
     g.set(
         "SendSystemMessage",
         lua.create_function(|lua, text: Value| {

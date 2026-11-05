@@ -53,8 +53,13 @@ pub(crate) fn apply_script_calls(
             } => {
                 let named = appliers.p0().attack_unit(&unit, exact);
                 if appliers.p7().may_start() {
-                    appliers.p0().select_for_attack(named);
-                    appliers.p7().swing_at_selection();
+                    match named {
+                        Some((entity, guid)) => {
+                            appliers.p0().select_for_attack(entity, guid);
+                            appliers.p7().swing_at_selection();
+                        }
+                        None => appliers.p7().no_attack_target(),
+                    }
                 }
             }
             ScriptCall::StopAttack => appliers.p7().stop_attack(),

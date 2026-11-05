@@ -114,6 +114,13 @@ impl AttackPress<'_, '_> {
         !attack_actor_refusal(me, my_guid, &mut self.ui_errors)
     }
 
+    /// `StartAttack` named nobody: the refusal, with the selection left alone (`0x72c2b0`).
+    pub(crate) fn no_attack_target(&mut self) {
+        self.ui_errors
+            .0
+            .push(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
+    }
+
     /// `StartAttack`'s swing at the selection a named unit left, past the nearest-enemy pick
     /// (`0x72c2b0`).
     pub(crate) fn swing_at_selection(&mut self) {

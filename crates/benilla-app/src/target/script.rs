@@ -89,12 +89,9 @@ impl ScriptSelect<'_, '_> {
             .or_else(|| self.by_name.attackable(unit, exact))
     }
 
-    /// Commit a unit [`Self::attack_unit`] named; nothing named leaves the selection bare.
-    pub(crate) fn select_for_attack(&mut self, named: Option<(Entity, u64)>) {
-        match named {
-            Some((entity, guid)) => self.commit.commit(entity, guid),
-            None => self.commit.clear(),
-        }
+    /// Commit the unit [`Self::attack_unit`] named.
+    pub(crate) fn select_for_attack(&mut self, entity: Entity, guid: u64) {
+        self.commit.commit(entity, guid);
     }
 
     /// `TargetNearest*([reverse])`, one cycle of the cycler the TAB key runs, called with
