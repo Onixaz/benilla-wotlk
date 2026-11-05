@@ -2481,6 +2481,70 @@ fn parse_server_body(
             let (id, value) = world_state::read_update_world_state(&mut r)?;
             ServerPacket::UpdateWorldState { id, value }
         }
+        // Deviation: 12340 writes these to its developer console, which benilla does not have;
+        // each is read in full and dropped. Godmode, pet godmode and XP gain read a `u8` on/off
+        // (`0x6e2ed0`, `0x6e2f00`, `0x6e40d6`); the server time a packed time and the last tick
+        // (`0x7e2a63`, `0x7e2a6e`).
+        opcode::SMSG_GODMODE | opcode::SMSG_PETGODMODE | opcode::SMSG_TOGGLE_XP_GAIN => {
+            read_u8(&mut r)?;
+            ServerPacket::Ignored { opcode }
+        }
+        opcode::SMSG_SERVERTIME => {
+            read_u32_le(&mut r)?;
+            read_u32_le(&mut r)?;
+            ServerPacket::Ignored { opcode }
+        }
+        // Deviation: the console's damage breakdown (`0x6d3f10`): attacker and target `u64`,
+        // source type, spell, a row count, then per row a label, an index and two `f32`
+        // (`0x6d4028`-`0x6d4049`).
+        opcode::SMSG_DAMAGE_CALC_LOG => {
+            read_u64_le(&mut r)?;
+            read_u64_le(&mut r)?;
+            read_u32_le(&mut r)?;
+            read_u32_le(&mut r)?;
+            let rows = read_u32_le(&mut r)? as i32;
+            for _ in 0..rows.max(0) {
+                read_cstring(&mut r)?;
+                read_u32_le(&mut r)?;
+                read_f32_le(&mut r)?;
+                read_f32_le(&mut r)?;
+            }
+            ServerPacket::Ignored { opcode }
+        }
+        // Two `u32` the reference reads and drops (`0x6e2f1c`, `0x6e308c`).
+        opcode::SMSG_FORCEACTIONSHOW | opcode::SMSG_BINDZONEREPLY => {
+            read_u32_le(&mut r)?;
+            read_u32_le(&mut r)?;
+            ServerPacket::Ignored { opcode }
+        }
+        // Looter `u64`, slot, a byte, item id and name, read and dropped (`0x6ced80`).
+        opcode::SMSG_LOOT_ITEM_NOTIFY => {
+            read_u64_le(&mut r)?;
+            read_u8(&mut r)?;
+            read_u8(&mut r)?;
+            read_u32_le(&mut r)?;
+            read_cstring(&mut r)?;
+            ServerPacket::Ignored { opcode }
+        }
+        // A unit `u64` and a string, read and dropped (`0x714b20`).
+        opcode::SMSG_FORCE_ANIM => {
+            read_u64_le(&mut r)?;
+            read_cstring(&mut r)?;
+            ServerPacket::Ignored { opcode }
+        }
+        // The relay's shape (`0x741b60`), which changes no movement state for this opcode.
+        opcode::MSG_MOVE_TOGGLE_COLLISION_CHEAT => {
+            read_packed_guid(&mut r)?;
+            movement::read_movement_info_wotlk(&mut r)?;
+            ServerPacket::Ignored { opcode }
+        }
+        // Nothing read: the GM player info pair returns (`0x52664a`), the two cheat toggles fall
+        // to the handler's unhandled exit (`0x6e4186`), the server geometry returns (`0x8c8de0`).
+        opcode::CMSG_GM_REQUEST_PLAYER_INFO
+        | opcode::SMSG_GM_PLAYER_INFO
+        | opcode::SMSG_IGNORE_REQUIREMENTS_CHEAT
+        | opcode::SMSG_IGNORE_DIMINISHING_RETURNS_CHEAT
+        | opcode::SMSG_DEBUG_SERVER_GEO => ServerPacket::Ignored { opcode },
         // Another player's move, relayed under the mover's opcode (creatures use monster moves).
         o if is_movement_relay(o) => {
             let guid = read_packed_guid(&mut r)?;
@@ -2655,5 +2719,69 @@ mod tests {
             .unwrap(),
             (ServerPacket::ResetRangedCombatTimer { time_ms: 500 }, 0)
         ));
+    }
+
+    /// The GM and debug packets 12340 takes to no game effect read their whole body and are not
+    /// tallied as dropped.
+    #[test]
+    fn the_gm_and_debug_packets_read_whole_and_are_ignored() {
+        fn cstr(s: &str) -> Vec<u8> {
+            let mut v = s.as_bytes().to_vec();
+            v.push(0);
+            v
+        }
+        let two_u32 = [7u32.to_le_bytes(), 9u32.to_le_bytes()].concat();
+        let mut loot = 0x0400_0000_0000_0042u64.to_le_bytes().to_vec();
+        loot.extend([3, 0]);
+        loot.extend(2589u32.to_le_bytes());
+        loot.extend(cstr("Linen Cloth"));
+        let mut anim = 0xF130_0000_0000_0007u64.to_le_bytes().to_vec();
+        anim.extend(cstr("Attack1H"));
+        let mut damage = [1u64.to_le_bytes(), 2u64.to_le_bytes()].concat();
+        damage.extend([0u32, 133, 2].iter().flat_map(|v| v.to_le_bytes()));
+        for (label, index) in [("base", 3u32), ("val", 0)] {
+            damage.extend(cstr(label));
+            damage.extend(index.to_le_bytes());
+            damage.extend(10f32.to_le_bytes());
+            damage.extend(12.5f32.to_le_bytes());
+        }
+        // Packed guid with no bytes set, then a still movement block with no optional parts.
+        let mut collision = vec![0u8];
+        collision.extend([0u8; 30]);
+        let bodies: [(u16, Vec<u8>); 15] = [
+            (opcode::SMSG_FORCEACTIONSHOW, two_u32.clone()),
+            (opcode::SMSG_PETGODMODE, vec![1]),
+            (opcode::SMSG_GODMODE, vec![0]),
+            (opcode::SMSG_SERVERTIME, two_u32.clone()),
+            (opcode::MSG_MOVE_TOGGLE_COLLISION_CHEAT, collision),
+            (opcode::SMSG_BINDZONEREPLY, two_u32),
+            (opcode::SMSG_LOOT_ITEM_NOTIFY, loot),
+            (opcode::CMSG_GM_REQUEST_PLAYER_INFO, Vec::new()),
+            (opcode::SMSG_GM_PLAYER_INFO, Vec::new()),
+            (opcode::SMSG_DAMAGE_CALC_LOG, damage),
+            (opcode::SMSG_IGNORE_REQUIREMENTS_CHEAT, Vec::new()),
+            (opcode::SMSG_IGNORE_DIMINISHING_RETURNS_CHEAT, Vec::new()),
+            (opcode::SMSG_FORCE_ANIM, anim),
+            (opcode::SMSG_TOGGLE_XP_GAIN, vec![1]),
+            (opcode::SMSG_DEBUG_SERVER_GEO, Vec::new()),
+        ];
+        for (op, body) in bodies {
+            let name = super::super::opcode_name(op).unwrap_or("?");
+            let (packet, tail) = parse_server_with_tail(op, &body).expect(name);
+            assert!(
+                matches!(packet, ServerPacket::Ignored { opcode } if opcode == op),
+                "{name}"
+            );
+            assert_eq!(tail, 0, "{name} leaves no byte unread");
+            assert!(
+                crate::events::decode(packet).is_empty(),
+                "{name} is no dropped packet"
+            );
+        }
+        // A row counted but not sent is a short read.
+        let mut short = vec![0u8; 24];
+        short.extend(1u32.to_le_bytes());
+        let err = parse_server(opcode::SMSG_DAMAGE_CALC_LOG, &short).err();
+        assert_eq!(err.map(|e| e.kind()), Some(io::ErrorKind::UnexpectedEof));
     }
 }
