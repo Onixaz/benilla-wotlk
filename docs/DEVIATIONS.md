@@ -1,8 +1,13 @@
-# Deviations: incoming opcodes benilla does not act on
+# Deviations
 
-12340 registers a handler for 610 incoming world opcodes (`reference/3.3.5a-opcodes.tsv`). This
-page lists each one benilla reads to no effect or does not decode, and why. Everything else has a
-decoder that does what 12340 does.
+What 12340 does that benilla leaves out on purpose, and the gaps still open next to them. Every
+other deviation is written where it lives, in the code beside the reference fact (a CVar's
+`Deviates` row, a comment).
+
+The first two sections cover the 610 incoming world opcodes 12340 registers a handler for
+(`reference/3.3.5a-opcodes.tsv`): each one benilla reads to no effect or does not decode, and
+why. Every other opcode has a decoder that does what 12340 does. The last section covers the
+engine verbs the stock interface calls that benilla leaves out.
 
 `crates/benilla-protocol/tests/deviations.rs` holds this page to the code: an opcode with no
 parse arm must be listed under "Not decoded", and a listed one must still have none. Give an
@@ -76,3 +81,47 @@ These are gaps, not decisions. Each has an open issue.
 | `0x3f2` | `SMSG_USERLIST_UPDATE` | #597 |
 | `0x47c` | `SMSG_SET_PHASE_SHIFT` | #456 |
 | `0x514` | `SMSG_SEND_ALL_COMBAT_LOG` | #442 |
+
+## Engine verbs left out
+
+Verbs the stock interface calls that benilla does not build, because no 3.3.5a server can serve
+what they ask for. The open gaps, the verbs still to build, are tracked in #668 and listed in the
+stock-UI test's known-gap list (`crates/benilla-app/src/ui_script/reference_ui.rs`).
+
+### Battle.net (Real ID)
+
+12340 talks to Battle.net over its own login, apart from the realm. A 3.3.5a server has no
+Battle.net service, so 12340 itself answers every one of these as if disconnected. benilla builds
+the ones the stock interface reads unguarded with those answers: `BNConnected`,
+`BNFeaturesEnabled` and `BNFeaturesEnabledAndConnected` are false, and the friend, invite and
+block counts are 0 (`crates/benilla-ui/src/script/battle_net.rs`). Each verb below acts on a
+Real ID friend, invite, conversation or block row, and with every count at 0 no such row exists.
+
+`BNAcceptFriendInvite`, `BNCreateConversation`, `BNDeclineFriendInvite`, `BNGetBlockedInfo`,
+`BNGetBlockedToonInfo`, `BNGetConversationInfo`, `BNGetConversationMemberInfo`,
+`BNGetCustomMessageTable`, `BNGetFOFInfo`, `BNGetFriendInfo`, `BNGetFriendInfoByID`,
+`BNGetFriendInviteInfo`, `BNGetFriendToonInfo`, `BNGetInfo`, `BNGetNumConversationMembers`,
+`BNGetNumFOF`, `BNGetNumFriendToons`, `BNGetSelectedBlock`, `BNGetSelectedFriend`,
+`BNGetSelectedToonBlock`, `BNGetToonInfo`, `BNInviteToConversation`, `BNIsFriend`, `BNIsSelf`,
+`BNIsToonBlocked`, `BNLeaveConversation`, `BNListConversation`, `BNRemoveFriend`,
+`BNReportPlayer`, `BNRequestFOFInfo`, `BNSendConversationMessage`, `BNSendFriendInvite`,
+`BNSendFriendInviteByID`, `BNSendWhisper`, `BNSetAFK`, `BNSetBlocked`, `BNSetCustomMessage`,
+`BNSetDND`, `BNSetFriendNote`, `BNSetSelectedBlock`, `BNSetSelectedFriend`,
+`BNSetSelectedToonBlock`, `BNSetToonBlocked`.
+
+### Knowledge base
+
+The help frame's knowledge base is downloaded over HTTP from a Blizzard web service, not asked of
+the realm: the setup request builds a `getKBSetup.xml` address for the locale (`0x550e10`). That
+service is gone and no 3.3.5a server stands in for it.
+
+`KBArticle_BeginLoading`, `KBArticle_GetData`, `KBQuery_BeginLoading`,
+`KBQuery_GetArticleHeaderCount`, `KBQuery_GetTotalArticleCount`, `KBSetup_BeginLoading`,
+`KBSetup_GetArticleHeaderCount`, `KBSetup_GetCategoryCount`, `KBSetup_GetCategoryData`,
+`KBSetup_GetSubCategoryCount`, `KBSetup_GetSubCategoryData`, `KBSetup_GetTotalArticleCount`,
+`KBSetup_IsLoaded`, `KBSystem_GetServerNotice`.
+
+### Voice chat
+
+benilla has no voice chat (see the voice opcodes above): `ChannelSilenceVoice`,
+`ChannelUnSilenceVoice`, `SetActiveVoiceChannelBySessionID`.
