@@ -187,6 +187,48 @@ pub(super) fn read_channel_notify_wotlk(r: &mut &[u8]) -> io::Result<ChannelNoti
     })
 }
 
+/// One edit to the watched channel's roster: `SMSG_USERLIST_ADD`, `_REMOVE` or `_UPDATE`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelUserList {
+    pub kind: ChannelUserListKind,
+    pub guid: u64,
+    /// The member's `ChannelMemberFlags`; a removal carries none.
+    pub member_flags: u8,
+    /// The channel's own flags.
+    pub channel_flags: u8,
+    /// The server's member count, which the client does not read.
+    pub count: u32,
+    pub channel: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelUserListKind {
+    Add,
+    Remove,
+    Update,
+}
+
+/// The three user-list packets: `u64` guid, the member's flags (not on a removal), the channel's
+/// flags, a `u32` count and the channel's name (`0x504144`, `0x504303`, `0x500393`).
+pub(super) fn read_channel_user_list(
+    r: &mut &[u8],
+    kind: ChannelUserListKind,
+) -> io::Result<ChannelUserList> {
+    let guid = read_u64_le(r)?;
+    let member_flags = match kind {
+        ChannelUserListKind::Remove => 0,
+        _ => read_u8(r)?,
+    };
+    Ok(ChannelUserList {
+        kind,
+        guid,
+        member_flags,
+        channel_flags: read_u8(r)?,
+        count: read_u32_le(r)?,
+        channel: read_cstring(r)?,
+    })
+}
+
 /// `SMSG_CHANNEL_LIST` (handler `0x505dc0`): `(display, channel, flags, members)`, each member a
 /// guid and its `ChannelMemberFlags`. A non-zero display byte routes the body to the channel pane
 /// (`0x505de5` → `0x503990`), zero to the `/chatlist` print.

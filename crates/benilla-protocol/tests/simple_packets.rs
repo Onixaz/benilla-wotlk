@@ -976,3 +976,86 @@ fn difficulty_change_results_read_their_tails() {
     assert_eq!(result(with(9, &[])), R::Done);
     assert_eq!(result(with(12, &[])), R::Other(12));
 }
+
+/// `SMSG_SET_PHASE_SHIFT` (`0x526cf4`): one `u32` mask.
+#[test]
+fn the_phase_shift_is_one_mask() {
+    let p =
+        messages::parse_server(messages::opcode::SMSG_SET_PHASE_SHIFT, &hx("41000000")).unwrap();
+    assert!(matches!(
+        decode(p).as_slice(),
+        [SessionEvent::PhaseShift { mask: 0x41 }]
+    ));
+}
+
+/// `SMSG_FEATURE_SYSTEM_STATUS` (`0x6e3f39`): the complaint status, then the voice status, read
+/// and dropped; `SMSG_COMPLAIN_RESULT` (`0x6e3e94`): result, reason.
+#[test]
+fn the_complaint_system_packets() {
+    let p =
+        messages::parse_server(messages::opcode::SMSG_FEATURE_SYSTEM_STATUS, &hx("0201")).unwrap();
+    assert!(matches!(
+        decode(p).as_slice(),
+        [SessionEvent::ComplaintStatus { status: 2 }]
+    ));
+    let p = messages::parse_server(messages::opcode::SMSG_COMPLAIN_RESULT, &hx("010c")).unwrap();
+    assert!(matches!(
+        decode(p).as_slice(),
+        [SessionEvent::ComplaintResult(messages::ComplaintResult {
+            result: 1,
+            reason: 12
+        })]
+    ));
+    let p = messages::parse_server(messages::opcode::SMSG_COMPLAIN_RESULT, &hx("00")).unwrap();
+    assert!(
+        matches!(
+            decode(p).as_slice(),
+            [SessionEvent::ComplaintResult(messages::ComplaintResult {
+                result: 0,
+                reason: 0
+            })]
+        ),
+        "AzerothCore's result alone takes the chat arm"
+    );
+    assert_eq!(
+        messages::complaint_mail(0x0102, 77),
+        hx("000201000000000000000000004d00000000000000"),
+        "u8 0, the sender, u32 0, the mail, u32 0"
+    );
+}
+
+/// The three user-list packets (`0x504130`, `0x5042f0`, `0x500380`): a removal carries no member
+/// flags.
+#[test]
+fn the_user_list_packets() {
+    use messages::{ChannelUserList, ChannelUserListKind as K};
+    let body = |member: Option<u8>| {
+        let mut b = 0x99u64.to_le_bytes().to_vec();
+        b.extend(member);
+        b.push(0x18);
+        b.extend_from_slice(&3u32.to_le_bytes());
+        b.extend_from_slice(b"General\0");
+        b
+    };
+    for (op, kind, member) in [
+        (messages::opcode::SMSG_USERLIST_ADD, K::Add, Some(0x2)),
+        (messages::opcode::SMSG_USERLIST_REMOVE, K::Remove, None),
+        (messages::opcode::SMSG_USERLIST_UPDATE, K::Update, Some(0x4)),
+    ] {
+        let p = messages::parse_server(op, &body(member)).unwrap();
+        match decode(p).as_slice() {
+            [SessionEvent::ChannelUserList(u)] => assert_eq!(
+                *u,
+                ChannelUserList {
+                    kind,
+                    guid: 0x99,
+                    member_flags: member.unwrap_or(0),
+                    channel_flags: 0x18,
+                    count: 3,
+                    channel: "General".into(),
+                }
+            ),
+            other => panic!("{kind:?}: {other:?}"),
+        }
+    }
+}

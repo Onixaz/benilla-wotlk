@@ -1932,6 +1932,11 @@ pub(crate) enum ClientCommand {
         mail_id: u32,
         sender: u64,
     },
+    /// `CMSG_COMPLAIN` about a mail's sender.
+    ComplainMail {
+        sender: u64,
+        mail_id: u32,
+    },
     /// `CMSG_MAIL_DELETE`, with a `mail_delete_reason`.
     MailDelete {
         mailbox: u64,
@@ -2329,6 +2334,8 @@ pub(crate) enum ClientCommand {
     },
     /// `MSG_RAID_READY_CHECK` with an empty body, leader only.
     ReadyCheckStart,
+    /// `MSG_RAID_READY_CHECK_FINISHED`: the initiator's check closed.
+    ReadyCheckFinish,
     /// `MSG_RAID_READY_CHECK` with one byte.
     ReadyCheckAnswer {
         ready: bool,

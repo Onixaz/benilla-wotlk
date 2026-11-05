@@ -14,12 +14,17 @@ use crate::world_state::WorldStates;
 #[derive(Resource)]
 struct WeatherTable(WeatherCatalog);
 
-/// Registers the two handlers.
+/// Registers the handlers.
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.add_systems(Startup, load_weather_table.after(AssetSet::Open))
+        .add_systems(
+            OnExit(crate::char_select::ClientState::InWorld),
+            reset_phase_mask,
+        )
         .net_handler(K::Weather, on_weather)
-        .net_handler(K::WorldStates, on_world_states);
+        .net_handler(K::WorldStates, on_world_states)
+        .net_handler(K::PhaseShift, on_phase_shift);
 }
 
 fn load_weather_table(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
@@ -60,6 +65,17 @@ fn on_world_states(In(ev): In<SessionEvent>, mut states: ResMut<WorldStates>) {
     {
         world_states(scope, pairs, &mut states);
     }
+}
+
+fn on_phase_shift(In(ev): In<SessionEvent>, mut states: ResMut<WorldStates>) {
+    if let SessionEvent::PhaseShift { mask } = ev {
+        debug!("phase mask {mask:#x}");
+        states.set_phase_mask(mask);
+    }
+}
+
+fn reset_phase_mask(mut states: ResMut<WorldStates>) {
+    states.reset_phase_mask();
 }
 
 /// `SMSG_WEATHER`: the zone's weather change, `instant` on zone entry, a ramp otherwise. The id

@@ -398,7 +398,8 @@ pub use lfg::{
     EncounterView, LfgBootView, LfgCatalogView, LfgCompletionRewardView, LfgDungeonRewardView,
     LfgDungeonView, LfgExpansionView, LfgGroupView, LfgLine, LfgMemberLocksView, LfgName,
     LfgPartyView, LfgProposalMemberView, LfgProposalView, LfgQueueStatusView, LfgRequest,
-    LfgRewardItemView, LfgRoleCheckMemberView, LfgRoleCheckView, LfgUpdateView, MapDifficultyView,
+    LfgRewardItemView, LfgRoleCheckMemberView, LfgRoleCheckView, LfgUpdateView, LfrGroupView,
+    LfrListView, LfrPlayerView, LfrStatsView, MapDifficultyView,
 };
 pub use loot::{LootRow, LootState, LOOT_PORTRAIT_UNIT};
 pub use loot_roll::{LootRollEntry, LootRollsState};

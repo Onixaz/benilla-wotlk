@@ -17,6 +17,7 @@ pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::Chat, on_chat)
         .net_handler(K::ChannelList, on_channel_list)
+        .net_handler(K::ChannelUserList, on_channel_user_list)
         .net_handler(K::ChatPlayerNotFound, on_whisper_refusal)
         .net_handler(K::ChatWrongFaction, on_whisper_refusal)
         .net_handler(K::ZoneUnderAttack, on_broadcast)
@@ -80,6 +81,43 @@ fn on_channel_list(
             .answer(crate::names::NameKey::Player(guid), guid, commands)
             .map(|name| name.map(str::to_string))
     });
+}
+
+/// `SMSG_USERLIST_ADD`, `_REMOVE` and `_UPDATE`: the watched channel's roster follows its members.
+fn on_channel_user_list(
+    In(ev): In<SessionEvent>,
+    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    names: Option<Res<crate::names::NameCache>>,
+    commands: Option<Res<NetCommands>>,
+) {
+    use benilla_protocol::messages::ChannelUserListKind as K;
+    let (SessionEvent::ChannelUserList(u), Some(mut script)) = (ev, script) else {
+        return;
+    };
+    debug!(
+        "chat: user list {:?} {:?} {:#x} flags {:#04x}",
+        u.kind, u.channel, u.guid, u.member_flags
+    );
+    match u.kind {
+        K::Add => script.channel_user_added(
+            &u.channel,
+            u.guid,
+            u.member_flags,
+            u.channel_flags,
+            |guid| {
+                let (Some(names), Some(commands)) = (names.as_deref(), commands.as_deref()) else {
+                    return None;
+                };
+                names
+                    .answer(crate::names::NameKey::Player(guid), guid, commands)
+                    .map(|name| name.map(str::to_string))
+            },
+        ),
+        K::Remove => script.channel_user_removed(&u.channel, u.guid, u.channel_flags),
+        K::Update => {
+            script.channel_user_updated(&u.channel, u.guid, u.member_flags, u.channel_flags)
+        }
+    }
 }
 
 /// The channel pane's roster waits on the name cache (`0x4ffe30`): each answer that has landed is

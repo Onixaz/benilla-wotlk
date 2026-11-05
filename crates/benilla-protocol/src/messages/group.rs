@@ -637,22 +637,12 @@ pub(super) fn read_raid_target_update(r: &mut &[u8]) -> io::Result<RaidTargetUpd
     })
 }
 
-/// A server `MSG_RAID_READY_CHECK`: empty when the leader starts a check, else one member's answer,
-/// sent to the leader only (`Group.cpp:94-96`, `126-130`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReadyCheck {
-    Started,
-    Answer { guid: u64, ready: u8 },
-}
-
-pub(super) fn read_ready_check(r: &mut &[u8]) -> io::Result<ReadyCheck> {
-    if r.is_empty() {
-        return Ok(ReadyCheck::Started);
-    }
-    Ok(ReadyCheck::Answer {
-        guid: read_u64_le(r)?,
-        ready: read_u8(r)?,
-    })
+/// `MSG_RAID_READY_CHECK_CONFIRM` (`0x5744f0`): the member's guid, then the ready byte when the
+/// body carries one, 0 when it does not.
+pub(super) fn read_ready_check_confirm(r: &mut &[u8]) -> io::Result<(u64, bool)> {
+    let guid = read_u64_le(r)?;
+    let ready = if r.is_empty() { 0 } else { read_u8(r)? };
+    Ok((guid, ready != 0))
 }
 
 /// `CMSG_GROUP_INVITE` body (`0x6d4300`): the name, then `InviteUnit`'s `u32` flags.
@@ -772,12 +762,12 @@ pub fn raid_target_request() -> Vec<u8> {
     vec![0xFF]
 }
 
-/// `MSG_RAID_READY_CHECK` body starting a check: empty (`Group.cpp:84-92`).
+/// `MSG_RAID_READY_CHECK` body starting a check: empty (`0x5732b0`).
 pub fn ready_check_start() -> Vec<u8> {
     Vec::new()
 }
 
-/// `MSG_RAID_READY_CHECK` body answering one: 1 ready or 0 not, no guid (`Group.cpp:84-92`).
+/// `MSG_RAID_READY_CHECK` body answering one: 1 ready or 0 not, no guid (`0x5740c0`).
 pub fn ready_check_answer(ready: bool) -> Vec<u8> {
     vec![u8::from(ready)]
 }

@@ -27,6 +27,16 @@ impl WorldWriter {
         self.send(opcode::CMSG_LFG_JOIN, &messages::lfg_join(join))
     }
 
+    /// `SearchLFGJoin`'s join (`0x558ed0`): the raid browser search key.
+    pub fn lfr_join(&mut self, key: u32) -> Result<()> {
+        self.send(opcode::CMSG_LFG_LFR_JOIN, &messages::lfr_search(key))
+    }
+
+    /// `SearchLFGLeave`'s leave (`0x558f90`): the joined key.
+    pub fn lfr_leave(&mut self, key: u32) -> Result<()> {
+        self.send(opcode::CMSG_LFG_LFR_LEAVE, &messages::lfr_search(key))
+    }
+
     /// `LeaveLFG` (`0x553ab0`).
     pub fn lfg_leave(&mut self) -> Result<()> {
         self.send(opcode::CMSG_LFG_LEAVE, &[])

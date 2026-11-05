@@ -375,6 +375,7 @@ fn left_clicking_the_player_frame_targets_self() {
         members: vec![benilla_ui::script::PartyMemberInfo {
             name: "Alice".into(),
             guid: 0xA11CE,
+            online: true,
         }],
         leader_index: 0, // we lead
         // The player's own guid, unset; 0 is also the ungrouped sentinel, but there is a member.
@@ -465,6 +466,7 @@ fn raid_mark_clicks_through_the_nested_level() {
         members: vec![benilla_ui::script::PartyMemberInfo {
             name: "Alice".into(),
             guid: 0xA11CE,
+            online: true,
         }],
         leader_index: 0, // we lead: the mark rows are leader-gated
         leader_guid: 0,  // the player's own guid; this fixture leaves it unset
@@ -1185,6 +1187,7 @@ fn the_party_art_paints_over_the_bars() {
         members: vec![benilla_ui::script::PartyMemberInfo {
             name: "Onepriest".into(),
             guid: 0x0_0B12,
+            online: true,
         }],
         leader_index: 0,
         leader_guid: 0,
@@ -1793,6 +1796,7 @@ fn the_player_frame_wears_the_leader_and_master_looter_icons() {
         members: vec![PartyMemberInfo {
             name: "Brisca".into(),
             guid: 0x7A17,
+            online: true,
         }],
         leader_index,
         // Follows `leader_index`: 0 = the player (unset here), else the member who leads.

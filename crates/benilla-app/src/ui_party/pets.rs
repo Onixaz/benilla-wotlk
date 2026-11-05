@@ -45,6 +45,14 @@ impl std::ops::Deref for Names<'_> {
     }
 }
 
+impl Names<'_> {
+    /// A player's name, `None` while asked of the server.
+    pub(super) fn player(&self, guid: u64) -> Option<Option<&str>> {
+        self.cache
+            .answer(crate::names::NameKey::Player(guid), guid, &self.commands)
+    }
+}
+
 /// What the pets' snapshots read: the object manager, the name cache and the creature-type
 /// resolver's sources.
 pub(super) struct Lookup<'a, 'w, 's, 'q> {

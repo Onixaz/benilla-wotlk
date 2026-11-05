@@ -125,6 +125,11 @@ impl WorldWriter {
         )
     }
 
+    /// Close the ready check we started (`MSG_RAID_READY_CHECK_FINISHED`, empty body).
+    pub fn ready_check_finish(&mut self) -> Result<()> {
+        self.send(opcode::MSG_RAID_READY_CHECK_FINISHED, &[])
+    }
+
     /// Start a raid ready check (`MSG_RAID_READY_CHECK`, empty body); leader only.
     pub fn ready_check_start(&mut self) -> Result<()> {
         self.send(opcode::MSG_RAID_READY_CHECK, &messages::ready_check_start())

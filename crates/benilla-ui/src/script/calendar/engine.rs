@@ -295,7 +295,10 @@ pub struct CalendarModel {
     pub(crate) raid_members: HashSet<u64>,
     /// The chat's complaint-system status, off until `SMSG_FEATURE_SYSTEM_STATUS`, which is not
     /// modelled.
-    complaints_enabled: bool,
+    /// The complaint system is on (`SMSG_FEATURE_SYSTEM_STATUS`).
+    pub(crate) complaints_enabled: bool,
+    /// The players complained about this session (`0x6b3700`).
+    pub(crate) complained: HashSet<u64>,
     pub(crate) requests: Vec<CalendarRequest>,
     pub(crate) signals: Vec<Signal>,
 }
@@ -343,6 +346,7 @@ impl Default for CalendarModel {
             friends: HashSet::new(),
             raid_members: HashSet::new(),
             complaints_enabled: false,
+            complained: HashSet::new(),
             requests: Vec::new(),
             signals: Vec::new(),
         }
@@ -2765,17 +2769,29 @@ impl CalendarModel {
             && !self.friends.contains(&e.creator)
     }
 
-    /// The complaint (`0x5bca50`). With the complaint system off, never sent.
+    /// The complaint (`0x5bca50`). With the complaint system off, never sent; a creator already
+    /// complained about is not reported again, the player's invite is removed instead.
     pub(crate) fn complain(&mut self, id: usize) {
         let e = self.event(id).clone();
         if self.action_pending || !self.can_complain(&e) {
             return;
         }
-        self.send(CalendarRequest::Complain {
-            creator: e.creator,
-            event_id: e.event_id,
-            invite_id: e.invite_id,
-        });
+        if self.complained.contains(&e.creator) {
+            self.error("COMPLAINT_ADDED", None);
+            self.send(CalendarRequest::RemoveInvite {
+                guid: self.player_guid(),
+                invite_id: e.invite_id,
+                moderator_invite: 0,
+                event_id: e.event_id,
+            });
+        } else {
+            self.complained.insert(e.creator);
+            self.send(CalendarRequest::Complain {
+                creator: e.creator,
+                event_id: e.event_id,
+                invite_id: e.invite_id,
+            });
+        }
         self.action_pending = true;
         self.signal("CALENDAR_ACTION_PENDING", vec![ScriptValue::Bool(true)]);
     }

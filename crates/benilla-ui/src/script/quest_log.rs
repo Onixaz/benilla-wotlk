@@ -1780,6 +1780,7 @@ mod tests {
             members: vec![crate::script::PartyMemberInfo {
                 name: "Mate".into(),
                 guid: 0x300,
+                online: true,
             }],
             ..Default::default()
         });

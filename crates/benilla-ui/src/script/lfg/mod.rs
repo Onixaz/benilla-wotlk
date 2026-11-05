@@ -8,13 +8,20 @@
 mod api;
 mod cvar_array;
 mod engine;
+mod search;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) use api::encounter_info;
-pub(super) use api::install;
 pub(crate) use engine::{Catalog, LfgModel};
+pub use search::{LfrGroupView, LfrListView, LfrPlayerView, LfrStatsView};
+
+/// Register the dungeon finder's globals and the raid browser's search list.
+pub(super) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
+    api::install(lua)?;
+    search::install(lua)
+}
 
 use super::ScriptValue;
 
@@ -121,6 +128,8 @@ pub struct LfgName {
     pub name: String,
     pub class_name: String,
     pub realm: String,
+    /// The class token (`"WARRIOR"`), the raid browser's `class` return; empty when unknown.
+    pub class_file: String,
 }
 
 /// `SMSG_LFG_UPDATE_PLAYER` or `SMSG_LFG_UPDATE_PARTY`.
@@ -270,6 +279,10 @@ pub enum LfgRequest {
     BootVote(bool),
     Teleport(bool),
     SetComment(String),
+    /// `CMSG_LFG_LFR_JOIN`: the raid browser search key, `type << 24 | dungeon`.
+    LfrJoin(u32),
+    /// `CMSG_LFG_LFR_LEAVE`: the joined key.
+    LfrLeave(u32),
 }
 
 /// What a server message shows besides its events: an error-display line or a UI sound kit.
@@ -334,12 +347,64 @@ impl super::UiScript {
 
     /// Push the names of the guids [`Self::lfg_wanted_names`] listed.
     pub fn set_lfg_names(&mut self, names: std::collections::HashMap<u64, LfgName>) {
-        set_field!(self, lfg.names, names);
+        if self.model_ref().lfg.names == names {
+            return;
+        }
+        let landed = {
+            let mut model = self.model_mut();
+            let lfg = &mut model.lfg;
+            lfg.names = names;
+            lfg.search.names_landed(&lfg.names)
+        };
+        if landed {
+            self.fire_event("UPDATE_LFG_LIST", Vec::new());
+        }
     }
 
-    /// The guids the verbs name: role check members, the boot target, the party's lock owners.
+    /// The guids the verbs name: role check members, the boot target, the party's lock owners and
+    /// the raid browser's players.
     pub fn lfg_wanted_names(&self) -> Vec<u64> {
         self.model_ref().lfg.wanted_names()
+    }
+
+    /// `SMSG_UPDATE_LFG_LIST`: the raid browser's list for the joined search.
+    pub fn lfr_list(&mut self, list: LfrListView) {
+        let fire = {
+            let mut model = self.model_mut();
+            let lfg = &mut model.lfg;
+            lfg.search.apply(list, &lfg.names)
+        };
+        if fire {
+            self.fire_event("UPDATE_LFG_LIST", Vec::new());
+        }
+    }
+
+    /// `SMSG_LFG_UPDATE_SEARCH`: the server's word on the raid browser search.
+    pub fn lfr_update_search(&mut self, joined: bool) {
+        if self.model_mut().lfg.search.update_search(joined) {
+            self.fire_event("UPDATE_LFG_LIST", Vec::new());
+        }
+    }
+
+    /// The areas the raid browser's rows name, for [`Self::set_lfr_area_names`].
+    pub fn lfr_wanted_areas(&self) -> Vec<u32> {
+        let model = self.model_ref();
+        let s = &model.lfg.search;
+        let mut v: Vec<u32> = s
+            .areas()
+            .filter(|a| !s.area_names.contains_key(a))
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    pub fn set_lfr_area_names(&mut self, names: std::collections::HashMap<u32, String>) {
+        let mut model = self.model_mut();
+        let s = &mut model.lfg.search;
+        for (area, name) in names {
+            s.area_names.entry(area).or_insert(name);
+        }
     }
 
     /// Push the `Interface\Icons` paths of the reward displays [`Self::lfg_wanted_displays`]

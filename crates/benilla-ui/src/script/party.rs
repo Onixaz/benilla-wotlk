@@ -10,7 +10,7 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{bool_or_default, number_arg, optional_string};
-use super::Model;
+use super::{Model, ScriptValue};
 
 /// One party member; everything else about them is the unit snapshot under their `partyN` token.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -18,6 +18,8 @@ pub struct PartyMemberInfo {
     pub name: String,
     /// The identity `UnitInParty` matches any token against; `0` never matches.
     pub guid: u64,
+    /// The roster's online bit, which holds a ready check open (`0x57463e`, `0x574761`).
+    pub online: bool,
 }
 
 /// One saved lockout from `SMSG_RAID_INSTANCE_INFO` (`0x501030`), with the `Map.dbc` and
@@ -175,10 +177,12 @@ pub enum PartyRequest {
         difficulty: u32,
         extend: bool,
     },
-    /// `DoReadyCheck()`, leader only (`MSG_RAID_READY_CHECK`, empty body).
+    /// `DoReadyCheck()`, past its gates (`MSG_RAID_READY_CHECK`, empty body, `0x5732b0`).
     ReadyCheckStart,
-    /// `ConfirmReadyCheck(ready)` (`MSG_RAID_READY_CHECK`, one byte).
+    /// `ConfirmReadyCheck(ready)` (`MSG_RAID_READY_CHECK`, one byte, `0x5740c0`).
     ReadyCheckAnswer(bool),
+    /// The initiator's check closed (`MSG_RAID_READY_CHECK_FINISHED`, empty body, `0x573390`).
+    ReadyCheckFinish,
     /// `RequestRaidInfo()` (`CMSG_REQUEST_RAID_INFO`).
     RequestRaidInfo,
     /// `SetDungeonDifficulty(n)` (`0x526050`), past its gates: the 0-based difficulty, which the
@@ -189,67 +193,164 @@ pub enum PartyRequest {
 }
 
 impl super::UiScript {
-    /// Push the roster snapshot, replacing it, and run `SMSG_GROUP_LIST`'s ready-check leg over the
-    /// new roster. The app fires the `PARTY_*` events.
+    /// Push the roster snapshot, replacing it, and run the roster's ready-check leg (`0x574880`):
+    /// a group gone or a new leader ends a running check, preempted; members gone, with nobody
+    /// online left pending, close the leader's or an officer's check at once.
     pub fn set_party(&mut self, state: PartyState) {
+        let (old_leader, old_count) = {
+            let model = self.model_ref();
+            (model.party.leader_guid, roster(&model.party).len())
+        };
         set_field!(self, party, state);
-        // The ready-check leg (from the `0x7d` handler): a member who left drops their pending
-        // flag, and nobody left pending force-closes the check.
         let lua = self.lua();
-        let mut model = self.model_mut();
-        if model.ready_check.deadline.is_some() {
-            let roster: Vec<u64> = model.party.raid.iter().map(|m| m.guid).collect();
-            model.ready_check.unanswered.retain(|g| roster.contains(g));
-            if model.ready_check.unanswered.is_empty() {
-                ready_check_force_close(lua, &mut model);
+        {
+            let mut model = self.model_mut();
+            let model: &mut Model = &mut model;
+            let count = roster(&model.party).len();
+            if count == 0 || model.party.leader_guid != old_leader {
+                // The reference fires this on every such roster update; one with no check armed
+                // or answered has no frame to tell.
+                let check = &mut model.ready_check;
+                if check.deadline.is_some() || check.initiator != 0 {
+                    check.deadline = None;
+                    check.initiator = 0;
+                    check
+                        .events
+                        .push(("READY_CHECK_FINISHED", vec![ScriptValue::Bool(true)]));
+                }
+            } else if model.ready_check.deadline.is_some()
+                && count < old_count
+                && (leads(&model.party) || officer(&model.party))
+                && !ready_check_pending_online(model)
+            {
+                ready_check_force_close(lua, model);
             }
         }
+        self.fire_ready_check_events();
     }
 
-    /// The `MSG_RAID_READY_CHECK` open form arrived. The leader force-closes if nobody is left
-    /// pending; anyone else arms the 30 s deadline, which their leader-gated tick never acts on.
-    /// The app fires the `READY_CHECK` popup.
-    pub fn ready_check_request(&mut self, we_lead: bool) {
+    /// `MSG_RAID_READY_CHECK` (`0x574d50`): arms the 30 s deadline and stores the initiator. A
+    /// raid officer, or a party's leader, flags every member pending but the initiator, who reads
+    /// ready; the other members' ready bytes stand. The initiator prints `READY_CHECK_START`.
+    /// [`Self::ready_check_initiated`] follows once the initiator's name is known.
+    pub fn ready_check_armed(&mut self, initiator: u64) {
         let lua = self.lua();
         let now = clock(lua);
         let mut model = self.model_mut();
-        if we_lead {
-            if model.ready_check.deadline.is_some() && !ready_check_pending_online(&model) {
-                ready_check_force_close(lua, &mut model);
-            }
+        let model: &mut Model = &mut model;
+        let own = model.party.own_guid;
+        let flags = if model.party.raid.is_empty() {
+            leads(&model.party)
         } else {
-            model.ready_check.deadline = Some(now + READY_CHECK_SECONDS);
-            model.ready_check.ready.clear();
-            model.ready_check.initiator = model.party.leader_guid;
+            officer(&model.party)
+        };
+        let members: Vec<u64> = roster(&model.party).iter().map(|m| m.0).collect();
+        let check = &mut model.ready_check;
+        check.deadline = Some(now + READY_CHECK_SECONDS);
+        check.initiator = initiator;
+        if own != 0 && own == initiator {
+            check.lines.push(global_text(lua, "READY_CHECK_START"));
+        }
+        if flags {
+            for guid in members.into_iter().filter(|&g| g != 0) {
+                if guid == initiator {
+                    check.pending.retain(|&g| g != guid);
+                    if !check.ready.contains(&guid) {
+                        check.ready.push(guid);
+                    }
+                } else if !check.pending.contains(&guid) {
+                    check.pending.push(guid);
+                }
+            }
         }
     }
 
-    /// One member's answer, relayed to the leader (guid matched in full). Any answer clears the
-    /// member's pending flag, as the handler stores a constant 0 whatever the status byte; a `0`
-    /// also prints `RAID_MEMBER_NOT_READY` for them. Once no member is both pending and online the
-    /// check closes at once, so an offline member never holds it open but is still listed as AFK.
-    pub fn ready_check_answered(&mut self, guid: u64, ready: bool) {
+    /// The initiator's name landed (`0x5747d0`): `READY_CHECK(name, secondsLeft)` on every client;
+    /// anyone but the initiator also prints `ERR_RAID_LEADER_READY_CHECK_START_S`.
+    pub fn ready_check_initiated(&mut self, name: &str) {
         let lua = self.lua();
-        let mut model = self.model_mut();
-        let Some(member) = model.party.raid.iter().find(|m| m.guid == guid) else {
-            return; // an unmatched guid writes nothing
-        };
-        let name = member.name.clone();
-        model.ready_check.unanswered.retain(|g| *g != guid);
-        if ready {
-            model.ready_check.ready.push(guid);
-        } else {
-            let template: String = lua
-                .globals()
-                .get::<String>("RAID_MEMBER_NOT_READY")
-                .unwrap_or_default();
-            model
-                .ready_check
-                .lines
-                .push(template.replacen("%s", &name, 1));
+        let now = clock(lua);
+        {
+            let mut model = self.model_mut();
+            let own = model.party.own_guid;
+            let check = &mut model.ready_check;
+            let left = check.deadline.map_or(0, |d| (d - now).max(0.0) as i64);
+            check.events.push((
+                "READY_CHECK",
+                vec![ScriptValue::Str(name.to_string()), ScriptValue::Int(left)],
+            ));
+            if own == 0 || own != check.initiator {
+                let template = global_text(lua, "ERR_RAID_LEADER_READY_CHECK_START_S");
+                check.lines.push(template.replacen("%s", name, 1));
+            }
         }
-        if model.ready_check.deadline.is_some() && !ready_check_pending_online(&model) {
-            ready_check_force_close(lua, &mut model);
+        self.fire_ready_check_events();
+    }
+
+    /// `MSG_RAID_READY_CHECK_CONFIRM` (`0x5744f0`): the member's pending flag clears and their
+    /// ready byte is stored. A `0` prints `RAID_MEMBER_NOT_READY`, in a raid on the initiator's
+    /// client alone. `READY_CHECK_CONFIRM(unit, ready)` fires per token naming the member, and the
+    /// check closes once nobody online is pending.
+    pub fn ready_check_confirmed(&mut self, guid: u64, ready: bool) {
+        let lua = self.lua();
+        {
+            let mut model = self.model_mut();
+            let model: &mut Model = &mut model;
+            let raid = !model.party.raid.is_empty();
+            let own = model.party.own_guid;
+            let Some((_, name, _)) = roster(&model.party).into_iter().find(|m| m.0 == guid) else {
+                return; // an unmatched guid writes nothing and fires nothing
+            };
+            let check = &mut model.ready_check;
+            check.pending.retain(|&g| g != guid);
+            check.ready.retain(|&g| g != guid);
+            if ready {
+                check.ready.push(guid);
+            } else if !name.is_empty() && (!raid || (own != 0 && own == check.initiator)) {
+                let template = global_text(lua, "RAID_MEMBER_NOT_READY");
+                check.lines.push(template.replacen("%s", &name, 1));
+            }
+            for token in model.unit_guids.tokens_naming(guid) {
+                model.ready_check.events.push((
+                    "READY_CHECK_CONFIRM",
+                    vec![ScriptValue::Str(token), ScriptValue::Bool(ready)],
+                ));
+            }
+            if !ready_check_pending_online(model) {
+                ready_check_force_close(lua, model);
+            }
+        }
+        self.fire_ready_check_events();
+    }
+
+    /// `MSG_RAID_READY_CHECK_FINISHED` (`0x572560`): the check is over, not preempted.
+    pub fn ready_check_finished(&mut self) {
+        {
+            let mut model = self.model_mut();
+            let check = &mut model.ready_check;
+            check.deadline = None;
+            check.initiator = 0;
+            check
+                .events
+                .push(("READY_CHECK_FINISHED", vec![ScriptValue::Bool(false)]));
+        }
+        self.fire_ready_check_events();
+    }
+
+    /// The initiator's 30 s timer (`0x573670`): once the deadline passes the check closes.
+    pub fn ready_check_tick(&mut self) {
+        let lua = self.lua();
+        let now = clock(lua);
+        let mut model = self.model_mut();
+        if model.ready_check.deadline.is_some_and(|d| now >= d) {
+            ready_check_time(lua, &mut model, now);
+        }
+    }
+
+    fn fire_ready_check_events(&mut self) {
+        let events = std::mem::take(&mut self.model_mut().ready_check.events);
+        for (event, args) in events {
+            self.fire_event(event, args);
         }
     }
 
@@ -716,33 +817,34 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
+    // DoReadyCheck() (`0x5740b0` -> `0x5732b0`): a party's leader or a raid officer, with no check
+    // still running, sends the start; the server's echo arms and flags it.
     g.set(
         "DoReadyCheck",
         lua.create_function(|lua, ()| {
             let now = clock(lua);
             let mut model = crate::script::model_mut_of(lua);
-            // The worker flags every roster member but the caller as pending and arms the 30 s
-            // deadline, then sends. A party has no raid roster, so nothing is flagged and the
-            // leader's echo closes it.
-            let own = model.party.own_guid;
-            model.ready_check.unanswered = model
-                .party
-                .raid
-                .iter()
-                .map(|m| m.guid)
-                .filter(|g| *g != own)
-                .collect();
-            model.ready_check.deadline = Some(now + READY_CHECK_SECONDS);
-            model.ready_check.ready.clear();
-            model.ready_check.initiator = own;
+            let party = &model.party;
+            let may = if party.raid.is_empty() {
+                !party.members.is_empty() && leads(party)
+            } else {
+                officer(party) || leads(party)
+            };
+            if !may {
+                return Ok(());
+            }
+            if model.ready_check.deadline.is_some_and(|d| now < d) {
+                model.ui_errors.push("ERR_READY_CHECK_IN_PROGRESS");
+                return Ok(());
+            }
             model.party_requests.push(PartyRequest::ReadyCheckStart);
             Ok(())
         })?,
     )?;
     // GetReadyCheckStatus(unit) (`0x574180`): nil unless a check is armed and unexpired and the
     // player leads the party (`0x57426e`) or holds raid rank (`0x5741d1`); then the initiator reads
-    // "ready", a pending member "waiting", one who answered ready "ready", the rest "notready". In
-    // a party the player, who is no `partyN` slot, reads only as the initiator (`0x5742d1`).
+    // "ready", a pending member "waiting", one whose answer was ready "ready", the rest "notready".
+    // In a party the player, who is no `partyN` slot, reads only as the initiator (`0x5742d1`).
     g.set(
         "GetReadyCheckStatus",
         lua.create_function(|lua, token: Option<String>| {
@@ -756,48 +858,48 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let check = &model.ready_check;
             let armed = check.deadline.is_some_and(|d| now < d);
             let status = if party.raid.is_empty() {
-                let leads = !party.members.is_empty() && party.leader_guid == party.own_guid;
                 let member = party.members.iter().any(|m| m.guid != 0 && m.guid == guid);
-                match (leads && armed, member) {
+                match (!party.members.is_empty() && leads(party) && armed, member) {
                     (false, _) => None,
                     (true, false) => (guid != 0 && guid == check.initiator).then_some("ready"),
                     (true, true) => Some(ready_check_answer(check, guid)),
                 }
             } else {
-                let officer = party
-                    .raid
-                    .iter()
-                    .any(|m| m.guid == party.own_guid && m.rank > 0);
                 let member = party.raid.iter().any(|m| m.guid != 0 && m.guid == guid);
-                (officer && armed && member).then(|| ready_check_answer(check, guid))
+                (officer(party) && armed && member).then(|| ready_check_answer(check, guid))
             };
             Ok(status)
         })?,
     )?;
-    // CheckReadyCheckTime(), called every frame from stock `UIParent.xml`'s `OnUpdate`, alone
-    // drives the 30 s expiry. Once an armed deadline passes, and only on the leader's client, it
-    // disarms and prints `RAID_MEMBERS_AFK` with the pending names joined by `", "`, or
-    // `READY_CHECK_NO_AFK`, as a `CHAT_MSG_SYSTEM` line. Both strings are read raw from `_G` with
-    // an empty default, not through `GetText`; nothing is sent.
+    // GetReadyCheckTimeLeft() (`0x572c80`): whole seconds to the deadline, 0 ungrouped or idle.
     g.set(
-        "CheckReadyCheckTime",
+        "GetReadyCheckTimeLeft",
         lua.create_function(|lua, ()| {
             let now = clock(lua);
-            let mut model = crate::script::model_mut_of(lua);
-            ready_check_tick(lua, &mut model, now);
-            Ok(())
+            let model = crate::script::model_mut_of(lua);
+            if roster(&model.party).is_empty() {
+                return Ok(0);
+            }
+            Ok(model
+                .ready_check
+                .deadline
+                .map_or(0, |d| (d - now).max(0.0) as i64))
         })?,
     )?;
-    // ConfirmReadyCheck(ready) reads its argument as truth: the reference's No button passes no
-    // argument, Yes passes `1`.
+    // ConfirmReadyCheck(ready) (`0x5740c0`): grouped, with a check armed and unexpired, sends the
+    // answer; its argument reads as truth, and the No button passes none.
     g.set(
         "ConfirmReadyCheck",
         lua.create_function(|lua, ready: Value| {
-            let ready = !matches!(ready, Value::Nil | Value::Boolean(false));
+            let now = clock(lua);
+            let ready = bool_or_default(Some(&ready), false);
             let mut model = crate::script::model_mut_of(lua);
-            model
-                .party_requests
-                .push(PartyRequest::ReadyCheckAnswer(ready));
+            let grouped = !roster(&model.party).is_empty();
+            if grouped && model.ready_check.deadline.is_some_and(|d| now < d) {
+                model
+                    .party_requests
+                    .push(PartyRequest::ReadyCheckAnswer(ready));
+            }
             Ok(())
         })?,
     )?;
@@ -942,26 +1044,29 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 /// The ready-check deadline, `0x7530` ms after the arm.
 const READY_CHECK_SECONDS: f64 = 30.0;
 
-/// The ready-check state: the armed deadline, the members whose pending flag (`[entry+0x158]`) is
-/// set, and summary lines not yet pushed to chat. Outside [`PartyState`] because a roster push
-/// replaces that and this survives it.
+/// The ready-check state: the armed deadline (`[0xbeb61c]`), the initiator (`[0xbeb620]`), the
+/// members' pending flags and ready bytes (a raid row's `+0x320`/`+0x324`, a party slot's
+/// `0x572450`/`0x572470`), and the lines and events not yet handed out. Outside [`PartyState`]
+/// because a roster push replaces that and this survives it.
 #[derive(Debug, Default)]
 pub(crate) struct ReadyCheckState {
     pub(crate) deadline: Option<f64>,
-    pub(crate) unanswered: Vec<u64>,
-    /// The members whose answer was ready (`[entry+0x324]`; a party slot's `0x572470`), which `GetReadyCheckStatus` reads.
-    pub(crate) ready: Vec<u64>,
-    /// Who started the check (`[0xbeb620]`): `GetReadyCheckStatus` answers `"ready"` for them.
     pub(crate) initiator: u64,
+    pub(crate) pending: Vec<u64>,
+    /// The members whose last ready byte was non-zero.
+    pub(crate) ready: Vec<u64>,
     pub(crate) lines: Vec<String>,
+    events: Vec<(&'static str, Vec<ScriptValue>)>,
 }
 
 /// A rostered member's `GetReadyCheckStatus` answer in an armed check (`0x574216`-`0x574233`).
 fn ready_check_answer(check: &ReadyCheckState, guid: u64) -> &'static str {
-    if guid == check.initiator || check.ready.contains(&guid) {
+    if guid == check.initiator {
         "ready"
-    } else if check.unanswered.contains(&guid) {
+    } else if check.pending.contains(&guid) {
         "waiting"
+    } else if check.ready.contains(&guid) {
+        "ready"
     } else {
         "notready"
     }
@@ -972,54 +1077,89 @@ fn clock(lua: &Lua) -> f64 {
     crate::script::clock::now(lua)
 }
 
-/// The timeout worker.
-fn ready_check_tick(lua: &Lua, model: &mut Model, now: f64) {
-    let Some(deadline) = model.ready_check.deadline else {
-        return;
-    };
-    if now < deadline {
-        return;
-    }
-    if model.party.own_guid != model.party.leader_guid {
-        return;
-    }
-    model.ready_check.deadline = None;
-    // A pending member the roster cannot name is skipped (its query arm off).
-    let names: Vec<&str> = model
-        .ready_check
-        .unanswered
-        .iter()
-        .filter_map(|g| model.party.raid.iter().find(|m| m.guid == *g))
-        .map(|m| m.name.as_str())
-        .filter(|n| !n.is_empty())
-        .collect();
-    let raw = |key: &str| lua.globals().get::<String>(key).unwrap_or_default();
-    let text = if names.is_empty() {
-        raw("READY_CHECK_NO_AFK")
+/// A `GetText` string by key, empty when the global is missing.
+fn global_text(lua: &Lua, key: &str) -> String {
+    lua.globals().get::<String>(key).unwrap_or_default()
+}
+
+/// The group the check walks: the raid roster in a raid, else the party slots, as
+/// `(guid, name, online)`.
+fn roster(party: &PartyState) -> Vec<(u64, String, bool)> {
+    if party.raid.is_empty() {
+        party
+            .members
+            .iter()
+            .map(|m| (m.guid, m.name.clone(), m.online))
+            .collect()
     } else {
-        raw("RAID_MEMBERS_AFK").replacen("%s", &names.join(", "), 1)
-    };
-    model.ready_check.lines.push(text);
+        party
+            .raid
+            .iter()
+            .map(|m| (m.guid, m.name.clone(), m.online))
+            .collect()
+    }
 }
 
-/// The `0x322` handler's close test: a member holds the check open only while pending and online
-/// (`[entry+0x18]` bit 0, `SMSG_GROUP_LIST`'s online bit). An empty roster closes at once.
-fn ready_check_pending_online(model: &Model) -> bool {
-    model
-        .ready_check
-        .unanswered
+/// The player leads the group, a bare guid compare.
+fn leads(party: &PartyState) -> bool {
+    party.own_guid != 0 && party.own_guid == party.leader_guid
+}
+
+/// The player's raid row has rank, assistant or leader (`0x574df4`).
+fn officer(party: &PartyState) -> bool {
+    party
+        .raid
         .iter()
-        .any(|g| model.party.raid.iter().any(|m| m.guid == *g && m.online))
+        .any(|m| m.guid == party.own_guid && m.rank > 0)
 }
 
-/// The force-close sites: an armed deadline becomes `now - 1` and the worker runs at once.
+/// The close (`0x573390`): only on the initiator's client, once the deadline passed,
+/// the check disarms and prints one system line, the pending members' names as
+/// `RAID_MEMBERS_AFK`, else `READY_CHECK_ALL_READY` when nobody answered not ready, else
+/// `READY_CHECK_FINISHED`; then the finish goes to the server, whose echo fires the event.
+fn ready_check_time(lua: &Lua, model: &mut Model, now: f64) {
+    let check = &model.ready_check;
+    let own = model.party.own_guid;
+    if !check.deadline.is_some_and(|d| now >= d) || check.initiator == 0 || own != check.initiator {
+        return;
+    }
+    let members = roster(&model.party);
+    let check = &mut model.ready_check;
+    check.deadline = None;
+    // A pending member whose name is not cached is skipped.
+    let names: Vec<&str> = members
+        .iter()
+        .filter(|m| check.pending.contains(&m.0) && !m.1.is_empty())
+        .map(|m| m.1.as_str())
+        .collect();
+    let all_ready = members.iter().all(|m| check.ready.contains(&m.0));
+    let text = if !names.is_empty() {
+        global_text(lua, "RAID_MEMBERS_AFK").replacen("%s", &names.join(", "), 1)
+    } else if all_ready {
+        global_text(lua, "READY_CHECK_ALL_READY")
+    } else {
+        global_text(lua, "READY_CHECK_FINISHED")
+    };
+    check.lines.push(text);
+    model.party_requests.push(PartyRequest::ReadyCheckFinish);
+}
+
+/// The close test (`0x57463e`, `0x574761`): a member holds the check open only while pending
+/// and online.
+fn ready_check_pending_online(model: &Model) -> bool {
+    roster(&model.party)
+        .iter()
+        .any(|m| m.2 && model.ready_check.pending.contains(&m.0))
+}
+
+/// The force-close sites: an armed deadline becomes `now - 1` and the check closes at once.
 fn ready_check_force_close(lua: &Lua, model: &mut Model) {
     if model.ready_check.deadline.is_none() {
         return;
     }
     let now = model.now;
     model.ready_check.deadline = Some(now - 1.0);
-    ready_check_tick(lua, model, now);
+    ready_check_time(lua, model, now);
 }
 
 #[cfg(test)]
@@ -1032,10 +1172,12 @@ mod tests {
                 PartyMemberInfo {
                     name: "Alice".into(),
                     guid: 0xA11CE,
+                    online: true,
                 },
                 PartyMemberInfo {
                     name: "Bob".into(),
                     guid: 0xB0B,
+                    online: true,
                 },
             ],
             leader_index: 1, // Alice (party1) leads
@@ -1611,6 +1753,7 @@ mod tests {
             DemoteAssistant("Bob")
             DoReadyCheck()
             RequestRaidInfo()
+            -- Solo, the ready check is refused (`0x5732b0`).
             "#,
         )
         .unwrap();
@@ -1632,7 +1775,6 @@ mod tests {
                     name: "Bob".into(),
                     grant: false
                 },
-                PartyRequest::ReadyCheckStart,
                 PartyRequest::RequestRaidInfo,
             ]
         );
@@ -1643,6 +1785,8 @@ mod tests {
     #[test]
     fn confirm_ready_check_treats_an_absent_argument_as_not_ready() {
         let mut s = UiScript::new().unwrap();
+        s.set_party(raid_we_lead(&s));
+        s.ready_check_armed(0xA11CE);
         s.run("ConfirmReadyCheck(1) ConfirmReadyCheck() ConfirmReadyCheck(false) ConfirmReadyCheck(0)")
             .unwrap();
         assert_eq!(
@@ -1651,8 +1795,8 @@ mod tests {
                 PartyRequest::ReadyCheckAnswer(true),
                 PartyRequest::ReadyCheckAnswer(false),
                 PartyRequest::ReadyCheckAnswer(false),
-                // `0` is true in Lua.
-                PartyRequest::ReadyCheckAnswer(true),
+                // The reference's coercion, not Lua truth: `0` is false.
+                PartyRequest::ReadyCheckAnswer(false),
             ]
         );
     }
@@ -1817,18 +1961,31 @@ mod tests {
             .unwrap());
     }
 
-    // ── The ready-check timeout ─────────────────────────────────────────────
+    // ── The ready check ─────────────────────────────────────────────────────
 
-    /// Us, Alice and Bob, with the two summary strings set.
+    /// Us, Alice and Bob in a raid we lead, the strings set and the ready-check events logged.
     fn raid_we_lead(s: &UiScript) -> PartyState {
         s.run(
-            r#"RAID_MEMBERS_AFK = "The following players are AFK: %s"
-               READY_CHECK_NO_AFK = "No players are AFK""#,
+            r#"RAID_MEMBERS_AFK = "The following players are Away: %s"
+               READY_CHECK_ALL_READY = "Everyone is Ready"
+               READY_CHECK_FINISHED = "Ready check finished"
+               READY_CHECK_START = "Starting ready check..."
+               RAID_MEMBER_NOT_READY = "%s is not ready"
+               ERR_RAID_LEADER_READY_CHECK_START_S = "%s has initiated a ready check."
+               LOG = {}
+               local f = CreateFrame("Frame")
+               for _, e in ipairs({"READY_CHECK", "READY_CHECK_CONFIRM", "READY_CHECK_FINISHED"}) do
+                   f:RegisterEvent(e)
+               end
+               f:SetScript("OnEvent", function(self, event, a, b)
+                   LOG[#LOG + 1] = event .. "," .. tostring(a) .. "," .. tostring(b)
+               end)"#,
         )
         .unwrap();
-        let row = |name: &str, guid: u64| crate::script::RaidMemberInfo {
+        let row = |name: &str, guid: u64, rank: u32| crate::script::RaidMemberInfo {
             name: name.into(),
             guid,
+            rank,
             online: true,
             ..Default::default()
         };
@@ -1837,19 +1994,21 @@ mod tests {
                 PartyMemberInfo {
                     name: "Alice".into(),
                     guid: 0xA11CE,
+                    online: true,
                 },
                 PartyMemberInfo {
                     name: "Bob".into(),
                     guid: 0xB0B,
+                    online: true,
                 },
             ],
             leader_index: 0,
             leader_guid: 0x5E1F,
             own_guid: 0x5E1F,
             raid: vec![
-                row("Probefour", 0x5E1F),
-                row("Alice", 0xA11CE),
-                row("Bob", 0xB0B),
+                row("Probefour", 0x5E1F, 2),
+                row("Alice", 0xA11CE, 0),
+                row("Bob", 0xB0B, 0),
             ],
             loot_method: "group".into(),
             master_looter: None,
@@ -1861,207 +2020,160 @@ mod tests {
         }
     }
 
+    fn log(s: &UiScript) -> Vec<String> {
+        let v: Vec<String> = s
+            .eval::<mlua::Table>("return LOG")
+            .unwrap()
+            .sequence_values()
+            .map(Result::unwrap)
+            .collect();
+        s.run("LOG = {}").unwrap();
+        v
+    }
+
+    fn status(s: &UiScript, token: &str) -> Option<String> {
+        s.eval::<Option<String>>(&format!("return GetReadyCheckStatus('{token}')"))
+            .unwrap()
+    }
+
+    /// `DoReadyCheck` (`0x5732b0`) only sends: the echo arms (`0x574d50`), and a check still
+    /// running refuses a second one.
     #[test]
-    fn the_leaders_check_times_out_into_the_afk_list_and_disarms() {
+    fn do_ready_check_sends_and_the_echo_arms() {
         let mut s = UiScript::new().unwrap();
-        let party = raid_we_lead(&s);
-        s.set_party(party);
+        s.set_party(raid_we_lead(&s));
         s.set_now(100.0);
         s.run("DoReadyCheck()").unwrap();
         assert_eq!(s.take_party_requests(), vec![PartyRequest::ReadyCheckStart]);
-
-        s.set_now(129.9);
-        s.run("CheckReadyCheckTime()").unwrap();
-        assert!(
-            s.take_ready_check_lines().is_empty(),
-            "not before the deadline"
-        );
-        s.set_now(130.0);
-        s.run("CheckReadyCheckTime()").unwrap();
         assert_eq!(
-            s.take_ready_check_lines(),
-            vec!["The following players are AFK: Alice, Bob".to_string()]
+            s.model_mut().ready_check.deadline,
+            None,
+            "nothing local yet"
         );
-        s.set_now(200.0);
-        s.run("CheckReadyCheckTime()").unwrap();
+
+        s.ready_check_armed(0x5E1F);
+        assert_eq!(s.take_ready_check_lines(), ["Starting ready check..."]);
+        s.ready_check_initiated("Probefour");
+        assert_eq!(log(&s), ["READY_CHECK,Probefour,30"], "the initiator's too");
         assert!(
             s.take_ready_check_lines().is_empty(),
-            "disarmed by the summary"
+            "no start line for us"
         );
-    }
+        assert_eq!(s.eval::<i64>("return GetReadyCheckTimeLeft()").unwrap(), 30);
 
-    /// The answer that leaves nobody pending closes the check at once.
-    #[test]
-    fn an_answer_clears_its_member_and_the_last_one_closes_the_check_at_once() {
-        let mut s = UiScript::new().unwrap();
-        let party = raid_we_lead(&s);
-        s.set_party(party);
-        s.set_now(100.0);
         s.run("DoReadyCheck()").unwrap();
-        s.ready_check_answered(0xA11CE, true);
-        assert!(
-            s.take_ready_check_lines().is_empty(),
-            "Bob is still pending"
-        );
-        s.ready_check_answered(0xB0B, true);
-        assert_eq!(
-            s.take_ready_check_lines(),
-            vec!["No players are AFK".to_string()],
-            "nobody left pending ⇒ the summary now, not at 130"
-        );
-        s.set_now(130.0);
-        s.run("CheckReadyCheckTime()").unwrap();
-        assert!(s.take_ready_check_lines().is_empty());
+        assert!(s.take_party_requests().is_empty());
+        assert_eq!(s.take_ui_errors(), vec!["ERR_READY_CHECK_IN_PROGRESS"]);
     }
 
-    /// The leader arm stores a constant 0 whatever the status byte.
+    /// A member's client arms and flags nothing without rank, and prints the initiator's line.
     #[test]
-    fn a_not_ready_answer_prints_its_line_and_still_clears_the_member() {
-        let mut s = UiScript::new().unwrap();
-        let party = raid_we_lead(&s);
-        s.run(r#"RAID_MEMBER_NOT_READY = "%s is not ready""#)
-            .unwrap();
-        s.set_party(party);
-        s.set_now(100.0);
-        s.run("DoReadyCheck()").unwrap();
-        s.ready_check_answered(0xDEAD, false);
-        assert!(
-            s.take_ready_check_lines().is_empty(),
-            "an unmatched guid writes nothing"
-        );
-        s.ready_check_answered(0xA11CE, false);
-        assert_eq!(
-            s.take_ready_check_lines(),
-            vec!["Alice is not ready".to_string()]
-        );
-        s.set_now(130.0);
-        s.run("CheckReadyCheckTime()").unwrap();
-        assert_eq!(
-            s.take_ready_check_lines(),
-            vec!["The following players are AFK: Bob".to_string()],
-            "Alice answered — not ready is not AFK"
-        );
-    }
-
-    /// The close tests online; the summary's walk does not.
-    #[test]
-    fn an_offline_member_never_blocks_the_close_but_is_still_listed() {
+    fn a_member_sees_the_initiators_line_and_answers() {
         let mut s = UiScript::new().unwrap();
         let mut party = raid_we_lead(&s);
-        party
-            .raid
-            .iter_mut()
-            .for_each(|m| m.online = m.guid != 0xB0B); // Bob is offline
-        s.set_party(party);
-        s.set_now(100.0);
-        s.run("DoReadyCheck()").unwrap();
-        s.ready_check_answered(0xA11CE, true);
-        assert_eq!(
-            s.take_ready_check_lines(),
-            vec!["The following players are AFK: Bob".to_string()],
-            "Alice's answer was the last ONLINE one, so the check closed and listed offline Bob"
-        );
-    }
-
-    /// A member's client arms the deadline, never clears it, and never prints.
-    #[test]
-    fn the_tick_is_inert_for_a_non_leader() {
-        let mut s = UiScript::new().unwrap();
-        s.run(r#"READY_CHECK_NO_AFK = "No players are AFK""#)
-            .unwrap();
-        s.set_party(two_member_party()); // Alice leads; we are 0x5E1F
-        s.set_now(100.0);
-        s.ready_check_request(false);
-        s.set_now(130.0);
-        s.run("CheckReadyCheckTime()").unwrap();
-        assert!(s.take_ready_check_lines().is_empty());
-        assert_eq!(s.model_mut().ready_check.deadline, Some(130.0));
-    }
-
-    #[test]
-    fn a_roster_change_with_nobody_left_pending_closes_the_check() {
-        let mut s = UiScript::new().unwrap();
-        let party = raid_we_lead(&s);
-        s.set_party(party.clone());
-        s.set_now(100.0);
-        s.run("DoReadyCheck()").unwrap();
-        s.ready_check_answered(0xA11CE, true);
-        let mut without_bob = party;
-        without_bob.raid.retain(|m| m.guid != 0xB0B);
-        without_bob.members.retain(|m| m.guid != 0xB0B);
-        s.set_party(without_bob);
-        assert_eq!(
-            s.take_ready_check_lines(),
-            vec!["No players are AFK".to_string()]
-        );
-    }
-
-    /// A party has no raid roster, so `DoReadyCheck` flags nobody.
-    #[test]
-    fn the_leaders_own_echo_closes_an_empty_check_at_once() {
-        let mut s = UiScript::new().unwrap();
-        let mut party = raid_we_lead(&s);
-        party.raid.clear();
-        s.set_party(party);
-        s.set_now(100.0);
-        s.run("DoReadyCheck()").unwrap();
-        s.ready_check_request(true);
-        assert_eq!(
-            s.take_ready_check_lines(),
-            vec!["No players are AFK".to_string()]
-        );
-    }
-
-    /// Both keys are read raw from `_G` with an empty default.
-    #[test]
-    fn a_missing_summary_string_prints_an_empty_line() {
-        let mut s = UiScript::new().unwrap();
-        let party = raid_we_lead(&s);
-        s.set_party(party);
-        s.set_now(100.0);
-        s.run("RAID_MEMBERS_AFK = nil DoReadyCheck()").unwrap();
-        s.set_now(130.0);
-        s.run("CheckReadyCheckTime()").unwrap();
-        assert_eq!(s.take_ready_check_lines(), vec![String::new()]);
-    }
-
-    /// `GetReadyCheckStatus` (`0x574180`): nil outside an armed check and for a raid member
-    /// without rank; in one, the initiator and a ready answer read "ready", a pending member
-    /// "waiting", a not-ready answer "notready".
-    #[test]
-    fn ready_check_status_reads_each_members_answer_while_armed() {
-        let mut s = UiScript::new().unwrap();
-        let mut party = raid_we_lead(&s);
-        party.raid[0].rank = 2;
-        s.set_party(party.clone());
-        for (token, guid) in [("player", 0x5E1F), ("party1", 0xA11CE), ("party2", 0xB0B)] {
-            s.set_unit(token, Some(unit(true, guid)));
-        }
-        let status = |s: &mut UiScript, token: &str| {
-            s.eval::<Option<String>>(&format!("return GetReadyCheckStatus('{token}')"))
-                .unwrap()
-        };
-        s.set_now(100.0);
-        assert_eq!(status(&mut s, "party1"), None, "no check armed");
-
-        s.run("DoReadyCheck()").unwrap();
-        assert_eq!(status(&mut s, "player").as_deref(), Some("ready"));
-        assert_eq!(status(&mut s, "party1").as_deref(), Some("waiting"));
-        s.ready_check_answered(0xA11CE, false);
-        assert_eq!(status(&mut s, "party1").as_deref(), Some("notready"));
-        assert_eq!(status(&mut s, "party2").as_deref(), Some("waiting"));
-        assert_eq!(status(&mut s, "target"), None, "no raid member");
-
-        // Without raid rank the player reads nothing, armed or not.
+        party.own_guid = 0xB0B;
         party.raid[0].rank = 0;
         s.set_party(party);
-        assert_eq!(status(&mut s, "party2"), None);
+        s.set_now(100.0);
+        s.run("ConfirmReadyCheck(1)").unwrap();
+        assert!(s.take_party_requests().is_empty(), "no check to answer");
+
+        s.ready_check_armed(0x5E1F);
+        s.ready_check_initiated("Probefour");
+        assert_eq!(log(&s), ["READY_CHECK,Probefour,30"]);
+        assert_eq!(
+            s.take_ready_check_lines(),
+            ["Probefour has initiated a ready check."]
+        );
+        assert!(s.model_mut().ready_check.pending.is_empty());
+        s.run("ConfirmReadyCheck()").unwrap();
+        assert_eq!(
+            s.take_party_requests(),
+            vec![PartyRequest::ReadyCheckAnswer(false)]
+        );
+        s.ready_check_finished();
+        assert_eq!(log(&s), ["READY_CHECK_FINISHED,false,nil"]);
     }
 
-    /// In a party the gate is leading it, and the player, no `partyN` slot, reads as the
-    /// initiator alone (`0x5742a0`).
+    /// Answers clear the pending flags and fire per token (`0x5744f0`); the last one online closes
+    /// the initiator's check with the summary and the finish send (`0x573390`).
     #[test]
-    fn a_party_ready_check_status_needs_the_lead() {
+    fn answers_confirm_per_token_and_the_last_one_closes_the_check() {
+        let mut s = UiScript::new().unwrap();
+        s.set_party(raid_we_lead(&s));
+        for (token, guid) in [("player", 0x5E1F), ("raid2", 0xA11CE), ("raid3", 0xB0B)] {
+            s.set_unit(token, Some(unit(true, guid)));
+        }
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: 0x5E1F,
+            raid: vec![0x5E1F, 0xA11CE, 0xB0B],
+            ..Default::default()
+        });
+        s.set_now(100.0);
+        s.ready_check_armed(0x5E1F);
+        s.take_ready_check_lines();
+        assert_eq!(
+            status(&s, "player").as_deref(),
+            Some("ready"),
+            "the initiator"
+        );
+        assert_eq!(status(&s, "raid2").as_deref(), Some("waiting"));
+
+        s.ready_check_confirmed(0xA11CE, false);
+        assert_eq!(log(&s), ["READY_CHECK_CONFIRM,raid2,false"]);
+        assert_eq!(s.take_ready_check_lines(), ["Alice is not ready"]);
+        assert_eq!(status(&s, "raid2").as_deref(), Some("notready"));
+        assert!(s.take_party_requests().is_empty(), "Bob still pending");
+
+        s.ready_check_confirmed(0xB0B, true);
+        assert_eq!(log(&s), ["READY_CHECK_CONFIRM,raid3,true"]);
+        assert_eq!(s.take_ready_check_lines(), ["Ready check finished"]);
+        assert_eq!(
+            s.take_party_requests(),
+            vec![PartyRequest::ReadyCheckFinish]
+        );
+        s.ready_check_confirmed(0xDEAD, true);
+        assert!(log(&s).is_empty(), "an unknown guid fires nothing");
+    }
+
+    /// The 30 s timer lists who never answered (`0x573390`), on the initiator's client only.
+    #[test]
+    fn the_initiators_timer_lists_the_away_members() {
+        let mut s = UiScript::new().unwrap();
+        s.set_party(raid_we_lead(&s));
+        s.set_now(100.0);
+        s.ready_check_armed(0x5E1F);
+        s.take_ready_check_lines();
+        s.ready_check_confirmed(0xA11CE, true);
+        s.set_now(129.0);
+        s.ready_check_tick();
+        assert!(s.take_ready_check_lines().is_empty());
+        s.set_now(130.0);
+        s.ready_check_tick();
+        assert_eq!(
+            s.take_ready_check_lines(),
+            ["The following players are Away: Bob"]
+        );
+        assert_eq!(
+            s.take_party_requests(),
+            vec![PartyRequest::ReadyCheckFinish]
+        );
+        assert_eq!(s.eval::<i64>("return GetReadyCheckTimeLeft()").unwrap(), 0);
+
+        // Everyone ready closes with the all-ready line.
+        s.set_now(200.0);
+        s.ready_check_armed(0x5E1F);
+        s.ready_check_confirmed(0xA11CE, true);
+        s.ready_check_confirmed(0xB0B, true);
+        assert_eq!(
+            s.take_ready_check_lines(),
+            ["Starting ready check...", "Everyone is Ready"]
+        );
+    }
+
+    /// In a party the leader flags the slots; an officer gate does not apply (`0x574e57`).
+    #[test]
+    fn a_party_leader_flags_the_slots_and_reads_their_answers() {
         let mut s = UiScript::new().unwrap();
         let mut party = raid_we_lead(&s);
         party.raid.clear();
@@ -2069,24 +2181,22 @@ mod tests {
         for (token, guid) in [("player", 0x5E1F), ("party1", 0xA11CE)] {
             s.set_unit(token, Some(unit(true, guid)));
         }
-        let status = |s: &mut UiScript, token: &str| {
-            s.eval::<Option<String>>(&format!("return GetReadyCheckStatus('{token}')"))
-                .unwrap()
-        };
         s.set_now(100.0);
-        s.run("DoReadyCheck()").unwrap();
-        assert_eq!(status(&mut s, "player").as_deref(), Some("ready"));
-        assert!(status(&mut s, "party1").is_some());
+        s.ready_check_armed(0x5E1F);
+        assert_eq!(status(&s, "player").as_deref(), Some("ready"));
+        assert_eq!(status(&s, "party1").as_deref(), Some("waiting"));
+        s.ready_check_confirmed(0xA11CE, true);
+        assert_eq!(status(&s, "party1").as_deref(), Some("ready"));
         s.set_now(130.0);
-        assert_eq!(status(&mut s, "party1"), None, "expired");
+        assert_eq!(status(&s, "party1"), None, "expired");
 
+        // A new leader ends the check, preempted.
+        log(&s);
+        s.set_now(140.0);
+        s.ready_check_armed(0x5E1F);
         party.leader_guid = 0xA11CE;
         s.set_party(party);
-        s.set_now(100.0);
-        assert_eq!(
-            status(&mut s, "party1"),
-            None,
-            "a member who does not lead reads nothing"
-        );
+        assert_eq!(log(&s), ["READY_CHECK_FINISHED,true,nil"]);
+        assert_eq!(status(&s, "party1"), None);
     }
 }
