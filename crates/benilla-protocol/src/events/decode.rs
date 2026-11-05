@@ -209,6 +209,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::ServerMessage { message_type, text } => {
             vec![SessionEvent::ServerMessage { message_type, text }]
         }
+        ServerPacket::TriggerMovie { movie_id } => vec![SessionEvent::TriggerMovie { movie_id }],
+        ServerPacket::DestLocSpellCast(c) => vec![SessionEvent::DestLocSpellCast(c)],
         ServerPacket::ZoneUnderAttack { area_id } => {
             vec![SessionEvent::ZoneUnderAttack { area_id }]
         }
@@ -320,6 +322,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 // Against the resolved caster: a GameObject's own guid in slot 1 is not an item.
                 item_caster: (s.item_or_caster != caster).then_some(s.item_or_caster),
                 trajectory: s.trajectory,
+                dest_counter: s.dest_counter,
             }];
             events.extend(runes);
             events

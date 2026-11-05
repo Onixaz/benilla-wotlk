@@ -1103,6 +1103,8 @@ pub(crate) struct Model {
     pub(crate) played_time_asks: u32,
     /// `OpeningCinematic()` calls, one empty `CMSG_OPENING_CINEMATIC` each.
     pub(crate) opening_cinematic_asks: u32,
+    /// `GameMovieFinished()` calls, each a `StopMovie` (`0x51d590`).
+    pub(crate) game_movie_finished_calls: u32,
     /// `Screenshot()` calls, one capture each.
     pub(crate) screenshot_asks: u32,
     /// `GetRealmName()`: `""` until pushed, never nil, since addons index tables with it at load.
@@ -1697,6 +1699,7 @@ impl Model {
             addon_sends: Vec::new(),
             played_time_asks: 0,
             opening_cinematic_asks: 0,
+            game_movie_finished_calls: 0,
             screenshot_asks: 0,
             realm_name: String::new(),
             player_record: super::PlayerRecord::default(),

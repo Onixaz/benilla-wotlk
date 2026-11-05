@@ -609,6 +609,17 @@ pub(super) fn occupies_voice_slot(source: Option<Entity>, latch: Latch, unit: En
     source == Some(unit) && matches!(latch, Latch::Voice(_))
 }
 
+/// Stop `unit`'s bark, the voice slot's channel.
+pub(super) fn stop_voice(out: &mut SoundOutput, unit: Entity) {
+    out.channels.retain_mut(|c| {
+        let stop = occupies_voice_slot(c.source, c.latch, unit);
+        if stop {
+            c.handle.stop(mixer::declick());
+        }
+        !stop
+    });
+}
+
 /// Stop every emote voice of `unit` but the newest channel.
 pub(super) fn stop_older_emote_voices(out: &mut SoundOutput, unit: Entity) {
     let newest = out.channels.len().saturating_sub(1);

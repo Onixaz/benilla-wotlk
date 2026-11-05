@@ -739,6 +739,10 @@ pub enum SessionEvent {
     ServerMessage { message_type: u32, text: String },
     /// `SMSG_ZONE_UNDER_ATTACK`: an `AreaTable.dbc` id, shown on the joined defense channels.
     ZoneUnderAttack { area_id: u32 },
+    /// A dest-location cast's visuals (`SMSG_NOTIFY_DEST_LOC_SPELL_CAST`).
+    DestLocSpellCast(crate::messages::DestLocSpellCast),
+    /// The server started a movie (`SMSG_TRIGGER_MOVIE`), a `Movie.dbc` id.
+    TriggerMovie { movie_id: u32 },
     /// A defense broadcast (`SMSG_DEFENSE_MESSAGE`), shown where [`Self::ZoneUnderAttack`] is.
     DefenseMessage { zone_id: u32, text: String },
     /// A dungeon finder message, applied by the app's port of the reference's dungeon finder.
@@ -828,6 +832,8 @@ pub enum SessionEvent {
         item_caster: Option<u64>,
         /// A trajectory missile's `(elevation, delay ms)` (`CAST_FLAG_ADJUST_MISSILE`).
         trajectory: Option<(f32, u32)>,
+        /// A dest-targeted GO's cast counter, 0 for none (`0x80e42a`).
+        dest_counter: u8,
     },
     /// A channeled beam's hops (`SMSG_SPELL_UPDATE_CHAIN_TARGETS`), consumed once by the next chain
     /// `CharProc`; the reference fills that `unit+0xd44` array from spell-go hits too.

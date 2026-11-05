@@ -73,6 +73,7 @@ mod loading_screen;
 mod local_state;
 mod login;
 mod minimap;
+mod movie;
 mod nameplates;
 mod names;
 mod net;

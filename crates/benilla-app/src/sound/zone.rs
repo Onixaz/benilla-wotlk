@@ -35,7 +35,7 @@ use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_world::lighting::GameClock;
 use benilla_world::schedule::WorldStage;
 
-use super::kit::{play_kit_ext, KitRef, Latch, PlayExtras, SoundCategory, SoundKits};
+use super::kit::{play_kit_ext, KitRef, Latch, PlayExtras, SoundCategory, SoundKits, Volume};
 use super::mixer::{self, StreamingSoundHandle};
 use super::{AudioListener, SoundConfig, SoundOutput};
 
@@ -959,6 +959,7 @@ fn server_sounds(
     config: Res<SoundConfig>,
     listener: Res<AudioListener>,
     transforms: Query<&Transform, Without<Camera3d>>,
+    selves: Query<(), With<crate::net::SelfPlayer>>,
 ) {
     if msgs.is_empty() {
         return;
@@ -986,11 +987,21 @@ fn server_sounds(
                 start_music_stream(&mut zone, &mut out, &mut kits, &assets, &config, m.sound_id);
             }
             ServerSoundKind::Sound2d | ServerSoundKind::ObjectSound => {
-                // At the source entity when it is streamed to us; otherwise flat.
+                // At the source entity when it is streamed to us; otherwise flat. Our own
+                // player's, with the listener on the character, plays flat at 0.65
+                // (`0x746a0e`-`0x746a6d`).
+                let own_flat = m.kind == ServerSoundKind::ObjectSound
+                    && config.listener_at_character
+                    && m.source.is_some_and(|e| selves.contains(e));
                 let pos = m
                     .source
+                    .filter(|_| !own_flat)
                     .and_then(|e| transforms.get(e).ok())
                     .map(|t| t.translation);
+                // A unit's object sound first stops its bark (`[unit+0x908]`, `0x7469d8`).
+                if let (ServerSoundKind::ObjectSound, Some(unit)) = (m.kind, m.source) {
+                    super::kit::stop_voice(&mut out, unit);
+                }
                 // An object sound registers on its unit (the reference's `AISOUNDDESC` pool), so
                 // the vocal gates keep the creature's grunts off a scripted voice line.
                 let source = match m.kind {
@@ -1014,6 +1025,7 @@ fn server_sounds(
                     PlayExtras {
                         source,
                         latch,
+                        volume_mult: Volume(if own_flat { 0.65 } else { 1.0 }),
                         ..default()
                     },
                 ) {

@@ -141,6 +141,7 @@ impl PluginGroup for GamePlugins {
             })
             .add(crate::death::DeathPlugin)
             .add(crate::ui_notices::NoticesPlugin)
+            .add(crate::movie::MoviePlugin)
             .add(crate::char_select::CharSelectPlugin { start: self.start })
             .add(crate::login::LoginPlugin)
             .add(crate::realm_select::RealmSelectPlugin)

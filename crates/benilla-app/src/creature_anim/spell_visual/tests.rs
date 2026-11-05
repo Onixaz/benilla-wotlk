@@ -2139,10 +2139,9 @@ fn a_dest_go_plays_the_impact_area_kit_unless_a_missile_or_a_beam_carries_it() {
     assert_eq!(
         delayed(&mut app),
         [super::DelayedAreaKit {
-            caster,
             kit_id: AREA_KIT,
             pos: at,
-            speed: 8.0
+            wait: super::AreaKitWait::Flight { caster, speed: 8.0 },
         }]
     );
 

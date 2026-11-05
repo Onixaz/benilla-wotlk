@@ -67,6 +67,12 @@ pub const SMSG_DESTROY_OBJECT: u16 = 0x00AA;
 /// Lua's `OpeningCinematic()`; empty body. vmangos does not handle it.
 pub const CMSG_OPENING_CINEMATIC: u16 = 0x00F9;
 pub const SMSG_TRIGGER_CINEMATIC: u16 = 0x00FA;
+/// A server-started movie: one `u32` `Movie.dbc` id (`0x526c7a`).
+pub const SMSG_TRIGGER_MOVIE: u16 = 0x0464; // 1124
+/// The movie ended, from `StopMovie` (`0x518870`); empty body.
+pub const CMSG_COMPLETE_MOVIE: u16 = 0x0465; // 1125
+/// A dest-location cast, for a caster this client may not see (`0x810050`).
+pub const SMSG_NOTIFY_DEST_LOC_SPELL_CAST: u16 = 0x048E; // 1166
 /// The next camera of a multi-camera `CinematicSequences` row began; empty body.
 pub const CMSG_NEXT_CINEMATIC_CAMERA: u16 = 0x00FB;
 pub const CMSG_COMPLETE_CINEMATIC: u16 = 0x00FC;

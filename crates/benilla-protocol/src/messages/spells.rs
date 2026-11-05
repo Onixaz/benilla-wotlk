@@ -5,8 +5,8 @@
 use std::io::{self, Read};
 
 use crate::wire::{
-    capacity_hint, read_cstring, read_i32_le, read_packed_guid, read_u32_le, read_u64_le, read_u8,
-    Vector3d,
+    capacity_hint, read_cstring, read_f32_le, read_i32_le, read_packed_guid, read_u32_le,
+    read_u64_le, read_u8, Vector3d,
 };
 
 /// The verdict on our cast. 12340's `SMSG_CAST_FAILED` (0x130, the opcode benilla names
@@ -470,6 +470,58 @@ pub struct SpellGo {
     /// The `CAST_FLAG_ADJUST_MISSILE` pair, `(elevation, delay ms)`: a trajectory missile's launch
     /// pitch and its flight time, as the GO handler (`0x80e1b0`) reads them.
     pub trajectory: Option<(f32, u32)>,
+    /// A dest-targeted GO's cast counter (`0x80e42a`), 0 for none; a nonzero one is recorded
+    /// against the caster so its [`DestLocSpellCast`] does not play again.
+    pub dest_counter: u8,
+}
+
+/// `SMSG_NOTIFY_DEST_LOC_SPELL_CAST` (`0x810050`): a dest-location cast whose caster this client
+/// may not see, read as one `0x40`-byte block (`0x810074`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DestLocSpellCast {
+    pub caster: u64,
+    pub dest_target: u64,
+    pub spell_id: u32,
+    /// The source location, raw WoW coordinates.
+    pub src: [f32; 3],
+    /// The dest position the visuals play at, raw WoW coordinates.
+    pub dest: [f32; 3],
+    pub elevation: f32,
+    pub speed: f32,
+    /// Milliseconds before the impact-area kit (`0x802700`).
+    pub delay_ms: u32,
+    /// The caster's cast counter, matched against the last one seen (`0x8100a1`).
+    pub counter: u8,
+}
+
+/// Read `SMSG_NOTIFY_DEST_LOC_SPELL_CAST`: the fields fill the block's first `0x39` bytes and the
+/// rest is padding, left unread.
+pub(super) fn read_dest_loc_spell_cast(r: &mut &[u8]) -> io::Result<DestLocSpellCast> {
+    let point = |r: &mut &[u8]| -> io::Result<[f32; 3]> {
+        Ok([read_f32_le(r)?, read_f32_le(r)?, read_f32_le(r)?])
+    };
+    let caster = read_u64_le(r)?;
+    let dest_target = read_u64_le(r)?;
+    let spell_id = read_u32_le(r)?;
+    let src = point(r)?;
+    let dest = point(r)?;
+    let elevation = read_f32_le(r)?;
+    let speed = read_f32_le(r)?;
+    let delay_ms = read_u32_le(r)?;
+    let counter = read_u8(r)?;
+    let pad = r.len().min(7);
+    *r = &r[pad..];
+    Ok(DestLocSpellCast {
+        caster,
+        dest_target,
+        spell_id,
+        src,
+        dest,
+        elevation,
+        speed,
+        delay_ms,
+        counter,
+    })
 }
 
 /// Read `SMSG_SPELL_GO`: the shared head, `u32` timestamp, the hit and miss lists, the targets,
@@ -524,9 +576,11 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
         let _ = read_u32_le(r)?;
         let _ = read_u32_le(r)?;
     }
-    if targets.mask & TARGET_FLAG_DEST_LOCATION != 0 {
-        let _dest_byte = read_u8(r)?;
-    }
+    let dest_counter = if targets.mask & TARGET_FLAG_DEST_LOCATION != 0 {
+        read_u8(r)?
+    } else {
+        0
+    };
     if targets.mask & TARGET_FLAG_EXTRA_TARGETS != 0 {
         // `u32` count of a point and a raw guid each; unbounded, so nothing is pre-allocated.
         for _ in 0..read_u32_le(r)? {
@@ -547,6 +601,7 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
         ammo_display_id,
         runes,
         trajectory,
+        dest_counter,
     })
 }
 

@@ -982,6 +982,9 @@ fn parse_server_body(
             let (message_type, text) = broadcast::read_server_message(&mut r)?;
             ServerPacket::ServerMessage { message_type, text }
         }
+        opcode::SMSG_TRIGGER_MOVIE => ServerPacket::TriggerMovie {
+            movie_id: read_u32_le(&mut r)?,
+        },
         opcode::SMSG_ZONE_UNDER_ATTACK => ServerPacket::ZoneUnderAttack {
             area_id: broadcast::read_zone_under_attack(&mut r)?,
         },
@@ -1236,6 +1239,9 @@ fn parse_server_body(
         }
         opcode::SMSG_SPELL_START => ServerPacket::SpellStart(spells::read_spell_start(&mut r)?),
         opcode::SMSG_SPELL_GO => ServerPacket::SpellGo(spells::read_spell_go(&mut r)?),
+        opcode::SMSG_NOTIFY_DEST_LOC_SPELL_CAST => {
+            ServerPacket::DestLocSpellCast(spells::read_dest_loc_spell_cast(&mut r)?)
+        }
         opcode::SMSG_SPELL_UPDATE_CHAIN_TARGETS => {
             ServerPacket::SpellChainTargets(spells::read_spell_chain_targets(&mut r)?)
         }
