@@ -121,6 +121,46 @@ fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
     assert!(s.take_errors().is_empty());
 }
 
+/// `SetSpellByID` (`0x625b90`), the totem bar's hover: a known spell's tooltip, the rank column on
+/// its fourth argument, nothing for an unknown spell, and a raise on a negative or missing id.
+#[test]
+fn set_spell_by_id_shows_a_known_spell_only() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.set_spell_tooltip(133, fireball());
+    s.set_spellbook(SpellBookState {
+        tabs: Vec::new(),
+        slots: vec![SpellSlotView {
+            spell_id: 133,
+            name: "Fireball".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "SB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT")
+        tt:SetOwner(a, "ANCHOR_RIGHT")
+        tt:SetSpellByID(133)
+        assert(tt:IsShown(), "a known spell shows")
+        assert(TTTextLeft1:GetText() == "Fireball")
+        assert(not TTTextRight1:IsShown(), "no rank column by default")
+        tt:SetSpellByID(133, false, true)
+        assert(TTTextRight1:GetText() == "Rank 1", "showRank shows the rank column")
+        tt:SetOwner(a, "ANCHOR_RIGHT")
+        tt:SetSpellByID(3599)
+        assert(tt:NumLines() == 0, "an unknown spell adds nothing")
+        tt:SetSpellByID(133, true)
+        assert(tt:NumLines() == 0, "not in the pet's book")
+        assert(not pcall(tt.SetSpellByID, tt, -1), "a negative id raises")
+        assert(not pcall(tt.SetSpellByID, tt), "a missing id raises")
+    "#,
+    )
+    .unwrap();
+    assert!(s.take_errors().is_empty());
+}
+
 /// `SetTracking` with a tracking spell active, the aura tooltip (`0x625940` → `SetBuff`): a gold
 /// name over the white aura description, with no cost, cast time or remaining line.
 #[test]

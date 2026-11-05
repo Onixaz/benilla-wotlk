@@ -609,6 +609,59 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             set_spell_by_id(lua, &this, spell_id, name, opts, None)
         })?,
     )?;
+    // GameTooltip:SetSpellByID(id[, isPet[, showRank]]) (`0x625b90`): a known spell's tooltip, the
+    // totem bar's hover. A non-number or negative id raises; a spell not known is a no-op.
+    m.set(
+        "SetSpellByID",
+        lua.create_function(|lua, args: MultiValue| {
+            let Some(Value::Table(this)) = args.front().cloned() else {
+                return Err(mlua::Error::runtime("Usage: SetSpellByID(id)"));
+            };
+            let id = match args.get(1) {
+                Some(v) => lua.coerce_number(v.clone())?.map(|n| n as i64 as i32),
+                None => None,
+            };
+            let Some(spell_id) = id.and_then(|i| u32::try_from(i).ok()) else {
+                let who = {
+                    let h = frame_handle_of(lua, &this)?;
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    model
+                        .arena
+                        .frame(h)
+                        .and_then(|f| f.name.clone())
+                        .unwrap_or_else(|| "<unnamed>".to_string())
+                };
+                return Err(mlua::Error::runtime(format!(
+                    "Invalid spell ID in {who}:SetSpellByID"
+                )));
+            };
+            let is_pet = super::binding_abi::bool_or_default(args.get(2), false);
+            let show_rank = super::binding_abi::bool_or_default(args.get(3), false);
+            let name = {
+                let model = crate::script::model_mut_of(lua);
+                if !super::multicast::has_spell(&model, spell_id, is_pet) {
+                    return Ok(());
+                }
+                let book = if is_pet {
+                    &model.pet_book.slots
+                } else {
+                    &model.spellbook.slots
+                };
+                book.iter()
+                    .find(|s| s.spell_id == spell_id)
+                    .map(|s| s.name.clone())
+            };
+            // The pet flag is also the builder's unit selector, as `SetSpell`'s.
+            let opts = SpellRenderOpts {
+                show_rank,
+                alt_caster: is_pet,
+                ..Default::default()
+            };
+            set_spell_by_id(lua, &this, spell_id, name, opts, None)
+        })?,
+    )?;
     // GameTooltip:SetShapeshift(index): the stance-bar hover, the form's spell tooltip.
     m.set(
         "SetShapeshift",

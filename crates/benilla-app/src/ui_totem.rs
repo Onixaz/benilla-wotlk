@@ -161,10 +161,19 @@ fn feed_totems(
         }
     }
 
-    // The unit announces its slot on streaming (`0x73fcc0`) and on its name (`0x72cde0`).
+    // The unit announces its slot on streaming (`0x73fcc0`) and on its name (`0x72cde0`); its
+    // disable (destroy or out of range) destroys the slot it holds (`0x73574a` → `0x5197d0`).
     let Totems { slots, announce } = &mut *totems;
-    for (i, totem) in slots.iter_mut().enumerate() {
-        let Some(totem) = totem else { continue };
+    for (i, cell) in slots.iter_mut().enumerate() {
+        let Some(totem) = cell else { continue };
+        if totem.sighted && !index.0.contains_key(&totem.guid) {
+            let _ = commands
+                .0
+                .send(ClientCommand::TotemDestroyed { slot: i as u8 });
+            *cell = None;
+            announce.push(i);
+            continue;
+        }
         if totem.start.is_none() {
             let (anchor, ui_now) = (clock.anchor, clock.ui_now);
             totem.start = Some(match totem.arrived.checked_duration_since(anchor) {
@@ -285,6 +294,68 @@ fn feed_multicast(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A streamed totem's unit leaving the index (Totemic Recall's despawn) destroys its slot as
+    /// `0x73574a` does: `CMSG_TOTEM_DESTROYED`, the slot emptied, `PLAYER_TOTEM_UPDATE`.
+    #[test]
+    fn a_despawned_totem_unit_destroys_its_slot() {
+        const TOTEM: u64 = 0xF130_0000_0000_0050;
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.insert_non_send_resource(UiScript::new().unwrap())
+            .init_resource::<Totems>()
+            .init_resource::<TotemCategories>()
+            .init_resource::<GuidIndex>()
+            .init_resource::<Items>()
+            .init_resource::<NameCache>()
+            .init_resource::<crate::ui_script::UiClock>()
+            .insert_resource(NetCommands(tx))
+            .add_systems(Update, feed_totems);
+        let unit = app.world_mut().spawn(ObjectStore::default()).id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(TOTEM, unit);
+        app.world_mut().resource_mut::<Totems>().slots[0] = Some(Totem {
+            guid: TOTEM,
+            duration_ms: 300_000,
+            arrived: Instant::now(),
+            start: None,
+            icon: None,
+            name: None,
+            sighted: false,
+        });
+        app.world()
+            .non_send_resource::<UiScript>()
+            .run(
+                "UPDATES = 0; local f = CreateFrame('Frame'); f:RegisterEvent('PLAYER_TOTEM_UPDATE')
+                 f:SetScript('OnEvent', function(_, _, slot) UPDATES = UPDATES + 1; LAST = slot end)",
+            )
+            .unwrap();
+        let live = |app: &App| {
+            app.world()
+                .non_send_resource::<UiScript>()
+                .eval::<bool>("return (GetTotemInfo(1))")
+                .unwrap()
+        };
+        app.update();
+        assert!(live(&app), "the streamed totem holds its slot");
+        app.world_mut().resource_mut::<GuidIndex>().0.remove(&TOTEM);
+        app.update();
+        assert!(!live(&app), "the despawn empties the slot");
+        assert!(app.world().resource::<Totems>().slots[0].is_none());
+        let sent: Vec<_> = rx
+            .try_iter()
+            .filter(|c| matches!(c, ClientCommand::TotemDestroyed { .. }))
+            .collect();
+        assert!(
+            matches!(sent[..], [ClientCommand::TotemDestroyed { slot: 0 }]),
+            "{sent:?}"
+        );
+        let script = app.world().non_send_resource::<UiScript>();
+        assert_eq!(script.eval::<i64>("return UPDATES").unwrap(), 2);
+        assert_eq!(script.eval::<i64>("return LAST").unwrap(), 1);
+    }
 
     /// The view rebuilds only when an input moves: a list edit that marks nothing is not read
     /// (the gate holds), and the same edit marked is.
