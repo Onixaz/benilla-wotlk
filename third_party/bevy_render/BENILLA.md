@@ -24,9 +24,19 @@ joins `size_changed` and `present_mode_changed` in the three places they decide 
 reconfigure branch of `create_surfaces`, which now also writes the latency into the surface
 configuration.
 
+## Patch — `src/render_resource/pipeline_cache.rs`
+
+`create_pipeline_task` spawns each pipeline build onto the async-compute pool on macOS too, as it
+does on every other native platform: the two `target_os = "macos"` lines are deleted from its
+`cfg` pair. Upstream compiles inline on the render thread there, so a burst serialises naga's
+WGSL→MSL translation into one frame: a Dalaran login on an M1 spent ~5 s of its loading screen on
+the pipeline warm pass and still timed out. Async, the warm drains and the login clears in
+8.5–9.0 s instead of 11.1–12.5 s. Upstream's exclusion rests on an unmeasured recollection
+(bevyengine/bevy#10812); bevyengine/bevy#26151 proposes the same deletion.
+
 ## How to check
 
-`diff -u <registry>/bevy_render-0.18.1/src/view/window/mod.rs
-third_party/bevy_render/src/view/window/mod.rs` shows the patch and nothing else; every other file
-is byte-identical to the registry crate. `benilla-app`'s `video` tests drive the window's latency
-through `gxTripleBuffer` and a `RestartGx`.
+`diff -ru <registry>/bevy_render-0.18.1/src third_party/bevy_render/src` shows the two patches and
+nothing else; every other file is byte-identical to the registry crate. `benilla-app`'s `video`
+tests drive the window's latency through `gxTripleBuffer` and a `RestartGx`. The pipeline patch
+shows on a login as `pipeline warm: N rigs drained` where it used to print `TIMED OUT`.
