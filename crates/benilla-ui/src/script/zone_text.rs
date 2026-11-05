@@ -24,6 +24,8 @@ pub struct ZoneTexts {
     pub pvp_faction: Option<String>,
     /// `GetZonePVPInfo`'s `isSubZonePvP`: a sanctuary, arena or combat type read off the subzone.
     pub pvp_subzone: bool,
+    /// `IsSubZonePVPPOI`: the leaf area's flag 0x8000.
+    pub pvp_poi: bool,
 }
 
 impl super::UiScript {
@@ -55,6 +57,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetMinimapZoneText",
         lua.create_function(text(|z| &z.minimap))?,
+    )?;
+    // IsSubZonePVPPOI() (`0x5167e0`): 1 or nil.
+    g.set(
+        "IsSubZonePVPPOI",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(super::binding_abi::flag(model.zone.pvp_poi))
+        })?,
     )?;
     // GetZonePVPInfo() (`0x51ba50`): `pvpType, isSubZonePvP` for a sanctuary, arena or combat
     // area, `pvpType, nil, factionName` for a territory, nothing without a type. `isSubZonePvP` is

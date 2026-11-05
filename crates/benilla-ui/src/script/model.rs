@@ -350,6 +350,10 @@ pub(crate) struct Model {
     /// Chat-type colours: 94 fixed and 10 `CHANNELn`, overlaid by `chat-cache.txt`.
     pub(crate) chat_colors: Vec<super::chat_types::ChatTypeColor>,
     pub(crate) chat_colors_changed: bool,
+    /// The zone channel ids `ResetChatWindows` put back in the auto-join mask.
+    pub(crate) zone_mask_additions: Vec<u32>,
+    /// A trade enchant slot ask: `false` the slot's click, `true` the replace popup's Accept.
+    pub(crate) trade_enchant_targets: Vec<bool>,
     /// The languages this character knows, in `Languages.dbc` row order.
     pub(crate) known_languages: Vec<String>,
     /// `ChrClasses.dbc`'s rows in record order, which `FillLocalizedClassList` walks.
@@ -1395,6 +1399,8 @@ impl Model {
             chat_window_changes: HashSet::new(),
             chat_colors: super::chat_types::seed(),
             chat_colors_changed: false,
+            zone_mask_additions: Vec::new(),
+            trade_enchant_targets: Vec::new(),
             known_languages: Vec::new(),
             class_names: Vec::new(),
             language_table: Vec::new(),

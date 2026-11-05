@@ -1797,6 +1797,10 @@ pub(crate) enum ClientCommand {
         spell_id: u32,
         item_guid: u64,
     },
+    /// A cast at the trade window's not-traded slot (`TARGET_FLAG_TRADE_ITEM`).
+    CastSpellTradeItem {
+        spell_id: u32,
+    },
     /// A glyph-socket cast from the book (`TARGET_FLAG_GLYPH_SLOT`, no payload).
     CastSpellGlyph {
         spell_id: u32,

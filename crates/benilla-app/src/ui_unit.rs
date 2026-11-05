@@ -983,6 +983,7 @@ pub(crate) fn snapshot(
         ghost: store.0.player_is_ghost(),
         // `UnitIsCharmed`: `UNIT_FIELD_CHARMEDBY != 0`.
         charmed: store.0.unit_charmed_by().is_some(),
+        controlling: store.0.unit_charm().is_some() || store.0.unit_summon().is_some(),
         // `UNIT_DYNAMIC_FLAGS` bits `0x4`/`0x8`; a unit with no descriptor reads `false`.
         tapped: store.0.unit_tapped(),
         tapped_by_player: store.0.unit_tapped_by_player(),

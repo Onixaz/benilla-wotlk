@@ -271,11 +271,13 @@ pub(super) fn read_cast_result(r: &mut &[u8]) -> io::Result<(u8, u32, CastOutcom
 // The `SpellCastTargets` mask bits, a `u32` on 12340.
 pub(super) const TARGET_FLAG_UNIT: u32 = 0x0002;
 pub(super) const TARGET_FLAG_ITEM: u32 = 0x0010;
+/// The not-traded trade slot, 0-based, as a trade item target names it.
+pub(super) const TRADE_ENCHANT_SLOT: u64 = 6;
 pub(super) const TARGET_FLAG_SOURCE_LOCATION: u32 = 0x0020;
 pub(super) const TARGET_FLAG_DEST_LOCATION: u32 = 0x0040;
 const TARGET_FLAG_CORPSE_ENEMY: u32 = 0x0200;
 pub(super) const TARGET_FLAG_GAMEOBJECT: u32 = 0x0800;
-const TARGET_FLAG_TRADE_ITEM: u32 = 0x1000;
+pub(super) const TARGET_FLAG_TRADE_ITEM: u32 = 0x1000;
 const TARGET_FLAG_STRING: u32 = 0x2000;
 const TARGET_FLAG_CORPSE_ALLY: u32 = 0x8000;
 const TARGET_FLAG_UNIT_MINIPET: u32 = 0x1_0000;
@@ -785,6 +787,17 @@ pub fn cast_spell_corpse(
     corpse_guid: u64,
 ) -> Vec<u8> {
     cast_at_guid(cast_count, spell_id, target.target_flag(), corpse_guid)
+}
+
+/// Body of `CMSG_CAST_SPELL` at the trade window's not-traded slot: `TARGET_FLAG_TRADE_ITEM` and
+/// the slot index in the item target's place (`0x80c5f0`).
+pub fn cast_spell_trade_item(cast_count: u8, spell_id: u32) -> Vec<u8> {
+    cast_at_guid(
+        cast_count,
+        spell_id,
+        TARGET_FLAG_TRADE_ITEM,
+        TRADE_ENCHANT_SLOT,
+    )
 }
 
 /// Body of `CMSG_CAST_SPELL` at an item, such as an enchant or poison: `TARGET_FLAG_ITEM` and the

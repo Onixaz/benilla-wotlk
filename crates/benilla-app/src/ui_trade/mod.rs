@@ -163,6 +163,11 @@ impl TradeSession {
         self.own_state += 1;
     }
 
+    /// The permanent enchant on the partner's item in the not-traded slot; `None` with no item.
+    pub(crate) fn their_enchant_slot(&self) -> Option<u32> {
+        self.their.slots[6].as_ref().map(|i| i.perm_enchant)
+    }
+
     /// The partner offer state our `CMSG_ACCEPT_TRADE` carries.
     pub(crate) fn their_state(&self) -> u32 {
         self.their_state

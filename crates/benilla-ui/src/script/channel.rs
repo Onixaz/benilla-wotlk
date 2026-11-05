@@ -16,6 +16,8 @@ pub struct ZoneChannelRow {
     pub shortcut: String,
     pub resolved: Option<String>,
     pub listed: bool,
+    /// `flags & 1`, a channel `ResetChatWindows` joins back.
+    pub auto_join: bool,
 }
 
 /// A channel verb's ask, drained by the app into its `CMSG_*`: the stock `ChatFrame.lua` slash
@@ -576,12 +578,14 @@ mod command_tests {
                 shortcut: "General".into(),
                 resolved: Some("General - Elwynn Forest".into()),
                 listed: true,
+                auto_join: false,
             },
             ZoneChannelRow {
                 id: 2,
                 shortcut: "Trade".into(),
                 resolved: None,
                 listed: false,
+                auto_join: false,
             },
         ]
     }
