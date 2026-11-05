@@ -125,7 +125,7 @@ fn script(class: u32) -> UiScript {
             "LFG_PROPOSAL_SHOW", "LFG_PROPOSAL_FAILED", "LFG_PROPOSAL_SUCCEEDED",
             "LFG_LOCK_INFO_RECEIVED", "LFG_UPDATE_RANDOM_INFO", "LFG_ROLE_CHECK_SHOW",
             "LFG_ROLE_CHECK_HIDE", "LFG_ROLE_CHECK_UPDATE", "LFG_ROLE_CHECK_ROLE_CHOSEN",
-            "LFG_QUEUE_STATUS_UPDATE"}) do
+            "LFG_QUEUE_STATUS_UPDATE", "UPDATE_LFG_LIST"}) do
             f:RegisterEvent(e)
         end
         f:SetScript("OnEvent", function(self, event, a)
@@ -566,4 +566,215 @@ fn instance_info_reads_its_map_difficulty() {
         .eval("local _, _, d, _, n = GetInstanceInfo() return d, n")
         .unwrap();
     assert_eq!((difficulty, size), (1, 5));
+}
+
+/// Naxxramas (159, type 2) in the raid browser.
+const NAXX_KEY: u32 = 2 << 24 | 159;
+
+fn lfr_player(guid: u64, level: u8, roles: u8) -> LfrPlayerView {
+    LfrPlayerView {
+        guid,
+        stats: Some(LfrStatsView {
+            level,
+            armor: 1000,
+            avg_item_level: 200.7,
+            ..Default::default()
+        }),
+        comment: Some(String::new()),
+        roles: Some(roles),
+        area: Some(4395),
+        ..Default::default()
+    }
+}
+
+fn lfr_name(name: &str, class: &str, file: &str) -> LfgName {
+    LfgName {
+        name: name.into(),
+        class_name: class.into(),
+        realm: String::new(),
+        class_file: file.into(),
+    }
+}
+
+/// `SearchLFGJoin` sends the key and empties both lists (`0x558ed0`); the first list for it is
+/// shown at once (`0x55bd88`), a difference after it only once refreshed (`0x55d280`).
+#[test]
+fn the_raid_browser_shows_its_first_list_and_refreshes_later_ones() {
+    let mut s = script(MAGE);
+    let mut cat = catalog();
+    cat.encounters.push(EncounterView {
+        map_id: 759,
+        difficulty: 0,
+        bit: 2,
+        name: "Anub'Rekhan".into(),
+        icon: Some("Anub".into()),
+    });
+    s.set_lfg_catalog(cat);
+    s.set_lfg_names(
+        [
+            (0x10, lfr_name("Zed", "Warrior", "WARRIOR")),
+            (0x11, lfr_name("Amy", "Priest", "PRIEST")),
+        ]
+        .into(),
+    );
+    assert_eq!(s.arity("SearchLFGGetJoinedID()").unwrap(), 0);
+    s.run("SearchLFGJoin(2, 159)").unwrap();
+    assert_eq!(s.take_lfg_requests(), [LfgRequest::LfrJoin(NAXX_KEY)]);
+    assert_eq!(log(&mut s), ["UPDATE_LFG_LIST"]);
+    s.run("SearchLFGJoin(2, 159)").unwrap();
+    assert!(s.take_lfg_requests().is_empty(), "the joined key again");
+
+    s.lfr_list(LfrListView {
+        lfg_type: 2,
+        dungeon: 159,
+        total_players: 2,
+        players: vec![lfr_player(0x10, 80, 0x2), lfr_player(0x11, 79, 0x4)],
+        ..Default::default()
+    });
+    assert_eq!(log(&mut s), ["UPDATE_LFG_LIST"]);
+    let (n, total): (i64, i64) = s.eval("return SearchLFGGetNumResults()").unwrap();
+    assert_eq!((n, total), (2, 2));
+    assert_eq!(s.eval::<i64>("return SearchLFGGetJoinedID()").unwrap(), 159);
+    let (name, level, class, members, file, bosses, tank): (
+        String,
+        i64,
+        String,
+        i64,
+        String,
+        i64,
+        bool,
+    ) = s
+        .eval(
+            "local n, l, _, c, _, m, _, f, t, _, _, tank = SearchLFGGetResults(1) \
+             return n, l, c, m, f, t, tank",
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            name.as_str(),
+            level,
+            class.as_str(),
+            members,
+            file.as_str(),
+            bosses,
+            tank
+        ),
+        ("Zed", 80, "Warrior", 0, "WARRIOR", 1, true)
+    );
+    assert_eq!(s.arity("SearchLFGGetResults(1)").unwrap(), 38);
+    let (boss, killed): (String, bool) = s
+        .eval("local b, _, k = SearchLFGGetEncounterResults(1, 1) return b, k")
+        .unwrap();
+    assert_eq!((boss.as_str(), killed), ("Anub'Rekhan", false));
+
+    // A difference edits the received list alone.
+    s.lfr_list(LfrListView {
+        lfg_type: 2,
+        dungeon: 159,
+        removed: Some(vec![0x11]),
+        ..Default::default()
+    });
+    assert!(log(&mut s).is_empty());
+    assert_eq!(s.eval::<i64>("return SearchLFGGetNumResults()").unwrap(), 2);
+    s.run("RefreshLFGList()").unwrap();
+    assert_eq!(log(&mut s), ["UPDATE_LFG_LIST"]);
+    assert_eq!(s.eval::<i64>("return SearchLFGGetNumResults()").unwrap(), 1);
+
+    // A list for another key is dropped.
+    s.lfr_list(LfrListView {
+        lfg_type: 2,
+        dungeon: 160,
+        players: vec![lfr_player(0x12, 80, 0)],
+        ..Default::default()
+    });
+    assert!(log(&mut s).is_empty());
+
+    s.run("SearchLFGLeave()").unwrap();
+    assert_eq!(s.take_lfg_requests(), [LfgRequest::LfrLeave(NAXX_KEY)]);
+    assert_eq!(log(&mut s), ["UPDATE_LFG_LIST"]);
+    assert_eq!(s.arity("SearchLFGGetResults(1)").unwrap(), 0);
+}
+
+/// A group reads as its leader; its other members come from `SearchLFGGetPartyResults`
+/// (`0x556280`); the header sort reorders the list and "group" puts groups first (`0x55d2b0`).
+#[test]
+fn the_raid_browser_lists_groups_and_sorts() {
+    let mut s = script(MAGE);
+    s.set_lfg_names(
+        [
+            (0x10, lfr_name("Zed", "Warrior", "WARRIOR")),
+            (0x11, lfr_name("Amy", "Priest", "PRIEST")),
+            (0x20, lfr_name("Lead", "Mage", "MAGE")),
+            (0x21, lfr_name("Mem", "Rogue", "ROGUE")),
+        ]
+        .into(),
+    );
+    s.run("SearchLFGJoin(2, 159)").unwrap();
+    const PARTY: u64 = 0x1F10_0000_0000_0005;
+    let member = |guid, leader| LfrPlayerView {
+        leader: Some(leader),
+        party: Some(PARTY),
+        ..lfr_player(guid, 80, 0)
+    };
+    s.lfr_list(LfrListView {
+        lfg_type: 2,
+        dungeon: 159,
+        groups: vec![LfrGroupView {
+            guid: PARTY,
+            comment: Some("lfm".into()),
+            ..Default::default()
+        }],
+        players: vec![
+            lfr_player(0x10, 80, 0x2),
+            member(0x21, false),
+            member(0x20, true),
+            lfr_player(0x11, 79, 0x4),
+        ],
+        ..Default::default()
+    });
+    log(&mut s);
+    let names = |s: &UiScript| -> Vec<String> {
+        (1..=3)
+            .map(|i| {
+                s.eval::<String>(&format!("return (SearchLFGGetResults({i}))"))
+                    .unwrap()
+            })
+            .collect()
+    };
+    assert_eq!(names(&s), ["Zed", "Amy", "Lead"], "solo players first");
+    let (members, comment): (i64, String) = s
+        .eval("local _, _, _, _, c, m = SearchLFGGetResults(3) return m, c")
+        .unwrap();
+    assert_eq!((members, comment.as_str()), (1, "lfm"));
+    assert_eq!(
+        s.eval::<String>("return (SearchLFGGetPartyResults(3, 1))")
+            .unwrap(),
+        "Mem"
+    );
+    assert_eq!(s.arity("SearchLFGGetPartyResults(3, 2)").unwrap(), 33);
+
+    s.run("SearchLFGSort('level')").unwrap();
+    assert_eq!(log(&mut s), ["UPDATE_LFG_LIST"]);
+    assert_eq!(names(&s), ["Amy", "Zed", "Lead"]);
+    s.run("SearchLFGSort('level')").unwrap();
+    assert_eq!(names(&s), ["Zed", "Amy", "Lead"], "the same key reverses");
+    s.run("SearchLFGSort('healer')").unwrap();
+    assert_eq!(names(&s), ["Amy", "Zed", "Lead"], "healers first");
+    s.run("SearchLFGSort('group')").unwrap();
+    assert_eq!(names(&s), ["Lead", "Amy", "Zed"]);
+}
+
+/// The server dropping the search empties both lists (`0x55c68b`).
+#[test]
+fn the_server_ends_a_raid_browser_search() {
+    let mut s = script(MAGE);
+    s.lfr_update_search(false);
+    assert!(log(&mut s).is_empty(), "nothing joined");
+    s.run("SearchLFGJoin(2, 159)").unwrap();
+    log(&mut s);
+    s.lfr_update_search(true);
+    assert!(log(&mut s).is_empty());
+    s.lfr_update_search(false);
+    assert_eq!(log(&mut s), ["UPDATE_LFG_LIST"]);
+    assert_eq!(s.arity("SearchLFGGetJoinedID()").unwrap(), 0);
 }

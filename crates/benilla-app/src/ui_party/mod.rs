@@ -96,13 +96,9 @@ pub struct GroupState {
     /// `UPDATE_INSTANCE_INFO` once per packet and `RaidFrame.lua:43` ignores the first, so the Raid
     /// Info button is decided on the second.
     pub saved_instances_answers: u32,
-    /// Bumped by each ready check that pops for us; a count, so a second one still fires.
-    pub ready_check: u32,
-    /// Bumped by every ready-check open, ours as leader included, where [`Self::ready_check`] skips
-    /// the leader's (the reference's leader arm never reaches the `READY_CHECK` fire).
-    pub ready_check_requests: u32,
-    /// The answers forwarded to us as leader, append-only until the next request clears them.
-    pub ready_check_answers: Vec<(u64, bool)>,
+    /// The ready-check packets in arrival order, append-only for the session; the feed replays
+    /// them into the engine from its own cursor.
+    pub ready_checks: Vec<ReadyCheckWire>,
     /// The player's own instance difficulties: the character's, kept across groups.
     pub player_difficulty: difficulty::PlayerDifficulty,
     /// The group's difficulties from its last list with members.
@@ -621,9 +617,7 @@ impl GroupState {
             roster_updates: _,
             saved_instances: _,
             saved_instances_answers: _,
-            ready_check: _,
-            ready_check_requests: _,
-            ready_check_answers: _,
+            ready_checks: _,
             // The character's own pair, and the list tail's: only a list with members writes the
             // group's difficulties (`0x6d8fc3`), and every list sets the LFG bit itself.
             player_difficulty: _,
@@ -664,30 +658,21 @@ impl GroupState {
         self.saved_instances_answers = self.saved_instances_answers.wrapping_add(1);
     }
 
-    /// `MSG_RAID_READY_CHECK`, open form, echoed to the whole group: the reference splits on the
-    /// leader guid, and only a non-leader prints the leader's line and gets the popup. Both arms
-    /// count the request and start a fresh answer log.
-    pub fn apply_ready_check_request(&mut self, we_lead: bool) -> Vec<UiError> {
-        self.ready_check_requests = self.ready_check_requests.wrapping_add(1);
-        self.ready_check_answers.clear();
-        if we_lead {
-            return Vec::new();
-        }
-        self.ready_check = self.ready_check.wrapping_add(1);
-        // The reference prints its name cache's entry for the leader; the roster holds the same.
-        let leader = self
-            .members
-            .iter()
-            .find(|m| m.guid == self.leader)
-            .map(|m| m.name.as_str())
-            .unwrap_or("");
-        vec![UiError::s("ERR_RAID_LEADER_READY_CHECK_START_S", leader)]
+    /// One ready-check packet, queued for the engine.
+    pub fn apply_ready_check(&mut self, wire: ReadyCheckWire) {
+        self.ready_checks.push(wire);
     }
+}
 
-    /// `MSG_RAID_READY_CHECK`, answer form: one member's answer, forwarded to the leader alone.
-    pub fn apply_ready_check_answer(&mut self, guid: u64, ready: bool) {
-        self.ready_check_answers.push((guid, ready));
-    }
+/// A ready-check packet as the engine takes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadyCheckWire {
+    /// `MSG_RAID_READY_CHECK`, the initiator's guid.
+    Started { initiator: u64 },
+    /// `MSG_RAID_READY_CHECK_CONFIRM`.
+    Confirm { guid: u64, ready: bool },
+    /// `MSG_RAID_READY_CHECK_FINISHED`.
+    Finished,
 }
 
 #[cfg(test)]
@@ -895,10 +880,10 @@ mod tests {
             ..Default::default()
         };
         g.raid_targets[0] = 0xA11CE;
-        g.apply_ready_check_request(false);
+        g.apply_ready_check(ReadyCheckWire::Started { initiator: 0xA11CE });
         g.apply_raid_instance_info(Vec::new());
         g.apply_raid_instance_info(vec![lockout]);
-        assert_eq!((g.ready_check, g.ready_check_requests), (1, 1));
+        assert_eq!(g.ready_checks.len(), 1);
         assert_eq!(g.saved_instances_answers, 2);
 
         g.apply_list(0, 0, vec![], 0, None, None);
@@ -907,11 +892,7 @@ mod tests {
         assert!(g.members.is_empty());
         assert_eq!(g.leader, 0);
         assert_eq!(g.raid_targets, [0; 8]);
-        assert_eq!(
-            (g.ready_check, g.ready_check_requests),
-            (1, 1),
-            "no READY_CHECK edge"
-        );
+        assert_eq!(g.ready_checks.len(), 1, "no ready-check packet");
         assert_eq!(g.saved_instances_answers, 2, "no UPDATE_INSTANCE_INFO edge");
         assert_eq!(
             g.saved_instances,
@@ -920,41 +901,30 @@ mod tests {
         );
 
         g.clear_session();
-        assert_eq!((g.ready_check, g.saved_instances_answers), (0, 0));
+        assert_eq!((g.ready_checks.len(), g.saved_instances_answers), (0, 0));
         assert!(g.saved_instances.is_empty());
     }
 
     #[test]
-    fn the_open_form_pops_for_a_member_and_stays_quiet_for_the_leader() {
-        let mut g = GroupState {
-            leader: 0xA11CE,
-            members: vec![member("Alice", 0xA11CE), member("Bob", 0xB0B)],
-            ..Default::default()
-        };
-        g.apply_ready_check_answer(0xB0B, true);
-
+    fn the_ready_check_packets_queue_in_arrival_order() {
+        let mut g = GroupState::default();
+        g.apply_ready_check(ReadyCheckWire::Started { initiator: 0xA11CE });
+        g.apply_ready_check(ReadyCheckWire::Confirm {
+            guid: 0xB0B,
+            ready: false,
+        });
+        g.apply_ready_check(ReadyCheckWire::Finished);
         assert_eq!(
-            g.apply_ready_check_request(false),
-            vec![UiError::s("ERR_RAID_LEADER_READY_CHECK_START_S", "Alice")]
+            g.ready_checks,
+            [
+                ReadyCheckWire::Started { initiator: 0xA11CE },
+                ReadyCheckWire::Confirm {
+                    guid: 0xB0B,
+                    ready: false
+                },
+                ReadyCheckWire::Finished,
+            ]
         );
-        assert_eq!((g.ready_check, g.ready_check_requests), (1, 1));
-        assert!(
-            g.ready_check_answers.is_empty(),
-            "a request starts a fresh log"
-        );
-
-        assert!(
-            g.apply_ready_check_request(true).is_empty(),
-            "the leader's echo"
-        );
-        assert_eq!(
-            (g.ready_check, g.ready_check_requests),
-            (1, 2),
-            "no popup for the leader"
-        );
-
-        g.apply_ready_check_answer(0xB0B, false);
-        assert_eq!(g.ready_check_answers, vec![(0xB0B, false)]);
     }
 
     /// Our own guid, for the lists that ask whether we lead.
@@ -1609,7 +1579,6 @@ mod tests {
         lines.extend(g.apply_destroyed());
         lines.extend(g.apply_uninvited());
         g.leader = 1;
-        lines.extend(g.apply_ready_check_request(false));
         lines.extend(g.apply_list(0, 0, Vec::new(), 0, None, None).lines);
 
         let mut keys: Vec<&str> = lines.iter().map(|m| m.key).collect();
@@ -1627,14 +1596,13 @@ mod tests {
                 "ERR_NEW_GUIDE_YOU",
                 "ERR_NEW_LEADER_S",
                 "ERR_NEW_LEADER_YOU",
-                "ERR_RAID_LEADER_READY_CHECK_START_S",
                 "ERR_RAID_MEMBER_ADDED_S",
                 "ERR_RAID_MEMBER_REMOVED_S",
                 "ERR_RAID_YOU_JOINED",
                 "ERR_RAID_YOU_LEFT",
                 "ERR_UNINVITE_YOU",
             ],
-            "all fifteen keys this window can raise are exercised below"
+            "all fourteen keys this window can raise are exercised below"
         );
 
         for msg in &lines {

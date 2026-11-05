@@ -65,6 +65,8 @@ fn lfg_send(w: &mut WorldWriter, request: benilla_ui::script::LfgRequest) -> any
         R::BootVote(vote) => w.lfg_set_boot_vote(vote),
         R::Teleport(out) => w.lfg_teleport(out),
         R::SetComment(comment) => w.lfg_set_comment(&comment),
+        R::LfrJoin(key) => w.lfr_join(key),
+        R::LfrLeave(key) => w.lfr_leave(key),
     }
 }
 
@@ -1900,6 +1902,9 @@ pub(super) fn writer_loop(
                         mail_id,
                         sender,
                     } => w.mail_return_to_sender(mailbox, mail_id, sender),
+                    ClientCommand::ComplainMail { sender, mail_id } => {
+                        w.complaint_mail(sender, mail_id)
+                    }
                     ClientCommand::MailDelete {
                         mailbox,
                         mail_id,
@@ -2055,6 +2060,7 @@ pub(super) fn writer_loop(
                         w.group_assistant_leader(guid, grant)
                     }
                     ClientCommand::ReadyCheckStart => w.ready_check_start(),
+                    ClientCommand::ReadyCheckFinish => w.ready_check_finish(),
                     ClientCommand::ReadyCheckAnswer { ready } => w.ready_check_answer(ready),
                     ClientCommand::RequestRaidInfo => w.request_raid_info(),
                     ClientCommand::ResetInstances => w.reset_instances(),

@@ -7,10 +7,8 @@
 //! 3. `PhaseShift` is 0 or shares a bit with the player's phase mask;
 //! 4. `Type` is 0, 1 or 3; 2 (battleground scoreboard columns) never.
 //!
-//! The scope is the server's last `SMSG_INIT_WORLD_STATES`, not the player's position.
-//!
-//! The phase mask (`[0xac80a4]`) is 1 outside phased areas and `SMSG_SET_PHASE_SHIFT` is not
-//! read, so it is held at 1.
+//! The scope is the server's last `SMSG_INIT_WORLD_STATES`, not the player's position; the phase
+//! mask is the server's last `SMSG_SET_PHASE_SHIFT` ([`WorldStates::phase_mask`]).
 
 use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
@@ -89,9 +87,6 @@ fn expand(text: &str, states: &WorldStates) -> String {
     out
 }
 
-/// The player's phase mask, held at the reference's default.
-const PHASE_MASK: u32 = 1;
-
 /// The admitted rows for the current scope, resolved as `GetWorldStateUIInfo` answers them.
 fn build(catalog: &WorldStateUiCatalog, states: &WorldStates) -> Vec<WorldStateUiView> {
     let Some(scope) = states.scope() else {
@@ -100,15 +95,15 @@ fn build(catalog: &WorldStateUiCatalog, states: &WorldStates) -> Vec<WorldStateU
     };
     catalog
         .rows()
-        .filter(|(_, row)| admits(row, scope))
+        .filter(|(_, row)| admits(row, scope, states.phase_mask()))
         .map(|(_, row)| resolve(row, states))
         .collect()
 }
 
-fn admits(row: &WorldStateUiRow, (map, zone, area): (u32, u32, u32)) -> bool {
+fn admits(row: &WorldStateUiRow, (map, zone, area): (u32, u32, u32), phase_mask: u32) -> bool {
     let map_ok = row.map_id == u32::MAX || row.map_id == map;
     let area_ok = row.area_id == 0 || row.area_id == zone || row.area_id == area;
-    let phase_ok = row.phase_shift == 0 || row.phase_shift & PHASE_MASK != 0;
+    let phase_ok = row.phase_shift == 0 || row.phase_shift & phase_mask != 0;
     map_ok && area_ok && phase_ok && matches!(row.ui_type, 0 | 1 | 3)
 }
 
@@ -241,31 +236,35 @@ mod tests {
     fn the_builder_gates_admit_the_right_rows() {
         // Eastern Plaguelands: map 0, zone 139.
         let epl = (0, 139, 139);
-        assert!(admits(&row(0, 139, 0), epl));
-        assert!(!admits(&row(0, 139, 0), (0, 1377, 1377)), "wrong area");
-        assert!(!admits(&row(0, 139, 0), (1, 139, 139)), "wrong map");
-        assert!(admits(&row(0, 0, 0), epl), "area 0 is a wildcard");
+        assert!(admits(&row(0, 139, 0), epl, 1));
+        assert!(!admits(&row(0, 139, 0), (0, 1377, 1377), 1), "wrong area");
+        assert!(!admits(&row(0, 139, 0), (1, 139, 139), 1), "wrong map");
+        assert!(admits(&row(0, 0, 0), epl, 1), "area 0 is a wildcard");
         assert!(
-            admits(&row(u32::MAX, 139, 0), (5, 139, 139)),
+            admits(&row(u32::MAX, 139, 0), (5, 139, 139), 1),
             "map -1 is a wildcard"
         );
         // A row may name the zone or the area inside it.
-        assert!(admits(&row(1, 976, 0), (1, 440, 976)), "the area");
-        assert!(admits(&row(1, 440, 0), (1, 440, 976)), "the zone");
+        assert!(admits(&row(1, 976, 0), (1, 440, 976), 1), "the area");
+        assert!(admits(&row(1, 440, 0), (1, 440, 976), 1), "the zone");
         assert!(
-            admits(&row(0, 139, 1), epl),
+            admits(&row(0, 139, 1), epl, 1),
             "world PvP has no channel gate"
         );
-        assert!(admits(&row(0, 139, 3), epl));
+        assert!(admits(&row(0, 139, 3), epl, 1));
         assert!(
-            !admits(&row(0, 139, 2), epl),
+            !admits(&row(0, 139, 2), epl, 1),
             "a scoreboard column is never an always-up row"
         );
         let mut phased = row(0, 139, 0);
         phased.phase_shift = 64;
-        assert!(!admits(&phased, epl), "a phased row outside its phase");
+        assert!(!admits(&phased, epl, 1), "a phased row outside its phase");
+        assert!(
+            admits(&phased, epl, 0x41),
+            "the server phased the player in"
+        );
         phased.phase_shift = 65;
-        assert!(admits(&phased, epl));
+        assert!(admits(&phased, epl, 1));
     }
 
     #[test]

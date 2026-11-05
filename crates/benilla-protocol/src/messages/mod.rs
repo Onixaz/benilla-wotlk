@@ -127,7 +127,9 @@ pub use calendar::{
     CalendarInviteAlert, CalendarInviteRef, CalendarInvitee, CalendarLockout, CalendarNewInvite,
     CalendarPacket, CalendarReset, CalendarSnapshot, CalendarStatusUpdate,
 };
-pub use channel::{channel_notice, ChannelNoticeTail, ChannelNotify};
+pub use channel::{
+    channel_notice, ChannelNoticeTail, ChannelNotify, ChannelUserList, ChannelUserListKind,
+};
 pub use char_services::{
     char_customize, char_faction_change, char_rename, set_player_declined_names, CharAppearance,
     CharChangeReq, CharChangeResult, CharRenameResult, DeclinedNamesResult,
@@ -196,8 +198,8 @@ pub use group::{
     party_member_mask, party_operation, party_result, patch_auras, raid_target_request,
     raid_target_set, ready_check_answer, ready_check_start, request_party_member_stats,
     request_raid_info, set_saved_instance_extend, DifficultySet, GroupDifficulties, GroupLootInfo,
-    GroupMemberEntry, PartyMemberStatsInfo, RaidInstanceEntry, RaidTargetUpdate, ReadyCheck,
-    RecordAura, GROUP_MEMBER_ASSISTANT, GROUP_MEMBER_MAIN_ASSIST, GROUP_MEMBER_MAIN_TANK,
+    GroupMemberEntry, PartyMemberStatsInfo, RaidInstanceEntry, RaidTargetUpdate, RecordAura,
+    GROUP_MEMBER_ASSISTANT, GROUP_MEMBER_MAIN_ASSIST, GROUP_MEMBER_MAIN_TANK,
 };
 pub use guild::{
     guild_accept, guild_add_rank, guild_bank_money_param, guild_bank_money_withdrawn,
@@ -235,9 +237,10 @@ pub use items::{
     SLOT_BANK_BAG_FIRST, SLOT_BANK_FIRST, SLOT_KEYRING_FIRST, SLOT_PACK_FIRST,
 };
 pub use lfg::{
-    lfg_comment, lfg_join, lfg_proposal_result, LfgBootProposal, LfgCompletionReward,
+    lfg_comment, lfg_join, lfg_proposal_result, lfr_search, LfgBootProposal, LfgCompletionReward,
     LfgDungeonReward, LfgJoin, LfgMemberLocks, LfgPacket, LfgProposal, LfgProposalMember,
-    LfgQueueStatus, LfgRewardItem, LfgRoleCheck, LfgRoleCheckMember, LfgUpdate,
+    LfgQueueStatus, LfgRewardItem, LfgRoleCheck, LfgRoleCheckMember, LfgUpdate, LfrGroup, LfrList,
+    LfrPlayer, LfrStats,
 };
 pub use loot::{
     autostore_loot_item, loot, loot_error, loot_master_give, loot_money, loot_release, loot_roll,
@@ -320,10 +323,11 @@ pub use roster::{
 pub use rune::{ConvertRune, ResyncRunes};
 pub use skills::unlearn_skill;
 pub use social::{
-    add_friend, add_ignore, add_mute, contact_flag, contact_list, del_friend, del_ignore, del_mute,
-    friend_result, friend_status, read_contact_list, read_friend_status, read_who,
-    set_contact_notes, who, ContactEntry, ContactList, FriendOnline, FriendStatusUpdate, WhoEntry,
-    WhoRequest, WhoResults, WHO_MAX_SEARCH_TERMS, WHO_MAX_ZONES,
+    add_friend, add_ignore, add_mute, complaint_mail, contact_flag, contact_list, del_friend,
+    del_ignore, del_mute, friend_result, friend_status, read_complaint_result, read_contact_list,
+    read_friend_status, read_who, set_contact_notes, who, ComplaintResult, ContactEntry,
+    ContactList, FriendOnline, FriendStatusUpdate, WhoEntry, WhoRequest, WhoResults,
+    WHO_MAX_SEARCH_TERMS, WHO_MAX_ZONES,
 };
 pub use spellbook::SpellCooldown;
 pub use spells::{

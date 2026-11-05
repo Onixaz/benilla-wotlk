@@ -730,6 +730,8 @@ pub enum SessionEvent {
         flags: u8,
         members: Vec<(u64, u8)>,
     },
+    /// One edit to the watched channel's roster (`SMSG_USERLIST_ADD`, `_REMOVE`, `_UPDATE`).
+    ChannelUserList(crate::messages::ChannelUserList),
     /// A whisper target wasn't found online (`SMSG_CHAT_PLAYER_NOT_FOUND`).
     ChatPlayerNotFound { name: String },
     /// A cross-faction whisper was refused (`SMSG_CHAT_WRONG_FACTION`); empty body.
@@ -1396,16 +1398,18 @@ pub enum SessionEvent {
     RaidTargetSet { setter: u64, marks: Vec<(u8, u64)> },
     /// The set raid-target icons (`MSG_RAID_TARGET_UPDATE`, full-list shape).
     RaidTargetList { entries: Vec<(u8, u64)> },
-    /// The raid leader started a ready check (`MSG_RAID_READY_CHECK`, empty body).
-    ReadyCheckRequest,
+    /// A ready check started (`MSG_RAID_READY_CHECK`), by `initiator`.
+    ReadyCheckStarted { initiator: u64 },
+    /// A member's ready-check answer (`MSG_RAID_READY_CHECK_CONFIRM`).
+    ReadyCheckConfirm { guid: u64, ready: bool },
+    /// The ready check closed (`MSG_RAID_READY_CHECK_FINISHED`).
+    ReadyCheckFinished,
     /// Our ready check came too soon (`SMSG_RAID_READY_CHECK_ERROR`, empty body).
     ReadyCheckError,
     /// A leader silenced or restored our voice (`MSG_NOTIFY_PARTY_SQUELCH`).
     PartySquelch { silenced: bool },
     /// We silenced or restored a member's voice (`SMSG_ECHO_PARTY_SQUELCH`).
     EchoPartySquelch { guid: u64, silenced: bool },
-    /// A member's ready-check answer, to the leader only (`MSG_RAID_READY_CHECK`, with a body).
-    ReadyCheckAnswer { guid: u64, ready: u8 },
     /// Our saved raid lockouts (`SMSG_RAID_INSTANCE_INFO`), replacing the list; empty is normal.
     RaidInstanceInfo {
         entries: Vec<crate::messages::RaidInstanceEntry>,
@@ -1483,6 +1487,10 @@ pub enum SessionEvent {
     /// A friend/ignore result (`SMSG_FRIEND_STATUS`): an add/remove ack or a friend's login or
     /// logout broadcast; the [`friend_result`](crate::messages::friend_result) code says which.
     FriendStatus(FriendStatusUpdate),
+    /// The answer to our complaint (`SMSG_COMPLAIN_RESULT`).
+    ComplaintResult(crate::messages::ComplaintResult),
+    /// The complaint system's status (`SMSG_FEATURE_SYSTEM_STATUS`): 0 off, 2 on with auto-ignore.
+    ComplaintStatus { status: u8 },
     /// A `/who` answer (`SMSG_WHO`): at most 49 rows, plus the true match total.
     WhoResults(WhoResults),
     /// A guild's name, ten rank names and tabard (`SMSG_GUILD_QUERY_RESPONSE`), cached by id.
@@ -1611,6 +1619,8 @@ pub enum SessionEvent {
         scope: Option<(u32, u32, u32)>,
         states: Vec<(u32, u32)>,
     },
+    /// The player's phase mask (`SMSG_SET_PHASE_SHIFT`), which gates phased world-state rows.
+    PhaseShift { mask: u32 },
 }
 
 impl SessionEventKind {

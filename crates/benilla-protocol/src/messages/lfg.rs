@@ -4,7 +4,7 @@
 
 use std::io::{self, Read};
 
-use crate::wire::{capacity_hint, read_cstring, read_u32_le, read_u64_le, read_u8};
+use crate::wire::{capacity_hint, read_cstring, read_f32_le, read_u32_le, read_u64_le, read_u8};
 
 /// One `SMSG_LFG_UPDATE_PLAYER` or `SMSG_LFG_UPDATE_PARTY`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -140,11 +140,92 @@ pub struct LfgCompletionReward {
     pub items: Vec<LfgRewardItem>,
 }
 
+/// A raid browser group's record (`0x553620`): what its flags carry.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LfrGroup {
+    pub guid: u64,
+    pub flags: u32,
+    /// `0x2`.
+    pub comment: Option<String>,
+    /// `0x10`: the three role bytes.
+    pub roles: Option<[u8; 3]>,
+    /// `0x80`: the instance's guid and its killed-encounter mask.
+    pub instance: Option<(u64, u32)>,
+}
+
+/// A raid browser player's stats block (`0x559050`, flag `0x1`), in wire order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LfrStats {
+    pub level: u8,
+    pub class: u8,
+    pub race: u8,
+    pub talents: [u8; 3],
+    pub armor: u32,
+    pub spell_damage: u32,
+    pub spell_heal: u32,
+    pub crit_melee: u32,
+    pub crit_ranged: u32,
+    pub crit_spell: u32,
+    pub mp5: f32,
+    pub mp5_combat: f32,
+    pub attack_power: u32,
+    pub agility: u32,
+    pub max_health: u32,
+    pub max_mana: u32,
+    /// The unnamed dword between the power and the item level (`+0x64`).
+    pub unknown: u32,
+    pub avg_item_level: f32,
+    pub defense: u32,
+    pub dodge: u32,
+    pub block: u32,
+    pub parry: u32,
+    pub haste: u32,
+    pub expertise: u32,
+}
+
+/// A raid browser player's record (`0x559050`): what its flags carry.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LfrPlayer {
+    pub guid: u64,
+    pub flags: u32,
+    /// `0x1`.
+    pub stats: Option<LfrStats>,
+    /// `0x2`.
+    pub comment: Option<String>,
+    /// `0x4`: leads its group.
+    pub leader: Option<bool>,
+    /// `0x8`: the group's guid, 0 for none.
+    pub party: Option<u64>,
+    /// `0x10`: leader 1, tank 2, healer 4, damage 8.
+    pub roles: Option<u8>,
+    /// `0x20`: an `AreaTable.dbc` id.
+    pub area: Option<u32>,
+    /// `0x40`.
+    pub status: Option<u8>,
+    /// `0x80`: the instance's guid and its killed-encounter mask.
+    pub instance: Option<(u64, u32)>,
+}
+
+/// `SMSG_UPDATE_LFG_LIST` (`0x55b770`): one raid browser list, whole or as a difference.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LfrList {
+    pub lfg_type: u32,
+    pub dungeon: u32,
+    /// `Some` for a difference: the guids gone since the last list.
+    pub removed: Option<Vec<u64>>,
+    pub total_groups: u32,
+    pub groups: Vec<LfrGroup>,
+    pub total_players: u32,
+    pub players: Vec<LfrPlayer>,
+}
+
 /// Every dungeon finder server message.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LfgPacket {
     UpdatePlayer(LfgUpdate),
     UpdateParty(LfgUpdate),
+    /// `SMSG_UPDATE_LFG_LIST`: the joined raid browser search's list.
+    UpdateList(Box<LfrList>),
     /// `SMSG_LFG_UPDATE_SEARCH`: whether the raid browser search is still joined.
     UpdateSearch {
         joined: bool,
@@ -184,6 +265,7 @@ impl LfgPacket {
         match self {
             Self::UpdatePlayer(_) => "SMSG_LFG_UPDATE_PLAYER",
             Self::UpdateParty(_) => "SMSG_LFG_UPDATE_PARTY",
+            Self::UpdateList(_) => "SMSG_UPDATE_LFG_LIST",
             Self::UpdateSearch { .. } => "SMSG_LFG_UPDATE_SEARCH",
             Self::QueueStatus(_) => "SMSG_LFG_QUEUE_STATUS",
             Self::Disabled => "SMSG_LFG_DISABLED",
@@ -216,6 +298,126 @@ fn read_slots(r: &mut impl Read) -> io::Result<Vec<u32>> {
 }
 
 /// `SMSG_LFG_UPDATE_PLAYER`: the extra block only behind the joined byte.
+/// `SMSG_UPDATE_LFG_LIST` (`0x55b770`): type, dungeon, the difference byte (with the removed
+/// guids), then the groups and the players, each after its count and the server's total.
+pub(super) fn read_update_list(r: &mut &[u8]) -> io::Result<LfrList> {
+    let lfg_type = read_u32_le(r)?;
+    let dungeon = read_u32_le(r)?;
+    let removed = if read_u8(r)? != 0 {
+        let n = read_u32_le(r)?;
+        let mut guids = Vec::with_capacity(capacity_hint(n, 256));
+        for _ in 0..n {
+            guids.push(read_u64_le(r)?);
+        }
+        Some(guids)
+    } else {
+        None
+    };
+    let group_count = read_u32_le(r)?;
+    let total_groups = read_u32_le(r)?;
+    let mut groups = Vec::with_capacity(capacity_hint(group_count, 256));
+    for _ in 0..group_count {
+        let guid = read_u64_le(r)?;
+        let flags = read_u32_le(r)?;
+        let comment = (flags & 0x2 != 0).then(|| read_cstring(r)).transpose()?;
+        let roles = if flags & 0x10 != 0 {
+            Some([read_u8(r)?, read_u8(r)?, read_u8(r)?])
+        } else {
+            None
+        };
+        let instance = if flags & 0x80 != 0 {
+            Some((read_u64_le(r)?, read_u32_le(r)?))
+        } else {
+            None
+        };
+        groups.push(LfrGroup {
+            guid,
+            flags,
+            comment,
+            roles,
+            instance,
+        });
+    }
+    let player_count = read_u32_le(r)?;
+    let total_players = read_u32_le(r)?;
+    let mut players = Vec::with_capacity(capacity_hint(player_count, 256));
+    for _ in 0..player_count {
+        let guid = read_u64_le(r)?;
+        let flags = read_u32_le(r)?;
+        let stats = (flags & 0x1 != 0).then(|| read_lfr_stats(r)).transpose()?;
+        let comment = (flags & 0x2 != 0).then(|| read_cstring(r)).transpose()?;
+        let leader = (flags & 0x4 != 0)
+            .then(|| read_u8(r))
+            .transpose()?
+            .map(|b| b != 0);
+        let party = (flags & 0x8 != 0).then(|| read_u64_le(r)).transpose()?;
+        let roles = (flags & 0x10 != 0).then(|| read_u8(r)).transpose()?;
+        let area = (flags & 0x20 != 0).then(|| read_u32_le(r)).transpose()?;
+        let status = (flags & 0x40 != 0).then(|| read_u8(r)).transpose()?;
+        let instance = if flags & 0x80 != 0 {
+            Some((read_u64_le(r)?, read_u32_le(r)?))
+        } else {
+            None
+        };
+        players.push(LfrPlayer {
+            guid,
+            flags,
+            stats,
+            comment,
+            leader,
+            party,
+            roles,
+            area,
+            status,
+            instance,
+        });
+    }
+    Ok(LfrList {
+        lfg_type,
+        dungeon,
+        removed,
+        total_groups,
+        groups,
+        total_players,
+        players,
+    })
+}
+
+fn read_lfr_stats(r: &mut &[u8]) -> io::Result<LfrStats> {
+    Ok(LfrStats {
+        level: read_u8(r)?,
+        class: read_u8(r)?,
+        race: read_u8(r)?,
+        talents: [read_u8(r)?, read_u8(r)?, read_u8(r)?],
+        armor: read_u32_le(r)?,
+        spell_damage: read_u32_le(r)?,
+        spell_heal: read_u32_le(r)?,
+        crit_melee: read_u32_le(r)?,
+        crit_ranged: read_u32_le(r)?,
+        crit_spell: read_u32_le(r)?,
+        mp5: read_f32_le(r)?,
+        mp5_combat: read_f32_le(r)?,
+        attack_power: read_u32_le(r)?,
+        agility: read_u32_le(r)?,
+        max_health: read_u32_le(r)?,
+        max_mana: read_u32_le(r)?,
+        unknown: read_u32_le(r)?,
+        avg_item_level: read_f32_le(r)?,
+        defense: read_u32_le(r)?,
+        dodge: read_u32_le(r)?,
+        block: read_u32_le(r)?,
+        parry: read_u32_le(r)?,
+        haste: read_u32_le(r)?,
+        expertise: read_u32_le(r)?,
+    })
+}
+
+/// `CMSG_LFG_LFR_JOIN` / `CMSG_LFG_LFR_LEAVE` body (`0x558ed0`, `0x558f90`): the search key,
+/// `type << 24 | dungeon`.
+pub fn lfr_search(key: u32) -> Vec<u8> {
+    key.to_le_bytes().to_vec()
+}
+
 pub(super) fn read_update_player(r: &mut impl Read) -> io::Result<LfgUpdate> {
     let update_type = read_u8(r)?;
     let joined = flag(r)?;

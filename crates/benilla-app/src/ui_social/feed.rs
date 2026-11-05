@@ -15,6 +15,7 @@ use crate::entities::CharCreate;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_action::{MessageSink, Shown, UiError};
+use benilla_ui::messages::MsgKind;
 
 use super::{name_pushes, result_key, row_guid, status_flag_key, Friend, SocialState};
 
@@ -119,6 +120,13 @@ pub(crate) fn feed_social(
     // The owed lines first, so a friend's offline line lands before the update that clears their
     // zone.
     crate::ui_action::show_messages(&mut script, &mut sink, "ui_social", owed);
+    // A complaint's answer, or a repeat complaint, prints as a system line (`0x6e3ed6`).
+    let complaints = std::mem::take(&mut social.complaint_lines);
+    if complaints > 0 {
+        let text = script.engine_text("COMPLAINT_ADDED");
+        let lines = (0..complaints).map(|_| Shown::unkeyed(MsgKind::Chat, text.clone()));
+        crate::ui_action::show_messages(&mut script, &mut sink, "ui_social", lines);
+    }
 
     let (ignores, ignore_order, ignores_named) = list_rows(&social.ignores, &names, &commands);
     let (mutes, mute_order, mutes_named) = list_rows(&social.mutes, &names, &commands);
@@ -398,13 +406,17 @@ fn index_of(order: &[u64], guid: u64) -> u32 {
 
 /// Turn the Lua API's social intents into their sends. A row resolves through the order the feed
 /// published, since the wire removes by guid.
-pub(super) fn drain_social(
+pub(crate) fn drain_social(
     script: Option<NonSendMut<UiScript>>,
     mut social: ResMut<SocialState>,
     commands: Res<NetCommands>,
     areas: Option<Res<AreaTableRes>>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
+    mut complaints: MessageReader<super::Complained>,
 ) {
+    for &c in complaints.read() {
+        social.complained(c);
+    }
     let Some(mut script) = script else {
         return;
     };

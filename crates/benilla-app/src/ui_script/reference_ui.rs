@@ -1344,15 +1344,6 @@ mod tests {
                 ],
             ),
             (
-                "the looking-for-raid browser, not built",
-                &[
-                    "RefreshLFGList",
-                    "SearchLFGJoin",
-                    "SearchLFGLeave",
-                    "SearchLFGSort",
-                ],
-            ),
-            (
                 "12340 verbs the stock windows call, each not built yet",
                 &[
                     "CancelItemTempEnchantment",
@@ -2025,12 +2016,9 @@ mod tests {
             ("PLAYER_ENTERING_BATTLEGROUND", R_1),
             ("PLAYER_ROLES_ASSIGNED", R_1),
             ("RAISED_AS_GHOUL", R_1),
-            ("READY_CHECK_CONFIRM", R_1),
-            ("READY_CHECK_FINISHED", R_1),
             ("TRADE_POTENTIAL_BIND_ENCHANT", R_1),
             ("UPDATE_CHAT_COLOR_NAME_BY_CLASS", R_1),
             ("UPDATE_FLOATING_CHAT_WINDOWS", R_1),
-            ("UPDATE_LFG_LIST", R_1),
             ("UPDATE_SHAPESHIFT_COOLDOWN", R_1),
             ("UPDATE_SHAPESHIFT_FORM", R_1),
             ("UPDATE_SHAPESHIFT_USABLE", R_1),

@@ -611,6 +611,25 @@ impl super::UiScript {
         }
     }
 
+    /// Push the complaint system's state: on or off, and the players already complained about.
+    pub fn set_calendar_complaints(&mut self, enabled: bool, complained: HashSet<u64>) {
+        {
+            let model = self.model_ref();
+            let c = &model.calendar;
+            if c.complaints_enabled == enabled && c.complained == complained {
+                return;
+            }
+        }
+        let mut model = self.model_mut();
+        model.calendar.complaints_enabled = enabled;
+        model.calendar.complained = complained;
+    }
+
+    /// A complaint result for an event: the calendar's `COMPLAINT_ADDED` error.
+    pub fn calendar_complaint_added(&mut self) {
+        self.calendar_run(|c, _| c.error("COMPLAINT_ADDED", None));
+    }
+
     /// Push the raid roster's guids, the invite list's "party" sort key.
     pub fn set_calendar_raid_members(&mut self, raid: HashSet<u64>) {
         if self.model_ref().calendar.raid_members != raid {

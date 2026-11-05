@@ -91,6 +91,7 @@ fn party(n: usize) -> PartyState {
             .map(|i| PartyMemberInfo {
                 name: format!("Mate{i}"),
                 guid: 0x300 + i as u64,
+                online: true,
             })
             .collect(),
         ..PartyState::default()

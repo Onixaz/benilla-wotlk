@@ -211,6 +211,9 @@ pub enum MailCommand {
     Return { message_id: u32 },
     /// `CMSG_MAIL_DELETE` with the player's reason.
     Delete { message_id: u32 },
+    /// `CMSG_COMPLAIN` about a mail's sender, from `ComplainInboxItem` (`0x56faf0`); the app
+    /// holds the complaint system's status and its complained-about list.
+    Complain { message_id: u32 },
     /// `CMSG_SEND_MAIL`.
     Send(MailSendRequest),
     /// `CloseMail`: the window closed; the app ends its session.
@@ -756,13 +759,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ComplainInboxItem(index) (`0x571350`): `Complain` (`0x56faf0`) returns while the chat
-    // complaint system's status is off, its value until `SMSG_FEATURE_SYSTEM_STATUS`, which is
-    // not modelled.
+    // ComplainInboxItem(index) (`0x571350`): the complaint (`0x56faf0`) needs no command in flight,
+    // an open mailbox and a mail `CanComplainInboxItem` passes; the app checks the status.
     g.set(
         "ComplainInboxItem",
         lua.create_function(|lua, index: Value| {
-            index_arg(lua, index, "Usage: ComplainInboxItem(index)")?;
+            let index = index_arg(lua, index, "Usage: ComplainInboxItem(index)")?;
+            let mut model = crate::script::model_mut_of(lua);
+            if model.mail_command_pending || !model.mail_mailbox {
+                return Ok(());
+            }
+            let Some(r) = row(&model, index).filter(|r| r.can_complain) else {
+                return Ok(());
+            };
+            let message_id = r.message_id;
+            model
+                .mail_commands
+                .push(MailCommand::Complain { message_id });
             Ok(())
         })?,
     )?;

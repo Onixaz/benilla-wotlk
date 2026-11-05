@@ -863,34 +863,47 @@ fn raid_target_update_smsg_shapes() {
     }
 }
 
-/// `MSG_RAID_READY_CHECK` from the server: empty when a check starts (Group.cpp:94-96), a full
-/// guid and state for a member's answer (126-130).
+/// The ready check's three server packets: the start names its initiator (`0x574d50`), an answer
+/// is a guid and a ready byte that may be absent (`0x5744f0`), the close is empty (`0x572560`).
 #[test]
 fn ready_check_smsg_shapes() {
-    let p = messages::parse_server(opcode::MSG_RAID_READY_CHECK, &[]).unwrap();
-    assert!(matches!(p, ServerPacket::ReadyCheckRequest));
+    let p = messages::parse_server(opcode::MSG_RAID_READY_CHECK, &0x88u64.to_le_bytes()).unwrap();
+    assert!(matches!(
+        p,
+        ServerPacket::ReadyCheckStarted { initiator: 0x88 }
+    ));
     assert!(matches!(
         decode(p).as_slice(),
-        [SessionEvent::ReadyCheckRequest]
+        [SessionEvent::ReadyCheckStarted { initiator: 0x88 }]
     ));
 
-    let mut body = 0x88u64.to_le_bytes().to_vec();
+    let mut body = 0x99u64.to_le_bytes().to_vec();
     body.push(1);
-    let p = messages::parse_server(opcode::MSG_RAID_READY_CHECK, &body).unwrap();
-    match &p {
-        ServerPacket::ReadyCheckAnswer { guid, ready } => {
-            assert_eq!(*guid, 0x88);
-            assert_eq!(*ready, 1);
-        }
-        other => panic!("expected ReadyCheckAnswer, got {}", other.name()),
-    }
-    match decode(p).as_slice() {
-        [SessionEvent::ReadyCheckAnswer {
-            guid: 0x88,
-            ready: 1,
-        }] => {}
-        other => panic!("ready check answer decode: {other:?}"),
-    }
+    let p = messages::parse_server(opcode::MSG_RAID_READY_CHECK_CONFIRM, &body).unwrap();
+    assert!(matches!(
+        decode(p).as_slice(),
+        [SessionEvent::ReadyCheckConfirm {
+            guid: 0x99,
+            ready: true
+        }]
+    ));
+    let p = messages::parse_server(opcode::MSG_RAID_READY_CHECK_CONFIRM, &body[..8]).unwrap();
+    assert!(
+        matches!(
+            p,
+            ServerPacket::ReadyCheckConfirm {
+                guid: 0x99,
+                ready: false
+            }
+        ),
+        "no byte reads as not ready"
+    );
+
+    let p = messages::parse_server(opcode::MSG_RAID_READY_CHECK_FINISHED, &[]).unwrap();
+    assert!(matches!(
+        decode(p).as_slice(),
+        [SessionEvent::ReadyCheckFinished]
+    ));
 }
 
 /// The bodiless notices and the two squelch reads (`0x6cbe80`, `0x5725a0`, `0x5725c0`, `0x572610`),

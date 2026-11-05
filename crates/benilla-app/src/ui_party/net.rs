@@ -41,8 +41,9 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::PartyMemberStats, on_member_stats)
         .net_handler(K::RaidTargetSet, on_raid_target)
         .net_handler(K::RaidTargetList, on_raid_target)
-        .net_handler(K::ReadyCheckRequest, on_ready_check_request)
-        .net_handler(K::ReadyCheckAnswer, on_ready_check_answer)
+        .net_handler(K::ReadyCheckStarted, on_ready_check)
+        .net_handler(K::ReadyCheckConfirm, on_ready_check)
+        .net_handler(K::ReadyCheckFinished, on_ready_check)
         .net_handler(K::RaidInstanceInfo, on_raid_instance_info)
         .net_handler(K::DungeonDifficulty, on_difficulty)
         .net_handler(K::RaidDifficulty, on_difficulty)
@@ -352,21 +353,16 @@ fn on_raid_target(
     }
 }
 
-fn on_ready_check_request(
-    In(ev): In<SessionEvent>,
-    mut group: ResMut<GroupState>,
-    mut errors: ResMut<UiErrorKeys>,
-    self_guid: Res<SelfGuid>,
-) {
-    if let SessionEvent::ReadyCheckRequest = ev {
-        ready_check_request(&mut group, &mut errors, &self_guid);
-    }
-}
-
-fn on_ready_check_answer(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
-    if let SessionEvent::ReadyCheckAnswer { guid, ready } = ev {
-        group.apply_ready_check_answer(guid, ready != 0);
-    }
+/// The three ready-check packets, queued in order for the engine's port of their handlers.
+fn on_ready_check(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
+    use super::ReadyCheckWire as W;
+    let wire = match ev {
+        SessionEvent::ReadyCheckStarted { initiator } => W::Started { initiator },
+        SessionEvent::ReadyCheckConfirm { guid, ready } => W::Confirm { guid, ready },
+        SessionEvent::ReadyCheckFinished => W::Finished,
+        _ => return,
+    };
+    group.apply_ready_check(wire);
 }
 
 fn on_raid_instance_info(In(ev): In<SessionEvent>, mut group: ResMut<GroupState>) {
@@ -386,11 +382,6 @@ fn push_group_lines(errors: &mut UiErrorKeys, lines: Vec<UiError>) {
 }
 
 /// We lead when our guid is the leader's, the reference's test.
-fn ready_check_request(group: &mut GroupState, errors: &mut UiErrorKeys, self_guid: &SelfGuid) {
-    let we_lead = self_guid.0 == Some(group.leader);
-    push_group_lines(errors, group.apply_ready_check_request(we_lead));
-}
-
 fn invited(group: &mut GroupState, errors: &mut UiErrorKeys, can_accept: bool, inviter: &str) {
     push_group_lines(errors, group.apply_invited(can_accept, inviter));
 }

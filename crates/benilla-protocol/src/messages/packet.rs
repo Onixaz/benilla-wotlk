@@ -648,6 +648,8 @@ pub enum ServerPacket {
         flags: u8,
         members: Vec<(u64, u8)>,
     },
+    /// `SMSG_USERLIST_ADD`, `_REMOVE` or `_UPDATE`: one edit to the watched channel's roster.
+    ChannelUserList(super::ChannelUserList),
     /// `SMSG_CHAT_PLAYER_NOT_FOUND`: the whisper target is not online
     /// (`Server/Packets/Chat.cpp:26-29`).
     ChatPlayerNotFound {
@@ -1456,8 +1458,10 @@ pub enum ServerPacket {
     RaidTargetList {
         entries: Vec<(u8, u64)>,
     },
-    /// `MSG_RAID_READY_CHECK`, empty body: the raid leader started a ready check.
-    ReadyCheckRequest,
+    /// `MSG_RAID_READY_CHECK`: a ready check started, echoed to the whole group.
+    ReadyCheckStarted {
+        initiator: u64,
+    },
     /// `SMSG_RAID_READY_CHECK_ERROR`: our ready check came too soon; empty body.
     ReadyCheckError,
     /// `MSG_NOTIFY_PARTY_SQUELCH`: a leader silenced or restored our voice.
@@ -1469,11 +1473,13 @@ pub enum ServerPacket {
         guid: u64,
         silenced: bool,
     },
-    /// `MSG_RAID_READY_CHECK`, non-empty body: one member's answer, forwarded to the leader only.
-    ReadyCheckAnswer {
+    /// `MSG_RAID_READY_CHECK_CONFIRM`: one member's answer.
+    ReadyCheckConfirm {
         guid: u64,
-        ready: u8,
+        ready: bool,
     },
+    /// `MSG_RAID_READY_CHECK_FINISHED`: the check closed.
+    ReadyCheckFinished,
     /// `SMSG_RAID_INSTANCE_INFO`: our saved raid lockouts, answering `CMSG_REQUEST_RAID_INFO`.
     RaidInstanceInfo {
         entries: Vec<super::group::RaidInstanceEntry>,
@@ -1564,6 +1570,13 @@ pub enum ServerPacket {
     ContactList(ContactList),
     /// `SMSG_FRIEND_STATUS`: an add or remove ack, or a friend's login or logout.
     FriendStatus(FriendStatusUpdate),
+    /// `SMSG_COMPLAIN_RESULT`: the answer to a `CMSG_COMPLAIN`.
+    ComplaintResult(super::ComplaintResult),
+    /// `SMSG_FEATURE_SYSTEM_STATUS`: the complaint system's status (0 off, 2 on with auto-ignore);
+    /// the voice status after it is read and dropped, as voice is not built.
+    FeatureSystemStatus {
+        complaints: u8,
+    },
     /// `SMSG_WHO`: the `/who` answer, up to 49 rows plus the true match total.
     WhoResults(WhoResults),
     /// `SMSG_GUILD_QUERY_RESPONSE`: a guild's name, ten rank names and tabard, cached by guild id.
@@ -1765,6 +1778,10 @@ pub enum ServerPacket {
     UpdateWorldState {
         id: u32,
         value: u32,
+    },
+    /// `SMSG_SET_PHASE_SHIFT`: the player's phase mask.
+    SetPhaseShift {
+        mask: u32,
     },
     /// `SMSG_ADDON_INFO` (`0x2ef`): one record per addon we sent in `CMSG_AUTH_SESSION`, in that
     /// order with no count or names, so record i is `STOCK_SECURE_ADDONS_WOTLK[i]`, then the
@@ -2014,6 +2031,12 @@ impl ServerPacket {
             ServerPacket::MessageChat(_) => "SMSG_MESSAGECHAT".into(),
             ServerPacket::ChannelNotify(_) => "SMSG_CHANNEL_NOTIFY".into(),
             ServerPacket::ChannelList { .. } => "SMSG_CHANNEL_LIST".into(),
+            ServerPacket::ChannelUserList(u) => match u.kind {
+                super::ChannelUserListKind::Add => "SMSG_USERLIST_ADD",
+                super::ChannelUserListKind::Remove => "SMSG_USERLIST_REMOVE",
+                super::ChannelUserListKind::Update => "SMSG_USERLIST_UPDATE",
+            }
+            .into(),
             ServerPacket::ChatPlayerNotFound { .. } => "SMSG_CHAT_PLAYER_NOT_FOUND".into(),
             ServerPacket::ChatWrongFaction => "SMSG_CHAT_WRONG_FACTION".into(),
             ServerPacket::Notification { .. } => "SMSG_NOTIFICATION".into(),
@@ -2301,9 +2324,9 @@ impl ServerPacket {
             ServerPacket::RaidTargetSet { .. } | ServerPacket::RaidTargetList { .. } => {
                 "MSG_RAID_TARGET_UPDATE".into()
             }
-            ServerPacket::ReadyCheckRequest | ServerPacket::ReadyCheckAnswer { .. } => {
-                "MSG_RAID_READY_CHECK".into()
-            }
+            ServerPacket::ReadyCheckStarted { .. } => "MSG_RAID_READY_CHECK".into(),
+            ServerPacket::ReadyCheckConfirm { .. } => "MSG_RAID_READY_CHECK_CONFIRM".into(),
+            ServerPacket::ReadyCheckFinished => "MSG_RAID_READY_CHECK_FINISHED".into(),
             ServerPacket::ReadyCheckError => "SMSG_RAID_READY_CHECK_ERROR".into(),
             ServerPacket::PartySquelch { .. } => "MSG_NOTIFY_PARTY_SQUELCH".into(),
             ServerPacket::EchoPartySquelch { .. } => "SMSG_ECHO_PARTY_SQUELCH".into(),
@@ -2333,6 +2356,8 @@ impl ServerPacket {
             ServerPacket::MirrorTimerStop { .. } => "SMSG_STOP_MIRROR_TIMER".into(),
             ServerPacket::ContactList(_) => "SMSG_CONTACT_LIST".into(),
             ServerPacket::FriendStatus(..) => "SMSG_FRIEND_STATUS".into(),
+            ServerPacket::ComplaintResult(_) => "SMSG_COMPLAIN_RESULT".into(),
+            ServerPacket::FeatureSystemStatus { .. } => "SMSG_FEATURE_SYSTEM_STATUS".into(),
             ServerPacket::WhoResults(..) => "SMSG_WHO".into(),
             ServerPacket::GuildQueryResponse(..) => "SMSG_GUILD_QUERY_RESPONSE".into(),
             ServerPacket::GuildRoster(..) => "SMSG_GUILD_ROSTER".into(),
@@ -2387,6 +2412,7 @@ impl ServerPacket {
             ServerPacket::TradeStatusExtended { .. } => "SMSG_TRADE_STATUS_EXTENDED".into(),
             ServerPacket::InitWorldStates(_) => "SMSG_INIT_WORLD_STATES".into(),
             ServerPacket::UpdateWorldState { .. } => "SMSG_UPDATE_WORLD_STATE".into(),
+            ServerPacket::SetPhaseShift { .. } => "SMSG_SET_PHASE_SHIFT".into(),
             ServerPacket::AddonInfo { .. } => "SMSG_ADDON_INFO".into(),
             ServerPacket::Ignored { opcode } => super::opcode_name(*opcode)
                 .map_or_else(|| format!("opcode {opcode:#06x}"), str::to_string),

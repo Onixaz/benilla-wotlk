@@ -552,6 +552,105 @@ impl super::UiScript {
         }
     }
 
+    /// `SMSG_USERLIST_ADD` (`0x504130`), read only while it names the selected channel: the member
+    /// is appended; with its name cached the roster sorts and fires its count and roster, else it
+    /// waits on the name as a display list's member does.
+    pub fn channel_user_added(
+        &mut self,
+        channel: &str,
+        guid: u64,
+        member_flags: u8,
+        channel_flags: u8,
+        name_of: impl Fn(u64) -> Option<Option<String>>,
+    ) {
+        self.channel_user_edit(channel, channel_flags, |pane| {
+            let answer = name_of(guid);
+            let asked = answer.is_none();
+            pane.roster.push(Member {
+                guid,
+                flags: member_flags,
+                name: answer.flatten(),
+                asked,
+            });
+            if asked {
+                pane.unnamed += 1;
+                return false;
+            }
+            sort_members(&mut pane.roster);
+            true
+        });
+    }
+
+    /// `SMSG_USERLIST_REMOVE` (`0x5042f0`): the member's row goes, the rest keep their order.
+    pub fn channel_user_removed(&mut self, channel: &str, guid: u64, channel_flags: u8) {
+        self.channel_user_edit(channel, channel_flags, |pane| {
+            let Some(i) = pane.roster.iter().position(|m| m.guid == guid) else {
+                return false;
+            };
+            pane.roster.remove(i);
+            true
+        });
+    }
+
+    /// `SMSG_USERLIST_UPDATE` (`0x500380`): the member's flags; the player's own owner and
+    /// moderator gates stay as the display list seated them.
+    pub fn channel_user_updated(
+        &mut self,
+        channel: &str,
+        guid: u64,
+        member_flags: u8,
+        channel_flags: u8,
+    ) {
+        self.channel_user_edit(channel, channel_flags, |pane| {
+            let Some(m) = pane.roster.iter_mut().find(|m| m.guid == guid) else {
+                return false;
+            };
+            m.flags = member_flags;
+            true
+        });
+    }
+
+    /// The three user-list handlers' shared frame: nothing unless the selection is this channel;
+    /// the channel's flags first (`CHANNEL_FLAGS_UPDATED` on a change), then `edit`, and when it
+    /// says so the count and roster events with the roster's length.
+    fn channel_user_edit(
+        &mut self,
+        channel: &str,
+        channel_flags: u8,
+        edit: impl FnOnce(&mut ChannelPane) -> bool,
+    ) {
+        let mut events: Vec<(&str, Vec<ScriptValue>)> = Vec::new();
+        {
+            let mut model = self.model_mut();
+            let pane = &mut model.channel_pane;
+            if !pane.is_selected(Kind::Channel, channel) {
+                return;
+            }
+            let index = pane.find(Kind::Channel, channel);
+            let at = ScriptValue::Int(index as i64);
+            if index != 0 {
+                let slot = usize::try_from(pane.entries[index - 1].channel)
+                    .ok()
+                    .and_then(|i| pane.slots.get_mut(i))
+                    .and_then(Option::as_mut);
+                if let Some(slot) = slot.filter(|s| s.flags != channel_flags) {
+                    slot.flags = channel_flags;
+                    events.push(("CHANNEL_FLAGS_UPDATED", vec![at.clone()]));
+                }
+            }
+            if edit(pane) && index != 0 {
+                let count = pane.roster.len() as u32;
+                pane.entries[index - 1].count = count;
+                let args = vec![at, ScriptValue::Int(i64::from(count))];
+                events.push(("CHANNEL_COUNT_UPDATE", args.clone()));
+                events.push(("CHANNEL_ROSTER_UPDATE", args));
+            }
+        }
+        for (event, args) in events {
+            self.fire_event(event, args);
+        }
+    }
+
     /// The guids whose name the pane's roster still waits for.
     pub fn channel_roster_unnamed(&self) -> Vec<u64> {
         let model = self.model_ref();

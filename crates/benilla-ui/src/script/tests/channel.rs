@@ -424,10 +424,12 @@ fn a_party_lists_under_the_group_header_and_builds_its_roster_at_once() {
             PartyMemberInfo {
                 name: "Zed".into(),
                 guid: 0x50,
+                online: true,
             },
             PartyMemberInfo {
                 name: "amy".into(),
                 guid: 0x60,
+                online: true,
             },
         ],
         leader_guid: 0x50,
@@ -467,6 +469,7 @@ fn a_raid_lists_its_entry_and_a_battleground_raid_the_battleground() {
         members: vec![PartyMemberInfo {
             name: "Zed".into(),
             guid: 0x50,
+            online: true,
         }],
         raid: vec![
             member("Me", OWN, 2),
@@ -519,4 +522,67 @@ fn set_active_voice_channel_zero_signals_the_first_entry() {
          assert(v == nil and va == nil)",
     )
     .unwrap();
+}
+
+/// The user-list packets edit the watched roster (`0x504130`, `0x5042f0`, `0x500380`): a member
+/// with a cached name joins sorted and fires the count and roster, one without waits on its name,
+/// a removal keeps the others' order, and another channel's packet is ignored.
+#[test]
+fn the_user_list_packets_edit_the_watched_roster() {
+    let mut s = pane();
+    s.run("SetSelectedDisplayChannel(3)").unwrap();
+    s.take_channel_commands();
+    s.display_channel_list(GENERAL, 0x18, &[(OWN, 0x01), (0x20, 0)], |g| match g {
+        OWN => Some(Some("Me".into())),
+        _ => Some(Some("bob".into())),
+    });
+    events(&s);
+    let names = |s: &crate::script::UiScript| -> Vec<String> {
+        let n = s.eval::<i64>("return GetNumChannelMembers(3)").unwrap();
+        (1..=n)
+            .map(|i| {
+                s.eval::<String>(&format!("return (GetChannelRosterInfo(3, {i}))"))
+                    .unwrap()
+            })
+            .collect()
+    };
+
+    s.channel_user_added(GENERAL, 0x30, 0, 0x18, |_| Some(Some("Ann".into())));
+    assert_eq!(
+        events(&s),
+        vec!["CHANNEL_COUNT_UPDATE:3:3", "CHANNEL_ROSTER_UPDATE:3:3"]
+    );
+    assert_eq!(names(&s), ["Ann", "bob", "Me"]);
+
+    s.channel_user_added(GENERAL, 0x40, 0, 0x1a, |_| None);
+    assert_eq!(
+        events(&s),
+        vec!["CHANNEL_FLAGS_UPDATED:3:nil"],
+        "the channel's flags moved; the roster waits on the name"
+    );
+    assert_eq!(s.channel_roster_unnamed(), vec![0x40]);
+    s.channel_roster_named(0x40, Some("Cid".into()));
+    assert_eq!(
+        events(&s),
+        vec!["CHANNEL_COUNT_UPDATE:3:4", "CHANNEL_ROSTER_UPDATE:3:4"]
+    );
+
+    s.channel_user_removed(GENERAL, 0x20, 0x1a);
+    assert_eq!(
+        events(&s),
+        vec!["CHANNEL_COUNT_UPDATE:3:3", "CHANNEL_ROSTER_UPDATE:3:3"]
+    );
+    assert_eq!(names(&s), ["Ann", "Cid", "Me"]);
+
+    s.channel_user_updated(GENERAL, 0x30, 0x02, 0x1a);
+    assert_eq!(
+        events(&s),
+        vec!["CHANNEL_COUNT_UPDATE:3:3", "CHANNEL_ROSTER_UPDATE:3:3"]
+    );
+    s.run("local _, _, m = GetChannelRosterInfo(3, 1) assert(m == 1, 'moderator')")
+        .unwrap();
+
+    s.channel_user_removed("MyChan", 0x30, 0);
+    s.channel_user_removed(GENERAL, 0x99, 0x1a);
+    assert!(events(&s).is_empty(), "another channel, an unknown member");
 }

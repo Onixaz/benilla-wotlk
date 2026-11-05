@@ -93,6 +93,7 @@ fn push_raid(s: &mut UiScript, raid: Vec<RaidMemberInfo>) {
         .map(|r| PartyMemberInfo {
             name: r.name.clone(),
             guid: r.guid,
+            online: true,
         })
         .collect();
     s.set_party(PartyState {
@@ -210,6 +211,7 @@ fn convert_to_raid_is_live_only_for_a_party_leader() {
         members: vec![PartyMemberInfo {
             name: "Alice".into(),
             guid: 0xA,
+            online: true,
         }],
         leader_index: 0,
         ..Default::default()
@@ -232,6 +234,7 @@ fn convert_to_raid_is_live_only_for_a_party_leader() {
         members: vec![PartyMemberInfo {
             name: "Alice".into(),
             guid: 0xA,
+            online: true,
         }],
         leader_index: 1,
         ..Default::default()
@@ -410,6 +413,7 @@ fn a_units_level_repaints_its_row_and_its_health_repaints_nothing() {
         members: vec![PartyMemberInfo {
             name: "Member1".into(),
             guid: raid[1].guid,
+            online: true,
         }],
         leader_index: 0,
         raid: raid.clone(),
@@ -476,6 +480,7 @@ fn ready_check_is_for_the_leader_and_the_officers() {
         members: vec![PartyMemberInfo {
             name: "Member1".into(),
             guid: raid[1].guid,
+            online: true,
         }],
         leader_index: 1,
         leader_guid: raid[1].guid,
@@ -492,6 +497,7 @@ fn ready_check_is_for_the_leader_and_the_officers() {
         members: vec![PartyMemberInfo {
             name: "Member1".into(),
             guid: raid[1].guid,
+            online: true,
         }],
         leader_index: 1,
         leader_guid: raid[1].guid,
@@ -565,6 +571,7 @@ fn only_the_leader_may_drag() {
         members: vec![PartyMemberInfo {
             name: "Member1".into(),
             guid: raid[1].guid,
+            online: true,
         }],
         leader_index: 1,
         raid,

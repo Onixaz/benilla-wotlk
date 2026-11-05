@@ -59,6 +59,7 @@ impl Plugin for UiCalendarPlugin {
     fn build(&self, app: &mut App) {
         use SessionEventKind as K;
         app.init_resource::<CalendarFeed>()
+            .add_message::<CalendarComplaintAdded>()
             .add_systems(Startup, load_calendar_catalog.after(AssetSet::Open))
             .add_systems(
                 Update,
@@ -87,6 +88,11 @@ impl Plugin for UiCalendarPlugin {
             .net_handler(K::InvalidatePlayer, on_invalidate_player);
     }
 }
+
+/// A complaint result for a calendar event (reason 12): the calendar's `COMPLAINT_ADDED` error
+/// (`0x6e3ebd`).
+#[derive(Message, Clone, Copy, Debug)]
+pub(crate) struct CalendarComplaintAdded;
 
 fn load_calendar_catalog(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     let Some(assets) = assets else { return };
@@ -217,7 +223,11 @@ fn feed_calendar(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     self_guid: Res<SelfGuid>,
     factions: Option<Res<crate::target::ring::Factions>>,
-    social: Res<crate::ui_social::SocialState>,
+    (social, mut complaints, mut complaint_added): (
+        Res<crate::ui_social::SocialState>,
+        MessageWriter<crate::ui_social::Complained>,
+        MessageReader<CalendarComplaintAdded>,
+    ),
     group: Res<GroupState>,
     names: Res<NameCache>,
     classes: Option<Res<ChrClassTable>>,
@@ -245,6 +255,10 @@ fn feed_calendar(
     let guild_id = player.as_ref().map(|p| p.guild_id);
     script.set_calendar_player(player);
     script.set_calendar_social(social.ignored_set(), social.friend_set());
+    script.set_calendar_complaints(social.complaint_status() != 0, social.complained_set());
+    for _ in complaint_added.read() {
+        script.calendar_complaint_added();
+    }
     let raid: HashSet<u64> =
         if group.in_group && group.group_type == crate::ui_party::GROUPTYPE_RAID {
             group.members.iter().map(|m| m.guid).collect()
@@ -287,6 +301,12 @@ fn feed_calendar(
 
     for request in script.take_calendar_requests() {
         debug!("ui_calendar: send {request:?}");
+        if let CalendarRequest::Complain { creator, .. } = request {
+            complaints.write(crate::ui_social::Complained {
+                guid: creator,
+                again: false,
+            });
+        }
         match command(request) {
             Some(c) => {
                 let _ = commands.0.send(ClientCommand::Calendar(c));

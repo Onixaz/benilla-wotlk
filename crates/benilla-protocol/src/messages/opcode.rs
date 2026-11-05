@@ -441,6 +441,12 @@ pub const CMSG_CHANNEL_MODERATE: u16 = 0x00A8; // 168
 pub const CMSG_CHANNEL_DISPLAY_LIST: u16 = 0x03D2; // 978
 /// 3.3.5a only: the channel the pane now shows (`0x504555`), `cstring channelName`.
 pub const CMSG_SET_CHANNEL_WATCH: u16 = 0x03EF; // 1007
+/// A member joined the watched channel (`0x504130`).
+pub const SMSG_USERLIST_ADD: u16 = 0x03F0; // 1008
+/// A member left the watched channel (`0x5042f0`).
+pub const SMSG_USERLIST_REMOVE: u16 = 0x03F1; // 1009
+/// A member's flags changed in the watched channel (`0x500380`).
+pub const SMSG_USERLIST_UPDATE: u16 = 0x03F2; // 1010
 
 /// The ignore notice ("Name is now ignoring you"): a raw `u64` guid (`Misc.cpp:127-130`).
 pub const CMSG_CHAT_IGNORED: u16 = 0x0225; // 549
@@ -1183,6 +1189,12 @@ pub const MSG_MOVE_KNOCK_BACK: u16 = 0x00F1; // 241
 pub const CMSG_WHO: u16 = 0x0062; // 98
 pub const SMSG_WHO: u16 = 0x0063; // 99
 pub const CMSG_CONTACT_LIST: u16 = 0x0066; // 102
+/// A report of a mail or a chat line ([`super::complaint_mail`], `0x56faf0`).
+pub const CMSG_COMPLAIN: u16 = 0x03C7; // 967
+/// The report's answer: `u8` result, `u8` reason (`0x6e3e94`).
+pub const SMSG_COMPLAIN_RESULT: u16 = 0x03C8; // 968
+/// The complaint and voice systems' statuses, one `u8` each (`0x6e3f39`).
+pub const SMSG_FEATURE_SYSTEM_STATUS: u16 = 0x03C9; // 969
 pub const SMSG_CONTACT_LIST: u16 = 0x0067; // 103
 pub const SMSG_FRIEND_STATUS: u16 = 0x0068; // 104
 pub const CMSG_ADD_FRIEND: u16 = 0x0069; // 105
@@ -1296,6 +1308,10 @@ pub const SMSG_PARTY_MEMBER_STATS_FULL: u16 = 0x02F2; // 754
 pub const MSG_RAID_TARGET_UPDATE: u16 = 0x0321; // 801
 /// Both ways: an empty body starts a check, a non-empty one answers (`Packets/Group.cpp:84-96`).
 pub const MSG_RAID_READY_CHECK: u16 = 0x0322; // 802
+/// A member's ready-check answer: `u64` guid, then the ready byte (`0x5744f0`).
+pub const MSG_RAID_READY_CHECK_CONFIRM: u16 = 0x03AE; // 942
+/// The ready check closed; empty body both ways (`0x572560`, sent from `0x573390`).
+pub const MSG_RAID_READY_CHECK_FINISHED: u16 = 0x03C6; // 966
 /// A ready check refused as too soon: empty body (`0x5725a0`).
 pub const SMSG_RAID_READY_CHECK_ERROR: u16 = 0x0408; // 1032
 /// Too many group commands: empty body (`0x6cbe80`).
@@ -1387,6 +1403,8 @@ pub const SMSG_AUCTION_LIST_PENDING_SALES: u16 = 0x0490; // 1168
 // The world-state table; these two are its only writers. NPC text's `$<n>w`/`$<n>e` tokens read it.
 pub const SMSG_INIT_WORLD_STATES: u16 = 0x02C2; // 706
 pub const SMSG_UPDATE_WORLD_STATE: u16 = 0x02C3; // 707
+/// The player's phase mask: one `u32` (`0x526cf4`).
+pub const SMSG_SET_PHASE_SHIFT: u16 = 0x047C; // 1148
 
 // ── Instance and raid lockouts ──
 
@@ -1457,6 +1475,8 @@ pub const SMSG_LFG_QUEUE_STATUS: u16 = 0x0365; // 869
 pub const SMSG_LFG_UPDATE_PLAYER: u16 = 0x0367; // 871
 pub const SMSG_LFG_UPDATE_PARTY: u16 = 0x0368; // 872
 pub const SMSG_LFG_UPDATE_SEARCH: u16 = 0x0369; // 873
+/// The joined raid browser search's list (`0x55b770`).
+pub const SMSG_UPDATE_LFG_LIST: u16 = 0x0360; // 864
 pub const SMSG_LFG_BOOT_PROPOSAL_UPDATE: u16 = 0x036D; // 877
 pub const SMSG_LFG_PLAYER_INFO: u16 = 0x036F; // 879
 pub const SMSG_LFG_PARTY_INFO: u16 = 0x0372; // 882

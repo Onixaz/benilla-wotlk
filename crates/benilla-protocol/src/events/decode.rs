@@ -200,6 +200,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             flags,
             members,
         }],
+        ServerPacket::ChannelUserList(u) => vec![SessionEvent::ChannelUserList(u)],
         ServerPacket::ChatPlayerNotFound { name } => {
             vec![SessionEvent::ChatPlayerNotFound { name }]
         }
@@ -870,7 +871,13 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::RaidTargetList { entries } => {
             vec![SessionEvent::RaidTargetList { entries }]
         }
-        ServerPacket::ReadyCheckRequest => vec![SessionEvent::ReadyCheckRequest],
+        ServerPacket::ReadyCheckStarted { initiator } => {
+            vec![SessionEvent::ReadyCheckStarted { initiator }]
+        }
+        ServerPacket::ReadyCheckConfirm { guid, ready } => {
+            vec![SessionEvent::ReadyCheckConfirm { guid, ready }]
+        }
+        ServerPacket::ReadyCheckFinished => vec![SessionEvent::ReadyCheckFinished],
         ServerPacket::ReadyCheckError => vec![SessionEvent::ReadyCheckError],
         ServerPacket::PartySquelch { silenced } => vec![SessionEvent::PartySquelch { silenced }],
         ServerPacket::EchoPartySquelch { guid, silenced } => {
@@ -878,9 +885,6 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         }
         ServerPacket::RaidInstanceInfo { entries } => {
             vec![SessionEvent::RaidInstanceInfo { entries }]
-        }
-        ServerPacket::ReadyCheckAnswer { guid, ready } => {
-            vec![SessionEvent::ReadyCheckAnswer { guid, ready }]
         }
         ServerPacket::DuelRequested {
             arbiter,
@@ -934,6 +938,10 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         }
         ServerPacket::MirrorTimerStop { kind } => vec![SessionEvent::MirrorTimerStop { kind }],
         ServerPacket::ContactList(list) => vec![SessionEvent::ContactList(list)],
+        ServerPacket::ComplaintResult(r) => vec![SessionEvent::ComplaintResult(r)],
+        ServerPacket::FeatureSystemStatus { complaints } => {
+            vec![SessionEvent::ComplaintStatus { status: complaints }]
+        }
         ServerPacket::FriendStatus(status) => vec![SessionEvent::FriendStatus(status)],
         ServerPacket::WhoResults(results) => vec![SessionEvent::WhoResults(results)],
         ServerPacket::GuildQueryResponse(response) => {
@@ -1522,6 +1530,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             scope: None,
             states: vec![(id, value)],
         }],
+        ServerPacket::SetPhaseShift { mask } => vec![SessionEvent::PhaseShift { mask }],
         ServerPacket::Ignored { .. } => Vec::new(),
         // No parse arm at all: surfaced for the app's dropped-opcode tally.
         ServerPacket::Other { opcode } => vec![SessionEvent::PacketDropped {

@@ -959,6 +959,15 @@ fn parse_server_body(
         opcode::SMSG_CHANNEL_NOTIFY => {
             ServerPacket::ChannelNotify(channel::read_channel_notify_wotlk(&mut r)?)
         }
+        opcode::SMSG_USERLIST_ADD | opcode::SMSG_USERLIST_REMOVE | opcode::SMSG_USERLIST_UPDATE => {
+            use channel::ChannelUserListKind as K;
+            let kind = match opcode {
+                opcode::SMSG_USERLIST_ADD => K::Add,
+                opcode::SMSG_USERLIST_REMOVE => K::Remove,
+                _ => K::Update,
+            };
+            ServerPacket::ChannelUserList(channel::read_channel_user_list(&mut r, kind)?)
+        }
         opcode::SMSG_CHANNEL_LIST => {
             let (display, name, flags, members) = channel::read_channel_list(&mut r)?;
             ServerPacket::ChannelList {
@@ -1008,6 +1017,9 @@ fn parse_server_body(
         opcode::SMSG_LFG_UPDATE_PARTY => {
             ServerPacket::Lfg(LfgPacket::UpdateParty(lfg::read_update_party(&mut r)?))
         }
+        opcode::SMSG_UPDATE_LFG_LIST => ServerPacket::Lfg(LfgPacket::UpdateList(Box::new(
+            lfg::read_update_list(&mut r)?,
+        ))),
         opcode::SMSG_LFG_UPDATE_SEARCH => ServerPacket::Lfg(LfgPacket::UpdateSearch {
             joined: read_u8(&mut r)? != 0,
         }),
@@ -2184,12 +2196,15 @@ fn parse_server_body(
         opcode::SMSG_RAID_INSTANCE_INFO => ServerPacket::RaidInstanceInfo {
             entries: group::read_raid_instance_info(&mut r)?,
         },
-        opcode::MSG_RAID_READY_CHECK => match group::read_ready_check(&mut r)? {
-            group::ReadyCheck::Started => ServerPacket::ReadyCheckRequest,
-            group::ReadyCheck::Answer { guid, ready } => {
-                ServerPacket::ReadyCheckAnswer { guid, ready }
-            }
+        // The initiator's guid (`0x574d50`).
+        opcode::MSG_RAID_READY_CHECK => ServerPacket::ReadyCheckStarted {
+            initiator: read_u64_le(&mut r)?,
         },
+        opcode::MSG_RAID_READY_CHECK_CONFIRM => {
+            let (guid, ready) = group::read_ready_check_confirm(&mut r)?;
+            ServerPacket::ReadyCheckConfirm { guid, ready }
+        }
+        opcode::MSG_RAID_READY_CHECK_FINISHED => ServerPacket::ReadyCheckFinished,
         opcode::SMSG_RAID_READY_CHECK_ERROR => ServerPacket::ReadyCheckError,
         // `u32` silenced, any nonzero value (`0x5725cb`).
         opcode::MSG_NOTIFY_PARTY_SQUELCH => ServerPacket::PartySquelch {
@@ -2285,6 +2300,14 @@ fn parse_server_body(
         opcode::SMSG_CONTACT_LIST => ServerPacket::ContactList(social::read_contact_list(&mut r)?),
         opcode::SMSG_FRIEND_STATUS => {
             ServerPacket::FriendStatus(social::read_friend_status(&mut r)?)
+        }
+        opcode::SMSG_COMPLAIN_RESULT => {
+            ServerPacket::ComplaintResult(social::read_complaint_result(&mut r)?)
+        }
+        opcode::SMSG_FEATURE_SYSTEM_STATUS => {
+            let complaints = read_u8(&mut r)?;
+            let _voice = read_u8(&mut r)?;
+            ServerPacket::FeatureSystemStatus { complaints }
         }
         opcode::SMSG_WHO => ServerPacket::WhoResults(social::read_who(&mut r)?),
         opcode::SMSG_GUILD_QUERY_RESPONSE => {
@@ -2481,6 +2504,9 @@ fn parse_server_body(
             let (id, value) = world_state::read_update_world_state(&mut r)?;
             ServerPacket::UpdateWorldState { id, value }
         }
+        opcode::SMSG_SET_PHASE_SHIFT => ServerPacket::SetPhaseShift {
+            mask: read_u32_le(&mut r)?,
+        },
         // Deviation: 12340 writes these to its developer console, which benilla does not have;
         // each is read in full and dropped. Godmode, pet godmode and XP gain read a `u8` on/off
         // (`0x6e2ed0`, `0x6e2f00`, `0x6e40d6`); the server time a packed time and the last tick

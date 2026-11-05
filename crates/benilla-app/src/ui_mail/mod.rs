@@ -218,7 +218,9 @@ impl Plugin for UiMailPlugin {
                     // frame; the feed runs after `UnitFeed` so a row's tooltip reads the template.
                     close_npc_session_out_of_range::<MailOpen>.before(feed_mail),
                     feed_mail.after(crate::ui_unit::UnitFeed).in_set(UiFeed),
-                    drain_mail.after(UiInput),
+                    drain_mail
+                        .after(UiInput)
+                        .before(crate::ui_social::drain_social),
                     // The cascade's order: the time query, this, then the battlefield status.
                     send_query_next_mail_time_on_enter.after(crate::net::send_query_time),
                 ),
@@ -798,12 +800,50 @@ fn feed_mail(
     }
 }
 
+/// The mail complaint's tail (`0x56faf0`): nothing with the complaint system off; a sender already
+/// complained about prints `COMPLAINT_ADDED`; else the report goes out, the row closes and the
+/// inbox is asked again. The complaint, for the social state to record.
+fn complain(
+    mail: &mut MailOpen,
+    social: &crate::ui_social::SocialState,
+    message_id: u32,
+    send: &dyn Fn(ClientCommand),
+    mailbox: u64,
+) -> Option<crate::ui_social::Complained> {
+    if social.complaint_status() == 0 {
+        return None;
+    }
+    let index = mail.index_of(message_id)?;
+    let sender = mail.rows[index].entry.sender_guid;
+    if social.is_complained(sender) {
+        return Some(crate::ui_social::Complained {
+            guid: sender,
+            again: true,
+        });
+    }
+    send(ClientCommand::ComplainMail {
+        sender,
+        mail_id: message_id,
+    });
+    mail.effects
+        .push(MailEffect::CloseInboxItem(index as u32 + 1));
+    send(ClientCommand::GetMailList { mailbox });
+    Some(crate::ui_social::Complained {
+        guid: sender,
+        again: false,
+    })
+}
+
 /// The VM's mail packets out, each as its verb's reference send does.
 fn drain_mail(
     script: Option<NonSendMut<UiScript>>,
     mut mail: ResMut<MailOpen>,
     mut pending: ResMut<MailPending>,
     commands: Res<NetCommands>,
+    (social, mut complaints): (
+        Res<crate::ui_social::SocialState>,
+        MessageWriter<crate::ui_social::Complained>,
+    ),
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     objects: Objects,
 ) {
@@ -880,6 +920,11 @@ fn drain_mail(
                     mail_id: message_id,
                     reason: mail_delete_reason::PLAYER,
                 });
+            }
+            MailCommand::Complain { message_id } => {
+                if let Some(c) = complain(&mut mail, &social, message_id, &send, mailbox) {
+                    complaints.write(c);
+                }
             }
             MailCommand::Send(req) => {
                 // Each attachment's guid is read off its bag slot as the send fires.

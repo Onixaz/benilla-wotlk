@@ -465,6 +465,8 @@ pub(crate) struct LfgModel {
     /// Reward items whose templates the reward getters asked for.
     pub(crate) reward_item_waits: HashSet<u32>,
     pub(crate) requests: Vec<LfgRequest>,
+    /// The raid browser's search list.
+    pub(crate) search: super::search::LfrSearch,
 }
 
 impl LfgModel {
@@ -1049,6 +1051,7 @@ impl LfgModel {
             v.push(self.boot.target);
         }
         v.extend(self.party_lock.iter().map(|l| l.guid));
+        v.extend(self.search.guids());
         v.sort_unstable();
         v.dedup();
         v

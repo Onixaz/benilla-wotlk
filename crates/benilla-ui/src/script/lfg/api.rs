@@ -30,20 +30,20 @@ const ROLES_CVAR: &str = "lfgSelectedRoles";
 const COLLAPSED_CVAR: &str = "lfdCollapsedHeaders";
 const SELECTED_CVAR: &str = "lfdSelectedDungeons";
 
-fn read<R>(lua: &Lua, f: impl FnOnce(&Model) -> R) -> R {
+pub(super) fn read<R>(lua: &Lua, f: impl FnOnce(&Model) -> R) -> R {
     let model = lua.app_data_ref::<ModelCell>().expect("model app_data");
     f(&model)
 }
 
-fn num(v: impl Into<f64>) -> Value {
+pub(super) fn num(v: impl Into<f64>) -> Value {
     Value::Number(v.into())
 }
 
-fn text(lua: &Lua, s: &str) -> mlua::Result<Value> {
+pub(super) fn text(lua: &Lua, s: &str) -> mlua::Result<Value> {
     Ok(Value::String(lua.create_string(s)?))
 }
 
-fn values(v: Vec<Value>) -> MultiValue {
+pub(super) fn values(v: Vec<Value>) -> MultiValue {
     MultiValue::from_vec(v)
 }
 
@@ -263,7 +263,7 @@ fn ui_error(lua: &Lua, key: &'static str) {
     crate::script::model_mut_of(lua).ui_errors.push(key);
 }
 
-fn fire(lua: &Lua, event: &str) {
+pub(super) fn fire(lua: &Lua, event: &str) {
     crate::script::tick::fire_event_into(lua, event, Vec::new());
 }
 

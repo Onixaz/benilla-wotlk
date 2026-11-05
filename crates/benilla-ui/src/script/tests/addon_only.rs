@@ -93,7 +93,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "GetNumDeclensionSets",
     "GetPlayerFacing",
     "GetPowerRegen",
-    "GetReadyCheckTimeLeft",
     "GetRunningMacro",
     "GetRunningMacroButton",
     "GetScriptCPUUsage",

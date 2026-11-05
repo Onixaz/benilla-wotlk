@@ -8,19 +8,7 @@ use benilla_protocol::messages::{self, ServerPacket};
 
 /// Opcodes with no decoder yet that are work, not a deviation, each with its open issue. Give one a
 /// decoder and its entry goes.
-const OPEN_GAPS: &[(u16, &str)] = &[
-    (0x2e6, "#5 Warden"),
-    (0x360, "#420 the raid browser's search list"),
-    (0x3ae, "#361 ready check"),
-    (0x3c6, "#361 ready check"),
-    (0x3c8, "#496 the complaint system"),
-    (0x3c9, "#496 the complaint system"),
-    (0x3f0, "#597 channel rosters"),
-    (0x3f1, "#597 channel rosters"),
-    (0x3f2, "#597 channel rosters"),
-    (0x47c, "#456 the phase mask"),
-    (0x514, "#442 the batched combat log"),
-];
+const OPEN_GAPS: &[(u16, &str)] = &[(0x2e6, "#5 Warden"), (0x514, "#442 the batched combat log")];
 
 fn repo_file(path: &str) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

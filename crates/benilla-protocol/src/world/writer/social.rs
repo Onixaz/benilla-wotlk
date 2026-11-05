@@ -8,6 +8,14 @@ use crate::messages::{self, opcode, WhoRequest};
 use super::WorldWriter;
 
 impl WorldWriter {
+    /// `CMSG_COMPLAIN` reporting a mail's sender.
+    pub fn complaint_mail(&mut self, sender: u64, message_id: u32) -> Result<()> {
+        self.send(
+            opcode::CMSG_COMPLAIN,
+            &messages::complaint_mail(sender, message_id),
+        )
+    }
+
     /// `CMSG_CONTACT_LIST`: `ShowFriends()`'s refresh of the lists `mask` names; the server also
     /// pushes every list at login.
     pub fn contact_list(&mut self, mask: u32) -> Result<()> {

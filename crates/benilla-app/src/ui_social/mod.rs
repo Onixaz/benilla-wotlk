@@ -15,13 +15,17 @@ use crate::ui_script::{UiFeed, UiInput};
 mod feed;
 mod query;
 
-pub(crate) use feed::feed_social;
+pub(crate) use feed::{drain_social, feed_social};
 pub(crate) use query::parse as who_query;
 
 /// The friend array's slots (the friend list's `+0x0`).
 const MAX_FRIENDS: usize = 100;
 /// The ignore and mute arrays' slots (`+0xd490`, `+0xd7c0`).
 const MAX_IGNORES: usize = 50;
+/// The complained-about ring's slots (`0x6b3750`).
+const MAX_COMPLAINED: usize = 32;
+/// The complaint status that also ignores whoever the player complained about (`0x6b52e0`).
+const COMPLAINTS_AUTO_IGNORE: u8 = 2;
 
 /// One friend as the reference's `FriendInfo` holds it. A logout clears only `connected`: the
 /// level, class and zone stay as last sent (`0x6b3d10`).
@@ -35,6 +39,14 @@ pub(crate) struct Friend {
     pub(crate) area: u32,
     pub(crate) level: u32,
     pub(crate) class: u32,
+}
+
+/// A complaint the mail or calendar verbs filed: `again` when its target was already complained
+/// about, which prints `COMPLAINT_ADDED` instead of a second report.
+#[derive(Message, Clone, Copy, Debug)]
+pub(crate) struct Complained {
+    pub(crate) guid: u64,
+    pub(crate) again: bool,
 }
 
 /// The social session mirror: filled by the social handlers, read by the feed, cleared on
@@ -71,6 +83,12 @@ pub(crate) struct SocialState {
     ignores_dirty: bool,
     mutes_dirty: bool,
     who_dirty: bool,
+    /// The complaint system's status from `SMSG_FEATURE_SYSTEM_STATUS` (`[0xbceffc]`): 0 off.
+    complaint_status: u8,
+    /// The players complained about this session, newest first.
+    complained: Vec<u64>,
+    /// `COMPLAINT_ADDED` lines owed to chat.
+    complaint_lines: u32,
 }
 
 impl SocialState {
@@ -83,8 +101,48 @@ impl SocialState {
 
     /// Is `guid` on the ignore list? The reference's `IsIgnored` (`0x6b52e0`): an ignored player's
     /// chat and text emotes drop silently, and their duel is declined.
+    /// At status 2 a player complained about counts as ignored too.
     pub(crate) fn is_ignored(&self, guid: u64) -> bool {
-        guid != 0 && self.ignores.contains(&guid)
+        guid != 0
+            && (self.ignores.contains(&guid)
+                || self.complaint_status == COMPLAINTS_AUTO_IGNORE && self.is_complained(guid))
+    }
+
+    /// The complaint system's status; 0 refuses every complaint.
+    pub(crate) fn complaint_status(&self) -> u8 {
+        self.complaint_status
+    }
+
+    /// Whether the player complained about `guid` this session (`0x6b3700`).
+    pub(crate) fn is_complained(&self, guid: u64) -> bool {
+        guid != 0 && self.complained.contains(&guid)
+    }
+
+    /// The complained-about guids, the calendar's mirror.
+    pub(crate) fn complained_set(&self) -> std::collections::HashSet<u64> {
+        self.complained.iter().copied().collect()
+    }
+
+    /// The ring add (`0x6b3750`): to the front, a repeat moved rather than duplicated, the
+    /// oldest dropped past 32.
+    pub(crate) fn add_complained(&mut self, guid: u64) {
+        self.complained.retain(|&g| g != guid);
+        self.complained.insert(0, guid);
+        self.complained.truncate(MAX_COMPLAINED);
+    }
+
+    /// Owe one `COMPLAINT_ADDED` chat line.
+    pub(crate) fn owe_complaint_line(&mut self) {
+        self.complaint_lines += 1;
+    }
+
+    /// A filed complaint: the target joins the ring, or a repeat owes its line.
+    pub(crate) fn complained(&mut self, c: Complained) {
+        if c.again {
+            self.owe_complaint_line();
+        } else {
+            self.add_complained(c.guid);
+        }
     }
 
     /// The ignore list as a set, the calendar's filter (`0x5c0104`).
@@ -369,6 +427,8 @@ pub(crate) mod net {
         use SessionEventKind as K;
         app.net_handler(K::ContactList, on_contact_list)
             .net_handler(K::FriendStatus, on_friend_status)
+            .net_handler(K::ComplaintStatus, on_complaint_status)
+            .net_handler(K::ComplaintResult, on_complaint_result)
             .net_handler(K::WhoResults, on_who)
             .net_handler(K::Disconnected, on_session_end);
     }
@@ -382,6 +442,44 @@ pub(crate) mod net {
     fn on_friend_status(In(ev): In<SessionEvent>, mut social: ResMut<SocialState>) {
         if let SessionEvent::FriendStatus(update) = ev {
             friend_status(&mut social, update);
+        }
+    }
+
+    /// `SMSG_FEATURE_SYSTEM_STATUS` (`0x6e3f39`).
+    fn on_complaint_status(In(ev): In<SessionEvent>, mut social: ResMut<SocialState>) {
+        if let SessionEvent::ComplaintStatus { status } = ev {
+            debug!("complaint system status {status}");
+            social.complaint_status = status;
+        }
+    }
+
+    /// `SMSG_COMPLAIN_RESULT` (`0x6e3e94`): result 1 turns the system off; reason 12 is the
+    /// calendar's, whose error line the calendar feed prints.
+    fn on_complaint_result(
+        In(ev): In<SessionEvent>,
+        mut social: ResMut<SocialState>,
+        mut calendar: MessageWriter<crate::ui_calendar::CalendarComplaintAdded>,
+    ) {
+        if let SessionEvent::ComplaintResult(r) = ev {
+            debug!("complaint result {} reason {}", r.result, r.reason);
+            complaint_result(&mut social, r, &mut || {
+                calendar.write(crate::ui_calendar::CalendarComplaintAdded);
+            });
+        }
+    }
+
+    pub(crate) fn complaint_result(
+        social: &mut SocialState,
+        r: benilla_protocol::messages::ComplaintResult,
+        calendar_line: &mut dyn FnMut(),
+    ) {
+        if r.result == 1 {
+            social.complaint_status = 0;
+        }
+        if r.reason == 12 {
+            calendar_line();
+        } else {
+            social.owe_complaint_line();
         }
     }
 
@@ -419,13 +517,17 @@ pub(crate) struct UiSocialPlugin;
 impl Plugin for UiSocialPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
-        app.init_resource::<SocialState>().add_systems(
-            Update,
-            (
-                feed::feed_social.in_set(UiFeed),
-                feed::drain_social.after(UiInput),
-            ),
-        );
+        app.init_resource::<SocialState>()
+            .add_message::<Complained>()
+            .add_systems(
+                Update,
+                (
+                    feed::feed_social
+                        .in_set(UiFeed)
+                        .run_if(crate::ui_script::ingame_ui_up),
+                    feed::drain_social.after(UiInput),
+                ),
+            );
     }
 }
 
