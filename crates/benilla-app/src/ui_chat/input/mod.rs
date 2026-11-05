@@ -956,6 +956,7 @@ pub(super) fn drain_chat_input(
                     C::Unban { name, player } => ClientCommand::ChannelUnban { name, player },
                     C::Moderate { name } => ClientCommand::ChannelModerate { name },
                     C::ToggleAnnouncements { name } => ClientCommand::ChannelAnnouncements { name },
+                    C::DeclineInvite { name } => ClientCommand::DeclineChannelInvite { name },
                     C::Watch { name } => ClientCommand::SetChannelWatch { name },
                     C::DisplayList { name } => ClientCommand::ChannelDisplayList { name },
                 };

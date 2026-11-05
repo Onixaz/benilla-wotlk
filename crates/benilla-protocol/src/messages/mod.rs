@@ -182,9 +182,9 @@ pub use equipment_set::{
 };
 pub use gameobject::{gameobj_use, gameobject_query, GameObjectQueryInfo};
 pub use gm_ticket::{
-    gm_ticket_create, gm_ticket_updatetext, GmResponse, GmTicket, GMTICKET_QUEUE_ENABLED,
-    GMTICKET_RESPONSE_TICKET_DELETED, GMTICKET_STATUS_DBERROR, GMTICKET_STATUS_DEFAULT,
-    GMTICKET_STATUS_HASTEXT,
+    gm_report_lag, gm_survey_submit, gm_ticket_create, gm_ticket_updatetext, GmResponse, GmTicket,
+    GMTICKET_QUEUE_ENABLED, GMTICKET_RESPONSE_TICKET_DELETED, GMTICKET_STATUS_DBERROR,
+    GMTICKET_STATUS_DEFAULT, GMTICKET_STATUS_HASTEXT,
 };
 pub use gossip::{
     gossip_hello, gossip_select_option, npc_text_query, select_greeting, GossipMenu, GossipOption,
@@ -319,10 +319,10 @@ pub use roster::{
 pub use rune::{ConvertRune, ResyncRunes};
 pub use skills::unlearn_skill;
 pub use social::{
-    add_friend, add_ignore, add_mute, complaint_mail, contact_flag, contact_list, del_friend,
-    del_ignore, del_mute, friend_result, friend_status, read_complaint_result, read_contact_list,
-    read_friend_status, read_who, set_contact_notes, who, ComplaintResult, ContactEntry,
-    ContactList, FriendOnline, FriendStatusUpdate, WhoEntry, WhoRequest, WhoResults,
+    add_friend, add_ignore, add_mute, complaint_chat, complaint_mail, contact_flag, contact_list,
+    del_friend, del_ignore, del_mute, friend_result, friend_status, read_complaint_result,
+    read_contact_list, read_friend_status, read_who, set_contact_notes, who, ComplaintResult,
+    ContactEntry, ContactList, FriendOnline, FriendStatusUpdate, WhoEntry, WhoRequest, WhoResults,
     WHO_MAX_SEARCH_TERMS, WHO_MAX_ZONES,
 };
 pub use spellbook::SpellCooldown;

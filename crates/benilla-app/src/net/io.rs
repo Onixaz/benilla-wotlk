@@ -1680,6 +1680,14 @@ pub(super) fn writer_loop(
                     ClientCommand::GmTicketGet => w.gm_ticket_get(),
                     ClientCommand::GmTicketDelete => w.gm_ticket_delete(),
                     ClientCommand::GmTicketSystemStatus => w.gm_ticket_system_status(),
+                    ClientCommand::GmReportLag { kind, map, pos } => {
+                        w.gm_report_lag(kind, map, pos)
+                    }
+                    ClientCommand::GmSurveySubmit {
+                        survey,
+                        answers,
+                        comment,
+                    } => w.gm_survey_submit(survey, &answers, &comment),
                     ClientCommand::BinderActivate { binder } => w.binder_activate(binder),
                     ClientCommand::SummonResponse { summoner, agree } => {
                         w.summon_response(summoner, agree)
@@ -1900,6 +1908,27 @@ pub(super) fn writer_loop(
                         mail_id,
                         sender,
                     } => w.mail_return_to_sender(mailbox, mail_id, sender),
+                    ClientCommand::GrantLevel { friend } => w.grant_level(friend),
+                    ClientCommand::DeclineChannelInvite { name } => {
+                        w.decline_channel_invite(&name)
+                    }
+                    ClientCommand::OptOutOfLoot { on } => w.opt_out_of_loot(on),
+                    ClientCommand::ReportPvpAfk { guid } => w.report_pvp_afk(guid),
+                    ClientCommand::ComplainChat {
+                        sender,
+                        sender_word,
+                        chat_type,
+                        zone_channel,
+                        age_secs,
+                        description,
+                    } => w.complaint_chat(
+                        sender,
+                        sender_word,
+                        chat_type,
+                        zone_channel,
+                        age_secs,
+                        &description,
+                    ),
                     ClientCommand::ComplainMail { sender, mail_id } => {
                         w.complaint_mail(sender, mail_id)
                     }

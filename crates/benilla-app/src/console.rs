@@ -92,7 +92,21 @@ impl Plugin for ConsolePlugin {
                 "List the CVars, optionally matching a string.",
                 cvarlist,
             )
-            .console_command("help", "List the console commands, or describe one.", help);
+            .console_command("help", "List the console commands, or describe one.", help)
+            .add_systems(Update, print_script_lines);
+    }
+}
+
+/// `ConsoleAddMessage`'s lines, printed as the reference's `ConsolePrintf` prints them.
+fn print_script_lines(
+    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    mut echo: ResMut<ConsoleEcho>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    for line in script.take_console_prints() {
+        echo.print(line);
     }
 }
 

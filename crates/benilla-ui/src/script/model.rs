@@ -288,7 +288,8 @@ pub(crate) struct Model {
     pub(crate) refer_a_friend: unit_menu::ReferAFriendState,
     /// Party and loot-method calls (`AcceptGroup`, `InviteUnit`, `SetLootMethod`, …) queued.
     pub(crate) party_requests: Vec<party::PartyRequest>,
-    /// System chat lines the party bindings composed, drained by the app.
+    /// System chat lines the bindings composed (`SendSystemMessage`, the party verbs), drained by
+    /// the app.
     pub(crate) party_lines: Vec<String>,
     /// The ready-check deadline and the unanswered flags the timeout tick reads.
     pub(crate) ready_check: party::ReadyCheckState,
@@ -366,8 +367,12 @@ pub(crate) struct Model {
     pub(crate) emote_requests: Vec<super::chat_misc::EmoteRequest>,
     /// `RandomRoll` calls queued.
     pub(crate) roll_requests: Vec<(u32, u32)>,
+    /// The recorded chat lines and the complaints filed from them.
+    pub(crate) chat_records: super::chat_record::ChatRecords,
     /// `ConsoleExec` lines that were not CVar writes.
     pub(crate) console_lines: Vec<String>,
+    /// `ConsoleAddMessage` lines for the console.
+    pub(crate) console_prints: Vec<String>,
     /// `LoggingChat` and `LoggingCombat`'s flags, and their change cue.
     pub(crate) logging_chat: bool,
     pub(crate) logging_combat: bool,
@@ -826,6 +831,14 @@ pub(crate) struct Model {
     pub(crate) loot_roll_confirms: Vec<(u32, u8)>,
     /// `AcceptLevelGrant` (true) and `DeclineLevelGrant` (false) calls.
     pub(crate) level_grant_answers: Vec<bool>,
+    /// The grant, summon and PvP AFK verbs' sends and refusals, in call order.
+    pub(crate) unit_requests: Vec<super::level_grant::UnitRequest>,
+    /// The answered player name records, by guid.
+    pub(crate) name_records: std::collections::HashMap<u64, super::name_records::NameRecord>,
+    /// Guids `GetPlayerInfoByGUID` asked the name cache for.
+    pub(crate) name_asks: Vec<u64>,
+    /// The loot opt-out flag `[0xbd19a0]`, kept for the process.
+    pub(crate) opt_out_of_loot: bool,
     /// The server's UI clock less the local clock, seconds; 0 until it is read.
     pub(crate) ui_time_offset: i32,
     /// The message of the day, `KBSystem_GetMOTD`.
@@ -1120,6 +1133,8 @@ pub(crate) struct Model {
     pub(crate) gm_ticket_intents: Vec<super::gm_ticket::GmTicketIntent>,
     /// `Stuck()` calls, each a cast of spell 7355, the Help window's Auto-Unstuck.
     pub(crate) stuck_casts: u32,
+    /// The GM survey's tables and the answers given since the last submit.
+    pub(crate) gm_survey: super::gm_ticket::SurveyState,
     /// `ConfirmBinder()` calls, one `CMSG_BINDER_ACTIVATE` each; the app holds the innkeeper.
     pub(crate) binder_confirms: u32,
     /// `CheckBinderDist()`: the innkeeper's question is live and in range; false hides its dialog.
@@ -1390,6 +1405,8 @@ impl Model {
             emote_requests: Vec::new(),
             roll_requests: Vec::new(),
             console_lines: Vec::new(),
+            console_prints: Vec::new(),
+            chat_records: Default::default(),
             logging_chat: false,
             logging_combat: false,
             logging_changed: false,
@@ -1602,6 +1619,10 @@ impl Model {
             loot_roll_votes: Vec::new(),
             loot_roll_confirms: Vec::new(),
             level_grant_answers: Vec::new(),
+            unit_requests: Vec::new(),
+            name_records: Default::default(),
+            name_asks: Vec::new(),
+            opt_out_of_loot: false,
             ui_time_offset: 0,
             kb_motd: String::new(),
             item_text: None,
@@ -1705,6 +1726,7 @@ impl Model {
             gm_ticket_categories: Vec::new(),
             gm_ticket_intents: Vec::new(),
             stuck_casts: 0,
+            gm_survey: Default::default(),
             binder_confirms: 0,
             binder_pending: false,
             summon_confirm: super::summon::SummonConfirmUiState::default(),

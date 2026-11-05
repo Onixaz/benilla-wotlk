@@ -6,7 +6,7 @@
 //! which the stock `HelpFrame.lua` reads as "no ticket".
 
 use benilla_protocol::messages::GmTicket;
-use benilla_ui::script::{GmTicketIntent, ScriptValue, UiScript};
+use benilla_ui::script::{GmTicketIntent, ScriptValue, SurveyTables, UiScript};
 use bevy::prelude::*;
 
 use benilla_assets::coords::bevy_to_wow;
@@ -184,7 +184,10 @@ impl GmTicketState {
             }
             GmTicketIntent::Delete => Ok((held && !answered).then_some(())),
             GmTicketIntent::Resolve => Ok(answered.then_some(())),
-            GmTicketIntent::Ask | GmTicketIntent::AskStatus => Ok(Some(())),
+            GmTicketIntent::ReportLag { .. } => Ok(has_player.then_some(())),
+            GmTicketIntent::Ask | GmTicketIntent::AskStatus | GmTicketIntent::SurveySubmit(_) => {
+                Ok(Some(()))
+            }
         }
     }
 }
@@ -201,10 +204,10 @@ fn ticket_text_valid(text: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Per VM ([`VmMemo`]): a `/reload`'s new VM is fed the categories afresh.
+/// Per VM ([`VmMemo`]): a `/reload`'s new VM is fed the categories and the survey afresh.
 #[derive(Resource, Default)]
 struct GmTicketFeedState {
-    vm: VmMemo<bool>,
+    vm: VmMemo<(bool, bool)>,
 }
 
 /// Fire the handler's signals in arrival order; push the categories once per VM.
@@ -212,6 +215,7 @@ fn feed_gm_ticket(
     script: Option<NonSendMut<UiScript>>,
     mut state: ResMut<GmTicketState>,
     categories: Option<Res<GmTicketCategories>>,
+    survey: Option<Res<GmSurveyTables>>,
     mut feed: ResMut<GmTicketFeedState>,
     mut sink: crate::ui_action::MessageSink,
 ) {
@@ -219,10 +223,16 @@ fn feed_gm_ticket(
         return;
     };
     let pushed = feed.vm.get(&script);
-    if !*pushed {
+    if !pushed.0 {
         if let Some(categories) = categories.as_deref() {
             script.set_gm_ticket_categories(categories.0.clone());
-            *pushed = true;
+            pushed.0 = true;
+        }
+    }
+    if !pushed.1 {
+        if let Some(survey) = survey.as_deref() {
+            script.set_gm_survey(survey.0.clone());
+            pushed.1 = true;
         }
     }
     if state.pending.is_empty() {
@@ -330,6 +340,16 @@ fn drain_gm_ticket(
                 need_response,
                 more_help,
             },
+            GmTicketIntent::ReportLag { kind } => ClientCommand::GmReportLag {
+                kind,
+                map,
+                pos: pos.unwrap_or([0.0; 3]),
+            },
+            GmTicketIntent::SurveySubmit(s) => ClientCommand::GmSurveySubmit {
+                survey: s.survey,
+                answers: s.answers,
+                comment: s.comment,
+            },
         });
     }
 }
@@ -363,6 +383,34 @@ fn load_gm_ticket_dbc(
             ));
         }
         Err(e) => warn!("gm ticket: GMTicketCategory.dbc failed to load: {e:#}"),
+    }
+}
+
+/// The four `GMSurvey*.dbc` tables as `GMSurveyQuestion` and `GMSurveyAnswer` read them.
+#[derive(Resource)]
+pub(crate) struct GmSurveyTables(pub(crate) SurveyTables);
+
+/// Startup, after the MPQ chain opens, as [`load_gm_ticket_dbc`].
+fn load_gm_survey_dbc(
+    mut commands: Commands,
+    world_assets: Option<Res<benilla_assets::WorldAssets>>,
+) {
+    use benilla_assets::LockRecover;
+    let Some(world_assets) = world_assets else {
+        return;
+    };
+    let mut chain = world_assets.chain.lock_recover();
+    match benilla_formats::load_gm_survey(&mut chain) {
+        Ok(s) => {
+            info!("gm survey: survey {} loaded", s.id);
+            commands.insert_resource(GmSurveyTables(SurveyTables {
+                id: s.id,
+                questions: s.questions,
+                question_text: s.question_text,
+                answers: s.answers,
+            }));
+        }
+        Err(e) => warn!("gm survey: GMSurvey tables failed to load: {e:#}"),
     }
 }
 
@@ -425,7 +473,7 @@ impl Plugin for UiGmTicketPlugin {
             .init_resource::<GmTicketFeedState>()
             .add_systems(
                 Startup,
-                load_gm_ticket_dbc.after(benilla_assets::AssetSet::Open),
+                (load_gm_ticket_dbc, load_gm_survey_dbc).after(benilla_assets::AssetSet::Open),
             )
             .add_systems(
                 Update,

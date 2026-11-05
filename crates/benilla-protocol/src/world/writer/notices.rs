@@ -19,4 +19,12 @@ impl WorldWriter {
             &messages::accept_level_grant(granter),
         )
     }
+
+    /// Grant a recruited friend a level (`CMSG_GRANT_LEVEL`, `0x523160`): their packed guid.
+    pub fn grant_level(&mut self, friend: u64) -> Result<()> {
+        self.send(
+            opcode::CMSG_GRANT_LEVEL,
+            &messages::accept_level_grant(friend),
+        )
+    }
 }

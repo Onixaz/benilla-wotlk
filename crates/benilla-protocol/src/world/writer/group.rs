@@ -171,4 +171,9 @@ impl WorldWriter {
             &messages::party_assignment(assignment, set, guid),
         )
     }
+
+    /// `CMSG_OPT_OUT_OF_LOOT`: pass on every roll from now on, or stop (`0x52cb40`).
+    pub fn opt_out_of_loot(&mut self, on: bool) -> Result<()> {
+        self.send(opcode::CMSG_OPT_OUT_OF_LOOT, &u32::from(on).to_le_bytes())
+    }
 }

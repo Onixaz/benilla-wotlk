@@ -55,6 +55,11 @@ impl super::UiScript {
         drain_field!(self, console_lines)
     }
 
+    /// Drain the `ConsoleAddMessage` lines since the last call.
+    pub fn take_console_prints(&mut self) -> Vec<String> {
+        drain_field!(self, console_prints)
+    }
+
     /// `(chat, combat)`, as `LoggingChat` and `LoggingCombat` last set them.
     pub fn logging_flags(&self) -> (bool, bool) {
         let model = self.model_mut();
@@ -115,6 +120,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
                 .filter(|t| !t.is_empty()),
             });
+            Ok(())
+        })?,
+    )?;
+
+    // SendSystemMessage(text) (`0x50d8a0`): one `CHAT_MSG_SYSTEM` line.
+    g.set(
+        "SendSystemMessage",
+        lua.create_function(|lua, text: Value| {
+            let text =
+                super::binding_abi::string_arg(lua, text, "Usage: SendSystemMessage(\"message\")")?;
+            crate::script::model_mut_of(lua).party_lines.push(text);
+            Ok(())
+        })?,
+    )?;
+
+    // ConsoleAddMessage(text) (`0x512090`): prints a non-empty string to the console.
+    g.set(
+        "ConsoleAddMessage",
+        lua.create_function(|lua, text: Value| {
+            let text =
+                super::binding_abi::string_arg(lua, text, "Usage: ConsoleAddMessage(string)")?;
+            if !text.is_empty() {
+                crate::script::model_mut_of(lua).console_prints.push(text);
+            }
             Ok(())
         })?,
     )?;

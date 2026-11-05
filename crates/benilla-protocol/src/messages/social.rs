@@ -406,6 +406,29 @@ pub fn complaint_mail(sender: u64, message_id: u32) -> Vec<u8> {
     body
 }
 
+/// `CMSG_COMPLAIN` reporting a chat line (`0x50dfd0`): type 1, the sender, the `u32` that
+/// followed the sender in its `SMSG_MESSAGECHAT`, the wire chat type, the zone channel id, the
+/// line's age in seconds and its description text.
+pub fn complaint_chat(
+    sender: u64,
+    sender_word: u32,
+    chat_type: u32,
+    zone_channel: u32,
+    age_secs: u32,
+    description: &str,
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(26 + description.len());
+    body.push(1);
+    body.extend_from_slice(&sender.to_le_bytes());
+    body.extend_from_slice(&sender_word.to_le_bytes());
+    body.extend_from_slice(&chat_type.to_le_bytes());
+    body.extend_from_slice(&zone_channel.to_le_bytes());
+    body.extend_from_slice(&age_secs.to_le_bytes());
+    body.extend_from_slice(description.as_bytes());
+    body.push(0);
+    body
+}
+
 /// `SMSG_COMPLAIN_RESULT` (`0x6e3e94`): result 1 turns the complaint system off; reason 12 shows
 /// in the calendar, any other in chat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

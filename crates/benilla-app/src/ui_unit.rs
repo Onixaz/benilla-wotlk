@@ -175,6 +175,7 @@ impl Plugin for UiUnitPlugin {
                 .after(feed_units)
                 .after(crate::ui_aura::AuraEvents),
         )
+        .add_systems(Update, feed_name_records.in_set(UnitFeed))
         .add_systems(Update, drain_pvp_toggles.after(UiInput))
         .net_handler(
             benilla_protocol::SessionEventKind::PowerUpdate,
@@ -525,6 +526,38 @@ fn fire_unit_combat(
                 ],
             );
         }
+    }
+}
+
+/// Mirror the name cache's changed players into the VM, every answered one into a new VM, and
+/// send `GetPlayerInfoByGUID`'s asks.
+fn feed_name_records(
+    script: Option<NonSendMut<UiScript>>,
+    mut names: ResMut<crate::names::NameCache>,
+    commands: Res<crate::net::NetCommands>,
+    mut fed: Local<crate::ui_script::VmMemo<bool>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    // The drain is bookkeeping: the feeds gate on the generation, not on change detection.
+    let names = names.bypass_change_detection();
+    let (wiped, changed) = names.take_player_changes();
+    if wiped {
+        script.clear_name_records();
+    }
+    let seeded = fed.get(&script);
+    let guids = if *seeded {
+        changed
+    } else {
+        *seeded = true;
+        names.player_guids()
+    };
+    for guid in guids {
+        script.set_name_record(guid, names.player_record(guid));
+    }
+    for guid in script.take_name_asks() {
+        let _ = names.resolve(guid, &commands);
     }
 }
 

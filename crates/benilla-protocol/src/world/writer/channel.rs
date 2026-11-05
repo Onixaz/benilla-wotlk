@@ -149,4 +149,12 @@ impl WorldWriter {
             &messages::channel_moderate(name),
         )
     }
+
+    /// Turn down an invitation to channel `name` (`CMSG_DECLINE_CHANNEL_INVITE`, `0x4fe4ef`).
+    pub fn decline_channel_invite(&mut self, name: &str) -> Result<()> {
+        let mut body = Vec::with_capacity(name.len() + 1);
+        body.extend_from_slice(name.as_bytes());
+        body.push(0);
+        self.send(opcode::CMSG_DECLINE_CHANNEL_INVITE, &body)
+    }
 }

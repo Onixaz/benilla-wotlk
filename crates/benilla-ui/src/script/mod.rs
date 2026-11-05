@@ -90,6 +90,9 @@ pub mod focus;
 mod secure_call;
 mod tutorial;
 mod unit_menu;
+pub use chat_record::{ChatComplaint, ChatRecord};
+pub use level_grant::UnitRequest;
+pub use name_records::NameRecord;
 pub use unit_menu::{DifficultyState, ReferAFriendState};
 mod worldmap_arrow;
 // `camera_view`: the five camera views and `FlipCameraYaw`, as the reference's UI camera has them.
@@ -102,6 +105,7 @@ mod channel_pane;
 mod char_sheet;
 mod char_stats;
 mod chat_misc;
+mod chat_record;
 mod chat_send;
 mod chat_types;
 mod chat_window;
@@ -117,6 +121,7 @@ pub mod diagnostics;
 mod editbox;
 mod formatted_text;
 pub mod instance;
+mod name_records;
 mod static_constants;
 pub(crate) use editbox::{adopt_text_region, editbox_text_region_wrapper};
 pub(crate) mod addon;
@@ -340,7 +345,7 @@ pub use death::{DeathAction, DeathUiState};
 pub use dressup::DressUpIntent;
 pub use duel::DuelRequest;
 pub use follow::FollowRequest;
-pub use gm_ticket::GmTicketIntent;
+pub use gm_ticket::{GmTicketIntent, SurveySubmission, SurveyTables};
 pub use gossip::{GossipMenu, GossipOptionView, GossipQuestRow};
 pub use guild::{
     GuildEventView, GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState,
@@ -998,6 +1003,8 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     static_constants::install(lua)?;
     chat_types::install(lua)?;
     chat_misc::install(lua)?;
+    chat_record::install(lua)?;
+    name_records::install(lua)?;
     channel::install(lua)?;
     channel_pane::install(lua)?;
     chat_window::install(lua)?;

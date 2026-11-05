@@ -89,6 +89,10 @@ pub enum ChannelCommand {
     Moderate {
         name: String,
     },
+    /// `DeclineInvite(channel)` (`0x4ffcc0`): `CMSG_CHAT_CHANNEL_DECLINE_INVITE`.
+    DeclineInvite {
+        name: String,
+    },
     /// `ChannelToggleAnnouncements(name)`.
     ToggleAnnouncements {
         name: String,
@@ -362,6 +366,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             model
                 .channel_commands
                 .push(ChannelCommand::Leave { name: wire });
+            Ok(())
+        })?,
+    )?;
+
+    // DeclineInvite(channel) (`0x4ffcc0`): a number names a joined slot, a name passes as it is.
+    g.set(
+        "DeclineInvite",
+        lua.create_function(|lua, channel: Value| {
+            let channel =
+                super::binding_abi::string_arg(lua, channel, "Usage: DeclineInvite(\"channel\")")?;
+            let name = match channel.trim().parse::<usize>() {
+                Ok(n) => {
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    name_at(&model, n).map(str::to_string)
+                }
+                Err(_) => Some(channel),
+            };
+            if let Some(name) = name {
+                push(lua, ChannelCommand::DeclineInvite { name });
+            }
             Ok(())
         })?,
     )?;

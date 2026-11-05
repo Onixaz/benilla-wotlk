@@ -601,7 +601,7 @@ fn is_a(flags: u32, mask: u32) -> bool {
 }
 
 /// `0x74d120`: an optional `0x`, then up to sixteen hex digits to the first other byte.
-fn parse_guid(s: &str) -> u64 {
+pub(super) fn parse_guid(s: &str) -> u64 {
     let s = s
         .get(..2)
         .filter(|p| p.eq_ignore_ascii_case("0x"))

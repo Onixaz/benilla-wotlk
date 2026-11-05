@@ -486,6 +486,8 @@ mod tests {
             text: text.to_string(),
             chat_tag: 0,
             achievement: 0,
+            wire_type: 0,
+            sender_word: 0,
         }
     }
 

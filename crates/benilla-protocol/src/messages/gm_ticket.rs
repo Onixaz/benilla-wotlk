@@ -83,6 +83,38 @@ pub fn gm_ticket_create(
     out
 }
 
+/// `CMSG_GM_REPORT_LAG` as `0x5acf30` writes it: the lag type, the map and where the player
+/// stands.
+pub fn gm_report_lag(kind: u32, map: u32, pos: [f32; 3]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(20);
+    out.extend_from_slice(&kind.to_le_bytes());
+    out.extend_from_slice(&map.to_le_bytes());
+    for c in pos {
+        out.extend_from_slice(&c.to_le_bytes());
+    }
+    out
+}
+
+/// `CMSG_GMSURVEY_SUBMIT` as `0x5acd50` writes it: the survey id; per question slot its id, and
+/// for a non-zero id the rank byte and comment, the first zero id ending the list after it is
+/// written; then the overall comment.
+pub fn gm_survey_submit(survey: u32, answers: &[(u32, u8, String)], comment: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(64);
+    out.extend_from_slice(&survey.to_le_bytes());
+    for (qid, rank, text) in answers.iter().take(10) {
+        out.extend_from_slice(&qid.to_le_bytes());
+        out.push(*rank);
+        out.extend_from_slice(text.as_bytes());
+        out.push(0);
+    }
+    if answers.len() < 10 {
+        out.extend_from_slice(&0u32.to_le_bytes());
+    }
+    out.extend_from_slice(comment.as_bytes());
+    out.push(0);
+    out
+}
+
 /// `CMSG_GMTICKET_UPDATETEXT` as `0x5acb50` writes it: the text alone.
 pub fn gm_ticket_updatetext(text: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() + 1);

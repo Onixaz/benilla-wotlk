@@ -52,4 +52,9 @@ impl WorldWriter {
             &messages::activate_taxi_express(flightmaster_guid, total_cost, nodes),
         )
     }
+
+    /// `CMSG_SET_TAXI_BENCHMARK_MODE` (`0x517b50`); the server answers by the player flag 0x20000.
+    pub fn set_taxi_benchmark_mode(&mut self, on: bool) -> Result<()> {
+        self.send(opcode::CMSG_SET_TAXI_BENCHMARK_MODE, &[u8::from(on)])
+    }
 }
