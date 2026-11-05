@@ -88,8 +88,7 @@ fn the_sends() -> Vec<String> {
 }
 
 /// cmangos drops each of them as "the player has not logged in yet" when it beats the load,
-/// so the login edge sends none, and the hourly clock resync (the clock never answered, so stale)
-/// waits for the create too.
+/// so the login edge sends none; with no clock answer yet, no re-ask is armed either.
 #[test]
 fn the_login_edge_alone_sends_nothing() {
     let (mut app, rx) = app();
@@ -112,6 +111,40 @@ fn the_self_create_sends_them_in_the_reference_order() {
     app.update();
     app.update();
     assert_eq!(sent(&rx), Vec::<String>::new());
+}
+
+/// An answer arms the re-ask at the earlier of an hour and the daily reset (`0x5dff7e`); it goes
+/// out once and waits for the next answer (`0x5e6daa`).
+#[test]
+fn a_time_answer_re_asks_at_the_reset_once() {
+    let (mut app, rx) = app();
+    log_in(&mut app);
+    self_create(&mut app);
+    app.update();
+    assert_eq!(sent(&rx), the_sends());
+
+    app.world_mut()
+        .resource_mut::<ServerWallClock>()
+        .sample(1_000, 3_000);
+    app.update();
+    assert_eq!(
+        sent(&rx),
+        Vec::<String>::new(),
+        "the reset is 50 minutes out"
+    );
+
+    // The reset is due now.
+    app.world_mut()
+        .resource_mut::<ServerWallClock>()
+        .sample(1_000, 0);
+    app.update();
+    assert_eq!(sent(&rx), vec!["QueryTime".to_string()]);
+    app.update();
+    assert_eq!(
+        sent(&rx),
+        Vec::<String>::new(),
+        "disarmed until the next answer"
+    );
 }
 
 /// A cross-map worldport purges the streamed world and the server creates us afresh (the reference

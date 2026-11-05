@@ -81,7 +81,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             spell_ids,
             cooldowns,
         }],
-        ServerPacket::ActionButtons { buttons } => vec![SessionEvent::ActionButtons { buttons }],
+        ServerPacket::ActionButtons { state, buttons } => {
+            vec![SessionEvent::ActionButtons { state, buttons }]
+        }
         ServerPacket::LearnedSpell { spell_id } => {
             vec![SessionEvent::SpellLearned { spell_id }]
         }
@@ -243,21 +245,11 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             roll,
             guid,
         }],
-        ServerPacket::InventoryChangeFailure {
-            reason,
-            required_level,
-            item_guid,
-            bag_slot,
-        } if reason != 0 => {
-            vec![SessionEvent::InventoryFailure {
-                reason,
-                required_level,
-                item_guid,
-                bag_slot,
-            }]
+        // Reason 0 ends the handler (`0x6e30ba`): no failure.
+        ServerPacket::InventoryChangeFailure(f) if f.reason != 0 => {
+            vec![SessionEvent::InventoryFailure(f)]
         }
-        // Reason 0 is `EQUIP_ERR_OK`, which vmangos sends too (`Player.cpp:11688`): no failure.
-        ServerPacket::InventoryChangeFailure { .. } => Vec::new(),
+        ServerPacket::InventoryChangeFailure(_) => Vec::new(),
         ServerPacket::AttackStart { attacker, victim } => {
             vec![SessionEvent::AttackStart { attacker, victim }]
         }

@@ -137,6 +137,7 @@ impl Plugin for UiUnitPlugin {
                 .run_if(crate::ui_script::ingame_ui_up),
         )
         .init_resource::<UnitFeedState>()
+        .init_resource::<RestStates>()
         // A UI-only harness has no sound or net stack, and a missing resource or message is a
         // system-validation panic; declaring twice is idempotent.
         .init_resource::<crate::sound::MessageSounds>()
@@ -379,11 +380,26 @@ fn feed_default_language(
     }
 }
 
+/// `Exhaustion.dbc`'s rows as `(id, name, factor)`, which the XP line reads (`[0xad3838]`); empty
+/// until the first VM loads them.
+#[derive(Resource, Default)]
+pub(crate) struct RestStates(pub(crate) Vec<(u8, String, f32)>);
+
+impl RestStates {
+    pub(crate) fn get(&self, id: u8) -> Option<(&str, f32)> {
+        self.0
+            .iter()
+            .find(|r| r.0 == id)
+            .map(|r| (r.1.as_str(), r.2))
+    }
+}
+
 /// Seed each VM's `Exhaustion.dbc` table; a failed load keeps the shipped-table fallback.
 fn load_exhaustion_rows(
     script: Option<NonSendMut<UiScript>>,
     assets: Option<Res<benilla_assets::WorldAssets>>,
     mut seeded: Local<crate::ui_script::VmMemo<bool>>,
+    mut rest_states: ResMut<RestStates>,
 ) {
     let (Some(mut script), Some(assets)) = (script, assets) else {
         return;
@@ -399,6 +415,10 @@ fn load_exhaustion_rows(
     match loaded {
         Ok(rows) => {
             info!("ui_unit: {} Exhaustion.dbc rest states", rows.len());
+            rest_states.0 = rows
+                .iter()
+                .map(|r| (r.id as u8, r.name.clone(), r.factor))
+                .collect();
             script.set_exhaustion_rows(
                 rows.into_iter()
                     .map(|r| (r.id as u8, r.name, f64::from(r.factor)))

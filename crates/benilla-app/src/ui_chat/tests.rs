@@ -324,20 +324,54 @@ fn honor_gain_lines_pick_the_reference_form() {
 
 #[test]
 fn xp_gain_lines_pick_the_reference_form() {
+    use super::XpLine;
     let _data = benilla_formats::wow_data_or_skip!();
-    // `COMBATLOG_XPGAIN_FIRSTPERSON`, `COMBATLOG_XPGAIN_EXHAUSTION1` (rested) and
-    // `COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED` (`GlobalStrings.lua:801`, `:789`, `:804`).
+    let line = |l: &XpLine, victim: Option<&str>| {
+        with_strings(|g| super::feed::xp_gain_line(l, victim, g))
+    };
+    let plain = |victim, total, group_rate| XpLine::Plain {
+        victim,
+        total,
+        group_rate,
+    };
     assert_eq!(
-        with_strings(|g| super::feed::xp_gain_line(Some("Kobold Vermin"), 35, 0, g)).as_deref(),
+        line(&plain(7, 35, 1.0), Some("Kobold Vermin")).as_deref(),
         Some("Kobold Vermin dies, you gain 35 experience.")
     );
     assert_eq!(
-        with_strings(|g| super::feed::xp_gain_line(Some("Kobold Vermin"), 52, 17, g)).as_deref(),
+        line(&plain(0, 120, 1.0), None).as_deref(),
+        Some("You gain 120 experience.")
+    );
+    // A group rate over 1 cut the shown award: trunc(120 / 1.5) = 80, a bonus of 40.
+    assert_eq!(
+        line(&plain(7, 120, 1.5), Some("Kobold Vermin")).as_deref(),
+        Some("Kobold Vermin dies, you gain 120 experience. (+40 group bonus)")
+    );
+    assert_eq!(
+        line(&plain(7, 100, 0.5), Some("Kobold Vermin")).as_deref(),
+        Some("Kobold Vermin dies, you gain 100 experience. (-100 raid penalty)")
+    );
+    let rested = |group_rate| XpLine::Rested {
+        victim: 7,
+        key: "COMBATLOG_XPGAIN_EXHAUSTION1",
+        state: "Rested".into(),
+        total: 52,
+        base: 35,
+        group_rate,
+    };
+    assert_eq!(
+        line(&rested(1.0), Some("Kobold Vermin")).as_deref(),
         Some("Kobold Vermin dies, you gain 52 experience. (+17 exp Rested bonus)")
     );
     assert_eq!(
-        with_strings(|g| super::feed::xp_gain_line(None, 120, 0, g)).as_deref(),
-        Some("You gain 120 experience.")
+        line(
+            &XpLine::Loss {
+                total: -300i32 as u32
+            },
+            None
+        )
+        .as_deref(),
+        Some("You lose 300 experience.")
     );
     // The shipped lavender, chat-cache row 46.
     assert_eq!(default_color(K::CombatXpGain), [111, 111, 255]);

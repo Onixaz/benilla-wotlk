@@ -2028,7 +2028,6 @@ mod tests {
             ("RAISED_AS_GHOUL", R_1),
             ("READY_CHECK_CONFIRM", R_1),
             ("READY_CHECK_FINISHED", R_1),
-            ("TALENTS_INVOLUNTARILY_RESET", R_1),
             ("TRADE_POTENTIAL_BIND_ENCHANT", R_1),
             ("UPDATE_CHAT_COLOR_NAME_BY_CLASS", R_1),
             ("UPDATE_FLOATING_CHAT_WINDOWS", R_1),

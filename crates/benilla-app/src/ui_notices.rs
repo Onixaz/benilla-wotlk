@@ -73,6 +73,10 @@ struct KbMotd {
 #[derive(Resource, Default)]
 struct ServerFirsts(Vec<ServerFirstAchievement>);
 
+/// The events a [`WorldNotice`] fires, in packet order.
+#[derive(Resource, Default)]
+struct NoticeEvents(Vec<(&'static str, Vec<ScriptValue>)>);
+
 pub(crate) struct NoticesPlugin;
 
 impl Plugin for NoticesPlugin {
@@ -83,6 +87,7 @@ impl Plugin for NoticesPlugin {
             .init_resource::<InebriationLines>()
             .init_resource::<KbMotd>()
             .init_resource::<ServerFirsts>()
+            .init_resource::<NoticeEvents>()
             .net_handler(K::OverrideLight, on_override_light)
             .net_handler(K::UiTime, on_ui_time)
             .net_handler(K::ArenaError, on_arena_error)
@@ -209,7 +214,9 @@ fn notice_line(notice: WorldNotice, names: &NameCache) -> Option<UiError> {
         }
         WorldNotice::BattlegroundInfoThrottled => UiError::key("ERR_BATTLEGROUND_INFO_THROTTLED"),
         WorldNotice::PlayTimeWarning { flags, seconds } => play_time_warning(flags, seconds)?,
-        WorldNotice::ReportPvpAfkResult { .. } => return None,
+        WorldNotice::ReportPvpAfkResult { .. }
+        | WorldNotice::ReferAFriendExpired { .. }
+        | WorldNotice::TalentsInvoluntarilyReset { .. } => return None,
     })
 }
 
@@ -249,11 +256,27 @@ fn on_notice(
     cvars: Option<ResMut<crate::cvars::Cvars>>,
     script: Option<NonSend<UiScript>>,
     mut chat: ResMut<ChatLog>,
+    mut events: ResMut<NoticeEvents>,
 ) {
     let SessionEvent::Notice(notice) = ev else {
         return;
     };
     debug!("net: {notice:?}");
+    match notice {
+        // `0x526642`: no refer-a-friend link is kept to clear, so only the event remains.
+        WorldNotice::ReferAFriendExpired { .. } => {
+            events.0.push(("FRIENDLIST_UPDATE", Vec::new()));
+            return;
+        }
+        // `0x526eca`: the byte as `%b`.
+        WorldNotice::TalentsInvoluntarilyReset { flag } => {
+            events
+                .0
+                .push(("TALENTS_INVOLUNTARILY_RESET", vec![ScriptValue::Bool(flag)]));
+            return;
+        }
+        _ => {}
+    }
     if let WorldNotice::ReportPvpAfkResult { result } = notice {
         let Some(mut cvars) = cvars else {
             return;
@@ -426,11 +449,13 @@ fn on_session_end(
     mut grant: ResMut<LevelGrant>,
     mut lines: ResMut<InebriationLines>,
     mut firsts: ResMut<ServerFirsts>,
+    mut events: ResMut<NoticeEvents>,
 ) {
     *clock = UiClock::default();
     *grant = LevelGrant::default();
     lines.0.clear();
     firsts.0.clear();
+    events.0.clear();
 }
 
 /// `CMSG_WORLD_STATE_UI_TIMER_UPDATE` every 20 s in world, the first at once (`0x5488f0`).
@@ -483,7 +508,11 @@ fn feed_notices(
     clock: Res<UiClock>,
     mut grant: ResMut<LevelGrant>,
     mut lines: ResMut<InebriationLines>,
-    (mut motd, mut firsts): (ResMut<KbMotd>, ResMut<ServerFirsts>),
+    (mut motd, mut firsts, mut events): (
+        ResMut<KbMotd>,
+        ResMut<ServerFirsts>,
+        ResMut<NoticeEvents>,
+    ),
     names: Res<NameCache>,
     items: Res<Items>,
     net: Res<NetCommands>,
@@ -506,6 +535,9 @@ fn feed_notices(
     }
     for _ in 0..std::mem::take(&mut motd.owed) {
         script.fire_event("KNOWLEDGE_BASE_SYSTEM_MOTD_UPDATED", Vec::new());
+    }
+    for (event, args) in std::mem::take(&mut events.0) {
+        script.fire_event(event, args);
     }
     if !firsts.0.is_empty() {
         let lua = script.lua();

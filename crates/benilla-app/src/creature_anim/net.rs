@@ -30,7 +30,8 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::PlaySpellImpact, on_play_spell_visual)
         .net_handler(K::AttackerState, on_attacker_state)
         .net_handler(K::EnvironmentalDamageLog, on_environmental_damage_log)
-        .net_handler(K::AchievementEarned, on_achievement_earned);
+        .net_handler(K::AchievementEarned, on_achievement_earned)
+        .net_handler(K::TitleEarned, on_title_earned);
 }
 
 fn on_attack_start(
@@ -533,6 +534,25 @@ pub(super) fn on_achievement_earned(
             "anim: {:#x} earned {}, the earn effect plays ({entity})",
             e.player, e.achievement
         );
+        fx.write(begin);
+    }
+}
+
+/// `SMSG_TITLE_EARNED`'s effect on our player, for an earned title only (`0x50c63c`).
+pub(super) fn on_title_earned(
+    In(ev): In<SessionEvent>,
+    me: Query<Entity, With<crate::net::SelfPlayer>>,
+    visuals: Option<Res<super::spell_visual::SpellVisuals>>,
+    mut fx: MessageWriter<super::spell_visual::SpellKitFx>,
+) {
+    let SessionEvent::TitleEarned { earned: true, .. } = ev else {
+        return;
+    };
+    let (Ok(entity), Some(visuals)) = (me.single(), visuals) else {
+        return;
+    };
+    if let Some(begin) = super::spell_visual::title_earn_fx(&visuals, entity) {
+        debug!("anim: title earned, the earn effect plays ({entity})");
         fx.write(begin);
     }
 }

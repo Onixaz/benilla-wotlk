@@ -293,7 +293,7 @@ impl World {
                 );
                 self.spell_book = Some(spell_ids.clone());
             }
-            SessionEvent::ActionButtons { buttons } => {
+            SessionEvent::ActionButtons { buttons, .. } => {
                 println!("SMSG_ACTION_BUTTONS: {} occupied slot(s)", buttons.len());
                 for b in buttons.iter().take(12) {
                     println!(

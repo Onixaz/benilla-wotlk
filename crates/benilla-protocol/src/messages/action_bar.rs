@@ -27,14 +27,20 @@ pub struct ActionButton {
     pub kind: u8,
 }
 
+/// `SMSG_ACTION_BUTTONS`' state byte: the table is stored for the player's init (`0x6e8000`).
+pub const ACTION_BUTTONS_INIT: u8 = 0;
+/// The table is stored and put on the bar at once (`0x6d87d3`).
+pub const ACTION_BUTTONS_SET: u8 = 1;
+/// No table: the bar locks until the next set (`0x6d8798`).
+pub const ACTION_BUTTONS_LOCK: u8 = 2;
+
 /// Read `SMSG_ACTION_BUTTONS` as the 12340 handler does (`0x6d8750`): a `u8` state, then for
-/// state 0 or 1 the [`ACTION_BUTTON_SLOTS`] slot words, dropping empty ones. Only state 1 puts the
-/// words on the bar (`0x6d87d3`); state 0 stores them, and state 2 carries no words. `None` is a
-/// body that sets no buttons.
-pub(super) fn read_action_buttons(r: &mut &[u8]) -> io::Result<Option<Vec<ActionButton>>> {
+/// state 0 or 1 the [`ACTION_BUTTON_SLOTS`] slot words, dropping empty ones. Any other state reads
+/// nothing more (`0x6d87b3`).
+pub(super) fn read_action_buttons(r: &mut &[u8]) -> io::Result<(u8, Vec<ActionButton>)> {
     let state = read_u8(r)?;
-    if state > 1 {
-        return Ok(None);
+    if state > ACTION_BUTTONS_SET {
+        return Ok((state, Vec::new()));
     }
     let mut buttons = Vec::new();
     for slot in 0..ACTION_BUTTON_SLOTS as u8 {
@@ -47,7 +53,7 @@ pub(super) fn read_action_buttons(r: &mut &[u8]) -> io::Result<Option<Vec<Action
             });
         }
     }
-    Ok((state == 1).then_some(buttons))
+    Ok((state, buttons))
 }
 
 /// `CMSG_SET_ACTION_BUTTON` (296): `button u8`, `packetData u32` packed as in [`ActionButton`]
@@ -81,9 +87,8 @@ mod tests {
         body.extend(0x004bu32.to_le_bytes()); // 75 Auto Shot
         body.resize(1 + 4 * ACTION_BUTTON_SLOTS, 0);
         let mut r = &body[..];
-        let buttons = read_action_buttons(&mut r)
-            .unwrap()
-            .expect("state 1 sets the bar");
+        let (state, buttons) = read_action_buttons(&mut r).unwrap();
+        assert_eq!(state, ACTION_BUTTONS_SET);
         assert!(r.is_empty());
         assert_eq!(
             buttons
@@ -94,9 +99,12 @@ mod tests {
         );
         // A short body is an error, not a partial bar.
         assert!(read_action_buttons(&mut &body[..100]).is_err());
-        // State 0 stores without setting; state 2 carries nothing.
+        // State 0 carries the words too; state 2 carries nothing.
         body[0] = 0;
-        assert_eq!(read_action_buttons(&mut &body[..]).unwrap(), None);
-        assert_eq!(read_action_buttons(&mut &[2u8][..]).unwrap(), None);
+        assert_eq!(read_action_buttons(&mut &body[..]).unwrap().1.len(), 3);
+        assert_eq!(
+            read_action_buttons(&mut &[2u8][..]).unwrap(),
+            (ACTION_BUTTONS_LOCK, Vec::new())
+        );
     }
 }

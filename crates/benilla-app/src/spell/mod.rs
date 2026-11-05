@@ -155,7 +155,15 @@ impl Plugin for SpellPlugin {
             .init_resource::<multicast::MultiCastLists>()
             .add_systems(
                 Update,
-                multicast::run_refill.after(WorldStage::Net).before(UiFeed),
+                (
+                    // The player's init puts the stored table on before the totem refill reads
+                    // the bar.
+                    net::put_action_table_on_init,
+                    multicast::run_refill,
+                )
+                    .chain()
+                    .after(WorldStage::Net)
+                    .before(UiFeed),
             )
             .add_systems(
                 Startup,

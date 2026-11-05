@@ -6,7 +6,10 @@
 use std::time::{Duration, Instant};
 
 use benilla_formats::LearnAnnouncement;
-use benilla_protocol::messages::{ActionButton, SpellCooldown, ACTION_KIND_SPELL};
+use benilla_protocol::messages::{
+    ActionButton, SpellCooldown, ACTION_BUTTONS_LOCK, ACTION_BUTTONS_SET,
+    ACTION_KIND_EQUIPMENT_SET, ACTION_KIND_SPELL,
+};
 use bevy::prelude::*;
 
 use super::cast_target::CastTargeting;
@@ -144,8 +147,9 @@ fn on_spell_book(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
 }
 
 fn on_action_buttons(In(ev): In<SessionEvent>, mut l: Lifecycle) {
-    if let SessionEvent::ActionButtons { buttons } = ev {
-        action_buttons(buttons, &mut l.actions);
+    if let SessionEvent::ActionButtons { state, buttons } = ev {
+        let player = l.self_guid.0.is_some_and(|g| l.index.0.contains_key(&g));
+        action_buttons(state, buttons, player, &mut l.actions, &l.net);
     }
 }
 
@@ -844,10 +848,78 @@ fn spell_book(
     }
 }
 
-/// `SMSG_ACTION_BUTTONS`, at login and on server-side edits, into the action store.
-fn action_buttons(buttons: Vec<ActionButton>, actions: &mut PlayerActions) {
-    debug!("net: action bar — {} occupied slots", buttons.len());
-    actions.buttons = buttons.into_iter().map(|b| (b.slot, b)).collect();
+/// `SMSG_ACTION_BUTTONS` (`0x6d8750`). State 2 locks the bar of a streamed player (`0x6d8798`).
+/// States 0 and 1 store the table; state 1 also unlocks and puts it on a streamed player's bar
+/// (`0x6d87e8`): a slot that [`slot_stands`] is set without a send (`0x6d883c`), every other slot
+/// of the 144, an empty one included, is removed with its `CMSG_SET_ACTION_BUTTON` clear
+/// (`0x6d882c` -> `0x5aab02`). Otherwise the player's init puts the table on
+/// ([`put_action_table_on_init`]).
+fn action_buttons(
+    state: u8,
+    buttons: Vec<ActionButton>,
+    player: bool,
+    actions: &mut PlayerActions,
+    net: &NetCommands,
+) {
+    debug!(
+        "net: action bar — state {state}, {} occupied slots",
+        buttons.len()
+    );
+    if state == ACTION_BUTTONS_LOCK {
+        actions.locked |= player;
+        return;
+    }
+    if state > ACTION_BUTTONS_SET {
+        return;
+    }
+    actions.table = Some(buttons.clone());
+    if state != ACTION_BUTTONS_SET || !player {
+        return;
+    }
+    actions.locked = false;
+    let table: std::collections::HashMap<u8, ActionButton> =
+        buttons.into_iter().map(|b| (b.slot, b)).collect();
+    for slot in 0..benilla_protocol::messages::ACTION_BUTTON_SLOTS as u8 {
+        match table.get(&slot).filter(|b| slot_stands(b, actions, true)) {
+            Some(&b) => {
+                actions.buttons.insert(slot, b);
+                actions.dirty = true;
+            }
+            None => actions.write_slot(slot, 0, net),
+        }
+    }
+}
+
+/// Whether a table slot goes on the bar: a spell word (kind nibble 0) only if the spell is known,
+/// tested on the whole word (`0x6d8805`); with `sets`, an equipment set only if a listed set has
+/// its id (`0x6d881f`).
+fn slot_stands(b: &ActionButton, actions: &PlayerActions, sets: bool) -> bool {
+    let word = b.action | (u32::from(b.kind) << 24);
+    if b.kind & 0xF0 == 0 {
+        return actions.spells.contains(&word);
+    }
+    !sets
+        || b.kind != ACTION_KIND_EQUIPMENT_SET
+        || actions.equipment_sets.iter().any(|s| s.id == b.action)
+}
+
+/// The player's init (`0x6e8000`-`0x6e8046`): the stored table's slots go on the bar, a spell slot
+/// only if known; nothing is removed.
+pub(crate) fn put_action_table_on_init(
+    mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
+    mut actions: ResMut<PlayerActions>,
+) {
+    if cascades.read().next().is_none() {
+        return;
+    }
+    let Some(table) = actions.table.clone() else {
+        return;
+    };
+    for b in table {
+        if slot_stands(&b, &actions, false) {
+            actions.buttons.insert(b.slot, b);
+        }
+    }
     actions.dirty = true;
 }
 
@@ -3429,6 +3501,95 @@ mod tests {
             None,
             "a reply for a spell we do not have in flight chains nothing"
         );
+    }
+
+    fn slot(slot: u8, action: u32, kind: u8) -> ActionButton {
+        ActionButton { slot, action, kind }
+    }
+
+    /// State 1 on a streamed player drops an unknown spell and an unlisted set (`0x6d882b`).
+    #[test]
+    fn a_set_table_bars_known_spells_and_listed_sets_only() {
+        let mut actions = PlayerActions::default();
+        actions.spells.insert(133);
+        actions
+            .equipment_sets
+            .push(benilla_protocol::messages::EquipmentSet {
+                guid: 1,
+                id: 3,
+                name: String::new(),
+                icon: String::new(),
+                items: [0; benilla_protocol::messages::EQUIPMENT_SET_SLOTS],
+            });
+        actions.locked = true;
+        let table = vec![
+            slot(0, 133, ACTION_KIND_SPELL),
+            slot(1, 116, ACTION_KIND_SPELL),
+            slot(2, 3, ACTION_KIND_EQUIPMENT_SET),
+            slot(3, 4, ACTION_KIND_EQUIPMENT_SET),
+            slot(4, 9, 0x40),
+        ];
+        let (tx, rx) = crossbeam_channel::unbounded();
+        action_buttons(
+            ACTION_BUTTONS_SET,
+            table.clone(),
+            true,
+            &mut actions,
+            &NetCommands(tx),
+        );
+        let mut barred: Vec<u8> = actions.buttons.keys().copied().collect();
+        barred.sort_unstable();
+        assert_eq!(barred, [0, 2, 4]);
+        // Every other slot, empty ones included, is cleared on the server too.
+        assert_eq!(rx.try_iter().count(), 144 - 3);
+        assert!(!actions.locked, "state 1 unlocks");
+        assert_eq!(actions.table, Some(table));
+    }
+
+    /// State 2 locks the writers; state 0 stores without barring, and the player's init bars a
+    /// known spell and any set (`0x6e8000`).
+    #[test]
+    fn the_lock_refuses_writes_and_init_bars_the_stored_table() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let net = NetCommands(tx);
+        let mut actions = PlayerActions::default();
+        action_buttons(ACTION_BUTTONS_LOCK, Vec::new(), false, &mut actions, &net);
+        assert!(!actions.locked, "no player, no lock");
+        action_buttons(ACTION_BUTTONS_LOCK, Vec::new(), true, &mut actions, &net);
+        actions.write_slot(5, 133, &net);
+        assert!(actions.buttons.is_empty() && rx.try_iter().next().is_none());
+
+        actions.spells.insert(133);
+        let table = vec![
+            slot(0, 133, ACTION_KIND_SPELL),
+            slot(1, 4, ACTION_KIND_EQUIPMENT_SET),
+            slot(2, 116, ACTION_KIND_SPELL),
+        ];
+        action_buttons(
+            benilla_protocol::messages::ACTION_BUTTONS_INIT,
+            table,
+            true,
+            &mut actions,
+            &net,
+        );
+        assert!(actions.buttons.is_empty(), "state 0 only stores");
+
+        let mut app = App::new();
+        app.add_message::<crate::net::WorldEnterCascadeMessage>()
+            .insert_resource(actions)
+            .add_systems(Update, put_action_table_on_init);
+        app.world_mut()
+            .write_message(crate::net::WorldEnterCascadeMessage);
+        app.update();
+        let mut barred: Vec<u8> = app
+            .world()
+            .resource::<PlayerActions>()
+            .buttons
+            .keys()
+            .copied()
+            .collect();
+        barred.sort_unstable();
+        assert_eq!(barred, [0, 1]);
     }
 
     /// `0x801cc4`, `0x801d5e`: a zero, an infinite (`0xFFFFFFFF`) or an unstreamed caster's

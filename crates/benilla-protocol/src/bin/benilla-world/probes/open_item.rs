@@ -76,9 +76,10 @@ impl Probe for OpenItem {
                     SessionEvent::LootError { guid, error } if guid == item_guid => {
                         verdict = Some(Err(format!("server refused with loot error {error}")));
                     }
-                    SessionEvent::InventoryFailure { reason, .. } => {
+                    SessionEvent::InventoryFailure(f) => {
                         verdict = Some(Err(format!(
-                            "server refused with EQUIP_ERR {reason} (locked? dead? flying?)"
+                            "server refused with EQUIP_ERR {} (locked? dead? flying?)",
+                            f.reason
                         )));
                     }
                     _ => {}

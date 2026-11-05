@@ -4,7 +4,7 @@
 use bevy::prelude::*;
 
 use benilla_protocol::messages::{
-    channel_notice, ChannelNoticeTail, ChatMessage, LevelUpInfo, XpGain, MACRO_EXPANDED_TYPES,
+    channel_notice, ChannelNoticeTail, ChatMessage, LevelUpInfo, MACRO_EXPANDED_TYPES,
 };
 
 use benilla_assets::{LockRecover, WorldAssets};
@@ -72,13 +72,8 @@ enum Pending {
         guid: u64,
         tries: u16,
     },
-    /// An XP award waiting on the victim's name (0: unnamed); `bonus` is total minus base.
-    XpGain {
-        victim: u64,
-        total: u32,
-        bonus: u32,
-        tries: u16,
-    },
+    /// An XP line, waiting on its victim's name when it names one.
+    XpGain { line: XpLine, tries: u16 },
     /// An honor award waiting on the victim's name; `rank` (0 none) becomes a title at the drain,
     /// from the victim's side in the same name-query record.
     HonorGain {
@@ -310,20 +305,9 @@ impl ChatLog {
         });
     }
 
-    /// Queue an XP award's line (`SMSG_LOG_XPGAIN`); a kill waits on the victim's name.
-    pub(crate) fn push_xp_gain(&mut self, x: &XpGain) {
-        // Both forks park: the template resolves at the drain; `victim: 0` is the unnamed form.
-        let named = x.kill && x.victim != 0;
-        self.pending.push(Pending::XpGain {
-            victim: if named { x.victim } else { 0 },
-            total: x.total,
-            bonus: if named {
-                x.total.saturating_sub(x.base)
-            } else {
-                0
-            },
-            tries: 0,
-        });
+    /// Queue an XP line (`SMSG_LOG_XPGAIN`); a named one waits on the victim's name.
+    pub(crate) fn push_xp_gain(&mut self, line: XpLine) {
+        self.pending.push(Pending::XpGain { line, tries: 0 });
     }
 
     /// Queue an honor award's line (`SMSG_PVP_CREDIT`); victim 0 is a bonus or objective award.
@@ -415,42 +399,156 @@ fn keyed(
     (!text.is_empty()).then_some(text)
 }
 
-/// The XP line: `COMBATLOG_XPGAIN_FIRSTPERSON`, the `_UNNAMED` form, or the rested
-/// `_EXHAUSTION1`, whose last two arguments are the signed bonus and the state word.
-pub(super) fn xp_gain_line(
-    victim: Option<&str>,
-    total: u32,
-    bonus: u32,
-    get: &dyn Fn(&str) -> Option<String>,
-) -> Option<String> {
-    use benilla_ui::strings::Arg;
-    match victim {
-        Some(name) if bonus > 0 => keyed(
-            get,
-            "COMBATLOG_XPGAIN_EXHAUSTION1",
-            &[
-                Arg::S(name),
-                Arg::D(i64::from(total)),
-                Arg::S(&format!("+{bonus}")),
-                Arg::S(RESTED_STATE),
-            ],
-        ),
-        Some(name) => keyed(
-            get,
-            "COMBATLOG_XPGAIN_FIRSTPERSON",
-            &[Arg::S(name), Arg::D(i64::from(total))],
-        ),
-        None => keyed(
-            get,
-            "COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED",
-            &[Arg::D(i64::from(total))],
-        ),
+/// The XP line `SMSG_LOG_XPGAIN` prints, its form chosen at the packet (`0x50c720`).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum XpLine {
+    /// Our own player as the victim: the loss line with the total, a negative signed amount on
+    /// the wire, negated (`0x50b660`).
+    Loss { total: u32 },
+    /// Refer-a-Friend quest XP: the total, two thirds of it as the bonus, and rest state 6's name
+    /// (`0x50b56d`-`0x50b633`).
+    ReferAFriendQuest { total: u32, state: String },
+    /// `0x50b1d0`: named for a held victim unit (0 unnamed); `_GROUP`/`_RAID` from the rate.
+    Plain {
+        victim: u64,
+        total: u32,
+        group_rate: f32,
+    },
+    /// A kill under a rest state whose factor is neither 0 nor 1 (`0x50b3fb`): the state's key and
+    /// name, and the signed bonus over the base.
+    Rested {
+        victim: u64,
+        key: &'static str,
+        state: String,
+        total: u32,
+        base: u32,
+        group_rate: f32,
+    },
+}
+
+impl XpLine {
+    /// The guid whose name the line waits on; 0 for none.
+    fn victim(&self) -> u64 {
+        match self {
+            XpLine::Plain { victim, .. } | XpLine::Rested { victim, .. } => *victim,
+            XpLine::Loss { .. } | XpLine::ReferAFriendQuest { .. } => 0,
+        }
     }
 }
 
-/// The `_EXHAUSTION1` template's state word. 1.12 has no GlobalString for it and the reference's
-/// own table is untraced; rested is the only bonus state vmangos sets (`Player.cpp:17990-17993`).
-const RESTED_STATE: &str = "Rested";
+/// `amount` over the group rate, truncated as the reference's float-to-int (`0x88b9c0`).
+fn over_rate(amount: i64, group_rate: f32) -> i64 {
+    (amount as f64 / f64::from(group_rate)) as i64
+}
+
+/// A signed amount as `"%s%d"`, with a `+` for zero and up (`0x50b457`-`0x50b474`).
+fn signed(amount: i64) -> String {
+    if amount >= 0 {
+        format!("+{amount}")
+    } else {
+        amount.to_string()
+    }
+}
+
+/// The `_GROUP` suffix when the rate raised the award, `_RAID` when it cut it, none when equal
+/// (`0x50b21e`, `0x50b416`).
+fn rate_suffix(amount: i64, scaled: i64) -> &'static str {
+    match scaled.cmp(&amount) {
+        std::cmp::Ordering::Equal => "",
+        std::cmp::Ordering::Less => "_GROUP",
+        std::cmp::Ordering::Greater => "_RAID",
+    }
+}
+
+/// The text of one [`XpLine`]; `victim` is the named forms' resolved name.
+pub(super) fn xp_gain_line(
+    line: &XpLine,
+    victim: Option<&str>,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    use benilla_ui::strings::Arg;
+    match line {
+        XpLine::Loss { total } => keyed(
+            get,
+            "COMBATLOG_XPLOSS_FIRSTPERSON_UNNAMED",
+            &[Arg::D(-i64::from(*total as i32))],
+        ),
+        XpLine::ReferAFriendQuest { total, state } => {
+            let bonus = (*total as f32 * 0.666_666_7).round_ties_even() as i64;
+            keyed(
+                get,
+                "COMBATLOG_XPGAIN_QUEST",
+                &[
+                    Arg::D(i64::from(*total)),
+                    Arg::S(&signed(bonus)),
+                    Arg::S(state),
+                    Arg::D(bonus),
+                ],
+            )
+        }
+        XpLine::Plain {
+            total, group_rate, ..
+        } => {
+            let total = i64::from(*total);
+            let scaled = over_rate(total, *group_rate);
+            let diff = Arg::D((total - scaled).abs());
+            let suffix = rate_suffix(total, scaled);
+            match victim {
+                Some(name) if suffix.is_empty() => keyed(
+                    get,
+                    "COMBATLOG_XPGAIN_FIRSTPERSON",
+                    &[Arg::S(name), Arg::D(total)],
+                ),
+                Some(name) => keyed(
+                    get,
+                    &format!("COMBATLOG_XPGAIN_FIRSTPERSON{suffix}"),
+                    &[Arg::S(name), Arg::D(total), diff],
+                ),
+                None if suffix.is_empty() => keyed(
+                    get,
+                    "COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED",
+                    &[Arg::D(total)],
+                ),
+                None => keyed(
+                    get,
+                    &format!("COMBATLOG_XPGAIN_FIRSTPERSON_UNNAMED{suffix}"),
+                    &[Arg::D(total), diff],
+                ),
+            }
+        }
+        XpLine::Rested {
+            key,
+            state,
+            total,
+            base,
+            group_rate,
+            ..
+        } => {
+            let name = victim.unwrap_or_default();
+            let (total, base) = (i64::from(*total), i64::from(*base));
+            let scaled = over_rate(base, *group_rate);
+            let bonus = signed(total - base);
+            let suffix = rate_suffix(base, scaled);
+            let mut args = vec![Arg::S(name), Arg::D(total), Arg::S(&bonus), Arg::S(state)];
+            if !suffix.is_empty() {
+                args.push(Arg::D((base - scaled).abs()));
+            }
+            keyed(get, &format!("{key}{suffix}"), &args)
+        }
+    }
+}
+
+/// The rest-state keys by state (`0xac7fb4`): 0 has none, 3 is the literal `"NULL"`, and 6, the
+/// Refer-a-Friend state, shares 1's.
+pub(crate) const REST_STATE_KEYS: [Option<&str>; 7] = [
+    None,
+    Some("COMBATLOG_XPGAIN_EXHAUSTION1"),
+    Some("COMBATLOG_XPGAIN_EXHAUSTION2"),
+    Some("NULL"),
+    Some("COMBATLOG_XPGAIN_EXHAUSTION4"),
+    Some("COMBATLOG_XPGAIN_EXHAUSTION5"),
+    Some("COMBATLOG_XPGAIN_EXHAUSTION1"),
+];
 
 /// The honor line (`0x50b6d0`): `COMBATLOG_HONORAWARD` with no victim; a kill under 1 honor prints
 /// nothing (`0x50b71f`); else `COMBATLOG_HONORGAIN` with the rank title, or
@@ -1048,29 +1146,22 @@ pub(super) fn feed_chat(
                     );
                 }
             }
-            Pending::XpGain {
-                victim,
-                total,
-                bonus,
-                tries,
-            } => {
-                // `victim == 0` is the unnamed form, with no name to wait for.
+            Pending::XpGain { line, tries } => {
+                let victim = line.victim();
                 let name = if victim == 0 {
                     None
                 } else {
                     let resolved = names.resolve(victim, &commands).map(str::to_string);
                     if resolved.is_none() && tries < NAME_MAX_TRIES {
                         still.push(Pending::XpGain {
-                            victim,
-                            total,
-                            bonus,
+                            line,
                             tries: tries + 1,
                         });
                         continue;
                     }
                     Some(resolved.unwrap_or_else(|| "Unknown".into()))
                 };
-                let line = xp_gain_line(name.as_deref(), total, bonus, &globals(&script));
+                let line = xp_gain_line(&line, name.as_deref(), &globals(&script));
                 if let Some(text) = line {
                     route(
                         &mut script,

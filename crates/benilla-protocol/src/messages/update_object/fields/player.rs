@@ -786,6 +786,11 @@ impl ObjectFields {
         self.get_u32(FIELD_OBJECT_TYPE).unwrap_or(0) & 0x4 != 0
     }
 
+    /// `OBJECT_FIELD_TYPE`'s unit bit `0x8`, a player included: the object-pointer type mask 8.
+    pub fn is_unit(&self) -> bool {
+        self.get_u32(FIELD_OBJECT_TYPE).unwrap_or(0) & 0x8 != 0
+    }
+
     /// The object's class from `OBJECT_FIELD_TYPE`, for updates with no `TypeId`; the player bit
     /// `0x10` is the reference's own is-player test (in its attack and interact checks).
     pub fn object_type(&self) -> Option<ObjectType> {

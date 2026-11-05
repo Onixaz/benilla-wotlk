@@ -121,6 +121,10 @@ pub enum WorldNotice {
     PlayTimeWarning { flags: u32, seconds: i32 },
     /// `SMSG_REPORT_PVP_AFK_RESULT` (`0x6e3fbb`): the result; two bytes and a guid follow, unused.
     ReportPvpAfkResult { result: u8 },
+    /// `SMSG_REFER_A_FRIEND_EXPIRED` (`0x526602`): the friend whose link ended, a full guid.
+    ReferAFriendExpired { friend: u64 },
+    /// `SMSG_TALENTS_INVOLUNTARILY_RESET` (`0x526eb7`): one byte, passed on as a boolean.
+    TalentsInvoluntarilyReset { flag: bool },
 }
 
 impl WorldNotice {
@@ -136,6 +140,8 @@ impl WorldNotice {
             WorldNotice::BattlegroundInfoThrottled => "SMSG_BATTLEGROUND_INFO_THROTTLED",
             WorldNotice::PlayTimeWarning { .. } => "SMSG_PLAY_TIME_WARNING",
             WorldNotice::ReportPvpAfkResult { .. } => "SMSG_REPORT_PVP_AFK_RESULT",
+            WorldNotice::ReferAFriendExpired { .. } => "SMSG_REFER_A_FRIEND_EXPIRED",
+            WorldNotice::TalentsInvoluntarilyReset { .. } => "SMSG_TALENTS_INVOLUNTARILY_RESET",
         }
     }
 }
@@ -165,6 +171,12 @@ pub(super) fn read_world_notice(opcode: u16, r: &mut &[u8]) -> io::Result<WorldN
             let (_, _, _) = (read_u8(r)?, read_u8(r)?, read_u64_le(r)?);
             WorldNotice::ReportPvpAfkResult { result }
         }
+        op::SMSG_REFER_A_FRIEND_EXPIRED => WorldNotice::ReferAFriendExpired {
+            friend: read_u64_le(r)?,
+        },
+        op::SMSG_TALENTS_INVOLUNTARILY_RESET => WorldNotice::TalentsInvoluntarilyReset {
+            flag: read_u8(r)? != 0,
+        },
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -587,5 +599,17 @@ mod tests {
             N::ReportPvpAfkResult { result: 5 }
         );
         assert!(parse_server(opcode::SMSG_REPORT_PVP_AFK_RESULT, &[5]).is_err());
+        assert_eq!(
+            notice(opcode::SMSG_REFER_A_FRIEND_EXPIRED, &0x2Au64.to_le_bytes()),
+            N::ReferAFriendExpired { friend: 0x2A }
+        );
+        assert_eq!(
+            notice(opcode::SMSG_TALENTS_INVOLUNTARILY_RESET, &[1]),
+            N::TalentsInvoluntarilyReset { flag: true }
+        );
+        assert_eq!(
+            notice(opcode::SMSG_TALENTS_INVOLUNTARILY_RESET, &[0]),
+            N::TalentsInvoluntarilyReset { flag: false }
+        );
     }
 }

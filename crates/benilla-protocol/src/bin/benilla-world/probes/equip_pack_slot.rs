@@ -50,13 +50,10 @@ impl Probe for EquipPackSlot {
                             ));
                         }
                     }
-                    SessionEvent::InventoryFailure {
-                        reason,
-                        required_level,
-                        ..
-                    } => {
+                    SessionEvent::InventoryFailure(f) => {
                         verdict = Some(format!(
-                            "server refused (InventoryResult {reason:#04x}, level req {required_level:?})"
+                            "server refused (InventoryResult {:#04x}, tail {:?})",
+                            f.reason, f.tail
                         ));
                     }
                     _ => {}

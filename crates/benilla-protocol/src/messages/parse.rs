@@ -1118,14 +1118,7 @@ fn parse_server_body(
             }
         }
         opcode::SMSG_INVENTORY_CHANGE_FAILURE => {
-            let (reason, required_level, item_guid, bag_slot) =
-                items::read_inventory_change_failure(&mut r)?;
-            ServerPacket::InventoryChangeFailure {
-                reason,
-                required_level,
-                item_guid,
-                bag_slot,
-            }
+            ServerPacket::InventoryChangeFailure(items::read_inventory_change_failure(&mut r)?)
         }
         opcode::SMSG_INITIAL_SPELLS => {
             let (spell_ids, cooldowns) = spellbook::read_initial_spells(&mut r)?;
@@ -1134,10 +1127,10 @@ fn parse_server_body(
                 cooldowns,
             }
         }
-        opcode::SMSG_ACTION_BUTTONS => match action_bar::read_action_buttons(&mut r)? {
-            Some(buttons) => ServerPacket::ActionButtons { buttons },
-            None => ServerPacket::Other { opcode },
-        },
+        opcode::SMSG_ACTION_BUTTONS => {
+            let (state, buttons) = action_bar::read_action_buttons(&mut r)?;
+            ServerPacket::ActionButtons { state, buttons }
+        }
         opcode::SMSG_LEARNED_SPELL => ServerPacket::LearnedSpell {
             spell_id: spellbook::read_learned_spell(&mut r)?,
         },
@@ -1727,7 +1720,9 @@ fn parse_server_body(
         | opcode::SMSG_ARENA_TEAM_CHANGE_FAILED_QUEUED
         | opcode::SMSG_BATTLEGROUND_INFO_THROTTLED
         | opcode::SMSG_PLAY_TIME_WARNING
-        | opcode::SMSG_REPORT_PVP_AFK_RESULT => {
+        | opcode::SMSG_REPORT_PVP_AFK_RESULT
+        | opcode::SMSG_REFER_A_FRIEND_EXPIRED
+        | opcode::SMSG_TALENTS_INVOLUNTARILY_RESET => {
             ServerPacket::Notice(super::notices::read_world_notice(opcode, &mut r)?)
         }
         opcode::SMSG_SEND_UNLEARN_SPELLS => {

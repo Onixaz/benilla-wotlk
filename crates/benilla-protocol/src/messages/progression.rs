@@ -4,35 +4,41 @@ use std::io::{self, Read};
 
 use crate::wire::{read_f32_le, read_i32_le, read_u32_le, read_u64_le, read_u8};
 
-/// `SMSG_LOG_XPGAIN`: an XP award; `victim` is 0 for non-kill XP (vmangos `Misc.cpp:512-522`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `SMSG_LOG_XPGAIN` (`0x50c720`): an XP award, or a loss when `victim` is our own player.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct XpGain {
+    /// The kill's victim; 0 for non-kill XP.
     pub victim: u64,
     pub total: u32,
-    /// The award before the rested bonus; only a kill carries it, else it equals `total`.
-    /// `total - base` is the chat line's "(+N exp Rested bonus)".
+    /// The award's kind: 0 a kill, which alone carries `base` and `group_rate`.
+    pub xp_type: u8,
+    /// The kill's award before the rested bonus; 0 otherwise, as the handler zeroes it.
     pub base: u32,
-    pub kill: bool,
+    /// The kill's group rate; 1.0 otherwise (`0x50c75b`).
+    pub group_rate: f32,
+    /// The Refer-a-Friend flag, the body's last byte (`0x50c787`).
+    pub refer_a_friend: bool,
 }
 
-/// Read `SMSG_LOG_XPGAIN`: `u64 victim, u32 total, u8 type` (0 kill, 1 other), then for a kill
-/// `u32 base, f32 groupBonus`. The group bonus is read and dropped, its chat line not built;
-/// vmangos always sends 1.0, meaning none (`Player.cpp:3039`).
+/// Read `SMSG_LOG_XPGAIN`: `u64 victim, u32 total, u8 type` (`0x50c756`), then for a kill `u32
+/// base, f32 groupRate` (`0x50c76e`, `0x50c779`), then always the `u8` Refer-a-Friend flag.
 pub(super) fn read_xp_gain(r: &mut impl Read) -> io::Result<XpGain> {
     let victim = read_u64_le(r)?;
     let total = read_u32_le(r)?;
     let xp_type = read_u8(r)?;
-    let kill = xp_type == 0;
-    let mut base = total;
-    if kill {
+    let (mut base, mut group_rate) = (0, 1.0);
+    if xp_type == 0 {
         base = read_u32_le(r)?;
-        let _group_bonus = read_f32_le(r)?;
+        group_rate = read_f32_le(r)?;
     }
+    let refer_a_friend = read_u8(r)? != 0;
     Ok(XpGain {
         victim,
         total,
+        xp_type,
         base,
-        kill,
+        group_rate,
+        refer_a_friend,
     })
 }
 
