@@ -209,6 +209,28 @@ pub fn submesh_to_skinned_mesh(sub: &RenderSubmesh) -> Mesh {
     skinned_mesh_as(sub, BillboardBake::Card)
 }
 
+/// A joint index with this bit names a rider row of the slot, after the body's bones: a rigid
+/// attached model drawn through its wearer's slot instead of one of its own. `wow_model.wgsl`'s
+/// `wow_rig_row` decodes it.
+pub const RIDER_JOINT_BIT: u16 = 0x8000;
+
+/// The skinned mesh of a model placed whole by its wearer's rider row `row`: every vertex takes
+/// that row at full weight, as a model at bind pose has one placement for every bone.
+pub fn submesh_to_rigid_mesh(sub: &RenderSubmesh, row: u16) -> Mesh {
+    let mut mesh = build_submesh_mesh_as(sub, RenderAssetUsages::default(), BillboardBake::Card);
+    let n = sub.positions.len();
+    let joint = RIDER_JOINT_BIT | row;
+    mesh.insert_attribute(
+        ATTRIBUTE_WOW_JOINT_INDEX,
+        VertexAttributeValues::Uint16x4(vec![[joint; 4]; n]),
+    );
+    mesh.insert_attribute(
+        ATTRIBUTE_WOW_JOINT_WEIGHT,
+        VertexAttributeValues::Float32x4(vec![[1.0, 0.0, 0.0, 0.0]; n]),
+    );
+    mesh
+}
+
 /// A billboard batch drawn through the rig palette, as the reference skins it: the skinned form
 /// in model space, which the billboard bone's camera-faced row turns about its pivot, and its
 /// unrigged twin, collapsed onto the pivot so an unrigged frame draws nothing.

@@ -26,6 +26,17 @@ pub(crate) const MAX_PALETTE_BONES: usize = 131_072;
 /// Bytes a bone: 3 `vec4` rows of the affine.
 const BONE_BYTES: u64 = 48;
 
+/// A slot table word: the base bone in bits 0..=16 (`MAX_PALETTE_BONES` is `1 << 17`), the body's
+/// own bone count above it, where its rider rows start. `wow_model.wgsl` decodes it: keep in sync.
+const TABLE_BASE_BITS: u32 = 17;
+const TABLE_BASE_MASK: u32 = (1 << TABLE_BASE_BITS) - 1;
+
+/// Slots only a body may take: every other lane refuses at or below this headroom, so a crowd's
+/// gear and props never leave a unit at bind pose. Under the doodad reaper's low-water (256), so
+/// a reaped doodad can wake again, and at the unit heal's floor (128), which then always finds the
+/// room the other lanes leave.
+pub const BODY_RESERVE: usize = 128;
+
 /// Byte offset of the rig slot table (a base bone index a slot), after the prop-probe region.
 pub(crate) fn rig_table_region_offset() -> u64 {
     crate::lighting::prop_probe_region_offset() + (7 * crate::lighting::MAX_PROP_PROBES * 16) as u64
@@ -67,8 +78,11 @@ pub struct RigPalettes {
     /// The row ranges written into `rows` since it took over from `spare`, which still holds
     /// `rows` as it stood then; `None` once too many to replay, so the next clone copies whole.
     since_swap: Option<Vec<(usize, usize)>>,
-    /// Slot → base bone index. Slot 0 is the tag's "no rig" sentinel and never allocated.
+    /// Slot → table word (base bone index, body bone count). Slot 0 is the tag's "no rig"
+    /// sentinel and never allocated.
     table: Arc<Vec<u32>>,
+    /// Per-slot rider rows after the body's bones; 0 for a slot that hosts none.
+    slot_riders: Vec<u32>,
     /// Slot → the world position its rows are measured from, written with the rows.
     origins: Arc<Vec<[f32; 4]>>,
     origin_generation: u64,
@@ -110,6 +124,7 @@ impl Default for RigPalettes {
             origin_generation: 0,
             origin_mirror_generation: 0,
             slot_len: vec![0; MAX_RIG_SLOTS],
+            slot_riders: vec![0; MAX_RIG_SLOTS],
             mirrored: vec![false; MAX_RIG_SLOTS],
             free_slots: Vec::new(),
             slot_high: 1, // slot 0 = the "no rig" tag sentinel
@@ -253,8 +268,16 @@ impl RigPalettes {
     }
 
     /// Claim a slot and a bone range for a rig; `None` when either slab is exhausted.
+    #[cfg(test)]
     pub(crate) fn alloc(&mut self, bones: u32) -> Option<(u16, u32)> {
-        if bones == 0 {
+        self.alloc_with_riders(bones, 0)
+    }
+
+    /// [`Self::alloc`] with `riders` rows after the body's bones, each one rigid attached model's
+    /// frame ([`Self::write_rider_row`]).
+    pub(crate) fn alloc_with_riders(&mut self, body: u32, riders: u32) -> Option<(u16, u32)> {
+        let bones = body + riders;
+        if body == 0 || body > (u32::MAX >> TABLE_BASE_BITS) {
             return None;
         }
         let (i, &(base, len)) = self
@@ -290,8 +313,9 @@ impl RigPalettes {
         );
         let r1 = r1.min(rows.len());
         rows[r0..r1].fill([0.0; 4]);
-        Arc::make_mut(&mut self.table)[slot as usize] = base;
+        Arc::make_mut(&mut self.table)[slot as usize] = base | (body << TABLE_BASE_BITS);
         self.slot_len[slot as usize] = bones;
+        self.slot_riders[slot as usize] = riders;
         self.mirrored[slot as usize] = false;
         self.table_generation += 1;
         self.live_bones += bones;
@@ -309,8 +333,9 @@ impl RigPalettes {
         let Some(&len) = self.slot_len.get(s).filter(|&&l| l > 0) else {
             return;
         };
-        let base = self.table[s];
+        let base = self.table[s] & TABLE_BASE_MASK;
         self.slot_len[s] = 0;
+        self.slot_riders[s] = 0;
         self.free_slots.push(slot);
         self.live_bones -= len;
         self.table_generation += 1;
@@ -444,13 +469,71 @@ impl RigPalettes {
     /// at bind pose has one placement for every joint), with the host's position as origin. An
     /// unchanged frame is a no-op, by bit equality so a sub-epsilon move still lands.
     pub(crate) fn write_rider(&mut self, slot: u16, frame: Affine3A, origin: Vec3) {
-        let s = slot as usize;
-        let (Some(&base), Some(&len)) = (self.table.get(s), self.slot_len.get(s)) else {
+        let Some(&len) = self.slot_len.get(slot as usize) else {
             return;
         };
-        if len == 0 {
+        self.write_frame_rows(slot, 0, len, frame, origin);
+    }
+
+    /// The rigid rider write into a body's slot: rider row `row` (joint
+    /// `benilla_assets::RIDER_JOINT_BIT | row`) gets the frame. The origin is the body's own, the
+    /// same root position both are measured from. `false` when the slot has no such row.
+    pub(crate) fn write_rider_row(
+        &mut self,
+        slot: u16,
+        row: u16,
+        frame: Affine3A,
+        origin: Vec3,
+    ) -> bool {
+        let s = slot as usize;
+        let (Some(&word), Some(&riders)) = (self.table.get(s), self.slot_riders.get(s)) else {
+            return false;
+        };
+        if u32::from(row) >= riders || self.slot_len[s] == 0 {
+            return false;
+        }
+        self.write_frame_rows(
+            slot,
+            (word >> TABLE_BASE_BITS) + u32::from(row),
+            1,
+            frame,
+            origin,
+        );
+        true
+    }
+
+    /// Rider rows a body's slot holds; 0 for a free slot or one that hosts none.
+    pub fn rider_rows(&self, slot: u16) -> u32 {
+        let s = slot as usize;
+        match self.slot_len.get(s) {
+            Some(&len) if len > 0 => self.slot_riders[s],
+            _ => 0,
+        }
+    }
+
+    /// Whether a lane other than a body may take a slot: [`BODY_RESERVE`] is kept for bodies.
+    pub fn room_beyond_bodies(&self) -> bool {
+        self.slot_headroom() > BODY_RESERVE
+    }
+
+    /// One frame into `count` rows of `slot` from bone `first`, the origin with it; an unchanged
+    /// frame and origin is a no-op.
+    fn write_frame_rows(
+        &mut self,
+        slot: u16,
+        first: u32,
+        count: u32,
+        frame: Affine3A,
+        origin: Vec3,
+    ) {
+        let s = slot as usize;
+        let (Some(&word), Some(&len)) = (self.table.get(s), self.slot_len.get(s)) else {
+            return;
+        };
+        if len == 0 || count == 0 || first + count > len {
             return;
         }
+        let (base, len) = ((word & TABLE_BASE_MASK) + first, count);
         let (m3, t) = (frame.matrix3, frame.translation);
         let want = [
             [m3.x_axis.x, m3.y_axis.x, m3.z_axis.x, t.x],
@@ -506,16 +589,33 @@ impl RigPalettes {
         self.rows_at(slot, bones, [0.0; 3])
     }
 
-    /// The rows of `slot` as `Mat4`s, `o` added to the translation column.
-    fn rows_at(&self, slot: u16, bones: usize, o: [f32; 3]) -> Option<Vec<Mat4>> {
-        let s = slot as usize;
-        let len = (*self.slot_len.get(s)? as usize).min(bones);
-        if len == 0 {
+    /// A body slot's rider rows in world space, indexed by a rigid rider's joint with
+    /// [`benilla_assets::RIDER_JOINT_BIT`] masked off: the picker's palette for worn gear.
+    pub fn rider_world_palette(&self, slot: u16) -> Option<Vec<Mat4>> {
+        let riders = self.rider_rows(slot) as usize;
+        if riders == 0 {
             return None;
         }
-        let base = *self.table.get(s)? as usize;
+        let o = *self.origins.get(slot as usize)?;
+        let body = (self.table[slot as usize] >> TABLE_BASE_BITS) as usize;
+        self.rows_from(slot, body, body + riders, [o[0], o[1], o[2]])
+    }
+
+    /// The rows of `slot` as `Mat4`s, `o` added to the translation column.
+    fn rows_at(&self, slot: u16, bones: usize, o: [f32; 3]) -> Option<Vec<Mat4>> {
+        self.rows_from(slot, 0, bones, o)
+    }
+
+    /// [`Self::rows_at`] from bone `first`.
+    fn rows_from(&self, slot: u16, first: usize, bones: usize, o: [f32; 3]) -> Option<Vec<Mat4>> {
+        let s = slot as usize;
+        let len = (*self.slot_len.get(s)? as usize).min(bones);
+        if len <= first {
+            return None;
+        }
+        let base = (*self.table.get(s)? & TABLE_BASE_MASK) as usize;
         Some(
-            (0..len)
+            (first..len)
                 .map(|b| {
                     let r = 3 * (base + b);
                     let row = |i: usize, off: f32| {
@@ -542,13 +642,22 @@ impl RigPalettes {
         self.row_placement(slot, 0)
     }
 
+    /// The same pair for a rigid rider drawn through its wearer's slot: its rider row.
+    pub fn rider_row_placement(&self, slot: u16, row: u16) -> Option<(Vec3, Vec3)> {
+        if u32::from(row) >= self.rider_rows(slot) {
+            return None;
+        }
+        let body = self.table.get(slot as usize)? >> TABLE_BASE_BITS;
+        self.row_placement(slot, body + u32::from(row))
+    }
+
     /// The same pair for any bone: a posed rider (the flexing ranged prop) differs by row.
     pub fn row_placement(&self, slot: u16, bone: u32) -> Option<(Vec3, Vec3)> {
         let s = slot as usize;
         if bone >= *self.slot_len.get(s)? {
             return None;
         }
-        let r = 3 * (*self.table.get(s)? + bone) as usize;
+        let r = 3 * ((*self.table.get(s)? & TABLE_BASE_MASK) + bone) as usize;
         let o = self.origins.get(s)?;
         Some((
             Vec3::new(o[0], o[1], o[2]),
@@ -560,7 +669,10 @@ impl RigPalettes {
     /// since an allocated but never-computed rig renders collapsed at the origin.
     pub fn computed_rigs(&self) -> usize {
         (0..self.slot_high)
-            .filter(|&s| self.slot_len[s] > 0 && self.rows[3 * self.table[s] as usize] != [0.0; 4])
+            .filter(|&s| {
+                self.slot_len[s] > 0
+                    && self.rows[3 * (self.table[s] & TABLE_BASE_MASK) as usize] != [0.0; 4]
+            })
             .count()
     }
 
@@ -620,7 +732,19 @@ impl RigSkin {
         bones: u32,
         ibp: Handle<SkinnedMeshInverseBindposes>,
     ) -> Option<Self> {
-        Self::allocate_inner(palettes, bones, Vec::new(), ibp)
+        Self::allocate_inner(palettes, bones, 0, Vec::new(), ibp)
+    }
+
+    /// [`Self::allocate_bones`] for a body that wears gear: `riders` rows after its bones, one per
+    /// attach slot, so each rigid item draws through this slot
+    /// ([`benilla_assets::RIDER_JOINT_BIT`]).
+    pub fn allocate_body(
+        palettes: &mut RigPalettes,
+        bones: u32,
+        riders: u32,
+        ibp: Handle<SkinnedMeshInverseBindposes>,
+    ) -> Option<Self> {
+        Self::allocate_inner(palettes, bones, riders, Vec::new(), ibp)
     }
 
     /// Allocate a rig over live joints; `None` when full, and the caller renders the bind pose.
@@ -630,16 +754,17 @@ impl RigSkin {
         ibp: Handle<SkinnedMeshInverseBindposes>,
     ) -> Option<Self> {
         let bones = joints.len() as u32;
-        Self::allocate_inner(palettes, bones, joints, ibp)
+        Self::allocate_inner(palettes, bones, 0, joints, ibp)
     }
 
     fn allocate_inner(
         palettes: &mut RigPalettes,
         bones: u32,
+        riders: u32,
         joints: Vec<Entity>,
         ibp: Handle<SkinnedMeshInverseBindposes>,
     ) -> Option<Self> {
-        match palettes.alloc(bones) {
+        match palettes.alloc_with_riders(bones, riders) {
             Some((slot, base)) => Some(Self {
                 slot,
                 base,
@@ -938,7 +1063,10 @@ fn census_rig_palettes(
         &RigSkin,
         Option<&crate::doodad_anim::DoodadAnimHost>,
         Has<crate::world_unit::WorldUnit>,
+        Has<crate::rig_rider::RigRider>,
     )>,
+    // Rigid riders, which hold a row of their wearer's slot and no slot of their own.
+    riders: Query<&crate::rig_rider::RigRider>,
     probes: Res<crate::lighting::PropProbes>,
     mut palettes: ResMut<RigPalettes>,
     mut next: Local<f32>,
@@ -951,17 +1079,24 @@ fn census_rig_palettes(
         return;
     }
     *next = now + every;
-    // Lanes, `(slots, bones)` each: doodad hosts split by their draw gate, units, everything else.
-    let (mut doodad, mut doodad_parked, mut unit, mut other) =
-        ((0u32, 0u32), (0u32, 0u32), (0u32, 0u32), (0u32, 0u32));
+    // Lanes, `(slots, bones)` each: doodad hosts split by their draw gate, units, attached models
+    // on a slot of their own, everything else.
+    let (mut doodad, mut doodad_parked, mut unit, mut rider, mut other) = (
+        (0u32, 0u32),
+        (0u32, 0u32),
+        (0u32, 0u32),
+        (0u32, 0u32),
+        (0u32, 0u32),
+    );
     let mut hist = [0u32; 6]; // bones/slot: ≤2, 3–4, 5–8, 9–16, 17–32, 33+
-    for (rig, host, is_unit) in &rigs {
+    for (rig, host, is_unit, is_rider) in &rigs {
         let b = rig.bones();
-        let lane = match (host, is_unit) {
-            (Some(h), _) if h.active => &mut doodad,
-            (Some(_), _) => &mut doodad_parked,
-            (None, true) => &mut unit,
-            (None, false) => &mut other,
+        let lane = match (host, is_unit, is_rider) {
+            (Some(h), ..) if h.active => &mut doodad,
+            (Some(_), ..) => &mut doodad_parked,
+            (None, true, _) => &mut unit,
+            (None, false, true) => &mut rider,
+            (None, false, false) => &mut other,
         };
         lane.0 += 1;
         lane.1 += b;
@@ -974,12 +1109,13 @@ fn census_rig_palettes(
             _ => 5,
         }] += 1;
     }
+    let rigid = riders.iter().filter(|r| r.row.is_some()).count();
     let denied = std::mem::take(&mut palettes.denied);
     let (s, b, ps, pb) = palettes.occupancy();
     let (p_live, p_peak) = probes.occupancy();
     eprintln!(
         "[rig-census] slots={s}/{} bones={b}/{MAX_PALETTE_BONES} peak={ps}/{pb} | \
-         doodad={}({}) parked={}({}) unit={}({}) other={}({}) | \
+         doodad={}({}) parked={}({}) unit={}({}) rider={}({}) rigid={rigid} other={}({}) | \
          bones/slot ≤2:{} 3-4:{} 5-8:{} 9-16:{} 17-32:{} 33+:{} | \
          denied +{denied} | probes {p_live}/{p_peak} of {}",
         MAX_RIG_SLOTS - 1,
@@ -989,6 +1125,8 @@ fn census_rig_palettes(
         doodad_parked.1,
         unit.0,
         unit.1,
+        rider.0,
+        rider.1,
         other.0,
         other.1,
         hist[0],
@@ -1205,6 +1343,62 @@ mod tests {
         assert!(p.dirty.contains(&(base, 2, false)));
     }
 
+    /// A body's word carries its bone count above the base, so the shader finds the rider rows; a
+    /// rider row lands after the bones, and the whole block frees.
+    #[test]
+    fn a_bodys_rider_rows_follow_its_bones_in_one_block() {
+        let mut p = RigPalettes::default();
+        let (_, pad) = p.alloc(3).unwrap();
+        let (slot, base) = p.alloc_with_riders(5, 8).unwrap();
+        assert_eq!(base, pad + 3);
+        let word = p.table[slot as usize];
+        assert_eq!(word & TABLE_BASE_MASK, base);
+        assert_eq!(
+            word >> TABLE_BASE_BITS,
+            5,
+            "the body's bones, where its riders start"
+        );
+        assert_eq!(p.rider_rows(slot), 8);
+        assert_eq!(
+            p.occupancy().1,
+            3 + 5 + 8,
+            "one block holds bones and riders"
+        );
+
+        let frame = Affine3A::from_translation(Vec3::new(0.0, 1.5, 0.0));
+        assert!(p.write_rider_row(slot, 7, frame, Vec3::new(9.0, 0.0, 0.0)));
+        assert!(
+            !p.write_rider_row(slot, 8, frame, Vec3::ZERO),
+            "rows 0..=7 only"
+        );
+        let r = 3 * (base + 5 + 7) as usize;
+        assert_eq!(p.rows[r][3], 0.0);
+        assert_eq!(p.rows[r + 1][3], 1.5, "row 7 is bone 5 + 7");
+        assert_eq!(
+            p.rows[3 * (base + 4) as usize],
+            [0.0; 4],
+            "the body's last bone untouched"
+        );
+        assert_eq!(p.slot_origin(slot), Some(Vec3::new(9.0, 0.0, 0.0)));
+
+        p.free(slot);
+        assert_eq!(p.rider_rows(slot), 0);
+        assert_eq!(p.occupancy().1, 3);
+        assert_eq!(p.rows[r + 1], [0.0; 4], "the rider rows free with the body");
+    }
+
+    /// Every lane but a body stops at the bodies' reserve.
+    #[test]
+    fn the_bodies_reserve_is_kept_from_other_lanes() {
+        let mut p = RigPalettes::default();
+        while p.slot_headroom() > BODY_RESERVE {
+            assert!(p.room_beyond_bodies());
+            p.alloc(1).unwrap();
+        }
+        assert!(!p.room_beyond_bodies(), "the reserve is reached");
+        assert!(p.alloc(1).is_some(), "…and a body still allocates in it");
+    }
+
     /// The copy-on-write clone copies only the live prefix; a free while shared still zeroes.
     #[test]
     fn a_shared_arc_write_copies_only_the_live_prefix() {
@@ -1278,7 +1472,10 @@ mod tests {
     #[test]
     fn alloc_fails_gracefully_at_capacity() {
         let mut p = RigPalettes::default();
-        let (big, _) = p.alloc(MAX_PALETTE_BONES as u32).unwrap();
+        // A body's own count must fit its table field, so the whole slab is one bone and riders.
+        let (big, _) = p
+            .alloc_with_riders(1, MAX_PALETTE_BONES as u32 - 1)
+            .unwrap();
         assert!(p.alloc(1).is_none(), "no bones left");
         p.free(big);
         // Slot exhaustion, separately from bone exhaustion.
