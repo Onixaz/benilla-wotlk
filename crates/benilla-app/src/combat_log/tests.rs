@@ -604,19 +604,34 @@ fn a_blocked_swing_on_you_centres_its_amounts() {
 /// clock returns to now after the batch.
 #[test]
 fn a_batched_entry_logs_backdated_by_its_offset() {
-    use crate::net::NetHandlerApp;
     use benilla_protocol::messages::SpellHealLog;
-    use benilla_protocol::{ServerPacket, SessionEvent, SessionEventKind as K};
+    use benilla_protocol::{ServerPacket, SessionEvent};
     let mut app = rig();
     let start = std::time::Instant::now();
     let mut time = Time::<bevy::time::Real>::new(start);
     // The first update only seats the clock; the second advances it.
     time.update_with_instant(start);
     time.update_with_instant(start + std::time::Duration::from_secs(10));
-    app.insert_resource(time)
-        .net_handler(K::CombatLogBackdate, super::on_backdate)
-        .net_handler(K::SpellDamageLog, super::on_spell_damage_log)
-        .net_handler(K::SpellHealLog, super::on_spell_heal_log);
+    app.insert_resource(time);
+    // In wire order, each event to its handler, as the dispatch runs them.
+    let dispatch = |app: &mut App, events: Vec<SessionEvent>| {
+        for ev in events {
+            let world = app.world_mut();
+            match ev {
+                SessionEvent::CombatLogBackdate { .. } => {
+                    world.run_system_once_with(super::on_backdate, ev)
+                }
+                SessionEvent::SpellDamageLog(_) => {
+                    world.run_system_once_with(super::on_spell_damage_log, ev)
+                }
+                SessionEvent::SpellHealLog(_) => {
+                    world.run_system_once_with(super::on_spell_heal_log, ev)
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+            .unwrap();
+        }
+    };
     let heal = SpellHealLog {
         target: ME,
         caster: ME,
@@ -632,7 +647,7 @@ fn a_batched_entry_logs_backdated_by_its_offset() {
             (100, ServerPacket::SpellHealLog(heal)),
         ],
     });
-    crate::net::handlers::dispatch(app.world_mut(), events);
+    dispatch(&mut app, events);
     let times: Vec<(CombatLogEvent, u64)> =
         entries(&app).iter().map(|e| (e.event, e.time_ms)).collect();
     assert_eq!(
@@ -642,8 +657,8 @@ fn a_batched_entry_logs_backdated_by_its_offset() {
             (CombatLogEvent::SpellHeal, 9_900),
         ]
     );
-    crate::net::handlers::dispatch(
-        app.world_mut(),
+    dispatch(
+        &mut app,
         vec![SessionEvent::SpellDamageLog(fireball_hit(0, 5))],
     );
     assert_eq!(entries(&app).last().map(|e| e.time_ms), Some(10_000));
