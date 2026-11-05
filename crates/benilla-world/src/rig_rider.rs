@@ -38,7 +38,7 @@ pub struct RigRider {
 /// re-arms on the unit's `[+0xd24]` instance (BowPull 160 at `$BWP`, BowRelease 161 or Stand 0 at
 /// `$BWR`), writes row `b` as `F × own.model[b] × ibp[b]`, every frame.
 pub(crate) fn write_rig_riders(
-    riders: Query<(Entity, &RigRider)>,
+    riders: Query<(Entity, &RigRider, Option<&InheritedVisibility>)>,
     poses: Query<&RigPose>,
     skins: Query<&RigSkin>,
     frames: Query<&GlobalTransform>,
@@ -47,7 +47,12 @@ pub(crate) fn write_rig_riders(
     mut scratch: Local<Vec<GlobalTransform>>,
     mut palettes: ResMut<RigPalettes>,
 ) {
-    for (entity, rider) in &riders {
+    for (entity, rider, shown) in &riders {
+        // A hidden rider draws nothing; every frame rewrites it whole, so the frame it shows
+        // (this pass runs after visibility propagation) writes it current.
+        if shown.is_some_and(|v| !v.get()) {
+            continue;
+        }
         let Ok(pose) = poses.get(rider.host) else {
             continue;
         };
