@@ -1,11 +1,27 @@
 //! `docs/DEVIATIONS.md` against the decoder: every incoming 12340 opcode with no parse arm is
-//! listed under "Not decoded", each listed one still has none, and each "Read and dropped" row
-//! has an arm.
+//! listed under "Not decoded" or in [`OPEN_GAPS`], each listed one still has none, and each "Read
+//! and dropped" row has an arm.
 
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use benilla_protocol::messages::{self, ServerPacket};
+
+/// Opcodes with no decoder yet that are work, not a deviation, each with its open issue. Give one a
+/// decoder and its entry goes.
+const OPEN_GAPS: &[(u16, &str)] = &[
+    (0x2e6, "#5 Warden"),
+    (0x360, "#420 the raid browser's search list"),
+    (0x3ae, "#361 ready check"),
+    (0x3c6, "#361 ready check"),
+    (0x3c8, "#496 the complaint system"),
+    (0x3c9, "#496 the complaint system"),
+    (0x3f0, "#597 channel rosters"),
+    (0x3f1, "#597 channel rosters"),
+    (0x3f2, "#597 channel rosters"),
+    (0x47c, "#456 the phase mask"),
+    (0x514, "#442 the batched combat log"),
+];
 
 fn repo_file(path: &str) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -24,12 +40,12 @@ fn undecoded(opcode: u16) -> bool {
     )
 }
 
-/// The page's rows as `(section, opcode, name)`; the section is the last `## ` heading.
+/// The page's opcode rows as `(section, opcode, name)`; the section is the last `### ` heading.
 fn rows(page: &str) -> Vec<(String, u16, String)> {
     let mut section = String::new();
     let mut out = Vec::new();
     for line in page.lines() {
-        if let Some(h) = line.strip_prefix("## ") {
+        if let Some(h) = line.strip_prefix("### ") {
             section = h.to_string();
         }
         let cells: Vec<&str> = line
@@ -69,10 +85,18 @@ fn the_deviation_page_lists_exactly_the_opcodes_with_no_decoder() {
         }
     }
 
+    for &(opcode, gap) in OPEN_GAPS {
+        assert!(
+            undecoded(opcode),
+            "{opcode:#05x} ({gap}) has a decoder: drop it"
+        );
+    }
+
     let listed: BTreeSet<u16> = page
         .iter()
         .filter(|(section, ..)| section == "Not decoded")
         .map(|&(_, opcode, _)| opcode)
+        .chain(OPEN_GAPS.iter().map(|&(opcode, _)| opcode))
         .collect();
     let missing: Vec<String> = reference
         .iter()
@@ -81,6 +105,6 @@ fn the_deviation_page_lists_exactly_the_opcodes_with_no_decoder() {
         .collect();
     assert!(
         missing.is_empty(),
-        "no decoder and no row in docs/DEVIATIONS.md: {missing:?}"
+        "no decoder, no row in docs/DEVIATIONS.md and no open gap: {missing:?}"
     );
 }
