@@ -1346,6 +1346,12 @@ mod tests {
             s.eval::<String>("return (GetTalentTabInfo(1))").unwrap(),
             "Fire"
         );
+        assert_eq!(
+            s.eval::<i64>("ClearInspectPlayer() return GetNumTalentTabs(true)")
+                .unwrap(),
+            0,
+            "the clear drops the inspected tabs at once"
+        );
     }
 
     #[test]
