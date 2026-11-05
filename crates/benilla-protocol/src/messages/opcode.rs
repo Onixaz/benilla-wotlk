@@ -329,6 +329,8 @@ pub const SMSG_PVP_CREDIT: u16 = 0x028C; // 652
 pub const SMSG_ENVIRONMENTALDAMAGELOG: u16 = 0x01FC; // 508
 pub const SMSG_LOG_XPGAIN: u16 = 0x01D0; // 464
 pub const SMSG_SPELLLOGMISS: u16 = 0x024B; // 587
+/// Combat-log packets batched with their times (`0x6d4110`).
+pub const SMSG_SEND_ALL_COMBAT_LOG: u16 = 0x0514; // 1300
 pub const SMSG_PERIODICAURALOG: u16 = 0x024E; // 590
 pub const SMSG_SPELLDAMAGESHIELD: u16 = 0x024F; // 591
 pub const SMSG_SPELLNONMELEEDAMAGELOG: u16 = 0x0250; // 592

@@ -209,6 +209,7 @@ impl LogCtx<'_, '_> {
 pub(crate) struct LogOut<'w> {
     pending: ResMut<'w, PendingEntries>,
     clock: Res<'w, CombatLogClock>,
+    backdate: Res<'w, super::entries::CombatLogBackdate>,
     time: Option<Res<'w, Time<bevy::time::Real>>>,
     gates: Res<'w, DamageTextGates>,
     text: MessageWriter<'w, CombatTextSpawn>,
@@ -218,10 +219,13 @@ pub(crate) struct LogOut<'w> {
 }
 
 impl LogOut<'_> {
+    /// The entry's time: now, less a batched entry's offset.
     fn now_ms(&self) -> u64 {
-        self.time
+        let now = self
+            .time
             .as_ref()
-            .map_or(0, |t| t.elapsed().as_millis() as u64)
+            .map_or(0, |t| t.elapsed().as_millis() as u64);
+        now.saturating_add_signed(-i64::from(self.backdate.0))
     }
 
     fn center(&mut self, message_type: &'static str, args: Vec<ScriptValue>) {

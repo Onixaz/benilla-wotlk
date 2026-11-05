@@ -531,3 +531,58 @@ fn building_damage_reads_three_guids() {
         }
     );
 }
+
+/// `0x6d4110`: a count and a base time, then per entry its time, its opcode and that opcode's body.
+/// Each logs as its standalone packet behind its offset, `base - time`; an opcode outside the
+/// routed nine reads nothing (`0x6d4169`-`0x6d41b8`).
+#[test]
+fn the_batched_combat_log_reads_each_entry_with_its_offset() {
+    let body = Body::default()
+        .i32(3)
+        .u32(10_000) // base
+        .u32(9_250) // 750 ms back
+        .u32(u32::from(opcode::SMSG_SPELLNONMELEEDAMAGELOG))
+        .pguid(MOB)
+        .pguid(ME)
+        .u32(133)
+        .u32(500)
+        .u32(0)
+        .u8(4)
+        .u32(0)
+        .u32(0)
+        .u8(0)
+        .u8(0)
+        .u32(0)
+        .u32(0)
+        .u8(0)
+        .u32(9_900) // 100 ms back
+        .u32(u32::from(opcode::SMSG_SPELLHEALLOG))
+        .pguid(ME)
+        .pguid(ME)
+        .u32(2050)
+        .u32(120)
+        .u32(0)
+        .u32(0)
+        .u8(0)
+        .u8(0)
+        .u32(10_000)
+        .u32(u32::from(opcode::SMSG_ATTACKERSTATEUPDATE)); // not routed: reads nothing
+    let ServerPacket::CombatLogBatch { entries } = parse(opcode::SMSG_SEND_ALL_COMBAT_LOG, body)
+    else {
+        panic!("combat log batch");
+    };
+    assert_eq!(entries.len(), 2);
+    assert!(matches!(entries[0], (750, ServerPacket::SpellDamageLog(_))));
+    assert!(matches!(entries[1], (100, ServerPacket::SpellHealLog(_))));
+    let events = decode(ServerPacket::CombatLogBatch { entries });
+    assert!(matches!(
+        events.as_slice(),
+        [
+            SessionEvent::CombatLogBackdate { ms: 750 },
+            SessionEvent::SpellDamageLog(_),
+            SessionEvent::CombatLogBackdate { ms: 100 },
+            SessionEvent::SpellHealLog(_),
+            SessionEvent::CombatLogBackdate { ms: 0 },
+        ]
+    ));
+}

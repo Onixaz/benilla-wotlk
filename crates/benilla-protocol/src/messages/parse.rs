@@ -155,6 +155,39 @@ fn read_multiple_packets(r: &mut &[u8]) -> io::Result<Vec<ServerPacket>> {
     Ok(packets)
 }
 
+/// Read an `SMSG_SEND_ALL_COMBAT_LOG` body (`0x6d4110`): an `i32` count and a `u32` base time, then
+/// per entry a `u32` time, a `u32` opcode and that opcode's body, read by its standalone log reader
+/// (`0x6d4169`-`0x6d41b8`) with the offset `base - time`. Any other opcode reads nothing.
+fn read_combat_log_batch(r: &mut &[u8]) -> io::Result<Vec<(i32, ServerPacket)>> {
+    let count = read_u32_le(r)? as i32;
+    let base = read_u32_le(r)?;
+    let mut entries = Vec::new();
+    for _ in 0..count.max(0) {
+        let offset = base.wrapping_sub(read_u32_le(r)?) as i32;
+        let opcode = read_u32_le(r)?;
+        let Ok(opcode) = u16::try_from(opcode) else {
+            continue;
+        };
+        if !matches!(
+            opcode,
+            opcode::SMSG_SPELLLOGMISS
+                | opcode::SMSG_SPELLBREAKLOG
+                | opcode::SMSG_SPELLDISPELLOG
+                | opcode::SMSG_SPELLSTEALLOG
+                | opcode::SMSG_SPELLHEALLOG
+                | opcode::SMSG_SPELLENERGIZELOG
+                | opcode::SMSG_SPELLLOGEXECUTE
+                | opcode::SMSG_PERIODICAURALOG
+                | opcode::SMSG_SPELLNONMELEEDAMAGELOG
+        ) {
+            continue;
+        }
+        let mut inner_tail = 0;
+        entries.push((offset, parse_server_body(opcode, r, &mut inner_tail)?));
+    }
+    Ok(entries)
+}
+
 /// Read a `SMSG_SPLINE_SET_*_SPEED` body: `[packed guid][f32 speed]`, no counter, no ack
 /// (vmangos `SendSpeedChangeToAll`, the `> 1_8_4` layout).
 fn read_spline_speed(kind: SpeedKind, r: &mut impl Read) -> io::Result<ServerPacket> {
@@ -531,6 +564,9 @@ fn parse_server_body(
         opcode::SMSG_MULTIPLE_PACKETS => ServerPacket::PacketBatch {
             opcode,
             packets: read_multiple_packets(&mut r)?,
+        },
+        opcode::SMSG_SEND_ALL_COMBAT_LOG => ServerPacket::CombatLogBatch {
+            entries: read_combat_log_batch(&mut r)?,
         },
         // `f32` progress (`0x716950`), then the unit's packed guid (`0x71695a`).
         opcode::SMSG_FLIGHT_SPLINE_SYNC => {

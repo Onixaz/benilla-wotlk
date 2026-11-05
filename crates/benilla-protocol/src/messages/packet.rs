@@ -183,6 +183,11 @@ pub enum ServerPacket {
         opcode: u16,
         packets: Vec<ServerPacket>,
     },
+    /// `SMSG_SEND_ALL_COMBAT_LOG`: combat-log packets, each with how many ms its time lies before
+    /// the batch's, which backdates its log entry (`0x74ff20`).
+    CombatLogBatch {
+        entries: Vec<(i32, ServerPacket)>,
+    },
     /// `SMSG_FLIGHT_SPLINE_SYNC`: where along its cyclic path the server has the unit, `0..1`.
     FlightSplineSync {
         guid: u64,
@@ -1900,6 +1905,7 @@ impl ServerPacket {
             ServerPacket::CharacterLoginFailed { .. } => "SMSG_CHARACTER_LOGIN_FAILED".into(),
             ServerPacket::UpdateObject { .. } => "SMSG_UPDATE_OBJECT".into(),
             ServerPacket::CompressedMoves { .. } => "SMSG_COMPRESSED_MOVES".into(),
+            ServerPacket::CombatLogBatch { .. } => "SMSG_SEND_ALL_COMBAT_LOG".into(),
             ServerPacket::PacketBatch { opcode, .. } => {
                 crate::messages::opcode_name(*opcode).unwrap_or("?").into()
             }

@@ -30,6 +30,18 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::CompressedMoves { packets } | ServerPacket::PacketBatch { packets, .. } => {
             packets.into_iter().flat_map(decode).collect()
         }
+        // Each entry as if alone, behind its backdate; the clock returns to now after the batch.
+        ServerPacket::CombatLogBatch { entries } => {
+            let mut out = Vec::new();
+            for (ms, packet) in entries {
+                out.push(SessionEvent::CombatLogBackdate { ms });
+                out.extend(decode(packet));
+            }
+            if !out.is_empty() {
+                out.push(SessionEvent::CombatLogBackdate { ms: 0 });
+            }
+            out
+        }
         ServerPacket::FlightSplineSync { guid, progress } => {
             vec![SessionEvent::FlightSplineSync { guid, progress }]
         }
