@@ -2176,6 +2176,8 @@ pub(crate) enum ClientCommand {
     Flush(crossbeam_channel::Sender<()>),
     /// `OpeningCinematic()`: `CMSG_OPENING_CINEMATIC`, empty.
     OpeningCinematic,
+    /// A movie's end: `CMSG_COMPLETE_MOVIE`, empty.
+    CompleteMovie,
     /// `CMSG_COMPLETE_CINEMATIC`, at the end or skip, or at once for an unresolvable trigger.
     /// Unacked, vmangos keeps visibility on the cinematic camera and nearby NPCs despawn.
     CompleteCinematic,

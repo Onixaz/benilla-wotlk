@@ -537,6 +537,16 @@ pub(crate) struct SpellGoTargets {
     pub(crate) trajectory: Option<Trajectory>,
 }
 
+/// A dest-location cast's visuals, from `SMSG_NOTIFY_DEST_LOC_SPELL_CAST` (`0x810050`), in bevy
+/// coords: no caster entity is needed.
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DestLocCast {
+    pub(crate) spell_id: u32,
+    pub(crate) src: Vec3,
+    pub(crate) dest: Vec3,
+    pub(crate) delay_ms: u32,
+}
+
 /// A trajectory missile's launch off its GO (`0x732ff0`): the pitch it leaves at and the time it
 /// lands, with the caster and cast id `SMSG_SET_PROJECTILE_POSITION` names it by.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -598,8 +608,9 @@ use env_damage::{hard_landing_dust, load_env_damage_table};
 pub(crate) use env_damage::{EnvDamageTable, HardLanding, HARD_LANDING_DESCENT};
 use spell_visual::{
     arm_aura_state_fx, arm_go_loot_fx, arm_level_up_fx, arm_loot_fx, arm_morph_latch,
-    arm_mount_poof_fx, load_spell_visuals, play_delayed_area_kits, play_state_done_kits,
-    replay_morph_kit, route_cast_visuals, track_violence_level, MorphLatch, StateDoneKit,
+    arm_mount_poof_fx, load_spell_visuals, play_delayed_area_kits, play_dest_loc_casts,
+    play_state_done_kits, replay_morph_kit, route_cast_visuals, track_violence_level, MorphLatch,
+    StateDoneKit,
 };
 // `crate::aura_visual`'s tests drive the aura-slot watcher directly.
 #[cfg(test)]
@@ -876,6 +887,7 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<SheathRequest>()
             .add_message::<CastEvent>()
             .add_message::<SpellGoTargets>()
+            .add_message::<DestLocCast>()
             .add_message::<SpellKitSound>()
             .add_message::<SpellKitShake>()
             .add_message::<SpellKitFx>()
@@ -908,6 +920,8 @@ impl Plugin for CreatureAnimPlugin {
                     (
                         arm_loot_fx,
                         arm_go_loot_fx,
+                        // After the stream stage, whose collider finish is an exclusive system.
+                        play_dest_loc_casts.after(WorldStage::Stream),
                         play_delayed_area_kits,
                         arm_level_up_fx,
                         arm_mount_poof_fx,

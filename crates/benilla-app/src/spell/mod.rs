@@ -17,6 +17,7 @@ mod cast_send;
 pub(crate) mod cast_target;
 pub(crate) mod combo;
 pub(crate) mod cooldowns;
+mod dest_loc;
 pub(crate) mod group_relation;
 mod inflight;
 pub(crate) mod learn_place;
@@ -170,6 +171,7 @@ impl Plugin for SpellPlugin {
                 load_summon_slots.after(benilla_assets::AssetSet::Open),
             );
         net::register(app);
+        dest_loc::register(app);
         combo::register(app);
     }
 }

@@ -37,6 +37,11 @@ impl WorldWriter {
         self.send(opcode::CMSG_QUERY_TIME, &messages::query_time())
     }
 
+    /// `CMSG_COMPLETE_MOVIE`, empty: a movie's end (`0x518870`).
+    pub fn complete_movie(&mut self) -> Result<()> {
+        self.send(opcode::CMSG_COMPLETE_MOVIE, &[])
+    }
+
     /// `CMSG_OPENING_CINEMATIC`, empty: Lua's `OpeningCinematic()` (opcode `0xf9` put).
     pub fn opening_cinematic(&mut self) -> Result<()> {
         self.send(opcode::CMSG_OPENING_CINEMATIC, &[])

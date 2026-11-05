@@ -669,6 +669,12 @@ pub enum ServerPacket {
         message_type: u32,
         text: String,
     },
+    /// `SMSG_NOTIFY_DEST_LOC_SPELL_CAST`: a dest-location cast's visuals, caster seen or not.
+    DestLocSpellCast(super::spells::DestLocSpellCast),
+    /// `SMSG_TRIGGER_MOVIE`: the `Movie.dbc` id the server starts.
+    TriggerMovie {
+        movie_id: u32,
+    },
     /// `SMSG_ZONE_UNDER_ATTACK`: one `AreaTable.dbc` id under attack by enemy players.
     ZoneUnderAttack {
         area_id: u32,
@@ -2009,6 +2015,8 @@ impl ServerPacket {
             ServerPacket::Notification { .. } => "SMSG_NOTIFICATION".into(),
             ServerPacket::AreaTriggerMessage { .. } => "SMSG_AREA_TRIGGER_MESSAGE".into(),
             ServerPacket::ServerMessage { .. } => "SMSG_SERVER_MESSAGE".into(),
+            ServerPacket::TriggerMovie { .. } => "SMSG_TRIGGER_MOVIE".into(),
+            ServerPacket::DestLocSpellCast(_) => "SMSG_NOTIFY_DEST_LOC_SPELL_CAST".into(),
             ServerPacket::ZoneUnderAttack { .. } => "SMSG_ZONE_UNDER_ATTACK".into(),
             ServerPacket::DefenseMessage { .. } => "SMSG_DEFENSE_MESSAGE".into(),
             ServerPacket::Lfg(p) => p.name().into(),

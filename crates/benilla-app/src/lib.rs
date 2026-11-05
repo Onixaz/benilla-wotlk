@@ -166,6 +166,7 @@ mod ui_mail;
 mod ui_merchant;
 mod ui_mirror;
 mod ui_models;
+mod ui_movie;
 mod ui_net;
 mod ui_notices;
 mod ui_party;

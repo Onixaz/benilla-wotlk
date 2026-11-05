@@ -54,6 +54,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // `GameMovieFinished()` (`0x51d590`): the movie's stop, which sends `CMSG_COMPLETE_MOVIE` while
+    // one is playing (`0x518870`); returns nothing. Arguments are ignored.
+    g.set(
+        "GameMovieFinished",
+        lua.create_function(|lua, _: MultiValue| {
+            crate::script::model_mut_of(lua).game_movie_finished_calls += 1;
+            Ok(())
+        })?,
+    )?;
+
     // Three setters whose state has no reader here, so each takes its argument as the reference
     // does, never raising, and stores nothing; all return zero values.
     // - `SetEuropeanNumbers(flag)`: argument 1 read as a boolean defaulting to true, which turns on
@@ -228,6 +238,11 @@ impl super::UiScript {
     /// Drain the `OpeningCinematic()` calls, each an empty `CMSG_OPENING_CINEMATIC`.
     pub fn take_opening_cinematic_asks(&mut self) -> u32 {
         drain_field!(self, opening_cinematic_asks)
+    }
+
+    /// Drain the `GameMovieFinished()` calls.
+    pub fn take_game_movie_finished_calls(&mut self) -> u32 {
+        drain_field!(self, game_movie_finished_calls)
     }
 
     /// Push the bind location's name, resolved from `SMSG_BINDPOINTUPDATE`'s AreaTable id through
@@ -423,6 +438,14 @@ mod tests {
             0,
             "the drain empties the queue"
         );
+    }
+
+    #[test]
+    fn game_movie_finished_queues_one_stop_per_call() {
+        let mut s = UiScript::new().unwrap();
+        assert_eq!(s.arity("GameMovieFinished()").unwrap(), 0);
+        assert_eq!(s.take_game_movie_finished_calls(), 1);
+        assert_eq!(s.take_game_movie_finished_calls(), 0);
     }
 
     /// The three setters never raise, whatever they are handed, and return zero values.
