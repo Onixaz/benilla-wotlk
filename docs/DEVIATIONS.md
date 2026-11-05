@@ -7,37 +7,12 @@ CVar's `Deviates` row, a comment).
 ## Opcodes
 
 Of the 610 incoming world opcodes 12340 registers a handler for (`reference/3.3.5a-opcodes.tsv`),
-the ones benilla reads to no effect or leaves undecoded on purpose. A test
-(`crates/benilla-protocol/tests/deviations.rs`) holds these tables to the decoder: an opcode with
-no parse arm must be listed under "Not decoded" or be a known gap with an open issue, and a listed
-one must still have none.
+the ones benilla leaves undecoded on purpose. A test (`crates/benilla-protocol/tests/deviations.rs`)
+holds this table to the decoder: an opcode with no parse arm must be listed under "Not decoded" or
+be a known gap with an open issue, and a listed one must still have none.
 
 The "AC sends" column says whether AzerothCore sends the opcode at all: "no" means it names it in
 its opcode table and nowhere else, so no AzerothCore server ever sends it.
-
-### Read and dropped
-
-These have a decoder that reads the whole 12340 body and does nothing more. 12340 does nothing
-more either, except the rows marked **console**: 12340 prints those to its developer console, and
-benilla has no console. That is the deviation.
-
-| Opcode | Name | 12340 | Why benilla drops it | AC sends |
-|---|---|---|---|---|
-| `0x01b` | `SMSG_FORCEACTIONSHOW` | reads two `u32` (`0x6e2f1c`) | no effect in 12340 | no |
-| `0x01d` | `SMSG_PETGODMODE` | **console**: "Pet Godmode enabled/disabled" (`0x6e2f00`) | no console | no |
-| `0x023` | `SMSG_GODMODE` | **console**: "Godmode enabled/disabled" (`0x6e2ed0`) | no console | no |
-| `0x049` | `SMSG_SERVERTIME` | **console**: server time and last tick (`0x7e2a50`) | no console | no |
-| `0x0d9` | `MSG_MOVE_TOGGLE_COLLISION_CHEAT` | the movement relay (`0x741b60`); no movement state changes | no effect in 12340 | no |
-| `0x157` | `SMSG_BINDZONEREPLY` | reads two `u32` (`0x6e308c`) | no effect in 12340 | no |
-| `0x164` | `SMSG_LOOT_ITEM_NOTIFY` | reads guid, slot, item and name (`0x6ced80`) | no effect in 12340 | no |
-| `0x22f` | `CMSG_GM_REQUEST_PLAYER_INFO` | reads nothing (`0x52664a`) | no effect in 12340 | no |
-| `0x230` | `SMSG_GM_PLAYER_INFO` | reads nothing (`0x52664a`) | no effect in 12340 | no |
-| `0x27c` | `SMSG_DAMAGE_CALC_LOG` | **console**: a "DMG:" damage breakdown (`0x6d3f10`) | no console | no |
-| `0x3a9` | `SMSG_IGNORE_REQUIREMENTS_CHEAT` | reads nothing (`0x6e4186`) | no effect in 12340 | no |
-| `0x406` | `SMSG_IGNORE_DIMINISHING_RETURNS_CHEAT` | reads nothing (`0x6e4186`) | no effect in 12340 | no |
-| `0x4d8` | `SMSG_FORCE_ANIM` | reads a guid and a string (`0x714b20`) | no effect in 12340 | no |
-| `0x4ed` | `SMSG_TOGGLE_XP_GAIN` | **console**: "XP Gain Enabled/Disabled" (`0x6e40d6`) | no console | no |
-| `0x4fc` | `SMSG_DEBUG_SERVER_GEO` | reads nothing (`0x8c8de0`) | no effect in 12340 | no |
 
 ### Not decoded
 

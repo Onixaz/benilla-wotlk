@@ -1,6 +1,5 @@
 //! `docs/DEVIATIONS.md` against the decoder: every incoming 12340 opcode with no parse arm is
-//! listed under "Not decoded" or in [`OPEN_GAPS`], each listed one still has none, and each "Read
-//! and dropped" row has an arm.
+//! listed under "Not decoded" or in [`OPEN_GAPS`], and each listed one still has none.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -79,7 +78,6 @@ fn the_deviation_page_lists_exactly_the_opcodes_with_no_decoder() {
             "{opcode:#05x}'s name"
         );
         match section.as_str() {
-            "Read and dropped" => assert!(!undecoded(*opcode), "{name} lost its decoder"),
             "Not decoded" => assert!(undecoded(*opcode), "{name} has a decoder: drop its row"),
             other => panic!("{name} under an unknown section {other:?}"),
         }
