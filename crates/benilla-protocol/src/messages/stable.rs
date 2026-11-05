@@ -29,18 +29,23 @@ impl StabledPet {
     }
 }
 
-/// `SMSG_STABLE_RESULT` codes, as the handler `0x5a17f0` switches on them.
+/// `SMSG_STABLE_RESULT` codes, as the handler `0x5a17f0` switches on them (table `0x5a181a`);
+/// 2-7 show nothing.
 pub mod stable_result {
-    /// `STABLE_ERR_MONEY`: not enough gold for the next slot; only a slot purchase gets it.
+    /// Not enough money for the next slot: `ERR_NOT_ENOUGH_MONEY` (`0x5a1821`).
     pub const ERR_MONEY: u8 = 0x01;
-    /// `STABLE_ERR_STABLE`: every refusal but the money one, with no reason attached.
+    /// Any other refusal; the reference shows nothing for it.
     pub const ERR_STABLE: u8 = 0x06;
-    /// `STABLE_SUCCESS_STABLE`: the current pet went into the first free stable slot.
+    /// The current pet went into a stable slot; the list is asked again (`0x5a1886`).
     pub const SUCCESS_STABLE: u8 = 0x08;
-    /// `STABLE_SUCCESS_UNSTABLE`: a stabled pet is now current, after an unstable or a swap.
+    /// A stabled pet is now current, after an unstable or a swap; the list is asked again.
     pub const SUCCESS_UNSTABLE: u8 = 0x09;
-    /// `STABLE_SUCCESS_BUY_SLOT`: a slot was bought; the next list's slot count shows it.
+    /// A slot was bought: the count moves (`0x5a1835`), then the list is asked again.
     pub const SUCCESS_BUY_SLOT: u8 = 0x0A;
+    /// Fires `PET_STABLE_UPDATE` (`0x5a18ff`).
+    pub const UPDATE: u8 = 0x0B;
+    /// The exotic-pet refusal: the tame-failure line with reason 12 (`0x5a1916`).
+    pub const ERR_EXOTIC: u8 = 0x0C;
 }
 
 /// Body of `MSG_LIST_STABLED_PETS` from the client (`Npc.cpp:51-54`): the refresh, needed after
@@ -104,7 +109,7 @@ pub(super) fn read_list_stabled_pets(r: &mut &[u8]) -> io::Result<(u64, u8, Vec<
     Ok((npc, num_stable_slots, pets))
 }
 
-/// Read `SMSG_STABLE_RESULT` (`Npc.cpp:99-102`): one [`stable_result`] byte.
+/// Read `SMSG_STABLE_RESULT` (`0x5a17fe`): one [`stable_result`] byte.
 pub(super) fn read_stable_result(r: &mut &[u8]) -> io::Result<u8> {
     read_u8(r)
 }

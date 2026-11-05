@@ -57,9 +57,13 @@ fn on_activate_reply(In(ev): In<SessionEvent>, mut taxi: ResMut<TaxiState>) {
     }
 }
 
-fn on_new_path(In(ev): In<SessionEvent>, mut taxi: ResMut<TaxiState>) {
+fn on_new_path(
+    In(ev): In<SessionEvent>,
+    mut taxi: ResMut<TaxiState>,
+    mut gossip: ResMut<GossipState>,
+) {
     if let SessionEvent::NewTaxiPath = ev {
-        taxi_new_path(&mut taxi);
+        taxi_new_path(&mut taxi, &mut gossip);
     }
 }
 
@@ -106,11 +110,12 @@ fn taxi_activate_reply(code: u32, taxi: &mut TaxiState) {
     taxi.reply = Some(code);
 }
 
-/// `SMSG_NEW_TAXI_PATH`, an empty body: vmangos sends it only on a first visit, beside a `known`
-/// node status for the flight master (`SendLearnNewTaxiNode`, `TaxiHandler.cpp:117`).
-fn taxi_new_path(taxi: &mut TaxiState) {
+/// `SMSG_NEW_TAXI_PATH`, an empty body, sent on a first visit: stage `ERR_NEWTAXIPATH` (`0x6e3054`)
+/// and close the gossip menu, as the zero-guid gossip setter does (`0x6e3063`).
+fn taxi_new_path(taxi: &mut TaxiState, gossip: &mut GossipState) {
     debug!("net: taxi — first-visit node learned (SMSG_NEW_TAXI_PATH)");
     taxi.discovered = true;
+    gossip.clear();
 }
 
 #[cfg(test)]
@@ -133,5 +138,15 @@ mod tests {
         taxi_nodes_shown(0x42, 2, mask, &mut taxi, &mut gossip);
         assert!(!taxi.no_paths);
         assert!(taxi.open.as_ref().unwrap().known.is_known(400));
+    }
+
+    #[test]
+    fn a_new_taxi_path_closes_the_gossip_menu() {
+        let mut taxi = TaxiState::default();
+        let mut gossip = GossipState::default();
+        gossip.npc = Some(0x42);
+        taxi_new_path(&mut taxi, &mut gossip);
+        assert!(taxi.discovered);
+        assert_eq!(gossip.npc, None);
     }
 }

@@ -4,8 +4,9 @@ use benilla_protocol::messages::TrainerSpell;
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
-use super::{TrainerErrors, TrainerOpen};
+use super::{TrainerAsked, TrainerErrors, TrainerOpen};
 use crate::net::NetHandlerApp;
+use crate::ui_gossip::GossipState;
 
 /// Register the trainer handlers, one per kind, plus the session-end listener.
 pub(super) fn register(app: &mut App) {
@@ -61,7 +62,12 @@ fn on_pet_spells(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>
     }
 }
 
-fn on_list(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
+fn on_list(
+    In(ev): In<SessionEvent>,
+    mut trainer_open: ResMut<TrainerOpen>,
+    asked: Res<TrainerAsked>,
+    gossip: Res<GossipState>,
+) {
     if let SessionEvent::TrainerList {
         trainer,
         trainer_type,
@@ -69,7 +75,15 @@ fn on_list(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
         greeting,
     } = ev
     {
-        trainer_list(trainer, trainer_type, services, greeting, &mut trainer_open);
+        let expected = [asked.0, gossip.npc];
+        trainer_list(
+            trainer,
+            trainer_type,
+            services,
+            greeting,
+            &expected,
+            &mut trainer_open,
+        );
     }
 }
 
@@ -89,9 +103,11 @@ fn on_buy_failed(In(ev): In<SessionEvent>, mut errors: ResMut<TrainerErrors>) {
 fn on_session_end(
     In(_): In<SessionEvent>,
     mut trainer_open: ResMut<TrainerOpen>,
+    mut asked: ResMut<TrainerAsked>,
     mut unlearned: ResMut<super::UnlearnedSpells>,
 ) {
     trainer_open.clear_session();
+    asked.0 = None;
     unlearned.0.clear();
 }
 
@@ -102,14 +118,20 @@ fn on_unlearn_spells(In(ev): In<SessionEvent>, mut unlearned: ResMut<super::Unle
     }
 }
 
-/// `SMSG_TRAINER_LIST`: open the window on the trainer's services.
+/// `SMSG_TRAINER_LIST`: open the window on the trainer's services, when the list is for the
+/// trainer last asked or the gossip NPC (`0x6d14b6`, `0x6d14d5`); any other list is dropped.
 fn trainer_list(
     trainer: u64,
     trainer_type: u32,
     services: Vec<TrainerSpell>,
     greeting: String,
+    expected: &[Option<u64>],
     trainer_open: &mut TrainerOpen,
 ) {
+    if !expected.contains(&Some(trainer)) {
+        debug!("net: trainer list for {trainer:#x}, neither asked nor the gossip npc — dropped");
+        return;
+    }
     debug!(
         "net: trainer {trainer:#x} (type {trainer_type}) listed {} services",
         services.len()
@@ -128,4 +150,23 @@ fn trainer_buy_succeeded(trainer: u64, spell_id: u32) {
 fn trainer_buy_failed(error: u32, errors: &mut TrainerErrors) {
     debug!("net: trainer buy failed (code {error})");
     errors.0.push(error);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_list_opens_only_for_the_asked_trainer_or_the_gossip_npc() {
+        let mut open = TrainerOpen::default();
+        let list = |guid, expected: &[Option<u64>], open: &mut TrainerOpen| {
+            trainer_list(guid, 0, Vec::new(), String::new(), expected, open);
+        };
+        list(0x99, &[Some(0x42), None], &mut open);
+        assert_eq!(open.trainer, None, "a stranger's list is dropped");
+        list(0x42, &[Some(0x42), None], &mut open);
+        assert_eq!(open.trainer, Some(0x42), "the asked trainer");
+        list(0x77, &[Some(0x42), Some(0x77)], &mut open);
+        assert_eq!(open.trainer, Some(0x77), "the gossip npc");
+    }
 }

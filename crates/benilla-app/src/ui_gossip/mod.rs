@@ -143,7 +143,7 @@ impl GossipState {
 }
 
 mod net;
-pub(crate) use net::gossip_complete as end_interaction;
+pub(crate) use net::end_interaction;
 
 /// The gossip window's handlers, feed and drain.
 pub(crate) struct UiGossipPlugin;

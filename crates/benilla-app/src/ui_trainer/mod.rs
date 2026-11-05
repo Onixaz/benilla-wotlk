@@ -29,6 +29,11 @@ use crate::ui_spellbook::SkillLines;
 /// `SMSG_TRAINER_LIST`'s `trainer_type` at a tradeskill trainer (`m_trainerType == 2`).
 const TRAINER_TYPE_TRADESKILL: u32 = 2;
 
+/// The trainer the last `CMSG_TRAINER_LIST` asked (`[0xc9ead8]`, written at `0x6d1f2f`); a list
+/// lands only for it or for the gossip NPC.
+#[derive(Resource, Default)]
+pub(crate) struct TrainerAsked(pub(crate) Option<u64>);
+
 /// The open trainer as `SMSG_TRAINER_LIST` delivered it.
 #[derive(Resource, Default)]
 pub(crate) struct TrainerOpen {
@@ -113,6 +118,7 @@ impl Plugin for UiTrainerPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
         app.init_resource::<TrainerOpen>()
+            .init_resource::<TrainerAsked>()
             .init_resource::<UnlearnedSpells>()
             .init_resource::<TrainerErrors>()
             .init_resource::<TrainerTooltipSubjects>()

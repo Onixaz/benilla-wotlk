@@ -66,6 +66,8 @@ pub(crate) struct StableOpen {
     /// A list landed and `PET_STABLE_SHOW` is owed: the reference fires it after every list, and
     /// `PET_STABLE_UPDATE`/`_PAPERDOLL` only from its creature-cache callbacks.
     pub(crate) fresh_list: bool,
+    /// `SMSG_STABLE_RESULT` 11 owes a bare `PET_STABLE_UPDATE`, window open or not (`0x5a18ff`).
+    pub(crate) update_owed: bool,
 }
 
 impl StableOpen {
@@ -205,6 +207,9 @@ fn feed_stable(
         })
         .collect();
     crate::ui_action::show_messages(&mut script, &mut sink, "ui_stable", lines);
+    if std::mem::take(&mut open.update_owed) {
+        script.fire_event("PET_STABLE_UPDATE", vec![]);
+    }
 
     // The next slot's price: `StableSlotPrices.dbc` row `purchased + 1`, 0 past the table.
     let next_slot_cost = prices
