@@ -1596,3 +1596,21 @@ pub const SMSG_ITEM_REFUND_RESULT: u16 = 0x04B5; // 1205
 pub const SMSG_SOCKET_GEMS_RESULT: u16 = 0x050B; // 1291
 /// An inspected player's talents and worn items, packed guid first (`0x6ce0c0`).
 pub const SMSG_INSPECT_TALENT: u16 = 0x03F4; // 1012
+
+// GM and debug packets 12340 reads to no game effect: a developer-console line, a read body
+// dropped, or nothing read. Each decodes to `ServerPacket::Ignored`.
+pub const SMSG_FORCEACTIONSHOW: u16 = 0x001B; // 27
+pub const SMSG_PETGODMODE: u16 = 0x001D; // 29
+pub const SMSG_GODMODE: u16 = 0x0023; // 35
+pub const SMSG_SERVERTIME: u16 = 0x0049; // 73
+pub const MSG_MOVE_TOGGLE_COLLISION_CHEAT: u16 = 0x00D9; // 217
+pub const SMSG_BINDZONEREPLY: u16 = 0x0157; // 343
+pub const SMSG_LOOT_ITEM_NOTIFY: u16 = 0x0164; // 356
+pub const CMSG_GM_REQUEST_PLAYER_INFO: u16 = 0x022F; // 559
+pub const SMSG_GM_PLAYER_INFO: u16 = 0x0230; // 560
+pub const SMSG_DAMAGE_CALC_LOG: u16 = 0x027C; // 636
+pub const SMSG_IGNORE_REQUIREMENTS_CHEAT: u16 = 0x03A9; // 937
+pub const SMSG_IGNORE_DIMINISHING_RETURNS_CHEAT: u16 = 0x0406; // 1030
+pub const SMSG_FORCE_ANIM: u16 = 0x04D8; // 1240
+pub const SMSG_TOGGLE_XP_GAIN: u16 = 0x04ED; // 1261
+pub const SMSG_DEBUG_SERVER_GEO: u16 = 0x04FC; // 1276

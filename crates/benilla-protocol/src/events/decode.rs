@@ -1522,6 +1522,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             scope: None,
             states: vec![(id, value)],
         }],
+        ServerPacket::Ignored { .. } => Vec::new(),
         // No parse arm at all: surfaced for the app's dropped-opcode tally.
         ServerPacket::Other { opcode } => vec![SessionEvent::PacketDropped {
             opcode,

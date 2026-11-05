@@ -1864,6 +1864,10 @@ pub enum ServerPacket {
     ForcedReactions {
         reactions: Vec<(u32, u32)>,
     },
+    /// A packet read in full that 12340 takes to no game effect; not a dropped packet.
+    Ignored {
+        opcode: u16,
+    },
     Other {
         opcode: u16,
     },
@@ -2384,6 +2388,8 @@ impl ServerPacket {
             ServerPacket::InitWorldStates(_) => "SMSG_INIT_WORLD_STATES".into(),
             ServerPacket::UpdateWorldState { .. } => "SMSG_UPDATE_WORLD_STATE".into(),
             ServerPacket::AddonInfo { .. } => "SMSG_ADDON_INFO".into(),
+            ServerPacket::Ignored { opcode } => super::opcode_name(*opcode)
+                .map_or_else(|| format!("opcode {opcode:#06x}"), str::to_string),
             ServerPacket::Other { opcode } => format!("opcode {opcode:#06x}"),
         }
     }
