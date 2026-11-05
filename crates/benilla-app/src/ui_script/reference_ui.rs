@@ -1250,25 +1250,6 @@ mod tests {
         // The assertion below refuses a name whose gap has closed.
         const KNOWN: &[(&str, &[&str])] = &[
             (
-                "the GM survey's verbs, not built: the survey window opens on GMSURVEY_DISPLAY, \
-                 and its buttons reach these",
-                &[
-                    "GMSurveyAnswerSubmit",
-                    "GMSurveyCommentSubmit",
-                    "GMSurveyQuestion",
-                    "GMSurveySubmit",
-                ],
-            ),
-            (
-                "the skill-point purchase arrows and button `SkillFrame.lua` still carries; they \
-                 show only while a row has a step or rank cost, which no 3.3.5a server sends",
-                &["AddSkillUp", "BuySkillTier", "RemoveSkillUp"],
-            ),
-            (
-                "TRADE_REPLACE_ENCHANT's Accept; the verb is not built",
-                &["ReplaceTradeEnchant"],
-            ),
-            (
                 "Real ID: 12340's Battle.net verbs, not built; a 3.3.5a server has no Battle.net service",
                 &[
                     "BNAcceptFriendInvite",
@@ -1307,26 +1288,6 @@ mod tests {
                 ],
             ),
             (
-                "the secure slash-command verbs `ChatFrame.lua` dispatches, not built",
-                &[
-                    "CancelShapeshiftForm",
-                    "DisableSpellAutocast",
-                    "Dismount",
-                    "EnableSpellAutocast",
-                    "EquipItemByName",
-                    "RunMacro",
-                    "RunMacroText",
-                    "SpellTargetItem",
-                    "StartAttack",
-                    "StopAttack",
-                    "StopMacro",
-                    "TargetLastFriend",
-                    "TargetNearestEnemyPlayer",
-                    "TargetNearestFriendPlayer",
-                    "UseItemByName",
-                ],
-            ),
-            (
                 "voice chat, not built",
                 &[
                     "ChannelSilenceVoice",
@@ -1341,36 +1302,6 @@ mod tests {
                     "KBQuery_BeginLoading",
                     "KBSetup_BeginLoading",
                     "KBSetup_IsLoaded",
-                ],
-            ),
-            (
-                "12340 verbs the stock windows call, each not built yet",
-                &[
-                    "CancelItemTempEnchantment",
-                    "ComplainChat",
-                    "ConsoleAddMessage",
-                    "DeclineInvite",
-                    "GetContainerFreeSlots",
-                    "GetItemSpell",
-                    "GetSpellLink",
-                    "GMReportLag",
-                    "GrantLevel",
-                    "IsEquippableItem",
-                    "IsEquippedItem",
-                    "IsSubZonePVPPOI",
-                    "IsTutorialFlagged",
-                    "PlayerCanTeleport",
-                    "ReportPlayerIsPVPAFK",
-                    "ResetChatWindows",
-                    "SendSystemMessage",
-                    "SetChatColorNameByClass",
-                    "SetOptOutOfLoot",
-                    "SetTaxiBenchmarkMode",
-                    "SummonFriend",
-                    "UnitInRange",
-                    "UnitIsControlling",
-                    "UnitIsSameServer",
-                    "UpdateAddOnMemoryUsage",
                 ],
             ),
             (

@@ -382,7 +382,7 @@ pub(crate) fn skills_row(
         // The unlearnable bit and a nonzero skill step.
         abandonable: slot.step != 0 && rc.unlearnable(),
         rank_costs: catalog.rank_costs(id, rc.cost_index),
-        // The tier opens on flag 8, or 4 before the first step (`0x5ce7e9`).
+        // The tier opens on flag 8, or 4 before the first step (`0x5ce6f0`).
         tier_cost: if rc.flags & 8 != 0 || (slot.step == 0 && rc.flags & 4 != 0) {
             catalog.tier_cost(rc.tier_id, u32::from(slot.step))
         } else {

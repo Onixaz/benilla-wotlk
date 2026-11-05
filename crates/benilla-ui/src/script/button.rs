@@ -949,7 +949,7 @@ pub(super) fn wants_press_visual(model: &Model, h: FrameHandle) -> bool {
     )
 }
 
-/// A `CLICK` binding's half (`0x5632d0`): the frame's `OnMouseDown` or `OnMouseUp`, then the click
+/// A `CLICK` binding's half (`0x563150`): the frame's `OnMouseDown` or `OnMouseUp`, then the click
 /// when the frame registered that half of `button`.
 pub(super) fn binding_click(
     lua: &Lua,

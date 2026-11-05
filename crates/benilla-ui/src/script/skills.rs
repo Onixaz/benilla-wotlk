@@ -100,7 +100,7 @@ impl super::UiScript {
         }
         model.skills_groups = groups;
         model.skills = state;
-        // The rebuild's new rows carry no pending points (`0x5cdf9e`).
+        // The rebuild's new rows carry no pending points (`0x5cd9b0`).
         model.skill_ups.clear();
         model.skill_up_points = 0;
     }
@@ -561,6 +561,82 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod skill_up_tests {
+    use super::*;
+    use crate::script::{UiScript, UnitGuids};
+
+    fn priced(points: u32, tier_cost: u32) -> UiScript {
+        let mut s = UiScript::new().unwrap();
+        s.set_unit_guids(&UnitGuids {
+            player: 1,
+            ..Default::default()
+        });
+        s.set_skills(SkillsState {
+            entries: vec![SkillEntry {
+                skill_id: 40,
+                name: "Herbs".into(),
+                value: 1,
+                max: 3,
+                mono: false,
+                temp_bonus: 0,
+                perm_bonus: 0,
+                min_level: 0,
+                cost_index: 0,
+                category_id: 1,
+                category_name: "Trade".into(),
+                category_order: 1,
+                description: String::new(),
+                abandonable: false,
+                rank_costs: vec![0, 2, 5].into(),
+                tier_cost,
+            }],
+            points,
+        });
+        s
+    }
+
+    /// `0x5cdbf0`: a point costs the next rank's price, within the points and under the max; the
+    /// line is row 2, under its header.
+    #[test]
+    fn a_skill_up_spends_what_the_next_rank_costs() {
+        let s = priced(7, 0);
+        s.run("AddSkillUp(2)").unwrap();
+        assert_eq!(s.eval::<i64>("return GetAdjustedSkillPoints()").unwrap(), 5);
+        s.run("AddSkillUp(2)").unwrap();
+        assert_eq!(s.eval::<i64>("return GetAdjustedSkillPoints()").unwrap(), 0);
+        s.run("AddSkillUp(2)").unwrap();
+        let temp: i64 = s.eval("return select(4, GetSkillLineInfo(2))").unwrap();
+        assert_eq!(temp, 1, "the rank is the first return past the header pair");
+        s.run("RemoveSkillUp(2)").unwrap();
+        assert_eq!(s.eval::<i64>("return GetAdjustedSkillPoints()").unwrap(), 2);
+        assert!(s.run("AddSkillUp('x')").is_err());
+    }
+
+    /// `0x5ce5d0`: the pending points go out once and clear, with nothing pending nothing goes.
+    #[test]
+    fn accept_sends_the_pending_points_once() {
+        let mut s = priced(7, 0);
+        s.run("AddSkillUp(2) AcceptSkillUps() AcceptSkillUps()")
+            .unwrap();
+        assert_eq!(
+            s.take_skill_requests(),
+            vec![SkillRequest::BuyRanks(vec![(40, 1)])]
+        );
+    }
+
+    /// `0x5ce6f0`: a tier needs a cost the points cover.
+    #[test]
+    fn a_tier_needs_the_points() {
+        let mut s = priced(4, 5);
+        s.run("BuySkillTier(2)").unwrap();
+        assert!(s.take_skill_requests().is_empty());
+        let mut s = priced(5, 5);
+        s.run("BuySkillTier(2)").unwrap();
+        assert_eq!(s.take_skill_requests(), vec![SkillRequest::BuyTier(40)]);
+    }
 }
 
 #[cfg(test)]

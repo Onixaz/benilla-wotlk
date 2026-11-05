@@ -373,9 +373,9 @@ pub(crate) struct Model {
     pub(crate) taxi_benchmark_requests: Vec<bool>,
     /// `CancelItemTempEnchantment` calls queued, as inventory slots.
     pub(crate) temp_enchant_cancels: Vec<u32>,
-    /// The override bindings (`0xc1f0ec`), filed by frame.
+    /// The override bindings (`[0xbeadd8]`), filed by frame.
     pub(crate) override_bindings: super::binding_commands::OverrideBindings,
-    /// A macro is running (`[0xbea8e0]`); `StopMacro` clears it.
+    /// A macro is running (`[0xbeaf4c]`); `StopMacro` clears it.
     pub(crate) macro_running: bool,
     /// The addons that hold a GC owner tag, a tag being the position here plus one.
     pub(crate) addon_owners: Vec<String>,
@@ -1103,7 +1103,7 @@ pub(crate) struct Model {
     pub(crate) skill_abandons: Vec<u32>,
     /// `AddSkillUp`'s pending points by skill line.
     pub(crate) skill_ups: HashMap<u32, u32>,
-    /// The cost of the pending points (`[0xc5dcd4]`).
+    /// The cost of the pending points (`[0xc22b00]`).
     pub(crate) skill_up_points: i32,
     pub(crate) skill_requests: Vec<super::skills::SkillRequest>,
 

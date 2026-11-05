@@ -96,14 +96,6 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
 /// Pairs nothing fires on the verb's path, each with its reason.
 const GAP: &[(&str, &str, &str)] = &[
     (
-        "ClickTargetTradeButton",
-        "TRADE_REPLACE_ENCHANT",
-        "the reference runs the enchant clash check when a spell is on the cursor and \
-         fires this for the replace dialog; casting \
-         an enchant onto the partner's slot is not built here — `ui_trade.rs` only mirrors the \
-         wire's enchant slot — so the verb is the money arm alone",
-    ),
-    (
         "CloseTrade",
         "PLAYER_TRADE_MONEY",
         "fired only when the trade did not complete, \

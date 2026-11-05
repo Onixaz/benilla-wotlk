@@ -596,7 +596,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let found = reduced_keys(&key.to_ascii_uppercase())
                 .into_iter()
                 .find_map(|k| {
-                    // `0x55e7d0`: a key's override stands before its binding.
+                    // `0x562140`: a key's override stands before its binding.
                     model
                         .override_bindings
                         .active(&k)

@@ -779,11 +779,11 @@ pub(super) fn remember_last_enemy(
     }
 }
 
-/// `TargetLastFriend`'s memory (`[0xbd07a8]`), set beside [`LastEnemy`].
+/// `TargetLastFriend`'s memory (`[0xbd07c8]`), set beside [`LastEnemy`].
 #[derive(Resource, Default)]
 pub(crate) struct LastFriend(pub(crate) Option<u64>);
 
-/// Stamp [`LastFriend`]: a selected unit the player cannot attack but can assist (`0x524b8d`).
+/// Stamp [`LastFriend`]: a selected unit the player cannot attack but can assist (`0x524bf0`).
 pub(super) fn remember_last_friend(
     selection: Res<Selection>,
     stores: Query<&ObjectStore>,

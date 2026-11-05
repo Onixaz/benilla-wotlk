@@ -317,6 +317,30 @@ fn token_key(t: &str) -> Option<BindKey> {
 }
 
 #[cfg(test)]
+mod reduction_tests {
+    use super::*;
+
+    /// `0x5622e0`: the masks 7, 6, 5, 3, 4, 2, 1, 0 over ALT, CTRL and SHIFT.
+    #[test]
+    fn a_chord_reduces_through_every_subset_of_its_modifiers() {
+        let chord = Chord::parse("ALT-CTRL-SHIFT-Z").unwrap();
+        let want = [
+            "ALT-CTRL-SHIFT-Z",
+            "CTRL-SHIFT-Z",
+            "ALT-SHIFT-Z",
+            "ALT-CTRL-Z",
+            "SHIFT-Z",
+            "CTRL-Z",
+            "ALT-Z",
+            "Z",
+        ]
+        .map(|k| Chord::parse(k).unwrap());
+        assert_eq!(chord.reductions(), want);
+        assert_eq!(Chord::parse("Z").unwrap().reductions().len(), 1);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

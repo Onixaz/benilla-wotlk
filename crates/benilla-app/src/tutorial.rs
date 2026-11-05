@@ -147,7 +147,7 @@ pub(crate) struct Tutorials {
     pushes: Vec<(u32, u8, u32)>,
     /// `showTutorials` off: a trigger flags its tutorial seen, with no popup (`0x530871`).
     muted: bool,
-    /// The completed list (`0xc08c78`), `id + 1` each in completion order, sixty at most.
+    /// The completed list (`0xbd19f0`), `id + 1` each in completion order, sixty at most.
     completed: Vec<u32>,
 }
 

@@ -19,7 +19,7 @@ const IGNORE_STATE: u32 = 0x80;
 const IN_CURRENCY: u32 = 0x200;
 /// The bags and backpack alone, the equip verbs' first pass.
 pub(super) const CARRIED: u32 = IN_BAGS | IN_BACKPACK;
-/// What a search without a location reads as (`0x754700`).
+/// What a search without a location reads as (`0x7546f0`).
 const DEFAULT_PLACES: u32 = IN_EQUIPMENT | CARRIED | IN_KEYRING | IN_CURRENCY;
 
 /// The Lua ids of the walk's containers.
@@ -40,7 +40,7 @@ pub(super) struct Held {
     name: String,
     link: Option<String>,
     pub(super) locked: bool,
-    /// A zero-durability item, or one flagged broken, the state filter drops (`0x75478e`).
+    /// A zero-durability item, or one flagged broken, the state filter drops (`0x7546f0`).
     broken: bool,
 }
 
@@ -52,7 +52,7 @@ pub(super) enum ItemQuery {
     Prefix(String),
     /// The full name, case-folded (`0x753b70`).
     Name(String),
-    /// A link's `(id, enchant, gems, random property, seed)`, its zero fields unread (`0x753a60`).
+    /// A link's `(id, enchant, gems, random property, seed)`, its zero fields unread (`0x7545d0`).
     Link([i64; 7]),
 }
 
@@ -194,7 +194,7 @@ pub(super) fn find_item(model: &Model, query: &ItemQuery, flags: u32) -> Option<
     walk(model, flags).into_iter().find(|h| query.matches(h))
 }
 
-/// An item id by a Lua number, link or name (`0x7096a0`): a name a held item or a cached template
+/// An item id by a Lua number, link or name (`0x709de0`): a name a held item or a cached template
 /// carries.
 fn item_id_of(lua: &Lua, model: &Model, v: &Value) -> mlua::Result<u32> {
     Ok(match ItemQuery::of(lua, v, ItemQuery::Name)? {
@@ -232,7 +232,7 @@ fn pickup_item(model: &mut Model, id: u32) {
     super::cursor::queue_cursor_update(model);
 }
 
-/// The first on-use spell a template names (`0x708a60`).
+/// The first on-use spell a template names (`0x706b90`).
 fn use_spell(model: &Model, item_id: u32) -> Option<u32> {
     let view = model.item_templates.get(&item_id)?;
     let spells = view.spell_triggers.iter();
@@ -242,7 +242,7 @@ fn use_spell(model: &Model, item_id: u32) -> Option<u32> {
         .next()
 }
 
-/// With no on-use spell, the use spell of an enchant on the worn item (`0x5a86b0`, `0x708c9f`).
+/// With no on-use spell, the use spell of an enchant on the worn item (`0x5a86b0`, `0x707c60`).
 fn enchant_use_spell(model: &Model, item_id: u32) -> Option<u32> {
     let query = ItemQuery::Id(item_id);
     let item = find_item(model, &query, IN_EQUIPMENT | IGNORE_STATE)?;
@@ -487,8 +487,77 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::script::{ContainerSlot, ContainerState, UiScript, UnitGuids};
 
-    /// `0x753a60`: a zero link field is unread; the set ones must match.
+    /// A player with `id` in backpack slot 3.
+    fn carrying(id: u32) -> UiScript {
+        let mut s = UiScript::new().unwrap();
+        s.set_unit_guids(&UnitGuids {
+            player: 1,
+            ..Default::default()
+        });
+        let mut model = s.model_mut();
+        let mut bag = ContainerState {
+            num_slots: 16,
+            ..Default::default()
+        };
+        bag.slots.insert(
+            3,
+            ContainerSlot {
+                item_id: id,
+                link: Some("|Hitem:25|h[Worn Sword]|h".into()),
+                ..Default::default()
+            },
+        );
+        model.containers.insert(0, bag);
+        drop(model);
+        s
+    }
+
+    fn equips(s: &mut UiScript) -> Vec<ScriptCall> {
+        s.take_script_calls()
+            .into_iter()
+            .filter(|c| matches!(c, ScriptCall::EquipItem { .. }))
+            .collect()
+    }
+
+    /// `0x51cf23` against `0x51cfb4`: a number takes one off; a name lands a slot higher.
+    #[test]
+    fn a_slot_name_lands_one_slot_past_its_number() {
+        let mut s = carrying(25);
+        s.run("EquipItemByName(25, 13)").unwrap();
+        let by_number = ScriptCall::EquipItem {
+            bag: 0,
+            slot: 3,
+            dst: Some(12),
+        };
+        assert_eq!(equips(&mut s), vec![by_number]);
+        s.run("EquipItemByName('Worn', 'Trinket0Slot')").unwrap();
+        let by_name = ScriptCall::EquipItem {
+            bag: 0,
+            slot: 3,
+            dst: Some(13),
+        };
+        assert_eq!(equips(&mut s), vec![by_name]);
+        assert!(s.run("EquipItemByName(25, 'TabardSlot')").is_err());
+        assert!(s.run("EquipItemByName(25, 'NoSuchSlot')").is_err());
+    }
+
+    /// `0x5d7820`: the free slots in order, into a given table.
+    #[test]
+    fn free_slots_skip_what_is_held() {
+        let s = carrying(25);
+        let (first, third, count): (i32, i32, i32) = s
+            .eval("local t = GetContainerFreeSlots(0) return t[1], t[3], #t")
+            .unwrap();
+        assert_eq!((first, third, count), (1, 4, 15));
+        let kept: i32 = s
+            .eval("local t = {} GetContainerFreeSlots(0, t) return t[2]")
+            .unwrap();
+        assert_eq!(kept, 2);
+    }
+
+    /// `0x7545d0`: a zero link field is unread; the set ones must match.
     #[test]
     fn a_link_matches_on_its_set_fields() {
         let held = Held {

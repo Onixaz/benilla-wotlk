@@ -305,7 +305,7 @@ pub(crate) fn dismount(cast: &mut crate::spell::ScriptCast) {
 }
 
 /// `CancelShapeshiftForm()` (`0x726ce0`): every cancelable aura of the active form's spell, unless
-/// charmed or the form's row forbids it (`0x80a8e0`).
+/// charmed or the form's row forbids it (`0x802f80`).
 pub(crate) fn cancel_form(cast: &mut crate::spell::ScriptCast) {
     let crate::spell::ScriptCast {
         targeting, ladder, ..

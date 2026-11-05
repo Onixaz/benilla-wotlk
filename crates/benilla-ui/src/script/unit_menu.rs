@@ -144,7 +144,7 @@ pub(super) fn summon_friend_refusal(model: &Model, token: &str, now: f64) -> u8 
     if !in_my_group(model, guid) {
         return 9;
     }
-    // A held player reads their level; an unheld member the group's record (`0x6d76b8`).
+    // A held player reads their level; an unheld member the group's record (`0x6d7630`).
     if !unit.is_some_and(|u| u.has_object) {
         let online = model
             .party

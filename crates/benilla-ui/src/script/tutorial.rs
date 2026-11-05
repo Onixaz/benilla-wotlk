@@ -207,6 +207,42 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use crate::script::UiScript;
 
+    /// `0x530140`, `0x530190`: the walk is completion order, not id order; 60 reads as the end.
+    #[test]
+    fn the_completed_walk_is_in_completion_order() {
+        let mut s = UiScript::new().unwrap();
+        s.set_tutorials_completed(vec![7, 3, 12, 60]);
+        let next: i32 = s.eval("return GetNextCompleatedTutorial(7)").unwrap();
+        assert_eq!(next, 3);
+        let prev: i32 = s.eval("return GetPrevCompleatedTutorial(12)").unwrap();
+        assert_eq!(prev, 3);
+        let count = |lua: &str| {
+            s.eval::<i32>(&format!("return select('#', {lua})"))
+                .unwrap()
+        };
+        assert_eq!(count("GetNextCompleatedTutorial(12)"), 0, "the next is 60");
+        assert_eq!(
+            count("GetPrevCompleatedTutorial(7)"),
+            0,
+            "nothing before the first"
+        );
+        assert_eq!(count("GetNextCompleatedTutorial(5)"), 0, "not completed");
+        assert!(s.eval::<()>("GetNextCompleatedTutorial('x')").is_err());
+    }
+
+    /// `0x5307a0`: bank B's bit; past the sixty, no value at all.
+    #[test]
+    fn is_tutorial_flagged_reads_the_acknowledged_bank() {
+        let mut s = UiScript::new().unwrap();
+        s.set_tutorial_bank(Some(vec![0b100; 8]));
+        let on: Option<i32> = s.eval("return IsTutorialFlagged(3)").unwrap();
+        assert_eq!(on, Some(1));
+        let off: Option<i32> = s.eval("return IsTutorialFlagged(4)").unwrap();
+        assert_eq!(off, None);
+        let n: i32 = s.eval("return select('#', IsTutorialFlagged(61))").unwrap();
+        assert_eq!(n, 0);
+    }
+
     #[test]
     fn tutorials_enabled_scans_the_whole_acknowledged_bank() {
         let mut s = UiScript::new().unwrap();

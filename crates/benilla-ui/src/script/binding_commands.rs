@@ -10,7 +10,7 @@ use super::calls::{CastAt, ScriptCall};
 use super::item_search::{find_item, ItemQuery};
 use super::model::Model;
 
-/// The longest line and body the runner keeps (`0x566f10`, `0x566400`).
+/// The longest line and body the runner keeps (`0x564db0`, `0x566400`).
 const MACRO_LINE: usize = 1023;
 const MACRO_BODY: usize = 1023;
 
@@ -76,7 +76,7 @@ impl super::UiScript {
     }
 }
 
-/// The macro runner (`0x566f10`): each line through `EXECUTE_CHAT_LINE`, a comment or `#` line
+/// The macro runner (`0x564db0`): each line through `EXECUTE_CHAT_LINE`, a comment or `#` line
 /// skipped, until `StopMacro`; the outer macro's state comes back after.
 fn run_macro(lua: &Lua, body: &str, button: Option<String>) {
     let saved = {
@@ -104,7 +104,7 @@ fn run_macro(lua: &Lua, body: &str, button: Option<String>) {
     model.click_button = saved.1;
 }
 
-/// A macro by its 1-based id or its name (`0x566e20`).
+/// A macro by its 1-based id or its name (`0x566df0`).
 fn macro_body(model: &Model, id: &Value, name: Option<String>) -> Option<String> {
     let index = match (id, name) {
         (Value::Integer(i), _) => usize::try_from(*i).ok()?,
@@ -128,7 +128,7 @@ fn click_frame(lua: &Lua, name: &str) -> Option<Table> {
     (frame.name.as_deref() == Some(name)).then_some(t)
 }
 
-/// A binding's cast target: the player or the focus under the modified clicks (`0x5631e5`).
+/// A binding's cast target: the player or the focus under the modified clicks (`0x563150`).
 fn modified_target(model: &Model) -> CastAt {
     if super::modified_click::is_modified_click(model, Some("SELFCAST")) {
         CastAt::Player
@@ -466,7 +466,7 @@ mod tests {
         assert!(s.run("SetOverrideBinding({}, false, 'T')").is_err());
     }
 
-    /// `0x566f10`: comment and `#` lines are skipped, a line keeps its spaces, and `StopMacro` ends
+    /// `0x564db0`: comment and `#` lines are skipped, a line keeps its spaces, and `StopMacro` ends
     /// the run.
     #[test]
     fn the_runner_skips_comments_and_stops() {

@@ -170,7 +170,7 @@ impl TradeSession {
         self.their.slots[6].as_ref().map(|i| i.perm_enchant)
     }
 
-    /// Whether our offer holds the item at `(bag, slot)` (`0x5d9b00`).
+    /// Whether our offer holds the item at `(bag, slot)` (`0x5864d0`).
     pub(crate) fn offers(&self, bag: i64, slot: u32) -> bool {
         self.our_sources.contains(&Some((bag, slot)))
     }

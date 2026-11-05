@@ -61,7 +61,7 @@ pub struct EnchantCatalog {
     gem_items: HashMap<u32, u32>,
     /// The sockets a prismatic enchant adds: its first effect 8's `EffectPointsMin` (`0x708140`).
     prismatic: HashMap<u32, u32>,
-    /// The spell an enchant's use effect casts: its first effect 7's `EffectArg` (`0x708c9f`).
+    /// The spell an enchant's use effect casts: its first effect 7's `EffectArg` (`0x707c60`).
     use_spells: HashMap<u32, u32>,
     /// A gem enchant's activation condition (`ConditionID`, a meta gem's), by enchant id.
     conditions: HashMap<u32, EnchantCondition>,
