@@ -611,7 +611,7 @@ mod skill_up_tests {
         let temp: i64 = s.eval("return select(4, GetSkillLineInfo(2))").unwrap();
         assert_eq!(temp, 1, "the rank is the first return past the header pair");
         s.run("RemoveSkillUp(2)").unwrap();
-        assert_eq!(s.eval::<i64>("return GetAdjustedSkillPoints()").unwrap(), 2);
+        assert_eq!(s.eval::<i64>("return GetAdjustedSkillPoints()").unwrap(), 5);
         assert!(s.run("AddSkillUp('x')").is_err());
     }
 

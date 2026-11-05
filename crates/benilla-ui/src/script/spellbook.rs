@@ -237,7 +237,7 @@ pub(super) fn is_pet_book(book_type: &str) -> bool {
 }
 
 /// The reference's shared spell-slot marshaller: arg 1 a number, arg 2 a number or string, and the
-/// index `trunc(arg1 - 1)` in `[0, 0x400)`, else the binding raises `Invalid spell slot in <Verb>`.
+/// index `trunc(arg1 - 1)` in `[0, 0x400)`, else the binding raises `<Verb>(): Invalid spell slot`.
 /// Answers the 1-based id and the normalised book type.
 fn spell_slot_args(id: Value, book_type: Value, verb: &str) -> mlua::Result<(u32, String)> {
     let invalid = || mlua::Error::runtime(format!("{verb}(): Invalid spell slot"));
@@ -1183,7 +1183,7 @@ mod tests {
                 .expect_err(bad)
                 .to_string();
             assert!(
-                err.contains("Invalid spell slot in GetSpellTexture"),
+                err.contains("GetSpellTexture(): Invalid spell slot"),
                 "{bad}: {err}"
             );
         }
@@ -1191,7 +1191,7 @@ mod tests {
             s.eval::<mlua::Value>("return GetSpellTexture(1)")
                 .unwrap_err()
                 .to_string()
-                .contains("Invalid spell slot in GetSpellTexture"),
+                .contains("GetSpellTexture(): Invalid spell slot"),
             "the book type is not optional"
         );
         // Inside the range but past the book: nil, not an error.
@@ -1801,7 +1801,7 @@ mod tests {
             .run(r#"GetSpellName(1025, "spell")"#)
             .expect_err("an out-of-range slot must raise");
         assert!(
-            format!("{err}").contains("Invalid spell slot in GetSpellName"),
+            format!("{err}").contains("GetSpellName(): Invalid spell slot"),
             "got {err}"
         );
         // Id 1023 is inside it and answers.
