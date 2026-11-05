@@ -1592,7 +1592,6 @@ mod tests {
             None,
             GoOverrides {
                 channel_owned: true,
-                ..Default::default()
             }
         ));
         assert!(!highlightable_flags(
@@ -1610,7 +1609,6 @@ mod tests {
             None,
             GoOverrides {
                 channel_owned: true,
-                ..Default::default()
             }
         ));
         assert!(!mouseover_eligible(
@@ -1629,7 +1627,6 @@ mod tests {
             None,
             GoOverrides {
                 channel_owned: true,
-                ..Default::default()
             }
         ));
         assert!(highlightable_flags(0, 0, 0, None, GoOverrides::default()));

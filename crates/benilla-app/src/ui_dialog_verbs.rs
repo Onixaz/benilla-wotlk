@@ -464,9 +464,6 @@ fn cancel_gate_could_apply(attributes_ex: u32) -> bool {
 mod tests {
     use super::*;
 
-    /// `UNIT_FIELD_LEVEL`, absolute field 34.
-    const LEVEL_FIELD: u16 = 34;
-
     #[test]
     fn setting_the_same_healer_is_a_complete_no_op() {
         let mut spirit = AreaSpiritHealer::default();
