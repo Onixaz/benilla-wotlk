@@ -1390,6 +1390,16 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // TargetLastEnemy(): re-select the last attackable target (which `SetSelection` stamps), a
     // no-op once it has streamed out. The app remembers it.
     g.set(
+        "TargetLastFriend",
+        lua.create_function(|lua, ()| {
+            let mut model = crate::script::model_mut_of(lua);
+            model
+                .script_calls
+                .push(ScriptCall::Select(SelectionRequest::LastFriend));
+            Ok(())
+        })?,
+    )?;
+    g.set(
         "TargetLastEnemy",
         lua.create_function(|lua, ()| {
             let mut model = crate::script::model_mut_of(lua);

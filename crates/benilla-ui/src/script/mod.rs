@@ -372,8 +372,9 @@ pub use video_pairs::VIDEO_PAIR_CVARS;
 pub use worldmap_arrow::ARROW_MODEL;
 
 pub use achievement::{
-    achievement_hyperlink, AchievementBook, AchievementCategoryRow, AchievementCriteriaRow,
-    AchievementDb, AchievementRow, AchievementUpdate, CriteriaWire, WowDate,
+    achievement_hyperlink, decode_tracked, encode_tracked, AchievementBook, AchievementCategoryRow,
+    AchievementCriteriaRow, AchievementDb, AchievementRow, AchievementUpdate, CriteriaWire,
+    WowDate,
 };
 pub use calendar::{
     date_time_text, CalendarCatalogView, CalendarCommandResultView, CalendarEventRowView,
@@ -448,7 +449,7 @@ pub(crate) use simplehtml::{
     apply_element_font_parts as apply_simplehtml_font_parts,
     element_of_xml_tag as simplehtml_element_of_xml_tag,
 };
-pub use skills::{SkillEntry, SkillsState};
+pub use skills::{SkillEntry, SkillRequest, SkillsState};
 pub use social::{FriendInfo, SocialRequest, SocialState, WhoInfo, WhoRecords};
 pub use sound::{MusicRequest, SoundRequest};
 pub use spell_info::{SpellInfo, SpellInfoSource};

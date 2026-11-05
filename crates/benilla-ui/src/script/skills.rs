@@ -7,10 +7,9 @@
 //! survives a re-push, and selecting a header clears it. Which lines reach the engine at all is the
 //! app's half (`feed_skills`).
 //!
-//! `numTempPoints` answers 0: the model carries no temp points, and on 1.12's data nothing a player
-//! holds moves the reference's field (`+0x10`), which only `AddSkillUp` increments. `stepCost` and
-//! `rankCost` are always nil, by the data: `SkillLine.skillCostsID` is 0 in every row and no line a
-//! player holds carries the step-cost flags.
+//! `numTempPoints` is what `AddSkillUp` has pending on the line, which a rebuild drops. `stepCost` is
+//! the tier the line's flags open and `rankCost` the next rank's price; the shipped data gives
+//! neither a value on a line a player holds.
 
 use std::collections::HashMap;
 
@@ -54,12 +53,27 @@ pub struct SkillEntry {
     /// `isAbandonable`, the 8th return: a nonzero skill step and `SkillRaceClassInfo.flags & 0x20`
     /// (`SKILL_FLAG_UNLEARNABLE`), both checked by the client.
     pub abandonable: bool,
+    /// The rank costs for the line's cost index, the first for rank 1 (`0x810f50`).
+    pub rank_costs: std::sync::Arc<[u32]>,
+    /// The next tier's cost where the line's flags open a purchase, else 0.
+    pub tier_cost: u32,
 }
 
 /// A flat, unordered push of every known skill line; the engine groups and sorts it.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct SkillsState {
     pub entries: Vec<SkillEntry>,
+    /// `PLAYER_CHARACTER_POINTS2`.
+    pub points: u32,
+}
+
+/// A skill buy, for the app to send.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SkillRequest {
+    /// `AcceptSkillUps()` (`0x5ce5d0`): `(line, points)` per visible line with points pending.
+    BuyRanks(Vec<(u32, u32)>),
+    /// `BuySkillTier(index)` (`0x5ce6f0`).
+    BuyTier(u32),
 }
 
 /// One category of the display tree, with its lines' positions in [`SkillsState::entries`].
@@ -86,6 +100,14 @@ impl super::UiScript {
         }
         model.skills_groups = groups;
         model.skills = state;
+        // The rebuild's new rows carry no pending points (`0x5cdf9e`).
+        model.skill_ups.clear();
+        model.skill_up_points = 0;
+    }
+
+    /// Drain the skill buys since the last call.
+    pub fn take_skill_requests(&mut self) -> Vec<SkillRequest> {
+        drain_field!(self, skill_requests)
     }
 
     /// Drain the skill ids `AbandonSkill` queued, one `CMSG_UNLEARN_SKILL` each; the removal comes
@@ -167,6 +189,53 @@ fn entry_at(model: &Model, index: usize) -> Option<&SkillEntry> {
         Row::Entry(ei) => model.skills.entries.get(*ei),
         Row::Header(_) => None,
     }
+}
+
+/// A rank's cost (`0x810f50`), 0 past the table.
+fn rank_cost(e: &SkillEntry, rank: i64) -> u32 {
+    usize::try_from(rank - 1)
+        .ok()
+        .and_then(|i| e.rank_costs.get(i))
+        .copied()
+        .unwrap_or(0)
+}
+
+/// The points `AddSkillUp` has pending on a line.
+fn skill_ups(model: &Model, skill_id: u32) -> u32 {
+    model.skill_ups.get(&skill_id).copied().unwrap_or(0)
+}
+
+/// `AddSkillUp` (`0x5cdbf0`): one more point on the line, if the rank and the points allow it.
+fn add_skill_up(model: &mut Model, index: usize) -> bool {
+    let Some(e) = entry_at(model, index).filter(|_| model.unit_guids.player != 0) else {
+        return false;
+    };
+    let (id, ups) = (e.skill_id, skill_ups(model, e.skill_id));
+    if e.value + ups >= e.max {
+        return false;
+    }
+    let cost = i64::from(rank_cost(e, i64::from(e.value + ups + 1)));
+    if cost + i64::from(model.skill_up_points) > i64::from(model.skills.points) {
+        return false;
+    }
+    model.skill_ups.insert(id, ups + 1);
+    model.skill_up_points += cost as i32;
+    true
+}
+
+/// `RemoveSkillUp` (`0x5cdd20`): one point back off the line.
+fn remove_skill_up(model: &mut Model, index: usize) -> bool {
+    let Some(e) = entry_at(model, index).filter(|_| model.unit_guids.player != 0) else {
+        return false;
+    };
+    let (id, ups) = (e.skill_id, skill_ups(model, e.skill_id));
+    if ups == 0 {
+        return false;
+    }
+    let cost = rank_cost(e, i64::from(e.value + ups));
+    model.skill_ups.insert(id, ups - 1);
+    model.skill_up_points -= cost as i32;
+    true
 }
 
 /// Collapse or expand the category whose header is at visible index `id`; 0 is every group, and a
@@ -311,18 +380,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Row::Entry(ei) => {
                     let e = &model.skills.entries[ei];
                     let (rank, max) = displayed_ranks(e);
+                    let ups = skill_ups(&model, e.skill_id);
+                    let cost = |c: u32| match c {
+                        0 => Value::Nil,
+                        c => Value::Integer(i64::from(c)),
+                    };
                     Ok(MultiValue::from_vec(vec![
                         Value::String(lua.create_string(&e.name)?),
                         Value::Nil, // isHeader
                         Value::Nil, // isExpanded
                         Value::Integer(rank),
-                        Value::Integer(0),                       // numTempPoints
+                        Value::Integer(i64::from(ups)), // numTempPoints
                         Value::Integer(i64::from(e.temp_bonus)), // skillModifier: temp only
                         Value::Integer(max),
                         binding_abi::flag(e.abandonable), // isAbandonable
-                        // stepCost, rankCost: nil, since Lua reads `0` as true.
-                        Value::Nil,
-                        Value::Nil,
+                        // stepCost, rankCost: nil for none, since Lua reads `0` as true.
+                        cost(e.tier_cost),
+                        cost(rank_cost(e, rank + i64::from(ups) + 1)),
                         Value::Integer(i64::from(e.min_level)), // minLevel
                         // skillCostType: the cost index plus one.
                         Value::Integer(i64::from(e.cost_index) + 1),
@@ -371,12 +445,91 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetAdjustedSkillPoints() → 0 here; the reference answers `PLAYER_CHARACTER_POINTS2` less the
-    // points `AddSkillUp` has pending. The stock pane reads it only under its `stepCost` and
-    // `rankCost` branches, which 1.12 data never opens.
+    // GetAdjustedSkillPoints() (`0x5ce540`): `PLAYER_CHARACTER_POINTS2` less the points
+    // `AddSkillUp` has pending; 0 without a player.
     g.set(
         "GetAdjustedSkillPoints",
-        lua.create_function(|_, ()| Ok(0i64))?,
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(if model.unit_guids.player == 0 {
+                0
+            } else {
+                i64::from(model.skills.points) - i64::from(model.skill_up_points)
+            })
+        })?,
+    )?;
+
+    // AddSkillUp(index) (`0x5ce460`) and RemoveSkillUp(index) (`0x5ce4d0`): a change fires
+    // `SKILL_LINES_CHANGED`.
+    for (verb, usage, apply) in [
+        (
+            "AddSkillUp",
+            "Usage: AddSkillUp(index)",
+            add_skill_up as fn(&mut Model, usize) -> bool,
+        ),
+        (
+            "RemoveSkillUp",
+            "Usage: RemoveSkillUp(index)",
+            remove_skill_up,
+        ),
+    ] {
+        g.set(
+            verb,
+            lua.create_function(move |lua, index: Value| {
+                let index = binding_abi::number_arg(lua, index, usage)?;
+                let moved = usize::try_from(index)
+                    .is_ok_and(|i| apply(&mut crate::script::model_mut_of(lua), i));
+                if moved {
+                    super::tick::fire_event_into(lua, "SKILL_LINES_CHANGED", Vec::new());
+                }
+                Ok(())
+            })?,
+        )?;
+    }
+
+    // AcceptSkillUps() (`0x5ce5d0`): with a cost pending, one packet for the visible lines; every
+    // line's points clear, with no event.
+    g.set(
+        "AcceptSkillUps",
+        lua.create_function(|lua, ()| {
+            let mut model = crate::script::model_mut_of(lua);
+            if model.skill_up_points == 0 {
+                return Ok(());
+            }
+            let lines = rows(&model)
+                .into_iter()
+                .filter_map(|row| match row {
+                    Row::Entry(ei) => model.skills.entries.get(ei),
+                    Row::Header(_) => None,
+                })
+                .map(|e| (e.skill_id, skill_ups(&model, e.skill_id)))
+                .filter(|&(_, ups)| ups != 0)
+                .collect();
+            model.skill_requests.push(SkillRequest::BuyRanks(lines));
+            model.skill_ups.clear();
+            model.skill_up_points = 0;
+            Ok(())
+        })?,
+    )?;
+
+    // BuySkillTier(index) (`0x5ce6f0`): the line's open tier, when the points cover it.
+    g.set(
+        "BuySkillTier",
+        lua.create_function(|lua, index: Value| {
+            let index = binding_abi::number_arg(lua, index, "Usage: BuySkillTier(index)")?;
+            let mut model = crate::script::model_mut_of(lua);
+            let line = usize::try_from(index)
+                .ok()
+                .and_then(|i| entry_at(&model, i))
+                .filter(|e| e.tier_cost != 0 && e.tier_cost <= model.skills.points)
+                .map(|e| e.skill_id);
+            if let Some(line) = line {
+                model.skill_requests.push(SkillRequest::BuyTier(line));
+            }
+            Ok(())
+        })?,
     )?;
 
     // AbandonSkill(index): queue the entry's skill id for `CMSG_UNLEARN_SKILL`, changing nothing
@@ -392,9 +545,20 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // CancelSkillUps(): zeroes every `numTempPoints`; the stock Close button calls it
-    // (`SkillFrame.xml:352`). No temp points are modelled, so nothing resets.
-    g.set("CancelSkillUps", lua.create_function(|_, ()| Ok(()))?)?;
+    // CancelSkillUps() (`0x5cd820`): zeroes every `numTempPoints` and fires, whatever was pending;
+    // the stock Close button calls it (`SkillFrame.xml:352`).
+    g.set(
+        "CancelSkillUps",
+        lua.create_function(|lua, ()| {
+            {
+                let mut model = crate::script::model_mut_of(lua);
+                model.skill_ups.clear();
+                model.skill_up_points = 0;
+            }
+            super::tick::fire_event_into(lua, "SKILL_LINES_CHANGED", Vec::new());
+            Ok(())
+        })?,
+    )?;
 
     Ok(())
 }
@@ -429,6 +593,8 @@ mod tests {
             description: format!("About {name}."),
             // Fixture rule: Professions (id 2) is abandonable, as the 0x20 flag splits it.
             abandonable: category_id == 2,
+            rank_costs: Default::default(),
+            tier_cost: 0,
             // Fixture rule: Class Skills (id 3) is single-rank, as the 0x400 flag splits it.
             mono: category_id == 3,
         }
@@ -437,6 +603,7 @@ mod tests {
     /// Weapon Skills (order 1) and Professions (order 2), pushed unordered: Swords before Defense.
     fn state() -> SkillsState {
         SkillsState {
+            points: 0,
             entries: vec![
                 entry(43, "Swords", 200, 300, 0, 1, "Weapon Skills", 1),
                 entry(95, "Defense", 180, 300, 5, 1, "Weapon Skills", 1),

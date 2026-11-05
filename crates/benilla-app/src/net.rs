@@ -1942,6 +1942,18 @@ pub(crate) enum ClientCommand {
         mail_id: u32,
         sender: u64,
     },
+    /// `CMSG_SET_TAXI_BENCHMARK_MODE`: `SetTaxiBenchmarkMode(on)`.
+    SetTaxiBenchmarkMode {
+        on: bool,
+    },
+    /// `CMSG_SKILL_BUY_RANK`: `AcceptSkillUps()`.
+    SkillBuyRank {
+        lines: Vec<(u32, u32)>,
+    },
+    /// `CMSG_SKILL_BUY_STEP`: `BuySkillTier(index)`.
+    SkillBuyStep {
+        line: u32,
+    },
     /// `CMSG_GRANT_LEVEL`: `GrantLevel(unit)`.
     GrantLevel {
         friend: u64,

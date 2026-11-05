@@ -2003,8 +2003,6 @@ mod tests {
             // ── The stock `UIParent.lua`'s listeners first, then the other files' ──
             ("ADDON_ACTION_BLOCKED", R_0),
             ("MACRO_ACTION_BLOCKED", R_0),
-            ("DISABLE_TAXI_BENCHMARK", R_1),
-            ("ENABLE_TAXI_BENCHMARK", R_1),
             ("FRIENDLIST_SHOW", R_1),
             ("ITEM_UNLOCKED", R_1),
             ("MAIL_LOCK_SEND_ITEMS", R_1),

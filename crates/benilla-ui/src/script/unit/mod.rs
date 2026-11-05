@@ -22,6 +22,8 @@ pub enum SelectionRequest {
     AssistByName(String),
     /// `TargetLastEnemy()`: the last attackable unit committed.
     LastEnemy,
+    /// `TargetLastFriend()` (`0x525e50`): the last assistable unit committed.
+    LastFriend,
 }
 
 /// The reference's local player record: a copy of the chosen `SMSG_CHAR_ENUM` row, written once at

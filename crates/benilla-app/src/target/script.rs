@@ -17,6 +17,8 @@ pub(crate) struct ScriptSelect<'w, 's> {
     tokens: crate::ui_unit::UnitTokens<'w, 's>,
     /// `TargetLastEnemy`'s memory, stamped by `scan::remember_last_enemy`.
     last_enemy: Res<'w, scan::LastEnemy>,
+    /// `TargetLastFriend`'s memory, stamped by `scan::remember_last_friend`.
+    last_friend: Res<'w, scan::LastFriend>,
     /// The SetSelection tail shared with the world click, `/target` and `/assist`, classification
     /// included.
     commit: SelectCommit<'w, 's>,
@@ -53,6 +55,11 @@ impl ScriptSelect<'_, '_> {
             }
             // Through the shared helper. Empty memory is a no-op, unlike `TargetLastTarget`, which
             // deselects.
+            SelectionRequest::LastFriend => {
+                if let Some((entity, guid)) = self.last_friend.0.and_then(|g| self.tokens.held(g)) {
+                    self.commit.commit(entity, guid);
+                }
+            }
             SelectionRequest::LastEnemy => {
                 let Some(guid) = self.last_enemy.0 else {
                     info!("TargetLastEnemy: nothing hostile has been targeted yet; no-op");
@@ -72,6 +79,22 @@ impl ScriptSelect<'_, '_> {
     /// `TargetByName(name, exactMatch)`, the stock `/target`.
     pub(crate) fn target_by_name(&mut self, name: &str, exact: bool) {
         by_name::target_named(&self.by_name, &mut self.commit, name, exact);
+    }
+
+    /// `StartAttack`'s named unit (`0x523090`): a token, else the closest attackable name, as a
+    /// unit to commit once the actor checks pass.
+    pub(crate) fn attack_unit(&self, unit: &str, exact: bool) -> Option<(Entity, u64)> {
+        self.tokens
+            .resolve(unit, &self.commit.selection)
+            .or_else(|| self.by_name.attackable(unit, exact))
+    }
+
+    /// Commit a unit [`Self::attack_unit`] named; nothing named leaves the selection bare.
+    pub(crate) fn select_for_attack(&mut self, named: Option<(Entity, u64)>) {
+        match named {
+            Some((entity, guid)) => self.commit.commit(entity, guid),
+            None => self.commit.clear(),
+        }
     }
 
     /// `TargetNearest*([reverse])`, one cycle of the cycler the TAB key runs, called with
@@ -133,6 +156,7 @@ mod tests {
         world.init_resource::<super::super::AssistAttack>();
         world.init_resource::<super::super::Selection>();
         world.init_resource::<scan::LastEnemy>();
+        world.init_resource::<scan::LastFriend>();
         world.init_resource::<crate::names::NameCache>();
         world.init_resource::<scan::TabHistory>();
         world.init_resource::<Time>();

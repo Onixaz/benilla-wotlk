@@ -1911,6 +1911,9 @@ pub(super) fn writer_loop(
                         mail_id,
                         sender,
                     } => w.mail_return_to_sender(mailbox, mail_id, sender),
+                    ClientCommand::SetTaxiBenchmarkMode { on } => w.set_taxi_benchmark_mode(on),
+                    ClientCommand::SkillBuyRank { lines } => w.skill_buy_rank(&lines),
+                    ClientCommand::SkillBuyStep { line } => w.skill_buy_step(line),
                     ClientCommand::GrantLevel { friend } => w.grant_level(friend),
                     ClientCommand::DeclineChannelInvite { name } => {
                         w.decline_channel_invite(&name)

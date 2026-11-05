@@ -56,8 +56,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("ScalingStatDistribution", "#239 heirloom stat scaling"),
     ("ScalingStatValues", "#239 heirloom stat scaling"),
     ("ScreenEffect", "#243 screen effects"),
-    ("SkillCostsData", "#240 skill training costs"),
-    ("SkillTiers", "#240 skill tiers"),
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
     ("SpellDifficulty", "#240 per-difficulty spell variants"),
     ("SpellMissileMotion", "#110 spell missile motion"),

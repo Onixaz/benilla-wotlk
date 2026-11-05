@@ -176,6 +176,7 @@ impl Plugin for UiUnitPlugin {
                 .after(crate::ui_aura::AuraEvents),
         )
         .add_systems(Update, feed_name_records.in_set(UnitFeed))
+        .add_systems(Update, taxi_benchmark.in_set(UnitFeed))
         .add_systems(Update, drain_pvp_toggles.after(UiInput))
         .net_handler(
             benilla_protocol::SessionEventKind::PowerUpdate,
@@ -527,6 +528,36 @@ fn fire_unit_combat(
             );
         }
     }
+}
+
+/// `SetTaxiBenchmarkMode`'s send, and the two events off `PLAYER_FLAGS` 0x20000's edge.
+fn taxi_benchmark(
+    script: Option<NonSendMut<UiScript>>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    commands: Res<crate::net::NetCommands>,
+    mut was_on: Local<Option<bool>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    for on in script.take_taxi_benchmark_requests() {
+        let _ = commands
+            .0
+            .send(crate::net::ClientCommand::SetTaxiBenchmarkMode { on });
+    }
+    let on = self_q
+        .iter()
+        .next()
+        .is_some_and(|s| s.0.player_flags() & 0x20000 != 0);
+    if was_on.is_some_and(|was| was != on) {
+        let event = if on {
+            "ENABLE_TAXI_BENCHMARK"
+        } else {
+            "DISABLE_TAXI_BENCHMARK"
+        };
+        script.fire_event(event, vec![]);
+    }
+    *was_on = Some(on);
 }
 
 /// Mirror the name cache's changed players into the VM, every answered one into a new VM, and

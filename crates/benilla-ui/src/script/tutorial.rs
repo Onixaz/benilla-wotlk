@@ -4,7 +4,7 @@
 //! bit of both banks and sends `CMSG_TUTORIAL_CLEAR`; `ResetTutorials()` clears them and sends
 //! `CMSG_TUTORIAL_RESET`. None of the three writers returns a value.
 
-use mlua::{Lua, Value};
+use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{flag, number_arg};
 
@@ -18,6 +18,11 @@ impl super::UiScript {
     /// The acknowledged bank's bytes, `None` before `SMSG_TUTORIAL_FLAGS`.
     pub fn set_tutorial_bank(&mut self, bank: Option<Vec<u8>>) {
         set_field!(self, tutorial_bank, bank);
+    }
+
+    /// The completed list, in completion order, `id + 1` each.
+    pub fn set_tutorials_completed(&mut self, completed: Vec<u32>) {
+        set_field!(self, tutorials_completed, completed);
     }
 
     /// `FlagTutorial(n)` calls since the last drain, as 0-based ids (`n − 1`).
@@ -105,6 +110,75 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             model.tutorial_triggers.push(id as u32);
             Ok(())
+        })?,
+    )?;
+
+    // `IsTutorialFlagged(n)` (`0x5307a0`): bank B's bit, 1 or nil; nothing past the sixty.
+    g.set(
+        "IsTutorialFlagged",
+        lua.create_function(|lua, n: Value| {
+            let n = number_arg(lua, n, "Usage: Trigger(\"tutorial\")")?;
+            let Ok(id) = u32::try_from(n.wrapping_sub(1)) else {
+                return Ok(MultiValue::new());
+            };
+            if id >= TRIGGER_IDS as u32 {
+                return Ok(MultiValue::new());
+            }
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let set = model
+                .tutorial_bank
+                .as_ref()
+                .and_then(|b| b.get((id >> 3) as usize))
+                .is_some_and(|byte| byte & (1 << (id & 7)) != 0);
+            Ok(MultiValue::from_vec(vec![flag(set)]))
+        })?,
+    )?;
+
+    // `GetNextCompleatedTutorial(n)` (`0x5301d0`): the tutorial completed after `n`; none at the
+    // end, or for a next of 60, the end's own marker.
+    g.set(
+        "GetNextCompleatedTutorial",
+        lua.create_function(|lua, n: Value| {
+            let n = number_arg(lua, n, "Usage: GetNextCompleatedTutorial(\"tutorial\")")?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let list = &model.tutorials_completed;
+            let next = list
+                .iter()
+                .position(|&id| id as i32 == n)
+                .and_then(|i| list.get(i + 1))
+                .copied()
+                .filter(|&id| id != TRIGGER_IDS as u32);
+            Ok(MultiValue::from_vec(
+                next.map(|id| Value::Integer(i64::from(id)))
+                    .into_iter()
+                    .collect(),
+            ))
+        })?,
+    )?;
+
+    // `GetPrevCompleatedTutorial(n)` (`0x530240`): the tutorial completed before `n`.
+    g.set(
+        "GetPrevCompleatedTutorial",
+        lua.create_function(|lua, n: Value| {
+            let n = number_arg(lua, n, "Usage: GetPrevCompleatedTutorial(\"tutorial\")")?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let list = &model.tutorials_completed;
+            let prev = list
+                .iter()
+                .position(|&id| id as i32 == n)
+                .and_then(|i| i.checked_sub(1))
+                .map(|i| list[i]);
+            Ok(MultiValue::from_vec(
+                prev.map(|id| Value::Integer(i64::from(id)))
+                    .into_iter()
+                    .collect(),
+            ))
         })?,
     )?;
 

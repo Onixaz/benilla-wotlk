@@ -27,6 +27,8 @@ fn skill(
         category_order,
         description: String::new(),
         abandonable: false,
+        rank_costs: Default::default(),
+        tier_cost: 0,
         mono,
     }
 }
@@ -62,6 +64,7 @@ fn shown_skills_page_with(measurer: Option<Box<dyn benilla_ui::script::TextMeasu
         }),
     );
     s.set_skills(SkillsState {
+        points: 0,
         entries: vec![
             skill(50, "Beast Mastery", 300, 300, true, (7, "Class Skills", 2)),
             skill(95, "Defense", 12, 60, false, (6, "Weapon Skills", 5)),
@@ -233,7 +236,7 @@ fn a_real_hunters_block_lists_exactly_what_the_reference_client_lists() {
         .collect();
 
     let mut s = UiScript::new().unwrap();
-    s.set_skills(SkillsState { entries });
+    s.set_skills(SkillsState { entries, points: 0 });
 
     let n = s.eval::<i64>("return GetNumSkillLines()").unwrap();
     let rows: Vec<(String, bool)> = (1..=n)
@@ -524,7 +527,7 @@ fn the_list_reaches_its_last_row_at_the_bars_end() {
             (10, "Languages", 8),
         ));
     }
-    s.set_skills(SkillsState { entries });
+    s.set_skills(SkillsState { entries, points: 0 });
     s.run(r#"ToggleCharacter("SkillFrame")"#).unwrap();
     s.resolve();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());

@@ -46,6 +46,22 @@ pub(crate) fn apply_script_calls(
             ScriptCall::TargetLastTarget => appliers.p0().target_last_target(),
             ScriptCall::ClearTarget => appliers.p0().clear_target(),
             ScriptCall::AttackTarget => appliers.p7().attack_target(),
+            ScriptCall::StartAttack { unit: None, .. } => appliers.p7().start_attack(),
+            ScriptCall::StartAttack {
+                unit: Some(unit),
+                exact,
+            } => {
+                let named = appliers.p0().attack_unit(&unit, exact);
+                if appliers.p7().may_start() {
+                    appliers.p0().select_for_attack(named);
+                    appliers.p7().swing_at_selection();
+                }
+            }
+            ScriptCall::StopAttack => appliers.p7().stop_attack(),
+            ScriptCall::Dismount => crate::ui_shapeshift::dismount(&mut appliers.p3()),
+            ScriptCall::CancelShapeshiftForm => {
+                crate::ui_shapeshift::cancel_form(&mut appliers.p3());
+            }
             ScriptCall::SpellTargetUnit(token) => appliers.p1().spell_target_unit(&token),
             ScriptCall::SpellStopTargeting => appliers.p1().stop_targeting(),
             ScriptCall::PlaceGlyph { socket, verdict } => {

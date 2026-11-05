@@ -196,7 +196,17 @@ pub(crate) fn drain_pet_book(
     let Some(mut script) = script else {
         return;
     };
-    let autocasts = script.take_pet_spell_autocasts();
+    let autocasts = script
+        .take_pet_spell_autocasts()
+        .into_iter()
+        .map(|spell_id| (spell_id, None))
+        .chain(
+            script
+                .take_pet_spell_autocast_sets()
+                .into_iter()
+                .map(|(spell_id, on)| (spell_id, Some(on))),
+        )
+        .collect::<Vec<_>>();
     if autocasts.is_empty() {
         return;
     }
@@ -205,12 +215,12 @@ pub(crate) fn drain_pet_book(
         debug!("ui_pet_book: dropping queued pet book intents — the bar is gone");
         return;
     }
-    for spell_id in autocasts {
+    for (spell_id, state) in autocasts {
         if !pet.actions_usable(&bar) {
             debug!("ui_pet_book: autocast {spell_id} refused, the pet's actions are not usable");
             continue;
         }
-        let Some(on) = flip_autocast(&mut bar.spells, spell_id) else {
+        let Some(on) = set_autocast(&mut bar.spells, spell_id, state) else {
             continue;
         };
         // The reference's event signal `0x161`: the bar repaints before the packet leaves, and the
@@ -225,19 +235,21 @@ pub(crate) fn drain_pet_book(
     }
 }
 
-/// The reference's local half: flip bit 30 of the spell's raw word, then copy it onto every bar
+/// The reference's local half: set bit 30 of the spell's raw word, `None` flipping it, then copy it
+/// onto every bar
 /// slot whose type and action match under `& 0x3FFFFFFF`, or the bar's sparkle stays stale until
 /// the next `SMSG_PET_SPELLS`. `None` where the reference aborts unsent: the word is not
 /// autocast-allowed, as a passive's and a command token's are not.
-fn flip_autocast(
+fn set_autocast(
     spells: &mut benilla_protocol::messages::PetSpells,
     spell_id: u32,
+    state: Option<bool>,
 ) -> Option<bool> {
     let word = spells
         .spells
         .iter_mut()
         .find(|w| w.action() == spell_id && w.autocast_allowed())?;
-    let on = !word.autocast_on();
+    let on = state.unwrap_or(!word.autocast_on());
     *word = word.with_autocast(on);
     let action = word.packed & 0x3FFF_FFFF;
     for slot in &mut spells.bar {
@@ -293,7 +305,7 @@ mod tests {
         spells.bar[4] = word(PET_ACT_DISABLED, CLAW);
         spells.bar[5] = word(PET_ACT_DISABLED, 2649);
 
-        assert_eq!(flip_autocast(&mut spells, CLAW), Some(true));
+        assert_eq!(set_autocast(&mut spells, CLAW, None), Some(true));
         assert!(spells.spells[0].autocast_on(), "the book word flipped");
         assert!(spells.bar[4].autocast_on(), "…and so did the bar slot");
         assert!(
@@ -302,18 +314,18 @@ mod tests {
         );
 
         // Flipping back reverses both.
-        assert_eq!(flip_autocast(&mut spells, CLAW), Some(false));
+        assert_eq!(set_autocast(&mut spells, CLAW, None), Some(false));
         assert!(!spells.spells[0].autocast_on());
         assert!(!spells.bar[4].autocast_on());
 
         // A word not autocast-allowed aborts before anything is written.
         assert_eq!(
-            flip_autocast(&mut spells, 3025),
+            set_autocast(&mut spells, 3025, None),
             None,
             "a passive cannot be toggled"
         );
         assert_eq!(
-            flip_autocast(&mut spells, 99),
+            set_autocast(&mut spells, 99, None),
             None,
             "nor can a spell the pet lacks"
         );
@@ -331,7 +343,7 @@ mod tests {
             spells.spells[0].autocast_on(),
             "ACT_ENABLED means bit 30 is set"
         );
-        assert_eq!(flip_autocast(&mut spells, GROWL), Some(false));
+        assert_eq!(set_autocast(&mut spells, GROWL, None), Some(false));
         assert!(!spells.spells[0].autocast_on());
         assert!(
             spells.spells[0].autocast_allowed(),

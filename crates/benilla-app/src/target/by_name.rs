@@ -199,6 +199,8 @@ enum Filter {
     AcceptAll,
     /// Mode 2, the assist check and `UNIT_FIELD_HEALTH > 0`: `/follow`.
     AssistableAlive,
+    /// Mode 1, the attack check and alive: `StartAttack`'s name.
+    AttackableAlive,
 }
 
 impl ByNameScan<'_, '_> {
@@ -224,6 +226,32 @@ impl ByNameScan<'_, '_> {
             store,
             self_store,
         ) >= 4
+    }
+
+    /// The mode-1 arm: the reads-dead triple, then the attack check.
+    fn attackable_alive(&self, store: Option<&ObjectStore>) -> bool {
+        if store.is_some_and(|s| s.0.unit_reads_dead()) {
+            return false;
+        }
+        let self_store = self.self_q.single().ok().and_then(|(_, _, _, s)| s);
+        super::can_attack(
+            store,
+            self.factions.as_deref(),
+            &self.reputations,
+            super::party_of(self.group.as_deref()),
+            self_store,
+        )
+    }
+
+    /// The closest attackable unit by name, `StartAttack`'s search (`0x523090`).
+    pub(super) fn attackable(&self, name: &str, exact: bool) -> Option<(Entity, u64)> {
+        let mode = if exact {
+            Match::ExactOnly
+        } else {
+            Match::PrefixOk
+        };
+        self.resolve(name, NameSearch::AnyUnit, Filter::AttackableAlive, mode)
+            .map(|(entity, guid, _)| (entity, guid))
     }
 
     /// The follow start gate ([`follow_refusal_key`]): the key of the first refusal, for the UI's
@@ -267,7 +295,11 @@ impl ByNameScan<'_, '_> {
             query,
             search,
             mode,
-            |store| filter != Filter::AssistableAlive || self.assistable_alive(store),
+            |store| match filter {
+                Filter::AcceptAll => true,
+                Filter::AssistableAlive => self.assistable_alive(store),
+                Filter::AttackableAlive => self.attackable_alive(store),
+            },
         )
     }
 }

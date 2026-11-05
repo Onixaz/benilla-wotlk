@@ -147,6 +147,8 @@ pub(crate) struct Tutorials {
     pushes: Vec<(u32, u8, u32)>,
     /// `showTutorials` off: a trigger flags its tutorial seen, with no popup (`0x530871`).
     muted: bool,
+    /// The completed list (`0xc08c78`), `id + 1` each in completion order, sixty at most.
+    completed: Vec<u32>,
 }
 
 impl Tutorials {
@@ -213,6 +215,9 @@ impl Tutorials {
         if let Some(bank_a) = self.fire_once.as_mut() {
             set_bank_bit(bank_a, id);
         }
+        if !self.completed.contains(&(id + 1)) && self.completed.len() < 60 {
+            self.completed.push(id + 1);
+        }
         self.sends.push(TutorialSend::Flag(id));
     }
 
@@ -236,6 +241,7 @@ impl Tutorials {
         {
             bank.iter_mut().for_each(|b| *b = 0);
         }
+        self.completed.clear();
         self.sends.push(TutorialSend::Reset);
     }
 
@@ -308,6 +314,7 @@ fn feed_tutorials(
     items: Res<crate::items::Items>,
     mut sounds: ResMut<crate::sound::MessageSounds>,
     mut told: Local<crate::ui_script::VmMemo<Option<Vec<u8>>>>,
+    mut told_completed: Local<crate::ui_script::VmMemo<Vec<u32>>>,
 ) {
     let now = Instant::now();
     for ask in asks.read() {
@@ -358,6 +365,11 @@ fn feed_tutorials(
     if *told != tutorials.acknowledged {
         told.clone_from(&tutorials.acknowledged);
         script.set_tutorial_bank(tutorials.acknowledged.clone());
+    }
+    let told_completed = told_completed.get(&script);
+    if *told_completed != tutorials.completed {
+        told_completed.clone_from(&tutorials.completed);
+        script.set_tutorials_completed(tutorials.completed.clone());
     }
 }
 
@@ -448,9 +460,15 @@ fn on_world_enter(
     mut entered: MessageReader<EnteredWorldMessage>,
     mut tutorials: ResMut<Tutorials>,
     mut cascade: ResMut<WorldEnterCascade>,
+    cvars: Option<Res<crate::cvars::Cvars>>,
 ) {
     for e in entered.read() {
         tutorials.world_enter();
+        // `0x5303a0`: the completed list comes back out of `flaggedTutorials`.
+        if let Some(value) = cvars.as_ref().and_then(|c| c.get("flaggedTutorials")) {
+            tutorials.completed = benilla_ui::script::decode_tracked(value);
+            tutorials.completed.truncate(60);
+        }
         if let Some(bytes) = &e.tutorial_flags {
             tutorials.apply_flags(bytes);
         }
@@ -563,8 +581,19 @@ fn watch_windows(
     watch.raid = Some(raid);
 }
 
-fn on_world_leave(mut tutorials: ResMut<Tutorials>, mut cascade: ResMut<WorldEnterCascade>) {
+fn on_world_leave(
+    mut tutorials: ResMut<Tutorials>,
+    mut cascade: ResMut<WorldEnterCascade>,
+    cvars: Option<ResMut<crate::cvars::Cvars>>,
+) {
     tutorials.world_leave();
+    // `0x530300`: the list goes back into `flaggedTutorials`.
+    if let Some(mut cvars) = cvars {
+        cvars.set(
+            "flaggedTutorials",
+            &benilla_ui::script::encode_tracked(&tutorials.completed),
+        );
+    }
     cascade.armed = false;
     cascade.entered_at = None;
 }

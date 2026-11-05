@@ -164,6 +164,11 @@ impl super::UiScript {
 
     /// Drain the spell ids `ToggleSpellAutocast` queued: `CMSG_PET_SPELL_AUTOCAST` (0x2F3) names a
     /// spell id, where the pet bar's toggle sends `CMSG_PET_SET_ACTION`.
+    pub fn take_pet_spell_autocast_sets(&mut self) -> Vec<(u32, bool)> {
+        drain_field!(self, pet_spell_autocast_sets)
+    }
+
+    /// Drain the pet book's autocast toggles since the last call.
     pub fn take_pet_spell_autocasts(&mut self) -> Vec<u32> {
         drain_field!(self, pet_spell_autocasts)
     }
@@ -235,7 +240,7 @@ pub(super) fn is_pet_book(book_type: &str) -> bool {
 /// index `trunc(arg1 - 1)` in `[0, 0x400)`, else the binding raises `Invalid spell slot in <Verb>`.
 /// Answers the 1-based id and the normalised book type.
 fn spell_slot_args(id: Value, book_type: Value, verb: &str) -> mlua::Result<(u32, String)> {
-    let invalid = || mlua::Error::runtime(format!("Invalid spell slot in {verb}"));
+    let invalid = || mlua::Error::runtime(format!("{verb}(): Invalid spell slot"));
     // `lua_isnumber` + `lua_tonumber`: a numeric string is a number.
     let index = match id {
         Value::Integer(i) => i as f64,
@@ -756,6 +761,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+
+    // EnableSpellAutocast(id, "pet") (`0x541140`) and DisableSpellAutocast (`0x5411a0`): the toggle
+    // with the state given.
+    for (verb, on) in [
+        ("EnableSpellAutocast", true),
+        ("DisableSpellAutocast", false),
+    ] {
+        g.set(
+            verb,
+            lua.create_function(move |lua, (id, book_type): (Value, Value)| {
+                let (id, book_type) = spell_slot_args(id, book_type, verb)?;
+                let mut model = crate::script::model_mut_of(lua);
+                let spell_id = book_slot(&model, id, &book_type)
+                    .filter(|_| is_pet_book(&book_type))
+                    .map(|s| s.spell_id);
+                if let Some(spell_id) = spell_id {
+                    model.pet_spell_autocast_sets.push((spell_id, on));
+                }
+                Ok(())
+            })?,
+        )?;
+    }
 
     // CastSpellByName(name [, target]) (`0x540310`), what `SlashCmdList["CAST"]` and the secure
     // `spell` action call: the name is a string or `Usage:` (`0x54032c`), the target a unit token

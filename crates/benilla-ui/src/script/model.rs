@@ -369,6 +369,8 @@ pub(crate) struct Model {
     pub(crate) guild_recruitment_changed: bool,
     /// `DoEmote` calls queued.
     pub(crate) emote_requests: Vec<super::chat_misc::EmoteRequest>,
+    /// `SetTaxiBenchmarkMode` calls queued.
+    pub(crate) taxi_benchmark_requests: Vec<bool>,
     /// `RandomRoll` calls queued.
     pub(crate) roll_requests: Vec<(u32, u32)>,
     /// The recorded chat lines and the complaints filed from them.
@@ -543,6 +545,8 @@ pub(crate) struct Model {
     pub(crate) macro_item_icon_source: Option<MacroIconSource>,
     /// `ToggleSpellAutocast` ids for `CMSG_PET_SPELL_AUTOCAST` (`0x2F3`), which names a spell.
     pub(crate) pet_spell_autocasts: Vec<u32>,
+    /// `EnableSpellAutocast` and `DisableSpellAutocast` calls queued.
+    pub(crate) pet_spell_autocast_sets: Vec<(u32, bool)>,
     /// An auto-repeat or cast that `SpellStopCasting()` can stop, not a channel. Its 1 or nil
     /// matters: the ESC chain (`UIParent.lua:1489`) reaches `CloseAllWindows()` on nil.
     pub(crate) casting: bool,
@@ -607,6 +611,8 @@ pub(crate) struct Model {
     pub(crate) battlefield_position_requests: std::cell::Cell<u32>,
     /// Acknowledged tutorials, `None` before `SMSG_TUTORIAL_FLAGS`; all `TutorialsEnabled()` reads.
     pub(crate) tutorial_bank: Option<Vec<u8>>,
+    /// The completed tutorials, in completion order, `id + 1` each.
+    pub(crate) tutorials_completed: Vec<u32>,
     /// `FlagTutorial(n)` calls, 0-based and in range.
     pub(crate) tutorial_flag_requests: Vec<u32>,
     /// `TriggerTutorial(n)` calls, 0-based and in range.
@@ -1083,6 +1089,11 @@ pub(crate) struct Model {
     pub(crate) skills_selected: Option<u32>,
     /// `AbandonSkill` ids for `CMSG_UNLEARN_SKILL`; nothing changes until the server's update.
     pub(crate) skill_abandons: Vec<u32>,
+    /// `AddSkillUp`'s pending points by skill line.
+    pub(crate) skill_ups: HashMap<u32, u32>,
+    /// The cost of the pending points (`[0xc5dcd4]`).
+    pub(crate) skill_up_points: i32,
+    pub(crate) skill_requests: Vec<super::skills::SkillRequest>,
 
     /// The reputation pane's snapshot, and the client's faction list and header tree over it.
     pub(crate) reputation: reputation::ReputationState,
@@ -1410,6 +1421,7 @@ impl Model {
             guild_recruitment_changed: false,
             emote_requests: Vec::new(),
             roll_requests: Vec::new(),
+            taxi_benchmark_requests: Vec::new(),
             console_lines: Vec::new(),
             console_prints: Vec::new(),
             chat_records: Default::default(),
@@ -1485,6 +1497,7 @@ impl Model {
             macro_item_icons: Vec::new(),
             macro_item_icon_source: None,
             pet_spell_autocasts: Vec::new(),
+            pet_spell_autocast_sets: Vec::new(),
             casting: false,
             spell_targeting: false,
             spell_targetable_units: HashSet::new(),
@@ -1515,6 +1528,7 @@ impl Model {
             battlefield_icon_scale: 1.0,
             battlefield_position_requests: std::cell::Cell::new(0),
             tutorial_bank: None,
+            tutorials_completed: Vec::new(),
             tutorial_flag_requests: Vec::new(),
             tutorial_triggers: Vec::new(),
             tutorial_clears: 0,
@@ -1792,6 +1806,9 @@ impl Model {
             skills_collapsed: HashSet::new(),
             skills_selected: None,
             skill_abandons: Vec::new(),
+            skill_ups: HashMap::new(),
+            skill_up_points: 0,
+            skill_requests: Vec::new(),
             reputation: reputation::ReputationState::default(),
             reputation_tree: reputation::FactionTree::default(),
             reputation_sends: Vec::new(),
