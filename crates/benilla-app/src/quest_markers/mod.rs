@@ -295,9 +295,10 @@ fn build_markers(
             .any(|s| s.billboard.is_none())
             .then(|| benilla_world::doodad_anim::spawn_anim_host(&mut commands, model, seat_tf))
             .flatten();
-        // Allocated eagerly: this lane has no draw gate to promote lazily. Slot 0 (table full)
-        // falls back to the static mesh below.
-        let marker_slot = host.as_ref().map_or(0, |h| {
+        // Allocated eagerly: this lane has no draw gate to promote lazily. Slot 0 (table full, or
+        // only the bodies' reserve left) falls back to the static mesh below.
+        let room = palettes.room_beyond_bodies();
+        let marker_slot = host.as_ref().filter(|_| room).map_or(0, |h| {
             benilla_world::rig_palette::RigSkin::allocate_bones(
                 &mut palettes,
                 h.bones(),

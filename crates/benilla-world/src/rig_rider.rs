@@ -9,6 +9,11 @@
 //!
 //! The entity keeps its absolute `GlobalTransform`: collision, picking, the item glow and the
 //! bowstring read it; only the rendered vertices take this route.
+//!
+//! A rigid rider owns no slot: its frame is one rider row of its wearer's slot, after the body's
+//! bones, so worn gear costs the slot table nothing. 12340 has no shared table to fill: each model
+//! uploads its own bones per draw (`0x8203b0`) and an attached model composes off its parent's
+//! attachment in view space (`0x82e550`, `0x82e140`).
 
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
@@ -16,8 +21,9 @@ use bevy::prelude::*;
 use crate::rig_anim::RigPose;
 use crate::rig_palette::{rebase_origin, RigPalettes, RigSkin};
 
-/// An attached model placed from a bone of `host`'s rig, in that rig's frame; it sits beside the
-/// [`crate::rig_palette::RigSkin`] that owns its palette slot, so both go on one despawn.
+/// An attached model placed from a bone of `host`'s rig, in that rig's frame; with no `row` it
+/// sits beside the [`crate::rig_palette::RigSkin`] that owns its palette slot, so both go on one
+/// despawn.
 #[derive(Component, Clone, Copy)]
 pub struct RigRider {
     /// The rig this model hangs off.
@@ -27,8 +33,11 @@ pub struct RigRider {
     pub bone: u16,
     /// The attachment point's own offset from that bone, model space.
     pub local: Vec3,
-    /// The palette slot written; a bind-pose rider repeats one frame into every row.
+    /// The palette slot written; a bind-pose rider of its own slot repeats one frame into every
+    /// row.
     pub slot: u16,
+    /// A rigid rider's row in its wearer's slot `slot` ([`benilla_assets::RIDER_JOINT_BIT`]).
+    pub row: Option<u16>,
 }
 
 /// Writes every rider's frame, with the palette's writers ([`crate::rig_palette::plugin`]): after
@@ -76,13 +85,16 @@ pub(crate) fn write_rig_riders(
             .filter(|own| !own.model.is_empty())
             .zip(skins.get(entity).ok())
             .and_then(|(own, skin)| Some((own, skin, ibps.get(&skin.ibp)?)));
-        match posed {
-            Some((own, skin, ibp)) => {
+        match (posed, rider.row) {
+            (Some((own, skin, ibp)), _) => {
                 scratch.clear();
                 scratch.extend(own.model.iter().map(|m| GlobalTransform::from(frame * *m)));
                 palettes.write_rig_worlds(skin, &scratch, ibp, origin);
             }
-            None => palettes.write_rider(rider.slot, frame, origin),
+            (None, Some(row)) => {
+                palettes.write_rider_row(rider.slot, row, frame, origin);
+            }
+            (None, None) => palettes.write_rider(rider.slot, frame, origin),
         }
     }
 }
@@ -132,6 +144,7 @@ mod tests {
                 bone: 1,
                 local,
                 slot,
+                row: None,
             },
         ));
         app.add_systems(Update, write_rig_riders);
@@ -203,6 +216,7 @@ mod tests {
                 bone: 1,
                 local: Vec3::ZERO,
                 slot,
+                row: None,
             },
         ));
         app.add_systems(Update, write_rig_riders);
@@ -231,6 +245,66 @@ mod tests {
         assert!(
             row1.abs_diff_eq(Vec3::new(0.0, 1.4, 0.0) + MUZZLE, 1.0e-4),
             "row 1 is that frame composed with the prop's bone: {row1:?}"
+        );
+    }
+
+    /// A rigid rider takes no slot: it writes its rider row of the wearer's slot, measured from the
+    /// wearer's origin, and leaves the body's own rows alone.
+    #[test]
+    fn a_rigid_rider_writes_its_row_of_the_wearers_slot() {
+        let mut app = App::new();
+        app.init_resource::<RigPalettes>();
+        app.init_resource::<Assets<SkinnedMeshInverseBindposes>>();
+        const AT: Vec3 = Vec3::new(-9451.0, 42.0, 61.0);
+        let unit = app
+            .world_mut()
+            .spawn(GlobalTransform::from(Transform::from_translation(AT)))
+            .id();
+        let mut pose = crate::testing::test_rig_pose(unit, &[Vec3::ZERO, Vec3::new(0.0, 1.4, 0.0)]);
+        pose.compose();
+        let body = {
+            let mut palettes = app.world_mut().resource_mut::<RigPalettes>();
+            RigSkin::allocate_body(&mut palettes, 2, 8, Handle::default()).unwrap()
+        };
+        let slot = body.slot;
+        app.world_mut().entity_mut(unit).insert((pose, body));
+        let local = Vec3::new(0.05, 0.0, 0.02);
+        app.world_mut().spawn(RigRider {
+            host: unit,
+            bone: 1,
+            local,
+            slot,
+            row: Some(3),
+        });
+        let slots_before = app.world().resource::<RigPalettes>().occupancy().0;
+        app.add_systems(Update, write_rig_riders);
+        app.update();
+
+        let palettes = app.world().resource::<RigPalettes>();
+        assert_eq!(
+            palettes.occupancy().0,
+            slots_before,
+            "the rider took no slot"
+        );
+        let (origin, row) = palettes
+            .rider_row_placement(slot, 3)
+            .expect("the row was written");
+        assert_eq!(origin, AT, "measured from the wearer's own origin");
+        assert!(
+            row.abs_diff_eq(Vec3::new(0.0, 1.4, 0.0) + local, 1.0e-5),
+            "row 3 holds the attach frame: {row:?}"
+        );
+        for bone in 0..2 {
+            let (_, t) = palettes.row_placement(slot, bone).unwrap();
+            assert_eq!(
+                t,
+                Vec3::ZERO,
+                "body bone {bone} is not the rider's to write"
+            );
+        }
+        assert!(
+            palettes.rider_row_placement(slot, 8).is_none(),
+            "8 rows: 0..=7"
         );
     }
 

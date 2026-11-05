@@ -93,8 +93,9 @@ struct WowLight {
     // The interior-prop SH probes, 7 rows per slot (`MAX_PROP_PROBES` = 8192 slots). Only this
     // shader declares this tail; the other shaders bind the same buffer by its prefix.
     prop_probes: array<vec4<f32>, 57344>,
-    // Per rig slot (sizes mirrored in rig_palette.rs): the base bone index into `palettes`, whose
-    // 3 rows per bone are `rig_from_joint × inverse_bindpose` from the rig's own origin.
+    // Per rig slot (sizes mirrored in rig_palette.rs): the base bone index into `palettes` and the
+    // body's bone count (`wow_rig_row`); 3 rows a bone, `rig_from_joint × inverse_bindpose` from
+    // the rig's own origin.
     rig_table: array<u32, 2048>,
     // Per rig slot: the M2 body tint (`model+0x184/188/18c`) packed `0xFFRRGGBB` like the
     // reference's node value (`param | 0xff000000`); 0 is identity.
@@ -266,6 +267,13 @@ struct WowVertex {
 }
 
 #ifdef WOW_RIG_SKIN
+// A slot's table word holds the base bone (bits 0..=16) and the body's bone count above it; a joint
+// with bit 15 names a rider row after the body's bones (model.rs `RIDER_JOINT_BIT`).
+fn wow_rig_row(word: u32, joint: u32) -> u32 {
+    let base = word & 0x1ffffu;
+    return select(base + joint, base + (word >> 17u) + (joint & 0x7fffu), joint >= 0x8000u);
+}
+
 fn wow_rig_slot(instance_index: u32) -> u32 {
     return (mesh_functions::get_tag(instance_index) >> 19u) & 0x7ffu;
 }
@@ -273,11 +281,11 @@ fn wow_rig_slot(instance_index: u32) -> u32 {
 // Blends the four weighted bones' palette rows into `rig_from_local`, which replaces the mesh's
 // world matrix like Bevy's `skin_model`; its translation is relative to `rig_origin[slot]`.
 fn wow_skin_model(instance_index: u32, indices: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
-    let base = wow_light.rig_table[wow_rig_slot(instance_index)];
-    let b0 = 3u * (base + indices.x);
-    let b1 = 3u * (base + indices.y);
-    let b2 = 3u * (base + indices.z);
-    let b3 = 3u * (base + indices.w);
+    let word = wow_light.rig_table[wow_rig_slot(instance_index)];
+    let b0 = 3u * wow_rig_row(word, indices.x);
+    let b1 = 3u * wow_rig_row(word, indices.y);
+    let b2 = 3u * wow_rig_row(word, indices.z);
+    let b3 = 3u * wow_rig_row(word, indices.w);
     let r0 = weights.x * wow_light.palettes[b0]
         + weights.y * wow_light.palettes[b1]
         + weights.z * wow_light.palettes[b2]

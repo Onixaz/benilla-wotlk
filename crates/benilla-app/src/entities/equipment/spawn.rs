@@ -91,6 +91,45 @@ impl SeatWriters<'_, '_> {
     }
 }
 
+/// Each rigid item's meshes, one per (geometry, rider row): every vertex on that row of its
+/// wearer's slot. A geometry held weakly hits only while its model is resident.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(in crate::entities) struct RiderMeshes<'w, 's> {
+    meshes: ResMut<'w, Assets<Mesh>>,
+    cache: Local<'s, RiderMeshCache>,
+}
+
+/// (geometry address, rider row) → the geometry, held weakly, and its rigid mesh.
+type RiderMeshCache = std::collections::HashMap<
+    (usize, u16),
+    (
+        std::sync::Weak<benilla_formats::RenderSubmesh>,
+        Handle<Mesh>,
+    ),
+>;
+
+impl RiderMeshes<'_, '_> {
+    /// The rigid mesh of `geometry` on rider row `row`, built on a miss.
+    fn mesh(
+        &mut self,
+        geometry: &std::sync::Arc<benilla_formats::RenderSubmesh>,
+        row: u16,
+    ) -> Handle<Mesh> {
+        let key = (std::sync::Arc::as_ptr(geometry) as usize, row);
+        if let Some((_, h)) = self.cache.get(&key).filter(|(g, _)| g.strong_count() > 0) {
+            return h.clone();
+        }
+        // A miss is a new item's first spawn: drop the meshes of models that have unloaded.
+        self.cache.retain(|_, (g, _)| g.strong_count() > 0);
+        let h = self
+            .meshes
+            .add(benilla_assets::submesh_to_rigid_mesh(geometry, row));
+        self.cache
+            .insert(key, (std::sync::Arc::downgrade(geometry), h.clone()));
+        h
+    }
+}
+
 /// Spawn each changed slot's item model under its attachment's joint once the model has built. The
 /// diff is per slot, and a new attach point alone moves the root: the reference's sheath paths
 /// touch only the weapon and quiver ids and stow a melee weapon by re-parenting its model, so the
@@ -122,6 +161,7 @@ pub(in crate::entities) fn attach_held_items(
     // A move keeps the item alive but changes the bone its palette frame is composed from.
     mut movers: Query<&mut benilla_world::rig_rider::RigRider>,
     mut palettes: ResMut<benilla_world::rig_palette::RigPalettes>,
+    mut rigid: RiderMeshes,
 ) {
     let Some(held) = held else {
         return;
@@ -218,6 +258,7 @@ pub(in crate::entities) fn attach_held_items(
                 spawn_slot(
                     &mut commands,
                     &mut palettes,
+                    &mut rigid,
                     &ctx,
                     pose.as_deref_mut(),
                     &held,
@@ -243,6 +284,7 @@ pub(in crate::entities) fn attach_held_items(
 fn spawn_slot(
     commands: &mut Commands,
     palettes: &mut benilla_world::rig_palette::RigPalettes,
+    rigid: &mut RiderMeshes,
     ctx: &WearerCtx,
     pose: Option<&mut benilla_world::rig_anim::RigPose>,
     held: &ItemDisplays,
@@ -327,6 +369,7 @@ fn spawn_slot(
         .inverse_bindposes
         .as_ref()
         .filter(|_| dm.welds_billboard() && !dm.skeleton.joints.is_empty())
+        .filter(|_| palettes.room_beyond_bodies())
         .and_then(|ibp| {
             let joints =
                 benilla_world::rig_palette::spawn_joints(commands, root, root, &dm.skeleton);
@@ -348,11 +391,31 @@ fn spawn_slot(
         });
     // The rider: an item at bind pose draws through one palette frame composed in the wearer's rig
     // frame, never an absolute f32 world matrix, whose ~9500 yd sums fall on a 0.98 mm grid and
-    // jitter. A boneless display, or a full palette, keeps the static mesh.
-    let rider = match item_rig {
-        Some(_) => None,
+    // jitter. A rigid one is a row of the wearer's own slot, its attach slot's, and takes no slot.
+    let rigid_row = (item_rig.is_none()
+        && !flexes
+        && ctx.rig_slot != 0
+        && (slot_idx as u32) < palettes.rider_rows(ctx.rig_slot)
+        && parts.iter().any(|p| p.billboard.is_none()))
+    .then_some(slot_idx as u16);
+    if let Some(row) = rigid_row {
+        commands
+            .entity(root)
+            .insert(benilla_world::rig_rider::RigRider {
+                host: entity,
+                bone,
+                local: offset,
+                slot: ctx.rig_slot,
+                row: Some(row),
+            });
+    }
+    // Otherwise its own slot, past the bodies' reserve; a boneless display, or no room, keeps the
+    // static mesh.
+    let rider = match (item_rig, rigid_row) {
+        (Some(_), _) | (None, Some(_)) => None,
         // Only when some drawn part has a skinned twin to index the slot.
-        None => (!dm.skeleton.joints.is_empty()
+        (None, None) => (!dm.skeleton.joints.is_empty()
+            && palettes.room_beyond_bodies()
             && parts
                 .iter()
                 .any(|p| p.billboard.is_none() && p.skinned_mesh.is_some()))
@@ -379,6 +442,7 @@ fn spawn_slot(
                     bone,
                     local: offset,
                     slot,
+                    row: None,
                 },
             ));
             slot
@@ -420,10 +484,14 @@ fn spawn_slot(
             let set = item_fade_set(part);
             let effective = PartFade::resolve(joined, &set);
             let (init_mat, tag_alpha) = effective.seed(&set, now);
-            // An item with a palette slot draws every part's skinned twin, a slotless one `mesh`.
-            let skinned = item_rig.or(rider).and(part.skinned_mesh.as_ref());
+            // A rigid item draws its rider-row mesh, one with a palette slot every part's skinned
+            // twin, a slotless one `mesh`.
+            let skinned = match rigid_row {
+                Some(row) => Some(rigid.mesh(&part.geometry, row)),
+                None => item_rig.or(rider).and(part.skinned_mesh.clone()),
+            };
             let mut child = parent.spawn((
-                Mesh3d(skinned.unwrap_or(&part.mesh).clone()),
+                Mesh3d(skinned.clone().unwrap_or_else(|| part.mesh.clone())),
                 MeshMaterial3d(init_mat),
                 Transform::default(),
                 ModelPart {
@@ -462,7 +530,7 @@ fn spawn_slot(
                 rig_slot, tag_alpha,
             )));
             // The build-time bound, as the render mesh is `RENDER_WORLD`-only; none when skinned.
-            if let (None, Some(aabb)) = (skinned, part.aabb) {
+            if let (None, Some(aabb)) = (&skinned, part.aabb) {
                 child.insert(aabb);
             }
             if let Some(lit) = part_interior_lit(
@@ -718,15 +786,18 @@ mod tests {
         wearer_slot: u16,
         item_rig: Option<u16>,
         mesh: Option<Handle<Mesh>>,
+        /// The drawn mesh's joint indices, where the test built it.
+        mesh_joints: Option<Vec<[u16; 4]>>,
         rider: Option<benilla_world::rig_rider::RigRider>,
         joints: usize,
     }
 
-    fn attach_a_shoulder(welded: bool) -> Attached {
+    fn attach_a_shoulder(welded: bool, riders: u32) -> Attached {
         const KIND: ItemModelKind = ItemModelKind::ShoulderLeft;
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.init_resource::<benilla_world::rig_palette::RigPalettes>();
+        app.init_resource::<Assets<Mesh>>();
         let mut displays = ItemDisplays::icons_for_tests(
             benilla_formats::ItemDisplayCatalog::from_displays(HashMap::new()),
         );
@@ -734,6 +805,13 @@ mod tests {
         let mut p = part(false);
         p.welded_billboard = welded;
         p.skinned_mesh = Some(skinned_handle());
+        // One triangle, so a rigid mesh built from it has vertices to read.
+        p.geometry = std::sync::Arc::new(benilla_formats::RenderSubmesh {
+            positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            uvs: vec![[0.0; 2]; 3],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        });
         dm.parts = Some(vec![p]);
         // A root and one spherical-billboard spike, as `LShoulder_Plate_PVPAlliance_A_01` has.
         dm.skeleton = benilla_assets::ModelSkeleton {
@@ -769,11 +847,12 @@ mod tests {
             attach: attach_id::SHOULDER_LEFT,
             visual: NO_GLOW,
         });
-        let skin = benilla_world::rig_palette::RigSkin::allocate_bones(
+        let skin = benilla_world::rig_palette::RigSkin::allocate_body(
             app.world_mut()
                 .resource_mut::<benilla_world::rig_palette::RigPalettes>()
                 .as_mut(),
             8,
+            riders,
             Handle::default(),
         )
         .expect("a fresh palette has room");
@@ -817,18 +896,30 @@ mod tests {
             .query::<&benilla_world::billboard::BillboardJointRig>()
             .iter(app.world())
             .count();
+        let mesh_joints = mesh.as_ref().and_then(|m| {
+            match app
+                .world()
+                .resource::<Assets<Mesh>>()
+                .get(m)?
+                .attribute(benilla_assets::ATTRIBUTE_WOW_JOINT_INDEX)?
+            {
+                bevy::mesh::VertexAttributeValues::Uint16x4(j) => Some(j.clone()),
+                _ => None,
+            }
+        });
         Attached {
             tags,
             wearer_slot,
             item_rig,
             mesh,
+            mesh_joints,
             rider,
             joints,
         }
     }
 
     fn attach_a_welded_shoulder() -> Attached {
-        attach_a_shoulder(true)
+        attach_a_shoulder(true, 0)
     }
 
     /// Attach one helm; returns the parts' tags and the wearer's slot (0 for a boneless wearer).
@@ -838,6 +929,7 @@ mod tests {
         app.add_plugins(MinimalPlugins);
         // `RigSkin`'s free hook frees the slot through this on teardown.
         app.init_resource::<benilla_world::rig_palette::RigPalettes>();
+        app.init_resource::<Assets<Mesh>>();
         let mut displays = ItemDisplays::icons_for_tests(
             benilla_formats::ItemDisplayCatalog::from_displays(HashMap::new()),
         );
@@ -946,11 +1038,40 @@ mod tests {
         assert!(a.rider.is_none(), "…and is not a rider");
     }
 
-    /// An ordinary item rides one rigid frame in the wearer's rig, never an absolute f32 world
-    /// matrix, which at ~9500 yd falls on a 0.98 mm grid.
+    /// On a wearer with rider rows, an ordinary item takes no slot: its parts draw through the
+    /// wearer's slot on the shoulder's own rider row.
+    #[test]
+    fn an_ordinary_item_rides_a_row_of_its_wearers_slot() {
+        let a = attach_a_shoulder(false, ATTACH_SLOTS as u32);
+        assert_eq!(a.item_rig, None, "no slot of its own");
+        assert_eq!(
+            benilla_world::mesh_tag::rig_of(a.tags[0]),
+            a.wearer_slot,
+            "the part indexes the WEARER's slot"
+        );
+        let rider = a.rider.expect("the item root carries the rider");
+        assert_eq!(rider.slot, a.wearer_slot);
+        assert_eq!(rider.row, Some(4), "the right shoulder's attach slot, 4");
+        assert_eq!(rider.bone, 3, "composed from the wearer's attach bone");
+        assert_ne!(
+            a.mesh,
+            Some(skinned_handle()),
+            "a rigid mesh, not the item's twin"
+        );
+        let joints = a.mesh_joints.expect("the rigid mesh carries joints");
+        let row = benilla_assets::RIDER_JOINT_BIT | 4;
+        assert!(
+            !joints.is_empty() && joints.iter().all(|j| j[0] == row),
+            "every vertex on rider row 4: {joints:?}"
+        );
+    }
+
+    /// A wearer with no rider rows (an invisible holder) gives its item a slot of its own: one
+    /// rigid frame in the wearer's rig, never an absolute f32 world matrix, which at ~9500 yd
+    /// falls on a 0.98 mm grid.
     #[test]
     fn an_ordinary_item_rides_one_rigid_frame_in_its_wearers_rig() {
-        let a = attach_a_shoulder(false);
+        let a = attach_a_shoulder(false, 0);
         let item_slot = a.item_rig.expect("an ordinary item takes a rider slot");
         assert_ne!(item_slot, a.wearer_slot, "its palette is not the wearer's");
         assert_eq!(
@@ -965,6 +1086,7 @@ mod tests {
         );
         let rider = a.rider.expect("the item root carries the rider");
         assert_eq!(rider.slot, item_slot);
+        assert_eq!(rider.row, None, "its own slot's every row");
         assert_eq!(rider.bone, 3, "composed from the wearer's attach bone");
         assert_eq!(rider.local, Vec3::ZERO, "…at the attachment point's offset");
         assert_eq!(a.joints, 0, "a rigid item builds no joint rig");
@@ -977,6 +1099,7 @@ mod tests {
             let mut app = App::new();
             app.add_plugins(MinimalPlugins);
             app.init_resource::<benilla_world::rig_palette::RigPalettes>();
+            app.init_resource::<Assets<Mesh>>();
             app.init_resource::<Assets<bevy::image::Image>>();
             let mut displays = ItemDisplays::icons_for_tests(
                 benilla_formats::ItemDisplayCatalog::from_displays(HashMap::new()),
@@ -1133,6 +1256,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.init_resource::<benilla_world::rig_palette::RigPalettes>();
+        app.init_resource::<Assets<Mesh>>();
         let mut displays = ItemDisplays::icons_for_tests(
             benilla_formats::ItemDisplayCatalog::from_displays(HashMap::new()),
         );
@@ -1224,6 +1348,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.init_resource::<benilla_world::rig_palette::RigPalettes>();
+        app.init_resource::<Assets<Mesh>>();
         let mut displays = ItemDisplays::icons_for_tests(
             benilla_formats::ItemDisplayCatalog::from_displays(HashMap::new()),
         );
@@ -1331,6 +1456,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.init_resource::<benilla_world::rig_palette::RigPalettes>();
+        app.init_resource::<Assets<Mesh>>();
         let mut displays = ItemDisplays::icons_for_tests(
             benilla_formats::ItemDisplayCatalog::from_displays(HashMap::new()),
         );
@@ -1403,6 +1529,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.init_resource::<benilla_world::rig_palette::RigPalettes>();
+        app.init_resource::<Assets<Mesh>>();
         let mut displays = ItemDisplays::icons_for_tests(
             benilla_formats::ItemDisplayCatalog::from_displays(HashMap::new()),
         );

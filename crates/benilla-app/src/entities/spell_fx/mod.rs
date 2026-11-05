@@ -196,8 +196,9 @@ pub(crate) fn attach_effect_visuals(
         })
         .collect();
     let (joints, armed) = arm_effect_rig(commands, root, dm, preferred_anim, stage);
+    // The bodies' reserve is not an effect's to take: past it the effect draws its static mesh.
     let rig_slot = match (&dm.inverse_bindposes, joints.is_empty()) {
-        (Some(ibp), false) => {
+        (Some(ibp), false) if palettes.room_beyond_bodies() => {
             benilla_world::rig_palette::RigSkin::allocate(palettes, joints.clone(), ibp.clone())
                 .map_or(0, |rig| {
                     let slot = rig.slot;

@@ -89,7 +89,8 @@ pub(super) use redress::redress_player_looks;
 /// `RigPose::anchor_for` on first use. `None` when the model has no inverse bindposes; slot 0
 /// means no palette slot, so parts draw the static bind-pose mesh. `skins` is false for a body
 /// that draws nothing of its own (an invisible holder of a visible weapon), which still needs the
-/// pose for its attachment points but takes no slot.
+/// pose for its attachment points but takes no slot. `riders` rows follow the bones, one per attach
+/// slot of a unit that wears gear, so its rigid items draw through this slot.
 fn setup_skinned_instance(
     commands: &mut Commands,
     palettes: &mut benilla_world::rig_palette::RigPalettes,
@@ -97,6 +98,7 @@ fn setup_skinned_instance(
     joints_root: Entity,
     d: &DisplayModel,
     skins: bool,
+    riders: u32,
 ) -> Option<RigBuild> {
     let ibp = d.inverse_bindposes.as_ref()?;
     let nbones = d.skeleton.joints.len();
@@ -106,9 +108,10 @@ fn setup_skinned_instance(
     // The on-replace hook frees the palette slot with the visual.
     let slot = match skins
         .then(|| {
-            benilla_world::rig_palette::RigSkin::allocate_bones(
+            benilla_world::rig_palette::RigSkin::allocate_body(
                 palettes,
                 nbones as u32,
+                riders,
                 ibp.clone(),
             )
         })
@@ -515,6 +518,7 @@ pub(super) fn attach_entity_visuals(
                         joints_root,
                         d,
                         skins,
+                        super::equipment::ATTACH_SLOTS as u32,
                     )
                 }
                 // A fresh corpse skins, or its Death pose would stand in bind pose; a bone pile, a
@@ -522,7 +526,15 @@ pub(super) fn attach_entity_visuals(
                 (EntityKind::Corpse, Some(d))
                     if !d.skeleton.joints.is_empty() && d.animations.is_some() =>
                 {
-                    setup_skinned_instance(&mut commands, &mut palettes, entity, entity, d, skins)
+                    setup_skinned_instance(
+                        &mut commands,
+                        &mut palettes,
+                        entity,
+                        entity,
+                        d,
+                        skins,
+                        0,
+                    )
                 }
                 // An animated GameObject skins like a creature. A door, button or chest
                 // (`go_animates`) runs the `GAMEOBJECT_STATE` machine; any other (a mailbox's
@@ -552,6 +564,7 @@ pub(super) fn attach_entity_visuals(
                                 entity,
                                 d,
                                 skins,
+                                0,
                             )
                         })
                         .flatten()
@@ -1005,8 +1018,15 @@ mod tests {
             let build = {
                 let mut queue = CommandQueue::default();
                 let mut commands = Commands::new(&mut queue, &world);
-                let build =
-                    setup_skinned_instance(&mut commands, &mut palettes, entity, entity, &d, skins);
+                let build = setup_skinned_instance(
+                    &mut commands,
+                    &mut palettes,
+                    entity,
+                    entity,
+                    &d,
+                    skins,
+                    0,
+                );
                 queue.apply(&mut world);
                 build
             };

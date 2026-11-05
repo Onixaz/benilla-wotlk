@@ -28,12 +28,12 @@ pub use world_assets::*;
 
 mod model;
 pub use model::{
-    bone_target_id, merged_static_mesh_faded, submesh_to_palette_billboard,
+    bone_target_id, merged_static_mesh_faded, submesh_to_palette_billboard, submesh_to_rigid_mesh,
     submesh_to_skinned_mesh, submesh_to_static_mesh, AnimClip, BillboardInfo, ClipEvent,
     GlobalBone, GlobalSeqChannel, ModelAnimations, ModelAttachment, ModelJoint, ModelMarker,
     ModelSkeleton, ModelSubmesh, PoseBone, PoseClip, PoseNode, PoseSource, PoseTrack, ResolvedAnim,
     ATTRIBUTE_WOW_FADE_SPHERE, ATTRIBUTE_WOW_JOINT_INDEX, ATTRIBUTE_WOW_JOINT_WEIGHT,
-    ATTRIBUTE_WOW_MERGED_SLOT,
+    ATTRIBUTE_WOW_MERGED_SLOT, RIDER_JOINT_BIT,
 };
 mod adt;
 mod terrain;

@@ -319,7 +319,10 @@ fn sample_jitter(
     let rids: Vec<(Vec3, Vec3)> = riders
         .iter()
         .filter(|r| r.host == entity)
-        .filter_map(|r| palettes.rider_placement(r.slot))
+        .filter_map(|r| match r.row {
+            Some(row) => palettes.rider_row_placement(r.slot, row),
+            None => palettes.rider_placement(r.slot),
+        })
         .collect();
     let dt = time.delta_secs().max(1.0e-6);
 
