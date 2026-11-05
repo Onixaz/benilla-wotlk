@@ -1727,8 +1727,6 @@ pub(super) fn writer_loop(
                             A::Decline => w.arena_team_decline(),
                         }
                     }
-                    ClientCommand::MeetingStoneJoin { go_guid } => w.meeting_stone_join(go_guid),
-                    ClientCommand::MeetingStoneLeave => w.meeting_stone_leave(),
                     ClientCommand::Lfg(request) => lfg_send(w, request),
                     ClientCommand::Calendar(command) => w.calendar(&command),
                     ClientCommand::TutorialFlag { id } => w.tutorial_flag(id),

@@ -329,6 +329,8 @@ pub const SMSG_PVP_CREDIT: u16 = 0x028C; // 652
 pub const SMSG_ENVIRONMENTALDAMAGELOG: u16 = 0x01FC; // 508
 pub const SMSG_LOG_XPGAIN: u16 = 0x01D0; // 464
 pub const SMSG_SPELLLOGMISS: u16 = 0x024B; // 587
+/// Combat-log packets batched with their times (`0x6d4110`).
+pub const SMSG_SEND_ALL_COMBAT_LOG: u16 = 0x0514; // 1300
 pub const SMSG_PERIODICAURALOG: u16 = 0x024E; // 590
 pub const SMSG_SPELLDAMAGESHIELD: u16 = 0x024F; // 591
 pub const SMSG_SPELLNONMELEEDAMAGELOG: u16 = 0x0250; // 592
@@ -956,25 +958,18 @@ pub const CMSG_AREA_SPIRIT_HEALER_QUEUE: u16 = 0x02E3; // 739
 /// The healer's next resurrection: `u64 guid`, `u32 ms`. For the cached healer and a positive
 /// time it arms the deadline and fires `AREA_SPIRIT_HEALER_IN_RANGE`.
 pub const SMSG_AREA_SPIRIT_HEALER_TIME: u16 = 0x02E4; // 740
-/// Right-click a meeting stone (GameObject type 23): `u64` guid, sent. A stone never sends
-/// [`CMSG_GAMEOBJ_USE`], which vmangos ignores for type 23 (`GameObject.cpp:1836`).
-pub const CMSG_MEETINGSTONE_JOIN: u16 = 0x0292; // 658
 /// The 3.3.5a meaning of 0x292: a saved lockout's extend toggle (`0x50dc10`).
 pub const CMSG_SET_SAVED_INSTANCE_EXTEND: u16 = 0x0292; // 658
 /// A main tank or main assist set or cleared (`0x6d7200`).
 pub const MSG_PARTY_ASSIGNMENT: u16 = 0x038E; // 910
-/// `CancelMeetingStoneRequest()`: empty, party leader only; the server's `0x295` reply clears the
-/// state. The name is the emulators'; the number is the client's.
-pub const CMSG_MEETINGSTONE_LEAVE: u16 = 0x0293; // 659
-/// The meeting-stone queue state: `u32 areaId`, `u8 status`; always stored, a message per
-/// status, then `MEETINGSTONE_CHANGED`.
-pub const SMSG_MEETINGSTONE_SETQUEUE: u16 = 0x0295; // 661
+/// A string 12340 writes to its developer console (`0x6d8521`).
+pub const SMSG_TEST_DROP_RATE_RESULT: u16 = 0x0295; // 661
 /// `u64` mailbox guid: the server opens the mail window on it (`0x56dbc0`).
 pub const SMSG_SHOW_MAILBOX: u16 = 0x0297; // 663
 /// `u32` ms: each ranged book spell starts that recovery (`0x8071c0`).
 pub const SMSG_RESET_RANGED_COMBAT_TIMER: u16 = 0x0298; // 664
-/// Display only: `u64 guid`; `ERR_MEETING_STONE_MEMBER_ADDED_S` once the name resolves.
-pub const SMSG_MEETINGSTONE_MEMBER_ADDED: u16 = 0x0299; // 665
+/// `u32` chat type of a party or raid line sent outside one (`0x6e397b`).
+pub const SMSG_CHAT_NOT_IN_PARTY: u16 = 0x0299; // 665
 /// `ConfirmPetUnlearn()`: the latched `u64 trainerGuid`, never an argument.
 pub const CMSG_PET_UNLEARN: u16 = 0x02F0; // 752
 /// The pet trainer asks: `u64 trainerGuid`, `u32 costCopper`, latched for

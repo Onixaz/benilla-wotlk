@@ -437,18 +437,16 @@ const GO_TYPE_AUCTIONHOUSE: i32 = 20;
 /// `GAMEOBJECT_TYPE_CAPTURE_POINT` (29): never a cursor, but a tooltip and brighten when its
 /// highlight column `data[19]` is set, GENERIC's rule. No 1.12 data uses it.
 const GO_TYPE_CAPTURE_POINT: i32 = 29;
-/// Inputs of the two types whose `+0x14` is a predicate of its own rather than the reference or a
-/// constant; the caller resolves them, and each is ignored for every other type.
+/// Input of the one type whose `+0x14` adds a predicate of its own; the caller resolves it, and it
+/// is ignored for every other type.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct GoOverrides {
     /// FISHINGNODE: the local player is channeling at this bobber.
     pub(crate) channel_owned: bool,
-    /// MEETINGSTONE: this stone's area is the one we are queued at.
-    pub(crate) meeting_stone_queued: bool,
 }
 
-/// `GAMEOBJECT_TYPE_MEETINGSTONE` (23): its `+0x14` only compares `template.data[2]` with the
-/// queued area; it never calls the shared gate.
+/// `GAMEOBJECT_TYPE_MEETINGSTONE` (23): the animated type's table with only the use slot replaced
+/// (`0x712270`), so its cursor takes the shared gate.
 pub(super) const GO_TYPE_MEETINGSTONE: i32 = 23;
 
 /// Whether a GameObject shows an interact cursor at all: the shared gate plus the per-type
@@ -467,10 +465,6 @@ fn highlightable_flags(
     }
     if type_id == GO_TYPE_FISHINGNODE && !overrides.channel_owned {
         return false;
-    }
-    // MEETINGSTONE's slot replaces the shared gate, so none of the terms below apply to it.
-    if type_id == GO_TYPE_MEETINGSTONE {
-        return !overrides.meeting_stone_queued;
     }
     // The faction term: the GameObject's reaction toward us must beat hostile. An unresolved
     // reaction passes, so a data gap never blanks the world.
@@ -566,13 +560,6 @@ pub(crate) fn go_highlightable(
         reaction,
         overrides,
     )
-}
-
-/// MEETINGSTONE's override for one stone, `template.data[2] == queued_area`. `queued_area` is the
-/// reference's global: 0 until the `SMSG_MEETINGSTONE_SETQUEUE` handler writes it. An unanswered
-/// template reads not queued; a `data[2]` of 0 matches the unqueued 0, as in the reference.
-pub(crate) fn meeting_stone_queued(area: Option<u32>, queued_area: u32) -> bool {
-    area.is_some_and(|a| a == queued_area)
 }
 
 /// The FISHINGNODE override's input: our `UNIT_FIELD_CHANNEL_OBJECT` is this GameObject. False when
@@ -795,8 +782,6 @@ pub(super) struct CursorInputs<'w, 's> {
     keys: Res<'w, ButtonInput<KeyCode>>,
     // `[player+0x1d28/2c]`, the object whose loot window is open.
     loot_latch: Res<'w, crate::ui_loot::LootLatch>,
-    // The queued area; absent in a headless build, which reads as not queued.
-    stone: Option<Res<'w, crate::ui_dialog_verbs::MeetingStone>>,
     // The creature records, whose cursor name `0x715ea0` reads; absent reads no name.
     names: Option<Res<'w, crate::names::NameCache>>,
 }
@@ -822,7 +807,6 @@ pub(super) fn classify(
         loot_cfg,
         keys,
         loot_latch,
-        stone,
         names,
         spells,
         spell_mods,
@@ -863,14 +847,9 @@ pub(super) fn classify(
             store.0.gameobject_faction(),
             Some(self_store),
         );
-        // Read before the gate: MEETINGSTONE's override is a template slot.
         let tmpl = hovered_object.guid.and_then(|g| go_inputs.templates.get(g));
         let overrides = GoOverrides {
             channel_owned: fishing_channel_owned(Some(self_store), hovered_object.guid),
-            meeting_stone_queued: meeting_stone_queued(
-                tmpl.and_then(|t| t.meeting_stone).map(|m| m.area),
-                stone.as_deref().map_or(0, |s| s.area),
-            ),
         };
         if !go_highlightable(store, reaction, overrides) {
             return None;
@@ -1582,11 +1561,7 @@ mod tests {
     }
 
     #[test]
-    fn the_meeting_stone_answers_only_the_queued_area() {
-        let queued = GoOverrides {
-            meeting_stone_queued: true,
-            ..Default::default()
-        };
+    fn the_meeting_stone_takes_the_shared_gate() {
         assert!(highlightable_flags(
             GO_TYPE_MEETINGSTONE,
             0,
@@ -1594,44 +1569,18 @@ mod tests {
             None,
             GoOverrides::default()
         ));
-        assert!(!highlightable_flags(
-            GO_TYPE_MEETINGSTONE,
-            0,
-            0,
-            None,
-            queued
-        ));
-        assert!(!mouseover_eligible(
-            GO_TYPE_MEETINGSTONE,
-            0,
-            0,
-            None,
-            None,
-            queued
-        ));
-        for (flags, dyn_flags, reaction) in [
-            (0x10, 0, Some(1)),
-            (0x1, 0, Some(1)),
-            (GO_FLAG_INTERACT_COND, 0, Some(1)),
-        ] {
+        for (flags, reaction) in [(0x10, None), (0x1, None), (0, Some(1))] {
             assert!(
-                highlightable_flags(
+                !highlightable_flags(
                     GO_TYPE_MEETINGSTONE,
                     flags,
-                    dyn_flags,
+                    0,
                     reaction,
                     GoOverrides::default()
                 ),
-                "flags {flags:#x} must not reach a meeting stone — its slot never calls"
+                "flags {flags:#x}, reaction {reaction:?}"
             );
         }
-        assert!(!meeting_stone_queued(None, 0));
-        assert!(!meeting_stone_queued(Some(1519), 0));
-        assert!(meeting_stone_queued(Some(1519), 1519));
-        assert!(!meeting_stone_queued(Some(1519), 1517));
-        assert!(!meeting_stone_queued(None, 1519));
-        // The reference's own `0 != 0`: a stone whose `data[2]` is 0 matches while unqueued.
-        assert!(meeting_stone_queued(Some(0), 0));
     }
 
     #[test]
@@ -1643,7 +1592,6 @@ mod tests {
             None,
             GoOverrides {
                 channel_owned: true,
-                ..Default::default()
             }
         ));
         assert!(!highlightable_flags(
@@ -1661,7 +1609,6 @@ mod tests {
             None,
             GoOverrides {
                 channel_owned: true,
-                ..Default::default()
             }
         ));
         assert!(!mouseover_eligible(
@@ -1680,7 +1627,6 @@ mod tests {
             None,
             GoOverrides {
                 channel_owned: true,
-                ..Default::default()
             }
         ));
         assert!(highlightable_flags(0, 0, 0, None, GoOverrides::default()));

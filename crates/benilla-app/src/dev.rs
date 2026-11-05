@@ -269,10 +269,6 @@ impl Plugin for DevProbesPlugin {
             if std::env::var("WOW_PROBE_BOOK").is_ok() {
                 app.add_plugins(crate::capture::ProbeBookPlugin);
             }
-            // `WOW_PROBE_STONE=1`: clicks a meeting stone and reads the LFG queue back.
-            if std::env::var("WOW_PROBE_STONE").is_ok() {
-                app.add_plugins(crate::capture::ProbeStonePlugin);
-            }
             // `WOW_PROBE_CHEST=1`: the self unit's base anim id around opening a chest.
             if std::env::var("WOW_PROBE_CHEST").is_ok() {
                 app.add_plugins(crate::capture::ProbeChestPlugin);

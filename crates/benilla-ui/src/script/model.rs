@@ -561,6 +561,10 @@ pub(crate) struct Model {
     pub(crate) pet_talent_preview: Vec<Vec<Vec<i32>>>,
     /// `LearnTalent(.., true)` sends queued, `(talentId, rank)`.
     pub(crate) pet_talent_learns: Vec<(u32, u32)>,
+    /// The inspected player's talent snapshot: its class's tabs and the inspect packet's groups.
+    pub(crate) inspect_talents: super::talent::TalentUiState,
+    /// The inspected groups' preview ranks, which the packet sets to the learned ones.
+    pub(crate) inspect_talent_preview: Vec<Vec<Vec<i32>>>,
     /// `LearnPreviewTalents(true)` sends queued.
     pub(crate) pet_talent_preview_learns: Vec<Vec<(u32, u32)>>,
     /// `ConfirmTalentWipe()` calls, one `MSG_TALENT_WIPE_CONFIRM` each; the app holds the trainer.
@@ -592,11 +596,6 @@ pub(crate) struct Model {
     /// A `Cell`: the stock `UIParent` OnUpdate calls the verb every frame and the app drains it
     /// every frame, and neither is anything drawn (`ModelCell`).
     pub(crate) battlefield_position_requests: std::cell::Cell<u32>,
-    /// `CancelMeetingStoneRequest()` calls; the app gates on leadership.
-    pub(crate) meeting_stone_cancels: u32,
-    /// The meeting stone's queued area and status text, as pushed.
-    pub(crate) meeting_stone_area: u32,
-    pub(crate) meeting_stone_status_text: Option<String>,
     /// Acknowledged tutorials, `None` before `SMSG_TUTORIAL_FLAGS`; all `TutorialsEnabled()` reads.
     pub(crate) tutorial_bank: Option<Vec<u8>>,
     /// `FlagTutorial(n)` calls, 0-based and in range.
@@ -1474,6 +1473,8 @@ impl Model {
             pet_talents: Default::default(),
             pet_talent_preview: Vec::new(),
             pet_talent_learns: Vec::new(),
+            inspect_talents: Default::default(),
+            inspect_talent_preview: Vec::new(),
             pet_talent_preview_learns: Vec::new(),
             talent_wipe_confirms: 0,
             talent_master_pending: false,
@@ -1490,9 +1491,6 @@ impl Model {
             battlefield_flags: Vec::new(),
             battlefield_icon_scale: 1.0,
             battlefield_position_requests: std::cell::Cell::new(0),
-            meeting_stone_cancels: 0,
-            meeting_stone_area: 0,
-            meeting_stone_status_text: None,
             tutorial_bank: None,
             tutorial_flag_requests: Vec::new(),
             tutorial_triggers: Vec::new(),

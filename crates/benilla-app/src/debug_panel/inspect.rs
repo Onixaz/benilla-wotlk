@@ -122,9 +122,6 @@ pub(super) struct InspectStores<'w, 's> {
     /// The GO template cache: a TEXT object's page and the tooltip ladder's highlight column
     /// and name.
     go_templates: Res<'w, crate::go_templates::GameObjectTemplates>,
-    /// The meeting-stone queue, part of MEETINGSTONE(23)'s highlightable term, so the card's
-    /// `interact` verdict reads the same predicate as the cursor.
-    stone: Option<Res<'w, crate::ui_dialog_verbs::MeetingStone>>,
     /// The published GameObject mouseover the tooltip reads; the card's own dev pick bypasses the
     /// publish, so this shows when the two differ.
     hovered_go: Res<'w, crate::target::HoveredObject>,
@@ -211,7 +208,6 @@ pub(super) fn inspect_ui(
         (&*stores.reputations, &stores.plates.0, &*stores.plate_mode);
     let party = crate::target::party_of(stores.group.as_deref());
     let go_templates = &*stores.go_templates;
-    let queued_area = stores.stone.as_deref().map_or(0, |s| s.area);
     let hovered_go = &*stores.hovered_go;
     // The picked submesh's shading payload, off the hit entity itself.
     let tag_line = mouseover
@@ -349,10 +345,6 @@ pub(super) fn inspect_ui(
             let overrides = crate::target::cursor_mode::GoOverrides {
                 channel_owned: crate::target::cursor_mode::fishing_channel_owned(
                     self_store, go_guid,
-                ),
-                meeting_stone_queued: crate::target::cursor_mode::meeting_stone_queued(
-                    go_guid.and_then(|g| Some(go_templates.get(g)?.meeting_stone?.area)),
-                    queued_area,
                 ),
             };
             let interact = if crate::target::cursor_mode::go_highlightable(s, reaction, overrides) {

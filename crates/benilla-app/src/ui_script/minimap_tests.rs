@@ -299,69 +299,6 @@ fn get_ping_position_answers_two_numbers_always() {
     );
 }
 
-/// Stock `MiniMapMeetingStoneFrame` follows `IsInMeetingStoneQueue()` on `MEETINGSTONE_CHANGED`.
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_meeting_stone_icon_follows_the_queue_across_meetingstone_changed() {
-    let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    s.run("function GetMinimapZoneText() return '' end")
-        .unwrap();
-    s.run("function PlaySound() end").unwrap();
-    for f in [
-        "Interface\\FrameXML\\GlobalStrings.lua",
-        "Interface\\FrameXML\\Fonts.xml",
-        "Interface\\FrameXML\\Localization.xml",
-        "Interface\\FrameXML\\BasicControls.xml",
-        "Interface\\FrameXML\\LocaleProperties.lua",
-        r"Interface\FrameXML\UIParent.xml",
-        r"Interface\FrameXML\MoneyFrame.lua",
-        r"Interface\FrameXML\MoneyFrame.xml",
-        "Interface\\FrameXML\\GameTooltip.xml",
-        "Interface\\FrameXML\\UIDropDownMenu.xml",
-        r"Interface\FrameXML\UIPanelTemplates.lua",
-        r"Interface\FrameXML\UIPanelTemplates.xml",
-        "Interface\\FrameXML\\StaticPopup.xml",
-        "Interface\\FrameXML\\BattlefieldFrame.xml",
-        "Interface\\FrameXML\\Minimap.xml",
-    ] {
-        load_xml(&s, f);
-    }
-    s.resolve();
-    let vis = |s: &UiScript| {
-        s.eval::<bool>("return MiniMapMeetingStoneFrame:IsVisible()")
-            .unwrap()
-    };
-    assert!(!vis(&s), "hidden at load");
-
-    s.set_meeting_stone(1519, Some("Looking for more for Stormwind City".into()));
-    s.fire_event("MEETINGSTONE_CHANGED", vec![]);
-    assert!(vis(&s), "a queued area shows the icon");
-    s.run("this = MiniMapMeetingStoneFrame; MiniMapMeetingStoneFrame:GetScript('OnEnter')()")
-        .unwrap();
-    assert_eq!(
-        s.eval::<String>("return GameTooltipTextLeft1:GetText()")
-            .unwrap(),
-        "Looking for more for Stormwind City"
-    );
-    s.run("MiniMapMeetingStoneFrame:Click()").unwrap();
-    assert!(
-        s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
-        "a click asks CONFIRM_LEAVE_QUEUE"
-    );
-    s.run("StaticPopup1Button1:Click()").unwrap();
-    assert_eq!(
-        s.take_meeting_stone_cancels(),
-        1,
-        "Accept is CancelMeetingStoneRequest()"
-    );
-
-    s.set_meeting_stone(0, Some("Looking for more for Unknown".into()));
-    s.fire_event("MEETINGSTONE_CHANGED", vec![]);
-    assert!(!vis(&s), "area 0 hides it again");
-}
-
 /// A shown ping pane publishes one tile request and no quad; once the renderer hands back a cell,
 /// the cell draws every frame in the overlay lane, even when nothing in the interface moves.
 #[test]

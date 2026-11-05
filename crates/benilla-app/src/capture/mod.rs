@@ -75,7 +75,6 @@ mod probe_model_camera;
 mod probe_partner;
 mod probe_rig;
 mod probe_service;
-mod probe_stone;
 mod probe_taxi;
 mod probe_vendor_swap;
 mod probes;
@@ -110,7 +109,6 @@ pub(crate) use probe_model_camera::ProbeModelCameraPlugin;
 pub(crate) use probe_partner::ProbePartnerPlugin;
 pub(crate) use probe_rig::ProbeRigPlugin;
 pub(crate) use probe_service::ProbeServicePlugin;
-pub(crate) use probe_stone::ProbeStonePlugin;
 pub(crate) use probe_taxi::ProbeTaxiPlugin;
 pub(crate) use probe_vendor_swap::ProbeVendorSwapPlugin;
 pub(crate) use probes::{

@@ -217,3 +217,70 @@ fn the_pet_spec_tab_shows_the_pets_tree_and_learns_for_the_pet() {
     let errors = talent_errors(s.take_errors());
     assert!(errors.is_empty(), "talent window errors: {errors:#?}");
 }
+
+/// The stock inspect window's talent tab (`InspectTalentFrame.lua`) reads the inspected player's
+/// set: a human paladin's trees with two points in the first talent, not the player's hunter trees
+/// and ranks. `INSPECT_TALENT_READY` refreshes it.
+#[test]
+fn the_stock_inspect_talent_tab_shows_the_inspected_players_trees() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _load_failures) =
+        super::layer_tests::production_load_with("talents", false, "", |_| {});
+    let _ = s.take_errors();
+    push_talents(&mut s);
+
+    const HUMAN: u8 = 1;
+    const PALADIN: u8 = 2;
+    let data = benilla_formats::wow_data().expect("install");
+    let mut chain = benilla_formats::open_chain(&data).unwrap();
+    let catalog = benilla_formats::load_talent_catalog(&mut chain).unwrap();
+    let spells = benilla_formats::load_spell_catalog(&mut chain).unwrap();
+    let tabs = catalog.tabs_for_class(HUMAN, PALADIN);
+    let first = catalog.talents_in_tab(tabs[0].id)[0].id;
+    let mut held = PlayerTalentGroups::fresh(0);
+    held.ranks = vec![HashMap::from([(first, 1u8)])];
+    let state = build_pages(
+        &catalog,
+        &BTreeSet::new(),
+        &spells,
+        HUMAN,
+        PALADIN,
+        (0, 0),
+        &held,
+    );
+    s.set_inspect_talents(state);
+
+    s.run(
+        r#"
+        LoadAddOn("Blizzard_InspectUI")
+        InspectFrame.unit = "player"
+        InspectFrame:Show()
+        InspectTalentFrame:Show()
+        "#,
+    )
+    .unwrap();
+    s.fire_event("INSPECT_TALENT_READY", Vec::<ScriptValue>::new());
+    let tab = s
+        .eval::<String>("return InspectTalentFrameTab1:GetText()")
+        .unwrap();
+    assert_eq!(tab, tabs[0].name, "the inspected class's first tree");
+    assert_ne!(
+        tab,
+        s.eval::<String>("return (GetTalentTabInfo(1))").unwrap(),
+        "not the player's own tree"
+    );
+    s.run(
+        r#"
+        local rank = InspectTalentFrameTalent1Rank:GetText()
+        assert(rank == "2", "the inspected rank reads 2, got " .. tostring(rank))
+        local spent = InspectTalentFrameSpentPointsText:GetText()
+        assert(spent and spent:find("2"), "two points spent, got " .. tostring(spent))
+        "#,
+    )
+    .unwrap();
+    let errors = talent_errors(s.take_errors());
+    assert!(errors.is_empty(), "inspect talent errors: {errors:#?}");
+}

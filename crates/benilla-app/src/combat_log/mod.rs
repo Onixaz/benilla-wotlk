@@ -41,6 +41,7 @@ impl Plugin for CombatLogPlugin {
         use SessionEventKind as K;
         app.init_resource::<entries::PendingEntries>()
             .init_resource::<entries::CombatLogClock>()
+            .init_resource::<entries::CombatLogBackdate>()
             .add_message::<crate::net::EnteredWorldMessage>()
             .add_message::<entries::CombatLogFired>()
             .add_message::<SpellCastFailedLog>()
@@ -59,7 +60,8 @@ impl Plugin for CombatLogPlugin {
                     .chain()
                     .in_set(crate::ui_script::UiFeed),
             );
-        app.net_handler(K::AttackerState, on_attacker_state)
+        app.net_handler(K::CombatLogBackdate, on_backdate)
+            .net_handler(K::AttackerState, on_attacker_state)
             .net_handler(K::SpellDamageLog, on_spell_damage_log)
             .net_handler(K::PeriodicAuraLog, on_periodic_aura_log)
             .net_handler(K::SpellHealLog, on_spell_heal_log)
@@ -84,6 +86,12 @@ impl Plugin for CombatLogPlugin {
             .net_handler(K::ExplorationXp, on_exploration_xp)
             .net_handler(K::LevelUp, on_level_up)
             .net_handler(K::PvpCredit, on_pvp_credit);
+    }
+}
+
+fn on_backdate(In(ev): In<SessionEvent>, mut backdate: ResMut<entries::CombatLogBackdate>) {
+    if let SessionEvent::CombatLogBackdate { ms } = ev {
+        backdate.0 = ms;
     }
 }
 

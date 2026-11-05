@@ -30,6 +30,18 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::CompressedMoves { packets } | ServerPacket::PacketBatch { packets, .. } => {
             packets.into_iter().flat_map(decode).collect()
         }
+        // Each entry as if alone, behind its backdate; the clock returns to now after the batch.
+        ServerPacket::CombatLogBatch { entries } => {
+            let mut out = Vec::new();
+            for (ms, packet) in entries {
+                out.push(SessionEvent::CombatLogBackdate { ms });
+                out.extend(decode(packet));
+            }
+            if !out.is_empty() {
+                out.push(SessionEvent::CombatLogBackdate { ms: 0 });
+            }
+            out
+        }
         ServerPacket::FlightSplineSync { guid, progress } => {
             vec![SessionEvent::FlightSplineSync { guid, progress }]
         }
@@ -358,9 +370,15 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             item_guid,
             spell_id,
         }],
-        ServerPacket::InspectItems { guid, items } => {
-            vec![SessionEvent::InspectItems { guid, items }]
-        }
+        // The talents first: 12340 reads them and fires `INSPECT_TALENT_READY` before the items.
+        ServerPacket::InspectTalent {
+            guid,
+            talents,
+            items,
+        } => vec![
+            SessionEvent::InspectTalents { guid, talents },
+            SessionEvent::InspectItems { guid, items },
+        ],
         ServerPacket::SocketGemsResult { item, enchants } => {
             vec![SessionEvent::SocketGemsResult { item, enchants }]
         }
@@ -1206,10 +1224,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::BattlegroundPlayer { guid, joined } => {
             vec![SessionEvent::BattlegroundPlayer { guid, joined }]
         }
-        ServerPacket::MeetingStoneSetQueue { area, status } => {
-            vec![SessionEvent::MeetingStoneSetQueue { area, status }]
+        ServerPacket::ChatNotInParty { chat_type } => {
+            vec![SessionEvent::ChatNotInParty { chat_type }]
         }
-        ServerPacket::MeetingStoneNotice(notice) => vec![SessionEvent::MeetingStoneNotice(notice)],
         ServerPacket::TutorialFlags(flags) => vec![SessionEvent::TutorialFlags(flags.bytes)],
         ServerPacket::PlayerBound { binder, area } => {
             vec![SessionEvent::PlayerBound { binder, area }]

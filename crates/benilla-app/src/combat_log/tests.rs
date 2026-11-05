@@ -108,6 +108,7 @@ fn rig() -> App {
         .insert_resource(spells())
         .init_resource::<PendingEntries>()
         .init_resource::<CombatLogClock>()
+        .init_resource::<super::entries::CombatLogBackdate>()
         .init_resource::<DamageTextGates>()
         .init_resource::<crate::ui_chat::ChatLog>()
         .add_message::<CombatTextSpawn>()
@@ -597,4 +598,68 @@ fn a_blocked_swing_on_you_centres_its_amounts() {
         centre(&mut app),
         [("BLOCK", vec![ScriptValue::Int(20), ScriptValue::Int(7)])]
     );
+}
+
+/// #442: a batched entry logs as its standalone packet, its time backdated by its offset; the
+/// clock returns to now after the batch.
+#[test]
+fn a_batched_entry_logs_backdated_by_its_offset() {
+    use benilla_protocol::messages::SpellHealLog;
+    use benilla_protocol::{ServerPacket, SessionEvent};
+    let mut app = rig();
+    let start = std::time::Instant::now();
+    let mut time = Time::<bevy::time::Real>::new(start);
+    // The first update only seats the clock; the second advances it.
+    time.update_with_instant(start);
+    time.update_with_instant(start + std::time::Duration::from_secs(10));
+    app.insert_resource(time);
+    // In wire order, each event to its handler, as the dispatch runs them.
+    let dispatch = |app: &mut App, events: Vec<SessionEvent>| {
+        for ev in events {
+            let world = app.world_mut();
+            match ev {
+                SessionEvent::CombatLogBackdate { .. } => {
+                    world.run_system_once_with(super::on_backdate, ev)
+                }
+                SessionEvent::SpellDamageLog(_) => {
+                    world.run_system_once_with(super::on_spell_damage_log, ev)
+                }
+                SessionEvent::SpellHealLog(_) => {
+                    world.run_system_once_with(super::on_spell_heal_log, ev)
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+            .unwrap();
+        }
+    };
+    let heal = SpellHealLog {
+        target: ME,
+        caster: ME,
+        spell_id: HEAL,
+        amount: 120,
+        overheal: 0,
+        absorbed: 0,
+        crit: false,
+    };
+    let events = benilla_protocol::events::decode(ServerPacket::CombatLogBatch {
+        entries: vec![
+            (750, ServerPacket::SpellDamageLog(fireball_hit(0, 500))),
+            (100, ServerPacket::SpellHealLog(heal)),
+        ],
+    });
+    dispatch(&mut app, events);
+    let times: Vec<(CombatLogEvent, u64)> =
+        entries(&app).iter().map(|e| (e.event, e.time_ms)).collect();
+    assert_eq!(
+        times,
+        [
+            (CombatLogEvent::SpellDamage, 9_250),
+            (CombatLogEvent::SpellHeal, 9_900),
+        ]
+    );
+    dispatch(
+        &mut app,
+        vec![SessionEvent::SpellDamageLog(fireball_hit(0, 5))],
+    );
+    assert_eq!(entries(&app).last().map(|e| e.time_ms), Some(10_000));
 }

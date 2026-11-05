@@ -183,6 +183,11 @@ pub enum ServerPacket {
         opcode: u16,
         packets: Vec<ServerPacket>,
     },
+    /// `SMSG_SEND_ALL_COMBAT_LOG`: combat-log packets, each with how many ms its time lies before
+    /// the batch's, which backdates its log entry (`0x74ff20`).
+    CombatLogBatch {
+        entries: Vec<(i32, ServerPacket)>,
+    },
     /// `SMSG_FLIGHT_SPLINE_SYNC`: where along its cyclic path the server has the unit, `0..1`.
     FlightSplineSync {
         guid: u64,
@@ -454,13 +459,10 @@ pub enum ServerPacket {
         guid: u64,
         joined: bool,
     },
-    /// `SMSG_MEETINGSTONE_SETQUEUE` (`0x295`): the meeting-stone queue state.
-    MeetingStoneSetQueue {
-        area: u32,
-        status: u8,
+    /// `SMSG_CHAT_NOT_IN_PARTY`: the chat type of a party or raid line sent outside one.
+    ChatNotInParty {
+        chat_type: u32,
     },
-    /// `0x299`: the meeting stone's display-only reply.
-    MeetingStoneNotice(crate::messages::MeetingStoneNotice),
     /// `SMSG_TUTORIAL_FLAGS`: the account's tutorial bank.
     TutorialFlags(crate::messages::TutorialFlags),
     /// `SMSG_SUMMON_REQUEST`: someone asks to pull us to them; nothing moves until
@@ -868,9 +870,10 @@ pub enum ServerPacket {
         item_guid: u64,
         spell_id: u32,
     },
-    /// `SMSG_INSPECT_TALENT`'s worn items; its talent body is read past.
-    InspectItems {
+    /// `SMSG_INSPECT_TALENT`: the inspected player's talent groups and worn items.
+    InspectTalent {
         guid: u64,
+        talents: super::TalentsInfo,
         items: Vec<super::item_ops::InspectItem>,
     },
     /// `SMSG_SOCKET_GEMS_RESULT`: the socketed item's enchants for sockets 1-3 and the bonus.
@@ -1902,6 +1905,7 @@ impl ServerPacket {
             ServerPacket::CharacterLoginFailed { .. } => "SMSG_CHARACTER_LOGIN_FAILED".into(),
             ServerPacket::UpdateObject { .. } => "SMSG_UPDATE_OBJECT".into(),
             ServerPacket::CompressedMoves { .. } => "SMSG_COMPRESSED_MOVES".into(),
+            ServerPacket::CombatLogBatch { .. } => "SMSG_SEND_ALL_COMBAT_LOG".into(),
             ServerPacket::PacketBatch { opcode, .. } => {
                 crate::messages::opcode_name(*opcode).unwrap_or("?").into()
             }
@@ -1985,10 +1989,7 @@ impl ServerPacket {
             ServerPacket::BattlegroundPlayer { joined: false, .. } => {
                 "SMSG_BATTLEGROUND_PLAYER_LEFT".into()
             }
-            ServerPacket::MeetingStoneSetQueue { .. } => "SMSG_MEETINGSTONE_SETQUEUE".into(),
-            ServerPacket::MeetingStoneNotice(
-                crate::messages::MeetingStoneNotice::MemberAdded { .. },
-            ) => "SMSG_MEETINGSTONE_MEMBER_ADDED".into(),
+            ServerPacket::ChatNotInParty { .. } => "SMSG_CHAT_NOT_IN_PARTY".into(),
             ServerPacket::ResetRangedCombatTimer { .. } => "SMSG_RESET_RANGED_COMBAT_TIMER".into(),
             ServerPacket::ResumeCastBar(_) => "SMSG_RESUME_CAST_BAR".into(),
             ServerPacket::TutorialFlags(_) => "SMSG_TUTORIAL_FLAGS".into(),
@@ -2096,7 +2097,7 @@ impl ServerPacket {
             ServerPacket::CancelAutoRepeat { .. } => "SMSG_CANCEL_AUTO_REPEAT".into(),
             ServerPacket::SpellCooldownList { .. } => "SMSG_SPELL_COOLDOWN".into(),
             ServerPacket::ItemCooldown { .. } => "SMSG_ITEM_COOLDOWN".into(),
-            ServerPacket::InspectItems { .. } => "SMSG_INSPECT_TALENT".into(),
+            ServerPacket::InspectTalent { .. } => "SMSG_INSPECT_TALENT".into(),
             ServerPacket::SocketGemsResult { .. } => "SMSG_SOCKET_GEMS_RESULT".into(),
             ServerPacket::ItemRefundInfo { .. } => "SMSG_ITEM_REFUND_INFO_RESPONSE".into(),
             ServerPacket::ItemRefundResult { .. } => "SMSG_ITEM_REFUND_RESULT".into(),

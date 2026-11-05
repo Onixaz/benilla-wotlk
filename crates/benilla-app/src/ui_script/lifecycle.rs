@@ -616,8 +616,8 @@ pub(crate) struct AddOnIdentity(pub(crate) Option<(String, String)>);
 pub(crate) struct LeavingWorldArmed(bool);
 
 /// The leave-world sweep ran past its latch: a cross-map worldport (the local player's destructor),
-/// a `/reload` or leaving the world. Its legs past the clear read this, as the meeting stone's text
-/// drop does; a same-map teleport destroys nothing and never sweeps.
+/// a `/reload` or leaving the world. Its legs past the clear read this, as the instance lock clock's
+/// stop does; a same-map teleport destroys nothing and never sweeps.
 #[derive(Message)]
 pub(crate) struct WorldLeaveSweepMessage;
 
@@ -1012,8 +1012,7 @@ mod tests {
     }
 
     /// A `ReloadUI()` runs the leave-world sweep (past the armed latch) and then re-enters the
-    /// world-enter cascade, whose readers re-send the time, mail, battlefield and meeting-stone
-    /// queries, only with the active player set.
+    /// world-enter cascade, whose readers re-send the time, mail and battlefield queries, only with the active player set.
     #[test]
     fn a_reload_sweeps_and_reenters_the_world_enter_cascade_once_the_player_exists() {
         use crate::net::WorldEnterCascadeMessage;

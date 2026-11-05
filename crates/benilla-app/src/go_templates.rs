@@ -46,9 +46,8 @@ pub(crate) struct GoTemplate {
     pub(crate) quest_material: Option<u32>,
 }
 
-/// A MEETINGSTONE template's slots, 12340 properties `0x33` to `0x35` (`0x7121e0`, `0x7108d0`). The
-/// area feeds the type's highlightable slot, the levels the use refusal
-/// `ERR_MEETING_STONE_INVALID_LEVEL`.
+/// A MEETINGSTONE template's slots, 12340 properties `0x33` to `0x35` (`0x7121e0`, `0x7108d0`): the
+/// level range the use checks both ends of, and the area its tooltip names.
 #[derive(Clone, Copy)]
 pub(crate) struct MeetingStoneTemplate {
     /// `data[0]`.

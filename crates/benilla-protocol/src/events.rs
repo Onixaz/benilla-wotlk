@@ -509,10 +509,8 @@ pub enum SessionEvent {
     ArenaTeamInvite { inviter: String, team: String },
     /// `SMSG_BATTLEGROUND_PLAYER_JOINED`/`_LEFT`, printed once the name cache has the guid.
     BattlegroundPlayer { guid: u64, joined: bool },
-    /// The meeting-stone queue state (`SMSG 0x295`): the area queued for and a status byte.
-    MeetingStoneSetQueue { area: u32, status: u8 },
-    /// The meeting stone's chat-line-only reply (`0x299`).
-    MeetingStoneNotice(crate::messages::MeetingStoneNotice),
+    /// A party or raid line of `chat_type` was sent outside one (`SMSG_CHAT_NOT_IN_PARTY`).
+    ChatNotInParty { chat_type: u32 },
     /// The tutorial bank bytes (`SMSG_TUTORIAL_FLAGS`); the client copies both its banks from them.
     TutorialFlags(Vec<u8>),
     /// The bind took (`SMSG_PLAYERBOUND`); `area` matches the [`Self::BindPoint`] sent beside it.
@@ -869,6 +867,14 @@ pub enum SessionEvent {
     /// `SMSG_ITEM_TIME_UPDATE`: seconds left on a timed item, 0 when expired. The client shows
     /// this, not `ITEM_FIELD_DURATION` (vmangos `Item::SendTimeUpdate`, `Objects/Item.cpp:1094`).
     ItemTime { item_guid: u64, seconds: u32 },
+    /// The combat-log events that follow, up to the next of these, happened `ms` before now: a
+    /// batched entry's offset, 0 after the batch (`SMSG_SEND_ALL_COMBAT_LOG`).
+    CombatLogBackdate { ms: i32 },
+    /// The inspected player's talent groups (`SMSG_INSPECT_TALENT`).
+    InspectTalents {
+        guid: u64,
+        talents: crate::messages::TalentsInfo,
+    },
     /// The inspected player's worn items (`SMSG_INSPECT_TALENT`, `SMSG_INSPECT_RESULTS_UPDATE`).
     InspectItems {
         guid: u64,

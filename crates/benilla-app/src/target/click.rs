@@ -177,8 +177,8 @@ pub(crate) struct Feedback<'w> {
     // The opener queue: this system cannot also hold `CastLadder` (a second `Items` and
     // `CastErrors` borrow), so the lock verdict goes to `ui_action::drain::drain_go_openers`.
     openers: ResMut<'w, crate::ui_action::GoOpenerCasts>,
-    // The stone's refusals need the roster, so they run in `drain_meeting_stone_joins`.
-    stone_uses: MessageWriter<'w, crate::ui_dialog_verbs::MeetingStoneUse>,
+    // The stone's refusals need the roster, so they run in `super::stone`.
+    stone_uses: MessageWriter<'w, crate::target::stone::MeetingStoneUse>,
     /// The loot close's dead-unit deselect (`0x5237ae`).
     deselect: MessageWriter<'w, DeselectGuid>,
 }
@@ -454,15 +454,17 @@ impl Dispatch<'_, '_> {
             }
             return;
         }
-        // MEETINGSTONE (type 23) has its own use slot: four client-side refusals, then
-        // `CMSG 0x292 {u64 goGuid}`, never `CMSG_GAMEOBJ_USE`, whose type-23 arm in vmangos does
-        // nothing (`GameObject.cpp:1836`). Types 9, 19, 23 and 28 override the shared sender.
+        // MEETINGSTONE (type 23) replaces the use slot alone (`0x712270`): its refusals read the
+        // roster and the target, so the right-click's loot close and auto-loot flag (`0x711140`)
+        // come first and `super::stone` runs the rest.
         if go_type == cursor_mode::GO_TYPE_MEETINGSTONE {
             if in_reach {
                 debug!("right-click meeting stone: {guid:#x}");
+                self.close_open_loot();
+                self.arm_auto_loot();
                 self.feedback
                     .stone_uses
-                    .write(crate::ui_dialog_verbs::MeetingStoneUse { go_guid: guid });
+                    .write(crate::target::stone::MeetingStoneUse { go_guid: guid });
             } else {
                 self.walk_to_object(entity, guid, go_type, walk);
             }
@@ -2294,7 +2296,7 @@ mod tests {
         world.init_resource::<crate::ui_guild_bank::GuildBankState>();
         world.init_resource::<crate::ui_item_text::ItemTextOpen>();
         world.init_resource::<crate::ui_action::GoOpenerCasts>();
-        world.init_resource::<Messages<crate::ui_dialog_verbs::MeetingStoneUse>>();
+        world.init_resource::<Messages<crate::target::stone::MeetingStoneUse>>();
         world.init_resource::<crate::player::Approach>();
         world.init_resource::<crate::player::FollowState>();
         world.init_resource::<crate::player::Player>();
@@ -2414,10 +2416,10 @@ mod tests {
         }
     }
 
-    /// A meeting stone's own use slot replaces the shared sender: the click hands it to the join
-    /// validator and puts no `0xB1` on the wire, which vmangos' type-23 `Use` ignores.
+    /// A meeting stone's use slot reads the roster: the click hands the stone to it and sends
+    /// nothing itself.
     #[test]
-    fn a_right_click_on_a_meeting_stone_joins_it_and_sends_no_gameobj_use() {
+    fn a_right_click_on_a_meeting_stone_hands_it_to_the_stone_use() {
         const STONE: u64 = 0x5701;
         let (tx, rx) = crossbeam_channel::unbounded::<ClientCommand>();
         let (mut world, _boar) = right_click_world();
@@ -2443,19 +2445,19 @@ mod tests {
         world.run_system_once(act_on_right_click).unwrap();
 
         let uses: Vec<_> = world
-            .resource::<Messages<crate::ui_dialog_verbs::MeetingStoneUse>>()
+            .resource::<Messages<crate::target::stone::MeetingStoneUse>>()
             .iter_current_update_messages()
             .copied()
             .collect();
         assert_eq!(
             uses,
-            vec![crate::ui_dialog_verbs::MeetingStoneUse { go_guid: STONE }],
-            "the stone must reach the join validator"
+            vec![crate::target::stone::MeetingStoneUse { go_guid: STONE }],
+            "the stone must reach its use"
         );
         assert!(
             !rx.try_iter()
                 .any(|c| matches!(c, ClientCommand::GameObjUse { .. })),
-            "a meeting stone must never send CMSG_GAMEOBJ_USE — the server drops it on the floor"
+            "the use sends after its refusals, not the click"
         );
     }
 
@@ -2950,7 +2952,7 @@ mod tests {
             .write(WorldRightClick);
         world.run_system_once(act_on_right_click).unwrap();
         assert!(world
-            .resource::<Messages<crate::ui_dialog_verbs::MeetingStoneUse>>()
+            .resource::<Messages<crate::target::stone::MeetingStoneUse>>()
             .iter_current_update_messages()
             .next()
             .is_none());

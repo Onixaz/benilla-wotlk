@@ -11,10 +11,10 @@ use super::{
     achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, barber,
     battlefield, binder, broadcast, calendar, channel, chat, combat_log, death, duel,
     equipment_set, gameobject, gm_ticket, gossip, group, guild, guild_bank, instance, item_ops,
-    items, lfg, loot, mail, meeting_stone, mirror_timer, monster_move, movement, opcode, page_text,
-    pet, petition, pose, progression, pvp, quest, rune, social, spellbook, spells, stable, summon,
-    tabard, talents, taxi, threat, totem, trade, trainer, tutorial, unit_state, update_object,
-    vehicle, vendor, world_state, AttackSwingError, CalendarPacket, Character, CreatureQueryInfo,
+    items, lfg, loot, mail, mirror_timer, monster_move, movement, opcode, page_text, pet, petition,
+    pose, progression, pvp, quest, rune, social, spellbook, spells, stable, summon, tabard,
+    talents, taxi, threat, totem, trade, trainer, tutorial, unit_state, update_object, vehicle,
+    vendor, world_state, AttackSwingError, CalendarPacket, Character, CreatureQueryInfo,
     DifficultySet, GameClock, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
 };
 
@@ -153,6 +153,39 @@ fn read_multiple_packets(r: &mut &[u8]) -> io::Result<Vec<ServerPacket>> {
         packets.push(packet);
     }
     Ok(packets)
+}
+
+/// Read an `SMSG_SEND_ALL_COMBAT_LOG` body (`0x6d4110`): an `i32` count and a `u32` base time, then
+/// per entry a `u32` time, a `u32` opcode and that opcode's body, read by its standalone log reader
+/// (`0x6d4169`-`0x6d41b8`) with the offset `base - time`. Any other opcode reads nothing.
+fn read_combat_log_batch(r: &mut &[u8]) -> io::Result<Vec<(i32, ServerPacket)>> {
+    let count = read_u32_le(r)? as i32;
+    let base = read_u32_le(r)?;
+    let mut entries = Vec::new();
+    for _ in 0..count.max(0) {
+        let offset = base.wrapping_sub(read_u32_le(r)?) as i32;
+        let opcode = read_u32_le(r)?;
+        let Ok(opcode) = u16::try_from(opcode) else {
+            continue;
+        };
+        if !matches!(
+            opcode,
+            opcode::SMSG_SPELLLOGMISS
+                | opcode::SMSG_SPELLBREAKLOG
+                | opcode::SMSG_SPELLDISPELLOG
+                | opcode::SMSG_SPELLSTEALLOG
+                | opcode::SMSG_SPELLHEALLOG
+                | opcode::SMSG_SPELLENERGIZELOG
+                | opcode::SMSG_SPELLLOGEXECUTE
+                | opcode::SMSG_PERIODICAURALOG
+                | opcode::SMSG_SPELLNONMELEEDAMAGELOG
+        ) {
+            continue;
+        }
+        let mut inner_tail = 0;
+        entries.push((offset, parse_server_body(opcode, r, &mut inner_tail)?));
+    }
+    Ok(entries)
 }
 
 /// Read a `SMSG_SPLINE_SET_*_SPEED` body: `[packed guid][f32 speed]`, no counter, no ack
@@ -532,6 +565,9 @@ fn parse_server_body(
             opcode,
             packets: read_multiple_packets(&mut r)?,
         },
+        opcode::SMSG_SEND_ALL_COMBAT_LOG => ServerPacket::CombatLogBatch {
+            entries: read_combat_log_batch(&mut r)?,
+        },
         // `f32` progress (`0x716950`), then the unit's packed guid (`0x71695a`).
         opcode::SMSG_FLIGHT_SPLINE_SYNC => {
             let progress = read_f32_le(&mut r)?;
@@ -842,19 +878,12 @@ fn parse_server_body(
             guid: crate::wire::read_u64_le(&mut r)?,
             joined: false,
         },
-        opcode::SMSG_MEETINGSTONE_SETQUEUE => {
-            let q = meeting_stone::read_meeting_stone_set_queue(&mut r)?;
-            ServerPacket::MeetingStoneSetQueue {
-                area: q.area,
-                status: q.status,
-            }
-        }
         opcode::SMSG_RESET_RANGED_COMBAT_TIMER => ServerPacket::ResetRangedCombatTimer {
             time_ms: read_u32_le(&mut r)?,
         },
-        opcode::SMSG_MEETINGSTONE_MEMBER_ADDED => ServerPacket::MeetingStoneNotice(
-            meeting_stone::read_meeting_stone_member_added(&mut r)?,
-        ),
+        opcode::SMSG_CHAT_NOT_IN_PARTY => ServerPacket::ChatNotInParty {
+            chat_type: read_u32_le(&mut r)?,
+        },
         opcode::SMSG_TUTORIAL_FLAGS => {
             ServerPacket::TutorialFlags(tutorial::read_tutorial_flags(&mut r)?)
         }
@@ -1283,8 +1312,12 @@ fn parse_server_body(
             }
         }
         opcode::SMSG_INSPECT_TALENT => {
-            let (guid, items) = item_ops::read_inspect_talent(&mut r)?;
-            ServerPacket::InspectItems { guid, items }
+            let (guid, talents, items) = item_ops::read_inspect_talent(&mut r)?;
+            ServerPacket::InspectTalent {
+                guid,
+                talents,
+                items,
+            }
         }
         opcode::SMSG_SOCKET_GEMS_RESULT => {
             let (item, enchants) = item_ops::read_socket_gems_result(&mut r)?;
@@ -2520,6 +2553,11 @@ fn parse_server_body(
             read_u32_le(&mut r)?;
             ServerPacket::Ignored { opcode }
         }
+        // A string for the console (`0x6d8521`).
+        opcode::SMSG_TEST_DROP_RATE_RESULT => {
+            read_cstring(&mut r)?;
+            ServerPacket::Ignored { opcode }
+        }
         // Deviation: the console's damage breakdown (`0x6d3f10`): attacker and target `u64`,
         // source type, spell, a row count, then per row a label, an index and two `f32`
         // (`0x6d4028`-`0x6d4049`).
@@ -2715,7 +2753,7 @@ mod tests {
     }
 
     /// `0x8020c0` and `0x8071c0`: the resumed cast's five fields, and the ranged reset's one
-    /// `u32`, not the meeting stone's empty notice.
+    /// `u32`.
     #[test]
     fn the_resume_and_ranged_reset_bodies_read_whole() {
         let mut body = vec![0x01, 0x11, 0x01, 0x22];
@@ -2774,7 +2812,7 @@ mod tests {
         // Packed guid with no bytes set, then a still movement block with no optional parts.
         let mut collision = vec![0u8];
         collision.extend([0u8; 30]);
-        let bodies: [(u16, Vec<u8>); 15] = [
+        let bodies: [(u16, Vec<u8>); 16] = [
             (opcode::SMSG_FORCEACTIONSHOW, two_u32.clone()),
             (opcode::SMSG_PETGODMODE, vec![1]),
             (opcode::SMSG_GODMODE, vec![0]),
@@ -2790,6 +2828,7 @@ mod tests {
             (opcode::SMSG_FORCE_ANIM, anim),
             (opcode::SMSG_TOGGLE_XP_GAIN, vec![1]),
             (opcode::SMSG_DEBUG_SERVER_GEO, Vec::new()),
+            (opcode::SMSG_TEST_DROP_RATE_RESULT, b"drop rate\0".to_vec()),
         ];
         for (op, body) in bodies {
             let name = super::super::opcode_name(op).unwrap_or("?");

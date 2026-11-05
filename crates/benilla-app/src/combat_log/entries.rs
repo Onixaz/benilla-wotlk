@@ -29,6 +29,11 @@ impl CombatLogClock {
     }
 }
 
+/// How many ms before now the combat-log events being handled happened: a batched entry's offset,
+/// which its queueing subtracts from the clock (`0x74ff20`); 0 outside a batch.
+#[derive(Resource, Default, Clone, Copy)]
+pub(crate) struct CombatLogBackdate(pub(crate) i32);
+
 /// How an endpoint's name is looked up (`0x74fd40`): a unit's cache, or a game object's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NameRef {

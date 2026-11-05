@@ -8,7 +8,7 @@ use benilla_protocol::messages::{self, ServerPacket};
 
 /// Opcodes with no decoder yet that are work, not a deviation, each with its open issue. Give one a
 /// decoder and its entry goes.
-const OPEN_GAPS: &[(u16, &str)] = &[(0x2e6, "#5 Warden"), (0x514, "#442 the batched combat log")];
+const OPEN_GAPS: &[(u16, &str)] = &[(0x2e6, "#5 Warden")];
 
 fn repo_file(path: &str) -> String {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

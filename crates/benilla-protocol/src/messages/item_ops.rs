@@ -163,13 +163,15 @@ pub struct InspectItem {
     pub seed: u32,
 }
 
-/// Read `SMSG_INSPECT_TALENT` (`0x6ce0c0`): the packed guid, the player talent body, then the worn
-/// items: a `u32` slot mask and per set bit the entry, a `u16` enchant mask with a `u16` per set bit,
-/// a `u16` random property, the creator's packed guid and a `u32` seed. Only the items are kept.
-pub(super) fn read_inspect_talent(r: &mut &[u8]) -> io::Result<(u64, Vec<InspectItem>)> {
+/// Read `SMSG_INSPECT_TALENT` (`0x6ce0c0`): the packed guid, the player talent body (`0x5c9ff0`),
+/// then the worn items: a `u32` slot mask and per set bit the entry, a `u16` enchant mask with a
+/// `u16` per set bit, a `u16` random property, the creator's packed guid and a `u32` seed.
+pub(super) fn read_inspect_talent(
+    r: &mut &[u8],
+) -> io::Result<(u64, super::TalentsInfo, Vec<InspectItem>)> {
     let guid = crate::wire::read_packed_guid(r)?;
-    super::talents::read_player_talents(r)?;
-    Ok((guid, read_inspect_items(r)?))
+    let talents = super::talents::read_player_talents(r)?;
+    Ok((guid, talents, read_inspect_items(r)?))
 }
 
 /// Read `SMSG_INSPECT_RESULTS_UPDATE` (`0x6ce070`): the packed guid, then the worn items as
@@ -321,9 +323,9 @@ mod tests {
         ));
     }
 
-    /// The talent body is read past, then each worn item with its enchants by mask.
+    /// The talent body, then each worn item with its enchants by mask.
     #[test]
-    fn an_inspect_talent_reads_the_worn_items() {
+    fn an_inspect_talent_reads_the_talents_and_the_worn_items() {
         let mut b = vec![0x01, 0x07]; // packed guid 7
         b.extend_from_slice(&0u32.to_le_bytes()); // unspent
         b.extend_from_slice(&[1, 0]); // one group, active 0
@@ -339,8 +341,26 @@ mod tests {
         b.push(0); // creator, empty packed guid
         b.extend_from_slice(&9u32.to_le_bytes());
         match parse_server(opcode::SMSG_INSPECT_TALENT, &b).unwrap() {
-            ServerPacket::InspectItems { guid, items } => {
+            ServerPacket::InspectTalent {
+                guid,
+                talents,
+                items,
+            } => {
                 assert_eq!(guid, 7);
+                match talents {
+                    crate::messages::TalentsInfo::Player {
+                        unspent,
+                        active_group,
+                        groups,
+                    } => {
+                        assert_eq!((unspent, active_group, groups.len()), (0, 0, 1));
+                        assert_eq!(
+                            (groups[0].talents[0].talent_id, groups[0].talents[0].rank),
+                            (1234, 2)
+                        );
+                    }
+                    other => panic!("{other:?}"),
+                }
                 assert_eq!(items.len(), 1);
                 let it = &items[0];
                 assert_eq!((it.slot, it.entry, it.counts_gems), (1, 40_000, true));
