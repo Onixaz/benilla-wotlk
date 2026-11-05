@@ -454,13 +454,10 @@ pub enum ServerPacket {
         guid: u64,
         joined: bool,
     },
-    /// `SMSG_MEETINGSTONE_SETQUEUE` (`0x295`): the meeting-stone queue state.
-    MeetingStoneSetQueue {
-        area: u32,
-        status: u8,
+    /// `SMSG_CHAT_NOT_IN_PARTY`: the chat type of a party or raid line sent outside one.
+    ChatNotInParty {
+        chat_type: u32,
     },
-    /// `0x299`: the meeting stone's display-only reply.
-    MeetingStoneNotice(crate::messages::MeetingStoneNotice),
     /// `SMSG_TUTORIAL_FLAGS`: the account's tutorial bank.
     TutorialFlags(crate::messages::TutorialFlags),
     /// `SMSG_SUMMON_REQUEST`: someone asks to pull us to them; nothing moves until
@@ -1985,10 +1982,7 @@ impl ServerPacket {
             ServerPacket::BattlegroundPlayer { joined: false, .. } => {
                 "SMSG_BATTLEGROUND_PLAYER_LEFT".into()
             }
-            ServerPacket::MeetingStoneSetQueue { .. } => "SMSG_MEETINGSTONE_SETQUEUE".into(),
-            ServerPacket::MeetingStoneNotice(
-                crate::messages::MeetingStoneNotice::MemberAdded { .. },
-            ) => "SMSG_MEETINGSTONE_MEMBER_ADDED".into(),
+            ServerPacket::ChatNotInParty { .. } => "SMSG_CHAT_NOT_IN_PARTY".into(),
             ServerPacket::ResetRangedCombatTimer { .. } => "SMSG_RESET_RANGED_COMBAT_TIMER".into(),
             ServerPacket::ResumeCastBar(_) => "SMSG_RESUME_CAST_BAR".into(),
             ServerPacket::TutorialFlags(_) => "SMSG_TUTORIAL_FLAGS".into(),

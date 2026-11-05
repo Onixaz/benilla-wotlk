@@ -39,6 +39,8 @@ const THREAT_STATUS_COLORS: [u32; 5] = [0xffffff, 0xb0b0b0, 0xffff77, 0xff9900, 
 /// app picks the tint for each line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TooltipTint {
+    /// The name's own colour, a type's line (the meeting stone's area, `0x7108d0`).
+    Title,
     /// A requirement line's normal colour (the key item's "Requires %s").
     White,
     /// `0xffff2020`, the unmet "Locked" line, the ramp's red rung.
@@ -498,6 +500,7 @@ impl super::UiScript {
             append_line(&self.lua, &wrapper, (name.to_string(), GOLD), None, false)?;
             for (text, tint) in lines {
                 let colour = match tint {
+                    TooltipTint::Title => GOLD,
                     TooltipTint::White => WHITE,
                     TooltipTint::Red => RED,
                     TooltipTint::PureRed => PURE_RED,

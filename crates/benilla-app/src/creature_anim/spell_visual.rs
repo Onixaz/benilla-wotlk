@@ -39,27 +39,6 @@ const LEVEL_UP_EFFECT: &str = "HARDCODED Unit Level Up";
 
 /// The mount cloud, hardcoded index 6: row 1185, the druid-morph puff.
 const MOUNT_POOF_EFFECT: &str = "HARDCODED Mount Poof";
-/// The meeting-stone join, hardcoded index 0xc, spawned on the local player by the `SMSG 0x295`
-/// status-1 arm.
-const MEETING_STONE_JOIN_EFFECT: &str = "HARDCODED Meeting Stone Join";
-
-/// The meeting-stone join visual on `entity`: a one-shot at `0x13`.
-pub(crate) fn meeting_stone_join_fx(visuals: &SpellVisuals, entity: Entity) -> Option<SpellKitFx> {
-    let (effect, path) = visuals.0.hardcoded_effect(MEETING_STONE_JOIN_EFFECT)?;
-    Some(SpellKitFx::Begin {
-        entity,
-        spell_id: 0,
-        persistent: false,
-        class: FxClass::Hold,
-        stage: FxStage::OneShot,
-        effects: vec![FxSlot {
-            tag: HARDCODED_FX_ATTACH,
-            effect,
-            path: path.to_string(),
-            scale: 1.0,
-        }],
-    })
-}
 
 /// `SpellVisual.dbc` × `SpellVisualKit.dbc`; absent without client data.
 #[derive(Resource)]

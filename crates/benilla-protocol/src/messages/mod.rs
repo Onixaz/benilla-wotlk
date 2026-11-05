@@ -36,7 +36,6 @@ mod items;
 mod lfg;
 mod loot;
 mod mail;
-mod meeting_stone;
 mod mirror_timer;
 mod monster_move;
 mod movement;
@@ -252,9 +251,6 @@ pub use mail::{
     mail_delete_reason, mail_error, mail_flags, mail_mark_as_read, mail_message_type,
     mail_return_to_sender, mail_take_item, mail_take_money, send_mail, MailAttachment, MailEnchant,
     MailList, MailListEntry, MailResult, MailSender, MAIL_ATTACHMENTS_MAX, MAIL_RECENT_SENDERS,
-};
-pub use meeting_stone::{
-    meeting_stone_join, meeting_stone_leave, MeetingStoneNotice, MeetingStoneSetQueue,
 };
 pub use mirror_timer::{
     read_pause_mirror_timer, read_start_mirror_timer, read_stop_mirror_timer, MirrorTimerKind,

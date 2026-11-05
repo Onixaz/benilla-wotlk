@@ -20,6 +20,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::ChannelUserList, on_channel_user_list)
         .net_handler(K::ChatPlayerNotFound, on_whisper_refusal)
         .net_handler(K::ChatWrongFaction, on_whisper_refusal)
+        .net_handler(K::ChatNotInParty, on_chat_not_in_party)
         .net_handler(K::ZoneUnderAttack, on_broadcast)
         .net_handler(K::DefenseMessage, on_broadcast)
         .net_handler(K::ServerMessage, on_broadcast)
@@ -143,6 +144,24 @@ fn on_whisper_refusal(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>)
         SessionEvent::ChatPlayerNotFound { name } => chat_player_not_found(&name, &mut errors),
         SessionEvent::ChatWrongFaction => chat_wrong_faction(&mut errors),
         _ => {}
+    }
+}
+
+/// `SMSG_CHAT_NOT_IN_PARTY` (`0x6e397b`): the party and battleground-party types say not in a
+/// group, the raid types not in a raid, any other nothing.
+fn not_in_party_key(chat_type: u32) -> Option<&'static str> {
+    match chat_type {
+        2 | 51 => Some("ERR_NOT_IN_GROUP"),
+        3 | 39 | 40 => Some("ERR_NOT_IN_RAID"),
+        _ => None,
+    }
+}
+
+fn on_chat_not_in_party(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>) {
+    if let SessionEvent::ChatNotInParty { chat_type } = ev {
+        errors
+            .0
+            .extend(not_in_party_key(chat_type).map(UiError::key));
     }
 }
 
@@ -637,6 +656,20 @@ mod tests {
         assert_eq!(chat_restricted_key(2), Some("ERR_USER_SQUELCHED"));
         assert_eq!(chat_restricted_key(3), Some("ERR_YELL_RESTRICTED"));
         assert_eq!(chat_restricted_key(4), None);
+    }
+
+    /// `0x6e397b`: the party types say not in a group, the raid types not in a raid.
+    #[test]
+    fn a_line_outside_the_group_names_the_group_it_needed() {
+        for t in [2, 51] {
+            assert_eq!(not_in_party_key(t), Some("ERR_NOT_IN_GROUP"), "type {t}");
+        }
+        for t in [3, 39, 40] {
+            assert_eq!(not_in_party_key(t), Some("ERR_NOT_IN_RAID"), "type {t}");
+        }
+        for t in [0, 1, 4, 44, 52] {
+            assert_eq!(not_in_party_key(t), None, "type {t}");
+        }
     }
 
     /// `0x6e3801`: a roll from an ignored player never queues; any other does.

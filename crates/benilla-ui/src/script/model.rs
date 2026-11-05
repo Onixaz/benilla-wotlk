@@ -592,11 +592,6 @@ pub(crate) struct Model {
     /// A `Cell`: the stock `UIParent` OnUpdate calls the verb every frame and the app drains it
     /// every frame, and neither is anything drawn (`ModelCell`).
     pub(crate) battlefield_position_requests: std::cell::Cell<u32>,
-    /// `CancelMeetingStoneRequest()` calls; the app gates on leadership.
-    pub(crate) meeting_stone_cancels: u32,
-    /// The meeting stone's queued area and status text, as pushed.
-    pub(crate) meeting_stone_area: u32,
-    pub(crate) meeting_stone_status_text: Option<String>,
     /// Acknowledged tutorials, `None` before `SMSG_TUTORIAL_FLAGS`; all `TutorialsEnabled()` reads.
     pub(crate) tutorial_bank: Option<Vec<u8>>,
     /// `FlagTutorial(n)` calls, 0-based and in range.
@@ -1490,9 +1485,6 @@ impl Model {
             battlefield_flags: Vec::new(),
             battlefield_icon_scale: 1.0,
             battlefield_position_requests: std::cell::Cell::new(0),
-            meeting_stone_cancels: 0,
-            meeting_stone_area: 0,
-            meeting_stone_status_text: None,
             tutorial_bank: None,
             tutorial_flag_requests: Vec::new(),
             tutorial_triggers: Vec::new(),

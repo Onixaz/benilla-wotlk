@@ -509,10 +509,8 @@ pub enum SessionEvent {
     ArenaTeamInvite { inviter: String, team: String },
     /// `SMSG_BATTLEGROUND_PLAYER_JOINED`/`_LEFT`, printed once the name cache has the guid.
     BattlegroundPlayer { guid: u64, joined: bool },
-    /// The meeting-stone queue state (`SMSG 0x295`): the area queued for and a status byte.
-    MeetingStoneSetQueue { area: u32, status: u8 },
-    /// The meeting stone's chat-line-only reply (`0x299`).
-    MeetingStoneNotice(crate::messages::MeetingStoneNotice),
+    /// A party or raid line of `chat_type` was sent outside one (`SMSG_CHAT_NOT_IN_PARTY`).
+    ChatNotInParty { chat_type: u32 },
     /// The tutorial bank bytes (`SMSG_TUTORIAL_FLAGS`); the client copies both its banks from them.
     TutorialFlags(Vec<u8>),
     /// The bind took (`SMSG_PLAYERBOUND`); `area` matches the [`Self::BindPoint`] sent beside it.

@@ -146,6 +146,8 @@ fn drive_mouseover_tooltip(
     // `ChrClasses.dbc` field 16, `UnitHasRelicSlot`'s input, and the form table the creature type
     // reads.
     tables: SnapshotTables,
+    // The meeting stone's area line.
+    areas: Option<Res<crate::area::AreaTableRes>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -316,6 +318,13 @@ fn drive_mouseover_tooltip(
             .filter(|_| template.lock_id != 0)
             .and_then(|l| l.0.slots(template.lock_id));
         let mut lines: Vec<(String, TooltipTint)> = Vec::new();
+        // The type's own lines come first (`0x70ba40`): a meeting stone names its area.
+        if let Some(name) = template
+            .meeting_stone
+            .and_then(|s| areas.as_deref()?.0.name(s.area))
+        {
+            lines.push((name.to_string(), TooltipTint::Title));
+        }
         // The lock lines' keys all read "Requires %s" in enUS; only the binary tells them apart.
         let go_get = |key: &str| benilla_ui::strings::global(script.lua(), key);
         // Both lock lines ask the lock test (`0x70f160`), the resolver the click uses.

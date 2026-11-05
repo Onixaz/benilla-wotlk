@@ -294,11 +294,6 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
         wall_clock: true,
     },
     ProbeVar {
-        name: "WOW_PROBE_STONE",
-        purpose: "1 or <x>,<y>,<z>[,<map>] — join a real meeting stone on the click's own route and read the queue back out of the live VM",
-        wall_clock: true,
-    },
-    ProbeVar {
         name: "WOW_PROBE_CHEST",
         purpose: "1 or <x>,<y>,<z>[,<map>] — open a real chest on the click's own route and report the self anim id before/during/after",
         wall_clock: true,

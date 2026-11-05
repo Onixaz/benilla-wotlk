@@ -1,8 +1,8 @@
 //! The verbs the stock `StaticPopup.lua` dialogs call: the instance-boot and area spirit healer
-//! clocks, the meeting stone pair and the pet untrain pair; the battlefield port answer is
+//! clocks and the pet untrain pair; the battlefield port answer is
 //! `battlefield_queue`'s.
 
-use mlua::{Lua, Value};
+use mlua::Lua;
 
 use super::binding_abi::flag;
 
@@ -42,19 +42,6 @@ impl super::UiScript {
     /// `AcceptAreaSpiritHeal()` calls since the last drain, each a `0x2E3` to send.
     pub fn take_area_spirit_accepts(&mut self) -> u32 {
         drain_field!(self, area_spirit_accepts)
-    }
-
-    /// `CancelMeetingStoneRequest()` calls since the last drain.
-    pub fn take_meeting_stone_cancels(&mut self) -> u32 {
-        drain_field!(self, meeting_stone_cancels)
-    }
-
-    /// The meeting stone's two globals: the queued area id (0 for none) and the cached status text
-    /// (`None` outside the world), which the app rebuilds.
-    pub fn set_meeting_stone(&mut self, area: u32, status_text: Option<String>) {
-        let mut model = self.model_mut();
-        model.meeting_stone_area = area;
-        model.meeting_stone_status_text = status_text;
     }
 }
 
@@ -106,41 +93,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             Ok(i64::from(model.area_spirit_secs))
-        })?,
-    )?;
-
-    // An empty `0x293` gated on party leadership (the app's); only the reply clears.
-    g.set(
-        "CancelMeetingStoneRequest",
-        lua.create_function(|lua, ()| {
-            let mut model = crate::script::model_mut_of(lua);
-            model.meeting_stone_cancels += 1;
-            Ok(())
-        })?,
-    )?;
-
-    // The number `1` or nil, never `0` (truthy, it would pin the icon) or a boolean.
-    g.set(
-        "IsInMeetingStoneQueue",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(model.meeting_stone_area != 0))
-        })?,
-    )?;
-
-    // A string or nil, never `""` for nothing.
-    g.set(
-        "GetMeetingStoneStatusText",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(match &model.meeting_stone_status_text {
-                Some(text) => Value::String(lua.create_string(text)?),
-                None => Value::Nil,
-            })
         })?,
     )?;
 
@@ -231,36 +183,6 @@ mod tests {
     }
 
     #[test]
-    fn the_meeting_stone_pair_answers_one_or_nil_and_string_or_nil() {
-        let mut s = UiScript::new().unwrap();
-        assert_eq!(s.arity("IsInMeetingStoneQueue()").unwrap(), 1);
-        assert!(s
-            .eval::<bool>("return IsInMeetingStoneQueue() == nil")
-            .unwrap());
-        assert!(s
-            .eval::<bool>("return GetMeetingStoneStatusText() == nil")
-            .unwrap());
-        s.set_meeting_stone(1519, Some("Looking for more for Stormwind City".into()));
-        assert_eq!(s.eval::<i64>("return IsInMeetingStoneQueue()").unwrap(), 1);
-        assert_eq!(
-            s.eval::<String>("return GetMeetingStoneStatusText()")
-                .unwrap(),
-            "Looking for more for Stormwind City"
-        );
-        s.set_meeting_stone(0, Some("Unknown".into()));
-        assert!(
-            s.eval::<bool>("return IsInMeetingStoneQueue() == nil")
-                .unwrap(),
-            "area 0: not queued, whatever the text says"
-        );
-        assert_eq!(
-            s.eval::<String>("return GetMeetingStoneStatusText()")
-                .unwrap(),
-            "Unknown"
-        );
-    }
-
-    #[test]
     fn the_pet_pair_counts_and_answers_one_or_nil() {
         let mut s = UiScript::new().unwrap();
         assert!(s
@@ -268,10 +190,8 @@ mod tests {
             .unwrap());
         s.set_pet_untrainer_pending(true);
         assert_eq!(s.eval::<i64>("return CheckPetUntrainerDist()").unwrap(), 1);
-        s.run("ConfirmPetUnlearn() ConfirmPetUnlearn() CancelMeetingStoneRequest()")
-            .unwrap();
+        s.run("ConfirmPetUnlearn() ConfirmPetUnlearn()").unwrap();
         assert_eq!(s.take_pet_unlearn_confirms(), 2);
-        assert_eq!(s.take_meeting_stone_cancels(), 1);
         assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 }

@@ -1206,10 +1206,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::BattlegroundPlayer { guid, joined } => {
             vec![SessionEvent::BattlegroundPlayer { guid, joined }]
         }
-        ServerPacket::MeetingStoneSetQueue { area, status } => {
-            vec![SessionEvent::MeetingStoneSetQueue { area, status }]
+        ServerPacket::ChatNotInParty { chat_type } => {
+            vec![SessionEvent::ChatNotInParty { chat_type }]
         }
-        ServerPacket::MeetingStoneNotice(notice) => vec![SessionEvent::MeetingStoneNotice(notice)],
         ServerPacket::TutorialFlags(flags) => vec![SessionEvent::TutorialFlags(flags.bytes)],
         ServerPacket::PlayerBound { binder, area } => {
             vec![SessionEvent::PlayerBound { binder, area }]

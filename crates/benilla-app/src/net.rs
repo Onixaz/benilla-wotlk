@@ -1576,12 +1576,6 @@ pub(crate) enum ClientCommand {
     BattlefieldMgr(benilla_ui::script::BattlefieldMgrRequest),
     /// An arena-team send.
     ArenaTeam(ArenaTeamCommand),
-    /// A meeting stone right-click past the client's four refusals: `CMSG 0x292`.
-    MeetingStoneJoin {
-        go_guid: u64,
-    },
-    /// `CancelMeetingStoneRequest()`: `CMSG 0x293`.
-    MeetingStoneLeave,
     /// A dungeon finder send, queued by its verb or the world-enter cascade.
     Lfg(benilla_ui::script::LfgRequest),
     /// A calendar send, as its 12340 sender writes it.

@@ -869,8 +869,7 @@ pub(crate) mod schedule_tests {
     ///   test reads one frame late at worst, as `ui_unit::feed_unit_reach`'s range test does
     ///   (`UiFeed` runs before `WorldStage::Input`, so it cannot follow the transport chain); and
     ///   against the `TutorialEvent` writers `tutorial::watch_self`, `watch_windows`,
-    ///   `ui_battlefield::feed_battlefield` and `ui_dialog_verbs::feed_meeting_stone` and the
-    ///   drain `tutorial::feed_tutorials`: it only appends one fire-once ask.
+    ///   `ui_battlefield::feed_battlefield` and the drain `tutorial::feed_tutorials`: it only appends one fire-once ask.
     /// - The vehicle seats (#632) add 15: `vehicle::ride::ride_seats` re-roots a passenger's rig in
     ///   the entity-visuals chain right after `reseat_mounts`, as a mount re-seat does, and shares
     ///   its unordered `RigPose` readers (the nameplate, overhead mark, combat-text and anim-event
@@ -1374,8 +1373,6 @@ pub(crate) mod schedule_tests {
          "`feed.vm: VmMemo<CharFeedMemo>`; `vm_reset` fires every transition on a fresh memo"),
         ("ui_chat/recruitment.rs", "guild_recruitment_cascade", Because::SelfHealing,
          "`pending` is held until the zone mask and zone id are settled, which happens on the entry VM"),
-        ("ui_dialog_verbs.rs", "feed_meeting_stone", Because::SelfHealing,
-         "the text waits for the world-enter cascade's reset (`meeting_stone_enter_world`), our own create a server round trip past the login edge, and every `/reload` resets it onto its new VM"),
         ("ui_duel.rs", "feed_duel", Because::PlayerRoundTrip,
          "a duel exists only after someone's Duel cast, and the server ends any duel at logout; FINISHED/bounds ride `VmMemo<FedDuel>` (another player's act: coincidence-only residual)"),
         ("ui_follow.rs", "feed_follow", Because::MemoLatched,

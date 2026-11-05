@@ -2368,16 +2368,10 @@ mod tests {
     }
 
     /// 1.12.1 producers still to remove, each with what replaces it; the list only shrinks.
-    const STILL_1_12_EVENTS: &[(&str, &str)] = &[
-        (
-            "MEETINGSTONE_CHANGED",
-            "1.12.1's meeting-stone queue, on opcodes that are other packets in 12340 (#421)",
-        ),
-        (
-            "CONFIRM_PET_UNLEARN",
-            "1.12.1's pet trainer prompt: 12340 has no handler for 0x2F1 and no ConfirmPetUnlearn",
-        ),
-    ];
+    const STILL_1_12_EVENTS: &[(&str, &str)] = &[(
+        "CONFIRM_PET_UNLEARN",
+        "1.12.1's pet trainer prompt: 12340 has no handler for 0x2F1 and no ConfirmPetUnlearn",
+    )];
 
     /// Every event benilla fires exists in the 3.3.5a client: an event it can dispatch is a
     /// NUL-terminated string in `WoW.exe`, and a name missing there no stock listener can ever

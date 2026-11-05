@@ -60,7 +60,6 @@ pub(crate) mod id {
     pub(crate) const WELCOME: u32 = 0x29;
     pub(crate) const RANGED_WEAPONS: u32 = 0x2b;
     pub(crate) const RAID_GROUPS: u32 = 0x2d;
-    pub(crate) const MEETING_STONES: u32 = 0x2e;
     pub(crate) const BATTLEGROUND_QUEUE: u32 = 0x2f;
     pub(crate) const PORT_TO_BATTLEGROUND: u32 = 0x30;
     pub(crate) const KEYRINGS: u32 = 0x31;

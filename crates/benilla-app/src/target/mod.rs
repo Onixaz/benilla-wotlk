@@ -41,6 +41,7 @@ mod reticle;
 pub(crate) mod ring;
 mod scan;
 mod script;
+pub(crate) mod stone;
 pub(crate) use script::ScriptSelect;
 
 /// `Faction.dbc`, our reputation table and the group as one [`SystemParam`], since every reaction
@@ -315,6 +316,15 @@ impl Plugin for TargetPlugin {
             .add_message::<AssistRequest>()
             .add_message::<click::DeselectGuid>()
             .add_message::<Interact>()
+            .add_message::<stone::MeetingStoneUse>()
+            // After the target chain, which writes the stone's use, so it leaves on the click's
+            // own frame.
+            .add_systems(
+                Update,
+                stone::drain_meeting_stone_uses
+                    .after(crate::ui_script::UiInput)
+                    .after(TargetUpdate),
+            )
             .add_systems(
                 Startup,
                 (
