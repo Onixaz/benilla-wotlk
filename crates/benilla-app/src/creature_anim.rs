@@ -920,7 +920,8 @@ impl Plugin for CreatureAnimPlugin {
                     (
                         arm_loot_fx,
                         arm_go_loot_fx,
-                        play_dest_loc_casts,
+                        // After the stream stage, whose collider finish is an exclusive system.
+                        play_dest_loc_casts.after(WorldStage::Stream),
                         play_delayed_area_kits,
                         arm_level_up_fx,
                         arm_mount_poof_fx,

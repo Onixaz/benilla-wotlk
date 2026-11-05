@@ -934,7 +934,7 @@ pub(crate) mod schedule_tests {
     ///   apply_walk_end_facing` against `face_booth_billboards`, which turns only booth quads.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_900;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_796;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
