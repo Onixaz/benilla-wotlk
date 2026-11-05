@@ -212,13 +212,25 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_tables_name_a_file_for_every_movie_they_vary() {
+    fn the_shipped_tables_name_a_file_for_every_complete_variation() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let c = load_movies(&mut chain).expect("movie tables");
         assert!(!c.volumes.is_empty() && !c.variations.is_empty());
-        for &(movie, _) in &c.variations {
-            assert!(c.file_for(movie, 1024).is_some(), "movie {movie}");
+        // A variation whose movie has a row and whose file has a resolution and a name resolves;
+        // the shipped tables also hold variations that do not.
+        let complete = |movie: u32, file: u32| {
+            c.volumes.contains_key(&movie)
+                && c.resolutions.contains_key(&file)
+                && c.files.contains_key(&file)
+        };
+        let mut resolved = 0;
+        for &(movie, file) in &c.variations {
+            if complete(movie, file) {
+                assert!(c.file_for(movie, 1024).is_some(), "movie {movie}");
+                resolved += 1;
+            }
         }
+        assert!(resolved > 0, "some movie resolves");
     }
 }
