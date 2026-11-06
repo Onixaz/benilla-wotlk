@@ -18,12 +18,12 @@
 use bevy::prelude::*;
 
 use crate::creature_anim::{held_strike_sound, AnimSoundEvent, CastHold, SpellVisuals};
-use crate::net::{ActiveMover, ObjectStore, SelfPlayer};
+use crate::net::ObjectStore;
 use benilla_assets::WorldAssets;
 use benilla_world::schedule::WorldStage;
 
 use super::emitter_pool::AmbientEmitterPool;
-use super::emote::{play_emote_voice, EmoteSounds, EmoteVoice, VOICE_ATTACH};
+use super::emote::{play_emote_voice, EmoteSounds, EmoteVoice, VoiceOwners, VOICE_ATTACH};
 use super::kit::{play_kit, KitRef, SoundCategory, SoundKits};
 use super::{AudioListener, SoundConfig, SoundOutput};
 
@@ -40,7 +40,7 @@ pub(super) fn route_anim_events(
     go_lane: Query<(), With<crate::go_anim::GoAnim>>,
     // The attachment read `$CSD` needs.
     attach: crate::entities::AttachPoints,
-    owners: Query<(), Or<(With<SelfPlayer>, With<ActiveMover>)>>,
+    owners: VoiceOwners,
     kits: Option<ResMut<SoundKits>>,
     assets: Option<Res<WorldAssets>>,
     emotes: Option<Res<EmoteSounds>>,

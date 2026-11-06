@@ -137,6 +137,9 @@ fn voice_audible(
     Some(performer) == me || performer_is_player && roster.in_party(me, performer)
 }
 
+/// The units whose voice is your own: the active player or the active mover.
+pub(super) type VoiceOwners<'w, 's> = Query<'w, 's, (), Or<(With<SelfPlayer>, With<ActiveMover>)>>;
+
 /// One play of `0x746d60`.
 pub(super) struct EmoteVoice {
     pub(super) kit: u32,
@@ -238,7 +241,7 @@ fn form_mutes_voice(form_flags: Option<u32>) -> bool {
 fn emote_sounds(
     mut msgs: MessageReader<EmoteMessage>,
     units: Query<(&ObjectStore, &Transform)>,
-    owners: Query<(), Or<(With<SelfPlayer>, With<ActiveMover>)>>,
+    owners: VoiceOwners,
     spells: Option<Res<crate::ui_action::Spells>>,
     emotes: Option<Res<EmoteSounds>>,
     kits: Option<ResMut<SoundKits>>,
