@@ -1469,11 +1469,11 @@ fn enable_and_disable_fire_their_scripts_on_a_change() {
     );
 }
 
-/// A frame still in its XML load (`+0x130`, set by the XML load and cleared before its `OnLoad`)
-/// runs no `OnEnable`/`OnDisable`: a child's `OnLoad` that disables its parent is silent, the
-/// parent's own `OnLoad` is not.
+/// The load mark (`+0x130`) clears before the `<Frames>` children are built (`0x490421`,
+/// `0x490493`): a child's `OnLoad` that disables its parent runs `OnDisable` (`0x9704fe`) before
+/// the parent's own `OnLoad`.
 #[test]
-fn a_frame_in_its_xml_load_fires_no_enable_scripts() {
+fn a_childs_onload_disabling_its_parent_runs_the_parents_ondisable() {
     let s = script();
     let doc = crate::framexml::parse(
         r#"<Ui>
@@ -1497,6 +1497,6 @@ fn a_frame_in_its_xml_load_fires_no_enable_scripts() {
     assert!(report.errors.is_empty(), "{:#?}", report.errors);
     assert_eq!(
         s.eval::<String>("return table.concat(log, ',')").unwrap(),
-        "onload,enable"
+        "disable,onload,enable"
     );
 }

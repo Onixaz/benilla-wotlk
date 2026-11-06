@@ -172,23 +172,24 @@ fn a_frame_visible_at_the_end_of_its_load_hears_onshow_after_onload() {
     );
 }
 
-/// The layer hide (`0x490300`) is silent while the frame is in its XML load: a child's `OnLoad`
-/// hiding its still-loading parent fires no `OnHide` on the parent, which then ends its load hidden
-/// and hears no `OnShow` either.
+/// The load mark clears before the `<Frames>` children are built (`0x490421`, `0x490493`), so a
+/// child's `OnLoad` hiding its parent runs the parent's `OnHide` (`0x490300`) before the parent's
+/// `OnLoad`, and the parent, ending its load hidden, hears no `OnShow`.
 #[test]
-fn a_hide_during_the_frames_own_load_is_silent() {
+fn a_childs_onload_hiding_its_parent_runs_the_parents_onhide_before_its_onload() {
     let s = script();
     s.run("log = {}").unwrap();
     load_xml(
         &s,
         r#"<Ui>
-             <Frame name="SilentP">
+             <Frame name="HiddenByKid">
                <Scripts>
+                 <OnLoad>table.insert(log, "load P")</OnLoad>
                  <OnShow>table.insert(log, "show P")</OnShow>
                  <OnHide>table.insert(log, "hide P")</OnHide>
                </Scripts>
                <Frames>
-                 <Frame name="SilentKid">
+                 <Frame name="HidingKid">
                    <Scripts>
                      <OnLoad>self:GetParent():Hide()</OnLoad>
                      <OnHide>table.insert(log, "hide Kid")</OnHide>
@@ -199,8 +200,65 @@ fn a_hide_during_the_frames_own_load_is_silent() {
            </Ui>"#,
     );
     let log: Vec<String> = s.eval("return log").unwrap();
-    assert_eq!(log, vec!["hide Kid"], "the loaded kid hears its hide");
-    assert!(!s.eval::<bool>("return SilentP:IsShown()").unwrap());
+    assert_eq!(log, vec!["hide Kid", "hide P", "load P"]);
+    assert!(!s.eval::<bool>("return HiddenByKid:IsShown()").unwrap());
+}
+
+/// A `hidden="true"` parent shown by a child's `OnLoad` hears `OnShow` then (`0x4902d0`) and again
+/// after its own `OnLoad` (`0x49058b`).
+#[test]
+fn a_childs_onload_showing_a_hidden_parent_gives_it_two_onshows() {
+    let s = script();
+    s.run("log = {}").unwrap();
+    load_xml(
+        &s,
+        r#"<Ui>
+             <Frame name="ShownByKid" hidden="true">
+               <Scripts>
+                 <OnLoad>table.insert(log, "load P")</OnLoad>
+                 <OnShow>table.insert(log, "show P")</OnShow>
+                 <OnHide>table.insert(log, "hide P")</OnHide>
+               </Scripts>
+               <Frames>
+                 <Frame name="ShowingKid">
+                   <Scripts><OnLoad>self:GetParent():Show()</OnLoad></Scripts>
+                 </Frame>
+               </Frames>
+             </Frame>
+           </Ui>"#,
+    );
+    let log: Vec<String> = s.eval("return log").unwrap();
+    assert_eq!(log, vec!["show P", "load P", "show P"]);
+}
+
+/// A scroll child is built inside the scroll frame's XML load (`0x96b920`), with the mark still
+/// set, so its `OnLoad` hiding the scroll frame runs no `OnHide`.
+#[test]
+fn a_scroll_childs_onload_hiding_its_parent_is_silent() {
+    let s = script();
+    s.run("log = {}").unwrap();
+    load_xml(
+        &s,
+        r#"<Ui>
+             <ScrollFrame name="HiddenByScrollChild">
+               <Scripts>
+                 <OnLoad>table.insert(log, "load P")</OnLoad>
+                 <OnShow>table.insert(log, "show P")</OnShow>
+                 <OnHide>table.insert(log, "hide P")</OnHide>
+               </Scripts>
+               <ScrollChild>
+                 <Frame name="HidingScrollChild">
+                   <Scripts><OnLoad>self:GetParent():Hide()</OnLoad></Scripts>
+                 </Frame>
+               </ScrollChild>
+             </ScrollFrame>
+           </Ui>"#,
+    );
+    let log: Vec<String> = s.eval("return log").unwrap();
+    assert_eq!(log, vec!["load P"]);
+    assert!(!s
+        .eval::<bool>("return HiddenByScrollChild:IsShown()")
+        .unwrap());
 }
 
 /// `CreateFrame` with a template loads it the same way, so the template's `OnShow` runs after its
