@@ -254,7 +254,12 @@ pub(super) fn steer_follow(
         return;
     }
     let bearing = bearing_to(flat);
-    player.face_yaw = steer(player.face_yaw, bearing, TURN_RATE, time.delta_secs());
+    player.face_yaw = steer(
+        player.face_yaw,
+        bearing,
+        TURN_RATE,
+        super::mover::move_step(&time).as_secs_f32(),
+    );
     let moving = should_move(follow.moving, distance, speed.value);
     if moving != follow.moving {
         info!(

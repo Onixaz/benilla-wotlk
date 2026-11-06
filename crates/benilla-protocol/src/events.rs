@@ -335,6 +335,8 @@ pub enum SessionEvent {
         arc: Option<SplineArc>,
         /// `SPLINEFLAG_ORIENTATION_FIXED`: the unit keeps its facing along the path.
         facing_fixed: bool,
+        /// `SPLINEFLAG_CYCLIC`: the path loops.
+        cycle: Option<crate::messages::SplineCycle>,
     },
     /// Same-map teleport (`MSG_MOVE_TELEPORT_ACK`): the app snaps our player and echoes the ack.
     Teleport {

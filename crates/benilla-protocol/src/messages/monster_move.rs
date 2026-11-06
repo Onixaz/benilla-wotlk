@@ -5,7 +5,7 @@
 
 use std::io;
 
-use crate::messages::{MonsterMoveFacing, ServerPacket, SplineArc};
+use crate::messages::{MonsterMoveFacing, ServerPacket, SplineArc, SplineCycle};
 use crate::wire::{
     capacity_hint, packed_to_vector3d, read_f32_le, read_i32_le, read_packed_guid, read_u32_le,
     read_u64_le, read_u8, Vector3d,
@@ -54,6 +54,7 @@ mod wotlk_spline {
     pub const ORIENTATION_FIXED: u32 = 0x4000;
     pub const CATMULLROM: u32 = 0x4_0000;
     pub const CYCLIC: u32 = 0x8_0000;
+    pub const ENTER_CYCLE: u32 = 0x10_0000;
     pub const ANIMATION: u32 = 0x20_0000;
 }
 
@@ -100,6 +101,7 @@ pub(super) fn read_monster_move_wotlk(
             run_mode: true,
             arc: None,
             facing_fixed: false,
+            cycle: None,
         });
     }
     let spline_flags = read_u32_le(r)?;
@@ -117,21 +119,31 @@ pub(super) fn read_monster_move_wotlk(
         None
     };
     let smooth = spline_flags & (wotlk_spline::FLYING | wotlk_spline::CATMULLROM) != 0;
+    let cyclic = spline_flags & wotlk_spline::CYCLIC != 0;
     let tail = if smooth {
         let mut points = read_monster_move_spline(r, true)?;
-        // A cyclic path carries one fake point (`WriteCatmullRomCyclicPath`): the start ahead of a
-        // flying path, a zero after a ground one.
-        if spline_flags & wotlk_spline::CYCLIC != 0 && !points.is_empty() {
-            if spline_flags & wotlk_spline::FLYING != 0 {
-                points.remove(0);
-            } else {
+        if cyclic {
+            // A ground path's fake point is a trailing zero (`WriteCatmullRomCyclicPath`).
+            if spline_flags & wotlk_spline::FLYING == 0 {
                 points.pop();
+            }
+            // A first waypoint on the unit is skipped (`0x73ce48`), a flying path's fake one.
+            if points.first().is_some_and(|p| on_start(p, &start)) {
+                points.remove(0);
+            }
+            // The curve runs on through its first waypoint (`0x73cef1`).
+            if let Some(&first) = points.first() {
+                points.push(first);
             }
         }
         points
     } else {
         read_linear_path_wotlk(r, start)?
     };
+    let cycle = cyclic.then(|| SplineCycle {
+        enter: spline_flags & wotlk_spline::ENTER_CYCLE != 0,
+        tail: tail.get(1).filter(|_| smooth).map(|v| [v.x, v.y, v.z]),
+    });
     let path = if tail.is_empty() {
         Vec::new()
     } else {
@@ -151,7 +163,14 @@ pub(super) fn read_monster_move_wotlk(
         run_mode: spline_flags & wotlk_spline::WALKMODE == 0,
         arc,
         facing_fixed: spline_flags & wotlk_spline::ORIENTATION_FIXED != 0,
+        cycle,
     })
+}
+
+/// Whether a waypoint sits on the path's start: under 1/36 yd (`[0xa349b0]`, squared).
+fn on_start(p: &Vector3d, start: &Vector3d) -> bool {
+    let (dx, dy, dz) = (p.x - start.x, p.y - start.y, p.z - start.z);
+    dx * dx + dy * dy + dz * dz < 0.000_771_604_94
 }
 
 /// 3.3.5a's `WriteLinearPath`: a `u32` count, the absolute endpoint, then `count - 1` packed
@@ -331,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn a_3_3_5a_cyclic_flying_path_drops_its_fake_lead_point() {
+    fn a_3_3_5a_cyclic_flying_path_drops_its_fake_lead_point_and_runs_through_its_first() {
         let mut b = head_wotlk(0x55, None, [0.0, 0.0, 10.0], 0);
         b.extend_from_slice(&(0x2000u32 | 0x8_0000 | 0x10_0000).to_le_bytes());
         b.extend_from_slice(&5_000u32.to_le_bytes());
@@ -339,14 +358,51 @@ mod tests {
         for f in [0.0f32, 0.0, 10.0, 10.0, 0.0, 10.0, 10.0, 10.0, 10.0] {
             b.extend_from_slice(&f.to_le_bytes());
         }
-        let ServerPacket::MonsterMove { path, .. } = parse_wotlk(opcode::SMSG_MONSTER_MOVE, &b)
+        let ServerPacket::MonsterMove { path, cycle, .. } =
+            parse_wotlk(opcode::SMSG_MONSTER_MOVE, &b)
         else {
             panic!("expected MonsterMove")
         };
         let path: Vec<[f32; 3]> = path.iter().map(|v| [v.x, v.y, v.z]).collect();
         assert_eq!(
             path,
-            [[0.0, 0.0, 10.0], [10.0, 0.0, 10.0], [10.0, 10.0, 10.0]]
+            [
+                [0.0, 0.0, 10.0],
+                [10.0, 0.0, 10.0],
+                [10.0, 10.0, 10.0],
+                [10.0, 0.0, 10.0]
+            ]
+        );
+        assert_eq!(
+            cycle,
+            Some(SplineCycle {
+                enter: true,
+                tail: Some([10.0, 10.0, 10.0])
+            })
+        );
+    }
+
+    #[test]
+    fn a_3_3_5a_linear_cyclic_path_keeps_its_waypoints() {
+        let mut b = head_wotlk(0x55, None, [0.0, 0.0, 0.0], 0);
+        b.extend_from_slice(&0x8_0000u32.to_le_bytes());
+        b.extend_from_slice(&5_000u32.to_le_bytes());
+        b.extend_from_slice(&1u32.to_le_bytes());
+        for f in [8.0f32, 0.0, 0.0] {
+            b.extend_from_slice(&f.to_le_bytes());
+        }
+        let ServerPacket::MonsterMove { path, cycle, .. } =
+            parse_wotlk(opcode::SMSG_MONSTER_MOVE, &b)
+        else {
+            panic!("expected MonsterMove")
+        };
+        assert_eq!(path.len(), 2);
+        assert_eq!(
+            cycle,
+            Some(SplineCycle {
+                enter: false,
+                tail: None
+            })
         );
     }
 

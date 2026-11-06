@@ -14,7 +14,7 @@ use crate::player::{GRAVITY, TERMINAL_VELOCITY};
 use super::facing::resolve_facing;
 use super::relay::RelayChain;
 use super::remote::{facing_lerp, fall_arc_step, jump_seed, reconcile_lerp};
-use super::spline::monster_move_spline;
+use super::spline::{monster_move_spline, next_lap_modifier, Cycle};
 use super::{RemoteMotion, Spline};
 
 fn speeds() -> MoveSpeeds {
@@ -397,6 +397,7 @@ fn spline_interpolates_constant_speed_and_faces_travel() {
         catmull_rom: false,
         end_facing: benilla_protocol::MonsterMoveFacing::None,
         run_mode: true,
+        cycle: None,
     };
     let close = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 0.05);
 
@@ -425,6 +426,211 @@ fn spline_interpolates_constant_speed_and_faces_travel() {
     );
 }
 
+/// A 4-point square lap, closed on its first point, over `secs`.
+fn lap(secs: u64, enter: bool, start: Instant) -> Spline {
+    Spline {
+        deck: None,
+        arc: None,
+        facing_fixed: false,
+        points: vec![
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [10.0, 10.0, 0.0],
+            [0.0, 10.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+        ],
+        start,
+        duration: Duration::from_secs(secs),
+        id: 0,
+        grounded: false,
+        catmull_rom: true,
+        end_facing: MonsterMoveFacing::None,
+        run_mode: true,
+        cycle: Some(Cycle {
+            enter,
+            lead: None,
+            tail: Some([10.0, 10.0, 0.0]),
+            duration_mod: 1.0,
+            duration_mod_next: 1.0,
+        }),
+    }
+}
+
+/// `0x98cad5`: a wrap takes the lap off the elapsed time and hands the next modifier over.
+#[test]
+fn a_cyclic_wrap_takes_the_lap_off_and_adopts_the_next_modifier() {
+    let start = Instant::now();
+    let mut s = lap(10, false, start);
+    let points = s.points.clone();
+    s.cycle.as_mut().unwrap().duration_mod_next = 0.5;
+
+    s.wrap(start + Duration::from_secs(9));
+    assert_eq!(s.start, start, "the lap still runs");
+    assert_eq!(s.cycle.unwrap().duration_mod, 1.0);
+
+    s.wrap(start + Duration::from_secs(12));
+    let c = s.cycle.unwrap();
+    assert_eq!(s.start, start + Duration::from_secs(10), "2 s into lap two");
+    assert_eq!(c.duration_mod, 0.5, "the next lap's modifier lands");
+    assert_eq!(c.duration_mod_next, 1.0, "and the one after is back at 1");
+    assert_eq!(s.lap(), Duration::from_secs(5), "the modified lap");
+    assert_eq!(s.points, points, "a looping path keeps its points");
+
+    s.wrap(start + Duration::from_secs(16));
+    let c = s.cycle.unwrap();
+    assert_eq!(
+        s.start,
+        start + Duration::from_secs(15),
+        "the 5 s lap ended"
+    );
+    assert_eq!(c.duration_mod, 1.0, "its modifier lasted one lap");
+}
+
+/// A long frame runs off every lap it passed at once.
+#[test]
+fn a_long_frame_runs_off_every_lap_it_passed() {
+    let start = Instant::now();
+    let mut s = lap(2, false, start);
+    s.wrap(start + Duration::from_millis(7_500));
+    assert_eq!(s.start, start + Duration::from_secs(6));
+}
+
+/// `0x98c940`: the first wrap of an entered cycle drops the entry and rebuilds the modifiers at 1.
+#[test]
+fn entering_the_cycle_drops_the_entry_at_the_first_wrap() {
+    let start = Instant::now();
+    let mut s = lap(10, true, start);
+    s.cycle.as_mut().unwrap().duration_mod_next = 0.5;
+    s.wrap(start + Duration::from_secs(11));
+    let c = s.cycle.unwrap();
+    assert!(!c.enter);
+    assert_eq!(s.points.len(), 5, "the entry is gone");
+    assert_eq!(
+        s.points[0],
+        [10.0, 0.0, 0.0],
+        "the loop opens on the old second point"
+    );
+    assert_eq!(
+        c.lead,
+        Some([0.0, 0.0, 0.0]),
+        "the point before the new start"
+    );
+    assert_eq!(c.tail, Some([10.0, 10.0, 0.0]));
+    assert_eq!((c.duration_mod, c.duration_mod_next), (1.0, 1.0));
+
+    s.wrap(start + Duration::from_secs(21));
+    assert_eq!(s.points.len(), 5, "only the first wrap drops a point");
+}
+
+/// A looped lap's end meets its start in place and in tangent: the wrap is seamless.
+#[test]
+fn a_looped_lap_closes_on_itself() {
+    let start = Instant::now();
+    let mut s = lap(10, true, start);
+    s.wrap(start + Duration::from_secs(10));
+    let lap_start = s.start;
+    let (a, fa, _) = s.sample(lap_start + Duration::from_millis(9_999));
+    let (b, fb, _) = s.sample(lap_start);
+    assert!(
+        (0..3).all(|i| (a[i] - b[i]).abs() < 0.02),
+        "the end {a:?} meets the start {b:?}"
+    );
+    assert!((fa.unwrap() - fb.unwrap()).abs() < 0.01, "{fa:?} {fb:?}");
+}
+
+/// `0x98ccc2`: a look-ahead past the lap's end reads the next lap, a one-shot's holds its end.
+#[test]
+fn a_look_ahead_past_the_lap_reads_on_into_the_next() {
+    let start = Instant::now();
+    let looped = lap(10, false, start);
+    let mut once = looped.clone();
+    once.cycle = None;
+    let past = start + Duration::from_secs(11);
+    let close = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 0.01);
+    assert!(close(
+        looped.sample(past).0,
+        looped.sample(start + Duration::from_secs(1)).0
+    ));
+    assert!(close(once.sample(past).0, [10.0, 0.0, 0.0]));
+}
+
+/// `0x98c670` at the unit disable: a torn-down unit has no spline, end facing or queued moves.
+#[test]
+fn a_torn_down_unit_stops_where_it_stands() {
+    use super::WalkEndFacing;
+    use benilla_world::model_fade::DespawnFade;
+    let mut world = bevy::prelude::World::new();
+    let unit = world
+        .spawn((
+            lap(10, false, Instant::now()),
+            WalkEndFacing(MonsterMoveFacing::Angle(1.0)),
+            motion(move_flags::FORWARD, 0.0),
+            crate::net::Guid(7),
+        ))
+        .id();
+    crate::net::tear_down(world.entity_mut(unit));
+    let unit = world.entity(unit);
+    assert!(unit.get::<Spline>().is_none());
+    assert!(unit.get::<WalkEndFacing>().is_none());
+    assert!(unit.get::<RemoteMotion>().is_none());
+    assert!(unit.get::<crate::net::Guid>().is_none());
+    assert!(unit.get::<DespawnFade>().is_some());
+}
+
+/// `0x98b5d0`: the drift, wrapped into half a lap, shortens or stretches the next lap by as much.
+#[test]
+fn the_spline_sync_retimes_the_next_lap_toward_the_server() {
+    let m = next_lap_modifier;
+    assert_eq!(m(0.5, 5_000.0, 10_000.0, 1.0), 1.0, "in step");
+    assert!(
+        (m(0.6, 5_000.0, 10_000.0, 1.0) - 0.9).abs() < 1e-3,
+        "we trail: a shorter lap"
+    );
+    assert!(
+        (m(0.4, 5_000.0, 10_000.0, 1.0) - 1.1).abs() < 1e-3,
+        "we lead: a longer lap"
+    );
+    assert!(
+        (m(0.95, 1_000.0, 10_000.0, 1.0) - 1.15).abs() < 1e-3,
+        "0.85 behind the server is 0.15 ahead of it"
+    );
+    assert_eq!(
+        m(0.5, 2_500.0, 10_000.0, 0.5),
+        1.0,
+        "in step on the modified lap"
+    );
+    assert_eq!(m(0.9, 1.0, 0.005, 1.0), 1.0, "a lap under 0.01 ms keeps 1");
+    assert_eq!(m(0.0, 5_000.0, 10_000.0, 2.0), 1.25, "a quarter behind");
+}
+
+/// `SMSG_FLIGHT_SPLINE_SYNC` lands on the next lap, not the running one.
+#[test]
+fn the_spline_sync_writes_the_next_modifier_only() {
+    let start = Instant::now();
+    let mut s = lap(10, false, start);
+    s.sync_next_lap(0.6, start + Duration::from_secs(5));
+    let c = s.cycle.unwrap();
+    assert_eq!(c.duration_mod, 1.0);
+    assert!((c.duration_mod_next - 0.9).abs() < 1e-3);
+    assert_eq!(
+        s.lap(),
+        Duration::from_secs(10),
+        "the running lap keeps its time"
+    );
+    s.wrap(start + Duration::from_secs(10));
+    assert_eq!(s.lap(), Duration::from_secs(9), "the next lap runs short");
+
+    let mut once = lap(10, false, start);
+    once.cycle = None;
+    once.sync_next_lap(0.6, start);
+    assert_eq!(
+        once.lap(),
+        Duration::from_secs(10),
+        "a one-shot never wraps"
+    );
+}
+
 #[test]
 fn spline_travel_pitch_is_the_segment_climb_angle() {
     // A 45 degree climb reports pitch `asin(dir.z)` = pi/4, up positive.
@@ -441,6 +647,7 @@ fn spline_travel_pitch_is_the_segment_climb_angle() {
         catmull_rom: false,
         end_facing: benilla_protocol::MonsterMoveFacing::None,
         run_mode: true,
+        cycle: None,
     };
     let (_, f, pitch) = s.sample(start + Duration::from_secs(1));
     assert!(f.unwrap().abs() < 1e-3, "facing is the horizontal heading");
@@ -469,6 +676,7 @@ fn monster_move_carries_every_waypoint() {
         None,
         false,
         benilla_protocol::MonsterMoveFacing::None,
+        None,
     )
     .expect("a moving monster-move yields a spline");
     assert_eq!(
@@ -540,6 +748,7 @@ fn monster_move_flying_spline_is_not_grounded() {
         None,
         false,
         benilla_protocol::MonsterMoveFacing::None,
+        None,
     )
     .expect("a flying monster-move still yields a spline");
     assert!(
@@ -562,6 +771,7 @@ fn monster_move_stop_clears_the_spline() {
             None,
             false,
             benilla_protocol::MonsterMoveFacing::None,
+            None,
         )
         .is_none(),
         "a Stop move snaps and clears, never builds a path"
@@ -582,6 +792,7 @@ fn monster_move_zero_duration_clears_the_spline() {
             None,
             false,
             benilla_protocol::MonsterMoveFacing::None,
+            None,
         )
         .is_none(),
         "a zero-duration move would divide by ~0 when sampled; treat as stationary"
@@ -602,6 +813,7 @@ fn monster_move_without_a_travelable_path_clears_the_spline() {
             None,
             false,
             benilla_protocol::MonsterMoveFacing::None,
+            None,
         )
         .is_none(),
         "a single point is nowhere to travel — no spline"

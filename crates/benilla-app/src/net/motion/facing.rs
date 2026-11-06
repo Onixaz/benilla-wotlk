@@ -234,6 +234,8 @@ pub(crate) fn drive_display_facing(
             Without<RemoteMotion>,
             Without<ActiveMover>,
             Without<benilla_world::rig_anim::AnimParked>,
+            // A fading model's transform is detached (`0x783630`).
+            Without<benilla_world::model_fade::DespawnFade>,
         ),
     >,
     self_q: Query<Entity, With<SelfPlayer>>,

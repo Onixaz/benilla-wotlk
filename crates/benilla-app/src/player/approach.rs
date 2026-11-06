@@ -452,7 +452,12 @@ pub(super) fn steer_approach(
     let turning = remaining.abs() > follow::TURN_DEADZONE;
     if turning {
         let rate = *goal.turn_rate.get_or_insert_with(|| turn_rate(remaining));
-        player.face_yaw = follow::steer(player.face_yaw, bearing, rate, time.delta_secs());
+        player.face_yaw = follow::steer(
+            player.face_yaw,
+            bearing,
+            rate,
+            super::mover::move_step(&time).as_secs_f32(),
+        );
     } else if let Toward::Face(_) = toward {
         // The facing walk ends once lined up, never holding forward.
         approach.goal = None;

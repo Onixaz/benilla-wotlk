@@ -46,6 +46,12 @@ pub struct CreateSpline {
     pub flying: bool,
     /// `MoveSplineFlag::Cyclic`: the server loops this path forever.
     pub cyclic: bool,
+    /// `MoveSplineFlag::Enter_Cycle`: the first wrap drops the path's entry (`0x98c940`).
+    pub enter_cycle: bool,
+    /// The running lap's and the next lap's duration modifiers (`spline+0x204`, `+0x208`).
+    pub duration_mods: [f32; 2],
+    /// The Catmull-Rom control points outside [`Self::path`], the wire array's first and last.
+    pub phantoms: [[f32; 3]; 2],
     /// `MoveSplineFlag::Runmode`; its absence forces walk mode on.
     pub run_mode: bool,
     /// `MoveSplineFlag::Parabolic`: the jump arc, as on `MonsterMove`.

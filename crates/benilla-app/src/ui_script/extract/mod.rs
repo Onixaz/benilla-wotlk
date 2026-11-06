@@ -480,8 +480,7 @@ pub(crate) fn seat_text_measurer(script: &mut UiScript, atlas: &UiFontAtlas, sea
 pub(super) fn tick_script(
     script: Option<NonSendMut<UiScript>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    // Real time: the reference's `GetTime` is the OS tick count, and virtual time clamps each
-    // delta to 250 ms, so a stall would leave every GetTime-anchored timer running long.
+    // Real time: the reference's `GetTime` is the OS tick count.
     time: Res<Time<Real>>,
     mut ui_clock: ResMut<super::UiClock>,
     mut font_atlas: Option<ResMut<UiFontAtlas>>,

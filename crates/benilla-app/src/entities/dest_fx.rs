@@ -208,7 +208,8 @@ pub(super) fn tick_shard_emitters(
     mut emitters: Query<(&mut ShardEmitter, &GlobalTransform)>,
 ) {
     for (mut em, tf) in &mut emitters {
-        em.accum += em.rate * time.delta_secs();
+        // Clamped as the particle step is, so a long frame sprays no burst.
+        em.accum += em.rate * time.delta_secs().min(0.1);
         while em.accum >= 1.0 {
             em.accum -= 1.0;
             let mut next = || {

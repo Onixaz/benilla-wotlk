@@ -2361,6 +2361,45 @@ fn walk_rate(app: &App, unit: Entity) -> f32 {
         .speed()
 }
 
+/// `0x7823e6`: a torn-down walker's detached model keeps animating its sequence, driven by no one.
+#[test]
+fn a_fading_walker_keeps_its_walk() {
+    use benilla_world::model_fade::DespawnFade;
+    let walking = MovementState {
+        flags: move_flags::FORWARD,
+        speed: 2.5,
+        ..Default::default()
+    };
+    let mut app = app();
+    let spawn = |app: &mut App| {
+        app.world_mut()
+            .spawn((
+                walker_model(),
+                AnimationPlayer::default(),
+                AnimationTransitions::new(),
+                AnimDriver::default(),
+                Transform::IDENTITY,
+                walking,
+            ))
+            .id()
+    };
+    let (fading, control) = (spawn(&mut app), spawn(&mut app));
+    app.update();
+    for unit in [fading, control] {
+        let mut unit = app.world_mut().entity_mut(unit);
+        unit.remove::<MovementState>();
+    }
+    app.world_mut()
+        .entity_mut(fading)
+        .insert(DespawnFade::default());
+    for _ in 0..4 {
+        advance(&mut app, 25);
+    }
+    let gait = |unit: Entity| app.world().entity(unit).get::<AnimDriver>().unwrap().gait;
+    assert_eq!(gait(fading), Some(4), "the walk plays on through the fade");
+    assert_eq!(gait(control), Some(0), "a live unit stops into Stand");
+}
+
 /// A Gordok Ogre-Mage (scale 2.2) walking at vmangos' `speed_walk` 1.6 × 2.5 = 4.0 yd/s cycles at
 /// 4.0 / (2.5 × 2.2) = 0.73×; the same unit at scale 1.0 reads 1.60×.
 #[test]

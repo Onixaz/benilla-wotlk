@@ -109,23 +109,3 @@ fn a_watched_unit_keeps_its_relayed_height_and_swim_to_fly_bit() {
         Some(&CollisionHeight(2.0))
     );
 }
-
-/// `0x98b5d0`: the drift, wrapped into half a lap, shortens or stretches the next lap by as much.
-#[test]
-fn the_spline_sync_retimes_the_next_lap_toward_the_server() {
-    let m = super::next_lap_modifier;
-    assert_eq!(m(0.5, 5.0, 10.0), 1.0, "in step");
-    assert!(
-        (m(0.6, 5.0, 10.0) - 0.9).abs() < 1e-5,
-        "we trail: a shorter lap"
-    );
-    assert!(
-        (m(0.4, 5.0, 10.0) - 1.1).abs() < 1e-5,
-        "we lead: a longer lap"
-    );
-    assert!(
-        (m(0.95, 1.0, 10.0) - 1.15).abs() < 1e-5,
-        "0.85 behind the server is 0.15 ahead of it"
-    );
-    assert_eq!(m(0.0, 0.0, 0.005), 1.0, "a lap under 10 ms keeps its pace");
-}

@@ -137,7 +137,7 @@ pub(super) fn breach_step(
         capsule,
         player.pos + half_h,
         player.horiz_vel + Vec3::Y * player.vel_y,
-        time.delta(),
+        super::mover::move_step(time),
         &MoveAndSlideConfig::default(),
         |_hit| MoveAndSlideHitResponse::Accept,
     );
@@ -207,7 +207,8 @@ pub(super) fn swim_step(
     surface_y: Option<f32>,
     surface_at: impl Fn(Vec3) -> Option<f32>,
 ) -> SwimOutcome {
-    let dt = time.delta_secs();
+    let step_time = super::mover::move_step(time);
+    let dt = step_time.as_secs_f32();
     let half_h = Vec3::Y * (CAPSULE_HEIGHT * 0.5);
     let center = player.pos + half_h;
 
@@ -227,7 +228,7 @@ pub(super) fn swim_step(
         capsule,
         center,
         vel,
-        time.delta(),
+        step_time,
         &MoveAndSlideConfig::default(),
         |_hit| MoveAndSlideHitResponse::Accept,
     );

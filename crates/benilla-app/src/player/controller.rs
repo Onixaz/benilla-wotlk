@@ -134,7 +134,7 @@ pub(super) fn control(
         },
         ..*pointer.3
     };
-    let dt = time.delta_secs();
+    let dt = super::mover::move_step(&time).as_secs_f32();
     // Free fly reads no keys while an EditBox is `typing` (not the per-key `consumed`, a binding's
     // concern); `binds` applied that gate when it latched, and the dev chords ignore it.
     let typing = ui_capture.typing;
@@ -905,7 +905,8 @@ pub(super) fn control(
         let wire_transport = movement_net::wire_transport(&player);
         // A held frame is simulation time skipped; the mover named is the one we drive.
         let skip = movement_net::SkipClock {
-            dt,
+            dt: time.delta_secs(),
+            skipped: time.delta_secs() - dt,
             held: player.settling,
             mover: player.foreign_mover.or(self_guid),
         };

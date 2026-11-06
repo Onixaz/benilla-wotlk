@@ -869,12 +869,21 @@ pub(crate) fn apply_despawn_fade(
             }
             if any {
                 df.started = now;
+                trace_fade(parent, "arm", now);
             } else {
                 commands.entity(parent).try_despawn();
             }
         } else if now - df.started >= APPEAR_FADE_SECS {
+            trace_fade(parent, "end", now - df.started);
             commands.entity(parent).try_despawn();
         }
+    }
+}
+
+/// One `fade` trace line, the frame clock's seconds beside the trace's wall stamp.
+fn trace_fade(unit: Entity, what: &str, secs: f32) {
+    if benilla_assets::trace::enabled_for("fade") {
+        benilla_assets::trace::line("fade", &format!("{unit:?} {what} {secs:.3}"));
     }
 }
 

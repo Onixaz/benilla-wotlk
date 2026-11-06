@@ -261,8 +261,7 @@ struct WarmBoothCam;
 /// Warm-pass state; the loading screen holds its cover on [`Self::satisfied`].
 #[derive(Resource, Default)]
 pub(crate) struct WarmPass {
-    /// `Time<Real>` when the menagerie spawned under this cover, `None` when idle. Real, because
-    /// `Time<Virtual>` clamps its delta at 250 ms and would shrink the stalls being timed.
+    /// `Time<Real>` when the menagerie spawned under this cover, `None` when idle.
     spawned_at: Option<f32>,
     /// This cover's warm work is done (drained, timed out, or not applicable).
     done: bool,

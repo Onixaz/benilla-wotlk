@@ -328,8 +328,7 @@ pub(super) fn drain_guild(
     for request in requests {
         match request {
             GuildRequest::Roster => {
-                // One request per 10 s, the rest swallowed silently. Real time: the virtual clock's
-                // 250 ms `max_delta` lags in a hitch.
+                // One request per 10 s on real time, the rest swallowed silently.
                 let now = time.elapsed_secs_f64();
                 if now >= guild.roster_allowed_at {
                     guild.roster_allowed_at = now + ROSTER_REQUEST_THROTTLE_SECS;

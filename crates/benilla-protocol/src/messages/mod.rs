@@ -268,7 +268,7 @@ pub use notices::{
 pub use opcode_names::opcode_name;
 pub use packet::{
     CreatureQueryInfo, GameClock, ItemQueryRecord, MonsterMoveFacing, NameQueryMiss, ServerPacket,
-    SplineArc,
+    SplineArc, SplineCycle,
 };
 pub use page_text::page_text_query;
 pub use parse::{parse_auth_response_wotlk, parse_server, parse_server_with_tail};

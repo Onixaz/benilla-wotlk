@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
-use benilla_protocol::{CreateSpline, EntityKind, MonsterMoveFacing, SplineArc};
+use benilla_protocol::{CreateSpline, EntityKind, MonsterMoveFacing, SplineArc, SplineCycle};
 use bevy::prelude::*;
 use bevy::utils::Parallel;
 
@@ -46,6 +46,35 @@ pub(crate) struct Spline {
     pub(crate) catmull_rom: bool,
     /// The facing the unit takes when the walk ends (`0x6eb0b0`'s done branch).
     pub(crate) end_facing: MonsterMoveFacing,
+    /// `SPLINEFLAG_CYCLIC`: the walk loops ([`Spline::wrap`]) and never ends; `None` runs once.
+    pub(crate) cycle: Option<Cycle>,
+}
+
+/// A looping [`Spline`]'s state (`0x98ca00`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Cycle {
+    /// `SPLINEFLAG_ENTER_CYCLE`: the first wrap drops the path's entry (`0x98c940`).
+    pub(crate) enter: bool,
+    /// The Catmull-Rom control before the path; without one the first point doubles.
+    pub(crate) lead: Option<[f32; 3]>,
+    /// The Catmull-Rom control past the path; without one the last point doubles.
+    pub(crate) tail: Option<[f32; 3]>,
+    /// The running lap's duration modifier (`spline+0x204`).
+    pub(crate) duration_mod: f32,
+    /// The next lap's, adopted at the wrap (`spline+0x208`).
+    pub(crate) duration_mod_next: f32,
+}
+
+impl From<SplineCycle> for Cycle {
+    fn from(c: SplineCycle) -> Self {
+        Self {
+            enter: c.enter,
+            lead: None,
+            tail: c.tail,
+            duration_mod: 1.0,
+            duration_mod_next: 1.0,
+        }
+    }
 }
 
 /// The id of a spline the server ended with a stop, owed in `CMSG_MOVE_SPLINE_DONE`. vmangos arms
@@ -67,7 +96,69 @@ impl Spline {
                 (dx * dx + dy * dy + dz * dz).sqrt()
             })
             .sum();
-        length / self.duration.as_secs_f32().max(1e-3)
+        length / self.lap().as_secs_f32().max(1e-3)
+    }
+
+    /// One lap's length: the duration under its modifier, rounded to ms (`0x98ca5b`).
+    pub(crate) fn lap(&self) -> Duration {
+        match &self.cycle {
+            Some(c) => {
+                let ms = self.duration.as_millis() as f32 * c.duration_mod;
+                Duration::from_millis((ms + 0.5) as u64)
+            }
+            None => self.duration,
+        }
+    }
+
+    /// Whether the walk is over: no lap left, or a one-shot past its lap (`0x98ca97`, `0x98cac7`).
+    fn finished(&self, now: Instant) -> bool {
+        let lap = self.lap();
+        lap.is_zero() || (self.cycle.is_none() && now.saturating_duration_since(self.start) >= lap)
+    }
+
+    /// Runs off the laps `now` has passed, each adopting the next modifier (`0x98cad5`).
+    pub(super) fn wrap(&mut self, now: Instant) {
+        loop {
+            let lap = self.lap();
+            if lap.is_zero() || now.saturating_duration_since(self.start) < lap {
+                return;
+            }
+            self.start += lap;
+            let Some(cycle) = self.cycle.as_mut() else {
+                return;
+            };
+            // The entry drops out, the point before the new start its lead, both modifiers at 1.
+            if std::mem::take(&mut cycle.enter) {
+                cycle.duration_mod_next = 1.0;
+                if self.points.len() > 2 {
+                    self.points.remove(0);
+                    cycle.lead = Some(self.points[self.points.len() - 2]);
+                }
+            }
+            cycle.duration_mod = std::mem::replace(&mut cycle.duration_mod_next, 1.0);
+        }
+    }
+
+    /// `SMSG_FLIGHT_SPLINE_SYNC`: the next lap's modifier, toward the server (`0x98b5d0`).
+    pub(crate) fn sync_next_lap(&mut self, progress: f32, now: Instant) {
+        let elapsed_ms = now.saturating_duration_since(self.start).as_secs_f32() * 1000.0;
+        let duration_ms = self.duration.as_millis() as f32;
+        if let Some(cycle) = self.cycle.as_mut() {
+            cycle.duration_mod_next =
+                next_lap_modifier(progress, elapsed_ms, duration_ms, cycle.duration_mod);
+        }
+    }
+
+    /// Elapsed over the lap, clamped to `0..=1`; past a cyclic lap's end it reads on (`0x98ccc2`).
+    fn progress(&self, now: Instant) -> f32 {
+        let t = now.saturating_duration_since(self.start).as_secs_f32()
+            / self.lap().as_secs_f32().max(1e-3);
+        let t = if self.cycle.is_some() && t > 1.0 {
+            t - 1.0
+        } else {
+            t
+        };
+        t.clamp(0.0, 1.0)
     }
 
     /// The arc's height over the path at `now` (`0x987d20`): `(T − s)·a/2·e −
@@ -104,11 +195,7 @@ impl Spline {
 
     /// Elapsed over duration, clamped to `0..=1`; the inspector's motion line reads it.
     pub(crate) fn elapsed_frac(&self) -> f32 {
-        (Instant::now()
-            .saturating_duration_since(self.start)
-            .as_secs_f32()
-            / self.duration.as_secs_f32().max(1e-3))
-        .clamp(0.0, 1.0)
+        self.progress(Instant::now())
     }
 
     /// Raw-WoW position, facing (`None` when vertical) and pitch `asin(dz/len)` at `now`, at
@@ -129,10 +216,8 @@ impl Spline {
         if total <= f32::EPSILON {
             return (pts[0], None, 0.0);
         }
-        let frac = (now.saturating_duration_since(self.start).as_secs_f32()
-            / self.duration.as_secs_f32().max(1e-3))
-        .clamp(0.0, 1.0);
-        let mut want = frac * total;
+        let ends = self.cycle.as_ref().map_or([None; 2], |c| [c.lead, c.tail]);
+        let mut want = self.progress(now) * total;
         for (i, &len) in lengths.iter().enumerate() {
             if want <= len || i + 1 == lengths.len() {
                 let t = if len > f32::EPSILON {
@@ -150,7 +235,7 @@ impl Spline {
                     let dir = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
                     (pos, dir)
                 } else {
-                    catmull_rom(pts, i, t)
+                    catmull_rom(pts, ends, i, t)
                 };
                 let (dx, dy, dz) = (dir[0], dir[1], dir[2]);
                 let facing = (!self.facing_fixed && dx * dx + dy * dy > 1e-6).then(|| dy.atan2(dx));
@@ -199,13 +284,24 @@ impl Spline {
     }
 }
 
-/// Uniform Catmull-Rom position and `d/du` tangent on `pts[i] → pts[i+1]` at `u ∈ [0,1]`, the ends
-/// duplicated as the 1.12 client stores them, so the curve passes every waypoint.
-fn catmull_rom(pts: &[[f32; 3]], i: usize, u: f32) -> ([f32; 3], [f32; 3]) {
-    let p0 = pts[i.saturating_sub(1)];
+/// Uniform Catmull-Rom position and tangent on `pts[i] → pts[i+1]`; a missing end control doubles.
+fn catmull_rom(
+    pts: &[[f32; 3]],
+    ends: [Option<[f32; 3]>; 2],
+    i: usize,
+    u: f32,
+) -> ([f32; 3], [f32; 3]) {
+    let p0 = match i {
+        0 => ends[0].unwrap_or(pts[0]),
+        _ => pts[i - 1],
+    };
     let p1 = pts[i];
     let p2 = pts[i + 1];
-    let p3 = pts[(i + 2).min(pts.len() - 1)];
+    let p3 = pts
+        .get(i + 2)
+        .copied()
+        .or(ends[1])
+        .unwrap_or(pts[pts.len() - 1]);
     let (u2, u3) = (u * u, u * u * u);
     let mut pos = [0.0f32; 3];
     let mut dir = [0.0f32; 3];
@@ -234,6 +330,7 @@ pub(in crate::net) fn monster_move_spline(
     arc: Option<SplineArc>,
     facing_fixed: bool,
     end_facing: MonsterMoveFacing,
+    cycle: Option<SplineCycle>,
 ) -> Option<Spline> {
     if stop || duration_ms == 0 || path.len() < 2 {
         return None;
@@ -251,21 +348,29 @@ pub(in crate::net) fn monster_move_spline(
         deck,
         arc,
         facing_fixed,
+        cycle: cycle.map(Cycle::from),
     })
 }
 
 /// The [`Spline`] a unit is already riding in its create block, back-dated by
 /// [`CreateSpline::time_passed_ms`]; `None` for a degenerate path, a zero duration, a finished
-/// ride, or anything under `WOW_CREATE_SPLINE=off`.
+/// one-shot, or anything under `WOW_CREATE_SPLINE=off`.
 pub(in crate::net) fn create_spline(spline: CreateSpline) -> Option<Spline> {
     if !create_spline_enabled()
         || spline.duration_ms == 0
         || spline.path.len() < 2
-        || spline.time_passed_ms >= spline.duration_ms
+        || (!spline.cyclic && spline.time_passed_ms >= spline.duration_ms)
     {
         return None;
     }
     let passed = Duration::from_millis(u64::from(spline.time_passed_ms));
+    let cycle = spline.cyclic.then_some(Cycle {
+        enter: spline.enter_cycle,
+        lead: Some(spline.phantoms[0]),
+        tail: Some(spline.phantoms[1]),
+        duration_mod: spline.duration_mods[0],
+        duration_mod_next: spline.duration_mods[1],
+    });
     Some(Spline {
         points: spline.path,
         // `checked_sub`: a spline older than the monotonic clock's origin would panic on `-`.
@@ -282,6 +387,7 @@ pub(in crate::net) fn create_spline(spline: CreateSpline) -> Option<Spline> {
         deck: None,
         arc: spline.arc,
         facing_fixed: spline.facing_fixed,
+        cycle,
     })
 }
 
@@ -373,7 +479,7 @@ pub(in crate::net) fn sample_splines(
     mut commands: Commands,
     mut q: Query<(
         Entity,
-        &Spline,
+        &mut Spline,
         &mut Transform,
         Has<CreatureSwimming>,
         // For the `spl` trace only; the sampler never gates on it.
@@ -391,13 +497,29 @@ pub(in crate::net) fn sample_splines(
     if tick {
         *trace_next = time.elapsed_secs() + SPL_TRACE_SECS;
     }
-    for (entity, spline, mut t, swimming, guid, rider) in &mut q {
+    for (entity, mut spline, mut t, swimming, guid, rider) in &mut q {
+        // Written only on a wrap: `Mut` stays clean for a walker.
+        if spline.cycle.is_some() && now.saturating_duration_since(spline.start) >= spline.lap() {
+            spline.wrap(now);
+            if tracing {
+                benilla_assets::trace::line(
+                    "spl",
+                    &format!(
+                        "{:#x} WRAP lap={:.3} nodes={} mods={:?}",
+                        guid.map_or(0, |g| g.0),
+                        spline.lap().as_secs_f32(),
+                        spline.points.len(),
+                        spline.cycle.map(|c| [c.duration_mod, c.duration_mod_next]),
+                    ),
+                );
+            }
+        }
         let (wow_pos, facing, pitch) = spline.sample(now);
         // A deck path's sample is the rider's transport-local pose, composed later this frame.
         if let Some(deck) = spline.deck {
             // Written as a world pose it would sit near the map origin, so a missing or mismatched
             // rider freezes the unit for the frame instead.
-            let done = now.saturating_duration_since(spline.start) >= spline.duration;
+            let done = spline.finished(now);
             if let Some(mut rider) = rider.filter(|r| r.transport_guid == deck) {
                 rider.local_pos = wow_pos;
                 if let Some(f) = facing {
@@ -436,10 +558,10 @@ pub(in crate::net) fn sample_splines(
             };
         }
         if let Some(was) = was {
-            trace_ride(guid.map_or(0, |g| g.0), spline, wow_pos, was, now);
+            trace_ride(guid.map_or(0, |g| g.0), &spline, wow_pos, was, now);
         }
         // A finished path drops its spline: `creature_anim` reads the spline's presence as moving.
-        if now.saturating_duration_since(spline.start) >= spline.duration {
+        if spline.finished(now) {
             if tracing {
                 benilla_assets::trace::line(
                     "spl",
@@ -457,6 +579,27 @@ pub(in crate::net) fn sample_splines(
     }
 }
 
+/// `0x98b5d0`: the progress gap, wrapped into half a lap, re-times the next lap within `0.5..=2`.
+pub(super) fn next_lap_modifier(
+    progress: f32,
+    elapsed_ms: f32,
+    duration_ms: f32,
+    modifier: f32,
+) -> f32 {
+    let lap = duration_ms * modifier;
+    if lap < 0.01 {
+        return 1.0;
+    }
+    let mut delta = progress - elapsed_ms / lap;
+    if delta > 0.5 {
+        delta -= 1.0;
+    }
+    if delta < -0.5 {
+        delta += 1.0;
+    }
+    ((duration_ms - (delta * duration_ms).trunc()) / duration_ms).clamp(0.5, 2.0)
+}
+
 /// How often the `spl` tag samples a live ride; one second keeps a busy zone off the trace mutex.
 const SPL_TRACE_SECS: f32 = 1.0;
 
@@ -469,14 +612,15 @@ fn trace_ride(guid: u64, spline: &Spline, pos: [f32; 3], was: [f32; 3], now: Ins
     benilla_assets::trace::line(
         "spl",
         &format!(
-            "{guid:#x} t={elapsed:.1}/{:.1} pos=[{:.2},{:.2},{:.2}] was={drift:.3} spd={:.2} nodes={} {}",
-            spline.duration.as_secs_f32(),
+            "{guid:#x} t={elapsed:.1}/{:.1} pos=[{:.2},{:.2},{:.2}] was={drift:.3} spd={:.2} nodes={} {}{}",
+            spline.lap().as_secs_f32(),
             pos[0],
             pos[1],
             pos[2],
             spline.speed(),
             spline.points.len(),
             if spline.grounded { "ground" } else { "flying" },
+            if spline.cycle.is_some() { " cyclic" } else { "" },
         ),
     );
 }
@@ -1471,6 +1615,7 @@ mod tests {
             catmull_rom: !grounded,
             end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
+            cycle: None,
         };
         let now = Instant::now();
         (spline, now)
@@ -1576,6 +1721,9 @@ mod tests {
             duration_ms: 12_000,
             flying: false,
             cyclic: false,
+            enter_cycle: false,
+            duration_mods: [1.0, 1.0],
+            phantoms: [[0.0; 3]; 2],
             run_mode: true,
             arc: None,
             facing_fixed: false,
@@ -1616,6 +1764,57 @@ mod tests {
         assert!(w
             .get::<super::super::facing::WalkEndFacing>(plain)
             .is_none());
+    }
+
+    /// A cyclic path never ends: the spline stays and no end facing is owed.
+    #[test]
+    fn a_cyclic_walk_outlives_its_lap() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_systems(Update, sample_splines);
+        let (mut s, _) = spline_at(vec![[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], true, 2.0);
+        s.end_facing = MonsterMoveFacing::Angle(1.0);
+        s.cycle = Some(super::Cycle {
+            enter: false,
+            lead: None,
+            tail: None,
+            duration_mod: 1.0,
+            duration_mod_next: 1.0,
+        });
+        let start = s.start;
+        let e = app.world_mut().spawn((Transform::default(), s)).id();
+        app.update();
+        let w = app.world();
+        let s = w.get::<Spline>(e).expect("the loop runs on");
+        assert!(s.start > start, "the wrap moved its start up");
+        assert!(w.get::<super::super::facing::WalkEndFacing>(e).is_none());
+    }
+
+    /// A create block's cyclic ride keeps its wire modifiers and controls, and past its lap wraps.
+    #[test]
+    fn a_created_cyclic_ride_past_its_lap_still_rides() {
+        let s = create_spline(CreateSpline {
+            path: vec![[0.0, 0.0, 0.0], [5.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            id: 1,
+            time_passed_ms: 6_000,
+            duration_ms: 5_000,
+            flying: true,
+            cyclic: true,
+            enter_cycle: false,
+            duration_mods: [1.5, 0.75],
+            phantoms: [[5.0, 0.0, 0.0], [5.0, 5.0, 0.0]],
+            run_mode: true,
+            arc: None,
+            facing_fixed: false,
+            final_facing: MonsterMoveFacing::None,
+            catmull_rom: true,
+        })
+        .expect("a loop is never finished");
+        let c = s.cycle.expect("cyclic");
+        assert_eq!(c.lead, Some([5.0, 0.0, 0.0]));
+        assert_eq!(c.tail, Some([5.0, 5.0, 0.0]));
+        assert_eq!((c.duration_mod, c.duration_mod_next), (1.5, 0.75));
+        assert_eq!(s.lap(), Duration::from_millis(7_500));
     }
 
     /// A walk that ends in the frame its unit despawns, the despawn applied first, does not panic
@@ -1703,6 +1902,9 @@ mod tests {
             duration_ms: 12_000,
             flying: false,
             cyclic: false,
+            enter_cycle: false,
+            duration_mods: [1.0, 1.0],
+            phantoms: [[0.0; 3]; 2],
             run_mode: true,
             arc: None,
             facing_fixed: false,
@@ -1729,6 +1931,9 @@ mod tests {
             duration_ms,
             flying: false,
             cyclic: false,
+            enter_cycle: false,
+            duration_mods: [1.0, 1.0],
+            phantoms: [[0.0; 3]; 2],
             run_mode: true,
             arc: None,
             facing_fixed: false,
@@ -1960,6 +2165,7 @@ mod server_moved_players {
             catmull_rom: false,
             end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
+            cycle: None,
         });
     }
 
@@ -2042,6 +2248,7 @@ mod server_moved_players {
             catmull_rom: true,
             end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
+            cycle: None,
         });
         clamp(&mut app);
         assert_eq!(y_of(&app, body), RIM_Z, "a flight owns its own altitude");
@@ -2367,6 +2574,7 @@ mod inside_a_hull {
             catmull_rom: false,
             end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
+            cycle: None,
         });
     }
 

@@ -433,7 +433,7 @@ fn drive_loading_screen(
         ),
     >,
     player: Option<Res<crate::player::Player>>,
-    // Real time: `Time<Virtual>` clamps frames over 250 ms, and a load is made of those.
+    // Real time: a load's long frames count in full, whatever the paced clock does.
     time: Res<Time<Real>>,
     // The cover holds until the warm pass has compiled its pipelines.
     warm: Res<crate::pipe_warm::WarmPass>,

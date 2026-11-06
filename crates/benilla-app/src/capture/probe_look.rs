@@ -13,8 +13,7 @@ use benilla_world::schedule::WorldStage;
 
 use super::ProbeClock;
 
-/// One scripted turn: `rate` (rad/s) over a window in wall-clock seconds ([`ProbeClock`]); the
-/// virtual clock clamps its delta to 250 ms, which would under-rotate across a hitch.
+/// One scripted turn: `rate` (rad/s) over a window in wall-clock seconds ([`ProbeClock`]).
 struct Turn {
     rate: f32,
     at: f32,
