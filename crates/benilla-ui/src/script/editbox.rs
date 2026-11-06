@@ -76,9 +76,11 @@ pub(super) fn key_input(lua: &Lua, key: &str) -> bool {
     flush::flush(lua, h);
     let id = frame_id_of(lua, h);
     match key.to_ascii_uppercase().as_str() {
-        // multiLine: Enter inserts a newline (no OnSpacePressed); else fire OnEnterPressed.
+        // A multi-line box with an empty `OnEnterPressed` slot inserts a newline; anything else
+        // runs the script (`0x9679ed`, `0x9679f6`).
         "ENTER" => {
-            if with_eb(lua, h, |eb| eb.multi_line).unwrap_or(false) {
+            let multi_line = read_eb(lua, h, |eb| eb.multi_line).unwrap_or(false);
+            if multi_line && !event::has_widget_handler(lua, id, "OnEnterPressed") {
                 insert(lua, h, "\n", false);
             } else {
                 fire_script(lua, id, "OnEnterPressed");

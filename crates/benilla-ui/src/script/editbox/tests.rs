@@ -552,6 +552,31 @@ fn multiline_enter_inserts_a_newline_without_onspacepressed() {
     assert_eq!(s.eval::<i64>("return spaces").unwrap(), 0);
 }
 
+/// A multi-line box with an `OnEnterPressed` script runs it and inserts nothing, and clearing the
+/// slot brings the newline back (`0x9679ed`, `0x9679f6`).
+#[test]
+fn multiline_enter_with_a_script_runs_it_and_inserts_nothing() {
+    let mut s = script();
+    s.run(
+        r#"
+        enters = 0
+        E = CreateFrame("EditBox", "E")
+        E:SetMultiLine(true)
+        E:SetScript("OnEnterPressed", function() enters = enters + 1 end)
+        E:SetFocus()
+    "#,
+    )
+    .unwrap();
+    assert!(s.key_input("ENTER"));
+    assert_eq!(s.eval::<i64>("return enters").unwrap(), 1);
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "");
+
+    s.run(r#"E:SetScript("OnEnterPressed", nil)"#).unwrap();
+    assert!(s.key_input("ENTER"));
+    assert_eq!(s.eval::<i64>("return enters").unwrap(), 1);
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "\n");
+}
+
 /// The method table has `SetAltArrowKeyMode`/`GetAltArrowKeyMode` at 46/47 and no
 /// `SetIgnoreArrows`; the XML `ignoreArrows` is the same flag (`[E+0x318] & 0x10`). The gate is on
 /// the key, in the host (`UiKeyboardCapture::arrows_fall_through`), so an `EditAction` that arrives

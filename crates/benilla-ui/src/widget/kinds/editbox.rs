@@ -55,7 +55,7 @@ pub struct EditBoxState {
     /// `autoFocus` (`E+0x318` bit 0): take the focus when shown if nothing holds it and on a key or
     /// char event while nothing is focused.
     pub auto_focus: bool,
-    /// `multiLine` (bit 1): Enter inserts a newline instead of firing `OnEnterPressed`.
+    /// `multiLine` (bit 1): Enter inserts a newline unless the box has an `OnEnterPressed` script.
     pub multi_line: bool,
     /// `numeric` (bit 2): an insert with any non-digit is refused whole, not filtered.
     pub numeric: bool,
