@@ -14,7 +14,9 @@ use bevy::render::{Render, RenderApp, RenderSystems};
 use super::prop_probes::MAX_PROP_PROBES;
 use super::{sh, WowLighting};
 use crate::dev_state::DebugState;
+use crate::ext_shadow::{shadow_value, ExtShadowQuality};
 use crate::view::ViewDistance;
+use crate::view::Viewer;
 use crate::view::WorldCamera;
 
 /// The shared light, std430-packed as `vec4<f32>` rows (all `vec4`, so std430 equals std140). Every
@@ -22,7 +24,7 @@ use crate::view::WorldCamera;
 /// `static_gx`) mirrors this row order as a prefix; keep them in sync.
 ///   0 light_ambient (w=Mod2x 1.0) · 1 light_diffuse (w=clamp on) · 2 light_sun (w=dir/SH enable) ·
 ///   3 light_spec (w=terrain shininess 20) · 4 fog_color (w=enable) ·
-///   5 fog_params (x=start y=end w=farclip) · 6-8 sh_c10_{r,g,b} · 9-11 sh_c13_{r,g,b} ·
+///   5 fog_params (x=start y=end z=cutoff w=farclip) · 6-8 sh_c10_{r,g,b} · 9-11 sh_c13_{r,g,b} ·
 ///   12 sh_c16 · 13-14 water river {shallow,deep} (w=alpha) · 15-16 water ocean (the same) ·
 ///   17 grade: `.x` the SIDN night fraction, `.yzw` the sun's SH DC at intensity 1 ·
 ///   18 wmo_fog_color · 19 wmo_fog_params (x=start y=end): the interior fog triple, read by
@@ -68,7 +70,7 @@ pub fn pack_model_core_rows(
     rows[6][3] = ambient[0]; // the DC lanes carry ambient alone
     rows[7][3] = ambient[1];
     rows[8][3] = ambient[2];
-    rows[12][0] = sun[6].x; // 12 sh_c16 xyz; .w is free
+    rows[12][0] = sun[6].x; // 12 sh_c16 xyz; .w is the receive's
     rows[12][1] = sun[6].y;
     rows[12][2] = sun[6].z;
     // 17 `.yzw`: the sun's SH DC at intensity 1; `.x` (SIDN) is the scene's.
@@ -194,6 +196,8 @@ fn build_light_data(
     debug: Res<DebugState>,
     view: Res<ViewDistance>,
     terrain: Option<Res<crate::terrain_stream::TerrainOptions>>,
+    quality: Option<Res<ExtShadowQuality>>,
+    viewer: Option<Res<Viewer>>,
     cam: Query<&GlobalTransform, With<WorldCamera>>,
     lights_q: Query<(&WorldPointLight, &GlobalTransform, Option<&LightRooms>)>,
     // The per-frame portal PVS, for the rooms term.
@@ -217,14 +221,14 @@ fn build_light_data(
     let rows = &mut fresh.rows;
     rows[3] = [l.spec[0], l.spec[1], l.spec[2], 20.0]; // 3 light_spec (w=terrain shininess 20)
     rows[4] = [l.fog_color[0], l.fog_color[1], l.fog_color[2], fog_enable]; // 4 fog_color (w=enable)
-    rows[5] = [l.fog_start, l.fog_end, 0.0, farclip]; // 5 fog_params (z unused; w=farclip)
+    rows[5] = [l.fog_start, l.fog_end, 0.0, farclip]; // 5 fog_params (z below; w=farclip)
     rows[13] = [rs[0], rs[1], rs[2], rsa]; // 13 water river shallow (w=alpha)
     rows[14] = [rd[0], rd[1], rd[2], rda]; // 14 water river deep
     rows[15] = [os[0], os[1], os[2], osa]; // 15 water ocean shallow
     rows[16] = [od[0], od[1], od[2], oda]; // 16 water ocean deep
     rows[17][0] = l.sidn_night;
     // Row 17 `.x` is the SIDN night fraction and `.yzw` the core packer's; 18/19 are the interior
-    // fog triple, 19.zw the terrain options, and 12.w is free.
+    // fog triple, 19.zw the terrain options, and 12.w mode 5.
     rows[18] = [
         l.wmo_fog_color[0],
         l.wmo_fog_color[1],
@@ -243,6 +247,12 @@ fn build_light_data(
     // by 4π undoes the spawn's premultiply, so the colour is the authored `colour × intensity`,
     // committed raw. Entries past the count stay stale; the count row guards every reader.
     let cam_pos = cam.single().map(|t| t.translation()).unwrap_or(Vec3::ZERO);
+    let value = shadow_value(quality.map_or(0, |q| q.0));
+    fresh.rows[12][3] = f32::from(value == 3);
+    if value == 1 {
+        // The cutoff plane's height: 2 yd above the camera's target, else the camera (`0x79abbf`).
+        fresh.rows[5][2] = viewer.and_then(|v| v.at).map_or(cam_pos.y, |at| at.y + 2.0);
+    }
     let mut pts: Vec<(f32, Vec3, f32, [f32; 3])> = lights_q
         .iter()
         .filter(|(_, _, rooms)| {

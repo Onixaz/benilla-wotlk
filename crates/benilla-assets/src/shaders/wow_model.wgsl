@@ -68,7 +68,7 @@ struct WowLight {
     light_sun: vec4<f32>,     // xyz sun travel dir (to-light = −xyz); w = directional enable
     light_spec: vec4<f32>,    // terrain's specular (w = its shininess); unread here
     fog_color: vec4<f32>,     // rgb row-7 fog (gamma); w = enable (>0.5)
-    fog_params: vec4<f32>,    // x = start, y = end, w = farclip wall; z unused
+    fog_params: vec4<f32>,    // x = start, y = end, z = shadow cutoff, w = farclip wall
     // Rows 6-12: the reference's `Model2.bls` order-2 SH probe of the scene light at intensity 1:
     // ambient DC in the c10 `.w` lanes, the sun's bands in c10.xyz, c13 and c16.xyz. Every sun band
     // is linear in the committed colour, so all scale by the intensity (never I²).
@@ -78,7 +78,7 @@ struct WowLight {
     sh_c13_r: vec4<f32>,
     sh_c13_g: vec4<f32>,
     sh_c13_b: vec4<f32>,
-    // xyz = the c16 quadratic band (x²−y²) per channel; w unused.
+    // xyz = the c16 quadratic band (x²−y²) per channel; w = mode 5.
     sh_c16: vec4<f32>,
     _water: array<vec4<f32>, 4>, // rows 13-16: the liquid swatches, unread here
     // x = the SIDN night fraction (1 overnight, 0 by day); yzw = the sun's SH DC at intensity 1.
@@ -976,7 +976,13 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // world's, so its pipeline compiles the receive out: dead code that still costs registers.
 #ifndef WOW_RIG_LANE
     if (!is_emissive && (u32(m.clutter_fade.z) & 4u) == 0u) {
-        let shadow = wow_shadow::shadow_term(in.world_position.xyz, is_interior);
+        // Detail doodads bind the empty plane `0xd431ac` (`0x874760`).
+        let shadow = wow_shadow::model_term(
+            in.world_position.xyz,
+            is_interior,
+            wow_light.sh_c16.w > 0.5,
+            select(wow_light.fog_params.z, 1e9, m.clutter_fade.w > 0.5),
+        );
         if (shadow < 1.0) {
             rgb = rgb * wow_shadow::shadow_scale(wow_shadow::grazing_fade(shadow, n_lit));
         }

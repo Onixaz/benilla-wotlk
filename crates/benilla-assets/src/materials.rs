@@ -605,22 +605,24 @@ mod tests {
     #[test]
     fn the_shadow_receive_is_inert_without_the_light() {
         let src = include_str!("shaders/wow_shadow.wgsl");
-        let term = &src[src.find("fn shadow_term").expect("shadow_term")..];
-        let first_sample = term.find("dynamic_term(").expect("samples the dynamic map");
-        let gate = term
-            .find("if (!shadow_maps_on()) {")
-            .expect("gated on the light");
-        assert!(
-            gate < first_sample,
-            "the light gate must come before any sampling"
-        );
+        for name in ["fn terrain_term", "fn model_term"] {
+            let term = &src[src.find(name).expect("the term")..];
+            let first_sample = term.find("map_coord(").expect("reads the dynamic map");
+            let gate = term
+                .find("if (!shadow_maps_on()) {")
+                .expect("gated on the light");
+            assert!(
+                gate < first_sample,
+                "the light gate must come before any sampling"
+            );
+        }
         let model = include_str!("shaders/wow_model.wgsl");
         assert!(
             model.contains("if (shadow < 1.0) {"),
             "the model receive multiplies only in shadow"
         );
         let terrain = include_str!("shaders/terrain.wgsl");
-        assert!(terrain.contains("shadow_lit = min(shadow_lit, wow_shadow::shadow_term("));
+        assert!(terrain.contains("shadow_lit = wow_shadow::terrain_term("));
     }
 
     /// The sky depth law for the WMO skybox, the one sky element on the model lane.

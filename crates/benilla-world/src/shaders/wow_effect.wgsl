@@ -21,7 +21,7 @@ struct WowLight {
     light_sun: vec4<f32>,
     light_spec: vec4<f32>,
     fog_color: vec4<f32>,  // rgb row-7 fog (gamma); w = enable (>0.5)
-    fog_params: vec4<f32>, // x=start y=end z=linear-lighting A/B flag w=farclip wall
+    fog_params: vec4<f32>, // x=start y=end z=shadow cutoff w=farclip wall
     sh_c10_r: vec4<f32>,
     sh_c10_g: vec4<f32>,
     sh_c10_b: vec4<f32>,

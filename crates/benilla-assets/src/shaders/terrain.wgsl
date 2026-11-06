@@ -51,9 +51,9 @@ struct WowLight {
     light_sun: vec4<f32>,     // xyz = world-space sun travel direction (to-light = −xyz); w unused.
     light_spec: vec4<f32>,    // rgb = row 9 specular color; w = shininess (20). rgb == 0 disables.
     fog_color: vec4<f32>,     // rgb = row 7 fog (raw, gamma 0..1); w = enable (>0.5 ⇒ blend).
-    fog_params: vec4<f32>,    // x = fog_start yd; y = fog_end yd; z unused; w = farclip wall.
+    fog_params: vec4<f32>,    // x = fog_start yd; y = fog_end yd; z = shadow cutoff; w = farclip wall.
     _sh: array<vec4<f32>, 6>, // rows 6-11: model SH coefficients, unread by terrain.
-    sh_c16: vec4<f32>,        // row 12: xyz = the models' c16 quad band; w free.
+    sh_c16: vec4<f32>,        // row 12: xyz = the models' c16 quad band; w = mode 5.
     _water: array<vec4<f32>, 4>, // rows 13-16: liquid swatches, unread by terrain.
     grade: vec4<f32>,         // row 17: reserved, layout only.
     _wmo_fog: vec4<f32>,      // row 18: interior fog, unread by terrain.
@@ -306,9 +306,12 @@ fn fragment(in: TerrainVsOut) -> @location(0) vec4<f32> {
         }
         shadow_lit = 1.0 - mcsh;
     }
-    // The shadow maps (`Terrain2_pcf.bls`, `Terrain3_pcf.bls`): their term joins the MCSH bit by
-    // `min`, without the model programs' grazing fade.
-    shadow_lit = min(shadow_lit, wow_shadow::shadow_term(in.world_position.xyz, false));
+    // The shadow maps' receive, without the model programs' grazing fade.
+    shadow_lit = wow_shadow::terrain_term(
+        in.world_position.xyz,
+        shadow_lit,
+        wow_light.sh_c16.w > 0.5,
+    );
 
     // The `terrainp_s.bls` combine, then an LDR clamp:
     //   diffuse  = tex · primary · (0.3·shadow + 0.7)   (a flat −30% in shadow, no tint)
