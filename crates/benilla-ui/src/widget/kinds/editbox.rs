@@ -57,7 +57,8 @@ pub struct EditBoxState {
     pub auto_focus: bool,
     /// `multiLine` (bit 1): Enter inserts a newline unless the box has an `OnEnterPressed` script.
     pub multi_line: bool,
-    /// `numeric` (bit 2): an insert with any non-digit is refused whole, not filtered.
+    /// `numeric` (bit 2): one insert with any non-digit is refused whole; a paste is one insert per
+    /// character.
     pub numeric: bool,
     /// `password` (bit 3): the display is one `*` per character (`E+0x334`); the text is untouched.
     pub password: bool,
@@ -449,7 +450,7 @@ impl EditBoxState {
 // `script::editbox` wraps these and fires the Lua events an `EditOutcome` names; the glue
 // screens use them with no Lua at all.
 
-/// What an edit changed, for the FrameXML wrapper's `OnTextChanged` and `OnSpacePressed` fires.
+/// What an edit changed, for the FrameXML wrapper's text sync and `OnChar`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EditOutcome {
     /// The text changed: `OnTextChanged`.
@@ -457,8 +458,6 @@ pub struct EditOutcome {
     /// An insert went in, so `OnChar` fires; a `numeric` abort that only deleted the selection did
     /// not.
     pub inserted: bool,
-    /// Typed spaces inserted, one `OnSpacePressed` each; a paste reports none.
-    pub spaces: usize,
 }
 
 impl EditOutcome {
@@ -537,21 +536,7 @@ impl EditBoxState {
         EditOutcome {
             text_changed: true,
             inserted: true,
-            spaces: ins.matches(' ').count(),
         }
-    }
-
-    /// Insert clipboard text with its control characters dropped, bar `\n` in a multiline box; a
-    /// paste fires no `OnSpacePressed`.
-    pub fn paste(&mut self, text: &str) -> EditOutcome {
-        let cleaned: String = text
-            .chars()
-            .filter(|&c| c as u32 >= 0x20 || (self.multi_line && c == '\n'))
-            .collect();
-        if cleaned.is_empty() {
-            return EditOutcome::default();
-        }
-        EditOutcome::changed(self.insert(&cleaned).text_changed)
     }
 
     /// `SetText`, in order: collapse the selection even when the text is equal; stop if equal (a

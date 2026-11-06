@@ -427,23 +427,37 @@ fn paste_into_an_unfocused_box_is_not_consumed() {
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "");
 }
 
+/// The one-character path (`0x965ce0`): a single-line box drops newlines and other controls and
+/// 0x7f, and a tab goes in as four spaces; a multi-line box keeps the newline.
 #[test]
 fn paste_strips_newlines_in_a_single_line_box_but_keeps_them_when_multiline() {
     let mut s = script();
     s.run(r#"E = CreateFrame("EditBox", "E"); E:SetFocus()"#)
         .unwrap();
-    // Single-line: newlines/tabs and other control chars are dropped; spaces survive.
-    assert!(s.paste("one\ntwo\tthree\r"));
+    assert!(s.paste("one\ntwo\tthree\r\u{7f}\u{1}"));
     assert_eq!(
         s.eval::<String>("return E:GetText()").unwrap(),
-        "onetwothree"
+        "onetwo    three"
     );
 
     let mut s = script();
     s.run(r#"E = CreateFrame("EditBox", "E"); E:SetMultiLine(true); E:SetFocus()"#)
         .unwrap();
-    assert!(s.paste("one\ntwo"));
+    assert!(s.paste("one\r\ntwo"));
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "one\ntwo");
+}
+
+/// A pasted `|` goes in as `||`, so a pasted escape stays literal text (`0x965ce0`).
+#[test]
+fn paste_writes_a_pipe_as_two() {
+    let mut s = script();
+    s.run(r#"E = CreateFrame("EditBox", "E"); E:SetFocus()"#)
+        .unwrap();
+    assert!(s.paste("|cffff0000x|r"));
+    assert_eq!(
+        s.eval::<String>("return E:GetText()").unwrap(),
+        "||cffff0000x||r"
+    );
 }
 
 #[test]
@@ -454,34 +468,60 @@ fn paste_honors_max_letters_and_numeric() {
     assert!(s.paste("abcdef"));
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "abc");
 
+    // Each character meets the numeric gate alone: non-digits drop and the digits go in.
     let mut s = script();
     s.run(r#"E = CreateFrame("EditBox", "E"); E:SetNumeric(true); E:SetFocus()"#)
         .unwrap();
-    assert!(s.paste("12a3"), "consumed even though the insert aborts");
-    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "");
+    assert!(s.paste("12a3"));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "123");
     assert!(s.paste("456"));
-    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "456");
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "123456");
 }
 
+/// Each pasted character is a full insert with its `OnChar` flag on, so `OnChar` fires per
+/// character, with `|` as `||` and a tab as its four spaces, and `OnSpacePressed` per space.
 #[test]
-fn paste_does_not_fire_onspacepressed() {
+fn paste_fires_on_char_and_on_space_pressed_per_character() {
     let mut s = script();
+    s.run(
+        r#"
+        spaces, chars = 0, {}
+        E = CreateFrame("EditBox", "E")
+        E:SetScript("OnSpacePressed", function() spaces = spaces + 1 end)
+        E:SetScript("OnChar", function(self, text) table.insert(chars, text) end)
+        E:SetFocus()
+    "#,
+    )
+    .unwrap();
+    assert!(s.paste("a b|\tc\n"));
+    assert_eq!(
+        s.eval::<String>("return E:GetText()").unwrap(),
+        "a b||    c"
+    );
+    assert_eq!(s.eval::<i64>("return spaces").unwrap(), 2);
+    assert_eq!(
+        s.eval::<String>("return table.concat(chars, ',')").unwrap(),
+        "a, ,b,||,    ,c"
+    );
+}
+
+/// The insert fires `OnSpacePressed` at most once however many spaces it holds (`0x965ccd`), and a
+/// typed character takes the same path as a pasted one.
+#[test]
+fn a_lua_insert_with_two_spaces_fires_on_space_pressed_once() {
+    let s = script();
     s.run(
         r#"
         spaces = 0
         E = CreateFrame("EditBox", "E")
         E:SetScript("OnSpacePressed", function() spaces = spaces + 1 end)
-        E:SetFocus()
+        E:Insert("a b c")
     "#,
     )
     .unwrap();
-    assert!(s.paste("a b c"));
-    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "a b c");
-    assert_eq!(
-        s.eval::<i64>("return spaces").unwrap(),
-        0,
-        "a paste is not a typed space"
-    );
+    assert_eq!(s.eval::<i64>("return spaces").unwrap(), 1);
+    s.run(r#"E:Insert("abc")"#).unwrap();
+    assert_eq!(s.eval::<i64>("return spaces").unwrap(), 1);
 }
 
 #[test]

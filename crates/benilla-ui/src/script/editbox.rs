@@ -34,8 +34,8 @@ pub(super) const REG_EDITBOX_METHODS: &str = "__benilla_editbox_methods";
 // Public entry points
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/// A typed character: Ctrl+A (arriving as SOH) selects all, other C0 controls are consumed inert,
-/// printable text is inserted.
+/// A typed character: Ctrl+A (arriving as SOH) selects all, and the rest goes through the
+/// one-character path, which consumes other C0 controls inert.
 pub(super) fn char_input(lua: &Lua, text: &str) -> bool {
     let Some(h) = route(lua) else {
         return false;
@@ -45,25 +45,34 @@ pub(super) fn char_input(lua: &Lua, text: &str) -> bool {
     if text == "\u{1}" {
         // Ctrl+A selects all (the client's keydown case 0x41/0x61).
         highlight_text(lua, h, 0, -1);
-    } else if text.chars().any(|c| (c as u32) >= 0x20) {
-        // A typed `|` goes in as `||` (the reference pushes the literal `"||"`), so markup cannot
-        // be typed; the pair draws as one `|` and counts as one letter.
-        insert(lua, h, &text.replace('|', "||"), true);
+    } else {
+        text.chars().for_each(|c| insert_char(lua, h, c));
     }
     true
 }
 
-/// Paste host clipboard text into the focused box as one edit: C0 controls are dropped, except a
-/// newline in a `multiLine` box, and no `OnSpacePressed` fires.
+/// Paste host clipboard text into the focused box (`0x965ed0`): the one-character path, per
+/// character, so a handler sees each `OnChar` and `OnSpacePressed` and a numeric box tests each one.
 pub(super) fn paste(lua: &Lua, text: &str) -> bool {
     let Some(h) = route(lua) else {
         return false;
     };
     flush::flush(lua, h); // Ctrl+V is a key-down
-    if with_eb(lua, h, |eb| eb.paste(text)).is_some_and(|o| o.text_changed) {
-        sync_text_region(lua, h);
-    }
+    text.chars().for_each(|c| insert_char(lua, h, c));
     true
+}
+
+/// The one-character insert (`0x965ce0`), which typing and paste share: other controls and 0x7f
+/// drop, a tab goes in as four spaces, a newline only in a multi-line box, and `|` as `||`, so
+/// markup cannot be typed; the pair draws as one `|` and counts as one letter.
+fn insert_char(lua: &Lua, h: FrameHandle, c: char) {
+    match c {
+        '\t' => insert(lua, h, "    "),
+        '\n' if read_eb(lua, h, |eb| eb.multi_line).unwrap_or(false) => insert(lua, h, "\n"),
+        '|' => insert(lua, h, "||"),
+        c if c < ' ' || c == '\u{7f}' => {}
+        c => insert(lua, h, c.encode_utf8(&mut [0; 4])),
+    }
 }
 
 /// A named key: only Enter, Escape and Tab act, and a focused box consumes every key.
@@ -81,7 +90,7 @@ pub(super) fn key_input(lua: &Lua, key: &str) -> bool {
         "ENTER" => {
             let multi_line = read_eb(lua, h, |eb| eb.multi_line).unwrap_or(false);
             if multi_line && !event::has_widget_handler(lua, id, "OnEnterPressed") {
-                insert(lua, h, "\n", false);
+                insert(lua, h, "\n");
             } else {
                 fire_script(lua, id, "OnEnterPressed");
             }
@@ -279,9 +288,10 @@ fn clear_focus_handle(lua: &Lua, h: FrameHandle) {
 // Editing primitives: mutate under one borrow, then sync and fire
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/// `Insert`: delete the selection, abort on a non-digit when `numeric`, splice, enforce caps, raise
-/// the dirty bits for the flush, and with `fire_space` fire one `OnSpacePressed` per space.
-fn insert(lua: &Lua, h: FrameHandle, ins: &str, fire_space: bool) {
+/// `Insert` (`0x965960`): delete the selection, abort on a non-digit when `numeric`, splice, enforce
+/// caps, raise the dirty bits for the flush, fire `OnChar`, and fire `OnSpacePressed` once if `ins`
+/// holds a space (`0x965ccd`).
+fn insert(lua: &Lua, h: FrameHandle, ins: &str) {
     let Some(out) = with_eb(lua, h, |eb| eb.insert(ins)) else {
         return; // not an EditBox
     };
@@ -302,10 +312,8 @@ fn insert(lua: &Lua, h: FrameHandle, ins: &str, fire_space: bool) {
     if let Err(e) = on_char {
         crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
-    if fire_space {
-        for _ in 0..out.spaces {
-            fire_script(lua, id, "OnSpacePressed");
-        }
+    if ins.contains(' ') {
+        fire_script(lua, id, "OnSpacePressed");
     }
 }
 
