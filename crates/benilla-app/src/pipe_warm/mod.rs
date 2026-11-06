@@ -306,9 +306,11 @@ impl WarmPass {
 /// apart.
 const WARM_SETTLE_SECS: f32 = 0.25;
 /// Rigs revealed per frame, which bounds the first-sight extract and queue work each frame takes
-/// on; the compiles themselves run on the async-compute pool. `$WOW_WARM_SLICE` overrides it; 0
-/// means unpaced.
-const WARM_REVEAL_PER_FRAME: usize = 24;
+/// on; the compiles themselves run on the async-compute pool. A loading frame runs ~50 ms, so the
+/// slice sets how many frames the pass spans (44 for the ~3150 rigs); unpaced, the compile burst
+/// starves the collider builds that share that pool. `$WOW_WARM_SLICE` overrides it; 0 means
+/// unpaced.
+const WARM_REVEAL_PER_FRAME: usize = 72;
 
 /// The pacing slice actually in force, `$WOW_WARM_SLICE` applied once.
 fn reveal_slice() -> usize {
