@@ -67,8 +67,7 @@ pub(crate) use sched_census::SchedCensusPlugin;
 mod stall;
 pub(crate) use stall::StallPlugin;
 
-/// The clock every probe schedule reads: real time. `Time<Virtual>` clamps each frame delta to
-/// `max_delta` (250 ms), so on a hitching leg it falls behind and drifts every `<secs>` knob.
+/// The clock every probe schedule reads: real time, as `Time<Virtual>` is paced and pausable.
 pub(crate) type ProbeClock<'w> = Res<'w, Time<bevy::time::Real>>;
 
 #[cfg(test)]
@@ -95,7 +94,7 @@ mod tests {
             (
                 "capture/probes/stall.rs",
                 "drive_stall",
-                "the clamp IS the subject: this probe reports `Time<Virtual>`'s delta beside \
+                "the clock IS the subject: this probe reports `Time<Virtual>`'s delta beside \
                  `Time<Real>`'s so a stalled frame's divergence is a printed number rather than a \
                  remembered constant. Its own schedule is [`ProbeClock`], bound on the line above",
             ),
@@ -155,7 +154,7 @@ mod tests {
         assert!(
             offenders.is_empty(),
             "the probe harness must schedule on the wall clock (`ProbeClock`), not the virtual \
-             clock — it is clamped to max_delta (250 ms), so any hitching leg silently drifts every \
+             clock — it is paced and pausable, so a held clock silently drifts every \
              `<secs>` knob out from under the operator. Offenders:\n  {}",
             offenders.join("\n  "),
         );

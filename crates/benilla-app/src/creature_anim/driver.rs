@@ -292,6 +292,7 @@ type HostData = (
     &'static Transform,
     // Read only by the debug trace.
     Has<SelfPlayer>,
+    Has<benilla_world::model_fade::DespawnFade>,
 );
 
 /// The per-unit animation state machine: death overrides; otherwise Specials as bracketed loops,
@@ -301,7 +302,8 @@ type HostData = (
 #[allow(clippy::type_complexity)]
 pub(super) fn drive_animations(
     par_commands: ParallelCommands,
-    mut units: Query<UnitData>,
+    // A fading model plays on with its object gone (`0x7823e6`): no driver picks for it.
+    mut units: Query<UnitData, Without<benilla_world::model_fade::DespawnFade>>,
     // A mount child's movement view is its host's, fetched through `MountBody.host`.
     mount_hosts: Query<HostData>,
     mut swings: MessageReader<SwingMessage>,
@@ -596,6 +598,10 @@ fn drive_unit(
             fresh_spawn,
         ),
     ) = item;
+    // A mount fades with its host, so it plays on with it too.
+    if mount_body.is_some_and(|mb| mount_hosts.get(mb.host).is_ok_and(|host| host.9)) {
+        return;
+    }
     let rng = unit_rng
         .bypass_change_detection()
         .stream(session_rng, entity);
@@ -614,7 +620,7 @@ fn drive_unit(
         ridden_by_self,
     ) = match mount_body {
         Some(mb) => match mount_hosts.get(mb.host) {
-            Ok((s, r, m, sp, f, sw, md, t, host_self)) => {
+            Ok((s, r, m, sp, f, sw, md, t, host_self, _)) => {
                 (s, r, m, sp, f, sw, md, t.scale.x, host_self)
             }
             Err(_) => (None, None, None, None, None, false, None, 1.0, false),

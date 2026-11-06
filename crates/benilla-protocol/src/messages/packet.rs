@@ -77,6 +77,15 @@ pub struct SplineArc {
     pub effect_start_ms: u32,
 }
 
+/// What a `SPLINEFLAG_CYCLIC` (`0x80000`) path carries past its waypoints.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SplineCycle {
+    /// `SPLINEFLAG_ENTER_CYCLE` (`0x100000`): the first wrap drops the path's entry (`0x98c940`).
+    pub enter: bool,
+    /// The Catmull-Rom control point past the path's end (`0x73cf0a`); a linear path has none.
+    pub tail: Option<[f32; 3]>,
+}
+
 /// The game clock the clock packets carry: the packed time and the zone `u32` read after it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GameClock {
@@ -234,6 +243,8 @@ pub enum ServerPacket {
         arc: Option<SplineArc>,
         /// `SPLINEFLAG_ORIENTATION_FIXED` (`0x4000`): the unit keeps its facing along the path.
         facing_fixed: bool,
+        /// `SPLINEFLAG_CYCLIC`: the path loops.
+        cycle: Option<SplineCycle>,
     },
     /// A relayed player `MSG_MOVE_*`: authoritative pose and live `moveFlags`; `transport` is set
     /// while `MOVEFLAG_ON_TRANSPORT`, a pose local to the transport.

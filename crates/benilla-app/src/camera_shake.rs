@@ -702,6 +702,7 @@ mod tests {
             catmull_rom: !grounded,
             end_facing: benilla_protocol::MonsterMoveFacing::None,
             run_mode: true,
+            cycle: None,
         };
 
         assert!(!suspended(None, None), "walking about: the shake plays");

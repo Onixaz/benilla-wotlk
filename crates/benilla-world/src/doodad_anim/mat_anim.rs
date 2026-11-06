@@ -798,8 +798,7 @@ pub(super) fn tick_anim_materials(
 }
 
 /// `WOW_MATANIM_DUTY=<start_s>:<period_s>` turns [`tick_anim_materials`] off and on every `period`
-/// seconds from `start`; the ON/OFF difference over the square wave is its per-frame cost. On
-/// `Time<Real>` because virtual time clamps to `max_delta` (250 ms) and lags on a hitching run.
+/// seconds from `start` on `Time<Real>`; the ON/OFF difference is its per-frame cost.
 fn matanim_off(time: &Time<bevy::time::Real>) -> bool {
     static SPEC: std::sync::OnceLock<Option<(f32, f32)>> = std::sync::OnceLock::new();
     let spec = SPEC.get_or_init(|| {

@@ -70,7 +70,12 @@ pub(super) fn step(
     water_floor: Option<f32>,
     nudge_speed: f32,
 ) -> Outcome {
-    let dt = time.delta_secs();
+    let step_time = move_step(time);
+    let dt = step_time.as_secs_f32();
+    // Fall time counts what the mover ran (`0x6f0a12`), not what it skipped.
+    if let Some(since) = player.airborne_since.as_mut() {
+        *since += (time.delta() - step_time).as_secs_f32();
+    }
     let input_horiz = if moving {
         dir.normalize() * speed
     } else {
@@ -236,7 +241,7 @@ pub(super) fn step(
             capsule,
             center,
             player.horiz_vel,
-            time.delta(),
+            step_time,
             Support {
                 rise: STEP_UP_HEIGHT,
                 offset: hover_offset,
@@ -274,7 +279,7 @@ pub(super) fn step(
         } else {
             player.horiz_vel + Vec3::Y * fall_mean_vy
         };
-        center = airborne_step(world, capsule, center, velocity, time.delta());
+        center = airborne_step(world, capsule, center, velocity, step_time);
         player.steep_support = false;
         player.step_start = None;
     }
@@ -707,6 +712,24 @@ pub(crate) fn fall_step(v0: f32, dt: f32, terminal: f32) -> (f32, f32) {
 /// One airborne step against the world: the arc's slide alone, with steep faces sheared
 /// ([`steep_contact_shear`]); gravity owns the height and the next ground probe the landing.
 /// Shared with the remote dead-reckon's arcs ([`crate::net::motion::remote`]).
+/// The most movement one frame runs (`0x6f0a12`); only a spline, on absolute time, takes the gap.
+pub(crate) const MAX_MOVE_STEP: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// This frame's movement step, under [`MAX_MOVE_STEP`].
+pub(crate) fn move_step<T: Default>(time: &Time<T>) -> std::time::Duration {
+    time.delta().min(MAX_MOVE_STEP)
+}
+
+#[cfg(test)]
+#[test]
+fn a_long_frame_moves_at_most_the_last_250_ms() {
+    let mut time = Time::<()>::default();
+    time.advance_by(std::time::Duration::from_millis(16));
+    assert_eq!(move_step(&time), std::time::Duration::from_millis(16));
+    time.advance_by(std::time::Duration::from_secs(4));
+    assert_eq!(move_step(&time), MAX_MOVE_STEP);
+}
+
 pub(crate) fn airborne_step(
     world: &benilla_world::collision::WorldCollision<'_, '_>,
     capsule: &Collider,

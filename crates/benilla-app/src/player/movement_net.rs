@@ -58,6 +58,8 @@ const IN_MOTION: u32 = HEARTBEAT_FLAGS | move_flags::FALLING_FAR | move_flags::O
 pub(super) struct SkipClock {
     /// The frame's length in seconds.
     pub(super) dt: f32,
+    /// The part of it past the movement step, skipped by a mover that runs (`0x6f0a12`).
+    pub(super) skipped: f32,
     /// The mover held instead of stepping ([`super::Player::settling`]): nothing integrated `dt`.
     pub(super) held: bool,
     /// The active mover, a possessed unit or our own body; `None` until the server names one.
@@ -369,6 +371,9 @@ fn stream_skipped_time(sender: &Sender<ClientCommand>, player: &mut Player, skip
         player.skipped_ms += skip.dt * 1000.0;
         return;
     }
+    if player.move_flags & IN_MOTION != 0 {
+        player.skipped_ms += skip.skipped * 1000.0;
+    }
     // The release edge sends the whole hold in whole ms; the residue is dropped.
     let lag_ms = player.skipped_ms as u32;
     player.skipped_ms = 0.0;
@@ -464,6 +469,7 @@ mod tests {
     fn no_skip() -> SkipClock {
         SkipClock {
             dt: 0.0,
+            skipped: 0.0,
             held: false,
             mover: None,
         }
@@ -472,6 +478,31 @@ mod tests {
     use super::*;
     use std::f32::consts::TAU;
 
+    /// `0x6f0a12`: a mover that runs reports what a long frame skipped; a standing one is no mover.
+    #[test]
+    fn a_long_frame_reports_the_time_a_running_mover_skipped() {
+        const MOVER: u64 = 0x2a;
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut player = Player::default();
+        let long = || SkipClock {
+            dt: 4.0,
+            skipped: 3.75,
+            held: false,
+            mover: Some(MOVER),
+        };
+        stream_skipped_time(&tx, &mut player, long());
+        assert!(rx.try_recv().is_err(), "nothing moves, nothing skips");
+        player.move_flags = move_flags::FORWARD;
+        stream_skipped_time(&tx, &mut player, long());
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientCommand::MoveTimeSkipped {
+                guid: MOVER,
+                lag_ms: 3750
+            })
+        ));
+    }
+
     #[test]
     fn a_settle_hold_reports_its_skipped_milliseconds_once_on_release() {
         const MOVER: u64 = 0x0000_0000_0000_002a;
@@ -479,11 +510,13 @@ mod tests {
         let mut player = Player::default();
         let held = |dt: f32| SkipClock {
             dt,
+            skipped: 0.0,
             held: true,
             mover: Some(MOVER),
         };
         let released = || SkipClock {
             dt: 0.016,
+            skipped: 0.0,
             held: false,
             mover: Some(MOVER),
         };

@@ -37,6 +37,7 @@ fn on_spline(speed: f32) -> crate::net::Spline {
         deck: None,
         arc: None,
         facing_fixed: false,
+        cycle: None,
     }
 }
 

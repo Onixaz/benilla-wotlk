@@ -37,6 +37,7 @@ const SPLINE_FLAG_FINAL_TARGET: u32 = 0x1_0000;
 const SPLINE_FLAG_FINAL_ANGLE: u32 = 0x2_0000;
 const SPLINE_FLAG_CATMULLROM: u32 = 0x4_0000;
 const SPLINE_FLAG_CYCLIC: u32 = 0x8_0000;
+const SPLINE_FLAG_ENTER_CYCLE: u32 = 0x10_0000;
 
 /// Parse a 3.3.5a `SMSG_UPDATE_OBJECT` body: the count, then each `Object`.
 pub(super) fn read_update_object(r: &mut impl Read) -> io::Result<Vec<Object>> {
@@ -245,8 +246,8 @@ fn read_create_spline(r: &mut impl Read) -> io::Result<Option<CreateSpline>> {
     let time_passed_ms = read_u32_le(r)?;
     let duration_ms = read_u32_le(r)?;
     let id = read_u32_le(r)?;
-    let _duration_mod = read_f32_le(r)?;
-    let _duration_mod_next = read_f32_le(r)?;
+    let duration_mod = read_f32_le(r)?;
+    let duration_mod_next = read_f32_le(r)?;
     let vertical_acceleration = read_f32_le(r)?;
     let effect_start_ms = read_u32_le(r)?;
     let amount_of_nodes = read_u32_le(r)?;
@@ -265,6 +266,9 @@ fn read_create_spline(r: &mut impl Read) -> io::Result<Option<CreateSpline>> {
         duration_ms,
         flying: spline_flags & SPLINE_FLAG_FLYING != 0,
         cyclic: spline_flags & SPLINE_FLAG_CYCLIC != 0,
+        enter_cycle: spline_flags & SPLINE_FLAG_ENTER_CYCLE != 0,
+        duration_mods: [duration_mod, duration_mod_next],
+        phantoms: [nodes[0], nodes[nodes.len() - 1]],
         run_mode: spline_flags & SPLINE_FLAG_WALKMODE == 0,
         arc: (spline_flags & SPLINE_FLAG_PARABOLIC != 0).then_some(SplineArc {
             vertical_acceleration,

@@ -286,6 +286,7 @@ mod tests {
                     catmull_rom: false,
                     end_facing: benilla_protocol::MonsterMoveFacing::None,
                     run_mode,
+                    cycle: None,
                 },
                 twist,
                 Embodied,

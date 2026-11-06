@@ -1029,6 +1029,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             run_mode,
             arc,
             facing_fixed,
+            cycle,
         } => vec![SessionEvent::MonsterMove {
             guid,
             transport,
@@ -1043,6 +1044,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             run_mode,
             arc,
             facing_fixed,
+            cycle,
         }],
         ServerPacket::PlayerMove {
             guid,

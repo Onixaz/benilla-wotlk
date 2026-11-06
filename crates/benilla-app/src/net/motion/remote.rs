@@ -321,9 +321,7 @@ pub(in crate::net) fn apply_move(
     rm.last_apply_pos = ev.position;
 }
 
-/// Fires every due queued move; runs before [`extrapolate_remote_units`]. Real time: the
-/// reference's clock is the OS wall clock, and Bevy's virtual clock clamps each delta to 250 ms, so
-/// a throttled window would fall behind the schedule.
+/// Fires every due queued move on real time, the reference's OS clock.
 #[allow(clippy::type_complexity)]
 pub(in crate::net) fn drain_pending_moves(
     time: Res<Time<Real>>,
@@ -377,7 +375,8 @@ pub(in crate::net) fn extrapolate_remote_units(
     >,
 ) {
     use crate::creature_anim::{ease_strafe_yaw, strafe_body_offset, wrap_pi};
-    let dt = time.delta_secs();
+    let step_time = crate::player::mover::move_step(&time);
+    let dt = step_time.as_secs_f32();
     let now_ms = time.elapsed_secs_f64() * 1000.0;
     for (e, mut t, mut rm, speeds, twist, latched, riding, guid, granted) in &mut q {
         if benilla_assets::trace::enabled() {
@@ -418,7 +417,7 @@ pub(in crate::net) fn extrapolate_remote_units(
                 Vec3::ZERO
             };
             let resolved_center = if airborne {
-                crate::player::mover::airborne_step(&world, &capsule.0, from, vel, time.delta())
+                crate::player::mover::airborne_step(&world, &capsule.0, from, vel, step_time)
             } else {
                 // The mover's granted modes: `HOVER` raises it a yard, and `WATER_WALKING` makes
                 // the liquid plane floor unless swimming. The local mover's aim-pitch gate has no
@@ -437,7 +436,7 @@ pub(in crate::net) fn extrapolate_remote_units(
                     &capsule.0,
                     from,
                     vel,
-                    time.delta(),
+                    step_time,
                     crate::player::mover::Support {
                         // The reference's step-height predicate is true for an uncharmed player, so
                         // the step height is 1.0.

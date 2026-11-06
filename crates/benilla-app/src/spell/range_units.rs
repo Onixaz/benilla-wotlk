@@ -177,6 +177,7 @@ mod tests {
             deck: None,
             arc: None,
             facing_fixed: false,
+            cycle: None,
         }
     }
 

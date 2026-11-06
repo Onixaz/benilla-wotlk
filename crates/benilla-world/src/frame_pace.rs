@@ -5,6 +5,7 @@
 //! vsync'd, each is snapped to a whole number of refresh periods and the remainder carried, so
 //! elapsed time still matches the wall clock; otherwise (uncapped, a real stall) it passes through.
 //!
+//! The frame clock has no clamp (`0x47f0ef`, `0x77ecb0`): a long frame reaches every timer whole.
 //! `Time<Real>` stays unpaced because probes read it and a stall must stay visible there.
 //! `WOW_NO_FRAME_PACE=1` turns pacing off, and a manual `TimeUpdateStrategy` is never paced.
 
@@ -126,8 +127,7 @@ pub(crate) fn pace_virtual_time(
         pacer.carry = 0.0;
         return;
     }
-    let paced =
-        Duration::from_secs_f64(pacer.pace(real.delta().as_secs_f64())).min(virt.max_delta());
+    let paced = Duration::from_secs_f64(pacer.pace(real.delta().as_secs_f64()));
     let total = pacer.total.unwrap_or(virt.elapsed()) + paced;
     pacer.total = Some(total);
 
@@ -140,6 +140,22 @@ pub(crate) fn pace_virtual_time(
     t.advance_by(paced);
     *virt = t;
     *generic = virt.as_generic();
+}
+
+/// The most physics catch-up one frame runs: the collision step has no reference clock to follow.
+const MAX_FIXED_CATCH_UP: Duration = Duration::from_millis(250);
+
+/// Takes Bevy's 250 ms cap off the virtual clock.
+fn lift_max_delta(mut virt: ResMut<Time<Virtual>>) {
+    virt.set_max_delta(Duration::MAX);
+}
+
+/// Drops the fixed-step backlog past [`MAX_FIXED_CATCH_UP`], so a long frame bursts no steps.
+fn cap_fixed_catch_up(mut fixed: ResMut<Time<Fixed>>) {
+    let over = fixed.overstep().saturating_sub(MAX_FIXED_CATCH_UP);
+    if !over.is_zero() {
+        fixed.discard_overstep(over);
+    }
 }
 
 /// `WOW_FIXED_DT`'s pending arm (see [`plugin`]).
@@ -184,7 +200,9 @@ pub fn plugin(app: &mut App) {
         .add_systems(First, arm_fixed_dt.before(TimeSystems));
     }
     app.init_resource::<FramePacer>()
-        .add_systems(First, pace_virtual_time.after(TimeSystems));
+        .add_systems(Startup, lift_max_delta)
+        .add_systems(First, pace_virtual_time.after(TimeSystems))
+        .add_systems(FixedFirst, cap_fixed_catch_up);
 }
 
 #[cfg(test)]
@@ -196,6 +214,51 @@ mod tests {
             off: false,
             ..Default::default()
         }
+    }
+
+    #[derive(Resource, Default)]
+    struct FixedSteps(u32);
+
+    /// One 4 s frame after a normal one, as the login UI load stalls.
+    fn long_frame() -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin)
+            .init_resource::<FixedSteps>()
+            .add_systems(FixedUpdate, |mut n: ResMut<FixedSteps>| n.0 += 1);
+        plugin(&mut app);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            10,
+        )));
+        app.update();
+        app.update();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(4)));
+        app.world_mut().resource_mut::<FixedSteps>().0 = 0;
+        app.update();
+        app
+    }
+
+    #[test]
+    fn a_long_frame_reaches_the_frame_clock_whole() {
+        let app = long_frame();
+        assert_eq!(
+            app.world().resource::<Time<Virtual>>().delta(),
+            Duration::from_secs(4)
+        );
+        assert_eq!(
+            app.world().resource::<Time>().delta(),
+            Duration::from_secs(4)
+        );
+    }
+
+    #[test]
+    fn a_long_frame_runs_no_burst_of_fixed_steps() {
+        let app = long_frame();
+        let steps = app.world().resource::<FixedSteps>().0;
+        let per_catch_up = (MAX_FIXED_CATCH_UP.as_secs_f64() * 64.0).ceil() as u32;
+        assert!(
+            steps <= per_catch_up + 2,
+            "{steps} steps, the catch-up is {per_catch_up}"
+        );
     }
 
     #[test]

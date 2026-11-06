@@ -10,7 +10,7 @@
 //! `STALL_HIT` prints three clocks: `wall_dt`, [`Instant`] across the main-schedule pass (the
 //! clock `transport::Transport::cycle_ms` runs on); `real_dt`, `Time<Real>`, which under pipelined
 //! rendering is stamped from an `Instant` the render world sends and lags a frame or two;
-//! `virt_dt`, after the frame pacer and the 250 ms `max_delta` clamp (`clamped=1`).
+//! `virt_dt`, after the frame pacer; `clamped=1` is a frame that lost time on the way there.
 
 use core::time::Duration;
 use std::time::Instant;
@@ -24,6 +24,8 @@ use super::ProbeClock;
 /// Default seconds between bursts and before the first, clear of login and world entry.
 const DEFAULT_EVERY_SECS: f32 = 20.0;
 const DEFAULT_AFTER_SECS: f32 = 30.0;
+/// Frames each injection reports, past the render thread's lag on the clock stamp.
+const HIT_FRAMES: u8 = 4;
 /// How often the monitor prints its `STALL_WATCH` summary, seconds.
 const WATCH_SECS: f32 = 5.0;
 
@@ -88,8 +90,8 @@ struct Stall {
     left: u32,
     /// Wall-clock second of the next `STALL_WATCH` summary.
     next_watch: f32,
-    /// Set on the frame that slept; reported on the frame that paid for it.
-    pending: Option<u64>,
+    /// Set on the frame that slept, with the frames left to report: `Time<Real>` lags the sleep.
+    pending: Option<(u64, u8)>,
     /// End of the previous main-schedule pass, for the wall-clock frame delta.
     last: Option<Instant>,
     /// This window's true frame deltas, milliseconds.
@@ -137,7 +139,8 @@ fn drive_stall(
     }
 
     // The frame that paid for the last injection.
-    if let Some(injected) = stall.pending.take() {
+    if let Some((injected, left)) = stall.pending.take() {
+        stall.pending = (left > 1).then_some((injected, left - 1));
         let real_ms = real.delta_secs_f64() * 1000.0;
         let virt_ms = virt.delta_secs_f64() * 1000.0;
         println!(
@@ -179,6 +182,6 @@ fn drive_stall(
         );
         stall.left -= 1;
         std::thread::sleep(Duration::from_millis(stall.ms));
-        stall.pending = Some(stall.ms);
+        stall.pending = Some((stall.ms, HIT_FRAMES));
     }
 }

@@ -597,6 +597,7 @@ fn on_monster_move(In(ev): In<SessionEvent>, mut sc: Scene) {
         run_mode,
         arc,
         facing_fixed,
+        cycle,
     } = ev
     {
         let rooted = modes_of(guid, &sc.index, &sc.modes).rooted();
@@ -614,6 +615,7 @@ fn on_monster_move(In(ev): In<SessionEvent>, mut sc: Scene) {
             run_mode,
             arc,
             facing_fixed,
+            cycle,
             rooted,
             &mut sc.commands,
             &sc.index,
@@ -660,44 +662,18 @@ fn on_gameobject_anim(In(ev): In<SessionEvent>, mut sc: Scene) {
     }
 }
 
-/// `SMSG_FLIGHT_SPLINE_SYNC` (`0x716940`): the next lap's duration modifier for the unit's spline,
-/// toward the server's progress (`0x98b5d0`). The reference adopts it when a cyclic spline wraps
-/// (`0x98ca00`); ours run one lap and never wrap, so it is traced, not applied.
+/// `SMSG_FLIGHT_SPLINE_SYNC` (`0x716940`): the modifier a cyclic spline adopts at its next wrap.
 fn on_flight_spline_sync(
     In(ev): In<SessionEvent>,
     index: Res<GuidIndex>,
-    splines: Query<&super::motion::Spline>,
+    mut splines: Query<&mut super::motion::Spline>,
 ) {
     let SessionEvent::FlightSplineSync { guid, progress } = ev else {
         return;
     };
-    let Some(spline) = index.0.get(&guid).and_then(|&e| splines.get(e).ok()) else {
-        return;
-    };
-    let elapsed = std::time::Instant::now().saturating_duration_since(spline.start);
-    let next = next_lap_modifier(
-        progress,
-        elapsed.as_secs_f32(),
-        spline.duration.as_secs_f32(),
-    );
-    debug!("net: flight spline sync {guid:#x} at {progress:.3}: next lap x{next:.3} (not applied)");
-}
-
-/// `0x98b5d0` with the running lap's modifier at 1: the progress gap to the server's, wrapped into
-/// half a lap, shortens or stretches the next lap by that much, clamped to `0.5..=2`; a lap under
-/// 10 ms keeps 1.
-fn next_lap_modifier(progress: f32, elapsed_s: f32, duration_s: f32) -> f32 {
-    if duration_s < 0.01 {
-        return 1.0;
+    if let Some(mut spline) = index.0.get(&guid).and_then(|&e| splines.get_mut(e).ok()) {
+        spline.sync_next_lap(progress, std::time::Instant::now());
     }
-    let mut delta = progress - elapsed_s / duration_s;
-    if delta > 0.5 {
-        delta -= 1.0;
-    }
-    if delta < -0.5 {
-        delta += 1.0;
-    }
-    ((duration_s - delta * duration_s) / duration_s).clamp(0.5, 2.0)
 }
 
 /// The observer movement-mode family: no ack.
@@ -1081,6 +1057,8 @@ fn objects_removed(guids: Vec<u64>, commands: &mut Commands, index: &mut GuidInd
 /// same-tick re-create spawns a fresh object beside the fading model.
 pub(crate) fn tear_down(mut ent: EntityWorldMut) {
     ent.remove::<Guid>();
+    // The movement disable (`0x6ec390` at `0x735198`) deletes the spline and frees the move queue.
+    ent.remove::<(Spline, super::motion::WalkEndFacing, RemoteMotion)>();
     ent.insert(DespawnFade::default());
 }
 
@@ -1102,6 +1080,7 @@ fn monster_move(
     run_mode: bool,
     arc: Option<benilla_protocol::SplineArc>,
     facing_fixed: bool,
+    cycle: Option<benilla_protocol::SplineCycle>,
     rooted: bool,
     commands: &mut Commands,
     index: &GuidIndex,
@@ -1226,6 +1205,7 @@ fn monster_move(
             arc,
             facing_fixed,
             facing,
+            cycle,
         ) {
             Some(spline) => {
                 commands.entity(e).insert(spline).remove::<SplineStopped>();
@@ -1778,6 +1758,7 @@ mod tests {
                             true,
                             None,
                             false,
+                            None,
                             rooted,
                             &mut commands,
                             &index,
@@ -1837,6 +1818,7 @@ mod tests {
                         true,
                         None,
                         false,
+                        None,
                         false,
                         &mut commands,
                         &index,
@@ -1887,6 +1869,7 @@ mod tests {
                         true,
                         None,
                         false,
+                        None,
                         false,
                         &mut commands,
                         &index,
