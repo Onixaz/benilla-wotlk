@@ -801,14 +801,12 @@ mod stand_state_tests {
             stand_state_refused(false, f::FORWARD, 3),
             "walking: /sleep refused"
         );
-        // SLEEP's effective mask is the one-shot route's `0x20003f`.
-        assert_eq!(
+        // Standing up from SLEEP is still ungated, by SLEEP's whole `0x20003f`.
+        assert!(!stand_state_refused(
+            false,
             f::TURN_LEFT | f::TURN_RIGHT | f::ANY_MOVE | f::SWIMMING,
-            f::ROUTE_COMMITTED_MOVE,
-            "`0x20003f`, byte-verified in the one-shot route and the stand-state setter alike"
-        );
-        // Standing up from SLEEP is still ungated.
-        assert!(!stand_state_refused(false, f::ROUTE_COMMITTED_MOVE, 0));
+            0
+        ));
         // FALLING is in neither mask.
         assert!(
             !stand_state_refused(false, f::FALLING, 3),

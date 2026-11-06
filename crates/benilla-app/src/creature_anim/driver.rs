@@ -403,9 +403,11 @@ pub(super) fn drive_animations(
             e.seq,
         ));
     }
-    // A mounted rider's mount-set emotes go to the mount model; the rider keeps the request for its
-    // own CLASS_A and nowhere routes. The emote player's armed test runs once, on the rider, ahead
-    // of that routing, so the forwarded copy carries none.
+    // `None` until `AnimationData.dbc` loads; every lookup then resolves to itself.
+    let catalog = anim_data.as_deref().map(|d| &d.0);
+    // A mounted rider's full-set emotes go to the mount model; the rider keeps the request for its
+    // own upper set and nowhere routes. The emote player's armed test runs once, on the rider,
+    // ahead of that routing, so the forwarded copy carries none.
     let mut to_mount: Vec<(Entity, (OneShotReq, u64))> = Vec::new();
     for (rider, reqs) in pending.iter() {
         let Ok((store, child)) = riders.get(*rider) else {
@@ -418,7 +420,10 @@ pub(super) fn drive_animations(
             let OneShotReq::Emote(id, via_player, remap) = req else {
                 continue;
             };
-            if !route_mounted(id).mount {
+            let behavior = units
+                .get(*rider)
+                .map_or(id, |u| routed_behavior(u.1, id, catalog));
+            if !route_mounted(behavior).mount {
                 continue;
             }
             let armed = via_player
@@ -459,8 +464,6 @@ pub(super) fn drive_animations(
     for r in sheath_requests.read() {
         pending_sheath.insert(r.entity, *r);
     }
-    // `None` until `AnimationData.dbc` loads; every lookup then resolves to itself.
-    let catalog = anim_data.as_deref().map(|d| &d.0);
     // `WOW_ANIM_COST=1` counts the frame's resting rows, the ones an input memo could skip; no skip
     // is taken, as a parked rig's wake pose still needs the right clip armed.
     let anim_cost = anim_cost_enabled();
@@ -885,6 +888,19 @@ fn drive_unit(
         swaps,
     );
 
+    // The split test's inputs. A facing ease ([`FacingStep`]) stands for the turn latch, which the
+    // reference sets out of movement and at stand state 0.
+    let split = select::SplitState {
+        flags: mv.flags,
+        stand_state: mv.stand_state,
+        turn_latch: facing_step.is_some()
+            && mv.flags & move_flags::TURN_LATCH_VOID == 0
+            && mv.stand_state == 0,
+        falling: airborne_frozen,
+        cast_anim: cast_hold.is_some(),
+        channeling: store.is_some_and(|s| s.0.unit_channel_spell() != 0),
+        attacking: engaged,
+    };
     // ── This frame's one-shots, each routed per play from live state (`route_oneshot`): masked
     // onto the SpineLow overlay beside `mode`, or full-body on the base track. A wound is a
     // per-bone secondary that a blended arm on the same bone overwrites (op4 copies over
@@ -1028,16 +1044,18 @@ fn drive_unit(
             }
             continue;
         }
-        // A mounted rider plays only its CLASS_A ids, on the key bone, and nothing else; a mount
-        // child plays the clip on its own bone 0.
+        // A mounted rider plays only its upper-set ids off the full set, on the key bone, and
+        // nothing else; a mount child plays the clip on its own bone 0.
+        let resolved = resolved_id(anims, id, catalog);
+        let behavior = select::behavior_of(resolved, catalog);
         let masked = if mounted {
-            if !route_mounted(id).rider_upper {
+            if !route_mounted(behavior).rider_upper {
                 continue;
             }
             true
         } else {
             mount_body.is_none()
-                && route_oneshot(id, mv.flags, mv.stand_state) == OneShotRoute::Masked
+                && route_oneshot(resolved, behavior, &split) == OneShotRoute::Masked
         };
         // Resolve to a clip this model has, roll its variation and its replay budget (a clamp
         // one-shot authored `(min,max)` plays R times).
