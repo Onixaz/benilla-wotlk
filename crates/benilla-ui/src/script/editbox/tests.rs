@@ -1186,6 +1186,97 @@ fn word_and_edge_deletes() {
     assert_eq!(s.eval::<i64>("return n").unwrap(), 0);
 }
 
+/// Ctrl+U and Ctrl+K delete from the caret to the edge past a selection, which only clears
+/// (`0x963c60`, `0x963c90`, `0x963950`), where the macOS edge delete takes the selection.
+#[test]
+fn ctrl_u_and_ctrl_k_ignore_the_selection() {
+    let mut s = script();
+    seam_rig(&mut s, "");
+    s.run(r#"E:SetText("hello world"); E:SetCursorPosition(5); E:HighlightText(0, 3)"#)
+        .unwrap();
+    assert!(s.editbox_action(EditAction::DeleteToEdge { back: true }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), " world");
+    assert_eq!(s.eval::<i64>("return E:GetCursorPosition()").unwrap(), 0);
+    assert!(
+        s.char_input("x"),
+        "the selection is gone: nothing is replaced"
+    );
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "x world");
+
+    s.run(r#"E:SetText("hello world"); E:SetCursorPosition(5); E:HighlightText(7, 9)"#)
+        .unwrap();
+    assert!(s.editbox_action(EditAction::DeleteToEdge { back: false }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "hello");
+    assert_eq!(s.eval::<i64>("return E:GetCursorPosition()").unwrap(), 5);
+
+    // A link is one atomic step of a walk that counts letters, so Ctrl+U takes it whole.
+    let link = "|cff0070dd|Hitem:1|h[Two Words]|h|r";
+    s.run(&format!(
+        r#"E:SetText("a{link}b"); E:SetCursorPosition({})"#,
+        1 + link.len()
+    ))
+    .unwrap();
+    assert!(s.editbox_action(EditAction::DeleteToEdge { back: true }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "b");
+}
+
+/// With no letter that way Ctrl+K runs nothing, so a selection survives and no event fires.
+#[test]
+fn ctrl_k_at_the_end_keeps_the_selection() {
+    let mut s = script();
+    seam_rig(&mut s, "abc");
+    s.run("E:HighlightText(0, 2)").unwrap();
+    s.tick(0.0);
+    s.run("n = 0; E:SetScript('OnTextChanged', function() n = n + 1 end)")
+        .unwrap();
+    assert!(s.editbox_action(EditAction::DeleteToEdge { back: false }));
+    s.tick(0.0);
+    assert_eq!(s.eval::<i64>("return n").unwrap(), 0);
+    assert!(s.char_input("x"), "the selection stands");
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "xc");
+}
+
+/// Ctrl+P and Ctrl+N are the history steps UP and DOWN take, without UP's fork on `multiLine`.
+#[test]
+fn ctrl_p_and_ctrl_n_recall_history_in_a_multi_line_box() {
+    let mut s = script();
+    s.run(
+        r#"
+        E = CreateFrame("EditBox", "E")
+        E:SetMultiLine(true)
+        E:SetHistoryLines(4)
+        E:AddHistoryLine("old")
+        E:AddHistoryLine("new")
+        E:SetFocus()
+    "#,
+    )
+    .unwrap();
+    assert!(s.editbox_action(EditAction::History { older: true }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "new");
+    assert!(s.editbox_action(EditAction::History { older: true }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "old");
+    assert!(s.editbox_action(EditAction::History { older: false }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "new");
+}
+
+/// Ctrl+D is Delete, a selection first; Ctrl+W is Ctrl+Backspace on `foo bar`.
+#[test]
+fn ctrl_d_and_ctrl_w_are_their_keys() {
+    let mut s = script();
+    seam_rig(&mut s, "foo bar");
+    s.editbox_action(EditAction::Delete {
+        unit: EditUnit::Word,
+        back: true,
+    });
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "foo ");
+    s.run("E:SetCursorPosition(0)").unwrap();
+    s.editbox_action(EditAction::Delete {
+        unit: EditUnit::Char,
+        back: false,
+    });
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "oo ");
+}
+
 /// SelectAll, the reference's Ctrl+A (`HighlightText(0, -1)`): the whole text selected, the caret
 /// at the end, and typing replaces it all.
 #[test]

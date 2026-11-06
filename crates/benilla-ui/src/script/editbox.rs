@@ -129,6 +129,12 @@ pub(super) fn action(lua: &Lua, a: EditAction) -> bool {
             // No keymap deletes by line or row.
             EditUnit::Line | EditUnit::Row => {}
         },
+        EditAction::DeleteToEdge { back } => {
+            if with_eb(lua, h, |eb| eb.delete_to_edge(back)) == Some(true) {
+                sync_text_region(lua, h);
+            }
+        }
+        EditAction::History { older } => history_step_key(lua, h, older),
         EditAction::SelectAll => highlight_text(lua, h, 0, -1),
     }
     true

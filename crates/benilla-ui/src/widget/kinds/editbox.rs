@@ -30,6 +30,11 @@ pub enum EditAction {
     },
     /// Delete one `unit` from the caret, or the selection if any; `Edge` back is Cmd+Backspace.
     Delete { unit: EditUnit, back: bool },
+    /// Ctrl+U (`back`) or Ctrl+K: delete from the caret to the text's edge with no selection test,
+    /// so a selection only clears.
+    DeleteToEdge { back: bool },
+    /// Ctrl+P (`older`) or Ctrl+N: the history step UP and DOWN take, in a multi-line box too.
+    History { older: bool },
     /// Ctrl+A: select all (`HighlightText(0, -1)`), the caret left where it is.
     SelectAll,
 }
@@ -494,6 +499,9 @@ impl EditBoxState {
                 // No keymap deletes by line or row.
                 EditUnit::Line | EditUnit::Row => false,
             }),
+            EditAction::DeleteToEdge { back } => EditOutcome::changed(self.delete_to_edge(back)),
+            // The caller recalls history through `SetText`, so `OnTextSet` fires.
+            EditAction::History { .. } => EditOutcome::default(),
             EditAction::SelectAll => {
                 self.highlight_text(0, -1);
                 EditOutcome::default()
@@ -688,6 +696,27 @@ impl EditBoxState {
             self.reset_blink();
         }
         did
+    }
+
+    /// Ctrl+U (`0x963c60`) or Ctrl+K (`0x963c90`): one atomic step back or on for each letter that
+    /// way, deleted as one span with no selection test (`0x963950`), which only clears a selection;
+    /// with no letter that way nothing runs.
+    pub fn delete_to_edge(&mut self, back: bool) -> bool {
+        self.end_history_browse();
+        let map = crate::markup::ClassMap::new(&self.text);
+        let (start, bytes) = if back {
+            (0, self.cursor)
+        } else {
+            (self.cursor, self.text.len() - self.cursor)
+        };
+        let letters = map.letters(start, bytes) as isize;
+        if letters == 0 {
+            return false;
+        }
+        let target = map.advance(self.cursor, if back { -letters } else { letters }, true);
+        self.delete_span(target.min(self.cursor)..target.max(self.cursor));
+        self.reset_blink();
+        true
     }
 
     /// Left or Right one step, `extend` dragging the selection ([`Self::extend_to`]). Bit 2 and the
