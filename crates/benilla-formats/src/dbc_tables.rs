@@ -110,6 +110,7 @@ tables! {
         "gtChanceToSpellCrit" => game_tables::gt_value_schema("gtChanceToSpellCrit"),
         "gtChanceToSpellCritBase" => game_tables::gt_value_schema("gtChanceToSpellCritBase"),
         "gtCombatRatings" => game_tables::gt_value_schema("gtCombatRatings"),
+        "gtNPCManaCostScaler" => game_tables::gt_value_schema("gtNPCManaCostScaler"),
         "gtOCTClassCombatRatingScalar" => game_tables::gt_keyed_value_schema(),
         "gtOCTRegenHP" => game_tables::gt_value_schema("gtOCTRegenHP"),
         "gtRegenHPPerSpt" => game_tables::gt_value_schema("gtRegenHPPerSpt"),

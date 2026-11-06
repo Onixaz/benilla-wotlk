@@ -14,8 +14,7 @@ use benilla_dbc::{FieldType, Schema, SchemaField};
 use crate::chain::Chain;
 use crate::dbc::{f32_at, parse, str_at, u32_at};
 
-/// The gt tables the barber shop and the character sheet read, by their lookup slot in 12340's
-/// adapter table (`0xaf4f90`).
+/// The gt tables benilla reads, by their lookup slot in 12340's adapter table (`0xaf4f90`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GameTableId {
     /// Slot 0: the barber shop's base price in copper by level (`0x52e850`, `0x52eba0`).
@@ -30,6 +29,8 @@ pub enum GameTableId {
     ChanceToSpellCrit,
     /// Slot 5: base spell crit by class.
     ChanceToSpellCritBase,
+    /// Slot 6: a non-player caster's spell cost scale by level (`0x8014f5`, `0x80150d`).
+    NpcManaCostScaler,
     /// Slot 7: health regen per spirit up to the cap, by level and class.
     OctRegenHp,
     /// Slot 9: health regen per spirit past the cap.
@@ -41,13 +42,14 @@ pub enum GameTableId {
 }
 
 impl GameTableId {
-    const ALL: [GameTableId; 10] = [
+    const ALL: [GameTableId; 11] = [
         GameTableId::BarberShopCostBase,
         GameTableId::CombatRatings,
         GameTableId::ChanceToMeleeCrit,
         GameTableId::ChanceToMeleeCritBase,
         GameTableId::ChanceToSpellCrit,
         GameTableId::ChanceToSpellCritBase,
+        GameTableId::NpcManaCostScaler,
         GameTableId::OctRegenHp,
         GameTableId::RegenHpPerSpt,
         GameTableId::RegenMpPerSpt,
@@ -63,6 +65,7 @@ impl GameTableId {
             GameTableId::ChanceToMeleeCritBase => "ChanceToMeleeCritBase",
             GameTableId::ChanceToSpellCrit => "ChanceToSpellCrit",
             GameTableId::ChanceToSpellCritBase => "ChanceToSpellCritBase",
+            GameTableId::NpcManaCostScaler => "NPCManaCostScaler",
             GameTableId::OctRegenHp => "OCTRegenHP",
             GameTableId::RegenHpPerSpt => "RegenHPPerSpt",
             GameTableId::RegenMpPerSpt => "RegenMPPerSpt",
@@ -108,6 +111,11 @@ impl GameTables {
                 })
                 .collect(),
         }
+    }
+
+    /// `table`'s `GameTables.dbc` row count, 0 for a table not loaded.
+    pub fn rows(&self, table: GameTableId) -> u32 {
+        self.tables.get(&table).map_or(0, |t| t.rows)
     }
 
     /// `GameTable_Lookup(slot, row, col)`: the value of record `col × rows + row`, 0 when absent.
@@ -233,5 +241,9 @@ mod tests {
         // The barber's base price climbs with level.
         let base = |level: i32| t.lookup(GameTableId::BarberShopCostBase, level - 1, 0);
         assert!(base(10) > 0.0 && base(80) > base(10));
+        // A non-player spell's cost scale climbs with level over the table's own row count.
+        let scale = |level: i32| t.lookup(GameTableId::NpcManaCostScaler, level - 1, 0);
+        assert!(scale(10) > 0.0 && scale(80) > scale(10));
+        assert_eq!(t.rows(GameTableId::NpcManaCostScaler), 100);
     }
 }

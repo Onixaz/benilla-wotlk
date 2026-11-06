@@ -121,6 +121,10 @@ pub enum Field {
     UnitPowerRegenInterruptedFlatModifier,
     /// The max-health multiplier less one, a float.
     UnitMaxHealthModifier,
+    /// Per-school flat spell cost changes: a unit block on the wire, a player block in [`SHARED`].
+    UnitPowerCostModifier,
+    /// Per-school spell cost multipliers less one, floats, placed as the flat changes are.
+    UnitPowerCostMultiplier,
     /// The positive and negative stat and resistance buffs: a unit block on the wire, a player
     /// block in [`SHARED`].
     PosStat,
@@ -525,6 +529,9 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         run(F::NegStat, Player, 1182, 5),
         run(F::ResistanceBuffModsPositive, Player, 1187, 7),
         run(F::ResistanceBuffModsNegative, Player, 1194, 7),
+        // 3.3.5a's spell cost runs, in words 1.12.1's unread tail leaves free.
+        run(F::UnitPowerCostModifier, Player, 1262, 7),
+        run(F::UnitPowerCostMultiplier, Player, 1269, 7),
         run(F::PlayerModDamageDonePos, Player, 1201, 7),
         run(F::PlayerModDamageDoneNeg, Player, 1208, 7),
         run(F::PlayerModDamageDonePct, Player, 1215, 7),
@@ -677,6 +684,9 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         // `GetManaRegen` reads power 0 at unit block `+0x88` and `+0xa4` (`0x4f5390`).
         run(F::UnitPowerRegenFlatModifier, Unit, 40, 7),
         run(F::UnitPowerRegenInterruptedFlatModifier, Unit, 47, 7),
+        // The cost lookup reads unit block `+0x1f4` (`0x5ee050`) and `+0x210` (`0x5ee0b0`).
+        run(F::UnitPowerCostModifier, Unit, 131, 7),
+        run(F::UnitPowerCostMultiplier, Unit, 138, 7),
         // `GetUnitMaxHealthModifier` reads unit block `+0x22c` (`0x612870`).
         one(F::UnitMaxHealthModifier, Unit, 145),
         run(F::PlayerDuelArbiter, Player, 148, 2),

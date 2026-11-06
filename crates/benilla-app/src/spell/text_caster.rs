@@ -27,7 +27,11 @@ const OPERANDS: usize = PlayerValue::ALL.len();
 /// Every [`PlayerValue`] as the player's fields give it, in [`PlayerValue::ALL`] order; all 0
 /// without a player.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Operands([f32; OPERANDS]);
+pub(crate) struct Operands(
+    [f32; OPERANDS],
+    /// The spell cost runs, which a cost token reads.
+    [u32; 14],
+);
 
 impl Default for Operands {
     fn default() -> Self {
@@ -37,11 +41,14 @@ impl Default for Operands {
 
 impl Operands {
     /// No player's operands.
-    pub(crate) const ZERO: Self = Self([0.0; OPERANDS]);
+    pub(crate) const ZERO: Self = Self([0.0; OPERANDS], [0; 14]);
 
     pub(crate) fn of(store: Option<&ObjectStore>, items: &Items) -> Self {
         match store {
-            Some(store) => Self(PlayerValue::ALL.map(|v| operand(store, items, v))),
+            Some(store) => Self(
+                PlayerValue::ALL.map(|v| operand(store, items, v)),
+                store.0.unit_power_cost_words(),
+            ),
             None => Self::default(),
         }
     }

@@ -248,13 +248,16 @@ fn feed_spellbook(
     // Each slot's cooldown (the reference's cooldown lookup: id, category and GCD alike) on the
     // `GetTime` clock, frame-stable per arm, so a running cooldown never churns the diff.
     let (anchor, ui_now) = (clock.anchor, clock.ui_now);
-    let rune_check = runes
-        .as_deref()
-        .zip(rune_costs.as_deref())
-        .map(|(runes, costs)| crate::spell::usable::RuneCheck {
-            state: &runes.state,
-            costs: &costs.0,
-        });
+    let rune_check =
+        runes
+            .as_deref()
+            .zip(rune_costs.as_deref())
+            .zip(store)
+            .map(|((runes, costs), store)| crate::spell::usable::RuneCheck {
+                state: &runes.state,
+                costs: &costs.0,
+                player: &store.0,
+            });
     let now_ms = (ui_now * 1000.0).floor() as i64;
     for slot in &mut fresh.slots {
         let d = spells.catalog.get(slot.spell_id);

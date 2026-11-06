@@ -40,7 +40,9 @@ pub(crate) use inflight::{
     inflight, ActiveChannel, AutoRepeatActive, LocalMoveStart, PendingCast, QueuedMeleeSpell,
     SelfCancel, SPELL_INTERRUPT_MOVEMENT,
 };
-pub(crate) use mods::{ModsDiff, SpellModifiers, OP_CAST_TIME, OP_COST, OP_GCD, OP_RADIUS};
+pub(crate) use mods::{
+    track_cost_inputs, ModsDiff, SpellModifiers, OP_CAST_TIME, OP_COST, OP_GCD, OP_RADIUS,
+};
 #[cfg(test)]
 pub(crate) use mods::{OP_COOLDOWN, OP_RANGE};
 pub(crate) use range_units::{RangeUnits, DEFAULT_REACH};
@@ -122,7 +124,8 @@ impl Plugin for SpellPlugin {
                     inflight::local_self_cancel
                         .in_set(UnitFeed)
                         .in_set(LocalCancel),
-                    mods::track_class_family
+                    (mods::track_class_family, mods::track_cost_inputs)
+                        .chain()
                         .after(WorldStage::Net)
                         .before(UnitFeed),
                     // The state push runs before the input pass's `ToggleGameMenu`, whose

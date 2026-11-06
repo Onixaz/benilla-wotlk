@@ -29,6 +29,17 @@ use crate::ui_action::Spells;
 /// Leg 8's caster unit flag.
 use crate::player::UNIT_FLAG_IN_COMBAT;
 
+/// `Attributes` bit 19: the cost of a non-player caster scales by level (`0x8014da`).
+const ATTR_LEVEL_SCALED_COST: u32 = 0x0008_0000;
+/// `AttributesEx4` bit 10: the cost adds the weapon term (`0x801371`).
+const ATTR_EX4_WEAPON_SPEED_COST: u32 = 0x0000_0400;
+/// The weapon term's speed with no usable weapon on an armed hand (`0x801445`).
+const UNARMED_COST_SPEED: u32 = 2000;
+/// The item flag that keeps a broken item usable (`0x6d71ab`).
+const ITEM_FLAG_BREAK_IGNORED: u32 = 0x0000_0008;
+/// The unit's second-word flag that disarms the off hand alone (`0x719038`).
+const UNIT_FLAG2_DISARM_OFFHAND: u32 = 0x0000_0080;
+
 /// The implicit targets leg 10b forks on: 6, single enemy, asks the attack check; 21, single
 /// friend, asks the assist check.
 const IMPLICIT_TARGET_ENEMY: u32 = 6;
@@ -61,6 +72,8 @@ pub(crate) struct UsableCtx<'a> {
 pub(crate) struct RuneCheck<'a> {
     pub(crate) state: &'a benilla_ui::script::RuneState,
     pub(crate) costs: &'a benilla_formats::SpellRuneCostCatalog,
+    /// The active player, whose school step the cost percentage takes.
+    pub(crate) player: &'a benilla_protocol::ObjectFields,
 }
 
 /// `POWER_RUNE`, the power type the power check sends to the rune check (`0x8017fe`).
@@ -73,10 +86,7 @@ const RUNE_FROST: u8 = 2;
 const RUNE_DEATH: u8 = 3;
 
 impl RuneCheck<'_> {
-    /// The rune check (`0x5ee5b0`): free when the cost percentage modifies to 0; else each kind's
-    /// ready runes against its cost, scaled only by a percentage above 100, with ready death runes
-    /// covering the whole shortfall. No row, or a non-rune spell, is free. The per-school unit cost
-    /// modifiers before the spell mod (`0x5ee61b`-`0x5ee641`) are not built.
+    /// The rune check (`0x5ee5b0`): the school step and spell mod take 100, then each kind's runes.
     pub(crate) fn has_runes(&self, d: &SpellDisplay, mods: &SpellModifiers) -> bool {
         self.shortfall(d, mods).0
     }
@@ -85,7 +95,7 @@ impl RuneCheck<'_> {
     /// then the death runes still missing once ready death runes are counted.
     fn shortfall(&self, d: &SpellDisplay, mods: &SpellModifiers) -> (bool, [i64; 4]) {
         let mut needed = [0i64; 4];
-        let pct = mods.apply(d, OP_COST, 100);
+        let pct = mods.apply(d, OP_COST, school_cost(self.player, d, 100));
         if pct == 0 || d.power_type != POWER_RUNE {
             return (true, needed);
         }
@@ -585,24 +595,59 @@ pub(crate) fn spell_usable(
     (true, false)
 }
 
-/// The resolved power cost, the power-cost lookup: `manaCost`, plus the signed `(level -
-/// baseLevel) * manaCostPerlevel` (only creature spells carry it), plus `ManaCostPercentage` of the
-/// reference's per-type basis: base health for health, base mana for mana, 1000 for rage, 100 for
-/// focus and energy, and 0 otherwise. Then `SPELLMOD_COST`, clamped at 0. The reference's
-/// per-school unit modifiers are not applied.
-///
-/// One cost for leg 12, the press-path gate and the tooltip, as the reference serves all six of its
-/// callers. The press-path gate refuses an unaffordable cast without sending anything, so an
-/// unmodified cost refuses casts a talented character can afford.
+/// The power-cost lookup (`0x8012f0`) at the caster's own level, the one cost for all its callers.
 pub(crate) fn power_cost(d: &SpellDisplay, store: &ObjectStore, mods: &SpellModifiers) -> u32 {
-    // The level term reads `baseLevel` (`+0x70`), as the reference does, but the reference scales a
-    // caster value / 5 there (vmangos: the level / 5); only creature spells have a per-level cost.
     power_cost_at(d, &store.0, store.0.unit_level().unwrap_or(0), mods)
 }
 
-/// [`power_cost`] against `unit`'s fields at the level term `level`, the value reads through the
-/// caster's `[vtbl+0xa8]` over 5. With the unit selector set, the tooltip's caster is the player's
-/// charm, else its summon, whose own basis is called.
+/// The spell's `fint`: `fistp` under the default FPU state, rounding half to even, not truncating.
+fn fint(value: f32) -> i32 {
+    value.round_ties_even() as i32
+}
+
+/// The caster's school step (`0x80145a`-`0x80148b`, `0x5ee61b`-`0x5ee641`) on a cost.
+fn school_cost(unit: &benilla_protocol::ObjectFields, d: &SpellDisplay, cost: i32) -> i32 {
+    let modified = cost.wrapping_add(unit.unit_power_cost_modifier(d.school_mask)) as f32;
+    fint((unit.unit_power_cost_multiplier(d.school_mask) * f64::from(modified)) as f32)
+}
+
+/// The weapon term (`0x801371`-`0x801457`): the active player's hand speed / 100.
+fn weapon_cost(
+    d: &SpellDisplay,
+    unit: &benilla_protocol::ObjectFields,
+    mods: &SpellModifiers,
+) -> u32 {
+    if d.attributes_ex4 & ATTR_EX4_WEAPON_SPEED_COST == 0 {
+        return 0;
+    }
+    let off_hand = d.attributes_ex3 & ATTR_EX3_OFF_HAND_ONLY != 0;
+    mods.weapon_speed(unit.object_guid(), off_hand)
+        .map_or(0, |speed| speed / 100)
+}
+
+/// The level scale of a non-player caster's level-scaled spell (`0x8014cc`-`0x801539`).
+fn npc_scaled_cost(
+    d: &SpellDisplay,
+    unit: &benilla_protocol::ObjectFields,
+    mods: &SpellModifiers,
+    cost: i32,
+) -> i32 {
+    if unit.object_type() == Some(benilla_protocol::messages::ObjectType::Player)
+        || d.attributes & ATTR_LEVEL_SCALED_COST == 0
+        || d.spell_level == 0
+    {
+        return cost;
+    }
+    let spell = mods.npc_cost_scaler(d.spell_level);
+    let caster = mods.npc_cost_scaler(unit.unit_level().unwrap_or(0));
+    if spell > 0.0 && caster > 0.0 {
+        fint((f64::from(caster) / f64::from(spell) * f64::from(cost)) as f32)
+    } else {
+        cost
+    }
+}
+
+/// [`power_cost`] on `unit`'s fields with the per-level term at `level`, `[vtbl+0x13c]` over 5.
 pub(crate) fn power_cost_at(
     d: &SpellDisplay,
     unit: &benilla_protocol::ObjectFields,
@@ -618,10 +663,59 @@ pub(crate) fn power_cost_at(
     let level_delta = i64::from(level) - i64::from(d.base_level);
     let cost = i64::from(d.mana_cost)
         + level_delta * i64::from(d.mana_cost_per_level)
-        + i64::from(base) * i64::from(d.mana_cost_pct) / 100;
-    // The talent cut applies before the clamp at 0.
+        + i64::from(base) * i64::from(d.mana_cost_pct) / 100
+        + i64::from(weapon_cost(d, unit, mods));
     let cost = cost.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-    u32::try_from(mods.apply(d, OP_COST, cost)).unwrap_or(0)
+    let cost = mods.apply(d, OP_COST, school_cost(unit, d, cost));
+    u32::try_from(npc_scaled_cost(d, unit, mods, cost)).unwrap_or(0)
+}
+
+/// The speed the weapon term reads (`0x801396`-`0x801445`): the form's round time, else the hand's.
+pub(crate) fn weapon_cost_speed(
+    store: &ObjectStore,
+    objects: &Objects,
+    items: &Items,
+    forms: Option<&std::collections::HashMap<u32, benilla_formats::ShapeshiftForm>>,
+    off_hand: bool,
+) -> u32 {
+    let form = u32::from(store.0.unit_shapeshift_form());
+    let round_time = forms
+        .and_then(|f| f.get(&form))
+        .map_or(0, |f| f.combat_round_time);
+    if round_time != 0 {
+        return round_time;
+    }
+    let slot = if off_hand {
+        crate::items::EQUIPMENT_SLOT_OFFHAND
+    } else {
+        crate::items::EQUIPMENT_SLOT_MAINHAND
+    };
+    store
+        .0
+        .player_inv_slot(slot)
+        .filter(|&guid| guid != 0)
+        .and_then(|guid| objects.object(guid))
+        .filter(|item| held_item_usable(item) && !hand_disarmed(store, objects, items, slot))
+        .map_or(UNARMED_COST_SPEED, |item| {
+            item.object_entry()
+                .and_then(|entry| items.template_cached(entry))
+                .map_or(0, |t| t.delay_ms)
+        })
+}
+
+/// The held-item test (`0x6d71a0`) on the item's own flags and durability.
+fn held_item_usable(item: &benilla_protocol::ObjectFields) -> bool {
+    let flags = item.item_flags().unwrap_or(0);
+    let broken =
+        item.item_max_durability().unwrap_or(0) > 0 && item.item_durability().unwrap_or(0) == 0;
+    flags & ITEM_FLAG_DEPRECATED == 0 && (flags & ITEM_FLAG_BREAK_IGNORED != 0 || !broken)
+}
+
+/// The per-hand disarm test (`0x718fc0`): the disarm ladder, or the off hand's own flag.
+fn hand_disarmed(store: &ObjectStore, objects: &Objects, items: &Items, slot: u8) -> bool {
+    crate::items::disarmed_equipment_slot_cached(store, objects, items) == Some(slot)
+        || (slot == crate::items::EQUIPMENT_SLOT_OFFHAND
+            && store.0.unit_flags2() & UNIT_FLAG2_DISARM_OFFHAND != 0)
 }
 
 /// What [`power_cost_at`] scales `d`'s percentage cost, a jump table on the power type plus 2, on
@@ -654,6 +748,11 @@ pub(crate) fn cost_basis(d: &SpellDisplay) -> CostBasis {
 /// Whether [`power_cost_at`]'s level term moves the cost: only a spell with a per-level cost.
 pub(crate) fn cost_reads_level(d: &SpellDisplay) -> bool {
     d.mana_cost_per_level != 0
+}
+
+/// Whether [`power_cost_at`]'s weapon term can move the cost.
+pub(crate) fn cost_reads_weapon(d: &SpellDisplay) -> bool {
+    d.attributes_ex4 & ATTR_EX4_WEAPON_SPEED_COST != 0
 }
 
 /// Whether the caster can afford `d`, for leg 12 and the press-path gate: `UNIT_FIELD_POWER[type]`,
@@ -940,6 +1039,7 @@ mod tests {
             RuneCheck {
                 state: &state,
                 costs: &costs,
+                player: &ObjectFields::default(),
             }
             .has_runes(&strike, &mods)
         };
@@ -966,9 +1066,375 @@ mod tests {
         let none = RuneCheck {
             state: &state,
             costs: &costs,
+            player: &ObjectFields::default(),
         };
         assert!(none.has_runes(&free, &mods));
         assert!(!none.has_runes(&strike, &mods));
+        // A school multiplier of -1 takes the percentage to 0 (`0x5ee663`): the spell is free.
+        let free_school = ObjectFields::from_pairs(&[(COST_MULTIPLIER + 3, (-1.0f32).to_bits())]);
+        let frost = SpellDisplay {
+            power_type: POWER_RUNE,
+            rune_cost_id: 7,
+            school_mask: 1 << 3,
+            ..Default::default()
+        };
+        let discounted = RuneCheck {
+            player: &free_school,
+            ..none
+        };
+        assert!(discounted.has_runes(&frost, &mods));
+        assert!(!discounted.has_runes(&strike, &mods), "another school");
+    }
+
+    // The shared places of the two cost runs, seven schools each.
+    const COST_MODIFIER: u16 = 1262;
+    const COST_MULTIPLIER: u16 = 1269;
+
+    fn pct(value: f32) -> u32 {
+        value.to_bits()
+    }
+
+    /// The smallest of the mask's schools, for each run on its own; an empty mask reads neither.
+    #[test]
+    fn the_school_step_picks_the_lowest_value_of_the_mask() {
+        let store = player(&[
+            (COST_MODIFIER + 2, 12),
+            (COST_MODIFIER + 3, (-30i32) as u32),
+            (COST_MODIFIER + 4, (-5i32) as u32),
+            (COST_MULTIPLIER + 2, pct(-0.1)),
+            (COST_MULTIPLIER + 3, pct(0.5)),
+            (COST_MULTIPLIER + 4, pct(-0.5)),
+        ]);
+        let mods = SpellModifiers::default();
+        let spell = |school_mask| SpellDisplay {
+            mana_cost: 130,
+            school_mask,
+            ..Default::default()
+        };
+        // Fire and frost: 130 - 30, times 1 - 0.1.
+        assert_eq!(power_cost(&spell(1 << 2 | 1 << 3), &store, &mods), 90);
+        // Frost and nature: 130 - 30, times 1 - 0.5.
+        assert_eq!(power_cost(&spell(1 << 3 | 1 << 4), &store, &mods), 50);
+        // Fire alone raises the cost by 12 before the cut.
+        assert_eq!(power_cost(&spell(1 << 2), &store, &mods), 128);
+        // A mask of a school with no value, and an empty one, leave the cost.
+        assert_eq!(power_cost(&spell(1), &store, &mods), 130);
+        assert_eq!(power_cost(&spell(0), &store, &mods), 130);
+    }
+
+    /// Flat, then multiplier, then `SPELLMOD_COST`, each rounding as the reference does.
+    #[test]
+    fn the_school_step_runs_before_the_cost_spell_modifier() {
+        let store = player(&[(COST_MODIFIER, 10), (COST_MULTIPLIER, pct(1.0))]);
+        let d = SpellDisplay {
+            spell_family: 3,
+            spell_family_flags: 1 << 5,
+            mana_cost: 100,
+            school_mask: 1,
+            ..Default::default()
+        };
+        let mut mods = SpellModifiers::default();
+        mods.set_class_family(3);
+        mods.set(true, 5, OP_COST, 5);
+        mods.set(false, 5, OP_COST, -50);
+        // (100 + 10) * 2 = 220, then (220 + 5) * 50 / 100, truncating.
+        assert_eq!(power_cost(&d, &store, &mods), 112);
+        // `fistp` rounds to nearest with ties to even: 37.5 is 38, 22.5 is 22, 22.6 is 23.
+        for (cost, multiplier, shown) in [(50, 0.75, 38), (30, 0.75, 22), (30, 0.7533, 23)] {
+            let store = player(&[(COST_MULTIPLIER, pct(multiplier as f32 - 1.0))]);
+            let d = SpellDisplay {
+                mana_cost: cost,
+                school_mask: 1,
+                ..Default::default()
+            };
+            assert_eq!(
+                power_cost(&d, &store, &SpellModifiers::default()),
+                shown,
+                "{cost} at {multiplier}"
+            );
+        }
+    }
+
+    /// A negative result clamps at 0 after the school step, and a free spell pays the flat rise.
+    #[test]
+    fn the_school_step_moves_a_free_spell_and_clamps_at_zero() {
+        let store = player(&[(COST_MODIFIER, (-200i32) as u32), (COST_MODIFIER + 1, 15)]);
+        let mods = SpellModifiers::default();
+        let spell = |school_mask| SpellDisplay {
+            mana_cost: 50,
+            school_mask,
+            ..Default::default()
+        };
+        assert_eq!(power_cost(&spell(1), &store, &mods), 0);
+        let free = SpellDisplay {
+            school_mask: 2,
+            ..Default::default()
+        };
+        assert_eq!(power_cost(&free, &store, &mods), 15);
+    }
+
+    /// The power gate pays the modified cost too.
+    #[test]
+    fn the_gate_reads_the_school_step() {
+        let d = SpellDisplay {
+            mana_cost: 100,
+            school_mask: 4,
+            ..Default::default()
+        };
+        let mods = SpellModifiers::default();
+        let store = player(&[(23, 80), (COST_MULTIPLIER + 2, pct(-0.25))]);
+        assert_eq!(power_cost(&d, &store, &mods), 75);
+        assert!(can_afford(&d, &store, &mods));
+        assert!(!can_afford(&d, &player(&[(23, 80)]), &mods));
+    }
+
+    /// A pet spell of level 20 cast at another level; the table's values are the test's own.
+    fn npc_scaled_mods() -> SpellModifiers {
+        let mut mods = SpellModifiers::default();
+        mods.set_npc_cost_scaler((1..=100).map(|level| level as f32 / 20.0));
+        mods
+    }
+
+    const OBJECT_TYPE: u16 = 2;
+    const UNIT_LEVEL: u16 = 34;
+    const TYPE_UNIT: u32 = 0x9;
+    const TYPE_PLAYER: u32 = 0x19;
+
+    #[test]
+    fn a_non_player_cost_scales_by_level() {
+        let scaled = |attributes, spell_level| SpellDisplay {
+            attributes,
+            spell_level,
+            mana_cost: 90,
+            ..Default::default()
+        };
+        let spell = scaled(0x0008_0000, 20);
+        let mods = npc_scaled_mods();
+        let unit = |ty: u32, level: u32| {
+            ObjectFields::from_pairs(&[(OBJECT_TYPE, ty), (UNIT_LEVEL, level)])
+        };
+        let cost = |d: &SpellDisplay, u: &ObjectFields| {
+            power_cost_at(d, u, u.unit_level().unwrap_or(0), &mods)
+        };
+        // Level 30 pays half again, level 10 half, and the spell's own level the base.
+        assert_eq!(cost(&spell, &unit(TYPE_UNIT, 30)), 135);
+        assert_eq!(cost(&spell, &unit(TYPE_UNIT, 10)), 45);
+        assert_eq!(cost(&spell, &unit(TYPE_UNIT, 20)), 90);
+        // A player is never scaled.
+        assert_eq!(cost(&spell, &unit(TYPE_PLAYER, 30)), 90);
+        // Neither is a spell without the attribute, or one with no spell level.
+        assert_eq!(cost(&scaled(0, 20), &unit(TYPE_UNIT, 30)), 90);
+        assert_eq!(cost(&scaled(0x0008_0000, 0), &unit(TYPE_UNIT, 30)), 90);
+        // A level past the table reads 0, which leaves the cost.
+        assert_eq!(cost(&spell, &unit(TYPE_UNIT, 101)), 90);
+        // The caster's own level, never the per-level term's skill level.
+        assert_eq!(power_cost_at(&spell, &unit(TYPE_UNIT, 30), 7, &mods), 135);
+    }
+
+    /// The pet bar's gate pays the scaled cost through the same lookup.
+    #[test]
+    fn a_pet_gate_pays_the_scaled_cost() {
+        let spell = SpellDisplay {
+            attributes: 0x0008_0000,
+            spell_level: 20,
+            mana_cost: 90,
+            ..Default::default()
+        };
+        let mods = npc_scaled_mods();
+        let pet = |mana: u32| {
+            ObjectStore(ObjectFields::from_pairs(&[
+                (OBJECT_TYPE, TYPE_UNIT),
+                (UNIT_LEVEL, 30),
+                (23, mana),
+            ]))
+        };
+        assert!(!can_afford(&spell, &pet(134), &mods));
+        assert!(can_afford(&spell, &pet(135), &mods));
+    }
+
+    /// `AttributesEx4` bit 10 with the hand `AttributesEx3` bit 24 picks.
+    fn shiv(off_hand: bool) -> SpellDisplay {
+        SpellDisplay {
+            attributes_ex3: if off_hand { 0x0100_0000 } else { 0 },
+            attributes_ex4: 0x400,
+            mana_cost: 20,
+            power_type: 3,
+            ..Default::default()
+        }
+    }
+
+    const MY_GUID: u64 = 0x77;
+    const OBJECT_GUID: u16 = 0;
+    const UNIT_FLAGS: u16 = 46;
+    const UNIT_FLAGS2: u16 = 44;
+    const UNIT_BYTES_2: u16 = 164;
+    const INV_MAINHAND: u16 = 486 + 2 * 15;
+    const INV_OFFHAND: u16 = 486 + 2 * 16;
+    const DISARMED: u32 = 0x0020_0000;
+
+    /// The term adds speed / 100 for the active player alone, by the spell's hand.
+    #[test]
+    fn the_weapon_term_reads_the_spells_hand_on_the_active_player() {
+        let mut mods = SpellModifiers::default();
+        mods.set_weapon_speed(MY_GUID, [2600, 1450]);
+        let mine = ObjectFields::from_pairs(&[(OBJECT_GUID, MY_GUID as u32)]);
+        let cost = |d: &SpellDisplay, u: &ObjectFields| power_cost_at(d, u, 0, &mods);
+        assert_eq!(cost(&shiv(false), &mine), 46, "main hand, 2.6 s");
+        assert_eq!(cost(&shiv(true), &mine), 34, "off hand, 1.45 s floors");
+        // Another unit, the charmed one included, is not the active player.
+        let other = ObjectFields::from_pairs(&[(OBJECT_GUID, 0x78)]);
+        assert_eq!(cost(&shiv(true), &other), 20);
+        // A spell without the attribute takes no term.
+        let plain = SpellDisplay {
+            attributes_ex4: 0,
+            ..shiv(true)
+        };
+        assert_eq!(cost(&plain, &mine), 20);
+        // The term runs before the school step.
+        let store = ObjectFields::from_pairs(&[
+            (OBJECT_GUID, MY_GUID as u32),
+            (COST_MULTIPLIER + 1, pct(-0.5)),
+        ]);
+        let physical = SpellDisplay {
+            school_mask: 2,
+            ..shiv(true)
+        };
+        assert_eq!(cost(&physical, &store), 17);
+    }
+
+    /// Each branch of the speed read, the fallback numbers among them.
+    #[test]
+    fn the_weapon_speed_walks_the_form_the_hand_and_its_fallbacks() {
+        use crate::items::TestDeps;
+        const MAIN: u64 = 0x100;
+        const OFF: u64 = 0x101;
+        const ITEM_ENTRY: u16 = 3;
+        const ITEM_FLAGS: u16 = 21;
+        const ITEM_DURABILITY: u16 = 46;
+        const ITEM_MAX_DURABILITY: u16 = 47;
+
+        struct Weapon {
+            delay: u32,
+            flags: u32,
+            durability: (u32, u32),
+        }
+        let sword = |delay| Weapon {
+            delay,
+            flags: 0,
+            durability: (50, 50),
+        };
+        let speed =
+            |player: &[(u16, u32)],
+             main: Option<Weapon>,
+             off: Option<Weapon>,
+             cached: bool,
+             forms: Option<&std::collections::HashMap<u32, benilla_formats::ShapeshiftForm>>,
+             hand: bool| {
+                let mut deps = TestDeps::new();
+                let mut pairs = player.to_vec();
+                for (field, guid, weapon) in [(INV_MAINHAND, MAIN, main), (INV_OFFHAND, OFF, off)] {
+                    let Some(w) = weapon else { continue };
+                    pairs.push((field, guid as u32));
+                    let entry = 500 + guid as u32;
+                    deps.spawn_item(
+                        guid,
+                        ObjectFields::from_pairs(&[
+                            (ITEM_ENTRY, entry),
+                            (ITEM_FLAGS, w.flags),
+                            (ITEM_DURABILITY, w.durability.0),
+                            (ITEM_MAX_DURABILITY, w.durability.1),
+                        ]),
+                    );
+                    if cached {
+                        deps.items.insert_template(
+                            entry,
+                            Some(benilla_protocol::messages::ItemInfo {
+                                class: 2,
+                                delay_ms: w.delay,
+                                ..crate::items::test_template("Sword")
+                            }),
+                        );
+                    }
+                }
+                let store = ObjectStore(ObjectFields::from_pairs(&pairs));
+                deps.with_objects(|objects, items, _| {
+                    weapon_cost_speed(&store, objects, items, forms, hand)
+                })
+            };
+        // Each hand reads its own weapon.
+        let both = || (Some(sword(2600)), Some(sword(1400)));
+        let (m, o) = both();
+        assert_eq!(speed(&[], m, o, true, None, false), 2600);
+        let (m, o) = both();
+        assert_eq!(speed(&[], m, o, true, None, true), 1400);
+        // An empty hand reads 2000, the other hand's weapon no matter.
+        assert_eq!(speed(&[], Some(sword(2600)), None, true, None, true), 2000);
+        // An uncached record reads 0.
+        assert_eq!(speed(&[], Some(sword(2600)), None, false, None, false), 0);
+        // An item with the unusable flag reads 2000.
+        let flagged = Weapon {
+            flags: 0x10,
+            ..sword(2600)
+        };
+        assert_eq!(speed(&[], Some(flagged), None, true, None, false), 2000);
+        // A broken one reads 2000, unless the flag `0x8` keeps it.
+        let broken = |flags| Weapon {
+            flags,
+            durability: (0, 50),
+            ..sword(2600)
+        };
+        assert_eq!(speed(&[], Some(broken(0)), None, true, None, false), 2000);
+        assert_eq!(speed(&[], Some(broken(8)), None, true, None, false), 2600);
+        // A 0 durability of a 0 maximum is not broken.
+        let unbreakable = Weapon {
+            durability: (0, 0),
+            ..sword(2600)
+        };
+        assert_eq!(speed(&[], Some(unbreakable), None, true, None, false), 2600);
+        // The disarm flag hides the main hand first, and the off hand then reads its own weapon.
+        let disarmed = [(UNIT_FLAGS, DISARMED)];
+        let (m, o) = both();
+        assert_eq!(speed(&disarmed, m, o, true, None, false), 2000);
+        let (m, o) = both();
+        assert_eq!(speed(&disarmed, m, o, true, None, true), 1400);
+        // With no main-hand weapon the disarm falls on the off hand.
+        assert_eq!(
+            speed(&disarmed, None, Some(sword(1400)), true, None, true),
+            2000
+        );
+        // The off-hand disarm flag is the off hand's alone.
+        let off_disarmed = [(UNIT_FLAGS2, 0x80)];
+        let (m, o) = both();
+        assert_eq!(speed(&off_disarmed, m, o, true, None, true), 2000);
+        let (m, o) = both();
+        assert_eq!(speed(&off_disarmed, m, o, true, None, false), 2600);
+        // A form with a round time wins over both hands; one without falls through.
+        let forms = std::collections::HashMap::from([
+            (
+                1,
+                benilla_formats::ShapeshiftForm {
+                    combat_round_time: 1000,
+                    ..Default::default()
+                },
+            ),
+            (3, benilla_formats::ShapeshiftForm::default()),
+        ]);
+        let in_form = |form: u32| [(UNIT_BYTES_2, form << 24)];
+        let (m, o) = both();
+        assert_eq!(speed(&in_form(1), m, o, true, Some(&forms), false), 1000);
+        let (m, o) = both();
+        assert_eq!(speed(&in_form(1), m, o, true, Some(&forms), true), 1000);
+        let (m, o) = both();
+        assert_eq!(speed(&in_form(3), m, o, true, Some(&forms), false), 2600);
+    }
+
+    /// A level reads its row, level 1 the first, and a level outside the table reads 0.
+    #[test]
+    fn the_scaler_reads_by_level_and_zero_outside_the_table() {
+        let mods = npc_scaled_mods();
+        assert_eq!(mods.npc_cost_scaler(20), 1.0);
+        assert_eq!(mods.npc_cost_scaler(0), 0.0);
+        assert_eq!(mods.npc_cost_scaler(101), 0.0);
     }
 
     /// Bloodrage (2687) takes 20% of base health, even when gear raises max health.

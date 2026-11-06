@@ -449,6 +449,15 @@ fn real_spell_catalog_reads_usable_walk_columns() {
     let forms = load_shapeshift_forms(&mut chain).expect("load SpellShapeshiftForm");
     let flags = |form: u8| forms.get(&u32::from(form)).map_or(0, |f| f.flags);
 
+    // The weapon cost term's round time: the cat swings faster than the bear, a stance has none.
+    let round_time = |form: u32| forms.get(&form).map_or(0, |f| f.combat_round_time);
+    assert!(round_time(1) > 0 && round_time(1) < round_time(5));
+    assert_eq!(round_time(17), 0, "Battle Stance");
+    // Shiv is the corpus' weapon-cost spell, on the off hand.
+    let shiv = cat.get(5938).unwrap();
+    assert_ne!(shiv.attributes_ex4 & 0x400, 0);
+    assert_ne!(shiv.attributes_ex3 & 0x0100_0000, 0);
+
     // Claw: cat form (1). Ambush: stealth (form 30), a dagger and the only-stealthed attribute.
     // Execute: battle or berserker stance and the target's below-20% aura state. Revenge: the
     // caster's defense state.

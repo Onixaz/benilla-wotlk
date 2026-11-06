@@ -460,6 +460,35 @@ impl ObjectFields {
     pub fn unit_max_health_modifier(&self) -> Option<f32> {
         self.get_f32(FIELD_UNIT_MAXHEALTHMODIFIER)
     }
+    /// `UNIT_FIELD_POWER_COST_MODIFIER`: the lowest of `mask`'s schools, 0 for none (`0x5ee050`).
+    pub fn unit_power_cost_modifier(&self, mask: u32) -> i32 {
+        (0..SPELL_SCHOOLS)
+            .filter(|&school| mask & 1 << school != 0)
+            .map(|school| {
+                self.get_i32(FIELD_UNIT_POWER_COST_MODIFIER + school)
+                    .unwrap_or(0)
+            })
+            .min()
+            .unwrap_or(0)
+    }
+    /// `UNIT_FIELD_POWER_COST_MULTIPLIER`: 1 plus the lowest of `mask`'s schools (`0x5ee0b0`).
+    pub fn unit_power_cost_multiplier(&self, mask: u32) -> f64 {
+        (0..SPELL_SCHOOLS)
+            .filter(|&school| mask & 1 << school != 0)
+            .map(|school| {
+                self.get_f32(FIELD_UNIT_POWER_COST_MULTIPLIER + school)
+                    .unwrap_or(0.0)
+            })
+            .reduce(f32::min)
+            .map_or(1.0, |lowest| f64::from(lowest) + 1.0)
+    }
+    /// Both spell cost runs as raw words, which a cached cost compares.
+    pub fn unit_power_cost_words(&self) -> [u32; 14] {
+        std::array::from_fn(|i| {
+            self.get_u32(FIELD_UNIT_POWER_COST_MODIFIER + i as u16)
+                .unwrap_or(0)
+        })
+    }
     /// `UNIT_FIELD_BASEATTACKTIME + i`: attack speed in ms, 0 mainhand, 1 offhand.
     pub fn unit_base_attack_time(&self, i: u8) -> Option<u32> {
         (i < 2).then(|| self.get_u32(FIELD_UNIT_BASEATTACKTIME + u16::from(i)))?

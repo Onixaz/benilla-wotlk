@@ -1,6 +1,6 @@
 //! `SpellShapeshiftForm.dbc`: the per-form rows the action bar, the form gate, the spell tooltip
 //! and tracking read. A 12340 row is 35 fields: the name spans sixteen locales and a mask (2-18),
-//! and `flags1`, `creatureType` and `AttackIconID` follow at 19, 20 and 21.
+//! and `flags1`, `creatureType`, `AttackIconID` and `CombatRoundTime` follow at 19, 20, 21 and 22.
 
 use std::collections::HashMap;
 
@@ -28,6 +28,8 @@ pub struct ShapeshiftForm {
     /// `AttackIconID` (column 21) through `SpellIcon.dbc`: the Attack action shows the current
     /// form's icon before the main-hand weapon's; `None` falls through to the weapon.
     pub attack_icon: Option<String>,
+    /// `CombatRoundTime` (column 22, `+0x18`): the form's attack speed in ms (`0x8013bc`).
+    pub combat_round_time: u32,
 }
 
 impl ShapeshiftForm {
@@ -80,6 +82,7 @@ pub fn load_shapeshift_forms(chain: &mut Chain) -> Result<HashMap<u32, Shapeshif
                     attack_icon: u32_at(r, 21)
                         .filter(|&i| i != 0)
                         .and_then(|i| icons.get(&i).cloned()),
+                    combat_round_time: u32_at(r, 22).unwrap_or(0),
                 },
             );
         }

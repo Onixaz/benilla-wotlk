@@ -236,6 +236,11 @@ pub const PLAYER_COMBAT_RATINGS: u8 = 25;
 const FIELD_UNIT_POWER_REGEN_FLAT_MODIFIER: u16 = 173; // ×7 powers, FLOAT
 const FIELD_UNIT_POWER_REGEN_INTERRUPTED_FLAT_MODIFIER: u16 = 180; // ×7, FLOAT
 const FIELD_UNIT_MAXHEALTHMODIFIER: u16 = 187; // FLOAT
+                                               // 3.3.5a's spell cost runs, in free player words as the stat buffs are.
+const FIELD_UNIT_POWER_COST_MODIFIER: u16 = 1262; // ×7 schools, INT
+const FIELD_UNIT_POWER_COST_MULTIPLIER: u16 = 1269; // ×7 schools, FLOAT
+/// The spell schools the cost runs hold.
+const SPELL_SCHOOLS: u16 = 7;
 
 /// `ITEM_FIELD_FLAGS`: `0x1` bound, `0x2` read (translated), `0x100` trade window, `0x200` text.
 pub const FIELD_ITEM_FLAGS: u16 = 21;
