@@ -1029,6 +1029,26 @@ fn click_places_cursor_and_drag_selects() {
     s.mouse_button(124.9, 60.0, "LeftButton", false);
 }
 
+/// The mouse-down (`0x967cd0`) reads no button: a right or middle press places the caret and takes
+/// the keyboard, and any release ends the drag it starts.
+#[test]
+fn every_mouse_button_places_the_caret_and_focuses() {
+    for button in ["RightButton", "MiddleButton", "Button4"] {
+        let mut s = script();
+        seam_rig(&mut s, "abcdefg");
+        s.run("E:ClearFocus()").unwrap();
+        s.mouse_button(114.0, 60.0, button, true);
+        assert_eq!(s.focused_editbox_name().as_deref(), Some("E"), "{button}");
+        let caret = |s: &UiScript| s.eval::<i64>("return E:GetCursorPosition()").unwrap();
+        assert_eq!(caret(&s), 2, "{button}");
+        s.mouse_move(128.0, 60.0);
+        assert_eq!(caret(&s), 4, "{button} drags");
+        s.mouse_button(128.0, 60.0, button, false);
+        s.mouse_move(135.0, 60.0);
+        assert_eq!(caret(&s), 4, "{button}'s release ends the drag");
+    }
+}
+
 /// Ctrl+arrows jump word boundaries (alnum runs); Ctrl+Shift extends the selection there.
 #[test]
 fn ctrl_arrows_jump_words() {

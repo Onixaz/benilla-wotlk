@@ -34,9 +34,9 @@ fn index_at_screen_pos(lua: &Lua, h: FrameHandle, x: f32, y: f32) -> usize {
     .unwrap_or(0)
 }
 
-/// A LeftButton press on EditBox `id` flushes the box first, then places the cursor at the clicked
-/// char, collapsing the selection, starts a drag and takes focus unconditionally; no shift+click
-/// branch.
+/// A press of any button on EditBox `id` (`0x967cd0`, which reads no button) flushes the box first,
+/// then places the cursor at the clicked char, collapsing the selection, starts a drag and takes
+/// focus unconditionally; no shift+click branch.
 pub(in crate::script) fn click(lua: &Lua, id: u32, x: f32, y: f32) {
     let Some(h) = editbox_of(lua, id) else { return };
     super::flush::flush(lua, h);

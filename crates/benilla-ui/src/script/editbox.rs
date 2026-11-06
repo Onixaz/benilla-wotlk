@@ -1,9 +1,9 @@
 //! The `EditBox` runtime: keyboard focus, the text buffer, cursor and selection, editing, and key
 //! and char dispatch.
 //!
-//! - Focus: one owner ([`Model::focused_editbox`], the client's focus global). A left click
-//!   focuses and collapses the selection to the clicked byte (before `SetFocus`), so it never
-//!   selects all. An `autoFocus` box takes the focus on show when none is held and on the first
+//! - Focus: one owner ([`Model::focused_editbox`], the client's focus global). A press of any
+//!   button focuses and collapses the selection to the clicked byte (before `SetFocus`), so it
+//!   never selects all. An `autoFocus` box takes the focus on show when none is held and on the first
 //!   key, and a hidden box drops it ([`visibility_focus`]).
 //! - Routing: a focused box consumes every key and char and fires only its specialized scripts
 //!   (Enter, Escape, Space, Tab, TextChanged, TextSet, focus), never a generic `OnKeyDown`; an
@@ -189,12 +189,15 @@ fn topmost_autofocus(lua: &Lua) -> Option<FrameHandle> {
     None
 }
 
-/// `SetFocus`: needs effective visibility, a no-op when already focused; fires `OnEditFocusLost` on
-/// the old box, then `OnEditFocusGained`. Its store is the client's only focus grant and writes no
-/// selection, so no focus gain changes the selection.
+/// `SetFocus` (`0x965120`): needs effective visibility, a no-op when already focused. The old box's
+/// `OnEditFocusLost` runs while the focus global (`0xdce474`) still names it, then the global
+/// moves, then the new box's `OnEditFocusGained` runs. Its store is the client's only focus grant
+/// and writes no selection, so no focus gain changes the selection.
 fn set_focus_handle(lua: &Lua, h: FrameHandle) {
-    let (old_id, new_id) = {
-        let mut model = crate::script::model_mut_of(lua);
+    let old = {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         let focusable = matches!(
             model.arena.frame(h),
             Some(f) if f.effective_visible && f.kind == FrameKind::EditBox
@@ -202,26 +205,26 @@ fn set_focus_handle(lua: &Lua, h: FrameHandle) {
         if !focusable || model.focused_editbox == Some(h) {
             return;
         }
-        let old = model.focused_editbox;
+        model.focused_editbox
+    };
+    if let Some(o) = old {
+        fire_script(lua, frame_id_of(lua, o), "OnEditFocusLost");
+        raise_cursor(&mut crate::script::model_mut_of(lua), o);
+    }
+    {
+        let mut model = crate::script::model_mut_of(lua);
         model.focused_editbox = Some(h);
-        if let Some(o) = old {
-            raise_cursor(&mut model, o);
-        }
-        raise_cursor(&mut model, h);
         // A focus gain ends history browsing (`SetText` keeps it for the chat parser's rewrite).
         if let Some(KindState::EditBox(eb)) = model.arena.frame_mut(h).map(|f| &mut f.kind_state) {
             eb.end_history_browse();
         }
-        (old.map(|o| model.frame_id(o)), model.frame_id(h))
-    };
-    if let Some(oid) = old_id {
-        fire_script(lua, oid, "OnEditFocusLost");
     }
-    fire_script(lua, new_id, "OnEditFocusGained");
+    fire_script(lua, frame_id_of(lua, h), "OnEditFocusGained");
+    raise_cursor(&mut crate::script::model_mut_of(lua), h);
 }
 
-/// The focus transition's caret write (`or 4`), on the box that gains the keyboard and on the one
-/// that loses it, whose next flush places or hides the caret.
+/// The focus transition's caret write (`or 4`), after the script, on the box that gains the
+/// keyboard and on the one that loses it, whose next flush places or hides the caret.
 fn raise_cursor(model: &mut Model, h: FrameHandle) {
     if let Some(KindState::EditBox(eb)) = model.arena.frame_mut(h).map(|f| &mut f.kind_state) {
         eb.dirty |= EditBoxState::DIRTY_CURSOR;
@@ -253,7 +256,7 @@ pub(super) fn visibility_focus(lua: &Lua, h: FrameHandle, visible: bool) {
     }
 }
 
-/// `ClearFocus`: only when this box holds the focus, then fires `OnEditFocusLost`.
+/// `ClearFocus` (`0x9651f0`): only when this box holds the focus, then fires `OnEditFocusLost`.
 fn clear_focus_handle(lua: &Lua, h: FrameHandle) {
     let id = {
         let mut model = crate::script::model_mut_of(lua);
@@ -261,10 +264,10 @@ fn clear_focus_handle(lua: &Lua, h: FrameHandle) {
             return;
         }
         model.focused_editbox = None;
-        raise_cursor(&mut model, h);
         model.frame_id(h)
     };
     fire_script(lua, id, "OnEditFocusLost");
+    raise_cursor(&mut crate::script::model_mut_of(lua), h);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

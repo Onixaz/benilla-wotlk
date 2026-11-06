@@ -1708,6 +1708,17 @@ impl UiScript {
         })
     }
 
+    /// Whether the OS window has the keyboard, fed each frame; the caret reads it and nothing
+    /// extract paints does, so the mutation count stands.
+    pub fn set_window_focused(&mut self, focused: bool) {
+        if self.model_ref().window_focused != focused {
+            let quiet = self.visual_epoch();
+            let mut model = self.model_mut();
+            model.window_focused = focused;
+            model.set_epoch(quiet);
+        }
+    }
+
     /// Whether a visible EditBox holds keyboard focus, which gates the world's keys as the client's
     /// test does.
     pub fn has_keyboard_focus(&self) -> bool {

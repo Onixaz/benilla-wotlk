@@ -210,6 +210,8 @@ pub(crate) struct Model {
 
     /// The focused edit box, taking all keys while visible; `None` admits `autoFocus`.
     pub(crate) focused_editbox: Option<FrameHandle>,
+    /// The OS window has the keyboard (`0x682df0`): without it a box's update hides the caret.
+    pub(crate) window_focused: bool,
 
     /// The mouse-enabled frame under the cursor, for the next move's `OnLeave`/`OnEnter`.
     pub(crate) mouseover: Option<FrameHandle>,
@@ -1361,6 +1363,7 @@ impl Model {
             frame_events: HashMap::new(),
             all_event_frames: Vec::new(),
             focused_editbox: None,
+            window_focused: true,
             mouseover: None,
             hover_repick: false,
             mouse_down_on: HashMap::new(),

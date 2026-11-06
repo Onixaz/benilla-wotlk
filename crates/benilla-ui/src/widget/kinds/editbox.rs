@@ -108,10 +108,13 @@ pub struct EditBoxState {
     /// A multi-line relayout that found its text's measure pending, retried at each flush until it
     /// lands; with no font engine installed the measure arrives from the host a tick later.
     pub relayout_owed: bool,
+    /// A caret leg that found the advance table pending, retried at each flush until it lands: the
+    /// flush clears bit 2 before the leg, so the bit cannot carry the retry.
+    pub caret_owed: bool,
     /// The first visible display byte of a single-line box (`E+0x348`), scrolled by whole chars to
     /// keep the caret in view; hides a caret outside the window.
     pub scroll_start: usize,
-    /// A left-button press in the box is held (`E+0x364`); moves extend the selection.
+    /// A press in the box is held (`E+0x364`), any button; moves extend the selection.
     pub drag_active: bool,
     /// Caret blink half-period in seconds (`E+0x370`; ctor 0.5, XML `blinkSpeed`).
     pub blink_period: f32,
@@ -194,6 +197,7 @@ impl Default for EditBoxState {
             cell_h: 0.0,
             dirty: Self::DIRTY_TEXT,
             relayout_owed: false,
+            caret_owed: false,
             scroll_start: 0,
             drag_active: false,
             blink_period: 0.5,

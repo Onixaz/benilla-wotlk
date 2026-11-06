@@ -247,10 +247,10 @@ fn an_on_text_changed_that_sets_its_own_text_fires_once_more_next_frame() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// Bit 2 clears after the caret leg, so a caret an `OnCursorChanged` handler moves is not reported
-/// again; the text it inserts keeps bit 0 for the next frame.
+/// Bit 2 clears before the caret leg (`0x9670b2`), so a caret an `OnCursorChanged` handler moves is
+/// reported at the next flush, ahead of the `OnTextChanged` the handler's insert owes.
 #[test]
-fn a_caret_moved_by_on_cursor_changed_is_cleared_with_the_bit() {
+fn a_caret_moved_by_on_cursor_changed_reports_on_the_next_flush() {
     let mut s = script();
     logged_box(&mut s);
     s.run(
@@ -268,8 +268,8 @@ fn a_caret_moved_by_on_cursor_changed_is_cleared_with_the_bit() {
     s.tick(0.016);
     assert_eq!(
         take_log(&s),
-        "early update text:ab! late",
-        "the insert's text bit, without its caret bit"
+        "early update cursor@21 text:ab! late",
+        "the insert's text bit and its caret bit"
     );
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
@@ -643,5 +643,124 @@ fn the_first_show_is_false_and_the_flush_clears_the_bit_after_the_script() {
     assert_eq!(take_log(&s), "a=true", "the insert the script reports");
     s.tick(0.016);
     assert_eq!(take_log(&s), "a!=false", "the handler's own insert");
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// A caret leg with its advance table pending has its bit cleared and still retries, with no engine
+/// to answer inline, at the flush that finds the table.
+#[test]
+fn a_pending_advance_table_retries_the_caret_leg() {
+    let mut s = UiScript::new().expect("construct UiScript");
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        LOG = {}
+        E = CreateFrame("EditBox", "E")
+        E:SetAutoFocus(false)
+        E:SetPoint("BOTTOMLEFT", 100, 50)
+        E:SetWidth(200); E:SetHeight(32)
+        E:SetScript("OnCursorChanged", function(self, arg1) table.insert(LOG, "cursor@" .. arg1) end)
+        E:SetFocus()
+        E:SetText("ab")
+    "#,
+    )
+    .unwrap();
+    s.resolve();
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "", "the table is pending");
+    let req = s.editbox_advances_request().expect("the focused box asks");
+    let cum: Vec<f32> = (0..=req.text.len()).map(|i| i as f32 * 7.0).collect();
+    s.set_editbox_advances(req.id, req.key, cum, vec![0], 0.0);
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "cursor@14");
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "", "the retry is spent");
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// Without window focus the update hides a shown caret and returns (`0x967691`), so the accumulator
+/// stands; with focus back the blink resumes from it, and a caret leg shows the caret at once.
+#[test]
+fn the_caret_hides_and_the_blink_stops_while_the_window_lacks_focus() {
+    let mut s = script();
+    logged_box(&mut s);
+    s.run("E:SetFocus()").unwrap();
+    s.tick(0.3);
+    let caret_on = |s: &mut UiScript| s.focused_editbox_text_ui().unwrap().caret_on;
+    assert!(caret_on(&mut s), "solid after the focus's caret leg");
+
+    s.set_window_focused(false);
+    s.tick(0.016);
+    assert!(!caret_on(&mut s), "hidden the first tick without focus");
+    for _ in 0..100 {
+        s.tick(0.016);
+        assert!(!caret_on(&mut s), "no blink without focus");
+    }
+
+    s.set_window_focused(true);
+    s.tick(0.1);
+    assert!(
+        !caret_on(&mut s),
+        "the accumulator stood at 0.3: 0.4 is short of the period"
+    );
+    s.tick(0.2);
+    assert!(
+        caret_on(&mut s),
+        "0.6 crosses it and the blink toggles the caret back"
+    );
+
+    s.set_window_focused(false);
+    s.tick(0.016);
+    s.set_window_focused(true);
+    s.run(r#"E:Insert("a")"#).unwrap();
+    s.tick(0.016);
+    assert!(caret_on(&mut s), "a caret leg shows it at once");
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// A flush with the window away still runs its caret leg, and the update hides what it showed.
+#[test]
+fn the_window_gate_follows_the_flush_in_the_update() {
+    let mut s = script();
+    logged_box(&mut s);
+    s.run("E:SetFocus()").unwrap();
+    s.tick(0.016);
+    s.set_window_focused(false);
+    s.run(r#"E:SetText("a")"#).unwrap();
+    s.tick(0.016);
+    assert!(take_log(&s).contains("cursor@7"), "the leg ran");
+    assert!(!s.focused_editbox_text_ui().unwrap().caret_on);
+}
+
+/// The focus change (`0x965120`) runs the old box's `OnEditFocusLost` while the focus global still
+/// names it, then moves the global, then runs the new box's `OnEditFocusGained`.
+#[test]
+fn on_edit_focus_lost_runs_before_the_focus_moves() {
+    let s = script();
+    s.run(
+        r#"
+        LOG = {}
+        local function log(what)
+            table.insert(LOG, what .. ":" .. tostring(A:HasFocus()) .. ":" .. tostring(B:HasFocus()))
+        end
+        for _, name in ipairs({ "A", "B" }) do
+            local f = CreateFrame("EditBox", name)
+            f:SetAutoFocus(false)
+            f:SetScript("OnEditFocusLost", function() log(name .. "-lost") end)
+            f:SetScript("OnEditFocusGained", function() log(name .. "-gained") end)
+        end
+        A:SetFocus()
+        LOG = {}
+        B:SetFocus()
+    "#,
+    )
+    .unwrap();
+    assert_eq!(take_log(&s), "A-lost:true:false B-gained:false:true");
+    s.run("B:ClearFocus()").unwrap();
+    assert_eq!(
+        take_log(&s),
+        "B-lost:false:false",
+        "`ClearFocus` empties the global first"
+    );
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
