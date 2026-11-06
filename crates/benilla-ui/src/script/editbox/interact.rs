@@ -72,8 +72,7 @@ pub(in crate::script) fn drag_end(lua: &Lua) {
     }
 }
 
-/// Ctrl+Left/Right, the word move: the client walks its per-byte class array, benilla stops at
-/// alphanumeric runs. `shift` extends the selection.
+/// Ctrl+Left/Right, the word move; `shift` extends the selection.
 pub(in crate::script) fn move_word(lua: &Lua, h: FrameHandle, right: bool, shift: bool) {
     with_eb(lua, h, |eb| eb.move_by_word(right, shift));
 }

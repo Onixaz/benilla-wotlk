@@ -18,9 +18,6 @@
 //! Mouse, selection and caret live in [`interact`] and [`seam`]; the OS clipboard is host-side,
 //! [`paste`] in and `UiScript::editbox_copy` or `editbox_cut` out. The host's per-OS keymap sends
 //! editing keys as [`EditAction`]s ([`action`]).
-//!
-//! Deviation: word and edge deletes (`Delete{Word,Edge}`), which 1.12 does not have, exist because
-//! the host's OS-native chords (Option/Cmd+Backspace, Ctrl+Backspace/Delete) expect them.
 
 use mlua::{Lua, Table};
 
@@ -127,8 +124,8 @@ pub(super) fn action(lua: &Lua, a: EditAction) -> bool {
         },
         EditAction::Delete { unit, back } => match unit {
             EditUnit::Char => delete_dir(lua, h, !back),
-            EditUnit::Word => delete_span(lua, h, |eb| eb.word_boundary(!back)),
-            EditUnit::Edge => delete_span(lua, h, |eb| if back { 0 } else { eb.text.len() }),
+            EditUnit::Word => delete_word(lua, h, !back),
+            EditUnit::Edge => delete_edge(lua, h, back),
             // No keymap deletes by line or row.
             EditUnit::Line | EditUnit::Row => {}
         },
@@ -315,11 +312,17 @@ fn set_text(lua: &Lua, h: FrameHandle, s: &str) {
     }
 }
 
-/// Word and edge deletes (no 1.12 counterpart): the selection if any, else the cursor to
-/// `target_of(eb)`.
-fn delete_span(lua: &Lua, h: FrameHandle, target_of: impl FnOnce(&EditBoxState) -> usize) {
+/// Ctrl+Delete and Ctrl+Backspace: the selection if any, else a whitespace-split word.
+fn delete_word(lua: &Lua, h: FrameHandle, forward: bool) {
+    if with_eb(lua, h, |eb| eb.delete_word(forward)) == Some(true) {
+        sync_text_region(lua, h);
+    }
+}
+
+/// The macOS Cmd+Backspace and Cmd+Delete: the selection if any, else to the text's edge.
+fn delete_edge(lua: &Lua, h: FrameHandle, back: bool) {
     let changed = with_eb(lua, h, |eb| {
-        let t = target_of(eb);
+        let t = if back { 0 } else { eb.text.len() };
         eb.delete_to(t)
     });
     if changed == Some(true) {

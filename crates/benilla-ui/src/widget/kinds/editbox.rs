@@ -5,7 +5,8 @@ use super::RegionHandle;
 pub enum EditUnit {
     /// One character, a whole link counting as one: plain arrow, Backspace, Delete.
     Char,
-    /// One word run ([`EditBoxState::word_boundary`]): Ctrl/Option+arrow.
+    /// One whitespace-split word ([`EditBoxState::move_by_word`], [`EditBoxState::delete_word`]):
+    /// Ctrl/Option+arrow, Ctrl+Backspace and Ctrl+Delete.
     Word,
     /// The caret's line, which ends at a newline: HOME/END, and Cmd+Left/Right on a Mac.
     Line,
@@ -394,32 +395,6 @@ impl EditBoxState {
         )
     }
 
-    /// The Ctrl+arrow target. A word here is a run of ASCII alphanumerics or non-ASCII bytes; the
-    /// reference walks its per-byte class array (`E+0x330`).
-    pub fn word_boundary(&self, forward: bool) -> usize {
-        let bytes = self.text.as_bytes();
-        let is_word = |b: u8| b.is_ascii_alphanumeric() || b >= 0x80;
-        if forward {
-            let mut i = self.cursor;
-            while i < bytes.len() && !is_word(bytes[i]) {
-                i += 1;
-            }
-            while i < bytes.len() && is_word(bytes[i]) {
-                i += 1;
-            }
-            i
-        } else {
-            let mut i = self.cursor;
-            while i > 0 && !is_word(bytes[i - 1]) {
-                i -= 1;
-            }
-            while i > 0 && is_word(bytes[i - 1]) {
-                i -= 1;
-            }
-            i
-        }
-    }
-
     /// Show the caret and restart its blink, as the flush's caret leg does for the focused box; the
     /// glue fields, which have no flush, call it on each change.
     pub fn reset_blink(&mut self) {
@@ -511,10 +486,7 @@ impl EditBoxState {
             }
             EditAction::Delete { unit, back } => EditOutcome::changed(match unit {
                 EditUnit::Char => self.delete_dir(!back),
-                EditUnit::Word => {
-                    let t = self.word_boundary(!back);
-                    self.delete_to(t)
-                }
+                EditUnit::Word => self.delete_word(!back),
                 EditUnit::Edge => {
                     let t = if back { 0 } else { self.text.len() };
                     self.delete_to(t)
@@ -644,23 +616,11 @@ impl EditBoxState {
     /// Backspace (`forward = false`) or Delete: the selection if any, else one step.
     pub fn delete_dir(&mut self, forward: bool) -> bool {
         self.end_history_browse();
-        let did = 'del: {
-            if self.sel_start != self.sel_end {
-                self.delete_selection();
-                break 'del true;
-            }
-            // One atomic token step (`atomicLinks = 1`), then the span snap: one Backspace takes a
-            // whole item link, escapes and `|r` included.
-            let target = crate::markup::ClassMap::new(&self.text).advance(
-                self.cursor,
-                if forward { 1 } else { -1 },
-                true,
-            );
-            if target != self.cursor {
-                self.delete_span(target.min(self.cursor)..target.max(self.cursor));
-                break 'del true;
-            }
-            false
+        let did = if self.sel_start != self.sel_end {
+            self.delete_selection();
+            true
+        } else {
+            self.delete_step(forward)
         };
         if did {
             self.reset_blink();
@@ -668,7 +628,48 @@ impl EditBoxState {
         did
     }
 
-    /// Word or edge delete: the selection if any, else the span from the caret to `target`.
+    /// One atomic token step (`atomicLinks = 1`), then the span snap: one Backspace takes a whole
+    /// item link, escapes and `|r` included. `false` with nothing that way.
+    fn delete_step(&mut self, forward: bool) -> bool {
+        let target = crate::markup::ClassMap::new(&self.text).advance(
+            self.cursor,
+            if forward { 1 } else { -1 },
+            true,
+        );
+        if target == self.cursor {
+            return false;
+        }
+        self.delete_span(target.min(self.cursor)..target.max(self.cursor));
+        true
+    }
+
+    /// Ctrl+Delete (`0x963a10`) or Ctrl+Backspace (`0x963b60`): the selection if any and no more,
+    /// else one step at a time while the next character is whitespace, then while it is not. Both
+    /// take the whitespace first, where Ctrl+Right ends on it.
+    pub fn delete_word(&mut self, forward: bool) -> bool {
+        self.end_history_browse();
+        let before = self.text.len();
+        if self.sel_start != self.sel_end {
+            self.delete_selection();
+        } else {
+            let space = |eb: &Self| {
+                if forward {
+                    space_at(&eb.text, eb.cursor)
+                } else {
+                    space_before(&eb.text, eb.cursor)
+                }
+            };
+            while space(self) && self.delete_step(forward) {}
+            while !space(self) && self.delete_step(forward) {}
+        }
+        let did = self.text.len() != before;
+        if did {
+            self.reset_blink();
+        }
+        did
+    }
+
+    /// Cmd+Backspace and Cmd+Delete: the selection if any, else the span from the caret to `target`.
     pub fn delete_to(&mut self, target: usize) -> bool {
         self.end_history_browse();
         let did = if self.sel_start != self.sel_end {
@@ -719,17 +720,18 @@ impl EditBoxState {
         }
     }
 
-    /// Ctrl/Option+arrow: the caret to the [`word_boundary`](Self::word_boundary) by single atomic
-    /// steps, so it always lands on a reachable stop.
+    /// Ctrl/Option+arrow, by single atomic steps. Right (`0x963e40`) steps while the caret is on no
+    /// whitespace, then while it is, so it lands at the next word's start. Left (`0x964050`) steps
+    /// back while the byte before the caret is whitespace, then while it is not; that loop decodes
+    /// one byte, so only ASCII whitespace stops it.
     pub fn move_by_word(&mut self, right: bool, extend: bool) {
-        let word = self.word_boundary(right);
-        self.walk(right, extend, |_, _, next| {
-            if right {
-                next <= word
-            } else {
-                next >= word
-            }
-        });
+        if right {
+            self.walk(true, extend, |text, at| !space_at(text, at));
+            self.walk(true, extend, space_at);
+        } else {
+            self.walk(false, extend, ascii_space_before);
+            self.walk(false, extend, |text, at| !ascii_space_before(text, at));
+        }
     }
 
     /// HOME/END: the caret back to its line's start or on to its end, a step at a time while the
@@ -737,7 +739,7 @@ impl EditBoxState {
     /// edge, as in a single-line box whose text was typed: typing drops a newline there, though
     /// `SetText` keeps one.
     pub fn move_to_line_edge(&mut self, end: bool, extend: bool) {
-        self.walk(end, extend, |text, at, _| {
+        self.walk(end, extend, |text, at| {
             let bytes = text.as_bytes();
             if end {
                 bytes.get(at) != Some(&b'\n')
@@ -749,7 +751,7 @@ impl EditBoxState {
 
     /// Ctrl+HOME/END and Cmd+Up/Down: the caret to `0` / `len`, a step at a time.
     pub fn move_to_edge(&mut self, end: bool, extend: bool) {
-        self.walk(end, extend, |_, _, _| true);
+        self.walk(end, extend, |_, _| true);
     }
 
     /// UP/DOWN in a multi-line box: the caret to the same column of the wrapped row above or below.
@@ -814,14 +816,14 @@ impl EditBoxState {
     }
 
     /// The loops of single steps behind the word, line and edge moves (links atomic): the caret
-    /// steps while `take(text, caret, next)` allows the step to `next`, each extending step
-    /// dragging the selection by [`Self::extend_to`]; a plain move collapses it at the end.
-    fn walk(&mut self, right: bool, extend: bool, take: impl Fn(&str, usize, usize) -> bool) {
+    /// steps while `take(text, caret)` holds, each extending step dragging the selection by
+    /// [`Self::extend_to`]; a plain move collapses it at the end.
+    fn walk(&mut self, right: bool, extend: bool, take: impl Fn(&str, usize) -> bool) {
         let from = self.cursor;
         let map = crate::markup::ClassMap::new(&self.text);
         loop {
             let next = map.advance(self.cursor, if right { 1 } else { -1 }, true);
-            if next == self.cursor || !take(&self.text, self.cursor, next) {
+            if next == self.cursor || !take(&self.text, self.cursor) {
                 break;
             }
             if extend {
@@ -959,6 +961,32 @@ impl EditBoxState {
         self.sel_start = snap_down(&self.text, self.sel_start.min(len));
         self.sel_end = snap_down(&self.text, self.sel_end.min(len));
     }
+}
+
+/// The word keys' `iswspace` (`0x415e76`): the CRT's table leaves U+0085 out, and the OS's class
+/// answers above U+00FF.
+fn is_space(c: char) -> bool {
+    c != '\u{85}' && c.is_whitespace()
+}
+
+/// Whether the character at byte `at` is whitespace.
+fn space_at(text: &str, at: usize) -> bool {
+    text.get(at..)
+        .and_then(|t| t.chars().next())
+        .is_some_and(is_space)
+}
+
+/// Whether the character before byte `at` is whitespace.
+fn space_before(text: &str, at: usize) -> bool {
+    text.get(..at)
+        .and_then(|t| t.chars().next_back())
+        .is_some_and(is_space)
+}
+
+/// Whether the byte before `at`, decoded alone (`0x964083`), is whitespace: a multi-byte
+/// character's last byte decodes to nothing.
+fn ascii_space_before(text: &str, at: usize) -> bool {
+    at > 0 && text.as_bytes()[at - 1] < 0x80 && is_space(text.as_bytes()[at - 1] as char)
 }
 
 /// The char boundary at or below `i`.
