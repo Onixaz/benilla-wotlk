@@ -287,6 +287,33 @@ mod tests {
         );
     }
 
+    /// The walk stops on a still scene, so the second drawn frame must not need a moved camera.
+    #[test]
+    fn a_still_camera_still_rigs_on_the_second_drawn_frame() {
+        let mut app = app();
+        let eye = Transform::from_xyz(0.0, 0.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y);
+        let projection = bevy::camera::Projection::from(bevy::camera::PerspectiveProjection {
+            far: 5000.0,
+            ..default()
+        });
+        let frustum = bevy::camera::primitives::Frustum::from_clip_from_world(
+            &(projection.get_clip_from_view() * GlobalTransform::from(eye).affine().inverse()),
+        );
+        app.world_mut().spawn((
+            crate::view::WorldCamera,
+            GlobalTransform::from(eye),
+            eye,
+            frustum,
+            projection,
+        ));
+        app.update(); // the camera's own change ticks pass
+        let (host, _part) = lazy_host(&mut app, true);
+        app.update(); // first drawn frame: the spawn race, no slot yet
+        assert_eq!(rig_slot(&app, host), None);
+        app.update();
+        assert!(rig_slot(&app, host).is_some(), "second drawn frame ⇒ slot");
+    }
+
     #[test]
     fn a_denied_wake_retries_until_the_table_has_room() {
         let mut app = app();
