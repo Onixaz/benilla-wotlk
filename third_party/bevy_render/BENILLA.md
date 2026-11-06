@@ -34,9 +34,21 @@ the pipeline warm pass and still timed out. Async, the warm drains and the login
 8.5–9.0 s instead of 11.1–12.5 s. Upstream's exclusion rests on an unmeasured recollection
 (bevyengine/bevy#10812); bevyengine/bevy#26151 proposes the same deletion.
 
+## Patch — `src/pipelined_rendering.rs`
+
+`renderer_extract` takes the finished render app back as ever, and on a frame with an `AppExit`
+keeps it in `RenderAppChannels` instead of handing it over, so the exit frame is not rendered and
+no render frame runs beside `bevy_winit`'s teardown. Upstream starts that frame and then blocks in
+`RenderAppChannels::drop`, with no timeout, as the windows go. Two waits on the render thread can
+then never end: Metal's `nextDrawable`, whose timeout `wgpu-hal` turns off in `configure`, and a
+non-Send render system (`create_surfaces` on macOS), queued for a main thread that serves nothing
+in that drop. A `WOW_LIVE_FPS` run on an M1 sat at 0% CPU after its last saved-variables line.
+
 ## How to check
 
-`diff -ru <registry>/bevy_render-0.18.1/src third_party/bevy_render/src` shows the two patches and
+`diff -ru <registry>/bevy_render-0.18.1/src third_party/bevy_render/src` shows the three patches and
 nothing else; every other file is byte-identical to the registry crate. `benilla-app`'s `video`
 tests drive the window's latency through `gxTripleBuffer` and a `RestartGx`. The pipeline patch
 shows on a login as `pipeline warm: N rigs drained` where it used to print `TIMED OUT`.
+`benilla-app`'s `shutdown` tests exit on a non-Send render system, which hangs without the exit
+patch.
