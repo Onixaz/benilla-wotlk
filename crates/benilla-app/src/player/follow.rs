@@ -1,14 +1,13 @@
-//! `/follow`, the auto-follow movement mode. It synthesizes input through the setter the
-//! MoveForward binding drives (the reference's sets and clears move-forward `0x100000`), so the
+//! `/follow`, the auto-follow movement mode, on the auto-move's own input bit (`0x72ecf0`), so the
 //! controller moves the body and nothing goes on the wire (vmangos has no follow opcode). It
 //! beelines with no path, ignores the followee's speed, and does not end on arrival.
 //!
 //! A player's movement start cancels it on the key-down edge: the start emitters call the
 //! movement-start guard, which cancels unless bit 0 of a global auto-move word is set, and only
 //! follow's own emitters set it; ours is a flag, [`Player::auto_forward`], so it never reaches the
-//! cancel. Jump survives, as do key releases, sitting, the walk toggle, damage, combat, mounting,
-//! casting and the followee leaving range (the reference skips follow's mode).
+//! cancel. Our swing, a teleport, a knockback or a followee past 30 yd, dead or flying end it.
 //!
+//! Jump survives on the ground, as do key releases, sitting, the walk toggle, damage and casting.
 //! The reference's turn-away cancel (160°-220°) runs only while drunk, gated on the drunk fraction,
 //! armed as the turn converges and disarmed at random; it is not built. The start gate (who may be
 //! followed) is [`crate::target::by_name`]'s.
@@ -17,28 +16,26 @@ use std::f32::consts::PI;
 
 use bevy::prelude::*;
 
-use crate::net::GuidIndex;
+use crate::net::{Embodied, GuidIndex, ObjectStore, UnitSpeeds};
 
+use super::approach::{self, Approach};
 use super::camera::{CameraControl, LookButton};
 use super::state::{MoveSpeed, Player};
 
-/// Follow's turn rate in rad/s, its own, not the keyboard's.
-const TURN_RATE: f32 = PI;
-
-/// Inside this many radians of the bearing, follow stops turning.
+/// Inside this many radians of the bearing, an auto-move stops turning.
 pub(super) const TURN_DEADZONE: f32 = 0.001;
 
 /// The speed the thresholds scale, the base run speed.
 pub(super) const SPEED_NORM: f32 = 7.0;
 
-/// The base stop distance, a constant, not a CVar.
+/// The stop distance, flat at any speed (`0xadaaa0`; `0x731cee` scales the ground walk alone).
 const STOP_DISTANCE: f32 = 3.0;
 
-/// Resume sits at 1.5× the stop distance.
-const RESUME_FACTOR: f32 = 1.5;
+/// The band's far edge at base speed, scaled by run or walk speed over 7 (`0x731ec2`).
+const RESUME_DISTANCE: f32 = 4.5;
 
-/// `cos 1°`, the vertical guard's threshold.
-const VERTICAL_ALIGN_COS: f32 = 0.999_847_7;
+/// Follow's row: a follow neither starts nor lasts at 30 yd or more.
+pub(crate) const LEASH_SQ: f32 = 900.0;
 
 /// Who we follow; the reference's followee guid, set when follow starts and cleared when it ends.
 #[derive(Resource, Default)]
@@ -48,6 +45,8 @@ pub(crate) struct FollowState {
     pub(crate) name: String,
     /// The band's latch: the synthesized forward input is held.
     moving: bool,
+    /// The first turn's latched rate.
+    turn_rate: Option<f32>,
     /// `WOW_FOLLOW_TRACE` bookkeeping: the last trace line's time and position.
     traced_at: f64,
     traced_pos: Option<Vec3>,
@@ -59,6 +58,7 @@ impl FollowState {
         self.guid = Some(guid);
         self.name = name;
         self.moving = false;
+        self.turn_rate = None;
         self.traced_at = 0.0;
         self.traced_pos = None;
     }
@@ -80,23 +80,17 @@ pub(crate) enum FollowRequest {
     Name { name: String, exact: bool },
 }
 
-/// Follow arrives and lets go of the key at this distance or closer.
-fn arrive_distance(speed: f32) -> f32 {
-    (speed / SPEED_NORM) * STOP_DISTANCE
-}
-
-/// A stopped follow resumes at this distance or beyond.
+/// A stopped follow resumes at this distance or beyond, off the 3D distance.
 fn resume_distance(speed: f32) -> f32 {
-    STOP_DISTANCE * RESUME_FACTOR * (speed / SPEED_NORM).max(1.0)
+    RESUME_DISTANCE * (speed / SPEED_NORM).max(1.0)
 }
 
-/// Whether the forward key is held this tick: a hysteresis band, so follow does not judder.
-fn should_move(was_moving: bool, distance: f32, speed: f32) -> bool {
-    if was_moving {
-        // Arrive is inclusive, so we keep going only while strictly beyond it.
-        distance > arrive_distance(speed)
+/// Whether forward is held this tick: the stop reads `d2`, the resume the true distance `d3`.
+fn should_move(was_moving: bool, d2: f32, d3: f32, speed: f32) -> bool {
+    if d2.sqrt() <= STOP_DISTANCE {
+        false
     } else {
-        distance >= resume_distance(speed)
+        was_moving || d3 >= resume_distance(speed)
     }
 }
 
@@ -123,12 +117,6 @@ pub(super) fn wrap_pi(a: f32) -> f32 {
 /// `from_rotation_y(y) * NEG_Z = (-sin y, 0, -cos y)`: `y = atan2(-dx, -dz)`.
 pub(super) fn bearing_to(delta: Vec3) -> f32 {
     (-delta.x).atan2(-delta.z)
-}
-
-/// The followee is within 1° of straight up or down, where the bearing means nothing.
-pub(super) fn vertically_degenerate(delta: Vec3) -> bool {
-    let dist = delta.length();
-    dist > f32::EPSILON && delta.y.abs() / dist > VERTICAL_ALIGN_COS
 }
 
 /// Turn toward `bearing` by at most `rate × dt`, not inside the deadzone.
@@ -158,8 +146,8 @@ pub(super) struct FollowInput<'w, 's> {
 }
 
 impl FollowInput<'_, '_> {
-    /// The press edge of any of the six movement commands; turn and strafe both cancel.
-    fn move_start(&self) -> bool {
+    /// The press edge of any of the six movement commands, or afloat an ascent or a descent.
+    fn move_start(&self, afloat: bool) -> bool {
         use crate::bindings::Input;
         [
             Input::MoveForward,
@@ -171,6 +159,9 @@ impl FollowInput<'_, '_> {
         ]
         .iter()
         .any(|&c| self.binds.just_pressed(c))
+            || (afloat
+                && (self.binds.just_pressed(Input::Ascend)
+                    || self.binds.just_pressed(Input::Descend)))
     }
 
     /// The cancel set, the start emitters' and the input tick's teardown, which end any auto-move.
@@ -179,7 +170,7 @@ impl FollowInput<'_, '_> {
         // press a UI frame captured dispatches neither.
         let both_engaged = self.rig.world_mouse.both() && self.rig.world_mouse.rose();
         follow_cancelled(
-            self.move_start(),
+            self.move_start(player.swimming || player.flying),
             // The on edge: `control` toggles `autorun` after this, so the flag is the pre-toggle
             // value.
             self.buttons.just_pressed(MouseButton::Forward) && !player.autorun,
@@ -215,12 +206,17 @@ pub(super) fn steer_follow(
     time: Res<Time>,
     mut follow: ResMut<FollowState>,
     mut player: ResMut<Player>,
+    approach: Res<Approach>,
     speed: Res<MoveSpeed>,
+    mover: Query<&UnitSpeeds, With<Embodied>>,
     index: Res<GuidIndex>,
-    transforms: Query<&Transform>,
+    targets: Query<(&Transform, Option<&ObjectStore>)>,
     input: FollowInput,
 ) {
     player.auto_forward = false;
+    player.auto_turning = false;
+    player.auto_as_move = false;
+    player.auto_take_off = false;
     if follow.guid.is_none() {
         return;
     }
@@ -231,43 +227,68 @@ pub(super) fn steer_follow(
     }
     let Some(guid) = follow.guid else { return };
     // A followee that streams out ends the follow.
-    let Some(target) = index
-        .0
-        .get(&guid)
-        .and_then(|e| transforms.get(*e).ok())
-        .map(|t| t.translation)
-    else {
+    let Some((target, store)) = index.0.get(&guid).and_then(|e| targets.get(*e).ok()) else {
         info!("follow: the followee is gone — follow ends");
         follow.stop();
         return;
     };
-    let delta = target - player.pos;
-    // On the full 3D delta, before the bearing flattens it.
-    if vertically_degenerate(delta) {
-        info!("follow: the followee is within 1° of straight overhead — follow ends");
+    // A followee on a taxi or dead ends it (`0x731857`, `0x73185d`).
+    if store.is_some_and(|s| {
+        s.0.unit_flags() & super::UNIT_FLAG_TAXI_FLIGHT != 0 || s.0.unit_health() == Some(0)
+    }) {
+        info!("follow: the followee left on a taxi or died — follow ends");
         follow.stop();
         return;
     }
-    let flat = Vec3::new(delta.x, 0.0, delta.z);
-    let distance = flat.length();
-    if distance < f32::EPSILON {
+    let delta = target.translation - player.pos;
+    let d2 = approach::goal_distance_sq(delta, approach::reads_height(&player));
+    // The row's leash (`0x731949`), on the distance the stop reads.
+    if d2 >= LEASH_SQ {
+        super::move_trace::auto_move("follow-leash", player.pos, target.translation);
+        info!("follow: the followee is past 30 yd — follow ends");
+        follow.stop();
         return;
     }
-    let bearing = bearing_to(flat);
-    player.face_yaw = steer(
-        player.face_yaw,
-        bearing,
-        TURN_RATE,
-        super::mover::move_step(&time).as_secs_f32(),
-    );
-    let moving = should_move(follow.moving, distance, speed.value);
+    let dt = super::mover::move_step(&time).as_secs_f32();
+    let bearing = approach::bearing_or(player.face_yaw, delta);
+    let turning = approach::steer_turn(&mut player, bearing, &mut follow.turn_rate, dt);
+    let pitch = approach::steer_pitch(&mut player, delta, dt);
+    player.auto_turning = turning || pitch.pitching;
+    player.auto_as_move = !approach.enabled;
+    // Past the stop and not pitching, a mover that may fly takes flight for a steep goal.
+    if d2.sqrt() > STOP_DISTANCE && !pitch.pitching && approach::takes_flight(&player, delta) {
+        super::move_trace::auto_move("take-off", player.pos, target.translation);
+        info!("follow: taking flight for a steep followee");
+        player.auto_take_off = true;
+        player.auto_forward = follow.moving;
+        return;
+    }
+    // Walk or run speed by the walk flag, whatever the medium (`0x731e23`).
+    let band_speed =
+        mover.single().map_or(
+            speed.value,
+            |s| {
+                if player.walking {
+                    s.0.walk
+                } else {
+                    s.0.run
+                }
+            },
+        );
+    let d3 = delta.length();
+    let can_move = !player.modes.rooted && !(pitch.pitching && pitch.overshoot);
+    let moving = can_move && should_move(follow.moving, d2, d3, band_speed);
     if moving != follow.moving {
         info!(
-            "follow: {} at {distance:.1} yd (arrive {:.1}, resume {:.1}, speed {:.1})",
+            "follow: {} at {:.1} yd (arrive {STOP_DISTANCE:.1}, resume {:.1}, speed {band_speed:.1})",
             if moving { "running" } else { "arrived" },
-            arrive_distance(speed.value),
-            resume_distance(speed.value),
-            speed.value,
+            d2.sqrt(),
+            resume_distance(band_speed),
+        );
+        super::move_trace::auto_move(
+            if moving { "follow-run" } else { "follow-stop" },
+            player.pos,
+            target.translation,
         );
     }
     // `WOW_FOLLOW_TRACE=1`: once a second, the distance left and the ground covered.
@@ -279,8 +300,9 @@ pub(super) fn steer_follow(
                 let elapsed = now - follow.traced_at;
                 let moved = player.pos.distance(from);
                 info!(
-                    "follow-trace: {distance:.1} yd to go, covered {moved:.1} yd in {elapsed:.2} s \
+                    "follow-trace: {:.1} yd to go, covered {moved:.1} yd in {elapsed:.2} s \
                      ({:.1} yd/s), moving={moving}",
+                    d2.sqrt(),
                     moved / elapsed as f32,
                 );
             }
@@ -310,25 +332,40 @@ mod tests {
 
     #[test]
     fn the_band_is_three_and_four_point_five_yards_at_normal_speed() {
-        assert_eq!(arrive_distance(7.0), 3.0);
+        assert_eq!(STOP_DISTANCE, 3.0);
         assert_eq!(resume_distance(7.0), 4.5);
     }
 
+    /// Only the resume scales: the stop is 3 yd at any speed (`0x731cee` is the ground walk's).
     #[test]
     fn resume_scales_with_speed_but_never_below_the_base_band() {
-        assert_eq!(arrive_distance(14.0), 6.0);
         assert_eq!(resume_distance(14.0), 9.0);
-        // Below base speed, resume's scale is floored at 1.0.
-        assert!(arrive_distance(3.5) < 3.0);
         assert_eq!(resume_distance(3.5), 4.5);
+        assert!(should_move(true, 3.001 * 3.001, 3.001, 14.0));
+        assert!(
+            !should_move(true, 9.0, 3.0, 14.0),
+            "a flat 3 yd at speed 14"
+        );
     }
 
     #[test]
     fn the_hysteresis_band_latches_on_both_edges() {
-        assert!(should_move(true, 3.001, 7.0));
-        assert!(!should_move(true, 3.0, 7.0), "arrive is inclusive");
-        assert!(!should_move(false, 4.0, 7.0));
-        assert!(should_move(false, 4.5, 7.0));
+        assert!(should_move(true, 3.001 * 3.001, 3.001, 7.0));
+        assert!(!should_move(true, 9.0, 3.0, 7.0), "arrive is inclusive");
+        assert!(!should_move(false, 16.0, 4.0, 7.0));
+        assert!(should_move(false, 4.5 * 4.5, 4.5, 7.0));
+    }
+
+    /// The resume reads the true distance, where the stop reads the flat one.
+    #[test]
+    fn the_resume_reads_the_height_the_stop_ignores() {
+        let flat_sq = 3.5 * 3.5;
+        let d3 = (flat_sq + 16.0_f32).sqrt();
+        assert!(should_move(false, flat_sq, d3, 7.0), "5.3 yd apart in 3D");
+        assert!(
+            !should_move(false, flat_sq, 3.5, 7.0),
+            "the same flat level"
+        );
     }
 
     #[test]
@@ -356,18 +393,15 @@ mod tests {
     #[test]
     fn the_turn_is_rate_limited_and_has_a_deadzone() {
         // 180°/s for a 0.1 s tick is 18° of the 90°.
-        let after = steer(0.0, PI / 2.0, TURN_RATE, 0.1);
-        assert!(
-            (after - TURN_RATE * 0.1).abs() < 1e-6,
-            "clamped to the budget"
-        );
-        assert!((steer(0.0, 0.05, TURN_RATE, 1.0) - 0.05).abs() < 1e-6);
-        assert_eq!(steer(1.0, 1.0 + TURN_DEADZONE / 2.0, TURN_RATE, 1.0), 1.0);
+        let after = steer(0.0, PI / 2.0, PI, 0.1);
+        assert!((after - PI * 0.1).abs() < 1e-6, "clamped to the budget");
+        assert!((steer(0.0, 0.05, PI, 1.0) - 0.05).abs() < 1e-6);
+        assert_eq!(steer(1.0, 1.0 + TURN_DEADZONE / 2.0, PI, 1.0), 1.0);
     }
 
     #[test]
     fn steering_takes_the_short_way_round() {
-        let after = steer(PI - 0.05, -PI + 0.05, TURN_RATE, 1.0);
+        let after = steer(PI - 0.05, -PI + 0.05, PI, 1.0);
         assert!(
             wrap_pi(after - (PI - 0.05)) > 0.0,
             "should wrap forward across ±π"
@@ -387,15 +421,5 @@ mod tests {
             !follow_cancelled(false, false, false, false, false),
             "a jump leaves every cancel input false"
         );
-    }
-
-    #[test]
-    fn a_followee_straight_overhead_ends_the_follow() {
-        assert!(vertically_degenerate(Vec3::new(0.0, 30.0, 0.0)));
-        assert!(vertically_degenerate(Vec3::new(0.0, -30.0, 0.0)));
-        // tan(1°) ≈ 0.01746, so 30 yd up needs more than 0.52 yd out.
-        assert!(!vertically_degenerate(Vec3::new(0.6, 30.0, 0.0)));
-        assert!(!vertically_degenerate(Vec3::new(10.0, 2.0, 5.0)));
-        assert!(!vertically_degenerate(Vec3::ZERO));
     }
 }

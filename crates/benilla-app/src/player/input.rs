@@ -41,9 +41,8 @@ pub(super) fn look_input(
             rig.world_mouse.held(LookButton::Left) || steer_held,
             bit::LEFT_MOUSE,
         );
-        // The auto-move sets the forward bit through W's own setter, so it arms the camera like W.
         set(
-            binds.pressed(crate::bindings::Input::MoveForward) || player.auto_forward,
+            binds.pressed(crate::bindings::Input::MoveForward),
             bit::FORWARD,
         );
         set(
@@ -69,7 +68,10 @@ pub(super) fn look_input(
         set(player.autorun, bit::AUTORUN);
         // The reference keeps these two in the camera's own Track and Fear bits; here one word
         // carries every edge.
-        set(player.server_riding, bit::TRACK);
+        // The auto-move's input bits, `0x1e00000`, set the same Track (`0x602dc0`).
+        set(player.server_riding || player.auto_forward, bit::TRACK);
+        set(player.auto_turning, bit::TRACK_TURN);
+        set(player.auto_as_move, bit::TRACK_AS_MOVE);
         set(player.control_lost, bit::FEAR);
         w
     };
@@ -152,9 +154,7 @@ pub(super) fn move_axes(
     // ── The forward/back axis ── The order of S and autorun decides: S held, then autorun
     // toggled, keeps both (the toggle pushes `0x1000`, so `test cl,0x30` misses) and the
     // reference sends MSG_MOVE_STOP with S held; autorun, then S, clears the bit at key-down and
-    // walks you backward. The auto-move is a held forward, W's own bit `0x100000` through W's
-    // setter, so it nets against S like W and never trips the cancel set, which fires on key-down
-    // edges.
+    // walks you backward. The auto-move's bit `0x200000` nets against S like W; no key trips it.
     let fwd_axis = state::forward_axis(
         binds.pressed(crate::bindings::Input::MoveForward) || player.auto_forward,
         binds.pressed(crate::bindings::Input::MoveBackward),
@@ -194,5 +194,56 @@ pub(super) fn move_axes(
         strafe_right,
         turn_left,
         turn_right,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::camera::follow_cmd as bit;
+    use super::*;
+
+    fn word(player: &Player) -> u32 {
+        look_input(
+            &crate::bindings::BindingsState::default(),
+            player,
+            &CameraControl::default(),
+        )
+        .follow_command
+    }
+
+    /// The auto-move holds its own input bits (`0x72ecf0`), Track to the camera, never W's.
+    #[test]
+    fn the_auto_move_sets_track_and_not_forward() {
+        let walking = Player {
+            auto_forward: true,
+            ..Player::default()
+        };
+        assert_eq!(word(&walking), bit::TRACK);
+        let turning = Player {
+            auto_turning: true,
+            ..Player::default()
+        };
+        assert_eq!(word(&turning), bit::TRACK_TURN);
+        assert_eq!(
+            word(&Player {
+                auto_forward: true,
+                auto_turning: true,
+                ..Player::default()
+            }),
+            bit::TRACK | bit::TRACK_TURN
+        );
+    }
+
+    /// A `/follow` with `autoInteract` off keeps the bits and marks them Move (`0x602760`).
+    #[test]
+    fn a_follow_with_click_to_move_off_marks_its_track_as_move() {
+        assert_eq!(
+            word(&Player {
+                auto_forward: true,
+                auto_as_move: true,
+                ..Player::default()
+            }),
+            bit::TRACK | bit::TRACK_AS_MOVE
+        );
     }
 }

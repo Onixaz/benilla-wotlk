@@ -164,7 +164,7 @@ pub(super) fn control(
                 .ok()
                 .and_then(|(_, _, _, _, _, store, ..)| store)
                 .is_some_and(|s| s.0.unit_flags() & 0x0010_0000 != 0),
-            track: player.server_riding,
+            track: player.server_riding || player.auto_forward || player.auto_turning,
             fear: player.control_lost,
             facing: player.face_yaw,
             mounted: body
@@ -328,6 +328,15 @@ pub(super) fn control(
             .ok()
             .map(|(g, m)| (g.0, m.map_or(0, |m| m.0))),
     );
+
+    // A teleport ends the auto-move and closes the loot (`0x72d2d0` calls `0x72aec0(1, 0)`).
+    if std::mem::take(&mut player.teleported) {
+        if speed_capsule.12.stop() || speed_capsule.13.active() {
+            move_trace::auto_move("teleport", player.pos, player.pos);
+        }
+        speed_capsule.13.stop();
+        net.14 .0 = true;
+    }
 
     let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z).normalize_or_zero();
 
@@ -548,7 +557,9 @@ pub(super) fn control(
         // press is the same take-off. Each edge reports and then resyncs (`0x7413f0`).
         let now = time.elapsed_secs();
         let feet = player.pos;
-        let edge = if fly_press {
+        // The auto-move's take-off for a steep goal is the same edge (`0x731e0f`).
+        let auto_take_off = std::mem::take(&mut player.auto_take_off);
+        let edge = if fly_press || auto_take_off {
             Some(flight::Edge::TakeOff)
         } else {
             flight::status(

@@ -786,6 +786,31 @@ pub(super) struct CursorInputs<'w, 's> {
     names: Option<Res<'w, crate::names::NameCache>>,
 }
 
+/// The skinning spell's max range toward `target` (`0x802c30`), 0 for a spell with no row.
+pub(super) fn spell_max_range(
+    spells: Option<&crate::ui_action::Spells>,
+    spell_mods: Option<&crate::spell::SpellModifiers>,
+    range_units: &crate::spell::RangeUnits,
+    spell_id: u32,
+    target: Option<benilla_formats::RangeUnit>,
+) -> f32 {
+    let range = (|| {
+        let spells = spells?;
+        let d = spells.catalog.get(spell_id)?;
+        let row = spells.ranges.get(d.range_index);
+        let caster = range_units.caster();
+        let targets = benilla_formats::RangeTargets {
+            target,
+            attack_target: range_units.caster_attack_target(),
+        };
+        match spell_mods {
+            Some(mods) => mods.min_max_range(d, row, caster, targets),
+            None => benilla_formats::min_max_range(d, row, caster, targets),
+        }
+    })();
+    range.map_or(0.0, |(_, max)| max)
+}
+
 /// The cursor and the attack fork over a pick; no pick, or nothing resolvable, reads Point.
 pub(super) fn classify(
     inputs: &CursorInputs,
@@ -813,24 +838,14 @@ pub(super) fn classify(
         range_units,
     } = inputs;
     let party = super::party_of(group.as_deref());
-    // The skinning spell's max range from the player toward `target` (`0x802c30`); a spell with no
-    // row reads 0, as the lookup zeroes both bounds.
     let skin_max_range = |spell_id: u32, target: Option<benilla_formats::RangeUnit>| -> f32 {
-        let range = (|| {
-            let spells = spells.as_deref()?;
-            let d = spells.catalog.get(spell_id)?;
-            let row = spells.ranges.get(d.range_index);
-            let caster = range_units.caster();
-            let targets = benilla_formats::RangeTargets {
-                target,
-                attack_target: range_units.caster_attack_target(),
-            };
-            match spell_mods.as_deref() {
-                Some(mods) => mods.min_max_range(d, row, caster, targets),
-                None => benilla_formats::min_max_range(d, row, caster, targets),
-            }
-        })();
-        range.map_or(0.0, |(_, max)| max)
+        spell_max_range(
+            spells.as_deref(),
+            spell_mods.as_deref(),
+            range_units,
+            spell_id,
+            target,
+        )
     };
     let can_auto_interact = crate::player::can_auto_interact(
         approach.enabled,

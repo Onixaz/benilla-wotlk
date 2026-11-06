@@ -108,15 +108,16 @@ fn common_prefix_len(query: &str, name: &str) -> usize {
 /// | we are alive | `0x7e` `ERR_PLAYER_DEAD` |
 /// | we are not stunned (`UNIT_FIELD_FLAGS & 0x40000`) | `0x191` `ERR_GENERIC_STUNNED` |
 /// | we are not casting | `0x134` `ERR_TOOBUSYTOFOLLOW` |
+/// | the followee is inside the row's 30 yd (`0x715c70`, 3D) | `0x126` `ERR_AUTOFOLLOW_TOO_FAR` |
 ///
-/// There is no followee-alive check (the per-tick death test ends a follow) and no distance check:
-/// follow's row has a `0.0` threshold, so `ERR_AUTOFOLLOW_TOO_FAR` never fires.
+/// There is no followee-alive check; the distance is the arm's, past its canceller, which ran.
 fn follow_refusal_key(
     followee_is_player: bool,
     can_assist_followee: bool,
     we_are_dead: bool,
     we_are_stunned: bool,
     we_are_casting: bool,
+    within_leash: bool,
 ) -> Option<&'static str> {
     if !followee_is_player || !can_assist_followee {
         return Some("ERR_INVALID_FOLLOW_TARGET");
@@ -130,8 +131,14 @@ fn follow_refusal_key(
     if we_are_casting {
         return Some("ERR_TOOBUSYTOFOLLOW");
     }
+    if !within_leash {
+        return Some(FOLLOW_TOO_FAR);
+    }
     None
 }
+
+/// The arm's refusal, the one past its canceller.
+const FOLLOW_TOO_FAR: &str = "ERR_AUTOFOLLOW_TOO_FAR";
 
 /// Whether the prefix tier is live, the resolver's exact-only argument. The unit popup's Target and
 /// Follow pass 1 (`UnitPopup.lua:557`, `UnitPopup.lua:623`), so a menu naming its unit never lands
@@ -262,8 +269,13 @@ impl ByNameScan<'_, '_> {
         followee: u64,
         followee_store: Option<&ObjectStore>,
         casting: bool,
+        at: Option<Vec3>,
     ) -> Option<&'static str> {
         let self_store = self.self_q.single().ok().and_then(|(_, _, _, s)| s);
+        let within_leash = match (at, self.origin()) {
+            (Some(at), Some(me)) => at.distance_squared(me) < crate::player::FOLLOW_LEASH_SQ,
+            _ => true,
+        };
         follow_refusal_key(
             guid::is_player(followee),
             super::ring_reaction(
@@ -276,6 +288,7 @@ impl ByNameScan<'_, '_> {
             self_store.is_some_and(|s| s.0.unit_is_dead()),
             self_store.is_some_and(|s| s.0.unit_flags() & crate::player::UNIT_FLAG_STUNNED != 0),
             casting,
+            within_leash,
         )
     }
 
@@ -567,10 +580,12 @@ pub(super) fn follow_requests(
     group: Res<crate::ui_party::GroupState>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
+    places: Query<&Transform>,
     cast: Res<crate::spell::PendingCast>,
     mut errors: ResMut<crate::ui_action::UiErrorKeys>,
     mut follow: ResMut<crate::player::FollowState>,
     mut approach: ResMut<crate::player::Approach>,
+    mut stand: MessageWriter<crate::player::StandStateRequest>,
 ) {
     for request in requests.read() {
         let resolved = match request {
@@ -599,23 +614,37 @@ pub(super) fn follow_requests(
         };
         // The start gate, whichever way the subject was found.
         if let Some((guid, _)) = &resolved {
-            let followee = index.0.get(guid).and_then(|e| stores.get(*e).ok());
+            let entity = index.0.get(guid);
+            let followee = entity.and_then(|e| stores.get(*e).ok());
+            let at = entity.and_then(|e| places.get(*e).ok().map(|t| t.translation));
             if let Some(key) = scan_params.follow_refusal(
                 *guid,
                 followee,
                 cast.in_flight(std::time::Instant::now()),
+                at,
             ) {
                 info!("follow: refused — {key}");
                 errors.0.push(crate::ui_action::UiError::key(key));
+                if key == FOLLOW_TOO_FAR {
+                    approach.stop();
+                    follow.stop();
+                }
                 continue;
             }
         }
         match resolved {
             Some((guid, name)) => {
                 info!("follow: now following \"{name}\" guid {guid:#x}");
-                // The arm cancels what runs first: one auto-move cell.
+                // The arm cancels what runs first, one auto-move cell, and stands us up.
                 approach.stop();
                 follow.start(guid, name);
+                let seated = scan_params
+                    .self_q
+                    .single()
+                    .is_ok_and(|(_, _, _, s)| s.is_some_and(|s| s.0.unit_stand_state() != 0));
+                if seated {
+                    stand.write(crate::player::StandStateRequest { state: 0 });
+                }
             }
             None => {
                 // No subject by name or token: a follow in progress is left alone.
@@ -865,39 +894,51 @@ mod tests {
     #[test]
     fn the_follow_gate_refuses_in_the_references_own_order() {
         // The clean case.
-        assert_eq!(follow_refusal_key(true, true, false, false, false), None);
+        assert_eq!(
+            follow_refusal_key(true, true, false, false, false, true),
+            None
+        );
         // A creature refuses, however it was found.
         assert_eq!(
-            follow_refusal_key(false, true, false, false, false),
+            follow_refusal_key(false, true, false, false, false, true),
             Some("ERR_INVALID_FOLLOW_TARGET")
         );
         // An enemy player fails the assist check, and shares the creature's line.
         assert_eq!(
-            follow_refusal_key(true, false, false, false, false),
+            follow_refusal_key(true, false, false, false, false, true),
             Some("ERR_INVALID_FOLLOW_TARGET")
         );
         // Our own three, each shadowed by the followee checks above it.
         assert_eq!(
-            follow_refusal_key(true, true, true, false, false),
+            follow_refusal_key(true, true, true, false, false, true),
             Some("ERR_PLAYER_DEAD")
         );
         assert_eq!(
-            follow_refusal_key(true, true, false, true, false),
+            follow_refusal_key(true, true, false, true, false, true),
             Some("ERR_GENERIC_STUNNED")
         );
         assert_eq!(
-            follow_refusal_key(true, true, false, false, true),
+            follow_refusal_key(true, true, false, false, true, true),
             Some("ERR_TOOBUSYTOFOLLOW")
         );
         // Everything wrong at once: the followee's line wins.
         assert_eq!(
-            follow_refusal_key(false, false, true, true, true),
+            follow_refusal_key(false, false, true, true, true, true),
             Some("ERR_INVALID_FOLLOW_TARGET")
         );
         // Dead and stunned: dead is checked first.
         assert_eq!(
-            follow_refusal_key(true, true, true, true, true),
+            follow_refusal_key(true, true, true, true, true, true),
             Some("ERR_PLAYER_DEAD")
+        );
+        // The arm's distance comes last, past every gate above.
+        assert_eq!(
+            follow_refusal_key(true, true, false, false, false, false),
+            Some("ERR_AUTOFOLLOW_TOO_FAR")
+        );
+        assert_eq!(
+            follow_refusal_key(true, true, false, false, true, false),
+            Some("ERR_TOOBUSYTOFOLLOW")
         );
     }
 

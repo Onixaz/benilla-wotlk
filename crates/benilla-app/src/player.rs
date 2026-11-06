@@ -85,11 +85,11 @@ use camera_zoom::{apply_zoom_scroll, CAM_DIST_DEFAULT};
 pub(crate) use movement_net::heartbeat_now;
 // `/follow`: chat sends the request, `crate::target` resolves the subject into the state, and
 // `follow` owns the motion.
-pub(crate) use follow::{FollowRequest, FollowState};
+pub(crate) use follow::{FollowRequest, FollowState, LEASH_SQ as FOLLOW_LEASH_SQ};
 // Click to Move: `crate::target`'s dispatchers start it and run the verb it owes on arrival.
 pub(crate) use approach::{
-    can_auto_interact, Approach, ApproachVerb, AutoMove, Refused, Subject, RANGE_STOP_FRACTION,
-    TALK_STOP,
+    can_auto_interact, talk_stop, Approach, ApproachVerb, AutoMove, Refused, Subject,
+    RANGE_STOP_FRACTION,
 };
 use state::{
     MoveSpeed, PlayerRide, AIR_NUDGE_SPEED, FALL_FAR_DROP, FALL_FAR_TIME, FOOT_CONE_HEIGHT,

@@ -170,6 +170,7 @@ pub(super) fn apply_server_moves(
     }
     // Cross-map worldport: snap, bump `CurrentMap` for the terrain streamer, ack if required.
     for w in worldports.read() {
+        player.teleported = true;
         let riding = w.transport_entry.is_some() && player.ride.is_some();
         if riding {
             // Riding through: the pose is deck-local (`Player.cpp:2114`) and the boat survived the
@@ -232,6 +233,7 @@ pub(super) fn apply_server_moves(
     }
     // Same-map teleport: snap and echo the ack, without which the server freezes our movement.
     for t in teleports.read() {
+        player.teleported = true;
         snap_near_teleport(player, &mut cam.yaw, t, time.elapsed_secs());
         // The echo is the whole handshake: the reference echoes on its next movement tick and sends
         // nothing else, and vmangos relocates us only when it lands (`ExecuteTeleportNear`,
@@ -959,6 +961,21 @@ mod handover_tests {
             driven.map(|(t, ..)| (t.translation, 0.0)),
             driven.map(|(_, g, m)| (g.0, m.map_or(0, |m| m.0))),
         );
+    }
+
+    /// A teleport ends the auto-move, the near and the far alike (`0x72d2d0`, `0x72aec0(1, 0)`).
+    #[test]
+    fn a_teleport_owes_the_auto_move_its_end() {
+        let (mut app, ..) = harness();
+        assert!(!app.world().resource::<Player>().teleported);
+        app.world_mut().write_message(TeleportMessage {
+            guid: ME,
+            counter: 1,
+            position: [1.0, 2.0, 3.0],
+            orientation: 0.0,
+        });
+        app.update();
+        assert!(app.world().resource::<Player>().teleported);
     }
 
     fn harness() -> (App, Entity, Entity, Receiver<ClientCommand>) {

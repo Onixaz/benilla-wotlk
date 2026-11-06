@@ -1463,7 +1463,8 @@ mod tests {
                 app.world_mut(),
                 crate::player::Player::with_move_flags(flags),
             );
-            app.init_resource::<super::super::LootConfig>()
+            app.add_message::<crate::target::click::ArrivalAttack>()
+                .init_resource::<super::super::LootConfig>()
                 .init_resource::<ButtonInput<KeyCode>>()
                 .add_systems(
                     Update,

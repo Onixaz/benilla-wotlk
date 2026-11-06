@@ -311,11 +311,15 @@ static PROBE_INTERACTS: std::sync::atomic::AtomicU32 = std::sync::atomic::Atomic
 /// `ProbeInteract(entry)`'s GameObject entry, 0 for none: a right-click on the nearest one.
 static PROBE_INTERACT_GO: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// `ProbeWalkBy(dx, dy, dz)`'s offset in WoW axes: a ground right-click that far from the player.
+static PROBE_WALK_BY: std::sync::Mutex<Option<[f32; 3]>> = std::sync::Mutex::new(None);
+
 /// Runs the queued `ProbeInteract()` presses on the selection, or on the nearest GameObject of
-/// the entry `ProbeInteract(entry)` named.
+/// the entry `ProbeInteract(entry)` named, and a `ProbeWalkBy` as the ground leg's walk.
 fn fire_probe_interacts(
     selection: Res<crate::target::Selection>,
     mut out: MessageWriter<crate::target::Interact>,
+    mut auto: crate::player::AutoMove,
     objects: Query<(
         Entity,
         &crate::net::NetEntity,
@@ -324,6 +328,12 @@ fn fire_probe_interacts(
     )>,
     me: Query<&Transform, With<crate::net::SelfPlayer>>,
 ) {
+    let walk_by = PROBE_WALK_BY.lock().ok().and_then(|mut w| w.take());
+    if let (Some(by), Some(at)) = (walk_by, me.iter().next().map(|t| t.translation)) {
+        let goal = at + benilla_assets::coords::wow_to_bevy(by);
+        let armed = auto.walk_to_ground(goal);
+        info!("probe-interact: ground right-click at {goal} ({by:?} away), armed {armed}");
+    }
     let go = PROBE_INTERACT_GO.swap(0, std::sync::atomic::Ordering::Relaxed);
     if go != 0 {
         let Some(at) = me.iter().next().map(|t| t.translation) else {
@@ -399,8 +409,7 @@ fn probe_lua_due(probe: &ProbeLua, now: f32) -> bool {
     }
 }
 
-/// Installs `ProbeLog(text)`, `ProbeInteract([goEntry])` and `ProbePaste(text)` into the live VM,
-/// per VM, while a chunk is set.
+/// Installs the `Probe*` Lua verbs into the live VM, per VM, while a chunk is set.
 fn install_probe_log(script: &benilla_ui::script::UiScript) {
     match script.lua().create_function(|_, text: String| {
         if let Ok(mut pastes) = PROBE_PASTES.lock() {
@@ -430,6 +439,21 @@ fn install_probe_log(script: &benilla_ui::script::UiScript) {
             }
         }
         Err(e) => error!("probe-lua: creating ProbeInteract: {e}"),
+    }
+    match script
+        .lua()
+        .create_function(|_, (dx, dy, dz): (f32, f32, f32)| {
+            if let Ok(mut walk) = PROBE_WALK_BY.lock() {
+                *walk = Some([dx, dy, dz]);
+            }
+            Ok(())
+        }) {
+        Ok(f) => {
+            if let Err(e) = script.lua().globals().set("ProbeWalkBy", f) {
+                error!("probe-lua: installing ProbeWalkBy: {e}");
+            }
+        }
+        Err(e) => error!("probe-lua: creating ProbeWalkBy: {e}"),
     }
     match script.lua().create_function(|_, text: String| {
         info!("probe-log: {text}");

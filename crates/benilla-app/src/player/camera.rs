@@ -268,6 +268,10 @@ pub(super) mod follow_cmd {
     pub(in crate::player) const AUTORUN: u32 = 0x1000;
     /// The union of bits 20, 21 and 23, which the reference folds into the camera's `Track` flag.
     pub(in crate::player) const TRACK: u32 = 0x100000;
+    /// The auto-move's turn and pitch bits: `Track` to the camera, but outside the head bob's mask.
+    pub(in crate::player) const TRACK_TURN: u32 = 0x0100_0000;
+    /// A `/follow` with `autoInteract` off: its `Track` reads as `Move` (`0x602760`); no input bit.
+    pub(in crate::player) const TRACK_AS_MOVE: u32 = 0x4000_0000;
     /// External control, the reference's `[cam+0x90] & 0x1000`: not an input-control bit, carried
     /// so one word holds every edge that arms.
     pub(in crate::player) const FEAR: u32 = 0x2000_0000;
@@ -313,6 +317,7 @@ impl FollowInput {
     fn state(&self, stopping: bool) -> FollowState {
         let mf = self.command;
         let held = |bits: u32| mf & bits != 0;
+        let tracked = held(follow_cmd::TRACK | follow_cmd::TRACK_TURN);
         if held(follow_cmd::FEAR) {
             FollowState::Fear
         } else if held(follow_cmd::TURN_BITS) || held(follow_cmd::RIGHT_MOUSE) {
@@ -323,9 +328,10 @@ impl FollowInput {
             FollowState::Strafe
         } else if held(follow_cmd::MOVE_BITS)
             || (held(follow_cmd::RIGHT_MOUSE) && held(follow_cmd::LEFT_MOUSE))
+            || (tracked && held(follow_cmd::TRACK_AS_MOVE))
         {
             FollowState::Move
-        } else if held(follow_cmd::TRACK) {
+        } else if tracked {
             FollowState::Track
         } else if stopping {
             FollowState::Stop
@@ -336,7 +342,9 @@ impl FollowInput {
 
     /// The tracking style whenever the word holds `Track` or `Fear`, even if another state wins.
     fn style(&self) -> FollowStyle {
-        if self.command & (follow_cmd::TRACK | follow_cmd::FEAR) != 0 {
+        let tracked = self.command & (follow_cmd::TRACK | follow_cmd::TRACK_TURN) != 0
+            && self.command & follow_cmd::TRACK_AS_MOVE == 0;
+        if tracked || self.command & follow_cmd::FEAR != 0 {
             self.cfg.tracking_style
         } else {
             self.cfg.style
@@ -2168,6 +2176,16 @@ mod tests {
         assert_eq!(state(follow_cmd::LEFT_MOUSE, false), FollowState::Idle);
         assert_eq!(state(follow_cmd::AUTORUN, false), FollowState::Move);
         assert_eq!(state(follow_cmd::TRACK, false), FollowState::Track);
+        assert_eq!(state(follow_cmd::TRACK_TURN, false), FollowState::Track);
+        assert_eq!(
+            state(follow_cmd::TRACK | follow_cmd::TRACK_AS_MOVE, false),
+            FollowState::Move,
+        );
+        assert_eq!(
+            state(follow_cmd::TRACK_TURN | follow_cmd::TRACK_AS_MOVE, false),
+            FollowState::Move,
+        );
+        assert_eq!(state(follow_cmd::TRACK_AS_MOVE, false), FollowState::Idle);
         assert_eq!(
             state(follow_cmd::TRACK | follow_cmd::FORWARD, false),
             FollowState::Move,
