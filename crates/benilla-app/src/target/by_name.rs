@@ -15,8 +15,9 @@
 //! object list's order (a tail append); we rank exact, then longer prefix, then nearest
 //! ([`Rank::beats`]), because the nearest namesake is the better pick.
 //!
-//! Not built: the reference's party and raid pre-scans, which select an unstreamed groupmate;
-//! [`Selection::target`] is an `Entity`.
+//! Not built for selection: the reference's party and raid pre-scans, which select an unstreamed
+//! groupmate; [`Selection::target`] is an `Entity`. `DoEmote` needs only a guid
+//! ([`emote_name_match`]).
 
 use std::cmp::Ordering;
 
@@ -414,6 +415,59 @@ impl PlayerLookup<'_, '_> {
     }
 }
 
+/// The distance a group member without an object scans at (`0x520331`), which a visible player
+/// beats and the active player, at the same distance, does not (`0x513196`).
+fn group_outbids(streamed: Option<u64>, me: Option<u64>) -> bool {
+    streamed.is_none() || streamed == me
+}
+
+/// `name` starts with the whole of `query`, folded (`0x5131ad`, compared at the query's length).
+fn has_query_prefix(name: &str, query: &str) -> bool {
+    name.len() >= query.len()
+        && name.as_bytes()[..query.len()].eq_ignore_ascii_case(query.as_bytes())
+}
+
+/// `DoEmote`'s name search past the token words, which needs only a guid. The token resolver's name
+/// half (`0x60a630`) takes the active player, then the raid or else the party, by the whole name;
+/// the scan (`0x52027e`) walks the party slots, then the raid, each member with no object and a
+/// cached name, then the visible objects, whose `streamed` hit is [`PlayerLookup::find`]'s.
+pub(crate) fn emote_name_match(
+    names: &NameCache,
+    roster: &crate::spell::group_relation::GroupRoster,
+    me: Option<u64>,
+    streamed: Option<u64>,
+    held: impl Fn(u64) -> bool,
+    query: &str,
+) -> Option<u64> {
+    let named = |guid: u64, hit: fn(&str, &str) -> bool| {
+        names.peek(guid).is_some_and(|name| hit(name, query))
+    };
+    let whole = |name: &str, query: &str| name.eq_ignore_ascii_case(query);
+    let group = if roster.raid.is_empty() {
+        &roster.party
+    } else {
+        &roster.raid
+    };
+    if let Some(guid) = me
+        .into_iter()
+        .chain(group.iter().copied())
+        .find(|&g| named(g, whole))
+    {
+        return Some(guid);
+    }
+    let streamed = streamed.filter(|&g| named(g, has_query_prefix));
+    if !group_outbids(streamed, me) {
+        return streamed;
+    }
+    roster
+        .party
+        .iter()
+        .chain(&roster.raid)
+        .copied()
+        .find(|&g| !held(g) && named(g, has_query_prefix))
+        .or(streamed)
+}
+
 /// `/target <name>` and the Lua `TargetByName(name, exactMatch)` through [`scan::commit`], the
 /// stop, select, re-swing path a click takes. `exact` is the Lua second argument, which the
 /// reference reads with default 0 as the resolver's exact-only flag. A miss leaves the target
@@ -698,6 +752,77 @@ mod tests {
             prefix,
             dist2,
         }
+    }
+
+    /// The scan's order: a member's whole name first, a visible player over an unstreamed member,
+    /// an unstreamed member over nobody and over yourself, party slots before the raid, and a member
+    /// with an object or no cached name not at all.
+    #[test]
+    fn the_emote_search_finds_a_group_member_out_of_streaming_range() {
+        use crate::spell::group_relation::GroupRoster;
+
+        const ME: u64 = 1;
+        const FAR: u64 = 2;
+        const NEAR: u64 = 3;
+        const NAMELESS: u64 = 4;
+        const STRANGER: u64 = 5;
+        const RAIDER: u64 = 6;
+
+        let mut names = NameCache::default();
+        for (guid, name) in [
+            (ME, "Claude"),
+            (FAR, "Farley"),
+            (NEAR, "Nearby"),
+            (STRANGER, "Farmer"),
+            (RAIDER, "Raidley"),
+        ] {
+            names.insert_player(guid, name.to_string(), None);
+        }
+        let roster = GroupRoster {
+            party: vec![NAMELESS, FAR, NEAR],
+            raid: Vec::new(),
+        };
+        let held = |g| g == NEAR || g == ME || g == STRANGER;
+        let find =
+            |streamed, query| emote_name_match(&names, &roster, Some(ME), streamed, held, query);
+        assert_eq!(
+            find(None, "Farley"),
+            Some(FAR),
+            "the whole name, unstreamed"
+        );
+        assert_eq!(find(None, "farl"), Some(FAR), "a prefix, unstreamed");
+        assert_eq!(
+            find(Some(STRANGER), "Far"),
+            Some(STRANGER),
+            "visible outbids"
+        );
+        assert_eq!(
+            find(Some(ME), "C"),
+            Some(ME),
+            "yourself, with no member to find"
+        );
+        assert_eq!(find(None, "Claude"), Some(ME), "the whole own name");
+        assert_eq!(
+            find(None, "Near"),
+            None,
+            "a member with an object is the scan's"
+        );
+        assert_eq!(find(Some(NEAR), "Near"), Some(NEAR));
+        assert_eq!(find(None, "Zed"), None);
+        assert_eq!(
+            find(Some(STRANGER), "Farz"),
+            None,
+            "a hit must start with the whole query"
+        );
+        let raid = GroupRoster {
+            party: Vec::new(),
+            raid: vec![ME, RAIDER],
+        };
+        assert_eq!(
+            emote_name_match(&names, &raid, Some(ME), None, held, "Raid"),
+            Some(RAIDER),
+            "the raid roster, when the party slots miss"
+        );
     }
 
     #[test]

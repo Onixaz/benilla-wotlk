@@ -5,13 +5,27 @@
 use mlua::{Lua, MultiValue, Value};
 
 /// `DoEmote(token [, target])`: the `EmotesText.dbc` name token (`"WAVE"`, not `/wave`) and an
-/// optional target string (the reference reads arg 2 with `lua_tostring`): a player name, or a `%`
-/// word for the selection. A non-string, non-number second argument reads as none.
+/// optional target string (the reference reads arg 2 with `lua_tostring`): a unit token, a player
+/// name, or a `%` word for the selection. A non-string, non-number second argument reads as none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EmoteRequest {
     pub token: String,
     pub target: Option<String>,
 }
+
+/// What `DoEmote`'s second argument names (`0x500a84`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EmoteTarget {
+    /// No argument, an empty one or a `%` word: the selection.
+    Selection,
+    /// A token's guid, unstreamed included; 0 for a streamed object that is no player.
+    Guid(u64),
+    /// Neither a token nor one that names anybody: the resolver's name scan.
+    Name(String),
+}
+
+/// The `none` token's guid (`0x60afc9`), which resolves and names no object.
+const NONE_TOKEN_GUID: u64 = u64::MAX;
 
 /// The reference's `lua_tonumber` coercion: a number or a numeric string; anything else is 0.
 fn to_u32(v: &Value) -> u32 {
@@ -43,6 +57,29 @@ impl super::UiScript {
     /// `DoEmote` calls since the last drain.
     pub fn take_emote_requests(&mut self) -> Vec<EmoteRequest> {
         drain_field!(self, emote_requests)
+    }
+
+    /// `DoEmote`'s second argument through the resolver (`0x520190`, typemask `0x10`, filter 0): the
+    /// token half first, then the name scan. `non_player` is the type test: a streamed object that
+    /// is no player sends guid 0, and an unstreamed guid passes, as filter 0 accepts it.
+    pub fn emote_target(
+        &self,
+        arg: Option<&str>,
+        non_player: impl FnOnce(u64) -> bool,
+    ) -> EmoteTarget {
+        let Some(arg) = arg.filter(|a| !a.is_empty() && !a.starts_with('%')) else {
+            return EmoteTarget::Selection;
+        };
+        if arg.eq_ignore_ascii_case("none") {
+            return EmoteTarget::Guid(NONE_TOKEN_GUID);
+        }
+        // A token naming nobody falls to the name scan, as one no compare matches does.
+        let guid = self.model_ref().unit_guids.guid_of(arg);
+        match guid.filter(|&g| g != super::focus::NOBODY) {
+            Some(guid) if non_player(guid) => EmoteTarget::Guid(0),
+            Some(guid) => EmoteTarget::Guid(guid),
+            None => EmoteTarget::Name(arg.to_string()),
+        }
     }
 
     /// `RandomRoll(min, max)` calls since the last drain, each a `CMSG_RANDOM_ROLL`.
@@ -230,21 +267,53 @@ mod tests {
         assert!(s.take_emote_requests().is_empty(), "drained");
     }
 
-    /// The second argument is a string, never a unit token: `"target"` is a name like any other,
-    /// and `%t` reaches the app's selection arm untouched.
+    /// The second argument resolves as a unit token before any name: `player`, `party1` and `focus`
+    /// name their guid, a creature target sends 0 through the type test, a plain name goes to the
+    /// scan, and `%t` or nothing is the selection.
     #[test]
-    fn do_emote_second_argument_is_passed_as_a_string() {
+    fn do_emote_second_argument_follows_the_token_rule() {
+        const ME: u64 = 1;
+        const MATE: u64 = 2;
+        const FOCUS: u64 = 3;
+        const CREATURE: u64 = 0xF130_0000_0000_0004;
+        const FAR_MATE: u64 = 5;
+
         let mut s = UiScript::new().unwrap();
-        s.run("DoEmote('WAVE', 'target') DoEmote('WAVE', '%t') DoEmote('WAVE', {})")
-            .unwrap();
+        s.set_unit_guids(&crate::script::UnitGuids {
+            player: ME,
+            target: CREATURE,
+            party: vec![MATE, FAR_MATE],
+            ..Default::default()
+        });
+        s.set_focus_guid(FOCUS);
+        s.run(
+            "DoEmote('WAVE', 'player') DoEmote('WAVE', 'party1') DoEmote('WAVE', 'focus') \
+             DoEmote('WAVE', 'party2') DoEmote('WAVE', 'target') DoEmote('WAVE', 'Bob') \
+             DoEmote('WAVE', 'Peter') DoEmote('WAVE', 'party3') DoEmote('WAVE', 'none') \
+             DoEmote('WAVE', '%t') DoEmote('WAVE', {})",
+        )
+        .unwrap();
+        let streamed_creature = |guid| guid == CREATURE;
         let targets: Vec<_> = s
             .take_emote_requests()
             .into_iter()
-            .map(|e| e.target)
+            .map(|e| s.emote_target(e.target.as_deref(), streamed_creature))
             .collect();
         assert_eq!(
             targets,
-            vec![Some("target".into()), Some("%t".into()), None]
+            vec![
+                EmoteTarget::Guid(ME),
+                EmoteTarget::Guid(MATE),
+                EmoteTarget::Guid(FOCUS),
+                EmoteTarget::Guid(FAR_MATE),
+                EmoteTarget::Guid(0),
+                EmoteTarget::Name("Bob".into()),
+                EmoteTarget::Name("Peter".into()),
+                EmoteTarget::Name("party3".into()),
+                EmoteTarget::Guid(u64::MAX),
+                EmoteTarget::Selection,
+                EmoteTarget::Selection,
+            ]
         );
     }
 

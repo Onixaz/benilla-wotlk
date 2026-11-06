@@ -43,28 +43,22 @@ fn target_player_name(
     names.resolve(guid, commands).map(str::to_string)
 }
 
-/// The target guid a `CMSG_TEXT_EMOTE` carries (`DoEmote`'s caller): the selection, unless the
-/// argument is a non-empty word not starting with `%`, which names a player through `named` and
-/// sends guid 0 on a miss. Either way an emote at yourself goes out untargeted, so 1.12 has no
-/// self-emote sentence. Compared by entity, which agrees with the guid: [`Selection`]'s one writer
-/// sets both from one streamed entity.
+/// The target guid a `CMSG_TEXT_EMOTE` carries (`DoEmote`'s caller): the selection, a token's guid
+/// or the name search's, 0 on a miss. Either way an emote at yourself goes out untargeted
+/// (`0x6ddaa0`).
 pub(super) fn emote_target(
-    arg: Option<&str>,
+    target: benilla_ui::script::EmoteTarget,
     selection: &Selection,
-    named: impl FnOnce(&str) -> Option<(Entity, u64)>,
-    me: Option<Entity>,
+    named: impl FnOnce(&str) -> Option<u64>,
+    me: Option<u64>,
 ) -> u64 {
-    let (entity, guid) = match arg.filter(|a| !a.is_empty() && !a.starts_with('%')) {
-        Some(name) => match named(name) {
-            Some((entity, guid)) => (Some(entity), Some(guid)),
-            None => (None, None),
-        },
-        None => (selection.target, selection.guid),
+    use benilla_ui::script::EmoteTarget as T;
+    let guid = match target {
+        T::Selection => selection.guid,
+        T::Guid(guid) => Some(guid),
+        T::Name(name) => named(&name),
     };
-    match guid {
-        Some(guid) if !(me.is_some() && entity == me) => guid,
-        _ => 0,
-    }
+    guid.filter(|&guid| Some(guid) != me).unwrap_or(0)
 }
 
 /// The inputs of `/shot`, `/liquid` and `/reaction`, bundled because [`drain_chat_input`] is at
@@ -112,6 +106,8 @@ pub(super) struct ChatOut<'w, 's> {
     follow: MessageWriter<'w, crate::player::FollowRequest>,
     /// `/wave <name>`'s player search, which selects nothing.
     players: crate::target::PlayerLookup<'w, 's>,
+    /// The party and raid `/wave <name>` searches before the visible objects.
+    roster: Option<Res<'w, crate::spell::group_relation::GroupRoster>>,
     /// `/partytest ping` seats a group member's ping through the wire arm's `seat`.
     ping: ResMut<'w, crate::minimap::MinimapPing>,
     /// The red error line by GlobalStrings key. The system's only `UiErrorKeys` access: a second
@@ -795,11 +791,27 @@ pub(super) fn drain_chat_input(
                         });
                     }
                 }
+                let is_streamed = |guid: u64| guids.0.contains_key(&guid);
+                let target = script.emote_target(arg.as_deref(), |guid| {
+                    is_streamed(guid) && !benilla_protocol::guid::is_player(guid)
+                });
+                let no_roster = crate::spell::group_relation::GroupRoster::default();
+                let roster = chat_out.roster.as_deref().unwrap_or(&no_roster);
                 let target = emote_target(
-                    arg.as_deref(),
+                    target,
                     &selection,
-                    |name| chat_out.players.find(&names, name),
-                    self_player.single().ok().map(|(entity, _, _)| entity),
+                    |name| {
+                        let streamed = chat_out.players.find(&names, name).map(|(_, guid)| guid);
+                        crate::target::emote_name_match(
+                            &names,
+                            roster,
+                            self_guid.0,
+                            streamed,
+                            is_streamed,
+                            name,
+                        )
+                    },
+                    self_guid.0,
                 );
                 match commands
                     .0

@@ -168,75 +168,69 @@ fn text_emote_lines_link_the_performers_first_mention() {
         .contains("[Bob]"));
 }
 
-/// `DoEmote` sends a self-target as guid 0, so 1.12 has no self-emote sentence.
+/// `DoEmote` sends a self-target as guid 0 (`0x6ddaa0`), so there is no self-emote sentence.
 #[test]
 fn emoting_at_your_own_selection_sends_an_untargeted_emote() {
-    let _data = benilla_formats::wow_data_or_skip!();
     use crate::target::Selection;
-    use bevy::prelude::Entity;
+    use benilla_ui::script::EmoteTarget as T;
 
-    let me = Entity::from_raw_u32(7).unwrap();
-    let them = Entity::from_raw_u32(9).unwrap();
-
-    let sel = Selection {
-        target: Some(me),
-        guid: Some(0xdead_beef),
+    const ME: u64 = 0x111;
+    let sel = |guid| Selection {
+        guid,
         ..Default::default()
     };
-    assert_eq!(emote_target(None, &sel, no_name, Some(me)), 0);
-
-    let sel = Selection {
-        target: Some(them),
-        guid: Some(0xdead_beef),
-        ..Default::default()
-    };
-    assert_eq!(emote_target(None, &sel, no_name, Some(me)), 0xdead_beef);
-
-    // No selection is untargeted, and with no self entity yet a selection goes out untouched.
     assert_eq!(
-        emote_target(None, &Selection::default(), no_name, Some(me)),
+        emote_target(T::Selection, &sel(Some(ME)), no_name, Some(ME)),
         0
     );
-    let sel = Selection {
-        target: Some(them),
-        guid: Some(0xdead_beef),
-        ..Default::default()
-    };
-    assert_eq!(emote_target(None, &sel, no_name, None), 0xdead_beef);
+    assert_eq!(
+        emote_target(T::Selection, &sel(Some(0xdead_beef)), no_name, Some(ME)),
+        0xdead_beef
+    );
+    // No selection is untargeted, and with no self guid yet a selection goes out untouched.
+    assert_eq!(emote_target(T::Selection, &sel(None), no_name, Some(ME)), 0);
+    assert_eq!(
+        emote_target(T::Selection, &sel(Some(0xdead_beef)), no_name, None),
+        0xdead_beef
+    );
 }
 
-fn no_name(_: &str) -> Option<(bevy::prelude::Entity, u64)> {
+fn no_name(_: &str) -> Option<u64> {
     None
 }
 
-/// A word not starting with `%` names a player and replaces the selection; a miss is guid 0; no
-/// argument or a `%` word is the selection.
+/// A token's guid and a name replace the selection; a miss is guid 0; the selection arm searches
+/// nothing.
 #[test]
-fn an_emote_argument_targets_the_named_player_and_not_the_selection() {
+fn an_emote_argument_replaces_the_selection() {
     use crate::target::Selection;
-    use bevy::prelude::Entity;
+    use benilla_ui::script::EmoteTarget as T;
 
-    let me = Entity::from_raw_u32(7).unwrap();
-    let bob = Entity::from_raw_u32(9).unwrap();
+    const ME: u64 = 0x111;
     let sel = Selection {
-        target: Some(Entity::from_raw_u32(11).unwrap()),
         guid: Some(0x5e1),
         ..Default::default()
     };
-    let find = |n: &str| (n == "Bob").then_some((bob, 0xb0b));
-    assert_eq!(emote_target(Some("Bob"), &sel, find, Some(me)), 0xb0b);
+    let find = |n: &str| (n == "Bob").then_some(0xb0b);
+    let name = |n: &str| T::Name(n.to_string());
+    assert_eq!(emote_target(name("Bob"), &sel, find, Some(ME)), 0xb0b);
     assert_eq!(
-        emote_target(Some("Nobody"), &sel, find, Some(me)),
+        emote_target(name("Nobody"), &sel, find, Some(ME)),
         0,
         "a miss is untargeted"
     );
-    for arg in [None, Some(""), Some("%t"), Some("%x")] {
-        let panics = |_: &str| -> Option<(Entity, u64)> { panic!("no search for {arg:?}") };
-        assert_eq!(emote_target(arg, &sel, panics, Some(me)), 0x5e1, "{arg:?}");
-    }
+    assert_eq!(emote_target(T::Guid(0xf0c), &sel, no_name, Some(ME)), 0xf0c);
+    assert_eq!(
+        emote_target(T::Guid(0), &sel, no_name, Some(ME)),
+        0,
+        "a creature token through the type test"
+    );
+    let panics = |_: &str| -> Option<u64> { panic!("no search") };
+    assert_eq!(emote_target(T::Selection, &sel, panics, Some(ME)), 0x5e1);
     // Naming yourself is the self-target edge: untargeted.
-    let own = |_: &str| Some((me, 0x111));
-    assert_eq!(emote_target(Some("Me"), &sel, own, Some(me)), 0);
+    let own = |_: &str| Some(ME);
+    assert_eq!(emote_target(name("Me"), &sel, own, Some(ME)), 0);
+    assert_eq!(emote_target(T::Guid(ME), &sel, no_name, Some(ME)), 0);
 }
 
 #[test]
