@@ -121,20 +121,23 @@ fn aa_corners(x0: f32, x1: f32, y_bottom: f32, y_top: f32) -> [[f32; 2]; 4] {
     ]
 }
 
-/// The drawable pieces for a frame's resolved rect (y-up), in paint order: the background (layer
-/// `BACKGROUND`), then the 8 border pieces (layer `BORDER`).
-pub fn pieces(frame: Rect, bd: &Backdrop) -> Vec<BackdropPiece> {
+/// The drawable pieces for a frame's resolved rect (y-up) at its effective `scale`, in paint order:
+/// the background (layer `BACKGROUND`), then the 8 border pieces (layer `BORDER`). The insets and
+/// `edgeSize` place the frame's own textures (`0x4a2e00`), so they scale with it; the texcoord runs
+/// are the scaled rect over the unscaled sizes (`0x4a29d0`), so a scaled frame repeats its art.
+pub fn pieces(frame: Rect, bd: &Backdrop, scale: f32) -> Vec<BackdropPiece> {
     let mut out = Vec::with_capacity(9);
-    let e = bd.edge_size;
+    let period = bd.edge_size;
+    let e = period * scale;
     let (l, r, b, t) = (frame.left, frame.right, frame.bottom, frame.top);
 
     // ── The background piece ──
     if bd.has_bg() {
         let (il, ir, it, ib) = (
-            bd.insets.left,
-            bd.insets.right,
-            bd.insets.top,
-            bd.insets.bottom,
+            bd.insets.left * scale,
+            bd.insets.right * scale,
+            bd.insets.top * scale,
+            bd.insets.bottom * scale,
         );
         // The four anchors, y-up. Bottom-right takes the top inset, as the reference does (it loads
         // `+0x50`, top, not `+0x54`); invisible when the two are equal.
@@ -146,10 +149,13 @@ pub fn pieces(frame: Rect, bd: &Backdrop) -> Vec<BackdropPiece> {
         ];
         // Untiled, no `SetTexCoord` runs and the background stretches over `[0,1]`.
         let uvs = if bd.tile {
-            let period = if bd.tile_size != 0.0 { bd.tile_size } else { e };
-            let bg_w = (r - ir) - (l + il);
-            let bg_h = (t - it) - (b + ib);
-            let (wt, ht) = (bg_w / period, bg_h / period);
+            let tile = if bd.tile_size != 0.0 {
+                bd.tile_size
+            } else {
+                period
+            };
+            // The whole rect, insets and all (`0x4a29d0`).
+            let (wt, ht) = ((r - l) / tile, (t - b) / tile);
             [[0.0, 0.0], [wt, 0.0], [wt, ht], [0.0, ht]]
         } else {
             [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]
@@ -165,8 +171,8 @@ pub fn pieces(frame: Rect, bd: &Backdrop) -> Vec<BackdropPiece> {
     // ── The 8 border pieces ──
     if bd.has_border() {
         // Edge strips tile `run` periods between the corners, 0 below two edges.
-        let w_run = ((r - l) / e - 2.0).max(0.0);
-        let h_run = ((t - b) / e - 2.0).max(0.0);
+        let w_run = ((r - l) / period - 2.0).max(0.0);
+        let h_run = ((t - b) / period - 2.0).max(0.0);
 
         let mut edge = |x0: f32, x1: f32, y0: f32, y1: f32, uvs: [[f32; 2]; 4]| {
             out.push(BackdropPiece {
@@ -306,12 +312,38 @@ mod tests {
         }
     }
 
+    // At 0.5 the pieces are the frame's own textures, half size, while the texcoord runs stay the
+    // scaled rect over the unscaled sizes, so the art repeats half as often (`0x4a29d0`).
+    #[test]
+    fn a_scaled_frame_halves_the_pieces_and_keeps_the_unscaled_divisors() {
+        let frame = Rect::new(0.0, 0.0, 50.0, 100.0);
+        let bd = tooltip_backdrop(16.0, 4.0);
+        let ps = pieces(frame, &bd, 0.5);
+        assert_eq!(ps.len(), 9);
+
+        let bg = ps[0];
+        assert_eq!(bg.corners[0], [2.0, 48.0]);
+        assert_eq!(bg.corners[2], [98.0, 2.0]);
+        assert!((bg.uvs[1][0] - 100.0 / 16.0).abs() < 1e-4);
+        assert!((bg.uvs[2][1] - 50.0 / 16.0).abs() < 1e-4);
+
+        // LEFT: 8 wide between the 8-tall corners, with a 50/16 - 2 run.
+        let left = ps[1];
+        assert_eq!(
+            left.corners,
+            [[0.0, 42.0], [8.0, 42.0], [8.0, 8.0], [0.0, 8.0]]
+        );
+        assert!((left.uvs[3][1] - 1.125).abs() < 1e-4);
+        // TOP: 100/16 - 2.
+        assert!((ps[3].uvs[0][1] - 4.25).abs() < 1e-4);
+    }
+
     // The tooltip's shape on a 200×100 frame (`Rect::new` takes bottom, left, top, right).
     #[test]
     fn piece_geometry_200x100_edge16_inset5() {
         let frame = Rect::new(0.0, 0.0, 100.0, 200.0);
         let bd = tooltip_backdrop(16.0, 5.0);
-        let ps = pieces(frame, &bd);
+        let ps = pieces(frame, &bd, 1.0);
         assert_eq!(ps.len(), 9);
 
         // Symmetric insets hide the bottom-right quirk.
@@ -322,8 +354,9 @@ mod tests {
         assert_eq!(bg.corners[2], [195.0, 5.0]); // BR
         assert_eq!(bg.corners[3], [5.0, 5.0]); // BL
         assert_eq!(bg.uvs[0], [0.0, 0.0]);
-        assert!((bg.uvs[1][0] - 190.0 / 16.0).abs() < 1e-4);
-        assert!((bg.uvs[2][1] - 90.0 / 16.0).abs() < 1e-4);
+        // The whole rect over the tile, insets and all.
+        assert!((bg.uvs[1][0] - 200.0 / 16.0).abs() < 1e-4);
+        assert!((bg.uvs[2][1] - 100.0 / 16.0).abs() < 1e-4);
 
         // Border pieces 1 to 8: LEFT, RIGHT, TOP, BOTTOM, TL, TR, BL, BR, flush inside the frame.
         let left = ps[1];
@@ -365,7 +398,7 @@ mod tests {
             },
             ..tooltip_backdrop(16.0, 0.0)
         };
-        let bg = pieces(frame, &bd)[0];
+        let bg = pieces(frame, &bd, 1.0)[0];
         assert_eq!(bg.corners[3], [3.0, 9.0]);
         // BR takes the top inset, 7, not the bottom's 9.
         assert_eq!(bg.corners[2], [196.0, 7.0]);
@@ -378,7 +411,7 @@ mod tests {
         // 20/16 - 2 = -0.75.
         let frame = Rect::new(0.0, 0.0, 20.0, 20.0);
         let bd = tooltip_backdrop(16.0, 5.0);
-        let ps = pieces(frame, &bd);
+        let ps = pieces(frame, &bd, 1.0);
         let left = ps[1]; // LEFT edge
         assert_eq!(left.uvs[3][1], 0.0, "h_run clamped to 0"); // BL v
         let top = ps[3]; // TOP edge
@@ -388,16 +421,16 @@ mod tests {
     #[test]
     fn presence_gates_pieces() {
         let frame = Rect::new(0.0, 0.0, 100.0, 100.0);
-        assert!(pieces(frame, &Backdrop::default()).is_empty());
+        assert!(pieces(frame, &Backdrop::default(), 1.0).is_empty());
         let bg_only = Backdrop {
             bg_file: Some("bg".into()),
             ..Default::default()
         };
-        assert_eq!(pieces(frame, &bg_only).len(), 1);
+        assert_eq!(pieces(frame, &bg_only, 1.0).len(), 1);
         let border_only = Backdrop {
             edge_file: Some("edge".into()),
             ..Default::default()
         };
-        assert_eq!(pieces(frame, &border_only).len(), 8);
+        assert_eq!(pieces(frame, &border_only, 1.0).len(), 8);
     }
 }

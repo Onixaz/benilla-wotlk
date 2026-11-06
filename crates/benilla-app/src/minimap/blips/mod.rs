@@ -177,7 +177,6 @@ pub(super) type BlipInputs<'w, 's> = (
     Query<'w, 's, &'static GlobalTransform, With<NetEntity>>,
     Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     ResMut<'w, MinimapBlipHover>,
-    Res<'w, crate::ui_script::UiScaleCvar>,
     Res<'w, crate::ui_party::GroupState>,
     TrackedCandidates<'w, 's>,
     Query<'w, 's, (&'static ObjectStore, &'static Guid), With<SelfPlayer>>,

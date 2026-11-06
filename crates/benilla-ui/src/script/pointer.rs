@@ -163,9 +163,10 @@ impl UiScript {
                 // spell is armed a plate refuses the hit before its rect is tested, so the reticle
                 // is placed through it.
                 && !model.nameplates.vetoes(fh)
-                && model.resolved.get(&fh).is_some_and(|r| {
-                    point_in_rect(inset_rect(*r, model.arena.hit_rect_insets(fh)), x, y)
-                })
+                && model
+                    .resolved
+                    .get(&fh)
+                    .is_some_and(|r| point_in_rect(hit_rect(&model, fh, *r), x, y))
                 && effective_clip(&model, &scroll_sources, fh)
                     .is_none_or(|c| point_in_rect(c, x, y))
         })
@@ -181,9 +182,10 @@ impl UiScript {
             // The wheel flag alone: the wheel index is separate from the mouse's, so the wheel
             // passes a frame that only takes the mouse, as a scroll pane's chrome does.
             model.arena.is_mouse_wheel_enabled(fh)
-                && model.resolved.get(&fh).is_some_and(|r| {
-                    point_in_rect(inset_rect(*r, model.arena.hit_rect_insets(fh)), x, y)
-                })
+                && model
+                    .resolved
+                    .get(&fh)
+                    .is_some_and(|r| point_in_rect(hit_rect(&model, fh, *r), x, y))
                 && effective_clip(&model, &scroll_sources, fh)
                     .is_none_or(|c| point_in_rect(c, x, y))
         })?;
@@ -694,8 +696,15 @@ pub(super) fn point_in_rect(r: Rect, x: f32, y: f32) -> bool {
     x >= r.left && x <= r.right && y >= r.bottom && y <= r.top
 }
 
-/// A frame's mouse rect: its resolved rect shrunk by its `[left, right, top, bottom]` hit-rect
-/// insets (y-up); an over-shrunk rect collapses to empty rather than inverting.
+/// A frame's mouse rect (`0x48fa20`): its raw hit-rect insets times its effective scale, against
+/// the resolved rect.
+fn hit_rect(model: &Model, fh: FrameHandle, r: Rect) -> Rect {
+    let scale = super::object::layout_methods::eff_scale(model, fh);
+    inset_rect(r, model.arena.hit_rect_insets(fh).map(|v| v * scale))
+}
+
+/// `r` shrunk by `[left, right, top, bottom]` insets in root units (y-up); an over-shrunk rect
+/// collapses to empty rather than inverting.
 fn inset_rect(r: Rect, [left, right, top, bottom]: [f32; 4]) -> Rect {
     Rect {
         left: r.left + left,

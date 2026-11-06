@@ -1230,6 +1230,27 @@ impl UiScript {
         true
     }
 
+    /// Make the resolved UI scale `UIParent`'s own (`0x513240`, `0x51fb80`), then fire
+    /// `UPDATE_FLOATING_CHAT_WINDOWS` for the chat frames that place themselves by the screen size.
+    /// `true` when the dial moved; `false` too with no `UIParent` yet, as the reference skips the
+    /// write until the FrameXML load has found one.
+    pub fn set_ui_scale(&mut self, scale: f32) -> bool {
+        if self.model_ref().ui_scale == Some(scale) {
+            return false;
+        }
+        let Some(h) = self.model_ref().arena.lookup("UIParent") else {
+            return false;
+        };
+        let mut model = self.model_mut();
+        model.ui_scale = Some(scale);
+        model.set_frame_scale(h, scale);
+        drop(model);
+        // Every drawn size moved, so every text metric on the new raster is owed again.
+        self.invalidate_text_measures();
+        self.fire_event("UPDATE_FLOATING_CHAT_WINDOWS", vec![]);
+        true
+    }
+
     /// Push the modifier state behind `IsShiftKeyDown`/`IsControlKeyDown`/`IsAltKeyDown`; the app
     /// calls it before the frame's mouse events, so a click handler reads the state of its click.
     pub fn set_modifiers(&mut self, shift: bool, ctrl: bool, alt: bool) {

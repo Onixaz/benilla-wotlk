@@ -244,11 +244,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })
     })?;
 
-    // GetEffectiveScale(): parent scale times own scale, from a root of 1: `uiScale` is applied at
-    // the raster seam (a screen `768/uiScale` units tall), so every coordinate Lua sees,
-    // `GetCursorPosition()` included, is already in UI units. The reference instead makes `uiScale`
-    // `UIParent`'s own scale (its UI setup calls `SetScale`), so there
-    // `UIParent:GetEffectiveScale()` answers it.
+    // GetEffectiveScale(): parent scale times own scale, from a root of 1. The UI scale is
+    // `UIParent`'s own scale (`0x513240`), so it reaches every frame under it and none outside it.
     m.set(
         "GetEffectiveScale",
         lua.create_function(|lua, this: Table| {

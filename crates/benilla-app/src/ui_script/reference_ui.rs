@@ -1945,7 +1945,6 @@ mod tests {
             ("PLAYER_ROLES_ASSIGNED", R_1),
             ("RAISED_AS_GHOUL", R_1),
             ("TRADE_POTENTIAL_BIND_ENCHANT", R_1),
-            ("UPDATE_FLOATING_CHAT_WINDOWS", R_1),
             ("UPDATE_SHAPESHIFT_COOLDOWN", R_1),
             ("UPDATE_SHAPESHIFT_FORM", R_1),
             ("UPDATE_SHAPESHIFT_USABLE", R_1),

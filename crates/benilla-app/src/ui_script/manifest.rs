@@ -59,9 +59,10 @@ fn bootstrap_positions(script: &UiScript) -> Vec<String> {
 /// screen, but not a size or seat computed from the old one. The managed pass re-wraps the open
 /// bags, whose columns `updateContainerFrameAnchors` lays out by `GetScreenHeight()`.
 /// Deviation: [`FULLSCREEN_QUADS_RESEAT`] re-sizes the full-screen quads, which the stock files
-/// size only in their OnLoads, because a resize or `uiScale` change here keeps the loaded UI and
-/// the blackout would stop short of the new screen. Host-side, not in the layer: it adapts the
-/// engine's resizable window, and changes nothing the stock UI does at a fixed size.
+/// size only in their OnLoads, because a resize here keeps the loaded UI, where the reference
+/// reloads it on a new aspect (`0x51fb80`), and the blackout would stop short of the new screen.
+/// Host-side, not in the layer: it adapts the engine's resizable window, and changes nothing the
+/// stock UI does at a fixed size.
 pub(super) fn on_screen_resized(script: &UiScript) {
     let _ = script.run("if UIParent_ManageFramePositions then UIParent_ManageFramePositions() end");
     if let Err(e) = script.run(FULLSCREEN_QUADS_RESEAT) {
@@ -71,12 +72,14 @@ pub(super) fn on_screen_resized(script: &UiScript) {
 
 /// The sizing arithmetic of `WorldMapFrame_OnLoad` (`WorldMapFrame.lua:19-28`) and
 /// `CinematicFrame_OnLoad` (`CinematicFrame.lua:6-21`), each existence-guarded: the glue screens
-/// have neither. Below 4:3 the bars go back to `CinematicFrame.xml`'s declared 1024 x 128, where
-/// the stock OnLoad leaves them.
+/// have neither. Both OnLoads ran at the bare root, `UIParent` still unscaled, and both frames sit
+/// outside it, so the screen size here is the root's. Below 4:3 the bars go back to
+/// `CinematicFrame.xml`'s declared 1024 x 128, where the stock OnLoad leaves them.
 const FULLSCREEN_QUADS_RESEAT: &str = r#"
+local rootScale = UIParent and UIParent:GetEffectiveScale() or 1
 if BlackoutWorld then
-    local width = GetScreenWidth()
-    local height = GetScreenHeight()
+    local width = GetScreenWidth() * rootScale
+    local height = GetScreenHeight() * rootScale
     if ( width / height < 4 / 3 ) then
         width = width * 1.25
         height = height * 1.25
@@ -85,8 +88,8 @@ if BlackoutWorld then
     BlackoutWorld:SetHeight( height )
 end
 if UpperBlackBar and LowerBlackBar then
-    local width = GetScreenWidth()
-    local height = GetScreenHeight()
+    local width = GetScreenWidth() * rootScale
+    local height = GetScreenHeight() * rootScale
     local barWidth, blackBarHeight = 1024, 128
     if ( width / height > 4 / 3 ) then
         local desiredHeight = width / 2

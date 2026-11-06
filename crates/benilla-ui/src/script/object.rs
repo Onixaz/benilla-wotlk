@@ -414,17 +414,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
+/// `UIParent`'s effective scale at `+0x7c`, 1 before it exists.
+fn ui_parent_scale(model: &crate::script::Model) -> f32 {
+    model
+        .arena
+        .lookup("UIParent")
+        .map_or(1.0, |h| layout_methods::eff_scale(model, h))
+}
+
 /// The frame globals only the in-game state registers (table `0xac80b0`): the glue state's
 /// `GetScreenWidth`/`GetScreenHeight` are other bindings (`0x4dcc20`/`0x4dcc70`).
 pub(super) fn install_in_game(lua: &Lua) -> mlua::Result<()> {
-    // `GetScreenWidth`/`GetScreenHeight`: the screen root's size in UI units.
+    // `GetScreenWidth` (`0x51aef0`) and `GetScreenHeight` (`0x51af50`): the root's size over
+    // `UIParent`'s effective scale, in the units of a frame directly under it.
     lua.globals().set(
         "GetScreenWidth",
         lua.create_function(|lua, ()| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model");
-            Ok(model.screen.width())
+            Ok(model.screen.width() / ui_parent_scale(&model))
         })?,
     )?;
     lua.globals().set(
@@ -433,7 +442,7 @@ pub(super) fn install_in_game(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model");
-            Ok(model.screen.height())
+            Ok(model.screen.height() / ui_parent_scale(&model))
         })?,
     )?;
 

@@ -469,7 +469,6 @@ fn emit_minimap(
         unit_pos,
         window,
         mut blip_hover,
-        ui_scale,
         group,
         tracked,
         self_store,
@@ -778,7 +777,7 @@ fn emit_minimap(
         }
         let win = window.iter().next();
         let cursor = win.and_then(|w| w.cursor_position());
-        let seam = win.map_or(1.0, |w| crate::ui_script::seam_scale(w.height(), ui_scale.0));
+        let seam = win.map_or(1.0, |w| crate::ui_script::seam_scale(w.height()));
         // The pan origin snapped to a half-logical-pixel grid: every blip offset and rim bearing
         // derives from `wx`/`wy`, so the layer steps together instead of rewriting the batch mesh
         // every frame while walking. Blip world positions stay exact.
@@ -793,8 +792,8 @@ fn emit_minimap(
             wx: (wx / q).round() * q,
             wy: (wy / q).round() * q,
             cursor,
-            // The cursor in UI space (y-up, ÷ the seam scale): the tooltip anchor resolves in
-            // 768-virtual units, not window px.
+            // The cursor in root units (y-up, ÷ the seam scale): the tooltip anchor resolves in
+            // those, not window px.
             cursor_ui: cursor
                 .zip(win)
                 .map(|(c, w)| Vec2::new(c.x / seam, (w.height() - c.y) / seam)),

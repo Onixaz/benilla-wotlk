@@ -1,8 +1,8 @@
 //! The UI-engine bridge: hosts [`benilla_ui::script::UiScript`] and feeds its
 //! [`extract`](benilla_ui::script::UiScript::extract) output into the quad pass
 //! ([`crate::ui_pass::UiQuads`]) every frame. The script side is WoW UI space (y-up, origin
-//! bottom-left, a screen `768/uiScale` units tall); [`seam_scale`] carries quads ×s out and the
-//! mouse ÷s in, and extraction flips to y-down window px.
+//! bottom-left, a root 768 units tall, the UI scale being `UIParent`'s own); [`seam_scale`] carries
+//! quads ×s out and the mouse ÷s in, and extraction flips to y-down window px.
 
 use bevy::prelude::*;
 
@@ -288,25 +288,14 @@ pub(crate) fn run_or_warn(script: &benilla_ui::script::UiScript, chunk: &str) {
     }
 }
 
-/// The game UI parent's scale, resolved from [`UiScaleSetting`] ([`resolve_ui_scale`]): the VM's
-/// screen is `768/scale` units tall. Tests pin the `Default` 1.0.
+/// `UIParent`'s scale, resolved from [`UiScaleSetting`] ([`resolve_ui_scale`]) and written to the
+/// in-game VM's frame ([`UiScript::set_ui_scale`]). Tests pin the `Default` 1.0.
 #[derive(Resource, PartialEq)]
 pub(crate) struct UiScaleCvar(pub(crate) f32);
 
 impl Default for UiScaleCvar {
     fn default() -> Self {
         Self(1.0)
-    }
-}
-
-impl UiScaleCvar {
-    /// The dial as `kind`'s VM sees it: the game UI's parent alone takes the scale (the UI scale
-    /// set `0x513240` scales the frame), so the glue screens stay 768 units tall.
-    pub(crate) fn for_vm(&self, kind: benilla_ui::script::VmKind) -> f32 {
-        match kind {
-            benilla_ui::script::VmKind::Glue => 1.0,
-            _ => self.0,
-        }
     }
 }
 
@@ -381,11 +370,11 @@ pub(crate) fn resolve_ui_scale(
     scale.set_if_neq(UiScaleCvar(want));
 }
 
-/// The seam scale `s`, window px per UI unit (`windowH/768 × uiScale`), used at every crossing of
-/// the VM boundary; identity for a degenerate window (h ≤ 0, before winit).
-pub(crate) fn seam_scale(window_h: f32, ui_scale: f32) -> f32 {
+/// The seam scale `s`, window px per root unit (`windowH/768`), used at every crossing of the VM
+/// boundary; identity for a degenerate window (h ≤ 0, before winit).
+pub(crate) fn seam_scale(window_h: f32) -> f32 {
     if window_h > 0.0 {
-        window_h / 768.0 * ui_scale
+        window_h / 768.0
     } else {
         1.0
     }
@@ -1227,23 +1216,12 @@ mod seam_scale_tests {
     use super::seam_scale;
 
     #[test]
-    fn the_glue_screens_ignore_the_ui_scale_dial() {
-        let dial = super::UiScaleCvar(0.9);
-        assert_eq!(dial.for_vm(benilla_ui::script::VmKind::Glue), 1.0);
-        assert_eq!(dial.for_vm(benilla_ui::script::VmKind::InGame), 0.9);
-    }
-
-    #[test]
-    fn seam_scale_is_the_768_base_times_the_dial() {
+    fn seam_scale_is_the_768_root() {
         // Identity at the design height, proportional elsewhere.
-        assert_eq!(seam_scale(768.0, 1.0), 1.0);
-        assert_eq!(seam_scale(1536.0, 1.0), 2.0);
-        // The dial multiplies it.
-        assert_eq!(seam_scale(768.0, 0.9), 0.9);
-        // The reference's pixel-perfect setting: uiScale = 768/screenH → 1 px per UI unit.
-        assert!((seam_scale(1080.0, 768.0 / 1080.0) - 1.0).abs() < 1e-6);
+        assert_eq!(seam_scale(768.0), 1.0);
+        assert_eq!(seam_scale(1536.0), 2.0);
         // A degenerate (pre-winit) window is identity, never a division blow-up.
-        assert_eq!(seam_scale(0.0, 0.9), 1.0);
+        assert_eq!(seam_scale(0.0), 1.0);
     }
 }
 
