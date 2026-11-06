@@ -29,11 +29,11 @@ pub(super) struct PetSlotWalk<'w, 's> {
     items: Option<Res<'w, crate::items::Items>>,
     commands: Option<Res<'w, crate::net::NetCommands>>,
     combo: Option<Res<'w, crate::spell::ComboPoints>>,
+    spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
 }
 
 impl PetSlotWalk<'_, '_> {
-    /// The usable walk with the pet as caster: no carried items, no talent modifiers, the pet's
-    /// own cooldowns, and the current target.
+    /// The usable walk with the pet as caster: no bags, its own cooldowns, the current target.
     fn usable(
         &self,
         spell_id: u32,
@@ -43,11 +43,12 @@ impl PetSlotWalk<'_, '_> {
         pet_unit: &PetUnit,
         cooldowns: &crate::spell::Cooldowns,
     ) -> bool {
-        let (Some(spells), Some(reputations), Some(items), Some(commands)) = (
+        let (Some(spells), Some(reputations), Some(items), Some(commands), Some(spell_mods)) = (
             spells,
             self.reputations.as_deref(),
             self.items.as_deref(),
             self.commands.as_deref(),
+            self.spell_mods.as_deref(),
         ) else {
             return true;
         };
@@ -63,7 +64,7 @@ impl PetSlotWalk<'_, '_> {
             reputations,
             party: crate::target::party_of(self.group.as_deref()),
             cooldowns,
-            spell_mods: &crate::spell::SpellModifiers::default(),
+            spell_mods,
             carried: &std::collections::HashMap::new(),
             // The pet is not the active player: no rune spell is usable on it (`0x80182d`).
             runes: None,

@@ -187,16 +187,17 @@ pub(super) fn feed_action_state(
     };
     // The rune leg compares ends on the `GetTime` millisecond clock the runes are stamped on.
     let now_ms = (ui_now * 1000.0).floor() as i64;
-    let rune_check =
-        rune_inputs
-            .0
-            .as_deref()
-            .zip(rune_inputs.1.as_deref())
-            .map(|(runes, costs)| usable::RuneCheck {
-                state: &runes.state,
-                costs: &costs.0,
-            });
     let me = self_q.iter().next();
+    let rune_check = rune_inputs
+        .0
+        .as_deref()
+        .zip(rune_inputs.1.as_deref())
+        .zip(me)
+        .map(|((runes, costs), (store, _, _, _))| usable::RuneCheck {
+            state: &runes.state,
+            costs: &costs.0,
+            player: &store.0,
+        });
     // The bags, walked once per frame for every reagent, totem and item count below.
     let carried = me
         .map(|(s, _, _, _)| carried_counts(&s.0, &objects))

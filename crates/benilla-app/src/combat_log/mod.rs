@@ -58,6 +58,7 @@ impl Plugin for CombatLogPlugin {
                     feed_combat_log,
                 )
                     .chain()
+                    .after(crate::spell::track_cost_inputs)
                     .in_set(crate::ui_script::UiFeed),
             );
         app.net_handler(K::CombatLogBackdate, on_backdate)

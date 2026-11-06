@@ -232,13 +232,16 @@ fn feed_shapeshift_bar(
     let carried = store
         .map(|s| crate::ui_items::carried_counts(&s.0, &objects))
         .unwrap_or_default();
-    let rune_check = runes
-        .as_deref()
-        .zip(rune_costs.as_deref())
-        .map(|(runes, costs)| usable::RuneCheck {
-            state: &runes.state,
-            costs: &costs.0,
-        });
+    let rune_check =
+        runes
+            .as_deref()
+            .zip(rune_costs.as_deref())
+            .zip(store)
+            .map(|((runes, costs), store)| usable::RuneCheck {
+                state: &runes.state,
+                costs: &costs.0,
+                player: &store.0,
+            });
     let fresh: Vec<ShapeshiftFormView> = rows
         .into_iter()
         .map(|(id, d)| {

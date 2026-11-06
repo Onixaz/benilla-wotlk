@@ -129,20 +129,42 @@ pub(super) fn build_view(
     // The caster's skill level for this spell: the level the cost's and the cast time's per-level
     // terms read.
     let pet_level = |pet| d.skill_level(ViewCaster::pet_skill_value(pet));
+    // The player's cost reads what these name; the pet's reads the pet's own, its pet inputs.
+    let cost_reads = |t: &benilla_formats::SpellDisplay| {
+        if !matches!(caster, ViewCaster::Player) {
+            return;
+        }
+        let mut deps = deps.borrow_mut();
+        deps.unit(UnitField::CostRuns);
+        if usable::cost_reads_level(t) {
+            deps.unit(UnitField::Level);
+        }
+        if usable::cost_reads_weapon(t) {
+            deps.unit(UnitField::WeaponCost);
+        }
+        match usable::cost_basis(t) {
+            CostBasis::None | CostBasis::Fixed(_) => {}
+            CostBasis::BaseMana => deps.unit(UnitField::BaseMana),
+            CostBasis::BaseHealth => deps.unit(UnitField::BaseHealth),
+        }
+    };
     // `$c` reads the view's caster's cost, as the cost cell does.
-    let text_cost = |t: &benilla_formats::SpellDisplay| match caster {
-        ViewCaster::Player => vctx
-            .store
-            .map_or(t.mana_cost, |s| usable::power_cost(t, s, vctx.spell_mods))
-            as i32,
-        ViewCaster::Pet(pet) => pet.map_or(-1, |p| {
-            usable::power_cost_at(
-                t,
-                p,
-                t.skill_level(ViewCaster::pet_skill_value(Some(p))),
-                vctx.spell_mods,
-            ) as i32
-        }),
+    let text_cost = |t: &benilla_formats::SpellDisplay| {
+        cost_reads(t);
+        match caster {
+            ViewCaster::Player => vctx
+                .store
+                .map_or(t.mana_cost, |s| usable::power_cost(t, s, vctx.spell_mods))
+                as i32,
+            ViewCaster::Pet(pet) => pet.map_or(-1, |p| {
+                usable::power_cost_at(
+                    t,
+                    p,
+                    t.skill_level(ViewCaster::pet_skill_value(Some(p))),
+                    vctx.spell_mods,
+                ) as i32
+            }),
+        }
     };
     let record = |read: crate::spell::text_caster::CasterRead| deps.borrow_mut().caster_read(read);
     let text_caster = vctx
@@ -190,19 +212,7 @@ pub(super) fn build_view(
             usable::power_cost_at(d, p, pet_level(Some(p)), vctx.spell_mods)
         }),
     };
-    // The player's cost reads its level, and the field a percentage scales by; the pet's reads the
-    // pet's own, which are pet inputs.
-    if matches!(caster, ViewCaster::Player) {
-        let mut deps = deps.borrow_mut();
-        if usable::cost_reads_level(d) {
-            deps.unit(UnitField::Level);
-        }
-        match usable::cost_basis(d) {
-            CostBasis::None | CostBasis::Fixed(_) => {}
-            CostBasis::BaseMana => deps.unit(UnitField::BaseMana),
-            CostBasis::BaseHealth => deps.unit(UnitField::BaseHealth),
-        }
-    }
+    cost_reads(d);
     let cost = {
         // The shared per-type divisor, never a local `power_type == 1` test.
         let div = benilla_protocol::messages::power_display_scale(d.power_type);
@@ -531,14 +541,14 @@ pub(super) fn reagent_state(
     (owned, named)
 }
 
-/// The pet unit's fields a pet view reads: its level, the cost bases the power-cost getter reads,
-/// its form, and its and its melee target's reach and motion.
+/// The pet unit's fields a pet view reads: level, cost bases and runs, form, reach and motion.
 #[derive(Clone, Copy, PartialEq, Default)]
 pub(super) struct PetInputs {
     guid: Option<u64>,
     level: u32,
     base_mana: u32,
     base_health: u32,
+    cost_runs: [u32; 14],
     form: u8,
     range_units: RangeSeen,
 }
@@ -560,6 +570,7 @@ impl PetInputs {
             level: p.unit_level().unwrap_or(0),
             base_mana: p.unit_base_mana().unwrap_or(0),
             base_health: p.unit_base_health().unwrap_or(0),
+            cost_runs: p.unit_power_cost_words(),
             form: p.unit_shapeshift_form(),
             range_units,
         }

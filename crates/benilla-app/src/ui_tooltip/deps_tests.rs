@@ -70,7 +70,7 @@ impl Inputs {
         pace: true,
         worn: EQUIPMENT_MASK,
         disarm: true,
-        unit: 0xf,
+        unit: 0x1f,
         lines: u128::MAX,
         bits: u128::MAX,
         poke: None,
@@ -228,7 +228,7 @@ impl Inputs {
             pace: !deps.range_units,
             worn: EQUIPMENT_MASK & !deps.worn,
             disarm: !deps.disarm,
-            unit: !deps.unit & 0xf,
+            unit: !deps.unit & 0x1f,
             lines: layout
                 .lines
                 .iter()
@@ -242,7 +242,13 @@ impl Inputs {
 }
 
 /// The [`UnitField`] names, by bit.
-const UNIT_NAMES: [&str; 4] = ["level", "base mana", "base health", "ranged attack time"];
+const UNIT_NAMES: [&str; 5] = [
+    "level",
+    "base mana",
+    "base health",
+    "ranged attack time",
+    "spell cost runs",
+];
 
 /// What a sweep holds fixed for a view: the form the form input puts on, the item kind worn
 /// items are of, and the class family the tables gate on.
@@ -334,6 +340,7 @@ fn mat(layout: &Layout, inputs: Inputs, p: Params) -> Mat {
                 2000
             },
         ),
+        (1262, if unit(UnitField::CostRuns) { 7 } else { 0 }),
     ];
     if inputs.disarm {
         pairs.push((46, 0x0020_0000));
@@ -1356,7 +1363,7 @@ fn the_modifier_diff_names_the_family_flag_bit_of_a_changed_cell() {
                 now.diff(&base),
                 ModsDiff {
                     bits: 1 << bit,
-                    class_family: false
+                    ..ModsDiff::default()
                 },
                 "bit {bit} op {op} flat {flat}"
             );
@@ -1367,11 +1374,22 @@ fn the_modifier_diff_names_the_family_flag_bit_of_a_changed_cell() {
     assert_eq!(
         now.diff(&base),
         ModsDiff {
-            bits: 0,
-            class_family: true
+            class_family: true,
+            ..ModsDiff::default()
+        }
+    );
+    let mut now = base.clone();
+    now.set_weapon_speed(1, [2600, 1400]);
+    assert_eq!(
+        now.diff(&base),
+        ModsDiff {
+            weapon_speed: true,
+            ..ModsDiff::default()
         }
     );
     assert_eq!(base.diff(&base), ModsDiff::default());
+    let moved = Changes::default().with_mods(now.diff(&base));
+    assert_eq!(moved.unit, UnitField::WeaponCost.bit());
 }
 
 /// A percentage's own bit, a worn slot's own bit, a skill line by its id, each unit field by its
@@ -1498,6 +1516,8 @@ fn the_seen_diff_names_each_input_it_saw_move() {
         (162, UnitField::BaseMana.bit()),
         (163, UnitField::BaseHealth.bit()),
         (128, UnitField::RangedTime.bit()),
+        (1262, UnitField::CostRuns.bit()),
+        (1275, UnitField::CostRuns.bit()),
         (28, 0),
         (29, 0),
         (33, 0),

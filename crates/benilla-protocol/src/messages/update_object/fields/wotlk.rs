@@ -340,6 +340,12 @@ mod tests {
             wire(&[
                 (40, 12.5f32.to_bits()),
                 (47, 3.25f32.to_bits()),
+                (133, 12),
+                (134, (-30i32) as u32),
+                (137, 7),
+                (140, (-0.25f32).to_bits()),
+                (141, 0.25f32.to_bits()),
+                (144, 0.5f32.to_bits()),
                 (145, 0.1f32.to_bits()),
                 (1027, 12),
                 (1028, 7),
@@ -356,6 +362,13 @@ mod tests {
         assert_eq!(f.unit_power_regen(0, false), Some(12.5));
         assert_eq!(f.unit_power_regen(0, true), Some(3.25));
         assert_eq!(f.unit_max_health_modifier(), Some(0.1));
+        assert_eq!(f.unit_power_cost_modifier(1 << 2 | 1 << 3), -30);
+        assert_eq!(f.unit_power_cost_modifier(1 << 2), 12);
+        assert_eq!(f.unit_power_cost_modifier(1 << 6), 7);
+        assert_eq!(f.unit_power_cost_modifier(0), 0);
+        assert_eq!(f.unit_power_cost_multiplier(1 << 2 | 1 << 3), 0.75);
+        assert_eq!(f.unit_power_cost_multiplier(1 << 6), 1.5);
+        assert_eq!(f.unit_power_cost_multiplier(0), 1.0);
         assert_eq!(f.player_expertise(0), Some(12));
         assert_eq!(f.player_expertise(1), Some(7));
         assert_eq!(f.player_ranged_crit_percentage(), Some(4.5));
@@ -537,6 +550,11 @@ mod tests {
             ),
             (Field::UnitMinRangedDamage, FIELD_UNIT_MINRANGEDDAMAGE),
             (Field::UnitMaxRangedDamage, FIELD_UNIT_MAXRANGEDDAMAGE),
+            (Field::UnitPowerCostModifier, FIELD_UNIT_POWER_COST_MODIFIER),
+            (
+                Field::UnitPowerCostMultiplier,
+                FIELD_UNIT_POWER_COST_MULTIPLIER,
+            ),
             (Field::PosStat, FIELD_PLAYER_POSSTAT0),
             (Field::NegStat, FIELD_PLAYER_NEGSTAT0),
             (

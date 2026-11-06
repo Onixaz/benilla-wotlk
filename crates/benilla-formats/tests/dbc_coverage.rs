@@ -29,7 +29,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("DestructibleModelData", "#243 destructible buildings"),
     ("DungeonMapChunk", "#238 dungeon map levels"),
     ("GameObjectArtKit", "#243 game object art kits"),
-    ("gtNPCManaCostScaler", "#233 NPC spell costs"),
     (
         "Item",
         "#239 item class, display and sheath by id: GetItemIcon, PickupItem",

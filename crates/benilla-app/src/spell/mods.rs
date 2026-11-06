@@ -18,7 +18,8 @@ use bevy::prelude::*;
 use benilla_formats::{SpellDisplay, SpellRange};
 
 use crate::chr_classes::ChrClassTable;
-use crate::net::{ObjectStore, SelfPlayer};
+use crate::items::Items;
+use crate::net::{ObjectStore, Objects, SelfPlayer};
 
 /// SpellModOps per row: the index stride.
 const OPS: usize = 31;
@@ -74,8 +75,18 @@ impl SpellMod {
     }
 }
 
-/// The two tables and the class family the gate compares against. Written only by the wire,
-/// cleared only at world-enter, read live.
+/// What the power-cost lookup reads past the unit's fields, kept with the tables its readers hold.
+#[derive(Clone, Default, PartialEq)]
+struct CostInputs {
+    /// The active player's guid, the one caster the weapon term applies to.
+    active_player: u64,
+    /// The weapon term's main-hand and off-hand speed in ms.
+    weapon_speed: [u32; 2],
+    /// `gtNPCManaCostScaler` column 0 by row, empty until the table loads.
+    npc_scaler: std::sync::Arc<[f32]>,
+}
+
+/// The wire's two tables, read live and cleared at world-enter, the class family and cost inputs.
 #[derive(Clone, Resource)]
 pub(crate) struct SpellModifiers {
     flat: [i32; CELLS],
@@ -83,6 +94,7 @@ pub(crate) struct SpellModifiers {
     /// The local player's class spell-family (`ChrClasses.dbc` field 15); 0 until the avatar
     /// resolves, which the reader's `SpellFamilyName != 0` gate covers.
     class_family: u32,
+    cost: CostInputs,
 }
 
 impl Default for SpellModifiers {
@@ -91,6 +103,7 @@ impl Default for SpellModifiers {
             flat: [0; CELLS],
             pct: [0; CELLS],
             class_family: 0,
+            cost: CostInputs::default(),
         }
     }
 }
@@ -118,6 +131,32 @@ impl SpellModifiers {
     /// Set the gate's class family (`0x8007a0`).
     pub(crate) fn set_class_family(&mut self, family: u32) {
         self.class_family = family;
+    }
+
+    /// Set the active player and the weapon term's hand speeds.
+    pub(crate) fn set_weapon_speed(&mut self, active_player: u64, speed: [u32; 2]) {
+        self.cost.active_player = active_player;
+        self.cost.weapon_speed = speed;
+    }
+
+    /// Bind `gtNPCManaCostScaler`'s column 0.
+    pub(crate) fn set_npc_cost_scaler(&mut self, values: impl IntoIterator<Item = f32>) {
+        self.cost.npc_scaler = values.into_iter().collect();
+    }
+
+    /// The hand speed the weapon term reads for `caster`, `None` for any caster but the player.
+    pub(crate) fn weapon_speed(&self, caster: Option<u64>, off_hand: bool) -> Option<u32> {
+        (caster == Some(self.cost.active_player))
+            .then(|| self.cost.weapon_speed[usize::from(off_hand)])
+    }
+
+    /// `gtNPCManaCostScaler`'s value for `level`, 0 outside the table (`0x7f6990`).
+    pub(crate) fn npc_cost_scaler(&self, level: u32) -> f32 {
+        level
+            .checked_sub(1)
+            .and_then(|row| self.cost.npc_scaler.get(row as usize))
+            .copied()
+            .unwrap_or(0.0)
     }
 
     /// Zero both tables and the class family, the set `0x8100e0` zeroes.
@@ -158,6 +197,7 @@ impl SpellModifiers {
         ModsDiff {
             bits,
             class_family: self.class_family != prev.class_family,
+            weapon_speed: self.cost.weapon_speed != prev.cost.weapon_speed,
         }
     }
 
@@ -251,6 +291,8 @@ pub(crate) struct ModsDiff {
     /// Bit `b` set: a cell of family-flag bit `b` changed, in either table at any op.
     pub(crate) bits: u128,
     pub(crate) class_family: bool,
+    /// The weapon term's hand speeds moved.
+    pub(crate) weapon_speed: bool,
 }
 
 /// The description expander's view of the tables.
@@ -288,6 +330,34 @@ pub(super) fn track_class_family(
     // Guarded: the tooltip feed diffs the tables whenever the resource is marked changed.
     if mods.class_family != family {
         mods.set_class_family(family);
+    }
+}
+
+/// Keep the cost inputs in step with the player and the tables, written only when they move.
+pub(crate) fn track_cost_inputs(
+    mut mods: ResMut<SpellModifiers>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    objects: Objects,
+    items: Option<Res<Items>>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+    tables: Option<Res<crate::ui_char::SheetTables>>,
+) {
+    if let Some(tables) = tables.filter(|t| t.is_changed()) {
+        let id = benilla_formats::GameTableId::NpcManaCostScaler;
+        let rows = tables.gt.rows(id) as i32;
+        mods.set_npc_cost_scaler((0..rows).map(|row| tables.gt.lookup(id, row, 0)));
+    }
+    let (Some(store), Some(items)) = (self_q.iter().next(), items) else {
+        return;
+    };
+    let forms = spells.as_deref().map(|s| &s.forms);
+    let speed = [false, true].map(|off_hand| {
+        crate::spell::usable::weapon_cost_speed(store, &objects, &items, forms, off_hand)
+    });
+    let guid = store.0.object_guid().unwrap_or(0);
+    // Guarded: every cost reader rebuilds whenever the resource is marked changed.
+    if mods.cost.active_player != guid || mods.cost.weapon_speed != speed {
+        mods.set_weapon_speed(guid, speed);
     }
 }
 

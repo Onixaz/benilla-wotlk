@@ -52,6 +52,10 @@ pub(super) enum UnitField {
     BaseMana,
     BaseHealth,
     RangedTime,
+    /// The two spell cost runs, which every cost reads.
+    CostRuns,
+    /// The weapon term's hand speeds.
+    WeaponCost,
 }
 
 impl UnitField {
@@ -61,6 +65,8 @@ impl UnitField {
             UnitField::BaseMana => 1 << 1,
             UnitField::BaseHealth => 1 << 2,
             UnitField::RangedTime => 1 << 3,
+            UnitField::CostRuns => 1 << 4,
+            UnitField::WeaponCost => 1 << 5,
         }
     }
 }
@@ -73,6 +79,7 @@ struct UnitFields {
     base_mana: u32,
     base_health: u32,
     ranged_time: u32,
+    cost_runs: [u32; 14],
 }
 
 impl UnitFields {
@@ -85,6 +92,7 @@ impl UnitFields {
             base_mana: p.unit_base_mana().unwrap_or(0),
             base_health: p.unit_base_health().unwrap_or(0),
             ranged_time: p.unit_ranged_attack_time().unwrap_or(0),
+            cost_runs: p.unit_power_cost_words(),
         }
     }
 
@@ -101,6 +109,11 @@ impl UnitFields {
             | moved(UnitField::BaseMana, self.base_mana, prev.base_mana)
             | moved(UnitField::BaseHealth, self.base_health, prev.base_health)
             | moved(UnitField::RangedTime, self.ranged_time, prev.ranged_time)
+            | if self.cost_runs != prev.cost_runs {
+                UnitField::CostRuns.bit()
+            } else {
+                0
+            }
     }
 }
 
@@ -280,6 +293,9 @@ impl Changes {
     pub(super) fn with_mods(mut self, diff: ModsDiff) -> Self {
         self.mod_bits = diff.bits;
         self.everything |= diff.class_family;
+        if diff.weapon_speed {
+            self.unit |= UnitField::WeaponCost.bit();
+        }
         self
     }
 
