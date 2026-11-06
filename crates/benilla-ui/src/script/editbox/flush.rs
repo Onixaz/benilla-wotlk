@@ -15,9 +15,10 @@ pub(in crate::script) fn update(lua: &Lua, h: FrameHandle, dt: f32) {
 
 /// The flush. It samples bit 0 at entry; on bit 0 the relayout runs and the bit clears; on bit 2
 /// the caret leg runs, with the blink and `OnCursorChanged`, and only then does the bit clear;
-/// last, `OnTextChanged` fires if bit 0 was set at entry. So a handler's edit raises bits for the
-/// next flush, a frame later, and never loops inside one: an `OnTextChanged` that sets its own text
-/// fires once more, next frame, and a caret moved by `OnCursorChanged` is cleared with the bit.
+/// last, `OnTextChanged` fires if bit 0 was set at entry, and bit 3 clears after it. So a handler's
+/// edit raises bits for the next flush, a frame later, and never loops inside one: an
+/// `OnTextChanged` that sets its own text fires once more, next frame, and a caret moved by
+/// `OnCursorChanged` is cleared with the bit.
 /// Besides the walk, the box's `OnKeyDown` and `OnMouseDown` run it before the key or click acts.
 ///
 /// Deviation: the flush's promotion of bit 2 to bit 0 when the caret has left the display window,
@@ -40,7 +41,18 @@ pub(super) fn flush(lua: &Lua, h: FrameHandle) {
         with_eb(lua, h, |eb| eb.dirty &= !EditBoxState::DIRTY_CURSOR);
     }
     if text_changed {
-        fire_script(lua, frame_id_of(lua, h), "OnTextChanged");
+        text_changed_script(lua, h);
+        with_eb(lua, h, |eb| eb.dirty &= !EditBoxState::DIRTY_USER_INPUT);
+    }
+}
+
+/// `OnTextChanged(userInput)` (`0x965460`): bit 3 as read when the script runs, a real boolean.
+fn text_changed_script(lua: &Lua, h: FrameHandle) {
+    let user_input = read_eb(lua, h, |eb| eb.dirty & EditBoxState::DIRTY_USER_INPUT != 0);
+    let id = frame_id_of(lua, h);
+    let args = vec![Value::Boolean(user_input.unwrap_or(false))];
+    if let Err(e) = event::fire_widget_handler(lua, id, "OnTextChanged", args) {
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
 }
 

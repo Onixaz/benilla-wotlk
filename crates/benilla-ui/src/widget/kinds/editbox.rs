@@ -101,9 +101,9 @@ pub struct EditBoxState {
     pub rows: Vec<usize>,
     /// The row pitch in pixels (the snapped font em), answered with the advances; 0 until then.
     pub cell_h: f32,
-    /// The dirty word (`[E+0x31c]`) the box's flush drains: [`Self::DIRTY_TEXT`] and
-    /// [`Self::DIRTY_CURSOR`]. The ctor sets bit 0, so a box fires `OnTextChanged` at its first
-    /// flush once shown.
+    /// The dirty word (`[E+0x31c]`) the box's flush drains: [`Self::DIRTY_TEXT`],
+    /// [`Self::DIRTY_CURSOR`] and [`Self::DIRTY_USER_INPUT`]. The ctor sets bit 0 alone, so a box
+    /// fires `OnTextChanged` at its first flush once shown, with `userInput` false.
     pub dirty: u8,
     /// A multi-line relayout that found its text's measure pending, retried at each flush until it
     /// lands; with no font engine installed the measure arrives from the host a tick later.
@@ -141,6 +141,10 @@ impl EditBoxState {
     /// `OnCursorChanged`. Bit 1, the highlight's, has no counterpart: the host paints the selection
     /// each frame.
     pub const DIRTY_CURSOR: u8 = 4;
+    /// Dirty bit 3, `OnTextChanged`'s `userInput` (`0x965460`): an insert or delete not from
+    /// `SetText` raises it, a landed `SetText` clears it, and the flush clears it after the script
+    /// (`0x9670cd`). So a re-seat, which does not touch it, reports `false` unless an edit waits.
+    pub const DIRTY_USER_INPUT: u8 = 8;
 
     /// A justify token's bit; `None` makes the caller raise the reference's
     /// `Usage: %s:SetJustifyH("justify")`.
@@ -545,7 +549,7 @@ impl EditBoxState {
         self.collapse();
         self.enforce_caps();
         self.reset_blink();
-        self.dirty |= Self::DIRTY_TEXT | Self::DIRTY_CURSOR; //
+        self.dirty |= Self::DIRTY_TEXT | Self::DIRTY_CURSOR | Self::DIRTY_USER_INPUT;
         EditOutcome {
             text_changed: true,
             inserted: true,
@@ -575,8 +579,10 @@ impl EditBoxState {
         if self.text == s {
             return false;
         }
-        // Clear all, then Insert, whose `numeric` gate refuses the whole string.
-        self.text = if self.numeric && !s.chars().all(|c| c.is_ascii_digit()) {
+        // Clear all, then Insert, whose `numeric` gate refuses the whole string before its write
+        // of bit 3 (`0x965a9c`), so a refused `SetText` leaves `userInput` as it stood.
+        let refused = self.numeric && !s.chars().all(|c| c.is_ascii_digit());
+        self.text = if refused {
             String::new()
         } else {
             s.to_string()
@@ -586,6 +592,9 @@ impl EditBoxState {
         self.enforce_caps();
         self.reset_blink();
         self.dirty |= Self::DIRTY_TEXT | Self::DIRTY_CURSOR;
+        if !refused {
+            self.dirty &= !Self::DIRTY_USER_INPUT;
+        }
         true
     }
 
@@ -894,7 +903,7 @@ impl EditBoxState {
         self.cursor = span.start;
         self.text.replace_range(span, "");
         self.collapse();
-        self.dirty |= Self::DIRTY_TEXT | Self::DIRTY_CURSOR; //
+        self.dirty |= Self::DIRTY_TEXT | Self::DIRTY_CURSOR | Self::DIRTY_USER_INPUT;
     }
 
     /// Collapse the selection onto the caret, as every delete does and as a screen losing the

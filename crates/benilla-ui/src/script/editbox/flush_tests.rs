@@ -509,3 +509,139 @@ fn on_cursor_changed_reports_the_first_row_at_plus_zero() {
     );
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
+
+/// [`logged_box`] logging `OnTextChanged`'s one argument, focused, its first-show fires drained.
+fn user_input_box(s: &mut UiScript) {
+    logged_box(s);
+    s.run(
+        r#"
+        E:SetScript("OnUpdate", nil)
+        E:SetScript("OnCursorChanged", nil)
+        E:SetScript("OnTextChanged", function(self, userInput)
+            table.insert(LOG, this:GetText() .. "=" .. tostring(userInput))
+        end)
+        EARLY:SetScript("OnUpdate", nil)
+        LATE:SetScript("OnUpdate", nil)
+        E:SetFocus()
+    "#,
+    )
+    .unwrap();
+    s.tick(0.016);
+    take_log(s);
+}
+
+/// Typing, the delete keys, cut and a Lua `Insert` pass 0 to the insert and delete (`0x965960`,
+/// `0x962f90`), so `OnTextChanged` gets a real `true`.
+#[test]
+fn on_text_changed_gets_true_for_keyed_edits_and_a_lua_insert() {
+    let mut s = script();
+    user_input_box(&mut s);
+    assert!(s.char_input("a"));
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "a=true", "typing");
+    s.run(r#"E:Insert("b")"#).unwrap();
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "ab=true", "a script's Insert");
+    s.editbox_action(EditAction::Delete {
+        unit: EditUnit::Char,
+        back: true,
+    });
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "a=true", "Backspace");
+    s.run("E:HighlightText(0, -1)").unwrap();
+    assert_eq!(s.editbox_cut().as_deref(), Some("a"));
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "=true", "cut");
+    assert!(s.paste("c"));
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "c=true", "paste");
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// `SetText` passes 1 to both (`0x9665ca`, `0x9665d5`), so `OnTextChanged` gets `false`, and the
+/// last writer before the flush wins: typing then `SetText` is `false`, `SetText` then typing
+/// `true`.
+#[test]
+fn on_text_changed_gets_false_for_set_text_and_the_last_writer_wins() {
+    let mut s = script();
+    user_input_box(&mut s);
+    s.run(r#"E:SetText("x")"#).unwrap();
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "x=false", "SetText");
+    assert!(s.char_input("y"));
+    s.run(r#"E:SetText("z")"#).unwrap();
+    s.tick(0.016);
+    assert_eq!(
+        take_log(&s),
+        "z=false",
+        "typing, then SetText, in one frame"
+    );
+    // A character's key-down flushes first, so the `SetText` reports on its own.
+    s.run(r#"E:SetText("p")"#).unwrap();
+    assert!(s.char_input("q"));
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "p=false pq=true", "SetText, then typing");
+    s.run(r#"E:SetText("r") E:Insert("s")"#).unwrap();
+    s.tick(0.016);
+    assert_eq!(
+        take_log(&s),
+        "rs=true",
+        "SetText, then Insert, in one frame"
+    );
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// A `SetText` the `numeric` gate refuses returns from the insert before its write of bit 3
+/// (`0x965a9c`), so the typing ahead of it still reads `true`.
+#[test]
+fn a_refused_numeric_set_text_leaves_user_input_as_it_stood() {
+    let mut s = script();
+    user_input_box(&mut s);
+    s.run("E:SetNumeric(true)").unwrap();
+    assert!(s.char_input("7"));
+    s.run(r#"E:SetText("x")"#).unwrap();
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "=true");
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// A re-seat raises bits 0-2 and not bit 3 (`0x963740`), so a resize fires `false`.
+#[test]
+fn a_resize_fires_on_text_changed_with_false() {
+    let mut s = script();
+    user_input_box(&mut s);
+    s.run("E:SetWidth(300)").unwrap();
+    s.resolve();
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "=false");
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// The ctor sets bit 0 alone (`0x966b70`), so the first show passes `false`, and the flush clears
+/// bit 3 after the script (`0x9670cd`): an `Insert` from the handler raises it and loses it, so its
+/// own `OnTextChanged`, next frame, reads `false`.
+#[test]
+fn the_first_show_is_false_and_the_flush_clears_the_bit_after_the_script() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        LOG = {}
+        E = CreateFrame("EditBox", "E")
+        E:SetAutoFocus(false)
+        E:SetScript("OnTextChanged", function(self, userInput)
+            table.insert(LOG, this:GetText() .. "=" .. tostring(userInput))
+            if not ADDED and this:GetText() ~= "" then ADDED = true this:Insert("!") end
+        end)
+    "#,
+    )
+    .unwrap();
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "=false", "the ctor's bit");
+    s.run(r#"E:Insert("a")"#).unwrap();
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "a=true", "the insert the script reports");
+    s.tick(0.016);
+    assert_eq!(take_log(&s), "a!=false", "the handler's own insert");
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}

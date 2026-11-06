@@ -13,7 +13,7 @@
 //! - Events: an edit, a caret move, a focus change or a re-seat of the text only raises the box's
 //!   dirty bits (`[E+0x31c]`); the box's flush, run after its own `OnUpdate` in the tick's walk
 //!   ([`update`]) and before a key or click acts on it, fires `OnCursorChanged` and then
-//!   `OnTextChanged`.
+//!   `OnTextChanged(userInput)`, true for an edit that did not come from `SetText`.
 //!
 //! Mouse, selection and caret live in [`interact`] and [`seam`]; the OS clipboard is host-side,
 //! [`paste`] in and `UiScript::editbox_copy` or `editbox_cut` out. The host's per-OS keymap sends
