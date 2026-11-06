@@ -88,6 +88,8 @@ pub(super) struct ChatProbes<'w, 's> {
     kinds: Query<'w, 's, &'static crate::net::NetEntity>,
     /// `/partytest raid` seats us as the leader, and the wire names a leader by guid.
     self_guid: Res<'w, crate::net::SelfGuid>,
+    /// Our own server spline, flying on a taxi: the emote gates read it live.
+    self_spline: Query<'w, 's, &'static crate::net::Spline, With<SelfPlayer>>,
     /// Our own auto-attack target, a gate of `DoEmote`'s local play.
     engaged: Query<'w, 's, (), (With<SelfPlayer>, With<crate::creature_anim::Engaged>)>,
     /// Our own held cast anim, the same gate's.
@@ -198,6 +200,7 @@ pub(super) fn drain_chat_input(
         world,
         stores,
         self_store,
+        self_spline,
         factions,
         reputations,
         guids,
@@ -700,6 +703,7 @@ pub(super) fn drain_chat_input(
                     .single()
                     .map_or((0, 0), |(_, m, _)| (m.stand_state, m.flags));
                 let swimming = flags & move_flags::SWIMMING != 0;
+                let flying_spline = self_spline.single().is_ok_and(|s| !s.grounded);
                 let emote_id = emotes.as_deref().and_then(|e| e.text_emote(text_id));
                 let posture = emote_id.and_then(|id| emotes.as_deref()?.posture_state(id));
                 // `DoEmote`'s gates: a possessed unit, then the `Emotes.dbc` row, then the emote
@@ -713,6 +717,7 @@ pub(super) fn drain_chat_input(
                         stand_state,
                         swimming,
                         flags,
+                        flying_spline,
                     ),
                     None => EmoteGate::Send,
                 };
@@ -774,7 +779,7 @@ pub(super) fn drain_chat_input(
                         stand_state: m.stand_state,
                         move_flags: m.flags,
                         vertical_speed: m.vertical_speed,
-                        flying: m.flying,
+                        flying: flying_spline,
                         loot_kneel: loot_kneel.as_deref().is_some_and(|k| k.0),
                         channeling: fields.unit_channel_spell() != 0,
                         casting: !casting.is_empty(),
@@ -1069,14 +1074,16 @@ pub(super) enum EmoteGate {
     Moving,
 }
 
-/// The emote eligibility check, the only reader of `Emotes.dbc` `EmoteFlags`, in the client's
-/// order; `DoEmote` calls it before building `CMSG_TEXT_EMOTE`. The `0x4000` arm tests movement,
-/// not `SWIMMING`, so it is no water gate.
+/// The emote eligibility check (`0x4f5410`), the only reader of `Emotes.dbc` `EmoteFlags`, in the
+/// client's order; `DoEmote` calls it before building `CMSG_TEXT_EMOTE`. The `0x4000` arm tests
+/// movement, not `SWIMMING`, so it is no water gate. `flying_spline` is a live spline with the
+/// flying flag `0x2000` and not the done flag `0x400`.
 pub(super) fn emote_send_eligible(
     emote_flags: u32,
     stand_state: u8,
     swimming: bool,
     move_flags: u32,
+    flying_spline: bool,
 ) -> EmoteGate {
     // `0x0400`: unconditional suppress.
     if emote_flags & 0x0400 != 0 {
@@ -1088,6 +1095,12 @@ pub(super) fn emote_send_eligible(
     }
     // `0x0080` while swimming.
     if emote_flags & 0x0080 != 0 && swimming {
+        return EmoteGate::Suppressed;
+    }
+    // `0x8000` on a flying spline (`0x4f5462`) or with the flying bit (`0x4f547d`).
+    if emote_flags & 0x8000 != 0
+        && (flying_spline || move_flags & crate::creature_anim::move_flags::FLYING != 0)
+    {
         return EmoteGate::Suppressed;
     }
     // `0x0200` ABSENT at SLEEP(3)/DEAD(7): the bit means "allowed while asleep/dead".
@@ -1116,10 +1129,11 @@ pub(super) fn emote_gate(
     stand_state: u8,
     swimming: bool,
     move_flags: u32,
+    flying_spline: bool,
 ) -> EmoteGate {
     match row_flags {
         Some(flags) if unit_flags & UNIT_FLAG_POSSESSED == 0 => {
-            emote_send_eligible(flags, stand_state, swimming, move_flags)
+            emote_send_eligible(flags, stand_state, swimming, move_flags, flying_spline)
         }
         _ => EmoteGate::Suppressed,
     }

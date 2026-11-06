@@ -1600,7 +1600,10 @@ fn the_standing_still_arm_reports_moving_and_ignores_swimming() {
 
     const STILL: u32 = 0x4000;
 
-    assert_eq!(emote_send_eligible(STILL, 0, false, 0), EmoteGate::Send);
+    assert_eq!(
+        emote_send_eligible(STILL, 0, false, 0, false),
+        EmoteGate::Send
+    );
     // Any INTEGRATED bit trips it: a direction, a turn or a fall.
     for f in [
         move_flags::FORWARD,
@@ -1610,31 +1613,66 @@ fn the_standing_still_arm_reports_moving_and_ignores_swimming() {
         move_flags::FALLING,
     ] {
         assert_eq!(
-            emote_send_eligible(STILL, 0, false, f),
+            emote_send_eligible(STILL, 0, false, f, false),
             EmoteGate::Moving,
             "move flag {f:#x}"
         );
     }
     // SWIMMING is not in `0x20ff`: a still swimmer is still.
     assert_eq!(
-        emote_send_eligible(STILL, 0, false, move_flags::SWIMMING),
+        emote_send_eligible(STILL, 0, false, move_flags::SWIMMING, false),
         EmoteGate::Send,
         "the mover-integration mask carries no SWIMMING"
     );
     // WALK_MODE and LEVITATING are mode bits, not motion.
     assert_eq!(
-        emote_send_eligible(STILL, 0, false, move_flags::WALK_MODE),
+        emote_send_eligible(STILL, 0, false, move_flags::WALK_MODE, false),
         EmoteGate::Send
     );
     // Without the flag, movement is irrelevant.
     assert_eq!(
-        emote_send_eligible(0, 0, false, move_flags::FORWARD),
+        emote_send_eligible(0, 0, false, move_flags::FORWARD, false),
         EmoteGate::Send
     );
     // An unconditionally suppressed emote (`0x0400`) never reaches this arm: it stays silent.
     assert_eq!(
-        emote_send_eligible(0x4400, 0, false, move_flags::FORWARD),
+        emote_send_eligible(0x4400, 0, false, move_flags::FORWARD, false),
         EmoteGate::Suppressed
+    );
+}
+
+/// `0x8000` refuses silently on the flying bit or a flying spline, ahead of the asleep arm, and the
+/// same emote on the ground passes; another row flies free.
+#[test]
+fn the_flight_arm_refuses_a_mount_special_in_the_air() {
+    use super::input::EmoteGate;
+    use crate::creature_anim::move_flags;
+
+    const NOT_IN_FLIGHT: u32 = 0x8000;
+    let gate = |flags, flags_word, spline| emote_send_eligible(flags, 0, false, flags_word, spline);
+    assert_eq!(
+        gate(NOT_IN_FLIGHT, move_flags::FLYING, false),
+        EmoteGate::Suppressed
+    );
+    assert_eq!(
+        gate(NOT_IN_FLIGHT, 0, true),
+        EmoteGate::Suppressed,
+        "a taxi"
+    );
+    assert_eq!(
+        gate(NOT_IN_FLIGHT, 0, false),
+        EmoteGate::Send,
+        "on the ground"
+    );
+    assert_eq!(
+        gate(0, move_flags::FLYING, true),
+        EmoteGate::Send,
+        "the bit gates"
+    );
+    assert_eq!(
+        emote_gate(Some(NOT_IN_FLIGHT), 0, 0, false, 0, true),
+        EmoteGate::Suppressed,
+        "through the row"
     );
 }
 
@@ -1667,21 +1705,24 @@ const LAUGH: u32 = 0x0980;
 /// silently; a missing `Emotes.dbc` row returns too.
 #[test]
 fn a_possessed_unit_or_a_missing_row_refuses_the_emote() {
-    assert_eq!(emote_gate(Some(0), 0, 0, false, 0), EmoteGate::Send);
+    assert_eq!(emote_gate(Some(0), 0, 0, false, 0, false), EmoteGate::Send);
     assert_eq!(
-        emote_gate(Some(0), 0x0100_0000, 0, false, 0),
+        emote_gate(Some(0), 0x0100_0000, 0, false, 0, false),
         EmoteGate::Suppressed
     );
     assert_eq!(
-        emote_gate(Some(0), 0x0100_0008, 0, false, 0),
+        emote_gate(Some(0), 0x0100_0008, 0, false, 0, false),
         EmoteGate::Suppressed
     );
     assert_eq!(
-        emote_gate(Some(0), 0x0200_0000, 0, false, 0),
+        emote_gate(Some(0), 0x0200_0000, 0, false, 0, false),
         EmoteGate::Send,
         "a neighbour bit"
     );
-    assert_eq!(emote_gate(None, 0, 0, false, 0), EmoteGate::Suppressed);
+    assert_eq!(
+        emote_gate(None, 0, 0, false, 0, false),
+        EmoteGate::Suppressed
+    );
 }
 
 /// A chat-only text emote has `EmoteID` 0, so `DoEmote` reads `Emotes.dbc` row 0 (flags 0), which
@@ -1696,25 +1737,36 @@ fn a_chat_only_emote_reads_row_zero_and_is_refused_dead_or_asleep() {
     let row = cat.emote_flags(cat.text_emote(smile).unwrap_or(0));
     assert_eq!(row, Some(0), "row 0, no flags");
     assert_eq!(
-        emote_gate(row, 0, 7, false, 0),
+        emote_gate(row, 0, 7, false, 0, false),
         EmoteGate::Suppressed,
         "dead"
     );
     assert_eq!(
-        emote_gate(row, 0, 3, false, 0),
+        emote_gate(row, 0, 3, false, 0, false),
         EmoteGate::Suppressed,
         "asleep"
     );
-    assert_eq!(emote_gate(row, 0, 0, false, 0), EmoteGate::Send, "standing");
-    assert_eq!(emote_gate(row, 0, 1, false, 0), EmoteGate::Send, "sitting");
+    assert_eq!(
+        emote_gate(row, 0, 0, false, 0, false),
+        EmoteGate::Send,
+        "standing"
+    );
+    assert_eq!(
+        emote_gate(row, 0, 1, false, 0, false),
+        EmoteGate::Send,
+        "sitting"
+    );
 }
 
 #[test]
 fn seated_stand_required_emotes_are_suppressed() {
     let _data = benilla_formats::wow_data_or_skip!();
-    assert_eq!(emote_send_eligible(BOW, 1, false, 0), EmoteGate::Suppressed); // 0x1 needs STAND
     assert_eq!(
-        emote_send_eligible(RUDE, 1, false, 0),
+        emote_send_eligible(BOW, 1, false, 0, false),
+        EmoteGate::Suppressed
+    ); // 0x1 needs STAND
+    assert_eq!(
+        emote_send_eligible(RUDE, 1, false, 0, false),
         EmoteGate::Suppressed
     );
 }
@@ -1722,20 +1774,35 @@ fn seated_stand_required_emotes_are_suppressed() {
 #[test]
 fn seated_non_stand_emotes_pass() {
     let _data = benilla_formats::wow_data_or_skip!();
-    assert_eq!(emote_send_eligible(APPLAUD, 1, false, 0), EmoteGate::Send);
-    assert_eq!(emote_send_eligible(CHEER, 1, false, 0), EmoteGate::Send);
-    assert_eq!(emote_send_eligible(LAUGH, 1, false, 0), EmoteGate::Send);
-    assert_eq!(emote_send_eligible(SALUTE, 1, false, 0), EmoteGate::Send);
+    assert_eq!(
+        emote_send_eligible(APPLAUD, 1, false, 0, false),
+        EmoteGate::Send
+    );
+    assert_eq!(
+        emote_send_eligible(CHEER, 1, false, 0, false),
+        EmoteGate::Send
+    );
+    assert_eq!(
+        emote_send_eligible(LAUGH, 1, false, 0, false),
+        EmoteGate::Send
+    );
+    assert_eq!(
+        emote_send_eligible(SALUTE, 1, false, 0, false),
+        EmoteGate::Send
+    );
 }
 
 #[test]
 fn swimming_suppresses_only_the_0x80_emotes() {
     let _data = benilla_formats::wow_data_or_skip!();
     assert_eq!(
-        emote_send_eligible(LAUGH, 0, true, 0),
+        emote_send_eligible(LAUGH, 0, true, 0, false),
         EmoteGate::Suppressed
     ); // 0x0980 has 0x80
-    assert_eq!(emote_send_eligible(CHEER, 0, true, 0), EmoteGate::Send);
+    assert_eq!(
+        emote_send_eligible(CHEER, 0, true, 0, false),
+        EmoteGate::Send
+    );
 }
 
 #[test]
@@ -1743,7 +1810,7 @@ fn standing_and_dry_everyone_is_eligible() {
     let _data = benilla_formats::wow_data_or_skip!();
     for flags in [BOW, RUDE, APPLAUD, CHEER, SALUTE, LAUGH] {
         assert_eq!(
-            emote_send_eligible(flags, 0, false, 0),
+            emote_send_eligible(flags, 0, false, 0, false),
             EmoteGate::Send,
             "flags {flags:#x}"
         );
@@ -1754,12 +1821,21 @@ fn standing_and_dry_everyone_is_eligible() {
 fn unconditional_and_sleep_dead_rules() {
     let _data = benilla_formats::wow_data_or_skip!();
     assert_eq!(
-        emote_send_eligible(0x0400, 0, false, 0),
+        emote_send_eligible(0x0400, 0, false, 0, false),
         EmoteGate::Suppressed
     ); // unconditional suppress
-    assert_eq!(emote_send_eligible(0, 3, false, 0), EmoteGate::Suppressed); // SLEEP, no allow bit
-    assert_eq!(emote_send_eligible(0, 7, false, 0), EmoteGate::Suppressed); // DEAD, no allow bit
-    assert_eq!(emote_send_eligible(0x0200, 3, false, 0), EmoteGate::Send); // 0x0200 allows it
+    assert_eq!(
+        emote_send_eligible(0, 3, false, 0, false),
+        EmoteGate::Suppressed
+    ); // SLEEP, no allow bit
+    assert_eq!(
+        emote_send_eligible(0, 7, false, 0, false),
+        EmoteGate::Suppressed
+    ); // DEAD, no allow bit
+    assert_eq!(
+        emote_send_eligible(0x0200, 3, false, 0, false),
+        EmoteGate::Send
+    ); // 0x0200 allows it
 }
 
 // ── received lines: the addon lane, the language header, the talk gesture ──────────────────
@@ -2251,7 +2327,7 @@ fn the_posture_emotes_carry_no_swim_suppression_flag() {
         }
         // A standing swimmer's posture emote passes the gate.
         assert_eq!(
-            super::input::emote_send_eligible(flags, 0, true, 0),
+            super::input::emote_send_eligible(flags, 0, true, 0, false),
             super::input::EmoteGate::Send,
             "posture emote {id} passes the emote gate while swimming"
         );
