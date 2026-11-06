@@ -1668,8 +1668,8 @@ impl UiScript {
         keyboard::char_input(&self.lua, text) || editbox::char_input(&self.lua, text)
     }
 
-    /// Paste host clipboard text into the focused EditBox as one edit: newlines survive only in a
-    /// `multiLine` box, other control characters drop. `true` if a box consumed it.
+    /// Paste host clipboard text into the focused EditBox a character at a time, through the path
+    /// typing takes. `true` if a box consumed it.
     pub fn paste(&mut self, text: &str) -> bool {
         editbox::paste(&self.lua, text)
     }
@@ -1706,6 +1706,17 @@ impl UiScript {
                         crate::widget::KindState::EditBox(eb) if eb.alt_arrow_key_mode)
             })
         })
+    }
+
+    /// Whether the OS window has the keyboard, fed each frame; the caret reads it and nothing
+    /// extract paints does, so the mutation count stands.
+    pub fn set_window_focused(&mut self, focused: bool) {
+        if self.model_ref().window_focused != focused {
+            let quiet = self.visual_epoch();
+            let mut model = self.model_mut();
+            model.window_focused = focused;
+            model.set_epoch(quiet);
+        }
     }
 
     /// Whether a visible EditBox holds keyboard focus, which gates the world's keys as the client's

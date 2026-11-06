@@ -1,9 +1,9 @@
 //! The `EditBox` runtime: keyboard focus, the text buffer, cursor and selection, editing, and key
 //! and char dispatch.
 //!
-//! - Focus: one owner ([`Model::focused_editbox`], the client's focus global). A left click
-//!   focuses and collapses the selection to the clicked byte (before `SetFocus`), so it never
-//!   selects all. An `autoFocus` box takes the focus on show when none is held and on the first
+//! - Focus: one owner ([`Model::focused_editbox`], the client's focus global). A press of any
+//!   button focuses and collapses the selection to the clicked byte (before `SetFocus`), so it
+//!   never selects all. An `autoFocus` box takes the focus on show when none is held and on the first
 //!   key, and a hidden box drops it ([`visibility_focus`]).
 //! - Routing: a focused box consumes every key and char and fires only its specialized scripts
 //!   (Enter, Escape, Space, Tab, TextChanged, TextSet, focus), never a generic `OnKeyDown`; an
@@ -13,14 +13,11 @@
 //! - Events: an edit, a caret move, a focus change or a re-seat of the text only raises the box's
 //!   dirty bits (`[E+0x31c]`); the box's flush, run after its own `OnUpdate` in the tick's walk
 //!   ([`update`]) and before a key or click acts on it, fires `OnCursorChanged` and then
-//!   `OnTextChanged`.
+//!   `OnTextChanged(userInput)`, true for an edit that did not come from `SetText`.
 //!
 //! Mouse, selection and caret live in [`interact`] and [`seam`]; the OS clipboard is host-side,
 //! [`paste`] in and `UiScript::editbox_copy` or `editbox_cut` out. The host's per-OS keymap sends
 //! editing keys as [`EditAction`]s ([`action`]).
-//!
-//! Deviation: word and edge deletes (`Delete{Word,Edge}`), which 1.12 does not have, exist because
-//! the host's OS-native chords (Option/Cmd+Backspace, Ctrl+Backspace/Delete) expect them.
 
 use mlua::{Lua, Table};
 
@@ -37,8 +34,8 @@ pub(super) const REG_EDITBOX_METHODS: &str = "__benilla_editbox_methods";
 // Public entry points
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/// A typed character: Ctrl+A (arriving as SOH) selects all, other C0 controls are consumed inert,
-/// printable text is inserted.
+/// A typed character: Ctrl+A (arriving as SOH) selects all, and the rest goes through the
+/// one-character path, which consumes other C0 controls inert.
 pub(super) fn char_input(lua: &Lua, text: &str) -> bool {
     let Some(h) = route(lua) else {
         return false;
@@ -48,25 +45,34 @@ pub(super) fn char_input(lua: &Lua, text: &str) -> bool {
     if text == "\u{1}" {
         // Ctrl+A selects all (the client's keydown case 0x41/0x61).
         highlight_text(lua, h, 0, -1);
-    } else if text.chars().any(|c| (c as u32) >= 0x20) {
-        // A typed `|` goes in as `||` (the reference pushes the literal `"||"`), so markup cannot
-        // be typed; the pair draws as one `|` and counts as one letter.
-        insert(lua, h, &text.replace('|', "||"), true);
+    } else {
+        text.chars().for_each(|c| insert_char(lua, h, c));
     }
     true
 }
 
-/// Paste host clipboard text into the focused box as one edit: C0 controls are dropped, except a
-/// newline in a `multiLine` box, and no `OnSpacePressed` fires.
+/// Paste host clipboard text into the focused box (`0x965ed0`): the one-character path, per
+/// character, so a handler sees each `OnChar` and `OnSpacePressed` and a numeric box tests each one.
 pub(super) fn paste(lua: &Lua, text: &str) -> bool {
     let Some(h) = route(lua) else {
         return false;
     };
     flush::flush(lua, h); // Ctrl+V is a key-down
-    if with_eb(lua, h, |eb| eb.paste(text)).is_some_and(|o| o.text_changed) {
-        sync_text_region(lua, h);
-    }
+    text.chars().for_each(|c| insert_char(lua, h, c));
     true
+}
+
+/// The one-character insert (`0x965ce0`), which typing and paste share: other controls and 0x7f
+/// drop, a tab goes in as four spaces, a newline only in a multi-line box, and `|` as `||`, so
+/// markup cannot be typed; the pair draws as one `|` and counts as one letter.
+fn insert_char(lua: &Lua, h: FrameHandle, c: char) {
+    match c {
+        '\t' => insert(lua, h, "    "),
+        '\n' if read_eb(lua, h, |eb| eb.multi_line).unwrap_or(false) => insert(lua, h, "\n"),
+        '|' => insert(lua, h, "||"),
+        c if c < ' ' || c == '\u{7f}' => {}
+        c => insert(lua, h, c.encode_utf8(&mut [0; 4])),
+    }
 }
 
 /// A named key: only Enter, Escape and Tab act, and a focused box consumes every key.
@@ -79,10 +85,12 @@ pub(super) fn key_input(lua: &Lua, key: &str) -> bool {
     flush::flush(lua, h);
     let id = frame_id_of(lua, h);
     match key.to_ascii_uppercase().as_str() {
-        // multiLine: Enter inserts a newline (no OnSpacePressed); else fire OnEnterPressed.
+        // A multi-line box with an empty `OnEnterPressed` slot inserts a newline; anything else
+        // runs the script (`0x9679ed`, `0x9679f6`).
         "ENTER" => {
-            if with_eb(lua, h, |eb| eb.multi_line).unwrap_or(false) {
-                insert(lua, h, "\n", false);
+            let multi_line = read_eb(lua, h, |eb| eb.multi_line).unwrap_or(false);
+            if multi_line && !event::has_widget_handler(lua, id, "OnEnterPressed") {
+                insert(lua, h, "\n");
             } else {
                 fire_script(lua, id, "OnEnterPressed");
             }
@@ -127,11 +135,17 @@ pub(super) fn action(lua: &Lua, a: EditAction) -> bool {
         },
         EditAction::Delete { unit, back } => match unit {
             EditUnit::Char => delete_dir(lua, h, !back),
-            EditUnit::Word => delete_span(lua, h, |eb| eb.word_boundary(!back)),
-            EditUnit::Edge => delete_span(lua, h, |eb| if back { 0 } else { eb.text.len() }),
+            EditUnit::Word => delete_word(lua, h, !back),
+            EditUnit::Edge => delete_edge(lua, h, back),
             // No keymap deletes by line or row.
             EditUnit::Line | EditUnit::Row => {}
         },
+        EditAction::DeleteToEdge { back } => {
+            if with_eb(lua, h, |eb| eb.delete_to_edge(back)) == Some(true) {
+                sync_text_region(lua, h);
+            }
+        }
+        EditAction::History { older } => history_step_key(lua, h, older),
         EditAction::SelectAll => highlight_text(lua, h, 0, -1),
     }
     true
@@ -189,12 +203,15 @@ fn topmost_autofocus(lua: &Lua) -> Option<FrameHandle> {
     None
 }
 
-/// `SetFocus`: needs effective visibility, a no-op when already focused; fires `OnEditFocusLost` on
-/// the old box, then `OnEditFocusGained`. Its store is the client's only focus grant and writes no
-/// selection, so no focus gain changes the selection.
+/// `SetFocus` (`0x965120`): needs effective visibility, a no-op when already focused. The old box's
+/// `OnEditFocusLost` runs while the focus global (`0xdce474`) still names it, then the global
+/// moves, then the new box's `OnEditFocusGained` runs. Its store is the client's only focus grant
+/// and writes no selection, so no focus gain changes the selection.
 fn set_focus_handle(lua: &Lua, h: FrameHandle) {
-    let (old_id, new_id) = {
-        let mut model = crate::script::model_mut_of(lua);
+    let old = {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
         let focusable = matches!(
             model.arena.frame(h),
             Some(f) if f.effective_visible && f.kind == FrameKind::EditBox
@@ -202,26 +219,26 @@ fn set_focus_handle(lua: &Lua, h: FrameHandle) {
         if !focusable || model.focused_editbox == Some(h) {
             return;
         }
-        let old = model.focused_editbox;
+        model.focused_editbox
+    };
+    if let Some(o) = old {
+        fire_script(lua, frame_id_of(lua, o), "OnEditFocusLost");
+        raise_cursor(&mut crate::script::model_mut_of(lua), o);
+    }
+    {
+        let mut model = crate::script::model_mut_of(lua);
         model.focused_editbox = Some(h);
-        if let Some(o) = old {
-            raise_cursor(&mut model, o);
-        }
-        raise_cursor(&mut model, h);
         // A focus gain ends history browsing (`SetText` keeps it for the chat parser's rewrite).
         if let Some(KindState::EditBox(eb)) = model.arena.frame_mut(h).map(|f| &mut f.kind_state) {
             eb.end_history_browse();
         }
-        (old.map(|o| model.frame_id(o)), model.frame_id(h))
-    };
-    if let Some(oid) = old_id {
-        fire_script(lua, oid, "OnEditFocusLost");
     }
-    fire_script(lua, new_id, "OnEditFocusGained");
+    fire_script(lua, frame_id_of(lua, h), "OnEditFocusGained");
+    raise_cursor(&mut crate::script::model_mut_of(lua), h);
 }
 
-/// The focus transition's caret write (`or 4`), on the box that gains the keyboard and on the one
-/// that loses it, whose next flush places or hides the caret.
+/// The focus transition's caret write (`or 4`), after the script, on the box that gains the
+/// keyboard and on the one that loses it, whose next flush places or hides the caret.
 fn raise_cursor(model: &mut Model, h: FrameHandle) {
     if let Some(KindState::EditBox(eb)) = model.arena.frame_mut(h).map(|f| &mut f.kind_state) {
         eb.dirty |= EditBoxState::DIRTY_CURSOR;
@@ -253,7 +270,7 @@ pub(super) fn visibility_focus(lua: &Lua, h: FrameHandle, visible: bool) {
     }
 }
 
-/// `ClearFocus`: only when this box holds the focus, then fires `OnEditFocusLost`.
+/// `ClearFocus` (`0x9651f0`): only when this box holds the focus, then fires `OnEditFocusLost`.
 fn clear_focus_handle(lua: &Lua, h: FrameHandle) {
     let id = {
         let mut model = crate::script::model_mut_of(lua);
@@ -261,19 +278,20 @@ fn clear_focus_handle(lua: &Lua, h: FrameHandle) {
             return;
         }
         model.focused_editbox = None;
-        raise_cursor(&mut model, h);
         model.frame_id(h)
     };
     fire_script(lua, id, "OnEditFocusLost");
+    raise_cursor(&mut crate::script::model_mut_of(lua), h);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // Editing primitives: mutate under one borrow, then sync and fire
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/// `Insert`: delete the selection, abort on a non-digit when `numeric`, splice, enforce caps, raise
-/// the dirty bits for the flush, and with `fire_space` fire one `OnSpacePressed` per space.
-fn insert(lua: &Lua, h: FrameHandle, ins: &str, fire_space: bool) {
+/// `Insert` (`0x965960`): delete the selection, abort on a non-digit when `numeric`, splice, enforce
+/// caps, raise the dirty bits for the flush, fire `OnChar`, and fire `OnSpacePressed` once if `ins`
+/// holds a space (`0x965ccd`).
+fn insert(lua: &Lua, h: FrameHandle, ins: &str) {
     let Some(out) = with_eb(lua, h, |eb| eb.insert(ins)) else {
         return; // not an EditBox
     };
@@ -294,10 +312,8 @@ fn insert(lua: &Lua, h: FrameHandle, ins: &str, fire_space: bool) {
     if let Err(e) = on_char {
         crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
-    if fire_space {
-        for _ in 0..out.spaces {
-            fire_script(lua, id, "OnSpacePressed");
-        }
+    if ins.contains(' ') {
+        fire_script(lua, id, "OnSpacePressed");
     }
 }
 
@@ -312,11 +328,17 @@ fn set_text(lua: &Lua, h: FrameHandle, s: &str) {
     }
 }
 
-/// Word and edge deletes (no 1.12 counterpart): the selection if any, else the cursor to
-/// `target_of(eb)`.
-fn delete_span(lua: &Lua, h: FrameHandle, target_of: impl FnOnce(&EditBoxState) -> usize) {
+/// Ctrl+Delete and Ctrl+Backspace: the selection if any, else a whitespace-split word.
+fn delete_word(lua: &Lua, h: FrameHandle, forward: bool) {
+    if with_eb(lua, h, |eb| eb.delete_word(forward)) == Some(true) {
+        sync_text_region(lua, h);
+    }
+}
+
+/// The macOS Cmd+Backspace and Cmd+Delete: the selection if any, else to the text's edge.
+fn delete_edge(lua: &Lua, h: FrameHandle, back: bool) {
     let changed = with_eb(lua, h, |eb| {
-        let t = target_of(eb);
+        let t = if back { 0 } else { eb.text.len() };
         eb.delete_to(t)
     });
     if changed == Some(true) {

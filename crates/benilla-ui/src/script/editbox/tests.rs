@@ -427,23 +427,37 @@ fn paste_into_an_unfocused_box_is_not_consumed() {
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "");
 }
 
+/// The one-character path (`0x965ce0`): a single-line box drops newlines and other controls and
+/// 0x7f, and a tab goes in as four spaces; a multi-line box keeps the newline.
 #[test]
 fn paste_strips_newlines_in_a_single_line_box_but_keeps_them_when_multiline() {
     let mut s = script();
     s.run(r#"E = CreateFrame("EditBox", "E"); E:SetFocus()"#)
         .unwrap();
-    // Single-line: newlines/tabs and other control chars are dropped; spaces survive.
-    assert!(s.paste("one\ntwo\tthree\r"));
+    assert!(s.paste("one\ntwo\tthree\r\u{7f}\u{1}"));
     assert_eq!(
         s.eval::<String>("return E:GetText()").unwrap(),
-        "onetwothree"
+        "onetwo    three"
     );
 
     let mut s = script();
     s.run(r#"E = CreateFrame("EditBox", "E"); E:SetMultiLine(true); E:SetFocus()"#)
         .unwrap();
-    assert!(s.paste("one\ntwo"));
+    assert!(s.paste("one\r\ntwo"));
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "one\ntwo");
+}
+
+/// A pasted `|` goes in as `||`, so a pasted escape stays literal text (`0x965ce0`).
+#[test]
+fn paste_writes_a_pipe_as_two() {
+    let mut s = script();
+    s.run(r#"E = CreateFrame("EditBox", "E"); E:SetFocus()"#)
+        .unwrap();
+    assert!(s.paste("|cffff0000x|r"));
+    assert_eq!(
+        s.eval::<String>("return E:GetText()").unwrap(),
+        "||cffff0000x||r"
+    );
 }
 
 #[test]
@@ -454,34 +468,60 @@ fn paste_honors_max_letters_and_numeric() {
     assert!(s.paste("abcdef"));
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "abc");
 
+    // Each character meets the numeric gate alone: non-digits drop and the digits go in.
     let mut s = script();
     s.run(r#"E = CreateFrame("EditBox", "E"); E:SetNumeric(true); E:SetFocus()"#)
         .unwrap();
-    assert!(s.paste("12a3"), "consumed even though the insert aborts");
-    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "");
+    assert!(s.paste("12a3"));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "123");
     assert!(s.paste("456"));
-    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "456");
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "123456");
 }
 
+/// Each pasted character is a full insert with its `OnChar` flag on, so `OnChar` fires per
+/// character, with `|` as `||` and a tab as its four spaces, and `OnSpacePressed` per space.
 #[test]
-fn paste_does_not_fire_onspacepressed() {
+fn paste_fires_on_char_and_on_space_pressed_per_character() {
     let mut s = script();
+    s.run(
+        r#"
+        spaces, chars = 0, {}
+        E = CreateFrame("EditBox", "E")
+        E:SetScript("OnSpacePressed", function() spaces = spaces + 1 end)
+        E:SetScript("OnChar", function(self, text) table.insert(chars, text) end)
+        E:SetFocus()
+    "#,
+    )
+    .unwrap();
+    assert!(s.paste("a b|\tc\n"));
+    assert_eq!(
+        s.eval::<String>("return E:GetText()").unwrap(),
+        "a b||    c"
+    );
+    assert_eq!(s.eval::<i64>("return spaces").unwrap(), 2);
+    assert_eq!(
+        s.eval::<String>("return table.concat(chars, ',')").unwrap(),
+        "a, ,b,||,    ,c"
+    );
+}
+
+/// The insert fires `OnSpacePressed` at most once however many spaces it holds (`0x965ccd`), and a
+/// typed character takes the same path as a pasted one.
+#[test]
+fn a_lua_insert_with_two_spaces_fires_on_space_pressed_once() {
+    let s = script();
     s.run(
         r#"
         spaces = 0
         E = CreateFrame("EditBox", "E")
         E:SetScript("OnSpacePressed", function() spaces = spaces + 1 end)
-        E:SetFocus()
+        E:Insert("a b c")
     "#,
     )
     .unwrap();
-    assert!(s.paste("a b c"));
-    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "a b c");
-    assert_eq!(
-        s.eval::<i64>("return spaces").unwrap(),
-        0,
-        "a paste is not a typed space"
-    );
+    assert_eq!(s.eval::<i64>("return spaces").unwrap(), 1);
+    s.run(r#"E:Insert("abc")"#).unwrap();
+    assert_eq!(s.eval::<i64>("return spaces").unwrap(), 1);
 }
 
 #[test]
@@ -550,6 +590,31 @@ fn multiline_enter_inserts_a_newline_without_onspacepressed() {
     assert!(s.key_input("ENTER"));
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "\n");
     assert_eq!(s.eval::<i64>("return spaces").unwrap(), 0);
+}
+
+/// A multi-line box with an `OnEnterPressed` script runs it and inserts nothing, and clearing the
+/// slot brings the newline back (`0x9679ed`, `0x9679f6`).
+#[test]
+fn multiline_enter_with_a_script_runs_it_and_inserts_nothing() {
+    let mut s = script();
+    s.run(
+        r#"
+        enters = 0
+        E = CreateFrame("EditBox", "E")
+        E:SetMultiLine(true)
+        E:SetScript("OnEnterPressed", function() enters = enters + 1 end)
+        E:SetFocus()
+    "#,
+    )
+    .unwrap();
+    assert!(s.key_input("ENTER"));
+    assert_eq!(s.eval::<i64>("return enters").unwrap(), 1);
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "");
+
+    s.run(r#"E:SetScript("OnEnterPressed", nil)"#).unwrap();
+    assert!(s.key_input("ENTER"));
+    assert_eq!(s.eval::<i64>("return enters").unwrap(), 1);
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "\n");
 }
 
 /// The method table has `SetAltArrowKeyMode`/`GetAltArrowKeyMode` at 46/47 and no
@@ -1029,7 +1094,28 @@ fn click_places_cursor_and_drag_selects() {
     s.mouse_button(124.9, 60.0, "LeftButton", false);
 }
 
-/// Ctrl+arrows jump word boundaries (alnum runs); Ctrl+Shift extends the selection there.
+/// The mouse-down (`0x967cd0`) reads no button: a right or middle press places the caret and takes
+/// the keyboard, and any release ends the drag it starts.
+#[test]
+fn every_mouse_button_places_the_caret_and_focuses() {
+    for button in ["RightButton", "MiddleButton", "Button4"] {
+        let mut s = script();
+        seam_rig(&mut s, "abcdefg");
+        s.run("E:ClearFocus()").unwrap();
+        s.mouse_button(114.0, 60.0, button, true);
+        assert_eq!(s.focused_editbox_name().as_deref(), Some("E"), "{button}");
+        let caret = |s: &UiScript| s.eval::<i64>("return E:GetCursorPosition()").unwrap();
+        assert_eq!(caret(&s), 2, "{button}");
+        s.mouse_move(128.0, 60.0);
+        assert_eq!(caret(&s), 4, "{button} drags");
+        s.mouse_button(128.0, 60.0, button, false);
+        s.mouse_move(135.0, 60.0);
+        assert_eq!(caret(&s), 4, "{button}'s release ends the drag");
+    }
+}
+
+/// Ctrl+Right lands at the next word's start and Ctrl+Left at a word's start (`0x963e40`,
+/// `0x964050`); Ctrl+Shift extends the selection there.
 #[test]
 fn ctrl_arrows_jump_words() {
     let mut s = script();
@@ -1046,8 +1132,8 @@ fn ctrl_arrows_jump_words() {
     });
     assert_eq!(
         s.focused_editbox_text_ui().unwrap().caret_x,
-        21.0,
-        "end of 'abc'"
+        28.0,
+        "start of 'def'"
     );
     s.editbox_action(EditAction::Move {
         unit: EditUnit::Word,
@@ -1106,9 +1192,9 @@ fn copy_cut_and_the_password_placeholder() {
     );
 }
 
-/// Word and edge deletes, the host's OS-native chords with no 1.12 counterpart: a word delete
-/// takes the adjacent alphanumeric run and the separators toward it, an edge delete clears to the
-/// line's end, and either deletes a live selection instead.
+/// Ctrl+Backspace and Ctrl+Delete (`0x963b60`, `0x963a10`) take the whitespace next to the caret,
+/// then the run past it; an edge delete clears to the line's end; either deletes a live selection
+/// instead, and no more.
 #[test]
 fn word_and_edge_deletes() {
     let mut s = script();
@@ -1118,7 +1204,7 @@ fn word_and_edge_deletes() {
         back: true,
     });
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "abc def ");
-    // Again: the space + "def" go together (back-walk skips separators first).
+    // Again: the space + "def" go together (back-walk skips whitespace first).
     s.editbox_action(EditAction::Delete {
         unit: EditUnit::Word,
         back: true,
@@ -1163,6 +1249,97 @@ fn word_and_edge_deletes() {
     }));
     s.tick(0.0);
     assert_eq!(s.eval::<i64>("return n").unwrap(), 0);
+}
+
+/// Ctrl+U and Ctrl+K delete from the caret to the edge past a selection, which only clears
+/// (`0x963c60`, `0x963c90`, `0x963950`), where the macOS edge delete takes the selection.
+#[test]
+fn ctrl_u_and_ctrl_k_ignore_the_selection() {
+    let mut s = script();
+    seam_rig(&mut s, "");
+    s.run(r#"E:SetText("hello world"); E:SetCursorPosition(5); E:HighlightText(0, 3)"#)
+        .unwrap();
+    assert!(s.editbox_action(EditAction::DeleteToEdge { back: true }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), " world");
+    assert_eq!(s.eval::<i64>("return E:GetCursorPosition()").unwrap(), 0);
+    assert!(
+        s.char_input("x"),
+        "the selection is gone: nothing is replaced"
+    );
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "x world");
+
+    s.run(r#"E:SetText("hello world"); E:SetCursorPosition(5); E:HighlightText(7, 9)"#)
+        .unwrap();
+    assert!(s.editbox_action(EditAction::DeleteToEdge { back: false }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "hello");
+    assert_eq!(s.eval::<i64>("return E:GetCursorPosition()").unwrap(), 5);
+
+    // A link is one atomic step of a walk that counts letters, so Ctrl+U takes it whole.
+    let link = "|cff0070dd|Hitem:1|h[Two Words]|h|r";
+    s.run(&format!(
+        r#"E:SetText("a{link}b"); E:SetCursorPosition({})"#,
+        1 + link.len()
+    ))
+    .unwrap();
+    assert!(s.editbox_action(EditAction::DeleteToEdge { back: true }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "b");
+}
+
+/// With no letter that way Ctrl+K runs nothing, so a selection survives and no event fires.
+#[test]
+fn ctrl_k_at_the_end_keeps_the_selection() {
+    let mut s = script();
+    seam_rig(&mut s, "abc");
+    s.run("E:HighlightText(0, 2)").unwrap();
+    s.tick(0.0);
+    s.run("n = 0; E:SetScript('OnTextChanged', function() n = n + 1 end)")
+        .unwrap();
+    assert!(s.editbox_action(EditAction::DeleteToEdge { back: false }));
+    s.tick(0.0);
+    assert_eq!(s.eval::<i64>("return n").unwrap(), 0);
+    assert!(s.char_input("x"), "the selection stands");
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "xc");
+}
+
+/// Ctrl+P and Ctrl+N are the history steps UP and DOWN take, without UP's fork on `multiLine`.
+#[test]
+fn ctrl_p_and_ctrl_n_recall_history_in_a_multi_line_box() {
+    let mut s = script();
+    s.run(
+        r#"
+        E = CreateFrame("EditBox", "E")
+        E:SetMultiLine(true)
+        E:SetHistoryLines(4)
+        E:AddHistoryLine("old")
+        E:AddHistoryLine("new")
+        E:SetFocus()
+    "#,
+    )
+    .unwrap();
+    assert!(s.editbox_action(EditAction::History { older: true }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "new");
+    assert!(s.editbox_action(EditAction::History { older: true }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "old");
+    assert!(s.editbox_action(EditAction::History { older: false }));
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "new");
+}
+
+/// Ctrl+D is Delete, a selection first; Ctrl+W is Ctrl+Backspace on `foo bar`.
+#[test]
+fn ctrl_d_and_ctrl_w_are_their_keys() {
+    let mut s = script();
+    seam_rig(&mut s, "foo bar");
+    s.editbox_action(EditAction::Delete {
+        unit: EditUnit::Word,
+        back: true,
+    });
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "foo ");
+    s.run("E:SetCursorPosition(0)").unwrap();
+    s.editbox_action(EditAction::Delete {
+        unit: EditUnit::Char,
+        back: false,
+    });
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "oo ");
 }
 
 /// SelectAll, the reference's Ctrl+A (`HighlightText(0, -1)`): the whole text selected, the caret

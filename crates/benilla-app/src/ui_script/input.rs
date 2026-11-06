@@ -130,6 +130,7 @@ pub(super) fn feed_ui_input(
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
     let alt = keys.pressed(KeyCode::AltLeft) || keys.pressed(KeyCode::AltRight);
     script.set_modifiers(shift, ctrl, alt);
+    script.set_window_focused(window.focused);
     // ── Mouse ── A cursor off the window skips only the mouse feed.
     // The headless hover probe's aim stands in for a missing cursor, so `PointerOverUi` rises and
     // falls over a panel in an automated run as it does for a person; a real pointer always wins.

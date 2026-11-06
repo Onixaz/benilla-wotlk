@@ -3,7 +3,7 @@
 
 use mlua::{Lua, Value};
 
-use super::{event, fire_script, frame_id_of, read_eb, relayout, with_eb, CARET_WIDTH};
+use super::{event, frame_id_of, read_eb, relayout, with_eb, CARET_WIDTH};
 use crate::widget::{EditBoxState, FrameHandle};
 
 /// The box's update after its Lua `OnUpdate`: the flush, then the caret blink. The walk runs it for
@@ -13,41 +13,59 @@ pub(in crate::script) fn update(lua: &Lua, h: FrameHandle, dt: f32) {
     blink(lua, h, dt);
 }
 
-/// The flush. It samples bit 0 at entry; on bit 0 the relayout runs and the bit clears; on bit 2
-/// the caret leg runs, with the blink and `OnCursorChanged`, and only then does the bit clear;
-/// last, `OnTextChanged` fires if bit 0 was set at entry. So a handler's edit raises bits for the
-/// next flush, a frame later, and never loops inside one: an `OnTextChanged` that sets its own text
-/// fires once more, next frame, and a caret moved by `OnCursorChanged` is cleared with the bit.
-/// Besides the walk, the box's `OnKeyDown` and `OnMouseDown` run it before the key or click acts.
+/// The flush (`0x967020`). It samples bit 0 at entry; on bit 0 the relayout runs and the bit clears;
+/// on bit 2 of the word as the relayout left it, the bit clears and then the caret leg runs, with
+/// the blink and `OnCursorChanged`; last, `OnTextChanged` fires if bit 0 was set at entry, and bit
+/// 3 clears after it. So a handler's edit raises bits for the next flush, a frame later, and never
+/// loops inside one: an `OnTextChanged` that sets its own text fires once more, next frame, and an
+/// `OnCursorChanged` that moves the caret reports the new place next frame. Besides the walk, the
+/// box's `OnKeyDown` and `OnMouseDown` run it before the key or click acts.
 ///
 /// Deviation: the flush's promotion of bit 2 to bit 0 when the caret has left the display window,
 /// with its IME legs, and the IME writer's `or 6` are not modelled: the promotion only relayouts,
 /// which re-windows a single-line box whose window benilla keeps host-side, and fires nothing,
 /// since bit 0 is sampled before it; benilla has no IME composition.
 pub(super) fn flush(lua: &Lua, h: FrameHandle) {
-    let Some((entry, owed)) = read_eb(lua, h, |eb| (eb.dirty, eb.relayout_owed)) else {
+    let Some((mut dirty, owed, caret_owed)) =
+        read_eb(lua, h, |eb| (eb.dirty, eb.relayout_owed, eb.caret_owed))
+    else {
         return;
     };
-    let text_changed = entry & EditBoxState::DIRTY_TEXT != 0;
+    let text_changed = dirty & EditBoxState::DIRTY_TEXT != 0;
     if text_changed || owed {
         let done = relayout::relayout(lua, h);
-        with_eb(lua, h, |eb| {
+        let left = with_eb(lua, h, |eb| {
             eb.dirty &= !EditBoxState::DIRTY_TEXT;
             eb.relayout_owed = !done;
+            eb.dirty
         });
+        dirty = left.unwrap_or(0);
     }
-    if entry & EditBoxState::DIRTY_CURSOR != 0 && caret(lua, h) {
+    if dirty & EditBoxState::DIRTY_CURSOR != 0 || caret_owed {
         with_eb(lua, h, |eb| eb.dirty &= !EditBoxState::DIRTY_CURSOR);
+        let placed = caret(lua, h);
+        with_eb(lua, h, |eb| eb.caret_owed = !placed);
     }
     if text_changed {
-        fire_script(lua, frame_id_of(lua, h), "OnTextChanged");
+        text_changed_script(lua, h);
+        with_eb(lua, h, |eb| eb.dirty &= !EditBoxState::DIRTY_USER_INPUT);
+    }
+}
+
+/// `OnTextChanged(userInput)` (`0x965460`): bit 3 as read when the script runs, a real boolean.
+fn text_changed_script(lua: &Lua, h: FrameHandle) {
+    let user_input = read_eb(lua, h, |eb| eb.dirty & EditBoxState::DIRTY_USER_INPUT != 0);
+    let id = frame_id_of(lua, h);
+    let args = vec![Value::Boolean(user_input.unwrap_or(false))];
+    if let Err(e) = event::fire_widget_handler(lua, id, "OnTextChanged", args) {
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
 }
 
 /// The caret leg: it restarts the blink, fires `OnCursorChanged`, then shows the caret in the
 /// focused box and hides it elsewhere. So a box that takes the keyboard, whose focus change raises
-/// bit 2, starts its caret solid. `false` while the advance table is pending, for the next flush to
-/// retry.
+/// bit 2, starts its caret solid. `false` while the advance table is pending, and
+/// `EditBoxState::caret_owed` has the next flush retry.
 fn caret(lua: &Lua, h: FrameHandle) -> bool {
     with_eb(lua, h, |eb| eb.blink_accum = 0.0);
     let placed = cursor_changed(lua, h);
@@ -122,30 +140,41 @@ fn cursor_changed(lua: &Lua, h: FrameHandle) -> bool {
     true
 }
 
-/// The caret blink: past the period (0.5 s by default) the focused box's caret toggles and the
-/// accumulator resets; only a period of exactly 0.0 keeps the caret solid.
+/// The caret blink (`0x967670`): without window focus (`0x682df0`) a shown caret hides and the
+/// accumulator stands, so the blink resumes from it when the focus returns. Past the period (0.5 s
+/// by default) the focused box's caret toggles and the accumulator resets; only a period of exactly
+/// 0.0 keeps the caret solid.
 ///
 /// Deviation: not gated on the cursor lying inside the scroll window, which benilla's host keeps
 /// around the caret.
 fn blink(lua: &Lua, h: FrameHandle, dt: f32) {
-    let focused = lua
-        .app_data_ref::<crate::script::ModelCell>()
-        .expect("model app_data")
-        .focused_editbox
-        == Some(h);
-    if !focused {
+    let (window, focused) = {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
+        (model.window_focused, model.focused_editbox == Some(h))
+    };
+    if window && !focused {
+        return;
+    }
+    let Some((shown, period)) = read_eb(lua, h, |eb| (eb.caret_shown, eb.blink_period)) else {
+        return;
+    };
+    if if window { period == 0.0 } else { !shown } {
         return;
     }
     // The blink is no extract input (the host draws the caret from the text-UI seam), so the
     // mutation count stands.
     let quiet = crate::script::model_mut_of(lua).epoch();
     with_eb(lua, h, |eb| {
-        if eb.blink_period != 0.0 {
-            eb.blink_accum += dt;
-            if eb.blink_accum > eb.blink_period {
-                eb.caret_shown = !eb.caret_shown;
-                eb.blink_accum = 0.0;
-            }
+        if !window {
+            eb.caret_shown = false;
+            return;
+        }
+        eb.blink_accum += dt;
+        if eb.blink_accum > eb.blink_period {
+            eb.caret_shown = !eb.caret_shown;
+            eb.blink_accum = 0.0;
         }
     });
     crate::script::model_mut_of(lua).set_epoch(quiet);

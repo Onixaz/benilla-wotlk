@@ -204,6 +204,117 @@ fn a_multi_step_shift_move_extends_step_by_step() {
     assert_eq!((eb.cursor, eb.sel_start, eb.sel_end), (10, 8, 10));
 }
 
+/// The caret after one Ctrl+Right (`back = false`) or Ctrl+Left from `cursor`.
+fn word_move(text: &str, cursor: usize, back: bool) -> usize {
+    let mut eb = at(text, cursor);
+    mv(&mut eb, EditUnit::Word, back, false);
+    eb.cursor
+}
+
+/// The text and caret left by one Ctrl+Delete (`back = false`) or Ctrl+Backspace from `cursor`.
+fn word_delete(text: &str, cursor: usize, back: bool) -> (String, usize) {
+    let mut eb = at(text, cursor);
+    eb.apply(EditAction::Delete {
+        unit: EditUnit::Word,
+        back,
+    });
+    (eb.text, eb.cursor)
+}
+
+/// Ctrl+Right steps while on no whitespace, then while on whitespace, so it lands at the next
+/// word's start (`0x963e40`); Ctrl+Left mirrors it, whitespace first (`0x964050`).
+#[test]
+fn word_moves_split_on_whitespace_and_land_on_word_starts() {
+    assert_eq!(word_move("abc def", 0, false), 4, "before def");
+    assert_eq!(word_move("abc def", 4, false), 7, "the end ends the walk");
+    assert_eq!(word_move("abc def", 7, true), 4, "before def");
+    assert_eq!(word_move("abc def", 4, true), 0, "whitespace, then abc");
+    // Punctuation is part of a word.
+    assert_eq!(word_move("foo-bar baz", 0, false), 8);
+    assert_eq!(word_move("one two-three", 13, true), 4);
+    assert_eq!(word_move("/w name hi", 0, false), 3);
+    // Leading and trailing whitespace.
+    assert_eq!(
+        word_move("  abc", 0, false),
+        2,
+        "the first loop stops at once"
+    );
+    assert_eq!(word_move("abc  ", 5, true), 0, "whitespace, then the word");
+    assert_eq!(
+        word_move("abc  ", 0, false),
+        5,
+        "trailing whitespace is crossed"
+    );
+    assert_eq!(word_move("   ", 3, true), 0);
+}
+
+/// Ctrl+Delete takes the whitespace first and then the word, the order Ctrl+Right does not use
+/// (`0x963a10`); Ctrl+Backspace takes the whitespace behind the caret, then the word (`0x963b60`).
+#[test]
+fn word_deletes_take_the_whitespace_then_the_word() {
+    assert_eq!(word_delete("abc def", 3, false), ("abc".into(), 3));
+    assert_eq!(word_delete("abc def", 0, false), (" def".into(), 0));
+    assert_eq!(word_delete("foo-bar baz", 0, false), (" baz".into(), 0));
+    assert_eq!(word_delete("foo bar", 7, true), ("foo ".into(), 4));
+    assert_eq!(word_delete("foo ", 4, true), ("".into(), 0));
+    assert_eq!(word_delete("foo-bar", 7, true), ("".into(), 0));
+    assert_eq!(word_delete("  ", 2, true), ("".into(), 0));
+    assert_eq!(word_delete("  ", 0, false), ("".into(), 0));
+}
+
+/// The two deletes take a selection and stop there; the loops do not run after it.
+#[test]
+fn a_word_delete_stops_at_the_selection() {
+    let mut eb = at("hello world", 5);
+    eb.highlight_text(2, 5);
+    eb.apply(EditAction::Delete {
+        unit: EditUnit::Word,
+        back: false,
+    });
+    assert_eq!((eb.text.as_str(), eb.cursor), ("he world", 2));
+}
+
+/// A link is one step of each loop, its inner space no word break: the walk reads the link's `|`
+/// and crosses it whole.
+#[test]
+fn a_link_is_one_step_of_the_word_keys() {
+    let link = "|cff0070dd|Hitem:1|h[Two Words]|h|r";
+    let text = format!("a {link} b");
+    assert_eq!(
+        word_move(&text, 2, false),
+        2 + link.len() + 1,
+        "over the link"
+    );
+    assert_eq!(
+        word_move(&text, 2 + link.len() + 1, true),
+        2,
+        "back over it"
+    );
+    assert_eq!(
+        word_delete(&text, 2, false),
+        ("a  b".into(), 2),
+        "the link goes whole"
+    );
+}
+
+/// Non-ASCII whitespace: the forward walk and both deletes decode a character, so U+3000 and U+00A0
+/// split words. Ctrl+Left decodes the one byte before the caret (`0x96407f`), so it crosses them
+/// as word characters. U+0085 is not in the CRT's table.
+#[test]
+fn non_ascii_whitespace_splits_every_word_key_but_ctrl_left() {
+    let ideographic = "ab\u{3000}cd";
+    assert_eq!(word_move(ideographic, 0, false), 5, "before cd");
+    assert_eq!(
+        word_move(ideographic, 7, true),
+        0,
+        "the byte before the caret is no whitespace"
+    );
+    assert_eq!(word_delete(ideographic, 5, true), ("cd".into(), 0));
+    assert_eq!(word_delete(ideographic, 2, false), ("ab".into(), 2));
+    assert_eq!(word_move("ab\u{a0}cd", 0, false), 4);
+    assert_eq!(word_move("ab\u{85}cd", 0, false), 6, "no space to the CRT");
+}
+
 /// Left at the text's start does not step (the reference tests `cursor > 0`), so neither the caret
 /// bit nor the blink's restart comes; a real step brings both.
 #[test]

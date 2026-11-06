@@ -589,16 +589,14 @@ impl UiScript {
                 }
             }
         }
-        // A left press in an EditBox places the cursor, starts a selection drag and focuses it
-        // whatever its `autoFocus`, before any `OnClick`.
-        if button == "LeftButton" {
-            if down {
-                if let Some(id) = hit_id {
-                    editbox::click(&self.lua, id, x, y);
-                }
-            } else {
-                editbox::drag_end(&self.lua);
+        // A press of any button in an EditBox places the cursor, starts a selection drag and focuses
+        // it whatever its `autoFocus`, before any `OnClick`; any release ends the drag.
+        if down {
+            if let Some(id) = hit_id {
+                editbox::click(&self.lua, id, x, y);
             }
+        } else {
+            editbox::drag_end(&self.lua);
         }
         // A gesture this press replaced gets its `OnDragStop` first: its handler's
         // `StopMovingOrSizing` frees the engine's one move slot.

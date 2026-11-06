@@ -75,7 +75,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             let s = crate::script::binding_abi::text_arg(lua, s)?;
             let h = frame_handle_of(lua, &this)?;
             if let Some(s) = s {
-                insert(lua, h, &s, true);
+                insert(lua, h, &s);
             }
             Ok(())
         })?,

@@ -1,8 +1,9 @@
 //! The per-OS text-editing keymap: a keypress and modifiers to an engine [`EditAction`] or a
-//! host-side clipboard operation. The Windows/Linux table is the reference's key handler:
-//! Ctrl+arrows by word, Ctrl+HOME/END to the text's edge, Ctrl+A/C/X/V, Ctrl/Shift+Insert,
-//! Shift+Delete. Deviation: macOS takes the Cocoa text-field chords and Ctrl+Backspace/Delete
-//! delete a word, because editing follows each OS's own text fields.
+//! host-side clipboard operation. The Windows/Linux table is the reference's key handler
+//! (`0x967760`): Ctrl+arrows by word, Ctrl+HOME/END to the text's edge, Ctrl+Backspace/Delete
+//! delete a word, Ctrl with A, B, C, D, F, K, N, P, U, V, W and X, Ctrl/Shift+Insert, Shift+Delete.
+//! Deviation: macOS takes the Cocoa text-field chords, because editing follows each OS's own text
+//! fields.
 
 use benilla_ui::script::{EditAction, EditUnit};
 use bevy::input::keyboard::KeyCode;
@@ -34,9 +35,9 @@ pub(crate) enum Chord {
 /// What `key`, which the layout names `name`, means under `m`; `None` falls through to character
 /// input.
 pub(crate) fn chord(key: KeyCode, name: Option<KeyName>, m: Mods, mac: bool) -> Option<Chord> {
-    // Ctrl (Cmd on a Mac) with the keys the layout names A, C, X and V: the reference's handler
-    // switches on the key's code, the name its bindings use, so on AZERTY select-all is the key
-    // labelled A. On the PC `!m.alt` excludes AltGr, which arrives as Ctrl+Alt and types letters on
+    // Ctrl (Cmd on a Mac) with the letters the layout names: the reference's handler switches on
+    // the key's code, the name its bindings use, so on AZERTY select-all is the key labelled A. On
+    // the PC `!m.alt` excludes AltGr, which arrives as Ctrl+Alt and types letters on
     // European layouts (Polish AltGr+A is `ą`); must agree with the char-input branch in
     // `input.rs`.
     let held = if mac { m.sup } else { m.ctrl && !m.alt };
@@ -46,6 +47,11 @@ pub(crate) fn chord(key: KeyCode, name: Option<KeyName>, m: Mods, mac: bool) -> 
             'C' => return Some(Chord::Copy),
             'X' => return Some(Chord::Cut),
             'V' => return Some(Chord::Paste),
+            _ if !mac => {
+                if let Some(action) = letter_pc(letter, m.shift) {
+                    return Some(Chord::Edit(action));
+                }
+            }
             _ => {}
         }
     }
@@ -54,6 +60,29 @@ pub(crate) fn chord(key: KeyCode, name: Option<KeyName>, m: Mods, mac: bool) -> 
     } else {
         chord_pc(key, m)
     }
+}
+
+/// Windows/Linux, the handler's other Ctrl letters; Shift extends only on B and F, which step as
+/// LEFT and RIGHT do. Ctrl+U and Ctrl+K are not the selection-first edge delete, and Ctrl+P and
+/// Ctrl+N recall history whatever `multiLine` says.
+fn letter_pc(letter: char, shift: bool) -> Option<EditAction> {
+    let step = |back| EditAction::Move {
+        unit: EditUnit::Char,
+        back,
+        extend: shift,
+    };
+    let delete = |unit, back| EditAction::Delete { unit, back };
+    Some(match letter {
+        'B' => step(true),
+        'F' => step(false),
+        'D' => delete(EditUnit::Char, false),
+        'W' => delete(EditUnit::Word, true),
+        'U' => EditAction::DeleteToEdge { back: true },
+        'K' => EditAction::DeleteToEdge { back: false },
+        'P' => EditAction::History { older: true },
+        'N' => EditAction::History { older: false },
+        _ => return None,
+    })
 }
 
 /// macOS, the Cocoa text-field chords: Option+Left/Right is a word and Cmd+Left/Right the line's
@@ -118,7 +147,7 @@ fn chord_mac(key: KeyCode, m: Mods) -> Option<Chord> {
     }
 }
 
-/// Windows/Linux: the reference's chords plus the Ctrl word deletes.
+/// Windows/Linux, the reference's chords.
 fn chord_pc(key: KeyCode, m: Mods) -> Option<Chord> {
     use EditUnit::{Char, Edge, Line, Row, Word};
     let mv = |unit, back| {
@@ -144,7 +173,6 @@ fn chord_pc(key: KeyCode, m: Mods) -> Option<Chord> {
         KeyCode::ArrowUp | KeyCode::ArrowDown if !m.sup => mv(Row, key == KeyCode::ArrowUp),
         // HOME/END stop at a newline; Ctrl goes to the text's edge.
         KeyCode::Home | KeyCode::End => mv(if m.ctrl { Edge } else { Line }, key == KeyCode::Home),
-        // Shift+Delete cuts, as the reference does.
         KeyCode::Backspace => {
             if m.ctrl {
                 del(Word, true)
@@ -152,8 +180,9 @@ fn chord_pc(key: KeyCode, m: Mods) -> Option<Chord> {
                 del(Char, true)
             }
         }
+        // The DELETE arm tests Shift first, so Ctrl+Shift+Delete cuts too.
         KeyCode::Delete => {
-            if m.shift && !m.ctrl {
+            if m.shift {
                 Some(Chord::Cut)
             } else if m.ctrl {
                 del(Word, false)
@@ -430,6 +459,110 @@ mod tests {
             Some(Chord::Cut)
         );
         assert_eq!(chord(KeyCode::KeyA, us(KeyCode::KeyA), SUP, false), None);
+    }
+
+    /// The handler's other Ctrl letters (`0x967760`): one each, Shift extending only B and F.
+    #[test]
+    fn pc_ctrl_letters() {
+        use EditAction::*;
+        use EditUnit::{Char, Word};
+        const CTRL_SHIFT: Mods = Mods {
+            shift: true,
+            ..CTRL
+        };
+        let on = |key, m| chord(key, us(key), m, false).map(|c| edit(Some(c)));
+        for (key, back) in [(KeyCode::KeyB, true), (KeyCode::KeyF, false)] {
+            for m in [CTRL, CTRL_SHIFT] {
+                assert_eq!(
+                    on(key, m),
+                    Some(Move {
+                        unit: Char,
+                        back,
+                        extend: m.shift
+                    })
+                );
+            }
+        }
+        let table = [
+            (
+                KeyCode::KeyD,
+                Delete {
+                    unit: Char,
+                    back: false,
+                },
+            ),
+            (
+                KeyCode::KeyW,
+                Delete {
+                    unit: Word,
+                    back: true,
+                },
+            ),
+            (KeyCode::KeyU, DeleteToEdge { back: true }),
+            (KeyCode::KeyK, DeleteToEdge { back: false }),
+            (KeyCode::KeyP, History { older: true }),
+            (KeyCode::KeyN, History { older: false }),
+        ];
+        for (key, action) in table {
+            assert_eq!(on(key, CTRL), Some(action), "{key:?}");
+            assert_eq!(on(key, CTRL_SHIFT), Some(action), "{key:?} ignores Shift");
+        }
+    }
+
+    /// The eight letters sit on the keys the layout names, stay off AltGr and stay off a Mac, which
+    /// keeps its Cocoa table.
+    #[test]
+    fn the_ctrl_letters_follow_the_layout_and_leave_altgr_and_the_mac() {
+        const ALTGR: Mods = Mods {
+            ctrl: true,
+            alt: true,
+            ..NONE
+        };
+        assert_eq!(
+            edit(chord(KeyCode::KeyZ, Some(KeyName::Char('W')), CTRL, false)),
+            EditAction::Delete {
+                unit: EditUnit::Word,
+                back: true
+            },
+            "AZERTY's key labelled W"
+        );
+        assert_eq!(
+            chord(KeyCode::KeyW, Some(KeyName::Char('Z')), CTRL, false),
+            None
+        );
+        for key in [
+            KeyCode::KeyB,
+            KeyCode::KeyD,
+            KeyCode::KeyF,
+            KeyCode::KeyK,
+            KeyCode::KeyN,
+            KeyCode::KeyP,
+            KeyCode::KeyU,
+            KeyCode::KeyW,
+        ] {
+            assert_eq!(chord(key, us(key), ALTGR, false), None, "AltGr+{key:?}");
+            assert_eq!(chord(key, us(key), NONE, false), None, "{key:?}");
+            for m in [CTRL, SUP] {
+                assert_eq!(chord(key, us(key), m, true), None, "{key:?} on a Mac");
+            }
+        }
+    }
+
+    /// The DELETE arm tests Shift before Ctrl, so Ctrl+Shift+Delete cuts.
+    #[test]
+    fn pc_ctrl_shift_delete_cuts() {
+        assert_eq!(
+            chord(
+                KeyCode::Delete,
+                us(KeyCode::Delete),
+                Mods {
+                    shift: true,
+                    ..CTRL
+                },
+                false
+            ),
+            Some(Chord::Cut)
+        );
     }
 
     /// On a Mac, Cmd+Left/Right go to the caret's line's start or end, as a Cocoa text view's do;

@@ -34,9 +34,9 @@ fn index_at_screen_pos(lua: &Lua, h: FrameHandle, x: f32, y: f32) -> usize {
     .unwrap_or(0)
 }
 
-/// A LeftButton press on EditBox `id` flushes the box first, then places the cursor at the clicked
-/// char, collapsing the selection, starts a drag and takes focus unconditionally; no shift+click
-/// branch.
+/// A press of any button on EditBox `id` (`0x967cd0`, which reads no button) flushes the box first,
+/// then places the cursor at the clicked char, collapsing the selection, starts a drag and takes
+/// focus unconditionally; no shift+click branch.
 pub(in crate::script) fn click(lua: &Lua, id: u32, x: f32, y: f32) {
     let Some(h) = editbox_of(lua, id) else { return };
     super::flush::flush(lua, h);
@@ -72,8 +72,7 @@ pub(in crate::script) fn drag_end(lua: &Lua) {
     }
 }
 
-/// Ctrl+Left/Right, the word move: the client walks its per-byte class array, benilla stops at
-/// alphanumeric runs. `shift` extends the selection.
+/// Ctrl+Left/Right, the word move; `shift` extends the selection.
 pub(in crate::script) fn move_word(lua: &Lua, h: FrameHandle, right: bool, shift: bool) {
     with_eb(lua, h, |eb| eb.move_by_word(right, shift));
 }
