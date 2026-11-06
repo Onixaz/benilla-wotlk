@@ -54,12 +54,12 @@ impl GestureQueue {
     }
 }
 
-/// The gesture a chat line plays, by wire chat type and text. Only `SAY`, `YELL` and `PARTY`
-/// gesture, never a creature's `MONSTER_SAY`/`MONSTER_YELL`. A text equal, case-insensitively, to a
-/// `LAUGH_WORDn` global laughs (the scan stops at the first missing or empty one); otherwise
-/// `PARTY` does nothing, `YELL` shouts whatever its text, and `SAY` reads its last byte only: `?`
-/// asks, `!` exclaims, anything else talks. `laugh_word(n)` reads the global off the player's own
-/// FrameXML; `None` ends the list.
+/// The gesture a chat line plays, by wire chat type and text (`0x50a199`). Only `SAY`, `YELL`,
+/// `PARTY` and `PARTY_LEADER` gesture, never a creature's `MONSTER_SAY`/`MONSTER_YELL`. A text equal,
+/// case-insensitively, to a `LAUGH_WORDn` global laughs (the scan stops at the first missing or
+/// empty one); otherwise the party lines do nothing, `YELL` shouts whatever its text, and `SAY`
+/// reads its last byte only: `?` asks, `!` exclaims, anything else talks. `laugh_word(n)` reads the
+/// global off the player's own FrameXML; `None` ends the list.
 pub(crate) fn select_gesture(
     chat_type: u8,
     text: &str,
@@ -68,7 +68,7 @@ pub(crate) fn select_gesture(
     use benilla_protocol::messages as m;
     if !matches!(
         chat_type,
-        m::CHAT_MSG_SAY | m::CHAT_MSG_YELL | m::CHAT_MSG_PARTY
+        m::CHAT_MSG_SAY | m::CHAT_MSG_YELL | m::CHAT_MSG_PARTY | m::CHAT_MSG_PARTY_LEADER
     ) {
         return None;
     }
@@ -87,7 +87,7 @@ pub(crate) fn select_gesture(
             Some(b'!') => Gesture::Exclamation,
             _ => Gesture::Talk,
         }),
-        _ => None, // PARTY, having failed the laugh scan
+        _ => None, // a party line, having failed the laugh scan
     }
 }
 
@@ -113,9 +113,10 @@ pub(super) fn drive_gestures(
         let Some(anim_id) = emotes.anim(emote_id) else {
             continue;
         };
-        let (store, movement, remote, engaged) =
-            units.get(entity).unwrap_or((None, None, None, false));
-        if !super::emote_anim::play_eligible(store, movement, remote, engaged, anim_id) {
+        let (store, movement, remote, engaged, casting) = units
+            .get(entity)
+            .unwrap_or((None, None, None, false, false));
+        if !super::emote_anim::play_eligible(store, movement, remote, engaged, casting, anim_id) {
             debug!("gesture: {gesture:?} suppressed for {entity:?}");
             continue;
         }
@@ -194,10 +195,17 @@ mod tests {
             "the one gesture a party line reaches"
         );
         assert_eq!(
-            select_gesture(m::CHAT_MSG_PARTY, "hello!", words),
-            None,
-            "a party line with no laugh word gestures nothing"
+            select_gesture(m::CHAT_MSG_PARTY_LEADER, "tehe", words),
+            Some(Gesture::Laugh),
+            "a party leader's line laughs as a member's does"
         );
+        for ty in [m::CHAT_MSG_PARTY, m::CHAT_MSG_PARTY_LEADER] {
+            assert_eq!(
+                select_gesture(ty, "hello!", words),
+                None,
+                "a party line with no laugh word gestures nothing"
+            );
+        }
     }
 
     #[test]
@@ -221,7 +229,7 @@ mod tests {
 
     /// A creature's bark arrives as `MONSTER_SAY`/`MONSTER_YELL`, not `SAY`/`YELL`.
     #[test]
-    fn only_say_yell_and_party_are_eligible() {
+    fn only_say_yell_and_the_party_lines_are_eligible() {
         for ty in [
             m::CHAT_MSG_MONSTER_SAY,
             m::CHAT_MSG_MONSTER_YELL,
@@ -295,6 +303,51 @@ mod tests {
             app.world().resource::<GestureQueue>().0.is_empty(),
             "the queue drains every frame"
         );
+    }
+
+    /// The talk gesture goes through the same player: a [`CastHold`](super::super::CastHold) refuses
+    /// it, and the same line after the hold clears plays.
+    #[test]
+    fn a_gesture_over_a_cast_hold_plays_only_after_it_clears() {
+        use crate::creature_anim::CastHold;
+        use crate::net::GuidIndex;
+
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let cat = benilla_formats::load_emote_sound_catalog(&mut chain).expect("emote catalog");
+
+        let mut app = App::new();
+        app.init_resource::<GestureQueue>()
+            .init_resource::<PlaySeq>()
+            .init_resource::<GuidIndex>()
+            .insert_resource(crate::sound::EmoteSounds(cat))
+            .add_message::<EmoteAnim>()
+            .add_systems(Update, drive_gestures);
+        let caster = app
+            .world_mut()
+            .spawn(CastHold {
+                anim_id: 54,
+                spell_id: 133,
+                ranged: false,
+            })
+            .id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(11, caster);
+        let talk = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<GestureQueue>()
+                .push(11, Gesture::Talk);
+            app.update();
+            app.world_mut()
+                .resource_mut::<bevy::ecs::message::Messages<EmoteAnim>>()
+                .drain()
+                .count()
+        };
+        assert_eq!(talk(&mut app), 0, "the hold refuses the gesture");
+        app.world_mut().entity_mut(caster).remove::<CastHold>();
+        assert_eq!(talk(&mut app), 1, "cleared, it plays");
     }
 
     #[test]

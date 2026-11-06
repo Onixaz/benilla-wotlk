@@ -136,8 +136,17 @@ fn play_bark(
     }
 }
 
-/// The death cry on either edge: health falling to 0 or `UNIT_DYNFLAG_DEAD` set, so a feign cries
-/// too. A unit that streams in dead cries nothing: create edges are suppressed.
+/// A unit's death edge: health falling to 0 or `UNIT_DYNFLAG_DEAD` set, so a feign counts too.
+fn died(e: &FieldChanged) -> bool {
+    use benilla_protocol::field::{FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH, UNIT_DYNFLAG_DEAD};
+    (e.unit_field(FIELD_UNIT_HEALTH) && e.old > 0 && e.new == 0)
+        || (e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS)
+            && e.old & UNIT_DYNFLAG_DEAD == 0
+            && e.new & UNIT_DYNFLAG_DEAD != 0)
+}
+
+/// The death cry on either [`died`] edge, which also stops the unit's emote voice. A unit that
+/// streams in dead cries nothing: create edges are suppressed.
 fn death_vocals(
     mut edges: MessageReader<FieldChanged>,
     units: Query<(&NetEntity, &Transform)>,
@@ -148,19 +157,15 @@ fn death_vocals(
     config: Res<SoundConfig>,
     listener: Res<AudioListener>,
 ) {
-    use benilla_protocol::field::{FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH, UNIT_DYNFLAG_DEAD};
     let (Some(voices), Some(mut kits), Some(assets)) = (voices, kits, assets) else {
         return;
     };
     let listener = listener.pos;
     for e in edges.read() {
-        let died = (e.unit_field(FIELD_UNIT_HEALTH) && e.old > 0 && e.new == 0)
-            || (e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS)
-                && e.old & UNIT_DYNFLAG_DEAD == 0
-                && e.new & UNIT_DYNFLAG_DEAD != 0);
-        if !died {
+        if !died(e) {
             continue;
         }
+        super::kit::stop_emote_voice(&mut out, e.entity);
         let Ok((net, transform)) = units.get(e.entity) else {
             continue;
         };
@@ -699,6 +704,32 @@ mod tests {
         let barking = (Some(a), Latch::Voice(BARK_AGGRO));
         assert!(occupies_voice_slot(barking.0, barking.1, a));
         assert!(!occupies_voice_slot(barking.0, barking.1, b));
+    }
+
+    /// Both death edges, which stop the emote voice; a health change that lands above 0 is none.
+    #[test]
+    fn a_death_edge_is_health_reaching_zero_or_the_dead_flag_setting() {
+        use benilla_protocol::field::{
+            FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH, UNIT_DYNFLAG_DEAD,
+        };
+        use benilla_protocol::messages::ObjectType;
+        let edge = |index, old, new| FieldChanged {
+            entity: Entity::PLACEHOLDER,
+            guid: 7,
+            kind: ObjectType::Player,
+            index,
+            old,
+            new,
+        };
+        assert!(died(&edge(FIELD_UNIT_HEALTH, 10, 0)));
+        assert!(!died(&edge(FIELD_UNIT_HEALTH, 10, 3)));
+        assert!(!died(&edge(FIELD_UNIT_HEALTH, 0, 0)));
+        assert!(died(&edge(FIELD_UNIT_DYNAMIC_FLAGS, 0, UNIT_DYNFLAG_DEAD)));
+        assert!(!died(&edge(
+            FIELD_UNIT_DYNAMIC_FLAGS,
+            UNIT_DYNFLAG_DEAD,
+            UNIT_DYNFLAG_DEAD
+        )));
     }
 
     /// `Sound_EnablePetSounds` off mutes a pet's aggro, order and attack barks, never its death cry

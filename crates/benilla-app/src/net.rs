@@ -1000,6 +1000,8 @@ pub(crate) enum ChatKind {
     Whisper,
     /// `/p`, dropped silently when ungrouped (`ChatHandler.cpp:472-493`).
     Party,
+    /// `/p` from the party leader (`0x50d516`), every member's `CHAT_MSG_PARTY_LEADER`.
+    PartyLeader,
     /// `/ra`; needs a raid (`ChatHandler.cpp:514-536`).
     Raid,
     /// `/rl`, leader only (`ChatHandler.cpp:538-559`).
@@ -1032,6 +1034,7 @@ impl ChatKind {
             Self::Emote => m::CHAT_TYPE_EMOTE,
             Self::Whisper => m::CHAT_TYPE_WHISPER,
             Self::Party => m::CHAT_TYPE_PARTY,
+            Self::PartyLeader => m::CHAT_TYPE_PARTY_LEADER,
             Self::Raid => m::CHAT_TYPE_RAID,
             Self::RaidWarning => m::CHAT_TYPE_RAID_WARNING,
             Self::Guild => m::CHAT_TYPE_GUILD,
@@ -1312,9 +1315,11 @@ pub(crate) enum ClientCommand {
     Emote {
         emote_id: u32,
     },
-    /// `CMSG_TEXT_EMOTE`; our own sound and animation ride the `SMSG_TEXT_EMOTE` echo.
+    /// `CMSG_TEXT_EMOTE`; our own sound and animation ride the `SMSG_TEXT_EMOTE` echo, which brings
+    /// `file_index` back.
     TextEmote {
         text_id: u32,
+        file_index: i32,
         target: u64,
     },
     /// `CMSG_CAST_SPELL`; `None` is a self or implicit target.
@@ -2924,8 +2929,8 @@ pub(crate) struct EmoteMessage {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EmoteKind {
-    /// An `EmotesText.dbc` id.
-    Text(u32),
+    /// An `EmotesText.dbc` id and the voice file the sender picked, `-1` the normal pick.
+    Text { text_id: u32, file_index: i32 },
     /// An `Emotes.dbc` id (its `EventSoundID`).
     Anim(u32),
 }
@@ -3209,12 +3214,13 @@ mod tests {
         assert_eq!(lanes, [0x02, 0x03, 0x04, 0x2C]);
     }
 
-    /// The chat bar's lanes: SAY is 1 (`0x50d1d8`) and there are no leader lanes.
+    /// The chat bar's lanes: SAY is 1 (`0x50d1d8`), and the party leader's alone of the leader lanes.
     #[test]
     fn chat_kinds_take_the_clients_own_wire_type() {
         for (kind, want) in [
             (ChatKind::Say, Some(0x01)),
             (ChatKind::Party, Some(0x02)),
+            (ChatKind::PartyLeader, Some(0x33)),
             (ChatKind::Raid, Some(0x03)),
             (ChatKind::Guild, Some(0x04)),
             (ChatKind::Officer, Some(0x05)),

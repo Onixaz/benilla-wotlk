@@ -322,8 +322,8 @@ fn bus_at_cap(live: impl Iterator<Item = Bus>, bus: Bus) -> bool {
 /// The optional half of [`play_kit_ext`]'s play surface.
 #[derive(Clone, Copy, Default)]
 pub(super) struct PlayExtras {
-    /// An explicit variation, bypassing the depleting pool (the client's `variant != -1`); the NPC
-    /// greeting cycler drives it.
+    /// An explicit file, bypassing the depleting pool and clamped to the last (`0x4cbb0f`, the
+    /// client's `variant != -1`): the NPC greeting cycler and a text emote's echoed index.
     pub(super) variant: Option<usize>,
     /// The entity the channel belongs to ([`ActiveChannel`]'s `source`).
     pub(super) source: Option<Entity>,
@@ -479,10 +479,19 @@ pub(super) fn play_kit_ext(
 
     // An explicit index when the caller drives the cycle, else the depleting weighted pick.
     let pick = match variant {
-        Some(i) if i < weights.len() => i,
-        Some(_) => return Ok(false), // out-of-range explicit variant: playable-as-nothing
+        Some(i) => i.min(weights.len() - 1),
         None => kits.pick_variation(id, &weights),
     };
+    if latch == Latch::EmoteVoice && benilla_assets::trace::enabled() {
+        benilla_assets::trace::line(
+            "voice",
+            &format!(
+                "emote kit={id} file={pick} of {} mult={mult} flat={}",
+                weights.len(),
+                pos.is_none()
+            ),
+        );
+    }
     let path = kits.catalog.get(id).expect("resolved above").files[pick]
         .0
         .clone();
@@ -613,6 +622,17 @@ pub(super) fn occupies_voice_slot(source: Option<Entity>, latch: Latch, unit: En
 pub(super) fn stop_voice(out: &mut SoundOutput, unit: Entity) {
     out.channels.retain_mut(|c| {
         let stop = occupies_voice_slot(c.source, c.latch, unit);
+        if stop {
+            c.handle.stop(mixer::declick());
+        }
+        !stop
+    });
+}
+
+/// Stop `unit`'s emote voice (`[unit+0x934]`), as its death does (`0x729399`).
+pub(super) fn stop_emote_voice(out: &mut SoundOutput, unit: Entity) {
+    out.channels.retain_mut(|c| {
+        let stop = occupies_emote_slot(c.source, c.latch, unit);
         if stop {
             c.handle.stop(mixer::declick());
         }
@@ -817,6 +837,19 @@ impl SoundKits {
     /// know when repeat interacts reach the pissed line.
     pub(super) fn variations(&self, kit: u32) -> usize {
         self.catalog.get(kit).map_or(0, |k| k.files.len())
+    }
+
+    /// The text-emote sender's file pick (`0x4ceb70`): a file of `kit`, `-1` for a kit with none.
+    pub(super) fn pick_file_index(&mut self, kit: u32) -> i32 {
+        let Some(weights) = self
+            .catalog
+            .get(kit)
+            .map(|k| k.files.iter().map(|(_, w)| *w).collect::<Vec<_>>())
+            .filter(|w| !w.is_empty())
+        else {
+            return -1;
+        };
+        self.pick_variation(kit, &weights) as i32
     }
 
     /// `(file path, base volume)` of a picked variation, for zone music and ambience, which stream

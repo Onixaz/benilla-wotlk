@@ -168,75 +168,69 @@ fn text_emote_lines_link_the_performers_first_mention() {
         .contains("[Bob]"));
 }
 
-/// `DoEmote` sends a self-target as guid 0, so 1.12 has no self-emote sentence.
+/// `DoEmote` sends a self-target as guid 0 (`0x6ddaa0`), so there is no self-emote sentence.
 #[test]
 fn emoting_at_your_own_selection_sends_an_untargeted_emote() {
-    let _data = benilla_formats::wow_data_or_skip!();
     use crate::target::Selection;
-    use bevy::prelude::Entity;
+    use benilla_ui::script::EmoteTarget as T;
 
-    let me = Entity::from_raw_u32(7).unwrap();
-    let them = Entity::from_raw_u32(9).unwrap();
-
-    let sel = Selection {
-        target: Some(me),
-        guid: Some(0xdead_beef),
+    const ME: u64 = 0x111;
+    let sel = |guid| Selection {
+        guid,
         ..Default::default()
     };
-    assert_eq!(emote_target(None, &sel, no_name, Some(me)), 0);
-
-    let sel = Selection {
-        target: Some(them),
-        guid: Some(0xdead_beef),
-        ..Default::default()
-    };
-    assert_eq!(emote_target(None, &sel, no_name, Some(me)), 0xdead_beef);
-
-    // No selection is untargeted, and with no self entity yet a selection goes out untouched.
     assert_eq!(
-        emote_target(None, &Selection::default(), no_name, Some(me)),
+        emote_target(T::Selection, &sel(Some(ME)), no_name, Some(ME)),
         0
     );
-    let sel = Selection {
-        target: Some(them),
-        guid: Some(0xdead_beef),
-        ..Default::default()
-    };
-    assert_eq!(emote_target(None, &sel, no_name, None), 0xdead_beef);
+    assert_eq!(
+        emote_target(T::Selection, &sel(Some(0xdead_beef)), no_name, Some(ME)),
+        0xdead_beef
+    );
+    // No selection is untargeted, and with no self guid yet a selection goes out untouched.
+    assert_eq!(emote_target(T::Selection, &sel(None), no_name, Some(ME)), 0);
+    assert_eq!(
+        emote_target(T::Selection, &sel(Some(0xdead_beef)), no_name, None),
+        0xdead_beef
+    );
 }
 
-fn no_name(_: &str) -> Option<(bevy::prelude::Entity, u64)> {
+fn no_name(_: &str) -> Option<u64> {
     None
 }
 
-/// A word not starting with `%` names a player and replaces the selection; a miss is guid 0; no
-/// argument or a `%` word is the selection.
+/// A token's guid and a name replace the selection; a miss is guid 0; the selection arm searches
+/// nothing.
 #[test]
-fn an_emote_argument_targets_the_named_player_and_not_the_selection() {
+fn an_emote_argument_replaces_the_selection() {
     use crate::target::Selection;
-    use bevy::prelude::Entity;
+    use benilla_ui::script::EmoteTarget as T;
 
-    let me = Entity::from_raw_u32(7).unwrap();
-    let bob = Entity::from_raw_u32(9).unwrap();
+    const ME: u64 = 0x111;
     let sel = Selection {
-        target: Some(Entity::from_raw_u32(11).unwrap()),
         guid: Some(0x5e1),
         ..Default::default()
     };
-    let find = |n: &str| (n == "Bob").then_some((bob, 0xb0b));
-    assert_eq!(emote_target(Some("Bob"), &sel, find, Some(me)), 0xb0b);
+    let find = |n: &str| (n == "Bob").then_some(0xb0b);
+    let name = |n: &str| T::Name(n.to_string());
+    assert_eq!(emote_target(name("Bob"), &sel, find, Some(ME)), 0xb0b);
     assert_eq!(
-        emote_target(Some("Nobody"), &sel, find, Some(me)),
+        emote_target(name("Nobody"), &sel, find, Some(ME)),
         0,
         "a miss is untargeted"
     );
-    for arg in [None, Some(""), Some("%t"), Some("%x")] {
-        let panics = |_: &str| -> Option<(Entity, u64)> { panic!("no search for {arg:?}") };
-        assert_eq!(emote_target(arg, &sel, panics, Some(me)), 0x5e1, "{arg:?}");
-    }
+    assert_eq!(emote_target(T::Guid(0xf0c), &sel, no_name, Some(ME)), 0xf0c);
+    assert_eq!(
+        emote_target(T::Guid(0), &sel, no_name, Some(ME)),
+        0,
+        "a creature token through the type test"
+    );
+    let panics = |_: &str| -> Option<u64> { panic!("no search") };
+    assert_eq!(emote_target(T::Selection, &sel, panics, Some(ME)), 0x5e1);
     // Naming yourself is the self-target edge: untargeted.
-    let own = |_: &str| Some((me, 0x111));
-    assert_eq!(emote_target(Some("Me"), &sel, own, Some(me)), 0);
+    let own = |_: &str| Some(ME);
+    assert_eq!(emote_target(name("Me"), &sel, own, Some(ME)), 0);
+    assert_eq!(emote_target(T::Guid(ME), &sel, no_name, Some(ME)), 0);
 }
 
 #[test]
@@ -1600,7 +1594,10 @@ fn the_standing_still_arm_reports_moving_and_ignores_swimming() {
 
     const STILL: u32 = 0x4000;
 
-    assert_eq!(emote_send_eligible(STILL, 0, false, 0), EmoteGate::Send);
+    assert_eq!(
+        emote_send_eligible(STILL, 0, false, 0, false),
+        EmoteGate::Send
+    );
     // Any INTEGRATED bit trips it: a direction, a turn or a fall.
     for f in [
         move_flags::FORWARD,
@@ -1610,31 +1607,66 @@ fn the_standing_still_arm_reports_moving_and_ignores_swimming() {
         move_flags::FALLING,
     ] {
         assert_eq!(
-            emote_send_eligible(STILL, 0, false, f),
+            emote_send_eligible(STILL, 0, false, f, false),
             EmoteGate::Moving,
             "move flag {f:#x}"
         );
     }
     // SWIMMING is not in `0x20ff`: a still swimmer is still.
     assert_eq!(
-        emote_send_eligible(STILL, 0, false, move_flags::SWIMMING),
+        emote_send_eligible(STILL, 0, false, move_flags::SWIMMING, false),
         EmoteGate::Send,
         "the mover-integration mask carries no SWIMMING"
     );
     // WALK_MODE and LEVITATING are mode bits, not motion.
     assert_eq!(
-        emote_send_eligible(STILL, 0, false, move_flags::WALK_MODE),
+        emote_send_eligible(STILL, 0, false, move_flags::WALK_MODE, false),
         EmoteGate::Send
     );
     // Without the flag, movement is irrelevant.
     assert_eq!(
-        emote_send_eligible(0, 0, false, move_flags::FORWARD),
+        emote_send_eligible(0, 0, false, move_flags::FORWARD, false),
         EmoteGate::Send
     );
     // An unconditionally suppressed emote (`0x0400`) never reaches this arm: it stays silent.
     assert_eq!(
-        emote_send_eligible(0x4400, 0, false, move_flags::FORWARD),
+        emote_send_eligible(0x4400, 0, false, move_flags::FORWARD, false),
         EmoteGate::Suppressed
+    );
+}
+
+/// `0x8000` refuses silently on the flying bit or a flying spline, ahead of the asleep arm, and the
+/// same emote on the ground passes; another row flies free.
+#[test]
+fn the_flight_arm_refuses_a_mount_special_in_the_air() {
+    use super::input::EmoteGate;
+    use crate::creature_anim::move_flags;
+
+    const NOT_IN_FLIGHT: u32 = 0x8000;
+    let gate = |flags, flags_word, spline| emote_send_eligible(flags, 0, false, flags_word, spline);
+    assert_eq!(
+        gate(NOT_IN_FLIGHT, move_flags::FLYING, false),
+        EmoteGate::Suppressed
+    );
+    assert_eq!(
+        gate(NOT_IN_FLIGHT, 0, true),
+        EmoteGate::Suppressed,
+        "a taxi"
+    );
+    assert_eq!(
+        gate(NOT_IN_FLIGHT, 0, false),
+        EmoteGate::Send,
+        "on the ground"
+    );
+    assert_eq!(
+        gate(0, move_flags::FLYING, true),
+        EmoteGate::Send,
+        "the bit gates"
+    );
+    assert_eq!(
+        emote_gate(Some(NOT_IN_FLIGHT), 0, 0, false, 0, true),
+        EmoteGate::Suppressed,
+        "through the row"
     );
 }
 
@@ -1667,21 +1699,24 @@ const LAUGH: u32 = 0x0980;
 /// silently; a missing `Emotes.dbc` row returns too.
 #[test]
 fn a_possessed_unit_or_a_missing_row_refuses_the_emote() {
-    assert_eq!(emote_gate(Some(0), 0, 0, false, 0), EmoteGate::Send);
+    assert_eq!(emote_gate(Some(0), 0, 0, false, 0, false), EmoteGate::Send);
     assert_eq!(
-        emote_gate(Some(0), 0x0100_0000, 0, false, 0),
+        emote_gate(Some(0), 0x0100_0000, 0, false, 0, false),
         EmoteGate::Suppressed
     );
     assert_eq!(
-        emote_gate(Some(0), 0x0100_0008, 0, false, 0),
+        emote_gate(Some(0), 0x0100_0008, 0, false, 0, false),
         EmoteGate::Suppressed
     );
     assert_eq!(
-        emote_gate(Some(0), 0x0200_0000, 0, false, 0),
+        emote_gate(Some(0), 0x0200_0000, 0, false, 0, false),
         EmoteGate::Send,
         "a neighbour bit"
     );
-    assert_eq!(emote_gate(None, 0, 0, false, 0), EmoteGate::Suppressed);
+    assert_eq!(
+        emote_gate(None, 0, 0, false, 0, false),
+        EmoteGate::Suppressed
+    );
 }
 
 /// A chat-only text emote has `EmoteID` 0, so `DoEmote` reads `Emotes.dbc` row 0 (flags 0), which
@@ -1696,25 +1731,36 @@ fn a_chat_only_emote_reads_row_zero_and_is_refused_dead_or_asleep() {
     let row = cat.emote_flags(cat.text_emote(smile).unwrap_or(0));
     assert_eq!(row, Some(0), "row 0, no flags");
     assert_eq!(
-        emote_gate(row, 0, 7, false, 0),
+        emote_gate(row, 0, 7, false, 0, false),
         EmoteGate::Suppressed,
         "dead"
     );
     assert_eq!(
-        emote_gate(row, 0, 3, false, 0),
+        emote_gate(row, 0, 3, false, 0, false),
         EmoteGate::Suppressed,
         "asleep"
     );
-    assert_eq!(emote_gate(row, 0, 0, false, 0), EmoteGate::Send, "standing");
-    assert_eq!(emote_gate(row, 0, 1, false, 0), EmoteGate::Send, "sitting");
+    assert_eq!(
+        emote_gate(row, 0, 0, false, 0, false),
+        EmoteGate::Send,
+        "standing"
+    );
+    assert_eq!(
+        emote_gate(row, 0, 1, false, 0, false),
+        EmoteGate::Send,
+        "sitting"
+    );
 }
 
 #[test]
 fn seated_stand_required_emotes_are_suppressed() {
     let _data = benilla_formats::wow_data_or_skip!();
-    assert_eq!(emote_send_eligible(BOW, 1, false, 0), EmoteGate::Suppressed); // 0x1 needs STAND
     assert_eq!(
-        emote_send_eligible(RUDE, 1, false, 0),
+        emote_send_eligible(BOW, 1, false, 0, false),
+        EmoteGate::Suppressed
+    ); // 0x1 needs STAND
+    assert_eq!(
+        emote_send_eligible(RUDE, 1, false, 0, false),
         EmoteGate::Suppressed
     );
 }
@@ -1722,20 +1768,35 @@ fn seated_stand_required_emotes_are_suppressed() {
 #[test]
 fn seated_non_stand_emotes_pass() {
     let _data = benilla_formats::wow_data_or_skip!();
-    assert_eq!(emote_send_eligible(APPLAUD, 1, false, 0), EmoteGate::Send);
-    assert_eq!(emote_send_eligible(CHEER, 1, false, 0), EmoteGate::Send);
-    assert_eq!(emote_send_eligible(LAUGH, 1, false, 0), EmoteGate::Send);
-    assert_eq!(emote_send_eligible(SALUTE, 1, false, 0), EmoteGate::Send);
+    assert_eq!(
+        emote_send_eligible(APPLAUD, 1, false, 0, false),
+        EmoteGate::Send
+    );
+    assert_eq!(
+        emote_send_eligible(CHEER, 1, false, 0, false),
+        EmoteGate::Send
+    );
+    assert_eq!(
+        emote_send_eligible(LAUGH, 1, false, 0, false),
+        EmoteGate::Send
+    );
+    assert_eq!(
+        emote_send_eligible(SALUTE, 1, false, 0, false),
+        EmoteGate::Send
+    );
 }
 
 #[test]
 fn swimming_suppresses_only_the_0x80_emotes() {
     let _data = benilla_formats::wow_data_or_skip!();
     assert_eq!(
-        emote_send_eligible(LAUGH, 0, true, 0),
+        emote_send_eligible(LAUGH, 0, true, 0, false),
         EmoteGate::Suppressed
     ); // 0x0980 has 0x80
-    assert_eq!(emote_send_eligible(CHEER, 0, true, 0), EmoteGate::Send);
+    assert_eq!(
+        emote_send_eligible(CHEER, 0, true, 0, false),
+        EmoteGate::Send
+    );
 }
 
 #[test]
@@ -1743,7 +1804,7 @@ fn standing_and_dry_everyone_is_eligible() {
     let _data = benilla_formats::wow_data_or_skip!();
     for flags in [BOW, RUDE, APPLAUD, CHEER, SALUTE, LAUGH] {
         assert_eq!(
-            emote_send_eligible(flags, 0, false, 0),
+            emote_send_eligible(flags, 0, false, 0, false),
             EmoteGate::Send,
             "flags {flags:#x}"
         );
@@ -1754,12 +1815,21 @@ fn standing_and_dry_everyone_is_eligible() {
 fn unconditional_and_sleep_dead_rules() {
     let _data = benilla_formats::wow_data_or_skip!();
     assert_eq!(
-        emote_send_eligible(0x0400, 0, false, 0),
+        emote_send_eligible(0x0400, 0, false, 0, false),
         EmoteGate::Suppressed
     ); // unconditional suppress
-    assert_eq!(emote_send_eligible(0, 3, false, 0), EmoteGate::Suppressed); // SLEEP, no allow bit
-    assert_eq!(emote_send_eligible(0, 7, false, 0), EmoteGate::Suppressed); // DEAD, no allow bit
-    assert_eq!(emote_send_eligible(0x0200, 3, false, 0), EmoteGate::Send); // 0x0200 allows it
+    assert_eq!(
+        emote_send_eligible(0, 3, false, 0, false),
+        EmoteGate::Suppressed
+    ); // SLEEP, no allow bit
+    assert_eq!(
+        emote_send_eligible(0, 7, false, 0, false),
+        EmoteGate::Suppressed
+    ); // DEAD, no allow bit
+    assert_eq!(
+        emote_send_eligible(0x0200, 3, false, 0, false),
+        EmoteGate::Send
+    ); // 0x0200 allows it
 }
 
 // ── received lines: the addon lane, the language header, the talk gesture ──────────────────
@@ -1968,8 +2038,19 @@ fn the_talk_gesture_reads_the_plaintext_not_the_garbled_line() {
     );
 }
 
+/// The party leader's own party line is the leader type; a member's and any other lane stay.
+#[test]
+fn the_party_leader_sends_the_leader_lane() {
+    use super::input::party_lane;
+    use crate::net::ChatKind as K;
+    assert_eq!(party_lane(K::Party, 7, Some(7)), K::PartyLeader);
+    assert_eq!(party_lane(K::Party, 7, Some(8)), K::Party);
+    assert_eq!(party_lane(K::Party, 0, Some(8)), K::Party);
+    assert_eq!(party_lane(K::Say, 7, Some(7)), K::Say);
+}
+
 /// A speaker whose `UNIT_FIELD_FLAGS` hold `0x20000000` (Polymorph, Kidney Shot, ...) plays no talk
-/// gesture on the immediate path; the copies behind a name query have no such test.
+/// gesture, a line held for the name query included: it re-enters the one composer.
 #[test]
 fn a_speaker_that_cannot_animate_queues_no_talk_gesture() {
     use super::feed::gesture_prevented;
@@ -1977,29 +2058,24 @@ fn a_speaker_that_cannot_animate_queues_no_talk_gesture() {
     use benilla_protocol::messages::CHAT_MSG_SAY;
 
     let laugh_words = |n: u32| (n == 1).then(|| "lol".to_string());
-    let speak = |tries: u16, flags: Option<u32>| {
+    let speak = |flags: Option<u32>| {
         select_gesture(CHAT_MSG_SAY, "lol", laugh_words)
-            .filter(|_| !gesture_prevented(tries, flags))
+            .filter(|_| !gesture_prevented(flags))
             .into_iter()
             .count()
     };
-    assert_eq!(speak(0, Some(0x2000_0000)), 0, "a polymorphed speaker");
-    assert_eq!(speak(0, Some(0x2000_0000 | 0x8)), 0, "among other bits");
-    assert_eq!(speak(0, Some(0)), 1, "an unflagged speaker laughs");
+    assert_eq!(speak(Some(0x2000_0000)), 0, "a polymorphed speaker");
+    assert_eq!(speak(Some(0x2000_0000 | 0x8)), 0, "among other bits");
+    assert_eq!(speak(Some(0)), 1, "an unflagged speaker laughs");
     assert_eq!(
-        speak(0, Some(0x1000_0000 | 0x0100_0000)),
+        speak(Some(0x1000_0000 | 0x0100_0000)),
         1,
         "neighbouring bits do not gate"
     );
     assert_eq!(
-        speak(0, None),
+        speak(None),
         1,
         "an unstreamed speaker is the queue's call, not this gate"
-    );
-    assert_eq!(
-        speak(3, Some(0x2000_0000)),
-        1,
-        "a line held for the name has no such test"
     );
 }
 
@@ -2256,7 +2332,7 @@ fn the_posture_emotes_carry_no_swim_suppression_flag() {
         }
         // A standing swimmer's posture emote passes the gate.
         assert_eq!(
-            super::input::emote_send_eligible(flags, 0, true, 0),
+            super::input::emote_send_eligible(flags, 0, true, 0, false),
             super::input::EmoteGate::Send,
             "posture emote {id} passes the emote gate while swimming"
         );
@@ -2464,6 +2540,8 @@ fn the_chat_cache_restore_is_finished_before_player_login() {
     world.init_resource::<crate::minimap::MinimapZoom>();
     world.init_resource::<crate::ui_script::ReloadUiPending>();
     world.init_resource::<super::edit::ChannelState>();
+    world.init_resource::<crate::ui_party::GroupState>();
+    world.init_resource::<crate::net::SelfGuid>();
     world.init_resource::<super::settings::ChatWindowFile>();
     crate::ui_script::setup_script(&mut world);
 
@@ -2552,6 +2630,8 @@ fn afk_then_dnd_clears_the_afk_first() {
     world.init_resource::<super::away::AfkMirror>();
     world.init_resource::<crate::cvars::Cvars>();
     world.init_resource::<super::edit::ChannelState>();
+    world.init_resource::<crate::ui_party::GroupState>();
+    world.init_resource::<crate::net::SelfGuid>();
     // The five `GlobalStrings.lua` keys the away lines read, at their enUS values.
     world
         .non_send_resource::<benilla_ui::script::UiScript>()
@@ -2614,6 +2694,8 @@ fn a_named_language_rides_the_chat_command() {
     world.init_resource::<super::away::AfkMirror>();
     world.init_resource::<crate::cvars::Cvars>();
     world.init_resource::<super::edit::ChannelState>();
+    world.init_resource::<crate::ui_party::GroupState>();
+    world.init_resource::<crate::net::SelfGuid>();
     world
         .non_send_resource::<benilla_ui::script::UiScript>()
         .run(
@@ -2663,6 +2745,8 @@ fn a_channel_send_carries_the_numbered_slots_name() {
     world.init_resource::<super::feed::ChatLog>();
     world.init_resource::<super::away::AfkMirror>();
     world.init_resource::<crate::cvars::Cvars>();
+    world.init_resource::<crate::ui_party::GroupState>();
+    world.init_resource::<crate::net::SelfGuid>();
     world.insert_resource(ChannelState {
         joined: vec![
             Some(ChannelSlot::joined("General - Elwynn Forest")),
@@ -2740,6 +2824,8 @@ fn an_empty_line_sends_nothing_but_afk_and_dnd() {
     world.init_resource::<super::feed::ChatLog>();
     world.insert_resource(super::away::AfkMirror(2));
     world.init_resource::<crate::cvars::Cvars>();
+    world.init_resource::<crate::ui_party::GroupState>();
+    world.init_resource::<crate::net::SelfGuid>();
     world.insert_resource(ChannelState {
         joined: vec![Some(ChannelSlot::joined("General - Elwynn Forest"))],
         ..Default::default()

@@ -435,6 +435,8 @@ pub fn faction_language(race: u8) -> u32 {
 /// [`CHAT_MSG_SAY`] etc.
 pub const CHAT_TYPE_SAY: u32 = 0x01;
 pub const CHAT_TYPE_PARTY: u32 = 0x02;
+/// The party leader's `PARTY` line, past the name table (`0x50d516`).
+pub const CHAT_TYPE_PARTY_LEADER: u32 = 0x33;
 pub const CHAT_TYPE_RAID: u32 = 0x03;
 pub const CHAT_TYPE_GUILD: u32 = 0x04;
 pub const CHAT_TYPE_OFFICER: u32 = 0x05;

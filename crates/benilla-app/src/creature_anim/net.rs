@@ -143,12 +143,14 @@ fn on_text_emote(
     if let SessionEvent::TextEmote {
         guid,
         text_emote,
+        file_index,
         target_name,
     } = ev
     {
         self::text_emote(
             guid,
             text_emote,
+            file_index,
             target_name,
             &index,
             &mut out,
@@ -413,15 +415,25 @@ fn attacker_state(
 fn text_emote(
     guid: u64,
     text_emote: u32,
+    file_index: i32,
     target_name: String,
     index: &GuidIndex,
     out: &mut MessageWriter<EmoteMessage>,
     chat_log: &mut crate::ui_chat::ChatLog,
 ) {
+    if benilla_assets::trace::enabled() {
+        benilla_assets::trace::line(
+            "emote",
+            &format!("recv guid={guid:#x} text={text_emote} index={file_index}"),
+        );
+    }
     out.write(EmoteMessage {
         guid,
         source: index.0.get(&guid).copied(),
-        kind: EmoteKind::Text(text_emote),
+        kind: EmoteKind::Text {
+            text_id: text_emote,
+            file_index,
+        },
     });
     chat_log.push_text_emote(guid, text_emote, target_name);
 }

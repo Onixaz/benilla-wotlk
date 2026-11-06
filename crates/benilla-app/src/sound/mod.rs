@@ -53,8 +53,6 @@ pub(crate) fn kit_decodes() -> u32 {
 }
 pub(crate) use glue::GlueMusicRequest;
 pub(crate) use greeting::NpcGreetingRequest;
-/// Named by the schedule tests' class table (`game_plugins::schedule_tests::Classes`).
-#[cfg(test)]
 pub(crate) use kit::SoundKits;
 pub(crate) use message::MessageSounds;
 pub(crate) use mixer::Mixer;
@@ -123,13 +121,11 @@ pub(crate) struct SoundConfig {
     /// position and orientation always move together, with no velocity. A cinematic overrides it
     /// (checked first).
     pub listener_at_character: bool,
-    /// `Sound_EnableEmoteSounds` (default "1", `0x4d17e5`): gates only the received text-emote
-    /// voice line ([`emote::emote_sounds`]); a zero fetches no kit at all. The reference's check
-    /// sits on the received text-emote leg or on the shared leg, which `$CSD` also enters; which
-    /// one is untraced, and benilla gates the received path alone.
+    /// `Sound_EnableEmoteSounds` (default "1", `0x4d17e5`): gates the received text-emote voice
+    /// line before the kit is fetched (`0x747018`) and the `$CSD` voice (`0x746dc5`).
     pub emote_sounds: bool,
     /// `Sound_EnablePetSounds` (default "1"): off, a unit with a pet number makes no aggro, order or
-    /// attack bark and no emote voice (`0x7474b0`, `0x746d60`).
+    /// attack bark and no `$CSD` voice (`0x7474b0`, `0x746e08`).
     pub pet_sounds: bool,
     /// `Sound_ZoneMusicNoDelay` (default "0", `0x4d1808`), the panel's "Loop Music": drops the
     /// `ZoneMusic.dbc` silence interval between plays of one zone's track

@@ -43,28 +43,22 @@ fn target_player_name(
     names.resolve(guid, commands).map(str::to_string)
 }
 
-/// The target guid a `CMSG_TEXT_EMOTE` carries (`DoEmote`'s caller): the selection, unless the
-/// argument is a non-empty word not starting with `%`, which names a player through `named` and
-/// sends guid 0 on a miss. Either way an emote at yourself goes out untargeted, so 1.12 has no
-/// self-emote sentence. Compared by entity, which agrees with the guid: [`Selection`]'s one writer
-/// sets both from one streamed entity.
+/// The target guid a `CMSG_TEXT_EMOTE` carries (`DoEmote`'s caller): the selection, a token's guid
+/// or the name search's, 0 on a miss. Either way an emote at yourself goes out untargeted
+/// (`0x6ddaa0`).
 pub(super) fn emote_target(
-    arg: Option<&str>,
+    target: benilla_ui::script::EmoteTarget,
     selection: &Selection,
-    named: impl FnOnce(&str) -> Option<(Entity, u64)>,
-    me: Option<Entity>,
+    named: impl FnOnce(&str) -> Option<u64>,
+    me: Option<u64>,
 ) -> u64 {
-    let (entity, guid) = match arg.filter(|a| !a.is_empty() && !a.starts_with('%')) {
-        Some(name) => match named(name) {
-            Some((entity, guid)) => (Some(entity), Some(guid)),
-            None => (None, None),
-        },
-        None => (selection.target, selection.guid),
+    use benilla_ui::script::EmoteTarget as T;
+    let guid = match target {
+        T::Selection => selection.guid,
+        T::Guid(guid) => Some(guid),
+        T::Name(name) => named(&name),
     };
-    match guid {
-        Some(guid) if !(me.is_some() && entity == me) => guid,
-        _ => 0,
-    }
+    guid.filter(|&guid| Some(guid) != me).unwrap_or(0)
 }
 
 /// The inputs of `/shot`, `/liquid` and `/reaction`, bundled because [`drain_chat_input`] is at
@@ -88,8 +82,12 @@ pub(super) struct ChatProbes<'w, 's> {
     kinds: Query<'w, 's, &'static crate::net::NetEntity>,
     /// `/partytest raid` seats us as the leader, and the wire names a leader by guid.
     self_guid: Res<'w, crate::net::SelfGuid>,
+    /// Our own server spline, flying on a taxi: the emote gates read it live.
+    self_spline: Query<'w, 's, &'static crate::net::Spline, With<SelfPlayer>>,
     /// Our own auto-attack target, a gate of `DoEmote`'s local play.
     engaged: Query<'w, 's, (), (With<SelfPlayer>, With<crate::creature_anim::Engaged>)>,
+    /// Our own held cast anim, the same gate's.
+    casting: Query<'w, 's, (), (With<SelfPlayer>, With<crate::creature_anim::CastHold>)>,
     loot_kneel: Option<Res<'w, crate::ui_loot::LootKneel>>,
 }
 
@@ -106,8 +104,13 @@ pub(super) struct ChatOut<'w, 's> {
     target: MessageWriter<'w, crate::target::TargetByNameRequest>,
     assist: MessageWriter<'w, crate::target::AssistRequest>,
     follow: MessageWriter<'w, crate::player::FollowRequest>,
+    /// The voice file `CMSG_TEXT_EMOTE` names: the kits, and our display's race and sex.
+    sound_kits: Option<ResMut<'w, crate::sound::SoundKits>>,
+    creatures: Option<Res<'w, crate::entities::Creatures>>,
     /// `/wave <name>`'s player search, which selects nothing.
     players: crate::target::PlayerLookup<'w, 's>,
+    /// The party and raid `/wave <name>` searches before the visible objects.
+    roster: Option<Res<'w, crate::spell::group_relation::GroupRoster>>,
     /// `/partytest ping` seats a group member's ping through the wire arm's `seat`.
     ping: ResMut<'w, crate::minimap::MinimapPing>,
     /// The red error line by GlobalStrings key. The system's only `UiErrorKeys` access: a second
@@ -196,12 +199,14 @@ pub(super) fn drain_chat_input(
         world,
         stores,
         self_store,
+        self_spline,
         factions,
         reputations,
         guids,
         kinds,
         self_guid,
         engaged,
+        casting,
         loot_kneel,
     } = &probes;
     let Some(mut script) = script else {
@@ -697,6 +702,7 @@ pub(super) fn drain_chat_input(
                     .single()
                     .map_or((0, 0), |(_, m, _)| (m.stand_state, m.flags));
                 let swimming = flags & move_flags::SWIMMING != 0;
+                let flying_spline = self_spline.single().is_ok_and(|s| !s.grounded);
                 let emote_id = emotes.as_deref().and_then(|e| e.text_emote(text_id));
                 let posture = emote_id.and_then(|id| emotes.as_deref()?.posture_state(id));
                 // `DoEmote`'s gates: a possessed unit, then the `Emotes.dbc` row, then the emote
@@ -710,6 +716,7 @@ pub(super) fn drain_chat_input(
                         stand_state,
                         swimming,
                         flags,
+                        flying_spline,
                     ),
                     None => EmoteGate::Send,
                 };
@@ -771,9 +778,10 @@ pub(super) fn drain_chat_input(
                         stand_state: m.stand_state,
                         move_flags: m.flags,
                         vertical_speed: m.vertical_speed,
-                        flying: m.flying,
+                        flying: flying_spline,
                         loot_kneel: loot_kneel.as_deref().is_some_and(|k| k.0),
                         channeling: fields.unit_channel_spell() != 0,
+                        casting: !casting.is_empty(),
                         engaged: !engaged.is_empty(),
                     };
                     if crate::creature_anim::local_play_eligible(&gate) {
@@ -786,16 +794,48 @@ pub(super) fn drain_chat_input(
                         });
                     }
                 }
+                let is_streamed = |guid: u64| guids.0.contains_key(&guid);
+                let target = script.emote_target(arg.as_deref(), |guid| {
+                    is_streamed(guid) && !benilla_protocol::guid::is_player(guid)
+                });
+                let no_roster = crate::spell::group_relation::GroupRoster::default();
+                let roster = chat_out.roster.as_deref().unwrap_or(&no_roster);
                 let target = emote_target(
-                    arg.as_deref(),
+                    target,
                     &selection,
-                    |name| chat_out.players.find(&names, name),
-                    self_player.single().ok().map(|(entity, _, _)| entity),
+                    |name| {
+                        let streamed = chat_out.players.find_other(&names, name, self_guid.0);
+                        crate::target::emote_name_match(
+                            &names,
+                            roster,
+                            self_guid.0,
+                            streamed,
+                            is_streamed,
+                            name,
+                        )
+                    },
+                    self_guid.0,
                 );
-                match commands
-                    .0
-                    .send(ClientCommand::TextEmote { text_id, target })
-                {
+                let file_index = match (emotes.as_deref(), self_store.single()) {
+                    (Some(e), Ok(store)) => e.pick_file_index(
+                        text_id,
+                        store,
+                        chat_out.creatures.as_deref(),
+                        chat_out.sound_kits.as_deref_mut(),
+                    ),
+                    _ => -1,
+                };
+                if benilla_assets::trace::enabled() {
+                    benilla_assets::trace::line(
+                        "emote",
+                        &format!("send text={text_id} index={file_index} target={target:#x}"),
+                    );
+                }
+                match commands.0.send(ClientCommand::TextEmote {
+                    text_id,
+                    file_index,
+                    target,
+                }) {
                     Ok(()) => info!("chat: sent {msg:?}"),
                     Err(_) => warn!("chat: not connected; dropped {msg:?}"),
                 }
@@ -1065,14 +1105,16 @@ pub(super) enum EmoteGate {
     Moving,
 }
 
-/// The emote eligibility check, the only reader of `Emotes.dbc` `EmoteFlags`, in the client's
-/// order; `DoEmote` calls it before building `CMSG_TEXT_EMOTE`. The `0x4000` arm tests movement,
-/// not `SWIMMING`, so it is no water gate.
+/// The emote eligibility check (`0x4f5410`), the only reader of `Emotes.dbc` `EmoteFlags`, in the
+/// client's order; `DoEmote` calls it before building `CMSG_TEXT_EMOTE`. The `0x4000` arm tests
+/// movement, not `SWIMMING`, so it is no water gate. `flying_spline` is a live spline with the
+/// flying flag `0x2000` and not the done flag `0x400`.
 pub(super) fn emote_send_eligible(
     emote_flags: u32,
     stand_state: u8,
     swimming: bool,
     move_flags: u32,
+    flying_spline: bool,
 ) -> EmoteGate {
     // `0x0400`: unconditional suppress.
     if emote_flags & 0x0400 != 0 {
@@ -1084,6 +1126,12 @@ pub(super) fn emote_send_eligible(
     }
     // `0x0080` while swimming.
     if emote_flags & 0x0080 != 0 && swimming {
+        return EmoteGate::Suppressed;
+    }
+    // `0x8000` on a flying spline (`0x4f5462`) or with the flying bit (`0x4f547d`).
+    if emote_flags & 0x8000 != 0
+        && (flying_spline || move_flags & crate::creature_anim::move_flags::FLYING != 0)
+    {
         return EmoteGate::Suppressed;
     }
     // `0x0200` ABSENT at SLEEP(3)/DEAD(7): the bit means "allowed while asleep/dead".
@@ -1112,10 +1160,11 @@ pub(super) fn emote_gate(
     stand_state: u8,
     swimming: bool,
     move_flags: u32,
+    flying_spline: bool,
 ) -> EmoteGate {
     match row_flags {
         Some(flags) if unit_flags & UNIT_FLAG_POSSESSED == 0 => {
-            emote_send_eligible(flags, stand_state, swimming, move_flags)
+            emote_send_eligible(flags, stand_state, swimming, move_flags, flying_spline)
         }
         _ => EmoteGate::Suppressed,
     }
@@ -1137,6 +1186,19 @@ fn auto_clear_afk(cvars: &crate::cvars::Cvars) -> bool {
     cvars.flag("autoClearAFK").unwrap_or(true)
 }
 
+/// A party line from the party leader goes out as `0x33` (`0x50d516`).
+pub(super) fn party_lane(
+    wire: crate::net::ChatKind,
+    leader: u64,
+    me: Option<u64>,
+) -> crate::net::ChatKind {
+    use crate::net::ChatKind as K;
+    match wire {
+        K::Party if me == Some(leader) => K::PartyLeader,
+        other => other,
+    }
+}
+
 /// Turn `SendChatMessage` calls into sends. No slash grammar runs here: an addon sending
 /// `"/dance"` says six characters. An unknown chat-type token prints a system line and sends
 /// nothing; an empty line of any other type but AFK and DND sends nothing and prints nothing.
@@ -1152,6 +1214,9 @@ pub(super) fn drain_addon_chat_sends(
     self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
     // The joined slots a `CHANNEL` target's number names.
     channels: Res<super::edit::ChannelState>,
+    // The leader a party line tests us against.
+    group: Res<crate::ui_party::GroupState>,
+    self_guid: Res<crate::net::SelfGuid>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -1204,7 +1269,7 @@ pub(super) fn drain_addon_chat_sends(
         // included; then AFK and DND each have an arm ahead of the generic send. The system lines,
         // the default text and the mirror are `super::away`'s.
         let strings = |key: &str| crate::ui_chat::combat::global_string(&script, key);
-        let wire = kind.wire();
+        let wire = party_lane(kind.wire(), group.leader, self_guid.0);
         if !matches!(wire, crate::net::ChatKind::Afk) {
             if let Some(line) =
                 super::away::auto_clear_line(*mirror, auto_clear_afk(&cvars), &strings)

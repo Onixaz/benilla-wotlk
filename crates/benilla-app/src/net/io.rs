@@ -1633,7 +1633,11 @@ pub(super) fn writer_loop(
                     ClientCommand::StandStateChange { state } => w.stand_state_change(state),
                     ClientCommand::MountSpecial => w.mount_special(),
                     ClientCommand::Emote { emote_id } => w.emote(emote_id),
-                    ClientCommand::TextEmote { text_id, target } => w.text_emote(text_id, target),
+                    ClientCommand::TextEmote {
+                        text_id,
+                        file_index,
+                        target,
+                    } => w.text_emote(text_id, file_index, target),
                     ClientCommand::GossipHello { guid } => w.gossip_hello(guid),
                     ClientCommand::GossipSelectOption {
                         guid,

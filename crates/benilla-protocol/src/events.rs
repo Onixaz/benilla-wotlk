@@ -620,9 +620,11 @@ pub enum SessionEvent {
         instant: bool,
     },
     /// A chat emote (`SMSG_TEXT_EMOTE`, `EmotesText.dbc`); empty `target_name` means untargeted.
+    /// `file_index` is the voice file the sender picked, `-1` the normal pick.
     TextEmote {
         guid: u64,
         text_emote: u32,
+        file_index: i32,
         target_name: String,
     },
     /// A unit's anim emote (`SMSG_EMOTE`): an `Emotes.dbc` id, its anim and its `EventSoundID`.

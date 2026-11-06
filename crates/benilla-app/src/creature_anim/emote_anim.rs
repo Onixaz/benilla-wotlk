@@ -13,10 +13,11 @@ use bevy::prelude::*;
 use crate::net::{EmoteKind, EmoteMessage, ObjectStore, RemoteMotion};
 use crate::sound::EmoteSounds;
 
-use super::{move_flags, select, EmoteAnim, Engaged, MovementState};
+use super::{move_flags, select, CastHold, EmoteAnim, Engaged, MovementState};
 
 /// The performer's gate inputs: stand state, move flags (`MovementState` for us, `RemoteMotion`
-/// for a remote player; a creature's spline carries no swim bit) and the [`Engaged`] marker.
+/// for a remote player; a creature's spline carries no swim bit), the [`Engaged`] marker and the
+/// [`CastHold`] of a cast's precast anim.
 pub(super) type PerformerQuery<'w, 's> = Query<
     'w,
     's,
@@ -25,6 +26,7 @@ pub(super) type PerformerQuery<'w, 's> = Query<
         Option<&'static MovementState>,
         Option<&'static RemoteMotion>,
         Has<Engaged>,
+        Has<CastHold>,
     ),
 >;
 
@@ -43,9 +45,10 @@ pub(super) fn emote_to_anim(
         else {
             continue;
         };
-        let (store, movement, remote, engaged) =
-            units.get(entity).unwrap_or((None, None, None, false));
-        if !play_eligible(store, movement, remote, engaged, anim_id) {
+        let (store, movement, remote, engaged, casting) = units
+            .get(entity)
+            .unwrap_or((None, None, None, false, false));
+        if !play_eligible(store, movement, remote, engaged, casting, anim_id) {
             debug!("emote_anim: suppressed anim {anim_id} for {entity:?}");
             continue;
         }
@@ -66,13 +69,13 @@ pub(super) fn receive_eligible(stand_state: u8, swimming: bool) -> bool {
     stand_state != 3 && !swimming
 }
 
-/// The shared player's half: no play while channeling or in combat, and LiftOff (192) and Land
-/// (200) skip the combat test alone (they set the flag the combat test is branched past on; the
-/// channel test runs first). Its already-armed test is the driver's `armed_id`, and its `[+0xd58] &
-/// 0x400` test (the weapon-visual hold) is [`super::RangedHold`].
-fn player_eligible(anim_id: u32, channeling: bool, in_combat: bool) -> bool {
+/// The shared player's half (`0x73ab90`): no play while channeling, while a cast's precast anim
+/// holds (`[unit+0xa38] & 0x400`, `0x73abf9`, here [`CastHold`]) or in combat. LiftOff (192) and
+/// Land (200) skip the combat test alone: the channel and cast tests run first. Its already-armed
+/// test is the driver's `armed_id`.
+fn player_eligible(anim_id: u32, channeling: bool, casting: bool, in_combat: bool) -> bool {
     let exempt = anim_id == u32::from(select::LIFT_OFF) || anim_id == u32::from(select::LAND);
-    !channeling && (exempt || !in_combat)
+    !channeling && !casting && (exempt || !in_combat)
 }
 
 /// The whole gate for one unit, as both producers call it; `engaged` stands for the client's
@@ -82,6 +85,7 @@ pub(super) fn play_eligible(
     movement: Option<&MovementState>,
     remote: Option<&RemoteMotion>,
     engaged: bool,
+    casting: bool,
     anim_id: u32,
 ) -> bool {
     let fields = store.map(|s| &s.0);
@@ -94,7 +98,8 @@ pub(super) fn play_eligible(
         != 0;
     let channeling = fields.is_some_and(|f| f.unit_channel_spell() != 0);
     let in_combat = engaged || fields.is_some_and(|f| f.unit_flags() & UNIT_FLAGS_COMBAT_BIT != 0);
-    receive_eligible(stand_state, swimming) && player_eligible(anim_id, channeling, in_combat)
+    receive_eligible(stand_state, swimming)
+        && player_eligible(anim_id, channeling, casting, in_combat)
 }
 
 /// Our own unit's inputs to `DoEmote`'s local-play gate.
@@ -110,6 +115,8 @@ pub(crate) struct LocalPlay {
     /// The loot-kneel latch with its kneeling target.
     pub(crate) loot_kneel: bool,
     pub(crate) channeling: bool,
+    /// A cast's precast anim holds (`[+0xa38] & 0x400`), [`CastHold`].
+    pub(crate) casting: bool,
     /// The auto-attack target `[+0xc48]` alone, not the combat flag bit.
     pub(crate) engaged: bool,
 }
@@ -119,13 +126,12 @@ const SHUFFLE_VOID: u32 = move_flags::HOVER | move_flags::SWIMMING | 0x800;
 
 /// The gate on `DoEmote`'s local play: the emote plays at once only while a direction key is held,
 /// and every other case waits for the server's `SMSG_EMOTE`. It refuses the dead, a unit both
-/// jumping and falling far, a jump with vertical speed, a kneeling looter, a channel, an
-/// auto-attack target, a turn shuffle (approximated) and any stand state but 0 (and the cached
-/// `[+0xc1c]`, which tracks it). The `[+0xd58]` test refuses only when both 0x400
-/// ([`super::RangedHold`]) and 0x10000 (unmodelled) are set, and so is not tested here; the
-/// turn-shuffle test approximates the reference's, which also exempts on the armed id, exempts on
-/// `d58 & 0xc` and fires on the mouse-turn latch `d58 & 0x1800`. The ranged auto-repeat test needs
-/// sheath state 2, which the stow `DoEmote` runs first has cleared.
+/// jumping and falling far, a jump with vertical speed, a kneeling looter, a channel, a held cast
+/// anim (`0x724499`, the bit alone), an auto-attack target, a turn shuffle (approximated) and any
+/// stand state but 0 (and the cached `[+0x9f8]`, which tracks it). The turn-shuffle test
+/// approximates the reference's, which also exempts on the armed id, exempts on `a38 & 0xc` and
+/// fires on the mouse-turn latch `a38 & 0x1800`. The ranged auto-repeat test needs sheath state 2,
+/// which the stow `DoEmote` runs first has cleared.
 pub(crate) fn local_play_eligible(i: &LocalPlay) -> bool {
     let f = i.move_flags;
     let turning = f & (move_flags::TURN_LEFT | move_flags::TURN_RIGHT) != 0;
@@ -136,6 +142,7 @@ pub(crate) fn local_play_eligible(i: &LocalPlay) -> bool {
         && f & move_flags::ANY_MOVE != 0
         && !i.loot_kneel
         && !i.channeling
+        && !i.casting
         && !i.engaged
         && !shuffling
         && i.stand_state == 0
@@ -150,7 +157,7 @@ const UNIT_FLAGS_COMBAT_BIT: u32 = 0x800;
 fn resolve_anim_emote(kind: EmoteKind, lookup: impl Fn(u32) -> Option<u32>) -> Option<u32> {
     match kind {
         EmoteKind::Anim(id) => lookup(id),
-        EmoteKind::Text(_) => None,
+        EmoteKind::Text { .. } => None,
     }
 }
 
@@ -162,7 +169,11 @@ mod tests {
     fn only_anim_kind_resolves_and_only_through_the_catalog() {
         let lookup = |id: u32| if id == 3 { Some(66) } else { None };
         assert_eq!(resolve_anim_emote(EmoteKind::Anim(3), lookup), Some(66));
-        assert_eq!(resolve_anim_emote(EmoteKind::Text(101), lookup), None);
+        let text = EmoteKind::Text {
+            text_id: 101,
+            file_index: 0,
+        };
+        assert_eq!(resolve_anim_emote(text, lookup), None);
         // An id the catalog lacks (AnimID 0 included) stays `None`.
         assert_eq!(resolve_anim_emote(EmoteKind::Anim(999), lookup), None);
     }
@@ -181,22 +192,50 @@ mod tests {
     #[test]
     fn channeling_or_combat_suppresses_the_play() {
         assert!(
-            player_eligible(66, false, false),
+            player_eligible(66, false, false, false),
             "idle and out of combat plays"
         );
-        assert!(!player_eligible(66, true, false), "channeling suppresses");
-        assert!(!player_eligible(66, false, true), "in combat suppresses");
+        assert!(
+            !player_eligible(66, true, false, false),
+            "channeling suppresses"
+        );
+        assert!(
+            !player_eligible(66, false, false, true),
+            "in combat suppresses"
+        );
+    }
+
+    /// A held precast anim refuses before the combat test, so it refuses LiftOff and Land too.
+    #[test]
+    fn a_held_cast_anim_refuses_the_play_lift_off_and_land_included() {
+        for id in [66, 192, 200] {
+            assert!(!player_eligible(id, false, true, false), "{id}");
+        }
+        assert!(
+            !play_eligible(None, None, None, false, true, 66),
+            "the whole gate"
+        );
+        assert!(play_eligible(None, None, None, false, false, 66));
     }
 
     /// LiftOff (192) and Land (200) skip the combat test, not the channel.
     #[test]
     fn lift_off_and_land_play_in_combat_but_not_while_channeling() {
-        assert!(player_eligible(192, false, true), "LiftOff in combat");
-        assert!(player_eligible(200, false, true), "Land in combat");
-        assert!(!player_eligible(66, false, true), "any other id refuses");
-        assert!(!player_eligible(193, false, true), "the neighbours refuse");
         assert!(
-            !player_eligible(192, true, true),
+            player_eligible(192, false, false, true),
+            "LiftOff in combat"
+        );
+        assert!(player_eligible(200, false, false, true), "Land in combat");
+        assert!(
+            !player_eligible(66, false, false, true),
+            "any other id refuses"
+        );
+        assert!(
+            !player_eligible(193, false, false, true),
+            "the neighbours refuse"
+        );
+        assert!(
+            !player_eligible(192, true, false, true),
             "channeling still refuses"
         );
     }
@@ -206,18 +245,21 @@ mod tests {
     #[test]
     fn an_engaged_unit_refuses_the_play_without_the_flag_bit() {
         assert!(
-            play_eligible(None, None, None, false, 66),
+            play_eligible(None, None, None, false, false, 66),
             "idle, no store: plays"
         );
         assert!(
-            !play_eligible(None, None, None, true, 66),
+            !play_eligible(None, None, None, true, false, 66),
             "engaged: refused"
         );
         assert!(
-            play_eligible(None, None, None, true, 192),
+            play_eligible(None, None, None, true, false, 192),
             "engaged LiftOff"
         );
-        assert!(play_eligible(None, None, None, true, 200), "engaged Land");
+        assert!(
+            play_eligible(None, None, None, true, false, 200),
+            "engaged Land"
+        );
     }
 
     fn moving() -> LocalPlay {
@@ -273,6 +315,10 @@ mod tests {
                 ..base
             },
             LocalPlay {
+                casting: true,
+                ..base
+            },
+            LocalPlay {
                 engaged: true,
                 ..base
             },
@@ -314,6 +360,44 @@ mod tests {
         ] {
             assert!(local_play_eligible(&i));
         }
+    }
+
+    /// The real system over a [`CastHold`]: a `SMSG_EMOTE` on a casting unit arms nothing, and the
+    /// same message plays once the hold clears.
+    #[test]
+    fn an_emote_over_a_cast_hold_plays_only_after_it_clears() {
+        const WAVE: u32 = 3;
+        let mut app = App::new();
+        app.init_resource::<crate::creature_anim::PlaySeq>()
+            .insert_resource(EmoteSounds(
+                benilla_formats::EmoteSoundCatalog::default().with_row(WAVE, 67, 0),
+            ))
+            .add_message::<EmoteMessage>()
+            .add_message::<EmoteAnim>()
+            .add_systems(Update, emote_to_anim);
+        let unit = app
+            .world_mut()
+            .spawn(CastHold {
+                anim_id: 54,
+                spell_id: 133,
+                ranged: false,
+            })
+            .id();
+        let emote = |app: &mut App| {
+            app.world_mut().write_message(EmoteMessage {
+                guid: 7,
+                source: Some(unit),
+                kind: EmoteKind::Anim(WAVE),
+            });
+            app.update();
+            app.world_mut()
+                .resource_mut::<bevy::ecs::message::Messages<EmoteAnim>>()
+                .drain()
+                .count()
+        };
+        assert_eq!(emote(&mut app), 0, "the hold refuses it");
+        app.world_mut().entity_mut(unit).remove::<CastHold>();
+        assert_eq!(emote(&mut app), 1, "cleared, it plays");
     }
 
     #[test]

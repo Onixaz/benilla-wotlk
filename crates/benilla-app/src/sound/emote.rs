@@ -1,7 +1,7 @@
 //! Emote sounds: `SMSG_TEXT_EMOTE` plays the performer's race/sex voice kit (`EmotesTextSound`)
-//! for the active player and the party only. Our own `/wave` goes out as `CMSG_TEXT_EMOTE` and
-//! plays through the server echo, as in 1.12. The catalog also serves `crate::ui_chat` and
-//! `crate::creature_anim`.
+//! for the active player and the party only. Our own `/wave` goes out as `CMSG_TEXT_EMOTE` with the
+//! voice file it picked and plays through the server echo, which every hearer reads the same file
+//! from. The catalog also serves `crate::ui_chat` and `crate::creature_anim`.
 
 use bevy::prelude::*;
 
@@ -9,7 +9,7 @@ use benilla_formats::EmoteSoundCatalog;
 use benilla_protocol::messages::ObjectType;
 
 use crate::entities::{AttachPoints, Creatures};
-use crate::net::{EmoteKind, EmoteMessage, ObjectStore, SelfGuid};
+use crate::net::{ActiveMover, EmoteKind, EmoteMessage, ObjectStore, SelfGuid, SelfPlayer};
 use crate::spell::group_relation::GroupRoster;
 use crate::ui_social::SocialState;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
@@ -17,8 +17,22 @@ use benilla_world::schedule::WorldStage;
 
 use super::kit::{
     play_kit_ext, stop_older_emote_voices, KitRef, Latch, PlayExtras, SoundCategory, SoundKits,
+    Volume,
 };
 use super::{AudioListener, SoundConfig, SoundOutput};
+
+/// The race and sex a unit's voice kit is picked by: the descriptor's while the display is native,
+/// else the display's override (`0x6ddb3a`-`0x6ddb61`).
+fn voice_race_sex(store: &ObjectStore, creatures: Option<&Creatures>) -> Option<(u8, u8)> {
+    let native = store.0.unit_displayid() == store.0.unit_native_displayid();
+    store
+        .0
+        .unit_displayid()
+        .filter(|_| !native)
+        .and_then(|d| u32::try_from(d).ok())
+        .and_then(|d| creatures?.display_race_sex(d))
+        .or_else(|| Some((store.0.unit_race()?, store.0.unit_gender()?)))
+}
 
 /// The emote-audio catalog (also the chat sender's `/name` → text-id resolver).
 #[derive(Resource)]
@@ -28,6 +42,24 @@ impl EmoteSounds {
     /// Resolve a `/command` name (case-insensitive) to its EmotesText id.
     pub(crate) fn text_id(&self, name: &str) -> Option<u32> {
         self.0.text_id(name)
+    }
+
+    /// The file index `CMSG_TEXT_EMOTE` carries (`0x6ddb6a`): one of the kit of our race and sex,
+    /// `-1` for a kit with no files.
+    pub(crate) fn pick_file_index(
+        &self,
+        text_id: u32,
+        store: &ObjectStore,
+        creatures: Option<&Creatures>,
+        kits: Option<&mut SoundKits>,
+    ) -> i32 {
+        let kit = voice_race_sex(store, creatures)
+            .and_then(|(race, sex)| self.0.voice(text_id, u32::from(race), u32::from(sex)))
+            .filter(|&k| k != 0);
+        match (kit, kits) {
+            (Some(kit), Some(kits)) => kits.pick_file_index(kit),
+            _ => -1,
+        }
     }
 
     /// An `Emotes.dbc` id's `AnimID`.
@@ -105,26 +137,76 @@ fn voice_audible(
     Some(performer) == me || performer_is_player && roster.in_party(me, performer)
 }
 
-/// Play `kit` at the unit's attachment `0x11`, then stop the unit's previous emote voice
-/// (`[unit+0xb28]`); a play that opens no channel stops nothing. Shared by the text-emote voice and
-/// the `$CSD` anim event. A Death Knight's takes its voice chain, except kit 6576
-/// (the unit's emote-sound play, `0x746d60`).
+/// The units whose voice is your own: the active player or the active mover.
+pub(super) type VoiceOwners<'w, 's> = Query<'w, 's, (), Or<(With<SelfPlayer>, With<ActiveMover>)>>;
+
+/// One play of `0x746d60`.
+pub(super) struct EmoteVoice {
+    pub(super) kit: u32,
+    pub(super) unit: Entity,
+    /// The unit's attachment `0x11`.
+    pub(super) at: Vec3,
+    /// The kit properties' file (`0x746f3b`): a non-negative index plays that file, `-1` the normal
+    /// pick, which the `$CSD` event asks for (`0x732be0`).
+    pub(super) file_index: i32,
+    /// The two CVar tests, which the `$CSD` event asks for (`0x732be2`) and the text voice does not.
+    pub(super) check_cvars: bool,
+    /// The active player or the active mover.
+    pub(super) own: bool,
+}
+
+/// A player at health below 1 plays nothing, on both paths (`0x746d80`).
+fn dead_player(store: Option<&ObjectStore>) -> bool {
+    store.is_some_and(|s| {
+        s.0.object_type() == Some(ObjectType::Player) && s.0.unit_health() == Some(0)
+    })
+}
+
+/// Where an emote voice sounds and its volume scale: your own with the listener on the character
+/// plays flat at 0.65 (`0x746f66`, `0x746fa2`-`0x746fc6`), every other at the unit at full scale.
+fn voice_placement(own: bool, listener_at_character: bool, at: Vec3) -> (Option<Vec3>, f32) {
+    if own && listener_at_character {
+        (None, 0.65)
+    } else {
+        (Some(at), 1.0)
+    }
+}
+
+/// Play a voice, then stop the unit's previous emote voice (`[unit+0x934]`); a play that opens no
+/// channel stops nothing. Shared by the text-emote voice and the `$CSD` anim event. A Death
+/// Knight's takes its voice chain, except kit 6576 (`0x746f6f`).
 pub(super) fn play_emote_voice(
     kits: &mut SoundKits,
     assets: &WorldAssets,
     out: &mut SoundOutput,
     config: &SoundConfig,
     listener: Vec3,
-    kit: u32,
-    unit: Entity,
+    voice: EmoteVoice,
     store: Option<&ObjectStore>,
-    at: Vec3,
 ) -> anyhow::Result<bool> {
     /// The one emote kit `0x746d60` leaves unfiltered.
     const UNFILTERED_EMOTE_KIT: u32 = 6576;
+    let EmoteVoice {
+        kit,
+        unit,
+        at,
+        file_index,
+        check_cvars,
+        own,
+    } = voice;
+    if dead_player(store) {
+        return Ok(false);
+    }
+    let pet = store.is_some_and(|s| s.0.unit_pet_number() != 0);
+    if check_cvars && (!config.emote_sounds || (!config.pet_sounds && pet)) {
+        return Ok(false);
+    }
+    let (pos, scale) = voice_placement(own, config.listener_at_character, at);
     let extras = PlayExtras {
+        variant: usize::try_from(file_index).ok(),
         source: Some(unit),
         latch: Latch::EmoteVoice,
+        volume_mult: Volume(scale),
         voice_filter: (kit != UNFILTERED_EMOTE_KIT)
             .then(|| super::kit::voice_filter(out, store))
             .flatten(),
@@ -137,7 +219,7 @@ pub(super) fn play_emote_voice(
         config,
         listener,
         KitRef::Id(kit),
-        Some(at),
+        pos,
         SoundCategory::Sfx,
         extras,
     )?;
@@ -147,12 +229,20 @@ pub(super) fn play_emote_voice(
     Ok(opened)
 }
 
+/// The text voice's form gate (`0x7470a3`): a shapeshift, a form row that is no stance (`0x721ca0`),
+/// whose `SpellShapeshiftForm` flags carry `0x1000` plays no voice.
+fn form_mutes_voice(form_flags: Option<u32>) -> bool {
+    form_flags.is_some_and(|f| f & 1 == 0 && f & 0x1000 != 0)
+}
+
 /// Route a text emote to the performer's race/sex voice. A performer whose race/sex has not arrived
 /// yet stays silent. `SMSG_EMOTE` plays no sound: the one-shot path never reads `EventSoundID`,
 /// which only the state emote's `$ESD` does.
 fn emote_sounds(
     mut msgs: MessageReader<EmoteMessage>,
     units: Query<(&ObjectStore, &Transform)>,
+    owners: VoiceOwners,
+    spells: Option<Res<crate::ui_action::Spells>>,
     emotes: Option<Res<EmoteSounds>>,
     kits: Option<ResMut<SoundKits>>,
     assets: Option<Res<WorldAssets>>,
@@ -174,7 +264,11 @@ fn emote_sounds(
     let listener = listener.pos;
     let no_roster = GroupRoster::default();
     for m in msgs.read() {
-        let EmoteKind::Text(text_id) = m.kind else {
+        let EmoteKind::Text {
+            text_id,
+            file_index,
+        } = m.kind
+        else {
             continue;
         };
         // The `Sound_EnableEmoteSounds` CVar gates the text-emote voice, read at play time; a zero never
@@ -187,11 +281,6 @@ fn emote_sounds(
         else {
             continue;
         };
-        // `Sound_EnablePetSounds` off silences a pet's emote voice too (the unit's emote-sound
-        // play, `0x746d60`, behind the emote check).
-        if !config.pet_sounds && store.0.unit_pet_number() != 0 {
-            continue;
-        }
         let is_player = store.0.object_type() == Some(ObjectType::Player);
         if !voice_audible(
             m.guid,
@@ -202,20 +291,16 @@ fn emote_sounds(
         ) {
             continue;
         }
-        // The display override's race and sex before the descriptor's.
-        let overridden = store
-            .0
-            .unit_displayid()
-            .and_then(|d| u32::try_from(d).ok())
-            .and_then(|d| creatures.as_deref()?.display_race_sex(d));
-        let (race, sex) = match overridden {
-            Some(rs) => rs,
-            None => {
-                let (Some(race), Some(sex)) = (store.0.unit_race(), store.0.unit_gender()) else {
-                    continue;
-                };
-                (race, sex)
-            }
+        let form = u32::from(store.0.unit_shapeshift_form());
+        let form_flags = spells
+            .as_deref()
+            .and_then(|s| s.forms.get(&form))
+            .map(|f| f.flags);
+        if form_mutes_voice(form_flags) {
+            continue;
+        }
+        let Some((race, sex)) = voice_race_sex(store, creatures.as_deref()) else {
+            continue;
         };
         let Some(kit) = emotes
             .0
@@ -224,17 +309,22 @@ fn emote_sounds(
         else {
             continue; // most emotes are voiceless (/wave)
         };
-        let at = attach.point(unit, VOICE_ATTACH, transform.translation);
+        let voice = EmoteVoice {
+            kit,
+            unit,
+            at: attach.point(unit, VOICE_ATTACH, transform.translation),
+            file_index,
+            check_cvars: false,
+            own: owners.contains(unit),
+        };
         if let Err(e) = play_emote_voice(
             &mut kits,
             &assets,
             &mut out,
             &config,
             listener,
-            kit,
-            unit,
+            voice,
             Some(store),
-            at,
         ) {
             warn!("emote sound (kit {kit}): {e:#}");
         }
@@ -298,6 +388,51 @@ mod tests {
         let r = roster();
         assert!(!voice_audible(MATE, Some(ME), true, &r, true));
         assert!(!voice_audible(ME, Some(ME), true, &r, true));
+    }
+
+    /// Your own voice plays flat at 0.65 with the listener on the character, positioned at full
+    /// scale otherwise; any other unit's always positions.
+    #[test]
+    fn your_own_voice_plays_flat_at_the_reference_scale() {
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        assert_eq!(voice_placement(true, true, at), (None, 0.65));
+        assert_eq!(voice_placement(true, false, at), (Some(at), 1.0));
+        assert_eq!(voice_placement(false, true, at), (Some(at), 1.0));
+    }
+
+    /// A player below 1 health plays nothing; a creature, or a player with no health field yet, is
+    /// not this gate's.
+    #[test]
+    fn a_dead_player_plays_no_voice() {
+        use benilla_protocol::field::FIELD_UNIT_HEALTH;
+        use benilla_protocol::ObjectFields;
+        let store = |type_mask, health| {
+            ObjectStore(ObjectFields::from_pairs(&[
+                (2, type_mask),
+                (FIELD_UNIT_HEALTH, health),
+            ]))
+        };
+        assert!(dead_player(Some(&store(0x19, 0))), "a dead player");
+        assert!(!dead_player(Some(&store(0x19, 1))), "alive");
+        assert!(!dead_player(Some(&store(0x9, 0))), "a dead creature");
+        assert!(!dead_player(None));
+    }
+
+    /// Bit `0x1000` silences a shapeshift; a stance is no shapeshift, and no form row is no gate.
+    #[test]
+    fn a_flagged_form_mutes_the_text_voice() {
+        assert!(form_mutes_voice(Some(0x1000)));
+        assert!(!form_mutes_voice(Some(0x1001)), "a stance");
+        assert!(!form_mutes_voice(Some(0)));
+        assert!(!form_mutes_voice(None));
+    }
+
+    /// The sender's pick reads the kit of its race and sex; a kit-less emote sends `-1`.
+    #[test]
+    fn a_kit_with_no_voice_sends_minus_one() {
+        let sounds = EmoteSounds(EmoteSoundCatalog::default());
+        let store = ObjectStore::default();
+        assert_eq!(sounds.pick_file_index(101, &store, None, None), -1);
     }
 
     /// The slot holder is the unit's own emote voice, never its bark or another unit's.

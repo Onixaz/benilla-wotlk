@@ -247,12 +247,13 @@ pub fn random_roll(min: u32, max: u32) -> Vec<u8> {
     body
 }
 
-/// `CMSG_TEXT_EMOTE` body: `u32` EmotesText.dbc id, `u32` text variation (only relayed), `u64`
-/// target or 0 (`Misc.cpp:60-65`). The server echoes `SMSG_TEXT_EMOTE` to us as well.
-pub fn text_emote(text_id: u32, target: u64) -> Vec<u8> {
+/// `CMSG_TEXT_EMOTE` body: `u32` EmotesText.dbc id, the voice file index the server relays (`-1`
+/// for a kit with no files, `0x6ddb76`), `u64` target or 0. The server echoes `SMSG_TEXT_EMOTE` to
+/// us as well.
+pub fn text_emote(text_id: u32, file_index: i32, target: u64) -> Vec<u8> {
     let mut b = Vec::with_capacity(16);
     b.extend_from_slice(&text_id.to_le_bytes());
-    b.extend_from_slice(&0u32.to_le_bytes()); // emoteNum: text-variation 0
+    b.extend_from_slice(&file_index.to_le_bytes());
     b.extend_from_slice(&target.to_le_bytes());
     b
 }

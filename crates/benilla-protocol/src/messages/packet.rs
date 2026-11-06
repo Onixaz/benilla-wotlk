@@ -611,10 +611,12 @@ pub enum ServerPacket {
     },
     /// `SMSG_TEXT_EMOTE`: `u64 guid, u32 textEmote, u32 emoteNum, u32 namelen, char name[namelen]`
     /// (`EmoteChatBuilder`; a lone NUL for no target). The raw `target_name` picks the sentence
-    /// form, as in the reference; `emoteNum` is read and ignored, as the reference ignores it.
+    /// form, as in the reference; `file_index` is the sender's `emoteNum`, the voice file it picked,
+    /// which reaches the voice player (`0x504070`, `0x746f3b`).
     TextEmote {
         guid: u64,
         text_emote: u32,
+        file_index: i32,
         target_name: String,
     },
     /// `SMSG_EMOTE`: `u32 emoteId (Emotes.dbc), u64 guid`, an animation emote.

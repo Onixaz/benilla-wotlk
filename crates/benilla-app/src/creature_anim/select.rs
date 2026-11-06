@@ -132,13 +132,17 @@ pub(crate) mod move_flags {
     /// flight and the mode bits are not among them.
     pub const INTEGRATED: u32 = STEERING | FALLING | ASCENDING | DESCENDING;
 
-    /// The committed-lower-body test routing a one-shot to the masked overlay; the client's
-    /// separate mouse-turn test (`d58 & 0x1800`) reads a field benilla does not model.
-    pub const ROUTE_COMMITTED_MOVE: u32 =
-        FORWARD | BACKWARD | STRAFE_LEFT | STRAFE_RIGHT | TURN_LEFT | TURN_RIGHT | SWIMMING;
+    /// The split test's move word for an upper-set id, `0x2e000ff` (`0x723f44`).
+    pub const SPLIT_MOVE: u32 = STEERING | SWIMMING | ASCENDING | DESCENDING | FLYING;
+
+    /// The split test's move word for a held cast, `0x2e0000f` (`0x723fe0`).
+    pub const SPLIT_CAST_MOVE: u32 = ANY_MOVE | SWIMMING | ASCENDING | DESCENDING | FLYING;
+
+    /// The bits that keep the turn latch off, `0x2e0100f`.
+    pub const TURN_LATCH_VOID: u32 = SPLIT_CAST_MOVE | FALLING;
 
     /// The stationary-cast pin's moving test: no turn bits, so a caster turning in place keeps the
-    /// pin, where [`ROUTE_COMMITTED_MOVE`]'s turn bits would flap it.
+    /// pin.
     pub const CAST_PIN_MOVE: u32 = ANY_MOVE | SWIMMING;
 }
 
@@ -559,10 +563,10 @@ pub(super) fn is_swing_id(id: u16) -> bool {
     matches!(id, 16..=19 | 85 | 87 | 88 | 117)
 }
 
-/// The client's COMBAT classifier: a combat clip requested over another is not armed; the playing
+/// The melee set (`0x71d590`): a combat clip requested over another is not armed; the playing
 /// one's rate doubles and the request defers.
 pub(super) fn is_combat_anim(id: u16) -> bool {
-    matches!(id, 10 | 16..=24 | 30 | 36 | 57..=59 | 85..=88 | 95 | 117 | 118)
+    matches!(id, 10 | 16..=24 | 30 | 36 | 57..=59 | 85..=88 | 95 | 117 | 118 | 170..=179 | 212)
 }
 
 /// The client's CAST classifier; with [`is_combat_anim`] it is the transplant test: a locomotion
@@ -749,64 +753,105 @@ pub(super) enum OneShotRoute {
     FullBody,
 }
 
-/// The CLASS_A set (the reference's byte table over `id - 2`), the only ids that may play on the
-/// key bone; every other id plays full-body.
-fn is_class_a(id: u16) -> bool {
-    matches!(id,
+/// The BehaviorID a resolved id routes by (`AnimationData` `row+0x18`), so a tier variant routes as
+/// its base id; the id itself until `AnimationData.dbc` loads.
+pub(super) fn behavior_of(id: u16, catalog: Option<&benilla_formats::AnimDataCatalog>) -> u16 {
+    catalog.and_then(|c| c.behavior(id)).unwrap_or(id)
+}
+
+/// The upper set (`0x71d800`), the BehaviorIDs that may play on the key bone.
+fn is_upper_set(behavior: u16) -> bool {
+    matches!(behavior,
         2 | 8..=10 | 14..=36 | 46..=49 | 51..=74 | 76..=78 | 80..=90 | 105..=113 | 117 | 118
-        | 122..=125 | 128..=130 | 133 | 134 | 136..=138 | 185 | 186 | 195)
+        | 122..=125 | 128..=130 | 133 | 134 | 136..=138 | 153..=156 | 185 | 186 | 195
+        | 213..=222 | 225)
 }
 
-/// The mount-set, the ids a mounted rider's request sends to the mount model.
-fn is_mount_set(id: u16) -> bool {
-    matches!(id, 0 | 1 | 3..=6 | 8..=13 | 37..=45 | 92..=95 | 119 | 120 | 127 | 131 | 132 | 135 | 143 | 187)
+/// The full set (`0x71d6b0`), the BehaviorIDs a mounted rider's request sends to the mount model.
+fn is_full_set(behavior: u16) -> bool {
+    matches!(behavior,
+        0 | 1 | 3..=6 | 8..=13 | 37..=45 | 92..=95 | 119 | 120 | 127 | 131 | 132 | 135 | 143 | 187
+        | 193)
 }
 
-/// Where a request goes while the unit has a mount model: a mount-set id to the mount, a CLASS_A id
-/// to the rider's key bone (8-10 are both), anything else nowhere.
+/// Where a request goes while the unit has a mount model: a full-set id to the mount; only an id
+/// outside the full set and inside the upper set takes the rider's key bone (`0x738b07`-`0x738b1b`);
+/// anything else goes nowhere.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct MountedRoute {
     pub(super) mount: bool,
     pub(super) rider_upper: bool,
 }
 
-pub(super) fn route_mounted(id: u16) -> MountedRoute {
+pub(super) fn route_mounted(behavior: u16) -> MountedRoute {
+    let mount = is_full_set(behavior);
     MountedRoute {
-        mount: is_mount_set(id),
-        rider_upper: is_class_a(id),
+        mount,
+        rider_upper: !mount && is_upper_set(behavior),
     }
 }
 
-/// The COMBAT set, the ids an airborne unit masks: every swing, no emote and no cast, so a
-/// jump-in-place cast replaces the hang full-body.
-fn is_combat(id: u16) -> bool {
-    matches!(id, 10 | 16..=24 | 30 | 36 | 57..=59 | 85..=88 | 95 | 117 | 118)
-}
-
-/// The ids forced full-body whatever the state: the Death class {1, 6, 131, 132} and the special
-/// attacks {57, 58, 118}.
-fn is_forced_full_body(id: u16) -> bool {
-    matches!(id, 1 | 6 | 131 | 132 | 57 | 58 | 118)
+/// The BehaviorIDs forced full-body whatever the state: dead or dying (`0x71dde0`) and the special
+/// attacks (`0x71d550`).
+fn is_forced_full_body(behavior: u16) -> bool {
+    matches!(
+        behavior,
+        1 | 6 | 131 | 132 | 466..=468 | 472 | 57 | 58 | 118
+    )
 }
 
 /// EmoteEat, the `/eat` and `/drink` loop.
 const EMOTE_EAT: u16 = 61;
 
-/// Route an unmounted one-shot by live state: masked while the lower body is committed (moving,
-/// turning, swimming, a non-zero stand state, or a COMBAT id airborne), else full-body, so one
-/// Attack1H is full-body standing and masked running.
-pub(super) fn route_oneshot(id: u16, flags: u32, stand_state: u8) -> OneShotRoute {
-    // EmoteEat (61) unmounted always takes the key bone, whatever the state.
-    if id == EMOTE_EAT {
+/// EmoteWork, which takes the key bone while swimming or flying, split or not (`0x738b9a`).
+const EMOTE_WORK: u16 = 62;
+
+/// One unit's inputs to the split test.
+#[derive(Clone, Copy, Default)]
+pub(super) struct SplitState {
+    /// `MOVEMENTFLAGS` ([`move_flags`]).
+    pub(super) flags: u32,
+    pub(super) stand_state: u8,
+    /// `[unit+0xa38] & 0x1800`, the model catching up with a facing change.
+    pub(super) turn_latch: bool,
+    /// Falling (`0x723350`): the FALLING bit with FALLINGFAR or a vertical speed.
+    pub(super) falling: bool,
+    /// A cast's precast anim holds ([`super::CastHold`]), `[unit+0xa38] & 0x400`.
+    pub(super) cast_anim: bool,
+    pub(super) channeling: bool,
+    /// An auto-attack target ([`super::Engaged`]).
+    pub(super) attacking: bool,
+}
+
+/// The torso split test (`0x723e30`). Its vehicle arms are the seat pose's; its jump arm reads a
+/// jump request over a melee clip, which never reaches here (the jump is [`Special`]).
+fn split_torso(behavior: u16, s: &SplitState) -> bool {
+    use move_flags as f;
+    let casting = s.cast_anim && !s.channeling;
+    let upper = is_upper_set(behavior)
+        && (s.turn_latch || s.flags & f::SPLIT_MOVE != 0 || s.falling || s.stand_state != 0);
+    let melee_airborne = is_combat_anim(behavior) && s.flags & f::FALLING != 0;
+    let moving_cast = casting && s.flags & f::SPLIT_CAST_MOVE != 0;
+    let is_land = matches!(behavior, 39 | 187);
+    // Fishing keeps the split only in a standing or seated state (`0x715880`).
+    let fishing_clear = matches!(behavior, 133 | 134) && !matches!(s.stand_state, 0 | 1 | 4..=6);
+    // A fight or cast turning with neither strafe bit plays full body (`0x724014`-`0x724046`).
+    let turning = s.turn_latch || s.flags & (f::TURN_LEFT | f::TURN_RIGHT) != 0;
+    let turn_clear = (casting || s.channeling || s.attacking)
+        && turning
+        && s.flags & (f::STRAFE_LEFT | f::STRAFE_RIGHT) == 0;
+    (upper || melee_airborne || moving_cast) && !is_land && !fishing_clear && !turn_clear
+}
+
+/// Route an unmounted one-shot by live state, `id` the resolved id and `behavior` its BehaviorID:
+/// the key bone when the split test passes, else bone 0, so one Attack1H is full-body standing and
+/// masked running.
+pub(super) fn route_oneshot(id: u16, behavior: u16, state: &SplitState) -> OneShotRoute {
+    let swimming_or_flying = state.flags & (move_flags::SWIMMING | move_flags::FLYING) != 0;
+    if id == EMOTE_EAT || (id == EMOTE_WORK && swimming_or_flying) {
         return OneShotRoute::Masked;
     }
-    if is_forced_full_body(id) || !is_class_a(id) {
-        return OneShotRoute::FullBody;
-    }
-    let committed_lower = flags & move_flags::ROUTE_COMMITTED_MOVE != 0
-        || stand_state != 0
-        || (is_combat(id) && flags & move_flags::FALLING != 0);
-    if committed_lower {
+    if !is_forced_full_body(behavior) && split_torso(behavior, state) {
         OneShotRoute::Masked
     } else {
         OneShotRoute::FullBody

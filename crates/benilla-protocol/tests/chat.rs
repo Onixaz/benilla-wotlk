@@ -13,7 +13,7 @@ use common::hx;
 /// (`Server/Packets/Misc.cpp:670-674`): `u32` emoteId and `u64` guid.
 #[test]
 fn text_emote_and_emote_decode() {
-    let body = hx("7700000000000000650000000000000004000000426f6200");
+    let body = hx("7700000000000000650000000200000004000000426f6200");
     let p = messages::parse_server(messages::opcode::SMSG_TEXT_EMOTE, &body).unwrap();
     // The target name picks the sentence form; the NUL counted in `namelen` is trimmed.
     assert!(matches!(
@@ -21,6 +21,7 @@ fn text_emote_and_emote_decode() {
         ServerPacket::TextEmote {
             guid: 0x77,
             text_emote: 101,
+            file_index: 2,
             target_name,
         } if target_name == "Bob"
     ));
@@ -29,15 +30,16 @@ fn text_emote_and_emote_decode() {
         [SessionEvent::TextEmote {
             guid: 0x77,
             text_emote: 101,
+            file_index: 2,
             target_name,
         }] if target_name == "Bob"
     ));
 
     // Untargeted, vmangos sends `namelen == 1` and a lone NUL: an empty name, not a one-byte one.
-    let body = hx("770000000000000065000000000000000100000000");
+    let body = hx("770000000000000065000000ffffffff0100000000");
     assert!(matches!(
         messages::parse_server(messages::opcode::SMSG_TEXT_EMOTE, &body).unwrap(),
-        ServerPacket::TextEmote { ref target_name, .. } if target_name.is_empty()
+        ServerPacket::TextEmote { file_index: -1, ref target_name, .. } if target_name.is_empty()
     ));
 
     let body = hx("060000008800000000000000");

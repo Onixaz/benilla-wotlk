@@ -1003,6 +1003,11 @@ fn resolved(
     })
 }
 
+/// The BehaviorID the routing sets read for `id` on this model (`0x7176f0`, then `row+0x18`).
+fn routed_behavior(anims: &ModelAnimations, id: u16, catalog: Option<&AnimDataCatalog>) -> u16 {
+    select::behavior_of(resolved_id(anims, id, catalog), catalog)
+}
+
 /// The clip for a requested id, through the `AnimationData.dbc` fallback.
 fn find_resolved<'a>(
     anims: &'a ModelAnimations,

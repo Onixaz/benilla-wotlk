@@ -314,7 +314,7 @@ pub use char_stats::{
     weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, UnitCombatStats,
     BANK_BAG_SLOT_COUNT, INVENTORY_SLOT_COUNT, SKILL_DEFENSE, SKILL_UNARMED,
 };
-pub use chat_misc::EmoteRequest;
+pub use chat_misc::{EmoteRequest, EmoteTarget};
 pub use chat_send::ChatSend;
 pub use chat_types::{default_chat_color, ChatTypeColor};
 pub use chat_window::{

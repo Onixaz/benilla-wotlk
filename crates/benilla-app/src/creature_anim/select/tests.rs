@@ -596,15 +596,27 @@ fn the_state_resolver_claims_a_row_even_when_its_anim_is_stand() {
 // `stand_state` 1 is seated.
 use OneShotRoute::{FullBody, Masked};
 
+/// [`route_oneshot`] for an id that is its own BehaviorID, on a unit doing nothing else.
+fn route(id: u16, flags: u32, stand_state: u8) -> OneShotRoute {
+    let falling = flags & move_flags::FALLING != 0;
+    let state = SplitState {
+        flags,
+        stand_state,
+        falling,
+        ..default()
+    };
+    route_oneshot(id, id, &state)
+}
+
 #[test]
 fn route_row1_standing_swing_is_full_body() {
-    assert_eq!(route_oneshot(17, 0, 0), FullBody);
+    assert_eq!(route(17, 0, 0), FullBody);
 }
 
 #[test]
 fn route_row2_running_swing_is_masked() {
     // Moving (`[9e8] & 0x20003f`): `esi` 1, the SpineLow overlay over the run.
-    assert_eq!(route_oneshot(17, move_flags::FORWARD, 0), Masked);
+    assert_eq!(route(17, move_flags::FORWARD, 0), Masked);
     // Every direction bit commits the legs, the keyboard turn keys in `0x3f` included.
     for f in [
         move_flags::BACKWARD,
@@ -613,40 +625,47 @@ fn route_row2_running_swing_is_masked() {
         move_flags::TURN_RIGHT,
         move_flags::SWIMMING,
     ] {
-        assert_eq!(route_oneshot(17, f, 0), Masked, "flag {f:#x}");
+        assert_eq!(route(17, f, 0), Masked, "flag {f:#x}");
     }
 }
 
 #[test]
 fn route_row3_midair_swing_is_masked() {
-    assert_eq!(route_oneshot(17, move_flags::FALLING, 0), Masked);
-    // The airborne test is combat-gated: an emote mid-jump is not masked.
-    assert_eq!(route_oneshot(68, move_flags::FALLING, 0), FullBody);
+    assert_eq!(route(17, move_flags::FALLING, 0), Masked);
+    // An emote mid-jump is masked too: the legs keep the jump.
+    assert_eq!(route(68, move_flags::FALLING, 0), Masked);
+    // A melee id takes the bare bit, upper set or not, where the upper arm reads a real fall.
+    let first_tick = SplitState {
+        flags: move_flags::FALLING,
+        ..default()
+    };
+    assert_eq!(route_oneshot(170, 170, &first_tick), Masked);
+    assert_eq!(route_oneshot(68, 68, &first_tick), FullBody);
 }
 
 #[test]
 fn route_row4_seated_emote_is_masked() {
-    assert_eq!(route_oneshot(80, 0, 1), Masked);
-    assert_eq!(route_oneshot(70, 0, 1), Masked); // EmoteLaugh family
+    assert_eq!(route(80, 0, 1), Masked);
+    assert_eq!(route(70, 0, 1), Masked); // EmoteLaugh family
 }
 
 #[test]
 fn route_row5_standing_clap_and_bow_are_full_body() {
     // 66 and 80 are not COMBAT: `esi` 0, bone 0; their waist-up look is authored, not routed.
-    assert_eq!(route_oneshot(80, 0, 0), FullBody);
-    assert_eq!(route_oneshot(66, 0, 0), FullBody);
+    assert_eq!(route(80, 0, 0), FullBody);
+    assert_eq!(route(66, 0, 0), FullBody);
 }
 
 #[test]
 fn route_row6_standing_cheer_is_full_body() {
     // Routed as row 5; cheer's legs are authored large.
-    assert_eq!(route_oneshot(68, 0, 0), FullBody);
+    assert_eq!(route(68, 0, 0), FullBody);
 }
 
 #[test]
 fn route_row7_seated_cheer_is_masked() {
     // Row 6's clip seated: `esi` 1, and the overlay never reaches the legs, which stay seated.
-    assert_eq!(route_oneshot(68, 0, 1), Masked);
+    assert_eq!(route(68, 0, 1), Masked);
 }
 
 #[test]
@@ -661,16 +680,16 @@ fn route_land_row8_picks_land_clip_from_touchdown_input() {
 
 #[test]
 fn route_classifier_memberships_are_the_decoded_bytes() {
-    // COMBAT is every swing, no emote; CLASS_A has 17, 66, 68 and 80.
-    assert!(is_combat(17));
+    // The melee set is every swing, no emote; the upper set has 17, 66, 68 and 80.
+    assert!(is_combat_anim(17));
     for id in [66, 68, 80] {
-        assert!(!is_combat(id), "emote {id} must not be COMBAT");
+        assert!(!is_combat_anim(id), "emote {id} is not a swing");
     }
     for id in [16, 17, 18, 19, 85, 87, 88, 117] {
-        assert!(is_combat(id) && is_class_a(id), "swing {id}");
+        assert!(is_combat_anim(id) && is_upper_set(id), "swing {id}");
     }
-    // The whole table, member and non-member alike, from the decoded bytes.
-    let class_a: Vec<u16> = [2, 8, 9, 10, 14, 15]
+    // The whole tables, member and non-member alike, from the decoded bytes.
+    let upper: Vec<u16> = [2, 8, 9, 10, 14, 15]
         .into_iter()
         .chain(16..=36)
         .chain(46..=49)
@@ -683,27 +702,158 @@ fn route_classifier_memberships_are_the_decoded_bytes() {
         .chain(128..=130)
         .chain([133, 134])
         .chain(136..=138)
+        .chain(153..=156)
         .chain([185, 186, 195])
+        .chain(213..=222)
+        .chain([225])
         .collect();
-    for id in 0..=300u16 {
-        assert_eq!(is_class_a(id), class_a.contains(&id), "CLASS_A {id}");
-    }
-    // The mount-set.
-    let mount: Vec<u16> = [0, 1]
+    let full: Vec<u16> = [0, 1]
         .into_iter()
         .chain(3..=6)
         .chain(8..=13)
         .chain(37..=45)
         .chain(92..=95)
-        .chain([119, 120, 127, 131, 132, 135, 143, 187])
+        .chain([119, 120, 127, 131, 132, 135, 143, 187, 193])
         .collect();
-    for id in 0..=300u16 {
-        assert_eq!(is_mount_set(id), mount.contains(&id), "mount-set {id}");
+    for id in 0..=505u16 {
+        assert_eq!(is_upper_set(id), upper.contains(&id), "upper set {id}");
+        assert_eq!(is_full_set(id), full.contains(&id), "full set {id}");
     }
     // Forced-full-body carve-outs never mask, even seated.
-    for id in [1, 6, 131, 132, 57, 58, 118] {
-        assert_eq!(route_oneshot(id, 0, 1), FullBody, "forced full-body {id}");
+    for id in [1, 6, 131, 132, 466, 467, 468, 472, 57, 58, 118] {
+        assert_eq!(route(id, 0, 1), FullBody, "forced full-body {id}");
     }
+}
+
+/// Every set reads the resolved id's BehaviorID: a tier variant routes as its base id, and the
+/// shipped table holds such rows.
+#[test]
+fn a_tier_variant_routes_as_its_base_id() {
+    use benilla_formats::{AnimDataCatalog, AnimEntry};
+    let row = |behavior, tier| AnimEntry {
+        weapon_flags: 0,
+        fallback: 0,
+        flags: 0,
+        behavior,
+        tier,
+    };
+    let catalog = AnimDataCatalog::from_rows([(300, row(68, 3)), (301, row(4, 3))]);
+    let moving = SplitState {
+        flags: move_flags::FORWARD,
+        ..default()
+    };
+    assert_eq!(behavior_of(300, Some(&catalog)), 68);
+    assert_eq!(behavior_of(300, None), 300, "no table yet: the id itself");
+    let b = behavior_of(300, Some(&catalog));
+    assert_eq!(route_oneshot(300, b, &moving), Masked);
+    assert_eq!(
+        route_oneshot(300, 300, &moving),
+        FullBody,
+        "by id it would not"
+    );
+    assert!(route_mounted(behavior_of(301, Some(&catalog))).mount);
+
+    let data = benilla_formats::wow_data_or_skip!();
+    let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+    let shipped = benilla_formats::load_anim_data_catalog(&mut chain).expect("AnimationData");
+    let tiered = (0..=505u16)
+        .filter(|&id| behavior_of(id, Some(&shipped)) != id)
+        .collect::<Vec<_>>();
+    assert!(!tiered.is_empty(), "the shipped table has tier rows");
+    for id in tiered {
+        let b = behavior_of(id, Some(&shipped));
+        assert_eq!(
+            route_oneshot(id, b, &moving),
+            route_oneshot(b, b, &moving),
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn the_split_test_follows_each_arm() {
+    let swing = |state: SplitState| route_oneshot(17, 17, &state);
+    let turning = SplitState {
+        flags: move_flags::TURN_LEFT,
+        ..default()
+    };
+    assert_eq!(swing(turning), Masked, "turning idle: the upper arm");
+    // A fighter or caster turning with neither strafe bit swings full body.
+    for state in [
+        SplitState {
+            attacking: true,
+            ..turning
+        },
+        SplitState {
+            channeling: true,
+            ..turning
+        },
+        SplitState {
+            cast_anim: true,
+            ..turning
+        },
+        SplitState {
+            flags: 0,
+            turn_latch: true,
+            attacking: true,
+            ..default()
+        },
+        SplitState {
+            flags: move_flags::FORWARD | move_flags::TURN_LEFT,
+            attacking: true,
+            ..default()
+        },
+    ] {
+        assert_eq!(swing(state), FullBody);
+    }
+    let strafing = SplitState {
+        flags: move_flags::TURN_LEFT | move_flags::STRAFE_LEFT,
+        attacking: true,
+        ..default()
+    };
+    assert_eq!(swing(strafing), Masked, "a strafe bit keeps the split");
+    // The turn latch alone splits an upper id, the flying bit too.
+    let latched = SplitState {
+        turn_latch: true,
+        ..default()
+    };
+    assert_eq!(swing(latched), Masked);
+    assert_eq!(route(17, move_flags::FLYING, 0), Masked);
+    assert_eq!(route(17, move_flags::ASCENDING, 0), Masked);
+    // A moving held cast splits any id; a channel is not a held cast.
+    let moving_cast = SplitState {
+        flags: move_flags::FORWARD,
+        cast_anim: true,
+        ..default()
+    };
+    assert_eq!(route_oneshot(126, 126, &moving_cast), Masked);
+    let moving_channel = SplitState {
+        channeling: true,
+        ..moving_cast
+    };
+    assert_eq!(route_oneshot(126, 126, &moving_channel), FullBody);
+    // A landing never splits, and fishing only standing or seated.
+    assert_eq!(route_oneshot(39, 39, &moving_cast), FullBody);
+    assert_eq!(route(133, 0, 1), Masked);
+    assert_eq!(route(133, 0, 8), FullBody);
+}
+
+/// The ids the old sets lacked: a split CustomSpell plays on the key bone.
+#[test]
+fn the_custom_spell_rows_split_on_a_moving_unit() {
+    for id in (153..=156).chain(213..=222).chain([225]) {
+        assert_eq!(route(id, move_flags::FORWARD, 0), Masked, "{id}");
+        assert_eq!(route(id, 0, 0), FullBody, "{id}, standing");
+        assert!(route_mounted(id).rider_upper, "{id}");
+    }
+}
+
+/// EmoteWork takes the key bone swimming or flying, split or not.
+#[test]
+fn emote_work_takes_the_key_bone_afloat() {
+    assert_eq!(route(62, move_flags::SWIMMING, 0), Masked);
+    assert_eq!(route(62, move_flags::FLYING, 0), Masked);
+    assert_eq!(route(62, 0, 0), FullBody);
 }
 
 #[test]
@@ -715,22 +865,25 @@ fn mounted_routing_sends_each_id_where_the_bytes_do() {
     }
     assert_eq!((r(68).mount, r(68).rider_upper), (false, true));
     assert_eq!((r(12).mount, r(12).rider_upper), (true, false));
-    // Wound ids 8-10 are in both.
-    assert_eq!((r(9).mount, r(9).rider_upper), (true, true));
+    // Wound ids 8-10 are in both sets, and the full set keeps them off the rider.
+    for id in 8..=10 {
+        assert_eq!((r(id).mount, r(id).rider_upper), (true, false), "{id}");
+    }
+    assert_eq!((r(193).mount, r(193).rider_upper), (true, false), "Hover");
 }
 
 #[test]
 fn standing_eat_is_masked_whatever_the_state() {
-    assert_eq!(route_oneshot(61, 0, 0), Masked);
-    assert_eq!(route_oneshot(61, move_flags::FORWARD, 0), Masked);
-    assert_eq!(route_oneshot(61, 0, 1), Masked);
+    assert_eq!(route(61, 0, 0), Masked);
+    assert_eq!(route(61, move_flags::FORWARD, 0), Masked);
+    assert_eq!(route(61, 0, 1), Masked);
 }
 
 #[test]
 fn whirlwind_and_birth_play_full_body_while_moving() {
     for id in [126, 127] {
-        assert_eq!(route_oneshot(id, move_flags::FORWARD, 0), FullBody, "{id}");
-        assert_eq!(route_oneshot(id, 0, 1), FullBody, "{id}");
+        assert_eq!(route(id, move_flags::FORWARD, 0), FullBody, "{id}");
+        assert_eq!(route(id, 0, 1), FullBody, "{id}");
     }
 }
 
