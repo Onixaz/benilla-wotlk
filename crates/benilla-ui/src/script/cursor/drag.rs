@@ -245,15 +245,13 @@ mod tests {
         assert_eq!(s.eval::<i64>("return heard").unwrap(), 0, "no popup");
         assert!(s.cursor_item().is_some(), "the payload keeps carrying");
 
-        // The trigger is a full click on the world, down and up over nothing.
+        // The pointer alone never drops: the app judges the press pick and the click test.
         s.mouse_button(-50.0, -50.0, "LeftButton", true);
-        assert_eq!(
-            s.eval::<i64>("return heard").unwrap(),
-            0,
-            "the press alone is not the trigger"
-        );
-        let consumed = s.mouse_button(-50.0, -50.0, "LeftButton", false);
-        assert!(consumed, "a world-drop click consumes the event");
+        assert!(!s.mouse_button(-50.0, -50.0, "LeftButton", false));
+        s.tick(0.01);
+        assert_eq!(s.eval::<i64>("return heard").unwrap(), 0);
+
+        assert!(s.world_drop_click(crate::script::WorldPick::Terrain));
         s.tick(0.01);
         assert_eq!(s.eval::<i64>("return heard").unwrap(), 1);
         assert!(
@@ -288,104 +286,12 @@ mod tests {
             equip_slots: Vec::new(),
         }));
 
-        s.mouse_button(-50.0, -50.0, "LeftButton", true);
-        let consumed = s.mouse_button(-50.0, -50.0, "LeftButton", false); // the completed click
-        assert!(consumed, "a world drop consumes the event");
+        assert!(s.world_drop_click(crate::script::WorldPick::Nothing));
         s.tick(0.01);
         assert_eq!(s.eval::<i64>("return heard").unwrap(), 1);
         assert_eq!(s.eval::<String>("return name").unwrap(), "");
         assert_eq!(s.eval::<i64>("return quality").unwrap(), 0);
         assert!(s.cursor_item().is_some(), "the payload stays held");
-    }
-
-    /// A click on the full-screen stock `WorldFrame` is a world click: in the reference, its press
-    /// runs the frame's `OnMouseDown` without consuming, then the `BUTTON1`/`BUTTON2` binding.
-    #[test]
-    fn a_click_on_the_world_frame_is_a_world_drop() {
-        let mut s = drag_script();
-        s.run(
-            r#"
-            WorldFrame = CreateFrame("WorldFrame", "WorldFrame") WorldFrame:SetAllPoints()
-            heard = 0
-            local f = CreateFrame("Frame", "Listener")
-            f:RegisterEvent("DELETE_ITEM_CONFIRM")
-            f:SetScript("OnEvent", function() heard = heard + 1 end)
-            "#,
-        )
-        .unwrap();
-        s.resolve();
-        s.set_cursor_for_test(CursorPayload::Item(CursorItem {
-            bar_placeable: true,
-            bag: 0,
-            slot: 1,
-            item_id: 117,
-            texture: None,
-            link: None,
-            count: None,
-            quality: None,
-            equip_slots: Vec::new(),
-        }));
-
-        // The premise: the click lands on the world frame.
-        let hit = s
-            .hit_test(400.0, 300.0)
-            .expect("the world frame is full-screen");
-        assert!(s.is_world_frame(hit));
-
-        s.mouse_button(400.0, 300.0, "LeftButton", true);
-        let consumed = s.mouse_button(400.0, 300.0, "LeftButton", false);
-        assert!(consumed, "a world drop consumes the completed click");
-        s.tick(0.01);
-        assert_eq!(s.eval::<i64>("return heard").unwrap(), 1, "the popup fires");
-        assert!(s.cursor_item().is_some(), "the payload stays held");
-    }
-
-    #[test]
-    fn a_click_on_a_frame_above_the_world_frame_is_not_a_world_drop() {
-        let mut s = drag_script();
-        s.run(
-            r#"
-            WorldFrame = CreateFrame("WorldFrame", "WorldFrame") WorldFrame:SetAllPoints()
-            heard = 0
-            local a = CreateFrame("Frame", "A")
-            a:SetPoint("BOTTOMLEFT", 0, 0); a:SetWidth(400); a:SetHeight(600); a:EnableMouse(true)
-            local f = CreateFrame("Frame", "Listener")
-            f:RegisterEvent("DELETE_ITEM_CONFIRM")
-            f:SetScript("OnEvent", function() heard = heard + 1 end)
-            "#,
-        )
-        .unwrap();
-        s.resolve();
-        s.set_cursor_for_test(CursorPayload::Item(CursorItem {
-            bar_placeable: true,
-            bag: 0,
-            slot: 1,
-            item_id: 117,
-            texture: None,
-            link: None,
-            count: None,
-            quality: None,
-            equip_slots: Vec::new(),
-        }));
-
-        s.mouse_button(100.0, 300.0, "LeftButton", true);
-        let consumed = s.mouse_button(100.0, 300.0, "LeftButton", false);
-        s.tick(0.01);
-        assert_eq!(s.eval::<i64>("return heard").unwrap(), 0, "no popup");
-        assert!(s.cursor_item().is_some());
-        assert!(
-            consumed,
-            "the plate ate the click — that IS the UI consuming it"
-        );
-
-        // A press and release split across the plate and the world, either way: no world click.
-        s.mouse_button(100.0, 300.0, "LeftButton", true);
-        s.mouse_button(600.0, 300.0, "LeftButton", false);
-        s.mouse_button(600.0, 300.0, "LeftButton", true);
-        s.mouse_button(100.0, 300.0, "LeftButton", false);
-        s.tick(0.01);
-        assert_eq!(s.eval::<i64>("return heard").unwrap(), 0, "still no popup");
-        assert!(s.cursor_item().is_some());
     }
 
     #[test]
@@ -399,78 +305,6 @@ mod tests {
             !s.mouse_button(400.0, 300.0, "LeftButton", false),
             "a bare world click is the world's, not the interface's"
         );
-    }
-
-    /// Over a world object the reference's object leg selects and keeps the payload.
-    #[test]
-    fn world_click_over_a_world_object_is_not_a_world_drop() {
-        let mut s = drag_script();
-        s.run(
-            r#"
-            heard = 0
-            local f = CreateFrame("Frame", "Listener")
-            f:RegisterEvent("DELETE_ITEM_CONFIRM")
-            f:SetScript("OnEvent", function() heard = heard + 1 end)
-            "#,
-        )
-        .unwrap();
-        s.resolve();
-        s.set_cursor_for_test(CursorPayload::Item(CursorItem {
-            bar_placeable: true,
-            bag: 0,
-            slot: 1,
-            item_id: 117,
-            texture: None,
-            link: None,
-            count: None,
-            quality: None,
-            equip_slots: Vec::new(),
-        }));
-        s.set_world_pick(crate::script::WorldPick::Object);
-
-        s.mouse_button(-50.0, -50.0, "LeftButton", true);
-        let consumed = s.mouse_button(-50.0, -50.0, "LeftButton", false);
-        assert!(
-            !consumed,
-            "over an object the click is the world's, not a drop"
-        );
-        s.tick(0.01);
-        assert_eq!(s.eval::<i64>("return heard").unwrap(), 0);
-        assert!(s.cursor_item().is_some(), "the item payload survives");
-    }
-
-    #[test]
-    fn frame_press_world_release_is_not_a_world_drop() {
-        let mut s = drag_script();
-        s.run(
-            r#"
-            heard = 0
-            local a = CreateFrame("Frame", "A")
-            a:SetPoint("BOTTOMLEFT", 0, 0); a:SetWidth(400); a:SetHeight(600); a:EnableMouse(true)
-            local f = CreateFrame("Frame", "Listener")
-            f:RegisterEvent("DELETE_ITEM_CONFIRM")
-            f:SetScript("OnEvent", function() heard = heard + 1 end)
-            "#,
-        )
-        .unwrap();
-        s.resolve();
-        s.set_cursor_for_test(CursorPayload::Item(CursorItem {
-            bar_placeable: true,
-            bag: 0,
-            slot: 1,
-            item_id: 117,
-            texture: None,
-            link: None,
-            count: None,
-            quality: None,
-            equip_slots: Vec::new(),
-        }));
-
-        s.mouse_button(100.0, 300.0, "LeftButton", true); // press on A (no RegisterForDrag)
-        s.mouse_button(-50.0, -50.0, "LeftButton", false); // release over the world
-        s.tick(0.01);
-        assert_eq!(s.eval::<i64>("return heard").unwrap(), 0);
-        assert!(s.cursor_item().is_some());
     }
 
     /// A non-item payload's world click clears it silently; a drag release keeps it.
@@ -503,8 +337,7 @@ mod tests {
         s.mouse_button(-50.0, -50.0, "LeftButton", false); // drag release: keeps carrying
         assert!(s.cursor_payload().is_some(), "a drag release never drops");
 
-        s.mouse_button(-50.0, -50.0, "LeftButton", true);
-        s.mouse_button(-50.0, -50.0, "LeftButton", false); // the world click clears
+        assert!(s.world_drop_click(crate::script::WorldPick::Nothing));
         s.tick(0.01);
         assert_eq!(
             s.eval::<i64>("return heard").unwrap(),

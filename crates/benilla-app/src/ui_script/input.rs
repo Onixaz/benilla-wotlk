@@ -31,17 +31,9 @@ pub(super) struct PointerFeed<'w> {
 }
 
 impl PointerFeed<'_> {
-    /// The reference's click-time pick: a hovered unit or GameObject is `Object`, else a finite
-    /// occlusion-ray hit (terrain, WMO, doodad) is `Terrain`, else `Nothing` (sky).
+    /// The pick as this frame's press sees it, the one [`crate::target::PressPick`] latches.
     fn world_pick(&self) -> benilla_ui::script::WorldPick {
-        use benilla_ui::script::WorldPick;
-        if self.hovered.target.is_some() || self.hovered_object.target.is_some() {
-            WorldPick::Object
-        } else if self.occlusion.distance.is_finite() {
-            WorldPick::Terrain
-        } else {
-            WorldPick::Nothing
-        }
+        crate::target::world_pick(&self.hovered, &self.hovered_object, &self.occlusion)
     }
 }
 
@@ -123,8 +115,6 @@ pub(super) fn feed_ui_input(
         return;
     };
     let wl_display = textinput::wayland_display(raw_handle);
-    // The pick routes the world drop: an object keeps the payload, terrain or sky drops it.
-    script.set_world_pick(world_pick);
     // ── Modifiers ── before the mouse feed, so a click's `IsShiftKeyDown` sees the click's state.
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight);
@@ -175,17 +165,12 @@ pub(super) fn feed_ui_input(
         }
         for (btn, name) in UI_MOUSE_BUTTONS {
             if buttons.just_pressed(btn) {
-                // A left press that would drop into the world (`world_drop_click`: any payload over
-                // terrain or nothing) is consumed now: the drop fires on the release, but the world
-                // click-pick and camera orbit act on the press. Over an object the reference runs
-                // SELECT with the payload still held.
+                // A payload over terrain or the sky claims the click: those legs prompt, not select.
                 if btn == MouseButton::Left && hover.0.is_none() {
                     use benilla_ui::script::WorldPick;
-                    let would_drop =
-                        script.cursor_payload().is_some() && world_pick != WorldPick::Object;
-                    if would_drop {
-                        click_consumed.0 = true;
-                    }
+                    click_consumed.0 =
+                        matches!(world_pick, WorldPick::Terrain | WorldPick::Nothing)
+                            && script.cursor_payload().is_some();
                 }
                 script.mouse_button(x, y, name, true);
             }

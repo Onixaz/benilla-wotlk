@@ -778,9 +778,10 @@ pub(super) fn world_click(s: &mut UiScript) {
     let (x, y) = world_point(s);
     s.mouse_move(x, y);
     s.mouse_button(x, y, "LeftButton", true);
+    s.mouse_button(x, y, "LeftButton", false);
     assert!(
-        s.mouse_button(x, y, "LeftButton", false),
-        "a world drop consumes the completed click"
+        s.world_drop_click(benilla_ui::script::WorldPick::Terrain),
+        "the completed click drops the payload"
     );
 }
 

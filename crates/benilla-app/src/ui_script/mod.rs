@@ -123,9 +123,7 @@ pub(crate) struct UiKeyboardCapture {
     pub(crate) arrows_fall_through: bool,
 }
 
-/// A left press the UI consumed without hitting a frame (a payload dropped on empty world), which
-/// world click-pick and orbit-start yield to. Over a world object the reference keeps an item
-/// payload and runs SELECT instead.
+/// A left press claimed for a payload drop: it settles as a [`crate::target::WorldDropClick`].
 #[derive(Resource, Default)]
 pub(crate) struct PlayerUiClickConsumed(pub(crate) bool);
 
