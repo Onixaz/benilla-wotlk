@@ -90,6 +90,8 @@ pub(super) struct ChatProbes<'w, 's> {
     self_guid: Res<'w, crate::net::SelfGuid>,
     /// Our own auto-attack target, a gate of `DoEmote`'s local play.
     engaged: Query<'w, 's, (), (With<SelfPlayer>, With<crate::creature_anim::Engaged>)>,
+    /// Our own held cast anim, the same gate's.
+    casting: Query<'w, 's, (), (With<SelfPlayer>, With<crate::creature_anim::CastHold>)>,
     loot_kneel: Option<Res<'w, crate::ui_loot::LootKneel>>,
 }
 
@@ -202,6 +204,7 @@ pub(super) fn drain_chat_input(
         kinds,
         self_guid,
         engaged,
+        casting,
         loot_kneel,
     } = &probes;
     let Some(mut script) = script else {
@@ -774,6 +777,7 @@ pub(super) fn drain_chat_input(
                         flying: m.flying,
                         loot_kneel: loot_kneel.as_deref().is_some_and(|k| k.0),
                         channeling: fields.unit_channel_spell() != 0,
+                        casting: !casting.is_empty(),
                         engaged: !engaged.is_empty(),
                     };
                     if crate::creature_anim::local_play_eligible(&gate) {

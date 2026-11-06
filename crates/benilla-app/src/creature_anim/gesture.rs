@@ -113,9 +113,10 @@ pub(super) fn drive_gestures(
         let Some(anim_id) = emotes.anim(emote_id) else {
             continue;
         };
-        let (store, movement, remote, engaged) =
-            units.get(entity).unwrap_or((None, None, None, false));
-        if !super::emote_anim::play_eligible(store, movement, remote, engaged, anim_id) {
+        let (store, movement, remote, engaged, casting) = units
+            .get(entity)
+            .unwrap_or((None, None, None, false, false));
+        if !super::emote_anim::play_eligible(store, movement, remote, engaged, casting, anim_id) {
             debug!("gesture: {gesture:?} suppressed for {entity:?}");
             continue;
         }
@@ -302,6 +303,51 @@ mod tests {
             app.world().resource::<GestureQueue>().0.is_empty(),
             "the queue drains every frame"
         );
+    }
+
+    /// The talk gesture goes through the same player: a [`CastHold`](super::super::CastHold) refuses
+    /// it, and the same line after the hold clears plays.
+    #[test]
+    fn a_gesture_over_a_cast_hold_plays_only_after_it_clears() {
+        use crate::creature_anim::CastHold;
+        use crate::net::GuidIndex;
+
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let cat = benilla_formats::load_emote_sound_catalog(&mut chain).expect("emote catalog");
+
+        let mut app = App::new();
+        app.init_resource::<GestureQueue>()
+            .init_resource::<PlaySeq>()
+            .init_resource::<GuidIndex>()
+            .insert_resource(crate::sound::EmoteSounds(cat))
+            .add_message::<EmoteAnim>()
+            .add_systems(Update, drive_gestures);
+        let caster = app
+            .world_mut()
+            .spawn(CastHold {
+                anim_id: 54,
+                spell_id: 133,
+                ranged: false,
+            })
+            .id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(11, caster);
+        let talk = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<GestureQueue>()
+                .push(11, Gesture::Talk);
+            app.update();
+            app.world_mut()
+                .resource_mut::<bevy::ecs::message::Messages<EmoteAnim>>()
+                .drain()
+                .count()
+        };
+        assert_eq!(talk(&mut app), 0, "the hold refuses the gesture");
+        app.world_mut().entity_mut(caster).remove::<CastHold>();
+        assert_eq!(talk(&mut app), 1, "cleared, it plays");
     }
 
     #[test]
