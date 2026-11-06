@@ -319,11 +319,18 @@ pub(crate) struct Player {
     /// bit. Observers read our gait off it, and it is in the server-authored merge mask, so a
     /// server move can flip it ([`super::wire_in`]); it owes no ack.
     pub(super) walking: bool,
-    /// The auto-move (`/follow` or Click to Move) holding forward this frame: the reference pushes
-    /// W's own bit, so this is a [`forward_axis`] term. Rewritten each frame by
+    /// The auto-move holding forward (`0x72ecf0`), a [`forward_axis`] term. Rewritten each frame by
     /// [`super::follow::steer_follow`] and [`super::approach::steer_approach`] just before the
     /// controller reads it.
     pub(super) auto_forward: bool,
+    /// The auto-move turning or pitching: input bits `0x1000000` and `0x400000`, Track but no bob.
+    pub(super) auto_turning: bool,
+    /// A `/follow` with `autoInteract` off: the camera reads its bits as Move (`0x602760`).
+    pub(super) auto_as_move: bool,
+    /// The auto-move asks the controller's flight edge for this frame (`0x731e0f`).
+    pub(super) auto_take_off: bool,
+    /// A teleport landed: the frame's auto-move ends and the loot closes (`0x72aec0(1, 0)`).
+    pub(super) teleported: bool,
     /// Free-fly (`F`): the camera moves on its own and the avatar/server position is frozen.
     pub(crate) detached: bool,
     /// `SMSG_CLIENT_CONTROL_UPDATE` with `allowMove = 0` named the unit we drive: us, while someone

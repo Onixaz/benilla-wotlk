@@ -6,7 +6,7 @@
 //! holds either, so arming one ends the other, the same input cancels both, and nothing goes on the
 //! wire but the movement; an attack on an enemy already in melee only turns to face it (mode 2).
 
-use std::f32::consts::{FRAC_PI_2, PI};
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, FRAC_PI_8, PI};
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -29,6 +29,8 @@ pub(crate) enum ApproachVerb {
     Use,
     /// Mode 9: the skin cast.
     Skin,
+    /// Mode 10: the combat enter.
+    Attack,
 }
 
 /// What the start gate checks the target for.
@@ -46,8 +48,11 @@ pub(crate) enum Refused {
     TooFar,
 }
 
-/// Talk stops at half the 5.5556 yd service reach.
-pub(crate) const TALK_STOP: f32 = 5.555_555_3 * 0.5;
+/// Talk's stop off the target's combat reach, `0.5 × reach + 2.0` (`0x71b40a`-`0x71b427`).
+pub(crate) fn talk_stop(combat_reach: f32) -> f32 {
+    0.5 * combat_reach + 2.0
+}
+
 /// Use and Skin stop at this fraction of the verb's range.
 pub(crate) const RANGE_STOP_FRACTION: f32 = 0.9;
 /// The ground walk stops half a yard short.
@@ -55,8 +60,6 @@ const GROUND_STOP: f32 = 0.5;
 /// No approach starts or lasts at 80 yd or more: the rows of modes 5-7, 9 and 10; the ground and
 /// sky rows have none.
 const LEASH_SQ: f32 = 6400.0;
-/// Within this many yards on the ground the goal's height is ignored.
-const FLAT_SNAP: f32 = 0.5;
 /// The sky walk's swim pitch: straight up or down past this sine, level within the next.
 const SKY_PITCH_STEEP: f32 = 0.866_02;
 const SKY_PITCH_LEVEL: f32 = 0.173_64;
@@ -65,6 +68,12 @@ const TURN_NARROW: f32 = 800.0;
 const TURN_WIDE: f32 = 1200.0;
 /// Less ground than this in a frame while lined up and holding forward is stuck.
 const STUCK: f32 = 1.0 / 360.0;
+/// The fifth frame in a row of losing ground or not moving ends the walk (`0x731969`, `0x731c62`).
+const STUCK_FRAMES: u8 = 5;
+/// A pitch this close to its aim has arrived (`0x72f1f0`).
+const PITCH_DEADZONE: f32 = 0.001;
+/// A goal more than `sqrt 2` yd off (`0x731dd3`) and steeper than 45° takes flight (`0x731d72`).
+const FLIGHT_MIN_DIST_SQ: f32 = 2.0;
 
 /// The approach in flight, and the verb an arrival owes.
 #[derive(Resource, Default)]
@@ -83,8 +92,8 @@ enum Toward {
     Object { verb: ApproachVerb, guid: u64 },
     /// Mode 4.
     Ground(Anchor),
-    /// Mode 10.
-    Melee(Anchor),
+    /// Mode 10: where the enemy stood, the enemy owed the swing.
+    Melee { at: Anchor, guid: u64 },
     /// Mode 8: a facing, with no stop.
     Sky(f32),
     /// Mode 2: a facing, turned to and done.
@@ -110,13 +119,18 @@ impl Toward {
         )
     }
 
-    /// Talk's and the melee walk's arrive and snap radii never scale with speed.
-    fn unscaled(self) -> bool {
-        self.is_talk() || matches!(self, Toward::Melee(_))
+    /// Only the ground walk scales its stop with speed (`0x731cee`).
+    fn scales_with_speed(self) -> bool {
+        matches!(self, Toward::Ground(_))
+    }
+
+    /// Every mode but face, follow, talk and sky counts a frame that loses ground (`0x731f34`).
+    fn counts_lost_ground(self) -> bool {
+        !self.is_talk() && !matches!(self, Toward::Sky(_) | Toward::Face(_))
     }
 
     fn leashed(self) -> bool {
-        matches!(self, Toward::Object { .. } | Toward::Melee(_))
+        matches!(self, Toward::Object { .. } | Toward::Melee { .. })
     }
 }
 
@@ -133,6 +147,18 @@ struct Goal {
     held: bool,
     /// The swim pitch the sky arm sets, applied on the walk's first frame.
     pitch: Option<f32>,
+    /// `0xca11d4`: frames in a row of losing ground or not moving.
+    stuck: u8,
+    /// The ground or melee point in the world, for the destination ring.
+    marker: Option<Vec3>,
+}
+
+impl Goal {
+    /// One more stuck frame; true on the fifth in a row.
+    fn strike(&mut self) -> bool {
+        self.stuck += 1;
+        self.stuck >= STUCK_FRAMES
+    }
 }
 
 impl Approach {
@@ -145,16 +171,41 @@ impl Approach {
         self.goal = None;
     }
 
+    /// The point a ground or melee walk heads for, the destination ring's anchor (`0x7275c0`).
+    pub(crate) fn marker(&self) -> Option<Vec3> {
+        self.goal.as_ref().and_then(|g| g.marker)
+    }
+
+    /// The facing turn (mode 2), which an attack round leaves alone.
+    pub(crate) fn facing(&self) -> bool {
+        self.goal
+            .as_ref()
+            .is_some_and(|g| matches!(g.toward, Toward::Face(_)))
+    }
+
+    /// Our own attack round ends any auto-move but the facing turn (`0x75699a`, `0x7569a3`).
+    pub(crate) fn end_on_own_round(&mut self, follow: &mut FollowState) {
+        if self.facing() {
+            return;
+        }
+        if self.active() {
+            info!("approach: ended by our own attack round");
+            self.stop();
+        }
+        if follow.guid.is_some() {
+            info!("follow: ended by our own attack round");
+            follow.stop();
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn stop_distance(&self) -> Option<f32> {
         self.goal.as_ref().map(|g| g.stop)
     }
 
     #[cfg(test)]
-    pub(crate) fn facing(&self) -> bool {
-        self.goal
-            .as_ref()
-            .is_some_and(|g| matches!(g.toward, Toward::Face(_)))
+    pub(crate) fn stuck_frames(&self) -> Option<u8> {
+        self.goal.as_ref().map(|g| g.stuck)
     }
 }
 
@@ -236,8 +287,9 @@ impl AutoMove<'_, '_> {
         if self.arm(Toward::Sky(facing), at, 0.0).is_err() {
             return false;
         }
+        // Swimming or flying the arm pitches along the ray (`0x72f0ce`).
         if let Some(goal) = self.approach.goal.as_mut() {
-            goal.pitch = self.player.swimming.then(|| sky_pitch(dir.y));
+            goal.pitch = (self.player.swimming || self.player.flying).then(|| sky_pitch(dir.y));
         }
         true
     }
@@ -245,15 +297,18 @@ impl AutoMove<'_, '_> {
     /// The reference's melee walk, for an attack on an enemy out of melee: to where it stands,
     /// stopping `stop` short. Deviation: the reference re-projects the point's height onto the
     /// first walkable facet a zero-size box gather finds at the enemy; here it keeps the enemy's
-    /// height. The snap radius is the stop, so the two differ only while swimming or on a steep
-    /// facet. Deviation: the reference stores the world point unconverted and reads it back as
-    /// deck-local, so on a transport it walks astray; here it rides the deck.
-    pub(crate) fn walk_into_melee(&mut self, at: Vec3, stop: f32) -> Result<(), Refused> {
+    /// height, read only afloat. Deviation: the reference walks astray on a deck; this rides it.
+    pub(crate) fn walk_into_melee(
+        &mut self,
+        guid: u64,
+        at: Vec3,
+        stop: f32,
+    ) -> Result<(), Refused> {
         if !self.can_auto_interact() {
             return Err(Refused::Silent);
         }
         let anchor = self.anchor(at);
-        self.arm(Toward::Melee(anchor), at, stop)
+        self.arm(Toward::Melee { at: anchor, guid }, at, stop)
     }
 
     /// For an attack on an enemy in melee: turn to face `at`.
@@ -299,6 +354,8 @@ impl AutoMove<'_, '_> {
             last_pos: self.player.pos,
             held: false,
             pitch: None,
+            stuck: 0,
+            marker: matches!(toward, Toward::Ground(_) | Toward::Melee { .. }).then_some(at),
         });
         if !standing {
             self.stand.write(super::StandStateRequest { state: 0 });
@@ -322,34 +379,26 @@ fn speed_scale(speed: f32) -> f32 {
     (speed / follow::SPEED_NORM).max(1.0)
 }
 
-/// The goal distance, squared: on the ground alone once inside the snap radius, unless swimming.
-/// The melee walk's snap radius is its stop.
-fn goal_distance_sq(toward: Toward, stop: f32, delta: Vec3, speed: f32, swimming: bool) -> f32 {
-    let base = if matches!(toward, Toward::Melee(_)) {
-        stop
-    } else {
-        FLAT_SNAP
-    };
-    let snap = if toward.unscaled() {
-        base
-    } else {
-        base * speed_scale(speed)
-    };
-    let flat = delta.x * delta.x + delta.z * delta.z;
-    if !swimming && flat <= snap * snap {
-        flat
-    } else {
+/// The walk's distance squared: flat unless swimming, flying or able to fly (`0x731901`).
+pub(super) fn goal_distance_sq(delta: Vec3, with_height: bool) -> f32 {
+    if with_height {
         delta.length_squared()
+    } else {
+        delta.x * delta.x + delta.z * delta.z
     }
 }
 
-/// The arrive distance: the stop distance scaled by the mover's current speed over 7 (0 at rest),
-/// never below 1×.
+/// Whether [`goal_distance_sq`] counts the height for this mover.
+pub(super) fn reads_height(player: &Player) -> bool {
+    player.swimming || player.flying || player.modes.can_fly
+}
+
+/// The arrive distance: only the ground walk's stop scales, by speed over 7, never below 1×.
 fn arrive_distance(toward: Toward, stop: f32, speed: f32) -> f32 {
-    if toward.unscaled() {
-        stop
-    } else {
+    if toward.scales_with_speed() {
         stop * speed_scale(speed)
+    } else {
+        stop
     }
 }
 
@@ -363,8 +412,89 @@ fn turn_rate(remaining: f32) -> f32 {
     deg.to_radians()
 }
 
-/// Steer toward the goal and hold forward; on arrival at an object face it and owe its verb. After
-/// [`follow::steer_follow`], which clears [`Player::auto_forward`].
+/// The heading a walk steers by; a goal straight over or under the feet keeps the facing.
+pub(super) fn bearing_or(face_yaw: f32, delta: Vec3) -> f32 {
+    if delta.x * delta.x + delta.z * delta.z > f32::EPSILON {
+        follow::bearing_to(Vec3::new(delta.x, 0.0, delta.z))
+    } else {
+        face_yaw
+    }
+}
+
+/// One turn step, the rate latched by the first (`0x731650`): whether the facing still has to turn.
+pub(super) fn steer_turn(
+    player: &mut Player,
+    bearing: f32,
+    latched: &mut Option<f32>,
+    dt: f32,
+) -> bool {
+    let remaining = follow::wrap_pi(bearing - player.face_yaw);
+    if remaining.abs() <= follow::TURN_DEADZONE {
+        return false;
+    }
+    let rate = *latched.get_or_insert_with(|| turn_rate(remaining));
+    player.face_yaw = follow::steer(player.face_yaw, bearing, rate, dt);
+    true
+}
+
+/// A frame's pitch: still moving, which the not-moving test waits for, and over 22.5° off its aim.
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+pub(super) struct PitchStep {
+    pub(super) pitching: bool,
+    pub(super) overshoot: bool,
+}
+
+/// The elevation to a goal (`0x71b580`): straight up or down with no ground between.
+fn elevation(delta: Vec3) -> f32 {
+    let dir = delta.normalize_or_zero();
+    if dir.x.abs() < PITCH_DEADZONE && dir.z.abs() < PITCH_DEADZONE {
+        return if delta.y > 0.0 { FRAC_PI_2 } else { -FRAC_PI_2 };
+    }
+    dir.y.asin()
+}
+
+/// The walk's pitch afloat: π rad/s to the elevation, level at the surface (`0x72f1f0`).
+pub(super) fn steer_pitch(player: &mut Player, delta: Vec3, dt: f32) -> PitchStep {
+    if !(player.swimming || player.flying) || delta.length_squared() <= STUCK * STUCK {
+        return PitchStep::default();
+    }
+    let at_surface = player.liquid_surface.is_some_and(|surface| {
+        let depth = surface - player.pos.y;
+        depth > 0.0
+            && (depth - super::swim::swim_enter_depth(player.collision_height.0)).abs()
+                < PITCH_DEADZONE
+    });
+    if delta.y > 0.0 && at_surface {
+        player.mover_pitch = 0.0;
+        return PitchStep::default();
+    }
+    let want = elevation(delta);
+    let pitch = player.mover_pitch;
+    if (want - pitch).abs() < PITCH_DEADZONE {
+        return PitchStep::default();
+    }
+    let step = PI * dt;
+    let next = if want <= pitch {
+        want.max(pitch - step)
+    } else {
+        want.min(pitch + step)
+    };
+    player.mover_pitch = next;
+    PitchStep {
+        pitching: true,
+        overshoot: (next - want).abs() > FRAC_PI_8,
+    }
+}
+
+/// Whether a walk on foot takes flight: it may fly and the goal is over 45° steep (`0x731d91`).
+pub(super) fn takes_flight(player: &Player, delta: Vec3) -> bool {
+    !(player.swimming || player.flying)
+        && player.modes.can_fly
+        && delta.length_squared() > FLIGHT_MIN_DIST_SQ
+        && delta.normalize_or_zero().y.abs() > FRAC_PI_4.cos()
+}
+
+/// One frame of a walk in the reference's order (`0x7317a0`), after [`follow::steer_follow`].
 pub(super) fn steer_approach(
     time: Res<Time>,
     mut approach: ResMut<Approach>,
@@ -374,18 +504,21 @@ pub(super) fn steer_approach(
     targets: Query<(&Transform, Option<&ObjectStore>, Option<&NetEntity>)>,
     input: FollowInput,
 ) {
-    let Some(goal) = approach.goal.as_mut() else {
+    if !approach.active() {
         return;
-    };
-    // The current speed off last frame's word, as the reference reads the mover's own.
-    let speed = mover
-        .single()
-        .map_or(0.0, |s| crate::net::current_speed(&s.0, player.move_flags));
+    }
     if input.cancels(&player) {
         info!("approach: cancelled by the player's own movement input");
         approach.stop();
         return;
     }
+    // The current speed off last frame's word, as the reference reads the mover's own.
+    let speed = mover
+        .single()
+        .map_or(0.0, |s| crate::net::current_speed(&s.0, player.move_flags));
+    let Some(goal) = approach.goal.as_mut() else {
+        return;
+    };
     let toward = goal.toward;
     if let Some(pitch) = goal.pitch.take() {
         player.mover_pitch = pitch;
@@ -412,7 +545,7 @@ pub(super) fn steer_approach(
             }
             Some(tf.translation)
         }
-        Toward::Ground(anchor) | Toward::Melee(anchor) => match anchor.frame {
+        Toward::Ground(anchor) | Toward::Melee { at: anchor, .. } => match anchor.frame {
             None => Some(anchor.at),
             Some(frame) => {
                 let Ok((tf, ..)) = targets.get(frame) else {
@@ -425,79 +558,97 @@ pub(super) fn steer_approach(
         },
         Toward::Sky(_) | Toward::Face(_) => None,
     };
+    if goal.marker.is_some() {
+        goal.marker = target;
+    }
+    let last_pos = std::mem::replace(&mut goal.last_pos, player.pos);
     let delta = target.map(|t| t - player.pos);
-    let d2 = delta.map(|d| goal_distance_sq(toward, goal.stop, d, speed, player.swimming));
+    let d2 = delta.map(|d| goal_distance_sq(d, reads_height(&player)));
     if toward.leashed() && d2.is_some_and(|d2| d2 >= LEASH_SQ) {
         info!("approach: beyond 80 yd");
         approach.stop();
         return;
     }
-    // Once lined up, a frame that ends farther off than the last aborts, but not Talk.
+    // Once lined up, a frame that ends farther off than the last counts, but not Talk's.
+    let mut stuck = false;
     if let Some(target) = target {
         if goal.aligned
-            && !toward.is_talk()
-            && goal.last_pos.distance_squared(target) < player.pos.distance_squared(target)
+            && toward.counts_lost_ground()
+            && last_pos.distance_squared(target) < player.pos.distance_squared(target)
         {
-            info!("approach: no longer closing");
+            stuck = true;
+            super::move_trace::auto_move("losing-ground", player.pos, target);
+            if goal.strike() {
+                info!("approach: no longer closing");
+                approach.stop();
+                return;
+            }
+        }
+    }
+    let dt = super::mover::move_step(&time).as_secs_f32();
+    let bearing = match (toward, delta) {
+        (Toward::Sky(facing) | Toward::Face(facing), _) => facing,
+        (_, Some(d)) => bearing_or(player.face_yaw, d),
+        (_, None) => player.face_yaw,
+    };
+    let turning = steer_turn(&mut player, bearing, &mut goal.turn_rate, dt);
+    if !turning {
+        // The facing walk ends once lined up, never holding forward.
+        if let Toward::Face(_) = toward {
+            approach.goal = None;
+            return;
+        }
+        goal.aligned = true;
+    }
+    if let Toward::Face(_) = toward {
+        player.auto_turning = turning;
+        return;
+    }
+    let pitch = delta.map_or_else(PitchStep::default, |d| steer_pitch(&mut player, d, dt));
+    player.auto_turning = turning || pitch.pitching;
+    // Holding forward on a row with the stuck flag, a frame that covers nothing counts.
+    if goal.held
+        && !turning
+        && !pitch.pitching
+        && player.pos.distance_squared(last_pos) < STUCK * STUCK
+    {
+        stuck = true;
+        super::move_trace::auto_move("not-moving", player.pos, target.unwrap_or(player.pos));
+        if goal.strike() {
+            info!("approach: stuck");
             approach.stop();
             return;
         }
     }
-    let bearing = match (toward, delta) {
-        (Toward::Sky(facing) | Toward::Face(facing), _) => facing,
-        (_, Some(d)) => follow::bearing_to(Vec3::new(d.x, 0.0, d.z)),
-        (_, None) => player.face_yaw,
-    };
-    let remaining = follow::wrap_pi(bearing - player.face_yaw);
-    let turning = remaining.abs() > follow::TURN_DEADZONE;
-    if turning {
-        let rate = *goal.turn_rate.get_or_insert_with(|| turn_rate(remaining));
-        player.face_yaw = follow::steer(
-            player.face_yaw,
-            bearing,
-            rate,
-            super::mover::move_step(&time).as_secs_f32(),
-        );
-    } else if let Toward::Face(_) = toward {
-        // The facing walk ends once lined up, never holding forward.
-        approach.goal = None;
-        return;
-    } else {
-        goal.aligned = true;
-    }
-    if let Toward::Face(_) = toward {
-        return;
-    }
-    if let (Some(d2), Some(delta)) = (d2, delta) {
+    if let (Some(d2), Some(target)) = (d2, target) {
         let arrive = arrive_distance(toward, goal.stop, speed);
         if d2 <= arrive * arrive {
+            super::move_trace::auto_move("arrived", player.pos, target);
             info!("approach: arrived at {:.2} yd", d2.sqrt());
-            // The canceller faces the armed guid: the object, and none for the ground. Deviation:
-            // the melee arm names the player's own guid, so the reference turns to face itself, a
-            // fixed heading; here the melee walk does not turn.
-            if let Toward::Object { verb, guid } = toward {
-                if delta.x * delta.x + delta.z * delta.z > f32::EPSILON {
-                    player.face_yaw = bearing;
+            // The end's facing flag writes the camera's facing alone (`0xca11d8`), not the body's.
+            match toward {
+                Toward::Object { verb, guid } => approach.arrived = Some((verb, guid)),
+                Toward::Melee { guid, .. } => {
+                    approach.arrived = Some((ApproachVerb::Attack, guid));
                 }
-                approach.arrived = Some((verb, guid));
+                _ => {}
             }
             approach.goal = None;
             return;
         }
     }
-    // Rooted, the reference lets go of forward, which also spares the stuck test.
-    let hold = !player.modes.rooted;
-    if !turning && goal.held && player.pos.distance_squared(goal.last_pos) < STUCK * STUCK {
-        info!("approach: stuck");
-        approach.stop();
+    if !stuck {
+        goal.stuck = 0;
+    }
+    if let Some(delta) = delta.filter(|d| !pitch.pitching && takes_flight(&player, *d)) {
+        super::move_trace::auto_move("take-off", player.pos, player.pos + delta);
+        info!("approach: taking flight for a steep goal");
+        player.auto_take_off = true;
+        player.auto_forward = goal.held;
         return;
     }
-    if delta.is_some_and(follow::vertically_degenerate) {
-        info!("approach: the target is straight overhead");
-        approach.stop();
-        return;
-    }
-    goal.last_pos = player.pos;
+    // Rooted, or a pitch far off its aim, lets go of forward, which spares the stuck test.
+    let hold = !player.modes.rooted && !(pitch.pitching && pitch.overshoot);
     goal.held = hold;
     player.auto_forward = hold;
 }
@@ -529,51 +680,78 @@ mod tests {
         frame: None,
     };
 
+    /// Talk's stop off the target's reach, and only the ground walk scales (`0x731cee`).
     #[test]
     fn talk_stops_inside_the_service_reach_and_never_scales() {
-        let talk = object(ApproachVerb::Talk);
-        assert!((TALK_STOP - 2.777_777_7).abs() < 1e-5);
-        assert_eq!(arrive_distance(talk, TALK_STOP, 14.0), TALK_STOP);
-        let loot = object(ApproachVerb::Loot);
-        assert_eq!(arrive_distance(loot, 5.0, 7.0), 5.0);
-        assert_eq!(arrive_distance(loot, 5.0, 14.0), 10.0);
-        let usage = object(ApproachVerb::Use);
-        assert_eq!(arrive_distance(usage, 5.0, 3.5), 5.0);
-        assert_eq!(arrive_distance(usage, 5.0, 0.0), 5.0, "at rest");
+        assert_eq!(talk_stop(1.5), 2.75);
+        assert_eq!(talk_stop(6.0), 5.0);
+        for verb in [
+            ApproachVerb::Talk,
+            ApproachVerb::Loot,
+            ApproachVerb::Use,
+            ApproachVerb::Skin,
+        ] {
+            assert_eq!(arrive_distance(object(verb), 2.75, 14.0), 2.75, "{verb:?}");
+        }
     }
 
-    /// The melee walk's stop is Talk's kind, never scaled; the ground's is.
+    /// The melee walk's stop is Talk's kind, never scaled; the ground's is, and never under 1×.
     #[test]
     fn the_ground_stop_scales_with_speed_and_the_melee_stop_does_not() {
-        assert_eq!(
-            arrive_distance(Toward::Ground(POINT), GROUND_STOP, 7.0),
-            0.5
-        );
-        assert_eq!(
-            arrive_distance(Toward::Ground(POINT), GROUND_STOP, 14.0),
-            1.0
-        );
-        assert_eq!(arrive_distance(Toward::Melee(POINT), 1.9, 14.0), 1.9);
+        let ground = Toward::Ground(POINT);
+        assert_eq!(arrive_distance(ground, GROUND_STOP, 7.0), 0.5);
+        assert_eq!(arrive_distance(ground, GROUND_STOP, 14.0), 1.0);
+        assert_eq!(arrive_distance(ground, GROUND_STOP, 3.5), 0.5);
+        assert_eq!(arrive_distance(ground, GROUND_STOP, 0.0), 0.5, "at rest");
+        let melee = Toward::Melee {
+            at: POINT,
+            guid: VENDOR,
+        };
+        assert_eq!(arrive_distance(melee, 3.67, 14.0), 3.67);
     }
 
+    /// Flat for a walker at any height, true for a mover that swims, flies or may fly (`0x731901`).
     #[test]
-    fn the_goal_flattens_only_inside_the_snap_radius() {
-        let usage = object(ApproachVerb::Use);
-        let above = Vec3::new(0.3, 4.0, 0.3);
-        assert!((goal_distance_sq(usage, 0.0, above, 7.0, false) - 0.18).abs() < 1e-5);
-        assert!((goal_distance_sq(usage, 0.0, above, 7.0, true) - 16.18).abs() < 1e-4);
-        let far = Vec3::new(3.0, 4.0, 0.0);
-        assert_eq!(goal_distance_sq(usage, 0.0, far, 7.0, false), 25.0);
+    fn the_goal_is_flat_unless_the_mover_swims_flies_or_may_fly() {
+        let above = Vec3::new(3.0, 4.0, 0.0);
+        assert_eq!(goal_distance_sq(above, false), 9.0);
+        assert_eq!(goal_distance_sq(above, true), 25.0);
+        let mut player = Player::default();
+        assert!(!reads_height(&player));
+        player.swimming = true;
+        assert!(reads_height(&player));
+        player.swimming = false;
+        player.flying = true;
+        assert!(reads_height(&player));
+        player.flying = false;
+        player.modes.can_fly = true;
+        assert!(reads_height(&player));
     }
 
-    /// The melee walk snaps to the ground within its stop, not half a yard, unscaled.
+    /// A walker stops at the flat stop under a goal on a ledge; the leash reads the same distance.
     #[test]
-    fn the_melee_goal_flattens_within_its_stop() {
-        let melee = Toward::Melee(POINT);
-        let above = Vec3::new(1.5, 4.0, 0.0);
-        assert!((goal_distance_sq(melee, 1.9, above, 14.0, false) - 2.25).abs() < 1e-5);
-        let beyond = Vec3::new(2.0, 4.0, 0.0);
-        assert!((goal_distance_sq(melee, 1.9, beyond, 14.0, false) - 20.0).abs() < 1e-4);
+    fn a_walk_to_an_npc_above_stops_at_the_flat_distance() {
+        let at = Vec3::new(10.0, 30.0, 0.0);
+        let mut app = world(at, 0);
+        assert_eq!(
+            start(
+                &mut app,
+                ApproachVerb::Talk,
+                Subject::Unit { dead: false },
+                at
+            ),
+            Ok(())
+        );
+        for _ in 0..300 {
+            if app.world().resource::<Approach>().arrived.is_some() {
+                break;
+            }
+            frame(&mut app, true);
+        }
+        let left = app.world().resource::<Player>().pos;
+        assert!(app.world().resource::<Approach>().arrived.is_some());
+        let flat = (at - left).with_y(0.0).length();
+        assert!(flat <= STOP && flat > STOP - 7.0 * DT - 1e-3, "{flat}");
     }
 
     /// The sky walk's swim pitch off its ray: straight up or down when steep, level when shallow.
@@ -588,6 +766,8 @@ mod tests {
     const ME: u64 = 0x1;
     const VENDOR: u64 = 0xF00D;
     const DT: f32 = 1.0 / 60.0;
+    /// Talk's stop at the default combat reach.
+    const STOP: f32 = 2.75;
 
     /// Our body at the origin facing -Z, alive (and seated when `stand_state` is set), a vendor at
     /// `at`, and both steers chained as the plugin runs them.
@@ -631,9 +811,7 @@ mod tests {
 
     fn start(app: &mut App, verb: ApproachVerb, subject: Subject, at: Vec3) -> Result<(), Refused> {
         app.world_mut()
-            .run_system_once(move |mut auto: AutoMove| {
-                auto.start(verb, VENDOR, subject, at, TALK_STOP)
-            })
+            .run_system_once(move |mut auto: AutoMove| auto.start(verb, VENDOR, subject, at, STOP))
             .unwrap()
     }
 
@@ -677,12 +855,12 @@ mod tests {
         let player = app.world().resource::<Player>();
         let left = player.pos.distance(at);
         assert!(
-            left <= TALK_STOP && left > TALK_STOP - 7.0 * DT - 1e-3,
-            "stopped {left} yd off, not at the 2.78 yd stop"
+            left <= STOP && left > STOP - 7.0 * DT - 1e-3,
+            "stopped {left} yd off, not at the 2.75 yd stop"
         );
         assert!(!player.auto_forward, "forward let go at the stop");
         assert!(
-            (follow::wrap_pi(player.face_yaw - follow::bearing_to(at - player.pos))).abs() < 1e-4,
+            (follow::wrap_pi(player.face_yaw - follow::bearing_to(at - player.pos))).abs() < 2e-3,
             "facing the vendor"
         );
         let approach = app.world().resource::<Approach>();
@@ -812,6 +990,93 @@ mod tests {
         assert!(approach.arrived.is_none(), "nothing owed");
     }
 
+    /// A Use walk lined up on its first frame, so every later frame runs both stuck tests.
+    fn lined_up_walk() -> App {
+        let at = Vec3::new(0.0, 0.0, -14.0);
+        let mut app = world(at, 0);
+        assert_eq!(
+            start(&mut app, ApproachVerb::Use, Subject::GameObject, at),
+            Ok(())
+        );
+        frame(&mut app, false);
+        app
+    }
+
+    /// Four frames that cover nothing leave the walk on; the fifth ends it (`0x731c62`).
+    #[test]
+    fn a_walk_ends_on_the_fifth_frame_without_moving() {
+        let mut app = lined_up_walk();
+        for n in 1..=4 {
+            frame(&mut app, false);
+            let approach = app.world().resource::<Approach>();
+            assert_eq!(approach.stuck_frames(), Some(n), "frame {n}");
+        }
+        frame(&mut app, false);
+        assert!(!app.world().resource::<Approach>().active());
+    }
+
+    /// A clean frame resets the one counter (`0x731d52`).
+    #[test]
+    fn a_clean_frame_resets_the_stuck_count() {
+        let mut app = lined_up_walk();
+        for _ in 0..3 {
+            frame(&mut app, false);
+        }
+        frame(&mut app, true);
+        assert_eq!(app.world().resource::<Approach>().stuck_frames(), Some(4));
+        frame(&mut app, false);
+        assert_eq!(app.world().resource::<Approach>().stuck_frames(), Some(0));
+        assert!(app.world().resource::<Approach>().active());
+    }
+
+    /// Walk the body one step back along the goal's line for a frame.
+    fn back_off(app: &mut App) {
+        app.world_mut().resource_mut::<Player>().pos.z += 0.1;
+        frame(app, false);
+    }
+
+    /// Four frames losing ground leave the walk on, the fifth ends it, not Talk's (`0x7319fc`).
+    #[test]
+    fn a_walk_ends_on_the_fifth_frame_losing_ground_but_not_talk() {
+        let mut app = lined_up_walk();
+        for _ in 0..4 {
+            back_off(&mut app);
+            assert!(app.world().resource::<Approach>().active());
+        }
+        back_off(&mut app);
+        assert!(!app.world().resource::<Approach>().active());
+
+        let at = Vec3::new(0.0, 0.0, -14.0);
+        let mut app = world(at, 0);
+        assert_eq!(
+            start(
+                &mut app,
+                ApproachVerb::Talk,
+                Subject::Unit { dead: false },
+                at
+            ),
+            Ok(())
+        );
+        frame(&mut app, false);
+        for _ in 0..20 {
+            back_off(&mut app);
+        }
+        assert!(app.world().resource::<Approach>().active());
+    }
+
+    /// A rooted walk lets go of forward, which spares the stuck tests.
+    #[test]
+    fn a_root_lets_go_of_forward_and_spares_the_walk() {
+        let mut app = lined_up_walk();
+        app.world_mut().resource_mut::<Player>().modes.rooted = true;
+        for _ in 0..30 {
+            frame(&mut app, false);
+        }
+        let approach = app.world().resource::<Approach>();
+        assert!(approach.active());
+        assert!(!app.world().resource::<Player>().auto_forward);
+    }
+
     #[test]
     fn the_first_turn_picks_the_wide_rate_past_120_degrees() {
         assert_eq!(turn_rate(0.5), 800f32.to_radians());
@@ -922,23 +1187,122 @@ mod tests {
         assert!(left <= 0.5, "{left}");
     }
 
-    /// Mode 10: the walk stops at its stop, unscaled, owes nothing and does not turn to face on
-    /// arrival.
+    /// Mode 10 stops at melee reach less its offset and owes the combat enter (`0x72b3a0`).
     #[test]
-    fn a_melee_walk_stops_at_its_stop_and_owes_nothing() {
+    fn a_melee_walk_stops_at_its_stop_and_owes_the_swing() {
         let at = Vec3::new(0.0, 0.0, -10.0);
-        let stop = (5.0_f32 - 1.333_333_3).sqrt();
+        let stop = 5.0_f32 - 1.333_333_3;
         let mut app = world(Vec3::new(40.0, 0.0, 0.0), 0);
         assert_eq!(
             app.world_mut()
-                .run_system_once(move |mut auto: AutoMove| auto.walk_into_melee(at, stop))
+                .run_system_once(move |mut auto: AutoMove| auto.walk_into_melee(VENDOR, at, stop))
                 .unwrap(),
             Ok(())
         );
         assert!(run_until_idle(&mut app, 300) < 300, "never arrived");
         let left = app.world().resource::<Player>().pos.distance(at);
         assert!(left <= stop && left > stop - 7.0 * DT - 1e-3, "{left}");
-        assert!(app.world().resource::<Approach>().arrived.is_none());
+        assert_eq!(
+            app.world().resource::<Approach>().arrived,
+            Some((ApproachVerb::Attack, VENDOR))
+        );
+    }
+
+    /// Only a ground or melee walk exposes its point, until it arrives (`0x7275c0`).
+    #[test]
+    fn only_a_ground_or_melee_walk_exposes_its_anchor() {
+        let point = Vec3::new(0.0, 0.0, -10.0);
+        let mut app = world(Vec3::new(40.0, 0.0, 0.0), 0);
+        assert!(app
+            .world_mut()
+            .run_system_once(move |mut auto: AutoMove| auto.walk_to_ground(point))
+            .unwrap());
+        assert_eq!(app.world().resource::<Approach>().marker(), Some(point));
+        assert!(run_until_idle(&mut app, 300) < 300, "never arrived");
+        assert_eq!(app.world().resource::<Approach>().marker(), None);
+        assert_eq!(
+            app.world_mut()
+                .run_system_once(move |mut auto: AutoMove| auto.walk_into_melee(VENDOR, point, 3.67))
+                .unwrap(),
+            Ok(())
+        );
+        assert_eq!(app.world().resource::<Approach>().marker(), Some(point));
+        assert!(app
+            .world_mut()
+            .run_system_once(move |mut auto: AutoMove| auto.face(point))
+            .unwrap());
+        assert_eq!(app.world().resource::<Approach>().marker(), None);
+        let vendor = Vec3::new(40.0, 0.0, 0.0);
+        assert_eq!(
+            start(
+                &mut app,
+                ApproachVerb::Talk,
+                Subject::Unit { dead: false },
+                vendor
+            ),
+            Ok(())
+        );
+        assert_eq!(app.world().resource::<Approach>().marker(), None);
+    }
+
+    /// A ground walk on a deck carries its ring with the deck.
+    #[test]
+    fn the_marker_rides_the_transport() {
+        let mut app = world(Vec3::new(40.0, 0.0, 0.0), 0);
+        let boat = app.world_mut().spawn(Transform::default()).id();
+        app.world_mut().resource_mut::<Player>().ride = Some(PlayerRide {
+            entity: boat,
+            guid: 0xB0A7,
+            local_pos: Vec3::ZERO,
+            boat_yaw: 0.0,
+        });
+        let point = Vec3::new(0.0, 0.0, -10.0);
+        assert!(app
+            .world_mut()
+            .run_system_once(move |mut auto: AutoMove| auto.walk_to_ground(point))
+            .unwrap());
+        app.world_mut()
+            .entity_mut(boat)
+            .insert(Transform::from_xyz(-6.0, 0.0, 0.0));
+        frame(&mut app, false);
+        let marker = app.world().resource::<Approach>().marker().unwrap();
+        assert!(
+            marker.distance(Vec3::new(-6.0, 0.0, -10.0)) < 1e-4,
+            "{marker}"
+        );
+    }
+
+    /// Our round ends every walk and a follow, but not the facing turn (mask 4, `0x7569a3`).
+    #[test]
+    fn our_own_round_ends_the_auto_move_but_not_the_facing_turn() {
+        let at = Vec3::new(14.0, 0.0, 0.0);
+        let mut app = world(at, 0);
+        assert!(app
+            .world_mut()
+            .run_system_once(move |mut auto: AutoMove| auto.face(at))
+            .unwrap());
+        let end = |app: &mut App| {
+            app.world_mut()
+                .run_system_once(|mut a: ResMut<Approach>, mut f: ResMut<FollowState>| {
+                    a.end_on_own_round(&mut f);
+                })
+                .unwrap();
+        };
+        end(&mut app);
+        assert!(app.world().resource::<Approach>().facing());
+
+        assert!(app
+            .world_mut()
+            .run_system_once(move |mut auto: AutoMove| auto.walk_to_ground(at))
+            .unwrap());
+        end(&mut app);
+        assert!(!app.world().resource::<Approach>().active());
+
+        app.world_mut()
+            .resource_mut::<FollowState>()
+            .start(VENDOR, "Friend".into());
+        end(&mut app);
+        assert!(app.world().resource::<FollowState>().guid.is_none());
     }
 
     /// Mode 2: ends a follow, turns to the enemy and is done, never walking.
@@ -997,20 +1361,261 @@ mod tests {
         assert!(left <= 0.5, "{left}");
     }
 
-    /// Swimming, the sky walk pitches along its ray.
+    /// Swimming or flying, the sky walk pitches along its ray (`0x72f0ce`); on foot it stays level.
     #[test]
-    fn a_swimming_sky_walk_pitches_along_the_ray() {
-        let mut app = world(Vec3::new(14.0, 0.0, 0.0), 0);
-        app.world_mut().resource_mut::<Player>().swimming = true;
-        assert!(app
-            .world_mut()
-            .run_system_once(|mut auto: AutoMove| auto.walk_toward_sky(Vec3::new(1.0, 1.0, 0.0)))
-            .unwrap());
-        frame(&mut app, false);
-        let pitch = app.world().resource::<Player>().mover_pitch;
-        assert!(
-            (pitch - std::f32::consts::FRAC_PI_4).abs() < 1e-5,
-            "{pitch}"
+    fn a_swimming_or_flying_sky_walk_pitches_along_the_ray() {
+        for (swimming, flying, want) in [
+            (true, false, FRAC_PI_4),
+            (false, true, FRAC_PI_4),
+            (false, false, 0.0),
+        ] {
+            let mut app = world(Vec3::new(14.0, 0.0, 0.0), 0);
+            {
+                let mut player = app.world_mut().resource_mut::<Player>();
+                player.swimming = swimming;
+                player.flying = flying;
+            }
+            assert!(app
+                .world_mut()
+                .run_system_once(|mut auto: AutoMove| {
+                    auto.walk_toward_sky(Vec3::new(1.0, 1.0, 0.0))
+                })
+                .unwrap());
+            frame(&mut app, false);
+            let pitch = app.world().resource::<Player>().mover_pitch;
+            assert!((pitch - want).abs() < 1e-5, "{pitch}");
+        }
+    }
+
+    /// The pitch steps at π rad/s toward the elevation, afloat and not on foot (`0x72f1f0`).
+    #[test]
+    fn a_swimming_or_flying_walk_pitches_toward_its_goal() {
+        let delta = Vec3::new(0.0, 10.0, -10.0);
+        for (swimming, flying, stepped) in [
+            (true, false, true),
+            (false, true, true),
+            (false, false, false),
+        ] {
+            let mut player = Player {
+                swimming,
+                flying,
+                ..Player::default()
+            };
+            let step = steer_pitch(&mut player, delta, 0.1);
+            assert_eq!(step.pitching, stepped);
+            let want = if stepped { PI * 0.1 } else { 0.0 };
+            assert!((player.mover_pitch - want).abs() < 1e-5);
+        }
+        // Inside its last step it lands on the elevation, then it has arrived.
+        let mut player = Player {
+            flying: true,
+            mover_pitch: FRAC_PI_4 - 0.01,
+            ..Player::default()
+        };
+        assert!(steer_pitch(&mut player, delta, 0.1).pitching);
+        assert!((player.mover_pitch - FRAC_PI_4).abs() < 1e-5);
+        assert!(!steer_pitch(&mut player, delta, 0.1).pitching);
+    }
+
+    /// More than 22.5° off its aim forward waits; the not-moving test waits while it pitches.
+    #[test]
+    fn forward_waits_for_a_pitch_far_off_its_aim() {
+        let at = Vec3::new(0.0, 40.0, -1.0);
+        let mut app = world(at, 0);
+        app.world_mut().resource_mut::<Player>().flying = true;
+        assert_eq!(
+            start(&mut app, ApproachVerb::Use, Subject::GameObject, at),
+            Ok(())
         );
+        frame(&mut app, false);
+        assert!(!app.world().resource::<Player>().auto_forward);
+        for _ in 0..10 {
+            frame(&mut app, false);
+        }
+        assert_eq!(app.world().resource::<Approach>().stuck_frames(), Some(0));
+        let forward = (0..30).any(|_| {
+            frame(&mut app, false);
+            app.world().resource::<Player>().auto_forward
+        });
+        assert!(forward, "held once within 22.5 degrees of its aim");
+    }
+
+    /// At the swimmer's rest line with a goal above it levels and does not pitch (`0x72f1f0`).
+    #[test]
+    fn a_swimmer_at_the_surface_stays_level_under_a_goal_above() {
+        let h = 2.0;
+        let mut player = Player {
+            swimming: true,
+            mover_pitch: 0.4,
+            liquid_surface: Some(super::super::swim::swim_enter_depth(h)),
+            collision_height: crate::entities::CollisionHeight(h),
+            ..Player::default()
+        };
+        let step = steer_pitch(&mut player, Vec3::new(0.0, 8.0, -8.0), 0.1);
+        assert_eq!(step, PitchStep::default());
+        assert_eq!(player.mover_pitch, 0.0);
+        // A goal below dives as anywhere else.
+        assert!(steer_pitch(&mut player, Vec3::new(0.0, -8.0, -8.0), 0.1).pitching);
+    }
+
+    /// A mover that may fly takes off for a goal over 45° and `sqrt 2` yd off (`0x731d91`).
+    #[test]
+    fn a_steep_goal_takes_flight_only_for_a_mover_that_may_fly() {
+        let steep = Vec3::new(0.0, 30.0, -10.0);
+        let mut player = Player::default();
+        assert!(!takes_flight(&player, steep), "no can-fly");
+        player.modes.can_fly = true;
+        assert!(takes_flight(&player, steep));
+        assert!(takes_flight(&player, -steep), "down as well");
+        assert!(
+            !takes_flight(&player, Vec3::new(0.0, 5.0, -10.0)),
+            "shallow"
+        );
+        assert!(
+            !takes_flight(&player, Vec3::new(0.0, 1.0, 0.0)),
+            "too close"
+        );
+        player.flying = true;
+        assert!(!takes_flight(&player, steep), "already flying");
+    }
+
+    /// The take-off frame asks the controller's flight edge and keeps what forward held.
+    #[test]
+    fn a_can_fly_walk_asks_for_flight_at_a_high_ledge() {
+        let at = Vec3::new(0.0, 30.0, -5.0);
+        let mut app = world(at, 0);
+        app.world_mut().resource_mut::<Player>().modes.can_fly = true;
+        assert_eq!(
+            start(&mut app, ApproachVerb::Use, Subject::GameObject, at),
+            Ok(())
+        );
+        frame(&mut app, false);
+        assert!(app.world().resource::<Player>().auto_take_off);
+    }
+
+    /// Nothing ends a walk or a follow for a goal straight overhead.
+    #[test]
+    fn a_goal_straight_overhead_ends_nothing() {
+        let at = Vec3::new(0.0, 30.0, 0.0);
+        let mut app = world(at, 0);
+        assert_eq!(
+            start(
+                &mut app,
+                ApproachVerb::Talk,
+                Subject::Unit { dead: false },
+                at
+            ),
+            Ok(())
+        );
+        app.world_mut().resource_mut::<Player>().pos.x = 0.1;
+        frame(&mut app, true);
+        assert!(
+            app.world().resource::<Approach>().active() || {
+                app.world().resource::<Approach>().arrived.is_some()
+            }
+        );
+        app.world_mut().resource_mut::<Approach>().stop();
+        app.world_mut()
+            .resource_mut::<FollowState>()
+            .start(VENDOR, "Friend".into());
+        app.world_mut().resource_mut::<Player>().pos = Vec3::ZERO;
+        frame(&mut app, true);
+        assert!(app.world().resource::<FollowState>().guid.is_some());
+    }
+
+    fn follow_world(at: Vec3) -> App {
+        let mut app = world(at, 0);
+        app.world_mut()
+            .resource_mut::<FollowState>()
+            .start(VENDOR, "Friend".into());
+        app
+    }
+
+    /// The follow stops at a flat 3 yd at any speed, whose stop never scales.
+    #[test]
+    fn a_follow_stops_at_a_flat_three_yards() {
+        let at = Vec3::new(0.0, 0.0, -12.0);
+        let mut app = follow_world(at);
+        for _ in 0..300 {
+            frame(&mut app, true);
+        }
+        let player = app.world().resource::<Player>();
+        let left = player.pos.distance(at);
+        assert!(left <= 3.0 && left > 3.0 - 7.0 * DT - 1e-3, "{left}");
+        assert!(!player.auto_forward);
+        assert!(app.world().resource::<FollowState>().guid.is_some());
+    }
+
+    /// A followee 30 yd off or more ends the follow (`0x731949`), on the distance the stop reads.
+    #[test]
+    fn a_followee_past_the_leash_ends_the_follow() {
+        let mut app = follow_world(Vec3::new(0.0, 0.0, -30.0));
+        frame(&mut app, true);
+        assert!(app.world().resource::<FollowState>().guid.is_none());
+
+        let mut app = follow_world(Vec3::new(0.0, 0.0, -29.9));
+        frame(&mut app, false);
+        assert!(app.world().resource::<FollowState>().guid.is_some());
+
+        // A flat reading: 40 yd up is under the leash for a walker, past it for a flyer.
+        let at = Vec3::new(0.0, 40.0, -20.0);
+        let mut app = follow_world(at);
+        frame(&mut app, false);
+        assert!(app.world().resource::<FollowState>().guid.is_some());
+        let mut app = follow_world(at);
+        app.world_mut().resource_mut::<Player>().flying = true;
+        frame(&mut app, false);
+        assert!(app.world().resource::<FollowState>().guid.is_none());
+    }
+
+    /// A followee that dies or boards a taxi ends the follow (`0x731857`, `0x73185d`).
+    #[test]
+    fn a_dead_or_flying_followee_ends_the_follow() {
+        let flags = benilla_protocol::field::FIELD_UNIT_FLAGS;
+        for pairs in [
+            vec![(22, 0), (28, 100)],
+            vec![
+                (22, 100),
+                (28, 100),
+                (flags, super::super::UNIT_FLAG_TAXI_FLIGHT),
+            ],
+        ] {
+            let at = Vec3::new(0.0, 0.0, -12.0);
+            let mut app = follow_world(at);
+            let vendor = app.world().resource::<GuidIndex>().0[&VENDOR];
+            app.world_mut()
+                .entity_mut(vendor)
+                .insert(ObjectStore(ObjectFields::from_pairs(&pairs)));
+            frame(&mut app, true);
+            assert!(app.world().resource::<FollowState>().guid.is_none());
+        }
+    }
+
+    /// The follow's first turn latches 800 or 1200 °/s as the walks' does (`0x731650`).
+    #[test]
+    fn a_follow_turns_at_the_auto_move_rates() {
+        for (at, rate) in [
+            (Vec3::new(10.0, 0.0, 0.0), 800.0_f32),
+            (Vec3::new(1.0, 0.0, 10.0), 1200.0),
+        ] {
+            let mut app = follow_world(at);
+            frame(&mut app, false);
+            let turned = app.world().resource::<Player>().face_yaw.abs();
+            let want = rate.to_radians() * DT;
+            assert!((turned - want).abs() < 1e-3, "{turned} vs {want}");
+        }
+    }
+
+    /// The follow's frame sets the camera's Move reading only with `autoInteract` off.
+    #[test]
+    fn a_follow_reads_as_move_only_with_click_to_move_off() {
+        for (on, as_move) in [(true, false), (false, true)] {
+            let mut app = follow_world(Vec3::new(10.0, 0.0, 0.0));
+            app.world_mut().resource_mut::<Approach>().enabled = on;
+            frame(&mut app, false);
+            let player = app.world().resource::<Player>();
+            assert!(player.auto_turning);
+            assert_eq!(player.auto_as_move, as_move);
+        }
     }
 }

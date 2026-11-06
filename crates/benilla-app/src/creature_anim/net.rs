@@ -175,8 +175,18 @@ fn on_attacker_state(
     mut edges: MessageWriter<SwingRefusalEdge>,
     stores: Query<&mut crate::net::ObjectStore>,
     mut play_seq: ResMut<PlaySeq>,
+    player: Option<Res<crate::player::Player>>,
+    approach: Option<ResMut<crate::player::Approach>>,
+    follow: Option<ResMut<crate::player::FollowState>>,
 ) {
     if let SessionEvent::AttackerState(s) = ev {
+        // Our own round ends the auto-move, the swing request does not (`0x75699a`).
+        if let (Some(player), Some(mut approach), Some(mut follow)) = (player, approach, follow) {
+            let mover = player.foreign_mover.or(self_guid.0);
+            if index.0.contains_key(&s.attacker) && Some(s.attacker) == mover {
+                approach.end_on_own_round(&mut follow);
+            }
+        }
         attacker_state(
             s,
             &index,

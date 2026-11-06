@@ -772,7 +772,7 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // Smart, 2 Always, as the stock dropdown writes it (`UIOptionsFrame.lua:525,536,547`); 3, the
     // Never entry's position, is the validator's upper bound (`(v, 0, 3)`). See `FollowStyle`.
     same("cameraSmoothStyle", "1").per_account(),
-    // Read instead of `cameraSmoothStyle` while the state mask holds Track or Fear; no panel row.
+    // Read for `cameraSmoothStyle` under Track or Fear; the stock Click-to-Move Camera dropdown.
     same("cameraSmoothTrackingStyle", "1").per_account(),
     // AUTO_FOLLOW_SPEED (`UIOptionsFrame.lua:88`), deg/s, registered "180.0": it sets the
     // transition's duration (`|dyaw| / rate * factor`), an average rate, not a slew. The knob

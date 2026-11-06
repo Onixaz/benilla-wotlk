@@ -343,6 +343,7 @@ impl Plugin for TargetPlugin {
             .add_message::<TargetByNameRequest>()
             .add_message::<AssistRequest>()
             .add_message::<click::DeselectGuid>()
+            .add_message::<click::ArrivalAttack>()
             .add_message::<Interact>()
             .add_message::<stone::MeetingStoneUse>()
             // After the target chain, which writes the stone's use, so it leaves on the click's

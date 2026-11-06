@@ -38,6 +38,14 @@ struct RingKey {
     surfaces: usize,
 }
 
+/// The destination ring of a ground or melee walk: its projection, rebuilt each frame it pulses.
+#[derive(Resource, Default)]
+pub(super) struct MoveRingState {
+    verts: Vec<EffectVertex>,
+    center: Vec3,
+    shown: bool,
+}
+
 /// The ring texture; the draw waits until it loads.
 #[derive(Resource)]
 pub(super) struct RingAssets {
@@ -46,6 +54,12 @@ pub(super) struct RingAssets {
 
 /// The reference's selection-circle texture, loaded: a white ring, tinted per vertex.
 const RING_TEXTURE: &str = "mpq://textures/unitselecttexture.blp";
+/// The destination ring's pulse period (ms) and radius bounds (yd) (`0xadac14`, `0xadac0c`).
+const MOVE_RING_PERIOD_MS: u128 = 500;
+const MOVE_RING_MIN: f32 = 0.5;
+const MOVE_RING_MAX: f32 = 0.75;
+/// The destination ring's diffuse, `0xFFFFFF7F` (`0x727724`-`0x72773e`).
+const MOVE_RING_COLOR: [f32; 3] = [1.0, 1.0, 0.498];
 /// Ring radius for a unit with no model: the reference's degenerate-box answer, 1.2.
 const RING_FALLBACK_RADIUS: f32 = benilla_formats::DEGENERATE_RING_FOOTPRINT;
 /// The highlight resolver's palette (`0x521bf0` with its third argument 1), not the nameplate's,
@@ -130,6 +144,7 @@ pub(super) fn setup_ring(mut commands: Commands, asset_server: Res<AssetServer>)
     let texture = asset_server.load::<Image>(RING_TEXTURE);
     commands.insert_resource(RingAssets { texture });
     commands.init_resource::<RingState>();
+    commands.init_resource::<MoveRingState>();
 }
 
 /// Load FactionTemplate.dbc once the MPQ chain is open; on failure the resource stays absent.
@@ -190,7 +205,22 @@ pub(super) fn update_ring(
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     // Our auto-attack; both clear paths end it, as the reference's death and teardown edges do.
     engaged: Query<(), (With<Engaged>, With<SelfPlayer>)>,
+    // The walk's destination ring, the same projector on its own record.
+    walk: (
+        Option<Res<crate::player::Approach>>,
+        Res<Time>,
+        ResMut<MoveRingState>,
+    ),
 ) {
+    let (approach, time, mut move_ring) = walk;
+    update_move_ring(
+        approach.as_deref(),
+        &time,
+        &camera,
+        &decals,
+        &mut move_ring,
+        &mut fade_angle,
+    );
     let state = &mut *state;
     let hide = match selection.target {
         None => {
@@ -294,6 +324,40 @@ pub(super) fn update_ring(
     }
 }
 
+/// The destination ring's radius at a clock in milliseconds (`0x7275c0`).
+fn move_ring_radius(ms: u128) -> f32 {
+    let phase = (ms % MOVE_RING_PERIOD_MS) as f32 / MOVE_RING_PERIOD_MS as f32;
+    let wave = ((std::f32::consts::TAU * phase).sin() + 1.0) * 0.5;
+    wave * (MOVE_RING_MAX - MOVE_RING_MIN) + MOVE_RING_MIN
+}
+
+/// The ring at a ground or melee walk's goal (`0x7275c0`), at the pulse's radius.
+fn update_move_ring(
+    approach: Option<&crate::player::Approach>,
+    time: &Time,
+    camera: &Query<&GlobalTransform, With<WorldCamera>>,
+    decals: &WorldDecal<'_, '_>,
+    state: &mut MoveRingState,
+    fade_angle: &mut f32,
+) {
+    let Some(center) = approach.and_then(crate::player::Approach::marker) else {
+        if state.shown {
+            state.shown = false;
+            state.verts.clear();
+        }
+        return;
+    };
+    *fade_angle = ring_fade_angle(camera).unwrap_or(*fade_angle);
+    state.verts.clear();
+    state.center = center;
+    let radius = move_ring_radius(time.elapsed().as_millis());
+    state.shown = project_ring(&mut state.verts, decals, center, radius, *fade_angle);
+    if benilla_assets::trace::enabled_for("ring") {
+        let line = format!("r={radius:.3} verts={}", state.verts.len());
+        benilla_assets::trace::line("ring", &line);
+    }
+}
+
 /// The fade's camera-relative angle θ, turning the texture's faded side away from the camera as
 /// the reference's camera-fed projector does. The texture is bright toward ring-local +Z and clear
 /// toward −Z, and [`project_ring`] rotates the UVs by −θ, so `θ = −π/2 − atan2(f.z, f.x)` for the
@@ -339,10 +403,11 @@ fn project_ring(
     )
 }
 
-/// Draw the cached projection tinted, one additive draw on the ring rung above the blob shadows.
+/// Draw the cached projections tinted, an additive draw each on the ring rung above the shadows.
 pub(super) fn push_ring(
     assets: Option<Res<RingAssets>>,
     state: Option<Res<RingState>>,
+    move_ring: Option<Res<MoveRingState>>,
     cam: Query<Entity, With<WorldCamera>>,
     mut draw: benilla_world::particles::buffer::WorldEffectDraw,
 ) {
@@ -350,25 +415,34 @@ pub(super) fn push_ring(
         return;
     };
     let Ok(cam) = cam.single() else { return };
-    if !state.shown || state.verts.is_empty() {
-        return;
-    }
-    let tint = state.color.to_linear();
-    let mut batch = draw
-        .batch(cam, assets.texture.id())
-        .additive()
-        .anchored(state.key.feet)
-        .rung(
-            benilla_world::sky_order::Rung::RING,
-            benilla_world::sky_order::Rung::DECAL_RASTER,
+    let mut push = |verts: &[EffectVertex], anchor: Vec3, tint: [f32; 3]| {
+        let mut batch = draw
+            .batch(cam, assets.texture.id())
+            .additive()
+            .anchored(anchor)
+            .rung(
+                benilla_world::sky_order::Rung::RING,
+                benilla_world::sky_order::Rung::DECAL_RASTER,
+            );
+        batch.extend(verts.iter().map(|v| EffectVertex {
+            pos: v.pos,
+            uv: v.uv,
+            // The tint as each vertex's diffuse, as in the reference; alpha is the fade.
+            color: [tint[0], tint[1], tint[2], v.color[3]],
+        }));
+        batch.tris();
+    };
+    if state.shown && !state.verts.is_empty() {
+        let tint = state.color.to_linear();
+        push(
+            &state.verts,
+            state.key.feet,
+            [tint.red, tint.green, tint.blue],
         );
-    batch.extend(state.verts.iter().map(|v| EffectVertex {
-        pos: v.pos,
-        uv: v.uv,
-        // The selector's colour as each vertex's diffuse, as in the reference; alpha is the fade.
-        color: [tint.red, tint.green, tint.blue, v.color[3]],
-    }));
-    batch.tris();
+    }
+    if let Some(ring) = move_ring.filter(|r| r.shown && !r.verts.is_empty()) {
+        push(&ring.verts, ring.center, MOVE_RING_COLOR);
+    }
 }
 
 /// The target's reaction toward our player as a rank `0..=6`, the direction every NPC colour uses
@@ -887,6 +961,16 @@ mod tests {
 
     /// A reaction forced on the target's faction answers both directions ahead of every other leg
     /// for a player-controlled viewer, and not for one without the flag (`0x71f822`, `0x725439`).
+    /// The pulse: 0.625 yd at the period's start, 0.75 a quarter in, 0.5 three quarters in.
+    #[test]
+    fn the_destination_ring_pulses_between_half_and_three_quarters_of_a_yard() {
+        assert!((super::move_ring_radius(0) - 0.625).abs() < 1e-5);
+        assert!((super::move_ring_radius(125) - 0.75).abs() < 1e-5);
+        assert!((super::move_ring_radius(250) - 0.625).abs() < 1e-5);
+        assert!((super::move_ring_radius(375) - 0.5).abs() < 1e-5);
+        assert!((super::move_ring_radius(500) - 0.625).abs() < 1e-5);
+    }
+
     #[test]
     fn a_forced_reaction_answers_ahead_of_the_comparator() {
         use crate::net::{ObjectStore, Reputations};
@@ -1312,6 +1396,7 @@ mod tests {
             let world = app.world_mut();
             // Inserted by a Startup system on a real boot; no schedule runs here.
             world.init_resource::<super::super::RingState>();
+            world.init_resource::<super::super::MoveRingState>();
             let me = world
                 .spawn((
                     SelfPlayer,

@@ -14,6 +14,7 @@
 //! - `sett`: how the settle hold ended ([`settle`]) and the time it skipped ([`skipped_time`]).
 //! - `rid`: a frame of a self-spline ride ([`ride`]).
 //! - `sync`: a time-sync request answered ([`time_sync`]).
+//! - `auto`: an auto-move edge ([`auto_move`]); `ring`: a frame of its destination ring.
 //!
 //! The anim driver writes `anim` lines into the same file on the same clock, and
 //! [`super::ride`] writes the transport carry's `ride`.
@@ -132,6 +133,32 @@ pub(super) fn flight(took_off: bool, feet: bevy::prelude::Vec3) {
             wow[0],
             wow[1],
             wow[2]
+        ),
+    );
+}
+
+/// One `auto` line per auto-move edge: why, the feet, the goal, and the flat and true distance.
+pub(super) fn auto_move(what: &str, feet: bevy::prelude::Vec3, goal: bevy::prelude::Vec3) {
+    if !trace::enabled_for("auto") {
+        return;
+    }
+    let (a, b) = (
+        benilla_assets::coords::bevy_to_wow(feet),
+        benilla_assets::coords::bevy_to_wow(goal),
+    );
+    let delta = goal - feet;
+    trace::line(
+        "auto",
+        &format!(
+            "{what} pos=[{:.2},{:.2},{:.2}] goal=[{:.2},{:.2},{:.2}] flat={:.3} d3={:.3}",
+            a[0],
+            a[1],
+            a[2],
+            b[0],
+            b[1],
+            b[2],
+            delta.with_y(0.0).length(),
+            delta.length(),
         ),
     );
 }
