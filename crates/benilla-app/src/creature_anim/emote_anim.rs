@@ -157,7 +157,7 @@ const UNIT_FLAGS_COMBAT_BIT: u32 = 0x800;
 fn resolve_anim_emote(kind: EmoteKind, lookup: impl Fn(u32) -> Option<u32>) -> Option<u32> {
     match kind {
         EmoteKind::Anim(id) => lookup(id),
-        EmoteKind::Text(_) => None,
+        EmoteKind::Text { .. } => None,
     }
 }
 
@@ -169,7 +169,11 @@ mod tests {
     fn only_anim_kind_resolves_and_only_through_the_catalog() {
         let lookup = |id: u32| if id == 3 { Some(66) } else { None };
         assert_eq!(resolve_anim_emote(EmoteKind::Anim(3), lookup), Some(66));
-        assert_eq!(resolve_anim_emote(EmoteKind::Text(101), lookup), None);
+        let text = EmoteKind::Text {
+            text_id: 101,
+            file_index: 0,
+        };
+        assert_eq!(resolve_anim_emote(text, lookup), None);
         // An id the catalog lacks (AnimID 0 included) stays `None`.
         assert_eq!(resolve_anim_emote(EmoteKind::Anim(999), lookup), None);
     }

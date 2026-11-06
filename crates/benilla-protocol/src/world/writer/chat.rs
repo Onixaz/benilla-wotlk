@@ -62,11 +62,12 @@ impl WorldWriter {
         self.send(opcode::CMSG_EMOTE, &emote_id.to_le_bytes())
     }
 
-    /// Perform a text emote (EmotesText id, target or 0), echoed to everyone in range, us included.
-    pub fn text_emote(&mut self, text_id: u32, target: u64) -> Result<()> {
+    /// Perform a text emote (EmotesText id, voice file index, target or 0), echoed to everyone in
+    /// range, us included.
+    pub fn text_emote(&mut self, text_id: u32, file_index: i32, target: u64) -> Result<()> {
         self.send(
             opcode::CMSG_TEXT_EMOTE,
-            &messages::text_emote(text_id, target),
+            &messages::text_emote(text_id, file_index, target),
         )
     }
 }

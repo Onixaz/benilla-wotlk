@@ -95,12 +95,17 @@ fn client_bodies_golden() {
         hx("00000000070000002e74656c65205765737466616c6c00"),
         "CMSG_MESSAGECHAT body"
     );
-    // CMSG_TEXT_EMOTE (vmangos `Misc.cpp:60-65`): textEmote, emoteNum (0) and the full target
-    // guid; the server silently drops a body without the guid.
+    // CMSG_TEXT_EMOTE: textEmote, the picked file index and the full target guid; the server
+    // silently drops a body without the guid.
     assert_eq!(
-        messages::text_emote(101, 0x2A),
-        hx("65000000000000002a00000000000000"),
+        messages::text_emote(101, 2, 0x2A),
+        hx("65000000020000002a00000000000000"),
         "CMSG_TEXT_EMOTE body"
+    );
+    assert_eq!(
+        messages::text_emote(101, -1, 0),
+        hx("65000000ffffffff0000000000000000"),
+        "a kit with no files sends -1"
     );
     assert_eq!(
         messages::stand_state_change(1),

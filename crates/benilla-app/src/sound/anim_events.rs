@@ -18,12 +18,12 @@
 use bevy::prelude::*;
 
 use crate::creature_anim::{held_strike_sound, AnimSoundEvent, CastHold, SpellVisuals};
-use crate::net::ObjectStore;
+use crate::net::{ActiveMover, ObjectStore, SelfPlayer};
 use benilla_assets::WorldAssets;
 use benilla_world::schedule::WorldStage;
 
 use super::emitter_pool::AmbientEmitterPool;
-use super::emote::{play_emote_voice, EmoteSounds, VOICE_ATTACH};
+use super::emote::{play_emote_voice, EmoteSounds, EmoteVoice, VOICE_ATTACH};
 use super::kit::{play_kit, KitRef, SoundCategory, SoundKits};
 use super::{AudioListener, SoundConfig, SoundOutput};
 
@@ -40,6 +40,7 @@ pub(super) fn route_anim_events(
     go_lane: Query<(), With<crate::go_anim::GoAnim>>,
     // The attachment read `$CSD` needs.
     attach: crate::entities::AttachPoints,
+    owners: Query<(), Or<(With<SelfPlayer>, With<ActiveMover>)>>,
     kits: Option<ResMut<SoundKits>>,
     assets: Option<Res<WorldAssets>>,
     emotes: Option<Res<EmoteSounds>>,
@@ -132,8 +133,16 @@ pub(super) fn route_anim_events(
                     .map_or(Vec3::ZERO, |t| t.translation());
                 let at = attach.point(ev.entity, VOICE_ATTACH, root);
                 let store = units.get(ev.entity).ok().and_then(|(store, _)| store);
+                let voice = EmoteVoice {
+                    kit: ev.data,
+                    unit: ev.entity,
+                    at,
+                    file_index: -1,
+                    check_cvars: true,
+                    own: owners.contains(ev.entity),
+                };
                 if let Err(e) = play_emote_voice(
-                    &mut kits, &assets, &mut out, &config, listener, ev.data, ev.entity, store, at,
+                    &mut kits, &assets, &mut out, &config, listener, voice, store,
                 ) {
                     if complained.insert(ev.data) {
                         warn!(

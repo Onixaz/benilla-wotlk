@@ -1312,9 +1312,11 @@ pub(crate) enum ClientCommand {
     Emote {
         emote_id: u32,
     },
-    /// `CMSG_TEXT_EMOTE`; our own sound and animation ride the `SMSG_TEXT_EMOTE` echo.
+    /// `CMSG_TEXT_EMOTE`; our own sound and animation ride the `SMSG_TEXT_EMOTE` echo, which brings
+    /// `file_index` back.
     TextEmote {
         text_id: u32,
+        file_index: i32,
         target: u64,
     },
     /// `CMSG_CAST_SPELL`; `None` is a self or implicit target.
@@ -2924,8 +2926,8 @@ pub(crate) struct EmoteMessage {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EmoteKind {
-    /// An `EmotesText.dbc` id.
-    Text(u32),
+    /// An `EmotesText.dbc` id and the voice file the sender picked, `-1` the normal pick.
+    Text { text_id: u32, file_index: i32 },
     /// An `Emotes.dbc` id (its `EventSoundID`).
     Anim(u32),
 }

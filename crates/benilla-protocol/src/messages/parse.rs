@@ -921,8 +921,7 @@ fn parse_server_body(
         opcode::SMSG_TEXT_EMOTE => {
             let guid = read_u64_le(&mut r)?;
             let text_emote = read_u32_le(&mut r)?;
-            // `emoteNum` picks neither sentence nor voice kit on the reference's receive side.
-            let _emote_num = read_u32_le(&mut r)?;
+            let file_index = read_u32_le(&mut r)? as i32;
             // The target's name, length-prefixed including its NUL (a lone `0x00` for no
             // target); trimmed at the first NUL, so no target reads as "", the untargeted form.
             let namelen = read_u32_le(&mut r)? as usize;
@@ -935,6 +934,7 @@ fn parse_server_body(
             ServerPacket::TextEmote {
                 guid,
                 text_emote,
+                file_index,
                 target_name,
             }
         }

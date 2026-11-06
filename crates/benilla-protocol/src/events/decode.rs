@@ -77,11 +77,13 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::TextEmote {
             guid,
             text_emote,
+            file_index,
             target_name,
         } => {
             vec![SessionEvent::TextEmote {
                 guid,
                 text_emote,
+                file_index,
                 target_name,
             }]
         }

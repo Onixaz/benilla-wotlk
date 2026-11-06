@@ -104,6 +104,9 @@ pub(super) struct ChatOut<'w, 's> {
     target: MessageWriter<'w, crate::target::TargetByNameRequest>,
     assist: MessageWriter<'w, crate::target::AssistRequest>,
     follow: MessageWriter<'w, crate::player::FollowRequest>,
+    /// The voice file `CMSG_TEXT_EMOTE` names: the kits, and our display's race and sex.
+    sound_kits: Option<ResMut<'w, crate::sound::SoundKits>>,
+    creatures: Option<Res<'w, crate::entities::Creatures>>,
     /// `/wave <name>`'s player search, which selects nothing.
     players: crate::target::PlayerLookup<'w, 's>,
     /// The party and raid `/wave <name>` searches before the visible objects.
@@ -813,10 +816,24 @@ pub(super) fn drain_chat_input(
                     },
                     self_guid.0,
                 );
-                match commands
-                    .0
-                    .send(ClientCommand::TextEmote { text_id, target })
-                {
+                let file_index = match (emotes.as_deref(), self_store.single()) {
+                    (Some(e), Ok(store)) => e.pick_file_index(
+                        text_id,
+                        store,
+                        chat_out.creatures.as_deref(),
+                        chat_out.sound_kits.as_deref_mut(),
+                    ),
+                    _ => -1,
+                };
+                benilla_assets::trace::line(
+                    "emote",
+                    &format!("send text={text_id} index={file_index} target={target:#x}"),
+                );
+                match commands.0.send(ClientCommand::TextEmote {
+                    text_id,
+                    file_index,
+                    target,
+                }) {
                     Ok(()) => info!("chat: sent {msg:?}"),
                     Err(_) => warn!("chat: not connected; dropped {msg:?}"),
                 }
