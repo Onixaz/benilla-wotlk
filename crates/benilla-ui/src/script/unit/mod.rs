@@ -22,6 +22,8 @@ pub enum SelectionRequest {
     AssistByName(String),
     /// `TargetLastEnemy()`: the last attackable unit committed.
     LastEnemy,
+    /// `TargetLastFriend()` (`0x525e50`): the last assistable unit committed.
+    LastFriend,
 }
 
 /// The reference's local player record: a copy of the chosen `SMSG_CHAR_ENUM` row, written once at
@@ -93,6 +95,8 @@ pub struct UnitState {
     /// `UnitIsCharmed`: `UNIT_FIELD_CHARMEDBY` (fields 10-11) is non-zero. `UNIT_FIELD_CHARM` is
     /// never read, so a charmer answers nil, as does a summoned pet.
     pub charmed: bool,
+    /// `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` is set (`UnitIsControlling`).
+    pub controlling: bool,
     /// `UnitIsGhost`: `PLAYER_FLAGS` bit `0x10`, so players only.
     pub ghost: bool,
     /// The reaction toward the player on `UnitReaction`'s scale, 1 hated to 7 revered, which

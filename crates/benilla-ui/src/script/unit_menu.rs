@@ -76,7 +76,7 @@ pub(crate) fn is_raf_player(model: &Model, unit: Option<&UnitState>) -> bool {
 }
 
 /// The party or raid membership test: a party slot or a raid row holds the guid.
-fn in_my_group(model: &Model, guid: u64) -> bool {
+pub(super) fn in_my_group(model: &Model, guid: u64) -> bool {
     model.unit_guids.party.contains(&guid) || model.party.raid.iter().any(|m| m.guid == guid)
 }
 
@@ -133,7 +133,7 @@ fn spell_cooling(model: &Model, spell: u32, now: f64) -> bool {
 }
 
 /// The player's summon-friend check (`0x6d7630`): 0 when the summon may go, else the refusal code.
-fn summon_friend_refusal(model: &Model, token: &str, now: f64) -> u8 {
+pub(super) fn summon_friend_refusal(model: &Model, token: &str, now: f64) -> u8 {
     let unit = model.unit(token).filter(|u| u.exists);
     let Some(guid) = unit.map(|u| u.guid).filter(|&g| g != 0) else {
         return 8;
@@ -144,8 +144,25 @@ fn summon_friend_refusal(model: &Model, token: &str, now: f64) -> u8 {
     if !in_my_group(model, guid) {
         return 9;
     }
-    // The record leg for an unheld member (offline 13, the record's level) is not built.
-    if unit.is_some_and(|u| u.level >= 61) {
+    // A held player reads their level; an unheld member the group's record (`0x6d7630`).
+    if !unit.is_some_and(|u| u.has_object) {
+        let online = model
+            .party
+            .raid
+            .iter()
+            .find(|m| m.guid == guid)
+            .map(|m| m.online);
+        let online = online.or_else(|| {
+            let member = model.party.members.iter().find(|m| m.guid == guid);
+            member.map(|m| m.online)
+        });
+        match online {
+            None => return 9,
+            Some(false) => return 13,
+            Some(true) => {}
+        }
+    }
+    if unit.is_some_and(|u| u.level > 60) {
         return 10;
     }
     if spell_cooling(model, model.refer_a_friend.summon_spell, now) {
@@ -157,7 +174,7 @@ fn summon_friend_refusal(model: &Model, token: &str, now: f64) -> u8 {
 
 /// The player's grant-level check (`0x6de9e0`): 0 when a level may be granted, else the refusal
 /// code.
-fn grant_level_refusal(model: &Model, token: &str) -> u8 {
+pub(super) fn grant_level_refusal(model: &Model, token: &str) -> u8 {
     let unit = model.unit(token).filter(|u| u.exists);
     if unit.is_none_or(|u| u.guid == 0) {
         return 8;
@@ -278,18 +295,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let inactive = super::aura::auras_of(&model, &unit)
                 .is_some_and(|list| list.iter().any(|a| a.spell_id == PVP_INACTIVE_AURA));
             Ok(inactive)
-        })?,
-    )?;
-    // CanComplainChat (`0x500c80`): benilla keeps no chat line records, so nil.
-    g.set(
-        "CanComplainChat",
-        lua.create_function(|lua, arg: Value| {
-            if optional_string(lua, &arg).is_none() {
-                return Err(mlua::Error::runtime(
-                    "Usage: CanComplainChat(lineID) or CanComplainChat(name) or CanComplainChat(name, text)",
-                ));
-            }
-            Ok(Value::Nil)
         })?,
     )?;
     // GetPartyAssignment("assignment" [, member [, exact]]) (`0x52cf60`): with a member, 1 or nil

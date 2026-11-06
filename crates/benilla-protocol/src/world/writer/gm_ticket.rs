@@ -53,4 +53,25 @@ impl WorldWriter {
     pub fn gm_response_resolve(&mut self) -> Result<()> {
         self.send(opcode::CMSG_GMRESPONSE_RESOLVE, &[])
     }
+
+    /// Report lag of `kind` from where the player stands (`CMSG_GM_REPORT_LAG`, `0x5acf30`).
+    pub fn gm_report_lag(&mut self, kind: u32, map: u32, pos: [f32; 3]) -> Result<()> {
+        self.send(
+            opcode::CMSG_GM_REPORT_LAG,
+            &messages::gm_report_lag(kind, map, pos),
+        )
+    }
+
+    /// Send the survey's answers (`CMSG_GMSURVEY_SUBMIT`, `0x5acd50`).
+    pub fn gm_survey_submit(
+        &mut self,
+        survey: u32,
+        answers: &[(u32, u8, String)],
+        comment: &str,
+    ) -> Result<()> {
+        self.send(
+            opcode::CMSG_GMSURVEY_SUBMIT,
+            &messages::gm_survey_submit(survey, answers, comment),
+        )
+    }
 }

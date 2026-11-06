@@ -439,6 +439,8 @@ fn server_first_line(
         text,
         chat_tag: 0,
         achievement: a.achievement,
+        wire_type: 0,
+        sender_word: 0,
     })
 }
 
@@ -608,10 +610,77 @@ fn drain_level_grant(
     script: Option<NonSendMut<UiScript>>,
     mut grant: ResMut<LevelGrant>,
     net: Res<NetCommands>,
+    names: Res<NameCache>,
+    mut errors: ResMut<UiErrorKeys>,
+    mut chat: ResMut<crate::ui_chat::ChatLog>,
+    mut waiting: Local<crate::ui_script::VmMemo<Vec<(u8, u64)>>>,
+    mut echo: Option<ResMut<crate::console::ConsoleEcho>>,
 ) {
+    use benilla_ui::script::UnitRequest as R;
     let Some(mut script) = script else {
         return;
     };
+    // `ConsoleAddMessage`'s lines (`0x512090`).
+    for line in script.take_console_prints() {
+        if let Some(echo) = echo.as_mut() {
+            echo.print(line);
+        }
+    }
+    let waiting = waiting.get(&script);
+    for request in script.take_unit_requests() {
+        match request {
+            R::GrantLevel(friend) => {
+                let _ = net.0.send(ClientCommand::GrantLevel { friend });
+            }
+            // 9 and 13 show the name, which the name cache may still have to answer (`0x523210`).
+            R::ReferAFriendRefused {
+                code: code @ (9 | 13),
+                guid,
+            } => {
+                let _ = names.resolve(guid, &net);
+                waiting.push((code, guid));
+            }
+            R::ReferAFriendRefused { code, .. } => {
+                errors.0.extend(refer_a_friend_error(u32::from(code), ""));
+            }
+            R::SummonFriend {
+                guid,
+                spell,
+                restore,
+            } => {
+                if restore.is_some() {
+                    let _ = net.0.send(ClientCommand::SetSelection { guid });
+                }
+                let _ = net.0.send(ClientCommand::CastSpell {
+                    spell_id: spell,
+                    target: Some(guid),
+                });
+                if let Some(guid) = restore {
+                    let _ = net.0.send(ClientCommand::SetSelection { guid });
+                }
+            }
+            R::ReportPvpAfk(guid) => {
+                let _ = net.0.send(ClientCommand::ReportPvpAfk { guid });
+                if let Some(name) = names.peek(guid) {
+                    let get = |key: &str| script.lua().globals().get::<String>(key).ok();
+                    if let Some(format) = get("REPORT_PVP_AFK_SENT") {
+                        use benilla_ui::strings::{fill, Arg};
+                        crate::ui_chat::away::push_system(
+                            &mut chat,
+                            fill(&format, &[Arg::S(name)]),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    waiting.retain(|&(code, guid)| {
+        let Some(name) = names.peek(guid) else {
+            return !names.answered_unknown(guid);
+        };
+        errors.0.extend(refer_a_friend_error(u32::from(code), name));
+        false
+    });
     for accept in script.take_level_grant_answers() {
         let Some(granter) = grant.granter.take() else {
             continue;
@@ -808,6 +877,9 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut w = World::new();
         w.init_resource::<LevelGrant>();
+        w.init_resource::<NameCache>();
+        w.init_resource::<UiErrorKeys>();
+        w.init_resource::<crate::ui_chat::ChatLog>();
         w.insert_resource(NetCommands(tx));
         for granter in [0x2A, 0x2B] {
             w.run_system_once_with(

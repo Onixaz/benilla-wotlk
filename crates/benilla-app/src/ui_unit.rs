@@ -175,6 +175,8 @@ impl Plugin for UiUnitPlugin {
                 .after(feed_units)
                 .after(crate::ui_aura::AuraEvents),
         )
+        .add_systems(Update, feed_name_records.in_set(UnitFeed))
+        .add_systems(Update, taxi_benchmark.in_set(UnitFeed))
         .add_systems(Update, drain_pvp_toggles.after(UiInput))
         .net_handler(
             benilla_protocol::SessionEventKind::PowerUpdate,
@@ -525,6 +527,67 @@ fn fire_unit_combat(
                 ],
             );
         }
+    }
+}
+
+/// `SetTaxiBenchmarkMode`'s send, and the two events off `PLAYER_FLAGS` 0x20000's edge.
+fn taxi_benchmark(
+    script: Option<NonSendMut<UiScript>>,
+    self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    commands: Res<crate::net::NetCommands>,
+    mut was_on: Local<crate::ui_script::VmMemo<Option<bool>>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let was_on = was_on.get(&script);
+    for on in script.take_taxi_benchmark_requests() {
+        let _ = commands
+            .0
+            .send(crate::net::ClientCommand::SetTaxiBenchmarkMode { on });
+    }
+    let on = self_q
+        .iter()
+        .next()
+        .is_some_and(|s| s.0.player_flags() & 0x20000 != 0);
+    if was_on.is_some_and(|was| was != on) {
+        let event = if on {
+            "ENABLE_TAXI_BENCHMARK"
+        } else {
+            "DISABLE_TAXI_BENCHMARK"
+        };
+        script.fire_event(event, vec![]);
+    }
+    *was_on = Some(on);
+}
+
+/// Mirror the name cache's changed players into the VM, every answered one into a new VM, and
+/// send `GetPlayerInfoByGUID`'s asks.
+fn feed_name_records(
+    script: Option<NonSendMut<UiScript>>,
+    names: Res<crate::names::NameCache>,
+    commands: Res<crate::net::NetCommands>,
+    mut fed: Local<crate::ui_script::VmMemo<bool>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let (wiped, changed) = names.take_player_changes();
+    if wiped {
+        script.clear_name_records();
+    }
+    let seeded = fed.get(&script);
+    let guids = if *seeded {
+        changed
+    } else {
+        *seeded = true;
+        names.player_guids()
+    };
+    for guid in guids {
+        script.set_name_record(guid, names.player_record(guid));
+    }
+    for guid in script.take_name_asks() {
+        let _ = names.resolve(guid, &commands);
     }
 }
 
@@ -950,6 +1013,7 @@ pub(crate) fn snapshot(
         ghost: store.0.player_is_ghost(),
         // `UnitIsCharmed`: `UNIT_FIELD_CHARMEDBY != 0`.
         charmed: store.0.unit_charmed_by().is_some(),
+        controlling: store.0.unit_charm().is_some() || store.0.unit_summon().is_some(),
         // `UNIT_DYNAMIC_FLAGS` bits `0x4`/`0x8`; a unit with no descriptor reads `false`.
         tapped: store.0.unit_tapped(),
         tapped_by_player: store.0.unit_tapped_by_player(),

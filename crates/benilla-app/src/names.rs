@@ -10,6 +10,8 @@
 
 use std::collections::HashMap;
 
+use benilla_assets::LockRecover;
+
 use bevy::prelude::*;
 
 use benilla_protocol::guid;
@@ -65,6 +67,9 @@ pub(crate) struct NameCache {
     /// Bumped by every landed answer and the pet-rename eviction, never by an ask: the gated
     /// feeds re-run when it moves.
     generation: u64,
+    /// What moved since the VM's mirror last read, behind a lock so the read takes no write on the
+    /// cache every feed reads: the session wipe, and the player guids.
+    changed_players: std::sync::Mutex<(bool, Vec<u64>)>,
 }
 
 /// One cached creature template head.
@@ -253,7 +258,40 @@ impl NameCache {
         self.player_realms.remove(&guid);
         self.players
             .insert(guid, (!name.is_empty()).then_some(name));
+        self.note_changed(guid);
         self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// Whether the name cache answered that the server does not know `guid`.
+    pub(crate) fn answered_unknown(&self, guid: u64) -> bool {
+        self.players.answered_unknown(guid)
+    }
+
+    fn note_changed(&self, guid: u64) {
+        self.changed_players.lock_recover().1.push(guid);
+    }
+
+    /// Whether the session wipe ran and the guids changed, since the last call.
+    pub(crate) fn take_player_changes(&self) -> (bool, Vec<u64>) {
+        std::mem::take(&mut *self.changed_players.lock_recover())
+    }
+
+    /// Every answered player guid.
+    pub(crate) fn player_guids(&self) -> Vec<u64> {
+        self.players.iter().map(|(g, _)| *g).collect()
+    }
+
+    /// The name record `guid` holds, as the VM mirrors it.
+    pub(crate) fn player_record(&self, guid: u64) -> Option<benilla_ui::script::NameRecord> {
+        let name = self.players.get(guid)?.clone();
+        let traits = self.player_traits(guid);
+        Some(benilla_ui::script::NameRecord {
+            name,
+            realm: self.player_realms.get(&guid).cloned().unwrap_or_default(),
+            class: traits.and_then(|t| crate::ui_unit::class_names(t.1)),
+            race: traits.and_then(|t| crate::ui_unit::race_names(t.0)),
+            gender: traits.map_or(0, |t| t.2),
+        })
     }
 
     /// The reference's world-session wipe: every record cache whose persistence byte `[cache+0x39]`
@@ -264,6 +302,7 @@ impl NameCache {
         self.player_traits.clear();
         self.player_realms.clear();
         self.pets.clear();
+        *self.changed_players.lock_recover() = (true, Vec::new());
         self.generation = self.generation.wrapping_add(1);
     }
 
@@ -372,6 +411,7 @@ impl NameCache {
         self.players.evict(guid);
         self.player_traits.remove(&guid);
         self.player_realms.remove(&guid);
+        self.note_changed(guid);
         self.generation = self.generation.wrapping_add(1);
     }
 
@@ -379,6 +419,7 @@ impl NameCache {
     pub(crate) fn set_player_realm(&mut self, guid: u64, realm: String) {
         if !realm.is_empty() {
             self.player_realms.insert(guid, realm);
+            self.note_changed(guid);
         }
     }
 

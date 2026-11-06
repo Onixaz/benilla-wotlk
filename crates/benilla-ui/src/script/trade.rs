@@ -161,6 +161,13 @@ fn click_trade_button(model: &mut Model, id: u32) {
 }
 
 /// Register the trade globals.
+impl super::UiScript {
+    /// Drain the partner's enchant slot asks: `false` the click, `true` the replace Accept.
+    pub fn take_trade_enchant_targets(&mut self) -> Vec<bool> {
+        drain_field!(self, trade_enchant_targets)
+    }
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -361,10 +368,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // ClickTargetTradeButton(id) (`TradeFrame.xml:101`): the partner's column takes nothing.
     g.set(
         "ClickTargetTradeButton",
-        lua.create_function(|lua, _id: u32| {
-            // Coins on the cursor still go into our offer, the index unread.
+        lua.create_function(|lua, id: u32| {
+            // Coins on the cursor go into our offer; with none, slot 7 takes the targeting spell.
             let mut model = crate::script::model_mut_of(lua);
+            let coins = cursor::money::cursor_money(&model) != 0;
             cursor::money::add_trade_money(&mut model);
+            if !coins && id == 7 {
+                model.trade_enchant_targets.push(false);
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // ReplaceTradeEnchant() (`0x510b80`): `TRADE_REPLACE_ENCHANT`'s Accept, the cast at slot 7.
+    g.set(
+        "ReplaceTradeEnchant",
+        lua.create_function(|lua, ()| {
+            crate::script::model_mut_of(lua)
+                .trade_enchant_targets
+                .push(true);
             Ok(())
         })?,
     )?;

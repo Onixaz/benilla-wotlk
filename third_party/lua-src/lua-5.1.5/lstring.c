@@ -12,6 +12,7 @@
 
 #include "lua.h"
 
+#include "lgc.h"
 #include "lmem.h"
 #include "lobject.h"
 #include "lstate.h"
@@ -57,6 +58,7 @@ static TString *newlstr (lua_State *L, const char *str, size_t l,
   ts->tsv.len = l;
   ts->tsv.hash = h;
   ts->tsv.marked = luaC_white(G(L));
+  ts->tsv.owner = lua_gcowner;
   ts->tsv.tt = LUA_TSTRING;
   ts->tsv.reserved = 0;
   memcpy(ts+1, str, l*sizeof(char));
@@ -99,6 +101,7 @@ Udata *luaS_newudata (lua_State *L, size_t s, Table *e) {
     luaM_toobig(L);
   u = cast(Udata *, luaM_malloc(L, s + sizeof(Udata)));
   u->uv.marked = luaC_white(G(L));  /* is not finalized */
+  u->uv.owner = lua_gcowner;
   u->uv.tt = LUA_TUSERDATA;
   u->uv.len = s;
   u->uv.metatable = NULL;

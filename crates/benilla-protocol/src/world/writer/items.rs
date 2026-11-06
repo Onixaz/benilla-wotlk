@@ -157,4 +157,18 @@ impl WorldWriter {
             &messages::destroy_item(bag, slot, count),
         )
     }
+
+    /// `CMSG_AUTOEQUIP_ITEM_SLOT`: equip `item` into equipment slot `slot` (`0x6dff90`).
+    pub fn auto_equip_item_slot(&mut self, item: u64, slot: u8) -> Result<()> {
+        let mut body = Vec::with_capacity(9);
+        body.extend_from_slice(&item.to_le_bytes());
+        body.push(slot);
+        self.send(opcode::CMSG_AUTOEQUIP_ITEM_SLOT, &body)
+    }
+
+    /// `CMSG_CANCEL_TEMP_ENCHANTMENT`: drop the temporary enchant on inventory slot `slot`
+    /// (`0x6d7120`); the change comes back as a field update.
+    pub fn cancel_temp_enchantment(&mut self, slot: u32) -> Result<()> {
+        self.send(opcode::CMSG_CANCEL_TEMP_ENCHANTMENT, &slot.to_le_bytes())
+    }
 }

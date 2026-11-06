@@ -288,7 +288,8 @@ pub(crate) struct Model {
     pub(crate) refer_a_friend: unit_menu::ReferAFriendState,
     /// Party and loot-method calls (`AcceptGroup`, `InviteUnit`, `SetLootMethod`, …) queued.
     pub(crate) party_requests: Vec<party::PartyRequest>,
-    /// System chat lines the party bindings composed, drained by the app.
+    /// System chat lines the bindings composed (`SendSystemMessage`, the party verbs), drained by
+    /// the app.
     pub(crate) party_lines: Vec<String>,
     /// The ready-check deadline and the unanswered flags the timeout tick reads.
     pub(crate) ready_check: party::ReadyCheckState,
@@ -349,6 +350,10 @@ pub(crate) struct Model {
     /// Chat-type colours: 94 fixed and 10 `CHANNELn`, overlaid by `chat-cache.txt`.
     pub(crate) chat_colors: Vec<super::chat_types::ChatTypeColor>,
     pub(crate) chat_colors_changed: bool,
+    /// The zone channel ids `ResetChatWindows` put back in the auto-join mask.
+    pub(crate) zone_mask_additions: Vec<u32>,
+    /// A trade enchant slot ask: `false` the slot's click, `true` the replace popup's Accept.
+    pub(crate) trade_enchant_targets: Vec<bool>,
     /// The languages this character knows, in `Languages.dbc` row order.
     pub(crate) known_languages: Vec<String>,
     /// `ChrClasses.dbc`'s rows in record order, which `FillLocalizedClassList` walks.
@@ -364,10 +369,28 @@ pub(crate) struct Model {
     pub(crate) guild_recruitment_changed: bool,
     /// `DoEmote` calls queued.
     pub(crate) emote_requests: Vec<super::chat_misc::EmoteRequest>,
+    /// `SetTaxiBenchmarkMode` calls queued.
+    pub(crate) taxi_benchmark_requests: Vec<bool>,
+    /// `CancelItemTempEnchantment` calls queued, as inventory slots.
+    pub(crate) temp_enchant_cancels: Vec<u32>,
+    /// The override bindings (`[0xbeadd8]`), filed by frame.
+    pub(crate) override_bindings: super::binding_commands::OverrideBindings,
+    /// A macro is running (`[0xbeaf4c]`); `StopMacro` clears it.
+    pub(crate) macro_running: bool,
+    /// The addons that hold a GC owner tag, a tag being the position here plus one.
+    pub(crate) addon_owners: Vec<String>,
+    /// The running tag, restored as a nested load ends.
+    pub(crate) addon_owner: u8,
+    /// Bytes per tag at the last `UpdateAddOnMemoryUsage`.
+    pub(crate) addon_memory: Vec<usize>,
     /// `RandomRoll` calls queued.
     pub(crate) roll_requests: Vec<(u32, u32)>,
+    /// The recorded chat lines and the complaints filed from them.
+    pub(crate) chat_records: super::chat_record::ChatRecords,
     /// `ConsoleExec` lines that were not CVar writes.
     pub(crate) console_lines: Vec<String>,
+    /// `ConsoleAddMessage` lines for the console.
+    pub(crate) console_prints: Vec<String>,
     /// `LoggingChat` and `LoggingCombat`'s flags, and their change cue.
     pub(crate) logging_chat: bool,
     pub(crate) logging_combat: bool,
@@ -534,6 +557,8 @@ pub(crate) struct Model {
     pub(crate) macro_item_icon_source: Option<MacroIconSource>,
     /// `ToggleSpellAutocast` ids for `CMSG_PET_SPELL_AUTOCAST` (`0x2F3`), which names a spell.
     pub(crate) pet_spell_autocasts: Vec<u32>,
+    /// `EnableSpellAutocast` and `DisableSpellAutocast` calls queued.
+    pub(crate) pet_spell_autocast_sets: Vec<(u32, bool)>,
     /// An auto-repeat or cast that `SpellStopCasting()` can stop, not a channel. Its 1 or nil
     /// matters: the ESC chain (`UIParent.lua:1489`) reaches `CloseAllWindows()` on nil.
     pub(crate) casting: bool,
@@ -598,6 +623,8 @@ pub(crate) struct Model {
     pub(crate) battlefield_position_requests: std::cell::Cell<u32>,
     /// Acknowledged tutorials, `None` before `SMSG_TUTORIAL_FLAGS`; all `TutorialsEnabled()` reads.
     pub(crate) tutorial_bank: Option<Vec<u8>>,
+    /// The completed tutorials, in completion order, `id + 1` each.
+    pub(crate) tutorials_completed: Vec<u32>,
     /// `FlagTutorial(n)` calls, 0-based and in range.
     pub(crate) tutorial_flag_requests: Vec<u32>,
     /// `TriggerTutorial(n)` calls, 0-based and in range.
@@ -826,6 +853,14 @@ pub(crate) struct Model {
     pub(crate) loot_roll_confirms: Vec<(u32, u8)>,
     /// `AcceptLevelGrant` (true) and `DeclineLevelGrant` (false) calls.
     pub(crate) level_grant_answers: Vec<bool>,
+    /// The grant, summon and PvP AFK verbs' sends and refusals, in call order.
+    pub(crate) unit_requests: Vec<super::level_grant::UnitRequest>,
+    /// The answered player name records, by guid.
+    pub(crate) name_records: std::collections::HashMap<u64, super::name_records::NameRecord>,
+    /// Guids `GetPlayerInfoByGUID` asked the name cache for.
+    pub(crate) name_asks: Vec<u64>,
+    /// The loot opt-out flag `[0xbd19a0]`, kept for the process.
+    pub(crate) opt_out_of_loot: bool,
     /// The server's UI clock less the local clock, seconds; 0 until it is read.
     pub(crate) ui_time_offset: i32,
     /// The message of the day, `KBSystem_GetMOTD`.
@@ -1066,6 +1101,11 @@ pub(crate) struct Model {
     pub(crate) skills_selected: Option<u32>,
     /// `AbandonSkill` ids for `CMSG_UNLEARN_SKILL`; nothing changes until the server's update.
     pub(crate) skill_abandons: Vec<u32>,
+    /// `AddSkillUp`'s pending points by skill line.
+    pub(crate) skill_ups: HashMap<u32, u32>,
+    /// The cost of the pending points (`[0xc22b00]`).
+    pub(crate) skill_up_points: i32,
+    pub(crate) skill_requests: Vec<super::skills::SkillRequest>,
 
     /// The reputation pane's snapshot, and the client's faction list and header tree over it.
     pub(crate) reputation: reputation::ReputationState,
@@ -1120,6 +1160,8 @@ pub(crate) struct Model {
     pub(crate) gm_ticket_intents: Vec<super::gm_ticket::GmTicketIntent>,
     /// `Stuck()` calls, each a cast of spell 7355, the Help window's Auto-Unstuck.
     pub(crate) stuck_casts: u32,
+    /// The GM survey's tables and the answers given since the last submit.
+    pub(crate) gm_survey: super::gm_ticket::SurveyState,
     /// `ConfirmBinder()` calls, one `CMSG_BINDER_ACTIVATE` each; the app holds the innkeeper.
     pub(crate) binder_confirms: u32,
     /// `CheckBinderDist()`: the innkeeper's question is live and in range; false hides its dialog.
@@ -1380,6 +1422,8 @@ impl Model {
             chat_window_changes: HashSet::new(),
             chat_colors: super::chat_types::seed(),
             chat_colors_changed: false,
+            zone_mask_additions: Vec::new(),
+            trade_enchant_targets: Vec::new(),
             known_languages: Vec::new(),
             class_names: Vec::new(),
             language_table: Vec::new(),
@@ -1389,7 +1433,16 @@ impl Model {
             guild_recruitment_changed: false,
             emote_requests: Vec::new(),
             roll_requests: Vec::new(),
+            override_bindings: Default::default(),
+            macro_running: false,
+            addon_owners: Vec::new(),
+            addon_owner: 0,
+            addon_memory: Vec::new(),
+            taxi_benchmark_requests: Vec::new(),
+            temp_enchant_cancels: Vec::new(),
             console_lines: Vec::new(),
+            console_prints: Vec::new(),
+            chat_records: Default::default(),
             logging_chat: false,
             logging_combat: false,
             logging_changed: false,
@@ -1462,6 +1515,7 @@ impl Model {
             macro_item_icons: Vec::new(),
             macro_item_icon_source: None,
             pet_spell_autocasts: Vec::new(),
+            pet_spell_autocast_sets: Vec::new(),
             casting: false,
             spell_targeting: false,
             spell_targetable_units: HashSet::new(),
@@ -1492,6 +1546,7 @@ impl Model {
             battlefield_icon_scale: 1.0,
             battlefield_position_requests: std::cell::Cell::new(0),
             tutorial_bank: None,
+            tutorials_completed: Vec::new(),
             tutorial_flag_requests: Vec::new(),
             tutorial_triggers: Vec::new(),
             tutorial_clears: 0,
@@ -1602,6 +1657,10 @@ impl Model {
             loot_roll_votes: Vec::new(),
             loot_roll_confirms: Vec::new(),
             level_grant_answers: Vec::new(),
+            unit_requests: Vec::new(),
+            name_records: Default::default(),
+            name_asks: Vec::new(),
+            opt_out_of_loot: false,
             ui_time_offset: 0,
             kb_motd: String::new(),
             item_text: None,
@@ -1705,6 +1764,7 @@ impl Model {
             gm_ticket_categories: Vec::new(),
             gm_ticket_intents: Vec::new(),
             stuck_casts: 0,
+            gm_survey: Default::default(),
             binder_confirms: 0,
             binder_pending: false,
             summon_confirm: super::summon::SummonConfirmUiState::default(),
@@ -1764,6 +1824,9 @@ impl Model {
             skills_collapsed: HashSet::new(),
             skills_selected: None,
             skill_abandons: Vec::new(),
+            skill_ups: HashMap::new(),
+            skill_up_points: 0,
+            skill_requests: Vec::new(),
             reputation: reputation::ReputationState::default(),
             reputation_tree: reputation::FactionTree::default(),
             reputation_sends: Vec::new(),

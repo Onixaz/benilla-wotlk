@@ -15,7 +15,7 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::binding_abi::{bool_or_default, flag};
+use super::binding_abi::{bool_or_default, flag, optional_string};
 use super::calls::{NearestMode, ScriptCall};
 use super::UiScript;
 
@@ -111,10 +111,11 @@ impl UiScript {
     /// The binding executor once the chord has resolved to `command`: its command run with the
     /// hardware-event gate raised, a press when `down`, else the release, which runs only a
     /// `runOnUp` body. `Ok(false)` when nothing ran: no such command, or a release of one that is
-    /// not `runOnUp`.
+    /// not `runOnUp`. A `SPELL`, `ITEM`, `MACRO` or `CLICK` command runs its own arm.
     pub fn execute_binding(&self, command: &str, down: bool) -> mlua::Result<bool> {
         self.model_mut().input.binding_depth += 1;
-        let result = super::keybind::run_command(&self.lua, command, down);
+        let result = super::binding_commands::run_special(&self.lua, command, down)
+            .unwrap_or_else(|| super::keybind::run_command(&self.lua, command, down));
         self.model_mut().input.binding_depth -= 1;
         result
     }
@@ -173,6 +174,13 @@ fn inert(lua: &Lua, names: &[&str]) -> mlua::Result<()> {
 
 /// Register the binding functions: the three tables' and `TargetNearestFriend`, with 3.3.5a's
 /// vertical four in place of 1.12's `Jump` and `SitOrStand`.
+impl super::UiScript {
+    /// Drain the `SetTaxiBenchmarkMode` calls since the last.
+    pub fn take_taxi_benchmark_requests(&mut self) -> Vec<bool> {
+        drain_field!(self, taxi_benchmark_requests)
+    }
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -372,12 +380,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── The main table ──────────────────────────────────────────────────────────────────────
-    // The four `TargetNearest*` shims are byte-identical but for the mode: argument 1, read as a
+    // The six `TargetNearest*` shims are byte-identical but for the mode: argument 1, read as a
     // boolean with default 0, is the reverse flag, then the nearest-target call takes
     // `(reverse, mode)`.
-    let nearest: [(&str, NearestMode); 4] = [
+    let nearest: [(&str, NearestMode); 6] = [
         ("TargetNearestEnemy", NearestMode::Enemy),
+        ("TargetNearestEnemyPlayer", NearestMode::EnemyPlayer),
         ("TargetNearestFriend", NearestMode::Friend),
+        ("TargetNearestFriendPlayer", NearestMode::FriendPlayer),
         ("TargetNearestPartyMember", NearestMode::PartyMember),
         ("TargetNearestRaidMember", NearestMode::RaidMember),
     ];
@@ -403,6 +413,50 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "AttackTarget",
         lua.create_function(|lua, _: MultiValue| {
             push_call(lua, ScriptCall::AttackTarget);
+            Ok(())
+        })?,
+    )?;
+    // StartAttack([unit [, exact]]) (`0x523090`): an empty name is no name.
+    g.set(
+        "StartAttack",
+        lua.create_function(|lua, args: MultiValue| {
+            let unit = args
+                .front()
+                .and_then(|v| optional_string(lua, v))
+                .filter(|u| !u.is_empty());
+            let exact = bool_or_default(args.get(1), false);
+            push_call(lua, ScriptCall::StartAttack { unit, exact });
+            Ok(())
+        })?,
+    )?;
+    g.set(
+        "StopAttack",
+        lua.create_function(|lua, _: MultiValue| {
+            push_call(lua, ScriptCall::StopAttack);
+            Ok(())
+        })?,
+    )?;
+    g.set(
+        "Dismount",
+        lua.create_function(|lua, _: MultiValue| {
+            push_call(lua, ScriptCall::Dismount);
+            Ok(())
+        })?,
+    )?;
+    g.set(
+        "CancelShapeshiftForm",
+        lua.create_function(|lua, _: MultiValue| {
+            push_call(lua, ScriptCall::CancelShapeshiftForm);
+            Ok(())
+        })?,
+    )?;
+    // SetTaxiBenchmarkMode([on]) (`0x517b50`): on by default; the player flag answers.
+    g.set(
+        "SetTaxiBenchmarkMode",
+        lua.create_function(|lua, on: Option<Value>| {
+            crate::script::model_mut_of(lua)
+                .taxi_benchmark_requests
+                .push(bool_or_default(on.as_ref(), true));
             Ok(())
         })?,
     )?;

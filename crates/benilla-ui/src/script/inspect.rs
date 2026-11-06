@@ -151,6 +151,33 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // UnitInRange(unit) (`0x612f10`): 1 within 40 yards for the player, their pet and the group
+    // with its pets, else nil.
+    g.set(
+        "UnitInRange",
+        lua.create_function(|lua, unit: Value| {
+            let unit = super::binding_abi::string_arg(lua, unit, "Usage: UnitInRange(\"unit\")")?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let guids = &model.unit_guids;
+            let Some(guid) = guids.resolve(&unit).ok().flatten() else {
+                return Ok(Value::Nil);
+            };
+            let ours = guid == guids.player
+                || guid == guids.pet
+                || guids.party.contains(&guid)
+                || guids.party_pets.contains(&guid)
+                || guids.raid.contains(&guid)
+                || guids.raid_pets.contains(&guid);
+            let near = model
+                .unit_reach
+                .get(&guid)
+                .is_some_and(|r| r.dist_sq <= 1600.0);
+            Ok(super::binding_abi::flag(ours && near))
+        })?,
+    )?;
+
     // NotifyInspect(unit) (`Blizzard_InspectUI.lua:9`): fire-and-forget, as nothing waits on the
     // reply.
     g.set(

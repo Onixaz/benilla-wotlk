@@ -1532,6 +1532,18 @@ pub(crate) enum ClientCommand {
     GmTicketDelete,
     /// `CMSG_GMTICKET_SYSTEMSTATUS`: `GetGMStatus()`.
     GmTicketSystemStatus,
+    /// `CMSG_GM_REPORT_LAG`: `GMReportLag(type)` from `map`/`pos` where we stand.
+    GmReportLag {
+        kind: u32,
+        map: u32,
+        pos: [f32; 3],
+    },
+    /// `CMSG_GMSURVEY_SUBMIT`: `GMSurveySubmit()`.
+    GmSurveySubmit {
+        survey: u32,
+        answers: Vec<(u32, u8, String)>,
+        comment: String,
+    },
     /// `CMSG_BINDER_ACTIVATE`, the `CONFIRM_BINDER` Accept: the only packet in the flow that
     /// binds. Declining sends nothing.
     BinderActivate {
@@ -1785,6 +1797,10 @@ pub(crate) enum ClientCommand {
         spell_id: u32,
         item_guid: u64,
     },
+    /// A cast at the trade window's not-traded slot (`TARGET_FLAG_TRADE_ITEM`).
+    CastSpellTradeItem {
+        spell_id: u32,
+    },
     /// A glyph-socket cast from the book (`TARGET_FLAG_GLYPH_SLOT`, no payload).
     CastSpellGlyph {
         spell_id: u32,
@@ -1925,6 +1941,52 @@ pub(crate) enum ClientCommand {
         mailbox: u64,
         mail_id: u32,
         sender: u64,
+    },
+    /// `CMSG_SET_TAXI_BENCHMARK_MODE`: `SetTaxiBenchmarkMode(on)`.
+    SetTaxiBenchmarkMode {
+        on: bool,
+    },
+    /// `CMSG_SKILL_BUY_RANK`: `AcceptSkillUps()`.
+    SkillBuyRank {
+        lines: Vec<(u32, u32)>,
+    },
+    /// `CMSG_SKILL_BUY_STEP`: `BuySkillTier(index)`.
+    SkillBuyStep {
+        line: u32,
+    },
+    /// `CMSG_CANCEL_TEMP_ENCHANTMENT`: `CancelItemTempEnchantment(slot)`.
+    CancelTempEnchantment {
+        slot: u32,
+    },
+    /// `CMSG_AUTOEQUIP_ITEM_SLOT`: `EquipItemByName(item, slot)`.
+    AutoEquipItemSlot {
+        item: u64,
+        slot: u8,
+    },
+    /// `CMSG_GRANT_LEVEL`: `GrantLevel(unit)`.
+    GrantLevel {
+        friend: u64,
+    },
+    /// `CMSG_CHAT_CHANNEL_DECLINE_INVITE`: `DeclineInvite(channel)`.
+    DeclineChannelInvite {
+        name: String,
+    },
+    /// `CMSG_OPT_OUT_OF_LOOT`: `SetOptOutOfLoot(on)`.
+    OptOutOfLoot {
+        on: bool,
+    },
+    /// `CMSG_REPORT_PVP_AFK`: `ReportPlayerIsPVPAFK(unit)`.
+    ReportPvpAfk {
+        guid: u64,
+    },
+    /// `CMSG_COMPLAIN` about a chat line's sender.
+    ComplainChat {
+        sender: u64,
+        sender_word: u32,
+        chat_type: u32,
+        zone_channel: u32,
+        age_secs: u32,
+        description: String,
     },
     /// `CMSG_COMPLAIN` about a mail's sender.
     ComplainMail {

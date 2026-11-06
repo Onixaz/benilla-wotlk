@@ -46,6 +46,27 @@ pub(crate) fn apply_script_calls(
             ScriptCall::TargetLastTarget => appliers.p0().target_last_target(),
             ScriptCall::ClearTarget => appliers.p0().clear_target(),
             ScriptCall::AttackTarget => appliers.p7().attack_target(),
+            ScriptCall::StartAttack { unit: None, .. } => appliers.p7().start_attack(),
+            ScriptCall::StartAttack {
+                unit: Some(unit),
+                exact,
+            } => {
+                let named = appliers.p0().attack_unit(&unit, exact);
+                if appliers.p7().may_start() {
+                    match named {
+                        Some((entity, guid)) => {
+                            appliers.p0().select_for_attack(entity, guid);
+                            appliers.p7().swing_at_selection();
+                        }
+                        None => appliers.p7().no_attack_target(),
+                    }
+                }
+            }
+            ScriptCall::StopAttack => appliers.p7().stop_attack(),
+            ScriptCall::Dismount => crate::ui_shapeshift::dismount(&mut appliers.p3()),
+            ScriptCall::CancelShapeshiftForm => {
+                crate::ui_shapeshift::cancel_form(&mut appliers.p3());
+            }
             ScriptCall::SpellTargetUnit(token) => appliers.p1().spell_target_unit(&token),
             ScriptCall::SpellStopTargeting => appliers.p1().stop_targeting(),
             ScriptCall::PlaceGlyph { socket, verdict } => {
@@ -79,6 +100,14 @@ pub(crate) fn apply_script_calls(
                 appliers.p5().use_container_item(script, bag, slot);
             }
             ScriptCall::UseInventoryItem(id) => appliers.p5().use_inventory_item(script, id),
+            ScriptCall::UseItemAt { bag, slot, at } => {
+                let cast = appliers.p3();
+                let aim = cast.targeting.aim(&cast.tokens, &at);
+                appliers.p5().use_item_at(script, bag, slot, aim);
+            }
+            ScriptCall::EquipItem { bag, slot, dst } => {
+                appliers.p5().equip_item(script, bag, slot, dst);
+            }
             ScriptCall::CastPetSpell { spell_id, on_self } => {
                 let out = crate::ui_pet_book::cast_pet_spell(&mut appliers.p6(), spell_id, on_self);
                 cast_as_pet(&mut appliers.p3(), out);

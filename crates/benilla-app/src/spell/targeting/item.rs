@@ -137,14 +137,52 @@ pub(crate) fn commit_item_cast_on_pick(
     windows: (
         Res<crate::ui_socket::RefundRecords>,
         Res<crate::net::PlayedClock>,
+        Option<Res<crate::ui_trade::TradeSession>>,
     ),
     mut ladder: crate::spell::CastLadder,
 ) {
-    let (refunds, played) = windows;
+    let (refunds, played, trade) = windows;
     let played_now = played.now();
     let Some(mut script) = script else {
         return;
     };
+    // The trade window's not-traded slot (`0x5198a0`): a click over an enchant raises the replace
+    // popup, whose Accept casts (`0x80c5f0`).
+    for accepted in script.take_trade_enchant_targets() {
+        let Some(current) = trade.as_deref().and_then(|t| t.their_enchant_slot()) else {
+            continue;
+        };
+        let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::Item) else {
+            continue;
+        };
+        let replaced = (!accepted && current != 0)
+            .then(|| {
+                let def = ladder.spells.as_deref()?.catalog.get(spell_id)?;
+                let catalog = &enchants.as_deref()?.0;
+                let existing = catalog.name(current)?;
+                (0..3)
+                    .filter(|&i| def.effects[i] == benilla_formats::SPELL_EFFECT_ENCHANT_ITEM)
+                    .find_map(|i| {
+                        let id = u32::try_from(def.effect_misc_value[i]).ok()?;
+                        Some((existing.to_string(), catalog.name(id)?.to_string()))
+                    })
+            })
+            .flatten();
+        match replaced {
+            Some((existing, new)) => script.fire_event(
+                "TRADE_REPLACE_ENCHANT",
+                vec![
+                    benilla_ui::script::ScriptValue::Str(existing),
+                    benilla_ui::script::ScriptValue::Str(new),
+                ],
+            ),
+            None => ladder.commit_targeted(
+                spell_id,
+                commit,
+                crate::spell::cast_send::TargetedBind::TradeItem,
+            ),
+        }
+    }
     // Fresh clicks, then the bind popup's Yes, go through the gate; the replace popup's Yes does
     // not.
     let mut asks: Vec<(u64, bool)> = Vec::new();

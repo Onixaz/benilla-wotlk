@@ -32,6 +32,8 @@ struct TradeOffer {
 pub(crate) struct TradeSession {
     /// Set at our initiate or the ladder's accept, since `OPEN_WINDOW` carries no guid.
     partner: Option<u64>,
+    /// Where each of our offered items sits, in the cursor's space.
+    our_sources: [Option<(i64, u32)>; TRADE_SLOT_COUNT],
     /// An unanswered incoming `BEGIN_TRADE`, the initiator's guid; not yet a trade.
     request: Option<u64>,
     /// Our `CMSG_INITIATE_TRADE` is live: the reference's initiate latch, set only as it goes out
@@ -163,6 +165,16 @@ impl TradeSession {
         self.own_state += 1;
     }
 
+    /// The permanent enchant on the partner's item in the not-traded slot; `None` with no item.
+    pub(crate) fn their_enchant_slot(&self) -> Option<u32> {
+        self.their.slots[6].as_ref().map(|i| i.perm_enchant)
+    }
+
+    /// Whether our offer holds the item at `(bag, slot)` (`0x5864d0`).
+    pub(crate) fn offers(&self, bag: i64, slot: u32) -> bool {
+        self.our_sources.contains(&Some((bag, slot)))
+    }
+
     /// The partner offer state our `CMSG_ACCEPT_TRADE` carries.
     pub(crate) fn their_state(&self) -> u32 {
         self.their_state
@@ -187,6 +199,7 @@ impl TradeSession {
             .and_then(|i| self.our.slots.get_mut(i as usize))
         {
             *slot = None;
+            self.our_sources[id_1based as usize - 1] = None;
             self.our_offer_changed();
         }
     }
@@ -799,6 +812,9 @@ fn drain_trade(
             // vmangos echoes a placement to the partner only, so our column is filled here.
             if let Some(item) = own_item_at(bag, slot, store, &objects, &items, &commands) {
                 trade.place_own_item(id, item);
+                if let Some(source) = trade.our_sources.get_mut(id as usize - 1) {
+                    *source = Some((bag, slot));
+                }
             }
             info!(target: "trade", "set item: slot {id} <- bag {bag}/{slot} (wire {wire_bag}/{wire_slot}); sending CMSG_SET_TRADE_ITEM");
             let _ = commands.0.send(ClientCommand::SetTradeItem {

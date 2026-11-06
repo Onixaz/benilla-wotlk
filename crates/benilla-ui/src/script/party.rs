@@ -132,6 +132,8 @@ pub enum PartyRequest {
     Accept { roles: u32 },
     /// `DeclineGroup()`.
     Decline,
+    /// `SetOptOutOfLoot(on)` (`0x52cf00`): `CMSG_OPT_OUT_OF_LOOT`.
+    OptOutOfLoot(bool),
     /// `LeaveParty()`.
     Leave,
     /// `InviteUnit(name [, a, b, c])` (`0x51a6e0`): a name, and flag bits 2, 4, 8 from arguments 2-4.
@@ -619,10 +621,34 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetOptOutOfLoot() (`0x52c2d0`): 1 while the client's opt-out flag `[0xbd19a0]` is set,
-    // else nil. Only `SetOptOutOfLoot` sets it, which is not built, so it reads nil.
+    // else nil.
     g.set(
         "GetOptOutOfLoot",
-        lua.create_function(|_, ()| Ok(Value::Nil))?,
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(super::binding_abi::flag(model.opt_out_of_loot))
+        })?,
+    )?;
+
+    // SetOptOutOfLoot(on) (`0x52cf00`): the send, then its system line.
+    g.set(
+        "SetOptOutOfLoot",
+        lua.create_function(|lua, on: Value| {
+            let on = on.as_boolean().unwrap_or(!on.is_nil());
+            let key = if on {
+                "OPT_OUT_LOOT_TOGGLE_ON"
+            } else {
+                "OPT_OUT_LOOT_TOGGLE_OFF"
+            };
+            let line = lua.globals().get::<String>(key).unwrap_or_default();
+            let mut model = crate::script::model_mut_of(lua);
+            model.opt_out_of_loot = on;
+            model.party_requests.push(PartyRequest::OptOutOfLoot(on));
+            model.party_lines.push(line);
+            Ok(())
+        })?,
     )?;
 
     // The party verbs queue a `PartyRequest` and return nothing.

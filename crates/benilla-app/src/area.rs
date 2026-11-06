@@ -256,6 +256,7 @@ fn feed_zone_events(
             .filter(|f| !f.is_empty())
             .map(str::to_string),
         pvp_subzone,
+        pvp_poi: leaf_row.flags & 0x8000 != 0,
     });
 
     if let Some(event) = event {

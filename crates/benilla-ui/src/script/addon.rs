@@ -67,6 +67,55 @@ const USAGE_LOAD_ON_DEMAND: &str = "Usage: IsAddOnLoadOnDemand(index or \"name\"
 const USAGE_LOADED: &str = "Usage: IsAddOnLoaded(index or \"name\")";
 const USAGE_LOAD: &str = "Usage: LoadAddOn(index or \"name\")";
 
+unsafe extern "C" {
+    fn lua_setgcowner(owner: std::ffi::c_int);
+    fn lua_gcupdatesizes(
+        state: *mut mlua::ffi::lua_State,
+        usage: *mut usize,
+        count: std::ffi::c_int,
+    );
+}
+
+/// The tags `lobject.h`'s owner byte holds, 0 being nobody's.
+const GC_OWNERS: usize = 256;
+
+/// Run `f` with new Lua objects tagged for insecure addon `i`; a secure one runs untagged, as a
+/// signed addon carries no taint.
+fn owned<R>(lua: &Lua, i: usize, f: impl FnOnce() -> R) -> R {
+    let (name, secure) = {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
+        (model.addons[i].name.clone(), model.addons[i].secure)
+    };
+    if secure {
+        return f();
+    }
+    with_owner(lua, &name, f)
+}
+
+/// Run `f` with new Lua objects tagged for addon `name`.
+fn with_owner<R>(lua: &Lua, name: &str, f: impl FnOnce() -> R) -> R {
+    let (tag, outer) = {
+        let mut model = crate::script::model_mut_of(lua);
+        let owners = &mut model.addon_owners;
+        let at = owners.iter().position(|n| n.eq_ignore_ascii_case(name));
+        let at = at.unwrap_or_else(|| {
+            owners.push(name.to_string());
+            owners.len() - 1
+        });
+        let tag = (at + 1).min(GC_OWNERS - 1) as u8;
+        (tag, std::mem::replace(&mut model.addon_owner, tag))
+    };
+    // SAFETY: a plain store to the thread's owner cells.
+    unsafe { lua_setgcowner(tag.into()) };
+    let out = f();
+    crate::script::model_mut_of(lua).addon_owner = outer;
+    // SAFETY: as above.
+    unsafe { lua_setgcowner(outer.into()) };
+    out
+}
+
 /// The `index or "name"` argument, read by the prologue all eight in-game verbs share
 /// (`GetAddOnInfo`, `GetAddOnMetadata`, `GetAddOnDependencies`, `EnableAddOn`, `DisableAddOn`,
 /// `IsAddOnLoadOnDemand`, `IsAddOnLoaded`, `LoadAddOn`). A numeric string is an index. An index out
@@ -378,6 +427,32 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // UpdateAddOnMemoryUsage() (`0x511510`).
+    g.set(
+        "UpdateAddOnMemoryUsage",
+        lua.create_function(|lua, ()| update_memory_usage(lua))?,
+    )?;
+
+    // GetAddOnMemoryUsage(index or "name") (`0x511530`): 0 for a name that holds nothing.
+    g.set(
+        "GetAddOnMemoryUsage",
+        lua.create_function(|lua, key: Value| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            let name = match addon_key(
+                lua,
+                &model,
+                &key,
+                "Usage: GetAddOnMemoryUsage(index or \"name\")",
+            )? {
+                AddonKey::Index(i) => model.addons[i].name.clone(),
+                AddonKey::Name(name) => name,
+            };
+            Ok(memory_usage(&model, &name))
+        })?,
+    )?;
+
     g.set(
         "LoadAddOn",
         lua.create_function(|lua, key: Value| {
@@ -422,6 +497,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 /// The reference's addon load, dependencies first; `Err` is the reason token. Synchronous inside
 /// the Lua call, as stock callers use the addon on the next line (`UIParent.lua:577`).
+/// `UpdateAddOnMemoryUsage` (`0x511510`): every owner's bytes, from a walk of the whole heap.
+fn update_memory_usage(lua: &Lua) -> mlua::Result<()> {
+    let mut usage = vec![0usize; GC_OWNERS];
+    // SAFETY: the walk reads the heap of the state it is handed and writes `GC_OWNERS` cells.
+    unsafe {
+        lua.exec_raw::<()>((), |state| {
+            lua_gcupdatesizes(state, usage.as_mut_ptr(), GC_OWNERS as std::ffi::c_int);
+        })?;
+    }
+    crate::script::model_mut_of(lua).addon_memory = usage;
+    Ok(())
+}
+
+/// `GetAddOnMemoryUsage` (`0x511530`): the kilobytes `name` held at the last update.
+fn memory_usage(model: &Model, name: &str) -> f64 {
+    let owners = &model.addon_owners;
+    let tag = owners.iter().position(|n| n.eq_ignore_ascii_case(name));
+    let bytes = tag.and_then(|t| model.addon_memory.get((t + 1).min(GC_OWNERS - 1)));
+    bytes.map_or(0.0, |&b| b as f64 * 0.0009765625)
+}
+
 fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     let (name, root, files, deps, already, chain, chain_reader) = {
         let model = lua
@@ -509,7 +605,7 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     }
 
     let mut toc = crate::status::Status::default();
-    run_files(lua, &name, &read, &files, &mut toc);
+    owned(lua, i, || run_files(lua, &name, &read, &files, &mut toc));
     // The toc's record under its banner, then the add-on's.
     let debug = framexml_debug(lua);
     let mut own = crate::status::Status::default();
@@ -863,6 +959,11 @@ impl super::UiScript {
         rebuild_index(&mut model);
     }
 
+    /// Run `f`, a third-party addon's load at the startup walk, with its objects tagged for it.
+    pub fn with_addon_owner<R>(&self, name: &str, f: impl FnOnce() -> R) -> R {
+        with_owner(self.lua(), name, f)
+    }
+
     /// Run one addon's saved-variables files at the startup walk's position, as `LoadAddOn` does.
     pub fn load_addon_saved_variables(&mut self, name: &str) {
         let i = self
@@ -871,7 +972,7 @@ impl super::UiScript {
             .iter()
             .position(|a| a.name.eq_ignore_ascii_case(name));
         if let Some(i) = i {
-            load_saved_variables(self.lua(), i);
+            owned(self.lua(), i, || load_saved_variables(self.lua(), i));
         }
     }
 

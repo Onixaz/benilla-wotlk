@@ -420,6 +420,27 @@ pub(crate) fn drain_social(
     let Some(mut script) = script else {
         return;
     };
+    script.set_complaint_status(social.complaint_status());
+    // The chat complaint's tail (`0x50dfd0`): a sender already complained about prints
+    // `COMPLAINT_ADDED`; else they join the list and the report goes out with the line's age.
+    for c in script.take_chat_complaints() {
+        if social.is_complained(c.sender) {
+            social.owe_complaint_line();
+            continue;
+        }
+        social.add_complained(c.sender);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as u32);
+        let _ = commands.0.send(ClientCommand::ComplainChat {
+            sender: c.sender,
+            sender_word: c.sender_word,
+            chat_type: c.chat_type,
+            zone_channel: c.zone_channel,
+            age_secs: now.wrapping_sub(c.time),
+            description: c.description,
+        });
+    }
     let requests = script.take_social_requests();
     if requests.is_empty() {
         return;

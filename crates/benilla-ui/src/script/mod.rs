@@ -85,11 +85,15 @@ mod battlefield_score;
 mod bind_confirm;
 mod binder;
 mod binding_abi;
+mod binding_commands;
 mod dialog_verbs;
 pub mod focus;
 mod secure_call;
 mod tutorial;
 mod unit_menu;
+pub use chat_record::{ChatComplaint, ChatRecord};
+pub use level_grant::UnitRequest;
+pub use name_records::NameRecord;
 pub use unit_menu::{DifficultyState, ReferAFriendState};
 mod worldmap_arrow;
 // `camera_view`: the five camera views and `FlipCameraYaw`, as the reference's UI camera has them.
@@ -102,6 +106,7 @@ mod channel_pane;
 mod char_sheet;
 mod char_stats;
 mod chat_misc;
+mod chat_record;
 mod chat_send;
 mod chat_types;
 mod chat_window;
@@ -117,6 +122,7 @@ pub mod diagnostics;
 mod editbox;
 mod formatted_text;
 pub mod instance;
+mod name_records;
 mod static_constants;
 pub(crate) use editbox::{adopt_text_region, editbox_text_region_wrapper};
 pub(crate) mod addon;
@@ -176,6 +182,7 @@ mod cooldown_widget;
 mod input_verbs;
 mod inspect;
 mod inventory_verbs;
+mod item_search;
 mod item_stats;
 mod item_text;
 mod kb_system;
@@ -340,7 +347,7 @@ pub use death::{DeathAction, DeathUiState};
 pub use dressup::DressUpIntent;
 pub use duel::DuelRequest;
 pub use follow::FollowRequest;
-pub use gm_ticket::GmTicketIntent;
+pub use gm_ticket::{GmTicketIntent, SurveySubmission, SurveyTables};
 pub use gossip::{GossipMenu, GossipOptionView, GossipQuestRow};
 pub use guild::{
     GuildEventView, GuildMemberInfo, GuildRankEdit, GuildRankInfo, GuildRequest, GuildState,
@@ -367,8 +374,9 @@ pub use video_pairs::VIDEO_PAIR_CVARS;
 pub use worldmap_arrow::ARROW_MODEL;
 
 pub use achievement::{
-    achievement_hyperlink, AchievementBook, AchievementCategoryRow, AchievementCriteriaRow,
-    AchievementDb, AchievementRow, AchievementUpdate, CriteriaWire, WowDate,
+    achievement_hyperlink, decode_tracked, encode_tracked, AchievementBook, AchievementCategoryRow,
+    AchievementCriteriaRow, AchievementDb, AchievementRow, AchievementUpdate, CriteriaWire,
+    WowDate,
 };
 pub use calendar::{
     date_time_text, CalendarCatalogView, CalendarCommandResultView, CalendarEventRowView,
@@ -443,7 +451,7 @@ pub(crate) use simplehtml::{
     apply_element_font_parts as apply_simplehtml_font_parts,
     element_of_xml_tag as simplehtml_element_of_xml_tag,
 };
-pub use skills::{SkillEntry, SkillsState};
+pub use skills::{SkillEntry, SkillRequest, SkillsState};
 pub use social::{FriendInfo, SocialRequest, SocialState, WhoInfo, WhoRecords};
 pub use sound::{MusicRequest, SoundRequest};
 pub use spell_info::{SpellInfo, SpellInfoSource};
@@ -998,6 +1006,10 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     static_constants::install(lua)?;
     chat_types::install(lua)?;
     chat_misc::install(lua)?;
+    chat_record::install(lua)?;
+    binding_commands::install(lua)?;
+    item_search::install(lua)?;
+    name_records::install(lua)?;
     channel::install(lua)?;
     channel_pane::install(lua)?;
     chat_window::install(lua)?;

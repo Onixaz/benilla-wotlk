@@ -355,6 +355,11 @@ impl super::UiScript {
         self.model_mut().chat_window_looks.to_vec()
     }
 
+    /// Drains the zone channel ids `ResetChatWindows` put back in the auto-join mask.
+    pub fn take_zone_mask_additions(&mut self) -> Vec<u32> {
+        drain_field!(self, zone_mask_additions)
+    }
+
     /// Drains the 0-based windows Lua changed since the last call, deduplicated and ascending.
     pub fn take_chat_window_changes(&mut self) -> Vec<usize> {
         let mut v: Vec<usize> = drain_field!(self, chat_window_changes)
@@ -366,6 +371,38 @@ impl super::UiScript {
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+    // ResetChatWindows() (`0x501f00`): every colour and window back to its boot record, the
+    // `flags & 1` zone channels back in window 1 and the auto-join mask, then the events.
+    lua.globals().set(
+        "ResetChatWindows",
+        lua.create_function(|lua, ()| {
+            let colors = {
+                let mut model = crate::script::model_mut_of(lua);
+                super::chat_types::reset_all(&mut model.chat_colors);
+                model.chat_colors_changed = true;
+                let count = model.chat_window_looks.len();
+                for i in 0..count {
+                    model.chat_window_looks[i] = ChatWindowLook::stock(i);
+                    model.chat_window_changes.insert(i);
+                }
+                let rows: Vec<(String, u32)> = model
+                    .zone_channel_catalog
+                    .iter()
+                    .filter(|r| r.auto_join)
+                    .map(|r| (r.shortcut.clone(), r.id))
+                    .collect();
+                for (shortcut, id) in rows {
+                    model.zone_mask_additions.push(id);
+                    model.register_window_channel(0, shortcut, id);
+                }
+                model.chat_colors.clone()
+            };
+            super::tick::fire_event_into(lua, "UPDATE_CHAT_WINDOWS", Vec::new());
+            super::chat_types::fire_all(lua, &colors);
+            Ok(())
+        })?,
+    )?;
+
     // GetChatWindowInfo(id) (`0x4fbd90`) → name, fontSize, r, g, b, a, shown, locked, docked,
     // uninteractable (1 or nil).
     lua.globals().set(
@@ -1313,12 +1350,14 @@ mod record_tests {
                 shortcut: "General".into(),
                 resolved: Some("General - Elwynn Forest".into()),
                 listed: true,
+                auto_join: false,
             },
             ZoneChannelRow {
                 id: 2,
                 shortcut: "Trade".into(),
                 resolved: None,
                 listed: false,
+                auto_join: false,
             },
         ]);
         s.run(

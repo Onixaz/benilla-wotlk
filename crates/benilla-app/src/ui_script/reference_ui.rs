@@ -1250,25 +1250,6 @@ mod tests {
         // The assertion below refuses a name whose gap has closed.
         const KNOWN: &[(&str, &[&str])] = &[
             (
-                "the GM survey's verbs, not built: the survey window opens on GMSURVEY_DISPLAY, \
-                 and its buttons reach these",
-                &[
-                    "GMSurveyAnswerSubmit",
-                    "GMSurveyCommentSubmit",
-                    "GMSurveyQuestion",
-                    "GMSurveySubmit",
-                ],
-            ),
-            (
-                "the skill-point purchase arrows and button `SkillFrame.lua` still carries; they \
-                 show only while a row has a step or rank cost, which no 3.3.5a server sends",
-                &["AddSkillUp", "BuySkillTier", "RemoveSkillUp"],
-            ),
-            (
-                "TRADE_REPLACE_ENCHANT's Accept; the verb is not built",
-                &["ReplaceTradeEnchant"],
-            ),
-            (
                 "Real ID: 12340's Battle.net verbs, not built; a 3.3.5a server has no Battle.net service",
                 &[
                     "BNAcceptFriendInvite",
@@ -1307,26 +1288,6 @@ mod tests {
                 ],
             ),
             (
-                "the secure slash-command verbs `ChatFrame.lua` dispatches, not built",
-                &[
-                    "CancelShapeshiftForm",
-                    "DisableSpellAutocast",
-                    "Dismount",
-                    "EnableSpellAutocast",
-                    "EquipItemByName",
-                    "RunMacro",
-                    "RunMacroText",
-                    "SpellTargetItem",
-                    "StartAttack",
-                    "StopAttack",
-                    "StopMacro",
-                    "TargetLastFriend",
-                    "TargetNearestEnemyPlayer",
-                    "TargetNearestFriendPlayer",
-                    "UseItemByName",
-                ],
-            ),
-            (
                 "voice chat, not built",
                 &[
                     "ChannelSilenceVoice",
@@ -1341,36 +1302,6 @@ mod tests {
                     "KBQuery_BeginLoading",
                     "KBSetup_BeginLoading",
                     "KBSetup_IsLoaded",
-                ],
-            ),
-            (
-                "12340 verbs the stock windows call, each not built yet",
-                &[
-                    "CancelItemTempEnchantment",
-                    "ComplainChat",
-                    "ConsoleAddMessage",
-                    "DeclineInvite",
-                    "GetContainerFreeSlots",
-                    "GetItemSpell",
-                    "GetSpellLink",
-                    "GMReportLag",
-                    "GrantLevel",
-                    "IsEquippableItem",
-                    "IsEquippedItem",
-                    "IsSubZonePVPPOI",
-                    "IsTutorialFlagged",
-                    "PlayerCanTeleport",
-                    "ReportPlayerIsPVPAFK",
-                    "ResetChatWindows",
-                    "SendSystemMessage",
-                    "SetChatColorNameByClass",
-                    "SetOptOutOfLoot",
-                    "SetTaxiBenchmarkMode",
-                    "SummonFriend",
-                    "UnitInRange",
-                    "UnitIsControlling",
-                    "UnitIsSameServer",
-                    "UpdateAddOnMemoryUsage",
                 ],
             ),
             (
@@ -2003,8 +1934,6 @@ mod tests {
             // ── The stock `UIParent.lua`'s listeners first, then the other files' ──
             ("ADDON_ACTION_BLOCKED", R_0),
             ("MACRO_ACTION_BLOCKED", R_0),
-            ("DISABLE_TAXI_BENCHMARK", R_1),
-            ("ENABLE_TAXI_BENCHMARK", R_1),
             ("FRIENDLIST_SHOW", R_1),
             ("ITEM_UNLOCKED", R_1),
             ("MAIL_LOCK_SEND_ITEMS", R_1),
@@ -2016,7 +1945,6 @@ mod tests {
             ("PLAYER_ROLES_ASSIGNED", R_1),
             ("RAISED_AS_GHOUL", R_1),
             ("TRADE_POTENTIAL_BIND_ENCHANT", R_1),
-            ("UPDATE_CHAT_COLOR_NAME_BY_CLASS", R_1),
             ("UPDATE_FLOATING_CHAT_WINDOWS", R_1),
             ("UPDATE_SHAPESHIFT_COOLDOWN", R_1),
             ("UPDATE_SHAPESHIFT_FORM", R_1),
@@ -2097,11 +2025,6 @@ mod tests {
                  `0x11d`), so StaticPopupDialogs[\"TRADE\"] is \
                  dead code THERE too, and benilla leaves it unproduced: \
                  producing this would be a divergence, not a fix",
-            ),
-            (
-                "TRADE_REPLACE_ENCHANT",
-                "UIParent.lua — the enchant-replacement confirm inside a trade; benilla's trade \
-                 feed does not derive it",
             ),
             (
                 "CLOSE_WORLD_MAP",

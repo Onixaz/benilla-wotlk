@@ -147,6 +147,9 @@ pub(super) fn drain_bag_autostores(
 /// What a `UseContainerItem` or `UseInventoryItem` call reads and writes.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ScriptItemUse<'w, 's> {
+    /// `UseItemByName`'s target for the use this call runs, `None` the selection.
+    aim: Local<'s, Option<crate::spell::cast_target::Aim>>,
+    trade: Option<Res<'w, crate::ui_trade::TradeSession>>,
     self_q: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
     merchant: Res<'w, crate::ui_merchant::MerchantOpen>,
     bank: Res<'w, crate::ui_bank::BankOpen>,
@@ -166,12 +169,116 @@ pub(crate) struct ScriptItemUse<'w, 's> {
     gate: crate::ui_bind_confirm::BindGate<'w>,
 }
 
+/// The context a use runs in: the selection, or the unit `UseItemByName` named.
+fn aimed<'a>(
+    targeting: &'a crate::spell::cast_target::CastTargeting,
+    aim: Option<crate::spell::cast_target::Aim>,
+) -> crate::spell::cast_target::CastContext<'a> {
+    aim.map_or_else(|| targeting.context(), |a| targeting.context_at(a))
+}
+
+/// `EquipItemByName`'s slotted send (`0x6dff90`): the soulbind deferral, then the lock and
+/// `CMSG_AUTOEQUIP_ITEM_SLOT`.
+pub(crate) fn send_equip_to_slot(
+    script: &mut UiScript,
+    gate: &mut crate::ui_bind_confirm::BindGate,
+    objects: &Objects,
+    items: &Items,
+    commands: &NetCommands,
+    store: Option<&ObjectStore>,
+    pending: &mut PendingItemOps,
+    (bag, slot, dst): (i64, u32, u8),
+    suppress: bool,
+) {
+    let (guid, count) = slot_guid_count(store, bag, slot, objects);
+    if guid == 0 {
+        return;
+    }
+    if !suppress && gate.equip_binds(script, objects, items, commands, guid) {
+        gate.defer_equip(
+            script,
+            crate::ui_bind_confirm::PendingEquip::Slot { bag, slot, dst },
+        );
+        return;
+    }
+    pending.add([(bag, slot, guid, count)]);
+    let _ = commands.0.send(ClientCommand::AutoEquipItemSlot {
+        item: guid,
+        slot: dst,
+    });
+}
+
 impl ScriptItemUse<'_, '_> {
+    /// `UseItemByName`'s use (`0x51cd00`): the item's own use, at `aim`.
+    pub(crate) fn use_item_at(
+        &mut self,
+        script: &mut UiScript,
+        bag: i64,
+        slot: u32,
+        aim: crate::spell::cast_target::Aim,
+    ) {
+        *self.aim = Some(aim);
+        if bag == benilla_ui::script::EQUIPMENT_BAG {
+            self.use_inventory_item(script, slot);
+        } else {
+            self.use_item(script, bag, slot);
+        }
+        *self.aim = None;
+    }
+
+    /// `EquipItemByName`'s send (`0x51cdb0`), an item in our trade offer refused (`0x6dffb8`).
+    pub(crate) fn equip_item(
+        &mut self,
+        script: &mut UiScript,
+        bag: i64,
+        slot: u32,
+        dst: Option<u8>,
+    ) {
+        let store = self.self_q.iter().next();
+        let Some(dst) = dst else {
+            let Some((bag_index, wire_slot)) = wire_pos(bag, slot) else {
+                return;
+            };
+            let slot0 = u8::try_from(slot.saturating_sub(1)).unwrap_or(0);
+            let guid = store.and_then(|s| slot_guid(&s.0, bag, slot0, &self.ladder.objects));
+            send_auto_equip(
+                script,
+                &mut self.gate,
+                &self.ladder.objects,
+                &self.ladder.items,
+                &self.ladder.commands,
+                bag_index,
+                wire_slot,
+                guid,
+                false,
+            );
+            return;
+        };
+        if self.trade.as_deref().is_some_and(|t| t.offers(bag, slot)) {
+            self.ui_errors
+                .0
+                .push(crate::ui_action::UiError::key("ERR_EQUIP_TRADE_ITEM"));
+            return;
+        }
+        send_equip_to_slot(
+            script,
+            &mut self.gate,
+            &self.ladder.objects,
+            &self.ladder.items,
+            &self.ladder.commands,
+            store,
+            &mut self.pending_items,
+            (bag, slot, dst),
+            false,
+        );
+    }
+
     /// `UseInventoryItem(id)`, a doll right-click, sent through [`super::send_item_use`], as the
     /// reference's doll click reaches the same item use a bag click does: a worn quest-starter
     /// offers its quest. Ids outside 1..=19 are refused.
     pub(crate) fn use_inventory_item(&mut self, script: &mut UiScript, id: u32) {
         let Self {
+            aim,
             self_q,
             targeting,
             ladder,
@@ -212,7 +319,7 @@ impl ScriptItemUse<'_, '_> {
                 on_object: None,
                 is_charter,
             },
-            &targeting.context(),
+            &aimed(targeting, **aim),
             ladder,
             script,
             gate,
@@ -235,6 +342,8 @@ impl ScriptItemUse<'_, '_> {
 
     fn use_at(&mut self, script: &mut UiScript, bag: i64, slot: u32, direct: bool) {
         let Self {
+            aim,
+            trade: _,
             self_q,
             merchant,
             bank,
@@ -393,7 +502,7 @@ impl ScriptItemUse<'_, '_> {
                     on_object: None,
                     is_charter: c.is_charter,
                 },
-                &targeting.context(),
+                &aimed(targeting, **aim),
                 ladder,
                 script,
                 gate,
@@ -482,7 +591,7 @@ impl ScriptItemUse<'_, '_> {
                 on_object: None,
                 is_charter: clicked.is_some_and(|c| c.is_charter),
             },
-            &targeting.context(),
+            &aimed(targeting, **aim),
             ladder,
             script,
             gate,
@@ -1243,6 +1352,19 @@ pub(super) fn drain_bind_confirm_answers(
                         dst_slot,
                         count: None,
                     },
+                    true,
+                );
+            }
+            crate::ui_bind_confirm::PendingEquip::Slot { bag, slot, dst } => {
+                send_equip_to_slot(
+                    &mut script,
+                    &mut gate,
+                    &objects,
+                    &items,
+                    &commands,
+                    store,
+                    &mut pending,
+                    (bag, slot, dst),
                     true,
                 );
             }

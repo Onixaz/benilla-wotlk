@@ -1680,6 +1680,14 @@ pub(super) fn writer_loop(
                     ClientCommand::GmTicketGet => w.gm_ticket_get(),
                     ClientCommand::GmTicketDelete => w.gm_ticket_delete(),
                     ClientCommand::GmTicketSystemStatus => w.gm_ticket_system_status(),
+                    ClientCommand::GmReportLag { kind, map, pos } => {
+                        w.gm_report_lag(kind, map, pos)
+                    }
+                    ClientCommand::GmSurveySubmit {
+                        survey,
+                        answers,
+                        comment,
+                    } => w.gm_survey_submit(survey, &answers, &comment),
                     ClientCommand::BinderActivate { binder } => w.binder_activate(binder),
                     ClientCommand::SummonResponse { summoner, agree } => {
                         w.summon_response(summoner, agree)
@@ -1825,6 +1833,9 @@ pub(super) fn writer_loop(
                         spell_id,
                         item_guid,
                     } => w.cast_spell_item(spell_id, item_guid),
+                    ClientCommand::CastSpellTradeItem { spell_id } => {
+                        w.cast_spell_trade_item(spell_id)
+                    }
                     ClientCommand::CastSpellGlyph { spell_id } => w.cast_spell_glyph(spell_id),
                     ClientCommand::LootMasterGive { guid, slot, target } => {
                         w.loot_master_give(guid, slot, target)
@@ -1900,6 +1911,36 @@ pub(super) fn writer_loop(
                         mail_id,
                         sender,
                     } => w.mail_return_to_sender(mailbox, mail_id, sender),
+                    ClientCommand::SetTaxiBenchmarkMode { on } => w.set_taxi_benchmark_mode(on),
+                    ClientCommand::SkillBuyRank { lines } => w.skill_buy_rank(&lines),
+                    ClientCommand::SkillBuyStep { line } => w.skill_buy_step(line),
+                    ClientCommand::CancelTempEnchantment { slot } => {
+                        w.cancel_temp_enchantment(slot)
+                    }
+                    ClientCommand::AutoEquipItemSlot { item, slot } => {
+                        w.auto_equip_item_slot(item, slot)
+                    }
+                    ClientCommand::GrantLevel { friend } => w.grant_level(friend),
+                    ClientCommand::DeclineChannelInvite { name } => {
+                        w.decline_channel_invite(&name)
+                    }
+                    ClientCommand::OptOutOfLoot { on } => w.opt_out_of_loot(on),
+                    ClientCommand::ReportPvpAfk { guid } => w.report_pvp_afk(guid),
+                    ClientCommand::ComplainChat {
+                        sender,
+                        sender_word,
+                        chat_type,
+                        zone_channel,
+                        age_secs,
+                        description,
+                    } => w.complaint_chat(
+                        sender,
+                        sender_word,
+                        chat_type,
+                        zone_channel,
+                        age_secs,
+                        &description,
+                    ),
                     ClientCommand::ComplainMail { sender, mail_id } => {
                         w.complaint_mail(sender, mail_id)
                     }

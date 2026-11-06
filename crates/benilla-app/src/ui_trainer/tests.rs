@@ -511,6 +511,7 @@ fn the_skill_gate_reads_the_players_skill_value() {
             description: String::new(),
             alternate_verb: String::new(),
             can_link: false,
+            costs_id: 0,
         },
     )]);
     let w = wire(2739, trainer_spell_state::RED, 50, 0, 164); // rank 100

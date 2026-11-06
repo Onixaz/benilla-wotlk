@@ -88,8 +88,8 @@ fn running_a_macro_runs_its_lines_through_the_references_edit_box() {
             .iter()
             .map(|c| (c.text.as_str(), c.chat_type.as_str()))
             .collect::<Vec<_>>(),
-        vec![("pew", "SAY")],
-        "the line was trimmed before the parse, and sent as the type its slash named"
+        vec![("  /say pew  ", "SAY")],
+        "an indented line is no command: the reference's tokenizer keeps its spaces (`0x564db0`)"
     );
     assert_eq!(
         s.take_emote_requests()

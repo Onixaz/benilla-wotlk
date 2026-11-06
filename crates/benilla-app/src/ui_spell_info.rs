@@ -57,6 +57,9 @@ struct CastNow {
     critter: Option<u64>,
     /// The player's auras, `(spell, wire flags)`.
     auras: Vec<(u32, u8)>,
+    /// The player's guid and known spells, a trade link's reads.
+    guid: u64,
+    known: std::collections::BTreeSet<u32>,
     summons: benilla_formats::SummonPropertiesCatalog,
 }
 
@@ -106,6 +109,36 @@ impl Source {
 }
 
 impl SpellInfoSource for Source {
+    /// `GetSpellLink` (`0x5408e0`): a row hidden by attributes `0x80` and `0x100` together has
+    /// none; the trade link needs a linkable line (`0x5db060`).
+    fn spell_link(
+        &self,
+        spell_id: u32,
+        skill: &dyn Fn(u32) -> (u32, u32),
+    ) -> Option<(String, Option<String>)> {
+        let d = self.spells.catalog.get(spell_id)?;
+        if d.attributes & 0x180 == 0x180 {
+            return None;
+        }
+        let snap = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (race, class) = snap.cast.race_class;
+        let trade = self.skill_lines.as_ref().and_then(|lines| {
+            let line = lines.spell_to_line(spell_id, race, class)?;
+            crate::ui_tradeskill::list_link(
+                d,
+                line,
+                lines,
+                &snap.cast.known,
+                (race, class, snap.cast.guid),
+                skill(line),
+            )
+        });
+        Some((d.name.clone(), trade))
+    }
+
     /// The current-spell test (`0x806030`): no row is nil; the pending cast; the auto-attack
     /// while attacking; a trade-skill opener while its line's book is open; a critter, mount or
     /// shapeshift by [`Source::is_active_spell`].
@@ -336,6 +369,7 @@ pub(crate) struct CastNowInputs<'w, 's> {
     queued_melee: Res<'w, crate::spell::QueuedMeleeSpell>,
     trade_skill: Option<Res<'w, crate::ui_tradeskill::TradeSkillOpen>>,
     summons: Res<'w, crate::spell::SummonSlots>,
+    actions: Res<'w, crate::ui_action::PlayerActions>,
     me: Query<'w, 's, SelfCastState, With<SelfPlayer>>,
 }
 
@@ -356,6 +390,10 @@ impl CastNowInputs<'_, '_> {
         cast.trade_line = self.trade_skill.as_ref().and_then(|t| t.line);
         cast.race_class = crate::spell::race_class(store);
         cast.critter = store.and_then(|s| s.0.unit_critter());
+        cast.guid = store.and_then(|s| s.0.object_guid()).unwrap_or(0);
+        if reinstall || self.actions.is_changed() {
+            cast.known.clone_from(&self.actions.spells);
+        }
         if reinstall || self.summons.is_changed() {
             cast.summons = self.summons.0.clone();
         }

@@ -630,6 +630,7 @@ fn tab_round_trip_with_a_selected_skill_by_point() {
     let mut s = character_ui();
     s.set_unit("player", Some(player_unit()));
     s.set_skills(SkillsState {
+        points: 0,
         entries: vec![
             SkillEntry {
                 skill_id: 95,
@@ -645,6 +646,8 @@ fn tab_round_trip_with_a_selected_skill_by_point() {
                 category_order: 1,
                 description: "Defensive expertise.".into(),
                 abandonable: false,
+                rank_costs: Default::default(),
+                tier_cost: 0,
                 mono: false,
             },
             SkillEntry {
@@ -662,6 +665,8 @@ fn tab_round_trip_with_a_selected_skill_by_point() {
                 description: "Working with metals.".into(),
                 // A primary profession: SkillRaceClassInfo flag 0x20, `SKILL_FLAG_UNLEARNABLE`.
                 abandonable: true,
+                rank_costs: Default::default(),
+                tier_cost: 0,
                 mono: false,
             },
         ],

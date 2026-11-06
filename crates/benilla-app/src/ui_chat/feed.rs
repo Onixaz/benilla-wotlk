@@ -977,6 +977,20 @@ pub(super) fn feed_chat(
                     ..Default::default()
                 };
                 channels.stamp_channel(&mut event);
+                // The record is written under the line id the event carries (`0x4fdd80`).
+                script.record_chat(benilla_ui::script::ChatRecord {
+                    chat_type: u32::from(msg.wire_type),
+                    sender_guid: msg.sender_guid,
+                    sender_word: msg.sender_word,
+                    sender_name: event.sender.clone(),
+                    channel: msg.channel.clone().unwrap_or_default(),
+                    zone_channel: event.zone_channel_id,
+                    text: text.clone(),
+                    line_id: windows.line_id.wrapping_add(1),
+                    time: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_secs() as u32),
+                });
                 route(&mut script, &mut windows, &event);
                 // The bubble gets the same text: the reference spawns it in this path.
                 if let Some(kind) = event.kind {

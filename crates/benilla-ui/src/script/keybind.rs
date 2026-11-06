@@ -459,7 +459,7 @@ pub(crate) fn run_command(lua: &Lua, command: &str, down: bool) -> mlua::Result<
 
 /// A chord and its modifier reductions in the reference's reduced-binding order (`0x5622e0`): up to
 /// three `MOD-` prefixes, every subset tried from all of them down to the bare key.
-fn reduced_keys(key: &str) -> Vec<String> {
+pub(super) fn reduced_keys(key: &str) -> Vec<String> {
     let mut mods = Vec::new();
     let mut rest = key;
     while mods.len() < 3 {
@@ -557,15 +557,22 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     lua.globals().set(
         "GetBindingAction",
-        lua.create_function(|lua, key: String| {
+        lua.create_function(|lua, (key, check_override): (String, Option<Value>)| {
             let model = crate::script::model_mut_of(lua);
             let key = key.to_ascii_uppercase();
-            let name = model
-                .keybinds
-                .live
-                .iter()
-                .find(|(k, _)| k == &key)
-                .map(|(_, c)| c.as_str())
+            // `0x562490`: the override first, when the caller asks.
+            let over = super::binding_abi::bool_or_default(check_override.as_ref(), false)
+                .then(|| model.override_bindings.active(&key))
+                .flatten();
+            let name = over
+                .or_else(|| {
+                    model
+                        .keybinds
+                        .live
+                        .iter()
+                        .find(|(k, _)| k == &key)
+                        .map(|(_, c)| c.as_str())
+                })
                 .unwrap_or("");
             lua.create_string(name)
         })?,
@@ -589,12 +596,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let found = reduced_keys(&key.to_ascii_uppercase())
                 .into_iter()
                 .find_map(|k| {
+                    // `0x562140`: a key's override stands before its binding.
                     model
-                        .keybinds
-                        .live
-                        .iter()
-                        .find(|(bound, _)| *bound == k)
-                        .map(|(_, c)| c.clone())
+                        .override_bindings
+                        .active(&k)
+                        .map(str::to_string)
+                        .or_else(|| {
+                            model
+                                .keybinds
+                                .live
+                                .iter()
+                                .find(|(bound, _)| *bound == k)
+                                .map(|(_, c)| c.clone())
+                        })
                 });
             match found {
                 Some(c) => Ok(MultiValue::from_iter([Value::String(

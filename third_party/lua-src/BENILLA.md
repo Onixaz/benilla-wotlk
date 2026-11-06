@@ -3,9 +3,9 @@
 Upstream: [`mlua-rs/lua-src-rs`](https://github.com/mlua-rs/lua-src-rs), MIT, version `550.0.0`,
 the version mlua 0.11 resolves to. Wired in through `[patch.crates-io]` in the workspace root.
 
-## The Lua sources are upstream's
+## The Lua sources are upstream's, but for the owner tag
 
-`lua-5.1.5/` is upstream's tree unchanged. The reference client, 3.3.5a, embeds stock Lua 5.1
+`lua-5.1.5/` is upstream's tree but for the hunk below. The reference client, 3.3.5a, embeds stock Lua 5.1
 (`$Lua: Lua 5.1.1` at `0xa470a0` in `Wow.exe`), and its own strings show the grammar and messages
 are 5.1's:
 
@@ -26,6 +26,21 @@ are 5.1's:
 the other four would answer a request for one with a missing directory at build time instead of a
 compile error. A change the reference's VM makes to stock 5.1 lands here, as a listed hunk.
 
+## The owner tag
+
+`GetAddOnMemoryUsage` answers per addon because the reference's VM carries a taint pointer in every
+object's header and walks the heap for it (`0x85b4e0`). benilla keeps no taint, so the hunk carries
+only the owner:
+
+- `lobject.h`: a `lu_byte owner` in `CommonHeader`, which fits the header's padding, so no object
+  grows. 255 owners; every addon past the 255th shares the last.
+- `lua.h`, `lgc.h`, `lgc.c`: the running owner, `lua_setgcowner`, and `lua_gcupdatesizes`, the walk
+  of `rootgc` and the string table.
+- `lgc.c`, `lstring.c`, `lfunc.c`, `lstate.c`: a new object takes the running owner.
+- `lvm.c`: entering a closure with an owner makes it the running one, as the reference's closure
+  taint does (`0x857ca0`).
+- `ldo.c`: a call from outside Lua starts from the owner the host set.
+
 ## The command that proves it
 
 ```sh
@@ -34,4 +49,4 @@ diff -r --strip-trailing-cr third_party/lua-src/lua-5.1.5 \
   ~/.cargo/registry/src/*/lua-src-550.0.0/lua-5.1.5
 ```
 
-That must print nothing.
+That must print the owner tag's hunks and nothing else.

@@ -330,7 +330,10 @@ fn feed_skills(
             entries.push(e);
         }
     }
-    let fresh = SkillsState { entries };
+    let fresh = SkillsState {
+        entries,
+        points: store.0.player_free_professions().unwrap_or(0),
+    };
     if last.as_ref() == Some(&fresh) {
         return;
     }
@@ -378,6 +381,13 @@ pub(crate) fn skills_row(
         description: line.description.clone(),
         // The unlearnable bit and a nonzero skill step.
         abandonable: slot.step != 0 && rc.unlearnable(),
+        rank_costs: catalog.rank_costs(id, rc.cost_index),
+        // The tier opens on flag 8, or 4 before the first step (`0x5ce6f0`).
+        tier_cost: if rc.flags & 8 != 0 || (slot.step == 0 && rc.flags & 4 != 0) {
+            catalog.tier_cost(rc.tier_id, u32::from(slot.step))
+        } else {
+            0
+        },
         mono: rc.mono(),
     })
 }
@@ -391,6 +401,14 @@ fn drain_skill_abandons(script: Option<NonSendMut<UiScript>>, commands: Res<NetC
     for skill_id in script.take_skill_abandons() {
         debug!("ui_char: abandon skill line {skill_id}");
         let _ = commands.0.send(ClientCommand::UnlearnSkill { skill_id });
+    }
+    for request in script.take_skill_requests() {
+        let _ = commands.0.send(match request {
+            benilla_ui::script::SkillRequest::BuyRanks(lines) => {
+                ClientCommand::SkillBuyRank { lines }
+            }
+            benilla_ui::script::SkillRequest::BuyTier(line) => ClientCommand::SkillBuyStep { line },
+        });
     }
 }
 

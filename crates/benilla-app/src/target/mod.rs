@@ -311,6 +311,7 @@ impl Plugin for TargetPlugin {
             .init_resource::<CombatFlash>()
             .init_resource::<scan::TabHistory>()
             .init_resource::<scan::LastEnemy>()
+            .init_resource::<scan::LastFriend>()
             .add_message::<AttackNearestRequest>()
             .add_message::<TargetByNameRequest>()
             .add_message::<AssistRequest>()
@@ -398,7 +399,12 @@ impl Plugin for TargetPlugin {
                     // The last-enemy stamp before the ring's death-clear, so a hostile that dies
                     // selected is still remembered (the reference's `TargetLastEnemy` has no
                     // liveness gate).
-                    (scan::remember_last_enemy, ring::update_ring).chain(),
+                    (
+                        scan::remember_last_enemy,
+                        scan::remember_last_friend,
+                        ring::update_ring,
+                    )
+                        .chain(),
                 )
                     .chain()
                     .in_set(TargetUpdate)

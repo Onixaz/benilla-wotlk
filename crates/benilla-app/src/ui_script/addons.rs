@@ -116,6 +116,12 @@ impl Addon {
     /// load record. Each error is logged as it happens and also returned, tagged
     /// `"<Addon>/<file>: <error>"`, for the tests to assert empty.
     fn load(&self, script: &UiScript, toc: &mut Status) -> Vec<String> {
+        // A folder addon runs tainted; the core's and the chain's secure files carry no owner.
+        if matches!(self.source, Source::Dir(_)) {
+            return script.with_addon_owner(&self.name, || {
+                self.load_files_into(script, &self.toc.files, toc)
+            });
+        }
         self.load_files_into(script, &self.toc.files, toc)
     }
 

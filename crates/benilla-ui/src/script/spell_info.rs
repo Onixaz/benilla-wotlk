@@ -39,6 +39,16 @@ pub trait SpellInfoSource {
     fn is_current_spell(&self, _spell_id: u32) -> bool {
         false
     }
+
+    /// `GetSpellLink`'s reads (`0x5408e0`): the name, and the `|Htrade:` link of a linkable
+    /// trade-skill opener; `skill` answers a line's rank and max. `None` for a row with no link.
+    fn spell_link(
+        &self,
+        _spell_id: u32,
+        _skill: &dyn Fn(u32) -> (u32, u32),
+    ) -> Option<(String, Option<String>)> {
+        None
+    }
 }
 
 impl super::UiScript {
@@ -104,6 +114,47 @@ pub(super) fn spell_of(
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+    // GetSpellLink(id | slot, bookType | "name") (`0x5408e0`): the link and the trade link, nil
+    // for each without; an unknown name answers nothing.
+    lua.globals().set(
+        "GetSpellLink",
+        lua.create_function(|lua, args: MultiValue| {
+            let by_id = args.len() == 1 && lua.coerce_number(args[0].clone())?.is_some();
+            let spell = if by_id {
+                let n = lua.coerce_number(args[0].clone())?.unwrap_or(0.0);
+                Some((super::binding_abi::ftol(n) as u32, false))
+            } else {
+                spell_of(lua, &args, "GetSpellLink")?
+            };
+            let Some((spell_id, _)) = spell else {
+                return Ok(MultiValue::new());
+            };
+            let (source, skills) = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                (model.spell_info.clone(), model.skills.entries.clone())
+            };
+            let skill = |line: u32| {
+                skills
+                    .iter()
+                    .find(|e| e.skill_id == line)
+                    .map_or((0, 0), |e| (e.value, e.max))
+            };
+            let Some((name, trade)) = source.and_then(|s| s.spell_link(spell_id, &skill)) else {
+                return Ok(MultiValue::from_vec(vec![Value::Nil, Value::Nil]));
+            };
+            let link = format!("|cff71d5ff|Hspell:{spell_id}|h[{name}]|h|r");
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(&link)?),
+                match trade {
+                    Some(t) => Value::String(lua.create_string(&t)?),
+                    None => Value::Nil,
+                },
+            ]))
+        })?,
+    )?;
+
     lua.globals().set(
         "GetSpellInfo",
         lua.create_function(|lua, args: MultiValue| {

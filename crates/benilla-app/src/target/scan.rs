@@ -55,6 +55,10 @@ fn tab_trace_on() -> bool {
 pub(crate) enum ScanSide {
     /// Mode 1: alive by the reads-dead triple, and the attack check.
     Enemy,
+    /// [`Self::Enemy`] for players alone (`0x518e40`, type 2).
+    EnemyPlayer,
+    /// [`Self::Friend`] for players alone (`0x518e40`, type 4).
+    FriendPlayer,
     /// Mode 2: the assist check, friendly or better, whose PvP-test leg refuses a creature without
     /// `UNIT_FLAG_PVP`; then health > 0 with no dynflag leg, so a feigning ally counts.
     Friend,
@@ -70,7 +74,9 @@ impl ScanSide {
         use benilla_ui::script::NearestMode;
         match mode {
             NearestMode::Enemy => Self::Enemy,
+            NearestMode::EnemyPlayer => Self::EnemyPlayer,
             NearestMode::Friend => Self::Friend,
+            NearestMode::FriendPlayer => Self::FriendPlayer,
             NearestMode::PartyMember => Self::Party,
             NearestMode::RaidMember => Self::Raid,
         }
@@ -227,8 +233,13 @@ impl TargetScan<'_, '_> {
         self_store: Option<&ObjectStore>,
     ) -> bool {
         match side {
+            ScanSide::EnemyPlayer | ScanSide::FriendPlayer
+                if !benilla_protocol::guid::is_player(guid) =>
+            {
+                false
+            }
             // Mode 1: the reads-dead triple, then the attack check.
-            ScanSide::Enemy => {
+            ScanSide::Enemy | ScanSide::EnemyPlayer => {
                 if store.is_some_and(|s| s.0.unit_reads_dead()) {
                     return false;
                 }
@@ -241,7 +252,7 @@ impl TargetScan<'_, '_> {
                 )
             }
             // Mode 2: the assist check (`0x7293d0`), then raw health (no reads-dead triple).
-            ScanSide::Friend => {
+            ScanSide::Friend | ScanSide::FriendPlayer => {
                 can_assist(
                     store,
                     self.factions.as_deref(),
@@ -330,8 +341,8 @@ impl TargetScan<'_, '_> {
                     guid_c.0,
                     tf,
                     match side {
-                        ScanSide::Enemy => "REJECT dead-or-unattackable",
-                        ScanSide::Friend => "REJECT dead-or-unassistable",
+                        ScanSide::Enemy | ScanSide::EnemyPlayer => "REJECT dead-or-unattackable",
+                        ScanSide::Friend | ScanSide::FriendPlayer => "REJECT dead-or-unassistable",
                         ScanSide::Party => "REJECT not-in-party",
                         ScanSide::Raid => "REJECT not-in-party-or-raid",
                     },
@@ -359,7 +370,8 @@ impl TargetScan<'_, '_> {
             }
             let off_center = project(tf.translation + Vec3::Y);
             // Enemy side only: a healer in combat and targeting you would head the CTRL-TAB pool.
-            let cwm = side == ScanSide::Enemy && store.is_some_and(|s| combat_with_me(s, me));
+            let enemies = matches!(side, ScanSide::Enemy | ScanSide::EnemyPlayer);
+            let cwm = enemies && store.is_some_and(|s| combat_with_me(s, me));
             let score = priority_score(off_center, dist, cwm);
             if trace {
                 let screen = off_center
@@ -567,7 +579,7 @@ pub(super) fn cycle(
         // `Attack`'s validation, which a mode-2 pick fails (reaction >= 4 against the attack
         // check's < 4). A duelling friendly passes the attack check's duel arm, which reads no
         // reaction, so the reference's `Attack` would re-swing at it; here it gets none.
-        side == ScanSide::Enemy,
+        matches!(side, ScanSide::Enemy | ScanSide::EnemyPlayer),
     );
     if out.changed {
         history.push(guid, now);
@@ -636,6 +648,16 @@ impl AttackPick<'_, '_> {
                 engaged,
             );
         }
+        self.gated(selection, errors)
+    }
+
+    /// The pick's tail, which an explicit target runs alone: the selection as it stands through
+    /// the second resolve and the final gate.
+    pub(crate) fn gated(
+        &mut self,
+        selection: &Selection,
+        errors: &mut crate::ui_action::UiErrorKeys,
+    ) -> Option<u64> {
         let Some(guid) = selection.guid else {
             debug!("attack: nothing to attack (ERR_NO_ATTACK_TARGET)");
             errors
@@ -753,6 +775,43 @@ pub(super) fn remember_last_enemy(
         super::party_of(group.as_deref()),
         Some(me),
     ) {
+        last.0 = Some(guid);
+    }
+}
+
+/// `TargetLastFriend`'s memory (`[0xbd07c8]`), set beside [`LastEnemy`].
+#[derive(Resource, Default)]
+pub(crate) struct LastFriend(pub(crate) Option<u64>);
+
+/// Stamp [`LastFriend`]: a selected unit the player cannot attack but can assist (`0x524bf0`).
+pub(super) fn remember_last_friend(
+    selection: Res<Selection>,
+    stores: Query<&ObjectStore>,
+    self_store: Query<&ObjectStore, With<SelfPlayer>>,
+    factions: Option<Res<Factions>>,
+    reputations: Res<Reputations>,
+    group: Option<Res<crate::ui_party::GroupState>>,
+    names: Res<crate::names::NameCache>,
+    mut last: ResMut<LastFriend>,
+) {
+    let Some((entity, guid)) = selection.target.zip(selection.guid) else {
+        return;
+    };
+    let Some(me) = self_store.iter().next() else {
+        return;
+    };
+    let store = stores.get(entity).ok();
+    let party = super::party_of(group.as_deref());
+    if !can_attack(store, factions.as_deref(), &reputations, party, Some(me))
+        && can_assist(
+            store,
+            factions.as_deref(),
+            &reputations,
+            super::party_of(group.as_deref()),
+            Some(me),
+            Some(&names),
+        )
+    {
         last.0 = Some(guid);
     }
 }

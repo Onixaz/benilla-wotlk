@@ -25,6 +25,7 @@ fn area(zone: &str, sub: &str, pvp: &str, faction: &str) -> ZoneTexts {
         pvp_type: some(pvp),
         pvp_faction: some(faction),
         pvp_subzone: false,
+        pvp_poi: false,
     }
 }
 
@@ -300,6 +301,7 @@ fn arena_pit_shows_the_ffa_line() {
     // The pit's own row carries the free-for-all flag: an "arena" type off the subzone.
     s.set_zone_texts(ZoneTexts {
         pvp_subzone: true,
+        pvp_poi: false,
         ..area("Stranglethorn Vale", "Gurubashi Arena", "arena", "")
     });
     s.fire_event("ZONE_CHANGED", vec![]);

@@ -72,6 +72,15 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_CAST_SPELL` at the trade window's not-traded slot (`0x80c5f0`).
+    pub fn cast_spell_trade_item(&mut self, spell_id: u32) -> Result<()> {
+        let count = self.cast_counter.take();
+        self.send(
+            opcode::CMSG_CAST_SPELL,
+            &messages::cast_spell_trade_item(count, spell_id),
+        )
+    }
+
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_GLYPH_SLOT`: a glyph spell cast from the book.
     pub fn cast_spell_glyph(&mut self, spell_id: u32) -> Result<()> {
         let count = self.cast_counter.take();

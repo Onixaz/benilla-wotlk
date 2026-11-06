@@ -383,6 +383,7 @@ void luaV_execute (lua_State *L, int nexeccalls) {
   lua_assert(isLua(L->ci));
   pc = L->savedpc;
   cl = &clvalue(L->ci->func)->l;
+  if (cl->owner) lua_gcowner = cl->owner;
   base = L->base;
   k = cl->p->k;
   /* main loop of interpreter */

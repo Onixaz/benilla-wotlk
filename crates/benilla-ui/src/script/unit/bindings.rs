@@ -935,6 +935,31 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // UnitSex(unit): 2 male, 3 female, or 1 neuter, which no feed sends. A unit that does not
     // resolve answers 2, never nil.
     g.set(
+        "PlayerCanTeleport",
+        lua.create_function(|lua, ()| {
+            // `0x60d8f0`: stunned, confused and fleeing players cannot.
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let flags = model.unit("player").map_or(0, |u| u.flags);
+            Ok(flags & (0x40000 | 0x800000 | 0x400000) == 0)
+        })?,
+    )?;
+    g.set(
+        "UnitIsControlling",
+        lua.create_function(|lua, token: Value| {
+            // `0x613c90`: a held unit with its charm or summon field set, 1 or nil.
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let held = crate::script::binding_abi::optional_string(lua, &token)
+                .and_then(|t| model.unit(&t).filter(|u| u.exists && u.has_object).cloned());
+            Ok(crate::script::binding_abi::flag(
+                held.is_some_and(|u| u.controlling),
+            ))
+        })?,
+    )?;
+    g.set(
         "UnitSex",
         lua.create_function(|lua, token: Value| {
             let token = Some(crate::script::binding_abi::string_arg(
@@ -1364,6 +1389,16 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // TargetLastEnemy(): re-select the last attackable target (which `SetSelection` stamps), a
     // no-op once it has streamed out. The app remembers it.
+    g.set(
+        "TargetLastFriend",
+        lua.create_function(|lua, ()| {
+            let mut model = crate::script::model_mut_of(lua);
+            model
+                .script_calls
+                .push(ScriptCall::Select(SelectionRequest::LastFriend));
+            Ok(())
+        })?,
+    )?;
     g.set(
         "TargetLastEnemy",
         lua.create_function(|lua, ()| {

@@ -21,6 +21,15 @@ pub enum ScriptCall {
     TargetLastTarget,
     /// `ClearTarget()`, a no-op when nothing is selected by then.
     ClearTarget,
+    /// `StartAttack([unit [, exact]])` (`0x523090`): `unit` names the target outright, skipping the
+    /// nearest-enemy fallback; nothing at all while already attacking.
+    StartAttack { unit: Option<String>, exact: bool },
+    /// `StopAttack()` (`0x51d0b0`).
+    StopAttack,
+    /// `Dismount()` (`0x51d170`).
+    Dismount,
+    /// `CancelShapeshiftForm()` (`0x53de60`).
+    CancelShapeshiftForm,
     /// `AttackTarget()`: the attack validator's pick from the selection as it stands then, which
     /// may move it to the nearest enemy, then the toggle.
     AttackTarget,
@@ -58,6 +67,15 @@ pub enum ScriptCall {
     /// `UseQuestLogSpecialItem(index)`: the bag item's own use (`0x708c20`), past the right-click's
     /// merchant, bank and equip arms.
     UseItem { bag: i64, slot: u32 },
+    /// `UseItemByName(item [, unit])` (`0x51cd00`): the found item's own use, at `at`; `bag` is
+    /// [`super::cursor::EQUIPMENT_BAG`] for a worn item.
+    UseItemAt { bag: i64, slot: u32, at: CastAt },
+    /// `EquipItemByName(item [, slot])` (`0x51cdb0`): to wire slot `dst`, else where it fits.
+    EquipItem {
+        bag: i64,
+        slot: u32,
+        dst: Option<u8>,
+    },
     /// `UseInventoryItem(id)` outside repair mode.
     UseInventoryItem(u32),
     /// `CastPetAction(slot)`, a 1-based pet bar slot.
@@ -114,6 +132,10 @@ pub enum NearestMode {
     Enemy,
     /// Mode 2, `TargetNearestFriend`.
     Friend,
+    /// Mode 2 of 12340's table, `TargetNearestEnemyPlayer`: [`Self::Enemy`] for players alone.
+    EnemyPlayer,
+    /// Mode 4 of 12340's table, `TargetNearestFriendPlayer`: [`Self::Friend`] for players alone.
+    FriendPlayer,
     /// Mode 3, `TargetNearestPartyMember`: a party member other than us.
     PartyMember,
     /// Mode 4, `TargetNearestRaidMember`: a party or raid member other than us.

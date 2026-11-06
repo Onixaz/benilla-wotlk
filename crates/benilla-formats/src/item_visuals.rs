@@ -61,6 +61,8 @@ pub struct EnchantCatalog {
     gem_items: HashMap<u32, u32>,
     /// The sockets a prismatic enchant adds: its first effect 8's `EffectPointsMin` (`0x708140`).
     prismatic: HashMap<u32, u32>,
+    /// The spell an enchant's use effect casts: its first effect 7's `EffectArg` (`0x707c60`).
+    use_spells: HashMap<u32, u32>,
     /// A gem enchant's activation condition (`ConditionID`, a meta gem's), by enchant id.
     conditions: HashMap<u32, EnchantCondition>,
     /// The skill and level an enchant asks of its wearer, for the rows that ask either.
@@ -151,6 +153,11 @@ impl EnchantCatalog {
         self.conditions.get(&enchant_id)
     }
 
+    /// The spell the enchant's use effect (7) casts, 0 for none.
+    pub fn use_spell(&self, enchant_id: u32) -> u32 {
+        self.use_spells.get(&enchant_id).copied().unwrap_or(0)
+    }
+
     /// The sockets the enchant adds, 0 for one with no prismatic effect (8).
     pub fn prismatic_sockets(&self, enchant_id: u32) -> u32 {
         self.prismatic.get(&enchant_id).copied().unwrap_or(0)
@@ -168,6 +175,7 @@ impl EnchantCatalog {
             flags,
             gem_items: HashMap::new(),
             prismatic: HashMap::new(),
+            use_spells: HashMap::new(),
             conditions: HashMap::new(),
             requirements: HashMap::new(),
         }
@@ -301,6 +309,8 @@ fn load_conditions(chain: &mut Chain) -> HashMap<u32, EnchantCondition> {
         })
         .collect()
 }
+/// The on-use effect type.
+const ENCHANT_USE_SPELL: u32 = 7;
 /// The prismatic-socket effect type.
 const ENCHANT_PRISMATIC_SOCKET: u32 = 8;
 
@@ -355,12 +365,17 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
     let mut requirements = HashMap::new();
     let mut gem_items = HashMap::new();
     let mut prismatic = HashMap::new();
+    let mut use_spells = HashMap::new();
     let mut conditions = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         // Effects at columns 2..5, their minimum points at 5..8.
         if let Some(i) = (0..3).find(|&i| u32_at(r, 2 + i) == Some(ENCHANT_PRISMATIC_SOCKET)) {
             prismatic.insert(id, u32_at(r, 5 + i).unwrap_or(0));
+        }
+        // Their args at 11..14.
+        if let Some(i) = (0..3).find(|&i| u32_at(r, 2 + i) == Some(ENCHANT_USE_SPELL)) {
+            use_spells.insert(id, u32_at(r, 11 + i).unwrap_or(0));
         }
         // Every row, `Flags == 0` included: the keys are the row set.
         flags.insert(id, u32_at(r, ENCHANT_FLAGS).unwrap_or(0));
@@ -401,6 +416,7 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
         flags,
         gem_items,
         prismatic,
+        use_spells,
         conditions,
         requirements,
     })

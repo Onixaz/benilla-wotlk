@@ -1,10 +1,10 @@
-//! The chord codec: Bevy input to and from the 1.12 binding strings `[ALT-][CTRL-][SHIFT-]<TOKEN>`,
-//! with 1.12's own token set. These strings are what the table stores, the window shows and the
-//! files save; a press matches by equality, then once more with its leftmost modifier dropped.
+//! The chord codec: Bevy input to and from the binding strings `[ALT-][CTRL-][SHIFT-]<TOKEN>`.
+//! These strings are what the table stores, the window shows and the files save; a press matches by
+//! equality, then by each subset of its modifiers ([`Chord::reductions`]).
 //!
-//! Prefix order is ALT-CTRL-SHIFT (`Blizzard_BindingUI.lua:176-182`), and it decides which modifier
-//! the fallback drops. Super/Cmd is not a 1.12 modifier, so a chord never carries it; that a press
-//! with it held runs nothing is `crate::bindings`'s deviation.
+//! Prefix order is ALT-CTRL-SHIFT (`Blizzard_BindingUI.lua:176-182`), and it orders the subsets.
+//! Super/Cmd is not a binding modifier, so a chord never carries it; that a press with it held runs
+//! nothing is `crate::bindings`'s deviation.
 
 use std::fmt;
 
@@ -49,6 +49,32 @@ pub(crate) struct Chord {
 }
 
 impl Chord {
+    /// The chord and its modifier reductions in the key lookup's order (`0x5622e0`): every subset of
+    /// the held modifiers, the first of them the lowest bit, from all down to the bare key.
+    pub(crate) fn reductions(self) -> Vec<Chord> {
+        const MASKS: [&[u8]; 4] = [&[0], &[1, 0], &[3, 2, 1, 0], &[7, 6, 5, 3, 4, 2, 1, 0]];
+        let held: Vec<u8> = [(self.alt, 0), (self.ctrl, 1), (self.shift, 2)]
+            .into_iter()
+            .filter_map(|(on, bit)| on.then_some(bit))
+            .collect();
+        MASKS[held.len()]
+            .iter()
+            .map(|&mask| {
+                let has = |bit: u8| {
+                    held.iter()
+                        .enumerate()
+                        .any(|(j, &b)| b == bit && mask & (1 << j) != 0)
+                };
+                Chord {
+                    alt: has(0),
+                    ctrl: has(1),
+                    shift: has(2),
+                    key: self.key,
+                }
+            })
+            .collect()
+    }
+
     /// Parse a canonical chord string (`"CTRL--"` is Ctrl+minus); an unknown base token is `None`,
     /// held in the table but never pressable.
     pub(crate) fn parse(s: &str) -> Option<Chord> {
@@ -74,28 +100,6 @@ impl Chord {
             shift,
             key: token_key(rest)?,
         })
-    }
-
-    /// The one retry after an exact miss: drop the leftmost modifier (ALT, then CTRL, then SHIFT).
-    /// The reference re-probes the text after the first `'-'` and never again, so `ALT-CTRL-Z`
-    /// reaches `CTRL-Z` and stops. A bare `-` retries the empty string there and misses, the `None`
-    /// here.
-    pub(crate) fn fallback(self) -> Option<Chord> {
-        if self.alt {
-            Some(Chord { alt: false, ..self })
-        } else if self.ctrl {
-            Some(Chord {
-                ctrl: false,
-                ..self
-            })
-        } else if self.shift {
-            Some(Chord {
-                shift: false,
-                ..self
-            })
-        } else {
-            None
-        }
     }
 }
 
@@ -309,6 +313,30 @@ fn token_key(t: &str) -> Option<BindKey> {
     match fixed_name(k) {
         Some(name @ KeyName::Word(w)) if w == t => Some(BindKey::Key(name)),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod reduction_tests {
+    use super::*;
+
+    /// `0x5622e0`: the masks 7, 6, 5, 3, 4, 2, 1, 0 over ALT, CTRL and SHIFT.
+    #[test]
+    fn a_chord_reduces_through_every_subset_of_its_modifiers() {
+        let chord = Chord::parse("ALT-CTRL-SHIFT-Z").unwrap();
+        let want = [
+            "ALT-CTRL-SHIFT-Z",
+            "CTRL-SHIFT-Z",
+            "ALT-SHIFT-Z",
+            "ALT-CTRL-Z",
+            "SHIFT-Z",
+            "CTRL-Z",
+            "ALT-Z",
+            "Z",
+        ]
+        .map(|k| Chord::parse(k).unwrap());
+        assert_eq!(chord.reductions(), want);
+        assert_eq!(Chord::parse("Z").unwrap().reductions().len(), 1);
     }
 }
 

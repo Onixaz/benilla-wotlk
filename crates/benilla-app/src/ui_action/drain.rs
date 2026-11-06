@@ -104,6 +104,81 @@ impl AttackPress<'_, '_> {
         );
     }
 
+    /// Whether the actor checks pass and we are not already attacking, `StartAttack`'s named leg
+    /// running before its selection moves.
+    pub(crate) fn may_start(&mut self) -> bool {
+        if self.pick.engaged() {
+            return false;
+        }
+        let (me, my_guid) = self.pick.player();
+        !attack_actor_refusal(me, my_guid, &mut self.ui_errors)
+    }
+
+    /// `StartAttack` named nobody: the refusal, with the selection left alone (`0x72c2b0`).
+    pub(crate) fn no_attack_target(&mut self) {
+        self.ui_errors
+            .0
+            .push(crate::ui_action::UiError::key("ERR_NO_ATTACK_TARGET"));
+    }
+
+    /// `StartAttack`'s swing at the selection a named unit left, past the nearest-enemy pick
+    /// (`0x72c2b0`).
+    pub(crate) fn swing_at_selection(&mut self) {
+        let Self {
+            pick,
+            selection,
+            seam,
+            ui_errors,
+        } = self;
+        let Some(guid) = pick.gated(selection, ui_errors) else {
+            return;
+        };
+        let Ok(e) = seam.me.single() else {
+            return;
+        };
+        crate::creature_anim::toggle_attack_local(
+            e,
+            guid,
+            false,
+            &mut seam.queued_melee,
+            &mut seam.auto_repeat,
+            &mut seam.sheath,
+            &mut seam.ecs,
+            &seam.net,
+        );
+    }
+
+    /// `StartAttack()` with no unit: the press, unless already attacking.
+    pub(crate) fn start_attack(&mut self) {
+        if !self.pick.engaged() {
+            self.attack_target();
+        }
+    }
+
+    /// `StopAttack()` (`0x51d0b0`): only while attacking.
+    pub(crate) fn stop_attack(&mut self) {
+        if self.pick.engaged() {
+            self.attack_target_off();
+        }
+    }
+
+    fn attack_target_off(&mut self) {
+        let Self { seam, .. } = self;
+        let Ok(e) = seam.me.single() else {
+            return;
+        };
+        crate::creature_anim::toggle_attack_local(
+            e,
+            0,
+            true,
+            &mut seam.queued_melee,
+            &mut seam.auto_repeat,
+            &mut seam.sheath,
+            &mut seam.ecs,
+            &seam.net,
+        );
+    }
+
     /// The cast attempt's attack pick for a spell press held there ([`crate::spell::HeldForPick`]):
     /// the validator alone, with no swing after it. Whether the cast goes on, at the unit the pick
     /// left selected.

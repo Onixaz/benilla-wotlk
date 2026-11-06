@@ -152,6 +152,7 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud) {
   L->tt = LUA_TTHREAD;
   g->currentwhite = bit2mask(WHITE0BIT, FIXEDBIT);
   L->marked = luaC_white(g);
+  L->owner = 0;
   set2bits(L->marked, FIXEDBIT, SFIXEDBIT);
   preinit_state(L, g);
   g->frealloc = f;

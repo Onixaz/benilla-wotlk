@@ -529,6 +529,8 @@ pub enum UseItemTarget {
     Dest([f32; 3]),
     /// `TARGET_FLAG_ITEM` and a packed guid: a poison, oil or stone applied to a clicked item.
     Item(u64),
+    /// `TARGET_FLAG_TRADE_ITEM` and the not-traded slot in the guid's place.
+    TradeItem,
     /// `TARGET_FLAG_SOURCE_LOCATION` and three `f32` coords (the location binding); only items
     /// carrying spell 265, such as Martin Fury, use it. vmangos reads it before the dest.
     Source([f32; 3]),
@@ -573,7 +575,7 @@ pub(super) fn put_cast_targets(body: &mut Vec<u8>, target: UseItemTarget) {
     use super::spells::{
         put_cast_tail, put_target_guid, put_target_point, TARGET_FLAG_DEST_LOCATION,
         TARGET_FLAG_GAMEOBJECT, TARGET_FLAG_GLYPH_SLOT, TARGET_FLAG_ITEM,
-        TARGET_FLAG_SOURCE_LOCATION, TARGET_FLAG_UNIT,
+        TARGET_FLAG_SOURCE_LOCATION, TARGET_FLAG_TRADE_ITEM, TARGET_FLAG_UNIT, TRADE_ENCHANT_SLOT,
     };
     let (mask, guid) = match target {
         UseItemTarget::SelfImplicit => {
@@ -587,6 +589,7 @@ pub(super) fn put_cast_targets(body: &mut Vec<u8>, target: UseItemTarget) {
         UseItemTarget::Unit(guid) => (TARGET_FLAG_UNIT, guid),
         UseItemTarget::Object(guid) => (TARGET_FLAG_GAMEOBJECT, guid),
         UseItemTarget::Item(guid) => (TARGET_FLAG_ITEM, guid),
+        UseItemTarget::TradeItem => (TARGET_FLAG_TRADE_ITEM, TRADE_ENCHANT_SLOT),
         UseItemTarget::Corpse(corpse, guid) => (corpse.target_flag(), guid),
         UseItemTarget::Dest(dest) => {
             put_cast_tail(body, TARGET_FLAG_DEST_LOCATION);

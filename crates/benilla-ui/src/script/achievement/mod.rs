@@ -753,7 +753,7 @@ fn wrong_side(a: &AchievementRow, faction: Option<i32>) -> bool {
 
 /// The `trackedAchievements` CVar's encoding (the int-list CVar wrapper, `0x766720`/`0x766f70`): a
 /// `v\x01` tag, then three base-93 digits from `#` per id.
-pub(crate) fn encode_tracked(ids: &[u32]) -> String {
+pub fn encode_tracked(ids: &[u32]) -> String {
     let mut out = String::from("v\u{1}");
     for &id in ids {
         if id > 93 * 93 * 93 - 1 || out.len() >= 0xfd {
@@ -768,7 +768,7 @@ pub(crate) fn encode_tracked(ids: &[u32]) -> String {
 
 /// Decode the CVar, stopping at an id of 0 (`0x5b3840`). An untagged value is the version-0
 /// form, three base-220 digits each (`0x766f00`).
-pub(crate) fn decode_tracked(value: &str) -> Vec<u32> {
+pub fn decode_tracked(value: &str) -> Vec<u32> {
     let bytes = value.as_bytes();
     let (body, base) = match bytes {
         [b'v', 1, rest @ ..] => (rest, 93u32),

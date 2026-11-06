@@ -129,6 +129,39 @@ fn reset(table: &mut [ChatTypeColor]) {
     }
 }
 
+/// `ResetChatWindows`' colour half (`0x501f00`): [`reset`], and the class-colour flags too.
+pub(super) fn reset_all(table: &mut [ChatTypeColor]) {
+    reset(table);
+    for entry in table.iter_mut() {
+        entry.by_class = false;
+    }
+}
+
+/// The `UPDATE_CHAT_COLOR` and `UPDATE_CHAT_COLOR_NAME_BY_CLASS` pair of every entry, as
+/// `ResetChatWindows` fires them.
+pub(super) fn fire_all(lua: &Lua, table: &[ChatTypeColor]) {
+    for entry in table {
+        super::tick::fire_event_into(
+            lua,
+            "UPDATE_CHAT_COLOR",
+            vec![
+                super::ScriptValue::Str(entry.name.clone()),
+                super::ScriptValue::Number(from_byte(entry.rgb[0])),
+                super::ScriptValue::Number(from_byte(entry.rgb[1])),
+                super::ScriptValue::Number(from_byte(entry.rgb[2])),
+            ],
+        );
+        super::tick::fire_event_into(
+            lua,
+            "UPDATE_CHAT_COLOR_NAME_BY_CLASS",
+            vec![
+                super::ScriptValue::Str(entry.name.clone()),
+                super::ScriptValue::Bool(entry.by_class),
+            ],
+        );
+    }
+}
+
 /// ASCII case-insensitive and nothing wider: the reference's compare folds only `A` to `Z`.
 fn position(table: &[ChatTypeColor], name: &str) -> Option<usize> {
     table.iter().position(|e| e.name.eq_ignore_ascii_case(name))
@@ -220,6 +253,33 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Ok(())
             },
         )?,
+    )?;
+
+    // SetChatColorNameByClass(chatType, on) (`0x4fedc0`): the event carries the caller's string.
+    g.set(
+        "SetChatColorNameByClass",
+        lua.create_function(|lua, args: MultiValue| {
+            let name = super::binding_abi::string_arg(
+                lua,
+                args.front().cloned().unwrap_or(Value::Nil),
+                "Usage: SetChatColorNameByClass(chatType, colorNameByClass)",
+            )?;
+            let on = super::binding_abi::bool_or_default(args.get(1), false);
+            {
+                let mut model = crate::script::model_mut_of(lua);
+                let Some(i) = position(&model.chat_colors, &name) else {
+                    return Ok(());
+                };
+                model.chat_colors[i].by_class = on;
+                model.chat_colors_changed = true;
+            }
+            super::tick::fire_event_into(
+                lua,
+                "UPDATE_CHAT_COLOR_NAME_BY_CLASS",
+                vec![super::ScriptValue::Str(name), super::ScriptValue::Bool(on)],
+            );
+            Ok(())
+        })?,
     )?;
 
     g.set(

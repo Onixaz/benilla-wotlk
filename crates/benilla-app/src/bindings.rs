@@ -6,8 +6,7 @@
 //!
 //! Dispatch ([`latch_and_dispatch`], in [`crate::ui_script::UiInput`] after the UI key feed), as
 //! the reference's binding dispatch and command runner do:
-//! - a press probes its exact chord, then once more with its leftmost modifier dropped
-//!   ([`Chord::fallback`]);
+//! - a press probes its exact chord, then each subset of its modifiers ([`Chord::reductions`]);
 //! - the resolved command's body runs with `keystate = "down"`, and the base key's release runs a
 //!   `runOnUp` body again with `"up"`. UI focus suppresses presses and releases nothing already
 //!   held; a latch ends only on its base key's release, the stuck-latch sweep (OS focus loss, the
@@ -43,32 +42,38 @@ use chord::{BindKey, Chord};
 pub(crate) use layout::LayoutNames;
 pub(crate) use script_input::Input;
 
-/// The chord-to-command map, rebuilt whenever the engine table's generation moves. Probe it
-/// through [`BindingDispatch::resolve`]: the lookup is two probes.
+/// The chord-to-command maps, rebuilt whenever the engine table's generation moves. Probe them
+/// through [`BindingDispatch::resolve`].
 #[derive(Resource, Default)]
 struct BindingDispatch {
     map: std::collections::HashMap<Chord, String>,
+    /// The override bindings' active commands, checked first at each reduction.
+    overrides: std::collections::HashMap<Chord, String>,
+    /// The override table's generation, keyed as [`Self::seen_generation`].
+    seen_overrides: crate::ui_script::VmMemo<Option<u64>>,
     /// The engine table's generation this map was built from, keyed per VM: a fresh VM restarts
     /// its counter at 0.
     seen_generation: crate::ui_script::VmMemo<Option<u64>>,
 }
 
 impl BindingDispatch {
-    /// Resolve a press as the reference's binding dispatch does: the exact chord, then one retry
-    /// with the leftmost modifier dropped ([`Chord::fallback`]).
+    /// Resolve a press as the reference's binding dispatch does (`0x5622e0`): the chord and each
+    /// modifier reduction, a key's override before its binding.
     ///
-    /// Deviation, dev builds only: `dev_plane` suppresses the keyboard retry, because
+    /// Deviation, dev builds only: `dev_plane` suppresses the keyboard reductions, because
     /// `Ctrl`+`Shift` is the dev overlays' plane ([`benilla_world::modkeys::DEV_CHORD`]) and
     /// `Ctrl`+`Shift`+`P` would otherwise fall back to `SHIFT-P` (`TOGGLECHARACTER3`). An exact
     /// `CTRL-SHIFT-` binding still dispatches; mouse and wheel are never suppressed.
     fn resolve(&self, chord: Chord, dev_plane: bool) -> Option<&str> {
-        if let Some(command) = self.map.get(&chord) {
-            return Some(command);
-        }
+        let probe = |c: &Chord| self.overrides.get(c).or_else(|| self.map.get(c));
         if dev_plane {
-            return None;
+            return probe(&chord).map(String::as_str);
         }
-        self.map.get(&chord.fallback()?).map(String::as_str)
+        chord
+            .reductions()
+            .iter()
+            .find_map(probe)
+            .map(String::as_str)
     }
 }
 
@@ -295,6 +300,16 @@ pub(crate) fn save_to_account_data(world: &mut World) {
 /// repaint.
 fn sync_dispatch(script: Option<NonSendMut<UiScript>>, mut dispatch: ResMut<BindingDispatch>) {
     let Some(mut script) = script else { return };
+    // No `UPDATE_BINDINGS` for an override (`0x563480`).
+    let overrides = script.override_generation();
+    if *dispatch.seen_overrides.get(&script) != Some(overrides) {
+        *dispatch.seen_overrides.get(&script) = Some(overrides);
+        dispatch.overrides = script
+            .override_bindings()
+            .into_iter()
+            .filter_map(|(key, command)| Some((Chord::parse(&key)?, command)))
+            .collect();
+    }
     let generation = script.keybinds_generation();
     if *dispatch.seen_generation.get(&script) == Some(generation) {
         return;
@@ -1163,9 +1178,9 @@ mod tests {
     /// The two-probe lookup: the exact chord, then one retry with the leftmost modifier dropped,
     /// never a third.
     #[test]
-    fn a_press_probes_its_chord_then_falls_back_once() {
-        // Shift held, W pressed: `SHIFT-W` is unbound, so the retry drops SHIFT and MOVEFORWARD
-        // runs (the reference's `strchr` step).
+    fn a_press_probes_its_chord_then_its_modifier_reductions() {
+        // Shift held, W pressed: `SHIFT-W` is unbound, so the reduction drops SHIFT and
+        // MOVEFORWARD runs.
         let mut app = harness();
         press_key(&mut app, KeyCode::ShiftLeft);
         press_key(&mut app, KeyCode::KeyW);
@@ -1180,7 +1195,7 @@ mod tests {
         app.update();
         assert!(!state(&app).pressed(Input::MoveForward));
         // Bare Z is the sheath toggle, ALT-Z is TOGGLEUI: the exact probe runs first, so a
-        // fallback never overrides a real entry.
+        // reduction never overrides a real entry.
         let mut app = harness();
         press_key(&mut app, KeyCode::KeyZ);
         app.update();
@@ -1196,15 +1211,14 @@ mod tests {
             "ALT-Z is TOGGLEUI: the exact chord probes first"
         );
         assert!(!state(&app).fired(Input::ToggleSheath));
-        // CTRL-ALT-Z runs nothing: the single strip drops the leftmost modifier (`ALT-CTRL-Z`
-        // to `CTRL-Z`, unbound) and stops, never reaching ALT-Z or Z.
+        // CTRL-ALT-Z reduces to `CTRL-Z`, unbound, then `ALT-Z` (`0x5622e0`).
         release_key(&mut app, KeyCode::KeyZ);
         press_key(&mut app, KeyCode::ControlLeft);
         press_key(&mut app, KeyCode::KeyZ);
         app.update();
         assert!(
-            lua_count(&app, "UITOGGLES") == 1 && !state(&app).fired(Input::ToggleSheath),
-            "ALT-CTRL-Z probes CTRL-Z and stops — no second strip to ALT-Z or Z"
+            lua_count(&app, "UITOGGLES") == 2 && !state(&app).fired(Input::ToggleSheath),
+            "ALT-CTRL-Z runs on through CTRL-Z to ALT-Z, short of the bare Z"
         );
         // TAB and SHIFT-TAB are both bound, so each resolves exactly.
         let mut app = harness();

@@ -24,6 +24,8 @@ use crate::Chain;
 const SKILL_LINE: &str = "DBFilesClient\\SkillLine.dbc";
 const SKILL_LINE_ABILITY: &str = "DBFilesClient\\SkillLineAbility.dbc";
 const SKILL_RACE_CLASS_INFO: &str = "DBFilesClient\\SkillRaceClassInfo.dbc";
+const SKILL_COSTS_DATA: &str = "DBFilesClient\\SkillCostsData.dbc";
+const SKILL_TIERS: &str = "DBFilesClient\\SkillTiers.dbc";
 
 const SKILL_LINE_FIELDS: usize = 56;
 const COL_SL_NAME_ENUS: usize = 3;
@@ -59,7 +61,12 @@ const COL_SRCI_RACE_MASK: usize = 2;
 const COL_SRCI_CLASS_MASK: usize = 3;
 const COL_SRCI_FLAGS: usize = 4;
 const COL_SRCI_MIN_LEVEL: usize = 5;
+const COL_SRCI_TIER: usize = 6;
 const COL_SRCI_COST_INDEX: usize = 7;
+const SKILL_COSTS_FIELDS: usize = 5;
+const SKILL_TIERS_FIELDS: usize = 33;
+/// `SkillTiers.dbc`'s `Cost[16]`; the `Value[16]` after it is unread.
+const SKILL_TIER_COSTS: usize = 16;
 
 /// Flag `0x80` (cmangos `SKILL_FLAG_DISPLAY_SORTED`), which the tab classifier reads as the low
 /// byte's sign: the line's spells go to the General tab.
@@ -98,6 +105,8 @@ pub struct SkillLineInfo {
     pub alternate_verb: String,
     /// `canLink`, column 55: the crafting book offers a `|Htrade:` link.
     pub can_link: bool,
+    /// `skillCostsID`, column 2: the `SkillCostsData.dbc` run its rank costs read.
+    pub costs_id: u32,
 }
 
 /// One row of a linkable line's `SkillLineAbility.dbc` run, a bit of its `|Htrade:` link.
@@ -137,6 +146,8 @@ pub struct SkillRaceClass {
     pub min_level: u32,
     /// `skillCostID`, column 7: `GetSkillLineInfo`'s 12th return is this plus one.
     pub cost_index: u32,
+    /// `SkillTierID`, column 6: the `SkillTiers.dbc` row a tier costs read.
+    pub tier_id: u32,
 }
 
 impl SkillRaceClass {
@@ -237,6 +248,10 @@ pub struct SkillLineCatalog {
     categories: HashMap<u32, (String, u32)>,
     /// Skill line id to its `SkillRaceClassInfo` rows; empty if the DBC failed to load.
     race_class: HashMap<u32, Vec<SrciRow>>,
+    /// `SkillCostsData.dbc`: a `skillCostsID` to one row of three costs per rank, in file order.
+    rank_costs: HashMap<u32, Vec<[u32; 3]>>,
+    /// `SkillTiers.dbc`: a tier id to its sixteen step costs.
+    tiers: HashMap<u32, [u32; SKILL_TIER_COSTS]>,
     /// `forward_spellid` inverted, next rank to previous; injective on the 5875 data.
     rank_prev: HashMap<u32, u32>,
     /// Each linkable line's first contiguous run of rows in file order (`0x812030`).
@@ -273,6 +288,8 @@ impl SkillLineCatalog {
             lines: HashMap::new(),
             categories: HashMap::new(),
             race_class: HashMap::new(),
+            rank_costs: HashMap::new(),
+            tiers: HashMap::new(),
             rank_prev: HashMap::new(),
             link_runs: HashMap::new(),
         }
@@ -353,6 +370,8 @@ impl SkillLineCatalog {
             lines: HashMap::new(),
             categories: HashMap::new(),
             race_class: HashMap::new(),
+            rank_costs: HashMap::new(),
+            tiers: HashMap::new(),
             rank_prev,
             link_runs: HashMap::new(),
         }
@@ -370,6 +389,7 @@ impl SkillLineCatalog {
                 description: String::new(),
                 alternate_verb: String::new(),
                 can_link,
+                costs_id: 0,
             },
         );
         s.link_runs.insert(line_id, run);
@@ -442,6 +462,30 @@ impl SkillLineCatalog {
 
     /// The row the reference resolves for `line_id`, `race` and `class`; with none, its list build
     /// drops the line, and so must the pane.
+    /// The rank costs of `line_id` for `cost_index`, the first for rank 1 (`0x810f50`); empty for
+    /// a line with none.
+    pub fn rank_costs(&self, line_id: u32, cost_index: u32) -> std::sync::Arc<[u32]> {
+        let column = cost_index as usize;
+        self.lines
+            .get(&line_id)
+            .and_then(|l| self.rank_costs.get(&l.costs_id))
+            .map(|rows| {
+                rows.iter()
+                    .map(|c| c.get(column).copied().unwrap_or(0))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The cost of tier step `step` (`0x810460`), 0 with no such tier or past the sixteen.
+    pub fn tier_cost(&self, tier_id: u32, step: u32) -> u32 {
+        self.tiers
+            .get(&tier_id)
+            .and_then(|t| t.get(step as usize))
+            .copied()
+            .unwrap_or(0)
+    }
+
     pub fn race_class(&self, line_id: u32, race: u8, class: u8) -> Option<SkillRaceClass> {
         self.srci_row(line_id, race, class).map(|r| r.row)
     }
@@ -568,6 +612,57 @@ fn load_categories(chain: &mut Chain) -> HashMap<u32, (String, u32)> {
     map
 }
 
+pub(crate) fn skill_costs_data_schema() -> Schema {
+    let mut s = Schema::new("SkillCostsData");
+    for i in 0..SKILL_COSTS_FIELDS {
+        s.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32));
+    }
+    s
+}
+
+pub(crate) fn skill_tiers_schema() -> Schema {
+    let mut s = Schema::new("SkillTiers");
+    for i in 0..SKILL_TIERS_FIELDS {
+        s.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32));
+    }
+    s
+}
+
+/// `SkillCostsData.dbc` by `skillCostsID`, in file order; an unreadable file gives an empty map.
+fn load_rank_costs(chain: &mut Chain) -> HashMap<u32, Vec<[u32; 3]>> {
+    let mut map: HashMap<u32, Vec<[u32; 3]>> = HashMap::new();
+    let Ok(bytes) = chain.read_file(SKILL_COSTS_DATA) else {
+        return map;
+    };
+    let Ok(set) = parse(&bytes, skill_costs_data_schema(), "SkillCostsData.dbc") else {
+        return map;
+    };
+    for r in set.records() {
+        if let Some(id) = u32_at(r, 1) {
+            let cost = |i: usize| u32_at(r, 2 + i).unwrap_or(0);
+            map.entry(id).or_default().push([cost(0), cost(1), cost(2)]);
+        }
+    }
+    map
+}
+
+/// `SkillTiers.dbc` by id; an unreadable file gives an empty map.
+fn load_tiers(chain: &mut Chain) -> HashMap<u32, [u32; SKILL_TIER_COSTS]> {
+    let mut map = HashMap::new();
+    let Ok(bytes) = chain.read_file(SKILL_TIERS) else {
+        return map;
+    };
+    let Ok(set) = parse(&bytes, skill_tiers_schema(), "SkillTiers.dbc") else {
+        return map;
+    };
+    for r in set.records() {
+        if let Some(id) = u32_at(r, 0) {
+            map.insert(id, std::array::from_fn(|i| u32_at(r, 1 + i).unwrap_or(0)));
+        }
+    }
+    map
+}
+
 pub(crate) fn skill_race_class_info_schema() -> Schema {
     let mut s = Schema::new("SkillRaceClassInfo");
     for i in 0..SKILL_RACE_CLASS_INFO_FIELDS {
@@ -602,6 +697,7 @@ fn load_race_class_info(chain: &mut Chain) -> HashMap<u32, Vec<SrciRow>> {
                 flags: u32_at(r, COL_SRCI_FLAGS).unwrap_or(0),
                 min_level: u32_at(r, COL_SRCI_MIN_LEVEL).unwrap_or(0),
                 cost_index: u32_at(r, COL_SRCI_COST_INDEX).unwrap_or(0),
+                tier_id: u32_at(r, COL_SRCI_TIER).unwrap_or(0),
             },
         });
     }
@@ -636,6 +732,7 @@ pub fn load_skill_line_catalog(chain: &mut Chain) -> Result<SkillLineCatalog> {
                 description,
                 alternate_verb,
                 can_link,
+                costs_id: u32_at(r, 2).unwrap_or(0),
             },
         );
     }
@@ -696,12 +793,16 @@ pub fn load_skill_line_catalog(chain: &mut Chain) -> Result<SkillLineCatalog> {
 
     let race_class = load_race_class_info(chain);
     let categories = load_categories(chain);
+    let rank_costs = load_rank_costs(chain);
+    let tiers = load_tiers(chain);
 
     Ok(SkillLineCatalog {
         lines,
         abilities,
         categories,
         race_class,
+        rank_costs,
+        tiers,
         rank_prev,
         link_runs,
     })

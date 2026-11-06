@@ -1629,3 +1629,25 @@ pub const SMSG_IGNORE_DIMINISHING_RETURNS_CHEAT: u16 = 0x0406; // 1030
 pub const SMSG_FORCE_ANIM: u16 = 0x04D8; // 1240
 pub const SMSG_TOGGLE_XP_GAIN: u16 = 0x04ED; // 1261
 pub const SMSG_DEBUG_SERVER_GEO: u16 = 0x04FC; // 1276
+
+// The sends behind stock interface verbs.
+/// `EquipItemByName(item, slot)`: `u64` item guid, `u8` slot (`0x6e013e`).
+pub const CMSG_AUTOEQUIP_ITEM_SLOT: u16 = 0x010F; // 271
+/// `BuySkillTier(index)`: `u32` skill line (`0x5ce826`).
+pub const CMSG_SKILL_BUY_STEP: u16 = 0x021F; // 543
+/// `AcceptSkillUps()`: `u32` count, then `u32` line and `u32` points per line (`0x5ce67a`).
+pub const CMSG_SKILL_BUY_RANK: u16 = 0x0220; // 544
+/// `GMSurveySubmit()` ([`super::gm_survey_submit`], `0x5acd50`).
+pub const CMSG_GMSURVEY_SUBMIT: u16 = 0x032A; // 810
+/// `CancelItemTempEnchantment(slot)`: `u32` inventory slot (`0x6d7120`).
+pub const CMSG_CANCEL_TEMP_ENCHANTMENT: u16 = 0x0379; // 889
+/// `SetTaxiBenchmarkMode(on)`: one `u8` (`0x517b50`).
+pub const CMSG_SET_TAXI_BENCHMARK_MODE: u16 = 0x0389; // 905
+/// `SetOptOutOfLoot(on)`: one `u32` (`0x52cb40`).
+pub const CMSG_OPT_OUT_OF_LOOT: u16 = 0x0409; // 1033
+/// `GrantLevel(unit)`: the friend's packed guid (`0x523160`).
+pub const CMSG_GRANT_LEVEL: u16 = 0x040D; // 1037
+/// `DeclineInvite(channel)`: the channel name (`0x4fe4ef`).
+pub const CMSG_DECLINE_CHANNEL_INVITE: u16 = 0x0410; // 1040
+/// `GMReportLag(type)` ([`super::gm_report_lag`], `0x5acf30`).
+pub const CMSG_GM_REPORT_LAG: u16 = 0x0502; // 1282

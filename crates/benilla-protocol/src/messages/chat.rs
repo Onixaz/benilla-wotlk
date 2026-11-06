@@ -112,6 +112,10 @@ pub struct ChatMessage {
     pub chat_tag: u8,
     /// The achievement a `$a` names, on the two achievement lanes (0 elsewhere).
     pub achievement: u32,
+    /// The 3.3.5a type byte as it came, 0 on a line built client-side.
+    pub wire_type: u8,
+    /// The `u32` after the sender guid, which a chat complaint echoes (`0x50dfd0`).
+    pub sender_word: u32,
 }
 
 impl ChatMessage {
@@ -282,7 +286,7 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
     let wire_type = read_u8(r)?;
     let language = read_u32_le(r)?;
     let sender_guid = read_u64_le(r)?;
-    let _flags = read_u32_le(r)?;
+    let sender_word = read_u32_le(r)?;
     let mut sender_name = None;
     let mut channel = None;
     let target_guid;
@@ -344,6 +348,8 @@ pub(super) fn read_message_chat_wotlk(r: &mut &[u8], gm: bool) -> io::Result<Opt
         text,
         chat_tag,
         achievement,
+        wire_type,
+        sender_word,
     }))
 }
 

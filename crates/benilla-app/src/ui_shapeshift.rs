@@ -294,6 +294,50 @@ fn feed_shapeshift_bar(
     }
 }
 
+/// `Dismount()` (`0x51d170`, `0x7412e0`): alive and not on a taxi, `CMSG_CANCEL_MOUNT_AURA`.
+pub(crate) fn dismount(cast: &mut crate::spell::ScriptCast) {
+    let store = cast.targeting.self_store.iter().next();
+    let on_taxi =
+        store.is_some_and(|s| s.0.unit_flags() & crate::player::UNIT_FLAG_TAXI_FLIGHT != 0);
+    if store.is_some_and(|s| !s.0.is_dead_or_ghost()) && !on_taxi {
+        let _ = cast.ladder.commands.0.send(ClientCommand::CancelMountAura);
+    }
+}
+
+/// `CancelShapeshiftForm()` (`0x726ce0`): every cancelable aura of the active form's spell, unless
+/// charmed or the form's row forbids it (`0x802f80`).
+pub(crate) fn cancel_form(cast: &mut crate::spell::ScriptCast) {
+    let crate::spell::ScriptCast {
+        targeting, ladder, ..
+    } = cast;
+    let Some(store) = targeting.self_store.iter().next() else {
+        return;
+    };
+    let form_byte = store.0.unit_shapeshift_form();
+    if form_byte == 0 || store.0.unit_charmed_by().is_some() {
+        return;
+    }
+    let Some(spells) = ladder.spells.as_ref() else {
+        return;
+    };
+    let row = spells.forms.get(&u32::from(form_byte));
+    let Some(auras) = targeting.self_auras.iter().next() else {
+        return;
+    };
+    for aura in auras.iter().filter(|a| a.is_cancelable()) {
+        let Some(d) = spells.catalog.get(aura.spell_id) else {
+            continue;
+        };
+        if d.shapeshift_form.unwrap_or(0) == u32::from(form_byte)
+            && crate::ui_action::toggle::form_recast_disposition(d, form_byte, row) == Some(true)
+        {
+            let _ = ladder.commands.0.send(ClientCommand::CancelAura {
+                spell_id: aura.spell_id,
+            });
+        }
+    }
+}
+
 /// `CastShapeshiftForm`, forked on the form id like the info call: the active form cancels unless
 /// `SpellShapeshiftForm.dbc` `flags1 & 0x2` makes it a silent no-op (warrior stances); a
 /// force-admitted spell whose aura is up cancels, with no DBC guard since it has no form id.

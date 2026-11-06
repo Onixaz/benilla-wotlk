@@ -11,6 +11,15 @@
 #include "lobject.h"
 
 
+/* the addon the running code belongs to; every new object carries it */
+#if defined(_MSC_VER)
+#define LUA_GCOWNER_TLS __declspec(thread)
+#else
+#define LUA_GCOWNER_TLS __thread
+#endif
+extern LUA_GCOWNER_TLS lu_byte lua_gcowner;
+extern LUA_GCOWNER_TLS lu_byte lua_gcbaseowner;
+
 /*
 ** Possible states of the Garbage Collector
 */

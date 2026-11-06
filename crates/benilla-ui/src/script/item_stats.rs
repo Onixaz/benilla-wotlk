@@ -410,7 +410,7 @@ fn equip_loc_token(inventory_type: u32) -> &'static str {
 /// The reference's integer parse over an `item:` field: an optional `-`, then digits up to the
 /// first non-digit, with no whitespace skip and no `+`. Deviation: an overflow saturates at
 /// `u32::MAX` where the reference wraps, because only a script can overflow it.
-fn reference_atoi(s: &str) -> i64 {
+pub(super) fn reference_atoi(s: &str) -> i64 {
     let b = s.as_bytes();
     let (neg, mut i) = match b.first() {
         Some(b'-') => (true, 1),

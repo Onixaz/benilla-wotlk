@@ -75,6 +75,7 @@ fn bound_target(bound: TargetedBind) -> UseItemTarget {
         TargetedBind::Dest(dest) => UseItemTarget::Dest(dest),
         TargetedBind::Source(src) => UseItemTarget::Source(src),
         TargetedBind::Item(guid) => UseItemTarget::Item(guid),
+        TargetedBind::TradeItem => UseItemTarget::TradeItem,
         TargetedBind::Object(guid) => UseItemTarget::Object(guid),
         TargetedBind::Unit(guid) => UseItemTarget::Unit(guid),
         TargetedBind::Corpse(guid, target) => UseItemTarget::Corpse(target, guid),
@@ -151,6 +152,8 @@ pub(crate) enum TargetedBind {
     Source([f32; 3]),
     /// The bag or paper-doll click's item guid.
     Item(u64),
+    /// The partner's not-traded trade slot (`0x80c5f0`).
+    TradeItem,
     /// The world click's GameObject guid: a chest, door, vein or herb.
     Object(u64),
     /// The world click's unit guid.
@@ -193,6 +196,7 @@ impl CastLadder<'_, '_> {
                     spell_id,
                     item_guid,
                 },
+                TargetedBind::TradeItem => ClientCommand::CastSpellTradeItem { spell_id },
                 // The right-click OPEN_LOCK packet: the target bind's GameObject arm fills both.
                 TargetedBind::Object(go_guid) => {
                     ClientCommand::CastSpellGameObject { spell_id, go_guid }

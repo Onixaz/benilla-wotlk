@@ -374,10 +374,17 @@ pub(super) fn auto_join_zone_channels(
     ),
     mut walk: ResMut<ZoneChannelWalk>,
     mut entered: MessageReader<crate::net::EnteredWorldMessage>,
-    script: Option<NonSendMut<benilla_ui::script::UiScript>>,
+    mut script: Option<NonSendMut<benilla_ui::script::UiScript>>,
     mut catalog_fed: Local<crate::ui_script::VmMemo<Option<(String, bool)>>>,
 ) {
     let (player, cinematic) = (&body.0, &body.1);
+    if let Some(script) = script.as_deref_mut() {
+        for id in script.take_zone_mask_additions() {
+            if let Some(mask) = &mut channels.zone_mask {
+                *mask |= super::edit::zone_bit(id);
+            }
+        }
+    }
     // World entry arms the walk; the session-end edges disarm it.
     if entered.read().next().is_some() {
         walk.live = true;
@@ -405,7 +412,6 @@ pub(super) fn auto_join_zone_channels(
     // The VM's catalog is fed before those gates: to its verbs an empty catalog means "no such
     // built-in channel", which files `General` as a custom channel and joins one of that name.
     // Zone-less, a zone row carries `resolved: None`, the reference's nil leg.
-    let mut script = script;
     if !channels.channels.is_empty() {
         if let Some(script) = script.as_mut() {
             let at = zone.clone().unwrap_or_default();
@@ -477,6 +483,7 @@ pub(crate) fn zone_channel_catalog(
             shortcut: r.shortcut.clone(),
             resolved: compose(r, zone_name, city_word),
             listed: !r.is_city_only() || in_city,
+            auto_join: r.flags & 1 != 0,
         })
         .collect()
 }

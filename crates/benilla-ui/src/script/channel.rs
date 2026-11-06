@@ -16,6 +16,8 @@ pub struct ZoneChannelRow {
     pub shortcut: String,
     pub resolved: Option<String>,
     pub listed: bool,
+    /// `flags & 1`, a channel `ResetChatWindows` joins back.
+    pub auto_join: bool,
 }
 
 /// A channel verb's ask, drained by the app into its `CMSG_*`: the stock `ChatFrame.lua` slash
@@ -87,6 +89,10 @@ pub enum ChannelCommand {
     },
     /// `ChannelModerate(name)`: toggles moderation.
     Moderate {
+        name: String,
+    },
+    /// `DeclineInvite(channel)` (`0x4ffcc0`): `CMSG_CHAT_CHANNEL_DECLINE_INVITE`.
+    DeclineInvite {
         name: String,
     },
     /// `ChannelToggleAnnouncements(name)`.
@@ -366,6 +372,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // DeclineInvite(channel) (`0x4ffcc0`): a number names a joined slot, a name passes as it is.
+    g.set(
+        "DeclineInvite",
+        lua.create_function(|lua, channel: Value| {
+            let channel =
+                super::binding_abi::string_arg(lua, channel, "Usage: DeclineInvite(\"channel\")")?;
+            let name = match channel.trim().parse::<usize>() {
+                Ok(n) => {
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    name_at(&model, n).map(str::to_string)
+                }
+                Err(_) => Some(channel),
+            };
+            if let Some(name) = name {
+                push(lua, ChannelCommand::DeclineInvite { name });
+            }
+            Ok(())
+        })?,
+    )?;
+
     // The one-name verbs: each queues its `CMSG_*` and returns nothing.
     for (verb, make) in [
         (
@@ -550,12 +578,14 @@ mod command_tests {
                 shortcut: "General".into(),
                 resolved: Some("General - Elwynn Forest".into()),
                 listed: true,
+                auto_join: false,
             },
             ZoneChannelRow {
                 id: 2,
                 shortcut: "Trade".into(),
                 resolved: None,
                 listed: false,
+                auto_join: false,
             },
         ]
     }

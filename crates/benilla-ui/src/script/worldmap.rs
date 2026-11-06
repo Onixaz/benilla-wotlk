@@ -1813,12 +1813,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // The debug map verbs: `GetNumMapDebugObjects` pushes 0 (`0x608560`); `HasDebugZoneMap`,
-    // `GetDebugZoneMap` and `GetMapDebugObjectInfo` share `0x8e5250`, which returns nothing.
+    // `GetDebugZoneMap`, `GetMapDebugObjectInfo` and `TeleportToDebugObject` share `0x8e5250`,
+    // which returns nothing.
     g.set("GetNumMapDebugObjects", lua.create_function(|_, ()| Ok(0))?)?;
     for name in [
         "HasDebugZoneMap",
         "GetDebugZoneMap",
         "GetMapDebugObjectInfo",
+        "TeleportToDebugObject",
     ] {
         g.set(name, lua.create_function(|_, _: MultiValue| Ok(()))?)?;
     }

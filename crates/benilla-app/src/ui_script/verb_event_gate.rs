@@ -96,21 +96,6 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
 /// Pairs nothing fires on the verb's path, each with its reason.
 const GAP: &[(&str, &str, &str)] = &[
     (
-        "CancelSkillUps",
-        "SKILL_LINES_CHANGED",
-        "the reference's verb calls the temp-point reset and fires unconditionally; here the reset runs over a table this model keeps empty (`skills.rs`), so \
-         nothing moves and `ui_char.rs`'s feed has nothing to announce — the stock SkillFrame \
-         would only repaint under its own Close",
-    ),
-    (
-        "ClickTargetTradeButton",
-        "TRADE_REPLACE_ENCHANT",
-        "the reference runs the enchant clash check when a spell is on the cursor and \
-         fires this for the replace dialog; casting \
-         an enchant onto the partner's slot is not built here — `ui_trade.rs` only mirrors the \
-         wire's enchant slot — so the verb is the money arm alone",
-    ),
-    (
         "CloseTrade",
         "PLAYER_TRADE_MONEY",
         "fired only when the trade did not complete, \

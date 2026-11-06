@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{MacroState, ScriptValue, UiScript};
+use benilla_ui::script::{MacroState, UiScript};
 
 use crate::char_select::InWorldGated;
 use benilla_assets::{LockRecover, WorldAssets};
@@ -278,23 +278,17 @@ fn rebind_macro_spells(
 
 /// The event each macro line is fired as: id `0x188`, whose registry slot is written once, with
 /// this name.
-const EXECUTE_CHAT_LINE: &str = "EXECUTE_CHAT_LINE";
-
-/// Run a macro by its 1-based index; returns whether anything ran. Like the reference's runner
-/// (reached only from `UseAction`), it fires `EXECUTE_CHAT_LINE` per non-empty line and nothing
-/// else: the stock `ChatFrame1` sends each through its edit box (`ChatFrame.lua:1343`), and an
-/// addon registered for the event sees every macro line.
+/// Run a macro by its 1-based index; returns whether it held a line. The reference's runner fires
+/// `EXECUTE_CHAT_LINE` per line and nothing else: the stock `ChatFrame1` sends each through its edit
+/// box (`ChatFrame.lua:1343`), and an addon registered for the event sees every macro line.
 pub(crate) fn run_macro(script: &mut UiScript, index: u32) -> bool {
     let Some(body) = script.macros().get(index as usize).map(|m| m.body.clone()) else {
         return false;
     };
-    let lines: Vec<String> = run::macro_lines(&body).map(str::to_string).collect();
-    if lines.is_empty() {
+    if run::macro_lines(&body).next().is_none() {
         return false;
     }
-    debug!("ui_macro: running macro {index} ({} line(s))", lines.len());
-    for line in lines {
-        script.fire_event(EXECUTE_CHAT_LINE, vec![ScriptValue::Str(line)]);
-    }
+    debug!("ui_macro: running macro {index}");
+    script.run_macro_body(&body);
     true
 }

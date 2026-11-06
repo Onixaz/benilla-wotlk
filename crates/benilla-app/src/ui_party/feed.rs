@@ -1024,6 +1024,9 @@ pub(super) fn drain_party(
                 let _ = commands.0.send(ClientCommand::GroupAccept { roles });
                 group.pending_invite = None;
             }
+            PartyRequest::OptOutOfLoot(on) => {
+                let _ = commands.0.send(ClientCommand::OptOutOfLoot { on });
+            }
             PartyRequest::Decline => {
                 let _ = commands.0.send(ClientCommand::GroupDecline);
                 group.pending_invite = None;

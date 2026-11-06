@@ -949,6 +949,28 @@ pub(super) fn wants_press_visual(model: &Model, h: FrameHandle) -> bool {
     )
 }
 
+/// A `CLICK` binding's half (`0x563150`): the frame's `OnMouseDown` or `OnMouseUp`, then the click
+/// when the frame registered that half of `button`.
+pub(super) fn binding_click(
+    lua: &Lua,
+    frame: &Table,
+    button: &str,
+    down: bool,
+) -> mlua::Result<()> {
+    let h = frame_handle_of(lua, frame)?;
+    let (id, wants) = {
+        let mut model = crate::script::model_mut_of(lua);
+        (model.frame_id(h), wants_click(&model, h, button, !down))
+    };
+    let script = if down { "OnMouseDown" } else { "OnMouseUp" };
+    let name = Value::String(lua.create_string(button)?);
+    super::event::fire_widget_handler(lua, id, script, vec![name])?;
+    if wants {
+        click_button(lua, id, button, down);
+    }
+    Ok(())
+}
+
 /// The click shared by the input path and `Click()`: a disabled Button fires nothing, a CheckButton
 /// toggles before `OnClick` runs, then `OnClick` gets the button name alone as `arg1` (the
 /// reference fires it with the format `"%s"`); `down`, true only for a click a `…ButtonDown`

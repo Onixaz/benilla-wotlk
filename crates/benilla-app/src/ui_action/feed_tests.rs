@@ -534,6 +534,7 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
             description: String::new(),
             alternate_verb: String::new(),
             can_link: false,
+            costs_id: 0,
         },
     )]);
 
