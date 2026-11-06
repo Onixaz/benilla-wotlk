@@ -103,7 +103,7 @@ pub struct UnitCombatStats {
     /// The main hand's skill line (picked by [`weapon_subclass_skill`]) as `(value + perm, temp)`,
     /// the split the reference's skill reader makes for all four skill pairs.
     pub main_weapon_skill: (i32, i32),
-    /// The off hand's pair, read the same way; an empty or non-weapon off hand is Unarmed.
+    /// The off hand's pair, read the same way; an empty off hand is Unarmed, a non-weapon `(0, 0)`.
     pub offhand_weapon_skill: (i32, i32),
     /// The ranged weapon's pair, the same split. Player only: `UnitRangedAttack` has no creature
     /// fallback, so a pet answers `(0, 0)` where `UnitDefense` answers level * 5.
@@ -111,6 +111,8 @@ pub struct UnitCombatStats {
     /// The [`SKILL_DEFENSE`] pair, the same split. The player's only: `UnitDefense` gives a
     /// non-player level * 5 instead (`cgunit_skill`), so the pet feed leaves it unset.
     pub defense_skill: (i32, i32),
+    /// The skill line in each hand, main, off, ranged (`0x6d6660`): Unarmed when empty, 0 for a non-weapon.
+    pub hand_skill_lines: [u32; 3],
     /// Whether a wand is equipped (`HasWandEquipped`).
     pub has_wand: bool,
     /// Avoidance chances, already percents on the wire (`PLAYER_DODGE_PERCENTAGE` and siblings).
@@ -192,6 +194,7 @@ impl Default for UnitCombatStats {
             offhand_weapon_skill: (0, 0),
             ranged_weapon_skill: (0, 0),
             defense_skill: (0, 0),
+            hand_skill_lines: [0; 3],
             has_wand: false,
             dodge_percent: 0.0,
             parry_percent: 0.0,
@@ -504,6 +507,44 @@ fn cgunit_skill(model: &Model, token: &str) -> i64 {
     model.unit(token).map_or(0, |u| i64::from(u.level)) * 5
 }
 
+/// The ratings the skill readers add, as 0-based `GetCombatRatingBonus` indices.
+const CR_WEAPON_SKILL: usize = 0;
+const CR_DEFENSE_SKILL: usize = 1;
+const CR_WEAPON_SKILL_HAND: [usize; 3] = [20, 21, 22];
+
+impl UnitCombatStats {
+    /// A rating's whole skill points: its percentage less 0.5, stored by `fistp` to nearest even (`0x6de73a`).
+    fn rating_skill_points(&self, rating: usize) -> i32 {
+        (f64::from(self.combat_rating_bonus[rating]) - 0.5).round_ties_even() as i32
+    }
+
+    /// A hand's weapon skill rating plus its own rating, each rounded alone (`0x6e0cba`, `0x6e0db3`).
+    fn hand_rating_points(&self, hand: usize) -> i32 {
+        self.rating_skill_points(CR_WEAPON_SKILL)
+            .saturating_add(self.rating_skill_points(CR_WEAPON_SKILL_HAND[hand]))
+    }
+
+    /// `GetSkillLineInfo`'s rank share: the points of the first hand holding `skill_id` (`0x5ce015`).
+    pub(super) fn skill_line_rating_points(&self, skill_id: u32) -> i32 {
+        self.hand_skill_lines
+            .iter()
+            .position(|&line| line == skill_id)
+            .map_or(0, |hand| self.hand_rating_points(hand))
+    }
+
+    /// The defense pair with the defense rating in its modifier (`0x6de725`).
+    fn rated_defense(&self) -> (i32, i32) {
+        let (base, modifier) = self.defense_skill;
+        let points = self.rating_skill_points(CR_DEFENSE_SKILL);
+        (base, modifier.saturating_add(points))
+    }
+
+    /// A weapon pair with its hand's rating points in the modifier.
+    fn rated_weapon(&self, (base, modifier): (i32, i32), hand: usize) -> (i32, i32) {
+        (base, modifier.saturating_add(self.hand_rating_points(hand)))
+    }
+}
+
 /// `token`'s inventory slot, unit-keyed as in the reference so the inspect doll reuses these
 /// bindings: `"player"` reads our own items, the inspected unit its public
 /// `PLAYER_VISIBLE_ITEM_*` entries, which carry no counts or durability.
@@ -781,10 +822,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitAttackBothHands(unit) → (mainBase, mainMod, offBase, offMod): the reference calls
-    // `[vtbl+0xb0]` for hand 0 then hand 1. Stock reads only the first pair
-    // (`PaperDollFrame.lua:398-399`). A pet's unit-class body ignores the hand, so both pairs are
-    // `(level * 5, 0)`.
+    // UnitAttackBothHands(unit) → (mainBase, mainMod, offBase, offMod): `[vtbl+0x144]` per hand; a pet's body gives `(level * 5, 0)` twice.
     g.set(
         "UnitAttackBothHands",
         lua.create_function(|lua, token: Option<String>| {
@@ -796,8 +834,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .player_combat_stats
                     .as_ref()
                     .map_or((0, 0, 0, 0), |s| {
-                        let (mb, mm) = skill_clamped(s.main_weapon_skill);
-                        let (ob, om) = skill_clamped(s.offhand_weapon_skill);
+                        let (mb, mm) = skill_clamped(s.rated_weapon(s.main_weapon_skill, 0));
+                        let (ob, om) = skill_clamped(s.rated_weapon(s.offhand_weapon_skill, 1));
                         (mb, mm, ob, om)
                     }),
                 Some("pet") => {
@@ -809,23 +847,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitRangedAttack(unit) → (base, modifier), the ranged weapon's skill pair.
+    // UnitRangedAttack(unit) → (base, modifier), the ranged hand's rated pair (`0x6e0d30`), unclamped.
     g.set(
         "UnitRangedAttack",
         lua.create_function(|lua, token: Option<String>| {
             Ok(with_unit_stats(lua, &token, |s| {
-                (
-                    i64::from(s.ranged_weapon_skill.0),
-                    i64::from(s.ranged_weapon_skill.1),
-                )
+                let (base, modifier) = s.rated_weapon(s.ranged_weapon_skill, 2);
+                (i64::from(base), i64::from(modifier))
             }))
         })?,
     )?;
 
-    // UnitDefense(unit) → (base, modifier); stock splits the modifier's sign itself
-    // (`PaperDollFrame.lua:259-271`). The gate is SELF or `UNIT_FIELD_SUMMONEDBY` = us, then
-    // `[vtbl+0xac]`: the player class reads the Defense skill, the unit class answers level * 5 and
-    // 0. Any other token gets the gate's zeros.
+    // UnitDefense(unit) → (base, modifier): self or our summon, then `[vtbl+0x140]`, the player's rated Defense or a unit's `(level * 5, 0)`.
     g.set(
         "UnitDefense",
         lua.create_function(|lua, token: Option<String>| {
@@ -836,7 +869,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Some("player") => model
                     .player_combat_stats
                     .as_ref()
-                    .map_or((0, 0), |s| skill_clamped(s.defense_skill)),
+                    .map_or((0, 0), |s| skill_clamped(s.rated_defense())),
                 Some("pet") => (cgunit_skill(&model, "pet"), 0),
                 _ => (0, 0),
             })
@@ -1470,6 +1503,105 @@ mod tests {
                 .unwrap(),
             (30, -30),
             "the same clamp, the same law"
+        );
+    }
+
+    /// A snapshot with `(index, percent)` rating bonuses over `stats()`.
+    fn rated(bonuses: &[(usize, f32)]) -> UnitCombatStats {
+        let mut s = stats();
+        for &(i, percent) in bonuses {
+            s.combat_rating_bonus[i] = percent;
+        }
+        s
+    }
+
+    fn defense(s: &mut UiScript) -> (i64, i64) {
+        s.eval(r#"return UnitDefense("player")"#).unwrap()
+    }
+
+    /// `UnitDefense` adds the defense rating as percent less 0.5, rounded to nearest even.
+    #[test]
+    fn defense_takes_the_rating_less_a_half_rounded_to_even() {
+        let mut s = UiScript::new().unwrap();
+        for (percent, points) in [
+            (0.0, 0),    // -0.5 ties to 0
+            (0.4, 0),    // -0.1
+            (1.0, 0),    // 0.5 ties to 0
+            (2.0, 2),    // 1.5 ties to 2
+            (3.0, 2),    // 2.5 ties to 2
+            (30.7, 30),  // 30.2
+            (30.9, 30),  // 30.4
+            (31.25, 31), // 30.75
+            (32.0, 32),  // 31.5 ties to 32
+        ] {
+            s.set_player_combat_stats(Some(rated(&[(1, percent)])));
+            assert_eq!(defense(&mut s), (55, 4 + points), "at {percent}%");
+        }
+        // The weapon ratings are not defense's.
+        s.set_player_combat_stats(Some(rated(&[(0, 40.0), (20, 40.0)])));
+        assert_eq!(defense(&mut s), (55, 4));
+    }
+
+    /// The modifier clamp runs on the rated modifier.
+    #[test]
+    fn the_skill_clamp_runs_after_the_rating() {
+        let mut s = UiScript::new().unwrap();
+        s.set_player_combat_stats(Some(UnitCombatStats {
+            defense_skill: (30, -90),
+            ..rated(&[(1, 41.0)])
+        }));
+        assert_eq!(defense(&mut s), (30, -30), "-90 + 40 is still below -30");
+        s.set_player_combat_stats(Some(UnitCombatStats {
+            defense_skill: (30, -40),
+            ..rated(&[(1, 41.0)])
+        }));
+        assert_eq!(defense(&mut s), (30, 0), "-40 + 40 stays unclamped");
+    }
+
+    /// Hand 0 adds weapon skill and main hand, hand 1 weapon skill and off hand, each rounded alone.
+    #[test]
+    fn attack_both_hands_takes_the_weapon_and_the_hand_rating() {
+        let mut s = UiScript::new().unwrap();
+        // Weapon skill 2.5 rounds to 2, main 4.0 to 4 (3.5), off 6.0 to 6 (5.5), ranged is not read.
+        s.set_player_combat_stats(Some(rated(&[
+            (0, 2.5),
+            (1, 90.0),
+            (20, 4.0),
+            (21, 6.0),
+            (22, 50.0),
+        ])));
+        assert_eq!(
+            s.eval::<(i64, i64, i64, i64)>(r#"return UnitAttackBothHands("player")"#)
+                .unwrap(),
+            (25, 2 + 2 + 4, 20, 2 + 6)
+        );
+    }
+
+    /// The ranged hand adds weapon skill and ranged, with no clamp; a pet's pair stays bare.
+    #[test]
+    fn ranged_attack_takes_the_weapon_and_the_ranged_rating() {
+        let mut s = UiScript::new().unwrap();
+        s.set_player_combat_stats(Some(rated(&[(0, 2.5), (20, 40.0), (21, 40.0), (22, 8.0)])));
+        s.set_pet_combat_stats(Some(pet_stats()));
+        assert_eq!(
+            s.eval::<(i64, i64)>(r#"return UnitRangedAttack("player")"#)
+                .unwrap(),
+            (18, 2 + 8)
+        );
+        assert_eq!(
+            s.eval::<(i64, i64)>(r#"return UnitRangedAttack("pet")"#)
+                .unwrap(),
+            (0, 0)
+        );
+        s.set_player_combat_stats(Some(UnitCombatStats {
+            ranged_weapon_skill: (18, -100),
+            ..rated(&[(22, 8.0)])
+        }));
+        assert_eq!(
+            s.eval::<(i64, i64)>(r#"return UnitRangedAttack("player")"#)
+                .unwrap(),
+            (18, -92),
+            "unlike the other two, the ranged reader has no clamp"
         );
     }
 

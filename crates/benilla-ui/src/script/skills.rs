@@ -304,16 +304,8 @@ fn selected_index(model: &Model) -> u32 {
         .map_or(0, |p| (p + 1) as u32)
 }
 
-/// `GetSkillLineInfo`'s `(skillRank, skillMaxRank)`, in the client's order:
-///
-/// ```text
-/// skillRank    = rank > 0 ? rank + permBonus : rank
-/// skillMaxRank = max  > 0 ? max  + permBonus : max
-/// if mono { skillMaxRank = 1; if skillRank > 1 { skillRank = 1 } }
-/// ```
-///
-/// Saturating at 0 keeps a negative permanent bonus from wrapping.
-fn displayed_ranks(e: &SkillEntry) -> (i64, i64) {
+/// `GetSkillLineInfo`'s `(skillRank, skillMaxRank)`: a nonzero rank folds the permanent bonus, floored at 0, the rank takes `rating_points`, a mono line clamps last (`0x5ce0c8`).
+fn displayed_ranks(e: &SkillEntry, rating_points: i64) -> (i64, i64) {
     let fold = |v: u32| {
         if v > 0 {
             (i64::from(v) + i64::from(e.perm_bonus)).max(0)
@@ -321,7 +313,7 @@ fn displayed_ranks(e: &SkillEntry) -> (i64, i64) {
             0
         }
     };
-    let (mut rank, mut max) = (fold(e.value), fold(e.max));
+    let (mut rank, mut max) = (fold(e.value) + rating_points, fold(e.max));
     if e.mono {
         max = 1;
         rank = rank.min(1);
@@ -379,7 +371,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 }
                 Row::Entry(ei) => {
                     let e = &model.skills.entries[ei];
-                    let (rank, max) = displayed_ranks(e);
+                    let rating_points = model
+                        .player_combat_stats
+                        .as_ref()
+                        .map_or(0, |s| s.skill_line_rating_points(e.skill_id));
+                    let (rank, max) = displayed_ranks(e, i64::from(rating_points));
                     let ups = skill_ups(&model, e.skill_id);
                     let cost = |c: u32| match c {
                         0 => Value::Nil,
@@ -986,6 +982,105 @@ mod tests {
                 "slot 1 must stay nil — it drives the stock file's own `if (not skillName)` early-out"
             );
         }
+    }
+
+    /// The player's hands hold Swords, Daggers and Bows, on these rating percentages.
+    fn rated_hands() -> crate::script::UnitCombatStats {
+        let mut s = crate::script::UnitCombatStats {
+            hand_skill_lines: [43, 173, 45],
+            ..Default::default()
+        };
+        s.combat_rating_bonus[0] = 2.5; // 2 points
+        s.combat_rating_bonus[20] = 4.0; // 4 points
+        s.combat_rating_bonus[21] = 6.0; // 6 points
+        s.combat_rating_bonus[22] = 8.0; // 8 points
+        s
+    }
+
+    /// `(name, skillRank, skillMaxRank)` of every line.
+    fn ranks(s: &UiScript) -> Vec<(String, i64, i64)> {
+        let n = s.eval::<i64>("return GetNumSkillLines()").unwrap();
+        (1..=n)
+            .filter_map(|i| {
+                let (name, header, rank, max) = s
+                    .eval::<(String, Option<i64>, i64, i64)>(&format!(
+                        "local n, h, _, r, _, _, m = GetSkillLineInfo({i}) return n, h, r, m"
+                    ))
+                    .unwrap();
+                header.is_none().then_some((name, rank, max))
+            })
+            .collect()
+    }
+
+    /// Each hand's line takes weapon skill plus that hand's rating; every other line stays bare.
+    #[test]
+    fn a_line_in_hand_takes_the_weapon_and_the_hand_rating() {
+        let mut s = UiScript::new().unwrap();
+        s.set_skills(SkillsState {
+            points: 0,
+            entries: vec![
+                entry(43, "Swords", 200, 300, 0, 1, "Weapon Skills", 1),
+                entry(173, "Daggers", 200, 300, 0, 1, "Weapon Skills", 1),
+                entry(45, "Bows", 200, 300, 0, 1, "Weapon Skills", 1),
+                entry(44, "Axes", 200, 300, 0, 1, "Weapon Skills", 1),
+            ],
+        });
+        s.set_player_combat_stats(Some(rated_hands()));
+        assert_eq!(
+            ranks(&s),
+            vec![
+                ("Axes".to_string(), 200, 300),
+                ("Bows".to_string(), 200 + 2 + 8, 300),
+                ("Daggers".to_string(), 200 + 2 + 6, 300),
+                ("Swords".to_string(), 200 + 2 + 4, 300),
+            ]
+        );
+    }
+
+    /// One line in two hands takes the first hand's rating.
+    #[test]
+    fn a_line_in_two_hands_takes_the_first_hands_rating() {
+        let mut s = UiScript::new().unwrap();
+        s.set_skills(SkillsState {
+            points: 0,
+            entries: vec![entry(43, "Swords", 200, 300, 0, 1, "Weapon Skills", 1)],
+        });
+        s.set_player_combat_stats(Some(crate::script::UnitCombatStats {
+            hand_skill_lines: [43, 43, 45],
+            ..rated_hands()
+        }));
+        assert_eq!(ranks(&s), vec![("Swords".to_string(), 206, 300)]);
+        s.set_player_combat_stats(Some(crate::script::UnitCombatStats {
+            hand_skill_lines: [0, 43, 43],
+            ..rated_hands()
+        }));
+        assert_eq!(ranks(&s), vec![("Swords".to_string(), 208, 300)]);
+    }
+
+    /// The single-rank clamp runs after the rating, and the next rank's price reads the rated rank.
+    #[test]
+    fn the_mono_clamp_and_the_rank_cost_read_the_rated_rank() {
+        let mut s = UiScript::new().unwrap();
+        let mut priced = entry(173, "Daggers", 1, 300, 0, 1, "Weapon Skills", 2);
+        priced.rank_costs = (1..=12).map(|i| i * 10).collect();
+        s.set_skills(SkillsState {
+            points: 0,
+            entries: vec![entry(43, "Swords", 1, 300, 0, 3, "Class Skills", 1), priced],
+        });
+        s.set_player_combat_stats(Some(rated_hands()));
+        assert_eq!(
+            ranks(&s),
+            vec![
+                ("Swords".to_string(), 1, 1),
+                ("Daggers".to_string(), 9, 300)
+            ]
+        );
+        assert_eq!(
+            s.eval::<i64>("return (select(10, GetSkillLineInfo(4)))")
+                .unwrap(),
+            100,
+            "the tenth rank's price, the rated 9 plus one"
+        );
     }
 
     #[test]
