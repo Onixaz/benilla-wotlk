@@ -298,7 +298,7 @@ fn a_link_is_one_step_of_the_word_keys() {
 }
 
 /// Non-ASCII whitespace: the forward walk and both deletes decode a character, so U+3000 and U+00A0
-/// split words. Ctrl+Left decodes the one byte before the caret (`0x964083`), so it crosses them
+/// split words. Ctrl+Left decodes the one byte before the caret (`0x96407f`), so it crosses them
 /// as word characters. U+0085 is not in the CRT's table.
 #[test]
 fn non_ascii_whitespace_splits_every_word_key_but_ctrl_left() {

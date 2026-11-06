@@ -997,7 +997,7 @@ fn space_before(text: &str, at: usize) -> bool {
         .is_some_and(is_space)
 }
 
-/// Whether the byte before `at`, decoded alone (`0x964083`), is whitespace: a multi-byte
+/// Whether the byte before `at`, decoded alone (`0x96407f`), is whitespace: a multi-byte
 /// character's last byte decodes to nothing.
 fn ascii_space_before(text: &str, at: usize) -> bool {
     at > 0 && text.as_bytes()[at - 1] < 0x80 && is_space(text.as_bytes()[at - 1] as char)
