@@ -54,12 +54,12 @@ impl GestureQueue {
     }
 }
 
-/// The gesture a chat line plays, by wire chat type and text. Only `SAY`, `YELL` and `PARTY`
-/// gesture, never a creature's `MONSTER_SAY`/`MONSTER_YELL`. A text equal, case-insensitively, to a
-/// `LAUGH_WORDn` global laughs (the scan stops at the first missing or empty one); otherwise
-/// `PARTY` does nothing, `YELL` shouts whatever its text, and `SAY` reads its last byte only: `?`
-/// asks, `!` exclaims, anything else talks. `laugh_word(n)` reads the global off the player's own
-/// FrameXML; `None` ends the list.
+/// The gesture a chat line plays, by wire chat type and text (`0x50a199`). Only `SAY`, `YELL`,
+/// `PARTY` and `PARTY_LEADER` gesture, never a creature's `MONSTER_SAY`/`MONSTER_YELL`. A text equal,
+/// case-insensitively, to a `LAUGH_WORDn` global laughs (the scan stops at the first missing or
+/// empty one); otherwise the party lines do nothing, `YELL` shouts whatever its text, and `SAY`
+/// reads its last byte only: `?` asks, `!` exclaims, anything else talks. `laugh_word(n)` reads the
+/// global off the player's own FrameXML; `None` ends the list.
 pub(crate) fn select_gesture(
     chat_type: u8,
     text: &str,
@@ -68,7 +68,7 @@ pub(crate) fn select_gesture(
     use benilla_protocol::messages as m;
     if !matches!(
         chat_type,
-        m::CHAT_MSG_SAY | m::CHAT_MSG_YELL | m::CHAT_MSG_PARTY
+        m::CHAT_MSG_SAY | m::CHAT_MSG_YELL | m::CHAT_MSG_PARTY | m::CHAT_MSG_PARTY_LEADER
     ) {
         return None;
     }
@@ -87,7 +87,7 @@ pub(crate) fn select_gesture(
             Some(b'!') => Gesture::Exclamation,
             _ => Gesture::Talk,
         }),
-        _ => None, // PARTY, having failed the laugh scan
+        _ => None, // a party line, having failed the laugh scan
     }
 }
 
@@ -194,10 +194,17 @@ mod tests {
             "the one gesture a party line reaches"
         );
         assert_eq!(
-            select_gesture(m::CHAT_MSG_PARTY, "hello!", words),
-            None,
-            "a party line with no laugh word gestures nothing"
+            select_gesture(m::CHAT_MSG_PARTY_LEADER, "tehe", words),
+            Some(Gesture::Laugh),
+            "a party leader's line laughs as a member's does"
         );
+        for ty in [m::CHAT_MSG_PARTY, m::CHAT_MSG_PARTY_LEADER] {
+            assert_eq!(
+                select_gesture(ty, "hello!", words),
+                None,
+                "a party line with no laugh word gestures nothing"
+            );
+        }
     }
 
     #[test]
@@ -221,7 +228,7 @@ mod tests {
 
     /// A creature's bark arrives as `MONSTER_SAY`/`MONSTER_YELL`, not `SAY`/`YELL`.
     #[test]
-    fn only_say_yell_and_party_are_eligible() {
+    fn only_say_yell_and_the_party_lines_are_eligible() {
         for ty in [
             m::CHAT_MSG_MONSTER_SAY,
             m::CHAT_MSG_MONSTER_YELL,

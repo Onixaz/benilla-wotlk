@@ -791,12 +791,10 @@ pub(super) struct SpeakerEffects<'w> {
 /// `UNIT_FIELD_FLAGS` bit `0x20000000` (`PREVENT_ANIM`: Polymorph, Kidney Shot, Gouge, Sleep).
 const UNIT_FLAG_PREVENT_ANIM: u32 = 0x2000_0000;
 
-/// Whether the speaker's flags suppress the chat talk gesture. Only the handler's own copy of the
-/// selector tests the bit (the one `0xa0` test of `0x20000000` in the image), which runs when the
-/// sender's name is already cached (`tries == 0`); a line held for the name query gestures from the
-/// deferred copies, which do not.
-pub(super) fn gesture_prevented(tries: u16, speaker_flags: Option<u32>) -> bool {
-    tries == 0 && speaker_flags.is_some_and(|f| f & UNIT_FLAG_PREVENT_ANIM != 0)
+/// Whether the speaker's flags suppress the chat talk gesture (`0x50a1ce`). The composer holds the
+/// one selector, and a line queued for a name re-enters it, so a held line passes the same gate.
+pub(super) fn gesture_prevented(speaker_flags: Option<u32>) -> bool {
+    speaker_flags.is_some_and(|f| f & UNIT_FLAG_PREVENT_ANIM != 0)
 }
 
 /// Drain [`ChatLog`]: resolve names (ask-once, bounded), build the events and [`route`] them.
@@ -1000,8 +998,7 @@ pub(super) fn feed_chat(
                 }
                 // The gesture reads the raw type and `plain`, not the garbled text: the selector is
                 // in the parser, on the buffer the handler hands the composer, so a Horde `lol`
-                // laughs for every observer. The immediate path alone refuses a speaker that cannot
-                // animate.
+                // laughs for every observer.
                 let speaker_flags = guids
                     .0
                     .get(&msg.sender_guid)
@@ -1015,7 +1012,7 @@ pub(super) fn feed_chat(
                             .get::<String>(format!("LAUGH_WORD{n}"))
                             .ok()
                     })
-                    .filter(|_| !gesture_prevented(tries, speaker_flags))
+                    .filter(|_| !gesture_prevented(speaker_flags))
                 {
                     speaker.gestures.push(msg.sender_guid, gesture);
                 }
