@@ -79,6 +79,31 @@ fn pane_rows(s: &mut UiScript, prefix: &str) -> Vec<(Option<String>, Option<Stri
         .collect()
 }
 
+/// The stock sheet's Defense row carries the rated figure: 400 base, 31.5% rating, 31 points.
+#[test]
+fn the_stock_defense_row_shows_the_rated_skill() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _load_failures) =
+        super::layer_tests::production_load_with("paperdoll-defense", false, "", |_| {});
+    let _ = s.take_errors();
+    s.set_unit("player", Some(mage()));
+    let mut stats = sheet_stats();
+    stats.combat_rating_bonus[1] = 31.5;
+    s.set_player_combat_stats(Some(stats));
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
+    s.run(r#"UpdatePaperdollStats("PlayerStatFrameRight", "PLAYERSTAT_DEFENSES")"#)
+        .unwrap();
+    let text = s
+        .eval::<Option<String>>("return PlayerStatFrameRight2StatText:GetText()")
+        .unwrap()
+        .unwrap_or_default();
+    assert!(text.contains("431"), "the Defense row reads {text:?}");
+}
+
 /// A mage's sheet: the panes default to Base Stats and Spell, both dropdowns carry those labels,
 /// and every row of every pane fills with no error from the sheet's code.
 #[test]

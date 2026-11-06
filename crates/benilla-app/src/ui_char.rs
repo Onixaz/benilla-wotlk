@@ -418,8 +418,7 @@ fn slot_entry(store: &ObjectStore, objects: &Objects, slot0: u8) -> Option<u32> 
     objects.object(guid)?.object_entry()
 }
 
-/// The weapon-skill line for `slot0`: vmangos's subclass table (`Item.cpp:700`) for a weapon,
-/// Unarmed (162) for anything else.
+/// The skill line of the hand at `slot0` (`0x6d6660`): Unarmed when empty, a weapon's subclass line, 0 for anything else.
 fn weapon_skill_id(
     store: &ObjectStore,
     objects: &Objects,
@@ -434,9 +433,9 @@ fn weapon_skill_id(
         return SKILL_UNARMED; // in flight: refined when the template lands
     };
     if t.class != ITEM_CLASS_WEAPON {
-        return SKILL_UNARMED;
+        return 0;
     }
-    weapon_subclass_skill(t.subclass).unwrap_or(SKILL_UNARMED)
+    weapon_subclass_skill(t.subclass).unwrap_or(0)
 }
 
 /// A skill's `(value + permanent bonus, temporary bonus)`, split as the reference splits it; value
@@ -560,21 +559,18 @@ fn combat_stats(
 
     let main_skill = weapon_skill_id(store, objects, items, commands, SLOT_MAIN_HAND);
     let offhand_skill = weapon_skill_id(store, objects, items, commands, SLOT_OFF_HAND);
-    let ranged_skill_id = slot_entry(store, objects, SLOT_RANGED)
-        .and_then(|e| items.template(e, 0, commands))
-        .filter(|t| t.class == ITEM_CLASS_WEAPON)
-        .and_then(|t| weapon_subclass_skill(t.subclass));
+    let ranged_skill = weapon_skill_id(store, objects, items, commands, SLOT_RANGED);
 
     UnitCombatStats {
         has_offhand,
         has_wand,
         main_weapon_skill: skill_pair(store, main_skill),
-        // `UnitAttackBothHands`'s second pair; a shield or an empty off hand reads Unarmed.
+        // `UnitAttackBothHands`'s second pair.
         offhand_weapon_skill: skill_pair(store, offhand_skill),
-        ranged_weapon_skill: ranged_skill_id.map_or((0, 0), |id| skill_pair(store, id)),
-        // `UnitDefense`'s pair. The 1.12 player sheet has no Defense row: its `SKILL_LINES_CHANGED`
-        // arm (`PaperDollFrame.lua:70-72`) redraws only the Attack row.
+        ranged_weapon_skill: skill_pair(store, ranged_skill),
+        // `UnitDefense`'s pair.
         defense_skill: skill_pair(store, SKILL_DEFENSE),
+        hand_skill_lines: [main_skill, offhand_skill, ranged_skill],
         // `GetDodgeChance`/`GetParryChance`/`GetBlockChance`: player fields, already percentages.
         dodge_percent: store.0.player_dodge_percentage().unwrap_or(0.0),
         parry_percent: store.0.player_parry_percentage().unwrap_or(0.0),
@@ -1297,6 +1293,59 @@ mod tests {
             (F_SKILL + 2, pair(0, u16::MAX - 9)), // perm = -10
         ]));
         assert_eq!(skill_pair(&cursed, 95), (-5, 0));
+    }
+
+    /// A hand's line: Unarmed when empty, a weapon's subclass line, 0 for a shield or a relic.
+    #[test]
+    fn a_hands_skill_line_follows_the_item_in_it() {
+        /// `PLAYER_FIELD_INV_SLOT_HEAD`, one guid pair per slot.
+        const F_INV_SLOT_HEAD: u16 = 486;
+        const SWORD: u64 = 0x4000_0000_0000_0001;
+        const SHIELD: u64 = 0x4000_0000_0000_0002;
+        let mut app = App::new();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        app.init_resource::<Items>()
+            .init_resource::<crate::net::GuidIndex>()
+            .insert_resource(NetCommands(tx));
+        let inv = |slot: u8| F_INV_SLOT_HEAD + 2 * u16::from(slot);
+        let world = app.world_mut();
+        world.spawn((
+            SelfPlayer,
+            ObjectStore(ObjectFields::from_pairs(&[
+                (inv(SLOT_MAIN_HAND), SWORD as u32),
+                (inv(SLOT_MAIN_HAND) + 1, (SWORD >> 32) as u32),
+                (inv(SLOT_OFF_HAND), SHIELD as u32),
+                (inv(SLOT_OFF_HAND) + 1, (SHIELD >> 32) as u32),
+                (inv(SLOT_RANGED), 0),
+                (inv(SLOT_RANGED) + 1, 0),
+            ])),
+        ));
+        for (guid, entry, class, subclass) in [(SWORD, 1, ITEM_CLASS_WEAPON, 7), (SHIELD, 2, 4, 6)]
+        {
+            let fields = ObjectFields::from_pairs(&[(F_OBJECT_ENTRY, entry)]);
+            crate::items::test_spawn_item(world, guid, fields, false);
+            let template = benilla_protocol::ItemInfo {
+                class,
+                subclass,
+                ..crate::items::test_template("Hand item")
+            };
+            world
+                .resource_mut::<Items>()
+                .insert_template(entry, Some(template));
+        }
+        let lines = world
+            .run_system_once(
+                |me: Query<&ObjectStore, With<SelfPlayer>>,
+                 objects: Objects,
+                 items: Res<Items>,
+                 commands: Res<NetCommands>| {
+                    let store = me.single().unwrap();
+                    [SLOT_MAIN_HAND, SLOT_OFF_HAND, SLOT_RANGED]
+                        .map(|slot| weapon_skill_id(store, &objects, &items, &commands, slot))
+                },
+            )
+            .unwrap();
+        assert_eq!(lines, [43, 0, SKILL_UNARMED]);
     }
 
     /// `PLAYER_FIELD_BANK_BAG_SLOT_1`, bank bag slot 0's guid pair.
