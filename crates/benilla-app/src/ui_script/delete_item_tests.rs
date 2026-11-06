@@ -3,8 +3,15 @@
 //! Jerky (117, quality 1) and Flurry Axe (871, quality 4).
 
 use benilla_ui::script::{ContainerSlot, ContainerState, UiScript};
+use benilla_world::interact::WorldClick;
+use bevy::ecs::system::RunSystemOnce;
+use bevy::prelude::*;
 
 use super::test_ui::{bag_open, bag_slot_button, world_click};
+use crate::target::{
+    latch_press_pick, Hovered, HoveredObject, PickOcclusion, PressPick, WorldDropClick,
+};
+use crate::ui_action::drop_item::drop_on_world_click;
 
 /// A backpack holding a 5-stack of `item_id` at `quality`, the parameter the popup forks on.
 fn one_item_backpack(item_id: u32, name: &str, quality: u32) -> ContainerState {
@@ -443,4 +450,187 @@ fn the_world_drop_survives_the_whole_shipped_interface() {
     s.run("StaticPopup1Button1:Click()").unwrap();
     assert!(s.cursor_item().is_none(), "the cursor is empty after Yes");
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+}
+
+/// A world with a held item, a prompt counter and `press` latched, for the click's payload legs.
+fn clicking_world(press: PressPick) -> World {
+    let mut s = UiScript::new().unwrap();
+    s.set_container(0, Some(one_item_backpack(117, "Tough Jerky", 1)));
+    s.run(
+        r#"
+        heard = 0
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("DELETE_ITEM_CONFIRM")
+        f:SetScript("OnEvent", function() heard = heard + 1 end)
+        PickupContainerItem(0, 1)
+        "#,
+    )
+    .unwrap();
+    assert!(s.cursor_item().is_some(), "fixture: the item is held");
+    let mut world = World::new();
+    world.insert_resource(press);
+    world.init_resource::<Messages<WorldClick>>();
+    world.init_resource::<Messages<WorldDropClick>>();
+    world.insert_non_send_resource(s);
+    world
+}
+
+/// Runs the legs and returns the prompts raised, asserting the item is still held.
+fn prompts(world: &mut World) -> i64 {
+    world.run_system_once(drop_on_world_click).unwrap();
+    let mut s = world.non_send_resource_mut::<UiScript>();
+    s.tick(0.01);
+    assert!(s.cursor_item().is_some(), "the item stays on the cursor");
+    s.eval::<i64>("return heard").unwrap()
+}
+
+/// How a press's click settles at the release, by `feed_ui_input`'s claim and the click test.
+#[derive(Clone, Copy)]
+enum Settled {
+    /// The press was not claimed: the select's click.
+    Click,
+    /// The press was claimed: the drop's.
+    Drop,
+    /// The click test called it a drag.
+    Drag,
+}
+
+fn settle(press: PressPick, settled: Settled) -> i64 {
+    let mut world = clicking_world(press);
+    match settled {
+        Settled::Click => {
+            world
+                .resource_mut::<Messages<WorldClick>>()
+                .write(WorldClick);
+        }
+        Settled::Drop => {
+            world
+                .resource_mut::<Messages<WorldDropClick>>()
+                .write(WorldDropClick);
+        }
+        Settled::Drag => {}
+    }
+    prompts(&mut world)
+}
+
+fn terrain() -> PickOcclusion {
+    PickOcclusion {
+        distance: 20.0,
+        ..PickOcclusion::default()
+    }
+}
+
+/// Each leg of the left click with an item held, as the press picked it.
+#[test]
+fn the_press_pick_decides_the_prompt_on_every_leg() {
+    use Settled::{Click, Drag, Drop};
+    let unit = World::new().spawn_empty().id();
+    let hover = Hovered {
+        target: Some(unit),
+        guid: Some(7),
+        distance: 10.0,
+        ..Hovered::default()
+    };
+    let object = HoveredObject {
+        target: Some(unit),
+        guid: Some(8),
+        distance: 5.0,
+    };
+    let far_object = HoveredObject {
+        distance: 15.0,
+        ..object
+    };
+    let corpse = Hovered {
+        corpse: Some(unit),
+        corpse_guid: Some(9),
+        distance: 10.0,
+        ..Hovered::default()
+    };
+    let refused = Hovered {
+        refused: true,
+        distance: 10.0,
+        ..Hovered::default()
+    };
+    let at = |hovered: Hovered, object: HoveredObject, occlusion: PickOcclusion| PressPick {
+        hovered,
+        object,
+        occlusion,
+        ..PressPick::default()
+    };
+    let none = (Hovered::default(), HoveredObject::default());
+    for (name, press, settled, expected) in [
+        ("a unit", at(hover, none.1, terrain()), Click, 0),
+        ("a corpse", at(corpse, none.1, terrain()), Click, 0),
+        ("a refused unit", at(refused, none.1, terrain()), Click, 0),
+        (
+            "a unit before a GameObject",
+            at(hover, far_object, terrain()),
+            Click,
+            0,
+        ),
+        ("a GameObject", at(none.0, object, terrain()), Click, 1),
+        (
+            "a GameObject before a unit",
+            at(hover, object, terrain()),
+            Click,
+            1,
+        ),
+        ("terrain", at(none.0, none.1, terrain()), Drop, 1),
+        (
+            "the sky",
+            at(none.0, none.1, PickOcclusion::default()),
+            Drop,
+            1,
+        ),
+        (
+            "a drag over terrain",
+            at(none.0, none.1, terrain()),
+            Drag,
+            0,
+        ),
+        (
+            "a drag over the sky",
+            at(none.0, none.1, PickOcclusion::default()),
+            Drag,
+            0,
+        ),
+        (
+            "a drag over a GameObject",
+            at(none.0, object, terrain()),
+            Drag,
+            0,
+        ),
+        ("a drag over a unit", at(hover, none.1, terrain()), Drag, 0),
+    ] {
+        assert_eq!(settle(press, settled), expected, "{name}");
+    }
+}
+
+/// The left look empties the hover before the release, so the release reads the latched pick.
+#[test]
+fn a_press_over_a_unit_and_a_release_over_nothing_raises_no_prompt() {
+    let mut world = clicking_world(PressPick::default());
+    let unit = world.spawn_empty().id();
+    world.insert_resource(Hovered {
+        target: Some(unit),
+        guid: Some(7),
+        distance: 10.0,
+        ..Hovered::default()
+    });
+    world.init_resource::<HoveredObject>();
+    world.insert_resource(terrain());
+    world.init_resource::<crate::target::cursor_mode::WorldCursor>();
+    world.init_resource::<crate::target::cursor_mode::AttackFork>();
+    let mut buttons = ButtonInput::<MouseButton>::default();
+    buttons.press(MouseButton::Left);
+    world.insert_resource(buttons);
+    world.run_system_once(latch_press_pick).unwrap();
+
+    // The look's blank hover, then the release's click.
+    world.insert_resource(Hovered::default());
+    world.insert_resource(PickOcclusion::default());
+    world
+        .resource_mut::<Messages<WorldClick>>()
+        .write(WorldClick);
+    assert_eq!(prompts(&mut world), 0);
 }

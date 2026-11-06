@@ -7,8 +7,10 @@
 use bevy::prelude::*;
 
 use benilla_ui::script::{CursorPayload, UiScript};
+use benilla_world::interact::WorldClick;
 
 use crate::spell::{CastCommit, TargetedBind};
+use crate::target::WorldDropClick;
 
 /// The feed validator's three gates, in order: is this a pet I can feed? The food is not checked
 /// here; the server judges the diet (`Spell.cpp:5912`, `SPELL_FAILED_WRONG_PET_FOOD`).
@@ -93,6 +95,22 @@ pub(crate) fn drop_item_on_unit(
         ladder.commit_targeted(spell_id, CastCommit::Spell, TargetedBind::Item(item_guid));
         // `ClearCursor(1,1)`, on success only.
         script.clear_cursor_payload();
+    }
+}
+
+/// The left click's payload legs on the press pick, at the settled click (`0x4f7880`).
+pub(crate) fn drop_on_world_click(
+    script: Option<NonSendMut<UiScript>>,
+    press: Res<crate::target::PressPick>,
+    mut clicks: MessageReader<WorldClick>,
+    mut drops: MessageReader<WorldDropClick>,
+) {
+    let clicked = clicks.read().count() + drops.read().count() > 0;
+    if !clicked {
+        return;
+    }
+    if let Some(mut script) = script {
+        script.world_drop_click(press.world_pick());
     }
 }
 

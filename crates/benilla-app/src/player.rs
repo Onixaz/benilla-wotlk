@@ -17,6 +17,7 @@ use bevy::window::{CursorOptions, PrimaryWindow};
 
 use crate::creature_anim::{move_flags, wrap_pi, BodyTwist, MovementState};
 use crate::net::{ClientCommand, Embodied, NetCommands, TeleportMessage, WorldportMessage};
+use crate::target::WorldDropClick;
 use crate::ui_script::InspectMode;
 use benilla_assets::coords::wow_to_bevy;
 use benilla_assets::AssetSet;

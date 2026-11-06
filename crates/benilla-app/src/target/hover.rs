@@ -280,7 +280,11 @@ pub(super) fn update_hover(
     let (Ok((camera, cam_tf)), Ok(window)) = (camera.single(), window.single()) else {
         return;
     };
-    let Some(cursor) = window.cursor_position() else {
+    let Some(cursor) = window.cursor_position().or_else(|| {
+        super::hover_probe::armed()
+            .then(super::hover_probe::now)
+            .flatten()
+    }) else {
         return;
     };
     let Ok(ray) = camera.viewport_to_world(cam_tf, cursor) else {

@@ -177,10 +177,11 @@ impl Default for PickOcclusion {
     }
 }
 
-/// The pick latched on the button's down edge, which a world click of either button acts on: the
-/// reference picks once per press into the WorldFrame (state `+0x350`, guid `+0x358`, point
-/// `+0x360`, distance `+0x36c`), so a drag can orbit the camera and still select. The hover is
-/// another matter: the reference blanks it during freelook (it sets `[wf+0x38c]&2`).
+/// A [`WorldClick`] whose press the UI claimed for a payload drop: it drops and never selects.
+#[derive(Message, Clone, Copy)]
+pub(crate) struct WorldDropClick;
+
+/// The pick latched on the press, which a click acts on (`0x4fa570`: kind `+0x2d8`, guid `+0x2e0`).
 #[derive(Resource, Default, Clone, Copy)]
 pub(crate) struct PressPick {
     pub(crate) hovered: Hovered,
@@ -198,6 +199,29 @@ impl PressPick {
     /// Whether the press was an Attack-cursor press, for the reference's new-target validation.
     pub(crate) fn attack(&self) -> bool {
         self.cursor.kind == cursor_mode::CursorKind::Attack
+    }
+
+    /// The hit kind the click switches on ([`world_pick`]).
+    pub(crate) fn world_pick(&self) -> benilla_ui::script::WorldPick {
+        world_pick(&self.hovered, &self.object, &self.occlusion)
+    }
+}
+
+/// The reference's one pick out of our two: a nearer GameObject, an object hit, a ray hit, the sky.
+pub(crate) fn world_pick(
+    hovered: &Hovered,
+    object: &HoveredObject,
+    occlusion: &PickOcclusion,
+) -> benilla_ui::script::WorldPick {
+    use benilla_ui::script::WorldPick;
+    if go_is_nearest(hovered, object) {
+        WorldPick::GameObject
+    } else if hovered.any().is_some() || hovered.refused {
+        WorldPick::Object
+    } else if occlusion.distance.is_finite() {
+        WorldPick::Terrain
+    } else {
+        WorldPick::Nothing
     }
 }
 
@@ -314,6 +338,7 @@ impl Plugin for TargetPlugin {
             .init_resource::<scan::TabHistory>()
             .init_resource::<scan::LastEnemy>()
             .init_resource::<scan::LastFriend>()
+            .add_message::<WorldDropClick>()
             .add_message::<AttackNearestRequest>()
             .add_message::<TargetByNameRequest>()
             .add_message::<AssistRequest>()
@@ -379,10 +404,11 @@ impl Plugin for TargetPlugin {
                     click::clear_target_requests,
                     // The script calls that touch the selection, the cast or the targeting cursor
                     // (`TargetUnit`, `/target`, `ClearTarget`, `/cast`, `UseAction`, …), applied
-                    // in the order the script made them; then `DropItemOnUnit`'s pet leg.
+                    // in the order the script made them; then the two item legs.
                     (
                         crate::script_calls::apply_script_calls,
                         crate::ui_action::drop_item::drop_item_on_unit,
+                        crate::ui_action::drop_item::drop_on_world_click,
                     )
                         .chain(),
                     // The chat layer's by-name asks: `/target` and `/assist` commit through

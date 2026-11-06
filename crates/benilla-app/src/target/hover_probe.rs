@@ -1,6 +1,6 @@
 //! The headless hover probe: aims the mouseover pick from a screen point when the window has no OS
 //! cursor, and reports what the pick found. An unattended run's window never receives the OS
-//! cursor, so without it [`super::hover::update_hovered_object`] never reaches the pick.
+//! cursor, so without it no pick runs. `lock` holds GameObjects alone.
 //!
 //! `WOW_HOVER_PROBE` names the aim, in the window's cursor space (logical px, y-down):
 //!

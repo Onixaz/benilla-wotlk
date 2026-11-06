@@ -301,31 +301,29 @@ pub(crate) fn take_cursor_item_for_sale(model: &mut Model) -> Option<CursorItem>
     Some(item)
 }
 
-/// What is under the cursor in the world this frame: the reference's click-time pick state
-/// `[this+0x350]`. The app feeds it; tests and captures leave it `Nothing`.
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+/// What a press hit: the kind at `[worldframe+0x2d8]`, stored `0x4fa5c6`, switched on `0x4f78f9`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WorldPick {
-    /// State 0: no world hit (the sky).
-    #[default]
+    /// Kind 0: no world hit (the sky).
     Nothing,
-    /// State 1: terrain, a WMO or a doodad, but no unit or GameObject.
+    /// Kinds 1 and 3: terrain, a WMO or a doodad.
     Terrain,
-    /// State 2: a unit or GameObject.
+    /// Kind 2, a unit, a player or a corpse: the object leg (`0x5274f0`) has no route to the prompt.
     Object,
+    /// Kind 2, a GameObject: slot `+0xa8` is a constant 0 (`0x8e5250`), so it prompts (`0x527792`).
+    GameObject,
 }
 
-/// A left click on the world with a payload held, press and release both over the world and no
-/// drag; returns whether it was consumed. Over an `Object` nothing drops and the click selects.
-/// Over `Terrain` or `Nothing` an item raises `DELETE_ITEM_CONFIRM(name, quality)` and stays held
-/// for the popup to clear; a spell, action, macro or pet action clears. Coins, a vendor row and a
-/// stabled pet stay held here, where the reference puts a vendor row down on every leg and clears
-/// any non-item payload over `Nothing`.
+/// A settled left click on the press's pick: an item prompts and stays held, any other drops off.
 ///
 /// Deviation: on `Terrain` the reference keeps a spell, action, macro or pet action on the left
 /// button; we clear them, because otherwise a spell has no left-click way off the cursor.
-pub(crate) fn world_drop_click(model: &mut Model) -> bool {
-    match (&model.cursor, model.world_pick) {
-        (Some(CursorPayload::Item(item)), WorldPick::Terrain | WorldPick::Nothing) => {
+pub(crate) fn world_drop_click(model: &mut Model, pick: WorldPick) -> bool {
+    match (&model.cursor, pick) {
+        (
+            Some(CursorPayload::Item(item)),
+            WorldPick::Terrain | WorldPick::Nothing | WorldPick::GameObject,
+        ) => {
             let item = item.clone();
             queue_delete_item_confirm(model, &item);
             true
@@ -412,9 +410,9 @@ impl super::UiScript {
         self.model_ref().cursor.clone()
     }
 
-    /// Feed the world pick under the cursor this frame ([`WorldPick`]).
-    pub fn set_world_pick(&mut self, pick: WorldPick) {
-        set_field!(self, world_pick, pick);
+    /// A completed left click on the world, on the press's pick ([`world_drop_click`]).
+    pub fn world_drop_click(&mut self, pick: WorldPick) -> bool {
+        self.model_ref().cursor.is_some() && world_drop_click(&mut self.model_mut(), pick)
     }
 
     /// [`take_cursor_item_for_sale`], for the app's interact ladder.
@@ -830,28 +828,35 @@ mod tests {
 
     /// Clearing a spell on terrain is the deviation documented on `world_drop_click`.
     #[test]
-    fn world_drop_terrain_and_nothing_both_clear_a_spell_payload() {
-        use super::{world_drop_click, WorldPick};
+    fn a_spell_payload_clears_over_terrain_and_nothing_and_stays_over_an_object() {
+        use super::WorldPick;
+        let spell = CursorPayload::Spell(CursorSpell {
+            passive: false,
+            book_slot: 3,
+            book_type: "spell".into(),
+            spell_id: 133,
+            texture: None,
+        });
         let mut s = UiScript::new().unwrap();
         for pick in [WorldPick::Terrain, WorldPick::Nothing] {
-            s.set_cursor_for_test(CursorPayload::Spell(CursorSpell {
-                passive: false,
-                book_slot: 3,
-                book_type: "spell".into(),
-                spell_id: 133,
-                texture: None,
-            }));
-            s.model_mut().world_pick = pick;
-            assert!(
-                world_drop_click(&mut s.model_mut()),
-                "{pick:?}: the dismiss consumes the click"
-            );
+            s.set_cursor_for_test(spell.clone());
+            assert!(s.world_drop_click(pick), "{pick:?}: the click dismisses it");
             assert!(
                 s.cursor_payload().is_none(),
                 "{pick:?}: the spell clears silently"
             );
         }
+        for pick in [WorldPick::Object, WorldPick::GameObject] {
+            s.set_cursor_for_test(spell.clone());
+            assert!(!s.world_drop_click(pick), "{pick:?}: nothing drops");
+            assert!(s.cursor_payload().is_some(), "{pick:?}: the spell stays");
+        }
+    }
 
+    /// Terrain, the sky and a GameObject raise the prompt, a unit does not; the item stays held.
+    #[test]
+    fn an_item_payload_raises_the_prompt_on_every_leg_but_a_unit() {
+        use super::WorldPick;
         let item = CursorPayload::Item(CursorItem {
             bar_placeable: true,
             bag: 0,
@@ -863,19 +868,38 @@ mod tests {
             quality: None,
             equip_slots: Vec::new(),
         });
-        s.set_cursor_for_test(item.clone());
-        s.model_mut().world_pick = WorldPick::Terrain;
-        assert!(
-            world_drop_click(&mut s.model_mut()),
-            "terrain: the item pops the popup"
-        );
-        assert!(s.cursor_item().is_some(), "and stays held");
-        s.model_mut().world_pick = WorldPick::Object;
-        assert!(
-            !world_drop_click(&mut s.model_mut()),
-            "object: nothing drops at all"
-        );
-        assert!(s.cursor_item().is_some());
+        for (pick, prompts) in [
+            (WorldPick::Terrain, true),
+            (WorldPick::Nothing, true),
+            (WorldPick::GameObject, true),
+            (WorldPick::Object, false),
+        ] {
+            let mut s = UiScript::new().unwrap();
+            s.run(
+                r#"
+                heard = 0
+                local f = CreateFrame("Frame")
+                f:RegisterEvent("DELETE_ITEM_CONFIRM")
+                f:SetScript("OnEvent", function() heard = heard + 1 end)
+                "#,
+            )
+            .unwrap();
+            s.set_cursor_for_test(item.clone());
+            assert_eq!(s.world_drop_click(pick), prompts, "{pick:?}");
+            s.tick(0.01);
+            assert_eq!(
+                s.eval::<i64>("return heard").unwrap(),
+                i64::from(prompts),
+                "{pick:?}"
+            );
+            assert!(s.cursor_item().is_some(), "{pick:?}: the item stays held");
+        }
+    }
+
+    #[test]
+    fn a_world_click_with_nothing_held_drops_nothing() {
+        let mut s = UiScript::new().unwrap();
+        assert!(!s.world_drop_click(super::WorldPick::Terrain));
     }
 
     #[test]

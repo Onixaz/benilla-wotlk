@@ -252,7 +252,7 @@ fn chat_box_arrows_edit_and_history_recalls() {
 fn chat_click_dismisses_a_stuck_spell_but_not_an_item() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{
-        ContainerSlot, ContainerState, SpellBookState, SpellSlotView, SpellTabView,
+        ContainerSlot, ContainerState, SpellBookState, SpellSlotView, SpellTabView, WorldPick,
     };
     let mut s = chat_frame();
     s.set_spellbook(SpellBookState {
@@ -301,8 +301,11 @@ fn chat_click_dismisses_a_stuck_spell_but_not_an_item() {
         "a drag release over the chat keeps carrying"
     );
 
+    // The chat body takes no click, so it lands on the world, whose legs the app runs.
+    assert!(s.hit_test(cx, cy).is_none_or(|hit| s.is_world_frame(hit)));
     s.mouse_button(cx, cy, "LeftButton", true);
     s.mouse_button(cx, cy, "LeftButton", false);
+    s.world_drop_click(WorldPick::Terrain);
     assert!(s.errors().is_empty(), "{:?}", s.errors());
     assert!(
         s.cursor_payload().is_none(),
@@ -350,6 +353,7 @@ fn chat_click_dismisses_a_stuck_spell_but_not_an_item() {
     assert!(s.cursor_item().is_some(), "fixture: the item is held");
     s.mouse_button(cx, cy, "LeftButton", true);
     s.mouse_button(cx, cy, "LeftButton", false);
+    s.world_drop_click(WorldPick::Terrain);
     assert!(
         s.cursor_item().is_some(),
         "a chat click never touches an item payload"

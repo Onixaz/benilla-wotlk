@@ -8,12 +8,14 @@ use bevy::math::DVec2;
 use super::super::camera_dynamics::{CameraOptions, SubjectState};
 use super::*;
 
-/// What the session's caller keeps between frames: the facing and the two click tests.
+/// What the session's caller keeps between frames, with the clock and the UI's claim on the press.
 #[derive(Resource, Default)]
 struct Hand {
     face_yaw: f32,
     left: Option<PressGesture>,
     right: Option<PressGesture>,
+    now: f32,
+    click_consumed: bool,
 }
 
 /// `control`'s call of [`run_look_session`], with the both-button run read off the latch.
@@ -22,7 +24,11 @@ fn look_frame(
     mut rig: ResMut<CameraControl>,
     cam: Single<&mut FlyCam>,
     window: Single<(&mut Window, &mut CursorOptions), With<PrimaryWindow>>,
-    mut clicks: (MessageWriter<WorldClick>, MessageWriter<WorldRightClick>),
+    mut clicks: (
+        MessageWriter<WorldClick>,
+        MessageWriter<WorldDropClick>,
+        MessageWriter<WorldRightClick>,
+    ),
     mut hand: ResMut<Hand>,
 ) {
     let (mut window, mut opts) = window.into_inner();
@@ -47,14 +53,15 @@ fn look_frame(
         &mut window,
         &mut opts,
         false,
-        false,
+        hand.click_consumed,
         &mut clicks.0,
         &mut clicks.1,
+        &mut clicks.2,
         &mut hand.left,
         &mut hand.right,
         LookConfig::default(),
         &dynamics,
-        0.0,
+        hand.now,
         focused,
     );
 }
@@ -68,6 +75,7 @@ fn world(over_ui: bool) -> World {
     world.init_resource::<CameraControl>();
     world.init_resource::<Hand>();
     world.init_resource::<Messages<WorldClick>>();
+    world.init_resource::<Messages<WorldDropClick>>();
     world.init_resource::<Messages<WorldRightClick>>();
     world.spawn((
         Camera::default(),
@@ -141,6 +149,75 @@ fn press(world: &mut World, b: MouseButton) {
 
 fn release(world: &mut World, b: MouseButton) {
     world.resource_mut::<ButtonInput<MouseButton>>().release(b);
+}
+
+/// One left press held `held` seconds with `dx` of travel: the clicks and drops it settled as.
+fn left_click(consumed: bool, held: f32, dx: f32) -> (usize, usize) {
+    let mut w = world(false);
+    frame(&mut w, 0.0);
+    w.resource_mut::<Hand>().click_consumed = consumed;
+    press(&mut w, MouseButton::Left);
+    frame(&mut w, 0.0);
+    w.resource_mut::<Hand>().click_consumed = false;
+    frame(&mut w, dx);
+    w.resource_mut::<Hand>().now = held;
+    release(&mut w, MouseButton::Left);
+    frame(&mut w, 0.0);
+    (
+        w.resource::<Messages<WorldClick>>().len(),
+        w.resource::<Messages<WorldDropClick>>().len(),
+    )
+}
+
+/// A claimed press settles on the same drag test as a plain one (`0x5f9600`), as a drop.
+#[test]
+fn a_payload_press_settles_on_the_click_test_as_a_drop() {
+    assert_eq!(left_click(false, 0.1, 0.0), (1, 0), "a plain click selects");
+    assert_eq!(left_click(true, 0.1, 0.0), (0, 1), "a claimed one drops");
+    assert_eq!(
+        left_click(true, 0.5, 0.0),
+        (0, 1),
+        "still short of the ceiling"
+    );
+    assert_eq!(
+        left_click(true, 0.8, 0.0),
+        (0, 0),
+        "800 ms is always a drag"
+    );
+    assert_eq!(
+        left_click(true, 0.5, 40.0),
+        (0, 0),
+        "as is travel from 200 ms"
+    );
+    assert_eq!(
+        left_click(true, 0.1, 40.0),
+        (0, 1),
+        "under 200 ms travel is free"
+    );
+}
+
+/// A drop keeps the look: the claimed press still orbits.
+#[test]
+fn a_payload_press_still_turns_the_camera() {
+    let mut w = world(false);
+    frame(&mut w, 0.0);
+    w.resource_mut::<Hand>().click_consumed = true;
+    press(&mut w, MouseButton::Left);
+    frame(&mut w, 40.0);
+    assert_eq!(w.resource::<CameraControl>().look, Some(LookButton::Left));
+}
+
+/// A press the UI took arms no click, so a frame's press never drops into the world.
+#[test]
+fn a_press_on_the_ui_settles_as_nothing() {
+    let mut w = world(true);
+    frame(&mut w, 0.0);
+    press(&mut w, MouseButton::Left);
+    frame(&mut w, 0.0);
+    release(&mut w, MouseButton::Left);
+    frame(&mut w, 0.0);
+    assert_eq!(w.resource::<Messages<WorldClick>>().len(), 0);
+    assert_eq!(w.resource::<Messages<WorldDropClick>>().len(), 0);
 }
 
 /// The right button's session, entered with no button: the mouse turns the camera and the body

@@ -31,7 +31,7 @@ use super::TargetingWants;
 /// Runs after `select_on_click`, which reads the mode this clears.
 pub(crate) fn commit_ground_cast_on_click(
     mut clicks: MessageReader<WorldClick>,
-    // The point the press ray hit (the reference's `+0x360`), read unchanged at the release.
+    // The point the press ray hit (the reference's `+0x2e8`), read unchanged at the release.
     press: Res<crate::target::PressPick>,
     mut ladder: crate::spell::CastLadder,
 ) {

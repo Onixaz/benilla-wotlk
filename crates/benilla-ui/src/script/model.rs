@@ -729,7 +729,6 @@ pub(crate) struct Model {
     pub(crate) pet_grid_shown: bool,
     /// The world pick under the cursor (`[this+0x350]`): a world click drops no payload on an
     /// object, only an item on terrain, and anything over nothing.
-    pub(crate) world_pick: cursor::WorldPick,
     /// Held-item bag moves, sent as `CMSG_SWAP_INV_ITEM` or `CMSG_SPLIT_ITEM`.
     pub(crate) container_moves: Vec<container::ContainerMove>,
     /// `(bag, slot)` clicks made in repair mode.
@@ -1600,7 +1599,6 @@ impl Model {
             cursor: None,
             cursor_grid_shown: false,
             pet_grid_shown: false,
-            world_pick: cursor::WorldPick::default(),
             container_moves: Vec::new(),
             container_repairs: Vec::new(),
             item_pick_armed: false,

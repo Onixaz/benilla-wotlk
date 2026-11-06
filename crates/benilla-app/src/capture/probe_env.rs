@@ -73,7 +73,7 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
     },
     ProbeVar {
         name: "WOW_PROBE_KEY",
-        purpose: "\"<key>@<secs>[:<hold>][;…]\" — synthesize key presses once in-world (a jump, a mount flourish, a held W)",
+        purpose: "\"<key>@<secs>[:<hold>][;…]\" — synthesize key presses once in-world (a jump, a mount flourish, a held W); `MouseLeft`/`MouseRight` press a mouse button at the `WOW_HOVER_PROBE` aim",
         // Each tap fires at its `@<secs>` and releases `<hold>` later, on `ProbeClock`.
         wall_clock: true,
     },

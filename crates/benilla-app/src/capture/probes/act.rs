@@ -98,7 +98,7 @@ impl Plugin for ProbeKeyPlugin {
                     Some((at, hold)) => (at, hold.trim().parse::<f32>().ok()?),
                     None => (rest, PROBE_KEY_TAP_SECS),
                 };
-                match (probe_key_by_name(key.trim()), at.trim().parse::<f32>()) {
+                match (probe_input_by_name(key.trim()), at.trim().parse::<f32>()) {
                     (Some(key), Ok(at)) => Some(ProbeKeyTap {
                         key,
                         at,
@@ -126,6 +126,23 @@ impl Plugin for ProbeKeyPlugin {
 
 /// Default hold: several frames for a held-key reader, still a tap.
 const PROBE_KEY_TAP_SECS: f32 = 0.25;
+
+/// What a [`ProbeKeyPlugin`] tap presses.
+#[derive(Clone, Copy, Debug)]
+enum ProbeInput {
+    Key(KeyCode),
+    /// A mouse button, aimed by `WOW_HOVER_PROBE`, as the window has no OS cursor.
+    Button(MouseButton),
+}
+
+/// A tap's name: `MouseLeft`, `MouseRight`, or a key.
+fn probe_input_by_name(name: &str) -> Option<ProbeInput> {
+    match name {
+        "MouseLeft" => Some(ProbeInput::Button(MouseButton::Left)),
+        "MouseRight" => Some(ProbeInput::Button(MouseButton::Right)),
+        _ => probe_key_by_name(name).map(ProbeInput::Key),
+    }
+}
 
 /// The key names [`ProbeKeyPlugin`] accepts.
 fn probe_key_by_name(name: &str) -> Option<KeyCode> {
@@ -184,7 +201,7 @@ struct ProbeKeys {
 }
 
 struct ProbeKeyTap {
-    key: KeyCode,
+    key: ProbeInput,
     at: f32,
     /// Seconds held: the spec's `:<hold>`, else [`PROBE_KEY_TAP_SECS`].
     hold: f32,
@@ -199,6 +216,7 @@ fn fire_probe_key(
     time: ProbeClock,
     self_player: Query<(), With<crate::net::SelfPlayer>>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut buttons: ResMut<ButtonInput<MouseButton>>,
     mut events: MessageWriter<bevy::input::keyboard::KeyboardInput>,
     mut hold: ResMut<benilla_world::modkeys::SyntheticHold>,
 ) {
@@ -225,12 +243,22 @@ fn fire_probe_key(
                 "probe-key: {:?} down ({now:.1}s, hold {:.2}s)",
                 tap.key, tap.hold
             );
-            keys.press(tap.key);
-            synth(tap.key, bevy::input::ButtonState::Pressed);
+            match tap.key {
+                ProbeInput::Key(key) => {
+                    keys.press(key);
+                    synth(key, bevy::input::ButtonState::Pressed);
+                }
+                ProbeInput::Button(button) => buttons.press(button),
+            }
             tap.pressed = true;
         } else if tap.pressed && !tap.released && now >= tap.at + tap.hold {
-            keys.release(tap.key);
-            synth(tap.key, bevy::input::ButtonState::Released);
+            match tap.key {
+                ProbeInput::Key(key) => {
+                    keys.release(key);
+                    synth(key, bevy::input::ButtonState::Released);
+                }
+                ProbeInput::Button(button) => buttons.release(button),
+            }
             tap.released = true;
         }
     }
@@ -241,7 +269,10 @@ fn fire_probe_key(
         .taps
         .iter()
         .filter(|t| t.pressed && !t.released)
-        .map(|t| t.key)
+        .filter_map(|t| match t.key {
+            ProbeInput::Key(key) => Some(key),
+            ProbeInput::Button(_) => None,
+        })
         .collect();
     if hold.0 != held {
         hold.0 = held;
