@@ -157,6 +157,58 @@ mod tests {
         );
     }
 
+    /// The exit frame is not rendered, so `world.clear_all()` waits on no non-Send render system.
+    #[test]
+    fn the_exit_frame_leaves_no_render_frame_in_flight() {
+        use bevy::app::{SubApp, TaskPoolPlugin};
+        use bevy::ecs::schedule::ScheduleLabel;
+        use bevy::ecs::system::NonSendMarker;
+        use bevy::render::pipelined_rendering::PipelinedRenderingPlugin;
+        use bevy::render::{Render, RenderApp};
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        static RENDERED: AtomicU32 = AtomicU32::new(0);
+        let mut render = SubApp::new();
+        render.update_schedule = Some(Render.intern());
+        render.add_systems(Render, |_main_thread: NonSendMarker| {
+            RENDERED.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let mut app = App::new();
+        app.add_plugins(TaskPoolPlugin::default());
+        app.insert_sub_app(RenderApp, render);
+        app.add_plugins(PipelinedRenderingPlugin);
+        app.finish();
+        app.cleanup();
+
+        // The drop's wait is unbounded: a regression ends the run instead of stalling the gate.
+        let dropped = Arc::new(AtomicBool::new(false));
+        let watched = Arc::clone(&dropped);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(30));
+            if !watched.load(Ordering::SeqCst) {
+                eprintln!("the main and render threads deadlocked on the exit drop");
+                std::process::exit(101);
+            }
+        });
+
+        app.update();
+        app.update();
+        app.world_mut().write_message(AppExit::Success);
+        app.update();
+        app.update(); // the pass macOS can pump after `event_loop.exit()`
+        app.world_mut().clear_all();
+        dropped.store(true, Ordering::SeqCst);
+
+        assert_eq!(
+            RENDERED.load(Ordering::SeqCst),
+            2,
+            "the frames before the exit are rendered, the exit frame and the pass after it not"
+        );
+    }
+
     #[test]
     fn a_later_exit_after_a_quiet_frame_is_a_new_edge() {
         let mut app = App::new();

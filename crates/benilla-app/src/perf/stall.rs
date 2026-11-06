@@ -179,12 +179,16 @@ fn watchdog(dir: Option<std::path::PathBuf>) {
             );
             // 1 s in-frame so the stall dominates the capture; 2 s at teardown, where the wedge
             // holds throughout.
-            let _ = std::process::Command::new("/usr/bin/sample")
-                .arg(&pid)
-                .arg(if exiting { "2" } else { "1" })
-                .arg("-file")
-                .arg(&file)
-                .status();
+            // On a thread of its own: a `sample` that never returns must not hold the backstop.
+            let pid = pid.clone();
+            std::thread::spawn(move || {
+                let _ = std::process::Command::new("/usr/bin/sample")
+                    .arg(&pid)
+                    .arg(if exiting { "2" } else { "1" })
+                    .arg("-file")
+                    .arg(&file)
+                    .status();
+            });
         }
     }
 }
