@@ -804,7 +804,7 @@ pub(super) fn drain_chat_input(
                     target,
                     &selection,
                     |name| {
-                        let streamed = chat_out.players.find(&names, name).map(|(_, guid)| guid);
+                        let streamed = chat_out.players.find_other(&names, name, self_guid.0);
                         crate::target::emote_name_match(
                             &names,
                             roster,
@@ -825,10 +825,12 @@ pub(super) fn drain_chat_input(
                     ),
                     _ => -1,
                 };
-                benilla_assets::trace::line(
-                    "emote",
-                    &format!("send text={text_id} index={file_index} target={target:#x}"),
-                );
+                if benilla_assets::trace::enabled() {
+                    benilla_assets::trace::line(
+                        "emote",
+                        &format!("send text={text_id} index={file_index} target={target:#x}"),
+                    );
+                }
                 match commands.0.send(ClientCommand::TextEmote {
                     text_id,
                     file_index,
@@ -1184,6 +1186,19 @@ fn auto_clear_afk(cvars: &crate::cvars::Cvars) -> bool {
     cvars.flag("autoClearAFK").unwrap_or(true)
 }
 
+/// A party line from the party leader goes out as `0x33` (`0x50d516`).
+pub(super) fn party_lane(
+    wire: crate::net::ChatKind,
+    leader: u64,
+    me: Option<u64>,
+) -> crate::net::ChatKind {
+    use crate::net::ChatKind as K;
+    match wire {
+        K::Party if me == Some(leader) => K::PartyLeader,
+        other => other,
+    }
+}
+
 /// Turn `SendChatMessage` calls into sends. No slash grammar runs here: an addon sending
 /// `"/dance"` says six characters. An unknown chat-type token prints a system line and sends
 /// nothing; an empty line of any other type but AFK and DND sends nothing and prints nothing.
@@ -1199,6 +1214,9 @@ pub(super) fn drain_addon_chat_sends(
     self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
     // The joined slots a `CHANNEL` target's number names.
     channels: Res<super::edit::ChannelState>,
+    // The leader a party line tests us against.
+    group: Res<crate::ui_party::GroupState>,
+    self_guid: Res<crate::net::SelfGuid>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -1251,7 +1269,7 @@ pub(super) fn drain_addon_chat_sends(
         // included; then AFK and DND each have an arm ahead of the generic send. The system lines,
         // the default text and the mirror are `super::away`'s.
         let strings = |key: &str| crate::ui_chat::combat::global_string(&script, key);
-        let wire = kind.wire();
+        let wire = party_lane(kind.wire(), group.leader, self_guid.0);
         if !matches!(wire, crate::net::ChatKind::Afk) {
             if let Some(line) =
                 super::away::auto_clear_line(*mirror, auto_clear_afk(&cvars), &strings)

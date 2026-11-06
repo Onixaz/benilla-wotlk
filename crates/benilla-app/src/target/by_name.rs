@@ -385,14 +385,28 @@ pub(crate) struct PlayerLookup<'w, 's> {
 }
 
 impl PlayerLookup<'_, '_> {
-    /// The reference's resolver with typemask `0x10`, filter mode 0 and no exact-only flag, as
-    /// `/assist <name>` calls it: any player in the object list, whole name or longest prefix.
-    /// Selects nothing.
-    pub(crate) fn find(&self, names: &NameCache, name: &str) -> Option<(Entity, u64)> {
-        self.find_as(names, name, Match::PrefixOk)
+    /// The resolver's object walk with typemask `0x10`, filter mode 0 and no exact-only flag, past
+    /// the active player, who scans at the group's distance (`0x51ffe0`): any other visible match or
+    /// group member comes first, and a hit on ourselves is untargeted anyway. Selects nothing.
+    pub(crate) fn find_other(&self, names: &NameCache, name: &str, me: Option<u64>) -> Option<u64> {
+        let origin = self.self_q.single().ok().map(|tf| tf.translation());
+        scan_units(
+            self.units
+                .iter()
+                .filter(|(_, g, _)| Some(g.0) != me)
+                .map(|(e, g, tf)| (e, g.0, tf.translation(), None)),
+            origin,
+            names,
+            name,
+            NameSearch::PlayerOnly,
+            Match::PrefixOk,
+            |_| true,
+        )
+        .map(|(_, g, _)| g)
     }
 
-    /// [`Self::find`] with the exact-only flag, as `StartDuel`'s second argument sets it.
+    /// The same walk over every player, with the exact-only flag as `StartDuel`'s second argument
+    /// sets it.
     pub(crate) fn find_as(
         &self,
         names: &NameCache,
@@ -415,12 +429,6 @@ impl PlayerLookup<'_, '_> {
     }
 }
 
-/// The distance a group member without an object scans at (`0x520331`), which a visible player
-/// beats and the active player, at the same distance, does not (`0x513196`).
-fn group_outbids(streamed: Option<u64>, me: Option<u64>) -> bool {
-    streamed.is_none() || streamed == me
-}
-
 /// `name` starts with the whole of `query`, folded (`0x5131ad`, compared at the query's length).
 fn has_query_prefix(name: &str, query: &str) -> bool {
     name.len() >= query.len()
@@ -430,7 +438,8 @@ fn has_query_prefix(name: &str, query: &str) -> bool {
 /// `DoEmote`'s name search past the token words, which needs only a guid. The token resolver's name
 /// half (`0x60a630`) takes the active player, then the raid or else the party, by the whole name;
 /// the scan (`0x52027e`) walks the party slots, then the raid, each member with no object and a
-/// cached name, then the visible objects, whose `streamed` hit is [`PlayerLookup::find`]'s.
+/// cached name, then the visible objects, whose `streamed` hit is [`PlayerLookup::find_other`]'s and
+/// outbids the group's distance (`0x520331`).
 pub(crate) fn emote_name_match(
     names: &NameCache,
     roster: &crate::spell::group_relation::GroupRoster,
@@ -455,17 +464,16 @@ pub(crate) fn emote_name_match(
     {
         return Some(guid);
     }
-    let streamed = streamed.filter(|&g| named(g, has_query_prefix));
-    if !group_outbids(streamed, me) {
-        return streamed;
-    }
-    roster
-        .party
-        .iter()
-        .chain(&roster.raid)
-        .copied()
-        .find(|&g| !held(g) && named(g, has_query_prefix))
-        .or(streamed)
+    streamed
+        .filter(|&g| named(g, has_query_prefix))
+        .or_else(|| {
+            roster
+                .party
+                .iter()
+                .chain(&roster.raid)
+                .copied()
+                .find(|&g| !held(g) && named(g, has_query_prefix))
+        })
 }
 
 /// `/target <name>` and the Lua `TargetByName(name, exactMatch)` through [`scan::commit`], the
@@ -755,8 +763,8 @@ mod tests {
     }
 
     /// The scan's order: a member's whole name first, a visible player over an unstreamed member,
-    /// an unstreamed member over nobody and over yourself, party slots before the raid, and a member
-    /// with an object or no cached name not at all.
+    /// an unstreamed member over nobody, party slots before the raid, and a member with an object or
+    /// no cached name not at all.
     #[test]
     fn the_emote_search_finds_a_group_member_out_of_streaming_range() {
         use crate::spell::group_relation::GroupRoster;
@@ -795,11 +803,6 @@ mod tests {
             find(Some(STRANGER), "Far"),
             Some(STRANGER),
             "visible outbids"
-        );
-        assert_eq!(
-            find(Some(ME), "C"),
-            Some(ME),
-            "yourself, with no member to find"
         );
         assert_eq!(find(None, "Claude"), Some(ME), "the whole own name");
         assert_eq!(

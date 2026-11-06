@@ -482,7 +482,7 @@ pub(super) fn play_kit_ext(
         Some(i) => i.min(weights.len() - 1),
         None => kits.pick_variation(id, &weights),
     };
-    if latch == Latch::EmoteVoice {
+    if latch == Latch::EmoteVoice && benilla_assets::trace::enabled() {
         benilla_assets::trace::line(
             "voice",
             &format!(

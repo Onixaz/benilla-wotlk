@@ -282,7 +282,7 @@ mod tests {
         s.set_unit_guids(&crate::script::UnitGuids {
             player: ME,
             target: CREATURE,
-            party: vec![MATE, FAR_MATE],
+            party: [MATE, FAR_MATE, 0, 0],
             ..Default::default()
         });
         s.set_focus_guid(FOCUS);

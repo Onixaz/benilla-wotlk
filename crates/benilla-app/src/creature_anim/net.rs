@@ -421,10 +421,12 @@ fn text_emote(
     out: &mut MessageWriter<EmoteMessage>,
     chat_log: &mut crate::ui_chat::ChatLog,
 ) {
-    benilla_assets::trace::line(
-        "emote",
-        &format!("recv guid={guid:#x} text={text_emote} index={file_index}"),
-    );
+    if benilla_assets::trace::enabled() {
+        benilla_assets::trace::line(
+            "emote",
+            &format!("recv guid={guid:#x} text={text_emote} index={file_index}"),
+        );
+    }
     out.write(EmoteMessage {
         guid,
         source: index.0.get(&guid).copied(),

@@ -326,7 +326,7 @@ pub(super) fn drive_animations(
         // Read for `DO_NOT_PLAY_WOUND_ANIM`; a missing cache reads as an unreceived template.
         Option<Res<crate::names::NameCache>>,
         MessageReader<BaseAnimRecompute>,
-        // A rider's mount child, where a mount-set request goes.
+        // A rider's mount child, where a full-set request goes.
         Query<(&ObjectStore, &crate::entities::mount::MountChild)>,
         // The open NPC session's unit: its state emote is passed over when the row's `EmoteFlags`
         // carry `0x2000`.

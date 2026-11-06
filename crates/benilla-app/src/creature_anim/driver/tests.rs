@@ -1446,10 +1446,10 @@ fn a_deepening_step_off_fall_never_becomes_a_jump() {
     }
 }
 
-/// A cast id is CLASS_A but not COMBAT, so a jump in place routes it full-body over the hang, and
-/// with no plays mid-arc the airborne freeze holds it until an edge.
+/// A cast id is in the upper set, so a jump in place splits it: the key bone plays it and the legs
+/// keep the jump.
 #[test]
-fn a_jump_in_place_cast_replaces_the_hang_and_survives_the_arc() {
+fn a_jump_in_place_cast_plays_on_the_key_bone_over_the_jump() {
     let mut app = app();
     let unit = jumper(&mut app);
     app.update(); // settle: Stand
@@ -1478,24 +1478,13 @@ fn a_jump_in_place_cast_replaces_the_hang_and_survives_the_arc() {
     }
     assert_eq!(
         drv(&app, unit).mode,
-        super::super::select::Mode::Swing {
-            id: 54,
-            under: Some(super::super::select::Special::Jump),
-        },
-        "the cast replaces the hang full-body — never dropped, never masked"
+        super::super::select::Mode::Entering(super::super::select::Special::Jump),
+        "the legs keep the jump"
     );
-    assert!(
-        drv(&app, unit).overlay.is_none(),
-        "no move bits, non-combat id: not the overlay route"
-    );
-    app.update();
-    app.update();
-    assert!(
-        matches!(
-            drv(&app, unit).mode,
-            super::super::select::Mode::Swing { id: 54, .. }
-        ),
-        "the airborne-freeze holds the one-shot through the arc"
+    assert_eq!(
+        drv(&app, unit).overlay.map(|o| o.id),
+        Some(54),
+        "a fall splits an upper-set id onto the key bone"
     );
 }
 
@@ -1531,10 +1520,10 @@ fn landing_mid_cast_plays_the_land_pick() {
     );
 }
 
-/// Fall(40) plays once, on the substep FALLINGFAR latches, so a cast armed after it holds bone 0
-/// until the landing pick.
+/// Fall(40) plays once, on the substep FALLINGFAR latches, and a cast armed in the fall splits: the
+/// key bone plays it and bone 0 keeps the loop until the landing pick.
 #[test]
-fn a_cast_over_the_fall_loop_holds_until_landing() {
+fn a_cast_over_the_fall_loop_takes_the_key_bone() {
     let mut app = app();
     let unit = jumper(&mut app);
     app.update();
@@ -1551,7 +1540,7 @@ fn a_cast_over_the_fall_loop_holds_until_landing() {
         via_player: false,
         remap_special: true,
     });
-    app.update(); // Swing { 54, under: Jump }
+    app.update();
     app.world_mut().entity_mut(unit).insert(MovementState {
         flags: move_flags::FALLING | move_flags::FALLING_FAR,
         vertical_speed: -5.0,
@@ -1562,7 +1551,7 @@ fn a_cast_over_the_fall_loop_holds_until_landing() {
     assert_eq!(
         mode(&app),
         super::super::select::Mode::Looping(super::super::select::Special::Fall),
-        "the latch's Fall play replaces the held cast"
+        "the latch's Fall play takes bone 0"
     );
     app.world_mut().write_message(EmoteAnim {
         entity: unit,
@@ -1572,29 +1561,20 @@ fn a_cast_over_the_fall_loop_holds_until_landing() {
         remap_special: true,
     });
     app.update();
-    assert!(
-        matches!(
-            mode(&app),
-            super::super::select::Mode::Swing {
-                id: 54,
-                under: Some(super::super::select::Special::Fall),
-                ..
-            }
-        ),
-        "the cast arms over the Fall loop"
+    assert_eq!(
+        mode(&app),
+        super::super::select::Mode::Looping(super::super::select::Special::Fall),
+        "the legs keep the Fall loop"
     );
-    app.update();
-    app.update();
-    assert!(
-        matches!(
-            mode(&app),
-            super::super::select::Mode::Swing {
-                id: 54,
-                under: Some(super::super::select::Special::Fall),
-                ..
-            }
-        ),
-        "the cast holds bone 0 through the fall — Fall plays only at its latch edge"
+    assert_eq!(
+        app.world()
+            .entity(unit)
+            .get::<AnimDriver>()
+            .unwrap()
+            .overlay
+            .map(|o| o.id),
+        Some(54),
+        "the cast takes the key bone"
     );
     app.world_mut()
         .entity_mut(unit)
@@ -1603,7 +1583,7 @@ fn a_cast_over_the_fall_loop_holds_until_landing() {
     assert_eq!(
         mode(&app),
         super::super::select::Mode::Land { id: 39, flags: 0 },
-        "the landing pick replaces the held cast"
+        "the landing pick ends the fall"
     );
 }
 
@@ -4043,9 +4023,9 @@ mod routing {
 
     const FIELD_MOUNTDISPLAYID: u16 = 133;
     const MOUNT: u16 = 91;
-    const PRAY: u16 = 75; // EmoteKneel, not CLASS_A
-    const CHEER: u16 = 68; // CLASS_A
-    const SHUFFLE: u16 = 12; // mount-set, not CLASS_A
+    const PRAY: u16 = 75; // EmoteKneel, in neither set
+    const CHEER: u16 = 68; // the upper set
+    const SHUFFLE: u16 = 12; // the full set, not the upper
     const EAT: u16 = 61;
 
     fn masked(anim_id: u16, node: u32, upper: u32) -> AnimClip {
@@ -4156,7 +4136,7 @@ mod routing {
         assert!(drv(&app, child).overlay.is_none());
         assert!(
             drv(&app, rider).overlay.is_none(),
-            "not CLASS_A: the rider idles"
+            "not the upper set: the rider idles"
         );
         assert_eq!(drv(&app, rider).active_anim(), Some(MOUNT));
     }
@@ -4226,7 +4206,7 @@ mod routing {
         assert_eq!(armed(&app), Some(CHEER), "the requested id, not clip 0");
     }
 
-    /// A mounted rider's mount-set emote is tested once, on the rider: an id the rider has armed
+    /// A mounted rider's full-set emote is tested once, on the rider: an id the rider has armed
     /// is not forwarded to the mount child.
     #[test]
     fn a_rider_armed_id_stops_the_forward_to_the_mount() {
@@ -4261,7 +4241,7 @@ mod routing {
         send(&mut app, false);
         assert!(
             matches!(child_mode(&app), Mode::Swing { id: SHUFFLE, .. }),
-            "the mount-set emote reaches the mount"
+            "the full-set emote reaches the mount"
         );
         app.world_mut()
             .entity_mut(child)

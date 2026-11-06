@@ -2038,6 +2038,17 @@ fn the_talk_gesture_reads_the_plaintext_not_the_garbled_line() {
     );
 }
 
+/// The party leader's own party line is the leader type; a member's and any other lane stay.
+#[test]
+fn the_party_leader_sends_the_leader_lane() {
+    use super::input::party_lane;
+    use crate::net::ChatKind as K;
+    assert_eq!(party_lane(K::Party, 7, Some(7)), K::PartyLeader);
+    assert_eq!(party_lane(K::Party, 7, Some(8)), K::Party);
+    assert_eq!(party_lane(K::Party, 0, Some(8)), K::Party);
+    assert_eq!(party_lane(K::Say, 7, Some(7)), K::Say);
+}
+
 /// A speaker whose `UNIT_FIELD_FLAGS` hold `0x20000000` (Polymorph, Kidney Shot, ...) plays no talk
 /// gesture, a line held for the name query included: it re-enters the one composer.
 #[test]
@@ -2529,6 +2540,8 @@ fn the_chat_cache_restore_is_finished_before_player_login() {
     world.init_resource::<crate::minimap::MinimapZoom>();
     world.init_resource::<crate::ui_script::ReloadUiPending>();
     world.init_resource::<super::edit::ChannelState>();
+    world.init_resource::<crate::ui_party::GroupState>();
+    world.init_resource::<crate::net::SelfGuid>();
     world.init_resource::<super::settings::ChatWindowFile>();
     crate::ui_script::setup_script(&mut world);
 
@@ -2617,6 +2630,8 @@ fn afk_then_dnd_clears_the_afk_first() {
     world.init_resource::<super::away::AfkMirror>();
     world.init_resource::<crate::cvars::Cvars>();
     world.init_resource::<super::edit::ChannelState>();
+    world.init_resource::<crate::ui_party::GroupState>();
+    world.init_resource::<crate::net::SelfGuid>();
     // The five `GlobalStrings.lua` keys the away lines read, at their enUS values.
     world
         .non_send_resource::<benilla_ui::script::UiScript>()
@@ -2679,6 +2694,8 @@ fn a_named_language_rides_the_chat_command() {
     world.init_resource::<super::away::AfkMirror>();
     world.init_resource::<crate::cvars::Cvars>();
     world.init_resource::<super::edit::ChannelState>();
+    world.init_resource::<crate::ui_party::GroupState>();
+    world.init_resource::<crate::net::SelfGuid>();
     world
         .non_send_resource::<benilla_ui::script::UiScript>()
         .run(
@@ -2728,6 +2745,8 @@ fn a_channel_send_carries_the_numbered_slots_name() {
     world.init_resource::<super::feed::ChatLog>();
     world.init_resource::<super::away::AfkMirror>();
     world.init_resource::<crate::cvars::Cvars>();
+    world.init_resource::<crate::ui_party::GroupState>();
+    world.init_resource::<crate::net::SelfGuid>();
     world.insert_resource(ChannelState {
         joined: vec![
             Some(ChannelSlot::joined("General - Elwynn Forest")),
@@ -2805,6 +2824,8 @@ fn an_empty_line_sends_nothing_but_afk_and_dnd() {
     world.init_resource::<super::feed::ChatLog>();
     world.insert_resource(super::away::AfkMirror(2));
     world.init_resource::<crate::cvars::Cvars>();
+    world.init_resource::<crate::ui_party::GroupState>();
+    world.init_resource::<crate::net::SelfGuid>();
     world.insert_resource(ChannelState {
         joined: vec![Some(ChannelSlot::joined("General - Elwynn Forest"))],
         ..Default::default()
