@@ -189,8 +189,8 @@ pub(crate) struct Model {
     pub(crate) on_size_changed_frames: Vec<FrameHandle>,
     /// Frames with an `OnUpdateModel` script, fired as a visible model pane paints.
     pub(crate) on_update_model_frames: Vec<FrameHandle>,
-    /// Frames inside their XML load, from its start to their own `OnLoad` (`+0x130`, set at
-    /// `0x4903b2`, cleared at `0x490421` before `OnLoad`): their `OnEnable`/`OnDisable` stay quiet.
+    /// Frames inside their XML load, from its start to their `<Frames>` (`+0x130`, set at
+    /// `0x4903b2`, cleared at `0x490421`): their show, hide and enable scripts stay quiet.
     pub(crate) xml_loading: HashSet<FrameHandle>,
     /// Per model file, a pane clock's sequences and bounds, read by the host off the `MD20`.
     pub(crate) model_facts: HashMap<String, std::sync::Arc<crate::widget::ModelFileFacts>>,

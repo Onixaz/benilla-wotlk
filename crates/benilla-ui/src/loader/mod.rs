@@ -679,8 +679,7 @@ impl Loader<'_> {
     ) {
         // This frame's deferred anchors drain before its OnLoad; a nested frame drains its own.
         let deferred_mark = self.deferred_anchors.len();
-        // In its XML load until its own `OnLoad` (`+0x130`): no `OnEnable`/`OnDisable` fires on it,
-        // not even from a child's `OnLoad`.
+        // The load mark (`+0x130`): no show, hide or enable script runs on it until `<Frames>`.
         let loading = crate::script::object::frame_handle_of(self.lua(), wrapper).ok();
         if let Some(h) = loading {
             self.model().xml_loading.insert(h);
@@ -743,8 +742,13 @@ impl Loader<'_> {
             }
         }
 
+        // 7a · the load mark clears (`0x490421`): a `<Frames>` child's `OnLoad` runs our scripts.
+        if let Some(h) = loading {
+            self.model().xml_loading.remove(&h);
+        }
+
         // 7b · nested <Frames>, template's then instance's, whose OnLoads fire before ours
-        //      (`0x48f400`, then `0x490410`).
+        //      (`0x48f400`, called at `0x490493`).
         for frames_el in children_named(el, "Frames") {
             for child in &frames_el.children {
                 let expanded = self.expand(child);
@@ -754,11 +758,7 @@ impl Loader<'_> {
 
         // 7c · deferred anchors: every child exists now, as at the reference's layout pass.
         self.drain_deferred_anchors(deferred_mark);
-        // 8 · this frame's OnLoad, now that its subtree is complete (bottom-up), after the load
-        //     mark is cleared (`0x490421`).
-        if let Some(h) = loading {
-            self.model().xml_loading.remove(&h);
-        }
+        // 8 · this frame's OnLoad, now that its subtree is complete (bottom-up).
         if let Some(func) = onload {
             self.fire_onload(wrapper, &func, dbg_name);
         }

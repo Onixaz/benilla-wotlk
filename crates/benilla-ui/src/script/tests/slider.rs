@@ -229,6 +229,36 @@ fn slider_setvalue_fires_onvaluechanged_only_on_change() {
     .unwrap();
 }
 
+/// A `<Frames>` child's `OnLoad` runs its slider parent's `OnDisable` (`0x97212a`): the load mark
+/// clears before the children are built (`0x490421`).
+#[test]
+fn a_childs_onload_disabling_a_slider_runs_its_ondisable() {
+    let s = script();
+    s.run("log = {}").unwrap();
+    let doc = crate::framexml::parse(
+        r#"<Ui>
+        <Slider name="LoadingSlider">
+            <Frames>
+                <Frame name="$parentKid">
+                    <Scripts><OnLoad>self:GetParent():Disable()</OnLoad></Scripts>
+                </Frame>
+            </Frames>
+            <Scripts>
+                <OnLoad>table.insert(log, "load")</OnLoad>
+                <OnDisable>table.insert(log, "disable")</OnDisable>
+            </Scripts>
+        </Slider>
+        </Ui>"#,
+    )
+    .unwrap();
+    let report = crate::loader::load_in(&s, &doc, "test.xml", &|_| None);
+    assert!(report.errors.is_empty(), "{:#?}", report.errors);
+    assert_eq!(
+        s.eval::<String>("return table.concat(log, ',')").unwrap(),
+        "disable,load"
+    );
+}
+
 /// 3.3.5a's Slider table (`0xb2ce20`) has its own `Enable`, `Disable` and `IsEnabled`: 1 or nil
 /// (`0x972050`), and each call runs `OnEnable`/`OnDisable` even without a change. The Button's
 /// predicate stays the number 1 or 0.
