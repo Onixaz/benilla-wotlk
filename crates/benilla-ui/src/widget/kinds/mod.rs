@@ -1108,14 +1108,15 @@ impl Default for SliderState {
 
 /// Where a press grabs the thumb: the offset from its leading edge that stays under the cursor,
 /// with distances from the track's leading edge so every UI surface shares it. Off the thumb it is
-/// the center, warping the value under the cursor. Deviation: on the thumb it is the grabbed point,
-/// where the reference's slider always centers it, because that feels less surprising and a
-/// stock-sized thumb hides the difference.
-pub fn slider_grab(cursor: f32, thumb_lead: f32, thumb_extent: f32) -> f32 {
-    if cursor >= thumb_lead && cursor <= thumb_lead + thumb_extent {
+/// half the own-unit length `0x96c320` centers on, warping the value under the cursor. Deviation:
+/// on the thumb it is the grabbed point, where the reference's slider always centers it, because
+/// that feels less surprising and a stock-sized thumb hides the difference. `drawn_extent` is the
+/// thumb in root units.
+pub fn slider_grab(cursor: f32, thumb_lead: f32, drawn_extent: f32, own_extent: f32) -> f32 {
+    if cursor >= thumb_lead && cursor <= thumb_lead + drawn_extent {
         cursor - thumb_lead
     } else {
-        thumb_extent * 0.5
+        own_extent * 0.5
     }
 }
 

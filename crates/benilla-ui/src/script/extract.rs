@@ -218,9 +218,8 @@ fn extract_one(
             let mut thumb_fill = false;
             if let Some(crate::widget::KindState::Slider(sl)) = owner_frame.map(|f| &f.kind_state) {
                 if sl.thumb == Some(rh) {
-                    // The thumb's own `GetWidth`/`GetHeight`, as the drag reads them
-                    // (`slider::thumb_extent`), not its authored `<Size>`.
-                    let tsize = super::region::virtual_span(model, rh);
+                    // The thumb's own `GetWidth`/`GetHeight`, not its authored `<Size>`, as drawn.
+                    let tsize = slider::drawn_thumb(model, owner, rh);
                     rect = rect.map(|r| slider::thumb_rect(r, tsize, sl.vertical, sl.fraction()));
                     thumb_fill = true;
                 }
@@ -232,7 +231,13 @@ fn extract_one(
             if let Some(crate::widget::KindState::ColorSelect(cs)) =
                 owner_frame.map(|f| &f.kind_state)
             {
-                let tsize = model.region_data.get(&rh).and_then(|d| d.size);
+                // Textures of the frame, so the markers draw at their size times its scale.
+                let scale = owner_frame.map_or(1.0, |f| f.effective_scale);
+                let tsize = model
+                    .region_data
+                    .get(&rh)
+                    .and_then(|d| d.size)
+                    .map(|(w, h)| (w * scale, h * scale));
                 if cs.wheel_thumb == Some(rh) {
                     rect = cs
                         .wheel

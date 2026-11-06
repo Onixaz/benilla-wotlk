@@ -510,10 +510,9 @@ pub(super) fn tick_script(
         return;
     };
     let (w, h) = (window.width(), window.height());
-    // The client's UI space is 768 units tall at every aspect (`f(screenH) = 768`, the caret's
-    // `H_px/192`), `768/uiScale` with the dial. The VM lives in it: quads scale ×s out, and the
-    // mouse and the measures ÷s in.
-    let s = super::seam_scale(h, ui_scale.for_vm(script.vm_kind()));
+    // The client's root is 768 units tall at every aspect (`f(screenH) = 768`, the caret's
+    // `H_px/192`). The VM lives in it: quads scale ×s out, and the mouse and the measures ÷s in.
+    let s = super::seam_scale(h);
     // A moved seam scale or DPI stales every text metric the engine caches: integer-stepped
     // advances do not rescale, and the size snap moves a string's width by several percent,
     // enough for the ellipsis to eat fitting text. A monitor hop moves the DPI alone.
@@ -556,10 +555,13 @@ pub(super) fn tick_script(
     {
         let _span = bevy::log::info_span!("ui_script: tick").entered();
         let resized = script.set_screen_size(w / s, if h > 0.0 { h / s } else { 768.0 });
-        // The glue lays out on the root alone; only the in-game state re-runs what the interface
-        // computed from the old screen size.
-        if resized && script.vm_kind() == benilla_ui::script::VmKind::InGame {
-            super::manifest::on_screen_resized(&script);
+        // The glue lays out on the root alone; only the in-game state has a `UIParent` to scale
+        // and re-runs what the interface computed from the old screen size.
+        if script.vm_kind() == benilla_ui::script::VmKind::InGame {
+            let rescaled = script.set_ui_scale(ui_scale.0);
+            if resized || rescaled {
+                super::manifest::on_screen_resized(&script);
+            }
         }
         script.tick(time.delta_secs());
     }
@@ -1952,25 +1954,41 @@ mod clip_plumb_tests {
         );
     }
 
-    /// At dial 0.5 the VM sees a 2048×1536 screen, and every window-px rect halves.
-    #[test]
-    fn the_uiscale_dial_scales_the_extracted_rects() {
+    /// The marker's clip after one tick at dial 0.5, with `chunk` run on a VM that has a `UIParent`.
+    fn clip_at_half_dial(chunk: &str) -> Option<Rect> {
         let mut app = app_with_scrolled_marker();
+        let script = app.world().non_send_resource::<UiScript>();
+        script
+            .run(r#"CreateFrame("Frame", "UIParent"):SetAllPoints()"#)
+            .unwrap();
+        script.run(chunk).unwrap();
         app.insert_resource(crate::ui_script::UiScaleCvar(0.5));
         app.update();
 
         let quads = &app.world().resource::<UiQuads>().quads;
-        let marker: &UiQuad = quads
+        quads
             .iter()
             .find(|q| q.color[0] == 1.0 && q.color[1] == 0.0 && q.color[2] == 0.0)
-            .expect("the colored marker quad extracted");
+            .expect("the colored marker quad extracted")
+            .clip
+    }
 
-        // WoW space: top 1536 − 100 = 1436, bottom 1236, right 300; ×0.5 is y-up px 618..718,
-        // and y-down through the 768 window the top is 50 and the bottom 150.
+    /// The dial is `UIParent`'s own scale: under it the window-px rect halves on the 768-unit root.
+    #[test]
+    fn the_dial_halves_a_frame_under_uiparent() {
+        // Own offset 100 down and 200 tall is 50 and 100 in root units, from the same top.
         assert_eq!(
-            marker.clip,
+            clip_at_half_dial("SF:SetParent(UIParent)"),
             Some(Rect::new(0.0, 50.0, 150.0, 150.0)),
-            "dial 0.5 halves the px rect and re-hangs the frame from the taller virtual top"
+        );
+    }
+
+    /// The root seam has no dial in it, so a frame outside `UIParent` keeps its rect.
+    #[test]
+    fn the_dial_leaves_a_frame_outside_uiparent_alone() {
+        assert_eq!(
+            clip_at_half_dial(""),
+            Some(Rect::new(0.0, 100.0, 300.0, 300.0)),
         );
     }
 

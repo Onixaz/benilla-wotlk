@@ -350,23 +350,20 @@ pub(crate) fn run_pending_entry_load(world: &mut World) {
 }
 
 /// Seat the VM's screen size, display modes and text measurer for the load, under the current
-/// window and `uiScale`: the load-edge half of [`super::extract::tick_script`]'s per-frame pair. A
-/// fresh VM answers 1024×768 until then, and a value computed once at load keeps it: stock
+/// window: the load-edge half of [`super::extract::tick_script`]'s per-frame pair. A fresh VM
+/// answers 1024×768 until then, and a value computed once at load keeps it: stock
 /// `WorldMapFrame_OnLoad` sizes the full-screen `BlackoutWorld` from `GetScreenWidth()` and
 /// `GetScreenHeight()` and never again (`WorldMapFrame.lua:19-28`). The font engine is built here
 /// when the glue VM loads at `Startup`, before the first `Update` would build it: the stock
 /// size-to-text `OnLoad`s read `GetTextWidth` (`CharacterCreate.xml:594`).
 fn seat_raster_seam_for_load(world: &mut World, script: &mut UiScript) {
     crate::ui_text::ensure_atlas(world);
-    let ui_scale = world
-        .get_resource::<super::UiScaleCvar>()
-        .map_or(1.0, |c| c.for_vm(script.vm_kind()));
     let (w, h) = {
         let mut q = world.query_filtered::<&Window, With<bevy::window::PrimaryWindow>>();
         q.single(world)
             .map_or((0.0, 0.0), |win| (win.width(), win.height()))
     };
-    let s = super::seam_scale(h, ui_scale);
+    let s = super::seam_scale(h);
     if w > 0.0 && h > 0.0 {
         // The VM lives in 768-tall virtual space, so logical size over the seam scale is its
         // screen. No `UIParent_ManageFramePositions` here, unlike `tick_script`: nothing is laid
@@ -496,6 +493,9 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
         let z = world.resource::<crate::minimap::MinimapZoom>();
         (z.outdoor, z.inside)
     };
+    let ui_scale = world
+        .get_resource::<super::UiScaleCvar>()
+        .map_or(1.0, |c| c.0);
     // No sound during the load edge, as in the reference's UI init.
     silenced_ui_load(&mut script, |script| {
         let _ = load_ingame_ui(script, identity.as_ref(), &roster, version_check);
@@ -516,6 +516,9 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
             |script| script.load_tracked_state(class_id),
             |script| {
                 crate::ui_chat::restore_chat_looks(world, script);
+                // `UIParent` scales last, so the whole load read a bare root (`0x52a980` runs
+                // `0x5240e0` at its end, the chat settings restored and the world not yet entered).
+                script.set_ui_scale(ui_scale);
             },
         );
     });

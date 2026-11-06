@@ -1388,7 +1388,7 @@ impl UiScript {
         let Some(bd) = model.backdrops.get(&fh) else {
             return;
         };
-        for piece in backdrop::pieces(fr, bd) {
+        for piece in backdrop::pieces(fr, bd, paint.scale) {
             // The piece's screen bounding box: the render is axis-aligned, so the reference's slant
             // under unequal top and bottom insets is not drawn (stock insets are symmetric).
             let xs = piece.corners.map(|c| c[0]);

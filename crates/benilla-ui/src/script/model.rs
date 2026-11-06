@@ -244,6 +244,9 @@ pub(crate) struct Model {
     pub(crate) warnings: Vec<String>,
     /// The screen-root rect (`[bottom, left, top, right]`), the anchor base for top-level frames.
     pub(crate) screen: Rect,
+    /// The UI scale last written to `UIParent` ([`crate::script::UiScript::set_ui_scale`]), so an
+    /// addon's own `UIParent:SetScale` stands until the dial moves.
+    pub(crate) ui_scale: Option<f32>,
 
     /// Each unit token's state as pushed this frame, keyed lowercased because 1.12's resolver
     /// matches case-insensitively: read it only through `unit`, where the fold lives.
@@ -1371,6 +1374,7 @@ impl Model {
             warnings: Vec::new(),
             // 1024x768 until the host calls `set_screen_size`; y-up `[bottom, left, top, right]`.
             screen: Rect::new(0.0, 0.0, 768.0, 1024.0),
+            ui_scale: None,
             units_by_lower: HashMap::new(),
             units_by_guid: HashMap::new(),
             player_auras: Vec::new(),
@@ -1893,6 +1897,18 @@ impl Model {
         match self.frame_to_id.get(&h) {
             Some(&id) => self.touch_layout_node(id),
             None => self.touch_layout(),
+        }
+    }
+
+    /// Write frame `h`'s own scale, as `SetScale` and the UI scale do.
+    pub(crate) fn set_frame_scale(&mut self, h: FrameHandle, scale: f32) {
+        let changed = self.arena.frame(h).is_some_and(|f| f.scale != scale);
+        self.arena.set_scale(h, scale);
+        if changed {
+            // Only the subtree's effective scale moves, as for a reparent.
+            self.touch_layout_reparent(h);
+            // The owner's effective scale is in every descendant FontString's measure key.
+            self.touch_measure_all();
         }
     }
 

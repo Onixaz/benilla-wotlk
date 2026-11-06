@@ -295,7 +295,8 @@ fn num_f32(v: &Value) -> f32 {
 
 /// The thumb's rect at `fraction` along the track, centred across it and inset so it travels
 /// `trackLen - thumbLen`; vertical puts fraction 0 at the top. Render and [`begin_drag`] both use
-/// it, so they never disagree. `thumb_size` is [`thumb_extent`]'s.
+/// it, so they never disagree. `thumb_size` is [`drawn_thumb`]'s. In own units the placement is
+/// `(track / scale - thumb) * fraction` (`0x96c210`), the same point once the frame scales it.
 pub(super) fn thumb_rect(r: Rect, thumb_size: (f32, f32), vertical: bool, fraction: f32) -> Rect {
     let (tw, th) = thumb_size;
     if vertical {
@@ -317,6 +318,20 @@ pub(super) fn thumb_rect(r: Rect, thumb_size: (f32, f32), vertical: bool, fracti
 /// slider captures a press but never moves.
 fn thumb_extent(model: &Model, thumb: Option<crate::widget::RegionHandle>) -> Option<(f32, f32)> {
     Some(super::region::virtual_span(model, thumb?))
+}
+
+/// [`thumb_extent`]'s span in root units: the thumb is a texture of the frame, so it draws at its
+/// size times the frame's scale.
+pub(super) fn drawn_thumb(
+    model: &Model,
+    owner: Option<FrameHandle>,
+    thumb: crate::widget::RegionHandle,
+) -> (f32, f32) {
+    let (w, h) = super::region::virtual_span(model, thumb);
+    let scale = owner.map_or(1.0, |o| {
+        crate::script::object::layout_methods::eff_scale(model, o)
+    });
+    (w * scale, h * scale)
 }
 
 /// The in-flight thumb drag and the grab offset [`slider_grab`] returned, so the thumb tracks the
@@ -346,25 +361,40 @@ pub(super) fn begin_drag(
     };
     // No thumb region: the press still captures, the dispatcher's store being unconditional, but
     // the value never moves (`+0x328`).
-    let Some(size) = thumb_extent(model, thumb) else {
+    let Some((own_w, own_h)) = thumb_extent(model, thumb) else {
         model.slider_drag = Some(SliderDrag {
             slider: h,
             grab_offset: 0.0,
         });
         return None;
     };
-    let trect = thumb_rect(r, size, vertical, fraction);
+    let trect = thumb_rect(
+        r,
+        thumb.map_or((0.0, 0.0), |t| drawn_thumb(model, Some(h), t)),
+        vertical,
+        fraction,
+    );
     let on_thumb = point_in_rect(trect, x, y);
     // Distances from the track's leading edge, where the thumb sits at `min`: `top - y` on a
     // vertical track in this y-up arena, `x - left` on a horizontal one.
-    let (cursor, thumb_lead, thumb_len) = if vertical {
-        (r.top - y, r.top - trect.top, trect.top - trect.bottom)
+    let (cursor, thumb_lead, thumb_len, own_len) = if vertical {
+        (
+            r.top - y,
+            r.top - trect.top,
+            trect.top - trect.bottom,
+            own_h,
+        )
     } else {
-        (x - r.left, trect.left - r.left, trect.right - trect.left)
+        (
+            x - r.left,
+            trect.left - r.left,
+            trect.right - trect.left,
+            own_w,
+        )
     };
     model.slider_drag = Some(SliderDrag {
         slider: h,
-        grab_offset: slider_grab(cursor, thumb_lead, thumb_len),
+        grab_offset: slider_grab(cursor, thumb_lead, thumb_len, own_len),
     });
     if on_thumb {
         return None; // no value change from the grab itself
@@ -384,6 +414,7 @@ pub(super) fn drag_move(model: &mut Model, x: f32, y: f32) -> Option<(u32, f32)>
         Some(KindState::Slider(s)) => (s.min, s.max, s.vertical, s.thumb),
         _ => return None, // slider destroyed mid-drag
     };
+    // The own-unit thumb against the scaled track, as `0x96c320` subtracts them.
     let (tw, th) = thumb_extent(model, thumb)?;
     // The leading-edge frame `begin_drag` stored the grab in.
     let (cursor, track_extent, thumb_len) = if vertical {

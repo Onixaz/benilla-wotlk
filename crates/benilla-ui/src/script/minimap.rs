@@ -113,11 +113,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     m.set(
         "PingLocation",
-        // Centre-relative offsets in UI units, x right and y up, parked for the app to resolve in
-        // the frame it draws the map; one pending click, not one per widget.
+        // Centre-relative offsets in the widget's own units, x right and y up, a fraction of its
+        // size (`0x57ed70`), parked in root units for the app to resolve in the frame it draws the
+        // map; one pending click, not one per widget.
         lua.create_function(|lua, (this, x, y): (Table, f32, f32)| {
             with_minimap(lua, &this, |_| ())?;
-            crate::script::model_mut_of(lua).minimap_ping_request = Some((x, y));
+            let h = frame_handle_of(lua, &this)?;
+            let mut model = crate::script::model_mut_of(lua);
+            let scale = crate::script::object::layout_methods::eff_scale(&model, h);
+            model.minimap_ping_request = Some((x * scale, y * scale));
             Ok(())
         })?,
     )?;

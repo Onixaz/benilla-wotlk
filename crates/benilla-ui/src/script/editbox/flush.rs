@@ -60,11 +60,12 @@ fn caret(lua: &Lua, h: FrameHandle) -> bool {
     placed
 }
 
-/// `OnCursorChanged(x, y, w, h)`, `x` the caret's advance along its line, `y` minus the row index
-/// times the row pitch, `w` the constant 4.0 and `h` the line height. The arguments are computed
-/// only for a box with the script, from the box's advance table, which the installed font engine
-/// measures here when the text or font moved. `false` while that table is pending, with no engine
-/// installed: the host answers the focused box's a tick later.
+/// `OnCursorChanged(x, y, w, h)` in the box's own units (`0x964a90`), `x` the caret's advance along
+/// its line, `y` minus the row index times the row pitch, `w` the constant 4.0 and `h` the line
+/// height. The arguments are computed only for a box with the script, from the box's advance
+/// table, which the installed font engine measures here when the text or font moved. `false` while
+/// that table is pending, with no engine installed: the host answers the focused box's a tick
+/// later.
 ///
 /// Deviation: `h` is the row pitch the advance answer carries, where the reference passes the line
 /// height: 0 for a single-line box, whose answer has no pitch, and for a multi-line box taller than
@@ -98,6 +99,13 @@ fn cursor_changed(lua: &Lua, h: FrameHandle) -> bool {
     let Some((x, y, pitch)) = args else {
         return false;
     };
+    // The advance table and the pitch are root units, the seam's.
+    let scale = crate::script::object::layout_methods::eff_scale(
+        &lua.app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data"),
+        h,
+    );
+    let (x, y, pitch) = (x / scale, y / scale, pitch / scale);
     if let Err(e) = event::fire_widget_handler(
         lua,
         id,
