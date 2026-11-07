@@ -226,6 +226,8 @@ fn a_minimap_is_born_with_nine_model_children_and_the_ninth_is_the_player_arrow(
         settled,
         "an unanchored pane paints nothing"
     );
+    s.run("Minimap:SetPoint('TOPLEFT') Minimap:SetWidth(140) Minimap:SetHeight(140)")
+        .unwrap();
     s.run("({Minimap:GetChildren()})[9]:SetAllPoints(Minimap)")
         .unwrap();
     s.resolve();

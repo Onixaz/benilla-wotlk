@@ -1265,9 +1265,9 @@ pub(super) fn simulate_particles(
                     &job.placement,
                     world,
                     &job.cam,
-                    &cam_tf,
+                    cam_tf,
                     camera,
-                    &projection,
+                    projection,
                     commit.textured,
                     &quads.verts[start as usize..],
                 );

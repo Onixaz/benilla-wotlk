@@ -364,7 +364,6 @@ pub(super) fn cull_cells(
     let Some((cam_t, proj, frustum)) = cam_view else {
         return;
     };
-    let (cam_t, proj) = (&*cam_t, &*proj);
     let cam_pos = cam_t.translation();
     let cam_fwd = Vec3::from(cam_t.forward());
     let gate = crate::exterior_cull::ExteriorGate::build(&windows, Some((cam_t, proj)));
