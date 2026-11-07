@@ -490,6 +490,28 @@ fn the_selection_queue_carries_all_three_verbs_in_call_order() {
     assert!(s.take_selection_requests().is_empty());
 }
 
+/// `TargetUnit` takes a token or a name (`0x525a30`): a name is the closest match, `/target <name>`
+/// and `/targetexact <name>`, and never a unit token's lookup.
+#[test]
+fn target_unit_reads_a_name_past_the_tokens() {
+    use crate::script::{ScriptCall, SelectionRequest};
+    let mut s = UiScript::new().unwrap();
+    s.eval::<()>(r#"TargetUnit("party1") TargetUnit("Marshal") TargetUnit("Marshal McBride", 1)"#)
+        .unwrap();
+    let calls = s.take_script_calls();
+    assert!(
+        matches!(
+            &calls[..],
+            [
+                ScriptCall::Select(SelectionRequest::Unit(t)),
+                ScriptCall::TargetByName { name: a, exact: false },
+                ScriptCall::TargetByName { name: b, exact: true },
+            ] if t == "party1" && a == "Marshal" && b == "Marshal McBride"
+        ),
+        "{calls:?}"
+    );
+}
+
 /// The reverse flag as the boolean coercion reads it (default 0): absent, nil, 0 and `"0"` are
 /// forward, 1, `true` and `"1"` reverse (`Bindings.xml:458`). The four shims differ only in the
 /// mode.

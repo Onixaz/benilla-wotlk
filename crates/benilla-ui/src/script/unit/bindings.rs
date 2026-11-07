@@ -5,7 +5,7 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::super::binding_abi::flag;
+use super::super::binding_abi::{bool_or_default, flag};
 use super::super::calls::ScriptCall;
 use super::{
     classification_word, grey_band, level_reads_unknown, pair_reaction, parse_unit_token,
@@ -1355,16 +1355,24 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, ()| Ok(Value::Nil))?,
     )?;
 
-    // TargetUnit(unit): queue the token for the app to resolve and select; a token naming no unit
-    // is a no-op, as in the reference.
+    // TargetUnit(unit or name [, exact]) (`0x525a30`): a token queues for the app to resolve and
+    // select, and one naming no unit is a no-op; anything else is the closest name match
+    // (`0x520190`), which `/target <name>` reaches.
     g.set(
         "TargetUnit",
-        lua.create_function(|lua, token: Option<String>| {
+        lua.create_function(|lua, (token, exact): (Option<String>, Option<Value>)| {
             if let Some(token) = token {
-                let mut model = crate::script::model_mut_of(lua);
-                model
-                    .script_calls
-                    .push(ScriptCall::Select(SelectionRequest::Unit(token)));
+                let call = if super::resolve::parse_unit_token(&token)
+                    == super::resolve::UnitTokenParse::Unknown
+                {
+                    ScriptCall::TargetByName {
+                        name: token,
+                        exact: bool_or_default(exact.as_ref(), false),
+                    }
+                } else {
+                    ScriptCall::Select(SelectionRequest::Unit(token))
+                };
+                crate::script::model_mut_of(lua).script_calls.push(call);
             }
             Ok(())
         })?,
