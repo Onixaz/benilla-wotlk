@@ -1118,6 +1118,7 @@ pub(crate) fn feed_quest_log(
                 // Absolute unix seconds, 0 untimed; the bindings subtract the server clock.
                 timer: r.log_slot.timer,
                 objectives,
+                rep_objective: t.rep_objective_faction != 0,
                 detail: Some(detail),
                 completion_text: completion_text(t, &macros),
                 poi_objectives: poi_objectives(t, &r.log_slot, &store.0, &objects),
@@ -2339,6 +2340,45 @@ mod tests {
 
     fn script(app: &mut App) -> Mut<'_, UiScript> {
         app.world_mut().non_send_resource_mut::<UiScript>()
+    }
+
+    /// A faction with no row counts a line that reads nothing until complete (`0x5e1300`, `0x5e1460`).
+    #[test]
+    fn a_faction_with_no_row_counts_a_line_that_reads_nothing() {
+        let (mut app, _, _rx) = log_app(&[(0, 201, 7)]);
+        let mut read = |t: &QuestTemplate| {
+            let mut t = t.clone();
+            t.quest_id = 201;
+            t.zone_or_sort = 7;
+            t.rep_objective_faction = u32::MAX;
+            app.world_mut()
+                .resource_mut::<QuestLog>()
+                .insert_template(t);
+            app.update();
+            let s = script(&mut app);
+            let kind = |i: i32| {
+                s.eval::<Option<String>>(&format!(
+                    "return (select(2, GetQuestLogLeaderBoard({i}, 2)))"
+                ))
+                .unwrap()
+            };
+            let count = s.eval::<i64>("return GetNumQuestLeaderBoards(2)").unwrap();
+            (count, kind(1), kind(2))
+        };
+
+        let mut t = quest_template([obj(100, 1, 0, 0, ""), empty(), empty(), empty()]);
+        t.rep_objective_value = 3000;
+        assert_eq!(read(&t), (2, Some("monster".into()), None));
+
+        // A standing that meets the value completes it, and the walk closes on the log line.
+        let mut t = quest_template([empty(), empty(), empty(), empty()]);
+        t.rep_objective_value = 0;
+        assert_eq!(read(&t), (1, Some("log".into()), Some("log".into())));
+
+        // The player line is counted beside the faction and answers both indices.
+        t.rep_objective_value = 3000;
+        t.players_slain = 2;
+        assert_eq!(read(&t), (2, Some("player".into()), Some("player".into())));
     }
 
     /// A folded quest stays a row past the shown count (`0x5e08f0`), every index verb reaching it,
