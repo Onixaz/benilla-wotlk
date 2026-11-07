@@ -135,6 +135,8 @@ pub struct NpcTextBlock {
     pub male: String,
     /// `text1`, shown when the NPC is female.
     pub female: String,
+    /// The block's three `(delay ms, Emotes.dbc id)` pairs, in wire order.
+    pub emotes: [(u32, u32); NPC_TEXT_EMOTES],
 }
 
 impl NpcTextBlock {
@@ -145,13 +147,30 @@ impl NpcTextBlock {
             &self.male
         }
     }
+
+    /// The line an NPC of `npc_gender` says: female only at 1 (`0x58ace0`).
+    pub fn line(&self, npc_gender: u8) -> &str {
+        self.column(npc_gender == 1)
+    }
+
+    /// The pairs the text setter plays, those before the first zero emote (`0x58adfb`-`0x58ae0e`).
+    pub fn played_emotes(&self) -> Vec<(u32, u32)> {
+        self.emotes
+            .iter()
+            .copied()
+            .take_while(|&(_, emote)| emote != 0)
+            .collect()
+    }
 }
 
 /// The greeting blocks in every `SMSG_NPC_TEXT_UPDATE` record.
 pub const NPC_TEXT_BLOCKS: usize = 8;
 
+/// The emote pairs in each block.
+pub const NPC_TEXT_EMOTES: usize = 3;
+
 /// Read `SMSG_NPC_TEXT_UPDATE` (vmangos `GossipDef.cpp:298-369`), all eight blocks undecided; the
-/// greeting is picked when the frame opens, by [`select_greeting`].
+/// greeting is picked when the frame opens, by [`select_block`].
 ///
 /// The language is parsed and dropped: the 1.12 client garbles a block in a non-zero language,
 /// which is not built, and no 1.12 record is known to set one. An id with the top bit set is a
@@ -167,14 +186,15 @@ pub(super) fn read_npc_text_update(r: &mut &[u8]) -> io::Result<(u32, Option<Vec
         let male = read_cstring(r)?;
         let female = read_cstring(r)?;
         let _language_id = read_u32_le(r)?;
-        for _ in 0..3 {
-            let _emote_delay = read_u32_le(r)?;
-            let _emote_id = read_u32_le(r)?;
+        let mut emotes = [(0, 0); NPC_TEXT_EMOTES];
+        for pair in &mut emotes {
+            *pair = (read_u32_le(r)?, read_u32_le(r)?);
         }
         blocks.push(NpcTextBlock {
             probability,
             male,
             female,
+            emotes,
         });
     }
     Ok((text_id, Some(blocks)))
@@ -218,7 +238,7 @@ pub(super) fn read_gossip_poi(r: &mut &[u8]) -> io::Result<GossipPoi> {
 /// text in the NPC's gender column (female only at 1), never falling back to the other column.
 /// `roll` is uniform in `[1.0, 2.0)`, `<=` makes an all-zero record pick block 0, and the sums
 /// are `f64` as on the client's x87 stack. `None` is its "Missing gossip text!".
-pub fn select_greeting(blocks: &[NpcTextBlock], npc_gender: u8, roll: f32) -> Option<&str> {
+pub fn select_block(blocks: &[NpcTextBlock], npc_gender: u8, roll: f32) -> Option<&NpcTextBlock> {
     let female = npc_gender == 1;
     let drawn = || blocks.iter().filter(|b| !b.column(female).is_empty());
     let sum: f64 = drawn().map(|b| b.probability as f64).sum();
@@ -227,7 +247,7 @@ pub fn select_greeting(blocks: &[NpcTextBlock], npc_gender: u8, roll: f32) -> Op
     for block in drawn() {
         acc += block.probability as f64;
         if threshold <= acc {
-            return Some(block.column(female));
+            return Some(block);
         }
     }
     None

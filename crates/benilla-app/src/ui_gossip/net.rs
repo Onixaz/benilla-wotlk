@@ -5,6 +5,7 @@ use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
 use super::GossipState;
+use crate::creature_anim::QueueNpcEmotes;
 use crate::net::{ClientCommand, GuidIndex, NetCommands, NetHandlerApp, ObjectStore};
 use crate::ui_quest::QuestGiver;
 
@@ -18,15 +19,27 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Disconnected, on_session_end);
 }
 
+/// The drawn greeting's emote writer; absent without the animation plugin.
+type EmoteOut<'w> = Option<MessageWriter<'w, QueueNpcEmotes>>;
+
+/// A greeting drawn by this packet plays its emotes on the NPC (`0x58ae81`).
+fn queue_greeting_emotes(gossip: &mut GossipState, out: &mut EmoteOut) {
+    if let (Some(ask), Some(out)) = (gossip.take_emotes(), out.as_mut()) {
+        out.write(ask);
+    }
+}
+
 fn on_gossip_menu(
     In(ev): In<SessionEvent>,
     mut gossip: ResMut<GossipState>,
     commands: Res<NetCommands>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
+    mut emotes: EmoteOut,
 ) {
     if let SessionEvent::GossipMenu(menu) = ev {
         gossip_menu(menu, &mut gossip, &commands, &index, &stores);
+        queue_greeting_emotes(&mut gossip, &mut emotes);
     }
 }
 
@@ -35,9 +48,11 @@ fn on_npc_greeting(
     mut gossip: ResMut<GossipState>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
+    mut emotes: EmoteOut,
 ) {
     if let SessionEvent::NpcGreeting { text_id, blocks } = ev {
         npc_greeting(text_id, blocks, &mut gossip, &index, &stores);
+        queue_greeting_emotes(&mut gossip, &mut emotes);
     }
 }
 

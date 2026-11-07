@@ -844,27 +844,18 @@ fn drive_unit(
     let sheath_frame_start = drv.sheath_cur;
     let sheath_byte = store.and_then(|s| s.0.unit_sheath_state()).unwrap_or(0);
     if drv.sheath_cur.is_none() || drv.sheath_byte != Some(sheath_byte) {
-        drv.sheath_cur = Some(sheath_byte);
+        drv.commit_sheath(sheath_byte);
         drv.sheath_byte = Some(sheath_byte);
     }
     // The setter: a no-op when unchanged (`newState == CUR`), else commit, volunteer
     // `CMSG_SETSHEATHED` for the local player, and for the manual toggle play the ceremony, per-arm
     // masked overlays by each item's stow family (hip 90, back 89).
     if let Some(req) = pending_sheath.get(&entity) {
-        let cur = drv.sheath_cur.unwrap_or(0);
-        // Deviation: a mounted draw is refused at the setter, because our rider track never replays
-        // the reference's per-play force-stow; the result is the same.
-        if req.state != cur && !(mounted && req.state != 0) {
+        if let Some(cur) = set_sheath(&mut drv, req.state, mounted, is_self, net) {
             debug!(
                 "sheath: unit {entity} {cur} -> {} (request, ceremony {})",
                 req.state, req.ceremony
             );
-            drv.sheath_cur = Some(req.state);
-            if is_self {
-                let _ = net.0.send(ClientCommand::SetSheathed {
-                    state: u32::from(req.state),
-                });
-            }
             if req.ceremony {
                 start_sheath_ceremony(
                     commands,
@@ -1161,6 +1152,19 @@ fn drive_unit(
     drv.last_special = special;
     if special_edge {
         drv.deferred = None;
+    }
+    // The anim end's restore (`0x73bea3`): a body clip ending by itself after the queue drained.
+    if drv.sheath_restore && body_clip_ended(&drv, &player, &tr, anims, catalog) {
+        drv.sheath_restore = false;
+        let prev = drv.sheath_prev;
+        if let Some(cur) = set_sheath(&mut drv, prev, mounted, is_self, net) {
+            if benilla_assets::trace::enabled() {
+                benilla_assets::trace::line(
+                    "fct",
+                    &format!("anim sheath-restore unit={entity} {cur}->{prev}"),
+                );
+            }
+        }
     }
     // Looping-variation advance (the unit's `model+0x70` callback): when the main node completes
     // its `R` passes, a fresh weighted pick with a fresh window follows (a gryphon's flap/glide, a
@@ -1537,7 +1541,7 @@ fn drive_unit(
                     "sheath: unit {entity} {cur} -> {forced} (anim {anim} flags {flags:#x}, \
                      engaged {engaged})"
                 );
-                drv.sheath_cur = Some(forced);
+                drv.commit_sheath(forced);
                 if is_self {
                     let _ = net.0.send(ClientCommand::SetSheathed {
                         state: u32::from(forced),
@@ -1559,6 +1563,47 @@ fn drive_unit(
     // since only the Load clips' `$BWP` re-latches.
     if mv.flags & (move_flags::ANY_MOVE | move_flags::SWIMMING) != 0 && nock_latched {
         commands.entity(entity).remove::<super::NockLatch>();
+    }
+}
+
+/// The sheath setter's commit and `CMSG_SETSHEATHED`, returning the state left; no change, `None`.
+fn set_sheath(
+    drv: &mut AnimDriver,
+    state: u8,
+    mounted: bool,
+    is_self: bool,
+    net: &NetCommands,
+) -> Option<u8> {
+    let cur = drv.sheath_cur.unwrap_or(0);
+    // Deviation: a mounted draw is refused, as our rider track never replays the force-stow.
+    if state == cur || (mounted && state != 0) {
+        return None;
+    }
+    drv.commit_sheath(state);
+    if is_self {
+        let _ = net.0.send(ClientCommand::SetSheathed {
+            state: u32::from(state),
+        });
+    }
+    Some(cur)
+}
+
+/// Whether the body clip ended by itself this frame: a one-shot finished, or a loop ran its window.
+fn body_clip_ended(
+    drv: &AnimDriver,
+    player: &AnimationPlayer,
+    tr: &AnimationTransitions,
+    anims: &ModelAnimations,
+    catalog: Option<&AnimDataCatalog>,
+) -> bool {
+    match drv.mode {
+        Mode::Swing { id, .. } => oneshot_finished(player, anims, id, catalog),
+        _ => drv.loop_window.is_some_and(|(node, budget)| {
+            tr.get_main_animation() == Some(node)
+                && player
+                    .animation(node)
+                    .is_some_and(|a| a.completions() >= budget)
+        }),
     }
 }
 

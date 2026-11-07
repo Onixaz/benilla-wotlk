@@ -187,8 +187,8 @@ pub use gm_ticket::{
     GMTICKET_STATUS_DEFAULT, GMTICKET_STATUS_HASTEXT,
 };
 pub use gossip::{
-    gossip_hello, gossip_select_option, npc_text_query, select_greeting, GossipMenu, GossipOption,
-    GossipPoi, NpcTextBlock, QuestOption, GOSSIP_MAX_ITEMS, NPC_TEXT_BLOCKS,
+    gossip_hello, gossip_select_option, npc_text_query, select_block, GossipMenu, GossipOption,
+    GossipPoi, NpcTextBlock, QuestOption, GOSSIP_MAX_ITEMS, NPC_TEXT_BLOCKS, NPC_TEXT_EMOTES,
 };
 pub use group::{
     group_accept, group_assistant_leader, group_change_sub_group, group_decline, group_disband,

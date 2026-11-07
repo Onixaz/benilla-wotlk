@@ -1,9 +1,4 @@
-//! A unit's emote queue, which the questgiver panels fill from their packets' emote pairs: the
-//! setter keeps up to four pairs whose `Emotes.dbc` row is a one-shot (`EmoteSpecProc` 0) and
-//! arms the first at its delay (`0x71a260`); the per-frame pass plays the due head's `AnimID` and
-//! arms the next at its own delay past the played sequence's length plus 500 ms (`0x73adc0`).
-
-use std::time::{Duration, Instant};
+//! A unit's emote queue, fed by the quest panels and the gossip text (`0x71a260`, `0x73adc0`).
 
 use benilla_assets::ModelAnimations;
 use bevy::prelude::*;
@@ -11,13 +6,16 @@ use bevy::prelude::*;
 use crate::net::{GuidIndex, NetEntity};
 use crate::sound::EmoteSounds;
 
-use super::{AnimData, EmoteAnim, PlaySeq};
+use super::{AnimData, AnimDriver, EmoteAnim, PlaySeq};
 
 /// The queue's slot count (`[unit+0x9fc]`, four `{delay, emote}` pairs).
 const SLOTS: usize = 4;
 
 /// The gap the pass adds after a played sequence before the next pair's delay (`0x73aec7`).
-const SEQUENCE_GAP_MS: u64 = 500;
+const SEQUENCE_GAP_MS: u32 = 500;
+
+/// Slot 0's emote while the queue is idle (`[unit+0xa00] = -1`).
+const IDLE: u32 = u32::MAX;
 
 /// The setter's ask: `(delay ms, Emotes.dbc id)` pairs for the unit `guid`, in wire order.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
@@ -26,45 +24,98 @@ pub(crate) struct QueueNpcEmotes {
     pub(crate) emotes: Vec<(u32, u32)>,
 }
 
-/// One unit's queue: the kept emote ids in order, the head due at `due`, and the later pairs'
-/// raw delays.
-#[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
+/// One unit's `(delay, emote)` slots; an armed slot's delay is a clock time in ms.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct EmoteQueue {
-    /// `(delay ms, emote)`, the head first; empty is the idle queue.
-    pending: Vec<(u32, u32)>,
-    due: Option<Instant>,
+    slots: [(u32, u32); SLOTS],
+}
+
+impl Default for EmoteQueue {
+    fn default() -> Self {
+        let mut slots = [(0, 0); SLOTS];
+        slots[0].1 = IDLE;
+        Self { slots }
+    }
+}
+
+/// One pass: the emote it plays, and whether it left the queue idle (`0x73adf5`, `0x73aed7`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Pass {
+    emote: Option<u32>,
+    drained: bool,
 }
 
 impl EmoteQueue {
-    /// The setter: a pair is kept when its emote is non-zero and its `Emotes.dbc` row is a
-    /// one-shot (`row+0x10 == 0`, `0x71a2a2`-`0x71a2cd`), into the four slots; the head is due its
-    /// delay from now.
-    fn set(&mut self, emotes: &[(u32, u32)], spec_proc: impl Fn(u32) -> Option<u32>, now: Instant) {
-        self.pending = emotes
-            .iter()
-            .copied()
-            .filter(|&(_, emote)| emote != 0 && spec_proc(emote) == Some(0))
-            .take(SLOTS)
-            .collect();
-        self.due = self
-            .pending
-            .first()
-            .map(|&(delay, _)| now + Duration::from_millis(u64::from(delay)));
+    /// The setter over `row` (`EmoteSpecProc`, `AnimID`), `true` when pair i's slot i has an anim.
+    fn set(
+        &mut self,
+        pairs: &[(u32, u32)],
+        row: impl Fn(u32) -> Option<(u32, u32)>,
+        now_ms: u32,
+    ) -> bool {
+        self.slots[0].1 = IDLE;
+        if pairs.is_empty() {
+            return false;
+        }
+        let mut kept = 0;
+        let mut hand_off = false;
+        for (i, &(delay, emote)) in pairs.iter().enumerate() {
+            if kept < SLOTS && emote != 0 && row(emote).is_some_and(|(spec, _)| spec == 0) {
+                self.slots[kept] = (delay, emote);
+                kept += 1;
+            }
+            let slot = self.slots.get(i).and_then(|&(_, id)| row(id));
+            hand_off |= slot.is_some_and(|(_, anim)| anim != 0);
+        }
+        if kept < SLOTS {
+            self.slots[kept].1 = 0;
+        }
+        self.slots[0].0 = self.slots[0].0.wrapping_add(now_ms);
+        hand_off
     }
 
-    /// The pass: once the head is due, its emote is returned to play and the next pair is armed at
-    /// its delay past `now`, the played sequence's `length_ms` and the 500 ms gap.
-    fn tick(&mut self, now: Instant, length_ms: impl FnOnce(u32) -> u64) -> Option<u32> {
-        let due = self.due?;
-        if now < due {
-            return None;
-        }
-        let (_, emote) = self.pending.remove(0);
-        self.due = self.pending.first().map(|&(delay, _)| {
-            now + Duration::from_millis(u64::from(delay) + length_ms(emote) + SEQUENCE_GAP_MS)
-        });
-        Some(emote)
+    fn is_idle(&self) -> bool {
+        self.slots[0].1 == IDLE
     }
+
+    /// The pass: the first live slot once due; the next waits `length_ms` and the gap past it.
+    fn tick(&mut self, now_ms: u32, length_ms: impl FnOnce(u32) -> u32) -> Pass {
+        if self.is_idle() {
+            return Pass::default();
+        }
+        let Some(i) = self.slots.iter().position(|&(_, emote)| emote != 0) else {
+            self.slots[0].1 = IDLE;
+            return Pass {
+                emote: None,
+                drained: true,
+            };
+        };
+        let (due, emote) = self.slots[i];
+        if due > now_ms {
+            return Pass::default();
+        }
+        self.slots[i].1 = 0;
+        let drained = match self.slots.get_mut(i + 1) {
+            Some(next) if next.1 != 0 => {
+                let wait = length_ms(emote).saturating_add(SEQUENCE_GAP_MS);
+                next.0 = next.0.wrapping_add(now_ms.wrapping_add(wait));
+                false
+            }
+            _ => {
+                self.slots[0].1 = IDLE;
+                true
+            }
+        };
+        Pass {
+            emote: Some(emote),
+            drained,
+        }
+    }
+}
+
+/// The async clock the setter and the pass share (`0x86ae20`).
+fn clock_ms(time: &Time<Real>) -> u32 {
+    time.elapsed().as_millis() as u32
 }
 
 /// Each [`QueueNpcEmotes`] onto its unit, replacing what was queued; a guid not streamed as a unit
@@ -75,13 +126,15 @@ pub(super) fn set_emote_queues(
     index: Res<GuidIndex>,
     kinds: Query<&NetEntity>,
     mut queues: Query<&mut EmoteQueue>,
+    mut drivers: Query<&mut AnimDriver>,
     emotes: Option<Res<EmoteSounds>>,
+    time: Res<Time<Real>>,
 ) {
     let Some(emotes) = emotes else {
         asks.clear();
         return;
     };
-    let now = Instant::now();
+    let now = clock_ms(&time);
     for ask in asks.read() {
         let Some(&entity) = index.0.get(&ask.guid) else {
             continue;
@@ -95,49 +148,70 @@ pub(super) fn set_emote_queues(
         if !unit {
             continue;
         }
-        let spec_proc = |id| emotes.0.spec_proc(id);
-        if let Ok(mut queue) = queues.get_mut(entity) {
-            queue.set(&ask.emotes, spec_proc, now);
+        let row = |id| Some((emotes.0.spec_proc(id)?, emotes.0.state_anim(id)?));
+        let hand_off = if let Ok(mut queue) = queues.get_mut(entity) {
+            queue.set(&ask.emotes, row, now)
         } else {
             let mut queue = EmoteQueue::default();
-            queue.set(&ask.emotes, spec_proc, now);
+            let hand_off = queue.set(&ask.emotes, row, now);
             commands.entity(entity).try_insert(queue);
+            hand_off
+        };
+        if hand_off {
+            if let Ok(mut drv) = drivers.get_mut(entity) {
+                drv.hand_off_sheath();
+            }
         }
     }
 }
 
-/// The per-frame pass over every queued unit: the due head's `AnimID` plays as a one-shot (the
-/// pass calls the anim player directly, `0x73ae52`), and the next waits on that sequence's length.
-/// Deviation: the setter's weapon-sheath hand-off (`0x71a30c`-`0x71a31c`) is not modelled.
+/// The per-frame pass: the due `AnimID` plays as a one-shot (`0x73ae52`); a drain arms the restore.
 pub(super) fn drive_emote_queues(
-    mut queues: Query<(Entity, &mut EmoteQueue, Option<&ModelAnimations>)>,
+    mut queues: Query<(
+        Entity,
+        &mut EmoteQueue,
+        Option<&ModelAnimations>,
+        Option<&mut AnimDriver>,
+    )>,
     mut out: MessageWriter<EmoteAnim>,
     mut play_seq: ResMut<PlaySeq>,
     emotes: Option<Res<EmoteSounds>>,
     anim_data: Option<Res<AnimData>>,
+    time: Res<Time<Real>>,
 ) {
     let Some(emotes) = emotes else { return };
-    let now = Instant::now();
+    let now = clock_ms(&time);
     let catalog = anim_data.as_deref().map(|d| &d.0);
-    for (entity, mut queue, anims) in &mut queues {
-        if queue.due.is_none_or(|due| now < due) {
+    for (entity, mut queue, anims, drv) in &mut queues {
+        if queue.is_idle() {
             continue;
         }
         let anim_of = |emote| emotes.0.state_anim(emote).unwrap_or(0);
-        let Some(emote) = queue.tick(now, |emote| {
+        let pass = queue.tick(now, |emote| {
             anims
                 .and_then(|a| super::find_resolved(a, anim_of(emote) as u16, catalog))
-                .map_or(0, |c| (c.duration * 1000.0) as u64)
-        }) else {
-            continue;
-        };
-        out.write(EmoteAnim {
-            entity,
-            anim_id: anim_of(emote) as u16,
-            seq: play_seq.next(),
-            via_player: false,
-            remap_special: true,
+                .map_or(0, |c| (c.duration * 1000.0) as u32)
         });
+        if let Some(emote) = pass.emote {
+            if benilla_assets::trace::enabled() {
+                benilla_assets::trace::line(
+                    "fct",
+                    &format!("anim emote-queue unit={entity} emote={emote}"),
+                );
+            }
+            out.write(EmoteAnim {
+                entity,
+                anim_id: anim_of(emote) as u16,
+                seq: play_seq.next(),
+                via_player: false,
+                remap_special: true,
+            });
+        }
+        if pass.drained {
+            if let Some(mut drv) = drv {
+                drv.sheath_restore = true;
+            }
+        }
     }
 }
 
@@ -145,52 +219,153 @@ pub(super) fn drive_emote_queues(
 mod tests {
     use super::*;
 
-    /// Emote 10 and 11 are one-shots, 12 a looping state emote, 13 has no row.
-    fn spec_proc(id: u32) -> Option<u32> {
+    /// 10 and 11 are one-shots, 12 a state emote, 13 has no row, 14 a one-shot with no anim.
+    fn row(id: u32) -> Option<(u32, u32)> {
         match id {
-            10 | 11 => Some(0),
-            12 => Some(2),
+            10 | 11 => Some((0, 60)),
+            12 => Some((2, 60)),
+            14 => Some((0, 0)),
             _ => None,
         }
     }
 
     #[test]
     fn the_setter_keeps_one_shots_only_and_four_at_most() {
-        let t0 = Instant::now();
         let mut q = EmoteQueue::default();
-        q.set(&[(0, 12), (5, 10), (0, 0), (0, 13), (7, 11)], spec_proc, t0);
-        assert_eq!(q.pending, [(5, 10), (7, 11)], "the kept pairs, compacted");
-        assert_eq!(q.due, Some(t0 + Duration::from_millis(5)));
-        q.set(&[(0, 10); 6], spec_proc, t0);
-        assert_eq!(q.pending.len(), 4, "four slots");
-        q.set(&[(0, 12)], spec_proc, t0);
-        assert!(
-            q.pending.is_empty() && q.due.is_none(),
-            "nothing kept: idle"
+        q.set(&[(0, 12), (5, 10), (0, 0), (0, 13), (7, 11)], row, 1000);
+        assert_eq!(q.slots[..3], [(1005, 10), (7, 11), (0, 0)], "compacted");
+        q.set(&[(0, 10); 6], row, 0);
+        assert_eq!(
+            q.slots.iter().filter(|s| s.1 == 10).count(),
+            4,
+            "four slots"
         );
     }
 
     #[test]
     fn each_pair_waits_its_delay_past_the_last_sequence_and_the_gap() {
-        let t0 = Instant::now();
-        let ms = |n| Duration::from_millis(n);
         let mut q = EmoteQueue::default();
-        q.set(&[(100, 10), (200, 11)], spec_proc, t0);
-        assert_eq!(q.tick(t0 + ms(99), |_| 1000), None, "the head's delay");
-        assert_eq!(q.tick(t0 + ms(100), |_| 1000), Some(10));
+        q.set(&[(100, 10), (200, 11)], row, 0);
+        assert_eq!(q.tick(99, |_| 1000), Pass::default(), "the head's delay");
+        let first = Pass {
+            emote: Some(10),
+            drained: false,
+        };
+        assert_eq!(q.tick(100, |_| 1000), first);
         // 200 delay + 1000 sequence + 500 gap past the play.
-        assert_eq!(q.tick(t0 + ms(1799), |_| 0), None);
-        assert_eq!(q.tick(t0 + ms(1800), |_| 0), Some(11));
-        assert_eq!(q.tick(t0 + ms(10_000), |_| 0), None, "drained");
+        assert_eq!(q.tick(1799, |_| 0), Pass::default());
+        let last = Pass {
+            emote: Some(11),
+            drained: true,
+        };
+        assert_eq!(q.tick(1800, |_| 0), last);
+        assert!(q.is_idle());
+        assert_eq!(q.tick(10_000, |_| 0), Pass::default(), "idle");
     }
 
     #[test]
     fn a_new_queue_replaces_the_old() {
-        let t0 = Instant::now();
         let mut q = EmoteQueue::default();
-        q.set(&[(0, 10), (0, 11)], spec_proc, t0);
-        q.set(&[(0, 11)], spec_proc, t0);
-        assert_eq!(q.tick(t0, |_| 0), Some(11));
-        assert_eq!(q.tick(t0 + Duration::from_secs(5), |_| 0), None);
+        q.set(&[(0, 10), (0, 11)], row, 0);
+        q.set(&[(0, 11)], row, 0);
+        assert_eq!(q.tick(0, |_| 0).emote, Some(11));
+        assert!(q.is_idle());
+    }
+
+    /// Pair i tests slot i after the keep, so a pair kept into an earlier slot does not count.
+    #[test]
+    fn the_hand_off_runs_for_an_animated_slot_at_the_pairs_own_index() {
+        let hand_off = |pairs: &[(u32, u32)]| EmoteQueue::default().set(pairs, row, 0);
+        assert!(hand_off(&[(0, 10)]), "a kept pair with an anim");
+        assert!(!hand_off(&[(0, 14)]), "a kept pair with AnimID 0");
+        assert!(!hand_off(&[(0, 12)]), "a dropped pair, slot 0 idle");
+        assert!(
+            !hand_off(&[(0, 12), (0, 10)]),
+            "kept into slot 0, while pair 1 reads the empty slot 1"
+        );
+        assert!(!hand_off(&[]), "no pairs: the setter leaves at once");
+
+        let mut q = EmoteQueue::default();
+        q.set(&[(0, 10), (0, 11)], row, 0);
+        assert!(
+            q.set(&[(0, 12), (0, 10)], row, 0),
+            "pair 1 reads slot 1's stale row"
+        );
+    }
+
+    /// A pair with nothing kept still drains on the next pass (`0x73adf5`).
+    #[test]
+    fn a_queue_that_kept_nothing_drains_on_its_next_pass() {
+        let mut q = EmoteQueue::default();
+        q.set(&[(0, 12)], row, 0);
+        let drained = Pass {
+            emote: None,
+            drained: true,
+        };
+        assert_eq!(q.tick(0, |_| 0), drained);
+        assert_eq!(q.tick(0, |_| 0), Pass::default());
+
+        q.set(&[], row, 0);
+        assert_eq!(q.tick(0, |_| 0), Pass::default(), "no pairs, no drain");
+    }
+
+    /// The real setter system: a unit takes the pairs and the hand-off, a game object neither.
+    #[test]
+    fn an_ask_lands_on_the_units_queue_and_hands_off_the_sheath() {
+        let mut app = App::new();
+        app.add_message::<QueueNpcEmotes>()
+            .init_resource::<GuidIndex>()
+            .init_resource::<Time<Real>>()
+            .insert_resource(EmoteSounds(
+                benilla_formats::EmoteSoundCatalog::default()
+                    .with_row(10, 60, 0)
+                    .with_spec_proc(10, 0),
+            ))
+            .add_systems(Update, set_emote_queues);
+        let mut driver = AnimDriver::default();
+        driver.commit_sheath(1);
+        driver.commit_sheath(0);
+        driver.sheath_restore = true;
+        let unit = app
+            .world_mut()
+            .spawn((
+                NetEntity {
+                    kind: benilla_protocol::EntityKind::Unit,
+                    display_id: None,
+                    scale: 1.0,
+                },
+                driver,
+            ))
+            .id();
+        let chest = app
+            .world_mut()
+            .spawn(NetEntity {
+                kind: benilla_protocol::EntityKind::GameObject,
+                display_id: None,
+                scale: 1.0,
+            })
+            .id();
+        let mut index = app.world_mut().resource_mut::<GuidIndex>();
+        index.0.insert(0x42, unit);
+        index.0.insert(0x43, chest);
+
+        for guid in [0x42, 0x43, 0x44] {
+            app.world_mut().write_message(QueueNpcEmotes {
+                guid,
+                emotes: vec![(250, 10)],
+            });
+        }
+        app.update();
+
+        let world = app.world();
+        let queue = world.entity(unit).get::<EmoteQueue>().expect("queued");
+        assert_eq!(queue.slots[0].1, 10);
+        let drv = world.entity(unit).get::<AnimDriver>().unwrap();
+        assert!(!drv.sheath_restore, "the hand-off drops a pending restore");
+        assert_eq!(drv.sheath_prev, 0, "and re-bases PREV on the current state");
+        assert!(
+            world.entity(chest).get::<EmoteQueue>().is_none(),
+            "a game object takes no emotes"
+        );
     }
 }

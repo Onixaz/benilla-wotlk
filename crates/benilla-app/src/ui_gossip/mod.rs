@@ -5,12 +5,13 @@
 use std::collections::HashMap;
 
 use benilla_protocol::messages::{
-    select_greeting, GossipMenu as WireMenu, GossipOption, NpcTextBlock, QuestOption,
+    select_block, GossipMenu as WireMenu, GossipOption, NpcTextBlock, QuestOption,
 };
 use bevy::prelude::*;
 
 use benilla_ui::script::{GossipMenu, GossipOptionView, GossipQuestRow, ScriptValue, UiScript};
 
+use crate::creature_anim::QueueNpcEmotes;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, Guid, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
 use crate::ui_quest::{row_is_active, row_is_one_click};
@@ -27,6 +28,8 @@ pub(crate) struct GossipState {
     pub(crate) text_id: u32,
     /// This open's drawn greeting; `None` while its text query is out.
     pub(crate) greeting: Option<String>,
+    /// The drawn block's emotes, until the handler queues them on the NPC.
+    emotes: Vec<(u32, u32)>,
     pub(crate) options: Vec<GossipOption>,
     pub(crate) quests: Vec<QuestOption>,
     records: HashMap<u32, Vec<NpcTextBlock>>,
@@ -49,9 +52,18 @@ impl GossipState {
     }
 
     /// `None` when the record has not arrived or has no line in the NPC's gender column.
-    pub(crate) fn draw_greeting(&self, text_id: u32, npc_gender: u8) -> Option<String> {
+    fn draw_block(&self, text_id: u32, npc_gender: u8) -> Option<&NpcTextBlock> {
         let blocks = self.cached_record(text_id)?;
-        select_greeting(blocks, npc_gender, greeting_roll()).map(str::to_string)
+        select_block(blocks, npc_gender, greeting_roll())
+    }
+
+    /// The emotes the last greeting drew for the NPC (`0x58ae81`), once.
+    fn take_emotes(&mut self) -> Option<QueueNpcEmotes> {
+        let guid = self.npc?;
+        (!self.emotes.is_empty()).then(|| QueueNpcEmotes {
+            guid,
+            emotes: std::mem::take(&mut self.emotes),
+        })
     }
 
     /// The reference's text-pending latch (`[0xc00be8]`): a menu whose text query is out, or was
@@ -106,8 +118,14 @@ impl GossipState {
     /// NPC's gender: the reference's missing-text path (`0x58adc7`) logs "Missing gossip text!"
     /// and fires `GOSSIP_CLOSED`. Here the clear makes the feed fire it if a menu was showing.
     fn resolve_greeting(&mut self, npc_gender: u8) {
-        match self.draw_greeting(self.text_id, npc_gender) {
-            Some(line) => self.greeting = Some(line),
+        let drawn = self
+            .draw_block(self.text_id, npc_gender)
+            .map(|block| (block.line(npc_gender).to_string(), block.played_emotes()));
+        match drawn {
+            Some((line, emotes)) => {
+                self.greeting = Some(line);
+                self.emotes = emotes;
+            }
             None => {
                 debug!(
                     "ui_gossip: missing gossip text (id {}) — ending the interaction",
@@ -132,6 +150,7 @@ impl GossipState {
         self.menu_id = 0;
         self.text_id = 0;
         self.greeting = None;
+        self.emotes.clear();
         self.options.clear();
         self.quests.clear();
     }
@@ -476,13 +495,49 @@ mod tests {
             vec![NpcTextBlock {
                 probability: 0.0,
                 male: "The Alliance needs you!".into(),
-                female: String::new(),
+                ..Default::default()
             }],
             0,
         );
         let menu = snapshot(&state, false).expect("text landed — the menu opens now, complete");
         assert_eq!(menu.greeting, "The Alliance needs you!");
         assert_eq!(menu.options.len(), 1, "options open WITH the greeting");
+    }
+
+    /// The draw plays the picked block's leading emotes on the NPC, at every open (`0x58ae81`).
+    #[test]
+    fn a_drawn_greeting_hands_its_emotes_over_once() {
+        let mut state = GossipState::default();
+        assert!(state.open_menu(wire(0x42, 50, Vec::new()), 0));
+        assert_eq!(
+            state.take_emotes(),
+            None,
+            "nothing drawn while the query is out"
+        );
+
+        let blocks = vec![NpcTextBlock {
+            male: "Well met.".into(),
+            emotes: [(100, 1), (200, 6), (0, 0)],
+            ..Default::default()
+        }];
+        state.text_arrived(50, blocks, 0);
+        let drawn = QueueNpcEmotes {
+            guid: 0x42,
+            emotes: vec![(100, 1), (200, 6)],
+        };
+        assert_eq!(state.take_emotes().as_ref(), Some(&drawn));
+        assert_eq!(state.take_emotes(), None, "once");
+
+        assert!(!state.open_menu(wire(0x42, 50, Vec::new()), 0), "cached");
+        assert_eq!(
+            state.take_emotes(),
+            Some(drawn),
+            "drawn again at the reopen"
+        );
+
+        state.remember_record(51, record("No emotes here."));
+        assert!(!state.open_menu(wire(0x42, 51, Vec::new()), 0));
+        assert_eq!(state.take_emotes(), None, "a block with none plays none");
     }
 
     // ── The hold, through the real feed ─────────────────────────────────────────
@@ -534,7 +589,7 @@ mod tests {
         vec![NpcTextBlock {
             probability: 0.0,
             male: line.into(),
-            female: String::new(),
+            ..Default::default()
         }]
     }
 
@@ -781,7 +836,7 @@ mod tests {
             vec![NpcTextBlock {
                 probability: 0.0,
                 male: "Back again?".into(),
-                female: String::new(),
+                ..Default::default()
             }],
         );
         let wants_query = state.open_menu(wire(0x42, 50, Vec::new()), 0);
@@ -805,6 +860,7 @@ mod tests {
                 probability: 0.0,
                 male: String::new(),
                 female: "Sister.".into(),
+                ..Default::default()
             }],
             0,
         );
@@ -823,7 +879,7 @@ mod tests {
             vec![NpcTextBlock {
                 probability: 0.0,
                 male: "Hail.".into(),
-                female: String::new(),
+                ..Default::default()
             }]
         };
         // Switched: the waiting menu is for id 70; id 50's late answer must not open it.
@@ -856,14 +912,14 @@ mod tests {
             vec![NpcTextBlock {
                 probability: 0.0,
                 male: "Greetings $N".into(),
-                female: String::new(),
+                ..Default::default()
             }],
         );
         state.clear();
         // The record outlives the menu; a revisit re-draws from it.
         assert!(state.cached_record(50).is_some());
         assert_eq!(
-            state.draw_greeting(50, 0).as_deref(),
+            state.draw_block(50, 0).map(|block| block.line(0)),
             Some("Greetings $N"),
             "the all-zero record draws block 0 on every roll"
         );
@@ -880,17 +936,18 @@ mod tests {
                 probability: 0.0,
                 male: "Well met, friend.".into(),
                 female: "Well met, sister.".into(),
+                ..Default::default()
             }],
         );
         assert_eq!(
-            state.draw_greeting(77, 0).as_deref(),
+            state.draw_block(77, 0).map(|block| block.line(0)),
             Some("Well met, friend.")
         );
         assert_eq!(
-            state.draw_greeting(77, 1).as_deref(),
+            state.draw_block(77, 1).map(|block| block.line(1)),
             Some("Well met, sister.")
         );
-        assert_eq!(state.draw_greeting(78, 0), None, "record not yet arrived");
+        assert_eq!(state.draw_block(78, 0), None, "record not yet arrived");
     }
 
     /// The reference's table (`0xacef20`), each index beside the `GOSSIP_OPTION_*` the world DB
