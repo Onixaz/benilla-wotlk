@@ -480,6 +480,8 @@ struct FxInstance {
     path: String,
     /// The root's uniform local scale ([`FxSlot::scale`]).
     scale: f32,
+    /// The `SpellVisualKitModelAttach` row placing the model ([`FxSlot::attach`]).
+    attach: Option<benilla_formats::ModelAttach>,
     root: Option<Entity>,
     /// The self-termination deadline on `time.elapsed_secs()`, or a reaped instance's `Decay` end.
     expires: Option<f32>,
@@ -502,20 +504,41 @@ pub(super) struct WorldPlantFx {
     owner: Entity,
     /// Re-plant on owner displacement (the client's flag `0x4000`): root-aura persistents only.
     follow: bool,
+    /// A `SpellVisualKitModelAttach` row's offset and turn on top of the plant.
+    attach: Option<benilla_formats::ModelAttach>,
 }
 
 /// The client's re-plant gate, distance² > 1e-3 in world units.
 const REPLANT_EPS_SQ: f32 = 1e-3;
 
-/// The plant transform: the owner's position, yaw only and scale.
-fn world_plant_transform(owner: &GlobalTransform) -> Transform {
+/// The plant transform: the owner's position, yaw only and scale, then the row's offset turned by
+/// the yaw but not scaled, and its turn inside the yaw (`0x6f8c31`).
+fn world_plant_transform(
+    owner: &GlobalTransform,
+    attach: Option<&benilla_formats::ModelAttach>,
+) -> Transform {
     let (scale, rotation, translation) = owner.to_scale_rotation_translation();
     let (yaw, _, _) = rotation.to_euler(EulerRot::YXZ);
+    let yaw = Quat::from_rotation_y(yaw);
+    let (offset, turn) = attach.map_or((Vec3::ZERO, Quat::IDENTITY), model_attach_local);
     Transform {
-        translation,
-        rotation: Quat::from_rotation_y(yaw),
+        translation: translation + yaw * offset,
+        rotation: yaw * turn,
         scale,
     }
+}
+
+/// A `SpellVisualKitModelAttach` row as a Bevy offset and turn in its attachment's frame: WoW
+/// `Rz(-yaw)·Ry(pitch)·Rx(roll)` and the y-negated offset (`0x6f84f0`).
+pub(super) fn model_attach_local(a: &benilla_formats::ModelAttach) -> (Vec3, Quat) {
+    // WoW z, y and x map to Bevy +Y, -X and -Z, so each turn keeps its sense about its image.
+    let turn = Quat::from_rotation_y(-a.yaw)
+        * Quat::from_rotation_x(-a.pitch)
+        * Quat::from_rotation_z(-a.roll);
+    (
+        benilla_assets::coords::wow_to_bevy(a.applied_offset()),
+        turn,
+    )
 }
 
 /// Whether an `EffectApplyAuraName` slot is `SPELL_AURA_MOD_ROOT` (26): the client's
@@ -553,8 +576,9 @@ pub(super) fn tend_world_plants(
             commands.entity(root).despawn();
             continue;
         };
-        if plant.follow && owner.translation().distance_squared(t.translation) > REPLANT_EPS_SQ {
-            *t = world_plant_transform(owner);
+        let at = world_plant_transform(owner, plant.attach.as_ref());
+        if plant.follow && at.translation.distance_squared(t.translation) > REPLANT_EPS_SQ {
+            *t = at;
         }
     }
 }
@@ -616,13 +640,13 @@ pub(super) fn resolve_spell_fx(
                         effect,
                         path,
                         scale,
+                        attach,
                     } in effects
                     {
                         // Per slot, as the reference's effect add opens with the same-slot replace.
                         replace_same_slot(
                             &mut instances,
-                            *effect,
-                            *tag,
+                            (*effect, *tag, attach.map(|a| a.id)),
                             &mut commands,
                             &mut emitters,
                         );
@@ -636,6 +660,7 @@ pub(super) fn resolve_spell_fx(
                             effect: *effect,
                             path: path.clone(),
                             scale: *scale,
+                            attach: *attach,
                             root: None,
                             expires: None,
                             decaying: false,
@@ -682,11 +707,11 @@ fn drain_instance_emitters(
 
 /// The same-slot replace: destroy each live node with the same `SpellVisualEffectName` record at
 /// the same tag, without a decay, which keeps the effect count flat in the number of attackers. The
-/// world-plant tag (-1) is exempt; a decaying instance is out of reach.
+/// world-plant tag (-1) is exempt; a decaying instance is out of reach. A node placed by a
+/// `SpellVisualKitModelAttach` row matches only that row (`0x6f8a60`).
 fn replace_same_slot(
     instances: &mut Vec<FxInstance>,
-    effect: u32,
-    tag: u16,
+    (effect, tag, attach_row): (u32, u16, Option<u32>),
     commands: &mut Commands,
     emitters: &mut Query<&mut benilla_world::particles::ParticleEmitter>,
 ) {
@@ -694,7 +719,8 @@ fn replace_same_slot(
         return;
     }
     instances.retain(|i| {
-        if i.decaying || i.effect != effect || i.tag != tag {
+        let row_matches = i.attach.is_none_or(|a| Some(a.id) == attach_row);
+        if i.decaying || i.effect != effect || i.tag != tag || !row_matches {
             return true;
         }
         if let Some(root) = i.root {
@@ -758,10 +784,12 @@ pub(super) fn attach_spell_fx(
         Option<&mut benilla_world::rig_anim::RigPose>,
         &GlobalTransform,
         Has<crate::entities::VisualAttached>,
+        Option<&crate::net::NetEntity>,
     )>,
     fx: Option<ResMut<SpellFx>>,
     asset_server: Res<AssetServer>,
     spells: Option<Res<crate::ui_action::Spells>>,
+    creatures: Option<Res<crate::entities::Creatures>>,
     time: Res<Time>,
     mut wow_materials: ResMut<Assets<WowModelMaterial>>,
     mut tint_reg: ResMut<FxTintAnims>,
@@ -775,8 +803,19 @@ pub(super) fn attach_spell_fx(
         return;
     };
     let now = time.elapsed_secs();
-    for (unit, mut att, bones, mut pose, unit_gt, body_built) in &mut units {
+    for (unit, mut att, bones, mut pose, unit_gt, body_built, net) in &mut units {
+        // A model flagged to hide them drops the hand-attachment models (`0x6f8d6e`).
+        let hides_hands = net
+            .and_then(|n| n.display_id)
+            .zip(creatures.as_deref())
+            .is_some_and(|(d, c)| c.hides_hand_effects(d));
         att.instances.retain_mut(|inst| {
+            if hides_hands && matches!(inst.tag, 1 | 2) {
+                if let Some(root) = inst.root {
+                    commands.entity(root).despawn();
+                }
+                return false;
+            }
             // Self-termination (the cast-release flash ran its span).
             if let Some(expires) = inst.expires {
                 if now >= expires {
@@ -848,11 +887,12 @@ pub(super) fn attach_spell_fx(
                     inst.persistent && spell_has_root_aura(spells.as_deref(), inst.spell_id);
                 let root = commands
                     .spawn((
-                        world_plant_transform(unit_gt),
+                        world_plant_transform(unit_gt, inst.attach.as_ref()),
                         Visibility::default(),
                         WorldPlantFx {
                             owner: unit,
                             follow,
+                            attach: inst.attach,
                         },
                     ))
                     // Chain-only visibility: the wrapper draws nothing, its children do.
@@ -873,9 +913,16 @@ pub(super) fn attach_spell_fx(
                 });
                 let ground_anchor = point.is_none_or(|(tag, ..)| tag == 0x13);
                 let (parent, offset) = point.map_or((unit, Vec3::ZERO), |(_, j, o)| (j, o));
+                // A row's offset and turn sit in the attachment's frame (`0x6f8e41`).
+                let (shift, turn) = inst
+                    .attach
+                    .as_ref()
+                    .map_or((Vec3::ZERO, Quat::IDENTITY), model_attach_local);
                 let root = commands
                     .spawn((
-                        Transform::from_translation(offset).with_scale(Vec3::splat(inst.scale)),
+                        Transform::from_translation(offset + shift)
+                            .with_rotation(turn)
+                            .with_scale(Vec3::splat(inst.scale)),
                         Visibility::default(),
                     ))
                     // Chain-only, as above.
@@ -1013,6 +1060,7 @@ mod tests {
             effect: 1499, // Ice Barrier's state model
             path: "Spells\\IceShield_State.mdx".into(),
             scale: 1.0,
+            attach: None,
             root: Some(root),
             expires: None,
             decaying: false,
@@ -1163,6 +1211,7 @@ mod tests {
                 effect,
                 path: path.into(),
                 scale: 1.0,
+                attach: None,
             }],
         }
     }
@@ -1277,6 +1326,7 @@ mod tests {
                         effect: 50,
                         path: PATH.to_string(),
                         scale: 1.0,
+                        attach: None,
                         root: None,
                         expires: None,
                         decaying: false,
@@ -1306,5 +1356,59 @@ mod tests {
             "the instance must survive to use the rebuilt entry — a persistent one is never reaped \
              for being pending"
         );
+    }
+
+    /// A row's turns keep their sense in Bevy space: yaw +90° carries WoW +x to -y, pitch +90°
+    /// carries it to -z, and the offset's y is negated (`0x6f84f0`).
+    #[test]
+    fn a_model_attach_row_turns_and_shifts_as_the_effect_matrix_does() {
+        use benilla_assets::coords::wow_to_bevy;
+        let near = |a: Vec3, b: Vec3| (a - b).length() < 1e-5;
+        let row = |yaw, pitch| benilla_formats::ModelAttach {
+            offset: [0.0, 2.0, 1.0],
+            yaw,
+            pitch,
+            ..Default::default()
+        };
+        let (shift, turn) = model_attach_local(&row(std::f32::consts::FRAC_PI_2, 0.0));
+        assert!(near(shift, wow_to_bevy([0.0, -2.0, 1.0])));
+        assert!(near(
+            turn * wow_to_bevy([1.0, 0.0, 0.0]),
+            wow_to_bevy([0.0, -1.0, 0.0])
+        ));
+        let (_, turn) = model_attach_local(&row(0.0, std::f32::consts::FRAC_PI_2));
+        assert!(near(
+            turn * wow_to_bevy([1.0, 0.0, 0.0]),
+            wow_to_bevy([0.0, 0.0, -1.0])
+        ));
+    }
+
+    /// A node a row placed is replaced only by that row (`0x6f8a60`).
+    #[test]
+    fn a_model_attach_node_is_replaced_only_by_its_own_row() {
+        let (mut app, unit) = resolving();
+        let at = |id| benilla_formats::ModelAttach {
+            id,
+            ..Default::default()
+        };
+        let begin_row = |row| SpellKitFx::Begin {
+            entity: unit,
+            spell_id: 1,
+            persistent: false,
+            class: FxClass::Hold,
+            stage: FxStage::OneShot,
+            effects: vec![FxSlot {
+                tag: 0x13,
+                effect: SPURT,
+                path: "Spells\\Spurt.mdx".to_string(),
+                scale: 1.0,
+                attach: Some(at(row)),
+            }],
+        };
+        send(&mut app, begin_row(1));
+        send(&mut app, begin_row(2));
+        assert_eq!(slots_of(&app, unit).len(), 2, "two rows coexist");
+        send(&mut app, begin_row(2));
+        assert_eq!(slots_of(&app, unit).len(), 2, "the same row replaces");
     }
 }

@@ -57,11 +57,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("ScreenEffect", "#243 screen effects"),
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
     ("SpellDifficulty", "#240 per-difficulty spell variants"),
-    ("SpellVisualKitAreaModel", "#110 area spell visual kits"),
-    (
-        "SpellVisualKitModelAttach",
-        "#110 spell visual kit attachments",
-    ),
     ("Startup_Strings", "#245 the client's startup error text"),
     ("StringLookups", "#245 string lookups"),
     ("TransportPhysics", "#243 transport rocking"),

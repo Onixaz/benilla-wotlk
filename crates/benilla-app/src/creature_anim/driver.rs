@@ -1128,6 +1128,20 @@ fn drive_unit(
     }
     // While the latch holds, the cast and channel kit anim is not offered (`0x7224dc`).
     let kit_hold = cast_hold.filter(|_| drv.special_idle.is_none());
+    // The precast start latch: its anim is offered until its one pass ends (`0x73bc77`), then the
+    // base re-picks the hold.
+    let mut cast_start = kit_hold.and_then(|h| {
+        h.start_anim
+            .filter(|_| drv.start_spent != Some(h.seq))
+            .map(|a| (h.seq, a))
+    });
+    if let Some((seq, start)) = cast_start {
+        if drv.gait == Some(start) && oneshot_finished(&player, anims, start, catalog) {
+            drv.start_spent = Some(seq);
+            drv.gait = None;
+            cast_start = None;
+        }
+    }
 
     // The whiff slow-down: a miss, dodge or evade plays the rest of the swing at 0.5. Deviation:
     // the reference writes bone 0's rate blindly; we scope it to the swing's own node, because a
@@ -1311,6 +1325,7 @@ fn drive_unit(
             airborne_frozen,
             auto_repeat,
             cast_hold: kit_hold,
+            cast_start: cast_start.map(|(_, a)| a),
             wielded,
             store,
             emote_sounds,

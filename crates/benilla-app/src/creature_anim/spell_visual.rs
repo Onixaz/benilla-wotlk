@@ -109,6 +109,8 @@ pub(crate) struct FxSlot {
     /// The model's uniform local scale, 1 for a kit slot; a GameObject's loot sparkle sizes to its
     /// object (`0x70d0f1`).
     pub(crate) scale: f32,
+    /// The `SpellVisualKitModelAttach` row that places it, its offset and turn (`0x6f84f0`).
+    pub(crate) attach: Option<benilla_formats::ModelAttach>,
 }
 
 /// A kit's attach-point effect models (kit fields 3 to 11 → `SpellVisualEffectName`), consumed by
@@ -351,18 +353,64 @@ pub(crate) fn held_strike_sound(
     resolve_stages(spells, visuals, spell_id, || None)?.strike_sound
 }
 
-/// A kit's populated effect slots; a slot with no `SpellVisualEffectName` path is skipped.
+/// A kit's effect models on a unit: its slots, its weapon effects (`0x73a6c0`) and its
+/// `SpellVisualKitModelAttach` rows (`0x745a7e`); one naming no model path is skipped.
 fn resolve_kit_effects(visuals: &SpellVisualCatalog, kit: &VisualKit) -> Vec<FxSlot> {
-    kit.effects()
-        .filter_map(|(tag, effect)| {
-            visuals.effect_path(effect).map(|path| FxSlot {
-                tag,
-                effect,
-                path: path.to_string(),
-                scale: 1.0,
-            })
+    let slot = |tag, effect, attach| {
+        visuals.effect_path(effect).map(|path| FxSlot {
+            tag,
+            effect,
+            path: path.to_string(),
+            scale: 1.0,
+            attach,
         })
+    };
+    let rows = visuals.model_attachments(kit.id).iter().filter_map(|a| {
+        let tag = u16::try_from(a.attachment).unwrap_or(benilla_formats::WORLD_EFFECT_TAG);
+        slot(tag, a.effect, Some(*a))
+    });
+    kit.effects()
+        .chain(kit.weapon_effects())
+        .filter_map(|(tag, effect)| slot(tag, effect, None))
+        .chain(rows)
         .collect()
+}
+
+/// A kit's weapon effects stow the unit's weapons unless the spell keeps its sheath,
+/// `Attributes & 0x40000` (`0x73a717`); a ranged-slot spell then draws its ranged weapon again, as
+/// the anim leg that follows does (`0x73b181`).
+fn stow_for_weapon_effects(
+    sheaths: &mut MessageWriter<super::SheathRequest>,
+    spells: &crate::ui_action::Spells,
+    entity: Entity,
+    spell_id: u32,
+    kit: &VisualKit,
+) {
+    if kit.weapon_effects().next().is_none() {
+        return;
+    }
+    let def = spells.catalog.get(spell_id);
+    if def.is_some_and(|d| d.attributes & 0x40000 != 0) {
+        return;
+    }
+    let sheath = |state| super::SheathRequest {
+        entity,
+        state,
+        ceremony: false,
+    };
+    sheaths.write(sheath(0));
+    if def.is_some_and(|d| d.ranged_slot()) {
+        sheaths.write(sheath(2));
+    }
+}
+
+/// The stage-2 lifecycle a kit's models run: kit flag `0x20` re-arms the birth (`0x7449e2`).
+fn state_stage(kit: &VisualKit) -> FxStage {
+    if kit.flags & benilla_formats::kit_flag::AURA_LOOPS_BIRTH != 0 {
+        FxStage::Relive
+    } else {
+        FxStage::State
+    }
 }
 
 /// A server-pushed kit (`SMSG_PLAY_SPELL_VISUAL` at stage 0, `SMSG_PLAY_SPELL_IMPACT` at stage 1),
@@ -388,10 +436,11 @@ type KitSpawnWriters<'w> = (
     MessageWriter<'w, crate::weapon_trail::TrailArm>,
     MessageWriter<'w, BaseAnimRecompute>,
     MessageWriter<'w, DelayedAreaKit>,
+    MessageWriter<'w, crate::aura_visual::BodyProcPlay>,
 );
 
 /// The writers one kit play fans out to.
-struct KitOut<'a, 'w1, 'w2, 'w3, 'w4, 'w5, 'w6, 'w7, 'w8> {
+struct KitOut<'a, 'w1, 'w2, 'w3, 'w4, 'w5, 'w6, 'w7, 'w8, 'w9, 'w10> {
     oneshots: &'a mut MessageWriter<'w1, EmoteAnim>,
     wounds: &'a mut MessageWriter<'w2, WoundAnim>,
     sounds: &'a mut MessageWriter<'w3, SpellKitSound>,
@@ -403,6 +452,28 @@ struct KitOut<'a, 'w1, 'w2, 'w3, 'w4, 'w5, 'w6, 'w7, 'w8> {
     trails: &'a mut MessageWriter<'w7, crate::weapon_trail::TrailArm>,
     /// The base recompute a stage-2 kit's anim id spends itself on.
     recomputes: &'a mut MessageWriter<'w8, BaseAnimRecompute>,
+    /// The stow a kit's weapon effects ask for ([`stow_for_weapon_effects`]).
+    sheaths: &'a mut MessageWriter<'w9, super::SheathRequest>,
+    /// The spell table, for the plays' attribute gates.
+    spells: &'a crate::ui_action::Spells,
+    /// The flash and procedural fade cases of the dispatcher.
+    body: &'a mut MessageWriter<'w10, crate::aura_visual::BodyProcPlay>,
+}
+
+/// The dispatcher's flash and fade cases for one kit play, every filled slot in order (`0x7265c0`).
+fn play_body_procs(
+    body: &mut MessageWriter<crate::aura_visual::BodyProcPlay>,
+    entity: Entity,
+    spell_id: u32,
+    kit: &VisualKit,
+) {
+    for proc in kit.char_procs().filter(crate::aura_visual::is_body_proc) {
+        body.write(crate::aura_visual::BodyProcPlay {
+            entity,
+            spell_id,
+            proc,
+        });
+    }
 }
 
 /// One kit play's policy on the reference's kit player:
@@ -433,9 +504,9 @@ impl KitPlay {
     };
 }
 
-/// Kit flags `0x4` and `0x10`, which become play flags `0x2` and `0x8` (`0x73b198`): either skips
-/// the Special remap from the held hands (`0x7386fc`).
-const KIT_RAW_SPECIAL: u32 = 0x4 | 0x10;
+/// Kit flags `0x4` and `0x10`, either of which skips the Special remap (`0x7386fc`).
+const KIT_RAW_SPECIAL: u32 =
+    benilla_formats::kit_flag::RAW_ANIM | benilla_formats::kit_flag::NO_SPECIAL_REMAP;
 
 fn play_kit(
     entity: Entity,
@@ -479,6 +550,7 @@ fn play_kit(
             proc,
         });
     }
+    play_body_procs(out.body, entity, spell_id, kit);
     // The trail arm, on the same terms; the reference dispatches it before the kit's anim, so a kit
     // with both fires its trail on its own swing.
     if let Some(trail) = kit.trail_proc() {
@@ -488,6 +560,7 @@ fn play_kit(
     if !play.effects {
         return;
     }
+    stow_for_weapon_effects(out.sheaths, out.spells, entity, spell_id, kit);
     let effects = resolve_kit_effects(visuals, kit);
     if !effects.is_empty() {
         out.fx.write(SpellKitFx::Begin {
@@ -512,11 +585,16 @@ fn play_kit_at(
     shakes: &mut MessageWriter<SpellKitShake>,
     bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
 ) {
-    for (_, effect) in kit.effects() {
+    let rows = visuals
+        .model_attachments(kit.id)
+        .iter()
+        .map(|a| (a.effect, Some(*a)));
+    for (effect, attach) in kit.effects().map(|(_, e)| (e, None)).chain(rows) {
         if let Some(path) = visuals.effect_path(effect) {
             bursts.write(crate::entities::dest_fx::GroundBurst {
                 path: path.to_string(),
                 pos,
+                attach,
             });
         }
     }
@@ -737,7 +815,7 @@ pub(super) fn route_cast_visuals(
         return; // no client data
     };
     // Disjoint borrows: the beam writer rides `out` while the missile and burst writers stay free.
-    let (missiles, bursts, chains, shakes, trails, recomputes, delayed) = (
+    let (missiles, bursts, chains, shakes, trails, recomputes, delayed, body) = (
         &mut spawns.0,
         &mut spawns.1,
         &mut spawns.2,
@@ -745,6 +823,7 @@ pub(super) fn route_cast_visuals(
         &mut spawns.4,
         &mut spawns.5,
         &mut spawns.6,
+        &mut spawns.7,
     );
     let mut out = KitOut {
         oneshots: &mut oneshots,
@@ -755,6 +834,9 @@ pub(super) fn route_cast_visuals(
         shakes,
         trails,
         recomputes,
+        sheaths: &mut sheaths,
+        spells,
+        body,
     };
 
     // `holds` lags one command flush and an instant cast's START and GO drain together, so
@@ -808,7 +890,7 @@ pub(super) fn route_cast_visuals(
                     .get(ev.spell_id)
                     .is_some_and(|d| d.ranged_attack())
                 {
-                    sheaths.write(super::SheathRequest {
+                    out.sheaths.write(super::SheathRequest {
                         entity: ev.entity,
                         state: 2,
                         ceremony: false,
@@ -836,11 +918,17 @@ pub(super) fn route_cast_visuals(
                     } else {
                         commands.entity(ev.entity).try_remove::<super::RangedHold>();
                     }
-                    if let Some(anim_id) = kit.anim_id {
+                    // A start anim of 0 plays (`0x73b1f9`) but is never offered (`0x722590`).
+                    let start_anim = kit.start_anim.filter(|&a| a > 0);
+                    // Deviation: a start-only kit offers nothing after its start (`0x722599`); its
+                    // hold falls to Stand rather than the idle pick.
+                    if let Some(anim_id) = kit.anim_id.or(start_anim.map(|_| 0)) {
                         commands.entity(ev.entity).try_insert(CastHold {
                             anim_id,
                             spell_id: ev.spell_id,
                             ranged,
+                            start_anim,
+                            seq: ev.seq,
                         });
                         pending.insert(ev.entity, Some(ev.spell_id));
                     }
@@ -850,6 +938,7 @@ pub(super) fn route_cast_visuals(
                             kit_sound,
                         });
                     }
+                    stow_for_weapon_effects(out.sheaths, spells, ev.entity, ev.spell_id, &kit);
                     // Persistent until the cast resolves, re-armed forever (stage 4).
                     let effects = resolve_kit_effects(&visuals.0, &kit);
                     if !effects.is_empty() {
@@ -885,7 +974,7 @@ pub(super) fn route_cast_visuals(
                     .get(ev.spell_id)
                     .is_some_and(|d| d.ranged_slot())
                 {
-                    sheaths.write(super::SheathRequest {
+                    out.sheaths.write(super::SheathRequest {
                         entity: ev.entity,
                         state: 2,
                         ceremony: false,
@@ -1094,6 +1183,8 @@ pub(super) fn route_cast_visuals(
                         anim_id,
                         spell_id: cur,
                         ranged: false, // no basic shot channels
+                        start_anim: None,
+                        seq: 0,
                     });
                     pending.insert(entity, Some(cur));
                 }
@@ -1114,6 +1205,8 @@ pub(super) fn route_cast_visuals(
                     out.trails
                         .write(crate::weapon_trail::TrailArm { entity, trail });
                 }
+                play_body_procs(out.body, entity, cur, &kit);
+                stow_for_weapon_effects(out.sheaths, spells, entity, cur, &kit);
                 // Persistent while the field holds, with the stage-2 lifecycle.
                 let effects = resolve_kit_effects(&visuals.0, &kit);
                 if !effects.is_empty() {
@@ -1122,7 +1215,7 @@ pub(super) fn route_cast_visuals(
                         spell_id: cur,
                         persistent: true,
                         class: FxClass::Hold,
-                        stage: FxStage::State,
+                        stage: state_stage(&kit),
                         effects,
                     });
                 }
@@ -1179,6 +1272,8 @@ pub(crate) fn arm_aura_state_fx(
     mut sounds: MessageWriter<SpellKitSound>,
     mut recomputes: MessageWriter<BaseAnimRecompute>,
     mut done: MessageWriter<StateDoneKit>,
+    mut sheaths: MessageWriter<super::SheathRequest>,
+    mut body: MessageWriter<crate::aura_visual::BodyProcPlay>,
     mut armed: Local<EntityHashMap<Vec<u32>>>,
     mut seen_vision: Local<u8>,
 ) {
@@ -1261,13 +1356,15 @@ pub(crate) fn arm_aura_state_fx(
                 effects.len(),
                 nodes.len()
             );
+            stow_for_weapon_effects(&mut sheaths, spells, entity, spell_id, &kit);
+            play_body_procs(&mut body, entity, spell_id, &kit);
             if !effects.is_empty() {
                 fx.write(SpellKitFx::Begin {
                     entity,
                     spell_id,
                     persistent: true,
                     class: FxClass::AuraState,
-                    stage: FxStage::State,
+                    stage: state_stage(&kit),
                     effects,
                 });
             }
@@ -1369,6 +1466,7 @@ pub(super) fn arm_loot_fx(
                     effect,
                     path: path.to_string(),
                     scale: 1.0,
+                    attach: None,
                 }],
             });
         } else if !lootable && armed.remove(&entity) {
@@ -1518,6 +1616,7 @@ pub(super) fn arm_go_loot_fx(
                     effect,
                     path: path.to_string(),
                     scale,
+                    attach: None,
                 }],
             });
         } else if armed.remove(&entity) {
@@ -1566,6 +1665,7 @@ pub(super) fn arm_level_up_fx(
                 effect,
                 path: path.to_string(),
                 scale: 1.0,
+                attach: None,
             }],
         });
     }
@@ -1606,6 +1706,7 @@ pub(super) fn arm_mount_poof_fx(
                 effect,
                 path: path.to_string(),
                 scale: 1.0,
+                attach: None,
             }],
         });
     }
@@ -1654,6 +1755,7 @@ fn hardcoded_one_shot(visuals: &SpellVisuals, entity: Entity, name: &str) -> Opt
             effect,
             path: path.to_string(),
             scale: 1.0,
+            attach: None,
         }],
     })
 }
@@ -1741,6 +1843,8 @@ pub(super) fn play_state_done_kits(
     mut shakes: MessageWriter<SpellKitShake>,
     mut trails: MessageWriter<crate::weapon_trail::TrailArm>,
     mut recomputes: MessageWriter<BaseAnimRecompute>,
+    mut sheaths: MessageWriter<super::SheathRequest>,
+    mut body: MessageWriter<crate::aura_visual::BodyProcPlay>,
 ) {
     let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
         ends.clear();
@@ -1764,6 +1868,9 @@ pub(super) fn play_state_done_kits(
             shakes: &mut shakes,
             trails: &mut trails,
             recomputes: &mut recomputes,
+            sheaths: &mut sheaths,
+            spells,
+            body: &mut body,
         };
         play_kit(
             end.entity,
@@ -1794,6 +1901,8 @@ pub(super) fn replay_morph_kit(
     mut shakes: MessageWriter<SpellKitShake>,
     mut trails: MessageWriter<crate::weapon_trail::TrailArm>,
     mut recomputes: MessageWriter<BaseAnimRecompute>,
+    mut sheaths: MessageWriter<super::SheathRequest>,
+    mut body: MessageWriter<crate::aura_visual::BodyProcPlay>,
 ) {
     for swap in swaps.read() {
         // Cleared even when the kit resolves to nothing.
@@ -1816,6 +1925,9 @@ pub(super) fn replay_morph_kit(
             shakes: &mut shakes,
             trails: &mut trails,
             recomputes: &mut recomputes,
+            sheaths: &mut sheaths,
+            spells,
+            body: &mut body,
         };
         play_kit(
             swap.entity,

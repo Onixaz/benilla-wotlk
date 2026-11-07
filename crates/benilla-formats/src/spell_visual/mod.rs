@@ -12,13 +12,18 @@ use benilla_dbc::{FieldType, Schema, SchemaField};
 use crate::dbc::{f32_at, i32_at, parse, str_at, u32_at};
 use crate::Chain;
 
+pub mod area_model;
 pub mod chain_effects;
+pub mod kit_flag;
 pub mod missile_motion;
 pub mod missiles;
+pub mod model_attach;
 
+pub use area_model::shard_density;
 pub use chain_effects::{ChainEffect, ChainProc};
 pub use missile_motion::MissileMotionRec;
 pub use missiles::{SpellMissileRec, DEFAULT_MISSILE_GRAVITY};
+pub use model_attach::{ModelAttach, MODEL_ATTACH_WORLD};
 
 const SPELL_VISUAL: &str = "DBFilesClient\\SpellVisual.dbc";
 const SPELL_VISUAL_KIT: &str = "DBFilesClient\\SpellVisualKit.dbc";
@@ -29,8 +34,7 @@ const SPELL_VISUAL_KIT_FIELDS: usize = 38;
 const SPELL_VISUAL_EFFECT_NAME_FIELDS: usize = 7;
 
 /// The kit columns of the emitter slots, in [`KIT_SLOT_TAGS`] order: head, chest, base, left hand,
-/// right hand, breath, special 1-3. Columns 9 and 10, the weapon effects, sit between breath and
-/// the specials; the slot walk (`0x745230`) plays neither.
+/// right hand, breath, special 1-3; columns 9-10 are the weapon effects ([`WEAPON_EFFECT_TAGS`]).
 const KIT_SLOT_COLUMNS: [usize; 9] = [3, 4, 5, 6, 7, 8, 11, 12, 13];
 
 /// The base slot's index in [`KIT_SLOT_COLUMNS`], column 5.
@@ -39,6 +43,9 @@ const KIT_SLOT_BASE: usize = 2;
 /// Each emitter slot's M2 `AttachmentID`, as the client's slot walk (`0x745230`) pushes them with
 /// the columns of [`KIT_SLOT_COLUMNS`].
 pub const KIT_SLOT_TAGS: [u16; 9] = [0x14, 0x22, 0x13, 0x15, 0x16, 0x11, 0x17, 0x18, 0x19];
+
+/// The attachments of kit columns 9 and 10, left and right hand, as a unit plays them (`0x73a74f`).
+pub const WEAPON_EFFECT_TAGS: [u16; 2] = [2, 1];
 
 /// The tag for kit column 14, the world effect: the slot walk plays it apart from the attached
 /// slots (`0x7454e5`), planted once in world space at the owner's position, facing and scale; it
@@ -73,10 +80,6 @@ pub struct CharProc {
 }
 
 impl CharProc {
-    pub fn small_int(&self, i: usize) -> u32 {
-        char_proc_small_int(self.params[i])
-    }
-
     /// This slot as a weapon swing trail. The type-8 arm truncates with `_ftol`, not the small-int
     /// decode: `unit+0xd1c = zero | three << 24`, `unit+0xd20 = two`. `CharParamOne` is not read;
     /// it holds 20.0 on 22 of the 34 trail kits and 0 to 25 on the rest. A zero duration fires
@@ -108,14 +111,6 @@ impl CharProc {
             ty: self.ty,
         })
     }
-}
-
-/// The 1.12.1 client's read of a small integer from a `CharProc` float param:
-/// `bits(param + 512.0) >> 14 & 0xff`, where adding 512 fixes the exponent so the integer sits in
-/// known mantissa bits. Used for the dynobject shard index; the client does no bounds check, so
-/// callers must.
-pub fn char_proc_small_int(param: f32) -> u32 {
-    (param + 512.0).to_bits() >> 14 & 0xff
 }
 
 /// A decoded weapon trail: the two words latched on the unit (`unit+0xd1c`, `unit+0xd20`) and
@@ -326,11 +321,14 @@ impl VisualStages {
     }
 }
 
-/// One `SpellVisualKit.dbc` row. Column 1 (the start animation), 9-10 (the weapon effects) and 37
-/// (flags) are not read.
+/// One `SpellVisualKit.dbc` row.
 // No `Eq`: the `CharProc` params are floats.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct VisualKit {
+    /// Column 0, the key of the kit's `SpellVisualKitModelAttach` rows.
+    pub id: u32,
+    /// Column 1: played in place of column 2 at a precast play, `None` for the data's -1 (`0x73b1f4`).
+    pub start_anim: Option<u16>,
     /// Column 2: the `AnimationData.dbc` id played on the unit.
     pub anim_id: Option<u16>,
     /// Column 15: the `SoundEntries.dbc` id.
@@ -349,7 +347,9 @@ pub struct VisualKit {
     /// type-9 slot: `params[0]` is its shard model index, `params[1]` the emit rate the graphics
     /// quality scales.
     pub char_proc_slots: [Option<CharProc>; KIT_CHAR_PROCS],
-    /// Column 37, the kit flags.
+    /// Columns 9 and 10, the left and right weapon effects, at [`WEAPON_EFFECT_TAGS`].
+    pub weapon_effects: [Option<u32>; 2],
+    /// Column 37, the kit flags ([`kit_flag`]).
     pub flags: u32,
 }
 
@@ -389,6 +389,14 @@ impl VisualKit {
             .filter_map(|(i, e)| e.map(|id| (KIT_SLOT_TAGS[i], id)))
             .chain(self.world_effect.map(|id| (WORLD_EFFECT_TAG, id)))
     }
+
+    /// `(attachment id, effect id)` for each weapon effect, left then right (`0x73a6c0`).
+    pub fn weapon_effects(&self) -> impl Iterator<Item = (u16, u32)> + '_ {
+        self.weapon_effects
+            .iter()
+            .zip(WEAPON_EFFECT_TAGS)
+            .filter_map(|(e, tag)| e.map(|id| (tag, id)))
+    }
 }
 
 /// The spell visual tables, each in its own id space.
@@ -405,6 +413,10 @@ pub struct SpellVisualCatalog {
     missiles: HashMap<u32, SpellMissileRec>,
     /// `SpellMissileMotion.dbc`, by `SpellVisual` column 21.
     motions: HashMap<u32, MissileMotionRec>,
+    /// `SpellVisualKitModelAttach.dbc` by parent kit.
+    model_attach: HashMap<u32, Box<[ModelAttach]>>,
+    /// `SpellVisualKitAreaModel.dbc`'s model paths in row order.
+    area_models: Vec<String>,
 }
 
 impl SpellVisualCatalog {
@@ -426,7 +438,33 @@ impl SpellVisualCatalog {
             chain_effects: HashMap::new(),
             missiles: HashMap::new(),
             motions: HashMap::new(),
+            model_attach: HashMap::new(),
+            area_models: Vec::new(),
         }
+    }
+
+    /// Seed one kit's `SpellVisualKitModelAttach` rows, for tests.
+    #[must_use]
+    pub fn with_model_attach(mut self, kit_id: u32, rows: &[ModelAttach]) -> Self {
+        self.model_attach.insert(kit_id, rows.into());
+        self
+    }
+
+    /// Seed the `SpellVisualKitAreaModel` paths in row order, for tests.
+    #[must_use]
+    pub fn with_area_models(mut self, paths: &[&str]) -> Self {
+        self.area_models = paths.iter().map(|p| p.to_string()).collect();
+        self
+    }
+
+    /// A kit's `SpellVisualKitModelAttach` rows in id order (`0x7fa9f0`, `0x7faa20`).
+    pub fn model_attachments(&self, kit_id: u32) -> &[ModelAttach] {
+        self.model_attach.get(&kit_id).map_or(&[], |r| r)
+    }
+
+    /// The shard model a DynamicObject emitter of `density` scatters (`0x7fbd70`).
+    pub fn area_model(&self, density: u8) -> &str {
+        area_model::area_model_at(&self.area_models, density)
     }
 
     /// Seed one `SpellMissile` row, for tests.
@@ -700,6 +738,7 @@ fn parse_kits(bytes: &[u8]) -> Result<HashMap<u32, VisualKit>> {
     let mut kits = HashMap::with_capacity(set.records().len());
     for r in set.records() {
         let Some(id) = u32_at(r, 0) else { continue };
+        let start_anim = i32_at(r, 1).and_then(|a| u16::try_from(a).ok());
         let anim_id = u32_at(r, 2).and_then(some_unless_none).map(|a| a as u16);
         let sound = u32_at(r, 15).and_then(some_unless_none);
         let mut effect_slots = [None; 9];
@@ -713,9 +752,12 @@ fn parse_kits(bytes: &[u8]) -> Result<HashMap<u32, VisualKit>> {
         kits.insert(
             id,
             VisualKit {
+                id,
+                start_anim,
                 anim_id,
                 sound,
                 effect_slots,
+                weapon_effects: [9, 10].map(|c| u32_at(r, c).and_then(some_unless_none)),
                 world_effect: u32_at(r, 14).and_then(some_unless_none),
                 shake: u32_at(r, 16).and_then(some_unless_none),
                 char_proc_slots,
@@ -772,6 +814,18 @@ pub fn load_spell_visual_catalog(chain: &mut Chain) -> Result<SpellVisualCatalog
             .read_file(missile_motion::SPELL_MISSILE_MOTION)
             .context("reading SpellMissileMotion.dbc")?,
     )?;
+    let max_kit_id = kits.keys().copied().max().unwrap_or(0);
+    let model_attach = model_attach::parse_model_attach(
+        &chain
+            .read_file(model_attach::SPELL_VISUAL_KIT_MODEL_ATTACH)
+            .context("reading SpellVisualKitModelAttach.dbc")?,
+        max_kit_id,
+    )?;
+    let area_models = area_model::parse_area_models(
+        &chain
+            .read_file(area_model::SPELL_VISUAL_KIT_AREA_MODEL)
+            .context("reading SpellVisualKitAreaModel.dbc")?,
+    )?;
 
     Ok(SpellVisualCatalog {
         visuals,
@@ -781,6 +835,8 @@ pub fn load_spell_visual_catalog(chain: &mut Chain) -> Result<SpellVisualCatalog
         chain_effects,
         missiles,
         motions,
+        model_attach,
+        area_models,
     })
 }
 

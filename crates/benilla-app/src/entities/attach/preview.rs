@@ -494,7 +494,7 @@ fn glue_ghost_arm(
     {
         match node {
             crate::aura_visual::AuraNode::Tint(rgb) => tint = Some(rgb),
-            crate::aura_visual::AuraNode::Alpha(a) => alpha = Some(a),
+            crate::aura_visual::AuraNode::Alpha(a, _) => alpha = Some(a),
             // Row 989 carries only these two; other proc types have no select-screen mechanism.
             _ => {}
         }
@@ -1158,7 +1158,7 @@ mod tests {
         assert!(
             nodes
                 .iter()
-                .any(|n| matches!(n, crate::aura_visual::AuraNode::Alpha(a) if *a == 0.5)),
+                .any(|n| matches!(n, crate::aura_visual::AuraNode::Alpha(a, _) if *a == 0.5)),
             "kit 989's CharProc 14 is 0.5; got {nodes:?}"
         );
 

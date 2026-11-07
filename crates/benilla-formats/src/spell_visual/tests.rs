@@ -118,7 +118,6 @@ fn kit_columns_read_the_3_3_5a_layout() {
     ));
     records.extend(kit_row(1, &[])); // plain-zero "none"
     records.extend(kit_row(2, &[(2, u32::MAX), (15, u32::MAX)])); // the -1 "none" form
-                                                                  // The weapon columns 9 and 10 are no slot the walk plays.
     records.extend(kit_row(3, &[(9, 77), (10, 78)]));
     let mut bytes = build_wdbc(5, SPELL_VISUAL_KIT_FIELDS as u32, &records);
     // Kit 285's first CharProc: type 1 (tint), `CharParamZero` 6711039.0.
@@ -147,9 +146,25 @@ fn kit_columns_read_the_3_3_5a_layout() {
         Some(6_711_039.0)
     );
 
-    assert_eq!(kits[&1], VisualKit::default(), "plain 0 = none");
-    assert_eq!(kits[&2], VisualKit::default(), "0xFFFFFFFF = none too");
-    assert_eq!(kits[&3].effects().count(), 0, "no weapon-column slot");
+    // Column 1's 0 is Stand, a real start anim; only -1 is none.
+    let bare = |id| VisualKit {
+        id,
+        start_anim: Some(0),
+        ..Default::default()
+    };
+    assert_eq!(kits[&1], bare(1), "plain 0 = none");
+    assert_eq!(kits[&2], bare(2), "0xFFFFFFFF = none too");
+    assert_eq!(kits[&38].start_anim, None, "-1 starts nothing");
+    assert_eq!(
+        kits[&3].effects().count(),
+        0,
+        "no weapon column in the slot walk"
+    );
+    assert_eq!(
+        kits[&3].weapon_effects().collect::<Vec<_>>(),
+        vec![(2, 77), (1, 78)],
+        "column 9 at the left hand, column 10 at the right"
+    );
 }
 
 #[test]
@@ -396,19 +411,6 @@ fn ground_aoe_chain_reads_the_area_kits() {
 }
 
 // ── The chain/beam table ──────────────────────────────────────────────────────
-
-/// Pinned against hand-computed IEEE bits, not against itself.
-#[test]
-fn char_proc_small_int_recovers_the_integer() {
-    // 1.0 + 512.0 = 513.0 = 0x44004000; >>14 = 0x11001; &0xff = 1.
-    assert_eq!(char_proc_small_int(1.0), 1);
-    assert_eq!(char_proc_small_int(0.0), 0);
-    for n in 0..=255u32 {
-        assert_eq!(char_proc_small_int(n as f32), n, "round-trips every byte");
-    }
-    // It truncates, reading the integer part out of the mantissa.
-    assert_eq!(char_proc_small_int(3.9), 3);
-}
 
 /// The chain case truncates the id and reads only params 0 and 2 for what benilla draws.
 #[test]
@@ -781,11 +783,6 @@ fn a_weapon_trail_proc_decodes_by_truncation() {
     assert_eq!(
         trail.packed, 0x64f8_2929,
         "0xAARRGGBB, as `unit+0xd1c` holds it"
-    );
-    assert_ne!(
-        proc.small_int(0),
-        u32::from(trail.rgb()[0]),
-        "the small-int decode is the WRONG idiom here and must not be reused"
     );
 }
 

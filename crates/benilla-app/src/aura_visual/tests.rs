@@ -50,12 +50,12 @@ fn proc_kit(procs: &[CharProc]) -> VisualKit {
 fn the_dispatch_names_only_the_verified_procs() {
     assert_eq!(
         node_for(proc(char_proc_type::ALPHA, 0.3)),
-        Some(AuraNode::Alpha(0.3)),
+        Some(AuraNode::Alpha(0.3, 0.0)),
         "the sneak family's 0.3 rides params[0]"
     );
     assert_eq!(
         node_for(proc(char_proc_type::ALPHA, 0.0)),
-        Some(AuraNode::Alpha(0.0)),
+        Some(AuraNode::Alpha(0.0, 0.0)),
         "kit 5129's 0.0 is a real value, not an absent one"
     );
     // 9222653 is 0x8CB9FD, the ghost's blue-white; the client ORs on the opaque byte.
@@ -92,23 +92,23 @@ fn the_target_is_base_times_the_newest_node() {
     let mut n = AuraNodes::new(1.0);
     assert_eq!(n.target(), 1.0, "no nodes → opaque");
 
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3)], 0.0);
+    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     assert!((n.target() - 0.3).abs() < 1e-6);
 
-    install(&mut n, GHOST, &[AuraNode::Alpha(0.5)], 0.0);
+    install(&mut n, GHOST, &[AuraNode::Alpha(0.5, 0.0)], 0.0);
     assert!(
         (n.target() - 0.5).abs() < 1e-6,
         "the newest node is the term"
     );
 
-    n.alpha.retain(|(s, _)| *s != GHOST);
+    n.alpha.retain(|(s, ..)| *s != GHOST);
     n.retarget(0.0);
     assert!((n.target() - 0.3).abs() < 1e-6);
 
     // A translucent display's base (128/255) scales the head term, or stands alone with no node.
     let mut half = AuraNodes::new(1.0);
     half.base = 128.0 / 255.0;
-    install(&mut half, STEALTH, &[AuraNode::Alpha(0.3)], 0.0);
+    install(&mut half, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     assert!((half.target() - (128.0 / 255.0) * 0.3).abs() < 1e-6);
     half.alpha.clear();
     half.retarget(0.0);
@@ -140,8 +140,8 @@ fn a_base_change_rides_the_same_ramp() {
 #[test]
 fn re_arming_the_same_spell_replaces_its_node() {
     let mut n = AuraNodes::new(1.0);
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3)], 0.0);
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3)], 0.0);
+    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
+    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     assert_eq!(n.alpha.len(), 1);
     assert!((n.target() - 0.3).abs() < 1e-6);
 }
@@ -150,7 +150,7 @@ fn re_arming_the_same_spell_replaces_its_node() {
 #[test]
 fn the_ramp_eases_over_one_second_both_ways() {
     let mut n = AuraNodes::new(1.0);
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3)], 0.0);
+    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
 
     assert!((n.tick(0.0) - 1.0).abs() < 1e-6, "t=0 is still opaque");
     // t³ at the halfway mark is 0.125 of the way down.
@@ -174,7 +174,7 @@ fn the_ramp_eases_over_one_second_both_ways() {
     assert!(!n.translucent(), "settled opaque again");
 
     let mut m = AuraNodes::new(1.0);
-    install(&mut m, STEALTH, &[AuraNode::Alpha(0.3)], 0.0);
+    install(&mut m, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     let mid = m.tick(0.7);
     m.alpha.clear();
     m.retarget(0.7);
@@ -184,10 +184,10 @@ fn the_ramp_eases_over_one_second_both_ways() {
 #[test]
 fn a_retarget_to_the_same_value_does_not_restart_the_ease() {
     let mut n = AuraNodes::new(1.0);
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3)], 0.0);
+    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     n.tick(AURA_ALPHA_FADE_SECS);
     let started = n.started;
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3)], 10.0);
+    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 10.0);
     assert_eq!(n.started, started, "same product → the ramp is untouched");
     assert!((n.tick(10.0) - 0.3).abs() < 1e-6, "and stays arrived");
 }
@@ -216,6 +216,8 @@ fn app_with_chains() -> App {
     app.add_message::<crate::creature_anim::SpellKitSound>();
     app.add_message::<AuraProc>();
     app.add_message::<crate::creature_anim::BaseAnimRecompute>();
+    app.add_message::<crate::creature_anim::SheathRequest>();
+    app.add_message::<BodyProcPlay>();
     app.init_resource::<benilla_world::model_render::FarSideTwins>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([
@@ -355,7 +357,10 @@ fn a_proc_only_state_kit_arms_stealth_translucency() {
         .entity(unit)
         .get::<AuraNodes>()
         .expect("the sneak kit armed a node set");
-    assert_eq!(n.alpha.as_slice(), [(STEALTH, 0.3)]);
+    assert_eq!(
+        n.alpha.iter().map(|&(s, f, _)| (s, f)).collect::<Vec<_>>(),
+        [(STEALTH, 0.3)]
+    );
     assert!((n.target() - 0.3).abs() < 1e-6);
     assert!(n.head_tint().is_none(), "kit 312 carries no tint");
 
@@ -377,7 +382,10 @@ fn a_kit_with_both_procs_installs_both_nodes() {
     app.update();
 
     let n = app.world().entity(unit).get::<AuraNodes>().unwrap();
-    assert_eq!(n.alpha.as_slice(), [(GHOST, 0.5)]);
+    assert_eq!(
+        n.alpha.iter().map(|&(s, f, _)| (s, f)).collect::<Vec<_>>(),
+        [(GHOST, 0.5)]
+    );
     assert_eq!(n.head_tint(), Some([0x8C, 0xB9, 0xFD]));
 }
 
@@ -400,7 +408,10 @@ fn two_auras_stack_and_unstack_through_the_slots() {
     crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[GHOST]);
     app.update();
     let n = app.world().entity(unit).get::<AuraNodes>().unwrap();
-    assert_eq!(n.alpha.as_slice(), [(GHOST, 0.5)]);
+    assert_eq!(
+        n.alpha.iter().map(|&(s, f, _)| (s, f)).collect::<Vec<_>>(),
+        [(GHOST, 0.5)]
+    );
     assert!((n.target() - 0.5).abs() < 1e-6);
 }
 
@@ -472,7 +483,7 @@ fn the_author_owns_the_tree_then_releases_at_opaque() {
     };
     // root → body part, and root → joint → held weapon (the depth the walk must reach).
     let mut nodes = AuraNodes::new(1.0);
-    install(&mut nodes, STEALTH, &[AuraNode::Alpha(0.3)], 0.0);
+    install(&mut nodes, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     let root = app.world_mut().spawn(nodes).id();
     let body = app
         .world_mut()
@@ -888,4 +899,98 @@ fn a_non_zero_rate_installs_a_node_and_holds_nothing() {
     app.update();
     assert!(!clip(&app, unit, 4).0);
     assert_eq!(clip(&app, unit, 4).1, 1.35);
+}
+
+// ── The fade time and the one-shot body procs ────────────────────────────────────────────────────
+
+/// Proc 14's fade time is `CharParamTwo` in seconds, whole ms (`0x72683a`); 0 takes the default.
+#[test]
+fn the_head_alpha_node_names_its_own_fade_time() {
+    let shadowform = CharProc {
+        ty: char_proc_type::ALPHA,
+        params: [0.65, 0.0, 2.0, 0.0],
+    };
+    assert_eq!(node_for(shadowform), Some(AuraNode::Alpha(0.65, 2.0)));
+    let mut n = AuraNodes::new(1.0);
+    install(&mut n, STEALTH, &[AuraNode::Alpha(0.65, 2.0)], 0.0);
+    assert!(n.tick(1.0) > 0.65 + 1e-3, "still easing at 1 s");
+    assert!((n.tick(2.0) - 0.65).abs() < 1e-6, "arrived at 2 s");
+    n.alpha.clear();
+    n.retarget(2.0);
+    assert!(
+        (n.tick(2.0 + AURA_ALPHA_FADE_SECS) - 1.0).abs() < 1e-6,
+        "no head node: the 1000 ms default"
+    );
+}
+
+/// The flash holds its colour through the delay, then eases to white and ends (`0x71a9a0`).
+#[test]
+fn a_flash_holds_then_fades_to_white() {
+    let f = Flash {
+        rgb: [0, 0x80, 0xff],
+        fades: 1.0,
+        duration: 2.0,
+    };
+    assert_eq!(
+        f.color(0.5),
+        Some([0, 0x80, 0xff]),
+        "held through the delay"
+    );
+    assert_eq!(
+        f.color(1.0),
+        Some([0, 0x80, 0xff]),
+        "the full colour at the start"
+    );
+    let mid = f.color(2.0).expect("running");
+    assert!(mid[0] > 100 && mid[0] < 155, "halfway to white: {mid:?}");
+    assert_eq!(f.color(3.0), None, "run out");
+}
+
+fn body_app() -> (App, Entity) {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .add_message::<BodyProcPlay>()
+        .add_systems(Update, (play_body_procs, tick_body_procs).chain());
+    let unit = app
+        .world_mut()
+        .spawn(crate::net::NetEntity {
+            kind: EntityKind::Unit,
+            display_id: None,
+            scale: 1.0,
+        })
+        .id();
+    (app, unit)
+}
+
+fn play(app: &mut App, unit: Entity, ty: i32, params: [f32; 4]) {
+    app.world_mut().write_message(BodyProcPlay {
+        entity: unit,
+        spell_id: 0,
+        proc: CharProc { ty, params },
+    });
+    app.update();
+}
+
+/// Kit 220's bleed flash: its colour lands on the head tint at once.
+#[test]
+fn a_flash_proc_paints_the_head_tint() {
+    let (mut app, unit) = body_app();
+    play(&mut app, unit, 13, [15_479_296.0, 0.5, 6.0, 0.0]);
+    let n = app.world().get::<AuraNodes>(unit).expect("a node set");
+    assert_eq!(n.head_tint(), Some([0xec, 0x32, 0x00]));
+}
+
+/// Any factor under 1 fades out whole, as the byte truncates (`0x726881`); 1 stays opaque.
+#[test]
+fn the_procedural_fade_truncates_its_target() {
+    let (mut app, unit) = body_app();
+    play(&mut app, unit, 15, [0.5, 0.0, 1.0, 0.0]);
+    let n = app.world().get::<AuraNodes>(unit).expect("a node set");
+    assert_eq!((n.to, n.ramp), (0.0, PROC_FADE_OUT_SECS));
+    assert!(n.fade_back.is_some(), "the return is armed");
+
+    let (mut app, unit) = body_app();
+    play(&mut app, unit, 15, [1.0, 0.0, 1.0, 0.0]);
+    let n = app.world().get::<AuraNodes>(unit).expect("a node set");
+    assert_eq!(n.to, 1.0);
 }

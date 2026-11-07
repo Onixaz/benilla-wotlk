@@ -296,6 +296,14 @@ impl CreatureCatalog {
             .is_none_or(|m| m.flags & 0x2 == 0)
     }
 
+    /// Whether the model drops hand-attached effects: `CreatureModelData.Flags & 0x10` (`0x6f8d6e`).
+    pub fn hides_hand_effects(&self, display_id: u32) -> bool {
+        self.display
+            .get(&display_id)
+            .and_then(|row| self.models.get(&row.model_id))
+            .is_some_and(|m| m.flags & 0x10 != 0)
+    }
+
     /// A display's footprint decal, fields 6..=8, in yards (inches × 1/36); `None` for a `−1`
     /// texture or a 0×0 print.
     pub fn footprint(&self, display_id: u32) -> Option<FootprintParams> {

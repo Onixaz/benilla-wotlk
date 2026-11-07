@@ -381,6 +381,8 @@ mod tests {
                 anim_id: 54,
                 spell_id: 133,
                 ranged: false,
+                start_anim: None,
+                seq: 0,
             })
             .id();
         let emote = |app: &mut App| {

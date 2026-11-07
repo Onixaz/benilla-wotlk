@@ -412,6 +412,11 @@ pub(crate) struct CastHold {
     /// A ranged wind-up (`Attributes & 0x2`): the reference brackets it with ranged snaps, so the
     /// sheath reconcile's force-stow never survives the frame.
     pub(crate) ranged: bool,
+    /// The precast kit's start anim (`SpellVisualKit` column 1), offered once in place of
+    /// [`Self::anim_id`] until its clip ends: the latch `0x73b207` sets and `0x73bc77` clears.
+    pub(crate) start_anim: Option<u16>,
+    /// The cast edge's `PlaySeq` stamp, which tells this hold's start latch from an earlier one's.
+    pub(crate) seq: u64,
 }
 
 /// A hand's fingers close (`HandsClosed`, 15) purely because a weapon occupies its attach point,
@@ -723,6 +728,8 @@ pub(crate) struct AnimDriver {
     /// (`0x73b38e`) until neither the key bone nor bone 0 plays it (`0x73bc81`). A model rebuild
     /// drops it with the driver, as the display reset does (`0x73e702`).
     special_idle: Option<u16>,
+    /// The [`CastHold::seq`] whose start anim has played out, the cleared start latch.
+    start_spent: Option<u64>,
 }
 
 impl AnimDriver {
@@ -810,6 +817,7 @@ impl Default for AnimDriver {
             rate_clip: None,
             base_dir: None,
             special_idle: None,
+            start_spent: None,
         }
     }
 }
@@ -917,6 +925,7 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<KitPush>()
             // The aura CharProc edges, drained by `crate::aura_visual`.
             .add_message::<crate::aura_visual::AuraProc>()
+            .add_message::<crate::aura_visual::BodyProcPlay>()
             .add_message::<HardLanding>()
             // The pending-morph latch, the reference's per-unit `[+0xd54]`.
             .init_resource::<MorphLatch>()
