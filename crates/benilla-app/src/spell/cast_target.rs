@@ -362,6 +362,28 @@ impl CastTargeting<'_, '_> {
         ctx
     }
 
+    /// The unit `guid` as the range check reads it ([`super::range_check::RangeFacts`]), `None`
+    /// before it streams.
+    pub(crate) fn range_facts(&self, guid: u64) -> Option<super::range_check::RangeFacts> {
+        let ctx = self.context_at(Aim::Unit(Some(guid)));
+        let rel = &ctx.rel;
+        let store = rel.target_store?;
+        let is_self = self.self_guid.0 == Some(guid);
+        Some(super::range_check::RangeFacts {
+            unit: ctx.range.target?,
+            pos: ctx.range.target_pos?,
+            flags: store.0.unit_flags(),
+            alive: super::bind_gates::unit_alive(&store.0),
+            dead_flag: store.0.unit_dynflag_dead(),
+            creature_type: rel.types.of(store),
+            pet_number: store.0.unit_pet_number(),
+            attackable: rel.attackable(is_self),
+            in_party: rel.in_party(is_self),
+            in_group: rel.in_group(is_self),
+            target: store.0.unit_target().filter(|&g| g != 0),
+        })
+    }
+
     /// The [`CastContext`] of a cast with the pet as caster (the spell-cast entry `0x80cce0` called
     /// with the pet), aimed at `target` or else the selection: the caster's store, position, reach
     /// and auras are the pet's, and it has no main hand and no own movement flags. With

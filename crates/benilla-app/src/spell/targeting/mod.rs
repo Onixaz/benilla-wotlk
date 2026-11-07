@@ -127,12 +127,20 @@ impl BindChecks<'_, '_> {
     }
 
     /// The same compare against a corpse. The range lookup pads a corpse's bounds as a unit's, but
-    /// with no unit to read the second reach from it reads the caster's again. On the ranged arm,
-    /// which the corpse spells use, no unit means no moving bonus; a melee row would fall back to
-    /// the auto-attack target.
+    /// with no unit to read the second reach from it reads the caster's again, and the pair is the
+    /// spell's own kind's (`0x801692`). On the ranged arm, which the corpse spells use, no unit
+    /// means no moving bonus; a melee row would fall back to the auto-attack target.
     fn corpse_range_refusal(&self, spell_id: u32, entity: Entity) -> Option<u8> {
         let mut range = self.range_inputs(entity);
-        range.target = Some(benilla_formats::RangeUnit::still(range.caster.reach));
+        let assist = self
+            .spells
+            .as_deref()
+            .and_then(|s| s.catalog.get(spell_id))
+            .is_some_and(benilla_formats::SpellDisplay::is_helpful);
+        range.target = Some(benilla_formats::RangeUnit {
+            assist,
+            ..benilla_formats::RangeUnit::still(range.caster.reach)
+        });
         self.refusal(spell_id, range)
     }
 

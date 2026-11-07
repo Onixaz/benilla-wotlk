@@ -96,6 +96,7 @@ impl RangeUnits<'_, '_> {
             player: store.0.object_type() == Some(ObjectType::Player),
             motion: unit_motion(flags, speeds.map(|s| &s.0), spline),
             assist: self.caster_assists(entity, store),
+            ranged_mod_range: None,
         })
     }
 

@@ -24,6 +24,7 @@ pub(crate) mod learn_place;
 mod mods;
 pub(crate) mod multicast;
 pub(crate) mod net;
+mod range_check;
 mod range_units;
 pub(crate) mod targeting;
 pub(crate) mod text_caster;
@@ -45,6 +46,7 @@ pub(crate) use mods::{
 };
 #[cfg(test)]
 pub(crate) use mods::{OP_COOLDOWN, OP_RANGE};
+pub(crate) use range_check::{range_check, RangeFacts};
 pub(crate) use range_units::{RangeUnits, DEFAULT_REACH};
 // `TargetingWants` is exported for the ground reticle, which draws for the location word alone.
 pub(crate) use targeting::{

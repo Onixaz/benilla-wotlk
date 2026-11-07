@@ -264,6 +264,23 @@ fn use_spell(model: &Model, item_id: u32) -> Option<u32> {
         .next()
 }
 
+/// The item's use spell, as `GetItemSpell` picks it, and the VM's spell source.
+#[allow(clippy::type_complexity)]
+fn item_range_spell(
+    lua: &Lua,
+    item: &Value,
+) -> mlua::Result<(
+    Option<u32>,
+    Option<std::rc::Rc<dyn super::spell_info::SpellInfoSource>>,
+)> {
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    let id = item_id_of(lua, &model, item)?;
+    let spell = use_spell(&model, id).or_else(|| enchant_use_spell(&model, id));
+    Ok((spell, model.spell_info.clone()))
+}
+
 /// With no on-use spell, the use spell of an enchant on the worn item (`0x5a86b0`, `0x707c60`).
 fn enchant_use_spell(model: &Model, item_id: u32) -> Option<u32> {
     let query = ItemQuery::Id(item_id);
@@ -402,6 +419,32 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 out[1] = Value::String(lua.create_string(&info.rank)?);
             }
             Ok(MultiValue::from_vec(out))
+        })?,
+    )?;
+
+    // ItemHasRange(item) (`0x51c870`): 1 when the item's use spell has a range, else nil.
+    g.set(
+        "ItemHasRange",
+        lua.create_function(|lua, item: Value| {
+            let (spell, source) = item_range_spell(lua, &item)?;
+            let has = spell
+                .zip(source)
+                .is_some_and(|(id, s)| s.spell_has_range(id, false));
+            Ok(if has { Value::Integer(1) } else { Value::Nil })
+        })?,
+    )?;
+
+    // IsItemInRange(item, unit) (`0x51c9c0`): the use spell's range check: 1, 0 or nil.
+    g.set(
+        "IsItemInRange",
+        lua.create_function(|lua, (item, unit): (Value, Value)| {
+            let (spell, source) = item_range_spell(lua, &item)?;
+            let target = super::spell_info::range_unit(lua, &unit);
+            let near = spell
+                .zip(source)
+                .zip(target)
+                .and_then(|((id, s), guid)| s.spell_in_range(id, false, guid));
+            Ok(super::spell_info::range_answer(near))
         })?,
     )?;
 
