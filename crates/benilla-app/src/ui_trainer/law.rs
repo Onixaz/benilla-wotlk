@@ -246,12 +246,15 @@ pub(super) fn ability_reqs(
     spells: &SpellCatalog,
     skill_lines: Option<&SkillLineCatalog>,
     known: &BTreeSet<u32>,
+    race_class: (u8, u8),
 ) -> [Option<TrainerAbilityReq>; 3] {
     slots.map(|id| {
         (id as i32 > 0).then(|| match spells.get(id) {
             Some(d) => TrainerAbilityReq {
                 name: Some(d.ranked_name()),
-                met: skill_lines.map_or(known.contains(&id), |c| known_or_higher(id, known, c)),
+                met: skill_lines.map_or(known.contains(&id), |c| {
+                    known_or_higher(id, known, race_class, c)
+                }),
             },
             None => TrainerAbilityReq {
                 name: None,

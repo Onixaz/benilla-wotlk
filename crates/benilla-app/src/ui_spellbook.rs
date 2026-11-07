@@ -105,6 +105,10 @@ struct FeedMemory {
     cooldown_epoch: gate::Watch,
     rune_epoch: gate::Watch,
     self_present: gate::Watch,
+    /// The race and class whose rank table the script holds.
+    next_ranks_for: Option<(u8, u8)>,
+    /// The known-spell set the script holds.
+    known_pushed: BTreeSet<u32>,
 }
 
 fn feed_spellbook(
@@ -202,6 +206,18 @@ fn feed_spellbook(
     let (race, class) = store
         .map(|s| (s.0.unit_race().unwrap_or(0), s.0.unit_class().unwrap_or(0)))
         .unwrap_or((0, 0));
+    // The known test reads the bitmap, set ahead of the registrar's book gates (`0x54208a`).
+    if memory.known_pushed != actions.spells {
+        memory.known_pushed.clone_from(&actions.spells);
+        script.set_known_spells(actions.spells.iter().copied());
+    }
+    // The item tests' rank walk reads the abilities the player's race and class admit (`0x71a6e6`).
+    if let Some(lines) = skill_lines.as_deref().filter(|_| race != 0 && class != 0) {
+        if memory.next_ranks_for != Some((race, class)) {
+            memory.next_ranks_for = Some((race, class));
+            script.set_next_ranks(lines.catalog.next_ranks(race, class));
+        }
+    }
     // The melee auto-attack shows the main-hand weapon, or Spell-Reset unarmed, not its `Temp`.
     let attack_icon = store.map(|s| {
         melee_auto_attack_icon(

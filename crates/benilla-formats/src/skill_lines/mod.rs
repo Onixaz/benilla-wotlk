@@ -338,16 +338,33 @@ impl SkillLineCatalog {
         head
     }
 
-    /// Whether a higher rank of `spell_id` is known, the reference's higher-rank test; the
-    /// trainer's colouring and state re-evaluator OR it with plain known-ness.
+    /// The next rank the higher-rank walk reads: the admitted row's `forward_spellid` (`0x71a670`) while positive (`0x726179`).
+    fn next_rank(&self, spell_id: u32, race: u8, class: u8) -> Option<u32> {
+        self.ability(spell_id, race, class)
+            .map(|a| a.forward_spell_id)
+            .filter(|&id| id as i32 > 0)
+    }
+
+    /// Every chained spell's next rank for a 1-based `race` and `class`, the table the UI's item tests walk.
+    pub fn next_ranks(&self, race: u8, class: u8) -> HashMap<u32, u32> {
+        self.abilities
+            .iter()
+            .filter(|(_, rows)| forward_of(rows).is_some())
+            .filter_map(|(&id, _)| Some((id, self.next_rank(id, race, class)?)))
+            .collect()
+    }
+
+    /// Whether a higher rank of `spell_id` is known (`0x726160`), ORed with plain known-ness by its callers.
     pub fn higher_rank_known(
         &self,
         spell_id: u32,
+        race: u8,
+        class: u8,
         known: &std::collections::BTreeSet<u32>,
     ) -> bool {
         let mut cur = spell_id;
         for _ in 0..MAX_RANK_CHAIN {
-            let Some(next) = self.rank_successor(cur) else {
+            let Some(next) = self.next_rank(cur, race, class) else {
                 return false;
             };
             if known.contains(&next) {

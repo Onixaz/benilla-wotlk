@@ -538,6 +538,8 @@ pub(crate) struct Model {
     pub(crate) spellbook: spellbook::SpellBookState,
     /// The book's highest-rank view, rebuilt with every [`Self::spellbook`] push.
     pub(crate) spellbook_highest_rank: spellbook::HighestRankView,
+    /// The full known-spell set, a superset of [`Self::spellbook`], and the rank table the item tests walk.
+    pub(crate) known_spells: spellbook::KnownSpells,
     /// The pet's spellbook, a second array as in the reference.
     pub(crate) pet_book: spellbook::PetBookState,
     /// The critter and mount lists (`0xbe8df4`).
@@ -1508,6 +1510,7 @@ impl Model {
             action_sets: Vec::new(),
             ui_errors: Vec::new(),
             spellbook: spellbook::SpellBookState::default(),
+            known_spells: spellbook::KnownSpells::default(),
             spellbook_highest_rank: spellbook::HighestRankView::default(),
             pet_book: spellbook::PetBookState::default(),
             companions: super::companion::CompanionState::default(),

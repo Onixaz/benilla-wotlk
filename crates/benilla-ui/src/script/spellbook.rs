@@ -9,6 +9,8 @@
 //! Deviation: `BOOKTYPE_SPELL`/`BOOKTYPE_PET` are engine globals here, where the reference defines
 //! them in `SpellBookFrame.lua:5-6`, so this module's tests run without the stock file.
 
+use std::collections::{HashMap, HashSet};
+
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{bool_or_default, flag};
@@ -21,6 +23,9 @@ pub(super) const BOOKTYPE_PET: &str = "pet";
 /// `HasPetSpells`' second return when no token is resolved: the reference's literal, pushed when
 /// the player object does not resolve. FrameXML concatenates it, so never nil.
 const PET_TOKEN_FALLBACK: &str = "PET";
+
+/// The rank walk's bound, past the longest chain; the reference's loop ends on the data alone.
+const MAX_RANK_WALK: usize = 32;
 
 /// One skill-line tab as `GetSpellTabInfo` returns it; `offset` is the tab's 0-based start in
 /// [`SpellBookState::slots`], computed by the app.
@@ -91,6 +96,33 @@ impl SpellBookState {
     }
 }
 
+/// The known-spell bitmap the player test reads (`0x7260e0`) and the next-rank table of its higher-rank walk (`0x726160`).
+#[derive(Debug, Default)]
+pub(crate) struct KnownSpells {
+    known: HashSet<u32>,
+    next_rank: HashMap<u32, u32>,
+}
+
+impl KnownSpells {
+    /// The spell or a higher rank of it is known, the pair `0x6dc4c3`-`0x6dc4d2` and the tooltip builder chain.
+    pub(crate) fn known_or_higher(&self, spell_id: u32) -> bool {
+        if self.known.contains(&spell_id) {
+            return true;
+        }
+        let mut cur = spell_id;
+        for _ in 0..MAX_RANK_WALK {
+            let Some(&next) = self.next_rank.get(&cur) else {
+                return false;
+            };
+            if self.known.contains(&next) {
+                return true;
+            }
+            cur = next;
+        }
+        false
+    }
+}
+
 /// The book with every lower rank folded away, which `SpellBookFrame.lua` pages through while
 /// `ShowAllSpellRanks` is off: the reference's second id array (`0xbe5d88`, count `0xbe8d9c`) and
 /// each tab's count beside it (`tab+0x8`), rebuilt on every re-sort (`0x53cb0f`-`0x53cd31`).
@@ -145,6 +177,18 @@ impl super::UiScript {
         let mut model = self.model_mut();
         model.spellbook_highest_rank = HighestRankView::of(&state);
         model.spellbook = state;
+    }
+
+    /// Replace the known-spell set, every spell the player holds whether or not the book lists it.
+    pub fn set_known_spells(&mut self, known: impl IntoIterator<Item = u32>) {
+        let mut model = self.model_mut();
+        model.known_spells.known.clear();
+        model.known_spells.known.extend(known);
+    }
+
+    /// Replace the rank table for the player's race and class, `SkillLineAbility.dbc`'s next rank by spell.
+    pub fn set_next_ranks(&mut self, next_rank: HashMap<u32, u32>) {
+        self.model_mut().known_spells.next_rank = next_rank;
     }
 
     /// Replace the pet's book; the app fires `SPELLS_CHANGED`, which the reference fires for both

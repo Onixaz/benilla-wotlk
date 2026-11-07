@@ -148,7 +148,7 @@ pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
     item_id == 0
         || model.item_templates.get(&item_id).is_none_or(|v| {
             item_usable(v, &model.player_req, |id| {
-                model.spellbook.named().any(|s| s.spell_id == id)
+                model.known_spells.known_or_higher(id)
             })
         })
 }
@@ -206,8 +206,7 @@ pub fn item_usable(
             }
         }
     }
-    // Deviation: a known higher rank of the spell, which the reference also accepts (`0x6dc4d2`),
-    // is not walked.
+    // `knows_spell` answers the spell and a higher rank of it (`0x6dc4c3`, `0x6dc4d2`).
     if v.required_spell != 0 && !knows_spell(v.required_spell) {
         return false;
     }
@@ -645,6 +644,62 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::{item_usable, ItemTemplateView, PlayerReqState};
     use crate::script::UiScript;
+
+    #[test]
+    fn a_known_higher_rank_of_the_required_spell_passes_the_gate() {
+        let mut s = UiScript::new().unwrap();
+        s.set_player_req_state(PlayerReqState {
+            level: 40,
+            class_id: 1,
+            race_id: 1,
+            ..Default::default()
+        });
+        s.set_item_template(
+            7,
+            ItemTemplateView {
+                allowable_class: -1,
+                allowable_race: -1,
+                required_spell: 100,
+                ..Default::default()
+            },
+        );
+        // 100 → 101 → 102, with 500 outside the chain.
+        s.set_next_ranks(std::collections::HashMap::from([(100, 101), (101, 102)]));
+        s.set_known_spells([101]);
+        assert!(s.item_usable(7), "rank 2 known, rank 1 required");
+        s.set_known_spells([102]);
+        assert!(s.item_usable(7), "the walk runs past the unknown rank 2");
+        s.set_known_spells([100]);
+        assert!(s.item_usable(7), "the required rank itself");
+        s.set_known_spells([500]);
+        assert!(!s.item_usable(7), "no rank of the chain known");
+        s.set_next_ranks(std::collections::HashMap::new());
+        s.set_known_spells([101]);
+        assert!(!s.item_usable(7), "no chain, no higher rank");
+    }
+
+    #[test]
+    fn a_lower_rank_does_not_answer_a_higher_requirement() {
+        let mut s = UiScript::new().unwrap();
+        s.set_player_req_state(PlayerReqState {
+            level: 40,
+            class_id: 1,
+            race_id: 1,
+            ..Default::default()
+        });
+        s.set_item_template(
+            7,
+            ItemTemplateView {
+                allowable_class: -1,
+                allowable_race: -1,
+                required_spell: 101,
+                ..Default::default()
+            },
+        );
+        s.set_next_ranks(std::collections::HashMap::from([(100, 101)]));
+        s.set_known_spells([100]);
+        assert!(!s.item_usable(7));
+    }
 
     #[test]
     fn item_usable_mirrors_the_gate_legs() {

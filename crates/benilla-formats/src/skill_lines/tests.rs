@@ -289,6 +289,18 @@ fn real_hidden_lines_are_the_ones_the_reference_client_never_lists() {
     assert_eq!(cat.race_class(118, 0, 0), None);
 }
 
+/// The Riding chain the mount items' required spell walks, for a human warrior.
+#[test]
+fn real_riding_ranks_answer_the_rank_walk() {
+    let data = crate::wow_data_or_skip!();
+    let mut chain = crate::open_chain(&data).expect("open chain");
+    let cat = load_skill_line_catalog(&mut chain).expect("load skill lines");
+    let known = std::collections::BTreeSet::from([33391]);
+    assert!(cat.higher_rank_known(33388, 1, 1, &known));
+    assert!(!cat.higher_rank_known(33391, 1, 1, &known));
+    assert_eq!(cat.next_ranks(1, 1).get(&33388), Some(&33391));
+}
+
 /// The `forward_spellid` chains the action bar normalises ranks along.
 #[test]
 fn real_rank_chains_resolve_the_highest_known_rank() {
@@ -414,18 +426,64 @@ fn a_higher_rank_is_known_only_forward_along_the_chain() {
     // 10 → 11 → 12.
     let cat = SkillLineCatalog::from_abilities([(10, row(11)), (11, row(12)), (12, row(0))]);
     let known = |ids: &[u32]| ids.iter().copied().collect::<BTreeSet<u32>>();
-    assert!(cat.higher_rank_known(10, &known(&[12])));
-    assert!(cat.higher_rank_known(10, &known(&[11])));
+    assert!(cat.higher_rank_known(10, 1, 1, &known(&[12])));
+    assert!(cat.higher_rank_known(10, 1, 1, &known(&[11])));
     assert!(
-        !cat.higher_rank_known(10, &known(&[10])),
+        !cat.higher_rank_known(10, 1, 1, &known(&[10])),
         "the spell itself is not a higher rank"
     );
     assert!(
-        !cat.higher_rank_known(12, &known(&[10, 11])),
+        !cat.higher_rank_known(12, 1, 1, &known(&[10, 11])),
         "nothing is forward of the top rank"
     );
     assert!(
-        !cat.higher_rank_known(99, &known(&[10, 11, 12])),
+        !cat.higher_rank_known(99, 1, 1, &known(&[10, 11, 12])),
         "an unchained spell has no chain"
     );
+    assert_eq!(
+        cat.next_ranks(1, 1),
+        HashMap::from([(10, 11), (11, 12)]),
+        "the table holds the chained spells alone"
+    );
+}
+
+#[test]
+fn the_rank_walk_stops_at_a_rank_the_race_and_class_do_not_admit() {
+    let row = |class_mask: u32, forward: u32| SlaRow {
+        class_mask,
+        ..SlaRow::any(SlaInfo {
+            skill_id: 1,
+            req_skill_value: 0,
+            forward_spell_id: forward,
+            trivial_low: 0,
+            trivial_high: 0,
+        })
+    };
+    // 10 → 11 → 12, the middle rank warriors alone (class 1).
+    let mut cat = SkillLineCatalog::from_abilities([]);
+    cat.abilities = HashMap::from([
+        (10, vec![row(0, 11)]),
+        (11, vec![row(1, 12)]),
+        (12, vec![row(0, 0)]),
+    ]);
+    let known = std::collections::BTreeSet::from([12]);
+    assert!(cat.higher_rank_known(10, 1, 1, &known));
+    assert!(
+        !cat.higher_rank_known(10, 1, 2, &known),
+        "a paladin's lookup misses the middle row, which ends the walk (`0x72619a`)"
+    );
+    assert_eq!(cat.next_ranks(1, 2), HashMap::from([(10, 11)]));
+}
+
+#[test]
+fn a_negative_forward_ends_the_rank_walk() {
+    let row = SlaInfo {
+        skill_id: 1,
+        req_skill_value: 0,
+        forward_spell_id: u32::MAX,
+        trivial_low: 0,
+        trivial_high: 0,
+    };
+    let cat = SkillLineCatalog::from_abilities([(10, row)]);
+    assert!(!cat.higher_rank_known(10, 1, 1, &std::collections::BTreeSet::from([u32::MAX])));
 }
