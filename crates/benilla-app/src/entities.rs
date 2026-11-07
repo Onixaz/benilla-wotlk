@@ -76,10 +76,14 @@ pub(crate) use collision_height::CollisionHeight;
 
 /// Spell missiles: the projectile a cast with a `Spell.dbc` Speed above 0 flies at each target.
 mod missile;
+pub(crate) use missile::MissileShape;
 pub(crate) use missile::{
     aim_launch_pos, AttachPosQuery, MissileMiss, MissileSound, PendingMissiles,
 };
-use missile::{attach_missile_models, mark_forced_missiles, move_missiles, spawn_missiles};
+use missile::{
+    attach_missile_models, mark_forced_missiles, move_missiles, run_missile_motion, spawn_missiles,
+    MissileMotion, MotionScripts,
+};
 
 /// A WMO-display GameObject's doodad props (a ship's sails), parented under it to ride a transport.
 mod wmo_props;
@@ -645,6 +649,8 @@ impl Plugin for EntitiesPlugin {
         .init_resource::<spell_fx::FxTintAnims>()
         // The per-caster pending-projectile queues (the client's `unit+0xac` lists).
         .init_resource::<missile::PendingMissiles>()
+        // The missile motion scripts' Lua state, built on the first scripted missile.
+        .init_non_send_resource::<MotionScripts>()
         .add_message::<MissileSound>()
         .add_message::<MissileMiss>()
         .add_message::<dest_fx::GroundBurst>()
@@ -698,7 +704,11 @@ impl Plugin for EntitiesPlugin {
                 (resolve_equipment, resolve_corpse_equipment),
                 // Spell effects and missiles create `SpellFx` entries too.
                 resolve_spell_fx,
-                move_missiles,
+                (
+                    run_missile_motion.run_if(any_with_component::<MissileMotion>),
+                    move_missiles,
+                )
+                    .chain(),
                 (spawn_missiles, mark_forced_missiles).chain(),
                 // The dest-anchored lane's three independent producers also create entries.
                 (arm_ground_effects, spawn_ground_bursts, tick_shard_emitters),

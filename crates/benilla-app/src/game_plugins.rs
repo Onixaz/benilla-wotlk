@@ -936,9 +936,14 @@ pub(crate) mod schedule_tests {
     ///   `transport::compose_riders` does a rider's, against the same unordered readers (the range,
     ///   reach, threat, spell-info and session feeds, the camera and the art scope), one frame late at
     ///   worst.
+    /// - The missile targeting kit and ground following (#110) add 5: `spawn_missiles` and
+    ///   `move_missiles` arm and reap a targeting kit, writing `SpellKitSound` against
+    ///   `sound::spell::route_spell_kit_sounds` and `SpellKitFx` against the chain-beam spawner
+    ///   (each read a frame late at worst), and `move_missiles` reads the terrain heightfield
+    ///   against `rescatter_clutter`, which touches only the clutter.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_851;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_856;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

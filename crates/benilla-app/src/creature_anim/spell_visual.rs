@@ -172,8 +172,6 @@ pub(crate) struct MissileSpawn {
     /// SOURCE-only cast at a zeroed DEST point; this launches only with a real DEST
     /// (`flags & 0x40`), a zeroed aim being a quirk not aped.
     pub(crate) ground_aim: Option<Vec3>,
-    /// The caster's ranged fallback visual, carried to arrival when the caster may be gone.
-    pub(crate) weapon_visual: Option<u32>,
     /// `SpellVisual` field 10: the sound the projectile loops in flight (the missile's `+0x40`).
     pub(crate) missile_sound: Option<u32>,
     /// Launch at the cast animation's release event, not at GO; the reference launches at GO only
@@ -181,6 +179,10 @@ pub(crate) struct MissileSpawn {
     pub(crate) awaits_release: bool,
     /// The GO's trajectory, with the spell's `SpellMissile.dbc` row.
     pub(crate) trajectory: Option<(super::Trajectory, Option<benilla_formats::SpellMissileRec>)>,
+    /// The visual rows' launch, aim, ground and motion columns.
+    pub(crate) shape: crate::entities::MissileShape,
+    /// A fixed launch point, for a missile with no caster to leave from (`0x802825`).
+    pub(crate) from: Option<Vec3>,
 }
 
 /// Load `SpellVisual.dbc` and `SpellVisualKit.dbc` off the patch chain at startup.
@@ -351,6 +353,11 @@ pub(crate) fn held_strike_sound(
     spell_id: u32,
 ) -> Option<u32> {
     resolve_stages(spells, visuals, spell_id, || None)?.strike_sound
+}
+
+/// A kit's effect models, for a kit a missile plays itself.
+pub(crate) fn kit_fx_slots(visuals: &SpellVisualCatalog, kit: &VisualKit) -> Vec<FxSlot> {
+    resolve_kit_effects(visuals, kit)
 }
 
 /// A kit's effect models on a unit: its slots, its weapon effects (`0x73a6c0`) and its
@@ -635,12 +642,14 @@ fn area_kit_delay(from: Option<Vec3>, pos: Vec3, speed: f32) -> f32 {
 }
 
 /// `SMSG_NOTIFY_DEST_LOC_SPELL_CAST`'s visuals (`0x8022d0`), no caster needed: the instant-area kit
-/// (column 23) at the dest position at once, then the impact-area kit (column 24) when a missile
-/// of the spell's speed from the source lands, or after the packet's delay with no missile
-/// (`0x802700`).
+/// (column 23) at the dest position at once, then a missile from the source to the dest when the
+/// row has one and Speed > 0, its landing playing the impact-area kit (column 24) on our own
+/// player at the point (`0x700e20`); with no missile the kit plays after the packet's delay
+/// (`0x802700`). The missile takes the row's ground following and motion, not its offsets.
 ///
-/// Deviation: the missile itself is not drawn (`0x8024ef`), as benilla's missiles fly from a unit;
-/// its landing kit keeps the flight time.
+/// Deviation: the packet's trajectory (pitch, missile speed) is not read, so a trajectory missile
+/// flies straight at Speed; with no player of ours yet its landing kit keeps the flight time alone.
+#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 pub(super) fn play_dest_loc_casts(
     mut casts: MessageReader<super::DestLocCast>,
     spells: Option<Res<crate::ui_action::Spells>>,
@@ -649,6 +658,8 @@ pub(super) fn play_dest_loc_casts(
     mut shakes: MessageWriter<SpellKitShake>,
     mut bursts: MessageWriter<crate::entities::dest_fx::GroundBurst>,
     mut delayed: MessageWriter<DelayedAreaKit>,
+    mut missiles: MessageWriter<MissileSpawn>,
+    me: Query<Entity, With<crate::net::SelfPlayer>>,
 ) {
     let (Some(spells), Some(visuals)) = (spells.as_deref(), visuals.as_deref()) else {
         casts.clear();
@@ -668,11 +679,39 @@ pub(super) fn play_dest_loc_casts(
                 &mut bursts,
             );
         }
+        let speed = spells.catalog.get(c.spell_id).map_or(0.0, |d| d.speed);
+        let missile = stages.missile_gate != 0 && stages.missile_model != 0 && speed > 0.0;
+        if let Some(player) = me.iter().next().filter(|_| missile) {
+            // An item model (-1 to -5) has no caster to take it from: the error cube (`0x80249a`).
+            let item_model = (-5..=-1).contains(&(stages.missile_model as i32));
+            let path = (!item_model)
+                .then(|| visuals.0.effect_path(stages.missile_model))
+                .flatten()
+                .unwrap_or(ERROR_CUBE);
+            let mut shape =
+                crate::entities::MissileShape::of(Some(&stages), Some(&stages), Some(&stages));
+            shape.source = None;
+            shape.impact_offset = Vec3::ZERO;
+            missiles.write(MissileSpawn {
+                caster: player,
+                spell_id: c.spell_id,
+                path: Some(path.to_string()),
+                ammo_display_id: None,
+                dest_tag: None,
+                speed,
+                targets: Vec::new(),
+                ground_aim: Some(c.dest),
+                missile_sound: stages.missile_sound,
+                awaits_release: false,
+                trajectory: None,
+                shape,
+                from: Some(c.src),
+            });
+            continue;
+        }
         if visuals.0.kit(stages.impact_area_kit).is_none() {
             continue;
         }
-        let speed = spells.catalog.get(c.spell_id).map_or(0.0, |d| d.speed);
-        let missile = stages.missile_gate != 0 && stages.missile_model != 0 && speed > 0.0;
         delayed.write(DelayedAreaKit {
             kit_id: stages.impact_area_kit,
             pos: c.dest,
@@ -737,11 +776,34 @@ fn go_plays_impact_area(visuals: &SpellVisualCatalog, stages: &VisualStages, spe
 #[derive(Clone, Copy)]
 struct ImpactPlay {
     spell_id: u32,
-    /// The caster's ranged fallback, resolved before the caster can vanish.
+    /// The caster's ranged fallback for an instant hit's merged row; a missile's arrival reads the
+    /// spell's own row (`0x703586`) and passes `None`.
     weapon_visual: Option<u32>,
+    /// The unit is the caster: the caster impact kit, else the target impact kit (`0x800d00`).
+    on_caster: bool,
+    /// Play the impact kit's models, sound and shake at this point, not on the unit (`0x702e5a`).
+    at: Option<Vec3>,
     /// Lay the victim's severity-0 wound flinch beside the kit.
     flinch: bool,
     seq: u64,
+}
+
+/// The impact kit a unit takes (`0x800d00`): column 14 on the caster, column 15 on anyone else,
+/// either falling back on column 3 when it names no kit.
+fn impact_kit<'a>(
+    visuals: &'a SpellVisualCatalog,
+    stages: &VisualStages,
+    on_caster: bool,
+) -> Option<&'a VisualKit> {
+    let own = if on_caster {
+        stages.caster_impact
+    } else {
+        stages.target_impact
+    };
+    [own, stages.impact]
+        .into_iter()
+        .filter(|&id| id != 0)
+        .find_map(|id| visuals.kit(id))
 }
 
 /// The unit-impact hand-off: the impact kit (stage 1), then the state kit's anim and sound, its
@@ -753,34 +815,53 @@ fn play_impact(
     spells: &crate::ui_action::Spells,
     visuals: &SpellVisualCatalog,
     out: &mut KitOut,
+    bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
 ) {
     let ImpactPlay {
         spell_id,
         weapon_visual,
+        on_caster,
+        at,
         flinch,
         seq,
     } = impact;
     if flinch {
         out.wounds.write(WoundAnim { entity });
     }
-    for (stage, play) in [
-        (
-            (|s: &VisualStages| s.impact) as fn(&VisualStages) -> u32,
-            KitPlay::DISCRETE,
-        ),
-        (
-            |s: &VisualStages| s.state,
-            KitPlay {
-                effects: false,
-                stage_2: true,
-                stage: FxStage::State,
-                ..KitPlay::DISCRETE
-            },
-        ),
-    ] {
-        if let Some(kit) = resolve_kit(spells, visuals, spell_id, stage, || weapon_visual) {
-            play_kit(entity, spell_id, &kit, play, seq, visuals, out);
+    let Some(stages) = resolve_stages(spells, visuals, spell_id, || weapon_visual) else {
+        return;
+    };
+    if let Some(kit) = impact_kit(visuals, &stages, on_caster) {
+        match at {
+            None => play_kit(entity, spell_id, kit, KitPlay::DISCRETE, seq, visuals, out),
+            Some(at) => {
+                // The unit keeps the anim, beam and trail legs; the models, sound and shake go
+                // to the point.
+                let unit_legs = VisualKit {
+                    shake: None,
+                    ..*kit
+                };
+                let play = KitPlay {
+                    effects: false,
+                    sound: false,
+                    ..KitPlay::DISCRETE
+                };
+                play_kit(entity, spell_id, &unit_legs, play, seq, visuals, out);
+                play_kit_at(kit, at, visuals, out.sounds, out.shakes, bursts);
+            }
         }
+    }
+    if let Some(kit) = (stages.state != 0)
+        .then(|| visuals.kit(stages.state))
+        .flatten()
+    {
+        let play = KitPlay {
+            effects: false,
+            stage_2: true,
+            stage: FxStage::State,
+            ..KitPlay::DISCRETE
+        };
+        play_kit(entity, spell_id, kit, play, seq, visuals, out);
     }
 }
 
@@ -1011,19 +1092,23 @@ pub(super) fn route_cast_visuals(
                     );
                 }
             }
-            CastEventKind::Impact { weapon_visual } => {
-                // The arrival flinches every living target, no hostility test.
+            CastEventKind::Impact { on_caster, at } => {
+                // The arrival flinches every living target, no hostility test, and reads the
+                // spell's own row, never the ranged merge (`0x703586`).
                 play_impact(
                     ev.entity,
                     ImpactPlay {
                         spell_id: ev.spell_id,
-                        weapon_visual,
+                        weapon_visual: None,
+                        on_caster,
+                        at,
                         flinch: true,
                         seq: ev.seq,
                     },
                     spells,
                     &visuals.0,
                     &mut out,
+                    bursts,
                 );
             }
             CastEventKind::GroundImpact { pos } => {
@@ -1092,7 +1177,8 @@ pub(super) fn route_cast_visuals(
             }
         }
         if display.speed <= 0.0 {
-            // Each hit flinches after its impact kit iff the spell is harmful.
+            // Each hit flinches after its impact kit iff the spell is harmful; a hit on the
+            // caster takes the caster impact kit (`0x801feb`).
             let flinch = display.is_harmful();
             for &target in &go.hits {
                 play_impact(
@@ -1100,12 +1186,15 @@ pub(super) fn route_cast_visuals(
                     ImpactPlay {
                         spell_id: go.spell_id,
                         weapon_visual: wv,
+                        on_caster: target == go.caster,
+                        at: None,
                         flinch,
                         seq: go.seq,
                     },
                     spells,
                     &visuals.0,
                     &mut out,
+                    bursts,
                 );
             }
         } else {
@@ -1145,12 +1234,19 @@ pub(super) fn route_cast_visuals(
                     speed: display.speed,
                     targets,
                     ground_aim,
-                    weapon_visual: wv,
                     missile_sound,
                     awaits_release,
                     trajectory: go
                         .trajectory
                         .map(|t| (t, visuals.0.missile(display.missile).copied())),
+                    // The own row before the ranged merge (`0x7332e0`), and the first visual past
+                    // the violence pick (`0x702570`).
+                    shape: crate::entities::MissileShape::of(
+                        visuals.0.stages(spell_visual_id(display)),
+                        stages.as_ref(),
+                        visuals.0.stages(display.visual),
+                    ),
+                    from: None,
                 });
             }
         }

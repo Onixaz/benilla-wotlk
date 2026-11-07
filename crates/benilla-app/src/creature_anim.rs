@@ -393,10 +393,11 @@ pub(crate) enum CastEventKind {
     Go,
     /// Died without release (`SMSG_SPELL_FAILED_OTHER`, or our failed `SMSG_CAST_RESULT`).
     Fail,
-    /// The spell landed on this unit (a missile arrival): impact kit, then state kit.
-    /// `weapon_visual` is the caster's ranged-weapon `SpellVisual`, carried from the GO since the
-    /// caster may despawn.
-    Impact { weapon_visual: Option<u32> },
+    /// The spell landed on this unit (a missile arrival): impact kit, then state kit, off the
+    /// spell's own visual (`0x703586`). `on_caster` takes the caster impact kit, else the target
+    /// impact kit, each falling back on the impact kit (`0x800d00`); `at` plays the kit's models at
+    /// that point, not on the unit (`0x702e5a`).
+    Impact { on_caster: bool, at: Option<Vec3> },
     /// A projectile with no live target at arrival (a despawned target too): the kit plays on the
     /// caster (`entity`) at `pos`, `SpellVisual` field 13, stage 3. Sent here only for a
     /// dest-targeted GO's missile with no hit (`MissileSpawn::ground_aim`).
@@ -621,8 +622,8 @@ use spell_visual::{
 #[cfg(test)]
 pub(crate) use spell_visual::arm_aura_state_fx as arm_aura_state_fx_for_test;
 pub(crate) use spell_visual::{
-    held_strike_sound, ChainProcPlay, FxClass, FxStage, KitPush, MissileSpawn, SpellKitFx,
-    SpellKitShake, SpellKitSound, SpellVisuals,
+    held_strike_sound, kit_fx_slots, ChainProcPlay, FxClass, FxStage, KitPush, MissileSpawn,
+    SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals,
 };
 
 /// The unit's own variation stream ([`benilla_assets::AnimRng::stream`]), cut on its first frame
