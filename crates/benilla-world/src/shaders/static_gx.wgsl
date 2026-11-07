@@ -402,9 +402,11 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
     }
     // The shadow maps on a lit item, wow_model.wgsl's receive (`benilla_world::ext_shadow`).
     if ((in.word & WORD_UNLIT) == 0u) {
-        let shadow = wow_shadow::shadow_term(
+        let shadow = wow_shadow::model_term(
             in.world_position.xyz,
             (in.word & WORD_INTERIOR) != 0u,
+            wow_light.sh_c16.w > 0.5,
+            wow_light.fog_params.z,
         );
         if (shadow < 1.0) {
             rgb = rgb * wow_shadow::shadow_scale(wow_shadow::grazing_fade(shadow, n_lit));

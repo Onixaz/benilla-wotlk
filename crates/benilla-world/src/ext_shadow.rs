@@ -112,6 +112,11 @@ pub fn units_only(mode: u8) -> bool {
     matches!(mode, 1 | 2)
 }
 
+/// The program group a mode's receivers load, 0 to 3 (`0xb1d554`).
+pub fn shadow_value(mode: u8) -> u8 {
+    [0, 1, 1, 2, 2, 3][usize::from(mode.min(SHADOW_MODE_MAX))]
+}
+
 /// The cascade count the mode's light carries: the dynamic map, then the three bands.
 fn cascade_count(mode: u8) -> usize {
     if has_bands(mode) {
@@ -793,5 +798,88 @@ mod tests {
         assert_eq!(c[2], 2.5);
         assert!((c[0] * 1024.0 - (c[0] * 1024.0).round()).abs() < 1e-3);
         assert!((c[0] - 10.0004).abs() <= 0.5 / 1024.0 + 1e-6);
+    }
+
+    #[test]
+    fn the_modes_load_three_program_groups() {
+        assert_eq!(
+            (0..=5).map(shadow_value).collect::<Vec<_>>(),
+            [0, 1, 1, 2, 2, 3]
+        );
+    }
+
+    /// The programs of one `.bls`: a 12-byte head, then a 12-byte record, a size and padded code.
+    fn bls_programs(bytes: &[u8]) -> Vec<&[u8]> {
+        let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+        let mut at = 12;
+        (0..word(8))
+            .map(|_| {
+                let size = word(at + 12);
+                let code = &bytes[at + 16..at + 16 + size];
+                at += 16 + size.next_multiple_of(4);
+                code
+            })
+            .collect()
+    }
+
+    /// Per sampler, how many texture reads one ps_3_0 program holds.
+    fn sampler_reads(code: &[u8]) -> [u32; 16] {
+        let words: Vec<u32> = code
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|w| u32::from_le_bytes(*w))
+            .collect();
+        let mut reads = [0; 16];
+        let mut at = 1;
+        while let Some(&token) = words.get(at) {
+            match token & 0xffff {
+                0xffff => break,
+                0xfffe => at += 1 + (token >> 16 & 0x7fff) as usize,
+                op => {
+                    let args = (token >> 24 & 0xf) as usize;
+                    // D3DSIO_TEX and D3DSIO_TEXLDL close on the sampler register.
+                    if op == 0x42 || op == 0x5f {
+                        reads[(words[at + args] & 0x7ff) as usize] += 1;
+                    }
+                    at += 1 + args;
+                }
+            }
+        }
+        reads
+    }
+
+    /// The map taps of `0x79e5c0`'s and `0x81f1d0`'s programs per value: wow_shadow.wgsl's arms.
+    #[test]
+    fn the_receive_arms_are_the_programs_each_value_loads() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::Chain::open(&data).expect("open the patch chain");
+        let mut read = |name: &str| {
+            chain
+                .read_file(&format!(r"Shaders\Pixel\ps_3_0\{name}.bls"))
+                .expect("a program file")
+        };
+        let terrain3 = read("Terrain3_pcf");
+        let terrain3 = bls_programs(&terrain3);
+        assert_eq!(terrain3.len(), 96);
+        for (group, maps) in [[5, 0, 0, 0], [5, 5, 5, 5], [9, 5, 5, 5]]
+            .iter()
+            .enumerate()
+        {
+            for layer_pair in 0..8 {
+                let reads = sampler_reads(terrain3[8 * group + layer_pair]);
+                assert_eq!(reads[5..9], *maps, "group {group} program {layer_pair}");
+            }
+            assert_eq!(sampler_reads(terrain3[8 * group])[1] > 0, group == 0);
+        }
+        let terrain2 = read("Terrain2_pcf");
+        let terrain2 = bls_programs(&terrain2);
+        assert_eq!(terrain2.len(), 32);
+        assert_eq!(sampler_reads(terrain2[0])[5..9], [5, 0, 0, 0]);
+        let model = read("Combiners_Opaque");
+        let model = bls_programs(&model);
+        for (value, maps) in [(1, [14, 0, 0, 0]), (2, [14, 5, 5, 5]), (3, [10, 5, 5, 5])] {
+            assert_eq!(sampler_reads(model[4 + value])[4..8], maps, "value {value}");
+        }
     }
 }
