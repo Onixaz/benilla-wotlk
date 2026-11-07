@@ -267,8 +267,7 @@ fn extract_one(
             // A Button's non-current state textures emit no quad, and its ButtonText takes
             // the current state's font object (disabled > highlighted > normal).
             let mut state_font: Option<&FontObject> = None;
-            let mut state_color: Option<[f32; 4]> = None;
-            let mut button_font: Option<&crate::widget::ButtonFont> = None;
+            let mut pushed_offset: Option<[f32; 2]> = None;
             if let Some(crate::widget::KindState::Button(bs)) = owner_frame.map(|f| &f.kind_state) {
                 let hovered = owner.is_some() && model.mouseover == owner;
                 // The press is not read here: the state texture latches on the transition
@@ -283,16 +282,17 @@ fn extract_one(
                     // normal one. An empty slot unlinks and keeps the last paint
                     // (`SetFontObject 0x485160`), modelled as staying on normal.
                     let highlighted = hovered || bs.locked_highlight;
-                    let (name, color) = if !bs.enabled() && bs.disabled_font.is_some() {
-                        (bs.disabled_font.as_ref(), bs.disabled_color)
+                    let name = if !bs.enabled() && bs.disabled_font.is_some() {
+                        bs.disabled_font.as_ref()
                     } else if bs.enabled() && highlighted && bs.highlight_font.is_some() {
-                        (bs.highlight_font.as_ref(), bs.highlight_color)
+                        bs.highlight_font.as_ref()
                     } else {
-                        (bs.normal_font.as_ref(), bs.normal_color)
+                        bs.normal_font.as_ref()
                     };
                     state_font = name.and_then(|n| model.font_object(n));
-                    button_font = bs.font.as_ref();
-                    state_color = color;
+                    // The pushed label's justification offset (`0x96f4a0`).
+                    pushed_offset = (bs.button_state() == crate::widget::ButtonVisualState::Pushed)
+                        .then_some(bs.pushed_text_offset);
                 }
             }
             // A title region never draws: `CreateTitleRegion` builds a plain Region with no
@@ -350,24 +350,6 @@ fn extract_one(
                     }
                 }
             }
-            // `Button:SetFont` sits between: a local set on the embedded font outranks its
-            // object (clearing the `inheritMask` bit, the font string's `+0xD4`, for good)
-            // but loses to the label's own, so `font_explicit` gates it too.
-            if let Some(bf) = button_font {
-                if !data.font_explicit.face {
-                    data.font_path = Some(bf.path.clone());
-                }
-                if !data.font_explicit.height {
-                    data.font_height = Some(bf.height);
-                }
-                if !data.font_explicit.outline {
-                    data.outline = super::Outline::flags(&bf.flags);
-                }
-            }
-            // The state colour repaints the label outright, even over its own colour.
-            if let Some(c) = state_color {
-                data.vertex_color = Some(c);
-            }
             // A region draws at its resolved rect only: drawable regions carry anchors (authored,
             // or `region::implicit_creation_anchor`) and a failed resolve latches unresolvable, so
             // an unanchored Lua region draws nowhere, as in the reference. The bar fill and thumbs
@@ -380,6 +362,12 @@ fn extract_one(
             }
             // An animation's translation moves the drawn quad only, not the layout rect.
             if let (Some(r), Some(&(dx, dy))) = (rect.as_mut(), model.anims.offsets.get(&rh)) {
+                r.left += dx;
+                r.right += dx;
+                r.bottom += dy;
+                r.top += dy;
+            }
+            if let (Some(r), Some([dx, dy])) = (rect.as_mut(), pushed_offset) {
                 r.left += dx;
                 r.right += dx;
                 r.bottom += dy;

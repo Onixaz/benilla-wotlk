@@ -9,7 +9,7 @@ use super::region_handle_of;
 
 /// Whether FontString `rh` holds a font handle (`[fs+0xe8]`), which the FontString's font set makes
 /// only from a face and a non-zero height. A Button's label also counts its button's state fonts
-/// and `Button:SetFont`, which extract paints it with.
+/// which extract paints it with.
 fn has_font(model: &crate::script::Model, rh: crate::widget::RegionHandle) -> bool {
     let own = model
         .region_data
@@ -21,12 +21,11 @@ fn has_font(model: &crate::script::Model, rh: crate::widget::RegionHandle) -> bo
         .and_then(|r| model.arena.frame(r.owner))
         .is_some_and(|f| match &f.kind_state {
             crate::widget::KindState::Button(bs) if bs.text == Some(rh) => {
-                bs.font.is_some()
-                    || [&bs.normal_font, &bs.highlight_font, &bs.disabled_font]
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|n| model.font_object(n))
-                        .any(|fo| fo.font.is_some())
+                [&bs.normal_font, &bs.highlight_font, &bs.disabled_font]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|n| model.font_object(n))
+                    .any(|fo| fo.font.is_some())
             }
             _ => false,
         })

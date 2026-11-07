@@ -177,6 +177,18 @@ fn edit<R>(lua: &Lua, this: &Table, f: impl FnOnce(&mut FontObject) -> R) -> mlu
     Ok(out)
 }
 
+/// Writes `color` into the named font object and repaints its users, as the button's XML colours
+/// do (`0x96f8d0`).
+pub(crate) fn set_object_color(model: &mut Model, name: &str, color: [f32; 4]) {
+    if let Some(fo) = model
+        .font_objects_by_lower
+        .get_mut(&name.to_ascii_lowercase())
+    {
+        fo.color = Some(color);
+        propagate(model, name);
+    }
+}
+
 /// A copy of the named font object's record.
 fn read(lua: &Lua, this: &Table) -> mlua::Result<FontObject> {
     let name = name_of(this)?;
