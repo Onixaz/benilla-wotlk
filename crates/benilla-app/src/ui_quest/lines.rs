@@ -338,7 +338,7 @@ mod tests {
                 "Quest accepted: A Threat Within",
                 "Experience gained: 450.",
                 "Received 10 Silver, 25 Copper.",
-                "Received item: |cffffffff|Hitem:2580:0:0:0|h[Linen Cloth]|h|r.",
+                "Received item: |cffffffff|Hitem:2580:0:0:0:0:0:0:0:0|h[Linen Cloth]|h|r.",
             ]
         );
         assert_eq!(
@@ -375,7 +375,7 @@ mod tests {
             chat(&app)[4..],
             [
                 "Kobold Camp Cleanup completed.",
-                "Received item: |cffffffff|Hitem:6529:0:0:0|h[Shiny Bauble]|h|r.",
+                "Received item: |cffffffff|Hitem:6529:0:0:0:0:0:0:0:0|h[Shiny Bauble]|h|r.",
             ]
         );
         assert!(app.world().resource::<QuestLines>().queued().is_empty());
@@ -430,7 +430,7 @@ mod tests {
         app.update();
         assert_eq!(
             chat(&app),
-            ["Received item: |cffffffff|Hitem:6529:0:0:0|h[Shiny Bauble]|h|r."]
+            ["Received item: |cffffffff|Hitem:6529:0:0:0:0:0:0:0:0|h[Shiny Bauble]|h|r."]
         );
         assert!(app.world().resource::<QuestLines>().queued().is_empty());
     }

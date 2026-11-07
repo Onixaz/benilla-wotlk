@@ -153,6 +153,8 @@ pub(crate) struct Model {
     pub(crate) layout_rounds: u64,
     /// Per frame, rasterized links `(y-up rect, link, full |H…|h markup)` for `OnHyperlinkClick`.
     pub(crate) link_spans: crate::widget::HandleMap<FrameHandle, Vec<(Rect, String, String)>>,
+    /// The span under the pointer, `(frame id, link, markup)`, for `OnHyperlinkLeave`.
+    pub(crate) hovered_link: Option<(u32, String, String)>,
     /// Region visuals (texture, colour, text) and layout (anchors, size, justify).
     pub(crate) region_data: crate::widget::HandleMap<RegionHandle, RegionData>,
     /// Each frame's backdrop plate (`<Backdrop>` or `SetBackdrop`, the client's `frame+0x1ac`).
@@ -986,8 +988,16 @@ pub(crate) struct Model {
     /// `ItemRandomProperties` id to its view, pushed whole at startup: a clicked tooltip cannot
     /// repaint on a late answer. The reference reads its loaded store.
     pub(crate) random_properties: HashMap<u32, super::RandomPropertyView>,
-    /// `ItemRandomSuffix.dbc`'s names, the suffix a negative random-property id takes.
-    pub(crate) random_suffixes: HashMap<u32, String>,
+    /// `ItemRandomSuffix.dbc`, what a negative random-property id takes.
+    pub(crate) random_suffixes: HashMap<u32, super::RandomSuffixView>,
+    /// `SpellItemEnchantment.dbc`, pushed whole at startup: a link names any row.
+    pub(crate) enchant_rows: HashMap<u32, super::EnchantRowView>,
+    /// Quest tooltips by quest id, the quests a tooltip asked for, and the tooltips waiting.
+    pub(crate) quest_tooltips: HashMap<u32, super::QuestTooltipView>,
+    pub(crate) quest_tooltip_asks: HashSet<u32>,
+    pub(crate) quest_tooltip_waits: HashMap<FrameHandle, u32>,
+    /// A waiting item setter is running again, which `SetHyperlink`'s toggle must not read.
+    pub(crate) item_setter_again: bool,
     /// The player's level, class, race and skills, for a tooltip's red requirement lines.
     pub(crate) player_req: PlayerReqState,
     /// Spell id to its tooltip view, and the misses asked for.
@@ -1737,7 +1747,13 @@ impl Model {
             item_sets: HashMap::new(),
             item_set_asks: HashSet::new(),
             random_properties: HashMap::new(),
+            hovered_link: None,
             random_suffixes: HashMap::new(),
+            enchant_rows: HashMap::new(),
+            quest_tooltips: HashMap::new(),
+            quest_tooltip_asks: HashSet::new(),
+            quest_tooltip_waits: HashMap::new(),
+            item_setter_again: false,
             item_stat_asks: HashSet::new(),
             player_req: PlayerReqState::default(),
             spell_tooltips: HashMap::new(),

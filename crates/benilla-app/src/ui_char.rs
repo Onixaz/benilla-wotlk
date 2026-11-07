@@ -688,7 +688,10 @@ fn slot_view(
                 t.quality as i32,
                 t.display_info_id,
                 Some(crate::ui_items::item_link_full(
-                    entry, 0, roll, 0, &name, t.quality,
+                    entry,
+                    &crate::ui_items::object_link_fields(obj, t.flags),
+                    &name,
+                    t.quality,
                 )),
                 find_equip_slot(t.inventory_type, has_relic_slot),
                 (t.class, t.subclass),

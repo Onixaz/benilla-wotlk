@@ -51,6 +51,24 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    // IsEventRegistered("event") (`0x49f160`): 1 or nil; a non-string raises.
+    m.set(
+        "IsEventRegistered",
+        lua.create_function(|lua, (this, event): (Table, Value)| {
+            let h = frame_handle_of(lua, &this)?;
+            let Some(event) = lua.coerce_string(event)? else {
+                return Err(mlua::Error::runtime(
+                    "Usage: Frame:IsEventRegistered(\"event\")",
+                ));
+            };
+            let model = crate::script::model_mut_of(lua);
+            let held = model
+                .vm
+                .event_key(&event.to_string_lossy())
+                .is_some_and(|key| model.frame_events.get(&h).is_some_and(|s| s.contains(key)));
+            Ok(crate::script::binding_abi::flag(held))
+        })?,
+    )?;
     // `RegisterAllEvents()`: the frame's `OnEvent` receives every event until
     // `UnregisterAllEvents`, the only way out. A flag (`Model::all_event_frames`), not a name list.
     m.set(
@@ -220,9 +238,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 }
 
 /// `SetScript(name, func)`: stores the closure under one of [`SCRIPT_KINDS`], else raises.
-/// Deviation: real kinds nothing fires yet raise too (`OnHyperlinkEnter`, `OnHyperlinkLeave`,
-/// `OnMessageScrollChanged`, `OnTooltipSetItem` and the other tooltip `OnTooltipSet*`, the movie
-/// frame's three), because an accepted handler that never runs fails silently.
+/// Deviation: real kinds nothing fires yet raise too (`OnMessageScrollChanged`,
+/// `OnTooltipSetFrameStack`, the movie frame's three), because an accepted handler that never runs
+/// fails silently.
 fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> mlua::Result<()> {
     let kind = script_kind(lua, name)
         .ok_or_else(|| mlua::Error::runtime(format!("SetScript: unsupported script '{name}'")))?;

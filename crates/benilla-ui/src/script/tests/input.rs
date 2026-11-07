@@ -560,6 +560,51 @@ fn set_script_on_double_click_is_accepted_because_something_fires_it() {
     assert!(s.eval::<bool>("return ran").unwrap(), "…and it FIRED");
 }
 
+/// `IsEventRegistered` (`0x49f160`) follows `RegisterEvent` and `UnregisterEvent`.
+#[test]
+fn is_event_registered_follows_the_frame() {
+    let s = script();
+    s.run(r#"F = CreateFrame("Frame"); F:RegisterEvent("PLAYER_LOGIN")"#)
+        .unwrap();
+    assert!(s
+        .eval::<bool>(r#"return F:IsEventRegistered("PLAYER_LOGIN") == 1"#)
+        .unwrap());
+    s.run(r#"F:UnregisterEvent("PLAYER_LOGIN")"#).unwrap();
+    assert!(s
+        .eval::<bool>(r#"return F:IsEventRegistered("PLAYER_LOGIN") == nil"#)
+        .unwrap());
+    assert!(s.run("F:IsEventRegistered(nil)").is_err());
+}
+
+/// A move across a hyperlink span fires its enter and leave, `self, link, text`.
+#[test]
+fn a_pointer_crossing_a_link_span_fires_enter_then_leave() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        seen = {}
+        F = CreateFrame("Frame", "Spanned", UIParent)
+        F:SetPoint("BOTTOMLEFT", 0, 0); F:SetWidth(100); F:SetHeight(100); F:EnableMouse(true)
+        F:SetScript("OnHyperlinkEnter", function(self, link, text) seen[#seen + 1] = "in " .. link end)
+        F:SetScript("OnHyperlinkLeave", function(self, link, text) seen[#seen + 1] = "out " .. text end)
+    "#,
+    )
+    .unwrap();
+    s.resolve();
+    let h = s.model_ref().arena.lookup("Spanned").unwrap();
+    let rect = crate::layout::Rect::new(10.0, 10.0, 20.0, 20.0);
+    s.set_link_spans(vec![(h, rect, "item:1".into(), "[One]".into())]);
+    s.mouse_move(50.0, 50.0);
+    s.mouse_move(15.0, 15.0);
+    s.mouse_move(16.0, 16.0);
+    s.mouse_move(50.0, 50.0);
+    assert_eq!(
+        s.eval::<String>("return table.concat(seen, ',')").unwrap(),
+        "in item:1,out [One]"
+    );
+}
+
 /// Script names nothing fires still raise; a name leaves this list only when something fires it.
 #[test]
 fn the_unfired_script_kinds_still_raise_rather_than_silently_accepting() {
@@ -568,9 +613,8 @@ fn the_unfired_script_kinds_still_raise_rather_than_silently_accepting() {
         .unwrap();
     // Real slots that benilla does not fire.
     for name in [
-        "OnHyperlinkEnter",
         "OnMessageScrollChanged",
-        "OnTooltipSetItem",
+        "OnTooltipSetFrameStack",
         "OnMovieFinished",
     ] {
         let err = s

@@ -70,7 +70,7 @@ fn eight_entries() -> QuestLogState {
 }
 
 /// The fixture reward's escaped link, a white (quality 1) item.
-const HAMMER_LINK: &str = "|cffffffff|Hitem:2024:0:0:0|h[Militia Hammer]|h|r";
+const HAMMER_LINK: &str = "|cffffffff|Hitem:2024:0:0:0:0:0:0:0:0|h[Militia Hammer]|h|r";
 
 /// The whole interface with `log` pushed and the window opened by the `L` binding's body,
 /// `ToggleFrame(QuestLogFrame)` (`Bindings.xml:659-661`).
@@ -901,7 +901,7 @@ fn reward_rows_preview_and_post_and_a_plain_click_stays_inert() {
         s.take_dressup_intents(),
         vec![
             benilla_ui::script::DressUpIntent::Dress,
-            benilla_ui::script::DressUpIntent::TryOn(2024)
+            benilla_ui::script::DressUpIntent::TryOn(2024, [0; 4])
         ],
         "ctrl-click opened the room wearing the reward"
     );

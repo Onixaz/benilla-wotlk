@@ -404,11 +404,17 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
         // Clear drops the subject and unregisters its health watcher.
         t.unit_guid = None;
         t.item_id = 0;
+        t.item_guid = 0;
+        t.item_link = Default::default();
+        t.spell_id = 0;
+        t.next_rank_spell = 0;
+        t.quest_id = 0;
         t.world_owned = false;
     }
     // New content replaces a spell or item render still waiting on its record.
     model.spell_tooltip_waits.remove(&h);
     model.item_tooltip_waits.remove(&h);
+    model.quest_tooltip_waits.remove(&h);
     model.achievement.tooltips.remove(&h);
     // The `<name>StatusBar` health bar is unit content: it hides with the lines, and the next
     // unit render re-shows it.

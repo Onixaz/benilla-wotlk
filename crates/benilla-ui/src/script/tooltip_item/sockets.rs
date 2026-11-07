@@ -189,6 +189,20 @@ pub(super) fn empty_socket(
 
 /// The slot walk over an instance's enchants: each line, a gem's icon, and the red lines of an
 /// unmet enchant or prismatic skill and level requirement.
+/// An enchant's text (`0x577260`): a random suffix's `$i` takes its share of the seed, which an
+/// item object's points read the same off the field the server writes.
+fn suffix_line(lua: &Lua, inst: &ItemInstance, e: &crate::script::EnchantView) -> String {
+    let roll = inst.link.random_property;
+    if roll >= 0 || !(7..=11).contains(&e.slot) || !e.name.contains("$i") {
+        return e.name.clone();
+    }
+    let value = crate::script::model_mut_of(lua)
+        .random_suffixes
+        .get(&roll.unsigned_abs())
+        .map_or(0, |r| r.value(usize::from(e.slot) - 7, inst.link.seed));
+    e.name.replace("$i", &value.to_string())
+}
+
 pub(super) fn socket_lines(
     lua: &Lua,
     this: &Table,
@@ -319,7 +333,7 @@ pub(super) fn socket_lines(
                 Some(t) => t,
                 None => continue,
             },
-            None => e.name.clone(),
+            None => suffix_line(lua, inst, e),
         };
         // The slot's charges: ITEM_SPELL_CHARGES inside the literal `" (%s)"`.
         if let Some(charges) = charges_phrase(e.charges, get) {

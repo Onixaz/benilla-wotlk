@@ -6,7 +6,7 @@ use crate::wire::{capacity_hint, read_u32_le, read_u64_le, read_u8};
 
 /// One item row of `SMSG_LOOT_RESPONSE` (vmangos `LootMgr.cpp:837-845,900-912`). `slot` is the
 /// 0-based wire slot that [`autostore_loot_item`] sends back; quest items follow at
-/// `items.len() + i` (`LootMgr.cpp:970`). The wire's `randomSuffix` is always 0 and is discarded.
+/// `items.len() + i` (`LootMgr.cpp:970`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LootItem {
     pub slot: u8,
@@ -15,6 +15,8 @@ pub struct LootItem {
     /// `item_template.display_id` → icon via `ItemDisplayInfo.dbc`.
     pub display_info_id: u32,
     pub random_property_id: u32,
+    /// The roll's seed, a random suffix's points (`0x62e520`).
+    pub random_suffix: u32,
     /// A [`slot_type`] code; solo looting always writes `ALLOW_LOOT` (`LootMgr.cpp:918-926`).
     pub slot_type: u8,
 }
@@ -346,7 +348,7 @@ pub(super) fn read_loot_response(r: &mut &[u8]) -> io::Result<(u64, LootResponse
         let item_id = read_u32_le(r)?;
         let item_count = read_u32_le(r)?;
         let display_info_id = read_u32_le(r)?;
-        let _random_suffix = read_u32_le(r)?; // always a literal 0 on the wire (LootMgr.cpp:842)
+        let random_suffix = read_u32_le(r)?;
         let random_property_id = read_u32_le(r)?;
         let slot_type = read_u8(r)?;
         items.push(LootItem {
@@ -355,6 +357,7 @@ pub(super) fn read_loot_response(r: &mut &[u8]) -> io::Result<(u64, LootResponse
             count: item_count,
             display_info_id,
             random_property_id,
+            random_suffix,
             slot_type,
         });
     }
@@ -716,6 +719,7 @@ mod tests {
                             count: 1,
                             display_info_id: 123,
                             random_property_id: 0,
+                            random_suffix: 0,
                             slot_type: slot_type::ALLOW_LOOT,
                         },
                         LootItem {
@@ -724,6 +728,7 @@ mod tests {
                             count: 1,
                             display_info_id: 4500,
                             random_property_id: 0,
+                            random_suffix: 0,
                             slot_type: slot_type::LOCKED,
                         },
                     ]

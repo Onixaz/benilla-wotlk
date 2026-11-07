@@ -347,6 +347,27 @@ fn render_spell(
     remaining: Option<String>,
     talent: Option<&TalentLines>,
 ) -> mlua::Result<()> {
+    render_spell_lines(lua, this, v, opts, remaining, talent)?;
+    if !opts.aura {
+        let h = frame_handle_of(lua, this)?;
+        let id = crate::script::model_mut_of(lua).frame_id(h);
+        if let Err(e) = super::event::fire_widget_handler(lua, id, "OnTooltipSetSpell", Vec::new())
+        {
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        }
+    }
+    Ok(())
+}
+
+/// The lines; `OnTooltipSetSpell` follows them for the spell builders (`0x6238a0`), not the aura's.
+fn render_spell_lines(
+    lua: &Lua,
+    this: &Table,
+    v: &SpellTooltipView,
+    opts: SpellRenderOpts,
+    remaining: Option<String>,
+    talent: Option<&TalentLines>,
+) -> mlua::Result<()> {
     let SpellRenderOpts {
         aura,
         show_rank,
@@ -485,6 +506,13 @@ pub(super) fn set_spell_with_talent(
         clear_content(&mut model, h);
     }
     fire_cleared(lua, h);
+    {
+        let mut model = crate::script::model_mut_of(lua);
+        if let Ok(t) = tip_mut(&mut model, h) {
+            t.spell_id = spell_id;
+            t.next_rank_spell = talent.next_spell;
+        }
+    }
     if talent.next_desc.is_none() {
         super::talent::ask_next_rank(lua, talent.next_spell);
     }
@@ -555,6 +583,12 @@ fn fill_spell(
     opts: SpellRenderOpts,
     remaining: Option<String>,
 ) -> mlua::Result<()> {
+    if !opts.aura {
+        let mut model = crate::script::model_mut_of(lua);
+        if let Ok(t) = tip_mut(&mut model, h) {
+            t.spell_id = spell_id;
+        }
+    }
     match spell_view_of(lua, spell_id, opts.alt_caster) {
         Some(v) => render_spell(lua, this, &v, opts, remaining, None)?,
         None => {
@@ -584,6 +618,29 @@ fn fill_spell(
 
 /// Register the spell and aura content methods on the GameTooltip method table.
 pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
+    // GameTooltip:GetSpell() (`0x61f0f0`): name, rank and id of the shown spell, then of a
+    // talent's next rank.
+    m.set(
+        "GetSpell",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let (ids, source) = {
+                let mut model = crate::script::model_mut_of(lua);
+                let t = tip_mut(&mut model, h)?;
+                let ids = [t.spell_id, t.next_rank_spell];
+                (ids, model.spell_info.clone())
+            };
+            let mut out = Vec::new();
+            for id in ids {
+                if let Some(info) = source.as_ref().and_then(|s| s.spell_info(id, false)) {
+                    out.push(mlua::Value::String(lua.create_string(&info.name)?));
+                    out.push(mlua::Value::String(lua.create_string(&info.rank)?));
+                    out.push(mlua::Value::Integer(i64::from(id)));
+                }
+            }
+            Ok(MultiValue::from_vec(out))
+        })?,
+    )?;
     // GameTooltip:SetSpell(bookId, bookType): the spellbook hover. `SetSpell` bounds the 1-based
     // slot to `[0, 0x400)` and reads the pet book when `bookType` is "pet", else the player's; the
     // pet flag also picks the cooldown bank it passes.

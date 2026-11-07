@@ -27,6 +27,7 @@ fn instance_of(held: &Held<'_>) -> (ItemInstance, u32) {
                 guid: s.guid,
                 socket_preview: None,
                 inspected: false,
+                link: link_of(s.link.as_deref()),
             },
             s.count.max(1),
         ),
@@ -45,10 +46,16 @@ fn instance_of(held: &Held<'_>) -> (ItemInstance, u32) {
                 guid: s.guid,
                 socket_preview: None,
                 inspected: false,
+                link: link_of(s.link.as_deref()),
             },
             s.count.max(1),
         ),
     }
+}
+
+fn link_of(link: Option<&str>) -> crate::script::ItemLinkFields {
+    link.and_then(crate::script::ItemLinkFields::parse)
+        .map_or_else(Default::default, |(_, f)| f)
 }
 
 /// Render `item_id` into the tooltip, the setters' shared tail.

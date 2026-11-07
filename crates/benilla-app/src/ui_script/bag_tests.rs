@@ -1358,7 +1358,7 @@ fn the_bar_bag_buttons_name_themselves_on_hover() {
         contents_count: Some(0), // an equipped bag, whose subclass row carries no count gate
         quality: 1,
         name: Some("Small Brown Pouch".into()),
-        link: Some("|cffffffff|Hitem:4496:0:0:0|h[Small Brown Pouch]|h|r".into()),
+        link: Some("|cffffffff|Hitem:4496:0:0:0:0:0:0:0:0|h[Small Brown Pouch]|h|r".into()),
         locked: false,
         equip_slots: vec![20],
         creator: None,
@@ -1413,7 +1413,7 @@ fn keyring(size: u32, occupied: bool) -> ContainerState {
                 count: 1,
                 quality: Some(1),
                 texture: Some("Interface\\Icons\\INV_Misc_Key_07".into()),
-                link: Some("|cffffffff|Hitem:7146:0:0:0|h[The Scarlet Key]|h|r".into()),
+                link: Some("|cffffffff|Hitem:7146:0:0:0:0:0:0:0:0|h[The Scarlet Key]|h|r".into()),
                 ..Default::default()
             },
         );

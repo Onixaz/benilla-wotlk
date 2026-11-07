@@ -200,6 +200,53 @@ impl UiScript {
         model.arena.frame(fh)?.name.clone()
     }
 
+    /// The hyperlink span of frame `id` under `(x, y)`. A message frame with its links off has
+    /// none (`0x9699c0`).
+    fn link_span_at(&self, id: u32, x: f32, y: f32) -> Option<(String, String)> {
+        let model = self.model_ref();
+        let fh = model.id_to_frame.get(&id).filter(|fh| {
+            !matches!(
+                model.arena.frame(**fh).map(|f| &f.kind_state),
+                Some(crate::widget::KindState::ScrollingMessage(smf))
+                    if !smf.hyperlinks_enabled
+            )
+        })?;
+        model
+            .link_spans
+            .get(fh)?
+            .iter()
+            .find(|(r, _, _)| point_in_rect(*r, x, y))
+            .map(|(_, l, m)| (l.clone(), m.clone()))
+    }
+
+    /// Fires `OnHyperlinkLeave` and `OnHyperlinkEnter(link, text)` as the pointer crosses a span.
+    fn cross_link_spans(&mut self, hovered: Option<u32>, x: f32, y: f32) {
+        let under = hovered.and_then(|id| {
+            self.link_span_at(id, x, y)
+                .map(|(link, markup)| (id, link, markup))
+        });
+        let held = self.model_ref().hovered_link.clone();
+        if held == under {
+            return;
+        }
+        self.model_mut().hovered_link = under.clone();
+        for (script, span) in [("OnHyperlinkLeave", held), ("OnHyperlinkEnter", under)] {
+            let Some((id, link, markup)) = span else {
+                continue;
+            };
+            let args = (
+                self.lua.create_string(&link),
+                self.lua.create_string(&markup),
+            );
+            if let (Ok(l), Ok(m)) = args {
+                let args = vec![Value::String(l), Value::String(m)];
+                if let Err(e) = event::fire_widget_handler(&self.lua, id, script, args) {
+                    self.push_error(e);
+                }
+            }
+        }
+    }
+
     /// Move the cursor to `(x, y)`. When the hovered frame changes, fires `OnLeave(self, true)` on
     /// the old one if still live and `OnEnter(self, true)` on the new; a disabled Button takes the
     /// hover but fires neither ([`button::hover_notify_runs`]). Drags and frame moves advance
@@ -292,6 +339,7 @@ impl UiScript {
                 self.push_error(e);
             }
         }
+        self.cross_link_spans(new_id, x, y);
         new_id
     }
 
@@ -525,28 +573,7 @@ impl UiScript {
         // owning frame, except after a started drag.
         if !down && !drag_release.as_ref().is_some_and(|r| r.started) {
             if let Some(id) = hit_id {
-                let span = {
-                    let model = self.model_ref();
-                    model
-                        .id_to_frame
-                        .get(&id)
-                        // A message frame with its links off takes no link clicks (`0x9699c0`).
-                        .filter(|fh| {
-                            !matches!(
-                                model.arena.frame(**fh).map(|f| &f.kind_state),
-                                Some(crate::widget::KindState::ScrollingMessage(smf))
-                                    if !smf.hyperlinks_enabled
-                            )
-                        })
-                        .and_then(|fh| model.link_spans.get(fh))
-                        .and_then(|spans| {
-                            spans
-                                .iter()
-                                .find(|(r, _, _)| point_in_rect(*r, x, y))
-                                .map(|(_, l, m)| (l.clone(), m.clone()))
-                        })
-                };
-                if let Some((link, markup)) = span {
+                if let Some((link, markup)) = self.link_span_at(id, x, y) {
                     let args = match (
                         self.lua.create_string(&link),
                         self.lua.create_string(&markup),

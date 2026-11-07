@@ -476,9 +476,14 @@ fn resolve_row(
     let link = name.as_ref().map(|n| {
         crate::ui_items::item_link_full(
             w.item_entry,
-            w.enchants[0].id,
-            roll,
-            w.suffix_factor,
+            &benilla_ui::script::ItemLinkFields {
+                enchant: w.enchants[0].id as i32,
+                gems: std::array::from_fn(|i| w.enchants[2 + i].id as i32),
+                ..benilla_ui::script::ItemLinkFields::roll(
+                    w.random_property_id,
+                    w.suffix_factor as i32,
+                )
+            },
             n,
             quality.unwrap_or(0),
         )

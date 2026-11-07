@@ -147,6 +147,13 @@ impl TalentCatalog {
             .find(|t| t.id == talent_id)
     }
 
+    /// `(rank's spell, rank count)` of a talent of any class, `rank` 0-based.
+    pub fn rank_spell(&self, talent_id: u32, rank: usize) -> Option<(u32, u32)> {
+        let t = self.by_tab.values().flatten().find(|t| t.id == talent_id)?;
+        let spell = *t.ranks.get(rank).filter(|&&s| s != 0)?;
+        Some((spell, t.max_rank()))
+    }
+
     pub fn len(&self) -> usize {
         self.by_tab.values().map(Vec::len).sum()
     }

@@ -88,8 +88,8 @@ fn setup() -> UiScript {
 }
 
 /// The resolved rolls' links as `ui_loot_roll` builds them: quality colour, four-field `|Hitem:`.
-const STAFF_LINK: &str = "|cffa335ee|Hitem:17182:0:0:0|h[Staff of Jordan]|h|r";
-const SWORD_LINK: &str = "|cffffffff|Hitem:25:0:0:0|h[Worn Shortsword]|h|r";
+const STAFF_LINK: &str = "|cffa335ee|Hitem:17182:0:0:0:0:0:0:0:0|h[Staff of Jordan]|h|r";
+const SWORD_LINK: &str = "|cffffffff|Hitem:25:0:0:0:0:0:0:0:0|h[Worn Shortsword]|h|r";
 
 /// Roll 7 resolved Epic and bind-on-pickup, roll 8 resolved Common, roll 9 with no template yet.
 fn rolls() -> LootRollsState {
@@ -567,7 +567,7 @@ fn ctrl_and_shift_on_the_roll_icon_preview_and_post_its_link() {
     s.set_modifiers(false, false, false);
     assert_eq!(
         s.take_dressup_intents(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(25)],
+        vec![DressUpIntent::Dress, DressUpIntent::TryOn(25, [0; 4])],
         "re-dress first, then try the rolled item on"
     );
     assert!(
@@ -692,7 +692,7 @@ fn the_3_3_5a_group_loot_frame_paints_the_vote_mask_and_sends_disenchant() {
             disenchant_skill: 25,
             time_left_ms: 60_000,
             item_id: 4949,
-            link: Some("|cff1eff00|Hitem:4949:0:0:0|h[Orcish Cleaver]|h|r".into()),
+            link: Some("|cff1eff00|Hitem:4949:0:0:0:0:0:0:0:0|h[Orcish Cleaver]|h|r".into()),
             random_property_id: 0,
         }],
     });

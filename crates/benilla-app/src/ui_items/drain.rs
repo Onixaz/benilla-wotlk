@@ -1472,7 +1472,7 @@ mod bind_confirm_tests {
                 count: 1,
                 quality: Some(quality),
                 item_id: FLURRY_AXE,
-                link: Some("|cffa335ee|Hitem:871:0:0:0|h[Flurry Axe]|h|r".into()),
+                link: Some("|cffa335ee|Hitem:871:0:0:0:0:0:0:0:0|h[Flurry Axe]|h|r".into()),
                 locked: false,
                 equip_slots: vec![16], // MainHandSlot
                 cooldown: None,

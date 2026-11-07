@@ -378,6 +378,12 @@ fn fire_probe_interacts(
 /// run leaves the OS clipboard alone.
 static PROBE_PASTES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
+/// `ProbeClick(target[, button[, mods]])` calls not yet run: a real press and release on a frame by
+/// name, or on the chat hyperlink span whose link holds the text after `link:`, with `mods` any of
+/// `shift`, `ctrl`, `alt`.
+static PROBE_CLICKS: std::sync::Mutex<Vec<(String, String, String)>> =
+    std::sync::Mutex::new(Vec::new());
+
 #[derive(Resource, Default)]
 struct ProbeLua {
     chunk: String,
@@ -455,6 +461,25 @@ fn install_probe_log(script: &benilla_ui::script::UiScript) {
         }
         Err(e) => error!("probe-lua: creating ProbeWalkBy: {e}"),
     }
+    match script.lua().create_function(
+        |_, (target, button, mods): (String, Option<String>, Option<String>)| {
+            if let Ok(mut clicks) = PROBE_CLICKS.lock() {
+                clicks.push((
+                    target,
+                    button.unwrap_or_else(|| "LeftButton".into()),
+                    mods.unwrap_or_default(),
+                ));
+            }
+            Ok(())
+        },
+    ) {
+        Ok(f) => {
+            if let Err(e) = script.lua().globals().set("ProbeClick", f) {
+                error!("probe-lua: installing ProbeClick: {e}");
+            }
+        }
+        Err(e) => error!("probe-lua: creating ProbeClick: {e}"),
+    }
     match script.lua().create_function(|_, text: String| {
         info!("probe-log: {text}");
         Ok(())
@@ -512,6 +537,35 @@ fn fire_probe_lua(
         .unwrap_or_default();
     for text in pastes {
         info!("probe-paste: {text:?} consumed={}", script.paste(&text));
+    }
+    let clicks = PROBE_CLICKS
+        .lock()
+        .map(|mut c| std::mem::take(&mut *c))
+        .unwrap_or_default();
+    for (target, button, mods) in clicks {
+        let at = match target.strip_prefix("link:") {
+            Some(text) => script.link_span_center(text),
+            None => script
+                .eval::<(Option<f32>, Option<f32>)>(&format!(
+                    "local x, y = {target}:GetCenter() local s = {target}:GetEffectiveScale()                      return x and x * s, y and y * s"
+                ))
+                .ok()
+                .and_then(|(x, y)| x.zip(y)),
+        };
+        let Some((x, y)) = at else {
+            info!("probe-click: {target} not found");
+            continue;
+        };
+        script.set_modifiers(
+            mods.contains("shift"),
+            mods.contains("ctrl"),
+            mods.contains("alt"),
+        );
+        script.mouse_move(x, y);
+        script.mouse_button(x, y, &button, true);
+        script.mouse_button(x, y, &button, false);
+        script.set_modifiers(false, false, false);
+        info!("probe-click: {target} {button} {mods} at ({x:.1}, {y:.1})");
     }
     // The caret no chunk can read, one line per change, with the window's focus beside it.
     let window = windows.iter().any(|w| w.focused);

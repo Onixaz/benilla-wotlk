@@ -279,6 +279,15 @@ pub struct TooltipState {
     /// The item shown, which every item setter records, its template held or in flight, and
     /// `GetItem` (`0x61ef10`) reads; 0 for none.
     pub item_id: u32,
+    /// The shown item object's guid (`+0x360`), 0 for a link or a template.
+    pub item_guid: u64,
+    /// The shown item's link block (`+0x3a0`): what `GetItem` rebuilds its link from.
+    pub item_link: crate::script::ItemLinkFields,
+    /// The spell shown and the talent's next rank (`GetSpell`, `0x61f0f0`); 0 for none.
+    pub spell_id: u32,
+    pub next_rank_spell: u32,
+    /// The quest shown (`SetHyperlink`'s toggle), 0 for none.
+    pub quest_id: u32,
 }
 
 /// `AddTexture`'s slot count, the template's `$parentTexture1..10` (`0x61c8bd`, `cmp 0xa`).

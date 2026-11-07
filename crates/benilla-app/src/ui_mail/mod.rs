@@ -392,9 +392,14 @@ impl MailLookups<'_, '_> {
         let link = template.zip(name.as_deref()).map(|(t, n)| {
             crate::ui_items::item_link_full(
                 a.entry,
-                a.enchants[0].id,
-                a.random_property_id as u32,
-                a.suffix_factor,
+                &benilla_ui::script::ItemLinkFields {
+                    enchant: a.enchants[0].id as i32,
+                    gems: std::array::from_fn(|i| a.enchants[2 + i].id as i32),
+                    ..benilla_ui::script::ItemLinkFields::roll(
+                        a.random_property_id,
+                        a.suffix_factor as i32,
+                    )
+                },
                 n,
                 t.quality,
             )

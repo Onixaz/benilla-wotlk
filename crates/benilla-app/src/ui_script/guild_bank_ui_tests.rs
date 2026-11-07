@@ -31,7 +31,7 @@ fn guild_bank() -> GuildBankView {
     logs[0] = vec![GuildBankLogView {
         kind: 1,
         player: Some("Claude".into()),
-        link: "|cffffffff|Hitem:2589:0:0:0|h[Linen Cloth]|h|r".into(),
+        link: "|cffffffff|Hitem:2589:0:0:0:0:0:0:0:0|h[Linen Cloth]|h|r".into(),
         count: 20,
         written_at: 0,
         ..Default::default()

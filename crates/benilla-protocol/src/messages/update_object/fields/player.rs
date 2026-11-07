@@ -69,6 +69,10 @@ impl ObjectFields {
     pub fn item_random_properties_id(&self) -> u32 {
         self.get_u32(44).unwrap_or(0)
     }
+    /// `ITEM_FIELD_PROPERTY_SEED` (field 43): a random suffix's points, the link's seed.
+    pub fn item_property_seed(&self) -> u32 {
+        self.get_u32(43).unwrap_or(0)
+    }
     /// `ITEM_FIELD_DURABILITY` (field 46): current durability.
     pub fn item_durability(&self) -> Option<u32> {
         self.get_u32(46)

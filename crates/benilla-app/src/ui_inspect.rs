@@ -151,9 +151,14 @@ fn inspect_slot_view(
         ),
         None => (None, 0, 0),
     };
-    let link = name
-        .as_ref()
-        .map(|n| crate::ui_items::item_link_full(entry, 0, roll, 0, n, quality));
+    let link = name.as_ref().map(|n| {
+        let fields = benilla_ui::script::ItemLinkFields {
+            enchant: store.0.player_visible_item_enchant(slot0, 0).unwrap_or(0) as i32,
+            random_property: roll as i32,
+            ..Default::default()
+        };
+        crate::ui_items::item_link_full(entry, &fields, n, quality)
+    });
     Some(InvSlotView {
         item_id: entry,
         icon: icons

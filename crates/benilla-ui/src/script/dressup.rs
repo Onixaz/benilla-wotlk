@@ -1,10 +1,12 @@
 //! The dressing room: the `DressUpModel` verbs and the intent queue behind them and behind
 //! `SetUnit`/`RefreshUnit` on a dressing-room pane. The reference edits a clone of the unit's
 //! model; here the app composes the look from the intents in order, which matters: on a closed
-//! window `DressUpItem` resets, then tries on (`DressUpFrame.lua:3-7`).
+//! window `DressUpItemLink` resets, then tries on (`DressUpFrame.lua:2-10`).
 
 use mlua::{Lua, Table, Value};
 
+use super::item_link::{reference_atoi, ItemLinkFields};
+use super::item_search::{find_item, ItemQuery};
 use super::object::frame_handle_of;
 use crate::widget::FrameKind;
 
@@ -21,10 +23,11 @@ pub enum DressUpIntent {
     /// hold.
     Undress,
     /// `TryOn(item)`: the item in its `InventoryType`'s slot, with no class, level or proficiency
-    /// check (`DressUpFrame.lua:2-16`).
-    TryOn(u32),
+    /// check, and the enchant ids a link names, the first with a visual glowing an item with no
+    /// visual of its own (`0x598830`).
+    TryOn(u32, [i32; 4]),
     /// The window was hidden, so the booth empties. The reference keeps its state while hidden,
-    /// but the next `DressUpItem` re-issues `SetUnit("player")`, so that state is never seen.
+    /// but the next `DressUpItemLink` re-issues `SetUnit("player")`, so that state is never seen.
     Close,
 }
 
@@ -56,6 +59,31 @@ pub(super) fn redress_if_dressup(lua: &Lua, this: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
+/// `TryOn`'s string forms: `None` is the refusal.
+fn try_on_text(lua: &Lua, text: &str) -> Option<DressUpIntent> {
+    if text.contains("item:") {
+        let (id, f) = ItemLinkFields::parse(text)?;
+        return Some(DressUpIntent::TryOn(id, enchant_ids(&f)));
+    }
+    if let Some(at) = text.find("enchant:") {
+        let spell = u32::try_from(reference_atoi(&text[at + 8..])).ok()?;
+        let source = crate::script::model_mut_of(lua).spell_info.clone()?;
+        let e = source.spell_stat_effects(spell)?;
+        let product = (e.attributes & 0x20 != 0 && e.item_type != 0).then_some(e.item_type)?;
+        return Some(DressUpIntent::TryOn(product, [0; 4]));
+    }
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    let held = find_item(&model, &ItemQuery::Name(text.to_string()), 0)?;
+    let fields = held.link_fields().unwrap_or_default();
+    Some(DressUpIntent::TryOn(held.item_id, enchant_ids(&fields)))
+}
+
+fn enchant_ids(f: &ItemLinkFields) -> [i32; 4] {
+    f.enchant_slots().map(|(_, id)| id)
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
@@ -78,40 +106,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // TryOn(itemID | "link") (`0x598830`): a number is the item id, an `item:` link its id, as
-    // `DressUpItemLink` passes; anything else answers ERR_NOT_EQUIPPABLE. Not built: an
-    // `enchant:` recipe link's product and a bag item named in full. A negative id previews
-    // nothing.
+    // TryOn(itemID | "link" | "name") (`0x598830`): a number is the item id, an `item:` link its
+    // item with the enchants it names, an `enchant:` link the product of its trade-skill spell and
+    // a name an item the player holds; anything else answers ERR_NOT_EQUIPPABLE.
     m.set(
         "TryOn",
         lua.create_function(|lua, (this, item): (Table, Value)| {
             frame_handle_of(lua, &this)?;
-            // `lua_isnumber` first, so a digit string is an id; then a link's `item:` id.
-            let id = match lua.coerce_number(item.clone())? {
-                Some(n) => Some(n.trunc() as i64),
-                None => match &item {
-                    Value::String(s) => {
-                        let s = s.to_string_lossy();
-                        s.find("item:").map(|at| {
-                            s[at + 5..]
-                                .chars()
-                                .take_while(char::is_ascii_digit)
-                                .collect::<String>()
-                                .parse::<i64>()
-                                .unwrap_or(0)
-                        })
-                    }
-                    _ => None,
-                },
-            };
-            match id {
-                Some(id) => {
-                    if let Ok(id) = u32::try_from(id) {
-                        if id != 0 {
-                            queue(lua, DressUpIntent::TryOn(id));
-                        }
+            // `lua_isnumber` first, so a digit string is an id.
+            if let Some(n) = lua.coerce_number(item.clone())? {
+                if let Ok(id) = u32::try_from(n.trunc() as i64) {
+                    if id != 0 {
+                        queue(lua, DressUpIntent::TryOn(id, [0; 4]));
                     }
                 }
+                return Ok(());
+            }
+            let intent = match &item {
+                Value::String(s) => try_on_text(lua, &s.to_string_lossy()),
+                _ => None,
+            };
+            match intent {
+                Some(intent) => queue(lua, intent),
                 None => crate::script::model_mut_of(lua)
                     .ui_errors
                     .push("ERR_NOT_EQUIPPABLE"),
@@ -202,12 +218,12 @@ mod tests {
             s.take_dressup_intents(),
             vec![
                 DressUpIntent::Dress,
-                DressUpIntent::TryOn(117),
-                DressUpIntent::TryOn(1234),
+                DressUpIntent::TryOn(117, [0; 4]),
+                DressUpIntent::TryOn(1234, [0; 4]),
                 DressUpIntent::Undress,
                 DressUpIntent::Dress,
                 DressUpIntent::Dress,
-                DressUpIntent::TryOn(117),
+                DressUpIntent::TryOn(117, [0; 4]),
             ]
         );
         assert_eq!(
@@ -250,8 +266,12 @@ mod tests {
                     and IsDressableItem(7002) == nil and IsDressableItem(7003) == nil
                     and IsDressableItem(9999) == nil
                     and IsDressableItem("|cffa335ee|Hitem:7000:0:0:0|h[Old Loop]|h|r") == 1
-                    and IsDressableItem("Old Loop") == 1 and IsDressableItem("Nobody") == nil"#
+                    and IsDressableItem("Old Loop") == nil and IsDressableItem("Nobody") == nil"#
             )
             .unwrap());
+        assert!(
+            s.take_item_stat_asks().contains(&9999),
+            "an uncached product asks, so the next click finds it"
+        );
     }
 }

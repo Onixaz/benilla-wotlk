@@ -5,6 +5,7 @@
 //! header folds re-sort in the VM, and the rebuild carries their `questLogCollapseFilter`.
 
 mod progress;
+mod tooltip;
 
 use crate::ui_items::{count_of, InventoryScope};
 use std::cell::RefCell;
@@ -176,6 +177,7 @@ impl Plugin for UiQuestLogPlugin {
                         .in_set(UnitFeed)
                         .before(feed_quest_log),
                     feed_quest_log.in_set(UnitFeed),
+                    tooltip::feed_quest_tooltips.in_set(UnitFeed),
                     // Before the script tick, so `QuestTimerFrame` reads this frame's clock.
                     feed_server_clock.in_set(UiFeed),
                     drain_quest_log_abandons.after(UiInput),

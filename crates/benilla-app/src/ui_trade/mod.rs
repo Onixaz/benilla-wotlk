@@ -533,7 +533,19 @@ fn resolve_slot(
         .and_then(|d| d.icon.clone());
     // Nil until the template answers: the link embeds the name and the quality colour.
     let link = match (name.as_deref(), quality) {
-        (Some(n), Some(q)) => Some(crate::ui_items::item_link(item.entry, n, q)),
+        (Some(n), Some(q)) => Some(crate::ui_items::item_link_full(
+            item.entry,
+            &benilla_ui::script::ItemLinkFields {
+                enchant: item.perm_enchant as i32,
+                gems: item.socket_enchants.map(|g| g as i32),
+                ..benilla_ui::script::ItemLinkFields::roll(
+                    item.random_prop_id as i32,
+                    item.suffix_factor as i32,
+                )
+            },
+            n,
+            q,
+        )),
         _ => None,
     };
     TradeSlotItem {

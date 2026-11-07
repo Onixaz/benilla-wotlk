@@ -435,7 +435,13 @@ fn get_item_info_finds_a_held_name_and_a_negative_suffix() {
             slots,
         }),
     );
-    s.set_random_suffixes(HashMap::from([(5, "of the Monkey".to_string())]));
+    s.set_random_suffixes(HashMap::from([(
+        5,
+        crate::script::RandomSuffixView {
+            name: "of the Monkey".into(),
+            ..Default::default()
+        },
+    )]));
     s.run(r#"ITEM_SUFFIX_TEMPLATE = "%s %s""#).unwrap();
     let (name, link): (Option<String>, Option<String>) = s
         .eval(r#"local n, l = GetItemInfo("socketed helm"); return n, l"#)

@@ -413,9 +413,7 @@ fn render(
     let t = items.template(item, 0, commands)?;
     let link = crate::ui_items::item_link_full(
         item,
-        0,
-        property,
-        suffix,
+        &benilla_ui::script::ItemLinkFields::roll(property as i32, suffix as i32),
         &catalogs.name(&t.name, property),
         t.quality,
     );
@@ -534,9 +532,10 @@ fn snapshot(
                 link: t.map(|t| {
                     crate::ui_items::item_link_full(
                         r.item_id,
-                        0,
-                        r.random_property_id,
-                        r.random_suffix,
+                        &benilla_ui::script::ItemLinkFields::roll(
+                            r.random_property_id as i32,
+                            r.random_suffix as i32,
+                        ),
                         &catalogs.name(&t.name, r.random_property_id),
                         t.quality,
                     )

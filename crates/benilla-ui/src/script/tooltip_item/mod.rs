@@ -7,14 +7,17 @@
 //! durability and "Already known"; the name never recolors.
 //!
 //! Stock FrameXML seats the shopping plates (`MerchantFrame.xml:63-80`,
-//! `Blizzard_AuctionUI.lua:1078`). There is no hover compare: `SHOW_COMPARE_TOOLTIP` has no fire
-//! site (the reference's two candidate sites never produce event 377), so `PaperDollFrame.lua`'s
-//! listener for it is dead code.
+//! `Blizzard_AuctionUI.lua:1078`), and the hover compare runs from `OnTooltipSetItem`
+//! (`GameTooltip.xml`, `ItemRef.xml`), which every builder fires before its show.
 
 use mlua::{Lua, MultiValue, Table, Value};
 
+use super::item_link::{item_hyperlink, reference_atoi, ItemLinkFields};
+use super::item_summary::StatSummary;
 use super::object::frame_handle_of;
-use super::tooltip::{clear_content, fire_cleared, show_or_hide_empty};
+use super::tooltip::{
+    append_line, clear_content, fire_cleared, hide_tooltip, show_or_hide_empty, tip_mut,
+};
 use super::ItemTemplateView;
 
 mod names;
@@ -99,17 +102,90 @@ fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
     v
 }
 
-/// A random-suffix roll's enchant lines: the reference copies the suffix row's five ids into
-/// enchant slots 7..11 for a block source with no item object.
-fn roll_enchants(lua: &Lua, random_property_id: u32) -> Vec<crate::script::EnchantView> {
+/// A link block's enchant lines: the enchant and gems in their slots, then the roll's five in
+/// slots 7..11, as the reference copies a block source's row.
+fn link_enchants(lua: &Lua, f: &ItemLinkFields) -> Vec<crate::script::EnchantView> {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    model
-        .random_properties
-        .get(&random_property_id)
-        .map(|v| v.enchants.clone())
-        .unwrap_or_default()
+    let line = |slot: u8, id: i32| {
+        let row = model.enchant_rows.get(&id.unsigned_abs())?;
+        let mut e = row.line.clone()?;
+        e.slot = slot;
+        e.negative = id < 0;
+        Some(e)
+    };
+    let mut out: Vec<_> = f
+        .enchant_slots()
+        .into_iter()
+        .filter(|&(_, id)| id != 0)
+        .filter_map(|(slot, id)| line(slot, id))
+        .collect();
+    match f.random_property {
+        1.. => {
+            if let Some(row) = model.random_properties.get(&(f.random_property as u32)) {
+                out.extend(row.enchants.iter().cloned());
+            }
+        }
+        0 => {}
+        _ => {
+            if let Some(row) = model.random_suffixes.get(&f.random_property.unsigned_abs()) {
+                for (i, &id) in row.enchants.iter().enumerate() {
+                    out.extend(line(7 + i as u8, id as i32));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A block source's instance (p6=1): its name and what its link names, no placeholder line.
+fn block_instance(lua: &Lua, name: Option<String>, link: Option<&str>) -> render::ItemInstance {
+    let link = link
+        .and_then(ItemLinkFields::parse)
+        .map_or_else(Default::default, |(_, f)| f);
+    render::ItemInstance {
+        name,
+        enchants: link_enchants(lua, &link),
+        link,
+        ..Default::default()
+    }
+}
+
+/// The item's name with its roll's suffix (`0x706d70`).
+fn rolled_name(model: &crate::script::Model, lua: &Lua, name: &str, roll: i32) -> String {
+    let suffix = match roll {
+        1.. => model
+            .random_properties
+            .get(&(roll as u32))
+            .map(|r| r.suffix.clone())
+            .filter(|s| !s.is_empty()),
+        0 => None,
+        _ => Some(
+            model
+                .random_suffixes
+                .get(&roll.unsigned_abs())
+                .map(|r| r.name.clone())
+                .unwrap_or_default(),
+        ),
+    };
+    match (suffix, crate::strings::global(lua, "ITEM_SUFFIX_TEMPLATE")) {
+        (Some(sfx), Some(t)) => crate::strings::fill(
+            &t,
+            &[crate::strings::Arg::S(name), crate::strings::Arg::S(&sfx)],
+        ),
+        _ => name.to_string(),
+    }
+}
+
+/// `OnTooltipSetItem` once the lines are built, before the show (`0x62d890`, `0x623760`).
+pub(super) fn fire_set_item(lua: &Lua, this: &Table) -> mlua::Result<()> {
+    let h = frame_handle_of(lua, this)?;
+    let id = crate::script::model_mut_of(lua).frame_id(h);
+    if let Err(e) = super::event::fire_widget_handler(lua, id, "OnTooltipSetItem", Vec::new()) {
+        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+    }
+    Ok(())
 }
 
 fn link_name(link: &str) -> Option<&str> {
@@ -134,28 +210,6 @@ fn fire_add_money(lua: &Lua, h: crate::widget::FrameHandle, cost: u64, max: Opti
     ) {
         crate::script::model_mut_of(lua).record_script_error(e.to_string());
     }
-}
-
-fn hyperlink_enchant_spell(link: &str) -> Option<u32> {
-    let at = link.find("enchant:")? + 8;
-    let tail = &link[at..];
-    let end = tail
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(tail.len());
-    tail[..end].parse().ok().filter(|&id: &u32| id != 0)
-}
-
-fn hyperlink_item_fields(link: &str) -> Option<(u32, u32, u32)> {
-    let at = link.find("item:")? + 5;
-    let tail = &link[at..];
-    let end = tail.find("|h").unwrap_or(tail.len());
-    let mut fields = tail[..end]
-        .split(':')
-        .map(|f| f.trim().parse().unwrap_or(0));
-    let item_id: u32 = fields.next()?;
-    let enchant_id = fields.next().unwrap_or(0);
-    let random_property_id = fields.next().unwrap_or(0);
-    (item_id != 0).then_some((item_id, enchant_id, random_property_id))
 }
 
 /// The id-keyed render; on a miss, the ask and the retrieving line. The engine's own item hovers
@@ -340,6 +394,223 @@ fn compare_slot(
     })
 }
 
+/// The frame's name, `<unnamed>` without one.
+fn frame_name(lua: &Lua, h: crate::widget::FrameHandle) -> String {
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    model
+        .arena
+        .frame(h)
+        .and_then(|f| f.name.clone())
+        .unwrap_or_else(|| "<unnamed>".into())
+}
+
+/// The integer after `key` in `link`.
+fn field_after(link: &str, key: &str) -> Option<i64> {
+    link.find(key)
+        .map(|at| reference_atoi(&link[at + key.len()..]))
+}
+
+/// Whether the tooltip shows and `held` reads `id`: the reference's toggle, which a waiting
+/// setter's second run does not read.
+fn toggles(
+    lua: &Lua,
+    h: crate::widget::FrameHandle,
+    id: i64,
+    held: fn(&crate::widget::TooltipState) -> i64,
+) -> bool {
+    let mut model = crate::script::model_mut_of(lua);
+    if model.item_setter_again {
+        return false;
+    }
+    let shown = model.arena.frame(h).is_some_and(|f| f.shown);
+    shown && tip_mut(&mut model, h).is_ok_and(|t| held(t) == id)
+}
+
+fn set_hyperlink(
+    lua: &Lua,
+    this: &Table,
+    h: crate::widget::FrameHandle,
+    link: &str,
+) -> mlua::Result<()> {
+    if let Some(id) = field_after(link, "item:") {
+        if toggles(lua, h, id, |t| i64::from(t.item_id)) {
+            hide_tooltip(lua, h);
+        } else if id > 0 {
+            set_item_link(lua, this, h, link)?;
+        }
+        return Ok(());
+    }
+    if let Some(spell) = field_after(link, "enchant:") {
+        if toggles(lua, h, spell, |t| i64::from(t.spell_id)) {
+            hide_tooltip(lua, h);
+            return Ok(());
+        }
+        // A recipe: the spell has to be a trade skill's (attribute 0x20).
+        let source = crate::script::model_mut_of(lua).spell_info.clone();
+        let Ok(spell) = u32::try_from(spell) else {
+            return Ok(());
+        };
+        let trade = source
+            .map(|s| s.spell_stat_effects(spell))
+            .is_none_or(|e| e.is_some_and(|e| e.attributes & 0x20 != 0));
+        if trade {
+            let name = link_name(link).map(str::to_string);
+            super::tooltip_spell::set_spell_by_id(
+                lua,
+                this,
+                spell,
+                name,
+                Default::default(),
+                None,
+            )?;
+        }
+        return Ok(());
+    }
+    if link.contains("dance:") {
+        return Ok(());
+    }
+    if let Some(spell) = field_after(link, "spell:") {
+        if toggles(lua, h, spell, |t| i64::from(t.spell_id)) {
+            hide_tooltip(lua, h);
+        } else if let Ok(spell) = u32::try_from(spell) {
+            set_spell_link(lua, this, spell)?;
+        }
+        return Ok(());
+    }
+    if let Some(at) = link.find("unit:") {
+        return super::tooltip_unit::set_unit_link(lua, this, h, &link[at + 5..]);
+    }
+    if let Some(quest) = field_after(link, "quest:") {
+        if toggles(lua, h, quest, |t| i64::from(t.quest_id)) {
+            hide_tooltip(lua, h);
+        } else {
+            super::tooltip_quest::set_quest(lua, this, quest as u32)?;
+        }
+        return Ok(());
+    }
+    if let Some(at) = link.find("talent:") {
+        let rest = &link[at + 7..];
+        let id = reference_atoi(rest);
+        let rank = rest
+            .find(':')
+            .map_or(-1, |c| reference_atoi(&rest[c + 1..]));
+        return super::talent::set_talent_link(lua, this, id as u32, rank as i32);
+    }
+    // Not built: a `trade:` link opening the linked book.
+    if link.contains("trade:") {
+        return Ok(());
+    }
+    if super::achievement::set_achievement_link(lua, this, link)? {
+        return Ok(());
+    }
+    if super::glyph::set_glyph_link(lua, this, link)? {
+        return Ok(());
+    }
+    Err(mlua::Error::runtime(format!(
+        "{}:SetHyperlink(): Unknown link type",
+        frame_name(lua, h)
+    )))
+}
+
+/// A spell link's tooltip: any `Spell.dbc` row, full and without a rank.
+fn set_spell_link(lua: &Lua, this: &Table, spell: u32) -> mlua::Result<()> {
+    super::tooltip_spell::set_spell_by_id(lua, this, spell, None, Default::default(), None)
+}
+
+/// The link block's build (`0x62dae0`): the fields into the block, the name rebuilt from the
+/// template and the roll, and a stack of 1, as the link carries no count.
+fn set_item_link(
+    lua: &Lua,
+    this: &Table,
+    h: crate::widget::FrameHandle,
+    link: &str,
+) -> mlua::Result<()> {
+    let Some((id, fields)) = ItemLinkFields::parse(link) else {
+        return Ok(());
+    };
+    {
+        let mut model = crate::script::model_mut_of(lua);
+        clear_content(&mut model, h);
+    }
+    fire_cleared(lua, h);
+    let flags = BuilderFlags {
+        sell: Sell::ONE,
+        ..Default::default()
+    };
+    match view_of(lua, id) {
+        Some(v) => {
+            let name = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                rolled_name(&model, lua, &v.name, fields.random_property)
+            };
+            let inst = render::ItemInstance {
+                name: Some(name),
+                enchants: link_enchants(lua, &fields),
+                link: fields,
+                ..Default::default()
+            };
+            render_view(lua, this, &v, flags, Some(&inst))?;
+        }
+        None => retrieving(lua, this)?,
+    }
+    show_or_hide_empty(lua, h);
+    Ok(())
+}
+
+/// The stat change the compare tooltip appends (`0x631590`, `0x62d930`): the main tooltip's item
+/// less the worn item shown here, under `ITEM_DELTA_DESCRIPTION`.
+fn add_compare_delta(
+    lua: &Lua,
+    this: &Table,
+    h: crate::widget::FrameHandle,
+    main: &Table,
+) -> mlua::Result<()> {
+    let Ok(main) = frame_handle_of(lua, main) else {
+        return Ok(());
+    };
+    let delta = {
+        let mut model = crate::script::model_mut_of(lua);
+        let Ok((a_id, a_fields)) = tip_mut(&mut model, main).map(|t| (t.item_id, t.item_link))
+        else {
+            return Ok(());
+        };
+        let Ok((b_id, b_fields)) = tip_mut(&mut model, h).map(|t| (t.item_id, t.item_link)) else {
+            return Ok(());
+        };
+        match (
+            model.item_templates.get(&a_id),
+            model.item_templates.get(&b_id),
+        ) {
+            (Some(a), Some(b)) => Some(StatSummary::delta(
+                &StatSummary::of(&model, a, &a_fields),
+                &StatSummary::of(&model, b, &b_fields),
+            )),
+            _ => None,
+        }
+    };
+    let Some(delta) = delta else {
+        return Ok(());
+    };
+    let get = |k: &str| crate::strings::global(lua, k);
+    let lines = delta.delta_lines(&get);
+    if lines.is_empty() {
+        return Ok(());
+    }
+    append_line(lua, this, (" ".into(), names::WHITE), None, false)?;
+    if let Some(text) = get("ITEM_DELTA_DESCRIPTION") {
+        append_line(lua, this, (text, names::WHITE), None, true)?;
+    }
+    for line in lines {
+        append_line(lua, this, (line, names::GOLD), None, false)?;
+    }
+    show_or_hide_empty(lua, h);
+    Ok(())
+}
+
 /// Register the item content channels into the GameTooltip kind method table.
 pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     socket_tips::install(lua, m)?;
@@ -351,20 +622,21 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let h = frame_handle_of(lua, &this)?;
             let shown = {
                 let mut model = crate::script::model_mut_of(lua);
-                let id = super::tooltip::tip_mut(&mut model, h).map_or(0, |t| t.item_id);
+                let (id, fields) = tip_mut(&mut model, h)
+                    .map_or((0, ItemLinkFields::default()), |t| (t.item_id, t.item_link));
                 (id != 0).then(|| {
-                    let v = model.item_templates.get(&id);
-                    (
-                        id,
-                        v.map_or_else(String::new, |v| v.name.clone()),
-                        v.map_or(1, |v| v.quality),
-                    )
+                    let view = model.item_templates.get(&id);
+                    let name = view.map_or_else(String::new, |v| {
+                        rolled_name(&model, lua, &v.name, fields.random_property)
+                    });
+                    let quality = view.map_or(1, |v| v.quality);
+                    (id, name, quality, fields, model.player_req.level)
                 })
             };
-            let Some((id, name, quality)) = shown else {
+            let Some((id, name, quality, fields, level)) = shown else {
                 return Ok(MultiValue::new());
             };
-            let link = super::item_stats::item_link(id, &name, quality);
+            let link = item_hyperlink(id, quality, &fields, level, &name);
             Ok(MultiValue::from_vec(vec![
                 Value::String(lua.create_string(&name)?),
                 Value::String(lua.create_string(&link)?),
@@ -372,67 +644,90 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
+    // GameTooltip:IsEquippedItem() (`0x61f1f0`): 1 when the shown item object is worn, else nil.
+    m.set(
+        "IsEquippedItem",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let mut model = crate::script::model_mut_of(lua);
+            let guid = tip_mut(&mut model, h).map_or(0, |t| t.item_guid);
+            let worn = guid != 0
+                && (1..=19).any(|slot| {
+                    model
+                        .inv_slot("player", slot)
+                        .is_some_and(|s| s.guid == guid)
+                });
+            Ok(super::binding_abi::flag(worn))
+        })?,
+    )?;
+
     // GameTooltip:SetHyperlinkCompareItem("hyperlink" [, offset, shiftButton, mainTooltip])
     // (`0x631b60`): the worn item the link's item is compared against, under "Currently
-    // Equipped"; the number 1, or nil with the tooltip untouched. Not built: offset 3's heirloom
-    // arm (a scaling item at an open vendor shows itself) and the main tooltip's stat delta.
+    // Equipped", with the stat change against `mainTooltip`'s item; the number 1, or nil with the
+    // tooltip untouched. Not built: offset 3's heirloom arm (a scaling item at an open vendor
+    // shows itself).
     m.set(
         "SetHyperlinkCompareItem",
-        lua.create_function(|lua, (this, link, offset): (Table, Value, Value)| {
-            let h = frame_handle_of(lua, &this)?;
-            let Some(link) = lua.coerce_string(link)? else {
-                let name = {
+        lua.create_function(
+            |lua, (this, link, offset, _shift, main): (Table, Value, Value, Value, Value)| {
+                let h = frame_handle_of(lua, &this)?;
+                let Some(link) = lua.coerce_string(link)? else {
+                    let name = {
+                        let model = lua
+                            .app_data_ref::<crate::script::ModelCell>()
+                            .expect("model app_data");
+                        model
+                            .arena
+                            .frame(h)
+                            .and_then(|f| f.name.clone())
+                            .unwrap_or_else(|| "<unnamed>".into())
+                    };
+                    return Err(mlua::Error::runtime(format!(
+                        "Usage: {name}:SetHyperlinkCompareItem(\"hyperlink\" [, offset, shiftButton])"
+                    )));
+                };
+                let has_player = {
                     let model = lua
                         .app_data_ref::<crate::script::ModelCell>()
                         .expect("model app_data");
-                    model
-                        .arena
-                        .frame(h)
-                        .and_then(|f| f.name.clone())
-                        .unwrap_or_else(|| "<unnamed>".into())
+                    model.unit("player").is_some_and(|u| u.exists)
                 };
-                return Err(mlua::Error::runtime(format!(
-                    "Usage: {name}:SetHyperlinkCompareItem(\"hyperlink\" [, offset, shiftButton])"
-                )));
-            };
-            let has_player = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                model.unit("player").is_some_and(|u| u.exists)
-            };
-            let Some((item_id, _, _)) = hyperlink_item_fields(&link.to_string_lossy()) else {
-                return Ok(Value::Nil);
-            };
-            if !has_player {
-                return Ok(Value::Nil);
-            }
-            let offset = lua.coerce_number(offset)?.map_or(0, |n| n as i64 - 1);
-            if offset == 2 {
-                return Ok(Value::Nil);
-            }
-            let Some(offered) = view_of(lua, item_id) else {
-                return Ok(Value::Nil);
-            };
-            let slot = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                compare_slot(&model, &offered, offset)
-            };
-            let Some(slot) = slot else {
-                return Ok(Value::Nil);
-            };
-            {
-                let mut model = crate::script::model_mut_of(lua);
-                if let Ok(t) = super::tooltip::tip_mut(&mut model, h) {
-                    t.equipped_header_armed = true;
+                let Some((item_id, _)) = ItemLinkFields::parse(&link.to_string_lossy()) else {
+                    return Ok(Value::Nil);
+                };
+                if !has_player {
+                    return Ok(Value::Nil);
                 }
-            }
-            this.get::<mlua::Function>("SetInventoryItem")?
-                .call::<MultiValue>((this.clone(), "player", slot))?;
-            Ok(Value::Integer(1))
-        })?,
+                let offset = lua.coerce_number(offset)?.map_or(0, |n| n as i64 - 1);
+                if offset == 2 {
+                    return Ok(Value::Nil);
+                }
+                let Some(offered) = view_of(lua, item_id) else {
+                    return Ok(Value::Nil);
+                };
+                let slot = {
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    compare_slot(&model, &offered, offset)
+                };
+                let Some(slot) = slot else {
+                    return Ok(Value::Nil);
+                };
+                {
+                    let mut model = crate::script::model_mut_of(lua);
+                    if let Ok(t) = tip_mut(&mut model, h) {
+                        t.equipped_header_armed = true;
+                    }
+                }
+                this.get::<mlua::Function>("SetInventoryItem")?
+                    .call::<MultiValue>((this.clone(), "player", slot))?;
+                if let Value::Table(main) = main {
+                    add_compare_delta(lua, &this, h, &main)?;
+                }
+                Ok(Value::Integer(1))
+            },
+        )?,
     )?;
 
     // GameTooltip:SetQuestItem(type, index) / SetQuestLogItem(type, index)
@@ -539,64 +834,21 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GameTooltip:SetHyperlink(link): the chat-link tooltip (`ItemRef.lua:60`). Takes an item
-    // link, escaped or a bare "item:<id>", an enchant link, an achievement link or a glyph link;
-    // any other link does nothing.
+    // GameTooltip:SetHyperlink(link) (`0x62dae0`), the chat-link tooltip (`ItemRef.lua`): the first
+    // link kind the text holds, tried in the reference's order; a shown tooltip clicked on what it
+    // holds hides. Any other text raises. Deviation: `dance:` does nothing, as dance studio is left
+    // out (`docs/DEVIATIONS.md`).
     m.set(
         "SetHyperlink",
-        lua.create_function(|lua, (this, link): (Table, String)| {
-            if super::achievement::set_achievement_link(lua, &this, &link)? {
-                return Ok(());
-            }
-            if super::glyph::set_glyph_link(lua, &this, &link)? {
-                return Ok(());
-            }
-            // The only other link it takes, a recipe's `|Henchant:<spellId>|h[name]|h`
-            // (`GetTradeSkillRecipeLink`): the spell's own tooltip.
-            if let Some(spell) = hyperlink_enchant_spell(&link) {
-                return super::tooltip_spell::set_spell_by_id(
-                    lua,
-                    &this,
-                    spell,
-                    link_name(&link).map(str::to_string),
-                    Default::default(),
-                    None,
-                );
-            }
-            let Some((id, _enchant_id, roll)) = hyperlink_item_fields(&link) else {
-                return Ok(());
-            };
+        lua.create_function(|lua, (this, link): (Table, Value)| {
             let h = frame_handle_of(lua, &this)?;
-            {
-                let mut model = crate::script::model_mut_of(lua);
-                clear_content(&mut model, h);
-            }
-            fire_cleared(lua, h);
-            // The reference's format is `"%s|Hitem:%d:%d:%d:%d|h[%s]|h%s"`, and `SetHyperlink`
-            // parses it into a block (p6=1): the enchant id to slot 0 (`+0x3d0`), the roll to
-            // `+0x424` (expanded into slots 2..6), the unique id to `+0x420`, unread; a missing
-            // field is 0. So a link shows its roll's lines, never the placeholder. The name is the
-            // link's own, built with the suffix joined. The enchant id is parsed, not rendered:
-            // naming it needs its `SpellItemEnchantment` row, and no link benilla composes carries
-            // one.
-            let inst = render::ItemInstance {
-                name: link_name(&link).map(str::to_string),
-                enchants: roll_enchants(lua, roll),
-                ..Default::default()
+            let Some(link) = lua.coerce_string(link)? else {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:SetHyperlink(link)",
+                    frame_name(lua, h)
+                )));
             };
-            // A link's block keeps `Clear`'s stack of 1: the link carries no count (`0x62dae0`).
-            let flags = BuilderFlags {
-                sell: Sell::ONE,
-                ..Default::default()
-            };
-            match view_of(lua, id) {
-                Some(v) => {
-                    render_view(lua, &this, &v, flags, Some(&inst))?;
-                }
-                None => retrieving(lua, &this)?,
-            }
-            show_or_hide_empty(lua, h);
-            Ok(())
+            set_hyperlink(lua, &this, h, &link.to_string_lossy())
         })?,
     )?;
 
@@ -647,6 +899,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                     guid: s.guid,
                                     socket_preview: None,
                                     inspected: !unit.eq_ignore_ascii_case("player"),
+                                    link: s
+                                        .link
+                                        .as_deref()
+                                        .and_then(ItemLinkFields::parse)
+                                        .map_or_else(Default::default, |(_, f)| f),
                                 },
                             )
                         });
@@ -751,6 +1008,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             render::ItemInstance {
                                 // The link's name: the reference builds both with its name builder.
                                 name: s.link.as_deref().and_then(link_name).map(str::to_string),
+                                link: s
+                                    .link
+                                    .as_deref()
+                                    .and_then(ItemLinkFields::parse)
+                                    .map_or_else(Default::default, |(_, f)| f),
                                 durability: s.durability,
                                 creator: s.creator.clone(),
                                 has_text: s.readable,
@@ -828,10 +1090,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     clear_content(&mut model, h);
                 }
                 fire_cleared(lua, h);
-                let inst = render::ItemInstance {
-                    name: item.name.clone(),
-                    ..Default::default()
-                };
+                let inst = block_instance(lua, item.name.clone(), item.link.as_deref());
                 // Ours is an item object (`0x62eff0`), theirs a block of its count (`0x62f1e0`).
                 let sell = if player_side {
                     Sell::Object {
@@ -886,11 +1145,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             fire_cleared(lua, h);
             // The row's app-composed name has the suffix joined, as the reference does; the lines
             // come from the roll id, the reference's `+0x424`.
-            let inst = render::ItemInstance {
-                name: row.name.clone(),
-                enchants: roll_enchants(lua, row.random_property_id),
-                ..Default::default()
-            };
+            let inst = block_instance(lua, row.name.clone(), row.link.as_deref());
             // The slot's count as the block's stack (`0x62e520`).
             let flags = BuilderFlags {
                 sell: Sell::Block {
@@ -940,6 +1195,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let inst = render::ItemInstance {
                 name: s.name.clone(),
                 enchants: s.enchants.clone(),
+                link: s
+                    .link
+                    .as_deref()
+                    .and_then(ItemLinkFields::parse)
+                    .map_or_else(Default::default, |(_, f)| f),
                 flags: s.flags & 0x4,
                 ..Default::default()
             };
@@ -984,11 +1244,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
-            let inst = render::ItemInstance {
-                name: entry.name.clone(),
-                enchants: roll_enchants(lua, entry.random_property_id),
-                ..Default::default()
-            };
+            let inst = block_instance(lua, entry.name.clone(), entry.link.as_deref());
             let flags = BuilderFlags {
                 sell: Sell::Block {
                     stack: entry.quantity,
@@ -1261,23 +1517,14 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let Some(a) = attachment.filter(|a| a.item_id != 0) else {
                 return Ok(Value::Nil);
             };
-            let (item_id, roll, name, stack) = (
-                a.item_id,
-                a.random_property_id.max(0) as u32,
-                a.name,
-                a.count,
-            );
+            let (item_id, link, name, stack) = (a.item_id, a.link, a.name, a.count);
             {
                 let mut model = crate::script::model_mut_of(lua);
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
             // A block source (p6=1) carrying the attachment's roll: no placeholder.
-            let inst = render::ItemInstance {
-                name,
-                enchants: roll_enchants(lua, roll),
-                ..Default::default()
-            };
+            let inst = block_instance(lua, name, link.as_deref());
             // The attachment's count as the block's stack (`0x62f9e0`).
             let flags = BuilderFlags {
                 sell: Sell::Block { stack, max: None },
@@ -1299,7 +1546,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetAuctionItem",
         lua.create_function(|lua, (this, kind, index): (Table, String, usize)| {
             let h = frame_handle_of(lua, &this)?;
-            let (item_id, roll, name) = {
+            let (item_id, link, name) = {
                 let model = crate::script::model_mut_of(lua);
                 let Some(auction) = &model.auction else {
                     return Ok(());
@@ -1308,8 +1555,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     return Ok(());
                 };
                 match auction.lists[list].rows.get(index.saturating_sub(1)) {
-                    Some(r) => (r.item_id, r.random_property_id, r.name.clone()),
-                    None => (0, 0, None),
+                    Some(r) => (r.item_id, r.link.clone(), r.name.clone()),
+                    None => (0, None, None),
                 }
             };
             if item_id == 0 {
@@ -1321,11 +1568,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             }
             fire_cleared(lua, h);
             // A block source (p6=1) carrying the listing's roll: no placeholder.
-            let inst = render::ItemInstance {
-                name,
-                enchants: roll_enchants(lua, roll),
-                ..Default::default()
-            };
+            let inst = block_instance(lua, name, link.as_deref());
             // A listing skips the sell price (`0x62fcf0`).
             match view_of(lua, item_id) {
                 Some(v) => render_view(lua, &this, &v, BuilderFlags::default(), Some(&inst))?,

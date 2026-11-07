@@ -30,6 +30,28 @@ pub struct SpellInfo {
     pub range: Option<(f32, f32)>,
 }
 
+/// One spell effect as the item stat summary reads it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpellStatEffect {
+    pub effect: u32,
+    pub aura: u32,
+    pub misc_value: i32,
+    pub base_points: i32,
+}
+
+/// A spell's stat-bearing fields (`0x61b5e0`), and whether it takes a reagent (`0x5173e0`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SpellStatEffects {
+    pub attributes: u32,
+    pub effects: [SpellStatEffect; 3],
+    pub has_reagents: bool,
+    /// The first effect's created item, a recipe's product (`0x598830`).
+    pub item_type: u32,
+    /// The helpful-or-harmful test's two answers (`0x7fe1b0`).
+    pub helpful: bool,
+    pub harmful: bool,
+}
+
 /// The app's answer for one spell id, against the player, or with `pet` against its pet.
 pub trait SpellInfoSource {
     fn spell_info(&self, spell_id: u32, pet: bool) -> Option<SpellInfo>;
@@ -38,6 +60,16 @@ pub trait SpellInfoSource {
     /// made.
     fn is_current_spell(&self, _spell_id: u32) -> bool {
         false
+    }
+
+    /// The spell's stat-bearing fields, `None` for no row.
+    fn spell_stat_effects(&self, _spell_id: u32) -> Option<SpellStatEffects> {
+        None
+    }
+
+    /// The spell a talent's `rank` teaches, 0-based, and the talent's rank count.
+    fn talent_rank_spell(&self, _talent_id: u32, _rank: i32) -> Option<(u32, u32)> {
+        None
     }
 
     /// `GetSpellLink`'s reads (`0x5408e0`): the name, and the `|Htrade:` link of a linkable

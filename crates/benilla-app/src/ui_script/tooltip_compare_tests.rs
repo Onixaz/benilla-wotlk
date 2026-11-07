@@ -1,7 +1,6 @@
-//! The shopping-compare and chat-link tooltips over the stock files. 1.12.1 has no hover compare:
-//! `SHOW_COMPARE_TOOLTIP` (event 377) has no fire site, so `PaperDollFrame.lua:621` is dead code
-//! and the vendor and auction rows are the plates' only consumers (`SetMerchantCompareItem`). The
-//! stock hover handlers read `this`, so the tests move the mouse.
+//! The shopping-compare and chat-link tooltips over the stock files: the vendor and auction rows
+//! raise the plates, and `OnTooltipSetItem` raises them on a hover. The stock hover handlers read
+//! `this`, so the tests move the mouse.
 
 use benilla_ui::script::{
     ContainerSlot, ContainerState, InvSlotView, InventorySlots, ItemTemplateView, UiScript,
@@ -77,7 +76,7 @@ fn seed_items(s: &mut UiScript) {
         contents_count: None,
         quality: 2,
         name: Some("Test Helm".into()),
-        link: Some("|cff1eff00|Hitem:1234:0:0:0|h[Test Helm]|h|r".into()),
+        link: Some("|cff1eff00|Hitem:1234:0:0:0:0:0:0:0:0|h[Test Helm]|h|r".into()),
         locked: false,
         equip_slots: vec![1],
         creator: None,
@@ -126,7 +125,7 @@ fn seed_items(s: &mut UiScript) {
             count: 1,
             quality: Some(3),
             item_id: 2000,
-            link: Some("|cff0070dd|Hitem:2000:0:0:0|h[Another Helm]|h|r".into()),
+            link: Some("|cff0070dd|Hitem:2000:0:0:0:0:0:0:0:0|h[Another Helm]|h|r".into()),
             locked: false,
             equip_slots: vec![1],
             cooldown: None,
@@ -155,7 +154,7 @@ fn item_ref_tooltip_renders_a_chat_link() {
     let mut s = harness();
     seed_items(&mut s);
     s.run(
-        r#"SetItemRef("item:2000", "|cff0070dd|Hitem:2000:0:0:0|h[Another Helm]|h|r", "LeftButton")"#,
+        r#"SetItemRef("item:2000", "|cff0070dd|Hitem:2000:0:0:0:0:0:0:0:0|h[Another Helm]|h|r", "LeftButton")"#,
     )
     .unwrap();
     assert!(s.errors().is_empty(), "link errors: {:?}", s.errors());
@@ -202,7 +201,7 @@ fn doll_hover_renders_the_live_instance() {
         contents_count: None,
         quality: 2,
         name: Some("Test Helm".into()),
-        link: Some("|cff1eff00|Hitem:1234:0:0:0|h[Test Helm]|h|r".into()),
+        link: Some("|cff1eff00|Hitem:1234:0:0:0:0:0:0:0:0|h[Test Helm]|h|r".into()),
         locked: false,
         equip_slots: vec![1],
         creator: None,
@@ -264,7 +263,7 @@ fn repair_mode_hover_shows_the_items_repair_cost() {
         count: 1,
         quality: 2,
         name: Some("Worn Sword".into()),
-        link: Some("|cff1eff00|Hitem:1300:0:0:0|h[Worn Sword]|h|r".into()),
+        link: Some("|cff1eff00|Hitem:1300:0:0:0:0:0:0:0:0|h[Worn Sword]|h|r".into()),
         durability: Some((35, 75)),
         equip_slots: vec![16],
         ..Default::default()
@@ -277,7 +276,7 @@ fn repair_mode_hover_shows_the_items_repair_cost() {
             item_id: 1301,
             count: 1,
             quality: Some(2),
-            link: Some("|cff1eff00|Hitem:1301:0:0:0|h[Worn Helm]|h|r".into()),
+            link: Some("|cff1eff00|Hitem:1301:0:0:0:0:0:0:0:0|h[Worn Helm]|h|r".into()),
             durability: Some((10, 40)),
             equip_slots: vec![1],
             ..Default::default()

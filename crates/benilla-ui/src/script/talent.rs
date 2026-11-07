@@ -1106,6 +1106,34 @@ fn reset_preview(model: &mut Model, side: Side, group: usize, tab: Option<usize>
     }
 }
 
+/// `SetHyperlink`'s `talent:` arm (`0x62dae0`): the link's rank of a talent of any class. Rank -1
+/// reads the first, with nothing learned.
+pub(super) fn set_talent_link(lua: &Lua, this: &Table, id: u32, rank: i32) -> mlua::Result<()> {
+    let source = crate::script::model_mut_of(lua).spell_info.clone();
+    let Some((spell, ranks)) = source.and_then(|s| s.talent_rank_spell(id, rank.max(0))) else {
+        return Ok(());
+    };
+    let shown = rank.max(-1) + 1;
+    let rank_line = crate::strings::global(lua, "TOOLTIP_TALENT_RANK").map(|t| {
+        crate::strings::fill(
+            &t,
+            &[
+                crate::strings::Arg::D(i64::from(shown)),
+                crate::strings::Arg::D(i64::from(ranks)),
+            ],
+        )
+    });
+    super::tooltip_spell::set_spell_with_talent(
+        lua,
+        this,
+        spell,
+        super::tooltip_spell::TalentLines {
+            rank_line,
+            ..Default::default()
+        },
+    )
+}
+
 /// Register `GameTooltip:SetTalent(tab, index[, isInspect[, isPet[, groupIndex[, isPreview]]]])`
 /// into the tooltip method table.
 pub(super) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
