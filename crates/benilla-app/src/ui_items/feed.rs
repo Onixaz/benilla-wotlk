@@ -521,6 +521,7 @@ pub(super) fn feed_random_properties(
 /// The item-tooltip feed: every template that lands is pushed unprompted, so the first hover never
 /// misses, as the reference reads one item cache synchronously; a read of an unresolved id records
 /// a miss, which queries it here.
+#[allow(clippy::type_complexity)]
 pub(crate) fn feed_item_stats(
     script: Option<NonSendMut<UiScript>>,
     mut items: ResMut<Items>,

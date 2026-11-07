@@ -364,7 +364,7 @@ mod tests {
         let mut room = DressUpRoom::default();
         room.apply(DressUpIntent::Dress);
         room.apply(DressUpIntent::TryOn(2000, [0; 4]));
-        room.resolve_pending(&items, &cmds);
+        room.resolve_pending(&items, &cmds, None, None, None);
 
         let look = player_look(&store, &net(), &room, &items, &cmds).expect("a look");
         assert_eq!(
@@ -392,7 +392,7 @@ mod tests {
 
         let mut room = DressUpRoom::default();
         room.apply(DressUpIntent::TryOn(2000, [0; 4]));
-        room.resolve_pending(&items, &cmds);
+        room.resolve_pending(&items, &cmds, None, None, None);
         assert_eq!(
             player_look(&store, &net(), &room, &items, &cmds)
                 .unwrap()
@@ -428,7 +428,7 @@ mod tests {
         let mut room = DressUpRoom::default();
         room.apply(DressUpIntent::Dress);
         room.apply(DressUpIntent::TryOn(2000, [0; 4]));
-        room.resolve_pending(&items, &cmds);
+        room.resolve_pending(&items, &cmds, None, None, None);
         room.apply(DressUpIntent::Undress);
         let look = player_look(&store, &net(), &room, &items, &cmds).unwrap();
         assert_eq!(look.equipment[4].display_id, 0, "the tried-on chest is off");
@@ -439,7 +439,7 @@ mod tests {
         );
 
         room.apply(DressUpIntent::TryOn(2000, [0; 4]));
-        room.resolve_pending(&items, &cmds);
+        room.resolve_pending(&items, &cmds, None, None, None);
         let look = player_look(&store, &net(), &room, &items, &cmds).unwrap();
         assert_eq!(
             look.equipment[4].display_id, 7000,
@@ -469,8 +469,12 @@ mod tests {
 
         let mut room = DressUpRoom::default();
         room.apply(DressUpIntent::TryOn(2000, [0; 4]));
-        room.resolve_pending(&items, &cmds);
-        assert_eq!(room.pending, vec![2000], "still waiting on the answer");
+        room.resolve_pending(&items, &cmds, None, None, None);
+        assert_eq!(
+            room.pending,
+            vec![(2000, [0; 4])],
+            "still waiting on the answer"
+        );
         assert_eq!(
             player_look(&store, &net(), &room, &items, &cmds)
                 .unwrap()
@@ -486,7 +490,7 @@ mod tests {
         assert_eq!(asks, 1);
 
         items.insert_template(2000, Some(worn("Shiny Chest", 7000, 5)));
-        room.resolve_pending(&items, &cmds);
+        room.resolve_pending(&items, &cmds, None, None, None);
         assert!(room.pending.is_empty());
         assert_eq!(
             player_look(&store, &net(), &room, &items, &cmds)
@@ -505,7 +509,7 @@ mod tests {
         items.insert_template(3000, Some(worn("Healing Potion", 9000, 0)));
         let mut room = DressUpRoom::default();
         room.apply(DressUpIntent::TryOn(3000, [0; 4]));
-        room.resolve_pending(&items, &cmds);
+        room.resolve_pending(&items, &cmds, None, None, None);
         assert!(room.pending.is_empty(), "resolved, just not worn anywhere");
         assert!(room.worn.iter().all(Option::is_none));
     }
@@ -525,7 +529,7 @@ mod tests {
             let mut room = DressUpRoom::default();
             room.apply(DressUpIntent::Dress);
             room.apply(DressUpIntent::TryOn(item, [0; 4]));
-            room.resolve_pending(&items, &cmds);
+            room.resolve_pending(&items, &cmds, None, None, None);
 
             let look = player_look(&store, &net(), &room, &items, &cmds).expect("a look");
             assert_eq!(
@@ -571,9 +575,9 @@ mod tests {
         let mut room = DressUpRoom::default();
         room.apply(DressUpIntent::Dress);
         room.apply(DressUpIntent::TryOn(2500, [0; 4]));
-        room.resolve_pending(&items, &cmds);
+        room.resolve_pending(&items, &cmds, None, None, None);
         room.apply(DressUpIntent::TryOn(2700, [0; 4]));
-        room.resolve_pending(&items, &cmds);
+        room.resolve_pending(&items, &cmds, None, None, None);
 
         let look = player_look(&store, &net(), &room, &items, &cmds).expect("a look");
         assert_eq!(look.equipment[15].display_id, 8700, "the axe is in hand");
@@ -591,7 +595,7 @@ mod tests {
         let mut room = DressUpRoom::default();
         room.apply(DressUpIntent::Dress);
         room.apply(DressUpIntent::TryOn(1600, [0; 4]));
-        room.resolve_pending(&items, &cmds);
+        room.resolve_pending(&items, &cmds, None, None, None);
 
         let look = player_look(&player(&[(15, 1500)]), &net(), &room, &items, &cmds).unwrap();
         assert_eq!(look.equipment[15].display_id, 5500, "the one-hander stays");
@@ -626,7 +630,7 @@ mod tests {
             let mut room = DressUpRoom::default();
             room.apply(DressUpIntent::Dress);
             room.apply(DressUpIntent::TryOn(2000, [0; 4]));
-            room.resolve_pending(&items, &cmds);
+            room.resolve_pending(&items, &cmds, None, None, None);
 
             let look = player_look(&store, &net(), &room, &items, &cmds).expect("a look");
             assert_eq!(look.equipment[7].display_id, 7000, "the boots went on");
@@ -669,7 +673,7 @@ mod tests {
 
         // The reference's `TryOn` path never tests the flag.
         room.apply(DressUpIntent::TryOn(2000, [0; 4]));
-        room.resolve_pending(&items, &cmds);
+        room.resolve_pending(&items, &cmds, None, None, None);
         let look = player_look(&store, &net(), &room, &items, &cmds).expect("a look");
         assert_eq!(
             look.equipment[0].display_id, 7000,

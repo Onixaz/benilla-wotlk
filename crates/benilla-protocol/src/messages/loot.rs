@@ -719,7 +719,7 @@ mod tests {
                             count: 1,
                             display_info_id: 123,
                             random_property_id: 0,
-                            random_suffix: 9,
+                            random_suffix: 0,
                             slot_type: slot_type::ALLOW_LOOT,
                         },
                         LootItem {

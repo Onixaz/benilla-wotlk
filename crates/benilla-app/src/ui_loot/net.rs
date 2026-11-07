@@ -739,6 +739,7 @@ mod tests {
                 count: 1,
                 display_info_id: 1117,
                 random_property_id: 0,
+                random_suffix: 0,
                 slot_type: 0,
             })
             .collect();
@@ -1426,6 +1427,7 @@ mod tests {
                         count: 1,
                         display_info_id: 1117,
                         random_property_id: 0,
+                        random_suffix: 0,
                         slot_type: 0,
                     }],
                 },
