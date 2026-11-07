@@ -1022,6 +1022,7 @@ fn a_retrieving_link_fires_and_its_landing_does_not_toggle() {
     let mut s = script();
     s.run(
         r#"
+        RETRIEVING_ITEM_INFO = "Retrieving item information"
         fired = 0
         local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         local tt = CreateFrame("GameTooltip", "TT")
