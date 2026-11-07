@@ -159,6 +159,9 @@ pub(crate) struct Placements {
     /// Bumped wherever a placement spawns, is handed off or is released: the resident-WMO set's
     /// one input ([`sync_interior_volumes`]). The resource's own change mark moves every frame.
     spawn_epoch: u64,
+    /// Bumped wherever a placement or prop gains its [`spawn::Sleeper`]: with
+    /// [`Self::spawn_epoch`], the dormant table's inputs. A prop's spawn moves no spawn epoch.
+    sleeper_epoch: u64,
 }
 
 impl Placements {

@@ -61,6 +61,7 @@ type SpawnTables<'w, 's> = (
     // The eye the dormant placements wake and sleep by, and where they were last judged from.
     Query<'w, 's, &'static GlobalTransform, With<crate::view::WorldCamera>>,
     Local<'s, Option<Vec3>>,
+    Local<'s, dormancy::DormantTable>,
 );
 
 /// Yards the eye moves before the dormant placements are judged again.
@@ -135,6 +136,7 @@ pub(super) fn spawn_loaded_placements(
         mut staticgx,
         camera,
         mut judged_at,
+        mut dormant,
     ) = tables;
     let Some(shared_light) = shared_light else {
         return;
@@ -168,6 +170,7 @@ pub(super) fn spawn_loaded_placements(
         materials: mat_cache,
         pending_spawns,
         spawn_epoch,
+        sleeper_epoch,
     } = placements;
 
     // At most `SPAWN_BUDGET` per frame, resumed next frame through the `spawned` flags; the check
@@ -177,142 +180,167 @@ pub(super) fn spawn_loaded_placements(
     //    budget as the spawns below.
     if let (true, Some(eye)) = (tend, eye) {
         *judged_at = Some(eye);
-        for p in by_id.values_mut() {
+        dormant.refresh(
+            (
+                *spawn_epoch,
+                *sleeper_epoch,
+                crate::model_fade::fade_generation(),
+            ),
+            by_id,
+        );
+        let dormancy::DormantTable { rows, due, .. } = &mut *dormant;
+        dormancy::judge(rows, eye, due);
+        for &row in due.iter() {
+            let row = &mut rows[row as usize];
+            let Some(p) = by_id.get_mut(&row.id) else {
+                continue;
+            };
             if !p.spawned {
                 continue;
             }
-            if let (ModelHandle::M2(h), Some(s)) = (&p.model, p.sleeper.as_mut()) {
-                let awake = s.awake;
-                if awake && !dormancy::near(eye, &s.fade, dormancy::SLEEP_MARGIN) {
-                    dormancy::sleep(&mut commands, s, &mut p.entities);
-                } else if !awake && dormancy::near(eye, &s.fade, dormancy::WAKE_MARGIN) {
-                    let Some(m) = m2s.get(h) else { continue };
-                    let key = ModelKey::from(h);
-                    let kinds = WANT_STATIC | if wants_rig(m) { WANT_SKINNED } else { 0 };
-                    if !forms.require(
-                        key,
-                        kinds,
-                        placement_priority(&streamer, p.transform.translation),
-                    ) {
-                        continue;
+            match row.prop {
+                None => {
+                    if let (ModelHandle::M2(h), Some(s)) = (&p.model, p.sleeper.as_mut()) {
+                        let awake = s.awake;
+                        if awake && !dormancy::near(eye, &s.fade, dormancy::SLEEP_MARGIN) {
+                            dormancy::sleep(&mut commands, s, &mut p.entities);
+                            row.awake = false;
+                        } else if !awake && dormancy::near(eye, &s.fade, dormancy::WAKE_MARGIN) {
+                            let Some(m) = m2s.get(h) else { continue };
+                            let key = ModelKey::from(h);
+                            let kinds = WANT_STATIC | if wants_rig(m) { WANT_SKINNED } else { 0 };
+                            if !forms.require(
+                                key,
+                                kinds,
+                                placement_priority(&streamer, p.transform.translation),
+                            ) {
+                                continue;
+                            }
+                            let SpawnedModel {
+                                entities: mut ents,
+                                host,
+                                ..
+                            } = spawn_model_entities(
+                                &mut commands,
+                                mat_cache,
+                                materials,
+                                light,
+                                &m.submeshes,
+                                FormSlices {
+                                    stat: forms.static_meshes(key).unwrap_or(&[]),
+                                    skin: forms.skinned_meshes(key),
+                                    billboard: forms.palette_billboards(key),
+                                },
+                                p.transform,
+                                &s.object,
+                                s.shade,
+                                None,
+                                Some(&s.fade),
+                                s.radius,
+                                s.center,
+                                s.anim_bound,
+                                Some((m, now)),
+                                &mut uv_reg,
+                                &mut tint_reg,
+                                &mut anim_table,
+                                false,
+                                None,
+                                None,
+                                None,
+                                SpawnMode::Entities(&s.mask),
+                            );
+                            entity_tail(
+                                &mut commands,
+                                &mut ents,
+                                host.as_ref(),
+                                m,
+                                p.transform,
+                                &s.fade,
+                                &SceneTag::Exterior,
+                                &s.object,
+                            );
+                            p.entities.extend(ents.iter().copied());
+                            s.awake = true;
+                            row.awake = true;
+                            s.live = ents;
+                            spawned_n += 1;
+                        }
                     }
-                    let SpawnedModel {
-                        entities: mut ents,
-                        host,
-                        ..
-                    } = spawn_model_entities(
-                        &mut commands,
-                        mat_cache,
-                        materials,
-                        light,
-                        &m.submeshes,
-                        FormSlices {
-                            stat: forms.static_meshes(key).unwrap_or(&[]),
-                            skin: forms.skinned_meshes(key),
-                            billboard: forms.palette_billboards(key),
-                        },
-                        p.transform,
-                        &s.object,
-                        s.shade,
-                        None,
-                        Some(&s.fade),
-                        s.radius,
-                        s.center,
-                        s.anim_bound,
-                        Some((m, now)),
-                        &mut uv_reg,
-                        &mut tint_reg,
-                        &mut anim_table,
-                        false,
-                        None,
-                        None,
-                        None,
-                        SpawnMode::Entities(&s.mask),
-                    );
-                    entity_tail(
-                        &mut commands,
-                        &mut ents,
-                        host.as_ref(),
-                        m,
-                        p.transform,
-                        &s.fade,
-                        &SceneTag::Exterior,
-                        &s.object,
-                    );
-                    p.entities.extend(ents.iter().copied());
-                    s.awake = true;
-                    s.live = ents;
-                    spawned_n += 1;
                 }
-            }
-            let portal_instance = p.portal_instance;
-            for d in p.doodads.iter_mut().filter(|d| d.spawned) {
-                let Some(s) = d.sleeper.as_mut() else {
-                    continue;
-                };
-                let awake = s.awake;
-                if awake && !dormancy::near(eye, &s.fade, dormancy::SLEEP_MARGIN) {
-                    dormancy::sleep(&mut commands, s, &mut p.entities);
-                } else if !awake && dormancy::near(eye, &s.fade, dormancy::WAKE_MARGIN) {
-                    let Some(m) = m2s.get(&d.handle) else {
+                Some(prop) => {
+                    let portal_instance = p.portal_instance;
+                    let Some(d) = p.doodads.get_mut(prop as usize).filter(|d| d.spawned) else {
                         continue;
                     };
-                    let key = ModelKey::from(&d.handle);
-                    let kinds = WANT_STATIC | if wants_rig(m) { WANT_SKINNED } else { 0 };
-                    if !forms.require(
-                        key,
-                        kinds,
-                        placement_priority(&streamer, d.transform.translation),
-                    ) {
+                    let Some(s) = d.sleeper.as_mut() else {
                         continue;
+                    };
+                    let awake = s.awake;
+                    if awake && !dormancy::near(eye, &s.fade, dormancy::SLEEP_MARGIN) {
+                        dormancy::sleep(&mut commands, s, &mut p.entities);
+                        row.awake = false;
+                    } else if !awake && dormancy::near(eye, &s.fade, dormancy::WAKE_MARGIN) {
+                        let Some(m) = m2s.get(&d.handle) else {
+                            continue;
+                        };
+                        let key = ModelKey::from(&d.handle);
+                        let kinds = WANT_STATIC | if wants_rig(m) { WANT_SKINNED } else { 0 };
+                        if !forms.require(
+                            key,
+                            kinds,
+                            placement_priority(&streamer, d.transform.translation),
+                        ) {
+                            continue;
+                        }
+                        let SpawnedModel {
+                            entities: mut ents,
+                            host,
+                            ..
+                        } = spawn_model_entities(
+                            &mut commands,
+                            mat_cache,
+                            materials,
+                            light,
+                            &m.submeshes,
+                            FormSlices {
+                                stat: forms.static_meshes(key).unwrap_or(&[]),
+                                skin: forms.skinned_meshes(key),
+                                billboard: forms.palette_billboards(key),
+                            },
+                            d.transform,
+                            &s.object,
+                            s.shade,
+                            s.interior_slot,
+                            Some(&s.fade),
+                            s.radius,
+                            s.center,
+                            s.anim_bound,
+                            Some((m, now)),
+                            &mut uv_reg,
+                            &mut tint_reg,
+                            &mut anim_table,
+                            false,
+                            None,
+                            None,
+                            None,
+                            SpawnMode::Entities(&s.mask),
+                        );
+                        entity_tail(
+                            &mut commands,
+                            &mut ents,
+                            host.as_ref(),
+                            m,
+                            d.transform,
+                            &s.fade,
+                            &prop_tag(portal_instance, &d.groups),
+                            &s.object,
+                        );
+                        p.entities.extend(ents.iter().copied());
+                        s.awake = true;
+                        row.awake = true;
+                        s.live = ents;
+                        spawned_n += 1;
                     }
-                    let SpawnedModel {
-                        entities: mut ents,
-                        host,
-                        ..
-                    } = spawn_model_entities(
-                        &mut commands,
-                        mat_cache,
-                        materials,
-                        light,
-                        &m.submeshes,
-                        FormSlices {
-                            stat: forms.static_meshes(key).unwrap_or(&[]),
-                            skin: forms.skinned_meshes(key),
-                            billboard: forms.palette_billboards(key),
-                        },
-                        d.transform,
-                        &s.object,
-                        s.shade,
-                        s.interior_slot,
-                        Some(&s.fade),
-                        s.radius,
-                        s.center,
-                        s.anim_bound,
-                        Some((m, now)),
-                        &mut uv_reg,
-                        &mut tint_reg,
-                        &mut anim_table,
-                        false,
-                        None,
-                        None,
-                        None,
-                        SpawnMode::Entities(&s.mask),
-                    );
-                    entity_tail(
-                        &mut commands,
-                        &mut ents,
-                        host.as_ref(),
-                        m,
-                        d.transform,
-                        &s.fade,
-                        &prop_tag(portal_instance, &d.groups),
-                        &s.object,
-                    );
-                    p.entities.extend(ents.iter().copied());
-                    s.awake = true;
-                    s.live = ents;
-                    spawned_n += 1;
                 }
             }
             if Instant::now() >= deadline {
@@ -322,7 +350,9 @@ pub(super) fn spawn_loaded_placements(
             }
         }
     }
-    'placements: for (&unique_id, p) in by_id.iter_mut() {
+    // Steady state, a dormant step alone: nothing below to spawn.
+    let spawning = if *pending_spawns > 0 { usize::MAX } else { 0 };
+    'placements: for (&unique_id, p) in by_id.iter_mut().take(spawning) {
         // 1. The model's own geometry, once; a WMO also resolves its doodad props for step 2.
         if !p.spawned {
             let entities = match &p.model {
@@ -425,6 +455,7 @@ pub(super) fn spawn_loaded_placements(
                             &object,
                         );
                     }
+                    *sleeper_epoch += 1;
                     p.sleeper =
                         (sleepy && dormancy::has_entity_phase(&entity_batches, m)).then(|| {
                             Sleeper {
@@ -908,6 +939,7 @@ pub(super) fn spawn_loaded_placements(
                     &object,
                 );
             }
+            *sleeper_epoch += 1;
             d.sleeper =
                 (sleepy && dormancy::has_entity_phase(&entity_batches, m)).then(|| Sleeper {
                     mask: entity_batches,
