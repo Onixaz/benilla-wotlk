@@ -1,5 +1,6 @@
 //! A seated passenger drawn on its seat (`0x74a7f0` in state 3): its model hangs from the vehicle
-//! model's seat attachment (`s_seatAttachments[seat.attachmentID]`, `0xa2d3f0`), placed by
+//! model's seat attachment (`s_seatAttachments[seat.attachmentID]`, `0xa2d3f0`), the model being a
+//! mounted unit's mount before its body (`0x6e6f80`), placed by
 //! `0x7490f0`: turned by its facing less the seat's yaw, rolled and pitched by the seat, scaled
 //! to its own size, its own `passengerAttachmentID` point (`0x748400`) on the seat's offset. A
 //! vehicle model without that attachment carries the passenger at the vehicle's own frame. The
@@ -10,9 +11,11 @@ use bevy::prelude::*;
 
 use benilla_assets::coords::wow_to_bevy;
 use benilla_formats::VehicleSeatRec;
+use benilla_protocol::messages::TransportPose;
 use benilla_world::model_fade::DespawnFade;
 use benilla_world::rig_anim::{RigFrame, RigPose};
 
+use crate::entities::mount::{MountBody, MountChild};
 use crate::entities::BoneAttach;
 use crate::net::{GuidIndex, NetEntity};
 use crate::transport::TransportRider;
@@ -97,6 +100,73 @@ fn joint_offset(seat: &VehicleSeatRec, points: Option<&BoneAttach>) -> Option<Ve
     seat_point(seat, points).map(|(_, offset)| offset)
 }
 
+/// A seated unit's position is its vehicle's (`0x749d80`): its rig hangs from the seat, and what
+/// reads the unit's own frame, ours or a remote's, follows the vehicle with it.
+#[allow(clippy::type_complexity)] // a Bevy system's full input set
+pub(super) fn follow_vehicles(
+    index: Res<GuidIndex>,
+    vehicles: Query<&Transform, (With<Vehicle>, Without<Passenger>)>,
+    mut passengers: Query<
+        (
+            &Passenger,
+            &mut Transform,
+            Option<&mut crate::net::RemoteMotion>,
+            Option<&TransportRider>,
+            Has<crate::net::Embodied>,
+        ),
+        Without<Vehicle>,
+    >,
+    me: Query<(), (With<crate::net::Embodied>, Without<Passenger>)>,
+    mut player: Option<ResMut<crate::player::Player>>,
+) {
+    if let (Some(player), false) = (player.as_deref_mut(), me.is_empty()) {
+        if player.seat_tail.is_some() {
+            player.seat_tail = None;
+        }
+    }
+    for (passenger, mut transform, motion, rider, driven) in &mut passengers {
+        if driven {
+            if let Some(player) = player.as_deref_mut() {
+                let tail = rider
+                    .filter(|_| passenger.state == SEATED)
+                    .map(|r| TransportPose {
+                        guid: r.transport_guid,
+                        pos: benilla_protocol::wire::Vector3d {
+                            x: r.local_pos[0],
+                            y: r.local_pos[1],
+                            z: r.local_pos[2],
+                        },
+                        orientation: r.local_orientation,
+                        seat: r.seat,
+                    });
+                if player.seat_tail != tail {
+                    player.seat_tail = tail;
+                }
+            }
+        }
+        if passenger.state != SEATED {
+            continue;
+        }
+        let Some(&vehicle) = index.0.get(&passenger.vehicle) else {
+            continue;
+        };
+        let Ok(at) = vehicles.get(vehicle).map(|t| t.translation) else {
+            continue;
+        };
+        if transform.translation != at {
+            transform.translation = at;
+        }
+        if let Some(mut motion) = motion {
+            motion.wow_pos = benilla_assets::coords::bevy_to_wow(at);
+        }
+        if driven {
+            if let Some(player) = player.as_deref_mut() {
+                player.pos = at;
+            }
+        }
+    }
+}
+
 /// Seat each seated passenger's rig on its seat, keep its turn, and stand an unseated one back on
 /// its own frame.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)] // a Bevy system's full input set
@@ -115,7 +185,16 @@ pub(super) fn ride_seats(
         ),
         Or<(With<Passenger>, With<SeatRide>)>,
     >,
-    vehicles: Query<(&Vehicle, &GlobalTransform, Option<&BoneAttach>), Without<DespawnFade>>,
+    vehicles: Query<
+        (
+            &Vehicle,
+            &GlobalTransform,
+            Option<&BoneAttach>,
+            Option<&MountChild>,
+        ),
+        Without<DespawnFade>,
+    >,
+    mounts: Query<(&GlobalTransform, Option<&BoneAttach>), With<MountBody>>,
     mut poses: Query<&mut RigPose>,
     index: Res<GuidIndex>,
     tables: Res<VehicleTables>,
@@ -127,9 +206,17 @@ pub(super) fn ride_seats(
             .filter(|p| p.state == SEATED || p.state == 4)
             .and_then(|p| Some((p, *index.0.get(&p.vehicle)?)));
         let wanted = seated.and_then(|(p, v)| {
-            let (vehicle, vehicle_tf, points) = vehicles.get(v).ok()?;
+            let (vehicle, vehicle_tf, points, mount) = vehicles.get(v).ok()?;
             let seat = tables.seat(vehicle.id, usize::from(p.seat))?;
-            Some((p, v, seat, vehicle_tf, points))
+            // The model the seat hangs from; a mount still building waits a frame.
+            let (model, model_tf, points) = match mount {
+                Some(&MountChild(m)) => {
+                    let (tf, points) = mounts.get(m).ok()?;
+                    (m, tf, Some(points?))
+                }
+                None => (v, vehicle_tf, points),
+            };
+            Some((p, v, seat, model, model_tf, points))
         });
         // Leave a seat the passenger left, or one whose vehicle went.
         if let Some(r) = ride {
@@ -154,7 +241,7 @@ pub(super) fn ride_seats(
                 continue;
             }
         }
-        let Some((p, vehicle, seat, vehicle_tf, points)) = wanted else {
+        let Some((p, vehicle, seat, model, vehicle_tf, points)) = wanted else {
             continue;
         };
         let facing = rider.map_or(0.0, |r| r.local_orientation);
@@ -190,15 +277,14 @@ pub(super) fn ride_seats(
         let joint = attachment
             .and_then(|a| points?.points.get(&a).copied())
             .and_then(|(bone, offset)| {
-                let joint =
-                    poses
-                        .get_mut(vehicle)
-                        .ok()?
-                        .anchor_for(&mut commands, vehicle, bone)?;
+                let joint = poses
+                    .get_mut(model)
+                    .ok()?
+                    .anchor_for(&mut commands, model, bone)?;
                 Some((joint, offset))
             });
         // Under the attachment, or at the vehicle's own frame without one (`0x7490f0`'s tail).
-        let parent = joint.map_or(vehicle, |(joint, _)| joint);
+        let parent = joint.map_or(model, |(joint, _)| joint);
         let anchor = commands
             .spawn((
                 local,
@@ -250,6 +336,63 @@ mod tests {
             passenger_anims: [-1, -1, 120, 121, -1, -1],
             ..Default::default()
         }
+    }
+
+    /// A seated unit's frame is the vehicle's as it moves, and our own carries its seat's tail
+    /// onto the wire until it leaves.
+    #[test]
+    fn a_seated_unit_follows_its_vehicle_and_owes_the_tail() {
+        use crate::player::Player;
+        use bevy::ecs::system::RunSystemOnce;
+        const BIKE: u64 = 0x20;
+        let mut w = World::new();
+        let bike = w
+            .spawn((
+                Vehicle {
+                    id: 7,
+                    raw_facing: 0.0,
+                },
+                Transform::from_xyz(4.0, 0.0, 2.0),
+            ))
+            .id();
+        let mut index = GuidIndex::default();
+        index.0.insert(BIKE, bike);
+        w.insert_resource(index);
+        w.init_resource::<Player>();
+        let me = w
+            .spawn((
+                Passenger {
+                    vehicle: BIKE,
+                    seat: 1,
+                    state: SEATED,
+                },
+                TransportRider {
+                    transport_guid: BIKE,
+                    local_pos: [1.0, 2.0, 3.0],
+                    local_orientation: 0.5,
+                    seat: 1,
+                },
+                Transform::default(),
+                crate::net::Embodied,
+            ))
+            .id();
+        w.run_system_once(follow_vehicles).unwrap();
+        assert_eq!(
+            w.entity(me).get::<Transform>().unwrap().translation,
+            Vec3::new(4.0, 0.0, 2.0)
+        );
+        let player = w.resource::<Player>();
+        assert_eq!(player.pos, Vec3::new(4.0, 0.0, 2.0));
+        let tail = player.seat_tail.expect("seated, the tail is owed");
+        assert_eq!((tail.guid, tail.seat), (BIKE, 1));
+        assert_eq!(tail.orientation, 0.5);
+
+        w.entity_mut(me).remove::<Passenger>();
+        w.run_system_once(follow_vehicles).unwrap();
+        assert!(
+            w.resource::<Player>().seat_tail.is_none(),
+            "out of the seat"
+        );
     }
 
     /// The ride loop over the start; no ride flag, no anim; 506 is none.

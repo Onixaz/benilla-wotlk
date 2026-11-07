@@ -140,7 +140,7 @@ pub(super) fn select_on_click(
 
 /// The service arms that are not a bare packet, bundled for the 16-param ceiling.
 #[derive(bevy::ecs::system::SystemParam)]
-pub(crate) struct ServiceArms<'w> {
+pub(crate) struct ServiceArms<'w, 's> {
     /// The last `SMSG_QUESTGIVER_STATUS` per guid (`[unit+0xcb8]`), read by bit 1's.
     pub(crate) quest: Res<'w, crate::ui_quest::QuestGiver>,
     /// Bit 7: the reference fires `CONFIRM_BINDER`; `CMSG_BINDER_ACTIVATE` is the dialog's Accept.
@@ -156,6 +156,8 @@ pub(crate) struct ServiceArms<'w> {
     pub(crate) loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
     /// The trainer arm's ask, which its list must answer.
     pub(crate) trainer_asked: ResMut<'w, crate::ui_trainer::TrainerAsked>,
+    /// The ride arm under the ladder's last rungs (`0x723050`).
+    pub(crate) player_vehicles: crate::vehicle::PlayerVehicles<'w, 's>,
 }
 
 /// The re-click gate, before the ladder: a right-click on the NPC whose window is open does
@@ -228,7 +230,7 @@ pub(crate) struct Dispatch<'w, 's> {
         ),
     >,
     places: Query<'w, 's, &'static Transform>,
-    service: ServiceArms<'w>,
+    service: ServiceArms<'w, 's>,
     feedback: Feedback<'w>,
     auto: crate::player::AutoMove<'w, 's>,
     player: Res<'w, crate::player::Player>,
@@ -753,6 +755,22 @@ impl Dispatch<'_, '_> {
             });
         let ghost = self_store.is_some_and(|s| s.0.player_is_ghost());
         let Some(arm) = service_arm(npc_flags, self.service.quest.status(guid)) else {
+            let player = benilla_protocol::guid::is_player(guid);
+            if player
+                && self
+                    .service
+                    .player_vehicles
+                    .takes_us(entity, guid, in_group)
+            {
+                debug!("right-click interact: {guid:#x} (a player vehicle with a free seat)");
+                let _ = self.seam.net.0.send(ClientCommand::Vehicle(
+                    crate::net::VehicleCommand::ByGuid {
+                        opcode: benilla_protocol::messages::opcode::CMSG_PLAYER_VEHICLE_ENTER,
+                        guid,
+                    },
+                ));
+                return;
+            }
             // No consulted bit does nothing, gesture included.
             debug!("right-click interact: {guid:#x} matches no service bit — nothing sent");
             return;

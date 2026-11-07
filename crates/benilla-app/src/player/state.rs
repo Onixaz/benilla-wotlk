@@ -511,6 +511,9 @@ pub(crate) struct Player {
     /// [`crate::transport::Transport`] support, kept through deck jumps, detached on world ground,
     /// in water or when the transport despawns.
     pub(super) ride: Option<PlayerRide>,
+    /// Seated in a vehicle: its transport tail as the server gave it, which every move of ours
+    /// carries so the server relays us as a rider.
+    pub(crate) seat_tail: Option<benilla_protocol::messages::TransportPose>,
 }
 
 /// The player's attachment to a transport's frame ([`Player::ride`]).

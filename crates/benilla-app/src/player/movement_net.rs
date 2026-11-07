@@ -416,6 +416,9 @@ pub(super) fn park_mover(sender: &Sender<ClientCommand>, player: &mut Player) {
 /// The rider's deck-local pose for the `ON_TRANSPORT` tail, or `None` off a deck. `bevy_to_wow` is
 /// a pure rotation, so it converts the local offset too; the local facing is `face_yaw - boat_yaw`.
 pub(super) fn wire_transport(player: &Player) -> Option<TransportPose> {
+    if player.seat_tail.is_some() {
+        return player.seat_tail;
+    }
     player.ride.as_ref().map(|r| {
         let local = bevy_to_wow(r.local_pos);
         TransportPose {
@@ -1305,6 +1308,23 @@ mod tests {
         assert!(transport.is_none() && jump.is_none());
         assert!((0.0..TAU).contains(&orientation));
         assert!(rx.try_recv().is_err(), "one ack per change");
+
+        // In a vehicle seat: the tail the server gave us, seat and all.
+        let seat_tail = TransportPose {
+            guid: 0x20,
+            pos: benilla_protocol::wire::Vector3d {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            orientation: 0.0,
+            seat: 1,
+        };
+        let player = Player {
+            seat_tail: Some(seat_tail),
+            ..Default::default()
+        };
+        assert_eq!(wire_transport(&player), Some(seat_tail));
 
         // On a deck.
         let player = Player {

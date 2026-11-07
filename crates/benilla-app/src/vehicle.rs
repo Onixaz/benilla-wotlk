@@ -53,6 +53,49 @@ pub(crate) struct VehicleTables {
     indicators: Arc<HashMap<u32, VehicleIndicatorView>>,
 }
 
+/// What the player-vehicle arm (`0x723050`) reads: a player with a vehicle and a free seat, one we
+/// do not ride already, in our party or raid.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct PlayerVehicles<'w, 's> {
+    vehicles: Query<'w, 's, &'static Vehicle>,
+    passengers: Query<'w, 's, &'static Passenger>,
+    me: Query<'w, 's, &'static Passenger, With<crate::net::SelfPlayer>>,
+    tables: Option<Res<'w, VehicleTables>>,
+}
+
+impl PlayerVehicles<'_, '_> {
+    /// The arm's answer for the player `entity` with `guid`; `in_group` is its party or raid test.
+    pub(crate) fn takes_us(&self, entity: Entity, guid: u64, in_group: bool) -> bool {
+        in_group
+            && !guid_is_our_transport(self.me.iter().next(), guid)
+            && self.vehicles.get(entity).is_ok_and(|v| {
+                let rec = self.tables.as_ref().and_then(|t| t.vehicle(v.id));
+                rec.is_some_and(|rec| {
+                    let riders = self.passengers.iter().filter(|p| p.vehicle == guid);
+                    free_seat_mask(&rec.seat_ids, riders.map(|p| p.seat)) != 0
+                })
+            })
+    }
+}
+
+fn guid_is_our_transport(me: Option<&Passenger>, guid: u64) -> bool {
+    me.is_some_and(|p| p.vehicle == guid)
+}
+
+/// The free seat mask (`0x757ef0`): each slot with a seat row and no rider.
+fn free_seat_mask(seat_ids: &[u32], riders: impl Iterator<Item = u8>) -> u8 {
+    let taken = riders.fold(0u8, |mask, seat| {
+        mask | 1u8.checked_shl(seat.into()).unwrap_or(0)
+    });
+    seat_ids
+        .iter()
+        .take(8)
+        .enumerate()
+        .filter(|&(_, &id)| id != 0)
+        .fold(0, |mask, (slot, _)| mask | 1 << slot)
+        & !taken
+}
+
 impl VehicleTables {
     pub(crate) fn vehicle(&self, id: u32) -> Option<&VehicleRec> {
         self.catalog.vehicle(id)
@@ -166,6 +209,7 @@ impl Plugin for VehiclePlugin {
                     // With the entity visuals, after the rigs are built and any mount re-seat.
                     (
                         transit::ride_transits,
+                        ride::follow_vehicles,
                         ride::ride_seats,
                         ride::sweep_seat_anchors,
                         transit::sweep_transit_anchors,
@@ -730,6 +774,69 @@ mod tests {
 
     const ME: u64 = 0x10;
     const CART: u64 = 0xF150_0000_0000_0001;
+
+    /// Each slot with a row and no rider is free; a two-seat mount with one rider has one left,
+    /// and with both taken none, which the player-vehicle arm reads as no room.
+    #[test]
+    fn the_free_seat_mask_is_the_rows_less_the_riders() {
+        let seats = [11, 12, 0, 0, 0, 0, 0, 0];
+        assert_eq!(free_seat_mask(&seats, [].into_iter()), 0b11);
+        assert_eq!(free_seat_mask(&seats, [1].into_iter()), 0b01);
+        assert_eq!(free_seat_mask(&seats, [0, 1].into_iter()), 0);
+        assert_eq!(free_seat_mask(&seats, [9].into_iter()), 0b11);
+    }
+
+    /// The arm answers for a free seat in our group, and not on the vehicle we ride.
+    #[test]
+    fn the_player_vehicle_arm_reads_the_seats_the_group_and_our_transport() {
+        use bevy::ecs::system::SystemState;
+        let mut catalog = VehicleCatalog::default();
+        catalog.vehicles.insert(
+            7,
+            VehicleRec {
+                seat_ids: [11, 12, 0, 0, 0, 0, 0, 0],
+                ..Default::default()
+            },
+        );
+        let mut w = World::new();
+        w.insert_resource(VehicleTables {
+            catalog: Arc::new(catalog),
+            ..Default::default()
+        });
+        const BIKE: u64 = 0x20;
+        let bike = w
+            .spawn(Vehicle {
+                id: 7,
+                raw_facing: 0.0,
+            })
+            .id();
+        let me = w.spawn(crate::net::SelfPlayer).id();
+        let mut state: SystemState<PlayerVehicles> = SystemState::new(&mut w);
+        assert!(state.get(&w).takes_us(bike, BIKE, true));
+        assert!(
+            !state.get(&w).takes_us(bike, BIKE, false),
+            "not in our group"
+        );
+        w.entity_mut(me).insert(Passenger {
+            vehicle: BIKE,
+            seat: 0,
+            state: passenger::SEATED,
+        });
+        assert!(!state.get(&w).takes_us(bike, BIKE, true), "we ride it");
+        w.entity_mut(me).remove::<Passenger>();
+        w.spawn(Passenger {
+            vehicle: BIKE,
+            seat: 0,
+            state: passenger::SEATED,
+        });
+        assert!(state.get(&w).takes_us(bike, BIKE, true), "one seat left");
+        w.spawn(Passenger {
+            vehicle: BIKE,
+            seat: 1,
+            state: passenger::SEATED,
+        });
+        assert!(!state.get(&w).takes_us(bike, BIKE, true), "full");
+    }
 
     fn world() -> (World, Entity, Entity) {
         let mut w = World::new();

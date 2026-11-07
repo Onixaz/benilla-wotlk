@@ -76,13 +76,10 @@ fn lookup(lua: &Lua, token: Option<&str>) -> Option<(bool, bool, VehicleUnitView
         .app_data_ref::<super::ModelCell>()
         .expect("model app_data");
     let u = model.unit(token?)?;
-    let facts = model
-        .vehicles
-        .units
-        .get(&u.guid)
-        .copied()
-        .unwrap_or_default();
-    Some((u.has_object, u.in_vehicle, facts))
+    let held = model.vehicles.units.get(&u.guid).copied();
+    let facts = held.unwrap_or_default();
+    let seated = held.is_some_and(|f| f.state != 0);
+    Some((u.has_object || seated, u.in_vehicle, facts))
 }
 
 /// The seat `0x613600` finds for the first argument, through `lua_tolstring` and the

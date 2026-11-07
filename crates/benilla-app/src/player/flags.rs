@@ -139,7 +139,7 @@ pub(super) fn this_frame(
     move_flags_now = state::incapacitated_flags(move_flags_now, !may_translate, !may_turn);
     // ON_TRANSPORT, whose local-pose tail is built at the send, from the post-attach state so
     // the two agree on the frame we board or step off.
-    if player.ride.is_some() && !held {
+    if (player.ride.is_some() || player.seat_tail.is_some()) && !held {
         move_flags_now |= move_flags::ON_TRANSPORT;
     }
 
