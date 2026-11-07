@@ -287,9 +287,9 @@ mod tests {
         );
     }
 
-    /// The walk stops on a still scene, so the second drawn frame must not need a moved camera.
+    /// A host waits for its second drawn frame, when its parts' first verdicts are in.
     #[test]
-    fn a_still_camera_still_rigs_on_the_second_drawn_frame() {
+    fn a_host_rigs_on_its_second_drawn_frame() {
         let mut app = app();
         let eye = Transform::from_xyz(0.0, 0.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y);
         let projection = bevy::camera::Projection::from(bevy::camera::PerspectiveProjection {

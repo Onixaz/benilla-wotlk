@@ -17,20 +17,19 @@ use benilla_assets::materials::WowModelMaterial;
 /// Shows or hides each model submesh. A doodad or WMO part is culled once its bound lies wholly
 /// past the far-clip wall ([`crate::view::within_farclip`]), so a straddler dissolves through the
 /// per-pixel wall. Writes only on a flip.
-/// One part's row for [`apply_model_visibility`], the unparked and the parked query alike.
+/// One part's row for [`apply_model_visibility`].
 type PartRow = (
-    Entity,
     &'static ModelPart,
-    Ref<'static, GlobalTransform>,
+    &'static GlobalTransform,
     &'static mut Visibility,
     Option<&'static DoodadFade>,
     Option<&'static mut MeshTag>,
     Option<&'static mut MeshMaterial3d<WowModelMaterial>>,
     Option<&'static Aabb>,
-    Option<Ref<'static, WmoGroupVis>>,
-    Option<Ref<'static, crate::doodad_anim::MatAnim>>,
+    Option<&'static WmoGroupVis>,
+    Option<&'static crate::doodad_anim::MatAnim>,
     Has<crate::exterior_cull::ExteriorScene>,
-    Option<Ref<'static, super::FarSideOfWater>>,
+    Has<super::FarSideOfWater>,
     Option<&'static crate::billboard::BillboardCard>,
     (
         Option<&'static super::M2BatchSort>,
@@ -42,22 +41,7 @@ type PartRow = (
 pub(super) fn apply_model_visibility(
     debug: Res<DebugState>,
     view: Res<ViewDistance>,
-    cam: Query<
-        (
-            Ref<GlobalTransform>,
-            Ref<Projection>,
-            Option<Ref<Transform>>,
-        ),
-        With<WorldCamera>,
-    >,
-    // Scene edges the per-part skip cannot read off its own row: a portal set changing (a
-    // building's asset lands frames after its spawn) and any card owner's inherited verdict
-    // flipping. An owner is a model root or a rig joint, never a part, so the ~29k part rows of a
-    // city stay out of the scan.
-    new_portals: Query<(), Changed<WmoPortalInstance>>,
-    owner_flips: Query<(), (Changed<InheritedVisibility>, Without<ModelPart>)>,
-    // A far-side mark the classifier strips under a still camera must un-skip its part.
-    mut unmarked: RemovedComponents<super::FarSideOfWater>,
+    cam: Query<(&GlobalTransform, &Projection), With<WorldCamera>>,
     instances: Query<&WmoPortalInstance>,
     windows: Res<crate::wmo_portal::ExteriorWindows>,
     // The camera's own building is not exterior scene: the reference draws it through the interior
@@ -71,31 +55,8 @@ pub(super) fn apply_model_visibility(
     // `projectedTextures`, and the effect roots that draw their projected batches regardless.
     projected: Res<crate::view::ProjectedTextures>,
     forced_roots: Query<(), With<super::ForcedProjection>>,
-    // The parts, split at parking. Both walk whole only when a scene input moved, else only the
-    // rows whose own input moved, which a tick scan finds without fetching a row.
-    (mut active, mut parked, moved_rows): (
-        Query<PartRow, Without<super::park::ParkedMesh>>,
-        Query<PartRow, With<super::park::ParkedMesh>>,
-        Query<
-            (
-                Entity,
-                Has<super::park::ParkedMesh>,
-                &'static ModelPart,
-                Ref<'static, GlobalTransform>,
-                Has<DoodadFade>,
-                Has<WmoGroupVis>,
-                Has<crate::exterior_cull::ExteriorScene>,
-                Option<Ref<'static, crate::doodad_anim::MatAnim>>,
-                Option<Ref<'static, super::FarSideOfWater>>,
-            ),
-            Or<(
-                Changed<GlobalTransform>,
-                Changed<WmoGroupVis>,
-                Changed<crate::doodad_anim::MatAnim>,
-                Changed<super::FarSideOfWater>,
-            )>,
-        >,
-    ),
+    // Every part is judged every frame, as the reference re-culls its whole scene (`0x79a870`).
+    mut parts: Query<PartRow>,
     // A building's MLIQ surfaces: a `WmoGroupVis` but no `ModelPart`, so none of the submesh
     // rules. A query here rather than a second writer, so a culled room's water goes with it.
     mut group_only: Query<
@@ -112,33 +73,14 @@ pub(super) fn apply_model_visibility(
 ) {
     let m = &debug.models;
     let cam_view = cam.iter().next();
-    let cam_t = cam_view.as_ref().map(|(t, _, _)| t);
-    // Every whole-scene input still since last frame: a part whose own row is still too would
-    // come out unchanged, so it skips the walk. The camera's local `Transform` counts too: this
-    // runs before propagation, so a teleport's move shows only there.
-    let scene_still = cam_view.as_ref().is_some_and(|(t, p, l)| {
-        !t.is_changed() && !p.is_changed() && !l.as_ref().is_some_and(|l| l.is_changed())
-    }) && !debug.is_changed()
-        && !view.is_changed()
-        && !windows.is_changed()
-        && !claim.is_changed()
-        && !far_twins.is_changed()
-        && !projected.is_changed()
-        && new_portals.is_empty()
-        && owner_flips.is_empty();
+    let cam_t = cam_view.as_ref().map(|(t, _)| t);
     let cam_pos = cam_t.map(|t| t.translation());
     let cam_fwd = cam_t.map(|t| Vec3::from(t.forward()));
-    let gate = crate::exterior_cull::ExteriorGate::build(
-        &windows,
-        cam_view.as_ref().map(|(t, p, _)| (&**t, &**p)),
-    );
+    let gate = crate::exterior_cull::ExteriorGate::build(&windows, cam_view);
     // The placement the camera stands in, exempt from its own window gate.
     let own_instance = claim.0.map(|c| c.room.instance);
     // Parallel over the resident model submeshes (~29k in a city); every write is change-gated.
-    let unmarked: bevy::platform::collections::HashSet<Entity> = unmarked.read().collect();
-    let unmarked = &unmarked;
     let judge = |(
-        entity,
         part,
         xf,
         mut vis,
@@ -153,17 +95,6 @@ pub(super) fn apply_model_visibility(
         card,
         (batch_sort, parent),
     ): bevy::ecs::query::QueryItem<'_, '_, PartRow>| {
-        if scene_still
-            && (unmarked.is_empty() || !unmarked.contains(&entity))
-            && !xf.is_changed()
-            && !group_vis.as_ref().is_some_and(|g| g.is_changed())
-            && !mat_anim.as_ref().is_some_and(|a| a.is_changed())
-            && !far_side.as_ref().is_some_and(|f| f.is_changed())
-        {
-            return;
-        }
-        let far_side = far_side.is_some();
-        let (group_vis, mat_anim) = (group_vis.as_deref(), mat_anim.as_deref());
         let toggled_on =
             m.kind_visible[kind_index(part.kind)] && m.blend_visible[blend_index(part.blend)];
         // `farclip` culls doodads and WMOs only: units and GameObjects come range-limited from
@@ -227,7 +158,7 @@ pub(super) fn apply_model_visibility(
             || own_building
             || match fade.and_then(|f| f.sphere) {
                 Some((center, radius)) => gate.admits_sphere(center, radius),
-                None => gate.admits(&xf, aabb),
+                None => gate.admits(xf, aabb),
             };
 
         // A billboard card draws only while its model does, by the owner's last-frame verdict.
@@ -303,53 +234,7 @@ pub(super) fn apply_model_visibility(
             }
         }
     };
-    if scene_still {
-        // The few rows whose own input moved (a unit's step, a part's animated alpha), judged in
-        // parallel like the rest: a still city skips its ~5k unparked rows without a fetch.
-        let (mut moved_active, mut moved_parked) = (
-            bevy::ecs::entity::EntityHashSet::default(),
-            bevy::ecs::entity::EntityHashSet::default(),
-        );
-        for (entity, is_parked, part, xf, fade, group, exterior, mat_anim, far_side) in &moved_rows
-        {
-            // A step reaches the verdict only through range, distance fade, portal or exterior
-            // window: a unit's or GameObject's untagged part reads none of them, so a crowd's
-            // walking bodies stay out of the walk unless another input moved.
-            let reads_position = matches!(part.kind, ModelKind::Doodad | ModelKind::Wmo)
-                || fade
-                || group
-                || exterior;
-            let other_input = mat_anim.is_some_and(|a| a.is_changed())
-                || far_side.is_some_and(|f| f.is_changed());
-            // A new row is judged whatever it is: its spawn verdict has not been written yet.
-            if xf.is_changed() && !xf.is_added() && !reads_position && !other_input {
-                continue;
-            }
-            if is_parked {
-                moved_parked.insert(entity);
-            } else {
-                moved_active.insert(entity);
-            }
-        }
-        for &entity in unmarked {
-            if parked.contains(entity) {
-                moved_parked.insert(entity);
-            } else if active.contains(entity) {
-                moved_active.insert(entity);
-            }
-        }
-        let moved_active: bevy::ecs::entity::UniqueEntityVec = moved_active.into_iter().collect();
-        let moved_parked: bevy::ecs::entity::UniqueEntityVec = moved_parked.into_iter().collect();
-        active
-            .par_iter_many_unique_mut(moved_active)
-            .for_each(judge);
-        parked
-            .par_iter_many_unique_mut(moved_parked)
-            .for_each(judge);
-    } else {
-        active.par_iter_mut().for_each(judge);
-        parked.par_iter_mut().for_each(judge);
-    }
+    parts.par_iter_mut().for_each(judge);
 
     // A building's MLIQ surfaces, gated by the ever-visited latch, not this frame's PVS: a group's
     // liquid draws from its first visit for the rest of the placement's residency. An index past
@@ -560,9 +445,9 @@ mod tests {
         );
     }
 
-    /// The rig a crowd test runs: the visibility system, its resources and a still camera at the
-    /// origin looking down -Z, so the second frame on is a still scene.
-    fn still_scene() -> App {
+    /// A doodad's range is its position, so a step across the far wall flips it.
+    #[test]
+    fn a_doodad_is_judged_where_it_stands() {
         let mut app = App::new();
         app.init_resource::<DebugState>()
             .init_resource::<ViewDistance>()
@@ -574,74 +459,9 @@ mod tests {
         app.world_mut().spawn((
             WorldCamera,
             GlobalTransform::IDENTITY,
-            Transform::IDENTITY,
             Projection::default(),
         ));
-        app
-    }
-
-    fn vis(app: &App, e: Entity) -> Visibility {
-        *app.world().entity(e).get::<Visibility>().unwrap()
-    }
-
-    fn step(app: &mut App, e: Entity, to: Vec3) {
-        *app.world_mut().get_mut::<GlobalTransform>(e).unwrap() =
-            GlobalTransform::from_translation(to);
-    }
-
-    /// A unit's part reads no position (units come range-limited from the server, untagged by any
-    /// window), so a walking body's step stays out of the still-scene walk; its first frame is
-    /// judged all the same.
-    #[test]
-    fn a_walking_unit_part_is_not_rejudged_but_a_new_one_is() {
-        let mut app = still_scene();
-        let part = app
-            .world_mut()
-            .spawn((
-                ModelPart {
-                    kind: ModelKind::Creature,
-                    blend: ModelBlend::Opaque,
-                },
-                GlobalTransform::IDENTITY,
-                Visibility::Hidden,
-            ))
-            .id();
-        app.update();
-        assert_eq!(vis(&app, part), Visibility::Inherited, "spawned: judged");
-        app.update();
-        // A stale verdict planted by hand shows whether a step re-judges the row.
-        app.world_mut().entity_mut(part).insert(Visibility::Hidden);
-        step(&mut app, part, Vec3::new(0.0, 0.0, -10.0));
-        app.update();
-        assert_eq!(
-            vis(&app, part),
-            Visibility::Hidden,
-            "a step alone: not re-judged"
-        );
-        let late = app
-            .world_mut()
-            .spawn((
-                ModelPart {
-                    kind: ModelKind::Creature,
-                    blend: ModelBlend::Opaque,
-                },
-                GlobalTransform::IDENTITY,
-                Visibility::Hidden,
-            ))
-            .id();
-        app.update();
-        assert_eq!(
-            vis(&app, late),
-            Visibility::Inherited,
-            "spawned in a still scene: judged"
-        );
-    }
-
-    /// The control: a doodad's range is its position, so its step is still judged.
-    #[test]
-    fn a_moving_doodad_is_still_judged_in_a_still_scene() {
-        let mut app = still_scene();
-        let far = Vec3::new(0.0, 0.0, -100_000.0);
+        let vis = |app: &App, e: Entity| *app.world().entity(e).get::<Visibility>().unwrap();
         let part = app
             .world_mut()
             .spawn((
@@ -649,20 +469,16 @@ mod tests {
                     kind: ModelKind::Doodad,
                     blend: ModelBlend::Opaque,
                 },
-                GlobalTransform::from_translation(far),
+                GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -100_000.0)),
                 Visibility::Inherited,
             ))
             .id();
         app.update();
-        app.update();
         assert_eq!(vis(&app, part), Visibility::Hidden, "past the far wall");
-        step(&mut app, part, Vec3::new(0.0, 0.0, -10.0));
+        *app.world_mut().get_mut::<GlobalTransform>(part).unwrap() =
+            GlobalTransform::from_translation(Vec3::new(0.0, 0.0, -10.0));
         app.update();
-        assert_eq!(
-            vis(&app, part),
-            Visibility::Inherited,
-            "stepped in range: re-judged"
-        );
+        assert_eq!(vis(&app, part), Visibility::Inherited, "stepped in range");
     }
 
     /// The reference's WMO liquid drain gates on the "Map objects" bit (`ModelKind::Wmo`), not the

@@ -1008,8 +1008,7 @@ pub(super) fn apply_kit_debug(
     config: Res<SoundConfig>,
     listener: Res<AudioListener>,
 ) {
-    // Read before borrowing mutably: `&mut` through `ResMut` marks `DebugState` changed, which
-    // the still-frame gates read.
+    // Read before borrowing mutably: `&mut` through `ResMut` marks `DebugState` changed.
     if !debug.sound.play_kit {
         return;
     }

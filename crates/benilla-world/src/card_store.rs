@@ -146,28 +146,20 @@ fn despawn_live_cards(mut world: DeferredWorld, ctx: HookContext) {
 #[allow(clippy::type_complexity)]
 pub fn admit_stored_cards(
     mut commands: Commands,
-    cam: Query<Ref<GlobalTransform>, With<crate::view::WorldCamera>>,
+    cam: Query<&GlobalTransform, With<crate::view::WorldCamera>>,
     mut holders: Query<(
         &mut CardHolder,
         Option<&crate::wmo_portal::WmoGroupVis>,
         Has<crate::exterior_cull::ExteriorScene>,
         Option<&crate::interact::WorldObject>,
     )>,
-    mut last_generation: Local<u32>,
 ) {
     let Ok(cam) = cam.single() else {
         return;
     };
     let generation = crate::model_fade::fade_generation();
-    let bands_moved = *last_generation != generation;
-    *last_generation = generation;
-    let cam_moved = cam.is_changed();
     let eye = cam.translation();
     for (mut holder, room, exterior, object) in &mut holders {
-        // A still camera over unchanged bands leaves every verdict standing, except a new holder's.
-        if !cam_moved && !bands_moved && !holder.is_added() {
-            continue;
-        }
         if holder.generation != generation {
             holder.bypass_change_detection().refresh_reach();
         }
@@ -329,16 +321,5 @@ mod tests {
             0,
             "the placement takes its live cards"
         );
-    }
-
-    /// A still camera skips judged holders, but a new holder is judged on its first frame.
-    #[test]
-    fn a_new_holder_is_judged_under_a_still_camera() {
-        let (mut world, pass) = world_at(Vec3::new(5.0, 0.0, 0.0));
-        world.run_system(pass).unwrap();
-        world.run_system(pass).unwrap(); // the camera's spawn mark is now old
-        world.spawn(CardHolder::new(vec![stored(Vec3::ZERO)]));
-        world.run_system(pass).unwrap();
-        assert_eq!(live_cards(&mut world), 1);
     }
 }

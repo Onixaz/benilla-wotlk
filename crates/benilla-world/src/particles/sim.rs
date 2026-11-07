@@ -211,20 +211,9 @@ pub(crate) struct SceneGates<'w, 's> {
     exterior_windows: Res<'w, crate::wmo_portal::ExteriorWindows>,
     camera_claim: Res<'w, crate::wmo_portal::CameraInteriorClaim>,
     portals: Query<'w, 's, &'static crate::wmo_portal::WmoPortalInstance>,
-    /// Buildings streamed in this frame, which can change a room admit.
-    new_portals: Query<'w, 's, (), Changed<crate::wmo_portal::WmoPortalInstance>>,
 }
 
 impl SceneGates<'_, '_> {
-    /// Any input of a draw-set verdict moved this frame; an `environmentDetail` write marks the
-    /// view distance changed, as it moves every owner's fade band.
-    pub(crate) fn changed(&self) -> bool {
-        self.view.is_changed()
-            || self.exterior_windows.is_changed()
-            || self.camera_claim.is_changed()
-            || !self.new_portals.is_empty()
-    }
-
     /// The far-clip wall, the exterior gate and the camera's placement for
     /// [`EmitterFade::in_draw_set`]; build once per walk.
     pub(crate) fn scene(
@@ -389,17 +378,7 @@ pub(super) fn simulate_particles(
     gates: SceneGates,
     interleave: WaterInterleave,
     mut commands: Commands,
-    cam: Query<
-        (
-            Entity,
-            Ref<GlobalTransform>,
-            &Frustum,
-            &Camera,
-            Ref<Projection>,
-            Option<Ref<Transform>>,
-        ),
-        With<WorldCamera>,
-    >,
+    cam: Query<(Entity, &GlobalTransform, &Frustum, &Camera, &Projection), With<WorldCamera>>,
     owners: Owners,
     // Model-particle instances, hidden with their frozen emitter.
     mut child_draws: Query<
@@ -422,7 +401,7 @@ pub(super) fn simulate_particles(
             &mut ParticleEmitter,
             &mut Transform,
             &mut GlobalTransform,
-            Option<Ref<EmitterFade>>,
+            Option<&EmitterFade>,
             Option<&RenderLayers>,
             Option<&EffectLightOverride>,
             Option<&crate::interior::EmitterLitBy>,
@@ -450,7 +429,7 @@ pub(super) fn simulate_particles(
     mut dumps: super::dumps::Dumps,
     mut scratch: Local<WalkScratch>,
 ) {
-    let Ok((world_cam, cam_tf, frustum, camera, projection, cam_local)) = cam.single() else {
+    let Ok((world_cam, cam_tf, frustum, camera, projection)) = cam.single() else {
         return;
     };
     // Clamped so a load hitch cannot fling every particle out in one step.
@@ -458,12 +437,6 @@ pub(super) fn simulate_particles(
     if dt <= 0.0 {
         return;
     }
-    // No draw-set input moved: a gated emitter's verdict stands, and its tests can be skipped.
-    let gate_inputs_still = !cam_tf.is_changed()
-        && !projection.is_changed()
-        && !cam_local.as_ref().is_some_and(|l| l.is_changed())
-        && !gates.changed()
-        && !interleave.surfaces_changed();
     let cam_pos = cam_tf.translation();
     // The emission scalar, unfloored: the reference's emission (`0x97d8c0`) multiplies it straight
     // in.
@@ -475,7 +448,7 @@ pub(super) fn simulate_particles(
     // The far-clip axis the owner doodad's own cull uses, so the two cross the wall together.
     let cam_fwd = Vec3::from(cam_tf.forward());
     // Built once per walk, the same values the model visibility gate uses.
-    let (farclip, exterior_gate, camera_instance) = gates.scene(Some((&*cam_tf, &*projection)));
+    let (farclip, exterior_gate, camera_instance) = gates.scene(Some((cam_tf, projection)));
     let dump_frame = dumps.depth_frame(time.elapsed_secs());
     let emit_dump = dumps.emit.due(time.elapsed_secs());
 
@@ -533,9 +506,6 @@ pub(super) fn simulate_particles(
             // resume with one frame's dt. The far-clip term is needed: our projection's far plane
             // is past `farclip`, and a level-4 owner fades only past 1200 yd.
             if let Some(f) = fade.as_ref() {
-                if emitter.gated && gate_inputs_still && !f.is_changed() {
-                    return;
-                }
                 let in_set = f.in_draw_set(
                     cam_pos,
                     cam_fwd,

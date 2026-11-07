@@ -175,11 +175,6 @@ impl Plugin for WorldFoundation {
             .init_resource::<crate::collision::ColliderEpoch>()
             .init_resource::<crate::collision::MoverTraceExclusions>()
             .add_systems(First, crate::collision::track_collider_removals);
-        // The still-input tally's one reader is the live FPS probe; its `InheritedVisibility` scan
-        // walks every drawable row, so it runs only under that probe.
-        if std::env::var_os("WOW_LIVE_FPS").is_some() {
-            app.add_systems(Last, crate::dev_state::count_still_inputs);
-        }
         // No pre-step transform propagation: movers write `Position`/`Rotation` directly, so a
         // second whole-world sweep buys nothing; an opening door's hull reaches physics a frame
         // late. `WOW_PHYS_PREPROP=1` restores avian's default.

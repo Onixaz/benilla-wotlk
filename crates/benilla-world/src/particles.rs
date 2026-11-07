@@ -340,8 +340,7 @@ impl ParticleEmitter {
     }
 
     /// Freeze or thaw this cloud from the owner's side ([`Self::frozen`]). Thawing clears
-    /// [`Self::gated`]: the draw-set early-out reads none of the owner's inputs, so a cloud left
-    /// gated on a still camera would never re-enter its draw set.
+    /// [`Self::gated`], so the cloud draws from its next step.
     pub fn set_frozen(&mut self, frozen: bool) {
         self.frozen = frozen;
         if !frozen {

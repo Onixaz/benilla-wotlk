@@ -277,10 +277,6 @@ fn cull_dump_path() -> &'static Option<std::path::PathBuf> {
     ENV_DUMP.get_or_init(|| std::env::var_os("WOW_CULLDUMP").map(std::path::PathBuf::from))
 }
 
-fn cull_dump_env() -> bool {
-    cull_dump_path().is_some()
-}
-
 /// Recompute each resident WMO's per-group visible set from the camera; a portal-less prop stays
 /// all-visible.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
@@ -294,11 +290,6 @@ fn compute_wmo_pvs(
     mut camera_fog: ResMut<CameraWmoFog>,
     mut camera_claim: ResMut<CameraInteriorClaim>,
     mut camera_windows: ResMut<ExteriorWindows>,
-    // The flood's other inputs: a placement moving, arriving or leaving, and its model landing.
-    (mut gone, mut last): (
-        RemovedComponents<WmoPortalInstance>,
-        Local<Option<(Mat4, Option<f32>, usize)>>,
-    ),
 ) {
     // No world camera yet: keep last frame's sets, all visible.
     let Some((cam_t, proj)) = cam.iter().next() else {
@@ -309,16 +300,6 @@ fn compute_wmo_pvs(
     probe.eye = eye_world;
     // The seed's terrain leg, sampled once for the camera's column.
     let terrain = terrain_height_under(&streamer, &adt_tiles, eye_world);
-    // The flood is a pure function of the view, the eye's ground and the placements: a still
-    // camera over unchanged buildings keeps last frame's sets (the dump request always floods).
-    // This system's own writes do not read back as changed here.
-    let key = (clip_from_world, terrain, wmos.len());
-    let placements_moved =
-        gone.read().count() > 0 || instances.iter_mut().any(|(_, i)| i.is_changed());
-    if *last == Some(key) && !placements_moved && probe.dump_to.is_none() && !cull_dump_env() {
-        return;
-    }
-    *last = Some(key);
     // `WOW_CULLDUMP=<path>` re-requests the dump every frame, last writer wins: a headless run has
     // no panel button, and a one-shot request at startup would catch an empty world.
     let dump_to = probe.dump_to.take().or_else(|| cull_dump_path().clone());
@@ -372,8 +353,7 @@ fn compute_wmo_pvs(
         let mut log = dump_text
             .is_some()
             .then(|| TraceLog::new(model, eye_local, terrain_local));
-        // Compare, then write: a parked camera's flood repeats its answer, and a blind write would
-        // mark every instance changed.
+        // Compare, then write: a blind write would mark every instance changed.
         let mut fresh = compute_pvs_traced(
             model,
             eye_local,
