@@ -32,11 +32,12 @@ pub(super) fn register(app: &mut App) {
 
 /// `SMSG_DISMOUNT` (`0x741a40`): the unit's own mount copy (`[unit+0x9c0]`) goes to 0 now, so
 /// [`reseat_mounts`] tears the mount down this frame, ahead of the descriptor. A unit with no
-/// mount is left alone (`0x741a76`). The vehicle leg that keeps a mount carrying passengers
-/// (`0x741a7f`) is not built: benilla seats no passengers.
+/// mount is left alone (`0x741a76`), and a mount carrying passengers stays until they are off
+/// (`0x741a7f`).
 fn on_dismount(
     In(ev): In<benilla_protocol::SessionEvent>,
     index: Res<crate::net::GuidIndex>,
+    riders: Query<&crate::vehicle::Passenger>,
     mut stores: Query<&mut ObjectStore>,
     mut dropped: MessageWriter<MountDropped>,
 ) {
@@ -46,6 +47,9 @@ fn on_dismount(
     let Some(&entity) = index.0.get(&guid) else {
         return;
     };
+    if riders.iter().any(|p| p.vehicle == guid) {
+        return;
+    }
     let Ok(mut store) = stores.get_mut(entity) else {
         return;
     };
@@ -295,6 +299,7 @@ pub(super) fn reseat_mounts(
     children: MountChildren,
     conforms: Query<(), With<super::conform::ConformNode>>,
     creatures: Option<Res<super::Creatures>>,
+    riders: Query<&crate::vehicle::Passenger>,
 ) {
     for (entity, net, store, applied, child, arrival) in &units {
         if !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
@@ -306,6 +311,11 @@ pub(super) fn reseat_mounts(
         // A mount-up whose field zeroes before the model loads leaves an unseated child (`applied`
         // never left 0), which would otherwise stand under the dismounted rider for good.
         if live == applied && (live != 0 || child.is_none()) {
+            continue;
+        }
+        // A mount carrying passengers outlasts its field (`0x74046f`).
+        let guid = store.0.object_guid();
+        if live == 0 && riders.iter().any(|p| Some(p.vehicle) == guid) {
             continue;
         }
         // A model-less unit (the cube) has no rig to seat: stamp the field so it never churns, and

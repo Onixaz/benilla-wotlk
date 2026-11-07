@@ -777,6 +777,7 @@ pub(super) struct CursorInputs<'w, 's> {
     spells: Option<Res<'w, crate::ui_action::Spells>>,
     spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
     range_units: crate::spell::RangeUnits<'w, 's>,
+    player_vehicles: crate::vehicle::PlayerVehicles<'w, 's>,
     quest: Res<'w, crate::ui_quest::QuestGiver>,
     loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
     keys: Res<'w, ButtonInput<KeyCode>>,
@@ -836,6 +837,7 @@ pub(super) fn classify(
         spells,
         spell_mods,
         range_units,
+        player_vehicles,
     } = inputs;
     let party = super::party_of(group.as_deref());
     let skin_max_range = |spell_id: u32, target: Option<benilla_formats::RangeUnit>| -> f32 {
@@ -967,7 +969,15 @@ pub(super) fn classify(
                 .and_then(|rec| rec.cursor_name.as_deref());
             // No matching bit clears the cursor without reaching the attack leg: Point, never the
             // sword.
+            let ride = || {
+                let guid = hovered.guid?;
+                let group = group.as_deref()?;
+                (benilla_protocol::guid::is_player(guid)
+                    && player_vehicles.takes_us(hovered.target?, guid, group.is_member(guid)))
+                .then_some(CursorKind::Vehicle)
+            };
             return service_cursor(store.0.unit_npc_flags(), status, cursor_name)
+                .or_else(ride)
                 .map(|kind| (kind, dist_sq > unit_interact_reach_sq(store)));
         }
         // The attack check, the predicate TAB, the combat flash and `UnitCanAttack` share; not

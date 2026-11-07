@@ -931,9 +931,14 @@ pub(crate) mod schedule_tests {
     ///   threat and NPC-session feeds, the art scope, the WDL stream and the booth billboards),
     ///   one frame late at worst, as the rider poses; and `net::motion::facing::
     ///   apply_walk_end_facing` against `face_booth_billboards`, which turns only booth quads.
+    /// - The seated frame (#352) adds 55: `vehicle::ride::follow_vehicles` writes a seated unit's
+    ///   `Transform`, `RemoteMotion` and our `Player` at the head of the entity-visuals chain, as
+    ///   `transport::compose_riders` does a rider's, against the same unordered readers (the range,
+    ///   reach, threat, spell-info and session feeds, the camera and the art scope), one frame late at
+    ///   worst.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_796;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_851;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
