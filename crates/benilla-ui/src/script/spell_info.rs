@@ -62,6 +62,17 @@ pub trait SpellInfoSource {
         false
     }
 
+    /// The range lookup with no target answers a nonzero bound (`0x541af0`): the player's, or with
+    /// `pet` the pet's.
+    fn spell_has_range(&self, _spell_id: u32, _pet: bool) -> bool {
+        false
+    }
+
+    /// The range check (`0x809610`) toward `target`: `None` where the spell cannot take that unit.
+    fn spell_in_range(&self, _spell_id: u32, _pet: bool, _target: u64) -> Option<bool> {
+        None
+    }
+
     /// The spell's stat-bearing fields, `None` for no row.
     fn spell_stat_effects(&self, _spell_id: u32) -> Option<SpellStatEffects> {
         None
@@ -145,7 +156,85 @@ pub(super) fn spell_of(
     Ok(resolve_spell_by_name(&model.spellbook, &query).map(|s| (s.spell_id, false)))
 }
 
+/// The argument the slot parser (`0x540670`) leaves the unit at, 1-based: 3 after a book slot or a
+/// name with a subtext, else 2.
+fn unit_arg(lua: &Lua, args: &MultiValue) -> mlua::Result<Value> {
+    let first = args.front().cloned().unwrap_or(Value::Nil);
+    let second = args.get(1).cloned().unwrap_or(Value::Nil);
+    let is_string =
+        |v: &Value| matches!(v, Value::String(_) | Value::Integer(_) | Value::Number(_));
+    let third = if lua.coerce_number(first)?.is_some() && is_string(&second) {
+        true
+    } else if is_string(&second) {
+        let s = lua
+            .coerce_string(second.clone())?
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default();
+        super::parse_unit_token(&s) == super::UnitTokenParse::Unknown
+    } else {
+        false
+    };
+    Ok(if third {
+        args.get(2).cloned().unwrap_or(Value::Nil)
+    } else {
+        second
+    })
+}
+
+/// The guid a range verb's unit argument names, `None` for a token naming nobody.
+pub(super) fn range_unit(lua: &Lua, unit: &Value) -> Option<u64> {
+    let token = super::binding_abi::optional_string(lua, unit)?;
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    model.unit_guids.resolve(&token).ok().flatten()
+}
+
+/// A range answer as Lua reads it: 1, 0, or nil where the check does not apply.
+pub(super) fn range_answer(answer: Option<bool>) -> Value {
+    answer.map_or(Value::Nil, |near| Value::Integer(i64::from(near)))
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+    // SpellHasRange(spell [, book]) (`0x541af0`): 1 or nil.
+    lua.globals().set(
+        "SpellHasRange",
+        lua.create_function(|lua, args: MultiValue| {
+            let Some((spell, pet)) = spell_of(lua, &args, "SpellHasRange")? else {
+                return Ok(MultiValue::from_vec(vec![Value::Nil]));
+            };
+            let source = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .spell_info
+                .clone();
+            let has = source.is_some_and(|s| s.spell_has_range(spell, pet));
+            let out = if has { Value::Integer(1) } else { Value::Nil };
+            Ok(MultiValue::from_vec(vec![out]))
+        })?,
+    )?;
+
+    // IsSpellInRange(spell, [book,] unit) (`0x541c60`): 1, 0, or nil where the spell cannot take
+    // the unit.
+    lua.globals().set(
+        "IsSpellInRange",
+        lua.create_function(|lua, args: MultiValue| {
+            let Some((spell, pet)) = spell_of(lua, &args, "IsSpellInRange")? else {
+                return Ok(MultiValue::from_vec(vec![Value::Nil]));
+            };
+            let target = range_unit(lua, &unit_arg(lua, &args)?);
+            let source = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .spell_info
+                .clone();
+            let near = source
+                .zip(target)
+                .and_then(|(s, guid)| s.spell_in_range(spell, pet, guid));
+            Ok(MultiValue::from_vec(vec![range_answer(near)]))
+        })?,
+    )?;
+
     // GetSpellLink(id | slot, bookType | "name") (`0x5408e0`): the link and the trade link, nil
     // for each without; an unknown name answers nothing.
     lua.globals().set(
@@ -261,6 +350,48 @@ mod tests {
         fn is_current_spell(&self, spell_id: u32) -> bool {
             spell_id == 63645 || spell_id == 133
         }
+
+        fn spell_has_range(&self, spell_id: u32, _pet: bool) -> bool {
+            spell_id == 133
+        }
+
+        fn spell_in_range(&self, spell_id: u32, _pet: bool, target: u64) -> Option<bool> {
+            (spell_id == 133 && target != ALLY).then_some(target == NEAR)
+        }
+    }
+
+    const NEAR: u64 = 7;
+    const FAR: u64 = 8;
+    const ALLY: u64 = 9;
+
+    /// The argument forms of the slot parser: a name then a unit, a book slot, then a book name,
+    /// then a unit. A token naming nobody and a unit the spell cannot take answer nil.
+    #[test]
+    fn the_spell_range_verbs_read_the_unit_past_the_slot() {
+        let mut s = script();
+        s.set_unit_guids(&crate::script::UnitGuids {
+            target: NEAR,
+            pet: FAR,
+            player: ALLY,
+            ..Default::default()
+        });
+        let is = |call: &str, want: &str| {
+            assert!(
+                s.eval::<bool>(&format!("return {call} == {want}")).unwrap(),
+                "{call}"
+            );
+        };
+        is("IsSpellInRange('Fireball', 'target')", "1");
+        is("IsSpellInRange('Fireball', 'pet')", "0");
+        is("IsSpellInRange(1, 'spell', 'target')", "1");
+        is("IsSpellInRange(1, 'spell', 'pet')", "0");
+        is("IsSpellInRange('Fireball', 'Rank 1', 'pet')", "0");
+        is("IsSpellInRange('Fireball', 'player')", "nil");
+        is("IsSpellInRange('Fireball', 'party1')", "nil");
+        is("SpellHasRange('Fireball')", "1");
+        is("SpellHasRange(1, 'spell')", "1");
+        is("SpellHasRange('Nope')", "nil");
+        assert!(s.eval::<mlua::Value>("return IsSpellInRange()").is_err());
     }
 
     /// `IsCurrentSpell` asks the cast state by id, so a spell the book lacks answers too; a book

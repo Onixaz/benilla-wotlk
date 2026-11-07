@@ -36,8 +36,8 @@ pub use expr::PlayerValue;
 pub use immunity::{cc_exemption, grants_immunity, CcExemption};
 pub use radius::{load_spell_radii, SpellRadius, SpellRadiusCatalog};
 pub use ranges::{
-    load_spell_ranges, min_max_range, min_max_range_reads_units, RangeTargets, RangeUnit,
-    SpellRange, SpellRangeCatalog, UnitMotion, COMBAT_REACH_ADD, MELEE_RANGE_FLOOR,
+    load_spell_ranges, min_max_range, min_max_range_reads_units, min_max_range_with, RangeTargets,
+    RangeUnit, SpellRange, SpellRangeCatalog, UnitMotion, COMBAT_REACH_ADD, MELEE_RANGE_FLOOR,
     MOVING_BONUS_FLAGS, MOVING_RANGE_BONUS, ON_NEXT_SWING_RANGE,
 };
 pub use soft_float::modify as soft_modify;

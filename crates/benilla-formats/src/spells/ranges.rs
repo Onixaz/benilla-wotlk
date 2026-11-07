@@ -18,7 +18,8 @@ pub struct SpellRange {
     /// The friendly pair, columns 2 and 4.
     pub friendly_min: f32,
     pub friendly_max: f32,
-    /// Bit 0: the melee range family (combat-reach based, not the authored min/max).
+    /// Bit 0: the melee range family (combat-reach based, not the authored min/max). Bit 1: the
+    /// minimum sits on the reach sum ([`Self::min_on_reach`]).
     pub flags: u32,
 }
 
@@ -36,6 +37,11 @@ impl SpellRange {
     pub fn is_melee(&self) -> bool {
         self.flags & 1 != 0
     }
+
+    /// Flags bit 1: the row's minimum adds to the floored reach sum and takes no pad (`0x7ff57f`).
+    pub fn min_on_reach(&self) -> bool {
+        self.flags & 2 != 0
+    }
 }
 
 /// The pad the melee arm adds to the two reaches; the loot check pads the loot reach by the same
@@ -46,27 +52,28 @@ pub const MELEE_RANGE_FLOOR: f32 = 5.0;
 /// The on-next-swing short-circuit's max.
 pub const ON_NEXT_SWING_RANGE: f32 = 100.0;
 
-/// The movement-flag bits the moving bonus tests of each unit, `0x200d`: forward, either strafe,
-/// and jumping. Backward, turning and swimming are not among them.
+/// The movement-flag bits the moving bonus tests of each unit (`0x7ff645`): forward, either strafe,
+/// and jumping, which this word keeps at `0x2000` and 12340's at `0x1000`. Backward, turning and
+/// swimming are not among them.
 pub const MOVING_BONUS_FLAGS: u32 = 0x200d;
-/// The moving bonus, 2.6667: added to the max after both arms.
+/// The moving bonus, 2.6667: joins the tail term after both arms.
 pub const MOVING_RANGE_BONUS: f32 = f32::from_bits(0x402a_aaab);
 
 /// One unit's motion as the moving bonus reads it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct UnitMotion {
-    /// The movement flags word, `[[unit+0x118]+0x40]`.
+    /// The movement flags word, `[[unit+0xd8]+0x44]`.
     pub flags: u32,
-    /// The current speed, on `[unit+0x9a8]`: 0 with no direction bit, else the unit's spline speed,
-    /// or the swim, walk, run or run-back speed the flags pick.
+    /// The current speed (`0x987570`): 0 with no direction bit, else the unit's spline speed, or
+    /// the swim, walk, run or run-back speed the flags pick.
     pub speed: f32,
-    /// The walk speed, `[unit+0xa30]`.
+    /// The walk speed, `[unit+0x818]`.
     pub walk_speed: f32,
 }
 
 impl UnitMotion {
-    /// The walk test answering 0: the current speed is above twice the walk speed. The reference
-    /// doubles the walk speed (`fadd st, st`), compares it with the speed (`fcompp`) and tests C0
+    /// The walk test (`0x716fa0`) answering 0: the current speed is above twice the walk speed. The
+    /// reference doubles the walk speed (`fadd st, st`), compares it with the speed (`fcompp`) and tests C0
     /// (`test ah, 1`), which is set by a doubled walk speed below the speed and by an unordered
     /// pair, so a NaN reads as running and an equal pair as walking.
     pub fn is_running(&self) -> bool {
@@ -84,16 +91,19 @@ impl UnitMotion {
 /// A unit as the range lookup reads it: its combat reach, whether it is a player, and its motion.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RangeUnit {
-    /// `UNIT_FIELD_COMBATREACH`, `[[unit+0x110]+0x1f0]`.
+    /// `UNIT_FIELD_COMBATREACH`, `[[unit+0xd0]+0xf0]`.
     pub reach: f32,
     /// `OBJECT_FIELD_TYPE` bit 4. Only a unit target's read counts: the ranged arm's bonus asks it
-    /// of the target, and the melee arm's never does. The caster's own is the gate of the
-    /// `Attributes & 2` scale, which is not applied.
+    /// of the target, and the melee arm's never does.
     pub player: bool,
     pub motion: UnitMotion,
     /// The assist check of `(caster, unit)` (`0x801685`): for a unit target, which `SpellRange.dbc`
     /// pair applies. Only a target's read counts.
     pub assist: bool,
+    /// The `RangedModRange` percent of a player's ranged-slot item, which scales an
+    /// `Attributes & 2` spell's max (`0x7ff69d`); `None` with no item or an uncached one. Only the
+    /// caster's read counts.
+    pub ranged_mod_range: Option<f32>,
 }
 
 impl RangeUnit {
@@ -104,6 +114,7 @@ impl RangeUnit {
             player: false,
             motion: UnitMotion::default(),
             assist: false,
+            ranged_mod_range: None,
         }
     }
 }
@@ -112,54 +123,60 @@ impl RangeUnit {
 /// are different inputs: only the first is an argument of the call.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RangeTargets {
-    /// The call's `target` argument (`[ebx+0x10]`), when it is a unit (typemask bit 3): a null
-    /// target, and one that is no unit, read `None`. Both arms read its reach, and the ranged arm
-    /// pads only for a target passed.
+    /// The call's `target` argument, when it is a unit (typemask bit 3): a null target, and one
+    /// that is no unit, read `None`. Both arms read its reach, and the ranged arm pads only for a
+    /// target passed. A corpse pads with the caster's reach twice, so it passes a still unit of
+    /// that reach.
     pub target: Option<RangeUnit>,
-    /// The caster's auto-attack target, `[caster+0xc48]`, which the function looks up itself. Only
+    /// The caster's auto-attack target, `[caster+0xa20]`, which the function looks up itself. Only
     /// the melee arm reads it, and only with no unit target passed. A caller that has no such unit
     /// to hand passes `None`.
     pub attack_target: Option<RangeUnit>,
 }
 
-/// The range lookup: a spell's `{min, max}` cast range, summed in `f64` because the client keeps
-/// the reach sums on the x87 stack and stores `f32` only at the end. On-next-swing spells
-/// (`Attributes & 0x404`) short-circuit to `(0, 100)`. The melee arm sums the reach of the unit
-/// target, else the auto-attack target, else the caster's own, with the caster's. The ranged arm
-/// pads only for a unit target passed in, the auto-attack target never pads it: the max always, and
-/// the min only when nonzero (the `fcomp`-vs-0.0 guard), so a min-0 spell never refuses
-/// `TOO_CLOSE`. `None`: no row, or the self row (id 1, `{0, 0}`).
-///
-/// After both arms the max takes the moving bonus ([`MOVING_RANGE_BONUS`]) when there is a unit
-/// (the target, or on the melee arm the auto-attack target), the caster and that unit each
-/// [`UnitMotion::moves_at_run_speed`], and the row is the melee row or the unit a player. It comes
-/// after the melee floor and before the range modifier (op 5), and the min never takes it. The
-/// on-next-swing short-circuit skips it.
-///
-/// Not applied: for a player the `Attributes & 2` scale, `max *= RangedModRange · 0.01` of the
-/// ranged-slot item, which a relic (range mod 0, InventoryType 28) would zero, though no spell a
-/// relic class learns carries the bit.
+/// [`min_max_range_with`] with no range modifier.
 pub fn min_max_range(
     spell: &crate::spells::SpellDisplay,
     row: Option<&SpellRange>,
     caster: RangeUnit,
     targets: RangeTargets,
 ) -> Option<(f32, f32)> {
+    min_max_range_with(spell, row, caster, targets, |max| max)
+}
+
+/// The range lookup (`0x7ff480`): a spell's `{min, max}` cast range, summed in `f64` because the
+/// client keeps the reach sums on the x87 stack. On-next-swing spells (`Attributes & 0x404`) answer
+/// `(0, 100)`. The melee arm's reach sum, floored at 5, is the max's tail term, over the unit
+/// target's reach, else the auto-attack target's, else the caster's own. The ranged arm takes the
+/// row's pair and pads for a target passed: the max by the bare reach sum as its tail term, and a
+/// nonzero min by the same, except on a [`SpellRange::min_on_reach`] row, whose min is the floored
+/// sum plus the row's. The moving bonus joins the tail; `modify`, the range modifier (op 5), runs
+/// on the max before the tail adds. `None`: no row, or the self row, which the range check never
+/// reaches for a spell with no unit word.
+pub fn min_max_range_with(
+    spell: &crate::spells::SpellDisplay,
+    row: Option<&SpellRange>,
+    caster: RangeUnit,
+    targets: RangeTargets,
+    modify: impl FnOnce(f32) -> f32,
+) -> Option<(f32, f32)> {
     if spell.on_next_swing() {
         return Some((0.0, ON_NEXT_SWING_RANGE));
     }
     let row = row?;
-    // The `esi` both arms leave: the unit the bonus reads, if any.
-    let (min, max, unit) = if row.is_melee() {
-        let unit = targets.target.or(targets.attack_target);
+    let floored_reach = |unit: Option<RangeUnit>| {
         let reach = unit.map_or(caster.reach, |u| u.reach);
         let sum = f64::from(reach) + f64::from(caster.reach) + f64::from(COMBAT_REACH_ADD);
-        let max = if sum > f64::from(MELEE_RANGE_FLOOR) {
+        if sum > f64::from(MELEE_RANGE_FLOOR) {
             sum as f32
         } else {
             MELEE_RANGE_FLOOR
-        };
-        (0.0, max, unit)
+        }
+    };
+    // The `esi` both arms leave is the unit the bonus reads, the `[ebp+0x1c]` the tail term.
+    let (min, max, tail, unit) = if row.is_melee() {
+        let unit = targets.target.or(targets.attack_target);
+        (0.0, 0.0, floored_reach(unit), unit)
     } else {
         // The pair 12340's wrapper picks (`0x801650`): the assist check toward a unit target, else
         // the spell's own helpful-or-harmful test answering helpful.
@@ -167,44 +184,64 @@ pub fn min_max_range(
             .target
             .map_or_else(|| spell.is_helpful(), |t| t.assist);
         let (row_min, row_max) = row.pair(friendly);
-        if row_min == 0.0 && row_max == 0.0 {
+        if row_min == 0.0 && row_max == 0.0 && !row.min_on_reach() {
             return None;
         }
-        let Some(target) = targets.target else {
-            return Some((row_min, row_max));
-        };
-        let pad = f64::from(caster.reach) + f64::from(target.reach);
-        let min = if row_min == 0.0 {
-            0.0
+        let min = if row.min_on_reach() {
+            (f64::from(floored_reach(targets.target)) + f64::from(row_min)) as f32
         } else {
-            (pad + f64::from(row_min)) as f32
+            row_min
         };
-        (min, (f64::from(row_max) + pad) as f32, Some(target))
+        match targets.target {
+            Some(target) => {
+                let pad = f64::from(caster.reach) + f64::from(target.reach);
+                let padded = min != 0.0 && !row.min_on_reach();
+                let min = if padded {
+                    (pad + f64::from(min)) as f32
+                } else {
+                    min
+                };
+                (min, row_max, pad as f32, targets.target)
+            }
+            None => (min, row_max, 0.0, None),
+        }
     };
     let earns_bonus = |unit: &RangeUnit| {
         caster.motion.moves_at_run_speed()
             && unit.motion.moves_at_run_speed()
             && (row.is_melee() || unit.player)
     };
-    let max = if unit.as_ref().is_some_and(earns_bonus) {
-        (f64::from(max) + f64::from(MOVING_RANGE_BONUS)) as f32
+    let tail = if unit.as_ref().is_some_and(earns_bonus) {
+        (f64::from(tail) + f64::from(MOVING_RANGE_BONUS)) as f32
     } else {
-        max
+        tail
     };
-    Some((min, max))
+    let max = match caster.ranged_mod_range {
+        Some(pct) if spell.ranged_slot() => {
+            (f64::from(pct) * f64::from(0.01f32) * f64::from(max)) as f32
+        }
+        _ => max,
+    };
+    Some((min, (f64::from(modify(max)) + f64::from(tail)) as f32))
 }
 
 /// Whether [`min_max_range`] reads the units it is not handed for this spell and row when it is
-/// passed no unit target, as the spell tooltip calls it (`push 0`): only the melee arm, which sums
-/// the auto-attack target's reach, else the caster's own, with the caster's, and asks both units'
-/// motion for the moving bonus. The ranged arm pads only for a target passed in, so a tooltip
-/// prints its row as it is; the on-next-swing short-circuit, the missing row and the self row read
-/// none. With a unit target the ranged arm reads both units too.
+/// passed no unit target, as the spell tooltip calls it (`push 0`): the melee arm, which sums the
+/// auto-attack target's reach, else the caster's own, with the caster's, and asks both units'
+/// motion for the moving bonus; a [`SpellRange::min_on_reach`] row, which sums the caster's own
+/// reach twice; and an `Attributes & 2` spell, which reads the caster's ranged item. Any other
+/// ranged row prints as it is; the on-next-swing short-circuit, the missing row and the self row
+/// read none. With a unit target the ranged arm reads both units too.
 pub fn min_max_range_reads_units(
     spell: &crate::spells::SpellDisplay,
     row: Option<&SpellRange>,
 ) -> bool {
-    !spell.on_next_swing() && row.is_some_and(SpellRange::is_melee)
+    !spell.on_next_swing()
+        && row.is_some_and(|r| {
+            r.is_melee()
+                || r.min_on_reach()
+                || (spell.ranged_slot() && r.pair(spell.is_helpful()) != (0.0, 0.0))
+        })
 }
 
 /// `SpellRange.dbc`, by row id ([`crate::spells::SpellDisplay::range_index`]).
@@ -426,6 +463,82 @@ mod tests {
         );
     }
 
+    /// A flags-2 row's min is the floored reach sum plus the row's and takes no pad; its max pads
+    /// as any ranged row's (`0x7ff57f`, `0x7ff62d`).
+    #[test]
+    fn a_flags_2_row_puts_its_min_on_the_reach_sum() {
+        const SHOT: SpellRange = SpellRange {
+            min: 5.0,
+            max: 35.0,
+            friendly_min: 5.0,
+            friendly_max: 35.0,
+            flags: 2,
+        };
+        let d = spell(114, 0);
+        let (min, max) = min_max_range(
+            &d,
+            Some(&SHOT),
+            RangeUnit::still(1.5),
+            reaches(Some(1.5), None),
+        )
+        .unwrap();
+        assert_eq!(min, MELEE_RANGE_FLOOR + 5.0, "4.333 floors at 5, plus 5");
+        assert_eq!(max, 38.0);
+        let (min, max) = min_max_range(
+            &d,
+            Some(&SHOT),
+            RangeUnit::still(4.0),
+            reaches(Some(4.0), None),
+        )
+        .unwrap();
+        assert!(
+            (min - 14.3333).abs() < 1e-3,
+            "9.333 clears the floor: {min}"
+        );
+        assert_eq!(max, 43.0);
+        // With no target the caster's reach counts twice for the min and the max takes no pad.
+        let (min, max) = min_max_range(
+            &d,
+            Some(&SHOT),
+            RangeUnit::still(4.0),
+            RangeTargets::default(),
+        )
+        .unwrap();
+        assert!((min - 14.3333).abs() < 1e-3);
+        assert_eq!(max, 35.0);
+    }
+
+    /// `Attributes & 2` scales the row's max by the ranged item's percent, then op 5 runs, then the
+    /// reach pad and the moving bonus add on top (`0x7ff69d`, `0x7ff75d`).
+    #[test]
+    fn the_tail_term_adds_after_the_scale_and_the_modifier() {
+        let caster = RangeUnit {
+            ranged_mod_range: Some(50.0),
+            ..RangeUnit::still(1.5)
+        };
+        let targets = reaches(Some(1.5), None);
+        let plain = spell(4, 0);
+        let (_, max) = min_max_range_with(&plain, Some(&FIREBALL), caster, targets, |m| m).unwrap();
+        assert_eq!(max, 38.0, "only Attributes & 2 reads the item");
+        let ranged = spell(4, 2);
+        let (_, max) =
+            min_max_range_with(&ranged, Some(&FIREBALL), caster, targets, |m| m).unwrap();
+        assert!((max - 20.5).abs() < 1e-3, "35 x 0.5 + 3: {max}");
+        let (_, max) =
+            min_max_range_with(&ranged, Some(&FIREBALL), caster, targets, |m| m * 2.0).unwrap();
+        assert!((max - 38.0).abs() < 1e-3, "17.5 x 2 + 3: {max}");
+        // The melee arm's max is the tail alone, so a percent modifier leaves it.
+        let (_, max) = min_max_range_with(
+            &spell(2, 0),
+            Some(&MELEE),
+            RangeUnit::still(1.5),
+            targets,
+            |m| m * 2.0,
+        )
+        .unwrap();
+        assert_eq!(max, MELEE_RANGE_FLOOR);
+    }
+
     /// The ranged arm pads only for the target passed, never for the caster's auto-attack target,
     /// which the ranged arm does not read. A row whose friendly pair is wider, as row 161's is: a
     /// unit target picks the pair by the assist check, no target by the spell's own
@@ -566,6 +679,7 @@ mod tests {
             row(0.0, 35.0, 0),
             row(8.0, 25.0, 0),
             row(0.0, 5.0, 1),
+            row(5.0, 35.0, 2),
         ];
         let still = RangeUnit::still;
         let runner = |reach| RangeUnit {
@@ -594,8 +708,19 @@ mod tests {
                 (runner(1.5), Some(still(1.5))),
                 (runner(1.5), Some(runner(1.5))),
             ),
+            // The ranged item's scale.
+            (
+                (still(1.5), None),
+                (
+                    RangeUnit {
+                        ranged_mod_range: Some(50.0),
+                        ..still(1.5)
+                    },
+                    None,
+                ),
+            ),
         ];
-        for attributes in [0, 0x4, 0x400, 0x404] {
+        for attributes in [0, 0x2, 0x4, 0x400, 0x404] {
             let spell = crate::spells::SpellDisplay {
                 attributes,
                 ..Default::default()

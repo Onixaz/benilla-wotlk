@@ -34,6 +34,8 @@ pub(crate) const OP_COST: u8 = 14;
 pub(crate) const OP_CAST_TIME: u8 = 10;
 /// The range lookup (`0x7ff480`) applies op 5 to its maximum.
 pub(crate) const OP_RANGE: u8 = 5;
+/// The ranged equipment slot, 0-based (`0x7ff6c3`).
+const EQUIPMENT_SLOT_RANGED: u8 = 17;
 /// The radius lookup (`0x8019c0`) applies op 6 before the reticle's 20-yard cap.
 pub(crate) const OP_RADIUS: u8 = 6;
 /// The cooldown start (`0x805d70`) applies op 21 to `startRecoveryTime`.
@@ -95,6 +97,8 @@ pub(crate) struct SpellModifiers {
     /// resolves, which the reader's `SpellFamilyName != 0` gate covers.
     class_family: u32,
     cost: CostInputs,
+    /// The `RangedModRange` of the ranged-slot item, its template cached (`0x7ff6c3`).
+    ranged_mod_range: Option<f32>,
 }
 
 impl Default for SpellModifiers {
@@ -104,6 +108,7 @@ impl Default for SpellModifiers {
             pct: [0; CELLS],
             class_family: 0,
             cost: CostInputs::default(),
+            ranged_mod_range: None,
         }
     }
 }
@@ -264,8 +269,8 @@ impl SpellModifiers {
         })
     }
 
-    /// The range lookup modifies only the maximum at its common tail, after the moving bonus. The
-    /// on-next-swing `Attributes & 0x404` arm returns before that tail.
+    /// The range lookup modifies only the row's maximum, before the reach and the moving bonus add
+    /// (`0x7ff737`). The on-next-swing `Attributes & 0x404` arm returns before that tail.
     pub(crate) fn min_max_range(
         &self,
         d: &SpellDisplay,
@@ -273,15 +278,13 @@ impl SpellModifiers {
         caster: benilla_formats::RangeUnit,
         targets: benilla_formats::RangeTargets,
     ) -> Option<(f32, f32)> {
-        let (min, max) = benilla_formats::min_max_range(d, row, caster, targets)?;
-        Some((
-            min,
-            if d.on_next_swing() {
-                max
-            } else {
-                self.apply_float(d, OP_RANGE, max)
-            },
-        ))
+        let caster = benilla_formats::RangeUnit {
+            ranged_mod_range: self.ranged_mod_range.filter(|_| caster.player),
+            ..caster
+        };
+        benilla_formats::min_max_range_with(d, row, caster, targets, |max| {
+            self.apply_float(d, OP_RANGE, max)
+        })
     }
 }
 
@@ -354,6 +357,16 @@ pub(crate) fn track_cost_inputs(
     let speed = [false, true].map(|off_hand| {
         crate::spell::usable::weapon_cost_speed(store, &objects, &items, forms, off_hand)
     });
+    let ranged_mod_range = store
+        .0
+        .player_inv_slot(EQUIPMENT_SLOT_RANGED)
+        .filter(|&g| g != 0)
+        .and_then(|g| objects.object(g)?.object_entry())
+        .and_then(|entry| items.template_cached(entry))
+        .map(|t| t.ranged_mod_range);
+    if mods.ranged_mod_range != ranged_mod_range {
+        mods.ranged_mod_range = ranged_mod_range;
+    }
     let guid = store.0.object_guid().unwrap_or(0);
     // Guarded: every cost reader rebuilds whenever the resource is marked changed.
     if mods.cost.active_player != guid || mods.cost.weapon_speed != speed {
@@ -585,7 +598,10 @@ mod tests {
         };
         let (min, max) = mods.min_max_range(&d, Some(&row), caster, target).unwrap();
         assert_eq!(min, 11.0);
-        assert!((max - 45.6).abs() < 0.001, "38 yards with +20% range");
+        assert!(
+            (max - 45.0).abs() < 0.001,
+            "35 yards +20%, then the 3 yards of reach"
+        );
         assert_eq!(mods.min_max_range(&d, None, caster, target), None);
 
         let on_next_swing = SpellDisplay {
@@ -599,10 +615,10 @@ mod tests {
         );
     }
 
-    /// The moving bonus is part of the max before op 5 scales it: a +20% talent on the melee row of
-    /// two running units scales 5 + 2.6667.
+    /// The melee arm's reach sum and the moving bonus add after op 5: a +20% talent on the melee
+    /// row of two running units leaves 5 + 2.6667.
     #[test]
-    fn range_modifier_scales_the_moving_bonus() {
+    fn range_modifier_leaves_the_melee_reach_and_the_moving_bonus() {
         let mut mods = mage_tables();
         let d = mage(&[5]);
         let melee = SpellRange {
@@ -630,8 +646,8 @@ mod tests {
             .unwrap();
         let bonus = benilla_formats::MOVING_RANGE_BONUS;
         assert!(
-            (max - (5.0 + bonus) * 1.2).abs() < 1e-4,
-            "the modifier scales the bonused max, not the bare 5.0: {max}"
+            (max - (5.0 + bonus)).abs() < 1e-4,
+            "the modifier runs on the row's max, which the melee arm leaves at 0: {max}"
         );
     }
 }

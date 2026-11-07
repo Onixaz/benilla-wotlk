@@ -29,6 +29,8 @@ pub(crate) struct WeaponActionIcons {
 /// One caster as the cost, cast and range terms read it.
 #[derive(Clone)]
 struct Caster {
+    guid: u64,
+    pos: Vec3,
     store: ObjectStore,
     /// The level the cost and cast terms scale by.
     level: u32,
@@ -42,6 +44,8 @@ struct Snapshot {
     mods: Option<crate::spell::SpellModifiers>,
     icons: WeaponActionIcons,
     cast: CastNow,
+    /// The units a token can name, as the range verbs' check reads them.
+    units: std::collections::HashMap<u64, crate::spell::RangeFacts>,
 }
 
 /// The player's cast state the current-spell test (`0x806030`) reads.
@@ -110,6 +114,41 @@ impl Source {
 }
 
 impl SpellInfoSource for Source {
+    fn spell_has_range(&self, spell_id: u32, pet: bool) -> bool {
+        let snap = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let caster = if pet { &snap.pet } else { &snap.player };
+        let (Some(caster), Some(mods), Some(d)) =
+            (caster, &snap.mods, self.spells.catalog.get(spell_id))
+        else {
+            return false;
+        };
+        let row = self.spells.ranges.get(d.range_index);
+        mods.min_max_range(d, row, caster.unit, RangeTargets::default())
+            .is_some_and(|(min, max)| min.abs() > f32::EPSILON || max.abs() > f32::EPSILON)
+    }
+
+    fn spell_in_range(&self, spell_id: u32, pet: bool, target: u64) -> Option<bool> {
+        let snap = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let caster = if pet { &snap.pet } else { &snap.player };
+        let (caster, mods) = (caster.as_ref()?, snap.mods.as_ref()?);
+        let d = self.spells.catalog.get(spell_id)?;
+        crate::spell::range_check(
+            d,
+            self.spells.ranges.get(d.range_index),
+            mods,
+            (caster.unit, caster.pos),
+            target,
+            snap.pet.as_ref().map(|p| p.guid),
+            |guid| snap.units.get(&guid).copied(),
+        )
+    }
+
     fn spell_stat_effects(&self, spell_id: u32) -> Option<SpellStatEffects> {
         let d = self.spells.catalog.get(spell_id)?;
         Some(SpellStatEffects {
@@ -321,6 +360,8 @@ fn feed_spell_info(
     index: Res<crate::net::GuidIndex>,
     stores: Query<Ref<ObjectStore>>,
     range_units: crate::spell::RangeUnits,
+    targeting: crate::spell::cast_target::CastTargeting,
+    transforms: Query<&Transform>,
     cast_now: CastNowInputs,
     mut memory: Local<VmMemo<Installed>>,
 ) {
@@ -358,11 +399,19 @@ fn feed_spell_info(
     // The units' motion moves every frame; their fields only when their stores do.
     let caster = |entity: Entity, store: &Ref<ObjectStore>, old: Option<Caster>, level: u32| {
         let unit = range_units.unit(entity)?;
+        let guid = store.0.object_guid()?;
+        let pos = transforms.get(entity).ok()?.translation;
         let store = match old {
             Some(c) if !reinstall && !store.is_changed() => c.store,
             _ => ObjectStore::clone(store),
         };
-        Some(Caster { store, level, unit })
+        Some(Caster {
+            guid,
+            pos,
+            store,
+            level,
+            unit,
+        })
     };
     snap.player = self_q.iter().next().and_then(|(entity, store)| {
         let level = store.0.unit_level().unwrap_or(0);
@@ -379,6 +428,12 @@ fn feed_spell_info(
         caster(entity, &store, snap.pet.take(), level)
     });
     cast_now.refresh(&mut snap.cast, reinstall);
+    snap.units.clear();
+    for guid in script.held_unit_guids() {
+        if let Some(facts) = targeting.range_facts(guid) {
+            snap.units.insert(guid, facts);
+        }
+    }
 }
 
 /// The self player's store, running cast, attack lock and auras.
