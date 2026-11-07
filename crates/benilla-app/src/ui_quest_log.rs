@@ -1161,17 +1161,15 @@ pub(crate) fn feed_quest_log(
 /// Every quest-log slot as `(quest id, state)`, the slot watcher's input.
 type SlotStates = Vec<(u32, u8)>;
 
-/// The quests the slot watcher announces, per slot as `(quest id, state)`: a quest in a slot that
-/// held none, or the same quest with its fail bit cleared. A slot that swaps one quest for another
-/// announces nothing.
+/// The quests the slot watcher announces (`0x6df3f7`), per slot as `(quest id, state)`: a slot's id
+/// changing to a quest, or the same quest with its fail bit cleared.
 fn accepted_quests(prior: &[(u32, u8)], now: &[(u32, u8)]) -> Vec<u32> {
     now.iter()
         .zip(prior)
         .filter(|&(&(id, state), &(was_id, was_state))| {
             id != 0
-                && (was_id == 0
-                    || (was_id == id
-                        && state & quest_slot_state::FAIL == 0
+                && (was_id != id
+                    || (state & quest_slot_state::FAIL == 0
                         && was_state & quest_slot_state::FAIL != 0))
         })
         .map(|(&(id, _), _)| id)
@@ -1860,15 +1858,14 @@ mod tests {
     // ── The accept line ─────────────────────────────────────────────────────────────────────────
 
     #[test]
-    fn the_slot_watcher_announces_a_filled_slot_and_a_cleared_failure_only() {
+    fn the_slot_watcher_announces_a_changed_slot_and_a_cleared_failure_only() {
         use quest_slot_state::FAIL;
         let prior = [(0, 0), (7, 0), (8, FAIL), (9, FAIL), (10, 0), (11, 0)];
         let now = [(783, 0), (7, 0), (8, 0), (9, FAIL), (12, 0), (0, 0)];
         assert_eq!(
             accepted_quests(&prior, &now),
-            [783, 8],
-            "an empty slot filled, and the same quest with its fail bit cleared; a kept quest, a \
-             kept failure, a slot swapping quests and a cleared slot say nothing"
+            [783, 8, 12],
+            "an empty slot filled, the same quest with its fail bit cleared and a slot swapping \n             quests; a kept quest, a kept failure and a cleared slot say nothing"
         );
     }
 
