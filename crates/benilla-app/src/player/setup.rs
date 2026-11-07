@@ -13,8 +13,8 @@ use benilla_world::terrain_stream::SPAWN_XY;
 use benilla_world::view::{WorldCamera, CAM_FAR, CAM_FOVY, NEARCLIP_DEFAULT};
 
 use super::{
-    CameraControl, FlyCam, MoveSpeed, Player, PlayerCapsule, CAM_DIST_DEFAULT, CAPSULE_HEIGHT,
-    CAPSULE_RADIUS,
+    CameraControl, CollisionArm, FlyCam, MoveSpeed, Player, PlayerCapsule, CAM_DIST_DEFAULT,
+    CAPSULE_HEIGHT, CAPSULE_RADIUS,
 };
 
 /// The stock run speed, `MOVE_RUN` 7.0 yd/s, until the server's speeds stream in.
@@ -74,7 +74,7 @@ pub(super) fn setup_player(
     commands.insert_resource(CameraControl {
         distance: CAM_DIST_DEFAULT,
         target_distance: CAM_DIST_DEFAULT,
-        collision_distance: CAM_DIST_DEFAULT,
+        collision_arm: CollisionArm::at(CAM_DIST_DEFAULT),
         // Opaque until `control` first computes the fade.
         self_fade_alpha: 1.0,
         ..default()
