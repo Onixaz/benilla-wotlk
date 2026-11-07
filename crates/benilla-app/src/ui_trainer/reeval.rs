@@ -22,6 +22,8 @@ pub(super) struct SkillSlot {
 pub(super) struct PlayerView {
     /// The player's known-spell set, the bitmap the known-spell test (`0x7260e0`) reads.
     pub known: BTreeSet<u32>,
+    /// The player's race and class, which the higher-rank walk's ability lookup keys on.
+    pub race_class: (u8, u8),
     pub level: u32,
     /// The occupied `PLAYER_SKILL_INFO` slots, in slot order.
     pub skills: Vec<SkillSlot>,
@@ -41,9 +43,10 @@ impl PlayerView {
 pub(super) fn known_or_higher(
     id: u32,
     known: &BTreeSet<u32>,
+    (race, class): (u8, u8),
     skill_lines: &SkillLineCatalog,
 ) -> bool {
-    known.contains(&id) || skill_lines.higher_rank_known(id, known)
+    known.contains(&id) || skill_lines.higher_rank_known(id, race, class, known)
 }
 
 /// One row of `0x596b00`: a wire spell with no `Spell.dbc` record keeps its wire state
@@ -82,7 +85,7 @@ pub(super) fn re_derive(
             LearnEffect::Other => wire.spell,
         };
         counted += 1;
-        if known_or_higher(id, &player.known, skill_lines) {
+        if known_or_higher(id, &player.known, player.race_class, skill_lines) {
             known += 1;
         }
         // The row's own spell ends the loop (`0x596ce8`).
@@ -109,7 +112,7 @@ pub(super) fn re_derive(
         .req_spells
         .iter()
         .filter(|&&id| id != 0)
-        .all(|&id| known_or_higher(id, &player.known, skill_lines));
+        .all(|&id| known_or_higher(id, &player.known, player.race_class, skill_lines));
     // An unlearned spell is gray before the ability and level tests (`0x596f66`).
     if player.unlearned.contains(&wire.spell) {
         return GRAY;

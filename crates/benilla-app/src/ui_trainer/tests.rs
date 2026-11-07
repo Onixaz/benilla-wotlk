@@ -32,6 +32,7 @@ fn probe_strings(key: &str) -> Option<String> {
 fn warrior(known: &[u32]) -> reeval::PlayerView {
     reeval::PlayerView {
         known: known.iter().copied().collect(),
+        race_class: (1, 1),
         level: 10,
         skills: Vec::new(),
         unlearned: Vec::new(),
@@ -862,6 +863,7 @@ mod re_derive {
     fn player() -> PlayerView {
         PlayerView {
             known: BTreeSet::new(),
+            race_class: (1, 1),
             level: 10,
             skills: Vec::new(),
             unlearned: Vec::new(),

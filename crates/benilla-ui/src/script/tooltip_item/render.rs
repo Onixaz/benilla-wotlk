@@ -139,8 +139,8 @@ pub(super) fn render_view(
             .cvars
             .get("showitemlevel")
             .is_some_and(|c| c.value.trim().parse::<f64>().is_ok_and(|n| n != 0.0));
-        // The known bits (the unit's spell-known test, `0x7260e0`): a mount or companion counts.
-        let knows = |id: u32| model.spellbook.named().any(|s| s.spell_id == id);
+        // The known bits or a higher rank (`0x62b4a2`-`0x62b4ae`, `0x62b50d`-`0x62b51c`).
+        let knows = |id: u32| model.known_spells.known_or_higher(id);
         let known = v.required_spell != 0 && knows(v.required_spell);
         // A taught spell (trigger 6, learn) the player knows: the always-red ITEM_SPELL_KNOWN.
         let taught = v

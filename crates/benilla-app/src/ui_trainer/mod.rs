@@ -216,7 +216,13 @@ fn resolve_service(wire: &TrainerSpell, cx: &ResolveCtx) -> TrainerService {
             cx.skill_lines,
             cx.player,
         ),
-        ability_reqs: ability_reqs(wire.req_spells, spells, cx.skill_lines, &cx.player.known),
+        ability_reqs: ability_reqs(
+            wire.req_spells,
+            spells,
+            cx.skill_lines,
+            &cx.player.known,
+            cx.race_class,
+        ),
         skill_step: display.is_some_and(|d| d.effects.contains(&SPELL_EFFECT_SKILL_STEP)),
         step_increase: service_step_increase(wire.spell, spells, cx.skill_lines, cx.get),
         skill_line: service_skill_line(wire.spell, spells, cx.skill_lines, cx.race_class),
@@ -283,6 +289,7 @@ fn player_view(
 ) -> reeval::PlayerView {
     reeval::PlayerView {
         known: known.clone(),
+        race_class: crate::spell::race_class(store),
         unlearned: unlearned.to_vec(),
         level: store.and_then(|s| s.0.unit_level()).unwrap_or(0),
         skills: store

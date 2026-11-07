@@ -7,6 +7,55 @@ use super::{axe, lines_of, right_color, script};
 use crate::script::*;
 
 #[test]
+fn a_known_higher_rank_clears_the_spell_requirement_and_marks_a_taught_spell() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.set_item_template(
+        9,
+        ItemTemplateView {
+            name: "Reins".into(),
+            quality: 1,
+            required_spell: 100,
+            required_spell_name: Some("Riding".into()),
+            spell_triggers: vec![(6, 100, String::new())],
+            ..Default::default()
+        },
+    );
+    let read = |s: &mut UiScript| {
+        s.run(
+            r#"
+            local a = Slot9 or CreateFrame("Button", "Slot9"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+            local tt = TT or CreateFrame("GameTooltip", "TT")
+            tt:SetOwner(a, "ANCHOR_RIGHT")
+            SetItemByIdForTest(tt, 9)
+        "#,
+        )
+        .unwrap();
+        lines_of(s)
+    };
+    let red = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
+    s.set_next_ranks(HashMap::from([(100, 101)]));
+    s.set_known_spells([500]);
+    let lines = read(&mut s);
+    let color = |lines: &[(String, [f32; 4])]| {
+        lines
+            .iter()
+            .find(|(t, _)| t == "[REQ_SKILL Riding]")
+            .unwrap()
+            .1
+    };
+    assert_eq!(color(&lines), red, "no rank known");
+    assert!(!lines.iter().any(|(t, _)| t == "[ITEM_SPELL_KNOWN]"));
+    s.set_known_spells([101]);
+    let lines = read(&mut s);
+    assert_ne!(color(&lines), red, "the higher rank clears the red");
+    assert!(
+        lines.iter().any(|(t, _)| t == "[ITEM_SPELL_KNOWN]"),
+        "a higher rank of a taught spell reads known"
+    );
+}
+
+#[test]
 fn item_line_law_and_red_requirements() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
@@ -135,14 +184,7 @@ fn verified_families_signable_locked_resists_known() {
             ..Default::default()
         },
     );
-    s.set_spellbook(SpellBookState {
-        tabs: Vec::new(),
-        slots: vec![SpellSlotView {
-            spell_id: 2020,
-            ..Default::default()
-        }],
-        ..Default::default()
-    });
+    s.set_known_spells([2020]);
     s.run(
         r#"
         local a = CreateFrame("Button", "Slot5"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
