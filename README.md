@@ -75,28 +75,10 @@ cd benilla-wotlk
 WOW_DATA=/path/to/WoW/Data cargo play
 ```
 
-`cargo ship` builds the release binary, with fat link-time optimization and without a profile,
-into `target/release/` without starting it. It is a drop-in replacement for `Wow.exe`: copy
-`benilla.exe` into the installation directory, beside `Data/`, and start it there. It reads that
-installation and keeps its settings, caches, saved variables, logs and screenshots in the same
-files `Wow.exe` uses, so the two can take turns on one installation. It refuses to start
-anywhere else.
-
-The binary `cargo play` builds runs from `target/play/` instead. Instead of setting `WOW_DATA`, you
-can put a `WoW` link beside it that points to the installation directory:
-
-```powershell
-New-Item -ItemType Junction -Path target\play\WoW -Target "C:\Games\World of Warcraft 3.3.5a"
-```
-
-```sh
-ln -s /path/to/WoW target/play/WoW
-```
-
 ### Faster with a profile
 
 `cargo play` reads a profile of how the game runs on your machine when you have recorded one, and
-builds with profile-guided optimization (PGO): about 20% more frames per second. The repository
+builds with profile-guided optimization (PGO): about 10-20% more frames per second.The repository
 does not ship a profile for `cargo play`; record one once:
 
 ```sh
