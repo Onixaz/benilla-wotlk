@@ -1111,7 +1111,7 @@ pub enum ServerPacket {
     /// `SMSG_GOSSIP_POI`: a guard's directions marker, unrequested (`GossipDef.cpp:253`).
     GossipPoi(GossipPoi),
     /// `SMSG_NPC_TEXT_UPDATE`: always 8 weighted text blocks (`GossipDef.cpp:298-369`), kept
-    /// undrawn; [`super::gossip::select_greeting`] picks one by gender and a roll at frame open.
+    /// undrawn; [`super::gossip::select_block`] picks one by gender and a roll at frame open.
     NpcText {
         text_id: u32,
         blocks: Vec<super::gossip::NpcTextBlock>,

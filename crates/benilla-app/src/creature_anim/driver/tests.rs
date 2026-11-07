@@ -212,6 +212,49 @@ fn stationary_cast_hold_stows_an_engaged_casters_weapon() {
     assert_eq!(sheath(&app), Some(1), "drawn again once the cast resolves");
 }
 
+/// A drained emote queue's restore waits for the body clip's own end, then snaps PREV back.
+#[test]
+fn a_drained_emote_queue_restores_the_sheath_at_the_body_clips_end() {
+    let mut app = app();
+    // No clips: Gait holds no window, and a one-shot counts as finished the frame it plays.
+    let mut model = caster_model();
+    model.clips.clear();
+    let unit = app
+        .world_mut()
+        .spawn((
+            model,
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimDriver::default(),
+            crate::net::SelfPlayer,
+            MovementState::default(),
+        ))
+        .id();
+    app.update(); // settle: Stand, stowed
+    {
+        let mut drv = app.world_mut().get_mut::<AnimDriver>(unit).unwrap();
+        drv.commit_sheath(1);
+        drv.commit_sheath(0);
+        drv.sheath_restore = true;
+    }
+    let drv = |app: &App| {
+        let d = app.world().entity(unit).get::<AnimDriver>().unwrap();
+        (d.sheath_state(), d.sheath_prev, d.sheath_restore)
+    };
+    app.update();
+    assert_eq!(drv(&app), (Some(0), 1, true), "no clip end, no restore");
+
+    app.world_mut().write_message(EmoteAnim {
+        entity: unit,
+        anim_id: 60,
+        seq: 1,
+        via_player: false,
+        remap_special: true,
+    });
+    app.update();
+    assert_eq!(drv(&app), (Some(1), 0, false), "PREV back, the flag spent");
+}
+
 /// The reconcile runs only inside the animation play call, so a playless frame keeps the stow.
 #[test]
 fn moving_cast_hold_keeps_its_stow_between_plays() {

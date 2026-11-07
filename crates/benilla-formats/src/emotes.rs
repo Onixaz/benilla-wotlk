@@ -77,6 +77,13 @@ impl EmoteSoundCatalog {
         self
     }
 
+    /// The same for a row's `EmoteSpecProc`.
+    #[doc(hidden)]
+    pub fn with_spec_proc(mut self, emote_id: u32, spec_proc: u32) -> Self {
+        self.spec_proc.insert(emote_id, spec_proc);
+        self
+    }
+
     /// The raw `AnimID` of an `Emotes.dbc` row, `0` (Stand) included: the state resolver claims the
     /// base with whatever the row holds (`row+8`), and a missing row claims nothing.
     pub fn state_anim(&self, emote_id: u32) -> Option<u32> {

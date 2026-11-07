@@ -264,24 +264,34 @@ fn npc_text_update_greeting_extraction() {
     // SMSG_NPC_TEXT_UPDATE (vmangos GossipDef.cpp:298-369): always 8 blocks of {f32 probability,
     // cstr text0 (male), cstr text1 (female), u32 languageId, 3x(u32 emoteDelay, u32 emoteId)}.
     fn block(w: &mut Vec<u8>, probability: f32, text0: &str, text1: &str) {
+        emote_block(w, probability, text0, text1, [(0, 0); 3]);
+    }
+    fn emote_block(
+        w: &mut Vec<u8>,
+        probability: f32,
+        text0: &str,
+        text1: &str,
+        emotes: [(u32, u32); 3],
+    ) {
         w.extend_from_slice(&probability.to_le_bytes());
         w.extend_from_slice(text0.as_bytes());
         w.push(0);
         w.extend_from_slice(text1.as_bytes());
         w.push(0);
         w.extend_from_slice(&0u32.to_le_bytes()); // languageId
-        for _ in 0..3 {
-            w.extend_from_slice(&0u32.to_le_bytes()); // emoteDelay
-            w.extend_from_slice(&0u32.to_le_bytes()); // emoteId
+        for (delay, emote) in emotes {
+            w.extend_from_slice(&delay.to_le_bytes());
+            w.extend_from_slice(&emote.to_le_bytes());
         }
     }
 
-    // The parse carries all 8 blocks; `select_greeting` picks one.
+    // The parse carries all 8 blocks; `select_block` picks one.
     let mut body = 321u32.to_le_bytes().to_vec(); // textID
     block(&mut body, 0.1, "Low probability greeting", "");
     block(&mut body, 0.0, "", "");
     block(&mut body, 0.0, "", "");
-    block(&mut body, 0.5, "Welcome, $N!", "Welcome, traveler!");
+    let emotes = [(100, 1), (0, 0), (300, 6)];
+    emote_block(&mut body, 0.5, "Welcome, $N!", "Welcome, traveler!", emotes);
     block(&mut body, 0.0, "", "");
     block(&mut body, 0.0, "", "");
     block(&mut body, 0.2, "", "Female-only greeting");
@@ -295,6 +305,9 @@ fn npc_text_update_greeting_extraction() {
             assert_eq!(blocks[3].male, "Welcome, $N!");
             assert_eq!(blocks[3].female, "Welcome, traveler!");
             assert_eq!(blocks[6].female, "Female-only greeting");
+            assert_eq!(blocks[3].emotes, emotes);
+            assert_eq!(blocks[3].played_emotes(), [(100, 1)], "a zero ends the run");
+            assert!(blocks[0].played_emotes().is_empty());
         }
         other => panic!("npc text update, got {}", other.name()),
     }
@@ -317,7 +330,9 @@ fn npc_text_update_greeting_extraction() {
             // full sum the last; the male column skips block 6, the female column block 0.
             const NEAR: f32 = 1.999_999_9;
             const FAR: f32 = 1.0;
-            let pick = |gender, roll| messages::select_greeting(&blocks, gender, roll);
+            let pick = |gender, roll| {
+                messages::select_block(&blocks, gender, roll).map(|block| block.line(gender))
+            };
             assert_eq!(pick(0, NEAR), Some("Low probability greeting"));
             assert_eq!(pick(0, FAR), Some("Welcome, $N!"));
             assert_eq!(pick(1, NEAR), Some("Welcome, traveler!"));
@@ -331,13 +346,17 @@ fn npc_text_update_greeting_extraction() {
 /// non-empty.
 #[test]
 fn greeting_draw_follows_the_weighted_law() {
-    use benilla_protocol::messages::{select_greeting, NpcTextBlock};
+    use benilla_protocol::messages::{select_block, NpcTextBlock};
 
     let b = |probability: f32, male: &str, female: &str| NpcTextBlock {
         probability,
         male: male.into(),
         female: female.into(),
+        ..Default::default()
     };
+    fn select_greeting(blocks: &[NpcTextBlock], gender: u8, roll: f32) -> Option<&str> {
+        select_block(blocks, gender, roll).map(|block| block.line(gender))
+    }
     // The threshold is (2 - roll) * sum for roll in [1, 2): FAR gives the sum, NEAR nearly 0.
     const NEAR: f32 = 1.999_999_9;
     const FAR: f32 = 1.0;

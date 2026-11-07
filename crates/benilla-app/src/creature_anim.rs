@@ -662,9 +662,12 @@ pub(crate) struct AnimDriver {
     /// The reference's `[unit+0xd58] & 0xc0000`: while Knockdown, LiftOff or Land holds it, base
     /// requests are refused, so a stun's knockdown survives the root's Stand recompute.
     base_lock: driver::play::BaseAnimLock,
-    /// The committed sheath state, the reference's `[unit+0xd40]`: seeded from the descriptor,
-    /// re-adopted when it changes, overwritten by requests and the reconcile.
+    /// The committed sheath state `[unit+0xb5c]`: seeded from the descriptor, set by the setter.
     sheath_cur: Option<u8>,
+    /// The state before it `[unit+0xb58]`, which a body clip's end restores after a queued emote.
+    sheath_prev: u8,
+    /// `[unit+0xa38] & 0x8000`: the emote queue drained, so the next body clip end restores.
+    sheath_restore: bool,
     /// The last descriptor sheath byte, to detect changes.
     sheath_byte: Option<u8>,
     /// The pending mid-animation weapon swap while a draw/stow one-shot plays.
@@ -787,6 +790,8 @@ impl Default for AnimDriver {
             interact_hold: false,
             base_lock: driver::play::BaseAnimLock::default(),
             sheath_cur: None,
+            sheath_prev: 0,
+            sheath_restore: false,
             sheath_byte: None,
             sheath_swap: None,
             started_anim: false,
@@ -835,6 +840,20 @@ impl AnimDriver {
     /// The client-side sheath state (0 stowed, 1 melee, 2 ranged), `None` until driven.
     pub(crate) fn sheath_state(&self) -> Option<u8> {
         self.sheath_cur
+    }
+
+    /// The setter's commit (`0x737019`-`0x73702b`): a change keeps the old state as PREV.
+    fn commit_sheath(&mut self, state: u8) {
+        if self.sheath_cur != Some(state) {
+            self.sheath_prev = self.sheath_cur.unwrap_or(state);
+            self.sheath_cur = Some(state);
+        }
+    }
+
+    /// The emote setter's hand-off (`0x71a30c`-`0x71a31c`): drop a pending restore, re-base PREV.
+    fn hand_off_sheath(&mut self) {
+        self.sheath_restore = false;
+        self.sheath_prev = self.sheath_cur.unwrap_or(self.sheath_prev);
     }
 
     /// Whether this unit started an animation this frame.
