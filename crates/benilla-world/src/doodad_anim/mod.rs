@@ -130,6 +130,13 @@ pub fn wants_rig(m: &M2Model) -> bool {
         )
 }
 
+/// Whether [`spawn_anim_host`] would host this model: [`wants_rig`] or a bind-posed sound arm.
+pub(crate) fn wants_host(m: &M2Model) -> bool {
+    wants_rig(m)
+        || (!crate::dev_state::deterministic_run()
+            && m.animations.as_ref().is_some_and(arms_for_sound))
+}
+
 /// Spawn the animation host for one placed M2 that animates: a root at the placement transform with
 /// the collapsed [`RigPose`] and, per tier, an `AnimationPlayer` looping the loader-idle seed (the
 /// reference's load arm, `(bone 0, animation id 0, linkFlag=1)`) and/or a [`GlobalSeqDrive`].
@@ -139,17 +146,14 @@ pub fn spawn_anim_host(
     m: &M2Model,
     transform: Transform,
 ) -> Option<AnimHostSpawn> {
-    // Captures keep every doodad static, so their frames are deterministic.
-    if crate::dev_state::deterministic_run() {
+    // No host for a capture, whose frames are deterministic, or a model nothing arms.
+    if !wants_host(m) {
         return None;
     }
     let tier = classify(&m.skeleton, m.animations.as_ref());
     // The sound arm, orthogonal to the tier: a bind-posed model still runs its event track, as in
     // the reference, so it gets a host with the arm bookkeeping but no `AnimationPlayer`.
     let sound_arm = m.animations.as_ref().is_some_and(arms_for_sound);
-    if matches!(tier, DoodadAnimTier::Static) && !sound_arm {
-        return None;
-    }
     let anims = m
         .animations
         .as_ref()
@@ -397,19 +401,20 @@ fn gate_doodad_anim(
         // a delay. It needs a second drawn frame (`host.active`): on its first, a spawned part's
         // `Visibility` is still the `Inherited` default the fade and cull authorities have not
         // judged, so every far doodad of a new tile reads drawn.
-        if drawn && host.active && !has_rig {
+        if drawn && !has_rig {
             if let Some(lazy) = lazy {
-                // A full table re-walks next frame to retry; a landed promote rigs the host.
-                pending |= !lazy::promote_lazy_rig(
-                    &mut commands,
-                    &mut palettes,
-                    &ibps,
-                    &worlds,
-                    entity,
-                    lazy,
-                    pose,
-                    &mut twin_parts,
-                );
+                // A first drawn frame or a full table re-walks next frame: a still scene would not.
+                pending |= !host.active
+                    || !lazy::promote_lazy_rig(
+                        &mut commands,
+                        &mut palettes,
+                        &ibps,
+                        &worlds,
+                        entity,
+                        lazy,
+                        pose,
+                        &mut twin_parts,
+                    );
             }
         }
         // An undrawn host that never was drawn still parks: born out of view, its global

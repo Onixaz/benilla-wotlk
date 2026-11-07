@@ -129,19 +129,24 @@ pub fn spawn_model_entities(
     // The anim host serves any joint consumer: a skinned part, an emitter or a ribbon, and a
     // billboard batch drawn through the palette. Under `$WOW_BILLBOARD_CARDS` a model of cards
     // alone gets none, as the billboard system then owns their transforms.
-    let mut host = m2
-        .filter(|(m, _)| {
-            submeshes
-                .iter()
-                .any(|s| s.billboard.is_none() || !billboard_cards())
-                || !m.emitters.is_empty()
-                || !m.ribbons.is_empty()
-        })
-        .filter(|_| !matches!(mode, SpawnMode::DivertOnly))
+    let hostable = m2.filter(|(m, _)| {
+        submeshes
+            .iter()
+            .any(|s| s.billboard.is_none() || !billboard_cards())
+            || !m.emitters.is_empty()
+            || !m.ribbons.is_empty()
+    });
+    let dormant = matches!(mode, SpawnMode::DivertOnly);
+    let mut host = hostable
+        .filter(|_| !dormant)
         .and_then(|(m, _)| crate::doodad_anim::spawn_anim_host(commands, m, transform));
     // Captures freeze material-alpha clocks at 0, for deterministic frames.
     let mat_frozen = crate::dev_state::deterministic_run();
-    let animated = host.is_some();
+    let animated = rides_host(
+        host.is_some(),
+        dormant,
+        hostable.is_some_and(|(m, _)| crate::doodad_anim::wants_host(m)),
+    );
     let rig_root = host.as_ref().map(|h| h.root);
     if let Some(h) = &host {
         out.push(h.root);
@@ -468,7 +473,7 @@ pub fn spawn_model_entities(
         }
         // Past the diverts: the entity phase's batch, which a dormant placement only notes.
         entity_batches[batch_idx] = true;
-        if matches!(mode, SpawnMode::DivertOnly) {
+        if dormant {
             continue;
         }
         // Register both materials for the UV scroll (idempotent per material). A per-sequence set
@@ -825,6 +830,11 @@ pub fn spawn_model_entities(
     }
 }
 
+/// Whether batches keep out of the static lanes, which draw bind pose, for a host now or at wake.
+fn rides_host(hosted: bool, dormant: bool, wake_hosts: bool) -> bool {
+    hosted || (dormant && wake_hosts)
+}
+
 /// `$WOW_BILLBOARD_CARDS=1`: every billboard batch stays a card, the palette lane's A/B and its
 /// fallback.
 fn billboard_cards() -> bool {
@@ -896,6 +906,14 @@ mod tests {
         let b = cull_bound(Some(&bind), None).expect("a bound");
         assert!(Vec3::from(b.min()).abs_diff_eq(Vec3::splat(-1.0), 1e-4));
         assert!(Vec3::from(b.max()).abs_diff_eq(Vec3::splat(1.0), 1e-4));
+    }
+
+    #[test]
+    fn a_dormant_placement_keeps_the_batches_its_wake_will_rig() {
+        assert!(rides_host(true, false, true), "awake: the host itself");
+        assert!(rides_host(false, true, true), "asleep: the wake's host");
+        assert!(!rides_host(false, true, false), "a static model diverts");
+        assert!(!rides_host(false, false, false), "no host, no reason");
     }
 
     /// The ballista's shape: section 10 drawn twice (base and shine), section 4 once.
