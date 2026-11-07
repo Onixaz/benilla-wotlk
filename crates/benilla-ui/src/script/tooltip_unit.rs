@@ -671,8 +671,73 @@ impl super::UiScript {
     }
 }
 
+/// `SetHyperlink`'s `unit:` arm (`0x62dae0`): the guid's hex, toggled like the others, for a unit
+/// some token still names.
+pub(super) fn set_unit_link(
+    lua: &Lua,
+    this: &Table,
+    h: crate::widget::FrameHandle,
+    guid: &str,
+) -> mlua::Result<()> {
+    let digits = guid.trim_start_matches("0x").trim_start_matches("0X");
+    let end = digits
+        .find(|c: char| !c.is_ascii_hexdigit())
+        .unwrap_or(digits.len());
+    let guid = u64::from_str_radix(&digits[..end], 16).unwrap_or(0);
+    let (same, token) = {
+        let mut model = crate::script::model_mut_of(lua);
+        let shown = model.arena.frame(h).is_some_and(|f| f.shown);
+        let same = shown
+            && crate::script::tooltip::tip_mut(&mut model, h)
+                .is_ok_and(|t| t.unit_guid == Some(guid));
+        (
+            same,
+            model.unit_guids.tokens_naming(guid).into_iter().next(),
+        )
+    };
+    if same {
+        crate::script::tooltip::hide_tooltip(lua, h);
+    } else if let Some(token) = token {
+        render_unit(lua, this, &token)?;
+    }
+    Ok(())
+}
+
 /// Register the unit content channel into the GameTooltip kind method table.
 pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
+    // GameTooltip:GetUnit() (`0x61dad0`): the shown unit's name and token, nil token for one no
+    // token names, nothing without a unit.
+    m.set(
+        "GetUnit",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let (name, token) = {
+                let mut model = crate::script::model_mut_of(lua);
+                let Some(guid) = crate::script::tooltip::tip_mut(&mut model, h)
+                    .ok()
+                    .and_then(|t| t.unit_guid)
+                else {
+                    return Ok(mlua::MultiValue::new());
+                };
+                let token = model.unit_guids.tokens_naming(guid).into_iter().next();
+                let name = token
+                    .as_deref()
+                    .and_then(|t| model.unit(t))
+                    .and_then(|u| u.name.clone());
+                (name, token)
+            };
+            let Some(name) = name else {
+                return Ok(mlua::MultiValue::new());
+            };
+            Ok(mlua::MultiValue::from_vec(vec![
+                mlua::Value::String(lua.create_string(&name)?),
+                match token {
+                    Some(t) => mlua::Value::String(lua.create_string(&t)?),
+                    None => mlua::Value::Nil,
+                },
+            ]))
+        })?,
+    )?;
     // GameTooltip:SetUnit(token) → 1 or nil, which `UnitFrame_OnEnter` reads to arm its re-poll.
     m.set(
         "SetUnit",

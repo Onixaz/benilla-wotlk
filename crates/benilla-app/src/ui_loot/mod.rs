@@ -211,6 +211,7 @@ impl LootState {
             count: p.count,
             display_info_id: p.display_info_id,
             random_property_id: p.random_property_id,
+            random_suffix: p.random_suffix,
             slot_type: kind,
         };
         let row = match row {
@@ -663,9 +664,10 @@ fn resolve_item(
                 Some(t.quality),
                 Some(crate::ui_items::item_link_full(
                     item.item_id,
-                    0,
-                    item.random_property_id,
-                    0,
+                    &benilla_ui::script::ItemLinkFields::roll(
+                        item.random_property_id as i32,
+                        item.random_suffix as i32,
+                    ),
                     &name,
                     t.quality,
                 )),
@@ -788,9 +790,10 @@ fn receive_line(r: &PendingReceive, name: &str, quality: u32) -> String {
     };
     let link = crate::ui_items::item_link_full(
         r.entry,
-        0,
-        r.random_property_id,
-        r.suffix_factor,
+        &benilla_ui::script::ItemLinkFields::roll(
+            r.random_property_id as i32,
+            r.suffix_factor as i32,
+        ),
         name,
         quality,
     );
@@ -2072,6 +2075,7 @@ mod tests {
             count,
             display_info_id: 1000 + entry,
             random_property_id: 0,
+            random_suffix: 0,
             slot_type: 0,
         }
     }
@@ -2406,21 +2410,21 @@ mod tests {
         // Common, single: `LOOT_ITEM_SELF`.
         assert_eq!(
             receive_line(&pending(2589, 1, false, false), "Linen Cloth", 1),
-            "You receive loot: |cffffffff|Hitem:2589:0:0:0|h[Linen Cloth]|h|r."
+            "You receive loot: |cffffffff|Hitem:2589:0:0:0:0:0:0:0:0|h[Linen Cloth]|h|r."
         );
         // Poor, stacked: `LOOT_ITEM_SELF_MULTIPLE`, with no space before `x2`.
         assert_eq!(
             receive_line(&pending(7092, 2, false, false), "Chipped Claw", 0),
-            "You receive loot: |cff9d9d9d|Hitem:7092:0:0:0|h[Chipped Claw]|h|rx2."
+            "You receive loot: |cff9d9d9d|Hitem:7092:0:0:0:0:0:0:0:0|h[Chipped Claw]|h|rx2."
         );
         // The (created, received) pair picks the verb, created winning over received.
         assert_eq!(
             receive_line(&pending(4306, 1, true, false), "Silk Cloth", 2),
-            "You receive item: |cff1eff00|Hitem:4306:0:0:0|h[Silk Cloth]|h|r."
+            "You receive item: |cff1eff00|Hitem:4306:0:0:0:0:0:0:0:0|h[Silk Cloth]|h|r."
         );
         assert_eq!(
             receive_line(&pending(2320, 4, true, true), "Coarse Thread", 1),
-            "You create: |cffffffff|Hitem:2320:0:0:0|h[Coarse Thread]|h|rx4."
+            "You create: |cffffffff|Hitem:2320:0:0:0:0:0:0:0:0|h[Coarse Thread]|h|rx4."
         );
     }
 
@@ -2436,7 +2440,7 @@ mod tests {
         let r = loot.receives.pop().expect("queued");
         assert_eq!(
             receive_line(&r, "Bloodrazor", 3),
-            "You receive loot: |cff0070dd|Hitem:15268:0:862:1234|h[Bloodrazor]|h|r."
+            "You receive loot: |cff0070dd|Hitem:15268:0:0:0:0:0:862:1234:0|h[Bloodrazor]|h|r."
         );
     }
 
@@ -2492,7 +2496,7 @@ mod tests {
     fn receive_line_clamps_an_out_of_range_quality_to_white() {
         assert_eq!(
             receive_line(&pending(1, 1, false, false), "Odd Thing", 9),
-            "You receive loot: |cffffffff|Hitem:1:0:0:0|h[Odd Thing]|h|r."
+            "You receive loot: |cffffffff|Hitem:1:0:0:0:0:0:0:0:0|h[Odd Thing]|h|r."
         );
     }
 

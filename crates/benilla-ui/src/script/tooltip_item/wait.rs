@@ -71,7 +71,7 @@ pub(super) fn retrieving(lua: &Lua, this: &Table) -> mlua::Result<()> {
     if let Some(text) = crate::strings::global(lua, "RETRIEVING_ITEM_INFO") {
         append_line(lua, this, (text, RED), None, false)?;
     }
-    Ok(())
+    super::fire_set_item(lua, this)
 }
 
 /// The bindings whose builder registers the item callback: every item content setter.
@@ -220,6 +220,8 @@ fn answer_wait(lua: &Lua, h: FrameHandle) -> mlua::Result<()> {
         .map(|i| call.raw_get::<Value>(i))
         .collect::<mlua::Result<Vec<_>>>()?;
     let f: Function = frame_wrapper(lua, id)?.get(method)?;
-    f.call::<MultiValue>(MultiValue::from_vec(args))?;
-    Ok(())
+    crate::script::model_mut_of(lua).item_setter_again = true;
+    let result = f.call::<MultiValue>(MultiValue::from_vec(args));
+    crate::script::model_mut_of(lua).item_setter_again = false;
+    result.map(|_| ())
 }

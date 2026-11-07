@@ -514,7 +514,7 @@ fn the_loot_window_draws_over_the_party_frames() {
 #[test]
 fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
     benilla_formats::wow_data_or_skip!();
-    const WOOL_LINK: &str = "|cffffffff|Hitem:2589:0:0:0|h[Wool Cloth]|h|r";
+    const WOOL_LINK: &str = "|cffffffff|Hitem:2589:0:0:0:0:0:0:0:0|h[Wool Cloth]|h|r";
     let mut s = stock_ui(1024.0, 768.0);
 
     s.set_loot(Some(LootState {
@@ -623,7 +623,7 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
     );
 
     // Ctrl on gloves: the dressing room wearing them, and no loot.
-    const GLOVES_LINK: &str = "|cffffffff|Hitem:2582:0:0:0|h[Thin Cloth Gloves]|h|r";
+    const GLOVES_LINK: &str = "|cffffffff|Hitem:2582:0:0:0:0:0:0:0:0|h[Thin Cloth Gloves]|h|r";
     s.set_item_template(
         2582,
         benilla_ui::script::ItemTemplateView {
@@ -656,7 +656,7 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
     ctrl_click(&mut s, gloves);
     assert_eq!(
         s.take_dressup_intents(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(2582)],
+        vec![DressUpIntent::Dress, DressUpIntent::TryOn(2582, [0; 4])],
         "re-dress first, then try the looted item on"
     );
     assert!(

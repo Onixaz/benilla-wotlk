@@ -223,7 +223,7 @@ fn feed_stable(
         &open,
         &names,
         families.as_deref(),
-        talents.as_deref().map(|t| &t.catalog),
+        talents.as_deref().map(|t| &*t.catalog),
         next_slot_cost,
         has_live_pet,
         &commands,

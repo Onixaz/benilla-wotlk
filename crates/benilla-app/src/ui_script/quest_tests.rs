@@ -584,8 +584,8 @@ fn reward_rows_preview_and_post_without_selecting_the_choice() {
     benilla_formats::wow_data_or_skip!();
     let mut s = stock_ui(1024.0, 768.0);
 
-    const SWORD: &str = "|cffffffff|Hitem:2299:0:0:0|h[Worn Sword]|h|r";
-    const MACE: &str = "|cffffffff|Hitem:2300:0:0:0|h[Worn Mace]|h|r";
+    const SWORD: &str = "|cffffffff|Hitem:2299:0:0:0:0:0:0:0:0|h[Worn Sword]|h|r";
+    const MACE: &str = "|cffffffff|Hitem:2300:0:0:0:0:0:0:0:0|h[Worn Mace]|h|r";
     let linked = |id: u32, name: &str, link: &str| QuestItemView {
         item_id: id,
         link: Some(link.into()),
@@ -602,7 +602,7 @@ fn reward_rows_preview_and_post_without_selecting_the_choice() {
         rewards: vec![linked(
             2504,
             "Worn Shortbow",
-            "|cffffffff|Hitem:2504:0:0:0|h[Worn Shortbow]|h|r",
+            "|cffffffff|Hitem:2504:0:0:0:0:0:0:0:0|h[Worn Shortbow]|h|r",
         )],
         ..QuestState::default()
     }));
@@ -652,7 +652,7 @@ fn reward_rows_preview_and_post_without_selecting_the_choice() {
     assert_eq!(
         s.eval::<String>("return ChatFrame1EditBox:GetText()")
             .unwrap(),
-        " |cffffffff|Hitem:2504:0:0:0|h[Worn Shortbow]|h|r"
+        " |cffffffff|Hitem:2504:0:0:0:0:0:0:0:0|h[Worn Shortbow]|h|r"
     );
 
     s.set_modifiers(false, true, false);
@@ -662,7 +662,7 @@ fn reward_rows_preview_and_post_without_selecting_the_choice() {
         s.take_dressup_intents(),
         vec![
             benilla_ui::script::DressUpIntent::Dress,
-            benilla_ui::script::DressUpIntent::TryOn(2299)
+            benilla_ui::script::DressUpIntent::TryOn(2299, [0; 4])
         ],
         "ctrl-click opened the room wearing choice 1"
     );

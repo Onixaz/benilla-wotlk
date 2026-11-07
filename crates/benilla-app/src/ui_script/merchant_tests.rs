@@ -1013,7 +1013,7 @@ fn trade_recipient_money_renders_the_digit_not_ellipsis() {
 #[test]
 fn ctrl_and_shift_on_a_vendor_row_take_the_modified_click_and_never_buy() {
     benilla_formats::wow_data_or_skip!();
-    const WATER_LINK: &str = "|cffffffff|Hitem:159:0:0:0|h[Refreshing Spring Water]|h|r";
+    const WATER_LINK: &str = "|cffffffff|Hitem:159:0:0:0:0:0:0:0:0|h[Refreshing Spring Water]|h|r";
     let mut s = stock_ui(1024.0, 768.0);
 
     s.set_money(12_345);

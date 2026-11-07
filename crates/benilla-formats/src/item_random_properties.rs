@@ -38,8 +38,16 @@ pub struct RandomProperty {
 /// `ItemRandomProperties.dbc` keyed by id, for the name suffix and the tooltip's enchants.
 pub struct RandomPropertyCatalog {
     rows: HashMap<u32, RandomProperty>,
-    /// `ItemRandomSuffix.dbc`'s enUS names by row, the names a negative id takes.
-    suffixes: HashMap<u32, String>,
+    /// `ItemRandomSuffix.dbc` by row, what a negative id takes.
+    suffixes: HashMap<u32, RandomSuffix>,
+}
+
+/// One `ItemRandomSuffix` row: the enUS name, and the enchants with their budget shares.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RandomSuffix {
+    pub name: String,
+    pub enchants: [u32; RANDOM_PROPERTY_SLOTS],
+    pub allocation: [u32; RANDOM_PROPERTY_SLOTS],
 }
 
 impl RandomPropertyCatalog {
@@ -59,7 +67,7 @@ impl RandomPropertyCatalog {
             _ => Some(
                 self.suffixes
                     .get(&id.unsigned_abs())
-                    .map_or("", String::as_str),
+                    .map_or("", |r| r.name.as_str()),
             ),
         }
     }
@@ -73,9 +81,9 @@ impl RandomPropertyCatalog {
         }
     }
 
-    /// Every random suffix as `(row, name)`, for the whole-table push to the engine.
-    pub fn iter_suffixes(&self) -> impl Iterator<Item = (u32, &str)> + '_ {
-        self.suffixes.iter().map(|(&id, n)| (id, n.as_str()))
+    /// Every random suffix by row, for the whole-table push to the engine.
+    pub fn iter_suffixes(&self) -> impl Iterator<Item = (u32, &RandomSuffix)> + '_ {
+        self.suffixes.iter().map(|(&id, r)| (id, r))
     }
 
     /// Every row as `(id, row)`, for the whole-table push to the engine.
@@ -143,11 +151,14 @@ pub fn load_random_property_catalog(chain: &mut Chain) -> Result<RandomPropertyC
     }
     Ok(RandomPropertyCatalog {
         rows,
-        suffixes: load_suffix_names(chain),
+        suffixes: load_suffixes(chain),
     })
 }
 
 const ITEM_RANDOM_SUFFIX: &str = "DBFilesClient\\ItemRandomSuffix.dbc";
+
+/// The first enchant column: past the id, the 17-column name and the internal name.
+const SUFFIX_ENCHANT: usize = 19;
 
 /// `ItemRandomSuffix.dbc`: 29 columns, 116 bytes: the id, the 17-column name, the internal name,
 /// five enchants and five allocation shares.
@@ -167,8 +178,8 @@ pub(crate) fn item_random_suffix_schema() -> Schema {
     s
 }
 
-/// The suffix names by row; an unreadable file names none, so a negative id reads its suffix empty.
-fn load_suffix_names(chain: &mut Chain) -> HashMap<u32, String> {
+/// The suffixes by row; an unreadable file names none, so a negative id reads its suffix empty.
+fn load_suffixes(chain: &mut Chain) -> HashMap<u32, RandomSuffix> {
     let Ok(bytes) = chain.read_file(ITEM_RANDOM_SUFFIX) else {
         return HashMap::new();
     };
@@ -177,7 +188,19 @@ fn load_suffix_names(chain: &mut Chain) -> HashMap<u32, String> {
     };
     rs.records()
         .iter()
-        .filter_map(|r| Some((u32_at(r, 0)?, str_at(&rs, r, 1)?)))
+        .filter_map(|r| {
+            let at = |base: usize| -> [u32; RANDOM_PROPERTY_SLOTS] {
+                std::array::from_fn(|i| u32_at(r, base + i).unwrap_or(0))
+            };
+            Some((
+                u32_at(r, 0)?,
+                RandomSuffix {
+                    name: str_at(&rs, r, 1)?,
+                    enchants: at(SUFFIX_ENCHANT),
+                    allocation: at(SUFFIX_ENCHANT + RANDOM_PROPERTY_SLOTS),
+                },
+            ))
+        })
         .collect()
 }
 

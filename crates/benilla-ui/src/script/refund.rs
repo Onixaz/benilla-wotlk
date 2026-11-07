@@ -181,8 +181,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Value::Integer(i64::from(count)),
                     match &view {
                         Some(v) => {
+                            let level = crate::script::model_mut_of(lua).player_req.level;
                             Value::String(lua.create_string(super::item_stats::item_link(
-                                id, &v.name, v.quality,
+                                id, &v.name, v.quality, level,
                             ))?)
                         }
                         None => Value::Nil,

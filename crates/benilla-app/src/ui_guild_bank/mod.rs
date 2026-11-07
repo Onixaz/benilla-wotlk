@@ -278,9 +278,14 @@ impl BankCatalogs<'_> {
             count: s.count,
             link: Some(crate::ui_items::item_link_full(
                 s.item_id,
-                s.enchant,
-                roll,
-                s.suffix_factor,
+                &benilla_ui::script::ItemLinkFields {
+                    enchant: s.enchant as i32,
+                    gems: s.gems.map(|g| g as i32),
+                    ..benilla_ui::script::ItemLinkFields::roll(
+                        s.random_property_id,
+                        s.suffix_factor as i32,
+                    )
+                },
                 &name,
                 t.quality,
             )),

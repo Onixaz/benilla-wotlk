@@ -34,7 +34,7 @@ use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 /// The talent catalog (`Talent.dbc`, `TalentTab.dbc`), absent when the client data failed to load.
 #[derive(Resource)]
 pub(crate) struct Talents {
-    pub(crate) catalog: TalentCatalog,
+    pub(crate) catalog: std::sync::Arc<TalentCatalog>,
 }
 
 /// The player's talent groups as the last `SMSG_TALENTS_INFO` named them (`0xc21030`).
@@ -167,7 +167,9 @@ fn load_talents(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     match loaded {
         Ok(catalog) => {
             info!("ui_talent: {} talent(s) in the catalog", catalog.len());
-            commands.insert_resource(Talents { catalog });
+            commands.insert_resource(Talents {
+                catalog: std::sync::Arc::new(catalog),
+            });
         }
         Err(e) => warn!("ui_talent: Talent.dbc failed to load — no talent window: {e:#}"),
     }

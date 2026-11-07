@@ -57,7 +57,7 @@ fn linen(slot_guid: u32, count: u32) -> MailAttachmentView {
         texture: Some("Interface\\Icons\\INV_Fabric_Linen_01".into()),
         count,
         quality: 1,
-        link: Some("|cffffffff|Hitem:2589:0:0:0|h[Linen Cloth]|h|r".into()),
+        link: Some("|cffffffff|Hitem:2589:0:0:0:0:0:0:0:0|h[Linen Cloth]|h|r".into()),
         random_property_id: 0,
     }
 }
@@ -141,7 +141,7 @@ fn seat_send_tab(s: &mut UiScript) {
                 count: 10 * slot,
                 quality: Some(1),
                 texture: Some("Interface\\Icons\\INV_Fabric_Linen_01".into()),
-                link: Some("|cffffffff|Hitem:2589:0:0:0|h[Linen Cloth]|h|r".into()),
+                link: Some("|cffffffff|Hitem:2589:0:0:0:0:0:0:0:0|h[Linen Cloth]|h|r".into()),
                 ..Default::default()
             },
         );

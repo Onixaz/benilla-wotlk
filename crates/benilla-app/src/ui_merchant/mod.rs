@@ -325,7 +325,10 @@ fn resolve_buyback(
         num_available: 0,
         item_id: entry,
         stats,
-        link: template.map(|t| item_link(entry, &t.name, t.quality)),
+        link: template.zip(obj).map(|(t, o)| {
+            let fields = crate::ui_items::object_link_fields(o, t.flags);
+            crate::ui_items::item_link_full(entry, &fields, &t.name, t.quality)
+        }),
         // No max stack: `GetMerchantItemMaxStack` indexes the merchant list, and a buyback row
         // is bought whole.
         max_stack: None,

@@ -164,7 +164,7 @@ fn ctrl_click_on_a_bag_item_opens_the_room_wearing_it() {
     );
     assert_eq!(
         s.take_dressup_intents(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(117)],
+        vec![DressUpIntent::Dress, DressUpIntent::TryOn(117, [0; 4])],
         "re-dress first, then try the clicked item on"
     );
     assert!(
@@ -234,7 +234,7 @@ fn ctrl_clicking_a_chat_link_previews_it() {
 
     assert_eq!(
         s.take_dressup_intents(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(117)],
+        vec![DressUpIntent::Dress, DressUpIntent::TryOn(117, [0; 4])],
         "a chat link's id reached TryOn through DressUpItemLink's own gsub"
     );
     assert!(
@@ -277,7 +277,7 @@ fn the_paper_doll_slots_preview_and_post_what_you_wear() {
     s.set_modifiers(false, false, false);
     assert_eq!(
         s.take_dressup_intents(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(1234)]
+        vec![DressUpIntent::Dress, DressUpIntent::TryOn(1234, [0; 4])]
     );
 
     assert!(s.focus_editbox("ChatFrameEditBox"));

@@ -177,6 +177,8 @@ fn template_view(
     caster: Option<&dyn benilla_formats::Caster>,
     // The socket bonus's name.
     enchants: Option<&crate::items::Enchants>,
+    // `GetItemUniqueness`'s quantity.
+    limits: Option<&crate::ui_trade::ItemLimitCategories>,
 ) -> benilla_ui::script::ItemTemplateView {
     let spell_name = |id: u32| -> Option<String> {
         spells
@@ -271,6 +273,20 @@ fn template_view(
         item_set: t.item_set,
         random_property: t.random_property,
         recipe_creates: recipe_creates(t, spells),
+        item_spells: t
+            .spells
+            .iter()
+            .filter(|s| s.spell_id != 0)
+            .map(|s| benilla_ui::script::ItemSpellView {
+                spell: s.spell_id,
+                trigger: s.trigger,
+                charges: s.charges,
+            })
+            .collect(),
+        bag_family: t.bag_family,
+        item_limit: limits
+            .and_then(|l| l.0.get(t.item_limit_category))
+            .map(|c| (c.id, c.quantity)),
         socket_colors: t.socket_colors,
         socket_bonus: t.socket_bonus,
         socket_bonus_name: (t.socket_bonus != 0)
@@ -297,7 +313,7 @@ fn template_view(
 /// The item a recipe teaches to make (`IsDressableItem` `0x517530`): a trigger spell whose first
 /// effect is learn-spell (36), teaching its trigger spell, or else the item's own learn-trigger
 /// (6) spell, whose first effect creates (24) an item.
-fn recipe_creates(t: &ItemInfo, spells: Option<&crate::ui_action::Spells>) -> u32 {
+pub(crate) fn recipe_creates(t: &ItemInfo, spells: Option<&crate::ui_action::Spells>) -> u32 {
     let Some(catalog) = spells.map(|s| &s.catalog) else {
         return 0;
     };
@@ -486,9 +502,19 @@ pub(super) fn feed_random_properties(
         props
             .0
             .iter_suffixes()
-            .map(|(id, name)| (id, name.to_string()))
+            .map(|(id, r)| {
+                (
+                    id,
+                    benilla_ui::script::RandomSuffixView {
+                        name: r.name.clone(),
+                        enchants: r.enchants,
+                        allocation: r.allocation,
+                    },
+                )
+            })
             .collect(),
     );
+    script.set_enchant_rows(crate::items::enchant_rows(&enchants));
     *pushed.get(&script) = true;
 }
 
@@ -514,10 +540,11 @@ pub(crate) fn feed_item_stats(
     sub_classes: Option<Res<super::ItemSubClasses>>,
     // `GetItemInfo`'s `itemType` and `itemTexture`.
     classes: Option<Res<super::ItemClasses>>,
-    // The bag icons, and the socket bonus's name.
-    (icons, enchants): (
+    // The bag icons, the socket bonus's name and the limit category's quantity.
+    (icons, enchants, limits): (
         Option<Res<ItemDisplays>>,
         Option<Res<crate::items::Enchants>>,
+        Option<Res<crate::ui_trade::ItemLimitCategories>>,
     ),
     mut pending: Local<crate::ui_script::VmMemo<std::collections::HashSet<u32>>>,
     mut mod_sensitive: Local<crate::ui_script::VmMemo<HashSet<u32>>>,
@@ -624,6 +651,7 @@ pub(crate) fn feed_item_stats(
                         &get,
                         caster,
                         enchants.as_deref(),
+                        limits.as_deref(),
                     ),
                 ))
             })
@@ -842,6 +870,9 @@ fn resolve_slot(
             ..Default::default()
         });
     };
+    let link_fields = objects
+        .object(guid)
+        .map_or_else(Default::default, |o| super::object_link_fields(o, t.flags));
     Some(ContainerSlot {
         guid,
         gems,
@@ -871,9 +902,7 @@ fn resolve_slot(
         // reads its name back off it.
         link: Some(crate::ui_items::item_link_full(
             entry,
-            0,
-            roll,
-            0,
+            &link_fields,
             &rolls.name(&t.name, roll),
             t.quality,
         )),

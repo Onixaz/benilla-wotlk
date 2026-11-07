@@ -67,6 +67,17 @@ pub struct EnchantCatalog {
     conditions: HashMap<u32, EnchantCondition>,
     /// The skill and level an enchant asks of its wearer, for the rows that ask either.
     requirements: HashMap<u32, EnchantRequirement>,
+    /// The three effects by enchant id, for the rows that have one.
+    effects: HashMap<u32, [EnchantEffect; 3]>,
+}
+
+/// One `SpellItemEnchantment` effect: its type, its points and its argument.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EnchantEffect {
+    pub kind: u32,
+    pub points_min: i32,
+    pub points_max: i32,
+    pub arg: u32,
 }
 
 /// An enchant's requirement: `RequiredSkillID` and `RequiredSkillRank`, with the skill's name
@@ -163,6 +174,16 @@ impl EnchantCatalog {
         self.prismatic.get(&enchant_id).copied().unwrap_or(0)
     }
 
+    /// The enchant's three effects, all zero for a row with none.
+    pub fn effects(&self, enchant_id: u32) -> [EnchantEffect; 3] {
+        self.effects.get(&enchant_id).copied().unwrap_or_default()
+    }
+
+    /// Every row's id, in no order.
+    pub fn ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.flags.keys().copied()
+    }
+
     /// Build from explicit maps, for tests; `flags` is also the row set [`Self::has_row`] reads.
     pub fn from_rows(
         visuals: HashMap<u32, i32>,
@@ -178,6 +199,7 @@ impl EnchantCatalog {
             use_spells: HashMap::new(),
             conditions: HashMap::new(),
             requirements: HashMap::new(),
+            effects: HashMap::new(),
         }
     }
 
@@ -367,8 +389,19 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
     let mut prismatic = HashMap::new();
     let mut use_spells = HashMap::new();
     let mut conditions = HashMap::new();
+    let mut effects = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
+        // Effects at columns 2..5, their points at 5..8 and 8..11, their args at 11..14.
+        let row: [EnchantEffect; 3] = std::array::from_fn(|i| EnchantEffect {
+            kind: u32_at(r, 2 + i).unwrap_or(0),
+            points_min: u32_at(r, 5 + i).unwrap_or(0) as i32,
+            points_max: u32_at(r, 8 + i).unwrap_or(0) as i32,
+            arg: u32_at(r, 11 + i).unwrap_or(0),
+        });
+        if row.iter().any(|e| e.kind != 0) {
+            effects.insert(id, row);
+        }
         // Effects at columns 2..5, their minimum points at 5..8.
         if let Some(i) = (0..3).find(|&i| u32_at(r, 2 + i) == Some(ENCHANT_PRISMATIC_SOCKET)) {
             prismatic.insert(id, u32_at(r, 5 + i).unwrap_or(0));
@@ -419,6 +452,7 @@ pub fn load_enchant_catalog(chain: &mut Chain) -> Result<EnchantCatalog> {
         use_spells,
         conditions,
         requirements,
+        effects,
     })
 }
 

@@ -322,6 +322,34 @@ fn enchant_lines_quiet(
     lines
 }
 
+/// Every `SpellItemEnchantment` row as a link reads it: its line, effects and gem.
+pub(crate) fn enchant_rows(
+    enchants: &Enchants,
+) -> std::collections::HashMap<u32, benilla_ui::script::EnchantRowView> {
+    enchants
+        .0
+        .ids()
+        .map(|id| {
+            let row = benilla_ui::script::EnchantRowView {
+                line: enchant_lines_quiet([(0, id as i32, 0, None)], Some(enchants))
+                    .into_iter()
+                    .next(),
+                effects: enchants
+                    .0
+                    .effects(id)
+                    .map(|e| benilla_ui::script::EnchantEffectView {
+                        kind: e.kind,
+                        points_min: e.points_min,
+                        points_max: e.points_max,
+                        arg: e.arg,
+                    }),
+                gem_item: enchants.0.gem_item(id).unwrap_or(0),
+            };
+            (id, row)
+        })
+        .collect()
+}
+
 /// `ItemRandomProperties.dbc`, the random-suffix roll: a name suffix and tooltip enchant slots
 /// 7..11. Optional: absent, names stay unsuffixed.
 #[derive(Resource)]

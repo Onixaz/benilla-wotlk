@@ -546,7 +546,12 @@ fn cursor_info(lua: &Lua, model: &Model) -> mlua::Result<MultiValue> {
                 Some(t) => vec![
                     str("item")?,
                     int(a.action),
-                    str(&super::item_stats::item_link(a.action, &t.name, t.quality))?,
+                    str(&super::item_stats::item_link(
+                        a.action,
+                        &t.name,
+                        t.quality,
+                        model.player_req.level,
+                    ))?,
                 ],
                 None => Vec::new(),
             },

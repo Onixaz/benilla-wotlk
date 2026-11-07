@@ -182,9 +182,12 @@ mod cooldown_widget;
 mod input_verbs;
 mod inspect;
 mod inventory_verbs;
+mod item_link;
 mod item_search;
 mod item_stats;
+mod item_summary;
 mod item_text;
+mod item_verbs;
 mod kb_system;
 pub mod keybind;
 mod keyboard;
@@ -259,6 +262,7 @@ mod tick;
 mod title;
 mod tooltip;
 mod tooltip_item;
+mod tooltip_quest;
 mod tooltip_spell;
 mod tooltip_unit;
 mod totem;
@@ -358,6 +362,7 @@ pub use guild_bank::{
     GUILD_BANK_MONEY_LOG, GUILD_BANK_TABS, GUILD_BANK_TAB_SLOTS,
 };
 pub use input_verbs::{BindingInput, FiredInput, HeldInput};
+pub use item_link::{item_hyperlink, ItemLinkFields};
 pub use macro_options::OptionState;
 pub use mirror_timer::{MirrorTimer, MIRROR_TIMER_TOKENS};
 pub use modelframe::ModelPaneFrame;
@@ -369,6 +374,7 @@ pub use tabard::{
     emblem_mask_path, TabardHost, TabardIntent, EMBLEM_MASK_TOKEN, TABARD_COUNTS,
     TABARD_CREATION_COST,
 };
+pub use tooltip_quest::QuestTooltipView;
 pub use unit_cast::UnitCast;
 pub use video_pairs::VIDEO_PAIR_CVARS;
 pub use worldmap_arrow::ARROW_MODEL;
@@ -398,7 +404,8 @@ pub use glyph::{
 pub use inspect::{InspectView, UnitReach};
 pub use instance::InstanceLock;
 pub use item_stats::{
-    item_usable, GemView, ItemSetMember, ItemSetView, ItemTemplateView, PlayerReqState,
+    item_usable, EnchantEffectView, EnchantRowView, GemView, ItemSetMember, ItemSetView,
+    ItemSpellView, ItemTemplateView, PlayerReqState, RandomSuffixView,
 };
 pub use item_text::ItemTextState;
 pub use layout_cache::PlacedFrame;
@@ -454,7 +461,7 @@ pub(crate) use simplehtml::{
 pub use skills::{SkillEntry, SkillRequest, SkillsState};
 pub use social::{FriendInfo, SocialRequest, SocialState, WhoInfo, WhoRecords};
 pub use sound::{MusicRequest, SoundRequest};
-pub use spell_info::{SpellInfo, SpellInfoSource};
+pub use spell_info::{SpellInfo, SpellInfoSource, SpellStatEffect, SpellStatEffects};
 pub use spellbook::{
     resolve_spell_by_name, PetBookState, SpellBookState, SpellSlotView, SpellTabView,
 };
@@ -633,7 +640,7 @@ pub const SCREEN: crate::layout::Handle = 0;
 /// ScrollFrame's three scroll kinds are `+0x32c`/`+0x334`/`+0x33c`. The EditBox's vtable replaces
 /// the key and char slots: an EditBox never fires `OnKeyDown`, and fires `OnChar` only from
 /// `Insert`, with the inserted text.
-const SCRIPT_KINDS: [&str; 47] = [
+const SCRIPT_KINDS: [&str; 54] = [
     "OnLoad",
     "OnEvent",
     "OnUpdate",
@@ -673,6 +680,9 @@ const SCRIPT_KINDS: [&str; 47] = [
     // A release over a message-frame hyperlink span, `OnHyperlinkClick(link, text, button)`;
     // `ChatFrameTemplate` passes it to `SetItemRef` (`ChatFrame.xml:15`, `ChatFrame.lua:1534`).
     "OnHyperlinkClick",
+    // The pointer entering and leaving such a span (`0x978540`, `0x978570`), fired by [`pointer`]'s move.
+    "OnHyperlinkEnter",
+    "OnHyperlinkLeave",
     // The GameTooltip's engine-fired scripts: money render, money clear and world-hover default
     // placement, all three wired by the stock template (`GameTooltipTemplate.xml:617-625`).
     "OnTooltipAddMoney",
@@ -703,6 +713,14 @@ const SCRIPT_KINDS: [&str; 47] = [
     // The GameTooltip's (`0x61a30b`, `+0x4ec`), fired once a unit's lines are built
     // ([`tooltip_unit`]).
     "OnTooltipSetUnit",
+    // The item, spell, quest, achievement and equipment-set builders' (`+0x4f4`..), each fired once
+    // its lines are built and before the show ([`tooltip_item`], [`tooltip_spell`],
+    // [`tooltip_quest`]).
+    "OnTooltipSetItem",
+    "OnTooltipSetSpell",
+    "OnTooltipSetQuest",
+    "OnTooltipSetAchievement",
+    "OnTooltipSetEquipmentSet",
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -1473,6 +1491,19 @@ impl UiScript {
                 .or_default()
                 .push((rect, link, markup));
         }
+    }
+
+    /// The centre of the first hyperlink span whose link holds `text`, for a probe's click.
+    pub fn link_span_center(&self, text: &str) -> Option<(f32, f32)> {
+        let model = self.model_ref();
+        model
+            .link_spans
+            .values()
+            .flatten()
+            .find_map(|(r, link, _)| {
+                link.contains(text)
+                    .then_some(((r.left + r.right) / 2.0, (r.bottom + r.top) / 2.0))
+            })
     }
 
     /// Whether the frame with this global name is shown with every ancestor (`IsVisible()`).

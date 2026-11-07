@@ -58,6 +58,53 @@ fn whole_seconds(ms: i64) -> i64 {
     ms.max(0) / 1000
 }
 
+pub(super) fn install_tooltip_method(lua: &Lua, m: &mlua::Table) -> mlua::Result<()> {
+    // GameTooltip:SetTotem(slot) (`0x6205c0`): the totem's name and its time left, nothing for an
+    // empty slot.
+    m.set(
+        "SetTotem",
+        lua.create_function(|lua, (this, slot): (mlua::Table, Value)| {
+            let h = super::object::frame_handle_of(lua, &this)?;
+            let slot = slot_arg(lua, slot, "Usage: GameTooltip:SetTotem(slot)")?;
+            let now = super::clock::now(lua);
+            let live = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                model.totems.live[slot]
+                    .as_ref()
+                    .map(|t| (t.name.clone(), t.start, t.duration_ms))
+            };
+            let Some((name, start, duration_ms)) = live else {
+                return Ok(());
+            };
+            super::tooltip::clear_content(&mut super::model_mut_of(lua), h);
+            super::tooltip::fire_cleared(lua, h);
+            let white = [1.0, 1.0, 1.0, 1.0];
+            let gold = [1.0, 210.0 / 255.0, 0.0, 1.0];
+            super::tooltip::append_line(
+                lua,
+                &this,
+                (name.unwrap_or_default(), white),
+                None,
+                false,
+            )?;
+            let left = (start + f64::from(duration_ms) / 1000.0 - now).max(0.0);
+            let get = |k: &str| crate::strings::global(lua, k);
+            if let Some(text) = super::tooltip::duration_text(
+                (left * 1000.0) as u32,
+                "SPELL_TIME_REMAINING",
+                true,
+                &get,
+            ) {
+                super::tooltip::append_line(lua, &this, (text, gold), None, false)?;
+            }
+            super::tooltip::show_or_hide_empty(lua, h);
+            Ok(())
+        })?,
+    )
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 

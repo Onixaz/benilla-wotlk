@@ -693,7 +693,9 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
             quality: Some(2),
             is_coin: false,
             item_id: 8888,
-            link: Some("|cff1eff00|Hitem:8888:0:584:0|h[Bloodrazor of the Monkey]|h|r".into()),
+            link: Some(
+                "|cff1eff00|Hitem:8888:0:0:0:0:0:584:0:0|h[Bloodrazor of the Monkey]|h|r".into(),
+            ),
             // The row carries the roll id; the engine resolves it, as the reference reads `+0x424`.
             random_property_id: 584,
             locked: false,
@@ -834,9 +836,10 @@ fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
     s.run(
         r#"
         local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        ITEM_SUFFIX_TEMPLATE = "%s %s"
         local tt = CreateFrame("GameTooltip", "TT")
         tt:SetOwner(Slot, "ANCHOR_RIGHT")
-        tt:SetHyperlink("|cff1eff00|Hitem:8888:0:584:0|h[Bloodrazor of the Monkey]|h|r")
+        tt:SetHyperlink("|cff1eff00|Hitem:8888:0:0:0:0:0:584:0:0|h[Bloodrazor of the Monkey]|h|r")
     "#,
     )
     .unwrap();
@@ -920,5 +923,126 @@ fn random_property_template_hover_shows_the_placeholder() {
     assert!(
         !texts.contains(&"[ITEM_RANDOM_ENCHANT]") && texts.contains(&"|cffffffffStamina +7|r"),
         "an instance's known roll replaces the placeholder — got {texts:?}"
+    );
+}
+
+/// A link's enchant and random suffix read off the pushed rows: the suffix joins the name and its
+/// `$i` takes its share of the seed (`0x577260`, `0x707650`).
+#[test]
+fn a_linked_suffix_fills_its_amount_and_its_enchant_prints() {
+    let mut s = script();
+    s.set_item_template(
+        8889,
+        ItemTemplateView {
+            name: "Outlander's Leggings".into(),
+            quality: 2,
+            class: 4,
+            ..Default::default()
+        },
+    );
+    let row = |id: u32, name: &str| {
+        (
+            id,
+            EnchantRowView {
+                line: Some(EnchantView {
+                    id,
+                    name: name.into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+    };
+    s.set_enchant_rows(HashMap::from([
+        row(2802, "+$i Stamina"),
+        row(1900, "Crusader"),
+    ]));
+    s.set_random_suffixes(HashMap::from([(
+        39,
+        RandomSuffixView {
+            name: "of the Bear".into(),
+            enchants: [2802, 0, 0, 0, 0],
+            allocation: [6666, 0, 0, 0, 0],
+        },
+    )]));
+    s.run(
+        r#"
+        ITEM_SUFFIX_TEMPLATE = "%s %s"
+        local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT")
+        tt:SetOwner(Slot, "ANCHOR_RIGHT")
+        tt:SetHyperlink("item:8889:1900:0:0:0:0:-39:28:80")
+    "#,
+    )
+    .unwrap();
+    let texts: Vec<String> = super::lines_of(&mut s)
+        .into_iter()
+        .map(|(t, _)| t)
+        .collect();
+    assert_eq!(texts[0], "Outlander's Leggings of the Bear");
+    assert!(texts.iter().any(|t| t.contains("+18 Stamina")), "{texts:?}");
+    assert!(texts.iter().any(|t| t.contains("Crusader")), "{texts:?}");
+    let link: String = s.eval("return select(2, TT:GetItem())").unwrap();
+    assert!(link.contains("|Hitem:8889:1900:0:0:0:0:-39:28:"), "{link}");
+}
+
+/// A clicked link closes a tooltip already showing it, and each builder runs its script before
+/// the show (`0x62dae0`, `0x62d890`).
+#[test]
+fn a_second_click_on_the_shown_item_hides_and_the_builder_fires_once() {
+    let mut s = script();
+    s.set_item_template(
+        8890,
+        ItemTemplateView {
+            name: "Loop".into(),
+            ..Default::default()
+        },
+    );
+    s.run(
+        r#"
+        fired = 0
+        local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT")
+        tt:SetOwner(Slot, "ANCHOR_RIGHT")
+        tt:SetScript("OnTooltipSetItem", function() fired = fired + 1 end)
+        tt:SetHyperlink("item:8890")
+    "#,
+    )
+    .unwrap();
+    assert_eq!(s.eval::<i64>("return fired").unwrap(), 1);
+    assert!(s.eval::<bool>("return TT:IsShown() == 1").unwrap());
+    s.run(r#"TT:SetHyperlink("item:8890")"#).unwrap();
+    assert!(s.eval::<bool>("return TT:IsShown() == nil").unwrap());
+}
+
+/// A link still in flight fires the script on the retrieving line and its landing does not read
+/// as a second click.
+#[test]
+fn a_retrieving_link_fires_and_its_landing_does_not_toggle() {
+    let mut s = script();
+    s.run(
+        r#"
+        fired = 0
+        local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT")
+        tt:SetOwner(Slot, "ANCHOR_RIGHT")
+        tt:SetScript("OnTooltipSetItem", function() fired = fired + 1 end)
+        tt:SetHyperlink("item:8891")
+    "#,
+    )
+    .unwrap();
+    assert_eq!(s.eval::<i64>("return fired").unwrap(), 1);
+    s.set_item_template(
+        8891,
+        ItemTemplateView {
+            name: "Late Loop".into(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(s.eval::<i64>("return fired").unwrap(), 2);
+    assert!(s.eval::<bool>("return TT:IsShown() == 1").unwrap());
+    assert_eq!(
+        s.eval::<String>("return TTTextLeft1:GetText()").unwrap(),
+        "Late Loop"
     );
 }

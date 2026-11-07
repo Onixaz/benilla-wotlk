@@ -9,6 +9,8 @@ use std::collections::HashMap;
 
 use mlua::{Lua, MultiValue, Value};
 
+use super::item_link::{item_hyperlink, ItemLinkFields, QUALITY_COLORS};
+
 /// An item template's tooltip view: the `SMSG_ITEM_QUERY_SINGLE_RESPONSE` fields the tooltip reads,
 /// plus app-resolved display strings.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -91,6 +93,12 @@ pub struct ItemTemplateView {
     /// `RandomProperty` (template `+0x1b8`): the item can roll a suffix, so a template tooltip
     /// prints `<Random enchantment>`.
     pub random_property: u32,
+    /// The item's five spell blocks, `spell != 0`, whatever their trigger.
+    pub item_spells: Vec<ItemSpellView>,
+    /// The bag family mask, `GetItemFamily`'s.
+    pub bag_family: u32,
+    /// The limit category and its quantity, `GetItemUniqueness`'s.
+    pub item_limit: Option<(u32, u32)>,
     /// The item a recipe teaches to make: a learn-spell (36) trigger whose taught spell creates
     /// (24) an item; 0 for none. `IsDressableItem` dresses a pattern as its product.
     pub recipe_creates: u32,
@@ -105,6 +113,14 @@ pub struct ItemTemplateView {
     /// (`EnchantID`) and that enchant's name, the gem tooltip's line and a socket's once filled.
     /// `None` when the template names no row.
     pub gem: Option<GemView>,
+}
+
+/// One of an item's spell blocks.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ItemSpellView {
+    pub spell: u32,
+    pub trigger: u32,
+    pub charges: i32,
 }
 
 /// One gem's `GemProperties.dbc` row, resolved by the app.
@@ -319,8 +335,13 @@ impl super::UiScript {
     }
 
     /// Pushes the `ItemRandomSuffix` names once, at load.
-    pub fn set_random_suffixes(&mut self, names: std::collections::HashMap<u32, String>) {
-        set_field!(self, random_suffixes, names);
+    pub fn set_random_suffixes(&mut self, rows: std::collections::HashMap<u32, RandomSuffixView>) {
+        set_field!(self, random_suffixes, rows);
+    }
+
+    /// Push `SpellItemEnchantment.dbc` whole: a link can name any row.
+    pub fn set_enchant_rows(&mut self, rows: std::collections::HashMap<u32, EnchantRowView>) {
+        set_field!(self, enchant_rows, rows);
     }
 
     /// Pushes the player state the red lines compare against.
@@ -329,48 +350,50 @@ impl super::UiScript {
     }
 }
 
-/// The item-quality palette (`0xad2d84`, eight entries), and the escape strings (`0xad2a84`).
-/// `GetItemQualityColor` answers each channel times 1/255; a quality past the table reads Common.
-const QUALITY_COLORS: [(u8, u8, u8, &str); 8] = [
-    (0x9d, 0x9d, 0x9d, "|cff9d9d9d"), // 0 Poor
-    (0xff, 0xff, 0xff, "|cffffffff"), // 1 Common
-    (0x1e, 0xff, 0x00, "|cff1eff00"), // 2 Uncommon
-    (0x00, 0x70, 0xdd, "|cff0070dd"), // 3 Rare
-    (0xa3, 0x35, 0xee, "|cffa335ee"), // 4 Epic
-    (0xff, 0x80, 0x00, "|cffff8000"), // 5 Legendary
-    (0xe6, 0xcc, 0x80, "|cffe6cc80"), // 6 Artifact
-    (0xe6, 0xcc, 0x80, "|cffe6cc80"), // 7 Heirloom
-];
-
-/// The client's item-link builder as the trade-skill link verbs call it:
-/// `|c<rrggbb>|Hitem:<id>:0:0:0|h[<name>]|h|r`. A quality past the palette selects index 1, white.
-pub(super) fn item_link(item_id: u32, name: &str, quality: u32) -> String {
-    let hex = QUALITY_COLORS
-        .get(quality as usize)
-        .unwrap_or(&QUALITY_COLORS[1])
-        .3;
-    format!("{hex}|Hitem:{item_id}:0:0:0|h[{name}]|h|r")
+/// One `ItemRandomSuffix` row.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RandomSuffixView {
+    pub name: String,
+    pub enchants: [u32; 5],
+    /// The enchants' shares of the seed, in hundredths of a percent.
+    pub allocation: [u32; 5],
 }
 
-/// The item-link builder behind `GetItemInfo`'s second return: the quality's colour, then
-/// `|Hitem:` with the id, the enchant, three gems, a 0, the random property, the seed and the
-/// player's level (`0xa24f04`), the name and a reset.
-fn create_item_link(item_id: u32, quality: u32, f: &ItemFields, level: u32, name: &str) -> String {
-    let hex = QUALITY_COLORS
-        .get(quality as usize)
-        .unwrap_or(&QUALITY_COLORS[1])
-        .3;
-    let [g1, g2, g3] = f.gems;
-    format!(
-        "{hex}|Hitem:{item_id}:{}:{g1}:{g2}:{g3}:0:{}:{}:{level}|h[{name}]|h|r",
-        f.enchant, f.random_property, f.seed
-    )
+impl RandomSuffixView {
+    /// The amount of enchant `index` (`0x707650`): its share of the seed's low word, truncated.
+    pub(super) fn value(&self, index: usize, seed: i32) -> i32 {
+        (self.allocation[index] as f32 * 0.0001 * f32::from(seed as u16)) as i32
+    }
+}
+
+/// One `SpellItemEnchantment` effect.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EnchantEffectView {
+    pub kind: u32,
+    pub points_min: i32,
+    pub points_max: i32,
+    pub arg: u32,
+}
+
+/// One `SpellItemEnchantment` row as a link reads it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EnchantRowView {
+    /// The row's tooltip line, `None` for one the tooltip hides or that has no name.
+    pub line: Option<super::EnchantView>,
+    pub effects: [EnchantEffectView; 3],
+    /// The gem item a socket enchant came from, 0 for none.
+    pub gem_item: u32,
+}
+
+/// [`item_hyperlink`] with nothing past the id, as the trade-skill link verbs build one.
+pub(super) fn item_link(item_id: u32, name: &str, quality: u32, level: u32) -> String {
+    item_hyperlink(item_id, quality, &ItemLinkFields::default(), level, name)
 }
 
 /// `InventoryType` → `GetItemInfo`'s `itemEquipLoc`, the reference's 30-pointer table: slots 0 and
 /// 29 are the shared `""`, not nil, and four tokens (`AMMO`, `THROWN`, `RANGEDRIGHT`, `QUIVER`)
 /// have no `GlobalStrings.lua` entry.
-fn equip_loc_token(inventory_type: u32) -> &'static str {
+pub(super) fn equip_loc_token(inventory_type: u32) -> &'static str {
     const TOKENS: [&str; 29] = [
         "",
         "INVTYPE_HEAD",
@@ -406,47 +429,10 @@ fn equip_loc_token(inventory_type: u32) -> &'static str {
     TOKENS.get(inventory_type as usize).copied().unwrap_or("")
 }
 
-/// The reference's integer parse over an `item:` field: an optional `-`, then digits up to the
-/// first non-digit, with no whitespace skip and no `+`. Deviation: an overflow saturates at
-/// `u32::MAX` where the reference wraps, because only a script can overflow it.
-pub(super) fn reference_atoi(s: &str) -> i64 {
-    let b = s.as_bytes();
-    let (neg, mut i) = match b.first() {
-        Some(b'-') => (true, 1),
-        _ => (false, 0),
-    };
-    let mut n: i64 = 0;
-    while let Some(&c) = b.get(i) {
-        if !c.is_ascii_digit() {
-            break;
-        }
-        n = n
-            .saturating_mul(10)
-            .saturating_add(i64::from(c - b'0'))
-            .min(i64::from(u32::MAX));
-        i += 1;
-    }
-    if neg {
-        -n
-    } else {
-        n
-    }
-}
-
-/// The fields an item string carries past its id, read as `0x50f630` reads them: the enchant, three
-/// gems, a fourth slot no builder writes back, the random property and the seed.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct ItemFields {
-    enchant: i32,
-    gems: [i32; 3],
-    random_property: i32,
-    seed: i32,
-}
-
 /// `GetItemInfo`'s argument (`0x516c60`): a number, or a string holding `item:` anywhere, a bare
 /// item string or a full link (a case-sensitive substring search). A name (the reference searches the
 /// item cache by name) and any other string are id 0. A non-number non-string raises.
-fn parse_item_arg(v: &Value) -> mlua::Result<(i64, ItemFields)> {
+fn parse_item_arg(v: &Value) -> mlua::Result<(i64, ItemLinkFields)> {
     let as_number = match v {
         Value::Integer(i) => Some(*i as f64),
         Value::Number(n) => Some(*n),
@@ -454,7 +440,7 @@ fn parse_item_arg(v: &Value) -> mlua::Result<(i64, ItemFields)> {
         _ => None,
     };
     if let Some(n) = as_number {
-        return Ok((n as i64, ItemFields::default()));
+        return Ok((n as i64, ItemLinkFields::default()));
     }
     let Value::String(s) = v else {
         return Err(mlua::Error::RuntimeError(
@@ -464,70 +450,49 @@ fn parse_item_arg(v: &Value) -> mlua::Result<(i64, ItemFields)> {
     let s = s.to_str().map_err(|_| {
         mlua::Error::RuntimeError("Usage: GetItemInfo(itemID|\"name\"|\"itemlink\")".into())
     })?;
-    let Some(rest) = s.find("item:").map(|at| &s[at + 5..]) else {
-        return Ok((0, ItemFields::default()));
-    };
-    let mut fields = rest.split(':').map(reference_atoi);
-    let id = fields.next().unwrap_or(0);
-    let mut next = || fields.next().unwrap_or(0) as i32;
-    let enchant = next();
-    let gems = [next(), next(), next()];
-    let _fourth = next();
-    let random_property = next();
-    let seed = next();
-    Ok((
-        id,
-        ItemFields {
-            enchant,
-            gems,
-            random_property,
-            seed,
-        },
-    ))
+    let s = String::from_utf8_lossy(s.as_bytes());
+    Ok(ItemLinkFields::parse(&s)
+        .map_or((0, ItemLinkFields::default()), |(id, f)| (i64::from(id), f)))
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+    super::item_verbs::install(lua)?;
     // IsDressableItem(itemID | "name" | "link") (`0x517530`): 1 for a cached template with an
-    // InventoryType, or a recipe whose product has one; nil otherwise, an uncached one included.
+    // InventoryType, or a recipe whose product has one; nil otherwise. Each cache miss, the
+    // product's too, asks and answers nil, so the next click finds it.
     lua.globals().set(
         "IsDressableItem",
         lua.create_function(|lua, arg: Value| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
+            let mut model = crate::script::model_mut_of(lua);
             let id = match &arg {
                 Value::Integer(i) => *i as u32,
                 Value::Number(n) => *n as i64 as u32,
                 Value::String(s) => {
-                    let s = s.to_string_lossy();
-                    // The item-id-by-name lookup (`0x709de0`): a link's id, else the cache's name
-                    // index.
-                    if let Some(at) = s.find("item:") {
-                        let digits: String = s[at + 5..]
-                            .chars()
-                            .take_while(char::is_ascii_digit)
-                            .collect();
-                        digits.parse().unwrap_or(0)
-                    } else {
-                        model
-                            .item_templates
-                            .iter()
-                            .find(|(_, v)| v.name == s)
-                            .map_or(0, |(id, _)| *id)
-                    }
+                    super::item_verbs::item_id_by_name(&model, &s.to_string_lossy()) as u32
                 }
                 _ => 0,
             };
-            let wearable = |id: u32| {
-                model
-                    .item_templates
-                    .get(&id)
-                    .is_some_and(|v| v.inventory_type != 0)
+            let Some((wearable, product)) = model
+                .item_templates
+                .get(&id)
+                .map(|v| (v.inventory_type != 0, v.recipe_creates))
+            else {
+                if id != 0 {
+                    model.item_stat_asks.insert(id);
+                }
+                return Ok(super::binding_abi::flag(false));
             };
-            let dressable = model.item_templates.get(&id).is_some_and(|v| {
-                v.inventory_type != 0 || (v.recipe_creates != 0 && wearable(v.recipe_creates))
-            });
-            Ok(super::binding_abi::flag(dressable))
+            if wearable || product == 0 {
+                return Ok(super::binding_abi::flag(wearable));
+            }
+            let makes = model
+                .item_templates
+                .get(&product)
+                .map(|v| v.inventory_type != 0);
+            if makes.is_none() {
+                model.item_stat_asks.insert(product);
+            }
+            Ok(super::binding_abi::flag(makes == Some(true)))
         })?,
     )?;
 
@@ -561,7 +526,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetItemInfo",
         lua.create_function(|lua, arg: Value| {
             let (id, fields) = parse_item_arg(&arg)?;
-            // A name, not an item string: an item object the player holds by that name (`0x709de0`).
+            // A name, not an item string: an item the player holds by that name (`0x709de0`).
             let id = match (&arg, id) {
                 (Value::String(s), 0) => {
                     let name = s.to_string_lossy();
@@ -595,7 +560,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         model
                             .random_suffixes
                             .get(&rp.unsigned_abs())
-                            .cloned()
+                            .map(|r| r.name.clone())
                             .unwrap_or_default(),
                     ),
                 };
@@ -614,7 +579,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 ),
                 _ => v.name.clone(),
             };
-            let link = create_item_link(item_id, v.quality, &fields, level, &name);
+            let link = item_hyperlink(item_id, v.quality, &fields, level, &name);
             let str_or_empty = |s: &Option<String>| s.clone().unwrap_or_default();
             Ok(MultiValue::from_vec(vec![
                 Value::String(lua.create_string(&name)?),
@@ -834,7 +799,8 @@ mod tests {
 
 #[cfg(test)]
 mod get_item_info_tests {
-    use super::{equip_loc_token, reference_atoi, ItemTemplateView};
+    use super::{equip_loc_token, ItemTemplateView};
+    use crate::script::item_link::reference_atoi;
     use crate::script::UiScript;
 
     /// Worn Shortsword, item 25, as vmangos `item_template` holds it (item level 2).

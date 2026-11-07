@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 
 use benilla_formats::{RangeTargets, RangeUnit, SkillLineCatalog};
-use benilla_ui::script::{SpellInfo, SpellInfoSource, UiScript};
+use benilla_ui::script::{SpellInfo, SpellInfoSource, SpellStatEffect, SpellStatEffects, UiScript};
 
 use crate::net::{ObjectStore, SelfPlayer};
 use crate::spell::usable;
@@ -66,6 +66,7 @@ struct CastNow {
 struct Source {
     spells: Spells,
     skill_lines: Option<std::sync::Arc<SkillLineCatalog>>,
+    talents: Option<std::sync::Arc<benilla_formats::TalentCatalog>>,
     snapshot: Arc<Mutex<Snapshot>>,
 }
 
@@ -109,6 +110,29 @@ impl Source {
 }
 
 impl SpellInfoSource for Source {
+    fn spell_stat_effects(&self, spell_id: u32) -> Option<SpellStatEffects> {
+        let d = self.spells.catalog.get(spell_id)?;
+        Some(SpellStatEffects {
+            attributes: d.attributes,
+            effects: std::array::from_fn(|i| SpellStatEffect {
+                effect: d.effects[i],
+                aura: d.effect_apply_aura[i],
+                misc_value: d.effect_misc_value[i],
+                base_points: d.effect_base_points[i],
+            }),
+            has_reagents: d.reagents.iter().any(|&(id, n)| id != 0 && n > 0),
+            item_type: d.effect_item_type[0],
+            helpful: d.is_helpful(),
+            harmful: d.is_harmful(),
+        })
+    }
+
+    fn talent_rank_spell(&self, talent_id: u32, rank: i32) -> Option<(u32, u32)> {
+        self.talents
+            .as_ref()?
+            .rank_spell(talent_id, usize::try_from(rank).ok()?)
+    }
+
     /// `GetSpellLink` (`0x5408e0`): a row hidden by attributes `0x80` and `0x100` together has
     /// none; the trade link needs a linkable line (`0x5db060`).
     fn spell_link(
@@ -289,6 +313,7 @@ fn feed_spell_info(
     script: Option<NonSendMut<UiScript>>,
     spells: Option<Res<Spells>>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
+    talents: Option<Res<crate::ui_talent::Talents>>,
     mods: Res<crate::spell::SpellModifiers>,
     icons: Res<WeaponActionIcons>,
     self_q: Query<(Entity, Ref<ObjectStore>), With<SelfPlayer>>,
@@ -306,12 +331,14 @@ fn feed_spell_info(
     let reinstall = vm_reset
         || installed.0.is_none()
         || spells.is_changed()
-        || skill_lines.as_ref().is_some_and(|s| s.is_changed());
+        || skill_lines.as_ref().is_some_and(|s| s.is_changed())
+        || talents.as_ref().is_some_and(|t| t.is_changed());
     if reinstall {
         let snapshot = Arc::new(Mutex::new(Snapshot::default()));
         script.set_spell_info_source(Rc::new(Source {
             spells: spells.clone(),
             skill_lines: skill_lines.as_ref().map(|s| s.catalog.clone()),
+            talents: talents.as_ref().map(|t| t.catalog.clone()),
             snapshot: snapshot.clone(),
         }));
         installed.0 = Some(snapshot);
