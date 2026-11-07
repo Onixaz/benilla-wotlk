@@ -62,6 +62,8 @@ pub struct QuestLogEntryView {
     /// `player`, `reputation` or `log` line, which answers every index past the others. The
     /// leaderboard verbs serve any row, selected or not.
     pub objectives: Vec<QuestLogObjectiveView>,
+    /// The template names a faction (`+0x1c`), a counted line even with no row (`0x5e1300`).
+    pub rep_objective: bool,
     /// This row's detail pane, `None` on a header. Per row, not per selection: the reference's
     /// detail verbs read the selection that `SelectQuestLogEntry` wrote and look the quest up in
     /// the same call, so a select-then-read answers about the row just selected.
@@ -176,14 +178,14 @@ pub fn fold_quest_log(entries: &mut [QuestLogEntryView], filter: i32) {
     entries.sort_by_key(|e| (e.hidden, e.sort_index, !e.is_header));
 }
 
-/// The number of leaderboard lines (`0x5e1300`): the end text, the kill and GameObject rows, the
-/// required items and the player or reputation line; with none, 1 once the quest is complete.
+/// Leaderboard line count (`0x5e1300`): the lines, the template's faction apart, or 1 if complete.
 fn leader_board_count(e: &QuestLogEntryView) -> i64 {
-    let counted = e
+    let built = e
         .objectives
         .iter()
-        .filter(|o| !o.intermediate && o.kind != "log")
+        .filter(|o| !o.intermediate && !matches!(o.kind.as_str(), "log" | "reputation"))
         .count() as i64;
+    let counted = built + i64::from(e.rep_objective);
     if counted == 0 && e.complete == 1 {
         1
     } else {
@@ -1440,6 +1442,54 @@ mod tests {
                 "SelectQuestLogEntry(1); local d = GetQuestLogQuestText(); return d == ''"
             )
             .unwrap());
+    }
+
+    /// The faction counts once with or without its line; the player line takes the rest (`0x5e1300`).
+    #[test]
+    fn the_templates_faction_counts_one_line_with_or_without_its_own() {
+        let line = |kind: &str| QuestLogObjectiveView {
+            text: kind.into(),
+            kind: kind.into(),
+            ..Default::default()
+        };
+        let row = |objectives, rep_objective| QuestLogState {
+            num_quests: 1,
+            daily_completed: 0,
+            entries: vec![QuestLogEntryView {
+                quest_id: 1,
+                objectives,
+                rep_objective,
+                ..Default::default()
+            }],
+        };
+        let mut s = UiScript::new().unwrap();
+        let read = |s: &mut UiScript, i: i32| {
+            s.eval::<Option<String>>(&format!(
+                "return (select(2, GetQuestLogLeaderBoard({i}, 1)))"
+            ))
+            .unwrap()
+        };
+
+        s.set_quest_log(row(vec![line("reputation")], true));
+        assert_eq!(
+            s.eval::<i64>("return GetNumQuestLeaderBoards(1)").unwrap(),
+            1
+        );
+        assert_eq!(read(&mut s, 1).as_deref(), Some("reputation"));
+
+        s.set_quest_log(row(vec![line("monster")], true));
+        assert_eq!(
+            s.eval::<i64>("return GetNumQuestLeaderBoards(1)").unwrap(),
+            2
+        );
+        assert_eq!(read(&mut s, 2), None);
+
+        s.set_quest_log(row(vec![line("player")], true));
+        assert_eq!(
+            s.eval::<i64>("return GetNumQuestLeaderBoards(1)").unwrap(),
+            2
+        );
+        assert_eq!(read(&mut s, 2).as_deref(), Some("player"));
     }
 
     #[test]
