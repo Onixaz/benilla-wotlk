@@ -11,7 +11,8 @@ use benilla_world::world_census::WorldCensus;
 /// `WOW_LIVE_FPS=<frames>` (default 300): the [`crate::capture::CapturePlugin`] probe's numbers on
 /// a connected run. Waits for the world and `WOW_LIVE_FPS_AT` seconds (default 25), uncaps vsync,
 /// warms [`PROBE_WARMUP_FRAMES`], samples, prints `FPS_PROBE scenario=live` and exits.
-/// `WOW_LIVE_FPS_MOVE=1` holds W throughout, measuring a run through the scene.
+/// `WOW_LIVE_FPS_MOVE=1` holds W throughout, measuring a run through the scene; `turn` holds W and
+/// A together, a tight circle that moves the camera every frame over one spot's scene.
 pub(crate) struct LiveFpsPlugin;
 
 /// Seconds past `WOW_LIVE_FPS_AT` without a world before the run exits as dead; covers a cold load.
@@ -30,7 +31,11 @@ impl Plugin for LiveFpsPlugin {
         app.insert_resource(LiveFps {
             frames,
             at,
-            run: std::env::var("WOW_LIVE_FPS_MOVE").as_deref() == Ok("1"),
+            held: match std::env::var("WOW_LIVE_FPS_MOVE").as_deref() {
+                Ok("1") => &[KeyCode::KeyW],
+                Ok("turn") => &[KeyCode::KeyW, KeyCode::KeyA],
+                _ => &[],
+            },
             phase: LiveFpsPhase::Waiting,
             samples: Vec::new(),
             cpu_samples: Vec::new(),
@@ -42,7 +47,6 @@ impl Plugin for LiveFpsPlugin {
             paced_samples: Vec::new(),
             threads_at_start: None,
             faults_at_start: None,
-            still_at_start: [0; 7],
             cpu_at_start: None,
             sys_at_start: None,
             occluded_now: false,
@@ -63,18 +67,12 @@ enum LiveFpsPhase {
     Done,
 }
 
-/// The still-frame input counters (`benilla_world::dev_state::STILL_INPUTS_CHANGED`), now.
-fn still_inputs_now() -> [u32; 7] {
-    let c = &benilla_world::dev_state::STILL_INPUTS_CHANGED;
-    std::array::from_fn(|i| c[i].load(std::sync::atomic::Ordering::Relaxed))
-}
-
 #[derive(Resource)]
 struct LiveFps {
     frames: usize,
     at: f32,
-    /// Hold W while measuring (`WOW_LIVE_FPS_MOVE=1`).
-    run: bool,
+    /// Keys held while measuring (`WOW_LIVE_FPS_MOVE`).
+    held: &'static [KeyCode],
     phase: LiveFpsPhase,
     samples: Vec<f32>,
     /// Process CPU per frame, ms, index-parallel with `samples`: says whether a slow frame was
@@ -97,8 +95,6 @@ struct LiveFps {
     threads_at_start: Option<Vec<(usize, String, f64, f64)>>,
     /// The page-fault counters at the window's first frame (`perf::process_faults`).
     faults_at_start: Option<(u64, u64)>,
-    /// `dev_state::STILL_INPUTS_CHANGED` at the window's first frame; `noisy=` is the delta.
-    still_at_start: [u32; 7],
     /// Process CPU seconds at the first sampled frame ([`crate::perf::process_cpu_secs`]), the
     /// baseline for `cpu_ms`/`cpu_pct`.
     cpu_at_start: Option<f64>,
@@ -224,15 +220,15 @@ fn drive_live_fps(
                 w.present_mode = crate::capture::probe_uncap_mode();
             }
             info!(
-                "live-fps: in-world + settled; vsync off, warming {PROBE_WARMUP_FRAMES} frames{}",
-                if probe.run { ", holding W" } else { "" }
+                "live-fps: in-world + settled; vsync off, warming {PROBE_WARMUP_FRAMES} frames, holding {:?}",
+                probe.held
             );
-            if probe.run {
-                // Held until released: winit only releases keys it saw go down. The raw message
-                // gives the binding dispatch its press edge (MOVEFORWARD latches off the event).
-                keys.press(KeyCode::KeyW);
+            // Held until released: winit only releases keys it saw go down. The raw message gives
+            // the binding dispatch its press edge (MOVEFORWARD latches off the event).
+            for &key_code in probe.held {
+                keys.press(key_code);
                 key_events.write(bevy::input::keyboard::KeyboardInput {
-                    key_code: KeyCode::KeyW,
+                    key_code,
                     logical_key: bevy::input::keyboard::Key::Unidentified(
                         bevy::input::keyboard::NativeKey::Unidentified,
                     ),
@@ -256,7 +252,6 @@ fn drive_live_fps(
                 probe.cpu_at_start = crate::perf::process_cpu_secs();
                 probe.threads_at_start = crate::perf::thread_cpu_table();
                 probe.faults_at_start = crate::perf::process_faults();
-                probe.still_at_start = still_inputs_now();
                 main_split.restart();
                 probe.sys_at_start = crate::perf::system_cpu_ticks();
                 // Restart churn with the window so warmup does not read as a ratchet.
@@ -455,27 +450,14 @@ fn drive_live_fps(
                                 .inside_ms()
                                 .map(|m| format!(" main_in={m:.2}"))
                                 .unwrap_or_default();
-                            let now_still = still_inputs_now();
-                            let noisy: Vec<u32> = now_still
-                                .iter()
-                                .zip(probe.still_at_start)
-                                .map(|(n, s)| n.wrapping_sub(s))
-                                .collect();
                             // Page faults per frame: `sys` time without syscalls is the kernel
                             // zero-filling pages.
                             let faults =
                                 match (probe.faults_at_start, crate::perf::process_faults()) {
                                     (Some((mi0, ma0)), Some((mi1, ma1))) => format!(
-                                        " faults={:.0}/{:.1} noisy=[cam:{},dbg:{},view:{},win:{},claim:{},portals:{},flips:{}]",
+                                        " faults={:.0}/{:.1}",
                                         (mi1 - mi0) as f64 / v_len as f64,
                                         (ma1 - ma0) as f64 / v_len as f64,
-                                        noisy[0],
-                                        noisy[1],
-                                        noisy[2],
-                                        noisy[3],
-                                        noisy[4],
-                                        noisy[5],
-                                        noisy[6],
                                     ),
                                     _ => String::new(),
                                 };
@@ -664,8 +646,8 @@ fn drive_live_fps(
                     unpathed[0], unpathed[1], unpathed[2], seen.mats
                 );
             }
-            if probe.run {
-                keys.release(KeyCode::KeyW);
+            for &key in probe.held {
+                keys.release(key);
             }
             probe.phase = LiveFpsPhase::Done;
             exit.write(AppExit::Success);

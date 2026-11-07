@@ -216,6 +216,28 @@ fn a_minimap_is_born_with_nine_model_children_and_the_ninth_is_the_player_arrow(
     s.set_minimap_player_facing(2.5);
     assert_eq!(s.eval::<f32>("return GetPlayerFacing()").unwrap(), 2.5);
 
+    // The arrow's pane is never anchored, so a turn moves no mutation count; one an addon anchors
+    // paints its facing.
+    s.resolve();
+    let settled = s.visual_epoch();
+    s.set_minimap_player_facing(1.0);
+    assert_eq!(
+        s.visual_epoch(),
+        settled,
+        "an unanchored pane paints nothing"
+    );
+    s.run("Minimap:SetPoint('TOPLEFT') Minimap:SetWidth(140) Minimap:SetHeight(140)")
+        .unwrap();
+    s.run("({Minimap:GetChildren()})[9]:SetAllPoints(Minimap)")
+        .unwrap();
+    s.resolve();
+    let settled = s.visual_epoch();
+    s.set_minimap_player_facing(2.0);
+    assert_ne!(s.visual_epoch(), settled, "an anchored pane redraws");
+    s.run("({Minimap:GetChildren()})[9]:ClearAllPoints()")
+        .unwrap();
+    s.resolve();
+
     // An addon's own child lands at index 10 and does not displace the arrow.
     s.run(r#"extra = CreateFrame("Frame", nil, m)"#).unwrap();
     s.set_minimap_player_facing(-1.25);

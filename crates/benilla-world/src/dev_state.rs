@@ -8,47 +8,6 @@ pub fn deterministic_run() -> bool {
     std::env::var("WOW_CAPTURE").is_ok()
 }
 
-/// Frames each still-frame input has read as changed since startup: `[camera transform,
-/// DebugState, ViewDistance, ExteriorWindows, CameraInteriorClaim, any WmoPortalInstance, any
-/// InheritedVisibility]`. The still-frame skips (visibility walk, billboards, emitter gates,
-/// doodad hosts) engage only while all are still; `FPS_PROBE`'s `noisy=` prints them per window.
-pub static STILL_INPUTS_CHANGED: [std::sync::atomic::AtomicU32; 7] = [
-    std::sync::atomic::AtomicU32::new(0),
-    std::sync::atomic::AtomicU32::new(0),
-    std::sync::atomic::AtomicU32::new(0),
-    std::sync::atomic::AtomicU32::new(0),
-    std::sync::atomic::AtomicU32::new(0),
-    std::sync::atomic::AtomicU32::new(0),
-    std::sync::atomic::AtomicU32::new(0),
-];
-
-/// `Last`: count this frame's changed still-frame inputs into [`STILL_INPUTS_CHANGED`].
-pub(crate) fn count_still_inputs(
-    cam: Query<Ref<GlobalTransform>, With<crate::view::WorldCamera>>,
-    debug: Res<DebugState>,
-    view: Res<crate::view::ViewDistance>,
-    windows: Res<crate::wmo_portal::ExteriorWindows>,
-    claim: Res<crate::wmo_portal::CameraInteriorClaim>,
-    portals: Query<(), Changed<crate::wmo_portal::WmoPortalInstance>>,
-    flips: Query<(), Changed<InheritedVisibility>>,
-) {
-    let changed = [
-        cam.iter().any(|t| t.is_changed()),
-        debug.is_changed(),
-        view.is_changed(),
-        windows.is_changed(),
-        claim.is_changed(),
-        !portals.is_empty(),
-        !flips.is_empty(),
-    ];
-    for (slot, c) in STILL_INPUTS_CHANGED.iter().zip(changed) {
-        if c {
-            slot.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
-}
-
-/// Root debug state, one section per subsystem.
 #[derive(Resource)]
 pub struct DebugState {
     /// Panel visible; toggled with the dev chord + `D`. `$WOW_PANEL=1` starts it open, so a

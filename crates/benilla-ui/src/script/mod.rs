@@ -1296,11 +1296,14 @@ impl UiScript {
             })
             .collect();
         for h in arrows {
+            // The arrow draws in the minimap's overlay; its pane paints only if an addon anchors
+            // it, so a turn otherwise leaves the extract its paint path.
+            let paints = model.resolved.contains_key(&h);
             if let Some(frame) = model.arena.frame_mut(h) {
                 if let KindState::Model(state) = &mut frame.kind_state {
                     if state.facing != facing {
                         state.facing = facing;
-                        moved = true;
+                        moved |= paints;
                     }
                 }
             }

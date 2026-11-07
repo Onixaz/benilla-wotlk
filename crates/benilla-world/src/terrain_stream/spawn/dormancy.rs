@@ -68,6 +68,90 @@ pub(crate) struct Sleeper {
     pub(super) interior_slot: Option<u16>,
 }
 
+/// One sleeper's flip test, flat: the step reads every row, and a city holds thousands of them.
+pub(crate) struct DormantRow {
+    center: Vec3,
+    /// Squared yards it wakes inside and sleeps past; infinite for a band-less owner.
+    wake: f32,
+    sleep: f32,
+    /// As the record last stood; the record's own flag decides.
+    pub(super) awake: bool,
+    pub(super) id: u32,
+    /// The WMO prop's index in its placement, `None` for the placement's own model.
+    pub(super) prop: Option<u32>,
+}
+
+impl DormantRow {
+    fn new(id: u32, prop: Option<u32>, s: &Sleeper) -> Self {
+        let edge = |margin: f32| {
+            crate::model_fade::fade_band(s.fade.size)
+                .map_or(f32::INFINITY, |(_, far)| (far + margin) * (far + margin))
+        };
+        Self {
+            center: s.fade.center,
+            wake: edge(WAKE_MARGIN),
+            sleep: edge(SLEEP_MARGIN),
+            awake: s.awake,
+            id,
+            prop,
+        }
+    }
+
+    /// Whether the eye crossed this row's edge: [`near`]'s test, squared.
+    fn flips(&self, eye: Vec3) -> bool {
+        let d = self.center.distance_squared(eye);
+        if self.awake {
+            d > self.sleep
+        } else {
+            d <= self.wake
+        }
+    }
+}
+
+/// Every sleeper's [`DormantRow`], rebuilt only when a sleeper arrives or leaves or the bands move,
+/// so a step scans these instead of chasing the placement records (~2 ms a step at Dalaran).
+#[derive(Default)]
+pub(crate) struct DormantTable {
+    /// The spawn epoch, sleeper epoch and fade generation [`Self::rows`] was built under.
+    key: Option<(u64, u64, u32)>,
+    pub(super) rows: Vec<DormantRow>,
+    /// This step's flipping rows.
+    pub(super) due: Vec<u32>,
+}
+
+impl DormantTable {
+    pub(super) fn refresh(
+        &mut self,
+        key: (u64, u64, u32),
+        by_id: &std::collections::HashMap<u32, super::super::Placement>,
+    ) {
+        if self.key.replace(key) == Some(key) {
+            return;
+        }
+        self.rows.clear();
+        for (&id, p) in by_id {
+            if let Some(s) = &p.sleeper {
+                self.rows.push(DormantRow::new(id, None, s));
+            }
+            for (i, d) in p.doodads.iter().enumerate() {
+                if let Some(s) = &d.sleeper {
+                    self.rows.push(DormantRow::new(id, Some(i as u32), s));
+                }
+            }
+        }
+    }
+}
+
+/// Collect into `due` the rows the eye's move flipped.
+pub(super) fn judge(rows: &[DormantRow], eye: Vec3, due: &mut Vec<u32>) {
+    due.clear();
+    due.extend(
+        rows.iter()
+            .enumerate()
+            .filter_map(|(i, r)| r.flips(eye).then_some(i as u32)),
+    );
+}
+
 /// How a placement's drawn entities are tagged for the exterior and portal culls.
 pub(super) enum SceneTag {
     /// An ADT doodad: exterior scene.
@@ -147,6 +231,34 @@ mod tests {
             instance: None,
             room: None,
         }
+    }
+
+    /// The flat judge flips a row exactly where [`near`] does, with the sleep edge's hysteresis.
+    #[test]
+    fn a_row_flips_where_near_does() {
+        let (_, far) = crate::model_fade::fade_band(0.5).unwrap();
+        let row = |awake| DormantRow {
+            center: Vec3::ZERO,
+            wake: (far + WAKE_MARGIN) * (far + WAKE_MARGIN),
+            sleep: (far + SLEEP_MARGIN) * (far + SLEEP_MARGIN),
+            awake,
+            id: 7,
+            prop: None,
+        };
+        for (x, margin) in [(far + 1.0, WAKE_MARGIN), (far + 9.0, WAKE_MARGIN)] {
+            let eye = Vec3::new(x, 0.0, 0.0);
+            assert_eq!(row(false).flips(eye), near(eye, &gate(0.5), margin));
+        }
+        for (x, margin) in [(far + 9.0, SLEEP_MARGIN), (far + 20.0, SLEEP_MARGIN)] {
+            let eye = Vec3::new(x, 0.0, 0.0);
+            assert_eq!(row(true).flips(eye), !near(eye, &gate(0.5), margin));
+        }
+        let mut due = Vec::new();
+        let eye = Vec3::new(far + 9.0, 0.0, 0.0);
+        judge(&[row(true), row(false)], eye, &mut due);
+        assert!(due.is_empty(), "between the edges neither flips");
+        judge(&[row(true), row(false)], Vec3::X * (far + 1.0), &mut due);
+        assert_eq!(due, [1], "the sleeper near the band wakes");
     }
 
     /// Sleep despawns the entity phase and leaves the hull and lights in the list.
