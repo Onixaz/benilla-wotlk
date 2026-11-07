@@ -474,8 +474,12 @@ impl FollowRig {
 /// Camera pitch clamp, ±89° (1.5533430576 rad), the same at every zoom: the reference has no
 /// separate first-person limit.
 pub(super) const CAM_PITCH_LIMIT: f32 = 89.0 * std::f32::consts::PI / 180.0;
-/// Rate (1/s) at which the arm eases back out once clear; pulling in is instant.
-const CAM_RETURN_RATE: f32 = 6.0;
+/// Seconds the arm takes back out after a pull-in, `[0xa4040c]`: a fixed span, whatever the length.
+const CAM_RETURN_SECS: f32 = 2.0;
+/// How far a hit must come inside the arm to start a return, 1/9 yd (`[0xa1e354]`).
+const CAM_RETURN_SLACK: f32 = 0.111_111_11;
+/// Where a return starts past the hit, `[0xa1ea80]`: the slack and a little more.
+const CAM_RETURN_LEAD: f32 = 0.111_112_07;
 /// Floor on the world pivot height, 5/6 yd (the reference's pivot clamp and corridor bound).
 pub(super) const CAM_PIVOT_FLOOR: f32 = 5.0 / 6.0;
 /// Ceiling on the world framing-pivot height, 15 yd.
@@ -504,6 +508,63 @@ pub(super) fn model_pivot_height(pivot: &CameraPivot, scale: f32, swimming: bool
 /// passes the rendered scale.
 pub(crate) fn head_height(pivot: Option<&CameraPivot>, scale: f32) -> f32 {
     pivot.map_or(CAM_PIVOT_FALLBACK, |p| model_pivot_height(p, scale, false))
+}
+
+/// A return in flight: the length it started from and the seconds since.
+#[derive(Clone, Copy, Debug)]
+struct ArmReturn {
+    from: f32,
+    elapsed: f32,
+}
+
+/// The arm's length from the head after world collision, kept apart from the zoom so the chosen
+/// distance survives an obstruction. The reference (`0x606f90`, stepped at `0x603d30`) pulls in at
+/// once and comes back over [`CAM_RETURN_SECS`] on the cosine smoothstep, aimed at the live zoom;
+/// with no return in flight the arm is the zoom.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct CollisionArm {
+    /// The return's value, or the full length: what a clear cast would seat the camera at.
+    length: f32,
+    arm_return: Option<ArmReturn>,
+}
+
+impl CollisionArm {
+    /// An arm at `length` with no return in flight.
+    pub(super) fn at(length: f32) -> Self {
+        Self {
+            length,
+            arm_return: None,
+        }
+    }
+
+    /// One frame: `open` is how far the cast reached and `full` the unobstructed length. Returns
+    /// the length the camera sits at. A hit keeps restarting the return, so it runs whole from the
+    /// frame the arm comes clear.
+    fn step(&mut self, open: f32, full: f32, dt: f32) -> f32 {
+        self.length = match &mut self.arm_return {
+            Some(ret) => {
+                ret.elapsed += dt;
+                let s = ret.elapsed / CAM_RETURN_SECS;
+                if s < 1.0 {
+                    let e = (1.0 - (std::f32::consts::PI * s).cos()) * 0.5;
+                    ret.from + (full - ret.from) * e
+                } else {
+                    self.arm_return = None;
+                    full
+                }
+            }
+            None => full,
+        };
+        let seated = open.min(self.length);
+        if self.length - seated > CAM_RETURN_SLACK {
+            self.length = seated + CAM_RETURN_LEAD;
+            self.arm_return = Some(ArmReturn {
+                from: self.length,
+                elapsed: 0.0,
+            });
+        }
+        seated
+    }
 }
 
 /// `cameraHeightSmoothSpeed`, default 1.2 yd/s: a move lasts `|Δh| / this`, an average rate, with
@@ -550,9 +611,7 @@ pub(crate) struct CameraControl {
     /// Third-person orbit distance (yd), gliding toward `target_distance`.
     pub(super) distance: f32,
     pub(super) target_distance: f32,
-    /// The arm's length from the head after world collision: pulled in instantly, eased back out,
-    /// and kept apart from `distance` so the chosen zoom survives an obstruction.
-    pub(super) collision_distance: f32,
+    pub(super) collision_arm: CollisionArm,
     pub(super) look: Option<LookButton>,
     /// Mouse-look is on: the reference's `[cam+0x90] & 1`. Written by [`run_look_session`], read
     /// the same frame for `cameraTerrainTilt`'s hand-off.
@@ -1191,7 +1250,7 @@ pub(super) fn seat_on_subject(
 }
 
 /// Seat the third-person camera: orient it, sweep the arm from `head` toward the ideal seat
-/// (snapping in, easing out), write the transform, and set the self-avatar fade. A keyboard turn
+/// (in at once, out over two seconds), write the transform, and set the self-avatar fade. A keyboard turn
 /// (and the drunk veer on `turn_delta`) carries the camera rigidly; a transport deck's turn is
 /// applied in [`super::control`]'s ride block, outside the look-session gate here, which would
 /// drop it during a drag. `player_pos`, `head` and `cam_pivot_height` are [`seat_on_subject`]'s
@@ -1256,14 +1315,8 @@ pub(super) fn seat_camera(
     // driver): [`SmartPivot`]'s sixth conjunct, so an unobstructed camera never pivots.
     rig.clipped = hit.is_some();
     let open = hit.unwrap_or(boom_len);
-    // Snap in when geometry intrudes; ease back out once it clears.
-    rig.collision_distance = if open < rig.collision_distance {
-        open
-    } else {
-        let t = 1.0 - (-CAM_RETURN_RATE * dt).exp();
-        rig.collision_distance + (open - rig.collision_distance) * t
-    };
-    let frac = (rig.collision_distance / boom_len).clamp(0.0, 1.0);
+    let arm_length = rig.collision_arm.step(open, boom_len, dt);
+    let frac = (arm_length / boom_len).clamp(0.0, 1.0);
     let seated = head + boom * frac;
     // The head bob is a world-space translation of the eye, added last into the slot
     // [`crate::camera_shake`] writes, as the reference folds the bob into the shake's accumulator
@@ -1295,7 +1348,7 @@ pub(super) fn seat_camera(
             cam.pitch,
             rig.distance,
             open,
-            rig.collision_distance,
+            arm_length,
             frac,
             translation.x,
             translation.y,
@@ -1610,6 +1663,79 @@ mod tests {
         (0..(secs / dt).round() as usize)
             .map(|_| g.advance(target, dt))
             .collect()
+    }
+
+    /// The arm's two speeds: in at once on a hit, out over the fixed span on the cosine.
+    #[test]
+    fn the_arm_pulls_in_at_once_and_returns_over_two_seconds() {
+        let mut arm = CollisionArm::at(6.0);
+        assert_eq!(
+            arm.step(6.0, 6.0, 0.01),
+            6.0,
+            "a clear cast sits at the zoom"
+        );
+        assert_eq!(
+            arm.step(2.0, 6.0, 0.01),
+            2.0,
+            "a hit seats it the same frame"
+        );
+        let from = 2.0 + CAM_RETURN_LEAD;
+        let at_half = arm.step(6.0, 6.0, CAM_RETURN_SECS / 2.0);
+        assert!(
+            (at_half - (from + 6.0) / 2.0).abs() < 1.0e-5,
+            "halfway: {at_half}"
+        );
+        assert_eq!(arm.step(6.0, 6.0, CAM_RETURN_SECS / 2.0), 6.0, "landed");
+        assert!(arm.arm_return.is_none(), "the return ends on landing");
+    }
+
+    /// Stepping in frames lands where the one long step does: the span is seconds, not frames.
+    #[test]
+    fn the_return_runs_on_seconds_whatever_the_frame_rate() {
+        let at = |frames: u32| {
+            let mut arm = CollisionArm::at(6.0);
+            arm.step(2.0, 6.0, 0.01);
+            for _ in 0..frames {
+                arm.step(6.0, 6.0, 0.5 / frames as f32);
+            }
+            arm.length
+        };
+        assert!((at(1) - at(120)).abs() < 1.0e-3, "{} vs {}", at(1), at(120));
+    }
+
+    /// A hit held on the arm keeps the camera at the hit, and the return starts when it clears.
+    #[test]
+    fn a_held_obstruction_restarts_the_return_until_it_clears() {
+        let mut arm = CollisionArm::at(6.0);
+        for _ in 0..1000 {
+            assert_eq!(arm.step(3.0, 6.0, 0.01), 3.0, "held at the hit");
+        }
+        assert!(arm.length - 3.0 <= CAM_RETURN_LEAD * 2.0, "{}", arm.length);
+        let first = arm.step(6.0, 6.0, 0.01);
+        assert!(
+            first - 3.0 < 2.0 * CAM_RETURN_LEAD,
+            "no leap on clearing: {first}"
+        );
+    }
+
+    /// A graze inside the slack clips the camera but starts no return.
+    #[test]
+    fn a_hit_inside_the_slack_starts_no_return() {
+        let mut arm = CollisionArm::at(6.0);
+        assert_eq!(arm.step(5.95, 6.0, 0.01), 5.95);
+        assert!(arm.arm_return.is_none());
+        assert_eq!(arm.step(6.0, 6.0, 0.01), 6.0, "back at once");
+    }
+
+    /// With no return in flight the arm is the zoom, with no lag; during one it aims at the live
+    /// zoom, so a wheel move retargets it.
+    #[test]
+    fn the_arm_follows_the_live_zoom() {
+        let mut arm = CollisionArm::at(6.0);
+        assert_eq!(arm.step(20.0, 20.0, 0.01), 20.0, "a clear arm has no lag");
+        arm.step(2.0, 20.0, 0.01);
+        arm.step(9.0, 9.0, CAM_RETURN_SECS);
+        assert_eq!(arm.length, 9.0, "the return lands on the zoom it finds");
     }
 
     /// A shapeshift glides the pivot both ways and never snaps: the far chain clamps back to the

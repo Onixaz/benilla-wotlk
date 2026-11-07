@@ -8,7 +8,7 @@
 
 use bevy::prelude::*;
 
-use super::camera::{CameraControl, FlyCam, CAM_PITCH_LIMIT};
+use super::camera::{CameraControl, CollisionArm, FlyCam, CAM_PITCH_LIMIT};
 use super::camera_zoom::{CAM_DIST_MAX, CAM_DIST_MIN};
 use super::Player;
 use benilla_world::view::WorldCamera;
@@ -68,7 +68,7 @@ pub(crate) fn restore_from_cvars(world: &mut World) {
     if let (Some(d), Some(mut rig)) = (distance, world.get_resource_mut::<CameraControl>()) {
         rig.distance = d;
         rig.target_distance = d;
-        rig.collision_distance = d;
+        rig.collision_arm = CollisionArm::at(d);
     }
     let Some(p) = pitch else {
         return;
