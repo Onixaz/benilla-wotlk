@@ -181,6 +181,7 @@ tables! {
         "SpamMessages" => text_filter_lists::spam_messages_schema(),
         "Spell" => spells::spell_schema(),
         "SpellMissile" => spell_visual::missiles::spell_missile_schema(),
+        "SpellMissileMotion" => spell_visual::missile_motion::spell_missile_motion_schema(),
         "SpellCastTimes" => spells::cast_times::schema(),
         "SpellCategory" => spells::spell_category_schema(),
         "SpellChainEffects" => spell_visual::chain_effects::chain_effects_schema(),

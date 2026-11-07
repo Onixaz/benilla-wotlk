@@ -74,6 +74,7 @@ fn spell_visual_columns_read_the_3_3_5a_layout() {
             missile_attach: 1,
             missile_sound: Some(3011),
             flags: 1,
+            missile_source_attach: u32::MAX,
             ..Default::default()
         }
     );
@@ -228,6 +229,8 @@ fn real_spell_visual_chain_resolves_fireball() {
             instant_area_kit: 0,
             impact_area_kit: 0,
             persistent_area_kit: 0,
+            // The missile columns are pinned by the merge and offset tests.
+            ..*stages
         }
     );
     assert_eq!(
@@ -627,6 +630,16 @@ fn the_weapon_merge_fills_only_the_empty_slots() {
         instant_area_kit: 5,
         impact_area_kit: 7,
         persistent_area_kit: 9,
+        missile_path_type: 2,
+        missile_source_attach: 4,
+        follow_ground_height: 100,
+        follow_ground_drop_speed: 300,
+        follow_ground_approach: 750,
+        follow_ground_flags: 6,
+        missile_motion: 13,
+        missile_targeting_kit: 8729,
+        missile_cast_offset: [1.0, 2.0, 3.0],
+        missile_impact_offset: [4.0, 5.0, 6.0],
     };
     // Multi-Shot's real shape: its own impact + missile, both body kits empty.
     let own = VisualStages {
@@ -662,6 +675,28 @@ fn the_weapon_merge_fills_only_the_empty_slots() {
         "state/channel are NOT in the client's fill list"
     );
     assert_eq!(merged.flags, 1, "nor the flags");
+    assert_eq!(
+        (
+            merged.missile_source_attach,
+            merged.follow_ground_height,
+            merged.follow_ground_drop_speed,
+            merged.follow_ground_approach,
+            merged.follow_ground_flags,
+            merged.missile_motion,
+        ),
+        (4, 100, 300, 750, 6, 13),
+        "the source attachment, ground following and motion fill (`0x721118`-`0x721160`)"
+    );
+    assert_eq!(
+        (
+            merged.missile_path_type,
+            merged.missile_targeting_kit,
+            merged.missile_cast_offset,
+            merged.missile_impact_offset,
+        ),
+        (0, 0, [0.0; 3], [0.0; 3]),
+        "the path type, targeting kit and offsets are not in the fill list"
+    );
     assert_eq!(
         (
             merged.instant_area_kit,

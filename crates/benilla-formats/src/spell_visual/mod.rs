@@ -13,9 +13,11 @@ use crate::dbc::{f32_at, i32_at, parse, str_at, u32_at};
 use crate::Chain;
 
 pub mod chain_effects;
+pub mod missile_motion;
 pub mod missiles;
 
 pub use chain_effects::{ChainEffect, ChainProc};
+pub use missile_motion::MissileMotionRec;
 pub use missiles::{SpellMissileRec, DEFAULT_MISSILE_GRAVITY};
 
 const SPELL_VISUAL: &str = "DBFilesClient\\SpellVisual.dbc";
@@ -182,12 +184,10 @@ pub mod char_proc_type {
     }
 }
 
-/// One `SpellVisual.dbc` row: the kit ids for the stages (0 for none), then the missile and
-/// dest-anchored columns. Columns 14-15 are read only for the beam test
-/// ([`SpellVisualCatalog::has_chain_effect`]); 16-22 (the missile's source attachment, ground
-/// following, motion and targeting kit) and 26-31 (the missile's cast and impact offsets) are not
-/// read.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// One `SpellVisual.dbc` row (`0x8b93f0`): the kit ids for the stages (0 for none), then the
+/// missile and dest-anchored columns.
+// No `Eq`: the offsets are floats.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct VisualStages {
     /// Column 1.
     pub precast: u32,
@@ -223,6 +223,25 @@ pub struct VisualStages {
     pub caster_impact: u32,
     /// Column 15, the target impact kit.
     pub target_impact: u32,
+    /// Column 9, the missile path type.
+    pub missile_path_type: u32,
+    /// Column 16, the missile's source attachment in column 10's encoding, `u32::MAX` for none
+    /// (`0x7faa40`); read it through [`Self::missile_source_attachment`].
+    pub missile_source_attach: u32,
+    /// Columns 17-20: the ground-following height, drop speed and approach, each in thousandths,
+    /// and the follow flags (`0x8022d0`).
+    pub follow_ground_height: i32,
+    pub follow_ground_drop_speed: i32,
+    pub follow_ground_approach: i32,
+    pub follow_ground_flags: u32,
+    /// Column 21, a `SpellMissileMotion.dbc` id.
+    pub missile_motion: u32,
+    /// Column 22, the missile targeting kit.
+    pub missile_targeting_kit: u32,
+    /// Columns 26-28, the missile's cast offset in model space, y negated on use (`0x7fc5f0`).
+    pub missile_cast_offset: [f32; 3],
+    /// Columns 29-31, the missile's impact offset, y negated on use (`0x7fabf0`).
+    pub missile_impact_offset: [f32; 3],
     /// Column 23: the kit `SMSG_SPELL_GO` plays at the packet's dest point when the targets carry
     /// one (`0x80ee85`).
     pub instant_area_kit: u32,
@@ -254,7 +273,18 @@ impl VisualStages {
             out.missile_gate = 1; // 72110b: the literal, not the weapon's value
             out.missile_model = weapon.missile_model; // 721112
         }
+        out.missile_source_attach = fill(self.missile_source_attach, weapon.missile_source_attach); // 721118
         out.missile_attach = fill(self.missile_attach, weapon.missile_attach); // 721124
+        let fill_i = |own: i32, w: i32| if own == 0 { w } else { own };
+        out.follow_ground_height = fill_i(self.follow_ground_height, weapon.follow_ground_height); // 721130
+        out.follow_ground_drop_speed = fill_i(
+            self.follow_ground_drop_speed,
+            weapon.follow_ground_drop_speed,
+        ); // 72113c
+        out.follow_ground_approach =
+            fill_i(self.follow_ground_approach, weapon.follow_ground_approach); // 721148
+        out.follow_ground_flags = fill(self.follow_ground_flags, weapon.follow_ground_flags); // 721154
+        out.missile_motion = fill(self.missile_motion, weapon.missile_motion); // 721160
         out.missile_sound = self.missile_sound.or(weapon.missile_sound); // 72116c
         out.strike_sound = self.strike_sound.or(weapon.strike_sound); // 721178
         out
@@ -264,12 +294,34 @@ impl VisualStages {
     /// [`FLAG_DEST_ATTACH_IS_ID`], else its [`MISSILE_ATTACH_TABLE`] entry; `None` past the table,
     /// where the reference reads on into adjacent data.
     pub fn missile_dest_attachment(&self) -> Option<u16> {
+        self.effect_attachment(self.missile_attach)
+    }
+
+    /// The M2 attachment the missile and the beam leave from, column 16 in column 10's encoding
+    /// (`0x71a7f0`); `None` for the row's -1.
+    pub fn missile_source_attachment(&self) -> Option<u16> {
+        (self.missile_source_attach != NONE_SENTINEL)
+            .then(|| self.effect_attachment(self.missile_source_attach))
+            .flatten()
+    }
+
+    /// The missile cast offset with y negated, as the reference applies it (`0x7fc5f0`).
+    pub fn cast_offset(&self) -> [f32; 3] {
+        let [x, y, z] = self.missile_cast_offset;
+        [x, -y, z]
+    }
+
+    /// The missile impact offset with y negated, as the reference applies it (`0x7fabf0`).
+    pub fn impact_offset(&self) -> [f32; 3] {
+        let [x, y, z] = self.missile_impact_offset;
+        [x, -y, z]
+    }
+
+    fn effect_attachment(&self, column: u32) -> Option<u16> {
         if self.flags & FLAG_DEST_ATTACH_IS_ID != 0 {
-            u16::try_from(self.missile_attach).ok()
+            u16::try_from(column).ok()
         } else {
-            MISSILE_ATTACH_TABLE
-                .get(self.missile_attach as usize)
-                .copied()
+            MISSILE_ATTACH_TABLE.get(column as usize).copied()
         }
     }
 }
@@ -351,6 +403,8 @@ pub struct SpellVisualCatalog {
     chain_effects: HashMap<u32, ChainEffect>,
     /// `SpellMissile.dbc`, by `Spell.dbc` column 227.
     missiles: HashMap<u32, SpellMissileRec>,
+    /// `SpellMissileMotion.dbc`, by `SpellVisual` column 21.
+    motions: HashMap<u32, MissileMotionRec>,
 }
 
 impl SpellVisualCatalog {
@@ -371,6 +425,7 @@ impl SpellVisualCatalog {
             hardcoded: HashMap::new(),
             chain_effects: HashMap::new(),
             missiles: HashMap::new(),
+            motions: HashMap::new(),
         }
     }
 
@@ -384,6 +439,23 @@ impl SpellVisualCatalog {
     /// A `SpellMissile.dbc` row by id.
     pub fn missile(&self, id: u32) -> Option<&SpellMissileRec> {
         self.missiles.get(&id)
+    }
+
+    /// Seed one `SpellMissileMotion` row, for tests.
+    #[must_use]
+    pub fn with_missile_motion(mut self, id: u32, motion: MissileMotionRec) -> Self {
+        self.motions.insert(id, motion);
+        self
+    }
+
+    /// A `SpellMissileMotion.dbc` row by id, `SpellVisual` column 21.
+    pub fn missile_motion(&self, id: u32) -> Option<&MissileMotionRec> {
+        self.motions.get(&id)
+    }
+
+    /// Every `SpellMissileMotion` row as `(id, row)`, in no order.
+    pub fn missile_motions(&self) -> impl Iterator<Item = (u32, &MissileMotionRec)> + '_ {
+        self.motions.iter().map(|(id, m)| (*id, m))
     }
 
     /// Seed one `SpellChainEffects` row, for tests.
@@ -505,17 +577,22 @@ impl SpellVisualCatalog {
     }
 }
 
-fn n_u32_schema(name: &str, fields: usize) -> Schema {
-    let mut s = Schema::new(name);
-    for i in 0..fields {
-        s.add_field(SchemaField::new(format!("F{i}"), FieldType::UInt32));
+/// `SpellVisual`: ids and ints, then the two float offsets in columns 26-31.
+pub(crate) fn spell_visual_schema() -> Schema {
+    let mut s = Schema::new("SpellVisual");
+    for i in 0..SPELL_VISUAL_FIELDS {
+        let ty = if i >= SPELL_VISUAL_OFFSETS_FIELD {
+            FieldType::Float32
+        } else {
+            FieldType::UInt32
+        };
+        s.add_field(SchemaField::new(format!("F{i}"), ty));
     }
     s
 }
 
-pub(crate) fn spell_visual_schema() -> Schema {
-    n_u32_schema("SpellVisual", SPELL_VISUAL_FIELDS)
-}
+/// Column 26, the first of the missile cast and impact offset floats.
+const SPELL_VISUAL_OFFSETS_FIELD: usize = 26;
 
 /// `SpellVisualEffectName`: id, name, model path, then the area effect size and three scale
 /// floats, which benilla does not read.
@@ -580,6 +657,7 @@ fn parse_visuals(bytes: &[u8]) -> Result<HashMap<u32, VisualStages>> {
     for r in set.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         let g = |i: usize| u32_at(r, i).unwrap_or(0);
+        let f = |i: usize| f32_at(r, i).unwrap_or(0.0);
         visuals.insert(
             id,
             VisualStages {
@@ -597,6 +675,16 @@ fn parse_visuals(bytes: &[u8]) -> Result<HashMap<u32, VisualStages>> {
                 flags: g(13),
                 caster_impact: g(14),
                 target_impact: g(15),
+                missile_path_type: g(9),
+                missile_source_attach: g(16),
+                follow_ground_height: g(17) as i32,
+                follow_ground_drop_speed: g(18) as i32,
+                follow_ground_approach: g(19) as i32,
+                follow_ground_flags: g(20),
+                missile_motion: g(21),
+                missile_targeting_kit: g(22),
+                missile_cast_offset: [f(26), f(27), f(28)],
+                missile_impact_offset: [f(29), f(30), f(31)],
                 instant_area_kit: g(23),
                 impact_area_kit: g(24),
                 persistent_area_kit: g(25),
@@ -638,7 +726,8 @@ fn parse_kits(bytes: &[u8]) -> Result<HashMap<u32, VisualKit>> {
     Ok(kits)
 }
 
-/// Read the spell visual tables and `SpellMissile.dbc` off the patch chain.
+/// Read the spell visual tables, `SpellMissile.dbc` and `SpellMissileMotion.dbc` off the patch
+/// chain.
 pub fn load_spell_visual_catalog(chain: &mut Chain) -> Result<SpellVisualCatalog> {
     let visuals = parse_visuals(
         &chain
@@ -678,6 +767,11 @@ pub fn load_spell_visual_catalog(chain: &mut Chain) -> Result<SpellVisualCatalog
             .read_file(missiles::SPELL_MISSILE)
             .context("reading SpellMissile.dbc")?,
     )?;
+    let motions = missile_motion::parse_missile_motions(
+        &chain
+            .read_file(missile_motion::SPELL_MISSILE_MOTION)
+            .context("reading SpellMissileMotion.dbc")?,
+    )?;
 
     Ok(SpellVisualCatalog {
         visuals,
@@ -686,6 +780,7 @@ pub fn load_spell_visual_catalog(chain: &mut Chain) -> Result<SpellVisualCatalog
         hardcoded,
         chain_effects,
         missiles,
+        motions,
     })
 }
 

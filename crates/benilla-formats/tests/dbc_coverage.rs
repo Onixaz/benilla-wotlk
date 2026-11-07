@@ -57,7 +57,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("ScreenEffect", "#243 screen effects"),
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
     ("SpellDifficulty", "#240 per-difficulty spell variants"),
-    ("SpellMissileMotion", "#110 spell missile motion"),
     ("SpellVisualKitAreaModel", "#110 area spell visual kits"),
     (
         "SpellVisualKitModelAttach",
