@@ -11,7 +11,8 @@ use benilla_world::world_census::WorldCensus;
 /// `WOW_LIVE_FPS=<frames>` (default 300): the [`crate::capture::CapturePlugin`] probe's numbers on
 /// a connected run. Waits for the world and `WOW_LIVE_FPS_AT` seconds (default 25), uncaps vsync,
 /// warms [`PROBE_WARMUP_FRAMES`], samples, prints `FPS_PROBE scenario=live` and exits.
-/// `WOW_LIVE_FPS_MOVE=1` holds W throughout, measuring a run through the scene.
+/// `WOW_LIVE_FPS_MOVE=1` holds W throughout, measuring a run through the scene; `turn` holds W and
+/// A together, a tight circle that moves the camera every frame over one spot's scene.
 pub(crate) struct LiveFpsPlugin;
 
 /// Seconds past `WOW_LIVE_FPS_AT` without a world before the run exits as dead; covers a cold load.
@@ -30,7 +31,11 @@ impl Plugin for LiveFpsPlugin {
         app.insert_resource(LiveFps {
             frames,
             at,
-            run: std::env::var("WOW_LIVE_FPS_MOVE").as_deref() == Ok("1"),
+            held: match std::env::var("WOW_LIVE_FPS_MOVE").as_deref() {
+                Ok("1") => &[KeyCode::KeyW],
+                Ok("turn") => &[KeyCode::KeyW, KeyCode::KeyA],
+                _ => &[],
+            },
             phase: LiveFpsPhase::Waiting,
             samples: Vec::new(),
             cpu_samples: Vec::new(),
@@ -73,8 +78,8 @@ fn still_inputs_now() -> [u32; 7] {
 struct LiveFps {
     frames: usize,
     at: f32,
-    /// Hold W while measuring (`WOW_LIVE_FPS_MOVE=1`).
-    run: bool,
+    /// Keys held while measuring (`WOW_LIVE_FPS_MOVE`).
+    held: &'static [KeyCode],
     phase: LiveFpsPhase,
     samples: Vec<f32>,
     /// Process CPU per frame, ms, index-parallel with `samples`: says whether a slow frame was
@@ -224,15 +229,15 @@ fn drive_live_fps(
                 w.present_mode = crate::capture::probe_uncap_mode();
             }
             info!(
-                "live-fps: in-world + settled; vsync off, warming {PROBE_WARMUP_FRAMES} frames{}",
-                if probe.run { ", holding W" } else { "" }
+                "live-fps: in-world + settled; vsync off, warming {PROBE_WARMUP_FRAMES} frames, holding {:?}",
+                probe.held
             );
-            if probe.run {
-                // Held until released: winit only releases keys it saw go down. The raw message
-                // gives the binding dispatch its press edge (MOVEFORWARD latches off the event).
-                keys.press(KeyCode::KeyW);
+            // Held until released: winit only releases keys it saw go down. The raw message gives
+            // the binding dispatch its press edge (MOVEFORWARD latches off the event).
+            for &key_code in probe.held {
+                keys.press(key_code);
                 key_events.write(bevy::input::keyboard::KeyboardInput {
-                    key_code: KeyCode::KeyW,
+                    key_code,
                     logical_key: bevy::input::keyboard::Key::Unidentified(
                         bevy::input::keyboard::NativeKey::Unidentified,
                     ),
@@ -664,8 +669,8 @@ fn drive_live_fps(
                     unpathed[0], unpathed[1], unpathed[2], seen.mats
                 );
             }
-            if probe.run {
-                keys.release(KeyCode::KeyW);
+            for &key in probe.held {
+                keys.release(key);
             }
             probe.phase = LiveFpsPhase::Done;
             exit.write(AppExit::Success);
