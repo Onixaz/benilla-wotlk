@@ -773,17 +773,8 @@ pub struct ScrollFrameState {
     pub range_stamp: Option<(u64, u64)>,
 }
 
-/// `Button:SetFont`'s record, one for the client's three embedded fonts (`+0x33c`, `+0x434`,
-/// `+0x3b8`), since `SetFont` sets all three alike and no Lua call parts them.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ButtonFont {
-    pub path: String,
-    /// The font height in logical px.
-    pub height: f32,
-    /// The normalized outline, `""`, `"OUTLINE"` or `"THICKOUTLINE"`, as `GetFont` answers it; an
-    /// omitted `flags` clears it, where the reference's handling is untraced.
-    pub flags: String,
-}
+/// The constructor's pushed offset (`0x970520`): 0.001 and -0.001 of the screen's width.
+const DEFAULT_PUSHED_TEXT_OFFSET: [f32; 2] = [1.024, -1.024];
 
 /// A button's state, `[button+0x328]`: 0 DISABLED, 1 NORMAL, 2 PUSHED, also the index into its
 /// texture array `+0x4b8`. Past the constructor, the state setter is its only writer.
@@ -831,15 +822,12 @@ pub struct ButtonState {
     pub highlight_font: Option<String>,
     /// [`ButtonState::normal_font`] for the disabled state (`+0x2b8`).
     pub disabled_font: Option<String>,
-    /// `Button:SetFont`'s face, kept on the button since `SetFont` never touches the label
-    /// (`+0x338`) and so creates none; extract applies it to whatever label there is.
-    pub font: Option<ButtonFont>,
-    /// `SetTextColor`'s label colour for the normal state, painted over the state font's own.
-    pub normal_color: Option<[f32; 4]>,
-    /// [`ButtonState::normal_color`] for the highlighted state, which never falls back to it.
-    pub highlight_color: Option<[f32; 4]>,
-    /// [`ButtonState::normal_color`] for the disabled state.
-    pub disabled_color: Option<[f32; 4]>,
+    /// The label's offset while pushed (`+0x2bc`), in UI units; `<PushedTextOffset>`,
+    /// `SetPushedTextOffset`.
+    pub pushed_text_offset: [f32; 2],
+    /// `SetMotionScriptsWhileDisabled` (`motionScriptsWhileDisabled=`): a disabled button still runs
+    /// its `OnEnter` and `OnLeave` (`0x96fca0`).
+    pub motion_scripts_while_disabled: bool,
     /// `LockHighlight()`: highlighted regardless of hover, both the texture and the label font.
     pub locked_highlight: bool,
     /// The shown state texture (`+0x4c4`), written only by `set_state` and `set_state_slot`.
@@ -865,10 +853,8 @@ impl Default for ButtonState {
             normal_font: None,
             highlight_font: None,
             disabled_font: None,
-            font: None,
-            normal_color: None,
-            highlight_color: None,
-            disabled_color: None,
+            pushed_text_offset: DEFAULT_PUSHED_TEXT_OFFSET,
+            motion_scripts_while_disabled: false,
             locked_highlight: false,
             shown: None,
             state: ButtonVisualState::Normal,

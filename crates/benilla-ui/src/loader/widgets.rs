@@ -233,12 +233,36 @@ impl Loader<'_> {
                 }
             }
         }
+        // All three colours write the shared normal font, when the button has one by then
+        // (`0x96f8d0`, branches `0x970162`, `0x970198`, `0x9701d1`), and later ones win.
+        for tag in ["NormalColor", "HighlightColor", "DisabledColor"] {
+            for c in children_named(el, tag).map(color_of) {
+                if let Ok(h) = crate::script::object::frame_handle_of(self.lua(), wrapper) {
+                    let mut model = self.model();
+                    let font = match model.arena.frame(h).map(|f| &f.kind_state) {
+                        Some(crate::widget::KindState::Button(bs)) => bs.normal_font.clone(),
+                        _ => None,
+                    };
+                    if let Some(font) = font {
+                        crate::script::font::set_object_color(&mut model, &font, c);
+                    }
+                }
+            }
+        }
+        if let Some(o) = children_named(el, "PushedTextOffset").last() {
+            if let (Some(x), Some(y)) = abs_dim(o) {
+                self.call(wrapper, "SetPushedTextOffset", (x, y), dbg);
+            }
+        }
         // After the fonts, as the label is attached after the child loop (`0x970150`): a label
         // `text=` creates is anchored by the normal font's justify (`SetFontString 0x96f7b0`).
         if let Some(text) = el.attr("text") {
             // A global-string key: `text="DELETE"` reads "Delete".
             let text = self.resolve_text(text, dbg);
             self.call(wrapper, "SetText", text, dbg);
+        }
+        if let Some(on) = el.attr_bool_opt("motionScriptsWhileDisabled") {
+            self.call(wrapper, "SetMotionScriptsWhileDisabled", on, dbg);
         }
         // `registerForClicks=` (`0x9702b1`): names split on space or comma, OR'd into 32 bits and
         // stored with the high word zeroed (`0x970321`/`0x97032a`), so no Up bit past the left's.

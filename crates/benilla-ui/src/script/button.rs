@@ -1,18 +1,17 @@
 //! The `Button` and `CheckButton` methods. The shown state texture latches at each state edge, not
-//! at paint. `<PushedTextOffset>` is not built: a pushed label does not shift. Lookup runs
+//! at paint. Lookup runs
 //! CheckButton's table, then Button's, then the frame table, the client's class chain, so
 //! `SetChecked` is nil on a plain Button and `GetText` on a plain Frame.
 
 use mlua::{Lua, MultiValue, ObjectLike, Table, Value};
 
-use super::object::{as_f32, frame_handle_of};
+use super::object::frame_handle_of;
 use super::region::region_wrapper;
 use super::{event, Model, RegionData};
 use crate::justify::Justify;
 use crate::order::DrawLayer;
 use crate::widget::{
-    ButtonFont, ButtonState, ButtonVisualState, FrameHandle, FrameKind, KindState, RegionHandle,
-    RegionKind,
+    ButtonState, ButtonVisualState, FrameHandle, FrameKind, KindState, RegionHandle, RegionKind,
 };
 
 pub(super) const REG_BUTTON_METHODS: &str = "__benilla_button_methods";
@@ -206,14 +205,14 @@ pub(super) fn edge(model: &mut Model, h: FrameHandle, f: impl FnOnce(&mut Button
 }
 
 /// Whether a hover edge on `h` reaches the base notify, the HIGHLIGHT layer and the Lua
-/// `<OnEnter>`/`<OnLeave>`: `OnEnter`/`OnLeave` skip it on a DISABLED Button, leaving only the
-/// hover sound. Every hover path goes through that pair (the mouse-focus set), and the Hyperlink
+/// `<OnEnter>`/`<OnLeave>`: `OnEnter`/`OnLeave` skip it on a DISABLED Button that does not run its
+/// motion scripts while disabled, leaving only the hover sound. Every hover path goes through that pair (the mouse-focus set), and the Hyperlink
 /// and NamePlate overrides chain back. The hover target still moves, so `GetMouseFocus()` answers a
 /// disabled button.
 pub(super) fn hover_notify_runs(model: &Model, h: Option<FrameHandle>) -> bool {
     let Some(h) = h else { return true };
     match model.arena.frame(h).map(|f| &f.kind_state) {
-        Some(KindState::Button(bs)) => bs.enabled(),
+        Some(KindState::Button(bs)) => bs.enabled() || bs.motion_scripts_while_disabled,
         _ => true,
     }
 }
@@ -643,141 +642,48 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetFont(file, height [, flags]) sets all three embedded fonts and returns nothing, discarding
-    // the shared font load's result. It never touches the label (`+0x338`), so creates none:
-    // extract applies the stored font to whatever label exists. Its checks are 5.0's coercing
-    // `lua_isstring`/`lua_isnumber`, else a usage error.
+    // SetPushedTextOffset(x, y) (`0x977f60`): numbers or a usage error; the label takes it while
+    // the button is pushed (`0x96f4a0`).
     m.set(
-        "SetFont",
-        lua.create_function(
-            |lua, (this, file, height, flags): (Table, Value, Value, Option<String>)| {
-                let usage = || {
-                    mlua::Error::runtime(
-                        "Usage: <Button>:SetFont(\"font\", fontHeight [, flags])".to_string(),
-                    )
-                };
-                let path = match &file {
-                    Value::String(s) => s.to_str()?.to_string(),
-                    Value::Number(_) | Value::Integer(_) => as_f32(&file).to_string(),
-                    _ => return Err(usage()),
-                };
-                let height = match &height {
-                    Value::Number(_) | Value::Integer(_) => as_f32(&height),
-                    Value::String(s) => s.to_str()?.parse::<f32>().map_err(|_| usage())?,
-                    _ => return Err(usage()),
-                };
-                let flags = super::Outline::flags(flags.as_deref().unwrap_or(""))
-                    .as_str()
-                    .to_string();
-                with_button(lua, &this, |bs| {
-                    bs.font = Some(ButtonFont {
-                        path,
-                        height,
-                        flags,
-                    })
-                })
-            },
-        )?,
+        "SetPushedTextOffset",
+        lua.create_function(|lua, (this, x, y): (Table, Value, Value)| {
+            let (Some(x), Some(y)) = (lua.coerce_number(x)?, lua.coerce_number(y)?) else {
+                let name = this
+                    .get::<mlua::Function>("GetName")
+                    .and_then(|f| f.call::<Option<String>>(this.clone()))
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| "<unnamed>".to_string());
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {name}:SetPushedTextOffset(x, y)"
+                )));
+            };
+            with_button(lua, &this, |bs| {
+                bs.pushed_text_offset = [x as f32, y as f32];
+            })
+        })?,
     )?;
-    // GetFont() → file, height, flags off the normal font, else the object it inherits
-    // (`<NormalFont>`, `SetNormalFontObject`); always three values.
     m.set(
-        "GetFont",
+        "GetPushedTextOffset",
         lua.create_function(|lua, this: Table| {
-            let (own, inherits) =
-                with_button(lua, &this, |bs| (bs.font.clone(), bs.normal_font.clone()))?;
-            let (path, height, flags) = match own {
-                Some(f) => (Some(f.path), Some(f.height), f.flags),
-                None => {
-                    let model = lua
-                        .app_data_ref::<crate::script::ModelCell>()
-                        .expect("model app_data");
-                    let fo = inherits.and_then(|n| model.font_object(&n));
-                    (
-                        fo.and_then(|f| f.font.clone()),
-                        fo.and_then(|f| f.height),
-                        fo.map(|f| f.outline)
-                            .unwrap_or_default()
-                            .as_str()
-                            .to_string(),
-                    )
-                }
-            };
-            let path = match path {
-                Some(p) => Value::String(lua.create_string(&p)?),
-                None => Value::Nil,
-            };
-            Ok((path, height, flags))
+            let [x, y] = with_button(lua, &this, |bs| bs.pushed_text_offset)?;
+            Ok((f64::from(x), f64::from(y)))
         })?,
     )?;
 
-    // The per-state label colours: a set one paints over the state font's colour at extract.
+    // The disabled button's motion scripts (`0x9783b0`), a Lua boolean read back.
     m.set(
-        "SetTextColor",
-        lua.create_function(
-            |lua, (this, r, g, b, a): (Table, Value, Value, Value, Option<f32>)| {
-                // Shape C on the channels (`Button:SetTextColor`, `2=C 3=C 4=C 5=B`).
-                let (r, g, b) = (
-                    super::object::as_f32(&r),
-                    super::object::as_f32(&g),
-                    super::object::as_f32(&b),
-                );
-                with_button(lua, &this, |bs| {
-                    bs.normal_color = Some([r, g, b, a.unwrap_or(1.0)])
-                })
-            },
-        )?,
-    )?;
-    // GetTextColor() → r, g, b, a, four values, off the normal font: its own colour, else the
-    // inherited object's (`<NormalFont>`, `SetNormalFontObject`), else white.
-    m.set(
-        "GetTextColor",
-        lua.create_function(|lua, this: Table| {
-            let (own, inherits) =
-                with_button(lua, &this, |bs| (bs.normal_color, bs.normal_font.clone()))?;
-            let c = own.unwrap_or_else(|| {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
-                inherits
-                    .and_then(|n| model.font_object(&n))
-                    .and_then(|f| f.color)
-                    .unwrap_or([1.0, 1.0, 1.0, 1.0])
-            });
-            Ok((c[0], c[1], c[2], c[3]))
+        "SetMotionScriptsWhileDisabled",
+        lua.create_function(|lua, (this, on): (Table, Value)| {
+            let on = super::binding_abi::bool_or_default(Some(&on), false);
+            with_button(lua, &this, |bs| bs.motion_scripts_while_disabled = on)
         })?,
     )?;
     m.set(
-        "SetHighlightTextColor",
-        lua.create_function(
-            |lua, (this, r, g, b, a): (Table, Value, Value, Value, Option<f32>)| {
-                // Shape C on the channels (`Button:SetTextColor`, `2=C 3=C 4=C 5=B`).
-                let (r, g, b) = (
-                    super::object::as_f32(&r),
-                    super::object::as_f32(&g),
-                    super::object::as_f32(&b),
-                );
-                with_button(lua, &this, |bs| {
-                    bs.highlight_color = Some([r, g, b, a.unwrap_or(1.0)])
-                })
-            },
-        )?,
-    )?;
-    m.set(
-        "SetDisabledTextColor",
-        lua.create_function(
-            |lua, (this, r, g, b, a): (Table, Value, Value, Value, Option<f32>)| {
-                // Shape C on the channels (`Button:SetTextColor`, `2=C 3=C 4=C 5=B`).
-                let (r, g, b) = (
-                    super::object::as_f32(&r),
-                    super::object::as_f32(&g),
-                    super::object::as_f32(&b),
-                );
-                with_button(lua, &this, |bs| {
-                    bs.disabled_color = Some([r, g, b, a.unwrap_or(1.0)])
-                })
-            },
-        )?,
+        "GetMotionScriptsWhileDisabled",
+        lua.create_function(|lua, this: Table| {
+            with_button(lua, &this, |bs| bs.motion_scripts_while_disabled)
+        })?,
     )?;
 
     // LockHighlight and UnlockHighlight: the highlight shows regardless of hover.

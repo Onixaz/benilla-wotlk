@@ -670,11 +670,11 @@ fn button_label_repaints_by_state_font_object() {
 }
 
 /// The highlight font object is put in force by a hover or `LockHighlight` (the text-state update
-/// `0x96f4a0` reads the highlight layer), so a colour on the normal state cannot reach it:
+/// `0x96f4a0` reads the highlight layer):
 /// `ClassTrainerSkillButtonTemplate`'s rows (`<HighlightFont style="GameFontHighlightLeft"/>`)
 /// turn white, and the trainer and trade-skill lists lock the selected row.
 #[test]
-fn a_locked_or_hovered_button_wears_its_highlight_font_over_its_normal_color() {
+fn a_locked_or_hovered_button_wears_its_highlight_font() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.register_font_object(
@@ -700,8 +700,6 @@ fn a_locked_or_hovered_button_wears_its_highlight_font_over_its_normal_color() {
         b:SetText("Rough Copper Vest")
         b:SetNormalFontObject("RowNormal")
         b:SetHighlightFontObject("RowHighlight")
-        -- The difficulty paint every one of the three list windows applies to every row.
-        b:SetTextColor(1.0, 0.5, 0.25)
     "#,
     )
     .unwrap();
@@ -725,8 +723,8 @@ fn a_locked_or_hovered_button_wears_its_highlight_font_over_its_normal_color() {
     s.mouse_move(400.0, 300.0); // nowhere near the row
     assert_eq!(
         label_color(&mut s),
-        Some([1.0, 0.5, 0.25, 1.0]),
-        "at rest the row wears the difficulty colour SetTextColor gave it"
+        Some([1.0, 0.82, 0.0, 1.0]),
+        "at rest the row wears its normal font"
     );
 
     s.resolve();
@@ -734,7 +732,7 @@ fn a_locked_or_hovered_button_wears_its_highlight_font_over_its_normal_color() {
     assert_eq!(
         label_color(&mut s),
         Some([1.0, 1.0, 1.0, 1.0]),
-        "hovered: the HIGHLIGHT font is in force, and the normal colour cannot reach it"
+        "hovered: the HIGHLIGHT font is in force"
     );
 
     s.resolve();
@@ -748,8 +746,8 @@ fn a_locked_or_hovered_button_wears_its_highlight_font_over_its_normal_color() {
     s.run("b:UnlockHighlight()").unwrap();
     assert_eq!(
         label_color(&mut s),
-        Some([1.0, 0.5, 0.25, 1.0]),
-        "unlocked: back to the difficulty colour"
+        Some([1.0, 0.82, 0.0, 1.0]),
+        "unlocked: back to the normal font"
     );
 
     s.run(r#"b:SetHighlightFontObject(nil); b:SetText("Rough Copper Vest")"#)
@@ -758,7 +756,7 @@ fn a_locked_or_hovered_button_wears_its_highlight_font_over_its_normal_color() {
     s.mouse_move(150.0, 110.0);
     assert_eq!(
         label_color(&mut s),
-        Some([1.0, 0.5, 0.25, 1.0]),
+        Some([1.0, 0.82, 0.0, 1.0]),
         "no <HighlightFont> → hover changes nothing"
     );
     assert!(s.errors().is_empty(), "{:?}", s.errors());
@@ -1368,82 +1366,6 @@ fn hiding_a_held_button_un_presses_it() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `Button:GetTextColor()` returns four values, r, g, b, a.
-#[test]
-fn button_get_text_color_answers_four_values_through_the_state_font() {
-    let s = script();
-    s.register_font_object(
-        "BtnGold",
-        FontObject {
-            color: Some([1.0, 0.82, 0.0, 1.0]),
-            height: Some(12.0),
-            ..Default::default()
-        },
-    );
-    s.run(
-        r#"
-        Plain = CreateFrame("Button", "PlainBtn")
-        Themed = CreateFrame("Button", "ThemedBtn")
-        Themed:SetNormalFontObject("BtnGold")
-        "#,
-    )
-    .unwrap();
-
-    assert_eq!(
-        s.arity("PlainBtn:GetTextColor()").unwrap(),
-        4,
-        "arity 4 — not 3, the plausible wrong answer"
-    );
-    let kinds: String = s
-        .eval(
-            r#"local r,g,b,a = PlainBtn:GetTextColor()
-               return type(r)..","..type(g)..","..type(b)..","..type(a)"#,
-        )
-        .unwrap();
-    assert_eq!(kinds, "number,number,number,number");
-
-    // Nothing set: the untinted white the other colour getters here answer.
-    let plain: Vec<f32> = (1..=4)
-        .map(|i| {
-            let discards = "_, ".repeat(i - 1);
-            s.eval::<f32>(&format!(
-                "local {discards}v = PlainBtn:GetTextColor() return v"
-            ))
-            .unwrap()
-        })
-        .collect();
-    assert_eq!(plain, vec![1.0, 1.0, 1.0, 1.0]);
-
-    // Unset locally, it reads through the normal state's font object, as `Button:GetFont` does.
-    let themed: Vec<f32> = (1..=4)
-        .map(|i| {
-            let discards = "_, ".repeat(i - 1);
-            s.eval::<f32>(&format!(
-                "local {discards}v = ThemedBtn:GetTextColor() return v"
-            ))
-            .unwrap()
-        })
-        .collect();
-    assert_eq!(themed, vec![1.0, 0.82, 0.0, 1.0]);
-
-    s.run("ThemedBtn:SetTextColor(0.1, 0.2, 0.3, 0.4)").unwrap();
-    let set: Vec<f32> = (1..=4)
-        .map(|i| {
-            let discards = "_, ".repeat(i - 1);
-            s.eval::<f32>(&format!(
-                "local {discards}v = ThemedBtn:GetTextColor() return v"
-            ))
-            .unwrap()
-        })
-        .collect();
-    assert_eq!(set, vec![0.1, 0.2, 0.3, 0.4]);
-
-    // A CheckButton reaches it through Button's table.
-    s.run(r#"CreateFrame("CheckButton", "ChkColorBtn")"#)
-        .unwrap();
-    assert_eq!(s.arity("ChkColorBtn:GetTextColor()").unwrap(), 4);
-}
-
 /// `Enable`/`Disable` run `OnEnable`/`OnDisable` on a change only (`0x970440` returns early when
 /// the state already matches), with no arguments past `self`.
 #[test]
@@ -1499,4 +1421,161 @@ fn a_childs_onload_disabling_its_parent_runs_the_parents_ondisable() {
         s.eval::<String>("return table.concat(log, ',')").unwrap(),
         "disable,onload,enable"
     );
+}
+
+/// The `Button` table (`0xb2d418`): its verbs answer, and the text verbs of a FontString do not.
+#[test]
+fn a_button_holds_the_3_3_5a_method_set() {
+    let s = script();
+    s.run(r#"B = CreateFrame("Button", "SurfaceBtn")"#).unwrap();
+    for verb in [
+        "Click",
+        "Disable",
+        "Enable",
+        "GetButtonState",
+        "GetDisabledFontObject",
+        "GetDisabledTexture",
+        "GetFontString",
+        "GetHighlightFontObject",
+        "GetHighlightTexture",
+        "GetMotionScriptsWhileDisabled",
+        "GetNormalFontObject",
+        "GetNormalTexture",
+        "GetPushedTextOffset",
+        "GetPushedTexture",
+        "GetText",
+        "GetTextHeight",
+        "GetTextWidth",
+        "IsEnabled",
+        "LockHighlight",
+        "RegisterForClicks",
+        "SetButtonState",
+        "SetDisabledFontObject",
+        "SetDisabledTexture",
+        "SetFontString",
+        "SetFormattedText",
+        "SetHighlightFontObject",
+        "SetHighlightTexture",
+        "SetMotionScriptsWhileDisabled",
+        "SetNormalFontObject",
+        "SetNormalTexture",
+        "SetPushedTextOffset",
+        "SetPushedTexture",
+        "SetText",
+        "UnlockHighlight",
+    ] {
+        assert!(
+            s.eval::<bool>(&format!("return B.{verb} ~= nil")).unwrap(),
+            "{verb}"
+        );
+    }
+    for verb in [
+        "SetTextColor",
+        "GetTextColor",
+        "SetHighlightTextColor",
+        "SetDisabledTextColor",
+        "SetFont",
+        "GetFont",
+    ] {
+        assert!(
+            s.eval::<bool>(&format!("return B.{verb} == nil")).unwrap(),
+            "{verb}"
+        );
+    }
+}
+
+/// A disabled button runs `OnEnter` and `OnLeave` only with the flag (`0x96fca0`, `0x96fd00`).
+#[test]
+fn a_disabled_button_runs_its_motion_scripts_with_the_flag() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        n = 0
+        b = CreateFrame("Button", "MotionBtn")
+        b:SetPoint("BOTTOMLEFT", 100, 100); b:SetWidth(100); b:SetHeight(20)
+        b:SetScript("OnEnter", function() n = n + 1 end)
+        b:Disable()
+    "#,
+    )
+    .unwrap();
+    assert!(!s
+        .eval::<bool>("return b:GetMotionScriptsWhileDisabled()")
+        .unwrap());
+    s.resolve();
+    s.mouse_move(150.0, 110.0);
+    assert_eq!(s.eval::<i64>("return n").unwrap(), 0);
+    s.mouse_move(400.0, 300.0);
+    s.run("b:SetMotionScriptsWhileDisabled(1)").unwrap();
+    assert!(s
+        .eval::<bool>("return b:GetMotionScriptsWhileDisabled()")
+        .unwrap());
+    s.mouse_move(150.0, 110.0);
+    assert_eq!(s.eval::<i64>("return n").unwrap(), 1);
+}
+
+/// The offset starts at the constructor's value and takes numbers or a usage error (`0x977f60`).
+#[test]
+fn the_pushed_offset_round_trips() {
+    let s = script();
+    s.run(r#"B = CreateFrame("Button", "OffsetBtn")"#).unwrap();
+    let (x, y) = s
+        .eval::<(f32, f32)>("return B:GetPushedTextOffset()")
+        .unwrap();
+    assert!(
+        (x - 1.024).abs() < 1e-6 && (y + 1.024).abs() < 1e-6,
+        "{x} {y}"
+    );
+    s.run(r#"B:SetPushedTextOffset("2", -3)"#).unwrap();
+    assert_eq!(
+        s.eval::<(f32, f32)>("return B:GetPushedTextOffset()")
+            .unwrap(),
+        (2.0, -3.0)
+    );
+    let err = s.run("B:SetPushedTextOffset(1)").unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("Usage: OffsetBtn:SetPushedTextOffset(x, y)"),
+        "{err}"
+    );
+}
+
+/// A pushed button's label moves by the offset, and a resting one's does not (`0x96f4a0`).
+#[test]
+fn a_pushed_label_shifts_by_the_offset() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.register_font_object(
+        "PushFont",
+        FontObject {
+            height: Some(12.0),
+            ..Default::default()
+        },
+    );
+    s.run(
+        r#"
+        b = CreateFrame("Button", "PushBtn")
+        b:SetPoint("BOTTOMLEFT", 100, 100); b:SetWidth(100); b:SetHeight(20)
+        b:SetNormalFontObject("PushFont")
+        b:SetText("Push")
+        b:SetPushedTextOffset(4, -2)
+    "#,
+    )
+    .unwrap();
+    let label = |s: &mut crate::script::UiScript| {
+        s.resolve();
+        s.extract()
+            .into_iter()
+            .find(|q| matches!(&q.content, QuadContent::Text { text: Some(t), .. } if t == "Push"))
+            .expect("label quad")
+            .rect
+            .expect("label rect")
+    };
+    let rest = label(&mut s);
+    s.run(r#"b:SetButtonState("PUSHED")"#).unwrap();
+    let pushed = label(&mut s);
+    assert_eq!(pushed.left, rest.left + 4.0);
+    assert_eq!(pushed.bottom, rest.bottom - 2.0);
+    s.run(r#"b:SetButtonState("NORMAL")"#).unwrap();
+    assert_eq!(label(&mut s), rest);
 }
