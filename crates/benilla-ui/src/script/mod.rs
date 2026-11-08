@@ -1996,6 +1996,16 @@ impl UiScript {
         self.model_mut().set_epoch(epoch);
     }
 
+    /// Arm the `PLAYER_LOGIN` one-shot (`0x52a9e6`); `IsLoggedIn` answers nil until it fires.
+    pub fn arm_player_login(&mut self) {
+        set_field!(self, player_login_armed, true);
+    }
+
+    /// Take the `PLAYER_LOGIN` one-shot for the world entry to fire.
+    pub fn take_player_login_armed(&mut self) -> bool {
+        std::mem::take(&mut self.model_mut().player_login_armed)
+    }
+
     fn push_error(&self, e: mlua::Error) {
         self.model_mut().record_script_error(e.to_string());
     }

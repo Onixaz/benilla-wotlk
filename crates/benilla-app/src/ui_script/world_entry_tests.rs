@@ -802,6 +802,102 @@ fn leaving_inside_the_deferral_window_drops_the_load_and_writes_nothing() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+// ───────────── `PLAYER_LOGIN` waits for the player ─────────────
+
+/// The load arms `PLAYER_LOGIN` and fires nothing; the first world entry fires it once, ahead of
+/// `PLAYER_ENTERING_WORLD` (`0x52816d`), and a later entry, the worldport's shape, only the second.
+#[test]
+fn player_login_fires_once_at_the_first_world_entry_ahead_of_entering_world() {
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (tmp, _c, _h) = hermetic_probe("login_edge");
+
+    let mut app = App::new();
+    app.add_plugins(crate::ui_unit::UiUnitPlugin);
+    app.init_resource::<super::AddOnIdentity>();
+    app.init_resource::<crate::minimap::MinimapZoom>();
+    app.init_resource::<super::ReloadUiPending>();
+    app.init_resource::<crate::target::Selection>();
+    app.init_resource::<crate::names::NameCache>();
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    app.insert_resource(crate::net::NetCommands(tx));
+    app.init_resource::<crate::net::Reputations>();
+    app.init_resource::<crate::ui_party::GroupState>();
+    app.init_resource::<crate::ui_chat::ChatLog>();
+    app.init_resource::<crate::ui_guild::GuildState>();
+    app.add_message::<crate::creature_anim::SwingImpact>();
+    app.insert_resource(State::new(crate::char_select::ClientState::InWorld));
+    super::setup_script(app.world_mut());
+    super::install_boot_vm(app.world_mut());
+    {
+        let mut script = app
+            .world_mut()
+            .non_send_resource_mut::<benilla_ui::script::UiScript>();
+        script
+            .run(
+                "EntrySeen = {} \
+                 local f = CreateFrame(\"Frame\") \
+                 f:RegisterEvent(\"PLAYER_LOGIN\") \
+                 f:RegisterEvent(\"PLAYER_ENTERING_WORLD\") \
+                 f:SetScript(\"OnEvent\", function(self, event) \
+                     table.insert(EntrySeen, event) end)",
+            )
+            .expect("probe frame");
+        script.arm_player_login();
+        assert!(script
+            .eval::<Option<i64>>("return IsLoggedIn()")
+            .unwrap()
+            .is_none());
+    }
+    let seen = |app: &App| -> Vec<String> {
+        app.world()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval::<Vec<String>>("return EntrySeen")
+            .expect("probe global")
+    };
+    app.update();
+    assert!(seen(&app).is_empty(), "no player yet, nothing fires");
+
+    let spawn = |app: &mut App| {
+        app.world_mut()
+            .spawn((
+                crate::net::SelfPlayer,
+                crate::net::Guid(1),
+                crate::net::ObjectStore(
+                    benilla_protocol::messages::ObjectFields::from_pairs(&[])
+                        .into_created(benilla_protocol::messages::ObjectType::Player),
+                ),
+            ))
+            .id()
+    };
+    let me = spawn(&mut app);
+    app.update();
+    assert_eq!(seen(&app), ["PLAYER_LOGIN", "PLAYER_ENTERING_WORLD"]);
+    assert_eq!(
+        app.world()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval::<i64>("return IsLoggedIn()")
+            .unwrap(),
+        1
+    );
+
+    // The worldport: the player leaves and returns with nothing re-armed.
+    app.world_mut().despawn(me);
+    app.update();
+    spawn(&mut app);
+    app.update();
+    assert_eq!(
+        seen(&app),
+        [
+            "PLAYER_LOGIN",
+            "PLAYER_ENTERING_WORLD",
+            "PLAYER_ENTERING_WORLD"
+        ]
+    );
+    let _ = std::fs::remove_dir_all(tmp);
+}
+
 // ───────────── The login one-shots wait for the in-game UI ─────────────
 
 /// The unit feed's login one-shots (`PLAYER_ENTERING_WORLD`, the first `PLAYER_XP_UPDATE` and

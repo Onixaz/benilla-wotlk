@@ -242,6 +242,8 @@ pub(crate) struct Model {
     /// Errors owed to `geterrorhandler()`, which the reference calls on each caught error; one the
     /// handler itself raises skips this queue, which stops the recursion.
     pub(crate) pending_error_dispatch: Vec<String>,
+    /// The `PLAYER_LOGIN` one-shot, `[0xbd0793]`, between the UI load and the world entry.
+    pub(crate) player_login_armed: bool,
     /// The session's retained diagnostic log, deduplicated and bounded; `errors` drains each frame.
     pub(crate) diagnostics: super::diagnostics::DiagnosticLog,
     /// Non-fatal warnings for the host, such as a dropped `inherits=` template.
@@ -1384,6 +1386,7 @@ impl Model {
             pending_size_changed: Vec::new(),
             errors: Vec::new(),
             pending_error_dispatch: Vec::new(),
+            player_login_armed: false,
             diagnostics: Default::default(),
             warnings: Vec::new(),
             // 1024x768 until the host calls `set_screen_size`; y-up `[bottom, left, top, right]`.

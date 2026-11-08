@@ -867,12 +867,23 @@ pub(crate) fn shutdown_on_exit(
 /// The world-enter cascade fires `PLAYER_LOGIN` if armed, then `PLAYER_ENTERING_WORLD`.
 ///
 /// On a `/reload`, the UI init enters the cascade itself. On a fresh login that call is skipped
-/// (the active-player GUID still 0) and the cascade runs from the local player's own create. This
-/// fires `PLAYER_LOGIN` at the end of the load on both, the `/reload` shape;
-/// `PLAYER_ENTERING_WORLD` fires from [`crate::ui_unit`] once the self descriptor lands.
+/// (the active-player GUID still 0) and the cascade runs from the local player's own create. Here
+/// both are [`crate::ui_unit`]'s world-entry edge, once the self descriptor lands; this test seam
+/// runs the login leg too, as the tests have no such edge.
 #[cfg(test)]
 pub(crate) fn finish_ui_load(script: &mut UiScript) {
     finish_ui_load_with(script, None, |_| {}, |_| {});
+    fire_armed_player_login(script);
+}
+
+/// `PLAYER_LOGIN` if the load armed it (`0x528193`), the one-shot `0x52818d` clears, with the
+/// load's instruction bound its handlers have always run under.
+pub(crate) fn fire_armed_player_login(script: &mut UiScript) {
+    if script.take_player_login_armed() {
+        script.set_instruction_budget(addons::LOAD_INSTRUCTION_BUDGET);
+        script.fire_event("PLAYER_LOGIN", vec![]);
+        script.clear_instruction_budget();
+    }
 }
 
 /// [`finish_ui_load`] with its two host seams. `host_settings` runs between the saved-variables
@@ -888,12 +899,13 @@ pub(crate) fn finish_ui_load_with(
     host_settings: impl FnOnce(&mut UiScript),
     between: impl FnOnce(&mut UiScript),
 ) {
-    // Still the load edge, so still bounded: re-armed so the saved variables and every
-    // `PLAYER_LOGIN` handler get the full allowance; the entry edge disarms it after.
+    // Still the load edge, so still bounded: re-armed so the saved variables get the full
+    // allowance; the entry edge disarms it after.
     script.set_instruction_budget(addons::LOAD_INSTRUCTION_BUDGET);
     crate::ui_saved::load_saved_variables(script, identity, host_settings);
     between(script);
-    script.fire_event("PLAYER_LOGIN", vec![]);
+    // `0x52a9e6`: the one-shot the world entry fires and clears.
+    script.arm_player_login();
 }
 
 /// Run the patch chain's `Interface\FrameXML\GlobalStrings.lua`, the first file in the reference's
