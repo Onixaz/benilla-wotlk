@@ -3,10 +3,7 @@
 //! distances, three per-copy randoms and the spell id; the results offset the model from its path
 //! (`0x700550`), turn and scale it (`0x6feb20`) and may set its speed. The functions run in a
 //! sandbox holding `math` and the degree-based aliases `0x758c50` installs, nothing else.
-//!
-//! Deviation: the reference compiles the scripts into the interface's Lua state under that
-//! sandbox; benilla gives them a state of their own, so the interface VM never runs on the
-//! missile path. A script sees the same globals either way.
+//! Deviation: a Lua state of their own, not the interface's, so its VM stays off the missile path.
 
 use std::collections::HashMap;
 
@@ -14,7 +11,7 @@ use bevy::prelude::*;
 use mlua::{Function, Lua, Table, Value};
 
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
-use benilla_formats::MissileMotionRec;
+use benilla_formats::{MissileMotionRec, SpellVisualCatalog};
 
 use super::{Missile, MotionPose};
 
@@ -46,12 +43,10 @@ sqrt = math.sqrt
 tan = function (x) return math.tan(math.rad(x)) end
 ";
 
-/// A moved model past this squared distance from its path marks the hit to play at the model
-/// (`0x7006c0`).
+/// A model this far (squared) off its path takes the hit kit at the model (`0x7006c0`).
 const OFF_PATH_SQ: f32 = 0.2;
 
-/// The script state and each motion's compiled function, built on first use; `None` marks a row
-/// that failed to compile or to run, which then flies unscripted (`0x75856f`).
+/// The script state and each row's function; `None` flies unscripted (`0x75856f`).
 #[derive(Default)]
 pub(crate) struct MotionScripts {
     lua: Option<(Lua, Table)>,
@@ -71,31 +66,31 @@ impl MotionScripts {
         Ok((lua, env))
     }
 
-    /// The compiled function for motion `id`, compiling `rec` on first ask (`0x7587d0`).
-    fn function(&mut self, id: u32, rec: &MissileMotionRec) -> Option<Function> {
-        if let Some(f) = self.funcs.get(&id) {
-            return f.clone();
+    /// Motion `id`'s function, compiled on the first ask (`0x7587d0`).
+    fn function(&mut self, id: u32, visuals: &SpellVisualCatalog) -> Option<&Function> {
+        if !self.funcs.contains_key(&id) {
+            let compiled = visuals
+                .missile_motion(id)
+                .and_then(|rec| self.compile(id, rec));
+            self.funcs.insert(id, compiled);
         }
+        self.funcs.get(&id)?.as_ref()
+    }
+
+    /// Compile a row in the sandbox, building the state on first use.
+    fn compile(&mut self, id: u32, rec: &MissileMotionRec) -> Option<Function> {
         if self.lua.is_none() {
-            match Self::sandbox() {
-                Ok(state) => self.lua = Some(state),
-                Err(e) => {
-                    warn!("missile motion: the script state failed: {e}");
-                    self.funcs.insert(id, None);
-                    return None;
-                }
-            }
+            self.lua = Self::sandbox()
+                .map_err(|e| warn!("missile motion: the script state failed: {e}"))
+                .ok();
         }
         let (lua, env) = self.lua.as_ref()?;
-        let compiled = lua
-            .load(rec.chunk())
+        lua.load(rec.chunk())
             .set_name(rec.name.as_str())
             .set_environment(env.clone())
             .eval::<Function>()
             .map_err(|e| warn!("missile motion {id} ({}): {e}", rec.name))
-            .ok();
-        self.funcs.insert(id, compiled.clone());
-        compiled
+            .ok()
     }
 
     /// Drop a function whose call failed: every missile on it flies unscripted after (`0x75856f`).
@@ -119,8 +114,7 @@ pub(crate) struct MissileMotion {
     pub(crate) start_distance: f32,
 }
 
-/// Three draws in `[0, 1)` for one copy, the reference's mantissa fill of its generator's bits
-/// (`0x702480`).
+/// Three `[0, 1)` draws for one copy, the mantissa fill of `0x702480`.
 pub(crate) fn draw_randoms() -> [f32; 3] {
     use std::sync::atomic::{AtomicU64, Ordering};
     static STATE: AtomicU64 = AtomicU64::new(0);
@@ -196,9 +190,7 @@ fn call(func: &Function, args: [f64; 12]) -> Option<Outputs> {
     ])
 }
 
-/// The model offset from the path (`0x700550`), in Bevy space: `transAngle`/`transMag` swing it
-/// around the flight's ground heading, then `transRight` along the heading's left, `transFront`
-/// along it and `transUp` up.
+/// The model's offset off its path, in Bevy space (`0x700550`).
 fn translation(out: &Outputs, launch: Vec3, impact: Vec3) -> Vec3 {
     let [dx, dy, _] = bevy_to_wow(impact - launch);
     let len = (dx * dx + dy * dy).sqrt();
@@ -223,8 +215,7 @@ fn translation(out: &Outputs, launch: Vec3, impact: Vec3) -> Vec3 {
     wow_to_bevy(o)
 }
 
-/// The model's turn (`0x6feb20`): yaw about its up, pitch about its left, roll about its forward,
-/// in that order, each in degrees; in Bevy's model frame up is +Y, left −X and forward −Z.
+/// Yaw, pitch and roll in degrees about the model's up, left and forward (`0x6feb20`).
 fn turn(out: &Outputs) -> Quat {
     let r = |v: f64| (v as f32).to_radians();
     Quat::from_axis_angle(Vec3::Y, r(out[5]))
@@ -232,11 +223,7 @@ fn turn(out: &Outputs) -> Quat {
         * Quat::from_axis_angle(Vec3::NEG_Z, r(out[7]))
 }
 
-/// Run every scripted missile's script (`0x701230`): its offset, turn and scale become the pose
-/// the flight step draws the model in, and its speed retimes the step (`0x7004cd`).
-///
-/// Deviation: the reference runs the script after the frame's step, on that step's progress; this
-/// runs it just before, on the last frame's, so it never writes a `Transform` of its own.
+/// Run each scripted copy (`0x701230`): its pose draws the model, its speed retimes (`0x7004cd`).
 pub(crate) fn run_missile_motion(
     mut scripts: NonSendMut<MotionScripts>,
     visuals: Option<Res<crate::creature_anim::SpellVisuals>>,
@@ -248,12 +235,9 @@ pub(crate) fn run_missile_motion(
         return;
     };
     let now = time.elapsed_secs();
+    // Deviation: before the step, on last frame's progress, so this writes no `Transform`.
     for (entity, mut missile, motion) in &mut missiles {
-        let func = visuals
-            .0
-            .missile_motion(motion.id)
-            .and_then(|rec| scripts.function(motion.id, rec));
-        let Some(func) = func else {
+        let Some(func) = scripts.function(motion.id, &visuals.0) else {
             commands.entity(entity).remove::<MissileMotion>();
             missile.pose = None;
             continue;
@@ -273,7 +257,7 @@ pub(crate) fn run_missile_motion(
             f64::from(motion.rand[2]),
             f64::from(missile.spell_id),
         ];
-        let Some(out) = call(&func, args) else {
+        let Some(out) = call(func, args) else {
             scripts.fail(motion.id);
             commands.entity(entity).remove::<MissileMotion>();
             missile.pose = None;
@@ -321,7 +305,7 @@ mod tests {
     fn the_sandbox_runs_degree_math_and_hides_the_base_library() {
         let mut scripts = MotionScripts::default();
         let f = scripts
-            .function(
+            .compile(
                 1,
                 &rec("transUp = sin(90) + PI * 0\nif print then transRight = 1 end\nscale = time"),
             )
@@ -341,10 +325,10 @@ mod tests {
     #[test]
     fn a_failing_script_drops_and_parabola_lifts_the_middle() {
         let mut scripts = MotionScripts::default();
-        let bad = scripts.function(2, &rec("error('x')")).expect("compiles");
+        let bad = scripts.compile(2, &rec("error('x')")).expect("compiles");
         assert!(call(&bad, [0.0; 12]).is_none());
         let parabola = scripts
-            .function(
+            .compile(
                 13,
                 &rec("local maxMagnitude = startDistance * .15\n\
                       transAngle = 0\n\

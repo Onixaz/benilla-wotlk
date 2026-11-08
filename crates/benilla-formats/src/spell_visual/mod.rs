@@ -218,7 +218,7 @@ pub struct VisualStages {
     pub caster_impact: u32,
     /// Column 15, the target impact kit.
     pub target_impact: u32,
-    /// Column 9, the missile path type.
+    /// Column 9, the missile path type; no 12340 reader of the row takes it.
     pub missile_path_type: u32,
     /// Column 16, the missile's source attachment in column 10's encoding, `u32::MAX` for none
     /// (`0x7faa40`); read it through [`Self::missile_source_attachment`].

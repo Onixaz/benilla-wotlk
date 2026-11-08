@@ -15,16 +15,14 @@ pub(super) const SPELL_HAND_DIRECTED: u16 = 38;
 const MIN_HEIGHT: f32 = 0.25;
 const MIN_RATE: f32 = 0.01;
 
-/// The longest step one follow takes, and how far below the hover height its down ray reaches
-/// (`0x6fffc0`).
+/// The longest follow step and the down ray's reach below the hover height (`0x6fffc0`).
 const MAX_STEP: f32 = 50.0;
 const SCAN_RANGE: f32 = 20.0;
 
 /// A step shorter than this does not turn the model (`0x701230`).
 const STILL: f32 = 2.384_185_8e-7;
 
-/// The launch override (`0x720bf0`): column 16's attachment plus the cast offset, or with no
-/// column 16 the cast offset alone.
+/// The launch override (`0x720bf0`): column 16's attachment and the cast offset.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct MissileSource {
     /// Column 16's attachment; `None` leaves from SpellHandDirected, else the model's origin.
@@ -73,8 +71,7 @@ pub(crate) struct MissileShape {
 }
 
 impl MissileShape {
-    /// `own` is the spell's own row (`0x7fa290`), `played` the row the cast plays after the ranged
-    /// merge (`0x720f80`), `first` the spell's first visual whatever the violence level.
+    /// From the spell's own row (`0x7fa290`), the merged row (`0x720f80`) and its first visual.
     pub(crate) fn of(
         own: Option<&VisualStages>,
         played: Option<&VisualStages>,
@@ -116,12 +113,7 @@ fn follow_of(s: &VisualStages) -> Option<FollowGround> {
     })
 }
 
-/// One step of a ground-following flight (`0x6fffc0`): `distance` along `dir` from `pos`, over the
-/// ground height `ground` reads, then the approach blend past [`FollowGround::start`].
-///
-/// Deviation: the reference rays the step against the world (up to four forward rays, then one
-/// down); this reads the terrain heightfield once at the step's end, so the flight climbs and
-/// drops with the terrain but passes over buildings and doodads, a cost a per-frame ray would add.
+/// One ground-following step (`0x6fffc0`), then the approach blend past the follow's start.
 pub(crate) fn follow_ground(
     pos: Vec3,
     dir: Vec3,
@@ -140,6 +132,7 @@ pub(crate) fn follow_ground(
         Vec3::NEG_Z
     };
     let mut out = pos + flat * distance;
+    // Deviation: one heightfield read, not `0x6fffc0`'s world rays, as a ray per missile costs.
     match ground(out) {
         // The ground rises above the flight: climb onto it at the hover height.
         Some(g) if g > pos.y => out.y = g + follow.height,
@@ -159,8 +152,7 @@ pub(crate) fn follow_ground(
     out
 }
 
-/// The flight's progress after a step (`0x6ffed0`): `1 − remaining / launch-to-impact` in 3D and
-/// `1 − (pos to impact) / (launch to impact)` over the ground, neither falling below `prev`.
+/// The flight's progress after a step, in 3D and over the ground, never falling (`0x6ffed0`).
 pub(crate) fn progress(
     launch: Vec3,
     impact: Vec3,
@@ -184,8 +176,7 @@ pub(crate) fn progress(
     (p.max(prev.0), h.max(prev.1))
 }
 
-/// A model that turns with its own motion (`0x701230`, missile flag `0x800`): it faces its last
-/// step, a step under 0.01 eased into the previous heading, else the aim.
+/// A model that faces its own last step, tiny steps eased (`0x701230`, missile flag `0x800`).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FaceMotion {
     last: Vec3,

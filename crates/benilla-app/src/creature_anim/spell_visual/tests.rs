@@ -829,6 +829,7 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
             ammo_display_id: None,
             seq: 1,
             trajectory: None,
+            reflected: 0,
         });
         app.update();
         assert_eq!(wounds(&mut app), expected, "instant GO of spell {spell_id}");
@@ -946,6 +947,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
             ammo_display_id: None,
             seq: 1,
             trajectory: None,
+            reflected: 0,
         });
     }
     app.update();
@@ -1048,6 +1050,7 @@ fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_poin
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
+        reflected: 0,
     });
     app.update();
     let spawns: Vec<_> = app
@@ -1128,6 +1131,7 @@ fn a_dest_go_plays_the_instant_area_kit_at_the_point() {
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
+        reflected: 0,
     });
     app.update();
     let bursts: Vec<_> = app
@@ -1803,6 +1807,7 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
+        reflected: 0,
     });
     app.update();
 
@@ -2127,6 +2132,7 @@ fn a_dest_go_plays_the_impact_area_kit_unless_a_missile_or_a_beam_carries_it() {
             ammo_display_id: None,
             seq: 1,
             trajectory: None,
+            reflected: 0,
         });
         app.update();
         caster
@@ -2395,6 +2401,7 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
+        reflected: 0,
     });
     app.update();
     let rung: Vec<(Entity, u32)> = sounds(&mut app)
@@ -2405,6 +2412,24 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
         })
         .collect();
     assert_eq!(rung, vec![(caster, 200), (target, 300)]);
+
+    // A reflect with no outcome of its own plays the caster's kit on the caster.
+    app.world_mut().write_message(SpellGoTargets {
+        caster,
+        spell_id: SPELL_ID,
+        hits: Vec::new(),
+        misses: vec![(target, 11)],
+        dest: None,
+        ammo_display_id: None,
+        seq: 1,
+        trajectory: None,
+        reflected: 1,
+    });
+    app.update();
+    assert!(matches!(
+        sounds(&mut app)[..],
+        [SpellKitSound::Play { entity, kit_sound: 200 }] if entity == caster
+    ));
 
     // No target impact kit: the target falls back on column 3, and a point takes the kit.
     let at = Vec3::new(1.0, 2.0, 3.0);

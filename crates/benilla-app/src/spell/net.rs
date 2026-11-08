@@ -417,10 +417,13 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
         ammo_display_id,
         item_caster,
         trajectory,
+        reflects,
         ..
     } = ev
     {
         let engaged = !sc.engaged_self.is_empty();
+        // A reflect with no outcome of its own lands on the caster (`0x80f44b`).
+        let reflected = reflects.iter().filter(|(_, r)| *r == 0).count() as u8;
         spell_go(
             caster,
             cast_count,
@@ -428,6 +431,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
             cast_flags,
             hits,
             misses,
+            reflected,
             target,
             go_target,
             dest,
@@ -1296,6 +1300,7 @@ fn spell_go(
     cast_flags: u32,
     hits: Vec<u64>,
     misses: Vec<(u64, u8)>,
+    reflected: u8,
     target: Option<u64>,
     go_target: Option<u64>,
     dest: Option<[f32; 3]>,
@@ -1552,6 +1557,7 @@ fn spell_go(
                     caster,
                     cast_id: cast_count,
                 }),
+                reflected,
             });
         }
     }
@@ -2483,6 +2489,7 @@ mod tests {
                            0,
                             vec![],
                             vec![],
+                            0,
                             None,
                             None,
                             None,
@@ -2688,6 +2695,7 @@ mod tests {
                        0,
                         vec![],
                         vec![],
+                        0,
                         None,
                         None,
                         None,
@@ -2894,6 +2902,7 @@ mod tests {
                        0,
                         vec![10, 20, 40, 30],
                         vec![],
+                        0,
                         None,
                         None,
                         None,
@@ -3280,6 +3289,7 @@ mod tests {
                            0,
                             vec![20],
                             vec![],
+                            0,
                             // A different guid from `hits[0]`, which the arm must take.
                             Some(99),
                             None,

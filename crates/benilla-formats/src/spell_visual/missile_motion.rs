@@ -51,8 +51,7 @@ pub struct MissileMotionRec {
     pub script: String,
     /// Column 3; no 12340 reader.
     pub flags: u32,
-    /// Column 4: the copies the missile flies, each with its own index; below 1 flies one
-    /// (`0x7336b3`).
+    /// Column 4: the copies the missile flies; below 1 flies one (`0x7336b3`).
     pub missile_count: u32,
 }
 
@@ -66,8 +65,7 @@ impl MissileMotionRec {
         }
     }
 
-    /// The chunk 12340 compiles for the row (`0x7587d0`): a function of [`MOTION_ARGS`] that presets
-    /// [`MOTION_RETURNS`] to 0.0, runs the body and returns them.
+    /// The chunk `0x7587d0` compiles for the row: arguments, preset results, body, results.
     pub fn chunk(&self) -> String {
         let mut s = String::with_capacity(self.script.len() + 512);
         s.push_str("return function(");

@@ -393,10 +393,7 @@ pub(crate) enum CastEventKind {
     Go,
     /// Died without release (`SMSG_SPELL_FAILED_OTHER`, or our failed `SMSG_CAST_RESULT`).
     Fail,
-    /// The spell landed on this unit (a missile arrival): impact kit, then state kit, off the
-    /// spell's own visual (`0x703586`). `on_caster` takes the caster impact kit, else the target
-    /// impact kit, each falling back on the impact kit (`0x800d00`); `at` plays the kit's models at
-    /// that point, not on the unit (`0x702e5a`).
+    /// A missile landed: `on_caster` picks the kit (`0x800d00`), `at` is its point (`0x702e5a`).
     Impact { on_caster: bool, at: Option<Vec3> },
     /// A projectile with no live target at arrival (a despawned target too): the kit plays on the
     /// caster (`entity`) at `pos`, `SpellVisual` field 13, stage 3. Sent here only for a
@@ -541,6 +538,8 @@ pub(crate) struct SpellGoTargets {
     pub(crate) seq: u64,
     /// The GO's trajectory (`castFlags & 0x20000`).
     pub(crate) trajectory: Option<Trajectory>,
+    /// Reflects with no outcome of their own, each the caster's impact kit on it (`0x80f467`).
+    pub(crate) reflected: u8,
 }
 
 /// A dest-location cast's visuals, from `SMSG_NOTIFY_DEST_LOC_SPELL_CAST` (`0x810050`), in bevy

@@ -876,6 +876,7 @@ pub(super) fn drain_chat_input(
                                     ammo_display_id: None,
                                     seq: play_seq.next(),
                                     trajectory: None,
+                                    reflected: 0,
                                 });
                             } else if let Some(me) = me.filter(|&m| m != entity) {
                                 go_targets.write(crate::creature_anim::SpellGoTargets {
@@ -889,6 +890,7 @@ pub(super) fn drain_chat_input(
                                     ammo_display_id: Some(5996),
                                     seq: play_seq.next(),
                                     trajectory: None,
+                                    reflected: 0,
                                 });
                             }
                         }

@@ -154,6 +154,8 @@ pub(super) struct Missile {
     path: Option<String>,
     /// Remaining flight time in seconds, the arrive-on-time integrator's state.
     arrive_in: f32,
+    /// The flight time at launch, a scripted arc's progress clock (`0x7015d0`).
+    flight_time: f32,
     parts_spawned: bool,
     /// A trajectory GO's flight.
     flight: Option<Flight>,
@@ -263,8 +265,7 @@ fn attach_world_pos_offset(
     Some(point.unwrap_or_else(|| base.translation() + base.rotation() * offset))
 }
 
-/// This frame's aim, re-solved every tick as the reference does; `hug` sets a unit aim's height
-/// to that far over the target's feet (`0x6ff7e8`).
+/// This frame's aim; `hug` sets a unit aim's height over the target's feet (`0x6ff7e8`).
 fn aim_point(
     aim: Aim,
     hug: Option<f32>,
@@ -294,9 +295,7 @@ fn aim_point(
     }
 }
 
-/// The launch override's point (`0x720bf0`): column 16's attachment plus the cast offset, or with
-/// no column 16 SpellHandDirected, else the model's origin, plus the offset; `None` keeps the
-/// release point, as when the model is not in or lacks column 16's attachment.
+/// The launch override's point (`0x720bf0`), `None` to keep the release point.
 fn source_world_pos(
     caster: Entity,
     source: MissileSource,
@@ -489,8 +488,7 @@ fn miss_defense_state(code: u8) -> Option<u32> {
     }
 }
 
-/// Everything a launch or a landing emits, as one system parameter: both missile systems sit at
-/// Bevy's 16-parameter ceiling.
+/// What a launch or a landing emits, one parameter as both systems sit at Bevy's ceiling.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct ArrivalOut<'w> {
     impacts: MessageWriter<'w, CastEvent>,
@@ -502,8 +500,7 @@ pub(super) struct ArrivalOut<'w> {
     visuals: Option<Res<'w, SpellVisuals>>,
 }
 
-/// The arrival hand-off, by the arms of the reference's per-tick dispatch (module docs). `model`
-/// is where the model drew last.
+/// The arrival hand-off by the reference's per-tick arms; `model` is where it drew last.
 fn arrival_handoff(
     missile: &Missile,
     at: Vec3,
@@ -522,8 +519,7 @@ fn arrival_handoff(
         Aim::Unit {
             target, miss: None, ..
         } => {
-            // At the model when a script moved it off its path, at the aim when the flight hugs the
-            // target, else on the unit (`0x702e5a`, `0x702e7e`).
+            // At the model if scripted off its path, at the aim if hugging (`0x702e5a`).
             let at = if missile.off_path {
                 Some(model)
             } else {
@@ -564,8 +560,7 @@ fn arrival_handoff(
     }
 }
 
-/// The flight's end, however it comes: the loop stops, the targeting kit is reaped (`0x6ff410`)
-/// and the missile despawns.
+/// End a flight: stop its loop, reap its targeting kit (`0x6ff410`) and despawn it.
 fn end_flight(
     entity: Entity,
     missile: &Missile,
@@ -584,9 +579,7 @@ fn end_flight(
     commands.entity(entity).despawn();
 }
 
-/// Column 22's kit on the target at the fire, at stage 2 with its fade time (`0x702906`): its
-/// models held until the flight ends, its sound rung. The stage-2 anim only compares with what the
-/// unit plays, which this does not ask.
+/// Hold column 22's kit on the target at the fire, its models and sound (`0x702906`).
 fn arm_targeting_kit(
     target: Entity,
     spell_id: u32,
@@ -615,9 +608,7 @@ fn arm_targeting_kit(
     Some(target)
 }
 
-/// Launch one queued GO from `launch`: a missile per target, or the one ground shot, each flying
-/// `distance / speed − time queued`, each as many copies as its motion row counts (`0x7336b3`);
-/// one already past its deadline hands off at once.
+/// Launch one queued GO from `launch`, per target and per motion copy (`0x7336b3`).
 #[allow(clippy::too_many_arguments)] // the spawner's full output set
 fn launch_go(
     go: &QueuedGo,
@@ -631,9 +622,7 @@ fn launch_go(
     play_seq: &mut crate::creature_anim::PlaySeq,
 ) {
     let shape = go.spawn.shape;
-    // The unit targets, else the location fallback's one ground shot: the reference reads the
-    // `flags & 0x60` latch only for an empty hit array, and turns a point aim's impact offset
-    // with the caster (`0x7335b2`).
+    // The unit targets, else one ground shot, its offset turned with the caster (`0x7335b2`).
     let aims: Vec<Aim> = if go.spawn.targets.is_empty() {
         let turn = units
             .get(go.spawn.caster)
@@ -704,6 +693,7 @@ fn launch_go(
                 aim: aim_at,
                 path: go.key.clone(),
                 arrive_in,
+                flight_time: arrive_in,
                 // An invisible flight has no parts to wait on.
                 parts_spawned: go.key.is_none(),
                 flight,
@@ -1137,11 +1127,7 @@ impl GroundHeight<'_> {
     }
 }
 
-/// The reference's arrive-on-time step: each frame covers `dt / remaining time` of the gap to the
-/// live aim, or a motion script's speed (`0x7015d0`); at the deadline the missile snaps there,
-/// hands off and despawns. A ground-following flight takes the same step over the terrain
-/// (`0x6fffc0`). A trajectory missile flies its arc instead, lands short at a server hit, and one
-/// of ours lands short on the first unit its step crosses, telling the server where.
+/// One flight step (`0x7015d0`): on its deadline or a script's speed, over the ground or an arc.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 pub(super) fn move_missiles(
     mut commands: Commands,
@@ -1194,21 +1180,20 @@ pub(super) fn move_missiles(
         }
         let previous = missile.pos;
         let m = &mut *missile;
-        if let Some(arc) = m.flight.as_mut().and_then(|f| f.arc.as_mut()) {
+        let dir = if let Some(arc) = m.flight.as_mut().and_then(|f| f.arc.as_mut()) {
             m.pos = arc.advance(dt);
-            if let Some(dir) = arc.heading().try_normalize() {
-                transform.rotation = missile_facing(dir);
-            }
+            m.progress = 1.0 - (m.arrive_in - dt) / m.flight_time;
+            m.h_progress = m.progress;
+            arc.heading().try_normalize()
         } else {
             let to_target = aim - previous;
             let share = dt / m.arrive_in;
             let distance = to_target.length();
-            // The reference's heading for a missile on its aim is straight up (`0x7018ae`).
-            let dir = to_target.try_normalize().unwrap_or(Vec3::Y);
+            let dir = to_target.try_normalize();
             m.pos = match m.follow {
                 Some(f) => shape::follow_ground(
                     previous,
-                    dir,
+                    dir.unwrap_or(Vec3::Y),
                     distance * share,
                     &f,
                     m.h_progress,
@@ -1224,23 +1209,21 @@ pub(super) fn move_missiles(
                 distance * (1.0 - share),
                 (m.progress, m.h_progress),
             );
-            // A scripted model draws off its path, turned and scaled (`0x701230`).
-            let (offset, turn, scale) = m.pose.map_or((Vec3::ZERO, Quat::IDENTITY, 1.0), |p| {
-                (p.offset, p.turn, p.scale)
-            });
-            let heading = match m.face.as_mut() {
-                Some(face) => face.face(m.pos + offset, dir),
-                None => dir,
-            };
-            if distance > 0.0 || m.pose.is_some() {
-                transform.rotation = missile_facing(heading) * turn;
-            }
-            transform.scale = Vec3::splat(scale);
-            transform.translation = m.pos + offset;
+            dir
+        };
+        // A scripted model draws off its path, turned and scaled (`0x701230`).
+        let (offset, turn, scale) = m.pose.map_or((Vec3::ZERO, Quat::IDENTITY, 1.0), |p| {
+            (p.offset, p.turn, p.scale)
+        });
+        let model = m.pos + offset;
+        // A missile on its aim heads straight up (`0x7018ae`).
+        let aim_dir = dir.unwrap_or(Vec3::Y);
+        let heading = m.face.as_mut().map_or(aim_dir, |f| f.face(model, aim_dir));
+        if dir.is_some() || m.pose.is_some() {
+            transform.rotation = missile_facing(heading) * turn;
         }
-        if m.flight.as_ref().is_some_and(|f| f.arc.is_some()) {
-            transform.translation = m.pos;
-        }
+        transform.scale = Vec3::splat(scale);
+        transform.translation = model;
         m.arrive_in -= dt;
         let now = m.pos;
         let (caster, spell) = (m.caster, m.spell_id);
@@ -2015,6 +1998,75 @@ mod tests {
         assert!(
             landed_at.is_some_and(|i| (18..=21).contains(&i)),
             "{landed_at:?}"
+        );
+    }
+
+    /// A script's offset, scale and speed reach the drawn model and the flight (`0x700550`).
+    #[test]
+    fn a_scripted_model_draws_off_its_flight_and_retimes_it() {
+        use benilla_formats::{MissileMotionRec, SpellVisualCatalog};
+        let mut app = app();
+        app.init_resource::<crate::net::GuidIndex>()
+            .init_resource::<crate::net::SelfGuid>()
+            .init_non_send_resource::<MotionScripts>()
+            .add_systems(
+                Update,
+                (run_missile_motion, move_missiles)
+                    .chain()
+                    .after(spawn_missiles),
+            );
+        app.insert_resource(SpellVisuals(
+            SpellVisualCatalog::from_tables(HashMap::new(), HashMap::new()).with_missile_motion(
+                7,
+                MissileMotionRec {
+                    name: "Up".into(),
+                    script: "transUp = 2
+scale = 0.5
+speedAbs = 48"
+                        .into(),
+                    flags: 0,
+                    missile_count: 1,
+                },
+            ),
+        ));
+        let caster = caster(&mut app, Vec3::ZERO);
+        let target = app
+            .world_mut()
+            .spawn(GlobalTransform::from_xyz(24.0, 0.0, 0.0))
+            .id();
+        let mut spawn = go(caster, target, false);
+        spawn.shape.motion = 7;
+        app.world_mut().write_message(spawn);
+        step(&mut app, 0.05);
+        let (pos, model, scale) = {
+            let world = app.world_mut();
+            let mut q = world.query::<(&Missile, &Transform)>();
+            let (m, t) = q.single(world).unwrap();
+            (m.pos, t.translation, t.scale.x)
+        };
+        assert!(
+            (model - (pos + Vec3::Y * 2.0)).length() < 1e-4,
+            "{model} vs {pos}"
+        );
+        assert_eq!(scale, 0.5);
+        let mut frames = 1;
+        let mut at = None;
+        while at.is_none() && frames < 40 {
+            step(&mut app, 0.05);
+            frames += 1;
+            at = app
+                .world_mut()
+                .resource_mut::<Messages<CastEvent>>()
+                .drain()
+                .find_map(|e| match e.kind {
+                    CastEventKind::Impact { at, .. } => Some(at),
+                    _ => None,
+                });
+        }
+        assert!((9..=12).contains(&frames), "24 yd at 48: {frames} frames");
+        assert!(
+            at.flatten().is_some(),
+            "off its path, the kit plays at the model"
         );
     }
 }
