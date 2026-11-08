@@ -298,6 +298,11 @@ impl Creatures {
         self.catalog.footprint(display_id)
     }
 
+    /// Whether a mount of this display jumps standing still.
+    pub(crate) fn mount_jumps_when_still(&self, display_id: u32) -> bool {
+        self.catalog.mount_jumps_when_still(display_id)
+    }
+
     /// Whether the model wears `$BTH` breath puffs, which `CreatureModelData.Flags & 0x2` stops.
     pub(crate) fn breathes(&self, display_id: u32) -> bool {
         self.catalog.breathes(display_id)
