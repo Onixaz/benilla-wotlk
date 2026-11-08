@@ -993,6 +993,7 @@ pub(crate) fn snapshot(
         is_connected: true,
         // What the token resolver yields, and `UnitIsUnit` compares.
         guid,
+        faction_template: store.0.unit_faction_template().unwrap_or(0),
         name,
         // The UI getters: `UNIT_DYNFLAG_DEAD` (feign death) zeroes `UnitHealth` and `UnitMana` but
         // not the maxima, so its edge fires the reference's pair; the power getters divide rage by
@@ -1356,11 +1357,23 @@ pub(crate) fn fire_transitions(
     if prev.is_none_or(|p| p.rank != cur.rank) {
         script.fire_event("UNIT_CLASSIFICATION_CHANGED", vec![tok()]);
     }
-    // `UNIT_FACTION`, the PvP-icon repaint, on the fields the icon reads and on the tapped bit: the
-    // reference's dynamic-flags watcher fires event 29 on bit `0x4` and has no arm for `0x8`.
+    // `UNIT_FACTION`, the PvP-icon repaint, on the fields the icon reads, on the tapped bit (the
+    // reference's dynamic-flags watcher fires event 29 on bit `0x4` and has no arm for `0x8`), and
+    // on the raw faction-template dword (`0x723680` into `0x71f8f0`).
     if prev.is_none_or(|p| {
-        (p.pvp, p.is_pvp_ffa, &p.faction_group, p.tapped)
-            != (cur.pvp, cur.is_pvp_ffa, &cur.faction_group, cur.tapped)
+        (
+            p.pvp,
+            p.is_pvp_ffa,
+            &p.faction_group,
+            p.tapped,
+            p.faction_template,
+        ) != (
+            cur.pvp,
+            cur.is_pvp_ffa,
+            &cur.faction_group,
+            cur.tapped,
+            cur.faction_template,
+        )
     }) {
         script.fire_event("UNIT_FACTION", vec![tok()]);
     }
@@ -1835,6 +1848,28 @@ fn feed_units(
                 // A clear fires nothing; the target frame hears `PLAYER_TARGET_CHANGED` below.
                 if memo.last.remove(token).is_some() {
                     gate.audit("feed_units", "a unit-token clear");
+                }
+            }
+        }
+    }
+
+    // A move of our own template repaints every other held unit we do not own (`0x718e50`); the
+    // reaction of each moved with it, though its own field did not.
+    if let Some((_, me)) = self_pair
+        .filter(|(_, g)| edges.moved(g.0, benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE))
+    {
+        for (_, state) in memo.last.iter().filter(|(_, s)| s.guid != me.0) {
+            let owned = index
+                .as_ref()
+                .and_then(|i| i.0.get(&state.guid))
+                .and_then(|&e| stores.all.get(e).ok())
+                .and_then(|s| {
+                    s.0.unit_owner(benilla_protocol::messages::OwnerFallback::CreatedBy)
+                })
+                == Some(me.0);
+            if !owned {
+                for token in script.unit_tokens(state.guid) {
+                    script.fire_event("UNIT_FACTION", vec![ScriptValue::Str(token)]);
                 }
             }
         }
@@ -3200,6 +3235,46 @@ mod tests {
         );
         // The control against firing always.
         assert!(fired(base.clone(), base.clone()).is_empty());
+    }
+
+    /// A template swap that moves no derived value still repaints: the raw field's own watcher
+    /// (`0x723680`) fires the event.
+    #[test]
+    fn a_faction_template_move_fires_unit_faction_with_every_derived_value_equal() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            SEEN = {}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("UNIT_FACTION")
+            f:SetScript("OnEvent", function(self, event, arg1) table.insert(SEEN, event .. ":" .. arg1) end)
+        "#,
+        )
+        .unwrap();
+        let base = UnitState {
+            exists: true,
+            has_object: true,
+            guid: 0x2a,
+            faction_template: 7,
+            ..Default::default()
+        };
+        let moved = UnitState {
+            faction_template: 14,
+            ..base.clone()
+        };
+        fire_transitions(&mut s, "target", Some(&base), &base, &FieldEdges::default());
+        assert!(s.eval::<Vec<String>>("return SEEN").unwrap().is_empty());
+        fire_transitions(
+            &mut s,
+            "target",
+            Some(&base),
+            &moved,
+            &FieldEdges::default(),
+        );
+        assert_eq!(
+            s.eval::<Vec<String>>("return SEEN").unwrap(),
+            ["UNIT_FACTION:target"]
+        );
     }
 
     /// The control is a bit no `UnitState` field decodes, so the trigger is the raw dword.
