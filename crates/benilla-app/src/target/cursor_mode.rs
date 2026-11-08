@@ -310,11 +310,23 @@ fn skin_cursor_kind(type_flags: u32) -> CursorKind {
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct AttackFork(pub(crate) bool);
 
-/// The player's legs of the classifier's attack leg, in its order: not dead or a ghost, not
-/// mounted, not pacified and in control. Any failure clears to Point.
-pub(crate) fn player_attack_legs(own: &ObjectStore, control_lost: bool) -> bool {
+/// The player's legs of the classifier's attack leg, `CursorTrackUnit` (`0x4f7a50`) after the
+/// NPC/loot/skin arms: `CanAttackNow` (`0x729a70`), not pacified, in control. Mounted is
+/// `CanAutoDismount` (`0x71b0c0`), not a hard block. Any failure clears to Point.
+pub(crate) fn player_attack_legs(
+    own: &ObjectStore,
+    control_lost: bool,
+    move_flags: u32,
+    auto_dismount: crate::spell::cast_target::AutoDismount,
+) -> bool {
     !own.0.is_dead_or_ghost()
-        && own.0.unit_mount_display_id() == 0
+        && (own.0.unit_mount_display_id() == 0
+            || crate::spell::validator::can_auto_dismount(
+                own.0.unit_flags(),
+                move_flags,
+                auto_dismount.ground,
+                auto_dismount.flying,
+            ))
         && own.0.unit_flags() & UNIT_FLAG_PACIFIED == 0
         && !control_lost
 }
@@ -785,6 +797,9 @@ pub(super) struct CursorInputs<'w, 's> {
     loot_latch: Res<'w, crate::ui_loot::LootLatch>,
     // The creature records, whose cursor name `0x715ea0` reads; absent reads no name.
     names: Option<Res<'w, crate::names::NameCache>>,
+    // `CanAttackNow`'s auto-dismount legs: the mover's flags and the two CVars (`0x71b0c0`).
+    self_move: Query<'w, 's, &'static crate::creature_anim::MovementState, With<SelfPlayer>>,
+    auto_dismount: Option<Res<'w, crate::spell::cast_target::AutoDismount>>,
 }
 
 /// The skinning spell's max range toward `target` (`0x802c30`), 0 for a spell with no row.
@@ -838,6 +853,8 @@ pub(super) fn classify(
         spell_mods,
         range_units,
         player_vehicles,
+        self_move,
+        auto_dismount,
     } = inputs;
     let party = super::party_of(group.as_deref());
     let skin_max_range = |spell_id: u32, target: Option<benilla_formats::RangeUnit>| -> f32 {
@@ -992,7 +1009,9 @@ pub(super) fn classify(
             return None;
         }
         attack_fork.set(true);
-        player_attack_legs(self_store, player.control_lost)
+        let move_flags = self_move.iter().next().map_or(0, |m| m.flags);
+        let auto_dismount = auto_dismount.as_deref().copied().unwrap_or_default();
+        player_attack_legs(self_store, player.control_lost, move_flags, auto_dismount)
             .then_some((CursorKind::Attack, dist_sq > ATTACK_RANGE_SQ))
     };
     // The corpse classifier.
@@ -1296,6 +1315,51 @@ mod tests {
             unable: true,
         };
         assert_eq!(point.stem(), "Point");
+    }
+
+    /// `CanAttackNow` (`0x729a70`) lets a mounted player attack when `CanAutoDismount` allows:
+    /// a grounded flyer with the default CVars, not an airborne one.
+    #[test]
+    fn a_grounded_flying_mount_keeps_the_sword() {
+        use crate::creature_anim::move_flags::FLYING;
+        use crate::spell::cast_target::AutoDismount;
+        use benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
+        use benilla_protocol::ObjectFields;
+        let own = |mount| {
+            ObjectStore(ObjectFields::from_pairs(&[(
+                FIELD_UNIT_MOUNTDISPLAYID,
+                mount,
+            )]))
+        };
+        let defaults = AutoDismount::default();
+        assert!(player_attack_legs(&own(0), false, 0, defaults));
+        assert!(
+            player_attack_legs(&own(27655), false, 0, defaults),
+            "a grounded flyer auto-dismounts, so the sword stays"
+        );
+        assert!(
+            !player_attack_legs(&own(27655), false, FLYING, defaults),
+            "airborne, autoDismountFlying is off"
+        );
+        assert!(player_attack_legs(
+            &own(27655),
+            false,
+            FLYING,
+            AutoDismount {
+                ground: true,
+                flying: true
+            }
+        ));
+        assert!(!player_attack_legs(
+            &own(27655),
+            false,
+            0,
+            AutoDismount {
+                ground: false,
+                flying: false
+            }
+        ));
+        assert!(!player_attack_legs(&own(0), true, 0, defaults));
     }
 
     #[test]
