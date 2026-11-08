@@ -4,7 +4,6 @@ pub(crate) mod lightning;
 
 use benilla_formats::{ChainEffect, VisualStages, MAX_COMBO_ROWS};
 use benilla_protocol::EntityKind;
-use benilla_world::particles::buffer::EffectBlend;
 use benilla_world::sky_order::Rung;
 use benilla_world::view::WorldCamera;
 use bevy::ecs::system::SystemParam;
@@ -127,22 +126,6 @@ fn beam_texture_url(raw: &str) -> String {
         "mpq://{}.blp",
         benilla_assets::sprite_key(raw).replace('\\', "/")
     )
-}
-
-/// A row's render-state blend (`0x9aad73`) on the effect lane, through the device's factor tables.
-fn beam_blend(mode: u8) -> EffectBlend {
-    match mode {
-        0 => EffectBlend::Opaque,
-        1 => EffectBlend::AlphaKey,
-        2 => EffectBlend::AlphaDepthWrite,
-        3 => EffectBlend::Add,
-        // `(DESTCOLOR, ZERO)`, drawn as the M2 `Mod` mapping is.
-        4 => EffectBlend::Multiply,
-        5 => EffectBlend::Mod2x,
-        6 => EffectBlend::ModAdd,
-        // Modes 7-11 ship on no row.
-        _ => EffectBlend::Add,
-    }
 }
 
 /// The live channel's object while the hop array holds at most one, else the hops (`0x726a56`).
@@ -500,7 +483,7 @@ pub(crate) fn simulate_chain_beams(
         let layer = effect.render_layer as f32 * Rung::CHAIN_BEAM_LAYER;
         // Fog and culling off (`0x9ab17a`, `0x9ab149`): the lane's defaults.
         batch
-            .blend(beam_blend(effect.blend_mode))
+            .gx_blend(effect.blend_mode)
             .rung(Rung::CHAIN_BEAM + layer, 0)
             .anchored(anchor_sum / anchor_n.max(1.0))
             .owner(entity)

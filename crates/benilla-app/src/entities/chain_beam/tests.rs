@@ -414,16 +414,6 @@ fn a_combo_row_draws_every_row_it_names() {
     assert!((lives[0] - 0.5).abs() < 1e-5, "row {COMBO_A}'s own life");
 }
 
-/// Blend mode 2 alone writes depth (`0x9aad37`); 3 is additive and 6 `(DESTCOLOR, ONE)`.
-#[test]
-fn the_row_blend_maps_through_the_device_tables() {
-    assert_eq!(beam_blend(2), EffectBlend::AlphaDepthWrite);
-    assert_eq!(beam_blend(3), EffectBlend::Add);
-    assert_eq!(beam_blend(4), EffectBlend::Multiply);
-    assert_eq!(beam_blend(5), EffectBlend::Mod2x);
-    assert_eq!(beam_blend(6), EffectBlend::ModAdd);
-}
-
 /// A saved location aims the next play at the ground, past any hops (`0x726a3b`).
 #[test]
 fn a_saved_location_draws_one_bolt_to_the_ground_and_plays_the_area_kit() {

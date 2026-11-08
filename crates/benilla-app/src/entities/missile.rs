@@ -1099,23 +1099,6 @@ fn land_short(
     });
 }
 
-/// The terrain under a ground-following flight, read per step.
-#[derive(bevy::ecs::system::SystemParam)]
-pub(super) struct GroundHeight<'w> {
-    streamer: Option<Res<'w, benilla_world::terrain_stream::TerrainStreamer>>,
-    tiles: Option<Res<'w, Assets<benilla_assets::AdtTile>>>,
-}
-
-impl GroundHeight<'_> {
-    fn at(&self, pos: Vec3) -> Option<f32> {
-        benilla_world::terrain_stream::terrain_height_under(
-            self.streamer.as_deref()?,
-            self.tiles.as_deref()?,
-            pos,
-        )
-    }
-}
-
 /// One flight step (`0x7015d0`): on its deadline or a script's speed, over the ground or an arc.
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 pub(super) fn move_missiles(
@@ -1128,7 +1111,7 @@ pub(super) fn move_missiles(
     mut sounds: MessageWriter<MissileSound>,
     mut play_seq: ResMut<crate::creature_anim::PlaySeq>,
     world: TrajectoryWorld,
-    ground: GroundHeight,
+    ground: benilla_world::surface::TerrainHeight,
 ) {
     let dt = time.delta_secs();
     for (entity, mut missile, mut transform) in &mut missiles {

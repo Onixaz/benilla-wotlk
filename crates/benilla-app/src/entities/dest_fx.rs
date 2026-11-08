@@ -207,24 +207,16 @@ pub(super) fn tick_shard_emitters(
     mut commands: Commands,
     time: Res<Time>,
     mut emitters: Query<(&mut ShardEmitter, &GlobalTransform)>,
-    streamer: Option<Res<benilla_world::terrain_stream::TerrainStreamer>>,
-    adt_tiles: Res<Assets<benilla_assets::AdtTile>>,
+    ground: benilla_world::surface::TerrainHeight,
 ) {
     let now = time.elapsed_secs();
-    let mut tile = None;
     for (mut em, tf) in &mut emitters {
         em.accum += em.rate * time.delta_secs().min(SHARD_STEP_CAP);
         if em.accum < 1.0 {
             continue;
         }
         let center = tf.translation();
-        let mut height = |p: Vec3| {
-            streamer.as_deref().and_then(|s| {
-                benilla_world::terrain_stream::terrain_height_under_cached(
-                    s, &adt_tiles, p, &mut tile,
-                )
-            })
-        };
+        let height = |p: Vec3| ground.at(p);
         // Deviation: the reference rays the world up then down (`0x7fc3d8`, `0x7fc46c`); the
         // heightfield alone is cheap, so only an emitter standing on the terrain follows it.
         let on_terrain = height(center).is_some_and(|h| (h - center.y).abs() < 0.5);
