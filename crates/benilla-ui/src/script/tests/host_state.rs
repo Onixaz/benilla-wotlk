@@ -9,11 +9,7 @@ use crate::script::{ActionState, AuraState, UiScript};
 /// Each old host name, the Lua that writes it, and a probe of every answer it once fed. The probe
 /// is read before and after the write; the two must agree, and the name must be absent from `_G`.
 const HOST_NAMES: &[(&str, &str, &str)] = &[
-    (
-        "__benilla_now",
-        "__benilla_now = 0",
-        "return GetTime() .. ' ' .. GetPlayerBuffTimeLeft(0)",
-    ),
+    ("__benilla_now", "__benilla_now = 0", "return GetTime()"),
     (
         "__benilla_zone_name",
         "__benilla_zone_name = 'x'",
@@ -110,8 +106,7 @@ fn a_host_name_is_absent_from_g_and_writing_it_changes_nothing() {
 }
 
 /// The clock an addon cannot rewind: after `__benilla_now = 0`, the next tick advances `GetTime`
-/// from where it was, and every countdown on it (a buff's time left, an action's cooldown) reads
-/// on as before.
+/// from where it was, and every countdown on it reads on as before.
 #[test]
 fn rewinding_the_old_clock_name_leaves_the_session_clock_running() {
     let mut s = session();
@@ -123,19 +118,17 @@ fn rewinding_the_old_clock_name_leaves_the_session_clock_running() {
         }),
     );
     let read = |s: &UiScript| {
-        s.eval::<(f64, f64, f64)>(
-            "local start, duration = GetActionCooldown(1) \
-             return GetTime(), GetPlayerBuffTimeLeft(0), start + duration",
+        s.eval::<(f64, f64)>(
+            "local start, duration = GetActionCooldown(1) return GetTime(), start + duration",
         )
         .unwrap()
     };
-    let (t0, left0, cd0) = read(&s);
-    assert_eq!((t0, left0, cd0), (500.5, 1199.5, 520.0));
+    let (t0, cd0) = read(&s);
+    assert_eq!((t0, cd0), (500.5, 520.0));
     s.run("__benilla_now = 0").unwrap();
     s.tick(0.25);
-    let (t1, left1, cd1) = read(&s);
+    let (t1, cd1) = read(&s);
     assert_eq!(t1, 500.75, "the tick advances from the session clock");
-    assert_eq!(left1, 1199.25);
     assert_eq!(cd1, 520.0, "the running cooldown still reads as running");
     assert_eq!(s.now(), 500.75, "and the host reads the same clock");
 }

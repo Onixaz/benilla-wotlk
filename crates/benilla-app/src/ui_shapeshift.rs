@@ -6,7 +6,7 @@
 //! Only a change of membership or order fires `UPDATE_SHAPESHIFT_FORMS`, the reference's
 //! learn/unlearn edge, because the stock `ShapeshiftBar_Update` rebuilds the shelf on every fire. A
 //! castability change fires `SPELL_UPDATE_USABLE`, as the reference does. Active form, texture and
-//! cooldown push silently and repaint on `PLAYER_AURAS_CHANGED` (a form's aura holds a slot,
+//! cooldown push silently and repaint on `UNIT_AURA` (a form's aura holds a slot,
 //! warrior stances included) and `SPELL_UPDATE_COOLDOWN`, so the feed runs before both; a
 //! cooldown's expiry fires nothing.
 
