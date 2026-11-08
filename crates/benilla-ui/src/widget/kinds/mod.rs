@@ -1210,6 +1210,14 @@ impl SliderState {
         self.set_min_max(self.min, max)
     }
 
+    /// The setter's unchanged test (`0x96c484`): the stored minimum and span within the epsilon
+    /// `[0x9ea27c]` (one `FLT_EPSILON`, `2.384e-7`).
+    pub fn same_range(&self, min: f32, max: f32) -> bool {
+        const RANGE_EPSILON: f32 = 2.384_185_8e-7;
+        (self.max - self.min - (max - min)).abs() < RANGE_EPSILON
+            && (self.min - min).abs() < RANGE_EPSILON
+    }
+
     /// `SetMinMaxValues`: sets the range; re-settles the value only once one exists.
     pub fn set_min_max(&mut self, min: f32, max: f32) -> Option<f32> {
         (self.min, self.max) = (min, max);
