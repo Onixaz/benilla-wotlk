@@ -130,12 +130,50 @@ fn a_relayed_swimmer_renders_pitched_and_the_gates_render_level() {
             move_flags::SWIMMING | move_flags::STRAFE_LEFT,
         ),
         ("a walker on dry land", move_flags::FORWARD),
+        (
+            "a climb with no forward",
+            move_flags::FLYING | move_flags::ASCENDING,
+        ),
     ] {
         let (yaw, pitch, roll) = decompose(flags, 0.9, 1.2);
         assert!((yaw - 1.2).abs() < 1e-5, "{name} keeps its heading");
         assert_eq!(pitch, 0.0, "{name} renders level");
         assert_eq!(roll, 0.0, "{name} never banks");
     }
+
+    // A flyer climbing or diving with forward or back takes ±π/4, not the reported pitch
+    // (`0x719b80`). A strafe-climb stays level; a backward climb inverts.
+    let fly = move_flags::FLYING | move_flags::FORWARD;
+    let (_, climb, _) = decompose(fly | move_flags::ASCENDING, 0.9, 0.0);
+    assert!(
+        (climb - std::f32::consts::FRAC_PI_4).abs() < 1e-5,
+        "a forward climb is 45°: {climb}"
+    );
+    let (_, dive, _) = decompose(fly | move_flags::DESCENDING, 0.9, 0.0);
+    assert!(
+        (dive + std::f32::consts::FRAC_PI_4).abs() < 1e-5,
+        "a forward dive is −45°: {dive}"
+    );
+    let (_, look, _) = decompose(fly, 0.6, 0.0);
+    assert!(
+        (look - 0.6).abs() < 1e-5,
+        "forward without a climb keeps the reported pitch: {look}"
+    );
+    let (_, strafe_climb, _) = decompose(
+        fly | move_flags::ASCENDING | move_flags::STRAFE_LEFT,
+        0.9,
+        0.0,
+    );
+    assert_eq!(strafe_climb, 0.0, "a strafe-climb stays level");
+    let (_, back_climb, _) = decompose(
+        move_flags::FLYING | move_flags::BACKWARD | move_flags::ASCENDING,
+        0.9,
+        0.0,
+    );
+    assert!(
+        (back_climb + std::f32::consts::FRAC_PI_4).abs() < 1e-5,
+        "a backward climb inverts to −45°: {back_climb}"
+    );
 }
 
 #[test]
