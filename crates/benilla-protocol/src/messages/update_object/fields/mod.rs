@@ -604,6 +604,10 @@ impl ObjectFields {
     pub fn dynamicobject_radius(&self) -> Option<f32> {
         self.get_f32(10)
     }
+    /// `DYNAMICOBJECT_CASTTIME`, the server clock of the cast that made it (`0x804cc0`).
+    pub fn dynamicobject_cast_time(&self) -> Option<u32> {
+        self.get_u32(11)
+    }
     /// The anchored point and facing in raw WoW coordinates, equal to the create's position.
     pub fn dynamicobject_position(&self) -> Option<([f32; 3], f32)> {
         Some((

@@ -830,6 +830,9 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
             seq: 1,
             trajectory: None,
             reflected: 0,
+            reflects: Vec::new(),
+            caster_guid: 0,
+            server_time: 0,
         });
         app.update();
         assert_eq!(wounds(&mut app), expected, "instant GO of spell {spell_id}");
@@ -948,6 +951,9 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
             seq: 1,
             trajectory: None,
             reflected: 0,
+            reflects: Vec::new(),
+            caster_guid: 0,
+            server_time: 0,
         });
     }
     app.update();
@@ -1051,6 +1057,9 @@ fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_poin
         seq: 1,
         trajectory: None,
         reflected: 0,
+        reflects: Vec::new(),
+        caster_guid: 0,
+        server_time: 0,
     });
     app.update();
     let spawns: Vec<_> = app
@@ -1132,6 +1141,9 @@ fn a_dest_go_plays_the_instant_area_kit_at_the_point() {
         seq: 1,
         trajectory: None,
         reflected: 0,
+        reflects: Vec::new(),
+        caster_guid: 0,
+        server_time: 0,
     });
     app.update();
     let bursts: Vec<_> = app
@@ -1808,6 +1820,9 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         seq: 1,
         trajectory: None,
         reflected: 0,
+        reflects: Vec::new(),
+        caster_guid: 0,
+        server_time: 0,
     });
     app.update();
 
@@ -2133,6 +2148,9 @@ fn a_dest_go_plays_the_impact_area_kit_unless_a_missile_or_a_beam_carries_it() {
             seq: 1,
             trajectory: None,
             reflected: 0,
+            reflects: Vec::new(),
+            caster_guid: 0,
+            server_time: 0,
         });
         app.update();
         caster
@@ -2402,6 +2420,9 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
         seq: 1,
         trajectory: None,
         reflected: 0,
+        reflects: Vec::new(),
+        caster_guid: 0,
+        server_time: 0,
     });
     app.update();
     let rung: Vec<(Entity, u32)> = sounds(&mut app)
@@ -2424,6 +2445,9 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
         seq: 1,
         trajectory: None,
         reflected: 1,
+        reflects: Vec::new(),
+        caster_guid: 0,
+        server_time: 0,
     });
     app.update();
     assert!(matches!(
@@ -2665,4 +2689,30 @@ fn a_dest_location_missile_flies_from_the_source_to_the_dest() {
         .drain()
         .next()
         .is_none());
+}
+
+/// A kit held at a point plants its head, base and world slots and its attach rows, not the rest.
+#[test]
+fn an_area_kit_at_a_point_plays_only_its_head_base_and_world_slots() {
+    let mut slots = [None; 9];
+    for (i, slot) in slots.iter_mut().enumerate() {
+        *slot = Some(100 + i as u32);
+    }
+    let kit = VisualKit {
+        effect_slots: slots,
+        ..Default::default()
+    };
+    let paths = (0..9)
+        .map(|i| (100 + i, format!("Slot{i}.m2")))
+        .collect::<HashMap<_, _>>();
+    let visuals = SpellVisualCatalog::from_tables_with_paths(HashMap::new(), HashMap::new(), paths);
+    let mut got: Vec<&str> = super::area_kit_models(&visuals, &kit)
+        .map(|(p, ..)| p)
+        .collect();
+    got.sort_unstable();
+    let tags = benilla_formats::KIT_SLOT_TAGS;
+    let want = |tag| format!("Slot{}.m2", tags.iter().position(|t| *t == tag).unwrap());
+    let mut expected = [want(0x14), want(0x13)];
+    expected.sort_unstable();
+    assert_eq!(got, expected);
 }

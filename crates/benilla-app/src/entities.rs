@@ -94,7 +94,8 @@ use spell_fx::{attach_spell_fx, resolve_spell_fx};
 /// Dest-anchored spell effects: a DynamicObject's area visual and a cast's burst at its point.
 pub(crate) mod dest_fx;
 use dest_fx::{
-    arm_ground_effects, attach_ground_fx_models, spawn_ground_bursts, tick_shard_emitters,
+    arm_ground_effects, attach_ground_fx_models, record_spells_in_transit, spawn_ground_bursts,
+    tick_shard_emitters, SpellsInTransit,
 };
 
 /// Spell chain beams, such as Chain Lightning's arcs.
@@ -653,6 +654,7 @@ impl Plugin for EntitiesPlugin {
         .init_non_send_resource::<MotionScripts>()
         .add_message::<MissileSound>()
         .add_message::<MissileMiss>()
+        .init_resource::<SpellsInTransit>()
         .add_message::<dest_fx::GroundBurst>()
         // A display swap's rebuild edge, for the impact-kit replay the reference runs at the end of
         // the rebuild.
@@ -711,7 +713,11 @@ impl Plugin for EntitiesPlugin {
                     .chain(),
                 (spawn_missiles, mark_forced_missiles).chain(),
                 // The dest-anchored lane's three independent producers also create entries.
-                (arm_ground_effects, spawn_ground_bursts, tick_shard_emitters),
+                (
+                    (record_spells_in_transit, arm_ground_effects).chain(),
+                    spawn_ground_bursts,
+                    tick_shard_emitters,
+                ),
                 update_display_models.in_set(DisplayBuildSet),
                 // The glue screens' character, assembled from the display built just above.
                 build_glue_preview,

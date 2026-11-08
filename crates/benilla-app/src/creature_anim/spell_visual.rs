@@ -37,6 +37,9 @@ const HARDCODED_FX_ATTACH: u16 = 0x13;
 /// The level-up effect's `SpellVisualEffectName` name.
 const LEVEL_UP_EFFECT: &str = "HARDCODED Unit Level Up";
 
+/// The slots an area kit plays at a point: head, base and world (`0x74566c`).
+const AREA_PLAY_TAGS: [u16; 3] = [0x14, 0x13, benilla_formats::WORLD_EFFECT_TAG];
+
 /// The mount cloud, hardcoded index 6: row 1185, the druid-morph puff.
 const MOUNT_POOF_EFFECT: &str = "HARDCODED Mount Poof";
 
@@ -166,9 +169,14 @@ pub(crate) struct MissileSpawn {
     pub(crate) dest_tag: Option<u16>,
     /// `Spell.dbc` Speed; flight time is distance over speed.
     pub(crate) speed: f32,
-    /// `None` for a hit; for a miss the `SpellMissInfo`, where the missile still flies and arrival
-    /// plays the victim's dodge (3) or block (5) clip.
+    /// `None` for a hit; for a miss the `SpellMissInfo`, where the missile still flies.
     pub(crate) targets: Vec<(Entity, Option<u8>)>,
+    /// Each reflecting target and the outcome on the caster of the flight it sends back.
+    pub(crate) reflects: Vec<(Entity, u8)>,
+    /// A reflect of this spell glances off instead (`AttributesEx7 & 0x20000000`, `0x732ff0`).
+    pub(crate) reflect_glances: bool,
+    /// The model's `SpellVisualEffectName` scale (`0x732ff0`).
+    pub(crate) scale: f32,
     /// With no targets and a DEST point on the GO, one projectile flies at the point, arriving as
     /// [`super::CastEventKind::GroundImpact`]. The reference latches on `flags & 0x60` and aims a
     /// SOURCE-only cast at a zeroed DEST point; this launches only with a real DEST
@@ -595,16 +603,75 @@ fn play_kit_at(
     shakes: &mut MessageWriter<SpellKitShake>,
     bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
 ) {
+    let slots = kit.effects().map(|(_, e)| e);
+    play_models_at(kit, slots, pos, visuals, sounds, shakes, bursts);
+}
+
+/// An area kit at a point: only its head, world and base slots and its attach rows (`0x745230`).
+fn play_area_kit_at(
+    kit: &VisualKit,
+    pos: Vec3,
+    visuals: &SpellVisualCatalog,
+    sounds: &mut MessageWriter<SpellKitSound>,
+    shakes: &mut MessageWriter<SpellKitShake>,
+    bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
+) {
+    let slots = area_slots(kit);
+    play_models_at(kit, slots, pos, visuals, sounds, shakes, bursts);
+}
+
+/// The slots an area or targeting kit plays at a point.
+fn area_slots(kit: &VisualKit) -> impl Iterator<Item = u32> + '_ {
+    kit.effects()
+        .filter(|(tag, _)| AREA_PLAY_TAGS.contains(tag))
+        .map(|(_, e)| e)
+}
+
+/// The models a kit held at a point plants: `(path, attach row, scale)` in the area subset.
+pub(crate) fn area_kit_models<'a>(
+    visuals: &'a SpellVisualCatalog,
+    kit: &'a VisualKit,
+) -> impl Iterator<Item = (&'a str, Option<benilla_formats::ModelAttach>, f32)> + 'a {
     let rows = visuals
         .model_attachments(kit.id)
         .iter()
         .map(|a| (a.effect, Some(*a)));
-    for (effect, attach) in kit.effects().map(|(_, e)| (e, None)).chain(rows) {
+    area_slots(kit)
+        .map(|e| (e, None))
+        .chain(rows)
+        .filter_map(|(effect, attach)| {
+            let path = visuals.effect_path(effect)?;
+            Some((path, attach, point_scale(visuals, effect)))
+        })
+}
+
+/// A model placed at a point: its row's scale from 1 (`0x6f8ae0`).
+fn point_scale(visuals: &SpellVisualCatalog, effect: u32) -> f32 {
+    visuals.effect_scale(effect).map_or(1.0, |s| s.planted(1.0))
+}
+
+/// The models `slots` names and the kit's attach rows at a point, with its sound and shake.
+fn play_models_at(
+    kit: &VisualKit,
+    slots: impl Iterator<Item = u32>,
+    pos: Vec3,
+    visuals: &SpellVisualCatalog,
+    sounds: &mut MessageWriter<SpellKitSound>,
+    shakes: &mut MessageWriter<SpellKitShake>,
+    bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
+) {
+    let rows = visuals
+        .model_attachments(kit.id)
+        .iter()
+        .map(|a| (a.effect, Some(*a)));
+    for (effect, attach) in slots.map(|e| (e, None)).chain(rows) {
         if let Some(path) = visuals.effect_path(effect) {
             bursts.write(crate::entities::dest_fx::GroundBurst {
                 path: path.to_string(),
                 pos,
                 attach,
+                scale: point_scale(visuals, effect),
+                turn: Quat::IDENTITY,
             });
         }
     }
@@ -666,7 +733,7 @@ pub(super) fn play_dest_loc_casts(
             continue;
         };
         if let Some(kit) = visuals.0.kit(stages.instant_area_kit) {
-            play_kit_at(
+            play_area_kit_at(
                 kit,
                 c.dest,
                 &visuals.0,
@@ -689,6 +756,12 @@ pub(super) fn play_dest_loc_casts(
                 crate::entities::MissileShape::of(Some(&stages), Some(&stages), Some(&stages));
             shape.source = None;
             shape.impact_offset = Vec3::ZERO;
+            // A flight with no caster arms no targeting kit (`0x7022d0`).
+            shape.targeting_kit = 0;
+            let scale = visuals
+                .0
+                .effect_scale(stages.missile_model)
+                .map_or(1.0, |s| s.scale);
             missiles.write(MissileSpawn {
                 // It lands on our own player, the no-caster arm of `0x700e20`.
                 caster: player,
@@ -698,6 +771,9 @@ pub(super) fn play_dest_loc_casts(
                 dest_tag: None,
                 speed,
                 targets: Vec::new(),
+                reflects: Vec::new(),
+                reflect_glances: false,
+                scale,
                 ground_aim: Some(c.dest),
                 missile_sound: stages.missile_sound,
                 awaits_release: false,
@@ -757,7 +833,7 @@ pub(super) fn play_delayed_area_kits(
             return true;
         }
         if let Some(kit) = visuals.0.kit(kit_id) {
-            play_kit_at(kit, pos, &visuals.0, &mut sounds, &mut shakes, &mut bursts);
+            play_area_kit_at(kit, pos, &visuals.0, &mut sounds, &mut shakes, &mut bursts);
         }
         false
     });
@@ -1118,7 +1194,7 @@ pub(super) fn route_cast_visuals(
                     || None,
                 );
                 if let Some(kit) = area {
-                    play_kit_at(&kit, pos, &visuals.0, out.sounds, out.shakes, bursts);
+                    play_area_kit_at(&kit, pos, &visuals.0, out.sounds, out.shakes, bursts);
                 }
             }
             CastEventKind::Fail => {
@@ -1150,7 +1226,7 @@ pub(super) fn route_cast_visuals(
         // carry one, fired at GO whatever the hit list.
         if let Some(dest) = go.dest {
             if let Some(kit) = stages.and_then(|s| visuals.0.kit(s.instant_area_kit)) {
-                play_kit_at(kit, dest, &visuals.0, out.sounds, out.shakes, bursts);
+                play_area_kit_at(kit, dest, &visuals.0, out.sounds, out.shakes, bursts);
             }
             // Then column 24 when no missile carries it: now at Speed 0, else at the would-be
             // landing (`0x80efc8`, `0x80efb6`).
@@ -1166,7 +1242,7 @@ pub(super) fn route_cast_visuals(
                             },
                         });
                     } else {
-                        play_kit_at(kit, dest, &visuals.0, out.sounds, out.shakes, bursts);
+                        play_area_kit_at(kit, dest, &visuals.0, out.sounds, out.shakes, bursts);
                     }
                 }
             }
@@ -1247,6 +1323,11 @@ pub(super) fn route_cast_visuals(
                     dest_tag,
                     speed: display.speed,
                     targets,
+                    reflects: go.reflects.clone(),
+                    reflect_glances: display.attributes_ex7 & 0x2000_0000 != 0,
+                    scale: stages
+                        .and_then(|s| visuals.0.effect_scale(s.missile_model))
+                        .map_or(1.0, |s| s.scale),
                     ground_aim,
                     missile_sound,
                     awaits_release,
