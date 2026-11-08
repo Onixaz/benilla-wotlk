@@ -812,3 +812,35 @@ fn only_type_eight_arms_a_trail() {
         assert!(proc.as_weapon_trail().is_none(), "type {ty}");
     }
 }
+
+/// A world-placed effect is held to its row's bounds, and a zero result reads 1.
+#[test]
+fn a_planted_effect_is_held_to_its_bounds() {
+    let row = EffectScale {
+        scale: 2.0,
+        min: 1.0,
+        max: 3.0,
+    };
+    assert_eq!(row.planted(1.0), 2.0);
+    assert_eq!(row.planted(0.1), 1.0);
+    assert_eq!(row.planted(5.0), 3.0);
+    let empty = EffectScale {
+        scale: 0.0,
+        min: 0.0,
+        max: 0.0,
+    };
+    assert_eq!(empty.planted(1.0), 1.0);
+}
+
+/// An attached effect keeps its world size inside the row's bounds on any body scale.
+#[test]
+fn an_attached_effect_is_held_to_its_bounds_by_its_world_size() {
+    let row = EffectScale {
+        scale: 2.0,
+        min: 1.0,
+        max: 4.0,
+    };
+    assert_eq!(row.attached(1.0, 1.0), 2.0);
+    assert_eq!(row.attached(1.0, 4.0), 0.5 * 2.0);
+    assert_eq!(row.attached(1.0, 0.25), 1.0 / 0.5 * 2.0);
+}

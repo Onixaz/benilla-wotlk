@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 
-use crate::creature_anim::{SpellKitSound, SpellVisuals};
+use crate::creature_anim::{SpellGoTargets, SpellKitSound, SpellVisuals};
 use crate::net::{NetEntity, ObjectStore};
 use benilla_protocol::EntityKind;
 
@@ -87,6 +87,93 @@ pub(crate) struct GroundBurst {
     pub(crate) pos: Vec3,
     /// A `SpellVisualKitModelAttach` row's offset and turn at the point.
     pub(crate) attach: Option<benilla_formats::ModelAttach>,
+    /// The model's uniform scale.
+    pub(crate) scale: f32,
+    /// The turn it stands at, as a resist burst takes the missile's facing (`0x7031ea`).
+    pub(crate) turn: Quat,
+}
+
+/// One cast flying at a point or a unit, until it would land (`0x804b20`).
+struct InTransit {
+    caster: u64,
+    spell_id: u32,
+    server_time: u32,
+    arrives: f32,
+}
+
+/// The casts in flight, which a DynamicObject of the same cast waits on.
+#[derive(Resource, Default)]
+pub(super) struct SpellsInTransit(Vec<InTransit>);
+
+impl SpellsInTransit {
+    /// The lookup of `0x804cc0`, keyed as the object's fields name its cast.
+    fn holds(&self, caster: u64, spell_id: u32, server_time: u32) -> bool {
+        self.0
+            .iter()
+            .any(|s| s.caster == caster && s.spell_id == spell_id && s.server_time == server_time)
+    }
+}
+
+/// A DynamicObject whose spell is still flying: nothing of it shows yet (`0x7049d0`, `0x704f60`).
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub(super) struct AwaitingTransit;
+
+/// Note each GO of a travelling spell by the time it lands, and drop those landed (`0x804c10`).
+pub(super) fn record_spells_in_transit(
+    mut gos: MessageReader<SpellGoTargets>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+    units: Query<&GlobalTransform>,
+    time: Res<Time>,
+    mut list: ResMut<SpellsInTransit>,
+) {
+    let now = time.elapsed_secs();
+    list.0.retain(|s| s.arrives > now);
+    let Some(spells) = spells else {
+        gos.clear();
+        return;
+    };
+    for go in gos.read() {
+        let speed = spells.catalog.get(go.spell_id).map_or(0.0, |d| d.speed);
+        let Some(from) = units.get(go.caster).ok().filter(|_| speed > 0.0) else {
+            continue;
+        };
+        let first = go.hits.first().or(go.misses.first().map(|(e, _)| e));
+        let to = go
+            .dest
+            .or_else(|| Some(units.get(*first?).ok()?.translation()));
+        if let Some(to) = to {
+            list.0.push(InTransit {
+                caster: go.caster_guid,
+                spell_id: go.spell_id,
+                server_time: go.server_time,
+                arrives: now + from.translation().distance(to) / speed,
+            });
+        }
+    }
+}
+
+/// A model held at a point until its owner despawns it, a kit a flight rides on the ground.
+pub(super) fn spawn_held_point_fx(
+    commands: &mut Commands,
+    path: &str,
+    pos: Vec3,
+    attach: Option<benilla_formats::ModelAttach>,
+    scale: f32,
+) -> Entity {
+    let (shift, turn) = attach.as_ref().map_or(
+        (Vec3::ZERO, Quat::IDENTITY),
+        super::spell_fx::model_attach_local,
+    );
+    commands
+        .spawn((
+            GroundFx::new(path.to_string(), true),
+            Transform::from_translation(pos + shift)
+                .with_rotation(turn)
+                .with_scale(Vec3::splat(scale)),
+            Visibility::default(),
+        ))
+        .id()
 }
 
 /// Arm each new DynamicObject off its create's fields: visual A, the shard emitter and the area
@@ -94,6 +181,8 @@ pub(crate) struct GroundBurst {
 pub(super) fn arm_ground_effects(
     mut commands: Commands,
     created: Query<(Entity, &NetEntity, &ObjectStore), Added<ObjectStore>>,
+    waiting: Query<(Entity, &NetEntity, &ObjectStore), With<AwaitingTransit>>,
+    transit: Res<SpellsInTransit>,
     visuals: Option<Res<SpellVisuals>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     fx: Option<ResMut<SpellFx>>,
@@ -105,10 +194,24 @@ pub(super) fn arm_ground_effects(
         return;
     };
     let level_scale = shard_rate_scale(spell_effect_level.map(|l| l.0));
-    for (anchor, net, store) in &created {
+    let flying = |store: &ObjectStore| {
+        transit.holds(
+            store.0.dynamicobject_caster().unwrap_or(0),
+            store.0.dynamicobject_spell_id().unwrap_or(0),
+            store.0.dynamicobject_cast_time().unwrap_or(0),
+        )
+    };
+    // A waiting object arms the frame its spell lands (`0x7051b0`).
+    let landed = waiting.iter().filter(|(_, _, store)| !flying(store));
+    for (anchor, net, store) in created.iter().chain(landed) {
         if net.kind != EntityKind::DynamicObject {
             continue;
         }
+        if flying(store) {
+            commands.entity(anchor).insert(AwaitingTransit);
+            continue;
+        }
+        commands.entity(anchor).remove::<AwaitingTransit>();
         let Some(spell_id) = store.0.dynamicobject_spell_id() else {
             continue;
         };
@@ -128,13 +231,22 @@ pub(super) fn arm_ground_effects(
         // Visual A (`0x704b30`): the persistent kit's world effect, else its base slot, at the
         // object's position with no terrain projection, turned by `DYNAMICOBJECT_FACING`; as a
         // child it goes with the anchor.
-        if let Some((_, path)) = visuals.0.persistent_area_model(stages) {
+        if let Some((effect, path)) = visuals.0.persistent_area_model(stages) {
             let path = path.to_string();
             ensure_model(&mut fx, &asset_server, &path);
+            // The row's scale when above 0 (`0x704d90`); a portal's radius fit is not built.
+            let scale = visuals.0.effect_scale(effect).map_or(1.0, |s| {
+                if s.scale > 0.0 {
+                    s.scale
+                } else {
+                    1.0
+                }
+            });
             let child = commands
                 .spawn((
                     GroundFx::new(path, true),
-                    Transform::from_rotation(Quat::from_rotation_y(facing)),
+                    Transform::from_rotation(Quat::from_rotation_y(facing))
+                        .with_scale(Vec3::splat(scale)),
                     Visibility::default(),
                 ))
                 .id();
@@ -195,7 +307,9 @@ pub(super) fn spawn_ground_bursts(
         );
         commands.spawn((
             GroundFx::new(burst.path.clone(), false),
-            Transform::from_translation(burst.pos + shift).with_rotation(turn),
+            Transform::from_translation(burst.pos + shift)
+                .with_rotation(burst.turn * turn)
+                .with_scale(Vec3::splat(burst.scale)),
             Visibility::default(),
         ));
     }
@@ -322,6 +436,20 @@ pub(super) fn attach_ground_fx_models(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cast_is_in_transit_only_under_its_own_three_keys() {
+        let list = SpellsInTransit(vec![InTransit {
+            caster: 7,
+            spell_id: 133,
+            server_time: 900,
+            arrives: 1.0,
+        }]);
+        assert!(list.holds(7, 133, 900));
+        assert!(!list.holds(8, 133, 900));
+        assert!(!list.holds(7, 116, 900));
+        assert!(!list.holds(7, 133, 901));
+    }
 
     #[test]
     fn the_shard_rate_follows_the_spell_effect_level_record() {

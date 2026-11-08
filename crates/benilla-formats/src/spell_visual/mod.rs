@@ -406,6 +406,8 @@ pub struct SpellVisualCatalog {
     kits: HashMap<u32, VisualKit>,
     /// `SpellVisualEffectName` id → model path (field 2).
     effect_paths: HashMap<u32, String>,
+    /// `SpellVisualEffectName` id → its scale columns.
+    effect_scales: HashMap<u32, EffectScale>,
     /// The `"HARDCODED *"` rows, name → (id, path): the effects the engine spawns itself, which the
     /// client resolves by name at boot against 14 baked strings.
     hardcoded: HashMap<String, (u32, String)>,
@@ -435,6 +437,7 @@ impl SpellVisualCatalog {
             visuals,
             kits,
             effect_paths,
+            effect_scales: HashMap::new(),
             hardcoded: HashMap::new(),
             chain_effects: HashMap::new(),
             missiles: HashMap::new(),
@@ -547,6 +550,18 @@ impl SpellVisualCatalog {
         self.kits.len()
     }
 
+    /// Seed one `SpellVisualEffectName` scale row, for tests.
+    #[must_use]
+    pub fn with_effect_scale(mut self, id: u32, scale: EffectScale) -> Self {
+        self.effect_scales.insert(id, scale);
+        self
+    }
+
+    /// A `SpellVisualEffectName` id's scale columns.
+    pub fn effect_scale(&self, effect_id: u32) -> Option<EffectScale> {
+        self.effect_scales.get(&effect_id).copied()
+    }
+
     /// A `SpellVisualEffectName` id's model path; an empty path reads as `None`.
     pub fn effect_path(&self, effect_id: u32) -> Option<&str> {
         self.effect_paths
@@ -633,8 +648,49 @@ pub(crate) fn spell_visual_schema() -> Schema {
 /// Column 26, the first of the missile cast and impact offset floats.
 const SPELL_VISUAL_OFFSETS_FIELD: usize = 26;
 
-/// `SpellVisualEffectName`: id, name, model path, then the area effect size and three scale
-/// floats, which benilla does not read.
+/// `SpellVisualEffectName` columns 4-6: a model's scale and the bounds its world size stays in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EffectScale {
+    pub scale: f32,
+    pub min: f32,
+    pub max: f32,
+}
+
+impl EffectScale {
+    /// A world-placed effect's scale from `base`, held to the bounds, and 1 at zero (`0x6f8ae0`).
+    pub fn planted(self, base: f32) -> f32 {
+        let scaled = base * self.scale;
+        let held = if scaled < self.min {
+            self.min
+        } else if scaled < self.max {
+            scaled
+        } else {
+            self.max
+        };
+        if held <= 0.0 {
+            1.0
+        } else {
+            held
+        }
+    }
+
+    /// An attached effect's local scale on an attachment of world scale `world` (`0x6f8c50`).
+    pub fn attached(self, base: f32, world: f32) -> f32 {
+        let local = base * self.scale;
+        let size = world * local;
+        if size <= 1e-6 {
+            local
+        } else if self.max < size {
+            local / size * self.max
+        } else if self.min > size {
+            self.min / size * local
+        } else {
+            local
+        }
+    }
+}
+
+/// `SpellVisualEffectName`: id, name, model path, then the area effect size and three scale floats.
 pub(crate) fn effect_name_schema() -> Schema {
     let mut s = Schema::new("SpellVisualEffectName");
     for i in 0..SPELL_VISUAL_EFFECT_NAME_FIELDS {
@@ -792,9 +848,13 @@ pub fn load_spell_visual_catalog(chain: &mut Chain) -> Result<SpellVisualCatalog
         "SpellVisualEffectName.dbc",
     )?;
     let mut effect_paths = HashMap::with_capacity(sven_set.records().len());
+    let mut effect_scales = HashMap::with_capacity(sven_set.records().len());
     let mut hardcoded = HashMap::new();
     for r in sven_set.records() {
         let Some(id) = u32_at(r, 0) else { continue };
+        if let (Some(scale), Some(min), Some(max)) = (f32_at(r, 4), f32_at(r, 5), f32_at(r, 6)) {
+            effect_scales.insert(id, EffectScale { scale, min, max });
+        }
         if let Some(path) = str_at(&sven_set, r, 2) {
             // Only the rows the client's boot resolve can hit, those named "HARDCODED …".
             if let Some(name) = str_at(&sven_set, r, 1).filter(|n| n.starts_with("HARDCODED ")) {
@@ -832,6 +892,7 @@ pub fn load_spell_visual_catalog(chain: &mut Chain) -> Result<SpellVisualCatalog
         visuals,
         kits,
         effect_paths,
+        effect_scales,
         hardcoded,
         chain_effects,
         missiles,

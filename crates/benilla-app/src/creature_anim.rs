@@ -525,8 +525,8 @@ pub(crate) struct SpellGoTargets {
     pub(crate) spell_id: u32,
     /// Units the spell landed on; each gets the impact hand-off.
     pub(crate) hits: Vec<Entity>,
-    /// Missed units with `SpellMissInfo`: the arrival plays Dodge (30) or ShieldBlock (24), never
-    /// Parry, and no impact kit; the deflect glance-off flight is not built.
+    /// Missed units with `SpellMissInfo`: no impact kit; the flight's route is
+    /// `crate::entities::missile`'s.
     pub(crate) misses: Vec<(Entity, u8)>,
     /// A dest-targeted cast's ground point, in bevy coords.
     pub(crate) dest: Option<Vec3>,
@@ -539,6 +539,11 @@ pub(crate) struct SpellGoTargets {
     pub(crate) trajectory: Option<Trajectory>,
     /// Reflects with no outcome of their own, each the caster's impact kit on it (`0x80f467`).
     pub(crate) reflected: u8,
+    /// Each reflecting unit and the outcome on the caster of the spell it sends back.
+    pub(crate) reflects: Vec<(Entity, u8)>,
+    pub(crate) caster_guid: u64,
+    /// The server's clock at the launch.
+    pub(crate) server_time: u32,
 }
 
 /// A dest-location cast's visuals, from `SMSG_NOTIFY_DEST_LOC_SPELL_CAST` (`0x810050`), in bevy
@@ -610,6 +615,7 @@ pub(crate) mod spell_visual;
 use blood::{blood_spurts, load_blood_tables};
 use env_damage::{hard_landing_dust, load_env_damage_table};
 pub(crate) use env_damage::{EnvDamageTable, HardLanding, HARD_LANDING_DESCENT};
+pub(crate) use spell_visual::area_kit_models;
 use spell_visual::{
     arm_aura_state_fx, arm_go_loot_fx, arm_level_up_fx, arm_loot_fx, arm_morph_latch,
     arm_mount_poof_fx, load_spell_visuals, play_delayed_area_kits, play_dest_loc_casts,

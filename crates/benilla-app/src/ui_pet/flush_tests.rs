@@ -58,6 +58,7 @@ fn go(caster: u64, spell_id: u32) -> SessionEvent {
         cast_count: 0,
         spell_id,
         cast_flags: 0,
+        server_time: 0,
         hits: vec![],
         misses: vec![],
         reflects: vec![],

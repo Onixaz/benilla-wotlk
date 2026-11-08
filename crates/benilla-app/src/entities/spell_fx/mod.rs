@@ -504,6 +504,8 @@ pub(super) struct WorldPlantFx {
     owner: Entity,
     /// Re-plant on owner displacement (the client's flag `0x4000`): root-aura persistents only.
     follow: bool,
+    /// The effect row's scale over the owner's.
+    name_scale: Option<benilla_formats::EffectScale>,
     /// A `SpellVisualKitModelAttach` row's offset and turn on top of the plant.
     attach: Option<benilla_formats::ModelAttach>,
 }
@@ -516,6 +518,7 @@ const REPLANT_EPS_SQ: f32 = 1e-3;
 fn world_plant_transform(
     owner: &GlobalTransform,
     attach: Option<&benilla_formats::ModelAttach>,
+    name_scale: Option<benilla_formats::EffectScale>,
 ) -> Transform {
     let (scale, rotation, translation) = owner.to_scale_rotation_translation();
     let (yaw, _, _) = rotation.to_euler(EulerRot::YXZ);
@@ -524,7 +527,7 @@ fn world_plant_transform(
     Transform {
         translation: translation + yaw * offset,
         rotation: yaw * turn,
-        scale,
+        scale: name_scale.map_or(scale, |s| Vec3::splat(s.planted(scale.x))),
     }
 }
 
@@ -576,7 +579,7 @@ pub(super) fn tend_world_plants(
             commands.entity(root).despawn();
             continue;
         };
-        let at = world_plant_transform(owner, plant.attach.as_ref());
+        let at = world_plant_transform(owner, plant.attach.as_ref(), plant.name_scale);
         if plant.follow && at.translation.distance_squared(t.translation) > REPLANT_EPS_SQ {
             *t = at;
         }
@@ -790,6 +793,7 @@ pub(super) fn attach_spell_fx(
     asset_server: Res<AssetServer>,
     spells: Option<Res<crate::ui_action::Spells>>,
     creatures: Option<Res<crate::entities::Creatures>>,
+    visuals: Option<Res<crate::creature_anim::SpellVisuals>>,
     time: Res<Time>,
     mut wow_materials: ResMut<Assets<WowModelMaterial>>,
     mut tint_reg: ResMut<FxTintAnims>,
@@ -880,6 +884,9 @@ pub(super) fn attach_spell_fx(
             if !planted && !body_built {
                 return true;
             }
+            let name_scale = visuals
+                .as_deref()
+                .and_then(|v| v.0.effect_scale(inst.effect));
             // Ground-anchored: a world plant, or an instance on the base point (`0x13`) or the unit
             // root. A chest-anchored one keeps its flat quads as geometry (`ProtectionFrom*`).
             let (root, ground_anchor) = if planted {
@@ -887,11 +894,12 @@ pub(super) fn attach_spell_fx(
                     inst.persistent && spell_has_root_aura(spells.as_deref(), inst.spell_id);
                 let root = commands
                     .spawn((
-                        world_plant_transform(unit_gt, inst.attach.as_ref()),
+                        world_plant_transform(unit_gt, inst.attach.as_ref(), name_scale),
                         Visibility::default(),
                         WorldPlantFx {
                             owner: unit,
                             follow,
+                            name_scale,
                             attach: inst.attach,
                         },
                     ))
@@ -918,11 +926,14 @@ pub(super) fn attach_spell_fx(
                     .attach
                     .as_ref()
                     .map_or((Vec3::ZERO, Quat::IDENTITY), model_attach_local);
+                // The attachment's world scale is the unit's; a bone's own scale is not read.
+                let unit_scale = unit_gt.to_scale_rotation_translation().0.x;
+                let scale = name_scale.map_or(inst.scale, |s| s.attached(inst.scale, unit_scale));
                 let root = commands
                     .spawn((
                         Transform::from_translation(offset + shift)
                             .with_rotation(turn)
-                            .with_scale(Vec3::splat(inst.scale)),
+                            .with_scale(Vec3::splat(scale)),
                         Visibility::default(),
                     ))
                     // Chain-only, as above.

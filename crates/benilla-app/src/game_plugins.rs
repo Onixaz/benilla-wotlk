@@ -949,9 +949,11 @@ pub(crate) mod schedule_tests {
     ///   `play_body_procs` reads `NetEntity` against `refresh_live_display`, which only swaps a
     ///   display; and `tick_shard_emitters` reads the terrain heightfield against
     ///   `rescatter_clutter`, as `move_missiles` does.
+    /// - `record_spells_in_transit` reads a caster's place against `publish_camera_pose` (+1): a
+    ///   frame's lag does not move a landing time that matters.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_872;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_873;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

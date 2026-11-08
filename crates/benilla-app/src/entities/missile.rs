@@ -44,13 +44,14 @@
 //! `SpellMissileMotion` count, and a targeting kit rides the target from launch to the flight's
 //! end (`0x702986`).
 //!
+//! A miss ends by its outcome ([`disposition`]): it flies past and fades, sticks in the shield,
+//! bursts, glances off at half speed or flies back at the caster.
+//!
 //! Not built: `$BWR` launches from its event marker, where the reference first tries the ranged
 //! weapon's HandArrow/Bullet attachment (`0x23`/`0x24`); column 16's index 13 leaves from the
-//! hand, not the held weapon's own attachments (`0x71a860`); a targeting kit with no target unit,
-//! which the reference plays on the caster at the aim (`0x702941`); homing aims at the attachment
-//! point, not the ray-sphere intercept, the same body point in practice; and the reference's
-//! per-outcome disposition, which keeps a BLOCK 5000 ms, rebuilds a RESIST or IMMUNE model, curves
-//! a DEFLECT away and re-launches a REFLECT at the caster, where every miss here ends on arrival.
+//! hand, not the held weapon's own attachments (`0x71a860`); homing aims at the attachment
+//! point, not the ray-sphere intercept, the same body point in practice; and a ground aim on a
+//! moving transport stays where it was, as the GO's dest is read in world space.
 
 use bevy::animation::transition::AnimationTransitions;
 use bevy::ecs::entity::EntityHashMap;
@@ -64,11 +65,13 @@ use benilla_assets::m2_url;
 
 use super::equipment::ItemDisplays;
 
+mod disposition;
 mod motion;
 mod shape;
 mod trajectory;
 use super::spell_fx::{attach_effect_visuals, ensure_model, EffectHost, FxMaterials, SpellFx};
 use super::{BoneAttach, DisplayModel, ModelHandle};
+use disposition::{DeckChase, MissKind};
 pub(crate) use motion::{run_missile_motion, MissileMotion, MotionScripts};
 pub(crate) use shape::MissileShape;
 use shape::{FaceMotion, FollowGround, MissileSource};
@@ -89,6 +92,22 @@ const SPECIAL_IDLE_HOLD_MAX: f32 = 2.0;
 
 /// The destination attachments tried after the spawn's own tag, as the reference cascades.
 const DEST_FALLBACKS: [u16; 2] = [0xf, 0x13];
+
+/// `AnimationData.dbc` Stuck, what a missile lodged in its victim plays (`0x6fee00`).
+const STUCK_ANIM: u16 = 191;
+
+/// `AnimationData.dbc` the glancing missile's sequence (`0x702fc0`).
+const GLANCE_ANIM: u16 = 198;
+
+/// How long a blocked missile stays in the shield (`0x702fc0`).
+const STUCK_SECS: f32 = 5.0;
+
+/// The victim's ShieldBlock and Dodge clips, a miss's own (`0x7022d0`, `0x7030d7`).
+const BLOCK_CLIP: u16 = 24;
+const DODGE_CLIP: u16 = 30;
+
+/// The burst a resisted missile leaves, hardcoded index 10 (`0x70318d`).
+const RESIST_EFFECT: &str = "HARDCODED Resist Spell";
 
 /// `AnimationData.dbc` InFlight, the sequence a projectile model plays in flight: a thrown weapon
 /// tumbles end over end and shows its trail only here; a model without it plays its first clip.
@@ -183,6 +202,45 @@ pub(super) struct Missile {
     targeting: Option<Entity>,
     /// A motion script's last offset, turn and scale for the model (`0x700550`, `0x6feb20`).
     pose: Option<MotionPose>,
+    /// How a miss ends; `None` for a hit.
+    kind: Option<MissKind>,
+    /// The outcome on the caster of the flight a reflect sends back; 0 is a hit.
+    reflect_outcome: u8,
+    /// Whether the miss's word and log have gone out (`0x100`).
+    spent: bool,
+    /// A flight no longer homing: past the target or glancing away.
+    fixed_aim: Option<Vec3>,
+    /// The last stretch of a fixed flight the model fades over, yards (`0x6ffcd0`).
+    fade_over: Option<f32>,
+    /// Seconds until the victim's defense clip, and the state that plays it (`0x7015d0`).
+    victim_clip: Option<(f32, u32)>,
+    /// The flight's yards per second, as launched.
+    speed: f32,
+    /// The time this cast was launched, a reflect's clock.
+    cast_at: f32,
+    /// Column 22's kit, re-armed when a reflect turns the flight.
+    targeting_kit: u32,
+    /// A targeting kit's models held at a ground aim, reaped with the flight (`0x702941`).
+    targeting_points: Vec<Entity>,
+    /// The carry along the target's transport (`0x6ffd70`).
+    deck: DeckChase,
+    /// The launch point rides the deck as well, a motion or follow flight (`0x7015d0`).
+    launch_rides_deck: bool,
+    /// The model's `SpellVisualEffectName` scale (`0x701230`).
+    scale: f32,
+}
+
+/// A blocked missile lodged in its victim: it rides the attachment until it expires (`0x6fee00`).
+#[derive(Component)]
+pub(super) struct StuckMissile {
+    target: Entity,
+    tag: u16,
+    /// Its place and turn against the attachment and the victim's facing.
+    local: Vec3,
+    turn: Quat,
+    until: f32,
+    spell_id: u32,
+    targeting: Option<Entity>,
 }
 
 /// How a motion script draws the model against its flight.
@@ -387,6 +445,9 @@ impl PendingMissiles {
             dest_tag: None,
             speed: 40.0,
             targets: Vec::new(),
+            reflects: Vec::new(),
+            reflect_glances: false,
+            scale: 1.0,
             ground_aim: None,
             missile_sound: None,
             awaits_release: true,
@@ -446,8 +507,7 @@ pub(crate) struct MissileMiss {
     /// The colour law's source class (`K`).
     pub(crate) caster: Entity,
     /// Always the missed target; only the no-target arm's words take each list entry's target.
-    /// Unlike the inline site the arrival floats Reflect over the target, and the caster's word
-    /// belongs to the re-launched flight, which is not built.
+    /// Unlike the inline site the arrival floats Reflect over the target.
     pub(crate) anchor: Entity,
     /// The colour law's `B` bit resolves off its record.
     pub(crate) spell_id: u32,
@@ -455,48 +515,45 @@ pub(crate) struct MissileMiss {
     pub(crate) code: u8,
 }
 
-/// A travelling spell is deflected, never parried: the launch classifier, called from the launch,
-/// stores PARRY(4) back as DEFLECT(9), so the word, the `UNIT_COMBAT` feed and the chat line all
-/// see 9. Every other code passes through.
-fn launch_outcome_code(code: u8) -> u8 {
-    if code == 4 {
-        9
-    } else {
-        code
-    }
-}
-
-/// The victim clip a missed arrival plays, as the melee `$CPP` dispatch's victim state
-/// ([`DefenseAnim`]): DODGE(3) plays Dodge (30), BLOCK(5) ShieldBlock (24), any other code
-/// nothing; PARRY(4) never arrives, as [`launch_outcome_code`] rewrote it.
-fn miss_defense_state(code: u8) -> Option<u32> {
-    match code {
-        3 => Some(2), // SPELL_MISS_DODGE → the dispatch's DODGES state
-        5 => Some(5), // SPELL_MISS_BLOCK → BLOCKS
-        _ => None,
-    }
-}
+/// The melee `$CPP` dispatch's victim states ([`DefenseAnim`]) that play Dodge and ShieldBlock.
+const DODGE_STATE: u32 = 2;
+const BLOCK_STATE: u32 = 5;
 
 /// What a launch or a landing emits, one parameter as both systems sit at Bevy's ceiling.
 #[derive(bevy::ecs::system::SystemParam)]
-pub(super) struct ArrivalOut<'w> {
+pub(super) struct ArrivalOut<'w, 's> {
     impacts: MessageWriter<'w, CastEvent>,
     defenses: MessageWriter<'w, DefenseAnim>,
     words: MessageWriter<'w, MissileMiss>,
     /// The targeting kit's models and sound, armed at launch and reaped at the flight's end.
     kit_fx: MessageWriter<'w, SpellKitFx>,
     kit_sounds: MessageWriter<'w, SpellKitSound>,
+    bursts: MessageWriter<'w, super::dest_fx::GroundBurst>,
     visuals: Option<Res<'w, SpellVisuals>>,
+    clips: Query<'w, 's, &'static benilla_assets::ModelAnimations>,
 }
 
-/// The arrival hand-off by the reference's per-tick arms; `model` is where it drew last.
+/// What an arrival leaves to the flight.
+enum AfterArrival {
+    End,
+    Stick,
+    Glance,
+    Reflect,
+}
+
+/// The arrival hand-off by the reference's per-tick arms; `model` is where it drew last and
+/// `turn` its facing.
 fn arrival_handoff(
     missile: &Missile,
     at: Vec3,
     model: Vec3,
+    turn: Quat,
     out: &mut ArrivalOut,
     play_seq: &mut crate::creature_anim::PlaySeq,
-) {
+) -> AfterArrival {
+    if missile.spent {
+        return AfterArrival::End;
+    }
     // A fresh tick sorts the arrival after the frame's packet handlers, as the reference plays it.
     let mut event = |entity, kind| CastEvent {
         entity,
@@ -525,12 +582,6 @@ fn arrival_handoff(
             miss: Some(code),
             ..
         } => {
-            if let Some(victim_state) = miss_defense_state(code) {
-                out.defenses.write(DefenseAnim {
-                    victim: target,
-                    victim_state,
-                });
-            }
             if missile.index == 0 {
                 out.words.write(MissileMiss {
                     caster: missile.caster,
@@ -539,6 +590,20 @@ fn arrival_handoff(
                     code,
                 });
             }
+            // The dodge a resist and a reflect draw on arrival (`0x7030d7`).
+            if matches!(missile.kind, Some(MissKind::Resisted | MissKind::Reflect)) {
+                out.defenses.write(DefenseAnim {
+                    victim: target,
+                    victim_state: DODGE_STATE,
+                });
+            }
+            match missile.kind {
+                Some(MissKind::Stuck) => return AfterArrival::Stick,
+                Some(MissKind::Glance) => return AfterArrival::Glance,
+                Some(MissKind::Reflect) => return AfterArrival::Reflect,
+                Some(MissKind::Resisted) => resist_burst(at, turn, out),
+                Some(MissKind::Wide) | None => {}
+            }
         }
         Aim::Ground(_) => {
             out.impacts.write(event(
@@ -546,6 +611,252 @@ fn arrival_handoff(
                 CastEventKind::GroundImpact { pos: at },
             ));
         }
+    }
+    AfterArrival::End
+}
+
+/// The resist burst at the landing, at the missile's facing and its row's scale (`0x703191`).
+fn resist_burst(at: Vec3, turn: Quat, out: &mut ArrivalOut) {
+    let Some(visuals) = out.visuals.as_deref() else {
+        return;
+    };
+    let Some((effect, path)) = visuals.0.hardcoded_effect(RESIST_EFFECT) else {
+        return;
+    };
+    let scale = visuals
+        .0
+        .effect_scale(effect)
+        .map_or(1.0, |s| s.planted(1.0));
+    out.bursts.write(super::dest_fx::GroundBurst {
+        path: path.to_string(),
+        pos: at,
+        attach: None,
+        scale,
+        turn: Quat::from_rotation_y(turn.to_euler(EulerRot::YXZ).0),
+    });
+}
+
+/// Play sequence `anim` on the missile's model, if it has one: applied after the frame's systems.
+fn play_missile_sequence(commands: &mut Commands, entity: Entity, key: String, anim: u16) {
+    commands.entity(entity).queue(move |mut e: EntityWorldMut| {
+        let node = e
+            .world()
+            .get_resource::<SpellFx>()
+            .and_then(|fx| fx.models.get(&key))
+            .and_then(|dm| dm.animations.as_ref())
+            .and_then(|a| a.find(anim))
+            .map(|c| c.node);
+        if let (Some(node), Some(mut player)) = (node, e.get_mut::<AnimationPlayer>()) {
+            player.stop_all();
+            player.play(node);
+        }
+    });
+}
+
+/// A victim's defense clip for this route, due half its length before the landing (`0x7022d0`):
+/// `Some` to count down, written at once when already due; only a modelled flight plays one.
+fn victim_clip(
+    target: Entity,
+    kind: Option<MissKind>,
+    arrive_in: f32,
+    modelled: bool,
+    out: &mut ArrivalOut,
+) -> Option<(f32, u32)> {
+    let (clip, state) = match kind {
+        Some(MissKind::Stuck) => (BLOCK_CLIP, BLOCK_STATE),
+        Some(MissKind::Glance) => (DODGE_CLIP, DODGE_STATE),
+        _ => return None,
+    };
+    if !modelled {
+        return None;
+    }
+    let half = out
+        .clips
+        .get(target)
+        .ok()
+        .and_then(|a| a.find(clip))
+        .map_or(0.0, |c| c.duration * 0.5);
+    let due = arrive_in - half;
+    if due > 0.0 {
+        return Some((due, state));
+    }
+    out.defenses.write(DefenseAnim {
+        victim: target,
+        victim_state: state,
+    });
+    None
+}
+
+/// Lodge a blocked missile in the victim's attachment (`0x6fee00`); `false` with no model on the
+/// flight or no such attachment. The reference parents it to the attachment's whole frame; here it
+/// turns with the unit, as the attachment's own rotation is not read.
+fn stick(
+    entity: Entity,
+    missile: &Missile,
+    transform: &Transform,
+    now: f32,
+    units: &AttachPosQuery,
+    joints: &Query<&GlobalTransform>,
+    commands: &mut Commands,
+) -> bool {
+    let Aim::Unit {
+        target, dest_tag, ..
+    } = missile.aim
+    else {
+        return false;
+    };
+    let Some(key) = missile.path.clone().filter(|_| missile.parts_spawned) else {
+        return false;
+    };
+    let Ok((base, Some(bones), _)) = units.get(target) else {
+        return false;
+    };
+    let Some(tag) = dest_tag
+        .into_iter()
+        .chain(DEST_FALLBACKS)
+        .find(|t| bones.points.contains_key(t))
+    else {
+        return false;
+    };
+    let Some(anchor) = attach_world_pos_offset(target, [tag], Vec3::ZERO, units, joints) else {
+        return false;
+    };
+    let facing = base.rotation().inverse();
+    commands
+        .entity(entity)
+        .remove::<Missile>()
+        .insert(StuckMissile {
+            target,
+            tag,
+            local: facing * (transform.translation - anchor),
+            turn: facing * transform.rotation,
+            until: now + STUCK_SECS,
+            spell_id: missile.spell_id,
+            targeting: missile.targeting,
+        });
+    play_missile_sequence(commands, entity, key, STUCK_ANIM);
+    true
+}
+
+/// Turn a parried missile away at half speed, fading out (`0x702fc0`); `false` straight up or down.
+fn glance_off(entity: Entity, m: &mut Missile, commands: &mut Commands) -> bool {
+    let [spin, tilt, _] = motion::draw_randoms().map(|r| r * 2.0 - 1.0);
+    let Some(dir) = disposition::glance_dir(m.pos - m.impact, spin, tilt) else {
+        return false;
+    };
+    m.speed *= 0.5;
+    m.pos = m.impact;
+    let reach = m.speed * disposition::PAST_TARGET_SECS;
+    m.fixed_aim = Some(m.pos + dir * reach);
+    m.fade_over = Some(reach);
+    m.arrive_in = disposition::PAST_TARGET_SECS;
+    m.flight_time = disposition::PAST_TARGET_SECS;
+    m.spent = true;
+    if let Some(key) = m.path.clone() {
+        play_missile_sequence(commands, entity, key, GLANCE_ANIM);
+    }
+    true
+}
+
+/// Send a reflected missile back at its caster from where it reached (`0x702fc0`, `0x7022d0`).
+fn reflect_back(
+    m: &mut Missile,
+    now: f32,
+    units: &AttachPosQuery,
+    joints: &Query<&GlobalTransform>,
+    out: &mut ArrivalOut,
+) -> bool {
+    let Aim::Unit {
+        dest_tag, offset, ..
+    } = m.aim
+    else {
+        return false;
+    };
+    let route = (m.reflect_outcome != 0).then(|| disposition::classify(m.reflect_outcome, false));
+    let kind = route.map(|(kind, _)| kind);
+    let aim = Aim::Unit {
+        target: m.caster,
+        dest_tag: if kind == Some(MissKind::Stuck) {
+            Some(disposition::SHIELD_ATTACHMENT)
+        } else {
+            dest_tag
+        },
+        offset,
+        miss: route.map(|(_, code)| code),
+    };
+    let Some(at) = aim_point(aim, None, units, joints) else {
+        return false;
+    };
+    let from = m.impact;
+    let distance = from.distance(at);
+    let speed = disposition::relaunch_speed(m.speed, distance, now - m.cast_at);
+    if m.targeting.take().is_some() {
+        out.kit_fx.write(SpellKitFx::Reap {
+            entity: match m.aim {
+                Aim::Unit { target, .. } => target,
+                Aim::Ground(_) => m.caster,
+            },
+            spell_id: m.spell_id,
+            class: FxClass::Hold,
+        });
+    }
+    m.aim = aim;
+    m.kind = kind;
+    m.reflect_outcome = 0;
+    m.pos = from;
+    m.launch = from;
+    m.progress = 0.0;
+    m.h_progress = 0.0;
+    m.flight = None;
+    m.speed = speed;
+    m.arrive_in = distance / speed;
+    m.fixed_aim = None;
+    m.fade_over = None;
+    if kind == Some(MissKind::Wide) {
+        m.fixed_aim = Some(disposition::wide_aim(from, at, speed, signed_random()));
+        m.arrive_in += disposition::PAST_TARGET_SECS;
+        m.fade_over = Some(speed * disposition::PAST_TARGET_SECS);
+    }
+    m.flight_time = m.arrive_in;
+    m.victim_clip = victim_clip(m.caster, kind, m.arrive_in, m.path.is_some(), out);
+    if m.targeting_kit != 0 {
+        m.targeting = arm_targeting_kit(m.caster, m.spell_id, m.targeting_kit, out);
+    }
+    true
+}
+
+/// One draw in -1 to 1, as the reference's signed generator.
+fn signed_random() -> f32 {
+    motion::draw_randoms()[0] * 2.0 - 1.0
+}
+
+/// Move each lodged missile with its victim, and free it on expiry or when the victim is gone.
+fn carry_stuck_missiles(
+    now: f32,
+    stuck: &mut Query<(Entity, &StuckMissile, &mut Transform), Without<Missile>>,
+    units: &AttachPosQuery,
+    joints: &Query<&GlobalTransform>,
+    commands: &mut Commands,
+    kit_fx: &mut MessageWriter<SpellKitFx>,
+) {
+    for (entity, s, mut transform) in stuck {
+        let anchor = attach_world_pos_offset(s.target, [s.tag], Vec3::ZERO, units, joints);
+        let held = anchor
+            .filter(|_| now < s.until)
+            .zip(units.get(s.target).ok());
+        let Some((anchor, (base, ..))) = held else {
+            if let Some(unit) = s.targeting {
+                kit_fx.write(SpellKitFx::Reap {
+                    entity: unit,
+                    spell_id: s.spell_id,
+                    class: FxClass::Hold,
+                });
+            }
+            commands.entity(entity).despawn();
+            continue;
+        };
+        transform.translation = anchor + base.rotation() * s.local;
+        transform.rotation = base.rotation() * s.turn;
     }
 }
 
@@ -558,6 +869,9 @@ fn end_flight(
     kit_fx: &mut MessageWriter<SpellKitFx>,
 ) {
     sounds.write(MissileSound::Stop { entity });
+    for &point in &missile.targeting_points {
+        commands.entity(point).despawn();
+    }
     if let Some(unit) = missile.targeting {
         kit_fx.write(SpellKitFx::Reap {
             entity: unit,
@@ -597,6 +911,31 @@ fn arm_targeting_kit(
     Some(target)
 }
 
+/// Hold column 22's kit at a flight's ground aim, on copy 0 alone (`0x702941`): its point models and
+/// its sound there, the area subset of a kit played at a point (`0x74547b`).
+fn arm_point_targeting_kit(
+    at: Vec3,
+    kit_id: u32,
+    commands: &mut Commands,
+    out: &mut ArrivalOut,
+) -> Vec<Entity> {
+    let Some(visuals) = out.visuals.as_deref() else {
+        return Vec::new();
+    };
+    let Some(kit) = visuals.0.kit(kit_id) else {
+        return Vec::new();
+    };
+    if let Some(kit_sound) = kit.sound {
+        out.kit_sounds
+            .write(SpellKitSound::PlayAt { pos: at, kit_sound });
+    }
+    crate::creature_anim::area_kit_models(&visuals.0, kit)
+        .map(|(path, attach, scale)| {
+            super::dest_fx::spawn_held_point_fx(commands, path, at, attach, scale)
+        })
+        .collect()
+}
+
 /// Launch one queued GO from `launch`, per target and per motion copy (`0x7336b3`).
 #[allow(clippy::too_many_arguments)] // the spawner's full output set
 fn launch_go(
@@ -612,24 +951,34 @@ fn launch_go(
 ) {
     let shape = go.spawn.shape;
     // The unit targets, else one ground shot, its offset turned with the caster (`0x7335b2`).
-    let aims: Vec<Aim> = if go.spawn.targets.is_empty() {
+    let aims: Vec<(Aim, Option<MissKind>)> = if go.spawn.targets.is_empty() {
         let turn = units
             .get(go.spawn.caster)
             .map_or(Quat::IDENTITY, |(g, ..)| g.rotation());
         go.spawn
             .ground_aim
-            .map(|p| Aim::Ground(p + turn * shape.impact_offset))
+            .map(|p| (Aim::Ground(p + turn * shape.impact_offset), None))
             .into_iter()
             .collect()
     } else {
         go.spawn
             .targets
             .iter()
-            .map(|&(target, miss)| Aim::Unit {
-                target,
-                dest_tag: go.spawn.dest_tag,
-                offset: shape.impact_offset,
-                miss: miss.map(launch_outcome_code),
+            .map(|&(target, miss)| {
+                let route = miss.map(|c| disposition::classify(c, go.spawn.reflect_glances));
+                let kind = route.map(|(kind, _)| kind);
+                let aim = Aim::Unit {
+                    target,
+                    // A blocked missile goes for the shield (`0x7022d0`).
+                    dest_tag: if kind == Some(MissKind::Stuck) {
+                        Some(disposition::SHIELD_ATTACHMENT)
+                    } else {
+                        go.spawn.dest_tag
+                    },
+                    offset: shape.impact_offset,
+                    miss: route.map(|(_, code)| code),
+                };
+                (aim, kind)
             })
             .collect()
     };
@@ -641,7 +990,7 @@ fn launch_go(
         .map(|m| m.copies());
     let copies = motion.unwrap_or(1);
     let hug = shape.follow.filter(|f| f.hugs_target()).map(|f| f.height);
-    for aim_at in aims {
+    for (aim_at, kind) in aims {
         let Some(aim) = aim_point(aim_at, hug, units, joints) else {
             continue; // target already gone
         };
@@ -650,11 +999,45 @@ fn launch_go(
             Some((t, _)) => t.delay - go.queued,
             None => launch.distance(aim) / go.spawn.speed.max(f32::EPSILON) - go.queued,
         };
+        let speed = if arrive_in > 0.0 {
+            launch.distance(aim) / arrive_in
+        } else {
+            go.spawn.speed
+        };
+        // A flight past its target aims once and runs on (`0x6ff6d0`).
+        let wide = kind == Some(MissKind::Wide);
+        let fixed_aim = wide.then(|| disposition::wide_aim(launch, aim, speed, signed_random()));
+        let fade_over = wide.then_some(speed * disposition::PAST_TARGET_SECS);
+        let arrive_in = arrive_in
+            + if wide {
+                disposition::PAST_TARGET_SECS
+            } else {
+                0.0
+            };
         let targeting = match aim_at {
             Aim::Unit { target, .. } if shape.targeting_kit != 0 && arrive_in > 0.0 => {
                 arm_targeting_kit(target, go.spawn.spell_id, shape.targeting_kit, out)
             }
             _ => None,
+        };
+        let mut targeting_points = match aim_at {
+            Aim::Ground(at) if shape.targeting_kit != 0 && arrive_in > 0.0 => {
+                arm_point_targeting_kit(at, shape.targeting_kit, commands, out)
+            }
+            _ => Vec::new(),
+        };
+        let reflect_outcome = match aim_at {
+            Aim::Unit { target, .. } => go
+                .spawn
+                .reflects
+                .iter()
+                .find(|(e, _)| *e == target)
+                .map_or(0, |&(_, r)| r),
+            Aim::Ground(_) => 0,
+        };
+        let clip = match aim_at {
+            Aim::Unit { target, .. } => victim_clip(target, kind, arrive_in, go.key.is_some(), out),
+            Aim::Ground(_) => None,
         };
         for index in 0..copies {
             let flight = go.spawn.trajectory.map(|(t, rec)| {
@@ -700,15 +1083,37 @@ fn launch_go(
                 index,
                 targeting,
                 pose: None,
+                kind,
+                reflect_outcome,
+                spent: false,
+                fixed_aim,
+                fade_over,
+                victim_clip: clip,
+                speed,
+                cast_at: now - go.queued,
+                targeting_kit: shape.targeting_kit,
+                targeting_points: if index == 0 {
+                    std::mem::take(&mut targeting_points)
+                } else {
+                    Vec::new()
+                },
+                deck: DeckChase::default(),
+                launch_rides_deck: motion.is_some() || shape.follow.is_some(),
+                scale: go.spawn.scale,
             };
-            if missile.arrive_in <= 0.0 {
-                arrival_handoff(&missile, aim, aim, out, play_seq);
+            let dir = (aim - launch).normalize_or(-Vec3::Z);
+            // A route that flies on from its landing still takes a step (`0x7022d0`).
+            let flies_on = matches!(kind, Some(MissKind::Glance | MissKind::Reflect));
+            if missile.arrive_in <= 0.0 && !flies_on {
+                arrival_handoff(&missile, aim, aim, missile_facing(dir), out, play_seq);
                 continue;
             }
-            let dir = (aim - launch).normalize_or(-Vec3::Z);
+            let scale = Vec3::splat(missile.scale);
             let mut entity = commands.spawn((
                 missile,
-                Transform::from_translation(launch).with_rotation(missile_facing(dir)),
+                Transform::from_translation(launch)
+                    .with_rotation(missile_facing(dir))
+                    .with_scale(scale),
                 Visibility::default(),
             ));
             if motion.is_some() {
@@ -971,6 +1376,7 @@ pub(super) struct TrajectoryWorld<'w, 's> {
     >,
     movers: Query<'w, 's, (), With<crate::net::ActiveMover>>,
     passengers: Query<'w, 's, &'static crate::vehicle::Passenger>,
+    riders: Query<'w, 's, &'static crate::transport::TransportRider>,
     index: Res<'w, crate::net::GuidIndex>,
     self_guid: Res<'w, crate::net::SelfGuid>,
     me: Query<'w, 's, &'static crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
@@ -983,6 +1389,12 @@ pub(super) struct TrajectoryWorld<'w, 's> {
 }
 
 impl TrajectoryWorld<'_, '_> {
+    /// The transport `unit` stands on, by its guid (`0x6ffd70`).
+    fn deck_of(&self, unit: Entity) -> Option<Entity> {
+        let rider = self.riders.get(unit).ok()?;
+        self.index.0.get(&rider.transport_guid).copied()
+    }
+
     /// `unit`'s root vehicle, itself when it rides none.
     fn root(&self, unit: Entity) -> Entity {
         let mut at = unit;
@@ -1105,6 +1517,7 @@ pub(super) fn move_missiles(
     mut commands: Commands,
     time: Res<Time>,
     mut missiles: Query<(Entity, &mut Missile, &mut Transform)>,
+    mut stuck: Query<(Entity, &StuckMissile, &mut Transform), Without<Missile>>,
     units: AttachPosQuery,
     joints: Query<&GlobalTransform>,
     mut out: ArrivalOut,
@@ -1114,9 +1527,18 @@ pub(super) fn move_missiles(
     ground: benilla_world::surface::TerrainHeight,
 ) {
     let dt = time.delta_secs();
+    let clock = time.elapsed_secs();
+    carry_stuck_missiles(
+        clock,
+        &mut stuck,
+        &units,
+        &joints,
+        &mut commands,
+        &mut out.kit_fx,
+    );
     for (entity, mut missile, mut transform) in &mut missiles {
         let hug = missile.follow.filter(|f| f.hugs_target()).map(|f| f.height);
-        let Some(aim) = aim_point(missile.aim, hug, &units, &joints) else {
+        let Some(live) = aim_point(missile.aim, hug, &units, &joints) else {
             // A unit target streamed out mid-flight: the reference's no-target arm plays on the
             // caster and floats a word per guid from the missile's list; not built, the flight ends
             // silently.
@@ -1129,25 +1551,80 @@ pub(super) fn move_missiles(
             );
             continue;
         };
+        let aim = missile.fixed_aim.unwrap_or(live);
         missile.impact = aim;
+        if let (Some((left, state)), Aim::Unit { target, .. }) = (missile.victim_clip, missile.aim)
+        {
+            missile.victim_clip = if left > dt {
+                Some((left - dt, state))
+            } else {
+                out.defenses.write(DefenseAnim {
+                    victim: target,
+                    victim_state: state,
+                });
+                None
+            };
+        }
+        // The flight rides its target's transport (`0x7015d0`).
+        let deck = match missile.aim {
+            Aim::Unit { target, .. } => world.deck_of(target),
+            Aim::Ground(_) => None,
+        }
+        .and_then(|d| units.get(d).ok());
+        if let Some((deck, ..)) = deck {
+            let carry = missile.deck.follow(deck.translation(), dt);
+            missile.pos += carry;
+            if missile.launch_rides_deck {
+                missile.launch += carry;
+            }
+        }
         if let Some(speed) = missile.speed_override.filter(|_| missile.flight.is_none()) {
             missile.arrive_in = missile.pos.distance(aim) / speed;
         }
         if missile.arrive_in <= dt {
-            arrival_handoff(
+            debug!(
+                "missile: spell {} landed, route {:?}, spent {}, speed {:.1}",
+                missile.spell_id, missile.kind, missile.spent, missile.speed
+            );
+            let next = arrival_handoff(
                 &missile,
                 aim,
                 transform.translation,
+                transform.rotation,
                 &mut out,
                 &mut play_seq,
             );
-            end_flight(
-                entity,
-                &missile,
-                &mut commands,
-                &mut sounds,
-                &mut out.kit_fx,
-            );
+            let flies_on = match next {
+                AfterArrival::End => false,
+                AfterArrival::Stick => {
+                    let held = stick(
+                        entity,
+                        &missile,
+                        &transform,
+                        clock,
+                        &units,
+                        &joints,
+                        &mut commands,
+                    );
+                    if held {
+                        sounds.write(MissileSound::Stop { entity });
+                    }
+                    held
+                }
+                AfterArrival::Glance => glance_off(entity, &mut missile, &mut commands),
+                AfterArrival::Reflect => {
+                    reflect_back(&mut missile, clock, &units, &joints, &mut out)
+                }
+            };
+            if !flies_on {
+                end_flight(
+                    entity,
+                    &missile,
+                    &mut commands,
+                    &mut sounds,
+                    &mut out.kit_fx,
+                );
+            }
             continue;
         }
         let previous = missile.pos;
@@ -1194,9 +1671,18 @@ pub(super) fn move_missiles(
         if dir.is_some() || m.pose.is_some() {
             transform.rotation = missile_facing(heading) * turn;
         }
-        transform.scale = Vec3::splat(scale);
+        transform.scale = Vec3::splat(scale * m.scale);
         transform.translation = model;
         m.arrive_in -= dt;
+        if let Some(range) = m.fade_over {
+            let distance = m.pos.distance(aim);
+            if distance < range {
+                let alpha = disposition::fade_alpha(distance, range);
+                commands
+                    .entity(entity)
+                    .insert(benilla_world::model_fade::ModelFade(alpha));
+            }
+        }
         let now = m.pos;
         let (caster, spell) = (m.caster, m.spell_id);
         let Some(flight) = m.flight.as_mut() else {
@@ -1367,7 +1853,8 @@ mod tests {
             .add_message::<DefenseAnim>()
             .add_message::<MissileMiss>()
             .add_message::<SpellKitFx>()
-            .add_message::<SpellKitSound>();
+            .add_message::<SpellKitSound>()
+            .add_message::<crate::entities::dest_fx::GroundBurst>();
         app.add_systems(Update, spawn_missiles);
         app
     }
@@ -1405,6 +1892,9 @@ mod tests {
             dest_tag: None,
             speed: SPEED,
             targets: vec![(target, None)],
+            reflects: Vec::new(),
+            reflect_glances: false,
+            scale: 1.0,
             ground_aim: None,
             missile_sound: None,
             awaits_release,
@@ -1603,79 +2093,254 @@ mod tests {
         );
     }
 
-    /// The live-target-missed arm: a miss plays the victim's dodge or block clip, never the impact,
-    /// and floats its word over the target. A parry reads Deflect, rewritten at launch; a Reflect
-    /// floats over the target, where the inline site re-anchors it to the caster.
+    /// A flying app with the systems a miss's whole route needs.
+    fn flying_app() -> App {
+        let mut app = app();
+        app.init_resource::<crate::net::GuidIndex>()
+            .init_resource::<crate::net::SelfGuid>()
+            .add_systems(Update, move_missiles.after(spawn_missiles));
+        app
+    }
+
+    /// Run the flight out, collecting what it wrote.
+    fn fly_out(app: &mut App) -> (Vec<CastEvent>, Vec<DefenseAnim>, Vec<(Entity, u8)>) {
+        let (mut impacts, mut clips, mut words) = (Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..200 {
+            step(app, 0.02);
+            impacts.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<CastEvent>>()
+                    .drain(),
+            );
+            clips.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<DefenseAnim>>()
+                    .drain(),
+            );
+            words.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<MissileMiss>>()
+                    .drain()
+                    .map(|w| (w.anchor, w.code)),
+            );
+        }
+        (impacts, clips, words)
+    }
+
+    /// Each outcome's word, and the arrival dodge only a resist and a reflect draw (`0x7030d7`).
+    /// These flights have no model, so none times a clip before it lands.
     #[test]
-    fn missed_arrival_words_the_target_deflects_a_parry_and_plays_dodge_or_block() {
-        for (code, expect_state, expect_word) in [
-            (3u8, Some(2u32), "Dodge"),
-            (5, Some(5), "Block"),
-            (1, None, "Miss"),
-            (4, None, "Deflect"),
-            (11, None, "Reflect"),
+    fn a_missed_arrival_words_the_target_and_only_resists_and_reflects_dodge() {
+        for (code, word_code, dodges, expect_word) in [
+            (3u8, 3u8, false, "Dodge"),
+            (5, 5, false, "Block"),
+            (1, 1, false, "Miss"),
+            (4, 9, false, "Deflect"),
+            (7, 7, true, "Immune"),
+            (11, 11, true, "Reflect"),
         ] {
-            let mut app = app();
+            let mut app = flying_app();
             let caster = caster(&mut app, Vec3::ZERO);
-            // 2.4 units at speed 24 = a 0.1 s flight; parked 0.2 s → arrival on the spot.
             let target = app
                 .world_mut()
                 .spawn(GlobalTransform::from_xyz(2.4, 0.0, 0.0))
                 .id();
-            let mut spawn = go(caster, target, true);
+            let mut spawn = go(caster, target, false);
             spawn.targets = vec![(target, Some(code))];
             app.world_mut().write_message(spawn);
-            step(&mut app, 0.10);
-            step(&mut app, 0.10);
-            app.world_mut().write_message(AnimSoundEvent {
-                entity: caster,
-                ident: *b"$CSL",
-                data: 0,
-                anim_id: 0,
-                pos: None,
-            });
-            step(&mut app, 0.016);
+            let (impacts, clips, words) = fly_out(&mut app);
+            assert!(missiles(&mut app).is_empty(), "flight over (code {code})");
             assert!(
-                missiles(&mut app).is_empty(),
-                "no flight entity (code {code})"
-            );
-            let impacts = app
-                .world_mut()
-                .resource_mut::<Messages<CastEvent>>()
-                .drain()
-                .filter(|e| matches!(e.kind, CastEventKind::Impact { .. }))
-                .count();
-            assert_eq!(impacts, 0, "a miss never plays the impact (code {code})");
-            let defenses: Vec<_> = app
-                .world_mut()
-                .resource_mut::<Messages<DefenseAnim>>()
-                .drain()
-                .collect();
-            match expect_state {
-                Some(state) => {
-                    assert_eq!(defenses.len(), 1, "one defense clip (code {code})");
-                    assert_eq!(defenses[0].victim, target);
-                    assert_eq!(defenses[0].victim_state, state);
-                }
-                None => assert!(defenses.is_empty(), "code {code} plays nothing"),
-            }
-            let words: Vec<_> = app
-                .world_mut()
-                .resource_mut::<Messages<MissileMiss>>()
-                .drain()
-                .map(|w| (w.anchor, w.caster, w.code))
-                .collect();
-            assert_eq!(
-                words,
-                vec![(target, caster, if code == 4 { 9 } else { code })],
-                "one word over the target (code {code})"
+                !impacts
+                    .iter()
+                    .any(|e| e.entity == target && matches!(e.kind, CastEventKind::Impact { .. })),
+                "a miss never plays the impact (code {code})"
             );
             assert_eq!(
-                crate::combat_text::miss_word(words[0].2).map(|(w, _)| w),
+                clips
+                    .iter()
+                    .map(|c| (c.victim, c.victim_state))
+                    .collect::<Vec<_>>(),
+                if dodges {
+                    vec![(target, DODGE_STATE)]
+                } else {
+                    Vec::new()
+                },
+                "code {code}"
+            );
+            assert_eq!(words, vec![(target, word_code)], "code {code}");
+            assert_eq!(
+                crate::combat_text::miss_word(word_code).map(|(w, _)| w),
                 Some(expect_word),
-                "code {code} words as {expect_word}"
+                "code {code}"
             );
         }
+    }
+
+    /// A reflect with no outcome of its own flies back and lands on the caster as a hit.
+    #[test]
+    fn a_reflect_flies_back_and_hits_the_caster() {
+        let mut app = flying_app();
+        let caster = caster(&mut app, Vec3::ZERO);
+        let target = app
+            .world_mut()
+            .spawn(GlobalTransform::from_xyz(2.4, 0.0, 0.0))
+            .id();
+        let mut spawn = go(caster, target, false);
+        spawn.targets = vec![(target, Some(11))];
+        app.world_mut().write_message(spawn);
+        let (impacts, ..) = fly_out(&mut app);
+        assert_eq!(
+            impacts
+                .iter()
+                .filter(|e| e.entity == caster
+                    && e.kind
+                        == CastEventKind::Impact {
+                            on_caster: true,
+                            at: None
+                        })
+                .count(),
+            1
+        );
+    }
+
+    /// A reflect the caster in turn resists words the caster, then ends.
+    #[test]
+    fn a_reflected_flight_takes_its_own_outcome_on_the_caster() {
+        let mut app = flying_app();
+        let caster = caster(&mut app, Vec3::ZERO);
+        let target = app
+            .world_mut()
+            .spawn(GlobalTransform::from_xyz(2.4, 0.0, 0.0))
+            .id();
+        let mut spawn = go(caster, target, false);
+        spawn.targets = vec![(target, Some(11))];
+        spawn.reflects = vec![(target, 2)];
+        app.world_mut().write_message(spawn);
+        let (impacts, _, words) = fly_out(&mut app);
+        assert_eq!(words, vec![(target, 11), (caster, 2)]);
+        assert!(!impacts
+            .iter()
+            .any(|e| matches!(e.kind, CastEventKind::Impact { .. })));
+    }
+
+    /// A modelled block plays the victim's shield clip on the way in, and an invisible one does not.
+    #[test]
+    fn a_modelled_block_times_the_shield_clip_before_it_lands() {
+        for (modelled, clips_expected) in [(true, 1), (false, 0)] {
+            let mut app = flying_app();
+            let caster = caster(&mut app, Vec3::ZERO);
+            let target = app
+                .world_mut()
+                .spawn(GlobalTransform::from_xyz(24.0, 0.0, 0.0))
+                .id();
+            let mut spawn = go(caster, target, false);
+            spawn.targets = vec![(target, Some(5))];
+            if modelled {
+                let path = "Spells\\Bolt.m2".to_string();
+                app.world_mut()
+                    .resource_mut::<SpellFx>()
+                    .models
+                    .insert(path.clone(), super::super::empty_shell());
+                spawn.path = Some(path);
+            }
+            app.world_mut().write_message(spawn);
+            let (_, clips, _) = fly_out(&mut app);
+            let blocks: Vec<u32> = clips.iter().map(|c| c.victim_state).collect();
+            assert_eq!(
+                blocks,
+                vec![BLOCK_STATE; clips_expected],
+                "modelled {modelled}"
+            );
+        }
+    }
+
+    /// A block lands in the shield, rides the victim for 5 s and only then goes.
+    #[test]
+    fn a_block_sticks_in_the_shield_and_rides_the_victim() {
+        let mut app = flying_app();
+        let caster = caster(&mut app, Vec3::ZERO);
+        let target = app
+            .world_mut()
+            .spawn((
+                GlobalTransform::from_xyz(2.4, 0.0, 0.0),
+                BoneAttach {
+                    points: HashMap::from([(disposition::SHIELD_ATTACHMENT, (0u16, Vec3::ZERO))]),
+                    markers: HashMap::new(),
+                },
+            ))
+            .id();
+        let pose = benilla_world::testing::test_rig_pose(target, &[Vec3::new(2.4, 1.0, 0.0)]);
+        app.world_mut().entity_mut(target).insert(pose);
+        let path = "Spells/Bolt.m2".to_string();
+        app.world_mut()
+            .resource_mut::<SpellFx>()
+            .models
+            .insert(path.clone(), super::super::empty_shell());
+        let mut spawn = go(caster, target, false);
+        spawn.targets = vec![(target, Some(5))];
+        spawn.path = Some(path);
+        app.world_mut().write_message(spawn);
+        step(&mut app, 0.016);
+        for mut m in app
+            .world_mut()
+            .query::<&mut Missile>()
+            .iter_mut(app.world_mut())
+        {
+            m.parts_spawned = true;
+        }
+        for _ in 0..30 {
+            step(&mut app, 0.02);
+        }
+        assert_eq!(missiles(&mut app).len(), 0, "off the flight list");
+        let mut stuck = app.world_mut().query::<&StuckMissile>();
+        assert_eq!(stuck.iter(app.world()).count(), 1, "lodged");
+        for _ in 0..30 {
+            step(&mut app, 0.2);
+        }
+        assert_eq!(stuck.iter(app.world()).count(), 0, "gone after 5 s");
+    }
+
+    /// A ground flight's targeting kit stands at the aim on copy 0 alone, and goes with the flight.
+    #[test]
+    fn a_ground_flight_holds_its_targeting_kit_at_the_aim() {
+        use benilla_formats::{SpellVisualCatalog, VisualKit};
+        const KIT: u32 = 8729;
+        const EFFECT: u32 = 3807;
+        let mut app = flying_app();
+        let mut slots = [None; 9];
+        slots[2] = Some(EFFECT);
+        slots[3] = Some(EFFECT + 1);
+        app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
+            HashMap::new(),
+            HashMap::from([(
+                KIT,
+                VisualKit {
+                    effect_slots: slots,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::from([
+                (EFFECT, "Spells\\Base.m2".to_string()),
+                (EFFECT + 1, "Spells\\Hand.m2".to_string()),
+            ]),
+        )));
+        let caster = caster(&mut app, Vec3::ZERO);
+        let at = Vec3::new(24.0, 0.0, 0.0);
+        let mut spawn = ground_go(caster, at);
+        spawn.shape.targeting_kit = KIT;
+        app.world_mut().write_message(spawn);
+        step(&mut app, 0.016);
+        let held = |app: &mut App| -> Vec<Vec3> {
+            app.world_mut()
+                .query_filtered::<&Transform, With<crate::entities::dest_fx::GroundFx>>()
+                .iter(app.world())
+                .map(|t| t.translation)
+                .collect()
+        };
+        assert_eq!(held(&mut app), vec![at], "the base slot alone, at the aim");
+        fly_out(&mut app);
+        assert!(held(&mut app).is_empty(), "reaped with the flight");
     }
 
     /// A GO with no cast-kit animation launches at once, with the full flight time.

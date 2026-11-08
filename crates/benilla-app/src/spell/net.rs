@@ -409,6 +409,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
         cast_count,
         spell_id,
         cast_flags,
+        server_time,
         hits,
         misses,
         target,
@@ -422,16 +423,15 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
     } = ev
     {
         let engaged = !sc.engaged_self.is_empty();
-        // A reflect with no outcome of its own lands on the caster (`0x80f44b`).
-        let reflected = reflects.iter().filter(|(_, r)| *r == 0).count() as u8;
         spell_go(
             caster,
             cast_count,
             spell_id,
             cast_flags,
+            server_time,
             hits,
             misses,
-            reflected,
+            reflects,
             target,
             go_target,
             dest,
@@ -1298,9 +1298,10 @@ fn spell_go(
     cast_count: u8,
     spell_id: u32,
     cast_flags: u32,
+    server_time: u32,
     hits: Vec<u64>,
     misses: Vec<(u64, u8)>,
-    reflected: u8,
+    reflects: Vec<(u64, u8)>,
     target: Option<u64>,
     go_target: Option<u64>,
     dest: Option<[f32; 3]>,
@@ -1567,7 +1568,14 @@ fn spell_go(
                     caster,
                     cast_id: cast_count,
                 }),
-                reflected,
+                // A reflect with no outcome of its own lands on the caster (`0x80f44b`).
+                reflected: reflects.iter().filter(|(_, r)| *r == 0).count() as u8,
+                reflects: reflects
+                    .iter()
+                    .filter_map(|&(g, r)| Some((*index.0.get(&g)?, r)))
+                    .collect(),
+                caster_guid: caster,
+                server_time,
             });
         }
     }
@@ -2497,9 +2505,10 @@ mod tests {
                            0,
                             go_spell,
                            0,
-                            vec![],
-                            vec![],
                             0,
+                            vec![],
+                            vec![],
+                            Vec::new(),
                             None,
                             None,
                             None,
@@ -2703,9 +2712,10 @@ mod tests {
                         0,
                         SPELL,
                        0,
-                        vec![],
-                        vec![],
                         0,
+                        vec![],
+                        vec![],
+                        Vec::new(),
                         None,
                         None,
                         None,
@@ -2910,9 +2920,10 @@ mod tests {
                         0,
                         421, // Chain Lightning
                        0,
+                        0,
                         vec![10, 20, 40, 30],
                         vec![],
-                        0,
+                        Vec::new(),
                         None,
                         None,
                         None,
@@ -3297,9 +3308,10 @@ mod tests {
                             0,
                             spell_id,
                            0,
+                            0,
                             vec![20],
                             vec![],
-                            0,
+                            Vec::new(),
                             // A different guid from `hits[0]`, which the arm must take.
                             Some(99),
                             None,

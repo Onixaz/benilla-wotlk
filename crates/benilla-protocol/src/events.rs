@@ -819,6 +819,8 @@ pub enum SessionEvent {
         cast_count: u8,
         spell_id: u32,
         cast_flags: u32,
+        /// The server's clock at the launch (`0x804cc0`).
+        server_time: u32,
         hits: Vec<u64>,
         misses: Vec<(u64, u8)>,
         /// `(guid, outcome)` of each reflect miss, logged back on the caster (`0x80e1b0`).

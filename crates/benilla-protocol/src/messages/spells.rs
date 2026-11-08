@@ -460,6 +460,8 @@ pub struct SpellGo {
     pub cast_count: u8,
     pub spell_id: u32,
     pub cast_flags: u32,
+    /// The server's clock at the launch, which a DynamicObject of the spell repeats (`0x804cc0`).
+    pub server_time: u32,
     pub hits: Vec<u64>,
     /// `(guid, SpellMissInfo)`.
     pub misses: Vec<(u64, u8)>,
@@ -535,7 +537,7 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     let cast_count = read_u8(r)?;
     let spell_id = read_u32_le(r)?;
     let cast_flags = read_u32_le(r)?;
-    let _timestamp = read_u32_le(r)?;
+    let server_time = read_u32_le(r)?;
 
     // Both counts are `u8`s; no tighter bound.
     let hit_count = read_u8(r)?;
@@ -596,6 +598,7 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
         cast_count,
         spell_id,
         cast_flags,
+        server_time,
         hits,
         misses,
         reflects,

@@ -319,6 +319,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 cast_count: s.cast_count,
                 spell_id: s.spell_id,
                 cast_flags: s.cast_flags,
+                server_time: s.server_time,
                 hits: s.hits,
                 misses: s.misses,
                 reflects: s.reflects,
