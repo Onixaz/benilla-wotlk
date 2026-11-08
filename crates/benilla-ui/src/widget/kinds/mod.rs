@@ -935,6 +935,11 @@ impl ButtonState {
         self.set_state(new);
     }
 
+    /// The press state a release's click requires.
+    pub fn is_pushed(&self) -> bool {
+        self.state == ButtonVisualState::Pushed
+    }
+
     /// `IsEnabled`: the state alone; the class has no enabled flag.
     pub fn enabled(&self) -> bool {
         self.state != ButtonVisualState::Disabled
