@@ -83,6 +83,32 @@ fn a_runtime_template_brings_size_anchors_regions_and_a_fired_onload() {
     assert!(s.take_warnings().is_empty());
 }
 
+/// A raising template `OnLoad` runs through the error handler, not the warning channel.
+#[test]
+fn a_raising_template_onload_reaches_the_error_handler() {
+    let mut s = script();
+    register(
+        &s,
+        r#"<Ui>
+             <Frame name="BoomTemplate" virtual="true">
+               <Scripts><OnLoad>error("template boom", 0)</OnLoad></Scripts>
+             </Frame>
+           </Ui>"#,
+    );
+    s.run(
+        r#"caught = {} seterrorhandler(function(m) table.insert(caught, m) end)
+           CreateFrame("Frame", "Boom", nil, "BoomTemplate")"#,
+    )
+    .unwrap();
+    s.dispatch_script_errors_to_handler();
+    assert_eq!(
+        s.eval::<String>("return caught[1]").unwrap(),
+        "template boom"
+    );
+    assert!(s.take_warnings().is_empty());
+    assert_eq!(s.take_errors().len(), 1);
+}
+
 /// A nested child is parented to the new frame, and `$parent` composes as it does through XML.
 #[test]
 fn a_nested_frames_child_is_named_against_the_caller() {

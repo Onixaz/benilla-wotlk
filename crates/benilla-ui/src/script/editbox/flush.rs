@@ -58,7 +58,7 @@ fn text_changed_script(lua: &Lua, h: FrameHandle) {
     let id = frame_id_of(lua, h);
     let args = vec![Value::Boolean(user_input.unwrap_or(false))];
     if let Err(e) = event::fire_widget_handler(lua, id, "OnTextChanged", args) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
 }
 
@@ -135,7 +135,7 @@ fn cursor_changed(lua: &Lua, h: FrameHandle) -> bool {
             Value::Number(f64::from(pitch)),
         ],
     ) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     true
 }

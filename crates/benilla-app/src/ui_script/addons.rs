@@ -169,11 +169,11 @@ impl Addon {
                 match script.run_chunk_named(&bytes, &self.chunk_name(file, &path)) {
                     Ok(()) => info!("ui_script: {}/{file} ran", self.name),
                     Err(e) => {
-                        let e = format!("{}/{file}: {e}", self.name);
-                        error!("ui_script: {e}");
+                        let host = format!("{}/{file}: {e}", self.name);
+                        error!("ui_script: {host}");
                         // A script error: it reaches the player through the Lua error handler.
-                        script.report_script_error(&e);
-                        failures.push(e);
+                        script.report_script_error(&host, &benilla_ui::script::lua_message(&e));
+                        failures.push(host);
                     }
                 }
                 continue;
@@ -220,11 +220,11 @@ impl Addon {
                 script.report_load_failure(&e);
                 failures.push(e);
             }
-            for e in &report.errors {
+            for (e, bare) in report.errors.iter().zip(&report.bare_errors) {
                 error!("ui_script({}/{file}): {e}", self.name);
                 // A script error, as in the Lua arm; `_ERRORMESSAGE`'s IsVisible guard shows only
                 // a burst's first, as in the reference.
-                script.report_script_error(&format!("{}/{file}: {e}", self.name));
+                script.report_script_error(&format!("{}/{file}: {e}", self.name), bare);
                 failures.push(format!("{}/{file}: {e}", self.name));
             }
             info!(

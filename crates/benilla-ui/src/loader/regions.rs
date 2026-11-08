@@ -41,7 +41,7 @@ impl Loader<'_> {
                         match wrapper.call_method(method, (rname.clone(), Some(level.clone()))) {
                             Ok(w) => w,
                             Err(e) => {
-                                self.report.errors.push(format!("{dbg}: {method}: {e}"));
+                                self.report_error(format!("{dbg}: {method}: {e}"), &e);
                                 continue;
                             }
                         };
@@ -67,7 +67,7 @@ impl Loader<'_> {
         self.apply_animations(region, region_wrapper, anim_base, dbg);
         if region.attr_bool("hidden") {
             if let Err(e) = region_wrapper.call_method::<()>("Hide", ()) {
-                self.report.errors.push(format!("{dbg}: region Hide: {e}"));
+                self.report_error(format!("{dbg}: region Hide: {e}"), &e);
             }
         }
         if let Some(a) = region

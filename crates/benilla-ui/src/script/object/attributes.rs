@@ -138,7 +138,7 @@ fn set_attribute(lua: &Lua, this: &Table, name: &str, value: Value) -> mlua::Res
     }
     let name = Value::String(lua.create_string(&lower)?);
     if let Err(e) = event::fire_widget_handler(lua, id, "OnAttributeChanged", vec![name, value]) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     Ok(())
 }

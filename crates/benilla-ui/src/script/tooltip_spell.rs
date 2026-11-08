@@ -353,7 +353,7 @@ fn render_spell(
         let id = crate::script::model_mut_of(lua).frame_id(h);
         if let Err(e) = super::event::fire_widget_handler(lua, id, "OnTooltipSetSpell", Vec::new())
         {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
     Ok(())

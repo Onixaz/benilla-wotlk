@@ -310,7 +310,7 @@ fn insert(lua: &Lua, h: FrameHandle, ins: &str) {
         .create_string(ins)
         .and_then(|s| event::fire_widget_handler(lua, id, "OnChar", vec![mlua::Value::String(s)]));
     if let Err(e) = on_char {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     if ins.contains(' ') {
         fire_script(lua, id, "OnSpacePressed");
@@ -544,7 +544,7 @@ fn frame_id_of(lua: &Lua, h: FrameHandle) -> u32 {
 /// Fire one specialized EditBox script (no args beyond `self`); errors go to [`Model::errors`].
 fn fire_script(lua: &Lua, id: u32, name: &str) {
     if let Err(e) = event::fire_widget_handler(lua, id, name, Vec::new()) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
 }
 

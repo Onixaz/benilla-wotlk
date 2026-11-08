@@ -32,6 +32,8 @@ pub struct LoadReport {
     /// Failures the reference raises on: a handler that fails to compile, a method call that
     /// errors, a malformed included document.
     pub errors: Vec<String>,
+    /// Each of [`Self::errors`]'s bare Lua message, what the Lua error handler gets.
+    pub bare_errors: Vec<String>,
     /// `<Include file=>` and `<Script file=>` paths the provider lacks. The reference logs
     /// `"Couldn't open %s"` or `"Error loading %s"` and goes on; kept apart from `warnings` so a
     /// load that resolved nothing is not clean.
@@ -102,15 +104,54 @@ pub fn load_into_under(
     loader.report
 }
 
+/// What a runtime template application reports: its warnings, and its errors, each the decorated
+/// text and the bare Lua message.
+#[derive(Debug, Default)]
+pub struct TemplateReport {
+    /// The loader's warnings.
+    pub warnings: Vec<String>,
+    /// `(decorated, bare)`: a raising `OnLoad`, reported through the error handler like any other.
+    pub errors: Vec<(String, String)>,
+}
+
+impl TemplateReport {
+    fn of(report: LoadReport) -> Self {
+        Self {
+            warnings: report.warnings,
+            errors: report.errors.into_iter().zip(report.bare_errors).collect(),
+        }
+    }
+
+    /// Hand the report to the VM's retained channels: warnings to the host, errors through the
+    /// host drain and the Lua error handler.
+    pub(crate) fn publish(self, lua: &mlua::Lua) {
+        if self.warnings.is_empty() && self.errors.is_empty() {
+            return;
+        }
+        let mut model = crate::script::model_mut_of(lua);
+        for w in self.warnings {
+            model.record_warning(w);
+        }
+        for (host, bare) in self.errors {
+            model.record_script_error(host, bare);
+        }
+    }
+}
+
 /// Apply a template to an existing frame, `CreateFrame`'s fourth argument. Returns the warnings,
 /// then the errors. The frame always survives: an unknown name leaves it bare, as in the
 /// reference, and only virtual elements are registered. The frame's own name is the `$parent`
 /// base (`MyButton` makes `$parentText` `MyButtonText`). Runs inside the `CreateFrame` binding, so
 /// it enters at [`Loader::decorate`]: [`Loader::materialize`] would recurse.
-pub fn apply_template(lua: &mlua::Lua, wrapper: &Table, kind: &str, template: &str) -> Vec<String> {
+pub fn apply_template(
+    lua: &mlua::Lua,
+    wrapper: &Table,
+    kind: &str,
+    template: &str,
+) -> TemplateReport {
     let template = template.trim();
     if template.is_empty() {
-        return Vec::new();
+        return TemplateReport::default();
     }
     // A template never reads a file: `<Include>` and `<Script file=>` are top-level only.
     let no_files = |_: &str| -> Option<Vec<u8>> { None };
@@ -180,9 +221,7 @@ pub fn apply_template(lua: &mlua::Lua, wrapper: &Table, kind: &str, template: &s
 
     loader.decorate(&expanded, wrapper, &self_name, &parent_name, &dbg);
 
-    let mut out = loader.report.warnings;
-    out.extend(loader.report.errors);
-    out
+    TemplateReport::of(loader.report)
 }
 
 /// Apply a `<Texture>` or `<FontString>` template to a region `CreateTexture` or `CreateFontString`
@@ -193,7 +232,7 @@ pub fn apply_region_template(
     region: &Table,
     tag: &str,
     template: &str,
-) -> Vec<String> {
+) -> TemplateReport {
     let no_files = |_: &str| -> Option<Vec<u8>> { None };
     let mut loader = Loader {
         lua,
@@ -212,9 +251,7 @@ pub fn apply_region_template(
     let expanded = loader.expand(&framexml::inherits_node(tag, template.trim()));
     let anim_base = own_name.unwrap_or_else(|| parent_name.clone());
     loader.load_region(&expanded, region, &anim_base, &parent_name, &dbg);
-    let mut out = loader.report.warnings;
-    out.extend(loader.report.errors);
-    out
+    TemplateReport::of(loader.report)
 }
 
 /// Join a FrameXML reference to its file's directory, lexically: `\` and `/` both separate, `..`
@@ -301,6 +338,12 @@ pub(super) struct DeferredAnchor {
 }
 
 impl Loader<'_> {
+    /// Record a Lua failure: `text` the decorated line, the error's own bare message beside it.
+    pub(super) fn report_error(&mut self, text: String, e: &mlua::Error) {
+        self.report.errors.push(text);
+        self.report.bare_errors.push(crate::script::lua_message(e));
+    }
+
     pub(super) fn lua(&self) -> &mlua::Lua {
         self.lua
     }
@@ -405,7 +448,7 @@ impl Loader<'_> {
                     // `[string "Interface\FrameXML\Foo.xml:<Scripts>"]`, not a file path.
                     let name = format!("{}:<Scripts>", self.path.replace('/', "\\"));
                     if let Err(e) = self.run_named(&chunk, &name) {
-                        self.report.errors.push(format!("inline <Script>: {e}"));
+                        self.report_error(format!("inline <Script>: {e}"), &e);
                     }
                 }
                 TopLevel::Font(el) => self.do_font(el),
@@ -631,14 +674,17 @@ impl Loader<'_> {
             match create.call((el.tag.clone(), resolved_name.clone(), parent.cloned())) {
                 Ok(w) => w,
                 Err(e) => {
-                    self.report.errors.push(format!(
-                        "CreateFrame(<{}>{}): {e}",
-                        el.tag,
-                        resolved_name
-                            .as_deref()
-                            .map(|n| format!(" name=\"{n}\""))
-                            .unwrap_or_default()
-                    ));
+                    self.report_error(
+                        format!(
+                            "CreateFrame(<{}>{}): {e}",
+                            el.tag,
+                            resolved_name
+                                .as_deref()
+                                .map(|n| format!(" name=\"{n}\""))
+                                .unwrap_or_default()
+                        ),
+                        &e,
+                    );
                     return None;
                 }
             };
@@ -800,7 +846,7 @@ impl Loader<'_> {
                     (_, Some(v)) => match self.lua().create_string(v) {
                         Ok(s) => Value::String(s),
                         Err(e) => {
-                            self.report.errors.push(format!("Frame {dbg}: {e}"));
+                            self.report_error(format!("Frame {dbg}: {e}"), &e);
                             continue;
                         }
                     },
@@ -826,7 +872,7 @@ impl Loader<'_> {
             return;
         };
         if let Err(e) = parent.set(key, child) {
-            self.report.errors.push(format!("parentKey=\"{key}\": {e}"));
+            self.report_error(format!("parentKey=\"{key}\": {e}"), &e);
         }
     }
 

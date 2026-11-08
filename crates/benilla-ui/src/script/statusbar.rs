@@ -269,7 +269,7 @@ pub(super) fn fire_min_max_changed(
         "OnMinMaxChanged",
         vec![Value::Number(f64::from(min)), Value::Number(f64::from(max))],
     ) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     Ok(())
 }
@@ -287,7 +287,7 @@ fn fire_value_changed(lua: &Lua, this: &Table, changed: Option<f32>) -> mlua::Re
         "OnValueChanged",
         vec![Value::Number(f64::from(value))],
     ) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     Ok(())
 }
@@ -306,7 +306,7 @@ pub(super) fn fire_engine_value_changed(lua: &Lua, bar: crate::widget::FrameHand
         "OnValueChanged",
         vec![Value::Number(f64::from(value))],
     ) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
 }
 

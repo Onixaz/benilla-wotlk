@@ -183,7 +183,7 @@ pub(super) fn fire_set_item(lua: &Lua, this: &Table) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let id = crate::script::model_mut_of(lua).frame_id(h);
     if let Err(e) = super::event::fire_widget_handler(lua, id, "OnTooltipSetItem", Vec::new()) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     Ok(())
 }
@@ -208,7 +208,7 @@ fn fire_add_money(lua: &Lua, h: crate::widget::FrameHandle, cost: u64, max: Opti
         "OnTooltipAddMoney",
         vec![Value::Number(cost as f64), max],
     ) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
 }
 

@@ -105,7 +105,7 @@ fn set_enabled(lua: &Lua, this: &Table, on: bool) -> mlua::Result<()> {
     if let Some(id) = fire {
         let script = if on { "OnEnable" } else { "OnDisable" };
         if let Err(e) = super::event::fire_widget_handler(lua, id, script, Vec::new()) {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
     Ok(())
@@ -278,7 +278,7 @@ fn fire_value_changed(lua: &Lua, this: &Table, changed: Option<f32>) -> mlua::Re
         "OnValueChanged",
         vec![Value::Number(f64::from(value))],
     ) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     Ok(())
 }

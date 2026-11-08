@@ -254,6 +254,7 @@ mod spellbook;
 mod stable;
 mod statusbar;
 mod stdlib;
+pub use stdlib::lua_message;
 mod summon;
 mod talent;
 mod taxi;
@@ -1879,15 +1880,15 @@ impl UiScript {
     }
 
     /// Report a script error the host caught outside the VM's dispatch (an addon file that failed
-    /// to compile or raised at file scope): it joins the handler-dispatch queue and the retained
-    /// log, not `errors`, since the caller has already logged it.
-    pub fn report_script_error(&self, msg: &str) {
+    /// to compile or raised at file scope): `host` joins the retained log, not `errors`, since the
+    /// caller has already logged it, and `bare` the handler-dispatch queue.
+    pub fn report_script_error(&self, host: &str, bare: &str) {
         // A Load row, not an Error one: to the player a file scope that raised and a missing file
         // are the same fact, the addon is not running.
-        diagnostics::record_load_failure(&self.lua, msg);
+        diagnostics::record_load_failure(&self.lua, host);
         self.model_mut()
             .pending_error_dispatch
-            .push(msg.to_string());
+            .push(bare.to_string());
     }
 
     /// Hand each queued script error to the Lua error handler, as the reference's catch closure
@@ -1930,7 +1931,7 @@ impl UiScript {
                     .and_then(|()| stdlib::protected_call(&self.lua, &handler, arg));
                 let _ = in_handler(false);
                 let Err(e) = called else { break };
-                arg = match self.lua.create_string(e.to_string()) {
+                arg = match self.lua.create_string(stdlib::lua_message(&e)) {
                     Ok(s) => mlua::MultiValue::from_vec(vec![mlua::Value::String(s)]),
                     Err(_) => break,
                 };
@@ -1997,7 +1998,7 @@ impl UiScript {
     }
 
     fn push_error(&self, e: mlua::Error) {
-        self.model_mut().record_script_error(e.to_string());
+        self.model_mut().record_lua_error(&e);
     }
 }
 
