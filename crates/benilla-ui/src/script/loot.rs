@@ -240,10 +240,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(slot
-                .checked_sub(1)
-                .and_then(|n| model.loot.as_ref()?.rows.get(n)?.as_ref())
-                .is_some_and(|r| !r.is_coin))
+            Ok(super::binding_abi::flag(
+                slot.checked_sub(1)
+                    .and_then(|n| model.loot.as_ref()?.rows.get(n)?.as_ref())
+                    .is_some_and(|r| !r.is_coin),
+            ))
         })?,
     )?;
 
@@ -253,10 +254,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(slot
-                .checked_sub(1)
-                .and_then(|n| model.loot.as_ref()?.rows.get(n)?.as_ref())
-                .is_some_and(|r| r.is_coin))
+            Ok(super::binding_abi::flag(
+                slot.checked_sub(1)
+                    .and_then(|n| model.loot.as_ref()?.rows.get(n)?.as_ref())
+                    .is_some_and(|r| r.is_coin),
+            ))
         })?,
     )?;
 
