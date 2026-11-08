@@ -18,7 +18,9 @@ impl Loader<'_> {
                 None => {
                     let set = crate::script::statusbar::set_min_max(self.lua(), wrapper, min, max);
                     if let Err(e) = set {
-                        self.report_error(format!("{dbg}: SetMinMaxValues: {e}"), &e);
+                        self.report
+                            .errors
+                            .push(format!("{dbg}: SetMinMaxValues: {e}"));
                     }
                 }
             }
@@ -422,7 +424,9 @@ impl Loader<'_> {
         if let (Some(min), Some(max)) = (parse("minValue"), parse("maxValue")) {
             // The setter, not the binding: a reversed XML pair stores, as it never raises.
             if let Err(e) = crate::script::slider::set_min_max(self.lua(), wrapper, min, max) {
-                self.report_error(format!("{dbg}: SetMinMaxValues: {e}"), &e);
+                self.report
+                    .errors
+                    .push(format!("{dbg}: SetMinMaxValues: {e}"));
             }
             if let Some(step) = parse("valueStep") {
                 self.call(wrapper, "SetValueStep", step, dbg);
