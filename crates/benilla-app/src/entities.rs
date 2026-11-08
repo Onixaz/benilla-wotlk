@@ -104,8 +104,8 @@ pub(crate) use chain_beam::ChainHops;
 use chain_beam::{simulate_chain_beams, spawn_chain_beams, ChainLocations};
 // `equip_slot` is the one InventoryType → slot table; the dressing room places items by it.
 pub(crate) use attach::{equip_slot, BodyPartsDesc};
-pub(crate) use equipment::ItemDisplays;
 pub(crate) use equipment::{BoneAttach, Equipment};
+pub(crate) use equipment::{ItemDisplays, FALLBACK_ITEM_ICON};
 // For the `WOW_DRESS_CENSUS` instrument: what a body wears against what it resolved.
 pub(crate) use equipment::{attach_id, DressKey, HeldAttached, ATTACH_SLOT_NAMES};
 // Only the tests that build a `DressKey` name this type.
@@ -952,10 +952,14 @@ pub(crate) fn setup_entities(
     match load_item_display_catalog(&mut chain) {
         Ok(catalog) => {
             info!("item display catalog: {} entries", catalog.len());
+            let item_dbc = benilla_formats::load_item_dbc_displays(&mut chain)
+                .inspect_err(|e| warn!("Item.dbc unavailable, bag icons wait on templates: {e:#}"))
+                .unwrap_or_default();
             commands.insert_resource(ItemDisplays {
                 catalog,
                 models: HashMap::new(),
                 helm_prefixes,
+                item_dbc,
             });
         }
         Err(e) => warn!("item displays unavailable, units hold nothing: {e:#}"),

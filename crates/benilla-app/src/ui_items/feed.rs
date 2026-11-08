@@ -8,7 +8,7 @@ use bevy::prelude::*;
 use benilla_protocol::ItemInfo;
 use benilla_ui::script::{item_lock_args, ContainerSlot, ContainerState, ScriptValue, UiScript};
 
-use crate::entities::ItemDisplays;
+use crate::entities::{ItemDisplays, FALLBACK_ITEM_ICON};
 use crate::items::Items;
 use crate::net::{NetCommands, ObjectStore, Objects, SelfPlayer};
 use crate::pending_item_ops::{LockTransitions, PendingItemOps};
@@ -843,6 +843,7 @@ fn resolve_slot(
             None => {
                 return Some(ContainerSlot {
                     guid,
+                    texture: Some(FALLBACK_ITEM_ICON.to_string()),
                     ..Default::default()
                 })
             }
@@ -850,9 +851,12 @@ fn resolve_slot(
     if entry == 0 {
         return Some(ContainerSlot {
             guid,
+            texture: Some(FALLBACK_ITEM_ICON.to_string()),
             ..Default::default()
         });
     }
+    // The bag icon needs no template (`0x5d7b18`).
+    let icon = icons.map(|i| i.carried_icon(entry));
     let template: Option<ItemInfo> = items.template(entry, guid, commands).cloned();
     let Some(t) = template else {
         // Asked (or a cached negative); show the slot occupied while the answer is in flight.
@@ -860,6 +864,7 @@ fn resolve_slot(
             guid,
             gems,
             durability: None,
+            texture: icon.or_else(|| Some(FALLBACK_ITEM_ICON.to_string())),
             item_id: entry,
             count,
             readable,
@@ -892,9 +897,7 @@ fn resolve_slot(
                 petitions.tooltip_view(id as u32, guid, names, commands)
             })
             .flatten(),
-        texture: icons
-            .and_then(|i| i.catalog.get(t.display_info_id))
-            .and_then(|d| d.icon.clone()),
+        texture: icon,
         count,
         durability,
         quality: Some(t.quality),

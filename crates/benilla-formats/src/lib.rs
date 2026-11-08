@@ -160,7 +160,9 @@ pub use pet_stats::{
     load_pet_personalities, PetHappiness, PetPersonalities, PetPersonality, FALLBACK_PERSONALITY,
 };
 mod items;
-pub use items::{load_item_display_catalog, ItemDisplay, ItemDisplayCatalog};
+pub use items::{
+    load_item_dbc_displays, load_item_display_catalog, ItemDisplay, ItemDisplayCatalog,
+};
 mod item_sounds;
 pub use item_sounds::{load_item_group_sounds, ItemGesture, ItemGroupSoundsCatalog};
 mod item_visuals;
