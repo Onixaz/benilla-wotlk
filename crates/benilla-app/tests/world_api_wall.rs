@@ -160,6 +160,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("schedule::WorldLive", "record"),
     ("schedule::WorldStage", "record"),
     ("sky_order::Rung", "wall"),
+    ("surface::TerrainHeight", "wall"),
     ("terrain_stream::SPAWN_XY", "wall"),
     ("terrain_stream::TerrainOptions", "record"),
     ("terrain_stream::ViewFocus", "record"),

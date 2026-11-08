@@ -76,10 +76,14 @@ pub(crate) use collision_height::CollisionHeight;
 
 /// Spell missiles: the projectile a cast with a `Spell.dbc` Speed above 0 flies at each target.
 mod missile;
+pub(crate) use missile::MissileShape;
 pub(crate) use missile::{
     aim_launch_pos, AttachPosQuery, MissileMiss, MissileSound, PendingMissiles,
 };
-use missile::{attach_missile_models, mark_forced_missiles, move_missiles, spawn_missiles};
+use missile::{
+    attach_missile_models, mark_forced_missiles, move_missiles, run_missile_motion, spawn_missiles,
+    MissileMotion, MotionScripts,
+};
 
 /// A WMO-display GameObject's doodad props (a ship's sails), parented under it to ride a transport.
 mod wmo_props;
@@ -96,7 +100,7 @@ use dest_fx::{
 /// Spell chain beams, such as Chain Lightning's arcs.
 mod chain_beam;
 pub(crate) use chain_beam::ChainHops;
-use chain_beam::{simulate_chain_beams, spawn_chain_beams};
+use chain_beam::{simulate_chain_beams, spawn_chain_beams, ChainLocations};
 // `equip_slot` is the one InventoryType → slot table; the dressing room places items by it.
 pub(crate) use attach::{equip_slot, BodyPartsDesc};
 pub(crate) use equipment::ItemDisplays;
@@ -296,6 +300,11 @@ impl Creatures {
     /// Whether the model wears `$BTH` breath puffs, which `CreatureModelData.Flags & 0x2` stops.
     pub(crate) fn breathes(&self, display_id: u32) -> bool {
         self.catalog.breathes(display_id)
+    }
+
+    /// Whether the model drops effects at the hand attachments, `CreatureModelData.Flags & 0x10`.
+    pub(crate) fn hides_hand_effects(&self, display_id: u32) -> bool {
+        self.catalog.hides_hand_effects(display_id)
     }
 
     /// A display's `CreatureModelAlpha / 255`, the aura layer's `baseAlpha`.
@@ -640,6 +649,8 @@ impl Plugin for EntitiesPlugin {
         .init_resource::<spell_fx::FxTintAnims>()
         // The per-caster pending-projectile queues (the client's `unit+0xac` lists).
         .init_resource::<missile::PendingMissiles>()
+        // The missile motion scripts' Lua state, built on the first scripted missile.
+        .init_non_send_resource::<MotionScripts>()
         .add_message::<MissileSound>()
         .add_message::<MissileMiss>()
         .add_message::<dest_fx::GroundBurst>()
@@ -693,7 +704,11 @@ impl Plugin for EntitiesPlugin {
                 (resolve_equipment, resolve_corpse_equipment),
                 // Spell effects and missiles create `SpellFx` entries too.
                 resolve_spell_fx,
-                move_missiles,
+                (
+                    run_missile_motion.run_if(any_with_component::<MissileMotion>),
+                    move_missiles,
+                )
+                    .chain(),
                 (spawn_missiles, mark_forced_missiles).chain(),
                 // The dest-anchored lane's three independent producers also create entries.
                 (arm_ground_effects, spawn_ground_bursts, tick_shard_emitters),
@@ -746,6 +761,7 @@ impl Plugin for EntitiesPlugin {
                 .in_set(EntityVisualsSet)
                 .after(WorldStage::Net),
         )
+        .init_resource::<ChainLocations>()
         // In the visuals set, after the cast router's beam plays and the net stage's hop arrays.
         .add_systems(
             Update,
@@ -788,6 +804,9 @@ impl Plugin for EntitiesPlugin {
                 // base.
                 crate::aura_visual::refresh_base_alpha,
                 crate::aura_visual::drain_aura_procs,
+                // The kit plays' flash and fade, then this frame's flash colour and fade returns.
+                crate::aura_visual::play_body_procs,
+                crate::aura_visual::tick_body_procs,
                 // The tint publish needs only the drain ahead of it.
                 (
                     crate::aura_visual::apply_aura_alpha,

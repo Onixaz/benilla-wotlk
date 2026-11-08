@@ -281,6 +281,24 @@ impl SpecializedRenderPipeline for EffectPipeline {
                 "BLEND_ADD",
             ),
             EffectBlend::Alpha => (Some(BlendState::ALPHA_BLENDING), false, "BLEND_ALPHA"),
+            EffectBlend::AlphaDepthWrite => (Some(BlendState::ALPHA_BLENDING), true, "BLEND_ALPHA"),
+            // `(DESTCOLOR, ONE)`; the shader's Mod2x arm writes the plain `(rgb, 1)` it needs.
+            EffectBlend::ModAdd => (
+                Some(BlendState {
+                    color: BlendComponent {
+                        src_factor: BlendFactor::Dst,
+                        dst_factor: BlendFactor::One,
+                        operation: BlendOperation::Add,
+                    },
+                    alpha: BlendComponent {
+                        src_factor: BlendFactor::Zero,
+                        dst_factor: BlendFactor::One,
+                        operation: BlendOperation::Add,
+                    },
+                }),
+                false,
+                "BLEND_MOD2X",
+            ),
             EffectBlend::Opaque => (None, true, "BLEND_OPAQUE"),
             // EGxBlend 1: Opaque's state, its alpha test in the shader (wgpu has no `glAlphaFunc`).
             EffectBlend::AlphaKey => (None, true, "BLEND_ALPHAKEY"),

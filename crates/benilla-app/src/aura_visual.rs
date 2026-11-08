@@ -11,8 +11,8 @@
 //! `UNIT_FIELD_BYTES_1` byte 3's stealth and ghost bits drive no body render in the reference: its
 //! readers only suppress nameplates and markers. The body keys on the aura, never on the flag.
 //!
-//! Proc types 2, 7 and 13 also appear on state kits; their mechanism is untraced, so [`node_for`]
-//! ignores them.
+//! Every kit play also runs the one-shot body procs ([`BodyProcPlay`]): 13 flashes the tint, 15
+//! fades the body out and back.
 
 use benilla_protocol::EntityKind;
 use bevy::mesh::MeshTag;
@@ -22,10 +22,12 @@ use benilla_assets::materials::WowModelMaterial;
 use benilla_world::interior::InteriorLit;
 use benilla_world::model_fade::{fade_alpha, FadeMaterials, PendingAppearFade, RenderFade};
 
-/// The aura-alpha ramp, a 1000 ms alpha fade to the target eased `clamp01(t)³` by [`fade_alpha`]. A
-/// code constant, not a kit column: the ghost kit's proc 14 carries no `1000.0` yet ramps over the
-/// same second.
+/// The aura-alpha ramp's default, 1000 ms eased `clamp01(t)³` by [`fade_alpha`], when the head node
+/// names no fade time (`0x71abf5`).
 pub(crate) const AURA_ALPHA_FADE_SECS: f32 = 1.0;
+
+/// The procedural fade's leg out, 500 ms (`0x7268aa`).
+const PROC_FADE_OUT_SECS: f32 = 0.5;
 
 /// Under half a step of the tag's 6-bit alpha field (1/64): a ramp this close has arrived.
 const ALPHA_EPS: f32 = 1.0 / 128.0;
@@ -33,8 +35,9 @@ const ALPHA_EPS: f32 = 1.0 / 128.0;
 /// One CharProc node a kit installs on a unit, keyed by spell id as the reference keys `node+0x18`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum AuraNode {
-    /// Proc 14: the alpha factor (`node+0x78`).
-    Alpha(f32),
+    /// Proc 14: the alpha factor (`node+0x78`) and its fade time in seconds, `CharParamTwo`
+    /// truncated to whole ms, 0 for the default (`0x72683a`).
+    Alpha(f32, f32),
     /// Proc 1: the body tint, unpacked from the param's `0x00RRGGBB`.
     Tint([u8; 3]),
     /// Proc 11: the playback rate of the unit's own clocks, `0.0` for the whole freeze family.
@@ -47,8 +50,8 @@ pub(crate) enum AuraNode {
 #[derive(Component, Debug, Default)]
 #[component(storage = "SparseSet")]
 pub(crate) struct AuraNodes {
-    /// Proc-14 `(spell id, factor)` nodes, newest first, as the reference links at the head.
-    alpha: Vec<(u32, f32)>,
+    /// Proc-14 `(spell id, factor, fade secs)` nodes, newest first, as the reference links at the head.
+    alpha: Vec<(u32, f32, f32)>,
     /// Proc-1 `(spell id, rgb)` nodes, newest first.
     tint: Vec<(u32, [u8; 3])>,
     /// Proc-11 `(spell id, rate)` nodes, newest first; the head drives the unit's clocks.
@@ -58,10 +61,17 @@ pub(crate) struct AuraNodes {
     base: f32,
     /// The ramp's live value, which the parts render at.
     current: f32,
-    /// The ramp, `from` to `to` over [`AURA_ALPHA_FADE_SECS`] from `started` (elapsed seconds).
+    /// The ramp, `from` to `to` over `ramp` seconds from `started` (elapsed seconds).
     from: f32,
     to: f32,
     started: f32,
+    ramp: f32,
+    /// A proc-13 flash: the tint the head node's would yield to while it runs (`0x71a9a0`).
+    flash: Option<Flash>,
+    /// The flash's colour this frame, which [`apply_aura_tint`] paints over the head tint.
+    flash_rgb: Option<[u8; 3]>,
+    /// A proc-15 fade's return to `baseAlpha`: due time and its ramp in seconds (`0x73dc1f`).
+    fade_back: Option<(f32, f32)>,
     /// Whether [`apply_aura_alpha`] owns this unit's parts: while translucent, plus the one frame
     /// at opaque that writes the settled alpha and hands the material back to its light law.
     authoring: bool,
@@ -74,6 +84,7 @@ impl AuraNodes {
             current: base,
             from: base,
             to: base,
+            ramp: AURA_ALPHA_FADE_SECS,
             ..Default::default()
         }
     }
@@ -81,24 +92,39 @@ impl AuraNodes {
     /// `baseAlpha` times the head alpha node's factor alone, never a product over the list; an
     /// empty list leaves `baseAlpha`.
     fn target(&self) -> f32 {
-        let head = self.alpha.first().map_or(1.0, |(_, f)| *f);
+        let head = self.alpha.first().map_or(1.0, |&(_, f, _)| f);
         (self.base * head).clamp(0.0, 1.0)
     }
 
     /// Aim the ramp at the target from where it is now; an unmoved target leaves it alone, so an
     /// aura refresh does not restart the ease.
     fn retarget(&mut self, now: f32) {
-        let target = self.target();
+        let ramp = self
+            .alpha
+            .first()
+            .map(|&(_, _, secs)| secs)
+            .filter(|&secs| secs > 0.0)
+            .unwrap_or(AURA_ALPHA_FADE_SECS);
+        self.fade_to(self.target(), ramp, now);
+    }
+
+    /// Ramp from the live value to `target` over `ramp` seconds; an unmoved target leaves it.
+    fn fade_to(&mut self, target: f32, ramp: f32, now: f32) {
         if (target - self.to).abs() <= f32::EPSILON {
             return;
         }
         self.from = self.current;
         self.to = target;
         self.started = now;
+        self.ramp = ramp;
     }
 
     fn tick(&mut self, now: f32) -> f32 {
-        let t = (now - self.started) / AURA_ALPHA_FADE_SECS;
+        let t = if self.ramp > 0.0 {
+            (now - self.started) / self.ramp
+        } else {
+            1.0
+        };
         self.current = fade_alpha(self.from, self.to, t);
         self.current
     }
@@ -107,9 +133,10 @@ impl AuraNodes {
         self.current < 1.0 - ALPHA_EPS
     }
 
-    /// The head tint node's RGB, which the reference's per-frame apply reads.
+    /// The tint this frame: a running flash, else the head tint node's RGB (`0x720dd1`).
     pub(crate) fn head_tint(&self) -> Option<[u8; 3]> {
-        self.tint.first().map(|(_, rgb)| *rgb)
+        self.flash_rgb
+            .or_else(|| self.tint.first().map(|(_, rgb)| *rgb))
     }
 
     /// The head proc-11 node's rate, the one the unit's clocks run at.
@@ -132,14 +159,18 @@ impl AuraNodes {
 /// with no aura node, chain link or rig slot moved writes nothing.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(crate) fn apply_aura_tint(
-    rigs: Query<(Entity, Ref<benilla_world::rig_palette::RigSkin>)>,
+    rigs: Query<(
+        Entity,
+        Ref<benilla_world::rig_palette::RigSkin>,
+        Has<benilla_world::model_fade::ParentModel>,
+    )>,
     chain: Query<(
         Option<&AuraNodes>,
         Option<&benilla_world::model_fade::ParentModel>,
     )>,
     // A word moves only with its rig's slot, an aura node or a chain link; else every slot holds.
     nodes_moved: Query<
-        (),
+        Entity,
         Or<(
             Changed<AuraNodes>,
             Changed<benilla_world::model_fade::ParentModel>,
@@ -152,11 +183,14 @@ pub(crate) fn apply_aura_tint(
 ) {
     let probe = tint_probe();
     let gone = nodes_gone.read().count() + links_gone.read().count();
-    let all = probe.is_some() || gone > 0 || !nodes_moved.is_empty();
+    let all = probe.is_some() || gone > 0;
+    // A body rig is its unit; only a linked rig must walk to learn whether its chain moved.
+    let moved: bevy::ecs::entity::EntityHashSet = nodes_moved.iter().collect();
     let mut painted = 0usize;
-    for (root, rig) in &rigs {
+    for (root, rig, linked) in &rigs {
         // A new or recycled slot is a changed `RigSkin`, so it is never left with a stale colour.
-        if !all && !rig.is_changed() {
+        let touched = moved.contains(&root) || (linked && !moved.is_empty());
+        if !all && !rig.is_changed() && !touched {
             continue;
         }
         let word = probe.or_else(|| chained_tint(&chain, root)).map_or(
@@ -300,7 +334,10 @@ pub(crate) enum AuraProc {
 pub(crate) fn node_for(proc: benilla_formats::CharProc) -> Option<AuraNode> {
     use benilla_formats::char_proc_type as ty;
     match proc.ty {
-        ty::ALPHA => Some(AuraNode::Alpha(proc.params[0])),
+        ty::ALPHA => Some(AuraNode::Alpha(
+            proc.params[0],
+            (proc.params[2] * 1000.0).trunc() / 1000.0,
+        )),
         // A float holding an integral `0x00RRGGBB`, rounded: the ghost's 9222653.0 is `0x8CB9FD`.
         ty::TINT => {
             let packed = proc.params[0].round().clamp(0.0, 0xff_ffff as f32) as u32;
@@ -370,7 +407,7 @@ pub(crate) fn drain_aura_procs(
 
 /// Drop every node one spell installed and re-aim the ramp.
 fn reap(n: &mut AuraNodes, spell_id: u32, now: f32) {
-    n.alpha.retain(|(s, _)| *s != spell_id);
+    n.alpha.retain(|(s, ..)| *s != spell_id);
     n.tint.retain(|(s, _)| *s != spell_id);
     n.rate.retain(|(s, _)| *s != spell_id);
     n.retarget(now);
@@ -379,12 +416,12 @@ fn reap(n: &mut AuraNodes, spell_id: u32, now: f32) {
 /// Install one spell's nodes at the head of each list, replacing any it had: nodes are keyed by
 /// spell id, so a second caster's copy of an aura installs one set.
 fn install(n: &mut AuraNodes, spell_id: u32, procs: &[AuraNode], now: f32) {
-    n.alpha.retain(|(s, _)| *s != spell_id);
+    n.alpha.retain(|(s, ..)| *s != spell_id);
     n.tint.retain(|(s, _)| *s != spell_id);
     n.rate.retain(|(s, _)| *s != spell_id);
     for node in procs {
         match *node {
-            AuraNode::Alpha(f) => n.alpha.insert(0, (spell_id, f)),
+            AuraNode::Alpha(f, secs) => n.alpha.insert(0, (spell_id, f, secs)),
             AuraNode::Tint(rgb) => n.tint.insert(0, (spell_id, rgb)),
             AuraNode::AnimRate(r) => n.rate.insert(0, (spell_id, r)),
         }
@@ -397,7 +434,7 @@ fn trace_edge(what: &str, entity: Entity, spell_id: u32, n: &AuraNodes) {
     if !benilla_assets::trace::enabled() {
         return;
     }
-    let alphas: Vec<f32> = n.alpha.iter().map(|(_, f)| *f).collect();
+    let alphas: Vec<f32> = n.alpha.iter().map(|&(_, f, _)| f).collect();
     let tint = n.head_tint().map_or_else(String::new, |[r, g, b]| {
         format!(" tint=#{r:02x}{g:02x}{b:02x}")
     });
@@ -657,6 +694,152 @@ fn author_descendants(
 /// A unit's live aura alpha, for the self-avatar feather, which composes it into its own product.
 pub(crate) fn root_alpha(nodes: Option<&AuraNodes>) -> f32 {
     nodes.map_or(1.0, |n| n.current)
+}
+
+/// A proc-13 flash on the unit's tint (`0x72671d`): held at its colour through the delay, then eased
+/// to white over the duration (`0x71a9a0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Flash {
+    rgb: [u8; 3],
+    /// Elapsed seconds when the fade starts, the play's time plus the delay.
+    fades: f32,
+    duration: f32,
+}
+
+impl Flash {
+    /// This frame's colour, `None` once run out (`0x71a9e9`).
+    fn color(&self, now: f32) -> Option<[u8; 3]> {
+        let elapsed = now - self.fades;
+        if elapsed < 0.0 {
+            return Some(self.rgb);
+        }
+        if elapsed >= self.duration {
+            return None;
+        }
+        // White lerped toward the colour by a byte weight, as the colour lerp does (`0x71aa3f`).
+        let t = ((1.0 - elapsed / self.duration) * 255.0) as i32;
+        if t == 255 {
+            return Some(self.rgb);
+        }
+        Some(
+            self.rgb
+                .map(|c| (255 + (((i32::from(c) - 255) * t) >> 8)) as u8),
+        )
+    }
+}
+
+/// One kit play's one-shot body proc, the dispatcher's flash (13) and procedural fade (15) cases;
+/// every kit play at every stage dispatches them (`0x7265c0`).
+#[derive(Message, Clone, Copy, Debug)]
+pub(crate) struct BodyProcPlay {
+    pub(crate) entity: Entity,
+    pub(crate) spell_id: u32,
+    pub(crate) proc: benilla_formats::CharProc,
+}
+
+/// The `CharProcType` of the flash and the procedural fade.
+const PROC_FLASH: i32 = 13;
+const PROC_FADE: i32 = 15;
+
+/// Whether a dispatcher proc is one [`play_body_procs`] runs.
+pub(crate) fn is_body_proc(proc: &benilla_formats::CharProc) -> bool {
+    matches!(proc.ty, PROC_FLASH | PROC_FADE)
+}
+
+/// Start each [`BodyProcPlay`] on its unit's node set: the flash replaces any running one, and the
+/// fade goes out over 500 ms, holds, then returns to `baseAlpha` (`0x71a940`).
+pub(crate) fn play_body_procs(
+    mut plays: MessageReader<BodyProcPlay>,
+    time: Res<Time>,
+    mut commands: Commands,
+    mut nodes: Query<&mut AuraNodes>,
+    units: Query<(&crate::net::NetEntity, Option<&crate::net::ObjectStore>)>,
+    creatures: Option<Res<crate::entities::Creatures>>,
+    names: Option<Res<crate::names::NameCache>>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+) {
+    let now = time.elapsed_secs();
+    let mut fresh: bevy::ecs::entity::EntityHashMap<AuraNodes> = Default::default();
+    for play in plays.read() {
+        let Ok((net, store)) = units.get(play.entity) else {
+            continue;
+        };
+        if !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
+            continue;
+        }
+        let [p0, p1, p2, p3] = play.proc.params;
+        // `_ftol` for every integer, as `0x407930` truncates.
+        let ms = |v: f32| (v * 1000.0).trunc() / 1000.0;
+        let edit = |n: &mut AuraNodes| match play.proc.ty {
+            PROC_FLASH => {
+                let packed = p0.trunc() as i64 as u32;
+                n.flash = Some(Flash {
+                    rgb: [(packed >> 16) as u8, (packed >> 8) as u8, packed as u8],
+                    fades: now + ms(p1),
+                    duration: ms(p2),
+                });
+            }
+            _ => {
+                // The target byte truncates `baseAlpha × param`, so any factor under 1 fades out
+                // whole (`0x726881`, `0x71a97c`).
+                let target = (n.base * p0).trunc().clamp(0.0, 1.0);
+                if p1.trunc() < 12.0 {
+                    n.fade_to(target, PROC_FADE_OUT_SECS, now);
+                    // Back to `baseAlpha` after the 500 ms and the hold, over param 2's ms.
+                    let due = now + PROC_FADE_OUT_SECS + p3.trunc() / 1000.0;
+                    n.fade_back = Some((due, p2.trunc() / 1000.0));
+                }
+            }
+        };
+        // A harmful flash skips a creature whose template has type flag `0x40` (`0x726727`).
+        if play.proc.ty == PROC_FLASH {
+            let shielded = store
+                .and_then(|s| s.0.object_entry())
+                .zip(names.as_deref())
+                .and_then(|(entry, n)| n.creature_record(entry))
+                .is_some_and(|r| r.type_flags & 0x40 != 0);
+            let harmful = spells
+                .as_deref()
+                .and_then(|s| s.catalog.get(play.spell_id))
+                .is_some_and(|d| d.is_harmful());
+            if shielded && harmful {
+                continue;
+            }
+        }
+        if let Ok(mut n) = nodes.get_mut(play.entity) {
+            edit(&mut n);
+        } else {
+            let n = fresh
+                .entry(play.entity)
+                .or_insert_with(|| AuraNodes::new(display_base_alpha(net, creatures.as_deref())));
+            edit(n);
+        }
+    }
+    for (entity, n) in fresh {
+        commands.entity(entity).try_insert(n);
+    }
+}
+
+/// Advance the running flashes and fade returns, touching only the node sets that change.
+pub(crate) fn tick_body_procs(time: Res<Time>, mut nodes: Query<&mut AuraNodes>) {
+    let now = time.elapsed_secs();
+    for mut n in &mut nodes {
+        if n.flash.is_none() && n.fade_back.is_none() {
+            continue;
+        }
+        let rgb = n.flash.and_then(|f| f.color(now));
+        if rgb != n.flash_rgb {
+            n.flash_rgb = rgb;
+        }
+        if rgb.is_none() && n.flash.is_some() {
+            n.flash = None;
+        }
+        if let Some((_, back)) = n.fade_back.filter(|&(due, _)| now >= due) {
+            n.fade_back = None;
+            let base = n.base;
+            n.fade_to(base, back, now);
+        }
+    }
 }
 
 #[cfg(test)]

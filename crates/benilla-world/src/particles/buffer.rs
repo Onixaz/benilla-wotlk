@@ -22,13 +22,18 @@ pub struct EffectVertex {
     pub color: [f32; 4],
 }
 
-/// The lane's blends: [`ParticleBlend`]'s four plus the multiplicative pair of decals and rain.
+/// The lane's blends: [`ParticleBlend`]'s four, the multiplicative pair of decals and rain, and the
+/// spell beams' two.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum EffectBlend {
     /// `(SRC_ALPHA, ONE)`, as premultiplied alpha after the shader's gamma `rgb·a` fold.
     Add,
     /// Standard alpha blending.
     Alpha,
+    /// [`EffectBlend::Alpha`] with depth write on: a beam row's blend mode 2 (`0x9aad37`).
+    AlphaDepthWrite,
+    /// `src·dst + dst` as `(Dst, One)`, the render state's blend mode 6: a beam row's.
+    ModAdd,
     /// No blend, depth write on, drawn in the transparent bracket at the owner rung.
     Opaque,
     /// Blend mode 1: [`EffectBlend::Opaque`]'s state plus an alpha test discarding below 224/255
@@ -39,6 +44,24 @@ pub enum EffectBlend {
     Multiply,
     /// `2·src·dst` as `(Dst, Src)`: rain's state.
     Mod2x,
+}
+
+impl EffectBlend {
+    /// A render-state blend mode through the device's tables (`0x9aad73`).
+    fn from_gx(mode: u8) -> Self {
+        match mode {
+            0 => Self::Opaque,
+            1 => Self::AlphaKey,
+            2 => Self::AlphaDepthWrite,
+            3 => Self::Add,
+            // `(DESTCOLOR, ZERO)`, drawn as the M2 `Mod` mapping is.
+            4 => Self::Multiply,
+            5 => Self::Mod2x,
+            6 => Self::ModAdd,
+            // Modes 7-11 ship on no row.
+            _ => Self::Add,
+        }
+    }
 }
 
 impl From<ParticleBlend> for EffectBlend {
@@ -400,6 +423,16 @@ pub fn clear_effect_frame_flag(mut quads: ResMut<EffectQuads>) {
 mod tests {
     use super::*;
 
+    /// Blend mode 2 alone writes depth (`0x9aad37`); 3 is additive and 6 `(DESTCOLOR, ONE)`.
+    #[test]
+    fn the_row_blend_maps_through_the_device_tables() {
+        assert_eq!(EffectBlend::from_gx(2), EffectBlend::AlphaDepthWrite);
+        assert_eq!(EffectBlend::from_gx(3), EffectBlend::Add);
+        assert_eq!(EffectBlend::from_gx(4), EffectBlend::Multiply);
+        assert_eq!(EffectBlend::from_gx(5), EffectBlend::Mod2x);
+        assert_eq!(EffectBlend::from_gx(6), EffectBlend::ModAdd);
+    }
+
     /// M2 modes 2 to 4 fold into `ModelBlend::Blend`; flat `Spells\` ground quads are mode 4.
     #[test]
     fn additive_wins_over_the_folded_blend_enum() {
@@ -602,6 +635,12 @@ impl EffectBatch<'_> {
     /// Multiply into what is drawn: the blob shadow.
     pub fn multiply(mut self) -> Self {
         self.spec.blend = EffectBlend::Multiply;
+        self
+    }
+
+    /// A render-state blend mode (`0x9aad73`), as a beam row stores it.
+    pub fn gx_blend(mut self, mode: u8) -> Self {
+        self.spec.blend = EffectBlend::from_gx(mode);
         self
     }
 

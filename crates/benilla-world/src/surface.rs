@@ -25,6 +25,20 @@ use crate::wmo_portal::{
     indoors_at, surface_terrain_sample, UnitWmoRoom, WmoPortalInstance, POSITION_PROBE_LIFT,
 };
 
+/// The MCNK heightfield alone, for a per-step caller the full query param would weigh down.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct TerrainHeight<'w> {
+    streamer: Option<Res<'w, TerrainStreamer>>,
+    adt_tiles: Option<Res<'w, Assets<AdtTile>>>,
+}
+
+impl TerrainHeight<'_> {
+    /// The heightfield's height under `pos` (Bevy space), `None` off the streamed set.
+    pub fn at(&self, pos: Vec3) -> Option<f32> {
+        terrain_height_under(self.streamer.as_deref()?, self.adt_tiles.as_deref()?, pos)
+    }
+}
+
 /// The placements and terrain the surface question rays, read live so no answer outlives its
 /// placement.
 #[derive(bevy::ecs::system::SystemParam)]

@@ -45,6 +45,8 @@ benilla-assets = { path = "../benilla-assets", default-features = false }
 benilla-formats = { path = "../benilla-formats", default-features = false }
 benilla-protocol = { path = "../benilla-protocol" }
 benilla-world = { path = "../benilla-world", default-features = false }
+# The missile motion scripts' own Lua 5.1 state, the interface's mlua build.
+mlua = { version = "0.11", features = ["lua51", "vendored"] }
 # `cache.md5`, the account data's per-slot checksums (`0x6b8ca0`).
 md-5 = "0.10"
 # Collision for our kinematic character controller; 0.6 targets Bevy 0.18, 0.7 moves to 0.19.

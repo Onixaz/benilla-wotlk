@@ -57,14 +57,14 @@ pub fn run(chain: &mut Chain, spell_id: u32) -> Result<()> {
                     if let Some(c) = kit.chain_proc() {
                         match visuals.chain_effect(c.effect_id) {
                             Some(e) => println!(
-                                "           beam   chain {} flag={} -> {} (segLen {} halfWidth {} noise {} scroll {}s hopLife {}ms delay {}ms hopStagger {}ms)",
+                                "           beam   chain {} flag={} -> {} (segLen {} halfWidth {} noise {} scroll {}/s hopLife {}ms delay {}ms hopStagger {}ms)",
                                 c.effect_id,
                                 u8::from(c.flag),
                                 e.texture,
                                 e.avg_seg_len,
                                 e.half_width,
                                 e.noise_scale,
-                                e.scroll_period_s,
+                                e.tex_scroll_speed,
                                 e.bolt_life_ms,
                                 e.first_bolt_delay_ms,
                                 e.bolt_stagger_ms,

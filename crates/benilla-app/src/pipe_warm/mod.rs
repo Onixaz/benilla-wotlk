@@ -664,6 +664,8 @@ fn warm_effect_lane(
             EffectBlend::AlphaKey,
             EffectBlend::Multiply,
             EffectBlend::Mod2x,
+            EffectBlend::AlphaDepthWrite,
+            EffectBlend::ModAdd,
         ] {
             // The rasterizer settle's constant and slope are both key axes, warmed as the pairs
             // that ship: every ground decal's, and the foam's.

@@ -279,9 +279,10 @@ mod talents;
 pub use talents::{load_talent_catalog, Talent, TalentCatalog, TalentTabInfo, MAX_TALENT_RANK};
 mod spell_visual;
 pub use spell_visual::{
-    char_proc_small_int, char_proc_type, load_spell_visual_catalog, ChainEffect, ChainProc,
-    CharProc, SpellMissileRec, SpellVisualCatalog, TrailProc, VisualKit, VisualStages,
-    DEFAULT_MISSILE_GRAVITY, KIT_CHAR_PROCS, KIT_SLOT_TAGS, MISSILE_ATTACH_TABLE, WORLD_EFFECT_TAG,
+    chain_flag, char_proc_type, kit_flag, load_spell_visual_catalog, shard_density, ChainEffect,
+    ChainProc, CharProc, MissileMotionRec, ModelAttach, SpellMissileRec, SpellVisualCatalog,
+    TrailProc, VisualKit, VisualStages, DEFAULT_MISSILE_GRAVITY, KIT_CHAR_PROCS, KIT_SLOT_TAGS,
+    MAX_COMBO_ROWS, MISSILE_ATTACH_TABLE, MODEL_ATTACH_WORLD, WEAPON_EFFECT_TAGS, WORLD_EFFECT_TAG,
 };
 mod emit_timing;
 pub use emit_timing::{EmitParams, EmitTiming, ParamsNow};

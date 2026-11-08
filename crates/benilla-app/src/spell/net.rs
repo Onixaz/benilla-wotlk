@@ -417,10 +417,13 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
         ammo_display_id,
         item_caster,
         trajectory,
+        reflects,
         ..
     } = ev
     {
         let engaged = !sc.engaged_self.is_empty();
+        // A reflect with no outcome of its own lands on the caster (`0x80f44b`).
+        let reflected = reflects.iter().filter(|(_, r)| *r == 0).count() as u8;
         spell_go(
             caster,
             cast_count,
@@ -428,6 +431,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
             cast_flags,
             hits,
             misses,
+            reflected,
             target,
             go_target,
             dest,
@@ -1296,6 +1300,7 @@ fn spell_go(
     cast_flags: u32,
     hits: Vec<u64>,
     misses: Vec<(u64, u8)>,
+    reflected: u8,
     target: Option<u64>,
     go_target: Option<u64>,
     dest: Option<[f32; 3]>,
@@ -1514,11 +1519,21 @@ fn spell_go(
         if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
             commands.entity(e).remove::<Casting>();
         }
-        // The GO's chain-hop fill, the producer for non-channelled chain spells. It must precede
-        // the CastEvent: the cast kit's chain proc consumes it the same frame. The reference gates
-        // it on the attribute predicate, whose role here is untraced; this fills unconditionally,
-        // harmless since consumption needs a chain proc and every fill clears.
-        fill_chain_hops(caster, e, &hits, commands, index);
+        // The hop fill the cast kit consumes: hits then misses, swapped by flag 0x400 (`0x80ec10`).
+        // Deviation: fills on every row, not only a beam's (`0x80ed5a`), as only a beam consumes it.
+        let hops: Vec<u64> = if cast_flags & 0x400 != 0 {
+            misses
+                .iter()
+                .map(|m| m.0)
+                .chain(hits.iter().copied())
+                .collect()
+        } else {
+            hits.iter()
+                .copied()
+                .chain(misses.iter().map(|m| m.0))
+                .collect()
+        };
+        fill_chain_hops(caster, e, &hops, commands, index);
         cast_events.write(CastEvent {
             entity: e,
             spell_id,
@@ -1552,6 +1567,7 @@ fn spell_go(
                     caster,
                     cast_id: cast_count,
                 }),
+                reflected,
             });
         }
     }
@@ -2483,6 +2499,7 @@ mod tests {
                            0,
                             vec![],
                             vec![],
+                            0,
                             None,
                             None,
                             None,
@@ -2688,6 +2705,7 @@ mod tests {
                        0,
                         vec![],
                         vec![],
+                        0,
                         None,
                         None,
                         None,
@@ -2894,6 +2912,7 @@ mod tests {
                        0,
                         vec![10, 20, 40, 30],
                         vec![],
+                        0,
                         None,
                         None,
                         None,
@@ -3280,6 +3299,7 @@ mod tests {
                            0,
                             vec![20],
                             vec![],
+                            0,
                             // A different guid from `hits[0]`, which the arm must take.
                             Some(99),
                             None,

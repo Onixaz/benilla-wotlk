@@ -393,10 +393,8 @@ pub(crate) enum CastEventKind {
     Go,
     /// Died without release (`SMSG_SPELL_FAILED_OTHER`, or our failed `SMSG_CAST_RESULT`).
     Fail,
-    /// The spell landed on this unit (a missile arrival): impact kit, then state kit.
-    /// `weapon_visual` is the caster's ranged-weapon `SpellVisual`, carried from the GO since the
-    /// caster may despawn.
-    Impact { weapon_visual: Option<u32> },
+    /// A missile landed: `on_caster` picks the kit (`0x800d00`), `at` is its point (`0x702e5a`).
+    Impact { on_caster: bool, at: Option<Vec3> },
     /// A projectile with no live target at arrival (a despawned target too): the kit plays on the
     /// caster (`entity`) at `pos`, `SpellVisual` field 13, stage 3. Sent here only for a
     /// dest-targeted GO's missile with no hit (`MissileSpawn::ground_aim`).
@@ -412,6 +410,11 @@ pub(crate) struct CastHold {
     /// A ranged wind-up (`Attributes & 0x2`): the reference brackets it with ranged snaps, so the
     /// sheath reconcile's force-stow never survives the frame.
     pub(crate) ranged: bool,
+    /// The precast kit's start anim (`SpellVisualKit` column 1), offered once in place of
+    /// [`Self::anim_id`] until its clip ends: the latch `0x73b207` sets and `0x73bc77` clears.
+    pub(crate) start_anim: Option<u16>,
+    /// The cast edge's `PlaySeq` stamp, which tells this hold's start latch from an earlier one's.
+    pub(crate) seq: u64,
 }
 
 /// A hand's fingers close (`HandsClosed`, 15) purely because a weapon occupies its attach point,
@@ -525,8 +528,7 @@ pub(crate) struct SpellGoTargets {
     /// Missed units with `SpellMissInfo`: the arrival plays Dodge (30) or ShieldBlock (24), never
     /// Parry, and no impact kit; the deflect glance-off flight is not built.
     pub(crate) misses: Vec<(Entity, u8)>,
-    /// A dest-targeted cast's ground point, in bevy coords; not read, the reference's
-    /// dest-anchored launch visual is untraced.
+    /// A dest-targeted cast's ground point, in bevy coords.
     pub(crate) dest: Option<Vec3>,
     /// The GO's ammo block (`castFlags & 0x20`): the ammo's `ItemDisplayInfo` id, the missile model
     /// when the visual chain has none.
@@ -535,6 +537,8 @@ pub(crate) struct SpellGoTargets {
     pub(crate) seq: u64,
     /// The GO's trajectory (`castFlags & 0x20000`).
     pub(crate) trajectory: Option<Trajectory>,
+    /// Reflects with no outcome of their own, each the caster's impact kit on it (`0x80f467`).
+    pub(crate) reflected: u8,
 }
 
 /// A dest-location cast's visuals, from `SMSG_NOTIFY_DEST_LOC_SPELL_CAST` (`0x810050`), in bevy
@@ -616,8 +620,8 @@ use spell_visual::{
 #[cfg(test)]
 pub(crate) use spell_visual::arm_aura_state_fx as arm_aura_state_fx_for_test;
 pub(crate) use spell_visual::{
-    held_strike_sound, ChainProcPlay, FxClass, FxStage, KitPush, MissileSpawn, SpellKitFx,
-    SpellKitShake, SpellKitSound, SpellVisuals,
+    held_strike_sound, kit_fx_slots, ChainProcPlay, FxClass, FxStage, KitPush, MissileSpawn,
+    SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals,
 };
 
 /// The unit's own variation stream ([`benilla_assets::AnimRng::stream`]), cut on its first frame
@@ -723,6 +727,8 @@ pub(crate) struct AnimDriver {
     /// (`0x73b38e`) until neither the key bone nor bone 0 plays it (`0x73bc81`). A model rebuild
     /// drops it with the driver, as the display reset does (`0x73e702`).
     special_idle: Option<u16>,
+    /// The [`CastHold::seq`] whose start anim has played out, the cleared start latch.
+    start_spent: Option<u64>,
 }
 
 impl AnimDriver {
@@ -810,6 +816,7 @@ impl Default for AnimDriver {
             rate_clip: None,
             base_dir: None,
             special_idle: None,
+            start_spent: None,
         }
     }
 }
@@ -917,6 +924,7 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<KitPush>()
             // The aura CharProc edges, drained by `crate::aura_visual`.
             .add_message::<crate::aura_visual::AuraProc>()
+            .add_message::<crate::aura_visual::BodyProcPlay>()
             .add_message::<HardLanding>()
             // The pending-morph latch, the reference's per-unit `[+0xd54]`.
             .init_resource::<MorphLatch>()
@@ -1000,7 +1008,7 @@ impl Plugin for CreatureAnimPlugin {
                 Update,
                 crate::aura_visual::apply_aura_anim_rate
                     .after(drive_animations)
-                    .after(crate::aura_visual::drain_aura_procs),
+                    .after(crate::aura_visual::tick_body_procs),
             );
     }
 }

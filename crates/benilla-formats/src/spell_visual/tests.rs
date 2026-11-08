@@ -74,6 +74,7 @@ fn spell_visual_columns_read_the_3_3_5a_layout() {
             missile_attach: 1,
             missile_sound: Some(3011),
             flags: 1,
+            missile_source_attach: u32::MAX,
             ..Default::default()
         }
     );
@@ -117,7 +118,6 @@ fn kit_columns_read_the_3_3_5a_layout() {
     ));
     records.extend(kit_row(1, &[])); // plain-zero "none"
     records.extend(kit_row(2, &[(2, u32::MAX), (15, u32::MAX)])); // the -1 "none" form
-                                                                  // The weapon columns 9 and 10 are no slot the walk plays.
     records.extend(kit_row(3, &[(9, 77), (10, 78)]));
     let mut bytes = build_wdbc(5, SPELL_VISUAL_KIT_FIELDS as u32, &records);
     // Kit 285's first CharProc: type 1 (tint), `CharParamZero` 6711039.0.
@@ -146,9 +146,25 @@ fn kit_columns_read_the_3_3_5a_layout() {
         Some(6_711_039.0)
     );
 
-    assert_eq!(kits[&1], VisualKit::default(), "plain 0 = none");
-    assert_eq!(kits[&2], VisualKit::default(), "0xFFFFFFFF = none too");
-    assert_eq!(kits[&3].effects().count(), 0, "no weapon-column slot");
+    // Column 1's 0 is Stand, a real start anim; only -1 is none.
+    let bare = |id| VisualKit {
+        id,
+        start_anim: Some(0),
+        ..Default::default()
+    };
+    assert_eq!(kits[&1], bare(1), "plain 0 = none");
+    assert_eq!(kits[&2], bare(2), "0xFFFFFFFF = none too");
+    assert_eq!(kits[&38].start_anim, None, "-1 starts nothing");
+    assert_eq!(
+        kits[&3].effects().count(),
+        0,
+        "no weapon column in the slot walk"
+    );
+    assert_eq!(
+        kits[&3].weapon_effects().collect::<Vec<_>>(),
+        vec![(2, 77), (1, 78)],
+        "column 9 at the left hand, column 10 at the right"
+    );
 }
 
 #[test]
@@ -228,6 +244,8 @@ fn real_spell_visual_chain_resolves_fireball() {
             instant_area_kit: 0,
             impact_area_kit: 0,
             persistent_area_kit: 0,
+            // The missile columns are pinned by the merge and offset tests.
+            ..*stages
         }
     );
     assert_eq!(
@@ -394,20 +412,7 @@ fn ground_aoe_chain_reads_the_area_kits() {
 
 // ── The chain/beam table ──────────────────────────────────────────────────────
 
-/// Pinned against hand-computed IEEE bits, not against itself.
-#[test]
-fn char_proc_small_int_recovers_the_integer() {
-    // 1.0 + 512.0 = 513.0 = 0x44004000; >>14 = 0x11001; &0xff = 1.
-    assert_eq!(char_proc_small_int(1.0), 1);
-    assert_eq!(char_proc_small_int(0.0), 0);
-    for n in 0..=255u32 {
-        assert_eq!(char_proc_small_int(n as f32), n, "round-trips every byte");
-    }
-    // It truncates, reading the integer part out of the mantissa.
-    assert_eq!(char_proc_small_int(3.9), 3);
-}
-
-/// The chain case truncates the id and reads only params 0 and 2 for what benilla draws.
+/// The chain case truncates the id and reads params 0, 2 and 3 (`0x726ab1`-`0x726af2`).
 #[test]
 fn a_chain_proc_takes_its_id_by_truncation() {
     let proc = CharProc {
@@ -419,6 +424,7 @@ fn a_chain_proc_takes_its_id_by_truncation() {
         Some(ChainProc {
             effect_id: 719,
             flag: true,
+            reverse: true,
             ty: char_proc_type::CHAIN_CHANNEL,
         }),
         "an id past 255, which the small-int decode would mangle"
@@ -428,8 +434,8 @@ fn a_chain_proc_takes_its_id_by_truncation() {
         params: [743.9, 1.0, 0.0, 0.0],
     };
     assert_eq!(
-        cast.as_chain().map(|c| (c.effect_id, c.flag)),
-        Some((743, false))
+        cast.as_chain().map(|c| (c.effect_id, c.flag, c.reverse)),
+        Some((743, false, false))
     );
     let padding = CharProc {
         ty: char_proc_type::CHAIN_CHANNEL,
@@ -459,7 +465,7 @@ fn real_chain_effects_table() {
     assert_eq!(lightning.avg_seg_len, 2.78);
     assert_eq!(lightning.half_width, 0.5);
     assert_eq!(lightning.noise_scale, 0.04);
-    assert_eq!(lightning.scroll_period_s, 1.0);
+    assert_eq!(lightning.tex_scroll_speed, 1.0);
     assert_eq!(lightning.bolt_life_ms, 1000);
     assert_eq!(lightning.first_bolt_delay_ms, 300);
     assert_eq!(lightning.bolt_stagger_ms, 0, "its hops light together");
@@ -474,8 +480,8 @@ fn real_chain_effects_table() {
     let drain = cat.chain_effect(8).expect("chain effect 8");
     assert_eq!(drain.texture, "Textures\\SpellChainEffects\\SoulBeam.blp");
     assert_eq!(
-        drain.scroll_period_s, -2.0,
-        "a NEGATIVE scroll period flows the texture back toward the caster"
+        drain.tex_scroll_speed, -2.0,
+        "a NEGATIVE scroll speed flows the texture back toward the caster"
     );
 
     // Ids are a lookup, never an index.
@@ -627,6 +633,16 @@ fn the_weapon_merge_fills_only_the_empty_slots() {
         instant_area_kit: 5,
         impact_area_kit: 7,
         persistent_area_kit: 9,
+        missile_path_type: 2,
+        missile_source_attach: 4,
+        follow_ground_height: 100,
+        follow_ground_drop_speed: 300,
+        follow_ground_approach: 750,
+        follow_ground_flags: 6,
+        missile_motion: 13,
+        missile_targeting_kit: 8729,
+        missile_cast_offset: [1.0, 2.0, 3.0],
+        missile_impact_offset: [4.0, 5.0, 6.0],
     };
     // Multi-Shot's real shape: its own impact + missile, both body kits empty.
     let own = VisualStages {
@@ -662,6 +678,28 @@ fn the_weapon_merge_fills_only_the_empty_slots() {
         "state/channel are NOT in the client's fill list"
     );
     assert_eq!(merged.flags, 1, "nor the flags");
+    assert_eq!(
+        (
+            merged.missile_source_attach,
+            merged.follow_ground_height,
+            merged.follow_ground_drop_speed,
+            merged.follow_ground_approach,
+            merged.follow_ground_flags,
+            merged.missile_motion,
+        ),
+        (4, 100, 300, 750, 6, 13),
+        "the source attachment, ground following and motion fill (`0x721118`-`0x721160`)"
+    );
+    assert_eq!(
+        (
+            merged.missile_path_type,
+            merged.missile_targeting_kit,
+            merged.missile_cast_offset,
+            merged.missile_impact_offset,
+        ),
+        (0, 0, [0.0; 3], [0.0; 3]),
+        "the path type, targeting kit and offsets are not in the fill list"
+    );
     assert_eq!(
         (
             merged.instant_area_kit,
@@ -746,11 +784,6 @@ fn a_weapon_trail_proc_decodes_by_truncation() {
     assert_eq!(
         trail.packed, 0x64f8_2929,
         "0xAARRGGBB, as `unit+0xd1c` holds it"
-    );
-    assert_ne!(
-        proc.small_int(0),
-        u32::from(trail.rgb()[0]),
-        "the small-int decode is the WRONG idiom here and must not be reused"
     );
 }
 

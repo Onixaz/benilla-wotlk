@@ -143,6 +143,7 @@ pub(super) fn blood_spurts(
                 effect,
                 path: path.to_string(),
                 scale: 1.0,
+                attach: None,
             }],
         });
     }

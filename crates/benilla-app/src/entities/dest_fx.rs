@@ -11,26 +11,17 @@ use benilla_protocol::EntityKind;
 
 use super::spell_fx::{attach_effect_visuals, ensure_model, FxMaterials, SpellFx};
 
-/// The client's hardcoded shard-model table, indexed by `CharParamZero`'s small int.
-const SHARD_MODELS: [&str; 7] = [
-    "Spells\\Blizzard_Impact_Base.mdx",
-    "Spells\\RainOfFire_Impact_Base.mdx",
-    "Spells\\CallLightning_Impact.mdx",
-    "Spells\\FlamestrikeSmall_Impact_Base.mdx",
-    "Spells\\DeathAndDecay_Area_Base.mdx",
-    "Spells\\ArcaneShot_Area.mdx",
-    "Spells\\StarShards_Impact_Base.mdx",
-];
-
-/// The `CharProcType` whose first kit block the emitter chain takes.
+/// The `CharProcType` whose first kit slot the emitter takes (`0x705000`).
 const PROC_TYPE_SHARD_EMITTER: i32 = 9;
 
-/// `CharParamZero`'s small int ([`benilla_formats::char_proc_small_int`]), clamped into
-/// [`SHARD_MODELS`]: the client has no bounds check (`mov cl,al`) and reads past it.
-fn shard_model_index(param0: f32) -> usize {
-    let idx = benilla_formats::char_proc_small_int(param0) as usize;
-    idx.min(SHARD_MODELS.len() - 1)
-}
+/// The longest frame the emitter steps, 1/15 s (`0x7fc22f`).
+const SHARD_STEP_CAP: f32 = 1.0 / 15.0;
+
+/// How far above the centre a shard's ground search reaches, 16.67 yd (`0x7fc3b4`).
+const SHARD_PROBE_RISE: f32 = 50.0 / 3.0;
+
+/// The longest delay before a shard starts, `2 × trunc(255 × u)` ms (`0x7fc51a`).
+const SHARD_DELAY_MAX_MS: f32 = 255.0;
 
 /// The shard emitter's rate factor from the `spellEffectLevel` record's integer, read once at the
 /// emitter's init (`0x7fb5e9`-`0x7fb5fe`), so a change reaches only
@@ -47,6 +38,8 @@ pub(super) struct GroundFx {
     path: String,
     /// Loop for life (visual A), or one pass of sequence 0 then despawn (a shard, a burst).
     looping: bool,
+    /// Nothing draws before this `time.elapsed_secs()`, a shard's start delay (`0x7fb33b`).
+    starts: f32,
     /// Parts attached (the model was ready).
     spawned: bool,
     loop_armed: bool,
@@ -59,6 +52,7 @@ impl GroundFx {
         Self {
             path,
             looping,
+            starts: 0.0,
             spawned: false,
             loop_armed: false,
             expires: None,
@@ -70,7 +64,7 @@ impl GroundFx {
 /// that run out their own lifetimes.
 #[derive(Component)]
 pub(super) struct ShardEmitter {
-    /// The [`SHARD_MODELS`] path.
+    /// The `SpellVisualKitAreaModel` row the density picks (`0x7fbd70`).
     path: String,
     /// `DYNAMICOBJECT_RADIUS`: the wire radius is the spread.
     radius: f32,
@@ -91,6 +85,8 @@ pub(crate) struct GroundBurst {
     pub(crate) path: String,
     /// The dest point, in Bevy coordinates.
     pub(crate) pos: Vec3,
+    /// A `SpellVisualKitModelAttach` row's offset and turn at the point.
+    pub(crate) attach: Option<benilla_formats::ModelAttach>,
 }
 
 /// Arm each new DynamicObject off its create's fields: visual A, the shard emitter and the area
@@ -151,12 +147,11 @@ pub(super) fn arm_ground_effects(
             }
             commands.entity(anchor).add_child(child);
         }
-        // Visual B from the same kit, whose sound loops as the area sound: stopped at destroy,
-        // where the reference fades it over 3 s. A kit with no type-9 block sounds here; whether
-        // the reference, which ties the sound to the emitter, sounds it is untraced.
+        // Visual B from the same kit, and the kit sound looped with or without it (`0x705059`).
         if let Some(kit) = visuals.0.kit(stages.persistent_area_kit) {
             if let Some(proc) = kit.char_procs().find(|p| p.ty == PROC_TYPE_SHARD_EMITTER) {
-                let path = SHARD_MODELS[shard_model_index(proc.params[0])].to_string();
+                let density = benilla_formats::shard_density(proc.params[0]);
+                let path = visuals.0.area_model(density).to_string();
                 ensure_model(&mut fx, &asset_server, &path);
                 commands.entity(anchor).insert(ShardEmitter {
                     path,
@@ -192,42 +187,60 @@ pub(super) fn spawn_ground_bursts(
     let Some(mut fx) = fx else { return };
     for burst in bursts.read() {
         ensure_model(&mut fx, &asset_server, &burst.path);
+        // Deviation: the reference turns a row's offset by the caster's facing (`0x6f8c31`); a
+        // point play carries no facing, so it lands unturned.
+        let (shift, turn) = burst.attach.as_ref().map_or(
+            (Vec3::ZERO, Quat::IDENTITY),
+            super::spell_fx::model_attach_local,
+        );
         commands.spawn((
             GroundFx::new(burst.path.clone(), false),
-            Transform::from_translation(burst.pos),
+            Transform::from_translation(burst.pos + shift).with_rotation(turn),
             Visibility::default(),
         ));
     }
 }
 
-/// Emit `rate` shards per second, each a free one-shot at a uniform random point of the radius's
-/// horizontal disc (the reference's spread scaled by `+0x11c`).
+/// Emit `rate` shards per second (`0x7fc220`): a random direction at a uniform fraction of the
+/// radius, so they crowd the centre, set on the ground and started up to 510 ms late.
 pub(super) fn tick_shard_emitters(
     mut commands: Commands,
     time: Res<Time>,
     mut emitters: Query<(&mut ShardEmitter, &GlobalTransform)>,
+    ground: benilla_world::surface::TerrainHeight,
 ) {
+    let now = time.elapsed_secs();
     for (mut em, tf) in &mut emitters {
-        // Clamped as the particle step is, so a long frame sprays no burst.
-        em.accum += em.rate * time.delta_secs().min(0.1);
+        em.accum += em.rate * time.delta_secs().min(SHARD_STEP_CAP);
+        if em.accum < 1.0 {
+            continue;
+        }
+        let center = tf.translation();
+        let height = |p: Vec3| ground.at(p);
+        // Deviation: the reference rays the world up then down (`0x7fc3d8`, `0x7fc46c`); the
+        // heightfield alone is cheap, so only an emitter standing on the terrain follows it.
+        let on_terrain = height(center).is_some_and(|h| (h - center.y).abs() < 0.5);
         while em.accum >= 1.0 {
             em.accum -= 1.0;
             let mut next = || {
                 em.rng ^= em.rng >> 12;
                 em.rng ^= em.rng << 25;
                 em.rng ^= em.rng >> 27;
-                em.rng.wrapping_mul(0x2545F4914F6CDD1D)
+                (em.rng.wrapping_mul(0x2545F4914F6CDD1D) >> 40) as f32 / (1u64 << 24) as f32
             };
-            let u1 = (next() >> 40) as f32 / (1u64 << 24) as f32;
-            let u2 = (next() >> 40) as f32 / (1u64 << 24) as f32;
-            let r = em.radius * u1.sqrt();
-            let theta = u2 * std::f32::consts::TAU;
-            let offset = Vec3::new(r * theta.cos(), 0.0, r * theta.sin());
-            commands.spawn((
-                GroundFx::new(em.path.clone(), false),
-                Transform::from_translation(tf.translation() + offset),
-                Visibility::default(),
-            ));
+            let (scale, angle, delay) = (next(), next() * std::f32::consts::TAU, next());
+            let r = em.radius * scale;
+            let mut at = center + Vec3::new(r * angle.cos(), 0.0, r * angle.sin());
+            // Off terrain a flat disc; a probe miss takes the centre itself (`0x7fc4a3`).
+            if on_terrain {
+                match height(at).filter(|h| (h - center.y).abs() <= SHARD_PROBE_RISE) {
+                    Some(h) => at.y = h,
+                    None => at = center,
+                }
+            }
+            let mut fx = GroundFx::new(em.path.clone(), false);
+            fx.starts = now + 2.0 * (delay * SHARD_DELAY_MAX_MS).trunc() / 1000.0;
+            commands.spawn((fx, Transform::from_translation(at), Visibility::default()));
         }
     }
 }
@@ -251,6 +264,9 @@ pub(super) fn attach_ground_fx_models(
     let now = time.elapsed_secs();
     for (entity, mut inst, player) in &mut instances {
         if !inst.spawned {
+            if now < inst.starts {
+                continue;
+            }
             ensure_model(&mut fx, &asset_server, &inst.path);
             let Some(dm) = fx.models.get(&inst.path) else {
                 continue; // unreachable: just inserted
@@ -319,18 +335,5 @@ mod tests {
         // Unclamped, as the record's integer reaches the multiply.
         assert!(near(shard_rate_scale(Some(18)), 1.9));
         assert_eq!(shard_rate_scale(None), 1.0);
-    }
-
-    /// The small-int decode, `bits(f32(param0 + 512.0)) >> 14 & 0xff`; the real rows carry 0.0
-    /// (Blizzard) and 1.0 (Rain of Fire).
-    #[test]
-    fn shard_model_index_decodes_and_clamps() {
-        assert_eq!(shard_model_index(0.0), 0);
-        assert_eq!(shard_model_index(1.0), 1);
-        assert_eq!(shard_model_index(6.0), 6);
-        assert_eq!(shard_model_index(7.0), 6, "clamped, not read past");
-        assert_eq!(shard_model_index(200.0), 6);
-        assert_eq!(SHARD_MODELS[0], "Spells\\Blizzard_Impact_Base.mdx");
-        assert_eq!(SHARD_MODELS[1], "Spells\\RainOfFire_Impact_Base.mdx");
     }
 }

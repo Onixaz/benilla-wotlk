@@ -201,6 +201,8 @@ fn stationary_cast_hold_stows_an_engaged_casters_weapon() {
 
     app.world_mut().entity_mut(unit).insert(CastHold {
         ranged: false,
+        start_anim: None,
+        seq: 0,
         anim_id: 51,
         spell_id: 20793,
     });
@@ -295,6 +297,8 @@ fn moving_cast_hold_keeps_its_stow_between_plays() {
 
     app.world_mut().entity_mut(unit).insert(CastHold {
         ranged: false,
+        start_anim: None,
+        seq: 0,
         anim_id: 51,
         spell_id: 20793,
     });
@@ -490,6 +494,8 @@ fn cast_hold_stows_even_when_the_model_lacks_the_spell_anims() {
 
     app.world_mut().entity_mut(unit).insert(CastHold {
         ranged: false,
+        start_anim: None,
+        seq: 0,
         anim_id: 51,
         spell_id: 20792,
     });
@@ -1014,6 +1020,8 @@ fn turning_in_place_never_unpins_the_stationary_cast_hold() {
             MovementState::default(),
             CastHold {
                 ranged: false,
+                start_anim: None,
+                seq: 0,
                 anim_id: 51,
                 spell_id: 116,
             },
@@ -1731,6 +1739,8 @@ fn a_jump_does_not_cut_the_moving_cast_hold() {
                 anim_id: 51,
                 spell_id: 1,
                 ranged: false,
+                start_anim: None,
+                seq: 0,
             },
         ))
         .id();
@@ -1925,6 +1935,8 @@ fn the_step_off_arc_freezes_the_gait_against_live_pins() {
     });
     app.world_mut().entity_mut(unit).insert(CastHold {
         ranged: false,
+        start_anim: None,
+        seq: 0,
         anim_id: 51,
         spell_id: 20793,
     });
@@ -5016,6 +5028,8 @@ fn a_cast_during_the_latch_does_not_pick_its_kit_anim() {
         let unit = eater(&mut app);
         app.world_mut().entity_mut(unit).insert(CastHold {
             ranged: false,
+            start_anim: None,
+            seq: 0,
             anim_id: 51,
             spell_id: 20793,
         });

@@ -34,6 +34,8 @@ pub(super) struct Frame<'a> {
     pub(super) airborne_frozen: bool,
     pub(super) auto_repeat: bool,
     pub(super) cast_hold: Option<&'a CastHold>,
+    /// The precast start anim while its latch holds, offered in place of the hold.
+    pub(super) cast_start: Option<u16>,
     pub(super) wielded: Option<&'a Wielded>,
     pub(super) store: Option<&'a ObjectStore>,
     pub(super) emote_sounds: Option<&'a EmoteSounds>,
@@ -69,6 +71,7 @@ pub(super) fn run(
         airborne_frozen,
         auto_repeat,
         cast_hold,
+        cast_start,
         wielded,
         store,
         emote_sounds,
@@ -341,7 +344,7 @@ pub(super) fn run(
                 let hold_cands;
                 let cands: &[u16] = match cast_hold {
                     Some(h) if mv.flags & move_flags::CAST_PIN_MOVE == 0 => {
-                        hold_cands = [h.anim_id, STAND];
+                        hold_cands = [cast_start.unwrap_or(h.anim_id), STAND];
                         &hold_cands
                     }
                     _ => cands,
@@ -440,7 +443,11 @@ pub(super) fn run(
                         }
                         // The ranged Load and Loot 50 are authored clamp: played once, they hold
                         // their last frame (full draw, the rummage pose), where a loop would wrap.
-                        let repeat = if select::is_ranged_load(target) || target == select::LOOT {
+                        // The precast start anim plays once, as its end is what clears it.
+                        let repeat = if select::is_ranged_load(target)
+                            || target == select::LOOT
+                            || Some(target) == cast_start
+                        {
                             // No watchdog window either, so nothing re-arms them.
                             drv.loop_window = None;
                             bevy::animation::RepeatAnimation::Never
