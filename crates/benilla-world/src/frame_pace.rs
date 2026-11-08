@@ -1,9 +1,12 @@
-//! Frame pacing: `Time<Virtual>` advances on the presentation cadence, not the CPU loop. Under
-//! `PresentMode::Fifo` frames are shown on refresh boundaries, but `Time<Real>` is stamped where
-//! the main thread waits on the render thread, so two frames shown 16.67 ms apart can measure
-//! 26.4 and 8.0 ms, and every bone of a standing model jitters at once. When recent deltas look
-//! vsync'd, each is snapped to a whole number of refresh periods and the remainder carried, so
-//! elapsed time still matches the wall clock; otherwise (uncapped, a real stall) it passes through.
+//! Frame pacing: under a vsync present mode `Time<Virtual>` advances on the presentation cadence,
+//! not the CPU loop. Deviates from 12340, whose frame delta is the plain difference of millisecond
+//! timestamps (`0x47f0ef`), for a measurement artifact of ours: under `PresentMode::Fifo` frames
+//! are shown on refresh boundaries, but `Time<Real>` is stamped where the main thread waits on the
+//! render thread, so two frames shown 16.67 ms apart can measure 26.4 and 8.0 ms, and every bone
+//! of a standing model jitters at once. When recent deltas look vsync'd, each is snapped to a
+//! whole number of refresh periods and the remainder carried, so elapsed time still matches the
+//! wall clock; a real stall passes through. An uncapped stream has no refresh to snap to and is
+//! the reference's delta exactly, however steady it is.
 //!
 //! The frame clock has no clamp (`0x47f0ef`, `0x77ecb0`): a long frame reaches every timer whole.
 //! `Time<Real>` stays unpaced because probes read it and a stall must stay visible there.
@@ -14,6 +17,7 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use bevy::time::{Real, TimeSystems, TimeUpdateStrategy, Virtual};
+use bevy::window::{PresentMode, PrimaryWindow};
 
 /// Recent raw deltas the refresh-period median is taken over, about a third of a second at 60 Hz.
 const WINDOW: usize = 20;
@@ -106,6 +110,15 @@ impl FramePacer {
     }
 }
 
+/// Whether `mode` holds each present to a refresh, the only stream with a cadence to restore.
+/// `Mailbox` replaces the queued frame without waiting, so its loop runs uncapped.
+fn holds_to_refresh(mode: PresentMode) -> bool {
+    matches!(
+        mode,
+        PresentMode::Fifo | PresentMode::FifoRelaxed | PresentMode::AutoVsync
+    )
+}
+
 /// Rewrites `Time<Virtual>` and the generic `Time` so this frame's delta is the paced one; runs
 /// right after Bevy's clock tick. Bevy has no delta setter, so the clock is rebuilt with its
 /// context and wrap period, and two `advance_by` calls place `elapsed` and `delta`. Paused or
@@ -116,15 +129,22 @@ pub(crate) fn pace_virtual_time(
     mut generic: ResMut<Time>,
     mut pacer: ResMut<FramePacer>,
     strategy: Option<Res<TimeUpdateStrategy>>,
+    window: Query<&Window, With<PrimaryWindow>>,
 ) {
     // A manual clock (the capture harness, deterministic tests) must reproduce frame for frame.
     let manual = matches!(
         strategy.as_deref(),
         Some(TimeUpdateStrategy::ManualInstant(_) | TimeUpdateStrategy::ManualDuration(_))
     );
-    if pacer.off || manual || virt.is_paused() || virt.relative_speed_f64() != 1.0 {
+    // The window's own mode, which a `RestartGx()` and the capture probes both write.
+    let vsync = window
+        .single()
+        .is_ok_and(|w| holds_to_refresh(w.present_mode));
+    if pacer.off || manual || !vsync || virt.is_paused() || virt.relative_speed_f64() != 1.0 {
         pacer.total = None;
         pacer.carry = 0.0;
+        // Deltas measured off the cadence must not vote on the next period.
+        pacer.hist.clear();
         return;
     }
     let paced = Duration::from_secs_f64(pacer.pace(real.delta().as_secs_f64()));
@@ -335,13 +355,165 @@ mod tests {
     }
 
     #[test]
-    fn an_uncapped_stream_is_left_alone() {
+    fn a_stream_with_no_cadence_is_left_alone() {
         let mut p = pacer();
-        // Frame times of a `PresentMode::AutoNoVsync` run.
+        // Too uneven for any period to hold 60% of the window.
         let raws = [0.004, 0.011, 0.0031, 0.019, 0.0072, 0.0155, 0.0028, 0.0093];
         for i in 0..WINDOW * 2 {
             let raw = raws[i % raws.len()];
             assert_eq!(p.pace(raw), raw, "no cadence ⇒ no snapping");
+        }
+    }
+
+    use bevy::ecs::system::RunSystemOnce;
+
+    /// Steady enough for [`FramePacer::cadence`] (7 of 8 within 15% of 4 ms), and skewed long as
+    /// real frame times are: the stream the pacer used to mistake for vsync.
+    const STEADY_US: [u64; 8] = [4000, 4100, 3900, 4000, 4200, 3800, 4000, 5500];
+    /// A 60 Hz refresh, whole microseconds so a delta compares exactly.
+    const REFRESH_US: u64 = 16667;
+
+    /// The three clocks and a primary window in `mode`, past the real clock's zero first update.
+    fn clocks(mode: PresentMode) -> World {
+        let mut world = World::new();
+        world.init_resource::<Time<Real>>();
+        world.init_resource::<Time<Virtual>>();
+        world.init_resource::<Time>();
+        world.insert_resource(pacer());
+        world.spawn((
+            Window {
+                present_mode: mode,
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        world
+            .resource_mut::<Time<Real>>()
+            .update_with_duration(Duration::ZERO);
+        world
+    }
+
+    /// One frame of `us` microseconds through Bevy's clocks and the pacer; the delta it left.
+    fn frame(world: &mut World, us: u64) -> Duration {
+        let raw = Duration::from_micros(us);
+        world.resource_mut::<Time<Real>>().update_with_duration(raw);
+        world.resource_mut::<Time<Virtual>>().advance_by(raw);
+        // Bevy's own tick ends with the generic clock on the virtual one.
+        let generic = world.resource::<Time<Virtual>>().as_generic();
+        *world.resource_mut::<Time>() = generic;
+        world.run_system_once(pace_virtual_time).unwrap();
+        let delta = world.resource::<Time<Virtual>>().delta();
+        assert_eq!(world.resource::<Time>().delta(), delta, "generic follows");
+        delta
+    }
+
+    fn set_mode(world: &mut World, mode: PresentMode) {
+        world
+            .query::<&mut Window>()
+            .single_mut(world)
+            .unwrap()
+            .present_mode = mode;
+    }
+
+    #[test]
+    fn a_steady_uncapped_stream_reaches_the_clock_exactly_as_measured() {
+        for mode in [
+            PresentMode::AutoNoVsync,
+            PresentMode::Immediate,
+            PresentMode::Mailbox,
+        ] {
+            let mut world = clocks(mode);
+            for i in 0..WINDOW * 10 {
+                let us = STEADY_US[i % STEADY_US.len()];
+                assert_eq!(frame(&mut world, us), Duration::from_micros(us), "{mode:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_same_stream_is_snapped_under_vsync() {
+        for mode in [
+            PresentMode::Fifo,
+            PresentMode::FifoRelaxed,
+            PresentMode::AutoVsync,
+        ] {
+            let mut world = clocks(mode);
+            let changed = (0..WINDOW * 10)
+                .filter(|i| {
+                    let us = STEADY_US[i % STEADY_US.len()];
+                    frame(&mut world, us) != Duration::from_micros(us)
+                })
+                .count();
+            assert!(changed > WINDOW, "{mode:?} paced {changed} frames");
+        }
+    }
+
+    #[test]
+    fn no_window_is_no_vsync() {
+        let mut world = clocks(PresentMode::Fifo);
+        let window = world
+            .query_filtered::<Entity, With<Window>>()
+            .single(&world);
+        world.despawn(window.unwrap());
+        for i in 0..WINDOW * 2 {
+            let us = STEADY_US[i % STEADY_US.len()];
+            assert_eq!(frame(&mut world, us), Duration::from_micros(us));
+        }
+    }
+
+    /// A world under `Fifo` that has settled on [`REFRESH_US`].
+    fn settled_on_refresh() -> World {
+        let mut world = clocks(PresentMode::Fifo);
+        for _ in 0..=WINDOW {
+            frame(&mut world, REFRESH_US);
+        }
+        world
+    }
+
+    #[test]
+    fn vsync_restores_a_mis_split_pair_through_the_clock() {
+        let mut world = settled_on_refresh();
+        let period = Duration::from_micros(REFRESH_US);
+        assert_eq!(frame(&mut world, 26400), period, "long half");
+        assert_eq!(frame(&mut world, 8000), period, "short half");
+    }
+
+    #[test]
+    fn vsync_keeps_both_refreshes_of_a_dropped_frame() {
+        let mut world = settled_on_refresh();
+        assert_eq!(
+            frame(&mut world, 2 * REFRESH_US),
+            Duration::from_micros(2 * REFRESH_US)
+        );
+    }
+
+    #[test]
+    fn vsync_reports_a_stall_as_it_happened() {
+        let mut world = settled_on_refresh();
+        assert_eq!(
+            frame(&mut world, 1_820_000),
+            Duration::from_micros(1_820_000)
+        );
+    }
+
+    #[test]
+    fn turning_vsync_off_and_on_starts_the_cadence_over() {
+        let mut world = clocks(PresentMode::Fifo);
+        for i in 0..WINDOW * 2 {
+            frame(&mut world, STEADY_US[i % STEADY_US.len()]);
+        }
+        set_mode(&mut world, PresentMode::AutoNoVsync);
+        let us = STEADY_US[1];
+        assert_eq!(frame(&mut world, us), Duration::from_micros(us), "off");
+        set_mode(&mut world, PresentMode::Fifo);
+        // The window refills from scratch; its last sample is the one that engages.
+        for i in 0..WINDOW - 1 {
+            let us = STEADY_US[i % STEADY_US.len()];
+            assert_eq!(
+                frame(&mut world, us),
+                Duration::from_micros(us),
+                "frame {i}"
+            );
         }
     }
 }
