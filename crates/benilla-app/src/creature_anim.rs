@@ -1008,7 +1008,7 @@ impl Plugin for CreatureAnimPlugin {
                 Update,
                 crate::aura_visual::apply_aura_anim_rate
                     .after(drive_animations)
-                    .after(crate::aura_visual::drain_aura_procs),
+                    .after(crate::aura_visual::tick_body_procs),
             );
     }
 }
