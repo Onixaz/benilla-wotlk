@@ -190,7 +190,12 @@ impl Plugin for UiUnitPlugin {
         .add_systems(Update, drain_action_bar_toggles.after(UiInput))
         .add_systems(Update, feed_default_language.in_set(UnitFeed))
         .add_systems(Update, feed_known_languages.in_set(UnitFeed))
-        .add_systems(Update, feed_option_state.in_set(UnitFeed))
+        .add_systems(
+            Update,
+            feed_option_state
+                .in_set(UnitFeed)
+                .after(crate::ui_items::feed::feed_item_stats),
+        )
         // `load_exhaustion_rows` pushes into the VM, so it runs per VM; the rest are one-shots.
         .add_systems(
             Update,
@@ -2019,17 +2024,101 @@ pub(crate) fn add_unit_feed(app: &mut App) {
         .add_systems(Update, feed_units);
 }
 
-/// The player state `SecureCmdOptionParse`'s `swimming` and `mounted` read, pushed each frame:
-/// the swim bit of our movement flags and our mount display.
+/// The Northrend continent, where flying also takes Cold Weather Flying (`0x7261b0`).
+const NORTHREND: u32 = 571;
+/// Rebuild what `equipped` and `worn` read, when the self descriptor or a template answer moved.
+#[derive(bevy::ecs::system::SystemParam)]
+struct EquippedFeed<'w, 's> {
+    changed: Query<'w, 's, (), (With<SelfPlayer>, Changed<ObjectStore>)>,
+    index: Option<Res<'w, crate::net::GuidIndex>>,
+    stores: Query<'w, 's, &'static ObjectStore>,
+    items: Option<Res<'w, crate::items::Items>>,
+    classes: Option<Res<'w, crate::ui_items::ItemClasses>>,
+    sub_classes: Option<Res<'w, crate::ui_items::ItemSubClasses>>,
+    epoch: Local<'s, Option<u64>>,
+}
+
+impl EquippedFeed<'_, '_> {
+    fn push(&mut self, script: &mut UiScript, store: &ObjectStore) {
+        let Some(items) = self.items.as_deref() else {
+            return;
+        };
+        let epoch = items.template_epoch();
+        if self.changed.is_empty() && *self.epoch == Some(epoch) {
+            return;
+        }
+        *self.epoch = Some(epoch);
+        let type_names = (0..29)
+            .map(|i| {
+                let token = benilla_ui::script::equip_loc_token(i);
+                let text = if token.is_empty() {
+                    None
+                } else {
+                    script
+                        .eval::<Option<String>>(&format!("return {token}"))
+                        .ok()
+                        .flatten()
+                };
+                [
+                    token.to_lowercase(),
+                    text.unwrap_or_default().to_lowercase(),
+                ]
+            })
+            .collect();
+        let rows = (0u8..19)
+            .filter_map(|slot| {
+                let guid = store.0.player_inv_slot(slot)?;
+                let entity = *self.index.as_deref()?.0.get(&guid)?;
+                let entry = self.stores.get(entity).ok()?.0.object_entry()?;
+                let t = items.template_cached(entry)?;
+                let class = self.classes.as_deref().and_then(|c| c.0.name(t.class));
+                let sub = self.sub_classes.as_deref();
+                let names = [
+                    class,
+                    sub.and_then(|s| s.0.name(t.class, t.subclass)),
+                    sub.and_then(|s| s.0.display_name(t.class, t.subclass)),
+                ]
+                .into_iter()
+                .flatten()
+                .map(str::to_lowercase)
+                .collect();
+                Some(benilla_ui::script::EquippedRow {
+                    inventory_type: t.inventory_type,
+                    names,
+                })
+            })
+            .collect();
+        script.set_equipped_for_macros(benilla_ui::script::EquippedForMacros {
+            type_names,
+            items: rows,
+        });
+    }
+}
+
+/// The player state `SecureCmdOptionParse`'s conditions read, pushed each frame.
 fn feed_option_state(
     script: Option<NonSendMut<UiScript>>,
     player: Option<Res<crate::player::Player>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    place: Option<Res<crate::area::PlayerPlace>>,
+    map: Option<Res<benilla_world::world_map::CurrentMap>>,
+    mut equipped: EquippedFeed,
 ) {
     let Some(mut script) = script else {
         return;
     };
+    if let Some(store) = self_q.iter().next() {
+        equipped.push(&mut script, store);
+    }
     let state = benilla_ui::script::OptionState {
+        flyable: place.as_deref().is_some_and(|p| p.flyable_area),
+        northrend: map.is_some_and(|m| m.0 == NORTHREND),
+        flying: player.as_deref().is_some_and(|p| p.flying),
+        indoors: place.as_deref().is_some_and(|p| p.indoors),
+        stealthed: self_q
+            .iter()
+            .next()
+            .is_some_and(|s| s.0.unit_is_stealthed()),
         swimming: player
             .as_deref()
             .is_some_and(|p| p.move_flags() & crate::creature_anim::move_flags::SWIMMING != 0),

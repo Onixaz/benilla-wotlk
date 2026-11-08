@@ -363,7 +363,7 @@ pub use guild_bank::{
 };
 pub use input_verbs::{BindingInput, FiredInput, HeldInput};
 pub use item_link::{item_hyperlink, ItemLinkFields};
-pub use macro_options::OptionState;
+pub use macro_options::{EquippedForMacros, EquippedRow, OptionState};
 pub use mirror_timer::{MirrorTimer, MIRROR_TIMER_TOKENS};
 pub use modelframe::ModelPaneFrame;
 pub use petition::{
@@ -403,6 +403,7 @@ pub use glyph::{
 };
 pub use inspect::{InspectView, UnitReach};
 pub use instance::InstanceLock;
+pub use item_stats::equip_loc_token;
 pub use item_stats::{
     item_usable, EnchantEffectView, EnchantRowView, GemView, ItemSetMember, ItemSetView,
     ItemSpellView, ItemTemplateView, PlayerReqState, RandomSuffixView,

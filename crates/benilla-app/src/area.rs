@@ -55,6 +55,16 @@ fn load_area_table(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     }
 }
 
+/// Where the player stands, for the macro conditions `indoors`, `outdoors` and `flyable`.
+#[derive(Resource, Default, PartialEq, Eq)]
+pub(crate) struct PlayerPlace {
+    /// Not outdoors by the object's WMO test (`0x71b7f0`, group flag `0x8`), `WMOAreaTable`'s flag
+    /// `0x4` forcing outdoors.
+    pub(crate) indoors: bool,
+    /// The leaf area's flag `0x400` without `0x20000000` (`0x51a1d0`).
+    pub(crate) flyable_area: bool,
+}
+
 /// The client's zone-text cache: the compare targets, the minimap line's cache and the indoor dedup
 /// pair. It lives per VM, so every login starts zeroed and its first resolve is a NEW_AREA.
 #[derive(Default)]
@@ -109,6 +119,7 @@ fn feed_zone_events(
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     roster: Option<Res<crate::char_select::Roster>>,
     mut cache: Local<crate::ui_script::VmMemo<ZoneCache>>,
+    mut place: ResMut<PlayerPlace>,
 ) {
     let (Some(mut script), Some(areas)) = (script, areas) else {
         return;
@@ -126,6 +137,13 @@ fn feed_zone_events(
     };
     let real_zone_text = areas.0.name(zone).unwrap_or_default().to_string();
     let indoor = world.area_interior().is_some();
+    place.set_if_neq(PlayerPlace {
+        indoors: match world.area_interior_rows() {
+            Some((_, group, _)) => group.is_none_or(|row| row.flags & 0x4 == 0),
+            None => indoor,
+        },
+        flyable_area: leaf_row.flags & 0x400 != 0 && leaf_row.flags & 0x2000_0000 == 0,
+    });
 
     // The outdoor texts the indoor naming starts from.
     let mut zone_text = real_zone_text.clone();
@@ -282,7 +300,8 @@ pub(crate) struct AreaPlugin;
 
 impl Plugin for AreaPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_area_table.after(AssetSet::Open))
+        app.init_resource::<PlayerPlace>()
+            .add_systems(Startup, load_area_table.after(AssetSet::Open))
             .add_systems(
                 Update,
                 // After the leaf authority: leaf, indoor bit and names must come from one frame, as

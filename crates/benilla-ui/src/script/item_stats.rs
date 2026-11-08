@@ -393,7 +393,7 @@ pub(super) fn item_link(item_id: u32, name: &str, quality: u32, level: u32) -> S
 /// `InventoryType` → `GetItemInfo`'s `itemEquipLoc`, the reference's 30-pointer table: slots 0 and
 /// 29 are the shared `""`, not nil, and four tokens (`AMMO`, `THROWN`, `RANGEDRIGHT`, `QUIVER`)
 /// have no `GlobalStrings.lua` entry.
-pub(super) fn equip_loc_token(inventory_type: u32) -> &'static str {
+pub fn equip_loc_token(inventory_type: u32) -> &'static str {
     const TOKENS: [&str; 29] = [
         "",
         "INVTYPE_HEAD",

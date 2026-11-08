@@ -13,10 +13,7 @@
 //! A boolean condition given an argument holds when its truth equals the argument's number
 //! (`0x5eeb00`): `[combat:0]` is out of combat.
 //!
-//! Deviation: `flyable`, `flying`, `indoors`, `outdoors`, `stealth`, `equipped`/`worn`,
-//! `vehicleui` and `unithasvehicleui` never hold, for state benilla does not track; `spec` reads
-//! the primary talent group, as benilla has no dual specialization; `pet:` matches the pet'"'"'s name,
-//! never its family.
+//! The state no unit snapshot carries arrives in [`OptionState`] and [`EquippedForMacros`].
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -29,12 +26,69 @@ pub struct OptionState {
     pub swimming: bool,
     /// `mounted`: the player's mount display (`[unit+0x9c0]`, `0x5efb23`).
     pub mounted: bool,
+    /// `flyable` (`0x5eee70`): the area's flying flag, and [`Self::northrend`] takes the training
+    /// as well (`0x7261b0`).
+    pub flyable: bool,
+    /// The player is on the Northrend continent.
+    pub northrend: bool,
+    /// `flying`: the mover's `0x2000000` (`0x5efaa0`).
+    pub flying: bool,
+    /// `indoors`, and `outdoors` its opposite: the object's WMO test (`0x71b7f0`).
+    pub indoors: bool,
+    /// `stealth`: `UNIT_FIELD_BYTES_1` byte 2 bit `0x2` (`0x5efb70`).
+    pub stealthed: bool,
+}
+
+/// One equipped item as `equipped`/`worn` reads it, names folded to lowercase.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EquippedRow {
+    pub inventory_type: u32,
+    /// `ItemClass.dbc`'s name, then `ItemSubClass.dbc`'s verbose and display names.
+    pub names: Vec<String>,
+}
+
+/// What `equipped`/`worn` (`0x5efd70`) compares: each slot token's name and localized text,
+/// indexed by inventory type, and the equipped items.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EquippedForMacros {
+    pub type_names: Vec<[String; 2]>,
+    pub items: Vec<EquippedRow>,
+}
+
+impl EquippedForMacros {
+    /// An argument naming a slot (type above 0) matches an item of that slot and nothing else;
+    /// any other matches an item's class or subclass (`0x517740`). No argument never holds.
+    fn matches(&self, args: &[&str]) -> bool {
+        args.iter().any(|arg| {
+            let arg = arg.to_lowercase();
+            match self
+                .type_names
+                .iter()
+                .position(|n| n[0] == arg || n[1] == arg)
+            {
+                Some(slot) if slot > 0 => {
+                    self.items.iter().any(|i| i.inventory_type as usize == slot)
+                }
+                _ => self.items.iter().any(|i| i.names.contains(&arg)),
+            }
+        })
+    }
 }
 
 impl super::UiScript {
     /// Push the player state [`OptionState`] carries.
     pub fn set_option_state(&mut self, state: OptionState) {
         set_field!(self, option_state, state);
+    }
+
+    /// Whether the book holds Cold Weather Flying.
+    pub fn set_knows_cold_weather_flying(&mut self, knows: bool) {
+        set_field!(self, knows_cold_weather_flying, knows);
+    }
+
+    /// Push what `equipped` and `worn` read.
+    pub fn set_equipped_for_macros(&mut self, state: EquippedForMacros) {
+        set_field!(self, equipped_for_macros, state);
     }
 
     /// Drain the condition names `SecureCmdOptionParse` did not know, for the app to post as
@@ -188,9 +242,14 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
             match pet {
                 None => false,
                 Some(_) if args.is_empty() => true,
-                Some(p) => args
-                    .iter()
-                    .any(|a| p.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(a))),
+                // The name or the creature family, each without regard to case (`0x5efbd0`).
+                Some(p) => args.iter().any(|a| {
+                    let a = a.to_lowercase();
+                    [p.name.as_deref(), model.pet_bar.stats.family.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .any(|n| n.to_lowercase() == a)
+                }),
             }
         }
         // Each argument through `IsModifiedClick`'s test (`0x5ef0a2` → `0x55f940`).
@@ -233,12 +292,22 @@ fn holds(model: &Model, token: &str, c: &Condition<'_>) -> Option<bool> {
         "cursor" => boolean(model.cursor.is_some(), args),
         "swimming" => boolean(model.option_state.swimming, args),
         "mounted" => boolean(model.option_state.mounted, args),
-        "spec" => any_number(1, args, true),
+        // The active talent group, 1-based; no argument never holds (`0x5ef2e0`).
+        "spec" => any_number(model.talents.active_group as i64 + 1, args, false),
         // The seat flag `0x20000000`: the player's seat (`0x5ef430`), the group's unit's
         // (`0x5ef470`).
         "vehicleui" => super::vehicle::has_vehicle_ui(model, "player"),
         "unithasvehicleui" => super::vehicle::has_vehicle_ui(model, token),
-        "flyable" | "flying" | "indoors" | "outdoors" | "stealth" | "equipped" | "worn" => false,
+        "flyable" => boolean(
+            model.option_state.flyable
+                && (!model.option_state.northrend || model.knows_cold_weather_flying),
+            args,
+        ),
+        "flying" => boolean(model.option_state.flying, args),
+        "indoors" => boolean(model.option_state.indoors, args),
+        "outdoors" => boolean(!model.option_state.indoors, args),
+        "stealth" => boolean(model.option_state.stealthed, args),
+        "equipped" | "worn" => model.equipped_for_macros.matches(args),
         _ => return None,
     })
 }
@@ -308,6 +377,18 @@ pub(crate) fn parse(model: &mut Model, options: &str) -> Option<(String, Option<
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+    // `IsMounted()` (`0x6125a0`): the active player's mount, 1 or nil.
+    lua.globals().set(
+        "IsMounted",
+        lua.create_function(|lua, ()| {
+            let mounted = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .option_state
+                .mounted;
+            Ok(super::binding_abi::flag(mounted))
+        })?,
+    )?;
     // SecureCmdOptionParse("options"): the option text and its target (nil when none), or nothing
     // when no option passes (`0x564b3f`). A non-string raises (`0x564b00`).
     lua.globals().set(
@@ -335,6 +416,125 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod state_condition_tests {
+    use super::{EquippedForMacros, EquippedRow, OptionState};
+    use crate::script::UiScript;
+
+    fn verdict(s: &UiScript, options: &str) -> Option<String> {
+        s.eval::<Option<String>>(&format!("return (SecureCmdOptionParse([[{options}]]))"))
+            .unwrap()
+    }
+
+    #[test]
+    fn the_player_state_conditions_read_the_pushed_state() {
+        let mut s = UiScript::new().unwrap();
+        for (cond, on) in [
+            (
+                "flyable",
+                OptionState {
+                    flyable: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "flying",
+                OptionState {
+                    flying: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "indoors",
+                OptionState {
+                    indoors: true,
+                    ..Default::default()
+                },
+            ),
+            (
+                "stealth",
+                OptionState {
+                    stealthed: true,
+                    ..Default::default()
+                },
+            ),
+        ] {
+            s.set_option_state(OptionState::default());
+            assert_eq!(
+                verdict(&s, &format!("[{cond}] a; b")).as_deref(),
+                Some("b"),
+                "{cond} off"
+            );
+            assert_eq!(
+                verdict(&s, &format!("[{cond}:0] a; b")).as_deref(),
+                Some("a"),
+                "{cond}:0 off"
+            );
+            s.set_option_state(on);
+            assert_eq!(
+                verdict(&s, &format!("[{cond}] a; b")).as_deref(),
+                Some("a"),
+                "{cond} on"
+            );
+            assert_eq!(
+                verdict(&s, &format!("[no{cond}] a; b")).as_deref(),
+                Some("b"),
+                "no{cond} on"
+            );
+        }
+        s.set_option_state(OptionState::default());
+        assert_eq!(verdict(&s, "[outdoors] a; b").as_deref(), Some("a"));
+        s.set_option_state(OptionState {
+            indoors: true,
+            ..Default::default()
+        });
+        assert_eq!(verdict(&s, "[outdoors] a; b").as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn equipped_matches_a_slot_token_or_a_class_or_subclass_name() {
+        let mut s = UiScript::new().unwrap();
+        let mut type_names = vec![[String::new(), String::new()]; 29];
+        type_names[14] = ["invtype_shield".into(), "off hand".into()];
+        s.set_equipped_for_macros(EquippedForMacros {
+            type_names,
+            items: vec![EquippedRow {
+                inventory_type: 14,
+                names: vec!["armor".into(), "shields".into()],
+            }],
+        });
+        for hit in [
+            "[equipped:Shields] a; b",
+            "[worn:Armor] a; b",
+            "[equipped:INVTYPE_SHIELD] a; b",
+            "[equipped:Off Hand] a; b",
+            "[equipped:Plate/Shields] a; b",
+        ] {
+            assert_eq!(verdict(&s, hit).as_deref(), Some("a"), "{hit}");
+        }
+        assert_eq!(verdict(&s, "[equipped:Plate] a; b").as_deref(), Some("b"));
+        assert_eq!(
+            verdict(&s, "[equipped] a; b").as_deref(),
+            Some("b"),
+            "no argument never holds"
+        );
+    }
+
+    #[test]
+    fn is_mounted_answers_one_or_nil() {
+        let mut s = UiScript::new().unwrap();
+        assert!(s
+            .eval::<Option<i64>>("return IsMounted()")
+            .unwrap()
+            .is_none());
+        s.set_option_state(OptionState {
+            mounted: true,
+            ..Default::default()
+        });
+        assert_eq!(s.eval::<i64>("return IsMounted()").unwrap(), 1);
+    }
 }
 
 #[cfg(test)]
