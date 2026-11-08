@@ -30,10 +30,11 @@ use crate::target::click::{resolve_go_action, GoAction};
 use crate::target::lock::GoLockInputs;
 use crate::ui_loot::{LootKneel, LootLatch, LootState};
 
-/// The default object: the `Worn Wooden Chest` at `gameobject` 3998644 (template 1765,
-/// `Lock.dbc` 43, `LockType 13 "Open Kneeling"`) in Elwynn. Ordinary world chests are spawn-pool
-/// members, absent from a fixed point most of the time; this one is unpooled with a 25 s respawn.
-const CHEST_AT: [f32; 4] = [-9474.37, 111.25, 57.03, 0.0];
+/// The default object: AzerothCore's `Ammo Crate` at `gameobject` 10663 (template 176785,
+/// `Lock.dbc` 43, `LockType 13 "Open Kneeling"`) in Dun Morogh. Ordinary world chests are
+/// spawn-pool members, absent from a fixed point most of the time; this one is unpooled with a
+/// 15 s respawn.
+const CHEST_AT: [f32; 4] = [-5746.87, -371.43, 365.88, 0.0];
 /// `GAMEOBJECT_TYPE_CHEST`, also a herb or mining node.
 const GO_TYPE_CHEST: i32 = 3;
 /// `AnimationData.dbc` ids: the kneel, and the stand to return to.
