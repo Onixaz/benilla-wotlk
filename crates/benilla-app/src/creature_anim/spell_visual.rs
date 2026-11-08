@@ -146,6 +146,8 @@ pub(crate) struct ChainProcPlay {
     /// `0` for a bare kit push, which never builds a beam.
     pub(crate) spell_id: u32,
     pub(crate) proc: benilla_formats::ChainProc,
+    /// The playing kit, which a location beam's area kit must differ from (`0x726b2c`).
+    pub(crate) kit_id: u32,
 }
 
 /// One projectile per target on the GO's Speed > 0 branch, consumed by `crate::entities::missile`.
@@ -549,12 +551,13 @@ fn play_kit(
     if let Some(group) = kit.shake {
         out.shakes.write(SpellKitShake::Play { entity, group });
     }
-    // The beam case runs for every play at every stage, ungated by `play.effects`.
-    if let Some(proc) = kit.chain_proc() {
+    // The beam case runs for every chain slot of every play, ungated by `play.effects`.
+    for proc in kit.char_procs().filter_map(|p| p.as_chain()) {
         out.chain.write(ChainProcPlay {
             entity,
             spell_id,
             proc,
+            kit_id: kit.id,
         });
     }
     play_body_procs(out.body, entity, spell_id, kit);
@@ -1298,12 +1301,13 @@ pub(super) fn route_cast_visuals(
                     out.sounds.write(SpellKitSound::Play { entity, kit_sound });
                 }
                 // The CharProc dispatcher's second caller: Drain Life's beam is reached only here,
-                // on the rising edge, and lives until the field clears.
-                if let Some(proc) = kit.chain_proc() {
+                // on the rising edge, and lives until the field clears; every chain slot runs.
+                for proc in kit.char_procs().filter_map(|p| p.as_chain()) {
                     out.chain.write(ChainProcPlay {
                         entity,
                         spell_id: cur,
                         proc,
+                        kit_id: kit.id,
                     });
                 }
                 // The trail arm from the same caller: kit 370 (Whirlwind Primer) is reached here.

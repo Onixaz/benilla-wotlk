@@ -20,7 +20,7 @@ pub mod missiles;
 pub mod model_attach;
 
 pub use area_model::shard_density;
-pub use chain_effects::{ChainEffect, ChainProc};
+pub use chain_effects::{chain_flag, ChainEffect, ChainProc, MAX_COMBO_ROWS};
 pub use missile_motion::MissileMotionRec;
 pub use missiles::{SpellMissileRec, DEFAULT_MISSILE_GRAVITY};
 pub use model_attach::{ModelAttach, MODEL_ATTACH_WORLD};
@@ -108,6 +108,7 @@ impl CharProc {
         (effect_id != 0).then(|| ChainProc {
             effect_id,
             flag: self.params[2] != 0.0,
+            reverse: self.params[3] != 0.0,
             ty: self.ty,
         })
     }

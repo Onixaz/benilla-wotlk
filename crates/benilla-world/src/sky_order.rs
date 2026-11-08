@@ -119,6 +119,10 @@ impl Rung {
     /// passes, just before the glare. One batch, no per-mote sort: the reference submits one
     /// indexed triangle list with depth-write off.
     pub const DRIFT_CLOUD: f32 = 1.4e4;
+    /// The spell beams' pass, after the M2 transparents, the water and the weather (`0x4f91d9`).
+    pub const CHAIN_BEAM: f32 = 1.15e4;
+    /// The step between the beams' render layers 0 to 3 (`0x9ab070`), past two beams' depth gap.
+    pub const CHAIN_BEAM_LAYER: f32 = 500.0;
     /// World text, above the glare so a flare never washes a nameplate (the reference draws it late
     /// in the frame); also the raster bias of a depth-tested layer, so no bigger than needed.
     pub const NAMEPLATE: f32 = 4.0e4;
@@ -145,6 +149,9 @@ const _: () = {
     assert!(Rung::NAMEPLATE - GLARE_BIAS > 1.0e4);
     // The drift cloud's anchor is the eye, so its margin need only beat one far plane.
     assert!(Rung::DRIFT_CLOUD - Rung::GROUND_FX > -WORLD_VIEW_Z_FLOOR);
+    // The beams: over every ground decal, under the drift cloud, at any distance and layer.
+    assert!(Rung::CHAIN_BEAM + WORLD_VIEW_Z_FLOOR - Rung::GROUND_FX > 0.0);
+    assert!(Rung::DRIFT_CLOUD - (Rung::CHAIN_BEAM + 3.0 * Rung::CHAIN_BEAM_LAYER) > 0.0);
     assert!(GLARE_BIAS - Rung::DRIFT_CLOUD > -WORLD_VIEW_Z_FLOOR);
     // The raster constants are their own axis, comparable only to zero and to each other.
     assert!(Rung::DECAL_RASTER > 0 && Rung::FOAM_RASTER < Rung::DECAL_RASTER);

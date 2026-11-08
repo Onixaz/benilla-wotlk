@@ -235,19 +235,8 @@ pub(crate) type AttachPosQuery<'w, 's> = Query<
     ),
 >;
 
-/// A unit's attachment position through the tag cascade, else its base; `None` only when the unit
-/// is gone. Chain-beam endpoints use it too, as the reference reads the same table the same way.
-pub(super) fn attach_world_pos(
-    unit: Entity,
-    tags: impl IntoIterator<Item = u16>,
-    units: &AttachPosQuery,
-    joints: &Query<&GlobalTransform>,
-) -> Option<Vec3> {
-    attach_world_pos_offset(unit, tags, Vec3::ZERO, units, joints)
-}
-
-/// [`attach_world_pos`] with `offset` (Bevy model space) in the attachment's frame, or turned with
-/// the unit at its base.
+/// A unit's attachment position through the tag cascade with `offset` (Bevy model space) in the
+/// attachment's frame, or turned with the unit at its base; `None` only when the unit is gone.
 fn attach_world_pos_offset(
     unit: Entity,
     tags: impl IntoIterator<Item = u16>,

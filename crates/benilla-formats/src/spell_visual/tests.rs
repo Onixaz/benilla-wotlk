@@ -412,7 +412,7 @@ fn ground_aoe_chain_reads_the_area_kits() {
 
 // ── The chain/beam table ──────────────────────────────────────────────────────
 
-/// The chain case truncates the id and reads only params 0 and 2 for what benilla draws.
+/// The chain case truncates the id and reads params 0, 2 and 3 (`0x726ab1`-`0x726af2`).
 #[test]
 fn a_chain_proc_takes_its_id_by_truncation() {
     let proc = CharProc {
@@ -424,6 +424,7 @@ fn a_chain_proc_takes_its_id_by_truncation() {
         Some(ChainProc {
             effect_id: 719,
             flag: true,
+            reverse: true,
             ty: char_proc_type::CHAIN_CHANNEL,
         }),
         "an id past 255, which the small-int decode would mangle"
@@ -433,8 +434,8 @@ fn a_chain_proc_takes_its_id_by_truncation() {
         params: [743.9, 1.0, 0.0, 0.0],
     };
     assert_eq!(
-        cast.as_chain().map(|c| (c.effect_id, c.flag)),
-        Some((743, false))
+        cast.as_chain().map(|c| (c.effect_id, c.flag, c.reverse)),
+        Some((743, false, false))
     );
     let padding = CharProc {
         ty: char_proc_type::CHAIN_CHANNEL,
@@ -464,7 +465,7 @@ fn real_chain_effects_table() {
     assert_eq!(lightning.avg_seg_len, 2.78);
     assert_eq!(lightning.half_width, 0.5);
     assert_eq!(lightning.noise_scale, 0.04);
-    assert_eq!(lightning.scroll_period_s, 1.0);
+    assert_eq!(lightning.tex_scroll_speed, 1.0);
     assert_eq!(lightning.bolt_life_ms, 1000);
     assert_eq!(lightning.first_bolt_delay_ms, 300);
     assert_eq!(lightning.bolt_stagger_ms, 0, "its hops light together");
@@ -479,8 +480,8 @@ fn real_chain_effects_table() {
     let drain = cat.chain_effect(8).expect("chain effect 8");
     assert_eq!(drain.texture, "Textures\\SpellChainEffects\\SoulBeam.blp");
     assert_eq!(
-        drain.scroll_period_s, -2.0,
-        "a NEGATIVE scroll period flows the texture back toward the caster"
+        drain.tex_scroll_speed, -2.0,
+        "a NEGATIVE scroll speed flows the texture back toward the caster"
     );
 
     // Ids are a lookup, never an index.

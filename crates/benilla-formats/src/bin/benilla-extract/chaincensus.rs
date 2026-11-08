@@ -1,7 +1,7 @@
 //! `chaincensus`: every `SpellVisualKit` that draws a `SpellChainEffects` beam, the row it names
 //! and the spells that reach it by stage. Each live slot must name one of the table's rows, or the
 //! decode of `CharParamZero` is wrong. The client tells the two kinds apart by the flag alone,
-//! never the type key.
+//! never the type key. `p/r` is the persist (param 2) and reverse (param 3) pair.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -54,37 +54,80 @@ pub fn run(chain: &mut Chain) -> Result<()> {
     let reach = kit_reachability(chain, &visuals)?;
 
     println!(
-        "SpellChainEffects: {} rows\n{:>4}  {:>8} {:>6} {:>7} {:>7} {:>7} {:>7} {:>6}  texture",
+        "SpellChainEffects: {} rows\n{:>4}  {:>6} {:>5} {:>5} {:>6} {:>5} {:>4} {:>4} {:>5}  {:>13}  {:>17}  {:>5}  {:>17}  {:>8} {:>5} {:>3} {:>6}  combo  texture",
         visuals.chain_effect_len(),
         "id",
         "segLen",
-        "halfWid",
+        "halfW",
         "noise",
-        "scrollS",
-        "hopLife",
-        "delay",
-        "hopStag",
+        "scroll",
+        "life",
+        "dly",
+        "stag",
+        "flags",
+        "joints",
+        "wave h/f/s",
+        "arc",
+        "pulse v/on/fade",
+        "rgba",
+        "blend",
+        "lyr",
+        "texLen",
     );
+    let mut blends = BTreeMap::<u8, usize>::new();
+    let mut layers = BTreeMap::<i32, usize>::new();
+    let mut flag_bits = [0usize; 32];
     for id in visuals.chain_effect_ids() {
         let Some(c) = visuals.chain_effect(id) else {
             continue;
         };
+        *blends.entry(c.blend_mode).or_default() += 1;
+        *layers.entry(c.render_layer).or_default() += 1;
+        for (bit, n) in flag_bits.iter_mut().enumerate() {
+            *n += usize::from(c.flags >> bit & 1 != 0);
+        }
+        let [r, g, b, a] = c.rgba;
         println!(
-            "{id:>4}  {:>8} {:>6} {:>7} {:>7} {:>7} {:>7} {:>6}  {}",
+            "{id:>4}  {:>6} {:>5} {:>5} {:>6} {:>5} {:>4} {:>4} {:>#5x}  {:>3}/{:<3} {:>2}/{:<2}  {:>5}/{:>5}/{:>5}  {:>5}  {:>5}/{:>5}/{:>5}  {r:02x}{g:02x}{b:02x}{a:02x} {:>5} {:>3} {:>6}  {:?}  {}",
             c.avg_seg_len,
             c.half_width,
             c.noise_scale,
-            c.scroll_period_s,
+            c.tex_scroll_speed,
             c.bolt_life_ms,
             c.first_bolt_delay_ms,
             c.bolt_stagger_ms,
+            c.flags,
+            c.joint_count,
+            c.joint_offset_radius,
+            c.joints_per_minor_joint,
+            c.minor_joints_per_major_joint,
+            c.wave_height,
+            c.wave_freq,
+            c.wave_speed,
+            c.arc_height,
+            c.pulse_speed,
+            c.pulse_on_length,
+            c.pulse_fade_length,
+            c.blend_mode,
+            c.render_layer,
+            c.texture_length,
+            c.combo,
             c.texture,
         );
     }
+    println!("\nblend modes (column 43): {blends:?}");
+    println!("render layers (column 45): {layers:?}");
+    let set: Vec<String> = flag_bits
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| **n > 0)
+        .map(|(bit, n)| format!("{:#x}:{n}", 1u32 << bit))
+        .collect();
+    println!("flag bits (column 8): {}", set.join(" "));
 
     println!(
         "\n{:>5} {:>4} {:>5} {:>4}  {:<9} {:<26} spells",
-        "kit", "type", "chain", "flag", "stage", "texture",
+        "kit", "type", "chain", "p/r", "stage", "texture",
     );
     let (mut live, mut padding, mut spells_hit) = (0usize, 0usize, BTreeSet::new());
     for kit_id in visuals.kit_ids() {
@@ -107,10 +150,11 @@ pub fn run(chain: &mut Chain) -> Result<()> {
             let listed: Vec<&str> = spells.iter().take(6).map(String::as_str).collect();
             let more = spells.len().saturating_sub(listed.len());
             println!(
-                "{kit_id:>5} {:>4} {:>5} {:>4}  {:<9} {texture:<26} {}{}",
+                "{kit_id:>5} {:>4} {:>5} {:>2}{:>2}  {:<9} {texture:<26} {}{}",
                 c.ty,
                 c.effect_id,
                 u8::from(c.flag),
+                u8::from(c.reverse),
                 stages.iter().copied().collect::<Vec<_>>().join(","),
                 listed.join(", "),
                 if more > 0 {

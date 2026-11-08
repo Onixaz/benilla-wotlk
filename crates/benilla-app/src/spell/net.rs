@@ -1519,11 +1519,21 @@ fn spell_go(
         if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
             commands.entity(e).remove::<Casting>();
         }
-        // The GO's chain-hop fill, the producer for non-channelled chain spells. It must precede
-        // the CastEvent: the cast kit's chain proc consumes it the same frame. The reference gates
-        // it on the attribute predicate, whose role here is untraced; this fills unconditionally,
-        // harmless since consumption needs a chain proc and every fill clears.
-        fill_chain_hops(caster, e, &hits, commands, index);
+        // The hop fill the cast kit consumes: hits then misses, swapped by flag 0x400 (`0x80ec10`).
+        // Deviation: fills on every row, not only a beam's (`0x80ed5a`), as only a beam consumes it.
+        let hops: Vec<u64> = if cast_flags & 0x400 != 0 {
+            misses
+                .iter()
+                .map(|m| m.0)
+                .chain(hits.iter().copied())
+                .collect()
+        } else {
+            hits.iter()
+                .copied()
+                .chain(misses.iter().map(|m| m.0))
+                .collect()
+        };
+        fill_chain_hops(caster, e, &hops, commands, index);
         cast_events.write(CastEvent {
             entity: e,
             spell_id,

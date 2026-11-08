@@ -22,13 +22,18 @@ pub struct EffectVertex {
     pub color: [f32; 4],
 }
 
-/// The lane's blends: [`ParticleBlend`]'s four plus the multiplicative pair of decals and rain.
+/// The lane's blends: [`ParticleBlend`]'s four, the multiplicative pair of decals and rain, and the
+/// spell beams' two.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum EffectBlend {
     /// `(SRC_ALPHA, ONE)`, as premultiplied alpha after the shader's gamma `rgb·a` fold.
     Add,
     /// Standard alpha blending.
     Alpha,
+    /// [`EffectBlend::Alpha`] with depth write on: a beam row's blend mode 2 (`0x9aad37`).
+    AlphaDepthWrite,
+    /// `src·dst + dst` as `(Dst, One)`, the render state's blend mode 6: a beam row's.
+    ModAdd,
     /// No blend, depth write on, drawn in the transparent bracket at the owner rung.
     Opaque,
     /// Blend mode 1: [`EffectBlend::Opaque`]'s state plus an alpha test discarding below 224/255

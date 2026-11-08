@@ -528,8 +528,7 @@ pub(crate) struct SpellGoTargets {
     /// Missed units with `SpellMissInfo`: the arrival plays Dodge (30) or ShieldBlock (24), never
     /// Parry, and no impact kit; the deflect glance-off flight is not built.
     pub(crate) misses: Vec<(Entity, u8)>,
-    /// A dest-targeted cast's ground point, in bevy coords; not read, the reference's
-    /// dest-anchored launch visual is untraced.
+    /// A dest-targeted cast's ground point, in bevy coords.
     pub(crate) dest: Option<Vec3>,
     /// The GO's ammo block (`castFlags & 0x20`): the ammo's `ItemDisplayInfo` id, the missile model
     /// when the visual chain has none.

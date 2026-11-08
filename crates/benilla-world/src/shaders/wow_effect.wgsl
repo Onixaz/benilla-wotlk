@@ -11,6 +11,7 @@
 // - BLEND_MULTIPLY: (rgb·α, α) under (Dst, 1−srcα) = `dst·lerp(1, rgb, α)`, the blob shadow's
 //   modulate-with-fade and ModelBlend::Mod at α = 1.
 // - BLEND_MOD2X:    (rgb, 1) under (Dst, Src) = `2·src·dst`, rain's state; reads no alpha.
+//   EffectBlend::ModAdd shares it under (Dst, One), and AlphaDepthWrite shares BLEND_ALPHA.
 
 #import bevy_render::view::View
 

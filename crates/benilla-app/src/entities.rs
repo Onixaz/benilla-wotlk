@@ -100,7 +100,7 @@ use dest_fx::{
 /// Spell chain beams, such as Chain Lightning's arcs.
 mod chain_beam;
 pub(crate) use chain_beam::ChainHops;
-use chain_beam::{simulate_chain_beams, spawn_chain_beams};
+use chain_beam::{simulate_chain_beams, spawn_chain_beams, ChainLocations};
 // `equip_slot` is the one InventoryType → slot table; the dressing room places items by it.
 pub(crate) use attach::{equip_slot, BodyPartsDesc};
 pub(crate) use equipment::ItemDisplays;
@@ -761,6 +761,7 @@ impl Plugin for EntitiesPlugin {
                 .in_set(EntityVisualsSet)
                 .after(WorldStage::Net),
         )
+        .init_resource::<ChainLocations>()
         // In the visuals set, after the cast router's beam plays and the net stage's hop arrays.
         .add_systems(
             Update,
