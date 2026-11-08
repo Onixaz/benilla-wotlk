@@ -318,21 +318,36 @@ pub(crate) fn use_action(
                 ladder.ground.clear();
                 return UseOutcome::Done;
             }
-            // A live `ActiveIconID` spell re-pressed cancels its aura. The form-match toggle is
+            // `ClickSpell` (`0x80da80`): an active spell (a live `ActiveIconID` aura, or a mount
+            // of the same creature) re-pressed cancels its aura. The form-match toggle is
             // `CastSpell`'s alone, not `UseAction`'s.
-            if let Some(d) = ladder.spells.as_ref().and_then(|s| s.catalog.get(b.action)) {
-                let auras = targeting.self_auras.iter().next();
-                if super::toggle::active_action_toggle(b.action, d, auras) {
-                    if ladder.keeps_fresh_toggle(b.action) {
-                        debug!("ui_action: cast {} re-pressed — just cast, kept", b.action);
+            if let Some(spells) = ladder.spells.as_ref() {
+                if let Some(d) = spells.catalog.get(b.action) {
+                    let auras = targeting.self_auras.iter().next();
+                    if super::toggle::is_active_spell(b.action, d, auras, &spells.catalog) {
+                        if ladder.keeps_fresh_toggle(b.action) {
+                            debug!("ui_action: cast {} re-pressed — just cast, kept", b.action);
+                            return UseOutcome::Done;
+                        }
+                        let mount_display = targeting
+                            .self_store
+                            .iter()
+                            .next()
+                            .map_or(0, |s| s.0.unit_mount_display_id());
+                        let spell_id = super::toggle::click_cancel_aura(
+                            b.action,
+                            d,
+                            auras,
+                            &spells.catalog,
+                            mount_display,
+                        );
+                        debug!("ui_action: cast {} re-pressed — aura cancels", b.action);
+                        let _ = ladder
+                            .commands
+                            .0
+                            .send(crate::net::ClientCommand::CancelAura { spell_id });
                         return UseOutcome::Done;
                     }
-                    debug!("ui_action: cast {} re-pressed — aura cancels", b.action);
-                    let _ = ladder
-                        .commands
-                        .0
-                        .send(crate::net::ClientCommand::CancelAura { spell_id: b.action });
-                    return UseOutcome::Done;
                 }
             }
             debug!(
