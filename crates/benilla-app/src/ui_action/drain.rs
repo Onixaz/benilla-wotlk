@@ -72,6 +72,8 @@ pub(crate) struct AttackPress<'w, 's> {
     selection: ResMut<'w, crate::target::Selection>,
     seam: crate::creature_anim::AttackSeam<'w, 's>,
     ui_errors: ResMut<'w, UiErrorKeys>,
+    player: Res<'w, crate::player::Player>,
+    auto_dismount: Res<'w, crate::spell::cast_target::AutoDismount>,
 }
 
 impl AttackPress<'_, '_> {
@@ -111,7 +113,13 @@ impl AttackPress<'_, '_> {
             return false;
         }
         let (me, my_guid) = self.pick.player();
-        !attack_actor_refusal(me, my_guid, &mut self.ui_errors)
+        !attack_actor_refusal(
+            me,
+            my_guid,
+            self.player.move_flags(),
+            *self.auto_dismount,
+            &mut self.ui_errors,
+        )
     }
 
     /// `StartAttack` named nobody: the refusal, with the selection left alone (`0x72c2b0`).
@@ -129,6 +137,7 @@ impl AttackPress<'_, '_> {
             selection,
             seam,
             ui_errors,
+            ..
         } = self;
         let Some(guid) = pick.gated(selection, ui_errors) else {
             return;
@@ -193,9 +202,11 @@ impl AttackPress<'_, '_> {
             selection,
             seam,
             ui_errors,
+            player,
+            auto_dismount,
         } = self;
         let (me, my_guid) = pick.player();
-        if attack_actor_refusal(me, my_guid, ui_errors) {
+        if attack_actor_refusal(me, my_guid, player.move_flags(), **auto_dismount, ui_errors) {
             return None;
         }
         pick.target(passed, selection, seam, ui_errors)

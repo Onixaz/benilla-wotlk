@@ -234,6 +234,8 @@ pub(crate) struct Dispatch<'w, 's> {
     feedback: Feedback<'w>,
     auto: crate::player::AutoMove<'w, 's>,
     player: Res<'w, crate::player::Player>,
+    // `CanAutoDismount` (`0x71b0c0`) for the mounted attack gate.
+    auto_dismount: Option<Res<'w, crate::spell::cast_target::AutoDismount>>,
     // `SpellShapeshiftForm.dbc`'s flags, the barber chair's shapeshift test.
     sheet: Option<Res<'w, crate::ui_char::SheetTables>>,
 }
@@ -330,6 +332,18 @@ impl Dispatch<'_, '_> {
     fn self_store(&self) -> Option<&ObjectStore> {
         let (me, ..) = self.me()?;
         self.stores.get(me).ok().map(|(s, _)| s)
+    }
+
+    /// The click's attack gate (`0x729a70`): dead, charmed, flags, then mounted only when
+    /// `CanAutoDismount` (`0x71b0c0`) refuses.
+    fn attack_blocked(&self) -> bool {
+        crate::ui_action::attack_actor_blocked(
+            self.self_store(),
+            self.me().map(|(_, g, _)| g),
+            self.player.move_flags(),
+            self.auto_dismount.as_deref().copied().unwrap_or_default(),
+        )
+        .is_some()
     }
 
     /// `0x6d5a60`, the head of both loot senders; `reach` is the melee reach, or a corpse's 5 yd.
@@ -1060,10 +1074,8 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
     match unit_branch(attack, dead_fork, leg) {
         UnitBranch::Attack => {
             // Past the dead and mounted gates and before StartAttack, so a refused swing still
-            // walks.
-            let refused = dispatch
-                .self_store()
-                .is_some_and(|s| s.0.is_dead_or_ghost() || s.0.unit_mount_display_id() > 0);
+            // walks. Mounted is `CanAutoDismount`, not a hard block.
+            let refused = dispatch.attack_blocked();
             match dispatch.melee_approach(entity).filter(|_| !refused) {
                 Some(MeleeApproach::Face(at)) => {
                     dispatch.auto.face(at);
@@ -1077,9 +1089,7 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
             // Silent after the select: the click's has no error display, and the red `ERR_ATTACK_*`
             // lines are the reference's (the Attack action, pet attack, the cast attempt). The
             // predicate is the reference's; the reference's own set is not transcribed.
-            if crate::ui_action::attack_actor_blocked(dispatch.self_store(), me.map(|(_, g, _)| g))
-                .is_some()
-            {
+            if dispatch.attack_blocked() {
                 // refused: the selection stands, no swing, nothing said
             } else {
                 // StartAttack's own select, past its gates and before the swing: the click's
@@ -1238,8 +1248,7 @@ pub(super) fn act_on_arrival(
         }
         // The combat enter, no auto flag (`0x71b1e0`), through the click's select and start.
         ApproachVerb::Attack if unit => {
-            let me = dispatch.me().map(|(_, g, _)| g);
-            if crate::ui_action::attack_actor_blocked(dispatch.self_store(), me).is_none() {
+            if !dispatch.attack_blocked() {
                 dispatch
                     .feedback
                     .arrival_attack
@@ -3308,11 +3317,13 @@ mod tests {
             .any(|c| matches!(c, ClientCommand::AttackSwing { guid: WOLF })));
     }
 
-    /// The mounted gate skips the walk and the swing alike.
+    /// An airborne flyer the auto-dismount CVars refuse skips the walk and the swing alike.
     #[test]
     fn a_mounted_attack_does_not_walk() {
         const F_MOUNT: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
         let (mut world, _vendor, rx) = walking_world(Vec3::new(14.0, 0.0, 0.0), true);
+        *world.resource_mut::<crate::player::Player>() =
+            crate::player::Player::with_move_flags(crate::creature_anim::move_flags::FLYING);
         let me = world
             .query_filtered::<Entity, With<SelfPlayer>>()
             .single(&world)
@@ -3347,7 +3358,49 @@ mod tests {
         assert!(
             !rx.try_iter()
                 .any(|c| matches!(c, ClientCommand::AttackSwing { .. })),
-            "the mounted gate skips StartAttack too"
+            "airborne, autoDismountFlying off, skips StartAttack"
+        );
+    }
+
+    /// A grounded flyer auto-dismounts (`0x71b0c0`), so the click still walks and swings.
+    #[test]
+    fn a_grounded_flying_mount_still_attacks() {
+        const F_MOUNT: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
+        let (mut world, _vendor, rx) = walking_world(Vec3::new(14.0, 0.0, 0.0), true);
+        let me = world
+            .query_filtered::<Entity, With<SelfPlayer>>()
+            .single(&world)
+            .unwrap();
+        world.entity_mut(me).insert(store(&[
+            (F_HEALTH, 100),
+            (F_MAXHEALTH, 100),
+            (F_MOUNT, 14_337),
+        ]));
+        let wolf = world
+            .spawn((
+                Guid(WOLF),
+                store(&[(F_HEALTH, 100), (F_MAXHEALTH, 100)]),
+                Transform::from_xyz(0.0, 0.0, -12.0),
+            ))
+            .id();
+        *world.resource_mut::<PressPick>() = PressPick {
+            hovered: Hovered {
+                target: Some(wolf),
+                guid: Some(WOLF),
+                distance: 12.0,
+                ..Hovered::default()
+            },
+            attack_fork: cursor_mode::AttackFork(true),
+            ..PressPick::default()
+        };
+        world
+            .resource_mut::<Messages<WorldRightClick>>()
+            .write(WorldRightClick);
+        world.run_system_once(act_on_right_click).unwrap();
+        assert!(
+            rx.try_iter()
+                .any(|c| matches!(c, ClientCommand::AttackSwing { .. })),
+            "grounded, autoDismount on, StartAttack goes out"
         );
     }
 

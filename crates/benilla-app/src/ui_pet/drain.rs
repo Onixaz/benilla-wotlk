@@ -178,14 +178,22 @@ impl PetPress<'_, '_> {
         }
         // Only Attack runs the attack validator, whose pick can move the selection (`0x5d4500`).
         let refused = if is_attack_order(entry) {
-            crate::ui_action::attack_actor_refusal(Some(pet_store), pet.self_guid.0, ui_errors)
-                || match pick.target(None, selection, seam, ui_errors) {
-                    Some(guid) => {
-                        target_guid = guid;
-                        false
-                    }
-                    None => true,
+            crate::ui_action::attack_actor_refusal(
+                Some(pet_store),
+                pet.self_guid.0,
+                0,
+                crate::spell::cast_target::AutoDismount {
+                    ground: false,
+                    flying: false,
+                },
+                ui_errors,
+            ) || match pick.target(None, selection, seam, ui_errors) {
+                Some(guid) => {
+                    target_guid = guid;
+                    false
                 }
+                None => true,
+            }
         } else {
             false
         };
