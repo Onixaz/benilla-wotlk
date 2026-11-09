@@ -193,6 +193,8 @@ pub(crate) struct CastContext<'a> {
     pub(crate) auto_unshift: bool,
     /// The caster's aura table: the toggle-cancel scans and the crowd-control exemption read it.
     pub(crate) self_auras: Option<&'a UnitAuras>,
+    /// The cast's unit candidate's aura table, the target aura-spell legs' read.
+    pub(crate) target_auras: Option<&'a UnitAuras>,
     /// The caster's combo points on the cast's target, the finisher gate's read
     /// (`GetComboPoints(target)`, the player's at `0x80d518`, the pet's at `0x80d54e`).
     pub(crate) combo_points: u8,
@@ -335,6 +337,10 @@ impl CastTargeting<'_, '_> {
                 self.auto.unshift(s, row.map_or(0, |f| f.flags))
             }),
             self_auras: self.self_auras.iter().next(),
+            target_auras: self
+                .selection
+                .target
+                .and_then(|e| self.unit_auras.get(e).ok()),
             combo_points: self.combo_on(false, 0),
         }
     }
@@ -370,6 +376,7 @@ impl CastTargeting<'_, '_> {
             .and_then(|e| self.transforms.get(e).ok())
             .map(|t| t.translation);
         ctx.range.target = entity.and_then(|e| self.range_units.unit(e));
+        ctx.target_auras = entity.and_then(|e| self.unit_auras.get(e).ok());
         ctx
     }
 

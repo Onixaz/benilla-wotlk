@@ -132,6 +132,23 @@ pub(crate) fn cast_cc_refusal(
     None
 }
 
+/// The aura-spell legs of a press: `CASTER_AURASTATE` for the caster's, `TARGET_AURASTATE` for a
+/// bound unit's (the shared table's `0x12` and `0x67`).
+pub(super) fn cast_aura_refusal(
+    spell: &SpellDisplay,
+    spells: &crate::ui_action::Spells,
+    caster: Option<&crate::unit_auras::UnitAuras>,
+    target: Option<&crate::unit_auras::UnitAuras>,
+) -> Option<u8> {
+    if !super::usable::caster_aura_spells_met(spell, spells, caster) {
+        return Some(0x12);
+    }
+    if !super::usable::target_aura_spells_met(spell, spells, target) {
+        return Some(0x67);
+    }
+    None
+}
+
 /// `SPELL_FAILED_PREVENTED_BY_MECHANIC`, "Can't do that while %s" with the blocking aura's
 /// `SpellMechanic.dbc` name.
 const REASON_PREVENTED_BY_MECHANIC: u8 = 0x8d;

@@ -96,6 +96,11 @@ const COL_STANCES: usize = 12;
 const COL_STANCES_HIGH: usize = 13;
 const COL_STANCES_NOT: usize = 14;
 const COL_CASTER_AURA_STATE: usize = 20;
+const COL_CASTER_AURA_SPELL: usize = 24;
+const COL_TARGET_AURA_SPELL: usize = 25;
+const COL_EXCLUDE_CASTER_AURA_SPELL: usize = 26;
+const COL_EXCLUDE_TARGET_AURA_SPELL: usize = 27;
+const COL_SPELL_DIFFICULTY: usize = 233;
 const COL_TARGET_AURA_STATE: usize = 21;
 const COL_TOTEM_1: usize = 50;
 const COL_REAGENT_1: usize = 52;
@@ -725,6 +730,11 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 stances_high: u32_at(r, COL_STANCES_HIGH).unwrap_or(0),
                 stances_not: u32_at(r, COL_STANCES_NOT).unwrap_or(0),
                 caster_aura_state: u32_at(r, COL_CASTER_AURA_STATE).unwrap_or(0),
+                caster_aura_spell: u32_at(r, COL_CASTER_AURA_SPELL).unwrap_or(0),
+                target_aura_spell: u32_at(r, COL_TARGET_AURA_SPELL).unwrap_or(0),
+                exclude_caster_aura_spell: u32_at(r, COL_EXCLUDE_CASTER_AURA_SPELL).unwrap_or(0),
+                exclude_target_aura_spell: u32_at(r, COL_EXCLUDE_TARGET_AURA_SPELL).unwrap_or(0),
+                difficulty_id: u32_at(r, COL_SPELL_DIFFICULTY).unwrap_or(0),
                 target_aura_state: u32_at(r, COL_TARGET_AURA_STATE).unwrap_or(0),
                 totems: std::array::from_fn(|i| u32_at(r, COL_TOTEM_1 + i).unwrap_or(0)),
                 reagents: std::array::from_fn(|i| {

@@ -136,13 +136,18 @@ pub(super) fn feed_action_state(
     selection: Res<Selection>,
     // One param for the guid index and the item store, for the same ceiling.
     objects: crate::net::Objects,
-    units: Query<(&ObjectStore, &Transform), Without<SelfPlayer>>,
+    // One tuple param, under Bevy's 16-param ceiling.
+    units_and_auras: (
+        Query<(&ObjectStore, &Transform), Without<SelfPlayer>>,
+        usable::UsableAuras,
+    ),
     factions: Option<Res<crate::target::Factions>>,
     reputations: Res<crate::net::Reputations>,
     items: Res<Items>,
     commands: Res<NetCommands>,
     mut memory: Local<crate::ui_script::VmMemo<StateMemory>>,
 ) {
+    let (units, usable_auras) = &units_and_auras;
     let Some(mut script) = script else {
         return;
     };
@@ -278,6 +283,8 @@ pub(super) fn feed_action_state(
                 // The usable walk; only its power gate sets `notEnoughMana`.
                 if let (Some((store, _, _, _)), Some(sp)) = (me, spells.as_deref()) {
                     let ctx = usable::UsableCtx {
+                        self_auras: usable_auras.me.single().ok(),
+                        target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
                         store,
                         target_store: target.map(|(s, _)| s),
                         factions: factions.as_deref(),
@@ -371,6 +378,8 @@ pub(super) fn feed_action_state(
                 // the default state.
                 if let Some((store, _, _, _)) = me {
                     let ctx = usable::UsableCtx {
+                        self_auras: usable_auras.me.single().ok(),
+                        target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
                         store,
                         target_store: target.map(|(s, _)| s),
                         factions: factions.as_deref(),
@@ -471,6 +480,8 @@ pub(super) fn feed_action_state(
             );
         }
         let ctx = usable::UsableCtx {
+            self_auras: usable_auras.me.single().ok(),
+            target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
             store,
             target_store: target.map(|(s, _)| s),
             factions: factions.as_deref(),
@@ -714,6 +725,8 @@ mod tests {
                         [(4, row)].into_iter().collect(),
                     ),
                     cast_times: Default::default(),
+                    difficulties: Default::default(),
+                    instance_difficulty: Default::default(),
                     durations: Default::default(),
                     radii: Default::default(),
                 })
@@ -833,6 +846,8 @@ mod tests {
                         [(2, melee)].into_iter().collect(),
                     ),
                     cast_times: Default::default(),
+                    difficulties: Default::default(),
+                    instance_difficulty: Default::default(),
                     durations: Default::default(),
                     radii: Default::default(),
                 })
@@ -973,6 +988,8 @@ mod tests {
                     forms: Default::default(),
                     ranges: Default::default(),
                     cast_times: Default::default(),
+                    difficulties: Default::default(),
+                    instance_difficulty: Default::default(),
                     durations: Default::default(),
                     radii: Default::default(),
                 })
@@ -1056,6 +1073,8 @@ mod tests {
                 forms: Default::default(),
                 ranges: Default::default(),
                 cast_times: Default::default(),
+                difficulties: Default::default(),
+                instance_difficulty: Default::default(),
                 durations: Default::default(),
                 radii: Default::default(),
             })
@@ -1157,6 +1176,8 @@ mod tests {
                 forms: Default::default(),
                 ranges: Default::default(),
                 cast_times: Default::default(),
+                difficulties: Default::default(),
+                instance_difficulty: Default::default(),
                 durations: Default::default(),
                 radii: Default::default(),
             })

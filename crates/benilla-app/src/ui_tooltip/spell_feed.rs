@@ -112,7 +112,7 @@ pub(super) fn build_view(
     };
     // A cross-referenced spell's own family mask decides its modifiers.
     let lookup = |id| {
-        let t = spells.catalog.get(id)?;
+        let t = spells.catalog.get(spells.for_difficulty(id))?;
         deps.borrow_mut().mod_bits |= vctx.spell_mods.read_bits(t);
         Some(t)
     };

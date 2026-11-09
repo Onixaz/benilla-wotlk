@@ -256,6 +256,8 @@ fn feed_shapeshift_bar(
             let castable = active
                 || store.is_none_or(|s| {
                     let ctx = usable::UsableCtx {
+                        self_auras: self_auras.iter().next(),
+                        target_auras: None,
                         store: s,
                         target_store,
                         factions: factions.as_deref(),

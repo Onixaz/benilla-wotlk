@@ -504,8 +504,7 @@ impl Parser<'_, '_> {
         if digits > 0 {
             let id = atoi(&text.as_bytes()[*pos..*pos + digits.min(7)]);
             *pos += digits;
-            // Deviation: the reference first swaps in the row for the instance's difficulty
-            // (`0x802850`); outside a dungeon or raid that is the same id.
+            // `lookup` swaps in the row for the instance's difficulty (`0x802850`).
             let Some(loaded) = (self.ctx.lookup)(id as u32) else {
                 return false;
             };

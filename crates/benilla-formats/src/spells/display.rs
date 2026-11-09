@@ -177,6 +177,16 @@ pub struct SpellDisplay {
     /// `CasterAuraState` (column 20): state n needs bit `1 << (n - 1)` of the caster's
     /// `UNIT_FIELD_AURASTATE`; 0 is none.
     pub caster_aura_state: u32,
+    /// `CasterAuraSpell` (column 24): an aura the caster must have, through [`Self::difficulty_id`].
+    pub caster_aura_spell: u32,
+    /// `TargetAuraSpell` (column 25): an aura the target must have.
+    pub target_aura_spell: u32,
+    /// `ExcludeCasterAuraSpell` (column 26): an aura the caster must not have.
+    pub exclude_caster_aura_spell: u32,
+    /// `ExcludeTargetAuraSpell` (column 27): an aura the target must not have.
+    pub exclude_target_aura_spell: u32,
+    /// `SpellDifficultyID` (column 233): the `SpellDifficulty.dbc` row, 0 for none.
+    pub difficulty_id: u32,
     /// `TargetAuraState` (column 21): the current target's required aura state.
     pub target_aura_state: u32,
     /// `Totem[2]` (columns 50-51): tools that must be carried, not consumed, such as a hammer.
@@ -327,6 +337,11 @@ impl Default for SpellDisplay {
             stances_high: 0,
             stances_not: 0,
             caster_aura_state: 0,
+            caster_aura_spell: 0,
+            target_aura_spell: 0,
+            exclude_caster_aura_spell: 0,
+            exclude_target_aura_spell: 0,
+            difficulty_id: 0,
             target_aura_state: 0,
             totems: [0; 2],
             reagents: [(0, 0); 8],

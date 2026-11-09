@@ -58,6 +58,8 @@ impl PetSlotWalk<'_, '_> {
             .and_then(|s| s.guid)
             .and_then(|guid| pet_unit.store(guid));
         let ctx = crate::spell::usable::UsableCtx {
+            self_auras: None,
+            target_auras: None,
             store: pet,
             target_store,
             factions: self.factions.as_deref(),
