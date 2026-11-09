@@ -22,7 +22,7 @@ fn statusbar_methods_exist_only_on_statusbars() {
 }
 
 #[test]
-fn statusbar_value_clamps_and_minmax_swaps() {
+fn statusbar_value_clamps_and_a_reversed_pair_clamps_min_to_max() {
     let s = script();
     s.run(
         r#"
@@ -32,11 +32,55 @@ fn statusbar_value_clamps_and_minmax_swaps() {
         assert(b:GetValue() == 100, "clamped to max")
         b:SetValue(-5)
         assert(b:GetValue() == 0, "clamped to min")
-        -- A reversed pair is swapped (the XML load's behavior, one rule for both paths).
+        -- A reversed pair clamps to min = max (`0x96180c`), the XML load's setter too.
         b:SetMinMaxValues(80, 20)
         local mn, mx = b:GetMinMaxValues()
-        assert(mn == 20 and mx == 80, "reversed pair swapped")
+        assert(mn == 20 and mx == 20, "reversed pair clamped")
         assert(b:GetValue() == 20, "held value re-clamped into the new range")
+    "#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn statusbar_setminmaxvalues_range_checks_raise() {
+    let s = script();
+    s.run(r#"B = CreateFrame("StatusBar", "SbRange")"#).unwrap();
+    for (call, want) in [
+        ("B:SetMinMaxValues(-2e12, 0)", "Min or Max out of range"),
+        ("B:SetMinMaxValues(0, 2e12)", "Min or Max out of range"),
+        (
+            "B:SetMinMaxValues(-9e11, 9e11)",
+            "Min and Max too far apart",
+        ),
+    ] {
+        let err = s.run(call).expect_err(call).to_string();
+        assert!(err.contains(want), "{call}: {err}");
+    }
+    let err = s.run("B:SetMinMaxValues(1)").unwrap_err().to_string();
+    assert!(
+        err.contains("Usage: SbRange:SetMinMaxValues(min, max)"),
+        "{err}"
+    );
+    s.run("B:SetMinMaxValues('1', '2')")
+        .expect("lua_isnumber takes a numeric string");
+}
+
+#[test]
+fn statusbar_unchanged_range_fires_nothing_and_leaves_the_value() {
+    let s = script();
+    s.run(
+        r#"
+        B = CreateFrame("StatusBar", "SbSame")
+        B:SetMinMaxValues(0, 10)
+        B:SetValue(5)
+        n = 0
+        B:SetScript("OnMinMaxChanged", function() n = n + 1 end)
+        B:SetMinMaxValues(0, 10)
+        assert(n == 0, "unchanged range fires nothing")
+        B:SetMinMaxValues(0, 3)
+        assert(n == 1, "a new range fires once")
+        assert(B:GetValue() == 3)
     "#,
     )
     .unwrap();

@@ -5,21 +5,25 @@ use crate::framexml::{self, Element};
 use super::{abs_dim, abs_value, children_named, color_of, tex_coords_of, Loader};
 
 impl Loader<'_> {
-    /// `<StatusBar>`: a reversed `minValue`/`maxValue` pair is swapped, as `SetMinMaxValues` also
-    /// does; `drawLayer` is the bar texture's layer, ARTWORK by default.
+    /// `<StatusBar>`: `minValue` with `maxValue` run the bound and the setter (`0x961800`), which
+    /// clamps a reversed pair; `drawLayer` is the bar texture's layer, ARTWORK by default.
     pub(super) fn apply_statusbar(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         if !el.tag.eq_ignore_ascii_case("StatusBar") {
             return;
         }
         let parse = |attr: &str| el.attr(attr).and_then(|v| v.trim().parse::<f32>().ok());
-        let (min, max) = (parse("minValue"), parse("maxValue"));
-        if min.is_some() || max.is_some() {
-            self.call(
-                wrapper,
-                "SetMinMaxValues",
-                (min.unwrap_or(0.0), max.unwrap_or(0.0)),
-                dbg,
-            );
+        if let (Some(min), Some(max)) = (parse("minValue"), parse("maxValue")) {
+            match crate::script::statusbar::range_error(f64::from(min), f64::from(max)) {
+                Some(message) => self.warn_once(dbg, format!("Frame {dbg}: {message}")),
+                None => {
+                    let set = crate::script::statusbar::set_min_max(self.lua(), wrapper, min, max);
+                    if let Err(e) = set {
+                        self.report
+                            .errors
+                            .push(format!("{dbg}: SetMinMaxValues: {e}"));
+                    }
+                }
+            }
         }
         if let Some(o) = el.attr("orientation") {
             self.call(wrapper, "SetOrientation", o.to_string(), dbg);
@@ -418,7 +422,12 @@ impl Loader<'_> {
         }
         let parse = |attr: &str| el.attr(attr).and_then(|v| v.trim().parse::<f32>().ok());
         if let (Some(min), Some(max)) = (parse("minValue"), parse("maxValue")) {
-            self.call(wrapper, "SetMinMaxValues", (min, max), dbg);
+            // The setter, not the binding: a reversed XML pair stores, as it never raises.
+            if let Err(e) = crate::script::slider::set_min_max(self.lua(), wrapper, min, max) {
+                self.report
+                    .errors
+                    .push(format!("{dbg}: SetMinMaxValues: {e}"));
+            }
             if let Some(step) = parse("valueStep") {
                 self.call(wrapper, "SetValueStep", step, dbg);
             }

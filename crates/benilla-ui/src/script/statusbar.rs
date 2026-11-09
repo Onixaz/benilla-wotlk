@@ -94,19 +94,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     m.set(
         "SetMinMaxValues",
-        lua.create_function(|lua, (this, min, max): (Table, f32, f32)| {
-            // A reversed pair is swapped, as its XML load does; the held value re-clamps, and a
-            // move fires `OnValueChanged`. A new range fires `OnMinMaxChanged` first (`0x961859`).
-            let (changed, range) = with_bar(lua, &this, |sb| {
-                let before = (sb.min, sb.max);
-                (sb.min, sb.max) = if min <= max { (min, max) } else { (max, min) };
-                let range =
-                    (!sb.range_set || before != (sb.min, sb.max)).then_some((sb.min, sb.max));
-                sb.range_set = true;
-                (store_value(sb, sb.value), range)
-            })?;
-            fire_min_max_changed(lua, &this, range)?;
-            fire_value_changed(lua, &this, changed)
+        lua.create_function(|lua, (this, min, max): (Table, Value, Value)| {
+            let (Some(min), Some(max)) = (lua.coerce_number(min)?, lua.coerce_number(max)?) else {
+                return Err(usage_error(lua, &this));
+            };
+            // The binding (`0x9713c0`) bounds both and their spread; XML takes the same two lines.
+            if let Some(message) = range_error(min, max) {
+                return Err(mlua::Error::runtime(message));
+            }
+            set_min_max(lua, &this, min as f32, max as f32)
         })?,
     )?;
     m.set(
@@ -244,8 +240,50 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Fire `OnValueChanged` (the StatusBar's script slot, `+0x32c`) for a changed value, outside any
-/// model borrow.
+/// The binding's and the XML load's bound on a StatusBar's range.
+pub(crate) fn range_error(min: f64, max: f64) -> Option<&'static str> {
+    const LIMIT: f64 = 1.0e12;
+    if !(-LIMIT..=LIMIT).contains(&min) || !(-LIMIT..=LIMIT).contains(&max) {
+        Some("Min or Max out of range") // `0xaa1794`
+    } else if max - min > LIMIT {
+        Some("Min and Max too far apart") // `0xaa17ac`
+    } else {
+        None
+    }
+}
+
+/// `Usage: <name>:SetMinMaxValues(min, max)` (`0xaa1770`), shared by the StatusBar and Slider.
+pub(super) fn usage_error(lua: &Lua, this: &Table) -> mlua::Error {
+    let name = frame_handle_of(lua, this).ok().and_then(|h| {
+        let model = crate::script::model_mut_of(lua);
+        model.arena.frame(h).and_then(|f| f.name.clone())
+    });
+    mlua::Error::runtime(format!(
+        "Usage: {}:SetMinMaxValues(min, max)",
+        name.as_deref().unwrap_or("<unnamed>")
+    ))
+}
+
+/// The setter (`0x961800`) past the binding's checks: a reversed pair clamps to `min = max`; an
+/// unchanged range (`0x961819`) fires nothing and leaves the value, a new one fires
+/// `OnMinMaxChanged` first (`0x961859`), then re-clamps a held value and fires `OnValueChanged`.
+pub(crate) fn set_min_max(lua: &Lua, this: &Table, min: f32, max: f32) -> mlua::Result<()> {
+    let min = min.min(max);
+    let moved = with_bar(lua, this, |sb| {
+        if sb.range_set && (sb.min, sb.max) == (min, max) {
+            return None;
+        }
+        (sb.min, sb.max) = (min, max);
+        sb.range_set = true;
+        Some(store_value(sb, sb.value))
+    })?;
+    let Some(changed) = moved else {
+        return Ok(());
+    };
+    fire_min_max_changed(lua, this, Some((min, max)))?;
+    fire_value_changed(lua, this, changed)
+}
+
 /// Fire `OnMinMaxChanged(min, max)` when `range` carries a new range: the StatusBar's (slot
 /// `+0x2bc`, `0x961560`) and the Slider's (`+0x2c0`, `0x96bbb0`), each run by its
 /// `SetMinMaxValues` only when the pair changed or was never set (`0x961819`, `0x96c484`), and
@@ -274,6 +312,8 @@ pub(super) fn fire_min_max_changed(
     Ok(())
 }
 
+/// Fire `OnValueChanged` (the StatusBar's script slot, `+0x32c`) for a changed value, outside any
+/// model borrow.
 fn fire_value_changed(lua: &Lua, this: &Table, changed: Option<f32>) -> mlua::Result<()> {
     let Some(value) = changed else { return Ok(()) };
     let id = {

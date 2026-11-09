@@ -186,7 +186,7 @@ fn slider_default_orientation_is_vertical() {
 }
 
 #[test]
-fn slider_value_clamps_and_does_not_swap_minmax() {
+fn slider_value_clamps_and_a_reversed_pair_raises() {
     let s = script();
     s.run(
         r#"
@@ -198,13 +198,34 @@ fn slider_value_clamps_and_does_not_swap_minmax() {
         assert(sl:GetValue() == 100, "clamped to max")
         sl:SetValue(-5)
         assert(sl:GetValue() == 0, "clamped to min")
-        -- Unlike StatusBar, a reversed pair is NOT swapped (the XML load stores min + range).
-        sl:SetMinMaxValues(80, 20)
+        assert(not pcall(sl.SetMinMaxValues, sl, 80, 20), "a reversed pair raises")
         local mn, mx = sl:GetMinMaxValues()
-        assert(mn == 80 and mx == 20, "reversed pair kept as given, not swapped")
+        assert(mn == 0 and mx == 100, "the raise stores nothing")
     "#,
     )
     .unwrap();
+}
+
+/// The XML load takes the setter, no check: a reversed pair stores as written.
+#[test]
+fn a_slider_xml_reversed_range_stores_and_raises_nothing() {
+    let s = script();
+    s.run(
+        r#"
+        local f = CreateFrame("Slider", "RevSlider")
+        assert(pcall(f.SetMinMaxValues, f, 0, 1))
+        "#,
+    )
+    .unwrap();
+    let doc =
+        crate::framexml::parse(r#"<Ui><Slider name="XmlRev" minValue="80" maxValue="20"/></Ui>"#)
+            .unwrap();
+    let report = crate::loader::load_into(s.lua(), &doc, "t.xml", &|_: &str| None);
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    let (mn, mx) = s
+        .eval::<(f32, f32)>("return XmlRev:GetMinMaxValues()")
+        .unwrap();
+    assert_eq!((mn, mx), (80.0, 20.0));
 }
 
 #[test]
