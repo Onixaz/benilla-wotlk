@@ -149,7 +149,7 @@ pub(crate) fn set_achievement_link(lua: &Lua, this: &Table, link: &str) -> mlua:
     if let Err(e) =
         crate::script::event::fire_widget_handler(lua, id, "OnTooltipSetAchievement", Vec::new())
     {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     set_shown(lua, h, true);
     Ok(true)

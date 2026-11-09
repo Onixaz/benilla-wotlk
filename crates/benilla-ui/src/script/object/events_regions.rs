@@ -342,11 +342,7 @@ fn apply_region_inherits(lua: &Lua, wrapper: &Table, tag: &str, from: &str) -> m
         templates.contains_key(from) || templates.keys().any(|k| k.eq_ignore_ascii_case(from))
     };
     if is_template {
-        let messages = crate::loader::apply_region_template(lua, wrapper, tag, from);
-        let mut model = crate::script::model_mut_of(lua);
-        for m in messages {
-            model.record_warning(m);
-        }
+        crate::loader::apply_region_template(lua, wrapper, tag, from).publish(lua);
         return Ok(());
     }
     Err(mlua::Error::runtime(format!(

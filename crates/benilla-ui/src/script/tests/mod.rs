@@ -202,6 +202,69 @@ fn a_chosen_error_handler_hears_engine_caught_errors_and_none_leaves_the_host_ch
     );
 }
 
+/// The handler gets the bare `error` text (with its position), never mlua's `runtime error:` word
+/// or a traceback: those stay on the host channel, which keeps the decorated text.
+#[test]
+fn the_error_handler_gets_the_bare_message_and_the_host_the_decorated_one() {
+    let mut s = crate::script::UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    s.run(
+        "caught = {} seterrorhandler(function(m) table.insert(caught, m) end) \
+         local b = CreateFrame('Button') \
+         b:SetScript('OnClick', function() error('click boom', 0) end) \
+         b:Click()",
+    )
+    .unwrap();
+    s.dispatch_script_errors_to_handler();
+    assert_eq!(s.eval::<String>("return caught[1]").unwrap(), "click boom");
+    let errors = s.take_errors();
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("click boom") && e != "click boom"),
+        "{errors:?}"
+    );
+}
+
+/// A handler that raises is handed its own error bare, as Lua 5.1 calls the slot again.
+#[test]
+fn a_raising_error_handler_is_handed_its_own_bare_error() {
+    let mut s = crate::script::UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    s.run(
+        "caught = {} seterrorhandler(function(m) \
+             table.insert(caught, m) \
+             if #caught == 1 then error('second', 0) end \
+         end) \
+         local b = CreateFrame('Button') \
+         b:SetScript('OnClick', function() error('first', 0) end) \
+         b:Click()",
+    )
+    .unwrap();
+    s.dispatch_script_errors_to_handler();
+    assert_eq!(
+        s.eval::<Vec<String>>("return caught").unwrap(),
+        ["first", "second"]
+    );
+}
+
+/// A raising file-scope chunk's message reaches the handler with no host decoration.
+#[test]
+fn a_chunks_error_reaches_the_handler_through_the_bare_channel() {
+    let mut s = crate::script::UiScript::new().unwrap();
+    s.run("caught = {} seterrorhandler(function(m) table.insert(caught, m) end)")
+        .unwrap();
+    let e = s
+        .run_chunk_named(b"error('file boom', 0)", "@x.lua")
+        .unwrap_err();
+    s.report_script_error(
+        &format!("Addon/x.lua: {e}"),
+        &crate::script::lua_message(&e),
+    );
+    s.dispatch_script_errors_to_handler();
+    assert_eq!(s.eval::<String>("return caught[1]").unwrap(), "file boom");
+}
+
 #[test]
 fn a_widget_handler_error_reaches_the_chosen_error_handler() {
     let mut s = crate::script::UiScript::new().unwrap();

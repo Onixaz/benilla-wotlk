@@ -640,7 +640,10 @@ fn load_bindings(lua: &Lua, name: &str, read: &Reader) {
     match crate::bindings_xml::parse(&text) {
         Ok(bindings) => super::keybind::register_addon_bindings(lua, name, &bindings),
         // Reported, not swallowed: otherwise a broken binding file leaves keys dead silently.
-        Err(e) => log_error(lua, &format!("{name}/Bindings.xml: {e}")),
+        Err(e) => {
+            let host = format!("{name}/Bindings.xml: {e}");
+            log_error(lua, &host, &host);
+        }
     }
 }
 
@@ -672,7 +675,8 @@ fn load_saved_variables(lua: &Lua, i: usize) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue, // the first-run case
             Err(e) => {
                 // Present but unreadable is held, like a file that will not run.
-                log_error(lua, &format!("{}: {e}", path.display()));
+                let host = format!("{}: {e}", path.display());
+                log_error(lua, &host, &host);
                 let mut model = crate::script::model_mut_of(lua);
                 if !model.held_saved_files.contains(&path) {
                     model.held_saved_files.push(path);
@@ -687,7 +691,11 @@ fn load_saved_variables(lua: &Lua, i: usize) {
         ) {
             // Deviation: the reference fails silently; we report it, as a player needs to know,
             // and hold the file so the shutdown write keeps it.
-            log_error(lua, &format!("{}: {e}", path.display()));
+            log_error(
+                lua,
+                &format!("{}: {e}", path.display()),
+                &super::stdlib::lua_message(&e),
+            );
             let mut model = crate::script::model_mut_of(lua);
             if !model.held_saved_files.contains(&path) {
                 model.held_saved_files.push(path);
@@ -733,7 +741,11 @@ fn run_files(lua: &Lua, name: &str, read: &Reader, files: &[String], toc: &mut S
         };
         if lua_file {
             if let Err(e) = run_chunk(lua, &bytes, &crate::script::addon_chunk_name(name, file)) {
-                log_error(lua, &format!("{name}/{file}: {e}"));
+                log_error(
+                    lua,
+                    &format!("{name}/{file}: {e}"),
+                    &super::stdlib::lua_message(&e),
+                );
             }
             continue;
         }
@@ -754,8 +766,8 @@ fn run_files(lua: &Lua, name: &str, read: &Reader, files: &[String], toc: &mut S
         for w in report.warnings {
             crate::script::diagnostics::record_warning(lua, &format!("{name}/{file}: {w}"));
         }
-        for e in report.errors {
-            log_error(lua, &format!("{name}/{file}: {e}"));
+        for (e, bare) in report.errors.into_iter().zip(report.bare_errors) {
+            log_error(lua, &format!("{name}/{file}: {e}"), &bare);
         }
     }
 }
@@ -787,13 +799,13 @@ fn run_chunk(lua: &Lua, bytes: &[u8], name: &str) -> mlua::Result<()> {
 }
 
 /// Record a demand-load error as the startup walk does ([`super::UiScript::report_script_error`]):
-/// a `Load` row, dispatched to the player's error handler and put on the host drain.
-fn log_error(lua: &Lua, msg: &str) {
-    let msg = format!("LoadAddOn: {msg}");
-    super::diagnostics::record_load_failure(lua, &msg);
+/// a `Load` row and the host drain carry `host`, the player's error handler `bare`.
+fn log_error(lua: &Lua, host: &str, bare: &str) {
+    let host = format!("LoadAddOn: {host}");
+    super::diagnostics::record_load_failure(lua, &host);
     let mut model = crate::script::model_mut_of(lua);
-    model.pending_error_dispatch.push(msg.clone());
-    model.errors.push(msg);
+    model.pending_error_dispatch.push(bare.to_string());
+    model.errors.push(host);
 }
 
 /// The glue's AddOn verbs (table `0xac3e00`) over the same registry the in-game ones read: the

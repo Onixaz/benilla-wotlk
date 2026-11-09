@@ -187,7 +187,7 @@ fn set_enabled(lua: &Lua, this: &Table, on: bool) -> mlua::Result<()> {
     if let Some(id) = fire {
         let script = if on { "OnEnable" } else { "OnDisable" };
         if let Err(e) = event::fire_widget_handler(lua, id, script, Vec::new()) {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
     Ok(())
@@ -933,7 +933,7 @@ pub(super) fn click_button(lua: &Lua, id: u32, button: &str, down: bool) {
         if let Err(e) =
             event::fire_widget_handler(lua, id, script, vec![btn.clone(), Value::Boolean(down)])
         {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
     crate::script::model_mut_of(lua).click_button = outer;

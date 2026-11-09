@@ -154,7 +154,7 @@ pub(crate) fn fire(lua: &Lua, id: u32, name: &str, args: Vec<Value>) {
     let outcome = wrapper(lua, id)
         .and_then(|w| crate::script::event::invoke_with_globals(lua, w, &func, None, args));
     if let Err(e) = outcome {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
 }
 

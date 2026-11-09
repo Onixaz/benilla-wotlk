@@ -728,13 +728,7 @@ pub(super) fn create_frame(
     // this call, so the handler can reach the frame by name.
     let wrapper = frame_wrapper(lua, id)?;
     if let Some(template) = template {
-        let messages = crate::loader::apply_template(lua, &wrapper, &kind, &template);
-        if !messages.is_empty() {
-            let mut model = crate::script::model_mut_of(lua);
-            for m in messages {
-                model.record_warning(m);
-            }
-        }
+        crate::loader::apply_template(lua, &wrapper, &kind, &template).publish(lua);
     }
     Ok(wrapper)
 }

@@ -11,12 +11,17 @@
 
 use mlua::{Lua, Value, Variadic};
 
-/// An mlua error's bare Lua message, as `loadstring` returns it: without the `syntax error: ` or
-/// `runtime error: ` word mlua's `Display` adds and the reference never does.
-pub(super) fn lua_message(e: &mlua::Error) -> String {
+/// An mlua error's bare Lua message, what `error` raised and `loadstring` returns: without the
+/// `syntax error: ` or `runtime error: ` word mlua's `Display` adds and the traceback mlua and our
+/// `xpcall` handler append, none of which the reference's error handler (`0x819730`) ever gets.
+pub fn lua_message(e: &mlua::Error) -> String {
     match e {
         mlua::Error::SyntaxError { message, .. } => message.clone(),
-        mlua::Error::RuntimeError(m) => m.clone(),
+        mlua::Error::RuntimeError(m) => match m.split_once("\nstack traceback:") {
+            Some((bare, _)) => bare.to_string(),
+            None => m.clone(),
+        },
+        mlua::Error::CallbackError { cause, .. } => lua_message(cause),
         other => other.to_string(),
     }
 }

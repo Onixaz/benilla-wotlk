@@ -126,12 +126,12 @@ fn fire(lua: &Lua, id: u32, script: &str, arg: &str) {
     let val = mlua::Value::String(match lua.create_string(arg) {
         Ok(s) => s,
         Err(e) => {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
             return;
         }
     });
     if let Err(e) = event::fire_widget_handler(lua, id, script, vec![val]) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
 }
 

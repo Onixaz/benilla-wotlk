@@ -109,7 +109,7 @@ pub(super) fn set_quest(lua: &Lua, this: &Table, quest_id: u32) -> mlua::Result<
     }
     let id = crate::script::model_mut_of(lua).frame_id(h);
     if let Err(e) = super::event::fire_widget_handler(lua, id, "OnTooltipSetQuest", Vec::new()) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     set_shown(lua, h, true);
     Ok(())

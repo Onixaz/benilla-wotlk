@@ -265,7 +265,7 @@ fn fire_color_select(lua: &Lua, this: &Table, r: f64, g: f64, b: f64) -> mlua::R
         "OnColorSelect",
         vec![Value::Number(r), Value::Number(g), Value::Number(b)],
     ) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     Ok(())
 }

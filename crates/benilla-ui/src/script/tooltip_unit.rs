@@ -224,7 +224,7 @@ fn render_unit(lua: &Lua, this: &Table, token: &str) -> mlua::Result<bool> {
     // (`0x621b85`): the stock handler re-tints the name line by `GameTooltip_UnitColor`.
     let id = crate::script::model_mut_of(lua).frame_id(h);
     if let Err(e) = super::event::fire_widget_handler(lua, id, "OnTooltipSetUnit", Vec::new()) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     show_or_hide_empty(lua, h);
     Ok(true)
@@ -295,7 +295,7 @@ fn update_bar(lua: &Lua, h: FrameHandle, unit: Option<&UnitState>) {
             "OnValueChanged",
             vec![mlua::Value::Number(f64::from(value))],
         ) {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
 }

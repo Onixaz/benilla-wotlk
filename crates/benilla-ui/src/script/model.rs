@@ -1225,13 +1225,20 @@ impl Model {
         }
     }
 
-    /// Records a caught script error for the host, the retained log and the Lua error handler; an
-    /// error raised by the handler itself goes back to the handler alone, never through here.
-    pub(crate) fn record_script_error(&mut self, msg: String) {
+    /// Records a caught Lua error: the decorated text for the host and the retained log, the bare
+    /// message for the Lua error handler ([`Self::record_script_error`]).
+    pub(crate) fn record_lua_error(&mut self, e: &mlua::Error) {
+        self.record_script_error(e.to_string(), super::stdlib::lua_message(e));
+    }
+
+    /// Records a caught script error: `host` for the host and the retained log, `bare` for the Lua
+    /// error handler, which never sees a decoration; an error raised by the handler itself goes
+    /// back to the handler alone, never through here.
+    pub(crate) fn record_script_error(&mut self, host: String, bare: String) {
         self.diagnostics
-            .record(super::diagnostics::DiagnosticKind::Error, &msg);
-        self.pending_error_dispatch.push(msg.clone());
-        self.errors.push(msg);
+            .record(super::diagnostics::DiagnosticKind::Error, &host);
+        self.pending_error_dispatch.push(bare);
+        self.errors.push(host);
     }
 
     /// Records a non-fatal warning for the host's terminal and the retained diagnostic log.

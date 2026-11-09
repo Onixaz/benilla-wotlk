@@ -35,7 +35,7 @@ pub(super) fn fire_all_event_listeners(lua: &Lua, event: &str, args: &[ScriptVal
         drop(model);
         if !already {
             if let Err(e) = fire_event_handler(lua, id, event, args) {
-                crate::script::model_mut_of(lua).record_script_error(e.to_string());
+                crate::script::model_mut_of(lua).record_lua_error(&e);
             }
         }
         at = next;
@@ -122,7 +122,7 @@ pub(super) fn fire_size_changes(lua: &Lua) {
             None,
             vec![Value::Number(f64::from(w)), Value::Number(f64::from(h))],
         ) {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
 }
@@ -236,7 +236,7 @@ fn hide_step(lua: &Lua, h: FrameHandle, kind_override: bool) {
     };
     if let Some(id) = left {
         if let Err(e) = fire_widget_handler(lua, id, "OnLeave", vec![Value::Boolean(false)]) {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
     for c in children {
@@ -277,7 +277,7 @@ pub(super) fn set_mouse_enabled(lua: &Lua, h: FrameHandle, enable: bool) {
     };
     if let Some(id) = left {
         if let Err(e) = fire_widget_handler(lua, id, "OnLeave", vec![Value::Boolean(false)]) {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
 }
@@ -321,7 +321,7 @@ fn notify_visibility(lua: &Lua, h: FrameHandle, visible: bool) {
     if let Some(id) = id {
         let name = if visible { "OnShow" } else { "OnHide" };
         if let Err(e) = fire(lua, id, name, None, Vec::new()) {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
     // The EditBox show/hide overrides call the base notify first, so this runs after the `fire`:
@@ -379,7 +379,7 @@ pub(super) fn fire_visibility_changes(lua: &Lua, changed: Vec<FrameHandle>) {
     };
     if let Some((_, oid)) = left {
         if let Err(e) = fire_widget_handler(lua, oid, "OnLeave", vec![Value::Boolean(false)]) {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
     for (h, id, visible) in items {
@@ -394,7 +394,7 @@ pub(super) fn fire_visibility_changes(lua: &Lua, changed: Vec<FrameHandle>) {
         }
         let name = if visible { "OnShow" } else { "OnHide" };
         if let Err(e) = fire(lua, id, name, None, Vec::new()) {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
         // The EditBox show/hide overrides (`+0x30`/`+0x34`) call the base notify first, so this
         // runs after the `fire`: an `autoFocus` box takes a free focus, a hidden box releases its

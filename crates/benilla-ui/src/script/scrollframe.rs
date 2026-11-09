@@ -307,7 +307,7 @@ pub(super) fn fire_range_changes(lua: &Lua) -> bool {
             "OnScrollRangeChanged",
             vec![Value::Number(f64::from(x)), Value::Number(f64::from(y))],
         ) {
-            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+            crate::script::model_mut_of(lua).record_lua_error(&e);
         }
     }
     fired
@@ -324,7 +324,7 @@ fn fire_scroll(lua: &Lua, this: &Table, script: &str, value: f32) -> mlua::Resul
     if let Err(e) =
         event::fire_widget_handler(lua, id, script, vec![Value::Number(f64::from(value))])
     {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
     Ok(())
 }

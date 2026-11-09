@@ -172,7 +172,7 @@ impl Loader<'_> {
     /// error is recorded, never propagated.
     pub(super) fn fire_onload(&mut self, wrapper: &Table, func: &Function, dbg: &str) {
         if let Err(e) = self.invoke_handler(wrapper, func) {
-            self.report.errors.push(format!("{dbg}: OnLoad: {e}"));
+            self.report_error(format!("{dbg}: OnLoad: {e}"), &e);
         }
     }
 
@@ -189,7 +189,7 @@ impl Loader<'_> {
         if let Err(e) =
             crate::script::event::fire_widget_handler(self.lua(), id, "OnShow", Vec::new())
         {
-            self.report.errors.push(format!("{dbg}: OnShow: {e}"));
+            self.report_error(format!("{dbg}: OnShow: {e}"), &e);
         }
     }
 
@@ -202,7 +202,7 @@ impl Loader<'_> {
         dbg: &str,
     ) {
         if let Err(e) = wrapper.call_method::<()>(method, args) {
-            self.report.errors.push(format!("{dbg}: {method}: {e}"));
+            self.report_error(format!("{dbg}: {method}: {e}"), &e);
         }
     }
 

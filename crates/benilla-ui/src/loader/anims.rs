@@ -219,7 +219,7 @@ impl Loader<'_> {
             let target = match anim_lua::wrapper(self.lua, id) {
                 Ok(t) => t,
                 Err(e) => {
-                    self.report.errors.push(format!("{dbg}: {e}"));
+                    self.report_error(format!("{dbg}: {e}"), &e);
                     continue;
                 }
             };

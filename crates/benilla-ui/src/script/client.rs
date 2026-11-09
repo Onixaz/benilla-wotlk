@@ -142,8 +142,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .set_mode(mlua::ChunkMode::Text)
                 .exec()
             {
-                crate::script::model_mut_of(lua)
-                    .record_script_error(super::stdlib::lua_message(&e));
+                // Both channels bare: this message names its chunk by its own source.
+                let bare = super::stdlib::lua_message(&e);
+                crate::script::model_mut_of(lua).record_script_error(bare.clone(), bare);
             }
             Ok(())
         })?,

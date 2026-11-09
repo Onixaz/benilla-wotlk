@@ -1031,7 +1031,7 @@ pub(crate) fn install_tooltip_method(lua: &Lua, m: &Table) -> mlua::Result<()> {
             if let Err(e) =
                 super::event::fire_widget_handler(lua, id, "OnTooltipSetEquipmentSet", Vec::new())
             {
-                super::model_mut_of(lua).record_script_error(e.to_string());
+                super::model_mut_of(lua).record_lua_error(&e);
             }
             super::tooltip::show_or_hide_empty(lua, h);
             Ok(())

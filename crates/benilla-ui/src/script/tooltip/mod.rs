@@ -435,7 +435,7 @@ pub(super) fn fire_cleared(lua: &Lua, h: FrameHandle) {
         model.frame_id(h)
     };
     if let Err(e) = event::fire_widget_handler(lua, id, "OnTooltipCleared", Vec::new()) {
-        crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        crate::script::model_mut_of(lua).record_lua_error(&e);
     }
 }
 
