@@ -209,7 +209,7 @@ fn the_stock_map_places_and_opens_a_quest_poi() {
             floor: 0,
             flags: 0,
             center: (-9464, 62),
-            points: 1,
+            outline: vec![(-9464, 62)],
             priority: 0,
         }],
     }]);
@@ -245,4 +245,189 @@ fn the_stock_map_places_and_opens_a_quest_poi() {
     s.run(&format!("WorldMap_OpenToQuest({QUEST})")).unwrap();
     let errors = map_errors(s.take_errors());
     assert!(errors.is_empty(), "open-to-quest errors: {errors:#?}");
+    assert!(
+        s.eval::<bool>("return WorldMapFrame.blockWorldMapUpdate == nil")
+            .unwrap(),
+        "the open finished, so later map updates are not dropped"
+    );
+}
+
+/// A selected quest's blob draws from its cached mesh, the cursor over it answers its quest and
+/// objective count (`0x58e9c0`), and a closed map extracts no blob.
+#[test]
+fn the_stock_map_draws_and_hovers_a_quest_blob() {
+    use benilla_ui::script::{
+        QuadContent, QuestLogEntryView, QuestLogState, QuestPoiRegion, QuestPoiView,
+    };
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = session();
+    let _ = s.take_errors();
+    const QUEST: u32 = 54;
+    s.set_quest_log(QuestLogState {
+        num_quests: 1,
+        entries: vec![
+            QuestLogEntryView {
+                title: "Elwynn Forest".into(),
+                is_header: true,
+                ..Default::default()
+            },
+            QuestLogEntryView {
+                quest_id: QUEST,
+                title: "Report to Goldshire".into(),
+                level: 5,
+                poi_objectives: 1,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    });
+    s.apply_quest_pois(vec![QuestPoiView {
+        quest_id: QUEST,
+        regions: vec![QuestPoiRegion {
+            objective: 0,
+            map: 0,
+            area: 30,
+            floor: 0,
+            flags: 0,
+            center: (-9464, 62),
+            outline: vec![(-9600, -100), (-9300, -100), (-9300, 250), (-9600, 250)],
+            priority: 0,
+        }],
+    }]);
+    s.run(&format!(
+        "ToggleFrame(WorldMapFrame) WorldMapBlobFrame:Show() WorldMapFrame_UpdateQuests() \
+         WorldMapBlobFrame:DrawQuestBlob({QUEST}, true)"
+    ))
+    .unwrap();
+    let errors = map_errors(s.take_errors());
+    assert!(errors.is_empty(), "blob errors: {errors:#?}");
+    s.resolve();
+    let blobs = |s: &UiScript| {
+        s.extract().into_iter().find_map(|q| match q.content {
+            QuadContent::QuestBlobs(p) => Some(p),
+            _ => None,
+        })
+    };
+    let first = blobs(&s).expect("the open map draws the blob");
+    assert_eq!(first.0.fill.len(), 20, "one fan triangle per spline point");
+    assert_eq!(first.0.border.len(), 20);
+    assert_eq!((first.0.fill_alpha, first.0.border_alpha), (128, 192));
+    assert_eq!(
+        blobs(&s).expect("still drawn"),
+        first,
+        "an unchanged walk reuses the cached mesh"
+    );
+
+    let (u, v) = s
+        .eval::<(f64, f64)>(r#"return GetPlayerMapPosition("player")"#)
+        .unwrap();
+    let (index, count) = s
+        .eval::<(i64, i64)>(&format!(
+            "return WorldMapBlobFrame:UpdateMouseOverTooltip({u}, {v})"
+        ))
+        .unwrap();
+    assert_eq!(
+        (index, count),
+        (2, 1),
+        "the quest's log row and one objective"
+    );
+    assert_eq!(
+        s.eval::<(i64, i64)>(
+            "return WorldMapBlobFrame:GetNumTooltips(), WorldMapBlobFrame:GetTooltipIndex(1)"
+        )
+        .unwrap(),
+        (1, 0)
+    );
+    assert_eq!(
+        s.eval::<i64>("return select('#', WorldMapBlobFrame:UpdateMouseOverTooltip(0.01, 0.01))")
+            .unwrap(),
+        0,
+        "off the blob nothing answers"
+    );
+    assert_eq!(
+        s.eval::<i64>("return WorldMapBlobFrame:GetNumTooltips()")
+            .unwrap(),
+        0
+    );
+
+    s.run(&format!("WorldMapBlobFrame:DrawQuestBlob({QUEST}, false)"))
+        .unwrap();
+    s.resolve();
+    assert!(
+        blobs(&s).is_none_or(|p| p.0.fill.is_empty()),
+        "the removed quest leaves no fill"
+    );
+    s.run(&format!(
+        "WorldMapBlobFrame:DrawQuestBlob({QUEST}, true) ToggleFrame(WorldMapFrame)"
+    ))
+    .unwrap();
+    s.resolve();
+    assert!(blobs(&s).is_none(), "a closed map extracts no blob");
+}
+
+/// The Quest Log's Show Map button finishes its open, so a later map update still paints the tiles.
+#[test]
+fn the_quest_log_show_map_button_leaves_the_map_updating() {
+    use benilla_ui::script::{QuestLogEntryView, QuestLogState, QuestPoiRegion, QuestPoiView};
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = session();
+    let _ = s.take_errors();
+    const QUEST: u32 = 60;
+    s.set_quest_log(QuestLogState {
+        num_quests: 1,
+        entries: vec![
+            QuestLogEntryView {
+                title: "Elwynn Forest".into(),
+                is_header: true,
+                ..Default::default()
+            },
+            QuestLogEntryView {
+                quest_id: QUEST,
+                title: "Kobold Candles".into(),
+                level: 7,
+                poi_objectives: 1,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    });
+    s.apply_quest_pois(vec![QuestPoiView {
+        quest_id: QUEST,
+        regions: vec![QuestPoiRegion {
+            objective: 0,
+            map: 0,
+            area: 30,
+            floor: 0,
+            flags: 0,
+            center: (-9464, 62),
+            outline: vec![(-9600, -100), (-9300, -100), (-9300, 250), (-9600, 250)],
+            priority: 0,
+        }],
+    }]);
+    s.run("ShowUIPanel(QuestLogFrame) QuestLog_SetSelection(2) QuestLogFrameShowMapButton:Click()")
+        .unwrap();
+    let errors = map_errors(s.take_errors());
+    assert!(errors.is_empty(), "show map errors: {errors:#?}");
+    assert!(
+        s.eval::<bool>(
+            "return WorldMapFrame:IsShown() and WorldMapFrame.blockWorldMapUpdate == nil"
+        )
+        .unwrap(),
+        "the click opened the map and finished its open"
+    );
+    s.run("WorldMapDetailTile1:SetTexture(nil)").unwrap();
+    s.fire_event("WORLD_MAP_UPDATE", vec![]);
+    let tile = s
+        .eval::<Option<String>>("return WorldMapDetailTile1:GetTexture()")
+        .unwrap();
+    assert!(
+        tile.is_some_and(|t| t.contains("Elwynn")),
+        "the later update set the zone's tiles"
+    );
 }

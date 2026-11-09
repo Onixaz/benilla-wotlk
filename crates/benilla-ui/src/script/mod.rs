@@ -205,6 +205,7 @@ mod merchant;
 mod messageframe;
 mod minimap;
 pub mod nameplate;
+pub(crate) mod quest_blob;
 mod quest_poi;
 mod quest_poi_frame;
 pub use nameplate::{PlateGeometry, PlateState};

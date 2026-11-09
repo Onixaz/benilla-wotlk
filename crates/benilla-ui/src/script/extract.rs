@@ -166,6 +166,11 @@ fn extract_one(
                 Some(crate::widget::KindState::Cooldown(c)) => c
                     .paint(frame.map_or(1.0, |f| f.effective_scale))
                     .map_or(QuadContent::Frame, QuadContent::Cooldown),
+                // Blobs only for a shown frame: a closed map walks no frame here at all.
+                Some(crate::widget::KindState::QuestPoi(p)) => {
+                    super::quest_blob::paint(model, p, fh)
+                        .map_or(QuadContent::Frame, QuadContent::QuestBlobs)
+                }
                 // A `<Model>`/`<PlayerModel>` pane's content hole, named so the app can join it to
                 // that window's bake. Both kinds share `KindState::Model`, as the client's
                 // character model widget extends its model widget.
@@ -465,6 +470,8 @@ fn extract_one(
     // its own OVERLAY and HIGHLIGHT regions.
     let z = match &content {
         QuadContent::ModelPane { .. } => zkey.callback(order::DrawLayer::Artwork).raw(),
+        // Queued on OVERLAY only (`0x590660`), after that layer's quads.
+        QuadContent::QuestBlobs(_) => zkey.callback(order::DrawLayer::Overlay).raw(),
         _ => zkey.raw(),
     };
     out.push(ExtractedQuad {

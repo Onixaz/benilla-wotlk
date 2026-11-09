@@ -1105,6 +1105,16 @@ impl WorldMapState {
         })
     }
 
+    /// The displayed row's `Map.dbc` id, `None` with no row, the blob build's area (`0x58f1a0`).
+    pub(crate) fn quest_blob_area(&self) -> Option<u32> {
+        self.row(self.current_id()).map(|r| r.map_id)
+    }
+
+    /// The displayed row and dungeon floor ids, the blob paint's cache key.
+    pub(crate) fn quest_blob_display(&self) -> (i32, i32) {
+        (self.current_id(), self.current_dungeon())
+    }
+
     /// A world point on the displayed map as `(u, v)`, and the Outland flag (`0x544140`).
     pub(crate) fn quest_project(&self, map: u32, x: f32, y: f32) -> ((f32, f32), bool) {
         self.project(WorldMapPoint { map, x, y })
