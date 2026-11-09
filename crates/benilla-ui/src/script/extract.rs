@@ -7,7 +7,9 @@ use crate::widget::{FrameHandle, HandleMap, HandleSet};
 
 use super::clip::{effective_clip, scroll_clip_sources};
 use super::model::ExtractIndex;
-use super::{colorselect, slider, ExtractedQuad, FontObject, QuadContent, TexCoords, UiScript};
+use super::{
+    backdrop, colorselect, slider, ExtractedQuad, FontObject, QuadContent, TexCoords, UiScript,
+};
 
 impl UiScript {
     /// Every live draw target, visible or not: each frame's slot then its regions, in arena order.
@@ -312,6 +314,33 @@ fn extract_one(
             if data_ref.is_some_and(super::nameplate::is_unpainted_glow) {
                 return;
             }
+            // A plain backdrop piece emits one atlas quad straight off its region, with no clone.
+            if let Some((d, (path, tile))) =
+                data_ref.and_then(|d| backdrop::plain_piece(d).map(|p| (d, p)))
+            {
+                let mut rect = model.region_resolved.get(&rh).copied();
+                if let (Some(r), Some(&(dx, dy))) = (rect.as_mut(), model.anims.offsets.get(&rh)) {
+                    r.left += dx;
+                    r.right += dx;
+                    r.bottom += dy;
+                    r.top += dy;
+                }
+                out.push(ExtractedQuad {
+                    target,
+                    z: zkey.raw(),
+                    rect,
+                    alpha: owner_frame.map_or(1.0, |f| f.effective_alpha) * d.alpha.unwrap_or(1.0),
+                    content: QuadContent::Backdrop {
+                        path: path.clone(),
+                        color: d.vertex_color.unwrap_or([1.0, 1.0, 1.0, 1.0]),
+                        uvs: backdrop::piece_uvs(d),
+                        tile,
+                    },
+                    clip,
+                    scale: owner_frame.map_or(1.0, |f| f.effective_scale),
+                });
+                return;
+            }
             let mut data = data_ref.cloned().unwrap_or_default();
             // One hop: the region's alpha times its owner's `effective_alpha`, which `SetAlpha`
             // already carries down the tree.
@@ -450,10 +479,9 @@ fn extract_one(
     // A ScrollingMessageFrame adds one Text quad per visible ring line, stacked bottom-up
     // with each line's fade alpha; the ring lives in its kind state, not in FontStrings.
     if let (ZTarget::Frame(fh), Some(fr)) = (target, rect) {
-        // The Backdrop draws at the frame slot; the lines take the ARTWORK content key,
-        // where the client's message strings live, over the BACKGROUND (hover box) art.
+        // The lines take the ARTWORK content key, where the client's message strings live, over
+        // the BACKGROUND (hover box) art.
         let paint = super::layout::FramePaint { alpha, scale };
-        UiScript::emit_backdrop(model, fh, fr, zkey.raw(), paint, clip, out);
         UiScript::emit_message_lines(
             model,
             fh,

@@ -554,6 +554,7 @@ fn draw_bubble(
         },
         bg_color: [1.0; 4],
         border_color: [1.0; 4],
+        ..Default::default()
     };
     let up = GxRect::new(-frame.max.y, frame.min.x, -frame.min.y, frame.max.x);
     for p in pieces(up, &bd, 1.0) {

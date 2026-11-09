@@ -297,6 +297,7 @@ pub use auction::{
     AuctionStartRequest, AuctionState, AuctionSubCategory, BIDDER, LIST, OWNER, SORT_COLUMNS,
 };
 pub use aura::AuraState;
+pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
 pub use bank::BankState;
 pub use barber::{BarberHost, BarberIntent, BarberStyle};

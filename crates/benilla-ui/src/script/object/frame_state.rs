@@ -481,8 +481,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(model.arena.frame(h).map(|f| f.alpha).unwrap_or(1.0))
         })?,
     )?;
-    // `SetBackdrop(table|nil)` installs or removes the tiled background and 8-piece border, both
-    // white until tinted; the two colour setters tint the background and the border respectively.
+    // `SetBackdrop(table|nil)` frees the old textures and builds the nine new ones (`0x4905a0`);
+    // the two colour setters tint the background and the border pieces respectively.
     m.set(
         "SetBackdrop",
         lua.create_function(|lua, (this, arg): (Table, Value)| {
@@ -497,15 +497,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     )))
                 }
             };
-            let mut model = crate::script::model_mut_of(lua);
-            match bd {
-                Some(b) => {
-                    model.backdrops.insert(h, b);
-                }
-                None => {
-                    model.backdrops.remove(&h);
-                }
-            }
+            crate::script::backdrop::set_backdrop(&mut crate::script::model_mut_of(lua), h, bd);
             Ok(())
         })?,
     )?;
@@ -564,10 +556,12 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, args): (Table, mlua::MultiValue)| {
             let color = backdrop_color(lua, args);
             let h = frame_handle_of(lua, &this)?;
-            let mut model = crate::script::model_mut_of(lua);
-            if let Some(bd) = model.backdrops.get_mut(&h) {
-                bd.bg_color = color;
-            }
+            crate::script::backdrop::set_color(
+                &mut crate::script::model_mut_of(lua),
+                h,
+                false,
+                color,
+            );
             Ok(())
         })?,
     )?;
@@ -576,10 +570,12 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, args): (Table, mlua::MultiValue)| {
             let color = backdrop_color(lua, args);
             let h = frame_handle_of(lua, &this)?;
-            let mut model = crate::script::model_mut_of(lua);
-            if let Some(bd) = model.backdrops.get_mut(&h) {
-                bd.border_color = color;
-            }
+            crate::script::backdrop::set_color(
+                &mut crate::script::model_mut_of(lua),
+                h,
+                true,
+                color,
+            );
             Ok(())
         })?,
     )?;
