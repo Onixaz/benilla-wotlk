@@ -140,7 +140,7 @@ fn update_icons(model: &mut Model) {
             icons.push(None);
             continue;
         };
-        let r = slot.regions[j];
+        let r = &slot.regions[j];
         icons.push(Some(PoiIcon {
             map: r.map,
             floor: r.floor,
@@ -157,7 +157,7 @@ fn update_icons(model: &mut Model) {
         if done {
             complete.push(i);
         } else {
-            movable[i] = r.points != 1;
+            movable[i] = r.outline.len() != 1;
             active.push(i);
         }
     }

@@ -60,6 +60,8 @@ pub enum QuadContent {
     /// A `Cooldown` widget's sweep, emitted at the frame's own z; its regions and children, if
     /// any, paint above it.
     Cooldown(crate::widget::CooldownPaint),
+    /// A `QuestPOIFrame`'s blobs (`0x5901c0`), drawn in its OVERLAY batch.
+    QuestBlobs(crate::widget::QuestBlobPaint),
     /// A `Minimap` widget's content hole, which the app fills with the map; emitted at the
     /// frame's own z, so the widget's children (border art, buttons) paint above it.
     Minimap {
