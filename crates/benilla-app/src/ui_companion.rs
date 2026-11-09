@@ -79,7 +79,7 @@ pub(crate) struct CompanionMemory {
 }
 
 /// A critter guid's entry bits, as `0x802dd8` takes them: bits 24..51, whatever the high word.
-fn critter_entry(guid: u64) -> u32 {
+pub(crate) fn critter_entry(guid: u64) -> u32 {
     ((guid >> 24) & 0x0fff_ffff) as u32
 }
 
@@ -361,7 +361,7 @@ fn feed_companions(
 /// a slot-5 summon whose creature is out sends `CMSG_DISMISS_CRITTER` with the critter's guid
 /// (`0x80303d`); an aura spell cancels its aura, a mount ridden through another spell of the same
 /// creature that one (`0x8030bc`).
-fn dismiss(
+pub(crate) fn dismiss(
     spell_id: u32,
     catalog: &SpellCatalog,
     summons: &SummonPropertiesCatalog,

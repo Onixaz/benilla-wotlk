@@ -139,6 +139,8 @@ pub(crate) struct CastLadder<'w, 's> {
         Option<Res<'w, crate::net::PlayedClock>>,
         Option<Res<'w, crate::items::Enchants>>,
     ),
+    /// The critter arm of the active-spell test; absent in a harness without the spell plugin.
+    pub(crate) summons: Option<Res<'w, super::SummonSlots>>,
 }
 
 /// What a targeting-cursor click bound: what the location bind or the target bind fills into the
@@ -171,6 +173,49 @@ impl CastLadder<'_, '_> {
     pub(crate) fn keeps_fresh_toggle(&self, spell_id: u32) -> bool {
         self.secure_toggle.as_deref().is_none_or(|s| s.0)
             && self.cooldowns.recently_cast(spell_id, 0, Instant::now())
+    }
+
+    /// The click paths' active-spell test on our own player (`0x802cb0`).
+    pub(crate) fn is_active_spell(
+        &self,
+        spell_id: u32,
+        store: Option<&crate::net::ObjectStore>,
+        auras: Option<&crate::unit_auras::UnitAuras>,
+    ) -> bool {
+        let Some(spells) = self.spells.as_ref() else {
+            return false;
+        };
+        let Some(d) = spells.catalog.get(spell_id) else {
+            return false;
+        };
+        let none = benilla_formats::SummonPropertiesCatalog::default();
+        let summons = self.summons.as_ref().map_or(&none, |s| &s.0);
+        let critter = store.and_then(|s| s.0.unit_critter());
+        crate::ui_action::toggle::is_active_spell(
+            spell_id,
+            d,
+            auras,
+            &spells.catalog,
+            summons,
+            critter,
+        )
+    }
+
+    /// Sends the aura cancel (`0x802f80`) for an active spell on our own player.
+    pub(crate) fn cancel_active_spell(
+        &self,
+        spell_id: u32,
+        store: Option<&crate::net::ObjectStore>,
+        auras: Option<&crate::unit_auras::UnitAuras>,
+    ) {
+        let (Some(spells), Some(store)) = (self.spells.as_ref(), store) else {
+            return;
+        };
+        let none = benilla_formats::SummonPropertiesCatalog::default();
+        let summons = self.summons.as_ref().map_or(&none, |s| &s.0);
+        for send in crate::ui_companion::dismiss(spell_id, &spells.catalog, summons, store, auras) {
+            let _ = self.commands.0.send(send);
+        }
     }
 
     /// The targeting cursor's commit: the ladder ran when the cursor went up, so the click owes

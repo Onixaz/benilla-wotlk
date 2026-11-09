@@ -1,12 +1,14 @@
 //! Press-again-to-cancel. The reference cancels in its dispatchers, above the cast attempt, and the
-//! two toggles differ: the active-action one runs in both `UseAction` and the `CastSpell`
-//! dispatcher, the form-match one in `CastSpell` only. `UseAction` is `ClickSpell` (`0x80da80`):
-//! it uses [`is_active_spell`], not only the `ActiveIconID` predicate, so a mount with no active
-//! icon still dismounts. Both cancel through the aura cancel, the buff right-click's
+//! two toggles differ: the click path's active-spell test (`0x80da80`, here [`is_active_spell`])
+//! runs in `UseAction`, the `CastSpell` dispatcher and item use, the form-match one in `CastSpell`
+//! only. Both cancel through the aura cancel (`0x802f80`), the buff right-click's
 //! `CMSG_CANCEL_AURA`; its own guard (`AttributesEx & 0x2000` set, `& 0x4` clear) never fires for
 //! a shipped toggle and is not built.
 
-use benilla_formats::{ShapeshiftForm, SpellCatalog, SpellDisplay, SPELL_AURA_MOUNTED};
+use benilla_formats::{
+    CompanionKind, ShapeshiftForm, SpellCatalog, SpellDisplay, SummonPropertiesCatalog,
+    SPELL_AURA_MOUNTED,
+};
 
 use crate::unit_auras::UnitAuras;
 
@@ -25,17 +27,21 @@ pub(crate) fn active_action_toggle(
         })
 }
 
-/// The click-spell active test (`0x802cb0`): a nonzero `ActiveIconID` or a mount (`WillSummonCritter`
-/// is aura 0 `MOUNTED`), then a cancelable aura of this spell, else any `MOUNTED` aura riding the
-/// same creature. A critter's slot-5 arm is the companion pane's.
+/// The click-spell active test (`0x802cb0`); the own-vehicle summon arm is not built.
 pub(crate) fn is_active_spell(
     spell_id: u32,
     d: &SpellDisplay,
     auras: Option<&UnitAuras>,
     catalog: &SpellCatalog,
+    summons: &SummonPropertiesCatalog,
+    critter: Option<u64>,
 ) -> bool {
-    if d.active_icon_id == 0 && d.effect_apply_aura[0] != SPELL_AURA_MOUNTED {
+    let kind = d.companion_kind(summons);
+    if d.active_icon_id == 0 && kind.is_none() {
         return false;
+    }
+    if kind == Some(CompanionKind::Critter) {
+        return critter.map(crate::ui_companion::critter_entry) == Some(d.companion_creature());
     }
     let Some(auras) = auras else {
         return false;
@@ -53,31 +59,6 @@ pub(crate) fn is_active_spell(
                     && m.effect_misc_value[0] == d.effect_misc_value[0]
             })
         })
-}
-
-/// The aura `ClickSpell` cancels (`0x802f80`): another `MOUNTED` aura of the same creature while
-/// mounted (`0x8030bc`), else the clicked spell.
-pub(crate) fn click_cancel_aura(
-    spell_id: u32,
-    d: &SpellDisplay,
-    auras: Option<&UnitAuras>,
-    catalog: &SpellCatalog,
-    mount_display: u32,
-) -> u32 {
-    if mount_display > 0 && d.effect_apply_aura.contains(&SPELL_AURA_MOUNTED) {
-        if let Some(other) = auras.and_then(|t| {
-            t.iter().find_map(|a| {
-                let m = catalog.get(a.spell_id)?;
-                (m.effect_apply_aura[0] == SPELL_AURA_MOUNTED
-                    && m.effect_misc_value[0] == d.effect_misc_value[0]
-                    && a.spell_id != spell_id)
-                    .then_some(a.spell_id)
-            })
-        }) {
-            return other;
-        }
-    }
-    spell_id
 }
 
 /// The form-match recast: `None` casts (not the active form), `Some(true)` cancels the form,
@@ -168,34 +149,50 @@ mod tests {
     fn a_mount_with_no_active_icon_is_still_an_active_spell() {
         let gryphon = mount(27655);
         let catalog = SpellCatalog::from_displays([(32242, mount(27655))].into());
+        let none = SummonPropertiesCatalog::default();
         let riding = UnitAuras::of(1, &[(0, 32242, 1)]);
-        assert!(is_active_spell(32242, &gryphon, Some(&riding), &catalog));
-        assert!(!is_active_spell(32242, &gryphon, None, &catalog));
+        let active = |auras| is_active_spell(32242, &gryphon, auras, &catalog, &none, None);
+        assert!(active(Some(&riding)));
+        assert!(!active(None));
         assert!(
             !active_action_toggle(32242, &gryphon, Some(&riding)),
             "the icon-swap predicate does not cover a mount"
         );
-        assert_eq!(
-            click_cancel_aura(32242, &gryphon, Some(&riding), &catalog, 27655),
-            32242
-        );
     }
 
-    /// A mount ridden through another spell of the same creature cancels that spell (`0x8030bc`).
+    /// A mount ridden through another spell of the same creature counts as active.
     #[test]
-    fn a_mount_ridden_through_another_spell_cancels_that_one() {
+    fn a_mount_ridden_through_another_spell_is_active() {
         let book = mount(800);
         let catalog = SpellCatalog::from_displays([(20, mount(800)), (22, mount(800))].into());
+        let none = SummonPropertiesCatalog::default();
         let riding = UnitAuras::of(1, &[(0, 22, 0)]);
-        assert!(is_active_spell(20, &book, Some(&riding), &catalog));
-        assert_eq!(
-            click_cancel_aura(20, &book, Some(&riding), &catalog, 1234),
-            22
-        );
-        assert_eq!(
-            click_cancel_aura(20, &book, Some(&riding), &catalog, 0),
+        assert!(is_active_spell(
             20,
-            "dismounted, the clicked spell is the cancel"
-        );
+            &book,
+            Some(&riding),
+            &catalog,
+            &none,
+            None
+        ));
+    }
+
+    /// A slot-5 summon is active while its own creature is the critter out (`0x802dcc`).
+    #[test]
+    fn a_critter_spell_is_active_while_its_creature_is_out() {
+        let critter = SpellDisplay {
+            effects: [28, 0, 0],
+            effect_misc_value: [7555, 0, 0],
+            effect_misc_value_b: [41, 0, 0],
+            ..Default::default()
+        };
+        let catalog = SpellCatalog::from_displays([(10673, critter)].into());
+        let critter = catalog.get(10673).unwrap();
+        let slots = SummonPropertiesCatalog::from_slots([(41, 5)]);
+        let guid = |entry: u64| 0xF130_0000_0000_0000 | (entry << 24) | 7;
+        let active = |out| is_active_spell(10673, critter, None, &catalog, &slots, out);
+        assert!(active(Some(guid(7555))));
+        assert!(!active(Some(guid(7556))), "another critter is out");
+        assert!(!active(None), "nothing is out");
     }
 }
