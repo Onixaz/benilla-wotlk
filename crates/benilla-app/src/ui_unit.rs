@@ -1752,12 +1752,13 @@ fn feed_units(
         }
     }
 
-    // `PLAYER_ENTERING_WORLD` once per world entry, after our descriptor lands, as the reference's
-    // does. At world exit, re-arm it and forget the player-global memos so the next character seeds
-    // them.
+    // `PLAYER_LOGIN` if the UI load armed it, then `PLAYER_ENTERING_WORLD`, once per world entry,
+    // after our descriptor lands, as the reference's cascade does (`0x52816d`). At world exit,
+    // re-arm the entry and forget the player-global memos so the next character seeds them.
     if self_pair.is_some() {
         if !memo.entered_world {
             gate.audit("feed_units", "the PLAYER_ENTERING_WORLD arm");
+            crate::ui_script::fire_armed_player_login(&mut script);
             script.fire_event("PLAYER_ENTERING_WORLD", vec![]);
             // The cascade's reputation world entry (`0x5d2bc0`) re-sorts and fires `UPDATE_FACTION`
             // (`0x5d1bfa`) with the player seated, which re-shows the XP bar the pre-player
