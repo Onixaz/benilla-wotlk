@@ -162,6 +162,7 @@ tables! {
         "PageTextMaterial" => page_text_material::schema(),
         "ParticleColor" => particles::particle_color_schema(),
         "PetPersonality" => pet_stats::personality_schema(),
+        "PowerDisplay" => power_display::power_display_schema(),
         "PvpDifficulty" => battlemaster_list::pvp_difficulty_schema(),
         "QuestFactionReward" => quest_rewards::quest_faction_reward_schema(),
         "QuestInfo" => quest_info::quest_info_schema(),

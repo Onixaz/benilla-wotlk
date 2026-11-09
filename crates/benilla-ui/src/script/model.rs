@@ -691,6 +691,8 @@ pub(crate) struct Model {
     /// The seat indicators by id.
     pub(crate) vehicle_indicators:
         std::sync::Arc<HashMap<u32, super::vehicle::VehicleIndicatorView>>,
+    /// The `PowerDisplay.dbc` rows by id.
+    pub(crate) power_displays: std::sync::Arc<HashMap<u32, super::vehicle::PowerDisplayView>>,
     /// The vehicle verbs' requests, for the app to send.
     pub(crate) vehicle_requests: Vec<super::vehicle::VehicleRequest>,
     /// `s_vehicleAimNormPower`, 0..1.
@@ -1611,6 +1613,7 @@ impl Model {
             threat: Default::default(),
             vehicles: Default::default(),
             vehicle_indicators: Default::default(),
+            power_displays: Default::default(),
             vehicle_requests: Vec::new(),
             vehicle_aim_power: 0.0,
             totems: Default::default(),
