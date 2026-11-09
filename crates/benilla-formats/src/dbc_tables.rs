@@ -121,6 +121,7 @@ tables! {
         "Holidays" => holidays::holidays_schema(),
         "ItemBagFamily" => itembagfamily::item_bag_family_schema(),
         "ItemClass" => itemclass::item_class_schema(),
+        "Item" => items::item_schema(),
         "ItemDisplayInfo" => items::item_display_info_schema(&LAYOUTS.item_display_info),
         "ItemExtendedCost" => item_extended_cost::schema(),
         "ItemLimitCategory" => item_limit_category::item_limit_category_schema(),
