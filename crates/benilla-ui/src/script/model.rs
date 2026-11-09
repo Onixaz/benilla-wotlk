@@ -159,6 +159,8 @@ pub(crate) struct Model {
     pub(crate) region_data: crate::widget::HandleMap<RegionHandle, RegionData>,
     /// Each frame's backdrop plate (`<Backdrop>` or `SetBackdrop`, the client's `frame+0x1ac`).
     pub(crate) backdrops: crate::widget::HandleMap<FrameHandle, backdrop::Backdrop>,
+    /// Each backdrop's nine texture slots (`frame+0x1ac`'s `+0x0..+0x20`).
+    pub(crate) backdrop_slots: crate::widget::HandleMap<FrameHandle, backdrop::BackdropSlots>,
     /// The SimpleHTML widgets' state: element fonts `+0x350`, link format `+0x360`, content nodes
     /// `+0x340`.
     pub(crate) simple_html: simplehtml::SimpleHtmlStates,
@@ -1351,6 +1353,7 @@ impl Model {
             link_spans: Default::default(),
             region_data: Default::default(),
             backdrops: Default::default(),
+            backdrop_slots: Default::default(),
             simple_html: simplehtml::SimpleHtmlStates::new(),
             font_objects_by_lower: HashMap::new(),
             region_resolved: Default::default(),

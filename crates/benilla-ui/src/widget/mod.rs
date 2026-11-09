@@ -771,6 +771,12 @@ impl WidgetArena {
         draw_layer: DrawLayer,
         sub_level: i8,
     ) -> Option<RegionHandle> {
+        if self
+            .frame(owner)
+            .is_some_and(|f| f.next_decl >= 1 << crate::order::DECL_BITS)
+        {
+            self.renumber_decls(owner);
+        }
         let decl_seq = {
             let f = self.frame_mut(owner)?;
             let d = f.next_decl;
@@ -791,6 +797,22 @@ impl WidgetArena {
             .regions
             .push(handle);
         Some(handle)
+    }
+
+    /// Close the `decl_seq` gaps freed regions left, keeping their order, so a frame that keeps
+    /// rebuilding its backdrop never overflows the sort key's declaration field.
+    fn renumber_decls(&mut self, owner: FrameHandle) {
+        let Some(regions) = self.frame(owner).map(|f| f.regions.clone()) else {
+            return;
+        };
+        for (i, rh) in regions.iter().enumerate() {
+            if let Some(r) = self.regions.get_mut(rh.index, rh.generation) {
+                r.decl_seq = i as u32;
+            }
+        }
+        if let Some(f) = self.frame_mut(owner) {
+            f.next_decl = regions.len() as u32;
+        }
     }
 
     /// Free one region, as only the SimpleHTML text set does in the client, pool-freeing the last
