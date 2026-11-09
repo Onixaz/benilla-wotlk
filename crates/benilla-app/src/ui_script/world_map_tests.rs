@@ -367,3 +367,67 @@ fn the_stock_map_draws_and_hovers_a_quest_blob() {
     s.resolve();
     assert!(blobs(&s).is_none(), "a closed map extracts no blob");
 }
+
+/// The Quest Log's Show Map button finishes its open, so a later map update still paints the tiles.
+#[test]
+fn the_quest_log_show_map_button_leaves_the_map_updating() {
+    use benilla_ui::script::{QuestLogEntryView, QuestLogState, QuestPoiRegion, QuestPoiView};
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = session();
+    let _ = s.take_errors();
+    const QUEST: u32 = 60;
+    s.set_quest_log(QuestLogState {
+        num_quests: 1,
+        entries: vec![
+            QuestLogEntryView {
+                title: "Elwynn Forest".into(),
+                is_header: true,
+                ..Default::default()
+            },
+            QuestLogEntryView {
+                quest_id: QUEST,
+                title: "Kobold Candles".into(),
+                level: 7,
+                poi_objectives: 1,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    });
+    s.apply_quest_pois(vec![QuestPoiView {
+        quest_id: QUEST,
+        regions: vec![QuestPoiRegion {
+            objective: 0,
+            map: 0,
+            area: 30,
+            floor: 0,
+            flags: 0,
+            center: (-9464, 62),
+            outline: vec![(-9600, -100), (-9300, -100), (-9300, 250), (-9600, 250)],
+            priority: 0,
+        }],
+    }]);
+    s.run("ShowUIPanel(QuestLogFrame) QuestLog_SetSelection(2) QuestLogFrameShowMapButton:Click()")
+        .unwrap();
+    let errors = map_errors(s.take_errors());
+    assert!(errors.is_empty(), "show map errors: {errors:#?}");
+    assert!(
+        s.eval::<bool>(
+            "return WorldMapFrame:IsShown() and WorldMapFrame.blockWorldMapUpdate == nil"
+        )
+        .unwrap(),
+        "the click opened the map and finished its open"
+    );
+    s.run("WorldMapDetailTile1:SetTexture(nil)").unwrap();
+    s.fire_event("WORLD_MAP_UPDATE", vec![]);
+    let tile = s
+        .eval::<Option<String>>("return WorldMapDetailTile1:GetTexture()")
+        .unwrap();
+    assert!(
+        tile.is_some_and(|t| t.contains("Elwynn")),
+        "the later update set the zone's tiles"
+    );
+}
