@@ -87,6 +87,10 @@ pub(crate) fn drain_meeting_stone_uses(
                 errors.0.push(crate::ui_action::UiError::key(key));
             }
             None => {
+                // Past its own gates the stone's use is the shared one, dismount first (`0x71190c`).
+                if let Ok(own) = self_q.single() {
+                    crate::creature_anim::dismount_first(own, &commands);
+                }
                 trace_use(&format!("SEND CMSG_GAMEOBJ_USE guid={go_guid:#x}"));
                 let _ = commands.0.send(ClientCommand::GameObjUse { guid: go_guid });
             }

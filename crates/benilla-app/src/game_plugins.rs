@@ -951,9 +951,11 @@ pub(crate) mod schedule_tests {
     ///   `rescatter_clutter`, as `move_missiles` does.
     /// - `record_spells_in_transit` reads a caster's place against `publish_camera_pose` (+1): a
     ///   frame's lag does not move a landing time that matters.
+    /// - `target::scan::remember_last_enemy` reads `Player` for the auto-dismount check (`0x71b0c0`)
+    ///   against six writers (+6): a mover's flags a frame late only delay a sampled stamp.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_873;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_879;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

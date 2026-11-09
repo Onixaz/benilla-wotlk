@@ -693,6 +693,61 @@ mod tests {
         assert_eq!(swings(&f), (vec![NEW], false));
     }
 
+    /// A mounted Attack refuses past melee reach ahead of the final gate (`0x72bdb0`), and inside
+    /// it the dismount leads the swing (`0x6e4950`).
+    #[test]
+    fn a_mounted_attack_is_refused_past_melee_and_dismounts_inside_it() {
+        use benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
+        for x in [20.0, 4.0] {
+            let mut f = frame(true);
+            with_factions(&mut f, FOE, &[]);
+            let world = f.app.world_mut();
+            let index = &world.resource::<GuidIndex>().0;
+            let (me, old) = (index[&ME], index[&OLD]);
+            world.entity_mut(old).insert((
+                Transform::from_xyz(x, 0.0, 0.0),
+                crate::net::NetEntity {
+                    kind: benilla_protocol::EntityKind::Unit,
+                    display_id: None,
+                    scale: 1.0,
+                },
+            ));
+            world
+                .entity_mut(me)
+                .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                    (2, 0x19),
+                    (HEALTH, 100),
+                    (28, 100),
+                    (FLAGS, 0x8),
+                    (TEMPLATE, OURS),
+                    (FIELD_UNIT_MOUNTDISPLAYID, 1147),
+                ])));
+            run(&mut f, "AttackTarget()");
+            let sent: Vec<ClientCommand> =
+                f.rx.try_iter()
+                    .filter(|c| {
+                        matches!(
+                            c,
+                            ClientCommand::CancelMountAura | ClientCommand::AttackSwing { .. }
+                        )
+                    })
+                    .collect();
+            if x > 5.0 {
+                assert_eq!(errors(&f), vec!["ERR_OUT_OF_RANGE"]);
+                assert!(sent.is_empty());
+            } else {
+                assert!(errors(&f).is_empty());
+                assert!(matches!(
+                    sent.as_slice(),
+                    [
+                        ClientCommand::CancelMountAura,
+                        ClientCommand::AttackSwing { guid: OLD }
+                    ]
+                ));
+            }
+        }
+    }
+
     /// A unit we are friendly toward is dropped and `TargetNearestEnemy` runs, moving the
     /// selection; the swing goes at what it picked. The Attack button reaches the same through the
     /// cast attempt.

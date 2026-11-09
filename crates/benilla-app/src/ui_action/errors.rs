@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use crate::net::ObjectStore;
 use crate::sound::MessageSounds;
+use crate::spell::validator::MountedGate;
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
 use crate::ui_items::{count_of, InventoryScope};
 
@@ -358,9 +359,10 @@ const ATTACK_FLAG_REFUSALS: [(u32, &str); 4] = [
 pub(crate) fn attack_actor_refusal(
     actor: Option<&ObjectStore>,
     self_guid: Option<u64>,
+    mounted: MountedGate,
     errors: &mut UiErrorKeys,
 ) -> bool {
-    let Some(key) = attack_actor_blocked(actor, self_guid) else {
+    let Some(key) = attack_actor_blocked(actor, self_guid, mounted) else {
         return false;
     };
     debug!("attack refused locally by the actor's own state — {key}");
@@ -371,14 +373,16 @@ pub(crate) fn attack_actor_refusal(
 /// The same ladder without the message, in the reference's gate order. The world right-click asks
 /// this: its path shows no error text and never reaches the attack-start validator, whose callers
 /// are the pet bar, Attack and the cast attempt. That path's own gate set overlaps this one but is
-/// not transcribed.
+/// not transcribed. Mounted refuses only through [`MountedGate`] (`0x729a70`).
 pub(crate) fn attack_actor_blocked(
     actor: Option<&ObjectStore>,
     self_guid: Option<u64>,
+    mounted: MountedGate,
 ) -> Option<&'static str> {
     // An unresolved actor skips the chain, as in the reference, though the pet bar's own gate never
     // lets an unresolved pet reach it.
-    let fields = &actor?.0;
+    let actor = actor?;
+    let fields = &actor.0;
     // Dead, or a player's ghost flag, since a ghost has health 1.
     let key = if fields.is_dead_or_ghost() {
         "ERR_ATTACK_DEAD"
@@ -393,7 +397,7 @@ pub(crate) fn attack_actor_blocked(
         .find(|(bit, _)| fields.unit_flags() & bit != 0)
     {
         key
-    } else if fields.unit_mount_display_id() > 0 {
+    } else if mounted.refuses(actor) {
         "ERR_ATTACK_MOUNTED"
     } else {
         return None;
@@ -716,6 +720,7 @@ mod ui_error_tests {
 #[cfg(test)]
 mod attack_actor_tests {
     use super::*;
+    use crate::spell::cast_target::AutoDismount;
     use benilla_protocol::ObjectFields;
 
     const HEALTH: u16 = 22;
@@ -733,8 +738,18 @@ mod attack_actor_tests {
     }
 
     fn refusal(store: Option<&ObjectStore>, self_guid: Option<u64>) -> Option<&'static str> {
+        refusal_at(store, self_guid, 0, AutoDismount::default())
+    }
+
+    fn refusal_at(
+        store: Option<&ObjectStore>,
+        self_guid: Option<u64>,
+        move_flags: u32,
+        auto_dismount: AutoDismount,
+    ) -> Option<&'static str> {
         let mut errors = UiErrorKeys::default();
-        let refused = attack_actor_refusal(store, self_guid, &mut errors);
+        let mounted = MountedGate::player(move_flags, Some(&auto_dismount));
+        let refused = attack_actor_refusal(store, self_guid, mounted, &mut errors);
         assert_eq!(
             refused,
             !errors.0.is_empty(),
@@ -762,7 +777,18 @@ mod attack_actor_tests {
         );
         assert_eq!(
             refusal(Some(&actor(&[(MOUNT, 1147)])), Some(7)),
-            Some("ERR_ATTACK_MOUNTED")
+            None,
+            "a grounded mount auto-dismounts (`0x71b0c0`)"
+        );
+        assert_eq!(
+            refusal_at(
+                Some(&actor(&[(MOUNT, 1147)])),
+                Some(7),
+                crate::creature_anim::move_flags::FLYING,
+                AutoDismount::default()
+            ),
+            Some("ERR_ATTACK_MOUNTED"),
+            "airborne, autoDismountFlying is off"
         );
         for (bit, key) in ATTACK_FLAG_REFUSALS {
             assert_eq!(

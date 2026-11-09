@@ -159,6 +159,65 @@ pub(crate) fn can_auto_dismount(
         && (move_flags & crate::creature_anim::move_flags::FLYING == 0 || auto_dismount_flying)
 }
 
+/// The attack gates' mounted leg (`0x729a70`, `0x72bdb0`), by who is attacking. The client flag
+/// `0x10000000` is not kept: it spans a dismount's server round trip, which benilla has no local
+/// teardown to shorten.
+#[derive(Clone, Copy)]
+pub(crate) enum MountedGate {
+    /// The active player: the auto-dismount check (`0x71b0c0`) decides.
+    Player {
+        move_flags: u32,
+        auto_dismount: super::cast_target::AutoDismount,
+    },
+    /// Any other unit never auto-dismounts; a creature with type flag `0x800` fights mounted.
+    Creature { type_flags: u32 },
+}
+
+impl MountedGate {
+    pub(crate) fn player(
+        move_flags: u32,
+        auto_dismount: Option<&super::cast_target::AutoDismount>,
+    ) -> Self {
+        Self::Player {
+            move_flags,
+            auto_dismount: auto_dismount.copied().unwrap_or_default(),
+        }
+    }
+
+    /// A non-player actor, its type flags read from the creature record (`0x715f70`).
+    pub(crate) fn creature(
+        store: &crate::net::ObjectStore,
+        names: Option<&crate::names::NameCache>,
+    ) -> Self {
+        Self::Creature {
+            type_flags: store
+                .0
+                .object_entry()
+                .and_then(|e| names?.creature_record(e))
+                .map_or(0, |r| r.type_flags),
+        }
+    }
+
+    /// Whether `own`, this actor's descriptor, is refused for being mounted.
+    pub(crate) fn refuses(self, own: &crate::net::ObjectStore) -> bool {
+        own.0.unit_mount_display_id() > 0
+            && match self {
+                Self::Player {
+                    move_flags,
+                    auto_dismount,
+                } => !can_auto_dismount(
+                    own.0.unit_flags(),
+                    move_flags,
+                    auto_dismount.ground,
+                    auto_dismount.flying,
+                ),
+                Self::Creature { type_flags } => {
+                    type_flags & crate::names::type_flags::MOUNTED_COMBAT == 0
+                }
+            }
+    }
+}
+
 /// The interrupt-flag water pair: `0x80` cancels an aura on entering water, `0x100` on leaving it
 /// (vmangos `AURA_INTERRUPT_UNDER_WATER_CANCELS` / `AURA_INTERRUPT_ABOVE_WATER_CANCELS`). The
 /// validator refuses a cast whose aura could not survive the caster's current side.
@@ -243,6 +302,21 @@ pub(super) fn cast_moving_refusal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A creature never auto-dismounts, and only type flag `0x800` lets it fight mounted.
+    #[test]
+    fn the_mounted_gate_exempts_only_a_creature_that_fights_mounted() {
+        use benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
+        let own = crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            FIELD_UNIT_MOUNTDISPLAYID,
+            1147,
+        )]));
+        assert!(MountedGate::Creature { type_flags: 0 }.refuses(&own));
+        assert!(!MountedGate::Creature { type_flags: 0x800 }.refuses(&own));
+        assert!(!MountedGate::player(0, None).refuses(&own), "grounded");
+        let airborne = crate::creature_anim::move_flags::FLYING;
+        assert!(MountedGate::player(airborne, None).refuses(&own));
+    }
 
     fn spell_with_range(range_index: u32, attributes: u32) -> SpellDisplay {
         SpellDisplay {

@@ -46,6 +46,9 @@ pub(crate) mod type_flags {
     /// `0x20`: the pass-2 election keeps an off-screen creature ticking so its combat stays
     /// audible.
     pub(crate) const MORE_AUDIBLE: u32 = 0x20;
+
+    /// `0x800`: the creature fights mounted (`0x715f70`).
+    pub(crate) const MOUNTED_COMBAT: u32 = 0x800;
 }
 
 /// The name cache: players by guid, creatures by template entry, pets by pet number.
