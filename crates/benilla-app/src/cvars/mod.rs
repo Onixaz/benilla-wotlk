@@ -749,6 +749,9 @@ fn load_config(world: &mut World) {
                 }
             }
         }
+        // The boot writes the locale it mounted back over the file's: a missing folder moved it
+        // to the next one that exists (`0x406953`).
+        cvars.set("locale", &benilla_formats::client_locale().folder);
         // `RunOnce*.wtf` and the realmlist files run after `Config.wtf`, each `SET` a write that
         // reaches the file at the next save (`0x4067f0`, `0x6b0bf0`).
         for (name, value) in extra {

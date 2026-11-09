@@ -599,7 +599,12 @@ fn feed_name_records(
 /// The race id to `UnitRace`'s display name and `raceFile` token (`"Scourge"`, `"NightElf"`); the
 /// display name is also what `$R`/`$r` expand to.
 pub(crate) fn race_names(race: u8) -> Option<(&'static str, &'static str)> {
-    Some(match race {
+    race_names_of(race, None)
+}
+
+/// [`race_names`] for a known sex, whose own name the reference picks (`0x715970`).
+pub(crate) fn race_names_of(race: u8, sex: Option<u8>) -> Option<(&'static str, &'static str)> {
+    let (english, file) = match race {
         1 => ("Human", "Human"),
         2 => ("Orc", "Orc"),
         3 => ("Dwarf", "Dwarf"),
@@ -611,12 +616,21 @@ pub(crate) fn race_names(race: u8) -> Option<(&'static str, &'static str)> {
         10 => ("Blood Elf", "BloodElf"),
         11 => ("Draenei", "Draenei"),
         _ => return None,
-    })
+    };
+    Some((
+        crate::locale_names::race(race, sex).unwrap_or(english),
+        file,
+    ))
 }
 
 /// The class id to `UnitClass`'s display name and uppercase `classFileName`.
 pub(crate) fn class_names(class: u8) -> Option<(&'static str, &'static str)> {
-    Some(match class {
+    class_names_of(class, None)
+}
+
+/// [`class_names`] for a known sex, whose own name the reference picks (`0x7159e0`).
+pub(crate) fn class_names_of(class: u8, sex: Option<u8>) -> Option<(&'static str, &'static str)> {
+    let (english, file) = match class {
         1 => ("Warrior", "WARRIOR"),
         2 => ("Paladin", "PALADIN"),
         3 => ("Hunter", "HUNTER"),
@@ -628,7 +642,11 @@ pub(crate) fn class_names(class: u8) -> Option<(&'static str, &'static str)> {
         9 => ("Warlock", "WARLOCK"),
         11 => ("Druid", "DRUID"),
         _ => return None,
-    })
+    };
+    Some((
+        crate::locale_names::class(class, sex).unwrap_or(english),
+        file,
+    ))
 }
 
 /// A playable race's fixed side, for where no faction template is at hand, as at world entry,
@@ -986,9 +1004,10 @@ pub(crate) fn snapshot(
     types: CreatureTypeSources<'_>,
 ) -> UnitState {
     let power_type = store.0.unit_power_type();
-    let race = store.0.unit_race().and_then(race_names);
+    let sex = store.0.unit_gender();
+    let race = store.0.unit_race().and_then(|r| race_names_of(r, sex));
     let class_id = store.0.unit_class();
-    let class = class_id.and_then(class_names);
+    let class = class_id.and_then(|c| class_names_of(c, sex));
     UnitState {
         exists: true,
         // A live descriptor is having succeeded, all of `UnitIsVisible`.
@@ -1265,9 +1284,9 @@ pub(crate) fn faction_group_localized(
         .map(str::to_string)
 }
 
-/// `CreatureType.dbc` id to the enUS word, a creature's level-line class slot.
+/// `CreatureType.dbc` id to its word in the running locale, a creature's level-line class slot.
 fn creature_type_word(t: u32) -> Option<&'static str> {
-    Some(match t {
+    let english = match t {
         1 => "Beast",
         2 => "Dragonkin",
         3 => "Demon",
@@ -1282,7 +1301,8 @@ fn creature_type_word(t: u32) -> Option<&'static str> {
         // Deviation: 10, "Not specified", answers None because the word would print in the
         // tooltip's level line; `UnitCreatureType` then answers nil where the reference names it.
         _ => return None,
-    })
+    };
+    Some(crate::locale_names::creature_type(t).unwrap_or(english))
 }
 
 /// The `PLAYER_QUEST_LOG` descriptor indexes, 25 slots of 5 fields.

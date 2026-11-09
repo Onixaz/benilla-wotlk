@@ -454,14 +454,13 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("cameraPitchSmoothSpeed", "45").per_account(),
     // The WowMouse switch (`0x5fd355`).
     same("enableWowMouse", "0"),
-    // `locale` (`0x4068c6`): the boot writes the install's locale over the registered "****";
-    // benilla is enUS-only. `useEnglishAudio` (`0x40690f`, "0").
+    // `locale` (`0x4068c6`): the boot writes the mounted locale over the registered "****".
+    // `useEnglishAudio` (`0x40690f`, "0"), registered and read by nothing else.
     overridden(
         "locale",
         "enUS",
         "****",
-        "the boot writes the running locale over it before the first frame, and benilla \
-         reads enUS alone",
+        "the boot writes the running locale over it before the first frame",
     ),
     same("useEnglishAudio", "0"),
     // The account data's sync switches: `synchronizeSettings` for all of it (`0x6b991b`), then one
