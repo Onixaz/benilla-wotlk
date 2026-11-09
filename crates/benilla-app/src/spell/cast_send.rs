@@ -953,7 +953,8 @@ fn send_spell_cast(
     }
     // The form leg (`0x72bac0`): needs-a-form always refuses, "Can't do that while shapeshifted"
     // only when the auto-unshift check does; otherwise the send leaves the form. A mount spell
-    // leaves it too (`0x80ac90`). Not built: that send's walk over a stance-flagged form's model.
+    // leaves a form that changes the model too, a stance-flagged one included (`0x721da0`,
+    // `0x726f30`).
     let mut cancel_form = false;
     let mut caster_form = 0;
     if let Some(d) = def {
@@ -978,7 +979,12 @@ fn send_spell_cast(
         }
         if d.effect_apply_aura
             .contains(&benilla_formats::SPELL_AURA_MOUNTED)
-            && validator::is_shapeshifted(form, form_flags)
+            && (validator::is_shapeshifted(form, form_flags)
+                || (form != 0
+                    && ctx
+                        .rel
+                        .self_store
+                        .is_some_and(|s| s.0.unit_displayid() != s.0.unit_native_displayid())))
             && ctx.auto_unshift
         {
             cancel_form = true;
@@ -1483,6 +1489,86 @@ mod tests {
                 assert!(sent.is_empty());
             }
         }
+    }
+
+    /// A mount spell leaves a stance-flagged form that changes the model, as Moonkin Form does.
+    #[test]
+    fn a_mount_spell_leaves_a_stance_flagged_form_with_a_model() {
+        use crate::net::ObjectStore;
+        use benilla_formats::{ShapeshiftForm, SpellDisplay, SPELL_AURA_MOUNTED};
+        use benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE;
+        use benilla_protocol::ObjectFields;
+        const MOUNT: u32 = 100;
+        const FORM_AURA: u32 = 24858;
+        const FORM: u32 = 31;
+        let (mut world, rx) = world();
+        let mut spells = crate::ui_action::Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [
+                (
+                    MOUNT,
+                    SpellDisplay {
+                        effect_apply_aura: [SPELL_AURA_MOUNTED, 0, 0],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    FORM_AURA,
+                    SpellDisplay {
+                        shapeshift_form: Some(FORM),
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        spells.forms.insert(
+            FORM,
+            ShapeshiftForm {
+                flags: 0xac1,
+                ..Default::default()
+            },
+        );
+        world.insert_resource(spells);
+        let store: &'static ObjectStore =
+            Box::leak(Box::new(ObjectStore(ObjectFields::from_pairs(&[
+                (22, 100),
+                (28, 100),
+                (131, 15374),
+                (132, 49),
+                (164, FORM << 24),
+            ]))));
+        let auras: &'static crate::unit_auras::UnitAuras = Box::leak(Box::new(
+            crate::unit_auras::UnitAuras::of(1, &[(0, FORM_AURA, AURA_UPDATE_FLAG_CANCELABLE | 1)]),
+        ));
+        world
+            .run_system_once(move |mut ladder: CastLadder| {
+                let base = ctx();
+                let form_ctx = cast_target::CastContext {
+                    rel: cast_target::TargetRelations {
+                        self_store: Some(store),
+                        ..base.rel
+                    },
+                    self_auras: Some(auras),
+                    ..base
+                };
+                ladder.send(MOUNT, &form_ctx, CastCommit::Spell);
+            })
+            .expect("one-shot");
+        let sent: Vec<ClientCommand> = rx.try_iter().collect();
+        assert!(matches!(
+            sent.as_slice(),
+            [
+                ClientCommand::CancelAura {
+                    spell_id: FORM_AURA
+                },
+                ClientCommand::CastSpell {
+                    spell_id: MOUNT,
+                    ..
+                }
+            ]
+        ));
     }
 
     #[test]
