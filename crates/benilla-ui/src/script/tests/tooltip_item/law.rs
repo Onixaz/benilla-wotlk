@@ -1042,3 +1042,172 @@ fn show_item_level_adds_the_line_for_its_four_classes() {
     .unwrap();
     assert!(s.take_errors().is_empty());
 }
+
+/// The second line by `colorblindMode` and template flag `0x8` (`0x627b23`): the heroic pair, the
+/// plain item's quality word, or nothing, each between the name and the petition lines.
+#[test]
+fn the_line_under_the_name_follows_colorblind_mode_and_the_heroic_flag() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.register_cvars([("colorblindMode", "0")]);
+    s.run(
+        r#"
+        ITEM_HEROIC = "[ITEM_HEROIC]"; ITEM_HEROIC_EPIC = "[ITEM_HEROIC_EPIC]"
+        ITEM_QUALITY0_DESC = "[Q0]"; ITEM_QUALITY3_DESC = "[Q3]"
+    "#,
+    )
+    .unwrap();
+    for (id, quality, flags) in [(31, 4u32, 0x8u32), (32, 3, 0), (33, 5, 0)] {
+        s.set_item_template(
+            id,
+            ItemTemplateView {
+                name: format!("Item{id}"),
+                quality,
+                flags,
+                ..Default::default()
+            },
+        );
+    }
+    let show = |s: &mut UiScript, id: u32, cvar: &str| {
+        s.run(&format!(
+            r#"
+            local a = CreateFrame("Button", "SlotH"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+            if not TT then CreateFrame("GameTooltip", "TT") end
+            SetCVar("colorblindMode", "{cvar}")
+            TT:SetOwner(a, "ANCHOR_RIGHT"); SetItemByIdForTest(TT, {id})
+        "#
+        ))
+        .unwrap();
+        lines_of(s)
+    };
+    let green = [0.0, 1.0, 0.0, 1.0];
+    let white = [1.0, 1.0, 1.0, 1.0];
+
+    let heroic = show(&mut s, 31, "0");
+    assert_eq!(
+        heroic[1],
+        ("[ITEM_HEROIC]".to_string(), green),
+        "{heroic:?}"
+    );
+    let epic = show(&mut s, 31, "1");
+    assert_eq!(
+        epic[1],
+        ("[ITEM_HEROIC_EPIC]".to_string(), white),
+        "{epic:?}"
+    );
+    let word = show(&mut s, 32, "1");
+    assert_eq!(word[1], ("[Q3]".to_string(), white), "{word:?}");
+    let plain = show(&mut s, 32, "0");
+    assert_eq!(plain.len(), 1, "no flag, no CVar, no line: {plain:?}");
+    // A quality whose key the player's strings lack adds no row, as `AddLine` drops an empty text.
+    let unkeyed = show(&mut s, 33, "1");
+    assert_eq!(unkeyed.len(), 1, "{unkeyed:?}");
+    assert!(s.take_errors().is_empty());
+}
+
+/// A gem under `DESTROY_GEM` reads as quality 0 in colorblind mode (`0x627b63`), whatever its own.
+#[test]
+fn a_destroyed_gem_reads_the_quality_zero_word() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.register_cvars([("colorblindMode", "1")]);
+    s.run(
+        r#"
+        DESTROY_GEM = "[DESTROY_GEM]"; ITEM_QUALITY0_DESC = "[Q0]"; ITEM_QUALITY3_DESC = "[Q3]"
+    "#,
+    )
+    .unwrap();
+    let mut inv: InventorySlots = Default::default();
+    inv[11] = Some(InvSlotView {
+        item_id: 35,
+        name: Some("Gem35".into()),
+        quality: 3,
+        ..Default::default()
+    });
+    s.set_inventory_slots(inv);
+    s.set_item_template(
+        35,
+        ItemTemplateView {
+            name: "Gem35".into(),
+            quality: 3,
+            inventory_type: 11,
+            gem_properties: 1,
+            ..Default::default()
+        },
+    );
+    s.set_item_template(
+        36,
+        ItemTemplateView {
+            name: "Offer".into(),
+            inventory_type: 11,
+            ..Default::default()
+        },
+    );
+    s.set_merchant(Some(MerchantState {
+        items: vec![MerchantItem {
+            name: Some("Offer".into()),
+            item_id: 36,
+            ..Default::default()
+        }],
+        ..Default::default()
+    }));
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "SlotG"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT")
+        tt:SetOwner(a, "ANCHOR_RIGHT")
+        assert(tt:SetMerchantCompareItem(1, 1))
+        assert(TTTextLeft1:GetText() == "[DESTROY_GEM]", tostring(TTTextLeft1:GetText()))
+        assert(TTTextLeft2:GetText() == "Gem35")
+        assert(TTTextLeft3:GetText() == "[Q0]", tostring(TTTextLeft3:GetText()))
+    "#,
+    )
+    .unwrap();
+    assert!(s.take_errors().is_empty());
+}
+
+/// Name-only mode jumps past the whole block (`0x627adc`), so neither a heroic item nor colorblind
+/// mode adds a line there.
+#[test]
+fn name_only_mode_prints_no_line_under_the_name() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.register_cvars([("colorblindMode", "1")]);
+    s.run(
+        r#"
+        ITEM_HEROIC = "[ITEM_HEROIC]"; ITEM_HEROIC_EPIC = "[ITEM_HEROIC_EPIC]"
+        ITEM_QUALITY4_DESC = "[Q4]"
+    "#,
+    )
+    .unwrap();
+    let mut inv: InventorySlots = Default::default();
+    inv[16] = Some(InvSlotView {
+        item_id: 34,
+        name: Some("Item34".into()),
+        quality: 4,
+        ..Default::default()
+    });
+    s.set_inventory_slots(inv);
+    s.set_item_template(
+        34,
+        ItemTemplateView {
+            name: "Item34".into(),
+            quality: 4,
+            flags: 0x8,
+            ..Default::default()
+        },
+    );
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "SlotN"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT")
+        tt:SetOwner(a, "ANCHOR_RIGHT")
+        assert(tt:SetInventoryItem("player", 16) == 1)
+        assert(TTTextLeft2:GetText() == "[ITEM_HEROIC_EPIC]", tostring(TTTextLeft2:GetText()))
+        assert(tt:SetInventoryItem("player", 16, 1) == 1)
+        assert(tt:NumLines() == 1, "name only: " .. tt:NumLines())
+    "#,
+    )
+    .unwrap();
+    assert!(s.take_errors().is_empty());
+}

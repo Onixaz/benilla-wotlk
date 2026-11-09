@@ -155,12 +155,16 @@ fn render_lines(
     // `None`: a template source, with no item object and no instance block.
     inst: Option<&ItemInstance>,
 ) -> mlua::Result<()> {
-    let (req, known_spell, taught_known, set_view, worn, show_item_level) = {
+    let (req, known_spell, taught_known, set_view, worn, show_item_level, colorblind) = {
         let mut model = crate::script::model_mut_of(lua);
         let show_item_level = model
             .cvars
             .get("showitemlevel")
             .is_some_and(|c| c.value.trim().parse::<f64>().is_ok_and(|n| n != 0.0));
+        let colorblind = model
+            .cvars
+            .get("colorblindmode")
+            .is_some_and(|c| crate::script::cvars::sstr_to_int(&c.value) != 0);
         // The known bits or a higher rank (`0x62b4a2`-`0x62b4ae`, `0x62b50d`-`0x62b51c`).
         let knows = |id: u32| model.known_spells.known_or_higher(id);
         let known = v.required_spell != 0 && knows(v.required_spell);
@@ -217,6 +221,7 @@ fn render_lines(
             set_view,
             worn,
             show_item_level,
+            colorblind,
         )
     };
     let add = |l: (String, [f32; 4])| append_line(lua, this, l, None, false);
@@ -254,6 +259,19 @@ fn render_lines(
         quality_color(v.quality)
     };
     add((name, name_color))?;
+    // By `colorblindMode` and heroic flag `0x8` (`0x627b23`); name-only skips it (`0x627adc`).
+    if !flags.name_only {
+        match (colorblind, v.flags & 0x8 != 0) {
+            (true, true) => keyed("ITEM_HEROIC_EPIC", &[], WHITE, false)?,
+            (true, false) => {
+                // A gem about to be destroyed reads as quality 0 (`0x627b63`).
+                let quality = if destroy_gem { 0 } else { v.quality };
+                keyed(&format!("ITEM_QUALITY{quality}_DESC"), &[], WHITE, false)?;
+            }
+            (false, true) => keyed("ITEM_HEROIC", &[], GREEN, false)?,
+            (false, false) => {}
+        }
+    }
     // The petition lines, below the name: a charter's `GUILD_CHARTER_*` pair or a petition's
     // `PETITION_*`, by the record's charter bit (`GetPetitionInfo`'s first return). A line whose
     // source is unresolved waits for the repaint, as the creator line does.
