@@ -233,6 +233,12 @@ pub(super) fn feed_action_state(
         _ => None,
     };
 
+    // The usable walk's target: the selection resolves to the player too (`0x80b5d0`).
+    let walk_target = target.map(|(s, _)| s).or_else(|| {
+        me.filter(|_| target_entity.is_some_and(|e| self_q.contains(e)))
+            .map(|(s, _, _, _)| s)
+    });
+
     let mut fresh: HashMap<u32, ActionState> = HashMap::new();
     for (&slot, button) in &actions.buttons {
         let action = u32::from(slot) + 1;
@@ -286,7 +292,7 @@ pub(super) fn feed_action_state(
                         self_auras: usable_auras.me.single().ok(),
                         target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
                         store,
-                        target_store: target.map(|(s, _)| s),
+                        target_store: walk_target,
                         factions: factions.as_deref(),
                         reputations: &reputations,
                         party: crate::target::party_of(group.as_deref()),
@@ -381,7 +387,7 @@ pub(super) fn feed_action_state(
                         self_auras: usable_auras.me.single().ok(),
                         target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
                         store,
-                        target_store: target.map(|(s, _)| s),
+                        target_store: walk_target,
                         factions: factions.as_deref(),
                         reputations: &reputations,
                         party: crate::target::party_of(group.as_deref()),
@@ -483,7 +489,7 @@ pub(super) fn feed_action_state(
             self_auras: usable_auras.me.single().ok(),
             target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
             store,
-            target_store: target.map(|(s, _)| s),
+            target_store: walk_target,
             factions: factions.as_deref(),
             reputations: &reputations,
             party: crate::target::party_of(group.as_deref()),

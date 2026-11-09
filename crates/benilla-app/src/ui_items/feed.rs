@@ -2060,6 +2060,8 @@ mod tests {
             ),
         ]);
         let spells = crate::ui_action::Spells {
+            difficulties: Default::default(),
+            instance_difficulty: Default::default(),
             catalog: benilla_formats::SpellCatalog::from_displays(displays),
             forms: Default::default(),
             ranges: Default::default(),
