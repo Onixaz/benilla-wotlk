@@ -953,9 +953,11 @@ pub(crate) mod schedule_tests {
     ///   frame's lag does not move a landing time that matters.
     /// - `target::scan::remember_last_enemy` reads `Player` for the auto-dismount check (`0x71b0c0`)
     ///   against six writers (+6): a mover's flags a frame late only delay a sampled stamp.
+    /// - The cast attempt's area leg reads `CurrentArea` against `update_current_area` from each
+    ///   `CastLadder` drain (+9): a press reads the area under the player a frame late at worst.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_879;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_888;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
