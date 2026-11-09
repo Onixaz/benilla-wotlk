@@ -935,6 +935,11 @@ impl ButtonState {
         self.set_state(new);
     }
 
+    /// The press state a release's click requires.
+    pub fn is_pushed(&self) -> bool {
+        self.state == ButtonVisualState::Pushed
+    }
+
     /// `IsEnabled`: the state alone; the class has no enabled flag.
     pub fn enabled(&self) -> bool {
         self.state != ButtonVisualState::Disabled
@@ -1208,6 +1213,14 @@ impl SliderState {
         let span = (f64::from(self.max) - f64::from(self.min)) as f32;
         let max = (f64::from(span) + f64::from(self.min)) as f32;
         self.set_min_max(self.min, max)
+    }
+
+    /// The setter's unchanged test (`0x96c484`): the stored minimum and span within the epsilon
+    /// `[0x9ea27c]` (one `FLT_EPSILON`, `2.384e-7`).
+    pub fn same_range(&self, min: f32, max: f32) -> bool {
+        const RANGE_EPSILON: f32 = 2.384_185_8e-7;
+        (self.max - self.min - (max - min)).abs() < RANGE_EPSILON
+            && (self.min - min).abs() < RANGE_EPSILON
     }
 
     /// `SetMinMaxValues`: sets the range; re-settles the value only once one exists.

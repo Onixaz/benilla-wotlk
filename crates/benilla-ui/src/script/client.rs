@@ -150,6 +150,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // `IsLoggedIn()` (`0x60a450`): nil while the `PLAYER_LOGIN` one-shot is armed, else 1.
+    g.set(
+        "IsLoggedIn",
+        lua.create_function(|lua, ()| {
+            let armed = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .player_login_armed;
+            Ok(super::binding_abi::flag(!armed))
+        })?,
+    )?;
+
     // `GetRealmName()`: the realm as the realm list spells it; `""` until the app pushes one, the
     // glue screen's answer, never nil, as addons index saved variables with it at file scope.
     g.set(

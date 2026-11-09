@@ -315,7 +315,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let data = model.region_data.entry(rh).or_default();
             data.alpha_gradient = Some((start, length));
             let chars = data.text.as_deref().map_or(0, |t| t.chars().count());
-            Ok(start < chars as f32)
+            Ok(super::super::binding_abi::flag(start < chars as f32))
         })?,
     )?;
 

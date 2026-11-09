@@ -159,6 +159,8 @@ pub(crate) struct Model {
     pub(crate) region_data: crate::widget::HandleMap<RegionHandle, RegionData>,
     /// Each frame's backdrop plate (`<Backdrop>` or `SetBackdrop`, the client's `frame+0x1ac`).
     pub(crate) backdrops: crate::widget::HandleMap<FrameHandle, backdrop::Backdrop>,
+    /// Each backdrop's nine texture slots (`frame+0x1ac`'s `+0x0..+0x20`).
+    pub(crate) backdrop_slots: crate::widget::HandleMap<FrameHandle, backdrop::BackdropSlots>,
     /// The SimpleHTML widgets' state: element fonts `+0x350`, link format `+0x360`, content nodes
     /// `+0x340`.
     pub(crate) simple_html: simplehtml::SimpleHtmlStates,
@@ -242,6 +244,8 @@ pub(crate) struct Model {
     /// Errors owed to `geterrorhandler()`, which the reference calls on each caught error; one the
     /// handler itself raises skips this queue, which stops the recursion.
     pub(crate) pending_error_dispatch: Vec<String>,
+    /// The `PLAYER_LOGIN` one-shot, `[0xbd0793]`, between the UI load and the world entry.
+    pub(crate) player_login_armed: bool,
     /// The session's retained diagnostic log, deduplicated and bounded; `errors` drains each frame.
     pub(crate) diagnostics: super::diagnostics::DiagnosticLog,
     /// Non-fatal warnings for the host, such as a dropped `inherits=` template.
@@ -1197,6 +1201,8 @@ pub(crate) struct Model {
     pub(crate) click_button: Option<String>,
     /// The player state `SecureCmdOptionParse`'s conditions read beside the unit snapshots.
     pub(crate) option_state: super::OptionState,
+    /// Whispered names by folded name: the spelling and the time last used, for autocomplete.
+    pub(crate) autocomplete_contacts: std::collections::HashMap<String, (String, f64)>,
     /// Condition names `SecureCmdOptionParse` did not know, for `ERR_UNKNOWN_MACRO_OPTION_S`.
     pub(crate) unknown_macro_options: Vec<String>,
 }
@@ -1358,6 +1364,7 @@ impl Model {
             link_spans: Default::default(),
             region_data: Default::default(),
             backdrops: Default::default(),
+            backdrop_slots: Default::default(),
             simple_html: simplehtml::SimpleHtmlStates::new(),
             font_objects_by_lower: HashMap::new(),
             region_resolved: Default::default(),
@@ -1391,6 +1398,7 @@ impl Model {
             pending_size_changed: Vec::new(),
             errors: Vec::new(),
             pending_error_dispatch: Vec::new(),
+            player_login_armed: false,
             diagnostics: Default::default(),
             warnings: Vec::new(),
             // 1024x768 until the host calls `set_screen_size`; y-up `[bottom, left, top, right]`.
@@ -1804,6 +1812,7 @@ impl Model {
             modifiers: (false, false, false),
             click_button: None,
             option_state: Default::default(),
+            autocomplete_contacts: Default::default(),
             unknown_macro_options: Vec::new(),
             money: 0,
             net_latency_ms: 0,

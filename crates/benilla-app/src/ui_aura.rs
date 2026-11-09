@@ -23,7 +23,7 @@ use crate::ui_script::UiInput;
 use crate::ui_unit::UnitFeed;
 use crate::unit_auras::{UnitAura, UnitAuras};
 
-/// [`feed_auras`] fires `PLAYER_AURAS_CHANGED` and `UNIT_AURA` inline, so a feed whose state their
+/// [`feed_auras`] fires `UNIT_AURA` inline, so a feed whose state their
 /// handlers re-read (the stance feed) runs `.before(AuraEvents)` or they read last frame's.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct AuraEvents;
@@ -64,6 +64,8 @@ struct AuraFeedMemory {
 #[derive(Default)]
 struct AuraFeedMemo {
     present: bool,
+    /// The player's packets as last read: one more fires `UNIT_AURA` with no slot moved.
+    packets: u64,
     /// The player's list inputs as last pushed: a refresh moves an expiry, an apply a spell.
     last: Vec<AuraInput>,
     /// Every other unit's list, by guid, the resolver's inputs and their pushes.
@@ -482,7 +484,8 @@ fn feed_auras(
     let memo = mem.vm.get(&script);
 
     // Fire on a discrete change, never on the countdown; a refresh counts.
-    let changed = !memo.present || inputs != memo.last;
+    let changed = !memo.present || inputs != memo.last || self_table.packets() != memo.packets;
+    memo.packets = self_table.packets();
     memo.last = inputs;
     memo.present = true;
 
@@ -590,8 +593,6 @@ fn feed_auras(
     script.set_player_auras(list);
     if changed {
         script.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);
-        // The 1.12.1 buff bar's own event, with no arguments; `MiniMapTrackingFrame` registers it.
-        script.fire_event("PLAYER_AURAS_CHANGED", vec![]);
     }
     // To every token naming a unit whose list moved; a token naming a new unit fires too, and a
     // token clearing fires nothing, since the frames react to their own events

@@ -5,50 +5,48 @@ use crate::framexml::{self, Element};
 use super::{abs_dim, abs_value, children_named, color_of, tex_coords_of, Loader};
 
 impl Loader<'_> {
-    /// `<Layers>`: each `<Texture>` and `<FontString>`, created on its layer.
+    /// One `<Layers>`: each `<Texture>` and `<FontString>`, created on its layer.
     pub(super) fn apply_layers(
         &mut self,
-        el: &Element,
+        layers: &Element,
         wrapper: &Table,
         parent_name: &str,
         dbg: &str,
     ) {
-        for layers in children_named(el, "Layers") {
-            for layer in children_named(layers, "Layer") {
-                let level = layer.attr("level").unwrap_or("ARTWORK").to_string();
-                for region in &layer.children {
-                    // `inherits=` may name a region template, in the frames' one registry; a font
-                    // object's name passes on to `apply_fontstring_font`.
-                    let region = &self.expand_region(region);
-                    let is_texture = region.tag.eq_ignore_ascii_case("Texture");
-                    let is_fontstring = region.tag.eq_ignore_ascii_case("FontString");
-                    if !is_texture && !is_fontstring {
-                        self.report.warnings.push(format!(
-                            "{dbg}: <Layer> child <{}> is not a Texture/FontString; skipped",
-                            region.tag
-                        ));
-                        continue;
-                    }
-                    let rname: Option<String> = region
-                        .name()
-                        .map(|raw| framexml::resolve_name(raw, parent_name));
-                    let method = if is_texture {
-                        "CreateTexture"
-                    } else {
-                        "CreateFontString"
-                    };
-                    let region_wrapper: Table =
-                        match wrapper.call_method(method, (rname.clone(), Some(level.clone()))) {
-                            Ok(w) => w,
-                            Err(e) => {
-                                self.report_error(format!("{dbg}: {method}: {e}"), &e);
-                                continue;
-                            }
-                        };
-                    self.bind_parent_key(region, wrapper, &region_wrapper);
-                    let anim_base = rname.clone().unwrap_or_else(|| parent_name.to_string());
-                    self.load_region(region, &region_wrapper, &anim_base, parent_name, dbg);
+        for layer in children_named(layers, "Layer") {
+            let level = layer.attr("level").unwrap_or("ARTWORK").to_string();
+            for region in &layer.children {
+                // `inherits=` may name a region template, in the frames' one registry; a font
+                // object's name passes on to `apply_fontstring_font`.
+                let region = &self.expand_region(region);
+                let is_texture = region.tag.eq_ignore_ascii_case("Texture");
+                let is_fontstring = region.tag.eq_ignore_ascii_case("FontString");
+                if !is_texture && !is_fontstring {
+                    self.report.warnings.push(format!(
+                        "{dbg}: <Layer> child <{}> is not a Texture/FontString; skipped",
+                        region.tag
+                    ));
+                    continue;
                 }
+                let rname: Option<String> = region
+                    .name()
+                    .map(|raw| framexml::resolve_name(raw, parent_name));
+                let method = if is_texture {
+                    "CreateTexture"
+                } else {
+                    "CreateFontString"
+                };
+                let region_wrapper: Table =
+                    match wrapper.call_method(method, (rname.clone(), Some(level.clone()))) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            self.report_error(format!("{dbg}: {method}: {e}"), &e);
+                            continue;
+                        }
+                    };
+                self.bind_parent_key(region, wrapper, &region_wrapper);
+                let anim_base = rname.clone().unwrap_or_else(|| parent_name.to_string());
+                self.load_region(region, &region_wrapper, &anim_base, parent_name, dbg);
             }
         }
     }

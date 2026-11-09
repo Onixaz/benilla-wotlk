@@ -787,18 +787,7 @@ fn load_failure(lua: &Lua, msg: &str) {
     crate::script::model_mut_of(lua).warn_host_only(msg);
 }
 
-/// Read `root/rel`, refusing a path that leaves `root`, lexically before any filesystem call;
-/// `join_ref` has already resolved the path, so an escape shows as a leading `..`.
-fn read_under(root: &std::path::Path, rel: &str) -> Option<Vec<u8>> {
-    let rel = std::path::Path::new(rel);
-    if rel
-        .components()
-        .any(|c| !matches!(c, std::path::Component::Normal(_)))
-    {
-        return None;
-    }
-    std::fs::read(root.join(rel)).ok()
-}
+use crate::source::read_under;
 
 /// Run a chunk read off disk, BOM stripped: [`crate::script::UiScript::run_chunk`] for the
 /// demand-load path, which has no `UiScript`.

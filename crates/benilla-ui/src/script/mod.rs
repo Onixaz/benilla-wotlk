@@ -205,6 +205,7 @@ mod merchant;
 mod messageframe;
 mod minimap;
 pub mod nameplate;
+pub(crate) mod quest_blob;
 mod quest_poi;
 mod quest_poi_frame;
 pub use nameplate::{PlateGeometry, PlateState};
@@ -246,13 +247,13 @@ mod shapeshift;
 mod simplehtml;
 mod skills;
 mod slash;
-mod slider;
+pub(crate) mod slider;
 mod social;
 mod sound;
 mod spell_info;
 mod spellbook;
 mod stable;
-mod statusbar;
+pub(crate) mod statusbar;
 mod stdlib;
 pub use stdlib::lua_message;
 mod summon;
@@ -298,6 +299,7 @@ pub use auction::{
     AuctionStartRequest, AuctionState, AuctionSubCategory, BIDDER, LIST, OWNER, SORT_COLUMNS,
 };
 pub use aura::AuraState;
+pub(crate) use backdrop::set_edge_blend as backdrop_set_edge_blend;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
 pub use bank::BankState;
 pub use barber::{BarberHost, BarberIntent, BarberStyle};
@@ -1995,6 +1997,16 @@ impl UiScript {
     /// mutable borrow since and changed nothing the extract reads.
     fn restore_epoch(&self, epoch: u64) {
         self.model_mut().set_epoch(epoch);
+    }
+
+    /// Arm the `PLAYER_LOGIN` one-shot (`0x52a9e6`); `IsLoggedIn` answers nil until it fires.
+    pub fn arm_player_login(&mut self) {
+        set_field!(self, player_login_armed, true);
+    }
+
+    /// Take the `PLAYER_LOGIN` one-shot for the world entry to fire.
+    pub fn take_player_login_armed(&mut self) -> bool {
+        std::mem::take(&mut self.model_mut().player_login_armed)
     }
 
     fn push_error(&self, e: mlua::Error) {

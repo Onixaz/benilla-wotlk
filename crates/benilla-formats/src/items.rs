@@ -16,6 +16,7 @@ use crate::dbc::{parse, str_at, u32_at};
 use crate::models::model_path;
 
 const ITEM_DISPLAY_INFO: &str = "DBFilesClient\\ItemDisplayInfo.dbc";
+const ITEM_DBC: &str = "DBFilesClient\\Item.dbc";
 
 /// One `ItemDisplayInfo` row: the visual identity of a held item or worn equipment. Basenames carry
 /// no directory: the `Item\ObjectComponents\<dir>\` join belongs to the app, since `<dir>` follows
@@ -192,6 +193,37 @@ fn catalog_from_records(
         );
     }
     ItemDisplayCatalog { displays }
+}
+
+/// `Item.dbc`, whose display id column the bag icon reads before any template answers (`0x70aa00`).
+pub(crate) fn item_schema() -> Schema {
+    let mut s = Schema::new("Item");
+    for name in [
+        "ID",
+        "ClassID",
+        "SubclassID",
+        "SoundOverrideSubclassID",
+        "Material",
+        "DisplayInfoID",
+        "InventoryType",
+        "SheatheType",
+    ] {
+        s.add_field(SchemaField::new(name, FieldType::UInt32));
+    }
+    s
+}
+
+/// Load `Item.dbc` off the patch chain as entry to display id.
+pub fn load_item_dbc_displays(chain: &mut Chain) -> Result<HashMap<u32, u32>> {
+    let bytes = chain
+        .read_file(ITEM_DBC)
+        .with_context(|| format!("reading {ITEM_DBC}"))?;
+    let rs = parse(&bytes, item_schema(), "Item")?;
+    Ok(rs
+        .records()
+        .iter()
+        .filter_map(|r| Some((u32_at(r, 0)?, u32_at(r, 5)?)))
+        .collect())
 }
 
 /// Load `ItemDisplayInfo.dbc` off the patch chain into an [`ItemDisplayCatalog`].

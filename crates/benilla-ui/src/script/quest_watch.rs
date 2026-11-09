@@ -45,7 +45,7 @@ pub struct QuestSpecialItemView {
 
 /// One region of a quest's POI, as the `SMSG_QUEST_POI_QUERY_RESPONSE` handler keeps it
 /// (`0x5e7370`).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct QuestPoiRegion {
     /// The leaderboard objective it serves, -1 for the turn-in.
     pub objective: i32,
@@ -55,8 +55,8 @@ pub struct QuestPoiRegion {
     pub flags: u32,
     /// The outline's mean point in world yards, integer-divided as the reference sums it.
     pub center: (i32, i32),
-    /// The outline's point count; a one-point region's icon is never pushed aside (`0x5e3165`).
-    pub points: u32,
+    /// The outline in world yards; a one-point region's icon is never pushed aside (`0x5e3165`).
+    pub outline: Vec<(i32, i32)>,
     /// The icon placement's priority, the lowest winning (`0x5e2eb0`).
     pub priority: i32,
 }
@@ -73,7 +73,7 @@ pub(super) struct PoiSlot {
     pub(super) quest_id: u32,
     pub(super) regions: Vec<QuestPoiRegion>,
     /// `+0x28`: a region shows on the displayed map, set by the last count.
-    shown: bool,
+    pub(super) shown: bool,
     /// The icon `QuestPOIUpdateIcons` placed, `None` for none (`0x5e2eb0`).
     pub(super) icon: Option<super::quest_poi::PoiIcon>,
 }
@@ -116,6 +116,11 @@ fn quest_at(model: &Model, index: i64) -> Option<&QuestLogEntryView> {
         .ok()
         .and_then(|i| model.quest_log.entries.get(i))
         .filter(|e| !e.is_header && e.quest_id != 0)
+}
+
+/// [`quest_index`] for the blob hover (`0x58e9c0`).
+pub(super) fn quest_log_index_of(model: &Model, quest_id: u32) -> i64 {
+    quest_index(model, quest_id) as i64
 }
 
 /// A quest in the log, a folded one included, as `AddQuestWatch` searches (`0x5e64f8`).

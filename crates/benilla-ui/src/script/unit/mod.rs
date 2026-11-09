@@ -207,6 +207,9 @@ pub struct UnitState {
     pub pvp_medal: u8,
     /// A player's `PLAYER_CHOSEN_TITLE`, a `CharTitles.dbc` mask id, 0 for none.
     pub chosen_title: i32,
+    /// The raw `UNIT_FIELD_FACTIONTEMPLATE`, whose edge `UNIT_FACTION` fires on (`0x723680`); 0 with
+    /// no descriptor.
+    pub faction_template: u32,
     /// `UnitFactionGroup`'s first return, `"Alliance"` or `"Horde"`: `FactionGroup.dbc`'s English
     /// `InternalName` for the side bit of the faction template's group mask, which stock builds
     /// texture paths from (`PlayerFrame.lua:68`). `None` for a template with no side.

@@ -391,7 +391,8 @@ impl UiScript {
         // So no `OnMouseDown`, drag arm, `OnClick` or double-click stamp, and the event is
         // consumed.
         if down {
-            if let Some(h) = self.hit_test_frame(x, y) {
+            let capture = self.model_ref().mouse_capture;
+            if let Some(h) = capture.or_else(|| self.hit_test_frame(x, y)) {
                 if self.title_region_hit(h, x, y) {
                     set_field!(self, cursor_pos, (x, y));
                     crate::script::object::movable::start_title_move(&mut self.model_mut(), h);
@@ -413,15 +414,15 @@ impl UiScript {
         {
             crate::script::object::movable::stop_auto_move(&mut self.model_mut());
         }
-        // The press this release belongs to, read before the borrow below drains `mouse_down_on`.
-        let captured_id: Option<u32> = if down {
-            None
-        } else {
+        // The frame this event goes to: a held capture takes every press and release, chorded ones
+        // too (`0x495470`, `0x4947a0`), and only a press with none falls to the hit frame.
+        let target_id: Option<u32> = {
             let model = self.model_ref();
-            model
-                .mouse_down_on
-                .get(button)
-                .and_then(|h| model.frame_to_id.get(h).copied())
+            match model.mouse_capture {
+                Some(h) => model.frame_to_id.get(&h).copied(),
+                None if down => hit_id,
+                None => None,
+            }
         };
         // The `GetTime()` clock for the double-click detector, read before the borrow.
         let now = self.now();
@@ -443,25 +444,34 @@ impl UiScript {
             Option<(u32, f64, f64, f64)>,
         ) = {
             let mut model = self.model_mut();
-            let hit_handle = hit_id.and_then(|id| model.id_to_frame.get(&id).copied());
+            let hit_handle = target_id.and_then(|id| model.id_to_frame.get(&id).copied());
+            // A Button's own hit rect (`0x96fabb`, `0x96fbb1`), whatever frame is over it now.
+            let inside = |model: &super::Model, h| {
+                model
+                    .resolved
+                    .get(&h)
+                    .is_some_and(|r| point_in_rect(hit_rect(model, h, *r), x, y))
+            };
             if down {
                 let displaced = match hit_handle {
                     Some(h) => model.mouse_down_on.insert(button.to_string(), h),
                     None => model.mouse_down_on.remove(button),
                 };
-                // The press edge, `SetButtonState(PUSHED)` (`0x96fb50`), on any Button.
-                if let Some(h) = hit_handle.filter(|&h| button::wants_press_visual(&model, h)) {
+                // The press edge, `SetButtonState(PUSHED)` (`0x96fb50`), on any Button the cursor
+                // is inside: a chorded press landing outside the capture's rect pushes nothing.
+                if let Some(h) = hit_handle
+                    .filter(|&h| button::wants_press_visual(&model, h) && inside(&model, h))
+                {
                     button::edge(&mut model, h, ButtonState::on_mouse_down);
                 }
                 // A press while this mouse button still holds another frame means a release was
                 // lost (a focus loss); that frame gets it so it does not stay pushed. The
                 // reference's capture never loses one.
-                if let Some(h) = displaced {
+                if let Some(h) = displaced.filter(|&h| Some(h) != hit_handle) {
                     button::edge(&mut model, h, ButtonState::on_mouse_up);
                 }
-                // The mouse-down dispatcher sets the capture `root+0x80` only when none is held: a
-                // second button pressed elsewhere does not displace it.
-                model.mouse_capture = model.mouse_capture.or(hit_handle);
+                // The press stores the frame it went to as the capture `root+0x80`.
+                model.mouse_capture = hit_handle;
                 // A press replaces any in-flight gesture; a started one gets its `OnDragStop`
                 // below, outside this borrow.
                 let abandoned = cursor::abandon_drag(&mut model);
@@ -481,11 +491,11 @@ impl UiScript {
                     None
                 };
                 let click = hit_handle
-                    .filter(|&h| button::wants_click(&model, h, button, false))
-                    .and(hit_id);
+                    .filter(|&h| button::wants_click(&model, h, button, false) && inside(&model, h))
+                    .and(target_id);
                 (click, None, jump, None, abandoned, color_jump)
             } else {
-                let pressed = model.mouse_down_on.remove(button);
+                model.mouse_down_on.remove(button);
                 // The release handler clears the capture only when no button is still held, so a
                 // chorded release keeps it.
                 if model.mouse_down_on.is_empty() {
@@ -495,24 +505,26 @@ impl UiScript {
                     super::slider::end_drag(&mut model);
                     super::colorselect::end_drag(&mut model);
                 }
-                let same_frame = matches!(
-                    (pressed, hit_handle),
-                    (Some(p), Some(released)) if p == released
-                );
                 let release = cursor::take_drag(&mut model, button);
                 let started = release.as_ref().is_some_and(|r| r.started);
-                // The release edge, `SetButtonState(NORMAL)`, on the pressed frame wherever the
-                // cursor is, skipped after a started drag, which already un-pressed it.
-                if let (Some(h), false) = (pressed, started) {
-                    button::edge(&mut model, h, ButtonState::on_mouse_up);
-                }
+                // A click needs the Button still PUSHED (`0x96fb60`) and the cursor inside it,
+                // read before the release edge below un-pushes it.
                 let click = if started {
                     None
                 } else {
                     hit_handle
-                        .filter(|&h| same_frame && button::wants_click(&model, h, button, true))
-                        .and(hit_id)
+                        .filter(|&h| {
+                            button::release_can_click(&model, h)
+                                && inside(&model, h)
+                                && button::wants_click(&model, h, button, true)
+                        })
+                        .and(target_id)
                 };
+                // The release edge, `SetButtonState(NORMAL)`, on the pressed frame wherever the
+                // cursor is, skipped after a started drag, which already un-pressed it.
+                if let (Some(h), false) = (hit_handle, started) {
+                    button::edge(&mut model, h, ButtonState::on_mouse_up);
+                }
                 // The double click, on the release that qualified as a click: the reference's
                 // mouse-up dispatcher fires `OnDoubleClick` instead of the second `OnClick`, only
                 // for a frame with an `OnDoubleClick` script (`[+0x4d4] != 0`). What suppresses the
@@ -564,7 +576,7 @@ impl UiScript {
         // fires nothing. A resize grip dragged out from under the cursor still gets its
         // `OnMouseUp`, so its resize ends.
         let script = if down { "OnMouseDown" } else { "OnMouseUp" };
-        if let Some(id) = if down { hit_id } else { captured_id } {
+        if let Some(id) = target_id {
             if let Err(e) = event::fire_widget_handler(&self.lua, id, script, vec![btn.clone()]) {
                 self.push_error(e);
             }
@@ -596,7 +608,7 @@ impl UiScript {
         // A press of any button in an EditBox places the cursor, starts a selection drag and focuses
         // it whatever its `autoFocus`, before any `OnClick`; any release ends the drag.
         if down {
-            if let Some(id) = hit_id {
+            if let Some(id) = target_id {
                 editbox::click(&self.lua, id, x, y);
             }
         } else {
@@ -629,9 +641,9 @@ impl UiScript {
                 self.push_error(e);
             }
         }
-        // A world-frame hit is not the UI consuming the event: the reference runs its `OnMouseDown`
-        // without consuming, then the `BUTTON1`/`BUTTON2` binding, the world click.
-        hit_id.is_some_and(|id| !self.is_world_frame(id))
+        // A world-frame capture is not the UI consuming the event: the reference runs its
+        // `OnMouseDown` without consuming, then the `BUTTON1`/`BUTTON2` binding, the world click.
+        target_id.is_some_and(|id| !self.is_world_frame(id))
     }
 
     /// Fire `OnDragStop` on a gesture's source, the one place a started drag ends; a source that

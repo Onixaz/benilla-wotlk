@@ -22,6 +22,8 @@ pub(super) fn control(
         // Only `nearclip` is read here, for the self-avatar fade.
         Res<benilla_world::view::ViewDistance>,
         Res<camera_zoom::VehicleSeatZoom>,
+        // The mount model's still-jump flag; absent without game data.
+        Option<Res<crate::entities::Creatures>>,
     ),
     mut net: (
         Res<NetCommands>,
@@ -609,9 +611,24 @@ pub(super) fn control(
         // A swimmer leaves through the top by a jump, which clears SWIMMING before the mover (the
         // fall start, `0x988370`), so this frame's mover, flags and wire see a jump. The swim
         // decision jumps an ascent within a third of a yard of the swim depth (`0x730e52`), reading
-        // the latch it enters with; a root refuses it, as every jump (`0x9883f0`). Mounted and
-        // still, `0x72eb80` would take its flourish arm instead; that arm is not built here.
+        // the latch it enters with; a root refuses it, as every jump (`0x9883f0`). It goes through
+        // the jump-key core, which eats a mounted, still swimmer's press in deep water.
+        let mount_display = body.single().ok().map_or(0, |(.., store, _, _, _, _, _)| {
+            store.map_or(0, |s| s.0.unit_mount_display_id())
+        });
+        let press = vertical::jump_press(vertical::JumpInputs {
+            mount_display,
+            mount_jumps_when_still: pointer
+                .7
+                .as_ref()
+                .is_some_and(|c| c.mount_jumps_when_still(mount_display)),
+            can_fly: player.modes.can_fly,
+            moving,
+            turning,
+            deep: surface_y.is_some_and(|s| s - player.pos.y > player.collision_height.0 * 0.5),
+        });
         let hop = was_swimming
+            && press == vertical::JumpPress::Jump
             && !player.modes.rooted
             && surface_y.is_some_and(|s| {
                 player
@@ -667,15 +684,17 @@ pub(super) fn control(
             (0.0, 0.0)
         };
 
-        // The mounted Space flourish, the jump-key handler: mounted, still and grounded plays
-        // MountSpecial (94) locally, then sends `CMSG_MOUNTSPECIAL_ANIM`; moving jumps; turning in
-        // place eats the press. Airborne, the press falls through and the mover drops it (the
-        // airborne arc stands in).
-        if want_jump && !moving && !swimming && player.airborne_since.is_none() {
-            if let Ok((e, .., store, _, _, _, _, _)) = body.single() {
-                if store.is_some_and(|s| s.0.unit_mount_display_id() != 0) {
+        // The ground press through the same core (`0x72eb80`): a still rider plays MountSpecial
+        // (94) locally, then sends `CMSG_MOUNTSPECIAL_ANIM`; a jumper jumps; a turn or deep water
+        // eats it. Airborne, the press falls through and the mover drops it (the airborne arc
+        // stands in).
+        if want_jump && !swimming && player.airborne_since.is_none() {
+            match press {
+                vertical::JumpPress::Jump => {}
+                vertical::JumpPress::Eaten => want_jump = false,
+                vertical::JumpPress::Flourish => {
                     want_jump = false;
-                    if !turning {
+                    if let Ok((e, ..)) = body.single() {
                         let _ = net.0 .0.send(ClientCommand::MountSpecial);
                         net.8.write(crate::creature_anim::MountFlourish { unit: e });
                     }

@@ -806,61 +806,6 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             }
         })?,
     )?;
-    // GameTooltip:SetPlayerBuff(buffIndex): the aura variant plus the time-remaining line only this
-    // entry appends, its text the reference's time-text formatter's (`tooltip::duration_text`). The
-    // argument is the 0-based cache position `GetPlayerBuff` returns (`BuffFrame.lua:105`), not a
-    // filtered ordinal. A miss, negative included, clears and hides the plate as `SetUnitBuff`'s
-    // does; a surplus argument is ignored, as in the reference.
-    m.set(
-        "SetPlayerBuff",
-        lua.create_function(|lua, (this, index): (Table, i64)| {
-            let now = crate::script::clock::now(lua);
-            let (spell_id, name, remaining_ms) = {
-                let model = crate::script::model_mut_of(lua);
-                let hit = usize::try_from(index)
-                    .ok()
-                    .and_then(|pos| model.player_auras.get(pos));
-                match hit {
-                    Some(a) => {
-                        // The gate is `untilCancelled`, not a known duration: the buff binding
-                        // skips the line when the record's `+0xc` is set, a DBC flag that holds
-                        // before any `SMSG_UPDATE_AURA_DURATION` lands; a lapsed aura shows "0
-                        // seconds remaining".
-                        let ms = (!a.until_cancelled).then(|| {
-                            // The reference counts integer milliseconds off `GetTickCount`;
-                            // this rounds the float clock to the nearest one.
-                            ((a.expiration_time - now) * 1000.0)
-                                .round()
-                                .clamp(0.0, f64::from(u32::MAX)) as u32
-                        });
-                        (a.spell_id, a.name.clone(), ms)
-                    }
-                    // A miss clears: an addon scan that stops when `TextLeft1` reads nil would
-                    // otherwise never end.
-                    None => (0, None, None),
-                }
-            };
-            // The reference formatter's text from the player's own strings; without them the line
-            // is skipped.
-            let remaining = remaining_ms.and_then(|ms| {
-                let g = lua.globals();
-                super::tooltip::duration_text(ms, "SPELL_TIME_REMAINING", true, &|key| {
-                    g.get::<String>(key).ok()
-                })
-            });
-            set_spell_by_id(
-                lua,
-                &this,
-                spell_id,
-                name,
-                SpellRenderOpts {
-                    aura: true,
-                    ..Default::default()
-                },
-                remaining,
-            )
-        })?,
-    )?;
     // GameTooltip:SetUnitAura("unit", [index] or ["name", "rank"][, "filter"]) (`0x626240`), and
     // SetUnitBuff (`0x6262c0`) and SetUnitDebuff (`0x626350`) with the sign forced as `UnitBuff`
     // forces it: the aura variant of the aura `UnitAura` finds, through the builder `0x625f00`.

@@ -200,7 +200,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     m.set(
         "AtTop",
-        lua.create_function(|lua, this: Table| with_smf(lua, &this, |smf| smf.at_top()))?,
+        lua.create_function(|lua, this: Table| {
+            with_smf(lua, &this, |smf| {
+                crate::script::binding_abi::flag(smf.at_top())
+            })
+        })?,
     )?;
     m.set(
         "AtBottom",
@@ -210,7 +214,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             match model.arena.frame(h).map(|f| &f.kind_state) {
-                Some(KindState::ScrollingMessage(smf)) => Ok(smf.at_bottom()),
+                Some(KindState::ScrollingMessage(smf)) => {
+                    Ok(crate::script::binding_abi::flag(smf.at_bottom()))
+                }
                 _ => Err(mlua::Error::runtime("not a ScrollingMessageFrame")),
             }
         })?,

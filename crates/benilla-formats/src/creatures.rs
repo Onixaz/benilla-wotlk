@@ -296,6 +296,15 @@ impl CreatureCatalog {
             .is_none_or(|m| m.flags & 0x2 == 0)
     }
 
+    /// Whether a mount of this model jumps standing still: `CreatureModelData.Flags & 0x400`
+    /// (`0x72ec25`).
+    pub fn mount_jumps_when_still(&self, display_id: u32) -> bool {
+        self.display
+            .get(&display_id)
+            .and_then(|row| self.models.get(&row.model_id))
+            .is_some_and(|m| m.flags & 0x400 != 0)
+    }
+
     /// Whether the model drops hand-attached effects: `CreatureModelData.Flags & 0x10` (`0x6f8d6e`).
     pub fn hides_hand_effects(&self, display_id: u32) -> bool {
         self.display

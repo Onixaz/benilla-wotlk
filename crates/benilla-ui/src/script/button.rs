@@ -846,6 +846,15 @@ pub(super) fn wants_click(model: &Model, h: FrameHandle, button: &str, up: bool)
     }
 }
 
+/// Whether a release may click `h`: a Button only while PUSHED (`0x96fb60`); any other kind has no
+/// such state.
+pub(super) fn release_can_click(model: &Model, h: FrameHandle) -> bool {
+    match model.arena.frame(h).map(|f| &f.kind_state) {
+        Some(KindState::Button(bs)) => bs.is_pushed(),
+        _ => true,
+    }
+}
+
 /// Whether a press on `h` pushes the art: any Button, whatever its click mask, since The layer
 /// mouse-down (`0x96fb34`) sets PUSHED after the mask test, not under it.
 pub(super) fn wants_press_visual(model: &Model, h: FrameHandle) -> bool {

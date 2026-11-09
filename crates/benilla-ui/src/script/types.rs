@@ -60,6 +60,8 @@ pub enum QuadContent {
     /// A `Cooldown` widget's sweep, emitted at the frame's own z; its regions and children, if
     /// any, paint above it.
     Cooldown(crate::widget::CooldownPaint),
+    /// A `QuestPOIFrame`'s blobs (`0x5901c0`), drawn in its OVERLAY batch.
+    QuestBlobs(crate::widget::QuestBlobPaint),
     /// A `Minimap` widget's content hole, which the app fills with the map; emitted at the
     /// frame's own z, so the widget's children (border art, buttons) paint above it.
     Minimap {
@@ -136,11 +138,11 @@ pub enum QuadContent {
         /// `0..=1`; the widget's value moves only its marker, never the strip.
         sat: f32,
     },
-    /// One `Backdrop` piece, the tiled background or one of the 8 border pieces, drawn in the
-    /// frame's slot behind its regions; per-corner UVs, since the top and bottom edges turn 90°.
+    /// One backdrop Texture region drawn as an atlas quad: the tiled background or one of the 8
+    /// border pieces, per-corner UVs, since the top and bottom edges turn 90°.
     Backdrop {
         path: String,
-        /// The `SetBackdropColor` or `SetBackdropBorderColor` tint, pre-alpha.
+        /// The region's vertex colour (`SetBackdropColor`, `SetBackdropBorderColor`), pre-alpha.
         color: [f32; 4],
         /// `[TL, TR, BR, BL]`, screen order.
         uvs: [[f32; 2]; 4],
@@ -410,6 +412,8 @@ pub(crate) struct RegionData {
     pub(crate) tex_coord_modifies_rect: bool,
     /// Rotation about the centre, radians counterclockwise; always 0: 1.12 has no Texture setter.
     pub(crate) rotation: f32,
+    /// A backdrop slot's sampler wrap, which also keeps it on the backdrop's one-atlas quad path.
+    pub(crate) backdrop_tile: Option<bool>,
     /// The font object this FontString inherits (`FONTINSTANCE+0x028`, a FontString's `+0xd0`), a
     /// live link: its paint is copied below, and
     /// [`script::font::propagate`](super::font::propagate) repaints on a change.

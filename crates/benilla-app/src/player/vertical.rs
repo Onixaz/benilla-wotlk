@@ -123,12 +123,110 @@ impl Vertical {
     }
 }
 
+/// What the jump-key core (`0x72eb80`) does with a press.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum JumpPress {
+    /// Queue the jump.
+    Jump,
+    /// The mounted flourish and `CMSG_MOUNTSPECIAL_ANIM`.
+    Flourish,
+    /// Nothing happens and nothing is sent.
+    Eaten,
+}
+
+/// The core's inputs.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct JumpInputs {
+    /// The rider's mount display, 0 for none or for a mount kept only for its passengers.
+    pub mount_display: u32,
+    /// The mount model's flag `0x400` (`0x72ec25`).
+    pub mount_jumps_when_still: bool,
+    /// `CAN_FLY` (`0x72ec4a`).
+    pub can_fly: bool,
+    /// A translate bit (`0x72ec5c`).
+    pub moving: bool,
+    /// A turn bit (`0x72ec71`).
+    pub turning: bool,
+    /// The liquid surface is over half the collision height above the feet (`0x718a20`).
+    pub deep: bool,
+}
+
+/// The core's arms, in its order: anything that can jump jumps, then a turn or deep water eats a
+/// still rider's press, and only then the flourish.
+pub(super) fn jump_press(i: JumpInputs) -> JumpPress {
+    if i.mount_display == 0 || i.mount_jumps_when_still || i.can_fly || i.moving {
+        JumpPress::Jump
+    } else if i.turning || i.deep {
+        JumpPress::Eaten
+    } else {
+        JumpPress::Flourish
+    }
+}
+
 /// The swim stroke's unit direction under the channel (`0x987b50`): straight up or down alone
 /// (cases `0x10`/`0x12`), else the level heading `level` and the vertical at 45° each
 /// (`0x987700`, both × `0.70710677`); the pitch is not read.
 pub(super) fn stroke(level: Vec3, direction: f32) -> Vec3 {
     let level = Vec3::new(level.x, 0.0, level.z).normalize_or_zero();
     (level + Vec3::Y * direction).normalize_or_zero()
+}
+
+#[cfg(test)]
+mod jump_press_tests {
+    use super::{jump_press, JumpInputs, JumpPress};
+
+    const RIDER: JumpInputs = JumpInputs {
+        mount_display: 14,
+        mount_jumps_when_still: false,
+        can_fly: false,
+        moving: false,
+        turning: false,
+        deep: false,
+    };
+
+    #[test]
+    fn each_arm_of_the_jump_core() {
+        let on = jump_press;
+        assert_eq!(on(RIDER), JumpPress::Flourish);
+        assert_eq!(
+            on(JumpInputs {
+                deep: true,
+                ..RIDER
+            }),
+            JumpPress::Eaten
+        );
+        assert_eq!(
+            on(JumpInputs {
+                turning: true,
+                ..RIDER
+            }),
+            JumpPress::Eaten
+        );
+        for jumps in [
+            JumpInputs {
+                mount_display: 0,
+                deep: true,
+                ..RIDER
+            },
+            JumpInputs {
+                moving: true,
+                deep: true,
+                ..RIDER
+            },
+            JumpInputs {
+                can_fly: true,
+                deep: true,
+                ..RIDER
+            },
+            JumpInputs {
+                mount_jumps_when_still: true,
+                deep: true,
+                ..RIDER
+            },
+        ] {
+            assert_eq!(on(jumps), JumpPress::Jump, "{jumps:?}");
+        }
+    }
 }
 
 #[cfg(test)]

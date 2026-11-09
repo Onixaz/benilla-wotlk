@@ -1,16 +1,14 @@
 use mlua::Table;
 
 use crate::framexml::Element;
+use crate::script::BlendMode;
 
 use super::{abs_value, children_named, color_of, Loader};
 
 impl Loader<'_> {
-    /// `<Backdrop>`: the table Lua `SetBackdrop` takes, then the two colours. A present `<Color>`
-    /// defaults a missing channel to black, alpha 1, not the white a table `SetBackdrop` leaves.
-    pub(super) fn apply_backdrop(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
-        let Some(bd) = children_named(el, "Backdrop").next() else {
-            return;
-        };
+    /// One `<Backdrop>`: the table Lua `SetBackdrop` takes, then the two colours. A present
+    /// `<Color>` defaults a missing channel to black, alpha 1, not the white a table leaves.
+    pub(super) fn apply_backdrop(&mut self, bd: &Element, wrapper: &Table, dbg: &str) {
         let table = match self.build_backdrop_table(bd) {
             Ok(t) => t,
             Err(e) => {
@@ -19,6 +17,11 @@ impl Loader<'_> {
             }
         };
         self.call(wrapper, "SetBackdrop", table, dbg);
+        if let Some(mode) = bd.attr("alphaMode").and_then(BlendMode::parse) {
+            if let Ok(h) = crate::script::object::frame_handle_of(self.lua(), wrapper) {
+                crate::script::backdrop_set_edge_blend(&mut self.model(), h, mode);
+            }
+        }
         if let Some(c) = children_named(bd, "Color").next() {
             let [r, g, b, a] = color_of(c);
             self.call(wrapper, "SetBackdropColor", (r, g, b, a), dbg);

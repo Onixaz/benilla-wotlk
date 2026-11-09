@@ -79,7 +79,7 @@ fn view(poi: QuestPoi) -> QuestPoiView {
                     floor: b.floor as i32,
                     flags: b.flags,
                     center,
-                    points: n as u32,
+                    outline: b.points,
                     priority: b.priority as i32,
                 }
             })
