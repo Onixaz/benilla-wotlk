@@ -129,6 +129,8 @@ struct GuidList {
     list: Vec<AuraState>,
     /// Taken from [`UnitAuras::versions`] each time the list changes.
     version: u64,
+    /// The unit's packets when last read: one more fires `UNIT_AURA` with no slot moved.
+    packets: u64,
     /// The frame that last read it; an entry no token can name this frame is dropped.
     frame: u64,
 }
@@ -300,6 +302,7 @@ impl UnitAuras {
             return;
         }
         self.scratch.clear();
+        let packets = live.and_then(|(_, t)| t).map_or(0, AuraTable::packets);
         match live {
             Some((store, table)) => {
                 if let Some(table) = table {
@@ -319,6 +322,11 @@ impl UnitAuras {
             Entry::Occupied(mut e) => {
                 let e = e.get_mut();
                 e.frame = self.frame;
+                if e.packets != packets {
+                    e.packets = packets;
+                    self.versions += 1;
+                    e.version = self.versions;
+                }
                 if e.inputs != self.scratch {
                     std::mem::swap(&mut e.inputs, &mut self.scratch);
                     let list = aura_list(ctx, &e.inputs);
@@ -337,6 +345,7 @@ impl UnitAuras {
                     inputs,
                     list,
                     version: self.versions,
+                    packets,
                     frame: self.frame,
                 });
             }
@@ -1085,6 +1094,27 @@ mod tests {
         assert!(seen(&mut app).is_empty());
         assert_eq!(listed(&mut app, "mouseover", true), [770, 589]);
         assert_eq!(listed(&mut app, "party1target", true), [770, 589]);
+    }
+
+    /// A packet that moves no slot still signals its unit (`0x72f5d0`).
+    #[test]
+    fn a_packet_that_moves_no_slot_still_fires_unit_aura() {
+        let mut app = chain_app();
+        let _ = seen(&mut app);
+        let mob = app.world().resource::<GuidIndex>().0[&MOB];
+        let same = benilla_protocol::messages::AuraUpdate {
+            unit: MOB,
+            all: false,
+            slots: Vec::new(),
+        };
+        app.world_mut()
+            .get_mut::<AuraTable>(mob)
+            .unwrap()
+            .apply(&same, 0.0);
+        app.update();
+        assert!(seen(&mut app).contains(&"target".to_string()));
+        app.update();
+        assert!(seen(&mut app).is_empty(), "no packet, nothing fires");
     }
 
     /// A nearer GameObject wins the pick, and the publisher writes its guid, which the resolver

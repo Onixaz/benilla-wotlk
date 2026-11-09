@@ -1500,7 +1500,7 @@ fn a_forms_state_change_leaves_the_shelf_down_over_the_raised_bar() {
         checked(&s, 1) && !checked(&s, 2),
         "no repaint before the state event"
     );
-    s.fire_event("PLAYER_AURAS_CHANGED", vec![]);
+    s.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);
     assert!(
         !checked(&s, 1) && checked(&s, 2),
         "the aura event repaints the ring"

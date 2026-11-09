@@ -14,8 +14,6 @@ use mlua::{Lua, MultiValue, Value};
 
 use super::Model;
 
-mod player_buff;
-
 /// One aura on one unit, as the app's feed pushes it ([`crate::script::UiScript::set_unit_auras`],
 /// [`crate::script::UiScript::set_player_auras`]).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -61,13 +59,6 @@ pub struct AuraState {
     /// In the finder's second list (`0x72c510`), the one `RAID` reads: a buff the player or its
     /// pet can cast, or a debuff whose dispel type the player can dispel.
     pub raid: bool,
-}
-
-/// The cancel gate of `CancelPlayerBuff`: a helpful aura with `AFLAG_CANCELABLE` (vmangos: unless
-/// `SPELL_ATTR_NO_AURA_CANCEL`), or any aura of a channeled spell, the only negative aura that
-/// cancels (breaking a channel on you).
-pub(super) fn cancel_authorized(a: &AuraState) -> bool {
-    (a.helpful && a.cancelable) || a.channeled
 }
 
 /// The filter byte `0x608390` builds at `+0x14`: `HELPFUL` alone until a filter string names
@@ -401,7 +392,7 @@ impl super::UiScript {
     }
 }
 
-/// Register the aura and tracking globals, the `GetPlayerBuff` family from [`player_buff`].
+/// Register the aura and tracking globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
@@ -457,8 +448,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-
-    player_buff::install(lua)?;
 
     Ok(())
 }
