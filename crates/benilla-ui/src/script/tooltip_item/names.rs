@@ -2,7 +2,7 @@
 //! `SPELL_SCHOOL%d_CAP`), which [`super::render`] resolves against the player's own
 //! `GlobalStrings.lua`, and its colours. Keys, not English: `INVTYPE_SHIELD` and
 //! `INVTYPE_WEAPONOFFHAND` both read "Off Hand" in enUS and differ elsewhere. [`CLASS_NAMES`] and
-//! [`RACE_NAMES`] are English literals; the reference reads `ChrClasses.dbc` and `ChrRaces.dbc`.
+//! [`RACE_NAMES`] are the enUS answers; another locale's come from `ChrClasses.dbc` and `ChrRaces.dbc`.
 
 /// The reference's quality colour table, read by `GetItemQualityColor`.
 pub(super) const QUALITY_RGB: [[f32; 3]; 7] = [

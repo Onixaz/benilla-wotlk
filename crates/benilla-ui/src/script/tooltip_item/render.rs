@@ -598,7 +598,7 @@ fn render_lines(
         let list: Vec<&str> = CLASS_NAMES
             .iter()
             .filter(|&&(id, _)| v.allowable_class & (1 << (id - 1)) != 0)
-            .map(|&(_, n)| n)
+            .map(|&(id, n)| crate::locale::class_name(id).unwrap_or(n))
             .collect();
         if !list.is_empty() {
             let ok = req.class_id > 0 && v.allowable_class & (1 << (req.class_id - 1)) != 0;
@@ -617,7 +617,7 @@ fn render_lines(
         let list: Vec<&str> = RACE_NAMES
             .iter()
             .filter(|&&(id, _)| v.allowable_race & (1 << (id - 1)) != 0)
-            .map(|&(_, n)| n)
+            .map(|&(id, n)| crate::locale::race_name(id).unwrap_or(n))
             .collect();
         if !list.is_empty() {
             let ok = req.race_id > 0 && v.allowable_race & (1 << (req.race_id - 1)) != 0;

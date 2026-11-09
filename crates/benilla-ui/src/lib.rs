@@ -8,6 +8,7 @@ pub mod justify;
 pub mod language;
 pub mod layout;
 pub mod loader;
+pub mod locale;
 pub mod markup;
 pub mod messages;
 pub mod names;

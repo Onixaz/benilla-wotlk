@@ -9,6 +9,8 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use benilla_mpq::Archive;
 
+use crate::locale::{self, ClientLocale};
+
 /// How the client composes its patch chain from the `Data` folder. Paths are relative to `Data`,
 /// `/`-separated, matched case-insensitively; [`LOCALE`] is the client's locale code.
 struct ArchiveLayout {
@@ -83,6 +85,8 @@ pub struct ChainEntry {
 pub struct Chain {
     /// Ascending priority: later archives win.
     archives: Vec<Archive>,
+    /// The locale the archives run as, which picks the DBC string slot ([`Chain::read`]).
+    locale: ClientLocale,
 }
 
 /// Whether `path` matches `pattern` as the reference's `FindFirstFileW` glob does: any case, `?` exactly one character other than a separator, so `patch-10.MPQ`
@@ -132,27 +136,6 @@ fn mount_order(layout: &ArchiveLayout, files: &[String], locale: &str) -> Result
     Ok(order)
 }
 
-/// The locale folder a layout reads from: the one subfolder of `Data` holding every required
-/// archive that names the locale. The reference reads its `locale` CVar; benilla has no locale
-/// selection yet, so more than one candidate is an error.
-fn locale_of(layout: &ArchiveLayout, files: &[String], dirs: &[String]) -> Result<String> {
-    let complete = |dir: &&String| {
-        layout
-            .base
-            .iter()
-            .filter(|b| b.required && b.path.contains(LOCALE))
-            .all(|b| {
-                let want = b.path.replace(LOCALE, dir);
-                files.iter().any(|f| f.eq_ignore_ascii_case(&want))
-            })
-    };
-    match dirs.iter().filter(complete).collect::<Vec<_>>()[..] {
-        [one] => Ok(one.clone()),
-        [] => bail!("no locale folder holds the locale archives"),
-        ref many => bail!("more than one locale folder: {many:?}"),
-    }
-}
-
 /// The names in `dir` of the entries that are files (`want_files`) or folders, sorted, as
 /// `read_dir` order is arbitrary and case-variant ties must resolve deterministically.
 fn list(dir: &Path, want_files: bool) -> Result<Vec<String>> {
@@ -175,11 +158,13 @@ fn list(dir: &Path, want_files: bool) -> Result<Vec<String>> {
     Ok(names)
 }
 
-/// The locale folder of a `Data` directory ([`locale_of`]): the subfolder `Chain::open` mounts the
-/// locale archives from, which is also the loose-file alternate (`Data\<locale>\`).
+/// The locale folder of a `Data` directory: the subfolder `Chain::open` mounts the locale archives
+/// from, which is also the loose-file alternate (`Data\<locale>\`).
 pub fn data_locale(path: &Path) -> Result<String> {
-    let (files, dirs) = data_listing(path)?;
-    locale_of(&LAYOUT, &files, &dirs)
+    let (files, _) = data_listing(path)?;
+    locale::resolve(&files, locale::wanted())
+        .map(str::to_string)
+        .context("no locale folder holds the locale archives")
 }
 
 /// A `Data` directory's files, its subfolders' as `dir/file`, and its subfolders.
@@ -197,35 +182,55 @@ fn data_listing(path: &Path) -> Result<(Vec<String>, Vec<String>)> {
 }
 
 impl Chain {
-    /// Open a `Data` directory's archives in the client's [`mount_order`], or a single `.MPQ` file.
+    /// Open a `Data` directory's archives in the client's [`mount_order`] for the `locale` CVar, or
+    /// a single `.MPQ` file.
     ///
     /// Deviation: an archive that fails to open is an error, where the reference logs
     /// `"Failed to open archive"` and goes on, because a skipped corrupt archive surfaces only as
     /// missing files far downstream.
     pub fn open(path: &Path) -> Result<Self> {
-        let mut archives = Vec::new();
-        if path.is_dir() {
-            let layout = &LAYOUT;
-            let wrong_install =
-                || format!("{} is not a 3.3.5a (12340) Data folder", path.display());
-            let (files, dirs) = data_listing(path)?;
-            let locale = locale_of(layout, &files, &dirs).with_context(wrong_install)?;
-            let order = mount_order(layout, &files, &locale).with_context(wrong_install)?;
-            for name in order {
-                let mpq = path.join(&name);
-                archives.push(
-                    Archive::open(&mpq).with_context(|| format!("opening {}", mpq.display()))?,
-                );
-            }
-            if archives.is_empty() {
-                bail!("no known 3.3.5a MPQs found in {}", path.display());
-            }
-        } else {
-            archives.push(
-                Archive::open(path).with_context(|| format!("opening MPQ {}", path.display()))?,
-            );
+        Self::open_locale(path, locale::wanted())
+    }
+
+    /// [`Chain::open`] for a `locale` CVar value of the caller's.
+    pub fn open_locale(path: &Path, wanted: &str) -> Result<Self> {
+        if !path.is_dir() {
+            let archive =
+                Archive::open(path).with_context(|| format!("opening MPQ {}", path.display()))?;
+            return Ok(Self {
+                archives: vec![archive],
+                locale: ClientLocale::lone_archive(),
+            });
         }
-        Ok(Self { archives })
+        let layout = &LAYOUT;
+        let wrong_install = || format!("{} is not a 3.3.5a (12340) Data folder", path.display());
+        let (files, _) = data_listing(path)?;
+        let folder = locale::resolve(&files, wanted)
+            .context("no locale folder holds the locale archives")
+            .with_context(wrong_install)?;
+        let order = mount_order(layout, &files, folder).with_context(wrong_install)?;
+        let mut archives = Vec::new();
+        for name in order {
+            let mpq = path.join(&name);
+            archives
+                .push(Archive::open(&mpq).with_context(|| format!("opening {}", mpq.display()))?);
+        }
+        if archives.is_empty() {
+            bail!("no known 3.3.5a MPQs found in {}", path.display());
+        }
+        let mut chain = Self {
+            archives,
+            locale: ClientLocale::lone_archive(),
+        };
+        // Read through the chain the way the client's profile reader goes through its file layer.
+        let ini = chain.read("Wow.ini").ok();
+        chain.locale = ClientLocale::from_ini(folder, locale::existing(&files), ini.as_deref());
+        Ok(chain)
+    }
+
+    /// The locale these archives run as.
+    pub fn locale(&self) -> &ClientLocale {
+        &self.locale
     }
 
     /// The highest-priority archive with an entry for `name`, a delete marker included, as a
@@ -253,9 +258,11 @@ impl Chain {
     /// Read a file by internal path (`/` or `\`) from its winning archive.
     pub fn read(&self, name: &str) -> Result<Vec<u8>> {
         let archive = self.archive_for(name)?;
-        archive
+        let mut bytes = archive
             .read_file(name)
-            .with_context(|| format!("reading {name} from {}", archive.path().display()))
+            .with_context(|| format!("reading {name} from {}", archive.path().display()))?;
+        locale::localize_dbc(name, &mut bytes, self.locale.index);
+        Ok(bytes)
     }
 
     /// The archive `name` reads from, as a cheap handle: a caller holding the chain behind a lock
@@ -432,20 +439,6 @@ mod tests {
         let mut files = wotlk_install();
         files.push("Alternate.MPQ".into());
         assert!(mount_order(wotlk(), &files, "enUS").is_err());
-    }
-
-    #[test]
-    fn the_locale_is_the_one_folder_with_the_locale_archives() {
-        let files = wotlk_install();
-        let dirs = owned(&["Cache", "enUS"]);
-        assert_eq!(locale_of(wotlk(), &files, &dirs).unwrap(), "enUS");
-
-        let mut two = files.clone();
-        two.extend(owned(&["deDE/locale-deDE.MPQ", "deDE/speech-deDE.MPQ"]));
-        let dirs = owned(&["deDE", "enUS"]);
-        assert!(locale_of(wotlk(), &two, &dirs).is_err());
-
-        assert!(locale_of(wotlk(), &owned(&["dbc.MPQ"]), &[]).is_err());
     }
 
     #[test]

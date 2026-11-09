@@ -563,8 +563,8 @@ pub(crate) fn record_from_roster(
     roster: &crate::char_select::Roster,
 ) -> Option<benilla_ui::script::PlayerRecord> {
     let row = roster.pending_row()?;
-    let race = crate::ui_unit::race_names(row.race);
-    let class = crate::ui_unit::class_names(row.class);
+    let race = crate::ui_unit::race_names_of(row.race, Some(row.gender));
+    let class = crate::ui_unit::class_names_of(row.class, Some(row.gender));
     Some(benilla_ui::script::PlayerRecord {
         name: row.name.clone(),
         race: race.map(|(n, f)| (n.to_string(), f.to_string())),
@@ -582,8 +582,8 @@ pub(crate) fn seat_from_roster(
     roster: &crate::char_select::Roster,
 ) -> Option<benilla_ui::script::UnitState> {
     let row = roster.pending_row()?;
-    let race = crate::ui_unit::race_names(row.race);
-    let class = crate::ui_unit::class_names(row.class);
+    let race = crate::ui_unit::race_names_of(row.race, Some(row.gender));
+    let class = crate::ui_unit::class_names_of(row.class, Some(row.gender));
     let sex = roster_sex(row.gender);
     Some(benilla_ui::script::UnitState {
         // Before the player object exists the reference answers `UnitExists("player")` nil: the
