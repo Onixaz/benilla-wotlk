@@ -158,7 +158,7 @@ fn feed_shapeshift_bar(
     clock: Res<crate::ui_script::UiClock>,
     // One tuple for Bevy's 16-param ceiling: the spell mods, the rune table and costs, and the
     // form byte the auto-tracking edge reads.
-    (spell_mods, runes, rune_costs, mut seen_form, combo, group): (
+    (spell_mods, runes, rune_costs, mut seen_form, combo, group, auto): (
         Res<crate::spell::SpellModifiers>,
         Option<Res<crate::ui_rune::Runes>>,
         Option<Res<crate::ui_rune::RuneCosts>>,
@@ -166,6 +166,7 @@ fn feed_shapeshift_bar(
         Option<Res<crate::spell::ComboPoints>>,
         // The group, for the reaction's party rung.
         Option<Res<crate::ui_party::GroupState>>,
+        crate::spell::AutoChecks,
     ),
     mut memory: Local<crate::ui_script::VmMemo<StanceMemory>>,
 ) {
@@ -242,6 +243,10 @@ fn feed_shapeshift_bar(
                 costs: &costs.0,
                 player: &store.0,
             });
+    let auto_unshift = store.is_some_and(|s| {
+        let form = u32::from(s.0.unit_shapeshift_form());
+        auto.unshift(s, spells.forms.get(&form).map_or(0, |f| f.flags))
+    });
     let fresh: Vec<ShapeshiftFormView> = rows
         .into_iter()
         .map(|(id, d)| {
@@ -260,6 +265,7 @@ fn feed_shapeshift_bar(
                         carried: &carried,
                         spell_mods: &spell_mods,
                         runes: rune_check,
+                        auto_unshift,
                         combo_points: combo
                             .as_deref()
                             .map_or(0, |c| c.player.on(0, selection.guid.unwrap_or(0))),
@@ -305,6 +311,24 @@ pub(crate) fn dismount(cast: &mut crate::spell::ScriptCast) {
     if store.is_some_and(|s| !s.0.is_dead_or_ghost()) && !on_taxi {
         let _ = cast.ladder.commands.0.send(ClientCommand::CancelMountAura);
     }
+}
+
+/// The cancelable auras holding `form`, as the auto-unshift's cancel walks them.
+pub(crate) fn form_auras(
+    form: u8,
+    auras: &crate::unit_auras::UnitAuras,
+    catalog: &benilla_formats::SpellCatalog,
+) -> Vec<u32> {
+    auras
+        .iter()
+        .filter(|a| {
+            a.is_cancelable()
+                && catalog
+                    .get(a.spell_id)
+                    .is_some_and(|d| d.shapeshift_form == Some(u32::from(form)))
+        })
+        .map(|a| a.spell_id)
+        .collect()
 }
 
 /// `CancelShapeshiftForm()` (`0x726ce0`): every cancelable aura of the active form's spell, unless

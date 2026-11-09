@@ -229,6 +229,11 @@ pub(crate) struct AutoMove<'w, 's> {
 }
 
 impl AutoMove<'_, '_> {
+    /// Ask to stand, as a click that stands the player does.
+    pub(crate) fn stand_up(&mut self) {
+        self.stand.write(super::StandStateRequest { state: 0 });
+    }
+
     pub(crate) fn can_auto_interact(&self) -> bool {
         can_auto_interact(
             self.approach.enabled,

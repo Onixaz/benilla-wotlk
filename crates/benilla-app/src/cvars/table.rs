@@ -479,8 +479,8 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("accountName", "").hidden(),
     // The rest of the game UI's CVar registration (`0x51d9b0`), `0x51da34`-`0x51f41b` in site
     // order, each at its registered string; flags 0x20 are per character. The stock interface reads
-    // and writes them; the engine readers of `autoStand`, `autoDismount`, `autoUnshift`,
-    // `unitHighlights` and `threatWorldText` have no counterpart here.
+    // and writes them; the engine readers of `unitHighlights` and `threatWorldText` have no
+    // counterpart here.
     same("autoStand", "1").per_account(),
     same("autoDismount", "1").per_account(),
     same("autoUnshift", "1").per_account(),
