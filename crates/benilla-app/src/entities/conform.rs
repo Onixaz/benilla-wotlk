@@ -7,6 +7,9 @@ use avian3d::prelude::SpatialQuery;
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::prelude::*;
 
+use crate::creature_anim::{move_flags, MovementState};
+use crate::net::RemoteMotion;
+
 /// Ray envelope around the unit's feet: start this far up, reach this far down past the feet.
 const TILT_PROBE_UP: f32 = 2.0;
 const TILT_PROBE_DOWN: f32 = 4.0;
@@ -36,6 +39,13 @@ fn tilt_target(sampled: Option<Vec3>) -> Option<Vec3> {
         Some(n) => Some(n),
         None => Some(Vec3::Y),
     }
+}
+
+/// Whether the unit is in the swim/fly matrix (`0x71fd80`): that path writes the pitched world
+/// transform onto GetObjectModel and never runs terrain tilt (`SetWorldTransform` with the
+/// ground normal). Counter-rotating the conform node toward world-up would cancel the climb.
+fn swim_or_fly(flags: u32) -> bool {
+    flags & (move_flags::SWIMMING | move_flags::FLYING) != 0
 }
 
 /// The flag dispatch in the unit's local frame: flag 1 keeps left horizontal, a pure pitch of
@@ -72,7 +82,15 @@ pub(super) fn conform_units(
     time: Res<Time>,
     spatial: SpatialQuery,
     decals: benilla_world::decal::WorldDecal,
-    units: Query<(&Transform, Has<benilla_world::rig_anim::AnimParked>), Without<ConformNode>>,
+    units: Query<
+        (
+            &Transform,
+            Has<benilla_world::rig_anim::AnimParked>,
+            Option<&MovementState>,
+            Option<&RemoteMotion>,
+        ),
+        Without<ConformNode>,
+    >,
     mut nodes: Query<(&ConformNode, &mut Transform)>,
     mut ups: Local<EntityHashMap<Vec3>>,
     mut disabled: Local<Option<bool>>,
@@ -87,19 +105,27 @@ pub(super) fn conform_units(
     let mut max_pitch: Option<(Entity, f32)> = None;
     let mut count = 0usize;
     for (node, mut node_tf) in &mut nodes {
-        let Ok((unit_tf, parked)) = units.get(node.unit) else {
+        let Ok((unit_tf, parked, movement, remote)) = units.get(node.unit) else {
             continue;
         };
         if parked {
             ups.remove(&node.unit);
             continue;
         }
+        let flags = movement
+            .map(|m| m.flags)
+            .or_else(|| remote.map(|r| r.flags))
+            .unwrap_or(0);
+        // Animate (`0x71fd80`) writes the swim/fly matrix onto the model and returns; terrain
+        // tilt never runs. Identity here lets the unit transform's climb/dive pitch show.
+        if swim_or_fly(flags) {
+            ups.remove(&node.unit);
+            node_tf.rotation = Quat::IDENTITY;
+            continue;
+        }
         // Sample and smooth once per unit per frame: a unit can host two flagged visuals (a
         // flagged body over a mount), and stepping twice would square the decay.
         if seen.insert(node.unit) {
-            // A unit on a flying spline eases level here: its flying pitch and bank are on the unit
-            // transform, from `sample_splines`, whatever the model flags. The probe misses in the
-            // air, so `tilt_target` yields world-up.
             let target = {
                 let origin = unit_tf.translation + Vec3::Y * TILT_PROBE_UP;
                 let sampled = spatial
@@ -186,5 +212,24 @@ mod tests {
             "flag 3 reduces to flag 1 without roll"
         );
         assert!(conform_rotation(2, uphill).angle_between(Quat::IDENTITY) < 1e-3);
+    }
+
+    #[test]
+    fn swim_or_fly_skips_the_ground_tilt() {
+        assert!(swim_or_fly(move_flags::FLYING));
+        assert!(swim_or_fly(move_flags::SWIMMING | move_flags::FORWARD));
+        assert!(
+            !swim_or_fly(move_flags::CAN_FLY),
+            "CAN_FLY on the ground still tilts"
+        );
+        // World-up in a +π/4 pitched local frame is a −π/4 conform, which would cancel the climb.
+        let pitched = Quat::from_rotation_x(std::f32::consts::FRAC_PI_4);
+        let n_local = pitched.inverse() * Vec3::Y;
+        let cancel = conform_rotation(1, n_local);
+        let mesh = pitched * cancel;
+        assert!(
+            mesh.angle_between(Quat::IDENTITY) < 1e-3,
+            "airborne world-up conform flattens the swim pitch"
+        );
     }
 }
