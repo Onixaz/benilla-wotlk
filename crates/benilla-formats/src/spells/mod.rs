@@ -105,6 +105,7 @@ const COL_EQUIPPED_ITEM_SUBCLASS_MASK: usize = 69;
 /// `EquippedItemInventoryTypeMask` (`+0x118`), read by the item-target gate.
 const COL_EQUIPPED_ITEM_INVENTORY_TYPE_MASK: usize = 70;
 const COL_REQUIRES_SPELL_FOCUS: usize = 18;
+const COL_REQUIRED_AREAS_ID: usize = 224;
 const COL_DISPEL: usize = 2;
 /// `SchoolMask`: 3.3.5a carries the school as a mask, Fireball 4, not 1.12.1's enum.
 const COL_SCHOOL_MASK: usize = 225;
@@ -739,6 +740,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 equipped_item_inventory_type_mask: u32_at(r, COL_EQUIPPED_ITEM_INVENTORY_TYPE_MASK)
                     .unwrap_or(0),
                 requires_spell_focus: u32_at(r, COL_REQUIRES_SPELL_FOCUS).unwrap_or(0),
+                required_areas_id: u32_at(r, COL_REQUIRED_AREAS_ID).unwrap_or(0) as i32,
                 // The first MOD_SHAPESHIFT effect's `EffectMiscValue` is the form.
                 shapeshift_form: (0..3).find_map(|i| {
                     (effect_apply_aura[i] == SPELL_AURA_MOD_SHAPESHIFT)

@@ -192,6 +192,9 @@ pub struct SpellDisplay {
     pub equipped_item_inventory_type_mask: u32,
     /// `RequiresSpellFocus` (column 18): the `SpellFocusObject.dbc` object needed nearby.
     pub requires_spell_focus: u32,
+    /// `RequiredAreasID` (column 224, signed): the `AreaGroup.dbc` row the caster must stand in,
+    /// read only when positive.
+    pub required_areas_id: i32,
     /// The `SpellShapeshiftForm.dbc` form: the first `SPELL_AURA_MOD_SHAPESHIFT` effect's
     /// `EffectMiscValue`, which the stance bar keys on.
     pub shapeshift_form: Option<u32>,
@@ -334,6 +337,7 @@ impl Default for SpellDisplay {
             equipped_item_subclass_mask: 0,
             equipped_item_inventory_type_mask: 0,
             requires_spell_focus: 0,
+            required_areas_id: 0,
             shapeshift_form: None,
             stance_bar_order: 0,
             active_icon: None,

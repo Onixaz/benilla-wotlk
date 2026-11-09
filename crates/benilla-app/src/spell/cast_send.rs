@@ -141,6 +141,8 @@ pub(crate) struct CastLadder<'w, 's> {
     ),
     /// The critter arm of the active-spell test; absent in a harness without the spell plugin.
     pub(crate) summons: Option<Res<'w, super::SummonSlots>>,
+    /// The area leg of the player's cast.
+    pub(crate) area_gate: crate::area::CastAreaGate<'w>,
 }
 
 /// What a targeting-cursor click bound: what the location bind or the target bind fills into the
@@ -563,6 +565,7 @@ impl CastLadder<'_, '_> {
             &mut self.trade_skill_opens,
             &mut self.ground,
             &mut self.held_for_pick,
+            &self.area_gate,
         );
     }
 }
@@ -624,6 +627,7 @@ fn send_spell_cast(
     trade_skill_opens: &mut crate::ui_tradeskill::TradeSkillOpens,
     ground: &mut super::targeting::SpellTargeting,
     held_for_pick: &mut HeldForPick,
+    area_gate: &crate::area::CastAreaGate,
 ) {
     let now = Instant::now();
     let def = spells.and_then(|s| s.catalog.get(spell_id));
@@ -1000,6 +1004,15 @@ fn send_spell_cast(
             _ => Vec::new(),
         },
     };
+    // The area leg (`0x739650`), after the form and aura-state legs.
+    if let Some((reason, area)) = def.and_then(|d| area_gate.refusal(d)) {
+        debug!("ui_action: cast {spell_id} refused locally — the area leg ({reason:#x})");
+        match area {
+            Some(area) => cast_errors.push_local_arg(spell_id, reason, area),
+            None => cast_errors.push_local(spell_id, reason),
+        }
+        return;
+    }
     // The deferred no-bind refusal: every rung passed and nothing bound.
     if let Some(reason) = deferred_refusal {
         debug!("ui_action: cast {spell_id} refused locally — the cast-arm tail ({reason:#x})");

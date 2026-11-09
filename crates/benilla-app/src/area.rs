@@ -28,7 +28,7 @@
 use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
 
-use benilla_formats::AreaTableCatalog;
+use benilla_formats::{AreaGroupCatalog, AreaTableCatalog};
 use benilla_ui::script::UiScript;
 
 use crate::net::{ObjectStore, SelfPlayer};
@@ -52,6 +52,80 @@ fn load_area_table(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
             commands.insert_resource(AreaTableRes(cat));
         }
         Err(e) => warn!("area: AreaTable catalog failed to load: {e:#}"),
+    }
+}
+
+/// The shared `AreaGroup.dbc` catalog, read by the cast gate and the trade skill's tool line.
+#[derive(Resource)]
+pub(crate) struct AreaGroupsRes(pub(crate) AreaGroupCatalog);
+
+fn load_area_groups(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
+    let Some(assets) = assets else { return };
+    let loaded = {
+        let mut chain = assets.chain.lock_recover();
+        benilla_formats::load_area_groups(&mut chain)
+    };
+    match loaded {
+        Ok(cat) => {
+            debug!("area: {} AreaGroup rows", cat.len());
+            commands.insert_resource(AreaGroupsRes(cat));
+        }
+        Err(e) => warn!("area: AreaGroup catalog failed to load: {e:#}"),
+    }
+}
+
+/// `SPELL_FAILED_REQUIRES_AREA`, the shared table's reason; its word names the area.
+const REASON_REQUIRES_AREA: u8 = 0x5d;
+/// `SPELL_FAILED_INCORRECT_AREA`, the shared table's reason.
+const REASON_INCORRECT_AREA: u8 = 0x96;
+
+/// The cast attempt's area leg (`0x739650`), one system parameter; each part is absent without
+/// game data or before the first area resolves, and the spell then passes for the server to judge.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct CastAreaGate<'w> {
+    groups: Option<Res<'w, AreaGroupsRes>>,
+    areas: Option<Res<'w, AreaTableRes>>,
+    current: Option<Res<'w, benilla_world::terrain_stream::CurrentArea>>,
+}
+
+impl CastAreaGate<'_> {
+    /// The refusal for a spell with a `RequiredAreasID`, and its area word.
+    pub(crate) fn refusal(
+        &self,
+        spell: &benilla_formats::SpellDisplay,
+    ) -> Option<(u8, Option<u32>)> {
+        area_refusal(
+            spell.required_areas_id,
+            self.current.as_deref()?.0?,
+            &self.groups.as_deref()?.0,
+            &self.areas.as_deref()?.0,
+        )
+    }
+}
+
+/// `0x739650`'s area leg: a positive group the area under the player is not in refuses
+/// `REQUIRES_AREA` naming the one area when the walk compared exactly one, else `INCORRECT_AREA`.
+/// An area with no `AreaTable.dbc` row compares nothing, as `0x7199e0` returns before the walk.
+fn area_refusal(
+    group: i32,
+    here: u32,
+    groups: &AreaGroupCatalog,
+    areas: &AreaTableCatalog,
+) -> Option<(u8, Option<u32>)> {
+    if group <= 0 {
+        return None;
+    }
+    let group = group as u32;
+    let walk = areas
+        .get(here)
+        .map(|row| groups.area_in_group(here, row.zone_id, group))
+        .unwrap_or_default();
+    if walk.found {
+        return None;
+    }
+    match groups.get(group) {
+        Some(row) if walk.checked == 1 => Some((REASON_REQUIRES_AREA, Some(row.areas[0]))),
+        _ => Some((REASON_INCORRECT_AREA, None)),
     }
 }
 
@@ -301,7 +375,10 @@ pub(crate) struct AreaPlugin;
 impl Plugin for AreaPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerPlace>()
-            .add_systems(Startup, load_area_table.after(AssetSet::Open))
+            .add_systems(
+                Startup,
+                (load_area_table, load_area_groups).after(AssetSet::Open),
+            )
             .add_systems(
                 Update,
                 // After the leaf authority: leaf, indoor bit and names must come from one frame, as
@@ -316,6 +393,40 @@ impl Plugin for AreaPlugin {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_area_leg_names_a_lone_area_and_passes_a_listed_one_or_its_parent() {
+        use benilla_formats::{AreaGroup, AreaTableRow};
+        let area = |zone_id| AreaTableRow {
+            map_id: 0,
+            zone_id,
+            explore_flag: 0,
+            flags: 0,
+            faction_group_mask: 0,
+            exploration_level: 0,
+            name: String::new(),
+        };
+        let areas = AreaTableCatalog::from_rows(vec![(50, area(0)), (51, area(50)), (60, area(0))]);
+        let group = |id, listed: &[u32]| {
+            let mut a = [0; 6];
+            a[..listed.len()].copy_from_slice(listed);
+            AreaGroup {
+                id,
+                areas: a,
+                next: 0,
+            }
+        };
+        let groups = AreaGroupCatalog::from_rows([group(1, &[50]), group(2, &[50, 70])]);
+        let refusal = |g, here| super::area_refusal(g, here, &groups, &areas);
+
+        assert_eq!(refusal(0, 60), None, "no requirement");
+        assert_eq!(refusal(1, 50), None, "the area itself");
+        assert_eq!(refusal(1, 51), None, "its parent");
+        assert_eq!(refusal(1, 60), Some((0x5d, Some(50))), "one area compared");
+        assert_eq!(refusal(2, 60), Some((0x96, None)), "two compared");
+        assert_eq!(refusal(9, 60), Some((0x96, None)), "no group row");
+        assert_eq!(refusal(1, 999), Some((0x96, None)), "no area row");
+    }
+
     use super::*;
 
     #[test]

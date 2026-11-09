@@ -43,6 +43,7 @@ tables! {
         "Achievement_Category" => achievements::category_schema(),
         "Achievement_Criteria" => achievements::criteria_schema(),
         "AnimationData" => anim_data::schema(),
+        "AreaGroup" => area_group::area_group_schema(),
         "AreaPOI" => area_poi::schema(),
         "AreaTable" => area_table::area_table_schema(&LAYOUTS.area_table),
         "AreaTrigger" => area_trigger::area_trigger_schema(),
