@@ -374,6 +374,8 @@ mod world_map_continent;
 pub use world_map_continent::{
     load_world_map_continent_catalog, WorldMapContinent, WorldMapContinentCatalog,
 };
+mod area_group;
+pub use area_group::{load_area_groups, AreaGroup, AreaGroupCatalog, AreaGroupMatch};
 mod area_poi;
 pub use area_poi::{load_area_poi_catalog, AreaPoi, AreaPoiCatalog};
 mod world_state_ui;
