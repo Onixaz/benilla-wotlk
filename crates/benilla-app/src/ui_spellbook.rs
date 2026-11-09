@@ -553,22 +553,19 @@ pub(crate) fn cast_spell(
         ladder,
         tokens,
     } = cast;
-    // `CastSpell`'s two cancel forks, in order: the active-action toggle, then the form match,
+    // `CastSpell`'s two cancel forks, in order: the active-spell test, then the form match,
     // which `UseAction` lacks, with its silent no-op.
     let forks = via_book.then(|| (ladder.spells.as_ref(), targeting.self_store.iter().next()));
     if let Some((Some(sp), Some(store))) = forks {
         if let Some(d) = sp.catalog.get(spell_id) {
             let auras = targeting.self_auras.iter().next();
-            if crate::ui_action::toggle::active_action_toggle(spell_id, d, auras) {
+            if ladder.is_active_spell(spell_id, Some(store), auras) {
                 if ladder.keeps_fresh_toggle(spell_id) {
                     debug!("ui_spellbook: cast {spell_id} re-pressed — just cast, kept");
                     return;
                 }
-                debug!("ui_spellbook: cast {spell_id} re-pressed — aura cancels");
-                let _ = ladder
-                    .commands
-                    .0
-                    .send(crate::net::ClientCommand::CancelAura { spell_id });
+                debug!("ui_spellbook: cast {spell_id} re-pressed — cancels");
+                ladder.cancel_active_spell(spell_id, Some(store), auras);
                 return;
             }
             let form = store.0.unit_shapeshift_form();

@@ -318,22 +318,18 @@ pub(crate) fn use_action(
                 ladder.ground.clear();
                 return UseOutcome::Done;
             }
-            // A live `ActiveIconID` spell re-pressed cancels its aura. The form-match toggle is
-            // `CastSpell`'s alone, not `UseAction`'s.
-            if let Some(d) = ladder.spells.as_ref().and_then(|s| s.catalog.get(b.action)) {
-                let auras = targeting.self_auras.iter().next();
-                if super::toggle::active_action_toggle(b.action, d, auras) {
-                    if ladder.keeps_fresh_toggle(b.action) {
-                        debug!("ui_action: cast {} re-pressed — just cast, kept", b.action);
-                        return UseOutcome::Done;
-                    }
-                    debug!("ui_action: cast {} re-pressed — aura cancels", b.action);
-                    let _ = ladder
-                        .commands
-                        .0
-                        .send(crate::net::ClientCommand::CancelAura { spell_id: b.action });
+            // `ClickSpell` (`0x80da80`): an active spell re-pressed cancels. The form-match toggle
+            // is `CastSpell`'s alone, not `UseAction`'s.
+            let auras = targeting.self_auras.iter().next();
+            let store = targeting.self_store.iter().next();
+            if ladder.is_active_spell(b.action, store, auras) {
+                if ladder.keeps_fresh_toggle(b.action) {
+                    debug!("ui_action: cast {} re-pressed — just cast, kept", b.action);
                     return UseOutcome::Done;
                 }
+                debug!("ui_action: cast {} re-pressed — cancels", b.action);
+                ladder.cancel_active_spell(b.action, store, auras);
+                return UseOutcome::Done;
             }
             debug!(
                 "ui_action: cast {} at {:?} (selection {:?})",

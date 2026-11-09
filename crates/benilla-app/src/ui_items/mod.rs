@@ -676,8 +676,7 @@ pub(crate) fn item_use_route(
 /// reference's cast tail runs the cast attempt the spellbook, `/cast` and the action bar run, with
 /// the item as an argument no gate skips for, and the cast send picks the opcode from it. So an
 /// item use takes the whole cast ladder, [`crate::spell::CastLadder::send`]. The toggle-cancel scan
-/// above the tail (an aura cancel) is the action button's predicate,
-/// [`crate::ui_action::toggle::active_action_toggle`], applied to the item's spell.
+/// above the tail is the click path's active-spell test, applied to the item's spell.
 ///
 /// Returns whether anything left for the server.
 pub(crate) fn send_item_use(
@@ -691,12 +690,8 @@ pub(crate) fn send_item_use(
     ui_errors: &mut crate::ui_action::UiErrorKeys,
 ) -> bool {
     // The toggle predicate over the caster's live aura slots.
-    let aura_cancels = |spell: u32| {
-        let Some(d) = ladder.spells.as_ref().and_then(|s| s.catalog.get(spell)) else {
-            return false;
-        };
-        crate::ui_action::toggle::active_action_toggle(spell, d, ctx.self_auras)
-    };
+    let aura_cancels =
+        |spell: u32| ladder.is_active_spell(spell, ctx.rel.self_store, ctx.self_auras);
     // The disarm ladder, asked of the caster's own inventory.
     let disarmed_hand = ctx.rel.self_store.and_then(|store| {
         crate::items::disarmed_equipment_slot(
@@ -718,11 +713,8 @@ pub(crate) fn send_item_use(
             false
         }
         ItemUseRoute::ToggleCancel(spell) => {
-            debug!("ui_items: item use {spell} re-pressed — its aura cancels, no cast");
-            let _ = ladder
-                .commands
-                .0
-                .send(crate::net::ClientCommand::CancelAura { spell_id: spell });
+            debug!("ui_items: item use {spell} re-pressed — cancels, no cast");
+            ladder.cancel_active_spell(spell, ctx.rel.self_store, ctx.self_auras);
             true
         }
         ItemUseRoute::QuestOffer { npc, quest } => {
