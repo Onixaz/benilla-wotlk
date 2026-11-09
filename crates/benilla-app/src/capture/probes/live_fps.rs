@@ -450,6 +450,10 @@ fn drive_live_fps(
                                 .inside_ms()
                                 .map(|m| format!(" main_in={m:.2}"))
                                 .unwrap_or_default();
+                            let wall = main_split
+                                .inside_wall_ms()
+                                .map(|m| format!(" main_wall={m:.2}"))
+                                .unwrap_or_default();
                             // Page faults per frame: `sys` time without syscalls is the kernel
                             // zero-filling pages.
                             let faults =
@@ -461,7 +465,7 @@ fn drive_live_fps(
                                     ),
                                     _ => String::new(),
                                 };
-                            format!(" thr=[{list}]{inside}{faults}")
+                            format!(" thr=[{list}]{inside}{wall}{faults}")
                         }
                         _ => String::new(),
                     };
