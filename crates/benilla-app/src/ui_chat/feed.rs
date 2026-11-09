@@ -866,6 +866,17 @@ pub(super) fn feed_chat(
                     });
                     continue;
                 }
+                // A whisper in or out enters autocomplete, addon whispers aside (`0x57b7c0`).
+                if matches!(
+                    msg.chat_type,
+                    benilla_protocol::messages::CHAT_MSG_WHISPER
+                        | benilla_protocol::messages::CHAT_MSG_WHISPER_INFORM
+                ) && msg.language != 0xFFFF_FFFF
+                {
+                    if let Some(n) = name.as_deref() {
+                        script.note_autocomplete_contact(n);
+                    }
+                }
                 // The base name; `stamp_channel` adds arg4's number and arg7-arg9 below.
                 let channel_base = msg.channel.clone().unwrap_or_default();
                 // `$`-macros expand for the monster, boss, BG system and award types only, against
