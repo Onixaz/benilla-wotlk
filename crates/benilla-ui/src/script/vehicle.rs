@@ -37,6 +37,16 @@ pub struct VehicleUnitView {
     pub seat: Option<VehicleSeatView>,
     /// Seated, on a transport that is its own `UNIT_FIELD_CHARM` (`0x6135b8`-`0x6135db`).
     pub controlling: bool,
+    /// Its own vehicle's three `PowerDisplay.dbc` ids, where the record sets flag `0x100000`.
+    pub power_displays: [u32; 3],
+}
+
+/// The `PowerDisplay.dbc` facts `UnitPowerType` returns.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PowerDisplayView {
+    pub actual_type: u32,
+    pub tag: String,
+    pub rgb: [u8; 3],
 }
 
 /// The vehicle facts the verbs read.
@@ -63,6 +73,11 @@ pub struct VehicleView {
 }
 
 impl super::UiScript {
+    /// The `PowerDisplay.dbc` rows by id, once for the VM.
+    pub fn set_power_displays(&mut self, rows: std::sync::Arc<HashMap<u32, PowerDisplayView>>) {
+        self.model_mut().power_displays = rows;
+    }
+
     /// Replace the vehicle facts; the app fires the vehicle events itself.
     pub fn set_vehicles(&mut self, view: VehicleView) {
         set_field!(self, vehicles, view);
@@ -217,6 +232,7 @@ mod tests {
                             skin: 1,
                         }),
                         controlling: true,
+                        ..Default::default()
                     },
                 ),
                 (
@@ -228,6 +244,7 @@ mod tests {
                             ..Default::default()
                         }),
                         controlling: false,
+                        ..Default::default()
                     },
                 ),
             ]),
@@ -239,6 +256,83 @@ mod tests {
     fn eval(s: &UiScript, code: &str) -> String {
         s.eval::<String>(&format!("return tostring({code})"))
             .unwrap()
+    }
+
+    #[test]
+    fn unit_power_type_shows_a_vehicles_display_only_over_its_live_power() {
+        let mut s = UiScript::new().unwrap();
+        s.set_unit(
+            "target",
+            Some(UnitState {
+                exists: true,
+                guid: 7,
+                power_type: 3,
+                ..Default::default()
+            }),
+        );
+        s.set_power_displays(std::sync::Arc::new(HashMap::from([
+            (
+                41,
+                PowerDisplayView {
+                    actual_type: 3,
+                    tag: "POWER_TYPE_PYRITE".into(),
+                    rgb: [0, 255, 51],
+                },
+            ),
+            (
+                1,
+                PowerDisplayView {
+                    actual_type: 0,
+                    tag: "AMMOSLOT".into(),
+                    rgb: [1, 2, 3],
+                },
+            ),
+        ])));
+        s.set_vehicles(VehicleView {
+            units: HashMap::from([(
+                7,
+                VehicleUnitView {
+                    power_displays: [41, 1, 0],
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        let row = |code: &str| {
+            s.eval::<String>(&format!(
+                "local t = {{UnitPowerType({code})}}
+                 for i = 1, #t do
+                     t[i] = i > 2 and string.format('%.3f', t[i]) or tostring(t[i])
+                 end
+                 return table.concat(t, ',')"
+            ))
+            .unwrap()
+        };
+        assert_eq!(row("'target'"), "3,POWER_TYPE_PYRITE,0.000,1.000,0.200");
+        assert_eq!(row("'target', 1"), "3,POWER_TYPE_PYRITE,0.000,1.000,0.200");
+        assert_eq!(row("'target', 2"), "0,", "a row over another power");
+        assert_eq!(row("'target', 3"), "0,", "no row");
+        assert_eq!(row("'target', 4"), "0,", "past the three slots");
+        assert_eq!(row("'nobody'"), "0,");
+    }
+
+    #[test]
+    fn unit_power_type_without_a_display_answers_the_power_and_its_token() {
+        let mut s = UiScript::new().unwrap();
+        s.set_unit(
+            "target",
+            Some(UnitState {
+                exists: true,
+                guid: 7,
+                power_type: 1,
+                ..Default::default()
+            }),
+        );
+        let n: i64 = s.eval("return (UnitPowerType('target'))").unwrap();
+        let t: String = s
+            .eval("return (select(2, UnitPowerType('target')))")
+            .unwrap();
+        assert_eq!((n, t.as_str()), (1, "RAGE"));
     }
 
     #[test]

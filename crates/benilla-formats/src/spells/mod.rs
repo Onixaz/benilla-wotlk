@@ -110,6 +110,7 @@ const COL_DISPEL: usize = 2;
 const COL_SCHOOL_MASK: usize = 225;
 /// `RuneCostID`, the `SpellRuneCost.dbc` row (`0x5ee686`).
 const COL_RUNE_COST_ID: usize = 226;
+const COL_POWER_DISPLAY_ID: usize = 228;
 const COL_MECHANIC: usize = 3;
 const COL_EFFECT_MECHANIC_1: usize = 83;
 const COL_ATTRIBUTES: usize = 4;
@@ -703,6 +704,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 category_recovery_ms: u32_at(r, COL_CATEGORY_RECOVERY_TIME).unwrap_or(0),
                 start_recovery_category: u32_at(r, COL_START_RECOVERY_CATEGORY).unwrap_or(0),
                 start_recovery_ms: u32_at(r, COL_START_RECOVERY_TIME).unwrap_or(0),
+                power_display_id: u32_at(r, COL_POWER_DISPLAY_ID).unwrap_or(0),
                 power_type: u32_at(r, COL_POWER_TYPE).unwrap_or(0),
                 mana_cost: u32_at(r, COL_MANA_COST).unwrap_or(0),
                 rune_cost_id: u32_at(r, COL_RUNE_COST_ID).unwrap_or(0),

@@ -43,10 +43,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "PaperDollItemFrame",
         "#239 equipment slot names: GetInventorySlotInfo",
     ),
-    (
-        "PowerDisplay",
-        "#240 alternate power display: UnitPowerType",
-    ),
     ("RandPropPoints", "#239 random property and suffix stats"),
     ("ScalingStatDistribution", "#239 heirloom stat scaling"),
     ("ScalingStatValues", "#239 heirloom stat scaling"),

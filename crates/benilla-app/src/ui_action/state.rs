@@ -714,6 +714,7 @@ mod tests {
                         [(4, row)].into_iter().collect(),
                     ),
                     cast_times: Default::default(),
+                    power_displays: Default::default(),
                     durations: Default::default(),
                     radii: Default::default(),
                 })
@@ -833,6 +834,7 @@ mod tests {
                         [(2, melee)].into_iter().collect(),
                     ),
                     cast_times: Default::default(),
+                    power_displays: Default::default(),
                     durations: Default::default(),
                     radii: Default::default(),
                 })
@@ -973,6 +975,7 @@ mod tests {
                     forms: Default::default(),
                     ranges: Default::default(),
                     cast_times: Default::default(),
+                    power_displays: Default::default(),
                     durations: Default::default(),
                     radii: Default::default(),
                 })
@@ -1056,6 +1059,7 @@ mod tests {
                 forms: Default::default(),
                 ranges: Default::default(),
                 cast_times: Default::default(),
+                power_displays: Default::default(),
                 durations: Default::default(),
                 radii: Default::default(),
             })
@@ -1157,6 +1161,7 @@ mod tests {
                 forms: Default::default(),
                 ranges: Default::default(),
                 cast_times: Default::default(),
+                power_displays: Default::default(),
                 durations: Default::default(),
                 radii: Default::default(),
             })

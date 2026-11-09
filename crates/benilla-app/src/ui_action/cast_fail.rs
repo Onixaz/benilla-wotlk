@@ -257,6 +257,8 @@ pub(super) struct FailArgs<'a> {
     pub(super) forms: Option<&'a HashMap<u32, ShapeshiftForm>>,
     /// `TotemCategory.dbc`, for `0x9c`.
     pub(super) totems: Option<&'a TotemCategoryCatalog>,
+    /// `PowerDisplay.dbc`, for `0x4d`.
+    pub(super) power_displays: Option<&'a benilla_formats::PowerDisplayCatalog>,
 }
 
 /// What an argument arm produced, and when nothing, which exit the reference takes: every arm but
@@ -414,6 +416,19 @@ pub(super) fn cast_fail_text(
             arg_text: first_layer.clone(),
         })
     };
+    // `0x4d`, both handlers' arm (`0x80569e`, `0x808935`): a spell with a `PowerDisplay.dbc` row
+    // says that power's name, the rest their per-power line.
+    let no_power = || {
+        let row = spell.and_then(|d| args.power_displays?.get(d.power_display_id));
+        let line = match row {
+            Some(row) => {
+                let noun = get_text(&row.tag).unwrap_or_else(|| row.tag.clone());
+                get_display("ERR_OUT_OF_POWER_DISPLAY").map(|l| l.fill(&noun))
+            }
+            None => get_display(power_keys(spell.map_or(0, |d| d.power_type)).0),
+        };
+        line.map(CastFailLine::arm_blanked)
+    };
     // The errorId overrides, from the caster's own handler; everything after this is shared.
     match caster {
         // Reasons above `0x8d` take the default arm, the rest the index table. Six overrides are
@@ -437,10 +452,7 @@ pub(super) fn cast_fail_text(
             }
             // Health takes `0x123`, the rest a per-power table entry, the same five ids as the
             // player's, so [`power_keys`] serves both.
-            0x4D => {
-                let power = spell.map_or(0, |d| d.power_type);
-                return get_display(power_keys(power).0).map(CastFailLine::arm_blanked);
-            }
+            0x4D => return no_power(),
             // The pet sends `0x01`, `0x02`, `0x09`, `0x18`, `0x28`, `0x41` and `0x8e` to its
             // generic arm, so it never says those lines. `0x17` goes there too and shows nothing
             // only because 1.12 ships no `SPELL_FAILED_DONT_REPORT`. `0x56`'s pet arm (errorId
@@ -484,10 +496,7 @@ pub(super) fn cast_fail_text(
                 return get_display(key);
             }
             0x41 => return get_display("ERR_SPELL_FAILED_NOTUNSHEATHED"),
-            0x4D => {
-                let power = spell.map_or(0, |d| d.power_type);
-                return get_display(power_keys(power).0).map(CastFailLine::arm_blanked);
-            }
+            0x4D => return no_power(),
             0x59 => return get_display("ERR_SPELL_OUT_OF_RANGE"),
             0x8E => return get_display("ERR_PLAY_TIME_EXCEEDED"),
             _ => {}
@@ -1012,6 +1021,46 @@ mod tests {
                 .unwrap()
                 .text,
             "Item is not ready yet."
+        );
+    }
+
+    #[test]
+    fn no_power_names_the_spells_power_display_for_player_and_pet() {
+        let mut m = gs();
+        m.insert("ERR_OUT_OF_POWER_DISPLAY", "Not enough %s");
+        m.insert("POWER_TYPE_PYRITE", "Pyrite");
+        let g = getter(&m);
+        let rows =
+            benilla_formats::PowerDisplayCatalog::from_rows([benilla_formats::PowerDisplay {
+                id: 41,
+                actual_type: 3,
+                tag: "POWER_TYPE_PYRITE".into(),
+                rgb: [0; 3],
+            }]);
+        let args = FailArgs {
+            power_displays: Some(&rows),
+            ..FailArgs::default()
+        };
+        let barrel = SpellDisplay {
+            power_type: 3,
+            power_display_id: 41,
+            ..Default::default()
+        };
+        for caster in [Caster::Player, Caster::Pet] {
+            let line = cast_fail_text(caster, 0x4D, Some(&barrel), args, &g).unwrap();
+            assert_eq!(line.key, "ERR_OUT_OF_POWER_DISPLAY");
+            assert_eq!(line.text, "Not enough Pyrite");
+        }
+        // A row the file lacks falls back to the power's own line.
+        let missing = SpellDisplay {
+            power_display_id: 9,
+            ..spell(1, 0, 0)
+        };
+        assert_eq!(
+            cast_fail_text(Caster::Player, 0x4D, Some(&missing), args, &g)
+                .unwrap()
+                .text,
+            "Not enough rage"
         );
     }
 

@@ -292,11 +292,13 @@ pub use spell_visual::{
 mod emit_timing;
 pub use emit_timing::{EmitParams, EmitTiming, ParamsNow};
 mod particles;
+mod power_display;
 pub use particles::{
     load_particle_colors, parse_m2_particle_emitters, LifeTrack, OverLife, OverLifeSample,
     ParticleBlend, ParticleColorTable, ParticleColors, ParticleEmitterDef, ParticleShape,
     SplineData,
 };
+pub use power_display::{load_power_displays, PowerDisplay, PowerDisplayCatalog};
 mod ribbons;
 pub use ribbons::{parse_m2_ribbon_emitters, RibbonEmitterDef, RibbonVisibility};
 mod value_track;

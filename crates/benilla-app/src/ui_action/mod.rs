@@ -185,6 +185,8 @@ pub(crate) struct Spells {
     pub(crate) ranges: benilla_formats::SpellRangeCatalog,
     /// `SpellCastTimes.dbc`, read through `CastingTimeIndex` by the cast-time lookup.
     pub(crate) cast_times: benilla_formats::SpellCastTimeCatalog,
+    /// `PowerDisplay.dbc`, the alternate power names; empty on a failed load.
+    pub(crate) power_displays: benilla_formats::PowerDisplayCatalog,
     /// `SpellDuration.dbc`: the `$d`/`$o` tokens' source, through the duration lookup.
     pub(crate) durations: benilla_formats::SpellDurationCatalog,
     /// `SpellRadius.dbc`: the `$a` token's yards.
@@ -240,6 +242,7 @@ impl Spells {
             forms: HashMap::new(),
             ranges: benilla_formats::SpellRangeCatalog::default(),
             cast_times: Default::default(),
+            power_displays: Default::default(),
             durations: Default::default(),
             radii: Default::default(),
         }
@@ -256,6 +259,7 @@ pub(crate) fn real_spells() -> Option<Spells> {
         forms: benilla_formats::load_shapeshift_forms(&mut chain).expect("forms"),
         ranges: benilla_formats::load_spell_ranges(&mut chain).expect("ranges"),
         cast_times: benilla_formats::load_spell_cast_times(&mut chain).expect("cast times"),
+        power_displays: benilla_formats::load_power_displays(&mut chain).expect("power displays"),
         durations: benilla_formats::load_spell_durations(&mut chain).expect("durations"),
         radii: benilla_formats::load_spell_radii(&mut chain).expect("radii"),
     })
@@ -490,6 +494,13 @@ fn load_spells(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
                     Default::default()
                 })
             };
+            let power_displays = {
+                let mut chain = assets.chain.lock_recover();
+                benilla_formats::load_power_displays(&mut chain).unwrap_or_else(|e| {
+                    warn!("ui_action: PowerDisplay.dbc failed — alternate powers off: {e:#}");
+                    Default::default()
+                })
+            };
             let durations = {
                 let mut chain = assets.chain.lock_recover();
                 benilla_formats::load_spell_durations(&mut chain).unwrap_or_else(|e| {
@@ -519,6 +530,7 @@ fn load_spells(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
                 forms,
                 ranges,
                 cast_times,
+                power_displays,
                 durations,
                 radii,
             });

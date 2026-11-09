@@ -24,6 +24,10 @@ use crate::ui_script::{gate, UiInput};
 
 mod held;
 
+/// The per-guid snapshots of the tokens that read a unit by guid, `vehicle` among them.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ChainUnitFeed;
+
 /// The unit-feed pass, gated so none of its login one-shots or per-VM memos runs before the in-game
 /// interface exists; the demo override orders itself after it.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -157,7 +161,9 @@ impl Plugin for UiUnitPlugin {
                 // After the aura feed, whose resolver inputs it measures.
                 feed_unit_reach.after(crate::ui_aura::AuraEvents),
                 // After the same feed, whose guids it covers.
-                held::feed_chain_units.after(crate::ui_aura::AuraEvents),
+                held::feed_chain_units
+                    .in_set(ChainUnitFeed)
+                    .after(crate::ui_aura::AuraEvents),
                 feed_player_control,
                 feed_farsight_focus,
                 melee_unit_combat,

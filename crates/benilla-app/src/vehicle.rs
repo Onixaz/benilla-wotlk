@@ -33,8 +33,8 @@ use benilla_formats::{VehicleCatalog, VehicleRec, VehicleSeatRec};
 use benilla_protocol::messages::{opcode, ObjectType};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
-    AimRec, AimUnit, ScriptValue, UiScript, VehicleIndicatorView, VehicleRequest, VehicleSeatView,
-    VehicleUnitView, VehicleView,
+    AimRec, AimUnit, PowerDisplayView, ScriptValue, UiScript, VehicleIndicatorView, VehicleRequest,
+    VehicleSeatView, VehicleUnitView, VehicleView,
 };
 
 use crate::net::{
@@ -162,6 +162,11 @@ impl Plugin for VehiclePlugin {
                 on_cancel_expected_ride,
             )
             .add_systems(Startup, load_vehicle_tables.after(AssetSet::Open))
+            // The seated state a frame's `vehicle` token reads comes from the passenger chain.
+            .configure_sets(
+                Update,
+                crate::ui_aura::AuraEvents.after(passenger::advance_transits),
+            )
             .add_systems(
                 Update,
                 (
@@ -173,9 +178,12 @@ impl Plugin for VehiclePlugin {
                     feed_vehicle_view
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(passenger::advance_transits),
+                    // After the `vehicle` token's guid and snapshot, which the events' handlers
+                    // read: the stock mana bar paints a unit it cannot read as disconnected.
                     feed_vehicle_signals
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(feed_vehicle_view)
+                        .after(crate::ui_unit::ChainUnitFeed)
                         .after(crate::ui_unit::EnterWorldFeed)
                         .after(on_world_enter)
                         .after(passenger::advance_transits),
@@ -414,6 +422,7 @@ fn feed_vehicle_view(
     names: Option<Res<crate::names::NameCache>>,
     tables: Res<VehicleTables>,
     aim: (Res<aim::VehicleAim>, Query<&crate::net::RemoteMotion>),
+    spells: Option<Res<crate::ui_action::Spells>>,
     mut pushed: Local<crate::ui_script::VmMemo<Option<VehicleView>>>,
 ) {
     let Some(mut script) = script else {
@@ -443,6 +452,7 @@ fn feed_vehicle_view(
                     state: p.state,
                     seat: seat.map(seat_view),
                     controlling: p.state == SEATED && store.0.unit_charm() == Some(p.vehicle),
+                    ..Default::default()
                 },
             );
             if guid == me {
@@ -455,6 +465,13 @@ fn feed_vehicle_view(
                     view.input_seat_flags = seat.map(|s| s.flags);
                 }
             }
+        }
+        // `Script_UnitPowerType`'s vehicle arm: only a record with flag `0x100000` (`0x60f1b8`).
+        if let Some(rec) = v
+            .and_then(|v| tables.vehicle(v.id))
+            .filter(|r| r.flags & 0x0010_0000 != 0)
+        {
+            view.units.entry(guid).or_default().power_displays = rec.power_display_ids;
         }
         facts.insert(
             guid,
@@ -530,6 +547,19 @@ fn feed_vehicle_view(
     let last = pushed.get(&script);
     if last.is_none() {
         script.set_vehicle_indicators(tables.indicators.clone());
+        if let Some(spells) = &spells {
+            let rows = spells.power_displays.iter().map(|row| {
+                (
+                    row.id,
+                    PowerDisplayView {
+                        actual_type: row.actual_type,
+                        tag: row.tag.clone(),
+                        rgb: row.rgb,
+                    },
+                )
+            });
+            script.set_power_displays(Arc::new(rows.collect()));
+        }
     }
     if last.as_ref() != Some(&view) {
         script.set_vehicles(view.clone());
