@@ -1201,6 +1201,10 @@ pub(crate) struct Model {
     pub(crate) click_button: Option<String>,
     /// The player state `SecureCmdOptionParse`'s conditions read beside the unit snapshots.
     pub(crate) option_state: super::OptionState,
+    /// `flyable`'s Northrend training, from the spell book.
+    pub(crate) knows_cold_weather_flying: bool,
+    /// What the macro conditions `equipped` and `worn` read.
+    pub(crate) equipped_for_macros: super::EquippedForMacros,
     /// Whispered names by folded name: the spelling and the time last used, for autocomplete.
     pub(crate) autocomplete_contacts: std::collections::HashMap<String, (String, f64)>,
     /// Condition names `SecureCmdOptionParse` did not know, for `ERR_UNKNOWN_MACRO_OPTION_S`.
@@ -1812,6 +1816,8 @@ impl Model {
             modifiers: (false, false, false),
             click_button: None,
             option_state: Default::default(),
+            knows_cold_weather_flying: false,
+            equipped_for_macros: Default::default(),
             autocomplete_contacts: Default::default(),
             unknown_macro_options: Vec::new(),
             money: 0,

@@ -115,6 +115,8 @@ pub(super) fn feed_actions(
     let (mut ui_error_keys, mut ui_error_texts, mut cast_fail_log) = ui_errors;
     let (sub_classes, temp_bar, pet_bar) = bars;
     let temp_flags = temp_bar.map_or(0, |t| t.flags);
+    // Cold Weather Flying, what `flyable` needs in Northrend (`0x7261b0`).
+    script.set_knows_cold_weather_flying(actions.spells.contains(&54197));
     let memory = memory.get(&script);
 
     // Cast failures become error lines through [`cast_fail`], all resolved before any event fires.
