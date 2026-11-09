@@ -65,6 +65,8 @@ pub(crate) struct UsableCtx<'a> {
     /// The caster's combo points on the current target: [`super::ComboPoints`]' player bank, or
     /// the pet's for the pet (`GetComboPoints(target)` with the target 0, `0x513920`, `0x5d3520`).
     pub(crate) combo_points: u8,
+    /// The auto-unshift check (`0x71b130`): a spell its form refuses stays usable when it passes.
+    pub(crate) auto_unshift: bool,
 }
 
 /// The player's runes and `SpellRuneCost.dbc`, for [`RuneCheck::has_runes`].
@@ -523,7 +525,9 @@ pub(crate) fn spell_usable(
     // it counts as shapeshifted and whether it refuses every unnamed spell.
     let form = ctx.store.0.unit_shapeshift_form();
     let form_flags = spells.forms.get(&u32::from(form)).map_or(0, |f| f.flags);
-    if !d.usable_in_form(form, form_flags) {
+    if d.form_refusal(form, form_flags).is_some_and(|r| {
+        matches!(r, benilla_formats::FormRefusal::OnlyShapeshift) || !ctx.auto_unshift
+    }) {
         return (false, false);
     }
     // Leg 7: only-stealthed spells need the CREEP vis flag.
@@ -979,6 +983,7 @@ mod tests {
             spell_mods,
             runes: None,
             combo_points: 0,
+            auto_unshift: false,
         }
     }
 
@@ -987,6 +992,15 @@ mod tests {
     }
 
     fn walk_with_combo(d: &SpellDisplay, store: &ObjectStore, combo_points: u8) -> (bool, bool) {
+        walk_full(d, store, combo_points, false)
+    }
+
+    fn walk_full(
+        d: &SpellDisplay,
+        store: &ObjectStore,
+        combo_points: u8,
+        auto_unshift: bool,
+    ) -> (bool, bool) {
         let cooldowns = Cooldowns::default();
         let reputations = Reputations(Vec::new(), Vec::new());
         let spells = Spells::empty_for_tests();
@@ -1003,12 +1017,29 @@ mod tests {
             &spells,
             &UsableCtx {
                 combo_points,
+                auto_unshift,
                 ..ctx(store, &cooldowns, &reputations, &carried, &spell_mods)
             },
             &objects,
             &items,
             &commands,
         )
+    }
+
+    /// The form leg (`0x80b5d0`): a spell its form refuses stays lit when the player can leave it.
+    #[test]
+    fn a_form_refused_spell_stays_usable_when_the_form_can_be_left() {
+        let shifted = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (22, 100),
+            (28, 100),
+            (164, 15 << 24),
+        ]));
+        let no_form = SpellDisplay {
+            attributes: 0x0001_0000,
+            ..Default::default()
+        };
+        assert!(!walk_full(&no_form, &shifted, 0, false).0);
+        assert!(walk_full(&no_form, &shifted, 0, true).0);
     }
 
     /// The rune check (`0x5ee5b0`): each kind's ready runes against the row, the shortfall covered
@@ -1676,6 +1707,7 @@ mod tests {
                 spell_mods: &SpellModifiers::default(),
                 runes: None,
                 combo_points: 0,
+                auto_unshift: false,
             };
             assert_eq!(
                 spell_usable(5308, &execute, &spells, &ctx, &objects, &items, &commands),

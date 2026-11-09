@@ -277,8 +277,8 @@ impl CastLadder<'_, '_> {
             };
             crate::ui_cast::queue_sent(&mut self.ecs, spell_id, target);
         }
-        if self.ground.dismounts() {
-            let _ = self.commands.0.send(ClientCommand::CancelMountAura);
+        if let Some(prelude) = self.ground.prelude() {
+            prelude.send(&self.commands, &mut self.ecs);
         }
         let _ = self.commands.0.send(cmd);
         let now = Instant::now();
@@ -916,6 +916,18 @@ fn send_spell_cast(
         cast_errors.push_local(spell_id, 0x39);
         return;
     }
+    // The seated block (`0x739650`): unless `Attributes & 0x08000000`, a seated caster the
+    // auto-stand check refuses reads 0x3e "You have to be standing"; any other stands at the send.
+    let stand = def.is_none_or(|d| d.attributes & 0x0800_0000 == 0)
+        && ctx
+            .rel
+            .self_store
+            .is_some_and(|s| s.0.unit_stand_state() != 0);
+    if stand && !ctx.auto_stand {
+        debug!("ui_action: cast {spell_id} refused locally — seated (0x3e)");
+        cast_errors.push_local(spell_id, 0x3e);
+        return;
+    }
     // The water leg: 0x50 "Cannot use while swimming" for mounts, Travel Form and food, 0x58 "Can
     // only use while swimming" for Aquatic Form. Local, because vmangos's CheckCast has no such arm
     // and would grant Aquatic Form on land.
@@ -939,7 +951,11 @@ fn send_spell_cast(
             return;
         }
     }
-    // The form leg (`0x72bac0`): "Can't do that while shapeshifted" or needs-a-form.
+    // The form leg (`0x72bac0`): needs-a-form always refuses, "Can't do that while shapeshifted"
+    // only when the auto-unshift check does; otherwise the send leaves the form. A mount spell
+    // leaves it too (`0x80ac90`). Not built: that send's walk over a stance-flagged form's model.
+    let mut cancel_form = false;
+    let mut caster_form = 0;
     if let Some(d) = def {
         let form = ctx
             .rel
@@ -949,13 +965,35 @@ fn send_spell_cast(
         let form_flags = spells
             .and_then(|s| s.forms.get(&u32::from(form)))
             .map_or(0, |f| f.flags);
+        caster_form = form;
         if let Some(refusal) = d.form_refusal(form, form_flags) {
-            let reason = refusal.reason();
-            debug!("ui_action: cast {spell_id} refused locally — the form gate ({reason:#x})");
-            cast_errors.push_local(spell_id, reason);
-            return;
+            if matches!(refusal, benilla_formats::FormRefusal::OnlyShapeshift) || !ctx.auto_unshift
+            {
+                let reason = refusal.reason();
+                debug!("ui_action: cast {spell_id} refused locally — the form gate ({reason:#x})");
+                cast_errors.push_local(spell_id, reason);
+                return;
+            }
+            cancel_form = true;
+        }
+        if d.effect_apply_aura
+            .contains(&benilla_formats::SPELL_AURA_MOUNTED)
+            && validator::is_shapeshifted(form, form_flags)
+            && ctx.auto_unshift
+        {
+            cancel_form = true;
         }
     }
+    let prelude = CastPrelude {
+        stand,
+        dismount,
+        cancel_form: match (cancel_form, ctx.self_auras, spells) {
+            (true, Some(auras), Some(spells)) => {
+                crate::ui_shapeshift::form_auras(caster_form, auras, &spells.catalog)
+            }
+            _ => Vec::new(),
+        },
+    };
     // The deferred no-bind refusal: every rung passed and nothing bound.
     if let Some(reason) = deferred_refusal {
         debug!("ui_action: cast {spell_id} refused locally — the cast-arm tail ({reason:#x})");
@@ -966,7 +1004,7 @@ fn send_spell_cast(
     if let Some(word) = pending_word {
         debug!("ui_action: cast {spell_id} awaits its click — targeting cursor up ({word:#06x})");
         ground.enter(spell_id, commit, word);
-        ground.dismount_at_commit(dismount);
+        ground.prelude_at_commit(prelude);
         return;
     }
     // The wand handoff: a new cast cancels the running repeat only when it carries
@@ -1009,11 +1047,8 @@ fn send_spell_cast(
     if matches!(commit, CastCommit::Spell) {
         crate::ui_cast::queue_sent(ecs, spell_id, target);
     }
-    // The pending send's dismount (`0x80af40`) goes out ahead of the cast.
-    if dismount {
-        debug!("ui_action: cast {spell_id} dismounts first (CMSG_CANCEL_MOUNT_AURA)");
-        let _ = commands.0.send(ClientCommand::CancelMountAura);
-    }
+    // The pending send's stand, dismount and unshift go out ahead of the cast.
+    prelude.send(commands, ecs);
     // The cast send: one targets block, two opcodes.
     let _ = commands.0.send(match commit {
         CastCommit::Spell => match (explicit_object, item_target) {
@@ -1095,6 +1130,31 @@ fn send_spell_cast(
     }
 }
 
+/// What the pending send does ahead of the cast (`0x80ac90`), in its order.
+#[derive(Clone, Default)]
+pub(crate) struct CastPrelude {
+    pub(crate) stand: bool,
+    pub(crate) dismount: bool,
+    /// The form's auras to cancel.
+    pub(crate) cancel_form: Vec<u32>,
+}
+
+impl CastPrelude {
+    pub(crate) fn send(&self, net: &NetCommands, ecs: &mut Commands) {
+        if self.stand {
+            ecs.write_message(crate::player::StandStateRequest { state: 0 });
+        }
+        if self.dismount {
+            debug!("ui_action: the cast dismounts first (CMSG_CANCEL_MOUNT_AURA)");
+            let _ = net.0.send(ClientCommand::CancelMountAura);
+        }
+        for &spell_id in &self.cancel_form {
+            debug!("ui_action: the cast leaves the form first ({spell_id})");
+            let _ = net.0.send(ClientCommand::CancelAura { spell_id });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1137,6 +1197,8 @@ mod tests {
             self_auras: None,
             self_move_flags: 0,
             auto_dismount: true,
+            auto_stand: true,
+            auto_unshift: true,
             combo_points: 0,
         }
     }
@@ -1289,6 +1351,140 @@ mod tests {
     /// The mounted block (`0x739e8f`): a mounted press the auto-dismount check allows sends
     /// `CMSG_CANCEL_MOUNT_AURA` ahead of the cast (the pending send, `0x80af40`); one it refuses
     /// reads 0x39 with no packet; the `Attributes & 0x01000000` spell casts in the saddle.
+    #[test]
+    fn a_seated_cast_stands_first_unless_auto_stand_refuses() {
+        use crate::net::ObjectStore;
+        use benilla_protocol::ObjectFields;
+        const SPELL: u32 = 100;
+        let (mut world, rx) = world();
+        let mut spells = crate::ui_action::Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [(SPELL, benilla_formats::SpellDisplay::default())]
+                .into_iter()
+                .collect(),
+        );
+        world.insert_resource(spells);
+        let seated: &'static ObjectStore =
+            Box::leak(Box::new(ObjectStore(ObjectFields::from_pairs(&[
+                (22, 100),
+                (28, 100),
+                (138, 1),
+            ]))));
+        for auto_stand in [true, false] {
+            world
+                .run_system_once(move |mut ladder: CastLadder| {
+                    let base = ctx();
+                    let seated_ctx = cast_target::CastContext {
+                        rel: cast_target::TargetRelations {
+                            self_store: Some(seated),
+                            ..base.rel
+                        },
+                        auto_stand,
+                        ..base
+                    };
+                    ladder.send(SPELL, &seated_ctx, CastCommit::Spell);
+                })
+                .expect("one-shot");
+            world
+                .resource_mut::<crate::spell::PendingCast>()
+                .clear_if(SPELL);
+            let cast = rx.try_iter().any(|c| {
+                matches!(
+                    c,
+                    ClientCommand::CastSpell {
+                        spell_id: SPELL,
+                        ..
+                    }
+                )
+            });
+            let stood = world
+                .resource_mut::<Messages<crate::player::StandStateRequest>>()
+                .drain()
+                .any(|r| r.state == 0);
+            assert_eq!((cast, stood), (auto_stand, auto_stand));
+        }
+    }
+
+    /// A cast its form refuses leaves the form first, unless the auto-unshift check says no.
+    #[test]
+    fn a_shapeshifted_cast_leaves_the_form_unless_auto_unshift_refuses() {
+        use crate::net::ObjectStore;
+        use benilla_formats::SpellDisplay;
+        use benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE;
+        use benilla_protocol::ObjectFields;
+        const SPELL: u32 = 100;
+        const FORM_AURA: u32 = 27545;
+        let (mut world, rx) = world();
+        let mut spells = crate::ui_action::Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [
+                (
+                    SPELL,
+                    SpellDisplay {
+                        attributes: 0x0001_0000,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    FORM_AURA,
+                    SpellDisplay {
+                        shapeshift_form: Some(15),
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        world.insert_resource(spells);
+        let shifted: &'static ObjectStore =
+            Box::leak(Box::new(ObjectStore(ObjectFields::from_pairs(&[
+                (22, 100),
+                (28, 100),
+                (164, 15 << 24),
+            ]))));
+        let auras: &'static crate::unit_auras::UnitAuras = Box::leak(Box::new(
+            crate::unit_auras::UnitAuras::of(1, &[(0, FORM_AURA, AURA_UPDATE_FLAG_CANCELABLE | 1)]),
+        ));
+        for auto_unshift in [true, false] {
+            world
+                .run_system_once(move |mut ladder: CastLadder| {
+                    let base = ctx();
+                    let shifted_ctx = cast_target::CastContext {
+                        rel: cast_target::TargetRelations {
+                            self_store: Some(shifted),
+                            ..base.rel
+                        },
+                        self_auras: Some(auras),
+                        auto_unshift,
+                        ..base
+                    };
+                    ladder.send(SPELL, &shifted_ctx, CastCommit::Spell);
+                })
+                .expect("one-shot");
+            world
+                .resource_mut::<crate::spell::PendingCast>()
+                .clear_if(SPELL);
+            let sent: Vec<ClientCommand> = rx.try_iter().collect();
+            if auto_unshift {
+                assert!(matches!(
+                    sent.as_slice(),
+                    [
+                        ClientCommand::CancelAura {
+                            spell_id: FORM_AURA
+                        },
+                        ClientCommand::CastSpell {
+                            spell_id: SPELL,
+                            ..
+                        }
+                    ]
+                ));
+            } else {
+                assert!(sent.is_empty());
+            }
+        }
+    }
+
     #[test]
     fn a_mounted_cast_dismounts_first_unless_auto_dismount_refuses() {
         use crate::net::ObjectStore;

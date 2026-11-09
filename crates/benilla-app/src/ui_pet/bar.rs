@@ -72,6 +72,8 @@ impl PetSlotWalk<'_, '_> {
                 c.pet
                     .on(0, self.selection.as_ref().and_then(|s| s.guid).unwrap_or(0))
             }),
+            // The auto-unshift check asks for the active player (`0x71b130`).
+            auto_unshift: false,
         };
         crate::spell::usable::spell_usable(
             spell_id,

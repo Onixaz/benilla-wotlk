@@ -130,6 +130,7 @@ pub(super) fn feed_action_state(
         Option<Res<crate::spell::ComboPoints>>,
         // The group, for the reaction's party rung.
         Option<Res<crate::ui_party::GroupState>>,
+        crate::spell::AutoChecks,
     ),
     self_q: Query<(&ObjectStore, &Transform, Has<Engaged>, Option<&Casting>), With<SelfPlayer>>,
     selection: Res<Selection>,
@@ -173,6 +174,7 @@ pub(super) fn feed_action_state(
         rune_inputs,
         combo,
         group,
+        auto,
     ) = &cast_state;
     let combo_points = combo
         .as_deref()
@@ -188,6 +190,11 @@ pub(super) fn feed_action_state(
     // The rune leg compares ends on the `GetTime` millisecond clock the runes are stamped on.
     let now_ms = (ui_now * 1000.0).floor() as i64;
     let me = self_q.iter().next();
+    let auto_unshift = me.is_some_and(|(store, ..)| {
+        let form = u32::from(store.0.unit_shapeshift_form());
+        let row = spells.as_deref().and_then(|t| t.forms.get(&form));
+        auto.unshift(store, row.map_or(0, |f| f.flags))
+    });
     let rune_check = rune_inputs
         .0
         .as_deref()
@@ -281,6 +288,7 @@ pub(super) fn feed_action_state(
                         spell_mods,
                         runes: rune_check,
                         combo_points,
+                        auto_unshift,
                     };
                     let (u, oom) = usable::spell_usable(
                         button.action,
@@ -373,6 +381,7 @@ pub(super) fn feed_action_state(
                         spell_mods,
                         runes: rune_check,
                         combo_points,
+                        auto_unshift,
                     };
                     let (u, oom) = usable::item_usable(
                         button.action,
@@ -472,6 +481,7 @@ pub(super) fn feed_action_state(
             spell_mods,
             runes: rune_check,
             combo_points,
+            auto_unshift,
         };
         for (id, was_ready) in memory.reactive.iter_mut().flatten() {
             let Some(d) = sp.catalog.get(*id) else {
