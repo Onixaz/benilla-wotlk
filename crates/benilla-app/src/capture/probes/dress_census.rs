@@ -1,5 +1,6 @@
 //! `WOW_DRESS_CENSUS=<secs>[,<every>]`: one line per streamed player near the body giving what the
-//! wire asked for, what we resolved and what hangs off the skeleton.
+//! wire asked for, what we resolved and what hangs off the skeleton, and one `DRESS_UNIT` line per
+//! creature with its three virtual item slots.
 //!
 //! - `flags`/`hide`: `PLAYER_FLAGS` and its `HIDE_HELM 0x400`/`HIDE_CLOAK 0x800` bits, a public
 //!   field, so every player in range is readable.
@@ -52,6 +53,7 @@ type DressQuery = (
     &'static ObjectStore,
     Option<&'static Equipment>,
     Option<&'static HeldAttached>,
+    Option<&'static crate::creature_anim::Wielded>,
 );
 
 /// One line per streamed player within [`DEFAULT_RADIUS`], contradictions first.
@@ -88,10 +90,36 @@ fn fire_dress_census(
     // `(is_contradiction, sort key, line)`; contradictions sort first.
     let mut rows: Vec<(bool, i64, String)> = Vec::new();
     let (mut hiding_helm, mut hiding_cloak, mut bad) = (0u32, 0u32, 0u32);
-    for (unit, guid, net, t, store, equipment, attached) in &entities {
-        if net.kind != EntityKind::Player
-            || t.translation.distance_squared(body.translation) > radius * radius
-        {
+    let mut unit_rows: Vec<(i64, String)> = Vec::new();
+    for (unit, guid, net, t, store, equipment, attached, wielded) in &entities {
+        if t.translation.distance_squared(body.translation) > radius * radius {
+            continue;
+        }
+        let spawned_of = |a: Option<&HeldAttached>| -> Vec<&str> {
+            a.map(|a| a.spawned_slots())
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter_map(|(i, e)| e.map(|_| ATTACH_SLOT_NAMES[i]))
+                .collect()
+        };
+        if net.kind == EntityKind::Unit {
+            let dist = t.translation.distance(body.translation);
+            unit_rows.push((
+                (dist * 100.0) as i64,
+                format!(
+                    "DRESS_UNIT {:#018x} entry={} d={dist:6.1} sheath={} ids={:?} hands={:?} spawned=[{}]",
+                    guid.0,
+                    store.0.object_entry().unwrap_or(0),
+                    store.0.unit_sheath_state().unwrap_or(0),
+                    [0u8, 1, 2].map(|s| store.0.unit_virtual_item_entry(s).unwrap_or(0)),
+                    wielded.map(|w| (w.main, w.off, w.ranged)),
+                    spawned_of(attached).join(","),
+                ),
+            ));
+            continue;
+        }
+        if net.kind != EntityKind::Player {
             continue;
         }
         let flags = store.0.player_flags();
@@ -99,13 +127,7 @@ fn fire_dress_census(
         hiding_helm += u32::from(hide_helm);
         hiding_cloak += u32::from(hide_cloak);
         let eq = equipment.copied().unwrap_or_default();
-        let spawned: Vec<&str> = attached
-            .map(|a| a.spawned_slots())
-            .into_iter()
-            .flatten()
-            .enumerate()
-            .filter_map(|(i, e)| e.map(|_| ATTACH_SLOT_NAMES[i]))
-            .collect();
+        let spawned = spawned_of(attached);
         // The wire hides a piece that is resolved onto the body or standing as an attach model.
         let helm_shown = eq.helm != 0 || spawned.contains(&"helm");
         let contradiction = (hide_helm && helm_shown) || (hide_cloak && eq.cloak != 0);
@@ -145,6 +167,10 @@ fn fire_dress_census(
         at[2],
     );
     for (_, _, line) in &rows {
+        println!("{line}");
+    }
+    unit_rows.sort_by_key(|(dist, _)| *dist);
+    for (_, line) in &unit_rows {
         println!("{line}");
     }
     for line in body_parts.describe(self_entity, &children) {

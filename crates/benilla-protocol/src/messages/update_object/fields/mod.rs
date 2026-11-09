@@ -111,7 +111,7 @@ pub const FIELD_UNIT_NPC_FLAGS: u16 = 147;
 const FIELD_UNIT_NPC_EMOTESTATE: u16 = 148;
 /// A creature's weapon display ids (main hand, off hand, ranged), with no item behind them
 /// (`Creature.cpp:4158-4181`).
-const FIELD_UNIT_VIRTUAL_ITEM_SLOT_DISPLAY: u16 = 37;
+const FIELD_UNIT_VIRTUAL_ITEM_SLOT_ID: u16 = 37;
 /// 3.3.5a's `POWER6`/`POWER7` (runes, runic power), then `MAXPOWER6`/`MAXPOWER7`.
 const FIELD_UNIT_POWER6: u16 = 40;
 const FIELD_UNIT_MAXPOWER6: u16 = 42;

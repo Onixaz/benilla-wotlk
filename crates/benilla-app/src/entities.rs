@@ -957,8 +957,8 @@ pub(crate) fn setup_entities(
     match load_item_display_catalog(&mut chain) {
         Ok(catalog) => {
             info!("item display catalog: {} entries", catalog.len());
-            let item_dbc = benilla_formats::load_item_dbc_displays(&mut chain)
-                .inspect_err(|e| warn!("Item.dbc unavailable, bag icons wait on templates: {e:#}"))
+            let item_dbc = benilla_formats::load_item_dbc(&mut chain)
+                .inspect_err(|e| warn!("Item.dbc unavailable, no creature holds anything: {e:#}"))
                 .unwrap_or_default();
             commands.insert_resource(ItemDisplays {
                 catalog,
