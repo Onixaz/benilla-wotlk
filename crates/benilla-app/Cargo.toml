@@ -18,6 +18,7 @@ tracy = ["bevy/trace_tracy"]
 trace_chrome = ["bevy/trace_chrome"]
 
 [dependencies]
+bevy_framepace = "0.21"
 anyhow.workspace = true
 # The EditBox clipboard, on the main thread as NSPasteboard requires; bevy_egui's 3.x.
 arboard = "3"

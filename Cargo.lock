@@ -517,6 +517,7 @@ dependencies = [
  "benilla-world",
  "bevy",
  "bevy_egui",
+ "bevy_framepace",
  "bytemuck",
  "coreaudio-rs 0.13.0",
  "cosmic-text",
@@ -1150,6 +1151,25 @@ dependencies = [
  "bevy_ui_widgets",
  "bevy_window",
  "smol_str",
+]
+
+[[package]]
+name = "bevy_framepace"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a42ab83f581861fd57b1c6170503a5e352a0937d799d03a4224e1735e668af51"
+dependencies = [
+ "bevy_app",
+ "bevy_diagnostic",
+ "bevy_ecs",
+ "bevy_log",
+ "bevy_platform",
+ "bevy_reflect",
+ "bevy_render",
+ "bevy_time",
+ "bevy_window",
+ "bevy_winit",
+ "spin_sleep",
 ]
 
 [[package]]
@@ -6146,6 +6166,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 dependencies = [
  "portable-atomic",
+]
+
+[[package]]
+name = "spin_sleep"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c07347b7c0301b9adba4350bdcf09c039d0e7160922050db0439b3c6723c8ab"
+dependencies = [
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
