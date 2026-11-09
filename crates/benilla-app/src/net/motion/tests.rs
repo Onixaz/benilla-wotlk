@@ -136,6 +136,18 @@ fn a_relayed_swimmer_renders_pitched_and_the_gates_render_level() {
         assert_eq!(pitch, 0.0, "{name} renders level");
         assert_eq!(roll, 0.0, "{name} never banks");
     }
+
+    // Another unit's climb or strafe keeps its reported pitch (`0x719a90`): ±π/4 is the active
+    // mover's own.
+    let fly = move_flags::FLYING | move_flags::FORWARD;
+    for flags in [
+        fly | move_flags::ASCENDING,
+        fly | move_flags::DESCENDING,
+        fly | move_flags::ASCENDING | move_flags::STRAFE_LEFT,
+    ] {
+        let (_, pitch, _) = decompose(flags, 0.2, 0.0);
+        assert!((pitch - 0.2).abs() < 1e-5, "reported pitch kept: {pitch}");
+    }
 }
 
 #[test]

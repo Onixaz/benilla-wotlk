@@ -7,6 +7,10 @@ use avian3d::prelude::SpatialQuery;
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::prelude::*;
 
+use crate::creature_anim::select::unify;
+use crate::creature_anim::{move_flags, MovementState};
+use crate::net::{CreatureSwimming, RemoteMotion, Spline, UnitMoveModes};
+
 /// Ray envelope around the unit's feet: start this far up, reach this far down past the feet.
 const TILT_PROBE_UP: f32 = 2.0;
 const TILT_PROBE_DOWN: f32 = 4.0;
@@ -16,6 +20,8 @@ const TILT_WALKABLE_Y: f32 = 0.0175;
 const TILT_FREEZE_Y: f32 = 0.3572;
 /// The up-vector smoothing: the residual toward the target decays by `0.0018^dt`.
 const TILT_DECAY: f32 = 0.0018;
+/// cos(0.01): a unit tilted past this is still easing level (`0x719b80`).
+const SWIM_SETTLED_UP_Y: f32 = 0.99995;
 
 /// The tilt carrier a flagged model's root bones hang under, a child of the unit spawned when the
 /// display's `terrain_tilt != 0`; [`conform_units`] writes its rotation, the stage.
@@ -36,6 +42,13 @@ fn tilt_target(sampled: Option<Vec3>) -> Option<Vec3> {
         Some(n) => Some(n),
         None => Some(Vec3::Y),
     }
+}
+
+/// Whether the swim/fly matrix replaces the ground tilt (`0x71fd80`), easing back level included.
+fn in_swim_matrix(flags: u32, unit_rotation: Quat) -> bool {
+    flags & (move_flags::SWIMMING | move_flags::FLYING) != 0
+        && (flags & (move_flags::FORWARD | move_flags::BACKWARD) != 0
+            || (unit_rotation * Vec3::Y).y < SWIM_SETTLED_UP_Y)
 }
 
 /// The flag dispatch in the unit's local frame: flag 1 keeps left horizontal, a pure pitch of
@@ -72,7 +85,18 @@ pub(super) fn conform_units(
     time: Res<Time>,
     spatial: SpatialQuery,
     decals: benilla_world::decal::WorldDecal,
-    units: Query<(&Transform, Has<benilla_world::rig_anim::AnimParked>), Without<ConformNode>>,
+    units: Query<
+        (
+            &Transform,
+            Has<benilla_world::rig_anim::AnimParked>,
+            Option<&MovementState>,
+            Option<&RemoteMotion>,
+            Option<&Spline>,
+            Has<CreatureSwimming>,
+            Option<&UnitMoveModes>,
+        ),
+        Without<ConformNode>,
+    >,
     mut nodes: Query<(&ConformNode, &mut Transform)>,
     mut ups: Local<EntityHashMap<Vec3>>,
     mut disabled: Local<Option<bool>>,
@@ -87,11 +111,20 @@ pub(super) fn conform_units(
     let mut max_pitch: Option<(Entity, f32)> = None;
     let mut count = 0usize;
     for (node, mut node_tf) in &mut nodes {
-        let Ok((unit_tf, parked)) = units.get(node.unit) else {
+        let Ok((unit_tf, parked, movement, remote, spline, swimming, modes)) = units.get(node.unit)
+        else {
             continue;
         };
         if parked {
             ups.remove(&node.unit);
+            continue;
+        }
+        let flags = unify(movement, remote, spline, swimming, modes).flags;
+        // The swim/fly matrix skips the tilt and keeps the ground normal as it was (`0x71fd80`).
+        if in_swim_matrix(flags, unit_tf.rotation) {
+            seen.insert(node.unit);
+            ups.entry(node.unit).or_insert(Vec3::Y);
+            node_tf.rotation = Quat::IDENTITY;
             continue;
         }
         // Sample and smooth once per unit per frame: a unit can host two flagged visuals (a
@@ -186,5 +219,55 @@ mod tests {
             "flag 3 reduces to flag 1 without roll"
         );
         assert!(conform_rotation(2, uphill).angle_between(Quat::IDENTITY) < 1e-3);
+    }
+
+    #[test]
+    fn the_swim_matrix_gate_is_both_halves() {
+        let level = Quat::from_rotation_y(1.0);
+        let pitched = level * Quat::from_rotation_x(0.2);
+        let fly = move_flags::FLYING;
+        assert!(in_swim_matrix(fly | move_flags::FORWARD, level));
+        assert!(in_swim_matrix(
+            move_flags::SWIMMING | move_flags::BACKWARD,
+            level
+        ));
+        assert!(in_swim_matrix(fly, pitched), "still easing level");
+        assert!(!in_swim_matrix(fly, level), "a settled hover tilts");
+        assert!(!in_swim_matrix(fly | move_flags::STRAFE_LEFT, level));
+        assert!(!in_swim_matrix(move_flags::FORWARD, pitched), "on foot");
+        assert!(!in_swim_matrix(move_flags::CAN_FLY, pitched));
+    }
+
+    /// One `conform_units` pass over a unit pitched 0.5 rad, in a world with no ground.
+    fn node_rotation(unit: impl Bundle) -> Quat {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Time>();
+        world.init_resource::<avian3d::collider_tree::ColliderTrees>();
+        let rotation = Quat::from_rotation_x(0.5);
+        let unit = world.spawn((Transform::from_rotation(rotation), unit)).id();
+        let node = world
+            .spawn((ConformNode { unit, mode: 1 }, Transform::default()))
+            .id();
+        world.run_system_once(conform_units).unwrap();
+        world.get::<Transform>(node).unwrap().rotation
+    }
+
+    #[test]
+    fn a_unit_in_the_swim_matrix_keeps_its_pitch_on_the_mesh() {
+        let moving = |flags| MovementState {
+            flags,
+            ..Default::default()
+        };
+        let flattened = |q: Quat| (q.angle_between(Quat::IDENTITY) - 0.5).abs() < 1e-3;
+        assert!(flattened(node_rotation(moving(move_flags::FORWARD))));
+        for kept in [
+            node_rotation(moving(move_flags::FLYING | move_flags::FORWARD)),
+            node_rotation(moving(move_flags::SWIMMING | move_flags::FORWARD)),
+            node_rotation(UnitMoveModes(move_flags::FLYING)),
+            node_rotation(CreatureSwimming),
+        ] {
+            assert_eq!(kept, Quat::IDENTITY);
+        }
     }
 }

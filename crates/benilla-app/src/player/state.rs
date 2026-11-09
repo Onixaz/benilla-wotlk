@@ -499,6 +499,8 @@ pub(crate) struct Player {
     /// ([`crate::creature_anim::strafe_body_offset`]), snapped to `face_yaw` while otherwise
     /// moving, and chasing at [`STATIONARY_CHASE_RATE`] while standing.
     pub(super) model_yaw: f32,
+    /// The rendered swim/fly body pitch, eased ([`crate::creature_anim::ease_swim_pitch`]).
+    pub(super) swim_body_pitch: f32,
     /// A server spline drives the body (`SMSG_MONSTER_MOVE` for our guid: a charge, a taxi):
     /// input, physics and the movement stream yield, and its end sends `CMSG_MOVE_SPLINE_DONE`.
     pub(super) server_riding: bool,
