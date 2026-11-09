@@ -624,9 +624,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "EnableMouse",
         lua.create_function(|lua, (this, enable): (Table, bool)| {
             let h = frame_handle_of(lua, &this)?;
-            crate::script::model_mut_of(lua)
-                .arena
-                .set_mouse_enabled(h, enable);
+            crate::script::event::set_mouse_enabled(lua, h, enable);
             Ok(())
         })?,
     )?;

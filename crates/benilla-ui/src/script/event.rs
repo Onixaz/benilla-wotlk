@@ -165,8 +165,8 @@ pub(super) fn show_this(lua: &Lua, h: FrameHandle) {
             model.set_epoch(quiet);
             return;
         }
-        // A show re-runs the hover walk at the saved cursor.
-        model.hover_repick = true;
+        // Joining the mouse index re-runs the hover walk at the saved cursor (`0x495880`).
+        model.hover_repick |= model.arena.is_mouse_enabled(h);
         model
             .arena
             .frame(h)
@@ -214,6 +214,7 @@ fn hide_step(lua: &Lua, h: FrameHandle, kind_override: bool) {
             model.set_epoch(quiet);
             return;
         }
+        drop_mouse_holds(&mut model, h);
         let hovered = (model.mouseover == Some(h)).then_some(h);
         // The leave is a virtual call: a disabled Button's own skips its `OnLeave`, while the
         // hover and the drag-arm still clear.
@@ -234,7 +235,7 @@ fn hide_step(lua: &Lua, h: FrameHandle, kind_override: bool) {
         (children, left)
     };
     if let Some(id) = left {
-        if let Err(e) = fire_widget_handler(lua, id, "OnLeave", vec![Value::Boolean(true)]) {
+        if let Err(e) = fire_widget_handler(lua, id, "OnLeave", vec![Value::Boolean(false)]) {
             crate::script::model_mut_of(lua).record_script_error(e.to_string());
         }
     }
@@ -242,6 +243,55 @@ fn hide_step(lua: &Lua, h: FrameHandle, kind_override: bool) {
         hide_this(lua, c);
     }
     notify_visibility(lua, h, false);
+}
+
+/// `EnableMouse` (`0x48f6a0`, `0x48f6f0`): a change on a visible frame joins or leaves the mouse
+/// index at once. Leaving drops the capture and the press and, for the hovered frame, the hover
+/// and drag arm with `OnLeave(false)`; unlike a hide, a held Button keeps its PUSHED art.
+pub(super) fn set_mouse_enabled(lua: &Lua, h: FrameHandle, enable: bool) {
+    let left = {
+        let mut model = crate::script::model_mut_of(lua);
+        if model.arena.is_mouse_enabled(h) == enable {
+            return;
+        }
+        model.arena.set_mouse_enabled(h, enable);
+        let visible = model.arena.frame(h).is_some_and(|f| f.effective_visible);
+        if !visible {
+            return;
+        }
+        if enable {
+            model.hover_repick = true;
+            return;
+        }
+        drop_mouse_holds(&mut model, h);
+        if model.mouseover != Some(h) {
+            return;
+        }
+        let notified = super::button::hover_notify_runs(&model, Some(h));
+        model.mouseover = None;
+        if model.drag.as_ref().is_some_and(|d| d.source == h) {
+            model.drag = None;
+        }
+        model.hover_repick = true;
+        notified.then(|| model.frame_id(h))
+    };
+    if let Some(id) = left {
+        if let Err(e) = fire_widget_handler(lua, id, "OnLeave", vec![Value::Boolean(false)]) {
+            crate::script::model_mut_of(lua).record_script_error(e.to_string());
+        }
+    }
+}
+
+/// A frame leaving the mouse index (`0x495900`) loses the capture and every press it held. No
+/// release follows, so nothing clicks and no `OnMouseUp` fires; a slider's grab ends with them.
+pub(super) fn drop_mouse_holds(model: &mut crate::script::Model, h: FrameHandle) {
+    if model.mouse_capture == Some(h) {
+        model.mouse_capture = None;
+    }
+    model.mouse_down_on.retain(|_, held| *held != h);
+    if model.slider_drag.as_ref().is_some_and(|d| d.slider == h) {
+        model.slider_drag = None;
+    }
 }
 
 /// Whether `h` is a live GameTooltip, whose show and hide overrides run before the base.
@@ -304,6 +354,9 @@ pub(super) fn fire_visibility_changes(lua: &Lua, changed: Vec<FrameHandle>) {
     // reference has no other.
     let left: Option<(FrameHandle, u32)> = {
         let mut model = crate::script::model_mut_of(lua);
+        for &(h, _, _) in items.iter().filter(|&&(_, _, vis)| !vis) {
+            drop_mouse_holds(&mut model, h);
+        }
         let hidden_hover = model
             .mouseover
             .filter(|&m| items.iter().any(|&(h, _, vis)| h == m && !vis));
@@ -316,13 +369,16 @@ pub(super) fn fire_visibility_changes(lua: &Lua, changed: Vec<FrameHandle>) {
                 model.drag = None;
             }
         }
-        model.hover_repick |= hidden_hover.is_some() || items.iter().any(|&(_, _, vis)| vis);
+        let mouse_shown = items
+            .iter()
+            .any(|&(h, _, vis)| vis && model.arena.is_mouse_enabled(h));
+        model.hover_repick |= hidden_hover.is_some() || mouse_shown;
         hidden_hover
             .filter(|_| notified)
             .map(|m| (m, model.frame_id(m)))
     };
     if let Some((_, oid)) = left {
-        if let Err(e) = fire_widget_handler(lua, oid, "OnLeave", vec![Value::Boolean(true)]) {
+        if let Err(e) = fire_widget_handler(lua, oid, "OnLeave", vec![Value::Boolean(false)]) {
             crate::script::model_mut_of(lua).record_script_error(e.to_string());
         }
     }
