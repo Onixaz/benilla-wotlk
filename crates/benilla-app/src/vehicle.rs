@@ -466,7 +466,7 @@ fn feed_vehicle_view(
                 }
             }
         }
-        // `Script_UnitPowerType`'s vehicle arm: only a record with flag `0x100000` (`0x60f1b8`).
+        // `UnitPowerType`'s vehicle arm: only a record with flag `0x100000` (`0x60f1b8`).
         if let Some(rec) = v
             .and_then(|v| tables.vehicle(v.id))
             .filter(|r| r.flags & 0x0010_0000 != 0)
