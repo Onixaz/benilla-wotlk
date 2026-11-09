@@ -709,6 +709,140 @@ fn every_widget_method_answers_the_reference_s_return_kinds() {
     );
 }
 
+/// Every 3.3.5a row whose catalogued returns are the numeric flag, `(nil) | (number)`, of a global
+/// or a method: `(name, is_method)`. A row that can also push a boolean is not a flag row.
+fn nil_number_flag_rows() -> Vec<(String, bool)> {
+    let tsv = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../reference/3.3.5a-shapes.tsv"
+    );
+    let text = std::fs::read_to_string(tsv).expect("reference/3.3.5a-shapes.tsv");
+    let mut rows: Vec<(String, bool)> = text
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.starts_with("name\t"))
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            let is_method = match *f.get(2)? {
+                "global" => false,
+                "method" => true,
+                _ => return None,
+            };
+            let kinds = *f.get(7)?;
+            (*f.get(8)? == "agree"
+                && *f.get(1)? != GLUE_TABLE
+                && kinds.contains("(nil)")
+                && kinds.contains("(number)")
+                && !kinds.contains("boolean"))
+            .then(|| (f[0].to_string(), is_method))
+        })
+        .collect();
+    rows.sort();
+    rows.dedup();
+    rows
+}
+
+/// A numeric flag pushes `1` or nil, never a Lua boolean: `x == 1`, `tostring(x)` and a saved
+/// variable tell them apart. Every row the catalogue marks, under each call shape that returns.
+#[test]
+fn no_nil_number_flag_answers_a_lua_boolean() {
+    /// Calls a broken argument can reach but no real one does: their result is a usage answer.
+    const OBJECTS: &[(&str, &str)] = &[
+        ("Frame", "PGFrame"),
+        ("Button", "PGButton"),
+        ("CheckButton", "PGCheck"),
+        ("Slider", "PGSlider"),
+        ("StatusBar", "PGBar"),
+        ("EditBox", "PGBox"),
+        ("ScrollFrame", "PGScroll"),
+        ("GameTooltip", "PGTip"),
+        ("MessageFrame", "PGMsg"),
+        ("ScrollingMessageFrame", "PGSmf"),
+        ("SimpleHTML", "PGHtml"),
+        ("Model", "PGModel"),
+        ("PlayerModel", "PGPlayerModel"),
+        ("Cooldown", "PGCooldown"),
+        ("ColorSelect", "PGColor"),
+    ];
+    let rows = nil_number_flag_rows();
+    let s = benilla_ui::script::UiScript::new().expect("VM");
+    s.run(KIND_HELPER).expect("kind helper");
+    for (kind, name) in OBJECTS {
+        let _ = s.run(&format!(
+            "{name} = CreateFrame(\"{kind}\", \"{name}\", UIParent)"
+        ));
+    }
+    let _ = s.run("PGTex = PGFrame:CreateTexture() PGFont = PGFrame:CreateFontString()");
+    let receivers: Vec<&str> = OBJECTS
+        .iter()
+        .map(|&(_, n)| n)
+        .chain(["PGTex", "PGFont"])
+        .collect();
+    const ARGS: &[&str] = &[
+        "",
+        "\"player\"",
+        "1",
+        "1, 1",
+        "\"player\", 1",
+        "\"OnClick\"",
+        "\"Frame\"",
+    ];
+    let mut checked = 0usize;
+    let mut booleans = Vec::new();
+    let mut probe = |call: String, shown: String| {
+        let chunk = format!(
+            "local ok, s = pcall(function() return PGKinds({call}) end) \
+             if not ok then return '?' end return s"
+        );
+        let Ok(got) = s.eval::<String>(&chunk) else {
+            return false;
+        };
+        if got == "?" {
+            return false;
+        }
+        checked += 1;
+        if got.split(',').any(|k| k == "boolean") {
+            booleans.push(format!("{shown} answers ({got})"));
+        }
+        true
+    };
+    for (name, is_method) in &rows {
+        for args in ARGS {
+            if *is_method {
+                for obj in &receivers {
+                    let exists = s
+                        .eval::<bool>(&format!("return type({obj}.{name}) == 'function'"))
+                        .unwrap_or(false);
+                    if exists {
+                        probe(
+                            format!("{obj}:{name}({args})"),
+                            format!("{obj}:{name}({args})"),
+                        );
+                    }
+                }
+            } else {
+                let exists = s
+                    .eval::<bool>(&format!("return type({name}) == 'function'"))
+                    .unwrap_or(false);
+                if exists && probe(format!("{name}({args})"), format!("{name}({args})")) {
+                    break;
+                }
+            }
+        }
+    }
+    assert!(
+        checked >= 150,
+        "the flag gate measured only {checked} calls: it has stopped covering anything"
+    );
+    booleans.sort();
+    booleans.dedup();
+    assert!(
+        booleans.is_empty(),
+        "{} calls on `(nil) | (number)` rows answer a Lua boolean:\n  {}",
+        booleans.len(),
+        booleans.join("\n  ")
+    );
+}
+
 /// Argument tuples the boolean gate tries in order until a call returns. A plausible wrong
 /// argument can change which kinds come back, which is why the kind gate passes only a unit
 /// token, but it never turns `1` into `true`.

@@ -80,14 +80,23 @@ pub(crate) struct UnitAuras {
     /// by `0x72c510`): a survivor keeps its place, a new aura appends, a batch of new ones in
     /// descending slot order (the rebuild's slot walk runs down, `0x72c6e9`).
     order: Vec<(u8, u32)>,
+    /// Packets folded in: each signals `UNIT_AURA` for its unit, whether or not a slot moved
+    /// (`0x72f5d0`, deduplicated per unit by the queue `0x6143f0`).
+    packets: u64,
 }
 
 impl UnitAuras {
+    /// Packets folded in so far, which a `UNIT_AURA` feed compares.
+    pub(crate) fn packets(&self) -> u64 {
+        self.packets
+    }
+
     /// Folds one packet in: `ALL` empties every slot first (`0x72f659`-`0x72f69f`), then each
     /// named slot takes its record or clears; then the display order is rebuilt. The reference
     /// rebuilds lazily, before the next finder walk (`0x72c9de`), so two packets read by no walk
     /// between them order as one there and as two here.
     pub(crate) fn apply(&mut self, update: &AuraUpdate, now: f64) {
+        self.packets = self.packets.wrapping_add(1);
         if update.all {
             self.by_slot.clear();
         }

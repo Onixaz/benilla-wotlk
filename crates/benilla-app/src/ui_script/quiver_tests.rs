@@ -346,7 +346,7 @@ fn seat_a_buff(s: &mut UiScript, spell_id: u32, name: &str, icon: &str) {
         channeled: false,
         ..Default::default()
     }]);
-    s.fire_event("PLAYER_AURAS_CHANGED", vec![]);
+    s.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);
 }
 
 /// Whether a visible quad draws this art. The buff bar is hidden first: an active aura's own
@@ -415,7 +415,7 @@ fn the_hawk_reminder_is_suppressed_only_once_frames_are_locked() {
 
     // Unlocked: the reminder shows even though Hawk is up.
     s.eval::<()>("Quiver_Store.IsLockedFrames = false").unwrap();
-    s.fire_event("PLAYER_AURAS_CHANGED", vec![]);
+    s.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);
     assert!(
         draws(&mut s, "Spell_Nature_RavenForm"),
         "unlocked frames force the icon on so it can be dragged — errors: {:#?}",
@@ -424,7 +424,7 @@ fn the_hawk_reminder_is_suppressed_only_once_frames_are_locked() {
 
     // Locked: the first clause governs, and Hawk being up suppresses its own reminder.
     s.eval::<()>("Quiver_Store.IsLockedFrames = true").unwrap();
-    s.fire_event("PLAYER_AURAS_CHANGED", vec![]);
+    s.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);
     assert!(
         !draws(&mut s, "Spell_Nature_RavenForm"),
         "locked + Hawk up must be blank: the reminder has nothing to remind you of"

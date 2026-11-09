@@ -2,7 +2,7 @@
 //! hovers use `GameTooltip_SetDefaultAnchor` (`GameTooltip.lua:73-77`): the screen's bottom-right
 //! corner, `-CONTAINER_OFFSET_X - 13` in from the right and `CONTAINER_OFFSET_Y` up.
 
-use benilla_ui::script::{AuraState, UiScript, UnitState};
+use benilla_ui::script::{AuraState, ScriptValue, UiScript, UnitState};
 
 use super::test_ui::load_ui as load_xml;
 
@@ -449,7 +449,7 @@ fn buff_hover_hangs_below_left_of_the_button() {
         ..Default::default()
     }]);
     // The event the stock buff buttons register (`BuffFrame.lua:113`).
-    s.fire_event("PLAYER_AURAS_CHANGED", vec![]);
+    s.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);
     s.resolve();
     // The template's inline `<OnEnter>`, called directly: the engine sets `this` only when it fires
     // a handler, so it is set by hand.

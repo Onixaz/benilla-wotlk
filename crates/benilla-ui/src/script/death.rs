@@ -117,7 +117,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(model.death.resurrect_sickness)
+            Ok(super::binding_abi::flag(model.death.resurrect_sickness))
         })?,
     )?;
     g.set(
@@ -126,7 +126,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(model.death.resurrect_has_timer)
+            Ok(super::binding_abi::flag(model.death.resurrect_has_timer))
         })?,
     )?;
     g.set(
@@ -135,7 +135,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(model.death.spirit_healer_in_range)
+            Ok(super::binding_abi::flag(model.death.spirit_healer_in_range))
         })?,
     )?;
 

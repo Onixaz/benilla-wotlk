@@ -597,7 +597,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(matches!(model.cursor, Some(CursorPayload::Item(_))))
+            Ok(super::binding_abi::flag(matches!(
+                model.cursor,
+                Some(CursorPayload::Item(_))
+            )))
         })?,
     )?;
     g.set(
@@ -606,7 +609,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(matches!(model.cursor, Some(CursorPayload::Spell(_))))
+            Ok(super::binding_abi::flag(matches!(
+                model.cursor,
+                Some(CursorPayload::Spell(_))
+            )))
         })?,
     )?;
     g.set(

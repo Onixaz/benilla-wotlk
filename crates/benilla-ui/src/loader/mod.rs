@@ -694,12 +694,18 @@ impl Loader<'_> {
         // 3 · <Size> and 4 · <Anchors> (the layout geometry base).
         self.apply_size(el, wrapper, dbg_name);
         self.apply_anchors(el, wrapper, parent_name, dbg_name);
-        // 5 · <Layers> regions; `$parent` in a region name is this frame.
-        self.apply_layers(el, wrapper, self_name, dbg_name);
+        // 5 · <Layers> and <Backdrop> in document order, the XML load's child walk (`0x4932c0`):
+        //     both link regions at the tail, so a template's come before the instance's.
+        for child in &el.children {
+            if child.tag.eq_ignore_ascii_case("Layers") {
+                // `$parent` in a region name is this frame.
+                self.apply_layers(child, wrapper, self_name, dbg_name);
+            } else if child.tag.eq_ignore_ascii_case("Backdrop") {
+                self.apply_backdrop(child, wrapper, dbg_name);
+            }
+        }
         // 5·b · a direct-child `<FontString>`: the widget's own text font (EditBox, message frame).
         self.apply_special_fontstrings(el, wrapper, self_name, dbg_name);
-        // 5a · <Backdrop> plate: the tiled bg + 8-piece border.
-        self.apply_backdrop(el, wrapper, dbg_name);
         // 5a' · <TitleRegion>: the drag handle, through the API's own CreateTitleRegion.
         self.apply_title_region(el, wrapper, self_name, dbg_name);
         // 5b · per-kind XML-load extras, each gated on the element's own tag,

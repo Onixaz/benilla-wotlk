@@ -1,8 +1,12 @@
-//! The frame backdrop as the 1.12 client builds it: the tiled background and 8-piece border that a
-//! `<Backdrop>` element or `SetBackdrop` installs. This module owns the data ([`Backdrop`]) and the
-//! geometry ([`pieces`], screen-space quads with per-corner UVs); the app renders them.
+//! The frame backdrop: the data `<Backdrop>` or `SetBackdrop` installs ([`Backdrop`]), the nine
+//! Texture regions it builds on the frame ([`set_backdrop`], [`generate`]), and the quad geometry
+//! ([`pieces`]) the world chat bubble draws its own backdrop from.
 
-use crate::layout::Rect;
+use crate::layout::{Anchor, Point, Rect};
+use crate::order::DrawLayer;
+use crate::widget::{FrameHandle, HandleMap, RegionHandle, RegionKind};
+
+use super::{BlendMode, Model, RegionData, TexCoords};
 
 /// The default `edgeSize`, logical 32: the constructor writes device 0.025.
 pub const DEFAULT_EDGE_SIZE: f32 = 32.0;
@@ -37,6 +41,8 @@ pub struct Backdrop {
     pub bg_color: [f32; 4],
     /// All 8 border pieces' vertex colour (`+0x64`, `SetBackdropBorderColor`).
     pub border_color: [f32; 4],
+    /// The XML `alphaMode` the eight edges take, BLEND by default (`0x4a2780`, `0x481620`).
+    pub edge_blend: BlendMode,
 }
 
 impl Default for Backdrop {
@@ -51,6 +57,7 @@ impl Default for Backdrop {
             insets: Insets::default(),
             bg_color: [1.0, 1.0, 1.0, 1.0],
             border_color: [1.0, 1.0, 1.0, 1.0],
+            edge_blend: BlendMode::Blend,
         }
     }
 }
@@ -81,6 +88,347 @@ pub struct BackdropPiece {
 }
 
 const SLICE: f32 = 0.125;
+
+/// The nine texture slots of the backdrop object (`0x4a2d40`).
+pub(crate) const SLOT_COUNT: usize = 9;
+
+/// A frame's backdrop textures, indexed by slot; a slot the file gate left empty is `None`.
+pub(crate) type BackdropSlots = [Option<RegionHandle>; SLOT_COUNT];
+
+/// `0x4a2e00` builds them in this order: background, the four edges, the four corners.
+const BG: usize = 0;
+const LEFT: usize = 1;
+const RIGHT: usize = 2;
+const TOP: usize = 3;
+const BOTTOM: usize = 4;
+const TOP_LEFT: usize = 5;
+const TOP_RIGHT: usize = 6;
+const BOTTOM_LEFT: usize = 7;
+const BOTTOM_RIGHT: usize = 8;
+
+/// The `v` inset of every edge texcoord (`0x4a29d0`, `0x4a2e00`).
+const V_INSET: f32 = 0.0625;
+/// The bounded `u` span of the four edges, `[left, right]`, indexed by slot (`0x4a29d0`).
+const EDGE_U: [[f32; 2]; 4] = [
+    [0.0078125, 0.1171875],
+    [0.1328125, 0.2421875],
+    [0.2578125, 0.3671875],
+    [0.3828125, 0.4921875],
+];
+/// The `u` span of the four corners, `[left, right]` (`0x4a2e00`).
+const CORNER_U: [[f32; 2]; 4] = [
+    [0.5078125, 0.6171875],
+    [0.6328125, 0.7421875],
+    [0.7578125, 0.8671875],
+    [0.8828125, 0.9921875],
+];
+
+/// Frees the frame's old textures, then links the new ones at the region list's tail (`0x4905a0`).
+pub(crate) fn set_backdrop(model: &mut Model, h: FrameHandle, bd: Option<Backdrop>) {
+    if let Some(old) = model.backdrop_slots.remove(&h) {
+        for rh in old.into_iter().flatten() {
+            super::region::free_region(model, rh);
+        }
+    }
+    let Some(bd) = bd else {
+        model.backdrops.remove(&h);
+        return;
+    };
+    let slots = build_slots(model, h, &bd);
+    model.backdrops.insert(h, bd);
+    model.backdrop_slots.insert(h, slots);
+    // `SetBackdrop` runs the texcoords over the rect the frame already has (`0x4a15a0`).
+    if let Some(&rect) = model.resolved.get(&h) {
+        generate(
+            &model.backdrops,
+            &model.backdrop_slots,
+            &mut model.region_data,
+            h,
+            rect,
+        );
+    }
+}
+
+/// Builds the slots the two files gate (`0x4a2e00`): layer 0 for the background, 1 for the rest.
+fn build_slots(model: &mut Model, h: FrameHandle, bd: &Backdrop) -> BackdropSlots {
+    let id = model.frame_id(h);
+    let at = |p: Point, x: f32, y: f32| Anchor::new(p, id, p, x, y);
+    let mut slots: BackdropSlots = [None; SLOT_COUNT];
+    if bd.has_bg() {
+        let i = bd.insets;
+        // `0x4a2e00` loads the top inset (`+0x50`) for the bottom-right anchor's y.
+        let anchors = vec![
+            at(Point::TopLeft, i.left, -i.top),
+            at(Point::TopRight, -i.right, -i.top),
+            at(Point::BottomLeft, i.left, i.bottom),
+            at(Point::BottomRight, -i.right, i.top),
+        ];
+        slots[BG] = add_piece(
+            model,
+            h,
+            DrawLayer::Background,
+            PieceSpec {
+                file: bd.bg_file.clone(),
+                size: None,
+                anchors,
+                coords: None,
+                tile: bd.tile,
+                color: bd.bg_color,
+                blend: BlendMode::Blend,
+            },
+        );
+    }
+    if bd.has_border() {
+        let e = bd.edge_size;
+        let corner = |u: [f32; 2]| {
+            let (t, b) = (V_INSET, 1.0 - V_INSET);
+            TexCoords::Corners([[u[0], t], [u[1], t], [u[1], b], [u[0], b]])
+        };
+        let mut rows = vec![
+            (
+                LEFT,
+                Some((e, 0.0)),
+                vec![at(Point::TopLeft, 0.0, -e), at(Point::BottomLeft, 0.0, e)],
+                None,
+            ),
+            (
+                RIGHT,
+                Some((e, 0.0)),
+                vec![at(Point::TopRight, 0.0, -e), at(Point::BottomRight, 0.0, e)],
+                None,
+            ),
+            (
+                TOP,
+                Some((0.0, e)),
+                vec![at(Point::TopLeft, e, 0.0), at(Point::TopRight, -e, 0.0)],
+                None,
+            ),
+            (
+                BOTTOM,
+                Some((0.0, e)),
+                vec![
+                    at(Point::BottomLeft, e, 0.0),
+                    at(Point::BottomRight, -e, 0.0),
+                ],
+                None,
+            ),
+        ];
+        for (slot, p, u) in [
+            (TOP_LEFT, Point::TopLeft, CORNER_U[0]),
+            (TOP_RIGHT, Point::TopRight, CORNER_U[1]),
+            (BOTTOM_LEFT, Point::BottomLeft, CORNER_U[2]),
+            (BOTTOM_RIGHT, Point::BottomRight, CORNER_U[3]),
+        ] {
+            rows.push((slot, Some((e, e)), vec![at(p, 0.0, 0.0)], Some(corner(u))));
+        }
+        for (slot, size, anchors, coords) in rows {
+            slots[slot] = add_piece(
+                model,
+                h,
+                DrawLayer::Border,
+                PieceSpec {
+                    file: bd.edge_file.clone(),
+                    size,
+                    anchors,
+                    coords,
+                    // Deviation: `0x4a2e00` clamps the corners; wrapping all eight shares one atlas handle.
+                    tile: true,
+                    color: bd.border_color,
+                    blend: bd.edge_blend,
+                },
+            );
+        }
+    }
+    slots
+}
+
+/// One slot's texture as the builder hands it to its region.
+struct PieceSpec {
+    file: Option<String>,
+    size: Option<(f32, f32)>,
+    anchors: Vec<Anchor>,
+    coords: Option<TexCoords>,
+    tile: bool,
+    color: [f32; 4],
+    blend: BlendMode,
+}
+
+fn add_piece(
+    model: &mut Model,
+    h: FrameHandle,
+    layer: DrawLayer,
+    spec: PieceSpec,
+) -> Option<RegionHandle> {
+    let rh = model
+        .arena
+        .create_region(h, RegionKind::Texture, layer, 0)?;
+    model.region_data.insert(
+        rh,
+        RegionData {
+            texture: spec.file,
+            size: spec.size,
+            anchors: spec.anchors,
+            tex_coords: spec.coords,
+            vertex_color: Some(spec.color),
+            blend: spec.blend,
+            backdrop_tile: Some(spec.tile),
+            ..Default::default()
+        },
+    );
+    // Minted last, so the cached layout graph adopts the region with its anchors in place.
+    model.region_id(rh);
+    Some(rh)
+}
+
+/// Rewrites a backdrop's size-dependent texcoords and re-applies both colours (`0x4a29d0`).
+pub(crate) fn generate(
+    backdrops: &HandleMap<FrameHandle, Backdrop>,
+    backdrop_slots: &HandleMap<FrameHandle, BackdropSlots>,
+    region_data: &mut HandleMap<RegionHandle, RegionData>,
+    h: FrameHandle,
+    rect: Rect,
+) {
+    let (Some(bd), Some(slots)) = (backdrops.get(&h), backdrop_slots.get(&h)) else {
+        return;
+    };
+    let (w, ht) = (rect.right - rect.left, rect.top - rect.bottom);
+    let period = bd.edge_size;
+    let tiles_x = (w / period - 2.0).max(0.0);
+    let tiles_y = (ht / period - 2.0).max(0.0);
+    if bd.tile && bd.has_bg() {
+        let tile = if bd.tile_size != 0.0 {
+            bd.tile_size
+        } else {
+            period
+        };
+        let (u, v) = (w / tile, ht / tile);
+        set_coords(
+            region_data,
+            slots[BG],
+            [[0.0, 0.0], [u, 0.0], [u, v], [0.0, v]],
+        );
+    }
+    if bd.has_border() {
+        let v0 = V_INSET;
+        for (slot, u) in [(LEFT, EDGE_U[0]), (RIGHT, EDGE_U[1])] {
+            let v1 = tiles_y - V_INSET;
+            set_coords(
+                region_data,
+                slots[slot],
+                [[u[0], v0], [u[1], v0], [u[1], v1], [u[0], v1]],
+            );
+        }
+        // TOP and BOTTOM are turned: their atlas `u` runs down the screen, `v` right to left.
+        for (slot, u) in [(TOP, EDGE_U[2]), (BOTTOM, EDGE_U[3])] {
+            let v1 = tiles_x - V_INSET;
+            set_coords(
+                region_data,
+                slots[slot],
+                [[u[0], v1], [u[0], v0], [u[1], v0], [u[1], v1]],
+            );
+        }
+    }
+    apply_color(region_data, slots, false, bd.bg_color);
+    apply_color(region_data, slots, true, bd.border_color);
+}
+
+fn set_coords(
+    region_data: &mut HandleMap<RegionHandle, RegionData>,
+    slot: Option<RegionHandle>,
+    corners: [[f32; 2]; 4],
+) {
+    if let Some(d) = slot.and_then(|rh| region_data.get_mut(&rh)) {
+        d.tex_coords = Some(TexCoords::Corners(corners));
+    }
+}
+
+/// Writes the background's colour, or the eight border pieces', to the slots (`0x4a25f0`, `0x4a2630`).
+fn apply_color(
+    region_data: &mut HandleMap<RegionHandle, RegionData>,
+    slots: &BackdropSlots,
+    border: bool,
+    color: [f32; 4],
+) {
+    for rh in color_slots(slots, border).into_iter().flatten() {
+        if let Some(d) = region_data.get_mut(&rh) {
+            d.vertex_color = Some(color);
+        }
+    }
+}
+
+/// The slots one colour tints: the background alone, or the eight border pieces.
+fn color_slots(slots: &BackdropSlots, border: bool) -> Vec<Option<RegionHandle>> {
+    if border {
+        slots[LEFT..].to_vec()
+    } else {
+        vec![slots[BG]]
+    }
+}
+
+/// The XML `alphaMode` on the eight edge textures (`0x4a2780`, `0x481620`).
+pub(crate) fn set_edge_blend(model: &mut Model, h: FrameHandle, blend: BlendMode) {
+    if let Some(bd) = model.backdrops.get_mut(&h) {
+        bd.edge_blend = blend;
+    }
+    if let Some(slots) = model.backdrop_slots.get(&h).copied() {
+        for rh in slots[LEFT..].iter().flatten() {
+            if let Some(d) = model.region_data.get_mut(rh) {
+                d.blend = blend;
+            }
+        }
+    }
+}
+
+/// `SetBackdropColor` or `SetBackdropBorderColor`: the stored colour and its slots, paint only.
+pub(crate) fn set_color(
+    model: &mut super::model::ModelCell,
+    h: FrameHandle,
+    border: bool,
+    color: [f32; 4],
+) {
+    let Some(slots) = model.backdrop_slots.get(&h).copied() else {
+        return;
+    };
+    let targets: Vec<crate::order::ZTarget> = color_slots(&slots, border)
+        .into_iter()
+        .flatten()
+        .map(crate::order::ZTarget::Region)
+        .collect();
+    let inner = model.paint_mut(&targets);
+    if let Some(bd) = inner.backdrops.get_mut(&h) {
+        if border {
+            bd.border_color = color;
+        } else {
+            bd.bg_color = color;
+        }
+    }
+    apply_color(&mut inner.region_data, &slots, border, color);
+}
+
+/// A slot still drawing its plain file, which goes out as one atlas quad; anything else is a Texture.
+pub(crate) fn plain_piece(d: &RegionData) -> Option<(&String, bool)> {
+    let tile = d.backdrop_tile?;
+    if d.fill.is_some()
+        || d.gradient.is_some()
+        || d.blend != BlendMode::Blend
+        || d.circular
+        || d.portrait_unit.is_some()
+        || d.rotation != 0.0
+        || d.desaturated
+    {
+        return None;
+    }
+    d.texture.as_ref().map(|p| (p, tile))
+}
+
+/// A slot's drawn UVs in `[TL, TR, BR, BL]`: its texcoords, or the full texture.
+pub(crate) fn piece_uvs(d: &RegionData) -> [[f32; 2]; 4] {
+    match d.tex_coords {
+        Some(TexCoords::Corners(c)) => c,
+        Some(TexCoords::Rect([l, r, t, b])) => [[l, t], [r, t], [r, b], [l, b]],
+        None => [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+    }
+}
 
 /// Pull a piece's UVs half a texel inward on every axis that does not tile, so bilinear
 /// magnification cannot sample the neighbouring slice of the shared border atlas (in

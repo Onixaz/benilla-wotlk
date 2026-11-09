@@ -2289,6 +2289,81 @@ mod loader_tests {
             r"Interface\Buttons\Leaf"
         );
     }
+    /// `<Layers>` and `<Backdrop>` link in document order, the template's before the instance's;
+    /// a later `<Backdrop>` replaces the earlier one (`0x4932c0`, `0x4905a0`).
+    #[test]
+    fn layers_and_backdrop_keep_document_order() {
+        let mut s = UiScript::new().unwrap();
+        s.set_screen_size(800.0, 600.0);
+        let doc = parse(
+            r#"<Ui>
+                <Frame name="DocOrderTemplate" virtual="true">
+                    <Backdrop bgFile="tplbg"/>
+                </Frame>
+                <Frame name="LayersFirst">
+                    <Layers><Layer level="BACKGROUND">
+                        <Texture name="LayersFirstTex"/>
+                    </Layer></Layers>
+                    <Backdrop bgFile="bg" edgeFile="edge"><EdgeSize><AbsValue val="8"/></EdgeSize></Backdrop>
+                </Frame>
+                <Frame name="BackdropFirst">
+                    <Backdrop bgFile="bg"/>
+                    <Layers><Layer level="BACKGROUND">
+                        <Texture name="BackdropFirstTex"/>
+                    </Layer></Layers>
+                </Frame>
+                <Frame name="Inherited" inherits="DocOrderTemplate">
+                    <Layers><Layer level="BORDER"><Texture name="InheritedTex"/></Layer></Layers>
+                    <Backdrop bgFile="mine" alphaMode="ADD"/>
+                </Frame>
+            </Ui>"#,
+        );
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+
+        assert!(s
+            .eval::<bool>("local a = LayersFirst:GetRegions() return a == LayersFirstTex")
+            .unwrap());
+        assert_eq!(
+            s.eval::<i64>("return LayersFirst:GetNumRegions()").unwrap(),
+            10
+        );
+        assert!(s
+            .eval::<bool>(
+                "local a, b = BackdropFirst:GetRegions() \
+                 return a:GetTexture() == 'bg' and b == BackdropFirstTex"
+            )
+            .unwrap());
+        // The template's backdrop replaced by the instance's, whose slot links after its Layers.
+        assert_eq!(
+            s.eval::<String>(
+                "local a, b = Inherited:GetRegions() return tostring(a == InheritedTex) .. ':' .. b:GetTexture()"
+            )
+            .unwrap(),
+            "true:mine"
+        );
+        assert_eq!(
+            s.eval::<i64>("return Inherited:GetNumRegions()").unwrap(),
+            2
+        );
+    }
+
+    #[test]
+    fn a_backdrop_alpha_mode_blends_its_edges() {
+        let s = UiScript::new().unwrap();
+        let doc = parse(
+            r#"<Ui><Frame name="Blended"><Backdrop bgFile="bg" edgeFile="edge" alphaMode="ADD"/></Frame></Ui>"#,
+        );
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(
+            s.eval::<(String, String)>(
+                "local a, b = Blended:GetRegions() return a:GetBlendMode(), b:GetBlendMode()"
+            )
+            .unwrap(),
+            ("BLEND".to_string(), "ADD".to_string())
+        );
+    }
 }
 
 mod layer_blend_tests {

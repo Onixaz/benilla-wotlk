@@ -111,6 +111,23 @@ fn set_enabled(lua: &Lua, this: &Table, on: bool) -> mlua::Result<()> {
     Ok(())
 }
 
+/// The setter (`0x96c470`) past the binding's check: an unchanged range (within the epsilon
+/// `[0x9ea27c]`) does nothing at all; a new one fires `OnMinMaxChanged`, then re-settles a held
+/// value and fires on a move, while a fresh slider with no value yet fires nothing (bit 2).
+pub(crate) fn set_min_max(lua: &Lua, this: &Table, min: f32, max: f32) -> mlua::Result<()> {
+    let moved = with_slider(lua, this, |s| {
+        if s.range_valid && s.same_range(min, max) {
+            return None;
+        }
+        Some(s.set_min_max(min, max))
+    })?;
+    let Some(changed) = moved else {
+        return Ok(());
+    };
+    super::statusbar::fire_min_max_changed(lua, this, Some((min, max)))?;
+    fire_value_changed(lua, this, changed)
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
@@ -132,19 +149,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     m.set(
         "SetMinMaxValues",
-        lua.create_function(|lua, (this, min, max): (Table, f32, f32)| {
-            // A reversed pair is kept, not swapped. A held value re-clamps and fires on a move; a
-            // fresh slider with no value yet fires nothing (bit 2).
-            let (changed, range) = with_slider(lua, &this, |s| {
-                let before = (s.range_valid, s.min, s.max);
-                let changed = s.set_min_max(min, max);
-                (
-                    changed,
-                    (before != (true, s.min, s.max)).then_some((s.min, s.max)),
-                )
-            })?;
-            super::statusbar::fire_min_max_changed(lua, &this, range)?;
-            fire_value_changed(lua, &this, changed)
+        lua.create_function(|lua, (this, min, max): (Table, Value, Value)| {
+            // The binding (`0x971df0`) raises its usage on a non-number or a reversed pair; the
+            // XML load's setter alone takes one.
+            let (Some(min), Some(max)) = (lua.coerce_number(min)?, lua.coerce_number(max)?) else {
+                return Err(super::statusbar::usage_error(lua, &this));
+            };
+            if (min as f32) > max as f32 {
+                return Err(super::statusbar::usage_error(lua, &this));
+            }
+            set_min_max(lua, &this, min as f32, max as f32)
         })?,
     )?;
     m.set(

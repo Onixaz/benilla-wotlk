@@ -62,6 +62,23 @@ pub(crate) struct ItemDisplays {
     pub(super) models: HashMap<(u32, ItemModelKind), DisplayModel>,
     /// ChrRaces' `ClientPrefix` by race id, the helm model's race suffix (`0x4e7800`).
     pub(crate) helm_prefixes: HashMap<u8, String>,
+    /// `Item.dbc`'s display id by entry, which the bag icon reads without a template.
+    pub(crate) item_dbc: HashMap<u32, u32>,
+}
+
+/// The icon no item or display names (`0x70a9ef`).
+pub(crate) const FALLBACK_ITEM_ICON: &str = r"Interface\Icons\INV_Misc_QuestionMark";
+
+impl ItemDisplays {
+    /// A carried item's icon (`0x70aa00`, `0x70a910`): `Item.dbc`'s display, display 0 with no
+    /// row, ending on [`FALLBACK_ITEM_ICON`]. No template is read.
+    pub(crate) fn carried_icon(&self, entry: u32) -> String {
+        let display = self.item_dbc.get(&entry).copied().unwrap_or(0);
+        self.catalog
+            .get(display)
+            .and_then(|d| d.icon.clone())
+            .unwrap_or_else(|| FALLBACK_ITEM_ICON.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -71,6 +88,7 @@ impl ItemDisplays {
             catalog,
             models: HashMap::new(),
             helm_prefixes: HashMap::new(),
+            item_dbc: HashMap::new(),
         }
     }
 }

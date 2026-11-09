@@ -2576,6 +2576,10 @@ fn the_chat_cache_restore_is_finished_before_player_login() {
         1,
     ));
     crate::ui_script::load_ingame_ui_on_world_entry(&mut world);
+    // The world-entry edge, where `PLAYER_LOGIN` fires (`0x52816d`).
+    crate::ui_script::fire_armed_player_login(
+        &mut world.non_send_resource_mut::<benilla_ui::script::UiScript>(),
+    );
 
     let read = |expr: &str| -> String {
         world

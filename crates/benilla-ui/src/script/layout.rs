@@ -1,12 +1,11 @@
 use std::collections::HashMap;
 
 use crate::layout::{self, Anchor, LayoutInput, Point, Rect};
-use crate::order::ZTarget;
 use crate::widget::{FrameHandle, FrameKind, KindState, RegionHandle};
 
 use super::backdrop;
 use super::types::RegionData;
-use super::{ExtractedQuad, MeasureRequest, Model, QuadContent, UiScript, SCREEN};
+use super::{MeasureRequest, Model, UiScript, SCREEN};
 
 /// A frame's `effective_alpha` and `effective_scale`, worn by the quads it emits itself.
 #[derive(Clone, Copy)]
@@ -736,6 +735,8 @@ impl UiScript {
             layout_rounds,
             pending_size_changed,
             texture_size_probe,
+            backdrops,
+            backdrop_slots,
             ..
         } = model;
         // ── The incremental seed ─────────────────────────────────────────────
@@ -799,6 +800,8 @@ impl UiScript {
                 return;
             }
         }
+        // Backdrops whose size moved: their texcoords rewrite once the pass settles (`0x48fa20`).
+        let mut resized_backdrops: Vec<FrameHandle> = Vec::new();
         // Under verify a skippable resolve runs anyway, against the rects it must reproduce.
         let verify_against = gate_skips.then(|| (resolved.clone(), region_resolved.clone()));
         // Cleared until the fixpoint converges: a cycle-bailed pass leaves its rects mid-flight
@@ -923,7 +926,16 @@ impl UiScript {
                 let (h, id, over) = scope.plan[i as usize];
                 match solver.rect(id) {
                     Some(r) => {
-                        if resolved.get(&h) != Some(&r) {
+                        let before = resolved.get(&h).copied();
+                        if before != Some(r) {
+                            if backdrops.contains_key(&h)
+                                && layout::size_changed(
+                                    before.unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0)),
+                                    r,
+                                )
+                            {
+                                resized_backdrops.push(h);
+                            }
                             resolved.insert(h, r);
                             changed = true;
                         }
@@ -1091,6 +1103,13 @@ impl UiScript {
                 // so a touch during this pass (a minted id) re-opens it. The
                 // fingerprint hashes inputs only, so the next unmutated resolve would match it.
                 *layout_epoch_resolved = Some(epoch_at_entry);
+                regenerate_backdrops(
+                    &resized_backdrops,
+                    backdrops,
+                    backdrop_slots,
+                    region_data,
+                    resolved,
+                );
                 queue_size_changes(&watched, resolved, frame_to_id, pending_size_changed);
                 return;
             }
@@ -1108,6 +1127,13 @@ impl UiScript {
         // The cycle bail: its rects are this frame's, so their size changes still fire, and the
         // scope forgets a graph that never settled.
         scope.invalidate();
+        regenerate_backdrops(
+            &resized_backdrops,
+            backdrops,
+            backdrop_slots,
+            region_data,
+            resolved,
+        );
         queue_size_changes(&watched, resolved, frame_to_id, pending_size_changed);
     }
 
@@ -1373,59 +1399,19 @@ impl UiScript {
         }
         out
     }
+}
 
-    /// Push one [`QuadContent::Backdrop`] per piece of frame `fh`'s backdrop, at the frame slot's
-    /// `z`: behind its regions, and background before border by the stable sort.
-    pub(super) fn emit_backdrop(
-        model: &Model,
-        fh: FrameHandle,
-        fr: Rect,
-        z: u64,
-        paint: FramePaint,
-        clip: Option<Rect>,
-        out: &mut Vec<ExtractedQuad>,
-    ) {
-        let Some(bd) = model.backdrops.get(&fh) else {
-            return;
-        };
-        for piece in backdrop::pieces(fr, bd, paint.scale) {
-            // The piece's screen bounding box: the render is axis-aligned, so the reference's slant
-            // under unequal top and bottom insets is not drawn (stock insets are symmetric).
-            let xs = piece.corners.map(|c| c[0]);
-            let ys = piece.corners.map(|c| c[1]);
-            let (left, right) = (
-                xs.iter().copied().fold(f32::MAX, f32::min),
-                xs.iter().copied().fold(f32::MIN, f32::max),
-            );
-            let (bottom, top) = (
-                ys.iter().copied().fold(f32::MAX, f32::min),
-                ys.iter().copied().fold(f32::MIN, f32::max),
-            );
-            let path = if piece.is_bg {
-                bd.bg_file.clone()
-            } else {
-                bd.edge_file.clone()
-            };
-            let Some(path) = path else { continue };
-            let color = if piece.is_bg {
-                bd.bg_color
-            } else {
-                bd.border_color
-            };
-            out.push(ExtractedQuad {
-                target: ZTarget::Frame(fh),
-                z,
-                rect: Some(Rect::new(bottom, left, top, right)),
-                alpha: paint.alpha,
-                content: QuadContent::Backdrop {
-                    path,
-                    color,
-                    uvs: piece.uvs,
-                    tile: piece.tile,
-                },
-                clip,
-                scale: paint.scale,
-            });
+/// Rewrites the texcoords of the backdrops this pass resized, against their settled rects.
+fn regenerate_backdrops(
+    resized: &[FrameHandle],
+    backdrops: &crate::widget::HandleMap<FrameHandle, backdrop::Backdrop>,
+    backdrop_slots: &crate::widget::HandleMap<FrameHandle, backdrop::BackdropSlots>,
+    region_data: &mut crate::widget::HandleMap<RegionHandle, RegionData>,
+    resolved: &crate::widget::HandleMap<FrameHandle, Rect>,
+) {
+    for &h in resized {
+        if let Some(&rect) = resolved.get(&h) {
+            backdrop::generate(backdrops, backdrop_slots, region_data, h, rect);
         }
     }
 }

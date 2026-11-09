@@ -13,6 +13,7 @@ use benilla_assets::WorldAssets;
 
 mod colorselect;
 mod cooldown;
+mod quest_blob;
 mod text;
 
 /// `WOW_UI_COST=1`: one untraced `[ui-cost]` line per frame, each phase's μs and the quad counts.
@@ -129,6 +130,7 @@ fn report_ui_pick(eq: &benilla_ui::script::ExtractedQuad, rect: Rect, at: Vec2, 
     let what = match &eq.content {
         QuadContent::Frame => "frame-slot".to_string(),
         QuadContent::Cooldown(_) => "cooldown".to_string(),
+        QuadContent::QuestBlobs(_) => "quest-blobs".to_string(),
         QuadContent::Minimap { .. } => "minimap".to_string(),
         QuadContent::Texture {
             path,
@@ -152,6 +154,7 @@ fn content_kind(c: &QuadContent) -> &'static str {
     match c {
         QuadContent::Frame => "frame",
         QuadContent::Cooldown(_) => "cooldown",
+        QuadContent::QuestBlobs(_) => "quest-blobs",
         QuadContent::Minimap { .. } => "minimap",
         QuadContent::ModelPane { .. } => "modelpane",
         QuadContent::Texture { .. } => "texture",
@@ -348,6 +351,7 @@ fn span_bounds(spans: &[u32], i: usize) -> (usize, usize) {
 fn splice_simple(eq: &benilla_ui::script::ExtractedQuad) -> bool {
     match &eq.content {
         QuadContent::Frame
+        | QuadContent::QuestBlobs(_)
         | QuadContent::Backdrop { .. }
         // At most one quad and one idempotent tile request.
         | QuadContent::ModelPane { .. }
@@ -1292,6 +1296,12 @@ fn convert_entry(
     match eq.content {
         // A frame draws nothing itself; its regions carry the visuals.
         QuadContent::Frame => {}
+        // A `QuestPOIFrame`'s blobs, in the frame's OVERLAY batch.
+        QuadContent::QuestBlobs(paint) => {
+            if let Some(assets) = assets.as_mut() {
+                quest_blob::emit(&paint.0, rect, eq.z, s, h, assets, images, out);
+            }
+        }
         // A `Cooldown`'s own sweep, under its regions and children.
         QuadContent::Cooldown(paint) => {
             if let Some(assets) = assets.as_mut() {
@@ -1635,8 +1645,8 @@ fn convert_entry(
             uvs,
             tile,
         } => {
-            // A backdrop piece, the bg or one of the 8 border pieces, sampled `Repeat` when `tile`;
-            // its UVs are per-corner, as the TOP and BOTTOM edges are rotated.
+            // A backdrop region, the bg or a border piece, sampled `Repeat` when `tile`;
+            // its UVs are per-corner, as the TOP and BOTTOM edges are turned.
             let handle = assets.as_mut().and_then(|a| {
                 if tile {
                     a.sprite_texture_tiled(&path, images)
@@ -1646,15 +1656,6 @@ fn convert_entry(
             });
             // A missing BLP draws nothing.
             let Some(handle) = handle else { return };
-            // The 8 border pieces share one atlas, so a `tile` piece is pulled half a texel in on
-            // its bounded axes; a stretched bg is a whole texture.
-            let uvs = match images.get(&handle) {
-                Some(img) if tile => {
-                    let sz = img.texture_descriptor.size;
-                    benilla_ui::script::inset_atlas_bleed(uvs, sz.width as f32, sz.height as f32)
-                }
-                _ => uvs,
-            };
             let mut color = color;
             color[3] *= eq.alpha;
             out.push(UiQuad {

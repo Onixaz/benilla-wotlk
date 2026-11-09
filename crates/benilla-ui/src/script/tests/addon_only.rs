@@ -107,7 +107,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "IsLeftAltKeyDown",
     "IsLeftControlKeyDown",
     "IsLeftShiftKeyDown",
-    "IsLoggedIn",
     "IsOutdoors",
     "IsRealPartyLeader",
     "IsRealRaidLeader",

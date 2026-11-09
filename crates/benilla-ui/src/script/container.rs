@@ -748,10 +748,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(mlua::MultiValue::new());
             };
             Ok(mlua::MultiValue::from_vec(vec![
-                match &s.texture {
-                    Some(p) => Value::String(lua.create_string(p.as_str())?),
-                    None => Value::Nil,
-                },
+                // Always a path for an occupied slot (`0x5d7b18`); the app fills the real one.
+                Value::String(
+                    lua.create_string(
+                        s.texture
+                            .as_deref()
+                            .unwrap_or(r"Interface\Icons\INV_Misc_QuestionMark"),
+                    )?,
+                ),
                 Value::Integer(i64::from(s.count)),
                 // A held item's source slot reads locked, derived from the cursor so the app's
                 // re-push cannot wipe it.
@@ -764,6 +768,33 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     None => Value::Nil,
                 },
             ]))
+        })?,
+    )?;
+
+    // GetContainerItemID(bag, slot) (`0x5d7d00`): the entry, or no value for an empty
+    // or unresolved slot.
+    lua.globals().set(
+        "GetContainerItemID",
+        lua.create_function(|lua, (bag, slot): (Value, Value)| {
+            let (Some(bag), Some(slot)) = (lua.coerce_number(bag)?, lua.coerce_number(slot)?)
+            else {
+                return Err(mlua::Error::runtime(
+                    "Usage: GetContainerItemID(index, slot)",
+                ));
+            };
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let entry = model
+                .containers
+                .get(&(bag as i64))
+                .and_then(|c| c.slots.get(&(slot as u32)))
+                .map_or(0, |s| s.item_id);
+            Ok(if entry == 0 {
+                mlua::MultiValue::new()
+            } else {
+                mlua::MultiValue::from_vec(vec![Value::Integer(i64::from(entry))])
+            })
         })?,
     )?;
 
@@ -1071,13 +1102,19 @@ mod tests {
             .eval::<bool>("local _, _, _, _, readable = GetContainerItemInfo(0, 4) return readable")
             .unwrap());
 
-        // An in-flight slot: texture nil, quality -1, itemCount real.
+        // An in-flight slot: the fallback icon, quality -1, itemCount real.
         assert!(s
             .eval::<bool>(
                 "local texture, itemCount, locked, quality = GetContainerItemInfo(0, 3)\n\
-                 return texture == nil and quality == -1 and itemCount ~= nil",
+                 return texture == [[Interface\\Icons\\INV_Misc_QuestionMark]] and quality == -1 and itemCount ~= nil",
             )
             .unwrap());
+        assert_eq!(
+            s.eval::<Option<i64>>("return GetContainerItemID(0, 99)")
+                .unwrap(),
+            None,
+            "an empty slot answers no value"
+        );
         assert!(s
             .eval::<bool>("return GetContainerItemLink(0, 3) == nil")
             .unwrap());

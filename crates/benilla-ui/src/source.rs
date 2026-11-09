@@ -8,6 +8,38 @@ use std::borrow::Cow;
 
 const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 
+/// Read `root/rel` as the reference's Windows filesystem would: each component matched without
+/// regard to ASCII case. Refuses a path that leaves `root` lexically before any filesystem call
+/// (`join_ref` has already resolved `..`, so an escape shows as a leading one, or anything
+/// absolute); a symlinked addon folder still works.
+pub fn read_under(root: &std::path::Path, rel: &str) -> Option<Vec<u8>> {
+    use std::path::Component;
+    let rel = std::path::Path::new(rel);
+    if rel.components().any(|c| !matches!(c, Component::Normal(_))) {
+        return None;
+    }
+    let mut path = root.to_path_buf();
+    for component in rel.components() {
+        let name = component.as_os_str();
+        let exact = path.join(name);
+        path = if exact.exists() {
+            exact
+        } else {
+            let wanted = name.to_string_lossy();
+            std::fs::read_dir(&path)
+                .ok()?
+                .flatten()
+                .find(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case(&wanted)
+                })?
+                .path()
+        };
+    }
+    std::fs::read(path).ok()
+}
+
 /// `bytes` without a leading UTF-8 BOM, a strip the reference added to its `luaL_loadbuffer`, so
 /// every chunk gets it, `loadstring` included; the `.toc` reader has its own. At most one mark,
 /// only at offset 0; a UTF-16 mark is left alone, as the reference leaves it.
@@ -58,6 +90,31 @@ fn cp1252(b: u8) -> char {
     match b {
         0x80..=0x9F => C1[(b - 0x80) as usize],
         _ => b as char,
+    }
+}
+
+#[cfg(test)]
+mod read_under_tests {
+    use super::read_under;
+
+    #[test]
+    fn a_case_mismatch_in_any_component_still_reads_and_an_escape_never_does() {
+        let root = std::env::temp_dir().join(format!("benilla_read_under_{}", std::process::id()));
+        let dir = root.join("MyAddon").join("Libs");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Core.lua"), b"x").unwrap();
+        assert_eq!(
+            read_under(&root, "MyAddon/Libs/Core.lua").as_deref(),
+            Some(&b"x"[..])
+        );
+        assert_eq!(
+            read_under(&root, "myaddon/LIBS/core.LUA").as_deref(),
+            Some(&b"x"[..])
+        );
+        assert_eq!(read_under(&root, "MyAddon/Libs/Missing.lua"), None);
+        assert_eq!(read_under(&root, "../outside.lua"), None);
+        assert_eq!(read_under(&root, "/abs.lua"), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
 

@@ -121,16 +121,17 @@ mod kinds;
 pub use handle_hash::{HandleHasher, HandleMap, HandleSet};
 pub use kinds::{
     click_mask_of, model_key, mouse_button_bit, slider_fraction, slider_grab, slider_set_value,
-    swipe_rim, ArmedSequence, ButtonState, ButtonVisualState, ColorSelectState, CooldownFlash,
-    CooldownPaint, CooldownState, CooldownStep, EditAction, EditBoxState, EditOutcome, EditUnit,
-    FrameKind, InsertMode, KindState, MessageFrameState, MessageLine, MinimapState, ModelFileFacts,
-    ModelFog, ModelLight, ModelPlayHead, ModelState, QuestPoiState, RegionKind, ScrollFrameState,
-    ScrollingMessageState, SequenceFacts, SliderState, StatusBarState, TooltipAnchor, TooltipState,
-    CLICK_LEFT_UP, COOLDOWN_FLASH_MS, COOLDOWN_FLASH_RGB, COOLDOWN_SWIPE_ALPHA,
-    MINIMAP_DEFAULT_ARROW_MODEL, MINIMAP_DEFAULT_MASK, MINIMAP_DEFAULT_PLAYER_MODEL,
-    MINIMAP_DEFAULT_ZOOM, MINIMAP_ENGINE_CHILDREN, MINIMAP_ZOOM_LEVELS, TOOLTIP_DOUBLE_GAP,
-    TOOLTIP_FADE_SECS, TOOLTIP_LINE_GAP, TOOLTIP_PAD, TOOLTIP_TEXTURE_GAP, TOOLTIP_TEXTURE_SLOTS,
-    TOOLTIP_WRAP_WIDTH,
+    swipe_rim, ArmedSequence, BlobGroup, BlobHover, BlobPaintKey, BlobRender, ButtonState,
+    ButtonVisualState, ColorSelectState, CooldownFlash, CooldownPaint, CooldownState, CooldownStep,
+    EditAction, EditBoxState, EditOutcome, EditUnit, FrameKind, InsertMode, KindState,
+    MessageFrameState, MessageLine, MinimapState, ModelFileFacts, ModelFog, ModelLight,
+    ModelPlayHead, ModelState, QuestBlobCache, QuestBlobMesh, QuestBlobPaint, QuestPoiState,
+    RegionKind, ScrollFrameState, ScrollingMessageState, SequenceFacts, SliderState,
+    StatusBarState, TooltipAnchor, TooltipState, CLICK_LEFT_UP, COOLDOWN_FLASH_MS,
+    COOLDOWN_FLASH_RGB, COOLDOWN_SWIPE_ALPHA, MINIMAP_DEFAULT_ARROW_MODEL, MINIMAP_DEFAULT_MASK,
+    MINIMAP_DEFAULT_PLAYER_MODEL, MINIMAP_DEFAULT_ZOOM, MINIMAP_ENGINE_CHILDREN,
+    MINIMAP_ZOOM_LEVELS, TOOLTIP_DOUBLE_GAP, TOOLTIP_FADE_SECS, TOOLTIP_LINE_GAP, TOOLTIP_PAD,
+    TOOLTIP_TEXTURE_GAP, TOOLTIP_TEXTURE_SLOTS, TOOLTIP_WRAP_WIDTH,
 };
 
 // ── Frame and Region nodes ───────────────────────────────────────────────────────────────────
@@ -771,6 +772,12 @@ impl WidgetArena {
         draw_layer: DrawLayer,
         sub_level: i8,
     ) -> Option<RegionHandle> {
+        if self
+            .frame(owner)
+            .is_some_and(|f| f.next_decl >= 1 << crate::order::DECL_BITS)
+        {
+            self.renumber_decls(owner);
+        }
         let decl_seq = {
             let f = self.frame_mut(owner)?;
             let d = f.next_decl;
@@ -791,6 +798,22 @@ impl WidgetArena {
             .regions
             .push(handle);
         Some(handle)
+    }
+
+    /// Close the `decl_seq` gaps freed regions left, keeping their order, so a frame that keeps
+    /// rebuilding its backdrop never overflows the sort key's declaration field.
+    fn renumber_decls(&mut self, owner: FrameHandle) {
+        let Some(regions) = self.frame(owner).map(|f| f.regions.clone()) else {
+            return;
+        };
+        for (i, rh) in regions.iter().enumerate() {
+            if let Some(r) = self.regions.get_mut(rh.index, rh.generation) {
+                r.decl_seq = i as u32;
+            }
+        }
+        if let Some(f) = self.frame_mut(owner) {
+            f.next_decl = regions.len() as u32;
+        }
     }
 
     /// Free one region, as only the SimpleHTML text set does in the client, pool-freeing the last
