@@ -1,8 +1,7 @@
 //! The openable-item live probe (`WOW_PROBE_CLAM=1`): right-clicks a lootable item in the bags and
 //! checks a loot window opens. The click makes two writes before the send: the grey lock
-//! ([`PendingItemOps`]) and the loot latch ([`LootLatch`]). vmangos answers `CMSG_OPEN_ITEM` with
-//! `SendLoot(item guid, LOOT_CORPSE)`, so `SMSG_LOOT_RESPONSE` comes back type 1 on the item's own
-//! guid, which a cold latch refuses.
+//! ([`PendingItemOps`]) and the loot latch ([`LootLatch`]). The server answers `CMSG_OPEN_ITEM`
+//! with a corpse-type `SMSG_LOOT_RESPONSE` on the item's own guid, which a cold latch refuses.
 //!
 //! The click runs through the live VM's `UseContainerItem(0, slot)`, the bag button's own call;
 //! each reading is `LootFrame:IsShown()` plus the session guid:
@@ -12,8 +11,8 @@
 //! 3. CLOSED: `CloseLoot()` takes the window down and clears the latch.
 //! 4. REOPEN: the same item clicked again opens a second time.
 //!
-//! `WOW_PROBE_CLAM=<entry>` aims it at another openable template; the default is a Small
-//! Barnacled Clam (7973, lootable with no lock). The probe `.additem`s its own copy and removes it
+//! `WOW_PROBE_CLAM=<entry>` aims it at another openable template; the default is a Brooding
+//! Darkwater Clam (44700, `ITEM_FLAG_HAS_LOOT` with no lock). The probe `.additem`s its own copy and removes it
 //! on the way out. Auto-loot is forced off: it would close the window within a frame or two. It
 //! logs `PROBE_CLAM:` lines and exits; the switches are `docs/CONTRIBUTING.md`, "Running it
 //! unattended".
@@ -28,9 +27,9 @@ use crate::net::{ChatKind, ClientCommand, NetCommands, ObjectStore, Objects, Sel
 use crate::pending_item_ops::PendingItemOps;
 use crate::ui_loot::{LootConfig, LootLatch, LootState};
 
-/// The default template, Small Barnacled Clam (entry 7973); its `item_loot_template` row (a Zesty
-/// Clam Meat) is what the window must show.
-const CLAM_ENTRY: u32 = 7973;
+/// The default template, Brooding Darkwater Clam (entry 44700), which AzerothCore's 3.3.5a data
+/// flags lootable with no lock.
+const CLAM_ENTRY: u32 = 44700;
 
 /// How long to wait for `.additem` to land the item and its template in the bags.
 const STOCK_TIMEOUT_SECS: f64 = 20.0;
