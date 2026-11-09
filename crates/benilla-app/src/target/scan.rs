@@ -293,6 +293,25 @@ impl TargetScan<'_, '_> {
             .map(|g| g.0)
     }
 
+    /// A mounted player past melee reach of `guid`: `reach² < d²`, centre to centre (`0x72bdb0`).
+    /// The range of an auto-ranged spell waits on its combat mode (#671).
+    fn mounted_out_of_reach(&self, guid: u64, target: &ObjectStore) -> bool {
+        let Ok((me_at, Some(me), _)) = self.self_q.single() else {
+            return false;
+        };
+        let at = self
+            .index
+            .as_ref()
+            .and_then(|i| i.0.get(&guid))
+            .and_then(|&e| self.units.get(e).ok());
+        let Some((_, _, _, at, _)) = at else {
+            return false;
+        };
+        let reach = super::cursor_mode::melee_reach(target, me);
+        me.0.unit_mount_display_id() > 0
+            && reach * reach < me_at.translation.distance_squared(at.translation)
+    }
+
     fn store_at(&self, entity: Entity) -> Option<&ObjectStore> {
         self.stores.get(entity).ok()
     }
@@ -634,6 +653,7 @@ impl AttackPick<'_, '_> {
         selection: &mut Selection,
         seam: &mut crate::creature_anim::AttackSeam,
         errors: &mut crate::ui_action::UiErrorKeys,
+        check_range: bool,
     ) -> Option<u64> {
         if !passed.or(selection.guid).is_some_and(|g| self.keeps(g)) {
             let engaged = self.engaged();
@@ -648,7 +668,7 @@ impl AttackPick<'_, '_> {
                 engaged,
             );
         }
-        self.gated(selection, errors)
+        self.gated(selection, errors, check_range)
     }
 
     /// The pick's tail, which an explicit target runs alone: the selection as it stands through
@@ -657,6 +677,7 @@ impl AttackPick<'_, '_> {
         &mut self,
         selection: &Selection,
         errors: &mut crate::ui_action::UiErrorKeys,
+        check_range: bool,
     ) -> Option<u64> {
         let Some(guid) = selection.guid else {
             debug!("attack: nothing to attack (ERR_NO_ATTACK_TARGET)");
@@ -670,6 +691,14 @@ impl AttackPick<'_, '_> {
             debug!("attack: {guid:#x} does not resolve, refused silently");
             return None;
         };
+        // The mounted range leg, ahead of the final gate.
+        if check_range && self.scan.mounted_out_of_reach(guid, store) {
+            debug!("attack: mounted, {guid:#x} is past melee reach (ERR_OUT_OF_RANGE)");
+            errors
+                .0
+                .push(crate::ui_action::UiError::key("ERR_OUT_OF_RANGE"));
+            return None;
+        }
         // The final gate's target legs; its actor legs repeat phase A's dead and mounted refusals,
         // which the caller ran.
         if !attack_target_valid(
@@ -749,6 +778,8 @@ pub(super) fn remember_last_enemy(
     reputations: Res<Reputations>,
     group: Option<Res<crate::ui_party::GroupState>>,
     mut last: ResMut<LastEnemy>,
+    player: Option<Res<crate::player::Player>>,
+    auto_dismount: Option<Res<crate::spell::cast_target::AutoDismount>>,
 ) {
     let Some((entity, guid)) = selection.target.zip(selection.guid) else {
         return;
@@ -757,8 +788,13 @@ pub(super) fn remember_last_enemy(
     let Some(me) = self_store.iter().next() else {
         return;
     };
-    // Conjuncts 2 and 3: not dead or a ghost (a ghost's wire health is 1), and not mounted.
-    if me.0.is_dead_or_ghost() || me.0.unit_mount_display_id() != 0 {
+    // Conjuncts 2 and 3: not dead or a ghost (a ghost's wire health is 1), and not refused for
+    // being mounted (`0x729a70`).
+    let mounted = crate::spell::validator::MountedGate::player(
+        player.as_deref().map_or(0, |p| p.move_flags()),
+        auto_dismount.as_deref(),
+    );
+    if me.0.is_dead_or_ghost() || mounted.refuses(me) {
         return;
     }
     let store = stores.get(entity).ok();
@@ -1603,11 +1639,15 @@ mod tests {
         };
         let c = mob(&mut world);
         with_self(&mut world, &[(F_MOUNTDISPLAYID, 1234)]);
+        world.insert_resource(crate::player::Player::with_move_flags(
+            crate::creature_anim::move_flags::FLYING,
+        ));
         assert_eq!(
             select(&mut world, Some((c, 0xC))),
             Some(0xE),
-            "mounted: the reference does not stamp"
+            "airborne, autoDismountFlying off: the reference does not stamp"
         );
+        world.remove_resource::<crate::player::Player>();
         with_self(&mut world, &[(F_HEALTH, 0)]);
         assert_eq!(
             select(&mut world, Some((c, 0xC))),
@@ -1626,6 +1666,13 @@ mod tests {
             select(&mut world, Some((c, 0xC))),
             Some(0xC),
             "the gate is the three states, not the selection"
+        );
+        // A grounded mount auto-dismounts, so the gate passes it.
+        with_self(&mut world, &[(F_MOUNTDISPLAYID, 1234)]);
+        assert_eq!(
+            select(&mut world, Some((c, 0x1C))),
+            Some(0x1C),
+            "grounded and mounted: the reference stamps"
         );
     }
 

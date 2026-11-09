@@ -27,6 +27,8 @@ pub(crate) struct GoTemplate {
     pub(crate) lock_id: u32,
     /// The hover tooltip's first line.
     pub(crate) name: String,
+    /// 12340 property `0x5b` (`0x746190`), where the type has one: a rider keeps the mount.
+    pub(crate) allow_mounted: bool,
     /// Mouseover eligibility for the two types that read a column (12340 property `0x12`):
     /// GENERIC(5) `data[1]` and CAPTURE_POINT(29) `data[19]` (`0x70ff80`).
     pub(crate) highlight_column: bool,
@@ -151,6 +153,7 @@ impl GameObjectTemplates {
             29 => data[19] != 0,
             _ => false,
         };
+        let allow_mounted = allow_mounted_slot(type_id).is_some_and(|slot| data[slot] != 0);
         // Adjacent to the highlight column but a different question: placement.
         let floating_tooltip = floating_tooltip_slot(type_id).is_some_and(|slot| data[slot] != 0);
         let meeting_stone = (type_id == 23).then(|| MeetingStoneTemplate {
@@ -186,6 +189,7 @@ impl GameObjectTemplates {
             Some(GoTemplate {
                 lock_id,
                 name,
+                allow_mounted,
                 highlight_column,
                 floating_tooltip,
                 meeting_stone,
@@ -222,6 +226,15 @@ fn floating_tooltip_slot(type_id: u32) -> Option<usize> {
 
 /// The `data[]` slot of a type's lockId, as 12340's lock lookup (`0x70ef30`) finds it by property
 /// `(type, 4)`.
+fn allow_mounted_slot(type_id: u32) -> Option<usize> {
+    match type_id {
+        2 => Some(8),
+        9 | 22 => Some(3),
+        10 => Some(17),
+        _ => None,
+    }
+}
+
 fn go_lock_slot(type_id: u32) -> Option<usize> {
     match type_id {
         // DOOR(0), BUTTON(1): data[0] = startOpen, data[1] = lockId.

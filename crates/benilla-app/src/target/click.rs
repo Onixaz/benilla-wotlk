@@ -234,7 +234,7 @@ pub(crate) struct Dispatch<'w, 's> {
     feedback: Feedback<'w>,
     auto: crate::player::AutoMove<'w, 's>,
     player: Res<'w, crate::player::Player>,
-    // `CanAutoDismount` (`0x71b0c0`) for the mounted attack gate.
+    // The auto-dismount CVars (`0x71b0c0`) for the mounted attack gate.
     auto_dismount: Option<Res<'w, crate::spell::cast_target::AutoDismount>>,
     // `SpellShapeshiftForm.dbc`'s flags, the barber chair's shapeshift test.
     sheet: Option<Res<'w, crate::ui_char::SheetTables>>,
@@ -334,16 +334,42 @@ impl Dispatch<'_, '_> {
         self.stores.get(me).ok().map(|(s, _)| s)
     }
 
-    /// The click's attack gate (`0x729a70`): dead, charmed, flags, then mounted only when
-    /// `CanAutoDismount` (`0x71b0c0`) refuses.
+    /// The click's attack gate (`0x729a70`): dead, charmed, flags, then mounted only when the
+    /// auto-dismount check (`0x71b0c0`) refuses.
     fn attack_blocked(&self) -> bool {
         crate::ui_action::attack_actor_blocked(
             self.self_store(),
             self.me().map(|(_, g, _)| g),
-            self.player.move_flags(),
-            self.auto_dismount.as_deref().copied().unwrap_or_default(),
+            self.mounted_gate(),
         )
         .is_some()
+    }
+
+    /// The combat enter's mounted leg (`0x6e4950`), whether the enter goes on: past melee reach
+    /// it stops, saying so unless `silent`; inside it the dismount leads the swing. The range of an
+    /// auto-ranged spell waits on its combat mode (#671).
+    fn enter_mounted(&mut self, target: Entity, silent: bool) -> bool {
+        let reach = self.melee_reach(target);
+        let Some(d2) = self.dist_sq(target) else {
+            return true;
+        };
+        let Some(own) = self
+            .self_store()
+            .filter(|s| s.0.unit_mount_display_id() > 0)
+        else {
+            return true;
+        };
+        if reach * reach < d2 {
+            if !silent {
+                self.feedback
+                    .errors
+                    .0
+                    .push(crate::ui_action::UiError::key("ERR_OUT_OF_RANGE"));
+            }
+            return false;
+        }
+        crate::creature_anim::dismount_first(own, &self.seam.net);
+        true
     }
 
     /// `0x6d5a60`, the head of both loot senders; `reach` is the melee reach, or a corpse's 5 yd.
@@ -373,6 +399,31 @@ impl Dispatch<'_, '_> {
     /// Any `0xc010ff` bit in our last streamed movement word: a direction, turn, pitch or fall.
     fn moving(&self) -> bool {
         self.player.move_flags() & crate::creature_anim::move_flags::INTEGRATED != 0
+    }
+
+    /// The mounted leg of the unit loot (`0x6dae89`): refused when the auto-dismount check says
+    /// no, else the dismount leads the send.
+    fn dismount_to_loot(&mut self) -> bool {
+        let Some(own) = self.self_store() else {
+            return true;
+        };
+        if self.mounted_gate().refuses(own) {
+            debug!("loot: refused, mounted");
+            self.feedback
+                .errors
+                .0
+                .push(crate::ui_action::UiError::key("ERR_NOT_WHILE_MOUNTED"));
+            return false;
+        }
+        crate::creature_anim::dismount_first(own, &self.seam.net);
+        true
+    }
+
+    fn mounted_gate(&self) -> crate::spell::validator::MountedGate {
+        crate::spell::validator::MountedGate::player(
+            self.player.move_flags(),
+            self.auto_dismount.as_deref(),
+        )
     }
 
     /// The reference's one mounted predicate, the player's `UNIT_FIELD_MOUNTDISPLAYID`.
@@ -453,7 +504,6 @@ impl Dispatch<'_, '_> {
     /// type's use handler, then its lock. A usable object out of `in_reach` goes to
     /// [`Self::walk_to_object`].
     fn use_gameobject(&mut self, entity: Entity, guid: u64, in_reach: bool, walk: bool) {
-        let self_mounted = self.mounted();
         let self_store = self
             .me()
             .and_then(|(e, ..)| self.stores.get(e).ok())
@@ -463,11 +513,12 @@ impl Dispatch<'_, '_> {
             .get(entity)
             .ok()
             .map(|(s, anim)| (s, crate::go_anim::go_state(anim, s)));
-        // The GameObject's own mounted gate returns before the opener: no packet, no cast. It
-        // applies only without a Lock.dbc row (a pointer test, so an all-empty row counts, unlike
-        // `LockCatalog::is_locked`); a locked object is refused by its opener cast. Only MAILBOX is
-        // exempt. Silent: the key has no text or sound, and the reference drops the empty string.
-        let lock_id = self.go_inputs.templates.get(guid).map_or(0, |t| t.lock_id);
+        // The GameObject's own mounted gate (`0x711470`) returns before the opener: no packet, no
+        // cast. It applies only without a Lock.dbc row (a pointer test, so an all-empty row counts,
+        // unlike `LockCatalog::is_locked`); a locked object is refused by its opener cast.
+        let template = self.go_inputs.templates.get(guid);
+        let (lock_id, allow_mounted) =
+            template.map_or((0, false), |t| (t.lock_id, t.allow_mounted));
         let has_lock_row = lock_id != 0
             && self
                 .go_inputs
@@ -475,10 +526,16 @@ impl Dispatch<'_, '_> {
                 .as_deref()
                 .is_some_and(|l| l.0.slots(lock_id).is_some());
         let go_type = go.map_or(-1, |(s, _)| s.0.gameobject_type_id());
-        if self_mounted && !has_lock_row && go_type != cursor_mode::GO_TYPE_MAILBOX {
-            debug!(
-                "right-click gameobject {guid:#x}: refused, mounted (lock-less type {go_type}, silent)"
-            );
+        let usable_mounted = go_usable_mounted(go_type, allow_mounted);
+        if !has_lock_row
+            && !usable_mounted
+            && self_store.is_some_and(|s| self.mounted_gate().refuses(s))
+        {
+            debug!("right-click gameobject {guid:#x}: refused, mounted (type {go_type})");
+            self.feedback
+                .errors
+                .0
+                .push(crate::ui_action::UiError::key("ERR_NOT_WHILE_MOUNTED"));
             return;
         }
         // MAILBOX (type 19) opens locally: its use (`0x70c9d0`) is the mailbox opener, which sends
@@ -572,6 +629,10 @@ impl Dispatch<'_, '_> {
                         &format!("SEND CMSG_GAMEOBJ_USE guid={guid:#x}"),
                     );
                 }
+                // The use's dismount (`0x71190c`) leads the send.
+                if let Some(own) = self_store.filter(|_| !usable_mounted) {
+                    crate::creature_anim::dismount_first(own, &self.seam.net);
+                }
                 let _ = self.seam.net.0.send(ClientCommand::GameObjUse { guid });
             }
             // Both opener arms queue for the one cast path, as the reference reaches its cast
@@ -650,7 +711,7 @@ impl Dispatch<'_, '_> {
         {
             return;
         }
-        if self.moving() {
+        if self.moving() || !self.dismount_to_loot() {
             return;
         }
         debug!("right-click loot: {guid:#x}");
@@ -695,18 +756,24 @@ impl Dispatch<'_, '_> {
             }
             return;
         }
-        // The cast's mounted check (reason `0x39`), the one place a rider is told anything; the
-        // record comes off [`GoLockInputs`]' catalog, this system's only `Spells`.
+        // The cast's mounted check (reason `0x39`) past the auto-dismount check (`0x71b0c0`), the
+        // dismount leading the cast; the record comes off [`GoLockInputs`]' catalog, this system's
+        // only `Spells`.
         let mounted = self.mounted();
         let def = self
             .go_inputs
             .spells
             .as_ref()
             .and_then(|s| s.catalog.get(spell_id));
-        if crate::spell::validator::cast_mounted_refusal(mounted, def) {
+        let needs_foot = crate::spell::validator::cast_mounted_refusal(mounted, def);
+        let own = self.self_store();
+        if needs_foot && own.is_some_and(|s| self.mounted_gate().refuses(s)) {
             debug!("right-click skin: refused locally — mounted (0x39)");
             self.feedback.cast_errors.push_local(spell_id, 0x39);
         } else {
+            if let Some(own) = own.filter(|_| needs_foot) {
+                crate::creature_anim::dismount_first(own, &self.seam.net);
+            }
             debug!("right-click skin: {guid:#x} (spell {spell_id})");
             let _ = self.seam.net.0.send(ClientCommand::CastSpell {
                 spell_id,
@@ -1008,13 +1075,11 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
     let attack = press.attack_fork.0;
     let target = dispatch.stores.get(entity).ok().map(|(s, _)| s);
     // ── The dead-target fork of the unit dispatcher ── Loot routes by classification (dead and
-    // `UNIT_DYNFLAG_LOOTABLE`), not the cursor kind, whose Pickup(8) a live vendor shares. A rider
-    // skips the loot leg for the skin leg, silently. Step 0 of [`DeadUnitLeg`] is hoisted for the
-    // trace.
+    // `UNIT_DYNFLAG_LOOTABLE`), not the cursor kind, whose Pickup(8) a live vendor shares. Step 0
+    // of [`DeadUnitLeg`] is hoisted for the trace.
     let dead_fork = target.is_some_and(|s| s.0.unit_is_dead() && !s.0.unit_dynflag_dead());
     let skin_spell = target.and_then(|s| dispatch.skin.unit_spell(s, dispatch.self_store()));
     let leg = dead_unit_leg(
-        self_mounted,
         dead_fork,
         target.is_some_and(|s| s.0.unit_lootable()),
         target.is_some_and(|s| s.0.unit_flags() & cursor_mode::UNIT_FLAG_SKINNABLE != 0),
@@ -1073,8 +1138,7 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
     }
     match unit_branch(attack, dead_fork, leg) {
         UnitBranch::Attack => {
-            // Past the dead and mounted gates and before StartAttack, so a refused swing still
-            // walks. Mounted is `CanAutoDismount`, not a hard block.
+            // The gates ahead of the combat enter (`0x73151c`): a refusal neither walks nor swings.
             let refused = dispatch.attack_blocked();
             match dispatch.melee_approach(entity).filter(|_| !refused) {
                 Some(MeleeApproach::Face(at)) => {
@@ -1089,7 +1153,7 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
             // Silent after the select: the click's has no error display, and the red `ERR_ATTACK_*`
             // lines are the reference's (the Attack action, pet attack, the cast attempt). The
             // predicate is the reference's; the reference's own set is not transcribed.
-            if dispatch.attack_blocked() {
+            if refused {
                 // refused: the selection stands, no swing, nothing said
             } else {
                 // StartAttack's own select, past its gates and before the swing: the click's
@@ -1098,10 +1162,14 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
                     outcome = commit(&mut dispatch.seam, selection);
                 }
                 debug!("right-click attack: {guid:#x}");
-                // The reference's body through the seam; `swung` means the commit's re-swing
-                // already went out, which the reference keeps from sending twice.
-                let engaged = me.is_some_and(|(_, _, e)| e);
-                dispatch.seam.start(guid, engaged || outcome.swung, false);
+                // The combat enter (`0x73154a`), silent when the click can walk in.
+                let silent = dispatch.auto.can_auto_interact();
+                if dispatch.enter_mounted(entity, silent) {
+                    // The reference's body through the seam; `swung` means the commit's re-swing
+                    // already went out, which the reference keeps from sending twice.
+                    let engaged = me.is_some_and(|(_, _, e)| e);
+                    dispatch.seam.start(guid, engaged || outcome.swung, false);
+                }
             }
         }
         UnitBranch::Dead(DeadUnitLeg::Loot) => {
@@ -1248,7 +1316,7 @@ pub(super) fn act_on_arrival(
         }
         // The combat enter, no auto flag (`0x71b1e0`), through the click's select and start.
         ApproachVerb::Attack if unit => {
-            if !dispatch.attack_blocked() {
+            if !dispatch.attack_blocked() && dispatch.enter_mounted(entity, false) {
                 dispatch
                     .feedback
                     .arrival_attack
@@ -1452,7 +1520,7 @@ fn route_lock_refusal(
 ///    the skin leg;
 /// 4. otherwise nothing.
 ///
-/// Step 1 never reads the target: a lootable and skinnable corpse skins mounted, loots on foot.
+/// Step 1 never reads the rider: the loot send decides a mounted click (`0x6dae89`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum DeadUnitLeg {
     /// `CMSG_LOOT`.
@@ -1474,17 +1542,11 @@ impl DeadUnitLeg {
     }
 }
 
-fn dead_unit_leg(
-    mounted: bool,
-    dead: bool,
-    lootable: bool,
-    skinnable: bool,
-    know_skinning: bool,
-) -> DeadUnitLeg {
+fn dead_unit_leg(dead: bool, lootable: bool, skinnable: bool, know_skinning: bool) -> DeadUnitLeg {
     if !dead {
         return DeadUnitLeg::Nothing;
     }
-    if !mounted && lootable {
+    if lootable {
         return DeadUnitLeg::Loot;
     }
     if skinnable && know_skinning {
@@ -1492,6 +1554,14 @@ fn dead_unit_leg(
     }
     DeadUnitLeg::Nothing
 }
+
+/// Whether a rider keeps the mount at this object (`0x710390`): a mailbox always, a barber chair
+/// never, any other by its template's column.
+fn go_usable_mounted(go_type: i32, allow_mounted: bool) -> bool {
+    go_type == cursor_mode::GO_TYPE_MAILBOX
+        || (go_type != cursor_mode::GO_TYPE_BARBER_CHAIR && allow_mounted)
+}
+
 /// The branch of the reference a unit right-click takes: the reference splits on death first and
 /// never rejoins, so only the alive side reaches the service send.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1917,80 +1987,46 @@ mod tests {
         assert_eq!(e.key, "ERR_USE_CANT_OPEN");
     }
 
-    /// The dead fork's rider test: a mounted player never takes the loot leg.
+    /// The right-click has no mounted gate on the loot leg (`0x731260`): the loot send decides.
     #[test]
-    fn a_mounted_player_never_takes_the_loot_leg() {
-        // On foot, a lootable corpse loots.
-        assert_eq!(
-            dead_unit_leg(false, true, true, false, false),
-            DeadUnitLeg::Loot
-        );
-        // Mounted, the same corpse, nothing to skin: nothing at all.
-        assert_eq!(
-            dead_unit_leg(true, true, true, false, false),
-            DeadUnitLeg::Nothing
-        );
-        // Mounted over a lootable and skinnable corpse, the fall-through skins.
-        assert_eq!(
-            dead_unit_leg(true, true, true, true, true),
-            DeadUnitLeg::Skin
-        );
-        // On foot the same body loots: step 1 never reads the target.
-        assert_eq!(
-            dead_unit_leg(false, true, true, true, true),
-            DeadUnitLeg::Loot
-        );
+    fn a_lootable_corpse_takes_the_loot_leg() {
+        assert_eq!(dead_unit_leg(true, true, false, false), DeadUnitLeg::Loot);
+        assert_eq!(dead_unit_leg(true, true, true, true), DeadUnitLeg::Loot);
     }
 
     #[test]
     fn the_dead_fork_keeps_its_other_three_gates() {
         // A live unit takes the alive branch.
-        assert_eq!(
-            dead_unit_leg(false, false, true, true, true),
-            DeadUnitLeg::Nothing
-        );
+        assert_eq!(dead_unit_leg(false, true, true, true), DeadUnitLeg::Nothing);
         // Dead, unlootable, skinnable, and we know the trade → Skin.
-        assert_eq!(
-            dead_unit_leg(false, true, false, true, true),
-            DeadUnitLeg::Skin
-        );
+        assert_eq!(dead_unit_leg(true, false, true, true), DeadUnitLeg::Skin);
         // Without the learn-time latch the same corpse gives nothing.
         assert_eq!(
-            dead_unit_leg(false, true, false, true, false),
+            dead_unit_leg(true, false, true, false),
             DeadUnitLeg::Nothing
         );
-        // A plain looted corpse: nothing, mounted or not.
-        for mounted in [false, true] {
-            assert_eq!(
-                dead_unit_leg(mounted, true, false, false, true),
-                DeadUnitLeg::Nothing
-            );
-        }
+        // A plain looted corpse: nothing.
+        assert_eq!(
+            dead_unit_leg(true, false, false, true),
+            DeadUnitLeg::Nothing
+        );
     }
     /// No combination of the dead fork's four inputs reaches [`UnitBranch::Service`].
     #[test]
     fn the_dead_fork_never_reaches_the_service_dispatch() {
-        for mounted in [false, true] {
-            for lootable in [false, true] {
-                for skinnable in [false, true] {
-                    for know_skinning in [false, true] {
-                        let leg = dead_unit_leg(mounted, true, lootable, skinnable, know_skinning);
-                        assert_eq!(
-                            unit_branch(false, true, leg),
-                            UnitBranch::Dead(leg),
-                            "a dead target escaped the fork (mounted={mounted} \
-                             lootable={lootable} skinnable={skinnable} know={know_skinning})"
-                        );
-                    }
+        for lootable in [false, true] {
+            for skinnable in [false, true] {
+                for know_skinning in [false, true] {
+                    let leg = dead_unit_leg(true, lootable, skinnable, know_skinning);
+                    assert_eq!(
+                        unit_branch(false, true, leg),
+                        UnitBranch::Dead(leg),
+                        "a dead target escaped the fork (lootable={lootable} \
+                         skinnable={skinnable} know={know_skinning})"
+                    );
                 }
             }
         }
-        // Mounted, over a lootable corpse, no skinning.
-        let leg = dead_unit_leg(true, true, true, false, false);
-        assert_eq!(
-            unit_branch(false, true, leg),
-            UnitBranch::Dead(DeadUnitLeg::Nothing)
-        );
         // A live unit still reaches the service dispatch.
         assert_eq!(
             unit_branch(false, false, DeadUnitLeg::Nothing),
@@ -3362,11 +3398,10 @@ mod tests {
         );
     }
 
-    /// A grounded flyer auto-dismounts (`0x71b0c0`), so the click still walks and swings.
-    #[test]
-    fn a_grounded_flying_mount_still_attacks() {
+    /// A grounded mount right-clicks a wolf `z` yd off, returning the world and what was sent.
+    fn mounted_click(z: f32, walk: bool) -> (World, Vec<ClientCommand>, Entity) {
         const F_MOUNT: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
-        let (mut world, _vendor, rx) = walking_world(Vec3::new(14.0, 0.0, 0.0), true);
+        let (mut world, _vendor, rx) = walking_world(Vec3::new(14.0, 0.0, 0.0), walk);
         let me = world
             .query_filtered::<Entity, With<SelfPlayer>>()
             .single(&world)
@@ -3380,14 +3415,23 @@ mod tests {
             .spawn((
                 Guid(WOLF),
                 store(&[(F_HEALTH, 100), (F_MAXHEALTH, 100)]),
-                Transform::from_xyz(0.0, 0.0, -12.0),
+                Transform::from_xyz(0.0, 0.0, -z),
+                crate::net::NetEntity {
+                    kind: benilla_protocol::EntityKind::Unit,
+                    display_id: None,
+                    scale: 1.0,
+                },
             ))
             .id();
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(WOLF, wolf);
         *world.resource_mut::<PressPick>() = PressPick {
             hovered: Hovered {
                 target: Some(wolf),
                 guid: Some(WOLF),
-                distance: 12.0,
+                distance: z,
                 ..Hovered::default()
             },
             attack_fork: cursor_mode::AttackFork(true),
@@ -3397,11 +3441,72 @@ mod tests {
             .resource_mut::<Messages<WorldRightClick>>()
             .write(WorldRightClick);
         world.run_system_once(act_on_right_click).unwrap();
-        assert!(
-            rx.try_iter()
-                .any(|c| matches!(c, ClientCommand::AttackSwing { .. })),
-            "grounded, autoDismount on, StartAttack goes out"
-        );
+        let sent = rx.try_iter().collect();
+        (world, sent, wolf)
+    }
+
+    fn dismounts_or_swings(sent: &[ClientCommand]) -> Vec<&ClientCommand> {
+        sent.iter()
+            .filter(|c| {
+                matches!(
+                    c,
+                    ClientCommand::CancelMountAura | ClientCommand::AttackSwing { .. }
+                )
+            })
+            .collect()
+    }
+
+    /// In melee reach the combat enter's dismount (`0x7412e0`) leads the swing, wire order and all.
+    #[test]
+    fn a_grounded_mount_in_melee_dismounts_ahead_of_the_swing() {
+        let (_, sent, _) = mounted_click(3.0, true);
+        assert!(matches!(
+            dismounts_or_swings(&sent).as_slice(),
+            [
+                ClientCommand::CancelMountAura,
+                ClientCommand::AttackSwing { guid: WOLF }
+            ]
+        ));
+    }
+
+    /// Out of reach the combat enter stops, silent because the click walks in (`0x73153e`).
+    #[test]
+    fn a_grounded_mount_out_of_melee_walks_without_a_swing() {
+        let (world, sent, _) = mounted_click(12.0, true);
+        assert!(dismounts_or_swings(&sent).is_empty());
+        assert!(world.resource::<crate::player::Approach>().active());
+        assert!(world
+            .resource::<crate::ui_action::UiErrorKeys>()
+            .0
+            .is_empty());
+    }
+
+    /// With no walk to come, the combat enter says why it stopped (`0x6e4950`).
+    #[test]
+    fn a_grounded_mount_out_of_melee_with_no_walk_is_out_of_range() {
+        let (world, sent, _) = mounted_click(12.0, false);
+        assert!(dismounts_or_swings(&sent).is_empty());
+        let errors = &world.resource::<crate::ui_action::UiErrorKeys>().0;
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].key, "ERR_OUT_OF_RANGE");
+    }
+
+    /// The walk's arrival is a combat enter too (`0x71b234`): the dismount, then the owed swing.
+    #[test]
+    fn a_mounted_arrival_dismounts_and_owes_the_swing() {
+        let (mut world, _, wolf) = mounted_click(3.0, true);
+        let (tx, rx) = crossbeam_channel::unbounded::<ClientCommand>();
+        world.insert_resource(NetCommands(tx));
+        world.resource_mut::<crate::player::Approach>().arrived =
+            Some((crate::player::ApproachVerb::Attack, WOLF));
+        world.run_system_once(act_on_arrival).unwrap();
+        assert!(rx
+            .try_iter()
+            .any(|c| matches!(c, ClientCommand::CancelMountAura)));
+        let owed = world.resource::<Messages<ArrivalAttack>>();
+        assert!(owed
+            .iter_current_update_messages()
+            .any(|a| a.entity == wolf && a.guid == WOLF));
     }
 
     /// The melee row's 80 yd leash refuses with `ERR_AUTOFOLLOW_TOO_FAR`; the swing still goes out.
@@ -3773,6 +3878,113 @@ mod tests {
                 "type {go_type}"
             );
         }
+    }
+
+    /// Puts the player on a mount, `move_flags` its movement word.
+    fn mount_me(world: &mut World, move_flags: u32) {
+        const F_MOUNT: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
+        world.insert_resource(crate::player::Player::with_move_flags(move_flags));
+        let me = world
+            .query_filtered::<Entity, With<SelfPlayer>>()
+            .single(world)
+            .unwrap();
+        world.entity_mut(me).insert(store(&[
+            (F_HEALTH, 100),
+            (F_MAXHEALTH, 100),
+            (F_MOUNT, 14_337),
+        ]));
+    }
+
+    fn error_keys(world: &World) -> Vec<&'static str> {
+        let errors = &world.resource::<crate::ui_action::UiErrorKeys>().0;
+        errors.iter().map(|e| e.key).collect()
+    }
+
+    /// A rider's loot send (`0x6dae89`): grounded the dismount leads it, airborne it is refused.
+    #[test]
+    fn a_mounted_loot_dismounts_or_says_why_not() {
+        use crate::creature_anim::move_flags::FLYING;
+        for flags in [0, FLYING] {
+            let (mut world, body, _corpse, rx) = loot_world(2.0, flags, true);
+            mount_me(&mut world, flags);
+            let hovered = Hovered {
+                target: Some(body),
+                guid: Some(BODY),
+                distance: 2.0,
+                ..Hovered::default()
+            };
+            right_click_loot(&mut world, hovered);
+            // The click's select goes out first; only the mounted leg's order matters here.
+            let sent: Vec<ClientCommand> = rx
+                .try_iter()
+                .filter(|c| {
+                    matches!(
+                        c,
+                        ClientCommand::CancelMountAura | ClientCommand::Loot { .. }
+                    )
+                })
+                .collect();
+            if flags == 0 {
+                assert!(matches!(
+                    sent.as_slice(),
+                    [
+                        ClientCommand::CancelMountAura,
+                        ClientCommand::Loot { guid: BODY }
+                    ]
+                ));
+            } else {
+                assert!(sent.is_empty());
+                assert_eq!(error_keys(&world), ["ERR_NOT_WHILE_MOUNTED"]);
+            }
+        }
+    }
+
+    /// A rider's use of a lock-less object (`0x711470`, `0x71190c`), grounded and airborne.
+    #[test]
+    fn a_mounted_object_use_dismounts_or_says_why_not() {
+        use crate::creature_anim::move_flags::FLYING;
+        for flags in [0, FLYING] {
+            let (mut world, _vendor, rx) = walking_world(Vec3::new(14.0, 0.0, 0.0), false);
+            mount_me(&mut world, flags);
+            let object = spawn_chest(&mut world, Vec3::new(0.0, 0.0, -2.0));
+            *world.resource_mut::<PressPick>() = PressPick {
+                object: HoveredObject {
+                    target: Some(object),
+                    guid: Some(CHEST),
+                    distance: 2.0,
+                },
+                cursor: WorldCursor {
+                    kind: cursor_mode::CursorKind::Interact,
+                    unable: false,
+                },
+                ..PressPick::default()
+            };
+            world
+                .resource_mut::<Messages<WorldRightClick>>()
+                .write(WorldRightClick);
+            world.run_system_once(act_on_right_click).unwrap();
+            let sent: Vec<ClientCommand> = rx.try_iter().collect();
+            if flags == 0 {
+                assert!(matches!(
+                    sent.as_slice(),
+                    [
+                        ClientCommand::CancelMountAura,
+                        ClientCommand::GameObjUse { guid: CHEST }
+                    ]
+                ));
+            } else {
+                assert!(sent.is_empty());
+                assert_eq!(error_keys(&world), ["ERR_NOT_WHILE_MOUNTED"]);
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_mailbox_or_the_column_keeps_a_rider_mounted() {
+        assert!(go_usable_mounted(cursor_mode::GO_TYPE_MAILBOX, false));
+        assert!(!go_usable_mounted(cursor_mode::GO_TYPE_BARBER_CHAIR, true));
+        assert!(go_usable_mounted(10, true));
+        assert!(!go_usable_mounted(3, false));
     }
 
     /// The arrival's use is the use alone: no loot close (`0x71b1e0` calls `0x70f680`).

@@ -72,8 +72,8 @@ pub(crate) struct AttackPress<'w, 's> {
     selection: ResMut<'w, crate::target::Selection>,
     seam: crate::creature_anim::AttackSeam<'w, 's>,
     ui_errors: ResMut<'w, UiErrorKeys>,
-    player: Res<'w, crate::player::Player>,
-    auto_dismount: Res<'w, crate::spell::cast_target::AutoDismount>,
+    player: Option<Res<'w, crate::player::Player>>,
+    auto_dismount: Option<Res<'w, crate::spell::cast_target::AutoDismount>>,
 }
 
 impl AttackPress<'_, '_> {
@@ -82,7 +82,7 @@ impl AttackPress<'_, '_> {
     /// validator's target. Only the start cancels auto-repeat, so stopping melee leaves Auto Shot
     /// running.
     pub(crate) fn attack_target(&mut self) {
-        let Some(guid) = self.validate(None) else {
+        let Some(guid) = self.validate(None, true) else {
             return;
         };
         let Self { pick, seam, .. } = self;
@@ -90,6 +90,9 @@ impl AttackPress<'_, '_> {
             return;
         };
         let engaged = pick.engaged();
+        if let (false, Some(own)) = (engaged, pick.player().0) {
+            crate::creature_anim::dismount_first(own, &seam.net);
+        }
         debug!(
             "attack {} at {guid:#x}",
             if engaged { "toggled off" } else { "swing" }
@@ -112,13 +115,15 @@ impl AttackPress<'_, '_> {
         if self.pick.engaged() {
             return false;
         }
+        let mounted = self.mounted_gate();
         let (me, my_guid) = self.pick.player();
-        !attack_actor_refusal(
-            me,
-            my_guid,
-            self.player.move_flags(),
-            *self.auto_dismount,
-            &mut self.ui_errors,
+        !attack_actor_refusal(me, my_guid, mounted, &mut self.ui_errors)
+    }
+
+    fn mounted_gate(&self) -> crate::spell::validator::MountedGate {
+        crate::spell::validator::MountedGate::player(
+            self.player.as_deref().map_or(0, |p| p.move_flags()),
+            self.auto_dismount.as_deref(),
         )
     }
 
@@ -139,12 +144,15 @@ impl AttackPress<'_, '_> {
             ui_errors,
             ..
         } = self;
-        let Some(guid) = pick.gated(selection, ui_errors) else {
+        let Some(guid) = pick.gated(selection, ui_errors, true) else {
             return;
         };
         let Ok(e) = seam.me.single() else {
             return;
         };
+        if let Some(own) = pick.player().0 {
+            crate::creature_anim::dismount_first(own, &seam.net);
+        }
         crate::creature_anim::toggle_attack_local(
             e,
             guid,
@@ -192,24 +200,25 @@ impl AttackPress<'_, '_> {
     /// the validator alone, with no swing after it. Whether the cast goes on, at the unit the pick
     /// left selected.
     pub(crate) fn pick_for_cast(&mut self, held: crate::spell::HeldCast) -> bool {
-        self.validate(held.passed).is_some()
+        self.validate(held.passed, false).is_some()
     }
 
-    /// The attack validator: its actor checks, then its target pick.
-    fn validate(&mut self, passed: Option<u64>) -> Option<u64> {
+    /// The attack validator: its actor checks, then its target pick. `check_range` is on for the
+    /// Attack action (`0x72c2de`) and off for the cast attempt (`0x80d661`).
+    fn validate(&mut self, passed: Option<u64>, check_range: bool) -> Option<u64> {
+        let mounted = self.mounted_gate();
         let Self {
             pick,
             selection,
             seam,
             ui_errors,
-            player,
-            auto_dismount,
+            ..
         } = self;
         let (me, my_guid) = pick.player();
-        if attack_actor_refusal(me, my_guid, player.move_flags(), **auto_dismount, ui_errors) {
+        if attack_actor_refusal(me, my_guid, mounted, ui_errors) {
             return None;
         }
-        pick.target(passed, selection, seam, ui_errors)
+        pick.target(passed, selection, seam, ui_errors, check_range)
     }
 }
 

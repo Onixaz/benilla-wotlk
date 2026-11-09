@@ -36,6 +36,8 @@ pub(crate) struct PetPress<'w, 's> {
     seam: crate::creature_anim::AttackSeam<'w, 's>,
     /// `secureAbilityToggle`, the recently-used guard on an aura cancel.
     cvars: Option<Res<'w, crate::cvars::Cvars>>,
+    /// The creature records, whose type flags exempt a mounted fighter (`0x715f70`).
+    names: Option<Res<'w, crate::names::NameCache>>,
 }
 
 /// The pet's control state against a spell (`0x5d437f`-`0x5d43dc`): stunned unless
@@ -111,6 +113,7 @@ impl PetPress<'_, '_> {
             pick,
             seam,
             cvars,
+            names,
         } = self;
         // The spell arm asks with `ignoreControl` set (`0x5d4283 push 1`), the others without.
         let Some(pet_store) = pet.usable_pet_with(bar, entry.is_spell()) else {
@@ -181,13 +184,10 @@ impl PetPress<'_, '_> {
             crate::ui_action::attack_actor_refusal(
                 Some(pet_store),
                 pet.self_guid.0,
-                0,
-                crate::spell::cast_target::AutoDismount {
-                    ground: false,
-                    flying: false,
-                },
+                crate::spell::validator::MountedGate::creature(pet_store, names.as_deref()),
                 ui_errors,
-            ) || match pick.target(None, selection, seam, ui_errors) {
+                // No range leg: a mounted pet that got this far fights mounted (`0x72bdb0`).
+            ) || match pick.target(None, selection, seam, ui_errors, false) {
                 Some(guid) => {
                     target_guid = guid;
                     false
