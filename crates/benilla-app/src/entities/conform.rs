@@ -7,8 +7,9 @@ use avian3d::prelude::SpatialQuery;
 use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::prelude::*;
 
+use crate::creature_anim::select::unify;
 use crate::creature_anim::{move_flags, MovementState};
-use crate::net::RemoteMotion;
+use crate::net::{CreatureSwimming, RemoteMotion, Spline, UnitMoveModes};
 
 /// Ray envelope around the unit's feet: start this far up, reach this far down past the feet.
 const TILT_PROBE_UP: f32 = 2.0;
@@ -19,6 +20,8 @@ const TILT_WALKABLE_Y: f32 = 0.0175;
 const TILT_FREEZE_Y: f32 = 0.3572;
 /// The up-vector smoothing: the residual toward the target decays by `0.0018^dt`.
 const TILT_DECAY: f32 = 0.0018;
+/// cos(0.01): a unit tilted past this is still easing level (`0x719b80`).
+const SWIM_SETTLED_UP_Y: f32 = 0.99995;
 
 /// The tilt carrier a flagged model's root bones hang under, a child of the unit spawned when the
 /// display's `terrain_tilt != 0`; [`conform_units`] writes its rotation, the stage.
@@ -41,11 +44,11 @@ fn tilt_target(sampled: Option<Vec3>) -> Option<Vec3> {
     }
 }
 
-/// Whether the unit is in the swim/fly matrix (`0x71fd80`): that path writes the pitched world
-/// transform onto GetObjectModel and never runs terrain tilt (`SetWorldTransform` with the
-/// ground normal). Counter-rotating the conform node toward world-up would cancel the climb.
-fn swim_or_fly(flags: u32) -> bool {
+/// Whether the swim/fly matrix replaces the ground tilt (`0x71fd80`), easing back level included.
+fn in_swim_matrix(flags: u32, unit_rotation: Quat) -> bool {
     flags & (move_flags::SWIMMING | move_flags::FLYING) != 0
+        && (flags & (move_flags::FORWARD | move_flags::BACKWARD) != 0
+            || (unit_rotation * Vec3::Y).y < SWIM_SETTLED_UP_Y)
 }
 
 /// The flag dispatch in the unit's local frame: flag 1 keeps left horizontal, a pure pitch of
@@ -88,6 +91,9 @@ pub(super) fn conform_units(
             Has<benilla_world::rig_anim::AnimParked>,
             Option<&MovementState>,
             Option<&RemoteMotion>,
+            Option<&Spline>,
+            Has<CreatureSwimming>,
+            Option<&UnitMoveModes>,
         ),
         Without<ConformNode>,
     >,
@@ -105,27 +111,28 @@ pub(super) fn conform_units(
     let mut max_pitch: Option<(Entity, f32)> = None;
     let mut count = 0usize;
     for (node, mut node_tf) in &mut nodes {
-        let Ok((unit_tf, parked, movement, remote)) = units.get(node.unit) else {
+        let Ok((unit_tf, parked, movement, remote, spline, swimming, modes)) = units.get(node.unit)
+        else {
             continue;
         };
         if parked {
             ups.remove(&node.unit);
             continue;
         }
-        let flags = movement
-            .map(|m| m.flags)
-            .or_else(|| remote.map(|r| r.flags))
-            .unwrap_or(0);
-        // Animate (`0x71fd80`) writes the swim/fly matrix onto the model and returns; terrain
-        // tilt never runs. Identity here lets the unit transform's climb/dive pitch show.
-        if swim_or_fly(flags) {
-            ups.remove(&node.unit);
+        let flags = unify(movement, remote, spline, swimming, modes).flags;
+        // The swim/fly matrix skips the tilt and keeps the ground normal as it was (`0x71fd80`).
+        if in_swim_matrix(flags, unit_tf.rotation) {
+            seen.insert(node.unit);
+            ups.entry(node.unit).or_insert(Vec3::Y);
             node_tf.rotation = Quat::IDENTITY;
             continue;
         }
         // Sample and smooth once per unit per frame: a unit can host two flagged visuals (a
         // flagged body over a mount), and stepping twice would square the decay.
         if seen.insert(node.unit) {
+            // A unit on a flying spline eases level here: its flying pitch and bank are on the unit
+            // transform, from `sample_splines`, whatever the model flags. The probe misses in the
+            // air, so `tilt_target` yields world-up.
             let target = {
                 let origin = unit_tf.translation + Vec3::Y * TILT_PROBE_UP;
                 let sampled = spatial
@@ -215,21 +222,52 @@ mod tests {
     }
 
     #[test]
-    fn swim_or_fly_skips_the_ground_tilt() {
-        assert!(swim_or_fly(move_flags::FLYING));
-        assert!(swim_or_fly(move_flags::SWIMMING | move_flags::FORWARD));
-        assert!(
-            !swim_or_fly(move_flags::CAN_FLY),
-            "CAN_FLY on the ground still tilts"
-        );
-        // World-up in a +π/4 pitched local frame is a −π/4 conform, which would cancel the climb.
-        let pitched = Quat::from_rotation_x(std::f32::consts::FRAC_PI_4);
-        let n_local = pitched.inverse() * Vec3::Y;
-        let cancel = conform_rotation(1, n_local);
-        let mesh = pitched * cancel;
-        assert!(
-            mesh.angle_between(Quat::IDENTITY) < 1e-3,
-            "airborne world-up conform flattens the swim pitch"
-        );
+    fn the_swim_matrix_gate_is_both_halves() {
+        let level = Quat::from_rotation_y(1.0);
+        let pitched = level * Quat::from_rotation_x(0.2);
+        let fly = move_flags::FLYING;
+        assert!(in_swim_matrix(fly | move_flags::FORWARD, level));
+        assert!(in_swim_matrix(
+            move_flags::SWIMMING | move_flags::BACKWARD,
+            level
+        ));
+        assert!(in_swim_matrix(fly, pitched), "still easing level");
+        assert!(!in_swim_matrix(fly, level), "a settled hover tilts");
+        assert!(!in_swim_matrix(fly | move_flags::STRAFE_LEFT, level));
+        assert!(!in_swim_matrix(move_flags::FORWARD, pitched), "on foot");
+        assert!(!in_swim_matrix(move_flags::CAN_FLY, pitched));
+    }
+
+    /// One `conform_units` pass over a unit pitched 0.5 rad, in a world with no ground.
+    fn node_rotation(unit: impl Bundle) -> Quat {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Time>();
+        world.init_resource::<avian3d::collider_tree::ColliderTrees>();
+        let rotation = Quat::from_rotation_x(0.5);
+        let unit = world.spawn((Transform::from_rotation(rotation), unit)).id();
+        let node = world
+            .spawn((ConformNode { unit, mode: 1 }, Transform::default()))
+            .id();
+        world.run_system_once(conform_units).unwrap();
+        world.get::<Transform>(node).unwrap().rotation
+    }
+
+    #[test]
+    fn a_unit_in_the_swim_matrix_keeps_its_pitch_on_the_mesh() {
+        let moving = |flags| MovementState {
+            flags,
+            ..Default::default()
+        };
+        let flattened = |q: Quat| (q.angle_between(Quat::IDENTITY) - 0.5).abs() < 1e-3;
+        assert!(flattened(node_rotation(moving(move_flags::FORWARD))));
+        for kept in [
+            node_rotation(moving(move_flags::FLYING | move_flags::FORWARD)),
+            node_rotation(moving(move_flags::SWIMMING | move_flags::FORWARD)),
+            node_rotation(UnitMoveModes(move_flags::FLYING)),
+            node_rotation(CreatureSwimming),
+        ] {
+            assert_eq!(kept, Quat::IDENTITY);
+        }
     }
 }

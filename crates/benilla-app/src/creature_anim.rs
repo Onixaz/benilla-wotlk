@@ -16,7 +16,8 @@ use benilla_world::schedule::WorldStage;
 /// The pure selection logic: the tables, the gait, swing and ready picks, the rate math.
 pub(crate) mod select;
 pub(crate) use select::{
-    ease_strafe_yaw, move_flags, strafe_body_offset, swim_body_rotation, MovementState,
+    ease_strafe_yaw, ease_swim_pitch, move_flags, strafe_body_offset, swim_body_rotation,
+    MovementState,
 };
 use select::{Mode, Special};
 

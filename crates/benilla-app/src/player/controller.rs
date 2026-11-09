@@ -819,12 +819,17 @@ pub(super) fn control(
             turning || mouselook,
             turn_rate,
         );
+        player.swim_body_pitch = crate::creature_anim::ease_swim_pitch(
+            player.swim_body_pitch,
+            move_flags_now,
+            swim_pitch,
+            dt,
+        );
         let cam_pivot_target = body_pose::drive(
             &player,
             &mut body,
             &mut net.6,
             afloat,
-            swim_pitch,
             move_flags_now,
             anim_flags,
             landed,

@@ -12,7 +12,6 @@ pub(super) fn drive(
     body: &mut BodyQuery,
     hard_landing: &mut MessageWriter<crate::creature_anim::HardLanding>,
     swimming: bool,
-    swim_pitch: f32,
     move_flags_now: u32,
     anim_flags: u32,
     landed: bool,
@@ -22,10 +21,9 @@ pub(super) fn drive(
     let mut cam_pivot_target = None;
     if let Ok((entity, mut t, motion, pivot, .., twist, _, net_entity)) = body.single_mut() {
         t.translation = player.pos;
-        // The swim pitch law every observed mover shares. `swim_pitch` is the aim, leveled along
-        // the surface when the rest-line cap bites, and the wire tail streams the same value.
+        // The active mover's own eased pitch (`0x719b80`); the wire tail streams the raw aim.
         t.rotation =
-            crate::creature_anim::swim_body_rotation(player.model_yaw, move_flags_now, swim_pitch);
+            Quat::from_rotation_y(player.model_yaw) * Quat::from_rotation_x(player.swim_body_pitch);
         // The landing predictor plays a hard landing's grunt and dust this frame; the server's
         // `SMSG_ENVIRONMENTALDAMAGELOG` dust follows a round trip later, as in the reference.
         // `fall_start_y` still holds this arc's launch height.

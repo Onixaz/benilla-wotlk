@@ -180,46 +180,51 @@ pub(crate) fn strafe_body_offset(flags: u32) -> f32 {
 }
 
 /// The swim body pitch for every mover with a reported pitch: the reference's `Rz(facing)·Ry(2π −
-/// pitch)` is `Ry(yaw)·Rx(pitch)` here, nose up positive. Only SWIMMING or FLYING with forward
-/// or back pitches (the model animate, `0x71fd80`); a climb or dive then takes ±π/4 instead of
-/// the reported pitch (the smoothed swim matrix, `0x719b80`).
+/// pitch)` is `Ry(yaw)·Rx(pitch)` here, nose up positive, and only SWIMMING or FLYING with forward
+/// or back pitches (the model animate, `0x71fd80`).
 pub(crate) fn swim_body_rotation(yaw: f32, flags: u32, pitch: f32) -> Quat {
-    let body_pitch = swim_body_pitch(flags, pitch);
-    if body_pitch != 0.0 {
-        Quat::from_rotation_y(yaw) * Quat::from_rotation_x(body_pitch)
+    if flags & (move_flags::SWIMMING | move_flags::FLYING) != 0
+        && flags & (move_flags::FORWARD | move_flags::BACKWARD) != 0
+    {
+        Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch)
     } else {
         Quat::from_rotation_y(yaw)
     }
 }
 
-/// The presented swim/fly pitch (`0x719b80`): ±π/4 while climbing or diving with forward or
-/// back, the reported pitch otherwise, leveled while strafing, idle, or on the ground. A
-/// backward climb or dive inverts the un-strafed value.
-pub(crate) fn swim_body_pitch(flags: u32, pitch: f32) -> f32 {
-    if flags & (move_flags::SWIMMING | move_flags::FLYING) == 0
-        || flags & (move_flags::FORWARD | move_flags::BACKWARD) == 0
+/// The active mover's swim/fly target pitch (`0x719b80`): a climb or dive is ±π/4, back inverted.
+fn swim_pitch_target(flags: u32, pitch: f32) -> f32 {
+    use std::f32::consts::FRAC_PI_4;
+    if flags & (move_flags::FORWARD | move_flags::BACKWARD) == 0
+        || flags & (move_flags::STRAFE_LEFT | move_flags::STRAFE_RIGHT) != 0
     {
         return 0.0;
     }
-    let climb = if flags & move_flags::ASCENDING != 0 {
-        std::f32::consts::FRAC_PI_4
+    let back = if flags & move_flags::BACKWARD != 0 {
+        -1.0
+    } else {
+        1.0
+    };
+    if flags & move_flags::ASCENDING != 0 {
+        back * FRAC_PI_4
     } else if flags & move_flags::DESCENDING != 0 {
-        -std::f32::consts::FRAC_PI_4
+        -back * FRAC_PI_4
     } else {
         pitch
-    };
-    // Strafe zeros the presented pitch (`m_flags & 0xC`) before the backward invert, so a
-    // strafe-climb stays level.
-    if flags & (move_flags::STRAFE_LEFT | move_flags::STRAFE_RIGHT) != 0 {
+    }
+}
+
+/// One frame of the active mover's eased swim/fly pitch (`0x719b80`, reset by `0x715810`).
+pub(crate) fn ease_swim_pitch(smoothed: f32, flags: u32, pitch: f32, dt: f32) -> f32 {
+    if flags & (move_flags::SWIMMING | move_flags::FLYING) == 0 {
         return 0.0;
     }
-    if flags & move_flags::BACKWARD != 0
-        && flags & (move_flags::ASCENDING | move_flags::DESCENDING) != 0
-    {
-        -climb
-    } else {
-        climb
+    let target = swim_pitch_target(flags, pitch);
+    let gap = target - smoothed;
+    if gap.abs() < 0.01 {
+        return target;
     }
+    smoothed + gap * dt.clamp(1.0 / 90.0, 0.05) * 4.0 * std::f32::consts::PI
 }
 
 /// The per-frame movement state the selector reads.

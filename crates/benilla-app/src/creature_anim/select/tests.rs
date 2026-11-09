@@ -949,6 +949,47 @@ fn strafe_flip_always_swings_around_the_front() {
 }
 
 #[test]
+fn the_active_movers_swim_pitch_takes_the_climb_law() {
+    use std::f32::consts::FRAC_PI_4;
+    let settle = |flags: u32, pitch: f32| {
+        (0..240).fold(0.0, |p, _| ease_swim_pitch(p, flags, pitch, 1.0 / 60.0))
+    };
+    let fly = move_flags::FLYING;
+    let forward = fly | move_flags::FORWARD;
+    let back = fly | move_flags::BACKWARD;
+    assert_eq!(settle(forward | move_flags::ASCENDING, 0.9), FRAC_PI_4);
+    assert_eq!(settle(forward | move_flags::DESCENDING, 0.9), -FRAC_PI_4);
+    assert_eq!(settle(back | move_flags::ASCENDING, 0.9), -FRAC_PI_4);
+    assert_eq!(settle(back | move_flags::DESCENDING, 0.9), FRAC_PI_4);
+    assert_eq!(settle(forward, 0.6), 0.6, "no climb: the reported pitch");
+    let strafe = forward | move_flags::ASCENDING | move_flags::STRAFE_LEFT;
+    assert_eq!(settle(strafe, 0.9), 0.0, "a strafe-climb is level");
+    assert_eq!(
+        settle(fly | move_flags::ASCENDING, 0.9),
+        0.0,
+        "a climb with neither forward nor back is level"
+    );
+}
+
+#[test]
+fn the_active_movers_swim_pitch_eases_on_the_reference_clock() {
+    use std::f32::consts::{FRAC_PI_4, PI};
+    let climb = move_flags::FLYING | move_flags::FORWARD | move_flags::ASCENDING;
+    let step = |dt: f32| ease_swim_pitch(0.0, climb, 0.0, dt);
+    let close = |a: f32, b: f32| assert!((a - b).abs() < 1e-5, "{a} vs {b}");
+    close(step(1.0 / 60.0), FRAC_PI_4 * 4.0 * PI / 60.0);
+    close(step(0.001), FRAC_PI_4 * 4.0 * PI / 90.0);
+    close(step(1.0), FRAC_PI_4 * 4.0 * PI * 0.05);
+    assert_eq!(
+        ease_swim_pitch(FRAC_PI_4 - 0.005, climb, 0.0, 0.016),
+        FRAC_PI_4
+    );
+    // Stopped it eases level; out of swim and flight it is level at once.
+    assert!(ease_swim_pitch(0.5, move_flags::FLYING, 0.0, 0.016) > 0.0);
+    assert_eq!(ease_swim_pitch(0.5, 0, 0.0, 0.016), 0.0);
+}
+
+#[test]
 fn base_arm_head_force_is_the_combat_carveout() {
     // The re-zero gate: a relaxed arm rolls (-1)…
     assert!(!arm_forces_head(false, false, 0), "Stand → Stand re-arm");
