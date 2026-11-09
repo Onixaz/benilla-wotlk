@@ -1229,6 +1229,7 @@ mod tests {
             mechanics: Some(&mechanics),
             forms: Some(&forms),
             totems: Some(&totems),
+            power_displays: None,
         };
         // `TOTEM_CATEGORY` names the tool category: 165 is the Mining Pick. The pet's table has no
         // such arm, and a word with no row shows nothing.

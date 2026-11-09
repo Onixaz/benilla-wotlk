@@ -2060,6 +2060,7 @@ mod tests {
             ),
         ]);
         let spells = crate::ui_action::Spells {
+            power_displays: Default::default(),
             catalog: benilla_formats::SpellCatalog::from_displays(displays),
             forms: Default::default(),
             ranges: Default::default(),
