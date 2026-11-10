@@ -432,7 +432,7 @@ fn emit_minimap(
     asset_server: Res<AssetServer>,
     // The last indoor verdict per object blip, and the stamps it was rayed against.
     (
-        death_net,
+        corpse_poi,
         mut indoor_memo,
         residency,
         collider_epoch,
@@ -441,7 +441,7 @@ fn emit_minimap(
         rotate,
         release_poi,
     ): (
-        Res<crate::death::DeathNet>,
+        Res<crate::death::CorpsePoi>,
         Local<IndoorMemo>,
         Res<benilla_world::interior::WmoResidency>,
         Res<benilla_world::collision::ColliderEpoch>,
@@ -776,7 +776,10 @@ fn emit_minimap(
             );
         }
         let win = window.iter().next();
-        let cursor = win.and_then(|w| w.cursor_position());
+        // The OS pointer, else `WOW_HOVER_PROBE`'s aim, the pointer the UI mouse feed reads too.
+        let cursor = win
+            .and_then(|w| w.cursor_position())
+            .or_else(crate::target::hover_probe_point);
         let seam = win.map_or(1.0, |w| crate::ui_script::seam_scale(w.height()));
         // The pan origin snapped to a half-logical-pixel grid: every blip offset and rim bearing
         // derives from `wx`/`wy`, so the layer steps together instead of rewriting the batch mesh
@@ -817,26 +820,25 @@ fn emit_minimap(
             blips::emit_landmarks(
                 ctx,
                 pois.as_ref().map(|p| &p.0),
-                poi_marker.on_map(map.0),
-                release_poi.on_map(map.0),
+                blips::StaticPois {
+                    marker: poi_marker.on_map(map.0),
+                    // Same map only: a dungeon corpse's display coords are the entrance.
+                    corpse: corpse_poi.on_map(map.0),
+                    release: release_poi.on_map(map.0),
+                },
                 map.0,
                 &assets.rim_arrows,
                 assets.poi.as_ref(),
                 &mut quads,
                 &mut hover,
             );
-            // The group and corpse rim arrows, before the player arrow, in the reference's order.
-            let corpse = death_net
-                .corpse
-                .filter(|cp| cp.display_map == map.0 as i32)
-                .map(|cp| cp.position);
+            // The group rim arrows, before the player arrow, in the reference's order.
             blips::emit_group_arrows(
                 ctx,
                 &group,
                 &vehicles.possessors,
                 &guids,
                 &unit_pos,
-                corpse,
                 &assets.rim_arrows,
                 &mut quads,
             );
@@ -960,36 +962,6 @@ fn emit_minimap(
         }
     }
     *blip_hover = hover;
-
-    // The corpse blip in range: its static POI's icon (`0x7f4990`). Out of range it is the rim
-    // arrow above, the fifth slot. Same map only: a dungeon corpse's display coords are the entrance.
-    let corpse_cell = assets
-        .poi
-        .as_ref()
-        .and_then(|p| Some((p, p.cell(blips::CORPSE_POI_ICON)?)));
-    if let (Some((poi, cell)), Some(cp)) = (corpse_cell, death_net.corpse) {
-        if cp.display_map == map.0 as i32 && blip_px_per_yd > 0.0 {
-            let off = turn_offset(
-                Vec2::new(
-                    (wy - cp.position[1]) * blip_px_per_yd,
-                    -(cp.position[0] - wx) * blip_px_per_yd,
-                ),
-                turn,
-            );
-            if off.length() <= side * 0.5 * 0.8 {
-                let s = side * (blips::POI_ICON_PX / blips::BLIP_BASIS_PX);
-                let rect = Rect::from_center_size(center + off, Vec2::splat(s));
-                quads.overlays.push(UiQuad {
-                    rect,
-                    z_key: slot.z,
-                    texture: Some(poi.tex.clone()),
-                    uv: crate::ui_pass::UvRect::from_tex_coords(cell),
-                    color: [1.0, 1.0, 1.0, slot.alpha],
-                    ..default()
-                });
-            }
-        }
-    }
 
     // Seat the click against this frame's geometry; the marker is the stock `MiniMapPing`
     // `<Model>`, drawn over the widget by `crate::ui_models`.
