@@ -229,7 +229,7 @@ pub(crate) struct AutoRepeatActive(pub Option<u32>);
 pub(crate) const SPELL_INTERRUPT_MOVEMENT: u32 = 0x1; // SpellRec+0x54 InterruptFlags (SPELL_INTERRUPT_FLAG_MOVEMENT)
 const CHANNEL_INTERRUPT_MOVING: u32 = 0x8; // SpellRec+0x5c ChannelInterruptFlags (AURA_INTERRUPT_MOVING_CANCELS)
 
-/// The reason the movement cancel ends the cast with (`0x8066ce`).
+/// The wire reason the movement cancel ends the cast with (`0x8066ce`).
 const CANCEL_REASON: u8 = 0x28;
 
 /// A directional move start or a jump happened this frame (the `0x10f0` mask; there is no
@@ -372,7 +372,9 @@ impl SelfCancel<'_, '_> {
                                 spell_id,
                                 kind: CastEventKind::Fail {
                                     interrupt: false,
-                                    reason: CANCEL_REASON,
+                                    reason: benilla_protocol::messages::wotlk_cast_fail_shared(
+                                        CANCEL_REASON,
+                                    ),
                                 },
                                 cast_count: running.map_or(0, |c| c.cast_count),
                                 seq: play_seq.next(),

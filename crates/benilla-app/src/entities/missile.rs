@@ -1250,7 +1250,7 @@ impl Launcher<'_, '_, '_, '_> {
         caster: Entity,
         gos: &[QueuedGo],
         release: Option<Vec3>,
-        which: PrecastDrop,
+        which: Option<PrecastDrop>,
         precast: &mut PrecastHolds,
         commands: &mut Commands,
         sounds: &mut MessageWriter<MissileSound>,
@@ -1275,7 +1275,9 @@ impl Launcher<'_, '_, '_, '_> {
                 play_seq,
             );
         }
-        precast.drop(caster, which, commands);
+        if let Some(which) = which {
+            precast.drop(caster, which, commands);
+        }
     }
 }
 
@@ -1339,7 +1341,7 @@ pub(super) fn spawn_missiles(
                     caster,
                     &gos,
                     release,
-                    PrecastDrop::UpTo(seq),
+                    Some(PrecastDrop::UpTo(seq)),
                     precast,
                     &mut commands,
                     &mut sounds,
@@ -1403,7 +1405,8 @@ pub(super) fn spawn_missiles(
                 spawn.caster,
                 std::slice::from_ref(&go),
                 release,
-                PrecastDrop::Any,
+                // A hold another queued GO took stays for the release that follows (`0x80f5c1`).
+                takes_hold.then_some(PrecastDrop::Any),
                 precast,
                 &mut commands,
                 &mut sounds,
@@ -1425,7 +1428,7 @@ pub(super) fn spawn_missiles(
             ev.entity,
             &gos,
             release,
-            PrecastDrop::Any,
+            Some(PrecastDrop::Any),
             precast,
             &mut commands,
             &mut sounds,
@@ -1472,7 +1475,7 @@ pub(super) fn spawn_missiles(
             caster,
             &gos,
             release,
-            PrecastDrop::Any,
+            Some(PrecastDrop::Any),
             precast,
             &mut commands,
             &mut sounds,
@@ -2677,6 +2680,37 @@ mod tests {
             .write_message(release(caster, 3, ReleaseKind::Fire));
         step(&mut app, 0.05);
         assert!(missiles(&mut app).is_empty());
+        assert!(app.world().get_entity(root).is_err());
+        assert!(!holds(&app, caster));
+    }
+
+    /// A GO launched at once leaves a hold a queued GO took: the release after it launches that GO
+    /// from the held model (`0x80f5c1`, `0x72e011`).
+    #[test]
+    fn an_instant_go_leaves_a_hold_a_queued_go_took() {
+        let mut app = app();
+        let hand = Vec3::new(0.0, 1.5, 0.0);
+        let held_at = Vec3::new(0.4, 2.0, -0.3);
+        let (caster, root, target) = holding_caster(&mut app, hand, held_at);
+        app.world_mut().write_message(MissileSpawn {
+            seq: 3,
+            ..go(caster, target, true)
+        });
+        step(&mut app, 0.05);
+        app.world_mut().write_message(MissileSpawn {
+            seq: 4,
+            ..go(caster, target, false)
+        });
+        step(&mut app, 0.05);
+        let from: Vec<Vec3> = missiles(&mut app).into_iter().map(|(_, at)| at).collect();
+        assert_eq!(from, vec![hand], "the instant GO leaves from the marker");
+        assert!(holds(&app, caster), "kept for the queued GO");
+        app.world_mut()
+            .write_message(release(caster, 5, ReleaseKind::Fire));
+        step(&mut app, 0.05);
+        let mut from: Vec<Vec3> = missiles(&mut app).into_iter().map(|(_, at)| at).collect();
+        from.sort_by(|a, b| a.y.total_cmp(&b.y));
+        assert_eq!(from, vec![hand, held_at]);
         assert!(app.world().get_entity(root).is_err());
         assert!(!holds(&app, caster));
     }
