@@ -104,7 +104,7 @@ pub(super) fn cut_loop(
         return;
     };
     // op4's arg3 is a literal `-1` here: the variation always rolls.
-    let (c, r) = roll_loop(anims, head, true, rng);
+    let (c, r) = roll_loop(anims, head, true, catalog, rng);
     *window = Some((c.node, r));
     arm(tr, player, c, RepeatAnimation::Forever, 1.0, Duration::ZERO);
     apply_direction(player, c, dir, 1.0);
@@ -155,20 +155,22 @@ pub(super) fn roll_oneshot<'a>(
     (c, repeat)
 }
 
-/// A looping arm's variation (`variationIdx = −1`): relaxed, the weighted walk (the idle fidget);
-/// combat or cast, the head. Only the watchdog's re-arm re-rolls, never the kernel.
+/// A looping arm's variation (`variationIdx = −1`): the weighted walk (the idle fidget), but the
+/// head for a Stand or ready id under combat or cast ([`select::takes_head`]). Only the watchdog's
+/// re-arm re-rolls, never the kernel.
 pub(super) fn pick_loop_variation<'a>(
     anims: &'a ModelAnimations,
     head: &'a AnimClip,
     relaxed: bool,
+    catalog: Option<&AnimDataCatalog>,
     rng: &mut benilla_assets::AnimRng,
 ) -> &'a AnimClip {
-    if relaxed {
+    if select::takes_head(relaxed, head.anim_id, catalog) {
+        head
+    } else {
         anims
             .pick_variation(head.anim_id, rng.draw())
             .unwrap_or(head)
-    } else {
-        head
     }
 }
 
@@ -178,11 +180,36 @@ pub(super) fn roll_loop<'a>(
     anims: &'a ModelAnimations,
     head: &'a AnimClip,
     relaxed: bool,
+    catalog: Option<&AnimDataCatalog>,
     rng: &mut benilla_assets::AnimRng,
 ) -> (&'a AnimClip, u32) {
-    let c = pick_loop_variation(anims, head, relaxed, rng);
+    let c = pick_loop_variation(anims, head, relaxed, catalog, rng);
     let r = rng.replay_count(c.replay);
     (c, r)
+}
+
+/// The model's own end of a loop no pick replayed (`0x831fc0`): a rolled arm of an id with
+/// variations picks one again by frequency, else the armed clip loops on; with a fresh budget.
+pub(super) fn model_loop_end<'a>(
+    anims: &'a ModelAnimations,
+    armed: &'a AnimClip,
+    relaxed: bool,
+    catalog: Option<&AnimDataCatalog>,
+    rng: &mut benilla_assets::AnimRng,
+) -> (&'a AnimClip, u32) {
+    let variants = anims
+        .clips
+        .iter()
+        .filter(|c| c.anim_id == armed.anim_id)
+        .count();
+    let c = if variants > 1 && !select::takes_head(relaxed, armed.anim_id, catalog) {
+        anims
+            .pick_variation(armed.anim_id, rng.draw())
+            .unwrap_or(armed)
+    } else {
+        armed
+    };
+    (c, rng.replay_count(c.replay))
 }
 
 /// Resolves `id` through the model's baked fallback and cross-fades into it with its rolls; a loop
@@ -208,7 +235,7 @@ pub(super) fn play(
     let dir = resolved(anims, id, catalog);
     if let Some(c) = anims.find(dir.id) {
         let (c, repeat) = if looping {
-            let (c, r) = roll_loop(anims, c, relaxed, rng);
+            let (c, r) = roll_loop(anims, c, relaxed, catalog, rng);
             *window = Some((c.node, r));
             (c, RepeatAnimation::Forever)
         } else {

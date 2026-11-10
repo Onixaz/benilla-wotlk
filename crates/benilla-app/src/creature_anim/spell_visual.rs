@@ -529,18 +529,23 @@ impl KitPlay {
     };
 }
 
-/// A kit play's anim flags: its own, and `Attributes & 0x40000` keeps the weapons (`0x73b1c9`).
+/// A kit play's anim flags: its own, and the weapons kept by `Attributes & 0x40000` (`0x73b1c9`)
+/// or by a missile model of -1 or -2 in the spell's own first `SpellVisual` row, never the
+/// low-violence pick nor the ranged weapon's merge (`0x74532f`, `0x73b1dc`).
 fn kit_anim_play(
     spells: &crate::ui_action::Spells,
+    visuals: &SpellVisualCatalog,
     spell_id: u32,
     kit: &VisualKit,
 ) -> AnimPlayFlags {
     let mut play = AnimPlayFlags::from_kit(kit.flags);
-    if spells
-        .catalog
-        .get(spell_id)
-        .is_some_and(|d| d.attributes & 0x40000 != 0)
-    {
+    let Some(def) = spells.catalog.get(spell_id) else {
+        return play;
+    };
+    let weapon_missile = visuals
+        .stages(def.visual)
+        .is_some_and(|s| matches!(s.missile_model as i32, -2 | -1));
+    if def.attributes & 0x40000 != 0 || weapon_missile {
         play.0 |= AnimPlayFlags::KEEP_WEAPONS;
     }
     play
@@ -569,7 +574,7 @@ fn play_kit(
                 anim_id,
                 seq,
                 via_player: false,
-                play: kit_anim_play(out.spells, spell_id, kit),
+                play: kit_anim_play(out.spells, visuals, spell_id, kit),
             });
         }
     }
@@ -880,7 +885,8 @@ struct ImpactPlay {
     /// Lay the victim's severity-0 wound flinch beside the kit.
     flinch: bool,
     seq: u64,
-    /// A missile's arrival gates the state kit on the target's aura; the instant hit does not.
+    /// A missile's arrival replays the state kit on a target holding the aura; the instant hit
+    /// plays only the impact kits (`0x801f10`).
     aura: Option<AuraHeld>,
 }
 
@@ -927,9 +933,9 @@ fn impact_kit<'a>(
         .find_map(|id| visuals.kit(id))
 }
 
-/// The unit-impact hand-off: the impact kit (stage 1), then the state kit's anim and sound, its
-/// models owned by [`arm_aura_state_fx`]; a missile replays it only on a target holding the aura.
-/// The flinch comes after the kit for a harmful instant hit, before it for every missile target.
+/// The unit-impact hand-off: the impact kit (stage 1), then, for a missile on a target holding the
+/// aura, the state kit's anim and sound, its models owned by [`arm_aura_state_fx`]. The flinch
+/// comes after the kit for a harmful instant hit, before it for every missile target.
 fn play_impact(
     entity: Entity,
     impact: ImpactPlay,
@@ -976,7 +982,7 @@ fn play_impact(
     if let Some(kit) = (stages.state != 0)
         .then(|| visuals.kit(stages.state))
         .flatten()
-        .filter(|k| aura.is_none_or(|a| a.replays(k.flags)))
+        .filter(|k| aura.is_some_and(|a| a.replays(k.flags)))
     {
         let play = KitPlay {
             effects: false,

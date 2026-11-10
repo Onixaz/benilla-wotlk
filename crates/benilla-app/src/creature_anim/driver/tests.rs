@@ -5139,3 +5139,126 @@ fn a_create2_sitter_starts_on_its_loop_where_a_create_sits_down() {
     assert_eq!(mode(&app, seeded), Mode::Looping(Special::Pose(1)));
     assert_eq!(mode(&app, plain), Mode::Entering(Special::Pose(1)));
 }
+
+/// A stationary caster on real clip assets holding precast 51 (`HOLD_SPAN` long) in two
+/// variations, a zero-frequency head and a max-frequency other, under a hold with play flags
+/// `play`. Nodes: Stand, the hold's head, the hold's other.
+fn spawn_kit_holder(
+    app: &mut App,
+    play: super::super::AnimPlayFlags,
+) -> (Entity, Vec<AnimationNodeIndex>) {
+    use bevy::animation::graph::{AnimationGraph, AnimationGraphHandle};
+    use bevy::animation::AnimationClip;
+
+    const HOLD_SPAN: f32 = 0.1;
+    let handles: Vec<_> = [4.0, HOLD_SPAN, HOLD_SPAN]
+        .iter()
+        .map(|d| {
+            let mut c = AnimationClip::default();
+            c.set_duration(*d);
+            app.world_mut()
+                .resource_mut::<Assets<AnimationClip>>()
+                .add(c)
+        })
+        .collect();
+    let (graph, nodes) = AnimationGraph::from_clips(handles);
+    let graph_handle = app
+        .world_mut()
+        .resource_mut::<Assets<AnimationGraph>>()
+        .add(graph);
+    let seq = |id: u16, node, duration: f32, frequency: u16| AnimClip {
+        node,
+        duration,
+        blend_time: 0.0,
+        frequency,
+        replay: (0, 0),
+        ..clip(id, 0, true)
+    };
+    let anims = ModelAnimations {
+        graph: graph_handle.clone(),
+        clips: vec![
+            seq(0, nodes[0], 4.0, 0),
+            seq(51, nodes[1], HOLD_SPAN, 0),
+            seq(51, nodes[2], HOLD_SPAN, 32767),
+        ],
+        hand_close: [None, None],
+        playable_animation_lookup: Vec::new(),
+        animation_lookup: Vec::new(),
+        global_bones: Vec::new(),
+        first_seq: None,
+        pose: Default::default(),
+    };
+    let unit = app
+        .world_mut()
+        .spawn((
+            anims,
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimationGraphHandle(graph_handle),
+            AnimDriver::default(),
+            CastHold {
+                ranged: false,
+                start_anim: None,
+                seq: 0,
+                play,
+                anim_id: 51,
+                spell_id: 20793,
+            },
+        ))
+        .id();
+    (unit, nodes)
+}
+
+/// Kit flag `0x40`: at the held kit anim's clip end the hold is picked and played again from its
+/// start (`0x7243d4`); without it nothing is picked and the clip runs on, the model's own end
+/// re-rolling only among its variations (`0x831fc0`). Either way the hold's arm rolls its
+/// variation, as only Stand and the ready ids keep the head under a cast (`0x737f51`).
+#[test]
+fn a_held_kit_anim_is_played_again_at_its_end_only_under_kit_flag_0x40() {
+    use super::super::AnimPlayFlags;
+    for repick in [false, true] {
+        let mut app = app();
+        let flags = AnimPlayFlags(if repick {
+            AnimPlayFlags::HOLD_REPICK
+        } else {
+            0
+        });
+        let (unit, nodes) = spawn_kit_holder(&mut app, flags);
+        let completions = |app: &App| {
+            app.world()
+                .entity(unit)
+                .get::<AnimationPlayer>()
+                .unwrap()
+                .animation(nodes[2])
+                .map(|a| a.completions())
+        };
+        app.update();
+        assert_eq!(
+            app.world().entity(unit).get::<AnimDriver>().unwrap().gait,
+            Some(51)
+        );
+        assert_eq!(completions(&app), Some(0), "the rolled variation armed");
+        assert!(
+            app.world()
+                .entity(unit)
+                .get::<AnimationPlayer>()
+                .unwrap()
+                .animation(nodes[1])
+                .is_none(),
+            "not the head"
+        );
+        // Past the 100 ms clip's end, then two more frames.
+        for _ in 0..6 {
+            advance(&mut app, 25);
+        }
+        if repick {
+            assert_eq!(
+                completions(&app),
+                Some(0),
+                "0x40: played again from its start"
+            );
+        } else {
+            assert_eq!(completions(&app), Some(1), "no 0x40: the clip runs on");
+        }
+    }
+}

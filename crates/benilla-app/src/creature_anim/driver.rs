@@ -45,7 +45,7 @@ mod tests;
 mod wound;
 
 pub(super) use grip::drive_hand_grip;
-use play::{holds_own_clip, oneshot_finished, play_clip, roll_loop, roll_oneshot};
+use play::{holds_own_clip, model_loop_end, oneshot_finished, play_clip, roll_loop, roll_oneshot};
 use wound::{wound_evict, wound_trigger, wound_upkeep, WoundEdge};
 
 /// The masked overlay's weight over the base clip on the SpineLow subtree, where the unmasked base
@@ -1197,12 +1197,32 @@ fn drive_unit(
     // re-selection: clearing the target lets `mode::run` re-pick, which is what ends a
     // turn-shuffle. A Special loop re-arms its id.
     if let Some((node, budget)) = drv.loop_window {
-        if tr.get_main_animation() == Some(node)
-            && player
-                .animation(node)
-                .is_some_and(|a| a.completions() >= budget)
-        {
-            if drv.mode == Mode::Gait {
+        let done = player.animation(node).map_or(0, |a| a.completions());
+        if tr.get_main_animation() == Some(node) && done >= budget {
+            // The held kit anim, armed as its own id, picks itself again only under kit flag
+            // `0x40` (`0x7243cc`); without it no id is picked and the model's own end re-rolls.
+            let held = kit_hold.filter(|h| {
+                cast_start.is_none() && drv.gait == Some(h.anim_id) && !h.play.hold_repick()
+            });
+            if drv.mode == Mode::Gait && held.is_some() {
+                let armed = anims.clips.iter().find(|c| c.node == node);
+                if let Some(armed) = armed {
+                    let rate = player.animation(node).map_or(1.0, |a| a.speed());
+                    let (c, fresh) = model_loop_end(anims, armed, relaxed, catalog, rng);
+                    if c.node == node {
+                        drv.loop_window = Some((node, done + fresh));
+                    } else if play_clip(
+                        &mut drv.base_lock,
+                        &mut tr,
+                        &mut player,
+                        c,
+                        bevy::animation::RepeatAnimation::Forever,
+                        rate,
+                    ) {
+                        drv.loop_window = Some((c.node, fresh));
+                    }
+                }
+            } else if drv.mode == Mode::Gait {
                 drv.gait = None;
                 drv.interact_hold = false; // the window's end is a re-pick
             } else {
@@ -1213,7 +1233,7 @@ fn drive_unit(
                     .and_then(|armed| find_resolved(anims, armed.anim_id, catalog));
                 if let Some(head) = head {
                     let rate = player.animation(node).map_or(1.0, |a| a.speed());
-                    let (c, fresh) = roll_loop(anims, head, relaxed, rng);
+                    let (c, fresh) = roll_loop(anims, head, relaxed, catalog, rng);
                     play_clip(
                         &mut drv.base_lock,
                         &mut tr,

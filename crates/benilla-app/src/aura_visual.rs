@@ -624,7 +624,7 @@ pub(crate) fn apply_aura_alpha(
         author_descendants(
             root,
             (root, skip, alpha),
-            alpha,
+            Some(alpha),
             now,
             &walk,
             &children_of,
@@ -680,11 +680,12 @@ pub(crate) use benilla_world::model_fade::OwnAlpha as OwnModelAlpha;
 
 /// Write `entity` if it is a fadeable part, then recurse regardless: held items, helms and
 /// shoulders hang under joints that carry no [`FadeMaterials`]. `scope` is the unit root, the
-/// mount a body-only alpha holds opaque, and the unit's alpha; `alpha` is this subtree's.
+/// mount a body-only alpha leaves alone, and the unit's alpha; `alpha` is this subtree's, `None`
+/// where nothing is written.
 fn author_descendants(
     entity: Entity,
     scope: (Entity, Option<Entity>, f32),
-    alpha: f32,
+    alpha: Option<f32>,
     now: f32,
     walk: &AlphaWalk,
     children_of: &Query<&Children>,
@@ -697,18 +698,19 @@ fn author_descendants(
         return;
     }
     let (root, skip, unit_alpha) = scope;
-    // The mount's subtree stays opaque, but for the rider's seat frame under it.
+    // The mount's subtree keeps the alpha it had, but for the rider's seat frame under it.
     let alpha = if skip == Some(entity) {
-        1.0
+        None
     } else if walk.frames.get(entity).is_ok_and(|f| f.0 == root) {
-        unit_alpha
+        Some(unit_alpha)
     } else {
         alpha
     };
-    if alpha == unit_alpha {
+    if alpha == Some(unit_alpha) {
         walked.insert(entity);
     }
-    if let Ok((fm, mut tag, mut mat, anim, lit, fade, pending, far_side)) = parts.get_mut(entity) {
+    let part = alpha.and_then(|a| parts.get_mut(entity).ok().map(|p| (a, p)));
+    if let Some((alpha, (fm, mut tag, mut mat, anim, lit, fade, pending, far_side))) = part {
         // A part awaiting its appear-fade stays invisible until the ramp arms; writing it would
         // flash it at the aura alpha.
         if !pending {

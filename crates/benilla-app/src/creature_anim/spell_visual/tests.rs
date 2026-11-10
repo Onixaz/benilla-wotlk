@@ -1736,13 +1736,11 @@ fn a_shooter_with_no_ranged_weapon_resolves_no_clip_at_all() {
     );
 }
 
-/// A state kit's anim id is a compare, never a play: the kit player's one play site is skipped for
-/// stage 2, the stage both field-4 users play (the aura watcher and the impact hand-off), so the id
-/// only feeds the reference's armed-id compare and a base recompute. Charge (22911) plays Knockdown
-/// (121) from impact kit 348; state kit 349's Stun (14) is a recompute, which Knockdown's
-/// base-animation lock refuses.
+/// An instant hit plays the impact kits alone (`0x801f10`): Charge (22911) plays Knockdown (121)
+/// from impact kit 348, and state kit 349's Stun (14) is neither a second play nor a recompute; it
+/// comes with the aura's own state kit.
 #[test]
-fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
+fn an_instant_hit_plays_its_impact_kit_and_no_state_kit() {
     const CHARGE: u32 = 22911;
     const CHARGE_VISUAL: u32 = 3783;
     const IMPACT_KIT: u32 = 348;
@@ -1846,10 +1844,9 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         .drain()
         .map(|r| (r.entity, r.anim_id))
         .collect();
-    assert_eq!(
-        recomputes,
-        vec![(victim, STUN)],
-        "the state kit's id is spent on the stage-2 recompute instead"
+    assert!(
+        recomputes.is_empty(),
+        "no state kit plays at the instant hit, not even its Stun ({STUN}) compare"
     );
 }
 
@@ -2808,4 +2805,49 @@ fn an_own_alpha_kit_marks_its_models() {
     };
     assert_eq!(own(benilla_formats::kit_flag::OWN_MODEL_ALPHA), vec![true]);
     assert_eq!(own(0), vec![false]);
+}
+
+/// A spell whose own first `SpellVisual` row flies missile model -1 or -2 keeps the weapons out
+/// at every kit play; the ranged weapon's row filling an empty one does not count, nor does any
+/// other model.
+#[test]
+fn a_weapon_missile_row_keeps_the_weapons_out() {
+    const VISUAL: u32 = 900;
+    const NO_ROW: u32 = 901;
+    let kit = VisualKit {
+        anim_id: Some(53),
+        ..Default::default()
+    };
+    let play_for = |missile_model: u32, visual: u32| {
+        let visuals = SpellVisualCatalog::from_tables(
+            HashMap::from([(
+                VISUAL,
+                VisualStages {
+                    missile_model,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::new(),
+        );
+        let spells = crate::ui_action::Spells {
+            catalog: SpellCatalog::from_displays(HashMap::from([(
+                1,
+                SpellDisplay {
+                    visual,
+                    ..Default::default()
+                },
+            )])),
+            ..crate::ui_action::Spells::empty_for_tests()
+        };
+        super::kit_anim_play(&spells, &visuals, 1, &kit).keep_weapons()
+    };
+    assert!(play_for(-1i32 as u32, VISUAL), "model -1");
+    assert!(play_for(-2i32 as u32, VISUAL), "model -2");
+    assert!(!play_for(-3i32 as u32, VISUAL), "model -3 is no such case");
+    assert!(!play_for(0, VISUAL), "no model");
+    assert!(!play_for(77, VISUAL), "a real model");
+    assert!(
+        !play_for(-1i32 as u32, NO_ROW),
+        "only the spell's own row is read"
+    );
 }

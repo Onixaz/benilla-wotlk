@@ -710,11 +710,20 @@ pub(super) fn reconcile_sheath(
     None
 }
 
-/// Whether a looping base arm keeps the head variation rather than rolling: with an auto-attack
-/// target, a cast or channel held, or a combat, cast or ready clip leaving. The ids here
-/// approximate the client's four classifiers.
+/// Whether a base arm's classifiers hold: an auto-attack target, a cast or channel held, or a
+/// combat, cast or ready clip leaving. The ids here approximate the client's four classifiers.
 pub(super) fn arm_forces_head(engaged: bool, casting: bool, outgoing: u16) -> bool {
     engaged || casting || matches!(outgoing, 16..=19 | 25..=29 | 51..=54)
+}
+
+/// Whether an arm of `id` takes the head variation: under the classifiers, a Stand or a
+/// ready-behaviour (25 to 29) id only; every other arm rolls (`0x737f51`-`0x737f83`).
+pub(super) fn takes_head(
+    relaxed: bool,
+    id: u16,
+    catalog: Option<&benilla_formats::AnimDataCatalog>,
+) -> bool {
+    !relaxed && (id == 0 || (25..=29).contains(&behavior_of(id, catalog)))
 }
 
 /// The wound flinch (`0x736640`): crit CombatCritical, engaged CombatWound, else StandWound.

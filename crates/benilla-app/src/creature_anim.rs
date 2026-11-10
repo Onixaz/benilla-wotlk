@@ -491,6 +491,9 @@ impl AnimPlayFlags {
     pub(crate) const NO_SPECIAL: u8 = 0x8;
     /// The clip's WeaponFlags stow is skipped (`0x738180`).
     pub(crate) const KEEP_WEAPONS: u8 = 0x20;
+    /// Not a play flag: kit flag `0x40`, which the hold's pick reads at the base anim's end
+    /// (`0x7243d4`).
+    pub(crate) const HOLD_REPICK: u8 = 0x80;
 
     /// A kit's flags as its anim play passes them (`0x714ce0`).
     pub(crate) fn from_kit(kit_flags: u32) -> Self {
@@ -500,6 +503,7 @@ impl AnimPlayFlags {
             (k::NO_TIER_RESOLVE, Self::NO_TIER),
             (k::NO_SPECIAL_REMAP, Self::NO_SPECIAL),
             (k::KEEP_WEAPONS, Self::KEEP_WEAPONS),
+            (k::REPICK_HELD_ANIM, Self::HOLD_REPICK),
         ];
         Self(
             bits.iter()
@@ -521,6 +525,11 @@ impl AnimPlayFlags {
     /// The played clip's WeaponFlags stow is skipped.
     pub(crate) fn keep_weapons(self) -> bool {
         self.0 & Self::KEEP_WEAPONS != 0
+    }
+
+    /// A held kit anim is played again when its clip ends.
+    pub(crate) fn hold_repick(self) -> bool {
+        self.0 & Self::HOLD_REPICK != 0
     }
 }
 

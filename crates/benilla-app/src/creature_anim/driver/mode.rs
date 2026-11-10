@@ -435,7 +435,7 @@ pub(super) fn run(
                         armed = false;
                     } else {
                         // Variation (when relaxed) and budget, the watchdog window.
-                        let (c, budget) = roll_loop(anims, c, relaxed, rng);
+                        let (c, budget) = roll_loop(anims, c, relaxed, catalog, rng);
                         if traced && benilla_assets::trace::enabled() {
                             // Every fresh gait play, same-clip replays included.
                             benilla_assets::trace::line(

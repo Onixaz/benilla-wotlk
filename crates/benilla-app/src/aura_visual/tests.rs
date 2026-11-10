@@ -998,6 +998,11 @@ fn the_procedural_fade_truncates_its_target() {
 /// One alpha-authored unit: a body part, a mount child with its own part and the rider's seat frame
 /// holding a weapon part, and a kit effect keeping its own alpha. Returns the parts in that order.
 fn mounted_unit_at(body_only: bool) -> (App, [Entity; 4]) {
+    mounted_unit_with(body_only, 1.0)
+}
+
+/// [`mounted_unit_at`] with the mount's part already at `mount_alpha`.
+fn mounted_unit_with(body_only: bool, mount_alpha: f32) -> (App, [Entity; 4]) {
     use benilla_world::model_fade::FadeMaterials;
     use bevy::mesh::MeshTag;
 
@@ -1041,6 +1046,9 @@ fn mounted_unit_at(body_only: bool) -> (App, [Entity; 4]) {
         .entity_mut(root)
         .insert(crate::entities::mount::MountChild(mount));
     let mount_part = part(&mut app, mount);
+    app.world_mut()
+        .entity_mut(mount_part)
+        .insert(MeshTag(benilla_world::mesh_tag::with_alpha(0, mount_alpha)));
     let seat = app
         .world_mut()
         .spawn((benilla_world::rig_anim::RigFrame(root), ChildOf(mount)))
@@ -1123,4 +1131,22 @@ fn the_body_only_latch_follows_install_and_reap() {
     // A kit with no alpha node leaves the latch alone.
     install_kit(&mut n, GHOST, &[AuraNode::Tint([1, 2, 3])], false, 0.0);
     assert!(n.body_only);
+}
+
+/// A body-only alpha never writes the mount: a mount another fade left translucent stays at that
+/// alpha, as `0x71ac41` points the write at the rider's own model.
+#[test]
+fn a_body_only_kit_leaves_the_mount_where_it_was() {
+    let (app, [body, mount, ..]) = mounted_unit_with(true, 0.5);
+    assert!((part_alpha(&app, body) - 0.3).abs() < 1.0 / 63.0);
+    assert!(
+        (part_alpha(&app, mount) - 0.5).abs() < 1.0 / 63.0,
+        "the mount keeps the alpha it had, not 1.0"
+    );
+
+    let (app, [_, mount, ..]) = mounted_unit_with(false, 0.5);
+    assert!(
+        (part_alpha(&app, mount) - 0.3).abs() < 1.0 / 63.0,
+        "without the bit the mount takes the fade"
+    );
 }

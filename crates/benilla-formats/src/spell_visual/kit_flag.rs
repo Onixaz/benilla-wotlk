@@ -8,6 +8,8 @@ pub const NO_TIER_RESOLVE: u32 = 0x8;
 pub const NO_SPECIAL_REMAP: u32 = 0x10;
 /// A stage-2 model re-arms its birth sequence at each end instead of handing over to `Hold` (`0x7449e2`).
 pub const AURA_LOOPS_BIRTH: u32 = 0x20;
+/// A held precast or channel anim is played again at its base anim's end, anim flag `0x10` (`0x7243d4`).
+pub const REPICK_HELD_ANIM: u32 = 0x40;
 /// A missile replays the state kit only on a target whose aura has an effect applied (`0x702f2e`).
 pub const ACTIVE_AURA_ONLY: u32 = 0x80;
 /// The kit's anim keeps the weapons out: play flag `0x20` skips the clip's stow (`0x73b1b6`, `0x738180`).
