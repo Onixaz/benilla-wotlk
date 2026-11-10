@@ -316,12 +316,12 @@ pub(crate) struct Model {
     /// `GetTime()`'s session seconds, which only the host moves ([`super::UiScript::tick`],
     /// [`super::UiScript::set_now`]); off `_G`, as the reference's clock is the OS tick count.
     pub(crate) now: f64,
-    /// Wall-clock anchor for Lua's live `GetTime()` reads during one UI tick.
-    pub(crate) clock_wall: Instant,
-    /// Whether Lua is executing inside the current UI tick.
-    pub(crate) clock_live: bool,
-    /// Whether Lua actually sampled the live clock during this tick.
-    pub(crate) clock_read: Cell<bool>,
+    /// When the running tick started, for `GetTime()`'s live reads inside it.
+    pub(crate) clock_wall: Cell<Instant>,
+    /// Inside a tick: `GetTime()` runs on from `clock_wall`.
+    pub(crate) clock_live: Cell<bool>,
+    /// The latest `GetTime()` answered; the clock never reads below it.
+    pub(crate) clock_floor: Cell<f64>,
     /// `GetGameTime()`'s `(hour, minute)`, pushed by the host as the game clock ticks.
     pub(crate) game_time: (u32, u32),
     /// The zone caches the four zone-text getters and `GetZonePVPInfo` read.
@@ -1448,9 +1448,9 @@ impl Model {
             saved_instances: Vec::new(),
             raid_selection: 0,
             now: 0.0,
-            clock_wall: Instant::now(),
-            clock_live: false,
-            clock_read: Cell::new(false),
+            clock_wall: Cell::new(Instant::now()),
+            clock_live: Cell::new(false),
+            clock_floor: Cell::new(0.0),
             game_time: (0, 0),
             zone: Default::default(),
             instance_type: None,

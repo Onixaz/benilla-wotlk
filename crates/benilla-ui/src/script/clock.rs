@@ -19,6 +19,7 @@ impl super::UiScript {
     /// construction; after that only [`Self::tick`] moves it.
     pub fn set_now(&mut self, secs: f64) {
         set_field!(self, now, secs);
+        self.model_ref().clock_floor.set(0.0);
     }
 
     /// Push the game clock `GetGameTime()` answers, `(hour, minute)`; 0:00 until the first push.
@@ -28,23 +29,26 @@ impl super::UiScript {
 }
 
 /// `GetTime()`'s clock, for a caller holding no model borrow; one that holds it reads `model.now`.
+/// Inside a tick it runs on from the tick's start, as the reference's OS clock does under a long
+/// handler; a value once read is a floor, so the next tick's start never reads earlier.
 pub(crate) fn now(lua: &Lua) -> f64 {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    if model.clock_live {
-        model.clock_read.set(true);
-        model.now + model.clock_wall.elapsed().as_secs_f64()
-    } else {
-        model.now
+    let mut t = model.now;
+    if model.clock_live.get() {
+        t += model.clock_wall.get().elapsed().as_secs_f64();
     }
+    let t = t.max(model.clock_floor.get());
+    model.clock_floor.set(t);
+    t
 }
 
 /// Register `GetTime` and `GetGameTime`.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
-    // GetTime(): one number, `GetTickCount` times the f64 0.001. During a UI tick the clock also
-    // advances from its wall-clock anchor, so time-sliced Lua callbacks can observe their budget.
+    // GetTime() (`0x6081f0`): one number, the OS millisecond clock times the f64 0.001, read live,
+    // so a time-sliced handler sees its own budget run down.
     g.set("GetTime", lua.create_function(|lua, ()| Ok(now(lua)))?)?;
     // GetGameTime(): two numbers, the hour then the minute, the clock `SMSG_LOGIN_SETTIMESPEED`
     // seeds; minute resolution, no seconds.
@@ -59,4 +63,37 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::script::UiScript;
+
+    /// A handler spinning on `GetTime()` sees it run on inside its tick, while the session clock
+    /// moves by the host's elapsed alone, and no read after the tick answers earlier.
+    #[test]
+    fn a_live_read_inside_a_tick_runs_on_without_advancing_the_session_clock() {
+        let mut s = UiScript::new().unwrap();
+        s.set_now(100.0);
+        s.run(
+            r#"
+            local f = CreateFrame("Frame")
+            f:SetScript("OnUpdate", function()
+                local start = GetTime()
+                while GetTime() - start < 0.002 do end
+                Last = GetTime()
+            end)
+            "#,
+        )
+        .unwrap();
+        for _ in 0..5 {
+            s.tick(1.0);
+        }
+        assert_eq!(s.now(), 105.0);
+        let last = s.eval::<f64>("return Last").unwrap();
+        assert!(last >= 105.002 && last < 106.0, "{last}");
+        assert!(s.eval::<f64>("return GetTime()").unwrap() >= last);
+        s.tick(0.0);
+        assert!(s.eval::<f64>("return Last").unwrap() >= last);
+    }
 }
