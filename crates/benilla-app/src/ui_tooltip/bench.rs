@@ -27,6 +27,7 @@ fn feed_cost_per_invalidation() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = Spells {
+        power_displays: Default::default(),
         difficulties: Default::default(),
         instance_difficulty: Default::default(),
         catalog: benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc"),

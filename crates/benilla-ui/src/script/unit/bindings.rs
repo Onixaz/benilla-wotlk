@@ -1011,24 +1011,50 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitPowerType(unit): one number, the power index (0 mana, 1 rage, ...), with no token string.
-    // A unit that does not resolve answers 0, never nil: `UnitFrame.lua:122` indexes `ManaBarColor`
-    // with it.
+    // UnitPowerType(unit [, index]) (`0x60f100`): a unit whose vehicle shows a `PowerDisplay.dbc`
+    // row over its live power answers the row's type, tag and colour for slot `index`; else slot 1
+    // answers the power index and its token (`0x7fe4b0`), and anything else 0 and "" (`0x60f32a`),
+    // never nil: `UnitFrame.lua:162` indexes `_G` with the token.
     g.set(
         "UnitPowerType",
-        lua.create_function(|lua, token: Value| {
+        lua.create_function(|lua, (token, index): (Value, Value)| {
             let token = Some(crate::script::binding_abi::string_arg(
                 lua,
                 token,
-                r#"Usage: UnitPowerType("unit")"#,
+                r#"Usage: UnitPowerType("unit"[, index])"#,
             )?);
-            // (type, token) as `0x60f100` pushes them: the token is the power-type string
-            // (`0x7fe4b0`), and a unit that resolves nothing answers 0 and "" (`0x60f32a`).
-            let ty = with_unit(lua, &token, None, |u| Some(u.power_type))?;
-            Ok(match ty {
-                Some(ty) => (i64::from(ty), power_token(ty)),
-                None => (0, ""),
-            })
+            // 0-based; a non-number is slot 1.
+            let slot = lua
+                .coerce_number(index)?
+                .map_or(0, |n| (n as i64 as u32).wrapping_sub(1));
+            let unit = with_unit(lua, &token, None, |u| Some((u.guid, u.power_type)))?;
+            let display = unit.and_then(|(guid, power_type)| {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                let ids = model.vehicles.units.get(&guid)?.power_displays;
+                let row = model.power_displays.get(ids.get(slot as usize)?)?;
+                (row.actual_type == u32::from(power_type)).then(|| row.clone())
+            });
+            if let Some(row) = display {
+                // `0x60f224`: each byte times the float 1/255, widened to a double.
+                let channel = |b: u8| Value::Number(f64::from(b) * f64::from(1.0_f32 / 255.0));
+                return Ok(MultiValue::from_vec(vec![
+                    Value::Integer(i64::from(row.actual_type)),
+                    Value::String(lua.create_string(&row.tag)?),
+                    channel(row.rgb[0]),
+                    channel(row.rgb[1]),
+                    channel(row.rgb[2]),
+                ]));
+            }
+            let (ty, name) = match unit {
+                Some((_, ty)) if slot == 0 => (i64::from(ty), power_token(ty)),
+                _ => (0, ""),
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::Integer(ty),
+                Value::String(lua.create_string(name)?),
+            ]))
         })?,
     )?;
 

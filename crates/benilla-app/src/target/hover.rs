@@ -94,9 +94,18 @@ pub(super) struct PickPose<'w, 's> {
     rigs: Query<'w, 's, &'static benilla_world::rig_palette::RigSkin>,
     /// Worn gear drawn through its wearer's slot: its palette is the wearer's rider rows.
     riders: Query<'w, 's, &'static benilla_world::rig_rider::RigRider>,
+    /// A unit's model frame, where its body is drawn: a seat anchor for a passenger.
+    poses: Query<'w, 's, &'static benilla_world::rig_anim::RigPose>,
+    frames: Query<'w, 's, &'static GlobalTransform>,
 }
 
 impl PickPose<'_, '_> {
+    /// The frame `unit`'s model is drawn in, its rig's `joints_root`, else the unit's own.
+    fn model_frame(&self, unit: Entity) -> Option<&GlobalTransform> {
+        let frame = self.poses.get(unit).map_or(unit, |p| p.joints_root);
+        self.frames.get(frame).ok()
+    }
+
     /// The skinning matrices a part linked to `rig` draws with.
     fn palette(&self, rig: Entity) -> Option<Vec<Mat4>> {
         if let Ok(skin) = self.rigs.get(rig) {
@@ -318,16 +327,18 @@ pub(super) fn update_hover(
             continue; // static/cube unit → the AABB fallback below
         }
         faithful.insert(entity);
-        // Broad phase: the playing sequence's bounds sphere, scaled by `OBJECT_FIELD_SCALE_X`. An
+        // Broad phase: the playing sequence's bounds sphere in the model's drawn frame, as
+        // `0x81cff0` takes each model's own matrix, so a passenger's sphere rides its seat. An
         // unauthored radius passes (the reference uses the header sphere), as does a mounted unit
         // (the reference sizes it from the mount's box).
         let clip = match (anims, drv) {
             (Some(a), Some(d)) => d.active_anim().and_then(|id| a.find(id)),
             _ => None,
         };
+        let frame = pose.model_frame(entity).unwrap_or(gt);
         if let Some(c) = clip.filter(|c| c.bounds_radius > 0.0 && mount_child.is_none()) {
-            let centre = gt.transform_point(c.bounds_center);
-            let radius = c.bounds_radius * gt.scale().max_element();
+            let centre = frame.transform_point(c.bounds_center);
+            let radius = c.bounds_radius * frame.scale().max_element();
             // Reject when the ray's closest approach exceeds the radius; a centre behind the
             // origin clamps to t = 0, so a unit we stand inside stays clickable.
             let along = (centre - origin).dot(dir).max(0.0);
@@ -907,10 +918,16 @@ mod tests {
     /// The picker's inputs with a camera ten yards up the Z axis, looking down it through a
     /// 100-pixel square with the cursor at its centre, over whatever stands at the origin.
     fn pick_world() -> World {
+        let mut world = World::new();
+        pick_world_in(&mut world);
+        world
+    }
+
+    /// [`pick_world`]'s inputs, in a world that already exists.
+    fn pick_world_in(world: &mut World) {
         use bevy::camera::RenderTargetInfo;
         use bevy::window::WindowResolution;
 
-        let mut world = World::new();
         world.init_resource::<CameraControl>();
         world.init_resource::<PointerOverUi>();
         world.insert_resource(PickOcclusion {
@@ -944,7 +961,160 @@ mod tests {
         };
         window.set_cursor_position(Some(Vec2::splat(50.0)));
         world.spawn((window, PrimaryWindow));
+    }
+
+    /// What the cursor's ray down the Z axis picks of one skinned unit whose root stands at `root`
+    /// while its rig is drawn at `seat`, as [`crate::vehicle`] reseats a passenger: a one-bone body
+    /// whose single triangle spans a yard around its model origin, playing a sequence whose bounds
+    /// sphere is a 1.5-yard ball there.
+    fn pick_seated(root: Vec3, seat: Vec3) -> Option<Entity> {
+        use benilla_assets::{
+            AnimClip, ModelAnimations, ModelJoint, ModelSkeleton, ATTRIBUTE_WOW_JOINT_INDEX,
+            ATTRIBUTE_WOW_JOINT_WEIGHT,
+        };
+        use bevy::asset::RenderAssetUsages;
+        use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
+        use bevy::mesh::{Indices, PrimitiveTopology};
+
+        let mut app = App::new();
+        app.init_resource::<Assets<SkinnedMeshInverseBindposes>>()
+            .init_resource::<Time<bevy::time::Real>>()
+            .init_resource::<benilla_world::lighting::PropProbes>();
+        benilla_world::rig_palette::plugin(&mut app);
+        pick_world_in(app.world_mut());
+        let world = app.world_mut();
+        world.insert_resource(fx::factions());
+        world.init_resource::<crate::spell::SpellTargeting>();
+        world.spawn((
+            SelfPlayer,
+            Guid(1),
+            GlobalTransform::from_translation(Vec3::new(50.0, 0.0, 0.0)),
+            fx::caster(1.5),
+        ));
+
+        let skeleton = ModelSkeleton {
+            joints: vec![ModelJoint {
+                parent: -1,
+                local_translation: Vec3::ZERO,
+                billboard: None,
+                parent_arm: None,
+            }],
+            ..Default::default()
+        };
+        let ibp = world
+            .resource_mut::<Assets<SkinnedMeshInverseBindposes>>()
+            .add(SkinnedMeshInverseBindposes::from(vec![Mat4::IDENTITY]));
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::all());
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            vec![[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 0.0]],
+        );
+        mesh.insert_attribute(
+            ATTRIBUTE_WOW_JOINT_INDEX,
+            bevy::mesh::VertexAttributeValues::Uint16x4(vec![[0; 4]; 3]),
+        );
+        mesh.insert_attribute(ATTRIBUTE_WOW_JOINT_WEIGHT, vec![[1.0f32, 0.0, 0.0, 0.0]; 3]);
+        mesh.insert_indices(Indices::U16(vec![0, 1, 2]));
+        let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+        let sequence = AnimClip {
+            anim_id: 0,
+            seq_index: 0,
+            node: Default::default(),
+            looping: true,
+            duration: 1.0,
+            move_speed: 0.0,
+            blend_time: 0.0,
+            bounds_center: Vec3::ZERO,
+            bounds_radius: 1.5,
+            bounds_min: Vec3::splat(-1.0),
+            bounds_max: Vec3::splat(1.0),
+            events: Vec::new().into(),
+            arm_nodes: None,
+            upper_node: None,
+            frequency: 0,
+            replay: (0, 0),
+            poses_bones: true,
+        };
+        let anims = ModelAnimations {
+            graph: Handle::default(),
+            clips: vec![sequence],
+            hand_close: [None, None],
+            playable_animation_lookup: Vec::new(),
+            animation_lookup: Vec::new(),
+            global_bones: Vec::new(),
+            first_seq: None,
+            pose: Default::default(),
+        };
+
+        // The seat the rig hangs from, apart from the unit's own frame.
+        let anchor = world
+            .spawn((
+                Transform::default(),
+                GlobalTransform::from_translation(seat),
+            ))
+            .id();
+        let unit = world
+            .spawn((
+                Guid(9),
+                NetEntity {
+                    kind: EntityKind::Unit,
+                    display_id: None,
+                    scale: 1.0,
+                },
+                GlobalTransform::from_translation(root),
+                InheritedVisibility::VISIBLE,
+                foe(),
+                anims,
+                AnimDriver::playing_gait(0),
+                benilla_world::rig_anim::RigPose::new(anchor, &skeleton),
+            ))
+            .id();
+        let joints = {
+            let mut commands = world.commands();
+            benilla_world::rig_palette::spawn_joints(&mut commands, anchor, unit, &skeleton)
+        };
+        world.flush();
         world
+            .entity_mut(joints[0])
+            .insert(GlobalTransform::from_translation(seat));
+        let skin = benilla_world::rig_palette::RigSkin::allocate(
+            &mut world.resource_mut::<benilla_world::rig_palette::RigPalettes>(),
+            joints,
+            ibp,
+        )
+        .expect("a fresh palette has room");
+        world.entity_mut(unit).insert(skin);
+        world.spawn((
+            ChildOf(unit),
+            Mesh3d(mesh),
+            benilla_world::rig_palette::RigPart(unit),
+            InheritedVisibility::VISIBLE,
+        ));
+        // The palette is written from the joints' globals, as each frame's compose leaves them.
+        app.update();
+        pick_under(app.world_mut(), None).target
+    }
+
+    /// The broad phase centres the playing sequence's sphere in the frame the model is drawn in, as
+    /// `0x81cff0` takes each model's own matrix: a seated passenger is picked through its drawn body
+    /// with its root out of the ray, and not through its empty root.
+    #[test]
+    fn a_seated_unit_is_picked_where_its_rig_is_drawn() {
+        let on_ray = Vec3::new(0.0, 0.0, 2.0);
+        let aside = Vec3::new(6.0, 0.0, 0.0);
+        assert!(
+            pick_seated(on_ray, on_ray).is_some(),
+            "an unseated unit: the root is the drawn frame"
+        );
+        assert!(
+            pick_seated(aside, on_ray).is_some(),
+            "the ray through the drawn body picks it, root or not"
+        );
+        assert_eq!(
+            pick_seated(on_ray, aside),
+            None,
+            "the ray through the empty root picks nothing"
+        );
     }
 
     /// One drawn pick box around the origin, the box fallback's geometry for a partless body.

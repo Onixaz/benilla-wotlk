@@ -46,6 +46,8 @@ pub(crate) struct GoTemplate {
     /// The `PageTextMaterial.dbc` id `GetQuestBackgroundMaterial` answers for a quest from this
     /// object (`0x710300`): QUESTGIVER (2) and TEXT (9) read `data[2]`, GOOBER (10) `data[9]`.
     pub(crate) quest_material: Option<u32>,
+    /// DUNGEON_DIFFICULTY (type 31) only: properties `0x57` and `0x58`, `data[0]` and `data[1]`.
+    pub(crate) difficulty: Option<crate::go_difficulty::DifficultySlots>,
 }
 
 /// A MEETINGSTONE template's slots, 12340 properties `0x33` to `0x35` (`0x7121e0`, `0x7108d0`): the
@@ -184,6 +186,12 @@ impl GameObjectTemplates {
             10 => Some(data[9].max(0) as u32),
             _ => None,
         };
+        let difficulty = (type_id == crate::go_difficulty::GO_TYPE_DIFFICULTY as u32).then(|| {
+            crate::go_difficulty::DifficultySlots {
+                map: data[0].max(0) as u32,
+                difficulty: data[1].max(0) as u32,
+            }
+        });
         self.templates.insert(
             entry,
             Some(GoTemplate {
@@ -196,6 +204,7 @@ impl GameObjectTemplates {
                 mo_transport,
                 text_page,
                 quest_material,
+                difficulty,
             }),
         );
     }
@@ -334,6 +343,24 @@ mod tests {
             "a GOOBER (type 10) reads data[9]"
         );
         assert_eq!(t.templates.get(103).unwrap().quest_material, None);
+    }
+
+    /// Type 31's two properties are its first two slots (`0x746190`).
+    #[test]
+    fn insert_captures_the_difficulty_slots() {
+        let mut t = GameObjectTemplates::default();
+        let mut data = [0i32; 24];
+        (data[0], data[1]) = (599, 1);
+        t.insert(192500, 31, "Halls of Stone".into(), &data);
+        t.insert(192501, 5, "Generic".into(), &data);
+        assert_eq!(
+            t.templates.get(192500).unwrap().difficulty,
+            Some(crate::go_difficulty::DifficultySlots {
+                map: 599,
+                difficulty: 1
+            })
+        );
+        assert_eq!(t.templates.get(192501).unwrap().difficulty, None);
     }
 
     #[test]

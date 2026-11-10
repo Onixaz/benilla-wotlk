@@ -519,30 +519,89 @@ fn build_release_poi(
     let Some(script) = script else {
         return;
     };
-    let name = script
+    let name = global_text(&script, "SPIRIT_HEALER_RELEASE_RED");
+    release_poi.from = death_net.release;
+    release_poi.poi = death_net
+        .release
+        .map(|r| static_poi(name, r.map, r.position));
+    debug!(
+        "release POI: {:?}",
+        release_poi.poi.as_ref().map(|p| (p.continent_id, p.pos))
+    );
+}
+
+/// The corpse's minimap POI (`0x7f4990`): `POIIcons` cell 8 at importance -1 with the in-range
+/// icon bit, named by `CORPSE_RED`; the one slot exempt from the 694.444-yd cut (`0x7f46b1`).
+#[derive(Resource, Default)]
+pub(crate) struct CorpsePoi {
+    from: Option<CorpsePoint>,
+    poi: Option<benilla_formats::AreaPoi>,
+}
+
+impl CorpsePoi {
+    /// The POI if it lies on `map_id`.
+    pub(crate) fn on_map(&self, map_id: u32) -> Option<&benilla_formats::AreaPoi> {
+        self.poi.as_ref().filter(|p| p.continent_id == map_id)
+    }
+}
+
+/// Follow [`DeathNet::corpse`] into [`CorpsePoi`]: a move only re-seats the POI, a corpse on a
+/// moving deck included. Waits for the VM, which holds its name.
+fn build_corpse_poi(
+    script: Option<NonSend<UiScript>>,
+    death_net: Res<DeathNet>,
+    mut corpse_poi: ResMut<CorpsePoi>,
+) {
+    if corpse_poi.from == death_net.corpse {
+        return;
+    }
+    let Some(script) = script else {
+        return;
+    };
+    corpse_poi.from = death_net.corpse;
+    let Some(cp) = death_net.corpse.filter(|cp| cp.display_map >= 0) else {
+        corpse_poi.poi = None;
+        return;
+    };
+    let map = cp.display_map as u32;
+    match &mut corpse_poi.poi {
+        Some(poi) => {
+            poi.continent_id = map;
+            poi.pos = [cp.position[0], cp.position[1], 0.0];
+        }
+        None => {
+            let name = global_text(&script, "CORPSE_RED");
+            corpse_poi.poi = Some(static_poi(name, map, cp.position));
+        }
+    }
+}
+
+/// A global string from the stock UI, empty when it is missing.
+fn global_text(script: &UiScript, key: &str) -> String {
+    script
         .lua()
         .globals()
-        .get::<String>("SPIRIT_HEALER_RELEASE_RED")
-        .unwrap_or_default();
-    release_poi.from = death_net.release;
-    release_poi.poi = death_net.release.map(|r| benilla_formats::AreaPoi {
+        .get::<String>(key)
+        .unwrap_or_default()
+}
+
+/// The corpse and spirit-healer static POI slots' shared shape (`0x7f4990`, `0x7f4a00`): icon 8,
+/// importance -1, flags 2, on `map` at `pos`.
+fn static_poi(name: String, map: u32, pos: [f32; 3]) -> benilla_formats::AreaPoi {
+    benilla_formats::AreaPoi {
         importance: u32::MAX, // -1, ahead of every landmark band
         icon: 8,
         icons: [8; 9],
         faction_id: 0,
-        pos: [r.position[0], r.position[1], 0.0],
-        continent_id: r.map,
+        pos: [pos[0], pos[1], 0.0],
+        continent_id: map,
         flags: 0x2,
         area_id: 0,
         name,
         description: String::new(),
         world_state_id: 0,
         map_link: 0,
-    });
-    debug!(
-        "release POI: {:?}",
-        release_poi.poi.as_ref().map(|p| (p.continent_id, p.pos))
-    );
+    }
 }
 
 /// Note a world-enter cascade for [`feed_death`], which holds the descriptor it needs.
@@ -796,6 +855,7 @@ impl Plugin for DeathPlugin {
         app.init_resource::<DeathNet>()
             .init_resource::<DeathFeedState>()
             .init_resource::<ReleasePoi>()
+            .init_resource::<CorpsePoi>()
             .add_systems(
                 Update,
                 (
@@ -814,6 +874,7 @@ impl Plugin for DeathPlugin {
                         .after(note_world_enter)
                         .before(feed_death),
                     build_release_poi.in_set(UiFeed).after(feed_death),
+                    build_corpse_poi.in_set(UiFeed).after(feed_death),
                 ),
             );
     }

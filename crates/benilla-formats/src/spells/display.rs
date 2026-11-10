@@ -142,6 +142,8 @@ pub struct SpellDisplay {
     /// `powerType` (column 41): 0 mana, 1 rage, 3 energy, 5 runes, 6 runic power; health is -2,
     /// stored as `0xFFFFFFFE` (Life Tap, Health Funnel).
     pub power_type: u32,
+    /// `PowerDisplayID` (column 228): the `PowerDisplay.dbc` row naming the power, 0 for none.
+    pub power_display_id: u32,
     /// `manaCost` (column 42): the flat cost in `power_type`'s unit.
     pub mana_cost: u32,
     /// `RuneCostID` (column 226): the `SpellRuneCost.dbc` row a rune spell (power type 5) spends.
@@ -202,6 +204,9 @@ pub struct SpellDisplay {
     pub equipped_item_inventory_type_mask: u32,
     /// `RequiresSpellFocus` (column 18): the `SpellFocusObject.dbc` object needed nearby.
     pub requires_spell_focus: u32,
+    /// `RequiredAreasID` (column 224, signed): the `AreaGroup.dbc` row the caster must stand in,
+    /// read only when positive.
+    pub required_areas_id: i32,
     /// The `SpellShapeshiftForm.dbc` form: the first `SPELL_AURA_MOD_SHAPESHIFT` effect's
     /// `EffectMiscValue`, which the stance bar keys on.
     pub shapeshift_form: Option<u32>,
@@ -323,6 +328,7 @@ impl Default for SpellDisplay {
             start_recovery_category: 0,
             start_recovery_ms: 0,
             power_type: 0,
+            power_display_id: 0,
             mana_cost: 0,
             rune_cost_id: 0,
             mana_cost_pct: 0,
@@ -349,6 +355,7 @@ impl Default for SpellDisplay {
             equipped_item_subclass_mask: 0,
             equipped_item_inventory_type_mask: 0,
             requires_spell_focus: 0,
+            required_areas_id: 0,
             shapeshift_form: None,
             stance_bar_order: 0,
             active_icon: None,

@@ -405,6 +405,8 @@ struct BookData<'w> {
     spell_mods: Res<'w, crate::spell::SpellModifiers>,
     skill_lines: Option<Res<'w, SkillLines>>,
     focus: Option<Res<'w, SpellFocus>>,
+    area_groups: Option<Res<'w, crate::area::AreaGroupsRes>>,
+    areas: Option<Res<'w, crate::area::AreaTableRes>>,
     icons: Option<Res<'w, ItemDisplays>>,
     subclasses: Option<Res<'w, crate::ui_items::ItemSubClasses>>,
     totem_categories: Res<'w, crate::ui_totem::TotemCategories>,
@@ -620,13 +622,21 @@ fn feed_trade_skill(
                 d.icon.clone()
             };
 
-            // Tools in `0x5de620`'s order: the focus, always met, then the tool items and the
-            // tool categories. A tool whose template has not landed is left out.
+            // Tools in `0x5de620`'s order: the focus and the group's first area, both always met,
+            // then the tool items and the tool categories. A tool whose template has not landed
+            // is left out.
             let focus = (d.requires_spell_focus != 0)
                 .then(|| {
                     data.focus
                         .as_deref()
                         .and_then(|f| f.catalog.name(d.requires_spell_focus))
+                })
+                .flatten();
+            let area = (d.required_areas_id > 0)
+                .then(|| {
+                    let groups = &data.area_groups.as_deref()?.0;
+                    let group = groups.get(d.required_areas_id as u32)?;
+                    data.areas.as_deref()?.0.name(group.areas[0])
                 })
                 .flatten();
             let mut tool_items = Vec::new();
@@ -672,8 +682,11 @@ fn feed_trade_skill(
                 };
             }
 
-            let mut tools: Vec<(String, bool)> =
-                focus.map(|f| (f.to_string(), true)).into_iter().collect();
+            let mut tools: Vec<(String, bool)> = focus
+                .into_iter()
+                .chain(area)
+                .map(|n| (n.to_string(), true))
+                .collect();
             tools.extend(tool_items);
             tools.extend(tool_kinds);
             let (min_made, max_made) = num_made(d);

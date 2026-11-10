@@ -73,8 +73,7 @@ impl ItemDisplay {
 
 const FLAG_GUILD_EMBLEM_TABARD: u32 = 0x1;
 
-/// `ItemDisplayInfo.dbc` by display id, the id `ItemDisplayInfoID` and
-/// `UNIT_VIRTUAL_ITEM_SLOT_DISPLAY` name.
+/// `ItemDisplayInfo.dbc` by display id, the id an `Item.dbc` row and an item template name.
 pub struct ItemDisplayCatalog {
     displays: HashMap<u32, ItemDisplay>,
 }
@@ -195,6 +194,17 @@ fn catalog_from_records(
     ItemDisplayCatalog { displays }
 }
 
+/// An `Item.dbc` row, as the reference packs it onto a unit, bytes truncated (`0x725010`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ItemDbcRow {
+    pub display: u32,
+    pub class: u8,
+    pub subclass: u8,
+    pub material: u8,
+    pub inventory_type: u8,
+    pub sheath: u8,
+}
+
 /// `Item.dbc`, whose display id column the bag icon reads before any template answers (`0x70aa00`).
 pub(crate) fn item_schema() -> Schema {
     let mut s = Schema::new("Item");
@@ -213,17 +223,32 @@ pub(crate) fn item_schema() -> Schema {
     s
 }
 
-/// Load `Item.dbc` off the patch chain as entry to display id.
-pub fn load_item_dbc_displays(chain: &mut Chain) -> Result<HashMap<u32, u32>> {
+/// The rows of a record set parsed with [`item_schema`], by entry.
+fn item_rows_from_records(rs: &RecordSet) -> HashMap<u32, ItemDbcRow> {
+    let byte = |r, i| u32_at(r, i).unwrap_or(0) as u8;
+    rs.records()
+        .iter()
+        .filter_map(|r| {
+            let row = ItemDbcRow {
+                display: u32_at(r, 5)?,
+                class: byte(r, 1),
+                subclass: byte(r, 2),
+                material: byte(r, 4),
+                inventory_type: byte(r, 6),
+                sheath: byte(r, 7),
+            };
+            Some((u32_at(r, 0)?, row))
+        })
+        .collect()
+}
+
+/// Load `Item.dbc` off the patch chain by entry.
+pub fn load_item_dbc(chain: &mut Chain) -> Result<HashMap<u32, ItemDbcRow>> {
     let bytes = chain
         .read_file(ITEM_DBC)
         .with_context(|| format!("reading {ITEM_DBC}"))?;
     let rs = parse(&bytes, item_schema(), "Item")?;
-    Ok(rs
-        .records()
-        .iter()
-        .filter_map(|r| Some((u32_at(r, 0)?, u32_at(r, 5)?)))
-        .collect())
+    Ok(item_rows_from_records(&rs))
 }
 
 /// Load `ItemDisplayInfo.dbc` off the patch chain into an [`ItemDisplayCatalog`].
@@ -309,6 +334,29 @@ mod tests {
             thrown.model_texture[0].as_deref(),
             Some("Thrown_1H_Dagger_A_01Copper")
         );
+    }
+
+    /// The record the virtual item handler reads: class `+0x4`, subclass `+0x8`, material `+0x10`,
+    /// display `+0x14`, inventory type `+0x18`, sheath `+0x1c` (`0x725010`).
+    #[test]
+    fn an_item_dbc_row_reads_the_columns_a_creature_s_item_is_dressed_from() {
+        let cols: [u32; 8] = [1899, 2, 7, 0xffff_ffff, 1, 5532, 21, 3];
+        let records: Vec<u8> = cols.iter().flat_map(|c| c.to_le_bytes()).collect();
+        let bytes = build_wdbc(1, 8, 32, &records, &[0]);
+        let rs = parse(&bytes, item_schema(), "Item").expect("parse");
+        let rows = item_rows_from_records(&rs);
+        assert_eq!(
+            rows.get(&1899),
+            Some(&ItemDbcRow {
+                display: 5532,
+                class: 2,
+                subclass: 7,
+                material: 1,
+                inventory_type: 21,
+                sheath: 3,
+            })
+        );
+        assert_eq!(rows.get(&1900), None);
     }
 
     /// A row: the second icon at column 6, and `ParticleColorID` closes the 25-column record.

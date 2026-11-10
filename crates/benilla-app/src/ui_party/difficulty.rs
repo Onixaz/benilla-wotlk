@@ -77,11 +77,11 @@ impl GroupState {
         }
     }
 
-    /// The raid difficulty the spell variants read (`0x519680`): on a dynamic map the size bit
-    /// and the group's heroic bit, else the current one.
-    pub(crate) fn effective_raid_difficulty(&self, dynamic_map: bool) -> u32 {
+    /// The effective raid difficulty (`0x519680`): a dynamic current map (`Map.dbc` flag `0x100`)
+    /// combines the raid size bit with the group's dynamic difficulty.
+    pub(crate) fn effective_raid_difficulty(&self, map_dynamic: bool) -> u32 {
         let raid = self.current_raid_difficulty();
-        if dynamic_map {
+        if map_dynamic {
             (raid & 1) + 2 * u32::from(self.difficulties.dynamic)
         } else {
             raid
@@ -92,10 +92,10 @@ impl GroupState {
     pub(crate) fn spell_difficulty_index(
         &self,
         instance_type: Option<u32>,
-        dynamic_map: bool,
+        map_dynamic: bool,
     ) -> Option<u32> {
         match instance_type {
-            Some(2) => Some(self.effective_raid_difficulty(dynamic_map)),
+            Some(2) => Some(self.effective_raid_difficulty(map_dynamic)),
             Some(1) => Some(self.current_dungeon_difficulty()),
             _ => None,
         }
@@ -356,6 +356,20 @@ mod tests {
         g.slots_emptied = true;
         let lines = g.difficulty_lines(1, 0, RaidMap::Other);
         assert_eq!(keys(&lines), ["ERR_DUNGEON_DIFFICULTY_CHANGED_S"]);
+    }
+
+    /// On a dynamic map the size bit and the dynamic difficulty combine; elsewhere the raid value.
+    #[test]
+    fn the_effective_raid_difficulty_combines_only_on_a_dynamic_map() {
+        let mut g = GroupState::default();
+        g.player_difficulty.raid = 3;
+        g.difficulties.dynamic = 1;
+        assert_eq!(g.effective_raid_difficulty(false), 3);
+        assert_eq!(g.effective_raid_difficulty(true), 3, "(3 & 1) + 2");
+        g.player_difficulty.raid = 2;
+        assert_eq!(g.effective_raid_difficulty(true), 2, "(2 & 1) + 2");
+        g.difficulties.dynamic = 0;
+        assert_eq!(g.effective_raid_difficulty(true), 0);
     }
 
     /// The raid line's wording follows the map; a dynamic map keeps the group value.

@@ -839,6 +839,15 @@ impl Default for AnimDriver {
 }
 
 impl AnimDriver {
+    /// A driver already playing gait `id`, for tests of what reads the playing sequence.
+    #[cfg(test)]
+    pub(crate) fn playing_gait(id: u16) -> Self {
+        Self {
+            gait: Some(id),
+            ..Self::default()
+        }
+    }
+
     /// The requested id playing now; the mouse pick's bounds follow it.
     pub(crate) fn active_anim(&self) -> Option<u16> {
         match self.mode {

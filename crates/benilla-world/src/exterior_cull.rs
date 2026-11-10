@@ -275,7 +275,7 @@ fn apply_exterior_cull(
     windows: Res<ExteriorWindows>,
     cam: Query<(&GlobalTransform, &Projection), With<WorldCamera>>,
     mut scene: Query<UnownedScene, UnownedSceneFilter>,
-    mut bodies: Query<ElectedBody>,
+    mut bodies: Query<ElectedBody, Without<crate::world_unit::ObjectHidden>>,
     instances: Query<&crate::wmo_portal::WmoPortalInstance>,
     wmos: Res<Assets<benilla_assets::WmoModel>>,
     mut verdict: ResMut<ExteriorCullVerdict>,

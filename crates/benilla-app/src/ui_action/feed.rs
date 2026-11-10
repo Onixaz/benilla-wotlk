@@ -74,6 +74,7 @@ impl FailNameTables<'_> {
             mechanics: self.mechanics.as_deref().map(|m| &m.catalog),
             forms: spells.map(|s| &s.forms),
             totems: self.totems.as_deref().map(|t| &t.0),
+            power_displays: spells.map(|s| &s.power_displays),
         }
     }
 }

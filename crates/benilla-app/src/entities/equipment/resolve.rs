@@ -323,11 +323,21 @@ pub(in crate::entities) fn resolve_equipment(
         for slot in 0..HELD_SLOTS {
             // (display id, inventory type, item sheath type, class, subclass, material) per slot.
             resolved[slot] = match net_entity.kind {
-                EntityKind::Unit => {
-                    // 3.3.5a's descriptor carries no `UNIT_VIRTUAL_ITEM_INFO` words.
-                    let display = s.unit_virtual_item_display(slot as u8).filter(|d| *d != 0);
-                    display.map(|d| (d, 0, 0, 0, 0, 0))
-                }
+                // The slot's `Item.dbc` row; no row or display 0 wields nothing (`0x725010`).
+                EntityKind::Unit => s
+                    .unit_virtual_item_entry(slot as u8)
+                    .and_then(|entry| held.item_dbc.get(&entry))
+                    .filter(|r| r.display != 0)
+                    .map(|r| {
+                        (
+                            r.display,
+                            u32::from(r.inventory_type),
+                            r.sheath,
+                            r.class,
+                            r.subclass,
+                            r.material,
+                        )
+                    }),
                 EntityKind::Player => s
                     .player_visible_item_entry(PLAYER_HELD_SLOTS[slot])
                     .filter(|e| *e != 0)
@@ -1113,6 +1123,139 @@ mod tests {
             "a unit that streams in disarmed shows no mainhand weapon"
         );
         drop(rx);
+    }
+
+    /// `UNIT_VIRTUAL_ITEM_SLOT_ID` in the shared index space, and `UNIT_FIELD_BYTES_2`.
+    const VIRTUAL_ITEM: u16 = 37;
+    const UNIT_BYTES_2: u16 = 164;
+
+    /// A creature holding `items` (slot, entry); rows: hip sword 500, back 2H 501, bow 502, 503 display 0.
+    fn creature_app(items: &[(u16, u32)], sheath: u8) -> (App, Entity) {
+        use benilla_formats::ItemDbcRow;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()));
+        let (tx, _rx) = crossbeam_channel::unbounded::<ClientCommand>();
+        app.init_resource::<Items>();
+        app.init_resource::<crate::net::GuidIndex>();
+        app.insert_resource(NetCommands(tx));
+        let mut displays = ItemDisplays::icons_for_tests(
+            benilla_formats::ItemDisplayCatalog::from_displays(std::collections::HashMap::new()),
+        );
+        let row = |display, class, subclass, material, inventory_type, sheath| ItemDbcRow {
+            display,
+            class,
+            subclass,
+            material,
+            inventory_type,
+            sheath,
+        };
+        displays.item_dbc = [
+            (500, row(950, 2, 7, 1, 21, 3)),
+            (501, row(951, 2, 8, 1, 17, 1)),
+            (502, row(952, 2, 2, 2, 15, 0)),
+            (503, row(0, 2, 7, 1, 21, 3)),
+        ]
+        .into();
+        app.insert_resource(displays);
+        let creature = app
+            .world_mut()
+            .spawn((
+                NetEntity {
+                    kind: EntityKind::Unit,
+                    display_id: Some(3167),
+                    scale: 1.0,
+                },
+                creature_store(items, sheath),
+            ))
+            .id();
+        app.add_systems(Update, resolve_equipment);
+        app.update();
+        (app, creature)
+    }
+
+    fn creature_store(items: &[(u16, u32)], sheath: u8) -> ObjectStore {
+        let mut pairs: Vec<(u16, u32)> =
+            items.iter().map(|&(s, e)| (VIRTUAL_ITEM + s, e)).collect();
+        pairs.push((UNIT_BYTES_2, u32::from(sheath)));
+        ObjectStore(ObjectFields::from_pairs(&pairs))
+    }
+
+    fn held_slot(app: &App, creature: Entity, slot: usize) -> Option<(u32, u16)> {
+        app.world()
+            .get::<HeldItems>(creature)
+            .and_then(|h| h.slots[slot].as_ref())
+            .map(|s| (s.display, s.attach))
+    }
+
+    #[test]
+    fn a_creature_slot_with_a_row_dresses_from_it() {
+        use crate::creature_anim::Wielded;
+        let (app, creature) = creature_app(&[(0, 500), (2, 502)], 0);
+        assert_eq!(
+            held_slot(&app, creature, 0),
+            Some((950, attach_id::HIP_MAIN)),
+            "the row's display, hung by its own sheath type while stowed"
+        );
+        assert_eq!(
+            held_slot(&app, creature, 2),
+            None,
+            "a ranged weapon shows only when drawn"
+        );
+        let w = *app
+            .world()
+            .get::<Wielded>(creature)
+            .expect("hands resolved");
+        assert_eq!(w.main, Some((2, 7)));
+        assert_eq!(w.main_sheath, 3);
+        assert_eq!(w.ranged, Some((2, 2)));
+        assert_eq!(w.ranged_inv, 15);
+        assert_eq!(w.materials[0], 1);
+
+        let (app, creature) = creature_app(&[(0, 500)], 1);
+        assert_eq!(
+            held_slot(&app, creature, 0),
+            Some((950, attach_id::HAND_RIGHT)),
+            "melee drawn: in the right hand"
+        );
+    }
+
+    #[test]
+    fn a_creature_slot_with_no_row_or_display_holds_nothing() {
+        use crate::creature_anim::Wielded;
+        for entry in [0, 9999, 503] {
+            let (app, creature) = creature_app(&[(0, entry)], 1);
+            assert_eq!(held_slot(&app, creature, 0), None, "entry {entry}");
+            let w = *app
+                .world()
+                .get::<Wielded>(creature)
+                .expect("hands resolved");
+            assert_eq!(w.main, None, "entry {entry}");
+        }
+    }
+
+    #[test]
+    fn a_creature_slot_that_changes_rehangs_its_item() {
+        use crate::creature_anim::Wielded;
+        let (mut app, creature) = creature_app(&[(0, 500)], 0);
+        assert_eq!(
+            held_slot(&app, creature, 0),
+            Some((950, attach_id::HIP_MAIN))
+        );
+        *app.world_mut().get_mut::<ObjectStore>(creature).unwrap() = creature_store(&[(0, 501)], 0);
+        app.update();
+        assert_eq!(
+            held_slot(&app, creature, 0),
+            Some((951, attach_id::BACK_RIGHT)),
+            "the new row's display and sheath type"
+        );
+        *app.world_mut().get_mut::<ObjectStore>(creature).unwrap() = creature_store(&[(0, 0)], 0);
+        app.update();
+        assert_eq!(
+            held_slot(&app, creature, 0),
+            None,
+            "a cleared slot holds nothing"
+        );
+        assert_eq!(app.world().get::<Wielded>(creature).unwrap().main, None);
     }
 
     #[test]
