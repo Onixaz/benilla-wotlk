@@ -208,7 +208,7 @@ pub mod nameplate;
 pub(crate) mod quest_blob;
 mod quest_poi;
 mod quest_poi_frame;
-pub use nameplate::{PlateGeometry, PlateState};
+pub use nameplate::{PlateCast, PlateGeometry, PlateState};
 mod macro_options;
 
 mod model;
