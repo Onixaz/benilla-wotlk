@@ -7,7 +7,9 @@ use bevy::math::Rect;
 use benilla_ui::script::{JustifyH, JustifyV};
 
 use super::super::engine::{TextEngine, UiFontAtlas};
-use super::super::markup::{fontstring_lines, parse_markup, ColorRun};
+use super::super::markup::{
+    fontstring_lines, icon_index, icons_of, parse_markup_icons, ColorRun, InlineIcon,
+};
 use super::wrap::{greedy_pack, tokenize_words};
 use super::{client_step, overflow, FontSpec, Justify, HEIGHT_LIMIT_MIN, WRAP_MIN_WIDTH};
 
@@ -39,19 +41,52 @@ pub(super) fn resolve(e: &mut TextEngine, font: &FontSpec) -> Resolved {
     }
 }
 
-/// One line's width in logical px, the sum of its characters' steps ([`client_step`]) as the
-/// reference's `GetTextWidth` sums them; every measure, the one inside a Lua call
-/// ([`benilla_ui::script::TextMeasure`]) included, runs through here. The caller ensures `text`'s
-/// metrics first: this is `&`-only, and a character not in the cache counts 0.
-pub(super) fn measure_line_width(e: &TextEngine, r: Resolved, step_extra: f32, text: &str) -> f32 {
+/// Each embedded texture's `[width, height]` in logical px at this font, whole device px each, by
+/// the spec parser's sizing (`0x6c0e80`) at the drawn font height. Deviation: the reference also
+/// multiplies explicit sizes by the frame's layout scale on top of the font height that already
+/// carries it; benilla scales an icon with its font alone.
+pub(super) fn icon_sizes(e: &TextEngine, r: Resolved, icons: &[InlineIcon]) -> Vec<[f32; 2]> {
+    if icons.is_empty() {
+        return Vec::new();
+    }
+    let pixel_scale = benilla_ui::markup::texture_pixel_scale(r.size, e.aspect());
+    let dpi = e.dpi();
+    icons
+        .iter()
+        .map(|i| {
+            let [w, h] = i.geometry.size(r.size, pixel_scale);
+            [
+                (w * dpi).round().max(0.0) / dpi,
+                (h * dpi).round().max(0.0) / dpi,
+            ]
+        })
+        .collect()
+}
+
+/// One line's width in logical px, the sum of its characters' steps ([`client_step`]) and its
+/// icons' widths as the reference's extent (`0x6c1430`) sums them; every measure, the one inside a
+/// Lua call ([`benilla_ui::script::TextMeasure`]) included, runs through here. The caller ensures
+/// `text`'s metrics first: this is `&`-only, and a character not in the cache counts 0.
+pub(super) fn measure_line_width(
+    e: &TextEngine,
+    r: Resolved,
+    step_extra: f32,
+    text: &str,
+    icons: &[[f32; 2]],
+) -> f32 {
     // Summed in device px and divided once, as the pen does: a sum of quotients is another `f32`,
     // and measure must equal render to the bit.
+    let dpi = e.dpi();
     let steps: f32 = text
         .chars()
-        .filter_map(|c| e.char_cell(r.face, r.ppem, c))
-        .map(|c| c.floor_sum + step_extra * c.glyphs.len() as f32)
+        .map(|c| match icon_index(c) {
+            Some(k) => icons.get(k).map_or(0.0, |s| (s[0] * dpi).round()),
+            None => e
+                .char_cell(r.face, r.ppem, c)
+                .map_or(0.0, |c| c.floor_sum + step_extra * c.glyphs.len() as f32),
+        })
         .sum();
-    steps / e.dpi()
+    steps / dpi
 }
 
 /// The width law itself, for the differential test that pins it to a shaped sum.
@@ -71,7 +106,7 @@ pub(crate) fn measure_line_width_for_test(
         radius: 0,
         step_extra,
     };
-    measure_line_width(e, r, step_extra, text)
+    measure_line_width(e, r, step_extra, text, &[])
 }
 
 /// Greedy wrap of one markup line into rows no wider than `max_width` px, the reference's wrap
@@ -86,6 +121,7 @@ pub(super) fn wrap_line(
     r: Resolved,
     line: &[ColorRun],
     max_width: f32,
+    icons: &[[f32; 2]],
 ) -> Vec<Vec<ColorRun>> {
     let words = tokenize_words(line);
     if words.is_empty() {
@@ -93,7 +129,7 @@ pub(super) fn wrap_line(
         return vec![line.to_vec()];
     }
     greedy_pack(words, max_width, |t| {
-        measure_line_width(e, r, r.step_extra, t)
+        measure_line_width(e, r, r.step_extra, t, icons)
     })
 }
 
@@ -111,11 +147,12 @@ pub(crate) fn measure_text(
     e.ensure_metrics(r.face, r.ppem, text);
     let e = &*e;
 
-    let lines = fontstring_lines(text, [1.0, 1.0, 1.0, 1.0]);
+    let (lines, icons) = fontstring_lines(text, [1.0, 1.0, 1.0, 1.0]);
+    let icons = icon_sizes(e, r, &icons);
     let render_lines: Vec<Vec<ColorRun>> = match wrap_width {
         Some(w) if w > WRAP_MIN_WIDTH => lines
             .iter()
-            .flat_map(|line| wrap_line(e, r, line, w))
+            .flat_map(|line| wrap_line(e, r, line, w, &icons))
             .collect(),
         _ => lines,
     };
@@ -124,7 +161,7 @@ pub(crate) fn measure_text(
         let mut w = 0.0f32;
         for run in line {
             if !run.text.is_empty() {
-                w += measure_line_width(e, r, r.step_extra, &run.text);
+                w += measure_line_width(e, r, r.step_extra, &run.text, &icons);
             }
         }
         max_w = max_w.max(w);
@@ -168,13 +205,14 @@ fn wrapped_rows_capped(
     wrap_width: f32,
     cap: usize,
 ) -> usize {
-    let lines = fontstring_lines(text, [1.0, 1.0, 1.0, 1.0]);
+    let (lines, icons) = fontstring_lines(text, [1.0, 1.0, 1.0, 1.0]);
     if wrap_width <= WRAP_MIN_WIDTH {
         return lines.len().min(cap);
     }
+    let icons = icon_sizes(e, r, &icons);
     let mut rows = 0usize;
     for line in &lines {
-        rows += wrap_line(e, r, line, wrap_width).len();
+        rows += wrap_line(e, r, line, wrap_width, &icons).len();
         if rows >= cap {
             return cap;
         }
@@ -263,7 +301,13 @@ pub(crate) fn line_origin(
     let x0 = match justify.h {
         JustifyH::Left => rect.min.x,
         JustifyH::Center | JustifyH::Right => {
-            let w = measure_line_width(e, r, r.step_extra, drawn);
+            let (lines, icons) = fontstring_lines(drawn, [1.0, 1.0, 1.0, 1.0]);
+            let icons = icon_sizes(e, r, &icons);
+            let w = lines.first().map_or(0.0, |line| {
+                line.iter()
+                    .map(|run| measure_line_width(e, r, r.step_extra, &run.text, &icons))
+                    .sum()
+            });
             if matches!(justify.h, JustifyH::Center) {
                 rect.min.x + ((rect.width() - w) * 0.5).max(0.0)
             } else {
@@ -302,13 +346,16 @@ pub(crate) fn line_advances(e: &mut TextEngine, text: &str, font: FontSpec) -> V
     e.ensure_metrics(r.face, r.ppem, &drawn);
     let e = &*e;
     let dpi = e.dpi();
+    let icons = icon_sizes(e, r, &icons_of(text));
 
     let mut written = vec![false; text.len() + 1];
     written[0] = true;
     // The render's device-px pen, so a caret boundary is the x the glyph before it was drawn at.
     let mut x_dev = 0.0f32;
     for (off, ch) in drawn.char_indices() {
-        if let Some(c) = e.char_cell(r.face, r.ppem, ch) {
+        if let Some(k) = icon_index(ch) {
+            x_dev += icons.get(k).map_or(0.0, |s| (s[0] * dpi).round());
+        } else if let Some(c) = e.char_cell(r.face, r.ppem, ch) {
             for g in &c.glyphs {
                 x_dev += client_step(g.advance, r.step_extra);
             }
@@ -342,11 +389,12 @@ pub(crate) fn line_rows(
     let mut rows = Vec::new();
     let mut base = 0usize; // byte offset of the current '\n' segment within `text`
     for seg in text.split('\n') {
-        let lines = parse_markup(seg, [1.0, 1.0, 1.0, 1.0]);
+        let (lines, icons) = parse_markup_icons(seg, [1.0, 1.0, 1.0, 1.0]);
+        let icons = icon_sizes(e, r, &icons);
         let sub: Vec<Vec<ColorRun>> = if wrap_width > WRAP_MIN_WIDTH {
             lines
                 .iter()
-                .flat_map(|line| wrap_line(e, r, line, wrap_width))
+                .flat_map(|line| wrap_line(e, r, line, wrap_width, &icons))
                 .collect()
         } else {
             lines

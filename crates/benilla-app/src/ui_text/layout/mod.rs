@@ -9,7 +9,7 @@ use benilla_ui::script::{JustifyH, JustifyV, Outline};
 use crate::ui_pass::{UiQuad, UvRect};
 
 use super::engine::TextEngine;
-use super::markup::{fontstring_lines, ColorRun};
+use super::markup::{fontstring_lines, icon_index, ColorRun};
 
 mod measure;
 mod overflow;
@@ -129,8 +129,19 @@ pub(crate) struct LinkSpan {
     pub(crate) markup: String,
 }
 
+/// One `|T…|t` embedded texture as laid out: its rect (screen px, y-down), path, texture
+/// coordinates (`[left, right, top, bottom]`) and the alpha of the run it sits in. The font string
+/// draws it as a texture of its own (`0x485af0`).
+pub(crate) struct IconQuad {
+    pub(crate) rect: Rect,
+    pub(crate) path: String,
+    pub(crate) tex_coords: Option<[f32; 4]>,
+    pub(crate) alpha: f32,
+}
+
 /// Lays out `text` in `rect` (screen px, y-down), one [`UiQuad`] per non-blank glyph, all on the
-/// region's `z_key` so push order breaks ties; `|c`/`|r` runs override `base_color`.
+/// region's `z_key` so push order breaks ties; `|c`/`|r` runs override `base_color`. An embedded
+/// texture takes its width and draws nothing here: [`layout_text_quads_full`] hands it out.
 pub(crate) fn layout_text_quads(
     e: &mut TextEngine,
     text: &str,
@@ -141,35 +152,14 @@ pub(crate) fn layout_text_quads(
     font: FontSpec,
     seat: TextSeat,
 ) -> Vec<UiQuad> {
-    layout_text_quads_inner(e, text, rect, base_color, justify, z_key, font, seat, None)
-}
-
-/// [`layout_text_quads`], also collecting the [`LinkSpan`]s a message frame's link hit test reads.
-pub(crate) fn layout_text_quads_links(
-    e: &mut TextEngine,
-    text: &str,
-    rect: Rect,
-    base_color: [f32; 4],
-    justify: Justify,
-    z_key: u64,
-    font: FontSpec,
-    seat: TextSeat,
-    links_out: &mut Vec<LinkSpan>,
-) -> Vec<UiQuad> {
-    layout_text_quads_inner(
-        e,
-        text,
-        rect,
-        base_color,
-        justify,
-        z_key,
-        font,
-        seat,
-        Some(links_out),
+    layout_text_quads_full(
+        e, text, rect, base_color, justify, z_key, font, seat, None, None,
     )
 }
 
-fn layout_text_quads_inner(
+/// [`layout_text_quads`], also collecting the [`LinkSpan`]s a message frame's link hit test reads
+/// and the [`IconQuad`]s of the string's embedded textures.
+pub(crate) fn layout_text_quads_full(
     e: &mut TextEngine,
     text: &str,
     rect: Rect,
@@ -179,6 +169,7 @@ fn layout_text_quads_inner(
     font: FontSpec,
     seat: TextSeat,
     mut links_out: Option<&mut Vec<LinkSpan>>,
+    mut icons_out: Option<&mut Vec<IconQuad>>,
 ) -> Vec<UiQuad> {
     let gradient = font.alpha_gradient;
     let r = measure::resolve(e, &font);
@@ -193,7 +184,8 @@ fn layout_text_quads_inner(
     // half-pixel ties by bearing at a fractional DPI, and a word's letters step.
 
     // The same lines the measure counted ([`fontstring_lines`]), or a MIDDLE block seats wrong.
-    let lines = fontstring_lines(text, base_color);
+    let (lines, icons) = fontstring_lines(text, base_color);
+    let icon_px = measure::icon_sizes(e, r, &icons);
     // THICK ink sits 1 logical px above the plain baseline: the reference's THICK quad shift (-2)
     // against its blit's baked seat; NORMAL cancels exactly.
     let thick_rise = f32::from(u8::from(matches!(font.outline, Outline::Thick)));
@@ -202,7 +194,7 @@ fn layout_text_quads_inner(
     let mut render_lines: Vec<Vec<ColorRun>> = if rect.width() > WRAP_MIN_WIDTH {
         lines
             .iter()
-            .flat_map(|line| measure::wrap_line(e, r, line, rect.width()))
+            .flat_map(|line| measure::wrap_line(e, r, line, rect.width(), &icon_px))
             .collect()
     } else {
         lines
@@ -254,6 +246,12 @@ fn layout_text_quads_inner(
         px_h: f32,
         color: [f32; 4],
     }
+    // An icon laid at line origin 0: its left in device px and its index.
+    struct PendingIcon {
+        x_dev: f32,
+        index: usize,
+        alpha: f32,
+    }
 
     // `SetAlphaGradient`'s character index counts drawn characters, markup stripped; it trails the
     // engine's source count by at most the newline count, a frame or two on the reveal's tail.
@@ -261,6 +259,7 @@ fn layout_text_quads_inner(
     for line in &render_lines {
         // First pass: lay the line at origin 0 and measure its width.
         let mut pending: Vec<PendingGlyph> = Vec::new();
+        let mut pending_icons: Vec<PendingIcon> = Vec::new();
         // The line's link x-ranges, one per link: a link's runs are contiguous.
         let mut line_links: Vec<(std::sync::Arc<super::markup::LinkInfo>, f32, f32)> = Vec::new();
         // The pen in device px: every step is an integer, so the logical width is one division.
@@ -273,6 +272,19 @@ fn layout_text_quads_inner(
             // The pen walks characters, not a shaped buffer: with the kern dropped
             // ([`client_step`]) a run is its characters' steps, the sum `measure_line_width` takes.
             for ch in run.text.chars() {
+                // An embedded texture steps its own width from the pen (`0x6c6f8e`).
+                if let Some(index) = icon_index(ch) {
+                    if let Some(&[w, _]) = icon_px.get(index) {
+                        pending_icons.push(PendingIcon {
+                            x_dev: pen_dev,
+                            index,
+                            alpha: run.color[3],
+                        });
+                        pen_dev += (w * dpi).round();
+                    }
+                    char_index += 1;
+                    continue;
+                }
                 let Some(cc) = e.char_cell(r.face, r.ppem, ch) else {
                     // No face shapes it: it draws and steps nothing, as the measure says.
                     char_index += 1;
@@ -329,6 +341,27 @@ fn layout_text_quads_inner(
                 color: g.color,
                 ..default()
             });
+        }
+        // An icon seats in the line's font cell by `justifyV`, its offsets in pixels, y up.
+        if let Some(out) = icons_out.as_deref_mut() {
+            let cell_top = pen_y - baseline_in_cell;
+            for p in &pending_icons {
+                let (icon, [w, h]) = (&icons[p.index], icon_px[p.index]);
+                let [off_x, off_y] = icon.geometry.offset;
+                let seat = match justify.v {
+                    JustifyV::Top => 0.0,
+                    JustifyV::Middle => (r.size - h) * 0.5,
+                    JustifyV::Bottom => r.size - h,
+                };
+                let x = (origin_dev_x + p.x_dev + (off_x * dpi).round()) / dpi;
+                let y = (((cell_top + seat) * dpi).round() - (off_y * dpi).round()) / dpi;
+                out.push(IconQuad {
+                    rect: Rect::new(x, y, x + w, y + h),
+                    path: icon.path.clone(),
+                    tex_coords: icon.geometry.tex_coords,
+                    alpha: p.alpha,
+                });
+            }
         }
         // Link hit rects cover the glyph cells: one font height down from baseline minus ascender.
         if let Some(out) = links_out.as_deref_mut() {
@@ -501,7 +534,7 @@ mod measure_fits_render {
                     e.ensure_metrics(r.face, r.ppem, label);
                     let runs = parse_markup(label, [1.0, 1.0, 1.0, 1.0]);
                     let line = runs.first().expect("one line");
-                    let rows = measure::wrap_line(&e, r, line, measured);
+                    let rows = measure::wrap_line(&e, r, line, measured, &[]);
                     assert_eq!(
                         rows.len(),
                         1,
@@ -716,6 +749,74 @@ mod measure_fits_render {
             );
             assert!(!quads.is_empty(), "{label:?} drew nothing");
         }
+    }
+
+    /// The stock `OBJECTIVES_LABEL`: the new-feature icon is a font height wide in the measure, and
+    /// it draws at the pen after `Objectives`, one pixel down by its `-1` offset.
+    #[test]
+    fn an_inline_texture_takes_its_width_in_the_measure_and_draws_at_the_pen() {
+        let Some(mut e) = test_engine(1.0) else {
+            eprintln!("skipping: no install / font chain");
+            return;
+        };
+        let s = spec(12.0);
+        let plain = measure_text(&mut e, "Objectives", None, s).0;
+        let text = "Objectives|TInterface\\OptionsFrame\\UI-OptionsFrame-NewFeatureIcon:0:0:0:-1|t";
+        assert_eq!(measure_text(&mut e, text, None, s).0, plain + 12.0);
+        let mut icons = Vec::new();
+        let quads = layout_text_quads_full(
+            &mut e,
+            text,
+            Rect::new(0.0, 0.0, 0.0, 0.0),
+            [1.0; 4],
+            Justify {
+                h: JustifyH::Left,
+                v: JustifyV::Top,
+            },
+            0,
+            s,
+            TextSeat::Exact,
+            None,
+            Some(&mut icons),
+        );
+        assert_eq!(
+            quads.len(),
+            10,
+            "the ten letters, and no glyph for the icon"
+        );
+        assert_eq!(icons.len(), 1);
+        let icon = &icons[0];
+        assert_eq!(
+            icon.path,
+            "Interface\\OptionsFrame\\UI-OptionsFrame-NewFeatureIcon"
+        );
+        // The pen after the text is the measure less its headroom pixel.
+        assert_eq!(
+            icon.rect,
+            Rect::new(plain - 1.0, 1.0, plain + 11.0, 13.0),
+            "a font-height square at the pen, one pixel below the cell top"
+        );
+        // An explicit size rides the pixel scale (`:16` at 14 px in 4:3 is 20), and the chat's
+        // Blizzard icon is twice the font height wide.
+        assert_eq!(measure_text(&mut e, "|Ta:16|t", None, spec(14.0)).0, 21.0);
+        let blizz = "|TInterface\\ChatFrame\\UI-ChatIcon-Blizz.blp:0:2:0:-3|t";
+        assert_eq!(measure_text(&mut e, blizz, None, spec(14.0)).0, 29.0);
+    }
+
+    /// The wrap sees the icon's width: a line that fits without it breaks with it.
+    #[test]
+    fn an_inline_texture_wraps_by_its_width() {
+        let Some(mut e) = test_engine(1.0) else {
+            eprintln!("skipping: no install / font chain");
+            return;
+        };
+        let s = spec(12.0);
+        let r = measure::resolve(&mut e, &s);
+        let words = measure_text(&mut e, "Chat Style", None, s).0;
+        e.ensure_metrics(r.face, r.ppem, "Chat Style");
+        let text = "Chat Style|TInterface\\OptionsFrame\\UI-OptionsFrame-NewFeatureIcon:0:0:0:-1|t";
+        assert_eq!(measure::wrapped_rows_for_test(&e, r, text, words + 1.0), 2);
+        assert_eq!(measure::wrapped_rows_for_test(&e, r, text, words + 13.0), 1);
     }
 
     /// Every glyph edge of a single-line string lands on the device grid: no per-letter phase.

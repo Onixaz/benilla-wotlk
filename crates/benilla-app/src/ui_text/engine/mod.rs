@@ -123,6 +123,9 @@ pub(crate) struct TextEngine {
     /// The window's `scale_factor`. Every raster size derives from it ([`Self::ppem`]), so a
     /// change invalidates no cell, only the measures taken under the old value.
     dpi: f32,
+    /// The window's width over its height, which sizes an embedded texture's explicit spec
+    /// ([`benilla_ui::markup::texture_pixel_scale`]); set beside [`Self::dpi`].
+    aspect: f32,
     /// `(face, ppem, char)` to pen metrics; never touches the GPU, so the VM's measurer fills it.
     chars: HashMap<(usize, u16, char), CharCell>,
     /// `(face, glyph, ppem, radius)` to cell; `None` for no ink or no room, so a miss is paid once.
@@ -200,6 +203,7 @@ impl TextEngine {
             missing_fonts: HashSet::new(),
             default_face,
             dpi,
+            aspect: 4.0 / 3.0,
             chars: HashMap::new(),
             cells: HashMap::new(),
             sheet: Sheet::new(images),
@@ -292,6 +296,11 @@ impl TextEngine {
         self.dpi
     }
 
+    /// The window's width over its height.
+    pub(super) fn aspect(&self) -> f32 {
+        self.aspect
+    }
+
     /// The face's ascender fraction, the `[font+0x17c]` term each line's baseline seats on.
     pub(super) fn ascent_ratio_of(&self, face: usize) -> f32 {
         self.faces.get(face).map_or(0.794, |f| f.ascent_ratio)
@@ -314,7 +323,10 @@ impl TextEngine {
     /// after it hits; the reference does this per character in its layout kernels. The reference's
     /// all-glyphs-cached test is not this: it gates geometry invalidation after eviction.
     pub(super) fn ensure_str(&mut self, face: usize, ppem: u16, radius: u8, text: &str) {
-        for ch in text.chars() {
+        for ch in text
+            .chars()
+            .filter(|&c| super::markup::icon_index(c).is_none())
+        {
             self.ensure_char(face, ppem, Some(radius), ch);
         }
     }
@@ -324,7 +336,10 @@ impl TextEngine {
     /// rasterize each character, but the step law reads only the advance, so skipping the bitmap
     /// changes no width.
     pub(super) fn ensure_metrics(&mut self, face: usize, ppem: u16, text: &str) {
-        for ch in text.chars() {
+        for ch in text
+            .chars()
+            .filter(|&c| super::markup::icon_index(c).is_none())
+        {
             self.ensure_char(face, ppem, None, ch);
         }
     }
@@ -635,6 +650,7 @@ pub(super) fn test_engine(dpi: f32) -> Option<TextEngine> {
         missing_fonts: HashSet::new(),
         default_face,
         dpi,
+        aspect: 4.0 / 3.0,
         chars: HashMap::new(),
         cells: HashMap::new(),
         sheet: Sheet::new(&Assets::<Image>::default()),
