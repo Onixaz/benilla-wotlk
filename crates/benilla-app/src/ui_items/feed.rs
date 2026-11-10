@@ -286,7 +286,12 @@ fn template_view(
         bag_family: t.bag_family,
         item_limit: limits
             .and_then(|l| l.0.get(t.item_limit_category))
-            .map(|c| (c.id, c.quantity)),
+            .map(|c| benilla_ui::script::ItemLimitView {
+                category: c.id,
+                name: c.name.clone(),
+                quantity: c.quantity,
+                flags: c.flags,
+            }),
         socket_colors: t.socket_colors,
         socket_bonus: t.socket_bonus,
         socket_bonus_name: (t.socket_bonus != 0)
