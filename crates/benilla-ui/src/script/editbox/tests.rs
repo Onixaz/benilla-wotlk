@@ -372,6 +372,19 @@ fn set_cursor_position_clamps_and_inserts_there() {
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "aXéc");
 }
 
+/// `SetCursorPosition` keeps a byte inside a character, as the setter (`0x963350`) does, and the
+/// next `Insert` lands before that character instead of splitting it.
+#[test]
+fn a_caret_inside_a_character_reads_back_and_inserts_before_it() {
+    let s = script();
+    s.run(r#"E = CreateFrame("EditBox", "E") E:SetText("é") E:SetCursorPosition(1)"#)
+        .unwrap();
+    assert_eq!(s.eval::<i64>("return E:GetCursorPosition()").unwrap(), 1);
+    s.run("E:Insert('x')").unwrap();
+    assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "xé");
+    assert_eq!(s.eval::<i64>("return E:GetCursorPosition()").unwrap(), 1);
+}
+
 // ── selection / highlight / keys ────────────────────────────────────────────────────────────
 
 #[test]
