@@ -2803,6 +2803,27 @@ fn only_the_state_kit_play_hands_the_caster_to_its_beam() {
         beam_plays(&mut app),
         vec![(target, 5, None), (target, 6, Some(caster))]
     );
+
+    // An instant hit's play carries no guid (`0x801f10`), so no beam of it names a source.
+    app.world_mut().write_message(SpellGoTargets {
+        caster,
+        spell_id: BEAM_SPELL,
+        hits: vec![target],
+        misses: Vec::new(),
+        dest: None,
+        ammo_display_id: None,
+        seq: 2,
+        trajectory: None,
+        reflected: 0,
+        reflects: Vec::new(),
+        caster_guid: 0,
+        server_time: 0,
+    });
+    app.update();
+    assert_eq!(
+        beam_plays(&mut app),
+        vec![(target, 5, None), (target, 6, None)]
+    );
 }
 
 /// The aura arm's state-kit play carries the aura's creator (`0x724c77`); a creator not

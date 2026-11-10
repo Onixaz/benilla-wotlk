@@ -860,8 +860,8 @@ fn go_plays_impact_area(visuals: &SpellVisualCatalog, stages: &VisualStages, spe
 #[derive(Clone, Copy)]
 struct ImpactPlay {
     spell_id: u32,
-    /// The caster, whose guid both kit plays carry (`0x702f5f`).
-    caster: Entity,
+    /// The caster a missile's plays carry (`0x702f5f`); an instant hit's carry none (`0x801f10`).
+    caster: Option<Entity>,
     /// The ranged fallback of an instant hit's merged row; `None` on arrival (`0x703586`).
     weapon_visual: Option<u32>,
     /// The unit is the caster: the caster impact kit, else the target impact kit (`0x800d00`).
@@ -917,7 +917,7 @@ fn play_impact(
         return;
     };
     let discrete = KitPlay {
-        caster: Some(caster),
+        caster,
         ..KitPlay::DISCRETE
     };
     if let Some(kit) = impact_kit(visuals, &stages, on_caster) {
@@ -1191,7 +1191,7 @@ pub(super) fn route_cast_visuals(
                     ev.entity,
                     ImpactPlay {
                         spell_id: ev.spell_id,
-                        caster,
+                        caster: Some(caster),
                         weapon_visual: None,
                         on_caster,
                         at,
@@ -1277,7 +1277,7 @@ pub(super) fn route_cast_visuals(
                     target,
                     ImpactPlay {
                         spell_id: go.spell_id,
-                        caster: go.caster,
+                        caster: None,
                         weapon_visual: wv,
                         on_caster: target == go.caster,
                         at: None,
