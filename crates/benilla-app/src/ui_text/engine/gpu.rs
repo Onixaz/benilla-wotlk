@@ -118,11 +118,17 @@ fn publish_sheet(
     let Some(mut atlas) = atlas else {
         return;
     };
-    let dpi = windows.single().map_or(1.0, Window::scale_factor);
+    let window = windows.single().ok();
+    let dpi = window.map_or(1.0, Window::scale_factor);
+    let aspect = window
+        .filter(|w| w.height() > 0.0)
+        .map_or(4.0 / 3.0, |w| w.width() / w.height());
     let (generation, dpi_moved) = {
         let mut e = atlas.lock();
-        let dpi_moved = (e.dpi - dpi).abs() > 1e-6;
+        // An aspect change resizes every explicit embedded texture, so it stales the memo too.
+        let dpi_moved = (e.dpi - dpi).abs() > 1e-6 || (e.aspect - aspect).abs() > 1e-6;
         e.dpi = dpi;
+        e.aspect = aspect;
         if e.reset_pending {
             e.reset_pending = false;
             e.generation += 1;

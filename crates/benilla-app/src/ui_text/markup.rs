@@ -7,8 +7,63 @@ pub(crate) struct LinkInfo {
     pub(crate) markup: String,
 }
 
+/// The character an embedded texture stands in as inside a run's text: the `k`th icon of a string
+/// is `ICON_BASE + k`, from Supplementary Private Use Area-A, which no client face carries, so the
+/// wrap, the pen and the caret walk an icon as one character.
+const ICON_BASE: u32 = 0xF0000;
+
+/// One past the last icon character.
+const ICON_END: u32 = 0xFFFFE;
+
+/// The stand-in character of the `k`th icon, `None` past the range.
+fn icon_char(k: usize) -> Option<char> {
+    u32::try_from(k)
+        .ok()
+        .and_then(|k| ICON_BASE.checked_add(k))
+        .filter(|&c| c < ICON_END)
+        .and_then(char::from_u32)
+}
+
+/// The icon index a run character stands for, `None` for an ordinary character.
+pub(super) fn icon_index(c: char) -> Option<usize> {
+    let c = u32::from(c);
+    (ICON_BASE..ICON_END)
+        .contains(&c)
+        .then(|| (c - ICON_BASE) as usize)
+}
+
+/// One `|T…|t` embedded texture of a string, in token order: its path and its spec's geometry.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct InlineIcon {
+    pub(crate) path: String,
+    pub(crate) geometry: benilla_ui::markup::TextureGeometry,
+}
+
+/// The `|T` span's icon, `None` when the spec parser refuses it: the token then draws nothing.
+fn inline_icon(spec: &str) -> Option<InlineIcon> {
+    benilla_ui::markup::TextureSpec::parse(spec).map(|s| InlineIcon {
+        path: s.path.to_string(),
+        geometry: s.geometry,
+    })
+}
+
+/// `input`'s embedded textures in token order, the table its icon characters index; empty, and no
+/// walk, for a string with no `|T`.
+pub(super) fn icons_of(input: &str) -> Vec<InlineIcon> {
+    if !input.contains("|T") {
+        return Vec::new();
+    }
+    benilla_ui::markup::tokens(input)
+        .filter_map(|(_, t)| match t.kind {
+            benilla_ui::markup::TokenKind::Texture { spec } => inline_icon(spec),
+            _ => None,
+        })
+        .collect()
+}
+
 /// One colour run of a line: its text, its straight-alpha RGBA in 0..1 (as
-/// [`crate::ui_pass::UiQuad::color`]), and its link.
+/// [`crate::ui_pass::UiQuad::color`]), and its link. An embedded texture is one character of the
+/// text ([`icon_index`]).
 #[derive(Clone)]
 pub(super) struct ColorRun {
     pub(super) text: String,
@@ -16,13 +71,24 @@ pub(super) struct ColorRun {
     pub(super) link: Option<std::sync::Arc<LinkInfo>>,
 }
 
-/// Resolve `input`'s inline markup, whose grammar is [`benilla_ui::markup`]'s, into lines of
-/// [`ColorRun`]s. `|n` breaks the line in every box. The reference skips it in a single-line box
-/// (`K & 0x200`, set by `SetMultiLine`), though its cursor model still parses it; no stock string
-/// carries `|n`, and a typed `|` becomes `||`.
+/// [`parse_markup_icons`]'s lines alone, for the tests.
+#[cfg(test)]
 pub(super) fn parse_markup(input: &str, base_color: [f32; 4]) -> Vec<Vec<ColorRun>> {
+    parse_markup_icons(input, base_color).0
+}
+
+/// Resolve `input`'s inline markup, whose grammar is [`benilla_ui::markup`]'s, into lines of
+/// [`ColorRun`]s and the string's [`InlineIcon`]s, which its icon characters index. `|n` breaks the
+/// line in every box. The reference skips it in a single-line box (`K & 0x200`, set by
+/// `SetMultiLine`), though its cursor model still parses it; no stock string carries `|n`, and a
+/// typed `|` becomes `||`.
+pub(super) fn parse_markup_icons(
+    input: &str,
+    base_color: [f32; 4],
+) -> (Vec<Vec<ColorRun>>, Vec<InlineIcon>) {
     use benilla_ui::markup::TokenKind as T;
 
+    let mut icons: Vec<InlineIcon> = Vec::new();
     let mut lines: Vec<Vec<ColorRun>> = Vec::new();
     let mut runs: Vec<ColorRun> = Vec::new();
     let mut color = base_color;
@@ -65,25 +131,44 @@ pub(super) fn parse_markup(input: &str, base_color: [f32; 4]) -> Vec<Vec<ColorRu
                     }
                 }
             }
+            // A character in the icon range is not one the faces draw; dropped, it cannot pose
+            // as an icon.
+            T::Char(c) if icon_index(c).is_some() => {}
             T::Char(c) => push_visible(c, &mut cur, &mut link),
+            T::Texture { spec } => {
+                if let Some(ch) = inline_icon(spec).and_then(|i| {
+                    let ch = icon_char(icons.len())?;
+                    icons.push(i);
+                    Some(ch)
+                }) {
+                    cur.push(ch);
+                    if let Some((_, visible, _)) = &mut link {
+                        visible.push_str(&format!("|T{spec}|t"));
+                    }
+                }
+            }
+            T::TextureClose => {}
         }
     }
     // An unterminated link's runs stay plain text: the `|H` is consumed, the text still shows.
     flush(&mut runs, &mut cur, color, &mut link);
     lines.push(runs);
-    lines
+    (lines, icons)
 }
 
-/// [`parse_markup`] under the FontString line-count law of `GxuFont_GetTextBlockHeight`: a line's
-/// terminating break is consumed with it, so a trailing break opens no line (a `<BR/>` block,
+/// [`parse_markup_icons`] under the FontString line-count law of `GxuFont_GetTextBlockHeight`: a
+/// line's terminating break is consumed with it, so a trailing break opens no line (a `<BR/>` block,
 /// `"\n"`, is one blank line), and an empty string is zero lines of height 0. Not the EditBox's
 /// law, hence a seam of its own: a multiline EditBox ending in a break shows the empty row its
 /// caret sits on, through `line_rows`.
-pub(super) fn fontstring_lines(input: &str, base_color: [f32; 4]) -> Vec<Vec<ColorRun>> {
+pub(super) fn fontstring_lines(
+    input: &str,
+    base_color: [f32; 4],
+) -> (Vec<Vec<ColorRun>>, Vec<InlineIcon>) {
     if input.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
-    let mut lines = parse_markup(input, base_color);
+    let (mut lines, icons) = parse_markup_icons(input, base_color);
     if lines.len() > 1
         && lines
             .last()
@@ -91,7 +176,7 @@ pub(super) fn fontstring_lines(input: &str, base_color: [f32; 4]) -> Vec<Vec<Col
     {
         lines.pop();
     }
-    lines
+    (lines, icons)
 }
 
 /// Accumulate one drawn char into the current run, and into the open link's visible text.
@@ -120,9 +205,10 @@ fn flush(
     }
 }
 
-/// `input`'s drawn text, as [`parse_markup`] draws it, with the raw byte offset of every boundary:
-/// `bounds[k]` is the raw offset before drawn byte `k`, and `bounds.len() == drawn.len() + 1`. The
-/// EditBox stores the raw string and draws only its visible text, so its advance table charges
+/// `input`'s drawn text, as [`parse_markup_icons`] draws it, with the raw byte offset of every
+/// boundary: `bounds[k]` is the raw offset before drawn byte `k`, and
+/// `bounds.len() == drawn.len() + 1`. The EditBox stores the raw string and draws only its visible
+/// text, so its advance table charges
 /// escape bytes zero width: a glyph ending at drawn byte `e` files its width at raw `bounds[e]`,
 /// just past the glyph and before any escape after it, and `||` draws one byte from two.
 pub(super) fn visible_map(input: &str) -> (String, Vec<usize>) {
@@ -131,13 +217,25 @@ pub(super) fn visible_map(input: &str) -> (String, Vec<usize>) {
     let mut drawn = String::new();
     let mut bounds: Vec<usize> = Vec::new();
     let mut last_end = 0usize;
+    let mut icons = 0usize;
     for (at, token) in benilla_ui::markup::tokens(input) {
         let c = match token.kind {
+            T::Char(c) if icon_index(c).is_some() => continue,
             T::Char(c) => c,
             T::EscapedPipe => '|',
             T::LineBreak => '\n',
+            // An icon draws as its stand-in, numbered as [`parse_markup_icons`] numbers it.
+            T::Texture { spec } => match inline_icon(spec).and_then(|_| icon_char(icons)) {
+                Some(ch) => {
+                    icons += 1;
+                    ch
+                }
+                None => continue,
+            },
             // Zero-width: no drawn byte, so no boundary of its own.
-            T::Color(_) | T::ColorReset | T::LinkOpen { .. } | T::LinkClose => continue,
+            T::Color(_) | T::ColorReset | T::LinkOpen { .. } | T::LinkClose | T::TextureClose => {
+                continue
+            }
         };
         // The boundary before this char is where the previous drawn token ended, before any escape
         // in between; a multi-byte char's interior boundaries are its own raw bytes.
@@ -208,13 +306,43 @@ mod markup_tests {
         assert_eq!(lines[1][0].text, "two");
     }
 
-    /// Build 5875 has no inline-texture escape: the remap table sends every `|` lead but C, H, N
-    /// and R to the ordinary-character arm, so `|T…|t` draws as text.
+    /// An embedded texture is one character of its run, standing for the string's icon table;
+    /// the stock `OBJECTIVES_LABEL` reads `Objectives` and one icon.
     #[test]
-    fn there_is_no_inline_texture_escape() {
-        let lines = parse_markup("a|TInterface\\Icons\\Foo:16:16|tb", WHITE);
+    fn an_inline_texture_is_one_icon_character_of_its_run() {
+        let (lines, icons) = parse_markup_icons(
+            "Objectives|TInterface\\OptionsFrame\\UI-OptionsFrame-NewFeatureIcon:0:0:0:-1|t",
+            WHITE,
+        );
         assert_eq!(lines[0].len(), 1);
-        assert_eq!(lines[0][0].text, "a|TInterface\\Icons\\Foo:16:16|tb");
+        let text: Vec<char> = lines[0][0].text.chars().collect();
+        assert_eq!(text.len(), 11);
+        assert_eq!(text[..10].iter().collect::<String>(), "Objectives");
+        assert_eq!(icon_index(text[10]), Some(0));
+        assert_eq!(icons.len(), 1);
+        assert_eq!(
+            icons[0].path,
+            "Interface\\OptionsFrame\\UI-OptionsFrame-NewFeatureIcon"
+        );
+        assert_eq!(icons[0].geometry.offset, [0.0, -1.0]);
+        // Icons number in token order.
+        let (lines, icons) = parse_markup_icons("|Ta:0|t x |Tb:0|t", WHITE);
+        let ks: Vec<Option<usize>> = lines[0][0].text.chars().map(icon_index).collect();
+        assert_eq!(ks, [Some(0), None, None, None, Some(1)]);
+        assert_eq!(icons[1].path, "b");
+        assert_eq!(icons_of("|Ta:0|t x |Tb:0|t"), icons);
+    }
+
+    /// A span the spec parser refuses and a stray `|t` draw nothing; a span the decoder refuses
+    /// draws as text.
+    #[test]
+    fn a_refused_texture_draws_nothing_and_an_undecoded_one_draws_as_text() {
+        let (lines, icons) = parse_markup_icons("a|Tfoo|tb|tc", WHITE);
+        assert_eq!(lines[0][0].text, "abc");
+        assert!(icons.is_empty());
+        assert_eq!(parse_markup("a|Tfoo", WHITE)[0][0].text, "a|Tfoo");
+        // A character in the icon range from the input cannot pose as an icon.
+        assert_eq!(parse_markup("a\u{F0000}b", WHITE)[0][0].text, "ab");
     }
 
     #[test]
@@ -317,7 +445,7 @@ mod markup_tests {
     }
 
     /// `||` draws one `|` from two raw bytes, `|n` and `\r\n` break the line, and `|T…|t` draws as
-    /// text.
+    /// one icon character.
     #[test]
     fn the_tokens_the_engine_grammar_added() {
         // `a||b`: the drawn `|` spans raw 1..3, so the boundary after it is 3.
@@ -326,14 +454,17 @@ mod markup_tests {
         assert_eq!(parse_markup("a|nb", WHITE).len(), 2);
         assert_eq!(parse_markup("a\r\nb", WHITE).len(), 2);
         assert_eq!(check_map("a\r\nb", "a\nb"), vec![0, 1, 3, 4]);
-        let (drawn, _) = visible_map("a|Tfoo|tb");
-        assert_eq!(drawn, "a|Tfoo|tb");
+        assert_eq!(check_map("a|Tfoo|tb", "ab"), vec![0, 1, 9]);
+        let icon = icon_char(0).expect("the first icon");
+        let bounds = check_map("a|Tfoo:0|tb", &format!("a{icon}b"));
+        // The icon's four drawn bytes map to its whole raw span.
+        assert_eq!(bounds, vec![0, 1, 2, 3, 4, 10, 11]);
     }
 
     /// The line-count law where it differs from a split, and where it does not.
     #[test]
     fn a_trailing_break_does_not_open_a_line() {
-        let n = |t: &str| fontstring_lines(t, [1.0, 1.0, 1.0, 1.0]).len();
+        let n = |t: &str| fontstring_lines(t, [1.0, 1.0, 1.0, 1.0]).0.len();
         assert_eq!(n("\n"), 1, "a <BR/> block is ONE blank line");
         assert_eq!(n("a\n"), 1);
         // The item tooltip's set spacer, the reference's literal.

@@ -1,16 +1,13 @@
-//! The 1.12 inline text markup (`|cAARRGGBB`, `|r`, `|H…|h…|h`, `|n`, `||`) and the edit box's
+//! The inline text markup (`|cAARRGGBB`, `|r`, `|H…|h…|h`, `|T…|t`, `|n`, `||`) and the edit box's
 //! cursor law over it, one grammar for the renderer and the edit box. It transcribes the token
-//! decoder ([`token_at`]: a byte remap into the jump table) and the edit box's per-byte class array
-//! `E+0x330`, rebuilt by the reference after every edit, with the primitives that read it
-//! ([`ClassMap`]).
+//! decoder ([`token_at`], `0x6bd5a0`), the embedded texture's spec parser ([`TextureSpec`],
+//! `0x6c0e80`) and the edit box's per-byte class array `E+0x330`, rebuilt by the reference after
+//! every edit, with the primitives that read it ([`ClassMap`]).
 //!
-//! 1.12 has no `|T…|t` texture escape: the remap claims only `c`, `h`, `n`, `r` in either case and
-//! `|`, so `|TInterface\Icons\Foo:16:16|t` draws literally.
-//!
-//! The decoder's flags word can disable classes, but no code in the 1.12 client sets the bits for
-//! `|c`, `|r`, `|H`, `|h` or `||` (the reference builds it from a font string's flags). Only `|n`
-//! can be switched off, on a single-line edit box (`SetMultiLine`), and the class map parses it
-//! regardless, so that gate belongs to the renderer's line breaker.
+//! The decoder's flags word can disable classes (`0x100` colours, `0x1000` textures), but no
+//! FontString here sets those bits. Only `|n` can be switched off, on a single-line edit box
+//! (`SetMultiLine`), and the class map parses it regardless, so that gate belongs to the renderer's
+//! line breaker.
 //!
 //! A cursor stands only on a token boundary with the adjacent zero-width escapes absorbed: after
 //! any trailing `|r`/`|h`, before any leading `|c`/`|H`. Every index here is a byte offset on a
@@ -82,6 +79,10 @@ pub enum TokenClass {
     LinkClose = 5,
     /// An ordinary character, its UTF-8 length.
     Char = 6,
+    /// A whole `|T<spec>|t` embedded texture.
+    Texture = 7,
+    /// A stray `|t`, 2 bytes.
+    TextureClose = 8,
 }
 
 /// A token and what it carries.
@@ -99,6 +100,13 @@ pub enum TokenKind<'a> {
     },
     LinkClose,
     Char(char),
+    Texture {
+        /// The text between `|T` and `|t`, such as `Interface\Icons\Foo:16:16`; [`TextureSpec`]
+        /// reads it.
+        spec: &'a str,
+    },
+    /// A `|t` outside a texture span: zero-width, drawing nothing.
+    TextureClose,
 }
 
 impl TokenKind<'_> {
@@ -111,6 +119,8 @@ impl TokenKind<'_> {
             TokenKind::LinkOpen { .. } => TokenClass::LinkOpen,
             TokenKind::LinkClose => TokenClass::LinkClose,
             TokenKind::Char(_) => TokenClass::Char,
+            TokenKind::Texture { .. } => TokenClass::Texture,
+            TokenKind::TextureClose => TokenClass::TextureClose,
         }
     }
 }
@@ -191,6 +201,20 @@ pub fn token_at(text: &str, at: usize) -> Option<Token<'_>> {
                 kind: TokenKind::LinkClose,
                 byte_len: 2,
             },
+            // Uppercase only opens and lowercase only closes (`0x6bd5a0`).
+            Some(b'T') => match parse_texture_span(b) {
+                Some(delim) => Token {
+                    kind: TokenKind::Texture {
+                        spec: &rest[2..delim],
+                    },
+                    byte_len: delim + 2,
+                },
+                None => literal_pipe,
+            },
+            Some(b't') => Token {
+                kind: TokenKind::TextureClose,
+                byte_len: 2,
+            },
             _ => literal_pipe,
         });
     }
@@ -227,6 +251,152 @@ fn parse_link_open(rest: &str) -> Option<(&str, usize)> {
         return None;
     }
     Some((&rest[2..delim], span))
+}
+
+/// The `|` that ends a `|T` span, whose next byte must be `t` (`0x6bd761`); `None`, a literal `|`,
+/// when no `|` follows, when it is not followed by `t`, or when the span is empty (`|T|t`).
+fn parse_texture_span(b: &[u8]) -> Option<usize> {
+    let delim = 2 + b.get(2..)?.iter().position(|&c| c == b'|')?;
+    (delim > 2 && b.get(delim + 1) == Some(&b't')).then_some(delim)
+}
+
+// ── The embedded texture's spec ─────────────────────────────────────────────────────────────
+
+/// A `|T` span's fields after the path, `height:width:offsetX:offsetY:imageWidth:imageHeight:
+/// left:right:top:bottom`, each optional in order, as the spec parser (`0x6c0e80`) reads them.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct TextureGeometry {
+    /// The height field; 0 or below takes the font's height.
+    pub height: f32,
+    /// The width field, `None` when absent.
+    pub width: Option<f32>,
+    /// The offset from the pen position in pixels, y up.
+    pub offset: [f32; 2],
+    /// `[left, right, top, bottom]` texture coordinates, set only when the image size is positive
+    /// and all four pixel bounds are present.
+    pub tex_coords: Option<[f32; 4]>,
+}
+
+/// A parsed `|T` span: the texture path and its geometry.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct TextureSpec<'a> {
+    pub path: &'a str,
+    pub geometry: TextureGeometry,
+}
+
+impl<'a> TextureSpec<'a> {
+    /// Parse a [`TokenKind::Texture`] spec. `None` when no `:` follows the path or the height field
+    /// is missing; the token then still consumes its bytes and draws nothing.
+    pub fn parse(spec: &'a str) -> Option<TextureSpec<'a>> {
+        let (path, rest) = spec.split_once(':')?;
+        if rest.is_empty() {
+            return None;
+        }
+        // A field that starts at the span's end is absent: a trailing `:` adds nothing.
+        let rest = rest.strip_suffix(':').unwrap_or(rest);
+        let mut fields = rest.split(':');
+        let mut next = || fields.next();
+        let height = storm_float(next()?);
+        let width = next().map(storm_float);
+        let offset_x = next().map_or(0.0, storm_float);
+        let offset_y = next().map_or(0.0, storm_float);
+        let image = (next().map(storm_int), next().map(storm_int));
+        let bounds = [next(), next(), next(), next()];
+        let tex_coords = match (image, bounds) {
+            ((Some(w), Some(h)), [Some(l), Some(r), Some(t), Some(b)]) if w > 0 && h > 0 => {
+                let (w, h) = (w as f32, h as f32);
+                Some([
+                    storm_int(l) as f32 / w,
+                    storm_int(r) as f32 / w,
+                    storm_int(t) as f32 / h,
+                    storm_int(b) as f32 / h,
+                ])
+            }
+            _ => None,
+        };
+        Some(TextureSpec {
+            path,
+            geometry: TextureGeometry {
+                height,
+                width,
+                offset: [offset_x, offset_y],
+                tex_coords,
+            },
+        })
+    }
+}
+
+impl TextureGeometry {
+    /// `[width, height]` in pixels for a font `font_px` tall: height 0 or below is the font's, a
+    /// missing width is the height, a width 0 or below is the font's, and a positive width under a
+    /// font-sized height is a multiple of that height (`:0:2` is 2:1); explicit sizes ride
+    /// `pixel_scale` ([`texture_pixel_scale`]).
+    pub fn size(&self, font_px: f32, pixel_scale: f32) -> [f32; 2] {
+        let explicit = self.height * pixel_scale;
+        let from_font = explicit <= 0.0 || explicit.is_nan();
+        let height = if from_font { font_px } else { explicit };
+        let width = match self.width {
+            None => height,
+            Some(w) if w > 0.0 => {
+                if from_font {
+                    w * height
+                } else {
+                    w * pixel_scale
+                }
+            }
+            Some(_) => font_px,
+        };
+        [width, height]
+    }
+}
+
+/// The spec parser's pixels per spec unit for a font `font_px` tall in a window of this `aspect`:
+/// it measures the font against a 14-unit reference height converted by the width scale
+/// (`0x6c0e80` with `0x47c070`), so `:16` at a 14 px font in a 4:3 window is 20 px.
+pub fn texture_pixel_scale(font_px: f32, aspect: f32) -> f32 {
+    let ddc_width = aspect / (aspect * aspect + 1.0).sqrt();
+    font_px / (14.0 * ddc_width)
+}
+
+/// The field as the spec parser copies it: at most 31 bytes.
+fn storm_field(field: &str) -> &str {
+    let mut end = field.len().min(31);
+    while !field.is_char_boundary(end) {
+        end -= 1;
+    }
+    &field[..end]
+}
+
+/// A field's leading decimal number, 0 when there is none, as the parser's string-to-float reads.
+fn storm_float(field: &str) -> f32 {
+    let s = storm_field(field).trim_start();
+    let b = s.as_bytes();
+    let mut end = usize::from(matches!(b.first(), Some(b'+' | b'-')));
+    let digits_from = end;
+    while b.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+    }
+    if b.get(end) == Some(&b'.') {
+        end += 1;
+        while b.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+    }
+    if end == digits_from || &s[digits_from..end] == "." {
+        return 0.0;
+    }
+    s[..end].parse().unwrap_or(0.0)
+}
+
+/// A field's leading integer, 0 when there is none.
+fn storm_int(field: &str) -> i32 {
+    let s = storm_field(field).trim_start();
+    let b = s.as_bytes();
+    let mut end = usize::from(matches!(b.first(), Some(b'+' | b'-')));
+    while b.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+    }
+    s[..end].parse().unwrap_or(0)
 }
 
 /// Every token of `text` with the byte offset it starts at.
@@ -402,8 +572,11 @@ impl ClassMap {
             let entry = self.entry(at);
             let Some(class) = entry.class() else { break };
             at += entry.byte_len();
-            // `|c` and `|H…|h` are skipped at either atomicity.
-            if matches!(class, TokenClass::Color | TokenClass::LinkOpen) {
+            // `|c`, `|H…|h` and `|T…|t` are skipped at either atomicity (`0x962d50`).
+            if matches!(
+                class,
+                TokenClass::Color | TokenClass::LinkOpen | TokenClass::Texture
+            ) {
                 continue;
             }
             if !atomic_links {
@@ -417,11 +590,11 @@ impl ClassMap {
             }
             // Inside a link and not its close: keep skipping.
         }
-        // Then absorb any immediately following `|r` / `|h`, so the cursor lands past them.
+        // Then absorb any immediately following `|r` / `|h` / `|t`, so the cursor lands past them.
         while at < end
             && matches!(
                 self.entry(at).class(),
-                Some(TokenClass::ColorReset | TokenClass::LinkClose)
+                Some(TokenClass::ColorReset | TokenClass::LinkClose | TokenClass::TextureClose)
             )
         {
             at = self.next_token(at);
@@ -432,10 +605,12 @@ impl ClassMap {
     /// One step backward, the mirror.
     fn step_back(&self, from: usize, atomic_links: bool) -> usize {
         let mut at = from;
-        // Trailing `|r` and `|h` first.
+        // Trailing `|r`, `|h` and `|t` first.
         while let Some(prev) = self.prev_token(at) {
             match self.entry(prev).class() {
-                Some(TokenClass::ColorReset | TokenClass::LinkClose) => at = prev,
+                Some(TokenClass::ColorReset | TokenClass::LinkClose | TokenClass::TextureClose) => {
+                    at = prev
+                }
                 _ => break,
             }
         }
@@ -447,10 +622,10 @@ impl ClassMap {
                 break;
             }
         }
-        // Then back over any preceding `|c` or `|H`.
+        // Then back over any preceding `|c`, `|H` or `|T…|t`.
         while let Some(prev) = self.prev_token(at) {
             match self.entry(prev).class() {
-                Some(TokenClass::Color | TokenClass::LinkOpen) => at = prev,
+                Some(TokenClass::Color | TokenClass::LinkOpen | TokenClass::Texture) => at = prev,
                 _ => break,
             }
         }
@@ -471,7 +646,7 @@ impl ClassMap {
         if self.entry(lo).in_link() {
             while !matches!(
                 self.entry(lo).class(),
-                Some(TokenClass::Color | TokenClass::LinkOpen)
+                Some(TokenClass::Color | TokenClass::LinkOpen | TokenClass::Texture)
             ) {
                 match self.prev_token(lo) {
                     Some(prev) => lo = prev,
@@ -480,7 +655,9 @@ impl ClassMap {
             }
             while let Some(prev) = self.prev_token(lo) {
                 match self.entry(prev).class() {
-                    Some(TokenClass::Color | TokenClass::LinkOpen) => lo = prev,
+                    Some(TokenClass::Color | TokenClass::LinkOpen | TokenClass::Texture) => {
+                        lo = prev
+                    }
                     _ => break,
                 }
             }
@@ -493,7 +670,7 @@ impl ClassMap {
             while hi < self.text_len()
                 && matches!(
                     self.entry(hi).class(),
-                    Some(TokenClass::ColorReset | TokenClass::LinkClose)
+                    Some(TokenClass::ColorReset | TokenClass::LinkClose | TokenClass::TextureClose)
                 )
             {
                 hi = self.next_token(hi);
@@ -603,17 +780,136 @@ mod tests {
     }
 
     #[test]
-    fn there_is_no_inline_texture_escape_in_1_12_1() {
-        // `|T…|t` is a later client's escape; in 1.12 every byte of it is an ordinary character.
+    fn a_texture_escape_is_one_token_through_its_closing_pipe_t() {
         let text = "|TInterface\\Icons\\Foo:16:16|t";
-        let first = token_at(text, 0).expect("a token");
-        assert_eq!(first.kind, TokenKind::Char('|'));
-        assert_eq!(first.byte_len, 1);
+        let t = one(text);
         assert_eq!(
-            token_at(text, 1).expect("a token").kind,
-            TokenKind::Char('T')
+            t.kind,
+            TokenKind::Texture {
+                spec: "Interface\\Icons\\Foo:16:16"
+            }
         );
-        assert!(tokens(text).all(|(_, t)| t.class() == TokenClass::Char));
+        assert_eq!(t.byte_len, text.len());
+        // The stock `OBJECTIVES_LABEL` shape, between text.
+        let ks = kinds(
+            "Objectives|TInterface\\OptionsFrame\\UI-OptionsFrame-NewFeatureIcon:0:0:0:-1|t!",
+        );
+        assert_eq!(ks.len(), 12, "ten letters, the texture, the bang");
+        assert_eq!(ks[10].1.class(), TokenClass::Texture);
+        assert_eq!(ks[11].1, TokenKind::Char('!'));
+        // The span ends at the first `|`, so a span carries no pipe of its own.
+        assert_eq!(one("|Ta:1|t|t").byte_len, 7);
+        // A stray `|t` is a zero-width close, lowercase only; `|T` opens uppercase only.
+        assert_eq!(one("|tx").kind, TokenKind::TextureClose);
+        assert_eq!(one("|tx").byte_len, 2);
+    }
+
+    /// The decoder's three refusals (`0x6bd5a0`): no `|` after `|T`, a `|` not followed by `t`, and
+    /// an empty span. Each leaves the `|` literal.
+    #[test]
+    fn a_texture_escape_that_fails_the_decoder_stays_literal() {
+        for text in ["|T", "|Tfoo", "|Tfoo|", "|Tfoo|x", "|T|t", "|Tfoo||t"] {
+            let t = token_at(text, 0).expect("a token");
+            assert_eq!(t.kind, TokenKind::Char('|'), "{text:?}");
+            assert_eq!(t.byte_len, 1, "{text:?}");
+        }
+        // A span the spec parser refuses is still one decoded token: it draws nothing.
+        assert_eq!(one("|Tfoo|t").kind, TokenKind::Texture { spec: "foo" });
+        assert_eq!(TextureSpec::parse("foo"), None);
+    }
+
+    fn spec(text: &str) -> TextureSpec<'_> {
+        TextureSpec::parse(text).expect("a spec")
+    }
+
+    /// `0x6c0e80`: the path runs to the first `:`, a height field is required, and the rest are
+    /// optional in order.
+    #[test]
+    fn the_spec_parser_reads_the_path_and_each_optional_field() {
+        assert_eq!(TextureSpec::parse("Interface\\Foo"), None, "no colon");
+        assert_eq!(TextureSpec::parse("Interface\\Foo:"), None, "no height");
+        let s = spec("Interface\\Foo:16");
+        assert_eq!(s.path, "Interface\\Foo");
+        assert_eq!(s.geometry.height, 16.0);
+        assert_eq!(s.geometry.width, None);
+        assert_eq!(s.geometry.offset, [0.0, 0.0]);
+        assert_eq!(s.geometry.tex_coords, None);
+        // A trailing `:` adds no field; an empty middle one is a 0.
+        assert_eq!(spec("a:16:").geometry.width, None);
+        assert_eq!(spec("a::5").geometry.height, 0.0);
+        assert_eq!(spec("a::5").geometry.width, Some(5.0));
+        let s = spec("a:0:0:0:-1");
+        assert_eq!(s.geometry.offset, [0.0, -1.0]);
+        // Fields read as their leading number.
+        assert_eq!(spec("a:12.5px:x").geometry.height, 12.5);
+        assert_eq!(spec("a:12.5px:x").geometry.width, Some(0.0));
+    }
+
+    /// The four sizing rules, at a 14 px font and a pixel scale of 1.25 (4:3).
+    #[test]
+    fn the_spec_parser_sizes_by_the_font_and_the_pixel_scale() {
+        let px = |text: &str| spec(text).geometry.size(14.0, 1.25);
+        // Height 0 or below: the font height; width absent: the height.
+        assert_eq!(px("a:0"), [14.0, 14.0]);
+        assert_eq!(px("a:-3"), [14.0, 14.0]);
+        // Width 0 or below: the font height, whatever the height.
+        assert_eq!(px("a:16:0"), [14.0, 20.0]);
+        assert_eq!(px("a:16:-1"), [14.0, 20.0]);
+        // Explicit sizes ride the pixel scale.
+        assert_eq!(px("a:16"), [20.0, 20.0]);
+        assert_eq!(px("a:16:8"), [10.0, 20.0]);
+        // A positive width under a font-sized height is a multiple of it: the Blizzard chat icon.
+        assert_eq!(
+            px("Interface\\ChatFrame\\UI-ChatIcon-Blizz.blp:0:2:0:-3"),
+            [28.0, 14.0]
+        );
+    }
+
+    #[test]
+    fn the_pixel_scale_measures_the_font_against_fourteen_width_units() {
+        assert!((texture_pixel_scale(14.0, 4.0 / 3.0) - 1.25).abs() < 1e-6);
+        assert!((texture_pixel_scale(28.0, 4.0 / 3.0) - 2.5).abs() < 1e-6);
+        // A wider window has a wider width scale, so the same spec draws smaller.
+        assert!(texture_pixel_scale(14.0, 16.0 / 9.0) < 1.25);
+    }
+
+    /// The image size and the four pixel bounds crop one atlas, as the dungeon finder's role icons
+    /// do; anything short of all four leaves the whole texture.
+    #[test]
+    fn the_spec_parser_crops_by_the_image_size_and_four_bounds() {
+        let s =
+            spec("Interface\\LFGFrame\\UI-LFG-ICON-PORTRAITROLES.blp:16:16:0:0:64:64:0:19:22:41");
+        assert_eq!(
+            s.geometry.tex_coords,
+            Some([0.0, 19.0 / 64.0, 22.0 / 64.0, 41.0 / 64.0])
+        );
+        assert_eq!(spec("a:16:16:0:0:64:64:0:19:22").geometry.tex_coords, None);
+        assert_eq!(
+            spec("a:16:16:0:0:0:64:0:19:22:41").geometry.tex_coords,
+            None
+        );
+        assert_eq!(
+            spec("a:16:16:0:0:64:-1:0:19:22:41").geometry.tex_coords,
+            None
+        );
+    }
+
+    /// The edit box walks a texture as it walks `|c`: skipped forward and stepped over backward
+    /// (`0x962d50`), never a letter (`0x962ea0`), and `|t` absorbed like `|r`.
+    #[test]
+    fn the_class_map_skips_a_texture_and_counts_no_letter_for_it() {
+        let text = "a|Tx:0|tb";
+        let map = ClassMap::new(text);
+        assert_eq!(map.entry(1).class(), Some(TokenClass::Texture));
+        assert_eq!(map.entry(1).byte_len(), 7);
+        assert_eq!(map.num_letters(), 2);
+        assert_eq!(map.advance(0, 1, false), 1);
+        assert_eq!(map.advance(1, 1, false), 9);
+        assert_eq!(map.advance(9, -1, false), 1);
+        assert_eq!(map.advance(1, -1, false), 0);
+        let map = ClassMap::new("a|tb");
+        assert_eq!(map.advance(0, 1, false), 3, "past the stray |t");
+        assert_eq!(map.num_letters(), 2);
     }
 
     #[test]
@@ -916,14 +1212,16 @@ mod tests {
                 // A trailing `|r`/`|h` must have been absorbed, so you are never before one.
                 if matches!(
                     entry.class(),
-                    Some(TokenClass::ColorReset | TokenClass::LinkClose)
+                    Some(TokenClass::ColorReset | TokenClass::LinkClose | TokenClass::TextureClose)
                 ) {
                     return false;
                 }
                 // A leading `|c`/`|H` must have been skipped, so you are never after one.
                 !matches!(
                     map.prev_token(at).map(|p| map.entry(p).class()),
-                    Some(Some(TokenClass::Color | TokenClass::LinkOpen))
+                    Some(Some(
+                        TokenClass::Color | TokenClass::LinkOpen | TokenClass::Texture
+                    ))
                 )
             })
             .collect()

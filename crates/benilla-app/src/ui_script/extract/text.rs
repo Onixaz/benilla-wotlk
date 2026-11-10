@@ -9,7 +9,7 @@ use benilla_ui::script::{EditBoxTextUi, FontShadow, JustifyH, JustifyV, Outline}
 use benilla_ui::widget::FrameHandle;
 
 use crate::ui_pass::{UiQuad, UvRect};
-use crate::ui_text::{layout_text_quads, layout_text_quads_links, TextSeat, UiFontAtlas};
+use crate::ui_text::{layout_text_quads, layout_text_quads_full, TextSeat, UiFontAtlas};
 
 /// `WOW_TEXT_PROBE=1`: log each Text quad's drawn string, font and ink rows; read once.
 static TEXT_PROBE: std::sync::LazyLock<bool> =
@@ -52,7 +52,8 @@ pub(super) struct TextHost<'a> {
 }
 
 /// Rasterize one Text quad into `out`, and a message-frame line's hyperlink spans into
-/// `link_spans`. Glyph quads take the region's `z` ([`layout_text_quads`]).
+/// `link_spans`. Glyph quads take the region's `z` ([`layout_text_quads`]); an embedded texture
+/// draws after them on the same `z`, its image from `texture`.
 pub(super) fn emit(
     atlas: &mut UiFontAtlas,
     text: &str,
@@ -60,6 +61,7 @@ pub(super) fn emit(
     host: TextHost<'_>,
     out: &mut Vec<UiQuad>,
     link_spans: &mut Vec<(FrameHandle, benilla_ui::layout::Rect, String, String)>,
+    texture: &mut dyn FnMut(&str) -> Option<Handle<Image>>,
 ) {
     let base_color = style.color.unwrap_or([1.0, 1.0, 1.0, 1.0]);
     // The block's top snaps to the UI grid, except on a world overlay, which has its own seat.
@@ -223,10 +225,11 @@ pub(super) fn emit(
         }
         out.extend(sq);
     }
+    let mut icons = Vec::new();
     let mut glyphs = if let ZTarget::Frame(fh) = host.target {
         // A frame-targeted Text quad is a message line: collect its links for the click hit-test.
         let mut spans = Vec::new();
-        let g = layout_text_quads_links(
+        let g = layout_text_quads_full(
             &mut atlas.lock(),
             text,
             host.rect,
@@ -238,7 +241,8 @@ pub(super) fn emit(
             host.z,
             spec,
             seat,
-            &mut spans,
+            Some(&mut spans),
+            Some(&mut icons),
         );
         for sp in spans {
             // Back to the engine's y-up UI units.
@@ -256,7 +260,7 @@ pub(super) fn emit(
         }
         g
     } else {
-        layout_text_quads(
+        layout_text_quads_full(
             &mut atlas.lock(),
             draw_text,
             draw_rect,
@@ -265,11 +269,42 @@ pub(super) fn emit(
             host.z,
             spec,
             seat,
+            None,
+            Some(&mut icons),
         )
     };
     for q in &mut glyphs {
         q.color[3] *= host.alpha;
         q.clip = text_clip;
+    }
+    // Each embedded texture is a texture region of the font string, at its alpha (`0x485af0`); a
+    // path the archives lack draws nothing. The fill's pass only: the shadow draws no icon.
+    let mut icon_quads = Vec::with_capacity(icons.len());
+    for icon in icons {
+        if probe {
+            info!(
+                "text probe: icon [{:.1},{:.1} {:.1}x{:.1}] {}",
+                icon.rect.min.x,
+                icon.rect.min.y,
+                icon.rect.width(),
+                icon.rect.height(),
+                icon.path
+            );
+        }
+        let Some(handle) = texture(&icon.path) else {
+            continue;
+        };
+        icon_quads.push(UiQuad {
+            rect: icon.rect,
+            z_key: host.z,
+            texture: Some(handle),
+            uv: icon
+                .tex_coords
+                .map_or(UvRect::FULL, UvRect::from_tex_coords),
+            color: [1.0, 1.0, 1.0, icon.alpha * host.alpha],
+            clip: text_clip,
+            ..default()
+        });
     }
     // The seat probe: the fill's ink rows relative to the rect top, to compare with the
     // vertical-seat law's `d + ascender`; the shadow's quads are not in `glyphs`.
@@ -307,6 +342,7 @@ pub(super) fn emit(
         }
     }
     out.extend(glyphs);
+    out.extend(icon_quads);
     // The caret: a 1 px bar in the constructor's white (`0xffffffff`), one line cell tall at the
     // engine's x, pushed after the glyphs to draw on top. The reference's is 4 UI units wide and
     // takes the edit box's text colour on a font change.
