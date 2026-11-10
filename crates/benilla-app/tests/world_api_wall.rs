@@ -186,6 +186,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("world_plugins::WorldPlugins", "record"),
     ("world_point::Subject", "record"),
     ("world_point::WorldPoint", "record"),
+    ("world_unit::ObjectHidden", "record"),
     ("world_unit::ViewerUnit", "wall"),
     ("world_unit::WorldUnit", "wall"),
     ("worldview::run", "record"),

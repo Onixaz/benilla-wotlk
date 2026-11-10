@@ -135,7 +135,7 @@ fn fire_particle_census(
             })
             .unwrap_or_default();
         println!(
-            "PARTICLE_CENSUS_EMITTER blend={:?} flags={:#06x} rate=[{}] life={:.2} tex={} live={} alpha={:.2}{dist}{plane}",
+            "PARTICLE_CENSUS_EMITTER blend={:?} flags={:#06x} rate=[{}] life={:.2} tex={} live={} alpha={:.2} quad_half={:.2}{dist}{plane}",
             d.blend,
             d.flags,
             rate_keys.join(","),
@@ -144,6 +144,7 @@ fn fire_particle_census(
             e.live(),
             // The composed model alpha: ~0 on a unit not yet appeared, 1 with no model above.
             e.render_alpha(),
+            e.max_quad_half(),
         );
         total += e.live();
         n += 1;

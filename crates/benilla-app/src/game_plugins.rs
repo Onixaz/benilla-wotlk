@@ -130,6 +130,7 @@ impl PluginGroup for GamePlugins {
             .add(CameraShakePlugin)
             .add(FootprintsPlugin)
             .add(crate::go_anim::plugin)
+            .add(crate::go_difficulty::plugin)
             .add(crate::doodad_events::plugin)
             .add(PlayerPlugin)
             .add(crate::screen_fade::ScreenFadePlugin)
