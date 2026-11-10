@@ -368,3 +368,97 @@ fn a_non_digit_over_a_numeric_selection_deletes_it() {
     assert_eq!(eb.insert("b"), EditOutcome::default());
     assert_eq!((eb.text.as_str(), eb.dirty), ("14", 0));
 }
+
+/// A caret `SetCursorPosition` left inside a two- or four-byte character: every edit and move
+/// settles it on the character's start first, so none panics and the text stays whole.
+#[test]
+fn every_edit_and_move_tolerates_a_caret_inside_a_character() {
+    // "aéb" with the caret in "é" (byte 2), "a😀b" with it in "😀" (byte 3).
+    for (text, inside) in [("a\u{e9}b", 2), ("a\u{1f600}b", 3)] {
+        let actions = [
+            EditAction::Move {
+                unit: EditUnit::Char,
+                back: false,
+                extend: false,
+            },
+            EditAction::Move {
+                unit: EditUnit::Char,
+                back: true,
+                extend: false,
+            },
+            EditAction::Move {
+                unit: EditUnit::Char,
+                back: false,
+                extend: true,
+            },
+            EditAction::Move {
+                unit: EditUnit::Word,
+                back: true,
+                extend: false,
+            },
+            EditAction::Move {
+                unit: EditUnit::Line,
+                back: false,
+                extend: true,
+            },
+            EditAction::Move {
+                unit: EditUnit::Edge,
+                back: true,
+                extend: false,
+            },
+            EditAction::Delete {
+                unit: EditUnit::Char,
+                back: true,
+            },
+            EditAction::Delete {
+                unit: EditUnit::Char,
+                back: false,
+            },
+            EditAction::Delete {
+                unit: EditUnit::Word,
+                back: true,
+            },
+            EditAction::Delete {
+                unit: EditUnit::Edge,
+                back: false,
+            },
+            EditAction::DeleteToEdge { back: true },
+            EditAction::DeleteToEdge { back: false },
+        ];
+        for action in actions {
+            let mut eb = at(text, inside);
+            eb.apply(action);
+            assert!(eb.text.is_char_boundary(eb.cursor), "{text:?} {action:?}");
+            assert!(
+                eb.text.is_char_boundary(eb.sel_start),
+                "{text:?} {action:?}"
+            );
+            assert!(eb.text.is_char_boundary(eb.sel_end), "{text:?} {action:?}");
+        }
+        let mut eb = at(text, inside);
+        eb.insert("x");
+        assert_eq!(
+            eb.text,
+            format!("ax{}", &text[1..]),
+            "inserted before the character"
+        );
+        assert_eq!(eb.cursor, 2);
+        let mut eb = EditBoxState {
+            multi_line: true,
+            ..at(text, inside)
+        };
+        eb.move_by_row(true, false);
+        assert!(eb.text.is_char_boundary(eb.cursor));
+        let mut eb = at(text, inside);
+        eb.move_caret_to(text.len(), true);
+        assert_eq!(eb.selected_text().as_deref(), Some(&text[1..]));
+        assert_eq!(eb.cut_selection().as_deref(), Some(&text[1..]));
+        assert_eq!(eb.text, "a");
+        // A password box maps the caret to its display without slicing inside the character.
+        let eb = EditBoxState {
+            password: true,
+            ..at(text, inside)
+        };
+        assert_eq!(eb.text_to_display(eb.cursor), 1);
+    }
+}
