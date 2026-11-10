@@ -180,12 +180,15 @@ impl super::UiScript {
         }
         // Preserve any wall time observed by Lua so the next tick cannot make GetTime move
         // backwards when the host's elapsed value is zero or under-reported.
+        let quiet = self.visual_epoch();
         let mut model = self.model_mut();
         if model.clock_read.get() {
             model.now += model.clock_wall.elapsed().as_secs_f64();
         }
         model.clock_wall = std::time::Instant::now();
         model.clock_live = false;
+        drop(model);
+        self.restore_epoch(quiet);
     }
 }
 
