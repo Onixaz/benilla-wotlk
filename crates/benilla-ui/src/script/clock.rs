@@ -91,7 +91,7 @@ mod tests {
         }
         assert_eq!(s.now(), 105.0);
         let last = s.eval::<f64>("return Last").unwrap();
-        assert!(last >= 105.002 && last < 106.0, "{last}");
+        assert!((105.002..106.0).contains(&last), "{last}");
         assert!(s.eval::<f64>("return GetTime()").unwrap() >= last);
         s.tick(0.0);
         assert!(s.eval::<f64>("return Last").unwrap() >= last);
