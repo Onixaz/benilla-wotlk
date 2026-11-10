@@ -602,7 +602,9 @@ pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 24] = [
 
 /// The Region method map: the names every region leaf reaches on a miss, 3.3.5a's `SetSize` and
 /// `GetSize` (`0x49d7a0`, `0x49d6f0`, registrar `0xac1480`) among them.
-pub(crate) const REGION_MAP_METHODS: [&str; 24] = [
+pub(crate) const REGION_MAP_METHODS: [&str; 26] = [
+    "IsProtected",
+    "CanChangeProtectedState",
     "GetObjectType",
     "IsObjectType",
     "GetName",
@@ -1301,12 +1303,12 @@ impl UiScript {
         }
     }
 
-    /// Push the player's facing (radians) onto every Minimap's player-arrow `Model`, every frame,
-    /// raw: the minimap's player-facing set copies it into the field `Model:SetFacing` writes, so
-    /// the arrow's `GetFacing()` reads it.
+    /// Cache the player's heading for `GetPlayerFacing` and push it onto each Minimap's arrow.
+    /// The API reads a normalized heading; each arrow model receives the raw argument.
     pub fn set_minimap_player_facing(&mut self, facing: f32) {
         let mut model = self.model_mut();
         let quiet = model.epoch();
+        model.player_facing = facing.rem_euclid(std::f32::consts::TAU);
         let mut moved = false;
         let arrows: Vec<crate::widget::FrameHandle> = model
             .arena

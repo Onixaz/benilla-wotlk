@@ -13,6 +13,7 @@ use super::{decode_id, draw_layer_from_str, frame_handle_of, publish_global};
 
 /// Populate `m`'s event, script and region-creation methods.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
+    super::protection::install(lua, m, crate::script::region_map::Side::Frame)?;
     // Events + scripts
     m.set(
         "RegisterEvent",
@@ -110,6 +111,23 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "GetScript",
         lua.create_function(|lua, (this, name): (Table, String)| get_script(lua, &this, &name))?,
+    )?;
+    m.set(
+        "HookScript",
+        lua.create_function(|lua, (this, name, hook): (Table, String, Function)| {
+            let kind = script_kind(lua, &name).ok_or_else(|| {
+                mlua::Error::runtime(format!("HookScript: unsupported script '{name}'"))
+            })?;
+            // 12340's Frame HookScript post-hooks the current script; SetScript replaces it.
+            let func = match get_script(lua, &this, kind)? {
+                Value::Function(original) => lua
+                    .load("local a, b = ... return function(...) a(...) return b(...) end")
+                    .set_name("=HookScript")
+                    .call::<Function>((original, hook))?,
+                _ => hook,
+            };
+            set_script(lua, &this, kind, Some(func))
+        })?,
     )?;
     // `HasScript(name)`: 1 if the widget can carry that script kind, else nil, whether or not one
     // is set. Answered from the flat `SCRIPT_KINDS`, so another type's kind reads 1 too, where the
@@ -404,6 +422,88 @@ fn create_region(
 #[cfg(test)]
 mod tests {
     use crate::script::UiScript;
+
+    #[test]
+    fn frame_hook_script_preserves_arguments_and_registration_order() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            F = CreateFrame("Frame")
+            F:RegisterEvent("PLAYER_LOGIN")
+            Log = ""
+            local function check(self, event, ...)
+                assert(self == F and event == "PLAYER_LOGIN")
+                assert(select('#', ...) == 3)
+                local a, b, c = ...
+                assert(a == 7 and b == nil and c == 9)
+            end
+            F:SetScript("OnEvent", function(...) check(...) Log = Log .. "a" end)
+            F:HookScript("OnEvent", function(...) check(...) Log = Log .. "b" end)
+            F:HookScript("onevent", function(...) check(...) Log = Log .. "c" end)
+            "#,
+        )
+        .unwrap();
+        s.fire_event(
+            "PLAYER_LOGIN",
+            vec![
+                crate::script::ScriptValue::Number(7.0),
+                crate::script::ScriptValue::Nil,
+                crate::script::ScriptValue::Number(9.0),
+            ],
+        );
+        assert_eq!(s.eval::<String>("return Log").unwrap(), "abc");
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+        s.run(r#"F:SetScript("OnEvent", function() Log = Log .. "d" end)"#)
+            .unwrap();
+        s.fire_event("PLAYER_LOGIN", vec![]);
+        assert_eq!(s.eval::<String>("return Log").unwrap(), "abcd");
+        s.run("F:SetScript('OnEvent', nil)").unwrap();
+        s.fire_event("PLAYER_LOGIN", vec![]);
+        assert_eq!(s.eval::<String>("return Log").unwrap(), "abcd");
+    }
+
+    #[test]
+    fn hook_script_alone_joins_and_leaves_the_update_walk() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            F = CreateFrame("Frame")
+            Updates = 0
+            local hook = function(self, elapsed)
+                assert(self == F and elapsed > 0)
+                Updates = Updates + 1
+            end
+            F:HookScript("OnUpdate", hook)
+            assert(F:GetScript("OnUpdate") == hook)
+            F:HookScript("OnUpdate", hook)
+            "#,
+        )
+        .unwrap();
+        s.tick(0.1);
+        assert_eq!(s.eval::<i64>("return Updates").unwrap(), 2);
+        s.run("F:SetScript('OnUpdate', nil)").unwrap();
+        s.tick(0.1);
+        assert_eq!(s.eval::<i64>("return Updates").unwrap(), 2);
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+    }
+
+    #[test]
+    fn hook_script_rejects_invalid_arguments_without_changing_the_handler() {
+        let s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            local f = CreateFrame("Frame")
+            local original = function() end
+            f:SetScript("OnShow", original)
+            assert(not pcall(f.HookScript, f, "OnShow", nil))
+            assert(not pcall(f.HookScript, f, "OnShow", {}))
+            assert(not pcall(f.HookScript, f, "NotAScript", original))
+            assert(f:GetScript("OnShow") == original)
+            assert(CreateFrame("Button").HookScript == f.HookScript)
+            "#,
+        )
+        .unwrap();
+    }
 
     /// Both frames share both events, so clearing one must leave the other's registrations.
     #[test]

@@ -4,6 +4,64 @@ use super::common::script;
 use crate::script::*;
 use crate::widget::{MINIMAP_DEFAULT_ZOOM, MINIMAP_ENGINE_CHILDREN, MINIMAP_ZOOM_LEVELS};
 
+#[test]
+fn player_facing_is_available_before_frames_and_tracks_the_heading_feed() {
+    let mut s = script();
+    s.run(
+        r#"
+        assert(type(GetPlayerFacing) == "function")
+        assert(select('#', GetPlayerFacing()) == 1)
+        assert(GetPlayerFacing() == 0)
+        local rotation = -GetPlayerFacing()
+        assert(rotation == 0)
+        "#,
+    )
+    .unwrap();
+    let quiet = s.visual_epoch();
+    for facing in [1.25, -0.5, std::f32::consts::TAU + 0.75] {
+        s.set_minimap_player_facing(facing);
+        assert_eq!(
+            s.eval::<f32>("return GetPlayerFacing()").unwrap(),
+            facing.rem_euclid(std::f32::consts::TAU)
+        );
+        assert_eq!(
+            s.visual_epoch(),
+            quiet,
+            "a frameless heading paints nothing"
+        );
+    }
+    assert!(UiScript::new_glue()
+        .unwrap()
+        .eval::<bool>("return GetPlayerFacing == nil")
+        .unwrap());
+}
+
+#[test]
+fn player_facing_is_independent_of_minimap_arrow_mutations() {
+    let mut s = script();
+    s.run(
+        r#"
+        local m = CreateFrame("Minimap", "Minimap")
+        Arrow = ({m:GetChildren()})[9]
+        "#,
+    )
+    .unwrap();
+    s.set_minimap_player_facing(2.5);
+    s.run(
+        r#"
+        assert(GetPlayerFacing() == 2.5 and Arrow:GetFacing() == 2.5)
+        Arrow:SetFacing(1)
+        assert(GetPlayerFacing() == 2.5)
+        Minimap = nil
+        assert(GetPlayerFacing() == 2.5)
+        "#,
+    )
+    .unwrap();
+    s.set_minimap_player_facing(1.5);
+    assert_eq!(s.eval::<f32>("return GetPlayerFacing()").unwrap(), 1.5);
+    assert_eq!(s.eval::<f32>("return Arrow:GetFacing()").unwrap(), 1.5);
+}
+
 /// The zoom rides extraction as [`QuadContent::Minimap`]; `SetZoom` clamps to 0..=5.
 #[test]
 fn minimap_zoom_api_and_extract() {
@@ -206,15 +264,15 @@ fn a_minimap_is_born_with_nine_model_children_and_the_ninth_is_the_player_arrow(
         )
         .unwrap());
 
-    // Questie's `GetPlayerFacing()`; 0 until the app pushes, the ctor default.
-    s.run("function GetPlayerFacing() return ({Minimap:GetChildren()})[9]:GetFacing() end")
+    // The arrow's own model facing is 0 until the app pushes, the ctor default.
+    s.run("function ArrowFacing() return ({Minimap:GetChildren()})[9]:GetFacing() end")
         .unwrap();
     s.run(r#"Minimap = m"#).unwrap();
-    assert_eq!(s.eval::<f32>("return GetPlayerFacing()").unwrap(), 0.0);
+    assert_eq!(s.eval::<f32>("return ArrowFacing()").unwrap(), 0.0);
 
     // The player-facing set stores the argument into `[[minimap+0x338]+0x39c]` unchanged.
     s.set_minimap_player_facing(2.5);
-    assert_eq!(s.eval::<f32>("return GetPlayerFacing()").unwrap(), 2.5);
+    assert_eq!(s.eval::<f32>("return ArrowFacing()").unwrap(), 2.5);
 
     // The arrow's pane is never anchored, so a turn moves no mutation count; one an addon anchors
     // paints its facing.
@@ -241,7 +299,7 @@ fn a_minimap_is_born_with_nine_model_children_and_the_ninth_is_the_player_arrow(
     // An addon's own child lands at index 10 and does not displace the arrow.
     s.run(r#"extra = CreateFrame("Frame", nil, m)"#).unwrap();
     s.set_minimap_player_facing(-1.25);
-    assert_eq!(s.eval::<f32>("return GetPlayerFacing()").unwrap(), -1.25);
+    assert_eq!(s.eval::<f32>("return ArrowFacing()").unwrap(), -1.25);
     assert_eq!(
         s.eval::<usize>("return m:GetNumChildren()").unwrap(),
         MINIMAP_ENGINE_CHILDREN + 1

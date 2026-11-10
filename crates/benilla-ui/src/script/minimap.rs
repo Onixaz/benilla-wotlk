@@ -64,6 +64,16 @@ pub(crate) fn apply_model_attrs(
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+    // GetPlayerFacing (`0x60a490`): one numeric heading, zero when no player exists.
+    lua.globals().set(
+        "GetPlayerFacing",
+        lua.create_function(|lua, ()| {
+            Ok(lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .player_facing)
+        })?,
+    )?;
     let m = lua.create_table()?;
 
     m.set(

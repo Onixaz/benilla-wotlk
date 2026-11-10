@@ -196,6 +196,9 @@ pub(crate) struct Model {
     /// Frames inside their XML load, from its start to their `<Frames>` (`+0x130`, set at
     /// `0x4903b2`, cleared at `0x490421`): their show, hide and enable scripts stay quiet.
     pub(crate) xml_loading: HashSet<FrameHandle>,
+    /// Frames whose XML explicitly sets protection; dependencies are derived on demand.
+    pub(crate) protected_frames: HashSet<FrameHandle>,
+    pub(crate) protection_cache: std::cell::RefCell<super::object::protection::Cache>,
     /// Per model file, a pane clock's sequences and bounds, read by the host off the `MD20`.
     pub(crate) model_facts: HashMap<String, std::sync::Arc<crate::widget::ModelFileFacts>>,
     /// Model files still waiting for their facts, for the host to load; deduplicated.
@@ -1138,6 +1141,8 @@ pub(crate) struct Model {
 
     /// The world map's pushed catalog and feed, and its selection.
     pub(crate) worldmap: super::worldmap::WorldMapState,
+    /// The player's heading for GetPlayerFacing, independent of mutable minimap models.
+    pub(crate) player_facing: f32,
     /// Nameplate `Button`s under `WorldFrame`, never shrunk, visible to `GetChildren()`.
     pub(crate) nameplates: super::nameplate::NamePlates,
     /// The world-state readout's rows, gated and resolved by the app.
@@ -1385,6 +1390,8 @@ impl Model {
             on_size_changed_frames: Vec::new(),
             on_update_model_frames: Vec::new(),
             xml_loading: HashSet::new(),
+            protected_frames: HashSet::new(),
+            protection_cache: Default::default(),
             model_facts: HashMap::new(),
             model_facts_wanted: Vec::new(),
             model_instances: 0,
@@ -1789,6 +1796,7 @@ impl Model {
             server_unix_time: std::cell::Cell::new(None),
             quest_reset_unix: std::cell::Cell::new(None),
             worldmap: super::worldmap::WorldMapState::default(),
+            player_facing: 0.0,
             nameplates: super::nameplate::NamePlates::default(),
             worldstate: super::worldstate::WorldStateUiState::default(),
             pending_events: Vec::new(),

@@ -15,6 +15,7 @@ use super::{
 
 /// Install the layout methods into `m`.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
+    crate::script::object::protection::install(lua, m, Side::Region)?;
     // The explicit size fills the axes the anchors do not pin, so SetAllPoints's two corners
     // leave it unread.
     set_shared(
