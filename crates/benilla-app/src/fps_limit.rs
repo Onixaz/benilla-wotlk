@@ -60,11 +60,17 @@ impl FrameDeadline {
     }
 }
 
+/// Deviation: an instrumented run measures the client, not the cap, and its window opens
+/// unfocused ([`benilla_world::bgwin`]), so the limiter stands down there.
+#[derive(Resource)]
+struct Instrumented(bool);
+
 pub(crate) struct FpsLimitPlugin;
 
 impl Plugin for FpsLimitPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FrameCaps>()
+            .insert_resource(Instrumented(benilla_world::bgwin::background_run()))
             // Winit's default background 60 Hz rail must not override maxFPSBk, including zero.
             .insert_resource(bevy::winit::WinitSettings::continuous())
             // NonSend keeps the sleep on the main thread, including with a parallel executor.
@@ -77,9 +83,14 @@ impl Plugin for FpsLimitPlugin {
 fn limit_frame(
     windows: Query<&Window, With<PrimaryWindow>>,
     caps: Res<FrameCaps>,
+    instrumented: Res<Instrumented>,
     mut deadline: NonSendMut<FrameDeadline>,
 ) {
-    let interval = windows.single().ok().and_then(|w| caps.interval(w.focused));
+    let interval = windows
+        .single()
+        .ok()
+        .filter(|_| !instrumented.0)
+        .and_then(|w| caps.interval(w.focused));
     let Some(interval) = interval else {
         deadline.0 = None;
         return;
@@ -177,6 +188,8 @@ mod tests {
                 .unfocused_mode,
             bevy::winit::UpdateMode::Continuous,
         );
+        // The test runner's own environment may name an instrumented run.
+        app.insert_resource(Instrumented(false));
         let window = app
             .world_mut()
             .spawn((Window::default(), PrimaryWindow))
@@ -197,5 +210,25 @@ mod tests {
         app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
         app.update();
         assert!(app.world().non_send_resource::<FrameDeadline>().0.is_none());
+    }
+
+    #[test]
+    fn an_instrumented_run_is_never_capped() {
+        let mut app = App::new();
+        app.add_plugins(FpsLimitPlugin)
+            .insert_resource(Instrumented(true));
+        // A probe window: on top, never focused, so the stock default would be maxFPSBk.
+        app.world_mut().spawn((
+            Window {
+                focused: false,
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        app.world_mut().resource_mut::<FrameCaps>().background = 8;
+        for _ in 0..4 {
+            app.update();
+            assert!(app.world().non_send_resource::<FrameDeadline>().0.is_none());
+        }
     }
 }
