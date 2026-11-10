@@ -1303,12 +1303,12 @@ impl UiScript {
         }
     }
 
-    /// Cache the player's heading for `GetPlayerFacing` and push it onto each Minimap's arrow.
-    /// The API reads a normalized heading; each arrow model receives the raw argument.
+    /// Push the player's facing (radians) onto every Minimap's player-arrow `Model`, every frame,
+    /// raw: the minimap's player-facing set copies it into the field `Model:SetFacing` writes, so
+    /// the arrow's `GetFacing()` reads it.
     pub fn set_minimap_player_facing(&mut self, facing: f32) {
         let mut model = self.model_mut();
         let quiet = model.epoch();
-        model.player_facing = facing.rem_euclid(std::f32::consts::TAU);
         let mut moved = false;
         let arrows: Vec<crate::widget::FrameHandle> = model
             .arena
@@ -1335,6 +1335,18 @@ impl UiScript {
         if !moved {
             model.set_epoch(quiet);
         }
+    }
+
+    /// `GetPlayerFacing`'s answer: the facing of what the camera follows, our body, a far-sight
+    /// subject or a vehicle; `None` while no camera exists, which reads 0. No extract reads it.
+    pub fn set_camera_target_facing(&mut self, facing: Option<f32>) {
+        self.model_ref().camera_facing.set(facing);
+    }
+
+    /// Run `GetTime()` on from the host's last clock set, on every read, as the reference's OS
+    /// clock does (`0x6081f0`); off, it holds between the host's sets, as a test wants.
+    pub fn set_live_clock(&mut self, live: bool) {
+        self.model_ref().clock_live.set(live);
     }
 
     /// Turn `MinimapCompassTexture` to `radians` as the minimap frame's compass rotation

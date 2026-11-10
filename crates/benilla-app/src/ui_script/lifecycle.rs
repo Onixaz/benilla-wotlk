@@ -121,6 +121,7 @@ fn new_vm<E: std::fmt::Display>(
         }
     };
     seed_vm_clock(world, &mut script);
+    script.set_live_clock(true);
     seed_class_names(world, &mut script);
     install_addon_asset_resolvers(world, &mut script);
     info!("ui_script: new VM, session {}", script.session());
@@ -268,8 +269,10 @@ fn mint_entry_vm(world: &mut World) {
     if let Some(mut script) = new_vm(world, UiScript::new) {
         crate::ui_spell_info::seed_spell_info_for_vm(world, &mut script);
         crate::ui_auction::seed_auction_categories_for_vm(world, &mut script);
+        // GetPlayerFacing answers at file scope: what the camera follows at entry is our body.
         if let Some(player) = world.get_resource::<crate::player::Player>() {
-            script.set_minimap_player_facing(player.facing());
+            let facing = player.facing().rem_euclid(std::f32::consts::TAU);
+            script.set_camera_target_facing(Some(facing));
         }
         world.insert_non_send_resource(script);
     }
@@ -1242,7 +1245,7 @@ mod tests {
                 -heading
             );
             // A new VM must read the player, not the dying VM's last snapshot.
-            script.set_minimap_player_facing(5.0);
+            script.set_camera_target_facing(Some(5.0));
             world.insert_non_send_resource(script);
         }
     }

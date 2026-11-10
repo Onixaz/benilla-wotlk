@@ -1,4 +1,5 @@
-//! The two clocks Lua reads: `GetTime()`, the session seconds [`UiScript::tick`] advances, and
+//! The two clocks Lua reads: `GetTime()`, the session seconds [`UiScript::tick`] advances and a
+//! live VM runs on from between ticks, and
 //! `GetGameTime()`, the game clock the host pushes. Both live in the [`Model`], out of an addon's
 //! reach, as the reference's live in the client.
 //!
@@ -19,7 +20,9 @@ impl super::UiScript {
     /// construction; after that only [`Self::tick`] moves it.
     pub fn set_now(&mut self, secs: f64) {
         set_field!(self, now, secs);
-        self.model_ref().clock_floor.set(0.0);
+        let model = self.model_ref();
+        model.clock_wall.set(std::time::Instant::now());
+        model.clock_floor.set(0.0);
     }
 
     /// Push the game clock `GetGameTime()` answers, `(hour, minute)`; 0:00 until the first push.
@@ -29,8 +32,8 @@ impl super::UiScript {
 }
 
 /// `GetTime()`'s clock, for a caller holding no model borrow; one that holds it reads `model.now`.
-/// Inside a tick it runs on from the tick's start, as the reference's OS clock does under a long
-/// handler; a value once read is a floor, so the next tick's start never reads earlier.
+/// A live VM runs on from the host's last set, as the reference's OS clock does under a long
+/// handler; a value once read is a floor, so the next set never reads earlier.
 pub(crate) fn now(lua: &Lua) -> f64 {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
@@ -47,8 +50,8 @@ pub(crate) fn now(lua: &Lua) -> f64 {
 /// Register `GetTime` and `GetGameTime`.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
-    // GetTime() (`0x6081f0`): one number, the OS millisecond clock times the f64 0.001, read live,
-    // so a time-sliced handler sees its own budget run down.
+    // GetTime() (`0x6081f0`): one number, the OS millisecond clock times the f64 0.001, read live
+    // on every call, so a time-sliced handler sees its own budget run down.
     g.set("GetTime", lua.create_function(|lua, ()| Ok(now(lua)))?)?;
     // GetGameTime(): two numbers, the hour then the minute, the clock `SMSG_LOGIN_SETTIMESPEED`
     // seeds; minute resolution, no seconds.
@@ -69,11 +72,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use crate::script::UiScript;
 
-    /// A handler spinning on `GetTime()` sees it run on inside its tick, while the session clock
-    /// moves by the host's elapsed alone, and no read after the tick answers earlier.
+    /// On a live clock a handler spinning on `GetTime()` sees it run on, while the session clock
+    /// moves by the host's elapsed alone, and no later read answers earlier.
     #[test]
-    fn a_live_read_inside_a_tick_runs_on_without_advancing_the_session_clock() {
+    fn a_live_read_runs_on_without_advancing_the_session_clock() {
         let mut s = UiScript::new().unwrap();
+        s.set_live_clock(true);
         s.set_now(100.0);
         s.run(
             r#"
@@ -95,5 +99,15 @@ mod tests {
         assert!(s.eval::<f64>("return GetTime()").unwrap() >= last);
         s.tick(0.0);
         assert!(s.eval::<f64>("return Last").unwrap() >= last);
+    }
+
+    /// Off, the clock holds between the host's sets, so a test reads exact values.
+    #[test]
+    fn a_held_clock_reads_the_host_value_exactly() {
+        let mut s = UiScript::new().unwrap();
+        s.set_now(7.5);
+        assert_eq!(s.eval::<f64>("return GetTime()").unwrap(), 7.5);
+        s.tick(0.25);
+        assert_eq!(s.eval::<f64>("return GetTime()").unwrap(), 7.75);
     }
 }

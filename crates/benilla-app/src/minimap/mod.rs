@@ -1098,12 +1098,20 @@ fn feed_minimap_mask(
 /// per-frame player-facing write sets `[+0x39c]`, what `Model:GetFacing()` reads.
 /// `player.facing()` is an unbounded accumulator, so it is normalized to `[0, 2π)`, the wire value
 /// vmangos's `VerifyMovementInfo` requires.
+///
+/// `GetPlayerFacing`'s answer rides along (`0x60a490`): the facing of what the camera follows, a
+/// far-sight subject or a vehicle when one is published, else our body.
 fn feed_minimap_player_facing(
     script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
     player: Res<Player>,
+    subject: Option<Res<crate::player::ViewSubject>>,
 ) {
     let Some(mut script) = script else { return };
-    script.set_minimap_player_facing(player.facing().rem_euclid(std::f32::consts::TAU));
+    let own = player.facing().rem_euclid(std::f32::consts::TAU);
+    script.set_minimap_player_facing(own);
+    let followed = subject.as_deref().and_then(|s| s.remote).map(|v| v.facing);
+    let camera = followed.map_or(own, |f| f.rem_euclid(std::f32::consts::TAU));
+    script.set_camera_target_facing(Some(camera));
 }
 
 /// Turn the compass texture against the map while it rotates (by `-facing`, `0x57d5b0`, from the

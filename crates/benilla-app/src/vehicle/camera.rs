@@ -139,6 +139,7 @@ pub(super) fn feed_vehicle_camera(
             entity,
             feet,
             pivot_height: head_height(pivot, net.map_or(1.0, |n| n.scale)),
+            facing: tf.rotation.to_euler(EulerRot::YXZ).0,
         })
     });
 }

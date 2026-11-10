@@ -316,9 +316,9 @@ pub(crate) struct Model {
     /// `GetTime()`'s session seconds, which only the host moves ([`super::UiScript::tick`],
     /// [`super::UiScript::set_now`]); off `_G`, as the reference's clock is the OS tick count.
     pub(crate) now: f64,
-    /// When the running tick started, for `GetTime()`'s live reads inside it.
+    /// When the host last set or advanced `now`, for `GetTime()`'s live reads.
     pub(crate) clock_wall: Cell<Instant>,
-    /// Inside a tick: `GetTime()` runs on from `clock_wall`.
+    /// `GetTime()` runs on from `clock_wall` (the app's VMs); off, it holds at `now` (tests).
     pub(crate) clock_live: Cell<bool>,
     /// The latest `GetTime()` answered; the clock never reads below it.
     pub(crate) clock_floor: Cell<f64>,
@@ -1151,8 +1151,8 @@ pub(crate) struct Model {
 
     /// The world map's pushed catalog and feed, and its selection.
     pub(crate) worldmap: super::worldmap::WorldMapState,
-    /// The player's heading for GetPlayerFacing, independent of mutable minimap models.
-    pub(crate) player_facing: f32,
+    /// `GetPlayerFacing`'s camera-target facing, pushed by the host; `None` with no camera.
+    pub(crate) camera_facing: std::cell::Cell<Option<f32>>,
     /// Nameplate `Button`s under `WorldFrame`, never shrunk, visible to `GetChildren()`.
     pub(crate) nameplates: super::nameplate::NamePlates,
     /// The world-state readout's rows, gated and resolved by the app.
@@ -1810,7 +1810,7 @@ impl Model {
             server_unix_time: std::cell::Cell::new(None),
             quest_reset_unix: std::cell::Cell::new(None),
             worldmap: super::worldmap::WorldMapState::default(),
-            player_facing: 0.0,
+            camera_facing: std::cell::Cell::new(None),
             nameplates: super::nameplate::NamePlates::default(),
             worldstate: super::worldstate::WorldStateUiState::default(),
             pending_events: Vec::new(),

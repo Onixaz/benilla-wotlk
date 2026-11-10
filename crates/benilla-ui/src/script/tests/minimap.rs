@@ -4,40 +4,37 @@ use super::common::script;
 use crate::script::*;
 use crate::widget::{MINIMAP_DEFAULT_ZOOM, MINIMAP_ENGINE_CHILDREN, MINIMAP_ZOOM_LEVELS};
 
+/// `GetPlayerFacing` (`0x60a490`) reads what the camera follows, 0 with no camera, and is a game
+/// verb alone; the camera's facing paints nothing.
 #[test]
-fn player_facing_is_available_before_frames_and_tracks_the_heading_feed() {
+fn player_facing_reads_the_camera_target_and_zero_with_no_camera() {
     let mut s = script();
     s.run(
         r#"
         assert(type(GetPlayerFacing) == "function")
         assert(select('#', GetPlayerFacing()) == 1)
         assert(GetPlayerFacing() == 0)
-        local rotation = -GetPlayerFacing()
-        assert(rotation == 0)
         "#,
     )
     .unwrap();
     let quiet = s.visual_epoch();
-    for facing in [1.25, -0.5, std::f32::consts::TAU + 0.75] {
-        s.set_minimap_player_facing(facing);
-        assert_eq!(
-            s.eval::<f32>("return GetPlayerFacing()").unwrap(),
-            facing.rem_euclid(std::f32::consts::TAU)
-        );
-        assert_eq!(
-            s.visual_epoch(),
-            quiet,
-            "a frameless heading paints nothing"
-        );
+    for facing in [1.25, 4.5] {
+        s.set_camera_target_facing(Some(facing));
+        assert_eq!(s.eval::<f32>("return GetPlayerFacing()").unwrap(), facing);
+        assert_eq!(s.visual_epoch(), quiet, "a camera facing paints nothing");
     }
+    s.set_camera_target_facing(None);
+    assert_eq!(s.eval::<f32>("return GetPlayerFacing()").unwrap(), 0.0);
     assert!(UiScript::new_glue()
         .unwrap()
         .eval::<bool>("return GetPlayerFacing == nil")
         .unwrap());
 }
 
+/// The arrow takes the player's facing and `GetPlayerFacing` the camera target's: a far-sight
+/// subject turns the one and not the other, and an addon's `SetFacing` on the arrow moves neither.
 #[test]
-fn player_facing_is_independent_of_minimap_arrow_mutations() {
+fn player_facing_is_independent_of_the_minimap_arrow() {
     let mut s = script();
     s.run(
         r#"
@@ -47,19 +44,15 @@ fn player_facing_is_independent_of_minimap_arrow_mutations() {
     )
     .unwrap();
     s.set_minimap_player_facing(2.5);
+    s.set_camera_target_facing(Some(0.5));
     s.run(
         r#"
-        assert(GetPlayerFacing() == 2.5 and Arrow:GetFacing() == 2.5)
+        assert(GetPlayerFacing() == 0.5 and Arrow:GetFacing() == 2.5)
         Arrow:SetFacing(1)
-        assert(GetPlayerFacing() == 2.5)
-        Minimap = nil
-        assert(GetPlayerFacing() == 2.5)
+        assert(GetPlayerFacing() == 0.5)
         "#,
     )
     .unwrap();
-    s.set_minimap_player_facing(1.5);
-    assert_eq!(s.eval::<f32>("return GetPlayerFacing()").unwrap(), 1.5);
-    assert_eq!(s.eval::<f32>("return Arrow:GetFacing()").unwrap(), 1.5);
 }
 
 /// The zoom rides extraction as [`QuadContent::Minimap`]; `SetZoom` clamps to 0..=5.
