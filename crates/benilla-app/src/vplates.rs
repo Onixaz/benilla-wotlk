@@ -33,6 +33,11 @@ use benilla_world::view::WorldCamera;
 
 /// The plate border, sharp-resampled so its 128x32 art stays crisp when magnified.
 pub(crate) mod border;
+/// The plate cast bar's state.
+mod cast_bar;
+
+pub(crate) use cast_bar::CastSource;
+use cast_bar::PlateCastBar;
 
 /// The plate CVars as the gate reads them: `nameplateShowEnemies`/`Friends` (`[0xbd09b8]`,
 /// `[0xbd09c8]`), which the V keys' stock bodies write (`Bindings.xml:544-573`), the six owned-unit
@@ -48,6 +53,8 @@ pub(crate) struct VPlateMode {
     pub(crate) guardians: [bool; 2],
     pub(crate) totems: [bool; 2],
     pub(crate) allow_overlap: bool,
+    /// `showVKeyCastbar` (`[0xbd0934]`), the Combat panel's row: the target plate's cast bar.
+    pub(crate) cast_bar: bool,
 }
 
 impl Default for VPlateMode {
@@ -61,6 +68,7 @@ impl Default for VPlateMode {
             guardians: [true; 2],
             totems: [true; 2],
             allow_overlap: true,
+            cast_bar: true,
         }
     }
 }
@@ -167,6 +175,9 @@ const LEVEL_H: f32 = 0.0086;
 const LEVEL_OFF_X: f32 = 0.0092;
 const LEVEL_OFF_Y: f32 = 0.0071;
 const SKULL_SIZE: f32 = 0.01;
+/// The cast bar's inset from its border's BOTTOMRIGHT (`[0xaa3528]`) and the cast icon's side.
+const CAST_OFF: f32 = 0.003125;
+const CAST_ICON_SIZE: f32 = 0.01;
 /// The raid-target icon: its RIGHT on the border's LEFT, hanging off the plate's left edge.
 const RAID_ICON_SIZE: f32 = 0.02;
 /// The plate's lift above the unit's head, in yards.
@@ -309,6 +320,7 @@ pub(crate) fn read_plate_cvars(
             on("nameplateShowFriendlyTotems"),
         ],
         allow_overlap: on("nameplateAllowOverlap"),
+        cast_bar: on("showVKeyCastbar"),
     };
     if *mode != now {
         info!(
@@ -362,6 +374,15 @@ struct PlateWorld<'w, 's> {
     map: Option<Res<'w, benilla_world::world_map::CurrentMap>>,
 }
 
+/// The plate cast bar's inputs: the units' casts, the spell rows, and each plate's bar with the
+/// `GetTime` stamp of the last frame, keyed as the plates are.
+#[derive(SystemParam)]
+struct PlateCasts<'w, 's> {
+    units: Option<Res<'w, crate::ui_cast::UnitCasts>>,
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
+    bars: Local<'s, (std::collections::HashMap<u64, PlateCastBar>, Option<f64>)>,
+}
+
 /// Every frame: gate the units, seat each plate and hand the result to the widget layer as
 /// [`PlateState`]s. Runs after the targeting chain, whose selection it reads.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
@@ -387,6 +408,7 @@ fn drive_vplates(
     mut bucket: Local<crate::smart_rect::SmartBucket>,
     group: Res<crate::ui_party::GroupState>,
     mut mouse_told: Local<crate::ui_script::VmMemo<Option<bool>>>,
+    mut casts: PlateCasts,
 ) {
     plates.0.clear();
     plate_hover.0 = None;
@@ -399,12 +421,14 @@ fn drive_vplates(
         }
     };
     if !mode.enemies && !mode.friends {
+        casts.bars.0.clear();
         retire_all(script);
         return;
     }
     let (Ok((cam, cam_pose)), Ok((self_guid, self_tf, self_store))) =
         (world.camera.single(), world.self_q.single())
     else {
+        casts.bars.0.clear();
         retire_all(script);
         return;
     };
@@ -413,14 +437,20 @@ fn drive_vplates(
     };
     // No plate while the game UI is hidden (`[0xac80a8]`, `0x72b0a0`).
     if !script.world_ui_visible() {
+        casts.bars.0.clear();
         script.retire_nameplates();
         return;
     }
     let cam_tf = GlobalTransform::from(*cam_pose);
     let Some(viewport) = cam.logical_viewport_size() else {
+        casts.bars.0.clear();
         script.retire_nameplates();
         return;
     };
+    // The cast bars step by the `GetTime` clock their casts are stamped on.
+    let now = script.now();
+    let dt = casts.bars.1.map_or(0.0, |t| (now - t).max(0.0) as f32);
+    casts.bars.1 = Some(now);
     let basis = plate_basis(viewport);
     let gx = |v: f32| gx_px(v, basis);
     let window = world.window.single().ok();
@@ -653,6 +683,15 @@ fn drive_vplates(
         //
         // The raid-target index is 1-based here, 0-based for the atlas cell.
         let mark = group.raid_target_index(guid.0);
+        // Only the target's plate is fed a cast (`0x720e50`); any other plate reads the stop.
+        let source = (world.selection.target == Some(entity))
+            .then(|| casts.units.as_ref()?.plate_source(guid.0))
+            .flatten();
+        let spells = casts.spells.as_deref();
+        let bar = casts.bars.0.entry(guid.0).or_default();
+        bar.feed(source, now * 1000.0, |id| spells?.catalog.get(id));
+        bar.tick(dt, mode.cast_bar);
+        let cast = bar.view();
         let x_units = (plate.min.x + plate.max.x) * 0.5 / seam;
         let y_units = (viewport.y - plate.min.y) / seam;
         if hovered_key == Some(guid.0) {
@@ -707,8 +746,14 @@ fn drive_vplates(
             alpha,
             lit,
             hovered: hover,
+            cast,
         });
     }
+    // A plate gone takes its cast bar with it, as the reference's plate does.
+    casts
+        .bars
+        .0
+        .retain(|key, _| states.iter().any(|s| s.key == *key));
 
     // The widget layer rewrites the static anchors only when this moves, so an addon's own
     // re-anchoring survives between resizes.
@@ -724,6 +769,8 @@ fn drive_vplates(
             level_off_y: gx(LEVEL_OFF_Y) / seam,
             skull_size: gx(SKULL_SIZE) / seam,
             raid_size: gx(RAID_ICON_SIZE) / seam,
+            cast_off: gx(CAST_OFF) / seam,
+            cast_icon_size: gx(CAST_ICON_SIZE) / seam,
             name_height: text_px(NAME_H, basis) / seam,
             level_height: text_px(LEVEL_H, basis) / seam,
             // Deviation: a constant one-logical-pixel shadow, not the reference's 0.001 gx, which
