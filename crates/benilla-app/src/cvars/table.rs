@@ -858,6 +858,10 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // [`crate::video::VideoConfig::vsync`], which the window's present mode follows at the
     // `RestartGx` commit. `$WOW_NOVSYNC=1` overrides it for the session.
     same("gxVSync", "1").latched(),
+    // Graphics CVars registered at 0x76a9e8; the frame limiter reads them at 0x6836d0.
+    // The knob is [`crate::fps_limit::FrameCaps`].
+    same("maxFPS", "200"),
+    same("maxFPSBk", "30"),
     // `gxWindow` (`0x76a630`, callback `0x769550`): "0" on enUS, "1" on zhCN, as `gxMaximize`. "0"
     // mode-sets the display to `gxResolution` at `gxRefresh`; where the platform has no mode-set
     // the window is borderless over the monitor instead ([`crate::video`]). The knob is

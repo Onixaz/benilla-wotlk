@@ -63,6 +63,7 @@ mod doodad_events;
 mod entities;
 mod fishing_line;
 mod footprints;
+mod fps_limit;
 mod game_plugins;
 mod go_anim;
 mod go_templates;
@@ -218,64 +219,6 @@ mod world_state;
 mod world_state_ui;
 
 use bevy::prelude::*;
-
-fn configure_fps_limit(app: &mut App) {
-    use bevy_framepace::{FramepaceSettings, Limiter};
-
-    let fps = std::env::var("WOW_FPS_CAP")
-        .ok()
-        .and_then(|value| value.parse::<f64>().ok())
-        .filter(|value| value.is_finite() && *value >= 1.0 && *value <= 240.0)
-        .unwrap_or(40.0);
-
-    app.add_plugins(bevy_framepace::FramepacePlugin);
-
-    app.world_mut()
-        .resource_mut::<FramepaceSettings>()
-        .limiter = Limiter::from_framerate(fps);
-
-    println!("Benilla FPS limiter enabled: {fps} FPS");
-}
-
-fn update_fps_for_focus(
-    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
-    mut settings: ResMut<bevy_framepace::FramepaceSettings>,
-    mut previous_focus: Local<Option<bool>>,
-) {
-    use bevy_framepace::Limiter;
-
-    let Ok(window) = windows.single() else {
-        return;
-    };
-
-    if *previous_focus == Some(window.focused) {
-        return;
-    }
-
-    *previous_focus = Some(window.focused);
-
-    let foreground_fps = std::env::var("WOW_FPS_CAP")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|v| v.is_finite() && *v >= 1.0 && *v <= 240.0)
-        .unwrap_or(40.0);
-
-    let background_fps = std::env::var("WOW_FPS_BACKGROUND")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|v| v.is_finite() && *v >= 1.0 && *v <= 240.0)
-        .unwrap_or(10.0);
-
-    let fps = if window.focused {
-        foreground_fps
-    } else {
-        background_fps
-    };
-
-    settings.limiter = Limiter::from_framerate(fps);
-
-    println!("Benilla FPS: {fps} (focused: {})", window.focused);
-}
 
 // A launcher stamps the build id at compile time and hands it to [`run`] or [`run_with`];
 // re-exported so the `benilla` shim needs no bevy dependency of its own.
@@ -549,9 +492,6 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
         connect: !capturing,
         start: run_mode::start_state(),
     });
-
-    configure_fps_limit(&mut app);
-    app.add_systems(Update, update_fps_for_focus);
 
     // benilla-assets' loaders go into the live `AssetServer`, so they register after `AssetPlugin`.
     benilla_assets::register_asset_loaders(&mut app);
