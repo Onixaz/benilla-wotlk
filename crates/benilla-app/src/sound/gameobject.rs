@@ -62,9 +62,14 @@ fn go_event_slot(ident: &[u8; 4]) -> Option<usize> {
 /// next frame (an arm frame fires nothing).
 pub(super) fn go_display_sounds(
     mut dispatched: MessageReader<GoStateDispatch>,
+    newly_hidden: Query<Entity, Added<benilla_world::world_unit::ObjectHidden>>,
     mut events: MessageReader<crate::creature_anim::AnimSoundEvent>,
     // The world pose: the event position is the model's placement in the reference.
-    gos: Query<(&NetEntity, &GlobalTransform)>,
+    gos: Query<(
+        &NetEntity,
+        &GlobalTransform,
+        Has<benilla_world::world_unit::ObjectHidden>,
+    )>,
     go_sounds: Option<Res<GoSounds>>,
     kits: Option<ResMut<SoundKits>>,
     assets: Option<Res<WorldAssets>>,
@@ -76,6 +81,10 @@ pub(super) fn go_display_sounds(
     // (0.334 s on the centaur teleporter), so an unresolvable id would warn several times a second.
     mut complained: Local<std::collections::HashSet<u32>>,
 ) {
+    // A hidden difficulty object's sound stops at once (`0x710ba8`).
+    for e in &newly_hidden {
+        super::emitter_pool::release(&mut pool, e);
+    }
     // The reference first releases the loop, before it picks the new substate's animation; drained
     // even when nothing else resolves.
     for d in dispatched.read() {
@@ -93,10 +102,11 @@ pub(super) fn go_display_sounds(
             continue;
         };
         // Only a GameObject has a display row in this table; a creature's `$GO*` tag is ignored.
-        let Ok((net, transform)) = gos.get(ev.entity) else {
+        let Ok((net, transform, hidden)) = gos.get(ev.entity) else {
             continue;
         };
-        if net.kind != EntityKind::GameObject {
+        // A hidden difficulty object is silent (`0x710ba8`).
+        if net.kind != EntityKind::GameObject || hidden {
             continue;
         }
         let kit = net

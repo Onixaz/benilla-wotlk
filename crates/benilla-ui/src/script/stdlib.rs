@@ -556,9 +556,6 @@ end
 function getglobal(name) return _G[name] end
 function setglobal(name, value) _G[name] = value end
 
--- ── GetLocale: benilla ships/reads enUS data only (the 5875 MPQs + Spell.dbc enUS column) ──────
-function GetLocale() return "enUS" end
-
 -- ── NOT here: wipe / strsplit / strjoin / strconcat / strtrim ─────────────────────────────────
 -- The client's own bindings, which `lua51.rs` installs after this layer.
 

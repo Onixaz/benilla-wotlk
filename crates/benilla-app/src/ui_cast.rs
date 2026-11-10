@@ -115,6 +115,23 @@ impl UnitCasts {
             .unwrap_or(false)
             && self.schools.against(is_player(caster)).any()
     }
+
+    /// What the plate's cast setter reads off `guid` (`0x720e50`): its channel first, else its
+    /// cast.
+    pub(crate) fn plate_source(&self, guid: u64) -> Option<crate::vplates::CastSource> {
+        let (run, channel) = match (self.channels.get(&guid), self.casts.get(&guid)) {
+            (Some(r), _) => (r, true),
+            (None, Some(r)) => (r, false),
+            (None, None) => return None,
+        };
+        Some(crate::vplates::CastSource {
+            spell_id: run.spell_id,
+            channel,
+            start_ms: run.start_ms,
+            end_ms: run.end_ms,
+            not_interruptible: self.reads_not_interruptible(guid),
+        })
+    }
 }
 
 /// A unit guid of the player kind.

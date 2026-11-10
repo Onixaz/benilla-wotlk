@@ -112,7 +112,7 @@ pub(super) fn build_view(
     };
     // A cross-referenced spell's own family mask decides its modifiers.
     let lookup = |id| {
-        let t = spells.catalog.get(id)?;
+        let t = spells.catalog.get(spells.for_difficulty(id))?;
         deps.borrow_mut().mod_bits |= vctx.spell_mods.read_bits(t);
         Some(t)
     };
@@ -213,6 +213,11 @@ pub(super) fn build_view(
         }),
     };
     cost_reads(d);
+    // The spell's `PowerDisplay.dbc` row and the power's name from its tag (`0x6238a0`).
+    let display_noun = spells
+        .power_displays
+        .get(d.power_display_id)
+        .map(|row| (vctx.get)(&row.tag).unwrap_or_else(|| row.tag.clone()));
     let cost = {
         // The shared per-type divisor, never a local `power_type == 1` test.
         let div = benilla_protocol::messages::power_display_scale(d.power_type);
@@ -226,6 +231,24 @@ pub(super) fn build_view(
         };
         if resolved_cost == 0 && d.mana_per_second == 0 {
             None
+        } else if let Some(noun) = &display_noun {
+            if d.mana_per_second > 0 {
+                keyed(
+                    vctx.get,
+                    "POWER_DISPLAY_COST_PER_TIME",
+                    &[
+                        Arg::D(i64::from(resolved_cost / div)),
+                        Arg::S(noun),
+                        Arg::D(i64::from(d.mana_per_second / div)),
+                    ],
+                )
+            } else {
+                keyed(
+                    vctx.get,
+                    "POWER_DISPLAY_COST",
+                    &[Arg::D(i64::from(resolved_cost / div)), Arg::S(noun)],
+                )
+            }
         } else if d.mana_per_second > 0 {
             Some(format!(
                 "{} {unit}, plus {} per sec",
@@ -416,7 +439,24 @@ pub(super) fn build_view(
         }
         (!parts.is_empty()).then(|| format!("Reagents: {}", parts.join(", ")))
     };
+    // `AttributesEx & 2`'s line (`0x625122`): the display's name, else the power's own key.
+    let use_all_power = (d.attributes_ex & 2 != 0)
+        .then(|| match &display_noun {
+            Some(noun) => keyed(vctx.get, "SPELL_USE_ALL_POWER_DISPLAY", &[Arg::S(noun)]),
+            None => match d.power_type {
+                0 => keyed(vctx.get, "SPELL_USE_ALL_MANA", &[]),
+                1 => keyed(vctx.get, "SPELL_USE_ALL_RAGE", &[]),
+                2 => keyed(vctx.get, "SPELL_USE_ALL_FOCUS", &[]),
+                3 => keyed(vctx.get, "SPELL_USE_ALL_ENERGY", &[]),
+                4 => keyed(vctx.get, "SPELL_USE_ALL_HAPPINESS", &[]),
+                5 => keyed(vctx.get, "SPELL_USE_ALL_RUNE", &[]),
+                6 => None,
+                _ => keyed(vctx.get, "SPELL_USE_ALL_HEALTH", &[]),
+            },
+        })
+        .flatten();
     let view = benilla_ui::script::SpellTooltipView {
+        use_all_power,
         name: d.name.clone(),
         rank: d.rank.clone(),
         // The aura variant's right column, gated on `SpellDispelType.dbc` `[+0x28]`.
@@ -497,6 +537,8 @@ pub(super) struct SpellFeedMemory {
     /// The race and class the source walk (book, trainer, talent ranks) last ran for; it runs
     /// again only when a source or these move, since a pushed id stays pushed until requeued.
     pub(super) walked_for: Option<(u8, u8)>,
+    /// The difficulty the pushed views' `$<id>` tokens resolved through.
+    pub(super) difficulty: u32,
 }
 
 impl SpellFeedMemory {
@@ -757,6 +799,15 @@ pub(super) fn feed_spell_tooltips(
     changes = changes.with_reagents(&memory.reagents, &reagent_state);
     memory.reagents = reagent_state;
     memory.requeue(&changes, &mut wanted, &mut wanted_pet);
+    // A new difficulty moves every other-spell token, which the views do not record.
+    let difficulty = spells
+        .instance_difficulty
+        .load(std::sync::atomic::Ordering::Relaxed);
+    if memory.difficulty != difficulty {
+        memory.difficulty = difficulty;
+        wanted.extend(memory.pushed.drain().map(|(id, _)| id));
+        wanted_pet.extend(memory.pet_pushed.drain().map(|(id, _)| id));
+    }
     // The pet's inputs: a new pet, or its level, bases, form, reach or motion moving, rebuilds the
     // pet views alone.
     let pet_guid = self_store.and_then(|s| s.0.unit_pet_guid());

@@ -190,8 +190,12 @@ impl ChannelState {
         }
     }
 
-    /// A confirmed join sets the channel's mask bit (in the `YOU_JOINED` arm).
+    /// A confirmed join sets the channel's mask bit (in the `YOU_JOINED` arm), only on a held slot:
+    /// a join the server made unasked finds no record and sets nothing (`0x507880`).
     pub(crate) fn note_zone_channel_joined(&mut self, name: &str) {
+        if self.number_of(name).is_none() {
+            return;
+        }
         let bit = zone_bit(self.channels.zone_channel_id(name));
         match &mut self.zone_mask {
             Some(mask) => *mask |= bit,
@@ -300,6 +304,19 @@ impl ChannelState {
         let n = self.number_of(name)?;
         self.joined[n as usize - 1].as_mut()?.state = SlotState::Suspended;
         Some(n)
+    }
+
+    /// The name the slot of `name`'s zone channel holds when it is another one: the confirm finds
+    /// a zone channel's record by its ChannelID (`0x507880`). `None` for a custom channel, a held
+    /// name or no slot.
+    pub(crate) fn zone_slot_held_as(&self, name: &str) -> Option<String> {
+        let id = self.channels.zone_channel_id(name);
+        if id == 0 || self.number_of(name).is_some() {
+            return None;
+        }
+        self.iter_names()
+            .find(|held| self.channels.zone_channel_id(held) == id)
+            .map(str::to_string)
     }
 
     /// The confirming `YOU_JOINED` writes state 0 unconditionally; separate from

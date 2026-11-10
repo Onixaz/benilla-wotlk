@@ -73,6 +73,9 @@ pub(super) fn query_statuses(
     mut state: Local<QueryState>,
 ) {
     let Some(store) = self_q.iter().next() else {
+        // The session ended and every object with it, so each giver of the next one is asked from
+        // its own create path (`0x744a50` -> `0x729f40`), the same guids included.
+        *state = QueryState::default();
         return;
     };
     // The descriptor walk runs only when our store changed; the epoch is a plain counter.
@@ -348,6 +351,76 @@ mod tests {
         assert!(
             app.world().resource::<QuestGiver>().status(NPC).is_none(),
             "and its stale answer is dropped"
+        );
+    }
+
+    /// A relog brings the same giver back with the same guid and fields: its create path asks again
+    /// (`0x744a50` -> `0x729f40`), though nothing about it or us moved.
+    #[test]
+    fn a_relog_asks_every_giver_again() {
+        use crate::net::{Guid, NetEntity};
+        use benilla_protocol::{EntityKind, ObjectFields};
+
+        const NPC: u64 = 0x4242;
+        const FIELD_LEVEL: u16 = 34;
+        const FIELD_NPC_FLAGS: u16 = 147;
+
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.insert_resource(NetCommands(tx))
+            .init_resource::<GuidIndex>()
+            .init_resource::<QuestGiver>()
+            .init_resource::<crate::net::Reputations>()
+            .add_systems(Update, query_statuses);
+
+        let enter = |app: &mut App| -> (Entity, Entity) {
+            let me = app
+                .world_mut()
+                .spawn((
+                    SelfPlayer,
+                    Guid(1),
+                    ObjectStore(ObjectFields::from_pairs(&[(FIELD_LEVEL, 5)])),
+                ))
+                .id();
+            let npc = app
+                .world_mut()
+                .spawn((
+                    NetEntity {
+                        kind: EntityKind::Unit,
+                        display_id: None,
+                        scale: 1.0,
+                    },
+                    Guid(NPC),
+                    ObjectStore(ObjectFields::from_pairs(&[(FIELD_NPC_FLAGS, 0x2)])),
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<GuidIndex>()
+                .0
+                .insert(NPC, npc);
+            (me, npc)
+        };
+        let asked = |app: &mut App| -> (usize, usize) {
+            app.update();
+            sent(&rx, NPC)
+        };
+
+        let (me, npc) = enter(&mut app);
+        assert_eq!(asked(&mut app), (1, 1), "the first entry asks the giver");
+        assert_eq!(asked(&mut app), (0, 0), "then quiet");
+
+        // Logout: the bridge despawns the world and the self player, and the statuses go.
+        app.world_mut().entity_mut(me).despawn();
+        app.world_mut().entity_mut(npc).despawn();
+        app.world_mut().resource_mut::<GuidIndex>().0.clear();
+        app.world_mut().resource_mut::<QuestGiver>().clear_session();
+        assert_eq!(asked(&mut app), (0, 0), "nothing asked at character select");
+
+        enter(&mut app);
+        assert_eq!(
+            asked(&mut app),
+            (1, 1),
+            "the same giver at the same guid is asked again, as in a fresh world"
         );
     }
 

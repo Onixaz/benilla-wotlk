@@ -72,7 +72,8 @@ pub enum Field {
     UnitFactionTemplate,
     UnitBytes0,
     /// A creature's weapon display ids.
-    UnitVirtualItemDisplay,
+    /// `UNIT_VIRTUAL_ITEM_SLOT_ID`: main hand, off hand and ranged, each an `Item.dbc` id.
+    UnitVirtualItemId,
     UnitFlags,
     UnitFlags2,
     UnitAura,
@@ -403,7 +404,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::UnitLevel, Unit, 34),
         one(F::UnitFactionTemplate, Unit, 35),
         one(F::UnitBytes0, Unit, 36),
-        run(F::UnitVirtualItemDisplay, Unit, 37, 3),
+        run(F::UnitVirtualItemId, Unit, 37, 3),
         // 3.3.5a's runes and runic power, in 1.12.1's `UNIT_VIRTUAL_ITEM_INFO`, which it lacks.
         run(F::UnitRunePower, Unit, 40, 2),
         run(F::UnitMaxRunePower, Unit, 42, 2),
@@ -582,8 +583,8 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
 };
 
 /// 3.3.5a (12340): AzerothCore `UpdateFields.h`. Not here, so not read: the auras
-/// (`SMSG_AURA_UPDATE` carries them), the virtual items (item entries, not display ids), the item
-/// text id, training points, the combo target and the old honor fields, which 3.3.5a has not.
+/// (`SMSG_AURA_UPDATE` carries them), the item text id, training points, the combo target and the
+/// old honor fields, which 3.3.5a has not.
 pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
     ends: DescriptorEnds {
         object: 6,
@@ -640,6 +641,8 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         run(F::UnitMaxRunePower, Unit, 38, 2),
         one(F::UnitLevel, Unit, 54),
         one(F::UnitFactionTemplate, Unit, 55),
+        // Read by the virtual item change handler at `[descriptors+200+slot*4]` (`0x725010`).
+        run(F::UnitVirtualItemId, Unit, 56, 3),
         one(F::UnitFlags, Unit, 59),
         one(F::UnitFlags2, Unit, 60),
         one(F::UnitAuraState, Unit, 61),
@@ -884,6 +887,9 @@ mod tests {
     fn each_layout_keeps_health_and_the_player_block_where_its_header_says() {
         assert_eq!(SHARED.place(Field::UnitHealth).unwrap().index, 22);
         assert_eq!(WIRE.place(Field::UnitHealth).unwrap().index, 24);
+        let virtual_items = WIRE.place(Field::UnitVirtualItemId).unwrap();
+        assert_eq!((virtual_items.index, virtual_items.count), (56, 3));
+        assert_eq!(SHARED.place(Field::UnitVirtualItemId).unwrap().index, 37);
         assert_eq!(SHARED.ends.unit, 188);
         assert_eq!(WIRE.ends.unit, 148);
         assert_eq!(WIRE.ends.player, 1326);
@@ -906,7 +912,6 @@ mod tests {
     fn fields_the_wire_does_not_carry_are_missing_not_borrowed() {
         for f in [
             Field::UnitAura,
-            Field::UnitVirtualItemDisplay,
             Field::PlayerComboTarget,
             Field::GameObjectRotation,
             Field::GameObjectPosition,

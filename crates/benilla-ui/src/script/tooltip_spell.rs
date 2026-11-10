@@ -38,6 +38,8 @@ pub struct SpellTooltipView {
     /// The cost cell, such as "35 Mana" or "11 Health, plus 5 per sec": the resolved cost through
     /// the power-type keys, falling back to health.
     pub cost: Option<String>,
+    /// "Uses all Pyrite" and its kin, for a spell with `AttributesEx` bit 2.
+    pub use_all_power: Option<String>,
     pub range: Option<String>,
     /// The cast cell ("1.5 sec cast", "Instant", "Next melee", "Channeled"); `None` is a passive
     /// spell, whose cast and cooldown line is omitted.
@@ -443,6 +445,9 @@ fn render_spell_lines(
         // The chance line, white and unwrapped, between the reagents and the description.
         if let Some(chance) = v.chance.as_ref().filter(|_| !brief) {
             append_line(lua, this, (chance.clone(), WHITE), None, false)?;
+        }
+        if let Some(all) = v.use_all_power.as_ref().filter(|_| !brief) {
+            append_line(lua, this, (all.clone(), WHITE), None, false)?;
         }
     }
     let desc = if aura && !v.aura_description.is_empty() {

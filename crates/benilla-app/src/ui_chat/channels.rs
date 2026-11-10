@@ -1,7 +1,7 @@
-//! The zone-channel auto-join, the reference's zone-channel refresh. The server joins nobody
-//! (vmangos `Player::UpdateLocalChannels` is empty, `Objects/Player.cpp:5121`), so the client joins
-//! every [`ChannelState::zone_mask`] row composed for the current zone, and on each zone change
-//! leaves and re-joins the zone-named ones, LEAVE then JOIN per slot.
+//! The zone-channel auto-join. The client joins every [`ChannelState::zone_mask`] row composed for
+//! the first zone of a session, once (`0x508090`, its registered flag reset only at world entry);
+//! after that the server moves the zone channels itself, joining each new name, and the confirm
+//! renames the slot by its ChannelID (`0x507880`).
 //!
 //! The join's `CHAT_MSG_CHANNEL_NOTICE` is also one of the events that trigger AceEvent-2.0's
 //! `AceEvent_FullyInitialized`, which many Ace2 addons wait for.
@@ -38,7 +38,8 @@ pub(crate) fn city_word(areas: &benilla_formats::AreaTableCatalog) -> Option<&st
 /// slot array itself ([`ChannelState::joined`]).
 #[derive(Resource, Default)]
 pub(crate) struct ZoneChannelWalk {
-    /// The top-level zone the last walk ran for; `None` walks from scratch.
+    /// The top-level zone the session's one walk ran for, the reference's registered flag; `None`
+    /// walks from scratch.
     at: Option<u32>,
     /// The zone the walk may act on this frame, the reference's `ds:`, read by the walk and the
     /// guild-recruitment cascade; `None` while a gate holds.
@@ -354,14 +355,14 @@ fn zone_is_settled(player: Option<&crate::player::Player>) -> bool {
     player.is_some_and(|p| p.active && !p.settling)
 }
 
-/// The walk, re-run whenever the zone changes. It composes from the real zone name, the
-/// `GetRealZoneText` cache, never the display text, which the indoor override renames.
+/// The walk, run once per session. It composes from the real zone name, the `GetRealZoneText`
+/// cache, never the display text, which the indoor override renames.
 ///
-/// The reference walks from its zone-text update on each zone change and once at world entry; this
-/// polls the same inputs every frame. It waits while the world arrives (`Player::settling`), as the
-/// reference walks after its loading screen and our leaf area moves while terrain streams in, and
-/// for the chat cache to seat the mask, as the reference bails on its ready flag until the cache
-/// loader calls the walk.
+/// The reference calls its walk from each zone-text update, which acts only until its registered
+/// flag is set; this polls the same inputs every frame. It waits while the world arrives
+/// (`Player::settling`), as the reference walks after its loading screen and our leaf area moves
+/// while terrain streams in, and for the chat cache to seat the mask, as the reference bails on its
+/// ready flag until the cache loader calls the walk.
 pub(super) fn auto_join_zone_channels(
     commands: Res<NetCommands>,
     mut channels: ResMut<ChannelState>,
@@ -434,8 +435,8 @@ pub(super) fn auto_join_zone_channels(
     if channels.zone_mask.is_none() {
         return; // the mask is not seated: the reference's ready-flag bail
     }
-    if walk.at == Some(zone_id) {
-        return; // same zone as last frame
+    if walk.at.is_some() {
+        return; // registered: later zones are the server's to move (`0x508090`)
     }
 
     let steps = plan_walk(&channels, &zone_name, in_city, city_word(&areas.0));
@@ -494,16 +495,16 @@ mod tests {
     use benilla_formats::ChatChannelRow;
     use WalkStep as W;
 
-    /// The shipped table, hand-built so the tests run without an install.
+    /// The shipped 3.3.5a table, hand-built so the tests run without an install.
     fn catalog() -> ChatChannelsCatalog {
         ChatChannelsCatalog::from_rows(
             [
-                (1, 0x00003, "General - %s", "General"),
+                (1, 0x80003, "General - %s", "General"),
                 (2, 0x0003B, "Trade - %s", "Trade"),
                 (22, 0x10003, "LocalDefense - %s", "LocalDefense"),
                 (23, 0x10004, "WorldDefense", "WorldDefense"),
-                (24, 0x00000, "LookingForGroup", "LookingForGroup"),
                 (25, 0x20032, "GuildRecruitment - %s", "GuildRecruitment"),
+                (26, 0x40039, "LookingForGroup", "LookingForGroup"),
             ]
             .into_iter()
             .map(|(id, flags, pattern, shortcut)| ChatChannelRow {
@@ -519,7 +520,7 @@ mod tests {
     /// The city word, row 3459 of the shipped `AreaTable.dbc`.
     const CITY: Option<&str> = Some("City");
 
-    /// A fresh character's mask: the DBC's three `INITIAL` rows.
+    /// General, Trade and LocalDefense.
     const SEED: u32 = 0x0020_0003;
     /// `GuildRecruitment`'s bit, `1 << (25 - 1)`, which the cascade's confirmed join sets.
     const GUILD_RECRUITMENT_BIT: u32 = 1 << 24;
@@ -871,11 +872,11 @@ mod tests {
             "General is gone for good; Trade is now number 1"
         );
 
-        // Until a `/join General` confirms and sets the bit back.
+        // Until a `/join General` claims its slot at send and its confirm sets the bit back.
         let mut relog = relog;
         apply_steps(&steps, &mut relog);
-        relog.note_zone_channel_joined("General - Elwynn Forest");
         relog.claim_slot("General - Elwynn Forest");
+        relog.note_zone_channel_joined("General - Elwynn Forest");
         assert_eq!(relog.zone_mask, Some(SEED));
         let steps = plan_walk(&relog, "Westfall", false, CITY);
         assert!(
@@ -1088,5 +1089,28 @@ mod tests {
         assert_eq!(cat.zone_channel_id("Trade - City"), 2);
         assert_eq!(cat.zone_channel_id("LocalDefense - Durotar"), 22);
         assert_eq!(cat.zone_channel_id("World"), 0);
+    }
+
+    /// `LookingForGroup`'s bit, `1 << (26 - 1)`.
+    const LFG_BIT: u32 = 1 << 25;
+
+    /// The session's one walk asks for LookingForGroup only when the mask holds its bit, and the
+    /// walk's city gate keeps that ask to a capital.
+    #[test]
+    fn the_walk_asks_for_looking_for_group_only_from_its_mask_bit_in_a_capital() {
+        let joins = |mask: u32, zone: &str, in_city: bool| -> Vec<String> {
+            plan_walk(&state(mask), zone, in_city, CITY)
+                .into_iter()
+                .filter_map(|st| match st {
+                    W::Join(n) => Some(n),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert!(!joins(SEED, "Orgrimmar", true).contains(&s("LookingForGroup")));
+        assert!(joins(SEED | LFG_BIT, "Orgrimmar", true).contains(&s("LookingForGroup")));
+        let durotar = plan_walk(&state(SEED | LFG_BIT), "Durotar", false, CITY);
+        assert!(durotar.contains(&W::Suspend(s("LookingForGroup"))));
+        assert!(!durotar.contains(&W::Join(s("LookingForGroup"))));
     }
 }

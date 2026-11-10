@@ -949,6 +949,12 @@ pub(super) fn drain_chat_input(
                         voice,
                     } => {
                         manual_join_or_leave(&channels, &mut script, &name);
+                        // A zone channel's slot is claimed at send (`0x507a80`).
+                        if channels.channels.zone_channel_id(&name) != 0
+                            && channels.claim_slot(&name).is_some()
+                        {
+                            script.set_channel_slots(channels.ui_slots());
+                        }
                         channels.join_command(name, password, false, voice)
                     }
                     C::Leave { name } => {

@@ -611,6 +611,21 @@ pub(crate) struct ItemUse {
     pub(crate) is_charter: bool,
 }
 
+/// The item use's requirement check (`0x6dc3f0` at `0x708eb9`): a refused item shows the check's
+/// message and sends nothing (`0x708ec2`-`0x708ef6`).
+pub(crate) fn refuse_item_use(
+    script: &benilla_ui::script::UiScript,
+    entry: u32,
+    ui_errors: &mut crate::ui_action::UiErrorKeys,
+) -> bool {
+    let Some(key) = script.item_use_refusal(entry) else {
+        return false;
+    };
+    debug!("ui_items: item {entry} use refused — {key}");
+    ui_errors.0.push(crate::ui_action::UiError::key(key));
+    true
+}
+
 /// What using an item sends: the reference's item use, the one fork behind the bag click, the doll
 /// click and the action bar.
 ///
@@ -689,6 +704,11 @@ pub(crate) fn send_item_use(
     // Passed in, not carried on `CastLadder`, so no system reaches it twice.
     ui_errors: &mut crate::ui_action::UiErrorKeys,
 ) -> bool {
+    // A quest-starter offers its quest ahead of the requirement check; every other use is refused
+    // with nothing sent.
+    if it.start_quest == 0 && refuse_item_use(script, it.entry, ui_errors) {
+        return false;
+    }
     // The toggle predicate over the caster's live aura slots.
     let aura_cancels =
         |spell: u32| ladder.is_active_spell(spell, ctx.rel.self_store, ctx.self_auras);
@@ -701,7 +721,11 @@ pub(crate) fn send_item_use(
             &ladder.commands,
         )
     });
-    match item_use_route(it, aura_cancels, disarmed_hand) {
+    let route = item_use_route(it, aura_cancels, disarmed_hand);
+    if matches!(route, ItemUseRoute::Cast(_)) && !leave_form_to_use(&it, ctx, ladder, ui_errors) {
+        return false;
+    }
+    match route {
         ItemUseRoute::CantUseDisarmed => {
             debug!(
                 "ui_items: item use refused — that hand is disarmed (slot {})",
@@ -766,6 +790,46 @@ pub(crate) fn send_item_use(
             true
         }
     }
+}
+
+/// The item use's form leg (`0x708c20`): a shapeshifted player leaves the form unless the form
+/// (flag `0x80`, or `0x40` for gear) or the item (flag `0x800000`) allows it; `false` is refused.
+fn leave_form_to_use(
+    it: &ItemUse,
+    ctx: &crate::spell::cast_target::CastContext,
+    ladder: &crate::spell::CastLadder,
+    ui_errors: &mut crate::ui_action::UiErrorKeys,
+) -> bool {
+    let (Some(store), Some(template)) =
+        (ctx.rel.self_store, ladder.items.template_cached(it.entry))
+    else {
+        return true;
+    };
+    let form = store.0.unit_shapeshift_form();
+    let row = ctx.rel.types.forms.and_then(|f| f.get(&u32::from(form)));
+    let flags = row.map_or(0, |f| f.flags);
+    let exempt = flags & 0x80 != 0
+        || (flags & 0x40 != 0 && template.inventory_type != 0)
+        || template.flags & 0x80_0000 != 0;
+    if !crate::spell::validator::is_shapeshifted(form, flags) || row.is_none() || exempt {
+        return true;
+    }
+    if !ctx.auto_unshift {
+        debug!("ui_items: item use refused — shapeshifted");
+        ui_errors.0.push(crate::ui_action::UiError::key(
+            "ERR_NO_ITEMS_WHILE_SHAPESHIFTED",
+        ));
+        return false;
+    }
+    if let (Some(auras), Some(spells)) = (ctx.self_auras, ladder.spells.as_ref()) {
+        for spell_id in crate::ui_shapeshift::form_auras(form, auras, &spells.catalog) {
+            let _ = ladder
+                .commands
+                .0
+                .send(crate::net::ClientCommand::CancelAura { spell_id });
+        }
+    }
+    true
 }
 
 /// The active player's level, which the link builder stamps on every link (`0x61e290`), kept by
@@ -1029,6 +1093,35 @@ mod tests {
         find_equip_slot, item_use_route, wire_pos, ItemUse, ItemUseRoute, KEYRING_CONTAINER,
     };
     use benilla_ui::script::EQUIPMENT_BAG;
+
+    /// An over-level item shows "You can't use that item." and is not used; a usable one passes.
+    #[test]
+    fn an_item_above_the_players_level_is_refused_locally() {
+        let mut script = benilla_ui::script::UiScript::new().unwrap();
+        script.set_player_req_state(benilla_ui::script::PlayerReqState {
+            level: 1,
+            class_id: 1,
+            race_id: 1,
+            ..Default::default()
+        });
+        let potion = |required_level| benilla_ui::script::ItemTemplateView {
+            allowable_class: -1,
+            allowable_race: -1,
+            required_level,
+            ..Default::default()
+        };
+        script.set_item_template(929, potion(22));
+        script.set_item_template(118, potion(1));
+        let mut errors = crate::ui_action::UiErrorKeys::default();
+        assert!(super::refuse_item_use(&script, 929, &mut errors));
+        assert_eq!(
+            errors.0,
+            vec![crate::ui_action::UiError::key("ERR_CANT_USE_ITEM")]
+        );
+        errors.0.clear();
+        assert!(!super::refuse_item_use(&script, 118, &mut errors));
+        assert!(errors.0.is_empty());
+    }
 
     /// The keyring's 32 slots are player slots 86-117; 81-85 are buyback.
     #[test]

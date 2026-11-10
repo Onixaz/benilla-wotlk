@@ -34,7 +34,9 @@ pub(crate) mod validator;
 // The one cast path: every caster takes [`CastLadder`] and commits through [`CastCommit`];
 // `send_spell_cast` is private to `cast_send`, so no second send path can exist.
 pub(crate) use cast_send::{CastCommit, CastLadder, HeldCast, HeldForPick, TargetedBind};
-pub(crate) use cast_target::{AutoDismount, AutoSelfCast, SecureAbilityToggle};
+pub(crate) use cast_target::{
+    AutoChecks, AutoDismount, AutoPosture, AutoSelfCast, SecureAbilityToggle,
+};
 pub(crate) use combo::ComboPoints;
 pub(crate) use cooldowns::Cooldowns;
 pub(crate) use inflight::{
@@ -111,6 +113,7 @@ impl Plugin for SpellPlugin {
             .init_resource::<SpellModifiers>()
             .init_resource::<AutoSelfCast>()
             .init_resource::<AutoDismount>()
+            .init_resource::<AutoPosture>()
             .init_resource::<SecureAbilityToggle>()
             .init_resource::<SpellTargeting>()
             .init_resource::<HeldForPick>()

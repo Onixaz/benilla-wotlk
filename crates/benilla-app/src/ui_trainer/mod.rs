@@ -489,7 +489,7 @@ pub(crate) fn feed_trainer(
             ranges: Some(&spells.ranges),
             variables: Some(spells.catalog.description_variables()),
             skill: &skill,
-            lookup: &|id| spells.catalog.get(id),
+            lookup: &|id| spells.catalog.get(spells.for_difficulty(id)),
             mods: Some(&*desc.spell_mods as &dyn benilla_formats::SpellMods),
             unmodified_points: false,
             gender: &|| store.0.unit_gender().unwrap_or(0),

@@ -403,6 +403,28 @@ impl ParticleEmitter {
         self.anchor_pos
     }
 
+    /// The largest half-extent of a live quad as the writer draws it, the census probe's size.
+    pub fn max_quad_half(&self) -> f32 {
+        let frame = quads::DrawFrame {
+            anchored: !self.def.model_space(),
+            ride: self.ride,
+            alpha: self.alpha,
+            size_scale: self.size_scale,
+        };
+        let axis = if self.def.xy_quad() {
+            quads::plane_axes(&frame, &self.placement).0.length()
+        } else {
+            1.0
+        };
+        self.particles
+            .iter()
+            .map(|p| {
+                let [x, y] = quads::particle_half(&self.def, &self.placement, p, self.size_scale);
+                x.max(y) * axis
+            })
+            .fold(0.0, f32::max)
+    }
+
     /// The cloud's world centroid, plane normal, RMS thickness and RMS in-plane radius as the
     /// quads draw it, the census probe's orientation measure; `None` under 4 particles.
     pub fn cloud_fingerprint(&self) -> Option<(Vec3, Vec3, f32, f32)> {

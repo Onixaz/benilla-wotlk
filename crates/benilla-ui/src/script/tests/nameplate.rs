@@ -2,7 +2,7 @@
 //! `pfUI/modules/nameplates.lua`, `ShaguTweaks/libs/libnameplate.lua`,
 //! `CustomNameplates/CustomNameplates.lua` and `_Nameplates/_Nameplates.lua`.
 
-use crate::script::{PlateGeometry, PlateState, UiScript};
+use crate::script::{PlateCast, PlateGeometry, PlateState, UiScript};
 
 /// A VM with a `WorldFrame` to hang plates off, all [`UiScript::sync_nameplates`] requires.
 fn vm() -> UiScript {
@@ -27,6 +27,8 @@ fn geometry() -> PlateGeometry {
         level_off_y: 9.1,
         skull_size: 12.8,
         raid_size: 25.6,
+        cast_off: 4.0,
+        cast_icon_size: 12.8,
         name_height: 12.8,
         level_height: 11.0,
         shadow_offset: 1.0,
@@ -49,6 +51,7 @@ fn plate(name: &str, health: f32, max: f32) -> PlateState {
         alpha: 1.0,
         lit: false,
         hovered: false,
+        cast: None,
     }
 }
 
@@ -122,22 +125,37 @@ fn a_plate_identifies_by_button_plus_the_border_texture() {
 }
 
 /// Six regions in `CustomNameplates.lua:212`'s order (`Border, Glow, Name, Level, Boss,
-/// RaidTargetIcon`) and one child; pfUI blanks a seventh region, and a second child as a cast bar.
+/// RaidTargetIcon`), the cast bar's border, shield and icon after them, and two children, the
+/// health bar and the cast bar (`0x98f790`).
 #[test]
-fn the_region_and_child_tuples_are_six_and_one() {
+fn the_region_and_child_tuples_are_nine_and_two() {
     let mut s = vm();
     drive(&mut s, &[plate("Wolf", 30.0, 40.0)]);
 
     assert_eq!(
         s.eval::<i64>("local p = WorldFrame:GetChildren() return p:GetNumRegions()")
             .unwrap(),
-        6
+        9
     );
     assert_eq!(
         s.eval::<i64>("local p = WorldFrame:GetChildren() return p:GetNumChildren()")
             .unwrap(),
-        1
+        2
     );
+    assert!(s
+        .eval::<bool>(
+            r#"
+            local p = WorldFrame:GetChildren()
+            local _, _, _, _, _, _, cbborder, cbshield, cbicon = p:GetRegions()
+            local _, castbar = p:GetChildren()
+            return cbborder:GetTexture() == "Interface\\Tooltips\\Nameplate-Border"
+               and cbshield:GetTexture() == "Interface\\Tooltips\\Nameplate-CastBar-Shield"
+               and cbicon:GetObjectType() == "Texture"
+               and castbar:GetObjectType() == "StatusBar"
+               and castbar:IsShown() == nil
+        "#
+        )
+        .unwrap());
     assert!(s
         .eval::<bool>(
             r#"
@@ -163,6 +181,120 @@ fn the_region_and_child_tuples_are_six_and_one() {
             if healthbar:GetNumRegions() ~= 1 then return false end
             local fill = healthbar:GetStatusBarTexture()
             return fill:GetTexture() == "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill"
+        "#
+        )
+        .unwrap());
+}
+
+fn bolt(value: f32, shielded: bool) -> PlateCast {
+    PlateCast {
+        min: 0.0,
+        max: 2.5,
+        value,
+        colour: [1.0, 0.7, 0.0, 1.0],
+        shielded,
+        icon: Some(r"Interface\Icons\Spell_Fire_FlameBolt".into()),
+        alpha: 1.0,
+    }
+}
+
+/// The cast bar (`0x98f040`): shown with its value, the casting colour and the spell icon; its
+/// border is the plate's size, mirrored, half a plate down; the bar's BOTTOMRIGHT is inset 0.003125
+/// gx left and up from the border's, and the icon sits 0.0092 gx right of the border's
+/// BOTTOMLEFT, 0.0071 up.
+#[test]
+fn the_cast_bar_shows_under_the_health_bar() {
+    let mut s = vm();
+    let mut wolf = plate("Wolf", 30.0, 40.0);
+    wolf.cast = Some(bolt(1.0, false));
+    drive(&mut s, &[wolf]);
+    let got: (bool, f32, f32, f32, String) = s
+        .eval(
+            r#"
+            local p = WorldFrame:GetChildren()
+            local _, _, _, _, _, _, border, shield, icon = p:GetRegions()
+            local _, bar = p:GetChildren()
+            local lo, hi = bar:GetMinMaxValues()
+            return border:IsShown() == 1 and shield:IsShown() == nil and icon:IsShown() == 1
+                   and bar:IsShown() == 1,
+                bar:GetValue(), lo, hi, icon:GetTexture()
+        "#,
+        )
+        .unwrap();
+    assert_eq!(
+        got,
+        (
+            true,
+            1.0,
+            0.0,
+            2.5,
+            r"Interface\Icons\Spell_Fire_FlameBolt".to_string()
+        )
+    );
+    let rects: Vec<f32> = s
+        .eval::<Vec<f32>>(
+            r#"
+            local p = WorldFrame:GetChildren()
+            local _, _, _, _, _, _, border, _, icon = p:GetRegions()
+            local _, bar = p:GetChildren()
+            local ix, iy = icon:GetCenter()
+            return { p:GetTop(), p:GetBottom(), border:GetTop(), border:GetBottom(),
+                     border:GetLeft(), border:GetRight(), bar:GetRight(), bar:GetBottom(),
+                     bar:GetWidth(), bar:GetHeight(), ix, iy, icon:GetWidth() }
+        "#,
+        )
+        .unwrap();
+    // The plate hangs from (500, 400): top 400, bottom 368, centre 384.
+    let want = [
+        400.0, 368.0, 384.0, 352.0, 436.0, 564.0, 560.0, 356.0, 103.0, 9.0, 447.8, 361.1, 12.8,
+    ];
+    assert_eq!(rects.len(), want.len());
+    assert!(
+        rects.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-3),
+        "{rects:?}"
+    );
+    let r = s
+        .eval::<String>(
+            r#"local _, bar = WorldFrame:GetChildren():GetChildren()
+               local r, g, b = bar:GetStatusBarTexture():GetVertexColor()
+               return string.format("%.2f %.2f %.2f", r, g, b)"#,
+        )
+        .unwrap();
+    assert_eq!(r, "1.00 0.70 0.00", "the casting colour");
+}
+
+/// A cast that cannot be interrupted shows the shield in place of the border, the bar inset down
+/// rather than up and the icon level with the border's bottom (`0x98f17b`-`0x98f254`); a stop
+/// hides the bar and its art.
+#[test]
+fn the_shield_moves_the_bar_and_icon_and_the_stop_hides_all() {
+    let mut s = vm();
+    let mut wolf = plate("Wolf", 30.0, 40.0);
+    wolf.cast = Some(bolt(1.0, true));
+    drive(&mut s, &[wolf.clone()]);
+    let got: Vec<f32> = s
+        .eval::<Vec<f32>>(
+            r#"
+            local p = WorldFrame:GetChildren()
+            local _, _, _, _, _, _, border, shield, icon = p:GetRegions()
+            local _, bar = p:GetChildren()
+            local _, iy = icon:GetCenter()
+            return { border:IsShown() or 0, shield:IsShown() or 0, bar:GetBottom(), iy,
+                     shield:GetTop() }
+        "#,
+        )
+        .unwrap();
+    assert_eq!(got, vec![0.0, 1.0, 348.0, 352.0, 368.0]);
+    wolf.cast = None;
+    drive(&mut s, &[wolf]);
+    assert!(s
+        .eval::<bool>(
+            r#"
+            local p = WorldFrame:GetChildren()
+            local _, _, _, _, _, _, border, shield, icon = p:GetRegions()
+            local _, bar = p:GetChildren()
+            return bar:IsShown() == nil and border:IsShown() == nil and shield:IsShown() == nil
+                   and icon:IsShown() == nil
         "#
         )
         .unwrap());

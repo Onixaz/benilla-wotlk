@@ -1,8 +1,9 @@
 //! The nameplate widgets: the reference's nameplate frame, an anonymous `Button` parented to the
 //! `WorldFrame` at strata WORLD, level 1. Plate addons (`_Nameplates`, `CustomNameplates`, pfUI,
 //! ShaguTweaks) find it in `WorldFrame:GetChildren()` and read it positionally: six regions in
-//! creation order, then one child, the health bar (1.12 has no cast bar). Addons take plates over,
-//! so static properties are written once, anchors when the window changes and state when it moves.
+//! creation order, the cast bar's three after them, then two children, the health bar and the cast
+//! bar. Addons take plates over, so static properties are written once, anchors when the window
+//! changes and state when it moves.
 
 use crate::layout::{Anchor, Point};
 use crate::order::DrawLayer;
@@ -22,6 +23,8 @@ pub const SKULL_TEXTURE: &str = "Interface\\TargetingFrame\\UI-TargetingFrame-Sk
 pub const RAID_ICON_TEXTURE: &str = "Interface\\TargetingFrame\\UI-RaidTargetingIcons";
 /// The health bar's fill, which `GetStatusBarTexture()` returns.
 pub const BAR_FILL_TEXTURE: &str = "Interface\\TargetingFrame\\UI-TargetingFrame-BarFill";
+/// The cast bar's art when the cast cannot be interrupted, in place of the border.
+pub const CAST_SHIELD_TEXTURE: &str = "Interface\\Tooltips\\Nameplate-CastBar-Shield";
 /// `NAMEPLATE_FONT`: Friz Quadrata.
 pub const PLATE_FONT: &str = "Fonts\\FRIZQT__.TTF";
 
@@ -46,6 +49,10 @@ pub struct PlateGeometry {
     pub level_off_y: f32,
     pub skull_size: f32,
     pub raid_size: f32,
+    /// The cast bar's inset from its border's BOTTOMRIGHT, 0.003125 gx (`[0xaa3528]`).
+    pub cast_off: f32,
+    /// The cast icon's side, 0.01 gx.
+    pub cast_icon_size: f32,
     pub name_height: f32,
     pub level_height: f32,
     /// The text's drop-shadow step, seam divided out like the rest: one logical pixel at any
@@ -83,6 +90,24 @@ pub struct PlateState {
     pub lit: bool,
     /// The pointer is on the plate: the name goes yellow and the glow region shows.
     pub hovered: bool,
+    /// The cast bar, `None` while hidden.
+    pub cast: Option<PlateCast>,
+}
+
+/// The plate cast bar as the frame draws it this frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlateCast {
+    pub min: f32,
+    pub max: f32,
+    pub value: f32,
+    /// The bar's colour and alpha.
+    pub colour: [f32; 4],
+    /// Not interruptible: the shield shows in place of the border and the bar and icon move.
+    pub shielded: bool,
+    /// The spell's icon path.
+    pub icon: Option<String>,
+    /// The border, shield and icon alpha.
+    pub alpha: f32,
 }
 
 /// One pooled plate's widgets, in the reference's creation order.
@@ -97,6 +122,11 @@ struct Plate {
     raid: RegionHandle,
     bar: FrameHandle,
     fill: RegionHandle,
+    cast_border: RegionHandle,
+    cast_shield: RegionHandle,
+    cast_icon: RegionHandle,
+    cast_bar: FrameHandle,
+    cast_fill: RegionHandle,
     /// Last frame's state, so [`Plate::drive`] writes only what moved; `None` while retired.
     last: Option<PlateState>,
     /// The geometry its anchors were written under, `None` before the first lay-out. Kept per
@@ -378,31 +408,39 @@ impl Plate {
             RAID_ICON_TEXTURE,
             BlendMode::Blend,
         );
+        // The cast bar's border is the plate border mirrored (`0x98f790`); its icon is OVERLAY.
+        let cast_border = texture(
+            model,
+            frame,
+            DrawLayer::Artwork,
+            BORDER_TEXTURE,
+            BlendMode::Blend,
+        );
+        model.region_data.entry(cast_border).or_default().tex_coords =
+            Some(TexCoords::Rect([1.0, 0.0, 0.0, 1.0]));
+        let cast_shield = texture(
+            model,
+            frame,
+            DrawLayer::Artwork,
+            CAST_SHIELD_TEXTURE,
+            BlendMode::Blend,
+        );
+        let cast_icon = model
+            .arena
+            .create_region(frame, RegionKind::Texture, DrawLayer::Overlay, 0)
+            .expect("live plate");
         // The order above is the ABI addons walk and, as 5875 has no sub-level, the draw order
         // within a layer.
 
-        // The one child, below the plate's level so the border draws over the fill.
-        let bar = model.arena.create(FrameKind::StatusBar, None, Some(frame));
-        model.arena.set_frame_strata(bar, strata);
-        model.arena.set_frame_level(bar, BAR_LEVEL, true);
-        let fill = model
-            .arena
-            .create_region(bar, RegionKind::Texture, DrawLayer::Artwork, 0)
-            .expect("live bar");
-        let fill_data = model.region_data.entry(fill).or_default();
-        fill_data.texture = Some(BAR_FILL_TEXTURE.to_string());
-        // The fill keeps a texture's default BLEND, written out as a fact.
-        fill_data.blend = BlendMode::Blend;
-        if let Some(KindState::StatusBar(sb)) =
-            model.arena.frame_mut(bar).map(|f| &mut f.kind_state)
-        {
-            sb.bar = Some(fill);
-            sb.min = 0.0;
-            sb.max = 1.0;
-            sb.value = 0.0;
-        }
+        // The two children, the health bar then the cast bar, each a level under the plate so
+        // the borders draw over the fills.
+        let (bar, fill) = status_bar(model, frame, strata);
+        let (cast_bar, cast_fill) = status_bar(model, frame, strata);
+        effects
+            .visibility
+            .extend(model.arena.set_shown(cast_bar, false));
 
-        for rh in [glow, skull, raid] {
+        for rh in [glow, skull, raid, cast_border, cast_shield, cast_icon] {
             model.region_data.entry(rh).or_default().hidden = true;
         }
 
@@ -426,6 +464,11 @@ impl Plate {
             raid,
             bar,
             fill,
+            cast_border,
+            cast_shield,
+            cast_icon,
+            cast_bar,
+            cast_fill,
             last: None,
             laid_out: None,
         }
@@ -506,6 +549,42 @@ impl Plate {
         let raid_data = model.region_data.entry(raid).or_default();
         raid_data.anchors = vec![Anchor::new(Point::Right, plate_id, Point::Left, 0.0, 0.0)];
         raid_data.size = Some((g.raid_size, g.raid_size));
+
+        // The cast border is the plate's size, its centre half a plate below the plate's; the
+        // shield's half a plate below the border's (`0x98f4eb`, `0x98f592`).
+        let p = &model.nameplates.plates[i];
+        let (cast_border, cast_shield, cast_icon, cast_bar) =
+            (p.cast_border, p.cast_shield, p.cast_icon, p.cast_bar);
+        let shielded = p
+            .last
+            .as_ref()
+            .and_then(|l| l.cast.as_ref())
+            .is_some_and(|c| c.shielded);
+        let border_data = model.region_data.entry(cast_border).or_default();
+        border_data.anchors = vec![Anchor::new(
+            Point::Center,
+            plate_id,
+            Point::Center,
+            0.0,
+            -g.height * 0.5,
+        )];
+        border_data.size = Some((g.width, g.height));
+        let border_id = model.region_id(cast_border);
+        let shield_data = model.region_data.entry(cast_shield).or_default();
+        shield_data.anchors = vec![Anchor::new(
+            Point::Center,
+            border_id,
+            Point::Center,
+            0.0,
+            -g.height * 0.5,
+        )];
+        shield_data.size = Some((g.width, g.height));
+        model.region_data.entry(cast_icon).or_default().size =
+            Some((g.cast_icon_size, g.cast_icon_size));
+        let cast_input = model.layout_inputs.entry(cast_bar).or_default();
+        cast_input.width = g.bar_width;
+        cast_input.height = g.bar_height;
+        seat_cast(model, i, g, shielded);
 
         // The first lay-out adds anchor targets, so the full touch; once per geometry change.
         model.touch_layout();
@@ -628,6 +707,11 @@ impl Plate {
             }
         }
 
+        if last.as_ref().is_none_or(|l| l.cast != state.cast) {
+            let was = last.as_ref().and_then(|l| l.cast.as_ref());
+            Plate::drive_cast(model, i, was, state.cast.as_ref(), effects);
+        }
+
         if last.as_ref().is_none_or(|l| l.raid_icon != state.raid_icon) {
             match state.raid_icon {
                 Some(idx) => {
@@ -643,6 +727,63 @@ impl Plate {
         model.nameplates.plates[i].last = Some(state.clone());
     }
 
+    /// The cast bar's write (`0x98f040`, `0x98e7e0`), each part only when it moved.
+    fn drive_cast(
+        model: &mut Model,
+        i: usize,
+        last: Option<&PlateCast>,
+        cast: Option<&PlateCast>,
+        effects: &mut SyncEffects,
+    ) {
+        let p = &model.nameplates.plates[i];
+        let (border, shield, icon, bar, fill) = (
+            p.cast_border,
+            p.cast_shield,
+            p.cast_icon,
+            p.cast_bar,
+            p.cast_fill,
+        );
+        let Some(cast) = cast else {
+            effects.visibility.extend(model.arena.set_shown(bar, false));
+            for rh in [border, shield, icon] {
+                model.region_data.entry(rh).or_default().hidden = true;
+            }
+            return;
+        };
+        if last.is_none() {
+            effects.visibility.extend(model.arena.set_shown(bar, true));
+        }
+        if last.is_none_or(|l| l.shielded != cast.shielded) {
+            if let Some(g) = model.nameplates.geometry {
+                seat_cast(model, i, g, cast.shielded);
+            }
+        }
+        if last.is_none_or(|l| l.min != cast.min || l.max != cast.max || l.value != cast.value) {
+            if let Some(KindState::StatusBar(sb)) =
+                model.arena.frame_mut(bar).map(|f| &mut f.kind_state)
+            {
+                sb.min = cast.min;
+                sb.max = cast.max;
+                sb.value = cast.value.clamp(cast.min, cast.max);
+            }
+            effects.values.push((bar, cast.value));
+        }
+        model.region_data.entry(fill).or_default().vertex_color = Some(cast.colour);
+        let art = Some([1.0, 1.0, 1.0, cast.alpha]);
+        let border_data = model.region_data.entry(border).or_default();
+        border_data.hidden = cast.shielded;
+        border_data.vertex_color = art;
+        let shield_data = model.region_data.entry(shield).or_default();
+        shield_data.hidden = !cast.shielded;
+        shield_data.vertex_color = art;
+        let icon_data = model.region_data.entry(icon).or_default();
+        icon_data.hidden = false;
+        icon_data.vertex_color = art;
+        if icon_data.texture != cast.icon {
+            icon_data.texture = cast.icon.clone();
+        }
+    }
+
     /// Retire a plate: hide it, never destroy it, so it keeps its child-list index and comes back
     /// as the same Lua object addons key their per-plate state by.
     fn retire(model: &mut Model, i: usize, effects: &mut SyncEffects) {
@@ -655,6 +796,58 @@ impl Plate {
             .extend(model.arena.set_shown(frame, false));
         model.nameplates.plates[i].last = None;
     }
+}
+
+/// The cast bar and the cast icon on the cast border (`0x98f217`-`0x98f2fa`): the bar's
+/// BOTTOMRIGHT inset 0.003125 gx left and up, or down when shielded; the icon's CENTER 0.0092 gx
+/// right of the border's BOTTOMLEFT and 0.0071 up, or level with it when shielded.
+fn seat_cast(model: &mut Model, i: usize, g: PlateGeometry, shielded: bool) {
+    let p = &model.nameplates.plates[i];
+    let (border, icon, bar) = (p.cast_border, p.cast_icon, p.cast_bar);
+    let border_id = model.region_id(border);
+    let bar_y = if shielded { -g.cast_off } else { g.cast_off };
+    model.layout_inputs.entry(bar).or_default().anchors = vec![Anchor::new(
+        Point::BottomRight,
+        border_id,
+        Point::BottomRight,
+        -g.cast_off,
+        bar_y,
+    )];
+    let icon_y = if shielded { 0.0 } else { g.level_off_y };
+    model.region_data.entry(icon).or_default().anchors = vec![Anchor::new(
+        Point::Center,
+        border_id,
+        Point::BottomLeft,
+        g.level_off_x,
+        icon_y,
+    )];
+    model.touch_layout();
+}
+
+/// A plate status bar: a child a level under the plate, filled with the bar-fill texture.
+fn status_bar(
+    model: &mut Model,
+    frame: FrameHandle,
+    strata: crate::order::Strata,
+) -> (FrameHandle, RegionHandle) {
+    let bar = model.arena.create(FrameKind::StatusBar, None, Some(frame));
+    model.arena.set_frame_strata(bar, strata);
+    model.arena.set_frame_level(bar, BAR_LEVEL, true);
+    let fill = model
+        .arena
+        .create_region(bar, RegionKind::Texture, DrawLayer::Artwork, 0)
+        .expect("live bar");
+    let fill_data = model.region_data.entry(fill).or_default();
+    fill_data.texture = Some(BAR_FILL_TEXTURE.to_string());
+    // The fill keeps a texture's default BLEND, written out as a fact.
+    fill_data.blend = BlendMode::Blend;
+    if let Some(KindState::StatusBar(sb)) = model.arena.frame_mut(bar).map(|f| &mut f.kind_state) {
+        sb.bar = Some(fill);
+        sb.min = 0.0;
+        sb.max = 1.0;
+        sb.value = 0.0;
+    }
+    (bar, fill)
 }
 
 /// One of the plate's textures, with its path and the blend mode the ctor sets.

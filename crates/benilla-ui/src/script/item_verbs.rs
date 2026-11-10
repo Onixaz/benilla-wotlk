@@ -12,7 +12,7 @@ use super::model::Model;
 use super::{ItemTemplateView, ModelCell};
 
 /// `ITEM_FLAG_UNIQUE_EQUIPPED`, which `GetItemUniqueness` answers as `-1, 1`.
-const FLAG_UNIQUE_EQUIPPED: u32 = 0x80000;
+pub(super) const FLAG_UNIQUE_EQUIPPED: u32 = 0x80000;
 
 /// The name table's read (`0x709de0`): the first `item:` id, else a held item's.
 pub(super) fn item_id_by_name(model: &Model, text: &str) -> i64 {
@@ -165,10 +165,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Value::Integer(1),
                 ]));
             }
-            Ok(match t.item_limit {
-                Some((category, quantity)) => MultiValue::from_vec(vec![
-                    Value::Integer(i64::from(category)),
-                    Value::Integer(i64::from(quantity)),
+            Ok(match &t.item_limit {
+                Some(limit) => MultiValue::from_vec(vec![
+                    Value::Integer(i64::from(limit.category)),
+                    Value::Integer(i64::from(limit.quantity)),
                 ]),
                 None => MultiValue::new(),
             })
@@ -384,7 +384,11 @@ mod tests {
             name: "Loop".into(),
             bag_family: 8,
             icon: Some("Interface\\Icons\\X".into()),
-            item_limit: Some((12, 3)),
+            item_limit: Some(crate::script::ItemLimitView {
+                category: 12,
+                quantity: 3,
+                ..Default::default()
+            }),
             ..Default::default()
         });
         assert_eq!(s.eval::<i64>("return GetItemFamily(7000)").unwrap(), 8);
@@ -412,7 +416,11 @@ mod tests {
     fn a_unique_equipped_flag_answers_before_the_limit_category() {
         let s = with_item(ItemTemplateView {
             flags: super::FLAG_UNIQUE_EQUIPPED,
-            item_limit: Some((12, 3)),
+            item_limit: Some(crate::script::ItemLimitView {
+                category: 12,
+                quantity: 3,
+                ..Default::default()
+            }),
             ..Default::default()
         });
         assert_eq!(

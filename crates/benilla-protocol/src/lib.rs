@@ -170,6 +170,11 @@ impl Logon {
 
 /// The full SRP6 logon against a `realmd`, then the realm list.
 pub fn logon(host: &str, username: &str, password: &str) -> Result<Logon> {
+    logon_locale(host, username, password, u32::from_be_bytes(*b"enUS"))
+}
+
+/// [`logon`] for a client running another locale, its four letters packed big-endian.
+pub fn logon_locale(host: &str, username: &str, password: &str, locale: u32) -> Result<Logon> {
     let (host, port) = host_port(host, AUTH_PORT);
 
     let username_n =
@@ -184,7 +189,7 @@ pub fn logon(host: &str, username: &str, password: &str) -> Result<Logon> {
         let mut dialed = None;
         for _ in 0..MAX_CHALLENGE_DIALS {
             let mut stream = dial(host, port)?;
-            auth::write_logon_challenge(&mut stream, &username.to_uppercase())
+            auth::write_logon_challenge(&mut stream, &username.to_uppercase(), locale)
                 .context("sending logon challenge")?;
             let Some(reply) =
                 auth::read_challenge_reply(&mut stream).context("reading logon challenge reply")?

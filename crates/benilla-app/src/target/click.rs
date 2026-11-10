@@ -236,6 +236,9 @@ pub(crate) struct Dispatch<'w, 's> {
     player: Res<'w, crate::player::Player>,
     // The auto-dismount CVars (`0x71b0c0`) for the mounted attack gate.
     auto_dismount: Option<Res<'w, crate::spell::cast_target::AutoDismount>>,
+    // The auto-stand and auto-unshift checks (`0x71b090`, `0x71b130`), and the form's auras.
+    checks: crate::spell::AutoChecks<'w>,
+    self_auras: Query<'w, 's, &'static crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     // `SpellShapeshiftForm.dbc`'s flags, the barber chair's shapeshift test.
     sheet: Option<Res<'w, crate::ui_char::SheetTables>>,
 }
@@ -401,6 +404,77 @@ impl Dispatch<'_, '_> {
         self.player.move_flags() & crate::creature_anim::move_flags::INTEGRATED != 0
     }
 
+    /// The player's form byte and its `SpellShapeshiftForm.dbc` flags.
+    fn form_state(&self) -> (u8, u32) {
+        let form = self.self_store().map_or(0, |s| s.0.unit_shapeshift_form());
+        let flags = self
+            .sheet
+            .as_deref()
+            .and_then(|t| t.form_flags.get(&u32::from(form)).copied())
+            .unwrap_or(0);
+        (form, flags)
+    }
+
+    fn can_auto_unshift(&self) -> bool {
+        let flags = self.form_state().1;
+        self.self_store()
+            .is_some_and(|s| self.checks.unshift(s, flags))
+    }
+
+    /// Leaves the form: `CMSG_CANCEL_AURA` for each aura holding it.
+    fn cancel_shapeshift(&self) {
+        let form = self.form_state().0;
+        let (Some(spells), Some(auras)) = (
+            self.go_inputs.spells.as_deref(),
+            self.self_auras.iter().next(),
+        ) else {
+            return;
+        };
+        for spell_id in crate::ui_shapeshift::form_auras(form, auras, &spells.catalog) {
+            debug!("leaves the form first ({spell_id})");
+            let _ = self.seam.net.0.send(ClientCommand::CancelAura { spell_id });
+        }
+    }
+
+    /// The stand leg of a loot click (`0x731260`, `0x706010`): refused when the auto-stand check
+    /// says no, else the ask to stand.
+    fn stand_to_loot(&mut self) -> bool {
+        if self
+            .self_store()
+            .is_none_or(|s| s.0.unit_stand_state() == 0)
+        {
+            return true;
+        }
+        if !self.checks.stand() {
+            debug!("right-click loot: refused, not standing");
+            self.feedback
+                .errors
+                .0
+                .push(crate::ui_action::UiError::key("ERR_LOOT_NOTSTANDING"));
+            return false;
+        }
+        self.auto.stand_up();
+        true
+    }
+
+    /// The form leg of an NPC click (`0x6ddbb0`): refused when the form may not be left, else the
+    /// cancel, ahead of any walk.
+    fn unshift_to_talk(&mut self) -> bool {
+        let (form, flags) = self.form_state();
+        if !crate::spell::validator::form_blocks_interact(form, flags) {
+            return true;
+        }
+        if !self.can_auto_unshift() {
+            debug!("right-click interact: refused, shapeshifted");
+            self.feedback.errors.0.push(crate::ui_action::UiError::key(
+                "ERR_CANT_INTERACT_SHAPESHIFTED",
+            ));
+            return false;
+        }
+        self.cancel_shapeshift();
+        true
+    }
+
     /// The mounted leg of the unit loot (`0x6dae89`): refused when the auto-dismount check says
     /// no, else the dismount leads the send.
     fn dismount_to_loot(&mut self) -> bool {
@@ -527,6 +601,8 @@ impl Dispatch<'_, '_> {
                 .is_some_and(|l| l.0.slots(lock_id).is_some());
         let go_type = go.map_or(-1, |(s, _)| s.0.gameobject_type_id());
         let usable_mounted = go_usable_mounted(go_type, allow_mounted);
+        let (form, form_flags) = self.form_state();
+        let leaves_form = crate::spell::validator::form_blocks_interact(form, form_flags);
         if !has_lock_row
             && !usable_mounted
             && self_store.is_some_and(|s| self.mounted_gate().refuses(s))
@@ -536,6 +612,15 @@ impl Dispatch<'_, '_> {
                 .errors
                 .0
                 .push(crate::ui_action::UiError::key("ERR_NOT_WHILE_MOUNTED"));
+            return;
+        }
+        // The same gate's form leg (`0x711470`).
+        if !has_lock_row && leaves_form && !self.can_auto_unshift() {
+            debug!("right-click gameobject {guid:#x}: refused, shapeshifted");
+            self.feedback
+                .errors
+                .0
+                .push(crate::ui_action::UiError::key("ERR_NOT_WHILE_SHAPESHIFTED"));
             return;
         }
         // MAILBOX (type 19) opens locally: its use (`0x70c9d0`) is the mailbox opener, which sends
@@ -632,6 +717,9 @@ impl Dispatch<'_, '_> {
                 // The use's dismount (`0x71190c`) leads the send.
                 if let Some(own) = self_store.filter(|_| !usable_mounted) {
                     crate::creature_anim::dismount_first(own, &self.seam.net);
+                }
+                if leaves_form {
+                    self.cancel_shapeshift();
                 }
                 let _ = self.seam.net.0.send(ClientCommand::GameObjUse { guid });
             }
@@ -785,6 +873,9 @@ impl Dispatch<'_, '_> {
     /// `0x6ddbb0`: the NPC-service ladder. Out of the unit's interact reach it walks there when
     /// `walk`, returning before the ladder and the gesture, and otherwise sends nothing.
     fn talk(&mut self, entity: Entity, guid: u64, in_reach: bool, walk: bool) {
+        if !self.unshift_to_talk() {
+            return;
+        }
         if !in_reach {
             if walk {
                 let reach = self
@@ -1037,17 +1128,7 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
         );
         // A rider fails leg 1 with no error and falls to leg 2, silently.
         if !self_mounted && lootable {
-            // Not standing: the client-local red `ERR_LOOT_NOTSTANDING`, no packet.
-            if dispatch
-                .self_store()
-                .is_some_and(|s| s.0.unit_stand_state() != 0)
-            {
-                debug!("right-click corpse loot: refused, not standing ({guid:#x})");
-                dispatch
-                    .feedback
-                    .errors
-                    .0
-                    .push(crate::ui_action::UiError::key("ERR_LOOT_NOTSTANDING"));
+            if !dispatch.stand_to_loot() {
                 return;
             }
             dispatch.loot_corpse(entity, guid, walk);
@@ -1173,18 +1254,7 @@ fn interact(dispatch: &mut Dispatch, press: &PressPick, mut select: Select) {
             }
         }
         UnitBranch::Dead(DeadUnitLeg::Loot) => {
-            // The stand-state check matches the corpse leg's.
-            if dispatch
-                .self_store()
-                .is_some_and(|s| s.0.unit_stand_state() != 0)
-            {
-                debug!("right-click loot: refused, not standing ({guid:#x})");
-                dispatch
-                    .feedback
-                    .errors
-                    .0
-                    .push(crate::ui_action::UiError::key("ERR_LOOT_NOTSTANDING"));
-            } else {
+            if dispatch.stand_to_loot() {
                 dispatch.loot_unit(entity, guid, walk);
             }
         }
@@ -3877,6 +3947,105 @@ mod tests {
                     .any(|c| matches!(c, ClientCommand::LootRelease { guid: LOOTED })),
                 "type {go_type}"
             );
+        }
+    }
+
+    const F_BYTES_1: u16 = 138;
+    const F_BYTES_2: u16 = 164;
+    /// A form with none of the stance, interact or item flags: creature Cat Form.
+    const NO_INTERACT_FORM: u32 = 15 << 24;
+
+    fn set_me(world: &mut World, extra: (u16, u32)) {
+        let me = world
+            .query_filtered::<Entity, With<SelfPlayer>>()
+            .single(world)
+            .unwrap();
+        world
+            .entity_mut(me)
+            .insert(store(&[(F_HEALTH, 100), (F_MAXHEALTH, 100), extra]));
+    }
+
+    fn posture(stand: bool, unshift: bool) -> crate::spell::AutoPosture {
+        crate::spell::AutoPosture { stand, unshift }
+    }
+
+    /// A seated loot click (`0x731260`): autoStand stands first, off it says why not.
+    #[test]
+    fn a_seated_loot_stands_first_or_says_why_not() {
+        for stand in [true, false] {
+            let (mut world, body, _corpse, rx) = loot_world(2.0, 0, true);
+            set_me(&mut world, (F_BYTES_1, 1));
+            world.insert_resource(posture(stand, true));
+            let hovered = Hovered {
+                target: Some(body),
+                guid: Some(BODY),
+                distance: 2.0,
+                ..Hovered::default()
+            };
+            right_click_loot(&mut world, hovered);
+            let looted = rx
+                .try_iter()
+                .any(|c| matches!(c, ClientCommand::Loot { guid: BODY }));
+            let stood = world
+                .resource::<Messages<crate::player::StandStateRequest>>()
+                .iter_current_update_messages()
+                .any(|r| r.state == 0);
+            assert_eq!((looted, stood), (stand, stand));
+            if !stand {
+                assert_eq!(error_keys(&world), ["ERR_LOOT_NOTSTANDING"]);
+            }
+        }
+    }
+
+    /// An NPC click in a form without the interact flag (`0x6ddbb0`): autoUnshift off refuses.
+    #[test]
+    fn a_shapeshifted_npc_click_needs_auto_unshift() {
+        for unshift in [true, false] {
+            let (mut world, vendor, rx) = walking_world(Vec3::new(0.0, 0.0, -2.0), false);
+            set_me(&mut world, (F_BYTES_2, NO_INTERACT_FORM));
+            world.insert_resource(posture(true, unshift));
+            click_vendor_in_reach(&mut world, vendor);
+            let listed = rx
+                .try_iter()
+                .any(|c| matches!(c, ClientCommand::ListInventory { guid: VENDOR }));
+            assert_eq!(listed, unshift);
+            if !unshift {
+                assert_eq!(error_keys(&world), ["ERR_CANT_INTERACT_SHAPESHIFTED"]);
+            }
+        }
+    }
+
+    /// A lock-less object in a form without the interact flag (`0x711470`).
+    #[test]
+    fn a_shapeshifted_object_use_needs_auto_unshift() {
+        for unshift in [true, false] {
+            let (mut world, _vendor, rx) = walking_world(Vec3::new(14.0, 0.0, 0.0), false);
+            set_me(&mut world, (F_BYTES_2, NO_INTERACT_FORM));
+            world.insert_resource(posture(true, unshift));
+            let object = spawn_chest(&mut world, Vec3::new(0.0, 0.0, -2.0));
+            *world.resource_mut::<PressPick>() = PressPick {
+                object: HoveredObject {
+                    target: Some(object),
+                    guid: Some(CHEST),
+                    distance: 2.0,
+                },
+                cursor: WorldCursor {
+                    kind: cursor_mode::CursorKind::Interact,
+                    unable: false,
+                },
+                ..PressPick::default()
+            };
+            world
+                .resource_mut::<Messages<WorldRightClick>>()
+                .write(WorldRightClick);
+            world.run_system_once(act_on_right_click).unwrap();
+            let used = rx
+                .try_iter()
+                .any(|c| matches!(c, ClientCommand::GameObjUse { guid: CHEST }));
+            assert_eq!(used, unshift);
+            if !unshift {
+                assert_eq!(error_keys(&world), ["ERR_NOT_WHILE_SHAPESHIFTED"]);
+            }
         }
     }
 

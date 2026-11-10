@@ -134,6 +134,8 @@ pub(crate) fn spans(tip: &str, base: Color) -> Vec<(String, Color)> {
             TokenKind::Char(c) => run.push(c),
             // No shipped tip has a hyperlink; one would draw its text and lose only the click.
             TokenKind::LinkOpen { .. } | TokenKind::LinkClose => {}
+            // No shipped tip embeds a texture.
+            TokenKind::Texture { .. } | TokenKind::TextureClose => {}
         }
     }
     flush(&mut run, colour, &mut out);

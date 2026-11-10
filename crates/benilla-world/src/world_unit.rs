@@ -9,6 +9,12 @@
 
 use bevy::prelude::*;
 
+/// The world object's hidden bit (`0x77f2f0`, static flag `0x4`): the body draws nothing whatever
+/// the exterior cull would say.
+#[derive(Component, Clone, Copy, Debug)]
+#[component(storage = "SparseSet")]
+pub struct ObjectHidden;
+
 /// A unit body the world can act on: it wades, takes ground shade, claims a WMO room and holds a
 /// rig palette slot. Every field is an engine fact; `benilla-protocol` is not a dependency here.
 #[derive(Component, Clone, Copy, Debug)]

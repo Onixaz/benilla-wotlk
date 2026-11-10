@@ -467,11 +467,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The locale name table at the locale index, the same answer as the in-game binding: benilla is
-    // enUS-only.
+    // The locale name table at the locale index, the same answer as the in-game binding (`0x4dbfd0`).
     g.set(
         "GetLocale",
-        lua.create_function(|lua, _: MultiValue| lua.create_string("enUS"))?,
+        lua.create_function(|lua, _: MultiValue| lua.create_string(crate::locale::script_name()))?,
     )?;
 
     // A string argument or `Usage: SetCurrentScreen("screen")`, copied into the 0x40-byte screen

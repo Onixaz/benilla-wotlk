@@ -130,6 +130,7 @@ impl PluginGroup for GamePlugins {
             .add(CameraShakePlugin)
             .add(FootprintsPlugin)
             .add(crate::go_anim::plugin)
+            .add(crate::go_difficulty::plugin)
             .add(crate::doodad_events::plugin)
             .add(PlayerPlugin)
             .add(crate::screen_fade::ScreenFadePlugin)
@@ -954,9 +955,11 @@ pub(crate) mod schedule_tests {
     ///   frame's lag does not move a landing time that matters.
     /// - `target::scan::remember_last_enemy` reads `Player` for the auto-dismount check (`0x71b0c0`)
     ///   against six writers (+6): a mover's flags a frame late only delay a sampled stamp.
+    /// - The cast attempt's area leg reads `CurrentArea` against `update_current_area` from each
+    ///   `CastLadder` drain (+9): a press reads the area under the player a frame late at worst.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_879;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_888;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
@@ -1046,6 +1049,122 @@ pub(crate) mod schedule_tests {
             POST_UPDATE_CEILING,
             POST_UPDATE_SLACK,
         );
+    }
+
+    /// The main-world schedules an in-world frame passes through.
+    fn frame_censuses(app: &mut App) -> Vec<(&'static str, Census)> {
+        let mut out = Vec::new();
+        macro_rules! take {
+            ($($label:ident),*) => {$(
+                out.push((stringify!($label), census(app, $label, SyncPoints::Built)));
+            )*};
+        }
+        // `Update` first: its systems register the resources every census's classes read.
+        take!(Update, PostUpdate, PreUpdate, First, RunFixedMainLoop, Last);
+        out
+    }
+
+    /// Is this run condition only a coarse phase check, true on every frame of the phase it names?
+    /// A system behind nothing else still runs on every in-world frame.
+    fn is_phase_condition(name: &str) -> bool {
+        [
+            "in_state<",
+            "resource_exists<",
+            "ingame_ui_up",
+            "world_is_live",
+            "world_audio_live",
+        ]
+        .iter()
+        .any(|phase| name.contains(phase))
+    }
+
+    /// One schedule's systems as the frame floor counts them: every system, then those that run on
+    /// every in-world frame, meaning no run condition beyond a coarse phase check on it or its sets.
+    fn frame_floor(census: &Census) -> (usize, usize) {
+        let mut systems = 0;
+        let mut every_frame = 0;
+        for info in census.systems.values() {
+            if is_sync_point(&info.name) {
+                continue;
+            }
+            systems += 1;
+            if info.conditions.iter().all(|c| is_phase_condition(c)) {
+                every_frame += 1;
+            }
+        }
+        (systems, every_frame)
+    }
+
+    /// The frame floor (#543): what the main world schedules every in-world frame, per schedule.
+    /// Each system costs its dispatch and parameter fetch even with nothing to do, about a
+    /// microsecond apiece, so the count is a frame-time cost in its own right. `every_frame` is the
+    /// number that matters: a system with a real trigger in its run condition skips on quiet frames.
+    const FRAME_FLOOR: &[(&str, usize, usize)] = &[
+        ("Update", 741, 733),
+        ("PostUpdate", 183, 142),
+        ("PreUpdate", 60, 60),
+        ("First", 11, 8),
+        ("RunFixedMainLoop", 7, 7),
+        ("Last", 31, 26),
+    ];
+    /// How far a count may sit under its ceiling before the ceiling must come down with it.
+    const FRAME_FLOOR_SLACK: usize = 8;
+
+    /// The gate on the frame floor: a new per-frame system fails here until it has a real trigger
+    /// in its run condition (`on_message`, `resource_changed`, a set gated on one) or replaces one.
+    #[test]
+    fn the_frame_runs_no_more_systems_than_the_ceilings_say() {
+        let mut app = headless_client();
+        let censuses = frame_censuses(&mut app);
+        if !type_names_available(&censuses[0].1) {
+            eprintln!("skipped: this build carries no system names");
+            return;
+        }
+        let dump = std::env::var_os("WOW_FRAME_FLOOR_DUMP").is_some();
+        let mut failures = Vec::new();
+        for ((name, census), (ceiling_name, systems_ceiling, every_ceiling)) in
+            censuses.iter().zip(FRAME_FLOOR)
+        {
+            assert_eq!(
+                name, ceiling_name,
+                "FRAME_FLOOR lists the schedules in order"
+            );
+            let (systems, every_frame) = frame_floor(census);
+            eprintln!(
+                "{name}: {systems} systems (ceiling {systems_ceiling}), {every_frame} every frame \
+                 (ceiling {every_ceiling})"
+            );
+            if dump {
+                let mut rows: Vec<_> = census
+                    .systems
+                    .values()
+                    .filter(|s| !is_sync_point(&s.name))
+                    .map(|s| format!("  {name} {} [{}]", s.name, s.conditions.join(", ")))
+                    .collect();
+                rows.sort();
+                rows.iter().for_each(|r| eprintln!("{r}"));
+            }
+            for (what, n, ceiling) in [
+                ("systems", systems, *systems_ceiling),
+                ("every-frame systems", every_frame, *every_ceiling),
+            ] {
+                if n > ceiling {
+                    failures.push(format!(
+                        "{name} has {n} {what}; the ceiling is {ceiling}. A system that runs every \
+                         frame costs every frame whether or not it has work: give it a run \
+                         condition on what it reacts to (`on_message`, `resource_changed`, a gated \
+                         set), fold it into a system that already runs, or raise the ceiling here \
+                         with the measured reason. `WOW_FRAME_FLOOR_DUMP=1` lists them."
+                    ));
+                } else if n + FRAME_FLOOR_SLACK < ceiling {
+                    failures.push(format!(
+                        "{name} has {n} {what} and the ceiling still says {ceiling}. Lower the \
+                         ceiling to {n} so it keeps ratcheting."
+                    ));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     /// The `ApplyDeferred` the build inserts between a system with commands and its dependents.
