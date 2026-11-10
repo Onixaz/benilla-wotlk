@@ -10,8 +10,8 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::creature_anim::spell_visual::{AreaKitWait, DelayedAreaKit};
-use crate::creature_anim::{ChainProcPlay, FxClass, SpellGoTargets, SpellKitFx, SpellVisuals};
-use crate::net::{GuidIndex, NetEntity};
+use crate::creature_anim::{ChainProcPlay, SpellEffectClear, SpellGoTargets, SpellVisuals};
+use crate::net::{Guid, GuidIndex, NetEntity};
 use lightning::{Lightning, Scratch};
 
 use super::OverheadFallback;
@@ -103,10 +103,11 @@ struct Bolt {
 pub(crate) struct ChainBeam {
     /// The reap key.
     spell_id: u32,
-    /// The kit's owner, the reap key; its loss ends the beam, as nothing else would reap one.
+    /// The kit's owner, whose effect list holds the beam (`0x6f8040`); its loss ends the beam.
     caster: Entity,
-    /// `[source, hop0, hop1, …]` as identities re-resolved every frame; a beam never re-targets.
-    nodes: Vec<Entity>,
+    /// `[source, hop0, hop1, …]` as guids resolved every frame, a gone one hiding its bolts until
+    /// it streams back (`0x7faeef`); a beam never re-targets.
+    nodes: Vec<u64>,
     /// The ground point of a beam cast at no unit, its one bolt's target (`0x7fc878`).
     location: Option<Vec3>,
     bolts: Vec<Bolt>,
@@ -152,14 +153,14 @@ pub(super) fn spawn_chain_beams(
     mut commands: Commands,
     time: Res<Time>,
     mut plays: MessageReader<ChainProcPlay>,
-    mut kit_fx: MessageReader<SpellKitFx>,
+    mut clears: MessageReader<SpellEffectClear>,
     mut go_targets: MessageReader<SpellGoTargets>,
     mut area_kits: MessageWriter<DelayedAreaKit>,
     visuals: Option<Res<SpellVisuals>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     asset_server: Res<AssetServer>,
     index: Res<GuidIndex>,
-    stores: Query<(&crate::net::ObjectStore, Option<&ChainHops>)>,
+    stores: Query<(&crate::net::ObjectStore, Option<&ChainHops>, Option<&Guid>)>,
     beams: Query<(Entity, &ChainBeam)>,
     transforms: Query<&GlobalTransform, Without<WorldCamera>>,
     mut locations: ResMut<ChainLocations>,
@@ -189,32 +190,28 @@ pub(super) fn spawn_chain_beams(
         locations.save(go.caster, row.flags, hit_units, go.dest);
     }
     locations.0.retain(|e, _| stores.contains(*e));
-    for ev in kit_fx.read() {
-        // A channel's hold and an aura's state kits keep their persistent beams (`0x743b40`).
-        let SpellKitFx::Reap {
-            entity,
-            spell_id,
-            class: FxClass::Hold | FxClass::AuraState,
-        } = ev
-        else {
-            continue;
-        };
-        for (e, beam) in &beams {
-            if beam.persistent && beam.caster == *entity && beam.spell_id == *spell_id {
-                commands.entity(e).despawn();
-            }
+    // The spell clear releases the owner's effects and the persistent beams they hold; a
+    // self-terminating beam keeps its own clock (`0x743b40`, `0x6f74f0`).
+    let cleared: Vec<SpellEffectClear> = clears.read().copied().collect();
+    for (e, beam) in &beams {
+        if beam.persistent
+            && cleared
+                .iter()
+                .any(|c| c.entity == beam.caster && c.spell_id == beam.spell_id)
+        {
+            commands.entity(e).despawn();
         }
     }
 
     let now = time.elapsed_secs();
     for play in plays.read() {
         // The caster may be gone within the same wire drain that produced this play.
-        let Ok((store, hops)) = stores.get(play.entity) else {
+        let Ok((store, hops, _)) = stores.get(play.entity) else {
             continue;
         };
         // Another unit's play runs from it to this one, or ends here unconsumed (`0x7269d8`).
         let source = play.from.filter(|&from| from != play.entity);
-        if source.is_some_and(|s| !stores.get(s).is_ok_and(|(o, _)| o.is_unit())) {
+        if source.is_some_and(|s| !stores.get(s).is_ok_and(|(o, ..)| o.is_unit())) {
             continue;
         }
         // Consume once on every other path: zeroed even when nothing is drawn (`0x726b0d`).
@@ -240,16 +237,10 @@ pub(super) fn spawn_chain_beams(
         };
         let stages = visual_of(play.spell_id);
         let ends = Ends::from_visual(stages, spells.catalog.get(play.spell_id).is_some());
-        // A persistent beam replaces the ones before it on the same caster and spell.
-        if play.proc.flag {
-            for (e, beam) in &beams {
-                if beam.persistent && beam.caster == play.entity && beam.spell_id == play.spell_id {
-                    commands.entity(e).despawn();
-                }
-            }
-        }
+        // Each play adds its own effect beside the spell's earlier ones (`0x7269ca`).
         *plays_seen = plays_seen.wrapping_add(1);
-        let nodes: Vec<Entity> = std::iter::once(from).chain(targets).collect();
+        let guid_of = |e: Entity| stores.get(e).ok().and_then(|(.., g)| g).map_or(0, |g| g.0);
+        let nodes: Vec<u64> = std::iter::once(from).chain(targets).map(guid_of).collect();
         // A location aims the one bolt when no unit is hit, turned with the caster (`0x7fc878`).
         let turn = transforms
             .get(play.entity)
@@ -426,6 +417,7 @@ pub(crate) fn simulate_chain_beams(
     images: Res<Assets<Image>>,
     world_cam: Query<(Entity, &GlobalTransform), With<WorldCamera>>,
     ends: EndPoints,
+    index: Res<GuidIndex>,
     mut beams: Query<(Entity, &mut ChainBeam)>,
     mut scratch: Local<Scratch>,
 ) {
@@ -457,11 +449,13 @@ pub(crate) fn simulate_chain_beams(
         let (mut anchor_sum, mut anchor_n) = (Vec3::ZERO, 0.0f32);
         for (i, bolt) in bolts.iter_mut().enumerate() {
             if *persistent || (bolt.start <= now && now < bolt.end) {
-                let src = ends.source(bolt.source, nodes[bolt.source], spec);
-                // A target that does not resolve hides the bolt where it stands.
-                let dst = nodes
-                    .get(bolt.target)
-                    .map_or(*location, |&n| ends.target(n, spec));
+                let resolve = |guid: u64| index.0.get(&guid).copied();
+                // An end that does not resolve hides the bolt where it stands (`0x7fb13b`).
+                let src =
+                    resolve(nodes[bolt.source]).and_then(|n| ends.source(bolt.source, n, spec));
+                let dst = nodes.get(bolt.target).map_or(*location, |&g| {
+                    resolve(g).and_then(|n| ends.target(n, spec))
+                });
                 let live = bolt.live.get_or_insert_with(|| {
                     let s = (*seed).wrapping_add((i as u32).wrapping_mul(0x27D4_EB2F));
                     Lightning::new(effect, src.unwrap_or_default(), dst.unwrap_or_default(), s)

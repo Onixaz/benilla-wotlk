@@ -49,6 +49,8 @@ fn app() -> App {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([
@@ -211,6 +213,8 @@ fn precast_kit_sound_rings_once_at_start() {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([(
@@ -481,7 +485,9 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
     app.add_message::<crate::net::FieldChanged>();
     // The watcher's CharProc and sound writers need their messages; kit 409 carries neither.
     app.add_message::<crate::aura_visual::AuraProc>();
-    app.add_message::<super::ChainProcPlay>();
+    app.add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>();
     app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::aura_visual::BodyProcPlay>();
     app.add_message::<SheathRequest>();
@@ -586,15 +592,23 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
     app.update();
     {
         let log = &app.world().resource::<FxLog>().0;
-        assert_eq!(log.len(), 2, "one Reap on the REMOVE edge");
-        let SpellKitFx::Reap {
-            spell_id, class, ..
-        } = &log[1]
-        else {
-            panic!("expected Reap");
-        };
-        assert_eq!(*spell_id, FOOD);
-        assert_eq!(*class, super::FxClass::AuraState);
+        // The spell clear on the REMOVE edge takes every class of the spell's models (`0x743b40`).
+        let reaps: Vec<_> = log[1..]
+            .iter()
+            .map(|e| match e {
+                SpellKitFx::Reap {
+                    spell_id, class, ..
+                } => (*spell_id, *class),
+                SpellKitFx::Begin { .. } => panic!("expected Reap"),
+            })
+            .collect();
+        assert_eq!(
+            reaps,
+            [
+                (FOOD, super::FxClass::AuraState),
+                (FOOD, super::FxClass::Hold)
+            ]
+        );
     }
 }
 
@@ -634,7 +648,9 @@ fn an_ending_aura_plays_its_state_done_kit_once() {
         .add_message::<StateDoneKit>();
     app.add_message::<crate::net::FieldChanged>();
     app.add_message::<crate::aura_visual::AuraProc>();
-    app.add_message::<super::ChainProcPlay>();
+    app.add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>();
     app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::aura_visual::BodyProcPlay>();
     app.add_message::<SheathRequest>();
@@ -643,6 +659,8 @@ fn an_ending_aura_plays_its_state_done_kit_once() {
         .add_message::<EmoteAnim>()
         .add_message::<WoundAnim>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
@@ -764,6 +782,8 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
         .add_message::<SheathRequest>();
     let stages = VisualStages {
         impact: IMPACT_KIT,
@@ -885,6 +905,8 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([
@@ -1004,6 +1026,8 @@ fn ground_app(
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
         HashMap::from([(VISUAL, stages)]),
@@ -1562,6 +1586,8 @@ fn real_shooter(weapon: &RealRanged) -> Option<(App, Entity)> {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(visuals));
     app.insert_resource(crate::ui_action::Spells {
@@ -1772,6 +1798,8 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([(
@@ -1871,6 +1899,8 @@ fn an_anim_only_state_kit_still_arms_on_the_aura_add_edge() {
         .add_message::<crate::net::FieldChanged>()
         .add_message::<crate::aura_visual::AuraProc>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
         .init_resource::<crate::net::GuidIndex>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
@@ -1941,6 +1971,8 @@ fn a_detection_aura_s_state_kit_follows_our_own_aura_vision() {
         .add_message::<crate::net::FieldChanged>()
         .add_message::<crate::aura_visual::AuraProc>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
         .init_resource::<crate::net::GuidIndex>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
@@ -2826,47 +2858,83 @@ fn only_the_state_kit_play_hands_the_caster_to_its_beam() {
     );
 }
 
+/// The aura beam fixture: Aura Beam Test (65444) with a state kit whose one slot is chain row 7.
+const AURA_BEAM_SPELL: u32 = 65444;
+
+/// The aura arm alone over [`AURA_BEAM_SPELL`]'s state kit, its state-done kit 913 beside it.
+fn aura_arm_app() -> App {
+    const VISUAL: u32 = 13881;
+    const STATE_KIT: u32 = 912;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
+        .add_message::<crate::aura_visual::AuraProc>()
+        .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<super::SpellEffectClear>()
+        .init_resource::<crate::net::GuidIndex>()
+        .add_message::<crate::aura_visual::BodyProcPlay>()
+        .add_message::<SheathRequest>()
+        .add_message::<SpellKitSound>()
+        .add_message::<super::BaseAnimRecompute>();
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+        HashMap::from([(
+            VISUAL,
+            VisualStages {
+                state: STATE_KIT,
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([(STATE_KIT, beam_kit(STATE_KIT, 7))]),
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            AURA_BEAM_SPELL,
+            SpellDisplay {
+                visual: VISUAL,
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    app.add_systems(Update, super::arm_aura_state_fx);
+    app
+}
+
+/// A unit holding `slots` as `(slot, spell, creator)`.
+fn aura_holder(app: &mut App, slots: &[(u8, u32, u64)]) -> Entity {
+    let (store, _) = crate::unit_auras::aura_unit_for_test(&[]);
+    app.world_mut()
+        .spawn((store, crate::unit_auras::UnitAuras::of_casters(slots)))
+        .id()
+}
+
+/// Every spell clear and state-done kit written since the last drain, as `(entity, spell)`.
+#[allow(clippy::type_complexity)]
+fn clears_and_done(app: &mut App) -> (Vec<(Entity, u32)>, Vec<(Entity, u32)>) {
+    let clears = app
+        .world_mut()
+        .resource_mut::<Messages<super::SpellEffectClear>>()
+        .drain()
+        .map(|c| (c.entity, c.spell_id))
+        .collect();
+    let done = app
+        .world_mut()
+        .resource_mut::<Messages<StateDoneKit>>()
+        .drain()
+        .map(|d| (d.entity, d.spell_id))
+        .collect();
+    (clears, done)
+}
+
 /// The aura arm's state-kit play carries the aura's creator (`0x724c77`); a creator not
 /// streamed names an entity no store answers.
 #[test]
 fn an_aura_s_state_kit_beam_names_its_creator() {
-    const SPELL: u32 = 65444;
-    const VISUAL: u32 = 13881;
-    const STATE_KIT: u32 = 912;
     const CREATOR: u64 = 0xF130_0000_0000_0042;
     for streamed in [true, false] {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.add_message::<SpellKitFx>()
-            .add_message::<StateDoneKit>()
-            .add_message::<crate::aura_visual::AuraProc>()
-            .add_message::<super::ChainProcPlay>()
-            .init_resource::<crate::net::GuidIndex>()
-            .add_message::<crate::aura_visual::BodyProcPlay>()
-            .add_message::<SheathRequest>()
-            .add_message::<SpellKitSound>()
-            .add_message::<super::BaseAnimRecompute>();
-        app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
-            HashMap::from([(
-                VISUAL,
-                VisualStages {
-                    state: STATE_KIT,
-                    ..Default::default()
-                },
-            )]),
-            HashMap::from([(STATE_KIT, beam_kit(STATE_KIT, 7))]),
-        )));
-        app.insert_resource(crate::ui_action::Spells {
-            catalog: SpellCatalog::from_displays(HashMap::from([(
-                SPELL,
-                SpellDisplay {
-                    visual: VISUAL,
-                    ..Default::default()
-                },
-            )])),
-            ..crate::ui_action::Spells::empty_for_tests()
-        });
-        app.add_systems(Update, super::arm_aura_state_fx);
+        let mut app = aura_arm_app();
         let creator = app.world_mut().spawn_empty().id();
         if streamed {
             app.world_mut()
@@ -2874,14 +2942,7 @@ fn an_aura_s_state_kit_beam_names_its_creator() {
                 .0
                 .insert(CREATOR, creator);
         }
-        let (store, _) = crate::unit_auras::aura_unit_for_test(&[]);
-        let holder = app
-            .world_mut()
-            .spawn((
-                store,
-                crate::unit_auras::UnitAuras::of(CREATOR, &[(0, SPELL, 0)]),
-            ))
-            .id();
+        let holder = aura_holder(&mut app, &[(0, AURA_BEAM_SPELL, CREATOR)]);
         app.update();
         let want = if streamed {
             creator
@@ -2894,4 +2955,145 @@ fn an_aura_s_state_kit_beam_names_its_creator() {
             "streamed={streamed}"
         );
     }
+}
+
+/// The applied core plays per slot with that slot's creator (`0x724c77`), so two casters' auras
+/// of one spell draw two beams; a held slot never replays (`0x7248a8`).
+#[test]
+fn each_aura_slot_plays_its_state_kit_with_its_own_creator() {
+    const A: u64 = 0xF130_0000_0000_00A1;
+    const B: u64 = 0xF130_0000_0000_00B2;
+    let mut app = aura_arm_app();
+    let (a, b) = (
+        app.world_mut().spawn_empty().id(),
+        app.world_mut().spawn_empty().id(),
+    );
+    app.world_mut()
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .extend([(A, a), (B, b)]);
+    let holder = aura_holder(
+        &mut app,
+        &[(0, AURA_BEAM_SPELL, A), (3, AURA_BEAM_SPELL, B)],
+    );
+    app.update();
+    assert_eq!(
+        beam_plays(&mut app),
+        vec![(holder, 7, Some(a)), (holder, 7, Some(b))]
+    );
+    // A third slot of the spell arriving later plays once more, with its own creator.
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(crate::unit_auras::UnitAuras::of_casters(&[
+            (0, AURA_BEAM_SPELL, A),
+            (3, AURA_BEAM_SPELL, B),
+            (5, AURA_BEAM_SPELL, B),
+        ]));
+    app.update();
+    assert_eq!(beam_plays(&mut app), vec![(holder, 7, Some(b))]);
+}
+
+/// Losing one of two slots holding a spell clears the spell's effects on the unit, the other
+/// slot's too, and plays the state-done kit once; the slot left keeps the spell and does not
+/// replay (`0x71e930`, `0x743b40`).
+#[test]
+fn losing_one_of_two_slots_clears_the_spell_and_replays_nothing() {
+    const A: u64 = 0xF130_0000_0000_00A1;
+    const B: u64 = 0xF130_0000_0000_00B2;
+    let mut app = aura_arm_app();
+    let holder = aura_holder(
+        &mut app,
+        &[(0, AURA_BEAM_SPELL, A), (1, AURA_BEAM_SPELL, B)],
+    );
+    app.update();
+    let _ = beam_plays(&mut app);
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(crate::unit_auras::UnitAuras::of_casters(&[(
+            1,
+            AURA_BEAM_SPELL,
+            B,
+        )]));
+    app.update();
+    assert_eq!(
+        clears_and_done(&mut app),
+        (
+            vec![(holder, AURA_BEAM_SPELL)],
+            vec![(holder, AURA_BEAM_SPELL)]
+        )
+    );
+    assert!(
+        beam_plays(&mut app).is_empty(),
+        "the slot left does not replay"
+    );
+}
+
+/// A channel leaving the spell clears its effects and unstores its aura slots (`0x73eb50`): the
+/// aura's later removal plays nothing, and only a new add replays the kit.
+#[test]
+fn a_channel_leaving_the_spell_unstores_its_aura_slots() {
+    const A: u64 = 0xF130_0000_0000_00A1;
+    let mut app = aura_arm_app();
+    let holder = aura_holder(&mut app, &[(2, AURA_BEAM_SPELL, A)]);
+    app.update();
+    assert_eq!(beam_plays(&mut app).len(), 1);
+    app.world_mut().write_message(super::ChannelSpellLeft {
+        entity: holder,
+        spell_id: AURA_BEAM_SPELL,
+    });
+    app.update();
+    assert_eq!(
+        clears_and_done(&mut app),
+        (vec![(holder, AURA_BEAM_SPELL)], Vec::new()),
+        "the clear, no state-done kit"
+    );
+    assert!(
+        beam_plays(&mut app).is_empty(),
+        "the held slot is not replayed"
+    );
+    // The aura leaving its unstored slot runs no removal core.
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(crate::unit_auras::UnitAuras::of_casters(&[]));
+    app.update();
+    assert_eq!(clears_and_done(&mut app), (Vec::new(), Vec::new()));
+    // A fresh add plays again.
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(crate::unit_auras::UnitAuras::of_casters(&[(
+            2,
+            AURA_BEAM_SPELL,
+            A,
+        )]));
+    app.update();
+    assert_eq!(beam_plays(&mut app).len(), 1);
+}
+
+/// The channel poll reports the spell a unit's channel leaves, to a new channel or to none
+/// (`0x73eb50`), and nothing on a rising edge.
+#[test]
+fn the_channel_poll_reports_the_spell_it_leaves() {
+    let mut app = app();
+    let left = |app: &mut App| -> Vec<(Entity, u32)> {
+        app.world_mut()
+            .resource_mut::<Messages<super::ChannelSpellLeft>>()
+            .drain()
+            .map(|l| (l.entity, l.spell_id))
+            .collect()
+    };
+    let store = |spell: u32| {
+        crate::net::ObjectStore(
+            benilla_protocol::ObjectFields::from_pairs(&[(144, spell)])
+                .into_created(benilla_protocol::messages::ObjectType::Unit),
+        )
+    };
+    let unit = app.world_mut().spawn(store(SPELL)).id();
+    app.update();
+    assert!(left(&mut app).is_empty(), "a rising edge leaves nothing");
+    app.world_mut().entity_mut(unit).insert(store(RANGED_SPELL));
+    app.update();
+    assert_eq!(left(&mut app), vec![(unit, SPELL)]);
+    app.world_mut().entity_mut(unit).insert(store(0));
+    app.update();
+    assert_eq!(left(&mut app), vec![(unit, RANGED_SPELL)]);
 }

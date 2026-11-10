@@ -48,7 +48,7 @@ fn beam_app() -> App {
     app.init_resource::<GuidIndex>();
     app.init_resource::<ChainLocations>();
     app.add_message::<ChainProcPlay>()
-        .add_message::<SpellKitFx>()
+        .add_message::<SpellEffectClear>()
         .add_message::<SpellGoTargets>()
         .add_message::<DelayedAreaKit>();
     app.insert_resource(SpellVisuals(
@@ -128,11 +128,33 @@ fn beam_app() -> App {
     app
 }
 
+/// Index a test object under a guid of its own, as the object manager does.
+fn streamed(app: &mut App, store: ObjectStore) -> Entity {
+    let e = app.world_mut().spawn(store).id();
+    let guid = 0xF130_0000_0000_0000 | u64::from(e.index_u32());
+    app.world_mut().entity_mut(e).insert(Guid(guid));
+    app.world_mut()
+        .resource_mut::<GuidIndex>()
+        .0
+        .insert(guid, e);
+    e
+}
+
 /// A streamed unit: an empty descriptor store is all the spawner reads off a target.
 fn unit(app: &mut App) -> Entity {
-    app.world_mut()
-        .spawn(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[])))
-        .id()
+    streamed(
+        app,
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[])),
+    )
+}
+
+/// A beam's nodes as the entities their guids name now.
+fn node_entities(app: &App, nodes: &[u64]) -> Vec<Entity> {
+    let index = app.world().resource::<GuidIndex>();
+    nodes
+        .iter()
+        .map(|g| index.0.get(g).copied().unwrap_or(Entity::PLACEHOLDER))
+        .collect()
 }
 
 /// A cast-stage play of chain id 1, flag clear.
@@ -153,11 +175,10 @@ fn play(entity: Entity, spell_id: u32) -> ChainProcPlay {
 
 /// A streamed unit whose store says so (`OBJECT_FIELD_TYPE` 0x9), which the guid arm resolves.
 fn typed_unit(app: &mut App) -> Entity {
-    app.world_mut()
-        .spawn(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-            (2, 0x9),
-        ])))
-        .id()
+    streamed(
+        app,
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(2, 0x9)])),
+    )
 }
 
 /// Every live beam as `(nodes, [(hop start, hop end)], expiry, persistent)`.
@@ -168,7 +189,7 @@ fn beams(app: &mut App) -> Vec<(Vec<Entity>, Vec<(f32, f32)>, f32, bool)> {
         .iter(app.world())
         .map(|b| {
             (
-                b.nodes.clone(),
+                node_entities(app, &b.nodes),
                 b.bolts.iter().map(|x| (x.start, x.end)).collect(),
                 b.expiry,
                 b.persistent,
@@ -315,7 +336,7 @@ fn two_plays_in_one_frame_share_no_hops() {
 }
 
 #[test]
-fn only_a_persistent_beam_answers_the_kit_reap() {
+fn only_a_persistent_beam_answers_the_spell_clear() {
     for persistent in [false, true] {
         let mut app = beam_app();
         let (caster, t1) = (unit(&mut app), unit(&mut app));
@@ -329,16 +350,15 @@ fn only_a_persistent_beam_answers_the_kit_reap() {
         assert_eq!(beams(&mut app).len(), 1);
         assert_eq!(beams(&mut app)[0].3, persistent);
 
-        app.world_mut().write_message(SpellKitFx::Reap {
+        app.world_mut().write_message(SpellEffectClear {
             entity: caster,
             spell_id: CHAIN_SPELL,
-            class: FxClass::Hold,
         });
         app.update();
         assert_eq!(
             beams(&mut app).len(),
             usize::from(!persistent),
-            "persistent={persistent}: the reap takes the channel beam and spares the cast one"
+            "persistent={persistent}: the clear takes the channel beam and spares the cast one"
         );
     }
 }
@@ -443,7 +463,11 @@ fn a_saved_location_draws_one_bolt_to_the_ground_and_plays_the_area_kit() {
         .query::<&ChainBeam>()
         .single(app.world())
         .expect("one beam");
-    assert_eq!(beam.nodes, vec![caster], "no unit target");
+    assert_eq!(
+        node_entities(&app, &beam.nodes),
+        vec![caster],
+        "no unit target"
+    );
     assert_eq!(beam.location, Some(dest));
     assert_eq!(beam.bolts.len(), 1);
     let kits: Vec<u32> = app
@@ -493,7 +517,7 @@ fn a_play_from_another_unit_runs_from_it_to_the_owner() {
         .single(app.world())
         .expect("one beam");
     assert_eq!(
-        beam.nodes,
+        node_entities(&app, &beam.nodes),
         vec![other, owner],
         "the other unit to the owner"
     );
@@ -556,9 +580,48 @@ fn an_unresolved_guid_draws_nothing_and_keeps_the_hops() {
     }
 }
 
-/// An aura's removal takes the persistent beam its state kit drew on the holder (`0x743b40`).
+/// Each play links its own effect on the owner, so another unit's aura beam and the owner's own
+/// channel beam of one spell coexist (`0x7269ca`), and one spell clear takes both (`0x743b40`).
 #[test]
-fn the_aura_state_reap_takes_a_persistent_beam() {
+fn two_persistent_beams_of_one_spell_coexist_until_the_spell_clear() {
+    let mut app = beam_app();
+    let (owner, other) = (unit(&mut app), typed_unit(&mut app));
+    let mut drawn_on_owner = play(owner, CHAIN_SPELL);
+    drawn_on_owner.from = Some(other);
+    drawn_on_owner.proc.flag = true;
+    app.world_mut().write_message(drawn_on_owner);
+    app.update();
+    app.world_mut()
+        .entity_mut(owner)
+        .insert(ChainHops(vec![other]));
+    let mut own = play(owner, CHAIN_SPELL);
+    own.proc.flag = true;
+    app.world_mut().write_message(own);
+    app.update();
+    let mut nodes: Vec<Vec<Entity>> = beams(&mut app).into_iter().map(|b| b.0).collect();
+    nodes.sort();
+    let mut want = vec![vec![other, owner], vec![owner, other]];
+    want.sort();
+    assert_eq!(nodes, want, "both beams live");
+    // Another owner's clear of the spell leaves them.
+    app.world_mut().write_message(SpellEffectClear {
+        entity: other,
+        spell_id: CHAIN_SPELL,
+    });
+    app.update();
+    assert_eq!(beams(&mut app).len(), 2);
+    app.world_mut().write_message(SpellEffectClear {
+        entity: owner,
+        spell_id: CHAIN_SPELL,
+    });
+    app.update();
+    assert!(beams(&mut app).is_empty(), "the owner's clear takes both");
+}
+
+/// A beam keeps its ends as guids (`0x7faeef`): a source that streams out and back under a new
+/// entity is the same end again, where an entity key would stay hidden forever.
+#[test]
+fn a_beam_end_follows_its_guid_across_a_restream() {
     let mut app = beam_app();
     let (owner, other) = (unit(&mut app), typed_unit(&mut app));
     let mut p = play(owner, CHAIN_SPELL);
@@ -566,12 +629,22 @@ fn the_aura_state_reap_takes_a_persistent_beam() {
     p.proc.flag = true;
     app.world_mut().write_message(p);
     app.update();
-    assert_eq!(beams(&mut app).len(), 1);
-    app.world_mut().write_message(SpellKitFx::Reap {
-        entity: owner,
-        spell_id: CHAIN_SPELL,
-        class: FxClass::AuraState,
-    });
-    app.update();
-    assert!(beams(&mut app).is_empty());
+    let guid = app.world().entity(other).get::<Guid>().expect("a guid").0;
+    app.world_mut().despawn(other);
+    app.world_mut().resource_mut::<GuidIndex>().0.remove(&guid);
+    assert_eq!(
+        beams(&mut app)[0].0,
+        vec![Entity::PLACEHOLDER, owner],
+        "gone: the bolt hides, the beam lives"
+    );
+    let back = app.world_mut().spawn(Guid(guid)).id();
+    app.world_mut()
+        .resource_mut::<GuidIndex>()
+        .0
+        .insert(guid, back);
+    assert_eq!(
+        beams(&mut app)[0].0,
+        vec![back, owner],
+        "back: the same end"
+    );
 }

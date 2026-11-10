@@ -173,8 +173,19 @@ impl UnitAuras {
     /// tests.
     #[cfg(test)]
     pub(crate) fn of(caster: u64, auras: &[(u8, u32, u8)]) -> Self {
+        let rows: Vec<_> = auras.iter().map(|&(s, id, f)| (s, id, f, caster)).collect();
+        Self::of_rows(&rows)
+    }
+    /// A table of untimed `(slot, spell, caster)` auras, flags 1, applied in one batch, for tests.
+    #[cfg(test)]
+    pub(crate) fn of_casters(auras: &[(u8, u32, u64)]) -> Self {
+        let rows: Vec<_> = auras.iter().map(|&(s, id, c)| (s, id, 1, c)).collect();
+        Self::of_rows(&rows)
+    }
+    #[cfg(test)]
+    fn of_rows(auras: &[(u8, u32, u8, u64)]) -> Self {
         let mut t = Self::default();
-        for &(slot, spell_id, flags) in auras {
+        for &(slot, spell_id, flags, caster) in auras {
             let a = UnitAura {
                 slot,
                 spell_id,

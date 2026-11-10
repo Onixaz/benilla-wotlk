@@ -155,6 +155,22 @@ pub(crate) struct ChainProcPlay {
     pub(crate) from: Option<Entity>,
 }
 
+/// A unit's channel spell changing away from `spell_id` (`0x73eb50`), from the channel poll to
+/// [`arm_aura_state_fx`], which clears the spell's effects and unarms its aura slots.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChannelSpellLeft {
+    pub(crate) entity: Entity,
+    pub(crate) spell_id: u32,
+}
+
+/// The clear of every effect of a spell on a unit (`0x743b40` with force 1), as an armed aura slot
+/// leaves or a channel ends; consumed by `crate::entities::chain_beam` for persistent beams.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SpellEffectClear {
+    pub(crate) entity: Entity,
+    pub(crate) spell_id: u32,
+}
+
 /// One projectile per target on the GO's Speed > 0 branch, consumed by `crate::entities::missile`.
 #[derive(Message, Clone)]
 pub(crate) struct MissileSpawn {
@@ -459,6 +475,7 @@ type KitSpawnWriters<'w> = (
     MessageWriter<'w, BaseAnimRecompute>,
     MessageWriter<'w, DelayedAreaKit>,
     MessageWriter<'w, crate::aura_visual::BodyProcPlay>,
+    MessageWriter<'w, ChannelSpellLeft>,
 );
 
 /// The writers one kit play fans out to.
@@ -985,7 +1002,7 @@ pub(super) fn route_cast_visuals(
         return; // no client data
     };
     // Disjoint borrows: the beam writer rides `out` while the missile and burst writers stay free.
-    let (missiles, bursts, chains, shakes, trails, recomputes, delayed, body) = (
+    let (missiles, bursts, chains, shakes, trails, recomputes, delayed, body, channel_left) = (
         &mut spawns.0,
         &mut spawns.1,
         &mut spawns.2,
@@ -994,6 +1011,7 @@ pub(super) fn route_cast_visuals(
         &mut spawns.5,
         &mut spawns.6,
         &mut spawns.7,
+        &mut spawns.8,
     );
     let mut out = KitOut {
         oneshots: &mut oneshots,
@@ -1378,6 +1396,13 @@ pub(super) fn route_cast_visuals(
             continue;
         }
         channel_cache.insert(entity, cur);
+        // The old spell's effects are cleared and its aura slots unarmed, either way (`0x73eb50`).
+        if prev != 0 {
+            channel_left.write(ChannelSpellLeft {
+                entity,
+                spell_id: prev,
+            });
+        }
         if cur != 0 {
             out.sounds.write(SpellKitSound::StopHold { entity });
             if prev != 0 {
@@ -1453,27 +1478,79 @@ pub(super) fn route_cast_visuals(
     channel_cache.retain(|e, _| units.contains(*e));
 }
 
-/// Arm and reap each aura's state kit (stage 2) off the unit's [`UnitAuras`]: a spell entering
-/// the table begins its kit's models persistent, also on a unit streamed in mid-aura (its first
-/// `SMSG_AURA_UPDATE_ALL`), and leaving reaps them. 12340's applied core (`0x724820`) plays the
-/// spell's `SpellVisual` state kit (column 4, `+0x10`) at stage 2 through the unit's kit player
-/// (`0x745230`, `0x724c86`), and its removal core (`0x71e930`) stops the spell's kits with
-/// `0x743b40(spellId, force=1)` (`0x71ebda`), then plays the state-done kit ([`StateDoneKit`]).
-/// The add edge rings the kit sound and never plays the kit's anim: stage 2 compares it with what
-/// the unit plays, a mismatch spent on a [`BaseAnimRecompute`]. `CharProc` columns go out as
-/// [`AuraProc`] edges, and a kit arms for any leg (Stealth's kit 312 is one `CharProc`). `armed`
-/// holds every visible aura's spell, kit or none, as the applied core stores the slot's spell
-/// (`0x724820`) whatever its visual.
+/// One aura slot as the applied core keeps it (`unit+0xedc`): the slot's spell, and whether a play
+/// stored it there, which only a visible add does and a channel clear undoes (`0x73eb50`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ArmedSlot {
+    slot: u8,
+    spell_id: u32,
+    armed: bool,
+}
+
+/// What [`arm_aura_state_fx`] keeps between frames.
+#[derive(Default)]
+pub(crate) struct AuraArmState {
+    /// Every streamed unit's live slots in slot order.
+    slots: EntityHashMap<Vec<ArmedSlot>>,
+    /// Our own `PLAYER_FIELD_BYTES2` byte 3 as last seen.
+    vision: u8,
+}
+
+/// The writers a clear and a play fan out to beyond the model, proc and sound lanes.
+type AuraArmLanes<'w, 's> = (
+    MessageWriter<'w, ChainProcPlay>,
+    MessageWriter<'w, SpellEffectClear>,
+    MessageReader<'w, 's, ChannelSpellLeft>,
+);
+
+/// The spell-keyed clear (`0x743b40` with force 1): every model class, the proc nodes and fades
+/// (`0x71ab80`, `0x7178e0`), the state kit's loop and the persistent beams.
+fn clear_spell_effects(
+    fx: &mut MessageWriter<SpellKitFx>,
+    procs: &mut MessageWriter<AuraProc>,
+    sounds: &mut MessageWriter<SpellKitSound>,
+    clears: &mut MessageWriter<SpellEffectClear>,
+    state_kit: Option<&VisualKit>,
+    entity: Entity,
+    spell_id: u32,
+) {
+    for class in [FxClass::AuraState, FxClass::Hold] {
+        fx.write(SpellKitFx::Reap {
+            entity,
+            spell_id,
+            class,
+        });
+    }
+    procs.write(AuraProc::Reap { entity, spell_id });
+    if let Some(kit_sound) = state_kit.and_then(|k| k.sound) {
+        sounds.write(SpellKitSound::StopKit { entity, kit_sound });
+    }
+    clears.write(SpellEffectClear { entity, spell_id });
+}
+
+/// Arm and reap each aura slot's state kit (stage 2) off the unit's [`UnitAuras`], per slot as
+/// 12340 does: a slot taking a spell plays its kit, also on a unit streamed in mid-aura (its first
+/// `SMSG_AURA_UPDATE_ALL`), and a slot losing it clears the spell. 12340's applied core
+/// (`0x724820`) stores the slot's spell whatever its visual, skips a slot already holding it, and
+/// plays the spell's `SpellVisual` state kit (column 4, `+0x10`) at stage 2 through the unit's kit
+/// player (`0x745230`) with that slot's creator as the play's guid (`0x724c77`). Its removal core
+/// (`0x71e930`) runs only for a stored slot: it clears every effect of the spell on the unit
+/// (`0x743b40(spellId, force=1)`, `0x71ebda`), so losing one of two slots holding a spell takes
+/// what the other drew, then plays the state-done kit ([`StateDoneKit`]). The aura reader removes
+/// before it adds (`0x72f5d0`). The add edge rings the kit sound and never plays the kit's anim:
+/// stage 2 compares it with what the unit plays, a mismatch spent on a [`BaseAnimRecompute`].
+/// `CharProc` columns go out as [`AuraProc`] edges and beams, and a kit arms for any leg (Stealth's
+/// kit 312 is one `CharProc`).
+///
+/// A unit's channel leaving a spell ([`ChannelSpellLeft`]) clears that spell's effects and unstores
+/// its slots (`0x73eb50`), so their later removal plays nothing and they replay only on a new add.
 ///
 /// A detection aura's kit shows only to a viewer who shares its vision: the applied core skips the
 /// kit when the spell's [`aura_vision_mask`](benilla_formats::SpellDisplay::aura_vision_mask) has
-/// no bit in our own `PLAYER_FIELD_BYTES2` byte 3 (`0x724979`), and a change of that byte re-arms
-/// or reaps every unit's matching auras (`0x727a70`), so a guard's Stealth Detection eye is hidden
-/// from anyone who cannot see stealth.
-///
-/// Deviation: the reference arms per slot (`unit+0xedc`) and its stop is by spell, so losing one
-/// of two slots holding a spell stops the kit the other still holds; this arms per spell and
-/// reaps when no slot holds it, as one state instance per spell is the evident intent.
+/// no bit in our own `PLAYER_FIELD_BYTES2` byte 3 (`0x724979`), and a change of that byte adds or
+/// removes every slot whose mask holds a changed bit (`0x727a70`), so a guard's Stealth Detection
+/// eye is hidden from anyone who cannot see stealth.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn arm_aura_state_fx(
     // Re-run on a table change and on first sight (a standing aura is a state); the full sweep
     // runs once per DBC-resource arrival.
@@ -1489,71 +1566,110 @@ pub(crate) fn arm_aura_state_fx(
     mut done: MessageWriter<StateDoneKit>,
     mut sheaths: MessageWriter<super::SheathRequest>,
     mut body: MessageWriter<crate::aura_visual::BodyProcPlay>,
-    mut chain: MessageWriter<ChainProcPlay>,
+    lanes: AuraArmLanes,
     index: Res<crate::net::GuidIndex>,
-    mut armed: Local<EntityHashMap<Vec<u32>>>,
-    mut seen_vision: Local<u8>,
+    mut state: Local<AuraArmState>,
 ) {
+    let (mut chain, mut clears, mut channel_left) = lanes;
     // No active player sees nothing gated (`0x72496a` returns on a null player).
     let vision = self_store
         .iter()
         .next()
         .and_then(|s| s.0.player_aura_vision())
         .unwrap_or(0);
-    let vision_changed = std::mem::replace(&mut *seen_vision, vision) != vision;
-    let full_sweep = vision_changed
+    let vision_changed = std::mem::replace(&mut state.vision, vision) ^ vision;
+    let full_sweep = vision_changed != 0
         || visuals.as_ref().is_some_and(|v| v.is_changed())
         || spells.as_ref().is_some_and(|s| s.is_changed());
     let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
+        channel_left.clear();
         return; // no client data
     };
+    let state_kit = |spell_id: u32| resolve_kit(spells, &visuals.0, spell_id, |s| s.state, || None);
+    // The router's channel poll ran first this frame.
+    for left in channel_left.read() {
+        let kit = state_kit(left.spell_id);
+        clear_spell_effects(
+            &mut fx,
+            &mut procs,
+            &mut sounds,
+            &mut clears,
+            kit.as_ref(),
+            left.entity,
+            left.spell_id,
+        );
+        for s in state.slots.get_mut(&left.entity).into_iter().flatten() {
+            if s.spell_id == left.spell_id {
+                s.armed = false;
+            }
+        }
+    }
     let scan = if full_sweep {
         units.iter().collect::<Vec<_>>()
     } else {
         changed.iter().filter_map(|e| units.get(e).ok()).collect()
     };
     for (entity, auras) in scan {
-        let prev = armed.entry(entity).or_default();
-        // Occupied slots this viewer may see, deduped: one state instance per spell however many
-        // casters hold it.
-        let mut cur: Vec<u32> = auras
+        let prev = state.slots.remove(&entity).unwrap_or_default();
+        // The removal core for every stored slot whose spell left, before any add (`0x72f5d0`).
+        let mut removed: Vec<u32> = prev
             .iter()
-            .map(|a| a.spell_id)
-            .filter(|&id| {
-                let mask = spells.catalog.get(id).map_or(0, |d| d.aura_vision_mask());
-                mask == 0 || vision & mask != 0
+            .filter(|p| {
+                p.armed
+                    && !auras
+                        .iter()
+                        .any(|a| a.slot == p.slot && a.spell_id == p.spell_id)
             })
+            .map(|p| p.spell_id)
             .collect();
-        cur.sort_unstable();
-        cur.dedup();
-        for &spell_id in prev.iter() {
-            if cur.binary_search(&spell_id).is_err() {
-                debug!("anim: aura state kit reaped ({entity}, spell {spell_id})");
-                fx.write(SpellKitFx::Reap {
-                    entity,
-                    spell_id,
-                    class: FxClass::AuraState,
-                });
-                procs.write(AuraProc::Reap { entity, spell_id });
-                // A looping state-kit sound dies with the aura's kits (`0x743b40`).
-                if let Some(kit_sound) =
-                    resolve_kit(spells, &visuals.0, spell_id, |s| s.state, || None)
-                        .and_then(|k| k.sound)
-                {
-                    sounds.write(SpellKitSound::StopKit { entity, kit_sound });
-                }
-                // Then the state-done kit, for any slot the applied core armed (`0x71eb11`).
-                done.write(StateDoneKit { entity, spell_id });
+        let mut added = Vec::new();
+        let mut next = Vec::with_capacity(prev.len());
+        for aura in auras.iter() {
+            let mask = spells
+                .catalog
+                .get(aura.spell_id)
+                .map_or(0, |d| d.aura_vision_mask());
+            let shown = mask == 0 || vision & mask != 0;
+            let old = prev
+                .iter()
+                .find(|p| p.slot == aura.slot && p.spell_id == aura.spell_id);
+            let was = old.is_some_and(|p| p.armed);
+            // A new slot is added; a held one only by a vision change on its mask (`0x727a70`).
+            let armed = match old {
+                Some(p) if mask & vision_changed == 0 => p.armed,
+                _ => shown,
+            };
+            next.push(ArmedSlot {
+                slot: aura.slot,
+                spell_id: aura.spell_id,
+                armed,
+            });
+            match (was, armed) {
+                (true, false) => removed.push(aura.spell_id),
+                // A stored slot keeps its spell's kits (`0x7248a8`).
+                (false, true) => added.push(aura),
+                _ => {}
             }
         }
-        let mut next = Vec::with_capacity(prev.len());
-        for &spell_id in &cur {
-            // Armed whatever its visual, so its end plays the state-done kit.
-            next.push(spell_id);
-            if prev.contains(&spell_id) {
-                continue; // still armed
-            }
-            let Some(kit) = resolve_kit(spells, &visuals.0, spell_id, |s| s.state, || None) else {
+        state.slots.insert(entity, next);
+        for spell_id in removed {
+            debug!("anim: aura state kit reaped ({entity}, spell {spell_id})");
+            let kit = state_kit(spell_id);
+            clear_spell_effects(
+                &mut fx,
+                &mut procs,
+                &mut sounds,
+                &mut clears,
+                kit.as_ref(),
+                entity,
+                spell_id,
+            );
+            // Then the state-done kit (`0x71eb11`).
+            done.write(StateDoneKit { entity, spell_id });
+        }
+        for aura in added {
+            let spell_id = aura.spell_id;
+            let Some(kit) = state_kit(spell_id) else {
                 continue; // no state kit
             };
             let effects = resolve_kit_effects(&visuals.0, &kit);
@@ -1561,23 +1677,12 @@ pub(crate) fn arm_aura_state_fx(
                 .char_procs()
                 .filter_map(crate::aura_visual::node_for)
                 .collect();
-            let mut beams = kit.char_procs().filter_map(|p| p.as_chain()).peekable();
-            if effects.is_empty()
-                && nodes.is_empty()
-                && beams.peek().is_none()
-                && kit.sound.is_none()
-                && kit.anim_id.is_none()
-            {
-                continue; // nothing to arm or reap
-            }
-            // The play carries the aura's creator (`0x724c77`); an unstreamed one names no unit.
-            let from = auras
-                .iter()
-                .find(|a| a.spell_id == spell_id)
-                .map(|a| a.caster)
+            // The slot's own creator is the play's guid (`0x724c77`); an unstreamed one names no
+            // unit.
+            let from = Some(aura.caster)
                 .filter(|&g| g != 0)
                 .map(|g| index.0.get(&g).copied().unwrap_or(Entity::PLACEHOLDER));
-            for proc in beams {
+            for proc in kit.char_procs().filter_map(|p| p.as_chain()) {
                 chain.write(ChainProcPlay {
                     entity,
                     spell_id,
@@ -1587,7 +1692,8 @@ pub(crate) fn arm_aura_state_fx(
                 });
             }
             debug!(
-                "anim: aura state kit armed ({entity}, spell {spell_id}): {} model(s), {} proc                  node(s)",
+                "anim: aura state kit armed ({entity}, slot {}, spell {spell_id}): {} model(s), {} proc node(s)",
+                aura.slot,
                 effects.len(),
                 nodes.len()
             );
@@ -1615,15 +1721,14 @@ pub(crate) fn arm_aura_state_fx(
                 sounds.write(SpellKitSound::Play { entity, kit_sound });
             }
             // The stage-2 anim leg, on the add edge only: an aura refreshed in place keeps its
-            // spell, and the slot already armed with it is skipped (`0x7248a8`).
+            // spell, and the slot already storing it is skipped (`0x7248a8`).
             if let Some(anim_id) = kit.anim_id {
                 recomputes.write(BaseAnimRecompute { entity, anim_id });
             }
         }
-        *prev = next;
     }
     // Streamed units despawn on range-out; drop their rows.
-    armed.retain(|e, _| units.contains(*e));
+    state.slots.retain(|e, _| units.contains(*e));
 }
 
 /// Arm and reap the loot sparkle on a dead lootable unit and on a corpse object with

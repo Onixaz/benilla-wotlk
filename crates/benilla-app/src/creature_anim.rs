@@ -642,8 +642,8 @@ use spell_visual::{
 #[cfg(test)]
 pub(crate) use spell_visual::arm_aura_state_fx as arm_aura_state_fx_for_test;
 pub(crate) use spell_visual::{
-    held_strike_sound, kit_fx_slots, ChainProcPlay, FxClass, FxStage, KitPush, MissileSpawn,
-    SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals,
+    held_strike_sound, kit_fx_slots, ChainProcPlay, ChannelSpellLeft, FxClass, FxStage, KitPush,
+    MissileSpawn, SpellEffectClear, SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals,
 };
 
 /// The unit's own variation stream ([`benilla_assets::AnimRng::stream`]), cut on its first frame
@@ -952,6 +952,8 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<MissileSpawn>()
             .add_message::<spell_visual::DelayedAreaKit>()
             .add_message::<ChainProcPlay>()
+            .add_message::<ChannelSpellLeft>()
+            .add_message::<SpellEffectClear>()
             .add_message::<KitPush>()
             // The aura CharProc edges, drained by `crate::aura_visual`.
             .add_message::<crate::aura_visual::AuraProc>()
