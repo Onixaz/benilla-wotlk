@@ -997,6 +997,9 @@ impl GlueMgr {
             .unwrap_or_default();
         let roster: Vec<String> = self.roster.iter().map(|c| c.name.clone()).collect();
         super::addons::register_for_glue(s, &realm, &roster, reply);
+        // GlueXML's character-select AddOns button rebuilds from this event. The initial seat can
+        // precede the character roster, so the later registry rebuild must notify the live screen.
+        s.fire_event("ADDON_LIST_UPDATE", Vec::new());
     }
 
     /// The glue world entry (`0x4d9bd0`) for the record at the VM's selection: nothing with no
@@ -1766,6 +1769,15 @@ pub(crate) fn drive_glue_mgr(
             fresh_vm = true;
         }
         mgr.stage(s, tables);
+        // Config.wtf may have finished seeding after the VM was first seated. Refresh the glue
+        // mirror before login-screen OnShow scripts query GetSavedAccountName().
+        if let Some(saved) = asks
+            .cvars
+            .as_deref()
+            .and_then(|c| c.get(crate::login::CVAR_ACCOUNT_NAME))
+        {
+            s.set_glue_saved_account(saved);
+        }
         // `GetAccountExpansionLevel` and the create screen's gates read the authentication's byte.
         if let Some(e) = expansion.as_deref() {
             s.set_account_expansion(e.0);
