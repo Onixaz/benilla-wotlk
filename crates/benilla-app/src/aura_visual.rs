@@ -676,9 +676,7 @@ pub(crate) struct AlphaWalk<'w, 's> {
 
 /// On a kit effect's root: kit flag `0x200`, its geometry keeps its own alpha and not its host's
 /// fade (`0x6f8f23`, `0x82e2a9`).
-#[derive(Component)]
-#[component(storage = "SparseSet")]
-pub(crate) struct OwnModelAlpha;
+pub(crate) use benilla_world::model_fade::OwnAlpha as OwnModelAlpha;
 
 /// Write `entity` if it is a fadeable part, then recurse regardless: held items, helms and
 /// shoulders hang under joints that carry no [`FadeMaterials`]. `scope` is the unit root, the

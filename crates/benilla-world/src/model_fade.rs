@@ -227,6 +227,12 @@ pub struct ModelFade(pub f32);
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ParentModel(pub Entity);
 
+/// A model that keeps its own alpha and takes none of its parent's: its [`ParentModel`] walk stops
+/// here (model flag `0x100000`, read at `0x82e2a9`).
+#[derive(Component, Clone, Copy, Debug, Default)]
+#[component(storage = "SparseSet")]
+pub struct OwnAlpha;
+
 /// The bound on a [`ParentModel`] walk, a cycle backstop: real chains are 1 to 3 links.
 pub const MAX_MODEL_CHAIN: usize = 8;
 
@@ -235,6 +241,7 @@ pub const MAX_MODEL_CHAIN: usize = 8;
 /// own instance root. A link with no published [`ModelAlpha`] (a booth bake) reads its
 /// [`ModelFade`]; the published one wins.
 #[derive(bevy::ecs::system::SystemParam)]
+#[allow(clippy::type_complexity)] // one query, the four facets of a chain link
 pub struct ModelAlphas<'w, 's> {
     chain: Query<
         'w,
@@ -243,6 +250,7 @@ pub struct ModelAlphas<'w, 's> {
             Option<&'static ModelAlpha>,
             Option<&'static ModelFade>,
             Option<&'static ParentModel>,
+            Has<OwnAlpha>,
         ),
     >,
 }
@@ -253,14 +261,14 @@ impl ModelAlphas<'_, '_> {
         let mut alpha = 1.0;
         let mut at = instance;
         for _ in 0..MAX_MODEL_CHAIN {
-            let Ok((published, declared, parent)) = self.chain.get(at) else {
+            let Ok((published, declared, parent, own)) = self.chain.get(at) else {
                 break;
             };
             // Published wins: it already folds the declared fade in.
             if let Some(a) = published.map(|a| a.0).or(declared.map(|d| d.0)) {
                 alpha *= a;
             }
-            match parent {
+            match parent.filter(|_| !own) {
                 Some(p) => at = p.0,
                 None => break,
             }
@@ -982,6 +990,20 @@ mod chain_tests {
             composed(&mut app, plain),
             0.5,
             "a child declaring nothing is its parent's"
+        );
+    }
+
+    #[test]
+    fn an_own_alpha_link_takes_none_of_its_parents_fade() {
+        let mut app = App::new();
+        let parent = app.world_mut().spawn(ModelFade(0.5)).id();
+        let own = app.world_mut().spawn((OwnAlpha, ParentModel(parent))).id();
+        let below = app.world_mut().spawn(ParentModel(own)).id();
+        assert_eq!(composed(&mut app, own), 1.0);
+        assert_eq!(
+            composed(&mut app, below),
+            1.0,
+            "the walk stops at the own-alpha link"
         );
     }
 
