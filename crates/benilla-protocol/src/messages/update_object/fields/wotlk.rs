@@ -198,6 +198,17 @@ mod tests {
         );
     }
 
+    /// The three virtual item words sit at 56..=58 and carry `Item.dbc` ids (`0x725010`).
+    #[test]
+    fn a_creature_s_virtual_item_words_reach_their_slots() {
+        let f =
+            ObjectFields::from_wotlk(wire(&[(56, 1899), (57, 143), (58, 2552)]), ObjectType::Unit);
+        assert_eq!(f.unit_virtual_item_entry(0), Some(1899));
+        assert_eq!(f.unit_virtual_item_entry(1), Some(143));
+        assert_eq!(f.unit_virtual_item_entry(2), Some(2552));
+        assert_eq!(f.unit_virtual_item_entry(3), None);
+    }
+
     /// A death knight's runes and runic power ride `POWER6`/`POWER7` (30, 31) and
     /// `MAXPOWER6`/`MAXPOWER7` (38, 39); the rune regen floats `UNIT_END + 0x485` (1305).
     #[test]
@@ -495,10 +506,7 @@ mod tests {
             (Field::UnitLevel, FIELD_UNIT_LEVEL),
             (Field::UnitFactionTemplate, FIELD_UNIT_FACTIONTEMPLATE),
             (Field::UnitBytes0, FIELD_UNIT_BYTES_0),
-            (
-                Field::UnitVirtualItemDisplay,
-                FIELD_UNIT_VIRTUAL_ITEM_SLOT_DISPLAY,
-            ),
+            (Field::UnitVirtualItemId, FIELD_UNIT_VIRTUAL_ITEM_SLOT_ID),
             (Field::UnitFlags, FIELD_UNIT_FLAGS),
             (Field::UnitAura, FIELD_UNIT_AURA),
             (Field::UnitAuraFlags, FIELD_UNIT_AURAFLAGS),

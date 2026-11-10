@@ -1,6 +1,6 @@
 //! Equipment visuals: `resolve` decides what each unit holds and wears and where, and `spawn` hangs
 //! the item models from the body's attachment joints (the reference's attach install). A creature
-//! carries display ids (`UNIT_VIRTUAL_ITEM_SLOT_DISPLAY`), a player only item entries
+//! carries `Item.dbc` ids (`UNIT_VIRTUAL_ITEM_SLOT_ID`), a player item entries
 //! (`PLAYER_VISIBLE_ITEM_*`), resolved through the templates as the reference's ItemCache does.
 
 use std::collections::HashMap;
@@ -62,8 +62,8 @@ pub(crate) struct ItemDisplays {
     pub(super) models: HashMap<(u32, ItemModelKind), DisplayModel>,
     /// ChrRaces' `ClientPrefix` by race id, the helm model's race suffix (`0x4e7800`).
     pub(crate) helm_prefixes: HashMap<u8, String>,
-    /// `Item.dbc`'s display id by entry, which the bag icon reads without a template.
-    pub(crate) item_dbc: HashMap<u32, u32>,
+    /// `Item.dbc` by entry, which a creature's held items and the bag icon read.
+    pub(crate) item_dbc: HashMap<u32, benilla_formats::ItemDbcRow>,
 }
 
 /// The icon no item or display names (`0x70a9ef`).
@@ -73,7 +73,7 @@ impl ItemDisplays {
     /// A carried item's icon (`0x70aa00`, `0x70a910`): `Item.dbc`'s display, display 0 with no
     /// row, ending on [`FALLBACK_ITEM_ICON`]. No template is read.
     pub(crate) fn carried_icon(&self, entry: u32) -> String {
-        let display = self.item_dbc.get(&entry).copied().unwrap_or(0);
+        let display = self.item_dbc.get(&entry).map_or(0, |r| r.display);
         self.catalog
             .get(display)
             .and_then(|d| d.icon.clone())
