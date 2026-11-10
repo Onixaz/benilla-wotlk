@@ -733,6 +733,26 @@ impl LayoutSolver {
         self.live.push(h);
     }
 
+    /// [`set_frame_anchored`](Self::set_frame_anchored) for a ScrollFrame child: replace the
+    /// child's authored anchor at the scroll-controlled point, while retaining its other anchors.
+    /// AceGUI's scroll content uses TOPLEFT plus RIGHT to derive its width.
+    pub fn set_frame_scroll_child(&mut self, h: Handle, src: &LayoutInput, anchor: Anchor) {
+        self.ensure(h);
+        self.touch(h);
+        let dst = &mut self.input[h as usize];
+        dst.anchors.clear();
+        dst.anchors.push(anchor);
+        dst.anchors.extend(
+            src.anchors
+                .iter()
+                .copied()
+                .filter(|a| a.point != anchor.point),
+        );
+        Self::copy_fields(dst, src);
+        self.is_frame[h as usize] = true;
+        self.live.push(h);
+    }
+
     fn copy_fields(dst: &mut LayoutInput, src: &LayoutInput) {
         dst.width = src.width;
         dst.height = src.height;
@@ -1342,6 +1362,29 @@ mod tests {
         assert_eq!(
             bits(s.rect(A).expect("resolved")),
             bits(Rect::new(555.0, 10.0, 595.0, 110.0))
+        );
+    }
+
+    #[test]
+    fn set_frame_scroll_child_replaces_only_the_controlled_anchor() {
+        const A: Handle = 1;
+        let mut s = LayoutSolver::new();
+        let input = LayoutInput::sized(
+            vec![
+                Anchor::new(Point::TopLeft, SCREEN, Point::TopLeft, 0.0, 0.0),
+                Anchor::new(Point::Right, SCREEN, Point::Right, 0.0, 0.0),
+            ],
+            0.0,
+            40.0,
+        );
+        let scroll = Anchor::new(Point::TopLeft, SCREEN, Point::TopLeft, 10.0, -5.0);
+        s.begin();
+        s.set_external(SCREEN, screen_rect());
+        s.set_frame_scroll_child(A, &input, scroll);
+        s.solve();
+        assert_eq!(
+            bits(s.rect(A).expect("resolved")),
+            bits(Rect::new(555.0, 10.0, 595.0, 800.0))
         );
     }
 }

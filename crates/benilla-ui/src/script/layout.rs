@@ -98,6 +98,13 @@ fn frame_node_hash(input: &LayoutInput, over: Option<Anchor>) -> u64 {
         Some(a) => node.anchors(std::slice::from_ref(&a)),
         None => node.feed(u64::MAX),
     }
+    if let Some(a) = over {
+        for authored in &input.anchors {
+            if authored.point != a.point {
+                node.anchors(std::slice::from_ref(authored));
+            }
+        }
+    }
     node.finish()
 }
 
@@ -321,7 +328,14 @@ impl LayoutScope {
             return false;
         }
         match self.plan[n as usize].2 {
-            Some(old) => self.unlink_edge(old.relative_to, id),
+            Some(old) => {
+                self.unlink_edge(old.relative_to, id);
+                for authored in anchors {
+                    if authored.point != old.point {
+                        self.unlink_edge(authored.relative_to, id);
+                    }
+                }
+            }
             None => {
                 for a in anchors {
                     self.unlink_edge(a.relative_to, id);
@@ -332,6 +346,12 @@ impl LayoutScope {
             Some(a) => {
                 self.hold(a.relative_to);
                 self.edge(id, a.relative_to);
+                for authored in anchors {
+                    if authored.point != a.point {
+                        self.hold(authored.relative_to);
+                        self.edge(id, authored.relative_to);
+                    }
+                }
             }
             None => {
                 for a in anchors {
@@ -917,7 +937,7 @@ impl UiScript {
                     continue;
                 };
                 match over {
-                    Some(a) => solver.set_frame_anchored(id, input, a),
+                    Some(a) => solver.set_frame_scroll_child(id, input, a),
                     None => solver.set_frame(id, input),
                 }
             }
@@ -1247,18 +1267,32 @@ impl UiScript {
                 Some(a) => fp.anchors(std::slice::from_ref(&a)),
                 None => fp.feed(u64::MAX),
             }
+            if let Some(a) = over {
+                for authored in &input.anchors {
+                    if authored.point != a.point {
+                        fp.anchors(std::slice::from_ref(authored));
+                    }
+                }
+            }
             if let Some(slot) = scope.now.get_mut(id as usize) {
                 *slot = frame_node_hash(input, over);
                 scope.node_of[id as usize] = i;
             }
             scope.plan.push((h, id, over));
             // A frame reads its anchor targets' rects, or only its ScrollFrame override's target,
-            // as the round loop's `set_frame_anchored` does.
+            // as the round loop's ScrollFrame override does.
             match over {
                 Some(a) => scope.edge(id, a.relative_to),
                 None => {
                     for a in &input.anchors {
                         scope.edge(id, a.relative_to);
+                    }
+                }
+            }
+            if let Some(a) = over {
+                for authored in &input.anchors {
+                    if authored.point != a.point {
+                        scope.edge(id, authored.relative_to);
                     }
                 }
             }

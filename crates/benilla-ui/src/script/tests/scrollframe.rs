@@ -69,6 +69,32 @@ fn get_scroll_child_roundtrips_wrapper_and_name_and_clears_on_nil() {
     .unwrap();
 }
 
+#[test]
+fn scroll_child_override_preserves_secondary_anchors_for_derived_width() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        local sf = CreateFrame("ScrollFrame", "SF")
+        sf:SetPoint("TOPLEFT", 100, -100)
+        sf:SetWidth(300); sf:SetHeight(200)
+        local child = CreateFrame("Frame", "Child")
+        child:SetPoint("TOPLEFT", sf, "TOPLEFT")
+        child:SetPoint("RIGHT", sf, "RIGHT")
+        child:SetHeight(100)
+        sf:SetScrollChild(child)
+        "#,
+    )
+    .unwrap();
+    s.resolve();
+    assert_eq!(s.eval::<f32>("return Child:GetWidth()").unwrap(), 300.0);
+    assert_eq!(s.eval::<f32>("return Child:GetHeight()").unwrap(), 100.0);
+    s.run("SF:SetVerticalScroll(40)").unwrap();
+    s.resolve();
+    assert_eq!(s.eval::<f32>("return Child:GetWidth()").unwrap(), 300.0);
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
 /// A positive offset lifts the child; offsets past the range or below zero are stored and applied
 /// as given, since the reference's `SetVerticalScroll` never reads the range.
 #[test]
