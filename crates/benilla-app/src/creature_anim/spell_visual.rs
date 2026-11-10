@@ -457,6 +457,8 @@ struct BeamKitWait {
     kit: VisualKit,
     play: KitPlay,
     seq: u64,
+    /// The impact's point, for a play split between the unit and a point (`0x7280c9`).
+    at: Option<Vec3>,
     deadline: f32,
     reached: bool,
 }
@@ -485,12 +487,25 @@ impl BeamKitWaits {
     }
 
     fn hold(&mut self, entity: Entity, spell_id: u32, kit: &VisualKit, play: KitPlay, seq: u64) {
+        self.hold_at(entity, spell_id, kit, play, seq, None);
+    }
+
+    fn hold_at(
+        &mut self,
+        entity: Entity,
+        spell_id: u32,
+        kit: &VisualKit,
+        play: KitPlay,
+        seq: u64,
+        at: Option<Vec3>,
+    ) {
         self.waits.push(BeamKitWait {
             entity,
             spell_id,
             kit: *kit,
             play,
             seq,
+            at,
             deadline: self.now + BEAM_WAIT_SECS,
             reached: false,
         });
@@ -518,6 +533,18 @@ fn draws_beam(spells: &crate::ui_action::Spells, visuals: &SpellVisualCatalog, s
         .get(spell)
         .and_then(|d| visuals.stages(d.visual))
         .is_some_and(|s| visuals.has_chain_effect(s))
+}
+
+/// Whether this kit play waits for the spell's beam instead of playing (`0x72af60`).
+fn waits_for_beam(
+    spell_id: u32,
+    kit: &VisualKit,
+    visuals: &SpellVisualCatalog,
+    out: &KitOut,
+) -> bool {
+    kit.flags & benilla_formats::kit_flag::BEAM_WAIT != 0
+        && out.waits.is_some()
+        && draws_beam(out.spells, visuals, spell_id)
 }
 
 /// The kit lanes [`route_cast_visuals`] writes but does not own, and the beam waits with their
@@ -616,13 +643,11 @@ fn play_kit(
     out: &mut KitOut,
 ) {
     // The whole play waits for the beam to reach this unit (`0x72af60`).
-    if kit.flags & benilla_formats::kit_flag::BEAM_WAIT != 0 {
+    if waits_for_beam(spell_id, kit, visuals, out) {
         if let Some(waits) = out.waits.as_deref_mut() {
-            if draws_beam(out.spells, visuals, spell_id) {
-                waits.hold(entity, spell_id, kit, play, seq);
-                return;
-            }
+            waits.hold(entity, spell_id, kit, play, seq);
         }
+        return;
     }
     if let Some(anim_id) = kit.anim_id {
         if play.stage_2 {
@@ -996,21 +1021,13 @@ fn play_impact(
     if let Some(kit) = impact_kit(visuals, &stages, on_caster) {
         match at {
             None => play_kit(entity, spell_id, kit, KitPlay::DISCRETE, seq, visuals, out),
-            Some(at) => {
-                // The unit keeps the anim, beam and trail legs; the models, sound and shake go
-                // to the point.
-                let unit_legs = VisualKit {
-                    shake: None,
-                    ..*kit
-                };
-                let play = KitPlay {
-                    effects: false,
-                    sound: false,
-                    ..KitPlay::DISCRETE
-                };
-                play_kit(entity, spell_id, &unit_legs, play, seq, visuals, out);
-                play_kit_at(kit, at, visuals, out.sounds, out.shakes, bursts);
+            // The play waits whole, its point kept with it (`0x72af60`).
+            Some(at) if waits_for_beam(spell_id, kit, visuals, out) => {
+                if let Some(waits) = out.waits.as_deref_mut() {
+                    waits.hold_at(entity, spell_id, kit, KitPlay::DISCRETE, seq, Some(at));
+                }
             }
+            Some(at) => play_kit_split(entity, spell_id, kit, at, seq, visuals, out, bursts),
         }
     }
     if let Some(kit) = (stages.state != 0)
@@ -1025,6 +1042,32 @@ fn play_impact(
         };
         play_kit(entity, spell_id, kit, play, seq, visuals, out);
     }
+}
+
+/// An impact kit split between the unit and a point: the unit keeps the anim, beam and trail
+/// legs; the models, sound and shake go to the point.
+#[allow(clippy::too_many_arguments)]
+fn play_kit_split(
+    entity: Entity,
+    spell_id: u32,
+    kit: &VisualKit,
+    at: Vec3,
+    seq: u64,
+    visuals: &SpellVisualCatalog,
+    out: &mut KitOut,
+    bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
+) {
+    let unit_legs = VisualKit {
+        shake: None,
+        ..*kit
+    };
+    let play = KitPlay {
+        effects: false,
+        sound: false,
+        ..KitPlay::DISCRETE
+    };
+    play_kit(entity, spell_id, &unit_legs, play, seq, visuals, out);
+    play_kit_at(kit, at, visuals, out.sounds, out.shakes, bursts);
 }
 
 /// The cast-edge router: wire [`CastEvent`]s and the public channel field → animation intents.
@@ -1091,10 +1134,16 @@ pub(super) fn route_cast_visuals(
     };
     // A reached play goes through the kit player again, past the wait (`0x7227f7`).
     for w in reached {
-        if commands.get_entity(w.entity).is_ok() {
-            play_kit(
+        if commands.get_entity(w.entity).is_err() {
+            continue;
+        }
+        match w.at {
+            None => play_kit(
                 w.entity, w.spell_id, &w.kit, w.play, w.seq, &visuals.0, &mut out,
-            );
+            ),
+            Some(at) => play_kit_split(
+                w.entity, w.spell_id, &w.kit, at, w.seq, &visuals.0, &mut out, bursts,
+            ),
         }
     }
     out.waits = waits.as_mut().map(|w| w.bypass_change_detection());

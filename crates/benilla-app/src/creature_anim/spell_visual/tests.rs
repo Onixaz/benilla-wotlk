@@ -2867,4 +2867,29 @@ fn a_beam_spells_flag_1_impact_kit_waits_for_the_beam_or_drops_at_the_timeout() 
     go(&mut app, PLAIN_SPELL);
     app.update();
     assert_eq!(rings(&mut app), 1, "no beam: played at the GO");
+
+    // An impact at a point waits whole, its point kept (`0x7280c9`).
+    let at = Vec3::new(1.0, 2.0, 3.0);
+    app.world_mut().write_message(cast_event(
+        target,
+        BEAM_SPELL,
+        CastEventKind::Impact {
+            on_caster: false,
+            at: Some(at),
+        },
+    ));
+    let at_point = |app: &mut App| -> usize {
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitSound>>()
+            .drain()
+            .filter(|s| {
+                matches!(s, SpellKitSound::PlayAt { pos, kit_sound: IMPACT_SOUND } if *pos == at)
+            })
+            .count()
+    };
+    app.update();
+    assert_eq!(at_point(&mut app), 0, "the point's sound waits too");
+    reach(&mut app, BEAM_SPELL);
+    app.update();
+    assert_eq!(at_point(&mut app), 1, "played at its point on the reach");
 }
