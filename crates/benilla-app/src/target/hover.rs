@@ -1048,7 +1048,10 @@ mod tests {
 
         // The seat the rig hangs from, apart from the unit's own frame.
         let anchor = world
-            .spawn((Transform::default(), GlobalTransform::from_translation(seat)))
+            .spawn((
+                Transform::default(),
+                GlobalTransform::from_translation(seat),
+            ))
             .id();
         let unit = world
             .spawn((
