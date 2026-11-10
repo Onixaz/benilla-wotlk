@@ -44,6 +44,9 @@
 //! `SpellMissileMotion` count, and a targeting kit rides the target from launch to the flight's
 //! end (`0x702986`).
 //!
+//! A row with flag `0x20` holds its model on the caster from cast start ([`PrecastHolds`]): every
+//! launch releases it, the first leaving from where it was held (`0x72df00`).
+//!
 //! A miss ends by its outcome ([`disposition`]): it flies past and fades, sticks in the shield,
 //! bursts, glances off at half speed or flies back at the caster.
 //!
@@ -1155,6 +1158,33 @@ pub(super) fn mark_forced_missiles(
     }
 }
 
+/// The casters' held missile models (`SpellVisual` flag `0x20`), which any launch releases.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct PrecastHolds<'w, 's> {
+    held: Query<'w, 's, &'static mut super::spell_fx::FxAttached>,
+    emitters: Query<'w, 's, &'static mut benilla_world::particles::ParticleEmitter>,
+}
+
+impl PrecastHolds<'_, '_> {
+    /// Release `caster`'s held model, returning its place, where the first launch leaves from
+    /// (`0x72e011`).
+    fn release(
+        &mut self,
+        caster: Entity,
+        commands: &mut Commands,
+        joints: &Query<&GlobalTransform>,
+    ) -> Option<Vec3> {
+        // Read first: a mutable borrow would mark every caster's effect list changed.
+        if !self.held.get(caster).is_ok_and(|a| a.holds_precast()) {
+            return None;
+        }
+        let root = self.held.get_mut(caster).ok()?.release_precast()?;
+        let at = joints.get(root).ok().map(GlobalTransform::translation);
+        super::spell_fx::end_root(commands, &mut self.emitters, root);
+        at
+    }
+}
+
 /// Takes the router's [`MissileSpawn`]s and runs the pending queue (module docs): park, drain on
 /// the release keyframe or launch at once, and flush a queue whose keyframe never comes.
 pub(super) fn spawn_missiles(
@@ -1178,6 +1208,7 @@ pub(super) fn spawn_missiles(
     mut sounds: MessageWriter<MissileSound>,
     mut out: ArrivalOut,
     mut play_seq: ResMut<crate::creature_anim::PlaySeq>,
+    mut precast: PrecastHolds,
 ) {
     let Some(mut fx) = fx else { return };
     let now = time.elapsed_secs();
@@ -1209,7 +1240,10 @@ pub(super) fn spawn_missiles(
             .or_else(|| launch_world_pos(spawn.caster, None, &units, &joints));
         if spawn.awaits_release {
             pending.0.entry(spawn.caster).or_default().push(go);
-        } else if let Some(launch) = fire_pos(&go, release, &units, &joints) {
+        } else if let Some(launch) = precast
+            .release(spawn.caster, &mut commands, &joints)
+            .or_else(|| fire_pos(&go, release, &units, &joints))
+        {
             launch_go(
                 &go,
                 launch,
@@ -1232,8 +1266,12 @@ pub(super) fn spawn_missiles(
             continue;
         };
         let release = launch_world_pos(ev.entity, Some(ev.ident), &units, &joints);
+        let mut held = precast.release(ev.entity, &mut commands, &joints);
         for go in &gos {
-            let Some(launch) = fire_pos(go, release, &units, &joints) else {
+            let Some(launch) = held
+                .take()
+                .or_else(|| fire_pos(go, release, &units, &joints))
+            else {
                 continue;
             };
             launch_go(
@@ -1284,8 +1322,12 @@ pub(super) fn spawn_missiles(
     });
     for (caster, gos) in flushes {
         let release = launch_world_pos(caster, None, &units, &joints);
+        let mut held = precast.release(caster, &mut commands, &joints);
         for go in &gos {
-            let Some(launch) = fire_pos(go, release, &units, &joints) else {
+            let Some(launch) = held
+                .take()
+                .or_else(|| fire_pos(go, release, &units, &joints))
+            else {
                 continue;
             };
             launch_go(
@@ -2359,6 +2401,52 @@ mod tests {
         assert_eq!(launched.len(), 1);
         assert_eq!(launched[0].1, hand);
         assert!((launched[0].0 - 1.0).abs() < 1e-3, "full flight time");
+    }
+
+    /// A held missile model hands over at the release: the first launch leaves from its place, the
+    /// next from the marker, and the model goes (`0x72df00`).
+    #[test]
+    fn the_release_launches_from_the_held_model_and_drops_it() {
+        let mut app = app();
+        let hand = Vec3::new(0.0, 1.5, 0.0);
+        let caster = caster(&mut app, hand);
+        let held_at = Vec3::new(0.4, 2.0, -0.3);
+        let root = app
+            .world_mut()
+            .spawn(GlobalTransform::from_translation(held_at))
+            .id();
+        app.world_mut().entity_mut(caster).insert(
+            super::super::spell_fx::FxAttached::holding_for_tests(133, Some(root)),
+        );
+        let target = app
+            .world_mut()
+            .spawn(GlobalTransform::from_xyz(24.0, 1.5, 0.0))
+            .id();
+        app.world_mut().write_message(go(caster, target, true));
+        app.world_mut().write_message(go(caster, target, true));
+        step(&mut app, 0.05);
+        assert!(
+            app.world().get_entity(root).is_ok(),
+            "held until the release"
+        );
+        app.world_mut().write_message(AnimSoundEvent {
+            entity: caster,
+            ident: *b"$CSL",
+            data: 0,
+            anim_id: 0,
+            pos: None,
+        });
+        step(&mut app, 0.05);
+        let mut from: Vec<Vec3> = missiles(&mut app).into_iter().map(|(_, at)| at).collect();
+        from.sort_by(|a, b| a.y.total_cmp(&b.y));
+        assert_eq!(from, vec![hand, held_at]);
+        assert!(app.world().get_entity(root).is_err(), "the model leaves");
+        let att = app
+            .world()
+            .entity(caster)
+            .get::<super::super::spell_fx::FxAttached>()
+            .unwrap();
+        assert!(!att.holds_precast());
     }
 
     /// A trajectory shot lands at the packet's delay on an arc above the straight line, and a

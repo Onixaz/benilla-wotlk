@@ -2716,3 +2716,85 @@ fn an_area_kit_at_a_point_plays_only_its_head_base_and_world_slots() {
     expected.sort_unstable();
     assert_eq!(got, expected);
 }
+
+/// A `SpellVisual` flag `0x20` row holds column 8's model at column 16 from START; column 16's -1,
+/// a column 8 naming no file or no flag hold nothing, and a failure releases the hold
+/// (`0x722950`, `0x72ed80`).
+#[test]
+fn a_flagged_visual_holds_its_missile_from_start_and_a_failure_releases_it() {
+    use super::FxClass;
+    let mut app = app();
+    let stages = |flags, missile_source_attach, missile_model| VisualStages {
+        flags,
+        missile_source_attach,
+        missile_model,
+        ..Default::default()
+    };
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
+        HashMap::from([
+            (1, stages(0x20, 3, 50)),
+            (2, stages(0x20, u32::MAX, 50)),
+            (3, stages(0x20, 3, 51)),
+            (4, stages(0, 3, 50)),
+        ]),
+        HashMap::new(),
+        HashMap::from([(50, "Spells\\Held.mdx".to_string())]),
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(
+            (1..=4)
+                .map(|v| {
+                    (
+                        100 + v,
+                        SpellDisplay {
+                            visual: v,
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
+        ),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    let unit = app.world_mut().spawn_empty().id();
+    let edge = |app: &mut App, spell_id, kind| {
+        app.world_mut()
+            .write_message(cast_event(unit, spell_id, kind));
+        app.update();
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitFx>>()
+            .drain()
+            .filter_map(|m| match m {
+                SpellKitFx::Begin {
+                    class: FxClass::Precast,
+                    effects,
+                    ..
+                } => Some(Some(effects.iter().map(|e| (e.tag, e.effect)).collect())),
+                SpellKitFx::Reap {
+                    class: FxClass::Precast,
+                    ..
+                } => Some(None),
+                _ => None,
+            })
+            .collect::<Vec<Option<Vec<(u16, u32)>>>>()
+    };
+    assert_eq!(
+        edge(&mut app, 101, CastEventKind::Start),
+        vec![Some(vec![(0x15, 50)])],
+        "index 3 is the left spell hand"
+    );
+    assert_eq!(
+        edge(&mut app, 102, CastEventKind::Start),
+        vec![Some(vec![])]
+    );
+    assert_eq!(
+        edge(&mut app, 103, CastEventKind::Start),
+        vec![Some(vec![])]
+    );
+    assert!(edge(&mut app, 104, CastEventKind::Start).is_empty());
+    assert!(
+        edge(&mut app, 101, CastEventKind::Go).is_empty(),
+        "GO keeps it"
+    );
+    assert_eq!(edge(&mut app, 101, CastEventKind::Fail), vec![None]);
+}

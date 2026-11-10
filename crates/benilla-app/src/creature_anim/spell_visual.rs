@@ -82,6 +82,9 @@ pub(crate) enum FxClass {
     Hold,
     /// Stage 2 under a live aura, reaped only by [`arm_aura_state_fx`].
     AuraState,
+    /// The missile model held on the caster during the cast, one per unit: a new hold, the
+    /// missile's release or an interrupt drops it at once (`0x722950`).
+    Precast,
 }
 
 /// The kit stage an instance's model runs its animation lifecycle as: the reference's per-stage
@@ -394,6 +397,20 @@ fn resolve_kit_effects(visuals: &SpellVisualCatalog, kit: &VisualKit) -> Vec<FxS
         .filter_map(|(tag, effect)| slot(tag, effect, None))
         .chain(rows)
         .collect()
+}
+
+/// The held missile model of a flagged row: column 8's file at column 16's attachment, `None`
+/// for column 16's -1 or a column 8 naming no file (`0x722950`).
+fn precast_missile_slot(visuals: &SpellVisualCatalog, stages: &VisualStages) -> Option<FxSlot> {
+    let tag = stages.precast_missile_attachment()?;
+    let path = visuals.effect_path(stages.missile_model)?;
+    Some(FxSlot {
+        tag,
+        effect: stages.missile_model,
+        path: path.to_string(),
+        scale: 1.0,
+        attach: None,
+    })
 }
 
 /// A kit's weapon effects stow the unit's weapons unless the spell keeps its sheath,
@@ -1108,6 +1125,20 @@ pub(super) fn route_cast_visuals(
                         });
                     }
                 }
+                // A flagged row holds column 8's model at column 16 until the release (`0x7fa41d`).
+                let stages = resolve_stages(spells, &visuals.0, ev.spell_id, || {
+                    weapon_src.caster(ev.entity)
+                });
+                if let Some(s) = stages.filter(VisualStages::holds_precast_missile) {
+                    out.fx.write(SpellKitFx::Begin {
+                        entity: ev.entity,
+                        spell_id: ev.spell_id,
+                        persistent: true,
+                        class: FxClass::Precast,
+                        stage: FxStage::Relive,
+                        effects: precast_missile_slot(&visuals.0, &s).into_iter().collect(),
+                    });
+                }
             }
             CastEventKind::Go => {
                 // Spell-id-keyed (the reap with no force): a proc's GO keeps another spell's hold.
@@ -1211,6 +1242,12 @@ pub(super) fn route_cast_visuals(
                     entity: ev.entity,
                     spell_id: ev.spell_id,
                     class: FxClass::Hold,
+                });
+                // The interrupt releases the held missile model (`0x72ed80`).
+                out.fx.write(SpellKitFx::Reap {
+                    entity: ev.entity,
+                    spell_id: ev.spell_id,
+                    class: FxClass::Precast,
                 });
             }
         }
