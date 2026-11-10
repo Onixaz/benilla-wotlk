@@ -1443,3 +1443,24 @@ fn special_idle_anims_are_the_cast_and_ranged_attack_behaviors() {
     }
     assert!(!is_special_idle_anim(0, None));
 }
+
+/// A play keeping the weapons out (kit flag `0x100`) skips the clip's `& 4` stow, and its `& 0x10`
+/// stow unless ranged-drawn (`0x738180`); without it both stow.
+#[test]
+fn a_keep_weapons_play_skips_the_clip_stow() {
+    assert_eq!(
+        reconcile_sheath(1, 42, kept_weapon_flags(4, 1, false), false, true, 1, false),
+        Some(0)
+    );
+    assert_eq!(
+        reconcile_sheath(1, 42, kept_weapon_flags(4, 1, true), false, true, 1, false),
+        None
+    );
+    assert_eq!(kept_weapon_flags(0x14, 1, true), 0);
+    assert_eq!(
+        kept_weapon_flags(0x14, 2, true),
+        0x10,
+        "ranged-drawn keeps the 0x10 stow"
+    );
+    assert_eq!(kept_weapon_flags(0x14, 1, false), 0x14);
+}

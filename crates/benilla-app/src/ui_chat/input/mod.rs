@@ -790,7 +790,7 @@ pub(super) fn drain_chat_input(
                             anim_id: anim as u16,
                             seq: play_seq.next(),
                             via_player: false,
-                            remap_special: true,
+                            play: Default::default(),
                         });
                     }
                 }

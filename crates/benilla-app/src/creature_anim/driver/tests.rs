@@ -203,6 +203,7 @@ fn stationary_cast_hold_stows_an_engaged_casters_weapon() {
         ranged: false,
         start_anim: None,
         seq: 0,
+        play: Default::default(),
         anim_id: 51,
         spell_id: 20793,
     });
@@ -251,7 +252,7 @@ fn a_drained_emote_queue_restores_the_sheath_at_the_body_clips_end() {
         anim_id: 60,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(drv(&app), (Some(1), 0, false), "PREV back, the flag spent");
@@ -299,6 +300,7 @@ fn moving_cast_hold_keeps_its_stow_between_plays() {
         ranged: false,
         start_anim: None,
         seq: 0,
+        play: Default::default(),
         anim_id: 51,
         spell_id: 20793,
     });
@@ -496,6 +498,7 @@ fn cast_hold_stows_even_when_the_model_lacks_the_spell_anims() {
         ranged: false,
         start_anim: None,
         seq: 0,
+        play: Default::default(),
         anim_id: 51,
         spell_id: 20792,
     });
@@ -725,7 +728,7 @@ fn whiff_slowdown_spares_a_non_swing_oneshot() {
         anim_id: 57,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.world_mut().write_message(SwingMessage {
         attacker: swinger,
@@ -812,7 +815,7 @@ fn same_frame_collision_fast_paths_the_second_combat_clip() {
         anim_id: 57,
         seq: 2,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     // swing_last: the spin arrives first.
     app.world_mut().write_message(EmoteAnim {
@@ -820,7 +823,7 @@ fn same_frame_collision_fast_paths_the_second_combat_clip() {
         anim_id: 57,
         seq: 3,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.world_mut().write_message(SwingMessage {
         attacker: swing_last,
@@ -1022,6 +1025,7 @@ fn turning_in_place_never_unpins_the_stationary_cast_hold() {
                 ranged: false,
                 start_anim: None,
                 seq: 0,
+                play: Default::default(),
                 anim_id: 51,
                 spell_id: 116,
             },
@@ -1521,7 +1525,7 @@ fn a_jump_in_place_cast_plays_on_the_key_bone_over_the_jump() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     fn drv(app: &App, unit: Entity) -> &AnimDriver {
@@ -1556,7 +1560,7 @@ fn landing_mid_cast_plays_the_land_pick() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     app.world_mut()
@@ -1589,7 +1593,7 @@ fn a_cast_over_the_fall_loop_takes_the_key_bone() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     app.world_mut().entity_mut(unit).insert(MovementState {
@@ -1609,7 +1613,7 @@ fn a_cast_over_the_fall_loop_takes_the_key_bone() {
         anim_id: 54,
         seq: 2,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(
@@ -1656,7 +1660,7 @@ fn a_moving_jump_cast_masks_onto_the_overlay() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
@@ -1683,7 +1687,7 @@ fn a_jump_over_a_live_cast_transplants_it_to_the_torso() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     {
@@ -1741,6 +1745,7 @@ fn a_jump_does_not_cut_the_moving_cast_hold() {
                 ranged: false,
                 start_anim: None,
                 seq: 0,
+                play: Default::default(),
             },
         ))
         .id();
@@ -1839,7 +1844,7 @@ fn a_finished_masked_cast_fades_out_instead_of_snapping() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     {
@@ -1937,6 +1942,7 @@ fn the_step_off_arc_freezes_the_gait_against_live_pins() {
         ranged: false,
         start_anim: None,
         seq: 0,
+        play: Default::default(),
         anim_id: 51,
         spell_id: 20793,
     });
@@ -1972,7 +1978,7 @@ fn a_midair_deferred_park_survives_the_level_and_dies_at_the_landing_play() {
         anim_id: 57,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.world_mut().write_message(SwingMessage {
         attacker: unit,
@@ -2297,7 +2303,7 @@ fn a_root_landing_with_the_cast_returns_the_body_to_neutral() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(
@@ -2325,7 +2331,7 @@ fn a_run_starting_under_a_cast_still_transplants_it_up() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     let mode = |app: &App| app.world().entity(unit).get::<AnimDriver>().unwrap().mode;
@@ -2667,7 +2673,7 @@ fn the_mount_transition_takes_bone_0_back_from_a_full_body_one_shot() {
         anim_id: SPELL_CAST_OMNI,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(
@@ -2987,7 +2993,7 @@ fn a_mid_volley_fire_clip_re_pulls_and_the_pull_promotes_to_the_hold() {
         anim_id: 46,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(
@@ -3139,7 +3145,7 @@ fn every_shot_of_a_volley_re_arms_the_fire_clip_through_the_emote_lane() {
             anim_id: 46,
             seq: shot,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
         assert_eq!(mode(&app), FIRING, "shot {shot} takes bone 0");
@@ -3550,7 +3556,7 @@ fn a_special_goes_unarmed_only_when_both_hands_are_empty() {
             anim_id: 57,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         unit
     };
@@ -3824,7 +3830,7 @@ fn a_gait_change_raises_the_anim_edge_and_a_steady_frame_does_not() {
         anim_id: 57,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert!(edge(&app), "and so does a one-shot");
@@ -3857,7 +3863,7 @@ fn a_combat_over_combat_fast_path_does_not_raise_the_anim_edge() {
         anim_id: 57,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert!(edge(&app), "the first combat play arms normally");
@@ -3936,7 +3942,7 @@ mod base_anim_lock {
             anim_id,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
     }
@@ -4173,7 +4179,7 @@ mod routing {
             anim_id,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
     }
@@ -4327,7 +4333,7 @@ mod routing {
                 anim_id: SHUFFLE,
                 seq: 1,
                 via_player,
-                remap_special: true,
+                play: Default::default(),
             });
             app.update();
         };
@@ -4376,7 +4382,7 @@ mod routing {
                 anim_id: CHEER,
                 seq: 1,
                 via_player,
-                remap_special: true,
+                play: Default::default(),
             });
             app.update();
         };
@@ -4569,7 +4575,7 @@ mod emote_state {
             anim_id: 118,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
         assert!(matches!(mode(&app, npc), Mode::Swing { id: 118, .. }));
@@ -4589,7 +4595,7 @@ mod emote_state {
             anim_id: 118,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
         interact_guid(&mut app, Some(partner), PLAYER);
@@ -4661,7 +4667,7 @@ mod emote_state {
             anim_id: 118,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
         assert!(matches!(
@@ -4752,7 +4758,7 @@ fn the_emote_player_skips_an_id_already_armed_but_plays_a_different_one() {
             anim_id,
             seq: 1,
             via_player,
-            remap_special: true,
+            play: Default::default(),
         });
         advance(app, 500);
     };
@@ -4876,7 +4882,7 @@ fn a_units_variation_rolls_are_independent_of_the_unit_order() {
                     anim_id,
                     seq: frame * 2 + i as u64,
                     via_player: false,
-                    remap_special: true,
+                    play: Default::default(),
                 });
             }
             app.update();
@@ -4959,7 +4965,7 @@ fn push_kit(app: &mut App, unit: Entity, stage: u8) {
         anim_id: 61,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
 }
 
@@ -4988,7 +4994,7 @@ fn a_stage_0_kit_latches_its_anim_until_the_body_plays_another() {
         anim_id: 60,
         seq: 2,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(
@@ -5030,6 +5036,7 @@ fn a_cast_during_the_latch_does_not_pick_its_kit_anim() {
             ranged: false,
             start_anim: None,
             seq: 0,
+            play: Default::default(),
             anim_id: 51,
             spell_id: 20793,
         });

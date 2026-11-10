@@ -75,6 +75,10 @@ pub(crate) struct AuraNodes {
     /// Whether [`apply_aura_alpha`] owns this unit's parts: while translucent, plus the one frame
     /// at opaque that writes the settled alpha and hands the material back to its light law.
     authoring: bool,
+    /// The alpha goes to the rider's body and not its mount (`unit+0x994`, read at `0x71ac41`).
+    body_only: bool,
+    /// The spells whose alpha node came from a kit with flag `0x400`, which a reap latches back.
+    body_only_spells: Vec<u32>,
 }
 
 impl AuraNodes {
@@ -329,6 +333,8 @@ pub(crate) enum AuraProc {
         spell_id: u32,
         /// The kit's proc nodes, in slot order (the client walks all four and dispatches each).
         nodes: Vec<AuraNode>,
+        /// Kit flag `0x400`: its alpha fades the rider's body, not the mount.
+        body_only: bool,
     },
     /// The aura left the slots: drop every node this spell id installed.
     Reap { entity: Entity, spell_id: u32 },
@@ -376,12 +382,13 @@ pub(crate) fn drain_aura_procs(
                 entity,
                 spell_id,
                 nodes: procs,
+                body_only,
             } => {
                 if procs.is_empty() {
                     continue;
                 }
                 if let Ok(mut n) = nodes.get_mut(*entity) {
-                    install(&mut n, *spell_id, procs, now);
+                    install_kit(&mut n, *spell_id, procs, *body_only, now);
                     trace_edge("arm", *entity, *spell_id, &n);
                 } else {
                     // Staged, not inserted: `Commands` apply at the end of the system, so a second
@@ -389,7 +396,7 @@ pub(crate) fn drain_aura_procs(
                     let n = fresh.entry(*entity).or_insert_with(|| {
                         AuraNodes::new(base_alpha(*entity, &units, creatures.as_deref()))
                     });
-                    install(n, *spell_id, procs, now);
+                    install_kit(n, *spell_id, procs, *body_only, now);
                     trace_edge("arm", *entity, *spell_id, n);
                 }
             }
@@ -410,8 +417,13 @@ pub(crate) fn drain_aura_procs(
     }
 }
 
-/// Drop every node one spell installed and re-aim the ramp.
+/// Drop every node one spell installed and re-aim the ramp; a reaped alpha node first latches its
+/// kit's body-only bit, as the release walk does (`0x71aba7`).
 fn reap(n: &mut AuraNodes, spell_id: u32, now: f32) {
+    if n.alpha.iter().any(|&(s, ..)| s == spell_id) {
+        n.body_only = n.body_only_spells.contains(&spell_id);
+    }
+    n.body_only_spells.retain(|&s| s != spell_id);
     n.alpha.retain(|(s, ..)| *s != spell_id);
     n.tint.retain(|(s, _)| *s != spell_id);
     n.rate.retain(|(s, _)| *s != spell_id);
@@ -432,6 +444,18 @@ fn install(n: &mut AuraNodes, spell_id: u32, procs: &[AuraNode], now: f32) {
         }
     }
     n.retarget(now);
+}
+
+/// [`install`] for a kit's nodes: a proc-14 node latches the kit's body-only bit (`0x72682e`).
+fn install_kit(n: &mut AuraNodes, spell_id: u32, procs: &[AuraNode], body_only: bool, now: f32) {
+    n.body_only_spells.retain(|&s| s != spell_id);
+    if procs.iter().any(|p| matches!(p, AuraNode::Alpha(..))) {
+        n.body_only = body_only;
+        if body_only {
+            n.body_only_spells.push(spell_id);
+        }
+    }
+    install(n, spell_id, procs, now);
 }
 
 /// Trace (`WOW_MOVE_TRACE=<path>`, tag `aur`) each node edge: the spell, its nodes, the target.
@@ -563,9 +587,11 @@ pub(crate) fn apply_aura_alpha(
         Entity,
         &mut AuraNodes,
         Option<&benilla_world::model_fade::ModelFade>,
+        Option<&crate::entities::mount::MountChild>,
     )>,
     children_of: Query<&Children>,
     mut parts: AuraParts,
+    walk: AlphaWalk,
     far_twins: Res<benilla_world::model_render::FarSideTwins>,
     mut cards: Query<(
         &benilla_world::billboard::BillboardCard,
@@ -578,7 +604,7 @@ pub(crate) fn apply_aura_alpha(
     // Each authoring unit's anchors and its alpha, for one card pass after the walks; a later
     // unit's walk overwrites an anchor two units share, as successive card passes did.
     let mut card_alpha = bevy::ecs::entity::EntityHashMap::<f32>::default();
-    for (root, mut n, declared) in &mut roots {
+    for (root, mut n, declared, mount) in &mut roots {
         let alpha = n.tick(now);
         // Declared to the engine's composed model alpha (`model_fade::ModelFade`) before the
         // settled-opaque early-out, so the ramp's arrival at 1.0 is declared too.
@@ -593,10 +619,14 @@ pub(crate) fn apply_aura_alpha(
         }
         // The walked set tells the card pass which anchors are this unit's.
         let mut walked = bevy::ecs::entity::EntityHashSet::default();
+        // A body-only alpha leaves the mount's own parts out of the walk (`0x71ac4d`).
+        let skip = mount.filter(|_| n.body_only).map(|m| m.0);
         author_descendants(
             root,
+            (root, skip, alpha),
             alpha,
             now,
+            &walk,
             &children_of,
             &mut parts,
             &far_twins,
@@ -637,19 +667,49 @@ fn author_cards(
     }
 }
 
+/// What [`author_descendants`] steps around: a model keeping its own alpha, and the rider's seat.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct AlphaWalk<'w, 's> {
+    own_alpha: Query<'w, 's, (), With<OwnModelAlpha>>,
+    frames: Query<'w, 's, &'static benilla_world::rig_anim::RigFrame>,
+}
+
+/// On a kit effect's root: kit flag `0x200`, its geometry keeps its own alpha and not its host's
+/// fade (`0x6f8f23`, `0x82e2a9`).
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub(crate) struct OwnModelAlpha;
+
 /// Write `entity` if it is a fadeable part, then recurse regardless: held items, helms and
-/// shoulders hang under joints that carry no [`FadeMaterials`].
+/// shoulders hang under joints that carry no [`FadeMaterials`]. `scope` is the unit root, the
+/// mount a body-only alpha holds opaque, and the unit's alpha; `alpha` is this subtree's.
 fn author_descendants(
     entity: Entity,
+    scope: (Entity, Option<Entity>, f32),
     alpha: f32,
     now: f32,
+    walk: &AlphaWalk,
     children_of: &Query<&Children>,
     parts: &mut AuraParts,
     far_twins: &benilla_world::model_render::FarSideTwins,
     reauthor: &mut benilla_world::interior::InteriorReauthor,
     walked: &mut bevy::ecs::entity::EntityHashSet,
 ) {
-    walked.insert(entity);
+    if walk.own_alpha.contains(entity) {
+        return;
+    }
+    let (root, skip, unit_alpha) = scope;
+    // The mount's subtree stays opaque, but for the rider's seat frame under it.
+    let alpha = if skip == Some(entity) {
+        1.0
+    } else if walk.frames.get(entity).is_ok_and(|f| f.0 == root) {
+        unit_alpha
+    } else {
+        alpha
+    };
+    if alpha == unit_alpha {
+        walked.insert(entity);
+    }
     if let Ok((fm, mut tag, mut mat, anim, lit, fade, pending, far_side)) = parts.get_mut(entity) {
         // A part awaiting its appear-fade stays invisible until the ramp arms; writing it would
         // flash it at the aura alpha.
@@ -688,8 +748,10 @@ fn author_descendants(
         for kid in kids {
             author_descendants(
                 *kid,
+                scope,
                 alpha,
                 now,
+                walk,
                 children_of,
                 parts,
                 far_twins,

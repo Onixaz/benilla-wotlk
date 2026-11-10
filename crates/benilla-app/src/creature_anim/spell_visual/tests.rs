@@ -568,6 +568,7 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
                 path: "Spells\\Item_Bread.mdx".to_string(),
                 scale: 1.0,
                 attach: None,
+                own_alpha: false,
             }],
             "bread at the spell hand"
         );
@@ -1318,6 +1319,7 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
             path: POOF.to_string(),
             scale: 1.0,
             attach: None,
+            own_alpha: false,
         }],
         "the build leg puffs the druid-morph cloud at the base attach"
     );
@@ -1337,6 +1339,7 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
             path: POOF.to_string(),
             scale: 1.0,
             attach: None,
+            own_alpha: false,
         }]
     );
 }
@@ -2715,4 +2718,94 @@ fn an_area_kit_at_a_point_plays_only_its_head_base_and_world_slots() {
     let mut expected = [want(0x14), want(0x13)];
     expected.sort_unstable();
     assert_eq!(got, expected);
+}
+
+/// Kit flag `0x80`: a missile replays the state kit only on a target whose aura has an effect
+/// applied; without it, holding the spell in any slot is enough. A dead target replays nothing.
+#[test]
+fn an_active_aura_only_kit_needs_an_applied_aura() {
+    use benilla_protocol::messages::{AuraRecord, AuraUpdate};
+
+    const SPELL_ID: u32 = 5570;
+    let store = |health| {
+        crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_HEALTH,
+            health,
+        )]))
+    };
+    let table = |flags| {
+        let mut t = crate::unit_auras::UnitAuras::default();
+        let record = AuraRecord {
+            spell_id: SPELL_ID,
+            flags,
+            level: 1,
+            stacks: 1,
+            caster: None,
+            duration_ms: None,
+        };
+        t.apply(
+            &AuraUpdate {
+                unit: 1,
+                all: false,
+                slots: vec![(0, Some(record))],
+            },
+            0.0,
+        );
+        t
+    };
+    let flagged = benilla_formats::kit_flag::ACTIVE_AURA_ONLY;
+    let applied = super::AuraHeld::of(&store(100), Some(&table(1)), SPELL_ID);
+    let inactive = super::AuraHeld::of(&store(100), Some(&table(0)), SPELL_ID);
+    assert!(applied.replays(flagged) && applied.replays(0));
+    assert!(
+        !inactive.replays(flagged),
+        "an empty-effect slot fails the 0x80 gate"
+    );
+    assert!(
+        inactive.replays(0),
+        "but holds the spell for an unflagged kit"
+    );
+    let dead = super::AuraHeld::of(&store(0), Some(&table(1)), SPELL_ID);
+    assert!(!dead.replays(0), "a dead target replays nothing");
+    let bare = super::AuraHeld::of(&store(100), None, SPELL_ID);
+    assert!(!bare.replays(0), "nor one without the aura");
+}
+
+/// Kit flags `0x8` and `0x100` become play flags `0x4` (no tier resolve) and `0x20` (keep the
+/// weapons out), beside `0x4` and `0x10` (`0x714ce0`).
+#[test]
+fn kit_flags_become_the_anim_play_flags() {
+    use benilla_formats::kit_flag as k;
+    let plain = super::AnimPlayFlags::from_kit(0);
+    assert!(plain.tier_resolve() && plain.remap_special() && !plain.keep_weapons());
+    let no_tier = super::AnimPlayFlags::from_kit(k::NO_TIER_RESOLVE);
+    assert!(!no_tier.tier_resolve() && no_tier.remap_special());
+    let raw = super::AnimPlayFlags::from_kit(k::RAW_ANIM);
+    assert!(!raw.tier_resolve() && !raw.remap_special());
+    let keeps = super::AnimPlayFlags::from_kit(k::KEEP_WEAPONS);
+    assert!(keeps.keep_weapons() && keeps.tier_resolve() && keeps.remap_special());
+    assert!(!super::AnimPlayFlags::from_kit(k::NO_SPECIAL_REMAP).remap_special());
+}
+
+/// Kit flag `0x200` marks every model the kit hangs as keeping its own alpha.
+#[test]
+fn an_own_alpha_kit_marks_its_models() {
+    let visuals = SpellVisualCatalog::from_tables_with_paths(
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::from([(10, "Spells\\Slot.mdx".to_string())]),
+    );
+    let kit = |flags| VisualKit {
+        flags,
+        world_effect: Some(10),
+        ..Default::default()
+    };
+    let own = |flags| {
+        super::kit_fx_slots(&visuals, &kit(flags))
+            .iter()
+            .map(|s| s.own_alpha)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(own(benilla_formats::kit_flag::OWN_MODEL_ALPHA), vec![true]);
+    assert_eq!(own(0), vec![false]);
 }

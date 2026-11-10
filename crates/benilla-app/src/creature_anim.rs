@@ -426,6 +426,8 @@ pub(crate) struct CastHold {
     pub(crate) start_anim: Option<u16>,
     /// The cast edge's `PlaySeq` stamp, which tells this hold's start latch from an earlier one's.
     pub(crate) seq: u64,
+    /// The hold kit's play flags (`0x724398`).
+    pub(crate) play: AnimPlayFlags,
 }
 
 /// A hand's fingers close (`HandsClosed`, 15) purely because a weapon occupies its attach point,
@@ -472,9 +474,54 @@ pub(crate) struct EmoteAnim {
     /// which skips an id already armed on the key bone or bone 0. A kit anim and `DoEmote`'s local
     /// play call directly and take no such test.
     pub(crate) via_player: bool,
-    /// The play seam's Special remap applies (`0x7385c0`): everything but a kit with flag `0x4` or
-    /// `0x10`, which plays its Special1H/2H as authored (`0x73b198`).
-    pub(crate) remap_special: bool,
+    /// The play flags a kit passes ([`AnimPlayFlags`]); none for every other caller.
+    pub(crate) play: AnimPlayFlags,
+}
+
+/// The animation play's flags a kit passes from its own (`0x73b198`, `0x714ce0`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AnimPlayFlags(pub(crate) u8);
+
+impl AnimPlayFlags {
+    /// The id plays as authored: no Special remap, no tier resolve (`0x7385c0`).
+    pub(crate) const RAW: u8 = 0x2;
+    /// No tier resolve through the unit's anim tier (`0x7176f0`).
+    pub(crate) const NO_TIER: u8 = 0x4;
+    /// No Special remap from the held hands.
+    pub(crate) const NO_SPECIAL: u8 = 0x8;
+    /// The clip's WeaponFlags stow is skipped (`0x738180`).
+    pub(crate) const KEEP_WEAPONS: u8 = 0x20;
+
+    /// A kit's flags as its anim play passes them (`0x714ce0`).
+    pub(crate) fn from_kit(kit_flags: u32) -> Self {
+        use benilla_formats::kit_flag as k;
+        let bits = [
+            (k::RAW_ANIM, Self::RAW),
+            (k::NO_TIER_RESOLVE, Self::NO_TIER),
+            (k::NO_SPECIAL_REMAP, Self::NO_SPECIAL),
+            (k::KEEP_WEAPONS, Self::KEEP_WEAPONS),
+        ];
+        Self(
+            bits.iter()
+                .filter(|(kit, _)| kit_flags & kit != 0)
+                .fold(0, |acc, (_, play)| acc | play),
+        )
+    }
+
+    /// The Special1H/2H remap from the held hands applies.
+    pub(crate) fn remap_special(self) -> bool {
+        self.0 & (Self::RAW | Self::NO_SPECIAL) == 0
+    }
+
+    /// The unit's anim tier resolves the id.
+    pub(crate) fn tier_resolve(self) -> bool {
+        self.0 & (Self::RAW | Self::NO_TIER) == 0
+    }
+
+    /// The played clip's WeaponFlags stow is skipped.
+    pub(crate) fn keep_weapons(self) -> bool {
+        self.0 & Self::KEEP_WEAPONS != 0
+    }
 }
 
 /// A state kit's `AnimID`, compared and never played: both field-4 callers pass stage 2, which the
@@ -516,7 +563,7 @@ fn flourish_to_anim(
             anim_id: select::MOUNT_SPECIAL,
             seq: play_seq.next(),
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
     }
 }

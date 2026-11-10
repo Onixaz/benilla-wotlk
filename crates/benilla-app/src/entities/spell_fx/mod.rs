@@ -482,6 +482,8 @@ struct FxInstance {
     scale: f32,
     /// The `SpellVisualKitModelAttach` row placing the model ([`FxSlot::attach`]).
     attach: Option<benilla_formats::ModelAttach>,
+    /// The model keeps its own alpha ([`FxSlot::own_alpha`]).
+    own_alpha: bool,
     root: Option<Entity>,
     /// The self-termination deadline on `time.elapsed_secs()`, or a reaped instance's `Decay` end.
     expires: Option<f32>,
@@ -644,6 +646,7 @@ pub(super) fn resolve_spell_fx(
                         path,
                         scale,
                         attach,
+                        own_alpha,
                     } in effects
                     {
                         // Per slot, as the reference's effect add opens with the same-slot replace.
@@ -664,6 +667,7 @@ pub(super) fn resolve_spell_fx(
                             path: path.clone(),
                             scale: *scale,
                             attach: *attach,
+                            own_alpha: *own_alpha,
                             root: None,
                             expires: None,
                             decaying: false,
@@ -942,6 +946,11 @@ pub(super) fn attach_spell_fx(
                 commands.entity(parent).add_child(root);
                 (root, ground_anchor)
             };
+            if inst.own_alpha {
+                commands
+                    .entity(root)
+                    .insert(crate::aura_visual::OwnModelAlpha);
+            }
             if spell_forces_projection(spells.as_deref(), inst.spell_id) {
                 commands
                     .entity(root)
@@ -1072,6 +1081,7 @@ mod tests {
             path: "Spells\\IceShield_State.mdx".into(),
             scale: 1.0,
             attach: None,
+            own_alpha: false,
             root: Some(root),
             expires: None,
             decaying: false,
@@ -1223,6 +1233,7 @@ mod tests {
                 path: path.into(),
                 scale: 1.0,
                 attach: None,
+                own_alpha: false,
             }],
         }
     }
@@ -1338,6 +1349,7 @@ mod tests {
                         path: PATH.to_string(),
                         scale: 1.0,
                         attach: None,
+                        own_alpha: false,
                         root: None,
                         expires: None,
                         decaying: false,
@@ -1414,6 +1426,7 @@ mod tests {
                 path: "Spells\\Spurt.mdx".to_string(),
                 scale: 1.0,
                 attach: Some(at(row)),
+                own_alpha: false,
             }],
         };
         send(&mut app, begin_row(1));

@@ -30,9 +30,9 @@ use super::select::{
 };
 use super::sheath::{advance_sheath_ceremony, start_sheath_ceremony};
 use super::{
-    find_resolved, move_flags, resolved_id, routed_behavior, AnimData, AnimDriver, AutoRepeatArmed,
-    BaseAnimRecompute, CastHold, DefenseAnim, EmoteAnim, Engaged, MovementState, NockLatch,
-    Overlay, OverlayFade, SheathRequest, SheathSwapMessage, SwingImpact, SwingMessage,
+    find_resolved, move_flags, resolved_id, routed_behavior, AnimData, AnimDriver, AnimPlayFlags,
+    AutoRepeatArmed, BaseAnimRecompute, CastHold, DefenseAnim, EmoteAnim, Engaged, MovementState,
+    NockLatch, Overlay, OverlayFade, SheathRequest, SheathSwapMessage, SwingImpact, SwingMessage,
     SwingSlowdown, UnitAnimRng, Wielded, WoundAnim,
 };
 
@@ -64,9 +64,9 @@ const JUMP_ARC_MIN_UP: f32 = 0.5;
 #[derive(Clone, Copy)]
 enum OneShotReq {
     Swing(u32),
-    /// The id, whether it came through the emote player's armed-id test, and whether the play
-    /// seam's Special remap applies ([`EmoteAnim::remap_special`]).
-    Emote(u16, bool, bool),
+    /// The id, whether it came through the emote player's armed-id test, and the play flags a kit
+    /// passes ([`EmoteAnim::play`]).
+    Emote(u16, bool, AnimPlayFlags),
 }
 
 /// The live one-shot the combat fast path tests: the key bone's clip, else bone 0's.
@@ -401,10 +401,10 @@ pub(super) fn drive_animations(
         pending_slow.insert(s.0);
     }
     for e in emotes.read() {
-        pending.entry(e.entity).or_default().push((
-            OneShotReq::Emote(e.anim_id, e.via_player, e.remap_special),
-            e.seq,
-        ));
+        pending
+            .entry(e.entity)
+            .or_default()
+            .push((OneShotReq::Emote(e.anim_id, e.via_player, e.play), e.seq));
     }
     // `None` until `AnimationData.dbc` loads; every lookup then resolves to itself.
     let catalog = anim_data.as_deref().map(|d| &d.0);
@@ -420,7 +420,7 @@ pub(super) fn drive_animations(
             continue;
         }
         for &(req, seq) in reqs {
-            let OneShotReq::Emote(id, via_player, remap) = req else {
+            let OneShotReq::Emote(id, via_player, play) = req else {
                 continue;
             };
             let behavior = units
@@ -434,7 +434,7 @@ pub(super) fn drive_animations(
                 .flatten()
                 .and_then(|u| armed_id(u.4, u.2, u.3, u.1));
             if armed != Some(id) {
-                to_mount.push((child.0, (OneShotReq::Emote(id, false, remap), seq)));
+                to_mount.push((child.0, (OneShotReq::Emote(id, false, play), seq)));
             }
         }
     }
@@ -940,7 +940,10 @@ fn drive_unit(
     });
     // In `PlaySeq` order, defense last: the reference plays it from the deferred impact scan,
     // after every message handler.
-    let mut requests: Vec<(u16, Option<u16>)> = pending
+    // Each request: the id to play, the raw id the armed test compares, and whether it keeps the
+    // weapons out.
+    let tier = store.map_or(0, |s| s.0.unit_anim_tier());
+    let mut requests: Vec<(u16, Option<u16>, bool)> = pending
         .get(&entity)
         .map(|v| {
             v.iter()
@@ -956,24 +959,29 @@ fn drive_unit(
                             swing_anim_main(w.armed_main())
                         };
                         debug!("swing: unit {entity} anim {id} (hitInfo {hit_info:#x})");
-                        (id, None)
+                        (id, None, false)
                     }
                     // The armed-id test compares the record's own AnimID, before the play
                     // seam's Special remap from the held hands.
-                    OneShotReq::Emote(id, via_player, remap) => {
+                    OneShotReq::Emote(id, via_player, play) => {
                         let w = wielded.copied().unwrap_or_default();
-                        let played = if remap {
+                        let played = if play.remap_special() {
                             select::special_anim(id, w.armed_main(), w.armed_off())
                         } else {
                             id
                         };
-                        (played, via_player.then_some(id))
+                        // The unit's anim tier resolves the id unless the kit skips it (`0x73875f`).
+                        let played = match catalog.filter(|_| tier != 0 && play.tier_resolve()) {
+                            Some(cat) => anims.resolve_tier(played, tier, cat),
+                            None => played,
+                        };
+                        (played, via_player.then_some(id), play.keep_weapons())
                     }
                 })
                 .collect()
         })
         .unwrap_or_default();
-    requests.extend(defense.map(|id| (id, None)));
+    requests.extend(defense.map(|id| (id, None, false)));
     // The deferred cache (`+0xd60`): once no one-shot is live, the parked combat clip plays. Fresh
     // requests supersede it. Never mid-air: the read is past the airborne freeze, so the landing
     // play clears it.
@@ -982,9 +990,10 @@ fn drive_unit(
         && !airborne_frozen
         && live_oneshot(&drv, &player, &tr, anims, catalog).is_none()
     {
-        requests.extend(drv.deferred.take().map(|id| (id, None)));
+        requests.extend(drv.deferred.take().map(|id| (id, None, false)));
     }
-    for (id, armed_test) in requests {
+    let mut oneshot_keeps = false;
+    for (id, armed_test, keeps) in requests {
         // The emote player's own test first: an id already armed on the key bone or bone 0 plays
         // nothing, ahead of the lock and the fast path.
         if let Some(raw) = armed_test {
@@ -1091,6 +1100,7 @@ fn drive_unit(
             });
             masked_played = true;
             played_oneshot = Some(id);
+            oneshot_keeps = keeps;
         } else {
             // Full-body: the clip replaces the base on bone 0 even over a Special, last writer
             // wins. An airborne arc's own clip freezes first, op4's pose-snapshot decay.
@@ -1112,6 +1122,7 @@ fn drive_unit(
             drv.gait = None;
             base_played = true;
             played_oneshot = Some(id);
+            oneshot_keeps = keeps;
         }
         if benilla_assets::trace::enabled() {
             benilla_assets::trace::line(
@@ -1538,7 +1549,14 @@ fn drive_unit(
             .or(hold_played)
             .or_else(|| drv.active_anim())
             .unwrap_or(STAND);
-        let flags = catalog.map_or(0, |cat| cat.weapon_flags(anim));
+        // A kit's keep-weapons flag rides the play that armed the clip (`0x73957a`).
+        let keeps = if played_oneshot.is_some() {
+            oneshot_keeps
+        } else {
+            cast_hold.is_some_and(|h| h.play.keep_weapons() && anim == h.anim_id)
+        };
+        let flags =
+            select::kept_weapon_flags(catalog.map_or(0, |cat| cat.weapon_flags(anim)), cur, keeps);
         if let Some(forced) =
             select::reconcile_sheath(cur, anim, flags, engaged, is_self, sheath_byte, mounted)
         {

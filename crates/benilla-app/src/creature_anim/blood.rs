@@ -144,6 +144,7 @@ pub(super) fn blood_spurts(
                 path: path.to_string(),
                 scale: 1.0,
                 attach: None,
+                own_alpha: false,
             }],
         });
     }

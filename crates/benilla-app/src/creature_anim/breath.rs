@@ -180,6 +180,7 @@ pub(super) fn fire_breath(
                 path: path.clone(),
                 scale: 1.0,
                 attach: None,
+                own_alpha: false,
             }],
         });
     }

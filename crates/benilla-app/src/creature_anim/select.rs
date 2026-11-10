@@ -663,6 +663,16 @@ pub(super) fn sheath_clip(sheath_type: u8) -> u16 {
 /// ReadyThrown 108 is not one: it stows, and the driver's snap bracket keeps the thrown wind-up.
 const SHEATH_RANGED_EXEMPT: [u16; 9] = [46, 49, 105, 106, 107, 109, 110, 111, 112];
 
+/// A clip's WeaponFlags under a play that keeps the weapons out: no `& 4` stow, and no `& 0x10`
+/// stow unless ranged-drawn (`0x738180`).
+pub(super) fn kept_weapon_flags(weapon_flags: u32, cur: u8, keeps: bool) -> u32 {
+    match (keeps, cur) {
+        (false, _) => weapon_flags,
+        (true, 2) => weapon_flags & !4,
+        (true, _) => weapon_flags & !(4 | 0x10),
+    }
+}
+
 /// The per-animation sheath reconcile: the state the clip's WeaponFlags force, first match winning,
 /// each a snap. `& 4` stows; mounted stows on every recompute and dismount restores nothing
 /// (inferred); `& 0x10` stows, bar the ranged exemptions while ranged-drawn; engaged or `& 0x20`
