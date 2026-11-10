@@ -11,6 +11,16 @@ use mlua::{Lua, MultiValue, Value};
 
 use super::item_link::{item_hyperlink, ItemLinkFields, QUALITY_COLORS};
 
+/// An `ItemLimitCategory.dbc` row, as the tooltip (`0x6280a0`) and `GetItemUniqueness` read it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ItemLimitView {
+    pub category: u32,
+    pub name: String,
+    pub quantity: u32,
+    /// `[row+0xc]`: bit 0 prints `ITEM_LIMIT_CATEGORY_MULTIPLE`.
+    pub flags: u32,
+}
+
 /// An item template's tooltip view: the `SMSG_ITEM_QUERY_SINGLE_RESPONSE` fields the tooltip reads,
 /// plus app-resolved display strings.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -97,8 +107,8 @@ pub struct ItemTemplateView {
     pub item_spells: Vec<ItemSpellView>,
     /// The bag family mask, `GetItemFamily`'s.
     pub bag_family: u32,
-    /// The limit category and its quantity, `GetItemUniqueness`'s.
-    pub item_limit: Option<(u32, u32)>,
+    /// The `ItemLimitCategory.dbc` row the item names; `None` for no category or no such row.
+    pub item_limit: Option<ItemLimitView>,
     /// The item a recipe teaches to make: a learn-spell (36) trigger whose taught spell creates
     /// (24) an item; 0 for none. `IsDressableItem` dresses a pattern as its product.
     pub recipe_creates: u32,
