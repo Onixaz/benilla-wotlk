@@ -112,7 +112,7 @@ pub(super) fn build_view(
     };
     // A cross-referenced spell's own family mask decides its modifiers.
     let lookup = |id| {
-        let t = spells.catalog.get(id)?;
+        let t = spells.catalog.get(spells.for_difficulty(id))?;
         deps.borrow_mut().mod_bits |= vctx.spell_mods.read_bits(t);
         Some(t)
     };
@@ -537,6 +537,8 @@ pub(super) struct SpellFeedMemory {
     /// The race and class the source walk (book, trainer, talent ranks) last ran for; it runs
     /// again only when a source or these move, since a pushed id stays pushed until requeued.
     pub(super) walked_for: Option<(u8, u8)>,
+    /// The difficulty the pushed views' `$<id>` tokens resolved through.
+    pub(super) difficulty: u32,
 }
 
 impl SpellFeedMemory {
@@ -797,6 +799,15 @@ pub(super) fn feed_spell_tooltips(
     changes = changes.with_reagents(&memory.reagents, &reagent_state);
     memory.reagents = reagent_state;
     memory.requeue(&changes, &mut wanted, &mut wanted_pet);
+    // A new difficulty moves every other-spell token, which the views do not record.
+    let difficulty = spells
+        .instance_difficulty
+        .load(std::sync::atomic::Ordering::Relaxed);
+    if memory.difficulty != difficulty {
+        memory.difficulty = difficulty;
+        wanted.extend(memory.pushed.drain().map(|(id, _)| id));
+        wanted_pet.extend(memory.pet_pushed.drain().map(|(id, _)| id));
+    }
     // The pet's inputs: a new pet, or its level, bases, form, reach or motion moving, rebuilds the
     // pet views alone.
     let pet_guid = self_store.and_then(|s| s.0.unit_pet_guid());

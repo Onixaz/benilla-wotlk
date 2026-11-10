@@ -47,7 +47,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("ScalingStatValues", "#239 heirloom stat scaling"),
     ("ScreenEffect", "#243 screen effects"),
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
-    ("SpellDifficulty", "#240 per-difficulty spell variants"),
     ("Startup_Strings", "#245 the client's startup error text"),
     ("StringLookups", "#245 string lookups"),
     ("TransportPhysics", "#243 transport rocking"),

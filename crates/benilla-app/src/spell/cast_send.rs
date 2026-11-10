@@ -1004,6 +1004,19 @@ fn send_spell_cast(
             _ => Vec::new(),
         },
     };
+    // The aura-spell legs: the caster's (`0x739650`), then a bound unit's (`0x803500`).
+    if let (Some(d), Some(sp)) = (def, spells) {
+        let target_auras = match target {
+            Some(guid) if ctx.self_guid == Some(guid) => ctx.self_auras,
+            Some(_) => ctx.target_auras,
+            None => None,
+        };
+        if let Some(reason) = validator::cast_aura_refusal(d, sp, ctx.self_auras, target_auras) {
+            debug!("ui_action: cast {spell_id} refused locally — an aura spell ({reason:#x})");
+            cast_errors.push_local(spell_id, reason);
+            return;
+        }
+    }
     // The area leg (`0x739650`), after the form and aura-state legs.
     if let Some((reason, area)) = def.and_then(|d| area_gate.refusal(d)) {
         debug!("ui_action: cast {spell_id} refused locally — the area leg ({reason:#x})");
@@ -1214,6 +1227,7 @@ mod tests {
             range: cast_target::RangeInputs::default(),
             main_hand_item: None,
             self_auras: None,
+            target_auras: None,
             self_move_flags: 0,
             auto_dismount: true,
             auto_stand: true,

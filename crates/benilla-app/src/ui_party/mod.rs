@@ -47,6 +47,7 @@ impl Plugin for UiPartyPlugin {
                         .after(crate::ui_unit::UnitFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
                     difficulty::feed_menu_gates.in_set(UiFeed),
+                    difficulty::feed_instance_difficulty.in_set(UiFeed),
                     feed::drain_party.after(UiInput),
                 ),
             );

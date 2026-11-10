@@ -2639,6 +2639,8 @@ mod tests {
         const SPELL: u32 = 2649;
         let spells = crate::ui_action::Spells {
             power_displays: Default::default(),
+            difficulties: Default::default(),
+            instance_difficulty: Default::default(),
             catalog: benilla_formats::SpellCatalog::from_displays(
                 [(SPELL, display())].into_iter().collect(),
             ),
@@ -3232,6 +3234,8 @@ mod tests {
         };
         let make_spells = || crate::ui_action::Spells {
             power_displays: Default::default(),
+            difficulties: Default::default(),
+            instance_difficulty: Default::default(),
             catalog: benilla_formats::SpellCatalog::from_displays(
                 [
                     // The 1.12 rows: Backstab Ex2 0x100000, Serpent Sting Ex2 0x20000.
@@ -3397,6 +3401,8 @@ mod tests {
 
         let spells = || crate::ui_action::Spells {
             power_displays: Default::default(),
+            difficulties: Default::default(),
+            instance_difficulty: Default::default(),
             catalog: benilla_formats::SpellCatalog::from_displays(
                 [
                     (
@@ -3676,6 +3682,8 @@ mod tests {
         };
         let spells = crate::ui_action::Spells {
             power_displays: Default::default(),
+            difficulties: Default::default(),
+            instance_difficulty: Default::default(),
             catalog: benilla_formats::SpellCatalog::from_displays(
                 [
                     (75, ranged(0, 0)),
@@ -3719,6 +3727,8 @@ mod tests {
         const STEALTH: u32 = 1784;
         let spells = crate::ui_action::Spells {
             power_displays: Default::default(),
+            difficulties: Default::default(),
+            instance_difficulty: Default::default(),
             catalog: benilla_formats::SpellCatalog::from_displays(
                 [(
                     STEALTH,
@@ -3808,6 +3818,8 @@ mod tests {
         const SHOT: u32 = 75;
         let spells = crate::ui_action::Spells {
             power_displays: Default::default(),
+            difficulties: Default::default(),
+            instance_difficulty: Default::default(),
             catalog: benilla_formats::SpellCatalog::from_displays(
                 [(
                     SHOT,

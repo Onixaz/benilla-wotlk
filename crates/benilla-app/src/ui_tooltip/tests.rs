@@ -278,6 +278,8 @@ fn battle_shout_description_scales_by_the_skill_level() {
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = Spells {
         power_displays: Default::default(),
+        difficulties: Default::default(),
+        instance_difficulty: Default::default(),
         catalog: benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc"),
         forms: benilla_formats::load_shapeshift_forms(&mut chain).expect("forms"),
         ranges: benilla_formats::load_spell_ranges(&mut chain).expect("ranges"),
@@ -322,6 +324,8 @@ fn fireball_view_on_real_data() {
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = Spells {
         power_displays: Default::default(),
+        difficulties: Default::default(),
+        instance_difficulty: Default::default(),
         catalog: benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc"),
         forms: benilla_formats::load_shapeshift_forms(&mut chain).expect("SpellShapeshiftForm.dbc"),
         ranges: benilla_formats::load_spell_ranges(&mut chain).expect("SpellRange.dbc"),
@@ -500,6 +504,8 @@ fn cost_and_cast_cells_on_real_data() {
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = Spells {
         power_displays: Default::default(),
+        difficulties: Default::default(),
+        instance_difficulty: Default::default(),
         catalog: benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc"),
         forms: benilla_formats::load_shapeshift_forms(&mut chain).expect("SpellShapeshiftForm.dbc"),
         ranges: benilla_formats::load_spell_ranges(&mut chain).expect("SpellRange.dbc"),
@@ -612,6 +618,8 @@ fn range_cell_on_real_data() {
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = Spells {
         power_displays: Default::default(),
+        difficulties: Default::default(),
+        instance_difficulty: Default::default(),
         catalog: benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc"),
         forms: benilla_formats::load_shapeshift_forms(&mut chain).expect("SpellShapeshiftForm.dbc"),
         ranges: benilla_formats::load_spell_ranges(&mut chain).expect("SpellRange.dbc"),
@@ -735,6 +743,8 @@ fn the_required_item_chance_and_reagent_lines_on_real_data() {
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = Spells {
         power_displays: Default::default(),
+        difficulties: Default::default(),
+        instance_difficulty: Default::default(),
         catalog: benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc"),
         forms: benilla_formats::load_shapeshift_forms(&mut chain).expect("SpellShapeshiftForm.dbc"),
         ranges: benilla_formats::load_spell_ranges(&mut chain).expect("SpellRange.dbc"),

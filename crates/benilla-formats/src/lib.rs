@@ -74,6 +74,8 @@ mod glyphs;
 pub use glyphs::{load_glyph_catalog, GlyphCatalog, GlyphProperty, GlyphSlot};
 mod gem_properties;
 mod item_limit_category;
+mod spell_difficulty;
+pub use spell_difficulty::{load_spell_difficulties, SpellDifficultyCatalog};
 mod spell_rune_cost;
 mod totem_category;
 pub use gem_properties::{load_gem_properties, GemPropertiesCatalog};

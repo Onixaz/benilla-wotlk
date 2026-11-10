@@ -189,6 +189,7 @@ tables! {
         "SpellCategory" => spells::spell_category_schema(),
         "SpellChainEffects" => spell_visual::chain_effects::chain_effects_schema(),
         "SpellDescriptionVariables" => spells::desc_vars::schema(),
+        "SpellDifficulty" => spell_difficulty::spell_difficulty_schema(),
         "SpellDispelType" => spells::dispel_types::schema(),
         "SpellDuration" => spells::duration::schema(),
         "SpellEffectCameraShakes" => camera_shakes::spell_effect_camera_shakes_schema(),
