@@ -695,6 +695,14 @@ pub(super) fn deliver(
     let notice = event
         .notice_byte()
         .filter(|_| event.kind == Some(ChatEventKind::ChannelNotice));
+    // A server join of a new zone name renames the slot of its ChannelID (`0x507880`).
+    if notice == Some(channel_notice::YOU_JOINED) {
+        if let Some(old) = channels.zone_slot_held_as(&event.channel) {
+            if let Some(n) = channels.rename_slot(&old, &event.channel) {
+                debug!("chat: server moved slot {n} {old:?} → {:?}", event.channel);
+            }
+        }
+    }
     // Read first: the reference picks the token from `slot+0x9c` before writing it, and the renamed
     // and suspended tokens keep the window's registration.
     event.slot_state = channels.slot_state(&event.channel);
@@ -723,7 +731,11 @@ pub(super) fn deliver(
         // A slot the walk renamed is numbered already, but its state must return to `Joined`.
         channels.confirm_slot(&event.channel);
     }
-    if notice == Some(channel_notice::YOU_JOINED) && channels.number_of(&event.channel).is_none() {
+    // A zone channel's record is made at send time; one the server joined unasked has none.
+    if notice == Some(channel_notice::YOU_JOINED)
+        && channels.number_of(&event.channel).is_none()
+        && channels.channels.zone_channel_id(&event.channel) == 0
+    {
         match channels.claim_slot(&event.channel) {
             Some(slot) => {
                 debug!(

@@ -748,10 +748,15 @@ POSITION "
             ]),
             ..Default::default()
         };
+        state.claim_slot("General - Elwynn Forest");
         // Unseated, a join is dropped.
         state.note_zone_channel_joined("General - Elwynn Forest");
         assert_eq!(state.zone_mask, None, "not seated: nothing to OR into");
         state.zone_mask = Some(0);
+        state.note_zone_channel_joined("Trade - City");
+        assert_eq!(state.zone_mask, Some(0), "a join with no slot sets nothing");
+        state.claim_slot("Trade - City");
+        state.claim_slot("MyChan");
         state.note_zone_channel_joined("General - Elwynn Forest");
         state.note_zone_channel_joined("Trade - City");
         assert_eq!(state.zone_mask, Some(0b11));
@@ -759,9 +764,8 @@ POSITION "
         assert_eq!(state.zone_mask, Some(0b11), "a custom channel has no bit");
         // The clear is keyed on the slot the wire name finds and its id; a name with no slot clears
         // nothing.
-        state.note_zone_channel_left("Trade - City");
-        assert_eq!(state.zone_mask, Some(0b11), "no slot carries it yet");
-        state.claim_slot("Trade - City");
+        state.note_zone_channel_left("Trade - Elwynn Forest");
+        assert_eq!(state.zone_mask, Some(0b11), "no slot carries that name");
         state.note_zone_channel_left("Trade - City");
         assert_eq!(
             state.zone_mask,

@@ -2890,3 +2890,52 @@ fn an_empty_line_sends_nothing_but_afk_and_dnd() {
         ]
     );
 }
+
+/// The server moves a zone channel by joining its new name: the slot holding that ChannelID takes
+/// the name and the notice reads `YOU_CHANGED`. A zone channel it joins unasked finds no slot, so it
+/// claims none and sets no `ZONECHANNELS` bit (`0x507880`).
+#[test]
+fn a_server_join_renames_the_zone_slot_by_id_and_an_unasked_one_takes_nothing() {
+    let _data = benilla_formats::wow_data_or_skip!();
+    let mut s = chat_vm();
+    let mut windows = super::frames::ChatWindows::default();
+    let row = |id, flags, pattern: &str| benilla_formats::ChatChannelRow {
+        id,
+        flags,
+        pattern: pattern.into(),
+        shortcut: pattern.split(' ').next().unwrap_or_default().into(),
+    };
+    let mut channels = super::edit::ChannelState {
+        channels: benilla_formats::ChatChannelsCatalog::from_rows(vec![
+            row(1, 0x8_0003, "General - %s"),
+            row(26, 0x4_0039, "LookingForGroup"),
+        ]),
+        zone_mask: Some(1),
+        ..Default::default()
+    };
+    channels.claim_slot("General - Durotar");
+    let you_joined = |name: &str| {
+        let mut e = ChatEvent::text_only(K::ChannelNotice, String::new());
+        e.channel = name.into();
+        e.notice = "2".into();
+        e
+    };
+
+    let mut moved = you_joined("General - Orgrimmar");
+    super::feed::deliver(&mut s, &mut windows, &mut channels, &mut moved);
+    assert_eq!(channels.names(), vec![Some("General - Orgrimmar".into())]);
+    assert_eq!(moved.slot_state, Some(super::edit::SlotState::Renamed));
+    assert_eq!(
+        channels.slot_state("General - Orgrimmar"),
+        Some(super::edit::SlotState::Joined)
+    );
+
+    super::feed::deliver(
+        &mut s,
+        &mut windows,
+        &mut channels,
+        &mut you_joined("LookingForGroup"),
+    );
+    assert_eq!(channels.number_of("LookingForGroup"), None);
+    assert_eq!(channels.zone_mask, Some(1), "no LookingForGroup bit");
+}
