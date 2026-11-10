@@ -9,7 +9,7 @@
 //! leaves `randomseed` out, and adds `trim`, `split` and `join` to the string table. Only what
 //! [`super::stdlib`]'s shared layer does not already bind is set here. `strreplace` is not built.
 
-use mlua::{Lua, MultiValue, Table, Value, Variadic};
+use mlua::{Function, Lua, MultiValue, Table, Value, Variadic};
 
 /// Install the layer; runs after [`super::stdlib::install`].
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -96,16 +96,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // `table.wipe(t)`: every key cleared, the table returned.
     let table: Table = g.get("table")?;
-    let wipe = lua.create_function(|_, t: Table| {
-        let keys: Vec<Value> = t
-            .pairs::<Value, Value>()
-            .map(|kv| kv.map(|(k, _)| k))
-            .collect::<mlua::Result<_>>()?;
-        for k in keys {
-            t.raw_set(k, Value::Nil)?;
-        }
-        Ok(t)
-    })?;
+    // Keep the traversal inside Lua: crossing the Rust/ Lua boundary for every key is prohibitively
+    // expensive for QuestHelper's recycled work tables. Removing the key just returned by `next`
+    // is valid during Lua table traversal and preserves the table identity.
+    let wipe: Function = lua
+        .load("return function(t) for k in next, t do t[k] = nil end return t end")
+        .eval()?;
     table.set("wipe", wipe.clone())?;
     g.set("wipe", wipe)?;
 
@@ -230,6 +226,19 @@ mod tests {
             .unwrap());
         assert!(ui
             .eval::<bool>("local t = wipe({1, 2, x = 3}) return next(t) == nil")
+            .unwrap());
+    }
+
+    #[test]
+    fn wipe_clears_large_array_and_hash_parts_without_collecting_keys() {
+        let ui = wotlk();
+        assert!(ui
+            .eval::<bool>(
+                "local t = {} \
+                 for i = 1, 10000 do t[i] = i; t['k' .. i] = i end \
+                 wipe(t) \
+                 return next(t) == nil"
+            )
             .unwrap());
     }
 }

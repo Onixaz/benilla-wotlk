@@ -29,17 +29,22 @@ impl super::UiScript {
 
 /// `GetTime()`'s clock, for a caller holding no model borrow; one that holds it reads `model.now`.
 pub(crate) fn now(lua: &Lua) -> f64 {
-    lua.app_data_ref::<crate::script::ModelCell>()
-        .expect("model app_data")
-        .now
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    if model.clock_live {
+        model.clock_read.set(true);
+        model.now + model.clock_wall.elapsed().as_secs_f64()
+    } else {
+        model.now
+    }
 }
 
 /// Register `GetTime` and `GetGameTime`.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
-    // GetTime(): one number, `GetTickCount` times the f64 0.001. Ours is the session clock the tick
-    // advances, so `GetTime()` deltas and the `elapsed` handed to OnUpdate agree; reference
-    // FrameXML (CastingBarFrame and kin) anchors cast windows on it.
+    // GetTime(): one number, `GetTickCount` times the f64 0.001. During a UI tick the clock also
+    // advances from its wall-clock anchor, so time-sliced Lua callbacks can observe their budget.
     g.set("GetTime", lua.create_function(|lua, ()| Ok(now(lua)))?)?;
     // GetGameTime(): two numbers, the hour then the minute, the clock `SMSG_LOGIN_SETTIMESPEED`
     // seeds; minute resolution, no seconds.

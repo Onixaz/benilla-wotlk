@@ -90,7 +90,13 @@ impl super::UiScript {
         // stands ([`ModelCell`]); the events fired below bump it through their verbs.
         let quiet = self.visual_epoch();
         let quiet_at_entry = quiet;
-        self.model_mut().now += f64::from(elapsed);
+        {
+            let mut model = self.model_mut();
+            model.now += f64::from(elapsed);
+            model.clock_wall = std::time::Instant::now();
+            model.clock_live = true;
+            model.clock_read.set(false);
+        }
         // The socketed item's changes queue first, the reference signalling them as they land.
         self.watch_socket_item();
         // Events queued since the last tick fire before this tick's walk.
@@ -172,6 +178,14 @@ impl super::UiScript {
                     .unwrap_or_else(|| format!("frame#{id}"))
             });
         }
+        // Preserve any wall time observed by Lua so the next tick cannot make GetTime move
+        // backwards when the host's elapsed value is zero or under-reported.
+        let mut model = self.model_mut();
+        if model.clock_read.get() {
+            model.now += model.clock_wall.elapsed().as_secs_f64();
+        }
+        model.clock_wall = std::time::Instant::now();
+        model.clock_live = false;
     }
 }
 
