@@ -67,7 +67,14 @@ fn install_glue_vm(world: &mut World, screen: super::glue::GlueScreen) -> bool {
     // The CVar table before the files load: the options panels read their CVars in `OnLoad`, and
     // this VM was born before `cvars::sync_cvars`'s per-VM seed.
     match world.get_resource::<crate::cvars::Cvars>() {
-        Some(cvars) => script.seed_cvars(cvars.vm_seed()),
+        Some(cvars) => {
+            script.seed_cvars(cvars.vm_seed());
+            // `GetSavedAccountName` (`0x4dd5d0`) reads the live CVar, which the remember-account
+            // checkbox's `OnLoad` asks for while the files load.
+            if let Some(saved) = cvars.get(crate::login::CVAR_ACCOUNT_NAME) {
+                script.set_glue_saved_account(saved);
+            }
+        }
         None => script.register_cvars(crate::cvars::registered_pairs()),
     }
     let start = std::time::Instant::now();
