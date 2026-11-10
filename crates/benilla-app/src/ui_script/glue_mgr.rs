@@ -997,9 +997,6 @@ impl GlueMgr {
             .unwrap_or_default();
         let roster: Vec<String> = self.roster.iter().map(|c| c.name.clone()).collect();
         super::addons::register_for_glue(s, &realm, &roster, reply);
-        // GlueXML's character-select AddOns button rebuilds from this event. The initial seat can
-        // precede the character roster, so the later registry rebuild must notify the live screen.
-        s.fire_event("ADDON_LIST_UPDATE", Vec::new());
     }
 
     /// The glue world entry (`0x4d9bd0`) for the record at the VM's selection: nothing with no
@@ -1769,15 +1766,6 @@ pub(crate) fn drive_glue_mgr(
             fresh_vm = true;
         }
         mgr.stage(s, tables);
-        // Config.wtf may have finished seeding after the VM was first seated. Refresh the glue
-        // mirror before login-screen OnShow scripts query GetSavedAccountName().
-        if let Some(saved) = asks
-            .cvars
-            .as_deref()
-            .and_then(|c| c.get(crate::login::CVAR_ACCOUNT_NAME))
-        {
-            s.set_glue_saved_account(saved);
-        }
         // `GetAccountExpansionLevel` and the create screen's gates read the authentication's byte.
         if let Some(e) = expansion.as_deref() {
             s.set_account_expansion(e.0);
@@ -1790,6 +1778,15 @@ pub(crate) fn drive_glue_mgr(
     if let (Some(s), Some(reply)) = (script.as_deref_mut(), addon_reply.as_ref()) {
         if fresh_vm || reply.is_changed() || std::mem::take(&mut mgr.addons_stale) {
             mgr.register_addons(s, reply.0.as_deref());
+        }
+        // The reply's arrival, and nothing else, fires `ADDON_LIST_UPDATE` (`0x6b1b70`); the world
+        // entry's own rewrite of it is not an arrival.
+        if reply.is_changed()
+            && reply.0.is_some()
+            && glue_up
+            && mgr.state != ScreenState::EnterWorld
+        {
+            s.fire_event("ADDON_LIST_UPDATE", Vec::new());
         }
     }
     if let (Some(s), Some(r)) = (script.as_deref_mut(), realms.as_ref()) {

@@ -69,9 +69,9 @@ fn install_glue_vm(world: &mut World, screen: super::glue::GlueScreen) -> bool {
     match world.get_resource::<crate::cvars::Cvars>() {
         Some(cvars) => {
             script.seed_cvars(cvars.vm_seed());
+            // `GetSavedAccountName` (`0x4dd5d0`) reads the live CVar, which the remember-account
+            // checkbox's `OnLoad` asks for while the files load.
             if let Some(saved) = cvars.get(crate::login::CVAR_ACCOUNT_NAME) {
-                // GlueXML initializes the remember-account checkbox during load, before the
-                // manager seats the VM. Seed the hidden account value before those OnLoad scripts.
                 script.set_glue_saved_account(saved);
             }
         }
