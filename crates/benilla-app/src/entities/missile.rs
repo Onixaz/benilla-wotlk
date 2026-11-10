@@ -576,6 +576,7 @@ fn arrival_handoff(
             let kind = CastEventKind::Impact {
                 on_caster: target == missile.caster,
                 at,
+                caster: missile.caster,
             };
             out.impacts.write(event(target, kind));
         }
@@ -2200,7 +2201,8 @@ mod tests {
                     && e.kind
                         == CastEventKind::Impact {
                             on_caster: true,
-                            at: None
+                            at: None,
+                            caster,
                         })
                 .count(),
             1
@@ -2588,11 +2590,14 @@ mod tests {
                 .drain()
                 .filter(|e| {
                     e.entity == target
-                        && e.kind
-                            == CastEventKind::Impact {
+                        && matches!(
+                            e.kind,
+                            CastEventKind::Impact {
                                 on_caster: false,
                                 at: None,
+                                ..
                             }
+                        )
                 })
                 .count();
         }

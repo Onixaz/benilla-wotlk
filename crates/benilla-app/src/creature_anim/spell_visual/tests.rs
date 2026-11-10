@@ -481,6 +481,8 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
     app.add_message::<crate::net::FieldChanged>();
     // The watcher's CharProc and sound writers need their messages; kit 409 carries neither.
     app.add_message::<crate::aura_visual::AuraProc>();
+    app.add_message::<super::ChainProcPlay>();
+    app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::aura_visual::BodyProcPlay>();
     app.add_message::<SheathRequest>();
     app.add_message::<SpellKitSound>()
@@ -632,6 +634,8 @@ fn an_ending_aura_plays_its_state_done_kit_once() {
         .add_message::<StateDoneKit>();
     app.add_message::<crate::net::FieldChanged>();
     app.add_message::<crate::aura_visual::AuraProc>();
+    app.add_message::<super::ChainProcPlay>();
+    app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::aura_visual::BodyProcPlay>();
     app.add_message::<SheathRequest>();
     app.add_message::<SpellKitSound>()
@@ -843,6 +847,7 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
         CastEventKind::Impact {
             on_caster: false,
             at: None,
+            caster: target,
         },
     ));
     app.update();
@@ -1865,6 +1870,8 @@ fn an_anim_only_state_kit_still_arms_on_the_aura_add_edge() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<crate::aura_visual::AuraProc>()
+        .add_message::<super::ChainProcPlay>()
+        .init_resource::<crate::net::GuidIndex>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
         .add_message::<SpellKitSound>()
@@ -1933,6 +1940,8 @@ fn a_detection_aura_s_state_kit_follows_our_own_aura_vision() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<crate::aura_visual::AuraProc>()
+        .add_message::<super::ChainProcPlay>()
+        .init_resource::<crate::net::GuidIndex>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
         .add_message::<SpellKitSound>()
@@ -2463,6 +2472,7 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
         CastEventKind::Impact {
             on_caster: false,
             at: Some(at),
+            caster,
         },
     ));
     app.update();
@@ -2715,4 +2725,152 @@ fn an_area_kit_at_a_point_plays_only_its_head_base_and_world_slots() {
     let mut expected = [want(0x14), want(0x13)];
     expected.sort_unstable();
     assert_eq!(got, expected);
+}
+
+/// A kit whose one slot is a beam of chain row `effect_id`.
+fn beam_kit(id: u32, effect_id: u32) -> VisualKit {
+    use benilla_formats::{char_proc_type, CharProc};
+    VisualKit {
+        id,
+        char_proc_slots: [
+            Some(CharProc {
+                ty: char_proc_type::CHAIN_CHANNEL,
+                params: [effect_id as f32, 0.0, 1.0, 0.0],
+            }),
+            None,
+            None,
+            None,
+        ],
+        ..Default::default()
+    }
+}
+
+/// Every beam play as `(owner, chain row, source)`.
+fn beam_plays(app: &mut App) -> Vec<(Entity, u32, Option<Entity>)> {
+    app.world_mut()
+        .resource_mut::<Messages<super::ChainProcPlay>>()
+        .drain()
+        .map(|p| (p.entity, p.proc.effect_id, p.from))
+        .collect()
+}
+
+/// A missile hit's two plays both carry the caster, but only the stage-2 state kit's sets
+/// `0x1000` (`0x745409`), so only its beam names a source.
+#[test]
+fn only_the_state_kit_play_hands_the_caster_to_its_beam() {
+    const BEAM_SPELL: u32 = 44776;
+    const BEAM_VISUAL: u32 = 9118;
+    const IMPACT_KIT: u32 = 910;
+    const STATE_KIT: u32 = 911;
+    let mut app = app();
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+        HashMap::from([(
+            BEAM_VISUAL,
+            VisualStages {
+                impact: IMPACT_KIT,
+                state: STATE_KIT,
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([
+            (IMPACT_KIT, beam_kit(IMPACT_KIT, 5)),
+            (STATE_KIT, beam_kit(STATE_KIT, 6)),
+        ]),
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            BEAM_SPELL,
+            SpellDisplay {
+                visual: BEAM_VISUAL,
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    let caster = app.world_mut().spawn_empty().id();
+    let target = app.world_mut().spawn_empty().id();
+    app.world_mut().write_message(cast_event(
+        target,
+        BEAM_SPELL,
+        CastEventKind::Impact {
+            on_caster: false,
+            at: None,
+            caster,
+        },
+    ));
+    app.update();
+    assert_eq!(
+        beam_plays(&mut app),
+        vec![(target, 5, None), (target, 6, Some(caster))]
+    );
+}
+
+/// The aura arm's state-kit play carries the aura's creator (`0x724c77`); a creator not
+/// streamed names an entity no store answers.
+#[test]
+fn an_aura_s_state_kit_beam_names_its_creator() {
+    const SPELL: u32 = 65444;
+    const VISUAL: u32 = 13881;
+    const STATE_KIT: u32 = 912;
+    const CREATOR: u64 = 0xF130_0000_0000_0042;
+    for streamed in [true, false] {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_message::<SpellKitFx>()
+            .add_message::<StateDoneKit>()
+            .add_message::<crate::aura_visual::AuraProc>()
+            .add_message::<super::ChainProcPlay>()
+            .init_resource::<crate::net::GuidIndex>()
+            .add_message::<crate::aura_visual::BodyProcPlay>()
+            .add_message::<SheathRequest>()
+            .add_message::<SpellKitSound>()
+            .add_message::<super::BaseAnimRecompute>();
+        app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+            HashMap::from([(
+                VISUAL,
+                VisualStages {
+                    state: STATE_KIT,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::from([(STATE_KIT, beam_kit(STATE_KIT, 7))]),
+        )));
+        app.insert_resource(crate::ui_action::Spells {
+            catalog: SpellCatalog::from_displays(HashMap::from([(
+                SPELL,
+                SpellDisplay {
+                    visual: VISUAL,
+                    ..Default::default()
+                },
+            )])),
+            ..crate::ui_action::Spells::empty_for_tests()
+        });
+        app.add_systems(Update, super::arm_aura_state_fx);
+        let creator = app.world_mut().spawn_empty().id();
+        if streamed {
+            app.world_mut()
+                .resource_mut::<crate::net::GuidIndex>()
+                .0
+                .insert(CREATOR, creator);
+        }
+        let (store, _) = crate::unit_auras::aura_unit_for_test(&[]);
+        let holder = app
+            .world_mut()
+            .spawn((
+                store,
+                crate::unit_auras::UnitAuras::of(CREATOR, &[(0, SPELL, 0)]),
+            ))
+            .id();
+        app.update();
+        let want = if streamed {
+            creator
+        } else {
+            Entity::PLACEHOLDER
+        };
+        assert_eq!(
+            beam_plays(&mut app),
+            vec![(holder, 7, Some(want))],
+            "streamed={streamed}"
+        );
+    }
 }

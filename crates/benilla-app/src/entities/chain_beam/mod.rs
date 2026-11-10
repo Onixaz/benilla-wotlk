@@ -103,9 +103,9 @@ struct Bolt {
 pub(crate) struct ChainBeam {
     /// The reap key.
     spell_id: u32,
-    /// Its loss ends the beam; nothing else would reap a persistent one.
+    /// The kit's owner, the reap key; its loss ends the beam, as nothing else would reap one.
     caster: Entity,
-    /// `[caster, hop0, hop1, …]` as identities re-resolved every frame; a beam never re-targets.
+    /// `[source, hop0, hop1, …]` as identities re-resolved every frame; a beam never re-targets.
     nodes: Vec<Entity>,
     /// The ground point of a beam cast at no unit, its one bolt's target (`0x7fc878`).
     location: Option<Vec3>,
@@ -190,10 +190,11 @@ pub(super) fn spawn_chain_beams(
     }
     locations.0.retain(|e, _| stores.contains(*e));
     for ev in kit_fx.read() {
+        // A channel's hold and an aura's state kits keep their persistent beams (`0x743b40`).
         let SpellKitFx::Reap {
             entity,
             spell_id,
-            class: FxClass::Hold,
+            class: FxClass::Hold | FxClass::AuraState,
         } = ev
         else {
             continue;
@@ -211,19 +212,26 @@ pub(super) fn spawn_chain_beams(
         let Ok((store, hops)) = stores.get(play.entity) else {
             continue;
         };
-        // Consume once, on every path: the reference zeroes the count even when nothing is drawn.
+        // Another unit's play runs from it to this one, or ends here unconsumed (`0x7269d8`).
+        let source = play.from.filter(|&from| from != play.entity);
+        if source.is_some_and(|s| !stores.get(s).is_ok_and(|(o, _)| o.is_unit())) {
+            continue;
+        }
+        // Consume once on every other path: zeroed even when nothing is drawn (`0x726b0d`).
         let hops = hops.filter(|_| !consumed.contains(&play.entity));
         consumed.insert(play.entity);
         commands.entity(play.entity).try_remove::<ChainHops>();
         // A saved location overrides the hops (`0x726a3b`); no spell or target is a silent return.
         let location = locations.0.get(&play.entity).copied();
-        let targets = match location {
-            Some(_) => Vec::new(),
-            None => select_targets(play.spell_id, hops, store, &index),
+        let targets = match (source, location) {
+            (Some(_), _) => vec![play.entity],
+            (None, Some(_)) => Vec::new(),
+            (None, None) => select_targets(play.spell_id, hops, store, &index),
         };
         if play.spell_id == 0 || (targets.is_empty() && location.is_none()) {
             continue;
         }
+        let from = source.unwrap_or(play.entity);
         let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
             continue;
         };
@@ -241,12 +249,14 @@ pub(super) fn spawn_chain_beams(
             }
         }
         *plays_seen = plays_seen.wrapping_add(1);
-        let nodes: Vec<Entity> = std::iter::once(play.entity).chain(targets).collect();
-        // A location takes the impact offset turned with the caster, once (`0x7fc878`).
+        let nodes: Vec<Entity> = std::iter::once(from).chain(targets).collect();
+        // A location aims the one bolt when no unit is hit, turned with the caster (`0x7fc878`).
         let turn = transforms
             .get(play.entity)
             .map_or(Quat::IDENTITY, |t| t.to_scale_rotation_translation().1);
-        let ground = location.map(|at| at + turn * ends.impact_offset);
+        let ground = location
+            .filter(|_| source.is_none())
+            .map(|at| at + turn * ends.impact_offset);
         let hop_count = if ground.is_some() { 1 } else { nodes.len() - 1 };
         // The root, then its combo walk, each drawing the same hops (`0x7fc8ea`).
         let rows = std::iter::once(play.proc.effect_id)

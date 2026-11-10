@@ -147,7 +147,17 @@ fn play(entity: Entity, spell_id: u32) -> ChainProcPlay {
             ty: char_proc_type::CHAIN_CAST,
         },
         kit_id: BEAM_KIT,
+        from: None,
     }
+}
+
+/// A streamed unit whose store says so (`OBJECT_FIELD_TYPE` 0x9), which the guid arm resolves.
+fn typed_unit(app: &mut App) -> Entity {
+    app.world_mut()
+        .spawn(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (2, 0x9),
+        ])))
+        .id()
 }
 
 /// Every live beam as `(nodes, [(hop start, hop end)], expiry, persistent)`.
@@ -459,4 +469,109 @@ fn a_beam_rows_go_saves_or_clears_the_location() {
     assert_eq!(at(&locations), Some(Vec3::Z), "flag 0x1 with none saves");
     locations.save(caster, 0, false, None);
     assert_eq!(at(&locations), None, "no dest clears it");
+}
+
+/// Under `0x1000` another unit's guid becomes the source and the owner the one hop, past its hop
+/// array and its saved location, whose area kit still plays (`0x7269d8`, `0x726b12`).
+#[test]
+fn a_play_from_another_unit_runs_from_it_to_the_owner() {
+    let mut app = beam_app();
+    let (owner, hop, other) = (unit(&mut app), unit(&mut app), typed_unit(&mut app));
+    app.world_mut()
+        .entity_mut(owner)
+        .insert(ChainHops(vec![hop]));
+    app.world_mut()
+        .resource_mut::<ChainLocations>()
+        .save(owner, 0, false, Some(Vec3::X));
+    let mut p = play(owner, CHAIN_SPELL);
+    p.from = Some(other);
+    app.world_mut().write_message(p);
+    app.update();
+    let beam = app
+        .world_mut()
+        .query::<&ChainBeam>()
+        .single(app.world())
+        .expect("one beam");
+    assert_eq!(
+        beam.nodes,
+        vec![other, owner],
+        "the other unit to the owner"
+    );
+    assert_eq!(beam.location, None, "a unit target, never the ground");
+    assert_eq!(beam.caster, owner, "the owner's kit keeps it");
+    assert_eq!(hops(&mut app), vec![vec![(0, 1)]]);
+    assert!(
+        app.world().entity(owner).get::<ChainHops>().is_none(),
+        "the hop array is consumed"
+    );
+    let kits: Vec<u32> = app
+        .world_mut()
+        .resource_mut::<Messages<DelayedAreaKit>>()
+        .drain()
+        .map(|k| k.kit_id)
+        .collect();
+    assert_eq!(
+        kits,
+        vec![AREA_KIT],
+        "the owner's location still plays its area kit"
+    );
+}
+
+/// The owner's own guid fails the test and takes the ordinary path (`0x7269fd`).
+#[test]
+fn a_play_naming_its_owner_takes_the_ordinary_path() {
+    let mut app = beam_app();
+    let (owner, hop) = (typed_unit(&mut app), unit(&mut app));
+    app.world_mut()
+        .entity_mut(owner)
+        .insert(ChainHops(vec![hop]));
+    let mut p = play(owner, CHAIN_SPELL);
+    p.from = Some(owner);
+    app.world_mut().write_message(p);
+    app.update();
+    assert_eq!(beams(&mut app)[0].0, vec![owner, hop]);
+}
+
+/// A guid naming no unit ends the arm before the hop array is touched (`0x726a1d`).
+#[test]
+fn an_unresolved_guid_draws_nothing_and_keeps_the_hops() {
+    let mut app = beam_app();
+    let gone = typed_unit(&mut app);
+    app.world_mut().despawn(gone);
+    let object = unit(&mut app); // a store with no unit type
+    for from in [gone, object, Entity::PLACEHOLDER] {
+        let (owner, hop) = (unit(&mut app), unit(&mut app));
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ChainHops(vec![hop]));
+        let mut p = play(owner, CHAIN_SPELL);
+        p.from = Some(from);
+        app.world_mut().write_message(p);
+        app.update();
+        assert!(beams(&mut app).is_empty(), "{from} draws nothing");
+        assert!(
+            app.world().entity(owner).get::<ChainHops>().is_some(),
+            "{from} leaves the hops for the next play"
+        );
+    }
+}
+
+/// An aura's removal takes the persistent beam its state kit drew on the holder (`0x743b40`).
+#[test]
+fn the_aura_state_reap_takes_a_persistent_beam() {
+    let mut app = beam_app();
+    let (owner, other) = (unit(&mut app), typed_unit(&mut app));
+    let mut p = play(owner, CHAIN_SPELL);
+    p.from = Some(other);
+    p.proc.flag = true;
+    app.world_mut().write_message(p);
+    app.update();
+    assert_eq!(beams(&mut app).len(), 1);
+    app.world_mut().write_message(SpellKitFx::Reap {
+        entity: owner,
+        spell_id: CHAIN_SPELL,
+        class: FxClass::AuraState,
+    });
+    app.update();
+    assert!(beams(&mut app).is_empty());
 }

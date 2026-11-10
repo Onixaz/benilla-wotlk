@@ -151,6 +151,8 @@ pub(crate) struct ChainProcPlay {
     pub(crate) proc: benilla_formats::ChainProc,
     /// The playing kit, which a location beam's area kit must differ from (`0x726b2c`).
     pub(crate) kit_id: u32,
+    /// The unit a stage-2 play's guid names (flag `0x1000`, `0x745409`), the beam's source.
+    pub(crate) from: Option<Entity>,
 }
 
 /// One projectile per target on the GO's Speed > 0 branch, consumed by `crate::entities::missile`.
@@ -511,6 +513,8 @@ struct KitPlay {
     /// The stage-2 (state kit) play: the kit player branches around the only anim play, so the id
     /// is only compared with what the unit plays, a mismatch spent on a [`BaseAnimRecompute`].
     stage_2: bool,
+    /// The play's caster guid as an entity; only a stage-2 play hands it to the beam.
+    caster: Option<Entity>,
 }
 
 impl KitPlay {
@@ -521,6 +525,7 @@ impl KitPlay {
         sound: true,
         stage: FxStage::OneShot,
         stage_2: false,
+        caster: None,
     };
 }
 
@@ -569,6 +574,8 @@ fn play_kit(
             spell_id,
             proc,
             kit_id: kit.id,
+            // Of the unit plays built here only stage 2 sets `0x1000` (`0x745409`).
+            from: play.caster.filter(|_| play.stage_2),
         });
     }
     play_body_procs(out.body, entity, spell_id, kit);
@@ -853,6 +860,8 @@ fn go_plays_impact_area(visuals: &SpellVisualCatalog, stages: &VisualStages, spe
 #[derive(Clone, Copy)]
 struct ImpactPlay {
     spell_id: u32,
+    /// The caster, whose guid both kit plays carry (`0x702f5f`).
+    caster: Entity,
     /// The ranged fallback of an instant hit's merged row; `None` on arrival (`0x703586`).
     weapon_visual: Option<u32>,
     /// The unit is the caster: the caster impact kit, else the target impact kit (`0x800d00`).
@@ -894,6 +903,7 @@ fn play_impact(
 ) {
     let ImpactPlay {
         spell_id,
+        caster,
         weapon_visual,
         on_caster,
         at,
@@ -906,9 +916,13 @@ fn play_impact(
     let Some(stages) = resolve_stages(spells, visuals, spell_id, || weapon_visual) else {
         return;
     };
+    let discrete = KitPlay {
+        caster: Some(caster),
+        ..KitPlay::DISCRETE
+    };
     if let Some(kit) = impact_kit(visuals, &stages, on_caster) {
         match at {
-            None => play_kit(entity, spell_id, kit, KitPlay::DISCRETE, seq, visuals, out),
+            None => play_kit(entity, spell_id, kit, discrete, seq, visuals, out),
             Some(at) => {
                 // The unit keeps the anim, beam and trail legs; the models, sound and shake go
                 // to the point.
@@ -919,7 +933,7 @@ fn play_impact(
                 let play = KitPlay {
                     effects: false,
                     sound: false,
-                    ..KitPlay::DISCRETE
+                    ..discrete
                 };
                 play_kit(entity, spell_id, &unit_legs, play, seq, visuals, out);
                 play_kit_at(kit, at, visuals, out.sounds, out.shakes, bursts);
@@ -934,7 +948,7 @@ fn play_impact(
             effects: false,
             stage_2: true,
             stage: FxStage::State,
-            ..KitPlay::DISCRETE
+            ..discrete
         };
         play_kit(entity, spell_id, kit, play, seq, visuals, out);
     }
@@ -1167,12 +1181,17 @@ pub(super) fn route_cast_visuals(
                     );
                 }
             }
-            CastEventKind::Impact { on_caster, at } => {
+            CastEventKind::Impact {
+                on_caster,
+                at,
+                caster,
+            } => {
                 // Every living target flinches; the kit comes off the spell's own row (`0x703586`).
                 play_impact(
                     ev.entity,
                     ImpactPlay {
                         spell_id: ev.spell_id,
+                        caster,
                         weapon_visual: None,
                         on_caster,
                         at,
@@ -1258,6 +1277,7 @@ pub(super) fn route_cast_visuals(
                     target,
                     ImpactPlay {
                         spell_id: go.spell_id,
+                        caster: go.caster,
                         weapon_visual: wv,
                         on_caster: target == go.caster,
                         at: None,
@@ -1392,6 +1412,7 @@ pub(super) fn route_cast_visuals(
                         spell_id: cur,
                         proc,
                         kit_id: kit.id,
+                        from: None,
                     });
                 }
                 // The trail arm from the same caller: kit 370 (Whirlwind Primer) is reached here.
@@ -1468,6 +1489,8 @@ pub(crate) fn arm_aura_state_fx(
     mut done: MessageWriter<StateDoneKit>,
     mut sheaths: MessageWriter<super::SheathRequest>,
     mut body: MessageWriter<crate::aura_visual::BodyProcPlay>,
+    mut chain: MessageWriter<ChainProcPlay>,
+    index: Res<crate::net::GuidIndex>,
     mut armed: Local<EntityHashMap<Vec<u32>>>,
     mut seen_vision: Local<u8>,
 ) {
@@ -1538,12 +1561,30 @@ pub(crate) fn arm_aura_state_fx(
                 .char_procs()
                 .filter_map(crate::aura_visual::node_for)
                 .collect();
+            let mut beams = kit.char_procs().filter_map(|p| p.as_chain()).peekable();
             if effects.is_empty()
                 && nodes.is_empty()
+                && beams.peek().is_none()
                 && kit.sound.is_none()
                 && kit.anim_id.is_none()
             {
                 continue; // nothing to arm or reap
+            }
+            // The play carries the aura's creator (`0x724c77`); an unstreamed one names no unit.
+            let from = auras
+                .iter()
+                .find(|a| a.spell_id == spell_id)
+                .map(|a| a.caster)
+                .filter(|&g| g != 0)
+                .map(|g| index.0.get(&g).copied().unwrap_or(Entity::PLACEHOLDER));
+            for proc in beams {
+                chain.write(ChainProcPlay {
+                    entity,
+                    spell_id,
+                    proc,
+                    kit_id: kit.id,
+                    from,
+                });
             }
             debug!(
                 "anim: aura state kit armed ({entity}, spell {spell_id}): {} model(s), {} proc                  node(s)",

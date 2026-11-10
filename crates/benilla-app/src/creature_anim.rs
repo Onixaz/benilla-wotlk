@@ -404,8 +404,13 @@ pub(crate) enum CastEventKind {
     Go,
     /// Died without release (`SMSG_SPELL_FAILED_OTHER`, or our failed `SMSG_CAST_RESULT`).
     Fail,
-    /// A missile landed: `on_caster` picks the kit (`0x800d00`), `at` is its point (`0x702e5a`).
-    Impact { on_caster: bool, at: Option<Vec3> },
+    /// A missile landed: `on_caster` picks the kit (`0x800d00`), `at` is its point (`0x702e5a`);
+    /// `caster` is the guid both of its kit plays carry (`0x702f5f`).
+    Impact {
+        on_caster: bool,
+        at: Option<Vec3>,
+        caster: Entity,
+    },
     /// A projectile with no live target at arrival (a despawned target too): the kit plays on the
     /// caster (`entity`) at `pos`, `SpellVisual` field 13, stage 3. Sent here only for a
     /// dest-targeted GO's missile with no hit (`MissileSpawn::ground_aim`).

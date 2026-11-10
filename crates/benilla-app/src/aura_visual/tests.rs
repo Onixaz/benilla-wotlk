@@ -215,6 +215,8 @@ fn app_with_chains() -> App {
     app.add_message::<crate::net::FieldChanged>();
     app.add_message::<crate::creature_anim::SpellKitSound>();
     app.add_message::<AuraProc>();
+    app.add_message::<crate::creature_anim::ChainProcPlay>();
+    app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::creature_anim::BaseAnimRecompute>();
     app.add_message::<crate::creature_anim::SheathRequest>();
     app.add_message::<BodyProcPlay>();
