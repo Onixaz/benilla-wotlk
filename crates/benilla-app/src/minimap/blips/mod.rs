@@ -140,9 +140,7 @@ impl RimArrowArt {
     }
 }
 /// An in-range POI icon's quad, 16 px (frozen by the constructor), the corpse's too (`0x5827e2`).
-pub(super) const POI_ICON_PX: f32 = 16.0;
-/// The corpse's static POI icon (`0x7f4990`).
-pub(super) const CORPSE_POI_ICON: u32 = 8;
+const POI_ICON_PX: f32 = 16.0;
 
 /// The blip under the cursor this frame, for [`drive_blip_tooltip`].
 #[derive(Resource, Default)]
@@ -271,14 +269,22 @@ pub(super) struct LandmarkSelection<'a> {
     pub(super) arrows: Vec<(f32, &'a AreaPoi, RimArrow)>,
 }
 
-/// The landmark selection (module doc). `marker`, the guard-directions POI, and `release`, the
-/// release graveyard's spirit-healer POI (`0x7f4a00`), are appended after the DBC scan as the
-/// reference appends its static blip slots: they skip the candidacy gate but not the 694.444-yd
-/// cut, which the reference spares only for the corpse slot.
+/// The static POI slots appended after the DBC scan, each placed on the shown map by its caller.
+#[derive(Clone, Copy, Default)]
+pub(super) struct StaticPois<'a> {
+    /// The guard-directions POI.
+    pub(super) marker: Option<&'a AreaPoi>,
+    /// The corpse's POI (`0x7f4990`), slot `0xd39540`.
+    pub(super) corpse: Option<&'a AreaPoi>,
+    /// The release graveyard's spirit-healer POI (`0x7f4a00`), the slot after the corpse's.
+    pub(super) release: Option<&'a AreaPoi>,
+}
+
+/// The landmark selection (module doc). The static slots skip the candidacy gate; all but the
+/// corpse's also take the 694.444-yd cut (`0x7f46b1`).
 pub(super) fn select_landmarks<'a>(
     pois: impl Iterator<Item = &'a AreaPoi>,
-    marker: Option<&'a AreaPoi>,
-    release: Option<&'a AreaPoi>,
+    statics: StaticPois<'a>,
     map_id: u32,
     wx: f32,
     wy: f32,
@@ -288,16 +294,17 @@ pub(super) fn select_landmarks<'a>(
     let mut arrows: Vec<(f32, &AreaPoi, RimArrow)> = Vec::new();
     let candidates = pois
         .filter(|p| p.continent_id == map_id && p.flags & FLAG_CANDIDATE != 0)
-        .map(|p| (p, RimArrow::Landmark))
-        .chain(marker.map(|m| (m, RimArrow::Guide)))
-        .chain(release.map(|r| (r, RimArrow::Corpse)));
-    for (p, art) in candidates {
+        .map(|p| (p, RimArrow::Landmark, false))
+        .chain(statics.marker.map(|m| (m, RimArrow::Guide, false)))
+        .chain(statics.corpse.map(|c| (c, RimArrow::Corpse, true)))
+        .chain(statics.release.map(|r| (r, RimArrow::Corpse, false)));
+    for (p, art, uncut) in candidates {
         let d = ((p.pos[0] - wx).powi(2) + (p.pos[1] - wy).powi(2)).sqrt();
         if d / radius_yd <= BLIP_EDGE_RATIO {
             if p.flags & FLAG_IN_RANGE_ICON != 0 {
                 icons.push(p);
             }
-        } else if d <= LANDMARK_RANK_YD {
+        } else if uncut || d <= LANDMARK_RANK_YD {
             arrows.push((d, p, art));
         }
     }
@@ -346,8 +353,7 @@ fn poi_icon_cell(icon: u32, width: u32) -> Option<[f32; 4]> {
 pub(super) fn emit_landmarks(
     ctx: &BlipCtx,
     cat: Option<&AreaPoiCatalog>,
-    marker: Option<&AreaPoi>,
-    release: Option<&AreaPoi>,
+    statics: StaticPois,
     map_id: u32,
     arrows: &RimArrowArt,
     poi_icons: Option<&PoiAtlas>,
@@ -356,8 +362,7 @@ pub(super) fn emit_landmarks(
 ) {
     let sel = select_landmarks(
         cat.into_iter().flat_map(|c| c.rows().map(|(_, p)| p)),
-        marker,
-        release,
+        statics,
         map_id,
         ctx.wx,
         ctx.wy,
@@ -458,21 +463,18 @@ pub(super) fn raid_rows(
         .take(RAID_ROWS_MAX)
 }
 
-/// The party, corpse and raid rim arrows, the out-of-range half of the group placement, drawn
-/// before the player arrow. A member a tracked vehicle stands for draws none (`0x7f3f40`).
+/// The party and raid rim arrows, the out-of-range half of the group placement, drawn before the
+/// player arrow. A member a tracked vehicle stands for draws none (`0x7f3f40`). The corpse's is a
+/// landmark arrow ([`StaticPois::corpse`]).
 ///
 /// This differs from the reference, not built yet: its slot 4 is the pet (`UNIT_FIELD_CHARM`, else
-/// `UNIT_FIELD_SUMMON`), and the corpse is static blip slot 2 on the POI path, at `Importance` -1
-/// and exempt from the 694.444-yd cut, taking one of the three rim slots. So there is no pet blip
-/// here, and four rim arrows can draw where the reference draws three.
-#[allow(clippy::too_many_arguments)]
+/// `UNIT_FIELD_SUMMON`), so there is no pet blip here.
 pub(super) fn emit_group_arrows(
     ctx: &BlipCtx,
     group: &crate::ui_party::GroupState,
     possessors: &[u64],
     guids: &GuidIndex,
     unit_pos: &Query<&GlobalTransform, With<NetEntity>>,
-    corpse: Option<[f32; 3]>,
     arrows: &RimArrowArt,
     quads: &mut UiQuads,
 ) {
@@ -483,10 +485,9 @@ pub(super) fn emit_group_arrows(
             .map(|p| (p, RimArrow::Group, GROUP_ARROW_PX))
     };
     let party = group.party_slots().filter_map(member);
-    let corpse = corpse.map(|c| ((c[0], c[1]), RimArrow::Corpse, ARROW_QUAD_PX));
     // The raid's arrows draw after the party's (`0x580ec0` after `0x580ae0`).
     let raid = raid_rows(group).filter_map(member);
-    for ((x, y), art, px) in party.chain(corpse).chain(raid) {
+    for ((x, y), art, px) in party.chain(raid) {
         let d = ((x - ctx.wx).powi(2) + (y - ctx.wy).powi(2)).sqrt();
         if d / ctx.radius_yd <= BLIP_EDGE_RATIO {
             continue; // in range: the dot pass draws it
@@ -620,6 +621,108 @@ mod tests {
         }
     }
 
+    fn marker_only(marker: &AreaPoi) -> StaticPois<'_> {
+        StaticPois {
+            marker: Some(marker),
+            ..Default::default()
+        }
+    }
+
+    /// A static slot's shape (`0x7f4990`, `0x7f4a00`): icon 8, importance -1, flags 2.
+    fn static_slot(x: f32, name: &str) -> AreaPoi {
+        AreaPoi {
+            icon: 8,
+            ..poi(u32::MAX, 0x2, x, name)
+        }
+    }
+
+    /// The corpse alone is spared the 694.444-yd cut (`0x7f46b1`); importance -1 ranks it first.
+    #[test]
+    fn the_corpse_slot_skips_the_rank_cut_and_ranks_first() {
+        let rows = [
+            poi(0, 1, 300.0, "minor-near"),
+            poi(0, 1, 400.0, "minor-mid"),
+        ];
+        let corpse = static_slot(2000.0, "Corpse");
+        let release = static_slot(2000.0, "Spirit Healer");
+        let statics = StaticPois {
+            corpse: Some(&corpse),
+            release: Some(&release),
+            ..Default::default()
+        };
+        let sel = select_landmarks(rows.iter(), statics, 0, 0.0, 0.0, 133.0);
+        let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
+        assert_eq!(names, ["Corpse", "minor-near", "minor-mid"]);
+        assert_eq!(sel.arrows[0].2, RimArrow::Corpse);
+    }
+
+    fn hover_ctx(cursor: Vec2) -> BlipCtx {
+        BlipCtx {
+            center: Vec2::new(100.0, 100.0),
+            side: BLIP_BASIS_PX,
+            px_per_yd: 0.5,
+            radius_yd: 140.8,
+            z: 0,
+            alpha: 1.0,
+            wx: 0.0,
+            wy: 0.0,
+            cursor: Some(cursor),
+            cursor_ui: Some(Vec2::new(cursor.x, -cursor.y)),
+            seam: 1.0,
+            turn: 0.0,
+        }
+    }
+
+    fn hover_at(cursor: Vec2, statics: StaticPois) -> MinimapBlipHover {
+        let atlas = PoiAtlas {
+            tex: Handle::default(),
+            width: 256,
+        };
+        let mut arrows = RimArrowArt::default();
+        arrows.set(RimArrow::Corpse, Some(Handle::default()));
+        let mut quads = UiQuads::default();
+        let mut hover = MinimapBlipHover::None;
+        emit_landmarks(
+            &hover_ctx(cursor),
+            None,
+            statics,
+            0,
+            &arrows,
+            Some(&atlas),
+            &mut quads,
+            &mut hover,
+        );
+        hover
+    }
+
+    /// The in-range corpse icon names itself on hover, as every POI in the tooltip walk does
+    /// (`0x57c720`, the POI's name at `+0x3c`); off its 16-px quad nothing is hovered.
+    #[test]
+    fn the_in_range_corpse_icon_hovers_as_its_name() {
+        let corpse = static_slot(40.0, "Corpse"); // 20 px north of the centre
+        let statics = StaticPois {
+            corpse: Some(&corpse),
+            ..Default::default()
+        };
+        let on = hover_at(Vec2::new(103.0, 84.0), statics);
+        assert!(matches!(&on, MinimapBlipHover::Landmark(n, _) if n == "Corpse"));
+        let off = hover_at(Vec2::new(100.0, 100.0), statics);
+        assert!(matches!(off, MinimapBlipHover::None));
+    }
+
+    /// Out of range the corpse's rim arrow carries the same name.
+    #[test]
+    fn the_corpse_rim_arrow_hovers_as_its_name() {
+        let corpse = static_slot(1000.0, "Corpse"); // north, past the 0.8 rim
+        let statics = StaticPois {
+            corpse: Some(&corpse),
+            ..Default::default()
+        };
+        let rim = 100.0 - BLIP_BASIS_PX * 0.5 * BLIP_EDGE_RATIO;
+        let on = hover_at(Vec2::new(100.0, rim), statics);
+        assert!(matches!(&on, MinimapBlipHover::Landmark(n, _) if n == "Corpse"));
+    }
+
     fn poi(importance: u32, flags: u32, x: f32, name: &str) -> AreaPoi {
         AreaPoi {
             importance,
@@ -645,7 +748,7 @@ mod tests {
             poi(3, 0x1d, 556.0, "Stormwind"),
             poi(3, 0x5, 601.0, "Goldshire"),
         ];
-        let sel = select_landmarks(rows.iter(), None, None, 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(rows.iter(), StaticPois::default(), 0, 0.0, 0.0, 133.0);
         assert!(sel.icons.is_empty(), "no Flags&2 row is in range");
         let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
         assert_eq!(names, ["Stormwind", "Goldshire"]);
@@ -661,7 +764,7 @@ mod tests {
             poi(3, 1, 400.0, "city-mid"),
             poi(0, 1, 695.0, "beyond-rank"),
         ];
-        let sel = select_landmarks(rows.iter(), None, None, 0, 0.0, 0.0, 100.0);
+        let sel = select_landmarks(rows.iter(), StaticPois::default(), 0, 0.0, 0.0, 100.0);
         let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
         assert_eq!(names, ["minor-near", "minor-far", "city-near"]);
     }
@@ -675,7 +778,7 @@ mod tests {
             poi(3, 0x5, 400.0, "Northshire Abbey"),
         ];
         let marker = poi(0, 0x63, 500.0, "Stormwind Warrior Trainer");
-        let sel = select_landmarks(cities.iter(), Some(&marker), None, 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(cities.iter(), marker_only(&marker), 0, 0.0, 0.0, 133.0);
         let names: Vec<&str> = sel.arrows.iter().map(|(_, p, _)| p.name.as_str()).collect();
         assert_eq!(
             names,
@@ -694,7 +797,7 @@ mod tests {
     #[test]
     fn the_guard_marker_draws_its_icon_in_range() {
         let marker = poi(0, 0x63, 50.0, "The Bank");
-        let sel = select_landmarks(std::iter::empty(), Some(&marker), None, 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(std::iter::empty(), marker_only(&marker), 0, 0.0, 0.0, 133.0);
         assert!(sel.arrows.is_empty(), "in range — no rim arrow");
         assert_eq!(sel.icons.len(), 1);
         assert_eq!(sel.icons[0].icon, 6);
@@ -705,7 +808,7 @@ mod tests {
     fn the_guard_marker_skips_the_candidacy_filter() {
         let mut marker = poi(0, 0, 300.0, "The Inn"); // Flags bit 0 clear: a DBC row would drop
         marker.continent_id = 571; // and a continent that isn't the displayed one
-        let sel = select_landmarks(std::iter::empty(), Some(&marker), None, 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(std::iter::empty(), marker_only(&marker), 0, 0.0, 0.0, 133.0);
         assert_eq!(sel.arrows.len(), 1, "appended unconditionally");
     }
 
@@ -715,7 +818,7 @@ mod tests {
         tower.icon = 9;
         let plain = poi(3, 0x5, 50.0, "Northshire Abbey");
         let rows = [tower, plain];
-        let sel = select_landmarks(rows.iter(), None, None, 0, 0.0, 0.0, 133.0);
+        let sel = select_landmarks(rows.iter(), StaticPois::default(), 0, 0.0, 0.0, 133.0);
         assert_eq!(sel.arrows.len(), 0);
         assert_eq!(sel.icons.len(), 1, "only the Flags&2 tower draws in range");
     }
