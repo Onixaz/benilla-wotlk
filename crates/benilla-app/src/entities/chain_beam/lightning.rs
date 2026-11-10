@@ -387,9 +387,30 @@ impl Lightning {
     /// The pulse's alpha per pair and the drawn strip `[start, start + count)` (`0x9a9490`).
     fn pulse(&self, e: &ChainEffect, length: f32, alphas: &mut [u8]) -> (usize, usize) {
         let pairs = alphas.len();
+        self.pulse_strip(e, length, pairs, |k, a| alphas[k] = a)
+    }
+
+    /// Whether this frame's draw reaches the first vertex (`0x10`) and the last (`0x20`) (`0x9aa75f`).
+    pub(super) fn reached_ends(&self, e: &ChainEffect) -> (bool, bool) {
+        let n = self.joints.len();
+        if !self.visible || self.off || n < 2 {
+            return (false, false);
+        }
+        let (start, count) = self.pulse_strip(e, self.src.distance(self.dst), n, |_, _| {});
+        (start == 0, start + count >= n * 2)
+    }
+
+    /// [`Self::pulse`] over `pairs` pairs, each alpha handed to `put`.
+    fn pulse_strip(
+        &self,
+        e: &ChainEffect,
+        length: f32,
+        pairs: usize,
+        mut put: impl FnMut(usize, u8),
+    ) -> (usize, usize) {
         let a = e.rgba[3];
         if !e.has(chain_flag::PULSE) {
-            alphas.fill(a);
+            (0..pairs).for_each(|k| put(k, a));
             return (0, pairs * 2);
         }
         let step = length / (pairs - 1) as f32;
@@ -402,7 +423,7 @@ impl Lightning {
         let fint = |v: f32| v.round_ties_even() as i32 as u8;
         let mut start = 0;
         let mut pos = 0.0f32;
-        for (k, slot) in alphas.iter_mut().enumerate() {
+        for k in 0..pairs {
             let i = k * 2;
             let alpha = if pos < fade_in_start {
                 start = i;
@@ -412,12 +433,12 @@ impl Lightning {
             } else if fade_out_end > pos {
                 a
             } else if pos >= self.pulse_pos {
-                *slot = 0;
+                put(k, 0);
                 return (start, i + 1 - start);
             } else {
                 fint(alpha_scale * (self.pulse_pos - pos) * fade_out_scale)
             };
-            *slot = alpha;
+            put(k, alpha);
             pos += step;
         }
         (start, pairs * 2 - start)
@@ -748,6 +769,56 @@ mod tests {
             (l.pulse_pos - 24.0).abs() < 1e-4,
             "length + 2 × fade + on, from the first tick's wrap: {}",
             l.pulse_pos
+        );
+    }
+
+    #[test]
+    fn a_pulse_reaches_the_caster_end_first_and_the_target_end_as_it_arrives() {
+        let e = ChainEffect {
+            flags: chain_flag::PULSE,
+            pulse_speed: 10.0,
+            pulse_on_length: 2.0,
+            pulse_fade_length: 1.0,
+            avg_seg_len: 0.5,
+            ..plain()
+        };
+        let mut l = shown(&e, Vec3::ZERO, Vec3::X * 20.0);
+        assert_eq!(
+            l.reached_ends(&e),
+            (true, false),
+            "the head leaves the caster"
+        );
+        l.update(&e, 1.0);
+        assert_eq!(l.reached_ends(&e), (false, false), "mid-beam at 10 yd");
+        l.update(&e, 0.9);
+        assert_eq!(l.reached_ends(&e), (false, false), "19 yd: not there yet");
+        l.update(&e, 0.15);
+        assert_eq!(l.reached_ends(&e), (false, true), "past the 20 yd end");
+    }
+
+    #[test]
+    fn a_beam_with_no_pulse_reaches_both_ends_while_it_draws() {
+        let e = plain();
+        let mut l = shown(&e, Vec3::ZERO, Vec3::X * 10.0);
+        assert_eq!(l.reached_ends(&e), (true, true));
+        l.visible = false;
+        assert_eq!(
+            l.reached_ends(&e),
+            (false, false),
+            "a hidden bolt reaches nothing"
+        );
+        let flicker = ChainEffect {
+            flags: chain_flag::FLICKER,
+            flicker_on_s: [0.1, 0.1],
+            flicker_off_s: [0.5, 0.5],
+            ..plain()
+        };
+        let mut l = shown(&flicker, Vec3::ZERO, Vec3::X * 10.0);
+        l.update(&flicker, 0.2);
+        assert_eq!(
+            l.reached_ends(&flicker),
+            (false, false),
+            "nor one flickered off"
         );
     }
 

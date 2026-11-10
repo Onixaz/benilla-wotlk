@@ -10,7 +10,9 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::creature_anim::spell_visual::{AreaKitWait, DelayedAreaKit};
-use crate::creature_anim::{ChainProcPlay, FxClass, SpellGoTargets, SpellKitFx, SpellVisuals};
+use crate::creature_anim::{
+    BeamKitWaits, ChainProcPlay, FxClass, SpellGoTargets, SpellKitFx, SpellVisuals,
+};
 use crate::net::{GuidIndex, NetEntity};
 use lightning::{Lightning, Scratch};
 
@@ -407,8 +409,23 @@ impl EndPoints<'_, '_> {
     }
 }
 
+/// The units a bolt's drawn ends reach (`0x7fb15a`): the source on the first vertex, the target
+/// on the last, or with no target the source, but on the first bolt, whose ground key no held play has.
+fn reached_units(
+    (first, last): (bool, bool),
+    bolt: usize,
+    source: Entity,
+    target: Option<Entity>,
+) -> [Option<Entity>; 2] {
+    let end = match target {
+        Some(t) => Some(t),
+        None => (bolt > 0).then_some(source),
+    };
+    [first.then_some(source), end.filter(|_| last)]
+}
+
 /// Per frame, the object tick (`0x7fae90`), bolt update (`0x9ab3b0`) and draw (`0x9aa210`).
-// Not built: the endpoint hand-off that shows a target's effects when a pulse arrives (`0x7fb173`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn simulate_chain_beams(
     time: Res<Time>,
     mut commands: Commands,
@@ -417,11 +434,14 @@ pub(crate) fn simulate_chain_beams(
     world_cam: Query<(Entity, &GlobalTransform), With<WorldCamera>>,
     ends: EndPoints,
     mut beams: Query<(Entity, &mut ChainBeam)>,
+    waits: Option<ResMut<BeamKitWaits>>,
     mut scratch: Local<Scratch>,
 ) {
     let Ok((cam, cam_xf)) = world_cam.single() else {
         return;
     };
+    // The end hand-off only matters to a waiting kit play.
+    let mut waits = waits.filter(|w| !w.is_empty());
     let eye = cam_xf.translation();
     let dt = time.delta_secs();
     let now = time.elapsed_secs();
@@ -432,6 +452,7 @@ pub(crate) fn simulate_chain_beams(
             continue;
         }
         let ChainBeam {
+            spell_id,
             nodes,
             location,
             bolts,
@@ -442,7 +463,8 @@ pub(crate) fn simulate_chain_beams(
             seed,
             ..
         } = &mut *beam;
-        let drawn = RENDER_LAYERS.contains(&effect.render_layer) && images.contains(&*texture);
+        let layered = RENDER_LAYERS.contains(&effect.render_layer);
+        let drawn = layered && images.contains(&*texture);
         let mut batch = drawn.then(|| draw.batch(cam, texture.id()));
         let (mut anchor_sum, mut anchor_n) = (Vec3::ZERO, 0.0f32);
         for (i, bolt) in bolts.iter_mut().enumerate() {
@@ -471,6 +493,20 @@ pub(crate) fn simulate_chain_beams(
                 continue;
             };
             live.update(effect, dt);
+            // The ends the draw reaches, whether or not its texture has loaded (`0x7fb15a`).
+            if let Some(waits) = waits.as_mut().filter(|_| layered) {
+                let target = nodes
+                    .get(bolt.target)
+                    .copied()
+                    .filter(|&n| ends.units.contains(n));
+                let reach = live.reached_ends(effect);
+                for unit in reached_units(reach, i, nodes[bolt.source], target)
+                    .into_iter()
+                    .flatten()
+                {
+                    waits.reach(unit, *spell_id);
+                }
+            }
             if let Some(batch) = batch.as_mut() {
                 if live.visible {
                     anchor_sum += (live.src + live.dst) * 0.5;

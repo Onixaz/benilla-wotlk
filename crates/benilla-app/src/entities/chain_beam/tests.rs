@@ -460,3 +460,40 @@ fn a_beam_rows_go_saves_or_clears_the_location() {
     locations.save(caster, 0, false, None);
     assert_eq!(at(&locations), None, "no dest clears it");
 }
+
+/// The tick's hand-off (`0x7fb15a`): first vertex to the source, last to the target, and with no
+/// target the source, but on the first bolt.
+#[test]
+fn a_bolts_drawn_ends_reach_its_source_and_target() {
+    let id = |n| Entity::from_raw_u32(n).expect("a test entity id");
+    let (src, dst) = (id(1), id(2));
+    assert_eq!(
+        reached_units((true, false), 0, src, Some(dst)),
+        [Some(src), None],
+        "a pulse leaving the caster"
+    );
+    assert_eq!(
+        reached_units((false, true), 0, src, Some(dst)),
+        [None, Some(dst)],
+        "a pulse arriving at the target"
+    );
+    assert_eq!(
+        reached_units((true, true), 1, src, Some(dst)),
+        [Some(src), Some(dst)],
+        "no pulse: both ends every drawn frame"
+    );
+    assert_eq!(
+        reached_units((false, true), 0, src, None),
+        [None, None],
+        "a ground bolt's end matches no held play"
+    );
+    assert_eq!(
+        reached_units((false, true), 2, src, None),
+        [None, Some(src)],
+        "a later hop with its target gone reaches its source"
+    );
+    assert_eq!(
+        reached_units((false, false), 0, src, Some(dst)),
+        [None, None]
+    );
+}

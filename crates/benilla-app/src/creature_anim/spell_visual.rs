@@ -446,8 +446,82 @@ pub(crate) struct KitPush {
     pub(crate) stage: u8,
 }
 
-/// The kit lanes [`route_cast_visuals`] writes but does not own, bundled into one param because
-/// the system is at Bevy's 16-`SystemParam` limit.
+/// How long a kit waits for its beam before it is dropped unplayed (`0x72af9f`, `0x728196`).
+const BEAM_WAIT_SECS: f32 = 10.0;
+
+/// One kit play held until a beam reaches its unit, the unit's delayed kit (`0x728050`).
+#[derive(Clone, Copy)]
+struct BeamKitWait {
+    entity: Entity,
+    spell_id: u32,
+    kit: VisualKit,
+    play: KitPlay,
+    seq: u64,
+    deadline: f32,
+    reached: bool,
+}
+
+/// The kit plays waiting on a beam: held by [`play_kit`], reached by the beam tick
+/// (`crate::entities::chain_beam`), played by [`route_cast_visuals`].
+#[derive(Resource, Default)]
+pub(crate) struct BeamKitWaits {
+    waits: Vec<BeamKitWait>,
+    /// The clock the deadlines run on, stamped by [`route_cast_visuals`].
+    now: f32,
+}
+
+impl BeamKitWaits {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.waits.is_empty()
+    }
+
+    /// A beam reached `entity`: its plays waiting on `spell_id` go next frame (`0x722760`).
+    pub(crate) fn reach(&mut self, entity: Entity, spell_id: u32) {
+        for w in &mut self.waits {
+            if w.entity == entity && w.spell_id == spell_id {
+                w.reached = true;
+            }
+        }
+    }
+
+    fn hold(&mut self, entity: Entity, spell_id: u32, kit: &VisualKit, play: KitPlay, seq: u64) {
+        self.waits.push(BeamKitWait {
+            entity,
+            spell_id,
+            kit: *kit,
+            play,
+            seq,
+            deadline: self.now + BEAM_WAIT_SECS,
+            reached: false,
+        });
+    }
+
+    /// The reached plays, taken out; one past its deadline is dropped unplayed (`0x728140`).
+    fn take_reached(&mut self, now: f32) -> Vec<BeamKitWait> {
+        self.now = now;
+        let mut reached = Vec::new();
+        self.waits.retain(|w| {
+            if w.reached {
+                reached.push(*w);
+                return false;
+            }
+            now < w.deadline
+        });
+        reached
+    }
+}
+
+/// Whether the spell's first visual draws a beam, the wait's gate (`0x72af76`).
+fn draws_beam(spells: &crate::ui_action::Spells, visuals: &SpellVisualCatalog, spell: u32) -> bool {
+    spells
+        .catalog
+        .get(spell)
+        .and_then(|d| visuals.stages(d.visual))
+        .is_some_and(|s| visuals.has_chain_effect(s))
+}
+
+/// The kit lanes [`route_cast_visuals`] writes but does not own, and the beam waits with their
+/// clock, bundled into one param because the system is at Bevy's 16-`SystemParam` limit.
 type KitSpawnWriters<'w> = (
     MessageWriter<'w, MissileSpawn>,
     MessageWriter<'w, crate::entities::dest_fx::GroundBurst>,
@@ -457,6 +531,8 @@ type KitSpawnWriters<'w> = (
     MessageWriter<'w, BaseAnimRecompute>,
     MessageWriter<'w, DelayedAreaKit>,
     MessageWriter<'w, crate::aura_visual::BodyProcPlay>,
+    Option<ResMut<'w, BeamKitWaits>>,
+    Res<'w, Time>,
 );
 
 /// The writers one kit play fans out to.
@@ -478,6 +554,8 @@ struct KitOut<'a, 'w1, 'w2, 'w3, 'w4, 'w5, 'w6, 'w7, 'w8, 'w9, 'w10> {
     spells: &'a crate::ui_action::Spells,
     /// The flash and procedural fade cases of the dispatcher.
     body: &'a mut MessageWriter<'w10, crate::aura_visual::BodyProcPlay>,
+    /// Where a beam spell's flag-`0x1` kit waits; `None` plays it at once, as a released play does.
+    waits: Option<&'a mut BeamKitWaits>,
 }
 
 /// The dispatcher's flash and fade cases for one kit play, every filled slot in order (`0x7265c0`).
@@ -537,6 +615,15 @@ fn play_kit(
     visuals: &SpellVisualCatalog,
     out: &mut KitOut,
 ) {
+    // The whole play waits for the beam to reach this unit (`0x72af60`).
+    if kit.flags & benilla_formats::kit_flag::BEAM_WAIT != 0 {
+        if let Some(waits) = out.waits.as_deref_mut() {
+            if draws_beam(out.spells, visuals, spell_id) {
+                waits.hold(entity, spell_id, kit, play, seq);
+                return;
+            }
+        }
+    }
     if let Some(anim_id) = kit.anim_id {
         if play.stage_2 {
             // Stage 2 compares, never plays; the driver holds the armed id and compares.
@@ -971,7 +1058,7 @@ pub(super) fn route_cast_visuals(
         return; // no client data
     };
     // Disjoint borrows: the beam writer rides `out` while the missile and burst writers stay free.
-    let (missiles, bursts, chains, shakes, trails, recomputes, delayed, body) = (
+    let (missiles, bursts, chains, shakes, trails, recomputes, delayed, body, waits, time) = (
         &mut spawns.0,
         &mut spawns.1,
         &mut spawns.2,
@@ -980,7 +1067,14 @@ pub(super) fn route_cast_visuals(
         &mut spawns.5,
         &mut spawns.6,
         &mut spawns.7,
+        &mut spawns.8,
+        &spawns.9,
     );
+    // Nothing watches the waits for changes.
+    let reached = waits.as_mut().map_or_else(Vec::new, |w| {
+        w.bypass_change_detection()
+            .take_reached(time.elapsed_secs())
+    });
     let mut out = KitOut {
         oneshots: &mut oneshots,
         wounds: &mut wounds,
@@ -993,7 +1087,17 @@ pub(super) fn route_cast_visuals(
         sheaths: &mut sheaths,
         spells,
         body,
+        waits: None,
     };
+    // A reached play goes through the kit player again, past the wait (`0x7227f7`).
+    for w in reached {
+        if commands.get_entity(w.entity).is_ok() {
+            play_kit(
+                w.entity, w.spell_id, &w.kit, w.play, w.seq, &visuals.0, &mut out,
+            );
+        }
+    }
+    out.waits = waits.as_mut().map(|w| w.bypass_change_detection());
 
     // `holds` lags one command flush and an instant cast's START and GO drain together, so
     // `pending` overlays this frame's hold writes (else the cast pose sticks).
@@ -1550,6 +1654,7 @@ pub(crate) fn arm_aura_state_fx(
                 effects.len(),
                 nodes.len()
             );
+            // Not built: a beam spell's flag-0x1 state kit waiting for the beam (`0x72af60`).
             stow_for_weapon_effects(&mut sheaths, spells, entity, spell_id, &kit);
             play_body_procs(&mut body, entity, spell_id, &kit);
             if !effects.is_empty() {
@@ -2065,6 +2170,8 @@ pub(super) fn play_state_done_kits(
             sheaths: &mut sheaths,
             spells,
             body: &mut body,
+            // No beam row's state-done kit carries flag 0x1, so none waits.
+            waits: None,
         };
         play_kit(
             end.entity,
@@ -2122,6 +2229,8 @@ pub(super) fn replay_morph_kit(
             sheaths: &mut sheaths,
             spells,
             body: &mut body,
+            // No morph spell's beam row has a flag-0x1 impact kit, so none waits.
+            waits: None,
         };
         play_kit(
             swap.entity,

@@ -2716,3 +2716,155 @@ fn an_area_kit_at_a_point_plays_only_its_head_base_and_world_slots() {
     expected.sort_unstable();
     assert_eq!(got, expected);
 }
+
+/// `0x72af60`: a flag-0x1 impact kit of a beam spell waits for the beam to reach its unit, and is
+/// dropped unplayed when nothing reaches it within 10 s (`0x728196`); without a beam it plays.
+#[test]
+fn a_beam_spells_flag_1_impact_kit_waits_for_the_beam_or_drops_at_the_timeout() {
+    use benilla_formats::{char_proc_type, kit_flag, CharProc};
+
+    const BEAM_SPELL: u32 = 57411; // Storm Cloud's shape: an instant pulsing beam
+    const PLAIN_SPELL: u32 = 57412;
+    const BEAM_VISUAL: u32 = 9813;
+    const PLAIN_VISUAL: u32 = 9814;
+    const CAST_KIT: u32 = 900;
+    const IMPACT_KIT: u32 = 282;
+    const IMPACT_SOUND: u32 = 77;
+
+    let mut app = app();
+    app.init_resource::<super::BeamKitWaits>();
+    // One second a frame, past the virtual clock's 250 ms cap.
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_secs(1),
+    ));
+    app.world_mut()
+        .resource_mut::<Time<Virtual>>()
+        .set_max_delta(std::time::Duration::from_secs(2));
+    let impact_only = VisualStages {
+        impact: IMPACT_KIT,
+        ..Default::default()
+    };
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+        HashMap::from([
+            (
+                BEAM_VISUAL,
+                VisualStages {
+                    cast: CAST_KIT,
+                    ..impact_only
+                },
+            ),
+            (PLAIN_VISUAL, impact_only),
+        ]),
+        HashMap::from([
+            (
+                CAST_KIT,
+                VisualKit {
+                    char_proc_slots: [
+                        Some(CharProc {
+                            ty: char_proc_type::CHAIN_CAST,
+                            params: [282.0, 0.0, 0.0, 0.0],
+                        }),
+                        None,
+                        None,
+                        None,
+                    ],
+                    ..Default::default()
+                },
+            ),
+            (
+                IMPACT_KIT,
+                VisualKit {
+                    id: IMPACT_KIT,
+                    sound: Some(IMPACT_SOUND),
+                    flags: kit_flag::BEAM_WAIT,
+                    ..Default::default()
+                },
+            ),
+        ]),
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([
+            (
+                BEAM_SPELL,
+                SpellDisplay {
+                    visual: BEAM_VISUAL,
+                    ..Default::default()
+                },
+            ),
+            (
+                PLAIN_SPELL,
+                SpellDisplay {
+                    visual: PLAIN_VISUAL,
+                    ..Default::default()
+                },
+            ),
+        ])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    let caster = app.world_mut().spawn_empty().id();
+    let target = app.world_mut().spawn_empty().id();
+    let go = |app: &mut App, spell_id: u32| {
+        app.world_mut().write_message(SpellGoTargets {
+            caster,
+            spell_id,
+            hits: vec![target],
+            misses: Vec::new(),
+            dest: None,
+            ammo_display_id: None,
+            seq: 1,
+            trajectory: None,
+            reflected: 0,
+            reflects: Vec::new(),
+            caster_guid: 0,
+            server_time: 0,
+        });
+    };
+    let rings = |app: &mut App| -> usize {
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitSound>>()
+            .drain()
+            .filter(|s| {
+                matches!(s, SpellKitSound::Play { entity, kit_sound: IMPACT_SOUND } if *entity == target)
+            })
+            .count()
+    };
+    let reach = |app: &mut App, spell_id: u32| {
+        app.world_mut()
+            .resource_mut::<super::BeamKitWaits>()
+            .reach(target, spell_id);
+    };
+
+    // The connect.
+    go(&mut app, BEAM_SPELL);
+    app.update();
+    assert_eq!(rings(&mut app), 0, "held at the GO");
+    app.update();
+    assert_eq!(rings(&mut app), 0, "still waiting");
+    reach(&mut app, PLAIN_SPELL);
+    app.update();
+    assert_eq!(rings(&mut app), 0, "another spell's beam reaches nothing");
+    reach(&mut app, BEAM_SPELL);
+    app.update();
+    assert_eq!(rings(&mut app), 1, "played once the beam reaches the unit");
+    app.update();
+    assert_eq!(rings(&mut app), 0, "and only once");
+    assert!(app.world().resource::<super::BeamKitWaits>().is_empty());
+
+    // The timeout.
+    go(&mut app, BEAM_SPELL);
+    for _ in 0..11 {
+        app.update();
+    }
+    assert!(
+        app.world().resource::<super::BeamKitWaits>().is_empty(),
+        "dropped past 10 s"
+    );
+    reach(&mut app, BEAM_SPELL);
+    app.update();
+    assert_eq!(rings(&mut app), 0, "a late reach plays nothing");
+
+    // The same kit on a spell with no beam.
+    go(&mut app, PLAIN_SPELL);
+    app.update();
+    assert_eq!(rings(&mut app), 1, "no beam: played at the GO");
+}
