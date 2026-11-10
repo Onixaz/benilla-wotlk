@@ -692,3 +692,94 @@ fn an_undocked_combat_log_redocks_at_two_by_its_tab_and_undocks_again() {
         "the frame stopped following the cursor"
     );
 }
+
+/// Chat Settings' Defaults (`RESET_CHAT`) rebuilds a stripped window 1 and closes its popup (#736, #462).
+#[test]
+fn reset_chat_defaults_restores_the_stripped_windows_and_closes_the_popup() {
+    use benilla_ui::script::{ChatWindowLook, MESSAGE_GROUPS};
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = super::layer_tests::production_load_seeded(
+        "chatreset",
+        false,
+        "",
+        |_| {},
+        |s| {
+            let r = benilla_ui::script::ScreenResolution {
+                width: 1600,
+                height: 900,
+            };
+            s.set_screen_resolutions(vec![r], Some(r));
+            // The half-reset record: window 1 down to two groups, the combat log to none.
+            let mut general = ChatWindowLook::stock(0);
+            general.name = "General".into();
+            general.font_size = 14;
+            general.a = 63;
+            general.messages = vec!["SYSTEM_NOMENU".into(), "BN_WHISPER_INFORM".into()];
+            let mut log = ChatWindowLook::stock(1);
+            log.messages.clear();
+            s.set_chat_window_looks([(0, general), (1, log)]);
+        },
+    );
+    super::test_ui::seat_chain_addon(&mut s, "Blizzard_CombatLog");
+    super::fire_chat_login(&mut s);
+    s.fire_event("PLAYER_LOGIN", vec![]);
+    s.run("UIParent_ManageFramePositions()").unwrap();
+    s.resolve();
+    s.take_errors();
+    s.take_chat_window_changes();
+
+    s.run("StaticPopup_Show('RESET_CHAT')").unwrap();
+    frames(&mut s, 1);
+    let (x, y) = centre(&mut s, "StaticPopup1Button1");
+    s.mouse_move(x, y);
+    s.mouse_button(x, y, "LeftButton", true);
+    s.mouse_button(x, y, "LeftButton", false);
+    frames(&mut s, 2);
+    let errors = s.take_errors();
+    assert!(errors.is_empty(), "reset errors: {errors:#?}");
+    assert!(
+        s.eval::<bool>("return StaticPopup1:IsShown() == nil")
+            .unwrap(),
+        "Accept closes the popup"
+    );
+
+    // `0x502060`: window 1 takes the `defaultOn` groups of 0-39; `0x502095`: window 2 all of 40-45.
+    let general: Vec<String> = MESSAGE_GROUPS[..40]
+        .iter()
+        .filter(|(_, on, _)| *on)
+        .map(|(n, _, _)| (*n).to_string())
+        .collect();
+    let combat: Vec<String> = MESSAGE_GROUPS[40..]
+        .iter()
+        .map(|(n, _, _)| (*n).to_string())
+        .collect();
+    let looks = s.chat_window_looks();
+    assert_eq!(looks[0].messages, general, "window 1's groups");
+    assert_eq!(looks[1].messages, combat, "window 2's groups");
+    assert_eq!((looks[0].docked, looks[0].shown), (Some(1), true));
+    // Docked behind General, the stock combat log's OnHide hook clears window 2's shown flag.
+    assert_eq!(looks[1].docked, Some(2));
+    for (i, look) in looks.iter().enumerate().skip(2) {
+        assert!(
+            look.messages.is_empty() && !look.shown,
+            "window {} empty",
+            i + 1
+        );
+    }
+    let changed = s.take_chat_window_changes();
+    assert!(
+        changed.contains(&0) && changed.contains(&1),
+        "the saver sees the reset"
+    );
+    assert!(
+        s.eval::<bool>(
+            "return ChatFrame1.messageTypeList ~= nil and tContains(ChatFrame1.messageTypeList, 'SAY') ~= nil \
+               and tContains(ChatFrame1.messageTypeList, 'WHISPER') ~= nil"
+        )
+        .unwrap(),
+        "ChatFrame1 listens to say and whisper again"
+    );
+}
