@@ -611,6 +611,21 @@ pub(crate) struct ItemUse {
     pub(crate) is_charter: bool,
 }
 
+/// The item use's requirement check (`0x6dc3f0` at `0x708eb9`): a refused item shows the check's
+/// message and sends nothing (`0x708ec2`-`0x708ef6`).
+pub(crate) fn refuse_item_use(
+    script: &benilla_ui::script::UiScript,
+    entry: u32,
+    ui_errors: &mut crate::ui_action::UiErrorKeys,
+) -> bool {
+    let Some(key) = script.item_use_refusal(entry) else {
+        return false;
+    };
+    debug!("ui_items: item {entry} use refused — {key}");
+    ui_errors.0.push(crate::ui_action::UiError::key(key));
+    true
+}
+
 /// What using an item sends: the reference's item use, the one fork behind the bag click, the doll
 /// click and the action bar.
 ///
@@ -689,6 +704,11 @@ pub(crate) fn send_item_use(
     // Passed in, not carried on `CastLadder`, so no system reaches it twice.
     ui_errors: &mut crate::ui_action::UiErrorKeys,
 ) -> bool {
+    // A quest-starter offers its quest ahead of the requirement check; every other use is refused
+    // with nothing sent.
+    if it.start_quest == 0 && refuse_item_use(script, it.entry, ui_errors) {
+        return false;
+    }
     // The toggle predicate over the caster's live aura slots.
     let aura_cancels =
         |spell: u32| ladder.is_active_spell(spell, ctx.rel.self_store, ctx.self_auras);
@@ -1073,6 +1093,35 @@ mod tests {
         find_equip_slot, item_use_route, wire_pos, ItemUse, ItemUseRoute, KEYRING_CONTAINER,
     };
     use benilla_ui::script::EQUIPMENT_BAG;
+
+    /// An over-level item shows "You can't use that item." and is not used; a usable one passes.
+    #[test]
+    fn an_item_above_the_players_level_is_refused_locally() {
+        let mut script = benilla_ui::script::UiScript::new().unwrap();
+        script.set_player_req_state(benilla_ui::script::PlayerReqState {
+            level: 1,
+            class_id: 1,
+            race_id: 1,
+            ..Default::default()
+        });
+        let potion = |required_level| benilla_ui::script::ItemTemplateView {
+            allowable_class: -1,
+            allowable_race: -1,
+            required_level,
+            ..Default::default()
+        };
+        script.set_item_template(929, potion(22));
+        script.set_item_template(118, potion(1));
+        let mut errors = crate::ui_action::UiErrorKeys::default();
+        assert!(super::refuse_item_use(&script, 929, &mut errors));
+        assert_eq!(
+            errors.0,
+            vec![crate::ui_action::UiError::key("ERR_CANT_USE_ITEM")]
+        );
+        errors.0.clear();
+        assert!(!super::refuse_item_use(&script, 118, &mut errors));
+        assert!(errors.0.is_empty());
+    }
 
     /// The keyring's 32 slots are player slots 86-117; 81-85 are buyback.
     #[test]

@@ -511,6 +511,13 @@ impl ScriptItemUse<'_, '_> {
             );
             return;
         }
+        // The requirement check follows the quest-starter arm and precedes the readable, open and
+        // spell arms (`0x708eb9`).
+        if let Some(c) = clicked {
+            if super::refuse_item_use(script, c.entry, ui_errors) {
+                return;
+            }
+        }
         // A book, a template with `PageText`, opens the reader with no packet. It precedes the open
         // arm, the inverse of the tooltip: an item both readable and lootable shows
         // `<Right Click to Open>` and reads on click.

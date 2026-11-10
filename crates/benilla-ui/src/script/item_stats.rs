@@ -171,12 +171,18 @@ pub struct PlayerReqState {
 /// [`item_usable`] by item entry: entry 0 and a template not yet answered are usable, as the
 /// merchant getter skips an uncached record.
 pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
-    item_id == 0
-        || model.item_templates.get(&item_id).is_none_or(|v| {
-            item_usable(v, &model.player_req, |id| {
-                model.known_spells.known_or_higher(id)
-            })
-        })
+    item_use_refusal_by_id(model, item_id).is_none()
+}
+
+/// [`item_use_refusal`] by item entry: entry 0 and a template not yet answered are refused nothing.
+pub(super) fn item_use_refusal_by_id(model: &super::Model, item_id: u32) -> Option<&'static str> {
+    if item_id == 0 {
+        return None;
+    }
+    let v = model.item_templates.get(&item_id)?;
+    item_use_refusal(v, &model.player_req, |id| {
+        model.known_spells.known_or_higher(id)
+    })
 }
 
 /// A quest item row's `quality` and `isUsable` as the giver and log readers answer them (`0x58d190`,
@@ -196,51 +202,62 @@ pub(super) fn quest_item_quality_usable(
 }
 /// The client's item-usable predicate (`0x6dc3f0`), whose answer the merchant and quest item getters
 /// push as `isUsable`, its legs in the reference's order. Proficiency tests the item's own subclass
-/// bit, with no alternate walk, and only for a class below 17 with a nonzero mask. A nonzero city rank always fails: it tests `PLAYER_FIELD_PVP_MEDALS`, which is never
-/// written. Reputation compares ranks, equivalent to the reference's standing threshold; an unknown
-/// faction is rank 0. An unpushed state (level 0) declines to judge, answering usable.
+/// bit, with no alternate walk, and only for a class below 17 with a nonzero mask. A nonzero city
+/// rank always fails: it tests `PLAYER_FIELD_PVP_MEDALS`, which is never written. Reputation
+/// compares ranks, equivalent to the reference's standing threshold; an unknown faction is rank 0.
+/// An unpushed state (level 0) declines to judge, answering usable.
 pub fn item_usable(
     v: &ItemTemplateView,
     req: &PlayerReqState,
     knows_spell: impl Fn(u32) -> bool,
 ) -> bool {
+    item_use_refusal(v, req, knows_spell).is_none()
+}
+
+/// [`item_usable`]'s refusal as the message key `0x6dc3f0` writes: `ERR_PROFICIENCY_NEEDED` (8)
+/// for the proficiency leg, `ERR_CANT_USE_ITEM` (`0xa9`) for every other.
+pub fn item_use_refusal(
+    v: &ItemTemplateView,
+    req: &PlayerReqState,
+    knows_spell: impl Fn(u32) -> bool,
+) -> Option<&'static str> {
+    const CANT_USE: Option<&str> = Some("ERR_CANT_USE_ITEM");
     if req.level == 0 {
-        return true;
+        return None;
     }
     if v.required_level > req.level {
-        return false;
+        return CANT_USE;
     }
     if req.class_id == 0 || v.allowable_class as u32 & (1 << (req.class_id - 1)) == 0 {
-        return false;
+        return CANT_USE;
     }
     if req.race_id == 0 || v.allowable_race as u32 & (1 << (req.race_id - 1)) == 0 {
-        return false;
+        return CANT_USE;
     }
     if let Some(&mask) = req.proficiency.get(&v.class) {
         if v.class < 17 && mask != 0 && mask & (1 << v.subclass) == 0 {
-            return false;
+            return Some("ERR_PROFICIENCY_NEEDED");
         }
     }
     // Template flags `0x20040000` skip the skill leg (`0x6dc493`).
-    if v.required_skill != 0 && v.flags & 0x2004_0000 == 0 {
-        match req.skills.get(&v.required_skill) {
-            None => return false,
-            Some(&val) => {
-                if val < v.required_skill_rank {
-                    return false;
-                }
-            }
-        }
+    if v.required_skill != 0
+        && v.flags & 0x2004_0000 == 0
+        && req
+            .skills
+            .get(&v.required_skill)
+            .is_none_or(|&val| val < v.required_skill_rank)
+    {
+        return CANT_USE;
     }
     // `knows_spell` answers the spell and a higher rank of it (`0x6dc4c3`, `0x6dc4d2`).
     if v.required_spell != 0 && !knows_spell(v.required_spell) {
-        return false;
+        return CANT_USE;
     }
     if v.required_honor_rank != 0 && u32::from(req.honor_rank) < v.required_honor_rank {
-        return false;
+        return CANT_USE;
     }
     if v.required_city_rank != 0 {
-        return false;
+        return CANT_USE;
     }
     if v.required_rep_faction != 0 {
         let rank = req
@@ -249,10 +266,10 @@ pub fn item_usable(
             .copied()
             .unwrap_or(0);
         if u32::from(rank) < v.required_rep_rank {
-            return false;
+            return CANT_USE;
         }
     }
-    true
+    None
 }
 
 /// An item set's tooltip block, app-resolved from `ItemSet.dbc`: member names from the template
@@ -619,6 +636,53 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::{item_usable, ItemTemplateView, PlayerReqState};
     use crate::script::UiScript;
+
+    /// The proficiency leg writes message 8; every other leg writes `0xa9`.
+    #[test]
+    fn the_refusal_names_the_message_the_failing_leg_writes() {
+        let mut s = UiScript::new().unwrap();
+        s.set_player_req_state(PlayerReqState {
+            level: 10,
+            class_id: 1,
+            race_id: 1,
+            proficiency: std::collections::HashMap::from([(2, 1 << 0)]),
+            ..Default::default()
+        });
+        let any = ItemTemplateView {
+            allowable_class: -1,
+            allowable_race: -1,
+            ..Default::default()
+        };
+        s.set_item_template(1, any.clone());
+        s.set_item_template(
+            2,
+            ItemTemplateView {
+                required_level: 11,
+                ..any.clone()
+            },
+        );
+        s.set_item_template(
+            3,
+            ItemTemplateView {
+                class: 2,
+                subclass: 1,
+                ..any.clone()
+            },
+        );
+        s.set_item_template(
+            4,
+            ItemTemplateView {
+                allowable_class: 1 << 1,
+                ..any
+            },
+        );
+        assert_eq!(s.item_use_refusal(1), None);
+        assert_eq!(s.item_use_refusal(2), Some("ERR_CANT_USE_ITEM"));
+        assert_eq!(s.item_use_refusal(3), Some("ERR_PROFICIENCY_NEEDED"));
+        assert_eq!(s.item_use_refusal(4), Some("ERR_CANT_USE_ITEM"));
+        assert_eq!(s.item_use_refusal(99), None, "an unanswered template");
+        assert_eq!(s.item_use_refusal(0), None);
+    }
 
     #[test]
     fn a_known_higher_rank_of_the_required_spell_passes_the_gate() {
