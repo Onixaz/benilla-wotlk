@@ -1974,6 +1974,7 @@ mod tests {
             .init_resource::<crate::spell::AutoPosture>()
             .init_resource::<crate::spell::SecureAbilityToggle>()
             .init_resource::<crate::perf::FpsJournalSetting>()
+            .init_resource::<crate::fps_limit::FrameCaps>()
             .init_resource::<crate::text_filter::TextFilterSwitches>()
             .init_resource::<crate::game_tip::GameTipSetting>()
             .add_plugins(CvarPlugin);

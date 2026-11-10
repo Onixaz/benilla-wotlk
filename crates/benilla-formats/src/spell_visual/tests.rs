@@ -187,6 +187,57 @@ fn the_dest_attachment_reads_the_table_or_the_column_itself() {
     assert_eq!(raw.missile_dest_attachment(), Some(0x22), "the id itself");
 }
 
+/// A unit reads index 13 as its held weapon, falling back to table slot 4; the raw flag, the
+/// -1 and the missile's own aim do not.
+#[test]
+fn index_13_is_the_held_weapon_for_a_unit_effect() {
+    let weapon = VisualStages {
+        missile_attach: 13,
+        missile_source_attach: 13,
+        ..Default::default()
+    };
+    assert_eq!(
+        weapon.missile_source_attachment(),
+        Some(EffectAttach::HeldWeapon)
+    );
+    assert_eq!(
+        weapon.beam_impact_attachment(),
+        Some(EffectAttach::HeldWeapon)
+    );
+    assert_eq!(
+        EffectAttach::HeldWeapon.tag(),
+        0x16,
+        "slot 4, the right spell hand"
+    );
+    assert_eq!(
+        weapon.missile_dest_attachment(),
+        Some(0x16),
+        "the missile's aim reads the table"
+    );
+    let raw = VisualStages {
+        missile_source_attach: 13,
+        flags: FLAG_DEST_ATTACH_IS_ID,
+        ..Default::default()
+    };
+    assert_eq!(
+        raw.missile_source_attachment(),
+        Some(EffectAttach::Point(13))
+    );
+    let hand = VisualStages {
+        missile_source_attach: 4,
+        ..Default::default()
+    };
+    assert_eq!(
+        hand.missile_source_attachment(),
+        Some(EffectAttach::Point(0x16))
+    );
+    let none = VisualStages {
+        missile_source_attach: u32::MAX,
+        ..Default::default()
+    };
+    assert_eq!(none.missile_source_attachment(), None);
+}
+
 #[test]
 fn the_precast_missile_attachment_needs_the_flag_and_column_16() {
     let held = |flags, source| VisualStages {

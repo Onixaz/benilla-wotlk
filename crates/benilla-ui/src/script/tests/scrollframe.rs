@@ -69,6 +69,60 @@ fn get_scroll_child_roundtrips_wrapper_and_name_and_clears_on_nil() {
     .unwrap();
 }
 
+/// The re-anchor (`0x96b1c0`) drops every point of the child and sets one TOPLEFT at
+/// `(-horizontal, vertical)`; points set after it hold until the next scroll set, as AceGUI's
+/// scroll content relies on (TOPLEFT plus TOPRIGHT re-set after `SetScrollChild`).
+#[test]
+fn scroll_child_reanchor_is_a_real_anchor_later_points_keep() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        local sf = CreateFrame("ScrollFrame", "SF")
+        sf:SetPoint("TOPLEFT", 100, -100)
+        sf:SetWidth(300); sf:SetHeight(200)
+        local child = CreateFrame("Frame", "Child", sf)
+        child:SetPoint("TOPLEFT")
+        child:SetPoint("TOPRIGHT")
+        child:SetWidth(250); child:SetHeight(100)
+        sf:SetScrollChild(child)
+        assert(child:GetNumPoints() == 1)
+        local p, rel, rp, x, y = child:GetPoint(1)
+        assert(p == "TOPLEFT" and rel == sf and rp == "TOPLEFT" and x == 0 and y == 0)
+        child:ClearAllPoints()
+        child:SetPoint("TOPLEFT", 0, 20)
+        child:SetPoint("TOPRIGHT", 0, 20)
+        "#,
+    )
+    .unwrap();
+    s.resolve();
+    assert_eq!(
+        s.eval::<f32>("return Child:GetRight() - Child:GetLeft()")
+            .unwrap(),
+        300.0
+    );
+    assert_eq!(s.eval::<f32>("return Child:GetTop()").unwrap(), 520.0);
+    s.run("SF:SetVerticalScroll(40) SF:SetHorizontalScroll(10)")
+        .unwrap();
+    s.run(
+        r#"
+        assert(Child:GetNumPoints() == 1)
+        local p, rel, rp, x, y = Child:GetPoint(1)
+        assert(p == "TOPLEFT" and rel == SF and rp == "TOPLEFT" and x == -10 and y == 40)
+        "#,
+    )
+    .unwrap();
+    s.resolve();
+    assert_eq!(s.eval::<f32>("return Child:GetLeft()").unwrap(), 90.0);
+    assert_eq!(s.eval::<f32>("return Child:GetTop()").unwrap(), 540.0);
+    assert_eq!(
+        s.eval::<f32>("return Child:GetRight() - Child:GetLeft()")
+            .unwrap(),
+        250.0
+    );
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
 /// A positive offset lifts the child; offsets past the range or below zero are stored and applied
 /// as given, since the reference's `SetVerticalScroll` never reads the range.
 #[test]
@@ -140,14 +194,15 @@ fn scroll_child_top_tracks_vertical_scroll_unclamped_then_restores_on_clear() {
         "a negative offset lowers the child: frame top 500 - 30"
     );
 
-    // Clearing the child stops the override, and its own untouched anchor applies again.
+    // Clearing the child re-anchors nothing (`0x96b3a0`): it keeps the anchor the last re-anchor
+    // gave it, its authored one long dropped.
     s.run("SF:SetScrollChild(nil)").unwrap();
     s.resolve();
     let quads = s.extract();
     assert_eq!(
         marker_rect(&quads, "marker:child").map(|r| r.top),
-        Some(580.0),
-        "authored anchor survives: screen top 600 - 20"
+        Some(470.0),
+        "the scroll anchor stays: frame top 500 - 30"
     );
 }
 
@@ -614,9 +669,8 @@ fn the_pump_reads_the_range_of_the_childs_measured_text() {
     );
 }
 
-/// The horizontal axis clones the vertical; the reference passes both offsets to
-/// `SetPoint(TOPLEFT, self, TOPLEFT, +h, +v)` unnegated, so a positive horizontal offset pushes the
-/// child right.
+/// The horizontal axis clones the vertical, but the re-anchor (`0x96b1c0`) negates x alone:
+/// `SetPoint(TOPLEFT, self, TOPLEFT, -h, +v)`, so a positive horizontal offset pulls the child left.
 #[test]
 fn scroll_child_left_tracks_horizontal_scroll_unclamped_and_fires_on_change() {
     let mut s = script();
@@ -658,15 +712,15 @@ fn scroll_child_left_tracks_horizontal_scroll_unclamped_and_fires_on_change() {
     s.resolve();
     assert_eq!(
         marker_rect(&s.extract(), "marker:hchild").map(|r| r.left),
-        Some(40.0),
-        "a positive horizontal offset moves the child right"
+        Some(-40.0),
+        "a positive horizontal offset moves the child left"
     );
     s.run("HSF:SetHorizontalScroll(-60)").unwrap();
     s.resolve();
     assert_eq!(
         marker_rect(&s.extract(), "marker:hchild").map(|r| r.left),
-        Some(-60.0),
-        "a negative horizontal offset scrolls right"
+        Some(60.0),
+        "a negative horizontal offset moves the child right"
     );
 
     // Neither the horizontal nor the vertical scroll set reads the range, so 450 is stored whole.

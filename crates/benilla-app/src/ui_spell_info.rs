@@ -347,6 +347,50 @@ impl Plugin for UiSpellInfoPlugin {
 #[derive(Default)]
 struct Installed(Option<Arc<Mutex<Snapshot>>>);
 
+fn install_source(
+    script: &mut UiScript,
+    spells: Spells,
+    skill_lines: Option<Arc<SkillLineCatalog>>,
+    talents: Option<Arc<benilla_formats::TalentCatalog>>,
+    snapshot: Snapshot,
+) -> Arc<Mutex<Snapshot>> {
+    let snapshot = Arc::new(Mutex::new(snapshot));
+    script.set_spell_info_source(Rc::new(Source {
+        spells,
+        skill_lines,
+        talents,
+        snapshot: snapshot.clone(),
+    }));
+    snapshot
+}
+
+/// 12340's GetSpellInfo(id) reads the spell DBC during the UI load, before any player feed.
+pub(crate) fn seed_spell_info_for_vm(world: &World, script: &mut UiScript) {
+    let Some(spells) = world.get_resource::<Spells>() else {
+        return;
+    };
+    install_source(
+        script,
+        spells.clone(),
+        world
+            .get_resource::<crate::ui_spellbook::SkillLines>()
+            .map(|s| s.catalog.clone()),
+        world
+            .get_resource::<crate::ui_talent::Talents>()
+            .map(|t| t.catalog.clone()),
+        Snapshot {
+            mods: world
+                .get_resource::<crate::spell::SpellModifiers>()
+                .cloned(),
+            icons: world
+                .get_resource::<WeaponActionIcons>()
+                .cloned()
+                .unwrap_or_default(),
+            ..Default::default()
+        },
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn feed_spell_info(
     script: Option<NonSendMut<UiScript>>,
@@ -375,14 +419,13 @@ fn feed_spell_info(
         || skill_lines.as_ref().is_some_and(|s| s.is_changed())
         || talents.as_ref().is_some_and(|t| t.is_changed());
     if reinstall {
-        let snapshot = Arc::new(Mutex::new(Snapshot::default()));
-        script.set_spell_info_source(Rc::new(Source {
-            spells: spells.clone(),
-            skill_lines: skill_lines.as_ref().map(|s| s.catalog.clone()),
-            talents: talents.as_ref().map(|t| t.catalog.clone()),
-            snapshot: snapshot.clone(),
-        }));
-        installed.0 = Some(snapshot);
+        installed.0 = Some(install_source(
+            &mut script,
+            spells.clone(),
+            skill_lines.as_ref().map(|s| s.catalog.clone()),
+            talents.as_ref().map(|t| t.catalog.clone()),
+            Snapshot::default(),
+        ));
     }
     let Some(snapshot) = installed.0.as_ref() else {
         return;

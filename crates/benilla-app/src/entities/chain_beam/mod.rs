@@ -2,7 +2,7 @@
 
 pub(crate) mod lightning;
 
-use benilla_formats::{ChainEffect, VisualStages, MAX_COMBO_ROWS};
+use benilla_formats::{ChainEffect, EffectAttach, VisualStages, MAX_COMBO_ROWS};
 use benilla_protocol::EntityKind;
 use benilla_world::sky_order::Rung;
 use benilla_world::view::WorldCamera;
@@ -34,11 +34,11 @@ pub(crate) struct ChainHops(pub(crate) Vec<Entity>);
 #[derive(Clone, Copy, Default)]
 struct Ends {
     /// Column 16, the caster end's attachment.
-    source_attach: Option<u16>,
+    source_attach: Option<EffectAttach>,
     /// Columns 26-28, the caster end's offset.
     cast_offset: Vec3,
     /// Column 10, every hop end's attachment.
-    dest_attach: Option<u16>,
+    dest_attach: Option<EffectAttach>,
     /// Columns 29-31, every hop end's offset.
     impact_offset: Vec3,
     /// The spell has a row; without one a hop end takes attachment 34 (`0x7fac79`).
@@ -56,7 +56,7 @@ impl Ends {
         Self {
             source_attach: s.missile_source_attachment(),
             cast_offset: benilla_assets::coords::wow_to_bevy(s.cast_offset()),
-            dest_attach: s.missile_dest_attachment(),
+            dest_attach: s.beam_impact_attachment(),
             impact_offset: benilla_assets::coords::wow_to_bevy(s.impact_offset()),
             known_spell,
         }
@@ -314,6 +314,7 @@ pub(crate) struct EndPoints<'w, 's> {
     joints: Query<'w, 's, &'static GlobalTransform>,
     heights: Query<'w, 's, &'static OverheadFallback>,
     kinds: Query<'w, 's, &'static NetEntity>,
+    weapons: super::equipment::HeldWeapons<'w, 's>,
 }
 
 impl EndPoints<'_, '_> {
@@ -356,7 +357,7 @@ impl EndPoints<'_, '_> {
         let bones = bones?;
         let attach = ends
             .source_attach
-            .and_then(|t| bones.points.get(&t).copied());
+            .and_then(|t| self.weapons.effect_point(e, bones, t));
         if let Some(p) = self.posed(e, attach, ends.cast_offset) {
             return Some(p);
         }
@@ -375,7 +376,8 @@ impl EndPoints<'_, '_> {
             let attach = bones.and_then(|b| b.points.get(&NO_SPELL_ATTACH).copied());
             return Some(self.posed(e, attach, Vec3::ZERO).unwrap_or(base + lift));
         }
-        let attach = bones.and_then(|b| ends.dest_attach.and_then(|t| b.points.get(&t).copied()));
+        let attach = bones.zip(ends.dest_attach);
+        let attach = attach.and_then(|(b, t)| self.weapons.effect_point(e, b, t));
         if let Some(p) = self.posed(e, attach, ends.impact_offset) {
             return Some(p);
         }

@@ -51,10 +51,9 @@
 //! bursts, glances off at half speed or flies back at the caster.
 //!
 //! Not built: `$BWR` launches from its event marker, where the reference first tries the ranged
-//! weapon's HandArrow/Bullet attachment (`0x23`/`0x24`); column 16's index 13 leaves from the
-//! hand, not the held weapon's own attachments (`0x71a860`); homing aims at the attachment
-//! point, not the ray-sphere intercept, the same body point in practice; and a ground aim on a
-//! moving transport stays where it was, as the GO's dest is read in world space.
+//! weapon's HandArrow/Bullet attachment (`0x23`/`0x24`); homing aims at the attachment point, not
+//! the ray-sphere intercept, the same body point in practice; and a ground aim on a moving
+//! transport stays where it was, as the GO's dest is read in world space.
 
 use bevy::animation::transition::AnimationTransitions;
 use bevy::ecs::entity::EntityHashMap;
@@ -66,7 +65,7 @@ use crate::creature_anim::{
 };
 use benilla_assets::m2_url;
 
-use super::equipment::ItemDisplays;
+use super::equipment::{HeldWeapons, ItemDisplays};
 
 mod disposition;
 mod motion;
@@ -351,17 +350,19 @@ fn source_world_pos(
     source: MissileSource,
     units: &AttachPosQuery,
     joints: &Query<&GlobalTransform>,
+    weapons: &HeldWeapons,
 ) -> Option<Vec3> {
     let (base, bones, pose) = units.get(caster).ok()?;
     let (bones, pose) = bones.zip(pose)?;
     let root = joints.get(pose.joints_root).ok()?;
-    let at = |tag: u16| {
-        let (bone, at) = bones.points.get(&tag).copied()?;
-        pose.posed_point(root, bone, at + source.offset)
-    };
+    let at = |(bone, at): (u16, Vec3)| pose.posed_point(root, bone, at + source.offset);
     match source.tag {
-        Some(tag) => at(tag),
-        None => at(shape::SPELL_HAND_DIRECTED)
+        Some(tag) => at(weapons.effect_point(caster, bones, tag)?),
+        None => bones
+            .points
+            .get(&shape::SPELL_HAND_DIRECTED)
+            .copied()
+            .and_then(at)
             .or_else(|| Some(base.translation() + base.affine().transform_vector3(source.offset))),
     }
 }
@@ -372,11 +373,12 @@ fn fire_pos(
     release: Option<Vec3>,
     units: &AttachPosQuery,
     joints: &Query<&GlobalTransform>,
+    weapons: &HeldWeapons,
 ) -> Option<Vec3> {
     go.spawn
         .shape
         .source
-        .and_then(|s| source_world_pos(go.spawn.caster, s, units, joints))
+        .and_then(|s| source_world_pos(go.spawn.caster, s, units, joints, weapons))
         .or(release)
 }
 
@@ -1198,6 +1200,7 @@ pub(super) fn spawn_missiles(
     asset_server: Res<AssetServer>,
     units: AttachPosQuery,
     joints: Query<&GlobalTransform>,
+    weapons: HeldWeapons,
     casters: Query<(
         &AnimDriver,
         &AnimationPlayer,
@@ -1242,7 +1245,7 @@ pub(super) fn spawn_missiles(
             pending.0.entry(spawn.caster).or_default().push(go);
         } else if let Some(launch) = precast
             .release(spawn.caster, &mut commands, &joints)
-            .or_else(|| fire_pos(&go, release, &units, &joints))
+            .or_else(|| fire_pos(&go, release, &units, &joints, &weapons))
         {
             launch_go(
                 &go,
@@ -1270,7 +1273,7 @@ pub(super) fn spawn_missiles(
         for go in &gos {
             let Some(launch) = held
                 .take()
-                .or_else(|| fire_pos(go, release, &units, &joints))
+                .or_else(|| fire_pos(go, release, &units, &joints, &weapons))
             else {
                 continue;
             };
@@ -1326,7 +1329,7 @@ pub(super) fn spawn_missiles(
         for go in &gos {
             let Some(launch) = held
                 .take()
-                .or_else(|| fire_pos(go, release, &units, &joints))
+                .or_else(|| fire_pos(go, release, &units, &joints, &weapons))
             else {
                 continue;
             };
@@ -2532,7 +2535,7 @@ mod tests {
         ] {
             let mut spawn = go(caster, target, false);
             spawn.shape.source = Some(MissileSource {
-                tag: Some(tag),
+                tag: Some(benilla_formats::EffectAttach::Point(tag)),
                 offset: Vec3::new(0.0, 0.5, 0.0),
             });
             app.world_mut().write_message(spawn);

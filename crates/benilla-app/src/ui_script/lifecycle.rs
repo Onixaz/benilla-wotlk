@@ -121,6 +121,7 @@ fn new_vm<E: std::fmt::Display>(
         }
     };
     seed_vm_clock(world, &mut script);
+    script.set_live_clock(true);
     seed_class_names(world, &mut script);
     install_addon_asset_resolvers(world, &mut script);
     info!("ui_script: new VM, session {}", script.session());
@@ -265,7 +266,14 @@ pub(crate) fn arm_entry_ui_load(world: &mut World) {
 /// and `ChatFrame.lua` the emote tokens.
 fn mint_entry_vm(world: &mut World) {
     crate::cvars::fold_dying_vm_cvars(world);
-    if let Some(script) = new_vm(world, UiScript::new) {
+    if let Some(mut script) = new_vm(world, UiScript::new) {
+        crate::ui_spell_info::seed_spell_info_for_vm(world, &mut script);
+        crate::ui_auction::seed_auction_categories_for_vm(world, &mut script);
+        // GetPlayerFacing answers at file scope: what the camera follows at entry is our body.
+        if let Some(player) = world.get_resource::<crate::player::Player>() {
+            let facing = player.facing().rem_euclid(std::f32::consts::TAU);
+            script.set_camera_target_facing(Some(facing));
+        }
         world.insert_non_send_resource(script);
     }
 }
@@ -1172,6 +1180,134 @@ mod tests {
             "the entry VM is a new session — every VmMemo resets here, so a one-shot spent \
              against the frameless glue VM is spent again against the one that has an interface"
         );
+    }
+
+    #[test]
+    fn auction_categories_are_available_to_addon_files_before_update() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).unwrap();
+        let mut world = World::new();
+        world.insert_resource(crate::ui_items::ItemClasses(
+            benilla_formats::load_item_classes(&mut chain).unwrap(),
+        ));
+        world.insert_resource(crate::ui_items::ItemSubClasses(
+            benilla_formats::load_item_sub_classes(&mut chain).unwrap(),
+        ));
+        let _files = super::super::reference_ui::fixture::lay(&[
+            (super::super::reference_ui::TOC, Some(b"BagProbe.lua\n")),
+            (
+                r"Interface\FrameXML\BagProbe.lua",
+                Some(br#"
+                    assert(select('#', GetAuctionItemClasses()) == 12)
+                    local search = string.format('t:%s|%s', select(12, GetAuctionItemClasses()), 'quest')
+                    assert(type(search) == 'string')
+                    BagProbeLoaded = true
+                "#),
+            ),
+        ]);
+        for _ in 0..2 {
+            mint_entry_vm(&mut world);
+            let s = world.non_send_resource::<UiScript>();
+            let failures = super::super::manifest::load_core(s);
+            assert!(
+                s.eval::<bool>("return BagProbeLoaded == true").unwrap(),
+                "{failures:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn player_facing_is_seeded_before_files_on_entry_and_reload() {
+        let _files = super::super::reference_ui::fixture::lay(&[
+            (super::super::reference_ui::TOC, Some(b"FacingProbe.lua\n")),
+            (
+                r"Interface\FrameXML\FacingProbe.lua",
+                Some(b"FacingAtLoad = GetPlayerFacing(); RotationAtLoad = -GetPlayerFacing()"),
+            ),
+        ]);
+        let mut world = World::new();
+        world.init_resource::<crate::player::Player>();
+        for facing in [1.25, -0.5] {
+            let mut player = world.resource_mut::<crate::player::Player>();
+            let old = player.facing();
+            player.turn_aim(facing - old);
+            mint_entry_vm(&mut world);
+            let mut script = world.remove_non_send_resource::<UiScript>().unwrap();
+            let failures = super::super::manifest::load_core(&script);
+            let heading = facing.rem_euclid(std::f32::consts::TAU);
+            assert_eq!(
+                script.eval::<f32>("return FacingAtLoad").unwrap(),
+                heading,
+                "{failures:?}"
+            );
+            assert_eq!(
+                script.eval::<f32>("return RotationAtLoad").unwrap(),
+                -heading
+            );
+            // A new VM must read the player, not the dying VM's last snapshot.
+            script.set_camera_target_facing(Some(5.0));
+            world.insert_non_send_resource(script);
+        }
+    }
+
+    #[test]
+    fn spell_info_is_available_to_files_on_each_new_entry_vm_before_update() {
+        use benilla_formats::{SpellCatalog, SpellDisplay};
+
+        let _files = super::super::reference_ui::fixture::lay(&[
+            (
+                super::super::reference_ui::TOC,
+                Some(b"SpellInfoProbe.lua\n"),
+            ),
+            (
+                r"Interface\FrameXML\SpellInfoProbe.lua",
+                Some(
+                    br#"
+                    local effects = {}
+                    for _, id in ipairs({51306, 32606, 2366}) do
+                        local name = GetSpellInfo(id)
+                        assert(name == "Spell " .. id)
+                        effects[GetSpellInfo(id)] = {token = "eng", noclog = true}
+                    end
+                    assert(effects["Spell 51306"].noclog)
+                    assert(select('#', GetSpellInfo(999999)) == 0)
+                    SpellInfoProbeLoaded = true
+                    "#,
+                ),
+            ),
+        ]);
+        let mut world = World::new();
+        let mut spells = crate::ui_action::Spells::empty_for_tests();
+        spells.catalog = SpellCatalog::from_displays(
+            [51306, 32606, 2366]
+                .into_iter()
+                .map(|id| {
+                    (
+                        id,
+                        SpellDisplay {
+                            id,
+                            name: format!("Spell {id}"),
+                            ..Default::default()
+                        },
+                    )
+                })
+                .collect(),
+        );
+        world.insert_resource(spells);
+        let mut previous = None;
+        for _ in 0..2 {
+            mint_entry_vm(&mut world);
+            let script = world.non_send_resource::<UiScript>();
+            assert_ne!(previous, Some(script.session()));
+            previous = Some(script.session());
+            let failures = super::super::manifest::load_core(script);
+            assert!(
+                script
+                    .eval::<bool>("return SpellInfoProbeLoaded == true")
+                    .unwrap(),
+                "{failures:?}"
+            );
+        }
     }
 
     /// A one-shot fired at the frameless glue VM reaches nobody (the reference's drops an event
