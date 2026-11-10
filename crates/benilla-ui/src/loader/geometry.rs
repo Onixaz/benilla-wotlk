@@ -8,6 +8,12 @@ impl Loader<'_> {
     /// A frame element's XML attributes and simple children, as the frame's XML load reads them,
     /// and a model pane's own.
     pub(super) fn apply_attrs(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
+        // SecureFrameTemplate marks its frame explicitly protected before OnLoad (12340).
+        if el.attr_bool("protected") {
+            if let Ok(h) = crate::script::object::frame_handle_of(self.lua(), wrapper) {
+                self.model().protected_frames.insert(h);
+            }
+        }
         if el.attr_bool("hidden") {
             self.call(wrapper, "Hide", (), dbg);
         }
