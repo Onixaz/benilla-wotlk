@@ -63,6 +63,29 @@ pub const MISSILE_ATTACH_TABLE: [u16; 16] = [
 /// [`MISSILE_ATTACH_TABLE`] (`0x733384`).
 const FLAG_DEST_ATTACH_IS_ID: u32 = 0x200;
 
+/// The table index a unit reads as its held weapon (`0x71a823`).
+const HELD_WEAPON_INDEX: u32 = 13;
+
+/// An effect attachment in columns 10 and 16's encoding as a unit resolves it (`0x71a860`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectAttach {
+    /// An M2 attachment id on the unit's own model.
+    Point(u16),
+    /// Index 13: the right-hand model's attachments 4 down to 0, else [`Self::tag`] on the unit.
+    HeldWeapon,
+}
+
+impl EffectAttach {
+    /// The unit attachment tested for the effect and taken without a weapon point: index 13
+    /// reads table slot 4 (`0x71a828`).
+    pub fn tag(self) -> u16 {
+        match self {
+            Self::Point(tag) => tag,
+            Self::HeldWeapon => MISSILE_ATTACH_TABLE[4],
+        }
+    }
+}
+
 /// The data writes "no value" in an id column as 0 or as this, inconsistently; both read `None`.
 const NONE_SENTINEL: u32 = u32::MAX;
 
@@ -202,7 +225,7 @@ pub struct VisualStages {
     /// Speed > 0, whatever this holds.
     pub missile_model: u32,
     /// Column 10: an index into [`MISSILE_ATTACH_TABLE`], or an attachment id; read it through
-    /// [`Self::missile_dest_attachment`].
+    /// [`Self::missile_dest_attachment`] or [`Self::beam_impact_attachment`].
     pub missile_attach: u32,
     /// Column 11: the `SoundEntries.dbc` loop the missile plays in flight, its volume shaped by
     /// distance, stopped when it arrives.
@@ -293,12 +316,17 @@ impl VisualStages {
         self.effect_attachment(self.missile_attach)
     }
 
-    /// The M2 attachment the missile and the beam leave from, column 16 in column 10's encoding
+    /// The attachment the missile and the beam leave from, column 16 in the unit effect encoding
     /// (`0x71a7f0`); `None` for the row's -1.
-    pub fn missile_source_attachment(&self) -> Option<u16> {
+    pub fn missile_source_attachment(&self) -> Option<EffectAttach> {
         (self.missile_source_attach != NONE_SENTINEL)
-            .then(|| self.effect_attachment(self.missile_source_attach))
+            .then(|| self.unit_effect_attachment(self.missile_source_attach))
             .flatten()
+    }
+
+    /// The attachment a beam's hop end sits at, column 10 in the unit effect encoding (`0x7fad5c`).
+    pub fn beam_impact_attachment(&self) -> Option<EffectAttach> {
+        self.unit_effect_attachment(self.missile_attach)
     }
 
     /// The missile cast offset with y negated, as the reference applies it (`0x7fc5f0`).
@@ -319,6 +347,14 @@ impl VisualStages {
         } else {
             MISSILE_ATTACH_TABLE.get(column as usize).copied()
         }
+    }
+
+    /// A column as a unit resolves it (`0x71a860`): the raw id, index 13's held weapon, the table.
+    fn unit_effect_attachment(&self, column: u32) -> Option<EffectAttach> {
+        if self.flags & FLAG_DEST_ATTACH_IS_ID == 0 && column == HELD_WEAPON_INDEX {
+            return Some(EffectAttach::HeldWeapon);
+        }
+        self.effect_attachment(column).map(EffectAttach::Point)
     }
 }
 

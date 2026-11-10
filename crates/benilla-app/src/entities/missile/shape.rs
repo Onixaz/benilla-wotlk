@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 
 use benilla_assets::coords::wow_to_bevy;
-use benilla_formats::VisualStages;
+use benilla_formats::{EffectAttach, VisualStages};
 
 /// The attachment a cast offset with no column 16 leaves from, SpellHandDirected (`0x720c86`).
 pub(super) const SPELL_HAND_DIRECTED: u16 = 38;
@@ -26,7 +26,7 @@ const STILL: f32 = 2.384_185_8e-7;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct MissileSource {
     /// Column 16's attachment; `None` leaves from SpellHandDirected, else the model's origin.
-    pub(crate) tag: Option<u16>,
+    pub(crate) tag: Option<EffectAttach>,
     /// Columns 26-28 in Bevy model space.
     pub(crate) offset: Vec3,
 }
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(
             MissileShape::of(Some(&hand), None, None).source,
             Some(MissileSource {
-                tag: Some(0x16),
+                tag: Some(EffectAttach::Point(0x16)),
                 offset: Vec3::ZERO
             })
         );

@@ -243,6 +243,66 @@ impl HeldAttached {
     }
 }
 
+impl HeldAttached {
+    /// The spawned item model on the right hand, attachment 1, as the effect walk finds it
+    /// (`0x71a8a3`).
+    fn right_hand(&self) -> Option<(u32, ItemModelKind)> {
+        self.applied
+            .slots
+            .iter()
+            .zip(&self.spawned)
+            .find_map(|(slot, root)| {
+                slot.filter(|s| s.attach == attach_id::HAND_RIGHT && root.is_some())
+            })
+            .map(|s| (s.display, s.kind))
+    }
+}
+
+/// Index 13's point (`0x71a8d0`): the right-hand model's first attachment of 4 down to 0, as the
+/// body's bone and an offset in its frame; `None` with no model there or none of those.
+fn held_weapon_point(
+    bones: &BoneAttach,
+    held: &HeldAttached,
+    items: &ItemDisplays,
+) -> Option<(u16, Vec3)> {
+    let item = items.models.get(&held.right_hand()?)?;
+    let &(bone, seat) = bones.points.get(&attach_id::HAND_RIGHT)?;
+    // The item root hangs unrotated at the hand's seat, so its bind-pose points add to it.
+    let at = (0..=4u16)
+        .rev()
+        .find_map(|id| crate::portrait::attachment_point(&item.skeleton, &item.attachments, id))?;
+    Some((bone, seat + at))
+}
+
+/// What a unit effect attachment reads beyond the body: the held models and the item cache.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct HeldWeapons<'w, 's> {
+    held: Query<'w, 's, &'static HeldAttached>,
+    items: Option<Res<'w, ItemDisplays>>,
+}
+
+impl HeldWeapons<'_, '_> {
+    /// A unit effect attachment's bone and offset (`0x71a860`): index 13 the held weapon's point,
+    /// else the body's tag; `None` when the body lacks that tag, the test before it (`0x71a7f0`).
+    pub(crate) fn effect_point(
+        &self,
+        unit: Entity,
+        bones: &BoneAttach,
+        attach: benilla_formats::EffectAttach,
+    ) -> Option<(u16, Vec3)> {
+        let tagged = bones.points.get(&attach.tag()).copied()?;
+        if attach != benilla_formats::EffectAttach::HeldWeapon {
+            return Some(tagged);
+        }
+        let weapon = self.held.get(unit).ok().zip(self.items.as_deref());
+        Some(
+            weapon
+                .and_then(|(held, items)| held_weapon_point(bones, held, items))
+                .unwrap_or(tagged),
+        )
+    }
+}
+
 /// The attach slots' names, in [`HeldAttached::spawned_slots`] order.
 pub(crate) const ATTACH_SLOT_NAMES: [&str; ATTACH_SLOTS] = [
     "main", "off", "ranged", "helm", "shL", "shR", "ammo", "quiver",
@@ -389,6 +449,140 @@ mod item_display_tests {
         assert!(
             !seen[1] && !seen[2],
             "a present model marks nothing after the insert frame: {seen:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod held_weapon_tests {
+    use std::collections::HashMap;
+
+    use benilla_formats::EffectAttach;
+    use bevy::ecs::system::SystemState;
+    use bevy::prelude::*;
+
+    use super::super::display::empty_display;
+    use super::{
+        attach_id, BoneAttach, HeldAttached, HeldItems, HeldSlot, HeldWeapons, ItemDisplays,
+        ItemModelKind, ATTACH_SLOTS, NO_GLOW,
+    };
+
+    const SWORD: u32 = 7;
+    const HAND: (u16, Vec3) = (5, Vec3::new(0.1, 0.0, 0.0));
+    const SPELL_HAND: (u16, Vec3) = (6, Vec3::new(0.0, 0.2, 0.0));
+
+    /// A weapon model whose one bone sits 1 yd up, with attachments at `ids`, each `id` yd along x.
+    fn sword(ids: &[u16]) -> ItemDisplays {
+        let mut displays = ItemDisplays::icons_for_tests(
+            benilla_formats::ItemDisplayCatalog::from_displays(HashMap::new()),
+        );
+        let mut dm = empty_display();
+        dm.skeleton = benilla_assets::ModelSkeleton {
+            joints: vec![benilla_assets::ModelJoint {
+                parent: -1,
+                local_translation: Vec3::Y,
+                billboard: None,
+                parent_arm: None,
+            }],
+            spine_bone: None,
+            head_bone: None,
+        };
+        dm.attachments = ids
+            .iter()
+            .map(|&id| benilla_assets::ModelAttachment {
+                id,
+                bone: 0,
+                offset: Vec3::X * f32::from(id),
+            })
+            .collect();
+        displays.models.insert((SWORD, ItemModelKind::Weapon), dm);
+        displays
+    }
+
+    /// The sword drawn in the right hand, or hung at `attach`; `None` for an empty hand.
+    fn held(attach: Option<u16>) -> HeldAttached {
+        let mut applied = HeldItems::default();
+        let mut spawned = [None; ATTACH_SLOTS];
+        if let Some(attach) = attach {
+            applied.slots[0] = Some(HeldSlot {
+                display: SWORD,
+                kind: ItemModelKind::Weapon,
+                attach,
+                visual: NO_GLOW,
+            });
+            spawned[0] = Some(Entity::PLACEHOLDER);
+        }
+        HeldAttached { applied, spawned }
+    }
+
+    fn point(
+        displays: ItemDisplays,
+        held: HeldAttached,
+        attach: EffectAttach,
+        body: &BoneAttach,
+    ) -> Option<(u16, Vec3)> {
+        let mut world = World::new();
+        world.insert_resource(displays);
+        let unit = world.spawn(held).id();
+        let mut state = SystemState::<HeldWeapons>::new(&mut world);
+        state.get(&world).effect_point(unit, body, attach)
+    }
+
+    fn body() -> BoneAttach {
+        BoneAttach {
+            points: HashMap::from([(attach_id::HAND_RIGHT, HAND), (0x16, SPELL_HAND)]),
+            markers: HashMap::new(),
+        }
+    }
+
+    /// Index 13 takes the right-hand model's highest attachment of 4 down to 0 at the hand's seat
+    /// (`0x71a8d0`); a model without any, a sheathed weapon and an empty hand fall back to the
+    /// right spell hand, and a body without that point to nothing (`0x71a7f0`).
+    #[test]
+    fn index_13_walks_the_held_weapons_attachments_down_to_the_spell_hand() {
+        let drawn = Some(attach_id::HAND_RIGHT);
+        assert_eq!(
+            point(
+                sword(&[1, 3, 6]),
+                held(drawn),
+                EffectAttach::HeldWeapon,
+                &body()
+            ),
+            Some((HAND.0, HAND.1 + Vec3::new(3.0, 1.0, 0.0))),
+            "attachment 3: 6 is past the walk"
+        );
+        assert_eq!(
+            point(sword(&[0]), held(drawn), EffectAttach::HeldWeapon, &body()),
+            Some((HAND.0, HAND.1 + Vec3::Y)),
+            "attachment 0 is the walk's last"
+        );
+        for (case, displays, held) in [
+            ("no weapon attachment", sword(&[5, 11]), held(drawn)),
+            ("sheathed", sword(&[3]), held(Some(attach_id::HIP_MAIN))),
+            ("empty hand", sword(&[3]), held(None)),
+        ] {
+            assert_eq!(
+                point(displays, held, EffectAttach::HeldWeapon, &body()),
+                Some(SPELL_HAND),
+                "{case}"
+            );
+        }
+        let mut handless = body();
+        handless.points.remove(&0x16);
+        assert_eq!(
+            point(
+                sword(&[3]),
+                held(drawn),
+                EffectAttach::HeldWeapon,
+                &handless
+            ),
+            None,
+            "the test reads the spell hand first"
+        );
+        assert_eq!(
+            point(sword(&[3]), held(drawn), EffectAttach::Point(0x16), &body()),
+            Some(SPELL_HAND),
+            "any other index is the body's own point"
         );
     }
 }
