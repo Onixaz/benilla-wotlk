@@ -7,6 +7,7 @@
 
 use mlua::{Lua, Table};
 
+use crate::script::item_verbs::FLAG_UNIQUE_EQUIPPED;
 use crate::script::tooltip::{append_line, duration_text, plural_template};
 use crate::script::ItemTemplateView;
 use crate::strings::{fill, Arg};
@@ -145,6 +146,32 @@ pub(super) fn render_view(
     super::fire_set_item(lua, this)
 }
 
+/// The one uniqueness line (`0x627fb4`): none for class 10, else the unique-equipped flag, a signed
+/// positive `MaxCount`, or the limit category, whose flag bit 0 picks the `_MULTIPLE` key.
+fn uniqueness_line(v: &ItemTemplateView) -> Option<(&'static str, Vec<Arg<'_>>)> {
+    if v.class == 10 {
+        return None;
+    }
+    if v.flags & FLAG_UNIQUE_EQUIPPED != 0 {
+        return Some(("ITEM_UNIQUE_EQUIPPABLE", Vec::new()));
+    }
+    match v.max_count as i32 {
+        1 => return Some(("ITEM_UNIQUE", Vec::new())),
+        n if n > 1 => return Some(("ITEM_UNIQUE_MULTIPLE", vec![Arg::D(n.into())])),
+        _ => {}
+    }
+    let limit = v.item_limit.as_ref()?;
+    let key = if limit.flags & 1 != 0 {
+        "ITEM_LIMIT_CATEGORY_MULTIPLE"
+    } else {
+        "ITEM_LIMIT_CATEGORY"
+    };
+    Some((
+        key,
+        vec![Arg::S(&limit.name), Arg::D(limit.quantity.into())],
+    ))
+}
+
 /// The lines. Not built: ITEM_COOLDOWN_TIME, ITEM_WRAPPED_BY and the `LOCKED_WITH_*` line under
 /// LOCKED.
 fn render_lines(
@@ -155,12 +182,16 @@ fn render_lines(
     // `None`: a template source, with no item object and no instance block.
     inst: Option<&ItemInstance>,
 ) -> mlua::Result<()> {
-    let (req, known_spell, taught_known, set_view, worn, show_item_level) = {
+    let (req, known_spell, taught_known, set_view, worn, show_item_level, colorblind) = {
         let mut model = crate::script::model_mut_of(lua);
         let show_item_level = model
             .cvars
             .get("showitemlevel")
             .is_some_and(|c| c.value.trim().parse::<f64>().is_ok_and(|n| n != 0.0));
+        let colorblind = model
+            .cvars
+            .get("colorblindmode")
+            .is_some_and(|c| crate::script::cvars::sstr_to_int(&c.value) != 0);
         // The known bits or a higher rank (`0x62b4a2`-`0x62b4ae`, `0x62b50d`-`0x62b51c`).
         let knows = |id: u32| model.known_spells.known_or_higher(id);
         let known = v.required_spell != 0 && knows(v.required_spell);
@@ -217,6 +248,7 @@ fn render_lines(
             set_view,
             worn,
             show_item_level,
+            colorblind,
         )
     };
     let add = |l: (String, [f32; 4])| append_line(lua, this, l, None, false);
@@ -254,6 +286,19 @@ fn render_lines(
         quality_color(v.quality)
     };
     add((name, name_color))?;
+    // By `colorblindMode` and heroic flag `0x8` (`0x627b23`); name-only skips it (`0x627adc`).
+    if !flags.name_only {
+        match (colorblind, v.flags & 0x8 != 0) {
+            (true, true) => keyed("ITEM_HEROIC_EPIC", &[], WHITE, false)?,
+            (true, false) => {
+                // A gem about to be destroyed reads as quality 0 (`0x627b63`).
+                let quality = if destroy_gem { 0 } else { v.quality };
+                keyed(&format!("ITEM_QUALITY{quality}_DESC"), &[], WHITE, false)?;
+            }
+            (false, true) => keyed("ITEM_HEROIC", &[], GREEN, false)?,
+            (false, false) => {}
+        }
+    }
     // The petition lines, below the name: a charter's `GUILD_CHARTER_*` pair or a petition's
     // `PETITION_*`, by the record's charter bit (`GetPetitionInfo`'s first return). A line whose
     // source is unresolved waits for the repaint, as the creator line does.
@@ -293,10 +338,8 @@ fn render_lines(
             3 => keyed("ITEM_BIND_ON_USE", &[], WHITE, false)?,
             _ => {}
         }
-        match v.max_count {
-            1 => keyed("ITEM_UNIQUE", &[], WHITE, false)?,
-            n if n > 1 => keyed("ITEM_UNIQUE_MULTIPLE", &[Arg::D(n.into())], WHITE, false)?,
-            _ => {}
+        if let Some((key, args)) = uniqueness_line(v) {
+            keyed(key, &args, WHITE, false)?;
         }
         if v.start_quest != 0 {
             keyed("ITEM_STARTS_QUEST", &[], WHITE, false)?;
@@ -598,7 +641,7 @@ fn render_lines(
         let list: Vec<&str> = CLASS_NAMES
             .iter()
             .filter(|&&(id, _)| v.allowable_class & (1 << (id - 1)) != 0)
-            .map(|&(_, n)| n)
+            .map(|&(id, n)| crate::locale::class_name(id).unwrap_or(n))
             .collect();
         if !list.is_empty() {
             let ok = req.class_id > 0 && v.allowable_class & (1 << (req.class_id - 1)) != 0;
@@ -617,7 +660,7 @@ fn render_lines(
         let list: Vec<&str> = RACE_NAMES
             .iter()
             .filter(|&&(id, _)| v.allowable_race & (1 << (id - 1)) != 0)
-            .map(|&(_, n)| n)
+            .map(|&(id, n)| crate::locale::race_name(id).unwrap_or(n))
             .collect();
         if !list.is_empty() {
             let ok = req.race_id > 0 && v.allowable_race & (1 << (req.race_id - 1)) != 0;
@@ -1025,6 +1068,76 @@ mod tests {
         assert_eq!(charges_phrase(1, &table).as_deref(), Some("<1 chg>"));
         assert_eq!(charges_phrase(5, &table).as_deref(), Some("<5 chgs>"));
         assert_eq!(charges_phrase(0, &table), None);
+    }
+
+    fn limit(flags: u32) -> Option<crate::script::ItemLimitView> {
+        Some(crate::script::ItemLimitView {
+            category: 2,
+            name: "Gems".into(),
+            quantity: 3,
+            flags,
+        })
+    }
+
+    /// `0x627fb4`: every arm of the chain, each shadowing the ones after it.
+    #[test]
+    fn the_uniqueness_chain_prints_one_line_in_the_reference_order() {
+        let line = |v: &ItemTemplateView| uniqueness_line(v).map(|(k, a)| (k.to_string(), a.len()));
+        let full = ItemTemplateView {
+            flags: FLAG_UNIQUE_EQUIPPED,
+            max_count: 1,
+            item_limit: limit(1),
+            ..Default::default()
+        };
+        // Class 10 skips every arm.
+        assert_eq!(
+            line(&ItemTemplateView {
+                class: 10,
+                ..full.clone()
+            }),
+            None
+        );
+        // The flag beats MaxCount and the category.
+        assert_eq!(line(&full), Some(("ITEM_UNIQUE_EQUIPPABLE".into(), 0)));
+        // MaxCount beats the category.
+        let counted = ItemTemplateView {
+            flags: 0,
+            ..full.clone()
+        };
+        assert_eq!(line(&counted), Some(("ITEM_UNIQUE".into(), 0)));
+        let multiple = ItemTemplateView {
+            max_count: 4,
+            ..counted.clone()
+        };
+        let (key, args) = uniqueness_line(&multiple).unwrap();
+        assert_eq!(key, "ITEM_UNIQUE_MULTIPLE");
+        assert_eq!(args, [Arg::D(4)]);
+    }
+
+    /// `0x628091` is reached by a `MaxCount` of zero or below (signed, `0x62800b`); bit 0 of the
+    /// row's flags picks the key, and the row fills name then quantity.
+    #[test]
+    fn a_limit_category_names_its_row_and_picks_the_key_by_bit_0() {
+        for (max_count, flags, want) in [
+            (0, 0, "ITEM_LIMIT_CATEGORY"),
+            (0, 1, "ITEM_LIMIT_CATEGORY_MULTIPLE"),
+            (u32::MAX, 0, "ITEM_LIMIT_CATEGORY"),
+        ] {
+            let v = ItemTemplateView {
+                max_count,
+                item_limit: limit(flags),
+                ..Default::default()
+            };
+            let (key, args) = uniqueness_line(&v).unwrap();
+            assert_eq!(key, want);
+            assert_eq!(args, [Arg::S("Gems"), Arg::D(3)]);
+        }
+    }
+
+    /// A category with no row, or none at all, prints nothing.
+    #[test]
+    fn a_category_with_no_row_prints_no_line() {
+        assert_eq!(uniqueness_line(&ItemTemplateView::default()), None);
     }
 
     /// `0x5ae380`: each set holding the item, in set order, once per slot that holds it.

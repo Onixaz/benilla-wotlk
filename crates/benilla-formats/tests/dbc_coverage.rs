@@ -20,7 +20,6 @@ use benilla_formats::{dbc_width, READ_TABLES};
 /// Tables 12340 reads that benilla does not, each with what it backs in the reference and the
 /// open issue that builds it, where one does.
 const NOT_READ: &[(&str, &str)] = &[
-    ("AreaGroup", "#240 GetTradeSkillTools' area requirement"),
     ("BannedAddOns", "#245 the addon ban list"),
     ("CreatureMovementInfo", "#243 creature movement"),
     ("DanceMoves", "#243 dance studio emotes"),
@@ -43,16 +42,11 @@ const NOT_READ: &[(&str, &str)] = &[
         "PaperDollItemFrame",
         "#239 equipment slot names: GetInventorySlotInfo",
     ),
-    (
-        "PowerDisplay",
-        "#240 alternate power display: UnitPowerType",
-    ),
     ("RandPropPoints", "#239 random property and suffix stats"),
     ("ScalingStatDistribution", "#239 heirloom stat scaling"),
     ("ScalingStatValues", "#239 heirloom stat scaling"),
     ("ScreenEffect", "#243 screen effects"),
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
-    ("SpellDifficulty", "#240 per-difficulty spell variants"),
     ("Startup_Strings", "#245 the client's startup error text"),
     ("StringLookups", "#245 string lookups"),
     ("TransportPhysics", "#243 transport rocking"),

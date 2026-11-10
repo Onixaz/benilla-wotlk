@@ -130,18 +130,24 @@ pub(super) fn feed_action_state(
         Option<Res<crate::spell::ComboPoints>>,
         // The group, for the reaction's party rung.
         Option<Res<crate::ui_party::GroupState>>,
+        crate::spell::AutoChecks,
     ),
     self_q: Query<(&ObjectStore, &Transform, Has<Engaged>, Option<&Casting>), With<SelfPlayer>>,
     selection: Res<Selection>,
     // One param for the guid index and the item store, for the same ceiling.
     objects: crate::net::Objects,
-    units: Query<(&ObjectStore, &Transform), Without<SelfPlayer>>,
+    // One tuple param, under Bevy's 16-param ceiling.
+    units_and_auras: (
+        Query<(&ObjectStore, &Transform), Without<SelfPlayer>>,
+        usable::UsableAuras,
+    ),
     factions: Option<Res<crate::target::Factions>>,
     reputations: Res<crate::net::Reputations>,
     items: Res<Items>,
     commands: Res<NetCommands>,
     mut memory: Local<crate::ui_script::VmMemo<StateMemory>>,
 ) {
+    let (units, usable_auras) = &units_and_auras;
     let Some(mut script) = script else {
         return;
     };
@@ -173,6 +179,7 @@ pub(super) fn feed_action_state(
         rune_inputs,
         combo,
         group,
+        auto,
     ) = &cast_state;
     let combo_points = combo
         .as_deref()
@@ -188,6 +195,11 @@ pub(super) fn feed_action_state(
     // The rune leg compares ends on the `GetTime` millisecond clock the runes are stamped on.
     let now_ms = (ui_now * 1000.0).floor() as i64;
     let me = self_q.iter().next();
+    let auto_unshift = me.is_some_and(|(store, ..)| {
+        let form = u32::from(store.0.unit_shapeshift_form());
+        let row = spells.as_deref().and_then(|t| t.forms.get(&form));
+        auto.unshift(store, row.map_or(0, |f| f.flags))
+    });
     let rune_check = rune_inputs
         .0
         .as_deref()
@@ -220,6 +232,12 @@ pub(super) fn feed_action_state(
         (Some(a), Some((_, t))) => Some(a.distance_squared(t.translation)),
         _ => None,
     };
+
+    // The usable walk's target: the selection resolves to the player too (`0x80b5d0`).
+    let walk_target = target.map(|(s, _)| s).or_else(|| {
+        me.filter(|_| target_entity.is_some_and(|e| self_q.contains(e)))
+            .map(|(s, _, _, _)| s)
+    });
 
     let mut fresh: HashMap<u32, ActionState> = HashMap::new();
     for (&slot, button) in &actions.buttons {
@@ -271,8 +289,10 @@ pub(super) fn feed_action_state(
                 // The usable walk; only its power gate sets `notEnoughMana`.
                 if let (Some((store, _, _, _)), Some(sp)) = (me, spells.as_deref()) {
                     let ctx = usable::UsableCtx {
+                        self_auras: usable_auras.me.single().ok(),
+                        target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
                         store,
-                        target_store: target.map(|(s, _)| s),
+                        target_store: walk_target,
                         factions: factions.as_deref(),
                         reputations: &reputations,
                         party: crate::target::party_of(group.as_deref()),
@@ -281,6 +301,7 @@ pub(super) fn feed_action_state(
                         spell_mods,
                         runes: rune_check,
                         combo_points,
+                        auto_unshift,
                     };
                     let (u, oom) = usable::spell_usable(
                         button.action,
@@ -363,8 +384,10 @@ pub(super) fn feed_action_state(
                 // the default state.
                 if let Some((store, _, _, _)) = me {
                     let ctx = usable::UsableCtx {
+                        self_auras: usable_auras.me.single().ok(),
+                        target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
                         store,
-                        target_store: target.map(|(s, _)| s),
+                        target_store: walk_target,
                         factions: factions.as_deref(),
                         reputations: &reputations,
                         party: crate::target::party_of(group.as_deref()),
@@ -373,6 +396,7 @@ pub(super) fn feed_action_state(
                         spell_mods,
                         runes: rune_check,
                         combo_points,
+                        auto_unshift,
                     };
                     let (u, oom) = usable::item_usable(
                         button.action,
@@ -462,8 +486,10 @@ pub(super) fn feed_action_state(
             );
         }
         let ctx = usable::UsableCtx {
+            self_auras: usable_auras.me.single().ok(),
+            target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
             store,
-            target_store: target.map(|(s, _)| s),
+            target_store: walk_target,
             factions: factions.as_deref(),
             reputations: &reputations,
             party: crate::target::party_of(group.as_deref()),
@@ -472,6 +498,7 @@ pub(super) fn feed_action_state(
             spell_mods,
             runes: rune_check,
             combo_points,
+            auto_unshift,
         };
         for (id, was_ready) in memory.reactive.iter_mut().flatten() {
             let Some(d) = sp.catalog.get(*id) else {
@@ -704,6 +731,9 @@ mod tests {
                         [(4, row)].into_iter().collect(),
                     ),
                     cast_times: Default::default(),
+                    power_displays: Default::default(),
+                    difficulties: Default::default(),
+                    instance_difficulty: Default::default(),
                     durations: Default::default(),
                     radii: Default::default(),
                 })
@@ -823,6 +853,9 @@ mod tests {
                         [(2, melee)].into_iter().collect(),
                     ),
                     cast_times: Default::default(),
+                    power_displays: Default::default(),
+                    difficulties: Default::default(),
+                    instance_difficulty: Default::default(),
                     durations: Default::default(),
                     radii: Default::default(),
                 })
@@ -963,6 +996,9 @@ mod tests {
                     forms: Default::default(),
                     ranges: Default::default(),
                     cast_times: Default::default(),
+                    power_displays: Default::default(),
+                    difficulties: Default::default(),
+                    instance_difficulty: Default::default(),
                     durations: Default::default(),
                     radii: Default::default(),
                 })
@@ -1046,6 +1082,9 @@ mod tests {
                 forms: Default::default(),
                 ranges: Default::default(),
                 cast_times: Default::default(),
+                power_displays: Default::default(),
+                difficulties: Default::default(),
+                instance_difficulty: Default::default(),
                 durations: Default::default(),
                 radii: Default::default(),
             })
@@ -1147,6 +1186,9 @@ mod tests {
                 forms: Default::default(),
                 ranges: Default::default(),
                 cast_times: Default::default(),
+                power_displays: Default::default(),
+                difficulties: Default::default(),
+                instance_difficulty: Default::default(),
                 durations: Default::default(),
                 radii: Default::default(),
             })

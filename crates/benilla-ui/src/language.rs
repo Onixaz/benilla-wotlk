@@ -1,14 +1,23 @@
 //! The grammar pass a font string runs over text as it is set (its text setter `0x483910` with its
 //! process flag, into the language pass `0x482110`): `|4singular:plural;` picks a form by the
-//! number before it. The enUS strings carry no `|1`..`|3` (Korean particles, French elision,
-//! Russian declension), which pass through unchanged.
+//! number before it. `|1`..`|3` (Korean particles, French elision, Russian declension) pass
+//! through unchanged.
 
 use std::borrow::Cow;
 
-/// The script layer's plural index (`0x817d10`) under enUS's rule 0 (`0x40642a`): 1 for any count
-/// but one.
+/// The script layer's plural index under the running locale's rule (`0x817d10`, set at
+/// `0x40642a`): koKR, frFR, zhCN and zhTW take rule 1, ruRU rule 2, the rest rule 0.
 pub fn plural_index(count: i32) -> usize {
-    usize::from(count != 1)
+    match crate::locale::index() {
+        1 | 2 | 4 | 5 => usize::from(count > 1),
+        8 => match (count % 100, count % 10) {
+            (11..=14, _) => 2,
+            (_, 1) => 0,
+            (_, 2..=4) => 1,
+            _ => 2,
+        },
+        _ => usize::from(count != 1),
+    }
 }
 
 /// The language pass over `text`, borrowed when it holds no `|4`.

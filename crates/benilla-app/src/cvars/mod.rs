@@ -749,6 +749,9 @@ fn load_config(world: &mut World) {
                 }
             }
         }
+        // The boot writes the locale it mounted back over the file's: a missing folder moved it
+        // to the next one that exists (`0x406953`).
+        cvars.set("locale", &benilla_formats::client_locale().folder);
         // `RunOnce*.wtf` and the realmlist files run after `Config.wtf`, each `SET` a write that
         // reaches the file at the next save (`0x4067f0`, `0x6b0bf0`).
         for (name, value) in extra {
@@ -1968,6 +1971,7 @@ mod tests {
             .init_resource::<crate::ui_trade::BlockTrades>()
             .init_resource::<crate::spell::AutoSelfCast>()
             .init_resource::<crate::spell::AutoDismount>()
+            .init_resource::<crate::spell::AutoPosture>()
             .init_resource::<crate::spell::SecureAbilityToggle>()
             .init_resource::<crate::perf::FpsJournalSetting>()
             .init_resource::<crate::fps_limit::FrameCaps>()

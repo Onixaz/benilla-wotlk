@@ -82,7 +82,7 @@ fn spell_desc_text(
                 ranges: Some(&sp.ranges),
                 variables: Some(sp.catalog.description_variables()),
                 skill,
-                lookup: &|i| sp.catalog.get(i),
+                lookup: &|i| sp.catalog.get(sp.for_difficulty(i)),
                 mods: mods.map(|m| m as &dyn benilla_formats::SpellMods),
                 unmodified_points: false,
                 gender,
@@ -286,7 +286,12 @@ fn template_view(
         bag_family: t.bag_family,
         item_limit: limits
             .and_then(|l| l.0.get(t.item_limit_category))
-            .map(|c| (c.id, c.quantity)),
+            .map(|c| benilla_ui::script::ItemLimitView {
+                category: c.id,
+                name: c.name.clone(),
+                quantity: c.quantity,
+                flags: c.flags,
+            }),
         socket_colors: t.socket_colors,
         socket_bonus: t.socket_bonus,
         socket_bonus_name: (t.socket_bonus != 0)
@@ -2060,6 +2065,9 @@ mod tests {
             ),
         ]);
         let spells = crate::ui_action::Spells {
+            power_displays: Default::default(),
+            difficulties: Default::default(),
+            instance_difficulty: Default::default(),
             catalog: benilla_formats::SpellCatalog::from_displays(displays),
             forms: Default::default(),
             ranges: Default::default(),

@@ -31,7 +31,9 @@ impl Toc {
             if let Some(directive) = line.strip_prefix("##") {
                 // `##` with no colon is a comment, as the client tolerates it.
                 if let Some((key, value)) = directive.split_once(':') {
-                    let key = key.trim();
+                    let Some(key) = crate::locale::toc_key(key.trim()) else {
+                        continue;
+                    };
                     if !key.is_empty() {
                         toc.directives
                             .push((key.to_string(), value.trim().to_string()));

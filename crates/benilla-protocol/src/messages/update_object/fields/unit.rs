@@ -357,10 +357,10 @@ impl ObjectFields {
     pub fn unit_bytes_0(&self) -> Option<u32> {
         self.get_u32(FIELD_UNIT_BYTES_0)
     }
-    /// `UNIT_VIRTUAL_ITEM_SLOT_DISPLAY + slot`: a creature's weapon `DisplayInfoID` for slot 0
-    /// main hand, 1 off hand or 2 ranged, with no item behind it.
-    pub fn unit_virtual_item_display(&self, slot: u8) -> Option<u32> {
-        (slot < 3).then(|| self.get_u32(FIELD_UNIT_VIRTUAL_ITEM_SLOT_DISPLAY + u16::from(slot)))?
+    /// `UNIT_VIRTUAL_ITEM_SLOT_ID + slot`: the `Item.dbc` id a creature holds in slot 0 main hand,
+    /// 1 off hand or 2 ranged (`0x725010`).
+    pub fn unit_virtual_item_entry(&self, slot: u8) -> Option<u32> {
+        (slot < 3).then(|| self.get_u32(FIELD_UNIT_VIRTUAL_ITEM_SLOT_ID + u16::from(slot)))?
     }
     /// `UNIT_FIELD_BYTES_2` byte 0: sheath state, 0 stowed, 1 melee drawn, 2 ranged drawn; for a
     /// player, whatever they last sent in `CMSG_SETSHEATHED`.

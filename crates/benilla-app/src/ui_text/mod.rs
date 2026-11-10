@@ -27,7 +27,7 @@ use benilla_ui::widget::RegionHandle;
 pub(crate) use measurer::{editbox_advances, measure_request, AtlasMeasurer};
 
 pub(crate) use layout::{
-    ellipsize_to_fit, layout_text_quads, layout_text_quads_links, line_advances, line_origin,
+    ellipsize_to_fit, layout_text_quads, layout_text_quads_full, line_advances, line_origin,
     line_rows, measure_text, measure_wrapped_rows, FontSpec, Justify, TextSeat, UI_SEAT_NUDGE,
 };
 

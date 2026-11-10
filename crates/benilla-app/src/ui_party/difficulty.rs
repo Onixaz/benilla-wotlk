@@ -77,6 +77,30 @@ impl GroupState {
         }
     }
 
+    /// The effective raid difficulty (`0x519680`): a dynamic current map (`Map.dbc` flag `0x100`)
+    /// combines the raid size bit with the group's dynamic difficulty.
+    pub(crate) fn effective_raid_difficulty(&self, map_dynamic: bool) -> u32 {
+        let raid = self.current_raid_difficulty();
+        if map_dynamic {
+            (raid & 1) + 2 * u32::from(self.difficulties.dynamic)
+        } else {
+            raid
+        }
+    }
+
+    /// `0x802850`'s index: a raid map's effective difficulty, a dungeon's current one.
+    pub(crate) fn spell_difficulty_index(
+        &self,
+        instance_type: Option<u32>,
+        map_dynamic: bool,
+    ) -> Option<u32> {
+        match instance_type {
+            Some(2) => Some(self.effective_raid_difficulty(map_dynamic)),
+            Some(1) => Some(self.current_dungeon_difficulty()),
+            _ => None,
+        }
+    }
+
     /// The list's tail: the party clear-all clears the LFG bit silently (`0x52d85e`), then the
     /// LFG-restricted setter signals `PARTY_LFG_RESTRICTED` when it sets it again (`0x52c0f8`); a
     /// list with members writes the group's difficulties (`0x6d8fc3`), without a line.
@@ -225,8 +249,47 @@ pub(super) fn feed_menu_gates(
     }
 }
 
+/// Publish the current map's difficulty index to the spell variants.
+pub(super) fn feed_instance_difficulty(
+    spells: Option<Res<Spells>>,
+    group: Res<GroupState>,
+    maps: Option<Res<benilla_assets::MapCatalogRes>>,
+    here: Option<Res<benilla_world::world_map::CurrentMap>>,
+) {
+    let Some(spells) = spells else { return };
+    let map = here.map(|m| m.0);
+    let (kind, dynamic) = map.zip(maps.as_deref()).map_or((None, false), |(m, c)| {
+        (c.0.instance_type(m), c.0.has_dynamic_difficulty(m))
+    });
+    let index = group
+        .spell_difficulty_index(kind, dynamic)
+        .map_or(0, |i| i + 1);
+    spells
+        .instance_difficulty
+        .store(index, std::sync::atomic::Ordering::Relaxed);
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_raid_reads_the_effective_difficulty_and_a_dungeon_the_current_one() {
+        use super::GroupState;
+        let mut g = GroupState::default();
+        g.player_difficulty.dungeon = 1;
+        g.player_difficulty.raid = 1;
+        assert_eq!(g.spell_difficulty_index(Some(1), false), Some(1));
+        assert_eq!(g.spell_difficulty_index(Some(2), false), Some(1));
+        assert_eq!(g.spell_difficulty_index(Some(0), false), None);
+        assert_eq!(g.spell_difficulty_index(None, false), None);
+        g.difficulties.dynamic = 1;
+        assert_eq!(
+            g.spell_difficulty_index(Some(2), true),
+            Some(3),
+            "a 25 on a dynamic map, heroic: the size bit plus twice the heroic bit"
+        );
+        assert_eq!(g.spell_difficulty_index(Some(2), false), Some(1));
+    }
+
     use super::*;
     use benilla_protocol::messages::GroupMemberEntry;
 
@@ -293,6 +356,20 @@ mod tests {
         g.slots_emptied = true;
         let lines = g.difficulty_lines(1, 0, RaidMap::Other);
         assert_eq!(keys(&lines), ["ERR_DUNGEON_DIFFICULTY_CHANGED_S"]);
+    }
+
+    /// On a dynamic map the size bit and the dynamic difficulty combine; elsewhere the raid value.
+    #[test]
+    fn the_effective_raid_difficulty_combines_only_on_a_dynamic_map() {
+        let mut g = GroupState::default();
+        g.player_difficulty.raid = 3;
+        g.difficulties.dynamic = 1;
+        assert_eq!(g.effective_raid_difficulty(false), 3);
+        assert_eq!(g.effective_raid_difficulty(true), 3, "(3 & 1) + 2");
+        g.player_difficulty.raid = 2;
+        assert_eq!(g.effective_raid_difficulty(true), 2, "(2 & 1) + 2");
+        g.difficulties.dynamic = 0;
+        assert_eq!(g.effective_raid_difficulty(true), 0);
     }
 
     /// The raid line's wording follows the map; a dynamic map keeps the group value.

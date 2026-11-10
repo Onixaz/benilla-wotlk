@@ -37,7 +37,6 @@ const fn client_os() -> u32 {
         OS_WINDOWS
     }
 }
-const LOCALE_EN_US: u32 = 0x656e_5553; // "enUS"
 
 /// A non-success auth result byte, typed so the app can map it to its `AUTH_*` glue string; it
 /// survives [`crate::logon`]'s `anyhow` contexts via `downcast_ref`. vmangos answers an unknown
@@ -83,8 +82,13 @@ pub struct ChallengeReply {
 }
 
 /// Send `CMD_AUTH_LOGON_CHALLENGE_Client` as the client does: its protocol version, version and
-/// build. `account_name` must be uppercased, as the SRP6 hashes use it.
-pub fn write_logon_challenge(w: &mut impl Write, account_name: &str) -> std::io::Result<()> {
+/// build. `account_name` must be uppercased, as the SRP6 hashes use it; `locale` is the client's
+/// four letters packed big-endian.
+pub fn write_logon_challenge(
+    w: &mut impl Write,
+    account_name: &str,
+    locale: u32,
+) -> std::io::Result<()> {
     // Everything after the 2-byte size field, assembled first so we can prefix its length.
     let mut body = Vec::with_capacity(34 + account_name.len());
     body.extend_from_slice(&GAME_NAME_WOW.to_le_bytes());
@@ -92,7 +96,7 @@ pub fn write_logon_challenge(w: &mut impl Write, account_name: &str) -> std::io:
     body.extend_from_slice(&CLIENT_BUILD.to_le_bytes());
     body.extend_from_slice(&PLATFORM_X86.to_le_bytes());
     body.extend_from_slice(&client_os().to_le_bytes());
-    body.extend_from_slice(&LOCALE_EN_US.to_le_bytes());
+    body.extend_from_slice(&locale.to_le_bytes());
     body.extend_from_slice(&0u32.to_le_bytes()); // utc_timezone_offset
     body.extend_from_slice(&Ipv4Addr::LOCALHOST.octets()); // client_ip_address (network order)
     body.push(account_name.len() as u8);
@@ -410,5 +414,19 @@ mod tests {
         assert_eq!(r.characters, 3);
         assert_eq!(r.category, 2);
         assert_eq!(r.id, 9);
+    }
+}
+
+#[cfg(test)]
+mod locale_tests {
+    /// The locale sits after the build, platform and OS fields, spelled backwards on the wire.
+    #[test]
+    fn the_challenge_carries_the_locale_it_is_given() {
+        let mut out = Vec::new();
+        super::write_logon_challenge(&mut out, "A", u32::from_be_bytes(*b"esES")).unwrap();
+        assert_eq!(
+            &out[4 + 4 + 3 + 2 + 4 + 4..4 + 4 + 3 + 2 + 4 + 4 + 4],
+            b"SEse"
+        );
     }
 }

@@ -98,6 +98,23 @@ pub(super) fn particle_half(
     [size[0] * p.size_mul[0] * k, size[1] * p.size_mul[1] * k]
 }
 
+/// An XY quad's unit axes (`0x97a482`, file flag 0x1000): model mode has the placement's rotation
+/// and the emitter frame's R(+Z, 90°), its scale divided out (`0x97a4d3`); world mode has only the
+/// ride frame (`0x97a3a1`).
+pub(super) fn plane_axes(frame: &DrawFrame, placement: &Transform) -> (Vec3, Vec3) {
+    if frame.anchored {
+        (
+            frame.ride.dir_to_world(wow_to_bevy([1.0, 0.0, 0.0])),
+            frame.ride.dir_to_world(wow_to_bevy([0.0, 1.0, 0.0])),
+        )
+    } else {
+        (
+            placement.rotation * wow_to_bevy([0.0, 1.0, 0.0]),
+            placement.rotation * wow_to_bevy([-1.0, 0.0, 0.0]),
+        )
+    }
+}
+
 /// Expand one pool into the shared stream: world-space quads, corners in perimeter order for the
 /// lane's `[0,1,2, 0,2,3]` indices.
 pub(super) fn expand_quads(
@@ -116,16 +133,7 @@ pub(super) fn expand_quads(
     } else {
         frame.size_scale
     };
-    // XY quads (file flag 0x1000) lie flat in the emitter's XY plane under the live model matrix,
-    // its scale included, in both modes. The basis carries the emitter frame's R(+Z, 90°) itself,
-    // since births take it at emission: X̂ to Ŷ, Ŷ to −X̂.
-    let plane_basis = def.xy_quad().then(|| {
-        let s = placement.scale.x.max(1e-4);
-        (
-            placement.rotation * (wow_to_bevy([0.0, 1.0, 0.0]) * s),
-            placement.rotation * (wow_to_bevy([-1.0, 0.0, 0.0]) * s),
-        )
-    });
+    let plane_basis = def.xy_quad().then(|| plane_axes(frame, placement));
     // Atlas cell: `col = idx & (cols − 1)`, `row = idx >> log2(cols)`, cols a power of two. The row
     // is never clamped: past the last cell V ≥ 1 and the repeat sampler wraps to row 0, which 553
     // emitters reach at a flipbook's tail.
@@ -377,11 +385,7 @@ pub(super) fn pool_record(
         frame.size_scale
     };
     let (base_r, base_u) = if def.xy_quad() {
-        let s = placement.scale.x.max(1e-4);
-        (
-            placement.rotation * (wow_to_bevy([0.0, 1.0, 0.0]) * s),
-            placement.rotation * (wow_to_bevy([-1.0, 0.0, 0.0]) * s),
-        )
+        plane_axes(frame, placement)
     } else {
         (cam.right, cam.up)
     };
@@ -493,6 +497,60 @@ mod tests {
             &mut out,
         );
         assert!(out.is_empty());
+    }
+
+    /// The half-extent axes of one XY quad at scale 3.62, turned, for file flags `flags`.
+    fn xy_axes(flags: u32, anchored: bool) -> (Vec3, Vec3, Transform) {
+        let mut def = crate::particles::tests::plain_def();
+        def.flags |= 0x1000 | flags;
+        def.over_life.scale = LifeTrack::constant([2.0, 2.0]);
+        let placement = Transform {
+            translation: Vec3::ZERO,
+            rotation: Quat::from_rotation_y(0.7),
+            scale: Vec3::splat(3.62),
+        };
+        let draw = DrawFrame {
+            anchored,
+            ..frame(1.0)
+        };
+        let mut out = Vec::new();
+        let pool = [particle()];
+        expand_quads(&def, &pool, &draw, &placement, &cam(), &mut out);
+        let at = |i: usize| Vec3::from_array(out[i].pos);
+        ((at(1) - at(0)) / 2.0, (at(3) - at(0)) / 2.0, placement)
+    }
+
+    /// Flag 0x20 sizes the quad by the scale once (`0x97bfad`), and without it not at all.
+    #[test]
+    fn an_xy_quad_takes_the_scale_once_with_flag_0x20_and_never_without() {
+        for anchored in [false, true] {
+            let flags = if anchored { 0 } else { 0x10 };
+            let (r, u, _) = xy_axes(flags | 0x20, anchored);
+            assert!((r.length() - 7.24).abs() < 1e-3, "{anchored}: {r:?}");
+            assert!((u.length() - 7.24).abs() < 1e-3, "{anchored}: {u:?}");
+            let (r, u, _) = xy_axes(flags, anchored);
+            assert!((r.length() - 2.0).abs() < 1e-3, "{anchored}: {r:?}");
+            assert!((u.length() - 2.0).abs() < 1e-3, "{anchored}: {u:?}");
+        }
+    }
+
+    /// Model mode turns the axes with the emitter; world mode ignores its rotation (`0x97a3a1`).
+    #[test]
+    fn an_xy_quad_turns_with_the_emitter_only_in_model_mode() {
+        let (r, u, placement) = xy_axes(0x10, false);
+        let turned = placement.rotation * super::wow_to_bevy([0.0, 2.0, 0.0]);
+        assert!(r.abs_diff_eq(turned, 1e-3), "{r:?} {turned:?}");
+        let turned = placement.rotation * super::wow_to_bevy([-2.0, 0.0, 0.0]);
+        assert!(u.abs_diff_eq(turned, 1e-3), "{u:?} {turned:?}");
+        let (r, u, _) = xy_axes(0, true);
+        assert!(
+            r.abs_diff_eq(super::wow_to_bevy([2.0, 0.0, 0.0]), 1e-3),
+            "{r:?}"
+        );
+        assert!(
+            u.abs_diff_eq(super::wow_to_bevy([0.0, 2.0, 0.0]), 1e-3),
+            "{u:?}"
+        );
     }
 
     /// Base spin turns the quad only while spin or its variance is non-zero (`0x97c282`).

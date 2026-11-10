@@ -13,6 +13,8 @@ pub use benilla_blp::BlpTexels;
 
 mod chain;
 pub use chain::{data_locale, Chain, ChainEntry};
+mod locale;
+pub use locale::{boot_locale, client_locale, dbc_strings, packed as packed_locale, ClientLocale};
 /// Loose `.tga` art, as addon folders ship it.
 mod tga;
 pub use tga::tga_to_rgba;
@@ -72,6 +74,8 @@ mod glyphs;
 pub use glyphs::{load_glyph_catalog, GlyphCatalog, GlyphProperty, GlyphSlot};
 mod gem_properties;
 mod item_limit_category;
+mod spell_difficulty;
+pub use spell_difficulty::{load_spell_difficulties, SpellDifficultyCatalog};
 mod spell_rune_cost;
 mod totem_category;
 pub use gem_properties::{load_gem_properties, GemPropertiesCatalog};
@@ -161,7 +165,7 @@ pub use pet_stats::{
 };
 mod items;
 pub use items::{
-    load_item_dbc_displays, load_item_display_catalog, ItemDisplay, ItemDisplayCatalog,
+    load_item_dbc, load_item_display_catalog, ItemDbcRow, ItemDisplay, ItemDisplayCatalog,
 };
 mod item_sounds;
 pub use item_sounds::{load_item_group_sounds, ItemGesture, ItemGroupSoundsCatalog};
@@ -282,7 +286,7 @@ pub use talents::{load_talent_catalog, Talent, TalentCatalog, TalentTabInfo, MAX
 mod spell_visual;
 pub use spell_visual::{
     chain_flag, char_proc_type, kit_flag, load_spell_visual_catalog, shard_density, ChainEffect,
-    ChainProc, CharProc, EffectScale, MissileMotionRec, ModelAttach, SpellMissileRec,
+    ChainProc, CharProc, EffectAttach, EffectScale, MissileMotionRec, ModelAttach, SpellMissileRec,
     SpellVisualCatalog, TrailProc, VisualKit, VisualStages, DEFAULT_MISSILE_GRAVITY,
     KIT_CHAR_PROCS, KIT_SLOT_TAGS, MAX_COMBO_ROWS, MISSILE_ATTACH_TABLE, MODEL_ATTACH_WORLD,
     WEAPON_EFFECT_TAGS, WORLD_EFFECT_TAG,
@@ -290,11 +294,13 @@ pub use spell_visual::{
 mod emit_timing;
 pub use emit_timing::{EmitParams, EmitTiming, ParamsNow};
 mod particles;
+mod power_display;
 pub use particles::{
     load_particle_colors, parse_m2_particle_emitters, LifeTrack, OverLife, OverLifeSample,
     ParticleBlend, ParticleColorTable, ParticleColors, ParticleEmitterDef, ParticleShape,
     SplineData,
 };
+pub use power_display::{load_power_displays, PowerDisplay, PowerDisplayCatalog};
 mod ribbons;
 pub use ribbons::{parse_m2_ribbon_emitters, RibbonEmitterDef, RibbonVisibility};
 mod value_track;
@@ -372,6 +378,8 @@ mod world_map_continent;
 pub use world_map_continent::{
     load_world_map_continent_catalog, WorldMapContinent, WorldMapContinentCatalog,
 };
+mod area_group;
+pub use area_group::{load_area_groups, AreaGroup, AreaGroupCatalog, AreaGroupMatch};
 mod area_poi;
 pub use area_poi::{load_area_poi_catalog, AreaPoi, AreaPoiCatalog};
 mod world_state_ui;

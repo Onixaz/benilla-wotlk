@@ -233,7 +233,10 @@ impl WeaponVisualSrc<'_, '_> {
         let (net_entity, store) = self.units.get(caster).ok()?;
         let s = &store.0;
         let display_id = match net_entity?.kind {
-            EntityKind::Unit => s.unit_virtual_item_display(2),
+            EntityKind::Unit => s
+                .unit_virtual_item_entry(2)
+                .and_then(|e| self.displays.as_deref()?.item_dbc.get(&e))
+                .map(|r| r.display),
             // 17: vmangos `EQUIPMENT_SLOT_RANGED`.
             EntityKind::Player => s
                 .player_visible_item_entry(17)

@@ -183,11 +183,12 @@ pub(super) fn respawn(
         Parked::World {
             net,
             transform,
+            store,
             speeds,
             rider,
             deck,
-            ..
         } => {
+            let kind = net.kind;
             let mut entity = commands.spawn((
                 Guid(guid),
                 net,
@@ -195,6 +196,12 @@ pub(super) fn respawn(
                 Visibility::default(),
             ));
             entity.vis_chain_only();
+            crate::go_difficulty::tag(
+                &mut entity,
+                kind,
+                store.gameobject_type_id(),
+                store.gameobject_dynamic_flags(),
+            );
             if let Some(s) = speeds {
                 entity.insert(s);
             }

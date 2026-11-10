@@ -132,6 +132,23 @@ pub(crate) fn cast_cc_refusal(
     None
 }
 
+/// The aura-spell legs of a press: `CASTER_AURASTATE` for the caster's, `TARGET_AURASTATE` for a
+/// bound unit's (the shared table's `0x12` and `0x67`).
+pub(super) fn cast_aura_refusal(
+    spell: &SpellDisplay,
+    spells: &crate::ui_action::Spells,
+    caster: Option<&crate::unit_auras::UnitAuras>,
+    target: Option<&crate::unit_auras::UnitAuras>,
+) -> Option<u8> {
+    if !super::usable::caster_aura_spells_met(spell, spells, caster) {
+        return Some(0x12);
+    }
+    if !super::usable::target_aura_spells_met(spell, spells, target) {
+        return Some(0x67);
+    }
+    None
+}
+
 /// `SPELL_FAILED_PREVENTED_BY_MECHANIC`, "Can't do that while %s" with the blocking aura's
 /// `SpellMechanic.dbc` name.
 const REASON_PREVENTED_BY_MECHANIC: u8 = 0x8d;
@@ -157,6 +174,32 @@ pub(crate) fn can_auto_dismount(
     unit_flags & crate::player::UNIT_FLAG_TAXI_FLIGHT == 0
         && auto_dismount
         && (move_flags & crate::creature_anim::move_flags::FLYING == 0 || auto_dismount_flying)
+}
+
+/// The auto-unshift check (`0x71b130`) for the active player: never on a taxi, only with
+/// `autoUnshift` on, in flight only with `autoDismountFlying` on too, and not in a form flagged
+/// `0x100`.
+pub(crate) fn can_auto_unshift(
+    unit_flags: u32,
+    move_flags: u32,
+    auto_unshift: bool,
+    auto_dismount_flying: bool,
+    form_flags: u32,
+) -> bool {
+    unit_flags & crate::player::UNIT_FLAG_TAXI_FLIGHT == 0
+        && auto_unshift
+        && (move_flags & crate::creature_anim::move_flags::FLYING == 0 || auto_dismount_flying)
+        && form_flags & 0x100 == 0
+}
+
+/// Whether a form counts as shapeshifted (`0x721ca0`): any but a stance, flag `0x1`.
+pub(crate) fn is_shapeshifted(form: u8, form_flags: u32) -> bool {
+    form != 0 && form_flags & 0x1 == 0
+}
+
+/// Whether a use or an NPC click must leave this form first: shapeshifted, without flag `0x8`.
+pub(crate) fn form_blocks_interact(form: u8, form_flags: u32) -> bool {
+    is_shapeshifted(form, form_flags) && form_flags & 0x8 == 0
 }
 
 /// The attack gates' mounted leg (`0x729a70`, `0x72bdb0`), by who is attacking. The client flag
@@ -302,6 +345,28 @@ pub(super) fn cast_moving_refusal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_unshift_follows_its_cvar_the_taxi_flight_and_the_form() {
+        use crate::creature_anim::move_flags::FLYING;
+        let taxi = crate::player::UNIT_FLAG_TAXI_FLIGHT;
+        assert!(can_auto_unshift(0, 0, true, false, 0));
+        assert!(!can_auto_unshift(0, 0, false, false, 0), "the CVar");
+        assert!(!can_auto_unshift(taxi, 0, true, true, 0), "on a taxi");
+        assert!(!can_auto_unshift(0, FLYING, true, false, 0), "airborne");
+        assert!(can_auto_unshift(0, FLYING, true, true, 0));
+        assert!(!can_auto_unshift(0, 0, true, false, 0x100), "form flag");
+    }
+
+    #[test]
+    fn a_stance_is_not_shapeshifted_and_flag_8_keeps_interact() {
+        assert!(!is_shapeshifted(0, 0));
+        assert!(!is_shapeshifted(17, 0x1));
+        assert!(is_shapeshifted(1, 0));
+        assert!(form_blocks_interact(1, 0));
+        assert!(!form_blocks_interact(1, 0x8));
+        assert!(!form_blocks_interact(17, 0x1));
+    }
 
     /// A creature never auto-dismounts, and only type flag `0x800` lets it fight mounted.
     #[test]

@@ -791,6 +791,7 @@ pub(super) struct CursorInputs<'w, 's> {
     names: Option<Res<'w, crate::names::NameCache>>,
     // The attack-now check's auto-dismount CVars (`0x71b0c0`).
     auto_dismount: Option<Res<'w, crate::spell::cast_target::AutoDismount>>,
+    auto: crate::spell::AutoChecks<'w>,
 }
 
 /// The skinning spell's max range toward `target` (`0x802c30`), 0 for a spell with no row.
@@ -845,6 +846,7 @@ pub(super) fn classify(
         range_units,
         player_vehicles,
         auto_dismount,
+        auto,
     } = inputs;
     let party = super::party_of(group.as_deref());
     let skin_max_range = |spell_id: u32, target: Option<benilla_formats::RangeUnit>| -> f32 {
@@ -959,15 +961,25 @@ pub(super) fn classify(
             return None; // a plain corpse: Point
         }
 
+        // A form the player may not leave bars the service cursor (`0x729620`).
+        let form = self_store.0.unit_shapeshift_form();
+        let form_flags = spells
+            .as_deref()
+            .and_then(|s| s.forms.get(&u32::from(form)))
+            .map_or(0, |f| f.flags);
+        let form_bars = crate::spell::validator::form_blocks_interact(form, form_flags)
+            && !auto.unshift(self_store, form_flags);
         // The interact check, asked through its timed wrapper, picks the ladder; it is not a
         // reaction threshold.
-        if super::can_interact(
-            Some(store),
-            factions.as_deref(),
-            reputations,
-            party,
-            Some(self_store),
-        ) {
+        if !form_bars
+            && super::can_interact(
+                Some(store),
+                factions.as_deref(),
+                reputations,
+                party,
+                Some(self_store),
+            )
+        {
             let status = hovered.guid.and_then(|g| quest.status(g));
             let cursor_name = store
                 .0

@@ -6,10 +6,10 @@ use mlua::{Lua, Value};
 /// `GENDER_FEMALE`, the one gender with a suffix of its own.
 const FEMALE: i64 = 3;
 
-/// The plural index (`0x817d10`) under rule 0, the one enUS sets: 1 for any count but one, the -1
-/// an absent ordinal passes included.
+/// The plural index (`0x817d10`) of the running locale's rule, the -1 an absent ordinal passes
+/// included.
 fn plural_index(count: i64) -> i64 {
-    i64::from(count != 1)
+    crate::language::plural_index(count as i32) as i64
 }
 
 /// The global `name` when it is a string or a number (`lua_isstring`, `0x818010`).

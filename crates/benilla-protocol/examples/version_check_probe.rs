@@ -50,7 +50,7 @@ fn attempt(host: &str, port: u16, user: &str, pass: &str, arm: Arm) -> Result<Op
         let mut stream = TcpStream::connect((host, port))
             .with_context(|| format!("connecting to {host}:{port}"))?;
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-        auth::write_logon_challenge(&mut stream, &user.to_uppercase())
+        auth::write_logon_challenge(&mut stream, &user.to_uppercase(), EN_US)
             .context("sending logon challenge")?;
         let reply = auth::read_challenge_reply(&mut stream)
             .context("reading challenge reply")?
@@ -94,6 +94,9 @@ fn attempt(host: &str, port: u16, user: &str, pass: &str, arm: Arm) -> Result<Op
 
 /// The five files the 1.12 client hashes, in this order (`ChecksumExecutables`); no other of the
 /// 120 orders gives the published digest.
+/// The logon challenge's locale, the four letters packed big-endian.
+const EN_US: u32 = u32::from_be_bytes(*b"enUS");
+
 const SCANNED: [&str; 5] = [
     "WoW.exe",
     "fmod.dll",
@@ -183,7 +186,7 @@ fn main() -> Result<()> {
     let mut stream =
         TcpStream::connect((host, port)).with_context(|| format!("connecting to {host}:{port}"))?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    auth::write_logon_challenge(&mut stream, &user.to_uppercase())?;
+    auth::write_logon_challenge(&mut stream, &user.to_uppercase(), EN_US)?;
     let crc_salt = auth::read_challenge_reply(&mut stream)?
         .ok_or_else(|| anyhow!("SUCCESS_SURVEY on the challenge: no SRP inputs"))?
         .crc_salt;

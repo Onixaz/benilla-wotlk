@@ -58,6 +58,8 @@ impl PetSlotWalk<'_, '_> {
             .and_then(|s| s.guid)
             .and_then(|guid| pet_unit.store(guid));
         let ctx = crate::spell::usable::UsableCtx {
+            self_auras: None,
+            target_auras: None,
             store: pet,
             target_store,
             factions: self.factions.as_deref(),
@@ -72,6 +74,8 @@ impl PetSlotWalk<'_, '_> {
                 c.pet
                     .on(0, self.selection.as_ref().and_then(|s| s.guid).unwrap_or(0))
             }),
+            // The auto-unshift check asks for the active player (`0x71b130`).
+            auto_unshift: false,
         };
         crate::spell::usable::spell_usable(
             spell_id,

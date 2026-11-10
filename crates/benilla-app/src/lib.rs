@@ -66,12 +66,14 @@ mod footprints;
 mod fps_limit;
 mod game_plugins;
 mod go_anim;
+mod go_difficulty;
 mod go_templates;
 #[cfg(feature = "dev")]
 mod hover_log;
 mod items;
 mod loading_screen;
 mod local_state;
+mod locale_names;
 mod login;
 mod minimap;
 mod nameplates;
@@ -306,6 +308,11 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
         };
         benilla_formats::set_drop_in_install(&root);
     }
+
+    // The locale, before anything opens the chain or a script asks (`0x402d50`, `0x4068ce`).
+    let locale = benilla_formats::boot_locale(cvars::boot_cvar("locale").as_deref());
+    benilla_ui::locale::set(locale.index, &locale.existing);
+    locale_names::boot(locale);
 
     // From here a panic leaves `benilla-config/Diagnostics/crash-<unix>.txt`; armed before the
     // `App` exists, so a panic while plugins build is reported too.

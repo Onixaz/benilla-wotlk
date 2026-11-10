@@ -187,8 +187,14 @@ pub(crate) struct CastContext<'a> {
     /// The auto-dismount check's verdict (`0x71b0c0`): a mounted cast dismounts instead of
     /// refusing.
     pub(crate) auto_dismount: bool,
+    /// The auto-stand check (`0x71b090`).
+    pub(crate) auto_stand: bool,
+    /// The auto-unshift check (`0x71b130`).
+    pub(crate) auto_unshift: bool,
     /// The caster's aura table: the toggle-cancel scans and the crowd-control exemption read it.
     pub(crate) self_auras: Option<&'a UnitAuras>,
+    /// The cast's unit candidate's aura table, the target aura-spell legs' read.
+    pub(crate) target_auras: Option<&'a UnitAuras>,
     /// The caster's combo points on the cast's target, the finisher gate's read
     /// (`GetComboPoints(target)`, the player's at `0x80d518`, the pet's at `0x80d54e`).
     pub(crate) combo_points: u8,
@@ -264,6 +270,7 @@ pub(crate) struct CastTargeting<'w, 's> {
     player: Option<Res<'w, crate::player::Player>>,
     /// `autoDismount` and `autoDismountFlying`; a harness without them reads the defaults.
     auto_dismount: Option<Res<'w, AutoDismount>>,
+    auto: AutoChecks<'w>,
     /// The caster's and the selection's reach and motion, for the range gate.
     range_units: super::RangeUnits<'w, 's>,
     /// The player's and the pet's combo banks; a harness without them holds none.
@@ -323,7 +330,17 @@ impl CastTargeting<'_, '_> {
                     cvars.flying,
                 )
             },
+            auto_stand: self.auto.stand(),
+            auto_unshift: self_store.is_some_and(|s| {
+                let form = u32::from(s.0.unit_shapeshift_form());
+                let row = self.spells.as_deref().and_then(|t| t.forms.get(&form));
+                self.auto.unshift(s, row.map_or(0, |f| f.flags))
+            }),
             self_auras: self.self_auras.iter().next(),
+            target_auras: self
+                .selection
+                .target
+                .and_then(|e| self.unit_auras.get(e).ok()),
             combo_points: self.combo_on(false, 0),
         }
     }
@@ -359,6 +376,7 @@ impl CastTargeting<'_, '_> {
             .and_then(|e| self.transforms.get(e).ok())
             .map(|t| t.translation);
         ctx.range.target = entity.and_then(|e| self.range_units.unit(e));
+        ctx.target_auras = entity.and_then(|e| self.unit_auras.get(e).ok());
         ctx
     }
 
@@ -484,6 +502,48 @@ impl Default for AutoDismount {
     }
 }
 
+/// `autoStand` (`[0xbd08f8]`) and `autoUnshift` (`[0xbd0904]`), both registered "1".
+#[derive(bevy::prelude::Resource, Clone, Copy)]
+pub(crate) struct AutoPosture {
+    pub(crate) stand: bool,
+    pub(crate) unshift: bool,
+}
+
+impl Default for AutoPosture {
+    fn default() -> Self {
+        Self {
+            stand: true,
+            unshift: true,
+        }
+    }
+}
+
+/// The active player's auto-stand and auto-unshift checks, for whoever asks them.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct AutoChecks<'w> {
+    player: Option<Res<'w, crate::player::Player>>,
+    dismount: Option<Res<'w, AutoDismount>>,
+    posture: Option<Res<'w, AutoPosture>>,
+}
+
+impl AutoChecks<'_> {
+    /// The auto-stand check (`0x71b090`).
+    pub(crate) fn stand(&self) -> bool {
+        self.posture.as_deref().copied().unwrap_or_default().stand
+    }
+
+    /// The auto-unshift check (`0x71b130`) for `own`, in a form whose row carries `form_flags`.
+    pub(crate) fn unshift(&self, own: &ObjectStore, form_flags: u32) -> bool {
+        super::validator::can_auto_unshift(
+            own.0.unit_flags(),
+            self.player.as_deref().map_or(0, |p| p.move_flags()),
+            self.posture.as_deref().copied().unwrap_or_default().unshift,
+            self.dismount.as_deref().copied().unwrap_or_default().flying,
+            form_flags,
+        )
+    }
+}
+
 /// `secureAbilityToggle` (`[0xbd097c]`, default "1"): a toggle re-pressed within 1.5 s of its
 /// cast keeps its aura (`0x80da80`).
 #[derive(bevy::prelude::Resource)]
@@ -495,12 +555,13 @@ impl Default for SecureAbilityToggle {
     }
 }
 
-/// `autoSelfCast`'s, `autoDismount`'s, `autoDismountFlying`'s and `secureAbilityToggle`'s change
-/// callbacks: flags.
+/// `autoSelfCast`'s, `autoDismount`'s, `autoDismountFlying`'s, `autoStand`'s, `autoUnshift`'s and
+/// `secureAbilityToggle`'s change callbacks: flags.
 pub(crate) fn on_cvar(
     ev: On<crate::cvars::CvarChanged>,
     mut auto: ResMut<AutoSelfCast>,
     mut dismount: ResMut<AutoDismount>,
+    mut posture: ResMut<AutoPosture>,
     mut secure: ResMut<SecureAbilityToggle>,
 ) {
     if ev.is("autoSelfCast") {
@@ -509,6 +570,10 @@ pub(crate) fn on_cvar(
         dismount.ground = ev.flag();
     } else if ev.is("autoDismountFlying") {
         dismount.flying = ev.flag();
+    } else if ev.is("autoStand") {
+        posture.stand = ev.flag();
+    } else if ev.is("autoUnshift") {
+        posture.unshift = ev.flag();
     } else if ev.is("secureAbilityToggle") {
         secure.0 = ev.flag();
     }

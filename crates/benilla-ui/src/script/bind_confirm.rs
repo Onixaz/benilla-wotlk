@@ -32,6 +32,12 @@ impl super::UiScript {
     pub fn item_usable(&self, item_id: u32) -> bool {
         super::item_stats::item_usable_by_id(&self.model_ref(), item_id)
     }
+
+    /// The item use's refusal (`0x6dc3f0` at `0x708eb9`): the message key to show, with nothing
+    /// sent. Entry `0` and an unanswered template are refused nothing.
+    pub fn item_use_refusal(&self, item_id: u32) -> Option<&'static str> {
+        super::item_stats::item_use_refusal_by_id(&self.model_ref(), item_id)
+    }
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {

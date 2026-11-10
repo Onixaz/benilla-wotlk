@@ -142,6 +142,8 @@ pub struct SpellDisplay {
     /// `powerType` (column 41): 0 mana, 1 rage, 3 energy, 5 runes, 6 runic power; health is -2,
     /// stored as `0xFFFFFFFE` (Life Tap, Health Funnel).
     pub power_type: u32,
+    /// `PowerDisplayID` (column 228): the `PowerDisplay.dbc` row naming the power, 0 for none.
+    pub power_display_id: u32,
     /// `manaCost` (column 42): the flat cost in `power_type`'s unit.
     pub mana_cost: u32,
     /// `RuneCostID` (column 226): the `SpellRuneCost.dbc` row a rune spell (power type 5) spends.
@@ -177,6 +179,16 @@ pub struct SpellDisplay {
     /// `CasterAuraState` (column 20): state n needs bit `1 << (n - 1)` of the caster's
     /// `UNIT_FIELD_AURASTATE`; 0 is none.
     pub caster_aura_state: u32,
+    /// `CasterAuraSpell` (column 24): an aura the caster must have, through [`Self::difficulty_id`].
+    pub caster_aura_spell: u32,
+    /// `TargetAuraSpell` (column 25): an aura the target must have.
+    pub target_aura_spell: u32,
+    /// `ExcludeCasterAuraSpell` (column 26): an aura the caster must not have.
+    pub exclude_caster_aura_spell: u32,
+    /// `ExcludeTargetAuraSpell` (column 27): an aura the target must not have.
+    pub exclude_target_aura_spell: u32,
+    /// `SpellDifficultyID` (column 233): the `SpellDifficulty.dbc` row, 0 for none.
+    pub difficulty_id: u32,
     /// `TargetAuraState` (column 21): the current target's required aura state.
     pub target_aura_state: u32,
     /// `Totem[2]` (columns 50-51): tools that must be carried, not consumed, such as a hammer.
@@ -192,6 +204,9 @@ pub struct SpellDisplay {
     pub equipped_item_inventory_type_mask: u32,
     /// `RequiresSpellFocus` (column 18): the `SpellFocusObject.dbc` object needed nearby.
     pub requires_spell_focus: u32,
+    /// `RequiredAreasID` (column 224, signed): the `AreaGroup.dbc` row the caster must stand in,
+    /// read only when positive.
+    pub required_areas_id: i32,
     /// The `SpellShapeshiftForm.dbc` form: the first `SPELL_AURA_MOD_SHAPESHIFT` effect's
     /// `EffectMiscValue`, which the stance bar keys on.
     pub shapeshift_form: Option<u32>,
@@ -313,6 +328,7 @@ impl Default for SpellDisplay {
             start_recovery_category: 0,
             start_recovery_ms: 0,
             power_type: 0,
+            power_display_id: 0,
             mana_cost: 0,
             rune_cost_id: 0,
             mana_cost_pct: 0,
@@ -327,6 +343,11 @@ impl Default for SpellDisplay {
             stances_high: 0,
             stances_not: 0,
             caster_aura_state: 0,
+            caster_aura_spell: 0,
+            target_aura_spell: 0,
+            exclude_caster_aura_spell: 0,
+            exclude_target_aura_spell: 0,
+            difficulty_id: 0,
             target_aura_state: 0,
             totems: [0; 2],
             reagents: [(0, 0); 8],
@@ -334,6 +355,7 @@ impl Default for SpellDisplay {
             equipped_item_subclass_mask: 0,
             equipped_item_inventory_type_mask: 0,
             requires_spell_focus: 0,
+            required_areas_id: 0,
             shapeshift_form: None,
             stance_bar_order: 0,
             active_icon: None,

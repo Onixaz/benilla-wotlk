@@ -16,6 +16,7 @@ use crate::ui_script::{UiFeed, UiInput};
 
 pub(crate) mod difficulty;
 mod feed;
+pub(crate) use feed::drain_party;
 pub(crate) mod net;
 mod pets;
 mod records;
@@ -46,6 +47,7 @@ impl Plugin for UiPartyPlugin {
                         .after(crate::ui_unit::UnitFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
                     difficulty::feed_menu_gates.in_set(UiFeed),
+                    difficulty::feed_instance_difficulty.in_set(UiFeed),
                     feed::drain_party.after(UiInput),
                 ),
             );

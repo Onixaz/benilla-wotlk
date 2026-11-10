@@ -730,7 +730,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // The category tests (`IsTournamentRealmCategory`, `IsInvalidTournamentRealmCategory`,
     // `IsInvalidLocale`): the 1-based visible category's row, 1 or nothing. A tournament row is
     // flag `0x1`, invalid for an account that is neither GM nor ProPass, which a realm server's
-    // logon never reports; a locale row is one whose mask excludes the client's enUS (index 0).
+    // logon never reports; a locale row is one whose mask excludes the running locale (`0x4df357`).
     for (name, which) in [
         ("IsTournamentRealmCategory", 0u8),
         ("IsInvalidTournamentRealmCategory", 1),
@@ -755,7 +755,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 };
                 let yes = match which {
                     0 | 1 => cat.flags & 0x1 != 0,
-                    _ => cat.locale_mask != 0 && cat.locale_mask & 1 == 0,
+                    _ => {
+                        cat.locale_mask != 0 && cat.locale_mask & (1 << crate::locale::index()) == 0
+                    }
                 };
                 Ok(if yes {
                     MultiValue::from_vec(vec![Value::Number(1.0)])

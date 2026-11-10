@@ -218,6 +218,17 @@ impl ChatWindowLook {
         }
     }
 
+    /// Window `index`'s record after `ResetChatWindows` (`0x501f00`): [`Self::stock`], but window 1
+    /// takes only the `defaultOn` groups of 0-39 (`0x502060`), so `TARGETICONS` stays off.
+    pub fn reset(index: usize) -> Self {
+        let mut look = Self::stock(index);
+        if index == 0 {
+            look.messages
+                .retain(|m| message_group_index(m).is_some_and(|i| MESSAGE_GROUPS[i].1));
+        }
+        look
+    }
+
     /// Drops unknown names and duplicates and puts the rest in table order, so
     /// `GetChatWindowMessages` (`0x4fc0c0`) answers as the reference's flag walk does.
     pub fn normalize_messages(&mut self) {
@@ -371,7 +382,7 @@ impl super::UiScript {
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
-    // ResetChatWindows() (`0x501f00`): every colour and window back to its boot record, the
+    // ResetChatWindows() (`0x501f00`): every colour and window back to its reset record, the
     // `flags & 1` zone channels back in window 1 and the auto-join mask, then the events.
     lua.globals().set(
         "ResetChatWindows",
@@ -382,7 +393,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 model.chat_colors_changed = true;
                 let count = model.chat_window_looks.len();
                 for i in 0..count {
-                    model.chat_window_looks[i] = ChatWindowLook::stock(i);
+                    model.chat_window_looks[i] = ChatWindowLook::reset(i);
                     model.chat_window_changes.insert(i);
                 }
                 let rows: Vec<(String, u32)> = model
@@ -950,6 +961,36 @@ mod tests {
             1
         );
         assert!(s.run("SetChatWindowUninteractable('x', true)").is_err());
+    }
+
+    /// Boot gives window 1 all of groups 0-39 (`0x50f033`); the reset only the `defaultOn` ones.
+    #[test]
+    fn reset_chat_windows_leaves_target_icons_off_where_boot_turns_them_on() {
+        let s = UiScript::new().unwrap();
+        let has_icons = |s: &UiScript| {
+            s.eval::<bool>(
+                "for _, m in ipairs({GetChatWindowMessages(1)}) do \
+                   if m == 'TARGETICONS' then return true end end return false",
+            )
+            .unwrap()
+        };
+        assert!(has_icons(&s), "the boot record carries TARGETICONS");
+        s.run("SetChatWindowName(1, 'Bob') ResetChatWindows()")
+            .unwrap();
+        assert!(!has_icons(&s), "the reset record does not");
+        assert_eq!(
+            s.eval::<i64>("return select('#', GetChatWindowMessages(1))")
+                .unwrap(),
+            39
+        );
+        let (name, docked): (String, i64) = s
+            .eval("local n, _, _, _, _, _, _, _, d = GetChatWindowInfo(1) return n, d")
+            .unwrap();
+        assert_eq!(
+            (name.as_str(), docked),
+            ("", 1),
+            "the name cleared, docked at 1"
+        );
     }
 
     #[test]

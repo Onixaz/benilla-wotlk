@@ -65,6 +65,53 @@ pub(crate) struct UsableCtx<'a> {
     /// The caster's combo points on the current target: [`super::ComboPoints`]' player bank, or
     /// the pet's for the pet (`GetComboPoints(target)` with the target 0, `0x513920`, `0x5d3520`).
     pub(crate) combo_points: u8,
+    /// The auto-unshift check (`0x71b130`): a spell its form refuses stays usable when it passes.
+    pub(crate) auto_unshift: bool,
+    /// The caster's and the current target's aura tables, for the aura-spell legs (`0x80b5d0`);
+    /// a unit with no table passes them.
+    pub(crate) self_auras: Option<&'a crate::unit_auras::UnitAuras>,
+    pub(crate) target_auras: Option<&'a crate::unit_auras::UnitAuras>,
+}
+
+/// The aura tables the usable walk's feeds read.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct UsableAuras<'w, 's> {
+    pub(crate) me: bevy::prelude::Query<
+        'w,
+        's,
+        &'static crate::unit_auras::UnitAuras,
+        bevy::prelude::With<crate::net::SelfPlayer>,
+    >,
+    pub(crate) all: bevy::prelude::Query<'w, 's, &'static crate::unit_auras::UnitAuras>,
+}
+
+/// Whether an aura table holds `id` (`0x7282a0`'s walk).
+pub(crate) fn has_aura(table: &crate::unit_auras::UnitAuras, id: u32) -> bool {
+    table.iter().any(|a| a.spell_id == id)
+}
+
+/// The caster's aura-spell legs: a required aura missing, or an excluded one present.
+pub(crate) fn caster_aura_spells_met(
+    d: &SpellDisplay,
+    spells: &Spells,
+    auras: Option<&crate::unit_auras::UnitAuras>,
+) -> bool {
+    let Some(table) = auras else { return true };
+    let need = spells.for_difficulty(d.caster_aura_spell);
+    let bar = spells.for_difficulty(d.exclude_caster_aura_spell);
+    (need == 0 || has_aura(table, need)) && (bar == 0 || !has_aura(table, bar))
+}
+
+/// The target's aura-spell legs, the same two tests.
+pub(crate) fn target_aura_spells_met(
+    d: &SpellDisplay,
+    spells: &Spells,
+    auras: Option<&crate::unit_auras::UnitAuras>,
+) -> bool {
+    let Some(table) = auras else { return true };
+    let need = spells.for_difficulty(d.target_aura_spell);
+    let bar = spells.for_difficulty(d.exclude_target_aura_spell);
+    (need == 0 || has_aura(table, need)) && (bar == 0 || !has_aura(table, bar))
 }
 
 /// The player's runes and `SpellRuneCost.dbc`, for [`RuneCheck::has_runes`].
@@ -523,7 +570,9 @@ pub(crate) fn spell_usable(
     // it counts as shapeshifted and whether it refuses every unnamed spell.
     let form = ctx.store.0.unit_shapeshift_form();
     let form_flags = spells.forms.get(&u32::from(form)).map_or(0, |f| f.flags);
-    if !d.usable_in_form(form, form_flags) {
+    if d.form_refusal(form, form_flags).is_some_and(|r| {
+        matches!(r, benilla_formats::FormRefusal::OnlyShapeshift) || !ctx.auto_unshift
+    }) {
         return (false, false);
     }
     // Leg 7: only-stealthed spells need the CREEP vis flag.
@@ -541,12 +590,25 @@ pub(crate) fn spell_usable(
     {
         return (false, false);
     }
-    // Legs 10/10b: no current target is unusable; then the aura-state bit; then the relation fork.
-    if d.target_aura_state != 0 {
-        let Some(target) = ctx.target_store else {
+    // The caster's aura-spell legs, each through the difficulty's variant.
+    if !caster_aura_spells_met(d, spells, ctx.self_auras) {
+        return (false, false);
+    }
+    // Legs 10/10b: no current target is unusable while a state or an aura is required; then the
+    // aura-state bit and the aura spells; then the relation fork.
+    let wants_target_aura = spells.for_difficulty(d.target_aura_spell) != 0;
+    let bars_target_aura = spells.for_difficulty(d.exclude_target_aura_spell) != 0;
+    let target_legs = d.target_aura_state != 0 || wants_target_aura || bars_target_aura;
+    if ctx.target_store.is_none() && (d.target_aura_state != 0 || wants_target_aura) {
+        return (false, false);
+    }
+    if let Some(target) = ctx.target_store.filter(|_| target_legs) {
+        if d.target_aura_state != 0
+            && target.0.unit_aura_state() & (1 << (d.target_aura_state - 1)) == 0
+        {
             return (false, false);
-        };
-        if target.0.unit_aura_state() & (1 << (d.target_aura_state - 1)) == 0 {
+        }
+        if !target_aura_spells_met(d, spells, ctx.target_auras) {
             return (false, false);
         }
         match d.implicit_target_a1 {
@@ -961,6 +1023,51 @@ mod tests {
         assert!(fits(0, true));
     }
 
+    #[test]
+    fn the_aura_spell_legs_read_the_variant_for_the_difficulty() {
+        use std::sync::atomic::Ordering::Relaxed;
+        let (_, table) = crate::unit_auras::aura_unit_for_test(&[7, 70]);
+        let mut spells = Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [
+                (
+                    7,
+                    SpellDisplay {
+                        difficulty_id: 3,
+                        ..Default::default()
+                    },
+                ),
+                (8, SpellDisplay::default()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        spells.difficulties =
+            benilla_formats::SpellDifficultyCatalog::from_rows([(3, [7, 71, 0, 0])]);
+        let need = |id| SpellDisplay {
+            caster_aura_spell: id,
+            ..Default::default()
+        };
+        let bar = |id| SpellDisplay {
+            exclude_caster_aura_spell: id,
+            ..Default::default()
+        };
+        let t = Some(&table);
+        assert!(caster_aura_spells_met(&need(7), &spells, t));
+        assert!(!caster_aura_spells_met(&need(8), &spells, t));
+        assert!(!caster_aura_spells_met(&bar(7), &spells, t));
+        assert!(caster_aura_spells_met(&bar(8), &spells, t));
+        assert!(caster_aura_spells_met(&need(8), &spells, None), "no table");
+        // Heroic turns the required 7 into 71, which the unit does not have.
+        spells.instance_difficulty.store(2, Relaxed);
+        assert!(!caster_aura_spells_met(&need(7), &spells, t));
+        let target = SpellDisplay {
+            exclude_target_aura_spell: 70,
+            ..Default::default()
+        };
+        assert!(!target_aura_spells_met(&target, &spells, t));
+    }
+
     fn ctx<'a>(
         store: &'a ObjectStore,
         cooldowns: &'a Cooldowns,
@@ -969,6 +1076,8 @@ mod tests {
         spell_mods: &'a SpellModifiers,
     ) -> UsableCtx<'a> {
         UsableCtx {
+            self_auras: None,
+            target_auras: None,
             store,
             target_store: None,
             factions: None,
@@ -979,6 +1088,7 @@ mod tests {
             spell_mods,
             runes: None,
             combo_points: 0,
+            auto_unshift: false,
         }
     }
 
@@ -987,6 +1097,15 @@ mod tests {
     }
 
     fn walk_with_combo(d: &SpellDisplay, store: &ObjectStore, combo_points: u8) -> (bool, bool) {
+        walk_full(d, store, combo_points, false)
+    }
+
+    fn walk_full(
+        d: &SpellDisplay,
+        store: &ObjectStore,
+        combo_points: u8,
+        auto_unshift: bool,
+    ) -> (bool, bool) {
         let cooldowns = Cooldowns::default();
         let reputations = Reputations(Vec::new(), Vec::new());
         let spells = Spells::empty_for_tests();
@@ -1003,12 +1122,29 @@ mod tests {
             &spells,
             &UsableCtx {
                 combo_points,
+                auto_unshift,
                 ..ctx(store, &cooldowns, &reputations, &carried, &spell_mods)
             },
             &objects,
             &items,
             &commands,
         )
+    }
+
+    /// The form leg (`0x80b5d0`): a spell its form refuses stays lit when the player can leave it.
+    #[test]
+    fn a_form_refused_spell_stays_usable_when_the_form_can_be_left() {
+        let shifted = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (22, 100),
+            (28, 100),
+            (164, 15 << 24),
+        ]));
+        let no_form = SpellDisplay {
+            attributes: 0x0001_0000,
+            ..Default::default()
+        };
+        assert!(!walk_full(&no_form, &shifted, 0, false).0);
+        assert!(walk_full(&no_form, &shifted, 0, true).0);
     }
 
     /// The rune check (`0x5ee5b0`): each kind's ready runes against the row, the shortfall covered
@@ -1666,6 +1802,8 @@ mod tests {
         let carried = crate::ui_items::carried_counts(&me.0, &objects);
         for (target, expect) in [(&healthy, false), (&low, true)] {
             let ctx = UsableCtx {
+                self_auras: None,
+                target_auras: None,
                 store: &me,
                 target_store: Some(target),
                 factions: None,
@@ -1676,6 +1814,7 @@ mod tests {
                 spell_mods: &SpellModifiers::default(),
                 runes: None,
                 combo_points: 0,
+                auto_unshift: false,
             };
             assert_eq!(
                 spell_usable(5308, &execute, &spells, &ctx, &objects, &items, &commands),

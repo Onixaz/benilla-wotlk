@@ -445,11 +445,11 @@ pub(crate) fn flag_of_tag(chat_tag: u8) -> &'static str {
     }
 }
 
-/// The 1.12 language names by wire id (vmangos `SharedDefines.h`, `LANG_*`), for the `[Language]`
-/// header. Language 0 has no `Languages.dbc` row, so the stock `arg3 ~= "Universal"` test never
-/// fires: an empty arg3 is what suppresses the header (`ChatFrame.lua:1442`).
+/// The language names by wire id, in the running locale, for the `[Language]` header. Language 0
+/// has no `Languages.dbc` row, so the stock `arg3 ~= "Universal"` test never fires: an empty arg3
+/// is what suppresses the header (`ChatFrame.lua:1442`).
 pub(crate) fn language_name(id: u32) -> &'static str {
-    match id {
+    let english = match id {
         1 => "Orcish",
         2 => "Darnassian",
         3 => "Taurahe",
@@ -463,8 +463,9 @@ pub(crate) fn language_name(id: u32) -> &'static str {
         13 => "Gnomish",
         14 => "Troll",
         33 => "Gutterspeak",
-        _ => "", // 0, Universal, and unknown ids: no header
-    }
+        _ => return "", // 0, Universal, and unknown ids: no header
+    };
+    crate::locale_names::language(id).unwrap_or(english)
 }
 
 #[cfg(test)]

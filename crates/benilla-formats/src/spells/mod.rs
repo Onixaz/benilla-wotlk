@@ -96,6 +96,11 @@ const COL_STANCES: usize = 12;
 const COL_STANCES_HIGH: usize = 13;
 const COL_STANCES_NOT: usize = 14;
 const COL_CASTER_AURA_STATE: usize = 20;
+const COL_CASTER_AURA_SPELL: usize = 24;
+const COL_TARGET_AURA_SPELL: usize = 25;
+const COL_EXCLUDE_CASTER_AURA_SPELL: usize = 26;
+const COL_EXCLUDE_TARGET_AURA_SPELL: usize = 27;
+const COL_SPELL_DIFFICULTY: usize = 233;
 const COL_TARGET_AURA_STATE: usize = 21;
 const COL_TOTEM_1: usize = 50;
 const COL_REAGENT_1: usize = 52;
@@ -105,11 +110,13 @@ const COL_EQUIPPED_ITEM_SUBCLASS_MASK: usize = 69;
 /// `EquippedItemInventoryTypeMask` (`+0x118`), read by the item-target gate.
 const COL_EQUIPPED_ITEM_INVENTORY_TYPE_MASK: usize = 70;
 const COL_REQUIRES_SPELL_FOCUS: usize = 18;
+const COL_REQUIRED_AREAS_ID: usize = 224;
 const COL_DISPEL: usize = 2;
 /// `SchoolMask`: 3.3.5a carries the school as a mask, Fireball 4, not 1.12.1's enum.
 const COL_SCHOOL_MASK: usize = 225;
 /// `RuneCostID`, the `SpellRuneCost.dbc` row (`0x5ee686`).
 const COL_RUNE_COST_ID: usize = 226;
+const COL_POWER_DISPLAY_ID: usize = 228;
 const COL_MECHANIC: usize = 3;
 const COL_EFFECT_MECHANIC_1: usize = 83;
 const COL_ATTRIBUTES: usize = 4;
@@ -703,6 +710,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 category_recovery_ms: u32_at(r, COL_CATEGORY_RECOVERY_TIME).unwrap_or(0),
                 start_recovery_category: u32_at(r, COL_START_RECOVERY_CATEGORY).unwrap_or(0),
                 start_recovery_ms: u32_at(r, COL_START_RECOVERY_TIME).unwrap_or(0),
+                power_display_id: u32_at(r, COL_POWER_DISPLAY_ID).unwrap_or(0),
                 power_type: u32_at(r, COL_POWER_TYPE).unwrap_or(0),
                 mana_cost: u32_at(r, COL_MANA_COST).unwrap_or(0),
                 rune_cost_id: u32_at(r, COL_RUNE_COST_ID).unwrap_or(0),
@@ -725,6 +733,11 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 stances_high: u32_at(r, COL_STANCES_HIGH).unwrap_or(0),
                 stances_not: u32_at(r, COL_STANCES_NOT).unwrap_or(0),
                 caster_aura_state: u32_at(r, COL_CASTER_AURA_STATE).unwrap_or(0),
+                caster_aura_spell: u32_at(r, COL_CASTER_AURA_SPELL).unwrap_or(0),
+                target_aura_spell: u32_at(r, COL_TARGET_AURA_SPELL).unwrap_or(0),
+                exclude_caster_aura_spell: u32_at(r, COL_EXCLUDE_CASTER_AURA_SPELL).unwrap_or(0),
+                exclude_target_aura_spell: u32_at(r, COL_EXCLUDE_TARGET_AURA_SPELL).unwrap_or(0),
+                difficulty_id: u32_at(r, COL_SPELL_DIFFICULTY).unwrap_or(0),
                 target_aura_state: u32_at(r, COL_TARGET_AURA_STATE).unwrap_or(0),
                 totems: std::array::from_fn(|i| u32_at(r, COL_TOTEM_1 + i).unwrap_or(0)),
                 reagents: std::array::from_fn(|i| {
@@ -739,6 +752,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 equipped_item_inventory_type_mask: u32_at(r, COL_EQUIPPED_ITEM_INVENTORY_TYPE_MASK)
                     .unwrap_or(0),
                 requires_spell_focus: u32_at(r, COL_REQUIRES_SPELL_FOCUS).unwrap_or(0),
+                required_areas_id: u32_at(r, COL_REQUIRED_AREAS_ID).unwrap_or(0) as i32,
                 // The first MOD_SHAPESHIFT effect's `EffectMiscValue` is the form.
                 shapeshift_form: (0..3).find_map(|i| {
                     (effect_apply_aura[i] == SPELL_AURA_MOD_SHAPESHIFT)

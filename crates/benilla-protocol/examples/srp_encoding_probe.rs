@@ -22,6 +22,8 @@ use rand::{thread_rng, RngCore};
 use sha1::{Digest, Sha1};
 
 const AUTH_PORT: u16 = 3724;
+/// The logon challenge's locale, the four letters packed big-endian.
+const EN_US: u32 = u32::from_be_bytes(*b"enUS");
 /// Failures allowed inside realmd's throttle window before it answers `WOW_FAIL_DB_BUSY`.
 const THROTTLE_MAX: u32 = 10;
 
@@ -262,7 +264,7 @@ fn handshake(
     let mut s = TcpStream::connect((host, AUTH_PORT))
         .with_context(|| format!("connecting to {host}:{AUTH_PORT}"))?;
     s.set_read_timeout(Some(Duration::from_secs(10)))?;
-    auth::write_logon_challenge(&mut s, user).context("sending logon challenge")?;
+    auth::write_logon_challenge(&mut s, user, EN_US).context("sending logon challenge")?;
     let reply = auth::read_challenge_reply(&mut s)
         .context("reading logon challenge reply")?
         .ok_or_else(|| anyhow!("SUCCESS_SURVEY on the challenge: no SRP inputs"))?;

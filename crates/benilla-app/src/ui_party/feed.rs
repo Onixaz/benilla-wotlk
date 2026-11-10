@@ -997,7 +997,7 @@ fn unit_guid(
 }
 
 /// Drain the Lua party intents into their `CMSG_*` sends.
-pub(super) fn drain_party(
+pub(crate) fn drain_party(
     script: Option<NonSendMut<UiScript>>,
     mut group: ResMut<GroupState>,
     selection: Res<Selection>,

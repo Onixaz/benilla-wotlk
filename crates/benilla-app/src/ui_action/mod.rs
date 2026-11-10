@@ -185,6 +185,12 @@ pub(crate) struct Spells {
     pub(crate) ranges: benilla_formats::SpellRangeCatalog,
     /// `SpellCastTimes.dbc`, read through `CastingTimeIndex` by the cast-time lookup.
     pub(crate) cast_times: benilla_formats::SpellCastTimeCatalog,
+    /// `PowerDisplay.dbc`, the alternate power names; empty on a failed load.
+    pub(crate) power_displays: benilla_formats::PowerDisplayCatalog,
+    /// `SpellDifficulty.dbc`; empty on a failed load.
+    pub(crate) difficulties: benilla_formats::SpellDifficultyCatalog,
+    /// The current map's difficulty index plus one, 0 outside a dungeon or raid.
+    pub(crate) instance_difficulty: std::sync::Arc<std::sync::atomic::AtomicU32>,
     /// `SpellDuration.dbc`: the `$d`/`$o` tokens' source, through the duration lookup.
     pub(crate) durations: benilla_formats::SpellDurationCatalog,
     /// `SpellRadius.dbc`: the `$a` token's yards.
@@ -192,6 +198,18 @@ pub(crate) struct Spells {
 }
 
 impl Spells {
+    /// `0x802850`: `id`, or its variant for the current map's difficulty.
+    pub(crate) fn for_difficulty(&self, id: u32) -> u32 {
+        use std::sync::atomic::Ordering::Relaxed;
+        let index = self.instance_difficulty.load(Relaxed).checked_sub(1);
+        match self.catalog.get(id) {
+            Some(d) if d.difficulty_id != 0 => {
+                self.difficulties.variant(d.difficulty_id, id, index)
+            }
+            _ => id,
+        }
+    }
+
     /// The cast time in ms as the reference's cast-time lookup returns it for argument 1, the
     /// tooltip's: the level-scaled `CastingTimeIndex` row, then spell-mod op 10, with no clamp, so
     /// row 18's negative time survives. A missing row returns 0 before the modifier. The cast-speed
@@ -240,6 +258,9 @@ impl Spells {
             forms: HashMap::new(),
             ranges: benilla_formats::SpellRangeCatalog::default(),
             cast_times: Default::default(),
+            power_displays: Default::default(),
+            difficulties: Default::default(),
+            instance_difficulty: Default::default(),
             durations: Default::default(),
             radii: Default::default(),
         }
@@ -256,6 +277,10 @@ pub(crate) fn real_spells() -> Option<Spells> {
         forms: benilla_formats::load_shapeshift_forms(&mut chain).expect("forms"),
         ranges: benilla_formats::load_spell_ranges(&mut chain).expect("ranges"),
         cast_times: benilla_formats::load_spell_cast_times(&mut chain).expect("cast times"),
+        power_displays: benilla_formats::load_power_displays(&mut chain).expect("power displays"),
+        difficulties: benilla_formats::load_spell_difficulties(&mut chain)
+            .expect("spell difficulties"),
+        instance_difficulty: Default::default(),
         durations: benilla_formats::load_spell_durations(&mut chain).expect("durations"),
         radii: benilla_formats::load_spell_radii(&mut chain).expect("radii"),
     })
@@ -490,6 +515,22 @@ fn load_spells(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
                     Default::default()
                 })
             };
+            let power_displays = {
+                let mut chain = assets.chain.lock_recover();
+                benilla_formats::load_power_displays(&mut chain).unwrap_or_else(|e| {
+                    warn!("ui_action: PowerDisplay.dbc failed — alternate powers off: {e:#}");
+                    Default::default()
+                })
+            };
+            let difficulties = {
+                let mut chain = assets.chain.lock_recover();
+                benilla_formats::load_spell_difficulties(&mut chain).unwrap_or_else(|e| {
+                    warn!(
+                        "ui_action: SpellDifficulty.dbc failed — one spell per difficulty: {e:#}"
+                    );
+                    Default::default()
+                })
+            };
             let durations = {
                 let mut chain = assets.chain.lock_recover();
                 benilla_formats::load_spell_durations(&mut chain).unwrap_or_else(|e| {
@@ -519,6 +560,9 @@ fn load_spells(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
                 forms,
                 ranges,
                 cast_times,
+                power_displays,
+                difficulties,
+                instance_difficulty: Default::default(),
                 durations,
                 radii,
             });
