@@ -561,8 +561,10 @@ fn far_markers(z: f32) -> f32 {
 /// [`classify_water_side`]'s sweep finds no batch carrying its near identity.
 #[derive(Resource, Default)]
 pub struct FarSideTwins {
-    to_far: std::collections::HashMap<AssetId<WowModelMaterial>, Handle<WowModelMaterial>>,
-    to_near: std::collections::HashMap<AssetId<WowModelMaterial>, Handle<WowModelMaterial>>,
+    to_far:
+        bevy::platform::collections::HashMap<AssetId<WowModelMaterial>, Handle<WowModelMaterial>>,
+    to_near:
+        bevy::platform::collections::HashMap<AssetId<WowModelMaterial>, Handle<WowModelMaterial>>,
 }
 
 impl FarSideTwins {

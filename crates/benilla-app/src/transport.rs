@@ -22,7 +22,7 @@ use benilla_formats::{
     ElevatorKeyframe, ElevatorPaths, TaxiPathNodes, TransportSample, TransportTimetable,
 };
 // The collider AABB and collider-tree refresh, run a second time each frame in the chain below.
-use benilla_world::collision::refit_changed_collider_aabbs as republish_moved_collider_aabbs;
+use benilla_world::collision::refit_changed_collider_aabbs;
 use bevy::prelude::*;
 
 use crate::go_templates::GameObjectTemplates;
@@ -47,15 +47,16 @@ impl Plugin for TransportPlugin {
                 Update,
                 // After the net drain and before input, so the deck is posed before the mover
                 // reads the world. avian refreshes collider AABBs in `FixedPostUpdate`, before
-                // `Update`, so without [`republish_moved_collider_aabbs`] the mover's casts see the
-                // deck's previous-frame box, above its rider after one long frame. It writes no
-                // tick resource, and it visits only the colliders moved since its own last run.
+                // `Update`, so without this second refit the mover's casts see the deck's
+                // previous-frame box, above its rider after one long frame. It writes no tick
+                // resource, and it visits only the decks: `FixedPostUpdate` keeps every other
+                // collider's box current.
                 (
                     arm_transports,
                     reseek_ridden_transport_at_worldport,
                     tick_transports,
                     watch_ridden_transport_map,
-                    republish_moved_collider_aabbs,
+                    refit_changed_collider_aabbs::<With<Transport>>,
                     compose_riders,
                     compose_deck_passengers,
                     ground_deck_riders,
@@ -668,8 +669,8 @@ fn compose_deck_passengers(
 /// bit that admits GameObject meshes, the deck among them.
 ///
 /// It runs here, not in [`crate::net::ground_clamp_creatures`] (in `WorldStage::Net`), because
-/// only after [`compose_riders`] and [`republish_moved_collider_aabbs`] are the rider's position
-/// and the deck's box this frame's. The height goes to the `Transform`, not `local_pos`, which
+/// only after [`compose_riders`] and the deck's own collider refit are the rider's position and
+/// the deck's box this frame's. The height goes to the `Transform`, not `local_pos`, which
 /// [`compose_riders`] recomposes from every frame.
 ///
 /// Not modelled: the reference's anti-warp guard takes the wire Z verbatim, skipping the re-ground,
