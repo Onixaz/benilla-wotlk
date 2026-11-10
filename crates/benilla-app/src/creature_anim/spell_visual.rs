@@ -980,7 +980,7 @@ pub(super) fn route_cast_visuals(
     visuals: Option<Res<SpellVisuals>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     mut weapon_src: WeaponVisualSrc,
-    units: Query<(Entity, &ObjectStore), Without<ItemObject>>,
+    units: Query<(Entity, &ObjectStore, Has<crate::net::SelfPlayer>), Without<ItemObject>>,
     holds: Query<&CastHold>,
     mut channel_cache: Local<EntityHashMap<u32>>,
 ) {
@@ -1125,10 +1125,13 @@ pub(super) fn route_cast_visuals(
                         });
                     }
                 }
-                // A flagged row holds column 8's model at column 16 until the release (`0x7fa41d`).
+                // A flagged row holds column 8's model at column 16 until the release (`0x7fa41d`);
+                // our own start packet releases missiles at once, dropping it (`0x806a0b`).
+                let is_self = units.get(ev.entity).is_ok_and(|(.., me)| me);
                 let stages = resolve_stages(spells, &visuals.0, ev.spell_id, || {
                     weapon_src.caster(ev.entity)
-                });
+                })
+                .filter(|_| !is_self);
                 if let Some(s) = stages.filter(VisualStages::holds_precast_missile) {
                     out.fx.write(SpellKitFx::Begin {
                         entity: ev.entity,
@@ -1388,7 +1391,7 @@ pub(super) fn route_cast_visuals(
 
     // The channel poll: `UNIT_CHANNEL_SPELL` edges drive an observed unit's channel (the self-only
     // `MSG_CHANNEL_*` do not); a cleared field drops the hold even with no other wire trace.
-    for (entity, store) in &units {
+    for (entity, store, _) in &units {
         let cur = store.0.unit_channel_spell();
         let prev = channel_cache.get(&entity).copied().unwrap_or(0);
         if cur == prev {

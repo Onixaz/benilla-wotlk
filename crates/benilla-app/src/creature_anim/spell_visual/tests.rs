@@ -2718,8 +2718,8 @@ fn an_area_kit_at_a_point_plays_only_its_head_base_and_world_slots() {
 }
 
 /// A `SpellVisual` flag `0x20` row holds column 8's model at column 16 from START; column 16's -1,
-/// a column 8 naming no file or no flag hold nothing, and a failure releases the hold
-/// (`0x722950`, `0x72ed80`).
+/// a column 8 naming no file, no flag or our own START hold nothing, and a failure releases the
+/// hold (`0x722950`, `0x72ed80`, `0x806a0b`).
 #[test]
 fn a_flagged_visual_holds_its_missile_from_start_and_a_failure_releases_it() {
     use super::FxClass;
@@ -2757,7 +2757,14 @@ fn a_flagged_visual_holds_its_missile_from_start_and_a_failure_releases_it() {
         ..crate::ui_action::Spells::empty_for_tests()
     });
     let unit = app.world_mut().spawn_empty().id();
-    let edge = |app: &mut App, spell_id, kind| {
+    let me = app
+        .world_mut()
+        .spawn((
+            crate::net::SelfPlayer,
+            crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[])),
+        ))
+        .id();
+    let edge_on = |app: &mut App, unit, spell_id, kind| {
         app.world_mut()
             .write_message(cast_event(unit, spell_id, kind));
         app.update();
@@ -2778,6 +2785,7 @@ fn a_flagged_visual_holds_its_missile_from_start_and_a_failure_releases_it() {
             })
             .collect::<Vec<Option<Vec<(u16, u32)>>>>()
     };
+    let edge = |app: &mut App, spell_id, kind| edge_on(app, unit, spell_id, kind);
     assert_eq!(
         edge(&mut app, 101, CastEventKind::Start),
         vec![Some(vec![(0x15, 50)])],
@@ -2797,4 +2805,8 @@ fn a_flagged_visual_holds_its_missile_from_start_and_a_failure_releases_it() {
         "GO keeps it"
     );
     assert_eq!(edge(&mut app, 101, CastEventKind::Fail), vec![None]);
+    assert!(
+        edge_on(&mut app, me, 101, CastEventKind::Start).is_empty(),
+        "our own START releases it at once"
+    );
 }
