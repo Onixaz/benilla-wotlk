@@ -95,24 +95,27 @@ function forceinsecure() end
 const REG_HOOK_WRAPPER: &str = "__benilla_hook_wrapper";
 
 /// The script hook wrapper (`0x817050`): the original with the arguments, its errors propagating,
-/// then the hook with the same arguments, an error of its going to the error handler, and the
-/// original's results returned. The reference hands the hook's error to the handler as the pcall's
-/// message handler; here the handler sees the same message once the pcall returns.
+/// then the hook with the same arguments under a protected call whose message handler is the error
+/// handler, so it runs at the error, and the original's results returned.
 const HOOK_WRAPPER: &str = r##"
-local pcall, select, unpack = pcall, select, unpack
+local xpcall, select, unpack = xpcall, select, unpack
 local function pack(...)
     return { n = select("#", ...), ... }
+end
+local function report(msg)
+    local handler = geterrorhandler and geterrorhandler()
+    if handler then
+        handler(msg)
+    end
+    return msg
 end
 return function(original, hook)
     return function(...)
         local out = pack(original(...))
-        local ok, msg = pcall(hook, ...)
-        if not ok then
-            local handler = geterrorhandler and geterrorhandler()
-            if handler then
-                handler(msg)
-            end
-        end
+        local args = pack(...)
+        xpcall(function()
+            hook(unpack(args, 1, args.n))
+        end, report)
         return unpack(out, 1, out.n)
     end
 end
