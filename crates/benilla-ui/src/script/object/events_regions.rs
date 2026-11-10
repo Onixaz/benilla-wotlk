@@ -112,18 +112,35 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "GetScript",
         lua.create_function(|lua, (this, name): (Table, String)| get_script(lua, &this, &name))?,
     )?;
+    // `HookScript("type", function)` (`0x49edb0`): with no script set, the hook becomes the script;
+    // else the script becomes the hook wrapper over the two (`0x817050`).
     m.set(
         "HookScript",
-        lua.create_function(|lua, (this, name, hook): (Table, String, Function)| {
-            let kind = script_kind(lua, &name).ok_or_else(|| {
-                mlua::Error::runtime(format!("HookScript: unsupported script '{name}'"))
-            })?;
-            // 12340's Frame HookScript post-hooks the current script; SetScript replaces it.
+        lua.create_function(|lua, (this, name, hook): (Table, Value, Value)| {
+            // `lua_isstring`: a number names a script too.
+            let name = match name {
+                Value::String(_) | Value::Integer(_) | Value::Number(_) => {
+                    lua.coerce_string(name)?
+                }
+                _ => None,
+            };
+            let (Some(name), Value::Function(hook)) = (name, hook) else {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:HookScript(\"type\", function)",
+                    name_or_unnamed(&this)
+                )));
+            };
+            let name = name.to_string_lossy();
+            let Some(kind) = script_kind(lua, &name) else {
+                return Err(mlua::Error::runtime(format!(
+                    "{} doesn't have a \"{name}\" script",
+                    name_or_unnamed(&this)
+                )));
+            };
             let func = match get_script(lua, &this, kind)? {
-                Value::Function(original) => lua
-                    .load("local a, b = ... return function(...) a(...) return b(...) end")
-                    .set_name("=HookScript")
-                    .call::<Function>((original, hook))?,
+                Value::Function(original) => {
+                    crate::script::secure_call::hook_wrapper(lua, original, hook)?
+                }
                 _ => hook,
             };
             set_script(lua, &this, kind, Some(func))
@@ -316,6 +333,15 @@ fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> ml
     Ok(())
 }
 
+/// The receiver's `GetName()`, or `<unnamed>`, as the client's errors name it.
+fn name_or_unnamed(this: &Table) -> String {
+    this.get::<Function>("GetName")
+        .and_then(|f| f.call::<Option<String>>(this.clone()))
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| super::anchor_args::UNNAMED.to_string())
+}
+
 /// The canonical spelling of script kind `name`, case-insensitively, from [`SCRIPT_KINDS`];
 /// `None` for a name the frames do not carry.
 fn script_kind(_lua: &Lua, name: &str) -> Option<&'static str> {
@@ -503,6 +529,44 @@ mod tests {
             "#,
         )
         .unwrap();
+    }
+
+    /// The wrapper (`0x817050`) answers the script's results and runs each hook under the error
+    /// handler, so a failing hook stops neither the script nor a later hook.
+    #[test]
+    fn a_hook_runs_under_the_error_handler_and_the_script_keeps_its_results() {
+        let s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            seterrorhandler(function(msg) Seen = msg end)
+            local f = CreateFrame("Frame", "HookProbe")
+            f:SetScript("OnShow", function() return 1, nil, 3 end)
+            f:HookScript("OnShow", function() error("hook", 0) end)
+            f:HookScript("OnShow", function() Later = true return 9 end)
+            local script = f:GetScript("OnShow")
+            assert(select('#', script()) == 3)
+            local a, b, c = script()
+            assert(a == 1 and b == nil and c == 3)
+            assert(Seen == "hook" and Later)
+            "#,
+        )
+        .unwrap();
+        let usage = s
+            .run(r#"HookProbe:HookScript("OnShow", nil)"#)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            usage.contains(r#"Usage: HookProbe:HookScript("type", function)"#),
+            "{usage}"
+        );
+        let missing = s
+            .run(r#"HookProbe:HookScript("NotAScript", function() end)"#)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing.contains(r#"HookProbe doesn't have a "NotAScript" script"#),
+            "{missing}"
+        );
     }
 
     /// Both frames share both events, so clearing one must leave the other's registrations.

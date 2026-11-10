@@ -91,6 +91,50 @@ end
 function forceinsecure() end
 "##;
 
+/// Registry key of the compiled script hook wrapper factory.
+const REG_HOOK_WRAPPER: &str = "__benilla_hook_wrapper";
+
+/// The script hook wrapper (`0x817050`): the original with the arguments, its errors propagating,
+/// then the hook with the same arguments, an error of its going to the error handler, and the
+/// original's results returned. The reference hands the hook's error to the handler as the pcall's
+/// message handler; here the handler sees the same message once the pcall returns.
+const HOOK_WRAPPER: &str = r##"
+local pcall, select, unpack = pcall, select, unpack
+local function pack(...)
+    return { n = select("#", ...), ... }
+end
+return function(original, hook)
+    return function(...)
+        local out = pack(original(...))
+        local ok, msg = pcall(hook, ...)
+        if not ok then
+            local handler = geterrorhandler and geterrorhandler()
+            if handler then
+                handler(msg)
+            end
+        end
+        return unpack(out, 1, out.n)
+    end
+end
+"##;
+
+/// `HookScript`'s wrapper over a set script and the hook, shared by every object kind.
+pub(crate) fn hook_wrapper(
+    lua: &Lua,
+    original: mlua::Function,
+    hook: mlua::Function,
+) -> mlua::Result<mlua::Function> {
+    let factory = match lua.named_registry_value::<Option<mlua::Function>>(REG_HOOK_WRAPPER)? {
+        Some(f) => f,
+        None => {
+            let f: mlua::Function = lua.load(HOOK_WRAPPER).set_name("=HookScript").eval()?;
+            lua.set_named_registry_value(REG_HOOK_WRAPPER, f.clone())?;
+            f
+        }
+    };
+    factory.call((original, hook))
+}
+
 /// Install `securecall` on a target whose base library has it.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `issecure()` (`0x816da0`): 1 while the taint global is clear, else nil. benilla taints
