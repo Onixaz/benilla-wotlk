@@ -9,7 +9,7 @@
 //! leaves `randomseed` out, and adds `trim`, `split` and `join` to the string table. Only what
 //! [`super::stdlib`]'s shared layer does not already bind is set here. `strreplace` is not built.
 
-use mlua::{Function, Lua, MultiValue, Table, Value, Variadic};
+use mlua::{Lua, MultiValue, Table, Value, Variadic};
 
 /// Install the layer; runs after [`super::stdlib::install`].
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -94,14 +94,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `table.wipe(t)`: every key cleared, the table returned.
+    // `table.wipe(t)` (`0x852180`): every key cleared raw, the table returned, in one native call.
     let table: Table = g.get("table")?;
-    // Keep the traversal inside Lua: crossing the Rust/ Lua boundary for every key is prohibitively
-    // expensive for QuestHelper's recycled work tables. Removing the key just returned by `next`
-    // is valid during Lua table traversal and preserves the table identity.
-    let wipe: Function = lua
-        .load("return function(t) for k in next, t do t[k] = nil end return t end")
-        .eval()?;
+    let wipe = lua.create_function(|_, t: Table| {
+        t.clear()?;
+        Ok(t)
+    })?;
     table.set("wipe", wipe.clone())?;
     g.set("wipe", wipe)?;
 

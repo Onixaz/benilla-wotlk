@@ -64,7 +64,8 @@ pub(crate) fn apply_model_attrs(
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
-    // GetPlayerFacing (`0x60a490`): one numeric heading, zero when no player exists.
+    // GetPlayerFacing (`0x60a490`): the active camera's target's facing, else the camera's yaw, 0
+    // with no camera; the host feeds the player's heading.
     lua.globals().set(
         "GetPlayerFacing",
         lua.create_function(|lua, ()| {
