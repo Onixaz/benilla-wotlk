@@ -48,6 +48,9 @@ kira = { path = "third_party/kira" }
 # bevy_render 0.18.1, patched to reconfigure a window's surface when its
 # `desired_maximum_frame_latency` moves (`third_party/bevy_render/BENILLA.md`).
 bevy_render = { path = "third_party/bevy_render" }
+# wgpu-hal 27.0.4, patched to recycle Metal staging buffers instead of allocating one per
+# `write_buffer` (`third_party/wgpu-hal/BENILLA.md`).
+wgpu-hal = { path = "third_party/wgpu-hal" }
 
 # Two builds. `dev` (`cargo dev`): every run, probe, test and gate builds it, so they share one
 # set of compiled artifacts. `release` is built, never tested: to play (`cargo play`), to ship

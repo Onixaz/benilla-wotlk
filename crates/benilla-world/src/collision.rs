@@ -413,9 +413,9 @@ pub(crate) fn use_change_aware_child_sync(app: &mut bevy::app::App) {
 
 /// avian's `update_moved_collider_aabbs`, visiting only colliders whose pose or shape changed:
 /// avian's walks every collider twice a step to read three change ticks, so each resident static
-/// hull costs every frame.
+/// hull costs every frame. `F` narrows it to the colliders a caller moved itself.
 #[allow(clippy::type_complexity)]
-pub fn refit_changed_collider_aabbs(
+pub fn refit_changed_collider_aabbs<F: bevy::ecs::query::QueryFilter + 'static>(
     mut colliders: bevy::ecs::system::Query<
         (
             bevy::ecs::entity::Entity,
@@ -434,6 +434,7 @@ pub fn refit_changed_collider_aabbs(
                 bevy::ecs::query::Changed<Rotation>,
                 bevy::ecs::query::Changed<Collider>,
             )>,
+            F,
         ),
     >,
     narrow_phase: bevy::ecs::system::Res<NarrowPhaseConfig>,
@@ -503,7 +504,7 @@ pub(crate) fn use_change_aware_aabb_refit(app: &mut bevy::app::App) {
     );
     app.add_systems(
         PhysicsSchedule,
-        refit_changed_collider_aabbs
+        refit_changed_collider_aabbs::<()>
             .in_set(avian3d::collider_tree::ColliderTreeSystems::UpdateAabbs)
             .ambiguous_with_all(),
     );
