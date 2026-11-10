@@ -143,18 +143,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     _ => None,
                 }
             };
-            // Any call marks the ranges dirty, the same child included (`0x96b3a0`).
-            let (changed, old) = with_scroll(lua, &this, |s| {
-                let old = s.child;
+            // Any call marks the ranges dirty and re-anchors the child, the same one included
+            // (`0x96b3a0`); the old child keeps the anchor it last had.
+            with_scroll(lua, &this, |s| {
                 s.child = new_child;
                 s.range_dirty = true;
-                (old != new_child, old)
             })?;
-            if changed {
-                // The child is an input of the layout resolve: its edges move to the override.
-                let h = frame_handle_of(lua, &this)?;
-                crate::script::model_mut_of(lua).touch_scroll_child(h, old);
-            }
+            let h = frame_handle_of(lua, &this)?;
+            crate::script::model_mut_of(lua).reanchor_scroll_child(h);
             Ok(())
         })?,
     )?;
@@ -191,7 +187,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             }
             let h = frame_handle_of(lua, &this)?;
-            crate::script::model_mut_of(lua).touch_scroll_child(h, None);
+            crate::script::model_mut_of(lua).reanchor_scroll_child(h);
             fire_scroll(lua, &this, "OnVerticalScroll", px)
         })?,
     )?;
@@ -212,8 +208,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ── The horizontal axis ──
     // SetHorizontalScroll(px) is the vertical setter's byte-clone on `[+0x324]`, firing
-    // `OnHorizontalScroll`. The sign is the reference's: the re-anchor puts the child at
-    // `(+hScroll, +vScroll)`, so a positive x moves it right, where a positive y lifts it.
+    // `OnHorizontalScroll`. The re-anchor negates x alone (`0x96b1f6`): the child sits at
+    // `(-hScroll, +vScroll)`, so a positive x moves it left, where a positive y lifts it.
     m.set(
         "SetHorizontalScroll",
         lua.create_function(|lua, (this, px): (Table, f32)| {
@@ -226,7 +222,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             }
             let h = frame_handle_of(lua, &this)?;
-            crate::script::model_mut_of(lua).touch_scroll_child(h, None);
+            crate::script::model_mut_of(lua).reanchor_scroll_child(h);
             fire_scroll(lua, &this, "OnHorizontalScroll", px)
         })?,
     )?;

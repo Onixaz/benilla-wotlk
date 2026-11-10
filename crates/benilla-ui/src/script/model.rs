@@ -2079,50 +2079,41 @@ impl Model {
         self.bump_layout_epoch();
     }
 
-    /// A ScrollFrame's child or offsets changed: the derivation anchors a live ScrollFrame's live
-    /// child TOPLEFT to its TOPLEFT at `(horizontal, vertical)` in place of its own anchors. `old`
-    /// returns to its anchors and the current child takes the override at the current offsets, each
-    /// named; anything the cached graph cannot re-point gives up naming.
-    pub(crate) fn touch_scroll_child(&mut self, scroll: FrameHandle, old: Option<FrameHandle>) {
-        if self.layout_touched.is_none() {
-            self.bump_layout_epoch();
+    /// 12340's scroll-child re-anchor (`0x96b1c0`): every point of the child dropped, then one
+    /// TOPLEFT to the ScrollFrame's TOPLEFT at `(-horizontal, vertical)`, a real anchor that a
+    /// later `SetPoint` on the child adds to or replaces.
+    pub(crate) fn reanchor_scroll_child(&mut self, scroll: FrameHandle) {
+        let Some(crate::widget::KindState::Scroll(state)) =
+            self.arena.frame(scroll).map(|f| &f.kind_state)
+        else {
             return;
-        }
-        let state = match self.arena.frame(scroll).map(|f| &f.kind_state) {
-            Some(crate::widget::KindState::Scroll(s)) => (s.child, s.horizontal, s.vertical),
-            _ => return self.touch_layout(),
         };
-        let (child, horizontal, vertical) = state;
-        let live = |m: &Self, h: Option<FrameHandle>| h.filter(|&h| m.arena.frame(h).is_some());
+        let (child, horizontal, vertical) = (state.child, state.horizontal, state.vertical);
+        let Some(child) = child.filter(|&c| self.arena.frame(c).is_some()) else {
+            return;
+        };
         let scroll_id = self.frame_id(scroll);
-        let mut named = Vec::new();
-        let mut ok = true;
-        if let Some(oc) = live(self, old).filter(|&h| Some(h) != child) {
-            let id = self.frame_id(oc);
-            let anchors = self.layout_inputs.entry(oc).or_default().anchors.clone();
-            ok &= self.layout_scope.set_override(id, None, &anchors);
-            named.push(id);
+        let new = crate::layout::Anchor::new(
+            crate::layout::Point::TopLeft,
+            scroll_id,
+            crate::layout::Point::TopLeft,
+            -horizontal,
+            vertical,
+        );
+        let input = self.layout_inputs.entry(child).or_default();
+        if let [only] = input.anchors.as_slice() {
+            if super::object::layout_methods::anchor_bits_eq(only, &new) {
+                return;
+            }
         }
-        if let Some(nc) = live(self, child) {
-            let id = self.frame_id(nc);
-            let anchors = self.layout_inputs.entry(nc).or_default().anchors.clone();
-            let over = crate::layout::Anchor::new(
-                crate::layout::Point::TopLeft,
-                scroll_id,
-                crate::layout::Point::TopLeft,
-                horizontal,
-                vertical,
-            );
-            ok &= self.layout_scope.set_override(id, Some(over), &anchors);
-            named.push(id);
+        let old: Vec<u32> = input.anchors.iter().map(|a| a.relative_to).collect();
+        input.anchors.clear();
+        input.anchors.push(new);
+        if old == [scroll_id] {
+            self.touch_layout_frame(child);
+        } else {
+            self.touch_layout_retarget_frame(child, &old, &[scroll_id]);
         }
-        if !ok {
-            return self.touch_layout();
-        }
-        for id in named {
-            self.touch_layout_node(id);
-        }
-        self.bump_layout_epoch();
     }
 
     /// Sync frame `h`'s layout input from the arena as the full derivation does: its effective
@@ -2152,13 +2143,7 @@ impl Model {
             return Adopt::Node;
         }
         if let Some(&h) = self.id_to_frame.get(&id) {
-            let Some(f) = self.arena.frame(h) else {
-                return Adopt::Refused;
-            };
-            let scroll_child = f.parent.and_then(|p| self.arena.frame(p)).is_some_and(
-                |p| matches!(&p.kind_state, crate::widget::KindState::Scroll(s) if s.child == Some(h)),
-            );
-            if scroll_child {
+            if self.arena.frame(h).is_none() {
                 return Adopt::Refused;
             }
             self.sync_layout_input(h);

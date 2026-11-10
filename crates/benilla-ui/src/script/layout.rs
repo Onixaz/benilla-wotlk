@@ -1,7 +1,5 @@
-use std::collections::HashMap;
-
-use crate::layout::{self, Anchor, LayoutInput, Point, Rect};
-use crate::widget::{FrameHandle, FrameKind, KindState, RegionHandle};
+use crate::layout::{self, Anchor, LayoutInput, Rect};
+use crate::widget::{FrameHandle, RegionHandle};
 
 use super::backdrop;
 use super::types::RegionData;
@@ -91,20 +89,9 @@ const NO_NODE: u64 = 0;
 
 /// A frame's per-node hash; the full derive and the incremental pass must agree bit for bit.
 #[inline]
-fn frame_node_hash(input: &LayoutInput, over: Option<Anchor>) -> u64 {
+fn frame_node_hash(input: &LayoutInput) -> u64 {
     let mut node = InputFingerprint::default();
     node.input(input);
-    match over {
-        Some(a) => node.anchors(std::slice::from_ref(&a)),
-        None => node.feed(u64::MAX),
-    }
-    if let Some(a) = over {
-        for authored in &input.anchors {
-            if authored.point != a.point {
-                node.anchors(std::slice::from_ref(authored));
-            }
-        }
-    }
     node.finish()
 }
 
@@ -201,8 +188,8 @@ pub(crate) struct LayoutScope {
     dirty: Vec<bool>,
     /// The closure's worklist.
     stack: Vec<u32>,
-    /// The cached frame roster, `(handle, id, ScrollFrame anchor override)`, kept across resolves.
-    plan: Vec<(FrameHandle, u32, Option<Anchor>)>,
+    /// The cached frame roster, `(handle, id)`, kept across resolves.
+    plan: Vec<(FrameHandle, u32)>,
     /// The cached roster of live, anchored regions.
     regions: Vec<RegionRow>,
     /// An incremental pass's `(id, hash)` writes to [`Self::last`], applied only on convergence.
@@ -272,7 +259,7 @@ impl LayoutScope {
         }
         #[allow(clippy::cast_possible_truncation)]
         let i = self.plan.len() as u32;
-        self.plan.push((h, id, None));
+        self.plan.push((h, id));
         self.node_of[id as usize] = i;
         for a in &input.anchors {
             self.hold(a.relative_to);
@@ -311,57 +298,6 @@ impl LayoutScope {
             self.hold(o);
             self.edge(id, o);
         }
-    }
-
-    /// Point frame node `id`'s edges at a ScrollFrame override, or back at its own `anchors` with
-    /// `None`, as the derivation does for a live ScrollFrame's live child. `false`: no frame node.
-    pub(crate) fn set_override(
-        &mut self,
-        id: u32,
-        over: Option<Anchor>,
-        anchors: &[Anchor],
-    ) -> bool {
-        let Some(&n) = self.node_of.get(id as usize) else {
-            return false;
-        };
-        if n == u32::MAX || n & REGION_TAG != 0 {
-            return false;
-        }
-        match self.plan[n as usize].2 {
-            Some(old) => {
-                self.unlink_edge(old.relative_to, id);
-                for authored in anchors {
-                    if authored.point != old.point {
-                        self.unlink_edge(authored.relative_to, id);
-                    }
-                }
-            }
-            None => {
-                for a in anchors {
-                    self.unlink_edge(a.relative_to, id);
-                }
-            }
-        }
-        match over {
-            Some(a) => {
-                self.hold(a.relative_to);
-                self.edge(id, a.relative_to);
-                for authored in anchors {
-                    if authored.point != a.point {
-                        self.hold(authored.relative_to);
-                        self.edge(id, authored.relative_to);
-                    }
-                }
-            }
-            None => {
-                for a in anchors {
-                    self.hold(a.relative_to);
-                    self.edge(id, a.relative_to);
-                }
-            }
-        }
-        self.plan[n as usize].2 = over;
-        true
     }
 
     /// Retire node `id`, whose widget died, when nothing in the graph reads its rect: unlink its
@@ -424,16 +360,13 @@ impl LayoutScope {
 
     /// Re-point node `id`'s outgoing edges after an anchor retarget. `old` and `new` are its full
     /// anchor-target lists, so duplicate anchors stay exact. `false` means a conservative touch:
-    /// `id` has no node, or a ScrollFrame override, not its anchors, supplies its edges.
+    /// `id` has no node.
     pub(crate) fn retarget(&mut self, id: u32, old: &[u32], new: &[u32]) -> bool {
         let Some(&n) = self.node_of.get(id as usize) else {
             return false;
         };
         if n == u32::MAX {
             return false;
-        }
-        if n & REGION_TAG == 0 && self.plan[n as usize].2.is_some() {
-            return false; // a ScrollFrame override owns this frame's edges, not its anchors
         }
         for &t in old {
             self.unlink_edge(t, id);
@@ -556,8 +489,6 @@ struct PreambleProf {
     watched: u128,
     /// The ids rebuild and the scale and clamp sync into `layout_inputs`.
     ids: u128,
-    /// The ScrollFrame override map.
-    scroll: u128,
     /// `region_resolved`'s liveness retain.
     retain: u128,
     /// `LayoutScope::begin_full`.
@@ -600,7 +531,6 @@ impl PreambleProf {
         let total = self.tooltip
             + self.watched
             + self.ids
-            + self.scroll
             + self.retain
             + self.begin
             + self.fp_frames
@@ -608,14 +538,13 @@ impl PreambleProf {
             + self.seed;
         eprintln!(
             "[layout-pre] skips={} incr={} frames={frames} anchored={regions} total_us={total} \
-             tooltip={} watched={} ids={} scroll={} retain={} begin={} \
+             tooltip={} watched={} ids={} retain={} begin={} \
              fp_frames={} fp_regions={} seed={}",
             u8::from(skips),
             u8::from(self.incremental),
             self.tooltip,
             self.watched,
             self.ids,
-            self.scroll,
             self.retain,
             self.begin,
             self.fp_frames,
@@ -780,9 +709,9 @@ impl UiScript {
                         None => continue,
                     }
                 } else {
-                    let (h, _, over) = scope.plan[n as usize];
+                    let (h, _) = scope.plan[n as usize];
                     match layout_inputs.get(&h) {
-                        Some(i) => frame_node_hash(i, over),
+                        Some(i) => frame_node_hash(i),
                         None => continue,
                     }
                 };
@@ -926,24 +855,21 @@ impl UiScript {
                 }
             }
             for &i in &seed_frames {
-                let (h, id, _) = scope.plan[i as usize];
+                let (h, id) = scope.plan[i as usize];
                 if let Some(r) = resolved.get(&h) {
                     solver.set_external(id, *r);
                 }
             }
             for &i in &solve_frames {
-                let (h, id, over) = scope.plan[i as usize];
+                let (h, id) = scope.plan[i as usize];
                 let Some(input) = layout_inputs.get(&h) else {
                     continue;
                 };
-                match over {
-                    Some(a) => solver.set_frame_scroll_child(id, input, a),
-                    None => solver.set_frame(id, input),
-                }
+                solver.set_frame(id, input);
             }
             solver.solve();
             for &i in &solve_frames {
-                let (h, id, over) = scope.plan[i as usize];
+                let (h, id) = scope.plan[i as usize];
                 match solver.rect(id) {
                     Some(r) => {
                         let before = resolved.get(&h).copied();
@@ -962,10 +888,9 @@ impl UiScript {
                     }
                     // `ClearAllPoints` (`0x48a200`) requests no resize, so the last rect stands.
                     // Deviation: a later resize drops it there (`0x489570`); here it stays.
-                    None if over.is_none()
-                        && layout_inputs
-                            .get(&h)
-                            .is_some_and(|input| input.anchors.is_empty()) => {}
+                    None if layout_inputs
+                        .get(&h)
+                        .is_some_and(|input| input.anchors.is_empty()) => {}
                     None => {
                         if resolved.remove(&h).is_some() {
                             changed = true;
@@ -1200,38 +1125,6 @@ impl UiScript {
         }
         pre.ids = pre.lap();
 
-        // A live ScrollFrame's live child is anchored, for this solve only, TOPLEFT to its TOPLEFT
-        // at the raw, unnegated `(horizontal, vertical)` offsets, as the reference's re-anchor
-        // passes them to `SetPoint`: y up, so a positive vertical lifts the child. Its authored
-        // anchors and size are untouched, so `SetScrollChild(nil)` needs no restore.
-        let mut scroll_child_anchor: HashMap<FrameHandle, Anchor> = HashMap::new();
-        for &(h, id) in &ids {
-            let Some(frame) = arena.frame(h) else {
-                continue;
-            };
-            if frame.kind != FrameKind::ScrollFrame {
-                continue;
-            }
-            let KindState::Scroll(state) = &frame.kind_state else {
-                continue;
-            };
-            let Some(child) = state.child else { continue };
-            if arena.frame(child).is_none() {
-                continue; // a stale/destroyed child contributes no override
-            }
-            scroll_child_anchor.insert(
-                child,
-                Anchor::new(
-                    Point::TopLeft,
-                    id,
-                    Point::TopLeft,
-                    state.horizontal,
-                    state.vertical,
-                ),
-            );
-        }
-        pre.scroll = pre.lap();
-
         // The reference resolves one graph in which frames and regions anchor each other; ours
         // alternates a frame solve and a region sweep until a round changes no rect, compared
         // exactly. The round cap is the node count, so only a cycle exhausts it, warned like the
@@ -1245,8 +1138,8 @@ impl UiScript {
 
         // ── The change gate ───────────────────────────────────────────────────────────────────
         // Fingerprint what the rounds read, to skip them when nothing moved since the last
-        // converged resolve: the screen; each live frame's id, synced `LayoutInput` and
-        // ScrollFrame override; each anchored region's anchors, explicit size, measured extent
+        // converged resolve: the screen; each live frame's id and synced `LayoutInput`; each
+        // anchored region's anchors, explicit size, measured extent
         // and liveness. Seeded rects are outputs, a pure function of these, so they are not hashed.
         // The same walk hashes each node alone into `LayoutScope::now` and records its edges.
         // Sized past `next_id` for the ids the region walk below may mint.
@@ -1258,43 +1151,18 @@ impl UiScript {
             let Some(input) = layout_inputs.get(&h) else {
                 continue;
             };
-            let over = scroll_child_anchor.get(&h).copied();
             #[allow(clippy::cast_possible_truncation)]
             let i = scope.plan.len() as u32;
             fp.feed(u64::from(id));
             fp.input(input);
-            match over {
-                Some(a) => fp.anchors(std::slice::from_ref(&a)),
-                None => fp.feed(u64::MAX),
-            }
-            if let Some(a) = over {
-                for authored in &input.anchors {
-                    if authored.point != a.point {
-                        fp.anchors(std::slice::from_ref(authored));
-                    }
-                }
-            }
             if let Some(slot) = scope.now.get_mut(id as usize) {
-                *slot = frame_node_hash(input, over);
+                *slot = frame_node_hash(input);
                 scope.node_of[id as usize] = i;
             }
-            scope.plan.push((h, id, over));
-            // A frame reads its anchor targets' rects, or only its ScrollFrame override's target,
-            // as the round loop's ScrollFrame override does.
-            match over {
-                Some(a) => scope.edge(id, a.relative_to),
-                None => {
-                    for a in &input.anchors {
-                        scope.edge(id, a.relative_to);
-                    }
-                }
-            }
-            if let Some(a) = over {
-                for authored in &input.anchors {
-                    if authored.point != a.point {
-                        scope.edge(id, authored.relative_to);
-                    }
-                }
+            scope.plan.push((h, id));
+            // A frame reads its anchor targets' rects.
+            for a in &input.anchors {
+                scope.edge(id, a.relative_to);
             }
         }
         #[allow(clippy::cast_possible_truncation)]
