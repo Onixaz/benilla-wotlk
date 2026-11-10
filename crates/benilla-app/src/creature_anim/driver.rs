@@ -1146,6 +1146,13 @@ fn drive_unit(
             .filter(|_| drv.start_spent != Some(h.seq))
             .map(|a| (h.seq, a))
     });
+    // A hold id as the base arms it: tier-resolved unless the kit skips it (`0x724398`).
+    let hold_armed = |id: u16| match (catalog, kit_hold) {
+        (Some(cat), Some(h)) if tier != 0 && h.play.tier_resolve() => {
+            anims.resolve_tier(id, tier, cat)
+        }
+        _ => id,
+    };
     if let Some((seq, start)) = cast_start {
         if drv.gait == Some(start) && oneshot_finished(&player, anims, start, catalog) {
             drv.start_spent = Some(seq);
@@ -1202,7 +1209,9 @@ fn drive_unit(
             // The held kit anim, armed as its own id, picks itself again only under kit flag
             // `0x40` (`0x7243cc`); without it no id is picked and the model's own end re-rolls.
             let held = kit_hold.filter(|h| {
-                cast_start.is_none() && drv.gait == Some(h.anim_id) && !h.play.hold_repick()
+                cast_start.is_none()
+                    && drv.gait == Some(hold_armed(h.anim_id))
+                    && !h.play.hold_repick()
             });
             if drv.mode == Mode::Gait && held.is_some() {
                 let armed = anims.clips.iter().find(|c| c.node == node);
@@ -1573,7 +1582,14 @@ fn drive_unit(
         let keeps = if played_oneshot.is_some() {
             oneshot_keeps
         } else {
-            cast_hold.is_some_and(|h| h.play.keep_weapons() && anim == h.anim_id)
+            // The hold's anim or its precast start anim, raw or as armed (`0x73b1f4`).
+            kit_hold.is_some_and(|h| {
+                h.play.keep_weapons()
+                    && [Some(h.anim_id), h.start_anim]
+                        .into_iter()
+                        .flatten()
+                        .any(|id| anim == id || anim == hold_armed(id))
+            })
         };
         let flags =
             select::kept_weapon_flags(catalog.map_or(0, |cat| cat.weapon_flags(anim)), cur, keeps);

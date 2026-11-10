@@ -5262,3 +5262,61 @@ fn a_held_kit_anim_is_played_again_at_its_end_only_under_kit_flag_0x40() {
         }
     }
 }
+
+/// A held kit anim on a fly-tier unit: tier-resolved to its tier row unless kit flag `0x8` skips
+/// it (`0x724398`); either way, without kit flag `0x40`, the armed clip runs on past its end.
+#[test]
+fn a_tiered_hold_resolves_unless_kit_flag_0x8_and_runs_on_at_its_end() {
+    use super::super::AnimPlayFlags;
+    let row = |behavior: u16, tier: u8| AnimEntry {
+        weapon_flags: 0,
+        fallback: 0,
+        flags: 0,
+        behavior,
+        tier,
+    };
+    for raw in [false, true] {
+        let mut app = app();
+        app.insert_resource(AnimData(AnimDataCatalog::from_rows([
+            (0, row(0, 0)),
+            (51, row(51, 0)),
+            (300, row(51, 1)),
+        ])));
+        let flags = AnimPlayFlags(if raw { AnimPlayFlags::NO_TIER } else { 0 });
+        let (unit, mut nodes) = spawn_kit_holder(&mut app, flags);
+        // The head 51 clip doubles as the tier row's only variation.
+        let tier_node = nodes[1];
+        {
+            let mut e = app.world_mut().entity_mut(unit);
+            let mut anims = e.get_mut::<ModelAnimations>().unwrap();
+            anims.clips[1].anim_id = 300;
+            anims.clips[1].frequency = 32767;
+            e.insert(crate::net::ObjectStore(ObjectFields::from_pairs(&[(
+                138,
+                1 << 16,
+            )])));
+        }
+        nodes.swap(1, 2);
+        app.update();
+        let want = if raw { 51 } else { 300 };
+        assert_eq!(
+            app.world().entity(unit).get::<AnimDriver>().unwrap().gait,
+            Some(want),
+            "raw {raw}"
+        );
+        let node = if raw { nodes[1] } else { tier_node };
+        let completions = |app: &App| {
+            app.world()
+                .entity(unit)
+                .get::<AnimationPlayer>()
+                .unwrap()
+                .animation(node)
+                .map(|a| a.completions())
+        };
+        assert_eq!(completions(&app), Some(0));
+        for _ in 0..6 {
+            advance(&mut app, 25);
+        }
+        assert_eq!(completions(&app), Some(1), "raw {raw}: the clip runs on");
+    }
+}
