@@ -325,13 +325,9 @@ fn install_script_methods(lua: &Lua, m: &Table, group: bool) -> mlua::Result<()>
                 Some(t) => t.get::<Option<Function>>(k)?,
                 None => None,
             };
-            // The script hook wrapper: the original, then the hook, with the same arguments.
             let func = match current {
                 None => hook,
-                Some(orig) => lua
-                    .load("local a, b = ... return function(...) a(...) return b(...) end")
-                    .set_name("=HookScript")
-                    .call::<Function>((orig, hook))?,
+                Some(orig) => crate::script::secure_call::hook_wrapper(lua, orig, hook)?,
             };
             set_script(lua, id, k, Some(func))
         })?,

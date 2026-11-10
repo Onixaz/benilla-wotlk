@@ -63,6 +63,7 @@ mod doodad_events;
 mod entities;
 mod fishing_line;
 mod footprints;
+mod fps_limit;
 mod game_plugins;
 mod go_anim;
 mod go_difficulty;

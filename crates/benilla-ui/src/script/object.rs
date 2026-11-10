@@ -24,6 +24,7 @@ mod events_regions;
 mod frame_state;
 pub(crate) mod layout_methods;
 mod mouse_over;
+pub(crate) mod protection;
 pub(crate) use layout_methods::eff_scale;
 pub(crate) mod movable;
 pub(crate) mod toplevel;
@@ -695,6 +696,10 @@ pub(super) fn create_frame(
         let h = model.arena.create(frame_kind, name, parent_handle);
         if frame_kind == FrameKind::WorldFrame {
             model.world_frame_made = true;
+        }
+        // The QuestPOIFrame constructor (`0x58ff50`) marks itself explicitly protected.
+        if frame_kind == FrameKind::QuestPoiFrame {
+            model.protected_frames.insert(h);
         }
         if is_model_ffx(&kind) {
             if let Some(KindState::Model(m)) = model.arena.frame_mut(h).map(|f| &mut f.kind_state) {

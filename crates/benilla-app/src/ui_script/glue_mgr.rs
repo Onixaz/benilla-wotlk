@@ -1779,6 +1779,15 @@ pub(crate) fn drive_glue_mgr(
         if fresh_vm || reply.is_changed() || std::mem::take(&mut mgr.addons_stale) {
             mgr.register_addons(s, reply.0.as_deref());
         }
+        // The reply's arrival, and nothing else, fires `ADDON_LIST_UPDATE` (`0x6b1b70`); the world
+        // entry's own rewrite of it is not an arrival.
+        if reply.is_changed()
+            && reply.0.is_some()
+            && glue_up
+            && mgr.state != ScreenState::EnterWorld
+        {
+            s.fire_event("ADDON_LIST_UPDATE", Vec::new());
+        }
     }
     if let (Some(s), Some(r)) = (script.as_deref_mut(), realms.as_ref()) {
         if fresh_vm || r.is_changed() {

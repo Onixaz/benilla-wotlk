@@ -361,6 +361,8 @@ impl Plate {
         // Anonymous, as the reference's name is zeroed: plate addons reject a named `WorldFrame`
         // child.
         let frame = model.arena.create(FrameKind::Button, None, Some(world));
+        // The plate constructor (`0x98f790`) marks it explicitly protected, so `WorldFrame` is too.
+        model.protected_frames.insert(frame);
         let strata = model
             .arena
             .frame(world)

@@ -351,6 +351,25 @@ fn a_plate_is_anonymous() {
         .unwrap());
 }
 
+/// The plate constructor (`0x98f790`) marks it explicitly protected, and the parent it protects is
+/// `WorldFrame`; a QuestPOIFrame (`0x58ff50`) is born so too.
+#[test]
+fn a_plate_and_a_quest_poi_frame_are_born_protected() {
+    let mut s = vm();
+    drive(&mut s, &[plate("Wolf", 30.0, 40.0)]);
+    s.run(
+        r#"
+        local a, b = WorldFrame:GetChildren():IsProtected()
+        assert(a == 1 and b == 1)
+        a, b = WorldFrame:IsProtected()
+        assert(a == 1 and b == nil)
+        a, b = CreateFrame("QuestPOIFrame"):IsProtected()
+        assert(a == 1 and b == 1)
+        "#,
+    )
+    .unwrap();
+}
+
 /// Addons key per-plate state on the plate object: pfUI's `registry[plate]` (`:342`) and
 /// `_Nameplates.Frames[Nameplate]` (`:205`).
 #[test]

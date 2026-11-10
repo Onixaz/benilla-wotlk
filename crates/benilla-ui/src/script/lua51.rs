@@ -94,16 +94,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `table.wipe(t)`: every key cleared, the table returned.
+    // `table.wipe(t)` (`0x852180`): every key cleared raw, the table returned, in one native call.
     let table: Table = g.get("table")?;
     let wipe = lua.create_function(|_, t: Table| {
-        let keys: Vec<Value> = t
-            .pairs::<Value, Value>()
-            .map(|kv| kv.map(|(k, _)| k))
-            .collect::<mlua::Result<_>>()?;
-        for k in keys {
-            t.raw_set(k, Value::Nil)?;
-        }
+        t.clear()?;
         Ok(t)
     })?;
     table.set("wipe", wipe.clone())?;
@@ -230,6 +224,19 @@ mod tests {
             .unwrap());
         assert!(ui
             .eval::<bool>("local t = wipe({1, 2, x = 3}) return next(t) == nil")
+            .unwrap());
+    }
+
+    #[test]
+    fn wipe_clears_large_array_and_hash_parts_without_collecting_keys() {
+        let ui = wotlk();
+        assert!(ui
+            .eval::<bool>(
+                "local t = {} \
+                 for i = 1, 10000 do t[i] = i; t['k' .. i] = i end \
+                 wipe(t) \
+                 return next(t) == nil"
+            )
             .unwrap());
     }
 }
