@@ -33,6 +33,7 @@ pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::SpellBook, on_spell_book)
         .net_handler(K::ActionButtons, on_action_buttons)
+        .net_handler(K::Disconnected, on_session_end)
         .net_handler(K::SpellLearned, on_spell_learned)
         .net_handler(K::SpellRemoved, on_spell_removed)
         .net_handler(K::SpellSuperceded, on_spell_superceded)
@@ -151,6 +152,24 @@ fn on_action_buttons(In(ev): In<SessionEvent>, mut l: Lifecycle) {
         let player = l.self_guid.0.is_some_and(|g| l.index.0.contains_key(&g));
         action_buttons(state, buttons, player, &mut l.actions, &l.net);
     }
+}
+
+/// Every session end returns to glue, whose next world entry zeroes the bar (`0x5a79d0`, via
+/// `0x52b550` from `0x405540`) before the login goes out; the lock lives on the player object.
+fn on_session_end(In(ev): In<SessionEvent>, mut actions: ResMut<PlayerActions>) {
+    if let SessionEvent::Disconnected { .. } = ev {
+        clear_bar(&mut actions);
+    }
+}
+
+/// The bar and its lock emptied without a send; the stored table stays (`0xad9f6c` is only
+/// overwritten).
+fn clear_bar(actions: &mut PlayerActions) {
+    if !actions.buttons.is_empty() {
+        actions.buttons.clear();
+        actions.dirty = true;
+    }
+    actions.locked = false;
 }
 
 fn on_spell_learned(
@@ -3625,6 +3644,66 @@ mod tests {
             .collect();
         barred.sort_unstable();
         assert_eq!(barred, [0, 1]);
+    }
+
+    /// A logout and a second character with disjoint slots in one app: the bar is zeroed at the
+    /// session end (`0x5a79d0`), so the second init bars its own table alone, and nothing is sent.
+    #[test]
+    fn a_character_switch_bars_only_the_new_characters_table() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let net = NetCommands(tx);
+        let mut app = App::new();
+        app.add_message::<crate::net::WorldEnterCascadeMessage>()
+            .init_resource::<PlayerActions>()
+            .add_systems(Update, put_action_table_on_init);
+        let end = app.world_mut().register_system(on_session_end);
+        let enter = |app: &mut App, spells: &[u32], table: Vec<ActionButton>| {
+            {
+                let mut actions = app.world_mut().resource_mut::<PlayerActions>();
+                // AzerothCore's login sends state 1 before our player streams: stored, not barred.
+                actions.spells = spells.iter().copied().collect();
+                action_buttons(ACTION_BUTTONS_SET, table, false, &mut actions, &net);
+            }
+            app.world_mut()
+                .write_message(crate::net::WorldEnterCascadeMessage);
+            app.update();
+            let mut barred: Vec<u8> = app
+                .world()
+                .resource::<PlayerActions>()
+                .buttons
+                .keys()
+                .copied()
+                .collect();
+            barred.sort_unstable();
+            barred
+        };
+
+        let mage = vec![
+            slot(0, 133, ACTION_KIND_SPELL),
+            slot(9, 66, ACTION_KIND_SPELL),
+        ];
+        assert_eq!(enter(&mut app, &[133, 66], mage), [0, 9]);
+        app.world_mut().resource_mut::<PlayerActions>().dirty = false;
+
+        app.world_mut()
+            .run_system_with(
+                end,
+                SessionEvent::Disconnected {
+                    reason: "logged out".into(),
+                    end: benilla_protocol::SessionEnd::LoggedOut,
+                },
+            )
+            .unwrap();
+        let actions = app.world().resource::<PlayerActions>();
+        assert!(actions.buttons.is_empty() && !actions.locked);
+        assert!(actions.dirty, "the feed re-resolves the emptied slots");
+
+        let warrior = vec![
+            slot(72, 78, ACTION_KIND_SPELL),
+            slot(84, 2457, ACTION_KIND_SPELL),
+        ];
+        assert_eq!(enter(&mut app, &[78, 2457], warrior), [72, 84]);
+        assert_eq!(rx.try_iter().count(), 0, "no CMSG_SET_ACTION_BUTTON");
     }
 
     /// `0x801cc4`, `0x801d5e`: a zero, an infinite (`0xFFFFFFFF`) or an unstreamed caster's
