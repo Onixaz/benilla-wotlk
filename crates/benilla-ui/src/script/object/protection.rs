@@ -25,7 +25,9 @@ impl Cache {
                 .filter(|h| model.arena.frame(**h).is_some())
                 .filter_map(|h| model.frame_to_id.get(h).copied())
                 .collect();
-            // 0x489bb0 follows protection dependencies, including parents and anchor targets.
+            // `0x489bb0`: a region is protected by a protected child frame (`0x491350`; a region
+            // has none, `0x4899f0`) or a protected dependent (`0x489b50`), one anchored to it. So
+            // protection climbs to the parent and to every anchor target, never region to owner.
             while let Some(id) = pending.pop() {
                 if !self.protected.insert(id) {
                     continue;
@@ -38,9 +40,6 @@ impl Cache {
                         pending.extend(input.anchors.iter().map(|a| a.relative_to));
                     }
                 } else if let Some(rh) = model.id_to_region.get(&id) {
-                    if let Some(region) = model.arena.region(*rh) {
-                        pending.extend(model.frame_to_id.get(&region.owner).copied());
-                    }
                     if let Some(data) = model.region_data.get(rh) {
                         pending.extend(data.anchors.iter().map(|a| a.relative_to));
                     }
@@ -53,7 +52,7 @@ impl Cache {
 }
 
 pub(in crate::script) fn install(lua: &Lua, methods: &Table, side: Side) -> mlua::Result<()> {
-    // IsProtected (0x49cad0): effective and explicit protection, each 1 or nil.
+    // IsProtected (`0x49cad0`): effective and explicit protection (`0x10000`), each 1 or nil.
     set_shared(lua, methods, side, "IsProtected", |lua, this: Table| {
         let id = super::decode_id(&this)?;
         let model = lua
@@ -66,6 +65,8 @@ pub(in crate::script) fn install(lua: &Lua, methods: &Table, side: Side) -> mlua
         let effective = model.protection_cache.borrow_mut().contains(&model, id);
         Ok((flag(effective), flag(explicit)))
     })?;
+    // CanChangeProtectedState (`0x49cb60`): 1 unless protected while protected actions are barred,
+    // the flag `InCombatLockdown` reads too.
     set_shared(
         lua,
         methods,
@@ -130,6 +131,8 @@ mod tests {
         assert_eq!(s.visual_epoch(), epoch);
     }
 
+    /// A texture a protected frame anchors to is protected; its owner is not, as a region is no
+    /// child frame of it.
     #[test]
     fn a_region_anchor_transmits_protection_and_clearing_it_releases_the_target() {
         let s = script();
@@ -140,7 +143,7 @@ mod tests {
             local header = CreateFrame("Frame", nil, nil, "ProtectedTemplate")
             header:SetPoint("CENTER", target)
             local a,b = target:IsProtected(); assert(a == 1 and b == nil)
-            assert(owner:IsProtected() == 1)
+            assert(owner:IsProtected() == nil)
             assert(target.IsProtected == owner.IsProtected)
             header:ClearAllPoints()
             assert(target:IsProtected() == nil and owner:IsProtected() == nil)

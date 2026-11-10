@@ -697,6 +697,10 @@ pub(super) fn create_frame(
         if frame_kind == FrameKind::WorldFrame {
             model.world_frame_made = true;
         }
+        // The QuestPOIFrame constructor (`0x58ff50`) marks itself explicitly protected.
+        if frame_kind == FrameKind::QuestPoiFrame {
+            model.protected_frames.insert(h);
+        }
         if is_model_ffx(&kind) {
             if let Some(KindState::Model(m)) = model.arena.frame_mut(h).map(|f| &mut f.kind_state) {
                 m.ffx = true;
