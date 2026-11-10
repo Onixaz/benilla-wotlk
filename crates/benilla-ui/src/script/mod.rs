@@ -208,7 +208,7 @@ pub mod nameplate;
 pub(crate) mod quest_blob;
 mod quest_poi;
 mod quest_poi_frame;
-pub use nameplate::{PlateGeometry, PlateState};
+pub use nameplate::{PlateCast, PlateGeometry, PlateState};
 mod macro_options;
 
 mod model;
@@ -408,8 +408,8 @@ pub use inspect::{InspectView, UnitReach};
 pub use instance::InstanceLock;
 pub use item_stats::equip_loc_token;
 pub use item_stats::{
-    item_usable, item_use_refusal, EnchantEffectView, EnchantRowView, GemView, ItemSetMember,
-    ItemSetView, ItemSpellView, ItemTemplateView, PlayerReqState, RandomSuffixView,
+    item_usable, item_use_refusal, EnchantEffectView, EnchantRowView, GemView, ItemLimitView,
+    ItemSetMember, ItemSetView, ItemSpellView, ItemTemplateView, PlayerReqState, RandomSuffixView,
 };
 pub use item_text::ItemTextState;
 pub use layout_cache::PlacedFrame;

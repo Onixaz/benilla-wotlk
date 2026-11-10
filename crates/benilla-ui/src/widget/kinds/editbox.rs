@@ -40,7 +40,8 @@ pub enum EditAction {
 }
 
 /// An `EditBox`'s runtime state; `E+` offsets are from the reference object's script-object base.
-/// Byte offsets stay on char boundaries, as the client's boundary snap keeps them.
+/// Byte offsets stay on char boundaries, as the client's boundary snap keeps them, but for the
+/// caret `SetCursorPosition` stores unsnapped, which each edit and move settles first.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditBoxState {
     /// The real text (`E+0x32c`); `password` masks only the display (`E+0x334`).
@@ -288,7 +289,7 @@ impl EditBoxState {
     /// A text byte offset as a display byte offset.
     pub fn text_to_display(&self, byte: usize) -> usize {
         if self.password {
-            self.text[..byte.min(self.text.len())].chars().count()
+            self.text[..snap_down(&self.text, byte)].chars().count()
         } else {
             byte
         }
@@ -512,6 +513,7 @@ impl EditBoxState {
     /// `numeric` test, which refuses the whole insert on any non-digit and leaves the deletion
     /// standing.
     pub fn insert(&mut self, ins: &str) -> EditOutcome {
+        self.settle_caret();
         // Typing with the caret inside a hyperlink, where only the mouse can put it, is swallowed:
         // the opening guard.
         if !crate::markup::ClassMap::new(&self.text).insert_allowed(self.cursor) {
@@ -585,6 +587,7 @@ impl EditBoxState {
 
     /// Ctrl+X: [`selected_text`](Self::selected_text), then delete the selection.
     pub fn cut_selection(&mut self) -> Option<String> {
+        self.settle_caret();
         let taken = self.selected_text()?;
         self.end_history_browse();
         self.delete_selection();
@@ -608,6 +611,7 @@ impl EditBoxState {
 
     /// Backspace (`forward = false`) or Delete: the selection if any, else one step.
     pub fn delete_dir(&mut self, forward: bool) -> bool {
+        self.settle_caret();
         self.end_history_browse();
         let did = if self.sel_start != self.sel_end {
             self.delete_selection();
@@ -640,6 +644,7 @@ impl EditBoxState {
     /// else one step at a time while the next character is whitespace, then while it is not. Both
     /// take the whitespace first, where Ctrl+Right ends on it.
     pub fn delete_word(&mut self, forward: bool) -> bool {
+        self.settle_caret();
         self.end_history_browse();
         let before = self.text.len();
         if self.sel_start != self.sel_end {
@@ -664,6 +669,7 @@ impl EditBoxState {
 
     /// Cmd+Backspace and Cmd+Delete: the selection if any, else the span from the caret to `target`.
     pub fn delete_to(&mut self, target: usize) -> bool {
+        self.settle_caret();
         self.end_history_browse();
         let did = if self.sel_start != self.sel_end {
             self.delete_selection();
@@ -687,6 +693,7 @@ impl EditBoxState {
     /// way, deleted as one span with no selection test (`0x963950`), which only clears a selection;
     /// with no letter that way nothing runs.
     pub fn delete_to_edge(&mut self, back: bool) -> bool {
+        self.settle_caret();
         self.end_history_browse();
         let map = crate::markup::ClassMap::new(&self.text);
         let (start, bytes) = if back {
@@ -708,6 +715,7 @@ impl EditBoxState {
     /// blink's restart come only when the caret moved: the helpers step it only while it can
     /// (`cursor < len`, `cursor > 0`), and the step raises the bit, whose flush restarts the blink.
     pub fn move_by_char(&mut self, right: bool, extend: bool) {
+        self.settle_caret();
         let from = self.cursor;
         // One token step, links atomic (`atomicLinks = 1`): a press crosses a whole link, never
         // into an escape, and Shift+arrow selects all of it.
@@ -779,6 +787,7 @@ impl EditBoxState {
     /// the reference steps back from it as from a row's start (its line table ends with the text's
     /// length), so DOWN onto a short last line stops before its last letter.
     pub fn move_by_row(&mut self, down: bool, extend: bool) {
+        self.settle_caret();
         let len = self.text.len();
         let display_len = self.display().len();
         let measured = self.advances.len() == display_len + 1
@@ -833,6 +842,7 @@ impl EditBoxState {
     /// steps while `take(text, caret)` holds, each extending step dragging the selection by
     /// [`Self::extend_to`]; a plain move collapses it at the end.
     fn walk(&mut self, right: bool, extend: bool, take: impl Fn(&str, usize) -> bool) {
+        self.settle_caret();
         let from = self.cursor;
         let map = crate::markup::ClassMap::new(&self.text);
         loop {
@@ -860,6 +870,7 @@ impl EditBoxState {
     /// `sel_start` moves `sel_start`, any other move left moves `sel_end`, and a move right mirrors
     /// that, so a caret inside a selection trims it.
     pub fn extend_to(&mut self, to: usize) {
+        self.settle_caret();
         if self.sel_start == self.sel_end {
             self.collapse();
         }
@@ -889,6 +900,7 @@ impl EditBoxState {
     /// that selects all, gives `(0, t)` here dragging right to `t`, where the reference gives `(t,
     /// len)`.
     pub fn move_caret_to(&mut self, target: usize, extend: bool) {
+        self.settle_caret();
         let from = self.cursor;
         let target = snap_down(&self.text, target.min(self.text.len()));
         if extend {
@@ -931,6 +943,16 @@ impl EditBoxState {
     pub fn collapse(&mut self) {
         self.sel_start = self.cursor;
         self.sel_end = self.cursor;
+    }
+
+    /// Snap the caret and selection down to char boundaries before an edit or move. The setter
+    /// (`0x963350`) stores a byte offset unchecked and the client's insert (`0x965960`) moves the
+    /// tail from that byte (`0x965a41`), splitting the character; a `String` cannot, so the caret settles on its start.
+    fn settle_caret(&mut self) {
+        let len = self.text.len();
+        self.cursor = snap_down(&self.text, self.cursor.min(len));
+        self.sel_start = snap_down(&self.text, self.sel_start.min(len));
+        self.sel_end = snap_down(&self.text, self.sel_end.min(len));
     }
 
     /// The selection end that is not the caret.
