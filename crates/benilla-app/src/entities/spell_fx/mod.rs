@@ -488,6 +488,18 @@ struct FxInstance {
     /// Reaped and playing its `Decay` out. A reap or replace cannot reach it, as the reference has
     /// moved it to its pending-destroy list.
     decaying: bool,
+    /// The held missile model's key, on a [`FxClass::Precast`] instance alone.
+    precast: Option<PrecastKey>,
+}
+
+/// What a held missile model is matched by: its cast, its edge's stamp and whether a missile took
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PrecastKey {
+    cast_count: u8,
+    seq: u64,
+    /// A missile created since took it, the unit flag `0x1000000` (`0x733058`).
+    handed: bool,
 }
 
 /// A unit's effect instances (the client's per-unit `+0xb4` effect list).
@@ -497,24 +509,65 @@ pub(super) struct FxAttached {
     instances: Vec<FxInstance>,
 }
 
+/// Which held missile model a release drops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PrecastDrop {
+    /// Any, as the launch's tail does (`0x72e1ed`).
+    Any,
+    /// One begun at or before this stamp: a release that came earlier on the wire leaves a later
+    /// hold.
+    UpTo(u64),
+    /// One begun at or before this stamp, of this cast count (`0x71bff0`).
+    Cast(u64, u8),
+}
+
 impl FxAttached {
-    /// Drop the held missile model, returning its spawned root for the caller to end; the release
-    /// fires from that model's place (`0x72df00`).
-    pub(super) fn release_precast(&mut self) -> Option<Entity> {
+    /// Drop the held missile model `which` names, returning its spawned root for the caller to end.
+    pub(super) fn release_precast(&mut self, which: PrecastDrop) -> Option<Entity> {
         let mut root = None;
         self.instances.retain(|i| {
-            let held = i.class == FxClass::Precast;
-            if held {
+            let Some(key) = i.precast else {
+                return true;
+            };
+            let drops = match which {
+                PrecastDrop::Any => true,
+                PrecastDrop::UpTo(seq) => key.seq <= seq,
+                PrecastDrop::Cast(seq, count) => key.seq <= seq && key.cast_count == count,
+            };
+            if drops {
                 root = root.or(i.root);
             }
-            !held
+            !drops
         });
         root
     }
 
     /// Whether a missile model is held, spawned or still loading.
     pub(super) fn holds_precast(&self) -> bool {
-        self.instances.iter().any(|i| i.class == FxClass::Precast)
+        self.instances.iter().any(|i| i.precast.is_some())
+    }
+
+    /// Whether a missile created at stamp `seq` takes the held model: the first one created after
+    /// the hold began (`0x73304d`).
+    pub(super) fn takes_precast(&self, seq: u64) -> bool {
+        self.instances
+            .iter()
+            .any(|i| i.precast.is_some_and(|k| !k.handed && k.seq <= seq))
+    }
+
+    /// Mark the held model taken (`0x733058`).
+    pub(super) fn hand_precast(&mut self) {
+        for k in self.instances.iter_mut().filter_map(|i| i.precast.as_mut()) {
+            k.handed = true;
+        }
+    }
+
+    /// The held model's spawned root while a missile has taken it.
+    pub(super) fn handed_precast_root(&self) -> Option<Entity> {
+        self.instances
+            .iter()
+            .find(|i| i.precast.is_some_and(|k| k.handed))
+            .and_then(|i| i.root)
     }
 
     /// A unit holding one missile model of `spell_id` at the right spell hand, spawned as `root`.
@@ -534,8 +587,22 @@ impl FxAttached {
                 root,
                 expires: None,
                 decaying: false,
+                precast: Some(PrecastKey {
+                    cast_count: 0,
+                    seq: 0,
+                    handed: false,
+                }),
             }],
         }
+    }
+
+    /// The test hold re-keyed to a cast count and a stamp.
+    #[cfg(test)]
+    pub(super) fn keyed_for_tests(mut self, cast_count: u8, seq: u64) -> Self {
+        for k in self.instances.iter_mut().filter_map(|i| i.precast.as_mut()) {
+            (k.cast_count, k.seq) = (cast_count, seq);
+        }
+        self
     }
 }
 
@@ -648,13 +715,16 @@ pub(super) fn resolve_spell_fx(
     time: Res<Time>,
     asset_server: Res<AssetServer>,
     mut emitters: Query<&mut benilla_world::particles::ParticleEmitter>,
+    bodies: Query<(Has<crate::entities::VisualAttached>, Option<&BoneAttach>)>,
 ) {
     let Some(mut fx) = fx else { return };
     let now = time.elapsed_secs();
     let mut ops: EntityHashMap<Vec<&SpellKitFx>> = EntityHashMap::default();
     for ev in events.read() {
         let entity = match ev {
-            SpellKitFx::Begin { entity, .. } | SpellKitFx::Reap { entity, .. } => *entity,
+            SpellKitFx::Begin { entity, .. }
+            | SpellKitFx::Reap { entity, .. }
+            | SpellKitFx::Hold { entity, .. } => *entity,
         };
         ops.entry(entity).or_default().push(ev);
     }
@@ -677,16 +747,6 @@ pub(super) fn resolve_spell_fx(
                     effects,
                     ..
                 } => {
-                    // A new hold first drops the unit's last, whatever its spell (`0x722950`).
-                    if *class == FxClass::Precast {
-                        let mut att = FxAttached {
-                            instances: std::mem::take(&mut instances),
-                        };
-                        if let Some(root) = att.release_precast() {
-                            end_root(&mut commands, &mut emitters, root);
-                        }
-                        instances = att.instances;
-                    }
                     // A persistent Begin first reaps the same (spell, class): a re-applied aura's
                     // old node decays out while the new one is born, as in the reference.
                     if *persistent {
@@ -729,6 +789,7 @@ pub(super) fn resolve_spell_fx(
                             root: None,
                             expires: None,
                             decaying: false,
+                            precast: None,
                         });
                     }
                 }
@@ -744,6 +805,50 @@ pub(super) fn resolve_spell_fx(
                         &mut commands,
                         &mut emitters,
                     );
+                }
+                SpellKitFx::Hold {
+                    spell_id,
+                    cast_count,
+                    seq,
+                    slot,
+                    ..
+                } => {
+                    // A new hold first drops the unit's last, whatever its spell (`0x722950`).
+                    let mut att = FxAttached {
+                        instances: std::mem::take(&mut instances),
+                    };
+                    if let Some(root) = att.release_precast(PrecastDrop::Any) {
+                        end_root(&mut commands, &mut emitters, root);
+                    }
+                    instances = att.instances;
+                    // The body must be loaded and have the attachment now, with no cascade
+                    // (`0x7229da`, `0x7229ee`); the held model itself loads after (`0x722a3f`).
+                    let (built, bones) = bodies.get(entity).unwrap_or((false, None));
+                    let Some(slot) = slot.as_ref().filter(|sl| {
+                        built && bones.is_some_and(|b| b.points.contains_key(&sl.tag))
+                    }) else {
+                        continue;
+                    };
+                    ensure_model(&mut fx, &asset_server, &slot.path);
+                    instances.push(FxInstance {
+                        spell_id: *spell_id,
+                        persistent: true,
+                        class: FxClass::Precast,
+                        stage: FxStage::Relive,
+                        tag: slot.tag,
+                        effect: slot.effect,
+                        path: slot.path.clone(),
+                        scale: slot.scale,
+                        attach: None,
+                        root: None,
+                        expires: None,
+                        decaying: false,
+                        precast: Some(PrecastKey {
+                            cast_count: *cast_count,
+                            seq: *seq,
+                            handed: false,
+                        }),
+                    });
                 }
             }
         }
@@ -816,10 +921,8 @@ fn reap_matching(
             "spell fx: {} reaped for spell {spell_id} ({class:?})",
             i.path
         );
-        // A held missile model is released, never decayed (`0x71bff0`).
         let span = i
             .root
-            .filter(|_| class != FxClass::Precast)
             .and_then(|_| fx.models.get(&i.path))
             .and_then(|dm| decay_span(dm.animations.as_ref()));
         let (Some(root), Some(span)) = (i.root, span) else {
@@ -928,9 +1031,10 @@ pub(super) fn attach_spell_fx(
                     );
                 }
             }
-            // A held missile needs the body and the attachment itself, with no cascade (`0x7229ee`).
-            let held = inst.class == FxClass::Precast;
-            if held && !(body_built && bones.is_some_and(|b| b.points.contains_key(&inst.tag))) {
+            // A held missile sits at its own attachment, with no cascade (`0x7229ee`): a rebuilt
+            // body without it drops the hold.
+            let held = inst.precast.is_some();
+            if held && body_built && !bones.is_some_and(|b| b.points.contains_key(&inst.tag)) {
                 return false;
             }
             // Pending: unspawnable flashes time out; a spawn sets the real span.
@@ -1154,6 +1258,7 @@ mod tests {
             root: Some(root),
             expires: None,
             decaying: false,
+            precast: None,
         }
     }
 
@@ -1347,26 +1452,44 @@ mod tests {
         );
     }
 
-    /// A held missile model: a new hold of any spell drops the last at once, the hold's own
-    /// reap releases it without a decay, and an empty hold still drops the last (`0x722950`).
-    #[test]
-    fn a_new_precast_hold_drops_the_last_and_an_interrupt_releases_it() {
-        let (mut app, unit) = resolving();
-        let hold = |spell_id, effects: Vec<FxSlot>| SpellKitFx::Begin {
-            entity: unit,
-            spell_id,
-            persistent: true,
-            class: FxClass::Precast,
-            stage: FxStage::Relive,
-            effects,
-        };
-        let slot = |effect| FxSlot {
+    /// A unit with a built body that has `tags`, for the hold's start gate.
+    fn bodied(app: &mut App, tags: &[u16], built: bool) -> Entity {
+        let mut e = app.world_mut().spawn(BoneAttach {
+            points: tags.iter().map(|&t| (t, (0u16, Vec3::ZERO))).collect(),
+            markers: HashMap::new(),
+        });
+        if built {
+            e.insert(crate::entities::VisualAttached);
+        }
+        e.id()
+    }
+
+    fn held_slot(effect: u32) -> FxSlot {
+        FxSlot {
             tag: 0x15,
             effect,
             path: "Spells\\Frostbolt.mdx".into(),
             scale: 1.0,
             attach: None,
-        };
+        }
+    }
+
+    fn hold(entity: Entity, spell_id: u32, seq: u64, slot: Option<FxSlot>) -> SpellKitFx {
+        SpellKitFx::Hold {
+            entity,
+            spell_id,
+            cast_count: 3,
+            seq,
+            slot,
+        }
+    }
+
+    /// A held missile model: a new hold of any spell drops the last at once, with no decay, and a
+    /// hold whose own gate fails still drops it (`0x722950`).
+    #[test]
+    fn a_new_precast_hold_drops_the_last_even_when_its_own_gate_fails() {
+        let (mut app, _) = resolving();
+        let unit = bodied(&mut app, &[0x15], true);
         let seat = |app: &mut App| {
             let root = app.world_mut().spawn_empty().id();
             app.world_mut()
@@ -1377,9 +1500,9 @@ mod tests {
                 .root = Some(root);
             root
         };
-        send(&mut app, hold(47937, vec![slot(3839)]));
+        send(&mut app, hold(unit, 47937, 1, Some(held_slot(3839))));
         let first = seat(&mut app);
-        send(&mut app, hold(47801, vec![slot(4016)]));
+        send(&mut app, hold(unit, 47801, 2, Some(held_slot(4016))));
         assert_eq!(
             slots_of(&app, unit),
             vec![(4016, 0x15)],
@@ -1387,27 +1510,66 @@ mod tests {
         );
         assert!(app.world().get_entity(first).is_err(), "dropped at once");
         let second = seat(&mut app);
-        send(
-            &mut app,
-            SpellKitFx::Reap {
-                entity: unit,
-                spell_id: 47801,
-                class: FxClass::Precast,
-            },
-        );
-        assert!(slots_of(&app, unit).is_empty(), "the interrupt releases it");
-        assert!(app.world().get_entity(second).is_err(), "with no decay");
-        send(&mut app, hold(47937, vec![slot(3839)]));
-        send(&mut app, hold(47801, Vec::new()));
+        send(&mut app, hold(unit, 47937, 3, None));
         assert!(
             slots_of(&app, unit).is_empty(),
             "a hold whose gate fails still drops the last"
         );
+        assert!(app.world().get_entity(second).is_err());
     }
 
-    /// A held missile model needs its own attachment on a built body: no cascade (`0x7229ee`).
+    /// The hold's start gate: a loaded body with the slot's own attachment, no cascade
+    /// (`0x7229da`, `0x7229ee`); the held model itself may still be loading.
     #[test]
-    fn a_precast_hold_without_its_attachment_or_a_body_is_dropped() {
+    fn a_precast_hold_needs_a_built_body_with_its_attachment_at_start() {
+        let (mut app, _) = resolving();
+        let held = |app: &App, e: Entity| {
+            app.world()
+                .get::<FxAttached>(e)
+                .is_some_and(FxAttached::holds_precast)
+        };
+        let ready = bodied(&mut app, &[0x15], true);
+        let lacking = bodied(&mut app, &[0xf, 0x13], true);
+        let unbuilt = bodied(&mut app, &[0x15], false);
+        for unit in [ready, lacking, unbuilt] {
+            send(&mut app, hold(unit, 1, 1, Some(held_slot(3839))));
+        }
+        assert!(held(&app, ready), "held, its model still loading");
+        assert!(!held(&app, lacking), "no fall back to another attachment");
+        assert!(!held(&app, unbuilt), "no body, no hold");
+    }
+
+    /// The hold's key: a missile made after it takes it once, a release stamped before it leaves
+    /// it, and the end-cast clear matches its cast count (`0x73304d`, `0x71bff0`).
+    #[test]
+    fn a_held_model_is_taken_once_and_dropped_by_stamp_and_count() {
+        let mut att = FxAttached::default();
+        att.instances.push(FxInstance {
+            precast: Some(PrecastKey {
+                cast_count: 3,
+                seq: 5,
+                handed: false,
+            }),
+            ..instance(Entity::PLACEHOLDER, true)
+        });
+        assert!(!att.takes_precast(4), "a missile made before the hold");
+        assert!(att.takes_precast(6));
+        att.hand_precast();
+        assert!(!att.takes_precast(7), "taken once");
+        assert_eq!(att.handed_precast_root(), Some(Entity::PLACEHOLDER));
+        assert_eq!(att.release_precast(PrecastDrop::UpTo(4)), None);
+        assert_eq!(att.release_precast(PrecastDrop::Cast(9, 2)), None);
+        assert!(att.holds_precast());
+        assert_eq!(
+            att.release_precast(PrecastDrop::Cast(9, 3)),
+            Some(Entity::PLACEHOLDER)
+        );
+        assert!(!att.holds_precast());
+    }
+
+    /// A built body that lost the attachment drops the hold rather than cascade (`0x7229ee`).
+    #[test]
+    fn a_rebuilt_body_without_the_attachment_drops_the_hold() {
         let (mut app, unit, _) = standing(&[]);
         let held = |app: &App, e: Entity| {
             app.world()
@@ -1433,18 +1595,18 @@ mod tests {
                 crate::entities::VisualAttached,
             ))
             .id();
-        let unbuilt = app
+        let rebuilding = app
             .world_mut()
             .spawn((
                 GlobalTransform::default(),
                 FxAttached::holding_for_tests(1, None),
-                bones(0x16),
+                bones(0xf),
             ))
             .id();
         app.update();
         assert!(held(&app, unit), "kept, waiting on its model");
         assert!(!held(&app, lacking), "no fall back to another attachment");
-        assert!(!held(&app, unbuilt), "no body, no hold");
+        assert!(held(&app, rebuilding), "waits for the body like any effect");
     }
 
     /// Execute's cast kit hangs one record on both hands (`0x15` and `0x16`), and both survive.
@@ -1520,6 +1682,7 @@ mod tests {
                         root: None,
                         expires: None,
                         decaying: false,
+                        precast: None,
                     }],
                 },
             ))

@@ -320,7 +320,13 @@ fn dev_command(dev: DevCmd, args: &str) -> ParsedChat {
                 None => (CastEventKind::Start, false),
                 Some(w) if w.eq_ignore_ascii_case("go") => (CastEventKind::Go, false),
                 Some(w) if w.eq_ignore_ascii_case("ground") => (CastEventKind::Go, true),
-                Some(w) if w.eq_ignore_ascii_case("fail") => (CastEventKind::Fail, false),
+                Some(w) if w.eq_ignore_ascii_case("fail") => (
+                    CastEventKind::Fail {
+                        interrupt: false,
+                        reason: 0,
+                    },
+                    false,
+                ),
                 Some(_) => return ParsedChat::Unknown,
             };
             ParsedChat::CastVis {

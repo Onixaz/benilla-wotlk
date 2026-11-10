@@ -76,8 +76,10 @@ fn on_cast_failed(
     In(ev): In<SessionEvent>,
     mut errors: ResMut<CastErrors>,
     mut bar: ResMut<super::PetBar>,
+    mut ends: PetCastEnd,
 ) {
     if let SessionEvent::PetCastFailed {
+        cast_count,
         spell_id,
         reason,
         arg,
@@ -87,6 +89,59 @@ fn on_cast_failed(
         // The start cooldown the press armed clears, then the pet bar refreshes (`0x806d41`).
         bar.cooldowns.clear_gcd(spell_id, std::time::Instant::now());
         pet_cast_failed(spell_id, reason, arg, &mut errors);
+        ends.end(spell_id, cast_count, reason);
+    }
+}
+
+/// What the pet's end-cast reaches (`0x806c30`): the charm, else the summon.
+#[derive(bevy::ecs::system::SystemParam)]
+struct PetCastEnd<'w, 's> {
+    commands: Commands<'w, 's>,
+    player: Query<'w, 's, &'static crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
+    index: Res<'w, GuidIndex>,
+    casting: Query<'w, 's, &'static crate::creature_anim::Casting>,
+    spells: Option<Res<'w, Spells>>,
+    cast_events: MessageWriter<'w, crate::creature_anim::CastEvent>,
+    releases: MessageWriter<'w, crate::creature_anim::MissileRelease>,
+    play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
+}
+
+impl PetCastEnd<'_, '_> {
+    /// The pet's running cast of this spell and count ends (`0x7fed81`); any other cast's end
+    /// still drops a held model of its count (`0x7feeb0`).
+    fn end(&mut self, spell_id: u32, cast_count: u8, reason: u8) {
+        let pet = self.player.iter().next().and_then(|s| s.0.unit_pet_guid());
+        let Some(&entity) = pet.and_then(|g| self.index.0.get(&g)) else {
+            return;
+        };
+        let seq = self.play_seq.next();
+        let running = self
+            .casting
+            .get(entity)
+            .is_ok_and(|c| c.spell_id == spell_id && c.cast_count == cast_count);
+        if running {
+            self.commands
+                .entity(entity)
+                .remove::<crate::creature_anim::Casting>();
+            self.cast_events.write(crate::creature_anim::CastEvent {
+                entity,
+                spell_id,
+                kind: crate::creature_anim::CastEventKind::Fail {
+                    interrupt: false,
+                    reason,
+                },
+                cast_count,
+                seq,
+            });
+        } else if self.spells.as_deref().is_some_and(|s| {
+            crate::creature_anim::end_cast_clears_hold(s, spell_id, cast_count, reason)
+        }) {
+            self.releases.write(crate::creature_anim::MissileRelease {
+                caster: entity,
+                seq,
+                kind: crate::creature_anim::ReleaseKind::Clear(cast_count),
+            });
+        }
     }
 }
 

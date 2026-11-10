@@ -779,6 +779,8 @@ pub enum ServerPacket {
     },
     /// `SMSG_PET_CAST_FAILED`: the pet's cast refusal, in `SMSG_CAST_RESULT`'s body and vocabulary.
     PetCastFailed {
+        /// The pet's cast count, which its end-cast matches (`0x806c30`).
+        cast_count: u8,
         spell_id: u32,
         outcome: CastOutcome,
     },

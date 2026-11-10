@@ -137,9 +137,14 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::PetActionFeedback { reason, spell } => {
             vec![SessionEvent::PetActionFeedback { reason, spell }]
         }
-        ServerPacket::PetCastFailed { spell_id, outcome } => match outcome {
+        ServerPacket::PetCastFailed {
+            cast_count,
+            spell_id,
+            outcome,
+        } => match outcome {
             CastOutcome::Ok => Vec::new(),
             CastOutcome::Failed { reason, arg, .. } => vec![SessionEvent::PetCastFailed {
+                cast_count,
                 spell_id,
                 reason,
                 arg,

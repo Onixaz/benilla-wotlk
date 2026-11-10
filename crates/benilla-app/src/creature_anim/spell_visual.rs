@@ -30,6 +30,23 @@ const ERROR_CUBE: &str = "Spells\\ErrorCube.mdx";
 /// these nodes by attach tag and node flag. A unit wears at most one.
 const LOOT_FX_KEY: u32 = u32::MAX;
 
+/// Wire result 187 in the shared numbering, the launch result the end-cast keeps the held model
+/// for (`0x7feeb0`).
+const LAUNCH_RESULT: u8 = 0x91;
+
+/// Whether a cast's end drops its held missile model: a failure of a numbered cast whose
+/// `SpellMissile` row has flag 1 (`0x7feeb0`).
+pub(crate) fn end_cast_clears_hold(
+    spells: &crate::ui_action::Spells,
+    spell_id: u32,
+    cast_count: u8,
+    reason: u8,
+) -> bool {
+    reason != LAUNCH_RESULT
+        && cast_count != 0
+        && spells.catalog.get(spell_id).is_some_and(|d| d.flies_aim)
+}
+
 /// The attachment the loot sparkle, ding and mount poof hang from, else the unit base. A per-effect
 /// table value, not a constant: a new user reads its row.
 const HARDCODED_FX_ATTACH: u16 = 0x13;
@@ -141,6 +158,35 @@ pub(crate) enum SpellKitFx {
         spell_id: u32,
         class: FxClass,
     },
+    /// A flagged row's held missile model ([`FxClass::Precast`]): drops the unit's last at once,
+    /// then holds `slot` when the unit's body is built and has the slot's attachment (`0x722950`).
+    Hold {
+        entity: Entity,
+        spell_id: u32,
+        /// The cast count the end-cast clear matches (`0x722acb`).
+        cast_count: u8,
+        /// The edge's `PlaySeq` stamp: a [`MissileRelease`] stamped earlier leaves it.
+        seq: u64,
+        slot: Option<FxSlot>,
+    },
+}
+
+/// A release of a caster's missiles outside its animation, applied in `seq` order with the
+/// [`MissileSpawn`]s by `crate::entities::missile`.
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct MissileRelease {
+    pub(crate) caster: Entity,
+    pub(crate) seq: u64,
+    pub(crate) kind: ReleaseKind,
+}
+
+/// What a [`MissileRelease`] does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReleaseKind {
+    /// Launch the caster's queue now and drop its held model (`0x72e240`).
+    Fire,
+    /// Drop the held model of this cast count alone (`0x71bff0`).
+    Clear(u8),
 }
 
 /// A kit play whose `CharProc` slots name a beam, the dispatcher's chain case, run at the kit tail
@@ -196,6 +242,8 @@ pub(crate) struct MissileSpawn {
     pub(crate) shape: crate::entities::MissileShape,
     /// A fixed launch point, for a missile with no caster to leave from (`0x802825`).
     pub(crate) from: Option<Vec3>,
+    /// The GO's `PlaySeq` stamp, which orders it among the [`MissileRelease`]s.
+    pub(crate) seq: u64,
 }
 
 /// Load `SpellVisual.dbc` and `SpellVisualKit.dbc` off the patch chain at startup.
@@ -474,6 +522,7 @@ type KitSpawnWriters<'w> = (
     MessageWriter<'w, BaseAnimRecompute>,
     MessageWriter<'w, DelayedAreaKit>,
     MessageWriter<'w, crate::aura_visual::BodyProcPlay>,
+    MessageWriter<'w, MissileRelease>,
 );
 
 /// The writers one kit play fans out to.
@@ -800,6 +849,8 @@ pub(super) fn play_dest_loc_casts(
                 trajectory: None,
                 shape,
                 from: Some(c.src),
+                // No caster queue to order against.
+                seq: 0,
             });
             continue;
         }
@@ -988,7 +1039,7 @@ pub(super) fn route_cast_visuals(
         return; // no client data
     };
     // Disjoint borrows: the beam writer rides `out` while the missile and burst writers stay free.
-    let (missiles, bursts, chains, shakes, trails, recomputes, delayed, body) = (
+    let (missiles, bursts, chains, shakes, trails, recomputes, delayed, body, releases) = (
         &mut spawns.0,
         &mut spawns.1,
         &mut spawns.2,
@@ -997,6 +1048,7 @@ pub(super) fn route_cast_visuals(
         &mut spawns.5,
         &mut spawns.6,
         &mut spawns.7,
+        &mut spawns.8,
     );
     let mut out = KitOut {
         oneshots: &mut oneshots,
@@ -1125,21 +1177,27 @@ pub(super) fn route_cast_visuals(
                         });
                     }
                 }
-                // A flagged row holds column 8's model at column 16 until the release (`0x7fa41d`);
-                // our own start packet releases missiles at once, dropping it (`0x806a0b`).
-                let is_self = units.get(ev.entity).is_ok_and(|(.., me)| me);
-                let stages = resolve_stages(spells, &visuals.0, ev.spell_id, || {
+                // Our own start packet launches our missiles and drops any held model right after the
+                // start visuals (`0x806a0b`), so a hold of our own never draws.
+                if units.get(ev.entity).is_ok_and(|(.., me)| me) {
+                    releases.write(MissileRelease {
+                        caster: ev.entity,
+                        seq: ev.seq,
+                        kind: ReleaseKind::Fire,
+                    });
+                } else if let Some(s) = resolve_stages(spells, &visuals.0, ev.spell_id, || {
                     weapon_src.caster(ev.entity)
                 })
-                .filter(|_| !is_self);
-                if let Some(s) = stages.filter(VisualStages::holds_precast_missile) {
-                    out.fx.write(SpellKitFx::Begin {
+                .filter(VisualStages::holds_precast_missile)
+                {
+                    // A flagged row holds column 8's model at column 16 until the release
+                    // (`0x7fa41d`).
+                    out.fx.write(SpellKitFx::Hold {
                         entity: ev.entity,
                         spell_id: ev.spell_id,
-                        persistent: true,
-                        class: FxClass::Precast,
-                        stage: FxStage::Relive,
-                        effects: precast_missile_slot(&visuals.0, &s).into_iter().collect(),
+                        cast_count: ev.cast_count,
+                        seq: ev.seq,
+                        slot: precast_missile_slot(&visuals.0, &s),
                     });
                 }
             }
@@ -1234,7 +1292,7 @@ pub(super) fn route_cast_visuals(
                     play_area_kit_at(&kit, pos, &visuals.0, out.sounds, out.shakes, bursts);
                 }
             }
-            CastEventKind::Fail => {
+            CastEventKind::Fail { interrupt, reason } => {
                 if held_spell(&pending, ev.entity) == Some(ev.spell_id) {
                     commands.entity(ev.entity).try_remove::<CastHold>();
                     pending.insert(ev.entity, None);
@@ -1246,12 +1304,21 @@ pub(super) fn route_cast_visuals(
                     spell_id: ev.spell_id,
                     class: FxClass::Hold,
                 });
-                // The interrupt releases the held missile model (`0x72ed80`).
-                out.fx.write(SpellKitFx::Reap {
-                    entity: ev.entity,
-                    spell_id: ev.spell_id,
-                    class: FxClass::Precast,
-                });
+                // An interrupt launches the caster's missiles and drops its held model (`0x72ed80`).
+                if interrupt {
+                    releases.write(MissileRelease {
+                        caster: ev.entity,
+                        seq: ev.seq,
+                        kind: ReleaseKind::Fire,
+                    });
+                }
+                if end_cast_clears_hold(spells, ev.spell_id, ev.cast_count, reason) {
+                    releases.write(MissileRelease {
+                        caster: ev.entity,
+                        seq: ev.seq,
+                        kind: ReleaseKind::Clear(ev.cast_count),
+                    });
+                }
             }
         }
     }
@@ -1352,12 +1419,13 @@ pub(super) fn route_cast_visuals(
                 .collect();
             // Only an empty hit array consults the ground point.
             let ground_aim = targets.is_empty().then_some(go.dest).flatten();
-            if !targets.is_empty() || ground_aim.is_some() {
-                // The release gate (inverted).
-                let awaits_release = stages
-                    .filter(|s| s.cast != 0)
-                    .and_then(|s| visuals.0.kit(s.cast))
-                    .is_some_and(|k| k.anim_id.is_some());
+            // The release gate (inverted).
+            let awaits_release = stages
+                .filter(|s| s.cast != 0)
+                .and_then(|s| visuals.0.kit(s.cast))
+                .is_some_and(|k| k.anim_id.is_some());
+            let spawns = !targets.is_empty() || ground_aim.is_some();
+            if spawns {
                 missiles.write(MissileSpawn {
                     caster: go.caster,
                     spell_id: go.spell_id,
@@ -1384,6 +1452,16 @@ pub(super) fn route_cast_visuals(
                         visuals.0.stages(display.visual),
                     ),
                     from: None,
+                    seq: go.seq,
+                });
+            }
+            // A missile row with no cast animation releases the caster's missiles at GO, a held
+            // model with them even when this GO made none (`0x80f5c1`).
+            if !awaits_release && stages.is_some_and(|s| s.missile_gate != 0) {
+                releases.write(MissileRelease {
+                    caster: go.caster,
+                    seq: go.seq,
+                    kind: ReleaseKind::Fire,
                 });
             }
         }

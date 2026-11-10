@@ -672,6 +672,7 @@ pub enum SessionEvent {
     /// The pet's cast refusal (`SMSG_PET_CAST_FAILED`); it never touches our own cast state.
     /// `reason` is in the shared numbering, `arg` the first argument word when sent.
     PetCastFailed {
+        cast_count: u8,
         spell_id: u32,
         reason: u8,
         arg: Option<u32>,

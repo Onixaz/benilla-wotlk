@@ -1369,7 +1369,10 @@ fn castvis_parses_id_and_phase() {
         parse_line("/castvis 689 FAIL"),
         ParsedChat::CastVis {
             spell_id: 689,
-            kind: CastEventKind::Fail,
+            kind: CastEventKind::Fail {
+                interrupt: false,
+                reason: 0
+            },
             ground: false
         }
     );

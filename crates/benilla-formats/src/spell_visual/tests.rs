@@ -263,6 +263,11 @@ fn the_precast_missile_attachment_needs_the_flag_and_column_16() {
         Some(3),
         "flag 0x200 reads the id itself"
     );
+    assert_eq!(
+        held(FLAG_PRECAST_MISSILE, 13).precast_missile_attachment(),
+        Some(MISSILE_ATTACH_TABLE[4]),
+        "index 13 tests and holds at slot 4's attachment (0x71a7f0)"
+    );
 }
 
 #[test]
