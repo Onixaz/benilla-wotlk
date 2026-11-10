@@ -438,7 +438,11 @@ fn install(n: &mut AuraNodes, spell_id: u32, procs: &[AuraNode], now: f32) {
     n.rate.retain(|(s, _)| *s != spell_id);
     for node in procs {
         match *node {
-            AuraNode::Alpha(f, secs) => n.alpha.insert(0, (spell_id, f, secs)),
+            // A proc-14 alpha outside 0..=1 releases the spell's alpha and installs none (`0x7265c0`).
+            AuraNode::Alpha(f, secs) if (0.0..=1.0).contains(&f) => {
+                n.alpha.insert(0, (spell_id, f, secs))
+            }
+            AuraNode::Alpha(..) => {}
             AuraNode::Tint(rgb) => n.tint.insert(0, (spell_id, rgb)),
             AuraNode::AnimRate(r) => n.rate.insert(0, (spell_id, r)),
         }
@@ -446,10 +450,18 @@ fn install(n: &mut AuraNodes, spell_id: u32, procs: &[AuraNode], now: f32) {
     n.retarget(now);
 }
 
-/// [`install`] for a kit's nodes: a proc-14 node latches the kit's body-only bit (`0x72682e`).
+/// [`install`] for a kit's nodes: a proc-14 node releases the spell's alpha, which latches the
+/// released kit's body-only bit, then an installed one latches its own (`0x72682e`).
 fn install_kit(n: &mut AuraNodes, spell_id: u32, procs: &[AuraNode], body_only: bool, now: f32) {
+    let released = procs.iter().any(|p| matches!(p, AuraNode::Alpha(..)));
+    let installed = procs
+        .iter()
+        .any(|p| matches!(p, AuraNode::Alpha(f, _) if (0.0..=1.0).contains(f)));
+    if released && n.alpha.iter().any(|&(s, ..)| s == spell_id) {
+        n.body_only = n.body_only_spells.contains(&spell_id);
+    }
     n.body_only_spells.retain(|&s| s != spell_id);
-    if procs.iter().any(|p| matches!(p, AuraNode::Alpha(..))) {
+    if installed {
         n.body_only = body_only;
         if body_only {
             n.body_only_spells.push(spell_id);
@@ -667,15 +679,14 @@ fn author_cards(
     }
 }
 
-/// What [`author_descendants`] steps around: a model keeping its own alpha, and the rider's seat.
+/// What [`author_descendants`] steps around: the rider's seat under a body-only alpha's mount.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AlphaWalk<'w, 's> {
-    own_alpha: Query<'w, 's, (), With<OwnModelAlpha>>,
     frames: Query<'w, 's, &'static benilla_world::rig_anim::RigFrame>,
 }
 
-/// On a kit effect's root: kit flag `0x200`, its geometry keeps its own alpha and not its host's
-/// fade (`0x6f8f23`, `0x82e2a9`).
+/// On a kit effect's root: kit flag `0x200`, its particles and ribbons keep their own alpha while
+/// its geometry still takes the host's (`0x6f8f23`, `0x82e2a9`).
 pub(crate) use benilla_world::model_fade::OwnAlpha as OwnModelAlpha;
 
 /// Write `entity` if it is a fadeable part, then recurse regardless: held items, helms and
@@ -694,9 +705,6 @@ fn author_descendants(
     reauthor: &mut benilla_world::interior::InteriorReauthor,
     walked: &mut bevy::ecs::entity::EntityHashSet,
 ) {
-    if walk.own_alpha.contains(entity) {
-        return;
-    }
     let (root, skip, unit_alpha) = scope;
     // The mount's subtree keeps the alpha it had, but for the rider's seat frame under it.
     let alpha = if skip == Some(entity) {

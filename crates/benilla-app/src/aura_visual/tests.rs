@@ -1101,19 +1101,15 @@ fn a_body_only_kit_fades_the_rider_and_not_the_mount() {
     }
 }
 
-/// Kit flag `0x200`: the kit's own models are never written by their host's fade.
+/// Kit flag `0x200` cuts only the particle and ribbon chain: the kit model's geometry still takes
+/// its host's fade (`0x827b6e` reads the inherited alpha).
 #[test]
-fn an_own_alpha_effect_keeps_out_of_the_host_fade() {
+fn an_own_alpha_effect_still_fades_its_geometry_with_the_host() {
     let (app, [body, .., fx]) = mounted_unit_at(false);
     assert!((part_alpha(&app, body) - 0.3).abs() < 1.0 / 63.0);
-    assert_eq!(
-        app.world()
-            .entity(fx)
-            .get::<bevy::mesh::MeshTag>()
-            .unwrap()
-            .0,
-        0,
-        "the effect part is left as it spawned"
+    assert!(
+        (part_alpha(&app, fx) - 0.3).abs() < 1.0 / 63.0,
+        "the effect's mesh fades with the unit"
     );
 }
 
@@ -1131,6 +1127,28 @@ fn the_body_only_latch_follows_install_and_reap() {
     // A kit with no alpha node leaves the latch alone.
     install_kit(&mut n, GHOST, &[AuraNode::Tint([1, 2, 3])], false, 0.0);
     assert!(n.body_only);
+}
+
+/// A proc-14 alpha outside 0..=1 only releases: the spell's node goes, none is installed, and the
+/// latch takes the released kit's bit (`0x7265c0`).
+#[test]
+fn an_out_of_range_alpha_releases_and_installs_nothing() {
+    let mut n = AuraNodes::new(1.0);
+    install_kit(&mut n, 47585, &[AuraNode::Alpha(0.3, 0.0)], true, 0.0);
+    install_kit(&mut n, STEALTH, &[AuraNode::Alpha(0.5, 0.0)], false, 0.0);
+    assert!(!n.body_only);
+    install_kit(&mut n, 47585, &[AuraNode::Alpha(1.5, 0.0)], false, 0.0);
+    assert!(
+        n.alpha.iter().all(|&(s, ..)| s != 47585),
+        "nothing installed"
+    );
+    assert!(n.body_only, "the released body-only node latched it");
+    install_kit(&mut n, STEALTH, &[AuraNode::Alpha(-1.0, 0.0)], true, 0.0);
+    assert!(n.alpha.is_empty());
+    assert!(
+        !n.body_only,
+        "the released plain node latched it, not the new kit"
+    );
 }
 
 /// A body-only alpha never writes the mount: a mount another fade left translucent stays at that

@@ -482,7 +482,7 @@ struct FxInstance {
     scale: f32,
     /// The `SpellVisualKitModelAttach` row placing the model ([`FxSlot::attach`]).
     attach: Option<benilla_formats::ModelAttach>,
-    /// The model keeps its own alpha ([`FxSlot::own_alpha`]).
+    /// The model's particles and ribbons keep their own alpha ([`FxSlot::own_alpha`]).
     own_alpha: bool,
     root: Option<Entity>,
     /// The self-termination deadline on `time.elapsed_secs()`, or a reaped instance's `Decay` end.

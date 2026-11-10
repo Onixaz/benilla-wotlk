@@ -115,7 +115,7 @@ pub(crate) struct FxSlot {
     pub(crate) scale: f32,
     /// The `SpellVisualKitModelAttach` row that places it, its offset and turn (`0x6f84f0`).
     pub(crate) attach: Option<benilla_formats::ModelAttach>,
-    /// Kit flag `0x200`: the model keeps its own alpha, not its host's fade (`0x74483a`).
+    /// Kit flag `0x200`: its particles and ribbons keep their own alpha (`0x74483a`).
     pub(crate) own_alpha: bool,
 }
 

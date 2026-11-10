@@ -14,7 +14,7 @@ pub const REPICK_HELD_ANIM: u32 = 0x40;
 pub const ACTIVE_AURA_ONLY: u32 = 0x80;
 /// The kit's anim keeps the weapons out: play flag `0x20` skips the clip's stow (`0x73b1b6`, `0x738180`).
 pub const KEEP_WEAPONS: u32 = 0x100;
-/// The kit's models keep their own alpha, not their host's fade (`0x74483a`, `0x82e2a9`).
+/// The kit's models' particles and ribbons keep their own alpha (`0x74483a`, `0x82e2a9`).
 pub const OWN_MODEL_ALPHA: u32 = 0x200;
 /// A CharProc-14 alpha fades the rider's body, not the mount it sits on (`0x72682e`, `0x71ac41`).
 pub const FADE_BODY_ONLY: u32 = 0x400;

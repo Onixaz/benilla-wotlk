@@ -227,8 +227,8 @@ pub struct ModelFade(pub f32);
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ParentModel(pub Entity);
 
-/// A model that keeps its own alpha and takes none of its parent's: its [`ParentModel`] walk stops
-/// here (model flag `0x100000`, read at `0x82e2a9`).
+/// A model whose particles and ribbons keep its own alpha and take none of its parent's: its
+/// [`ParentModel`] walk stops here (model flag `0x100000`, read at `0x82e2a9`).
 #[derive(Component, Clone, Copy, Debug, Default)]
 #[component(storage = "SparseSet")]
 pub struct OwnAlpha;
