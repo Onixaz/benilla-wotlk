@@ -834,6 +834,12 @@ fn object_create(
     // Chain-only visibility: the root renders nothing itself, and culling flips its
     // `Visibility` through `Mut` writes, which do not re-add the sweep row.
     entity.vis_chain_only();
+    crate::go_difficulty::tag(
+        &mut entity,
+        kind,
+        fields.gameobject_type_id(),
+        fields.gameobject_dynamic_flags(),
+    );
     if let Some(s) = speeds {
         entity.insert(UnitSpeeds(s));
     }

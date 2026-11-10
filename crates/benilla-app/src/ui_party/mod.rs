@@ -16,6 +16,7 @@ use crate::ui_script::{UiFeed, UiInput};
 
 pub(crate) mod difficulty;
 mod feed;
+pub(crate) use feed::drain_party;
 pub(crate) mod net;
 mod pets;
 mod records;

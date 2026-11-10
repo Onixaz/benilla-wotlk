@@ -89,6 +89,11 @@ impl AuraNodes {
         }
     }
 
+    /// A node set held at `base` from the first frame, for an object with no aura path.
+    pub(crate) fn steady(base: f32) -> Self {
+        Self::new(base)
+    }
+
     /// `baseAlpha` times the head alpha node's factor alone, never a product over the list; an
     /// empty list leaves `baseAlpha`.
     fn target(&self) -> f32 {
@@ -494,6 +499,10 @@ pub(crate) fn refresh_base_alpha(
 ) {
     let now = time.elapsed_secs();
     for (entity, net, nodes) in &mut units {
+        // A GameObject's base alpha is its type's (`0x70dd50`), set where it spawns.
+        if net.kind == EntityKind::GameObject {
+            continue;
+        }
         let base = display_base_alpha(net, creatures.as_deref());
         match nodes {
             Some(mut n) => {
