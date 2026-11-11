@@ -281,14 +281,74 @@ pub type InventorySlots = [Option<InvSlotView>; INVENTORY_SLOT_COUNT];
 pub const BANK_BAG_SLOT_COUNT: usize = 7;
 pub type BankBagSlots = [Option<InvSlotView>; BANK_BAG_SLOT_COUNT];
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaperDollSlotInfo {
+    pub name: String,
+    pub texture: String,
+    pub slot: u32,
+}
+
+#[cfg(test)]
+pub(crate) fn test_paperdoll_rows() -> Vec<PaperDollSlotInfo> {
+    let rows = [
+        ("AmmoSlot", 0, "Ranged"),
+        ("HeadSlot", 1, "Head"),
+        ("NeckSlot", 2, "Neck"),
+        ("ShoulderSlot", 3, "Shoulder"),
+        ("ShirtSlot", 4, "Shirt"),
+        ("ChestSlot", 5, "Chest"),
+        ("WaistSlot", 6, "Waist"),
+        ("LegsSlot", 7, "Legs"),
+        ("FeetSlot", 8, "Feet"),
+        ("WristSlot", 9, "Wrists"),
+        ("HandsSlot", 10, "Hands"),
+        ("Finger0Slot", 11, "Finger"),
+        ("Finger1Slot", 12, "Finger"),
+        ("Trinket0Slot", 13, "Trinket"),
+        ("Trinket1Slot", 14, "Trinket"),
+        ("BackSlot", 15, "Chest"),
+        ("MainHandSlot", 16, "MainHand"),
+        ("SecondaryHandSlot", 17, "SecondaryHand"),
+        ("RangedSlot", 18, "Ranged"),
+        ("TabardSlot", 19, "Tabard"),
+        ("Bag0Slot", 20, "Bag"),
+        ("Bag1Slot", 21, "Bag"),
+        ("Bag2Slot", 22, "Bag"),
+        ("Bag3Slot", 23, "Bag"),
+        ("Bag1", 64, "Bag"),
+        ("Bag2", 65, "Bag"),
+        ("Bag3", 66, "Bag"),
+        ("Bag4", 67, "Bag"),
+        ("Bag5", 68, "Bag"),
+        ("Bag6", 69, "Bag"),
+        ("Bag7", 70, "Bag"),
+        ("Bag8", 71, "Bag"),
+        ("Bag9", 72, "Bag"),
+        ("Bag10", 73, "Bag"),
+        ("Bag11", 74, "Bag"),
+        ("Bag12", 75, "Bag"),
+    ];
+    rows.into_iter()
+        .map(|(name, slot, texture)| PaperDollSlotInfo {
+            name: name.into(),
+            slot,
+            texture: format!("UI-PaperDoll-Slot-{texture}"),
+        })
+        .collect()
+}
+
 /// `PaperDollItemFrame.dbc`'s 36 rows as `(SlotName, SlotID, art suffix)`. The texture column
 /// shares strings between rows, so `BackSlot` shows the Chest art and `AmmoSlot` the Ranged.
 /// A `SLOT_INFO` slot id by its button name, case-insensitive (`0x5e9617`).
-pub(super) fn slot_id_by_name(name: &str) -> Option<i64> {
-    SLOT_INFO
+pub(super) fn slot_info_by_name<'a>(model: &'a Model, name: &str) -> Option<&'a PaperDollSlotInfo> {
+    model
+        .paperdoll_item_frame
         .iter()
-        .find(|(n, _, _)| n.eq_ignore_ascii_case(name))
-        .map(|&(_, id, _)| id)
+        .find(|r| r.name.eq_ignore_ascii_case(name))
+}
+
+pub(super) fn slot_id_by_name(model: &Model, name: &str) -> Option<i64> {
+    slot_info_by_name(model, name).map(|r| i64::from(r.slot))
 }
 
 /// The GlobalStrings key naming equipment slot `slot0` (0..18), the button name upper-cased
@@ -317,47 +377,6 @@ pub(super) fn slot_token(slot0: usize) -> Option<&'static str> {
     ];
     TOKENS.get(slot0).copied()
 }
-
-const SLOT_INFO: [(&str, i64, &str); 36] = [
-    ("AmmoSlot", 0, "Ranged"),
-    ("HeadSlot", 1, "Head"),
-    ("NeckSlot", 2, "Neck"),
-    ("ShoulderSlot", 3, "Shoulder"),
-    ("ShirtSlot", 4, "Shirt"),
-    ("ChestSlot", 5, "Chest"),
-    ("WaistSlot", 6, "Waist"),
-    ("LegsSlot", 7, "Legs"),
-    ("FeetSlot", 8, "Feet"),
-    ("WristSlot", 9, "Wrists"),
-    ("HandsSlot", 10, "Hands"),
-    ("Finger0Slot", 11, "Finger"),
-    ("Finger1Slot", 12, "Finger"),
-    ("Trinket0Slot", 13, "Trinket"),
-    ("Trinket1Slot", 14, "Trinket"),
-    ("BackSlot", 15, "Chest"),
-    ("MainHandSlot", 16, "MainHand"),
-    ("SecondaryHandSlot", 17, "SecondaryHand"),
-    ("RangedSlot", 18, "Ranged"),
-    ("TabardSlot", 19, "Tabard"),
-    ("Bag0Slot", 20, "Bag"),
-    ("Bag1Slot", 21, "Bag"),
-    ("Bag2Slot", 22, "Bag"),
-    ("Bag3Slot", 23, "Bag"),
-    // `Bag1`..`Bag12` keep 64..75, not the bank bags' 68..74; all sixteen bag rows share one
-    // texture string.
-    ("Bag1", 64, "Bag"),
-    ("Bag2", 65, "Bag"),
-    ("Bag3", 66, "Bag"),
-    ("Bag4", 67, "Bag"),
-    ("Bag5", 68, "Bag"),
-    ("Bag6", 69, "Bag"),
-    ("Bag7", 70, "Bag"),
-    ("Bag8", 71, "Bag"),
-    ("Bag9", 72, "Bag"),
-    ("Bag10", 73, "Bag"),
-    ("Bag11", 74, "Bag"),
-    ("Bag12", 75, "Bag"),
-];
 
 /// The client's 12 durability-alert regions (`0xa1ce4c`) as live slot ids: stock's 11
 /// `INVENTORY_ALERT_STATUS_SLOTS` (`DurabilityFrame.lua:2-12`), then low ammo, which the client
@@ -406,6 +425,10 @@ fn ammo_alert_status(slot: &Option<InvSlotView>) -> u8 {
 }
 
 impl super::UiScript {
+    pub fn set_paperdoll_item_frame(&mut self, rows: Vec<PaperDollSlotInfo>) {
+        set_field!(self, paperdoll_item_frame, rows);
+    }
+
     /// Push, or clear with `None`, the player's combat-stats snapshot.
     pub fn set_player_combat_stats(&mut self, stats: Option<UnitCombatStats>) {
         set_field!(self, player_combat_stats, stats);
@@ -1068,34 +1091,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetInventorySlotInfo(slotName) → (slotId, textureName, checkRelic) from `SLOT_INFO`.
+    // GetInventorySlotInfo(slotName) → (slotId, textureName, checkRelic) from `PaperDollItemFrame.dbc`.
     // `checkRelic` is a property of the slot; stock pairs it with `UnitHasRelicSlot("player")`
     // (`PaperDollFrame.lua:680`, `:744`).
     g.set(
         "GetInventorySlotInfo",
         lua.create_function(|lua, name: String| {
-            // A full-string ASCII case-insensitive match: the reference calls `_strnicmp` with no
-            // length limit. The 36 names stay distinct after folding.
-            let Some((_, id, art)) = SLOT_INFO
-                .iter()
-                .find(|(n, _, _)| n.eq_ignore_ascii_case(&name))
-            else {
+            let model = crate::script::model_mut_of(lua);
+            let Some(row) = slot_info_by_name(&model, &name) else {
                 // An unknown name raises, never nil; the string is the reference's, verbatim.
                 return Err(mlua::Error::runtime(
                     "Invalid inventory slot in GetInventorySlotInfo",
                 ));
             };
             Ok((
-                *id,
-                // The DBC's bytes verbatim, unnormalised: a lowercase directory and the `.blp`
-                // extension, visible to any Lua that compares the string.
+                i64::from(row.slot),
                 Value::String(
-                    lua.create_string(format!(
-                        "interface\\paperdoll\\UI-PaperDoll-Slot-{art}.blp"
-                    ))?,
+                    lua.create_string(format!("interface\\paperdoll\\{}.blp", row.texture))?,
                 ),
                 // `checkRelic`: the number 1 for `RangedSlot` only, not a boolean.
-                if *id == 18 {
+                if row.slot == 18 {
                     Value::Integer(1)
                 } else {
                     Value::Nil
@@ -1947,7 +1962,8 @@ mod tests {
 
     #[test]
     fn get_inventory_slot_info_serves_the_dbc_rows() {
-        let s = UiScript::new().unwrap();
+        let mut s = UiScript::new().unwrap();
+        s.set_paperdoll_item_frame(super::test_paperdoll_rows());
         assert_eq!(
             s.eval::<(i64, String)>(r#"return GetInventorySlotInfo("HeadSlot")"#)
                 .unwrap(),

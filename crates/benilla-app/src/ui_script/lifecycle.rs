@@ -130,9 +130,32 @@ fn new_vm<E: std::fmt::Display>(
     seed_vm_clock(world, &mut script);
     script.set_live_clock(true);
     seed_class_names(world, &mut script);
+    seed_paperdoll_item_frame(world, &mut script);
     install_addon_asset_resolvers(world, &mut script);
     info!("ui_script: new VM, session {}", script.session());
     Some(script)
+}
+
+fn seed_paperdoll_item_frame(world: &mut World, script: &mut UiScript) {
+    let Some(assets) = world.get_resource::<benilla_assets::WorldAssets>() else {
+        return;
+    };
+    let Ok(catalog) = benilla_formats::load_paperdoll_item_frame(&mut assets.chain.lock_recover())
+    else {
+        warn!("ui_script: PaperDollItemFrame.dbc unavailable");
+        return;
+    };
+    script.set_paperdoll_item_frame(
+        catalog
+            .rows()
+            .iter()
+            .map(|r| benilla_ui::script::PaperDollSlotInfo {
+                name: r.name.clone(),
+                texture: r.texture.clone(),
+                slot: r.slot,
+            })
+            .collect(),
+    );
 }
 
 /// Hand the new VM `ChrClasses.dbc`'s names before its first file: `Constants.lua:87` calls

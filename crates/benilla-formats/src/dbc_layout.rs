@@ -22,6 +22,7 @@ pub struct DbcLayouts {
     pub chat_profanity: ChatProfanity,
     pub chat_channels: ChatChannels,
     pub area_table: AreaTable,
+    pub paperdoll_item_frame: PaperDollItemFrame,
 }
 
 /// `AreaTable.dbc`; the id, map, parent, explore bit, flags and exploration level are columns 0
@@ -31,6 +32,12 @@ pub struct DbcLayouts {
 pub struct AreaTable {
     pub fields: usize,
     pub faction_group_mask: usize,
+}
+
+/// `PaperDollItemFrame.dbc`; slot button name, empty-slot texture and inventory slot id.
+#[derive(Debug)]
+pub struct PaperDollItemFrame {
+    pub fields: usize,
 }
 
 /// A table of `ID`, one localized string (its enUS column 1) and its mask or flags:
@@ -290,6 +297,7 @@ pub const LAYOUTS: DbcLayouts = DbcLayouts {
         fields: 36,
         faction_group_mask: 28,
     },
+    paperdoll_item_frame: PaperDollItemFrame { fields: 3 },
 };
 
 #[cfg(test)]

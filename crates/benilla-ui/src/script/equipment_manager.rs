@@ -872,7 +872,8 @@ fn install_item_verbs(lua: &Lua) -> mlua::Result<()> {
                 }
                 Value::String(s) => {
                     let name = s.to_string_lossy();
-                    match super::char_stats::slot_id_by_name(&name).filter(|&id| id > 0) {
+                    match super::char_stats::slot_id_by_name(&read(lua), &name).filter(|&id| id > 0)
+                    {
                         Some(id) => id - 1,
                         None => {
                             return Err(mlua::Error::runtime(
