@@ -840,7 +840,8 @@ pub enum SessionEvent {
         /// The ground point (`TARGET_FLAG_DEST_LOCATION`, raw WoW); the lasting effect is a
         /// DynamicObject.
         dest: Option<[f32; 3]>,
-        ammo_display_id: Option<u32>,
+        /// The ammo block, `(displayId, inventoryType)` (`CAST_FLAG_AMMO`).
+        ammo: Option<(u32, u32)>,
         /// The cast item when the first guid is not the caster; the item cooldown keys on it.
         item_caster: Option<u64>,
         /// A trajectory missile's `(elevation, delay ms)` (`CAST_FLAG_ADJUST_MISSILE`).

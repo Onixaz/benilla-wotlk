@@ -878,7 +878,7 @@ pub(super) fn drain_chat_input(
                                     misses: Vec::new(),
                                     dest,
                                     points: Vec::new(),
-                                    ammo_display_id: None,
+                                    ammo: None,
                                     seq: play_seq.next(),
                                     trajectory: None,
                                     reflected: 0,
@@ -899,7 +899,10 @@ pub(super) fn drain_chat_input(
                                     points: Vec::new(),
                                     // A real GO carries the caster's ammo; this flies the
                                     // Rough Arrow, display id 5996.
-                                    ammo_display_id: Some(5996),
+                                    ammo: Some(crate::creature_anim::ItemModel {
+                                        display_id: 5996,
+                                        inventory_type: 24,
+                                    }),
                                     seq: play_seq.next(),
                                     trajectory: None,
                                     reflected: 0,

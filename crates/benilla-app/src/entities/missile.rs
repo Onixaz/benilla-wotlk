@@ -29,8 +29,9 @@
 //! `SpellVisual` 0), an `ItemDisplayInfo` row resolved by shape: a model in the right slot is
 //! `Item\ObjectComponents\Ammo\`, in the left `…\Weapon\` (thrown), each with its object skin. The
 //! reference resolves the row, forking on the wire's ammo InventoryType (`0x19`, thrown), and the
-//! shape rule matches it on every shipped row. With no model at all the missile flies invisible and
-//! still impacts on schedule.
+//! shape rule matches it on every shipped row. A model id of -1 to -3 flies the caster's main, off
+//! or ranged item, -4 and -5 the wire's ammo, each from its `InventoryType`'s folder (`0x732100`).
+//! An item that makes no model flies the error cube (`0x7339e1`).
 //!
 //! A GO with no unit targets but a point flies one projectile at it (the reference's
 //! empty-hit-array arm spawns one, unit slot −1): the Flare, a bomb thrown at empty ground. It aims
@@ -65,6 +66,8 @@ use bevy::animation::transition::AnimationTransitions;
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
 
+use crate::creature_anim::spell_visual::{MissileItem, ERROR_CUBE};
+use crate::creature_anim::ItemModel;
 use crate::creature_anim::{
     oneshot_is_live, AnimData, AnimDriver, AnimSoundEvent, CastEvent, CastEventKind, DefenseAnim,
     FxClass, MissileRelease, MissileSpawn, ReleaseKind, SpellKitFx, SpellKitSound, SpellVisuals,
@@ -186,6 +189,8 @@ pub(super) struct Missile {
     /// The flight time at launch, a scripted arc's progress clock (`0x7015d0`).
     flight_time: f32,
     parts_spawned: bool,
+    /// The item glow still to hang on the model once it has built, 0 for none.
+    glow: i32,
     /// A trajectory GO's flight.
     flight: Option<Flight>,
     /// The flight's own position; the model draws here plus a motion script's offset.
@@ -515,6 +520,8 @@ struct QueuedGo {
     saw_oneshot: bool,
     /// Its first missile took the caster's held model (`0x73304d`).
     takes_hold: bool,
+    /// The item model's own `ItemVisuals` glow, 0 for none.
+    glow: i32,
 }
 
 /// Every caster's queue of projectiles awaiting release, the reference's unit `+0xac` list of
@@ -547,7 +554,7 @@ impl PendingMissiles {
             caster,
             spell_id: 75,
             path: None,
-            ammo_display_id: None,
+            item: None,
             dest_tag: None,
             speed: 40.0,
             targets: Vec::new(),
@@ -575,6 +582,7 @@ impl PendingMissiles {
                 queued: 0.0,
                 saw_oneshot: false,
                 takes_hold: false,
+                glow: 0,
             });
     }
 }
@@ -606,6 +614,54 @@ fn ensure_ammo_model(
         fx.models.insert(key.clone(), dm);
     }
     Some(key)
+}
+
+/// An item's model as a missile flies it (`0x732100`): its `InventoryType`'s folder, the left model
+/// else the right with its own skin, keyed `item:<display id>:<inventory type>`.
+fn ensure_item_model(
+    fx: &mut SpellFx,
+    displays: &ItemDisplays,
+    item: ItemModel,
+    asset_server: &AssetServer,
+) -> Option<String> {
+    let key = format!("item:{}:{}", item.display_id, item.inventory_type);
+    if !fx.models.contains_key(&key) {
+        let (dir, model, texture) =
+            item_model_file(displays.catalog.get(item.display_id)?, item.inventory_type)?;
+        let dm = DisplayModel {
+            handle: ModelHandle::M2(asset_server.load(m2_url(&format!("{dir}\\{model}")))),
+            object_texture: texture,
+            dir,
+            ..super::empty_shell()
+        };
+        fx.models.insert(key.clone(), dm);
+    }
+    Some(key)
+}
+
+/// An item's model file by its `InventoryType` (`0x732100`): the folder, the left model else the
+/// right, and that side's skin.
+fn item_model_file(
+    row: &benilla_formats::ItemDisplay,
+    inventory_type: u32,
+) -> Option<(String, String, Option<String>)> {
+    let dir = format!("Item\\ObjectComponents\\{}", item_folder(inventory_type)?);
+    let col = if row.model[0].is_some() { 0 } else { 1 };
+    let model = row.model[col].clone()?;
+    Some((dir, model, row.model_texture[col].clone()))
+}
+
+/// The folder an item's `InventoryType` keeps its model in (`0x732125`). A head item (1) is not
+/// built: the reference names its file by a race row keyed on the sex byte (`0x7321ad`).
+fn item_folder(inventory_type: u32) -> Option<&'static str> {
+    Some(match inventory_type {
+        1 => return None,
+        3 => "Shoulder",
+        14 => "Shield",
+        24 => "Ammo",
+        27 => "Quiver",
+        _ => "Weapon",
+    })
 }
 
 /// A travelling spell's deferred miss word. `SMSG_SPELL_GO` skips its inline word when the
@@ -1480,6 +1536,7 @@ fn launch_go(
                 flight_time: arrive_in,
                 // An invisible flight has no parts to wait on.
                 parts_spawned: go.key.is_none(),
+                glow: go.glow,
                 flight,
                 pos: launch,
                 launch,
@@ -1757,21 +1814,53 @@ pub(super) fn spawn_missiles(
             }
         };
         // Resolve the model now, so it loads while the release animation plays.
-        let key = match (&spawn.path, spawn.ammo_display_id) {
-            (Some(path), _) => {
-                fx.models
-                    .entry(path.clone())
-                    .or_insert_with(|| DisplayModel {
-                        handle: ModelHandle::M2(asset_server.load(m2_url(path))),
-                        ..super::empty_shell()
-                    });
-                Some(path.clone())
-            }
-            (None, Some(display_id)) => displays
-                .as_deref()
-                .and_then(|d| ensure_ammo_model(&mut fx, d, display_id, &asset_server)),
-            (None, None) => None,
+        let item = spawn.item.and_then(|item| {
+            let d = displays.as_deref()?;
+            let (key, display_id) = match item {
+                MissileItem::Ammo(display_id) => (
+                    ensure_ammo_model(&mut fx, d, display_id, &asset_server)?,
+                    display_id,
+                ),
+                MissileItem::Held(model) => (
+                    ensure_item_model(&mut fx, d, model, &asset_server)?,
+                    model.display_id,
+                ),
+            };
+            // The item's own glow rides its model (`0x7322de`, `0x4eacb5`).
+            Some((key, d.catalog.get(display_id).map_or(0, |r| r.item_visual)))
+        });
+        // An item that makes no model flies the error cube (`0x7339e1`).
+        let (item, glow) = match (spawn.item, item) {
+            (Some(_), None) => (Some(ERROR_CUBE.to_string()), 0),
+            (_, Some((key, glow))) => (Some(key), glow),
+            (None, None) => (None, 0),
         };
+        let key = match spawn.path.clone().or(item) {
+            Some(path) if !fx.models.contains_key(&path) => {
+                fx.models.insert(
+                    path.clone(),
+                    DisplayModel {
+                        handle: ModelHandle::M2(asset_server.load(m2_url(&path))),
+                        ..super::empty_shell()
+                    },
+                );
+                Some(path)
+            }
+            key => key,
+        };
+        if spawn.item.is_some() && benilla_assets::trace::enabled_for("fx") {
+            let model = key.as_ref().and_then(|k| fx.models.get(k));
+            benilla_assets::trace::line(
+                "fx",
+                &format!(
+                    "missile item spell={} item={:?} key={key:?} dir={:?} skin={:?} glow={glow}",
+                    spawn.spell_id,
+                    spawn.item,
+                    model.map(|m| &m.dir),
+                    model.and_then(|m| m.object_texture.as_ref()),
+                ),
+            );
+        }
         // A missile with a caster takes its held model when it is the first made since the hold.
         let takes_hold = spawn.from.is_none() && precast.hand(spawn.caster, spawn.seq);
         let go = QueuedGo {
@@ -1780,6 +1869,7 @@ pub(super) fn spawn_missiles(
             queued: 0.0,
             saw_oneshot: false,
             takes_hold,
+            glow,
         };
         if spawn.awaits_release {
             pending.0.entry(spawn.caster).or_default().push(go);
@@ -1896,12 +1986,13 @@ pub(super) fn attach_missile_models(
     mut anim_table: ResMut<benilla_world::mat_anim_table::MatAnimTable>,
     ibps: Res<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     mut palettes: ResMut<benilla_world::rig_palette::RigPalettes>,
+    mut glows: Option<ResMut<super::item_glow::ItemGlows>>,
 ) {
     let Some(mut fx) = fx else {
         return;
     };
     for (entity, mut missile) in &mut missiles {
-        if missile.parts_spawned {
+        if missile.parts_spawned && missile.glow == 0 {
             continue;
         }
         let Some(key) = missile.path.clone() else {
@@ -1911,31 +2002,116 @@ pub(super) fn attach_missile_models(
         let Some(dm) = fx.models.get(&key) else {
             continue; // unreachable: just inserted
         };
+        let mut materials = FxMaterials {
+            store: &mut wow_materials,
+            tint: &mut tint_reg,
+            uv: &mut uv_reg,
+            table: &mut anim_table,
+        };
         // `false` means still loading; a later pass attaches mid-flight.
-        if !attach_effect_visuals(
+        if !missile.parts_spawned {
+            if !attach_effect_visuals(
+                &mut commands,
+                entity,
+                dm,
+                time.elapsed_secs(),
+                false, // a missile's flat quads are geometry, never ground decals
+                // A free world model: its trail stays world-frozen and its pool finishes in place.
+                EffectHost::default(),
+                // A missile, not a kit effect: no kit stage and no Birth/Hold/Decay, one sequence.
+                None,
+                &mut materials,
+                &ibps,
+                &mut palettes,
+                Some(INFLIGHT_ANIM),
+            ) {
+                continue;
+            }
+            missile.parts_spawned = true;
+        }
+        let Some(glows) = glows.as_deref_mut() else {
+            missile.glow = 0;
+            continue;
+        };
+        let hung = attach_item_glow(
             &mut commands,
             entity,
             dm,
+            missile.glow,
+            glows,
+            &asset_server,
             time.elapsed_secs(),
-            false, // a missile's flat quads are geometry, never ground decals
-            // A free world model: its trail stays world-frozen and its pool finishes in place.
-            EffectHost::default(),
-            // A missile, not a kit effect: no kit stage and no Birth/Hold/Decay, one sequence.
-            None,
-            &mut FxMaterials {
-                store: &mut wow_materials,
-                tint: &mut tint_reg,
-                uv: &mut uv_reg,
-                table: &mut anim_table,
-            },
+            &mut materials,
             &ibps,
             &mut palettes,
-            Some(INFLIGHT_ANIM),
-        ) {
-            continue;
+        );
+        if hung {
+            missile.glow = 0;
         }
-        missile.parts_spawned = true;
     }
+}
+
+/// Hang an item model's glow on its missile (`0x4ea8f0`): one instance per authored slot at that
+/// attachment of the model, all at once when every glow model has built; `false` while loading.
+#[allow(clippy::too_many_arguments)] // the effect attach's own lanes, passed through
+fn attach_item_glow(
+    commands: &mut Commands,
+    missile: Entity,
+    model: &DisplayModel,
+    visual: i32,
+    glows: &mut super::item_glow::ItemGlows,
+    asset_server: &AssetServer,
+    now: f32,
+    materials: &mut FxMaterials,
+    ibps: &Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>,
+    palettes: &mut benilla_world::rig_palette::RigPalettes,
+) -> bool {
+    let Some(paths) = glows.effects(visual).cloned() else {
+        return true; // nothing to hang
+    };
+    super::item_glow::ensure_glow_models(glows, visual, asset_server);
+    let ready = paths
+        .iter()
+        .flatten()
+        .all(|p| glows.models.get(p).is_some_and(|dm| dm.parts.is_some()));
+    if !ready {
+        return false;
+    }
+    for (slot, path) in paths
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| p.as_ref().map(|p| (i, p)))
+    {
+        let Some(dm) = glows.models.get(path) else {
+            continue;
+        };
+        // A model without the slot's attachment hangs nothing there.
+        let Some(at) =
+            crate::portrait::attachment_point(&model.skeleton, &model.attachments, slot as u16)
+        else {
+            continue;
+        };
+        let instance = commands
+            .spawn((Transform::from_translation(at), Visibility::default()))
+            .id();
+        commands.entity(missile).add_child(instance);
+        attach_effect_visuals(
+            commands,
+            instance,
+            dm,
+            now,
+            false,
+            EffectHost {
+                parent: Some(missile),
+            },
+            None,
+            materials,
+            ibps,
+            palettes,
+            None, // the glow models author one looping sequence
+        );
+    }
+    true
 }
 
 /// The units a trajectory missile may hit, and what decides which (`0x6fcb60`).
@@ -2458,6 +2634,46 @@ mod tests {
     /// `Spell.dbc` Speed such that the test target's 24-unit range is a 1.000 s flight.
     const SPEED: f32 = 24.0;
 
+    /// An item missile's file (`0x732100`): its `InventoryType`'s folder, the left model and skin
+    /// else the right, nothing for a head item or a row with no model.
+    #[test]
+    fn an_item_missile_takes_its_inventory_types_folder() {
+        let row = |left: Option<&str>, right: Option<&str>| benilla_formats::ItemDisplay {
+            model: [left.map(str::to_string), right.map(str::to_string)],
+            model_texture: [Some("SkinL".into()), Some("SkinR".into())],
+            ..Default::default()
+        };
+        let both = row(Some("Left.mdx"), Some("Right.mdx"));
+        let right = row(None, Some("Arrow.mdx"));
+        let file = |r: &benilla_formats::ItemDisplay, inv: u32| {
+            item_model_file(r, inv).map(|(dir, model, skin)| (dir, model, skin.unwrap()))
+        };
+        let dir = |d: &str| format!("Item\\ObjectComponents\\{d}");
+        for (inv, folder) in [
+            (3, "Shoulder"),
+            (14, "Shield"),
+            (24, "Ammo"),
+            (27, "Quiver"),
+            (13, "Weapon"),
+            (15, "Weapon"),
+            (25, "Weapon"),
+            (0, "Weapon"),
+        ] {
+            assert_eq!(
+                file(&both, inv),
+                Some((dir(folder), "Left.mdx".into(), "SkinL".into())),
+                "{inv}"
+            );
+        }
+        assert_eq!(
+            file(&right, 24),
+            Some((dir("Ammo"), "Arrow.mdx".into(), "SkinR".into())),
+            "the right side when the left is empty"
+        );
+        assert_eq!(file(&both, 1), None, "a head item");
+        assert_eq!(file(&row(None, None), 13), None, "no model");
+    }
+
     fn app() -> App {
         let mut app = App::new();
         // No TimePlugin: the tests advance `Time` by hand so every queued-duration is exact.
@@ -2518,7 +2734,7 @@ mod tests {
             caster,
             spell_id: 133,
             path: None, // an invisible flight; the queue needs no model
-            ammo_display_id: None,
+            item: None,
             dest_tag: None,
             speed: SPEED,
             targets: vec![(target, None)],
@@ -2552,6 +2768,90 @@ mod tests {
             .iter(app.world())
             .map(|(m, t)| (m.arrive_in, t.translation))
             .collect()
+    }
+
+    /// An item whose display makes no model flies the error cube (`0x7339e1`), the ammo model and
+    /// a held item alike.
+    #[test]
+    fn an_item_with_no_model_flies_the_error_cube() {
+        let item = ItemModel {
+            display_id: 77,
+            inventory_type: 13,
+        };
+        for item in [MissileItem::Ammo(77), MissileItem::Held(item)] {
+            let mut app = app();
+            // Loaded already, so the test needs no model asset type.
+            app.world_mut()
+                .resource_mut::<SpellFx>()
+                .models
+                .insert(ERROR_CUBE.to_string(), super::super::empty_shell());
+            let caster = caster(&mut app, Vec3::ZERO);
+            let target = app
+                .world_mut()
+                .spawn(GlobalTransform::from_xyz(24.0, 0.0, 0.0))
+                .id();
+            let mut spawn = go(caster, target, false);
+            spawn.item = Some(item);
+            app.world_mut().write_message(spawn);
+            step(&mut app, 0.016);
+            let paths: Vec<_> = app
+                .world_mut()
+                .query::<&Missile>()
+                .iter(app.world())
+                .map(|m| m.path.clone())
+                .collect();
+            assert_eq!(paths, vec![Some(ERROR_CUBE.to_string())], "{item:?}");
+        }
+    }
+
+    /// An item missile keeps its display's own glow to hang once its model builds (`0x7322de`);
+    /// the error cube has none.
+    #[test]
+    fn an_item_missile_carries_its_displays_glow() {
+        let held = ItemModel {
+            display_id: 77,
+            inventory_type: 13,
+        };
+        for (item, glow) in [
+            (MissileItem::Held(held), 31),
+            (MissileItem::Ammo(77), 31),
+            (MissileItem::Ammo(78), 0),
+        ] {
+            let mut app = app();
+            app.insert_resource(ItemDisplays::icons_for_tests(
+                benilla_formats::ItemDisplayCatalog::from_displays(HashMap::from([(
+                    77,
+                    benilla_formats::ItemDisplay {
+                        model: [Some("Axe.mdx".into()), None],
+                        item_visual: 31,
+                        ..Default::default()
+                    },
+                )])),
+            ));
+            // Loaded already, so the test needs no model asset type.
+            for key in ["item:77:13", "ammo:77", ERROR_CUBE] {
+                app.world_mut()
+                    .resource_mut::<SpellFx>()
+                    .models
+                    .insert(key.to_string(), super::super::empty_shell());
+            }
+            let caster = caster(&mut app, Vec3::ZERO);
+            let target = app
+                .world_mut()
+                .spawn(GlobalTransform::from_xyz(24.0, 0.0, 0.0))
+                .id();
+            let mut spawn = go(caster, target, false);
+            spawn.item = Some(item);
+            app.world_mut().write_message(spawn);
+            step(&mut app, 0.016);
+            let glows: Vec<i32> = app
+                .world_mut()
+                .query::<&Missile>()
+                .iter(app.world())
+                .map(|m| m.glow)
+                .collect();
+            assert_eq!(glows, vec![glow], "{item:?}");
+        }
     }
 
     #[test]

@@ -439,7 +439,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
         target_mask,
         src,
         dest,
-        ammo_display_id,
+        ammo,
         item_caster,
         trajectory,
         reflects,
@@ -481,7 +481,12 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
             target,
             go_target,
             (target_mask, src, dest, points),
-            ammo_display_id,
+            ammo.map(
+                |(display_id, inventory_type)| crate::creature_anim::ItemModel {
+                    display_id,
+                    inventory_type,
+                },
+            ),
             item_caster,
             trajectory,
             &mut sc.commands,
@@ -1367,7 +1372,7 @@ fn spell_go(
     go_target: Option<u64>,
     // The targets' mask with their source, dest and extra points.
     (target_mask, src, dest, points): GoPoints,
-    ammo_display_id: Option<u32>,
+    ammo: Option<crate::creature_anim::ItemModel>,
     item_caster: Option<u64>,
     trajectory: Option<(f32, u32)>,
     commands: &mut Commands,
@@ -1405,7 +1410,7 @@ fn spell_go(
     debug!(
         "net: spell go {spell_id} by {caster:#x} ({} hit(s), {} miss(es), flags \
          {cast_flags:#x}, target {target:?}, go_target {go_target:?}, dest {dest:?}, \
-         ammo {ammo_display_id:?})",
+         ammo {ammo:?})",
         hits.len(),
         misses.len()
     );
@@ -1592,10 +1597,21 @@ fn spell_go(
         } else {
             hit_codes.chain(miss_codes).collect()
         };
-        // The hop fill the cast kit consumes. Deviation: fills on every row, not only a beam's
-        // (`0x80ed5a`), as only a beam consumes it.
-        let hops: Vec<u64> = list.iter().map(|&(g, ..)| g).collect();
-        fill_chain_hops(caster, e, &hops, commands, index);
+        // The hop fill the cast kit consumes, a unit caster's alone (`0x80ed5a`). Deviation:
+        // fills on every row, not only a beam's, as only a beam consumes it.
+        let object = stores.get(e).is_ok_and(|s| {
+            s.0.object_type().is_some_and(|t| {
+                !matches!(
+                    t,
+                    benilla_protocol::messages::ObjectType::Unit
+                        | benilla_protocol::messages::ObjectType::Player
+                )
+            })
+        });
+        if !object {
+            let hops: Vec<u64> = list.iter().map(|&(g, ..)| g).collect();
+            fill_chain_hops(caster, e, &hops, commands, index);
+        }
         cast_events.write(CastEvent {
             entity: e,
             spell_id,
@@ -1632,7 +1648,7 @@ fn spell_go(
                 src,
                 dest,
                 points,
-                ammo_display_id,
+                ammo,
                 seq,
                 trajectory: trajectory.map(|(pitch, delay_ms)| crate::creature_anim::Trajectory {
                     pitch,

@@ -687,9 +687,8 @@ pub(crate) struct SpellGoTargets {
     pub(crate) dest: Option<Vec3>,
     /// The extra target points, in bevy coords; one whose transport is not here is dropped.
     pub(crate) points: Vec<crate::entities::DeckPoint>,
-    /// The GO's ammo block (`castFlags & 0x20`): the ammo's `ItemDisplayInfo` id, the missile model
-    /// when the visual chain has none.
-    pub(crate) ammo_display_id: Option<u32>,
+    /// The GO's ammo block (`castFlags & 0x20`), a missile's model for column 8's 0, -4 and -5.
+    pub(crate) ammo: Option<ItemModel>,
     /// `PlaySeq` stamp, the GO's `CastEvent`'s.
     pub(crate) seq: u64,
     /// The GO's trajectory (`castFlags & 0x20000`).
@@ -701,6 +700,14 @@ pub(crate) struct SpellGoTargets {
     pub(crate) caster_guid: u64,
     /// The server's clock at the launch.
     pub(crate) server_time: u32,
+}
+
+/// An item a missile flies as its model: its `ItemDisplayInfo` id and the `InventoryType` that
+/// picks the model's folder (`0x732100`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ItemModel {
+    pub(crate) display_id: u32,
+    pub(crate) inventory_type: u32,
 }
 
 /// A dest-location cast's visuals, from `SMSG_NOTIFY_DEST_LOC_SPELL_CAST` (`0x810050`), in bevy

@@ -67,7 +67,7 @@ fn go(caster: u64, spell_id: u32) -> SessionEvent {
         target_mask: 0,
         src: None,
         dest: None,
-        ammo_display_id: None,
+        ammo: None,
         item_caster: None,
         trajectory: None,
         dest_counter: 0,

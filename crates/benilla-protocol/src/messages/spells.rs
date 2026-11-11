@@ -364,11 +364,9 @@ const CAST_FLAG_VISUAL_CHAIN: u32 = 0x8_0000;
 const CAST_FLAG_RUNE_LIST: u32 = 0x20_0000;
 const CAST_FLAG_IMMUNITY: u32 = 0x400_0000;
 
-/// Read the ammo block: `u32 displayId`, `u32 inventoryType` (dropped).
-fn read_ammo(r: &mut impl Read) -> io::Result<u32> {
-    let display_id = read_u32_le(r)?;
-    let _inventory_type = read_u32_le(r)?;
-    Ok(display_id)
+/// Read the ammo block: `u32 displayId`, `u32 inventoryType`.
+fn read_ammo(r: &mut impl Read) -> io::Result<(u32, u32)> {
+    Ok((read_u32_le(r)?, read_u32_le(r)?))
 }
 
 /// A cast's rune block: the caster's ready-rune masks before and after the cast, and for each of
@@ -438,7 +436,7 @@ pub(super) fn read_spell_start(r: &mut impl Read) -> io::Result<SpellStart> {
         None
     };
     let ammo_display_id = if cast_flags & CAST_FLAG_AMMO != 0 {
-        Some(read_ammo(r)?)
+        Some(read_ammo(r)?.0)
     } else {
         None
     };
@@ -482,7 +480,8 @@ pub struct SpellGo {
     /// `(guid, outcome)` of each reflect miss, the reflected spell's result on the caster.
     pub reflects: Vec<(u64, u8)>,
     pub targets: SpellCastTargets,
-    pub ammo_display_id: Option<u32>,
+    /// The ammo block, `(displayId, inventoryType)`: the ammo a missile flies (`0x733820`).
+    pub ammo: Option<(u32, u32)>,
     /// The `CAST_FLAG_RUNE_LIST` block.
     pub runes: Option<CastRunes>,
     /// The `CAST_FLAG_ADJUST_MISSILE` pair, `(elevation, delay ms)`: a trajectory missile's launch
@@ -587,7 +586,7 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     } else {
         None
     };
-    let ammo_display_id = if cast_flags & CAST_FLAG_AMMO != 0 {
+    let ammo = if cast_flags & CAST_FLAG_AMMO != 0 {
         Some(read_ammo(r)?)
     } else {
         None
@@ -620,7 +619,7 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
         misses,
         reflects,
         targets,
-        ammo_display_id,
+        ammo,
         runes,
         trajectory,
         dest_counter,
