@@ -263,22 +263,22 @@ pub fn unknownobject(lua: &Lua) -> mlua::Result<mlua::String> {
     })
 }
 
-/// The reference's grey-level band, indexed by player level / 5.
-const GREY_BAND: [u32; 20] = [
-    4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11, 12, 12, 12, 12, 12, 12, 12, 12,
-];
+/// The reference's grey-level band, indexed by player level / 5: `GetQuestGreenRange`'s table
+/// `0xa1c4a0` and the trivial test's `0xa31bb8` hold the same 20 values.
+const GREY_BAND: [u32; 20] = [4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8];
 
-/// `GetQuestGreenRange`'s answer: the band for a player level, 12 past the table.
+/// `GetQuestGreenRange`'s answer: the band for a player level, 8 past the table (`0x5e28a1`
+/// clamps to the last row, the trivial test `0x6de1ac` falls back to 8).
 pub fn grey_band(player_level: u32) -> u32 {
     GREY_BAND
         .get((player_level / 5) as usize)
         .copied()
-        .unwrap_or(12)
+        .unwrap_or(8)
 }
 
-/// The reference's grey level test: the unit is more than the band below the player, strictly, so a
-/// gap equal to the band is still green. The reference also returns false for a player (object type
-/// bit `0x10`); a pet takes the level test.
+/// The reference's grey level test (`0x6de130`): the unit is more than the band below the player,
+/// strictly, so a gap equal to the band is still green. The reference also returns false for a
+/// player (object type bit `0x10`); a pet takes the level test.
 pub fn unit_is_grey(player_level: u32, unit_level: u32) -> bool {
     player_level > unit_level && player_level - unit_level > grey_band(player_level)
 }

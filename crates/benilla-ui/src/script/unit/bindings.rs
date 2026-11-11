@@ -491,17 +491,25 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             unit_predicate(lua, &token, |u| u.is_player)
         })?,
     )?;
-    // UnitIsTrivial(unit): 1 for a non-player unit below the player's grey-level band, nil otherwise.
-    // QuestHelper uses this to keep trivial kills out of its loot statistics.
+    // `UnitIsTrivial(unit)` (`0x6112b0`): 1 or nil, the held object's grey test (`0x6de130`), never
+    // for a player; the same `lua_isstring` gate as `UnitIsTapped`.
     g.set(
         "UnitIsTrivial",
-        lua.create_function(|lua, token: Option<String>| {
-            let model = lua
+        lua.create_function(|lua, token: Value| {
+            let token = Some(crate::script::binding_abi::string_arg(
+                lua,
+                token,
+                r#"Usage: UnitIsTrivial("unit")"#,
+            )?);
+            let player_level = lua
                 .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(flag(token.and_then(|t| model.unit(&t)).is_some_and(|u| {
-                !u.is_player && unit_is_grey(model.player_req.level, u.level)
-            })))
+                .expect("model app_data")
+                .player_req
+                .level;
+            let hit = with_unit(lua, &token, false, |u| {
+                u.has_object && !u.is_player && unit_is_grey(player_level, u.level)
+            })?;
+            Ok(flag(hit))
         })?,
     )?;
     // UnitIsPlusMob(unit): `UNIT_FIELD_FLAGS` bit 0x40, never the creature rank. The server sets it
