@@ -125,6 +125,8 @@ pub(crate) struct RuneCheck<'a> {
 
 /// `POWER_RUNE`, the power type the power check sends to the rune check (`0x8017fe`).
 pub(crate) const POWER_RUNE: u32 = 5;
+/// `POWER_HEALTH`, the power type the power check compares against health (`0x8017f9`).
+const POWER_HEALTH: i32 = -2;
 
 /// The rune kinds `SpellRuneCost.dbc` charges, then death, which stands in for any (`0x5ee786`).
 const RUNE_BLOOD: u8 = 0;
@@ -817,22 +819,18 @@ pub(crate) fn cost_reads_weapon(d: &SpellDisplay) -> bool {
     d.attributes_ex4 & ATTR_EX4_WEAPON_SPEED_COST != 0
 }
 
-/// Whether the caster can afford `d`, for leg 12 and the press-path gate. The reference's health
-/// cost (`PowerType -2`) is strict (`health > cost`); every other type reads its power pool and is
-/// inclusive (`power >= cost`).
+/// Whether the caster can afford `d`, for leg 12 and the press-path gate (`0x8017e0`): health
+/// strictly above the cost for `POWER_HEALTH` (`0x801866`), else the cost at most the pool
+/// (`0x80181d`). Runes go to [`RuneCheck`] before this.
 pub(crate) fn can_afford(d: &SpellDisplay, store: &ObjectStore, mods: &SpellModifiers) -> bool {
-    let power_type = d.power_type as i32;
-    let health_cost = power_type == -2;
-    let avail = if health_cost {
-        store.0.unit_health().unwrap_or(0)
-    } else {
-        store.0.unit_power(power_type as u8).unwrap_or(0)
-    };
+    let unit = &store.0;
     let cost = power_cost(d, store, mods);
-    if health_cost {
-        avail > cost
-    } else {
-        avail >= cost
+    let health = || unit.unit_predicted_health().unwrap_or(0);
+    match d.power_type as i32 {
+        POWER_HEALTH => cost < health(),
+        // `0x71c2e0` indexes the pools by type, so -1 lands on the health slot before power 0.
+        -1 => cost <= health(),
+        ty => cost <= unit.unit_power(ty as u8).unwrap_or(0),
     }
 }
 
@@ -1606,30 +1604,43 @@ mod tests {
         assert_eq!(power_cost(&bloodrage, &without_gear, &mods), 337);
     }
 
+    /// The power check (`0x8017e0`): health must exceed a `POWER_HEALTH` cost, -1 reads health
+    /// through the pool index at most the cost, and a pool type is at most the cost.
     #[test]
-    fn only_minus_two_uses_health_for_affordability() {
-        let spell = SpellDisplay {
-            power_type: (-1i32) as u32,
+    fn the_power_check_is_strict_on_health_alone() {
+        let mods = SpellModifiers::default();
+        let flat = |power_type: i32| SpellDisplay {
+            power_type: power_type as u32,
             mana_cost: 100,
             ..Default::default()
         };
-        let mods = SpellModifiers::default();
-        let store = player(&[(22, 1_000), (255, 100)]);
-        assert!(
-            !can_afford(&spell, &store, &mods),
-            "a non--2 negative type must not borrow the health pool"
-        );
+        let health = |hp: u32| player(&[(22, hp), (23, 0)]);
+        assert!(can_afford(&flat(-2), &health(101), &mods));
+        assert!(!can_afford(&flat(-2), &health(100), &mods));
+        assert!(!can_afford(&flat(-2), &health(99), &mods));
+        assert!(can_afford(&flat(-1), &health(101), &mods));
+        assert!(can_afford(&flat(-1), &health(100), &mods));
+        assert!(!can_afford(&flat(-1), &health(99), &mods));
+        assert!(can_afford(&flat(0), &player(&[(22, 0), (23, 100)]), &mods));
+        assert!(!can_afford(
+            &flat(0),
+            &player(&[(22, 1_000), (23, 99)]),
+            &mods
+        ));
     }
 
+    /// `0x71c2c0` reads the predicted health `SMSG_HEALTH_UPDATE` set over the raw field.
     #[test]
-    fn normal_power_cost_remains_inclusive() {
+    fn a_health_cost_reads_the_predicted_health() {
+        let mods = SpellModifiers::default();
         let spell = SpellDisplay {
-            power_type: 0,
+            power_type: POWER_HEALTH as u32,
             mana_cost: 100,
             ..Default::default()
         };
-        let mods = SpellModifiers::default();
-        let store = player(&[(23, 100)]);
+        let mut store = player(&[(22, 100)]);
+        assert!(!can_afford(&spell, &store, &mods));
+        assert!(store.0.set_predicted_health(101));
         assert!(can_afford(&spell, &store, &mods));
     }
 

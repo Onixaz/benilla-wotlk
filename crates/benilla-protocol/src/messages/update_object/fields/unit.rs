@@ -134,6 +134,10 @@ impl ObjectFields {
     pub fn unit_health(&self) -> Option<u32> {
         self.get_u32(FIELD_UNIT_HEALTH)
     }
+    /// Health as `0x71c2c0` reads it: the predicted copy `SMSG_HEALTH_UPDATE` set, else raw.
+    pub fn unit_predicted_health(&self) -> Option<u32> {
+        self.predicted_health().or_else(|| self.unit_health())
+    }
     /// `UNIT_FIELD_MAXHEALTH`: full hit points.
     pub fn unit_max_health(&self) -> Option<u32> {
         self.get_u32(FIELD_UNIT_MAXHEALTH)
@@ -158,7 +162,7 @@ impl ObjectFields {
         if self.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0 {
             return Some(0);
         }
-        self.predicted_health().or_else(|| self.unit_health())
+        self.unit_predicted_health()
     }
     /// Power as `UnitMana` reads it: 0 under `UNIT_DYNFLAG_DEAD`, else divided by
     /// [`power_display_scale`]. Its `POWER_HEALTH` leg compares a zero-extended byte with -2, so it
