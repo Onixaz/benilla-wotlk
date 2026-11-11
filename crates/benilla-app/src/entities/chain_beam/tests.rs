@@ -557,3 +557,26 @@ fn a_bolts_drawn_ends_connect_its_source_and_target() {
         [None, None]
     );
 }
+
+/// A ground beam whose chain id names no row draws nothing, yet its area kit still plays: the
+/// beam builder returns nothing to wait on (`0x726afd`).
+#[test]
+fn a_ground_beam_with_no_chain_row_still_plays_its_area_kit() {
+    let mut app = beam_app();
+    let caster = unit(&mut app);
+    app.world_mut()
+        .resource_mut::<ChainLocations>()
+        .save(caster, 0, false, Some(Vec3::ONE));
+    let mut p = play(caster, CHAIN_SPELL);
+    p.proc.effect_id = 999;
+    app.world_mut().write_message(p);
+    app.update();
+    assert!(beams(&mut app).is_empty(), "no row, no beam");
+    let kits: Vec<u32> = app
+        .world_mut()
+        .resource_mut::<Messages<DelayedAreaKit>>()
+        .drain()
+        .map(|k| k.kit_id)
+        .collect();
+    assert_eq!(kits, vec![AREA_KIT]);
+}

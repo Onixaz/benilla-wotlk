@@ -58,7 +58,7 @@ use bevy::prelude::*;
 
 use crate::creature_anim::{
     oneshot_is_live, AnimData, AnimDriver, AnimSoundEvent, CastEvent, CastEventKind, DefenseAnim,
-    FxClass, FxStage, MissileSpawn, SpellKitFx, SpellKitSound, SpellVisuals,
+    FxClass, MissileSpawn, SpellKitFx, SpellKitSound, SpellVisuals,
 };
 use benilla_assets::m2_url;
 
@@ -533,6 +533,11 @@ pub(super) struct ArrivalOut<'w, 's> {
     bursts: MessageWriter<'w, super::dest_fx::GroundBurst>,
     visuals: Option<Res<'w, SpellVisuals>>,
     clips: Query<'w, 's, &'static benilla_assets::ModelAnimations>,
+    /// Where a beam spell's flag-0x1 targeting kit waits, and what it needs to tell.
+    waits: Option<ResMut<'w, crate::creature_anim::BeamKitWaits>>,
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
+    kinds: Query<'w, 's, &'static crate::net::NetEntity>,
+    time: Res<'w, Time>,
 }
 
 /// What an arrival leaves to the flight.
@@ -893,23 +898,34 @@ fn arm_targeting_kit(
 ) -> Option<Entity> {
     let visuals = out.visuals.as_deref()?;
     let kit = visuals.0.kit(kit_id)?;
-    let effects = crate::creature_anim::kit_fx_slots(&visuals.0, kit);
-    if !effects.is_empty() {
-        out.kit_fx.write(SpellKitFx::Begin {
-            entity: target,
-            spell_id,
-            persistent: true,
-            class: FxClass::Hold,
-            stage: FxStage::State,
-            effects,
-        });
+    // On a unit, a beam spell's flag-0x1 kit waits for the beam to reach it (`0x72af60`).
+    let is_unit = out.kinds.get(target).is_ok_and(|n| {
+        matches!(
+            n.kind,
+            benilla_protocol::EntityKind::Player | benilla_protocol::EntityKind::Unit
+        )
+    });
+    if let (Some(waits), Some(spells)) = (out.waits.as_mut(), out.spells.as_deref()) {
+        if is_unit
+            && crate::creature_anim::spell_visual::kit_waits_for_beam(
+                spells, &visuals.0, spell_id, kit,
+            )
+        {
+            let now = out.time.elapsed_secs();
+            waits
+                .bypass_change_detection()
+                .hold_targeting(target, spell_id, kit_id, now);
+            return Some(target);
+        }
     }
-    if let Some(kit_sound) = kit.sound {
-        out.kit_sounds.write(SpellKitSound::Play {
-            entity: target,
-            kit_sound,
-        });
-    }
+    crate::creature_anim::arm_targeting_kit(
+        target,
+        spell_id,
+        kit,
+        &visuals.0,
+        &mut out.kit_fx,
+        &mut out.kit_sounds,
+    );
     Some(target)
 }
 
@@ -2599,6 +2615,93 @@ mod tests {
         assert!(reaped, "the flight's end reaps the targeting kit");
         assert_eq!(impacts, 3, "every copy lands");
         assert!(missiles(&mut app).is_empty());
+    }
+
+    /// On a beam spell, a flag-0x1 targeting kit on a unit target waits for the beam to reach the
+    /// target (`0x72af60`), and the flight still reaps it on its end.
+    #[test]
+    fn a_beam_spells_flag_1_targeting_kit_waits_for_the_beam() {
+        use benilla_formats::{
+            char_proc_type, kit_flag, CharProc, SpellCatalog, SpellDisplay, SpellVisualCatalog,
+            VisualKit, VisualStages,
+        };
+        const KIT: u32 = 8729;
+        const CAST_KIT: u32 = 900;
+        const VISUAL: u32 = 6;
+        let mut app = app();
+        app.init_resource::<crate::creature_anim::BeamKitWaits>();
+        app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+            HashMap::from([(
+                VISUAL,
+                VisualStages {
+                    cast: CAST_KIT,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::from([
+                (
+                    CAST_KIT,
+                    VisualKit {
+                        id: CAST_KIT,
+                        char_proc_slots: [
+                            Some(CharProc {
+                                ty: char_proc_type::CHAIN_CAST,
+                                params: [1.0, 0.0, 0.0, 0.0],
+                            }),
+                            None,
+                            None,
+                            None,
+                        ],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    KIT,
+                    VisualKit {
+                        id: KIT,
+                        sound: Some(77),
+                        flags: kit_flag::BEAM_WAIT,
+                        ..Default::default()
+                    },
+                ),
+            ]),
+        )));
+        let spawn0 = go(Entity::PLACEHOLDER, Entity::PLACEHOLDER, false);
+        app.insert_resource(crate::ui_action::Spells {
+            catalog: SpellCatalog::from_displays(HashMap::from([(
+                spawn0.spell_id,
+                SpellDisplay {
+                    visual: VISUAL,
+                    ..Default::default()
+                },
+            )])),
+            ..crate::ui_action::Spells::empty_for_tests()
+        });
+        let caster = caster(&mut app, Vec3::ZERO);
+        let target = app
+            .world_mut()
+            .spawn((
+                GlobalTransform::from_xyz(24.0, 0.0, 0.0),
+                crate::net::NetEntity {
+                    kind: benilla_protocol::EntityKind::Unit,
+                    display_id: None,
+                    scale: 1.0,
+                },
+            ))
+            .id();
+        let mut spawn = go(caster, target, false);
+        spawn.shape.targeting_kit = KIT;
+        app.world_mut().write_message(spawn);
+        step(&mut app, 0.016);
+        let rang = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<Messages<SpellKitSound>>()
+                .drain()
+                .any(|s| matches!(s, SpellKitSound::Play { entity, .. } if entity == target))
+        };
+        assert!(!rang(&mut app), "the targeting kit waits");
+        let waits = app.world().resource::<crate::creature_anim::BeamKitWaits>();
+        assert!(!waits.is_empty(), "held on the target");
     }
 
     /// A ground-following flight with no terrain streamed flies its line and lands on time.

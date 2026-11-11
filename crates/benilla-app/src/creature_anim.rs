@@ -637,7 +637,7 @@ use spell_visual::{
 #[cfg(test)]
 pub(crate) use spell_visual::arm_aura_state_fx as arm_aura_state_fx_for_test;
 pub(crate) use spell_visual::{
-    held_strike_sound, kit_fx_slots, BeamKitWaits, ChainProcPlay, FxClass, FxStage, KitPush,
+    arm_targeting_kit, held_strike_sound, BeamKitWaits, ChainProcPlay, FxClass, FxStage, KitPush,
     MissileSpawn, SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals,
 };
 

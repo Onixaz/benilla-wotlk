@@ -240,72 +240,75 @@ pub(super) fn spawn_chain_beams(
         let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
             continue;
         };
-        let Some(root) = visuals.0.chain_effect(play.proc.effect_id) else {
-            continue; // an id naming no row is the client's own no-op
-        };
         let stages = visual_of(play.spell_id);
-        let ends = Ends::from_visual(stages, spells.catalog.get(play.spell_id).is_some());
-        // A persistent beam replaces the ones before it on the same caster and spell.
-        if play.proc.flag {
-            for (e, beam) in &beams {
-                if beam.persistent && beam.caster == play.entity && beam.spell_id == play.spell_id {
-                    commands.entity(e).despawn();
+        // An id naming no row draws nothing, but the area kit still plays (`0x726afd`).
+        if let Some(root) = visuals.0.chain_effect(play.proc.effect_id) {
+            let ends = Ends::from_visual(stages, spells.catalog.get(play.spell_id).is_some());
+            // A persistent beam replaces the ones before it on the same caster and spell.
+            if play.proc.flag {
+                for (e, beam) in &beams {
+                    if beam.persistent
+                        && beam.caster == play.entity
+                        && beam.spell_id == play.spell_id
+                    {
+                        commands.entity(e).despawn();
+                    }
                 }
             }
-        }
-        *plays_seen = plays_seen.wrapping_add(1);
-        let nodes: Vec<Entity> = std::iter::once(play.entity).chain(targets).collect();
-        // A location takes the impact offset turned with the caster, once (`0x7fc878`).
-        let turn = transforms
-            .get(play.entity)
-            .map_or(Quat::IDENTITY, |t| t.to_scale_rotation_translation().1);
-        let ground = location.map(|at| at + turn * ends.impact_offset);
-        let hop_count = if ground.is_some() { 1 } else { nodes.len() - 1 };
-        // The root, then its combo walk, each drawing the same hops (`0x7fc8ea`).
-        let rows = std::iter::once(play.proc.effect_id)
-            .chain(root.combo.iter().copied())
-            .take(MAX_COMBO_ROWS);
-        for (r, row) in rows.enumerate() {
-            let Some(effect) = visuals.0.chain_effect(row) else {
-                break;
-            };
-            let delay = effect.first_bolt_delay_ms as f32 / 1000.0;
-            let stagger = effect.bolt_stagger_ms as f32 / 1000.0;
-            let life = effect.bolt_life_ms as f32 / 1000.0;
-            let bolts: Vec<Bolt> = (0..hop_count)
-                .map(|i| {
-                    let start = now + delay + i as f32 * stagger;
-                    Bolt {
-                        source: if play.proc.reverse { 0 } else { i },
-                        target: i + 1,
-                        attachment: if i == 0 { seq } else { NO_BEAM_KEY },
-                        start,
-                        end: start + life,
-                        live: None,
-                    }
-                })
-                .collect();
-            let expiry = bolts.iter().map(|b| b.end).fold(now + delay, f32::max);
-            commands.spawn((
-                Transform::IDENTITY,
-                ChainBeam {
-                    spell_id: play.spell_id,
-                    caster: play.entity,
-                    nodes: nodes.clone(),
-                    location: ground,
-                    bolts,
-                    texture: asset_server.load::<Image>(beam_texture_url(&effect.texture)),
-                    effect: effect.clone(),
-                    ends,
-                    persistent: play.proc.flag,
-                    expiry,
-                    // Per-beam seed, so neighbouring beams never draw the same joints.
-                    seed: 0x9E37_79B9
-                        ^ play.spell_id.wrapping_mul(2_654_435_761)
-                        ^ plays_seen.wrapping_mul(40_503)
-                        ^ (r as u32).wrapping_mul(0x85EB_CA6B),
-                },
-            ));
+            *plays_seen = plays_seen.wrapping_add(1);
+            let nodes: Vec<Entity> = std::iter::once(play.entity).chain(targets).collect();
+            // A location takes the impact offset turned with the caster, once (`0x7fc878`).
+            let turn = transforms
+                .get(play.entity)
+                .map_or(Quat::IDENTITY, |t| t.to_scale_rotation_translation().1);
+            let ground = location.map(|at| at + turn * ends.impact_offset);
+            let hop_count = if ground.is_some() { 1 } else { nodes.len() - 1 };
+            // The root, then its combo walk, each drawing the same hops (`0x7fc8ea`).
+            let rows = std::iter::once(play.proc.effect_id)
+                .chain(root.combo.iter().copied())
+                .take(MAX_COMBO_ROWS);
+            for (r, row) in rows.enumerate() {
+                let Some(effect) = visuals.0.chain_effect(row) else {
+                    break;
+                };
+                let delay = effect.first_bolt_delay_ms as f32 / 1000.0;
+                let stagger = effect.bolt_stagger_ms as f32 / 1000.0;
+                let life = effect.bolt_life_ms as f32 / 1000.0;
+                let bolts: Vec<Bolt> = (0..hop_count)
+                    .map(|i| {
+                        let start = now + delay + i as f32 * stagger;
+                        Bolt {
+                            source: if play.proc.reverse { 0 } else { i },
+                            target: i + 1,
+                            attachment: if i == 0 { seq } else { NO_BEAM_KEY },
+                            start,
+                            end: start + life,
+                            live: None,
+                        }
+                    })
+                    .collect();
+                let expiry = bolts.iter().map(|b| b.end).fold(now + delay, f32::max);
+                commands.spawn((
+                    Transform::IDENTITY,
+                    ChainBeam {
+                        spell_id: play.spell_id,
+                        caster: play.entity,
+                        nodes: nodes.clone(),
+                        location: ground,
+                        bolts,
+                        texture: asset_server.load::<Image>(beam_texture_url(&effect.texture)),
+                        effect: effect.clone(),
+                        ends,
+                        persistent: play.proc.flag,
+                        expiry,
+                        // Per-beam seed, so neighbouring beams never draw the same joints.
+                        seed: 0x9E37_79B9
+                            ^ play.spell_id.wrapping_mul(2_654_435_761)
+                            ^ plays_seen.wrapping_mul(40_503)
+                            ^ (r as u32).wrapping_mul(0x85EB_CA6B),
+                    },
+                ));
+            }
         }
         // A location beam plays the area kit the GO skipped, unless this is that kit (`0x726b2c`).
         let area_kit = stages.map_or(0, |s| s.impact_area_kit);

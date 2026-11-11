@@ -3072,3 +3072,250 @@ fn a_beam_spells_flag_1_state_kit_arms_when_the_beam_reaches_its_unit() {
     app.update();
     assert_eq!(armed(&mut app), vec![plain], "no beam: armed at once");
 }
+
+/// A beam visual whose cast kit draws the beam, plus `kits` in its `stages`.
+fn beam_tables(
+    spell: u32,
+    visual: u32,
+    stages: VisualStages,
+    kits: Vec<VisualKit>,
+) -> (SpellVisuals, crate::ui_action::Spells) {
+    use benilla_formats::{char_proc_type, CharProc};
+    let cast_kit = VisualKit {
+        id: stages.cast,
+        char_proc_slots: [
+            Some(CharProc {
+                ty: char_proc_type::CHAIN_CAST,
+                params: [1.0, 0.0, 0.0, 0.0],
+            }),
+            None,
+            None,
+            None,
+        ],
+        ..Default::default()
+    };
+    let kits = kits
+        .into_iter()
+        .chain([cast_kit])
+        .map(|k| (k.id, k))
+        .collect();
+    let visuals = SpellVisuals(SpellVisualCatalog::from_tables(
+        HashMap::from([(visual, stages)]),
+        kits,
+    ));
+    let spells = crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            spell,
+            SpellDisplay {
+                visual,
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    };
+    (visuals, spells)
+}
+
+/// A flag-0x1 kit that rings its own id as its sound.
+fn waiting_kit(id: u32, anim_id: Option<u16>) -> VisualKit {
+    VisualKit {
+        id,
+        anim_id,
+        sound: Some(id),
+        flags: benilla_formats::kit_flag::BEAM_WAIT,
+        ..Default::default()
+    }
+}
+
+fn unit_with_channel(channel: u32) -> crate::net::ObjectStore {
+    crate::net::ObjectStore(
+        // `OBJECT_FIELD_TYPE` object and unit, and `UNIT_CHANNEL_SPELL`.
+        benilla_protocol::ObjectFields::from_pairs(&[(2, 0x9), (144, channel)])
+            .into_created(benilla_protocol::messages::ObjectType::Unit),
+    )
+}
+
+/// Every kit play on a unit passes the beam wait (`0x72af60`): the precast, the channel, the GO's
+/// instant area kit (`0x80ee85`) and a landing's area kit (`0x700e20`) each wait on a beam spell,
+/// and each plays its own way once the beam reaches the unit.
+#[test]
+fn a_beam_spells_precast_channel_and_area_kits_wait_for_the_beam() {
+    const BEAM_SPELL: u32 = 5;
+    const PRECAST: u32 = 8;
+    const CHANNEL: u32 = 9;
+    const INSTANT_AREA: u32 = 10;
+    const IMPACT_AREA: u32 = 11;
+    const ANIM: u16 = 52;
+
+    let mut app = app();
+    app.init_resource::<super::BeamKitWaits>();
+    let (visuals, spells) = beam_tables(
+        BEAM_SPELL,
+        6,
+        VisualStages {
+            precast: PRECAST,
+            cast: 7,
+            channel: CHANNEL,
+            instant_area_kit: INSTANT_AREA,
+            impact_area_kit: IMPACT_AREA,
+            ..Default::default()
+        },
+        vec![
+            waiting_kit(PRECAST, Some(ANIM)),
+            waiting_kit(CHANNEL, Some(ANIM)),
+            waiting_kit(INSTANT_AREA, None),
+            waiting_kit(IMPACT_AREA, None),
+        ],
+    );
+    app.insert_resource(visuals).insert_resource(spells);
+    let rung = |app: &mut App| -> Vec<(Entity, u32)> {
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitSound>>()
+            .drain()
+            .filter_map(|s| match s {
+                SpellKitSound::Play { entity, kit_sound } => Some((entity, kit_sound)),
+                _ => None,
+            })
+            .collect()
+    };
+    let areas = |app: &mut App| -> Vec<u32> {
+        app.world_mut()
+            .resource_mut::<Messages<super::DelayedAreaKit>>()
+            .drain()
+            .map(|d| d.kit_id)
+            .collect()
+    };
+    let reach = |app: &mut App, unit: Entity| {
+        app.world_mut().resource_mut::<super::BeamKitWaits>().reach(
+            unit,
+            BEAM_SPELL,
+            super::NO_BEAM_KEY,
+        );
+    };
+    let hold_of = |app: &App, unit: Entity| {
+        app.world()
+            .entity(unit)
+            .get::<CastHold>()
+            .map(|h| h.spell_id)
+    };
+
+    // The precast: no hold and no sound until the reach, then both.
+    let caster = app.world_mut().spawn(unit_with_channel(0)).id();
+    app.world_mut()
+        .write_message(cast_event(caster, BEAM_SPELL, CastEventKind::Start));
+    app.update();
+    assert!(rung(&mut app).is_empty(), "the precast waits");
+    assert_eq!(hold_of(&app, caster), None);
+    reach(&mut app, caster);
+    app.update();
+    assert_eq!(rung(&mut app), vec![(caster, PRECAST)]);
+    assert_eq!(hold_of(&app, caster), Some(BEAM_SPELL), "held on the reach");
+
+    // The channel kit, off the field's rising edge.
+    let channeller = app.world_mut().spawn(unit_with_channel(BEAM_SPELL)).id();
+    app.update();
+    assert!(rung(&mut app).is_empty(), "the channel kit waits");
+    assert_eq!(hold_of(&app, channeller), None);
+    reach(&mut app, channeller);
+    app.update();
+    assert_eq!(rung(&mut app), vec![(channeller, CHANNEL)]);
+    assert_eq!(hold_of(&app, channeller), Some(BEAM_SPELL));
+
+    // The GO's instant area kit at its point, on the caster.
+    app.world_mut().write_message(SpellGoTargets {
+        caster,
+        spell_id: BEAM_SPELL,
+        hits: Vec::new(),
+        misses: Vec::new(),
+        dest: Some(Vec3::ONE),
+        ammo_display_id: None,
+        seq: 1,
+        trajectory: None,
+        reflected: 0,
+        reflects: Vec::new(),
+        caster_guid: 0,
+        server_time: 0,
+    });
+    app.update();
+    let rings_at = |app: &mut App| -> usize {
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitSound>>()
+            .drain()
+            .filter(|s| matches!(s, SpellKitSound::PlayAt { .. }))
+            .count()
+    };
+    assert_eq!(rings_at(&mut app), 0, "the instant area kit waits");
+    assert!(areas(&mut app).is_empty());
+    reach(&mut app, caster);
+    app.update();
+    assert_eq!(areas(&mut app), vec![INSTANT_AREA], "played at its point");
+
+    // A landing's area kit on its caster.
+    app.world_mut().write_message(cast_event(
+        caster,
+        BEAM_SPELL,
+        CastEventKind::GroundImpact { pos: Vec3::ONE },
+    ));
+    app.update();
+    assert_eq!(rings_at(&mut app), 0, "the landing's area kit waits");
+    assert!(areas(&mut app).is_empty());
+    reach(&mut app, caster);
+    app.update();
+    assert_eq!(areas(&mut app), vec![IMPACT_AREA]);
+    assert!(app.world().resource::<super::BeamKitWaits>().is_empty());
+}
+
+/// An aura's state-done kit on a beam spell waits for the beam like any unit kit (`0x72af60`).
+#[test]
+fn a_beam_spells_state_done_kit_waits_for_the_beam() {
+    const BEAM_SPELL: u32 = 5;
+    const DONE_KIT: u32 = 8;
+
+    let mut app = app();
+    app.init_resource::<super::BeamKitWaits>();
+    app.init_resource::<super::super::PlaySeq>();
+    let (visuals, spells) = beam_tables(
+        BEAM_SPELL,
+        6,
+        VisualStages {
+            cast: 7,
+            state_done: DONE_KIT,
+            ..Default::default()
+        },
+        vec![waiting_kit(DONE_KIT, None)],
+    );
+    app.insert_resource(visuals).insert_resource(spells);
+    app.add_systems(
+        Update,
+        super::play_state_done_kits.after(route_cast_visuals),
+    );
+    let unit = app.world_mut().spawn(unit_with_channel(0)).id();
+    let rung = |app: &mut App| -> usize {
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitSound>>()
+            .drain()
+            .filter(|s| {
+                matches!(
+                    s,
+                    SpellKitSound::Play {
+                        kit_sound: DONE_KIT,
+                        ..
+                    }
+                )
+            })
+            .count()
+    };
+    app.world_mut().write_message(StateDoneKit {
+        entity: unit,
+        spell_id: BEAM_SPELL,
+    });
+    app.update();
+    assert_eq!(rung(&mut app), 0, "held at the aura's end");
+    app.world_mut().resource_mut::<super::BeamKitWaits>().reach(
+        unit,
+        BEAM_SPELL,
+        super::NO_BEAM_KEY,
+    );
+    app.update();
+    assert_eq!(rung(&mut app), 1, "played on the reach");
+}
