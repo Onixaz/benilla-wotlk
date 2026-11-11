@@ -1652,6 +1652,8 @@ fn spell_go(
                 seq,
                 trajectory: trajectory.map(|(pitch, delay_ms)| crate::creature_anim::Trajectory {
                     pitch,
+                    // The cast's own aimed speed (`0x733705`), which a GO does not carry.
+                    speed: 0.0,
                     delay: delay_ms as f32 / 1000.0,
                     caster,
                     cast_id: cast_count,

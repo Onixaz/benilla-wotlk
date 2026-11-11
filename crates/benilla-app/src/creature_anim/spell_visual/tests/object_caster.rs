@@ -13,7 +13,7 @@ use super::super::{
     SpellKitSound, ERROR_CUBE,
 };
 use super::ground_app;
-use crate::creature_anim::{ItemModel, SpellGoTargets};
+use crate::creature_anim::{ItemModel, SpellGoTargets, Trajectory};
 
 const SPELL: u32 = 5041;
 const CAST_KIT: u32 = 11;
@@ -87,6 +87,21 @@ fn go(
     ammo: Option<ItemModel>,
     reflected: u8,
 ) {
+    go_aimed(app, caster, dest, points, hits, ammo, reflected, None);
+}
+
+/// [`go`] with the GO's trajectory.
+#[allow(clippy::too_many_arguments)] // one GO's whole shape
+fn go_aimed(
+    app: &mut App,
+    caster: Entity,
+    dest: Option<Vec3>,
+    points: &[Vec3],
+    hits: Vec<Entity>,
+    ammo: Option<ItemModel>,
+    reflected: u8,
+    trajectory: Option<Trajectory>,
+) {
     app.world_mut().write_message(CastEvent {
         entity: caster,
         spell_id: SPELL,
@@ -113,7 +128,7 @@ fn go(
             .collect(),
         ammo,
         seq: 2,
-        trajectory: None,
+        trajectory,
         reflected,
         reflects: Vec::new(),
         caster_guid: 0,
@@ -164,14 +179,31 @@ fn played_at(sounds: &[SpellKitSound]) -> Vec<(u32, Vec3)> {
 }
 
 /// A GameObject's dest and each extra point take the no-caster path (`0x80f051`, `0x80f3d8`):
-/// column 23 and then column 24 at once, never delayed by the flight, and no cast kit.
+/// column 23 and then column 24 at once, never delayed by the flight or a trajectory (delay 0 at
+/// `0x80f0ec`), and no cast kit.
 #[test]
 fn a_game_object_plays_its_dest_and_points_through_the_no_caster_path() {
     let (at, p) = (Vec3::new(3.0, 0.0, 4.0), Vec3::new(-6.0, 1.0, 2.0));
-    for speed in [0.0, 8.0] {
+    let aimed = Trajectory {
+        pitch: 0.6,
+        speed: 0.0,
+        delay: 1.5,
+        caster: 0xF110_0000_0000_0001,
+        cast_id: 1,
+    };
+    for (speed, trajectory) in [(0.0, None), (8.0, None), (8.0, Some(aimed))] {
         let mut app = app(speed, false);
         let trap = object(&mut app, GAME_OBJECT);
-        go(&mut app, trap, Some(at), &[p], Vec::new(), None, 0);
+        go_aimed(
+            &mut app,
+            trap,
+            Some(at),
+            &[p],
+            Vec::new(),
+            None,
+            0,
+            trajectory,
+        );
         let s = sounds(&mut app);
         assert_eq!(
             played_at(&s),

@@ -1533,7 +1533,8 @@ fn launch_go(
                     None => (launch, marker_flight),
                 };
             let flight = go.spawn.trajectory.map(|(t, rec)| {
-                let arc = trajectory::launch(t.pitch, 0.0, launch, aim, rec.as_ref(), arrive_in);
+                let arc =
+                    trajectory::launch(t.pitch, t.speed, launch, aim, rec.as_ref(), arrive_in);
                 // A missile whose row collides with units tests its path (`0x700880`).
                 let collider = match (arc, rec) {
                     (Some(_), Some(r)) if r.flags & 0x3C != 0 => Collider::Pending {
@@ -3611,6 +3612,7 @@ mod tests {
         let at = Vec3::new(40.0, 0.0, 0.0);
         let trajectory = crate::creature_anim::Trajectory {
             pitch: 0.6,
+            speed: 0.0,
             delay: 2.0,
             caster: 0xF130_0000_0000_0001,
             cast_id: 7,

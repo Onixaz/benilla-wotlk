@@ -1348,7 +1348,6 @@ fn play_no_caster_dest(
     }
     let speed = display.speed;
     let missile = stages.missile_gate != 0 && stages.missile_model != 0 && speed > 0.0;
-    // Deviation: the packet's trajectory is not read, so such a missile flies straight.
     if let Some(player) = player.filter(|_| missile) {
         // An item model (-1 to -5) has no caster to take it from: the error cube (`0x80249a`).
         let item_model = (-5..=-1).contains(&(stages.missile_model as i32));
@@ -1380,7 +1379,9 @@ fn play_no_caster_dest(
             ground_aim: Some(c.dest),
             missile_sound: stages.missile_sound,
             awaits_release: false,
-            trajectory: None,
+            trajectory: c
+                .trajectory
+                .map(|t| (t, visuals.missile(display.missile).copied())),
             shape,
             from: Some(c.src),
             list: None,
@@ -1396,7 +1397,8 @@ fn play_no_caster_dest(
     out.delayed.write(DelayedAreaKit {
         kit_id: stages.impact_area_kit,
         pos: c.dest,
-        wait: if missile {
+        // A trajectory missile lands at the packet's delay (`0x80266f`).
+        wait: if missile && c.trajectory.is_none() {
             AreaKitWait::FlightFrom { from: c.src, speed }
         } else {
             AreaKitWait::Secs(c.delay_ms as f32 / 1000.0)
@@ -1645,6 +1647,8 @@ fn play_object_caster_go(
                 src: at,
                 dest: at,
                 delay_ms: 0,
+                // Only a row with no missile gets here (`0x80ef53`), so no trajectory flies.
+                trajectory: None,
             };
             let lanes = NoCasterOut {
                 sounds: out.sounds,

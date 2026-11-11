@@ -718,6 +718,8 @@ pub(crate) struct DestLocCast {
     pub(crate) src: Vec3,
     pub(crate) dest: Vec3,
     pub(crate) delay_ms: u32,
+    /// The packet's trajectory, at a missile speed above 0 (`0x802641`).
+    pub(crate) trajectory: Option<Trajectory>,
 }
 
 /// A trajectory missile's launch off its GO (`0x732ff0`): the pitch it leaves at and the time it
@@ -725,6 +727,8 @@ pub(crate) struct DestLocCast {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Trajectory {
     pub(crate) pitch: f32,
+    /// The launch speed an arc with no solution falls back to (`0x700880`), 0 for none.
+    pub(crate) speed: f32,
     /// Seconds from the GO to the landing.
     pub(crate) delay: f32,
     pub(crate) caster: u64,

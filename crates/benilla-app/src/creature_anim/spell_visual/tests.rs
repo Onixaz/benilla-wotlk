@@ -2980,6 +2980,7 @@ fn a_dest_location_missile_flies_from_the_source_to_the_dest() {
         src,
         dest,
         delay_ms: 0,
+        trajectory: None,
     };
 
     app.world_mut().write_message(cast);
@@ -3027,6 +3028,100 @@ fn a_dest_location_missile_flies_from_the_source_to_the_dest() {
         .drain()
         .next()
         .is_none());
+}
+
+/// A dest-location cast at a missile speed above 0 hands its missile the packet's pitch, speed
+/// and landing time with the spell's `SpellMissile.dbc` row (`0x80264d`-`0x80266f`); with no
+/// player of ours the area kit waits the packet's delay, not the flight.
+#[test]
+fn a_dest_location_missile_takes_the_packets_trajectory() {
+    const SPELL_ID: u32 = 52694;
+    const VISUAL_ID: u32 = 10100;
+    const AREA_KIT: u32 = 5;
+    const MISSILE_ROW: u32 = 33;
+    let row = benilla_formats::SpellMissileRec {
+        flags: 0x10,
+        gravity: 19.29,
+        ..Default::default()
+    };
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<super::super::DestLocCast>()
+        .add_message::<SpellKitSound>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::entities::dest_fx::GroundBurst>()
+        .add_message::<super::DelayedAreaKit>()
+        .add_message::<MissileSpawn>()
+        .add_message::<super::MissileRelease>();
+    app.insert_resource(SpellVisuals(
+        SpellVisualCatalog::from_tables(
+            HashMap::from([(
+                VISUAL_ID,
+                VisualStages {
+                    missile_gate: 1,
+                    missile_model: 7,
+                    impact_area_kit: AREA_KIT,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::from([(AREA_KIT, VisualKit::default())]),
+        )
+        .with_missile(MISSILE_ROW, row),
+    ));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            SPELL_ID,
+            SpellDisplay {
+                visual: VISUAL_ID,
+                speed: 20.0,
+                missile: MISSILE_ROW,
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    app.add_systems(Update, super::play_dest_loc_casts);
+    let trajectory = super::super::Trajectory {
+        pitch: 0.7,
+        speed: 31.0,
+        delay: 2.5,
+        caster: 0xF130_0000_0000_0042,
+        cast_id: 9,
+    };
+    let cast = super::super::DestLocCast {
+        spell_id: SPELL_ID,
+        src: Vec3::new(0.0, 5.0, 0.0),
+        dest: Vec3::new(30.0, 0.0, 0.0),
+        delay_ms: 2500,
+        trajectory: Some(trajectory),
+    };
+
+    app.world_mut().write_message(cast);
+    app.update();
+    let waits: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Messages<super::DelayedAreaKit>>()
+        .drain()
+        .map(|d| d.wait)
+        .collect();
+    assert_eq!(
+        waits,
+        vec![super::AreaKitWait::Secs(2.5)],
+        "no player of ours: the kit waits the packet's landing time"
+    );
+
+    app.world_mut().spawn(crate::net::SelfPlayer);
+    app.world_mut().write_message(cast);
+    app.update();
+    let spawns: Vec<MissileSpawn> = app
+        .world_mut()
+        .resource_mut::<Messages<MissileSpawn>>()
+        .drain()
+        .collect();
+    match &spawns[..] {
+        [s] => assert_eq!(s.trajectory, Some((trajectory, Some(row)))),
+        other => panic!("one missile, got {}", other.len()),
+    }
 }
 
 /// A kit held at a point plants its head, base and world slots and its attach rows, not the rest.

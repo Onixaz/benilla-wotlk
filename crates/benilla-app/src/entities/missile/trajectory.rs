@@ -140,8 +140,8 @@ impl Arc {
 }
 
 /// `0x700880`: the arc from `launch` to `impact` at `pitch`, landing in `remaining` seconds; `None`
-/// flies the missile straight to land on time. `speed` is the cast's own speed, 0 for a cast we
-/// did not aim.
+/// flies the missile straight to land on time. `speed` is the packet's or our own aim's, 0 for
+/// none.
 pub(super) fn launch(
     pitch: f32,
     speed: f32,
