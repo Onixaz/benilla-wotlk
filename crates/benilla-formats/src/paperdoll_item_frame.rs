@@ -30,7 +30,7 @@ impl PaperDollItemFrameCatalog {
     }
 }
 
-fn schema() -> Schema {
+pub(crate) fn schema() -> Schema {
     let mut s = Schema::new("PaperDollItemFrame");
     s.add_field(SchemaField::new("Name", FieldType::String));
     s.add_field(SchemaField::new("Texture", FieldType::String));
