@@ -187,12 +187,16 @@ const ATTR_EX2_PLAYER_LEVEL: u32 = 0x100_0000;
 fn hasted(ctx: &TokenContext, d: &SpellDisplay, ms: i32) -> i32 {
     let Some(caster) = ctx.caster else { return ms };
     let periodic = d.effect_amplitude.iter().any(|&p| p != 0);
-    let speed = caster.cast_speed();
-    if periodic
-        && d.attributes_ex5 & ATTR_EX5_HASTE_AFFECTS_DURATION != 0
-        && d.attributes_ex3 & ATTR_EX3_IGNORE_HASTE == 0
-        && speed >= 0.001
+    if !periodic
+        || d.attributes_ex5 & ATTR_EX5_HASTE_AFFECTS_DURATION == 0
+        || d.attributes_ex3 & ATTR_EX3_IGNORE_HASTE != 0
     {
+        return ms;
+    }
+    // Read only for a spell that scales, so a caller tracking the read sees it only where the
+    // text follows the speed.
+    let speed = caster.cast_speed();
+    if speed >= 0.001 {
         (ms as f32 * speed).round_ties_even() as i32
     } else {
         ms

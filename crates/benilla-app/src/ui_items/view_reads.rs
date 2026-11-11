@@ -20,8 +20,10 @@ pub(crate) struct ViewReads {
     auras: Vec<u32>,
     /// The expression operands read off the player's fields, an [`operand_bit`] each.
     operands: u64,
-    /// A read of a field [`Seen`] does not keep (the cast speed, a power cost's level and base
-    /// power): the view is due whenever anything it could have read moved.
+    /// A hasted `$d` or `$t` read the cast speed.
+    cast_speed: bool,
+    /// A read of fields [`Seen`] does not keep (a power cost's level and base power): the view is
+    /// due whenever anything it could have read moved.
     unkept: bool,
 }
 
@@ -32,7 +34,7 @@ impl ViewReads {
             CasterRead::Spell(id) => push_unique(&mut self.known, id),
             CasterRead::Aura(id) => push_unique(&mut self.auras, id),
             CasterRead::Operand(v) => self.operands |= operand_bit(v),
-            CasterRead::CastSpeed => self.unkept = true,
+            CasterRead::CastSpeed => self.cast_speed = true,
         }
     }
 
@@ -49,6 +51,7 @@ impl ViewReads {
     /// Whether `moved` holds an input this view read.
     pub(super) fn hits(&self, moved: &Moved) -> bool {
         (self.unkept && moved.any)
+            || (self.cast_speed && moved.cast_speed)
             || moved.operands & self.operands != 0
             || self.known.iter().any(|id| moved.known.contains(id))
             || self.auras.iter().any(|id| moved.auras.contains(id))
@@ -72,6 +75,7 @@ pub(super) struct Moved {
     auras: Vec<u32>,
     /// An [`operand_bit`] each.
     operands: u64,
+    cast_speed: bool,
 }
 
 /// One frame's player inputs, as the feed's params give them.
@@ -79,6 +83,8 @@ pub(super) struct Inputs<'a> {
     /// Whether a player is streamed: without one the parser has no caster and records nothing.
     pub(super) player: bool,
     pub(super) reads: super::feed::TokenReads,
+    /// `UNIT_MOD_CAST_SPEED`, which a hasted period reads; 1.0 before it streams.
+    pub(super) cast_speed: f32,
     /// The spell book `$?s` reads, and the change detection's word that it was written.
     pub(super) known: &'a BTreeSet<u32>,
     pub(super) known_written: bool,
@@ -96,6 +102,8 @@ pub(crate) struct Seen {
     gender: u8,
     /// The expression operands off the player's fields, and the cost runs beside them.
     operands: Operands,
+    /// The cast speed's bits.
+    cast_speed: u32,
     known: BTreeSet<u32>,
     /// The spells of the player's auras, ascending.
     auras: Vec<u32>,
@@ -109,6 +117,7 @@ impl Seen {
             skills,
             gender,
             operands,
+            cast_speed: inputs.cast_speed.to_bits(),
             known: inputs.known.clone(),
             auras: aura_spells(inputs.auras),
         }
@@ -147,16 +156,20 @@ impl Seen {
         let now = aura_spells(inputs.auras);
         let auras = sorted_difference(&self.auras, &now);
         self.auras = now;
+        let cast_speed = self.cast_speed != inputs.cast_speed.to_bits();
+        self.cast_speed = inputs.cast_speed.to_bits();
         (self.player, self.skills, self.gender, self.operands) =
             (inputs.player, skills, gender, operands);
         let moved = Moved {
             any: inputs.known_written
                 || inputs.auras_written
                 || operand_bits != 0
+                || cast_speed
                 || !auras.is_empty(),
             known,
             auras,
             operands: operand_bits,
+            cast_speed,
         };
         (all_due, moved)
     }
@@ -202,6 +215,7 @@ mod tests {
         written: bool,
         gender: u8,
         operands: Operands,
+        cast_speed: f32,
         player: bool,
     }
 
@@ -218,6 +232,7 @@ mod tests {
             written,
             gender: 0,
             operands: Operands::ZERO,
+            cast_speed: 1.0,
             player: true,
         }
     }
@@ -231,6 +246,7 @@ mod tests {
                     self.gender,
                     self.operands.clone(),
                 ),
+                cast_speed: self.cast_speed,
                 known: &self.known,
                 known_written: self.written,
                 auras: Some(&self.auras),
@@ -288,19 +304,32 @@ mod tests {
         assert!(!knows.hits(&moved));
     }
 
-    /// A view that read a field the feed keeps no copy of is due on any change, as every view
+    /// A view that read fields the feed keeps no copy of is due on any change, as every view
     /// was before the reads were recorded; with nothing moved it is not.
     #[test]
     fn an_unkept_read_is_due_on_any_change() {
-        let speed = reads(&[CasterRead::CastSpeed]);
         let mut cost = ViewReads::default();
         cost.power_cost();
         let (_, refresh) = step(&frame(&[], &[1], false), &frame(&[], &[1], true));
-        assert!(speed.hits(&refresh));
         assert!(cost.hits(&refresh));
         let (_, still) = step(&frame(&[], &[1], false), &frame(&[], &[1], false));
         assert!(!still.any);
-        assert!(!speed.hits(&still));
+        assert!(!cost.hits(&still));
+    }
+
+    /// The cast speed reaches the views with a hasted period, and an aura refresh does not.
+    #[test]
+    fn the_cast_speed_reaches_its_readers_alone() {
+        let speed = reads(&[CasterRead::CastSpeed]);
+        let asks = reads(&[CasterRead::Aura(1)]);
+        let mut hasted = frame(&[], &[1], false);
+        hasted.cast_speed = 0.8;
+        let (all_due, moved) = step(&frame(&[], &[1], false), &hasted);
+        assert!(!all_due);
+        assert!(speed.hits(&moved));
+        assert!(!asks.hits(&moved));
+        let (_, refresh) = step(&frame(&[], &[1], false), &frame(&[], &[1], true));
+        assert!(!speed.hits(&refresh));
     }
 
     /// The inputs no view records make every view due: a player arriving, the gender byte.

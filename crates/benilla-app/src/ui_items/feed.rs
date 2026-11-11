@@ -595,6 +595,7 @@ pub(crate) fn feed_item_stats(
     let inputs = Inputs {
         player: me.is_some(),
         reads: token_reads(me, &items),
+        cast_speed: me.and_then(|s| s.0.unit_mod_cast_speed()).unwrap_or(1.0),
         known: caster_sources.known(),
         known_written: caster_sources.known_changed(),
         auras: caster_sources.auras(),
