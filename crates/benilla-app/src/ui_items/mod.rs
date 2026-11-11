@@ -29,6 +29,7 @@ mod equip_error;
 pub(crate) use equip_error::{equip_error_key, inventory_error_key};
 pub(crate) mod feed;
 mod net;
+pub(crate) mod view_reads;
 
 pub(crate) use drain::send_auto_equip;
 use drain::{

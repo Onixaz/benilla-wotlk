@@ -57,6 +57,19 @@ impl Operands {
         self.0[v.index()]
     }
 
+    /// The spell cost runs, which [`Operands::diff`] leaves out.
+    pub(crate) fn cost_runs(&self) -> &[u32; 14] {
+        &self.1
+    }
+
+    /// No player's operands but `v`.
+    #[cfg(test)]
+    pub(crate) fn with(v: PlayerValue, value: f32) -> Self {
+        let mut operands = Self::ZERO;
+        operands.0[v.index()] = value;
+        operands
+    }
+
     /// The operands that differ from `prev`, a bit per [`PlayerValue::index`].
     pub(crate) fn diff(&self, prev: &Self) -> u64 {
         self.0
@@ -253,8 +266,17 @@ impl CasterSources<'_, '_> {
 
     /// A learn, an unlearn or an aura change since the system last ran.
     pub(crate) fn changed(&self) -> bool {
+        self.known_changed() || self.auras_changed()
+    }
+
+    /// The book's resource was written since the system last ran.
+    pub(crate) fn known_changed(&self) -> bool {
         self.actions.as_ref().is_some_and(|a| a.is_changed())
-            || self.auras.single().is_ok_and(|a| a.is_changed())
+    }
+
+    /// The player's aura table was written since the system last ran.
+    pub(crate) fn auras_changed(&self) -> bool {
+        self.auras.single().is_ok_and(|a| a.is_changed())
     }
 }
 
