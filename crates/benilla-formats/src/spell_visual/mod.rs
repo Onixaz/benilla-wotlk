@@ -63,6 +63,9 @@ pub const MISSILE_ATTACH_TABLE: [u16; 16] = [
 /// [`MISSILE_ATTACH_TABLE`] (`0x733384`).
 const FLAG_DEST_ATTACH_IS_ID: u32 = 0x200;
 
+/// `SpellVisual` flags bit: the missile's model is held on the caster from cast start (`0x7fa41d`).
+const FLAG_PRECAST_MISSILE: u32 = 0x20;
+
 /// The table index a unit reads as its held weapon (`0x71a823`).
 const HELD_WEAPON_INDEX: u32 = 13;
 
@@ -322,6 +325,21 @@ impl VisualStages {
         (self.missile_source_attach != NONE_SENTINEL)
             .then(|| self.unit_effect_attachment(self.missile_source_attach))
             .flatten()
+    }
+
+    /// The attachment a [`FLAG_PRECAST_MISSILE`] row holds column 8's model at during the cast,
+    /// `None` without the flag or for column 16's -1 (`0x722950`).
+    pub fn precast_missile_attachment(&self) -> Option<u16> {
+        (self.flags & FLAG_PRECAST_MISSILE != 0)
+            .then(|| self.missile_source_attachment())
+            .flatten()
+            .map(EffectAttach::tag)
+    }
+
+    /// Whether the row holds its missile on the caster during the cast; a new hold drops the last
+    /// even where this row's own gate then fails (`0x722950`).
+    pub fn holds_precast_missile(&self) -> bool {
+        self.flags & FLAG_PRECAST_MISSILE != 0
     }
 
     /// The attachment a beam's hop end sits at, column 10 in the unit effect encoding (`0x7fad5c`).

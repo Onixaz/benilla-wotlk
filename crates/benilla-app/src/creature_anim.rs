@@ -367,6 +367,8 @@ impl AttackSeam<'_, '_> {
 #[derive(Component, Clone, Copy)]
 pub(crate) struct Casting {
     pub(crate) spell_id: u32,
+    /// The start's `castCount`, which an interrupt must match (`0x72ed80`).
+    pub(crate) cast_count: u8,
     #[allow(dead_code)]
     pub(crate) until: Option<Instant>,
 }
@@ -391,6 +393,8 @@ pub(crate) struct CastEvent {
     pub(crate) entity: Entity,
     pub(crate) spell_id: u32,
     pub(crate) kind: CastEventKind,
+    /// The packet's `castCount`; 0 where the edge has none.
+    pub(crate) cast_count: u8,
     /// `PlaySeq` stamp, carried to the kit's `EmoteAnim`.
     pub(crate) seq: u64,
 }
@@ -402,10 +406,16 @@ pub(crate) enum CastEventKind {
     Start,
     /// `SMSG_SPELL_GO`: reaps the precast, plays the cast kit.
     Go,
-    /// Died without release (`SMSG_SPELL_FAILED_OTHER`, or our failed `SMSG_CAST_RESULT`).
-    Fail,
-    /// A missile landed: `on_caster` picks the kit (`0x800d00`), `at` is its point (`0x702e5a`).
-    Impact { on_caster: bool, at: Option<Vec3> },
+    /// Died without release, through the end-cast (`0x7fecc0`) with the reason byte as sent;
+    /// `interrupt` when `SMSG_SPELL_FAILURE` names the unit's running cast (`0x72ed80`).
+    Fail { interrupt: bool, wire_reason: u8 },
+    /// A missile landed: `on_caster` picks the kit (`0x800d00`), `at` is its point (`0x702e5a`);
+    /// `caster` is the guid both of its kit plays carry (`0x702f5f`).
+    Impact {
+        on_caster: bool,
+        at: Option<Vec3>,
+        caster: Entity,
+    },
     /// A projectile with no live target at arrival (a despawned target too): the kit plays on the
     /// caster (`entity`) at `pos`, `SpellVisual` field 13, stage 3. Sent here only for a
     /// dest-targeted GO's missile with no hit (`MissileSpawn::ground_aim`).
@@ -637,8 +647,9 @@ use spell_visual::{
 #[cfg(test)]
 pub(crate) use spell_visual::arm_aura_state_fx as arm_aura_state_fx_for_test;
 pub(crate) use spell_visual::{
-    arm_targeting_kit, held_strike_sound, BeamKitWaits, ChainProcPlay, FxClass, FxStage, KitPush,
-    MissileSpawn, SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals,
+    end_cast_clears_hold, held_strike_sound, BeamKitWaits, ChainProcPlay, ChannelSpellLeft,
+    FxClass, FxStage, KitEffectClear, KitPush, MissileRelease, MissileSpawn, ReleaseKind,
+    SpellEffectClear, SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals, UnitKitLanes,
 };
 
 /// The unit's own variation stream ([`benilla_assets::AnimRng::stream`]), cut on its first frame
@@ -945,8 +956,12 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<SpellKitFx>()
             .add_message::<StateDoneKit>()
             .add_message::<MissileSpawn>()
+            .add_message::<MissileRelease>()
             .add_message::<spell_visual::DelayedAreaKit>()
             .add_message::<ChainProcPlay>()
+            .add_message::<ChannelSpellLeft>()
+            .add_message::<SpellEffectClear>()
+            .add_message::<KitEffectClear>()
             .add_message::<KitPush>()
             // The aura CharProc edges, drained by `crate::aura_visual`.
             .add_message::<crate::aura_visual::AuraProc>()

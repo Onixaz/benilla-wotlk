@@ -25,6 +25,8 @@ pub enum CastOutcome {
         /// The second word (`0x808200`): the count `NEED_MORE_ITEMS` asks for, the skill value
         /// `MIN_SKILL` needs.
         arg2: Option<u32>,
+        /// The reason byte as sent, which the end-cast tests raw (`0x7feeb0`).
+        wire: u8,
     },
 }
 
@@ -256,13 +258,19 @@ const SHARED_CAST_FAIL_UNKNOWN: u8 = 0x91;
 pub(super) fn read_cast_result(r: &mut &[u8]) -> io::Result<(u8, u32, CastOutcome)> {
     let cast_count = read_u8(r)?;
     let spell_id = read_u32_le(r)?;
-    let reason = wotlk_cast_fail_shared(read_u8(r)?);
+    let wire = read_u8(r)?;
+    let reason = wotlk_cast_fail_shared(wire);
     let arg = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
     let arg2 = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
     Ok((
         cast_count,
         spell_id,
-        CastOutcome::Failed { reason, arg, arg2 },
+        CastOutcome::Failed {
+            reason,
+            arg,
+            arg2,
+            wire,
+        },
     ))
 }
 
@@ -612,13 +620,19 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
 
 /// Read `SMSG_SPELL_FAILURE` or `SMSG_SPELL_FAILED_OTHER` as their 12340 handlers do
 /// (`0x809c70`, `0x806ad0`): packed caster, `u8 castCount`, `u32 spell`, `u8 reason`, the reason
-/// returned in the shared numbering.
-pub(super) fn read_spell_failed(r: &mut &[u8]) -> io::Result<(u64, u8, u32, u8)> {
+/// returned in the shared numbering and as sent.
+pub(super) fn read_spell_failed(r: &mut &[u8]) -> io::Result<(u64, u8, u32, u8, u8)> {
     let caster = read_packed_guid(r)?;
     let cast_count = read_u8(r)?;
     let spell_id = read_u32_le(r)?;
-    let reason = wotlk_cast_fail_shared(read_u8(r)?);
-    Ok((caster, cast_count, spell_id, reason))
+    let wire = read_u8(r)?;
+    Ok((
+        caster,
+        cast_count,
+        spell_id,
+        wotlk_cast_fail_shared(wire),
+        wire,
+    ))
 }
 
 /// Read `SMSG_SPELL_DELAYED` (`0x801b80`): packed caster, `u32` pushback ms.
@@ -1040,11 +1054,17 @@ mod tests {
         // Count 5, Lesser Heal, wire 0x28 INTERRUPTED: shared 0x23.
         let body = [0x01, 0x10, 5, 0x02, 0x08, 0, 0, 0x28];
         let mut r = &body[..];
-        let (caster, count, spell, reason) = read_spell_failed(&mut r).unwrap();
+        let (caster, count, spell, reason, wire) = read_spell_failed(&mut r).unwrap();
         assert!(r.is_empty());
-        assert_eq!((caster, count, spell), (0x10, 5, 2050));
+        assert_eq!((caster, count, spell, wire), (0x10, 5, 2050, 0x28));
         assert_eq!(WOTLK_CAST_FAIL_KEYS[0x28], "SPELL_FAILED_INTERRUPTED");
         assert_eq!(reason, wotlk_cast_fail_shared(0x28));
+        // Wires 187 and 188 share `SPELL_FAILED_UNKNOWN`; the raw byte tells them apart.
+        for wire_in in [187u8, 188] {
+            let body = [0x01, 0x10, 5, 0x02, 0x08, 0, 0, wire_in];
+            let (.., reason, wire) = read_spell_failed(&mut &body[..]).unwrap();
+            assert_eq!((reason, wire), (0x91, wire_in));
+        }
 
         let body = [0x01, 0x10, 0xf4, 0x01, 0, 0];
         assert_eq!(read_spell_delayed(&mut &body[..]).unwrap(), (0x10, 500));
@@ -1062,23 +1082,34 @@ mod tests {
         // count 9, Raptor Strike, wire 0x0c BAD_TARGETS (AzerothCore, no target): shared 0x0a.
         let body = [9, 0x9d, 0x0b, 0, 0, 0x0c];
         let mut r = &body[..];
-        let failed = |reason, arg, arg2| CastOutcome::Failed { reason, arg, arg2 };
+        let failed = |reason, arg, arg2, wire| CastOutcome::Failed {
+            reason,
+            arg,
+            arg2,
+            wire,
+        };
         assert_eq!(
             read_cast_result(&mut r).unwrap(),
-            (9, 2973, failed(0x0a, None, None))
+            (9, 2973, failed(0x0a, None, None, 0x0c))
         );
         assert!(r.is_empty());
         // Wire 0x66 REQUIRES_SPELL_FOCUS with its focus id: shared 0x5e.
         let body = [9, 133, 0, 0, 0, 0x66, 3, 0, 0, 0];
         assert_eq!(
             read_cast_result(&mut &body[..]).unwrap(),
-            (9, 133, failed(0x5e, Some(3), None))
+            (9, 133, failed(0x5e, Some(3), None, 0x66))
         );
         // Wire 55 NEED_MORE_ITEMS for Prospecting 31252: five Copper Ore (2770), shared 0x97.
         let body = [9, 0x14, 0x7a, 0, 0, 55, 0xd2, 0x0a, 0, 0, 5, 0, 0, 0];
         assert_eq!(
             read_cast_result(&mut &body[..]).unwrap(),
-            (9, 31252, failed(0x97, Some(2770), Some(5)))
+            (9, 31252, failed(0x97, Some(2770), Some(5), 55))
+        );
+        // Wire 188, past the 12340 table: shared `SPELL_FAILED_UNKNOWN`, the byte kept as sent.
+        let body = [9, 133, 0, 0, 0, 188];
+        assert_eq!(
+            read_cast_result(&mut &body[..]).unwrap(),
+            (9, 133, failed(0x91, None, None, 188))
         );
     }
 

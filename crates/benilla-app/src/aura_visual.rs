@@ -44,6 +44,14 @@ pub(crate) enum AuraNode {
     AnimRate(f32),
 }
 
+/// One proc-11 node: an effect in the unit's list, so a kit clear matches its kit (`0x744bd0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RateNode {
+    spell_id: u32,
+    kit_id: u32,
+    rate: f32,
+}
+
 /// One unit's CharProc node lists (the reference's `unit+0xb50` alpha and `unit+0xce0` tint lists)
 /// and its alpha ramp. On the net entity root: the reference keeps one per unit object, and every
 /// attached model renders off its owner's.
@@ -54,8 +62,8 @@ pub(crate) struct AuraNodes {
     alpha: Vec<(u32, f32, f32)>,
     /// Proc-1 `(spell id, rgb)` nodes, newest first.
     tint: Vec<(u32, [u8; 3])>,
-    /// Proc-11 `(spell id, rate)` nodes, newest first; the head drives the unit's clocks.
-    rate: Vec<(u32, f32)>,
+    /// Proc-11 nodes, newest first; the head drives the unit's clocks.
+    rate: Vec<RateNode>,
     /// `baseAlpha`, the display row's `CreatureModelAlpha / 255` for every unit, players included;
     /// kept current by [`refresh_base_alpha`].
     base: f32,
@@ -146,14 +154,18 @@ impl AuraNodes {
 
     /// The head proc-11 node's rate, the one the unit's clocks run at.
     pub(crate) fn head_anim_rate(&self) -> Option<f32> {
-        self.rate.first().map(|(_, r)| *r)
+        self.rate.first().map(|n| n.rate)
     }
 
     /// A node set holding one proc-11 node, as a freeze aura leaves it, without the slot watcher.
     #[cfg(test)]
     pub(crate) fn with_rate_node_for_tests(spell_id: u32, rate: f32) -> Self {
         Self {
-            rate: vec![(spell_id, rate)],
+            rate: vec![RateNode {
+                spell_id,
+                kit_id: 0,
+                rate,
+            }],
             ..Default::default()
         }
     }
@@ -320,15 +332,18 @@ fn trace_clock_edge(what: &str, rig: Entity, player: &AnimationPlayer) {
     );
 }
 
-/// One aura's CharProc edge, from [`crate::creature_anim::arm_aura_state_fx`]'s slot watch.
+/// One kit play's CharProc node edge: an aura slot's state kit from
+/// [`crate::creature_anim::arm_aura_state_fx`], or a missile's targeting kit.
 #[derive(Message, Clone, Debug)]
 pub(crate) enum AuraProc {
-    /// The aura landed in a slot: install this kit's body procs, keyed by its spell id.
+    /// A kit played: install its node procs, keyed by its spell id.
     Begin {
         entity: Entity,
         spell_id: u32,
         /// The kit's proc nodes, in slot order (the client walks all four and dispatches each).
         nodes: Vec<AuraNode>,
+        /// The playing kit, which an anim-rate node keeps for a kit clear.
+        kit_id: u32,
     },
     /// The aura left the slots: drop every node this spell id installed.
     Reap { entity: Entity, spell_id: u32 },
@@ -359,9 +374,11 @@ pub(crate) fn node_for(proc: benilla_formats::CharProc) -> Option<AuraNode> {
     }
 }
 
-/// Apply this frame's [`AuraProc`] edges to the units' node lists.
+/// Apply this frame's [`AuraProc`] edges to the units' node lists, then the kit clears, which drop
+/// the anim-rate effects they match (`0x744bd0`).
 pub(crate) fn drain_aura_procs(
     mut edges: MessageReader<AuraProc>,
+    mut kit_clears: MessageReader<crate::creature_anim::KitEffectClear>,
     time: Res<Time>,
     mut commands: Commands,
     mut nodes: Query<&mut AuraNodes>,
@@ -376,12 +393,13 @@ pub(crate) fn drain_aura_procs(
                 entity,
                 spell_id,
                 nodes: procs,
+                kit_id,
             } => {
                 if procs.is_empty() {
                     continue;
                 }
                 if let Ok(mut n) = nodes.get_mut(*entity) {
-                    install(&mut n, *spell_id, procs, now);
+                    install(&mut n, *spell_id, *kit_id, procs, now);
                     trace_edge("arm", *entity, *spell_id, &n);
                 } else {
                     // Staged, not inserted: `Commands` apply at the end of the system, so a second
@@ -389,7 +407,7 @@ pub(crate) fn drain_aura_procs(
                     let n = fresh.entry(*entity).or_insert_with(|| {
                         AuraNodes::new(base_alpha(*entity, &units, creatures.as_deref()))
                     });
-                    install(n, *spell_id, procs, now);
+                    install(n, *spell_id, *kit_id, procs, now);
                     trace_edge("arm", *entity, *spell_id, n);
                 }
             }
@@ -405,6 +423,16 @@ pub(crate) fn drain_aura_procs(
             }
         }
     }
+    for clear in kit_clears.read() {
+        let matches = |r: &RateNode| r.kit_id == clear.kit_id;
+        if let Ok(mut n) = nodes.get_mut(clear.entity) {
+            if n.rate.iter().any(matches) {
+                n.rate.retain(|r| !matches(r));
+            }
+        } else if let Some(n) = fresh.get_mut(&clear.entity) {
+            n.rate.retain(|r| !matches(r));
+        }
+    }
     for (entity, n) in fresh {
         commands.entity(entity).try_insert(n);
     }
@@ -414,21 +442,30 @@ pub(crate) fn drain_aura_procs(
 fn reap(n: &mut AuraNodes, spell_id: u32, now: f32) {
     n.alpha.retain(|(s, ..)| *s != spell_id);
     n.tint.retain(|(s, _)| *s != spell_id);
-    n.rate.retain(|(s, _)| *s != spell_id);
+    n.rate.retain(|r| r.spell_id != spell_id);
     n.retarget(now);
 }
 
-/// Install one spell's nodes at the head of each list, replacing any it had: nodes are keyed by
-/// spell id, so a second caster's copy of an aura installs one set.
-fn install(n: &mut AuraNodes, spell_id: u32, procs: &[AuraNode], now: f32) {
+/// Install one play's nodes at the head of each list. Alpha and tint replace the spell's own, as
+/// their cases release by spell first (`0x7265c0`); an anim-rate effect replaces only one of its
+/// own spell and kit, so a replayed aura does not stack.
+fn install(n: &mut AuraNodes, spell_id: u32, kit_id: u32, procs: &[AuraNode], now: f32) {
     n.alpha.retain(|(s, ..)| *s != spell_id);
     n.tint.retain(|(s, _)| *s != spell_id);
-    n.rate.retain(|(s, _)| *s != spell_id);
+    n.rate
+        .retain(|r| (r.spell_id, r.kit_id) != (spell_id, kit_id));
     for node in procs {
         match *node {
             AuraNode::Alpha(f, secs) => n.alpha.insert(0, (spell_id, f, secs)),
             AuraNode::Tint(rgb) => n.tint.insert(0, (spell_id, rgb)),
-            AuraNode::AnimRate(r) => n.rate.insert(0, (spell_id, r)),
+            AuraNode::AnimRate(rate) => n.rate.insert(
+                0,
+                RateNode {
+                    spell_id,
+                    kit_id,
+                    rate,
+                },
+            ),
         }
     }
     n.retarget(now);

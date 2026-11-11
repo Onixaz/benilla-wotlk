@@ -12,9 +12,9 @@ use bevy::prelude::*;
 use crate::creature_anim::spell_visual::{kit_waits_for_beam, NO_BEAM_KEY};
 use crate::creature_anim::spell_visual::{AreaKitWait, DelayedAreaKit};
 use crate::creature_anim::{
-    BeamKitWaits, ChainProcPlay, FxClass, SpellGoTargets, SpellKitFx, SpellVisuals,
+    BeamKitWaits, ChainProcPlay, KitEffectClear, SpellEffectClear, SpellGoTargets, SpellVisuals,
 };
-use crate::net::{GuidIndex, NetEntity};
+use crate::net::{Guid, GuidIndex, NetEntity};
 use lightning::{Lightning, Scratch};
 
 use super::OverheadFallback;
@@ -111,10 +111,13 @@ struct Bolt {
 pub(crate) struct ChainBeam {
     /// The reap key.
     spell_id: u32,
-    /// Its loss ends the beam; nothing else would reap a persistent one.
+    /// The kit of the effect holding it, a kit clear's key (`0x744bd0`).
+    kit_id: u32,
+    /// The kit's owner, whose effect list holds the beam (`0x6f8040`); its loss ends the beam.
     caster: Entity,
-    /// `[caster, hop0, hop1, …]` as identities re-resolved every frame; a beam never re-targets.
-    nodes: Vec<Entity>,
+    /// `[source, hop0, hop1, …]` as guids resolved every frame, a gone one hiding its bolts until
+    /// it streams back (`0x7faeef`); a beam never re-targets.
+    nodes: Vec<u64>,
     /// The ground point of a beam cast at no unit, its one bolt's target (`0x7fc878`).
     location: Option<Vec3>,
     bolts: Vec<Bolt>,
@@ -160,14 +163,15 @@ pub(super) fn spawn_chain_beams(
     mut commands: Commands,
     time: Res<Time>,
     mut plays: MessageReader<ChainProcPlay>,
-    mut kit_fx: MessageReader<SpellKitFx>,
+    mut clears: MessageReader<SpellEffectClear>,
+    mut kit_clears: MessageReader<KitEffectClear>,
     mut go_targets: MessageReader<SpellGoTargets>,
     mut area_kits: MessageWriter<DelayedAreaKit>,
     visuals: Option<Res<SpellVisuals>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     asset_server: Res<AssetServer>,
     index: Res<GuidIndex>,
-    stores: Query<(&crate::net::ObjectStore, Option<&ChainHops>)>,
+    stores: Query<(&crate::net::ObjectStore, Option<&ChainHops>, Option<&Guid>)>,
     beams: Query<(Entity, &ChainBeam)>,
     transforms: Query<&GlobalTransform, Without<WorldCamera>>,
     mut locations: ResMut<ChainLocations>,
@@ -199,17 +203,23 @@ pub(super) fn spawn_chain_beams(
     }
     locations.0.retain(|e, _| stores.contains(*e));
     sequences.retain(|e, _| stores.contains(*e));
-    for ev in kit_fx.read() {
-        let SpellKitFx::Reap {
-            entity,
-            spell_id,
-            class: FxClass::Hold,
-        } = ev
-        else {
-            continue;
-        };
+    // The spell clear releases the owner's effects and the persistent beams they hold; a
+    // self-terminating beam keeps its own clock (`0x743b40`, `0x6f74f0`).
+    let cleared: Vec<SpellEffectClear> = clears.read().copied().collect();
+    let kits_cleared: Vec<KitEffectClear> = kit_clears.read().copied().collect();
+    if !cleared.is_empty() || !kits_cleared.is_empty() {
         for (e, beam) in &beams {
-            if beam.persistent && beam.caster == *entity && beam.spell_id == *spell_id {
+            let spell = || {
+                cleared
+                    .iter()
+                    .any(|c| c.entity == beam.caster && c.spell_id == beam.spell_id)
+            };
+            let kit = || {
+                kits_cleared
+                    .iter()
+                    .any(|c| c.entity == beam.caster && c.kit_id == beam.kit_id)
+            };
+            if beam.persistent && (spell() || kit()) {
                 commands.entity(e).despawn();
             }
         }
@@ -218,22 +228,29 @@ pub(super) fn spawn_chain_beams(
     let now = time.elapsed_secs();
     for play in plays.read() {
         // The caster may be gone within the same wire drain that produced this play.
-        let Ok((store, hops)) = stores.get(play.entity) else {
+        let Ok((store, hops, _)) = stores.get(play.entity) else {
             continue;
         };
-        // Consume once, on every path: the reference zeroes the count even when nothing is drawn.
+        // Another unit's play runs from it to this one, or ends here unconsumed (`0x7269d8`).
+        let source = play.from.filter(|&from| from != play.entity);
+        if source.is_some_and(|s| !stores.get(s).is_ok_and(|(o, ..)| o.is_unit())) {
+            continue;
+        }
+        // Consume once on every other path: zeroed even when nothing is drawn (`0x726b0d`).
         let hops = hops.filter(|_| !consumed.contains(&play.entity));
         consumed.insert(play.entity);
         commands.entity(play.entity).try_remove::<ChainHops>();
         // A saved location overrides the hops (`0x726a3b`); no spell or target is a silent return.
         let location = locations.0.get(&play.entity).copied();
-        let targets = match location {
-            Some(_) => Vec::new(),
-            None => select_targets(play.spell_id, hops, store, &index),
+        let targets = match (source, location) {
+            (Some(_), _) => vec![play.entity],
+            (None, Some(_)) => Vec::new(),
+            (None, None) => select_targets(play.spell_id, hops, store, &index),
         };
         if play.spell_id == 0 || (targets.is_empty() && location.is_none()) {
             continue;
         }
+        let from = source.unwrap_or(play.entity);
         let sequence = sequences.entry(play.entity).or_insert(0);
         let seq = *sequence;
         *sequence = sequence.wrapping_add(2);
@@ -244,24 +261,17 @@ pub(super) fn spawn_chain_beams(
         // An id naming no row draws nothing, but the area kit still plays (`0x726afd`).
         if let Some(root) = visuals.0.chain_effect(play.proc.effect_id) {
             let ends = Ends::from_visual(stages, spells.catalog.get(play.spell_id).is_some());
-            // A persistent beam replaces the ones before it on the same caster and spell.
-            if play.proc.flag {
-                for (e, beam) in &beams {
-                    if beam.persistent
-                        && beam.caster == play.entity
-                        && beam.spell_id == play.spell_id
-                    {
-                        commands.entity(e).despawn();
-                    }
-                }
-            }
+            // Each play adds its own effect beside the spell's earlier ones (`0x7269ca`).
             *plays_seen = plays_seen.wrapping_add(1);
-            let nodes: Vec<Entity> = std::iter::once(play.entity).chain(targets).collect();
-            // A location takes the impact offset turned with the caster, once (`0x7fc878`).
+            let guid_of = |e: Entity| stores.get(e).ok().and_then(|(.., g)| g).map_or(0, |g| g.0);
+            let nodes: Vec<u64> = std::iter::once(from).chain(targets).map(guid_of).collect();
+            // A location aims the one bolt when no unit is hit, turned with the caster (`0x7fc878`).
             let turn = transforms
                 .get(play.entity)
                 .map_or(Quat::IDENTITY, |t| t.to_scale_rotation_translation().1);
-            let ground = location.map(|at| at + turn * ends.impact_offset);
+            let ground = location
+                .filter(|_| source.is_none())
+                .map(|at| at + turn * ends.impact_offset);
             let hop_count = if ground.is_some() { 1 } else { nodes.len() - 1 };
             // The root, then its combo walk, each drawing the same hops (`0x7fc8ea`).
             let rows = std::iter::once(play.proc.effect_id)
@@ -292,6 +302,7 @@ pub(super) fn spawn_chain_beams(
                     Transform::IDENTITY,
                     ChainBeam {
                         spell_id: play.spell_id,
+                        kit_id: play.kit_id,
                         caster: play.entity,
                         nodes: nodes.clone(),
                         location: ground,
@@ -466,6 +477,7 @@ pub(crate) fn simulate_chain_beams(
     images: Res<Assets<Image>>,
     world_cam: Query<(Entity, &GlobalTransform), With<WorldCamera>>,
     ends: EndPoints,
+    index: Res<GuidIndex>,
     mut beams: Query<(Entity, &mut ChainBeam)>,
     waits: Option<ResMut<BeamKitWaits>>,
     mut scratch: Local<Scratch>,
@@ -478,6 +490,7 @@ pub(crate) fn simulate_chain_beams(
     let eye = cam_xf.translation();
     let dt = time.delta_secs();
     let now = time.elapsed_secs();
+    let resolve = |guid: u64| index.0.get(&guid).copied();
     for (entity, mut beam) in &mut beams {
         // A one-shot ends with its last hop (`0x7fb205`); any beam ends with its caster.
         if (!beam.persistent && now >= beam.expiry) || !ends.units.contains(beam.caster) {
@@ -502,11 +515,12 @@ pub(crate) fn simulate_chain_beams(
         let (mut anchor_sum, mut anchor_n) = (Vec3::ZERO, 0.0f32);
         for (i, bolt) in bolts.iter_mut().enumerate() {
             if *persistent || (bolt.start <= now && now < bolt.end) {
-                let src = ends.source(bolt.source, nodes[bolt.source], spec);
-                // A target that does not resolve hides the bolt where it stands.
-                let dst = nodes
-                    .get(bolt.target)
-                    .map_or(*location, |&n| ends.target(n, spec));
+                // An end that does not resolve hides the bolt where it stands (`0x7fb13b`).
+                let src =
+                    resolve(nodes[bolt.source]).and_then(|n| ends.source(bolt.source, n, spec));
+                let dst = nodes.get(bolt.target).map_or(*location, |&g| {
+                    resolve(g).and_then(|n| ends.target(n, spec))
+                });
                 let live = bolt.live.get_or_insert_with(|| {
                     let s = (*seed).wrapping_add((i as u32).wrapping_mul(0x27D4_EB2F));
                     Lightning::new(effect, src.unwrap_or_default(), dst.unwrap_or_default(), s)
@@ -527,15 +541,15 @@ pub(crate) fn simulate_chain_beams(
             };
             live.update(effect, dt);
             // The ends the draw reaches, whether or not its texture has loaded (`0x7fb15a`).
-            if let Some(waits) = waits.as_mut().filter(|_| layered) {
-                // Any object is a target, a game object too, whose connect finds no held play
-                // (`0x744330`); a gone one has hidden the bolt above.
-                let target = nodes.get(bolt.target).copied();
+            // Any object is a target, a game object too, whose connect finds no held play
+            // (`0x744330`); a gone one has hidden the bolt above.
+            let target = nodes.get(bolt.target).map(|&g| resolve(g));
+            let source = resolve(nodes[bolt.source]).filter(|_| target != Some(None));
+            if let (Some(waits), Some(source)) = (waits.as_mut().filter(|_| layered), source) {
                 let reach = live.reached_ends(effect);
-                for (object, key) in
-                    reached_ends(reach, nodes[bolt.source], target, bolt.attachment)
-                        .into_iter()
-                        .flatten()
+                for (object, key) in reached_ends(reach, source, target.flatten(), bolt.attachment)
+                    .into_iter()
+                    .flatten()
                 {
                     waits.reach(object, *spell_id, key);
                 }

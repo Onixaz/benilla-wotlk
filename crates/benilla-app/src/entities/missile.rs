@@ -44,6 +44,11 @@
 //! `SpellMissileMotion` count, and a targeting kit rides the target from launch to the flight's
 //! end (`0x702986`).
 //!
+//! A row with flag `0x20` holds its model on the caster from cast start ([`PrecastHolds`]): the
+//! first missile made after it takes it and leaves from where it was held, and every launch drops
+//! it (`0x72df00`). A [`MissileRelease`] launches a queue at once (an interrupt, our own start, a
+//! GO with no cast animation) or drops one cast's hold (the end-cast).
+//!
 //! A miss ends by its outcome ([`disposition`]): it flies past and fades, sticks in the shield,
 //! bursts, glances off at half speed or flies back at the caster.
 //!
@@ -58,7 +63,7 @@ use bevy::prelude::*;
 
 use crate::creature_anim::{
     oneshot_is_live, AnimData, AnimDriver, AnimSoundEvent, CastEvent, CastEventKind, DefenseAnim,
-    FxClass, MissileSpawn, SpellKitFx, SpellKitSound, SpellVisuals,
+    FxClass, MissileRelease, MissileSpawn, ReleaseKind, SpellKitFx, SpellKitSound, SpellVisuals,
 };
 use benilla_assets::m2_url;
 
@@ -68,7 +73,9 @@ mod disposition;
 mod motion;
 mod shape;
 mod trajectory;
-use super::spell_fx::{attach_effect_visuals, ensure_model, EffectHost, FxMaterials, SpellFx};
+use super::spell_fx::{
+    attach_effect_visuals, ensure_model, EffectHost, FxMaterials, PrecastDrop, SpellFx,
+};
 use super::{BoneAttach, DisplayModel, ModelHandle};
 use disposition::{DeckChase, MissKind};
 pub(crate) use motion::{run_missile_motion, MissileMotion, MotionScripts};
@@ -198,7 +205,7 @@ pub(super) struct Missile {
     /// The copy's index among a motion's copies; only copy 0 floats a miss word (`0x703017`).
     index: u32,
     /// The unit wearing the targeting kit, reaped when the flight ends (`0x6ff410`).
-    targeting: Option<Entity>,
+    targeting: Option<Targeting>,
     /// A motion script's last offset, turn and scale for the model (`0x700550`, `0x6feb20`).
     pose: Option<MotionPose>,
     /// How a miss ends; `None` for a hit.
@@ -239,7 +246,29 @@ pub(super) struct StuckMissile {
     turn: Quat,
     until: f32,
     spell_id: u32,
-    targeting: Option<Entity>,
+    targeting: Option<Targeting>,
+}
+
+/// A targeting kit a unit wears for a flight, with the fade stamp its clear matches (`0x6ff410`).
+#[derive(Clone, Copy, Debug)]
+struct Targeting {
+    unit: Entity,
+    fade: u32,
+}
+
+/// A flight's fade stamp: the fire time in ms its targeting kit is played and cleared by.
+fn fade_stamp(now: f32) -> u32 {
+    (now * 1000.0) as u32
+}
+
+/// Clear a targeting kit off its unit by spell and fade stamp: its models alone carry the stamp,
+/// so its beams and anim rate stay (`0x6ff410`, `0x744cc8`).
+fn reap_targeting(t: Targeting, spell_id: u32, kit_fx: &mut MessageWriter<SpellKitFx>) {
+    kit_fx.write(SpellKitFx::Reap {
+        entity: t.unit,
+        spell_id,
+        class: FxClass::Targeting(t.fade),
+    });
 }
 
 /// How a motion script draws the model against its flight.
@@ -418,6 +447,8 @@ struct QueuedGo {
     queued: f32,
     /// A one-shot has played on the caster since queuing, which arms the anim-end flush.
     saw_oneshot: bool,
+    /// Its first missile took the caster's held model (`0x73304d`).
+    takes_hold: bool,
 }
 
 /// Every caster's queue of projectiles awaiting release, the reference's unit `+0xac` list of
@@ -433,6 +464,13 @@ impl PendingMissiles {
     /// test; [`crate::ranged_flex`] asks it before the drain, in the reference's order.
     pub(crate) fn releasing(&self, caster: Entity) -> bool {
         self.0.get(&caster).is_some_and(|q| !q.is_empty())
+    }
+
+    /// Whether a projectile of `spell_id` waits on `caster`, the applied core's skip (`0x724b92`).
+    pub(crate) fn queues(&self, caster: Entity, spell_id: u32) -> bool {
+        self.0
+            .get(&caster)
+            .is_some_and(|q| q.iter().any(|g| g.spawn.spell_id == spell_id))
     }
 
     /// Queues one projectile on `caster` for tests of the gate's consumers; only its presence
@@ -456,6 +494,7 @@ impl PendingMissiles {
             trajectory: None,
             shape: MissileShape::default(),
             from: None,
+            seq: 0,
         };
         app.world_mut()
             .resource_mut::<Self>()
@@ -467,6 +506,7 @@ impl PendingMissiles {
                 key: None,
                 queued: 0.0,
                 saw_oneshot: false,
+                takes_hold: false,
             });
     }
 }
@@ -527,9 +567,8 @@ pub(super) struct ArrivalOut<'w, 's> {
     impacts: MessageWriter<'w, CastEvent>,
     defenses: MessageWriter<'w, DefenseAnim>,
     words: MessageWriter<'w, MissileMiss>,
-    /// The targeting kit's models and sound, armed at launch and reaped at the flight's end.
-    kit_fx: MessageWriter<'w, SpellKitFx>,
-    kit_sounds: MessageWriter<'w, SpellKitSound>,
+    /// The targeting kit's play, armed at launch and cleared at the flight's end.
+    kit: crate::creature_anim::UnitKitLanes<'w>,
     bursts: MessageWriter<'w, super::dest_fx::GroundBurst>,
     visuals: Option<Res<'w, SpellVisuals>>,
     clips: Query<'w, 's, &'static benilla_assets::ModelAnimations>,
@@ -566,6 +605,7 @@ fn arrival_handoff(
         entity,
         spell_id: missile.spell_id,
         kind,
+        cast_count: 0,
         seq: play_seq.next(),
     };
     match missile.aim {
@@ -581,6 +621,7 @@ fn arrival_handoff(
             let kind = CastEventKind::Impact {
                 on_caster: target == missile.caster,
                 at,
+                caster: missile.caster,
             };
             out.impacts.write(event(target, kind));
         }
@@ -798,15 +839,8 @@ fn reflect_back(
     let from = m.impact;
     let distance = from.distance(at);
     let speed = disposition::relaunch_speed(m.speed, distance, now - m.cast_at);
-    if m.targeting.take().is_some() {
-        out.kit_fx.write(SpellKitFx::Reap {
-            entity: match m.aim {
-                Aim::Unit { target, .. } => target,
-                Aim::Ground(_) => m.caster,
-            },
-            spell_id: m.spell_id,
-            class: FxClass::Hold,
-        });
+    if let Some(t) = m.targeting.take() {
+        reap_targeting(t, m.spell_id, &mut out.kit.fx);
     }
     m.aim = aim;
     m.kind = kind;
@@ -828,7 +862,8 @@ fn reflect_back(
     m.flight_time = m.arrive_in;
     m.victim_clip = victim_clip(m.caster, kind, m.arrive_in, m.path.is_some(), out);
     if m.targeting_kit != 0 {
-        m.targeting = arm_targeting_kit(m.caster, m.spell_id, m.targeting_kit, out);
+        let fade = fade_stamp(now);
+        m.targeting = arm_targeting_kit(m.caster, m.caster, m.spell_id, m.targeting_kit, fade, out);
     }
     true
 }
@@ -853,12 +888,8 @@ fn carry_stuck_missiles(
             .filter(|_| now < s.until)
             .zip(units.get(s.target).ok());
         let Some((anchor, (base, ..))) = held else {
-            if let Some(unit) = s.targeting {
-                kit_fx.write(SpellKitFx::Reap {
-                    entity: unit,
-                    spell_id: s.spell_id,
-                    class: FxClass::Hold,
-                });
+            if let Some(t) = s.targeting {
+                reap_targeting(t, s.spell_id, kit_fx);
             }
             commands.entity(entity).despawn();
             continue;
@@ -880,12 +911,8 @@ fn end_flight(
     for &point in &missile.targeting_points {
         commands.entity(point).despawn();
     }
-    if let Some(unit) = missile.targeting {
-        kit_fx.write(SpellKitFx::Reap {
-            entity: unit,
-            spell_id: missile.spell_id,
-            class: FxClass::Hold,
-        });
+    if let Some(t) = missile.targeting {
+        reap_targeting(t, missile.spell_id, kit_fx);
     }
     commands.entity(entity).despawn();
 }
@@ -898,13 +925,16 @@ fn is_unit_kind(kind: benilla_protocol::EntityKind) -> bool {
     )
 }
 
-/// Hold column 22's kit on the target at the fire, its models and sound (`0x702906`).
+/// Play column 22's kit on the target at the fire, the whole stage-2 kit with the caster as its
+/// guid, so its beams run from the caster (`0x702906`, `0x702923`).
 fn arm_targeting_kit(
     target: Entity,
+    caster: Entity,
     spell_id: u32,
     kit_id: u32,
+    fade: u32,
     out: &mut ArrivalOut,
-) -> Option<Entity> {
+) -> Option<Targeting> {
     let visuals = out.visuals.as_deref()?;
     let kit = visuals.0.kit(kit_id)?;
     // On a unit, a beam spell's flag-0x1 kit waits for the beam to reach it (`0x72af60`).
@@ -923,15 +953,9 @@ fn arm_targeting_kit(
             return None;
         }
     }
-    crate::creature_anim::arm_targeting_kit(
-        target,
-        spell_id,
-        kit,
-        &visuals.0,
-        &mut out.kit_fx,
-        &mut out.kit_sounds,
-    );
-    Some(target)
+    out.kit
+        .play_targeting_kit(target, caster, spell_id, kit, fade, &visuals.0);
+    Some(Targeting { unit: target, fade })
 }
 
 /// Hold column 22's kit at a flight's ground aim, on copy 0 alone (`0x702941`): its point models and
@@ -967,7 +991,8 @@ fn arm_point_targeting_kit(
         }
     }
     if let Some(kit_sound) = kit.sound {
-        out.kit_sounds
+        out.kit
+            .sounds
             .write(SpellKitSound::PlayAt { pos: at, kit_sound });
     }
     crate::creature_anim::area_kit_models(&visuals.0, kit)
@@ -977,11 +1002,13 @@ fn arm_point_targeting_kit(
         .collect()
 }
 
-/// Launch one queued GO from `launch`, per target and per motion copy (`0x7336b3`).
+/// Launch one queued GO from `launch`, per target and per motion copy (`0x7336b3`); `held`, the
+/// held model's place, is where its first missile leaves from (`0x72e011`).
 #[allow(clippy::too_many_arguments)] // the spawner's full output set
 fn launch_go(
     go: &QueuedGo,
     launch: Vec3,
+    mut held: Option<Vec3>,
     now: f32,
     commands: &mut Commands,
     units: &AttachPosQuery,
@@ -1035,29 +1062,43 @@ fn launch_go(
         let Some(aim) = aim_point(aim_at, hug, units, joints) else {
             continue; // target already gone
         };
-        // A trajectory lands at the packet's delay (`0x732ff0`), not at distance over speed.
-        let arrive_in = match go.spawn.trajectory {
-            Some((t, _)) => t.delay - go.queued,
-            None => launch.distance(aim) / go.spawn.speed.max(f32::EPSILON) - go.queued,
-        };
-        let speed = if arrive_in > 0.0 {
-            launch.distance(aim) / arrive_in
-        } else {
-            go.spawn.speed
-        };
         // A flight past its target aims once and runs on (`0x6ff6d0`).
         let wide = kind == Some(MissKind::Wide);
-        let fixed_aim = wide.then(|| disposition::wide_aim(launch, aim, speed, signed_random()));
-        let fade_over = wide.then_some(speed * disposition::PAST_TARGET_SECS);
-        let arrive_in = arrive_in
-            + if wide {
+        let flight_from = |from: Vec3| {
+            // A trajectory lands at the packet's delay (`0x732ff0`), not at distance over speed.
+            let arrive_in = match go.spawn.trajectory {
+                Some((t, _)) => t.delay - go.queued,
+                None => from.distance(aim) / go.spawn.speed.max(f32::EPSILON) - go.queued,
+            };
+            let speed = if arrive_in > 0.0 {
+                from.distance(aim) / arrive_in
+            } else {
+                go.spawn.speed
+            };
+            let fixed_aim = wide.then(|| disposition::wide_aim(from, aim, speed, signed_random()));
+            let fade_over = wide.then_some(speed * disposition::PAST_TARGET_SECS);
+            let past = if wide {
                 disposition::PAST_TARGET_SECS
             } else {
                 0.0
             };
+            (arrive_in + past, speed, fixed_aim, fade_over)
+        };
+        let marker_flight = flight_from(launch);
+        let arrive_in = marker_flight.0;
+        // The first missile made takes the held model, its motion copies new ones (`0x702b60`).
+        let first_from = held.take();
         let targeting = match aim_at {
             Aim::Unit { target, .. } if shape.targeting_kit != 0 && arrive_in > 0.0 => {
-                arm_targeting_kit(target, go.spawn.spell_id, shape.targeting_kit, out)
+                let fade = fade_stamp(now);
+                arm_targeting_kit(
+                    target,
+                    go.spawn.caster,
+                    go.spawn.spell_id,
+                    shape.targeting_kit,
+                    fade,
+                    out,
+                )
             }
             _ => None,
         };
@@ -1082,6 +1123,11 @@ fn launch_go(
             Aim::Ground(_) => None,
         };
         for index in 0..copies {
+            let (launch, (arrive_in, speed, fixed_aim, fade_over)) =
+                match first_from.filter(|_| index == 0) {
+                    Some(from) => (from, flight_from(from)),
+                    None => (launch, marker_flight),
+                };
             let flight = go.spawn.trajectory.map(|(t, rec)| {
                 let arc = trajectory::launch(t.pitch, 0.0, launch, aim, rec.as_ref(), arrive_in);
                 // A missile whose row collides with units tests its path (`0x700880`).
@@ -1197,12 +1243,111 @@ pub(super) fn mark_forced_missiles(
     }
 }
 
-/// Takes the router's [`MissileSpawn`]s and runs the pending queue (module docs): park, drain on
-/// the release keyframe or launch at once, and flush a queue whose keyframe never comes.
+/// The casters' held missile models (`SpellVisual` flag `0x20`): a missile made after the hold
+/// takes it, and every launch drops it.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct PrecastHolds<'w, 's> {
+    held: Query<'w, 's, &'static mut super::spell_fx::FxAttached>,
+    emitters: Query<'w, 's, &'static mut benilla_world::particles::ParticleEmitter>,
+}
+
+impl PrecastHolds<'_, '_> {
+    /// Whether a missile of `caster` made at stamp `seq` takes the held model, which then is
+    /// taken (`0x73304d`).
+    fn hand(&mut self, caster: Entity, seq: u64) -> bool {
+        // Read first: a mutable borrow would mark every caster's effect list changed.
+        if !self.held.get(caster).is_ok_and(|a| a.takes_precast(seq)) {
+            return false;
+        }
+        if let Ok(mut a) = self.held.get_mut(caster) {
+            a.hand_precast();
+        }
+        true
+    }
+
+    /// Where the taken model is, the place its missile leaves from (`0x72e011`).
+    fn handed_place(&self, caster: Entity, joints: &Query<&GlobalTransform>) -> Option<Vec3> {
+        let root = self.held.get(caster).ok()?.handed_precast_root()?;
+        joints.get(root).ok().map(GlobalTransform::translation)
+    }
+
+    /// Drop `caster`'s held model `which` names at once, with no decay.
+    fn drop(&mut self, caster: Entity, which: PrecastDrop, commands: &mut Commands) {
+        if !self.held.get(caster).is_ok_and(|a| a.holds_precast()) {
+            return;
+        }
+        let Ok(mut a) = self.held.get_mut(caster) else {
+            return;
+        };
+        if let Some(root) = a.release_precast(which) {
+            super::spell_fx::end_root(commands, &mut self.emitters, root);
+        }
+    }
+}
+
+/// The router's missile edges, the GOs' spawns and the releases, and the held models they move.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct MissileEdges<'w, 's> {
+    spawns: MessageReader<'w, 's, MissileSpawn>,
+    releases: MessageReader<'w, 's, MissileRelease>,
+    precast: PrecastHolds<'w, 's>,
+}
+
+/// The parts of [`spawn_missiles`] that launch a caster's queue.
+struct Launcher<'a, 'w, 's, 'j> {
+    now: f32,
+    units: &'a AttachPosQuery<'w, 's>,
+    joints: &'a Query<'w, 's, &'j GlobalTransform>,
+    weapons: &'a HeldWeapons<'w, 's>,
+}
+
+impl Launcher<'_, '_, '_, '_> {
+    /// Launch `gos` from `release`, the GO that took the held model from its place, then drop the
+    /// hold `which` names: the launch's tail (`0x72e1ed`).
+    #[allow(clippy::too_many_arguments)] // the spawner's full output set
+    fn release(
+        &self,
+        caster: Entity,
+        gos: &[QueuedGo],
+        release: Option<Vec3>,
+        which: Option<PrecastDrop>,
+        precast: &mut PrecastHolds,
+        commands: &mut Commands,
+        sounds: &mut MessageWriter<MissileSound>,
+        out: &mut ArrivalOut,
+        play_seq: &mut crate::creature_anim::PlaySeq,
+    ) {
+        let held = precast.handed_place(caster, self.joints);
+        for go in gos {
+            let Some(launch) = fire_pos(go, release, self.units, self.joints, self.weapons) else {
+                continue; // the caster is already gone
+            };
+            launch_go(
+                go,
+                launch,
+                held.filter(|_| go.takes_hold),
+                self.now,
+                commands,
+                self.units,
+                self.joints,
+                sounds,
+                out,
+                play_seq,
+            );
+        }
+        if let Some(which) = which {
+            precast.drop(caster, which, commands);
+        }
+    }
+}
+
+/// Takes the router's [`MissileSpawn`]s and [`MissileRelease`]s in wire order and runs the pending
+/// queue (module docs): park, drain on the release keyframe or a release, or launch at once, and
+/// flush a queue whose keyframe never comes.
 pub(super) fn spawn_missiles(
     mut commands: Commands,
     time: Res<Time>,
-    mut spawns: MessageReader<MissileSpawn>,
+    mut edges: MissileEdges,
     mut anim_events: MessageReader<AnimSoundEvent>,
     mut pending: ResMut<PendingMissiles>,
     fx: Option<ResMut<SpellFx>>,
@@ -1224,8 +1369,57 @@ pub(super) fn spawn_missiles(
 ) {
     let Some(mut fx) = fx else { return };
     let now = time.elapsed_secs();
-    // Resolve the model now, so it loads while the release animation plays.
-    for spawn in spawns.read() {
+    let launcher = Launcher {
+        now,
+        units: &units,
+        joints: &joints,
+        weapons: &weapons,
+    };
+    // Stamp order; a GO's own release follows its spawn.
+    let MissileEdges {
+        spawns,
+        releases,
+        precast,
+    } = &mut edges;
+    let mut wire: Vec<(u64, Result<&MissileSpawn, MissileRelease>)> = spawns
+        .read()
+        .map(|sp| (sp.seq, Ok(sp)))
+        .chain(releases.read().map(|r| (r.seq, Err(*r))))
+        .collect();
+    wire.sort_by_key(|&(seq, _)| seq);
+    for (_, edge) in wire {
+        let spawn = match edge {
+            Ok(spawn) => spawn,
+            Err(MissileRelease {
+                caster,
+                seq,
+                kind: ReleaseKind::Fire,
+            }) => {
+                let gos = pending.0.remove(&caster).unwrap_or_default();
+                let release = launch_world_pos(caster, None, &units, &joints);
+                launcher.release(
+                    caster,
+                    &gos,
+                    release,
+                    Some(PrecastDrop::UpTo(seq)),
+                    precast,
+                    &mut commands,
+                    &mut sounds,
+                    &mut out,
+                    &mut play_seq,
+                );
+                continue;
+            }
+            Err(MissileRelease {
+                caster,
+                seq,
+                kind: ReleaseKind::Clear(count),
+            }) => {
+                precast.drop(caster, PrecastDrop::Cast(seq, count), &mut commands);
+                continue;
+            }
+        };
+        // Resolve the model now, so it loads while the release animation plays.
         let key = match (&spawn.path, spawn.ammo_display_id) {
             (Some(path), _) => {
                 fx.models
@@ -1241,21 +1435,22 @@ pub(super) fn spawn_missiles(
                 .and_then(|d| ensure_ammo_model(&mut fx, d, display_id, &asset_server)),
             (None, None) => None,
         };
+        // A missile with a caster takes its held model when it is the first made since the hold.
+        let takes_hold = spawn.from.is_none() && precast.hand(spawn.caster, spawn.seq);
         let go = QueuedGo {
             spawn: spawn.clone(),
             key,
             queued: 0.0,
             saw_oneshot: false,
+            takes_hold,
         };
-        let release = spawn
-            .from
-            .or_else(|| launch_world_pos(spawn.caster, None, &units, &joints));
         if spawn.awaits_release {
             pending.0.entry(spawn.caster).or_default().push(go);
-        } else if let Some(launch) = fire_pos(&go, release, &units, &joints, &weapons) {
+        } else if let Some(from) = spawn.from {
             launch_go(
                 &go,
-                launch,
+                from,
+                None,
                 now,
                 &mut commands,
                 &units,
@@ -1264,7 +1459,21 @@ pub(super) fn spawn_missiles(
                 &mut out,
                 &mut play_seq,
             );
-        } // else the caster is already gone
+        } else {
+            let release = launch_world_pos(spawn.caster, None, &units, &joints);
+            launcher.release(
+                spawn.caster,
+                std::slice::from_ref(&go),
+                release,
+                // A hold another queued GO took stays for the release that follows (`0x80f5c1`).
+                takes_hold.then_some(PrecastDrop::Any),
+                precast,
+                &mut commands,
+                &mut sounds,
+                &mut out,
+                &mut play_seq,
+            );
+        }
     }
     // A release ident fired on a caster launches its whole queue from the event's own position.
     for ev in anim_events.read() {
@@ -1275,22 +1484,17 @@ pub(super) fn spawn_missiles(
             continue;
         };
         let release = launch_world_pos(ev.entity, Some(ev.ident), &units, &joints);
-        for go in &gos {
-            let Some(launch) = fire_pos(go, release, &units, &joints, &weapons) else {
-                continue;
-            };
-            launch_go(
-                go,
-                launch,
-                now,
-                &mut commands,
-                &units,
-                &joints,
-                &mut sounds,
-                &mut out,
-                &mut play_seq,
-            );
-        }
+        launcher.release(
+            ev.entity,
+            &gos,
+            release,
+            Some(PrecastDrop::Any),
+            precast,
+            &mut commands,
+            &mut sounds,
+            &mut out,
+            &mut play_seq,
+        );
     }
     // Age every queue, and flush one whose one-shot ended without its keyframe or never started.
     let dt = time.delta_secs();
@@ -1327,22 +1531,17 @@ pub(super) fn spawn_missiles(
     });
     for (caster, gos) in flushes {
         let release = launch_world_pos(caster, None, &units, &joints);
-        for go in &gos {
-            let Some(launch) = fire_pos(go, release, &units, &joints, &weapons) else {
-                continue;
-            };
-            launch_go(
-                go,
-                launch,
-                now,
-                &mut commands,
-                &units,
-                &joints,
-                &mut sounds,
-                &mut out,
-                &mut play_seq,
-            );
-        }
+        launcher.release(
+            caster,
+            &gos,
+            release,
+            Some(PrecastDrop::Any),
+            precast,
+            &mut commands,
+            &mut sounds,
+            &mut out,
+            &mut play_seq,
+        );
     }
 }
 
@@ -1550,6 +1749,7 @@ fn land_short(
         entity: missile.caster,
         spell_id: missile.spell_id,
         kind: CastEventKind::GroundImpact { pos: at },
+        cast_count: 0,
         seq: play_seq.next(),
     });
 }
@@ -1577,7 +1777,7 @@ pub(super) fn move_missiles(
         &units,
         &joints,
         &mut commands,
-        &mut out.kit_fx,
+        &mut out.kit.fx,
     );
     for (entity, mut missile, mut transform) in &mut missiles {
         let hug = missile.follow.filter(|f| f.hugs_target()).map(|f| f.height);
@@ -1590,7 +1790,7 @@ pub(super) fn move_missiles(
                 &missile,
                 &mut commands,
                 &mut sounds,
-                &mut out.kit_fx,
+                &mut out.kit.fx,
             );
             continue;
         };
@@ -1665,7 +1865,7 @@ pub(super) fn move_missiles(
                     &missile,
                     &mut commands,
                     &mut sounds,
-                    &mut out.kit_fx,
+                    &mut out.kit.fx,
                 );
             }
             continue;
@@ -1748,7 +1948,7 @@ pub(super) fn move_missiles(
                 &missile,
                 &mut commands,
                 &mut sounds,
-                &mut out.kit_fx,
+                &mut out.kit.fx,
             );
         }
     }
@@ -1876,7 +2076,7 @@ mod tests {
     use bevy::asset::AssetPlugin;
 
     use super::*;
-    use crate::creature_anim::PlaySeq;
+    use crate::creature_anim::{ChainProcPlay, PlaySeq};
 
     /// `Spell.dbc` Speed such that the test target's 24-unit range is a 1.000 s flight.
     const SPEED: f32 = 24.0;
@@ -1890,6 +2090,7 @@ mod tests {
         app.init_resource::<PendingMissiles>();
         app.init_resource::<PlaySeq>();
         app.add_message::<MissileSpawn>()
+            .add_message::<MissileRelease>()
             .add_message::<AnimSoundEvent>()
             .add_message::<MissileSound>()
             .add_message::<CastEvent>()
@@ -1897,6 +2098,15 @@ mod tests {
             .add_message::<MissileMiss>()
             .add_message::<SpellKitFx>()
             .add_message::<SpellKitSound>()
+            .add_message::<ChainProcPlay>()
+            .add_message::<crate::creature_anim::EmoteAnim>()
+            .add_message::<crate::creature_anim::WoundAnim>()
+            .add_message::<crate::creature_anim::SpellKitShake>()
+            .add_message::<crate::weapon_trail::TrailArm>()
+            .add_message::<crate::creature_anim::BaseAnimRecompute>()
+            .add_message::<crate::creature_anim::SheathRequest>()
+            .add_message::<crate::aura_visual::BodyProcPlay>()
+            .add_message::<crate::aura_visual::AuraProc>()
             .add_message::<crate::entities::dest_fx::GroundBurst>();
         app.add_systems(Update, spawn_missiles);
         app
@@ -1944,6 +2154,7 @@ mod tests {
             trajectory: None,
             shape: MissileShape::default(),
             from: None,
+            seq: 1,
         }
     }
 
@@ -2240,7 +2451,8 @@ mod tests {
                     && e.kind
                         == CastEventKind::Impact {
                             on_caster: true,
-                            at: None
+                            at: None,
+                            caster,
                         })
                 .count(),
             1
@@ -2409,6 +2621,197 @@ mod tests {
         assert_eq!(launched.len(), 1);
         assert_eq!(launched[0].1, hand);
         assert!((launched[0].0 - 1.0).abs() < 1e-3, "full flight time");
+    }
+
+    /// A held missile model hands over at the release: the first launch leaves from its place, the
+    /// next from the marker, and the model goes (`0x72df00`).
+    #[test]
+    fn the_release_launches_from_the_held_model_and_drops_it() {
+        let mut app = app();
+        let hand = Vec3::new(0.0, 1.5, 0.0);
+        let caster = caster(&mut app, hand);
+        let held_at = Vec3::new(0.4, 2.0, -0.3);
+        let root = app
+            .world_mut()
+            .spawn(GlobalTransform::from_translation(held_at))
+            .id();
+        app.world_mut().entity_mut(caster).insert(
+            super::super::spell_fx::FxAttached::holding_for_tests(133, Some(root)),
+        );
+        let target = app
+            .world_mut()
+            .spawn(GlobalTransform::from_xyz(24.0, 1.5, 0.0))
+            .id();
+        app.world_mut().write_message(go(caster, target, true));
+        app.world_mut().write_message(go(caster, target, true));
+        step(&mut app, 0.05);
+        assert!(
+            app.world().get_entity(root).is_ok(),
+            "held until the release"
+        );
+        app.world_mut().write_message(AnimSoundEvent {
+            entity: caster,
+            ident: *b"$CSL",
+            data: 0,
+            anim_id: 0,
+            pos: None,
+        });
+        step(&mut app, 0.05);
+        let mut from: Vec<Vec3> = missiles(&mut app).into_iter().map(|(_, at)| at).collect();
+        from.sort_by(|a, b| a.y.total_cmp(&b.y));
+        assert_eq!(from, vec![hand, held_at]);
+        assert!(app.world().get_entity(root).is_err(), "the model leaves");
+        let att = app
+            .world()
+            .entity(caster)
+            .get::<super::super::spell_fx::FxAttached>()
+            .unwrap();
+        assert!(!att.holds_precast());
+    }
+
+    /// A caster holding a model at `held_at`, keyed to cast count 4 at stamp 2, and its target.
+    fn holding_caster(app: &mut App, hand: Vec3, held_at: Vec3) -> (Entity, Entity, Entity) {
+        let caster = caster(app, hand);
+        let root = app
+            .world_mut()
+            .spawn(GlobalTransform::from_translation(held_at))
+            .id();
+        app.world_mut().entity_mut(caster).insert(
+            super::super::spell_fx::FxAttached::holding_for_tests(133, Some(root))
+                .keyed_for_tests(4, 2),
+        );
+        let target = app
+            .world_mut()
+            .spawn(GlobalTransform::from_xyz(24.0, 1.5, 0.0))
+            .id();
+        (caster, root, target)
+    }
+
+    fn holds(app: &App, caster: Entity) -> bool {
+        app.world()
+            .get::<super::super::spell_fx::FxAttached>(caster)
+            .is_some_and(|a| a.holds_precast())
+    }
+
+    fn release(caster: Entity, seq: u64, kind: ReleaseKind) -> MissileRelease {
+        MissileRelease { caster, seq, kind }
+    }
+
+    /// Only the first missile made takes the held model: a GO's second target leaves from the
+    /// marker (`0x73304d`, `0x72e011`).
+    #[test]
+    fn only_the_first_target_of_a_go_leaves_from_the_held_model() {
+        let mut app = app();
+        let hand = Vec3::new(0.0, 1.5, 0.0);
+        let held_at = Vec3::new(0.4, 2.0, -0.3);
+        let (caster, root, target) = holding_caster(&mut app, hand, held_at);
+        let other = app
+            .world_mut()
+            .spawn(GlobalTransform::from_xyz(0.0, 1.5, 24.0))
+            .id();
+        app.world_mut().write_message(MissileSpawn {
+            targets: vec![(target, None), (other, None)],
+            seq: 3,
+            ..go(caster, target, false)
+        });
+        step(&mut app, 0.05);
+        let mut from: Vec<Vec3> = missiles(&mut app).into_iter().map(|(_, at)| at).collect();
+        from.sort_by(|a, b| a.y.total_cmp(&b.y));
+        assert_eq!(from, vec![hand, held_at]);
+        assert!(app.world().get_entity(root).is_err());
+        assert!(!holds(&app, caster));
+    }
+
+    /// A release launches the queue at once from the held model and the marker and drops the
+    /// hold; one stamped before the hold leaves it (`0x72e240`).
+    #[test]
+    fn a_release_launches_the_queue_and_drops_the_hold() {
+        let mut app = app();
+        let hand = Vec3::new(0.0, 1.5, 0.0);
+        let held_at = Vec3::new(0.4, 2.0, -0.3);
+        let (caster, root, target) = holding_caster(&mut app, hand, held_at);
+        app.world_mut()
+            .write_message(release(caster, 1, ReleaseKind::Fire));
+        step(&mut app, 0.05);
+        assert!(holds(&app, caster), "a release from before the hold");
+        app.world_mut().write_message(MissileSpawn {
+            seq: 3,
+            ..go(caster, target, true)
+        });
+        app.world_mut()
+            .write_message(release(caster, 4, ReleaseKind::Fire));
+        step(&mut app, 0.05);
+        let from: Vec<Vec3> = missiles(&mut app).into_iter().map(|(_, at)| at).collect();
+        assert_eq!(from, vec![held_at], "launched before its keyframe");
+        assert!(app.world().get_entity(root).is_err());
+        assert!(!holds(&app, caster));
+        assert!(!app.world().resource::<PendingMissiles>().releasing(caster));
+    }
+
+    /// A release with no queue still drops the hold (`0x72e1ed`).
+    #[test]
+    fn a_release_with_no_missile_drops_the_hold() {
+        let mut app = app();
+        let (caster, root, _) = holding_caster(&mut app, Vec3::Y, Vec3::X);
+        app.world_mut()
+            .write_message(release(caster, 3, ReleaseKind::Fire));
+        step(&mut app, 0.05);
+        assert!(missiles(&mut app).is_empty());
+        assert!(app.world().get_entity(root).is_err());
+        assert!(!holds(&app, caster));
+    }
+
+    /// A GO launched at once leaves a hold a queued GO took: the release after it launches that GO
+    /// from the held model (`0x80f5c1`, `0x72e011`).
+    #[test]
+    fn an_instant_go_leaves_a_hold_a_queued_go_took() {
+        let mut app = app();
+        let hand = Vec3::new(0.0, 1.5, 0.0);
+        let held_at = Vec3::new(0.4, 2.0, -0.3);
+        let (caster, root, target) = holding_caster(&mut app, hand, held_at);
+        app.world_mut().write_message(MissileSpawn {
+            seq: 3,
+            ..go(caster, target, true)
+        });
+        step(&mut app, 0.05);
+        app.world_mut().write_message(MissileSpawn {
+            seq: 4,
+            ..go(caster, target, false)
+        });
+        step(&mut app, 0.05);
+        let from: Vec<Vec3> = missiles(&mut app).into_iter().map(|(_, at)| at).collect();
+        assert_eq!(from, vec![hand], "the instant GO leaves from the marker");
+        assert!(holds(&app, caster), "kept for the queued GO");
+        app.world_mut()
+            .write_message(release(caster, 5, ReleaseKind::Fire));
+        step(&mut app, 0.05);
+        let mut from: Vec<Vec3> = missiles(&mut app).into_iter().map(|(_, at)| at).collect();
+        from.sort_by(|a, b| a.y.total_cmp(&b.y));
+        assert_eq!(from, vec![hand, held_at]);
+        assert!(app.world().get_entity(root).is_err());
+        assert!(!holds(&app, caster));
+    }
+
+    /// The end-cast clear drops only its own cast's hold and launches nothing (`0x71bff0`).
+    #[test]
+    fn the_end_cast_clear_drops_only_its_cast_s_hold() {
+        let mut app = app();
+        let (caster, root, target) = holding_caster(&mut app, Vec3::Y, Vec3::X);
+        app.world_mut().write_message(MissileSpawn {
+            seq: 3,
+            ..go(caster, target, true)
+        });
+        app.world_mut()
+            .write_message(release(caster, 4, ReleaseKind::Clear(5)));
+        step(&mut app, 0.05);
+        assert!(holds(&app, caster), "another cast's count");
+        app.world_mut()
+            .write_message(release(caster, 5, ReleaseKind::Clear(4)));
+        step(&mut app, 0.05);
+        assert!(app.world().get_entity(root).is_err());
+        assert!(!holds(&app, caster));
+        assert!(missiles(&mut app).is_empty(), "a clear launches nothing");
+        assert!(app.world().resource::<PendingMissiles>().releasing(caster));
     }
 
     /// A trajectory shot lands at the packet's delay on an arc above the straight line, and a
@@ -2585,6 +2988,7 @@ mod tests {
                 },
             ),
         ));
+        app.insert_resource(crate::ui_action::Spells::empty_for_tests());
         let caster = caster(&mut app, Vec3::ZERO);
         let target = app
             .world_mut()
@@ -2635,17 +3039,160 @@ mod tests {
                 .drain()
                 .filter(|e| {
                     e.entity == target
-                        && e.kind
-                            == CastEventKind::Impact {
+                        && matches!(
+                            e.kind,
+                            CastEventKind::Impact {
                                 on_caster: false,
                                 at: None,
+                                ..
                             }
+                        )
                 })
                 .count();
         }
         assert!(reaped, "the flight's end reaps the targeting kit");
         assert_eq!(impacts, 3, "every copy lands");
         assert!(missiles(&mut app).is_empty());
+    }
+
+    /// The targeting kit plays whole at stage 2 naming the caster, so its beam runs from the caster
+    /// to the target, its anim is a recompute and its body and node procs run (`0x702906`,
+    /// `0x702923`); the flight's end clears its models by spell and fade stamp, which its beam
+    /// does not carry (`0x6ff410`, `0x744cc8`).
+    #[test]
+    fn the_targeting_kit_plays_whole_from_the_caster_and_its_models_end_with_the_flight() {
+        use benilla_formats::{char_proc_type, CharProc, SpellVisualCatalog, VisualKit};
+        const KIT: u32 = 8730;
+        const EFFECT: u32 = 3807;
+        let mut app = app();
+        app.init_resource::<crate::net::GuidIndex>()
+            .init_resource::<crate::net::SelfGuid>()
+            .add_systems(Update, move_missiles.after(spawn_missiles));
+        let mut slots = [None; 9];
+        slots[2] = Some(EFFECT);
+        app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
+            HashMap::new(),
+            HashMap::from([(
+                KIT,
+                VisualKit {
+                    id: KIT,
+                    effect_slots: slots,
+                    anim_id: Some(14),
+                    char_proc_slots: [
+                        Some(CharProc {
+                            ty: char_proc_type::CHAIN_CHANNEL,
+                            params: [9.0, 0.0, 1.0, 0.0],
+                        }),
+                        Some(CharProc {
+                            ty: char_proc_type::ANIM_RATE,
+                            params: [0.0; 4],
+                        }),
+                        Some(CharProc {
+                            ty: 13, // the flash
+                            params: [255.0, 0.0, 0.5, 0.0],
+                        }),
+                        None,
+                    ],
+                    ..Default::default()
+                },
+            )]),
+            HashMap::from([(EFFECT, "Spells\\Mark.mdx".to_string())]),
+        )));
+        app.insert_resource(crate::ui_action::Spells::empty_for_tests());
+        let caster = caster(&mut app, Vec3::ZERO);
+        let target = app
+            .world_mut()
+            .spawn(GlobalTransform::from_xyz(24.0, 0.0, 0.0))
+            .id();
+        let mut spawn = go(caster, target, false);
+        spawn.shape.targeting_kit = KIT;
+        let spell_id = spawn.spell_id;
+        app.world_mut().write_message(spawn);
+        step(&mut app, 0.016);
+        let plays: Vec<ChainProcPlay> = app
+            .world_mut()
+            .resource_mut::<Messages<ChainProcPlay>>()
+            .drain()
+            .collect();
+        let [play] = plays[..] else {
+            panic!("one beam play, got {}", plays.len());
+        };
+        assert_eq!(
+            (play.entity, play.from, play.kit_id, play.proc.effect_id),
+            (target, Some(caster), KIT, 9)
+        );
+        let world = app.world_mut();
+        let recomputes: Vec<_> = world
+            .resource_mut::<Messages<crate::creature_anim::BaseAnimRecompute>>()
+            .drain()
+            .map(|r| (r.entity, r.anim_id))
+            .collect();
+        assert_eq!(
+            recomputes,
+            vec![(target, 14)],
+            "stage 2 compares, never plays"
+        );
+        assert!(world
+            .resource_mut::<Messages<crate::creature_anim::EmoteAnim>>()
+            .drain()
+            .next()
+            .is_none());
+        let flashes: Vec<_> = world
+            .resource_mut::<Messages<crate::aura_visual::BodyProcPlay>>()
+            .drain()
+            .map(|b| (b.entity, b.proc.ty))
+            .collect();
+        assert_eq!(flashes, vec![(target, 13)]);
+        let nodes: Vec<_> = world
+            .resource_mut::<Messages<crate::aura_visual::AuraProc>>()
+            .drain()
+            .collect();
+        let [crate::aura_visual::AuraProc::Begin {
+            entity,
+            kit_id,
+            ref nodes,
+            ..
+        }] = nodes[..]
+        else {
+            panic!("one node edge, got {nodes:?}");
+        };
+        assert_eq!((entity, kit_id, nodes.len()), (target, KIT, 1));
+        let fx: Vec<SpellKitFx> = world
+            .resource_mut::<Messages<SpellKitFx>>()
+            .drain()
+            .collect();
+        let [SpellKitFx::Begin {
+            entity,
+            class: FxClass::Targeting(stamp),
+            persistent: true,
+            ..
+        }] = fx[..]
+        else {
+            panic!("one stamped hold, got {}", fx.len());
+        };
+        assert_eq!(entity, target);
+        let mut reaps = Vec::new();
+        for _ in 0..40 {
+            step(&mut app, 0.05);
+            reaps.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<SpellKitFx>>()
+                    .drain()
+                    .filter_map(|f| match f {
+                        SpellKitFx::Reap {
+                            entity,
+                            spell_id,
+                            class,
+                        } => Some((entity, spell_id, class)),
+                        SpellKitFx::Begin { .. } | SpellKitFx::Hold { .. } => None,
+                    }),
+            );
+        }
+        assert_eq!(
+            reaps,
+            vec![(target, spell_id, FxClass::Targeting(stamp))],
+            "the stamped models alone; no beam clear exists for the flight"
+        );
     }
 
     /// On a beam spell, a flag-0x1 targeting kit on a unit target waits for the beam to reach the

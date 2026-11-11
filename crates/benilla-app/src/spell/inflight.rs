@@ -229,6 +229,9 @@ pub(crate) struct AutoRepeatActive(pub Option<u32>);
 pub(crate) const SPELL_INTERRUPT_MOVEMENT: u32 = 0x1; // SpellRec+0x54 InterruptFlags (SPELL_INTERRUPT_FLAG_MOVEMENT)
 const CHANNEL_INTERRUPT_MOVING: u32 = 0x8; // SpellRec+0x5c ChannelInterruptFlags (AURA_INTERRUPT_MOVING_CANCELS)
 
+/// The wire reason the movement cancel ends the cast with (`0x8066ce`).
+const CANCEL_REASON: u8 = 0x28;
+
 /// A directional move start or a jump happened this frame (the `0x10f0` mask; there is no
 /// autorun yet). Set by `player::control`, consumed by [`local_self_cancel`].
 #[derive(Resource, Default)]
@@ -360,13 +363,18 @@ impl SelfCancel<'_, '_> {
                         }
                         // `spell_failed_other`'s self reap, run early so the echo finds it done.
                         if let Some(e) = self_e {
-                            if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
+                            let running = casting.get(e).ok().filter(|c| c.spell_id == spell_id);
+                            if running.is_some() {
                                 ecs.entity(e).remove::<Casting>();
                             }
                             cast_events.write(CastEvent {
                                 entity: e,
                                 spell_id,
-                                kind: CastEventKind::Fail,
+                                kind: CastEventKind::Fail {
+                                    interrupt: false,
+                                    wire_reason: CANCEL_REASON,
+                                },
+                                cast_count: running.map_or(0, |c| c.cast_count),
                                 seq: play_seq.next(),
                             });
                         }
@@ -562,6 +570,7 @@ mod tests {
             let self_e = app.world().resource::<GuidIndex>().0[&10];
             app.world_mut().entity_mut(self_e).insert(Casting {
                 spell_id,
+                cast_count: 0,
                 until: None,
             });
         }
