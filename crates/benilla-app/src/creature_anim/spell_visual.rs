@@ -20,7 +20,8 @@ use crate::unit_auras::UnitAuras;
 use benilla_assets::{LockRecover, WorldAssets};
 
 use super::{
-    BaseAnimRecompute, CastEvent, CastEventKind, CastHold, EmoteAnim, SpellGoTargets, WoundAnim,
+    AnimPlayFlags, BaseAnimRecompute, CastEvent, CastEventKind, CastHold, EmoteAnim,
+    SpellGoTargets, WoundAnim,
 };
 
 /// The 1.12 client's missile model for an unresolvable visual, shipped in the MPQs.
@@ -144,6 +145,10 @@ pub(crate) struct FxSlot {
     pub(crate) scale: f32,
     /// The `SpellVisualKitModelAttach` row that places it, its offset and turn (`0x6f84f0`).
     pub(crate) attach: Option<benilla_formats::ModelAttach>,
+    /// Kit flag `0x200`: its particles and ribbons keep their own alpha (`0x74483a`).
+    pub(crate) own_alpha: bool,
+    /// The kit's anim, which the effect carries in the unit's effect list (`0x71f591`).
+    pub(crate) kit_anim: Option<super::KitAnim>,
 }
 
 /// A kit's attach-point effect models (kit fields 3 to 11 → `SpellVisualEffectName`), consumed by
@@ -512,6 +517,8 @@ fn play_point_targeting_kit(
 /// A kit's effect models on a unit: its slots, its weapon effects (`0x73a6c0`) and its
 /// `SpellVisualKitModelAttach` rows (`0x745a7e`); one naming no model path is skipped.
 fn resolve_kit_effects(visuals: &SpellVisualCatalog, kit: &VisualKit) -> Vec<FxSlot> {
+    let own_alpha = kit.flags & benilla_formats::kit_flag::OWN_MODEL_ALPHA != 0;
+    let kit_anim = super::KitAnim::of(kit);
     let slot = |tag, effect, attach| {
         visuals.effect_path(effect).map(|path| FxSlot {
             tag,
@@ -519,6 +526,8 @@ fn resolve_kit_effects(visuals: &SpellVisualCatalog, kit: &VisualKit) -> Vec<FxS
             path: path.to_string(),
             scale: 1.0,
             attach,
+            own_alpha,
+            kit_anim,
         })
     };
     let rows = visuals.model_attachments(kit.id).iter().filter_map(|a| {
@@ -543,6 +552,8 @@ fn precast_missile_slot(visuals: &SpellVisualCatalog, stages: &VisualStages) -> 
         path: path.to_string(),
         scale: 1.0,
         attach: None,
+        own_alpha: false,
+        kit_anim: None,
     })
 }
 
@@ -855,8 +866,8 @@ struct KitPlay {
     sound: bool,
     /// The models' animation lifecycle ([`FxStage`]).
     stage: FxStage,
-    /// The stage-2 (state kit) play: the kit player branches around the only anim play, so the id
-    /// is only compared with what the unit plays, a mismatch spent on a [`BaseAnimRecompute`].
+    /// The stage-2 (state kit) play: the kit player branches around the one-shot play, so the id
+    /// is compared with what the unit plays, a mismatch spent on a [`BaseAnimRecompute`].
     stage_2: bool,
     /// The play's caster guid as an entity; only a stage-2 play hands it to the beam.
     caster: Option<Entity>,
@@ -877,9 +888,27 @@ impl KitPlay {
     };
 }
 
-/// Kit flags `0x4` and `0x10`, either of which skips the Special remap (`0x7386fc`).
-const KIT_RAW_SPECIAL: u32 =
-    benilla_formats::kit_flag::RAW_ANIM | benilla_formats::kit_flag::NO_SPECIAL_REMAP;
+/// A kit play's anim flags: its own, and the weapons kept by `Attributes & 0x40000` (`0x73b1c9`)
+/// or by a missile model of -1 or -2 in the spell's own first `SpellVisual` row, never the
+/// low-violence pick nor the ranged weapon's merge (`0x74532f`, `0x73b1dc`).
+fn kit_anim_play(
+    spells: &crate::ui_action::Spells,
+    visuals: &SpellVisualCatalog,
+    spell_id: u32,
+    kit: &VisualKit,
+) -> AnimPlayFlags {
+    let mut play = AnimPlayFlags::from_kit(kit.flags);
+    let Some(def) = spells.catalog.get(spell_id) else {
+        return play;
+    };
+    let weapon_missile = visuals
+        .stages(def.visual)
+        .is_some_and(|s| matches!(s.missile_model as i32, -2 | -1));
+    if def.attributes & 0x40000 != 0 || weapon_missile {
+        play.0 |= AnimPlayFlags::KEEP_WEAPONS;
+    }
+    play
+}
 
 fn play_kit(
     entity: Entity,
@@ -904,7 +933,11 @@ fn play_kit(
     if let Some(anim_id) = kit.anim_id {
         if play.stage_2 {
             // Stage 2 compares, never plays; the driver holds the armed id and compares.
-            out.recomputes.write(BaseAnimRecompute { entity, anim_id });
+            out.recomputes.write(BaseAnimRecompute {
+                entity,
+                anim_id,
+                play: kit_anim_play(out.spells, visuals, spell_id, kit),
+            });
         } else if (8..=10).contains(&anim_id) {
             // A CombatWound id (8 to 10) lays a severity-0 wound in the blend slot, not the kit's
             // own id.
@@ -915,7 +948,7 @@ fn play_kit(
                 anim_id,
                 seq,
                 via_player: false,
-                remap_special: kit.flags & KIT_RAW_SPECIAL == 0,
+                play: kit_anim_play(out.spells, visuals, spell_id, kit),
             });
         }
     }
@@ -1042,6 +1075,7 @@ fn play_proc_nodes(
             spell_id,
             nodes,
             kit_id: kit.id,
+            body_only: kit.flags & benilla_formats::kit_flag::FADE_BODY_ONLY != 0,
         });
     }
 }
@@ -1325,11 +1359,8 @@ struct ImpactPlay {
 struct MissileHit {
     /// The caster both of its plays carry (`0x702f5f`).
     caster: Entity,
-    /// The target's health is above 0 (`0x702f17`).
-    alive: bool,
-    /// The target holds an aura of the spell (`0x702f25`), `Some(true)` with an effect bit set
-    /// (`0x702f3f`).
-    aura_active: Option<bool>,
+    /// What the target holds of the spell as the missile arrives (`0x702f11`).
+    aura: AuraHeld,
 }
 
 impl MissileHit {
@@ -1339,25 +1370,41 @@ impl MissileHit {
         target: Option<(&ObjectStore, Option<&UnitAuras>)>,
         spell_id: u32,
     ) -> Self {
-        let alive = target.is_some_and(|(s, _)| s.0.unit_health().is_some_and(|h| h > 0));
-        let aura_active = target.and_then(|(_, a)| a).and_then(|auras| {
-            let mut held = auras.iter().filter(|a| a.spell_id == spell_id).peekable();
-            held.peek()?;
-            Some(held.any(|a| a.flags & AURA_EFFECT_BITS != 0))
+        let aura = target.map_or(AuraHeld::default(), |(store, auras)| {
+            AuraHeld::of(store, auras, spell_id)
         });
+        Self { caster, aura }
+    }
+
+    /// The arrival replays the state kit on a target holding the aura (`0x702f2e`).
+    fn plays_state(&self, kit: &VisualKit) -> bool {
+        self.aura.replays(kit.flags)
+    }
+}
+
+/// What a missile's target holds of the spell when it arrives (`0x702f11`).
+#[derive(Clone, Copy, Debug, Default)]
+struct AuraHeld {
+    /// Alive and holding the spell in a slot (`0x702f25`).
+    held: bool,
+    /// Holding it with an effect bit set (`0x702f3f`).
+    applied: bool,
+}
+
+impl AuraHeld {
+    /// The target's hold of `spell_id`: a dead or unknown unit holds nothing.
+    fn of(store: &ObjectStore, auras: Option<&UnitAuras>, spell_id: u32) -> Self {
+        let alive = store.0.unit_health().unwrap_or(0) > 0;
+        let auras = auras.filter(|_| alive);
         Self {
-            caster,
-            alive,
-            aura_active,
+            held: auras.is_some_and(|a| a.holds_spell(spell_id)),
+            applied: auras.is_some_and(|a| a.has_applied(spell_id)),
         }
     }
 
-    /// The state kit plays on a living target holding the aura, an active one when the kit asks.
-    fn plays_state(&self, kit: &VisualKit) -> bool {
-        self.alive
-            && self.aura_active.is_some_and(|active| {
-                active || kit.flags & benilla_formats::kit_flag::STATE_NEEDS_ACTIVE_AURA == 0
-            })
+    /// Whether the state kit replays: held, and applied under kit flag `0x80` (`0x702f2e`).
+    fn replays(self, kit_flags: u32) -> bool {
+        self.held && (self.applied || kit_flags & benilla_formats::kit_flag::ACTIVE_AURA_ONLY == 0)
     }
 }
 
@@ -1531,6 +1578,7 @@ fn play_precast_kit(
             ranged,
             start_anim,
             seq,
+            play: AnimPlayFlags::from_kit(kit.flags),
         });
         pending.insert(entity, Some(spell_id));
     }
@@ -1578,6 +1626,7 @@ fn play_channel_kit(
             ranged: false, // no basic shot channels
             start_anim: None,
             seq: 0,
+            play: AnimPlayFlags::from_kit(kit.flags),
         });
         pending.insert(entity, Some(spell_id));
     }
@@ -2297,6 +2346,8 @@ type AuraArmLanes<'w, 's> = (
     MessageWriter<'w, crate::weapon_trail::TrailArm>,
     Option<ResMut<'w, BeamKitWaits>>,
     Res<'w, Time>,
+    Commands<'w, 's>,
+    Query<'w, 's, &'static super::StateKitAnims>,
 );
 
 /// One state-kit play the applied core admits: the unit, the spell and the play's guid;
@@ -2342,8 +2393,8 @@ fn clear_spell_effects(
 /// (`0x71e930`) runs only for a stored slot: it clears every effect of the spell on the unit
 /// (`0x743b40(spellId, force=1)`, `0x71ebda`), so losing one of two slots holding a spell takes
 /// what the other drew, then plays the state-done kit ([`StateDoneKit`]). The aura reader removes
-/// before it adds (`0x72f5d0`). The add edge rings the kit sound and never plays the kit's anim:
-/// stage 2 compares it with what the unit plays, a mismatch spent on a [`BaseAnimRecompute`].
+/// before it adds (`0x72f5d0`). The add edge rings the kit sound and plays the kit's anim only when
+/// it is dead or dying: stage 2 compares it with what the unit plays, a mismatch spent on a [`BaseAnimRecompute`].
 /// `CharProc` columns go out as [`AuraProc`] edges and beams, and a kit arms for any leg (Stealth's
 /// kit 312 is one `CharProc`).
 ///
@@ -2391,6 +2442,8 @@ pub(crate) fn arm_aura_state_fx(
         mut trails,
         mut waits,
         time,
+        mut commands,
+        state_anims,
     ) = lanes;
     // No active player sees nothing gated (`0x72496a` returns on a null player).
     let vision = self_store
@@ -2487,6 +2540,7 @@ pub(crate) fn arm_aura_state_fx(
     } else {
         changed.iter().filter_map(|e| units.get(e).ok()).collect()
     };
+    let scanned: Vec<Entity> = scan.iter().map(|&(e, _)| e).collect();
     for (entity, auras) in scan {
         let prev = state.slots.remove(&entity).unwrap_or_default();
         // The removal core for every stored slot whose spell left, before any add (`0x72f5d0`):
@@ -2597,6 +2651,8 @@ pub(crate) fn arm_aura_state_fx(
             false
         });
     }
+    // The units' state-kit anims, kept as long as an armed slot holds the spell.
+    let mut touched: EntityHashMap<Vec<(u32, super::KitAnim)>> = EntityHashMap::default();
     for StatePlay {
         entity,
         spell_id,
@@ -2663,7 +2719,39 @@ pub(crate) fn arm_aura_state_fx(
         // The stage-2 anim leg, on the add edge only: an aura refreshed in place keeps its
         // spell, and the slot already storing it is skipped (`0x7248a8`).
         if let Some(anim_id) = kit.anim_id {
-            recomputes.write(BaseAnimRecompute { entity, anim_id });
+            recomputes.write(BaseAnimRecompute {
+                entity,
+                anim_id,
+                play: kit_anim_play(spells, &visuals.0, spell_id, &kit),
+            });
+        }
+        touched
+            .entry(entity)
+            .or_default()
+            .extend(super::KitAnim::of(&kit).map(|k| (spell_id, k)));
+    }
+    for &entity in &scanned {
+        touched.entry(entity).or_default();
+    }
+    for (entity, added) in touched {
+        let before = state_anims.get(entity).map_or(&[][..], |s| s.0.as_slice());
+        let holds = |spell_id: u32| {
+            state
+                .slots
+                .get(&entity)
+                .is_some_and(|slots| slots.iter().any(|s| s.armed && s.spell_id == spell_id))
+        };
+        let mut anims: Vec<(u32, super::KitAnim)> =
+            before.iter().filter(|(s, _)| holds(*s)).copied().collect();
+        anims.extend(added);
+        if anims.as_slice() != before {
+            if anims.is_empty() {
+                commands.entity(entity).try_remove::<super::StateKitAnims>();
+            } else {
+                commands
+                    .entity(entity)
+                    .try_insert(super::StateKitAnims(anims));
+            }
         }
     }
     // Streamed units despawn on range-out; drop their rows.
@@ -2746,6 +2834,8 @@ pub(super) fn arm_loot_fx(
                     path: path.to_string(),
                     scale: 1.0,
                     attach: None,
+                    own_alpha: false,
+                    kit_anim: None,
                 }],
             });
         } else if !lootable && armed.remove(&entity) {
@@ -2896,6 +2986,8 @@ pub(super) fn arm_go_loot_fx(
                     path: path.to_string(),
                     scale,
                     attach: None,
+                    own_alpha: false,
+                    kit_anim: None,
                 }],
             });
         } else if armed.remove(&entity) {
@@ -2945,6 +3037,8 @@ pub(super) fn arm_level_up_fx(
                 path: path.to_string(),
                 scale: 1.0,
                 attach: None,
+                own_alpha: false,
+                kit_anim: None,
             }],
         });
     }
@@ -2986,6 +3080,8 @@ pub(super) fn arm_mount_poof_fx(
                 path: path.to_string(),
                 scale: 1.0,
                 attach: None,
+                own_alpha: false,
+                kit_anim: None,
             }],
         });
     }
@@ -3035,6 +3131,8 @@ fn hardcoded_one_shot(visuals: &SpellVisuals, entity: Entity, name: &str) -> Opt
             path: path.to_string(),
             scale: 1.0,
             attach: None,
+            own_alpha: false,
+            kit_anim: None,
         }],
     })
 }

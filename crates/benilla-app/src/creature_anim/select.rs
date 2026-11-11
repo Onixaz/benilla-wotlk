@@ -18,6 +18,8 @@ const MOVING_EPSILON: f32 = 0.1;
 pub(super) const STAND: u16 = 0;
 
 pub(super) const DEATH: u16 = 1;
+/// DeathStart, whose presence on the model picks the bracketed dead pose (`0x71dfc0`).
+pub(super) const DEATH_START: u16 = 466;
 
 /// ShuffleLeft (11): once armed it plays out its clip, not ending with the turn.
 pub(super) const SHUFFLE_LEFT: u16 = 11;
@@ -663,6 +665,16 @@ pub(super) fn sheath_clip(sheath_type: u8) -> u16 {
 /// ReadyThrown 108 is not one: it stows, and the driver's snap bracket keeps the thrown wind-up.
 const SHEATH_RANGED_EXEMPT: [u16; 9] = [46, 49, 105, 106, 107, 109, 110, 111, 112];
 
+/// A clip's WeaponFlags under a play that keeps the weapons out: no `& 4` stow, and no `& 0x10`
+/// stow unless ranged-drawn (`0x738180`).
+pub(super) fn kept_weapon_flags(weapon_flags: u32, cur: u8, keeps: bool) -> u32 {
+    match (keeps, cur) {
+        (false, _) => weapon_flags,
+        (true, 2) => weapon_flags & !4,
+        (true, _) => weapon_flags & !(4 | 0x10),
+    }
+}
+
 /// The per-animation sheath reconcile: the state the clip's WeaponFlags force, first match winning,
 /// each a snap. `& 4` stows; mounted stows on every recompute and dismount restores nothing
 /// (inferred); `& 0x10` stows, bar the ranged exemptions while ranged-drawn; engaged or `& 0x20`
@@ -700,11 +712,20 @@ pub(super) fn reconcile_sheath(
     None
 }
 
-/// Whether a looping base arm keeps the head variation rather than rolling: with an auto-attack
-/// target, a cast or channel held, or a combat, cast or ready clip leaving. The ids here
-/// approximate the client's four classifiers.
+/// Whether a base arm's classifiers hold: an auto-attack target, a cast or channel held, or a
+/// combat, cast or ready clip leaving. The ids here approximate the client's four classifiers.
 pub(super) fn arm_forces_head(engaged: bool, casting: bool, outgoing: u16) -> bool {
     engaged || casting || matches!(outgoing, 16..=19 | 25..=29 | 51..=54)
+}
+
+/// Whether an arm of `id` takes the head variation: under the classifiers, a Stand or a
+/// ready-behaviour (25 to 29) id only; every other arm rolls (`0x737f51`-`0x737f83`).
+pub(super) fn takes_head(
+    relaxed: bool,
+    id: u16,
+    catalog: Option<&benilla_formats::AnimDataCatalog>,
+) -> bool {
+    !relaxed && (id == 0 || (25..=29).contains(&behavior_of(id, catalog)))
 }
 
 /// The wound flinch (`0x736640`): crit CombatCritical, engaged CombatWound, else StandWound.
@@ -824,6 +845,69 @@ pub(super) fn route_mounted(behavior: u16) -> MountedRoute {
         mount,
         rider_upper: !mount && is_upper_set(behavior),
     }
+}
+
+/// A dead or dying anim by its row's BehaviorID (`0x71dde0`); an id with no row is neither.
+pub(super) fn is_dead_or_dying(
+    id: u16,
+    catalog: Option<&benilla_formats::AnimDataCatalog>,
+) -> bool {
+    catalog
+        .and_then(|c| c.behavior(id))
+        .is_some_and(|b| matches!(b, 1 | 6 | 131 | 132 | 466..=468 | 472))
+}
+
+/// The first dying kit flagged `0x4` names the dead pose, played raw (`0x724185`); its other bits
+/// never leave the pick.
+pub(super) fn raw_death_kit(kits: &[super::KitAnim]) -> Option<u16> {
+    kits.iter()
+        .find(|k| k.play.0 & super::AnimPlayFlags::RAW != 0)
+        .map(|k| k.anim_id)
+}
+
+/// A display swap's replay flags (`0x73e7c6`): the dying kits' bits gathered up to the first
+/// flagged `0x4` or `0x8`, passed only when one is; otherwise none.
+pub(super) fn replay_flags(kits: &[super::KitAnim]) -> super::AnimPlayFlags {
+    use super::AnimPlayFlags as P;
+    let mut flags = 0;
+    for k in kits {
+        flags |= k.play.0;
+        if flags & (P::RAW | P::NO_TIER) != 0 {
+            return P(flags);
+        }
+    }
+    P(0)
+}
+
+/// The dead pose the base pick chooses past the raw kit (`0x724060`): a model with DeathStart
+/// (466) holds it in a fall and DeathEndHold (472) otherwise; else Dead (6), Drowned (132) when
+/// swimming, unless a far fall or a dying anim plays. `None` keeps what plays.
+pub(super) fn choose_death_pose(
+    flags: u32,
+    torso: Option<u16>,
+    has_death_start: bool,
+    catalog: Option<&benilla_formats::AnimDataCatalog>,
+) -> Option<u16> {
+    let falling = flags & move_flags::FALLING != 0;
+    if has_death_start {
+        return Some(if falling { DEATH_START } else { 472 });
+    }
+    let far = falling && flags & move_flags::FALLING_FAR != 0;
+    if far || torso.is_some_and(|t| is_dying(t, catalog)) {
+        return None;
+    }
+    Some(if flags & move_flags::SWIMMING != 0 {
+        132
+    } else {
+        6
+    })
+}
+
+/// A dying anim, the fall and not the lying pose (`0x71dd80`).
+pub(super) fn is_dying(id: u16, catalog: Option<&benilla_formats::AnimDataCatalog>) -> bool {
+    catalog
+        .and_then(|c| c.behavior(id))
+        .is_some_and(|b| matches!(b, 1 | 131 | 466 | 467))
 }
 
 /// The BehaviorIDs forced full-body whatever the state: dead or dying (`0x71dde0`) and the special
