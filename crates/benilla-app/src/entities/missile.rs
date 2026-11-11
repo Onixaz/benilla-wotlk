@@ -651,8 +651,8 @@ fn item_model_file(
     Some((dir, model, row.model_texture[col].clone()))
 }
 
-/// The folder an item's `InventoryType` keeps its model in (`0x732125`). A head item (1) is not
-/// built: the reference names its file by a race row keyed on the sex byte (`0x7321ad`).
+/// The folder an item's `InventoryType` keeps its model in (`0x732125`); a head item's file,
+/// `<model>.mdx_<prefix><sex>.mdx`, is never shipped, so it flies the error cube (`0x732213`).
 fn item_folder(inventory_type: u32) -> Option<&'static str> {
     Some(match inventory_type {
         1 => return None,
@@ -662,6 +662,30 @@ fn item_folder(inventory_type: u32) -> Option<&'static str> {
         27 => "Quiver",
         _ => "Weapon",
     })
+}
+
+/// A held item missile's scale, the caster's seat for the item's `InventoryType` as the world scale
+/// of its attachment (`0x73230c`); `None` with no posed model or no such attachment.
+fn item_seat_scale(
+    caster: Entity,
+    inventory_type: u32,
+    units: &AttachPosQuery,
+    joints: &Query<&GlobalTransform>,
+) -> Option<f32> {
+    let attachment = match inventory_type {
+        1 => 11,
+        14 => 0,
+        22 => 2,
+        24 | 25 => return None,
+        _ => 1,
+    };
+    let (_, bones, pose) = units.get(caster).ok()?;
+    let (bones, pose) = bones.zip(pose)?;
+    let &(bone, _) = bones.points.get(&attachment)?;
+    let model = *pose.model.get(bone as usize)?;
+    let root = joints.get(pose.joints_root).ok()?;
+    // The attachment matrix's first row, the WoW +X axis, Bevy -Z.
+    Some((root.affine() * model).transform_vector3(Vec3::Z).length())
 }
 
 /// A travelling spell's deferred miss word. `SMSG_SPELL_GO` skips its inline word when the
@@ -1821,7 +1845,7 @@ pub(super) fn spawn_missiles(
                     ensure_ammo_model(&mut fx, d, display_id, &asset_server)?,
                     display_id,
                 ),
-                MissileItem::Held(model) => (
+                MissileItem::Held(model) | MissileItem::Wire(model) => (
                     ensure_item_model(&mut fx, d, model, &asset_server)?,
                     model.display_id,
                 ),
@@ -1863,13 +1887,25 @@ pub(super) fn spawn_missiles(
         }
         // A missile with a caster takes its held model when it is the first made since the hold.
         let takes_hold = spawn.from.is_none() && precast.hand(spawn.caster, spawn.seq);
+        let mut queued = spawn.clone();
+        // A held slot's named item takes the caster's seat scale, a taken hold none (`0x73230c`).
+        if let (Some(MissileItem::Held(model)), false) = (spawn.item, takes_hold) {
+            let row = displays
+                .as_deref()
+                .and_then(|d| d.catalog.get(model.display_id));
+            let named = row.is_some_and(|r| r.model.iter().any(Option::is_some));
+            queued.scale = named
+                .then(|| item_seat_scale(spawn.caster, model.inventory_type, &units, &joints))
+                .flatten()
+                .unwrap_or(1.0);
+        }
         let go = QueuedGo {
-            spawn: spawn.clone(),
+            spawn: queued,
             key,
             queued: 0.0,
             saw_oneshot: false,
             takes_hold,
-            glow,
+            glow: if takes_hold { 0 } else { glow },
         };
         if spawn.awaits_release {
             pending.0.entry(spawn.caster).or_default().push(go);
@@ -2851,6 +2887,75 @@ mod tests {
                 .map(|m| m.glow)
                 .collect();
             assert_eq!(glows, vec![glow], "{item:?}");
+        }
+    }
+
+    /// A held item's missile takes the world scale of the caster's seat for its `InventoryType`
+    /// (`0x73230c`); the ammo ids and an item with no model fly at 1.
+    #[test]
+    fn a_held_item_missile_takes_its_seats_scale() {
+        let held = |display_id, inventory_type| {
+            MissileItem::Held(ItemModel {
+                display_id,
+                inventory_type,
+            })
+        };
+        let wire = MissileItem::Wire(ItemModel {
+            display_id: 77,
+            inventory_type: 13,
+        });
+        for (item, scale) in [
+            (held(77, 13), 3.0),
+            (held(77, 22), 1.0), // no left-hand attachment
+            (held(77, 25), 1.0), // thrown: no seat
+            (held(78, 13), 1.0), // no model
+            (wire, 1.0),
+        ] {
+            let mut app = app();
+            app.insert_resource(ItemDisplays::icons_for_tests(
+                benilla_formats::ItemDisplayCatalog::from_displays(HashMap::from([(
+                    77,
+                    benilla_formats::ItemDisplay {
+                        model: [Some("Axe.mdx".into()), None],
+                        ..Default::default()
+                    },
+                )])),
+            ));
+            for key in ["item:77:13", "item:77:22", "item:77:25", ERROR_CUBE] {
+                app.world_mut()
+                    .resource_mut::<SpellFx>()
+                    .models
+                    .insert(key.to_string(), super::super::empty_shell());
+            }
+            let caster = caster(&mut app, Vec3::ZERO);
+            *app.world_mut().get_mut::<GlobalTransform>(caster).unwrap() =
+                GlobalTransform::from(Transform::from_scale(Vec3::splat(1.5)));
+            let mut world = app.world_mut().entity_mut(caster);
+            world
+                .get_mut::<BoneAttach>()
+                .unwrap()
+                .points
+                .insert(1, (0, Vec3::ZERO));
+            world
+                .get_mut::<benilla_world::rig_anim::RigPose>()
+                .unwrap()
+                .model[0] = bevy::math::Affine3A::from_scale(Vec3::splat(2.0));
+            let target = app
+                .world_mut()
+                .spawn(GlobalTransform::from_xyz(24.0, 0.0, 0.0))
+                .id();
+            let mut spawn = go(caster, target, false);
+            spawn.item = Some(item);
+            app.world_mut().write_message(spawn);
+            step(&mut app, 0.016);
+            let scales: Vec<f32> = app
+                .world_mut()
+                .query::<&Missile>()
+                .iter(app.world())
+                .map(|m| m.scale)
+                .collect();
+            assert_eq!(scales.len(), 1, "{item:?}");
+            assert!((scales[0] - scale).abs() < 1e-5, "{item:?}: {}", scales[0]);
         }
     }
 

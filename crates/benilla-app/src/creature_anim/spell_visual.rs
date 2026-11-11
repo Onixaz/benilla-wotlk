@@ -250,8 +250,10 @@ pub(crate) struct KitEffectClear {
 pub(crate) enum MissileItem {
     /// Column 8's 0 with the GO's ammo: the ammo model (`0x73398e`).
     Ammo(u32),
-    /// Column 8's -1 to -5: a held slot's item or the GO's ammo, by its own folder (`0x732100`).
+    /// Column 8's -1 to -3: a held slot's item, sized by the caster's seat for it (`0x7338f1`).
     Held(ItemModel),
+    /// Column 8's -4 and -5: the GO's ammo by its own folder, unsized (`0x73392d`).
+    Wire(ItemModel),
 }
 
 /// One projectile per target on the GO's Speed > 0 branch, consumed by `crate::entities::missile`.
@@ -328,6 +330,7 @@ pub(super) struct WeaponVisualSrc<'w, 's> {
     displays: Option<Res<'w, ItemDisplays>>,
     items: Option<Res<'w, Items>>,
     net: Option<Res<'w, NetCommands>>,
+    creatures: Option<Res<'w, crate::entities::Creatures>>,
     // `Without<ItemObject>`: an item's store overlaps the unit indices, so a unit read of it
     // answers item fields.
     units: Query<'w, 's, (Option<&'static NetEntity>, &'static ObjectStore), Without<ItemObject>>,
@@ -393,6 +396,16 @@ impl WeaponVisualSrc<'_, '_> {
             }
             _ => return None,
         };
+        // A head item's file takes the race row its sex byte names, else none (`0x7321ad`).
+        if inventory_type == 1 {
+            let sex = s
+                .unit_displayid()
+                .and_then(|d| u32::try_from(d).ok())
+                .and_then(|d| self.creatures.as_deref()?.display_race_sex(d))
+                .map(|(_, sex)| sex)
+                .or_else(|| s.unit_gender())?;
+            self.displays.as_deref()?.helm_prefixes.get(&sex)?;
+        }
         (display_id != 0).then_some(ItemModel {
             display_id,
             inventory_type,
@@ -1584,7 +1597,7 @@ fn missile_item(
 ) -> Option<MissileItem> {
     match model as i32 {
         m @ -3..=-1 => held((-1 - m) as u8).map(MissileItem::Held),
-        -5 | -4 => ammo.map(MissileItem::Held),
+        -5 | -4 => ammo.map(MissileItem::Wire),
         0 => ammo.map(|a| MissileItem::Ammo(a.display_id)),
         _ => None,
     }

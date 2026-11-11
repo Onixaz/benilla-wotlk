@@ -303,7 +303,7 @@ fn missile_item_reads_column_8() {
         );
     }
     for m in [-4, -5] {
-        assert_eq!(item(m, Some(ammo)), Some(MissileItem::Held(ammo)), "{m}");
+        assert_eq!(item(m, Some(ammo)), Some(MissileItem::Wire(ammo)), "{m}");
         assert_eq!(item(m, None), None, "{m} with no ammo");
     }
     assert_eq!(item(0, Some(ammo)), Some(MissileItem::Ammo(5996)));
@@ -334,7 +334,7 @@ fn a_units_item_missile_flies_its_held_item() {
         (-4, None),
         (
             -5,
-            Some(MissileItem::Held(ItemModel {
+            Some(MissileItem::Wire(ItemModel {
                 display_id: 5996,
                 inventory_type: 24,
             })),
@@ -390,6 +390,62 @@ fn a_units_item_missile_flies_its_held_item() {
         let path = want.is_none().then(|| ERROR_CUBE.to_string());
         assert_eq!(spawns[0].path, path, "{model}");
         assert_eq!(spawns[0].scale, 1.0, "{model}: an item flies at scale 1");
+    }
+}
+
+/// A creature's head item keeps its slot only when its sex byte names a race row (`0x7321ad`).
+#[test]
+fn a_head_item_needs_the_race_row_its_sex_byte_names() {
+    const HELM: u32 = 9001;
+    for (sex, want) in [(0u32, false), (1, true)] {
+        let mut app = ground_app(
+            SPELL,
+            20.0,
+            VisualStages {
+                missile_gate: 1,
+                missile_model: -3i32 as u32,
+                ..Default::default()
+            },
+            HashMap::new(),
+            HashMap::new(),
+        );
+        let mut displays = crate::entities::ItemDisplays::icons_for_tests(
+            benilla_formats::ItemDisplayCatalog::from_displays(HashMap::new()),
+        );
+        displays.item_dbc.insert(
+            HELM,
+            benilla_formats::ItemDbcRow {
+                display: 4000,
+                inventory_type: 1,
+                ..Default::default()
+            },
+        );
+        displays.helm_prefixes.insert(1, "Hu".into());
+        app.insert_resource(displays);
+        let caster = app
+            .world_mut()
+            .spawn((
+                crate::net::NetEntity {
+                    kind: benilla_protocol::EntityKind::Unit,
+                    display_id: None,
+                    scale: 1.0,
+                },
+                // The ranged slot and `UNIT_FIELD_BYTES_0`'s sex byte.
+                crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                    (2, UNIT),
+                    (39, HELM),
+                    (36, sex << 16),
+                ])),
+            ))
+            .id();
+        let target = object(&mut app, UNIT);
+        go(&mut app, caster, None, &[], vec![target], None, 0);
+        let spawns = missiles(&mut app);
+        let held = Some(MissileItem::Held(ItemModel {
+            display_id: 4000,
+            inventory_type: 1,
+        }));
+        assert_eq!(spawns[0].item, held.filter(|_| want), "sex {sex}");
     }
 }
 
