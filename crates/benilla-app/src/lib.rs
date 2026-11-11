@@ -503,6 +503,22 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
     // benilla-assets' loaders go into the live `AssetServer`, so they register after `AssetPlugin`.
     benilla_assets::register_asset_loaders(&mut app);
 
+    // The frame's four other schedules as well: `First`, `StateTransition`, `SpawnScene` and `Last`
+    // hold a few dozen systems of a few µs each, and the main thread parked while the pool ran
+    // them. Single-threaded measured 3.66 -> 3.55 ms of main thread on an empty map and 7.52 -> 7.41
+    // at Dalaran.
+    // `WOW_MT_FRAME_EDGES=1` restores it. Set here, once the plugins that own the schedules have
+    // built.
+    if std::env::var_os("WOW_MT_FRAME_EDGES").is_none() {
+        let single = |s: &mut Schedule| {
+            s.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+        };
+        app.edit_schedule(First, single)
+            .edit_schedule(StateTransition, single)
+            .edit_schedule(bevy::app::SpawnScene, single)
+            .edit_schedule(Last, single);
+    }
+
     // `ExtractSchedule` runs single-threaded too: bevy_render leaves it multi-threaded, with no
     // non-Send member, and single-threaded measured faster. `WOW_MT_EXTRACT=1` restores it.
     //
