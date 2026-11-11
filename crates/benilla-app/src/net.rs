@@ -204,6 +204,8 @@ pub(crate) struct Guid(pub(crate) u64);
 
 /// A streamed entity's kind and display id, from which [`crate::entities`] builds its visual.
 #[derive(Component, Clone, Copy)]
+// The swim stamp rides in with the entity, so setting and clearing it moves no archetype.
+#[require(motion::SwimStamp)]
 pub(crate) struct NetEntity {
     pub(crate) kind: EntityKind,
     pub(crate) display_id: Option<u32>,

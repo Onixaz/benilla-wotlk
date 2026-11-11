@@ -1128,22 +1128,14 @@ fn clamp_seat_disabled() -> bool {
     })
 }
 
-/// A stamped unit re-enters [`mark_swimming_creatures`] only when its `Transform` or its
-/// descriptors change (a `UNIT_FIELD_FLAGS` delta must re-ask); an unstamped one every frame.
-type SwimMarkGate = Or<(
-    Changed<Transform>,
-    Changed<ObjectStore>,
-    Without<SwimEvaluated>,
-)>;
-
 type SwimMarkQuery = (
     Entity,
     &'static NetEntity,
-    &'static Transform,
+    Ref<'static, Transform>,
     Option<&'static CollisionHeight>,
-    Option<&'static ObjectStore>,
+    Option<Ref<'static, ObjectStore>>,
     Has<CreatureSwimming>,
-    Has<SwimEvaluated>,
+    &'static mut SwimStamp,
     // [`ground_derived`]'s other inputs: the mark and the clamp must walk the same population.
     Has<Spline>,
     Has<GroundClamped>,
@@ -1154,11 +1146,15 @@ type SwimMarkQuery = (
 );
 
 /// The stamp [`mark_swimming_creatures`] leaves once a unit's room claim settles; 1.12 water is
-/// static, so it holds until the unit moves or the `ColliderEpoch` bumps.
-#[derive(Component)]
-// Sparse: stamped and cleared as units move, so it splits no table.
-#[component(storage = "SparseSet")]
-pub(in crate::net) struct SwimEvaluated;
+/// static, so it holds until the unit moves or the `ColliderEpoch` bumps. A stamped unit re-enters
+/// the mark only when its `Transform` or its descriptors change (a `UNIT_FIELD_FLAGS` delta must
+/// re-ask); an unstamped one every frame.
+///
+/// A field every streamed entity carries ([`NetEntity`] requires it), not a marker: a marker set
+/// and cleared as units move mints an archetype for each set of components it meets, none is ever
+/// freed, and every unit query walks them all.
+#[derive(Component, Default)]
+pub(in crate::net) struct SwimStamp(bool);
 
 /// The exit band (yd) below the swim boundary: the player boundary's 1/36-yd hysteresis, an
 /// absolute distance, not scaled with collision height.
@@ -1229,19 +1225,15 @@ fn creature_swim_state(marked: bool, depth: f32, boundary: f32, unit_flags: u32)
 /// Chained before [`ground_clamp_creatures`] so a fresh mark exempts the clamp the same frame.
 pub(in crate::net) fn mark_swimming_creatures(
     mut commands: Commands,
-    units: Query<SwimMarkQuery, SwimMarkGate>,
-    stamped: Query<Entity, With<SwimEvaluated>>,
+    mut units: Query<SwimMarkQuery>,
     world: benilla_world::world_point::WorldPoint,
     epoch: Res<benilla_world::collision::ColliderEpoch>,
     mut last_epoch: Local<Option<u64>>,
 ) {
-    // A collider epoch change (liquid streams with the colliders) drops every stamp.
+    // A collider epoch change (liquid streams with the colliders) drops every stamp held before
+    // this run; one set in this run stands.
     let now = epoch.get();
-    if last_epoch.replace(now) != Some(now) {
-        for e in &stamped {
-            commands.entity(e).remove::<SwimEvaluated>();
-        }
-    }
+    let epoch_moved = last_epoch.replace(now) != Some(now);
     for (
         e,
         net,
@@ -1249,52 +1241,57 @@ pub(in crate::net) fn mark_swimming_creatures(
         collision,
         store,
         marked,
-        evaluated,
+        mut stamp,
         splined,
         clamped,
         embodied,
         relayed,
         parked,
-    ) in &units
+    ) in &mut units
     {
-        // A parked unit drops its stamp, so the frame it wakes re-asks the water it stands in.
-        if parked && !embodied {
-            if evaluated {
-                commands.entity(e).remove::<SwimEvaluated>();
-            }
-            continue;
-        }
-        if !ground_derived(net.kind, splined, clamped, embodied, relayed) {
-            // A kind no input can admit (a GameObject) is stamped once, so the gate drops it; a
-            // player can join the set standing still, and stays unstamped.
-            if !evaluated && !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
-                commands.entity(e).insert(SwimEvaluated);
-            }
-            continue; // GameObjects don't swim; a relayed player's flag arrives on the wire
-        }
-        // The unit's own room decides whose liquid answers (an interior's, not the ADT water over
-        // it). An unsettled claim may not enter swim, but a stale mark may always clear.
-        let who = benilla_world::world_point::Subject::Unit(e);
-        if !marked && !world.room_settled(who) {
-            continue; // unstamped, so retried until the claim lands
-        }
-        if !evaluated {
-            commands.entity(e).insert(SwimEvaluated);
-        }
-        let wow = bevy_to_wow(t.translation);
-        let depth = world
-            .water_surface_at(who, wow)
-            .map_or(f32::MIN, |s| s - wow[2]);
-        let boundary = swim_enter_depth(collision.copied().unwrap_or_default().0);
-        // Flags read 0 until the descriptor block lands; `Changed<ObjectStore>` re-asks then.
-        let flags = store.map_or(0, |s| s.0.unit_flags());
-        let swimming = creature_swim_state(marked, depth, boundary, flags);
-        if swimming != marked {
-            if swimming {
-                commands.entity(e).insert(CreatureSwimming);
+        let evaluated = stamp.0;
+        // What this visit does to the stamp: set it, drop it, or leave it.
+        let (mut set, mut dropped) = (false, false);
+        let due = !evaluated || t.is_changed() || store.as_ref().is_some_and(|s| s.is_changed());
+        if due {
+            if parked && !embodied {
+                // A parked unit drops its stamp, so the frame it wakes re-asks the water it
+                // stands in.
+                dropped = true;
+            } else if !ground_derived(net.kind, splined, clamped, embodied, relayed) {
+                // A kind no input can admit (a GameObject) is stamped once, so the gate drops
+                // it; a player can join the set standing still, and stays unstamped. GameObjects
+                // don't swim; a relayed player's flag arrives on the wire.
+                set = !evaluated && !matches!(net.kind, EntityKind::Unit | EntityKind::Player);
             } else {
-                commands.entity(e).remove::<CreatureSwimming>();
+                // The unit's own room decides whose liquid answers (an interior's, not the ADT
+                // water over it). An unsettled claim may not enter swim, but a stale mark may
+                // always clear; unstamped, it is retried until the claim lands.
+                let who = benilla_world::world_point::Subject::Unit(e);
+                if marked || world.room_settled(who) {
+                    set = !evaluated;
+                    let wow = bevy_to_wow(t.translation);
+                    let depth = world
+                        .water_surface_at(who, wow)
+                        .map_or(f32::MIN, |s| s - wow[2]);
+                    let boundary = swim_enter_depth(collision.copied().unwrap_or_default().0);
+                    // Flags read 0 until the descriptor block lands; a changed `ObjectStore`
+                    // re-asks then.
+                    let flags = store.map_or(0, |s| s.0.unit_flags());
+                    let swimming = creature_swim_state(marked, depth, boundary, flags);
+                    if swimming != marked {
+                        if swimming {
+                            commands.entity(e).insert(CreatureSwimming);
+                        } else {
+                            commands.entity(e).remove::<CreatureSwimming>();
+                        }
+                    }
+                }
             }
+        }
+        let stamped = set || (evaluated && !dropped && !epoch_moved);
+        if stamped != evaluated {
+            stamp.0 = stamped;
         }
     }
 }
@@ -1590,14 +1587,26 @@ mod under_floor {
 mod tests {
     use super::*;
 
-    /// The swim stamp is set and cleared as units move: a table column would split the unit tables
-    /// every query walks.
+    /// The swim stamp is set and cleared as units move, so it is a field the entity is born
+    /// with: stamping and clearing leave the unit in the archetype it had.
     #[test]
-    fn the_swim_mark_is_a_sparse_set() {
-        use bevy::ecs::component::StorageType;
+    fn stamping_a_unit_moves_no_archetype() {
+        let mut world = World::new();
+        let unit = world
+            .spawn(NetEntity {
+                kind: EntityKind::Unit,
+                display_id: None,
+                scale: 1.0,
+            })
+            .id();
+        let born = world.entity(unit).archetype().id();
+        assert!(!world.get::<SwimStamp>(unit).expect("born with the stamp").0);
+        world.get_mut::<SwimStamp>(unit).unwrap().0 = true;
+        assert_eq!(world.entity(unit).archetype().id(), born);
         assert_eq!(
-            <SwimEvaluated as Component>::STORAGE_TYPE,
-            StorageType::SparseSet
+            world.archetypes().len(),
+            2,
+            "the empty archetype and the unit's own"
         );
     }
 
@@ -2377,7 +2386,41 @@ mod server_moved_players {
         app.world_mut()
             .run_system_once(super::mark_swimming_creatures)
             .expect("run the swim mark");
-        assert!(app.world().get::<super::SwimEvaluated>(go).is_some());
+        assert!(app.world().get::<super::SwimStamp>(go).is_some_and(|s| s.0));
+    }
+
+    /// A stamp holds while the entity and the world's colliders stay put and through a move of
+    /// the entity itself; a collider epoch change drops it, and the next visit stamps it again.
+    #[test]
+    fn a_stamp_holds_until_the_collider_epoch_moves() {
+        let (mut app, go) = hollow(EntityKind::GameObject);
+        let mark = app
+            .world_mut()
+            .register_system(super::mark_swimming_creatures);
+        let stamped = |app: &App| app.world().get::<super::SwimStamp>(go).is_some_and(|s| s.0);
+        let run = |app: &mut App| app.world_mut().run_system(mark).expect("run the swim mark");
+        run(&mut app);
+        assert!(stamped(&app), "the first visit stamps");
+        run(&mut app);
+        assert!(stamped(&app), "nothing moved: the stamp holds");
+        app.world_mut()
+            .get_mut::<Transform>(go)
+            .expect("the body has a transform")
+            .translation
+            .x += 1.0;
+        run(&mut app);
+        assert!(
+            stamped(&app),
+            "a kind the mark never admits keeps its stamp when it moves"
+        );
+        app.world_mut().resource_mut::<ColliderEpoch>().bump();
+        run(&mut app);
+        assert!(
+            !stamped(&app),
+            "the epoch moved: every stamp held before this run drops"
+        );
+        run(&mut app);
+        assert!(stamped(&app), "and the next visit stamps again");
     }
 
     /// The subject rule as a table, with a GameObject and the ways a Player leaves the set.
