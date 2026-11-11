@@ -817,16 +817,23 @@ pub(crate) fn cost_reads_weapon(d: &SpellDisplay) -> bool {
     d.attributes_ex4 & ATTR_EX4_WEAPON_SPEED_COST != 0
 }
 
-/// Whether the caster can afford `d`, for leg 12 and the press-path gate: `UNIT_FIELD_POWER[type]`,
-/// or `UNIT_FIELD_HEALTH` for any negative PowerType (Bloodrage's -2), against [`power_cost`].
+/// Whether the caster can afford `d`, for leg 12 and the press-path gate. The reference's health
+/// cost (`PowerType -2`) is strict (`health > cost`); every other type reads its power pool and is
+/// inclusive (`power >= cost`).
 pub(crate) fn can_afford(d: &SpellDisplay, store: &ObjectStore, mods: &SpellModifiers) -> bool {
     let power_type = d.power_type as i32;
-    let avail = if power_type < 0 {
+    let health_cost = power_type == -2;
+    let avail = if health_cost {
         store.0.unit_health().unwrap_or(0)
     } else {
         store.0.unit_power(power_type as u8).unwrap_or(0)
     };
-    avail >= power_cost(d, store, mods)
+    let cost = power_cost(d, store, mods);
+    if health_cost {
+        avail > cost
+    } else {
+        avail >= cost
+    }
 }
 
 #[cfg(test)]
@@ -1591,8 +1598,39 @@ mod tests {
         assert!(!can_afford(&bloodrage, &below_cost, &mods));
         assert_eq!(walk(&bloodrage, &below_cost), (false, true));
 
+        let equal_cost = player(&[(22, 337), (28, 4_000), (163, 1_689)]);
+        assert!(!can_afford(&bloodrage, &equal_cost, &mods));
+        assert_eq!(walk(&bloodrage, &equal_cost), (false, true));
+
         let without_gear = player(&[(22, 400), (28, 1_689), (163, 1_689)]);
         assert_eq!(power_cost(&bloodrage, &without_gear, &mods), 337);
+    }
+
+    #[test]
+    fn only_minus_two_uses_health_for_affordability() {
+        let spell = SpellDisplay {
+            power_type: (-1i32) as u32,
+            mana_cost: 100,
+            ..Default::default()
+        };
+        let mods = SpellModifiers::default();
+        let store = player(&[(22, 1_000), (255, 100)]);
+        assert!(
+            !can_afford(&spell, &store, &mods),
+            "a non--2 negative type must not borrow the health pool"
+        );
+    }
+
+    #[test]
+    fn normal_power_cost_remains_inclusive() {
+        let spell = SpellDisplay {
+            power_type: 0,
+            mana_cost: 100,
+            ..Default::default()
+        };
+        let mods = SpellModifiers::default();
+        let store = player(&[(23, 100)]);
+        assert!(can_afford(&spell, &store, &mods));
     }
 
     /// The reference's jump table (indexed by the type plus 2): base health for -2, base mana,
