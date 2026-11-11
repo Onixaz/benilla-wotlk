@@ -829,7 +829,6 @@ fn drive_unit(
             };
             // The fallback walk and its direction mode run on a raw id too (`0x832bb7`).
             let dir = resolved(anims, played, catalog);
-            info!(dir.id, dir.dir_flags);
             if let Some(c) = anims.find(dir.id).or_else(|| anims.find(STAND)) {
                 // A witnessed death rolls its variation; a streamed-in corpse takes the head.
                 let settle = first && !restart;
