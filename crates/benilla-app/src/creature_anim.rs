@@ -533,15 +533,81 @@ impl AnimPlayFlags {
     }
 }
 
-/// A state kit's `AnimID`, compared and never played: both field-4 callers pass stage 2, which the
-/// kit player diverts, and a mismatch with the armed id recomputes the base. So it only cuts:
-/// Charge's Knockdown (121) falls to Stand, since the base selector never yields its Stun (14). An
-/// in-place aura refresh emits nothing.
+/// A state kit's `AnimID`: both field-4 callers pass stage 2, which the kit player diverts, and a
+/// mismatch with the armed id recomputes the base, playing the id first only when it is dead or
+/// dying (`0x73b32b`). So it mostly cuts: Charge's Knockdown (121) falls to Stand, since the base
+/// selector never yields its Stun (14). An in-place aura refresh emits nothing.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct BaseAnimRecompute {
     pub(crate) entity: Entity,
     /// The right side of the reference's armed-id compare.
     pub(crate) anim_id: u16,
+    /// The kit play's flags, which a dead or dying id is played with (`0x73b33e`).
+    pub(crate) play: AnimPlayFlags,
+}
+
+/// A live kit effect's `AnimID` and the play flags its own kit flags give (`0x73e79d`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct KitAnim {
+    pub(crate) anim_id: u16,
+    pub(crate) play: AnimPlayFlags,
+}
+
+impl KitAnim {
+    /// A kit's anim with its flags; `None` for a kit with no anim.
+    pub(crate) fn of(kit: &benilla_formats::VisualKit) -> Option<Self> {
+        let play = AnimPlayFlags::from_kit(kit.flags).0 & !AnimPlayFlags::HOLD_REPICK;
+        kit.anim_id.map(|anim_id| Self {
+            anim_id,
+            play: AnimPlayFlags(play),
+        })
+    }
+}
+
+/// The anims of the unit's live state kits by spell: a state kit's play adds an anim effect when
+/// no model carries the kit (`0x73b30d`); a model-borne one is the effect instances'.
+#[derive(Component, Default, Clone, Debug)]
+#[component(storage = "SparseSet")]
+pub(crate) struct StateKitAnims(pub(crate) Vec<(u32, KitAnim)>);
+
+/// What a display swap carries to the rebuilt driver (`0x73e410`): a dying anim under half played
+/// restarts, and a falling unit keeps its torso anim.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[component(storage = "SparseSet")]
+pub(crate) struct SwapReplay {
+    /// The dying anim's BehaviorID, played again from its start (`0x73e496`).
+    pub(crate) restart: Option<u16>,
+    /// The old torso anim, played again if the unit is falling (`0x73e75a`).
+    pub(crate) torso: Option<u16>,
+}
+
+/// Reads a unit's driver as its display swap tears it down, for [`SwapReplay`].
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct SwapCarry<'w, 's> {
+    units: Query<
+        'w,
+        's,
+        (
+            &'static AnimDriver,
+            &'static AnimationPlayer,
+            &'static bevy::animation::transition::AnimationTransitions,
+            &'static ModelAnimations,
+        ),
+    >,
+    data: Option<Res<'w, AnimData>>,
+}
+
+impl SwapCarry<'_, '_> {
+    /// Leave `entity` the replay its rebuilt driver plays; a unit with no driver carries none.
+    pub(crate) fn carry(&self, commands: &mut Commands, entity: Entity) {
+        let Ok((drv, player, tr, anims)) = self.units.get(entity) else {
+            return;
+        };
+        let replay = drv.swap_replay(player, tr, anims, self.data.as_deref().map(|d| &d.0));
+        if replay != SwapReplay::default() {
+            commands.entity(entity).insert(replay);
+        }
+    }
 }
 
 /// Rears a rider's mount: MountSpecial (94) on the mount child while the rider holds Mount (91);
@@ -802,9 +868,41 @@ pub(crate) struct AnimDriver {
     special_idle: Option<u16>,
     /// The [`CastHold::seq`] whose start anim has played out, the cleared start latch.
     start_spent: Option<u64>,
+    /// Read dead or dying on the last pass (`0x71f560`), for a display swap's replay.
+    dead: bool,
 }
 
 impl AnimDriver {
+    /// The torso anim, the key bone's else bone 0's, under half played and dying on a dead unit
+    /// (`0x73e484`), and as the falling replay's id (`0x73e513`).
+    fn swap_replay(
+        &self,
+        player: &AnimationPlayer,
+        tr: &bevy::animation::transition::AnimationTransitions,
+        anims: &ModelAnimations,
+        catalog: Option<&AnimDataCatalog>,
+    ) -> SwapReplay {
+        let node = self
+            .overlay
+            .map(|o| o.node)
+            .or_else(|| tr.get_main_animation());
+        let Some(clip) = node.and_then(|n| anims.clips.iter().find(|c| c.node == n)) else {
+            return SwapReplay::default();
+        };
+        let progress = player.animation(clip.node).map_or(1.0, |a| {
+            if clip.duration > 0.0 {
+                a.seek_time().rem_euclid(clip.duration) / clip.duration
+            } else {
+                1.0
+            }
+        });
+        let restart = self.dead && select::is_dying(clip.anim_id, catalog) && progress < 0.5;
+        SwapReplay {
+            restart: restart.then(|| select::behavior_of(clip.anim_id, catalog)),
+            torso: Some(clip.anim_id),
+        }
+    }
+
     /// The requested `(base, masked overlay)` ids, for the inspector.
     pub(crate) fn playing(&self) -> (Option<u16>, Option<u16>) {
         let base = match self.mode {
@@ -890,6 +988,7 @@ impl Default for AnimDriver {
             base_dir: None,
             special_idle: None,
             start_spent: None,
+            dead: false,
         }
     }
 }

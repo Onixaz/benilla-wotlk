@@ -957,9 +957,13 @@ pub(crate) mod schedule_tests {
     ///   against six writers (+6): a mover's flags a frame late only delay a sampled stamp.
     /// - The cast attempt's area leg reads `CurrentArea` against `update_current_area` from each
     ///   `CastLadder` drain (+9): a press reads the area under the player a frame late at worst.
+    /// - The display swap's carry (#1043) adds 3 net: `refresh_live_display` reads the swapped
+    ///   unit's `AnimationPlayer` for its dying anim's progress against `apply_aura_anim_rate`,
+    ///   `drive_go_anim`, `drive_booth_turn`, `pose_markers` and `sync_tiles`, which pause or pose
+    ///   clocks; it reads one torn-down unit's clip time, a frame's step either way.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_888;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_891;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

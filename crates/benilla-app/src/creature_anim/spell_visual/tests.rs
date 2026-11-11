@@ -569,6 +569,7 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
                 scale: 1.0,
                 attach: None,
                 own_alpha: false,
+                kit_anim: None,
             }],
             "bread at the spell hand"
         );
@@ -1320,6 +1321,7 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
             scale: 1.0,
             attach: None,
             own_alpha: false,
+            kit_anim: None,
         }],
         "the build leg puffs the druid-morph cloud at the base attach"
     );
@@ -1340,6 +1342,7 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
             scale: 1.0,
             attach: None,
             own_alpha: false,
+            kit_anim: None,
         }]
     );
 }
@@ -2849,5 +2852,94 @@ fn a_weapon_missile_row_keeps_the_weapons_out() {
     assert!(
         !play_for(-1i32 as u32, NO_ROW),
         "only the spell's own row is read"
+    );
+}
+
+/// A state kit's anim joins the unit's effect list for as long as the aura holds the spell, with
+/// its own kit flags as play flags (`0x73b30d`, `0x73e79d`); its add edge's recompute carries the
+/// kit play's flags, which a dead or dying id is played with (`0x73b33e`).
+#[test]
+fn a_state_kits_anim_rides_the_effect_list_while_its_aura_holds() {
+    use super::super::{AnimPlayFlags, KitAnim, StateKitAnims};
+    use benilla_formats::kit_flag;
+    const SPELL: u32 = 71372; // Harvest Soul
+    const VISUAL: u32 = 15103;
+    const STATE_KIT: u32 = 13959; // anim 132, flags 0x4 | 0x8
+    const DROWNED: u16 = 132;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
+        .add_message::<crate::net::FieldChanged>()
+        .add_message::<crate::aura_visual::AuraProc>()
+        .add_message::<crate::aura_visual::BodyProcPlay>()
+        .add_message::<SheathRequest>()
+        .add_message::<SpellKitSound>()
+        .add_message::<super::BaseAnimRecompute>();
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+        HashMap::from([(
+            VISUAL,
+            VisualStages {
+                state: STATE_KIT,
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([(
+            STATE_KIT,
+            VisualKit {
+                anim_id: Some(DROWNED),
+                flags: kit_flag::RAW_ANIM | kit_flag::NO_TIER_RESOLVE,
+                ..Default::default()
+            },
+        )]),
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            SPELL,
+            SpellDisplay {
+                visual: VISUAL,
+                attributes: 0x40000,
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    app.add_systems(Update, super::arm_aura_state_fx);
+
+    let unit = app
+        .world_mut()
+        .spawn(crate::unit_auras::aura_unit_for_test(&[SPELL]))
+        .id();
+    app.update();
+    let raw = AnimPlayFlags::RAW | AnimPlayFlags::NO_TIER;
+    assert_eq!(
+        app.world().entity(unit).get::<StateKitAnims>().unwrap().0,
+        vec![(
+            SPELL,
+            KitAnim {
+                anim_id: DROWNED,
+                play: AnimPlayFlags(raw),
+            }
+        )],
+        "the kit's own flags, without the spell's keep-weapons"
+    );
+    let plays: Vec<u8> = app
+        .world_mut()
+        .resource_mut::<Messages<super::BaseAnimRecompute>>()
+        .drain()
+        .map(|r| r.play.0)
+        .collect();
+    assert_eq!(
+        plays,
+        vec![raw | AnimPlayFlags::KEEP_WEAPONS],
+        "the play's flags take the spell's Attributes 0x40000"
+    );
+
+    crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
+    app.update();
+    assert!(
+        app.world().entity(unit).get::<StateKitAnims>().is_none(),
+        "the aura's end takes the anim out"
     );
 }

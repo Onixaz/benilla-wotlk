@@ -90,6 +90,7 @@ pub(super) fn refresh_live_display(
         ),
     >,
     mut swapped: MessageWriter<DisplaySwapped>,
+    carry: crate::creature_anim::SwapCarry,
 ) {
     // The prism reads only the static catalog of `Creatures`, whose model cache changes often.
     let catalog_new = creatures.as_ref().is_some_and(|c| c.is_added());
@@ -118,6 +119,7 @@ pub(super) fn refresh_live_display(
                 );
                 net.display_id = Some(live);
                 swapped.write(DisplaySwapped { entity });
+                carry.carry(&mut commands, entity);
                 rebuild_visual(&mut commands, entity);
             }
         }
@@ -270,6 +272,7 @@ fn on_force_display_update(
     index: Res<crate::net::GuidIndex>,
     units: Query<&NetEntity, With<VisualAttached>>,
     mut swapped: MessageWriter<DisplaySwapped>,
+    carry: crate::creature_anim::SwapCarry,
 ) {
     let benilla_protocol::SessionEvent::ForceDisplayUpdate { guid } = ev else {
         return;
@@ -282,6 +285,7 @@ fn on_force_display_update(
         .is_ok_and(|n| matches!(n.kind, EntityKind::Unit | EntityKind::Player));
     if is_unit {
         swapped.write(DisplaySwapped { entity });
+        carry.carry(&mut commands, entity);
         rebuild_visual(&mut commands, entity);
     }
 }

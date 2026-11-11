@@ -3951,6 +3951,7 @@ mod base_anim_lock {
         app.world_mut().write_message(BaseAnimRecompute {
             entity: unit,
             anim_id,
+            play: Default::default(),
         });
         app.update();
     }
@@ -5318,5 +5319,305 @@ fn a_tiered_hold_resolves_unless_kit_flag_0x8_and_runs_on_at_its_end() {
             advance(&mut app, 25);
         }
         assert_eq!(completions(&app), Some(1), "raw {raw}: the clip runs on");
+    }
+}
+
+/// The dead-pose rows: Stand, Death, Dead, Fall, Drowned, and FlyDeath on the fly tier.
+fn death_catalog() -> AnimData {
+    let row = |behavior: u16, tier: u8| AnimEntry {
+        weapon_flags: 0,
+        fallback: 0,
+        flags: 0,
+        behavior,
+        tier,
+    };
+    AnimData(AnimDataCatalog::from_rows([
+        (0, row(0, 0)),
+        (1, row(1, 0)),
+        (6, row(6, 0)),
+        (40, row(40, 0)),
+        (132, row(132, 0)),
+        (230, row(1, 1)),
+    ]))
+}
+
+/// A unit on real clip assets with Stand, Death (1 s), Dead, Fall, Drowned and FlyDeath, alive
+/// (health 100) unless `dead`, on anim tier `tier`. Returns the unit and each clip's node by id.
+fn spawn_mortal(
+    app: &mut App,
+    dead: bool,
+    tier: u32,
+) -> (Entity, std::collections::HashMap<u16, AnimationNodeIndex>) {
+    use bevy::animation::graph::{AnimationGraph, AnimationGraphHandle};
+    use bevy::animation::AnimationClip;
+
+    app.insert_resource(death_catalog());
+    let rows = [
+        (0u16, 4.0, true),
+        (1, 1.0, false),
+        (6, 4.0, true),
+        (40, 4.0, true),
+        (132, 4.0, true),
+        (230, 1.0, false),
+    ];
+    let handles: Vec<_> = rows
+        .iter()
+        .map(|&(_, d, _)| {
+            let mut c = AnimationClip::default();
+            c.set_duration(d);
+            app.world_mut()
+                .resource_mut::<Assets<AnimationClip>>()
+                .add(c)
+        })
+        .collect();
+    let (graph, nodes) = AnimationGraph::from_clips(handles);
+    let graph_handle = app
+        .world_mut()
+        .resource_mut::<Assets<AnimationGraph>>()
+        .add(graph);
+    let mut animation_lookup = vec![0xffff; 512];
+    let clips = rows
+        .iter()
+        .zip(&nodes)
+        .enumerate()
+        .map(|(i, (&(id, duration, looping), &node))| {
+            animation_lookup[id as usize] = i as u16;
+            AnimClip {
+                node,
+                duration,
+                blend_time: 0.0,
+                ..clip(id, 0, looping)
+            }
+        })
+        .collect();
+    let anims = ModelAnimations {
+        graph: graph_handle.clone(),
+        clips,
+        hand_close: [None, None],
+        playable_animation_lookup: Vec::new(),
+        animation_lookup,
+        global_bones: Vec::new(),
+        first_seq: None,
+        pose: Default::default(),
+    };
+    let health = if dead { 0 } else { 100 };
+    let unit = app
+        .world_mut()
+        .spawn((
+            anims,
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimationGraphHandle(graph_handle),
+            AnimDriver::default(),
+            crate::net::ObjectStore(ObjectFields::from_pairs(&[
+                (22, health),
+                (28, 100),
+                (138, tier << 16),
+            ])),
+        ))
+        .id();
+    let by_id = rows.iter().map(|r| r.0).zip(nodes).collect();
+    (unit, by_id)
+}
+
+fn gait_of(app: &App, unit: Entity) -> Option<u16> {
+    app.world().entity(unit).get::<AnimDriver>().unwrap().gait
+}
+
+fn state_kit(anim_id: u16, play: u8) -> super::super::StateKitAnims {
+    super::super::StateKitAnims(vec![(
+        1,
+        super::super::KitAnim {
+            anim_id,
+            play: super::super::AnimPlayFlags(play),
+        },
+    )])
+}
+
+/// A living unit under a state kit with a dead anim reads dead to the pick and lies in Dead
+/// (`0x71f591`, `0x7241e5`); the kit's end stands it up again.
+#[test]
+fn a_dying_state_kit_lays_a_living_unit_down_until_it_ends() {
+    let mut app = app();
+    let (unit, _) = spawn_mortal(&mut app, false, 0);
+    app.update();
+    assert_eq!(gait_of(&app, unit), Some(0), "alive: Stand");
+    app.world_mut().entity_mut(unit).insert(state_kit(6, 0));
+    app.update();
+    assert_eq!(gait_of(&app, unit), Some(6), "the kit lays it in Dead");
+    assert!(app.world().entity(unit).get::<AnimDriver>().unwrap().dead);
+    app.world_mut()
+        .entity_mut(unit)
+        .remove::<super::super::StateKitAnims>();
+    app.update();
+    app.update();
+    assert_eq!(gait_of(&app, unit), Some(0), "the kit's end stands it");
+}
+
+/// Only kit flag `0x4` leaves the death pick: such a kit names the pose and plays it raw
+/// (`0x724185`); a dying kit flagged `0x8` and `0x100` alone takes the pick's own Dead.
+#[test]
+fn only_kit_flag_0x4_names_the_dead_pose() {
+    use super::super::AnimPlayFlags as P;
+    for (play, want) in [
+        (P::RAW | P::NO_TIER, 132),
+        (P::NO_TIER | P::KEEP_WEAPONS, 6),
+    ] {
+        let mut app = app();
+        let (unit, _) = spawn_mortal(&mut app, false, 0);
+        app.world_mut()
+            .entity_mut(unit)
+            .insert(state_kit(132, play));
+        app.update();
+        assert_eq!(gait_of(&app, unit), Some(want), "play {play:#x}");
+    }
+}
+
+/// A state kit's dying anim plays when it arms (`0x73b33e`), with the kit play's flags: a raw one
+/// skips the fly tier's row.
+#[test]
+fn a_state_kits_dying_anim_plays_with_its_flags_when_it_arms() {
+    use super::super::AnimPlayFlags as P;
+    for (play, node_id) in [(0, 230), (P::RAW, 1)] {
+        let mut app = app();
+        let (unit, nodes) = spawn_mortal(&mut app, false, 1);
+        app.update();
+        app.world_mut()
+            .write_message(super::super::BaseAnimRecompute {
+                entity: unit,
+                anim_id: 1,
+                play: P(play),
+            });
+        app.update();
+        assert_eq!(gait_of(&app, unit), Some(1), "Death, a dying anim, is kept");
+        let player = app.world().entity(unit).get::<AnimationPlayer>().unwrap();
+        assert!(
+            player.animation(nodes[&node_id]).is_some(),
+            "play {play:#x}"
+        );
+    }
+}
+
+/// A display swap's rebuilt model replays the dead pose with the dying kits' flags (`0x73e7e7`):
+/// a kit flagged `0x8` keeps a fly-tier corpse off FlyDeath only through the swap, as the death
+/// pick passes `0x4` alone.
+#[test]
+fn a_swap_replays_the_dead_pose_with_the_dying_kits_flags() {
+    use super::super::{AnimPlayFlags as P, SwapReplay};
+    for (swap, play, node_id) in [
+        (false, P::NO_TIER, 230),
+        (true, P::NO_TIER, 1),
+        (true, 0, 230),
+    ] {
+        let mut app = app();
+        let (unit, nodes) = spawn_mortal(&mut app, true, 1);
+        app.world_mut()
+            .entity_mut(unit)
+            .insert(state_kit(132, play));
+        if swap {
+            app.world_mut().entity_mut(unit).insert(SwapReplay {
+                restart: None,
+                torso: Some(0),
+            });
+        }
+        app.update();
+        assert_eq!(gait_of(&app, unit), Some(1));
+        let player = app.world().entity(unit).get::<AnimationPlayer>().unwrap();
+        assert!(
+            player.animation(nodes[&node_id]).is_some(),
+            "swap {swap}, play {play:#x}"
+        );
+        assert!(
+            app.world().entity(unit).get::<SwapReplay>().is_none(),
+            "read once"
+        );
+    }
+}
+
+/// A display swap under half through a dying anim plays it again from its start on the rebuilt
+/// model (`0x73e496`); without it a dead unit's first pass settles at the end.
+#[test]
+fn a_swap_mid_death_restarts_the_death_anim() {
+    use super::super::SwapReplay;
+    for restart in [false, true] {
+        let mut app = app();
+        let (unit, nodes) = spawn_mortal(&mut app, true, 0);
+        if restart {
+            app.world_mut().entity_mut(unit).insert(SwapReplay {
+                restart: Some(1),
+                torso: Some(1),
+            });
+        }
+        app.update();
+        let player = app.world().entity(unit).get::<AnimationPlayer>().unwrap();
+        let t = player.animation(nodes[&1]).unwrap().seek_time();
+        if restart {
+            assert!(t < 0.5, "replayed from its start: {t}");
+        } else {
+            assert!(t >= 1.0, "settled at its end: {t}");
+        }
+    }
+}
+
+/// What a swap carries off the torn-down driver: a dead unit's dying anim under half played
+/// restarts by its BehaviorID, past half it does not; the torso anim always rides along.
+#[test]
+fn a_swap_carries_a_death_under_half_played() {
+    let mut app = app();
+    let (unit, _) = spawn_mortal(&mut app, false, 0);
+    app.update();
+    // Killed on a later pass, so Death plays from its start.
+    app.world_mut()
+        .entity_mut(unit)
+        .insert(crate::net::ObjectStore(ObjectFields::from_pairs(&[
+            (22, 0),
+            (28, 100),
+        ])));
+    app.update();
+    let carried = |app: &App| {
+        let e = app.world().entity(unit);
+        let catalog = app.world().resource::<AnimData>();
+        e.get::<AnimDriver>().unwrap().swap_replay(
+            e.get::<AnimationPlayer>().unwrap(),
+            e.get::<AnimationTransitions>().unwrap(),
+            e.get::<ModelAnimations>().unwrap(),
+            Some(&catalog.0),
+        )
+    };
+    for _ in 0..3 {
+        advance(&mut app, 100);
+    }
+    let early = carried(&app);
+    assert_eq!(early.restart, Some(1), "under half: {early:?}");
+    assert_eq!(early.torso, Some(1));
+    for _ in 0..4 {
+        advance(&mut app, 100);
+    }
+    assert_eq!(carried(&app).restart, None, "past half");
+}
+
+/// A swap mid-fall plays the old torso anim again on the rebuilt model (`0x73e765`), which the
+/// step-off freeze then holds; a grounded swap picks afresh.
+#[test]
+fn a_swap_mid_fall_keeps_the_torso_anim() {
+    use super::super::SwapReplay;
+    for falling in [false, true] {
+        let mut app = app();
+        let (unit, _) = spawn_mortal(&mut app, false, 0);
+        app.world_mut().entity_mut(unit).insert((
+            SwapReplay {
+                restart: None,
+                torso: Some(6),
+            },
+            MovementState {
+                flags: if falling { move_flags::FALLING } else { 0 },
+                vertical_speed: -3.0,
+                ..Default::default()
+            },
+        ));
+        app.update();
+        app.update();
+        let want = if falling { 6 } else { 0 };
+        assert_eq!(gait_of(&app, unit), Some(want), "falling {falling}");
     }
 }

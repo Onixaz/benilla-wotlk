@@ -18,6 +18,8 @@ const MOVING_EPSILON: f32 = 0.1;
 pub(super) const STAND: u16 = 0;
 
 pub(super) const DEATH: u16 = 1;
+/// DeathStart, whose presence on the model picks the bracketed dead pose (`0x71dfc0`).
+pub(super) const DEATH_START: u16 = 466;
 
 /// ShuffleLeft (11): once armed it plays out its clip, not ending with the turn.
 pub(super) const SHUFFLE_LEFT: u16 = 11;
@@ -843,6 +845,69 @@ pub(super) fn route_mounted(behavior: u16) -> MountedRoute {
         mount,
         rider_upper: !mount && is_upper_set(behavior),
     }
+}
+
+/// A dead or dying anim by its row's BehaviorID (`0x71dde0`); an id with no row is neither.
+pub(super) fn is_dead_or_dying(
+    id: u16,
+    catalog: Option<&benilla_formats::AnimDataCatalog>,
+) -> bool {
+    catalog
+        .and_then(|c| c.behavior(id))
+        .is_some_and(|b| matches!(b, 1 | 6 | 131 | 132 | 466..=468 | 472))
+}
+
+/// The first dying kit flagged `0x4` names the dead pose, played raw (`0x724185`); its other bits
+/// never leave the pick.
+pub(super) fn raw_death_kit(kits: &[super::KitAnim]) -> Option<u16> {
+    kits.iter()
+        .find(|k| k.play.0 & super::AnimPlayFlags::RAW != 0)
+        .map(|k| k.anim_id)
+}
+
+/// A display swap's replay flags (`0x73e7c6`): the dying kits' bits gathered up to the first
+/// flagged `0x4` or `0x8`, passed only when one is; otherwise none.
+pub(super) fn replay_flags(kits: &[super::KitAnim]) -> super::AnimPlayFlags {
+    use super::AnimPlayFlags as P;
+    let mut flags = 0;
+    for k in kits {
+        flags |= k.play.0;
+        if flags & (P::RAW | P::NO_TIER) != 0 {
+            return P(flags);
+        }
+    }
+    P(0)
+}
+
+/// The dead pose the base pick chooses past the raw kit (`0x724060`): a model with DeathStart
+/// (466) holds it in a fall and DeathEndHold (472) otherwise; else Dead (6), Drowned (132) when
+/// swimming, unless a far fall or a dying anim plays. `None` keeps what plays.
+pub(super) fn choose_death_pose(
+    flags: u32,
+    torso: Option<u16>,
+    has_death_start: bool,
+    catalog: Option<&benilla_formats::AnimDataCatalog>,
+) -> Option<u16> {
+    let falling = flags & move_flags::FALLING != 0;
+    if has_death_start {
+        return Some(if falling { DEATH_START } else { 472 });
+    }
+    let far = falling && flags & move_flags::FALLING_FAR != 0;
+    if far || torso.is_some_and(|t| is_dying(t, catalog)) {
+        return None;
+    }
+    Some(if flags & move_flags::SWIMMING != 0 {
+        132
+    } else {
+        6
+    })
+}
+
+/// A dying anim, the fall and not the lying pose (`0x71dd80`).
+pub(super) fn is_dying(id: u16, catalog: Option<&benilla_formats::AnimDataCatalog>) -> bool {
+    catalog
+        .and_then(|c| c.behavior(id))
+        .is_some_and(|b| matches!(b, 1 | 131 | 466 | 467))
 }
 
 /// The BehaviorIDs forced full-body whatever the state: dead or dying (`0x71dde0`) and the special

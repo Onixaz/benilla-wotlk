@@ -181,6 +181,7 @@ pub(super) fn fire_breath(
                 scale: 1.0,
                 attach: None,
                 own_alpha: false,
+                kit_anim: None,
             }],
         });
     }

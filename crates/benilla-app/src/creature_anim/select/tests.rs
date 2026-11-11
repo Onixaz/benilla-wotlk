@@ -1464,3 +1464,67 @@ fn a_keep_weapons_play_skips_the_clip_stow() {
     );
     assert_eq!(kept_weapon_flags(0x14, 1, false), 0x14);
 }
+
+fn dying(anim_id: u16, play: u8) -> super::super::KitAnim {
+    super::super::KitAnim {
+        anim_id,
+        play: super::super::AnimPlayFlags(play),
+    }
+}
+
+/// The death pick keeps only kit flag `0x4`'s play flag `0x2` (`0x724185`), from the first dying
+/// kit carrying it; the swap's replay gathers every bit up to the first kit flagged `0x4` or `0x8`
+/// and passes nothing without one (`0x73e7c6`).
+#[test]
+fn the_death_pick_and_the_swap_replay_read_different_kit_bits() {
+    use super::super::AnimPlayFlags as P;
+    let kits = [
+        dying(6, P::NO_SPECIAL),
+        dying(132, P::NO_TIER | P::KEEP_WEAPONS),
+        dying(1, P::RAW),
+    ];
+    assert_eq!(raw_death_kit(&kits), Some(1));
+    assert_eq!(
+        replay_flags(&kits).0,
+        P::NO_SPECIAL | P::NO_TIER | P::KEEP_WEAPONS,
+        "gathered up to the 0x8 kit, the raw one after it unread"
+    );
+    assert_eq!(raw_death_kit(&kits[..2]), None);
+    assert_eq!(replay_flags(&kits[..1]).0, 0, "no 0x4 or 0x8: nothing");
+    assert_eq!(replay_flags(&[]).0, 0);
+}
+
+/// Past the raw kit the pick lies the unit in DeathStart in a fall or DeathEndHold on a model with
+/// DeathStart; else Dead, Drowned when swimming, unless a far fall or a dying anim plays
+/// (`0x724128`-`0x7241e5`).
+#[test]
+fn the_dead_pose_follows_the_model_and_the_movement() {
+    use benilla_formats::{AnimDataCatalog, AnimEntry};
+    let row = |behavior| AnimEntry {
+        weapon_flags: 0,
+        fallback: 0,
+        flags: 0,
+        behavior,
+        tier: 0,
+    };
+    let cat = AnimDataCatalog::from_rows([(1, row(1)), (6, row(6)), (131, row(131))]);
+    let cat = Some(&cat);
+    let fall = move_flags::FALLING;
+    let far = fall | move_flags::FALLING_FAR;
+    assert_eq!(choose_death_pose(fall, None, true, cat), Some(DEATH_START));
+    assert_eq!(choose_death_pose(0, Some(1), true, cat), Some(472));
+    assert_eq!(choose_death_pose(0, None, false, cat), Some(6));
+    assert_eq!(
+        choose_death_pose(move_flags::SWIMMING, Some(6), false, cat),
+        Some(132)
+    );
+    assert_eq!(choose_death_pose(far, None, false, cat), None, "a far fall");
+    assert_eq!(choose_death_pose(fall, None, false, cat), Some(6));
+    assert_eq!(
+        choose_death_pose(0, Some(131), false, cat),
+        None,
+        "Drown plays"
+    );
+    assert!(is_dead_or_dying(6, cat) && !is_dying(6, cat));
+    assert!(is_dying(131, cat) && !is_dead_or_dying(0, cat));
+}
