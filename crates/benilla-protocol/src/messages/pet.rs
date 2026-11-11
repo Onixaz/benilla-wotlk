@@ -474,18 +474,22 @@ mod tests {
         assert!(matches!(
             parse(&[4, 0x59, 0x0a, 0, 0, 0x66, 3, 0, 0, 0]).as_slice(),
             [SessionEvent::PetCastFailed {
+                cast_count: 4,
                 spell_id: 2649,
                 reason: 0x5e,
                 arg: Some(3),
+                wire_reason: 0x66,
             }]
         ));
         // No argument: wire 0x0c BAD_TARGETS, shared 0x0a.
         assert!(matches!(
             parse(&[4, 0x59, 0x0a, 0, 0, 0x0c]).as_slice(),
             [SessionEvent::PetCastFailed {
+                cast_count: 4,
                 spell_id: 2649,
                 reason: 0x0a,
                 arg: None,
+                wire_reason: 0x0c,
             }]
         ));
     }

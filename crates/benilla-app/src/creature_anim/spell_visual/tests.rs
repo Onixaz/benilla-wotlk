@@ -46,6 +46,7 @@ fn app() -> App {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::MissileRelease>()
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
@@ -113,6 +114,7 @@ fn cast_event(entity: Entity, spell_id: u32, kind: CastEventKind) -> CastEvent {
         entity,
         spell_id,
         kind,
+        cast_count: 0,
         seq: 1,
     }
 }
@@ -208,6 +210,7 @@ fn precast_kit_sound_rings_once_at_start() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::MissileRelease>()
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
@@ -337,8 +340,14 @@ fn same_frame_start_and_fail_leave_no_hold() {
 
     app.world_mut()
         .write_message(cast_event(unit, SPELL, CastEventKind::Start));
-    app.world_mut()
-        .write_message(cast_event(unit, SPELL, CastEventKind::Fail));
+    app.world_mut().write_message(cast_event(
+        unit,
+        SPELL,
+        CastEventKind::Fail {
+            interrupt: false,
+            wire_reason: 0,
+        },
+    ));
     app.update();
     assert_eq!(hold(&app, unit), None, "the failed cast's hold is released");
 }
@@ -757,6 +766,7 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::MissileRelease>()
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
@@ -877,6 +887,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::MissileRelease>()
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
@@ -996,6 +1007,7 @@ fn ground_app(
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::MissileRelease>()
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
@@ -1084,6 +1096,7 @@ fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_poin
         entity: caster,
         spell_id: GROUND,
         kind: CastEventKind::GroundImpact { pos: at },
+        cast_count: 0,
         seq: 2,
     });
     app.update();
@@ -1554,6 +1567,7 @@ fn real_shooter(weapon: &RealRanged) -> Option<(App, Entity)> {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::MissileRelease>()
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
@@ -1764,6 +1778,7 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::MissileRelease>()
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
@@ -2610,7 +2625,8 @@ fn a_dest_location_missile_flies_from_the_source_to_the_dest() {
         .add_message::<SpellKitShake>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::DelayedAreaKit>()
-        .add_message::<MissileSpawn>();
+        .add_message::<MissileSpawn>()
+        .add_message::<super::MissileRelease>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([(
             VISUAL_ID,
@@ -2715,4 +2731,244 @@ fn an_area_kit_at_a_point_plays_only_its_head_base_and_world_slots() {
     let mut expected = [want(0x14), want(0x13)];
     expected.sort_unstable();
     assert_eq!(got, expected);
+}
+
+/// What the router sends the hold and the missile spawner for one cast edge.
+#[derive(Debug, PartialEq)]
+enum HoldEdge {
+    /// A hold, with its slot's `(tag, effect)` when its row's own gate passes.
+    Hold(u8, Option<(u16, u32)>),
+    Fire,
+    Clear(u8),
+}
+
+fn hold_edges(app: &mut App) -> Vec<HoldEdge> {
+    let mut out: Vec<HoldEdge> = app
+        .world_mut()
+        .resource_mut::<Messages<SpellKitFx>>()
+        .drain()
+        .filter_map(|m| match m {
+            SpellKitFx::Hold {
+                cast_count, slot, ..
+            } => Some(HoldEdge::Hold(
+                cast_count,
+                slot.map(|sl| (sl.tag, sl.effect)),
+            )),
+            _ => None,
+        })
+        .collect();
+    out.extend(
+        app.world_mut()
+            .resource_mut::<Messages<super::MissileRelease>>()
+            .drain()
+            .map(|r| match r.kind {
+                super::ReleaseKind::Fire => HoldEdge::Fire,
+                super::ReleaseKind::Clear(n) => HoldEdge::Clear(n),
+            }),
+    );
+    out
+}
+
+/// A catalog of flag `0x20` rows for the hold tests: visual 1 a held missile at index 3, 2 with
+/// column 16's -1, 3 naming no file, 4 unflagged, 5 index 13 with a cast animation; spells
+/// `100 + visual`, 105 and 106 flying an aim (`SpellMissile` flag 1), 106 on visual 1.
+fn hold_app() -> (App, Entity, Entity) {
+    let mut app = app();
+    let stages = |flags, missile_source_attach, missile_model| VisualStages {
+        flags,
+        missile_source_attach,
+        missile_model,
+        missile_gate: 1,
+        ..Default::default()
+    };
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
+        HashMap::from([
+            (1, stages(0x20, 3, 50)),
+            (2, stages(0x20, u32::MAX, 50)),
+            (3, stages(0x20, 3, 51)),
+            (4, stages(0, 3, 50)),
+            (
+                5,
+                VisualStages {
+                    cast: 9,
+                    ..stages(0x20, 13, 50)
+                },
+            ),
+        ]),
+        HashMap::from([(
+            9,
+            VisualKit {
+                anim_id: Some(FIRE_ANIM),
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([(50, "Spells\\Held.mdx".to_string())]),
+    )));
+    let display = |visual, flies_aim| SpellDisplay {
+        visual,
+        speed: 20.0,
+        flies_aim,
+        ..Default::default()
+    };
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(
+            (1..=5)
+                .map(|v| (100 + v, display(v, v == 5)))
+                .chain([(106, display(1, true))])
+                .collect(),
+        ),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    let unit = app.world_mut().spawn_empty().id();
+    let me = app
+        .world_mut()
+        .spawn((
+            crate::net::SelfPlayer,
+            crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[])),
+        ))
+        .id();
+    (app, unit, me)
+}
+
+fn edge_of(
+    app: &mut App,
+    unit: Entity,
+    spell_id: u32,
+    cast_count: u8,
+    kind: CastEventKind,
+) -> Vec<HoldEdge> {
+    app.world_mut().write_message(CastEvent {
+        cast_count,
+        ..cast_event(unit, spell_id, kind)
+    });
+    app.update();
+    hold_edges(app)
+}
+
+/// A `SpellVisual` flag `0x20` row holds column 8's model at column 16 from START with the cast's
+/// count; column 16's -1 and a column 8 naming no file still send the hold that drops the last,
+/// and index 13 holds at the weapon hand's slot-4 attachment (`0x722950`, `0x71a7f0`).
+#[test]
+fn a_flagged_visual_holds_its_missile_from_start() {
+    use HoldEdge::*;
+    let (mut app, unit, _) = hold_app();
+    let start = CastEventKind::Start;
+    assert_eq!(
+        edge_of(&mut app, unit, 101, 7, start),
+        vec![Hold(7, Some((0x15, 50)))],
+        "index 3 is the left spell hand"
+    );
+    assert_eq!(edge_of(&mut app, unit, 102, 0, start), vec![Hold(0, None)]);
+    assert_eq!(edge_of(&mut app, unit, 103, 0, start), vec![Hold(0, None)]);
+    assert!(edge_of(&mut app, unit, 104, 0, start).is_empty());
+    assert_eq!(
+        edge_of(&mut app, unit, 105, 0, start),
+        vec![Hold(0, Some((0x16, 50)))]
+    );
+}
+
+/// Our own START launches our missiles and drops any hold right after the start visuals, so it
+/// holds nothing, flagged or not (`0x806a0b`).
+#[test]
+fn our_own_start_releases_our_missiles() {
+    let (mut app, _, me) = hold_app();
+    for spell_id in [101, 104] {
+        assert_eq!(
+            edge_of(&mut app, me, spell_id, 1, CastEventKind::Start),
+            vec![HoldEdge::Fire]
+        );
+    }
+}
+
+/// A failure: `SMSG_SPELL_FAILURE` naming the running cast launches and drops (`0x72ed80`); the
+/// end-cast drops only a numbered cast's hold of a flag-1 missile, not on wire result 187 alone
+/// (`0x7feeb0`).
+#[test]
+fn a_failure_releases_the_hold_on_the_reference_s_paths() {
+    use HoldEdge::*;
+    let (mut app, unit, _) = hold_app();
+    let fail = |interrupt, wire_reason| CastEventKind::Fail {
+        interrupt,
+        wire_reason,
+    };
+    assert_eq!(
+        edge_of(&mut app, unit, 101, 4, fail(true, 0x28)),
+        vec![Fire],
+        "an interrupt; no flag 1"
+    );
+    assert!(
+        edge_of(&mut app, unit, 101, 4, fail(false, 0x28)).is_empty(),
+        "another failure leaves a hold without flag 1"
+    );
+    assert_eq!(
+        edge_of(&mut app, unit, 106, 4, fail(false, 0x28)),
+        vec![Clear(4)]
+    );
+    assert_eq!(
+        edge_of(&mut app, unit, 106, 4, fail(true, 0x28)),
+        vec![Fire, Clear(4)]
+    );
+    assert!(
+        edge_of(&mut app, unit, 106, 0, fail(false, 0x28)).is_empty(),
+        "an unnumbered cast"
+    );
+    assert!(
+        edge_of(&mut app, unit, 106, 4, fail(false, 187)).is_empty(),
+        "the launch result"
+    );
+    assert_eq!(
+        edge_of(&mut app, unit, 106, 4, fail(false, 188)),
+        vec![Clear(4)],
+        "a reason past it, shared 0x91 with it"
+    );
+    assert!(
+        edge_of(&mut app, unit, 101, 4, CastEventKind::Go).is_empty(),
+        "GO keeps it"
+    );
+}
+
+/// A missile row's GO with no cast animation releases the caster's missiles, the hold with them,
+/// even when it made no missile; one with a cast animation waits for it (`0x80f5c1`).
+#[test]
+fn a_go_without_a_cast_animation_releases_even_with_no_missile() {
+    let (mut app, unit, _) = hold_app();
+    let go = |app: &mut App, spell_id, hits: Vec<Entity>| {
+        app.world_mut().write_message(SpellGoTargets {
+            caster: unit,
+            spell_id,
+            hits,
+            misses: Vec::new(),
+            dest: None,
+            ammo_display_id: None,
+            seq: 3,
+            trajectory: None,
+            reflected: 0,
+            reflects: Vec::new(),
+            caster_guid: 0,
+            server_time: 0,
+        });
+        app.update();
+        let spawns = app
+            .world_mut()
+            .resource_mut::<Messages<MissileSpawn>>()
+            .drain()
+            .map(|sp| sp.seq)
+            .collect::<Vec<_>>();
+        (spawns, hold_edges(app))
+    };
+    assert_eq!(
+        go(&mut app, 101, Vec::new()),
+        (Vec::new(), vec![HoldEdge::Fire]),
+        "no missile, still a release"
+    );
+    assert_eq!(
+        go(&mut app, 101, vec![unit]),
+        (vec![3], vec![HoldEdge::Fire]),
+        "the spawn, then its GO's release"
+    );
+    assert_eq!(
+        go(&mut app, 105, Vec::new()),
+        (Vec::new(), Vec::new()),
+        "a cast animation releases at its keyframe"
+    );
 }
