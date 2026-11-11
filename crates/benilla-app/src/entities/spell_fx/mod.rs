@@ -914,7 +914,7 @@ fn reap_matching(
     emitters: &mut Query<&mut benilla_world::particles::ParticleEmitter>,
 ) {
     instances.retain_mut(|i| {
-        if i.decaying || !i.persistent || i.spell_id != spell_id || i.class != class {
+        if i.decaying || !i.persistent || i.spell_id != spell_id || !class.reaps(i.class) {
             return true;
         }
         debug!(

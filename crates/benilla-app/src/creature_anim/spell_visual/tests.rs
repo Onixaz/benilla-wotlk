@@ -50,6 +50,12 @@ fn app() -> App {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([
@@ -214,6 +220,12 @@ fn precast_kit_sound_rings_once_at_start() {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([(
@@ -490,6 +502,14 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
     app.add_message::<crate::net::FieldChanged>();
     // The watcher's CharProc and sound writers need their messages; kit 409 carries neither.
     app.add_message::<crate::aura_visual::AuraProc>();
+    app.add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>();
+    app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::aura_visual::BodyProcPlay>();
     app.add_message::<SheathRequest>();
     app.add_message::<SpellKitSound>()
@@ -593,15 +613,23 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
     app.update();
     {
         let log = &app.world().resource::<FxLog>().0;
-        assert_eq!(log.len(), 2, "one Reap on the REMOVE edge");
-        let SpellKitFx::Reap {
-            spell_id, class, ..
-        } = &log[1]
-        else {
-            panic!("expected Reap");
-        };
-        assert_eq!(*spell_id, FOOD);
-        assert_eq!(*class, super::FxClass::AuraState);
+        // The spell clear on the REMOVE edge takes every class of the spell's models (`0x743b40`).
+        let reaps: Vec<_> = log[1..]
+            .iter()
+            .map(|e| match e {
+                SpellKitFx::Reap {
+                    spell_id, class, ..
+                } => (*spell_id, *class),
+                SpellKitFx::Begin { .. } | SpellKitFx::Hold { .. } => panic!("expected Reap"),
+            })
+            .collect();
+        assert_eq!(
+            reaps,
+            [
+                (FOOD, super::FxClass::AuraState),
+                (FOOD, super::FxClass::Hold)
+            ]
+        );
     }
 }
 
@@ -641,6 +669,14 @@ fn an_ending_aura_plays_its_state_done_kit_once() {
         .add_message::<StateDoneKit>();
     app.add_message::<crate::net::FieldChanged>();
     app.add_message::<crate::aura_visual::AuraProc>();
+    app.add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>();
+    app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::aura_visual::BodyProcPlay>();
     app.add_message::<SheathRequest>();
     app.add_message::<SpellKitSound>()
@@ -648,6 +684,12 @@ fn an_ending_aura_plays_its_state_done_kit_once() {
         .add_message::<EmoteAnim>()
         .add_message::<WoundAnim>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
@@ -770,6 +812,12 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
         .add_message::<SheathRequest>();
     let stages = VisualStages {
         impact: IMPACT_KIT,
@@ -853,6 +901,7 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
         CastEventKind::Impact {
             on_caster: false,
             at: None,
+            caster: target,
         },
     ));
     app.update();
@@ -891,6 +940,12 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([
@@ -1011,6 +1066,12 @@ fn ground_app(
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
         HashMap::from([(VISUAL, stages)]),
@@ -1571,6 +1632,12 @@ fn real_shooter(weapon: &RealRanged) -> Option<(App, Entity)> {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(visuals));
     app.insert_resource(crate::ui_action::Spells {
@@ -1748,9 +1815,10 @@ fn a_shooter_with_no_ranged_weapon_resolves_no_clip_at_all() {
 }
 
 /// A state kit's anim id is a compare, never a play: the kit player's one play site is skipped for
-/// stage 2, the stage both field-4 users play (the aura watcher and the impact hand-off), so the id
+/// stage 2, the stage both field-4 users play (the aura watcher and the missile hit), so the id
 /// only feeds the reference's armed-id compare and a base recompute. Charge (22911) plays Knockdown
-/// (121) from impact kit 348; state kit 349's Stun (14) is a recompute, which Knockdown's
+/// (121) from impact kit 348; an instant hit plays nothing more (`0x801f10`), and a missile hit on
+/// a holder of the aura spends state kit 349's Stun (14) on a recompute, which Knockdown's
 /// base-animation lock refuses.
 #[test]
 fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
@@ -1782,6 +1850,12 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([(
@@ -1822,7 +1896,7 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
     app.add_systems(Update, route_cast_visuals);
 
     let caster = app.world_mut().spawn_empty().id();
-    let victim = app.world_mut().spawn_empty().id();
+    let victim = struck_unit(app.world_mut(), 1, &[(0, CHARGE, 1)]);
     app.world_mut()
         .write_message(cast_event(caster, CHARGE, CastEventKind::Go));
     app.world_mut().write_message(SpellGoTargets {
@@ -1858,11 +1932,53 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         .drain()
         .map(|r| (r.entity, r.anim_id))
         .collect();
+    assert!(recomputes.is_empty(), "an instant hit plays no state kit");
+
+    app.world_mut().write_message(cast_event(
+        victim,
+        CHARGE,
+        CastEventKind::Impact {
+            on_caster: false,
+            at: None,
+            caster,
+        },
+    ));
+    app.update();
+    let plays: Vec<(Entity, u16)> = app
+        .world_mut()
+        .resource_mut::<Messages<EmoteAnim>>()
+        .drain()
+        .map(|e| (e.entity, e.anim_id))
+        .collect();
+    assert_eq!(
+        plays,
+        vec![(victim, KNOCKDOWN)],
+        "the state kit must not add a second one-shot"
+    );
+    let recomputes: Vec<(Entity, u16)> = app
+        .world_mut()
+        .resource_mut::<Messages<super::BaseAnimRecompute>>()
+        .drain()
+        .map(|r| (r.entity, r.anim_id))
+        .collect();
     assert_eq!(
         recomputes,
         vec![(victim, STUN)],
         "the state kit's id is spent on the stage-2 recompute instead"
     );
+}
+
+/// A unit at `health` holding `auras` as `(slot, spell, flags)`.
+fn struck_unit(world: &mut World, health: u32, auras: &[(u8, u32, u8)]) -> Entity {
+    use benilla_protocol::field::FIELD_UNIT_HEALTH;
+    let store = benilla_protocol::ObjectFields::from_pairs(&[(FIELD_UNIT_HEALTH, health)])
+        .into_created(benilla_protocol::messages::ObjectType::Unit);
+    world
+        .spawn((
+            crate::net::ObjectStore(store),
+            crate::unit_auras::UnitAuras::of(0, auras),
+        ))
+        .id()
 }
 
 /// An anim-only state kit still arms, and its add edge owes a recompute: 15 shipped state kits are
@@ -1880,6 +1996,14 @@ fn an_anim_only_state_kit_still_arms_on_the_aura_add_edge() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<crate::aura_visual::AuraProc>()
+        .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
+        .init_resource::<crate::net::GuidIndex>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
         .add_message::<SpellKitSound>()
@@ -1948,6 +2072,14 @@ fn a_detection_aura_s_state_kit_follows_our_own_aura_vision() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<crate::aura_visual::AuraProc>()
+        .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
+        .init_resource::<crate::net::GuidIndex>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
         .add_message::<SpellKitSound>()
@@ -2478,6 +2610,7 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
         CastEventKind::Impact {
             on_caster: false,
             at: Some(at),
+            caster,
         },
     ));
     app.update();
@@ -2971,4 +3104,627 @@ fn a_go_without_a_cast_animation_releases_even_with_no_missile() {
         (Vec::new(), Vec::new()),
         "a cast animation releases at its keyframe"
     );
+}
+
+/// A kit whose one slot is a beam of chain row `effect_id`.
+fn beam_kit(id: u32, effect_id: u32) -> VisualKit {
+    use benilla_formats::{char_proc_type, CharProc};
+    VisualKit {
+        id,
+        char_proc_slots: [
+            Some(CharProc {
+                ty: char_proc_type::CHAIN_CHANNEL,
+                params: [effect_id as f32, 0.0, 1.0, 0.0],
+            }),
+            None,
+            None,
+            None,
+        ],
+        ..Default::default()
+    }
+}
+
+/// Every beam play as `(owner, chain row, source)`.
+fn beam_plays(app: &mut App) -> Vec<(Entity, u32, Option<Entity>)> {
+    app.world_mut()
+        .resource_mut::<Messages<super::ChainProcPlay>>()
+        .drain()
+        .map(|p| (p.entity, p.proc.effect_id, p.from))
+        .collect()
+}
+
+/// A missile hit's two plays both carry the caster, but only the stage-2 state kit's sets
+/// `0x1000` (`0x745409`), so only its beam names a source.
+#[test]
+fn only_the_state_kit_play_hands_the_caster_to_its_beam() {
+    const BEAM_SPELL: u32 = 44776;
+    const BEAM_VISUAL: u32 = 9118;
+    const IMPACT_KIT: u32 = 910;
+    const STATE_KIT: u32 = 911;
+    let mut app = app();
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+        HashMap::from([(
+            BEAM_VISUAL,
+            VisualStages {
+                impact: IMPACT_KIT,
+                state: STATE_KIT,
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([
+            (IMPACT_KIT, beam_kit(IMPACT_KIT, 5)),
+            (STATE_KIT, beam_kit(STATE_KIT, 6)),
+        ]),
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            BEAM_SPELL,
+            SpellDisplay {
+                visual: BEAM_VISUAL,
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    let caster = app.world_mut().spawn_empty().id();
+    let target = struck_unit(app.world_mut(), 1, &[(0, BEAM_SPELL, 1)]);
+    app.world_mut().write_message(cast_event(
+        target,
+        BEAM_SPELL,
+        CastEventKind::Impact {
+            on_caster: false,
+            at: None,
+            caster,
+        },
+    ));
+    app.update();
+    assert_eq!(
+        beam_plays(&mut app),
+        vec![(target, 5, None), (target, 6, Some(caster))]
+    );
+
+    // An instant hit plays its impact kit alone, with no guid (`0x801f10`).
+    app.world_mut().write_message(SpellGoTargets {
+        caster,
+        spell_id: BEAM_SPELL,
+        hits: vec![target],
+        misses: Vec::new(),
+        dest: None,
+        ammo_display_id: None,
+        seq: 2,
+        trajectory: None,
+        reflected: 0,
+        reflects: Vec::new(),
+        caster_guid: 0,
+        server_time: 0,
+    });
+    app.update();
+    assert_eq!(beam_plays(&mut app), vec![(target, 5, None)]);
+}
+
+/// The aura beam fixture: Aura Beam Test (65444) with a state kit whose one slot is chain row 7.
+const AURA_BEAM_SPELL: u32 = 65444;
+
+/// The aura arm alone over [`AURA_BEAM_SPELL`]'s state kit, its state-done kit 913 beside it.
+fn aura_arm_app() -> App {
+    aura_arm_app_with(beam_kit(912, 7))
+}
+
+/// The aura arm alone over [`AURA_BEAM_SPELL`] with `state_kit` as its state kit.
+fn aura_arm_app_with(state_kit: VisualKit) -> App {
+    const VISUAL: u32 = 13881;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
+        .add_message::<crate::aura_visual::AuraProc>()
+        .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .add_message::<super::KitEffectClear>()
+        .init_resource::<crate::net::GuidIndex>()
+        .add_message::<crate::aura_visual::BodyProcPlay>()
+        .add_message::<SheathRequest>()
+        .add_message::<SpellKitSound>()
+        .add_message::<super::BaseAnimRecompute>();
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+        HashMap::from([(
+            VISUAL,
+            VisualStages {
+                state: state_kit.id,
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([(state_kit.id, state_kit)]),
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            AURA_BEAM_SPELL,
+            SpellDisplay {
+                visual: VISUAL,
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    app.add_systems(Update, super::arm_aura_state_fx);
+    app
+}
+
+/// A unit holding `slots` as `(slot, spell, creator)`.
+fn aura_holder(app: &mut App, slots: &[(u8, u32, u64)]) -> Entity {
+    let (store, _) = crate::unit_auras::aura_unit_for_test(&[]);
+    app.world_mut()
+        .spawn((store, crate::unit_auras::UnitAuras::of_casters(slots)))
+        .id()
+}
+
+/// Every spell clear and state-done kit written since the last drain, as `(entity, spell)`.
+#[allow(clippy::type_complexity)]
+fn clears_and_done(app: &mut App) -> (Vec<(Entity, u32)>, Vec<(Entity, u32)>) {
+    let clears = app
+        .world_mut()
+        .resource_mut::<Messages<super::SpellEffectClear>>()
+        .drain()
+        .map(|c| (c.entity, c.spell_id))
+        .collect();
+    let done = app
+        .world_mut()
+        .resource_mut::<Messages<StateDoneKit>>()
+        .drain()
+        .map(|d| (d.entity, d.spell_id))
+        .collect();
+    (clears, done)
+}
+
+/// The aura arm's state-kit play carries the aura's creator (`0x724c77`); a creator not
+/// streamed names an entity no store answers.
+#[test]
+fn an_aura_s_state_kit_beam_names_its_creator() {
+    const CREATOR: u64 = 0xF130_0000_0000_0042;
+    for streamed in [true, false] {
+        let mut app = aura_arm_app();
+        let creator = app.world_mut().spawn_empty().id();
+        if streamed {
+            app.world_mut()
+                .resource_mut::<crate::net::GuidIndex>()
+                .0
+                .insert(CREATOR, creator);
+        }
+        let holder = aura_holder(&mut app, &[(0, AURA_BEAM_SPELL, CREATOR)]);
+        app.update();
+        let want = if streamed {
+            creator
+        } else {
+            Entity::PLACEHOLDER
+        };
+        assert_eq!(
+            beam_plays(&mut app),
+            vec![(holder, 7, Some(want))],
+            "streamed={streamed}"
+        );
+    }
+}
+
+/// The applied core plays per slot with that slot's creator (`0x724c77`), so two casters' auras
+/// of one spell draw two beams; a held slot never replays (`0x7248a8`).
+#[test]
+fn each_aura_slot_plays_its_state_kit_with_its_own_creator() {
+    const A: u64 = 0xF130_0000_0000_00A1;
+    const B: u64 = 0xF130_0000_0000_00B2;
+    let mut app = aura_arm_app();
+    let (a, b) = (
+        app.world_mut().spawn_empty().id(),
+        app.world_mut().spawn_empty().id(),
+    );
+    app.world_mut()
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .extend([(A, a), (B, b)]);
+    let holder = aura_holder(
+        &mut app,
+        &[(0, AURA_BEAM_SPELL, A), (3, AURA_BEAM_SPELL, B)],
+    );
+    app.update();
+    assert_eq!(
+        beam_plays(&mut app),
+        vec![(holder, 7, Some(a)), (holder, 7, Some(b))]
+    );
+    // A third slot of the spell arriving later plays once more, with its own creator.
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(crate::unit_auras::UnitAuras::of_casters(&[
+            (0, AURA_BEAM_SPELL, A),
+            (3, AURA_BEAM_SPELL, B),
+            (5, AURA_BEAM_SPELL, B),
+        ]));
+    app.update();
+    assert_eq!(beam_plays(&mut app), vec![(holder, 7, Some(b))]);
+}
+
+/// Losing one of two slots holding a spell clears the spell's effects on the unit, the other
+/// slot's too, and plays the state-done kit once; the slot left keeps the spell and does not
+/// replay (`0x71e930`, `0x743b40`).
+#[test]
+fn losing_one_of_two_slots_clears_the_spell_and_replays_nothing() {
+    const A: u64 = 0xF130_0000_0000_00A1;
+    const B: u64 = 0xF130_0000_0000_00B2;
+    let mut app = aura_arm_app();
+    let holder = aura_holder(
+        &mut app,
+        &[(0, AURA_BEAM_SPELL, A), (1, AURA_BEAM_SPELL, B)],
+    );
+    app.update();
+    let _ = beam_plays(&mut app);
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(crate::unit_auras::UnitAuras::of_casters(&[(
+            1,
+            AURA_BEAM_SPELL,
+            B,
+        )]));
+    app.update();
+    assert_eq!(
+        clears_and_done(&mut app),
+        (
+            vec![(holder, AURA_BEAM_SPELL)],
+            vec![(holder, AURA_BEAM_SPELL)]
+        )
+    );
+    assert!(
+        beam_plays(&mut app).is_empty(),
+        "the slot left does not replay"
+    );
+}
+
+/// A channel leaving the spell clears its effects and unstores its aura slots (`0x73eb50`): the
+/// aura's later removal plays nothing, and only a new add replays the kit.
+#[test]
+fn a_channel_leaving_the_spell_unstores_its_aura_slots() {
+    const A: u64 = 0xF130_0000_0000_00A1;
+    let mut app = aura_arm_app();
+    let holder = aura_holder(&mut app, &[(2, AURA_BEAM_SPELL, A)]);
+    app.update();
+    assert_eq!(beam_plays(&mut app).len(), 1);
+    app.world_mut().write_message(super::ChannelSpellLeft {
+        entity: holder,
+        spell_id: AURA_BEAM_SPELL,
+    });
+    app.update();
+    assert_eq!(
+        clears_and_done(&mut app),
+        (vec![(holder, AURA_BEAM_SPELL)], Vec::new()),
+        "the clear, no state-done kit"
+    );
+    assert!(
+        beam_plays(&mut app).is_empty(),
+        "the held slot is not replayed"
+    );
+    // The aura leaving its unstored slot runs no removal core.
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(crate::unit_auras::UnitAuras::of_casters(&[]));
+    app.update();
+    assert_eq!(clears_and_done(&mut app), (Vec::new(), Vec::new()));
+    // A fresh add plays again.
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(crate::unit_auras::UnitAuras::of_casters(&[(
+            2,
+            AURA_BEAM_SPELL,
+            A,
+        )]));
+    app.update();
+    assert_eq!(beam_plays(&mut app).len(), 1);
+}
+
+/// The channel poll reports the spell a unit's channel leaves, to a new channel or to none
+/// (`0x73eb50`), and nothing on a rising edge.
+#[test]
+fn the_channel_poll_reports_the_spell_it_leaves() {
+    let mut app = app();
+    let left = |app: &mut App| -> Vec<(Entity, u32)> {
+        app.world_mut()
+            .resource_mut::<Messages<super::ChannelSpellLeft>>()
+            .drain()
+            .map(|l| (l.entity, l.spell_id))
+            .collect()
+    };
+    let store = |spell: u32| {
+        crate::net::ObjectStore(
+            benilla_protocol::ObjectFields::from_pairs(&[(144, spell)])
+                .into_created(benilla_protocol::messages::ObjectType::Unit),
+        )
+    };
+    let unit = app.world_mut().spawn(store(SPELL)).id();
+    app.update();
+    assert!(left(&mut app).is_empty(), "a rising edge leaves nothing");
+    app.world_mut().entity_mut(unit).insert(store(RANGED_SPELL));
+    app.update();
+    assert_eq!(left(&mut app), vec![(unit, SPELL)]);
+    app.world_mut().entity_mut(unit).insert(store(0));
+    app.update();
+    assert_eq!(left(&mut app), vec![(unit, RANGED_SPELL)]);
+}
+
+/// A missile hit plays the state kit only on a living target holding the spell's aura, an active
+/// one when the kit sets `0x80` (`0x702f17`, `0x702f25`, `0x702f2e`).
+#[test]
+fn a_missile_hit_plays_the_state_kit_only_on_a_living_holder_of_the_aura() {
+    const SPELL: u32 = 44776;
+    const VISUAL: u32 = 9118;
+    const STATE_KIT: u32 = 911;
+    // (health, auras as (slot, spell, flags), kit flags, plays)
+    type Case<'a> = (u32, &'a [(u8, u32, u8)], u32, bool);
+    let cases: [Case; 7] = [
+        (1, &[(0, SPELL, 1)], 0, true),
+        (0, &[(0, SPELL, 1)], 0, false),
+        (1, &[], 0, false),
+        (1, &[(0, SPELL + 1, 1)], 0, false),
+        (1, &[(0, SPELL, 0)], 0, true),
+        (1, &[(0, SPELL, 0)], 0x80, false),
+        (1, &[(0, SPELL, 0), (1, SPELL, 4)], 0x80, true),
+    ];
+    for (i, (health, auras, kit_flags, plays)) in cases.into_iter().enumerate() {
+        let mut app = app();
+        app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+            HashMap::from([(
+                VISUAL,
+                VisualStages {
+                    state: STATE_KIT,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::from([(
+                STATE_KIT,
+                VisualKit {
+                    flags: kit_flags,
+                    ..beam_kit(STATE_KIT, 6)
+                },
+            )]),
+        )));
+        app.insert_resource(crate::ui_action::Spells {
+            catalog: SpellCatalog::from_displays(HashMap::from([(
+                SPELL,
+                SpellDisplay {
+                    visual: VISUAL,
+                    ..Default::default()
+                },
+            )])),
+            ..crate::ui_action::Spells::empty_for_tests()
+        });
+        let caster = app.world_mut().spawn_empty().id();
+        let target = struck_unit(app.world_mut(), health, auras);
+        app.world_mut().write_message(cast_event(
+            target,
+            SPELL,
+            CastEventKind::Impact {
+                on_caster: false,
+                at: None,
+                caster,
+            },
+        ));
+        app.update();
+        let want = if plays {
+            vec![(target, 6, Some(caster))]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(beam_plays(&mut app), want, "case {i}");
+    }
+}
+
+/// The aura reader adds only a slot with an effect bit set and removes one losing them all
+/// (`0x72f8e1`): an inactive aura arms nothing, turning active plays the kit, and going inactive
+/// clears the spell and plays the state-done kit.
+#[test]
+fn only_an_active_aura_slot_arms_its_state_kit() {
+    const A: u64 = 0xF130_0000_0000_00A1;
+    let mut app = aura_arm_app();
+    let holder = app
+        .world_mut()
+        .spawn((
+            crate::unit_auras::aura_unit_for_test(&[]).0,
+            crate::unit_auras::UnitAuras::of(A, &[(0, AURA_BEAM_SPELL, 0)]),
+        ))
+        .id();
+    app.update();
+    assert!(beam_plays(&mut app).is_empty(), "inactive: nothing armed");
+    let set = |app: &mut App, flags: u8| {
+        app.world_mut()
+            .entity_mut(holder)
+            .insert(crate::unit_auras::UnitAuras::of(
+                A,
+                &[(0, AURA_BEAM_SPELL, flags)],
+            ));
+        app.update();
+    };
+    set(&mut app, 2);
+    assert_eq!(
+        beam_plays(&mut app).len(),
+        1,
+        "turning active plays the kit"
+    );
+    assert_eq!(clears_and_done(&mut app), (Vec::new(), Vec::new()));
+    set(&mut app, 0);
+    assert_eq!(
+        clears_and_done(&mut app),
+        (
+            vec![(holder, AURA_BEAM_SPELL)],
+            vec![(holder, AURA_BEAM_SPELL)]
+        ),
+        "losing the effect bits removes the slot"
+    );
+    // An inactive slot leaving runs no removal.
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(crate::unit_auras::UnitAuras::of(A, &[]));
+    app.update();
+    assert_eq!(clears_and_done(&mut app), (Vec::new(), Vec::new()));
+}
+
+/// The applied core stores the slot but skips the kit while a missile of the spell still waits on
+/// the unit, for a row with a missile (`0x724b92`); the stored slot's removal still clears.
+#[test]
+fn a_queued_missile_of_the_spell_holds_back_the_aura_s_state_kit() {
+    const SHOT: u32 = 75; // the spell `PendingMissiles::queue_a_shot` queues
+    const VISUAL: u32 = 2000;
+    const STATE_KIT: u32 = 914;
+    for (gate, queued, plays) in [(1, true, false), (0, true, true), (1, false, true)] {
+        let mut app = aura_arm_app();
+        app.init_resource::<crate::entities::PendingMissiles>();
+        app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+            HashMap::from([(
+                VISUAL,
+                VisualStages {
+                    state: STATE_KIT,
+                    missile_gate: gate,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::from([(STATE_KIT, beam_kit(STATE_KIT, 8))]),
+        )));
+        app.insert_resource(crate::ui_action::Spells {
+            catalog: SpellCatalog::from_displays(HashMap::from([(
+                SHOT,
+                SpellDisplay {
+                    visual: VISUAL,
+                    ..Default::default()
+                },
+            )])),
+            ..crate::ui_action::Spells::empty_for_tests()
+        });
+        let holder = aura_holder(&mut app, &[(0, SHOT, 0xF130_0000_0000_00A1)]);
+        if queued {
+            crate::entities::PendingMissiles::queue_a_shot(&mut app, holder);
+        }
+        app.update();
+        assert_eq!(
+            beam_plays(&mut app).len(),
+            usize::from(plays),
+            "gate {gate}, queued {queued}"
+        );
+        app.world_mut()
+            .entity_mut(holder)
+            .insert(crate::unit_auras::UnitAuras::of_casters(&[]));
+        app.update();
+        assert_eq!(
+            clears_and_done(&mut app).0,
+            vec![(holder, SHOT)],
+            "the stored slot is removed either way"
+        );
+    }
+}
+
+/// A display change re-adds every slot it does not store (`0x728e70`): one a channel unstored
+/// replays with its creator, an inactive one is stored and plays, and a stored one is skipped.
+#[test]
+fn a_display_change_re_adds_the_slots_it_does_not_store() {
+    const A: u64 = 0xF130_0000_0000_00A1;
+    let mut app = aura_arm_app();
+    let a = app.world_mut().spawn_empty().id();
+    app.world_mut()
+        .resource_mut::<crate::net::GuidIndex>()
+        .0
+        .insert(A, a);
+    let holder = aura_holder(&mut app, &[(2, AURA_BEAM_SPELL, A)]);
+    app.update();
+    assert_eq!(beam_plays(&mut app), vec![(holder, 7, Some(a))]);
+    let swap = |app: &mut App| {
+        app.world_mut()
+            .write_message(crate::entities::DisplaySwapped { entity: holder });
+        app.update();
+    };
+    swap(&mut app);
+    assert!(beam_plays(&mut app).is_empty(), "a stored slot is skipped");
+    app.world_mut().write_message(super::ChannelSpellLeft {
+        entity: holder,
+        spell_id: AURA_BEAM_SPELL,
+    });
+    app.update();
+    assert!(beam_plays(&mut app).is_empty());
+    swap(&mut app);
+    assert_eq!(beam_plays(&mut app), vec![(holder, 7, Some(a))]);
+    swap(&mut app);
+    assert!(
+        beam_plays(&mut app).is_empty(),
+        "stored again by the re-add"
+    );
+
+    // An inactive slot never arms on its add, but the display change stores and plays it.
+    let idle = app
+        .world_mut()
+        .spawn((
+            crate::unit_auras::aura_unit_for_test(&[]).0,
+            crate::unit_auras::UnitAuras::of(A, &[(4, AURA_BEAM_SPELL, 0)]),
+        ))
+        .id();
+    app.update();
+    assert!(beam_plays(&mut app).is_empty());
+    app.world_mut()
+        .write_message(crate::entities::DisplaySwapped { entity: idle });
+    app.update();
+    assert_eq!(beam_plays(&mut app), vec![(idle, 7, Some(a))]);
+}
+
+/// A state kit with an anim-rate proc (11) waits for the unit's model (`0x724bf0`): the load plays
+/// it with no guid while the unit holds the spell (`0x73eacf`), and plays nothing once it left.
+#[test]
+fn an_anim_rate_state_kit_waits_for_the_model() {
+    use benilla_formats::{char_proc_type, CharProc};
+    const A: u64 = 0xF130_0000_0000_00A1;
+    let mut kit = beam_kit(915, 7);
+    kit.char_proc_slots[1] = Some(CharProc {
+        ty: char_proc_type::ANIM_RATE,
+        params: [0.0; 4],
+    });
+    for holds_at_load in [true, false] {
+        let mut app = aura_arm_app_with(kit);
+        let a = app.world_mut().spawn_empty().id();
+        app.world_mut()
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(A, a);
+        let holder = aura_holder(&mut app, &[(0, AURA_BEAM_SPELL, A)]);
+        app.update();
+        app.update();
+        assert!(beam_plays(&mut app).is_empty(), "no model, no play");
+        assert!(app
+            .world_mut()
+            .resource_mut::<Messages<crate::aura_visual::AuraProc>>()
+            .drain()
+            .next()
+            .is_none());
+        if !holds_at_load {
+            app.world_mut()
+                .entity_mut(holder)
+                .insert(crate::unit_auras::UnitAuras::of_casters(&[]));
+            app.update();
+            let _ = clears_and_done(&mut app);
+        }
+        app.world_mut()
+            .entity_mut(holder)
+            .insert(crate::entities::VisualAttached);
+        app.update();
+        let want = if holds_at_load {
+            vec![(holder, 7, None)]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(beam_plays(&mut app), want, "holds at load: {holds_at_load}");
+        app.update();
+        assert!(beam_plays(&mut app).is_empty(), "played once");
+    }
+
+    // A loaded model plays at once, with the slot's creator.
+    let mut app = aura_arm_app_with(kit);
+    let holder = aura_holder(&mut app, &[(0, AURA_BEAM_SPELL, 0)]);
+    app.world_mut()
+        .entity_mut(holder)
+        .insert(crate::entities::VisualAttached);
+    app.update();
+    assert_eq!(beam_plays(&mut app), vec![(holder, 7, None)]);
 }
