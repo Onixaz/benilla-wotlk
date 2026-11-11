@@ -2339,7 +2339,12 @@ fn a_dest_go_plays_the_impact_area_kit_unless_a_missile_or_a_beam_carries_it() {
         [super::DelayedAreaKit {
             kit_id: AREA_KIT,
             pos: at,
-            wait: super::AreaKitWait::Flight { caster, speed: 8.0 },
+            wait: super::AreaKitWait::Flight {
+                caster,
+                speed: 8.0,
+                to: at
+            },
+            deck: None,
         }]
     );
 
@@ -2361,6 +2366,177 @@ fn a_delayed_area_kit_waits_the_missile_flight() {
         0.5
     );
     assert_eq!(super::area_kit_delay(None, Vec3::ONE, 10.0), 0.0);
+}
+
+/// Each extra point takes the instant area kit and, with no missile to carry it, the impact area
+/// kit, as the dest does; at Speed > 0 every one waits for the last point's flight and a
+/// transport's point plays on its transport (`0x80f1cc`, `0x80e978`).
+#[test]
+fn a_go_plays_the_area_kits_at_each_extra_point() {
+    const INSTANT_KIT: u32 = 1944;
+    const AREA_KIT: u32 = 3270;
+    const SPARK: u32 = 4101;
+    const BOOM: u32 = 4100;
+    let dest = Vec3::new(3.0, 0.0, 4.0);
+    let (p, local, on_deck) = (
+        Vec3::new(6.0, 0.0, 8.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(1.0, 0.0, 30.0),
+    );
+    let stages = VisualStages {
+        instant_area_kit: INSTANT_KIT,
+        impact_area_kit: AREA_KIT,
+        ..Default::default()
+    };
+    let kits = || {
+        HashMap::from([
+            (
+                INSTANT_KIT,
+                VisualKit {
+                    sound: Some(SPARK),
+                    ..Default::default()
+                },
+            ),
+            (
+                AREA_KIT,
+                VisualKit {
+                    sound: Some(BOOM),
+                    ..Default::default()
+                },
+            ),
+        ])
+    };
+    let go = |app: &mut App| {
+        let caster = app.world_mut().spawn(GlobalTransform::default()).id();
+        let deck = app.world_mut().spawn_empty().id();
+        let point = |at, deck, world| crate::entities::DeckPoint { at, deck, world };
+        app.world_mut().write_message(SpellGoTargets {
+            list: Vec::new(),
+            target_mask: 0x80040,
+            src: None,
+            caster,
+            spell_id: 1,
+            hits: Vec::new(),
+            misses: Vec::new(),
+            dest: Some(dest),
+            points: vec![point(p, None, p), point(local, Some(deck), on_deck)],
+            ammo_display_id: None,
+            seq: 1,
+            trajectory: None,
+            reflected: 0,
+            reflects: Vec::new(),
+            caster_guid: 0,
+            server_time: 0,
+        });
+        app.update();
+        (caster, deck)
+    };
+    let sounds = |app: &mut App| -> Vec<(u32, Vec3)> {
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitSound>>()
+            .drain()
+            .filter_map(|s| match s {
+                SpellKitSound::PlayAt { pos, kit_sound } => Some((kit_sound, pos)),
+                _ => None,
+            })
+            .collect()
+    };
+
+    let mut app = ground_app(1, 0.0, stages, kits(), HashMap::new());
+    go(&mut app);
+    assert_eq!(
+        sounds(&mut app),
+        vec![
+            (SPARK, dest),
+            (BOOM, dest),
+            (SPARK, p),
+            (BOOM, p),
+            (SPARK, on_deck),
+            (BOOM, on_deck),
+        ]
+    );
+
+    let mut app = ground_app(1, 8.0, stages, kits(), HashMap::new());
+    let (caster, deck) = go(&mut app);
+    assert_eq!(
+        sounds(&mut app),
+        vec![(SPARK, dest), (SPARK, p), (SPARK, on_deck)]
+    );
+    let wait = super::AreaKitWait::Flight {
+        caster,
+        speed: 8.0,
+        to: on_deck,
+    };
+    let delayed: Vec<super::DelayedAreaKit> = app
+        .world_mut()
+        .resource_mut::<Messages<super::DelayedAreaKit>>()
+        .drain()
+        .collect();
+    let kit = |pos, deck| super::DelayedAreaKit {
+        kit_id: AREA_KIT,
+        pos,
+        wait,
+        deck,
+    };
+    assert_eq!(
+        delayed,
+        vec![
+            kit(dest, None),
+            kit(p, None),
+            kit(on_deck, Some((deck, local)))
+        ]
+    );
+}
+
+/// A delayed area kit on a transport plays where the transport is when it comes due, and at its
+/// place at the GO once the transport is gone.
+#[test]
+fn a_delayed_area_kit_on_a_transport_plays_where_it_has_moved() {
+    const AREA_KIT: u32 = 3270;
+    const BOOM: u32 = 4100;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .add_message::<super::DelayedAreaKit>()
+        .add_message::<SpellKitSound>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::entities::dest_fx::GroundBurst>()
+        .insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
+            HashMap::new(),
+            HashMap::from([(
+                AREA_KIT,
+                VisualKit {
+                    sound: Some(BOOM),
+                    ..Default::default()
+                },
+            )]),
+            HashMap::new(),
+        )))
+        .add_systems(Update, super::play_delayed_area_kits);
+    let deck = app
+        .world_mut()
+        .spawn(GlobalTransform::from_xyz(0.0, 0.0, 50.0))
+        .id();
+    let local = Vec3::new(2.0, 0.0, 0.0);
+    let at_go = Vec3::new(2.0, 0.0, 10.0);
+    for deck in [Some((deck, local)), Some((Entity::PLACEHOLDER, local))] {
+        app.world_mut().write_message(super::DelayedAreaKit {
+            kit_id: AREA_KIT,
+            pos: at_go,
+            wait: super::AreaKitWait::Secs(0.0),
+            deck,
+        });
+    }
+    app.update();
+    let played: Vec<Vec3> = app
+        .world_mut()
+        .resource_mut::<Messages<SpellKitSound>>()
+        .drain()
+        .filter_map(|s| match s {
+            SpellKitSound::PlayAt { pos, .. } => Some(pos),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(played, vec![Vec3::new(2.0, 0.0, 50.0), at_go]);
 }
 
 /// The beam test reads the cast, impact, state, channel and the two impact-kit columns, never
@@ -3978,6 +4154,7 @@ fn a_held_area_kit_plays_on_its_keyed_connect() {
             kit_id: AREA_KIT,
             pos,
             wait: super::AreaKitWait::Secs(0.0),
+            deck: None,
         }]
     );
     assert!(app.world().resource::<super::BeamKitWaits>().is_empty());
@@ -4713,7 +4890,7 @@ fn spawn_shapes(go: &SpellGoTargets, display: &SpellDisplay, flags: u32) -> Vec<
         shape: crate::entities::MissileShape::default(),
         from: None,
         list: None,
-        aim_deck: 0,
+        aim_deck: None,
         seq: 1,
     };
     super::go_missiles(go, display, flags, base)
@@ -4824,12 +5001,16 @@ fn a_multi_target_spell_flies_one_missile_with_every_target() {
 fn extra_points_fly_one_missile_each_or_one_carrying_them() {
     let mut world = World::new();
     let a = world.spawn_empty().id();
+    let deck = world.spawn_empty().id();
     let (p, q) = (Vec3::new(5.0, 0.0, 5.0), Vec3::new(1.0, 0.0, 1.0));
+    let qw = Vec3::new(1.0, 0.0, 11.0);
+    let point = |at, deck, world| crate::entities::DeckPoint { at, deck, world };
     let go = SpellGoTargets {
-        points: vec![(p, 0), (q, 9)],
+        points: vec![point(p, None, p), point(q, Some(deck), qw)],
         ..listed_go(&[a], &[], 0x80002, None)
     };
-    let shapes = |display: &SpellDisplay| -> Vec<(usize, Option<Vec3>, u64, usize)> {
+    type Shape = (usize, Option<Vec3>, Option<(Entity, Vec3)>, usize);
+    let shapes = |display: &SpellDisplay| -> Vec<Shape> {
         let base = MissileSpawn {
             caster: Entity::PLACEHOLDER,
             spell_id: SPELL,
@@ -4848,7 +5029,7 @@ fn extra_points_fly_one_missile_each_or_one_carrying_them() {
             shape: crate::entities::MissileShape::default(),
             from: None,
             list: None,
-            aim_deck: 0,
+            aim_deck: None,
             seq: 1,
         };
         super::go_missiles(&go, display, 0, base)
@@ -4861,13 +5042,20 @@ fn extra_points_fly_one_missile_each_or_one_carrying_them() {
     };
     assert_eq!(
         shapes(&SpellDisplay::default()),
-        vec![(1, None, 0, 0), (0, Some(p), 0, 0), (0, Some(q), 9, 0)]
+        vec![
+            (1, None, None, 0),
+            (0, Some(p), None, 0),
+            (0, Some(qw), Some((deck, q)), 0)
+        ]
     );
     let multi = SpellDisplay {
         attributes_ex4: 0x4_0000,
         ..Default::default()
     };
-    assert_eq!(shapes(&multi), vec![(0, None, 0, 0), (0, Some(p), 0, 2)]);
+    assert_eq!(
+        shapes(&multi),
+        vec![(0, None, None, 0), (0, Some(p), None, 2)]
+    );
 }
 
 /// An area landing's listed unit plays the impact kit its role picks and, under the hit's own aura

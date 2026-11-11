@@ -100,6 +100,8 @@ pub(crate) struct Scene<'w, 's> {
     go_targets: MessageWriter<'w, SpellGoTargets>,
     go_lid: MessageWriter<'w, crate::go_anim::GoLidOpen>,
     sheaths: MessageWriter<'w, crate::creature_anim::SheathRequest>,
+    /// Where a GO's extra points' transports are.
+    decks: Query<'w, 's, &'static GlobalTransform>,
 }
 
 /// `SMSG_INITIAL_SPELLS`, once at login, into the action store the UI feed reads.
@@ -445,6 +447,27 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
         ..
     } = ev
     {
+        // A point on a transport not here is dropped; the rest keep their place now (`0x80e559`).
+        let points = points
+            .into_iter()
+            .filter_map(|(p, deck)| {
+                let at = benilla_assets::coords::wow_to_bevy(p);
+                if deck == 0 {
+                    return Some(crate::entities::DeckPoint {
+                        at,
+                        deck: None,
+                        world: at,
+                    });
+                }
+                let e = *l.index.0.get(&deck)?;
+                let world = crate::entities::deck_place(at, sc.decks.get(e).ok()?);
+                Some(crate::entities::DeckPoint {
+                    at,
+                    deck: Some(e),
+                    world,
+                })
+            })
+            .collect();
         let engaged = !sc.engaged_self.is_empty();
         spell_go(
             caster,
@@ -1320,12 +1343,12 @@ fn spell_start(
 /// loot-target latch.
 const GO_TYPE_CHEST: i32 = 3;
 
-/// The targets' mask, source and dest points, and extra points with their transport guids.
+/// The targets' mask, source and dest points, and extra points.
 type GoPoints = (
     u32,
     Option<[f32; 3]>,
     Option<[f32; 3]>,
-    Vec<([f32; 3], u64)>,
+    Vec<crate::entities::DeckPoint>,
 );
 
 /// `SMSG_SPELL_GO`: the cast launched. The server schedules damage off `Spell.dbc` Speed; the
@@ -1593,10 +1616,6 @@ fn spell_go(
         // A pure dest cast (ground AoE, empty lists) rides the same message: the point is a target.
         let dest = dest.map(benilla_assets::coords::wow_to_bevy);
         let src = src.map(benilla_assets::coords::wow_to_bevy);
-        let points: Vec<(Vec3, u64)> = points
-            .into_iter()
-            .map(|(p, deck)| (benilla_assets::coords::wow_to_bevy(p), deck))
-            .collect();
         if !hits.is_empty()
             || !misses.is_empty()
             || dest.is_some()

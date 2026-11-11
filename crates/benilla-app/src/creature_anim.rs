@@ -685,8 +685,8 @@ pub(crate) struct SpellGoTargets {
     pub(crate) src: Option<Vec3>,
     /// A dest-targeted cast's ground point, in bevy coords.
     pub(crate) dest: Option<Vec3>,
-    /// The extra target points in bevy coords, each local to its transport guid when not 0.
-    pub(crate) points: Vec<(Vec3, u64)>,
+    /// The extra target points, in bevy coords; one whose transport is not here is dropped.
+    pub(crate) points: Vec<crate::entities::DeckPoint>,
     /// The GO's ammo block (`castFlags & 0x20`): the ammo's `ItemDisplayInfo` id, the missile model
     /// when the visual chain has none.
     pub(crate) ammo_display_id: Option<u32>,

@@ -240,6 +240,10 @@ pub(super) struct Missile {
     scale: f32,
     /// The targets it carries, and the listed unit it is on.
     list: Option<Box<ListFlight>>,
+    /// A ground aim local to a transport, re-placed through it every step (`0x6ff320`).
+    aim_deck: Option<(Entity, Vec3)>,
+    /// The flight loop, restarted by each new flight off a landing (`0x702a3f`).
+    sound: Option<u32>,
 }
 
 /// The targets one missile carries (`0x733600`): it lands on them at its point, or hops them.
@@ -250,9 +254,32 @@ pub(crate) struct TargetList {
     pub(crate) results: bool,
     /// Flag `0x200`: a unit landing hops on to the next listed unit (`0x702a60`).
     pub(crate) bounce: bool,
-    /// The extra points, each local to its transport guid when not 0; a landing plays the target
-    /// kit at each (`0x701150`).
-    pub(crate) points: Vec<(Vec3, u64)>,
+    /// The extra points; a landing plays the target kit at each (`0x701150`).
+    pub(crate) points: Vec<DeckPoint>,
+}
+
+/// An extra target point (`0x80e44f`): local to its transport when it has one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DeckPoint {
+    /// Bevy coords, local to `deck` when set.
+    pub(crate) at: Vec3,
+    pub(crate) deck: Option<Entity>,
+    /// The world point at the GO, kept once the transport is gone (`0x80e570`).
+    pub(crate) world: Vec3,
+}
+
+impl DeckPoint {
+    /// Where it is now: through its transport while that is here, else its world point.
+    pub(crate) fn place(&self, decks: &Query<&GlobalTransform>) -> Vec3 {
+        self.deck
+            .and_then(|d| decks.get(d).ok())
+            .map_or(self.world, |g| deck_place(self.at, g))
+    }
+}
+
+/// A transport-local point in the world: the transport's turn, then its place (`0x6ff320`).
+pub(crate) fn deck_place(local: Vec3, deck: &GlobalTransform) -> Vec3 {
+    deck.translation() + deck.rotation() * local
 }
 
 /// One listed target, resolved by guid where the missile meets it.
@@ -534,7 +561,7 @@ impl PendingMissiles {
             shape: MissileShape::default(),
             from: None,
             list: None,
-            aim_deck: 0,
+            aim_deck: None,
             seq: 0,
         };
         app.world_mut()
@@ -622,20 +649,11 @@ pub(super) struct ArrivalOut<'w, 's> {
     index: Option<Res<'w, crate::net::GuidIndex>>,
     /// Our own player, which plays an area landing whose caster is gone (`0x700ed9`).
     me: Query<'w, 's, Entity, With<crate::net::SelfPlayer>>,
-    placed: Query<'w, 's, (), With<GlobalTransform>>,
+    /// What is placed in the world, and where.
+    placed: Query<'w, 's, &'static GlobalTransform>,
 }
 
 impl ArrivalOut<'_, '_> {
-    /// A point in the world, through its transport when `deck` is not 0; `None` when that
-    /// transport is not here, as the reference drops such a point (`0x80e559`).
-    fn deck_point(&self, at: Vec3, deck: u64, joints: &Query<&GlobalTransform>) -> Option<Vec3> {
-        if deck == 0 {
-            return Some(at);
-        }
-        let deck = *self.index.as_deref()?.0.get(&deck)?;
-        Some(joints.get(deck).ok()?.transform_point(at))
-    }
-
     /// A listed guid's unit; an object of another type names none (`0x700fb1`).
     fn listed_unit(&self, guid: u64) -> Option<Entity> {
         let unit = *self.index.as_deref()?.0.get(&guid)?;
@@ -799,7 +817,8 @@ impl AreaLanding<'_> {
         }
         // Each point plays the target kit there through the caster, none with it gone (`0x701150`).
         if out.placed.contains(caster) {
-            for &(pos, _) in &list.points {
+            for p in &list.points {
+                let pos = p.place(&out.placed);
                 out.impacts
                     .write(event(caster, CastEventKind::PointImpact { pos }));
             }
@@ -973,23 +992,10 @@ fn stick(
     joints: &Query<&GlobalTransform>,
     commands: &mut Commands,
 ) -> bool {
-    let Aim::Unit {
-        target, dest_tag, ..
-    } = missile.aim
-    else {
+    let Some((target, tag, key)) = lodge(missile, units) else {
         return false;
     };
-    let Some(key) = missile.path.clone().filter(|_| missile.parts_spawned) else {
-        return false;
-    };
-    let Ok((base, Some(bones), _)) = units.get(target) else {
-        return false;
-    };
-    let Some(tag) = dest_tag
-        .into_iter()
-        .chain(DEST_FALLBACKS)
-        .find(|t| bones.points.contains_key(t))
-    else {
+    let Ok((base, ..)) = units.get(target) else {
         return false;
     };
     let Some(anchor) = attach_world_pos_offset(target, [tag], Vec3::ZERO, units, joints) else {
@@ -1010,6 +1016,26 @@ fn stick(
         });
     play_missile_sequence(commands, entity, key, STUCK_ANIM);
     true
+}
+
+/// Where a blocked missile lodges (`0x6fee00`): its victim, the attachment and its model's key;
+/// `None` with no drawn model or no such attachment.
+fn lodge(missile: &Missile, units: &AttachPosQuery) -> Option<(Entity, u16, String)> {
+    let Aim::Unit {
+        target, dest_tag, ..
+    } = missile.aim
+    else {
+        return None;
+    };
+    let key = missile.path.clone().filter(|_| missile.parts_spawned)?;
+    let (_, Some(bones), _) = units.get(target).ok()? else {
+        return None;
+    };
+    let tag = dest_tag
+        .into_iter()
+        .chain(DEST_FALLBACKS)
+        .find(|t| bones.points.contains_key(t))?;
+    Some((target, tag, key))
 }
 
 /// Turn a parried missile away at half speed, fading out (`0x702fc0`); `false` straight up or down.
@@ -1270,6 +1296,7 @@ fn launch_go(
     // it carries the list.
     let mut lands_now: Vec<(Vec3, bool)> = Vec::new();
     let mut first = 0;
+    let mut aim_deck = None;
     let aims: Vec<(Aim, Option<MissKind>)> = if !go.spawn.targets.is_empty() {
         go.spawn
             .targets
@@ -1295,10 +1322,18 @@ fn launch_go(
         } else {
             turn * shape.impact_offset
         };
-        out.deck_point(p, go.spawn.aim_deck, joints)
-            .map(|p| (Aim::Ground(p + offset), None))
-            .into_iter()
-            .collect()
+        // A transport's point keeps the offset in its frame and follows it (`0x733820`).
+        let at = match go.spawn.aim_deck {
+            Some((deck, local)) => match joints.get(deck) {
+                Ok(g) => {
+                    aim_deck = Some((deck, local + offset));
+                    deck_place(local + offset, g)
+                }
+                Err(_) => p + offset,
+            },
+            None => p + offset,
+        };
+        vec![(Aim::Ground(at), None)]
     } else if let Some(list) = go.spawn.list.as_ref().filter(|l| l.bounce) {
         // A hopping list starts at its first unit, past any guid naming none (`0x7023db`).
         let start = list
@@ -1338,17 +1373,8 @@ fn launch_go(
         }
     }
     let flight_list = go.spawn.list.as_ref().map(|list| {
-        // The points resolve once, at the launch.
-        let points = list
-            .points
-            .iter()
-            .filter_map(|&(p, deck)| Some((out.deck_point(p, deck, joints)?, 0)))
-            .collect();
         Box::new(ListFlight {
-            list: TargetList {
-                points,
-                ..list.clone()
-            },
+            list: list.clone(),
             current: first,
             dest_tag: go.spawn.dest_tag,
             offset: shape.impact_offset,
@@ -1487,6 +1513,8 @@ fn launch_go(
                 launch_rides_deck: motion.is_some() || shape.follow.is_some(),
                 scale: go.spawn.scale,
                 list: flight_list.clone(),
+                aim_deck: aim_deck.filter(|_| matches!(aim_at, Aim::Ground(_))),
+                sound: go.spawn.missile_sound,
             };
             let dir = (aim - launch).normalize_or(-Vec3::Z);
             // A route that flies on from its landing still takes a step (`0x7022d0`).
@@ -2089,6 +2117,13 @@ pub(super) fn move_missiles(
         &mut out.kit.fx,
     );
     for (entity, mut missile, mut transform) in &mut missiles {
+        // Re-place a transport's point each step; once the transport goes, the aim stays (`0x6ff320`).
+        if let Some((deck, local)) = missile.aim_deck {
+            match joints.get(deck) {
+                Ok(g) => missile.aim = Aim::Ground(deck_place(local, g)),
+                Err(_) => missile.aim_deck = None,
+            }
+        }
         let hug = missile.follow.filter(|f| f.hugs_target()).map(|f| f.height);
         let live = match aim_point(missile.aim, hug, &units, &joints) {
             Some(live) => live,
@@ -2114,10 +2149,10 @@ pub(super) fn move_missiles(
                 None
             };
         }
-        // The flight rides its target's transport (`0x7015d0`).
+        // The flight rides its target's transport, or its point's (`0x6ffd70`).
         let deck = match missile.aim {
             Aim::Unit { target, .. } => world.deck_of(target),
-            Aim::Ground(_) => None,
+            Aim::Ground(_) => missile.aim_deck.map(|(d, _)| d),
         }
         .and_then(|d| units.get(d).ok());
         if let Some((deck, ..)) = deck {
@@ -2143,46 +2178,65 @@ pub(super) fn move_missiles(
                 &mut out,
                 &mut play_seq,
             );
+            // Every landing stops the flight loop, a new flight restarts it (`0x70354c`, `0x702a3f`).
+            sounds.write(MissileSound::Stop { entity });
             // A unit landing hops a listed flight on after its route, a reflect on its return
-            // (`0x702a60`); a stuck one flies on instead of lodging.
+            // (`0x702a60`); a blocked one lodges, then the hop takes it out of the shield still
+            // playing Stuck (`0x703105`, `0x7025b0`).
             let on_unit = matches!(missile.aim, Aim::Unit { .. });
             let mut hopped = |m: &mut Missile, out: &mut ArrivalOut| {
                 m.impact = aim;
-                match hop(m, clock, &units, &joints, out) {
-                    Hop::On => true,
-                    Hop::Done => false,
-                    Hop::Stranded => {
-                        land_on_area(m, aim, out, &mut play_seq);
-                        false
-                    }
+                let next = hop(m, clock, &units, &joints, out);
+                if next == Hop::Stranded {
+                    land_on_area(m, aim, out, &mut play_seq);
                 }
+                next
             };
+            let mut relaunched = false;
             let flies_on = match next {
-                AfterArrival::End => on_unit && hopped(&mut missile, &mut out),
-                AfterArrival::Stick if hopped(&mut missile, &mut out) => true,
+                AfterArrival::End => {
+                    relaunched = on_unit && hopped(&mut missile, &mut out) == Hop::On;
+                    relaunched
+                }
                 AfterArrival::Glance => {
                     let glancing = glance_off(entity, &mut missile, &mut commands);
-                    hopped(&mut missile, &mut out) || glancing
+                    relaunched = hopped(&mut missile, &mut out) == Hop::On;
+                    relaunched || glancing
                 }
                 AfterArrival::Stick => {
-                    let held = stick(
-                        entity,
-                        &missile,
-                        &transform,
-                        clock,
-                        &units,
-                        &joints,
-                        &mut commands,
-                    );
-                    if held {
-                        sounds.write(MissileSound::Stop { entity });
+                    let lodged = lodge(&missile, &units);
+                    match hopped(&mut missile, &mut out) {
+                        Hop::On => {
+                            relaunched = true;
+                            if let Some((.., key)) = lodged {
+                                play_missile_sequence(&mut commands, entity, key, STUCK_ANIM);
+                            }
+                            true
+                        }
+                        Hop::Stranded => false,
+                        Hop::Done => stick(
+                            entity,
+                            &missile,
+                            &transform,
+                            clock,
+                            &units,
+                            &joints,
+                            &mut commands,
+                        ),
                     }
-                    held
                 }
                 AfterArrival::Reflect => {
-                    reflect_back(&mut missile, clock, &units, &joints, &mut out)
+                    relaunched = reflect_back(&mut missile, clock, &units, &joints, &mut out);
+                    relaunched
                 }
             };
+            if let Some(kit_sound) = missile.sound.filter(|_| relaunched) {
+                sounds.write(MissileSound::Start {
+                    entity,
+                    kit_sound,
+                    pos: missile.pos,
+                });
+            }
             if !flies_on {
                 end_flight(
                     entity,
@@ -2479,7 +2533,7 @@ mod tests {
             shape: MissileShape::default(),
             from: None,
             list: None,
-            aim_deck: 0,
+            aim_deck: None,
             seq: 1,
         }
     }
@@ -4087,9 +4141,131 @@ speedAbs = 48"
         assert_eq!(kinds[1], (caster, CastEventKind::GroundImpact { pos: at }));
     }
 
-    /// A blocked landing with a unit left hops on instead of lodging in the shield (`0x702fc0`).
+    /// A blocked landing lodges in the shield, and a unit left takes it straight out again on the
+    /// hop, still playing Stuck, its flight loop restarted; the last unit keeps it (`0x702fc0`,
+    /// `0x6fee00`, `0x7022d0`).
     #[test]
-    fn a_blocked_hop_flies_on_rather_than_sticking() {
+    fn a_blocked_hop_lodges_then_flies_on_playing_stuck() {
+        use benilla_protocol::EntityKind;
+        const LOOP: u32 = 31;
+        let mut app = area_app();
+        let caster = caster(&mut app, Vec3::ZERO);
+        let path = "Spells\\Bolt.m2".to_string();
+        let stuck_node = AnimationNodeIndex::new(3);
+        let mut model = super::super::empty_shell();
+        model.animations = Some(benilla_assets::ModelAnimations {
+            graph: Handle::default(),
+            clips: vec![benilla_assets::AnimClip {
+                anim_id: STUCK_ANIM,
+                seq_index: 0,
+                node: stuck_node,
+                looping: true,
+                duration: 1.0,
+                move_speed: 0.0,
+                blend_time: 0.0,
+                bounds_center: Vec3::ZERO,
+                bounds_radius: 0.0,
+                bounds_min: Vec3::ZERO,
+                bounds_max: Vec3::ZERO,
+                events: std::sync::Arc::new([]),
+                arm_nodes: None,
+                upper_node: None,
+                frequency: 0,
+                replay: (0, 0),
+                poses_bones: false,
+            }],
+            hand_close: [None, None],
+            playable_animation_lookup: Vec::new(),
+            animation_lookup: Vec::new(),
+            global_bones: Vec::new(),
+            first_seq: None,
+            pose: Default::default(),
+        });
+        app.world_mut()
+            .resource_mut::<SpellFx>()
+            .models
+            .insert(path.clone(), model);
+        let shielded = |app: &mut App, guid: u64, at: Vec3| {
+            let unit = listed(app, guid, at, EntityKind::Unit);
+            let shield = BoneAttach {
+                points: HashMap::from([(disposition::SHIELD_ATTACHMENT, (0u16, Vec3::ZERO))]),
+                markers: HashMap::new(),
+            };
+            let pose = benilla_world::testing::test_rig_pose(unit, &[at]);
+            app.world_mut().entity_mut(unit).insert((shield, pose));
+            unit
+        };
+        let a = shielded(&mut app, 1, Vec3::new(2.4, 0.0, 0.0));
+        let b = shielded(&mut app, 2, Vec3::new(2.4, 0.0, 2.4));
+        let mut spawn = hopping(caster, &[(1, 5), (2, 5)]);
+        spawn.path = Some(path);
+        spawn.missile_sound = Some(LOOP);
+        app.world_mut().write_message(spawn);
+        step(&mut app, 0.016);
+        let flight = app
+            .world_mut()
+            .query_filtered::<Entity, With<Missile>>()
+            .single(app.world())
+            .unwrap();
+        app.world_mut()
+            .entity_mut(flight)
+            .insert(AnimationPlayer::default())
+            .get_mut::<Missile>()
+            .unwrap()
+            .parts_spawned = true;
+        app.world_mut()
+            .resource_mut::<Messages<MissileSound>>()
+            .clear();
+        let mut starts = 0;
+        let mut words = Vec::new();
+        let mut stuck_in_flight = false;
+        for _ in 0..40 {
+            step(&mut app, 0.02);
+            starts += app
+                .world_mut()
+                .resource_mut::<Messages<MissileSound>>()
+                .drain()
+                .filter(|s| {
+                    matches!(
+                        s,
+                        MissileSound::Start {
+                            kit_sound: LOOP,
+                            ..
+                        }
+                    )
+                })
+                .count();
+            words.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<MissileMiss>>()
+                    .drain()
+                    .map(|w| w.anchor),
+            );
+            let on_b = app
+                .world()
+                .get::<Missile>(flight)
+                .is_some_and(|m| matches!(m.aim, Aim::Unit { target, .. } if target == b));
+            let playing = app
+                .world()
+                .get::<AnimationPlayer>(flight)
+                .is_some_and(|p| p.is_playing_animation(stuck_node));
+            stuck_in_flight |= on_b && playing;
+        }
+        assert_eq!(words, vec![a, b]);
+        assert!(stuck_in_flight, "the hop flies on playing Stuck");
+        assert_eq!(starts, 1, "the hop restarts the flight loop");
+        let lodged: Vec<Entity> = app
+            .world_mut()
+            .query::<&StuckMissile>()
+            .iter(app.world())
+            .map(|s| s.target)
+            .collect();
+        assert_eq!(lodged, vec![b], "the last unit keeps it");
+    }
+
+    /// A blocked landing with no model to lodge hops on all the same (`0x702fc0`).
+    #[test]
+    fn an_unmodelled_blocked_hop_flies_on() {
         use benilla_protocol::EntityKind;
         let mut app = area_app();
         let caster = caster(&mut app, Vec3::ZERO);
@@ -4110,8 +4286,8 @@ speedAbs = 48"
     }
 
     /// A points missile lands at its first point, offset-free, and plays the target kit at each
-    /// point through the caster, a transport's point carried by it (`0x734191`, `0x701150`); with
-    /// the transport gone it flies none (`0x80e559`).
+    /// point through the caster, a transport's point where the transport is at the landing
+    /// (`0x734191`, `0x701150`).
     #[test]
     fn a_points_missile_plays_the_target_kit_at_each_point() {
         let mut app = area_app();
@@ -4120,23 +4296,34 @@ speedAbs = 48"
             .world_mut()
             .spawn(GlobalTransform::from_xyz(0.0, 0.0, 10.0))
             .id();
-        app.world_mut()
-            .resource_mut::<crate::net::GuidIndex>()
-            .0
-            .insert(77, deck);
         let first = Vec3::new(2.4, 0.0, 0.0);
         let local = Vec3::new(1.0, 0.0, 0.0);
         let mut spawn = located(
             caster,
             first,
             TargetList {
-                points: vec![(first, 0), (local, 77)],
+                points: vec![
+                    DeckPoint {
+                        at: first,
+                        deck: None,
+                        world: first,
+                    },
+                    DeckPoint {
+                        at: local,
+                        deck: Some(deck),
+                        world: Vec3::new(1.0, 0.0, 10.0),
+                    },
+                ],
                 bounce: true,
                 ..TargetList::default()
             },
         );
         spawn.shape.impact_offset = Vec3::new(0.0, 5.0, 0.0);
-        app.world_mut().write_message(spawn.clone());
+        app.world_mut().write_message(spawn);
+        step(&mut app, 0.02);
+        app.world_mut()
+            .entity_mut(deck)
+            .insert(GlobalTransform::from_xyz(0.0, 0.0, 12.0));
         let (impacts, ..) = fly_out(&mut app);
         let kinds: Vec<(Entity, CastEventKind)> =
             impacts.iter().map(|e| (e.entity, e.kind)).collect();
@@ -4148,17 +4335,50 @@ speedAbs = 48"
                 (
                     caster,
                     CastEventKind::PointImpact {
-                        pos: Vec3::new(1.0, 0.0, 10.0)
+                        pos: Vec3::new(1.0, 0.0, 12.0)
                     }
                 ),
             ]
         );
+    }
 
-        spawn.ground_aim = Some(local);
-        spawn.aim_deck = 78;
-        app.world_mut().write_message(spawn);
-        let (impacts, ..) = fly_out(&mut app);
-        assert!(impacts.is_empty(), "no transport, no flight");
+    /// A point on a transport is aimed at through it every step, so the flight follows a moving
+    /// deck; with the transport gone it lands where the point last was (`0x6ff320`).
+    #[test]
+    fn a_point_on_a_transport_is_followed_every_step() {
+        for gone in [false, true] {
+            let mut app = area_app();
+            let caster = caster(&mut app, Vec3::ZERO);
+            let deck = app
+                .world_mut()
+                .spawn(GlobalTransform::from_xyz(0.0, 0.0, 10.0))
+                .id();
+            let local = Vec3::new(1.0, 0.0, 0.0);
+            let mut spawn = ground_go(caster, Vec3::new(1.0, 0.0, 10.0));
+            spawn.aim_deck = Some((deck, local));
+            app.world_mut().write_message(spawn);
+            step(&mut app, 0.02);
+            app.world_mut()
+                .entity_mut(deck)
+                .insert(GlobalTransform::from_xyz(0.0, 0.0, 14.0));
+            step(&mut app, 0.02);
+            if gone {
+                app.world_mut().despawn(deck);
+            } else {
+                app.world_mut()
+                    .entity_mut(deck)
+                    .insert(GlobalTransform::from_xyz(0.0, 0.0, 16.0));
+            }
+            let (impacts, ..) = fly_out(&mut app);
+            let landed = if gone { 14.0 } else { 16.0 };
+            assert_eq!(
+                impacts.iter().map(|e| e.kind).collect::<Vec<_>>(),
+                vec![CastEventKind::GroundImpact {
+                    pos: Vec3::new(1.0, 0.0, landed)
+                }],
+                "transport gone: {gone}"
+            );
+        }
     }
 
     /// A unit list naming no unit lands at once at its first listed object, here a GameObject.

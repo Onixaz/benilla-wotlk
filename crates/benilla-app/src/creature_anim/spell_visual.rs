@@ -284,8 +284,9 @@ pub(crate) struct MissileSpawn {
     pub(crate) from: Option<Vec3>,
     /// The targets one missile carries, landing on them at its point or hopping them (`0x733600`).
     pub(crate) list: Option<crate::entities::TargetList>,
-    /// The transport guid `ground_aim` is local to, 0 for none.
-    pub(crate) aim_deck: u64,
+    /// The transport a point aim follows and the point in its frame; `ground_aim` is its place at
+    /// the GO.
+    pub(crate) aim_deck: Option<(Entity, Vec3)>,
     /// The GO's `PlaySeq` stamp, which orders it among the [`MissileRelease`]s.
     pub(crate) seq: u64,
 }
@@ -1182,14 +1183,21 @@ pub(crate) struct DelayedAreaKit {
     pub(crate) kit_id: u32,
     pub(crate) pos: Vec3,
     pub(crate) wait: AreaKitWait,
+    /// The transport the point is on and the point in its frame, placed through it when due;
+    /// `pos` is its place at the GO.
+    pub(crate) deck: Option<(Entity, Vec3)>,
 }
 
 /// How long a [`DelayedAreaKit`] waits.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum AreaKitWait {
-    /// The flight from the caster at `Spell.dbc` Speed, yards per second, above 0: at once with no
-    /// caster position.
-    Flight { caster: Entity, speed: f32 },
+    /// The flight from the caster to `to` at `Spell.dbc` Speed, yards per second, above 0: at once
+    /// with no caster position.
+    Flight {
+        caster: Entity,
+        speed: f32,
+        to: Vec3,
+    },
     /// The flight from a fixed point at Speed.
     FlightFrom { from: Vec3, speed: f32 },
     /// A fixed wait, in seconds.
@@ -1272,7 +1280,7 @@ pub(super) fn play_dest_loc_casts(
                 shape,
                 from: Some(c.src),
                 list: None,
-                aim_deck: 0,
+                aim_deck: None,
                 // No caster queue to order against.
                 seq: 0,
             });
@@ -1289,6 +1297,7 @@ pub(super) fn play_dest_loc_casts(
             } else {
                 AreaKitWait::Secs(c.delay_ms as f32 / 1000.0)
             },
+            deck: None,
         });
     }
 }
@@ -1302,19 +1311,19 @@ pub(super) fn play_delayed_area_kits(
     mut sounds: MessageWriter<SpellKitSound>,
     mut shakes: MessageWriter<SpellKitShake>,
     mut bursts: MessageWriter<crate::entities::dest_fx::GroundBurst>,
-    mut pending: Local<Vec<(f32, u32, Vec3)>>,
+    mut pending: Local<Vec<(f32, DelayedAreaKit)>>,
 ) {
     let now = time.elapsed_secs();
     for q in queued.read() {
         let wait = match q.wait {
-            AreaKitWait::Flight { caster, speed } => {
+            AreaKitWait::Flight { caster, speed, to } => {
                 let from = casters.get(caster).ok().map(|g| g.translation());
-                area_kit_delay(from, q.pos, speed)
+                area_kit_delay(from, to, speed)
             }
             AreaKitWait::FlightFrom { from, speed } => area_kit_delay(Some(from), q.pos, speed),
             AreaKitWait::Secs(secs) => secs,
         };
-        pending.push((now + wait, q.kit_id, q.pos));
+        pending.push((now + wait, *q));
     }
     if pending.is_empty() {
         return;
@@ -1323,15 +1332,28 @@ pub(super) fn play_delayed_area_kits(
         pending.clear();
         return; // no client data
     };
-    pending.retain(|&(due, kit_id, pos)| {
-        if now < due {
-            return true;
-        }
-        if let Some(kit) = visuals.0.kit(kit_id) {
-            play_area_kit_at(kit, pos, &visuals.0, &mut sounds, &mut shakes, &mut bursts);
-        }
-        false
-    });
+    pending.retain(
+        |&(
+            due,
+            DelayedAreaKit {
+                kit_id, pos, deck, ..
+            },
+        )| {
+            if now < due {
+                return true;
+            }
+            // A transport's point plays where the transport is now (`0x80f276`).
+            let pos = deck
+                .and_then(|(d, local)| {
+                    Some(crate::entities::deck_place(local, casters.get(d).ok()?))
+                })
+                .unwrap_or(pos);
+            if let Some(kit) = visuals.0.kit(kit_id) {
+                play_area_kit_at(kit, pos, &visuals.0, &mut sounds, &mut shakes, &mut bursts);
+            }
+            false
+        },
+    );
 }
 
 /// The GO's missiles by its targets' kind (`0x80f493`): a multi-target spell flies one missile with
@@ -1389,10 +1411,10 @@ fn go_missiles(
             });
         }
         // The extra points ride one more missile, aimed at the first (`0x80f50e`, `0x733e20`).
-        if let Some(&(first, deck)) = go.points.first() {
+        if let Some(first) = go.points.first() {
             out.push(MissileSpawn {
-                ground_aim: Some(first),
-                aim_deck: deck,
+                ground_aim: Some(first.world),
+                aim_deck: first.deck.map(|d| (d, first.at)),
                 list: Some(TargetList {
                     points: go.points.clone(),
                     bounce: true,
@@ -1438,10 +1460,10 @@ fn go_missiles(
         }
     }
     // One missile per extra point, carrying no list (`0x80f5a0`, `0x733820`).
-    for &(at, deck) in &go.points {
+    for p in &go.points {
         out.push(MissileSpawn {
-            ground_aim: Some(at),
-            aim_deck: deck,
+            ground_aim: Some(p.world),
+            aim_deck: p.deck.map(|d| (d, p.at)),
             ..base.clone()
         });
     }
@@ -1935,6 +1957,7 @@ pub(super) fn route_cast_visuals(
                     kit_id,
                     pos,
                     wait: AreaKitWait::Secs(0.0),
+                    deck: None,
                 });
             }
             WaitPlay::Precast { kit, seq } => play_precast_kit(
@@ -2285,37 +2308,52 @@ pub(super) fn route_cast_visuals(
         // Resolved once per GO; every consumer below reads the merged row.
         let wv = weapon_src.caster(go.caster);
         let stages = resolve_stages(spells, &visuals.0, go.spell_id, || wv);
-        // The instant area kit (`0x80ee85`): column 23's kit at the dest point when the targets
-        // carry one, fired at GO whatever the hit list.
-        if let Some(dest) = go.dest {
-            if let Some(kit) = stages.and_then(|s| visuals.0.kit(s.instant_area_kit)) {
+        // Column 23 at the dest and each extra point at once (`0x80ee85`, `0x80f1cc`), then 24 when
+        // no missile carries it, now at Speed 0, else at the would-be landing (`0x80efb6`).
+        let kits = stages.map(|s| {
+            let impact = go_plays_impact_area(&visuals.0, &s, display.speed)
+                .then(|| visuals.0.kit(s.impact_area_kit))
+                .flatten();
+            (visuals.0.kit(s.instant_area_kit), impact, s.impact_area_kit)
+        });
+        // One landing time serves every point, the last point's when there are some (`0x80e978`).
+        let landing = go.points.last().map(|p| p.world).or(go.dest);
+        let dest = go.dest.map(|d| (d, None));
+        let points = go
+            .points
+            .iter()
+            .map(|p| (p.world, p.deck.map(|d| (d, p.at))));
+        for (at, deck) in dest.into_iter().chain(points) {
+            let Some((instant, impact, impact_id)) = kits else {
+                break;
+            };
+            if let Some(kit) = instant {
                 play_unit_area_kit(
                     go.caster,
                     go.spell_id,
                     kit,
-                    dest,
+                    at,
                     &visuals.0,
                     &mut out,
                     bursts,
                 );
             }
-            // Then column 24 when no missile carries it: now at Speed 0, else at the would-be
-            // landing (`0x80efc8`, `0x80efb6`).
-            if let Some(s) = stages.filter(|s| go_plays_impact_area(&visuals.0, s, display.speed)) {
-                if let Some(kit) = visuals.0.kit(s.impact_area_kit) {
-                    if display.speed > 0.0 {
-                        delayed.write(DelayedAreaKit {
-                            kit_id: s.impact_area_kit,
-                            pos: dest,
-                            wait: AreaKitWait::Flight {
-                                caster: go.caster,
-                                speed: display.speed,
-                            },
-                        });
-                    } else {
-                        play_area_kit_at(kit, dest, &visuals.0, out.sounds, out.shakes, bursts);
-                    }
-                }
+            let Some(kit) = impact else {
+                continue;
+            };
+            if display.speed > 0.0 {
+                delayed.write(DelayedAreaKit {
+                    kit_id: impact_id,
+                    pos: at,
+                    wait: AreaKitWait::Flight {
+                        caster: go.caster,
+                        speed: display.speed,
+                        to: landing.unwrap_or(at),
+                    },
+                    deck,
+                });
+            } else {
+                play_area_kit_at(kit, at, &visuals.0, out.sounds, out.shakes, bursts);
             }
         }
         if display.speed <= 0.0 {
@@ -2405,7 +2443,7 @@ pub(super) fn route_cast_visuals(
                 ),
                 from: None,
                 list: None,
-                aim_deck: 0,
+                aim_deck: None,
                 seq: go.seq,
             };
             let flags = stages.map_or(0, |s| s.flags);

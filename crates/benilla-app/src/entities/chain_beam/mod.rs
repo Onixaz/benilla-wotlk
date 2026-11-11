@@ -347,6 +347,7 @@ pub(super) fn spawn_chain_beams(
                 kit_id: area_kit,
                 pos,
                 wait: AreaKitWait::Secs(0.0),
+                deck: None,
             });
         }
     }
