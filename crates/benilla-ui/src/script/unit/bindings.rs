@@ -9,8 +9,8 @@ use super::super::binding_abi::{bool_or_default, flag};
 use super::super::calls::ScriptCall;
 use super::{
     classification_word, grey_band, level_reads_unknown, pair_reaction, parse_unit_token,
-    pick_unit_token, unit_predicate, unknownobject, with_unit, PlayerRecord, SelectionRequest,
-    UnitBase, UnitTokenParse,
+    pick_unit_token, unit_is_grey, unit_predicate, unknownobject, with_unit, PlayerRecord,
+    SelectionRequest, UnitBase, UnitTokenParse,
 };
 
 /// The type `UnitPower` and `UnitPowerMax` read with no type argument, the unit's own display
@@ -489,6 +489,19 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "UnitIsPlayer",
         lua.create_function(|lua, token: Option<String>| {
             unit_predicate(lua, &token, |u| u.is_player)
+        })?,
+    )?;
+    // UnitIsTrivial(unit): 1 for a non-player unit below the player's grey-level band, nil otherwise.
+    // QuestHelper uses this to keep trivial kills out of its loot statistics.
+    g.set(
+        "UnitIsTrivial",
+        lua.create_function(|lua, token: Option<String>| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(flag(token.and_then(|t| model.unit(&t)).is_some_and(|u| {
+                !u.is_player && unit_is_grey(model.player_req.level, u.level)
+            })))
         })?,
     )?;
     // UnitIsPlusMob(unit): `UNIT_FIELD_FLAGS` bit 0x40, never the creature rank. The server sets it

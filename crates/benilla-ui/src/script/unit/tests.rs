@@ -385,6 +385,55 @@ fn unit_level_reads_minus_one_when_the_level_cant_be_told() {
 }
 
 #[test]
+fn unit_is_trivial_uses_the_players_grey_level_band() {
+    use crate::script::PlayerReqState;
+    let mut s = UiScript::new().unwrap();
+    s.set_player_req_state(PlayerReqState {
+        level: 60,
+        ..Default::default()
+    });
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            level: 47,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(
+        s.eval::<i64>(r#"return UnitIsTrivial("target")"#).unwrap(),
+        1
+    );
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            level: 48,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(
+        s.eval::<Option<i64>>(r#"return UnitIsTrivial("target")"#)
+            .unwrap(),
+        None
+    );
+    s.set_unit(
+        "target",
+        Some(UnitState {
+            exists: true,
+            level: 1,
+            is_player: true,
+            ..Default::default()
+        }),
+    );
+    assert_eq!(
+        s.eval::<Option<i64>>(r#"return UnitIsTrivial("target")"#)
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
 fn corpse_can_attack_and_green_range_bindings() {
     use crate::script::PlayerReqState;
     let mut s = UiScript::new().unwrap();

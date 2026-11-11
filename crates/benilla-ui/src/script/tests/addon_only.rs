@@ -166,7 +166,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "UnSilenceMember",
     "UnitIsFeignDeath",
     "UnitIsPVPSanctuary",
-    "UnitIsTrivial",
     "UpdateAddOnCPUUsage",
     "UploadSettings",
     "VoiceGetCurrentCaptureDevice",
