@@ -229,6 +229,24 @@ pub(crate) fn ease_swim_pitch(smoothed: f32, flags: u32, pitch: f32, dt: f32) ->
     smoothed + gap * dt.clamp(1.0 / 90.0, 0.05) * 4.0 * std::f32::consts::PI
 }
 
+/// One frame of the active mover's eased fly bank (`0x719b80`): turn rate times −0.15, at
+/// `elapsed * π/2` (×4 with no forward or back), clamped ±π/4. `Animate` passes `MOVEFLAG_FLYING`
+/// as the third argument, so a swimmer and every other unit stay level (`0x719a90`). Leaving
+/// flight zeros it with the pitch (`0x715810`). `facing_delta` is this frame's wrapped yaw step.
+pub(crate) fn ease_swim_roll(smoothed: f32, flags: u32, facing_delta: f32, dt: f32) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+    if flags & move_flags::FLYING == 0 {
+        return 0.0;
+    }
+    let elapsed = dt.clamp(1.0 / 90.0, 0.05);
+    let target = facing_delta / elapsed * -0.15;
+    let mut rate = elapsed * FRAC_PI_2;
+    if flags & (move_flags::FORWARD | move_flags::BACKWARD) == 0 {
+        rate *= 4.0;
+    }
+    (smoothed + (target - smoothed) * rate.clamp(0.0, 1.0)).clamp(-FRAC_PI_4, FRAC_PI_4)
+}
+
 /// The per-frame movement state the selector reads.
 #[derive(Component, Clone, Copy, Default)]
 #[component(storage = "SparseSet")]

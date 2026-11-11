@@ -990,6 +990,36 @@ fn the_active_movers_swim_pitch_eases_on_the_reference_clock() {
 }
 
 #[test]
+fn the_active_movers_fly_roll_eases_from_turn_rate() {
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+    let fly = move_flags::FLYING;
+    let forward = fly | move_flags::FORWARD;
+    let dt = 1.0 / 60.0;
+    let step = |flags: u32, delta: f32| ease_swim_roll(0.0, flags, delta, dt);
+    let close = |a: f32, b: f32| assert!((a - b).abs() < 1e-5, "{a} vs {b}");
+    // facingDelta / elapsed * −0.15, then * elapsed * π/2.
+    close(step(forward, 0.1), 0.1 / dt * -0.15 * dt * FRAC_PI_2);
+    close(step(fly, 0.1), 0.1 / dt * -0.15 * dt * FRAC_PI_2 * 4.0);
+    close(
+        step(forward, 0.1),
+        step(forward | move_flags::SWIMMING, 0.1),
+    );
+    assert_eq!(step(move_flags::SWIMMING | move_flags::FORWARD, 0.1), 0.0);
+    assert_eq!(ease_swim_roll(0.4, 0, 0.1, dt), 0.0);
+    // Hover's ×4 rate reaches the ±π/4 clamp in one 1 rad step; a forward flyer does not.
+    assert_eq!(ease_swim_roll(0.0, fly, 1.0, dt), -FRAC_PI_4);
+    assert_eq!(ease_swim_roll(0.0, fly, -1.0, dt), FRAC_PI_4);
+    assert!(ease_swim_roll(0.0, forward, 1.0, dt) > -FRAC_PI_4);
+    // The same dt clamp as the pitch channel.
+    let clamped = |dt: f32| {
+        let elapsed = dt.clamp(1.0 / 90.0, 0.05);
+        0.1 / elapsed * -0.15 * elapsed * FRAC_PI_2
+    };
+    close(ease_swim_roll(0.0, forward, 0.1, 0.001), clamped(0.001));
+    close(ease_swim_roll(0.0, forward, 0.1, 1.0), clamped(1.0));
+}
+
+#[test]
 fn base_arm_head_force_is_the_combat_carveout() {
     // The re-zero gate: a relaxed arm rolls (-1)…
     assert!(!arm_forces_head(false, false, 0), "Stand → Stand re-arm");

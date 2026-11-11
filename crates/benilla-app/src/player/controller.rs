@@ -844,6 +844,14 @@ pub(super) fn control(
             swim_pitch,
             dt,
         );
+        let facing_delta = wrap_pi(player.model_yaw - player.swim_smooth_facing);
+        player.swim_smooth_facing = player.model_yaw;
+        player.swim_body_roll = crate::creature_anim::ease_swim_roll(
+            player.swim_body_roll,
+            move_flags_now,
+            facing_delta,
+            dt,
+        );
         let cam_pivot_target = body_pose::drive(
             &player,
             &mut body,

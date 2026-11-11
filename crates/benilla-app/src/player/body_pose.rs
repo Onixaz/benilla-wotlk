@@ -21,9 +21,11 @@ pub(super) fn drive(
     let mut cam_pivot_target = None;
     if let Ok((entity, mut t, motion, pivot, .., twist, _, net_entity)) = body.single_mut() {
         t.translation = player.pos;
-        // The active mover's own eased pitch (`0x719b80`); the wire tail streams the raw aim.
-        t.rotation =
-            Quat::from_rotation_y(player.model_yaw) * Quat::from_rotation_x(player.swim_body_pitch);
+        // The active mover's own eased pitch and fly bank (`0x719b80`); the wire tail streams
+        // the raw aim. The reference's `Rz(facing)·Ry(2π − pitch)·Rx(roll)` is this product.
+        t.rotation = Quat::from_rotation_y(player.model_yaw)
+            * Quat::from_rotation_x(player.swim_body_pitch)
+            * Quat::from_rotation_z(player.swim_body_roll);
         // The landing predictor plays a hard landing's grunt and dust this frame; the server's
         // `SMSG_ENVIRONMENTALDAMAGELOG` dust follows a round trip later, as in the reference.
         // `fall_start_y` still holds this arc's launch height.
