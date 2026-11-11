@@ -241,7 +241,7 @@ fn dress_swaps(eq: &mut Equipment, swapped: impl Fn(usize) -> Option<u32>) {
 }
 
 /// The inputs whose change rebuilds a unit's dress and re-applies its swaps: the display, a
-/// player's visible items and hide flags (`0x6e4580`, `0x6dd0f0`), a clone's look (`0x730290`).
+/// player's visible items and helm flag (`0x6e4580`, `0x6dd0f0`), a clone's look (`0x730290`).
 fn dress_rebuild_key(
     s: &benilla_protocol::messages::ObjectFields,
     net_entity: &NetEntity,
@@ -253,7 +253,7 @@ fn dress_rebuild_key(
         for slot in 0..19u8 {
             fold(u64::from(s.player_visible_item_entry(slot).unwrap_or(0)));
         }
-        fold(u64::from(s.player_hides_helm()) | u64::from(s.player_hides_cloak()) << 1);
+        fold(u64::from(s.player_hides_helm()));
     }
     if let Some(m) = mirror {
         for &d in &m.items {
@@ -347,7 +347,10 @@ pub(in crate::entities) fn resolve_equipment(
         if !matches!(net_entity.kind, EntityKind::Unit | EntityKind::Player) {
             continue;
         }
-        let unit_edges = edges.remove(&entity);
+        // An end edge moves only a unit that holds a swap, so kit clears elsewhere cost nothing.
+        let unit_edges = edges
+            .remove(&entity)
+            .filter(|e| swaps.is_some() || e.iter().any(|e| matches!(e, SwapEdge::Begin { .. })));
         let s = &store.0;
         // The anim layer's committed sheath state, else the raw byte until the driver runs.
         let committed = driver
@@ -382,9 +385,10 @@ pub(in crate::entities) fn resolve_equipment(
         let mut swaps = swaps.or(fresh.as_mut());
         if let Some(sw) = swaps.as_deref_mut() {
             let gate = SwapGate {
-                // A character component: a player's character body, an NPC's extra row or a clone.
+                // A character component: a character body or an extra row, or a clone (`0x730100`).
                 component: match net_entity.kind {
-                    EntityKind::Player => display_model.is_none_or(|dm| dm.is_character_body),
+                    EntityKind::Player => display_model
+                        .is_none_or(|dm| dm.is_character_body || dm.npc_appearance.is_some()),
                     _ => npc.is_some() || mirror.is_some(),
                 },
                 // The form gate: a player in its native display or one that wears items (`0x7202c0`).
@@ -397,6 +401,14 @@ pub(in crate::entities) fn resolve_equipment(
                         })),
             };
             let has_display = |d: u32| held.catalog.get(d).is_some();
+            if net_entity.kind == EntityKind::Player {
+                let own_cape = s
+                    .player_visible_item_entry(14)
+                    .filter(|e| *e != 0)
+                    .and_then(|e| templates.held(e, &net))
+                    .is_some_and(|t| t.display_info_id != 0);
+                sw.toggle_cloak(s.player_hides_cloak(), own_cape, gate);
+            }
             sw.rebuild(dress_rebuild_key(s, net_entity, mirror), gate, has_display);
             if sw.waiting() {
                 let guid = s.object_guid().unwrap_or(0);
@@ -456,7 +468,7 @@ pub(in crate::entities) fn resolve_equipment(
                 eq.helm = 0;
             }
             // A swap's display wins its slot, a hidden one too: the swaps re-apply after the
-            // helm and cloak toggles (`0x6dd0f0`, `0x6e0e00`).
+            // helm toggles (`0x6dd0f0`, `0x6e0e00`); the cloak's own toggle settles in the swaps.
             dress_swaps(&mut eq, swapped);
             // The emblem, for every player; the composite paints it only on a flagged tabard.
             eq.emblem = guilds

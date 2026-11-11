@@ -13,6 +13,9 @@ use bevy::prelude::*;
 /// The character component's item slots, head to cape; 11 has no inventory type (`0x4e7a30`).
 pub(crate) const ITEM_SLOTS: usize = 12;
 
+/// The cape's item slot.
+const CAPE: usize = 10;
+
 /// The component item slot an `InventoryType` dresses (`0x4e7a30`); `None` for any other type.
 pub(crate) fn slot_for_inv_type(inv_type: u8) -> Option<usize> {
     Some(match inv_type {
@@ -69,6 +72,8 @@ pub(crate) struct ItemSwaps {
     shown: [Option<u32>; ITEM_SLOTS],
     /// The dress inputs at the last rebuild; a change re-applies every effect.
     rebuilt: Option<u64>,
+    /// The player's cloak-hide bit when last seen, `None` before the first look.
+    cloak_hidden: Option<bool>,
 }
 
 impl ItemSwaps {
@@ -121,6 +126,15 @@ impl ItemSwaps {
     /// The display an effect shows on `slot`, if any.
     pub(crate) fn shown(&self, slot: usize) -> Option<u32> {
         self.shown[slot]
+    }
+
+    /// The cloak toggle, which re-applies no effect: hiding takes a swapped cape off and showing
+    /// puts the unit's own cape over it (`0x6dd1b0`, `0x6e0ef0`).
+    pub(crate) fn toggle_cloak(&mut self, hidden: bool, own_cape: bool, gate: SwapGate) {
+        let was = self.cloak_hidden.replace(hidden);
+        if was.is_some_and(|w| w != hidden) && gate.admits(CAPE) && (hidden || own_cape) {
+            self.shown[CAPE] = None;
+        }
     }
 
     /// Re-apply every effect after a dress rebuild, newest first so the oldest lands last
@@ -292,6 +306,29 @@ mod tests {
         assert_eq!(s.shown(0), None);
         s.rebuild(2, PLAYER, any_display);
         assert_eq!(s.shown(0), Some(HAT));
+    }
+
+    #[test]
+    fn a_cloak_toggle_takes_a_swapped_cape_off_without_reapplying() {
+        let cape = |item| match item {
+            5 => Some(Some((16, 903))),
+            _ => Some(None),
+        };
+        let mut s = ItemSwaps::default();
+        s.toggle_cloak(false, false, PLAYER);
+        s.begin(10, 100, 5);
+        s.answer(cape, PLAYER, any_display);
+        assert_eq!(s.shown(CAPE), Some(903));
+        s.toggle_cloak(true, true, PLAYER);
+        assert_eq!(s.shown(CAPE), None, "hiding takes the swap off");
+        s.rebuild(1, PLAYER, any_display);
+        assert_eq!(s.shown(CAPE), Some(903), "the next rebuild puts it back");
+        s.toggle_cloak(false, false, PLAYER);
+        assert_eq!(s.shown(CAPE), Some(903), "showing no own cape keeps it");
+        s.toggle_cloak(true, false, PLAYER);
+        s.rebuild(2, PLAYER, any_display);
+        s.toggle_cloak(false, true, PLAYER);
+        assert_eq!(s.shown(CAPE), None, "the own cape goes over it");
     }
 
     #[test]
