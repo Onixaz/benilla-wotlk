@@ -9,8 +9,8 @@ use super::super::binding_abi::{bool_or_default, flag};
 use super::super::calls::ScriptCall;
 use super::{
     classification_word, grey_band, level_reads_unknown, pair_reaction, parse_unit_token,
-    pick_unit_token, unit_predicate, unknownobject, with_unit, PlayerRecord, SelectionRequest,
-    UnitBase, UnitTokenParse,
+    pick_unit_token, unit_is_grey, unit_predicate, unknownobject, with_unit, PlayerRecord,
+    SelectionRequest, UnitBase, UnitTokenParse,
 };
 
 /// The type `UnitPower` and `UnitPowerMax` read with no type argument, the unit's own display
@@ -489,6 +489,27 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "UnitIsPlayer",
         lua.create_function(|lua, token: Option<String>| {
             unit_predicate(lua, &token, |u| u.is_player)
+        })?,
+    )?;
+    // `UnitIsTrivial(unit)` (`0x6112b0`): 1 or nil, the held object's grey test (`0x6de130`), never
+    // for a player; the same `lua_isstring` gate as `UnitIsTapped`.
+    g.set(
+        "UnitIsTrivial",
+        lua.create_function(|lua, token: Value| {
+            let token = Some(crate::script::binding_abi::string_arg(
+                lua,
+                token,
+                r#"Usage: UnitIsTrivial("unit")"#,
+            )?);
+            let player_level = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .player_req
+                .level;
+            let hit = with_unit(lua, &token, false, |u| {
+                u.has_object && !u.is_player && unit_is_grey(player_level, u.level)
+            })?;
+            Ok(flag(hit))
         })?,
     )?;
     // UnitIsPlusMob(unit): `UNIT_FIELD_FLAGS` bit 0x40, never the creature rank. The server sets it

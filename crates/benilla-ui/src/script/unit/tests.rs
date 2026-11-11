@@ -385,6 +385,54 @@ fn unit_level_reads_minus_one_when_the_level_cant_be_told() {
 }
 
 #[test]
+fn unit_is_trivial_uses_the_players_grey_level_band() {
+    use crate::script::PlayerReqState;
+    let mut s = UiScript::new().unwrap();
+    let mut trivial = |player: u32, unit: UnitState| {
+        s.set_player_req_state(PlayerReqState {
+            level: player,
+            ..Default::default()
+        });
+        s.set_unit("target", Some(unit));
+        s.eval::<Option<i64>>(r#"return UnitIsTrivial("target")"#)
+            .unwrap()
+    };
+    let held = |level: u32| UnitState {
+        exists: true,
+        has_object: true,
+        level,
+        ..Default::default()
+    };
+    // The band caps at 8 from level 40: at 60 and 80 a gap of 9 is trivial, 8 is not.
+    for (player, band) in [(10u32, 5u32), (39, 7), (60, 8), (80, 8)] {
+        assert_eq!(
+            trivial(player, held(player - band - 1)),
+            Some(1),
+            "{player}"
+        );
+        assert_eq!(trivial(player, held(player - band)), None, "{player}");
+    }
+    // Never a player, and never a unit the client holds no object for.
+    let player_unit = UnitState {
+        is_player: true,
+        ..held(1)
+    };
+    assert_eq!(trivial(80, player_unit), None);
+    let roster_only = UnitState {
+        has_object: false,
+        ..held(1)
+    };
+    assert_eq!(trivial(80, roster_only), None);
+    let err = s
+        .eval::<Option<i64>>("return UnitIsTrivial({})")
+        .unwrap_err();
+    assert!(
+        err.to_string().contains(r#"Usage: UnitIsTrivial("unit")"#),
+        "{err}"
+    );
+}
+
+#[test]
 fn corpse_can_attack_and_green_range_bindings() {
     use crate::script::PlayerReqState;
     let mut s = UiScript::new().unwrap();
@@ -437,8 +485,8 @@ fn corpse_can_attack_and_green_range_bindings() {
     assert!(s
         .eval::<bool>(r#"return UnitIsCorpse("target") == nil"#)
         .unwrap());
-    // `GetQuestGreenRange`: the grey band for the player's level, 12 past the table.
-    for (pl, want) in [(3u32, 4i64), (46, 9), (120, 12)] {
+    // `GetQuestGreenRange`: the grey band for the player's level, 8 from level 40 and past the table.
+    for (pl, want) in [(3u32, 4i64), (39, 7), (46, 8), (80, 8), (120, 8)] {
         s.set_player_req_state(PlayerReqState {
             level: pl,
             ..Default::default()
