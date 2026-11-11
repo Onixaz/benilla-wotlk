@@ -615,18 +615,19 @@ pub(in crate::entities) fn resolve_equipment(
                 _ => {}
             }
         }
-        // The one hand `UNIT_FLAG_DISARMED` hides, if any.
-        let hidden = wielded.disarmed_hand();
-        // The rising edge; a unit first seen disarmed never had one.
-        let disarm_edge =
-            hidden.is_some() && current_wielded.is_some_and(|w| w.disarmed_hand().is_none());
-        let mut next_freeze = match hidden {
-            // The falling edge clears it: the reference re-attaches by the live sheath state.
-            None => None,
-            // The edge writes it below, from the placement the weapon had at that moment.
-            Some(_) if disarm_edge => None,
-            Some(_) => freeze.copied(),
-        };
+        // The held slots the weapon getter reads as empty, each with its own rising edge; a unit
+        // first seen disarmed never had one.
+        let hidden = wielded.disarmed_hands();
+        let was_hidden = current_wielded.map(Wielded::disarmed_hands);
+        let disarm_edge = |slot: usize| hidden[slot] && was_hidden.is_some_and(|w| !w[slot]);
+        let mut next_freeze = freeze.copied().unwrap_or_default();
+        for (slot, &now) in hidden.iter().enumerate() {
+            // The falling edge clears a hold: the reference re-attaches by the live sheath state.
+            // The rising edge writes it below, from the placement the item had at that moment.
+            if !now || disarm_edge(slot) {
+                next_freeze.release(slot);
+            }
+        }
         // Pass 2, the models.
         for slot in 0..HELD_SLOTS {
             let Some((display, inv_type, item_sheath, _, _, _)) = resolved[slot] else {
@@ -648,15 +649,20 @@ pub(in crate::entities) fn resolve_equipment(
             // enchant raises a model event drawn or not and `visual` exists only for a placed slot.
             worn[slot] = Some((display, kind, enchant_fold(s, net_entity.kind, slot)));
             let live = placement(slot, inv_type, item_sheath, sheath_of(slot, inv_type));
-            // The hidden hand's weapon stays where the disarm reflex left it.
-            let attach = if hidden == Some(slot) {
-                if disarm_edge {
-                    let kept = live
-                        .filter(|a| !matches!(*a, attach_id::HAND_RIGHT | attach_id::HAND_LEFT));
-                    next_freeze = Some(DisarmFreeze::new(slot as u8, display, kept));
+            // A hidden hand's item stays where the disarm reflex left it.
+            let attach = if hidden[slot] {
+                if disarm_edge(slot) {
+                    // A drawn shield leaves the arm too (`0x73c5d0` passes its shield byte).
+                    let kept = live.filter(|a| {
+                        !matches!(
+                            *a,
+                            attach_id::HAND_RIGHT | attach_id::HAND_LEFT | attach_id::SHIELD
+                        )
+                    });
+                    next_freeze.hold(slot, display, kept);
                     kept
                 } else {
-                    next_freeze.and_then(|f| f.attach_for(slot as u8, display))
+                    next_freeze.attach_for(slot, display)
                 }
             } else {
                 live
@@ -857,12 +863,12 @@ pub(in crate::entities) fn resolve_equipment(
             commands.entity(entity).insert(wielded);
         }
         // No freeze is a real state, so the falling edge removes the component.
-        match next_freeze {
-            Some(f) if freeze != Some(&f) => {
-                commands.entity(entity).insert(f);
-            }
-            None if freeze.is_some() => {
+        match (next_freeze.is_empty(), freeze) {
+            (true, Some(_)) => {
                 commands.entity(entity).remove::<DisarmFreeze>();
+            }
+            (false, f) if f != Some(&next_freeze) => {
+                commands.entity(entity).insert(next_freeze);
             }
             _ => {}
         }
@@ -1732,8 +1738,8 @@ mod tests {
         assert_eq!(w.main, Some((2, 7)), "GetWeapon(0, 1) still sees the sword");
         assert_eq!(w.armed_main(), None, "GetWeapon(0, 0) is NULL");
         assert_eq!(
-            w.disarmed_hand(),
-            Some(0),
+            w.disarmed_hands(),
+            [true, false, false],
             "the main hand is the one hidden"
         );
     }

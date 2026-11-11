@@ -658,6 +658,8 @@ pub(crate) fn test_spawn_item(
 /// `EQUIPMENT_SLOT_MAINHAND` / `_OFFHAND` (vmangos `EquipmentSlots`).
 pub(crate) const EQUIPMENT_SLOT_MAINHAND: u8 = 15;
 pub(crate) const EQUIPMENT_SLOT_OFFHAND: u8 = 16;
+/// The ranged equipment slot.
+pub(crate) const EQUIPMENT_SLOT_RANGED: u8 = 17;
 
 /// One equipment slot's item class; `None` while empty or its template is in flight.
 fn equipped_class(
@@ -678,58 +680,58 @@ pub(crate) fn is_disarmed(store: &ObjectStore) -> bool {
     store.0.unit_flags() & crate::creature_anim::UNIT_FLAG_DISARMED != 0
 }
 
-/// The equipment slot this character's disarm hides ([`crate::creature_anim::disarmed_hand`] over
-/// the raw inventory), for the action bar's equipped-item requirement and the item-use refusal
-/// (the item use's rung 15). `None` while the flag is down or neither hand holds a weapon.
-pub(crate) fn disarmed_equipment_slot(
+/// The equipment slots this character's disarm hides, one bit per slot, as the equipped-item
+/// search strips them (`0x6de230`): main and off hand by [`crate::creature_anim::hand_disarmed`]
+/// over the raw inventory, ranged by `UNIT_FIELD_FLAGS_2 & 0x400`. 0 with every flag down.
+pub(crate) fn disarmed_equipment_slots(
     store: &ObjectStore,
     objects: &Objects,
     items: &Items,
     commands: &NetCommands,
-) -> Option<u8> {
-    if store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_RANGED != 0 {
-        return Some(EQUIPMENT_SLOT_MAINHAND + 2);
-    }
-    if store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_OFFHAND == 0
-        && !is_disarmed(store)
-    {
-        return None;
-    }
-    let main = equipped_class(store, objects, items, commands, EQUIPMENT_SLOT_MAINHAND);
-    let off = equipped_class(store, objects, items, commands, EQUIPMENT_SLOT_OFFHAND);
-    crate::creature_anim::disarmed_hand_with_offhand(
-        main,
-        off,
-        store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_OFFHAND != 0,
-    )
-    .map(|hand| EQUIPMENT_SLOT_MAINHAND + hand as u8)
+) -> u32 {
+    disarmed_slots_by(store, |slot| {
+        equipped_class(store, objects, items, commands, slot)
+    })
 }
 
-/// [`disarmed_equipment_slot`] without the ask.
-pub(crate) fn disarmed_equipment_slot_cached(
+/// [`disarmed_equipment_slots`] without the ask.
+pub(crate) fn disarmed_equipment_slots_cached(
     store: &ObjectStore,
     objects: &Objects,
     items: &Items,
-) -> Option<u8> {
-    if store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_OFFHAND == 0
-        && !is_disarmed(store)
-    {
-        return None;
-    }
-    let class_of = |slot: u8| -> Option<u8> {
+) -> u32 {
+    disarmed_slots_by(store, |slot| {
         let guid = store.0.player_inv_slot(slot).filter(|&g| g != 0)?;
         let entry = objects.object(guid).and_then(|o| o.object_entry())?;
         Some(items.template_cached(entry)?.class as u8)
-    };
-    if store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_RANGED != 0 {
-        return Some(EQUIPMENT_SLOT_MAINHAND + 2);
+    })
+}
+
+/// [`disarmed_equipment_slots`] over `class_of`, which reads one slot's item class.
+fn disarmed_slots_by(store: &ObjectStore, class_of: impl Fn(u8) -> Option<u8>) -> u32 {
+    use crate::creature_anim::{UNIT_FLAG2_DISARM_OFFHAND, UNIT_FLAG2_DISARM_RANGED};
+    let flags2 = store.0.unit_flags2();
+    let disarmed = is_disarmed(store);
+    let disarm_offhand = flags2 & UNIT_FLAG2_DISARM_OFFHAND != 0;
+    let mut slots = 0;
+    if disarmed || disarm_offhand {
+        let (main, off) = (
+            class_of(EQUIPMENT_SLOT_MAINHAND),
+            class_of(EQUIPMENT_SLOT_OFFHAND),
+        );
+        for (hand, slot) in [EQUIPMENT_SLOT_MAINHAND, EQUIPMENT_SLOT_OFFHAND]
+            .into_iter()
+            .enumerate()
+        {
+            if crate::creature_anim::hand_disarmed(hand, disarmed, disarm_offhand, main, off) {
+                slots |= 1 << slot;
+            }
+        }
     }
-    crate::creature_anim::disarmed_hand_with_offhand(
-        class_of(EQUIPMENT_SLOT_MAINHAND),
-        class_of(EQUIPMENT_SLOT_OFFHAND),
-        store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_OFFHAND != 0,
-    )
-    .map(|hand| EQUIPMENT_SLOT_MAINHAND + hand as u8)
+    if flags2 & UNIT_FLAG2_DISARM_RANGED != 0 {
+        slots |= 1 << EQUIPMENT_SLOT_RANGED;
+    }
+    slots
 }
 
 /// A minimal valid item template named `name`; the sentinels that matter are `allowable_*` = -1

@@ -662,7 +662,7 @@ pub(crate) enum ItemUseRoute {
 pub(crate) fn item_use_route(
     it: ItemUse,
     aura_cancels: impl Fn(u32) -> bool,
-    disarmed_hand: Option<u8>,
+    disarmed_slots: u32,
 ) -> ItemUseRoute {
     if let Some(npc) = it.guid.filter(|_| it.start_quest != 0) {
         return ItemUseRoute::QuestOffer {
@@ -676,8 +676,11 @@ pub(crate) fn item_use_route(
         return ItemUseRoute::ShowPetition { item };
     }
     // Rung 15: in the player array `slot` is the equipment index, which the reference finds by
-    // scanning the worn guids for the item.
-    if disarmed_hand.is_some() && it.bag_index == PLAYER_ARRAY && Some(it.slot) == disarmed_hand {
+    // scanning the worn guids for the item. Only the two melee hands are tested, never ranged.
+    if it.bag_index == PLAYER_ARRAY
+        && matches!(it.slot, 15 | 16)
+        && disarmed_slots & (1 << it.slot) != 0
+    {
         return ItemUseRoute::CantUseDisarmed;
     }
     match it.use_spell {
@@ -713,15 +716,15 @@ pub(crate) fn send_item_use(
     let aura_cancels =
         |spell: u32| ladder.is_active_spell(spell, ctx.rel.self_store, ctx.self_auras);
     // The disarm ladder, asked of the caster's own inventory.
-    let disarmed_hand = ctx.rel.self_store.and_then(|store| {
-        crate::items::disarmed_equipment_slot(
+    let disarmed_slots = ctx.rel.self_store.map_or(0, |store| {
+        crate::items::disarmed_equipment_slots(
             store,
             &ladder.objects,
             &ladder.items,
             &ladder.commands,
         )
     });
-    let route = item_use_route(it, aura_cancels, disarmed_hand);
+    let route = item_use_route(it, aura_cancels, disarmed_slots);
     if matches!(route, ItemUseRoute::Cast(_)) && !leave_form_to_use(&it, ctx, ladder, ui_errors) {
         return false;
     }
@@ -1154,12 +1157,22 @@ mod tests {
         let never = |_: u32| false;
 
         assert_eq!(
-            item_use_route(worn(15), never, Some(15)),
+            item_use_route(worn(15), never, 1 << 15),
             ItemUseRoute::CantUseDisarmed
         );
         // A disarmed dual-wielder's other hand is not hidden.
         assert_eq!(
-            item_use_route(worn(16), never, Some(15)),
+            item_use_route(worn(16), never, 1 << 15),
+            ItemUseRoute::Cast(8690)
+        );
+        // Both hands under the main and off-hand flags.
+        assert_eq!(
+            item_use_route(worn(16), never, 1 << 15 | 1 << 16),
+            ItemUseRoute::CantUseDisarmed
+        );
+        // The ranged flag never refuses a use (`Item_C` tests slots 15 and 16 alone).
+        assert_eq!(
+            item_use_route(worn(17), never, 1 << 17),
             ItemUseRoute::Cast(8690)
         );
         // The same item in a bag is not worn, so it is never this refusal.
@@ -1170,18 +1183,15 @@ mod tests {
                     ..worn(15)
                 },
                 never,
-                Some(15)
+                1 << 15
             ),
             ItemUseRoute::Cast(8690)
         );
         // Flag down: nothing is hidden.
-        assert_eq!(
-            item_use_route(worn(15), never, None),
-            ItemUseRoute::Cast(8690)
-        );
+        assert_eq!(item_use_route(worn(15), never, 0), ItemUseRoute::Cast(8690));
         // The off hand hidden: the ladder's empty or non-weapon main-hand rung.
         assert_eq!(
-            item_use_route(worn(16), never, Some(16)),
+            item_use_route(worn(16), never, 1 << 16),
             ItemUseRoute::CantUseDisarmed
         );
     }
@@ -1203,25 +1213,25 @@ mod tests {
         };
         let never = |_| false;
         assert_eq!(
-            item_use_route(it(Some(letter), 373, None), never, None),
+            item_use_route(it(Some(letter), 373, None), never, 0),
             ItemUseRoute::QuestOffer {
                 npc: letter,
                 quest: 373
             }
         );
         assert_eq!(
-            item_use_route(it(Some(letter), 0, Some(8690)), never, None),
+            item_use_route(it(Some(letter), 0, Some(8690)), never, 0),
             ItemUseRoute::Cast(8690),
             "a hearthstone takes the cast tail"
         );
         assert_eq!(
-            item_use_route(it(Some(letter), 0, None), never, None),
+            item_use_route(it(Some(letter), 0, None), never, 0),
             ItemUseRoute::Nothing,
             "no ON_USE block — the ref sends nothing"
         );
         // No resolved instance: nothing to address, so the ordinary path runs.
         assert_eq!(
-            item_use_route(it(None, 373, Some(8690)), never, None),
+            item_use_route(it(None, 373, Some(8690)), never, 0),
             ItemUseRoute::Cast(8690)
         );
     }
@@ -1243,22 +1253,22 @@ mod tests {
         };
         let never = |_| false;
         assert_eq!(
-            item_use_route(it(Some(charter), true, None), never, None),
+            item_use_route(it(Some(charter), true, None), never, 0),
             ItemUseRoute::ShowPetition { item: charter },
             "the charter opens its petition window"
         );
         // Without the flag, the same item is the reference's silent no-op.
         assert_eq!(
-            item_use_route(it(Some(charter), false, None), never, None),
+            item_use_route(it(Some(charter), false, None), never, 0),
             ItemUseRoute::Nothing
         );
         // No resolved instance: it falls through, as the quest fork does.
         assert_eq!(
-            item_use_route(it(None, true, None), never, None),
+            item_use_route(it(None, true, None), never, 0),
             ItemUseRoute::Nothing
         );
         assert_eq!(
-            item_use_route(it(None, true, Some(8690)), never, None),
+            item_use_route(it(None, true, Some(8690)), never, 0),
             ItemUseRoute::Cast(8690)
         );
     }
@@ -1280,18 +1290,18 @@ mod tests {
         };
         let mounted = |spell: u32| spell == SUMMON_HORSE;
         assert_eq!(
-            item_use_route(it(0, Some(SUMMON_HORSE)), mounted, None),
+            item_use_route(it(0, Some(SUMMON_HORSE)), mounted, 0),
             ItemUseRoute::ToggleCancel(SUMMON_HORSE),
             "mounted: the click dismounts — CMSG_CANCEL_AURA, no CMSG_USE_ITEM",
         );
         assert_eq!(
-            item_use_route(it(0, Some(SUMMON_HORSE)), |_| false, None),
+            item_use_route(it(0, Some(SUMMON_HORSE)), |_| false, 0),
             ItemUseRoute::Cast(SUMMON_HORSE),
             "not mounted: the very same click casts",
         );
         // Order: the quest offer forks, above the toggle scan.
         assert_eq!(
-            item_use_route(it(373, Some(SUMMON_HORSE)), mounted, None),
+            item_use_route(it(373, Some(SUMMON_HORSE)), mounted, 0),
             ItemUseRoute::QuestOffer {
                 npc: 0x4000_0000_0000_0BAD,
                 quest: 373
@@ -1299,7 +1309,7 @@ mod tests {
         );
         // An item with no ON_USE block has nothing to cancel, whatever the predicate says.
         assert_eq!(
-            item_use_route(it(0, None), |_| true, None),
+            item_use_route(it(0, None), |_| true, 0),
             ItemUseRoute::Nothing
         );
     }

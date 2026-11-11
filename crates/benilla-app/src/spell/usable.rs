@@ -37,8 +37,6 @@ const ATTR_EX4_WEAPON_SPEED_COST: u32 = 0x0000_0400;
 const UNARMED_COST_SPEED: u32 = 2000;
 /// The item flag that keeps a broken item usable (`0x6d71ab`).
 const ITEM_FLAG_BREAK_IGNORED: u32 = 0x0000_0008;
-/// The unit's second-word flag that disarms the off hand alone (`0x719038`).
-const UNIT_FLAG2_DISARM_OFFHAND: u32 = 0x0000_0080;
 
 /// The implicit targets leg 10b forks on: 6, single enemy, asks the attack check; 21, single
 /// friend, asks the assist check.
@@ -304,9 +302,7 @@ pub(crate) fn equipped_item_fits_cached(
         return true;
     }
     let mut mask = hand_mask(d);
-    if let Some(hidden) = crate::items::disarmed_equipment_slot_cached(store, objects, items) {
-        mask &= !(1u32 << hidden);
-    }
+    mask &= !crate::items::disarmed_equipment_slots_cached(store, objects, items);
     equipped_slots_match(
         store,
         mask,
@@ -426,10 +422,8 @@ pub(crate) fn equipped_item_fits(
     }
     let class = d.equipped_item_class as u32;
     let mut mask = hand_mask(d);
-    // The disarm ladder strips the one hidden hand from the mask.
-    if let Some(hidden) = crate::items::disarmed_equipment_slot(store, objects, items, commands) {
-        mask &= !(1u32 << hidden);
-    }
+    // The disarm strips each hidden hand from the mask (`0x6de230`).
+    mask &= !crate::items::disarmed_equipment_slots(store, objects, items, commands);
     equipped_slots_match(store, mask, class, d.equipped_item_subclass_mask, |guid| {
         let (entry, durability, max_durability) = objects.object(guid).and_then(|o| {
             Some((
@@ -773,11 +767,9 @@ fn held_item_usable(item: &benilla_protocol::ObjectFields) -> bool {
     flags & ITEM_FLAG_DEPRECATED == 0 && (flags & ITEM_FLAG_BREAK_IGNORED != 0 || !broken)
 }
 
-/// The per-hand disarm test (`0x718fc0`): the disarm ladder, or the off hand's own flag.
+/// The per-hand disarm test (`0x718fc0`) on equipment `slot`, main or off hand.
 fn hand_disarmed(store: &ObjectStore, objects: &Objects, items: &Items, slot: u8) -> bool {
-    crate::items::disarmed_equipment_slot_cached(store, objects, items) == Some(slot)
-        || (slot == crate::items::EQUIPMENT_SLOT_OFFHAND
-            && store.0.unit_flags2() & UNIT_FLAG2_DISARM_OFFHAND != 0)
+    crate::items::disarmed_equipment_slots_cached(store, objects, items) & (1 << slot) != 0
 }
 
 /// What [`power_cost_at`] scales `d`'s percentage cost, a jump table on the power type plus 2, on

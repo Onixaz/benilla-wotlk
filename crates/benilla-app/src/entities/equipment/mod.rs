@@ -159,33 +159,37 @@ pub(super) struct HeldItems {
 pub(super) const ATTACH_SLOTS: usize = 8;
 
 /// What the disarm reflex left attached: the reference builds attachments from events, and this is
-/// the one such state kept across frames. The reference's disarm handler runs on any unit whose
-/// disarm bit changes; as it rises, a drawn weapon leaves the hidden hand (attach `0xf`) and a
-/// stowed one stays, and no attach site moves it while the unit's weapon getter reads NULL.
-#[derive(Component, Clone, Copy, PartialEq, Eq)]
+/// the one such state kept across frames. The reference's disarm handlers run on any unit whose
+/// disarm bits change (`0x73c330` main flag, `0x73c5d0` off-hand and ranged flags); as a hand's
+/// bit rises, a drawn item leaves the hand (attach `0xf`) and a stowed one stays, and no attach
+/// site moves it while the unit's weapon getter reads NULL.
+#[derive(Component, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct DisarmFreeze {
-    /// The hand hidden at the edge: 0 mainhand, 1 offhand.
-    slot: u8,
-    /// The item in that hand; a different one was never attached while the flag is up.
-    display: u32,
-    /// Where the reflex left it; `None` when it was detached from the hand.
-    attach: Option<u16>,
+    /// Per held slot (main, off, ranged): the item hidden at that hand's edge, and where the reflex
+    /// left it (`None` when it was detached from the hand).
+    hands: [Option<(u32, Option<u16>)>; 3],
 }
 
 impl DisarmFreeze {
-    pub(super) fn new(slot: u8, display: u32, attach: Option<u16>) -> Self {
-        DisarmFreeze {
-            slot,
-            display,
-            attach,
-        }
+    /// Hold `display` in `slot` at `attach`, at that hand's rising edge.
+    pub(super) fn hold(&mut self, slot: usize, display: u32, attach: Option<u16>) {
+        self.hands[slot] = Some((display, attach));
     }
 
-    /// Where `display` still hangs in `slot`; `None` for any other hand or item.
-    pub(super) fn attach_for(&self, slot: u8, display: u32) -> Option<u16> {
-        (self.slot == slot && self.display == display)
-            .then_some(self.attach)
-            .flatten()
+    /// Drop `slot`'s hold, at its falling edge.
+    pub(super) fn release(&mut self, slot: usize) {
+        self.hands[slot] = None;
+    }
+
+    /// Where `display` still hangs in `slot`; `None` for an unheld hand or another item.
+    pub(super) fn attach_for(&self, slot: usize, display: u32) -> Option<u16> {
+        self.hands[slot]
+            .filter(|&(d, _)| d == display)
+            .and_then(|(_, a)| a)
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.hands.iter().all(Option::is_none)
     }
 }
 
