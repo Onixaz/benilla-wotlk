@@ -6,3 +6,5 @@ pub const RAW_ANIM: u32 = 0x4;
 pub const NO_SPECIAL_REMAP: u32 = 0x10;
 /// A stage-2 model re-arms its birth sequence at each end instead of handing over to `Hold` (`0x7449e2`).
 pub const AURA_LOOPS_BIRTH: u32 = 0x20;
+/// A missile hit plays the state kit only while the target's aura of the spell is active (`0x702f2e`).
+pub const STATE_NEEDS_ACTIVE_AURA: u32 = 0x80;

@@ -409,8 +409,13 @@ pub(crate) enum CastEventKind {
     /// Died without release, through the end-cast (`0x7fecc0`) with the reason byte as sent;
     /// `interrupt` when `SMSG_SPELL_FAILURE` names the unit's running cast (`0x72ed80`).
     Fail { interrupt: bool, wire_reason: u8 },
-    /// A missile landed: `on_caster` picks the kit (`0x800d00`), `at` is its point (`0x702e5a`).
-    Impact { on_caster: bool, at: Option<Vec3> },
+    /// A missile landed: `on_caster` picks the kit (`0x800d00`), `at` is its point (`0x702e5a`);
+    /// `caster` is the guid both of its kit plays carry (`0x702f5f`).
+    Impact {
+        on_caster: bool,
+        at: Option<Vec3>,
+        caster: Entity,
+    },
     /// A projectile with no live target at arrival (a despawned target too): the kit plays on the
     /// caster (`entity`) at `pos`, `SpellVisual` field 13, stage 3. Sent here only for a
     /// dest-targeted GO's missile with no hit (`MissileSpawn::ground_aim`).
@@ -642,9 +647,9 @@ use spell_visual::{
 #[cfg(test)]
 pub(crate) use spell_visual::arm_aura_state_fx as arm_aura_state_fx_for_test;
 pub(crate) use spell_visual::{
-    end_cast_clears_hold, held_strike_sound, kit_fx_slots, ChainProcPlay, FxClass, FxStage,
-    KitPush, MissileRelease, MissileSpawn, ReleaseKind, SpellKitFx, SpellKitShake, SpellKitSound,
-    SpellVisuals,
+    end_cast_clears_hold, held_strike_sound, ChainProcPlay, ChannelSpellLeft, FxClass, FxStage,
+    KitEffectClear, KitPush, MissileRelease, MissileSpawn, ReleaseKind, SpellEffectClear,
+    SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals, UnitKitLanes,
 };
 
 /// The unit's own variation stream ([`benilla_assets::AnimRng::stream`]), cut on its first frame
@@ -954,6 +959,9 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<MissileRelease>()
             .add_message::<spell_visual::DelayedAreaKit>()
             .add_message::<ChainProcPlay>()
+            .add_message::<ChannelSpellLeft>()
+            .add_message::<SpellEffectClear>()
+            .add_message::<KitEffectClear>()
             .add_message::<KitPush>()
             // The aura CharProc edges, drained by `crate::aura_visual`.
             .add_message::<crate::aura_visual::AuraProc>()
