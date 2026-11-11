@@ -9,6 +9,7 @@ use benilla_world::view::WorldCamera;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
+use crate::creature_anim::spell_visual::{kit_waits_for_beam, NO_BEAM_KEY};
 use crate::creature_anim::spell_visual::{AreaKitWait, DelayedAreaKit};
 use crate::creature_anim::{
     BeamKitWaits, ChainProcPlay, FxClass, SpellGoTargets, SpellKitFx, SpellVisuals,
@@ -71,6 +72,8 @@ pub(crate) struct SpawnState {
     /// The hop array's in-place zeroing within one frame (`0x726b0d`).
     consumed: bevy::ecs::entity::EntityHashSet,
     plays_seen: u32,
+    /// Each caster's beam sequence, from 0 and up 2 a beam (`0x726b96`), its beams' first-bolt key.
+    sequences: bevy::ecs::entity::EntityHashMap<i32>,
 }
 
 /// Each caster's saved ground point, cleared by its next beam row's GO (`0x715400`).
@@ -92,6 +95,9 @@ struct Bolt {
     /// 0, the caster, for every hop of a reversed beam, else the hop before (`0x7fa547`).
     source: usize,
     target: usize,
+    /// The key a target-less end connects its source with: the caster's sequence on the first bolt,
+    /// else none (`0x7fa59b`).
+    attachment: i32,
     /// `t0 + delay + i × stagger` in scene seconds (`0x7fa4e2`, `0x7fa569`).
     start: f32,
     /// `start + boltLife` (`0x7fa53f`).
@@ -165,11 +171,12 @@ pub(super) fn spawn_chain_beams(
     beams: Query<(Entity, &ChainBeam)>,
     transforms: Query<&GlobalTransform, Without<WorldCamera>>,
     mut locations: ResMut<ChainLocations>,
-    mut state: Local<SpawnState>,
+    (mut waits, mut state): (Option<ResMut<BeamKitWaits>>, Local<SpawnState>),
 ) {
     let SpawnState {
         consumed,
         plays_seen,
+        sequences,
     } = &mut *state;
     consumed.clear();
     let visual_of = |spell_id: u32| {
@@ -191,6 +198,7 @@ pub(super) fn spawn_chain_beams(
         locations.save(go.caster, row.flags, hit_units, go.dest);
     }
     locations.0.retain(|e, _| stores.contains(*e));
+    sequences.retain(|e, _| stores.contains(*e));
     for ev in kit_fx.read() {
         let SpellKitFx::Reap {
             entity,
@@ -226,6 +234,9 @@ pub(super) fn spawn_chain_beams(
         if play.spell_id == 0 || (targets.is_empty() && location.is_none()) {
             continue;
         }
+        let sequence = sequences.entry(play.entity).or_insert(0);
+        let seq = *sequence;
+        *sequence = sequence.wrapping_add(2);
         let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
             continue;
         };
@@ -267,6 +278,7 @@ pub(super) fn spawn_chain_beams(
                     Bolt {
                         source: if play.proc.reverse { 0 } else { i },
                         target: i + 1,
+                        attachment: if i == 0 { seq } else { NO_BEAM_KEY },
                         start,
                         end: start + life,
                         live: None,
@@ -297,9 +309,26 @@ pub(super) fn spawn_chain_beams(
         }
         // A location beam plays the area kit the GO skipped, unless this is that kit (`0x726b2c`).
         let area_kit = stages.map_or(0, |s| s.impact_area_kit);
-        if let Some(pos) =
-            location.filter(|_| area_kit != play.kit_id && visuals.0.kit(area_kit).is_some())
+        let Some((pos, kit)) = location
+            .filter(|_| area_kit != play.kit_id)
+            .zip(visuals.0.kit(area_kit))
+        else {
+            continue;
+        };
+        // A flag-0x1 area kit waits for the first bolt's end under the beam's sequence (`0x726b8e`).
+        if let Some(w) = waits
+            .as_mut()
+            .filter(|_| kit_waits_for_beam(spells, &visuals.0, play.spell_id, kit))
         {
+            w.bypass_change_detection().hold_area(
+                play.entity,
+                play.spell_id,
+                seq,
+                area_kit,
+                pos,
+                now,
+            );
+        } else {
             area_kits.write(DelayedAreaKit {
                 kit_id: area_kit,
                 pos,
@@ -409,19 +438,20 @@ impl EndPoints<'_, '_> {
     }
 }
 
-/// The units a bolt's drawn ends reach (`0x7fb15a`): the source on the first vertex, the target
-/// on the last, or with no target the source, but on the first bolt, whose ground key no held play has.
-fn reached_units(
+/// The objects a bolt's drawn ends connect, with the key each carries (`0x7fb15a`): the source on
+/// the first vertex, and on the last the target object, unit or not, or with none the source under
+/// the bolt's attachment.
+fn reached_ends(
     (first, last): (bool, bool),
-    bolt: usize,
     source: Entity,
     target: Option<Entity>,
-) -> [Option<Entity>; 2] {
+    attachment: i32,
+) -> [Option<(Entity, i32)>; 2] {
     let end = match target {
-        Some(t) => Some(t),
-        None => (bolt > 0).then_some(source),
+        Some(t) => (t, NO_BEAM_KEY),
+        None => (source, attachment),
     };
-    [first.then_some(source), end.filter(|_| last)]
+    [first.then_some((source, NO_BEAM_KEY)), last.then_some(end)]
 }
 
 /// Per frame, the object tick (`0x7fae90`), bolt update (`0x9ab3b0`) and draw (`0x9aa210`).
@@ -495,16 +525,16 @@ pub(crate) fn simulate_chain_beams(
             live.update(effect, dt);
             // The ends the draw reaches, whether or not its texture has loaded (`0x7fb15a`).
             if let Some(waits) = waits.as_mut().filter(|_| layered) {
-                let target = nodes
-                    .get(bolt.target)
-                    .copied()
-                    .filter(|&n| ends.units.contains(n));
+                // Any object is a target, a game object too, whose connect finds no held play
+                // (`0x744330`); a gone one has hidden the bolt above.
+                let target = nodes.get(bolt.target).copied();
                 let reach = live.reached_ends(effect);
-                for unit in reached_units(reach, i, nodes[bolt.source], target)
-                    .into_iter()
-                    .flatten()
+                for (object, key) in
+                    reached_ends(reach, nodes[bolt.source], target, bolt.attachment)
+                        .into_iter()
+                        .flatten()
                 {
-                    waits.reach(unit, *spell_id);
+                    waits.reach(object, *spell_id, key);
                 }
             }
             if let Some(batch) = batch.as_mut() {

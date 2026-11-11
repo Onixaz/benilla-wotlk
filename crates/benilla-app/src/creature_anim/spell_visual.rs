@@ -449,22 +449,39 @@ pub(crate) struct KitPush {
 /// How long a kit waits for its beam before it is dropped unplayed (`0x72af9f`, `0x728196`).
 const BEAM_WAIT_SECS: f32 = 10.0;
 
-/// One kit play held until a beam reaches its unit, the unit's delayed kit (`0x728050`).
-#[derive(Clone, Copy)]
+/// The attachment key of an ordinary play and of every connect but a target-less bolt's (`0x7fb15a`).
+pub(crate) const NO_BEAM_KEY: i32 = -1;
+
+/// What a held play does once its beam reaches it.
+enum WaitPlay {
+    /// The unit's kit play, with the point of a play split between the unit and a point (`0x7280c9`).
+    Kit {
+        kit: Box<VisualKit>,
+        play: KitPlay,
+        seq: u64,
+        at: Option<Vec3>,
+    },
+    /// A location beam's area kit at its point (`0x726b2c`).
+    Area { kit_id: u32, pos: Vec3 },
+    /// An aura's state kit (`0x724c86`), armed by [`arm_aura_state_fx`].
+    AuraState,
+}
+
+/// One play held until a beam reaches its unit, the unit's delayed kit (`0x728050`).
 struct BeamKitWait {
     entity: Entity,
     spell_id: u32,
-    kit: VisualKit,
-    play: KitPlay,
-    seq: u64,
-    /// The impact's point, for a play split between the unit and a point (`0x7280c9`).
-    at: Option<Vec3>,
+    /// The attachment a connect must carry (`0x722760`): [`NO_BEAM_KEY`], or a location beam's
+    /// sequence for its area kit.
+    key: i32,
+    what: WaitPlay,
     deadline: f32,
     reached: bool,
 }
 
-/// The kit plays waiting on a beam: held by [`play_kit`], reached by the beam tick
-/// (`crate::entities::chain_beam`), played by [`route_cast_visuals`].
+/// The plays waiting on a beam: held by the kit players, reached by the beam tick
+/// (`crate::entities::chain_beam`), played by [`route_cast_visuals`] and, for an aura's state
+/// kit, [`arm_aura_state_fx`].
 #[derive(Resource, Default)]
 pub(crate) struct BeamKitWaits {
     waits: Vec<BeamKitWait>,
@@ -477,50 +494,62 @@ impl BeamKitWaits {
         self.waits.is_empty()
     }
 
-    /// A beam reached `entity`: its plays waiting on `spell_id` go next frame (`0x722760`).
-    pub(crate) fn reach(&mut self, entity: Entity, spell_id: u32) {
+    /// A beam reached `entity` with attachment `key`: its plays waiting on `spell_id` with that key
+    /// go (`0x722760`).
+    pub(crate) fn reach(&mut self, entity: Entity, spell_id: u32, key: i32) {
         for w in &mut self.waits {
-            if w.entity == entity && w.spell_id == spell_id {
+            if w.entity == entity && w.spell_id == spell_id && w.key == key {
                 w.reached = true;
             }
         }
     }
 
-    fn hold(&mut self, entity: Entity, spell_id: u32, kit: &VisualKit, play: KitPlay, seq: u64) {
-        self.hold_at(entity, spell_id, kit, play, seq, None);
-    }
-
-    fn hold_at(
-        &mut self,
-        entity: Entity,
-        spell_id: u32,
-        kit: &VisualKit,
-        play: KitPlay,
-        seq: u64,
-        at: Option<Vec3>,
-    ) {
+    fn hold(&mut self, entity: Entity, spell_id: u32, key: i32, what: WaitPlay, now: f32) {
         self.waits.push(BeamKitWait {
             entity,
             spell_id,
-            kit: *kit,
-            play,
-            seq,
-            at,
-            deadline: self.now + BEAM_WAIT_SECS,
+            key,
+            what,
+            deadline: now + BEAM_WAIT_SECS,
             reached: false,
         });
     }
 
-    /// The reached plays, taken out; one past its deadline is dropped unplayed (`0x728140`).
+    /// A location beam's area kit, held on its caster under the beam's sequence (`0x726b2c`).
+    pub(crate) fn hold_area(
+        &mut self,
+        caster: Entity,
+        spell_id: u32,
+        sequence: i32,
+        kit_id: u32,
+        pos: Vec3,
+        now: f32,
+    ) {
+        let what = WaitPlay::Area { kit_id, pos };
+        self.hold(caster, spell_id, sequence, what, now);
+    }
+
+    /// The reached kit and area plays, taken out; an unreached play past its deadline is dropped
+    /// unplayed (`0x728140`).
     fn take_reached(&mut self, now: f32) -> Vec<BeamKitWait> {
         self.now = now;
+        let (reached, held) = std::mem::take(&mut self.waits)
+            .into_iter()
+            .filter(|w| w.reached || now < w.deadline)
+            .partition(|w| w.reached && !matches!(w.what, WaitPlay::AuraState));
+        self.waits = held;
+        reached
+    }
+
+    /// The reached aura state kits, taken out.
+    fn take_reached_auras(&mut self) -> Vec<(Entity, u32)> {
         let mut reached = Vec::new();
         self.waits.retain(|w| {
-            if w.reached {
-                reached.push(*w);
-                return false;
+            let take = w.reached && matches!(w.what, WaitPlay::AuraState);
+            if take {
+                reached.push((w.entity, w.spell_id));
             }
-            now < w.deadline
+            !take
         });
         reached
     }
@@ -535,16 +564,41 @@ fn draws_beam(spells: &crate::ui_action::Spells, visuals: &SpellVisualCatalog, s
         .is_some_and(|s| visuals.has_chain_effect(s))
 }
 
+/// Whether a unit's play of `kit` for `spell_id` waits for the spell's beam (`0x72af60`); an
+/// object's never does (`0x743570`).
+pub(crate) fn kit_waits_for_beam(
+    spells: &crate::ui_action::Spells,
+    visuals: &SpellVisualCatalog,
+    spell_id: u32,
+    kit: &VisualKit,
+) -> bool {
+    kit.flags & benilla_formats::kit_flag::BEAM_WAIT != 0 && draws_beam(spells, visuals, spell_id)
+}
+
+/// Where a kit play may wait: the waits, and which entities are units.
+struct BeamHold<'a> {
+    waits: &'a mut BeamKitWaits,
+    is_unit: &'a dyn Fn(Entity) -> bool,
+}
+
 /// Whether this kit play waits for the spell's beam instead of playing (`0x72af60`).
 fn waits_for_beam(
+    entity: Entity,
     spell_id: u32,
     kit: &VisualKit,
     visuals: &SpellVisualCatalog,
     out: &KitOut,
 ) -> bool {
-    kit.flags & benilla_formats::kit_flag::BEAM_WAIT != 0
-        && out.waits.is_some()
-        && draws_beam(out.spells, visuals, spell_id)
+    out.waits.as_ref().is_some_and(|h| (h.is_unit)(entity))
+        && kit_waits_for_beam(out.spells, visuals, spell_id, kit)
+}
+
+/// Hold a unit's kit play on its beam, under the ordinary key.
+fn hold_kit(out: &mut KitOut, entity: Entity, spell_id: u32, what: WaitPlay) {
+    if let Some(h) = out.waits.as_mut() {
+        let now = h.waits.now;
+        h.waits.hold(entity, spell_id, NO_BEAM_KEY, what, now);
+    }
 }
 
 /// The kit lanes [`route_cast_visuals`] writes but does not own, and the beam waits with their
@@ -582,7 +636,7 @@ struct KitOut<'a, 'w1, 'w2, 'w3, 'w4, 'w5, 'w6, 'w7, 'w8, 'w9, 'w10> {
     /// The flash and procedural fade cases of the dispatcher.
     body: &'a mut MessageWriter<'w10, crate::aura_visual::BodyProcPlay>,
     /// Where a beam spell's flag-`0x1` kit waits; `None` plays it at once, as a released play does.
-    waits: Option<&'a mut BeamKitWaits>,
+    waits: Option<BeamHold<'a>>,
 }
 
 /// The dispatcher's flash and fade cases for one kit play, every filled slot in order (`0x7265c0`).
@@ -643,10 +697,14 @@ fn play_kit(
     out: &mut KitOut,
 ) {
     // The whole play waits for the beam to reach this unit (`0x72af60`).
-    if waits_for_beam(spell_id, kit, visuals, out) {
-        if let Some(waits) = out.waits.as_deref_mut() {
-            waits.hold(entity, spell_id, kit, play, seq);
-        }
+    if waits_for_beam(entity, spell_id, kit, visuals, out) {
+        let what = WaitPlay::Kit {
+            kit: Box::new(*kit),
+            play,
+            seq,
+            at: None,
+        };
+        hold_kit(out, entity, spell_id, what);
         return;
     }
     if let Some(anim_id) = kit.anim_id {
@@ -1022,10 +1080,14 @@ fn play_impact(
         match at {
             None => play_kit(entity, spell_id, kit, KitPlay::DISCRETE, seq, visuals, out),
             // The play waits whole, its point kept with it (`0x72af60`).
-            Some(at) if waits_for_beam(spell_id, kit, visuals, out) => {
-                if let Some(waits) = out.waits.as_deref_mut() {
-                    waits.hold_at(entity, spell_id, kit, KitPlay::DISCRETE, seq, Some(at));
-                }
+            Some(at) if waits_for_beam(entity, spell_id, kit, visuals, out) => {
+                let what = WaitPlay::Kit {
+                    kit: Box::new(*kit),
+                    play: KitPlay::DISCRETE,
+                    seq,
+                    at: Some(at),
+                };
+                hold_kit(out, entity, spell_id, what);
             }
             Some(at) => play_kit_split(entity, spell_id, kit, at, seq, visuals, out, bursts),
         }
@@ -1132,21 +1194,44 @@ pub(super) fn route_cast_visuals(
         body,
         waits: None,
     };
-    // A reached play goes through the kit player again, past the wait (`0x7227f7`).
+    // A reached play goes through the kit player again, past the wait (`0x7227f7`). 12340's tick
+    // reads the end bits its last render set (`0x4f91d4` runs before `0x4f91d9`), so this is the
+    // frame after the drawn reach there too.
     for w in reached {
         if commands.get_entity(w.entity).is_err() {
             continue;
         }
-        match w.at {
-            None => play_kit(
-                w.entity, w.spell_id, &w.kit, w.play, w.seq, &visuals.0, &mut out,
+        match w.what {
+            WaitPlay::Kit {
+                kit,
+                play,
+                seq,
+                at: None,
+            } => play_kit(w.entity, w.spell_id, &kit, play, seq, &visuals.0, &mut out),
+            WaitPlay::Kit {
+                kit,
+                seq,
+                at: Some(at),
+                ..
+            } => play_kit_split(
+                w.entity, w.spell_id, &kit, at, seq, &visuals.0, &mut out, bursts,
             ),
-            Some(at) => play_kit_split(
-                w.entity, w.spell_id, &w.kit, at, w.seq, &visuals.0, &mut out, bursts,
-            ),
+            WaitPlay::Area { kit_id, pos } => {
+                delayed.write(DelayedAreaKit {
+                    kit_id,
+                    pos,
+                    wait: AreaKitWait::Secs(0.0),
+                });
+            }
+            WaitPlay::AuraState => {}
         }
     }
-    out.waits = waits.as_mut().map(|w| w.bypass_change_detection());
+    // An object's kit never waits (`0x743570`).
+    let is_unit = |e: Entity| units.get(e).is_ok_and(|(_, s)| s.is_unit());
+    out.waits = waits.as_mut().map(|w| BeamHold {
+        waits: w.bypass_change_detection(),
+        is_unit: &is_unit,
+    });
 
     // `holds` lags one command flush and an instant cast's START and GO drain together, so
     // `pending` overlays this frame's hold writes (else the cast pose sticks).
@@ -1585,6 +1670,75 @@ pub(super) fn route_cast_visuals(
     channel_cache.retain(|e, _| units.contains(*e));
 }
 
+/// The lanes an aura's state kit arms on.
+struct StateKitWriters<'a, 'w1, 'w2, 'w3, 'w4, 'w5, 'w6> {
+    fx: &'a mut MessageWriter<'w1, SpellKitFx>,
+    procs: &'a mut MessageWriter<'w2, AuraProc>,
+    sounds: &'a mut MessageWriter<'w3, SpellKitSound>,
+    recomputes: &'a mut MessageWriter<'w4, BaseAnimRecompute>,
+    sheaths: &'a mut MessageWriter<'w5, super::SheathRequest>,
+    body: &'a mut MessageWriter<'w6, crate::aura_visual::BodyProcPlay>,
+}
+
+/// A state kit's models and proc nodes; `None` when the kit arms nothing at all.
+fn state_kit_parts(
+    visuals: &SpellVisualCatalog,
+    kit: &VisualKit,
+) -> Option<(Vec<FxSlot>, Vec<crate::aura_visual::AuraNode>)> {
+    let effects = resolve_kit_effects(visuals, kit);
+    let nodes: Vec<crate::aura_visual::AuraNode> = kit
+        .char_procs()
+        .filter_map(crate::aura_visual::node_for)
+        .collect();
+    let empty = effects.is_empty() && nodes.is_empty() && kit.sound.is_none();
+    (!empty || kit.anim_id.is_some()).then_some((effects, nodes))
+}
+
+/// One aura state kit's arm: the stow, the body procs, the models, the proc nodes, the sound and
+/// the stage-2 anim leg.
+fn arm_state_kit(
+    entity: Entity,
+    spell_id: u32,
+    kit: &VisualKit,
+    (effects, nodes): (Vec<FxSlot>, Vec<crate::aura_visual::AuraNode>),
+    spells: &crate::ui_action::Spells,
+    w: &mut StateKitWriters,
+) {
+    debug!(
+        "anim: aura state kit armed ({entity}, spell {spell_id}): {} model(s), {} proc node(s)",
+        effects.len(),
+        nodes.len()
+    );
+    stow_for_weapon_effects(w.sheaths, spells, entity, spell_id, kit);
+    play_body_procs(w.body, entity, spell_id, kit);
+    if !effects.is_empty() {
+        w.fx.write(SpellKitFx::Begin {
+            entity,
+            spell_id,
+            persistent: true,
+            class: FxClass::AuraState,
+            stage: state_stage(kit),
+            effects,
+        });
+    }
+    if !nodes.is_empty() {
+        w.procs.write(AuraProc::Begin {
+            entity,
+            spell_id,
+            nodes,
+        });
+    }
+    // Ungated; a same-frame duplicate of the impact hand-off's collapses downstream.
+    if let Some(kit_sound) = kit.sound {
+        w.sounds.write(SpellKitSound::Play { entity, kit_sound });
+    }
+    // The stage-2 anim leg, on the add edge only: an aura refreshed in place keeps its spell, and
+    // the slot already armed with it is skipped (`0x7248a8`).
+    if let Some(anim_id) = kit.anim_id {
+        w.recomputes.write(BaseAnimRecompute { entity, anim_id });
+    }
+}
+
 /// Arm and reap each aura's state kit (stage 2) off the unit's [`UnitAuras`]: a spell entering
 /// the table begins its kit's models persistent, also on a unit streamed in mid-aura (its first
 /// `SMSG_AURA_UPDATE_ALL`), and leaving reaps them. 12340's applied core (`0x724820`) plays the
@@ -1621,6 +1775,7 @@ pub(crate) fn arm_aura_state_fx(
     mut done: MessageWriter<StateDoneKit>,
     mut sheaths: MessageWriter<super::SheathRequest>,
     mut body: MessageWriter<crate::aura_visual::BodyProcPlay>,
+    (mut waits, time): (Option<ResMut<BeamKitWaits>>, Res<Time>),
     mut armed: Local<EntityHashMap<Vec<u32>>>,
     mut seen_vision: Local<u8>,
 ) {
@@ -1637,6 +1792,27 @@ pub(crate) fn arm_aura_state_fx(
     let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
         return; // no client data
     };
+    let mut writers = StateKitWriters {
+        fx: &mut fx,
+        procs: &mut procs,
+        sounds: &mut sounds,
+        recomputes: &mut recomputes,
+        sheaths: &mut sheaths,
+        body: &mut body,
+    };
+    // A held state kit the beam reached plays now, past the wait (`0x7227f7`).
+    let reached = waits.as_mut().map_or_else(Vec::new, |w| {
+        w.bypass_change_detection().take_reached_auras()
+    });
+    for (entity, spell_id) in reached {
+        let kit = resolve_kit(spells, &visuals.0, spell_id, |s| s.state, || None);
+        if let Some((kit, parts)) = kit
+            .filter(|_| units.contains(entity))
+            .and_then(|k| state_kit_parts(&visuals.0, &k).map(|p| (k, p)))
+        {
+            arm_state_kit(entity, spell_id, &kit, parts, spells, &mut writers);
+        }
+    }
     let scan = if full_sweep {
         units.iter().collect::<Vec<_>>()
     } else {
@@ -1659,18 +1835,20 @@ pub(crate) fn arm_aura_state_fx(
         for &spell_id in prev.iter() {
             if cur.binary_search(&spell_id).is_err() {
                 debug!("anim: aura state kit reaped ({entity}, spell {spell_id})");
-                fx.write(SpellKitFx::Reap {
+                writers.fx.write(SpellKitFx::Reap {
                     entity,
                     spell_id,
                     class: FxClass::AuraState,
                 });
-                procs.write(AuraProc::Reap { entity, spell_id });
+                writers.procs.write(AuraProc::Reap { entity, spell_id });
                 // A looping state-kit sound dies with the aura's kits (`0x743b40`).
                 if let Some(kit_sound) =
                     resolve_kit(spells, &visuals.0, spell_id, |s| s.state, || None)
                         .and_then(|k| k.sound)
                 {
-                    sounds.write(SpellKitSound::StopKit { entity, kit_sound });
+                    writers
+                        .sounds
+                        .write(SpellKitSound::StopKit { entity, kit_sound });
                 }
                 // Then the state-done kit, for any slot the applied core armed (`0x71eb11`).
                 done.write(StateDoneKit { entity, spell_id });
@@ -1686,52 +1864,25 @@ pub(crate) fn arm_aura_state_fx(
             let Some(kit) = resolve_kit(spells, &visuals.0, spell_id, |s| s.state, || None) else {
                 continue; // no state kit
             };
-            let effects = resolve_kit_effects(&visuals.0, &kit);
-            let nodes: Vec<crate::aura_visual::AuraNode> = kit
-                .char_procs()
-                .filter_map(crate::aura_visual::node_for)
-                .collect();
-            if effects.is_empty()
-                && nodes.is_empty()
-                && kit.sound.is_none()
-                && kit.anim_id.is_none()
-            {
+            let Some(parts) = state_kit_parts(&visuals.0, &kit) else {
                 continue; // nothing to arm or reap
-            }
-            debug!(
-                "anim: aura state kit armed ({entity}, spell {spell_id}): {} model(s), {} proc                  node(s)",
-                effects.len(),
-                nodes.len()
-            );
-            // Not built: a beam spell's flag-0x1 state kit waiting for the beam (`0x72af60`).
-            stow_for_weapon_effects(&mut sheaths, spells, entity, spell_id, &kit);
-            play_body_procs(&mut body, entity, spell_id, &kit);
-            if !effects.is_empty() {
-                fx.write(SpellKitFx::Begin {
+            };
+            // A beam spell's flag-0x1 state kit waits for the beam to reach this unit (`0x72af60`).
+            if let Some(w) = waits
+                .as_mut()
+                .filter(|_| kit_waits_for_beam(spells, &visuals.0, spell_id, &kit))
+            {
+                let now = time.elapsed_secs();
+                w.bypass_change_detection().hold(
                     entity,
                     spell_id,
-                    persistent: true,
-                    class: FxClass::AuraState,
-                    stage: state_stage(&kit),
-                    effects,
-                });
+                    NO_BEAM_KEY,
+                    WaitPlay::AuraState,
+                    now,
+                );
+                continue;
             }
-            if !nodes.is_empty() {
-                procs.write(AuraProc::Begin {
-                    entity,
-                    spell_id,
-                    nodes,
-                });
-            }
-            // Ungated; a same-frame duplicate of the impact hand-off's collapses downstream.
-            if let Some(kit_sound) = kit.sound {
-                sounds.write(SpellKitSound::Play { entity, kit_sound });
-            }
-            // The stage-2 anim leg, on the add edge only: an aura refreshed in place keeps its
-            // spell, and the slot already armed with it is skipped (`0x7248a8`).
-            if let Some(anim_id) = kit.anim_id {
-                recomputes.write(BaseAnimRecompute { entity, anim_id });
-            }
+            arm_state_kit(entity, spell_id, &kit, parts, spells, &mut writers);
         }
         *prev = next;
     }
