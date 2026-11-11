@@ -847,6 +847,8 @@ pub enum SessionEvent {
         trajectory: Option<(f32, u32)>,
         /// A dest-targeted GO's cast counter, 0 for none (`0x80e42a`).
         dest_counter: u8,
+        /// The extra target points (raw WoW), each with its transport guid or 0 (`0x80e44f`).
+        points: Vec<([f32; 3], u64)>,
     },
     /// A channeled beam's hops (`SMSG_SPELL_UPDATE_CHAIN_TARGETS`), consumed once by the next chain
     /// `CharProc`; the reference fills that `unit+0xd44` array from spell-go hits too.

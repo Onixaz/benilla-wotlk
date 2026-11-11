@@ -345,6 +345,11 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 item_caster: (s.item_or_caster != caster).then_some(s.item_or_caster),
                 trajectory: s.trajectory,
                 dest_counter: s.dest_counter,
+                points: s
+                    .points
+                    .iter()
+                    .map(|(d, t)| ([d.x, d.y, d.z], *t))
+                    .collect(),
             }];
             events.extend(runes);
             events

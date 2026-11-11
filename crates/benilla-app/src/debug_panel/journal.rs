@@ -115,7 +115,8 @@ pub(super) fn record_casts(
             // a pure dest cast has no other.
             CastEventKind::Impact { .. }
             | CastEventKind::GroundImpact { .. }
-            | CastEventKind::AreaImpact { .. } => {
+            | CastEventKind::AreaImpact { .. }
+            | CastEventKind::PointImpact { .. } => {
                 if let Some(row) = journal
                     .records
                     .iter_mut()

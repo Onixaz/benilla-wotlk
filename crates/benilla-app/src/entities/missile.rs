@@ -250,6 +250,9 @@ pub(crate) struct TargetList {
     pub(crate) results: bool,
     /// Flag `0x200`: a unit landing hops on to the next listed unit (`0x702a60`).
     pub(crate) bounce: bool,
+    /// The extra points, each local to its transport guid when not 0; a landing plays the target
+    /// kit at each (`0x701150`).
+    pub(crate) points: Vec<(Vec3, u64)>,
 }
 
 /// One listed target, resolved by guid where the missile meets it.
@@ -531,6 +534,7 @@ impl PendingMissiles {
             shape: MissileShape::default(),
             from: None,
             list: None,
+            aim_deck: 0,
             seq: 0,
         };
         app.world_mut()
@@ -622,6 +626,16 @@ pub(super) struct ArrivalOut<'w, 's> {
 }
 
 impl ArrivalOut<'_, '_> {
+    /// A point in the world, through its transport when `deck` is not 0; `None` when that
+    /// transport is not here, as the reference drops such a point (`0x80e559`).
+    fn deck_point(&self, at: Vec3, deck: u64, joints: &Query<&GlobalTransform>) -> Option<Vec3> {
+        if deck == 0 {
+            return Some(at);
+        }
+        let deck = *self.index.as_deref()?.0.get(&deck)?;
+        Some(joints.get(deck).ok()?.transform_point(at))
+    }
+
     /// A listed guid's unit; an object of another type names none (`0x700fb1`).
     fn listed_unit(&self, guid: u64) -> Option<Entity> {
         let unit = *self.index.as_deref()?.0.get(&guid)?;
@@ -781,6 +795,13 @@ impl AreaLanding<'_> {
                     spell_id,
                     code: u.result,
                 });
+            }
+        }
+        // Each point plays the target kit there through the caster, none with it gone (`0x701150`).
+        if out.placed.contains(caster) {
+            for &(pos, _) in &list.points {
+                out.impacts
+                    .write(event(caster, CastEventKind::PointImpact { pos }));
             }
         }
     }
@@ -1264,11 +1285,20 @@ fn launch_go(
             })
             .collect()
     } else if let Some(p) = go.spawn.ground_aim {
-        // One ground shot, its offset turned with the caster (`0x7335b2`).
+        // One ground shot, its offset turned with the caster (`0x7335b2`); a points list's first
+        // point takes none (`0x734191`).
         let turn = units
             .get(go.spawn.caster)
             .map_or(Quat::IDENTITY, |(g, ..)| g.rotation());
-        vec![(Aim::Ground(p + turn * shape.impact_offset), None)]
+        let offset = if go.spawn.list.as_ref().is_some_and(|l| !l.points.is_empty()) {
+            Vec3::ZERO
+        } else {
+            turn * shape.impact_offset
+        };
+        out.deck_point(p, go.spawn.aim_deck, joints)
+            .map(|p| (Aim::Ground(p + offset), None))
+            .into_iter()
+            .collect()
     } else if let Some(list) = go.spawn.list.as_ref().filter(|l| l.bounce) {
         // A hopping list starts at its first unit, past any guid naming none (`0x7023db`).
         let start = list
@@ -1282,8 +1312,14 @@ fn launch_go(
                 vec![unit_aim(unit, (result != 0).then_some(result))]
             }
             None => {
-                // The reference's unset aim is not aped: it lands where it leaves.
-                lands_now.push((launch, true));
+                // At the first listed object's place; the reference's unset aim is not aped.
+                let at = list
+                    .units
+                    .first()
+                    .and_then(|u| out.index.as_deref()?.0.get(&u.guid).copied())
+                    .and_then(|e| units.get(e).ok())
+                    .map_or(launch, |(g, ..)| g.translation());
+                lands_now.push((at, true));
                 Vec::new()
             }
         }
@@ -1302,8 +1338,17 @@ fn launch_go(
         }
     }
     let flight_list = go.spawn.list.as_ref().map(|list| {
+        // The points resolve once, at the launch.
+        let points = list
+            .points
+            .iter()
+            .filter_map(|&(p, deck)| Some((out.deck_point(p, deck, joints)?, 0)))
+            .collect();
         Box::new(ListFlight {
-            list: list.clone(),
+            list: TargetList {
+                points,
+                ..list.clone()
+            },
             current: first,
             dest_tag: go.spawn.dest_tag,
             offset: shape.impact_offset,
@@ -2434,6 +2479,7 @@ mod tests {
             shape: MissileShape::default(),
             from: None,
             list: None,
+            aim_deck: 0,
             seq: 1,
         }
     }
@@ -3832,6 +3878,7 @@ speedAbs = 48"
                 .collect(),
             results,
             bounce,
+            points: Vec::new(),
         }
     }
 
@@ -4060,5 +4107,74 @@ speedAbs = 48"
             .iter(app.world())
             .count();
         assert_eq!(stuck, 0);
+    }
+
+    /// A points missile lands at its first point, offset-free, and plays the target kit at each
+    /// point through the caster, a transport's point carried by it (`0x734191`, `0x701150`); with
+    /// the transport gone it flies none (`0x80e559`).
+    #[test]
+    fn a_points_missile_plays_the_target_kit_at_each_point() {
+        let mut app = area_app();
+        let caster = caster(&mut app, Vec3::ZERO);
+        let deck = app
+            .world_mut()
+            .spawn(GlobalTransform::from_xyz(0.0, 0.0, 10.0))
+            .id();
+        app.world_mut()
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(77, deck);
+        let first = Vec3::new(2.4, 0.0, 0.0);
+        let local = Vec3::new(1.0, 0.0, 0.0);
+        let mut spawn = located(
+            caster,
+            first,
+            TargetList {
+                points: vec![(first, 0), (local, 77)],
+                bounce: true,
+                ..TargetList::default()
+            },
+        );
+        spawn.shape.impact_offset = Vec3::new(0.0, 5.0, 0.0);
+        app.world_mut().write_message(spawn.clone());
+        let (impacts, ..) = fly_out(&mut app);
+        let kinds: Vec<(Entity, CastEventKind)> =
+            impacts.iter().map(|e| (e.entity, e.kind)).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (caster, CastEventKind::GroundImpact { pos: first }),
+                (caster, CastEventKind::PointImpact { pos: first }),
+                (
+                    caster,
+                    CastEventKind::PointImpact {
+                        pos: Vec3::new(1.0, 0.0, 10.0)
+                    }
+                ),
+            ]
+        );
+
+        spawn.ground_aim = Some(local);
+        spawn.aim_deck = 78;
+        app.world_mut().write_message(spawn);
+        let (impacts, ..) = fly_out(&mut app);
+        assert!(impacts.is_empty(), "no transport, no flight");
+    }
+
+    /// A unit list naming no unit lands at once at its first listed object, here a GameObject.
+    #[test]
+    fn a_hopping_list_with_no_unit_lands_at_its_first_object() {
+        let mut app = area_app();
+        let caster = caster(&mut app, Vec3::ZERO);
+        let at = Vec3::new(6.0, 0.0, 0.0);
+        listed(&mut app, 5, at, benilla_protocol::EntityKind::GameObject);
+        app.world_mut().write_message(hopping(caster, &[(5, 0)]));
+        let (impacts, ..) = fly_out(&mut app);
+        let kinds: Vec<(Entity, CastEventKind)> =
+            impacts.iter().map(|e| (e.entity, e.kind)).collect();
+        assert_eq!(
+            kinds,
+            vec![(caster, CastEventKind::GroundImpact { pos: at })]
+        );
     }
 }

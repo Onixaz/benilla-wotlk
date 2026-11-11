@@ -441,6 +441,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
         item_caster,
         trajectory,
         reflects,
+        points,
         ..
     } = ev
     {
@@ -456,7 +457,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
             reflects,
             target,
             go_target,
-            (target_mask, src, dest),
+            (target_mask, src, dest, points),
             ammo_display_id,
             item_caster,
             trajectory,
@@ -1319,6 +1320,14 @@ fn spell_start(
 /// loot-target latch.
 const GO_TYPE_CHEST: i32 = 3;
 
+/// The targets' mask, source and dest points, and extra points with their transport guids.
+type GoPoints = (
+    u32,
+    Option<[f32; 3]>,
+    Option<[f32; 3]>,
+    Vec<([f32; 3], u64)>,
+);
+
 /// `SMSG_SPELL_GO`: the cast launched. The server schedules damage off `Spell.dbc` Speed; the
 /// packet carries the hit and miss lists and the ammo display id, and the flight is rebuilt from
 /// the same Speed column ([`SpellGoTargets`]).
@@ -1333,8 +1342,8 @@ fn spell_go(
     reflects: Vec<(u64, u8)>,
     target: Option<u64>,
     go_target: Option<u64>,
-    // The targets' mask with their source and dest points.
-    (target_mask, src, dest): (u32, Option<[f32; 3]>, Option<[f32; 3]>),
+    // The targets' mask with their source, dest and extra points.
+    (target_mask, src, dest, points): GoPoints,
     ammo_display_id: Option<u32>,
     item_caster: Option<u64>,
     trajectory: Option<(f32, u32)>,
@@ -1584,7 +1593,16 @@ fn spell_go(
         // A pure dest cast (ground AoE, empty lists) rides the same message: the point is a target.
         let dest = dest.map(benilla_assets::coords::wow_to_bevy);
         let src = src.map(benilla_assets::coords::wow_to_bevy);
-        if !hits.is_empty() || !misses.is_empty() || dest.is_some() || src.is_some() {
+        let points: Vec<(Vec3, u64)> = points
+            .into_iter()
+            .map(|(p, deck)| (benilla_assets::coords::wow_to_bevy(p), deck))
+            .collect();
+        if !hits.is_empty()
+            || !misses.is_empty()
+            || dest.is_some()
+            || src.is_some()
+            || !points.is_empty()
+        {
             go_targets.write(SpellGoTargets {
                 caster: e,
                 spell_id,
@@ -1594,6 +1612,7 @@ fn spell_go(
                 target_mask,
                 src,
                 dest,
+                points,
                 ammo_display_id,
                 seq,
                 trajectory: trajectory.map(|(pitch, delay_ms)| crate::creature_anim::Trajectory {
@@ -2554,7 +2573,7 @@ mod tests {
                             Vec::new(),
                             None,
                             None,
-                            (0, None, None),
+                            (0, None, None, Vec::new()),
                             None,
                             None,
                             None,
@@ -2764,7 +2783,7 @@ mod tests {
                         Vec::new(),
                         None,
                         None,
-                        (0, None, None),
+                        (0, None, None, Vec::new()),
                         None,
                         item_caster.or(Some(caster)),
                         None,
@@ -2972,7 +2991,7 @@ mod tests {
                         Vec::new(),
                         None,
                         None,
-                        (0, None, None),
+                        (0, None, None, Vec::new()),
                         None,
                         None,
                         None,
@@ -3364,7 +3383,7 @@ mod tests {
                             // A different guid from `hits[0]`, which the arm must take.
                             Some(99),
                             None,
-                            (0, None, None),
+                            (0, None, None, Vec::new()),
                             None,
                             None,
                             None,

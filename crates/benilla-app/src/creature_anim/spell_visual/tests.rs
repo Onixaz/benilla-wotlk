@@ -889,6 +889,7 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
             hits: vec![target],
             misses: Vec::new(),
             dest: None,
+            points: Vec::new(),
             ammo_display_id: None,
             seq: 1,
             trajectory: None,
@@ -1021,6 +1022,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
             hits: vec![target],
             misses: Vec::new(),
             dest: None,
+            points: Vec::new(),
             ammo_display_id: None,
             seq: 1,
             trajectory: None,
@@ -1137,6 +1139,7 @@ fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_poin
         hits: Vec::new(),
         misses: Vec::new(),
         dest: Some(at),
+        points: Vec::new(),
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
@@ -1225,6 +1228,7 @@ fn a_dest_go_plays_the_instant_area_kit_at_the_point() {
         hits: Vec::new(),
         misses: Vec::new(),
         dest: Some(at),
+        points: Vec::new(),
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
@@ -1923,6 +1927,7 @@ fn an_instant_hit_plays_its_impact_kit_and_no_state_kit() {
         hits: vec![victim],
         misses: Vec::new(),
         dest: None,
+        points: Vec::new(),
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
@@ -2282,6 +2287,7 @@ fn a_dest_go_plays_the_impact_area_kit_unless_a_missile_or_a_beam_carries_it() {
             hits: Vec::new(),
             misses: Vec::new(),
             dest: Some(at),
+            points: Vec::new(),
             ammo_display_id: None,
             seq: 1,
             trajectory: None,
@@ -2557,6 +2563,7 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
         hits: vec![caster, target],
         misses: Vec::new(),
         dest: None,
+        points: Vec::new(),
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
@@ -2585,6 +2592,7 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
         hits: Vec::new(),
         misses: vec![(target, 11)],
         dest: None,
+        points: Vec::new(),
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
@@ -3072,6 +3080,7 @@ fn a_go_without_a_cast_animation_releases_even_with_no_missile() {
             hits,
             misses: Vec::new(),
             dest: None,
+            points: Vec::new(),
             ammo_display_id: None,
             seq: 3,
             trajectory: None,
@@ -3193,6 +3202,7 @@ fn only_the_state_kit_play_hands_the_caster_to_its_beam() {
         hits: vec![target],
         misses: Vec::new(),
         dest: None,
+        points: Vec::new(),
         ammo_display_id: None,
         seq: 2,
         trajectory: None,
@@ -3833,6 +3843,7 @@ fn a_beam_spells_flag_1_impact_kit_waits_for_the_beam_or_drops_at_the_timeout() 
             hits: vec![hit],
             misses: Vec::new(),
             dest: None,
+            points: Vec::new(),
             ammo_display_id: None,
             seq: 1,
             trajectory: None,
@@ -4323,6 +4334,7 @@ fn a_beam_spells_precast_channel_and_area_kits_wait_for_the_beam() {
         hits: Vec::new(),
         misses: Vec::new(),
         dest: Some(Vec3::ONE),
+        points: Vec::new(),
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
@@ -4668,6 +4680,7 @@ fn listed_go(
         target_mask,
         src: None,
         dest,
+        points: Vec::new(),
         ammo_display_id: None,
         seq: 1,
         trajectory: None,
@@ -4700,6 +4713,7 @@ fn spawn_shapes(go: &SpellGoTargets, display: &SpellDisplay, flags: u32) -> Vec<
         shape: crate::entities::MissileShape::default(),
         from: None,
         list: None,
+        aim_deck: 0,
         seq: 1,
     };
     super::go_missiles(go, display, flags, base)
@@ -4802,6 +4816,58 @@ fn a_multi_target_spell_flies_one_missile_with_every_target() {
     );
     let empty = listed_go(&[], &[], 0x2, None);
     assert!(spawn_shapes(&empty, &multi, 0).is_empty());
+}
+
+/// The extra points: a multi-target spell flies one more missile carrying them all, at the first
+/// (`0x80f50e`); any other flies one per point carrying none (`0x80f5a0`).
+#[test]
+fn extra_points_fly_one_missile_each_or_one_carrying_them() {
+    let mut world = World::new();
+    let a = world.spawn_empty().id();
+    let (p, q) = (Vec3::new(5.0, 0.0, 5.0), Vec3::new(1.0, 0.0, 1.0));
+    let go = SpellGoTargets {
+        points: vec![(p, 0), (q, 9)],
+        ..listed_go(&[a], &[], 0x80002, None)
+    };
+    let shapes = |display: &SpellDisplay| -> Vec<(usize, Option<Vec3>, u64, usize)> {
+        let base = MissileSpawn {
+            caster: Entity::PLACEHOLDER,
+            spell_id: SPELL,
+            path: None,
+            ammo_display_id: None,
+            dest_tag: None,
+            speed: 20.0,
+            targets: Vec::new(),
+            reflects: Vec::new(),
+            reflect_glances: false,
+            scale: 1.0,
+            ground_aim: None,
+            missile_sound: None,
+            awaits_release: false,
+            trajectory: None,
+            shape: crate::entities::MissileShape::default(),
+            from: None,
+            list: None,
+            aim_deck: 0,
+            seq: 1,
+        };
+        super::go_missiles(&go, display, 0, base)
+            .into_iter()
+            .map(|s| {
+                let points = s.list.map_or(0, |l| l.points.len());
+                (s.targets.len(), s.ground_aim, s.aim_deck, points)
+            })
+            .collect()
+    };
+    assert_eq!(
+        shapes(&SpellDisplay::default()),
+        vec![(1, None, 0, 0), (0, Some(p), 0, 0), (0, Some(q), 9, 0)]
+    );
+    let multi = SpellDisplay {
+        attributes_ex4: 0x4_0000,
+        ..Default::default()
+    };
+    assert_eq!(shapes(&multi), vec![(0, None, 0, 0), (0, Some(p), 0, 2)]);
 }
 
 /// An area landing's listed unit plays the impact kit its role picks and, under the hit's own aura

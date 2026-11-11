@@ -422,6 +422,9 @@ pub(crate) enum CastEventKind {
     /// A missile landing on its area reached this listed unit (`0x70105d`): its impact kit and,
     /// under the hit's aura test, its state kit, both carrying `caster`, with no flinch.
     AreaImpact { caster: Entity },
+    /// A missile landing on its area reached this extra point: the target kit plays there through
+    /// the caster (`0x701150`).
+    PointImpact { pos: Vec3 },
 }
 
 /// The anim held while a cast is in flight (`SpellVisualKit` field 2): full-body when standing
@@ -682,6 +685,8 @@ pub(crate) struct SpellGoTargets {
     pub(crate) src: Option<Vec3>,
     /// A dest-targeted cast's ground point, in bevy coords.
     pub(crate) dest: Option<Vec3>,
+    /// The extra target points in bevy coords, each local to its transport guid when not 0.
+    pub(crate) points: Vec<(Vec3, u64)>,
     /// The GO's ammo block (`castFlags & 0x20`): the ammo's `ItemDisplayInfo` id, the missile model
     /// when the visual chain has none.
     pub(crate) ammo_display_id: Option<u32>,

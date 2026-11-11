@@ -491,6 +491,8 @@ pub struct SpellGo {
     /// A dest-targeted GO's cast counter (`0x80e42a`), 0 for none; a nonzero one is recorded
     /// against the caster so its [`DestLocSpellCast`] does not play again.
     pub dest_counter: u8,
+    /// The extra target points (`0x80e44f`), each with its transport guid or 0.
+    pub points: Vec<(Vector3d, u64)>,
 }
 
 /// `SMSG_NOTIFY_DEST_LOC_SPELL_CAST` (`0x810050`): a dest-location cast whose caster this client
@@ -599,11 +601,12 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     } else {
         0
     };
+    let mut points = Vec::new();
     if targets.mask & TARGET_FLAG_EXTRA_TARGETS != 0 {
         // `u32` count of a point and a raw guid each; unbounded, so nothing is pre-allocated.
         for _ in 0..read_u32_le(r)? {
-            let _point = Vector3d::read(r)?;
-            let _guid = read_u64_le(r)?;
+            let point = Vector3d::read(r)?;
+            points.push((point, read_u64_le(r)?));
         }
     }
     Ok(SpellGo {
@@ -621,6 +624,7 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
         runes,
         trajectory,
         dest_counter,
+        points,
     })
 }
 

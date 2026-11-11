@@ -284,6 +284,8 @@ pub(crate) struct MissileSpawn {
     pub(crate) from: Option<Vec3>,
     /// The targets one missile carries, landing on them at its point or hopping them (`0x733600`).
     pub(crate) list: Option<crate::entities::TargetList>,
+    /// The transport guid `ground_aim` is local to, 0 for none.
+    pub(crate) aim_deck: u64,
     /// The GO's `PlaySeq` stamp, which orders it among the [`MissileRelease`]s.
     pub(crate) seq: u64,
 }
@@ -1270,6 +1272,7 @@ pub(super) fn play_dest_loc_casts(
                 shape,
                 from: Some(c.src),
                 list: None,
+                aim_deck: 0,
                 // No caster queue to order against.
                 seq: 0,
             });
@@ -1372,19 +1375,32 @@ fn go_missiles(
             })
             .collect();
         // With no target and no point the missile is dropped (`0x7337e9`).
-        if !located && units.is_empty() {
-            return out;
+        if located || !units.is_empty() {
+            let list = TargetList {
+                results: !units.is_empty(),
+                units,
+                bounce: true,
+                points: Vec::new(),
+            };
+            out.push(MissileSpawn {
+                ground_aim: point.filter(|_| located),
+                list: Some(list),
+                ..base.clone()
+            });
         }
-        let list = TargetList {
-            results: !units.is_empty(),
-            units,
-            bounce: true,
-        };
-        out.push(MissileSpawn {
-            ground_aim: point.filter(|_| located),
-            list: Some(list),
-            ..base
-        });
+        // The extra points ride one more missile, aimed at the first (`0x80f50e`, `0x733e20`).
+        if let Some(&(first, deck)) = go.points.first() {
+            out.push(MissileSpawn {
+                ground_aim: Some(first),
+                aim_deck: deck,
+                list: Some(TargetList {
+                    points: go.points.clone(),
+                    bounce: true,
+                    ..TargetList::default()
+                }),
+                ..base
+            });
+        }
         return out;
     }
     let unit_targets = !located || visual_flags & VISUAL_FLAG_UNIT_MISSILES != 0;
@@ -1415,10 +1431,19 @@ fn go_missiles(
                     units,
                     results: !hits,
                     bounce: false,
+                    points: Vec::new(),
                 }),
                 ..base.clone()
             });
         }
+    }
+    // One missile per extra point, carrying no list (`0x80f5a0`, `0x733820`).
+    for &(at, deck) in &go.points {
+        out.push(MissileSpawn {
+            ground_aim: Some(at),
+            aim_deck: deck,
+            ..base.clone()
+        });
     }
     out
 }
@@ -2167,6 +2192,25 @@ pub(super) fn route_cast_visuals(
                     bursts,
                 );
             }
+            CastEventKind::PointImpact { pos } => {
+                // The target kit at the point, stage 1, with no state kit and no flinch.
+                play_impact(
+                    ev.entity,
+                    ImpactPlay {
+                        spell_id: ev.spell_id,
+                        missile: None,
+                        weapon_visual: None,
+                        on_caster: false,
+                        at: Some(pos),
+                        flinch: false,
+                        seq: ev.seq,
+                    },
+                    spells,
+                    &visuals.0,
+                    &mut out,
+                    bursts,
+                );
+            }
             CastEventKind::GroundImpact { pos } => {
                 // A missile arrived at a point: `SpellVisual` column 24, the impact area kit, which
                 // `SMSG_SPELL_GO` leaves to the landing when a missile flies (`0x80ef53`), plays
@@ -2361,6 +2405,7 @@ pub(super) fn route_cast_visuals(
                 ),
                 from: None,
                 list: None,
+                aim_deck: 0,
                 seq: go.seq,
             };
             let flags = stages.map_or(0, |s| s.flags);
