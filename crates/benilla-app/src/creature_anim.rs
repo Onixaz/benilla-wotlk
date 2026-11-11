@@ -647,9 +647,9 @@ use spell_visual::{
 #[cfg(test)]
 pub(crate) use spell_visual::arm_aura_state_fx as arm_aura_state_fx_for_test;
 pub(crate) use spell_visual::{
-    end_cast_clears_hold, held_strike_sound, ChainProcPlay, ChannelSpellLeft, FxClass, FxStage,
-    KitEffectClear, KitPush, MissileRelease, MissileSpawn, ReleaseKind, SpellEffectClear,
-    SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals, UnitKitLanes,
+    end_cast_clears_hold, held_strike_sound, BeamKitWaits, ChainProcPlay, ChannelSpellLeft,
+    FxClass, FxStage, KitEffectClear, KitPush, MissileRelease, MissileSpawn, ReleaseKind,
+    SpellEffectClear, SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals, UnitKitLanes,
 };
 
 /// The unit's own variation stream ([`benilla_assets::AnimRng::stream`]), cut on its first frame
@@ -969,6 +969,8 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<HardLanding>()
             // The pending-morph latch, the reference's per-unit `[+0xd54]`.
             .init_resource::<MorphLatch>()
+            // The kit plays waiting on a beam, held and played by the cast router.
+            .init_resource::<BeamKitWaits>()
             .add_systems(
                 Startup,
                 (
