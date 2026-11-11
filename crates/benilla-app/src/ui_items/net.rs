@@ -124,7 +124,7 @@ fn inventory_failure(
         InventoryFailureTail::None => None,
     };
     equip_errors.0.push(EquipError {
-        reason: f.reason,
+        reason: u32::from(f.reason),
         required_level,
         bag_slot: f.bag_slot,
     });

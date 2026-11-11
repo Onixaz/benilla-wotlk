@@ -1,15 +1,15 @@
-//! The wire `InventoryResult` to the `GlobalStrings` key of its red error line.
+//! An inventory result to the `GlobalStrings` key of its red error line, by 12340's table
+//! (`0x753bb0`).
 //!
-//! Reason 59 (`EQUIP_ERR_NONE`) only clears a pending lock (`ItemHandler.cpp:865`, `:963`), and
-//! after a failed item use rides beside the real refusal (`SpellHandler.cpp:130`). The reference
-//! maps it like any reason to an error key with no 1.12 string, which the error sink's
-//! empty-string guard drops. Reason 0, the one coded suppression, is dropped earlier, by
-//! `benilla_protocol::events`.
+//! A server sends result 59 beside the real refusal of a failed item use; its key has no string,
+//! so the error sink's empty-string guard drops the line. The failure packet's result 0 is dropped
+//! earlier, by `benilla_protocol::events` (`0x6e30b8`).
 
-/// A refusal reason's key, total: [`inventory_error_key`], with a result that shows nothing as
-/// the empty key the error sink drops. Reason 1's string carries a `%d` for the required level.
-pub(crate) fn equip_error_key(reason: u8) -> &'static str {
-    inventory_error_key(u32::from(reason)).unwrap_or("")
+/// A result's key, total: [`inventory_error_key`], with a result that shows nothing as the empty
+/// key the error sink drops. It takes the whole `u32` the auction and mail results carry
+/// (`0x5a03df`, `0x5718e0`).
+pub(crate) fn equip_error_key(result: u32) -> &'static str {
+    inventory_error_key(result).unwrap_or("")
 }
 
 /// An `InventoryResult`'s key in 12340's table (`0x753bb0`): `None` for the results it maps to id
@@ -20,7 +20,7 @@ pub(crate) fn inventory_error_key(result: u32) -> Option<&'static str> {
         1 => "ERR_CANT_EQUIP_LEVEL_I",
         2 => "ERR_CANT_EQUIP_SKILL",
         3 => "ERR_WRONG_SLOT",
-        // BAG_FULL and its BAG_FULL3/4/6 aliases; 51 is not one.
+        // Five results share the bag-full line; 51 is not one.
         4 | 53 | 56 | 62 | 74 => "ERR_BAG_FULL",
         5 => "ERR_BAG_IN_BAG",
         6 => "ERR_TRADE_EQUIPPED_BAG",
@@ -54,7 +54,6 @@ pub(crate) fn inventory_error_key(result: u32) -> Option<&'static str> {
         38 => "ERR_PLAYER_DEAD",
         39 => "ERR_CLIENT_LOCKED_OUT",
         40 | 73 => "ERR_INTERNAL_BAG_ERROR",
-        // ERR_ONLY_ONE_BOLT's 1.12 string also says "quiver".
         41 => "ERR_ONLY_ONE_BOLT",
         42 => "ERR_ONLY_ONE_AMMO",
         43 => "ERR_CANT_WRAP_STACKABLE",
@@ -65,12 +64,10 @@ pub(crate) fn inventory_error_key(result: u32) -> Option<&'static str> {
         48 => "ERR_CANT_WRAP_BAGS",
         49 => "ERR_LOOT_GONE",
         50 => "ERR_INV_FULL",
-        // EQUIP_ERR_BANK_FULL: the reference sets errorId 1, `ERR_BANK_FULL`, though vmangos tags
-        // it `ERR_BAG_FULL`.
         51 => "ERR_BANK_FULL",
         52 | 57 => "ERR_VENDOR_SOLD_OUT",
         58 => "ERR_OBJECT_IS_BUSY",
-        // EQUIP_ERR_NONE, the lock-clear sentinel: a real key with no 1.12 string.
+        // A catalog key with no `GlobalStrings` line.
         59 => "ERR_CANT_BE_DISENCHANTED",
         60 => "ERR_NOT_IN_COMBAT",
         61 => "ERR_NOT_WHILE_DISARMED",
@@ -108,9 +105,9 @@ pub(crate) fn inventory_error_key(result: u32) -> Option<&'static str> {
 mod tests {
     use super::{equip_error_key, inventory_error_key};
 
-    /// Stunned and dead are 37 and 38 at 5875; 39 and 40 are "right now" and the bag error.
+    /// The low band: level, the stun and death pair, "right now", the bag error and a full pack.
     #[test]
-    fn equip_error_table_matches_the_5875_enum() {
+    fn the_low_band_maps_as_the_reference_table_does() {
         assert_eq!(equip_error_key(50), "ERR_INV_FULL");
         assert_eq!(equip_error_key(37), "ERR_GENERIC_STUNNED");
         assert_eq!(equip_error_key(38), "ERR_PLAYER_DEAD");
@@ -119,19 +116,19 @@ mod tests {
         assert_eq!(equip_error_key(1), "ERR_CANT_EQUIP_LEVEL_I");
     }
 
-    /// The reference's table maps 51 to `ERR_BANK_FULL`, against vmangos's `ItemDefines.h` tag.
+    /// 51 is the bank's own line; 4, 53, 56, 62 and 74 share the bag's.
     #[test]
     fn a_full_bank_says_bank_not_bag() {
         assert_eq!(equip_error_key(51), "ERR_BANK_FULL");
-        for alias in [4u8, 53, 56, 62] {
+        for alias in [4, 53, 56, 62, 74] {
             assert_eq!(equip_error_key(alias), "ERR_BAG_FULL", "reason {alias}");
         }
     }
 
-    /// A mount used in cat form answers `SPELL_FAILED_NO_ITEMS_WHILE_SHAPESHIFTED` and reason 59
-    /// (`SpellHandler.cpp:130`); 59 must print nothing, or the refusal shows twice.
+    /// A failed item use answers its cast failure and result 59 together; 59 must print nothing,
+    /// or the refusal shows twice.
     #[test]
-    fn the_lock_clear_sentinel_maps_to_the_stringless_key() {
+    fn result_59_maps_to_the_stringless_key() {
         assert_eq!(equip_error_key(59), "ERR_CANT_BE_DISENCHANTED");
     }
 
@@ -159,6 +156,63 @@ mod tests {
         assert_eq!(equip_error_key(0xFF), "ERR_BAG_FULL");
     }
 
+    /// A result past a byte is not folded onto its low byte: `0x101` is the default, not result 1.
+    #[test]
+    fn a_result_past_a_byte_takes_the_default() {
+        for result in [0x100, 0x101, 0x151, u32::MAX] {
+            assert_eq!(
+                equip_error_key(result),
+                "ERR_BAG_FULL",
+                "result {result:#x}"
+            );
+        }
+    }
+
+    /// The equip refusals a wrong slot, a missing skill or proficiency and a two-hander raise.
+    #[test]
+    fn the_equip_refusals_map_to_their_own_lines() {
+        for (result, key) in [
+            (2, "ERR_CANT_EQUIP_SKILL"),
+            (3, "ERR_WRONG_SLOT"),
+            (8, "ERR_PROFICIENCY_NEEDED"),
+            (10, "ERR_CANT_EQUIP_EVER"),
+            (13, "ERR_2HANDED_EQUIPPED"),
+            (14, "ERR_2HSKILLNOTFOUND"),
+            (20, "ERR_NOT_EQUIPPABLE"),
+            (63, "ERR_CANT_EQUIP_RANK"),
+            (64, "ERR_CANT_EQUIP_REPUTATION"),
+        ] {
+            assert_eq!(equip_error_key(result), key, "result {result}");
+        }
+    }
+
+    /// The rows 3.3.5a added between 68 and 90, one each.
+    #[test]
+    fn the_rows_past_67_map_one_by_one() {
+        for (result, key) in [
+            (68, "ERR_VENDOR_MISSING_TURNINS"),
+            (69, "ERR_NOT_ENOUGH_HONOR_POINTS"),
+            (70, "ERR_NOT_ENOUGH_ARENA_POINTS"),
+            (71, "ERR_ITEM_MAX_COUNT_SOCKETED"),
+            (72, "ERR_MAIL_BOUND_ITEM"),
+            (73, "ERR_INTERNAL_BAG_ERROR"),
+            (75, "ERR_ITEM_MAX_COUNT_EQUIPPED_SOCKETED"),
+            (76, "ERR_ITEM_UNIQUE_EQUIPPABLE_SOCKETED"),
+            (77, "ERR_TOO_MUCH_GOLD"),
+            (78, "ERR_NOT_DURING_ARENA_MATCH"),
+            (80, "ERR_CANT_EQUIP_RATING"),
+            (82, "ERR_NOT_SAME_ACCOUNT"),
+            (85, "ERR_ITEM_MAX_LIMIT_CATEGORY_SOCKETED_EXCEEDED_IS"),
+            (86, "ERR_SCALING_STAT_ITEM_LEVEL_EXCEEDED"),
+            (87, "ERR_PURCHASE_LEVEL_TOO_LOW"),
+            (88, "ERR_CANT_EQUIP_NEED_TALENT"),
+            (89, "ERR_ITEM_MAX_LIMIT_CATEGORY_EQUIPPED_EXCEEDED_IS"),
+            (90, "ERR_SHAPESHIFT_FORM_CANNOT_EQUIP"),
+        ] {
+            assert_eq!(equip_error_key(result), key, "result {result}");
+        }
+    }
+
     /// Every key resolves in the shipped `GlobalStrings.lua` except reason 59's, which must not: a
     /// typo'd key would swallow a refusal in silence. Skips without client data.
     #[test]
@@ -173,7 +227,7 @@ mod tests {
         let g = |key: &str| s.lua().globals().get::<String>(key).ok();
 
         // Reason 0 never reaches this table (gated at `events::decode`); 81 and 83 show nothing.
-        for reason in (1..=91u8).filter(|r| ![81, 83].contains(r)) {
+        for reason in (1..=91u32).filter(|r| ![81, 83].contains(r)) {
             let key = equip_error_key(reason);
             let text = g(key).unwrap_or_default();
             if reason == 59 {

@@ -101,8 +101,8 @@ pub(crate) fn wire_pos(bag: i64, slot1: u32) -> Option<(u8, u8)> {
 /// One inventory refusal off the wire, with the fills of the only two reasons that format one.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EquipError {
-    /// The wire `InventoryResult`.
-    pub reason: u8,
+    /// The inventory result: a byte off the failure packet, a `u32` off a mail result.
+    pub reason: u32,
     /// Reasons 1 and `0x57`'s `%d`, the packet's required level.
     pub required_level: Option<u32>,
     /// Reason 16's `%s` source: the destination bag's player slot (255 names no bag), which the
@@ -613,13 +613,20 @@ pub(crate) struct ItemUse {
 }
 
 /// The item use's requirement check (`0x6dc3f0` at `0x708eb9`): a refused item shows the check's
-/// message and sends nothing (`0x708ec2`-`0x708ef6`).
+/// message and sends nothing (`0x708ec2`-`0x708ef6`). Then the use enchant's skill, `enchant_skill`
+/// as [`crate::items::use_enchant_skill`] reads it: under its rank shows inventory result 2's line
+/// (`0x708f2c`-`0x708f39`).
 pub(crate) fn refuse_item_use(
     script: &benilla_ui::script::UiScript,
     entry: u32,
+    enchant_skill: Option<(u32, u32)>,
     ui_errors: &mut crate::ui_action::UiErrorKeys,
 ) -> bool {
-    let Some(key) = script.item_use_refusal(entry) else {
+    let refusal = script.item_use_refusal(entry).or_else(|| {
+        let (skill, rank) = enchant_skill?;
+        (script.skill_value(skill)? < rank).then(|| equip_error_key(2))
+    });
+    let Some(key) = refusal else {
         return false;
     };
     debug!("ui_items: item {entry} use refused — {key}");
@@ -707,7 +714,11 @@ pub(crate) fn send_item_use(
 ) -> bool {
     // A quest-starter offers its quest ahead of the requirement check; every other use is refused
     // with nothing sent.
-    if it.start_quest == 0 && refuse_item_use(script, it.entry, ui_errors) {
+    let enchant_skill = it
+        .guid
+        .and_then(|guid| ladder.objects.object(guid))
+        .and_then(|f| crate::items::use_enchant_skill(f, ladder.trade_window.1.as_deref()));
+    if it.start_quest == 0 && refuse_item_use(script, it.entry, enchant_skill, ui_errors) {
         return false;
     }
     // The toggle predicate over the caster's live aura slots.
@@ -1114,14 +1125,52 @@ mod tests {
         script.set_item_template(929, potion(22));
         script.set_item_template(118, potion(1));
         let mut errors = crate::ui_action::UiErrorKeys::default();
-        assert!(super::refuse_item_use(&script, 929, &mut errors));
+        assert!(super::refuse_item_use(&script, 929, None, &mut errors));
         assert_eq!(
             errors.0,
             vec![crate::ui_action::UiError::key("ERR_CANT_USE_ITEM")]
         );
         errors.0.clear();
-        assert!(!super::refuse_item_use(&script, 118, &mut errors));
+        assert!(!super::refuse_item_use(&script, 118, None, &mut errors));
         assert!(errors.0.is_empty());
+    }
+
+    /// A use enchant asking Engineering 400 refuses a player at 399 with the skill line and passes
+    /// one at 400; a player without the skill reads 0, and an unpushed state refuses nothing.
+    #[test]
+    fn a_use_enchant_above_the_players_skill_is_refused_locally() {
+        let mut script = benilla_ui::script::UiScript::new().unwrap();
+        script.set_item_template(
+            118,
+            benilla_ui::script::ItemTemplateView {
+                allowable_class: -1,
+                allowable_race: -1,
+                ..Default::default()
+            },
+        );
+        let mut errors = crate::ui_action::UiErrorKeys::default();
+        assert!(!super::refuse_item_use(
+            &script,
+            118,
+            Some((202, 400)),
+            &mut errors
+        ));
+        let mut at = |skills: &[(u32, u32)]| {
+            script.set_player_req_state(benilla_ui::script::PlayerReqState {
+                level: 80,
+                class_id: 1,
+                race_id: 1,
+                skills: skills.iter().copied().collect(),
+                ..Default::default()
+            });
+            let mut errors = crate::ui_action::UiErrorKeys::default();
+            let refused = super::refuse_item_use(&script, 118, Some((202, 400)), &mut errors);
+            (refused, errors.0)
+        };
+        let skill_line = || vec![crate::ui_action::UiError::key("ERR_CANT_EQUIP_SKILL")];
+        assert_eq!(at(&[(202, 399)]), (true, skill_line()));
+        assert_eq!(at(&[]), (true, skill_line()));
+        assert_eq!(at(&[(202, 400)]), (false, vec![]));
     }
 
     /// The keyring's 32 slots are player slots 86-117; 81-85 are buyback.
