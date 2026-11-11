@@ -323,7 +323,7 @@ fn dev_command(dev: DevCmd, args: &str) -> ParsedChat {
                 Some(w) if w.eq_ignore_ascii_case("fail") => (
                     CastEventKind::Fail {
                         interrupt: false,
-                        reason: 0,
+                        wire_reason: 0,
                     },
                     false,
                 ),

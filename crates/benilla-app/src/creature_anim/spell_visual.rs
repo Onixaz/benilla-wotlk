@@ -30,19 +30,18 @@ const ERROR_CUBE: &str = "Spells\\ErrorCube.mdx";
 /// these nodes by attach tag and node flag. A unit wears at most one.
 const LOOT_FX_KEY: u32 = u32::MAX;
 
-/// Wire result 187 in the shared numbering, the launch result the end-cast keeps the held model
-/// for (`0x7feeb0`).
-const LAUNCH_RESULT: u8 = 0x91;
+/// Wire result 187, the one reason byte the end-cast keeps the held model for (`0x7feeb0`).
+const LAUNCH_RESULT: u8 = 187;
 
 /// Whether a cast's end drops its held missile model: a failure of a numbered cast whose
-/// `SpellMissile` row has flag 1 (`0x7feeb0`).
+/// `SpellMissile` row has flag 1, tested on the reason byte as sent (`0x7feeb0`).
 pub(crate) fn end_cast_clears_hold(
     spells: &crate::ui_action::Spells,
     spell_id: u32,
     cast_count: u8,
-    reason: u8,
+    wire_reason: u8,
 ) -> bool {
-    reason != LAUNCH_RESULT
+    wire_reason != LAUNCH_RESULT
         && cast_count != 0
         && spells.catalog.get(spell_id).is_some_and(|d| d.flies_aim)
 }
@@ -1292,7 +1291,10 @@ pub(super) fn route_cast_visuals(
                     play_area_kit_at(&kit, pos, &visuals.0, out.sounds, out.shakes, bursts);
                 }
             }
-            CastEventKind::Fail { interrupt, reason } => {
+            CastEventKind::Fail {
+                interrupt,
+                wire_reason,
+            } => {
                 if held_spell(&pending, ev.entity) == Some(ev.spell_id) {
                     commands.entity(ev.entity).try_remove::<CastHold>();
                     pending.insert(ev.entity, None);
@@ -1312,7 +1314,7 @@ pub(super) fn route_cast_visuals(
                         kind: ReleaseKind::Fire,
                     });
                 }
-                if end_cast_clears_hold(spells, ev.spell_id, ev.cast_count, reason) {
+                if end_cast_clears_hold(spells, ev.spell_id, ev.cast_count, wire_reason) {
                     releases.write(MissileRelease {
                         caster: ev.entity,
                         seq: ev.seq,

@@ -861,6 +861,8 @@ pub enum ServerPacket {
         cast_count: u8,
         spell_id: u32,
         reason: u8,
+        /// The reason byte as sent, which the end-cast tests raw (`0x7feeb0`).
+        wire_reason: u8,
     },
     /// `SMSG_SPELL_DELAYED`: pushback; a hit extended the caster's cast by `delay_ms`.
     SpellDelayed {

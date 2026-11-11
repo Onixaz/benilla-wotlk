@@ -131,6 +131,10 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 CastOutcome::Ok => None,
                 CastOutcome::Failed { arg2, .. } => arg2,
             },
+            wire_reason: match outcome {
+                CastOutcome::Ok => None,
+                CastOutcome::Failed { wire, .. } => Some(wire),
+            },
         }],
         ServerPacket::PetSpells(spells) => vec![SessionEvent::PetSpells(Box::new(spells))],
         ServerPacket::PetMode(mode) => vec![SessionEvent::PetMode(mode)],
@@ -143,11 +147,14 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             outcome,
         } => match outcome {
             CastOutcome::Ok => Vec::new(),
-            CastOutcome::Failed { reason, arg, .. } => vec![SessionEvent::PetCastFailed {
+            CastOutcome::Failed {
+                reason, arg, wire, ..
+            } => vec![SessionEvent::PetCastFailed {
                 cast_count,
                 spell_id,
                 reason,
                 arg,
+                wire_reason: wire,
             }],
         },
         ServerPacket::PetTameFailure { reason } => vec![SessionEvent::PetTameFailure { reason }],
@@ -354,12 +361,14 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             cast_count,
             spell_id,
             reason,
+            wire_reason,
         } => vec![SessionEvent::SpellFailed {
             other,
             caster,
             cast_count,
             spell_id,
             reason,
+            wire_reason,
         }],
         ServerPacket::CancelAutoRepeat { guid } => vec![SessionEvent::CancelAutoRepeat { guid }],
         ServerPacket::SpellCooldownList {

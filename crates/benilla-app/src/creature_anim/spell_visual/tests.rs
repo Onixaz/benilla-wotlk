@@ -345,7 +345,7 @@ fn same_frame_start_and_fail_leave_no_hold() {
         SPELL,
         CastEventKind::Fail {
             interrupt: false,
-            reason: 0,
+            wire_reason: 0,
         },
     ));
     app.update();
@@ -2881,13 +2881,16 @@ fn our_own_start_releases_our_missiles() {
 }
 
 /// A failure: `SMSG_SPELL_FAILURE` naming the running cast launches and drops (`0x72ed80`); the
-/// end-cast drops only a numbered cast's hold of a flag-1 missile, not on the launch result
+/// end-cast drops only a numbered cast's hold of a flag-1 missile, not on wire result 187 alone
 /// (`0x7feeb0`).
 #[test]
 fn a_failure_releases_the_hold_on_the_reference_s_paths() {
     use HoldEdge::*;
     let (mut app, unit, _) = hold_app();
-    let fail = |interrupt, reason| CastEventKind::Fail { interrupt, reason };
+    let fail = |interrupt, wire_reason| CastEventKind::Fail {
+        interrupt,
+        wire_reason,
+    };
     assert_eq!(
         edge_of(&mut app, unit, 101, 4, fail(true, 0x28)),
         vec![Fire],
@@ -2910,8 +2913,13 @@ fn a_failure_releases_the_hold_on_the_reference_s_paths() {
         "an unnumbered cast"
     );
     assert!(
-        edge_of(&mut app, unit, 106, 4, fail(false, super::LAUNCH_RESULT)).is_empty(),
+        edge_of(&mut app, unit, 106, 4, fail(false, 187)).is_empty(),
         "the launch result"
+    );
+    assert_eq!(
+        edge_of(&mut app, unit, 106, 4, fail(false, 188)),
+        vec![Clear(4)],
+        "a reason past it, shared 0x91 with it"
     );
     assert!(
         edge_of(&mut app, unit, 101, 4, CastEventKind::Go).is_empty(),

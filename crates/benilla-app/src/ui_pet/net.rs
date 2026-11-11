@@ -83,13 +83,14 @@ fn on_cast_failed(
         spell_id,
         reason,
         arg,
+        wire_reason,
     } = ev
     {
         bar.pending_cast = None;
         // The start cooldown the press armed clears, then the pet bar refreshes (`0x806d41`).
         bar.cooldowns.clear_gcd(spell_id, std::time::Instant::now());
         pet_cast_failed(spell_id, reason, arg, &mut errors);
-        ends.end(spell_id, cast_count, reason);
+        ends.end(spell_id, cast_count, wire_reason);
     }
 }
 
@@ -109,7 +110,7 @@ struct PetCastEnd<'w, 's> {
 impl PetCastEnd<'_, '_> {
     /// The pet's running cast of this spell and count ends (`0x7fed81`); any other cast's end
     /// still drops a held model of its count (`0x7feeb0`).
-    fn end(&mut self, spell_id: u32, cast_count: u8, reason: u8) {
+    fn end(&mut self, spell_id: u32, cast_count: u8, wire_reason: u8) {
         let pet = self.player.iter().next().and_then(|s| s.0.unit_pet_guid());
         let Some(&entity) = pet.and_then(|g| self.index.0.get(&g)) else {
             return;
@@ -128,13 +129,13 @@ impl PetCastEnd<'_, '_> {
                 spell_id,
                 kind: crate::creature_anim::CastEventKind::Fail {
                     interrupt: false,
-                    reason,
+                    wire_reason,
                 },
                 cast_count,
                 seq,
             });
         } else if self.spells.as_deref().is_some_and(|s| {
-            crate::creature_anim::end_cast_clears_hold(s, spell_id, cast_count, reason)
+            crate::creature_anim::end_cast_clears_hold(s, spell_id, cast_count, wire_reason)
         }) {
             self.releases.write(crate::creature_anim::MissileRelease {
                 caster: entity,
@@ -696,10 +697,10 @@ mod tests {
                 0x2A,
             )])),
         ));
-        let end = |app: &mut App, spell_id: u32, cast_count: u8, reason: u8| {
+        let end = |app: &mut App, spell_id: u32, cast_count: u8, wire_reason: u8| {
             app.world_mut()
                 .run_system_once(move |mut ends: PetCastEnd| {
-                    ends.end(spell_id, cast_count, reason);
+                    ends.end(spell_id, cast_count, wire_reason);
                 })
                 .expect("run_system_once");
             let casts: Vec<(u32, u8)> = app
@@ -735,9 +736,14 @@ mod tests {
             "an unnumbered cast"
         );
         assert_eq!(
-            end(&mut app, 7, 4, 0x91),
+            end(&mut app, 7, 4, 187),
             (vec![], vec![]),
             "the launch result"
+        );
+        assert_eq!(
+            end(&mut app, 7, 4, 188),
+            (vec![], vec![ReleaseKind::Clear(4)]),
+            "a reason past it, shared 0x91 with it"
         );
         assert_eq!(
             end(&mut app, 8, 4, 0x0c),

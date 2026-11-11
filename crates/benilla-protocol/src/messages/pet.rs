@@ -478,6 +478,7 @@ mod tests {
                 spell_id: 2649,
                 reason: 0x5e,
                 arg: Some(3),
+                wire_reason: 0x66,
             }]
         ));
         // No argument: wire 0x0c BAD_TARGETS, shared 0x0a.
@@ -488,6 +489,7 @@ mod tests {
                 spell_id: 2649,
                 reason: 0x0a,
                 arg: None,
+                wire_reason: 0x0c,
             }]
         ));
     }

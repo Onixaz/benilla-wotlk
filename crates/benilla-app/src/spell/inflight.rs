@@ -372,9 +372,7 @@ impl SelfCancel<'_, '_> {
                                 spell_id,
                                 kind: CastEventKind::Fail {
                                     interrupt: false,
-                                    reason: benilla_protocol::messages::wotlk_cast_fail_shared(
-                                        CANCEL_REASON,
-                                    ),
+                                    wire_reason: CANCEL_REASON,
                                 },
                                 cast_count: running.map_or(0, |c| c.cast_count),
                                 seq: play_seq.next(),

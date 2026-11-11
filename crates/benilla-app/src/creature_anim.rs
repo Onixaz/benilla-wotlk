@@ -406,9 +406,9 @@ pub(crate) enum CastEventKind {
     Start,
     /// `SMSG_SPELL_GO`: reaps the precast, plays the cast kit.
     Go,
-    /// Died without release, through the end-cast (`0x7fecc0`) with `reason`; `interrupt` when
-    /// `SMSG_SPELL_FAILURE` names the unit's running cast (`0x72ed80`).
-    Fail { interrupt: bool, reason: u8 },
+    /// Died without release, through the end-cast (`0x7fecc0`) with the reason byte as sent;
+    /// `interrupt` when `SMSG_SPELL_FAILURE` names the unit's running cast (`0x72ed80`).
+    Fail { interrupt: bool, wire_reason: u8 },
     /// A missile landed: `on_caster` picks the kit (`0x800d00`), `at` is its point (`0x702e5a`).
     Impact { on_caster: bool, at: Option<Vec3> },
     /// A projectile with no live target at arrival (a despawned target too): the kit plays on the

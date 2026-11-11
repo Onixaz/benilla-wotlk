@@ -661,6 +661,8 @@ pub enum SessionEvent {
         reason: Option<u8>,
         arg: Option<u32>,
         arg2: Option<u32>,
+        /// The reason byte as sent, which the end-cast tests raw (`0x7feeb0`).
+        wire_reason: Option<u8>,
     },
     /// The whole pet bar (`SMSG_PET_SPELLS`), never a delta; a zero `pet_guid` tears it down.
     PetSpells(Box<PetSpells>),
@@ -676,6 +678,8 @@ pub enum SessionEvent {
         spell_id: u32,
         reason: u8,
         arg: Option<u32>,
+        /// The reason byte as sent, which the end-cast tests raw (`0x7feeb0`).
+        wire_reason: u8,
     },
     /// A refused tame, Call Pet or Revive Pet (`SMSG_PET_TAME_FAILURE`): the reason's
     /// `PETTAME_*` string fills `ERR_TAME_FAILED`.
@@ -855,6 +859,8 @@ pub enum SessionEvent {
         cast_count: u8,
         spell_id: u32,
         reason: u8,
+        /// The reason byte as sent, which the end-cast tests raw (`0x7feeb0`).
+        wire_reason: u8,
     },
     /// A unit's cast was pushed back by damage (`SMSG_SPELL_DELAYED`); its end moves out by
     /// `delay_ms`.

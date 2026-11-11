@@ -1371,7 +1371,7 @@ fn castvis_parses_id_and_phase() {
             spell_id: 689,
             kind: CastEventKind::Fail {
                 interrupt: false,
-                reason: 0
+                wire_reason: 0
             },
             ground: false
         }
