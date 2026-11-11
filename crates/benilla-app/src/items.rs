@@ -494,10 +494,8 @@ impl Items {
         self.templates.answered_unknown(entry)
     }
 
-    /// A reader's own ask for `entry`: a denied entry is asked again, as the reference deletes a
-    /// denial and the next reader with a callback asks anew (`0x67cbd0`), else [`Self::template`].
-    /// Deviation for performance: a polling reader keeps the denial, as its re-ask would go out
-    /// every frame.
+    /// A reader's own ask: a denied entry is asked again, as a denial leaves no entry (`0x67cbd0`).
+    /// Deviation for performance: a polling reader keeps the denial, or it re-asks each round trip.
     pub(crate) fn ask_template(
         &self,
         entry: u32,
