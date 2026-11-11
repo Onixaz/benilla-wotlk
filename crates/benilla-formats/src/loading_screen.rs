@@ -1,5 +1,6 @@
-//! `LoadingScreens.dbc`: a `Map.dbc` `LoadingScreenID` → the loading art's BLP path (column 2), in
-//! the layout of the client the chain was opened for (`crate::dbc_layout::LoadingScreens`).
+//! `LoadingScreens.dbc`: a `Map.dbc` `LoadingScreenID` → the loading art's BLP path (column 2) and
+//! WotLK wide-art flag (column 3), in the layout of the client the chain was opened for
+//! (`crate::dbc_layout::LoadingScreens`).
 //! The open world has one per continent (3 Kalimdor, 4 Eastern Kingdoms); the other rows are per
 //! instance.
 
@@ -17,11 +18,17 @@ const LOADING_SCREENS: &str = "DBFilesClient\\LoadingScreens.dbc";
 /// `LoadingScreenID` → BLP path.
 pub struct LoadingScreenCatalog {
     paths: HashMap<u32, String>,
+    wide: HashMap<u32, bool>,
 }
 
 impl LoadingScreenCatalog {
     pub fn path(&self, id: u32) -> Option<&str> {
         self.paths.get(&id).map(String::as_str)
+    }
+
+    /// Whether the WotLK row permits the adjacent `Wide` loading-screen art.
+    pub fn has_wide_screen(&self, id: u32) -> bool {
+        self.wide.get(&id).copied().unwrap_or(false)
     }
 
     pub fn len(&self) -> usize {
@@ -56,12 +63,14 @@ pub fn load_loading_screens(chain: &mut Chain) -> Result<LoadingScreenCatalog> {
         "LoadingScreens",
     )?;
     let mut paths = HashMap::with_capacity(rs.records().len());
+    let mut wide = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         if let (Some(id), Some(path)) = (u32_at(r, 0), str_at(&rs, r, 2)) {
             paths.insert(id, path);
+            wide.insert(id, u32_at(r, 3).is_some_and(|v| v != 0));
         }
     }
-    Ok(LoadingScreenCatalog { paths })
+    Ok(LoadingScreenCatalog { paths, wide })
 }
 
 #[cfg(test)]
@@ -87,6 +96,15 @@ mod tests {
         assert_eq!(
             screens.path(3),
             Some("Interface\\Glues\\LoadingScreens\\LoadScreenKalimdor.blp")
+        );
+        assert!(screens.has_wide_screen(3), "Kalimdor has WotLK wide art");
+        assert!(
+            screens.has_wide_screen(4),
+            "Eastern Kingdoms has WotLK wide art"
+        );
+        assert!(
+            !screens.has_wide_screen(1),
+            "instance rows have no wide art"
         );
 
         let resolve = |map_id| {

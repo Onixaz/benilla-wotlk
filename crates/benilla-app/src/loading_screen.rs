@@ -42,9 +42,11 @@ const FILL_BOTTOM: f32 = 0.0625; // 0.075 − 0.025·0.5
 const FILL_HEIGHT: f32 = 0.025;
 const FILL_MAX_WIDTH: f32 = 0.525; // halfW; fill width = progress · FILL_MAX_WIDTH
 
-/// The glue and loading screens are authored 4:3; on a wider window the reference fits them to
-/// height and pillarboxes. The square BLP is stretched to this aspect.
+/// The normal glue and loading screens are authored 4:3; WotLK continent rows may select a 16:10
+/// companion art on a wider window. Both areas are fitted to the viewport height and centred.
 const BACKDROP_ASPECT: f32 = 4.0 / 3.0;
+const WIDE_BACKDROP_ASPECT: f32 = 1.6;
+const WIDE_WINDOW_THRESHOLD: f32 = BACKDROP_ASPECT + 0.001;
 /// Consecutive fully resident frames before the clear: debounces the post-teleport frame where
 /// `ready` reads 0 against a nonzero `total`.
 const CLEAR_AFTER_READY_FRAMES: u32 = 3;
@@ -263,6 +265,9 @@ impl LoadingScreen {
 // UI entity markers.
 #[derive(Component)]
 struct LoadingRoot;
+
+#[derive(Component)]
+struct LoadingArea;
 #[derive(Component)]
 struct LoadingBackdrop;
 #[derive(Component)]
@@ -343,12 +348,15 @@ fn setup_loading_screen(
     commands.entity(root).with_children(|root| {
         // One 4:3 area fit to the viewport height and centred; the bar's fractions are relative
         // to it. Paint order is spawn order: backdrop, tip, fill, border.
-        root.spawn(Node {
-            width: Val::Vh(100.0 * BACKDROP_ASPECT),
-            height: Val::Vh(100.0),
-            position_type: PositionType::Relative,
-            ..default()
-        })
+        root.spawn((
+            LoadingArea,
+            Node {
+                width: Val::Vh(100.0 * BACKDROP_ASPECT),
+                height: Val::Vh(100.0),
+                position_type: PositionType::Relative,
+                ..default()
+            },
+        ))
         .with_children(|area| {
             // Tinted black until the art resolves.
             area.spawn((
@@ -416,14 +424,20 @@ fn drive_loading_screen(
         Res<WorldLoadProgress>,
         Res<benilla_world::terrain_stream::ViewFocus>,
     ),
-    current_map: Option<Res<CurrentMap>>,
+    mut context: ParamSet<(
+        Option<Res<CurrentMap>>,
+        Query<&Window, With<bevy::window::PrimaryWindow>>,
+    )>,
     maps: Option<Res<MapCatalogRes>>,
     screens: Option<Res<LoadingScreenCatalogRes>>,
     mut assets: Option<ResMut<WorldAssets>>,
     mut images: ResMut<Assets<Image>>,
     mut root: Query<&mut Visibility, (With<LoadingRoot>, Without<LoadingBackdrop>)>,
     mut backdrop: Query<(&mut ImageNode, &mut Visibility), With<LoadingBackdrop>>,
-    mut fill: Query<&mut Node, With<LoadingBarFill>>,
+    mut nodes: ParamSet<(
+        Query<&mut Node, With<LoadingArea>>,
+        Query<&mut Node, With<LoadingBarFill>>,
+    )>,
     mut bar_vis: Query<
         &mut Visibility,
         (
@@ -464,7 +478,7 @@ fn drive_loading_screen(
     ) = edges;
     let (progress, focus) = (&stream.0, &stream.1);
     let now = time.elapsed_secs();
-    let map_id = current_map.as_ref().map(|m| m.0);
+    let map_id = context.p0().as_ref().map(|m| m.0);
     // The physics hold releases on the same residency signal, so the body's world is live first.
     let player_settling = player.as_ref().is_some_and(|p| p.settling);
 
@@ -638,23 +652,59 @@ fn drive_loading_screen(
         if let (Some(map_id), Some(maps), Some(screens), Some(assets)) =
             (screen.map, maps.as_ref(), screens.as_ref(), assets.as_mut())
         {
-            let path = maps
+            let base_path = maps
                 .0
                 .loading_screen_id(map_id)
-                .and_then(|id| screens.0.path(id))
-                .map(str::to_string);
-            let handle = path.and_then(|path| match screen.art_cache.get(&path) {
-                Some(h) => Some(h.clone()),
-                None => assets.sprite_texture(&path, &mut images).inspect(|h| {
-                    screen.art_cache.insert(path.clone(), h.clone());
-                }),
+                .and_then(|id| screens.0.path(id).map(|path| (id, path.to_string())));
+            let wide_requested = base_path.as_ref().is_some_and(|(id, _)| {
+                screens.0.has_wide_screen(*id)
+                    && context
+                        .p1()
+                        .single()
+                        .map(|w| w.width() / w.height() > WIDE_WINDOW_THRESHOLD)
+                        .unwrap_or(false)
+            });
+            let mut candidates = Vec::new();
+            if let Some((_, base)) = base_path {
+                if wide_requested {
+                    let wide_path = base
+                        .strip_suffix(".blp")
+                        .map(|stem| format!("{stem}Wide.blp"));
+                    if let Some(path) = wide_path {
+                        candidates.push((path, true));
+                    }
+                }
+                candidates.push((base, false));
+            }
+            let mut selected_wide = false;
+            let handle = candidates.into_iter().find_map(|(path, is_wide)| {
+                let handle = match screen.art_cache.get(&path) {
+                    Some(h) => Some(h.clone()),
+                    None => assets.sprite_texture(&path, &mut images).inspect(|h| {
+                        screen.art_cache.insert(path.clone(), h.clone());
+                    }),
+                }?;
+                selected_wide = is_wide;
+                Some(handle)
             });
             match (handle, backdrop.single_mut()) {
                 (Some(handle), Ok((mut img, _))) => {
                     img.image = handle;
                     img.color = Color::WHITE; // untint to reveal the art
+                    if let Ok(mut node) = nodes.p0().single_mut() {
+                        node.width = Val::Vh(
+                            100.0
+                                * if selected_wide {
+                                    WIDE_BACKDROP_ASPECT
+                                } else {
+                                    BACKDROP_ASPECT
+                                },
+                        );
+                    }
                     screen.art_resolved = true;
-                    info!("loading screen: backdrop for map {map_id} resolved");
+                    info!(
+                        "loading screen: backdrop for map {map_id} resolved (wide={selected_wide})"
+                    );
                 }
                 // No retry: the reference writes `-1` into the map id and the draw returns on it.
                 _ => {
@@ -670,7 +720,7 @@ fn drive_loading_screen(
         screen.displayed = screen.displayed.max(progress.fraction());
     }
     let frac = screen.displayed;
-    if let Ok(mut node) = fill.single_mut() {
+    if let Ok(mut node) = nodes.p1().single_mut() {
         node.width = Val::Percent(frac * FILL_MAX_WIDTH * 100.0);
     }
 }
