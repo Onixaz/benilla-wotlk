@@ -2211,6 +2211,8 @@ fn a_melee_to_ranged_toggle_stows_both_hands_before_it_reaches_for_the_bow() {
                 ranged_inv: 0x0f,
                 materials: [1, 6, 2],
                 disarmed: false,
+                disarm_offhand: false,
+                disarm_ranged: false,
             },
         ))
         .id();

@@ -44,10 +44,11 @@ fn sheathe_sounds(
         };
         // One message per arm, naming the slot that moved: a sword-and-board draw is two sounds,
         // and a melee → ranged toggle's second movement rings the bow.
+        // The weapon getter with the disarm on (`0x732500`): a hidden hand is silent.
         let item = match swap.slot {
-            0 => wielded.main,
-            1 => wielded.off,
-            _ => wielded.ranged,
+            0 => wielded.armed_main(),
+            1 => wielded.armed_off(),
+            _ => wielded.armed_ranged(),
         };
         if item.is_none() {
             continue; // an empty slot is silent

@@ -426,6 +426,11 @@ fn weapon_skill_id(
     commands: &NetCommands,
     slot0: u8,
 ) -> u32 {
+    // The skill readers ask the weapon getter with the disarm on (`0x6d6671`): a hidden hand is
+    // Unarmed.
+    if crate::items::disarmed_equipment_slots(store, objects, items, commands) & (1 << slot0) != 0 {
+        return SKILL_UNARMED;
+    }
     let Some(entry) = slot_entry(store, objects, slot0) else {
         return SKILL_UNARMED;
     };

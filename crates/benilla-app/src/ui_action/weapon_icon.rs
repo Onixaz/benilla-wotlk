@@ -82,6 +82,10 @@ pub(crate) fn ranged_weapon_icon(
     icons: Option<&ItemDisplays>,
     commands: &NetCommands,
 ) -> Option<String> {
+    // A disarmed ranged slot shows none (`0x5a85e0`).
+    if store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_RANGED != 0 {
+        return None;
+    }
     let guid = store.0.player_inv_slot(EQUIPMENT_SLOT_RANGED)?;
     let entry = objects.object(guid)?.object_entry()?;
     let template = items.template(entry, guid, commands)?;
