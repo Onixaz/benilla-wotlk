@@ -1168,3 +1168,54 @@ fn a_body_only_kit_leaves_the_mount_where_it_was() {
         "without the bit the mount takes the fade"
     );
 }
+
+/// The unit's alpha lands on its mount's model, so the mount's particles and ribbons fade with it
+/// down the composed chain; a body-only alpha leaves the mount at the alpha it had (`0x71ac39`).
+#[test]
+fn the_mounts_particles_take_the_units_alpha_unless_body_only() {
+    use benilla_world::model_fade::{ModelAlphas, ModelFade};
+    let mount_alpha = |body_only: bool, before: Option<f32>| {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<benilla_world::interior::InteriorReauthor>();
+        app.init_resource::<benilla_world::model_render::FarSideTwins>();
+        app.add_systems(Update, apply_aura_alpha);
+        let mut nodes = AuraNodes::new(1.0);
+        install_kit(
+            &mut nodes,
+            47585,
+            &[AuraNode::Alpha(0.3, 0.0)],
+            body_only,
+            0.0,
+        );
+        nodes.started = -10.0;
+        let root = app.world_mut().spawn(nodes).id();
+        let mount = app.world_mut().spawn(ChildOf(root)).id();
+        if let Some(a) = before {
+            app.world_mut().entity_mut(mount).insert(ModelFade(a));
+        }
+        // The mount's own translucent display is the rider's to declare.
+        app.world_mut()
+            .entity_mut(mount)
+            .insert(AuraNodes::steady(0.6));
+        app.world_mut()
+            .entity_mut(root)
+            .insert(crate::entities::mount::MountChild(mount));
+        app.update();
+        app.update();
+        let mut state = bevy::ecs::system::SystemState::<ModelAlphas>::new(app.world_mut());
+        state.get(app.world()).get(mount)
+    };
+    assert!(
+        (mount_alpha(false, None) - 0.3).abs() < 1e-6,
+        "the mount's clouds fade with the unit"
+    );
+    assert!(
+        (mount_alpha(true, Some(0.5)) - 0.5).abs() < 1e-6,
+        "body-only: the mount keeps the alpha it had"
+    );
+    assert!(
+        (mount_alpha(true, None) - 1.0).abs() < 1e-6,
+        "body-only: a mount never faded stays opaque"
+    );
+}

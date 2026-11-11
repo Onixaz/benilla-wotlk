@@ -601,6 +601,7 @@ pub(crate) fn apply_aura_alpha(
         Option<&benilla_world::model_fade::ModelFade>,
         Option<&crate::entities::mount::MountChild>,
     )>,
+    mount_fades: Query<&benilla_world::model_fade::ModelFade>,
     children_of: Query<&Children>,
     mut parts: AuraParts,
     walk: AlphaWalk,
@@ -613,6 +614,9 @@ pub(crate) fn apply_aura_alpha(
     mut reauthor: ResMut<benilla_world::interior::InteriorReauthor>,
 ) {
     let now = time.elapsed_secs();
+    // A mount whose rider authors an alpha takes the rider's, not its own nodes'.
+    let hosted: bevy::ecs::entity::EntityHashSet =
+        roots.iter().filter_map(|(.., m)| m.map(|m| m.0)).collect();
     // Each authoring unit's anchors and its alpha, for one card pass after the walks; a later
     // unit's walk overwrites an anchor two units share, as successive card passes did.
     let mut card_alpha = bevy::ecs::entity::EntityHashMap::<f32>::default();
@@ -620,10 +624,19 @@ pub(crate) fn apply_aura_alpha(
         let alpha = n.tick(now);
         // Declared to the engine's composed model alpha (`model_fade::ModelFade`) before the
         // settled-opaque early-out, so the ramp's arrival at 1.0 is declared too.
-        if declared.is_none_or(|d| d.0 != alpha) {
+        if !hosted.contains(&root) && declared.is_none_or(|d| d.0 != alpha) {
             commands
                 .entity(root)
                 .insert(benilla_world::model_fade::ModelFade(alpha));
+        }
+        // The unit's alpha goes on its mount's model, whose particles and ribbons read it; a
+        // body-only alpha writes the rider's own model and the mount keeps its last (`0x71ac39`).
+        if let Some(m) = mount.filter(|_| !n.body_only) {
+            if mount_fades.get(m.0).map_or(true, |d| d.0 != alpha) {
+                commands
+                    .entity(m.0)
+                    .try_insert(benilla_world::model_fade::ModelFade(alpha));
+            }
         }
         let translucent = n.translucent();
         if !translucent && !n.authoring {
