@@ -344,7 +344,9 @@ pub(super) fn run(
                 let hold_cands;
                 let cands: &[u16] = match cast_hold {
                     Some(h) if mv.flags & move_flags::CAST_PIN_MOVE == 0 => {
-                        hold_cands = [cast_start.unwrap_or(h.anim_id), STAND];
+                        // The hold id takes the play's Special remap unless the kit skips it.
+                        let hold = h.play.special(h.anim_id, wielded);
+                        hold_cands = [cast_start.unwrap_or(hold), STAND];
                         &hold_cands
                     }
                     _ => cands,
@@ -384,7 +386,8 @@ pub(super) fn run(
                 // A held kit flagged `0x4` or `0x8` plays its id unresolved (`0x724398`).
                 let held_raw = cast_hold.is_some_and(|h| {
                     !h.play.tier_resolve()
-                        && cands.first() == Some(&cast_start.unwrap_or(h.anim_id))
+                        && cands.first()
+                            == Some(&cast_start.unwrap_or(h.play.special(h.anim_id, wielded)))
                 });
                 let tier = store
                     .filter(|_| !held_raw)

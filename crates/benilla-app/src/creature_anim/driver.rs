@@ -30,7 +30,7 @@ use super::select::{
 };
 use super::sheath::{advance_sheath_ceremony, start_sheath_ceremony};
 use super::{
-    find_resolved, move_flags, resolved_id, routed_behavior, AnimData, AnimDriver, AnimPlayFlags,
+    find_resolved, move_flags, resolved, routed_behavior, AnimData, AnimDriver, AnimPlayFlags,
     AutoRepeatArmed, BaseAnimRecompute, CastHold, DefenseAnim, EmoteAnim, Engaged, MovementState,
     NockLatch, Overlay, OverlayFade, SheathRequest, SheathSwapMessage, SwingImpact, SwingMessage,
     SwingSlowdown, UnitAnimRng, Wielded, WoundAnim,
@@ -45,7 +45,10 @@ mod tests;
 mod wound;
 
 pub(super) use grip::drive_hand_grip;
-use play::{holds_own_clip, model_loop_end, oneshot_finished, play_clip, roll_loop, roll_oneshot};
+use play::{
+    apply_direction, holds_own_clip, model_loop_end, oneshot_finished, play_clip, roll_loop,
+    roll_oneshot,
+};
 use wound::{wound_evict, wound_trigger, wound_upkeep, WoundEdge};
 
 /// The masked overlay's weight over the base clip on the SpineLow subtree, where the unmasked base
@@ -824,9 +827,10 @@ fn drive_unit(
                 Some(cat) => anims.resolve_tier(id, tier, cat),
                 None => id,
             };
-            if let Some(c) = find_resolved(anims, played, catalog)
-                .or_else(|| find_resolved(anims, STAND, catalog))
-            {
+            // The fallback walk and its direction mode run on a raw id too (`0x832bb7`).
+            let dir = resolved(anims, played, catalog);
+            info!(dir.id, dir.dir_flags);
+            if let Some(c) = anims.find(dir.id).or_else(|| anims.find(STAND)) {
                 // A witnessed death rolls its variation; a streamed-in corpse takes the head.
                 let settle = first && !restart;
                 let c = if settle {
@@ -837,8 +841,15 @@ fn drive_unit(
                 let active = tr.play(&mut player, c.node, Duration::from_secs_f32(c.blend_time));
                 if c.looping {
                     active.repeat();
-                } else if settle {
-                    active.seek_to(c.duration); // streamed in dead: settled, not replayed
+                }
+                if dir.dir_flags != 0 && dir.id == c.anim_id {
+                    dir.apply(active, 1.0, c.duration);
+                }
+                // Streamed in dead: settled at the play's end, not replayed; a held mode is already.
+                if settle && !c.looping && dir.dir_flags == 0 {
+                    active.seek_to(c.duration);
+                } else if settle && dir.dir_flags == 1 {
+                    active.seek_to(0.0);
                 }
             }
             // A blended bone-0 arm overwrites bone 0's secondary slot: it evicts a full-body
@@ -858,11 +869,13 @@ fn drive_unit(
         .and_then(|r| r.torso)
         .filter(|_| first && airborne_frozen)
     {
-        if let Some(c) = find_resolved(anims, id, catalog) {
+        let dir = resolved(anims, id, catalog);
+        if let Some(c) = anims.find(dir.id) {
             let active = tr.play(&mut player, c.node, Duration::from_secs_f32(c.blend_time));
             if c.looping {
                 active.repeat();
             }
+            apply_direction(&mut player, c, dir, 1.0);
             drv.gait = Some(id);
             drv.gait_flags = mv.flags;
         }
@@ -1053,12 +1066,7 @@ fn drive_unit(
                     // The armed-id test compares the record's own AnimID, before the play
                     // seam's Special remap from the held hands.
                     OneShotReq::Emote(id, via_player, play) => {
-                        let w = wielded.copied().unwrap_or_default();
-                        let played = if play.remap_special() {
-                            select::special_anim(id, w.armed_main(), w.armed_off())
-                        } else {
-                            id
-                        };
+                        let played = play.special(id, wielded);
                         // The unit's anim tier resolves the id unless the kit skips it (`0x73875f`).
                         let played = match catalog.filter(|_| tier != 0 && play.tier_resolve()) {
                             Some(cat) => anims.resolve_tier(played, tier, cat),
@@ -1142,20 +1150,20 @@ fn drive_unit(
         }
         // A mounted rider plays only its upper-set ids off the full set, on the key bone, and
         // nothing else; a mount child plays the clip on its own bone 0.
-        let resolved = resolved_id(anims, id, catalog);
-        let behavior = select::behavior_of(resolved, catalog);
+        // The model's own fallback walk runs on every arm, a raw kit id's too (`0x832bb7`).
+        let dir = resolved(anims, id, catalog);
+        let behavior = select::behavior_of(dir.id, catalog);
         let masked = if mounted {
             if !route_mounted(behavior).rider_upper {
                 continue;
             }
             true
         } else {
-            mount_body.is_none()
-                && route_oneshot(resolved, behavior, &split) == OneShotRoute::Masked
+            mount_body.is_none() && route_oneshot(dir.id, behavior, &split) == OneShotRoute::Masked
         };
         // Resolve to a clip this model has, roll its variation and its replay budget (a clamp
         // one-shot authored `(min,max)` plays R times).
-        let picked = find_resolved(anims, id, catalog).map(|h| roll_oneshot(anims, h, rng));
+        let picked = anims.find(dir.id).map(|h| roll_oneshot(anims, h, rng));
         // No split bone (`[+0xd5c] == -1`): a key-bone play arms nothing.
         if masked
             && match picked {
@@ -1182,6 +1190,9 @@ fn drive_unit(
             active.set_repeat(repeat); // a reused node keeps no stale count
             active.set_speed(1.0); // nor a stale whiff slow-down
             active.set_weight(0.0); // the fade upkeep raises it this same frame
+            if let Some((c, _)) = picked.filter(|_| dir.dir_flags != 0) {
+                dir.apply(active, 1.0, c.duration);
+            }
             drv.overlay = Some(Overlay {
                 node,
                 id,
@@ -1205,7 +1216,9 @@ fn drive_unit(
                 }
             }
             if let Some((c, repeat)) = picked {
-                play_clip(&mut drv.base_lock, &mut tr, &mut player, c, repeat, 1.0);
+                if play_clip(&mut drv.base_lock, &mut tr, &mut player, c, repeat, 1.0) {
+                    apply_direction(&mut player, c, dir, 1.0);
+                }
             }
             drv.mode = Mode::Swing { id, under: special };
             drv.gait = None;
@@ -1217,7 +1230,8 @@ fn drive_unit(
             benilla_assets::trace::line(
                 "fct",
                 &format!(
-                    "anim play unit={entity} id={id} masked={masked_played} base={base_played} under={special:?}"
+                    "anim play unit={entity} id={id} clip={} dir={} masked={masked_played} base={base_played} under={special:?}",
+                    dir.id, dir.dir_flags
                 ),
             );
         }
@@ -1233,13 +1247,15 @@ fn drive_unit(
     let mut cast_start = kit_hold.and_then(|h| {
         h.start_anim
             .filter(|_| drv.start_spent != Some(h.seq))
-            .map(|a| (h.seq, a))
+            .map(|a| (h.seq, h.play.special(a, wielded)))
     });
-    // A hold id as the base arms it: tier-resolved unless the kit skips it (`0x724398`).
+    // A hold id as the base arms it: remapped and tier-resolved unless the kit skips them
+    // (`0x724398`).
     let hold_armed = |id: u16| match (catalog, kit_hold) {
         (Some(cat), Some(h)) if tier != 0 && h.play.tier_resolve() => {
-            anims.resolve_tier(id, tier, cat)
+            anims.resolve_tier(h.play.special(id, wielded), tier, cat)
         }
+        (_, Some(h)) => h.play.special(id, wielded),
         _ => id,
     };
     if let Some((seq, start)) = cast_start {
@@ -1537,19 +1553,23 @@ fn drive_unit(
     let masked_hold = kit_hold
         .filter(|_| mv.flags & move_flags::CAST_PIN_MOVE != 0)
         .and_then(|h| {
-            find_resolved(anims, h.anim_id, catalog).and_then(|c| {
-                c.upper_node
-                    .map(|node| (h.anim_id, node, c.blend_time.max(0.0)))
-            })
+            let id = h.play.special(h.anim_id, wielded);
+            let dir = resolved(anims, id, catalog);
+            anims
+                .find(dir.id)
+                .and_then(|c| c.upper_node.map(|node| (id, node, c, dir)))
         });
     match (masked_hold, drv.overlay) {
-        (Some((id, node, blend)), prior) if prior.is_none_or(|ov| ov.looping && ov.id != id) => {
+        (Some((id, node, c, dir)), prior) if prior.is_none_or(|ov| ov.looping && ov.id != id) => {
             // Free slot or a stale hold loop: a blended key-bone re-arm.
-            retire_overlay(&mut drv, &mut player, blend);
+            retire_overlay(&mut drv, &mut player, c.blend_time.max(0.0));
             let active = player.play(node);
             active.replay();
             active.repeat();
             active.set_weight(0.0); // the fade upkeep raises it this same frame
+            if dir.dir_flags != 0 {
+                dir.apply(active, 1.0, c.duration);
+            }
             drv.overlay = Some(Overlay {
                 node,
                 id,

@@ -532,6 +532,16 @@ impl AnimPlayFlags {
         self.0 & (Self::RAW | Self::NO_SPECIAL) == 0
     }
 
+    /// The id this play arms ahead of any resolve: Special1H/2H remapped from the held hands unless
+    /// the play skips it (`0x73870a`).
+    pub(crate) fn special(self, id: u16, wielded: Option<&Wielded>) -> u16 {
+        if !self.remap_special() {
+            return id;
+        }
+        let w = wielded.copied().unwrap_or_default();
+        select::special_anim(id, w.armed_main(), w.armed_off())
+    }
+
     /// The unit's anim tier resolves the id.
     pub(crate) fn tier_resolve(self) -> bool {
         self.0 & (Self::RAW | Self::NO_TIER) == 0
