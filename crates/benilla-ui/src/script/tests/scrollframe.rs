@@ -69,6 +69,54 @@ fn get_scroll_child_roundtrips_wrapper_and_name_and_clears_on_nil() {
     .unwrap();
 }
 
+#[test]
+fn set_scroll_child_reparents_new_and_detaches_old_child() {
+    let s = script();
+    s.run(
+        r#"
+        local sf = CreateFrame("ScrollFrame", "SF")
+        local oldHost = CreateFrame("Frame", "OldHost")
+        local newHost = CreateFrame("Frame", "NewHost")
+        local old = CreateFrame("Frame", "Old", oldHost)
+        local new = CreateFrame("Frame", "New", newHost)
+        sf:SetScrollChild(old)
+        assert(old:GetParent() == sf)
+        assert(oldHost:GetNumChildren() == 0)
+        assert(sf:GetNumChildren() == 1)
+        sf:SetScrollChild(new)
+        assert(old:GetParent() == nil)
+        assert(new:GetParent() == sf)
+        assert(oldHost:GetNumChildren() == 0 and newHost:GetNumChildren() == 0)
+        assert(sf:GetNumChildren() == 1)
+        sf:SetScrollChild(nil)
+        assert(new:GetParent() == nil)
+        assert(sf:GetNumChildren() == 0)
+        "#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn scroll_child_inherits_scrollframe_visibility_and_scale() {
+    let s = script();
+    s.run(
+        r#"
+        local sf = CreateFrame("ScrollFrame", "SF")
+        local host = CreateFrame("Frame", "Host")
+        local child = CreateFrame("Frame", "Child", host)
+        sf:SetScale(2)
+        sf:Hide()
+        child:Show()
+        sf:SetScrollChild(child)
+        assert(not child:IsVisible(), "a hidden ScrollFrame hides its scroll child")
+        assert(child:GetEffectiveScale() == 2, "the scroll child inherits the ScrollFrame scale")
+        sf:Show()
+        assert(child:IsVisible(), "showing the ScrollFrame shows its scroll child")
+        "#,
+    )
+    .unwrap();
+}
+
 /// The re-anchor (`0x96b1c0`) drops every point of the child and sets one TOPLEFT at
 /// `(-horizontal, vertical)`; points set after it hold until the next scroll set, as AceGUI's
 /// scroll content relies on (TOPLEFT plus TOPRIGHT re-set after `SetScrollChild`).

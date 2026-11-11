@@ -143,13 +143,46 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     _ => None,
                 }
             };
-            // Any call marks the ranges dirty and re-anchors the child, the same one included
-            // (`0x96b3a0`); the old child keeps the anchor it last had.
+            let h = frame_handle_of(lua, &this)?;
+            let old_child = with_scroll(lua, &this, |s| s.child)?;
+            if old_child != new_child {
+                // Stock clears the old scroll child through the same parent-change path as
+                // SetParent(nil), then parents the new child to this ScrollFrame.  This updates
+                // children lists, effective scale/visibility and alpha inheritance before the
+                // scroll-specific anchor is installed.
+                for (child, parent) in [(old_child, None), (new_child, Some(h))] {
+                    let Some(child) = child else { continue };
+                    if child == h {
+                        continue;
+                    }
+                    let moves = {
+                        let model = lua
+                            .app_data_ref::<crate::script::ModelCell>()
+                            .expect("model app_data");
+                        model.arena.reparent_moves(child, parent)
+                    };
+                    if !moves {
+                        continue;
+                    }
+                    event::hide_this(lua, child);
+                    let relinked = {
+                        let mut model = crate::script::model_mut_of(lua);
+                        let relinked = model.arena.reparent_relink(child, parent);
+                        if relinked {
+                            model.touch_layout_reparent(child);
+                            model.touch_measure_all();
+                        }
+                        relinked
+                    };
+                    if relinked {
+                        event::show_this(lua, child);
+                    }
+                }
+            }
             with_scroll(lua, &this, |s| {
                 s.child = new_child;
                 s.range_dirty = true;
             })?;
-            let h = frame_handle_of(lua, &this)?;
             crate::script::model_mut_of(lua).reanchor_scroll_child(h);
             Ok(())
         })?,
