@@ -2180,9 +2180,8 @@ pub(super) fn move_missiles(
             );
             // Every landing stops the flight loop, a new flight restarts it (`0x70354c`, `0x702a3f`).
             sounds.write(MissileSound::Stop { entity });
-            // A unit landing hops a listed flight on after its route, a reflect on its return
-            // (`0x702a60`); a blocked one lodges, then the hop takes it out of the shield still
-            // playing Stuck (`0x703105`, `0x7025b0`).
+            // A unit landing hops a listed flight on (`0x702a60`); a blocked hop lodges, then
+            // leaves the shield still playing Stuck (`0x703105`, `0x7025b0`).
             let on_unit = matches!(missile.aim, Aim::Unit { .. });
             let mut hopped = |m: &mut Missile, out: &mut ArrivalOut| {
                 m.impact = aim;

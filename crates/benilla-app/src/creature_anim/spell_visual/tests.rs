@@ -915,7 +915,8 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
 }
 
 /// The GO's release gate: a Speed>0 spell whose cast kit plays a body animation defers its
-/// [`MissileSpawn`] to the animation's release keyframe; any other launches at GO.
+/// [`MissileSpawn`] to the animation's release keyframe; any other launches at GO. A row with no
+/// missile flies only on an ammo model (`0x7fffb0`).
 #[test]
 fn missile_spawn_defers_iff_the_cast_kit_animates() {
     const ANIMATED: u32 = 133; // Fireball's shape: cast kit with anim 53
@@ -959,6 +960,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
                 ANIMATED_VISUAL,
                 VisualStages {
                     cast: CAST_KIT,
+                    missile_gate: 1,
                     ..Default::default()
                 },
             ),
@@ -1012,7 +1014,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
 
     let caster = app.world_mut().spawn_empty().id();
     let target = app.world_mut().spawn_empty().id();
-    for spell_id in [ANIMATED, SILENT] {
+    for (spell_id, ammo) in [(ANIMATED, None), (SILENT, Some(5)), (SILENT, None)] {
         app.world_mut().write_message(SpellGoTargets {
             list: Vec::new(),
             target_mask: 0x2,
@@ -1023,7 +1025,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
             misses: Vec::new(),
             dest: None,
             points: Vec::new(),
-            ammo_display_id: None,
+            ammo_display_id: ammo,
             seq: 1,
             trajectory: None,
             reflected: 0,
@@ -1037,12 +1039,13 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
         .world_mut()
         .resource_mut::<Messages<MissileSpawn>>()
         .drain()
-        .map(|m| (m.spell_id, m.awaits_release))
+        .map(|m| (m.spell_id, m.awaits_release, m.path.clone()))
         .collect();
+    let cube = Some(super::ERROR_CUBE.to_string());
     assert_eq!(
         spawns,
-        vec![(ANIMATED, true), (SILENT, false)],
-        "deferred iff the cast kit animates"
+        vec![(ANIMATED, true, cube), (SILENT, false, None)],
+        "deferred iff the cast kit animates; a missile row with no model flies the error cube; no missile and no ammo, no flight"
     );
 }
 

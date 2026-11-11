@@ -2398,15 +2398,13 @@ pub(super) fn route_cast_visuals(
                 }
             }
         } else {
-            // The spawn gate is Speed alone: basic shots have no visual row.
-            let path = stages.and_then(|s| {
-                (s.missile_model >= 1).then(|| {
-                    visuals
-                        .0
-                        .effect_path(s.missile_model)
-                        .unwrap_or(ERROR_CUBE)
-                        .to_string()
-                })
+            // Missiles need a visual row with a missile or an ammo model (`0x7fffb0`, `0x800120`).
+            let flies = stages.is_some_and(|s| s.missile_gate != 0 || go.ammo_display_id.is_some());
+            // No model and no ammo draws the error cube (`0x733820`).
+            let path = stages.and_then(|s| match s.missile_model {
+                m if m >= 1 => Some(visuals.0.effect_path(m).unwrap_or(ERROR_CUBE).to_string()),
+                0 if go.ammo_display_id.is_none() => Some(ERROR_CUBE.to_string()),
+                _ => None,
             });
             // An out-of-table ordinal reads adjacent `.rdata` in the reference; here, the base.
             let dest_tag = stages.and_then(|s| s.missile_dest_attachment());
@@ -2447,7 +2445,10 @@ pub(super) fn route_cast_visuals(
                 seq: go.seq,
             };
             let flags = stages.map_or(0, |s| s.flags);
-            for spawn in go_missiles(go, display, flags, base) {
+            for spawn in go_missiles(go, display, flags, base)
+                .into_iter()
+                .filter(|_| flies)
+            {
                 missiles.write(spawn);
             }
             // A missile row with no cast animation releases the caster's missiles at GO, a held
