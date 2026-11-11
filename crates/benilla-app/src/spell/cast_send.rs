@@ -848,9 +848,9 @@ fn send_spell_cast(
         cast_errors.push_local(spell_id, commit.not_ready_reason());
         return;
     }
-    // The power gate (spells only: the item fork jumps past it): raw `UNIT_FIELD_POWER[type]` (a
-    // negative PowerType reads health) signed-compared against the cost, refusing 0x4d. Local,
-    // because vmangos accepts the cast and its NO_POWER fail clears the running GCD.
+    // The power gate (spells only: the item fork jumps past it): the power check `0x8017e0`
+    // ([`super::usable::can_afford`]), refusing 0x4d. Local, because vmangos accepts the cast and
+    // its NO_POWER fail clears the running GCD.
     if !commit.is_item() {
         if let (Some(d), Some(store)) = (def, ctx.rel.self_store) {
             if !super::usable::can_afford(d, store, spell_mods) {
