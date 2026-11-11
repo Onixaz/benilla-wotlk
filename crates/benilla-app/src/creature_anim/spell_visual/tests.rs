@@ -597,6 +597,8 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
                 path: "Spells\\Item_Bread.mdx".to_string(),
                 scale: 1.0,
                 attach: None,
+                own_alpha: false,
+                kit_anim: None,
             }],
             "bread at the spell hand"
         );
@@ -1392,6 +1394,8 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
             path: POOF.to_string(),
             scale: 1.0,
             attach: None,
+            own_alpha: false,
+            kit_anim: None,
         }],
         "the build leg puffs the druid-morph cloud at the base attach"
     );
@@ -1411,6 +1415,8 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
             path: POOF.to_string(),
             scale: 1.0,
             attach: None,
+            own_alpha: false,
+            kit_anim: None,
         }]
     );
 }
@@ -1814,14 +1820,11 @@ fn a_shooter_with_no_ranged_weapon_resolves_no_clip_at_all() {
     );
 }
 
-/// A state kit's anim id is a compare, never a play: the kit player's one play site is skipped for
-/// stage 2, the stage both field-4 users play (the aura watcher and the missile hit), so the id
-/// only feeds the reference's armed-id compare and a base recompute. Charge (22911) plays Knockdown
-/// (121) from impact kit 348; an instant hit plays nothing more (`0x801f10`), and a missile hit on
-/// a holder of the aura spends state kit 349's Stun (14) on a recompute, which Knockdown's
-/// base-animation lock refuses.
+/// An instant hit plays the impact kits alone (`0x801f10`): Charge (22911) plays Knockdown (121)
+/// from impact kit 348, and state kit 349's Stun (14) is neither a second play nor a recompute; it
+/// comes with the aura's own state kit.
 #[test]
-fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
+fn an_instant_hit_plays_its_impact_kit_and_no_state_kit() {
     const CHARGE: u32 = 22911;
     const CHARGE_VISUAL: u32 = 3783;
     const IMPACT_KIT: u32 = 348;
@@ -1932,39 +1935,9 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         .drain()
         .map(|r| (r.entity, r.anim_id))
         .collect();
-    assert!(recomputes.is_empty(), "an instant hit plays no state kit");
-
-    app.world_mut().write_message(cast_event(
-        victim,
-        CHARGE,
-        CastEventKind::Impact {
-            on_caster: false,
-            at: None,
-            caster,
-        },
-    ));
-    app.update();
-    let plays: Vec<(Entity, u16)> = app
-        .world_mut()
-        .resource_mut::<Messages<EmoteAnim>>()
-        .drain()
-        .map(|e| (e.entity, e.anim_id))
-        .collect();
-    assert_eq!(
-        plays,
-        vec![(victim, KNOCKDOWN)],
-        "the state kit must not add a second one-shot"
-    );
-    let recomputes: Vec<(Entity, u16)> = app
-        .world_mut()
-        .resource_mut::<Messages<super::BaseAnimRecompute>>()
-        .drain()
-        .map(|r| (r.entity, r.anim_id))
-        .collect();
-    assert_eq!(
-        recomputes,
-        vec![(victim, STUN)],
-        "the state kit's id is spent on the stage-2 recompute instead"
+    assert!(
+        recomputes.is_empty(),
+        "no state kit plays at the instant hit, not even its Stun ({STUN}) compare"
     );
 }
 
@@ -4404,4 +4377,235 @@ fn a_beam_spells_state_done_kit_waits_for_the_beam() {
     );
     app.update();
     assert_eq!(rung(&mut app), 1, "played on the reach");
+}
+
+/// Kit flag `0x80`: a missile replays the state kit only on a target whose aura has an effect
+/// applied; without it, holding the spell in any slot is enough. A dead target replays nothing.
+#[test]
+fn an_active_aura_only_kit_needs_an_applied_aura() {
+    use benilla_protocol::messages::{AuraRecord, AuraUpdate};
+
+    const SPELL_ID: u32 = 5570;
+    let store = |health| {
+        crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_HEALTH,
+            health,
+        )]))
+    };
+    let table = |flags| {
+        let mut t = crate::unit_auras::UnitAuras::default();
+        let record = AuraRecord {
+            spell_id: SPELL_ID,
+            flags,
+            level: 1,
+            stacks: 1,
+            caster: None,
+            duration_ms: None,
+        };
+        t.apply(
+            &AuraUpdate {
+                unit: 1,
+                all: false,
+                slots: vec![(0, Some(record))],
+            },
+            0.0,
+        );
+        t
+    };
+    let flagged = benilla_formats::kit_flag::ACTIVE_AURA_ONLY;
+    let applied = super::AuraHeld::of(&store(100), Some(&table(1)), SPELL_ID);
+    let inactive = super::AuraHeld::of(&store(100), Some(&table(0)), SPELL_ID);
+    assert!(applied.replays(flagged) && applied.replays(0));
+    assert!(
+        !inactive.replays(flagged),
+        "an empty-effect slot fails the 0x80 gate"
+    );
+    assert!(
+        inactive.replays(0),
+        "but holds the spell for an unflagged kit"
+    );
+    let dead = super::AuraHeld::of(&store(0), Some(&table(1)), SPELL_ID);
+    assert!(!dead.replays(0), "a dead target replays nothing");
+    let bare = super::AuraHeld::of(&store(100), None, SPELL_ID);
+    assert!(!bare.replays(0), "nor one without the aura");
+}
+
+/// Kit flags `0x8` and `0x100` become play flags `0x4` (no tier resolve) and `0x20` (keep the
+/// weapons out), beside `0x4` and `0x10` (`0x714ce0`).
+#[test]
+fn kit_flags_become_the_anim_play_flags() {
+    use benilla_formats::kit_flag as k;
+    let plain = super::AnimPlayFlags::from_kit(0);
+    assert!(plain.tier_resolve() && plain.remap_special() && !plain.keep_weapons());
+    let no_tier = super::AnimPlayFlags::from_kit(k::NO_TIER_RESOLVE);
+    assert!(!no_tier.tier_resolve() && no_tier.remap_special());
+    let raw = super::AnimPlayFlags::from_kit(k::RAW_ANIM);
+    assert!(!raw.tier_resolve() && !raw.remap_special());
+    let keeps = super::AnimPlayFlags::from_kit(k::KEEP_WEAPONS);
+    assert!(keeps.keep_weapons() && keeps.tier_resolve() && keeps.remap_special());
+    assert!(!super::AnimPlayFlags::from_kit(k::NO_SPECIAL_REMAP).remap_special());
+}
+
+/// Kit flag `0x200` marks every model the kit hangs as keeping its own alpha.
+#[test]
+fn an_own_alpha_kit_marks_its_models() {
+    let visuals = SpellVisualCatalog::from_tables_with_paths(
+        HashMap::new(),
+        HashMap::new(),
+        HashMap::from([(10, "Spells\\Slot.mdx".to_string())]),
+    );
+    let kit = |flags| VisualKit {
+        flags,
+        world_effect: Some(10),
+        ..Default::default()
+    };
+    let own = |flags| {
+        super::resolve_kit_effects(&visuals, &kit(flags))
+            .iter()
+            .map(|s| s.own_alpha)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(own(benilla_formats::kit_flag::OWN_MODEL_ALPHA), vec![true]);
+    assert_eq!(own(0), vec![false]);
+}
+
+/// A spell whose own first `SpellVisual` row flies missile model -1 or -2 keeps the weapons out
+/// at every kit play; the ranged weapon's row filling an empty one does not count, nor does any
+/// other model.
+#[test]
+fn a_weapon_missile_row_keeps_the_weapons_out() {
+    const VISUAL: u32 = 900;
+    const NO_ROW: u32 = 901;
+    let kit = VisualKit {
+        anim_id: Some(53),
+        ..Default::default()
+    };
+    let play_for = |missile_model: u32, visual: u32| {
+        let visuals = SpellVisualCatalog::from_tables(
+            HashMap::from([(
+                VISUAL,
+                VisualStages {
+                    missile_model,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::new(),
+        );
+        let spells = crate::ui_action::Spells {
+            catalog: SpellCatalog::from_displays(HashMap::from([(
+                1,
+                SpellDisplay {
+                    visual,
+                    ..Default::default()
+                },
+            )])),
+            ..crate::ui_action::Spells::empty_for_tests()
+        };
+        super::kit_anim_play(&spells, &visuals, 1, &kit).keep_weapons()
+    };
+    assert!(play_for(-1i32 as u32, VISUAL), "model -1");
+    assert!(play_for(-2i32 as u32, VISUAL), "model -2");
+    assert!(!play_for(-3i32 as u32, VISUAL), "model -3 is no such case");
+    assert!(!play_for(0, VISUAL), "no model");
+    assert!(!play_for(77, VISUAL), "a real model");
+    assert!(
+        !play_for(-1i32 as u32, NO_ROW),
+        "only the spell's own row is read"
+    );
+}
+
+/// A state kit's anim joins the unit's effect list for as long as the aura holds the spell, with
+/// its own kit flags as play flags (`0x73b30d`, `0x73e79d`); its add edge's recompute carries the
+/// kit play's flags, which a dead or dying id is played with (`0x73b33e`).
+#[test]
+fn a_state_kits_anim_rides_the_effect_list_while_its_aura_holds() {
+    use super::super::{AnimPlayFlags, KitAnim, StateKitAnims};
+    use benilla_formats::kit_flag;
+    const SPELL: u32 = 71372; // Harvest Soul
+    const VISUAL: u32 = 15103;
+    const STATE_KIT: u32 = 13959; // anim 132, flags 0x4 | 0x8
+    const DROWNED: u16 = 132;
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
+        .add_message::<crate::net::FieldChanged>()
+        .add_message::<crate::aura_visual::AuraProc>()
+        .add_message::<super::ChainProcPlay>()
+        .add_message::<super::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::SpellEffectClear>()
+        .init_resource::<crate::net::GuidIndex>()
+        .add_message::<crate::aura_visual::BodyProcPlay>()
+        .add_message::<SheathRequest>()
+        .add_message::<SpellKitSound>()
+        .add_message::<super::BaseAnimRecompute>();
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+        HashMap::from([(
+            VISUAL,
+            VisualStages {
+                state: STATE_KIT,
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([(
+            STATE_KIT,
+            VisualKit {
+                anim_id: Some(DROWNED),
+                flags: kit_flag::RAW_ANIM | kit_flag::NO_TIER_RESOLVE,
+                ..Default::default()
+            },
+        )]),
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            SPELL,
+            SpellDisplay {
+                visual: VISUAL,
+                attributes: 0x40000,
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    app.add_systems(Update, super::arm_aura_state_fx);
+
+    let unit = app
+        .world_mut()
+        .spawn(crate::unit_auras::aura_unit_for_test(&[SPELL]))
+        .id();
+    app.update();
+    let raw = AnimPlayFlags::RAW | AnimPlayFlags::NO_TIER;
+    assert_eq!(
+        app.world().entity(unit).get::<StateKitAnims>().unwrap().0,
+        vec![(
+            SPELL,
+            KitAnim {
+                anim_id: DROWNED,
+                play: AnimPlayFlags(raw),
+            }
+        )],
+        "the kit's own flags, without the spell's keep-weapons"
+    );
+    let plays: Vec<u8> = app
+        .world_mut()
+        .resource_mut::<Messages<super::BaseAnimRecompute>>()
+        .drain()
+        .map(|r| r.play.0)
+        .collect();
+    assert_eq!(
+        plays,
+        vec![raw | AnimPlayFlags::KEEP_WEAPONS],
+        "the play's flags take the spell's Attributes 0x40000"
+    );
+
+    crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
+    app.update();
+    assert!(
+        app.world().entity(unit).get::<StateKitAnims>().is_none(),
+        "the aura's end takes the anim out"
+    );
 }

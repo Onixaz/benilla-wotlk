@@ -482,6 +482,10 @@ struct FxInstance {
     scale: f32,
     /// The `SpellVisualKitModelAttach` row placing the model ([`FxSlot::attach`]).
     attach: Option<benilla_formats::ModelAttach>,
+    /// The model's particles and ribbons keep their own alpha ([`FxSlot::own_alpha`]).
+    own_alpha: bool,
+    /// Its kit's anim ([`FxSlot::kit_anim`]).
+    kit_anim: Option<crate::creature_anim::KitAnim>,
     root: Option<Entity>,
     /// The self-termination deadline on `time.elapsed_secs()`, or a reaped instance's `Decay` end.
     expires: Option<f32>,
@@ -505,7 +509,7 @@ struct PrecastKey {
 /// A unit's effect instances (the client's per-unit `+0xb4` effect list).
 #[derive(Component, Default)]
 #[component(storage = "SparseSet")]
-pub(super) struct FxAttached {
+pub(crate) struct FxAttached {
     instances: Vec<FxInstance>,
 }
 
@@ -584,6 +588,8 @@ impl FxAttached {
                 path: "Spells\\Demolisher_Missile.mdx".into(),
                 scale: 1.0,
                 attach: None,
+                own_alpha: false,
+                kit_anim: None,
                 root,
                 expires: None,
                 decaying: false,
@@ -614,6 +620,17 @@ pub(super) fn end_root(
 ) {
     drain_instance_emitters(emitters, root);
     commands.entity(root).despawn();
+}
+
+impl FxAttached {
+    /// The anims of the kits whose models still live on the unit, decaying ones gone to the
+    /// destroy list (`0x744870`); a state kit's are [`crate::creature_anim::StateKitAnims`].
+    pub(crate) fn kit_anims(&self) -> impl Iterator<Item = crate::creature_anim::KitAnim> + '_ {
+        self.instances
+            .iter()
+            .filter(|i| !i.decaying && i.class != FxClass::AuraState)
+            .filter_map(|i| i.kit_anim)
+    }
 }
 
 /// A world-planted kit instance root (kit column 14): a free entity planted once at its owner, and
@@ -766,6 +783,8 @@ pub(super) fn resolve_spell_fx(
                         path,
                         scale,
                         attach,
+                        own_alpha,
+                        kit_anim,
                     } in effects
                     {
                         // Per slot, as the reference's effect add opens with the same-slot replace.
@@ -786,6 +805,8 @@ pub(super) fn resolve_spell_fx(
                             path: path.clone(),
                             scale: *scale,
                             attach: *attach,
+                            own_alpha: *own_alpha,
+                            kit_anim: *kit_anim,
                             root: None,
                             expires: None,
                             decaying: false,
@@ -840,6 +861,8 @@ pub(super) fn resolve_spell_fx(
                         path: slot.path.clone(),
                         scale: slot.scale,
                         attach: None,
+                        own_alpha: slot.own_alpha,
+                        kit_anim: slot.kit_anim,
                         root: None,
                         expires: None,
                         decaying: false,
@@ -1125,6 +1148,11 @@ pub(super) fn attach_spell_fx(
                 commands.entity(parent).add_child(root);
                 (root, ground_anchor)
             };
+            if inst.own_alpha {
+                commands
+                    .entity(root)
+                    .insert(crate::aura_visual::OwnModelAlpha);
+            }
             if spell_forces_projection(spells.as_deref(), inst.spell_id) {
                 commands
                     .entity(root)
@@ -1255,11 +1283,40 @@ mod tests {
             path: "Spells\\IceShield_State.mdx".into(),
             scale: 1.0,
             attach: None,
+            own_alpha: false,
+            kit_anim: None,
             root: Some(root),
             expires: None,
             decaying: false,
             precast: None,
         }
+    }
+
+    /// A kit model carries its kit's anim in the unit's effect list until it decays to the destroy
+    /// list (`0x744870`); a state kit's anim is the aura table's, read apart.
+    #[test]
+    fn a_live_kit_model_carries_its_kits_anim() {
+        use crate::creature_anim::{AnimPlayFlags, KitAnim};
+        let anim = KitAnim {
+            anim_id: 6,
+            play: AnimPlayFlags(AnimPlayFlags::RAW),
+        };
+        let root = Entity::PLACEHOLDER;
+        let with = |class, decaying| FxInstance {
+            class,
+            decaying,
+            kit_anim: Some(anim),
+            ..instance(root, false)
+        };
+        let att = FxAttached {
+            instances: vec![
+                with(FxClass::Hold, false),
+                with(FxClass::Hold, true),
+                with(FxClass::AuraState, false),
+                instance(root, false),
+            ],
+        };
+        assert_eq!(att.kit_anims().collect::<Vec<_>>(), vec![anim]);
     }
 
     /// An app running `attach_spell_fx`, and a unit with one spawned instance per `persistent`.
@@ -1407,6 +1464,8 @@ mod tests {
                 path: path.into(),
                 scale: 1.0,
                 attach: None,
+                own_alpha: false,
+                kit_anim: None,
             }],
         }
     }
@@ -1471,6 +1530,8 @@ mod tests {
             path: "Spells\\Frostbolt.mdx".into(),
             scale: 1.0,
             attach: None,
+            own_alpha: false,
+            kit_anim: None,
         }
     }
 
@@ -1679,6 +1740,8 @@ mod tests {
                         path: PATH.to_string(),
                         scale: 1.0,
                         attach: None,
+                        own_alpha: false,
+                        kit_anim: None,
                         root: None,
                         expires: None,
                         decaying: false,
@@ -1756,6 +1819,8 @@ mod tests {
                 path: "Spells\\Spurt.mdx".to_string(),
                 scale: 1.0,
                 attach: Some(at(row)),
+                own_alpha: false,
+                kit_anim: None,
             }],
         };
         send(&mut app, begin_row(1));
