@@ -391,6 +391,14 @@ impl WidgetArena {
         if let Some(of) = self.frame_mut(old_owner) {
             of.regions.retain(|&r| r != rh);
         }
+        // A pool that keeps moving regions in and out would run the tail past the sort key's
+        // field: close the gaps first, as a create does.
+        if self
+            .frame(new_owner)
+            .is_some_and(|f| f.next_decl >= 1 << crate::order::DECL_BITS)
+        {
+            self.renumber_decls(new_owner);
+        }
         let decl_seq = {
             let f = self.frame_mut(new_owner).expect("live new owner");
             let d = f.next_decl;

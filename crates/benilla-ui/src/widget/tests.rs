@@ -392,6 +392,38 @@ fn destroy_unpublishes_and_recurses() {
     assert_eq!(a.lookup("Root"), None, "name unpublished");
 }
 
+/// A texture pool parks its regions on one frame and hands them out again: each move takes the
+/// tail of its new owner's list, and the ordinal stays inside the sort key's field.
+#[test]
+fn a_region_moved_between_owners_keeps_its_ordinal_in_the_keys_field() {
+    let mut a = arena();
+    let park = a.create(FrameKind::Frame, None, None);
+    let user = a.create(FrameKind::Frame, None, None);
+    let texture = |a: &mut WidgetArena, owner| {
+        a.create_region(owner, RegionKind::Texture, DrawLayer::Artwork, 0)
+            .unwrap()
+    };
+    let resident = texture(&mut a, park);
+    let pooled = texture(&mut a, user);
+    for _ in 0..(1 << crate::order::DECL_BITS) + 10 {
+        assert!(a.set_region_owner(pooled, Some(park)));
+        assert!(a.set_region_owner(pooled, Some(user)));
+    }
+    assert!(a.set_region_owner(pooled, Some(park)));
+    let seq = |a: &WidgetArena, r| a.region(r).unwrap().decl_seq;
+    assert!(seq(&a, pooled) < 1 << crate::order::DECL_BITS);
+    assert!(
+        seq(&a, resident) < seq(&a, pooled),
+        "the arrival is still the tail"
+    );
+    assert_eq!(a.frame(park).unwrap().regions, [resident, pooled]);
+    // A detach and re-attach on the same owner takes the tail too.
+    let late = texture(&mut a, park);
+    assert!(a.set_region_owner(pooled, None));
+    assert!(a.set_region_owner(pooled, Some(park)));
+    assert!(seq(&a, late) < seq(&a, pooled));
+}
+
 #[test]
 fn generational_handle_detects_reuse() {
     let mut a = arena();
