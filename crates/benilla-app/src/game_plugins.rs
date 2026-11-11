@@ -172,6 +172,7 @@ impl PluginGroup for GamePlugins {
             .add(crate::video::VideoPlugin)
             // A CVar knob too, so before CvarPlugin for the same reason.
             .add(crate::realmlist::RealmlistPlugin)
+            .add(crate::fps_limit::FpsLimitPlugin)
             .add(crate::cvars::CvarPlugin)
             .add(crate::console::ConsolePlugin)
             .add(crate::bindings::BindingsPlugin)
@@ -1098,13 +1099,17 @@ pub(crate) mod schedule_tests {
     /// Each system costs its dispatch and parameter fetch even with nothing to do, about a
     /// microsecond apiece, so the count is a frame-time cost in its own right. `every_frame` is the
     /// number that matters: a system with a real trigger in its run condition skips on quiet frames.
+    // The stock CVar frame limiter adds its change observer to `Update` (four dispatch entries
+    // in Bevy's observer graph) and its mandatory once-per-frame deadline sleeper to `Last`.
+    // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
+    // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 741, 733),
+        ("Update", 745, 737),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),
         ("RunFixedMainLoop", 7, 7),
-        ("Last", 31, 26),
+        ("Last", 32, 27),
     ];
     /// How far a count may sit under its ceiling before the ceiling must come down with it.
     const FRAME_FLOOR_SLACK: usize = 8;

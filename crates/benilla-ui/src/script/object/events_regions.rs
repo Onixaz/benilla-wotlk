@@ -13,6 +13,7 @@ use super::{decode_id, draw_layer_from_str, frame_handle_of, publish_global};
 
 /// Populate `m`'s event, script and region-creation methods.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
+    super::protection::install(lua, m, crate::script::region_map::Side::Frame)?;
     // Events + scripts
     m.set(
         "RegisterEvent",
@@ -110,6 +111,40 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "GetScript",
         lua.create_function(|lua, (this, name): (Table, String)| get_script(lua, &this, &name))?,
+    )?;
+    // `HookScript("type", function)` (`0x49edb0`): with no script set, the hook becomes the script;
+    // else the script becomes the hook wrapper over the two (`0x817050`).
+    m.set(
+        "HookScript",
+        lua.create_function(|lua, (this, name, hook): (Table, Value, Value)| {
+            // `lua_isstring`: a number names a script too.
+            let name = match name {
+                Value::String(_) | Value::Integer(_) | Value::Number(_) => {
+                    lua.coerce_string(name)?
+                }
+                _ => None,
+            };
+            let (Some(name), Value::Function(hook)) = (name, hook) else {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:HookScript(\"type\", function)",
+                    name_or_unnamed(&this)
+                )));
+            };
+            let name = name.to_string_lossy();
+            let Some(kind) = script_kind(lua, &name) else {
+                return Err(mlua::Error::runtime(format!(
+                    "{} doesn't have a \"{name}\" script",
+                    name_or_unnamed(&this)
+                )));
+            };
+            let func = match get_script(lua, &this, kind)? {
+                Value::Function(original) => {
+                    crate::script::secure_call::hook_wrapper(lua, original, hook)?
+                }
+                _ => hook,
+            };
+            set_script(lua, &this, kind, Some(func))
+        })?,
     )?;
     // `HasScript(name)`: 1 if the widget can carry that script kind, else nil, whether or not one
     // is set. Answered from the flat `SCRIPT_KINDS`, so another type's kind reads 1 too, where the
@@ -298,6 +333,15 @@ fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> ml
     Ok(())
 }
 
+/// The receiver's `GetName()`, or `<unnamed>`, as the client's errors name it.
+fn name_or_unnamed(this: &Table) -> String {
+    this.get::<Function>("GetName")
+        .and_then(|f| f.call::<Option<String>>(this.clone()))
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| super::anchor_args::UNNAMED.to_string())
+}
+
 /// The canonical spelling of script kind `name`, case-insensitively, from [`SCRIPT_KINDS`];
 /// `None` for a name the frames do not carry.
 fn script_kind(_lua: &Lua, name: &str) -> Option<&'static str> {
@@ -404,6 +448,126 @@ fn create_region(
 #[cfg(test)]
 mod tests {
     use crate::script::UiScript;
+
+    #[test]
+    fn frame_hook_script_preserves_arguments_and_registration_order() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            F = CreateFrame("Frame")
+            F:RegisterEvent("PLAYER_LOGIN")
+            Log = ""
+            local function check(self, event, ...)
+                assert(self == F and event == "PLAYER_LOGIN")
+                assert(select('#', ...) == 3)
+                local a, b, c = ...
+                assert(a == 7 and b == nil and c == 9)
+            end
+            F:SetScript("OnEvent", function(...) check(...) Log = Log .. "a" end)
+            F:HookScript("OnEvent", function(...) check(...) Log = Log .. "b" end)
+            F:HookScript("onevent", function(...) check(...) Log = Log .. "c" end)
+            "#,
+        )
+        .unwrap();
+        s.fire_event(
+            "PLAYER_LOGIN",
+            vec![
+                crate::script::ScriptValue::Number(7.0),
+                crate::script::ScriptValue::Nil,
+                crate::script::ScriptValue::Number(9.0),
+            ],
+        );
+        assert_eq!(s.eval::<String>("return Log").unwrap(), "abc");
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+        s.run(r#"F:SetScript("OnEvent", function() Log = Log .. "d" end)"#)
+            .unwrap();
+        s.fire_event("PLAYER_LOGIN", vec![]);
+        assert_eq!(s.eval::<String>("return Log").unwrap(), "abcd");
+        s.run("F:SetScript('OnEvent', nil)").unwrap();
+        s.fire_event("PLAYER_LOGIN", vec![]);
+        assert_eq!(s.eval::<String>("return Log").unwrap(), "abcd");
+    }
+
+    #[test]
+    fn hook_script_alone_joins_and_leaves_the_update_walk() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            F = CreateFrame("Frame")
+            Updates = 0
+            local hook = function(self, elapsed)
+                assert(self == F and elapsed > 0)
+                Updates = Updates + 1
+            end
+            F:HookScript("OnUpdate", hook)
+            assert(F:GetScript("OnUpdate") == hook)
+            F:HookScript("OnUpdate", hook)
+            "#,
+        )
+        .unwrap();
+        s.tick(0.1);
+        assert_eq!(s.eval::<i64>("return Updates").unwrap(), 2);
+        s.run("F:SetScript('OnUpdate', nil)").unwrap();
+        s.tick(0.1);
+        assert_eq!(s.eval::<i64>("return Updates").unwrap(), 2);
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+    }
+
+    #[test]
+    fn hook_script_rejects_invalid_arguments_without_changing_the_handler() {
+        let s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            local f = CreateFrame("Frame")
+            local original = function() end
+            f:SetScript("OnShow", original)
+            assert(not pcall(f.HookScript, f, "OnShow", nil))
+            assert(not pcall(f.HookScript, f, "OnShow", {}))
+            assert(not pcall(f.HookScript, f, "NotAScript", original))
+            assert(f:GetScript("OnShow") == original)
+            assert(CreateFrame("Button").HookScript == f.HookScript)
+            "#,
+        )
+        .unwrap();
+    }
+
+    /// The wrapper (`0x817050`) answers the script's results and runs each hook under the error
+    /// handler, so a failing hook stops neither the script nor a later hook.
+    #[test]
+    fn a_hook_runs_under_the_error_handler_and_the_script_keeps_its_results() {
+        let s = UiScript::new().unwrap();
+        s.run(
+            r#"
+            seterrorhandler(function(msg) Seen = msg end)
+            local f = CreateFrame("Frame", "HookProbe")
+            f:SetScript("OnShow", function() return 1, nil, 3 end)
+            f:HookScript("OnShow", function() error("hook", 0) end)
+            f:HookScript("OnShow", function() Later = true return 9 end)
+            local script = f:GetScript("OnShow")
+            assert(select('#', script()) == 3)
+            local a, b, c = script()
+            assert(a == 1 and b == nil and c == 3)
+            assert(Seen == "hook" and Later)
+            "#,
+        )
+        .unwrap();
+        let usage = s
+            .run(r#"HookProbe:HookScript("OnShow", nil)"#)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            usage.contains(r#"Usage: HookProbe:HookScript("type", function)"#),
+            "{usage}"
+        );
+        let missing = s
+            .run(r#"HookProbe:HookScript("NotAScript", function() end)"#)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            missing.contains(r#"HookProbe doesn't have a "NotAScript" script"#),
+            "{missing}"
+        );
+    }
 
     /// Both frames share both events, so clearing one must leave the other's registrations.
     #[test]

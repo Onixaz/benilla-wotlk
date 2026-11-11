@@ -2288,6 +2288,36 @@ mod tests {
         );
     }
 
+    /// The installed secure handlers require real XML protection, including its explicit bit.
+    #[test]
+    fn secure_templates_execute_and_wrap_scripts_with_protected_headers() {
+        let _data = benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new().expect("VM");
+        s.set_screen_size(1024.0, 768.0);
+        seat_a_player(&mut s);
+        let _ = super::super::manifest::load_default_ui(&s);
+        let before = s.errors().len();
+        s.run(
+            r#"
+            local parent = CreateFrame("Frame")
+            local header = CreateFrame("Frame", nil, parent, "SecureHandlerBaseTemplate")
+            local a,b = header:IsProtected(); assert(a == 1 and b == 1)
+            local a,b = parent:IsProtected(); assert(a == 1 and b == nil)
+            SecureHandlerExecute(header, 'self:SetAttribute("executed", 17)')
+            assert(header:GetAttribute("executed") == 17)
+            local button = CreateFrame("Button", nil, nil, "SecureActionButtonTemplate")
+            SecureHandlerWrapScript(button, "OnClick", header,
+                'owner:SetAttribute("clicked", true)')
+            button:Click()
+            assert(header:GetAttribute("clicked") == true)
+            local ok,err = pcall(SecureHandlerWrapScript, button, "OnClick", parent, '')
+            assert(not ok and string.find(err, "explicitly protected"))
+            "#,
+        )
+        .unwrap();
+        assert_eq!(s.errors().len(), before, "{:?}", s.errors());
+    }
+
     /// 1.12.1 producers still to remove, each with what replaces it; the list only shrinks.
     const STILL_1_12_EVENTS: &[(&str, &str)] = &[(
         "CONFIRM_PET_UNLEARN",

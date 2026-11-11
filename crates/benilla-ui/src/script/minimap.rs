@@ -64,6 +64,19 @@ pub(crate) fn apply_model_attrs(
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+    // GetPlayerFacing (`0x60a490`): the facing of the object the active camera follows, 0 with no
+    // camera, as the host pushes it ([`super::UiScript::set_camera_target_facing`]).
+    lua.globals().set(
+        "GetPlayerFacing",
+        lua.create_function(|lua, ()| {
+            Ok(lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data")
+                .camera_facing
+                .get()
+                .unwrap_or(0.0))
+        })?,
+    )?;
     let m = lua.create_table()?;
 
     m.set(

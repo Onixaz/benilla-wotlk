@@ -398,6 +398,48 @@ fn set_hyperlink_renders_items_and_ignores_other_links() {
     assert!(s.take_errors().is_empty());
 }
 
+#[test]
+fn tooltip_item_hooks_run_after_the_item_lines_are_built() {
+    let mut s = script();
+    s.set_item_template(
+        7002,
+        ItemTemplateView {
+            name: "New Loop".into(),
+            quality: 2,
+            inventory_type: 11,
+            ..Default::default()
+        },
+    );
+    s.run(
+        r#"
+        local owner = CreateFrame("Frame")
+        for _, name in ipairs({"GameTooltip", "ItemRefTooltip"}) do
+            local tip = CreateFrame("GameTooltip", name)
+            local order = ""
+            tip:SetScript("OnTooltipSetItem", function(self)
+                assert(self == tip)
+                order = order .. "a"
+            end)
+            tip:HookScript("OnTooltipSetItem", function(self, ...)
+                assert(select('#', ...) == 0)
+                assert(_G[self:GetName() .. "TextLeft1"]:GetText() == "New Loop")
+                order = order .. "b"
+            end)
+            tip:HookScript("OnTooltipSetItem", function(self)
+                self:AddLine("Addon annotation")
+                order = order .. "c"
+            end)
+            tip:SetOwner(owner, "ANCHOR_RIGHT")
+            tip:SetHyperlink("item:7002")
+            assert(order == "abc", order)
+            assert(_G[name .. "TextLeft" .. tip:NumLines()]:GetText() == "Addon annotation")
+        end
+        "#,
+    )
+    .unwrap();
+    assert!(s.take_errors().is_empty());
+}
+
 /// A recipe whose product id is `spell_id + 10_000`, so the tooltip's name shows which row it hit.
 fn ts_recipe(spell_id: u32, name: &str, group: (u32, u32, &str)) -> TradeSkillRecipe {
     TradeSkillRecipe {

@@ -82,7 +82,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "GetMouseButtonName",
     "GetMovieResolution",
     "GetNumDeclensionSets",
-    "GetPlayerFacing",
     "GetPowerRegen",
     "GetRunningMacro",
     "GetRunningMacroButton",
