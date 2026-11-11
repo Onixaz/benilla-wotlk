@@ -25,6 +25,7 @@ fn type_name(ty: i32) -> &'static str {
         char_proc_type::CHAIN_CHANNEL => "CHAIN (beam; the channel-stage key)",
         char_proc_type::CHAIN_CAST => "CHAIN (beam; the cast-stage key)",
         char_proc_type::WEAPON_TRAIL => "TRAIL (weapon swing ribbon, $WTB→$WTT)",
+        char_proc_type::ITEM_SWAP => "ITEM_SWAP (an item slot shows CharParamOne's item)",
         _ => "(unmodelled)",
     }
 }

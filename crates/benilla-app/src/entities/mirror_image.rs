@@ -103,8 +103,7 @@ fn on_mirror_image_data(
         "net: mirror image for {guid:#x}: race {} sex {}",
         look.race, look.sex
     );
-    // The worn displays land with the look, so the rebuild dresses the body: a unit is never
-    // re-dressed in place.
+    // The worn displays land with the look, so the rebuild dresses the body.
     let worn = mirror_equipment(&look);
     commands
         .entity(entity)

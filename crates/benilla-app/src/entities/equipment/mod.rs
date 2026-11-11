@@ -17,6 +17,7 @@ pub(crate) use resolve::DressKey;
 pub(super) use resolve::{resolve_corpse_equipment, resolve_equipment};
 mod spawn;
 pub(super) use spawn::attach_held_items;
+mod swap;
 mod wait;
 pub(super) use wait::warn_unsettled_equipment;
 
@@ -119,6 +120,18 @@ pub(crate) struct Equipment {
 #[derive(Component)]
 #[component(storage = "SparseSet")]
 pub(in crate::entities) struct AppliedEquipment(pub(in crate::entities) Equipment);
+
+/// An NPC's worn displays off its `CreatureDisplayInfoExtra` row, as its component adds them
+/// (`0x730210`): helm, the eight composite slots and the cape.
+pub(in crate::entities) fn npc_equipment(npc: &benilla_formats::NpcAppearance) -> Equipment {
+    Equipment {
+        bodyslots: std::array::from_fn(|i| npc.equipment[i + 2]),
+        cloak: npc.cape,
+        helm: npc.equipment[0],
+        settled: true,
+        ..Default::default()
+    }
+}
 
 /// A visual rebuilt for a mount or display swap, not a spawn: it skips the appear-fade.
 #[derive(Component)]

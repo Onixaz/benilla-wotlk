@@ -1,6 +1,8 @@
 //! Equipment resolution: what each unit holds and wears this frame, and where each item hangs.
 
 use benilla_protocol::EntityKind;
+use bevy::ecs::entity::EntityHashMap;
+use bevy::ecs::message::MessageCursor;
 use bevy::prelude::*;
 
 use crate::creature_anim::{
@@ -11,9 +13,11 @@ use crate::net::{NetCommands, NetEntity, ObjectStore};
 
 use super::super::item_glow::{self, ItemGlows};
 use super::super::Creatures;
+use super::swap::{ItemSwaps, SwapGate};
 use super::{
-    attach_id, ensure_item_model_mut, DisarmFreeze, Equipment, HeldItems, HeldSlot, ItemDisplays,
-    ItemModelKind, ATTACH_SLOTS, COMPOSITE_SLOTS, HELD_SLOTS, NO_GLOW, PLAYER_HELD_SLOTS,
+    attach_id, ensure_item_model_mut, npc_equipment, DisarmFreeze, Equipment, HeldItems, HeldSlot,
+    ItemDisplays, ItemModelKind, ATTACH_SLOTS, COMPOSITE_SLOTS, HELD_SLOTS, NO_GLOW,
+    PLAYER_HELD_SLOTS,
 };
 
 /// Where one held slot's item hangs, if it shows: a melee item drawn in sheath state 1, else by its
@@ -120,12 +124,151 @@ pub(crate) struct DressKey {
     pub(crate) held_ready: bool,
 }
 
-/// Resolve every unit's held and worn items, skipping one whose descriptor, [`ResolveKey`] and
-/// the global epochs all held still.
+/// The kit plays' item-swap edges and kit clears, read from the cast router's lanes; optional so a
+/// world without the spell-visual plugin dresses as before.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(in crate::entities) struct SwapEdges<'w, 's> {
+    procs: Option<Res<'w, Messages<crate::aura_visual::AuraProc>>>,
+    clears: Option<Res<'w, Messages<crate::creature_anim::KitEffectClear>>>,
+    cursors: Local<
+        's,
+        (
+            MessageCursor<crate::aura_visual::AuraProc>,
+            MessageCursor<crate::creature_anim::KitEffectClear>,
+        ),
+    >,
+}
+
+/// One type-17 edge on a unit.
+#[derive(Clone, Copy)]
+enum SwapEdge {
+    Begin {
+        spell_id: u32,
+        kit_id: u32,
+        item: u32,
+    },
+    EndSpell(u32),
+    EndKit(u32),
+}
+
+impl SwapEdges<'_, '_> {
+    /// This frame's edges by unit, the aura lane's before the kit clears.
+    fn take(&mut self) -> EntityHashMap<Vec<SwapEdge>> {
+        use crate::aura_visual::{AuraNode, AuraProc};
+        let mut out: EntityHashMap<Vec<SwapEdge>> = EntityHashMap::default();
+        let (proc_cursor, clear_cursor) = &mut *self.cursors;
+        if let Some(procs) = self.procs.as_deref() {
+            for edge in proc_cursor.read(procs) {
+                match edge {
+                    AuraProc::Begin {
+                        entity,
+                        spell_id,
+                        nodes,
+                        kit_id,
+                        ..
+                    } => {
+                        for node in nodes {
+                            if let AuraNode::ItemSwap(item) = *node {
+                                out.entry(*entity).or_default().push(SwapEdge::Begin {
+                                    spell_id: *spell_id,
+                                    kit_id: *kit_id,
+                                    item,
+                                });
+                            }
+                        }
+                    }
+                    AuraProc::Reap { entity, spell_id } => {
+                        out.entry(*entity)
+                            .or_default()
+                            .push(SwapEdge::EndSpell(*spell_id));
+                    }
+                }
+            }
+        }
+        if let Some(clears) = self.clears.as_deref() {
+            for clear in clear_cursor.read(clears) {
+                out.entry(clear.entity)
+                    .or_default()
+                    .push(SwapEdge::EndKit(clear.kit_id));
+            }
+        }
+        out
+    }
+}
+
+/// Apply a unit's edges; a unit with no swap yet gets one only for a begin.
+fn apply_swap_edges(
+    swaps: &mut Option<&mut ItemSwaps>,
+    fresh: &mut Option<ItemSwaps>,
+    edges: &[SwapEdge],
+) {
+    if swaps.is_none() && edges.iter().any(|e| matches!(e, SwapEdge::Begin { .. })) {
+        *fresh = Some(ItemSwaps::default());
+    }
+    let Some(s) = swaps.as_deref_mut().or(fresh.as_mut()) else {
+        return;
+    };
+    for edge in edges {
+        match *edge {
+            SwapEdge::Begin {
+                spell_id,
+                kit_id,
+                item,
+            } => s.begin(spell_id, kit_id, item),
+            SwapEdge::EndSpell(spell_id) => {
+                s.end_spell(spell_id);
+            }
+            SwapEdge::EndKit(kit_id) => {
+                s.end_kit(kit_id);
+            }
+        }
+    }
+}
+
+/// Lay the swaps' displays on a dress by item slot: the head, shirt to tabard and the cape.
+fn dress_swaps(eq: &mut Equipment, swapped: impl Fn(usize) -> Option<u32>) {
+    if let Some(d) = swapped(0) {
+        eq.helm = d;
+    }
+    for slot in 2..=9 {
+        if let Some(d) = swapped(slot) {
+            eq.bodyslots[slot - 2] = d;
+        }
+    }
+    if let Some(d) = swapped(10) {
+        eq.cloak = d;
+    }
+}
+
+/// The inputs whose change rebuilds a unit's dress and re-applies its swaps: the display, a
+/// player's visible items and helm flag (`0x6e4580`, `0x6dd0f0`), a clone's look (`0x730290`).
+fn dress_rebuild_key(
+    s: &benilla_protocol::messages::ObjectFields,
+    net_entity: &NetEntity,
+    mirror: Option<&benilla_protocol::messages::MirrorLook>,
+) -> u64 {
+    let mut key = u64::from(net_entity.display_id.unwrap_or(0));
+    let mut fold = |v: u64| key = key.wrapping_mul(0x0100_0000_01b3).wrapping_add(v);
+    if net_entity.kind == EntityKind::Player {
+        for slot in 0..19u8 {
+            fold(u64::from(s.player_visible_item_entry(slot).unwrap_or(0)));
+        }
+        fold(u64::from(s.player_hides_helm()));
+    }
+    if let Some(m) = mirror {
+        for &d in &m.items {
+            fold(u64::from(d));
+        }
+    }
+    key
+}
+
+/// Resolve every unit's held and worn items, skipping one whose descriptor, [`ResolveKey`], item
+/// swaps and the global epochs all held still.
 #[allow(clippy::type_complexity)]
 pub(in crate::entities) fn resolve_equipment(
     mut commands: Commands,
-    units: Query<(
+    mut units: Query<(
         Entity,
         &NetEntity,
         Ref<ObjectStore>,
@@ -138,7 +281,7 @@ pub(in crate::entities) fn resolve_equipment(
         Has<NockLatch>,
         Option<&ResolveKey>,
         Option<&DressKey>,
-        Option<&DisarmFreeze>,
+        (Option<&DisarmFreeze>, Option<&mut ItemSwaps>),
         Has<crate::net::SelfPlayer>,
         Option<&super::super::mirror_image::MirrorLookOf>,
     )>,
@@ -158,7 +301,10 @@ pub(in crate::entities) fn resolve_equipment(
     mut guilds: Option<ResMut<crate::ui_guild::GuildState>>,
     tabard_design: Option<Res<crate::ui_tabard::TabardDesign>>,
     barber: Option<Res<crate::ui_barber::BarberBody>>,
+    mut swap_edges: SwapEdges,
 ) {
+    // Drained every run, so an edge never lands twice.
+    let mut edges = swap_edges.take();
     let Some(mut held) = held else {
         return;
     };
@@ -193,14 +339,18 @@ pub(in crate::entities) fn resolve_equipment(
         nock_latched,
         current_key,
         current_dress,
-        freeze,
+        (freeze, mut swaps),
         is_self,
         mirror,
-    ) in &units
+    ) in &mut units
     {
         if !matches!(net_entity.kind, EntityKind::Unit | EntityKind::Player) {
             continue;
         }
+        // An end edge moves only a unit that holds a swap, so kit clears elsewhere cost nothing.
+        let unit_edges = edges
+            .remove(&entity)
+            .filter(|e| swaps.is_some() || e.iter().any(|e| matches!(e, SwapEdge::Begin { .. })));
         let s = &store.0;
         // The anim layer's committed sheath state, else the raw byte until the driver runs.
         let committed = driver
@@ -213,12 +363,79 @@ pub(in crate::entities) fn resolve_equipment(
             nocked: nocked.map(|n| n.display_id),
             latched: nock_latched,
         };
-        if !caches_moved && !store.is_changed() && current_key == Some(&key) {
+        if !caches_moved && !store.is_changed() && current_key == Some(&key) && unit_edges.is_none()
+        {
             continue;
         }
         if current_key != Some(&key) {
             commands.entity(entity).insert(key);
         }
+        // A clone dresses in its caster's displays (`0x730564`-`0x7306bc`).
+        let mirror = mirror.and_then(|m| m.for_display(net_entity.display_id));
+        let display_model = net_entity
+            .display_id
+            .and_then(|d| creatures.as_deref()?.models.get(&d));
+        let npc = display_model.and_then(|dm| dm.npc_appearance.as_ref());
+        // The type-17 effects: this frame's edges, a rebuild, then the item cache's answers.
+        let mut fresh = None;
+        let mut swaps = swaps.as_deref_mut();
+        if let Some(unit_edges) = &unit_edges {
+            apply_swap_edges(&mut swaps, &mut fresh, unit_edges);
+            // Each new effect asks the item cache itself, a denied item again (`0x6f86d8`).
+            for edge in unit_edges {
+                if let SwapEdge::Begin { item, .. } = *edge {
+                    templates.ask_template(item, s.object_guid().unwrap_or(0), &net);
+                }
+            }
+        }
+        let mut swaps = swaps.or(fresh.as_mut());
+        if let Some(sw) = swaps.as_deref_mut() {
+            let gate = SwapGate {
+                // A character component: a character body or an extra row, or a clone (`0x730100`).
+                component: match net_entity.kind {
+                    EntityKind::Player => display_model
+                        .is_none_or(|dm| dm.is_character_body || dm.npc_appearance.is_some()),
+                    _ => npc.is_some() || mirror.is_some(),
+                },
+                // The form gate: a player in its native display or one that wears items (`0x7202c0`).
+                wears_items: net_entity.kind == EntityKind::Player
+                    && (s.unit_displayid() == s.unit_native_displayid()
+                        || net_entity.display_id.is_some_and(|d| {
+                            creatures
+                                .as_deref()
+                                .is_some_and(|c| c.catalog.wears_items(d))
+                        })),
+            };
+            let has_display = |d: u32| held.catalog.get(d).is_some();
+            if net_entity.kind == EntityKind::Player {
+                let own_cape = s
+                    .player_visible_item_entry(14)
+                    .filter(|e| *e != 0)
+                    .and_then(|e| templates.held(e, &net))
+                    .is_some_and(|t| t.display_info_id != 0);
+                sw.toggle_cloak(s.player_hides_cloak(), own_cape, gate);
+            }
+            sw.rebuild(dress_rebuild_key(s, net_entity, mirror), gate, has_display);
+            if sw.waiting() {
+                let guid = s.object_guid().unwrap_or(0);
+                // Any answer runs the item's `Item.dbc` row, a denial too (`0x6f8600`).
+                sw.answer(
+                    |item| {
+                        let answered = templates.template(item, guid, &net).is_some()
+                            || templates.template_answered_unknown(item);
+                        answered.then(|| {
+                            held.item_dbc
+                                .get(&item)
+                                .map(|r| (r.inventory_type, r.display))
+                        })
+                    },
+                    gate,
+                    has_display,
+                );
+            }
+        }
+        let swaps = swaps.as_deref();
+        let swapped = |slot: usize| swaps.and_then(|sw| sw.shown(slot));
         // `PLAYER_FLAGS`' `HIDE_HELM 0x400` and `HIDE_CLOAK 0x800` are public, so another player's
         // choice shows here; a hidden piece is display id 0, so its model and its hide masks go.
         let (hide_helm, hide_cloak) = (s.player_hides_helm(), s.player_hides_cloak());
@@ -256,6 +473,9 @@ pub(in crate::entities) fn resolve_equipment(
             if hide_helm {
                 eq.helm = 0;
             }
+            // A swap's display wins its slot, a hidden one too: the swaps re-apply after the
+            // helm toggles (`0x6dd0f0`, `0x6e0e00`); the cloak's own toggle settles in the swaps.
+            dress_swaps(&mut eq, swapped);
             // The emblem, for every player; the composite paints it only on a flagged tabard.
             eq.emblem = guilds
                 .as_deref_mut()
@@ -289,12 +509,25 @@ pub(in crate::entities) fn resolve_equipment(
                 commands.entity(entity).insert(eq);
             }
         }
-        // A clone dresses in its caster's displays (`0x730564`-`0x7306bc`).
-        let mirror = mirror.and_then(|m| m.for_display(net_entity.display_id));
-        if let Some(look) = mirror.filter(|_| net_entity.kind == EntityKind::Unit) {
-            let eq = super::super::mirror_image::mirror_equipment(look);
-            if current_equipment != Some(&eq) {
-                commands.entity(entity).insert(eq);
+        if net_entity.kind == EntityKind::Unit {
+            // A clone in its caster's displays, an item-swapped NPC in its row's; only the head
+            // takes a swap here.
+            let own = match mirror {
+                Some(look) => Some(super::super::mirror_image::mirror_equipment(look)),
+                None => swaps.and(npc).map(npc_equipment),
+            };
+            match own {
+                Some(mut eq) => {
+                    dress_swaps(&mut eq, swapped);
+                    if current_equipment != Some(&eq) {
+                        commands.entity(entity).insert(eq);
+                    }
+                }
+                // A swapped NPC's new display with no extra row wears nothing of its own.
+                None if swaps.is_some() && current_equipment.is_some() => {
+                    commands.entity(entity).remove::<Equipment>();
+                }
+                None => {}
             }
         }
         // The sheath a slot is placed by: per arm during a draw or stow ceremony (`VisualSheath`),
@@ -542,17 +775,35 @@ pub(in crate::entities) fn resolve_equipment(
                 // Zero when hidden, the id the geoset half got, so the two cannot disagree; the
                 // barber chair takes both off our own body.
                 let stripped = is_self && barber.is_some();
-                let helm = if hide_helm || stripped { 0 } else { resolve(0) };
-                let shoulder = if stripped { 0 } else { resolve(2) };
+                // A swap wins over the hide preference, as in the geoset half.
+                let helm = match (stripped, swapped(0)) {
+                    (true, _) => 0,
+                    (false, Some(d)) => d,
+                    (false, None) if hide_helm => 0,
+                    (false, None) => resolve(0),
+                };
+                let shoulder = if stripped {
+                    0
+                } else {
+                    swapped(1).unwrap_or_else(|| resolve(2))
+                };
                 Some((helm, shoulder, race, sex))
             }
             EntityKind::Unit => match mirror {
-                Some(m) => Some((m.items[0], m.items[1], m.race, m.sex.min(1))),
-                None => net_entity
-                    .display_id
-                    .and_then(|disp| creatures.as_deref()?.models.get(&disp))
-                    .and_then(|dm| dm.npc_appearance.as_ref())
-                    .map(|npc| (npc.equipment[0], npc.equipment[1], npc.race, npc.sex.min(1))),
+                Some(m) => Some((
+                    swapped(0).unwrap_or(m.items[0]),
+                    m.items[1],
+                    m.race,
+                    m.sex.min(1),
+                )),
+                None => npc.map(|npc| {
+                    (
+                        swapped(0).unwrap_or(npc.equipment[0]),
+                        npc.equipment[1],
+                        npc.race,
+                        npc.sex.min(1),
+                    )
+                }),
             },
             _ => None,
         };
@@ -611,6 +862,9 @@ pub(in crate::entities) fn resolve_equipment(
                 commands.entity(entity).remove::<DisarmFreeze>();
             }
             _ => {}
+        }
+        if let Some(sw) = fresh {
+            commands.entity(entity).insert(sw);
         }
     }
 }
@@ -941,6 +1195,171 @@ mod tests {
         let (cloak_only, helm_attached) = dress(0x800);
         assert_eq!((cloak_only.helm, cloak_only.cloak), (900, 0));
         assert!(helm_attached);
+    }
+
+    /// A world with a hidden-helm player in helm 900, `Item.dbc` row 500 a head item of display
+    /// 777 and row 501 a robe of display 778, and the kit lanes registered.
+    fn swap_world(flags: u32) -> (App, Entity, crossbeam_channel::Receiver<ClientCommand>) {
+        use benilla_formats::{ItemDbcRow, ItemDisplay, ItemDisplayCatalog};
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()));
+        app.add_message::<crate::aura_visual::AuraProc>();
+        app.add_message::<crate::creature_anim::KitEffectClear>();
+        let mut items = Items::default();
+        items.insert_template(100, Some(worn(900, 1)));
+        items.insert_template(501, Some(worn(778, 20)));
+        let (tx, rx) = crossbeam_channel::unbounded::<ClientCommand>();
+        app.insert_resource(items);
+        app.init_resource::<crate::net::GuidIndex>();
+        app.insert_resource(NetCommands(tx));
+        let catalog = ItemDisplayCatalog::from_displays(
+            [900, 777, 778]
+                .into_iter()
+                .map(|d| (d, ItemDisplay::default()))
+                .collect(),
+        );
+        let mut displays = ItemDisplays::icons_for_tests(catalog);
+        for (item, display, inventory_type) in [(500, 777, 1), (501, 778, 20)] {
+            displays.item_dbc.insert(
+                item,
+                ItemDbcRow {
+                    display,
+                    inventory_type,
+                    ..Default::default()
+                },
+            );
+        }
+        app.insert_resource(displays);
+        let player = app
+            .world_mut()
+            .spawn((
+                NetEntity {
+                    kind: EntityKind::Player,
+                    display_id: Some(49),
+                    scale: 1.0,
+                },
+                wearing(flags, &[(0, 100)]),
+            ))
+            .id();
+        app.add_systems(Update, resolve_equipment);
+        app.update();
+        (app, player, rx)
+    }
+
+    fn swap_begin(app: &mut App, entity: Entity, spell_id: u32, kit_id: u32, item: u32) {
+        app.world_mut()
+            .write_message(crate::aura_visual::AuraProc::Begin {
+                entity,
+                spell_id,
+                nodes: vec![crate::aura_visual::AuraNode::ItemSwap(item)],
+                kit_id,
+                body_only: false,
+            });
+    }
+
+    fn helm(app: &App, player: Entity) -> (u32, Option<u32>) {
+        let w = app.world();
+        let held = w.get::<HeldItems>(player).and_then(|h| h.slots[3]);
+        (
+            w.get::<Equipment>(player).unwrap().helm,
+            held.map(|s| s.display),
+        )
+    }
+
+    /// CharProc 17 waits on a late template, then dresses the head, model and geoset half alike;
+    /// the aura's end puts the worn helm back.
+    #[test]
+    fn an_item_swap_applies_on_its_late_template_and_restores_at_the_aura_end() {
+        let (mut app, player, rx) = swap_world(0);
+        assert_eq!(helm(&app, player), (900, Some(900)));
+        swap_begin(&mut app, player, 44212, 8381, 500);
+        app.update();
+        assert_eq!(helm(&app, player), (900, Some(900)), "no template yet");
+        assert!(
+            rx.try_iter()
+                .any(|c| matches!(c, ClientCommand::ItemQuery { entry: 500, .. })),
+            "the item cache is asked"
+        );
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(500, Some(worn(1, 1)));
+        app.update();
+        assert_eq!(
+            helm(&app, player),
+            (777, Some(777)),
+            "the Item.dbc row's display, not the template's"
+        );
+        app.world_mut()
+            .write_message(crate::aura_visual::AuraProc::Reap {
+                entity: player,
+                spell_id: 44212,
+            });
+        app.update();
+        assert_eq!(helm(&app, player), (900, Some(900)));
+    }
+
+    /// A cached item applies the frame its kit plays, over a hidden helm and on the chest for a
+    /// robe; a kit clear ends it.
+    #[test]
+    fn a_cached_item_swap_applies_at_once_and_a_kit_clear_ends_it() {
+        let (mut app, player, _rx) = swap_world(0x400);
+        assert_eq!(helm(&app, player), (0, None));
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(500, Some(worn(1, 1)));
+        swap_begin(&mut app, player, 44212, 8381, 500);
+        swap_begin(&mut app, player, 61401, 12024, 501);
+        app.update();
+        assert_eq!(
+            helm(&app, player),
+            (777, Some(777)),
+            "a swap wins over hide-helm"
+        );
+        let chest = |app: &App| app.world().get::<Equipment>(player).unwrap().bodyslots[1];
+        assert_eq!(chest(&app), 778);
+        app.world_mut()
+            .write_message(crate::creature_anim::KitEffectClear {
+                entity: player,
+                kit_id: 8381,
+            });
+        app.update();
+        assert_eq!(helm(&app, player), (0, None), "hidden again");
+        assert_eq!(chest(&app), 778, "the other kit's swap stays");
+    }
+
+    /// A denied item is asked again by the next effect, which waits on that answer; a denial still
+    /// dresses the item's `Item.dbc` row.
+    #[test]
+    fn a_denied_item_is_asked_again_by_the_next_effect() {
+        let (mut app, player, rx) = swap_world(0);
+        let asks = |rx: &crossbeam_channel::Receiver<ClientCommand>| {
+            rx.try_iter()
+                .filter(|c| matches!(c, ClientCommand::ItemQuery { entry: 500, .. }))
+                .count()
+        };
+        swap_begin(&mut app, player, 44212, 8381, 500);
+        app.update();
+        assert_eq!(asks(&rx), 1);
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(500, None);
+        app.update();
+        assert_eq!(helm(&app, player), (777, Some(777)), "the denial applies");
+        assert_eq!(asks(&rx), 0, "the polling read keeps the denial");
+        app.world_mut()
+            .write_message(crate::creature_anim::KitEffectClear {
+                entity: player,
+                kit_id: 8381,
+            });
+        swap_begin(&mut app, player, 44212, 8382, 500);
+        app.update();
+        assert_eq!(asks(&rx), 1, "the next effect asks again");
+        assert_eq!(helm(&app, player), (900, Some(900)), "and waits on it");
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(500, None);
+        app.update();
+        assert_eq!(helm(&app, player), (777, Some(777)));
     }
 
     /// An unmarked store edit must not land, as the gate skips the unit; a marked one must.

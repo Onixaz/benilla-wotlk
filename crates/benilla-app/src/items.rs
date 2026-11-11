@@ -441,7 +441,8 @@ impl RollCatalogs<'_> {
 /// Item templates by entry, asked once, and the enchant times queued for items not yet held.
 #[derive(Resource, Default)]
 pub(crate) struct Items {
-    /// A `None` answer is the server's unknown entry, cached so it is never re-asked.
+    /// A `None` answer is the server's unknown entry, kept for the polling readers; a reader's own
+    /// ask ([`Self::ask_template`]) asks it again.
     templates: QueryCache<u32, ItemInfo>,
     /// Landed since the last [`Self::take_fresh`]; pushed to the UI unprompted.
     fresh: Vec<u32>,
@@ -491,6 +492,21 @@ impl Items {
     /// then shows the reference's `"UNKNOWN"` instead of waiting.
     pub(crate) fn template_answered_unknown(&self, entry: u32) -> bool {
         self.templates.answered_unknown(entry)
+    }
+
+    /// A reader's own ask: a denied entry is asked again, as a denial leaves no entry (`0x67cbd0`).
+    /// Deviation for performance: a polling reader keeps the denial, or it re-asks each round trip.
+    pub(crate) fn ask_template(
+        &self,
+        entry: u32,
+        guid: u64,
+        commands: &NetCommands,
+    ) -> Option<&ItemInfo> {
+        self.templates.ask_again(entry, || {
+            debug!("items: asking a denied template again (entry {entry})");
+            let _ = commands.0.send(ClientCommand::ItemQuery { entry, guid });
+        });
+        self.template(entry, guid, commands)
     }
 
     /// The [`HeldTemplate`] view of [`Self::template`], asked template-only.

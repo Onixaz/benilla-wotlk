@@ -5,8 +5,8 @@
 //! The read that asks takes `&self` (the in-flight set is behind a lock), so read-only systems
 //! share the owning resource and its change detection means an answer landed.
 //!
-//! A negative answer is cached as `None` and never re-asked: an integer-keyed store's high-bit
-//! miss, or a player's empty name.
+//! A negative answer (an integer-keyed store's high-bit miss, or a player's empty name) is cached
+//! as `None`: a read never re-asks it, only a reader's own [`QueryCache::ask_again`].
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -66,9 +66,20 @@ impl<K: Copy + Eq + Hash, V> QueryCache<K, V> {
         self.answered.contains_key(&key)
     }
 
-    /// Whether the server answered "unknown", as opposed to a still-pending ask.
+    /// Whether the server answered "unknown", as opposed to a still-pending ask, a re-ask too.
     pub(crate) fn answered_unknown(&self, key: K) -> bool {
-        self.answered.get(&key).is_some_and(Option::is_none)
+        self.answered.get(&key).is_some_and(Option::is_none) && !self.is_pending(key)
+    }
+
+    /// Ask again for a key the server answered "unknown", once until the new answer lands; whether
+    /// it asked.
+    pub(crate) fn ask_again(&self, key: K, ask: impl FnOnce()) -> bool {
+        let denied = self.answered.get(&key).is_some_and(Option::is_none);
+        let asked = denied && self.pending.lock_recover().insert(key);
+        if asked {
+            ask();
+        }
+        asked
     }
 
     /// Whether an ask for `key` is in flight.
@@ -183,6 +194,26 @@ mod tests {
         assert_eq!(asks, 1);
         assert!(cache.answered_unknown(1));
         assert!(!cache.answered_unknown(2));
+    }
+
+    #[test]
+    fn a_negative_asked_again_waits_on_the_new_answer() {
+        let mut cache: QueryCache<u32, &str> = QueryCache::default();
+        let mut asks = 0;
+        assert!(!cache.ask_again(1, || asks += 1), "nothing denied yet");
+        cache.insert(1, None);
+        assert!(cache.ask_again(1, || asks += 1));
+        assert!(!cache.ask_again(1, || asks += 1), "one ask in flight");
+        assert_eq!(asks, 1);
+        assert!(!cache.answered_unknown(1), "the re-ask is pending");
+        assert!(cache.get_or_ask(1, || asks += 1).is_none());
+        cache.insert(1, Some("one"));
+        assert_eq!(cache.get(1), Some(&"one"));
+        assert!(
+            !cache.ask_again(1, || asks += 1),
+            "a record is never re-asked"
+        );
+        assert_eq!(asks, 1);
     }
 
     #[test]

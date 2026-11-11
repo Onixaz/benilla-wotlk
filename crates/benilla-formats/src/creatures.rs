@@ -59,6 +59,8 @@ pub struct NpcAppearance {
     pub cape: u32,
     /// The baked body atlas under `Textures\BakedNpcTextures\`; `None` composites the body live.
     pub bake_name: Option<String>,
+    /// `Flags` (field 19); bit 0x1 lets a player in this display wear items (`0x7202c0`).
+    pub flags: u32,
 }
 
 /// One CreatureDisplayInfo row (the parts we use).
@@ -355,6 +357,23 @@ impl CreatureCatalog {
         Some((row.race, row.sex))
     }
 
+    /// A player in this display wears items, the first leg of the form gate (`0x7202c0`):
+    /// `CreatureModelData.Flags & 0x4` and its extra row's `Flags & 0x1`.
+    pub fn wears_items(&self, display_id: u32) -> bool {
+        let Some(row) = self.display.get(&display_id) else {
+            return false;
+        };
+        let model = self
+            .models
+            .get(&row.model_id)
+            .is_some_and(|m| m.flags & 0x4 != 0);
+        model
+            && self
+                .extra
+                .get(&row.extended_id)
+                .is_some_and(|e| e.flags & 0x1 != 0)
+    }
+
     /// Number of display entries (for logging/diagnostics).
     pub fn len(&self) -> usize {
         self.display.len()
@@ -596,6 +615,7 @@ fn load_creature_display_info_extra(chain: &mut Chain) -> Result<HashMap<u32, Np
                     equipment: std::array::from_fn(|i| u32_at(r, l.equipment + i).unwrap_or(0)),
                     cape: u32_at(r, l.equipment + 10).unwrap_or(0),
                     bake_name: str_at(&rs, r, l.bake_name),
+                    flags: u32_at(r, l.equipment + l.equipment_slots).unwrap_or(0),
                 },
             );
         }
@@ -793,6 +813,7 @@ mod tests {
             equipment: [0; 10],
             cape: 0,
             bake_name: None,
+            flags: 0,
         }
     }
 

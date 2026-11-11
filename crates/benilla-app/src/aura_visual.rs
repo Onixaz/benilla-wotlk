@@ -42,6 +42,9 @@ pub(crate) enum AuraNode {
     Tint([u8; 3]),
     /// Proc 11: the playback rate of the unit's own clocks, `0.0` for the whole freeze family.
     AnimRate(f32),
+    /// Proc 17: an item whose display one item slot shows; the equipment resolve owns it
+    /// (`entities::equipment::swap`).
+    ItemSwap(u32),
 }
 
 /// One proc-11 node: an effect in the unit's list, so a kit clear matches its kit (`0x744bd0`).
@@ -376,6 +379,7 @@ pub(crate) fn node_for(proc: benilla_formats::CharProc) -> Option<AuraNode> {
         // A playback rate, passed through: the reference hands it to the bone speed setter
         // unexamined.
         ty::ANIM_RATE => Some(AuraNode::AnimRate(proc.params[0])),
+        ty::ITEM_SWAP => proc.as_item_swap().map(AuraNode::ItemSwap),
         _ => None,
     }
 }
@@ -402,7 +406,8 @@ pub(crate) fn drain_aura_procs(
                 kit_id,
                 body_only,
             } => {
-                if procs.is_empty() {
+                // The item swap is the equipment resolve's, and alone builds no node set.
+                if procs.iter().all(|p| matches!(p, AuraNode::ItemSwap(_))) {
                     continue;
                 }
                 if let Ok(mut n) = nodes.get_mut(*entity) {
@@ -482,6 +487,7 @@ fn install(n: &mut AuraNodes, spell_id: u32, kit_id: u32, procs: &[AuraNode], no
                     rate,
                 },
             ),
+            AuraNode::ItemSwap(_) => {}
         }
     }
     n.retarget(now);

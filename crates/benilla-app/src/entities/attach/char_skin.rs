@@ -230,7 +230,8 @@ pub(super) fn resolve_worn_equip(
                 tabard_preview: e.tabard_preview,
             })
             .unwrap_or_default(),
-        // A clone wears its caster's displays, the only unit given an `Equipment`.
+        // A clone wears its caster's displays and an item-swapped NPC its own row's with the swap,
+        // the only units given an `Equipment`.
         EntityKind::Unit if equipment.is_some() => equipment
             .map(|e| WornEquip {
                 bodyslots: e.bodyslots,
