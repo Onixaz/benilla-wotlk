@@ -122,6 +122,13 @@ impl CharProc {
         })
     }
 
+    /// This slot as an item swap: `CharParamOne` truncated to an item id (`0x726c3c`); `None` for
+    /// another type or for id 0, which asks the item cache nothing (`0x67ca30`).
+    pub fn as_item_swap(&self) -> Option<u32> {
+        let item = self.params[1].trunc() as i32;
+        (self.ty == char_proc_type::ITEM_SWAP && item > 0).then_some(item as u32)
+    }
+
     /// This slot as a beam; `None` too when `CharParamZero` truncates to 0, which names no row and
     /// is how the data writes an unused slot. The dispatcher's chain case reads params 0, 2 and 3
     /// only (`0x726ab1`-`0x726af2`): the id through `_ftol`, not the small-int decode, as 3.3.5a
@@ -191,6 +198,10 @@ pub mod char_proc_type {
     /// fires once per arm. For 21 of the 34 kits carrying it (Heroic Strike's 324, Hamstring's
     /// 3050, Sunder's 557) it is the whole visual: they fill no effect slot.
     pub const WEAPON_TRAIL: i32 = 8;
+
+    /// Item swap: one item slot of the unit shows `CharParamOne`'s item while the effect lives,
+    /// then its own again (`0x6f8650`, `0x6f8700`). All 14 kits carrying it are state kits.
+    pub const ITEM_SWAP: i32 = 17;
 
     /// A beam, as the data keys it on channel-stage kits (Drain Life, Mind Flay). It reaches the
     /// same dispatcher case as [`CHAIN_CAST`] (`0x72697a`, byte table `0x726ccc`); behaviour keys

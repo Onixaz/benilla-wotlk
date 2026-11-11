@@ -36,8 +36,9 @@ type PartWrites<'a> = (
     Option<Mut<'a, PortraitPart>>,
 );
 
-/// Re-dress every player whose worn equipment changed. A display change is a different model and
-/// stays a teardown (`refresh_live_display`).
+/// Re-dress every player whose worn equipment changed, and every unit whose dress an item swap
+/// moved (`0x6f82d0`). A display change is a different model and stays a teardown
+/// (`refresh_live_display`).
 #[allow(clippy::type_complexity)]
 pub(in crate::entities) fn redress_player_looks(
     mut commands: Commands,
@@ -46,7 +47,8 @@ pub(in crate::entities) fn redress_player_looks(
             Entity,
             &NetEntity,
             &Equipment,
-            &mut AppliedEquipment,
+            // Absent on a unit first dressed off its display's own row.
+            Option<&mut AppliedEquipment>,
             &Children,
             Option<&benilla_world::rig_palette::RigSkin>,
             Option<&super::super::BoneAttach>,
@@ -54,6 +56,7 @@ pub(in crate::entities) fn redress_player_looks(
             Option<&mut benilla_world::rig_anim::RigPose>,
             Option<&benilla_world::interior::BodyBakeCenter>,
             Option<&benilla_world::model_fade::UnitAppearFade>,
+            Option<&super::super::mirror_image::MirrorLookOf>,
         ),
         // A torn-down player is freed, not re-dressed.
         (
@@ -98,19 +101,52 @@ pub(in crate::entities) fn redress_player_looks(
     let (sections, mut skin_composites, asset_server, mut mats, mut meshes, mut merged, mut images) =
         skin_build;
     let now = time.elapsed_secs();
-    for (entity, net, live, mut applied, children, rig, bones, mut pose, bake_center, unit_fade) in
-        &mut players
+    for (
+        entity,
+        net,
+        live,
+        applied,
+        children,
+        rig,
+        bones,
+        mut pose,
+        bake_center,
+        unit_fade,
+        mirror,
+    ) in &mut players
     {
         // Wait until every visible item has resolved, or a half-dressed atlas composites first.
-        if net.kind != EntityKind::Player || !live.settled || *live == applied.0 {
+        if !matches!(net.kind, EntityKind::Player | EntityKind::Unit) || !live.settled {
             continue;
         }
-        // Stamp first: a model-less player has nothing to re-dress and must not retry every frame.
-        applied.0 = *live;
-        let Some(dm) = net
+        let dm = net
             .display_id
-            .and_then(|disp| creatures.as_deref()?.models.get(&disp))
-        else {
+            .and_then(|disp| creatures.as_deref()?.models.get(&disp));
+        // A unit without a stamp was dressed off its display's own row.
+        let was = match (
+            applied.as_deref(),
+            dm.and_then(|d| d.npc_appearance.as_ref()),
+        ) {
+            (Some(a), _) => a.0,
+            (None, Some(npc)) if net.kind == EntityKind::Unit && mirror.is_none() => {
+                super::super::equipment::npc_equipment(npc)
+            }
+            _ => continue,
+        };
+        if *live == was && applied.is_some() {
+            continue;
+        }
+        // Stamp first: a model-less unit has nothing to re-dress and must not retry every frame.
+        match applied {
+            Some(mut a) => a.0 = *live,
+            None => {
+                commands.entity(entity).insert(AppliedEquipment(*live));
+            }
+        }
+        if *live == was {
+            continue;
+        }
+        let Some(dm) = dm else {
             continue;
         };
         let Some(parts) = dm.parts.as_deref() else {
@@ -118,12 +154,11 @@ pub(in crate::entities) fn redress_player_looks(
         };
 
         let worn = resolve_worn_equip(net, Some(live), Some(dm));
-        // Players only: a clone's look is never re-dressed in place.
         let tables = super::char_skin::LookTables {
             sections: sections.as_deref(),
             characters: characters.as_deref(),
         };
-        let look = resolve_char_look(net, Some(dm), entity, &stores, None, Some(live), tables);
+        let look = resolve_char_look(net, Some(dm), entity, &stores, mirror, Some(live), tables);
         // A re-dress is the reference's incremental composite: the new geosets apply at once and
         // the atlas composites that frame when its sections are resident, never gated or withheld.
         // So it composites here, in the frame, taking over a running composite of the same look;
@@ -411,6 +446,7 @@ mod tests {
             equipment: [0; 10],
             cape: 0,
             bake_name: None,
+            flags: 0,
         });
         app.insert_resource(Creatures {
             catalog: Default::default(),

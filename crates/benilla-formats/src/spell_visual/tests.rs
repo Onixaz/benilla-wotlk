@@ -880,6 +880,21 @@ fn a_zero_duration_trail_proc_is_no_trail() {
     assert!(proc.as_weapon_trail().is_none());
 }
 
+/// The type-17 arm reads `CharParamOne` truncated; id 0 and other types swap nothing.
+#[test]
+fn an_item_swap_proc_reads_param_one() {
+    let swap = |ty, one| CharProc {
+        ty,
+        params: [0.0, one, 0.0, 0.0],
+    };
+    assert_eq!(
+        swap(char_proc_type::ITEM_SWAP, 33292.9).as_item_swap(),
+        Some(33292)
+    );
+    assert_eq!(swap(char_proc_type::ITEM_SWAP, 0.0).as_item_swap(), None);
+    assert_eq!(swap(char_proc_type::ALPHA, 33292.0).as_item_swap(), None);
+}
+
 #[test]
 fn only_type_eight_arms_a_trail() {
     for ty in [

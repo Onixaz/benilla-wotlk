@@ -754,7 +754,7 @@ pub(super) fn attach_entity_visuals(
                 Transform::default()
             };
             // What the visual was dressed with, for `redress_player_looks` to diff.
-            if let (EntityKind::Player, Some(e)) = (net.kind, equipment) {
+            if let (EntityKind::Player | EntityKind::Unit, Some(e)) = (net.kind, equipment) {
                 commands
                     .entity(entity)
                     .insert(super::equipment::AppliedEquipment(*e));

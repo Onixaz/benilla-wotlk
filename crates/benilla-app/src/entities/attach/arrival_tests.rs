@@ -338,6 +338,7 @@ fn a_baked_npc_skin_never_waits_on_the_compositor() {
         equipment: [0; 10],
         cape: 0,
         bake_name: bake_name.map(str::to_owned),
+        flags: 0,
     };
     app.world_mut().insert_resource(Creatures {
         catalog: Default::default(),
