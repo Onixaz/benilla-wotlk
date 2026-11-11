@@ -381,6 +381,12 @@ pub(in crate::entities) fn resolve_equipment(
         let mut swaps = swaps.as_deref_mut();
         if let Some(unit_edges) = &unit_edges {
             apply_swap_edges(&mut swaps, &mut fresh, unit_edges);
+            // Each new effect asks the item cache itself, a denied item again (`0x6f86d8`).
+            for edge in unit_edges {
+                if let SwapEdge::Begin { item, .. } = *edge {
+                    templates.ask_template(item, s.object_guid().unwrap_or(0), &net);
+                }
+            }
         }
         let mut swaps = swaps.or(fresh.as_mut());
         if let Some(sw) = swaps.as_deref_mut() {
@@ -1319,6 +1325,41 @@ mod tests {
         app.update();
         assert_eq!(helm(&app, player), (0, None), "hidden again");
         assert_eq!(chest(&app), 778, "the other kit's swap stays");
+    }
+
+    /// A denied item is asked again by the next effect, which waits on that answer; a denial still
+    /// dresses the item's `Item.dbc` row.
+    #[test]
+    fn a_denied_item_is_asked_again_by_the_next_effect() {
+        let (mut app, player, rx) = swap_world(0);
+        let asks = |rx: &crossbeam_channel::Receiver<ClientCommand>| {
+            rx.try_iter()
+                .filter(|c| matches!(c, ClientCommand::ItemQuery { entry: 500, .. }))
+                .count()
+        };
+        swap_begin(&mut app, player, 44212, 8381, 500);
+        app.update();
+        assert_eq!(asks(&rx), 1);
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(500, None);
+        app.update();
+        assert_eq!(helm(&app, player), (777, Some(777)), "the denial applies");
+        assert_eq!(asks(&rx), 0, "the polling read keeps the denial");
+        app.world_mut()
+            .write_message(crate::creature_anim::KitEffectClear {
+                entity: player,
+                kit_id: 8381,
+            });
+        swap_begin(&mut app, player, 44212, 8382, 500);
+        app.update();
+        assert_eq!(asks(&rx), 1, "the next effect asks again");
+        assert_eq!(helm(&app, player), (900, Some(900)), "and waits on it");
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(500, None);
+        app.update();
+        assert_eq!(helm(&app, player), (777, Some(777)));
     }
 
     /// An unmarked store edit must not land, as the gate skips the unit; a marked one must.

@@ -705,11 +705,8 @@ impl Plugin for EntitiesPlugin {
         .add_systems(
             Update,
             (
-                // Equipment resolution creates the item display entries built the same frame.
-                // The nested tuples are unordered groups: the outer tuple is at `chain()`'s
-                // 20-element ceiling.
-                (resolve_equipment, resolve_corpse_equipment),
-                // Spell effects and missiles create `SpellFx` entries too.
+                // Spell effects and missiles create `SpellFx` entries. The nested tuples are
+                // unordered groups: the outer tuple is at `chain()`'s 20-element ceiling.
                 resolve_spell_fx,
                 (
                     run_missile_motion.run_if(any_with_component::<MissileMotion>),
@@ -717,6 +714,9 @@ impl Plugin for EntitiesPlugin {
                 )
                     .chain(),
                 (spawn_missiles, mark_forced_missiles).chain(),
+                // Equipment resolution creates the item display entries built the same frame,
+                // after the missiles, whose targeting kits' item swaps it dresses that frame.
+                (resolve_equipment, resolve_corpse_equipment),
                 // The dest-anchored lane's three independent producers also create entries.
                 (
                     (record_spells_in_transit, arm_ground_effects).chain(),

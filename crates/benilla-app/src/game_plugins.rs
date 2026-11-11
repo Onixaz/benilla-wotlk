@@ -626,6 +626,63 @@ pub(crate) mod schedule_tests {
         );
     }
 
+    /// Every kit play's node writer runs before the dress resolve, so a CharProc 17 item swap
+    /// dresses the frame its kit plays, a missile's targeting kit too (`0x702906`).
+    #[test]
+    fn every_kit_node_writer_runs_before_the_dress_resolve() {
+        let mut app = headless_client();
+        let writers = resource_writers::<bevy::ecs::message::Messages<crate::aura_visual::AuraProc>>(
+            &mut app, Update,
+        );
+        let c = census(&mut app, Update, SyncPoints::Declared);
+        if !type_names_available(&c) {
+            eprintln!("skipped: this build carries no system names");
+            return;
+        }
+        let keys = |name: &str| -> Vec<SystemKey> {
+            c.systems
+                .iter()
+                .filter(|(_, s)| s.name.ends_with(name))
+                .map(|(k, _)| *k)
+                .collect()
+        };
+        let resolve = keys("::resolve_equipment");
+        assert_eq!(resolve.len(), 1, "one dress resolve");
+        let mut after: HashMap<SystemKey, Vec<SystemKey>> = HashMap::new();
+        for (a, b) in &c.dependencies {
+            after.entry(*a).or_default().push(*b);
+        }
+        let reaches = |from: SystemKey| {
+            let (mut seen, mut stack) = (HashSet::new(), vec![from]);
+            while let Some(k) = stack.pop() {
+                if k == resolve[0] {
+                    return true;
+                }
+                if seen.insert(k) {
+                    stack.extend(after.get(&k).into_iter().flatten().copied());
+                }
+            }
+            false
+        };
+        let names: Vec<&str> = writers
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .filter(|n| n.contains("benilla_app::"))
+            .collect();
+        assert!(
+            names.iter().any(|n| n.ends_with("::move_missiles")),
+            "the missile flight plays a targeting kit: {names:?}"
+        );
+        for name in names {
+            for key in keys(name) {
+                assert!(
+                    reaches(key),
+                    "{name} writes kit nodes after the dress resolve"
+                );
+            }
+        }
+    }
+
     /// One row of the class table: the type's name for the message, and its `TypeId`.
     type ClassRow = (&'static str, fn() -> TypeId);
 
