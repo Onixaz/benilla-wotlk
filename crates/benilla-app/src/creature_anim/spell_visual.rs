@@ -396,6 +396,31 @@ pub(crate) fn arm_targeting_kit(
     }
 }
 
+/// A reached ground-aim targeting kit at its point: its area-subset models loop there while the
+/// caster holds them (`0x744ac0`), and its sound rings there (`0x74547b`).
+fn play_point_targeting_kit(
+    caster: Entity,
+    kit: &VisualKit,
+    at: Vec3,
+    visuals: &SpellVisualCatalog,
+    sounds: &mut MessageWriter<SpellKitSound>,
+    bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
+) {
+    for (path, attach, scale) in area_kit_models(visuals, kit) {
+        bursts.write(crate::entities::dest_fx::GroundBurst {
+            path: path.to_string(),
+            pos: at,
+            attach,
+            scale,
+            turn: Quat::IDENTITY,
+            held_by: Some(caster),
+        });
+    }
+    if let Some(kit_sound) = kit.sound {
+        sounds.write(SpellKitSound::PlayAt { pos: at, kit_sound });
+    }
+}
+
 /// A kit's effect models on a unit: its slots, its weapon effects (`0x73a6c0`) and its
 /// `SpellVisualKitModelAttach` rows (`0x745a7e`); one naming no model path is skipped.
 fn resolve_kit_effects(visuals: &SpellVisualCatalog, kit: &VisualKit) -> Vec<FxSlot> {
@@ -493,8 +518,9 @@ enum WaitPlay {
     Precast { kit: Box<VisualKit>, seq: u64 },
     /// A channel's kit, its hold, loop and beam.
     Channel { kit: Box<VisualKit> },
-    /// A missile's targeting kit on its target, held until the flight ends.
-    Targeting { kit_id: u32 },
+    /// A missile's targeting kit, on its target or at a ground aim on its caster (`0x702941`); the
+    /// replay carries no fade time, so the flight's end never reaps it (`0x6ff410`).
+    Targeting { kit_id: u32, at: Option<Vec3> },
 }
 
 /// One play held until a beam reaches its unit, the unit's delayed kit (`0x728050`).
@@ -559,10 +585,31 @@ impl BeamKitWaits {
         self.hold(caster, spell_id, sequence, what, now);
     }
 
-    /// A missile's targeting kit, held on its target under the ordinary key.
-    pub(crate) fn hold_targeting(&mut self, target: Entity, spell_id: u32, kit_id: u32, now: f32) {
-        let what = WaitPlay::Targeting { kit_id };
-        self.hold(target, spell_id, NO_BEAM_KEY, what, now);
+    /// A missile's targeting kit, held on its target or, with its ground aim, on its caster, under
+    /// the ordinary key.
+    pub(crate) fn hold_targeting(
+        &mut self,
+        unit: Entity,
+        spell_id: u32,
+        kit_id: u32,
+        at: Option<Vec3>,
+        now: f32,
+    ) {
+        let what = WaitPlay::Targeting { kit_id, at };
+        self.hold(unit, spell_id, NO_BEAM_KEY, what, now);
+    }
+
+    /// The reached targeting plays held at a point: `(unit, kit, point)`.
+    #[cfg(test)]
+    pub(crate) fn reached_targeting_points(&self) -> Vec<(Entity, u32, Vec3)> {
+        let point = |w: &BeamKitWait| match w.what {
+            WaitPlay::Targeting {
+                kit_id,
+                at: Some(at),
+            } if w.reached => Some((w.entity, kit_id, at)),
+            _ => None,
+        };
+        self.waits.iter().filter_map(point).collect()
     }
 
     /// The reached kit and area plays, taken out; an unreached play past its deadline is dropped
@@ -881,6 +928,7 @@ fn play_models_at(
                 attach,
                 scale: point_scale(visuals, effect),
                 turn: Quat::IDENTITY,
+                held_by: None,
             });
         }
     }
@@ -1433,9 +1481,17 @@ pub(super) fn route_cast_visuals(
                 &visuals.0,
                 &mut out,
             ),
-            WaitPlay::Targeting { kit_id } => {
-                if let Some(kit) = visuals.0.kit(kit_id) {
-                    arm_targeting_kit(w.entity, w.spell_id, kit, &visuals.0, out.fx, out.sounds);
+            WaitPlay::Targeting { kit_id, at } => {
+                let Some(kit) = visuals.0.kit(kit_id) else {
+                    continue;
+                };
+                match at {
+                    None => {
+                        arm_targeting_kit(w.entity, w.spell_id, kit, &visuals.0, out.fx, out.sounds)
+                    }
+                    Some(at) => {
+                        play_point_targeting_kit(w.entity, kit, at, &visuals.0, out.sounds, bursts)
+                    }
                 }
             }
             WaitPlay::AuraState => {}

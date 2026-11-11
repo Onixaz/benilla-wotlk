@@ -2953,6 +2953,72 @@ fn a_held_area_kit_plays_on_its_keyed_connect() {
     assert!(app.world().resource::<super::BeamKitWaits>().is_empty());
 }
 
+/// A ground-aim targeting kit held on its caster plants its area-subset models at its point once
+/// the beam reaches the caster, held by the caster rather than the flight (`0x702941`, `0x744ac0`).
+#[test]
+fn a_held_ground_targeting_kit_plants_at_its_point_on_the_casters_reach() {
+    const SPELL: u32 = 9;
+    const KIT: u32 = 8729;
+    const EFFECT: u32 = 3807;
+    let mut app = app();
+    app.init_resource::<super::BeamKitWaits>();
+    let mut slots = [None; 9];
+    slots[2] = Some(EFFECT);
+    slots[3] = Some(EFFECT + 1);
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
+        HashMap::new(),
+        HashMap::from([(
+            KIT,
+            VisualKit {
+                id: KIT,
+                effect_slots: slots,
+                sound: Some(77),
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([
+            (EFFECT, "Spells\\Base.m2".to_string()),
+            (EFFECT + 1, "Spells\\Hand.m2".to_string()),
+        ]),
+    )));
+    let caster = app.world_mut().spawn_empty().id();
+    let at = Vec3::new(24.0, 0.0, 3.0);
+    app.world_mut()
+        .resource_mut::<super::BeamKitWaits>()
+        .hold_targeting(caster, SPELL, KIT, Some(at), 0.0);
+    let planted = |app: &mut App| -> Vec<(String, Vec3, Option<Entity>)> {
+        app.world_mut()
+            .resource_mut::<Messages<crate::entities::dest_fx::GroundBurst>>()
+            .drain()
+            .map(|b| (b.path, b.pos, b.held_by))
+            .collect()
+    };
+    let rang_at = |app: &mut App| -> Vec<Vec3> {
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitSound>>()
+            .drain()
+            .filter_map(|s| match s {
+                SpellKitSound::PlayAt { pos, kit_sound: 77 } => Some(pos),
+                _ => None,
+            })
+            .collect()
+    };
+    app.update();
+    assert!(planted(&mut app).is_empty(), "held");
+    assert!(rang_at(&mut app).is_empty(), "its sound waits too");
+    app.world_mut()
+        .resource_mut::<super::BeamKitWaits>()
+        .reach(caster, SPELL, super::NO_BEAM_KEY);
+    app.update();
+    assert_eq!(
+        planted(&mut app),
+        vec![("Spells\\Base.m2".to_string(), at, Some(caster))],
+        "the base slot alone, at the point, held by the caster"
+    );
+    assert_eq!(rang_at(&mut app), vec![at]);
+    assert!(app.world().resource::<super::BeamKitWaits>().is_empty());
+}
+
 /// An aura's flag-0x1 state kit on a beam spell waits for the beam to reach its unit before it
 /// arms (`0x72af60` via `0x724c86`); on a spell with no beam it arms at once.
 #[test]

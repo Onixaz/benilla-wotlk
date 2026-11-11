@@ -640,6 +640,7 @@ fn resist_burst(at: Vec3, turn: Quat, out: &mut ArrivalOut) {
         attach: None,
         scale,
         turn: Quat::from_rotation_y(turn.to_euler(EulerRot::YXZ).0),
+        held_by: None,
     });
 }
 
@@ -889,6 +890,14 @@ fn end_flight(
     commands.entity(entity).despawn();
 }
 
+/// Whether an entity kind is a unit, the type a kit play's owner lookup asks for.
+fn is_unit_kind(kind: benilla_protocol::EntityKind) -> bool {
+    matches!(
+        kind,
+        benilla_protocol::EntityKind::Player | benilla_protocol::EntityKind::Unit
+    )
+}
+
 /// Hold column 22's kit on the target at the fire, its models and sound (`0x702906`).
 fn arm_targeting_kit(
     target: Entity,
@@ -899,12 +908,7 @@ fn arm_targeting_kit(
     let visuals = out.visuals.as_deref()?;
     let kit = visuals.0.kit(kit_id)?;
     // On a unit, a beam spell's flag-0x1 kit waits for the beam to reach it (`0x72af60`).
-    let is_unit = out.kinds.get(target).is_ok_and(|n| {
-        matches!(
-            n.kind,
-            benilla_protocol::EntityKind::Player | benilla_protocol::EntityKind::Unit
-        )
-    });
+    let is_unit = out.kinds.get(target).is_ok_and(|n| is_unit_kind(n.kind));
     if let (Some(waits), Some(spells)) = (out.waits.as_mut(), out.spells.as_deref()) {
         if is_unit
             && crate::creature_anim::spell_visual::kit_waits_for_beam(
@@ -914,8 +918,9 @@ fn arm_targeting_kit(
             let now = out.time.elapsed_secs();
             waits
                 .bypass_change_detection()
-                .hold_targeting(target, spell_id, kit_id, now);
-            return Some(target);
+                .hold_targeting(target, spell_id, kit_id, None, now);
+            // The replay carries no fade time, so the flight's end has nothing to reap (`0x6ff410`).
+            return None;
         }
     }
     crate::creature_anim::arm_targeting_kit(
@@ -932,6 +937,8 @@ fn arm_targeting_kit(
 /// Hold column 22's kit at a flight's ground aim, on copy 0 alone (`0x702941`): its point models and
 /// its sound there, the area subset of a kit played at a point (`0x74547b`).
 fn arm_point_targeting_kit(
+    caster: Entity,
+    spell_id: u32,
     at: Vec3,
     kit_id: u32,
     commands: &mut Commands,
@@ -943,6 +950,22 @@ fn arm_point_targeting_kit(
     let Some(kit) = visuals.0.kit(kit_id) else {
         return Vec::new();
     };
+    // Only a unit caster plays it (`0x7028e3`).
+    if !out.kinds.get(caster).is_ok_and(|n| is_unit_kind(n.kind)) {
+        return Vec::new();
+    }
+    // The play is the caster's, so a beam spell's flag-0x1 kit waits for the beam to reach it with
+    // its point (`0x72af60`).
+    if let (Some(waits), Some(spells)) = (out.waits.as_mut(), out.spells.as_deref()) {
+        if crate::creature_anim::spell_visual::kit_waits_for_beam(spells, &visuals.0, spell_id, kit)
+        {
+            let now = out.time.elapsed_secs();
+            waits
+                .bypass_change_detection()
+                .hold_targeting(caster, spell_id, kit_id, Some(at), now);
+            return Vec::new();
+        }
+    }
     if let Some(kit_sound) = kit.sound {
         out.kit_sounds
             .write(SpellKitSound::PlayAt { pos: at, kit_sound });
@@ -1040,7 +1063,8 @@ fn launch_go(
         };
         let mut targeting_points = match aim_at {
             Aim::Ground(at) if shape.targeting_kit != 0 && arrive_in > 0.0 => {
-                arm_point_targeting_kit(at, shape.targeting_kit, commands, out)
+                let (caster, spell_id) = (go.spawn.caster, go.spawn.spell_id);
+                arm_point_targeting_kit(caster, spell_id, at, shape.targeting_kit, commands, out)
             }
             _ => Vec::new(),
         };
@@ -2345,6 +2369,13 @@ mod tests {
             ]),
         )));
         let caster = caster(&mut app, Vec3::ZERO);
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(crate::net::NetEntity {
+                kind: benilla_protocol::EntityKind::Unit,
+                display_id: None,
+                scale: 1.0,
+            });
         let at = Vec3::new(24.0, 0.0, 0.0);
         let mut spawn = ground_go(caster, at);
         spawn.shape.targeting_kit = KIT;
@@ -2618,7 +2649,7 @@ mod tests {
     }
 
     /// On a beam spell, a flag-0x1 targeting kit on a unit target waits for the beam to reach the
-    /// target (`0x72af60`), and the flight still reaps it on its end.
+    /// target (`0x72af60`), and the flight keeps nothing to reap: the replay is not its (`0x6ff410`).
     #[test]
     fn a_beam_spells_flag_1_targeting_kit_waits_for_the_beam() {
         use benilla_formats::{
@@ -2702,6 +2733,114 @@ mod tests {
         assert!(!rang(&mut app), "the targeting kit waits");
         let waits = app.world().resource::<crate::creature_anim::BeamKitWaits>();
         assert!(!waits.is_empty(), "held on the target");
+        let mut flights = app.world_mut().query::<&Missile>();
+        assert!(
+            flights.iter(app.world()).all(|m| m.targeting.is_none()),
+            "no reap"
+        );
+    }
+
+    /// On a beam spell, a ground flight's flag-0x1 targeting kit waits on the caster with its aim
+    /// (`0x702941`, `0x72af60`): nothing plants at launch and the flight's end leaves the wait.
+    #[test]
+    fn a_beam_spells_ground_targeting_kit_waits_on_the_caster_with_its_point() {
+        use benilla_formats::{
+            char_proc_type, kit_flag, CharProc, SpellCatalog, SpellDisplay, SpellVisualCatalog,
+            VisualKit, VisualStages,
+        };
+        const KIT: u32 = 8729;
+        const CAST_KIT: u32 = 900;
+        const VISUAL: u32 = 6;
+        const EFFECT: u32 = 3807;
+        let mut app = flying_app();
+        app.init_resource::<crate::creature_anim::BeamKitWaits>();
+        let mut slots = [None; 9];
+        slots[2] = Some(EFFECT);
+        app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
+            HashMap::from([(
+                VISUAL,
+                VisualStages {
+                    cast: CAST_KIT,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::from([
+                (
+                    CAST_KIT,
+                    VisualKit {
+                        id: CAST_KIT,
+                        char_proc_slots: [
+                            Some(CharProc {
+                                ty: char_proc_type::CHAIN_CAST,
+                                params: [1.0, 0.0, 0.0, 0.0],
+                            }),
+                            None,
+                            None,
+                            None,
+                        ],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    KIT,
+                    VisualKit {
+                        id: KIT,
+                        effect_slots: slots,
+                        flags: kit_flag::BEAM_WAIT,
+                        ..Default::default()
+                    },
+                ),
+            ]),
+            HashMap::from([(EFFECT, "Spells\\Base.m2".to_string())]),
+        )));
+        let caster = caster(&mut app, Vec3::ZERO);
+        app.world_mut()
+            .entity_mut(caster)
+            .insert(crate::net::NetEntity {
+                kind: benilla_protocol::EntityKind::Unit,
+                display_id: None,
+                scale: 1.0,
+            });
+        let at = Vec3::new(24.0, 0.0, 0.0);
+        let mut spawn = ground_go(caster, at);
+        spawn.shape.targeting_kit = KIT;
+        app.insert_resource(crate::ui_action::Spells {
+            catalog: SpellCatalog::from_displays(HashMap::from([(
+                spawn.spell_id,
+                SpellDisplay {
+                    visual: VISUAL,
+                    ..Default::default()
+                },
+            )])),
+            ..crate::ui_action::Spells::empty_for_tests()
+        });
+        let spell_id = spawn.spell_id;
+        app.world_mut().write_message(spawn);
+        step(&mut app, 0.016);
+        let planted = |app: &mut App| {
+            app.world_mut()
+                .query_filtered::<(), With<crate::entities::dest_fx::GroundFx>>()
+                .iter(app.world())
+                .count()
+        };
+        assert_eq!(planted(&mut app), 0, "nothing plants at the launch");
+        fly_out(&mut app);
+        assert!(missiles(&mut app).is_empty(), "the flight is over");
+        // The beam reaching the caster now still finds the play with its point.
+        let mut waits = app
+            .world_mut()
+            .resource_mut::<crate::creature_anim::BeamKitWaits>();
+        assert!(!waits.is_empty(), "held on the caster past the flight");
+        waits.reach(
+            caster,
+            spell_id,
+            crate::creature_anim::spell_visual::NO_BEAM_KEY,
+        );
+        assert_eq!(
+            waits.reached_targeting_points(),
+            vec![(caster, KIT, at)],
+            "its point kept"
+        );
     }
 
     /// A ground-following flight with no terrain streamed flies its line and lands on time.
