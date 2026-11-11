@@ -168,6 +168,8 @@ impl Plugin for CameraShakePlugin {
                 Update,
                 (fire_shakes, fire_kit_shakes)
                     .in_set(WorldStage::Present)
+                    // A missile's targeting kit shakes from the visuals set.
+                    .after(crate::entities::EntityVisualsSet)
                     .run_if(not(resource_exists::<crate::run_mode::CaptureMode>)),
             );
     }

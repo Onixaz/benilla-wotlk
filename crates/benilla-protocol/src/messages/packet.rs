@@ -779,6 +779,8 @@ pub enum ServerPacket {
     },
     /// `SMSG_PET_CAST_FAILED`: the pet's cast refusal, in `SMSG_CAST_RESULT`'s body and vocabulary.
     PetCastFailed {
+        /// The pet's cast count, which its end-cast matches (`0x806c30`).
+        cast_count: u8,
         spell_id: u32,
         outcome: CastOutcome,
     },
@@ -859,6 +861,8 @@ pub enum ServerPacket {
         cast_count: u8,
         spell_id: u32,
         reason: u8,
+        /// The reason byte as sent, which the end-cast tests raw (`0x7feeb0`).
+        wire_reason: u8,
     },
     /// `SMSG_SPELL_DELAYED`: pushback; a hit extended the caster's cast by `delay_ms`.
     SpellDelayed {

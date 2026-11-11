@@ -168,12 +168,16 @@ impl UnitAuras {
     }
     /// Any slot holds `spell_id`, an effect applied or not (`0x7282a0`).
     pub(crate) fn holds_spell(&self, spell_id: u32) -> bool {
-        self.has_applied(spell_id) || self.inactive.values().any(|&s| s == spell_id)
+        self.by_slot.values().any(|a| a.spell_id == spell_id)
+            || self.inactive.values().any(|&s| s == spell_id)
     }
 
     /// A slot holds `spell_id` with an effect bit set (`0x728300`).
     pub(crate) fn has_applied(&self, spell_id: u32) -> bool {
-        self.by_slot.values().any(|a| a.spell_id == spell_id)
+        use benilla_protocol::messages::AURA_UPDATE_EFF_INDEX_MASK;
+        self.by_slot
+            .values()
+            .any(|a| a.spell_id == spell_id && a.flags & AURA_UPDATE_EFF_INDEX_MASK != 0)
     }
 
     /// Live auras by ascending slot.
@@ -190,8 +194,19 @@ impl UnitAuras {
     /// tests.
     #[cfg(test)]
     pub(crate) fn of(caster: u64, auras: &[(u8, u32, u8)]) -> Self {
+        let rows: Vec<_> = auras.iter().map(|&(s, id, f)| (s, id, f, caster)).collect();
+        Self::of_rows(&rows)
+    }
+    /// A table of untimed `(slot, spell, caster)` auras, flags 1, applied in one batch, for tests.
+    #[cfg(test)]
+    pub(crate) fn of_casters(auras: &[(u8, u32, u64)]) -> Self {
+        let rows: Vec<_> = auras.iter().map(|&(s, id, c)| (s, id, 1, c)).collect();
+        Self::of_rows(&rows)
+    }
+    #[cfg(test)]
+    fn of_rows(auras: &[(u8, u32, u8, u64)]) -> Self {
         let mut t = Self::default();
-        for &(slot, spell_id, flags) in auras {
+        for &(slot, spell_id, flags, caster) in auras {
             let a = UnitAura {
                 slot,
                 spell_id,

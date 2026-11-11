@@ -36,6 +36,9 @@ pub(crate) struct RemoteView {
     pub(crate) feet: Vec3,
     /// Its framing pivot height above the feet, as [`head_height`] gives it.
     pub(crate) pivot_height: f32,
+    /// Its facing, the yaw of its rotation, which a unit builds from its wire yaw alone; what
+    /// `GetPlayerFacing` (`0x60a490`) answers while the camera follows it.
+    pub(crate) facing: f32,
 }
 
 impl RemoteView {
@@ -110,6 +113,7 @@ pub(super) fn publish_view_subject(
             entity,
             feet: t.translation,
             pivot_height: head_height(pivot, net.map_or(1.0, |n| n.scale)),
+            facing: t.rotation.to_euler(EulerRot::YXZ).0,
         })
         .or_else(|| vehicle.as_deref().and_then(|v| v.0));
 

@@ -602,7 +602,9 @@ pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 24] = [
 
 /// The Region method map: the names every region leaf reaches on a miss, 3.3.5a's `SetSize` and
 /// `GetSize` (`0x49d7a0`, `0x49d6f0`, registrar `0xac1480`) among them.
-pub(crate) const REGION_MAP_METHODS: [&str; 24] = [
+pub(crate) const REGION_MAP_METHODS: [&str; 26] = [
+    "IsProtected",
+    "CanChangeProtectedState",
     "GetObjectType",
     "IsObjectType",
     "GetName",
@@ -1333,6 +1335,18 @@ impl UiScript {
         if !moved {
             model.set_epoch(quiet);
         }
+    }
+
+    /// `GetPlayerFacing`'s answer: the facing of what the camera follows, our body, a far-sight
+    /// subject or a vehicle; `None` while no camera exists, which reads 0. No extract reads it.
+    pub fn set_camera_target_facing(&mut self, facing: Option<f32>) {
+        self.model_ref().camera_facing.set(facing);
+    }
+
+    /// Run `GetTime()` on from the host's last clock set, on every read, as the reference's OS
+    /// clock does (`0x6081f0`); off, it holds between the host's sets, as a test wants.
+    pub fn set_live_clock(&mut self, live: bool) {
+        self.model_ref().clock_live.set(live);
     }
 
     /// Turn `MinimapCompassTexture` to `radians` as the minimap frame's compass rotation

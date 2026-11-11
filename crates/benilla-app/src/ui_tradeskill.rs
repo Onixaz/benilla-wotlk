@@ -813,7 +813,7 @@ fn drain_trade_skill(
                     ladder.send(ev.spell_id, &targeting.context(), CastCommit::Spell);
                 }
             }
-            CastEventKind::Fail => script.trade_skill_cast_failed(ev.spell_id),
+            CastEventKind::Fail { .. } => script.trade_skill_cast_failed(ev.spell_id),
             _ => {}
         }
     }

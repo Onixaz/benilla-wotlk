@@ -1,5 +1,8 @@
 //! `SpellVisualKit` column 37, the kit flags benilla reads.
 
+/// On a spell whose visual draws a beam, the play waits for the beam to reach the unit (`0x72af8b`).
+pub const BEAM_WAIT: u32 = 0x1;
+
 /// The kit's anim plays as authored: play flag `0x2`, no Special remap, no model fallback (`0x73b198`).
 pub const RAW_ANIM: u32 = 0x4;
 /// The kit's anim skips the unit's tier resolve but keeps the Special remap: play flag `0x4` (`0x73b1a6`).

@@ -42,13 +42,19 @@ fn lightning() -> ChainEffect {
 }
 
 fn beam_app() -> App {
+    beam_app_area_flags(0)
+}
+
+/// [`beam_app`] with the area kit's flags.
+fn beam_app_area_flags(area_flags: u32) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()));
     app.init_asset::<Image>();
     app.init_resource::<GuidIndex>();
     app.init_resource::<ChainLocations>();
     app.add_message::<ChainProcPlay>()
-        .add_message::<SpellKitFx>()
+        .add_message::<SpellEffectClear>()
+        .add_message::<KitEffectClear>()
         .add_message::<SpellGoTargets>()
         .add_message::<DelayedAreaKit>();
     app.insert_resource(SpellVisuals(
@@ -84,6 +90,7 @@ fn beam_app() -> App {
                     AREA_KIT,
                     VisualKit {
                         id: AREA_KIT,
+                        flags: area_flags,
                         ..Default::default()
                     },
                 ),
@@ -128,11 +135,33 @@ fn beam_app() -> App {
     app
 }
 
+/// Index a test object under a guid of its own, as the object manager does.
+fn streamed(app: &mut App, store: ObjectStore) -> Entity {
+    let e = app.world_mut().spawn(store).id();
+    let guid = 0xF130_0000_0000_0000 | u64::from(e.index_u32());
+    app.world_mut().entity_mut(e).insert(Guid(guid));
+    app.world_mut()
+        .resource_mut::<GuidIndex>()
+        .0
+        .insert(guid, e);
+    e
+}
+
 /// A streamed unit: an empty descriptor store is all the spawner reads off a target.
 fn unit(app: &mut App) -> Entity {
-    app.world_mut()
-        .spawn(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[])))
-        .id()
+    streamed(
+        app,
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[])),
+    )
+}
+
+/// A beam's nodes as the entities their guids name now.
+fn node_entities(app: &App, nodes: &[u64]) -> Vec<Entity> {
+    let index = app.world().resource::<GuidIndex>();
+    nodes
+        .iter()
+        .map(|g| index.0.get(g).copied().unwrap_or(Entity::PLACEHOLDER))
+        .collect()
 }
 
 /// A cast-stage play of chain id 1, flag clear.
@@ -147,7 +176,16 @@ fn play(entity: Entity, spell_id: u32) -> ChainProcPlay {
             ty: char_proc_type::CHAIN_CAST,
         },
         kit_id: BEAM_KIT,
+        from: None,
     }
+}
+
+/// A streamed unit whose store says so (`OBJECT_FIELD_TYPE` 0x9), which the guid arm resolves.
+fn typed_unit(app: &mut App) -> Entity {
+    streamed(
+        app,
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(2, 0x9)])),
+    )
 }
 
 /// Every live beam as `(nodes, [(hop start, hop end)], expiry, persistent)`.
@@ -158,7 +196,7 @@ fn beams(app: &mut App) -> Vec<(Vec<Entity>, Vec<(f32, f32)>, f32, bool)> {
         .iter(app.world())
         .map(|b| {
             (
-                b.nodes.clone(),
+                node_entities(app, &b.nodes),
                 b.bolts.iter().map(|x| (x.start, x.end)).collect(),
                 b.expiry,
                 b.persistent,
@@ -305,7 +343,7 @@ fn two_plays_in_one_frame_share_no_hops() {
 }
 
 #[test]
-fn only_a_persistent_beam_answers_the_kit_reap() {
+fn only_a_persistent_beam_answers_the_spell_clear() {
     for persistent in [false, true] {
         let mut app = beam_app();
         let (caster, t1) = (unit(&mut app), unit(&mut app));
@@ -319,16 +357,15 @@ fn only_a_persistent_beam_answers_the_kit_reap() {
         assert_eq!(beams(&mut app).len(), 1);
         assert_eq!(beams(&mut app)[0].3, persistent);
 
-        app.world_mut().write_message(SpellKitFx::Reap {
+        app.world_mut().write_message(SpellEffectClear {
             entity: caster,
             spell_id: CHAIN_SPELL,
-            class: FxClass::Hold,
         });
         app.update();
         assert_eq!(
             beams(&mut app).len(),
             usize::from(!persistent),
-            "persistent={persistent}: the reap takes the channel beam and spares the cast one"
+            "persistent={persistent}: the clear takes the channel beam and spares the cast one"
         );
     }
 }
@@ -433,7 +470,11 @@ fn a_saved_location_draws_one_bolt_to_the_ground_and_plays_the_area_kit() {
         .query::<&ChainBeam>()
         .single(app.world())
         .expect("one beam");
-    assert_eq!(beam.nodes, vec![caster], "no unit target");
+    assert_eq!(
+        node_entities(&app, &beam.nodes),
+        vec![caster],
+        "no unit target"
+    );
     assert_eq!(beam.location, Some(dest));
     assert_eq!(beam.bolts.len(), 1);
     let kits: Vec<u32> = app
@@ -443,6 +484,64 @@ fn a_saved_location_draws_one_bolt_to_the_ground_and_plays_the_area_kit() {
         .map(|k| k.kit_id)
         .collect();
     assert_eq!(kits, vec![AREA_KIT]);
+}
+
+/// A flag-0x1 area kit waits on the caster under the beam's sequence, the first bolt's attachment;
+/// the caster's next beam takes the sequence 2 up (`0x726b8e`, `0x726b96`, `0x7fa59b`).
+#[test]
+fn a_location_beams_flag_1_area_kit_waits_under_the_beams_sequence() {
+    let mut app = beam_app_area_flags(benilla_formats::kit_flag::BEAM_WAIT);
+    app.init_resource::<BeamKitWaits>();
+    let caster = unit(&mut app);
+    let t1 = unit(&mut app);
+    let dest = Vec3::new(5.0, 1.0, -7.0);
+    let attachments = |app: &mut App| -> Vec<Vec<i32>> {
+        app.world_mut()
+            .query::<&ChainBeam>()
+            .iter(app.world())
+            .map(|b| b.bolts.iter().map(|x| x.attachment).collect())
+            .collect()
+    };
+    // A unit beam first: its first bolt carries sequence 0, the rest none.
+    app.world_mut()
+        .entity_mut(caster)
+        .insert(ChainHops(vec![t1, caster]));
+    app.world_mut().write_message(play(caster, CHAIN_SPELL));
+    app.update();
+    assert_eq!(attachments(&mut app), vec![vec![0, NO_BEAM_KEY]]);
+    assert!(
+        app.world().resource::<BeamKitWaits>().is_empty(),
+        "no location, no area kit"
+    );
+    for (e, _) in beams_with_ids(&mut app) {
+        app.world_mut().despawn(e);
+    }
+
+    // Then a ground beam: sequence 2, its area kit held, not played.
+    app.world_mut()
+        .resource_mut::<ChainLocations>()
+        .save(caster, 0, false, Some(dest));
+    app.world_mut().write_message(play(caster, CHAIN_SPELL));
+    app.update();
+    assert_eq!(attachments(&mut app), vec![vec![2]]);
+    assert_eq!(
+        app.world_mut()
+            .resource_mut::<Messages<DelayedAreaKit>>()
+            .drain()
+            .count(),
+        0,
+        "the area kit waits for the ground bolt"
+    );
+    assert!(!app.world().resource::<BeamKitWaits>().is_empty());
+}
+
+/// Every live beam with its entity.
+fn beams_with_ids(app: &mut App) -> Vec<(Entity, u32)> {
+    app.world_mut()
+        .query::<(Entity, &ChainBeam)>()
+        .iter(app.world())
+        .map(|(e, b)| (e, b.spell_id))
+        .collect()
 }
 
 /// The GO's save: the dest unless flag 0x1 hit units, and a clear otherwise (`0x80ed7d`).
@@ -459,4 +558,248 @@ fn a_beam_rows_go_saves_or_clears_the_location() {
     assert_eq!(at(&locations), Some(Vec3::Z), "flag 0x1 with none saves");
     locations.save(caster, 0, false, None);
     assert_eq!(at(&locations), None, "no dest clears it");
+}
+
+/// Under `0x1000` another unit's guid becomes the source and the owner the one hop, past its hop
+/// array and its saved location, whose area kit still plays (`0x7269d8`, `0x726b12`).
+#[test]
+fn a_play_from_another_unit_runs_from_it_to_the_owner() {
+    let mut app = beam_app();
+    let (owner, hop, other) = (unit(&mut app), unit(&mut app), typed_unit(&mut app));
+    app.world_mut()
+        .entity_mut(owner)
+        .insert(ChainHops(vec![hop]));
+    app.world_mut()
+        .resource_mut::<ChainLocations>()
+        .save(owner, 0, false, Some(Vec3::X));
+    let mut p = play(owner, CHAIN_SPELL);
+    p.from = Some(other);
+    app.world_mut().write_message(p);
+    app.update();
+    let beam = app
+        .world_mut()
+        .query::<&ChainBeam>()
+        .single(app.world())
+        .expect("one beam");
+    assert_eq!(
+        node_entities(&app, &beam.nodes),
+        vec![other, owner],
+        "the other unit to the owner"
+    );
+    assert_eq!(beam.location, None, "a unit target, never the ground");
+    assert_eq!(beam.caster, owner, "the owner's kit keeps it");
+    assert_eq!(hops(&mut app), vec![vec![(0, 1)]]);
+    assert!(
+        app.world().entity(owner).get::<ChainHops>().is_none(),
+        "the hop array is consumed"
+    );
+    let kits: Vec<u32> = app
+        .world_mut()
+        .resource_mut::<Messages<DelayedAreaKit>>()
+        .drain()
+        .map(|k| k.kit_id)
+        .collect();
+    assert_eq!(
+        kits,
+        vec![AREA_KIT],
+        "the owner's location still plays its area kit"
+    );
+}
+
+/// The owner's own guid fails the test and takes the ordinary path (`0x7269fd`).
+#[test]
+fn a_play_naming_its_owner_takes_the_ordinary_path() {
+    let mut app = beam_app();
+    let (owner, hop) = (typed_unit(&mut app), unit(&mut app));
+    app.world_mut()
+        .entity_mut(owner)
+        .insert(ChainHops(vec![hop]));
+    let mut p = play(owner, CHAIN_SPELL);
+    p.from = Some(owner);
+    app.world_mut().write_message(p);
+    app.update();
+    assert_eq!(beams(&mut app)[0].0, vec![owner, hop]);
+}
+
+/// A guid naming no unit ends the arm before the hop array is touched (`0x726a1d`).
+#[test]
+fn an_unresolved_guid_draws_nothing_and_keeps_the_hops() {
+    let mut app = beam_app();
+    let gone = typed_unit(&mut app);
+    app.world_mut().despawn(gone);
+    let object = unit(&mut app); // a store with no unit type
+    for from in [gone, object, Entity::PLACEHOLDER] {
+        let (owner, hop) = (unit(&mut app), unit(&mut app));
+        app.world_mut()
+            .entity_mut(owner)
+            .insert(ChainHops(vec![hop]));
+        let mut p = play(owner, CHAIN_SPELL);
+        p.from = Some(from);
+        app.world_mut().write_message(p);
+        app.update();
+        assert!(beams(&mut app).is_empty(), "{from} draws nothing");
+        assert!(
+            app.world().entity(owner).get::<ChainHops>().is_some(),
+            "{from} leaves the hops for the next play"
+        );
+    }
+}
+
+/// Each play links its own effect on the owner, so another unit's aura beam and the owner's own
+/// channel beam of one spell coexist (`0x7269ca`), and one spell clear takes both (`0x743b40`).
+#[test]
+fn two_persistent_beams_of_one_spell_coexist_until_the_spell_clear() {
+    let mut app = beam_app();
+    let (owner, other) = (unit(&mut app), typed_unit(&mut app));
+    let mut drawn_on_owner = play(owner, CHAIN_SPELL);
+    drawn_on_owner.from = Some(other);
+    drawn_on_owner.proc.flag = true;
+    app.world_mut().write_message(drawn_on_owner);
+    app.update();
+    app.world_mut()
+        .entity_mut(owner)
+        .insert(ChainHops(vec![other]));
+    let mut own = play(owner, CHAIN_SPELL);
+    own.proc.flag = true;
+    app.world_mut().write_message(own);
+    app.update();
+    let mut nodes: Vec<Vec<Entity>> = beams(&mut app).into_iter().map(|b| b.0).collect();
+    nodes.sort();
+    let mut want = vec![vec![other, owner], vec![owner, other]];
+    want.sort();
+    assert_eq!(nodes, want, "both beams live");
+    // Another owner's clear of the spell leaves them.
+    app.world_mut().write_message(SpellEffectClear {
+        entity: other,
+        spell_id: CHAIN_SPELL,
+    });
+    app.update();
+    assert_eq!(beams(&mut app).len(), 2);
+    app.world_mut().write_message(SpellEffectClear {
+        entity: owner,
+        spell_id: CHAIN_SPELL,
+    });
+    app.update();
+    assert!(beams(&mut app).is_empty(), "the owner's clear takes both");
+}
+
+/// A beam keeps its ends as guids (`0x7faeef`): a source that streams out and back under a new
+/// entity is the same end again, where an entity key would stay hidden forever.
+#[test]
+fn a_beam_end_follows_its_guid_across_a_restream() {
+    let mut app = beam_app();
+    let (owner, other) = (unit(&mut app), typed_unit(&mut app));
+    let mut p = play(owner, CHAIN_SPELL);
+    p.from = Some(other);
+    p.proc.flag = true;
+    app.world_mut().write_message(p);
+    app.update();
+    let guid = app.world().entity(other).get::<Guid>().expect("a guid").0;
+    app.world_mut().despawn(other);
+    app.world_mut().resource_mut::<GuidIndex>().0.remove(&guid);
+    assert_eq!(
+        beams(&mut app)[0].0,
+        vec![Entity::PLACEHOLDER, owner],
+        "gone: the bolt hides, the beam lives"
+    );
+    let back = app.world_mut().spawn(Guid(guid)).id();
+    app.world_mut()
+        .resource_mut::<GuidIndex>()
+        .0
+        .insert(guid, back);
+    assert_eq!(
+        beams(&mut app)[0].0,
+        vec![back, owner],
+        "back: the same end"
+    );
+}
+
+/// A kit clear takes the persistent beams of that kit on the owner, whatever the spell: the
+/// precast clear (`0x744bd0`, `0x7fec2f`).
+#[test]
+fn a_kit_clear_takes_only_its_kit_s_persistent_beams() {
+    let mut app = beam_app();
+    let (owner, other) = (unit(&mut app), typed_unit(&mut app));
+    let mut p = play(owner, CHAIN_SPELL);
+    p.from = Some(other);
+    p.proc.flag = true;
+    app.world_mut().write_message(p);
+    app.update();
+    assert_eq!(beams(&mut app).len(), 1);
+    for miss in [
+        KitEffectClear {
+            entity: owner,
+            kit_id: BEAM_KIT + 1,
+        },
+        KitEffectClear {
+            entity: other,
+            kit_id: BEAM_KIT,
+        },
+    ] {
+        app.world_mut().write_message(miss);
+        app.update();
+        assert_eq!(beams(&mut app).len(), 1, "{miss:?} leaves it");
+    }
+    app.world_mut().write_message(KitEffectClear {
+        entity: owner,
+        kit_id: BEAM_KIT,
+    });
+    app.update();
+    assert!(beams(&mut app).is_empty(), "its kit's clear takes it");
+}
+
+/// The tick's hand-off (`0x7fb15a`): first vertex to the source, last to the target object under
+/// no key, and with no target object to the source under the bolt's attachment.
+#[test]
+fn a_bolts_drawn_ends_connect_its_source_and_target() {
+    let id = |n| Entity::from_raw_u32(n).expect("a test entity id");
+    let (src, dst) = (id(1), id(2));
+    const SEQ: i32 = 4;
+    assert_eq!(
+        reached_ends((true, false), src, Some(dst), SEQ),
+        [Some((src, NO_BEAM_KEY)), None],
+        "a pulse leaving the caster"
+    );
+    assert_eq!(
+        reached_ends((false, true), src, Some(dst), SEQ),
+        [None, Some((dst, NO_BEAM_KEY))],
+        "a pulse arriving at the target, unit or game object"
+    );
+    assert_eq!(
+        reached_ends((true, true), src, Some(dst), NO_BEAM_KEY),
+        [Some((src, NO_BEAM_KEY)), Some((dst, NO_BEAM_KEY))],
+        "no pulse: both ends every drawn frame"
+    );
+    assert_eq!(
+        reached_ends((false, true), src, None, SEQ),
+        [None, Some((src, SEQ))],
+        "a ground bolt's end connects its caster under the beam's sequence"
+    );
+    assert_eq!(
+        reached_ends((false, false), src, Some(dst), SEQ),
+        [None, None]
+    );
+}
+
+/// A ground beam whose chain id names no row draws nothing, yet its area kit still plays: the
+/// beam builder returns nothing to wait on (`0x726afd`).
+#[test]
+fn a_ground_beam_with_no_chain_row_still_plays_its_area_kit() {
+    let mut app = beam_app();
+    let caster = unit(&mut app);
+    app.world_mut()
+        .resource_mut::<ChainLocations>()
+        .save(caster, 0, false, Some(Vec3::ONE));
+    let mut p = play(caster, CHAIN_SPELL);
+    p.proc.effect_id = 999;
+    app.world_mut().write_message(p);
+    app.update();
+    assert!(beams(&mut app).is_empty(), "no row, no beam");
+    let kits: Vec<u32> = app
+        .world_mut()
+        .resource_mut::<Messages<DelayedAreaKit>>()
+        .drain()
+        .map(|k| k.kit_id)
+        .collect();
+    assert_eq!(kits, vec![AREA_KIT]);
 }

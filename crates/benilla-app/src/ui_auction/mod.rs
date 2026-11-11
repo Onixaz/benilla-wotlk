@@ -560,6 +560,15 @@ pub(crate) fn categories(
         .collect()
 }
 
+/// Seed the static auction filter tree before the VM loads interface files.
+pub(crate) fn seed_auction_categories_for_vm(world: &World, script: &mut UiScript) {
+    // 12340's category verbs read DBC data even at addon file scope, without an auction session.
+    script.set_auction_item_classes(categories(
+        world.get_resource::<crate::ui_items::ItemClasses>(),
+        world.get_resource::<crate::ui_items::ItemSubClasses>(),
+    ));
+}
+
 /// The DBC catalogs as one system param, since [`feed_auction`] is at Bevy's 16-param limit.
 type AuctionCatalogs<'w> = (
     Option<Res<'w, crate::ui_items::ItemClasses>>,

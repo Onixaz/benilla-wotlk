@@ -951,6 +951,11 @@ pub(crate) mod schedule_tests {
     ///   `play_body_procs` reads `NetEntity` against `refresh_live_display`, which only swaps a
     ///   display; and `tick_shard_emitters` reads the terrain heightfield against
     ///   `rescatter_clutter`, as `move_missiles` does.
+    /// - The missile targeting kit's whole play (#1045) adds 5 and orders 15 away: `spawn_missiles`
+    ///   and `move_missiles` stow through `SheathRequest` against `drain_death`,
+    ///   `commit_item_cast_on_pick`, `drain_go_openers` and `drain_bind_on_use_confirms`, as
+    ///   `arm_aura_state_fx` does; the aura node layer and the kit shakes now run after the visuals
+    ///   set.
     /// - `record_spells_in_transit` reads a caster's place against `publish_camera_pose` (+1): a
     ///   frame's lag does not move a landing time that matters.
     /// - `target::scan::remember_last_enemy` reads `Player` for the auto-dismount check (`0x71b0c0`)

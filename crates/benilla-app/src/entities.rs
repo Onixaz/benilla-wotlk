@@ -826,6 +826,8 @@ impl Plugin for EntitiesPlugin {
             )
                 .chain()
                 .after(apply_unit_mat_alpha)
+                // A missile's targeting kit plays and clears its procs in the visuals set.
+                .after(EntityVisualsSet)
                 .before(crate::player::apply_self_model_fade),
         );
     }
