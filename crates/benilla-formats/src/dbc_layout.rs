@@ -55,7 +55,7 @@ pub struct ChatChannels {
     pub shortcut: usize,
 }
 
-/// `LoadingScreens.dbc`; `ID`, `Name` and `FileName` are columns 0, 1 and 2.
+/// `LoadingScreens.dbc`; `ID`, `Name` and `FileName` are columns 0, 1 and 2, the wide-art flag 3.
 #[derive(Debug)]
 pub struct LoadingScreens {
     pub fields: usize,
