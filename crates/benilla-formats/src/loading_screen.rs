@@ -1,5 +1,6 @@
-//! `LoadingScreens.dbc`: a `Map.dbc` `LoadingScreenID` → the loading art's BLP path (column 2), in
-//! the layout of the client the chain was opened for (`crate::dbc_layout::LoadingScreens`).
+//! `LoadingScreens.dbc`: a `Map.dbc` `LoadingScreenID` → the loading art's BLP path (column 2) and
+//! its wide-art flag (column 3, read at `0x8b2b20`), in the layout of the client the chain was opened for
+//! (`crate::dbc_layout::LoadingScreens`).
 //! The open world has one per continent (3 Kalimdor, 4 Eastern Kingdoms); the other rows are per
 //! instance.
 
@@ -14,22 +15,29 @@ use crate::dbc::{parse, str_at, u32_at};
 
 const LOADING_SCREENS: &str = "DBFilesClient\\LoadingScreens.dbc";
 
-/// `LoadingScreenID` → BLP path.
+/// `LoadingScreenID` → BLP path and wide-art flag.
 pub struct LoadingScreenCatalog {
-    paths: HashMap<u32, String>,
+    rows: HashMap<u32, (String, bool)>,
 }
 
 impl LoadingScreenCatalog {
     pub fn path(&self, id: u32) -> Option<&str> {
-        self.paths.get(&id).map(String::as_str)
+        self.row(id).map(|(path, _)| path)
+    }
+
+    /// The row's art path and whether it has a `Wide` companion.
+    pub fn row(&self, id: u32) -> Option<(&str, bool)> {
+        self.rows
+            .get(&id)
+            .map(|(path, wide)| (path.as_str(), *wide))
     }
 
     pub fn len(&self) -> usize {
-        self.paths.len()
+        self.rows.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.paths.is_empty()
+        self.rows.is_empty()
     }
 }
 
@@ -55,13 +63,13 @@ pub fn load_loading_screens(chain: &mut Chain) -> Result<LoadingScreenCatalog> {
         schema(&crate::dbc_layout::LAYOUTS.loading_screens),
         "LoadingScreens",
     )?;
-    let mut paths = HashMap::with_capacity(rs.records().len());
+    let mut rows = HashMap::with_capacity(rs.records().len());
     for r in rs.records() {
         if let (Some(id), Some(path)) = (u32_at(r, 0), str_at(&rs, r, 2)) {
-            paths.insert(id, path);
+            rows.insert(id, (path, u32_at(r, 3).is_some_and(|v| v != 0)));
         }
     }
-    Ok(LoadingScreenCatalog { paths })
+    Ok(LoadingScreenCatalog { rows })
 }
 
 #[cfg(test)]
@@ -87,6 +95,15 @@ mod tests {
         assert_eq!(
             screens.path(3),
             Some("Interface\\Glues\\LoadingScreens\\LoadScreenKalimdor.blp")
+        );
+        assert!(screens.row(3).unwrap().1, "Kalimdor has wide art");
+        assert!(screens.row(4).unwrap().1, "Eastern Kingdoms has wide art");
+        let deadmines = maps
+            .loading_screen_id(36)
+            .expect("Deadmines has a loading screen");
+        assert!(
+            !screens.row(deadmines).unwrap().1,
+            "instance rows have no wide art"
         );
 
         let resolve = |map_id| {

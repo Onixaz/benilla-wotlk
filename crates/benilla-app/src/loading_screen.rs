@@ -42,9 +42,29 @@ const FILL_BOTTOM: f32 = 0.0625; // 0.075 − 0.025·0.5
 const FILL_HEIGHT: f32 = 0.025;
 const FILL_MAX_WIDTH: f32 = 0.525; // halfW; fill width = progress · FILL_MAX_WIDTH
 
-/// The glue and loading screens are authored 4:3; on a wider window the reference fits them to
-/// height and pillarboxes. The square BLP is stretched to this aspect.
+/// The loading art is authored 4:3; a row with the wide flag swaps in a 16:10 companion on a display
+/// at least 4:3 + 0.001 wide (`0x409f69`). The art's area keeps its aspect, pillarboxed on a wider
+/// window and letterboxed on a narrower one, and the bar and tip sit inside it.
 const BACKDROP_ASPECT: f32 = 4.0 / 3.0;
+const WIDE_BACKDROP_ASPECT: f32 = 1.6;
+const WIDE_WINDOW_THRESHOLD: f32 = BACKDROP_ASPECT + 0.001;
+
+/// Fit the art's area to the window at `aspect`, centred by the root.
+fn fit_area(node: &mut Node, aspect: f32) {
+    node.width = Val::Vh(100.0 * aspect);
+    node.height = Val::Vh(100.0);
+    node.max_width = Val::Vw(100.0);
+    node.max_height = Val::Vw(100.0 / aspect);
+}
+
+/// The wide art's path: `Wide` before the file name's first `.`, or at the end with none
+/// (`0x409fb0`).
+fn wide_art_path(path: &str) -> String {
+    match path.find('.') {
+        Some(dot) => format!("{}Wide{}", &path[..dot], &path[dot..]),
+        None => format!("{path}Wide"),
+    }
+}
 /// Consecutive fully resident frames before the clear: debounces the post-teleport frame where
 /// `ready` reads 0 against a nonzero `total`.
 const CLEAR_AFTER_READY_FRAMES: u32 = 3;
@@ -263,6 +283,9 @@ impl LoadingScreen {
 // UI entity markers.
 #[derive(Component)]
 struct LoadingRoot;
+
+#[derive(Component)]
+struct LoadingArea;
 #[derive(Component)]
 struct LoadingBackdrop;
 #[derive(Component)]
@@ -341,15 +364,14 @@ fn setup_loading_screen(
     let fill = tex("Interface\\Glues\\LoadingBar\\Loading-BarFill.blp").unwrap_or_default();
 
     commands.entity(root).with_children(|root| {
-        // One 4:3 area fit to the viewport height and centred; the bar's fractions are relative
-        // to it. Paint order is spawn order: backdrop, tip, fill, border.
-        root.spawn(Node {
-            width: Val::Vh(100.0 * BACKDROP_ASPECT),
-            height: Val::Vh(100.0),
+        // One area at the art's aspect, fit to the window and centred; the bar's fractions are
+        // relative to it. Paint order is spawn order: backdrop, tip, fill, border.
+        let mut area = Node {
             position_type: PositionType::Relative,
             ..default()
-        })
-        .with_children(|area| {
+        };
+        fit_area(&mut area, BACKDROP_ASPECT);
+        root.spawn((LoadingArea, area)).with_children(|area| {
             // Tinted black until the art resolves.
             area.spawn((
                 LoadingBackdrop,
@@ -416,14 +438,20 @@ fn drive_loading_screen(
         Res<WorldLoadProgress>,
         Res<benilla_world::terrain_stream::ViewFocus>,
     ),
-    current_map: Option<Res<CurrentMap>>,
+    context: (
+        Option<Res<CurrentMap>>,
+        Query<&Window, With<bevy::window::PrimaryWindow>>,
+    ),
     maps: Option<Res<MapCatalogRes>>,
     screens: Option<Res<LoadingScreenCatalogRes>>,
     mut assets: Option<ResMut<WorldAssets>>,
     mut images: ResMut<Assets<Image>>,
     mut root: Query<&mut Visibility, (With<LoadingRoot>, Without<LoadingBackdrop>)>,
     mut backdrop: Query<(&mut ImageNode, &mut Visibility), With<LoadingBackdrop>>,
-    mut fill: Query<&mut Node, With<LoadingBarFill>>,
+    mut nodes: ParamSet<(
+        Query<&mut Node, With<LoadingArea>>,
+        Query<&mut Node, With<LoadingBarFill>>,
+    )>,
     mut bar_vis: Query<
         &mut Visibility,
         (
@@ -464,6 +492,7 @@ fn drive_loading_screen(
     ) = edges;
     let (progress, focus) = (&stream.0, &stream.1);
     let now = time.elapsed_secs();
+    let (current_map, window) = context;
     let map_id = current_map.as_ref().map(|m| m.0);
     // The physics hold releases on the same residency signal, so the body's world is live first.
     let player_settling = player.as_ref().is_some_and(|p| p.settling);
@@ -638,23 +667,49 @@ fn drive_loading_screen(
         if let (Some(map_id), Some(maps), Some(screens), Some(assets)) =
             (screen.map, maps.as_ref(), screens.as_ref(), assets.as_mut())
         {
-            let path = maps
+            let row = maps
                 .0
                 .loading_screen_id(map_id)
-                .and_then(|id| screens.0.path(id))
-                .map(str::to_string);
-            let handle = path.and_then(|path| match screen.art_cache.get(&path) {
-                Some(h) => Some(h.clone()),
-                None => assets.sprite_texture(&path, &mut images).inspect(|h| {
-                    screen.art_cache.insert(path.clone(), h.clone());
-                }),
+                .and_then(|id| screens.0.row(id));
+            let wide_window = window
+                .single()
+                .is_ok_and(|w| w.width() / w.height() >= WIDE_WINDOW_THRESHOLD);
+            // The wide art first when the row and the window ask for it, then the normal art.
+            let mut candidates = Vec::new();
+            if let Some((base, has_wide)) = row {
+                if has_wide && wide_window {
+                    candidates.push((wide_art_path(base), true));
+                }
+                candidates.push((base.to_string(), false));
+            }
+            let mut selected_wide = false;
+            let handle = candidates.into_iter().find_map(|(path, is_wide)| {
+                let handle = match screen.art_cache.get(&path) {
+                    Some(h) => Some(h.clone()),
+                    None => assets.sprite_texture(&path, &mut images).inspect(|h| {
+                        screen.art_cache.insert(path.clone(), h.clone());
+                    }),
+                }?;
+                selected_wide = is_wide;
+                Some(handle)
             });
+            // Each load starts at 4:3 (`0x409f5c` clears the wide flag before the pick).
+            if let Ok(mut node) = nodes.p0().single_mut() {
+                let aspect = if selected_wide {
+                    WIDE_BACKDROP_ASPECT
+                } else {
+                    BACKDROP_ASPECT
+                };
+                fit_area(&mut node, aspect);
+            }
             match (handle, backdrop.single_mut()) {
                 (Some(handle), Ok((mut img, _))) => {
                     img.image = handle;
                     img.color = Color::WHITE; // untint to reveal the art
                     screen.art_resolved = true;
-                    info!("loading screen: backdrop for map {map_id} resolved");
+                    info!(
+                        "loading screen: backdrop for map {map_id} resolved (wide={selected_wide})"
+                    );
                 }
                 // No retry: the reference writes `-1` into the map id and the draw returns on it.
                 _ => {
@@ -670,7 +725,7 @@ fn drive_loading_screen(
         screen.displayed = screen.displayed.max(progress.fraction());
     }
     let frac = screen.displayed;
-    if let Ok(mut node) = fill.single_mut() {
+    if let Ok(mut node) = nodes.p1().single_mut() {
         node.width = Val::Percent(frac * FILL_MAX_WIDTH * 100.0);
     }
 }
@@ -678,6 +733,27 @@ fn drive_loading_screen(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_art_goes_before_the_first_dot_keeping_the_extension() {
+        assert_eq!(
+            wide_art_path("Interface\\Glues\\LoadingScreens\\LoadScreenNorthrend.blp"),
+            "Interface\\Glues\\LoadingScreens\\LoadScreenNorthrendWide.blp"
+        );
+        assert_eq!(wide_art_path("A\\B.BLP"), "A\\BWide.BLP");
+        assert_eq!(wide_art_path("A\\B"), "A\\BWide");
+    }
+
+    #[test]
+    fn the_area_keeps_its_aspect_inside_the_window() {
+        let mut node = Node::default();
+        fit_area(&mut node, WIDE_BACKDROP_ASPECT);
+        assert_eq!(node.width, Val::Vh(160.0));
+        assert_eq!(node.height, Val::Vh(100.0));
+        // A window narrower than the art caps the width at the window and the height to match.
+        assert_eq!(node.max_width, Val::Vw(100.0));
+        assert_eq!(node.max_height, Val::Vw(62.5));
+    }
 
     #[test]
     fn the_cover_counts_frames_to_the_glass_and_resets_the_moment_it_drops() {
