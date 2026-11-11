@@ -416,10 +416,15 @@ pub(crate) enum CastEventKind {
         at: Option<Vec3>,
         caster: Entity,
     },
-    /// A projectile with no live target at arrival (a despawned target too): the kit plays on the
-    /// caster (`entity`) at `pos`, `SpellVisual` field 13, stage 3. Sent here only for a
-    /// dest-targeted GO's missile with no hit (`MissileSpawn::ground_aim`).
+    /// A projectile with no live target at arrival (a located cast, a target gone, an object): the
+    /// impact area kit plays through `entity`, the caster or our player, at `pos` (`0x700e20`).
     GroundImpact { pos: Vec3 },
+    /// A missile landing on its area reached this listed unit (`0x70105d`): its impact kit and,
+    /// under the hit's aura test, its state kit, both carrying `caster`, with no flinch.
+    AreaImpact { caster: Entity },
+    /// A missile landing on its area reached this extra point: the target kit plays there through
+    /// the caster (`0x701150`).
+    PointImpact { pos: Vec3 },
 }
 
 /// The anim held while a cast is in flight (`SpellVisualKit` field 2): full-body when standing
@@ -671,11 +676,19 @@ pub(crate) struct SpellGoTargets {
     /// Missed units with `SpellMissInfo`: no impact kit; the flight's route is
     /// `crate::entities::missile`'s.
     pub(crate) misses: Vec<(Entity, u8)>,
+    /// Every listed guid with its outcome (0 a hit) and a reflect's outcome on the caster, hits
+    /// first unless cast flag `0x400`; a list missile resolves them as it lands (`0x8001ee`).
+    pub(crate) list: Vec<(u64, u8, u8)>,
+    /// The targets' flag mask, which picks the missiles' kind (`0x7fffb0`).
+    pub(crate) target_mask: u32,
+    /// The source point, in bevy coords.
+    pub(crate) src: Option<Vec3>,
     /// A dest-targeted cast's ground point, in bevy coords.
     pub(crate) dest: Option<Vec3>,
-    /// The GO's ammo block (`castFlags & 0x20`): the ammo's `ItemDisplayInfo` id, the missile model
-    /// when the visual chain has none.
-    pub(crate) ammo_display_id: Option<u32>,
+    /// The extra target points, in bevy coords; one whose transport is not here is dropped.
+    pub(crate) points: Vec<crate::entities::DeckPoint>,
+    /// The GO's ammo block (`castFlags & 0x20`), a missile's model for column 8's 0, -4 and -5.
+    pub(crate) ammo: Option<ItemModel>,
     /// `PlaySeq` stamp, the GO's `CastEvent`'s.
     pub(crate) seq: u64,
     /// The GO's trajectory (`castFlags & 0x20000`).
@@ -689,6 +702,14 @@ pub(crate) struct SpellGoTargets {
     pub(crate) server_time: u32,
 }
 
+/// An item a missile flies as its model: its `ItemDisplayInfo` id and the `InventoryType` that
+/// picks the model's folder (`0x732100`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ItemModel {
+    pub(crate) display_id: u32,
+    pub(crate) inventory_type: u32,
+}
+
 /// A dest-location cast's visuals, from `SMSG_NOTIFY_DEST_LOC_SPELL_CAST` (`0x810050`), in bevy
 /// coords: no caster entity is needed.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
@@ -697,6 +718,8 @@ pub(crate) struct DestLocCast {
     pub(crate) src: Vec3,
     pub(crate) dest: Vec3,
     pub(crate) delay_ms: u32,
+    /// The packet's trajectory, at a missile speed above 0 (`0x802641`).
+    pub(crate) trajectory: Option<Trajectory>,
 }
 
 /// A trajectory missile's launch off its GO (`0x732ff0`): the pitch it leaves at and the time it
@@ -704,6 +727,8 @@ pub(crate) struct DestLocCast {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Trajectory {
     pub(crate) pitch: f32,
+    /// The launch speed an arc with no solution falls back to (`0x700880`), 0 for none.
+    pub(crate) speed: f32,
     /// Seconds from the GO to the landing.
     pub(crate) delay: f32,
     pub(crate) caster: u64,

@@ -100,6 +100,8 @@ pub(crate) struct Scene<'w, 's> {
     go_targets: MessageWriter<'w, SpellGoTargets>,
     go_lid: MessageWriter<'w, crate::go_anim::GoLidOpen>,
     sheaths: MessageWriter<'w, crate::creature_anim::SheathRequest>,
+    /// Where a GO's extra points' transports are.
+    decks: Query<'w, 's, &'static GlobalTransform>,
 }
 
 /// `SMSG_INITIAL_SPELLS`, once at login, into the action store the UI feed reads.
@@ -434,14 +436,38 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
         misses,
         target,
         go_target,
+        target_mask,
+        src,
         dest,
-        ammo_display_id,
+        ammo,
         item_caster,
         trajectory,
         reflects,
+        points,
         ..
     } = ev
     {
+        // A point on a transport not here is dropped; the rest keep their place now (`0x80e559`).
+        let points = points
+            .into_iter()
+            .filter_map(|(p, deck)| {
+                let at = benilla_assets::coords::wow_to_bevy(p);
+                if deck == 0 {
+                    return Some(crate::entities::DeckPoint {
+                        at,
+                        deck: None,
+                        world: at,
+                    });
+                }
+                let e = *l.index.0.get(&deck)?;
+                let world = crate::entities::deck_place(at, sc.decks.get(e).ok()?);
+                Some(crate::entities::DeckPoint {
+                    at,
+                    deck: Some(e),
+                    world,
+                })
+            })
+            .collect();
         let engaged = !sc.engaged_self.is_empty();
         spell_go(
             caster,
@@ -454,8 +480,13 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
             reflects,
             target,
             go_target,
-            dest,
-            ammo_display_id,
+            (target_mask, src, dest, points),
+            ammo.map(
+                |(display_id, inventory_type)| crate::creature_anim::ItemModel {
+                    display_id,
+                    inventory_type,
+                },
+            ),
             item_caster,
             trajectory,
             &mut sc.commands,
@@ -1317,6 +1348,14 @@ fn spell_start(
 /// loot-target latch.
 const GO_TYPE_CHEST: i32 = 3;
 
+/// The targets' mask, source and dest points, and extra points.
+type GoPoints = (
+    u32,
+    Option<[f32; 3]>,
+    Option<[f32; 3]>,
+    Vec<crate::entities::DeckPoint>,
+);
+
 /// `SMSG_SPELL_GO`: the cast launched. The server schedules damage off `Spell.dbc` Speed; the
 /// packet carries the hit and miss lists and the ammo display id, and the flight is rebuilt from
 /// the same Speed column ([`SpellGoTargets`]).
@@ -1331,8 +1370,9 @@ fn spell_go(
     reflects: Vec<(u64, u8)>,
     target: Option<u64>,
     go_target: Option<u64>,
-    dest: Option<[f32; 3]>,
-    ammo_display_id: Option<u32>,
+    // The targets' mask with their source, dest and extra points.
+    (target_mask, src, dest, points): GoPoints,
+    ammo: Option<crate::creature_anim::ItemModel>,
     item_caster: Option<u64>,
     trajectory: Option<(f32, u32)>,
     commands: &mut Commands,
@@ -1370,7 +1410,7 @@ fn spell_go(
     debug!(
         "net: spell go {spell_id} by {caster:#x} ({} hit(s), {} miss(es), flags \
          {cast_flags:#x}, target {target:?}, go_target {go_target:?}, dest {dest:?}, \
-         ammo {ammo_display_id:?})",
+         ammo {ammo:?})",
         hits.len(),
         misses.len()
     );
@@ -1547,21 +1587,31 @@ fn spell_go(
         if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
             commands.entity(e).remove::<Casting>();
         }
-        // The hop fill the cast kit consumes: hits then misses, swapped by flag 0x400 (`0x80ec10`).
-        // Deviation: fills on every row, not only a beam's (`0x80ed5a`), as only a beam consumes it.
-        let hops: Vec<u64> = if cast_flags & 0x400 != 0 {
-            misses
-                .iter()
-                .map(|m| m.0)
-                .chain(hits.iter().copied())
-                .collect()
+        // The GO's one target list: hits then misses, swapped by flag 0x400 (`0x80ec10`,
+        // `0x8001ee`), a hit with outcome 0, a reflect with the outcome it sends back.
+        let reflect_of = |g: u64| reflects.iter().find(|r| r.0 == g).map_or(0, |r| r.1);
+        let hit_codes = hits.iter().map(|&g| (g, 0, 0));
+        let miss_codes = misses.iter().map(|&(g, code)| (g, code, reflect_of(g)));
+        let list: Vec<(u64, u8, u8)> = if cast_flags & 0x400 != 0 {
+            miss_codes.chain(hit_codes).collect()
         } else {
-            hits.iter()
-                .copied()
-                .chain(misses.iter().map(|m| m.0))
-                .collect()
+            hit_codes.chain(miss_codes).collect()
         };
-        fill_chain_hops(caster, e, &hops, commands, index);
+        // The hop fill the cast kit consumes, a unit caster's alone (`0x80ed5a`). Deviation:
+        // fills on every row, not only a beam's, as only a beam consumes it.
+        let object = stores.get(e).is_ok_and(|s| {
+            s.0.object_type().is_some_and(|t| {
+                !matches!(
+                    t,
+                    benilla_protocol::messages::ObjectType::Unit
+                        | benilla_protocol::messages::ObjectType::Player
+                )
+            })
+        });
+        if !object {
+            let hops: Vec<u64> = list.iter().map(|&(g, ..)| g).collect();
+            fill_chain_hops(caster, e, &hops, commands, index);
+        }
         cast_events.write(CastEvent {
             entity: e,
             spell_id,
@@ -1581,17 +1631,29 @@ fn spell_go(
             .collect();
         // A pure dest cast (ground AoE, empty lists) rides the same message: the point is a target.
         let dest = dest.map(benilla_assets::coords::wow_to_bevy);
-        if !hits.is_empty() || !misses.is_empty() || dest.is_some() {
+        let src = src.map(benilla_assets::coords::wow_to_bevy);
+        if !hits.is_empty()
+            || !misses.is_empty()
+            || dest.is_some()
+            || src.is_some()
+            || !points.is_empty()
+        {
             go_targets.write(SpellGoTargets {
                 caster: e,
                 spell_id,
                 hits,
                 misses,
+                list,
+                target_mask,
+                src,
                 dest,
-                ammo_display_id,
+                points,
+                ammo,
                 seq,
                 trajectory: trajectory.map(|(pitch, delay_ms)| crate::creature_anim::Trajectory {
                     pitch,
+                    // The cast's own aimed speed (`0x733705`), which a GO does not carry.
+                    speed: 0.0,
                     delay: delay_ms as f32 / 1000.0,
                     caster,
                     cast_id: cast_count,
@@ -2548,7 +2610,7 @@ mod tests {
                             Vec::new(),
                             None,
                             None,
-                            None,
+                            (0, None, None, Vec::new()),
                             None,
                             None,
                             None,
@@ -2758,7 +2820,7 @@ mod tests {
                         Vec::new(),
                         None,
                         None,
-                        None,
+                        (0, None, None, Vec::new()),
                         None,
                         item_caster.or(Some(caster)),
                         None,
@@ -2966,7 +3028,7 @@ mod tests {
                         Vec::new(),
                         None,
                         None,
-                        None,
+                        (0, None, None, Vec::new()),
                         None,
                         None,
                         None,
@@ -3358,7 +3420,7 @@ mod tests {
                             // A different guid from `hits[0]`, which the arm must take.
                             Some(99),
                             None,
-                            None,
+                            (0, None, None, Vec::new()),
                             None,
                             None,
                             None,

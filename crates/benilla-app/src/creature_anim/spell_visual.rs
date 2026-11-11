@@ -10,6 +10,7 @@ use bevy::ecs::entity::{EntityHashMap, EntityHashSet};
 use bevy::prelude::*;
 
 use benilla_formats::{SpellVisualCatalog, VisualKit, VisualStages};
+use benilla_protocol::messages::ObjectType;
 use benilla_protocol::EntityKind;
 
 use crate::aura_visual::AuraProc;
@@ -20,12 +21,12 @@ use crate::unit_auras::UnitAuras;
 use benilla_assets::{LockRecover, WorldAssets};
 
 use super::{
-    AnimPlayFlags, BaseAnimRecompute, CastEvent, CastEventKind, CastHold, EmoteAnim,
+    AnimPlayFlags, BaseAnimRecompute, CastEvent, CastEventKind, CastHold, EmoteAnim, ItemModel,
     SpellGoTargets, WoundAnim,
 };
 
-/// The 1.12 client's missile model for an unresolvable visual, shipped in the MPQs.
-const ERROR_CUBE: &str = "Spells\\ErrorCube.mdx";
+/// The missile model when none resolves (`0x7339e1`).
+pub(crate) const ERROR_CUBE: &str = "Spells\\ErrorCube.mdx";
 
 /// The [`SpellKitFx`] reap key for the loot sparkle, outside the spell id range; the reference keys
 /// these nodes by attach tag and node flag. A unit wears at most one.
@@ -244,16 +245,27 @@ pub(crate) struct KitEffectClear {
     pub(crate) kit_id: u32,
 }
 
+/// A missile's item model (`0x733820`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MissileItem {
+    /// Column 8's 0 with the GO's ammo: the ammo model (`0x73398e`).
+    Ammo(u32),
+    /// Column 8's -1 to -3: a held slot's item, sized by the caster's seat for it (`0x7338f1`).
+    Held(ItemModel),
+    /// Column 8's -4 and -5: the GO's ammo by its own folder, unsized (`0x73392d`).
+    Wire(ItemModel),
+}
+
 /// One projectile per target on the GO's Speed > 0 branch, consumed by `crate::entities::missile`.
 #[derive(Message, Clone)]
 pub(crate) struct MissileSpawn {
     pub(crate) caster: Entity,
     pub(crate) spell_id: u32,
-    /// `SpellVisual` column 8's model, or `ERROR_CUBE` for an unresolvable id; `None` when column 8
-    /// is below 1 or there is no row, and the spawner flies the wire ammo model.
+    /// `SpellVisual` column 8's model, or `ERROR_CUBE` when none resolves; `None` when the model is
+    /// [`Self::item`].
     pub(crate) path: Option<String>,
-    /// The GO's ammo display, flown when [`Self::path`] is `None`.
-    pub(crate) ammo_display_id: Option<u32>,
+    /// The item model flown when [`Self::path`] is `None`.
+    pub(crate) item: Option<MissileItem>,
     /// The attach tag the missile homes to
     /// ([`benilla_formats::VisualStages::missile_dest_attachment`]); `None` aims at the target's
     /// base.
@@ -268,10 +280,8 @@ pub(crate) struct MissileSpawn {
     pub(crate) reflect_glances: bool,
     /// The model's `SpellVisualEffectName` scale (`0x732ff0`).
     pub(crate) scale: f32,
-    /// With no targets and a DEST point on the GO, one projectile flies at the point, arriving as
-    /// [`super::CastEventKind::GroundImpact`]. The reference latches on `flags & 0x60` and aims a
-    /// SOURCE-only cast at a zeroed DEST point; this launches only with a real DEST
-    /// (`flags & 0x40`), a zeroed aim being a quirk not aped.
+    /// A located cast's point (the dest, else the source, `0x7334c1`): one projectile flies at it,
+    /// arriving as [`super::CastEventKind::GroundImpact`].
     pub(crate) ground_aim: Option<Vec3>,
     /// `SpellVisual` field 10: the sound the projectile loops in flight (the missile's `+0x40`).
     pub(crate) missile_sound: Option<u32>,
@@ -284,6 +294,11 @@ pub(crate) struct MissileSpawn {
     pub(crate) shape: crate::entities::MissileShape,
     /// A fixed launch point, for a missile with no caster to leave from (`0x802825`).
     pub(crate) from: Option<Vec3>,
+    /// The targets one missile carries, landing on them at its point or hopping them (`0x733600`).
+    pub(crate) list: Option<crate::entities::TargetList>,
+    /// The transport a point aim follows and the point in its frame; `ground_aim` is its place at
+    /// the GO.
+    pub(crate) aim_deck: Option<(Entity, Vec3)>,
     /// The GO's `PlaySeq` stamp, which orders it among the [`MissileRelease`]s.
     pub(crate) seq: u64,
 }
@@ -315,6 +330,7 @@ pub(super) struct WeaponVisualSrc<'w, 's> {
     displays: Option<Res<'w, ItemDisplays>>,
     items: Option<Res<'w, Items>>,
     net: Option<Res<'w, NetCommands>>,
+    creatures: Option<Res<'w, crate::entities::Creatures>>,
     // `Without<ItemObject>`: an item's store overlaps the unit indices, so a unit read of it
     // answers item fields.
     units: Query<'w, 's, (Option<&'static NetEntity>, &'static ObjectStore), Without<ItemObject>>,
@@ -347,7 +363,69 @@ impl WeaponVisualSrc<'_, '_> {
             .spell_visual;
         (visual != 0).then_some(visual)
     }
+
+    /// The item a held slot (0 main, 1 off, 2 ranged) shows, a missile's model for column 8's
+    /// -1 to -3 (`0x732400`): a creature's `Item.dbc` row, a player's visible item, whose main and
+    /// off hand a disarm empties (`0x6e05d0`).
+    fn held_item(&mut self, caster: Entity, slot: u8) -> Option<ItemModel> {
+        let (net_entity, store) = self.units.get(caster).ok()?;
+        let s = &store.0;
+        let (display_id, inventory_type) = match net_entity?.kind {
+            EntityKind::Unit => s
+                .unit_virtual_item_entry(slot)
+                .and_then(|e| self.displays.as_deref()?.item_dbc.get(&e))
+                .map(|r| (r.display, u32::from(r.inventory_type)))?,
+            EntityKind::Player => {
+                let held = |slot: u8| {
+                    s.player_visible_item_entry(PLAYER_VISIBLE_HELD + slot)
+                        .filter(|e| *e != 0)
+                        .and_then(|entry| self.items.as_deref()?.held(entry, self.net.as_deref()?))
+                };
+                let item = held(slot)?;
+                let weapon = |t: Option<crate::items::HeldTemplate>| {
+                    t.is_some_and(|t| t.class as u8 == super::ITEM_CLASS_WEAPON)
+                };
+                let disarmed = hand_disarmed(
+                    slot,
+                    s.unit_flags(),
+                    s.unit_flags2(),
+                    weapon(held(0)),
+                    weapon(Some(item)),
+                );
+                (!disarmed).then_some((item.display_info_id, item.inventory_type))?
+            }
+            _ => return None,
+        };
+        // A head item's file takes the race row its sex byte names, else none (`0x7321ad`).
+        if inventory_type == 1 {
+            let sex = s
+                .unit_displayid()
+                .and_then(|d| u32::try_from(d).ok())
+                .and_then(|d| self.creatures.as_deref()?.display_race_sex(d))
+                .map(|(_, sex)| sex)
+                .or_else(|| s.unit_gender())?;
+            self.displays.as_deref()?.helm_prefixes.get(&sex)?;
+        }
+        (display_id != 0).then_some(ItemModel {
+            display_id,
+            inventory_type,
+        })
+    }
 }
+
+/// Whether a disarm empties a player's held slot (`0x718fc0`): the main hand's weapon under
+/// `UNIT_FLAG_DISARMED`, else the off hand's, or the off hand by `UNIT_FIELD_FLAGS2 & 0x80`.
+fn hand_disarmed(slot: u8, flags: u32, flags2: u32, main_weapon: bool, own_weapon: bool) -> bool {
+    let flagged = flags & super::UNIT_FLAG_DISARMED != 0;
+    match slot {
+        0 => flagged && main_weapon,
+        1 => (flagged && !main_weapon && own_weapon) || flags2 & 0x80 != 0,
+        _ => false,
+    }
+}
+
+/// The player's first held visible item slot, the main hand; the off hand and ranged follow.
+const PLAYER_VISIBLE_HELD: u8 = 15;
 
 /// The violence level below 2, as [`track_violence_level`] keeps it from `violenceLevel`.
 static LOW_VIOLENCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -1180,14 +1258,21 @@ pub(crate) struct DelayedAreaKit {
     pub(crate) kit_id: u32,
     pub(crate) pos: Vec3,
     pub(crate) wait: AreaKitWait,
+    /// The transport the point is on and the point in its frame, placed through it when due;
+    /// `pos` is its place at the GO.
+    pub(crate) deck: Option<(Entity, Vec3)>,
 }
 
 /// How long a [`DelayedAreaKit`] waits.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum AreaKitWait {
-    /// The flight from the caster at `Spell.dbc` Speed, yards per second, above 0: at once with no
-    /// caster position.
-    Flight { caster: Entity, speed: f32 },
+    /// The flight from the caster to `to` at `Spell.dbc` Speed, yards per second, above 0: at once
+    /// with no caster position.
+    Flight {
+        caster: Entity,
+        speed: f32,
+        to: Vec3,
+    },
     /// The flight from a fixed point at Speed.
     FlightFrom { from: Vec3, speed: f32 },
     /// A fixed wait, in seconds.
@@ -1200,7 +1285,7 @@ fn area_kit_delay(from: Option<Vec3>, pos: Vec3, speed: f32) -> f32 {
     from.map_or(0.0, |c| c.distance(pos) / speed)
 }
 
-/// A dest-location cast's visuals (`0x8022d0`): column 23 at once, then a missile or column 24.
+/// A dest-location cast's visuals off `SMSG_NOTIFY_DEST_LOC_SPELL_CAST` ([`play_no_caster_dest`]).
 #[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 pub(super) fn play_dest_loc_casts(
     mut casts: MessageReader<super::DestLocCast>,
@@ -1218,75 +1303,108 @@ pub(super) fn play_dest_loc_casts(
         return;
     };
     for c in casts.read() {
-        let Some(stages) = resolve_stages(spells, &visuals.0, c.spell_id, || None) else {
-            continue;
-        };
-        if let Some(kit) = visuals.0.kit(stages.instant_area_kit) {
-            play_area_kit_at(
-                kit,
-                c.dest,
-                &visuals.0,
-                &mut sounds,
-                &mut shakes,
-                &mut bursts,
-            );
-        }
-        let speed = spells.catalog.get(c.spell_id).map_or(0.0, |d| d.speed);
-        let missile = stages.missile_gate != 0 && stages.missile_model != 0 && speed > 0.0;
-        // Deviation: the packet's trajectory is not read, so such a missile flies straight.
-        if let Some(player) = me.iter().next().filter(|_| missile) {
-            // An item model (-1 to -5) has no caster to take it from: the error cube (`0x80249a`).
-            let item_model = (-5..=-1).contains(&(stages.missile_model as i32));
-            let path = (!item_model)
-                .then(|| visuals.0.effect_path(stages.missile_model))
-                .flatten()
-                .unwrap_or(ERROR_CUBE);
-            let mut shape =
-                crate::entities::MissileShape::of(Some(&stages), Some(&stages), Some(&stages));
-            shape.source = None;
-            shape.impact_offset = Vec3::ZERO;
-            // A flight with no caster arms no targeting kit (`0x7022d0`).
-            shape.targeting_kit = 0;
-            let scale = visuals
-                .0
-                .effect_scale(stages.missile_model)
-                .map_or(1.0, |s| s.scale);
-            missiles.write(MissileSpawn {
-                // It lands on our own player, the no-caster arm of `0x700e20`.
-                caster: player,
-                spell_id: c.spell_id,
-                path: Some(path.to_string()),
-                ammo_display_id: None,
-                dest_tag: None,
-                speed,
-                targets: Vec::new(),
-                reflects: Vec::new(),
-                reflect_glances: false,
-                scale,
-                ground_aim: Some(c.dest),
-                missile_sound: stages.missile_sound,
-                awaits_release: false,
-                trajectory: None,
-                shape,
-                from: Some(c.src),
-                // No caster queue to order against.
-                seq: 0,
-            });
-            continue;
-        }
-        if visuals.0.kit(stages.impact_area_kit).is_none() {
-            continue;
-        }
-        delayed.write(DelayedAreaKit {
-            kit_id: stages.impact_area_kit,
-            pos: c.dest,
-            wait: if missile {
-                AreaKitWait::FlightFrom { from: c.src, speed }
-            } else {
-                AreaKitWait::Secs(c.delay_ms as f32 / 1000.0)
+        play_no_caster_dest(
+            c,
+            spells,
+            &visuals.0,
+            NoCasterOut {
+                sounds: &mut sounds,
+                shakes: &mut shakes,
+                bursts: &mut bursts,
+                delayed: &mut delayed,
+                missiles: &mut missiles,
             },
-        });
+            me.iter().next(),
+        );
     }
+}
+
+/// The lanes [`play_no_caster_dest`] writes.
+struct NoCasterOut<'a, 'w1, 'w2, 'w3, 'w4, 'w5> {
+    sounds: &'a mut MessageWriter<'w1, SpellKitSound>,
+    shakes: &'a mut MessageWriter<'w2, SpellKitShake>,
+    bursts: &'a mut MessageWriter<'w3, crate::entities::dest_fx::GroundBurst>,
+    delayed: &'a mut MessageWriter<'w4, DelayedAreaKit>,
+    missiles: &'a mut MessageWriter<'w5, MissileSpawn>,
+}
+
+/// The no-caster dest visuals (`0x8022d0`), off the spell's first visual unpicked: column 23 at
+/// once, then a missile or column 24; `player` is our own, where such a missile lands.
+fn play_no_caster_dest(
+    c: &super::DestLocCast,
+    spells: &crate::ui_action::Spells,
+    visuals: &SpellVisualCatalog,
+    out: NoCasterOut,
+    player: Option<Entity>,
+) {
+    let Some(display) = spells.catalog.get(c.spell_id) else {
+        return;
+    };
+    let Some(stages) = visuals.stages(display.visual).copied() else {
+        return;
+    };
+    if let Some(kit) = visuals.kit(stages.instant_area_kit) {
+        play_area_kit_at(kit, c.dest, visuals, out.sounds, out.shakes, out.bursts);
+    }
+    let speed = display.speed;
+    let missile = stages.missile_gate != 0 && stages.missile_model != 0 && speed > 0.0;
+    if let Some(player) = player.filter(|_| missile) {
+        // An item model (-1 to -5) has no caster to take it from: the error cube (`0x80249a`).
+        let item_model = (-5..=-1).contains(&(stages.missile_model as i32));
+        let path = (!item_model)
+            .then(|| visuals.effect_path(stages.missile_model))
+            .flatten()
+            .unwrap_or(ERROR_CUBE);
+        let mut shape =
+            crate::entities::MissileShape::of(Some(&stages), Some(&stages), Some(&stages));
+        shape.source = None;
+        shape.impact_offset = Vec3::ZERO;
+        // A flight with no caster arms no targeting kit (`0x7022d0`).
+        shape.targeting_kit = 0;
+        let scale = visuals
+            .effect_scale(stages.missile_model)
+            .map_or(1.0, |s| s.scale);
+        out.missiles.write(MissileSpawn {
+            // It lands on our own player, the no-caster arm of `0x700e20`.
+            caster: player,
+            spell_id: c.spell_id,
+            path: Some(path.to_string()),
+            item: None,
+            dest_tag: None,
+            speed,
+            targets: Vec::new(),
+            reflects: Vec::new(),
+            reflect_glances: false,
+            scale,
+            ground_aim: Some(c.dest),
+            missile_sound: stages.missile_sound,
+            awaits_release: false,
+            trajectory: c
+                .trajectory
+                .map(|t| (t, visuals.missile(display.missile).copied())),
+            shape,
+            from: Some(c.src),
+            list: None,
+            aim_deck: None,
+            // No caster queue to order against.
+            seq: 0,
+        });
+        return;
+    }
+    if visuals.kit(stages.impact_area_kit).is_none() {
+        return;
+    }
+    out.delayed.write(DelayedAreaKit {
+        kit_id: stages.impact_area_kit,
+        pos: c.dest,
+        // A trajectory missile lands at the packet's delay (`0x80266f`).
+        wait: if missile && c.trajectory.is_none() {
+            AreaKitWait::FlightFrom { from: c.src, speed }
+        } else {
+            AreaKitWait::Secs(c.delay_ms as f32 / 1000.0)
+        },
+        deck: None,
+    });
 }
 
 /// Queue each [`DelayedAreaKit`] and play the due ones at their point ([`play_kit_at`]).
@@ -1298,19 +1416,19 @@ pub(super) fn play_delayed_area_kits(
     mut sounds: MessageWriter<SpellKitSound>,
     mut shakes: MessageWriter<SpellKitShake>,
     mut bursts: MessageWriter<crate::entities::dest_fx::GroundBurst>,
-    mut pending: Local<Vec<(f32, u32, Vec3)>>,
+    mut pending: Local<Vec<(f32, DelayedAreaKit)>>,
 ) {
     let now = time.elapsed_secs();
     for q in queued.read() {
         let wait = match q.wait {
-            AreaKitWait::Flight { caster, speed } => {
+            AreaKitWait::Flight { caster, speed, to } => {
                 let from = casters.get(caster).ok().map(|g| g.translation());
-                area_kit_delay(from, q.pos, speed)
+                area_kit_delay(from, to, speed)
             }
             AreaKitWait::FlightFrom { from, speed } => area_kit_delay(Some(from), q.pos, speed),
             AreaKitWait::Secs(secs) => secs,
         };
-        pending.push((now + wait, q.kit_id, q.pos));
+        pending.push((now + wait, *q));
     }
     if pending.is_empty() {
         return;
@@ -1319,15 +1437,245 @@ pub(super) fn play_delayed_area_kits(
         pending.clear();
         return; // no client data
     };
-    pending.retain(|&(due, kit_id, pos)| {
-        if now < due {
-            return true;
+    pending.retain(
+        |&(
+            due,
+            DelayedAreaKit {
+                kit_id, pos, deck, ..
+            },
+        )| {
+            if now < due {
+                return true;
+            }
+            // A transport's point plays where the transport is now (`0x80f276`).
+            let pos = deck
+                .and_then(|(d, local)| {
+                    Some(crate::entities::deck_place(local, casters.get(d).ok()?))
+                })
+                .unwrap_or(pos);
+            if let Some(kit) = visuals.0.kit(kit_id) {
+                play_area_kit_at(kit, pos, &visuals.0, &mut sounds, &mut shakes, &mut bursts);
+            }
+            false
+        },
+    );
+}
+
+/// The GO's missiles by its targets' kind (`0x80f493`): a multi-target spell flies one missile with
+/// every target, at the point or hopping them (`0x800180`); any other flies one per unit or object,
+/// else one at the point carrying the group, hits and misses apart (`0x7fffb0`).
+fn go_missiles(
+    go: &SpellGoTargets,
+    display: &benilla_formats::SpellDisplay,
+    visual_flags: u32,
+    base: MissileSpawn,
+) -> Vec<MissileSpawn> {
+    use crate::entities::{ListedUnit, TargetList};
+    let mask = go.target_mask;
+    let located = mask & TARGET_LOCATIONS != 0;
+    // A located missile aims at the dest, else the source (`0x7334c1`).
+    let point = if mask & TARGET_DEST != 0 {
+        go.dest
+    } else {
+        go.src
+    };
+    let listed = |hits: bool| -> Vec<ListedUnit> {
+        go.list
+            .iter()
+            .filter(|&&(_, result, _)| (result == 0) == hits)
+            .map(|&(guid, result, reflect)| ListedUnit {
+                guid,
+                result,
+                reflect,
+            })
+            .collect()
+    };
+    let mut out = Vec::new();
+    if display.attributes_ex4 & ATTR_EX4_MULTI_TARGET_MISSILE != 0 {
+        let units: Vec<ListedUnit> = go
+            .list
+            .iter()
+            .map(|&(guid, result, reflect)| ListedUnit {
+                guid,
+                result,
+                reflect,
+            })
+            .collect();
+        // With no target and no point the missile is dropped (`0x7337e9`).
+        if located || !units.is_empty() {
+            let list = TargetList {
+                results: !units.is_empty(),
+                units,
+                bounce: true,
+                points: Vec::new(),
+            };
+            out.push(MissileSpawn {
+                ground_aim: point.filter(|_| located),
+                list: Some(list),
+                ..base.clone()
+            });
         }
-        if let Some(kit) = visuals.0.kit(kit_id) {
-            play_area_kit_at(kit, pos, &visuals.0, &mut sounds, &mut shakes, &mut bursts);
+        // The extra points ride one more missile, aimed at the first (`0x80f50e`, `0x733e20`).
+        if let Some(first) = go.points.first() {
+            out.push(MissileSpawn {
+                ground_aim: Some(first.world),
+                aim_deck: first.deck.map(|d| (d, first.at)),
+                list: Some(TargetList {
+                    points: go.points.clone(),
+                    bounce: true,
+                    ..TargetList::default()
+                }),
+                ..base
+            });
         }
-        false
-    });
+        return out;
+    }
+    let unit_targets = !located || visual_flags & VISUAL_FLAG_UNIT_MISSILES != 0;
+    let groups: [(Vec<MissileTarget>, bool); 2] = [
+        (go.hits.iter().map(|&e| (e, None)).collect(), true),
+        (
+            go.misses.iter().map(|&(e, c)| (e, Some(c))).collect(),
+            false,
+        ),
+    ];
+    for (targets, hits) in groups {
+        // The misses make missiles only when there are some (`0x80f544`).
+        if !hits && targets.is_empty() {
+            continue;
+        }
+        if !targets.is_empty() && mask & TARGET_UNIT_OR_OBJECT != 0 && unit_targets {
+            out.push(MissileSpawn {
+                targets,
+                ..base.clone()
+            });
+        } else if located
+            && (!targets.is_empty() || visual_flags & VISUAL_FLAG_NO_EMPTY_MISSILE == 0)
+        {
+            let units = listed(hits);
+            out.push(MissileSpawn {
+                ground_aim: point,
+                list: (!units.is_empty()).then_some(TargetList {
+                    units,
+                    results: !hits,
+                    bounce: false,
+                    points: Vec::new(),
+                }),
+                ..base.clone()
+            });
+        }
+    }
+    // One missile per extra point, carrying no list (`0x80f5a0`, `0x733820`).
+    for p in &go.points {
+        out.push(MissileSpawn {
+            ground_aim: Some(p.world),
+            aim_deck: p.deck.map(|d| (d, p.at)),
+            ..base.clone()
+        });
+    }
+    out
+}
+
+/// A per-target missile's target and, for a miss, its `SpellMissInfo`.
+type MissileTarget = (Entity, Option<u8>);
+
+/// The targets' unit and object bits, a per-target missile's gate (`0x800005`).
+const TARGET_UNIT_OR_OBJECT: u32 = 0x802;
+/// The source and dest location bits (`0x7fffe3`), and the dest alone (`0x7334c1`).
+const TARGET_LOCATIONS: u32 = 0x60;
+const TARGET_DEST: u32 = 0x40;
+/// `AttributesEx4` `0x40000`: one missile carries every target (`0x80f493`).
+const ATTR_EX4_MULTI_TARGET_MISSILE: u32 = 0x4_0000;
+/// `SpellVisual` flags: a located cast still flies per unit (`0x7fffef`); no empty located
+/// missile (`0x8000d3`).
+const VISUAL_FLAG_UNIT_MISSILES: u32 = 0x1;
+const VISUAL_FLAG_NO_EMPTY_MISSILE: u32 = 0x100;
+
+/// A missile's item model by column 8 (`0x7338e2`): -1 to -3 the held slot's item, -4 and -5 the
+/// ammo by its own folder, 0 the ammo model; `None` for a file id, or an item with no display.
+fn missile_item(
+    model: u32,
+    ammo: Option<ItemModel>,
+    held: impl FnOnce(u8) -> Option<ItemModel>,
+) -> Option<MissileItem> {
+    match model as i32 {
+        m @ -3..=-1 => held((-1 - m) as u8).map(MissileItem::Held),
+        -5 | -4 => ammo.map(MissileItem::Wire),
+        0 => ammo.map(|a| MissileItem::Ammo(a.display_id)),
+        _ => None,
+    }
+}
+
+/// A GO whose caster is no unit (`0x80ed20`): no cast kit and no missile. A GameObject's dest and
+/// extra points take the no-caster path when its row plays column 24 itself (`0x80f051`,
+/// `0x80f3d8`); at Speed 0 each hit plays its target impact kit (`0x801f10`).
+#[allow(clippy::too_many_arguments)] // the router's lanes, passed through
+fn play_object_caster_go(
+    go: &SpellGoTargets,
+    display: &benilla_formats::SpellDisplay,
+    plays_impact_area: bool,
+    game_object: bool,
+    player: Option<Entity>,
+    spells: &crate::ui_action::Spells,
+    visuals: &SpellVisualCatalog,
+    out: &mut KitOut,
+    (bursts, delayed, missiles): (
+        &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
+        &mut MessageWriter<DelayedAreaKit>,
+        &mut MessageWriter<MissileSpawn>,
+    ),
+) {
+    if benilla_assets::trace::enabled_for("fx") {
+        benilla_assets::trace::line(
+            "fx",
+            &format!(
+                "go object caster={} spell={} game_object={game_object} dest_kits={} dest={:?} \
+                 points={} hits={}",
+                go.caster,
+                go.spell_id,
+                game_object && plays_impact_area,
+                go.dest,
+                go.points.len(),
+                go.hits.len()
+            ),
+        );
+    }
+    if game_object && plays_impact_area {
+        let points = go.points.iter().map(|p| p.world);
+        for at in go.dest.into_iter().chain(points) {
+            let cast = super::DestLocCast {
+                spell_id: go.spell_id,
+                src: at,
+                dest: at,
+                delay_ms: 0,
+                // Only a row with no missile gets here (`0x80ef53`), so no trajectory flies.
+                trajectory: None,
+            };
+            let lanes = NoCasterOut {
+                sounds: out.sounds,
+                shakes: out.shakes,
+                bursts,
+                delayed,
+                missiles,
+            };
+            play_no_caster_dest(&cast, spells, visuals, lanes, player);
+        }
+    }
+    if display.speed > 0.0 {
+        return;
+    }
+    let flinch = display.is_harmful();
+    for &target in &go.hits {
+        let play = ImpactPlay {
+            spell_id: go.spell_id,
+            missile: None,
+            weapon_visual: None,
+            on_caster: false,
+            at: None,
+            flinch,
+            seq: go.seq,
+        };
+        play_impact(target, play, spells, visuals, out, bursts);
+    }
 }
 
 /// Whether `SMSG_SPELL_GO` plays column 24 itself (`0x80ef23`): not when a missile carries it to
@@ -1802,6 +2150,7 @@ pub(super) fn route_cast_visuals(
                     kit_id,
                     pos,
                     wait: AreaKitWait::Secs(0.0),
+                    deck: None,
                 });
             }
             WaitPlay::Precast { kit, seq } => play_precast_kit(
@@ -1841,6 +2190,14 @@ pub(super) fn route_cast_visuals(
     }
     // An object's kit never waits (`0x743570`).
     let is_unit = |e: Entity| units.get(e).is_ok_and(|(_, s, ..)| s.is_unit());
+    // A caster known to be an object of another type than a unit, a GameObject's trap or totem.
+    let object_type = |e: Entity| {
+        units
+            .get(e)
+            .ok()
+            .and_then(|(_, s, ..)| s.0.object_type())
+            .filter(|t| !matches!(t, ObjectType::Unit | ObjectType::Player))
+    };
     out.waits = waits.as_mut().map(|w| BeamHold {
         waits: w.bypass_change_detection(),
         is_unit: &is_unit,
@@ -1873,6 +2230,11 @@ pub(super) fn route_cast_visuals(
         // A despawn applied at the net sync point can outlive a cast edge from the same batch;
         // skip a dead subject whole.
         if commands.get_entity(ev.entity).is_err() {
+            continue;
+        }
+        // A caster that is no unit plays no start or cast visuals (`0x806891`, `0x80ee08`).
+        let start_or_go = matches!(ev.kind, CastEventKind::Start | CastEventKind::Go);
+        if start_or_go && object_type(ev.entity).is_some() {
             continue;
         }
         match ev.kind {
@@ -2037,6 +2399,47 @@ pub(super) fn route_cast_visuals(
                     bursts,
                 );
             }
+            CastEventKind::AreaImpact { caster } => {
+                play_impact(
+                    ev.entity,
+                    ImpactPlay {
+                        spell_id: ev.spell_id,
+                        missile: Some(MissileHit::on(
+                            caster,
+                            units.get(ev.entity).ok().map(|(_, s, a, _)| (s, a)),
+                            ev.spell_id,
+                        )),
+                        weapon_visual: None,
+                        on_caster: ev.entity == caster,
+                        at: None,
+                        flinch: false,
+                        seq: ev.seq,
+                    },
+                    spells,
+                    &visuals.0,
+                    &mut out,
+                    bursts,
+                );
+            }
+            CastEventKind::PointImpact { pos } => {
+                // The target kit at the point, stage 1, with no state kit and no flinch.
+                play_impact(
+                    ev.entity,
+                    ImpactPlay {
+                        spell_id: ev.spell_id,
+                        missile: None,
+                        weapon_visual: None,
+                        on_caster: false,
+                        at: Some(pos),
+                        flinch: false,
+                        seq: ev.seq,
+                    },
+                    spells,
+                    &visuals.0,
+                    &mut out,
+                    bursts,
+                );
+            }
             CastEventKind::GroundImpact { pos } => {
                 // A missile arrived at a point: `SpellVisual` column 24, the impact area kit, which
                 // `SMSG_SPELL_GO` leaves to the landing when a missile flies (`0x80ef53`), plays
@@ -2103,46 +2506,76 @@ pub(super) fn route_cast_visuals(
         }
     }
 
-    // Speed 0 plays every impact now, Speed > 0 flies one projectile per target. Misses fly too;
-    // the reference deflects them off the target, which is not built.
+    // Speed 0 plays every impact now, Speed > 0 flies the missiles [`go_missiles`] picks.
     for go in go_targets.read() {
         let Some(display) = spells.catalog.get(go.spell_id) else {
             continue;
         };
+        // A caster that is no unit takes the plain visual pick, no ranged fill (`0x80edb9`).
+        let unit = object_type(go.caster).is_none();
         // Resolved once per GO; every consumer below reads the merged row.
-        let wv = weapon_src.caster(go.caster);
+        let wv = unit.then(|| weapon_src.caster(go.caster)).flatten();
         let stages = resolve_stages(spells, &visuals.0, go.spell_id, || wv);
-        // The instant area kit (`0x80ee85`): column 23's kit at the dest point when the targets
-        // carry one, fired at GO whatever the hit list.
-        if let Some(dest) = go.dest {
-            if let Some(kit) = stages.and_then(|s| visuals.0.kit(s.instant_area_kit)) {
+        // Column 23 at the dest and each extra point at once (`0x80ee85`, `0x80f1cc`), then 24 when
+        // no missile carries it, now at Speed 0, else at the would-be landing (`0x80efb6`).
+        let kits = stages.map(|s| {
+            let impact = go_plays_impact_area(&visuals.0, &s, display.speed)
+                .then(|| visuals.0.kit(s.impact_area_kit))
+                .flatten();
+            (visuals.0.kit(s.instant_area_kit), impact, s.impact_area_kit)
+        });
+        if !unit {
+            play_object_caster_go(
+                go,
+                display,
+                kits.is_some_and(|(_, impact, _)| impact.is_some()),
+                object_type(go.caster) == Some(ObjectType::GameObject),
+                units.iter().find(|(.., me)| *me).map(|(e, ..)| e),
+                spells,
+                &visuals.0,
+                &mut out,
+                (bursts, delayed, missiles),
+            );
+            continue;
+        }
+        // One landing time serves every point, the last point's when there are some (`0x80e978`).
+        let landing = go.points.last().map(|p| p.world).or(go.dest);
+        let dest = go.dest.map(|d| (d, None));
+        let points = go
+            .points
+            .iter()
+            .map(|p| (p.world, p.deck.map(|d| (d, p.at))));
+        for (at, deck) in dest.into_iter().chain(points) {
+            let Some((instant, impact, impact_id)) = kits else {
+                break;
+            };
+            if let Some(kit) = instant {
                 play_unit_area_kit(
                     go.caster,
                     go.spell_id,
                     kit,
-                    dest,
+                    at,
                     &visuals.0,
                     &mut out,
                     bursts,
                 );
             }
-            // Then column 24 when no missile carries it: now at Speed 0, else at the would-be
-            // landing (`0x80efc8`, `0x80efb6`).
-            if let Some(s) = stages.filter(|s| go_plays_impact_area(&visuals.0, s, display.speed)) {
-                if let Some(kit) = visuals.0.kit(s.impact_area_kit) {
-                    if display.speed > 0.0 {
-                        delayed.write(DelayedAreaKit {
-                            kit_id: s.impact_area_kit,
-                            pos: dest,
-                            wait: AreaKitWait::Flight {
-                                caster: go.caster,
-                                speed: display.speed,
-                            },
-                        });
-                    } else {
-                        play_area_kit_at(kit, dest, &visuals.0, out.sounds, out.shakes, bursts);
-                    }
-                }
+            let Some(kit) = impact else {
+                continue;
+            };
+            if display.speed > 0.0 {
+                delayed.write(DelayedAreaKit {
+                    kit_id: impact_id,
+                    pos: at,
+                    wait: AreaKitWait::Flight {
+                        caster: go.caster,
+                        speed: display.speed,
+                        to: landing.unwrap_or(at),
+                    },
+                    deck,
+                });
+            } else {
+                play_area_kit_at(kit, at, &visuals.0, out.sounds, out.shakes, bursts);
             }
         }
         if display.speed <= 0.0 {
@@ -2187,62 +2620,70 @@ pub(super) fn route_cast_visuals(
                 }
             }
         } else {
-            // The spawn gate is Speed alone: basic shots have no visual row.
-            let path = stages.and_then(|s| {
-                (s.missile_model >= 1).then(|| {
+            // Missiles need a visual row with a missile or an ammo model (`0x7fffb0`, `0x800120`).
+            let ammo = go.ammo.filter(|a| a.display_id != 0);
+            let flies = stages.is_some_and(|s| s.missile_gate != 0 || ammo.is_some());
+            let item = stages.and_then(|s| {
+                missile_item(s.missile_model, ammo, |slot| {
+                    weapon_src.held_item(go.caster, slot)
+                })
+            });
+            // A model id naming no file, or an item with no display, draws the error cube.
+            let path = match (stages, item) {
+                (_, Some(_)) => None,
+                (Some(s), None) if s.missile_model as i32 >= 1 => Some(
                     visuals
                         .0
                         .effect_path(s.missile_model)
                         .unwrap_or(ERROR_CUBE)
-                        .to_string()
-                })
-            });
+                        .to_string(),
+                ),
+                _ => Some(ERROR_CUBE.to_string()),
+            };
             // An out-of-table ordinal reads adjacent `.rdata` in the reference; here, the base.
             let dest_tag = stages.and_then(|s| s.missile_dest_attachment());
             let missile_sound = stages.and_then(|s| s.missile_sound);
-            let targets: Vec<(Entity, Option<u8>)> = go
-                .hits
-                .iter()
-                .map(|&e| (e, None))
-                .chain(go.misses.iter().map(|&(e, code)| (e, Some(code))))
-                .collect();
-            // Only an empty hit array consults the ground point.
-            let ground_aim = targets.is_empty().then_some(go.dest).flatten();
             // The release gate (inverted).
             let awaits_release = stages
                 .filter(|s| s.cast != 0)
                 .and_then(|s| visuals.0.kit(s.cast))
                 .is_some_and(|k| k.anim_id.is_some());
-            let spawns = !targets.is_empty() || ground_aim.is_some();
-            if spawns {
-                missiles.write(MissileSpawn {
-                    caster: go.caster,
-                    spell_id: go.spell_id,
-                    path,
-                    ammo_display_id: go.ammo_display_id,
-                    dest_tag,
-                    speed: display.speed,
-                    targets,
-                    reflects: go.reflects.clone(),
-                    reflect_glances: display.attributes_ex7 & 0x2000_0000 != 0,
-                    scale: stages
-                        .and_then(|s| visuals.0.effect_scale(s.missile_model))
-                        .map_or(1.0, |s| s.scale),
-                    ground_aim,
-                    missile_sound,
-                    awaits_release,
-                    trajectory: go
-                        .trajectory
-                        .map(|t| (t, visuals.0.missile(display.missile).copied())),
-                    // The own row (`0x7332e0`), the merged row, the unpicked first (`0x702570`).
-                    shape: crate::entities::MissileShape::of(
-                        visuals.0.stages(spell_visual_id(display)),
-                        stages.as_ref(),
-                        visuals.0.stages(display.visual),
-                    ),
-                    from: None,
-                    seq: go.seq,
-                });
+            let base = MissileSpawn {
+                caster: go.caster,
+                spell_id: go.spell_id,
+                path,
+                item,
+                dest_tag,
+                speed: display.speed,
+                targets: Vec::new(),
+                reflects: go.reflects.clone(),
+                reflect_glances: display.attributes_ex7 & 0x2000_0000 != 0,
+                scale: stages
+                    .and_then(|s| visuals.0.effect_scale(s.missile_model))
+                    .map_or(1.0, |s| s.scale),
+                ground_aim: None,
+                missile_sound,
+                awaits_release,
+                trajectory: go
+                    .trajectory
+                    .map(|t| (t, visuals.0.missile(display.missile).copied())),
+                // The own row (`0x7332e0`), the merged row, the unpicked first (`0x702570`).
+                shape: crate::entities::MissileShape::of(
+                    visuals.0.stages(spell_visual_id(display)),
+                    stages.as_ref(),
+                    visuals.0.stages(display.visual),
+                ),
+                from: None,
+                list: None,
+                aim_deck: None,
+                seq: go.seq,
+            };
+            let flags = stages.map_or(0, |s| s.flags);
+            for spawn in go_missiles(go, display, flags, base)
+                .into_iter()
+                .filter(|_| flies)
+            {
+                missiles.write(spawn);
             }
             // A missile row with no cast animation releases the caster's missiles at GO, a held
             // model with them even when this GO made none (`0x80f5c1`).

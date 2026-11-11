@@ -803,3 +803,38 @@ fn a_ground_beam_with_no_chain_row_still_plays_its_area_kit() {
         .collect();
     assert_eq!(kits, vec![AREA_KIT]);
 }
+
+/// Only a unit caster saves its GO's location; a GameObject's GO saves nothing (`0x80ed20`).
+#[test]
+fn only_a_unit_casters_go_saves_the_location() {
+    let mut app = beam_app();
+    let unit = typed_unit(&mut app);
+    let trap = streamed(
+        &mut app,
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(2, 0x21)])),
+    );
+    for caster in [unit, trap] {
+        app.world_mut().write_message(SpellGoTargets {
+            caster,
+            spell_id: CHAIN_SPELL,
+            hits: Vec::new(),
+            misses: Vec::new(),
+            list: Vec::new(),
+            target_mask: 0x40,
+            src: None,
+            dest: Some(Vec3::X),
+            points: Vec::new(),
+            ammo: None,
+            seq: 1,
+            trajectory: None,
+            reflected: 0,
+            reflects: Vec::new(),
+            caster_guid: 0,
+            server_time: 0,
+        });
+    }
+    app.update();
+    let saved = &app.world().resource::<ChainLocations>().0;
+    assert_eq!(saved.get(&unit), Some(&Vec3::X), "the unit's");
+    assert_eq!(saved.get(&trap), None, "not the GameObject's");
+}

@@ -337,12 +337,19 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 reflects: s.reflects,
                 target: s.targets.unit_target,
                 go_target: s.targets.go_target,
+                target_mask: s.targets.mask,
+                src: s.targets.src.map(|d| [d.x, d.y, d.z]),
                 dest: s.targets.dest.map(|d| [d.x, d.y, d.z]),
-                ammo_display_id: s.ammo_display_id,
+                ammo: s.ammo,
                 // Against the resolved caster: a GameObject's own guid in slot 1 is not an item.
                 item_caster: (s.item_or_caster != caster).then_some(s.item_or_caster),
                 trajectory: s.trajectory,
                 dest_counter: s.dest_counter,
+                points: s
+                    .points
+                    .iter()
+                    .map(|(d, t)| ([d.x, d.y, d.z], *t))
+                    .collect(),
             }];
             events.extend(runes);
             events

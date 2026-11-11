@@ -16,6 +16,8 @@ use super::{
 };
 use crate::creature_anim::SpellGoTargets;
 
+mod object_caster;
+
 /// Demon Armor's shipped chain: visual 130 → precast kit 217 with anim 52, an instant self-buff.
 const SPELL: u32 = 706;
 const VISUAL: u32 = 130;
@@ -881,12 +883,16 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
         app.world_mut()
             .write_message(cast_event(caster, spell_id, CastEventKind::Go));
         app.world_mut().write_message(SpellGoTargets {
+            list: Vec::new(),
+            target_mask: 0x2,
+            src: None,
             caster,
             spell_id,
             hits: vec![target],
             misses: Vec::new(),
             dest: None,
-            ammo_display_id: None,
+            points: Vec::new(),
+            ammo: None,
             seq: 1,
             trajectory: None,
             reflected: 0,
@@ -911,7 +917,8 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
 }
 
 /// The GO's release gate: a Speed>0 spell whose cast kit plays a body animation defers its
-/// [`MissileSpawn`] to the animation's release keyframe; any other launches at GO.
+/// [`MissileSpawn`] to the animation's release keyframe; any other launches at GO. A row with no
+/// missile flies only on an ammo model (`0x7fffb0`).
 #[test]
 fn missile_spawn_defers_iff_the_cast_kit_animates() {
     const ANIMATED: u32 = 133; // Fireball's shape: cast kit with anim 53
@@ -955,6 +962,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
                 ANIMATED_VISUAL,
                 VisualStages {
                     cast: CAST_KIT,
+                    missile_gate: 1,
                     ..Default::default()
                 },
             ),
@@ -1008,14 +1016,21 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
 
     let caster = app.world_mut().spawn_empty().id();
     let target = app.world_mut().spawn_empty().id();
-    for spell_id in [ANIMATED, SILENT] {
+    for (spell_id, ammo) in [(ANIMATED, None), (SILENT, Some(5)), (SILENT, None)] {
         app.world_mut().write_message(SpellGoTargets {
+            list: Vec::new(),
+            target_mask: 0x2,
+            src: None,
             caster,
             spell_id,
             hits: vec![target],
             misses: Vec::new(),
             dest: None,
-            ammo_display_id: None,
+            points: Vec::new(),
+            ammo: ammo.map(|display_id| crate::creature_anim::ItemModel {
+                display_id,
+                inventory_type: 24,
+            }),
             seq: 1,
             trajectory: None,
             reflected: 0,
@@ -1029,12 +1044,13 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
         .world_mut()
         .resource_mut::<Messages<MissileSpawn>>()
         .drain()
-        .map(|m| (m.spell_id, m.awaits_release))
+        .map(|m| (m.spell_id, m.awaits_release, m.path.clone()))
         .collect();
+    let cube = Some(super::ERROR_CUBE.to_string());
     assert_eq!(
         spawns,
-        vec![(ANIMATED, true), (SILENT, false)],
-        "deferred iff the cast kit animates"
+        vec![(ANIMATED, true, cube), (SILENT, false, None)],
+        "deferred iff the cast kit animates; a missile row with no model flies the error cube; no missile and no ammo, no flight"
     );
 }
 
@@ -1123,12 +1139,16 @@ fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_poin
 
     let caster = app.world_mut().spawn_empty().id();
     app.world_mut().write_message(SpellGoTargets {
+        list: Vec::new(),
+        target_mask: 0x40,
+        src: None,
         caster,
         spell_id: GROUND,
         hits: Vec::new(),
         misses: Vec::new(),
         dest: Some(at),
-        ammo_display_id: None,
+        points: Vec::new(),
+        ammo: None,
         seq: 1,
         trajectory: None,
         reflected: 0,
@@ -1208,12 +1228,16 @@ fn a_dest_go_plays_the_instant_area_kit_at_the_point() {
     );
     let caster = app.world_mut().spawn_empty().id();
     app.world_mut().write_message(SpellGoTargets {
+        list: Vec::new(),
+        target_mask: 0x40,
+        src: None,
         caster,
         spell_id: 2120,
         hits: Vec::new(),
         misses: Vec::new(),
         dest: Some(at),
-        ammo_display_id: None,
+        points: Vec::new(),
+        ammo: None,
         seq: 1,
         trajectory: None,
         reflected: 0,
@@ -1903,12 +1927,16 @@ fn an_instant_hit_plays_its_impact_kit_and_no_state_kit() {
     app.world_mut()
         .write_message(cast_event(caster, CHARGE, CastEventKind::Go));
     app.world_mut().write_message(SpellGoTargets {
+        list: Vec::new(),
+        target_mask: 0x2,
+        src: None,
         caster,
         spell_id: CHARGE,
         hits: vec![victim],
         misses: Vec::new(),
         dest: None,
-        ammo_display_id: None,
+        points: Vec::new(),
+        ammo: None,
         seq: 1,
         trajectory: None,
         reflected: 0,
@@ -2259,12 +2287,16 @@ fn a_dest_go_plays_the_impact_area_kit_unless_a_missile_or_a_beam_carries_it() {
     let go = |app: &mut App| {
         let caster = app.world_mut().spawn(GlobalTransform::default()).id();
         app.world_mut().write_message(SpellGoTargets {
+            list: Vec::new(),
+            target_mask: 0x40,
+            src: None,
             caster,
             spell_id: 1,
             hits: Vec::new(),
             misses: Vec::new(),
             dest: Some(at),
-            ammo_display_id: None,
+            points: Vec::new(),
+            ammo: None,
             seq: 1,
             trajectory: None,
             reflected: 0,
@@ -2315,7 +2347,12 @@ fn a_dest_go_plays_the_impact_area_kit_unless_a_missile_or_a_beam_carries_it() {
         [super::DelayedAreaKit {
             kit_id: AREA_KIT,
             pos: at,
-            wait: super::AreaKitWait::Flight { caster, speed: 8.0 },
+            wait: super::AreaKitWait::Flight {
+                caster,
+                speed: 8.0,
+                to: at
+            },
+            deck: None,
         }]
     );
 
@@ -2337,6 +2374,177 @@ fn a_delayed_area_kit_waits_the_missile_flight() {
         0.5
     );
     assert_eq!(super::area_kit_delay(None, Vec3::ONE, 10.0), 0.0);
+}
+
+/// Each extra point takes the instant area kit and, with no missile to carry it, the impact area
+/// kit, as the dest does; at Speed > 0 every one waits for the last point's flight and a
+/// transport's point plays on its transport (`0x80f1cc`, `0x80e978`).
+#[test]
+fn a_go_plays_the_area_kits_at_each_extra_point() {
+    const INSTANT_KIT: u32 = 1944;
+    const AREA_KIT: u32 = 3270;
+    const SPARK: u32 = 4101;
+    const BOOM: u32 = 4100;
+    let dest = Vec3::new(3.0, 0.0, 4.0);
+    let (p, local, on_deck) = (
+        Vec3::new(6.0, 0.0, 8.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(1.0, 0.0, 30.0),
+    );
+    let stages = VisualStages {
+        instant_area_kit: INSTANT_KIT,
+        impact_area_kit: AREA_KIT,
+        ..Default::default()
+    };
+    let kits = || {
+        HashMap::from([
+            (
+                INSTANT_KIT,
+                VisualKit {
+                    sound: Some(SPARK),
+                    ..Default::default()
+                },
+            ),
+            (
+                AREA_KIT,
+                VisualKit {
+                    sound: Some(BOOM),
+                    ..Default::default()
+                },
+            ),
+        ])
+    };
+    let go = |app: &mut App| {
+        let caster = app.world_mut().spawn(GlobalTransform::default()).id();
+        let deck = app.world_mut().spawn_empty().id();
+        let point = |at, deck, world| crate::entities::DeckPoint { at, deck, world };
+        app.world_mut().write_message(SpellGoTargets {
+            list: Vec::new(),
+            target_mask: 0x80040,
+            src: None,
+            caster,
+            spell_id: 1,
+            hits: Vec::new(),
+            misses: Vec::new(),
+            dest: Some(dest),
+            points: vec![point(p, None, p), point(local, Some(deck), on_deck)],
+            ammo: None,
+            seq: 1,
+            trajectory: None,
+            reflected: 0,
+            reflects: Vec::new(),
+            caster_guid: 0,
+            server_time: 0,
+        });
+        app.update();
+        (caster, deck)
+    };
+    let sounds = |app: &mut App| -> Vec<(u32, Vec3)> {
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitSound>>()
+            .drain()
+            .filter_map(|s| match s {
+                SpellKitSound::PlayAt { pos, kit_sound } => Some((kit_sound, pos)),
+                _ => None,
+            })
+            .collect()
+    };
+
+    let mut app = ground_app(1, 0.0, stages, kits(), HashMap::new());
+    go(&mut app);
+    assert_eq!(
+        sounds(&mut app),
+        vec![
+            (SPARK, dest),
+            (BOOM, dest),
+            (SPARK, p),
+            (BOOM, p),
+            (SPARK, on_deck),
+            (BOOM, on_deck),
+        ]
+    );
+
+    let mut app = ground_app(1, 8.0, stages, kits(), HashMap::new());
+    let (caster, deck) = go(&mut app);
+    assert_eq!(
+        sounds(&mut app),
+        vec![(SPARK, dest), (SPARK, p), (SPARK, on_deck)]
+    );
+    let wait = super::AreaKitWait::Flight {
+        caster,
+        speed: 8.0,
+        to: on_deck,
+    };
+    let delayed: Vec<super::DelayedAreaKit> = app
+        .world_mut()
+        .resource_mut::<Messages<super::DelayedAreaKit>>()
+        .drain()
+        .collect();
+    let kit = |pos, deck| super::DelayedAreaKit {
+        kit_id: AREA_KIT,
+        pos,
+        wait,
+        deck,
+    };
+    assert_eq!(
+        delayed,
+        vec![
+            kit(dest, None),
+            kit(p, None),
+            kit(on_deck, Some((deck, local)))
+        ]
+    );
+}
+
+/// A delayed area kit on a transport plays where the transport is when it comes due, and at its
+/// place at the GO once the transport is gone.
+#[test]
+fn a_delayed_area_kit_on_a_transport_plays_where_it_has_moved() {
+    const AREA_KIT: u32 = 3270;
+    const BOOM: u32 = 4100;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins)
+        .add_message::<super::DelayedAreaKit>()
+        .add_message::<SpellKitSound>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::entities::dest_fx::GroundBurst>()
+        .insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
+            HashMap::new(),
+            HashMap::from([(
+                AREA_KIT,
+                VisualKit {
+                    sound: Some(BOOM),
+                    ..Default::default()
+                },
+            )]),
+            HashMap::new(),
+        )))
+        .add_systems(Update, super::play_delayed_area_kits);
+    let deck = app
+        .world_mut()
+        .spawn(GlobalTransform::from_xyz(0.0, 0.0, 50.0))
+        .id();
+    let local = Vec3::new(2.0, 0.0, 0.0);
+    let at_go = Vec3::new(2.0, 0.0, 10.0);
+    for deck in [Some((deck, local)), Some((Entity::PLACEHOLDER, local))] {
+        app.world_mut().write_message(super::DelayedAreaKit {
+            kit_id: AREA_KIT,
+            pos: at_go,
+            wait: super::AreaKitWait::Secs(0.0),
+            deck,
+        });
+    }
+    app.update();
+    let played: Vec<Vec3> = app
+        .world_mut()
+        .resource_mut::<Messages<SpellKitSound>>()
+        .drain()
+        .filter_map(|s| match s {
+            SpellKitSound::PlayAt { pos, .. } => Some(pos),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(played, vec![Vec3::new(2.0, 0.0, 50.0), at_go]);
 }
 
 /// The beam test reads the cast, impact, state, channel and the two impact-kit columns, never
@@ -2531,12 +2739,16 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
             .collect()
     };
     app.world_mut().write_message(SpellGoTargets {
+        list: Vec::new(),
+        target_mask: 0x2,
+        src: None,
         caster,
         spell_id: SPELL_ID,
         hits: vec![caster, target],
         misses: Vec::new(),
         dest: None,
-        ammo_display_id: None,
+        points: Vec::new(),
+        ammo: None,
         seq: 1,
         trajectory: None,
         reflected: 0,
@@ -2556,12 +2768,16 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
 
     // A reflect with no outcome of its own plays the caster's kit on the caster.
     app.world_mut().write_message(SpellGoTargets {
+        list: Vec::new(),
+        target_mask: 0x2,
+        src: None,
         caster,
         spell_id: SPELL_ID,
         hits: Vec::new(),
         misses: vec![(target, 11)],
         dest: None,
-        ammo_display_id: None,
+        points: Vec::new(),
+        ammo: None,
         seq: 1,
         trajectory: None,
         reflected: 1,
@@ -2764,6 +2980,7 @@ fn a_dest_location_missile_flies_from_the_source_to_the_dest() {
         src,
         dest,
         delay_ms: 0,
+        trajectory: None,
     };
 
     app.world_mut().write_message(cast);
@@ -2811,6 +3028,100 @@ fn a_dest_location_missile_flies_from_the_source_to_the_dest() {
         .drain()
         .next()
         .is_none());
+}
+
+/// A dest-location cast at a missile speed above 0 hands its missile the packet's pitch, speed
+/// and landing time with the spell's `SpellMissile.dbc` row (`0x80264d`-`0x80266f`); with no
+/// player of ours the area kit waits the packet's delay, not the flight.
+#[test]
+fn a_dest_location_missile_takes_the_packets_trajectory() {
+    const SPELL_ID: u32 = 52694;
+    const VISUAL_ID: u32 = 10100;
+    const AREA_KIT: u32 = 5;
+    const MISSILE_ROW: u32 = 33;
+    let row = benilla_formats::SpellMissileRec {
+        flags: 0x10,
+        gravity: 19.29,
+        ..Default::default()
+    };
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<super::super::DestLocCast>()
+        .add_message::<SpellKitSound>()
+        .add_message::<SpellKitShake>()
+        .add_message::<crate::entities::dest_fx::GroundBurst>()
+        .add_message::<super::DelayedAreaKit>()
+        .add_message::<MissileSpawn>()
+        .add_message::<super::MissileRelease>();
+    app.insert_resource(SpellVisuals(
+        SpellVisualCatalog::from_tables(
+            HashMap::from([(
+                VISUAL_ID,
+                VisualStages {
+                    missile_gate: 1,
+                    missile_model: 7,
+                    impact_area_kit: AREA_KIT,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::from([(AREA_KIT, VisualKit::default())]),
+        )
+        .with_missile(MISSILE_ROW, row),
+    ));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            SPELL_ID,
+            SpellDisplay {
+                visual: VISUAL_ID,
+                speed: 20.0,
+                missile: MISSILE_ROW,
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    app.add_systems(Update, super::play_dest_loc_casts);
+    let trajectory = super::super::Trajectory {
+        pitch: 0.7,
+        speed: 31.0,
+        delay: 2.5,
+        caster: 0xF130_0000_0000_0042,
+        cast_id: 9,
+    };
+    let cast = super::super::DestLocCast {
+        spell_id: SPELL_ID,
+        src: Vec3::new(0.0, 5.0, 0.0),
+        dest: Vec3::new(30.0, 0.0, 0.0),
+        delay_ms: 2500,
+        trajectory: Some(trajectory),
+    };
+
+    app.world_mut().write_message(cast);
+    app.update();
+    let waits: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Messages<super::DelayedAreaKit>>()
+        .drain()
+        .map(|d| d.wait)
+        .collect();
+    assert_eq!(
+        waits,
+        vec![super::AreaKitWait::Secs(2.5)],
+        "no player of ours: the kit waits the packet's landing time"
+    );
+
+    app.world_mut().spawn(crate::net::SelfPlayer);
+    app.world_mut().write_message(cast);
+    app.update();
+    let spawns: Vec<MissileSpawn> = app
+        .world_mut()
+        .resource_mut::<Messages<MissileSpawn>>()
+        .drain()
+        .collect();
+    match &spawns[..] {
+        [s] => assert_eq!(s.trajectory, Some((trajectory, Some(row)))),
+        other => panic!("one missile, got {}", other.len()),
+    }
 }
 
 /// A kit held at a point plants its head, base and world slots and its attach rows, not the rest.
@@ -3040,12 +3351,16 @@ fn a_go_without_a_cast_animation_releases_even_with_no_missile() {
     let (mut app, unit, _) = hold_app();
     let go = |app: &mut App, spell_id, hits: Vec<Entity>| {
         app.world_mut().write_message(SpellGoTargets {
+            list: Vec::new(),
+            target_mask: 0x2,
+            src: None,
             caster: unit,
             spell_id,
             hits,
             misses: Vec::new(),
             dest: None,
-            ammo_display_id: None,
+            points: Vec::new(),
+            ammo: None,
             seq: 3,
             trajectory: None,
             reflected: 0,
@@ -3158,12 +3473,16 @@ fn only_the_state_kit_play_hands_the_caster_to_its_beam() {
 
     // An instant hit plays its impact kit alone, with no guid (`0x801f10`).
     app.world_mut().write_message(SpellGoTargets {
+        list: Vec::new(),
+        target_mask: 0x2,
+        src: None,
         caster,
         spell_id: BEAM_SPELL,
         hits: vec![target],
         misses: Vec::new(),
         dest: None,
-        ammo_display_id: None,
+        points: Vec::new(),
+        ammo: None,
         seq: 2,
         trajectory: None,
         reflected: 0,
@@ -3795,12 +4114,16 @@ fn a_beam_spells_flag_1_impact_kit_waits_for_the_beam_or_drops_at_the_timeout() 
     let object = app.world_mut().spawn(store(0x21)).id();
     let go_at = |app: &mut App, spell_id: u32, hit: Entity| {
         app.world_mut().write_message(SpellGoTargets {
+            list: Vec::new(),
+            target_mask: 0x2,
+            src: None,
             caster,
             spell_id,
             hits: vec![hit],
             misses: Vec::new(),
             dest: None,
-            ammo_display_id: None,
+            points: Vec::new(),
+            ammo: None,
             seq: 1,
             trajectory: None,
             reflected: 0,
@@ -3934,6 +4257,7 @@ fn a_held_area_kit_plays_on_its_keyed_connect() {
             kit_id: AREA_KIT,
             pos,
             wait: super::AreaKitWait::Secs(0.0),
+            deck: None,
         }]
     );
     assert!(app.world().resource::<super::BeamKitWaits>().is_empty());
@@ -4282,12 +4606,16 @@ fn a_beam_spells_precast_channel_and_area_kits_wait_for_the_beam() {
 
     // The GO's instant area kit at its point, on the caster.
     app.world_mut().write_message(SpellGoTargets {
+        list: Vec::new(),
+        target_mask: 0x40,
+        src: None,
         caster,
         spell_id: BEAM_SPELL,
         hits: Vec::new(),
         misses: Vec::new(),
         dest: Some(Vec3::ONE),
-        ammo_display_id: None,
+        points: Vec::new(),
+        ammo: None,
         seq: 1,
         trajectory: None,
         reflected: 0,
@@ -4608,4 +4936,303 @@ fn a_state_kits_anim_rides_the_effect_list_while_its_aura_holds() {
         app.world().entity(unit).get::<StateKitAnims>().is_none(),
         "the aura's end takes the anim out"
     );
+}
+
+/// A GO's targets as the router reads them: `hits`, `misses` with their codes, the wire list in
+/// that order with a guid per entity's index, and the mask and points.
+fn listed_go(
+    hits: &[Entity],
+    misses: &[(Entity, u8)],
+    target_mask: u32,
+    dest: Option<Vec3>,
+) -> SpellGoTargets {
+    let guid = |e: Entity| 0xF130_0000_0000_0000 | u64::from(e.index_u32());
+    SpellGoTargets {
+        caster: Entity::PLACEHOLDER,
+        spell_id: SPELL,
+        hits: hits.to_vec(),
+        misses: misses.to_vec(),
+        list: hits
+            .iter()
+            .map(|&e| (guid(e), 0, 0))
+            .chain(misses.iter().map(|&(e, c)| (guid(e), c, 0)))
+            .collect(),
+        target_mask,
+        src: None,
+        dest,
+        points: Vec::new(),
+        ammo: None,
+        seq: 1,
+        trajectory: None,
+        reflected: 0,
+        reflects: Vec::new(),
+        caster_guid: 0,
+        server_time: 0,
+    }
+}
+
+/// A spawn as `(per-target count, ground aim, listed results, outcomes came, hops)`.
+type SpawnShape = (usize, Option<Vec3>, Option<(Vec<u8>, bool, bool)>);
+
+fn spawn_shapes(go: &SpellGoTargets, display: &SpellDisplay, flags: u32) -> Vec<SpawnShape> {
+    let base = MissileSpawn {
+        caster: Entity::PLACEHOLDER,
+        spell_id: SPELL,
+        path: None,
+        item: None,
+        dest_tag: None,
+        speed: 20.0,
+        targets: Vec::new(),
+        reflects: Vec::new(),
+        reflect_glances: false,
+        scale: 1.0,
+        ground_aim: None,
+        missile_sound: None,
+        awaits_release: false,
+        trajectory: None,
+        shape: crate::entities::MissileShape::default(),
+        from: None,
+        list: None,
+        aim_deck: None,
+        seq: 1,
+    };
+    super::go_missiles(go, display, flags, base)
+        .into_iter()
+        .map(|s| {
+            let list = s.list.map(|l| {
+                let results = l.units.iter().map(|u| u.result).collect();
+                (results, l.results, l.bounce)
+            });
+            (s.targets.len(), s.ground_aim, list)
+        })
+        .collect()
+}
+
+/// The GO's missiles by its targets' kind (`0x7fffb0`): a unit or object cast flies one per target,
+/// a located cast one at its point carrying the hits and another the misses with their outcomes,
+/// visual flag `0x1` keeps a located cast per unit, flag `0x100` drops an empty located missile,
+/// and a cast naming neither flies none.
+#[test]
+fn a_go_s_targets_pick_per_unit_missiles_or_one_at_the_point_carrying_them() {
+    let mut world = World::new();
+    let (a, b, c) = (
+        world.spawn_empty().id(),
+        world.spawn_empty().id(),
+        world.spawn_empty().id(),
+    );
+    let at = Vec3::new(5.0, 0.0, 5.0);
+    let plain = SpellDisplay::default();
+    let unit = listed_go(&[a, b], &[(c, 2)], 0x2, None);
+    assert_eq!(
+        spawn_shapes(&unit, &plain, 0),
+        vec![(2, None, None), (1, None, None)],
+        "per unit, hits and misses apart"
+    );
+    let located = listed_go(&[a, b], &[(c, 2)], 0x42, Some(at));
+    assert_eq!(
+        spawn_shapes(&located, &plain, 0),
+        vec![
+            (0, Some(at), Some((vec![0, 0], false, false))),
+            (0, Some(at), Some((vec![2], true, false))),
+        ],
+        "one at the point per group, only the misses' with outcomes"
+    );
+    assert_eq!(
+        spawn_shapes(&located, &plain, 0x1),
+        vec![(2, None, None), (1, None, None)],
+        "visual flag 0x1 keeps a located cast per unit"
+    );
+    let missed_only = listed_go(&[], &[(c, 2)], 0x40, Some(at));
+    assert_eq!(
+        spawn_shapes(&missed_only, &plain, 0),
+        vec![
+            (0, Some(at), None),
+            (0, Some(at), Some((vec![2], true, false)))
+        ],
+        "an empty hit group still flies at the point"
+    );
+    assert_eq!(
+        spawn_shapes(&missed_only, &plain, 0x100),
+        vec![(0, Some(at), Some((vec![2], true, false)))],
+        "unless visual flag 0x100 drops it"
+    );
+    let source_only = SpellGoTargets {
+        src: Some(at),
+        ..listed_go(&[a], &[], 0x20, None)
+    };
+    assert_eq!(
+        spawn_shapes(&source_only, &plain, 0),
+        vec![(0, Some(at), Some((vec![0], false, false)))],
+        "a source-only cast aims at its source"
+    );
+    let self_cast = listed_go(&[a], &[], 0, None);
+    assert!(
+        spawn_shapes(&self_cast, &plain, 0).is_empty(),
+        "no unit, object or point bit: no missile"
+    );
+}
+
+/// A multi-target spell (`AttributesEx4 & 0x40000`) flies one missile with every target and its
+/// outcome: hopping them from the first, or at the point when located; with neither it flies
+/// none (`0x800180`, `0x733600`, `0x7337e9`).
+#[test]
+fn a_multi_target_spell_flies_one_missile_with_every_target() {
+    let mut world = World::new();
+    let (a, b) = (world.spawn_empty().id(), world.spawn_empty().id());
+    let at = Vec3::new(5.0, 0.0, 5.0);
+    let multi = SpellDisplay {
+        attributes_ex4: 0x4_0000,
+        ..Default::default()
+    };
+    let unit = listed_go(&[a], &[(b, 3)], 0x2, None);
+    assert_eq!(
+        spawn_shapes(&unit, &multi, 0x1),
+        vec![(0, None, Some((vec![0, 3], true, true)))]
+    );
+    let located = listed_go(&[a], &[(b, 3)], 0x40, Some(at));
+    assert_eq!(
+        spawn_shapes(&located, &multi, 0),
+        vec![(0, Some(at), Some((vec![0, 3], true, true)))]
+    );
+    let empty = listed_go(&[], &[], 0x2, None);
+    assert!(spawn_shapes(&empty, &multi, 0).is_empty());
+}
+
+/// The extra points: a multi-target spell flies one more missile carrying them all, at the first
+/// (`0x80f50e`); any other flies one per point carrying none (`0x80f5a0`).
+#[test]
+fn extra_points_fly_one_missile_each_or_one_carrying_them() {
+    let mut world = World::new();
+    let a = world.spawn_empty().id();
+    let deck = world.spawn_empty().id();
+    let (p, q) = (Vec3::new(5.0, 0.0, 5.0), Vec3::new(1.0, 0.0, 1.0));
+    let qw = Vec3::new(1.0, 0.0, 11.0);
+    let point = |at, deck, world| crate::entities::DeckPoint { at, deck, world };
+    let go = SpellGoTargets {
+        points: vec![point(p, None, p), point(q, Some(deck), qw)],
+        ..listed_go(&[a], &[], 0x80002, None)
+    };
+    type Shape = (usize, Option<Vec3>, Option<(Entity, Vec3)>, usize);
+    let shapes = |display: &SpellDisplay| -> Vec<Shape> {
+        let base = MissileSpawn {
+            caster: Entity::PLACEHOLDER,
+            spell_id: SPELL,
+            path: None,
+            item: None,
+            dest_tag: None,
+            speed: 20.0,
+            targets: Vec::new(),
+            reflects: Vec::new(),
+            reflect_glances: false,
+            scale: 1.0,
+            ground_aim: None,
+            missile_sound: None,
+            awaits_release: false,
+            trajectory: None,
+            shape: crate::entities::MissileShape::default(),
+            from: None,
+            list: None,
+            aim_deck: None,
+            seq: 1,
+        };
+        super::go_missiles(&go, display, 0, base)
+            .into_iter()
+            .map(|s| {
+                let points = s.list.map_or(0, |l| l.points.len());
+                (s.targets.len(), s.ground_aim, s.aim_deck, points)
+            })
+            .collect()
+    };
+    assert_eq!(
+        shapes(&SpellDisplay::default()),
+        vec![
+            (1, None, None, 0),
+            (0, Some(p), None, 0),
+            (0, Some(qw), Some((deck, q)), 0)
+        ]
+    );
+    let multi = SpellDisplay {
+        attributes_ex4: 0x4_0000,
+        ..Default::default()
+    };
+    assert_eq!(
+        shapes(&multi),
+        vec![(0, None, None, 0), (0, Some(p), None, 2)]
+    );
+}
+
+/// An area landing's listed unit plays the impact kit its role picks and, under the hit's own aura
+/// gate, the state kit, both carrying the caster, and never flinches (`0x70105d`, `0x7010df`).
+#[test]
+fn an_area_landing_plays_a_listed_unit_s_kits_under_the_hit_s_gate_with_no_wound() {
+    const AREA_SPELL: u32 = 31250;
+    const AREA_VISUAL: u32 = 8782;
+    const CASTER_KIT: u32 = 920;
+    const TARGET_KIT: u32 = 921;
+    const STATE_KIT: u32 = 922;
+    // (health, auras as (slot, spell, flags), kit flags, plays)
+    type Case<'a> = (u32, &'a [(u8, u32, u8)], u32, bool);
+    let cases: [Case; 4] = [
+        (1, &[(0, AREA_SPELL, 1)], 0, true),
+        (0, &[(0, AREA_SPELL, 1)], 0, false),
+        (1, &[(0, AREA_SPELL, 0)], 0x80, false),
+        (1, &[(0, AREA_SPELL, 4)], 0x80, true),
+    ];
+    for (i, (health, auras, kit_flags, plays)) in cases.into_iter().enumerate() {
+        let mut app = app();
+        app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+            HashMap::from([(
+                AREA_VISUAL,
+                VisualStages {
+                    caster_impact: CASTER_KIT,
+                    target_impact: TARGET_KIT,
+                    state: STATE_KIT,
+                    ..Default::default()
+                },
+            )]),
+            HashMap::from([
+                (CASTER_KIT, beam_kit(CASTER_KIT, 4)),
+                (TARGET_KIT, beam_kit(TARGET_KIT, 5)),
+                (
+                    STATE_KIT,
+                    VisualKit {
+                        flags: kit_flags,
+                        ..beam_kit(STATE_KIT, 6)
+                    },
+                ),
+            ]),
+        )));
+        app.insert_resource(crate::ui_action::Spells {
+            catalog: SpellCatalog::from_displays(HashMap::from([(
+                AREA_SPELL,
+                SpellDisplay {
+                    visual: AREA_VISUAL,
+                    ..Default::default()
+                },
+            )])),
+            ..crate::ui_action::Spells::empty_for_tests()
+        });
+        let caster = struck_unit(app.world_mut(), 1, &[]);
+        let target = struck_unit(app.world_mut(), health, auras);
+        for unit in [target, caster] {
+            app.world_mut().write_message(cast_event(
+                unit,
+                AREA_SPELL,
+                CastEventKind::AreaImpact { caster },
+            ));
+        }
+        app.update();
+        let mut want = vec![(target, 5, None)];
+        if plays {
+            want.push((target, 6, Some(caster)));
+        }
+        want.push((caster, 4, None));
+        assert_eq!(beam_plays(&mut app), want, "case {i}");
+        let wounds = app
+            .world_mut()
+            .resource_mut::<Messages<WoundAnim>>()
+            .drain()
+            .count();
+        assert_eq!(wounds, 0, "case {i}: an area landing flinches nobody");
+    }
 }

@@ -3,6 +3,7 @@
 pub(crate) mod lightning;
 
 use benilla_formats::{ChainEffect, EffectAttach, VisualStages, MAX_COMBO_ROWS};
+use benilla_protocol::messages::ObjectType;
 use benilla_protocol::EntityKind;
 use benilla_world::sky_order::Rung;
 use benilla_world::view::WorldCamera;
@@ -198,6 +199,14 @@ pub(super) fn spawn_chain_beams(
         {
             continue;
         }
+        // A unit caster's alone (`0x80ed20`).
+        let object = stores.get(go.caster).is_ok_and(|(s, ..)| {
+            s.0.object_type()
+                .is_some_and(|t| !matches!(t, ObjectType::Unit | ObjectType::Player))
+        });
+        if object {
+            continue;
+        }
         let hit_units = !(go.hits.is_empty() && go.misses.is_empty());
         locations.save(go.caster, row.flags, hit_units, go.dest);
     }
@@ -347,6 +356,7 @@ pub(super) fn spawn_chain_beams(
                 kit_id: area_kit,
                 pos,
                 wait: AreaKitWait::Secs(0.0),
+                deck: None,
             });
         }
     }

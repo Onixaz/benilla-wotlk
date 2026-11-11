@@ -78,6 +78,14 @@ fn dest_loc_cast(
         src: benilla_assets::coords::wow_to_bevy(c.src),
         dest: benilla_assets::coords::wow_to_bevy(c.dest),
         delay_ms: c.delay_ms,
+        // The missile's pitch, speed and landing time ride the packet (`0x80264d`-`0x80266f`).
+        trajectory: (c.speed > 0.0).then_some(crate::creature_anim::Trajectory {
+            pitch: c.elevation,
+            speed: c.speed,
+            delay: c.delay_ms as f32 / 1000.0,
+            caster: c.caster,
+            cast_id: c.counter,
+        }),
     })
 }
 
@@ -164,5 +172,29 @@ mod tests {
         assert!(dest_loc_cast(cast(7, 3), &mut p, 0.5).is_none());
         let played = dest_loc_cast(cast(7, 4), &mut p, 0.5).unwrap();
         assert_eq!(played.delay_ms, 500);
+    }
+
+    /// The packet's trajectory reaches the missile only at a missile speed above 0 (`0x802641`).
+    #[test]
+    fn a_notify_carries_its_trajectory_at_a_missile_speed() {
+        let mut p = ProcessedDestLocCasts::default();
+        let flat = dest_loc_cast(cast(7, 1), &mut p, 0.0).unwrap();
+        assert_eq!(flat.trajectory, None, "speed 0");
+        let aimed = DestLocSpellCast {
+            elevation: 0.4,
+            speed: 25.0,
+            ..cast(7, 2)
+        };
+        let played = dest_loc_cast(aimed, &mut p, 0.0).unwrap();
+        assert_eq!(
+            played.trajectory,
+            Some(crate::creature_anim::Trajectory {
+                pitch: 0.4,
+                speed: 25.0,
+                delay: 0.5,
+                caster: 7,
+                cast_id: 2,
+            })
+        );
     }
 }

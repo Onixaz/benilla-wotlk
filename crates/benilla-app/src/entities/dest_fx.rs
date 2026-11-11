@@ -7,6 +7,7 @@ use bevy::prelude::*;
 
 use crate::creature_anim::{SpellGoTargets, SpellKitSound, SpellVisuals};
 use crate::net::{NetEntity, ObjectStore};
+use benilla_protocol::messages::ObjectType;
 use benilla_protocol::EntityKind;
 
 use super::spell_fx::{attach_effect_visuals, ensure_model, FxMaterials, SpellFx};
@@ -129,6 +130,7 @@ pub(super) fn record_spells_in_transit(
     mut gos: MessageReader<SpellGoTargets>,
     spells: Option<Res<crate::ui_action::Spells>>,
     units: Query<&GlobalTransform>,
+    stores: Query<&crate::net::ObjectStore>,
     time: Res<Time>,
     mut list: ResMut<SpellsInTransit>,
 ) {
@@ -140,7 +142,12 @@ pub(super) fn record_spells_in_transit(
     };
     for go in gos.read() {
         let speed = spells.catalog.get(go.spell_id).map_or(0.0, |d| d.speed);
-        let Some(from) = units.get(go.caster).ok().filter(|_| speed > 0.0) else {
+        // A unit caster's alone (`0x80e780`).
+        let object = stores.get(go.caster).is_ok_and(|s| {
+            s.0.object_type()
+                .is_some_and(|t| !matches!(t, ObjectType::Unit | ObjectType::Player))
+        });
+        let Some(from) = units.get(go.caster).ok().filter(|_| speed > 0.0 && !object) else {
             continue;
         };
         let first = go.hits.first().or(go.misses.first().map(|(e, _)| e));
@@ -460,6 +467,62 @@ mod tests {
         assert!(!list.holds(8, 133, 900));
         assert!(!list.holds(7, 116, 900));
         assert!(!list.holds(7, 133, 901));
+    }
+
+    /// A unit's travelling GO is noted, a GameObject's never (`0x80e780`).
+    #[test]
+    fn only_a_unit_casters_go_is_in_transit() {
+        const SPELL: u32 = 133;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<SpellsInTransit>()
+            .add_message::<SpellGoTargets>()
+            .add_systems(Update, record_spells_in_transit);
+        app.insert_resource(crate::ui_action::Spells {
+            catalog: benilla_formats::SpellCatalog::from_displays(std::collections::HashMap::from(
+                [(
+                    SPELL,
+                    benilla_formats::SpellDisplay {
+                        speed: 20.0,
+                        ..Default::default()
+                    },
+                )],
+            )),
+            ..crate::ui_action::Spells::empty_for_tests()
+        });
+        let mut caster = |mask: u32| {
+            app.world_mut()
+                .spawn((
+                    GlobalTransform::default(),
+                    ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(2, mask)])),
+                ))
+                .id()
+        };
+        let (unit, trap) = (caster(0x9), caster(0x21));
+        for (guid, caster) in [(1u64, unit), (2, trap)] {
+            app.world_mut().write_message(SpellGoTargets {
+                caster,
+                spell_id: SPELL,
+                hits: Vec::new(),
+                misses: Vec::new(),
+                list: Vec::new(),
+                target_mask: 0x40,
+                src: None,
+                dest: Some(Vec3::new(40.0, 0.0, 0.0)),
+                points: Vec::new(),
+                ammo: None,
+                seq: 1,
+                trajectory: None,
+                reflected: 0,
+                reflects: Vec::new(),
+                caster_guid: guid,
+                server_time: 900,
+            });
+        }
+        app.update();
+        let list = app.world().resource::<SpellsInTransit>();
+        assert!(list.holds(1, SPELL, 900), "the unit's");
+        assert!(!list.holds(2, SPELL, 900), "not the GameObject's");
     }
 
     /// A point play held by a unit loops while the unit stands and goes with it (`0x744ac0`); a

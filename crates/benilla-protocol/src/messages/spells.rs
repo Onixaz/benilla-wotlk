@@ -310,6 +310,9 @@ pub struct SpellCastTargets {
     pub unit_target: Option<u64>,
     /// The `TARGET_FLAG_GAMEOBJECT` target, such as the chest an open-lock cast opens.
     pub go_target: Option<u64>,
+    /// The source point (`TARGET_FLAG_SOURCE_LOCATION`), which a source-only missile aims at
+    /// (`0x7334e5`).
+    pub src: Option<Vector3d>,
     pub dest: Option<Vector3d>,
 }
 
@@ -329,10 +332,12 @@ fn read_spell_cast_targets(r: &mut impl Read) -> io::Result<SpellCastTargets> {
     if mask & (TARGET_FLAG_ITEM | TARGET_FLAG_TRADE_ITEM) != 0 {
         let _item_guid = read_packed_guid(r)?;
     }
-    if mask & TARGET_FLAG_SOURCE_LOCATION != 0 {
+    let src = if mask & TARGET_FLAG_SOURCE_LOCATION != 0 {
         let _transport = read_packed_guid(r)?;
-        let _src = Vector3d::read(r)?;
-    }
+        Some(Vector3d::read(r)?)
+    } else {
+        None
+    };
     let dest = if mask & TARGET_FLAG_DEST_LOCATION != 0 {
         let _transport = read_packed_guid(r)?;
         Some(Vector3d::read(r)?)
@@ -346,6 +351,7 @@ fn read_spell_cast_targets(r: &mut impl Read) -> io::Result<SpellCastTargets> {
         mask,
         unit_target,
         go_target,
+        src,
         dest,
     })
 }
@@ -358,11 +364,9 @@ const CAST_FLAG_VISUAL_CHAIN: u32 = 0x8_0000;
 const CAST_FLAG_RUNE_LIST: u32 = 0x20_0000;
 const CAST_FLAG_IMMUNITY: u32 = 0x400_0000;
 
-/// Read the ammo block: `u32 displayId`, `u32 inventoryType` (dropped).
-fn read_ammo(r: &mut impl Read) -> io::Result<u32> {
-    let display_id = read_u32_le(r)?;
-    let _inventory_type = read_u32_le(r)?;
-    Ok(display_id)
+/// Read the ammo block: `u32 displayId`, `u32 inventoryType`.
+fn read_ammo(r: &mut impl Read) -> io::Result<(u32, u32)> {
+    Ok((read_u32_le(r)?, read_u32_le(r)?))
 }
 
 /// A cast's rune block: the caster's ready-rune masks before and after the cast, and for each of
@@ -432,7 +436,7 @@ pub(super) fn read_spell_start(r: &mut impl Read) -> io::Result<SpellStart> {
         None
     };
     let ammo_display_id = if cast_flags & CAST_FLAG_AMMO != 0 {
-        Some(read_ammo(r)?)
+        Some(read_ammo(r)?.0)
     } else {
         None
     };
@@ -476,7 +480,8 @@ pub struct SpellGo {
     /// `(guid, outcome)` of each reflect miss, the reflected spell's result on the caster.
     pub reflects: Vec<(u64, u8)>,
     pub targets: SpellCastTargets,
-    pub ammo_display_id: Option<u32>,
+    /// The ammo block, `(displayId, inventoryType)`: the ammo a missile flies (`0x733820`).
+    pub ammo: Option<(u32, u32)>,
     /// The `CAST_FLAG_RUNE_LIST` block.
     pub runes: Option<CastRunes>,
     /// The `CAST_FLAG_ADJUST_MISSILE` pair, `(elevation, delay ms)`: a trajectory missile's launch
@@ -485,6 +490,8 @@ pub struct SpellGo {
     /// A dest-targeted GO's cast counter (`0x80e42a`), 0 for none; a nonzero one is recorded
     /// against the caster so its [`DestLocSpellCast`] does not play again.
     pub dest_counter: u8,
+    /// The extra target points (`0x80e44f`), each with its transport guid or 0.
+    pub points: Vec<(Vector3d, u64)>,
 }
 
 /// `SMSG_NOTIFY_DEST_LOC_SPELL_CAST` (`0x810050`): a dest-location cast whose caster this client
@@ -579,7 +586,7 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     } else {
         None
     };
-    let ammo_display_id = if cast_flags & CAST_FLAG_AMMO != 0 {
+    let ammo = if cast_flags & CAST_FLAG_AMMO != 0 {
         Some(read_ammo(r)?)
     } else {
         None
@@ -593,11 +600,12 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     } else {
         0
     };
+    let mut points = Vec::new();
     if targets.mask & TARGET_FLAG_EXTRA_TARGETS != 0 {
         // `u32` count of a point and a raw guid each; unbounded, so nothing is pre-allocated.
         for _ in 0..read_u32_le(r)? {
-            let _point = Vector3d::read(r)?;
-            let _guid = read_u64_le(r)?;
+            let point = Vector3d::read(r)?;
+            points.push((point, read_u64_le(r)?));
         }
     }
     Ok(SpellGo {
@@ -611,10 +619,11 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
         misses,
         reflects,
         targets,
-        ammo_display_id,
+        ammo,
         runes,
         trajectory,
         dest_counter,
+        points,
     })
 }
 

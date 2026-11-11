@@ -833,16 +833,23 @@ pub enum SessionEvent {
         target: Option<u64>,
         /// The GameObject an open-lock cast targets (`TARGET_FLAG_GAMEOBJECT`), a chest or door.
         go_target: Option<u64>,
+        /// The targets' flag mask, which picks a missile's kind (`0x7fffb0`).
+        target_mask: u32,
+        /// The source point (`TARGET_FLAG_SOURCE_LOCATION`, raw WoW).
+        src: Option<[f32; 3]>,
         /// The ground point (`TARGET_FLAG_DEST_LOCATION`, raw WoW); the lasting effect is a
         /// DynamicObject.
         dest: Option<[f32; 3]>,
-        ammo_display_id: Option<u32>,
+        /// The ammo block, `(displayId, inventoryType)` (`CAST_FLAG_AMMO`).
+        ammo: Option<(u32, u32)>,
         /// The cast item when the first guid is not the caster; the item cooldown keys on it.
         item_caster: Option<u64>,
         /// A trajectory missile's `(elevation, delay ms)` (`CAST_FLAG_ADJUST_MISSILE`).
         trajectory: Option<(f32, u32)>,
         /// A dest-targeted GO's cast counter, 0 for none (`0x80e42a`).
         dest_counter: u8,
+        /// The extra target points (raw WoW), each with its transport guid or 0 (`0x80e44f`).
+        points: Vec<([f32; 3], u64)>,
     },
     /// A channeled beam's hops (`SMSG_SPELL_UPDATE_CHAIN_TARGETS`), consumed once by the next chain
     /// `CharProc`; the reference fills that `unit+0xd44` array from spell-go hits too.
