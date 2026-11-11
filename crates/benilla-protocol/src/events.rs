@@ -833,6 +833,10 @@ pub enum SessionEvent {
         target: Option<u64>,
         /// The GameObject an open-lock cast targets (`TARGET_FLAG_GAMEOBJECT`), a chest or door.
         go_target: Option<u64>,
+        /// The targets' flag mask, which picks a missile's kind (`0x7fffb0`).
+        target_mask: u32,
+        /// The source point (`TARGET_FLAG_SOURCE_LOCATION`, raw WoW).
+        src: Option<[f32; 3]>,
         /// The ground point (`TARGET_FLAG_DEST_LOCATION`, raw WoW); the lasting effect is a
         /// DynamicObject.
         dest: Option<[f32; 3]>,

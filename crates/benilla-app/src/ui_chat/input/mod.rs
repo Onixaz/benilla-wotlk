@@ -869,6 +869,9 @@ pub(super) fn drain_chat_input(
                             });
                             if let Some(dest) = dest {
                                 go_targets.write(crate::creature_anim::SpellGoTargets {
+                                    list: Vec::new(),
+                                    target_mask: 0x40,
+                                    src: None,
                                     caster: entity,
                                     spell_id,
                                     hits: Vec::new(),
@@ -884,6 +887,9 @@ pub(super) fn drain_chat_input(
                                 });
                             } else if let Some(me) = me.filter(|&m| m != entity) {
                                 go_targets.write(crate::creature_anim::SpellGoTargets {
+                                    list: Vec::new(),
+                                    target_mask: 0x2,
+                                    src: None,
                                     caster: entity,
                                     spell_id,
                                     hits: vec![me],

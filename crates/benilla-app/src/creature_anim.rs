@@ -416,10 +416,12 @@ pub(crate) enum CastEventKind {
         at: Option<Vec3>,
         caster: Entity,
     },
-    /// A projectile with no live target at arrival (a despawned target too): the kit plays on the
-    /// caster (`entity`) at `pos`, `SpellVisual` field 13, stage 3. Sent here only for a
-    /// dest-targeted GO's missile with no hit (`MissileSpawn::ground_aim`).
+    /// A projectile with no live target at arrival (a located cast, a target gone, an object): the
+    /// impact area kit plays through `entity`, the caster or our player, at `pos` (`0x700e20`).
     GroundImpact { pos: Vec3 },
+    /// A missile landing on its area reached this listed unit (`0x70105d`): its impact kit and,
+    /// under the hit's aura test, its state kit, both carrying `caster`, with no flinch.
+    AreaImpact { caster: Entity },
 }
 
 /// The anim held while a cast is in flight (`SpellVisualKit` field 2): full-body when standing
@@ -671,6 +673,13 @@ pub(crate) struct SpellGoTargets {
     /// Missed units with `SpellMissInfo`: no impact kit; the flight's route is
     /// `crate::entities::missile`'s.
     pub(crate) misses: Vec<(Entity, u8)>,
+    /// Every listed guid with its outcome (0 a hit) and a reflect's outcome on the caster, hits
+    /// first unless cast flag `0x400`; a list missile resolves them as it lands (`0x8001ee`).
+    pub(crate) list: Vec<(u64, u8, u8)>,
+    /// The targets' flag mask, which picks the missiles' kind (`0x7fffb0`).
+    pub(crate) target_mask: u32,
+    /// The source point, in bevy coords.
+    pub(crate) src: Option<Vec3>,
     /// A dest-targeted cast's ground point, in bevy coords.
     pub(crate) dest: Option<Vec3>,
     /// The GO's ammo block (`castFlags & 0x20`): the ammo's `ItemDisplayInfo` id, the missile model

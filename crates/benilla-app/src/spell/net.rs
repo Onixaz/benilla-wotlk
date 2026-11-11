@@ -434,6 +434,8 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
         misses,
         target,
         go_target,
+        target_mask,
+        src,
         dest,
         ammo_display_id,
         item_caster,
@@ -454,7 +456,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
             reflects,
             target,
             go_target,
-            dest,
+            (target_mask, src, dest),
             ammo_display_id,
             item_caster,
             trajectory,
@@ -1331,7 +1333,8 @@ fn spell_go(
     reflects: Vec<(u64, u8)>,
     target: Option<u64>,
     go_target: Option<u64>,
-    dest: Option<[f32; 3]>,
+    // The targets' mask with their source and dest points.
+    (target_mask, src, dest): (u32, Option<[f32; 3]>, Option<[f32; 3]>),
     ammo_display_id: Option<u32>,
     item_caster: Option<u64>,
     trajectory: Option<(f32, u32)>,
@@ -1547,20 +1550,19 @@ fn spell_go(
         if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
             commands.entity(e).remove::<Casting>();
         }
-        // The hop fill the cast kit consumes: hits then misses, swapped by flag 0x400 (`0x80ec10`).
-        // Deviation: fills on every row, not only a beam's (`0x80ed5a`), as only a beam consumes it.
-        let hops: Vec<u64> = if cast_flags & 0x400 != 0 {
-            misses
-                .iter()
-                .map(|m| m.0)
-                .chain(hits.iter().copied())
-                .collect()
+        // The GO's one target list: hits then misses, swapped by flag 0x400 (`0x80ec10`,
+        // `0x8001ee`), a hit with outcome 0, a reflect with the outcome it sends back.
+        let reflect_of = |g: u64| reflects.iter().find(|r| r.0 == g).map_or(0, |r| r.1);
+        let hit_codes = hits.iter().map(|&g| (g, 0, 0));
+        let miss_codes = misses.iter().map(|&(g, code)| (g, code, reflect_of(g)));
+        let list: Vec<(u64, u8, u8)> = if cast_flags & 0x400 != 0 {
+            miss_codes.chain(hit_codes).collect()
         } else {
-            hits.iter()
-                .copied()
-                .chain(misses.iter().map(|m| m.0))
-                .collect()
+            hit_codes.chain(miss_codes).collect()
         };
+        // The hop fill the cast kit consumes. Deviation: fills on every row, not only a beam's
+        // (`0x80ed5a`), as only a beam consumes it.
+        let hops: Vec<u64> = list.iter().map(|&(g, ..)| g).collect();
         fill_chain_hops(caster, e, &hops, commands, index);
         cast_events.write(CastEvent {
             entity: e,
@@ -1581,12 +1583,16 @@ fn spell_go(
             .collect();
         // A pure dest cast (ground AoE, empty lists) rides the same message: the point is a target.
         let dest = dest.map(benilla_assets::coords::wow_to_bevy);
-        if !hits.is_empty() || !misses.is_empty() || dest.is_some() {
+        let src = src.map(benilla_assets::coords::wow_to_bevy);
+        if !hits.is_empty() || !misses.is_empty() || dest.is_some() || src.is_some() {
             go_targets.write(SpellGoTargets {
                 caster: e,
                 spell_id,
                 hits,
                 misses,
+                list,
+                target_mask,
+                src,
                 dest,
                 ammo_display_id,
                 seq,
@@ -2548,7 +2554,7 @@ mod tests {
                             Vec::new(),
                             None,
                             None,
-                            None,
+                            (0, None, None),
                             None,
                             None,
                             None,
@@ -2758,7 +2764,7 @@ mod tests {
                         Vec::new(),
                         None,
                         None,
-                        None,
+                        (0, None, None),
                         None,
                         item_caster.or(Some(caster)),
                         None,
@@ -2966,7 +2972,7 @@ mod tests {
                         Vec::new(),
                         None,
                         None,
-                        None,
+                        (0, None, None),
                         None,
                         None,
                         None,
@@ -3358,7 +3364,7 @@ mod tests {
                             // A different guid from `hits[0]`, which the arm must take.
                             Some(99),
                             None,
-                            None,
+                            (0, None, None),
                             None,
                             None,
                             None,

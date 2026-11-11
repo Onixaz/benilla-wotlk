@@ -76,7 +76,6 @@ pub(crate) use collision_height::CollisionHeight;
 
 /// Spell missiles: the projectile a cast with a `Spell.dbc` Speed above 0 flies at each target.
 mod missile;
-pub(crate) use missile::MissileShape;
 pub(crate) use missile::{
     aim_launch_pos, AttachPosQuery, MissileMiss, MissileSound, PendingMissiles,
 };
@@ -84,6 +83,7 @@ use missile::{
     attach_missile_models, mark_forced_missiles, move_missiles, run_missile_motion, spawn_missiles,
     MissileMotion, MotionScripts,
 };
+pub(crate) use missile::{ListedUnit, MissileShape, TargetList};
 
 /// A WMO-display GameObject's doodad props (a ship's sails), parented under it to ride a transport.
 mod wmo_props;

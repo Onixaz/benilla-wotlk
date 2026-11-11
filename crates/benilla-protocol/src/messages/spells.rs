@@ -310,6 +310,9 @@ pub struct SpellCastTargets {
     pub unit_target: Option<u64>,
     /// The `TARGET_FLAG_GAMEOBJECT` target, such as the chest an open-lock cast opens.
     pub go_target: Option<u64>,
+    /// The source point (`TARGET_FLAG_SOURCE_LOCATION`), which a source-only missile aims at
+    /// (`0x7334e5`).
+    pub src: Option<Vector3d>,
     pub dest: Option<Vector3d>,
 }
 
@@ -329,10 +332,12 @@ fn read_spell_cast_targets(r: &mut impl Read) -> io::Result<SpellCastTargets> {
     if mask & (TARGET_FLAG_ITEM | TARGET_FLAG_TRADE_ITEM) != 0 {
         let _item_guid = read_packed_guid(r)?;
     }
-    if mask & TARGET_FLAG_SOURCE_LOCATION != 0 {
+    let src = if mask & TARGET_FLAG_SOURCE_LOCATION != 0 {
         let _transport = read_packed_guid(r)?;
-        let _src = Vector3d::read(r)?;
-    }
+        Some(Vector3d::read(r)?)
+    } else {
+        None
+    };
     let dest = if mask & TARGET_FLAG_DEST_LOCATION != 0 {
         let _transport = read_packed_guid(r)?;
         Some(Vector3d::read(r)?)
@@ -346,6 +351,7 @@ fn read_spell_cast_targets(r: &mut impl Read) -> io::Result<SpellCastTargets> {
         mask,
         unit_target,
         go_target,
+        src,
         dest,
     })
 }

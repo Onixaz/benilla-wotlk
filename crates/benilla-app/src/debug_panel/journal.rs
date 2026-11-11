@@ -113,7 +113,9 @@ pub(super) fn record_casts(
             }
             // Arrivals credit the newest launched row for the spell; a ground arrival counts, as
             // a pure dest cast has no other.
-            CastEventKind::Impact { .. } | CastEventKind::GroundImpact { .. } => {
+            CastEventKind::Impact { .. }
+            | CastEventKind::GroundImpact { .. }
+            | CastEventKind::AreaImpact { .. } => {
                 if let Some(row) = journal
                     .records
                     .iter_mut()
