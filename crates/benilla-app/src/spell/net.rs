@@ -300,6 +300,7 @@ fn on_cast_result(
         reason,
         arg,
         arg2,
+        wire_reason,
     } = ev
     {
         // `SMSG_CAST_FAILED` ends our cast through `0x808200` -> `0x7fecc0` with its reason.
@@ -312,7 +313,7 @@ fn on_cast_result(
             });
         }
         let chained = cast_result(
-            spell_id,
+            (spell_id, cast_count, wire_reason.unwrap_or(0)),
             success,
             reason,
             [arg, arg2],
@@ -357,7 +358,7 @@ fn on_own_spell_go(
         return;
     }
     let chained = cast_result(
-        spell_id,
+        (spell_id, 0, 0),
         true,
         None,
         [None; 2],
@@ -518,6 +519,7 @@ fn on_spell_failed(
         cast_count,
         spell_id,
         reason,
+        wire_reason,
     } = ev
     {
         if !other {
@@ -545,7 +547,7 @@ fn on_spell_failed(
         spell_failed_other(
             other,
             caster,
-            spell_id,
+            (spell_id, cast_count, wire_reason),
             &mut sc.commands,
             &l.index,
             &sc.casting,
@@ -1097,7 +1099,7 @@ fn superceded_spell(
 /// The verdict on our cast: a refusal (`SMSG_CAST_FAILED`, benilla's `SMSG_CAST_RESULT`), or
 /// with `success` our own `SMSG_SPELL_GO` ([`on_own_spell_go`]).
 fn cast_result(
-    spell_id: u32,
+    (spell_id, cast_count, wire_reason): (u32, u8, u8),
     success: bool,
     reason: Option<u8>,
     [arg, arg2]: [Option<u32>; 2],
@@ -1183,7 +1185,11 @@ fn cast_result(
             cast_events.write(CastEvent {
                 entity: e,
                 spell_id,
-                kind: CastEventKind::Fail,
+                kind: CastEventKind::Fail {
+                    interrupt: false,
+                    wire_reason,
+                },
+                cast_count,
                 seq,
             });
         }
@@ -1292,6 +1298,7 @@ fn spell_start(
         if cast_time_ms > 0 {
             commands.entity(e).insert(Casting {
                 spell_id,
+                cast_count,
                 until: Some(Instant::now() + Duration::from_millis(u64::from(cast_time_ms))),
             });
         }
@@ -1300,6 +1307,7 @@ fn spell_start(
             entity: e,
             spell_id,
             kind: CastEventKind::Start,
+            cast_count,
             seq,
         });
     }
@@ -1558,6 +1566,7 @@ fn spell_go(
             entity: e,
             spell_id,
             kind: CastEventKind::Go,
+            cast_count,
             seq,
         });
         // Targets not streamed to us drop out. The miss code picks the victim's dodge or block
@@ -1605,7 +1614,7 @@ fn spell_go(
 fn spell_failed_other(
     other: bool,
     caster: u64,
-    spell_id: u32,
+    (spell_id, cast_count, wire_reason): (u32, u8, u8),
     commands: &mut Commands,
     index: &GuidIndex,
     casting: &Query<&Casting>,
@@ -1632,13 +1641,21 @@ fn spell_failed_other(
     }
     // Keyed by spell id, like the reap (the 0x2A6 handler's `(spellId, 0)`).
     if let Some(&e) = index.0.get(&caster) {
-        if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
+        let running = casting.get(e).ok();
+        if running.is_some_and(|c| c.spell_id == spell_id) {
             commands.entity(e).remove::<Casting>();
         }
+        // `SMSG_SPELL_FAILURE` interrupts the running cast of this spell and count (`0x72ed80`).
+        let interrupt =
+            !other && running.is_some_and(|c| c.spell_id == spell_id && c.cast_count == cast_count);
         cast_events.write(CastEvent {
             entity: e,
             spell_id,
-            kind: CastEventKind::Fail,
+            kind: CastEventKind::Fail {
+                interrupt,
+                wire_reason,
+            },
+            cast_count,
             seq,
         });
     }
@@ -2487,6 +2504,7 @@ mod tests {
                 SelfPlayer,
                 Casting {
                     spell_id: 133,
+                    cast_count: 0,
                     until: None,
                 },
                 ObjectStore::default(),
@@ -3056,7 +3074,7 @@ mod tests {
                           mut auto_repeat: ResMut<AutoRepeatActive>| {
                         let net = crate::net::NetCommands(tx.clone());
                         cast_result(
-                            75,
+                            (75, 0, 0),
                             false,
                             Some(reason),
                             [None; 2],
@@ -3503,7 +3521,7 @@ mod tests {
                           mut auto_repeat: ResMut<AutoRepeatActive>| {
                         let net = crate::net::NetCommands(tx.clone());
                         cast_result(
-                            spell_id,
+                            (spell_id, 0, 0),
                             success,
                             if success { None } else { Some(0x1b) },
                             [None; 2],
@@ -3856,7 +3874,7 @@ mod tests {
                         cooldowns.apply_wire_cooldown(STEALTH, 0, 0, row, &mods, Instant::now());
                         assert!(cooldowns.has_on_hold_record(STEALTH, 0, 0));
                         cast_result(
-                            STEALTH,
+                            (STEALTH, 0, 0),
                             false,
                             Some(reason),
                             [None; 2],

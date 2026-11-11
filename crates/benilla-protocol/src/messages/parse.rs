@@ -1202,11 +1202,14 @@ fn parse_server_body(
             let (reason, spell) = pet::read_pet_action_feedback(&mut r)?;
             ServerPacket::PetActionFeedback { reason, spell }
         }
-        // The 12340 handler (`0x806c30`) reads `SMSG_CAST_FAILED`'s body; the pet's own cast
-        // count is not ours to match.
+        // The 12340 handler (`0x806c30`) reads `SMSG_CAST_FAILED`'s body.
         opcode::SMSG_PET_CAST_FAILED => {
-            let (_cast_count, spell_id, outcome) = spells::read_cast_result(&mut r)?;
-            ServerPacket::PetCastFailed { spell_id, outcome }
+            let (cast_count, spell_id, outcome) = spells::read_cast_result(&mut r)?;
+            ServerPacket::PetCastFailed {
+                cast_count,
+                spell_id,
+                outcome,
+            }
         }
         opcode::SMSG_PET_TAME_FAILURE => ServerPacket::PetTameFailure {
             reason: pet::read_pet_tame_failure(&mut r)?,
@@ -1280,13 +1283,15 @@ fn parse_server_body(
             ServerPacket::SpellChainTargets(spells::read_spell_chain_targets(&mut r)?)
         }
         opcode::SMSG_SPELL_FAILED_OTHER | opcode::SMSG_SPELL_FAILURE => {
-            let (caster, cast_count, spell_id, reason) = spells::read_spell_failed(&mut r)?;
+            let (caster, cast_count, spell_id, reason, wire_reason) =
+                spells::read_spell_failed(&mut r)?;
             ServerPacket::SpellFailed {
                 other: opcode == opcode::SMSG_SPELL_FAILED_OTHER,
                 caster,
                 cast_count,
                 spell_id,
                 reason,
+                wire_reason,
             }
         }
         opcode::SMSG_SPELL_DELAYED => {

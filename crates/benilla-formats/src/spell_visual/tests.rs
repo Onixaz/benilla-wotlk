@@ -239,6 +239,38 @@ fn index_13_is_the_held_weapon_for_a_unit_effect() {
 }
 
 #[test]
+fn the_precast_missile_attachment_needs_the_flag_and_column_16() {
+    let held = |flags, source| VisualStages {
+        flags,
+        missile_source_attach: source,
+        ..Default::default()
+    };
+    assert_eq!(held(0, 3).precast_missile_attachment(), None, "no flag");
+    assert!(!held(0, 3).holds_precast_missile());
+    assert_eq!(
+        held(FLAG_PRECAST_MISSILE, u32::MAX).precast_missile_attachment(),
+        None,
+        "column 16's -1"
+    );
+    assert!(held(FLAG_PRECAST_MISSILE, u32::MAX).holds_precast_missile());
+    assert_eq!(
+        held(FLAG_PRECAST_MISSILE, 3).precast_missile_attachment(),
+        Some(0x15),
+        "an index reads the table"
+    );
+    assert_eq!(
+        held(FLAG_PRECAST_MISSILE | FLAG_DEST_ATTACH_IS_ID, 3).precast_missile_attachment(),
+        Some(3),
+        "flag 0x200 reads the id itself"
+    );
+    assert_eq!(
+        held(FLAG_PRECAST_MISSILE, 13).precast_missile_attachment(),
+        Some(MISSILE_ATTACH_TABLE[4]),
+        "index 13 tests and holds at slot 4's attachment (0x71a7f0)"
+    );
+}
+
+#[test]
 fn kit_effect_slots_pair_with_their_attach_tags() {
     let kit = VisualKit {
         // Fireball's precast: left hand (slot 3) and right hand (slot 4).

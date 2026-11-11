@@ -76,17 +76,73 @@ fn on_cast_failed(
     In(ev): In<SessionEvent>,
     mut errors: ResMut<CastErrors>,
     mut bar: ResMut<super::PetBar>,
+    mut ends: PetCastEnd,
 ) {
     if let SessionEvent::PetCastFailed {
+        cast_count,
         spell_id,
         reason,
         arg,
+        wire_reason,
     } = ev
     {
         bar.pending_cast = None;
         // The start cooldown the press armed clears, then the pet bar refreshes (`0x806d41`).
         bar.cooldowns.clear_gcd(spell_id, std::time::Instant::now());
         pet_cast_failed(spell_id, reason, arg, &mut errors);
+        ends.end(spell_id, cast_count, wire_reason);
+    }
+}
+
+/// What the pet's end-cast reaches (`0x806c30`): the charm, else the summon.
+#[derive(bevy::ecs::system::SystemParam)]
+struct PetCastEnd<'w, 's> {
+    commands: Commands<'w, 's>,
+    player: Query<'w, 's, &'static crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
+    index: Res<'w, GuidIndex>,
+    casting: Query<'w, 's, &'static crate::creature_anim::Casting>,
+    spells: Option<Res<'w, Spells>>,
+    cast_events: MessageWriter<'w, crate::creature_anim::CastEvent>,
+    releases: MessageWriter<'w, crate::creature_anim::MissileRelease>,
+    play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
+}
+
+impl PetCastEnd<'_, '_> {
+    /// The pet's running cast of this spell and count ends (`0x7fed81`); any other cast's end
+    /// still drops a held model of its count (`0x7feeb0`).
+    fn end(&mut self, spell_id: u32, cast_count: u8, wire_reason: u8) {
+        let pet = self.player.iter().next().and_then(|s| s.0.unit_pet_guid());
+        let Some(&entity) = pet.and_then(|g| self.index.0.get(&g)) else {
+            return;
+        };
+        let seq = self.play_seq.next();
+        let running = self
+            .casting
+            .get(entity)
+            .is_ok_and(|c| c.spell_id == spell_id && c.cast_count == cast_count);
+        if running {
+            self.commands
+                .entity(entity)
+                .remove::<crate::creature_anim::Casting>();
+            self.cast_events.write(crate::creature_anim::CastEvent {
+                entity,
+                spell_id,
+                kind: crate::creature_anim::CastEventKind::Fail {
+                    interrupt: false,
+                    wire_reason,
+                },
+                cast_count,
+                seq,
+            });
+        } else if self.spells.as_deref().is_some_and(|s| {
+            crate::creature_anim::end_cast_clears_hold(s, spell_id, cast_count, wire_reason)
+        }) {
+            self.releases.write(crate::creature_anim::MissileRelease {
+                caster: entity,
+                seq,
+                kind: crate::creature_anim::ReleaseKind::Clear(cast_count),
+            });
+        }
     }
 }
 
@@ -598,5 +654,107 @@ mod tests {
                 "{key} is the red line"
             );
         }
+    }
+
+    /// The pet's running cast of this spell and count ends through the cast edge; any other drops
+    /// only a numbered flag-1 missile's held model of its count (`0x7fed81`, `0x7feeb0`).
+    #[test]
+    fn the_pet_s_cast_failure_ends_its_cast_or_drops_its_hold() {
+        use crate::creature_anim::{
+            CastEvent, CastEventKind, Casting, MissileRelease, ReleaseKind,
+        };
+        use benilla_formats::{SpellCatalog, SpellDisplay};
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = App::new();
+        app.add_message::<CastEvent>()
+            .add_message::<MissileRelease>()
+            .init_resource::<crate::creature_anim::PlaySeq>();
+        let aim = SpellDisplay {
+            flies_aim: true,
+            ..Default::default()
+        };
+        app.insert_resource(Spells {
+            catalog: SpellCatalog::from_displays(
+                [(7, aim), (8, SpellDisplay::default())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..Spells::empty_for_tests()
+        });
+        let pet = app
+            .world_mut()
+            .spawn(Casting {
+                spell_id: 7,
+                cast_count: 3,
+                until: None,
+            })
+            .id();
+        app.insert_resource(GuidIndex([(0x2A, pet)].into_iter().collect()));
+        app.world_mut().spawn((
+            crate::net::SelfPlayer,
+            crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_SUMMON,
+                0x2A,
+            )])),
+        ));
+        let end = |app: &mut App, spell_id: u32, cast_count: u8, wire_reason: u8| {
+            app.world_mut()
+                .run_system_once(move |mut ends: PetCastEnd| {
+                    ends.end(spell_id, cast_count, wire_reason);
+                })
+                .expect("run_system_once");
+            let casts: Vec<(u32, u8)> = app
+                .world_mut()
+                .resource_mut::<Messages<CastEvent>>()
+                .drain()
+                .map(|e| {
+                    assert!(matches!(
+                        e.kind,
+                        CastEventKind::Fail {
+                            interrupt: false,
+                            ..
+                        }
+                    ));
+                    (e.spell_id, e.cast_count)
+                })
+                .collect();
+            let releases: Vec<ReleaseKind> = app
+                .world_mut()
+                .resource_mut::<Messages<MissileRelease>>()
+                .drain()
+                .map(|r| r.kind)
+                .collect();
+            (casts, releases)
+        };
+        assert_eq!(
+            end(&mut app, 7, 4, 0x0c),
+            (vec![], vec![ReleaseKind::Clear(4)])
+        );
+        assert_eq!(
+            end(&mut app, 7, 0, 0x0c),
+            (vec![], vec![]),
+            "an unnumbered cast"
+        );
+        assert_eq!(
+            end(&mut app, 7, 4, 187),
+            (vec![], vec![]),
+            "the launch result"
+        );
+        assert_eq!(
+            end(&mut app, 7, 4, 188),
+            (vec![], vec![ReleaseKind::Clear(4)]),
+            "a reason past it, shared 0x91 with it"
+        );
+        assert_eq!(
+            end(&mut app, 8, 4, 0x0c),
+            (vec![], vec![]),
+            "no flag-1 missile"
+        );
+        assert!(app.world().get::<Casting>(pet).is_some());
+        assert_eq!(end(&mut app, 7, 3, 0x0c), (vec![(7, 3)], vec![]));
+        assert!(
+            app.world().get::<Casting>(pet).is_none(),
+            "the running cast ends"
+        );
     }
 }
