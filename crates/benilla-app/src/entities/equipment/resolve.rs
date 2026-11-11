@@ -546,6 +546,8 @@ pub(in crate::entities) fn resolve_equipment(
         let mut wielded = Wielded {
             // Read where the reference's weapon getter reads it.
             disarmed: s.unit_flags() & UNIT_FLAG_DISARMED != 0,
+            disarm_offhand: s.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_OFFHAND != 0,
+            disarm_ranged: s.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_RANGED != 0,
             ..Wielded::default()
         };
         let mut ranged_inv_type = None;
@@ -616,7 +618,8 @@ pub(in crate::entities) fn resolve_equipment(
         // The one hand `UNIT_FLAG_DISARMED` hides, if any.
         let hidden = wielded.disarmed_hand();
         // The rising edge; a unit first seen disarmed never had one.
-        let disarm_edge = hidden.is_some() && current_wielded.is_some_and(|w| !w.disarmed);
+        let disarm_edge =
+            hidden.is_some() && current_wielded.is_some_and(|w| w.disarmed_hand().is_none());
         let mut next_freeze = match hidden {
             // The falling edge clears it: the reference re-attaches by the live sheath state.
             None => None,

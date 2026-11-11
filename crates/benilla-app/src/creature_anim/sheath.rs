@@ -385,6 +385,8 @@ mod tests {
             ranged_inv: 0x0f,     // INVTYPE_RANGED, the left arm
             materials: [1, 6, 2], // metal sword, plate shield, wood bow (real 5875 values)
             disarmed: false,
+            disarm_offhand: false,
+            disarm_ranged: false,
         }
     }
 

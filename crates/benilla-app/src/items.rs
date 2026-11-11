@@ -687,12 +687,22 @@ pub(crate) fn disarmed_equipment_slot(
     items: &Items,
     commands: &NetCommands,
 ) -> Option<u8> {
-    if !is_disarmed(store) {
+    if store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_RANGED != 0 {
+        return Some(EQUIPMENT_SLOT_MAINHAND + 2);
+    }
+    if store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_OFFHAND == 0
+        && !is_disarmed(store)
+    {
         return None;
     }
     let main = equipped_class(store, objects, items, commands, EQUIPMENT_SLOT_MAINHAND);
     let off = equipped_class(store, objects, items, commands, EQUIPMENT_SLOT_OFFHAND);
-    crate::creature_anim::disarmed_hand(main, off).map(|hand| EQUIPMENT_SLOT_MAINHAND + hand as u8)
+    crate::creature_anim::disarmed_hand_with_offhand(
+        main,
+        off,
+        store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_OFFHAND != 0,
+    )
+    .map(|hand| EQUIPMENT_SLOT_MAINHAND + hand as u8)
 }
 
 /// [`disarmed_equipment_slot`] without the ask.
@@ -701,7 +711,9 @@ pub(crate) fn disarmed_equipment_slot_cached(
     objects: &Objects,
     items: &Items,
 ) -> Option<u8> {
-    if !is_disarmed(store) {
+    if store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_OFFHAND == 0
+        && !is_disarmed(store)
+    {
         return None;
     }
     let class_of = |slot: u8| -> Option<u8> {
@@ -709,9 +721,13 @@ pub(crate) fn disarmed_equipment_slot_cached(
         let entry = objects.object(guid).and_then(|o| o.object_entry())?;
         Some(items.template_cached(entry)?.class as u8)
     };
-    crate::creature_anim::disarmed_hand(
+    if store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_RANGED != 0 {
+        return Some(EQUIPMENT_SLOT_MAINHAND + 2);
+    }
+    crate::creature_anim::disarmed_hand_with_offhand(
         class_of(EQUIPMENT_SLOT_MAINHAND),
         class_of(EQUIPMENT_SLOT_OFFHAND),
+        store.0.unit_flags2() & crate::creature_anim::UNIT_FLAG2_DISARM_OFFHAND != 0,
     )
     .map(|hand| EQUIPMENT_SLOT_MAINHAND + hand as u8)
 }

@@ -53,23 +53,38 @@ pub(crate) struct Wielded {
     /// `UNIT_FIELD_FLAGS & UNIT_FLAG_DISARMED`, replicated for every unit; the reference reads it
     /// inside the weapon getter (`[[unit+0x110]+0xa0] & 0x200000`), for creatures as for players.
     pub(crate) disarmed: bool,
+    /// `UNIT_FIELD_FLAGS_2`'s off-hand and ranged disarm bits, read by the same weapon getter.
+    pub(crate) disarm_offhand: bool,
+    pub(crate) disarm_ranged: bool,
 }
 
 /// `UNIT_FIELD_FLAGS` bit 21 (vmangos `UnitDefines.h:566`), tested inside the weapon getter, the
 /// player's and the unit's alike.
 pub(crate) const UNIT_FLAG_DISARMED: u32 = 0x0020_0000;
+/// `UNIT_FIELD_FLAGS_2` bit 7: disarm the off hand without testing for a weapon.
+pub(crate) const UNIT_FLAG2_DISARM_OFFHAND: u32 = 0x0000_0080;
+/// `UNIT_FIELD_FLAGS_2` bit 10: disarm the ranged hand.
+pub(crate) const UNIT_FLAG2_DISARM_RANGED: u32 = 0x0000_0400;
 
 /// `ItemClass` 2, weapon: the disarm ladder's whole test, so a shield is never the hand it hides.
 pub(crate) const ITEM_CLASS_WEAPON: u8 = 2;
 
-/// The one held slot the disarm hides: the main hand if it holds a weapon, else the off hand if it
-/// does (the weapon getter's held read); the ranged slot is never gated, as vmangos agrees
-/// (`Unit.h:991`). Over classes so the action bar's equipped-item test can use it on raw inventory.
+/// The main/off-hand portion of the disarm ladder, retained as a test helper over raw classes.
+#[cfg(test)]
 pub(crate) fn disarmed_hand(main_class: Option<u8>, off_class: Option<u8>) -> Option<usize> {
+    disarmed_hand_with_offhand(main_class, off_class, false)
+}
+
+/// The weapon getter's hand-1 ladder, including `UNIT_FIELD_FLAGS_2 & 0x80`.
+pub(crate) fn disarmed_hand_with_offhand(
+    main_class: Option<u8>,
+    off_class: Option<u8>,
+    offhand_flag: bool,
+) -> Option<usize> {
     if main_class == Some(ITEM_CLASS_WEAPON) {
         return Some(0);
     }
-    if off_class == Some(ITEM_CLASS_WEAPON) {
+    if offhand_flag || off_class == Some(ITEM_CLASS_WEAPON) {
         return Some(1);
     }
     None
@@ -78,8 +93,17 @@ pub(crate) fn disarmed_hand(main_class: Option<u8>, off_class: Option<u8>) -> Op
 impl Wielded {
     /// The held slot this unit's disarm hides now, `None` while the flag is down.
     pub(crate) fn disarmed_hand(&self) -> Option<usize> {
-        self.disarmed
-            .then(|| disarmed_hand(self.main.map(|(c, _)| c), self.off.map(|(c, _)| c)))
+        if self.disarm_ranged {
+            return Some(2);
+        }
+        (self.disarmed || self.disarm_offhand)
+            .then(|| {
+                disarmed_hand_with_offhand(
+                    self.main.map(|(c, _)| c),
+                    self.off.map(|(c, _)| c),
+                    self.disarm_offhand,
+                )
+            })
             .flatten()
     }
 
@@ -92,6 +116,11 @@ impl Wielded {
     /// The off hand as the weapon getter's held read sees it.
     pub(crate) fn armed_off(&self) -> Option<(u8, u8)> {
         self.off.filter(|_| self.disarmed_hand() != Some(1))
+    }
+
+    /// The ranged hand as the weapon getter's hand-2 read sees it.
+    pub(crate) fn armed_ranged(&self) -> Option<(u8, u8)> {
+        self.ranged.filter(|_| !self.disarm_ranged)
     }
 }
 
@@ -1459,5 +1488,33 @@ mod disarm_tests {
         assert_eq!(disarmed_hand(Some(4), Some(2)), Some(1));
         assert_eq!(disarmed_hand(None, None), None);
         assert_eq!(disarmed_hand(Some(4), Some(4)), None);
+        assert_eq!(
+            disarmed_hand_with_offhand(None, Some(2), true),
+            Some(1),
+            "the flags-2 off-hand bit disarms without a weapon test"
+        );
+        let flagged_offhand = Wielded {
+            main: None,
+            off: Some((2, 15)),
+            disarm_offhand: true,
+            ..Default::default()
+        };
+        assert_eq!(flagged_offhand.disarmed_hand(), Some(1));
+        assert_eq!(flagged_offhand.armed_off(), None);
+    }
+
+    #[test]
+    fn flags_two_disarm_the_ranged_hand_and_leave_melee_hands() {
+        let ranged = Wielded {
+            main: Some((2, 7)),
+            off: Some((2, 15)),
+            ranged: Some((2, 2)),
+            disarm_ranged: true,
+            ..Default::default()
+        };
+        assert_eq!(ranged.disarmed_hand(), Some(2));
+        assert_eq!(ranged.armed_main(), ranged.main);
+        assert_eq!(ranged.armed_off(), ranged.off);
+        assert_eq!(ranged.armed_ranged(), None);
     }
 }

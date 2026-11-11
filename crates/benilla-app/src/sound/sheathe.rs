@@ -47,7 +47,7 @@ fn sheathe_sounds(
         let item = match swap.slot {
             0 => wielded.main,
             1 => wielded.off,
-            _ => wielded.ranged,
+            _ => wielded.armed_ranged(),
         };
         if item.is_none() {
             continue; // an empty slot is silent

@@ -426,6 +426,11 @@ fn weapon_skill_id(
     commands: &NetCommands,
     slot0: u8,
 ) -> u32 {
+    if crate::items::disarmed_equipment_slot(store, objects, items, commands)
+        .is_some_and(|disarmed| disarmed == slot0)
+    {
+        return SKILL_UNARMED;
+    }
     let Some(entry) = slot_entry(store, objects, slot0) else {
         return SKILL_UNARMED;
     };
