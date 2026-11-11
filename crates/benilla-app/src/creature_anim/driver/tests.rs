@@ -5621,3 +5621,222 @@ fn a_swap_mid_fall_keeps_the_torso_anim() {
         assert_eq!(gait_of(&app, unit), Some(want), "falling {falling}");
     }
 }
+
+/// Rows `(id, fallback, flags)` on the ground tier, each its own behavior.
+fn fallback_catalog(rows: &[(u16, u16, u32)]) -> AnimData {
+    AnimData(AnimDataCatalog::from_rows(rows.iter().map(
+        |&(id, fallback, flags)| {
+            (
+                id,
+                AnimEntry {
+                    weapon_flags: 0,
+                    fallback,
+                    flags,
+                    behavior: id,
+                    tier: 0,
+                },
+            )
+        },
+    )))
+}
+
+/// A living unit on real 1 s clips `(id, looping)`, with `catalog`; returns each clip's node by id.
+fn spawn_on_clips(
+    app: &mut App,
+    catalog: AnimData,
+    rows: &[(u16, bool)],
+) -> (Entity, std::collections::HashMap<u16, AnimationNodeIndex>) {
+    use bevy::animation::graph::{AnimationGraph, AnimationGraphHandle};
+    use bevy::animation::AnimationClip;
+
+    app.insert_resource(catalog);
+    let handles: Vec<_> = rows
+        .iter()
+        .map(|_| {
+            let mut c = AnimationClip::default();
+            c.set_duration(1.0);
+            app.world_mut()
+                .resource_mut::<Assets<AnimationClip>>()
+                .add(c)
+        })
+        .collect();
+    let (graph, nodes) = AnimationGraph::from_clips(handles);
+    let graph_handle = app
+        .world_mut()
+        .resource_mut::<Assets<AnimationGraph>>()
+        .add(graph);
+    let clips = rows
+        .iter()
+        .zip(&nodes)
+        .map(|(&(id, looping), &node)| AnimClip {
+            node,
+            blend_time: 0.0,
+            ..clip(id, 0, looping)
+        })
+        .collect();
+    let anims = ModelAnimations {
+        graph: graph_handle.clone(),
+        clips,
+        hand_close: [None, None],
+        playable_animation_lookup: Vec::new(),
+        animation_lookup: Vec::new(),
+        global_bones: Vec::new(),
+        first_seq: None,
+        pose: Default::default(),
+    };
+    let unit = app
+        .world_mut()
+        .spawn((
+            anims,
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimationGraphHandle(graph_handle),
+            AnimDriver::default(),
+            crate::net::ObjectStore(ObjectFields::from_pairs(&[(22, 100), (28, 100)])),
+        ))
+        .id();
+    let by_id = rows.iter().map(|r| r.0).zip(nodes).collect();
+    (unit, by_id)
+}
+
+/// The armed speed and clock of `node`, if it plays.
+fn speed_and_time(app: &App, unit: Entity, node: AnimationNodeIndex) -> Option<(f32, f32)> {
+    app.world()
+        .entity(unit)
+        .get::<AnimationPlayer>()
+        .unwrap()
+        .animation(node)
+        .map(|a| (a.speed(), a.seek_time()))
+}
+
+/// A raw kit id the model lacks still plays its `AnimationData.dbc` fallback: play flags `0x2` and
+/// `0x4` skip only the tier resolve, and the model's bone-sequence setter walks the fallback on
+/// every id it is handed (`0x832bb7`).
+#[test]
+fn a_raw_kit_id_the_model_lacks_still_plays_its_fallback() {
+    use super::super::AnimPlayFlags as P;
+    for play in [P::RAW, P::NO_TIER, P::RAW | P::NO_TIER] {
+        let mut app = app();
+        let catalog = fallback_catalog(&[(0, 0, 0), (16, 0, 0), (17, 16, 0), (57, 17, 0)]);
+        let (unit, nodes) = spawn_on_clips(&mut app, catalog, &[(0, true), (16, false)]);
+        // A dagger in hand, so the remap `0x4` keeps leaves Special1H as it is.
+        app.world_mut().entity_mut(unit).insert(Wielded {
+            main: Some((2, 0xf)),
+            ..Default::default()
+        });
+        app.update();
+        app.world_mut().write_message(EmoteAnim {
+            entity: unit,
+            anim_id: 57,
+            seq: 1,
+            via_player: false,
+            play: P(play),
+        });
+        app.update();
+        assert_eq!(
+            speed_and_time(&app, unit, nodes[&16]).map(|(s, _)| s),
+            Some(1.0),
+            "play {play:#x}: Special1H(57) falls through Attack1H(17) to AttackUnarmed(16)"
+        );
+    }
+}
+
+/// A one-shot whose fallback walk passes a row flagged `0x10` plays its clip reversed from the end,
+/// and one passing `0x20` holds it on its last frame (`0x826350`, `0x826b00`).
+#[test]
+fn a_one_shot_fallback_takes_the_walks_direction_mode() {
+    use super::super::AnimPlayFlags as P;
+    // LootUp(189) reverses into Loot(50); UseStandingLoop(123) holds UseStanding(128).
+    for (id, clip_id, reversed) in [(189u16, 50u16, true), (123, 128, false)] {
+        let mut app = app();
+        let catalog = fallback_catalog(&[
+            (0, 0, 0),
+            (50, 0, 0),
+            (128, 0, 0),
+            (123, 128, 0x20),
+            (189, 50, 0x10),
+        ]);
+        let (unit, nodes) =
+            spawn_on_clips(&mut app, catalog, &[(0, true), (50, false), (128, false)]);
+        app.update();
+        app.world_mut().write_message(EmoteAnim {
+            entity: unit,
+            anim_id: id,
+            seq: 1,
+            via_player: false,
+            play: P(P::RAW),
+        });
+        app.update();
+        let (speed, t) = speed_and_time(&app, unit, nodes[&clip_id]).expect("the fallback plays");
+        if reversed {
+            assert!(
+                speed < 0.0 && t > 0.9,
+                "{id}: reversed from its end ({speed}, {t})"
+            );
+        } else {
+            assert!(
+                speed == 0.0 && t > 0.9,
+                "{id}: held on its last frame ({speed}, {t})"
+            );
+        }
+    }
+}
+
+/// A raw dying kit's Drowned on a model lacking Drowned and Drown holds Death on its last frame:
+/// Drowned's row stops the walk's direction (`0x826350`), so the body lies at once.
+#[test]
+fn a_raw_drowned_kit_on_a_model_without_it_holds_death_at_its_end() {
+    use super::super::AnimPlayFlags as P;
+    let mut app = app();
+    let catalog = fallback_catalog(&[(0, 0, 0), (1, 0, 0), (131, 1, 0), (132, 131, 0x20)]);
+    let (unit, nodes) = spawn_on_clips(&mut app, catalog, &[(0, true), (1, false)]);
+    app.update();
+    app.world_mut()
+        .entity_mut(unit)
+        .insert(state_kit(132, P::RAW | P::NO_TIER));
+    app.update();
+    assert_eq!(gait_of(&app, unit), Some(132), "the kit names the pose");
+    let (speed, t) = speed_and_time(&app, unit, nodes[&1]).expect("Death plays");
+    assert!(
+        speed == 0.0 && t > 0.9,
+        "held on its last frame ({speed}, {t})"
+    );
+}
+
+/// A held kit's Special1H takes the play's remap as a one-shot's does (`0x724398`, `0x73870a`): a
+/// two-hander holds Special2H, unless the kit's flags skip the remap.
+#[test]
+fn a_held_special_takes_the_remap_unless_the_kit_skips_it() {
+    use super::super::AnimPlayFlags as P;
+    for (play, want) in [
+        (0, 58u16),
+        (P::RAW, 57),
+        (P::NO_SPECIAL, 57),
+        (P::NO_TIER, 58),
+    ] {
+        let mut app = app();
+        let catalog = fallback_catalog(&[(0, 0, 0), (57, 0, 0), (58, 0, 0)]);
+        let (unit, nodes) = spawn_on_clips(&mut app, catalog, &[(0, true), (57, true), (58, true)]);
+        app.world_mut().entity_mut(unit).insert((
+            Wielded {
+                main: Some((2, 0x1)), // a two-handed axe
+                ..Default::default()
+            },
+            CastHold {
+                ranged: false,
+                start_anim: None,
+                seq: 0,
+                play: P(play),
+                anim_id: 57,
+                spell_id: 42669,
+            },
+        ));
+        app.update();
+        app.update();
+        assert_eq!(gait_of(&app, unit), Some(want), "play {play:#x}");
+        assert!(
+            speed_and_time(&app, unit, nodes[&want]).is_some(),
+            "play {play:#x}: the clip plays"
+        );
+    }
+}
