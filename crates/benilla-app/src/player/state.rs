@@ -501,6 +501,10 @@ pub(crate) struct Player {
     pub(super) model_yaw: f32,
     /// The rendered swim/fly body pitch, eased ([`crate::creature_anim::ease_swim_pitch`]).
     pub(super) swim_body_pitch: f32,
+    /// The rendered fly body roll, eased ([`crate::creature_anim::ease_swim_roll`]).
+    pub(super) swim_body_roll: f32,
+    /// Last frame's rendered yaw, the swim matrix's `m_smoothFacing` (`0x719b80`).
+    pub(super) swim_smooth_facing: f32,
     /// A server spline drives the body (`SMSG_MONSTER_MOVE` for our guid: a charge, a taxi):
     /// input, physics and the movement stream yield, and its end sends `CMSG_MOVE_SPLINE_DONE`.
     pub(super) server_riding: bool,

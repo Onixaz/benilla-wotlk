@@ -232,6 +232,8 @@ mod tests {
             level
         ));
         assert!(in_swim_matrix(fly, pitched), "still easing level");
+        let banked = level * Quat::from_rotation_z(0.2);
+        assert!(in_swim_matrix(fly, banked), "a hover still banking");
         assert!(!in_swim_matrix(fly, level), "a settled hover tilts");
         assert!(!in_swim_matrix(fly | move_flags::STRAFE_LEFT, level));
         assert!(!in_swim_matrix(move_flags::FORWARD, pitched), "on foot");

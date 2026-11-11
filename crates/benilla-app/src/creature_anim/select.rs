@@ -229,6 +229,44 @@ pub(crate) fn ease_swim_pitch(smoothed: f32, flags: u32, pitch: f32, dt: f32) ->
     smoothed + gap * dt.clamp(1.0 / 90.0, 0.05) * 4.0 * std::f32::consts::PI
 }
 
+/// The active mover's swim/fly body rotation: the reference's `Rz(facing)·Ry(2π − pitch)·Rx(roll)`
+/// (`0x719b80`) is `Ry(yaw)·Rx(pitch)·Rz(−roll)` here, as its forward `+X` is `−Z`.
+pub(crate) fn smoothed_swim_rotation(yaw: f32, pitch: f32, roll: f32) -> Quat {
+    Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch) * Quat::from_rotation_z(-roll)
+}
+
+/// One frame of the active mover's eased fly bank (`0x719b80`): turn rate times −0.15, at
+/// `elapsed * π/2` (×4 with no forward or back), clamped ±π/4, for a flyer alone. With no forward
+/// or back it runs only while the bank or the pitch (`pitch_easing`) is unsettled, else it is
+/// zeroed (`0x71fd80`, `0x715810`). `facing_delta` is this frame's wrapped yaw step.
+pub(crate) fn ease_swim_roll(
+    smoothed: f32,
+    flags: u32,
+    facing_delta: f32,
+    dt: f32,
+    pitch_easing: bool,
+) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};
+    if flags & move_flags::FLYING == 0 {
+        return 0.0;
+    }
+    let hover = flags & (move_flags::FORWARD | move_flags::BACKWARD) == 0;
+    if hover && smoothed == 0.0 && !pitch_easing {
+        return 0.0;
+    }
+    let elapsed = dt.clamp(1.0 / 90.0, 0.05);
+    let target = facing_delta / elapsed * -0.15;
+    let mut rate = elapsed * FRAC_PI_2;
+    if hover {
+        rate *= 4.0;
+    }
+    let roll = (smoothed + (target - smoothed) * rate.clamp(0.0, 1.0)).clamp(-FRAC_PI_4, FRAC_PI_4);
+    if hover && !pitch_easing && (roll - target).abs() <= 0.01 {
+        return 0.0;
+    }
+    roll
+}
+
 /// The per-frame movement state the selector reads.
 #[derive(Component, Clone, Copy, Default)]
 #[component(storage = "SparseSet")]
