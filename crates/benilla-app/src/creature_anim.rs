@@ -642,9 +642,9 @@ use spell_visual::{
 #[cfg(test)]
 pub(crate) use spell_visual::arm_aura_state_fx as arm_aura_state_fx_for_test;
 pub(crate) use spell_visual::{
-    held_strike_sound, kit_fx_slots, ChainProcPlay, ChannelSpellLeft, FxClass, FxStage,
-    KitEffectClear, KitPush, MissileSpawn, SpellEffectClear, SpellKitFx, SpellKitShake,
-    SpellKitSound, SpellVisuals,
+    held_strike_sound, ChainProcPlay, ChannelSpellLeft, FxClass, FxStage, KitEffectClear, KitPush,
+    MissileSpawn, SpellEffectClear, SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals,
+    UnitKitLanes,
 };
 
 /// The unit's own variation stream ([`benilla_assets::AnimRng::stream`]), cut on its first frame

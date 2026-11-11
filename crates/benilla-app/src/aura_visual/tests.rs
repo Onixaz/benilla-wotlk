@@ -92,10 +92,10 @@ fn the_target_is_base_times_the_newest_node() {
     let mut n = AuraNodes::new(1.0);
     assert_eq!(n.target(), 1.0, "no nodes → opaque");
 
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
+    install(&mut n, STEALTH, 0, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     assert!((n.target() - 0.3).abs() < 1e-6);
 
-    install(&mut n, GHOST, &[AuraNode::Alpha(0.5, 0.0)], 0.0);
+    install(&mut n, GHOST, 0, &[AuraNode::Alpha(0.5, 0.0)], 0.0);
     assert!(
         (n.target() - 0.5).abs() < 1e-6,
         "the newest node is the term"
@@ -108,7 +108,7 @@ fn the_target_is_base_times_the_newest_node() {
     // A translucent display's base (128/255) scales the head term, or stands alone with no node.
     let mut half = AuraNodes::new(1.0);
     half.base = 128.0 / 255.0;
-    install(&mut half, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
+    install(&mut half, STEALTH, 0, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     assert!((half.target() - (128.0 / 255.0) * 0.3).abs() < 1e-6);
     half.alpha.clear();
     half.retarget(0.0);
@@ -140,8 +140,8 @@ fn a_base_change_rides_the_same_ramp() {
 #[test]
 fn re_arming_the_same_spell_replaces_its_node() {
     let mut n = AuraNodes::new(1.0);
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
+    install(&mut n, STEALTH, 0, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
+    install(&mut n, STEALTH, 0, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     assert_eq!(n.alpha.len(), 1);
     assert!((n.target() - 0.3).abs() < 1e-6);
 }
@@ -150,7 +150,7 @@ fn re_arming_the_same_spell_replaces_its_node() {
 #[test]
 fn the_ramp_eases_over_one_second_both_ways() {
     let mut n = AuraNodes::new(1.0);
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
+    install(&mut n, STEALTH, 0, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
 
     assert!((n.tick(0.0) - 1.0).abs() < 1e-6, "t=0 is still opaque");
     // t³ at the halfway mark is 0.125 of the way down.
@@ -174,7 +174,7 @@ fn the_ramp_eases_over_one_second_both_ways() {
     assert!(!n.translucent(), "settled opaque again");
 
     let mut m = AuraNodes::new(1.0);
-    install(&mut m, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
+    install(&mut m, STEALTH, 0, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     let mid = m.tick(0.7);
     m.alpha.clear();
     m.retarget(0.7);
@@ -184,10 +184,10 @@ fn the_ramp_eases_over_one_second_both_ways() {
 #[test]
 fn a_retarget_to_the_same_value_does_not_restart_the_ease() {
     let mut n = AuraNodes::new(1.0);
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
+    install(&mut n, STEALTH, 0, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     n.tick(AURA_ALPHA_FADE_SECS);
     let started = n.started;
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 10.0);
+    install(&mut n, STEALTH, 0, &[AuraNode::Alpha(0.3, 0.0)], 10.0);
     assert_eq!(n.started, started, "same product → the ramp is untouched");
     assert!((n.tick(10.0) - 0.3).abs() < 1e-6, "and stays arrived");
 }
@@ -197,8 +197,8 @@ fn a_retarget_to_the_same_value_does_not_restart_the_ease() {
 fn the_tint_head_node_is_the_newest_installed() {
     let mut n = AuraNodes::new(1.0);
     assert_eq!(n.head_tint(), None);
-    install(&mut n, GHOST, &[AuraNode::Tint([0x8C, 0xB9, 0xFD])], 0.0);
-    install(&mut n, 12881, &[AuraNode::Tint([0x00, 0xFF, 0x00])], 0.0);
+    install(&mut n, GHOST, 0, &[AuraNode::Tint([0x8C, 0xB9, 0xFD])], 0.0);
+    install(&mut n, 12881, 0, &[AuraNode::Tint([0x00, 0xFF, 0x00])], 0.0);
     assert_eq!(n.head_tint(), Some([0x00, 0xFF, 0x00]));
     n.tint.retain(|(s, _)| *s != 12881);
     assert_eq!(n.head_tint(), Some([0x8C, 0xB9, 0xFD]));
@@ -217,6 +217,9 @@ fn app_with_chains() -> App {
     app.add_message::<AuraProc>();
     app.add_message::<crate::creature_anim::ChainProcPlay>()
         .add_message::<crate::creature_anim::ChannelSpellLeft>()
+        .add_message::<crate::entities::DisplaySwapped>()
+        .add_message::<crate::creature_anim::SpellKitShake>()
+        .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<crate::creature_anim::SpellEffectClear>()
         .add_message::<crate::creature_anim::KitEffectClear>();
     app.init_resource::<crate::net::GuidIndex>();
@@ -488,7 +491,7 @@ fn the_author_owns_the_tree_then_releases_at_opaque() {
     };
     // root → body part, and root → joint → held weapon (the depth the walk must reach).
     let mut nodes = AuraNodes::new(1.0);
-    install(&mut nodes, STEALTH, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
+    install(&mut nodes, STEALTH, 0, &[AuraNode::Alpha(0.3, 0.0)], 0.0);
     let root = app.world_mut().spawn(nodes).id();
     let body = app
         .world_mut()
@@ -766,6 +769,8 @@ fn ice_block_holds_the_clocks_and_the_drop_lets_them_go() {
         .world_mut()
         .spawn((
             crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
+            // A built model: a proc-11 kit waits for one.
+            crate::entities::VisualAttached,
             rig_playing(&[(4, 1.35), (54, 1.0)]),
         ))
         .id();
@@ -810,6 +815,8 @@ fn a_clip_armed_under_the_freeze_comes_back_at_its_own_speed() {
         .world_mut()
         .spawn((
             crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
+            // A built model: a proc-11 kit waits for one.
+            crate::entities::VisualAttached,
             rig_playing(&[(4, 1.35), (54, 1.0)]),
         ))
         .id();
@@ -859,6 +866,8 @@ fn the_freeze_reaches_the_mount_body() {
         .world_mut()
         .spawn((
             crate::unit_auras::aura_unit_for_test(&[ICE_BLOCK]),
+            // A built model: a proc-11 kit waits for one.
+            crate::entities::VisualAttached,
             rig_playing(&[(91, 1.0), (54, 1.0)]),
             crate::entities::mount::MountChild(mount),
         ))
@@ -895,7 +904,7 @@ fn an_aura_without_the_proc_never_touches_a_clock() {
 #[test]
 fn a_non_zero_rate_installs_a_node_and_holds_nothing() {
     let mut n = AuraNodes::new(1.0);
-    install(&mut n, 17624, &[AuraNode::AnimRate(8_947_848.0)], 0.0);
+    install(&mut n, 17624, 0, &[AuraNode::AnimRate(8_947_848.0)], 0.0);
     assert_eq!(n.head_anim_rate(), Some(8_947_848.0));
 
     let mut app = app_with_freeze();
@@ -917,7 +926,7 @@ fn the_head_alpha_node_names_its_own_fade_time() {
     };
     assert_eq!(node_for(shadowform), Some(AuraNode::Alpha(0.65, 2.0)));
     let mut n = AuraNodes::new(1.0);
-    install(&mut n, STEALTH, &[AuraNode::Alpha(0.65, 2.0)], 0.0);
+    install(&mut n, STEALTH, 0, &[AuraNode::Alpha(0.65, 2.0)], 0.0);
     assert!(n.tick(1.0) > 0.65 + 1e-3, "still easing at 1 s");
     assert!((n.tick(2.0) - 0.65).abs() < 1e-6, "arrived at 2 s");
     n.alpha.clear();
@@ -998,4 +1007,45 @@ fn the_procedural_fade_truncates_its_target() {
     play(&mut app, unit, 15, [1.0, 0.0, 1.0, 0.0]);
     let n = app.world().get::<AuraNodes>(unit).expect("a node set");
     assert_eq!(n.to, 1.0);
+}
+
+/// A kit clear drops the anim-rate effects of its kit alone, as they sit in the unit's effect list;
+/// another kit's rate and the tint stay (`0x744bd0`, `0x7265c0`).
+#[test]
+fn a_kit_clear_drops_only_the_anim_rate_of_its_kit() {
+    const SPELL: u32 = 30888;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<AuraProc>()
+        .add_message::<crate::creature_anim::KitEffectClear>();
+    app.add_systems(Update, drain_aura_procs);
+    let unit = app.world_mut().spawn_empty().id();
+    for kit_id in [5, 9] {
+        app.world_mut().write_message(AuraProc::Begin {
+            entity: unit,
+            spell_id: SPELL,
+            nodes: vec![AuraNode::AnimRate(0.0), AuraNode::Tint([1, 2, 3])],
+            kit_id,
+        });
+    }
+    app.update();
+    let rates = |app: &App| -> Vec<u32> {
+        let n = app.world().entity(unit).get::<AuraNodes>().unwrap();
+        n.rate.iter().map(|r| r.kit_id).collect()
+    };
+    assert_eq!(rates(&app), vec![9, 5]);
+    let clear = |app: &mut App, kit_id| {
+        app.world_mut()
+            .write_message(crate::creature_anim::KitEffectClear {
+                entity: unit,
+                kit_id,
+            });
+        app.update();
+    };
+    clear(&mut app, 7);
+    assert_eq!(rates(&app).len(), 2, "another kit matches nothing");
+    clear(&mut app, 9);
+    assert_eq!(rates(&app), vec![5]);
+    let n = app.world().entity(unit).get::<AuraNodes>().unwrap();
+    assert_eq!(n.head_tint(), Some([1, 2, 3]), "the tint is no effect");
 }

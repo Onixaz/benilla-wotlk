@@ -105,9 +105,8 @@ struct Bolt {
 pub(crate) struct ChainBeam {
     /// The reap key.
     spell_id: u32,
-    /// The kit and fade stamp of the effect holding it, a kit clear's keys (`0x744bd0`).
+    /// The kit of the effect holding it, a kit clear's key (`0x744bd0`).
     kit_id: u32,
-    fade: u32,
     /// The kit's owner, whose effect list holds the beam (`0x6f8040`); its loss ends the beam.
     caster: Entity,
     /// `[source, hop0, hop1, …]` as guids resolved every frame, a gone one hiding its bolts until
@@ -208,12 +207,9 @@ pub(super) fn spawn_chain_beams(
                     .any(|c| c.entity == beam.caster && c.spell_id == beam.spell_id)
             };
             let kit = || {
-                kits_cleared.iter().any(|c| {
-                    c.entity == beam.caster
-                        && c.kit_id == beam.kit_id
-                        && c.spell_id.is_none_or(|s| s == beam.spell_id)
-                        && c.fade.is_none_or(|f| f == beam.fade)
-                })
+                kits_cleared
+                    .iter()
+                    .any(|c| c.entity == beam.caster && c.kit_id == beam.kit_id)
             };
             if beam.persistent && (spell() || kit()) {
                 commands.entity(e).despawn();
@@ -296,7 +292,6 @@ pub(super) fn spawn_chain_beams(
                 ChainBeam {
                     spell_id: play.spell_id,
                     kit_id: play.kit_id,
-                    fade: play.fade,
                     caster: play.entity,
                     nodes: nodes.clone(),
                     location: ground,
