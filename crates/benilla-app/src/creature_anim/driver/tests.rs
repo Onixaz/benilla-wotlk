@@ -203,6 +203,7 @@ fn stationary_cast_hold_stows_an_engaged_casters_weapon() {
         ranged: false,
         start_anim: None,
         seq: 0,
+        play: Default::default(),
         anim_id: 51,
         spell_id: 20793,
     });
@@ -251,7 +252,7 @@ fn a_drained_emote_queue_restores_the_sheath_at_the_body_clips_end() {
         anim_id: 60,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(drv(&app), (Some(1), 0, false), "PREV back, the flag spent");
@@ -299,6 +300,7 @@ fn moving_cast_hold_keeps_its_stow_between_plays() {
         ranged: false,
         start_anim: None,
         seq: 0,
+        play: Default::default(),
         anim_id: 51,
         spell_id: 20793,
     });
@@ -496,6 +498,7 @@ fn cast_hold_stows_even_when_the_model_lacks_the_spell_anims() {
         ranged: false,
         start_anim: None,
         seq: 0,
+        play: Default::default(),
         anim_id: 51,
         spell_id: 20792,
     });
@@ -725,7 +728,7 @@ fn whiff_slowdown_spares_a_non_swing_oneshot() {
         anim_id: 57,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.world_mut().write_message(SwingMessage {
         attacker: swinger,
@@ -812,7 +815,7 @@ fn same_frame_collision_fast_paths_the_second_combat_clip() {
         anim_id: 57,
         seq: 2,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     // swing_last: the spin arrives first.
     app.world_mut().write_message(EmoteAnim {
@@ -820,7 +823,7 @@ fn same_frame_collision_fast_paths_the_second_combat_clip() {
         anim_id: 57,
         seq: 3,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.world_mut().write_message(SwingMessage {
         attacker: swing_last,
@@ -1022,6 +1025,7 @@ fn turning_in_place_never_unpins_the_stationary_cast_hold() {
                 ranged: false,
                 start_anim: None,
                 seq: 0,
+                play: Default::default(),
                 anim_id: 51,
                 spell_id: 116,
             },
@@ -1521,7 +1525,7 @@ fn a_jump_in_place_cast_plays_on_the_key_bone_over_the_jump() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     fn drv(app: &App, unit: Entity) -> &AnimDriver {
@@ -1556,7 +1560,7 @@ fn landing_mid_cast_plays_the_land_pick() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     app.world_mut()
@@ -1589,7 +1593,7 @@ fn a_cast_over_the_fall_loop_takes_the_key_bone() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     app.world_mut().entity_mut(unit).insert(MovementState {
@@ -1609,7 +1613,7 @@ fn a_cast_over_the_fall_loop_takes_the_key_bone() {
         anim_id: 54,
         seq: 2,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(
@@ -1656,7 +1660,7 @@ fn a_moving_jump_cast_masks_onto_the_overlay() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     let drv = app.world().entity(unit).get::<AnimDriver>().unwrap();
@@ -1683,7 +1687,7 @@ fn a_jump_over_a_live_cast_transplants_it_to_the_torso() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     {
@@ -1741,6 +1745,7 @@ fn a_jump_does_not_cut_the_moving_cast_hold() {
                 ranged: false,
                 start_anim: None,
                 seq: 0,
+                play: Default::default(),
             },
         ))
         .id();
@@ -1839,7 +1844,7 @@ fn a_finished_masked_cast_fades_out_instead_of_snapping() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     {
@@ -1937,6 +1942,7 @@ fn the_step_off_arc_freezes_the_gait_against_live_pins() {
         ranged: false,
         start_anim: None,
         seq: 0,
+        play: Default::default(),
         anim_id: 51,
         spell_id: 20793,
     });
@@ -1972,7 +1978,7 @@ fn a_midair_deferred_park_survives_the_level_and_dies_at_the_landing_play() {
         anim_id: 57,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.world_mut().write_message(SwingMessage {
         attacker: unit,
@@ -2297,7 +2303,7 @@ fn a_root_landing_with_the_cast_returns_the_body_to_neutral() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(
@@ -2325,7 +2331,7 @@ fn a_run_starting_under_a_cast_still_transplants_it_up() {
         anim_id: 54,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     let mode = |app: &App| app.world().entity(unit).get::<AnimDriver>().unwrap().mode;
@@ -2667,7 +2673,7 @@ fn the_mount_transition_takes_bone_0_back_from_a_full_body_one_shot() {
         anim_id: SPELL_CAST_OMNI,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(
@@ -2987,7 +2993,7 @@ fn a_mid_volley_fire_clip_re_pulls_and_the_pull_promotes_to_the_hold() {
         anim_id: 46,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(
@@ -3139,7 +3145,7 @@ fn every_shot_of_a_volley_re_arms_the_fire_clip_through_the_emote_lane() {
             anim_id: 46,
             seq: shot,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
         assert_eq!(mode(&app), FIRING, "shot {shot} takes bone 0");
@@ -3550,7 +3556,7 @@ fn a_special_goes_unarmed_only_when_both_hands_are_empty() {
             anim_id: 57,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         unit
     };
@@ -3824,7 +3830,7 @@ fn a_gait_change_raises_the_anim_edge_and_a_steady_frame_does_not() {
         anim_id: 57,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert!(edge(&app), "and so does a one-shot");
@@ -3857,7 +3863,7 @@ fn a_combat_over_combat_fast_path_does_not_raise_the_anim_edge() {
         anim_id: 57,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert!(edge(&app), "the first combat play arms normally");
@@ -3936,7 +3942,7 @@ mod base_anim_lock {
             anim_id,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
     }
@@ -3945,6 +3951,7 @@ mod base_anim_lock {
         app.world_mut().write_message(BaseAnimRecompute {
             entity: unit,
             anim_id,
+            play: Default::default(),
         });
         app.update();
     }
@@ -4173,7 +4180,7 @@ mod routing {
             anim_id,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
     }
@@ -4327,7 +4334,7 @@ mod routing {
                 anim_id: SHUFFLE,
                 seq: 1,
                 via_player,
-                remap_special: true,
+                play: Default::default(),
             });
             app.update();
         };
@@ -4376,7 +4383,7 @@ mod routing {
                 anim_id: CHEER,
                 seq: 1,
                 via_player,
-                remap_special: true,
+                play: Default::default(),
             });
             app.update();
         };
@@ -4569,7 +4576,7 @@ mod emote_state {
             anim_id: 118,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
         assert!(matches!(mode(&app, npc), Mode::Swing { id: 118, .. }));
@@ -4589,7 +4596,7 @@ mod emote_state {
             anim_id: 118,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
         interact_guid(&mut app, Some(partner), PLAYER);
@@ -4661,7 +4668,7 @@ mod emote_state {
             anim_id: 118,
             seq: 1,
             via_player: false,
-            remap_special: true,
+            play: Default::default(),
         });
         app.update();
         assert!(matches!(
@@ -4752,7 +4759,7 @@ fn the_emote_player_skips_an_id_already_armed_but_plays_a_different_one() {
             anim_id,
             seq: 1,
             via_player,
-            remap_special: true,
+            play: Default::default(),
         });
         advance(app, 500);
     };
@@ -4876,7 +4883,7 @@ fn a_units_variation_rolls_are_independent_of_the_unit_order() {
                     anim_id,
                     seq: frame * 2 + i as u64,
                     via_player: false,
-                    remap_special: true,
+                    play: Default::default(),
                 });
             }
             app.update();
@@ -4959,7 +4966,7 @@ fn push_kit(app: &mut App, unit: Entity, stage: u8) {
         anim_id: 61,
         seq: 1,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
 }
 
@@ -4988,7 +4995,7 @@ fn a_stage_0_kit_latches_its_anim_until_the_body_plays_another() {
         anim_id: 60,
         seq: 2,
         via_player: false,
-        remap_special: true,
+        play: Default::default(),
     });
     app.update();
     assert_eq!(
@@ -5030,6 +5037,7 @@ fn a_cast_during_the_latch_does_not_pick_its_kit_anim() {
             ranged: false,
             start_anim: None,
             seq: 0,
+            play: Default::default(),
             anim_id: 51,
             spell_id: 20793,
         });
@@ -5131,4 +5139,485 @@ fn a_create2_sitter_starts_on_its_loop_where_a_create_sits_down() {
     let mode = |app: &App, e: Entity| app.world().entity(e).get::<AnimDriver>().unwrap().mode;
     assert_eq!(mode(&app, seeded), Mode::Looping(Special::Pose(1)));
     assert_eq!(mode(&app, plain), Mode::Entering(Special::Pose(1)));
+}
+
+/// A stationary caster on real clip assets holding precast 51 (`HOLD_SPAN` long) in two
+/// variations, a zero-frequency head and a max-frequency other, under a hold with play flags
+/// `play`. Nodes: Stand, the hold's head, the hold's other.
+fn spawn_kit_holder(
+    app: &mut App,
+    play: super::super::AnimPlayFlags,
+) -> (Entity, Vec<AnimationNodeIndex>) {
+    use bevy::animation::graph::{AnimationGraph, AnimationGraphHandle};
+    use bevy::animation::AnimationClip;
+
+    const HOLD_SPAN: f32 = 0.1;
+    let handles: Vec<_> = [4.0, HOLD_SPAN, HOLD_SPAN]
+        .iter()
+        .map(|d| {
+            let mut c = AnimationClip::default();
+            c.set_duration(*d);
+            app.world_mut()
+                .resource_mut::<Assets<AnimationClip>>()
+                .add(c)
+        })
+        .collect();
+    let (graph, nodes) = AnimationGraph::from_clips(handles);
+    let graph_handle = app
+        .world_mut()
+        .resource_mut::<Assets<AnimationGraph>>()
+        .add(graph);
+    let seq = |id: u16, node, duration: f32, frequency: u16| AnimClip {
+        node,
+        duration,
+        blend_time: 0.0,
+        frequency,
+        replay: (0, 0),
+        ..clip(id, 0, true)
+    };
+    let anims = ModelAnimations {
+        graph: graph_handle.clone(),
+        clips: vec![
+            seq(0, nodes[0], 4.0, 0),
+            seq(51, nodes[1], HOLD_SPAN, 0),
+            seq(51, nodes[2], HOLD_SPAN, 32767),
+        ],
+        hand_close: [None, None],
+        playable_animation_lookup: Vec::new(),
+        animation_lookup: Vec::new(),
+        global_bones: Vec::new(),
+        first_seq: None,
+        pose: Default::default(),
+    };
+    let unit = app
+        .world_mut()
+        .spawn((
+            anims,
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimationGraphHandle(graph_handle),
+            AnimDriver::default(),
+            CastHold {
+                ranged: false,
+                start_anim: None,
+                seq: 0,
+                play,
+                anim_id: 51,
+                spell_id: 20793,
+            },
+        ))
+        .id();
+    (unit, nodes)
+}
+
+/// Kit flag `0x40`: at the held kit anim's clip end the hold is picked and played again from its
+/// start (`0x7243d4`); without it nothing is picked and the clip runs on, the model's own end
+/// re-rolling only among its variations (`0x831fc0`). Either way the hold's arm rolls its
+/// variation, as only Stand and the ready ids keep the head under a cast (`0x737f51`).
+#[test]
+fn a_held_kit_anim_is_played_again_at_its_end_only_under_kit_flag_0x40() {
+    use super::super::AnimPlayFlags;
+    for repick in [false, true] {
+        let mut app = app();
+        let flags = AnimPlayFlags(if repick {
+            AnimPlayFlags::HOLD_REPICK
+        } else {
+            0
+        });
+        let (unit, nodes) = spawn_kit_holder(&mut app, flags);
+        let completions = |app: &App| {
+            app.world()
+                .entity(unit)
+                .get::<AnimationPlayer>()
+                .unwrap()
+                .animation(nodes[2])
+                .map(|a| a.completions())
+        };
+        app.update();
+        assert_eq!(
+            app.world().entity(unit).get::<AnimDriver>().unwrap().gait,
+            Some(51)
+        );
+        assert_eq!(completions(&app), Some(0), "the rolled variation armed");
+        assert!(
+            app.world()
+                .entity(unit)
+                .get::<AnimationPlayer>()
+                .unwrap()
+                .animation(nodes[1])
+                .is_none(),
+            "not the head"
+        );
+        // Past the 100 ms clip's end, then two more frames.
+        for _ in 0..6 {
+            advance(&mut app, 25);
+        }
+        if repick {
+            assert_eq!(
+                completions(&app),
+                Some(0),
+                "0x40: played again from its start"
+            );
+        } else {
+            assert_eq!(completions(&app), Some(1), "no 0x40: the clip runs on");
+        }
+    }
+}
+
+/// A held kit anim on a fly-tier unit: tier-resolved to its tier row unless kit flag `0x8` skips
+/// it (`0x724398`); either way, without kit flag `0x40`, the armed clip runs on past its end.
+#[test]
+fn a_tiered_hold_resolves_unless_kit_flag_0x8_and_runs_on_at_its_end() {
+    use super::super::AnimPlayFlags;
+    let row = |behavior: u16, tier: u8| AnimEntry {
+        weapon_flags: 0,
+        fallback: 0,
+        flags: 0,
+        behavior,
+        tier,
+    };
+    for raw in [false, true] {
+        let mut app = app();
+        app.insert_resource(AnimData(AnimDataCatalog::from_rows([
+            (0, row(0, 0)),
+            (51, row(51, 0)),
+            (300, row(51, 1)),
+        ])));
+        let flags = AnimPlayFlags(if raw { AnimPlayFlags::NO_TIER } else { 0 });
+        let (unit, mut nodes) = spawn_kit_holder(&mut app, flags);
+        // The head 51 clip doubles as the tier row's only variation.
+        let tier_node = nodes[1];
+        {
+            let mut e = app.world_mut().entity_mut(unit);
+            let mut anims = e.get_mut::<ModelAnimations>().unwrap();
+            anims.clips[1].anim_id = 300;
+            anims.clips[1].frequency = 32767;
+            e.insert(crate::net::ObjectStore(ObjectFields::from_pairs(&[(
+                138,
+                1 << 16,
+            )])));
+        }
+        nodes.swap(1, 2);
+        app.update();
+        let want = if raw { 51 } else { 300 };
+        assert_eq!(
+            app.world().entity(unit).get::<AnimDriver>().unwrap().gait,
+            Some(want),
+            "raw {raw}"
+        );
+        let node = if raw { nodes[1] } else { tier_node };
+        let completions = |app: &App| {
+            app.world()
+                .entity(unit)
+                .get::<AnimationPlayer>()
+                .unwrap()
+                .animation(node)
+                .map(|a| a.completions())
+        };
+        assert_eq!(completions(&app), Some(0));
+        for _ in 0..6 {
+            advance(&mut app, 25);
+        }
+        assert_eq!(completions(&app), Some(1), "raw {raw}: the clip runs on");
+    }
+}
+
+/// The dead-pose rows: Stand, Death, Dead, Fall, Drowned, and FlyDeath on the fly tier.
+fn death_catalog() -> AnimData {
+    let row = |behavior: u16, tier: u8| AnimEntry {
+        weapon_flags: 0,
+        fallback: 0,
+        flags: 0,
+        behavior,
+        tier,
+    };
+    AnimData(AnimDataCatalog::from_rows([
+        (0, row(0, 0)),
+        (1, row(1, 0)),
+        (6, row(6, 0)),
+        (40, row(40, 0)),
+        (132, row(132, 0)),
+        (230, row(1, 1)),
+    ]))
+}
+
+/// A unit on real clip assets with Stand, Death (1 s), Dead, Fall, Drowned and FlyDeath, alive
+/// (health 100) unless `dead`, on anim tier `tier`. Returns the unit and each clip's node by id.
+fn spawn_mortal(
+    app: &mut App,
+    dead: bool,
+    tier: u32,
+) -> (Entity, std::collections::HashMap<u16, AnimationNodeIndex>) {
+    use bevy::animation::graph::{AnimationGraph, AnimationGraphHandle};
+    use bevy::animation::AnimationClip;
+
+    app.insert_resource(death_catalog());
+    let rows = [
+        (0u16, 4.0, true),
+        (1, 1.0, false),
+        (6, 4.0, true),
+        (40, 4.0, true),
+        (132, 4.0, true),
+        (230, 1.0, false),
+    ];
+    let handles: Vec<_> = rows
+        .iter()
+        .map(|&(_, d, _)| {
+            let mut c = AnimationClip::default();
+            c.set_duration(d);
+            app.world_mut()
+                .resource_mut::<Assets<AnimationClip>>()
+                .add(c)
+        })
+        .collect();
+    let (graph, nodes) = AnimationGraph::from_clips(handles);
+    let graph_handle = app
+        .world_mut()
+        .resource_mut::<Assets<AnimationGraph>>()
+        .add(graph);
+    let mut animation_lookup = vec![0xffff; 512];
+    let clips = rows
+        .iter()
+        .zip(&nodes)
+        .enumerate()
+        .map(|(i, (&(id, duration, looping), &node))| {
+            animation_lookup[id as usize] = i as u16;
+            AnimClip {
+                node,
+                duration,
+                blend_time: 0.0,
+                ..clip(id, 0, looping)
+            }
+        })
+        .collect();
+    let anims = ModelAnimations {
+        graph: graph_handle.clone(),
+        clips,
+        hand_close: [None, None],
+        playable_animation_lookup: Vec::new(),
+        animation_lookup,
+        global_bones: Vec::new(),
+        first_seq: None,
+        pose: Default::default(),
+    };
+    let health = if dead { 0 } else { 100 };
+    let unit = app
+        .world_mut()
+        .spawn((
+            anims,
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimationGraphHandle(graph_handle),
+            AnimDriver::default(),
+            crate::net::ObjectStore(ObjectFields::from_pairs(&[
+                (22, health),
+                (28, 100),
+                (138, tier << 16),
+            ])),
+        ))
+        .id();
+    let by_id = rows.iter().map(|r| r.0).zip(nodes).collect();
+    (unit, by_id)
+}
+
+fn gait_of(app: &App, unit: Entity) -> Option<u16> {
+    app.world().entity(unit).get::<AnimDriver>().unwrap().gait
+}
+
+fn state_kit(anim_id: u16, play: u8) -> super::super::StateKitAnims {
+    super::super::StateKitAnims(vec![(
+        1,
+        super::super::KitAnim {
+            anim_id,
+            play: super::super::AnimPlayFlags(play),
+        },
+    )])
+}
+
+/// A living unit under a state kit with a dead anim reads dead to the pick and lies in Dead
+/// (`0x71f591`, `0x7241e5`); the kit's end stands it up again.
+#[test]
+fn a_dying_state_kit_lays_a_living_unit_down_until_it_ends() {
+    let mut app = app();
+    let (unit, _) = spawn_mortal(&mut app, false, 0);
+    app.update();
+    assert_eq!(gait_of(&app, unit), Some(0), "alive: Stand");
+    app.world_mut().entity_mut(unit).insert(state_kit(6, 0));
+    app.update();
+    assert_eq!(gait_of(&app, unit), Some(6), "the kit lays it in Dead");
+    assert!(app.world().entity(unit).get::<AnimDriver>().unwrap().dead);
+    app.world_mut()
+        .entity_mut(unit)
+        .remove::<super::super::StateKitAnims>();
+    app.update();
+    app.update();
+    assert_eq!(gait_of(&app, unit), Some(0), "the kit's end stands it");
+}
+
+/// Only kit flag `0x4` leaves the death pick: such a kit names the pose and plays it raw
+/// (`0x724185`); a dying kit flagged `0x8` and `0x100` alone takes the pick's own Dead.
+#[test]
+fn only_kit_flag_0x4_names_the_dead_pose() {
+    use super::super::AnimPlayFlags as P;
+    for (play, want) in [
+        (P::RAW | P::NO_TIER, 132),
+        (P::NO_TIER | P::KEEP_WEAPONS, 6),
+    ] {
+        let mut app = app();
+        let (unit, _) = spawn_mortal(&mut app, false, 0);
+        app.world_mut()
+            .entity_mut(unit)
+            .insert(state_kit(132, play));
+        app.update();
+        assert_eq!(gait_of(&app, unit), Some(want), "play {play:#x}");
+    }
+}
+
+/// A state kit's dying anim plays when it arms (`0x73b33e`), with the kit play's flags: a raw one
+/// skips the fly tier's row.
+#[test]
+fn a_state_kits_dying_anim_plays_with_its_flags_when_it_arms() {
+    use super::super::AnimPlayFlags as P;
+    for (play, node_id) in [(0, 230), (P::RAW, 1)] {
+        let mut app = app();
+        let (unit, nodes) = spawn_mortal(&mut app, false, 1);
+        app.update();
+        app.world_mut()
+            .write_message(super::super::BaseAnimRecompute {
+                entity: unit,
+                anim_id: 1,
+                play: P(play),
+            });
+        app.update();
+        assert_eq!(gait_of(&app, unit), Some(1), "Death, a dying anim, is kept");
+        let player = app.world().entity(unit).get::<AnimationPlayer>().unwrap();
+        assert!(
+            player.animation(nodes[&node_id]).is_some(),
+            "play {play:#x}"
+        );
+    }
+}
+
+/// A display swap's rebuilt model replays the dead pose with the dying kits' flags (`0x73e7e7`):
+/// a kit flagged `0x8` keeps a fly-tier corpse off FlyDeath only through the swap, as the death
+/// pick passes `0x4` alone.
+#[test]
+fn a_swap_replays_the_dead_pose_with_the_dying_kits_flags() {
+    use super::super::{AnimPlayFlags as P, SwapReplay};
+    for (swap, play, node_id) in [
+        (false, P::NO_TIER, 230),
+        (true, P::NO_TIER, 1),
+        (true, 0, 230),
+    ] {
+        let mut app = app();
+        let (unit, nodes) = spawn_mortal(&mut app, true, 1);
+        app.world_mut()
+            .entity_mut(unit)
+            .insert(state_kit(132, play));
+        if swap {
+            app.world_mut().entity_mut(unit).insert(SwapReplay {
+                restart: None,
+                torso: Some(0),
+            });
+        }
+        app.update();
+        assert_eq!(gait_of(&app, unit), Some(1));
+        let player = app.world().entity(unit).get::<AnimationPlayer>().unwrap();
+        assert!(
+            player.animation(nodes[&node_id]).is_some(),
+            "swap {swap}, play {play:#x}"
+        );
+        assert!(
+            app.world().entity(unit).get::<SwapReplay>().is_none(),
+            "read once"
+        );
+    }
+}
+
+/// A display swap under half through a dying anim plays it again from its start on the rebuilt
+/// model (`0x73e496`); without it a dead unit's first pass settles at the end.
+#[test]
+fn a_swap_mid_death_restarts_the_death_anim() {
+    use super::super::SwapReplay;
+    for restart in [false, true] {
+        let mut app = app();
+        let (unit, nodes) = spawn_mortal(&mut app, true, 0);
+        if restart {
+            app.world_mut().entity_mut(unit).insert(SwapReplay {
+                restart: Some(1),
+                torso: Some(1),
+            });
+        }
+        app.update();
+        let player = app.world().entity(unit).get::<AnimationPlayer>().unwrap();
+        let t = player.animation(nodes[&1]).unwrap().seek_time();
+        if restart {
+            assert!(t < 0.5, "replayed from its start: {t}");
+        } else {
+            assert!(t >= 1.0, "settled at its end: {t}");
+        }
+    }
+}
+
+/// What a swap carries off the torn-down driver: a dead unit's dying anim under half played
+/// restarts by its BehaviorID, past half it does not; the torso anim always rides along.
+#[test]
+fn a_swap_carries_a_death_under_half_played() {
+    let mut app = app();
+    let (unit, _) = spawn_mortal(&mut app, false, 0);
+    app.update();
+    // Killed on a later pass, so Death plays from its start.
+    app.world_mut()
+        .entity_mut(unit)
+        .insert(crate::net::ObjectStore(ObjectFields::from_pairs(&[
+            (22, 0),
+            (28, 100),
+        ])));
+    app.update();
+    let carried = |app: &App| {
+        let e = app.world().entity(unit);
+        let catalog = app.world().resource::<AnimData>();
+        e.get::<AnimDriver>().unwrap().swap_replay(
+            e.get::<AnimationPlayer>().unwrap(),
+            e.get::<AnimationTransitions>().unwrap(),
+            e.get::<ModelAnimations>().unwrap(),
+            Some(&catalog.0),
+        )
+    };
+    for _ in 0..3 {
+        advance(&mut app, 100);
+    }
+    let early = carried(&app);
+    assert_eq!(early.restart, Some(1), "under half: {early:?}");
+    assert_eq!(early.torso, Some(1));
+    for _ in 0..4 {
+        advance(&mut app, 100);
+    }
+    assert_eq!(carried(&app).restart, None, "past half");
+}
+
+/// A swap mid-fall plays the old torso anim again on the rebuilt model (`0x73e765`), which the
+/// step-off freeze then holds; a grounded swap picks afresh.
+#[test]
+fn a_swap_mid_fall_keeps_the_torso_anim() {
+    use super::super::SwapReplay;
+    for falling in [false, true] {
+        let mut app = app();
+        let (unit, _) = spawn_mortal(&mut app, false, 0);
+        app.world_mut().entity_mut(unit).insert((
+            SwapReplay {
+                restart: None,
+                torso: Some(6),
+            },
+            MovementState {
+                flags: if falling { move_flags::FALLING } else { 0 },
+                vertical_speed: -3.0,
+                ..Default::default()
+            },
+        ));
+        app.update();
+        app.update();
+        let want = if falling { 6 } else { 0 };
+        assert_eq!(gait_of(&app, unit), Some(want), "falling {falling}");
+    }
 }

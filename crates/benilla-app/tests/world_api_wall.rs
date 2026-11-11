@@ -128,6 +128,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("mat_anim_table::affine_row", "record"),
     ("mesh_tag::HIGHLIGHT_BIT", "record"),
     ("model_fade::ModelFade", "record"),
+    ("model_fade::OwnAlpha", "record"),
     ("model_fade::ParentModel", "record"),
     ("model_fade::RenderFade", "record"),
     ("model_fade::UnitRenderAlpha", "wall"),

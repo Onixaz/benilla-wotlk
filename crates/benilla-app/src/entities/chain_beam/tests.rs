@@ -42,6 +42,11 @@ fn lightning() -> ChainEffect {
 }
 
 fn beam_app() -> App {
+    beam_app_area_flags(0)
+}
+
+/// [`beam_app`] with the area kit's flags.
+fn beam_app_area_flags(area_flags: u32) -> App {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()));
     app.init_asset::<Image>();
@@ -85,6 +90,7 @@ fn beam_app() -> App {
                     AREA_KIT,
                     VisualKit {
                         id: AREA_KIT,
+                        flags: area_flags,
                         ..Default::default()
                     },
                 ),
@@ -480,6 +486,64 @@ fn a_saved_location_draws_one_bolt_to_the_ground_and_plays_the_area_kit() {
     assert_eq!(kits, vec![AREA_KIT]);
 }
 
+/// A flag-0x1 area kit waits on the caster under the beam's sequence, the first bolt's attachment;
+/// the caster's next beam takes the sequence 2 up (`0x726b8e`, `0x726b96`, `0x7fa59b`).
+#[test]
+fn a_location_beams_flag_1_area_kit_waits_under_the_beams_sequence() {
+    let mut app = beam_app_area_flags(benilla_formats::kit_flag::BEAM_WAIT);
+    app.init_resource::<BeamKitWaits>();
+    let caster = unit(&mut app);
+    let t1 = unit(&mut app);
+    let dest = Vec3::new(5.0, 1.0, -7.0);
+    let attachments = |app: &mut App| -> Vec<Vec<i32>> {
+        app.world_mut()
+            .query::<&ChainBeam>()
+            .iter(app.world())
+            .map(|b| b.bolts.iter().map(|x| x.attachment).collect())
+            .collect()
+    };
+    // A unit beam first: its first bolt carries sequence 0, the rest none.
+    app.world_mut()
+        .entity_mut(caster)
+        .insert(ChainHops(vec![t1, caster]));
+    app.world_mut().write_message(play(caster, CHAIN_SPELL));
+    app.update();
+    assert_eq!(attachments(&mut app), vec![vec![0, NO_BEAM_KEY]]);
+    assert!(
+        app.world().resource::<BeamKitWaits>().is_empty(),
+        "no location, no area kit"
+    );
+    for (e, _) in beams_with_ids(&mut app) {
+        app.world_mut().despawn(e);
+    }
+
+    // Then a ground beam: sequence 2, its area kit held, not played.
+    app.world_mut()
+        .resource_mut::<ChainLocations>()
+        .save(caster, 0, false, Some(dest));
+    app.world_mut().write_message(play(caster, CHAIN_SPELL));
+    app.update();
+    assert_eq!(attachments(&mut app), vec![vec![2]]);
+    assert_eq!(
+        app.world_mut()
+            .resource_mut::<Messages<DelayedAreaKit>>()
+            .drain()
+            .count(),
+        0,
+        "the area kit waits for the ground bolt"
+    );
+    assert!(!app.world().resource::<BeamKitWaits>().is_empty());
+}
+
+/// Every live beam with its entity.
+fn beams_with_ids(app: &mut App) -> Vec<(Entity, u32)> {
+    app.world_mut()
+        .query::<(Entity, &ChainBeam)>()
+        .iter(app.world())
+        .map(|(e, b)| (e, b.spell_id))
+        .collect()
+}
+
 /// The GO's save: the dest unless flag 0x1 hit units, and a clear otherwise (`0x80ed7d`).
 #[test]
 fn a_beam_rows_go_saves_or_clears_the_location() {
@@ -682,4 +746,60 @@ fn a_kit_clear_takes_only_its_kit_s_persistent_beams() {
     });
     app.update();
     assert!(beams(&mut app).is_empty(), "its kit's clear takes it");
+}
+
+/// The tick's hand-off (`0x7fb15a`): first vertex to the source, last to the target object under
+/// no key, and with no target object to the source under the bolt's attachment.
+#[test]
+fn a_bolts_drawn_ends_connect_its_source_and_target() {
+    let id = |n| Entity::from_raw_u32(n).expect("a test entity id");
+    let (src, dst) = (id(1), id(2));
+    const SEQ: i32 = 4;
+    assert_eq!(
+        reached_ends((true, false), src, Some(dst), SEQ),
+        [Some((src, NO_BEAM_KEY)), None],
+        "a pulse leaving the caster"
+    );
+    assert_eq!(
+        reached_ends((false, true), src, Some(dst), SEQ),
+        [None, Some((dst, NO_BEAM_KEY))],
+        "a pulse arriving at the target, unit or game object"
+    );
+    assert_eq!(
+        reached_ends((true, true), src, Some(dst), NO_BEAM_KEY),
+        [Some((src, NO_BEAM_KEY)), Some((dst, NO_BEAM_KEY))],
+        "no pulse: both ends every drawn frame"
+    );
+    assert_eq!(
+        reached_ends((false, true), src, None, SEQ),
+        [None, Some((src, SEQ))],
+        "a ground bolt's end connects its caster under the beam's sequence"
+    );
+    assert_eq!(
+        reached_ends((false, false), src, Some(dst), SEQ),
+        [None, None]
+    );
+}
+
+/// A ground beam whose chain id names no row draws nothing, yet its area kit still plays: the
+/// beam builder returns nothing to wait on (`0x726afd`).
+#[test]
+fn a_ground_beam_with_no_chain_row_still_plays_its_area_kit() {
+    let mut app = beam_app();
+    let caster = unit(&mut app);
+    app.world_mut()
+        .resource_mut::<ChainLocations>()
+        .save(caster, 0, false, Some(Vec3::ONE));
+    let mut p = play(caster, CHAIN_SPELL);
+    p.proc.effect_id = 999;
+    app.world_mut().write_message(p);
+    app.update();
+    assert!(beams(&mut app).is_empty(), "no row, no beam");
+    let kits: Vec<u32> = app
+        .world_mut()
+        .resource_mut::<Messages<DelayedAreaKit>>()
+        .drain()
+        .map(|k| k.kit_id)
+        .collect();
+    assert_eq!(kits, vec![AREA_KIT]);
 }

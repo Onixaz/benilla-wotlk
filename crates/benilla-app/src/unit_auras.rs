@@ -83,6 +83,8 @@ pub(crate) struct UnitAuras {
     /// Packets folded in: each signals `UNIT_AURA` for its unit, whether or not a slot moved
     /// (`0x72f5d0`, deduplicated per unit by the queue `0x6143f0`).
     packets: u64,
+    /// Slots holding a spell with no effect bit: no reader sees them but the spell-id walk.
+    inactive: BTreeMap<u8, u32>,
 }
 
 impl UnitAuras {
@@ -99,8 +101,10 @@ impl UnitAuras {
         self.packets = self.packets.wrapping_add(1);
         if update.all {
             self.by_slot.clear();
+            self.inactive.clear();
         }
         for (slot, record) in &update.slots {
+            self.inactive.remove(slot);
             match record.filter(AuraRecord::is_live) {
                 Some(r) => {
                     self.by_slot
@@ -108,6 +112,9 @@ impl UnitAuras {
                 }
                 None => {
                     self.by_slot.remove(slot);
+                    if let Some(r) = record.filter(|r| r.spell_id != 0) {
+                        self.inactive.insert(*slot, r.spell_id);
+                    }
                 }
             }
         }
@@ -159,6 +166,20 @@ impl UnitAuras {
             }
         }
     }
+    /// Any slot holds `spell_id`, an effect applied or not (`0x7282a0`).
+    pub(crate) fn holds_spell(&self, spell_id: u32) -> bool {
+        self.by_slot.values().any(|a| a.spell_id == spell_id)
+            || self.inactive.values().any(|&s| s == spell_id)
+    }
+
+    /// A slot holds `spell_id` with an effect bit set (`0x728300`).
+    pub(crate) fn has_applied(&self, spell_id: u32) -> bool {
+        use benilla_protocol::messages::AURA_UPDATE_EFF_INDEX_MASK;
+        self.by_slot
+            .values()
+            .any(|a| a.spell_id == spell_id && a.flags & AURA_UPDATE_EFF_INDEX_MASK != 0)
+    }
+
     /// Live auras by ascending slot.
     pub(crate) fn iter(&self) -> impl Iterator<Item = &UnitAura> + '_ {
         self.by_slot.values()

@@ -30,9 +30,9 @@ use super::select::{
 };
 use super::sheath::{advance_sheath_ceremony, start_sheath_ceremony};
 use super::{
-    find_resolved, move_flags, resolved_id, routed_behavior, AnimData, AnimDriver, AutoRepeatArmed,
-    BaseAnimRecompute, CastHold, DefenseAnim, EmoteAnim, Engaged, MovementState, NockLatch,
-    Overlay, OverlayFade, SheathRequest, SheathSwapMessage, SwingImpact, SwingMessage,
+    find_resolved, move_flags, resolved_id, routed_behavior, AnimData, AnimDriver, AnimPlayFlags,
+    AutoRepeatArmed, BaseAnimRecompute, CastHold, DefenseAnim, EmoteAnim, Engaged, MovementState,
+    NockLatch, Overlay, OverlayFade, SheathRequest, SheathSwapMessage, SwingImpact, SwingMessage,
     SwingSlowdown, UnitAnimRng, Wielded, WoundAnim,
 };
 
@@ -45,7 +45,7 @@ mod tests;
 mod wound;
 
 pub(super) use grip::drive_hand_grip;
-use play::{holds_own_clip, oneshot_finished, play_clip, roll_loop, roll_oneshot};
+use play::{holds_own_clip, model_loop_end, oneshot_finished, play_clip, roll_loop, roll_oneshot};
 use wound::{wound_evict, wound_trigger, wound_upkeep, WoundEdge};
 
 /// The masked overlay's weight over the base clip on the SpineLow subtree, where the unmasked base
@@ -64,9 +64,9 @@ const JUMP_ARC_MIN_UP: f32 = 0.5;
 #[derive(Clone, Copy)]
 enum OneShotReq {
     Swing(u32),
-    /// The id, whether it came through the emote player's armed-id test, and whether the play
-    /// seam's Special remap applies ([`EmoteAnim::remap_special`]).
-    Emote(u16, bool, bool),
+    /// The id, whether it came through the emote player's armed-id test, and the play flags a kit
+    /// passes ([`EmoteAnim::play`]).
+    Emote(u16, bool, AnimPlayFlags),
 }
 
 /// The live one-shot the combat fast path tests: the key bone's clip, else bone 0's.
@@ -276,6 +276,11 @@ type UnitData = (
         Option<&'static crate::vehicle::SeatPose>,
         // Created by update type 3: the stand-state seed its first pass reads.
         Has<crate::net::FreshSpawn>,
+        // The unit's effect list: its state kits' anims and its live kit models' (`0x71f560`).
+        Option<&'static super::StateKitAnims>,
+        Option<&'static crate::entities::spell_fx::FxAttached>,
+        // A display swap's carry-over to this rebuilt driver (`0x73e410`).
+        Option<&'static super::SwapReplay>,
     ),
 );
 
@@ -401,10 +406,10 @@ pub(super) fn drive_animations(
         pending_slow.insert(s.0);
     }
     for e in emotes.read() {
-        pending.entry(e.entity).or_default().push((
-            OneShotReq::Emote(e.anim_id, e.via_player, e.remap_special),
-            e.seq,
-        ));
+        pending
+            .entry(e.entity)
+            .or_default()
+            .push((OneShotReq::Emote(e.anim_id, e.via_player, e.play), e.seq));
     }
     // `None` until `AnimationData.dbc` loads; every lookup then resolves to itself.
     let catalog = anim_data.as_deref().map(|d| &d.0);
@@ -420,7 +425,7 @@ pub(super) fn drive_animations(
             continue;
         }
         for &(req, seq) in reqs {
-            let OneShotReq::Emote(id, via_player, remap) = req else {
+            let OneShotReq::Emote(id, via_player, play) = req else {
                 continue;
             };
             let behavior = units
@@ -434,7 +439,7 @@ pub(super) fn drive_animations(
                 .flatten()
                 .and_then(|u| armed_id(u.4, u.2, u.3, u.1));
             if armed != Some(id) {
-                to_mount.push((child.0, (OneShotReq::Emote(id, false, remap), seq)));
+                to_mount.push((child.0, (OneShotReq::Emote(id, false, play), seq)));
             }
         }
     }
@@ -446,9 +451,9 @@ pub(super) fn drive_animations(
         reqs.sort_by_key(|&(_, seq)| seq);
     }
     // Stage-2 base recomputes by unit, last wins: of two in a frame the second's verdict stands.
-    let mut pending_recompute: bevy::ecs::entity::EntityHashMap<u16> = default();
+    let mut pending_recompute: bevy::ecs::entity::EntityHashMap<(u16, AnimPlayFlags)> = default();
     for r in recomputes.read() {
-        pending_recompute.insert(r.entity, r.anim_id);
+        pending_recompute.insert(r.entity, (r.anim_id, r.play));
     }
     // A stage-0 kit with an anim latches it as the special idle after its play (`0x73b38e`, flag
     // `0x80`); stage 1 never does. The last push of the frame wins.
@@ -516,7 +521,7 @@ struct UnitCx<'a, 'w, 's> {
     pending_wound: &'a EntityHashMap<WoundEdge>,
     pending_defense: &'a EntityHashMap<u32>,
     pending_slow: &'a EntityHashSet,
-    pending_recompute: &'a EntityHashMap<u16>,
+    pending_recompute: &'a EntityHashMap<(u16, AnimPlayFlags)>,
     pending_sheath: &'a EntityHashMap<SheathRequest>,
     pending_latch: &'a EntityHashMap<u16>,
     catalog: Option<&'a AnimDataCatalog>,
@@ -596,6 +601,9 @@ fn drive_unit(
             mut unit_rng,
             seat_pose,
             fresh_spawn,
+            state_kits,
+            kit_fx,
+            swap_replay,
         ),
     ) = item;
     // A mount fades with its host, so it plays on with it too.
@@ -647,7 +655,28 @@ fn drive_unit(
     // pair the death handler runs, so a feign lies down and stands when the flag clears. Absent
     // health reads as zero: a create block omits zero fields, so a corpse streams in with no
     // HEALTH.
-    let dead = store.is_some_and(|s| s.0.unit_reads_dead());
+    let store_dead = store.is_some_and(|s| s.0.unit_reads_dead());
+    // A live kit effect whose anim is dead or dying reads the unit dead too (`0x71f591`), as does
+    // the state kit arming one this frame.
+    let dying_kits: Vec<super::KitAnim> = state_kits
+        .into_iter()
+        .flat_map(|s| s.0.iter().map(|&(_, k)| k))
+        .chain(kit_fx.into_iter().flat_map(|f| f.kit_anims()))
+        .filter(|k| select::is_dead_or_dying(k.anim_id, catalog))
+        .collect();
+    let dying_recompute = pending_recompute
+        .get(&entity)
+        .copied()
+        .filter(|&(id, _)| select::is_dead_or_dying(id, catalog));
+    let dead = store_dead || !dying_kits.is_empty() || dying_recompute.is_some();
+    if drv.dead != dead {
+        drv.dead = dead;
+    }
+    // A display swap's carry-over is read once, by the rebuilt driver's first pass.
+    let swap_replay = swap_replay.copied();
+    if swap_replay.is_some() {
+        commands.entity(entity).remove::<super::SwapReplay>();
+    }
     // `UNIT_FIELD_MOUNTDISPLAYID` is the one mounted signal; a mount child has no store, so it
     // never reads as mounted.
     let mount_display = store.map_or(0, |s| s.0.unit_mount_display_id());
@@ -739,23 +768,68 @@ fn drive_unit(
         commands.entity(entity).remove::<crate::net::FreshSpawn>();
     }
 
-    // Death overrides every state: play Death and hold.
+    // Death overrides every state: the dead pose, armed on an edge and held.
     if dead {
-        if drv.gait != Some(DEATH) {
+        let tier = store.map_or(0, |s| s.0.unit_anim_tier());
+        let torso = drv.gait;
+        let lying = torso.is_some_and(|g| g == DEATH || select::is_dead_or_dying(g, catalog));
+        // The pick's own pose past the raw kit, on the model holding DeathStart as its tier asks
+        // for it (`0x71dfc0`).
+        let pose_after = |torso: Option<u16>| {
+            let death_start = match catalog.filter(|_| tier != 0) {
+                Some(cat) => anims.resolve_tier(select::DEATH_START, tier, cat),
+                None => select::DEATH_START,
+            };
+            let has_death_start = anims.owns(death_start);
+            select::choose_death_pose(mv.flags, torso, has_death_start, catalog)
+        };
+        // (id, play flags, from its start)
+        let arm: Option<(u16, AnimPlayFlags, bool)> =
+            if let Some(b) = swap_replay.and_then(|r| r.restart) {
+                // A swap under half through a dying anim replays it from its start (`0x73e496`).
+                Some((b, AnimPlayFlags::default(), true))
+            } else if let Some(raw) = select::raw_death_kit(&dying_kits) {
+                // The first dying kit flagged `0x4` names the pose, raw (`0x724185`).
+                let play = dying_recompute.map_or(0, |(_, p)| p.0) | AnimPlayFlags::RAW;
+                (torso != Some(raw)).then_some((raw, AnimPlayFlags(play), false))
+            } else if let Some((id, play)) = dying_recompute.filter(|&(id, _)| torso != Some(id)) {
+                // A state kit's dead or dying anim plays, then the pick re-chooses (`0x73b33e`).
+                Some((pose_after(Some(id)).unwrap_or(id), play, false))
+            } else if lying {
+                None
+            } else if store_dead {
+                Some((DEATH, AnimPlayFlags::default(), false))
+            } else {
+                pose_after(torso).map(|id| (id, AnimPlayFlags::default(), false))
+            };
+        if let Some((id, mut play, restart)) = arm {
+            // The rebuilt model replays its pose with the dying kits' flags (`0x73e7e7`).
+            if swap_replay.is_some() && !restart {
+                play.0 |= select::replay_flags(&dying_kits).0;
+            }
             debug!(
-                "death pose: unit {entity} arms Death ({DEATH}) — {}{}",
+                "death pose: unit {entity} arms {id} (play {:#x}) — {}{}",
+                play.0,
                 if store.is_some_and(|s| s.0.unit_is_dead()) {
                     "killed"
-                } else {
+                } else if store_dead {
                     "feign (UNIT_DYNFLAG_DEAD, health intact)"
+                } else {
+                    "a dying kit"
                 },
                 if first { ", streamed in dead" } else { "" }
             );
-            if let Some(c) = find_resolved(anims, DEATH, catalog)
+            // The unit's anim tier resolves the id unless the play skips it (`0x73875f`).
+            let played = match catalog.filter(|_| tier != 0 && play.tier_resolve()) {
+                Some(cat) => anims.resolve_tier(id, tier, cat),
+                None => id,
+            };
+            if let Some(c) = find_resolved(anims, played, catalog)
                 .or_else(|| find_resolved(anims, STAND, catalog))
             {
                 // A witnessed death rolls its variation; a streamed-in corpse takes the head.
-                let c = if first {
+                let settle = first && !restart;
+                let c = if settle {
                     c
                 } else {
                     anims.pick_variation(c.anim_id, rng.draw()).unwrap_or(c)
@@ -763,7 +837,7 @@ fn drive_unit(
                 let active = tr.play(&mut player, c.node, Duration::from_secs_f32(c.blend_time));
                 if c.looping {
                     active.repeat();
-                } else if first {
+                } else if settle {
                     active.seek_to(c.duration); // streamed in dead: settled, not replayed
                 }
             }
@@ -773,10 +847,25 @@ fn drive_unit(
                 player.stop(wd.node);
             }
             drv.mode = Mode::Gait;
-            drv.gait = Some(DEATH);
+            drv.gait = Some(id);
             drv.deferred = None; // a normal arm clears the cache
         }
         return;
+    }
+    // A swap mid-fall plays the old torso anim again on the rebuilt model (`0x73e765`), which the
+    // airborne freeze then holds.
+    if let Some(id) = swap_replay
+        .and_then(|r| r.torso)
+        .filter(|_| first && airborne_frozen)
+    {
+        if let Some(c) = find_resolved(anims, id, catalog) {
+            let active = tr.play(&mut player, c.node, Duration::from_secs_f32(c.blend_time));
+            if c.looping {
+                active.repeat();
+            }
+            drv.gait = Some(id);
+            drv.gait_flags = mv.flags;
+        }
     }
 
     // The mount transition arms bone 0's primary through op4: the build plays 91 Mount with a
@@ -940,7 +1029,10 @@ fn drive_unit(
     });
     // In `PlaySeq` order, defense last: the reference plays it from the deferred impact scan,
     // after every message handler.
-    let mut requests: Vec<(u16, Option<u16>)> = pending
+    // Each request: the id to play, the raw id the armed test compares, and whether it keeps the
+    // weapons out.
+    let tier = store.map_or(0, |s| s.0.unit_anim_tier());
+    let mut requests: Vec<(u16, Option<u16>, bool)> = pending
         .get(&entity)
         .map(|v| {
             v.iter()
@@ -956,24 +1048,29 @@ fn drive_unit(
                             swing_anim_main(w.armed_main())
                         };
                         debug!("swing: unit {entity} anim {id} (hitInfo {hit_info:#x})");
-                        (id, None)
+                        (id, None, false)
                     }
                     // The armed-id test compares the record's own AnimID, before the play
                     // seam's Special remap from the held hands.
-                    OneShotReq::Emote(id, via_player, remap) => {
+                    OneShotReq::Emote(id, via_player, play) => {
                         let w = wielded.copied().unwrap_or_default();
-                        let played = if remap {
+                        let played = if play.remap_special() {
                             select::special_anim(id, w.armed_main(), w.armed_off())
                         } else {
                             id
                         };
-                        (played, via_player.then_some(id))
+                        // The unit's anim tier resolves the id unless the kit skips it (`0x73875f`).
+                        let played = match catalog.filter(|_| tier != 0 && play.tier_resolve()) {
+                            Some(cat) => anims.resolve_tier(played, tier, cat),
+                            None => played,
+                        };
+                        (played, via_player.then_some(id), play.keep_weapons())
                     }
                 })
                 .collect()
         })
         .unwrap_or_default();
-    requests.extend(defense.map(|id| (id, None)));
+    requests.extend(defense.map(|id| (id, None, false)));
     // The deferred cache (`+0xd60`): once no one-shot is live, the parked combat clip plays. Fresh
     // requests supersede it. Never mid-air: the read is past the airborne freeze, so the landing
     // play clears it.
@@ -982,9 +1079,10 @@ fn drive_unit(
         && !airborne_frozen
         && live_oneshot(&drv, &player, &tr, anims, catalog).is_none()
     {
-        requests.extend(drv.deferred.take().map(|id| (id, None)));
+        requests.extend(drv.deferred.take().map(|id| (id, None, false)));
     }
-    for (id, armed_test) in requests {
+    let mut oneshot_keeps = false;
+    for (id, armed_test, keeps) in requests {
         // The emote player's own test first: an id already armed on the key bone or bone 0 plays
         // nothing, ahead of the lock and the fast path.
         if let Some(raw) = armed_test {
@@ -1091,6 +1189,7 @@ fn drive_unit(
             });
             masked_played = true;
             played_oneshot = Some(id);
+            oneshot_keeps = keeps;
         } else {
             // Full-body: the clip replaces the base on bone 0 even over a Special, last writer
             // wins. An airborne arc's own clip freezes first, op4's pose-snapshot decay.
@@ -1112,6 +1211,7 @@ fn drive_unit(
             drv.gait = None;
             base_played = true;
             played_oneshot = Some(id);
+            oneshot_keeps = keeps;
         }
         if benilla_assets::trace::enabled() {
             benilla_assets::trace::line(
@@ -1135,6 +1235,13 @@ fn drive_unit(
             .filter(|_| drv.start_spent != Some(h.seq))
             .map(|a| (h.seq, a))
     });
+    // A hold id as the base arms it: tier-resolved unless the kit skips it (`0x724398`).
+    let hold_armed = |id: u16| match (catalog, kit_hold) {
+        (Some(cat), Some(h)) if tier != 0 && h.play.tier_resolve() => {
+            anims.resolve_tier(id, tier, cat)
+        }
+        _ => id,
+    };
     if let Some((seq, start)) = cast_start {
         if drv.gait == Some(start) && oneshot_finished(&player, anims, start, catalog) {
             drv.start_spent = Some(seq);
@@ -1186,12 +1293,34 @@ fn drive_unit(
     // re-selection: clearing the target lets `mode::run` re-pick, which is what ends a
     // turn-shuffle. A Special loop re-arms its id.
     if let Some((node, budget)) = drv.loop_window {
-        if tr.get_main_animation() == Some(node)
-            && player
-                .animation(node)
-                .is_some_and(|a| a.completions() >= budget)
-        {
-            if drv.mode == Mode::Gait {
+        let done = player.animation(node).map_or(0, |a| a.completions());
+        if tr.get_main_animation() == Some(node) && done >= budget {
+            // The held kit anim, armed as its own id, picks itself again only under kit flag
+            // `0x40` (`0x7243cc`); without it no id is picked and the model's own end re-rolls.
+            let held = kit_hold.filter(|h| {
+                cast_start.is_none()
+                    && drv.gait == Some(hold_armed(h.anim_id))
+                    && !h.play.hold_repick()
+            });
+            if drv.mode == Mode::Gait && held.is_some() {
+                let armed = anims.clips.iter().find(|c| c.node == node);
+                if let Some(armed) = armed {
+                    let rate = player.animation(node).map_or(1.0, |a| a.speed());
+                    let (c, fresh) = model_loop_end(anims, armed, relaxed, catalog, rng);
+                    if c.node == node {
+                        drv.loop_window = Some((node, done + fresh));
+                    } else if play_clip(
+                        &mut drv.base_lock,
+                        &mut tr,
+                        &mut player,
+                        c,
+                        bevy::animation::RepeatAnimation::Forever,
+                        rate,
+                    ) {
+                        drv.loop_window = Some((c.node, fresh));
+                    }
+                }
+            } else if drv.mode == Mode::Gait {
                 drv.gait = None;
                 drv.interact_hold = false; // the window's end is a re-pick
             } else {
@@ -1202,7 +1331,7 @@ fn drive_unit(
                     .and_then(|armed| find_resolved(anims, armed.anim_id, catalog));
                 if let Some(head) = head {
                     let rate = player.animation(node).map_or(1.0, |a| a.speed());
-                    let (c, fresh) = roll_loop(anims, head, relaxed, rng);
+                    let (c, fresh) = roll_loop(anims, head, relaxed, catalog, rng);
                     play_clip(
                         &mut drv.base_lock,
                         &mut tr,
@@ -1221,7 +1350,7 @@ fn drive_unit(
     // after this frame's one-shot arms, so the state kit cuts the impact kit (Charge 22911:
     // Knockdown 121, then Stun 14). A unit inside a Special is left alone: the recompute would land
     // in the same state, and forcing Gait replays its entry.
-    if let Some(&want) = pending_recompute.get(&entity) {
+    if let Some(&(want, _)) = pending_recompute.get(&entity) {
         let armed = drv.overlay.map(|ov| ov.id).or_else(|| {
             tr.get_main_animation()
                 .and_then(|n| anims.clips.iter().find(|c| c.node == n))
@@ -1538,7 +1667,21 @@ fn drive_unit(
             .or(hold_played)
             .or_else(|| drv.active_anim())
             .unwrap_or(STAND);
-        let flags = catalog.map_or(0, |cat| cat.weapon_flags(anim));
+        // A kit's keep-weapons flag rides the play that armed the clip (`0x73957a`).
+        let keeps = if played_oneshot.is_some() {
+            oneshot_keeps
+        } else {
+            // The hold's anim or its precast start anim, raw or as armed (`0x73b1f4`).
+            kit_hold.is_some_and(|h| {
+                h.play.keep_weapons()
+                    && [Some(h.anim_id), h.start_anim]
+                        .into_iter()
+                        .flatten()
+                        .any(|id| anim == id || anim == hold_armed(id))
+            })
+        };
+        let flags =
+            select::kept_weapon_flags(catalog.map_or(0, |cat| cat.weapon_flags(anim)), cur, keeps);
         if let Some(forced) =
             select::reconcile_sheath(cur, anim, flags, engaged, is_self, sheath_byte, mounted)
         {

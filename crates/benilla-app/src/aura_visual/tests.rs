@@ -1026,6 +1026,7 @@ fn a_kit_clear_drops_only_the_anim_rate_of_its_kit() {
             spell_id: SPELL,
             nodes: vec![AuraNode::AnimRate(0.0), AuraNode::Tint([1, 2, 3])],
             kit_id,
+            body_only: false,
         });
     }
     app.update();
@@ -1048,4 +1049,231 @@ fn a_kit_clear_drops_only_the_anim_rate_of_its_kit() {
     assert_eq!(rates(&app), vec![5]);
     let n = app.world().entity(unit).get::<AuraNodes>().unwrap();
     assert_eq!(n.head_tint(), Some([1, 2, 3]), "the tint is no effect");
+}
+
+/// One alpha-authored unit: a body part, a mount child with its own part and the rider's seat frame
+/// holding a weapon part, and a kit effect keeping its own alpha. Returns the parts in that order.
+fn mounted_unit_at(body_only: bool) -> (App, [Entity; 4]) {
+    mounted_unit_with(body_only, 1.0)
+}
+
+/// [`mounted_unit_at`] with the mount's part already at `mount_alpha`.
+fn mounted_unit_with(body_only: bool, mount_alpha: f32) -> (App, [Entity; 4]) {
+    use benilla_world::model_fade::FadeMaterials;
+    use bevy::mesh::MeshTag;
+
+    let cutout: Handle<benilla_assets::materials::WowModelMaterial> =
+        bevy::asset::uuid_handle!("c0000000-0000-4000-8000-00000000a400");
+    let blend: Handle<benilla_assets::materials::WowModelMaterial> =
+        bevy::asset::uuid_handle!("b1000000-0000-4000-8000-00000000a400");
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.init_resource::<benilla_world::interior::InteriorReauthor>();
+    app.init_resource::<benilla_world::model_render::FarSideTwins>();
+    app.add_systems(Update, apply_aura_alpha);
+    let fm = FadeMaterials {
+        cutout: cutout.clone(),
+        blend,
+        bake_blend: None,
+        zfill: None,
+    };
+    let mut nodes = AuraNodes::new(1.0);
+    install_kit(
+        &mut nodes,
+        47585,
+        0,
+        &[AuraNode::Alpha(0.3, 0.0)],
+        body_only,
+        0.0,
+    );
+    let root = app.world_mut().spawn(nodes).id();
+    let part = |app: &mut App, parent: Entity| {
+        app.world_mut()
+            .spawn((
+                fm.clone(),
+                MeshTag(0),
+                MeshMaterial3d(cutout.clone()),
+                ChildOf(parent),
+            ))
+            .id()
+    };
+    let body = part(&mut app, root);
+    let mount = app.world_mut().spawn(ChildOf(root)).id();
+    app.world_mut()
+        .entity_mut(root)
+        .insert(crate::entities::mount::MountChild(mount));
+    let mount_part = part(&mut app, mount);
+    app.world_mut()
+        .entity_mut(mount_part)
+        .insert(MeshTag(benilla_world::mesh_tag::with_alpha(0, mount_alpha)));
+    let seat = app
+        .world_mut()
+        .spawn((benilla_world::rig_anim::RigFrame(root), ChildOf(mount)))
+        .id();
+    let weapon = part(&mut app, seat);
+    let fx = app.world_mut().spawn((OwnModelAlpha, ChildOf(root))).id();
+    let fx_part = part(&mut app, fx);
+    app.update();
+    app.world_mut()
+        .entity_mut(root)
+        .get_mut::<AuraNodes>()
+        .unwrap()
+        .started = -10.0;
+    app.update();
+    (app, [body, mount_part, weapon, fx_part])
+}
+
+fn part_alpha(app: &App, part: Entity) -> f32 {
+    let tag = app
+        .world()
+        .entity(part)
+        .get::<bevy::mesh::MeshTag>()
+        .unwrap()
+        .0;
+    benilla_world::mesh_tag::alpha_of(tag)
+}
+
+/// Kit flag `0x400` fades the rider and its held items but holds the mount opaque; without it the
+/// whole mounted unit fades.
+#[test]
+fn a_body_only_kit_fades_the_rider_and_not_the_mount() {
+    let (app, [body, mount, weapon, _]) = mounted_unit_at(true);
+    for p in [body, weapon] {
+        assert!(
+            (part_alpha(&app, p) - 0.3).abs() < 1.0 / 63.0,
+            "rider part {p}"
+        );
+    }
+    assert!(
+        (part_alpha(&app, mount) - 1.0).abs() < 1.0 / 63.0,
+        "the mount stays opaque"
+    );
+
+    let (app, [body, mount, weapon, _]) = mounted_unit_at(false);
+    for p in [body, mount, weapon] {
+        assert!(
+            (part_alpha(&app, p) - 0.3).abs() < 1.0 / 63.0,
+            "part {p} fades"
+        );
+    }
+}
+
+/// Kit flag `0x200` cuts only the particle and ribbon chain: the kit model's geometry still takes
+/// its host's fade (`0x827b6e` reads the inherited alpha).
+#[test]
+fn an_own_alpha_effect_still_fades_its_geometry_with_the_host() {
+    let (app, [body, .., fx]) = mounted_unit_at(false);
+    assert!((part_alpha(&app, body) - 0.3).abs() < 1.0 / 63.0);
+    assert!(
+        (part_alpha(&app, fx) - 0.3).abs() < 1.0 / 63.0,
+        "the effect's mesh fades with the unit"
+    );
+}
+
+/// The latch follows the last proc-14 install, and a reap latches the reaped kit's own bit, so the
+/// fade back lands on the model the fade went to (`0x71aba7`).
+#[test]
+fn the_body_only_latch_follows_install_and_reap() {
+    let mut n = AuraNodes::new(1.0);
+    install_kit(&mut n, 47585, 0, &[AuraNode::Alpha(0.3, 0.0)], true, 0.0);
+    assert!(n.body_only);
+    install_kit(&mut n, STEALTH, 0, &[AuraNode::Alpha(0.3, 0.0)], false, 0.0);
+    assert!(!n.body_only, "a plain alpha kit clears it");
+    reap(&mut n, 47585, 0.0);
+    assert!(n.body_only, "the reaped body-only node latches it back");
+    // A kit with no alpha node leaves the latch alone.
+    install_kit(&mut n, GHOST, 0, &[AuraNode::Tint([1, 2, 3])], false, 0.0);
+    assert!(n.body_only);
+}
+
+/// A proc-14 alpha outside 0..=1 only releases: the spell's node goes, none is installed, and the
+/// latch takes the released kit's bit (`0x7265c0`).
+#[test]
+fn an_out_of_range_alpha_releases_and_installs_nothing() {
+    let mut n = AuraNodes::new(1.0);
+    install_kit(&mut n, 47585, 0, &[AuraNode::Alpha(0.3, 0.0)], true, 0.0);
+    install_kit(&mut n, STEALTH, 0, &[AuraNode::Alpha(0.5, 0.0)], false, 0.0);
+    assert!(!n.body_only);
+    install_kit(&mut n, 47585, 0, &[AuraNode::Alpha(1.5, 0.0)], false, 0.0);
+    assert!(
+        n.alpha.iter().all(|&(s, ..)| s != 47585),
+        "nothing installed"
+    );
+    assert!(n.body_only, "the released body-only node latched it");
+    install_kit(&mut n, STEALTH, 0, &[AuraNode::Alpha(-1.0, 0.0)], true, 0.0);
+    assert!(n.alpha.is_empty());
+    assert!(
+        !n.body_only,
+        "the released plain node latched it, not the new kit"
+    );
+}
+
+/// A body-only alpha never writes the mount: a mount another fade left translucent stays at that
+/// alpha, as `0x71ac41` points the write at the rider's own model.
+#[test]
+fn a_body_only_kit_leaves_the_mount_where_it_was() {
+    let (app, [body, mount, ..]) = mounted_unit_with(true, 0.5);
+    assert!((part_alpha(&app, body) - 0.3).abs() < 1.0 / 63.0);
+    assert!(
+        (part_alpha(&app, mount) - 0.5).abs() < 1.0 / 63.0,
+        "the mount keeps the alpha it had, not 1.0"
+    );
+
+    let (app, [_, mount, ..]) = mounted_unit_with(false, 0.5);
+    assert!(
+        (part_alpha(&app, mount) - 0.3).abs() < 1.0 / 63.0,
+        "without the bit the mount takes the fade"
+    );
+}
+
+/// The unit's alpha lands on its mount's model, so the mount's particles and ribbons fade with it
+/// down the composed chain; a body-only alpha leaves the mount at the alpha it had (`0x71ac39`).
+#[test]
+fn the_mounts_particles_take_the_units_alpha_unless_body_only() {
+    use benilla_world::model_fade::{ModelAlphas, ModelFade};
+    let mount_alpha = |body_only: bool, before: Option<f32>| {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.init_resource::<benilla_world::interior::InteriorReauthor>();
+        app.init_resource::<benilla_world::model_render::FarSideTwins>();
+        app.add_systems(Update, apply_aura_alpha);
+        let mut nodes = AuraNodes::new(1.0);
+        install_kit(
+            &mut nodes,
+            47585,
+            0,
+            &[AuraNode::Alpha(0.3, 0.0)],
+            body_only,
+            0.0,
+        );
+        nodes.started = -10.0;
+        let root = app.world_mut().spawn(nodes).id();
+        let mount = app.world_mut().spawn(ChildOf(root)).id();
+        if let Some(a) = before {
+            app.world_mut().entity_mut(mount).insert(ModelFade(a));
+        }
+        // The mount's own translucent display is the rider's to declare.
+        app.world_mut()
+            .entity_mut(mount)
+            .insert(AuraNodes::steady(0.6));
+        app.world_mut()
+            .entity_mut(root)
+            .insert(crate::entities::mount::MountChild(mount));
+        app.update();
+        app.update();
+        let mut state = bevy::ecs::system::SystemState::<ModelAlphas>::new(app.world_mut());
+        state.get(app.world()).get(mount)
+    };
+    assert!(
+        (mount_alpha(false, None) - 0.3).abs() < 1e-6,
+        "the mount's clouds fade with the unit"
+    );
+    assert!(
+        (mount_alpha(true, Some(0.5)) - 0.5).abs() < 1e-6,
+        "body-only: the mount keeps the alpha it had"
+    );
+    assert!(
+        (mount_alpha(true, None) - 1.0).abs() < 1e-6,
+        "body-only: a mount never faded stays opaque"
+    );
 }

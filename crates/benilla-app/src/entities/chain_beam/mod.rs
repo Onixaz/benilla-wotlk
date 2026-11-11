@@ -9,9 +9,10 @@ use benilla_world::view::WorldCamera;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
+use crate::creature_anim::spell_visual::{kit_waits_for_beam, NO_BEAM_KEY};
 use crate::creature_anim::spell_visual::{AreaKitWait, DelayedAreaKit};
 use crate::creature_anim::{
-    ChainProcPlay, KitEffectClear, SpellEffectClear, SpellGoTargets, SpellVisuals,
+    BeamKitWaits, ChainProcPlay, KitEffectClear, SpellEffectClear, SpellGoTargets, SpellVisuals,
 };
 use crate::net::{Guid, GuidIndex, NetEntity};
 use lightning::{Lightning, Scratch};
@@ -71,6 +72,8 @@ pub(crate) struct SpawnState {
     /// The hop array's in-place zeroing within one frame (`0x726b0d`).
     consumed: bevy::ecs::entity::EntityHashSet,
     plays_seen: u32,
+    /// Each caster's beam sequence, from 0 and up 2 a beam (`0x726b96`), its beams' first-bolt key.
+    sequences: bevy::ecs::entity::EntityHashMap<i32>,
 }
 
 /// Each caster's saved ground point, cleared by its next beam row's GO (`0x715400`).
@@ -92,6 +95,9 @@ struct Bolt {
     /// 0, the caster, for every hop of a reversed beam, else the hop before (`0x7fa547`).
     source: usize,
     target: usize,
+    /// The key a target-less end connects its source with: the caster's sequence on the first bolt,
+    /// else none (`0x7fa59b`).
+    attachment: i32,
     /// `t0 + delay + i × stagger` in scene seconds (`0x7fa4e2`, `0x7fa569`).
     start: f32,
     /// `start + boltLife` (`0x7fa53f`).
@@ -169,11 +175,12 @@ pub(super) fn spawn_chain_beams(
     beams: Query<(Entity, &ChainBeam)>,
     transforms: Query<&GlobalTransform, Without<WorldCamera>>,
     mut locations: ResMut<ChainLocations>,
-    mut state: Local<SpawnState>,
+    (mut waits, mut state): (Option<ResMut<BeamKitWaits>>, Local<SpawnState>),
 ) {
     let SpawnState {
         consumed,
         plays_seen,
+        sequences,
     } = &mut *state;
     consumed.clear();
     let visual_of = |spell_id: u32| {
@@ -195,6 +202,7 @@ pub(super) fn spawn_chain_beams(
         locations.save(go.caster, row.flags, hit_units, go.dest);
     }
     locations.0.retain(|e, _| stores.contains(*e));
+    sequences.retain(|e, _| stores.contains(*e));
     // The spell clear releases the owner's effects and the persistent beams they hold; a
     // self-terminating beam keeps its own clock (`0x743b40`, `0x6f74f0`).
     let cleared: Vec<SpellEffectClear> = clears.read().copied().collect();
@@ -243,77 +251,98 @@ pub(super) fn spawn_chain_beams(
             continue;
         }
         let from = source.unwrap_or(play.entity);
+        let sequence = sequences.entry(play.entity).or_insert(0);
+        let seq = *sequence;
+        *sequence = sequence.wrapping_add(2);
         let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
             continue;
         };
-        let Some(root) = visuals.0.chain_effect(play.proc.effect_id) else {
-            continue; // an id naming no row is the client's own no-op
-        };
         let stages = visual_of(play.spell_id);
-        let ends = Ends::from_visual(stages, spells.catalog.get(play.spell_id).is_some());
-        // Each play adds its own effect beside the spell's earlier ones (`0x7269ca`).
-        *plays_seen = plays_seen.wrapping_add(1);
-        let guid_of = |e: Entity| stores.get(e).ok().and_then(|(.., g)| g).map_or(0, |g| g.0);
-        let nodes: Vec<u64> = std::iter::once(from).chain(targets).map(guid_of).collect();
-        // A location aims the one bolt when no unit is hit, turned with the caster (`0x7fc878`).
-        let turn = transforms
-            .get(play.entity)
-            .map_or(Quat::IDENTITY, |t| t.to_scale_rotation_translation().1);
-        let ground = location
-            .filter(|_| source.is_none())
-            .map(|at| at + turn * ends.impact_offset);
-        let hop_count = if ground.is_some() { 1 } else { nodes.len() - 1 };
-        // The root, then its combo walk, each drawing the same hops (`0x7fc8ea`).
-        let rows = std::iter::once(play.proc.effect_id)
-            .chain(root.combo.iter().copied())
-            .take(MAX_COMBO_ROWS);
-        for (r, row) in rows.enumerate() {
-            let Some(effect) = visuals.0.chain_effect(row) else {
-                break;
-            };
-            let delay = effect.first_bolt_delay_ms as f32 / 1000.0;
-            let stagger = effect.bolt_stagger_ms as f32 / 1000.0;
-            let life = effect.bolt_life_ms as f32 / 1000.0;
-            let bolts: Vec<Bolt> = (0..hop_count)
-                .map(|i| {
-                    let start = now + delay + i as f32 * stagger;
-                    Bolt {
-                        source: if play.proc.reverse { 0 } else { i },
-                        target: i + 1,
-                        start,
-                        end: start + life,
-                        live: None,
-                    }
-                })
-                .collect();
-            let expiry = bolts.iter().map(|b| b.end).fold(now + delay, f32::max);
-            commands.spawn((
-                Transform::IDENTITY,
-                ChainBeam {
-                    spell_id: play.spell_id,
-                    kit_id: play.kit_id,
-                    caster: play.entity,
-                    nodes: nodes.clone(),
-                    location: ground,
-                    bolts,
-                    texture: asset_server.load::<Image>(beam_texture_url(&effect.texture)),
-                    effect: effect.clone(),
-                    ends,
-                    persistent: play.proc.flag,
-                    expiry,
-                    // Per-beam seed, so neighbouring beams never draw the same joints.
-                    seed: 0x9E37_79B9
-                        ^ play.spell_id.wrapping_mul(2_654_435_761)
-                        ^ plays_seen.wrapping_mul(40_503)
-                        ^ (r as u32).wrapping_mul(0x85EB_CA6B),
-                },
-            ));
+        // An id naming no row draws nothing, but the area kit still plays (`0x726afd`).
+        if let Some(root) = visuals.0.chain_effect(play.proc.effect_id) {
+            let ends = Ends::from_visual(stages, spells.catalog.get(play.spell_id).is_some());
+            // Each play adds its own effect beside the spell's earlier ones (`0x7269ca`).
+            *plays_seen = plays_seen.wrapping_add(1);
+            let guid_of = |e: Entity| stores.get(e).ok().and_then(|(.., g)| g).map_or(0, |g| g.0);
+            let nodes: Vec<u64> = std::iter::once(from).chain(targets).map(guid_of).collect();
+            // A location aims the one bolt when no unit is hit, turned with the caster (`0x7fc878`).
+            let turn = transforms
+                .get(play.entity)
+                .map_or(Quat::IDENTITY, |t| t.to_scale_rotation_translation().1);
+            let ground = location
+                .filter(|_| source.is_none())
+                .map(|at| at + turn * ends.impact_offset);
+            let hop_count = if ground.is_some() { 1 } else { nodes.len() - 1 };
+            // The root, then its combo walk, each drawing the same hops (`0x7fc8ea`).
+            let rows = std::iter::once(play.proc.effect_id)
+                .chain(root.combo.iter().copied())
+                .take(MAX_COMBO_ROWS);
+            for (r, row) in rows.enumerate() {
+                let Some(effect) = visuals.0.chain_effect(row) else {
+                    break;
+                };
+                let delay = effect.first_bolt_delay_ms as f32 / 1000.0;
+                let stagger = effect.bolt_stagger_ms as f32 / 1000.0;
+                let life = effect.bolt_life_ms as f32 / 1000.0;
+                let bolts: Vec<Bolt> = (0..hop_count)
+                    .map(|i| {
+                        let start = now + delay + i as f32 * stagger;
+                        Bolt {
+                            source: if play.proc.reverse { 0 } else { i },
+                            target: i + 1,
+                            attachment: if i == 0 { seq } else { NO_BEAM_KEY },
+                            start,
+                            end: start + life,
+                            live: None,
+                        }
+                    })
+                    .collect();
+                let expiry = bolts.iter().map(|b| b.end).fold(now + delay, f32::max);
+                commands.spawn((
+                    Transform::IDENTITY,
+                    ChainBeam {
+                        spell_id: play.spell_id,
+                        kit_id: play.kit_id,
+                        caster: play.entity,
+                        nodes: nodes.clone(),
+                        location: ground,
+                        bolts,
+                        texture: asset_server.load::<Image>(beam_texture_url(&effect.texture)),
+                        effect: effect.clone(),
+                        ends,
+                        persistent: play.proc.flag,
+                        expiry,
+                        // Per-beam seed, so neighbouring beams never draw the same joints.
+                        seed: 0x9E37_79B9
+                            ^ play.spell_id.wrapping_mul(2_654_435_761)
+                            ^ plays_seen.wrapping_mul(40_503)
+                            ^ (r as u32).wrapping_mul(0x85EB_CA6B),
+                    },
+                ));
+            }
         }
         // A location beam plays the area kit the GO skipped, unless this is that kit (`0x726b2c`).
         let area_kit = stages.map_or(0, |s| s.impact_area_kit);
-        if let Some(pos) =
-            location.filter(|_| area_kit != play.kit_id && visuals.0.kit(area_kit).is_some())
+        let Some((pos, kit)) = location
+            .filter(|_| area_kit != play.kit_id)
+            .zip(visuals.0.kit(area_kit))
+        else {
+            continue;
+        };
+        // A flag-0x1 area kit waits for the first bolt's end under the beam's sequence (`0x726b8e`).
+        if let Some(w) = waits
+            .as_mut()
+            .filter(|_| kit_waits_for_beam(spells, &visuals.0, play.spell_id, kit))
         {
+            w.bypass_change_detection().hold_area(
+                play.entity,
+                play.spell_id,
+                seq,
+                area_kit,
+                pos,
+                now,
+            );
+        } else {
             area_kits.write(DelayedAreaKit {
                 kit_id: area_kit,
                 pos,
@@ -423,8 +452,24 @@ impl EndPoints<'_, '_> {
     }
 }
 
+/// The objects a bolt's drawn ends connect, with the key each carries (`0x7fb15a`): the source on
+/// the first vertex, and on the last the target object, unit or not, or with none the source under
+/// the bolt's attachment.
+fn reached_ends(
+    (first, last): (bool, bool),
+    source: Entity,
+    target: Option<Entity>,
+    attachment: i32,
+) -> [Option<(Entity, i32)>; 2] {
+    let end = match target {
+        Some(t) => (t, NO_BEAM_KEY),
+        None => (source, attachment),
+    };
+    [first.then_some((source, NO_BEAM_KEY)), last.then_some(end)]
+}
+
 /// Per frame, the object tick (`0x7fae90`), bolt update (`0x9ab3b0`) and draw (`0x9aa210`).
-// Not built: the endpoint hand-off that shows a target's effects when a pulse arrives (`0x7fb173`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn simulate_chain_beams(
     time: Res<Time>,
     mut commands: Commands,
@@ -434,14 +479,18 @@ pub(crate) fn simulate_chain_beams(
     ends: EndPoints,
     index: Res<GuidIndex>,
     mut beams: Query<(Entity, &mut ChainBeam)>,
+    waits: Option<ResMut<BeamKitWaits>>,
     mut scratch: Local<Scratch>,
 ) {
     let Ok((cam, cam_xf)) = world_cam.single() else {
         return;
     };
+    // The end hand-off only matters to a waiting kit play.
+    let mut waits = waits.filter(|w| !w.is_empty());
     let eye = cam_xf.translation();
     let dt = time.delta_secs();
     let now = time.elapsed_secs();
+    let resolve = |guid: u64| index.0.get(&guid).copied();
     for (entity, mut beam) in &mut beams {
         // A one-shot ends with its last hop (`0x7fb205`); any beam ends with its caster.
         if (!beam.persistent && now >= beam.expiry) || !ends.units.contains(beam.caster) {
@@ -449,6 +498,7 @@ pub(crate) fn simulate_chain_beams(
             continue;
         }
         let ChainBeam {
+            spell_id,
             nodes,
             location,
             bolts,
@@ -459,12 +509,12 @@ pub(crate) fn simulate_chain_beams(
             seed,
             ..
         } = &mut *beam;
-        let drawn = RENDER_LAYERS.contains(&effect.render_layer) && images.contains(&*texture);
+        let layered = RENDER_LAYERS.contains(&effect.render_layer);
+        let drawn = layered && images.contains(&*texture);
         let mut batch = drawn.then(|| draw.batch(cam, texture.id()));
         let (mut anchor_sum, mut anchor_n) = (Vec3::ZERO, 0.0f32);
         for (i, bolt) in bolts.iter_mut().enumerate() {
             if *persistent || (bolt.start <= now && now < bolt.end) {
-                let resolve = |guid: u64| index.0.get(&guid).copied();
                 // An end that does not resolve hides the bolt where it stands (`0x7fb13b`).
                 let src =
                     resolve(nodes[bolt.source]).and_then(|n| ends.source(bolt.source, n, spec));
@@ -490,6 +540,20 @@ pub(crate) fn simulate_chain_beams(
                 continue;
             };
             live.update(effect, dt);
+            // The ends the draw reaches, whether or not its texture has loaded (`0x7fb15a`).
+            // Any object is a target, a game object too, whose connect finds no held play
+            // (`0x744330`); a gone one has hidden the bolt above.
+            let target = nodes.get(bolt.target).map(|&g| resolve(g));
+            let source = resolve(nodes[bolt.source]).filter(|_| target != Some(None));
+            if let (Some(waits), Some(source)) = (waits.as_mut().filter(|_| layered), source) {
+                let reach = live.reached_ends(effect);
+                for (object, key) in reached_ends(reach, source, target.flatten(), bolt.attachment)
+                    .into_iter()
+                    .flatten()
+                {
+                    waits.reach(object, *spell_id, key);
+                }
+            }
             if let Some(batch) = batch.as_mut() {
                 if live.visible {
                     anchor_sum += (live.src + live.dst) * 0.5;
