@@ -15,6 +15,7 @@ use crate::pending_item_ops::{LockTransitions, PendingItemOps};
 use crate::ui_script::gate;
 
 use super::equip_error::equip_error_key;
+use super::view_reads::{Inputs, Moved, Seen, ViewReads};
 use super::{
     find_equip_slot, has_key, slot_guid_count, EquipErrors, BAGS, BAG_SLOT_FIRST, BANK_BAGS,
     BANK_BAG_ID_FIRST, BANK_BAG_ID_LAST, BANK_BAG_SLOT_FIRST, BANK_CONTAINER, BANK_SLOTS,
@@ -100,7 +101,7 @@ fn spell_desc_text(
 /// What the `$`-tokens read of the player beside the modifiers, the known set and the auras: the
 /// skills the per-level terms scale by, the gender byte `$g`/`$G` branch on, and the expression
 /// operands off its fields.
-type TokenReads = (
+pub(super) type TokenReads = (
     crate::spell::SkillSnapshot,
     u8,
     crate::spell::text_caster::Operands,
@@ -113,6 +114,32 @@ fn token_reads(me: Option<&ObjectStore>, items: &Items) -> TokenReads {
         gender,
         crate::spell::text_caster::Operands::of(me, items),
     )
+}
+
+/// The held item views a change of the player can move.
+#[derive(Default)]
+pub(crate) struct ModSensitive {
+    /// Every view with a `$` in a trigger text: due when the modifiers, the skills or the gender
+    /// move.
+    all: HashSet<u32>,
+    /// Of those, the ones whose tokens read the player through the caster, and what each read.
+    reads: HashMap<u32, ViewReads>,
+}
+
+impl ModSensitive {
+    /// File the view just built for `id`: whether a trigger text has a `$`, and what it read.
+    fn hold(&mut self, id: u32, has_tokens: bool, reads: ViewReads) {
+        if has_tokens {
+            self.all.insert(id);
+        } else {
+            self.all.remove(&id);
+        }
+        if has_tokens && !reads.is_empty() {
+            self.reads.insert(id, reads);
+        } else {
+            self.reads.remove(&id);
+        }
+    }
 }
 
 /// Only descriptions with substitution tokens can change when the caster's spell mods change.
@@ -553,9 +580,9 @@ pub(crate) fn feed_item_stats(
         Option<Res<crate::ui_trade::ItemLimitCategories>>,
     ),
     mut pending: Local<crate::ui_script::VmMemo<std::collections::HashSet<u32>>>,
-    mut mod_sensitive: Local<crate::ui_script::VmMemo<HashSet<u32>>>,
+    mut mod_sensitive: Local<crate::ui_script::VmMemo<ModSensitive>>,
     mut last_home: Local<crate::ui_script::VmMemo<Option<String>>>,
-    mut last_reads: Local<crate::ui_script::VmMemo<Option<TokenReads>>>,
+    mut last_seen: Local<crate::ui_script::VmMemo<Option<Seen>>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -564,12 +591,25 @@ pub(crate) fn feed_item_stats(
     let mod_sensitive = mod_sensitive.get(&script);
     let last_home = last_home.get(&script);
     let me = self_q.single().ok();
-    // The `$`-tokens follow the player's skills and gender.
-    let reads = token_reads(me, &items);
-    let gender = reads.1;
-    let reads_changed = last_reads.get(&script).as_ref() != Some(&reads);
-    let operands = reads.2.clone();
-    *last_reads.get(&script) = Some(reads);
+    // The `$`-tokens follow the player's skills, gender, fields, spell book and auras.
+    let inputs = Inputs {
+        player: me.is_some(),
+        reads: token_reads(me, &items),
+        cast_speed: me.and_then(|s| s.0.unit_mod_cast_speed()).unwrap_or(1.0),
+        known: caster_sources.known(),
+        known_written: caster_sources.known_changed(),
+        auras: caster_sources.auras(),
+        auras_written: caster_sources.auras_changed(),
+    };
+    // Every `$` view when an input no view records moved; else the views that read what moved.
+    let (all_due, moved, seen) = match last_seen.get(&script) {
+        Some(seen) => {
+            let (all_due, moved) = seen.advance(inputs);
+            (all_due || spell_mods.is_changed(), moved, &*seen)
+        }
+        none => (true, Moved::default(), &*none.insert(Seen::new(inputs))),
+    };
+    let (gender, operands) = (seen.gender(), seen.operands());
     // `GetBindLocation()`'s push, here so it and the `$z` token share one name, and ahead of the
     // pending gate below: the bind point can arrive while the feed idles.
     let home_area: Option<&str> = home_bind
@@ -588,8 +628,16 @@ pub(crate) fn feed_item_stats(
         pending.extend(items.take_fresh());
     }
     pending.extend(script.take_item_stat_asks());
-    if spell_mods.is_changed() || reads_changed || caster_sources.changed() {
-        pending.extend(mod_sensitive.iter().copied());
+    if all_due {
+        pending.extend(mod_sensitive.all.iter().copied());
+    } else if moved.any {
+        pending.extend(
+            mod_sensitive
+                .reads
+                .iter()
+                .filter(|(_, reads)| reads.hits(&moved))
+                .map(|(&id, _)| id),
+        );
     }
     if pending.is_empty() {
         return;
@@ -597,20 +645,24 @@ pub(crate) fn feed_item_stats(
     let spell_res = spells.as_deref();
     let skill_catalog = skill_lines.as_deref().map(|s| &*s.catalog);
     let skill = |id| crate::spell::spell_skill_value(me, skill_catalog, id);
+    // What the view being built reads of the player, taken as each view is done.
+    let view_reads = std::cell::RefCell::new(ViewReads::default());
     let cost = |d: &benilla_formats::SpellDisplay| {
+        view_reads.borrow_mut().power_cost();
         me.map_or(d.mana_cost, |s| {
             crate::spell::usable::power_cost(d, s, &spell_mods)
         }) as i32
     };
-    let text_caster = me.map(|store| {
-        crate::spell::text_caster::untracked(
-            store,
-            (caster_sources.known(), caster_sources.auras()),
-            &operands,
-            &spell_mods,
-            &skill,
-            &cost,
-        )
+    let record = |read| view_reads.borrow_mut().caster_read(read);
+    let text_caster = me.map(|store| crate::spell::text_caster::TextCaster {
+        store,
+        known: caster_sources.known(),
+        auras: caster_sources.auras(),
+        operands,
+        mods: &spell_mods,
+        skill: &skill,
+        power_cost: &cost,
+        on_read: &record,
     });
     let caster = text_caster
         .as_ref()
@@ -635,31 +687,25 @@ pub(crate) fn feed_item_stats(
             .filter_map(|id| {
                 pending.remove(&id);
                 let t = items.template(id, 0, &commands)?.clone();
-                if item_has_mod_tokens(&t, spell_res) {
-                    mod_sensitive.insert(id);
-                } else {
-                    mod_sensitive.remove(&id);
-                }
-                Some((
-                    id,
-                    template_view(
-                        &t,
-                        spell_res,
-                        Some(&spell_mods),
-                        &skill,
-                        skill_catalog,
-                        home_area,
-                        &|| gender,
-                        factions.as_deref().map(|f| f.catalog()),
-                        sub_classes.as_deref().map(|s| &s.0),
-                        classes.as_deref().map(|c| &c.0),
-                        icons.as_deref(),
-                        &get,
-                        caster,
-                        enchants.as_deref(),
-                        limits.as_deref(),
-                    ),
-                ))
+                let view = template_view(
+                    &t,
+                    spell_res,
+                    Some(&spell_mods),
+                    &skill,
+                    skill_catalog,
+                    home_area,
+                    &|| gender,
+                    factions.as_deref().map(|f| f.catalog()),
+                    sub_classes.as_deref().map(|s| &s.0),
+                    classes.as_deref().map(|c| &c.0),
+                    icons.as_deref(),
+                    &get,
+                    caster,
+                    enchants.as_deref(),
+                    limits.as_deref(),
+                );
+                mod_sensitive.hold(id, item_has_mod_tokens(&t, spell_res), view_reads.take());
+                Some((id, view))
             })
             .collect()
     };
