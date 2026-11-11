@@ -9,6 +9,7 @@
 //! floor), or with no row the cosmic sheet. Projection is the engine's (`0x544140`), so every
 //! position verb answers for the selection of the moment it is called.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use mlua::{Lua, MultiValue, Value};
@@ -22,6 +23,16 @@ pub struct WorldMapPoint {
     pub map: u32,
     pub x: f32,
     pub y: f32,
+    /// The height the floor lookup reads (`0x5442a3`); 0 where the reference projects a flat
+    /// point: a landmark, a quest POI, an unstreamed party member.
+    pub z: f32,
+}
+
+impl WorldMapPoint {
+    /// A point at height 0.
+    pub fn flat(map: u32, x: f32, y: f32) -> Self {
+        Self { map, x, y, z: 0.0 }
+    }
 }
 
 /// One `WorldMapArea.dbc` row below a continent: a zone, a city, or an instance map.
@@ -191,6 +202,17 @@ pub struct WorldMapDungeonView {
     pub parent_world_map_id: u32,
 }
 
+/// One `DungeonMapChunk.dbc` row: the floor of a WMO group from a height up.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WorldMapChunkView {
+    pub map_id: u32,
+    /// The group's MOGP id (`+0x8`), the key `WMOAreaTable` joins on.
+    pub wmo_group_id: u32,
+    /// The `DungeonMap` row (`+0xc`).
+    pub dungeon_map_id: i32,
+    pub min_z: f32,
+}
+
 /// One `WorldMapTransforms.dbc` row.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WorldMapTransformView {
@@ -209,6 +231,8 @@ pub struct WorldMapCatalog {
     /// The rows on no continent, or with no rect (`[0xbe8f3c]`), in file order.
     pub orphans: Vec<WorldMapZoneView>,
     pub dungeon_maps: Vec<WorldMapDungeonView>,
+    /// `DungeonMapChunk.dbc`, in file order: a map's rows in one run, a group's within it.
+    pub dungeon_chunks: Vec<WorldMapChunkView>,
     pub transforms: Vec<WorldMapTransformView>,
     /// `Map.dbc`'s entrance (`+0x2c..+0x34`) by map, for maps with one.
     pub entrances: HashMap<u32, WorldMapPoint>,
@@ -224,6 +248,8 @@ pub struct WorldMapPlayer {
     pub facing: f32,
     /// The zone `AreaTable` id the resolver matches (`[0xbd080c]`).
     pub zone: u32,
+    /// The MOGP id of the WMO group the player stands in, 0 in none (`[0xbd0814]`).
+    pub wmo_group: u32,
 }
 
 /// The per-frame feed: world positions the position verbs project when called.
@@ -277,6 +303,8 @@ pub struct WorldMapState {
     world_states: HashMap<u32, i32>,
     marker: Option<WorldMapPoiView>,
     landmarks: Vec<Landmark>,
+    /// The floor lookup's last map and its first chunk row (`[0xbe8ef8]`, `[0xbe8efc]`).
+    chunk_cache: Cell<(u32, usize)>,
     /// The arrow frames' wrapper ids, built once per session.
     pub(crate) arrow_world: Option<(u32, u32)>,
     pub(crate) arrow_mini: Option<(u32, u32)>,
@@ -362,16 +390,68 @@ impl WorldMapState {
                         map: t.new_map_id,
                         x: p.x + t.offset.0,
                         y: p.y + t.offset.1,
+                        z: p.z,
                     },
                     t.new_dungeon_map_id,
                 )
             })
     }
 
+    /// `0x5439e0`: the `DungeonMap` row of WMO group `group` on `map` at height `z`, -1 for none
+    /// or an id of 0. From the map's cached first row, the last row of the group's run with
+    /// `MinZ <= z` wins (`0x543a94`); the walk ends with the group's run or the map's.
+    fn floor_at(&self, map: u32, group: u32, z: f32) -> i32 {
+        if map == 0 || group == 0 {
+            return -1;
+        }
+        let start = match self.chunk_cache.get() {
+            (m, i) if m == map => i,
+            _ => {
+                self.chunk_cache.set((map, 0));
+                0
+            }
+        };
+        let (mut in_map, mut in_group, mut floor) = (false, false, -1);
+        for (i, row) in self.catalog.dungeon_chunks.iter().enumerate().skip(start) {
+            if row.map_id != map {
+                if in_map {
+                    break;
+                }
+                continue;
+            }
+            if !in_map {
+                in_map = true;
+                self.chunk_cache.set((map, i));
+            }
+            if row.wmo_group_id == group {
+                in_group = true;
+                if row.min_z <= z {
+                    floor = row.dungeon_map_id;
+                }
+            } else if in_group {
+                break;
+            }
+        }
+        floor
+    }
+
+    /// The floor under the player on `map` (`0x5439e0` over `[0xbd0814]`), -1 for none.
+    fn player_floor(&self, map: u32) -> i32 {
+        self.feed
+            .player
+            .map_or(-1, |p| self.floor_at(map, p.wmo_group, p.pos.z))
+    }
+
+    /// [`Self::project_on`] with no floor passed in.
+    fn project(&self, p: WorldMapPoint) -> ((f32, f32), bool) {
+        self.project_on(p, 0)
+    }
+
     /// `0x544140`: a world position on the displayed map, `(0, 0)` off it. The second value is
     /// the Outland flag the Azeroth sheet raises for map 530 (`0x212`), which every caller but
-    /// the corpse's honours by hiding.
-    fn project(&self, p: WorldMapPoint) -> ((f32, f32), bool) {
+    /// the corpse's honours by hiding. A `floor` below 1 is looked up instead: the player's WMO
+    /// group at the position's own map and height (`0x5442a3`).
+    fn project_on(&self, p: WorldMapPoint, floor: i32) -> ((f32, f32), bool) {
         const OFF: ((f32, f32), bool) = ((0.0, 0.0), false);
         let s = self.selection;
         let (t, t_dungeon) = self.transform(p);
@@ -404,8 +484,12 @@ impl WorldMapState {
         }
         // A zone's rect is in its own map's coordinates; a continent's in the drawn map's.
         let pos = if s.zone < 0 { t } else { p };
-        // `DungeonMapChunk` is not read, so the floor the position stands on is never known.
-        let at_floor = -1;
+        let at_floor = if floor > 0 {
+            floor
+        } else {
+            let group = self.feed.player.map_or(0, |pl| pl.wmo_group);
+            self.floor_at(p.map, group, p.z)
+        };
         let shown = self.current_dungeon();
         let floor = if at_floor == shown {
             self.dungeon(at_floor)
@@ -459,16 +543,8 @@ impl WorldMapState {
         let cont = self.continent(s.continent)?;
         let row = self.row(id)?;
         let (left, right, top, bottom) = row.loc_rect;
-        let (tl, _) = self.transform(WorldMapPoint {
-            map: row.map_id,
-            x: top,
-            y: left,
-        });
-        let (br, _) = self.transform(WorldMapPoint {
-            map: row.map_id,
-            x: bottom,
-            y: right,
-        });
+        let (tl, _) = self.transform(WorldMapPoint::flat(row.map_id, top, left));
+        let (br, _) = self.transform(WorldMapPoint::flat(row.map_id, bottom, right));
         let (x, y) = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
         if tl.y - br.y == 0.0 || tl.x - br.x == 0.0 {
             return None;
@@ -624,8 +700,8 @@ impl WorldMapState {
     }
 
     /// The current-zone lookup (`0x547170`): the player's continent and zone, else the row
-    /// of the instance map, else the zone holding the instance's entrance; `None` is the cosmic
-    /// sheet. `DungeonMapChunk` is not read, so no position resolves to a floor.
+    /// of the instance map on the floor under the player, else the zone holding the instance's
+    /// entrance; `(-2, -1, -1)` is the cosmic sheet.
     fn current_zone(&self) -> (i32, i32, i32) {
         let Some(player) = self.feed.player else {
             return (-1, -1, -1);
@@ -637,13 +713,20 @@ impl WorldMapState {
             .iter()
             .position(|c| c.map_id == t.map);
         let Some(ci) = found else {
-            let dungeon = if t_dungeon != 0 { t_dungeon as i32 } else { -1 };
             if let Some(orphan) = self
                 .catalog
                 .orphans
                 .iter()
                 .find(|o| o.map_id == player.pos.map)
             {
+                // The floor under the player when positive (`0x5474db`), else the transform's
+                // row, else the lookup's own answer.
+                let floor = self.player_floor(orphan.map_id);
+                let dungeon = if floor < 1 && t_dungeon != 0 {
+                    t_dungeon as i32
+                } else {
+                    floor
+                };
                 return (-2, orphan.id as i32, dungeon);
             }
             if let Some(&entrance) = self
@@ -672,25 +755,31 @@ impl WorldMapState {
                             return (ci as i32, i32::from(zi) - 1, -1);
                         }
                     }
-                    return (ci as i32, self.zone_of(ci, player.zone), -1);
+                    return self.zone_of(ci, player.zone);
                 }
             }
             return (-2, -1, -1);
         };
-        (ci as i32, self.zone_of(ci, player.zone), -1)
+        self.zone_of(ci, player.zone)
     }
 
-    /// `0x547170`'s zone walk: the row of the player's zone with a rect, else a rectless row's
-    /// parent; -1 for the continent map.
-    fn zone_of(&self, ci: usize, area: u32) -> i32 {
+    /// `0x547170`'s zone walk, as the setter's three cells: the row of the player's zone with a
+    /// rect; a rectless row opens directly on the floor under the player when one resolves
+    /// (`0x5478da`), else leaves its parent; zone -1 is the continent map.
+    fn zone_of(&self, ci: usize, area: u32) -> (i32, i32, i32) {
         let zones = &self.catalog.continents[ci].zones;
         let mut found = -1;
         for z in zones.iter().filter(|z| z.area_id == area) {
             if z.has_rect() {
-                return zones
+                found = zones
                     .iter()
                     .position(|r| r.id == z.id)
                     .map_or(-1, |i| i as i32);
+                break;
+            }
+            let floor = self.player_floor(z.map_id);
+            if floor >= 0 {
+                return (-2, z.id as i32, floor);
             }
             if z.parent_world_map_id != 0 {
                 if let Some(i) = zones.iter().position(|r| r.id == z.parent_world_map_id) {
@@ -698,7 +787,7 @@ impl WorldMapState {
                 }
             }
         }
-        found
+        (ci as i32, found, -1)
     }
 
     /// The overlay pre-search (`0x545110`): a revealed overlay whose hit rect holds the cursor,
@@ -824,11 +913,7 @@ impl WorldMapState {
                 let (zt, zl) = if row.display_map_id < 0 {
                     (zt, zl)
                 } else {
-                    let (p, _) = self.transform(WorldMapPoint {
-                        map: row.map_id,
-                        x: zt,
-                        y: zl,
-                    });
+                    let (p, _) = self.transform(WorldMapPoint::flat(row.map_id, zt, zl));
                     (p.x, p.y)
                 };
                 let rx = 1.0 / (cl - cr);
@@ -921,6 +1006,7 @@ impl super::UiScript {
     pub fn set_world_map_catalog(&mut self, catalog: WorldMapCatalog) {
         let mut model = self.model_mut();
         model.worldmap.catalog = catalog;
+        model.worldmap.chunk_cache.take();
         model.worldmap.refresh();
         queue_update(&mut model);
     }
@@ -1051,14 +1137,15 @@ impl WorldMapState {
     /// region's own-area bind (`0x5e5ba1`) and the current-map test (`0x5e0110`). `None` when no
     /// area or floor is displayed, which counts nothing.
     pub(crate) fn quest_poi_shown(&self, poi: &QuestPoiPlace) -> Option<bool> {
-        let at = WorldMapPoint {
-            map: poi.map,
-            x: poi.x,
-            y: poi.y,
-        };
+        let at = WorldMapPoint::flat(poi.map, poi.x, poi.y);
         let on = |(uv, outland): ((f32, f32), bool)| !outland && (uv.0 * uv.1).abs() >= 0.001;
         if let Some(d) = self.dungeon(self.current_dungeon()) {
-            return Some(d.map_id == poi.map && d.floor_index == poi.floor && on(self.project(at)));
+            // The dungeon-map test projects onto the displayed floor itself (`0x5e0180`).
+            return Some(
+                d.map_id == poi.map
+                    && d.floor_index == poi.floor
+                    && on(self.project_on(at, d.id as i32)),
+            );
         }
         let id = self.current_id();
         let row = self.row(id)?;
@@ -1117,7 +1204,16 @@ impl WorldMapState {
 
     /// A world point on the displayed map as `(u, v)`, and the Outland flag (`0x544140`).
     pub(crate) fn quest_project(&self, map: u32, x: f32, y: f32) -> ((f32, f32), bool) {
-        self.project(WorldMapPoint { map, x, y })
+        self.project(WorldMapPoint::flat(map, x, y))
+    }
+
+    /// [`Self::quest_project`] onto the displayed floor where one is displayed, as
+    /// `QuestPOIGetIconInfo` passes it in (`0x5e0590`).
+    pub(crate) fn quest_icon_project(&self, map: u32, x: f32, y: f32) -> ((f32, f32), bool) {
+        let floor = self
+            .dungeon(self.current_dungeon())
+            .map_or(0, |d| d.id as i32);
+        self.project_on(WorldMapPoint::flat(map, x, y), floor)
     }
 
     /// The player's map position, the icon update's distance origin.
@@ -1836,4 +1932,99 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod floor_tests {
+    use super::*;
+
+    fn state(rows: &[(u32, u32, i32, f32)]) -> WorldMapState {
+        WorldMapState {
+            catalog: WorldMapCatalog {
+                dungeon_chunks: rows
+                    .iter()
+                    .map(
+                        |&(map_id, wmo_group_id, dungeon_map_id, min_z)| WorldMapChunkView {
+                            map_id,
+                            wmo_group_id,
+                            dungeon_map_id,
+                            min_z,
+                        },
+                    )
+                    .collect(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// `0x543a94`: of a group's rows, the last whose `MinZ` is at or below the height.
+    #[test]
+    fn the_last_row_at_or_below_the_height_wins() {
+        let wm = state(&[
+            (533, 9, 56, -10000.0),
+            (533, 9, 57, 100.0),
+            (533, 9, 58, 250.0),
+        ]);
+        assert_eq!(wm.floor_at(533, 9, 99.9), 56);
+        assert_eq!(wm.floor_at(533, 9, 100.0), 57, "the bound is inclusive");
+        assert_eq!(wm.floor_at(533, 9, 900.0), 58);
+        assert_eq!(wm.floor_at(533, 9, -20000.0), -1, "under every row");
+        assert_eq!(wm.floor_at(533, 9, f32::NAN), -1);
+    }
+
+    /// The walk stops where the group's run ends, and where the map's does.
+    #[test]
+    fn the_walk_ends_with_the_groups_run_or_the_maps() {
+        let wm = state(&[
+            (533, 9, 56, 0.0),
+            (533, 10, 57, 0.0),
+            (533, 9, 58, 0.0),
+            (574, 3, 1, 0.0),
+            (533, 11, 59, 0.0),
+        ]);
+        assert_eq!(
+            wm.floor_at(533, 9, 5.0),
+            56,
+            "the group's second run is not read"
+        );
+        assert_eq!(wm.floor_at(533, 11, 5.0), -1, "nor the map's");
+        assert_eq!(wm.floor_at(574, 3, 5.0), 1);
+        assert_eq!(wm.floor_at(533, 12, 5.0), -1, "a group with no row");
+    }
+
+    /// `0x5439ed`: a map or a group of 0 answers -1 before any row is read.
+    #[test]
+    fn an_id_of_zero_answers_no_floor() {
+        let wm = state(&[(0, 7, 31, 0.0), (533, 9, 56, 0.0)]);
+        assert_eq!(wm.floor_at(0, 7, 5.0), -1, "map 0's rows are never reached");
+        assert_eq!(wm.floor_at(533, 0, 5.0), -1);
+        assert_eq!(wm.chunk_cache.get(), (0, 0), "and the cache is not touched");
+    }
+
+    /// `0x543a7a`: the map's first row is kept, and the next walk for that map starts there.
+    #[test]
+    fn the_walk_starts_at_the_maps_cached_first_row() {
+        let wm = state(&[
+            (43, 1, 28, 0.0),
+            (533, 9, 56, 0.0),
+            (533, 10, 57, 0.0),
+            (574, 3, 1, 0.0),
+        ]);
+        assert_eq!(wm.floor_at(533, 10, 0.0), 57);
+        assert_eq!(wm.chunk_cache.get(), (533, 1));
+        assert_eq!(wm.floor_at(574, 3, 0.0), 1);
+        assert_eq!(
+            wm.chunk_cache.get(),
+            (574, 3),
+            "another map restarts from row 0"
+        );
+        wm.chunk_cache.set((533, 2));
+        assert_eq!(
+            wm.floor_at(533, 9, 0.0),
+            -1,
+            "rows before the cached one are not read"
+        );
+        assert_eq!(wm.floor_at(533, 10, 0.0), 57);
+    }
 }

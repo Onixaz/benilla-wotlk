@@ -76,6 +76,7 @@ fn at((u, v): (f32, f32)) -> WorldMapPoint {
         map: 1,
         x: 1000.0 * (1.0 - v),
         y: 1000.0 * (1.0 - u),
+        z: 0.0,
     }
 }
 
@@ -86,6 +87,7 @@ fn feed(s: &mut UiScript, uv: Option<(f32, f32)>, facing: f32, party: Vec<Option
             pos: at(uv.unwrap_or((2.0, 2.0))),
             facing,
             zone: 3277,
+            wmo_group: 0,
         }),
         party: party.into_iter().map(|p| p.map(at)).collect(),
         ..Default::default()

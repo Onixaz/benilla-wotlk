@@ -473,6 +473,7 @@ fn corpse_map_position_binding() {
             map: 0,
             x: 250.0,
             y: 750.0,
+            z: 0.0,
         }),
         ..Default::default()
     });

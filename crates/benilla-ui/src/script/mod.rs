@@ -504,9 +504,10 @@ pub use vehicle::{
 pub use weapon_enchant::WeaponEnchant;
 pub use who_sort::{WhoSortChain, WhoSortKey};
 pub use worldmap::{
-    WorldMapCatalog, WorldMapContinentView, WorldMapDungeonView, WorldMapExploreGate, WorldMapFeed,
-    WorldMapOverlayView, WorldMapPlayer, WorldMapPoiView, WorldMapPoint, WorldMapSelection,
-    WorldMapSheet, WorldMapState, WorldMapTransformView, WorldMapZoneView,
+    WorldMapCatalog, WorldMapChunkView, WorldMapContinentView, WorldMapDungeonView,
+    WorldMapExploreGate, WorldMapFeed, WorldMapOverlayView, WorldMapPlayer, WorldMapPoiView,
+    WorldMapPoint, WorldMapSelection, WorldMapSheet, WorldMapState, WorldMapTransformView,
+    WorldMapZoneView,
 };
 pub use worldstate::WorldStateUiView;
 pub use worn_display::WornDisplay;

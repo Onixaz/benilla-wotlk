@@ -30,9 +30,11 @@ fn session() -> (UiScript, Vec<String>) {
                 map: 0,
                 x: -9464.0,
                 y: 62.0,
+                z: 0.0,
             },
             facing: 0.0,
             zone: 12,
+            wmo_group: 0,
         }),
         ..Default::default()
     });

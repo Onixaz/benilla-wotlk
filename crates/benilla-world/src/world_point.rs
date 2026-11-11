@@ -14,7 +14,8 @@ use crate::liquid::{
 use crate::surface::SurfaceUnderfoot;
 use crate::terrain_stream::CurrentArea;
 use crate::wmo_portal::{
-    CameraInteriorClaim, CurrentAreaInterior, CurrentWmoInterior, PlayerWmoRoom, UnitWmoRoom,
+    CameraInteriorClaim, CurrentAreaInterior, CurrentWmoGroup, CurrentWmoInterior, PlayerWmoRoom,
+    UnitWmoRoom,
 };
 
 /// Whose question it is: inside a building only that placement's MLIQ answers, outdoors only the
@@ -50,6 +51,7 @@ pub struct WorldPoint<'w, 's> {
     area: Res<'w, CurrentArea>,
     interior: Res<'w, CurrentWmoInterior>,
     area_interior: Res<'w, CurrentAreaInterior>,
+    wmo_group: Res<'w, CurrentWmoGroup>,
     wmo_areas: Option<Res<'w, crate::wmo_portal::WmoAreas>>,
 }
 
@@ -67,6 +69,7 @@ pub fn init_world_point_resources(world: &mut bevy::prelude::World) {
     world.init_resource::<CurrentArea>();
     world.init_resource::<CurrentWmoInterior>();
     world.init_resource::<CurrentAreaInterior>();
+    world.init_resource::<CurrentWmoGroup>();
 }
 
 /// The liquid whose loop plays ([`WorldPoint::nearest_liquid`]).
@@ -232,6 +235,11 @@ impl WorldPoint<'_, '_> {
                 .group_row(wmo_id, name_set, group_area_id)
                 .map(|r| r.flags),
         )
+    }
+
+    /// The MOGP id of the WMO group under the player whatever its flags, 0 over open ground.
+    pub fn wmo_group(&self) -> u32 {
+        self.wmo_group.0
     }
 
     /// The player's zone-text interior claim: indoors comes from a down-ray under the player alone,

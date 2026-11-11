@@ -127,8 +127,9 @@ fn feed_battlefield_positions(
     };
     *last_empty.get(&script) = Some((true, icon_scale.to_bits()));
 
-    let project =
-        |x: f32, y: f32| script.world_map_project(benilla_ui::script::WorldMapPoint { map, x, y });
+    let project = |x: f32, y: f32| {
+        script.world_map_project(benilla_ui::script::WorldMapPoint::flat(map, x, y))
+    };
     let mut name_landed = false;
     let mut players = Vec::with_capacity(packet.players.len());
     for p in &packet.players {
