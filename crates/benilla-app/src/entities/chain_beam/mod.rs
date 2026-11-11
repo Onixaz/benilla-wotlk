@@ -10,7 +10,9 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::creature_anim::spell_visual::{AreaKitWait, DelayedAreaKit};
-use crate::creature_anim::{ChainProcPlay, SpellEffectClear, SpellGoTargets, SpellVisuals};
+use crate::creature_anim::{
+    ChainProcPlay, KitEffectClear, SpellEffectClear, SpellGoTargets, SpellVisuals,
+};
 use crate::net::{Guid, GuidIndex, NetEntity};
 use lightning::{Lightning, Scratch};
 
@@ -103,6 +105,9 @@ struct Bolt {
 pub(crate) struct ChainBeam {
     /// The reap key.
     spell_id: u32,
+    /// The kit and fade stamp of the effect holding it, a kit clear's keys (`0x744bd0`).
+    kit_id: u32,
+    fade: u32,
     /// The kit's owner, whose effect list holds the beam (`0x6f8040`); its loss ends the beam.
     caster: Entity,
     /// `[source, hop0, hop1, …]` as guids resolved every frame, a gone one hiding its bolts until
@@ -154,6 +159,7 @@ pub(super) fn spawn_chain_beams(
     time: Res<Time>,
     mut plays: MessageReader<ChainProcPlay>,
     mut clears: MessageReader<SpellEffectClear>,
+    mut kit_clears: MessageReader<KitEffectClear>,
     mut go_targets: MessageReader<SpellGoTargets>,
     mut area_kits: MessageWriter<DelayedAreaKit>,
     visuals: Option<Res<SpellVisuals>>,
@@ -193,13 +199,25 @@ pub(super) fn spawn_chain_beams(
     // The spell clear releases the owner's effects and the persistent beams they hold; a
     // self-terminating beam keeps its own clock (`0x743b40`, `0x6f74f0`).
     let cleared: Vec<SpellEffectClear> = clears.read().copied().collect();
-    for (e, beam) in &beams {
-        if beam.persistent
-            && cleared
-                .iter()
-                .any(|c| c.entity == beam.caster && c.spell_id == beam.spell_id)
-        {
-            commands.entity(e).despawn();
+    let kits_cleared: Vec<KitEffectClear> = kit_clears.read().copied().collect();
+    if !cleared.is_empty() || !kits_cleared.is_empty() {
+        for (e, beam) in &beams {
+            let spell = || {
+                cleared
+                    .iter()
+                    .any(|c| c.entity == beam.caster && c.spell_id == beam.spell_id)
+            };
+            let kit = || {
+                kits_cleared.iter().any(|c| {
+                    c.entity == beam.caster
+                        && c.kit_id == beam.kit_id
+                        && c.spell_id.is_none_or(|s| s == beam.spell_id)
+                        && c.fade.is_none_or(|f| f == beam.fade)
+                })
+            };
+            if beam.persistent && (spell() || kit()) {
+                commands.entity(e).despawn();
+            }
         }
     }
 
@@ -277,6 +295,8 @@ pub(super) fn spawn_chain_beams(
                 Transform::IDENTITY,
                 ChainBeam {
                     spell_id: play.spell_id,
+                    kit_id: play.kit_id,
+                    fade: play.fade,
                     caster: play.entity,
                     nodes: nodes.clone(),
                     location: ground,

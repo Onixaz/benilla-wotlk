@@ -217,7 +217,8 @@ fn app_with_chains() -> App {
     app.add_message::<AuraProc>();
     app.add_message::<crate::creature_anim::ChainProcPlay>()
         .add_message::<crate::creature_anim::ChannelSpellLeft>()
-        .add_message::<crate::creature_anim::SpellEffectClear>();
+        .add_message::<crate::creature_anim::SpellEffectClear>()
+        .add_message::<crate::creature_anim::KitEffectClear>();
     app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::creature_anim::BaseAnimRecompute>();
     app.add_message::<crate::creature_anim::SheathRequest>();

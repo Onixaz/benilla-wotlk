@@ -57,8 +57,9 @@ use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
 
 use crate::creature_anim::{
-    oneshot_is_live, AnimData, AnimDriver, AnimSoundEvent, CastEvent, CastEventKind, DefenseAnim,
-    FxClass, FxStage, MissileSpawn, SpellKitFx, SpellKitSound, SpellVisuals,
+    oneshot_is_live, AnimData, AnimDriver, AnimSoundEvent, CastEvent, CastEventKind, ChainProcPlay,
+    DefenseAnim, FxClass, FxStage, KitEffectClear, MissileSpawn, SpellKitFx, SpellKitSound,
+    SpellVisuals,
 };
 use benilla_assets::m2_url;
 
@@ -198,7 +199,7 @@ pub(super) struct Missile {
     /// The copy's index among a motion's copies; only copy 0 floats a miss word (`0x703017`).
     index: u32,
     /// The unit wearing the targeting kit, reaped when the flight ends (`0x6ff410`).
-    targeting: Option<Entity>,
+    targeting: Option<Targeting>,
     /// A motion script's last offset, turn and scale for the model (`0x700550`, `0x6feb20`).
     pose: Option<MotionPose>,
     /// How a miss ends; `None` for a hit.
@@ -239,7 +240,41 @@ pub(super) struct StuckMissile {
     turn: Quat,
     until: f32,
     spell_id: u32,
-    targeting: Option<Entity>,
+    targeting: Option<Targeting>,
+}
+
+/// A targeting kit a unit wears for a flight, with the kit and fade stamp its clear matches
+/// (`0x6ff410`).
+#[derive(Clone, Copy, Debug)]
+struct Targeting {
+    unit: Entity,
+    kit_id: u32,
+    fade: u32,
+}
+
+/// A flight's fade stamp: the fire time in ms its targeting kit is played and cleared by.
+fn fade_stamp(now: f32) -> u32 {
+    (now * 1000.0) as u32
+}
+
+/// Clear a targeting kit off its unit: its models and sound, and the persistent beams it drew.
+fn reap_targeting(
+    t: Targeting,
+    spell_id: u32,
+    kit_fx: &mut MessageWriter<SpellKitFx>,
+    clears: &mut MessageWriter<KitEffectClear>,
+) {
+    kit_fx.write(SpellKitFx::Reap {
+        entity: t.unit,
+        spell_id,
+        class: FxClass::Hold,
+    });
+    clears.write(KitEffectClear {
+        entity: t.unit,
+        kit_id: t.kit_id,
+        spell_id: Some(spell_id),
+        fade: Some(t.fade),
+    });
 }
 
 /// How a motion script draws the model against its flight.
@@ -435,6 +470,13 @@ impl PendingMissiles {
         self.0.get(&caster).is_some_and(|q| !q.is_empty())
     }
 
+    /// Whether a projectile of `spell_id` waits on `caster`, the applied core's skip (`0x724b92`).
+    pub(crate) fn queues(&self, caster: Entity, spell_id: u32) -> bool {
+        self.0
+            .get(&caster)
+            .is_some_and(|q| q.iter().any(|g| g.spawn.spell_id == spell_id))
+    }
+
     /// Queues one projectile on `caster` for tests of the gate's consumers; only its presence
     /// matters.
     #[cfg(test)]
@@ -530,6 +572,9 @@ pub(super) struct ArrivalOut<'w, 's> {
     /// The targeting kit's models and sound, armed at launch and reaped at the flight's end.
     kit_fx: MessageWriter<'w, SpellKitFx>,
     kit_sounds: MessageWriter<'w, SpellKitSound>,
+    /// The targeting kit's beams, and their clear at the flight's end.
+    chains: MessageWriter<'w, ChainProcPlay>,
+    kit_clears: MessageWriter<'w, KitEffectClear>,
     bursts: MessageWriter<'w, super::dest_fx::GroundBurst>,
     visuals: Option<Res<'w, SpellVisuals>>,
     clips: Query<'w, 's, &'static benilla_assets::ModelAnimations>,
@@ -793,15 +838,8 @@ fn reflect_back(
     let from = m.impact;
     let distance = from.distance(at);
     let speed = disposition::relaunch_speed(m.speed, distance, now - m.cast_at);
-    if m.targeting.take().is_some() {
-        out.kit_fx.write(SpellKitFx::Reap {
-            entity: match m.aim {
-                Aim::Unit { target, .. } => target,
-                Aim::Ground(_) => m.caster,
-            },
-            spell_id: m.spell_id,
-            class: FxClass::Hold,
-        });
+    if let Some(t) = m.targeting.take() {
+        reap_targeting(t, m.spell_id, &mut out.kit_fx, &mut out.kit_clears);
     }
     m.aim = aim;
     m.kind = kind;
@@ -823,7 +861,8 @@ fn reflect_back(
     m.flight_time = m.arrive_in;
     m.victim_clip = victim_clip(m.caster, kind, m.arrive_in, m.path.is_some(), out);
     if m.targeting_kit != 0 {
-        m.targeting = arm_targeting_kit(m.caster, m.spell_id, m.targeting_kit, out);
+        let fade = fade_stamp(now);
+        m.targeting = arm_targeting_kit(m.caster, m.caster, m.spell_id, m.targeting_kit, fade, out);
     }
     true
 }
@@ -841,6 +880,7 @@ fn carry_stuck_missiles(
     joints: &Query<&GlobalTransform>,
     commands: &mut Commands,
     kit_fx: &mut MessageWriter<SpellKitFx>,
+    clears: &mut MessageWriter<KitEffectClear>,
 ) {
     for (entity, s, mut transform) in stuck {
         let anchor = attach_world_pos_offset(s.target, [s.tag], Vec3::ZERO, units, joints);
@@ -848,12 +888,8 @@ fn carry_stuck_missiles(
             .filter(|_| now < s.until)
             .zip(units.get(s.target).ok());
         let Some((anchor, (base, ..))) = held else {
-            if let Some(unit) = s.targeting {
-                kit_fx.write(SpellKitFx::Reap {
-                    entity: unit,
-                    spell_id: s.spell_id,
-                    class: FxClass::Hold,
-                });
+            if let Some(t) = s.targeting {
+                reap_targeting(t, s.spell_id, kit_fx, clears);
             }
             commands.entity(entity).despawn();
             continue;
@@ -870,30 +906,40 @@ fn end_flight(
     commands: &mut Commands,
     sounds: &mut MessageWriter<MissileSound>,
     kit_fx: &mut MessageWriter<SpellKitFx>,
+    clears: &mut MessageWriter<KitEffectClear>,
 ) {
     sounds.write(MissileSound::Stop { entity });
     for &point in &missile.targeting_points {
         commands.entity(point).despawn();
     }
-    if let Some(unit) = missile.targeting {
-        kit_fx.write(SpellKitFx::Reap {
-            entity: unit,
-            spell_id: missile.spell_id,
-            class: FxClass::Hold,
-        });
+    if let Some(t) = missile.targeting {
+        reap_targeting(t, missile.spell_id, kit_fx, clears);
     }
     commands.entity(entity).despawn();
 }
 
-/// Hold column 22's kit on the target at the fire, its models and sound (`0x702906`).
+/// Hold column 22's kit on the target at the fire, its models and sound, and its beams run from
+/// the caster the stage-2 play names (`0x702906`, `0x702923`).
 fn arm_targeting_kit(
     target: Entity,
+    caster: Entity,
     spell_id: u32,
     kit_id: u32,
+    fade: u32,
     out: &mut ArrivalOut,
-) -> Option<Entity> {
+) -> Option<Targeting> {
     let visuals = out.visuals.as_deref()?;
     let kit = visuals.0.kit(kit_id)?;
+    for proc in kit.char_procs().filter_map(|p| p.as_chain()) {
+        out.chains.write(ChainProcPlay {
+            entity: target,
+            spell_id,
+            proc,
+            kit_id: kit.id,
+            from: Some(caster),
+            fade,
+        });
+    }
     let effects = crate::creature_anim::kit_fx_slots(&visuals.0, kit);
     if !effects.is_empty() {
         out.kit_fx.write(SpellKitFx::Begin {
@@ -911,7 +957,11 @@ fn arm_targeting_kit(
             kit_sound,
         });
     }
-    Some(target)
+    Some(Targeting {
+        unit: target,
+        kit_id: kit.id,
+        fade,
+    })
 }
 
 /// Hold column 22's kit at a flight's ground aim, on copy 0 alone (`0x702941`): its point models and
@@ -1019,7 +1069,15 @@ fn launch_go(
             };
         let targeting = match aim_at {
             Aim::Unit { target, .. } if shape.targeting_kit != 0 && arrive_in > 0.0 => {
-                arm_targeting_kit(target, go.spawn.spell_id, shape.targeting_kit, out)
+                let fade = fade_stamp(now);
+                arm_targeting_kit(
+                    target,
+                    go.spawn.caster,
+                    go.spawn.spell_id,
+                    shape.targeting_kit,
+                    fade,
+                    out,
+                )
             }
             _ => None,
         };
@@ -1539,6 +1597,7 @@ pub(super) fn move_missiles(
         &joints,
         &mut commands,
         &mut out.kit_fx,
+        &mut out.kit_clears,
     );
     for (entity, mut missile, mut transform) in &mut missiles {
         let hug = missile.follow.filter(|f| f.hugs_target()).map(|f| f.height);
@@ -1552,6 +1611,7 @@ pub(super) fn move_missiles(
                 &mut commands,
                 &mut sounds,
                 &mut out.kit_fx,
+                &mut out.kit_clears,
             );
             continue;
         };
@@ -1627,6 +1687,7 @@ pub(super) fn move_missiles(
                     &mut commands,
                     &mut sounds,
                     &mut out.kit_fx,
+                    &mut out.kit_clears,
                 );
             }
             continue;
@@ -1710,6 +1771,7 @@ pub(super) fn move_missiles(
                 &mut commands,
                 &mut sounds,
                 &mut out.kit_fx,
+                &mut out.kit_clears,
             );
         }
     }
@@ -1787,6 +1849,7 @@ fn on_pre_resurrect(
     mut commands: Commands,
     mut sounds: MessageWriter<MissileSound>,
     mut kit_fx: MessageWriter<SpellKitFx>,
+    mut clears: MessageWriter<KitEffectClear>,
 ) {
     let benilla_protocol::SessionEvent::PreResurrect { guid } = ev else {
         return;
@@ -1796,7 +1859,14 @@ fn on_pre_resurrect(
     };
     for (entity, missile) in &missiles {
         if matches!(missile.aim, Aim::Unit { target, .. } if target == unit) {
-            end_flight(entity, missile, &mut commands, &mut sounds, &mut kit_fx);
+            end_flight(
+                entity,
+                missile,
+                &mut commands,
+                &mut sounds,
+                &mut kit_fx,
+                &mut clears,
+            );
         }
     }
 }
@@ -1858,6 +1928,8 @@ mod tests {
             .add_message::<MissileMiss>()
             .add_message::<SpellKitFx>()
             .add_message::<SpellKitSound>()
+            .add_message::<ChainProcPlay>()
+            .add_message::<KitEffectClear>()
             .add_message::<crate::entities::dest_fx::GroundBurst>();
         app.add_systems(Update, spawn_missiles);
         app
@@ -2604,6 +2676,78 @@ mod tests {
         assert!(reaped, "the flight's end reaps the targeting kit");
         assert_eq!(impacts, 3, "every copy lands");
         assert!(missiles(&mut app).is_empty());
+    }
+
+    /// The targeting kit's stage-2 play names the caster, so its beam runs from the caster to the
+    /// target (`0x702906`, `0x702923`), and the flight's end clears that kit by spell and fade stamp
+    /// (`0x6ff410`).
+    #[test]
+    fn the_targeting_kit_s_beam_runs_from_the_caster_and_ends_with_the_flight() {
+        use benilla_formats::{char_proc_type, CharProc, SpellVisualCatalog, VisualKit};
+        const KIT: u32 = 8730;
+        let mut app = app();
+        app.init_resource::<crate::net::GuidIndex>()
+            .init_resource::<crate::net::SelfGuid>()
+            .add_systems(Update, move_missiles.after(spawn_missiles));
+        app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
+            HashMap::new(),
+            HashMap::from([(
+                KIT,
+                VisualKit {
+                    id: KIT,
+                    char_proc_slots: [
+                        Some(CharProc {
+                            ty: char_proc_type::CHAIN_CHANNEL,
+                            params: [9.0, 0.0, 1.0, 0.0],
+                        }),
+                        None,
+                        None,
+                        None,
+                    ],
+                    ..Default::default()
+                },
+            )]),
+        )));
+        let caster = caster(&mut app, Vec3::ZERO);
+        let target = app
+            .world_mut()
+            .spawn(GlobalTransform::from_xyz(24.0, 0.0, 0.0))
+            .id();
+        let mut spawn = go(caster, target, false);
+        spawn.shape.targeting_kit = KIT;
+        let spell_id = spawn.spell_id;
+        app.world_mut().write_message(spawn);
+        step(&mut app, 0.016);
+        let plays: Vec<ChainProcPlay> = app
+            .world_mut()
+            .resource_mut::<Messages<ChainProcPlay>>()
+            .drain()
+            .collect();
+        let [play] = plays[..] else {
+            panic!("one beam play, got {}", plays.len());
+        };
+        assert_eq!(
+            (play.entity, play.from, play.kit_id, play.proc.effect_id),
+            (target, Some(caster), KIT, 9)
+        );
+        let mut clears = Vec::new();
+        for _ in 0..40 {
+            step(&mut app, 0.05);
+            clears.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<KitEffectClear>>()
+                    .drain(),
+            );
+        }
+        assert_eq!(
+            clears,
+            vec![KitEffectClear {
+                entity: target,
+                kit_id: KIT,
+                spell_id: Some(spell_id),
+                fade: Some(play.fade),
+            }]
+        );
     }
 
     /// A ground-following flight with no terrain streamed flies its line and lands on time.

@@ -49,6 +49,7 @@ fn beam_app() -> App {
     app.init_resource::<ChainLocations>();
     app.add_message::<ChainProcPlay>()
         .add_message::<SpellEffectClear>()
+        .add_message::<KitEffectClear>()
         .add_message::<SpellGoTargets>()
         .add_message::<DelayedAreaKit>();
     app.insert_resource(SpellVisuals(
@@ -170,6 +171,7 @@ fn play(entity: Entity, spell_id: u32) -> ChainProcPlay {
         },
         kit_id: BEAM_KIT,
         from: None,
+        fade: 0,
     }
 }
 
@@ -646,5 +648,55 @@ fn a_beam_end_follows_its_guid_across_a_restream() {
         beams(&mut app)[0].0,
         vec![back, owner],
         "back: the same end"
+    );
+}
+
+/// A kit clear takes the persistent beams of that kit on the owner (`0x744bd0`): a precast clear
+/// of any spell (`0x7fec2f`), a targeting clear only of its spell and fade stamp (`0x6ff410`).
+#[test]
+fn a_kit_clear_takes_only_its_kit_s_persistent_beams() {
+    let mut app = beam_app();
+    let (owner, other) = (unit(&mut app), typed_unit(&mut app));
+    let mut p = play(owner, CHAIN_SPELL);
+    p.from = Some(other);
+    p.proc.flag = true;
+    p.fade = 7;
+    app.world_mut().write_message(p);
+    app.update();
+    assert_eq!(beams(&mut app).len(), 1);
+    let clear = |kit_id, spell_id, fade| KitEffectClear {
+        entity: owner,
+        kit_id,
+        spell_id,
+        fade,
+    };
+    for miss in [
+        clear(BEAM_KIT + 1, None, None),
+        clear(BEAM_KIT, Some(CHAIN_SPELL + 1), None),
+        clear(BEAM_KIT, Some(CHAIN_SPELL), Some(8)),
+        KitEffectClear {
+            entity: other,
+            ..clear(BEAM_KIT, None, None)
+        },
+    ] {
+        app.world_mut().write_message(miss);
+        app.update();
+        assert_eq!(beams(&mut app).len(), 1, "{miss:?} leaves it");
+    }
+    app.world_mut()
+        .write_message(clear(BEAM_KIT, Some(CHAIN_SPELL), Some(7)));
+    app.update();
+    assert!(
+        beams(&mut app).is_empty(),
+        "its own targeting clear takes it"
+    );
+
+    app.world_mut().write_message(p);
+    app.update();
+    app.world_mut().write_message(clear(BEAM_KIT, None, None));
+    app.update();
+    assert!(
+        beams(&mut app).is_empty(),
+        "a precast clear takes it whatever the spell"
     );
 }
