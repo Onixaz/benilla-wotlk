@@ -995,28 +995,75 @@ fn the_active_movers_fly_roll_eases_from_turn_rate() {
     let fly = move_flags::FLYING;
     let forward = fly | move_flags::FORWARD;
     let dt = 1.0 / 60.0;
-    let step = |flags: u32, delta: f32| ease_swim_roll(0.0, flags, delta, dt);
+    let step = |flags: u32, delta: f32| ease_swim_roll(0.0, flags, delta, dt, false);
     let close = |a: f32, b: f32| assert!((a - b).abs() < 1e-5, "{a} vs {b}");
     // facingDelta / elapsed * −0.15, then * elapsed * π/2.
-    close(step(forward, 0.1), 0.1 / dt * -0.15 * dt * FRAC_PI_2);
-    close(step(fly, 0.1), 0.1 / dt * -0.15 * dt * FRAC_PI_2 * 4.0);
+    let target = 0.1 / dt * -0.15;
+    close(step(forward, 0.1), target * dt * FRAC_PI_2);
     close(
         step(forward, 0.1),
         step(forward | move_flags::SWIMMING, 0.1),
     );
     assert_eq!(step(move_flags::SWIMMING | move_flags::FORWARD, 0.1), 0.0);
-    assert_eq!(ease_swim_roll(0.4, 0, 0.1, dt), 0.0);
-    // Hover's ×4 rate reaches the ±π/4 clamp in one 1 rad step; a forward flyer does not.
-    assert_eq!(ease_swim_roll(0.0, fly, 1.0, dt), -FRAC_PI_4);
-    assert_eq!(ease_swim_roll(0.0, fly, -1.0, dt), FRAC_PI_4);
-    assert!(ease_swim_roll(0.0, forward, 1.0, dt) > -FRAC_PI_4);
+    assert_eq!(ease_swim_roll(0.4, 0, 0.1, dt, false), 0.0);
+    // With forward released, a bank still out eases at ×4.
+    close(
+        ease_swim_roll(0.3, fly, 0.1, dt, false),
+        0.3 + (target - 0.3) * dt * FRAC_PI_2 * 4.0,
+    );
+    // That ×4 rate reaches the ±π/4 clamp in one 1 rad step; a forward flyer does not.
+    assert_eq!(ease_swim_roll(-0.1, fly, 1.0, dt, false), -FRAC_PI_4);
+    assert_eq!(ease_swim_roll(0.1, fly, -1.0, dt, false), FRAC_PI_4);
+    assert!(ease_swim_roll(0.0, forward, 1.0, dt, false) > -FRAC_PI_4);
     // The same dt clamp as the pitch channel.
     let clamped = |dt: f32| {
         let elapsed = dt.clamp(1.0 / 90.0, 0.05);
         0.1 / elapsed * -0.15 * elapsed * FRAC_PI_2
     };
-    close(ease_swim_roll(0.0, forward, 0.1, 0.001), clamped(0.001));
-    close(ease_swim_roll(0.0, forward, 0.1, 1.0), clamped(1.0));
+    close(
+        ease_swim_roll(0.0, forward, 0.1, 0.001, false),
+        clamped(0.001),
+    );
+    close(ease_swim_roll(0.0, forward, 0.1, 1.0, false), clamped(1.0));
+}
+
+#[test]
+fn a_settled_hover_does_not_bank() {
+    let fly = move_flags::FLYING;
+    let dt = 1.0 / 60.0;
+    // Turning in place from a level hover: the swim matrix is not run (`0x71fd80`).
+    assert_eq!(ease_swim_roll(0.0, fly, 0.1, dt, false), 0.0);
+    assert_eq!(ease_swim_roll(0.0, fly, -1.0, dt, false), 0.0);
+    // While the pitch is still easing level it runs, and the turn banks.
+    assert!(ease_swim_roll(0.0, fly, 0.1, dt, true) < 0.0);
+    // A bank that has reached its target is settled: the next frame zeroes it (`0x715810`).
+    let target = 0.05 / dt * -0.15;
+    assert_eq!(ease_swim_roll(target + 0.005, fly, 0.05, dt, false), 0.0);
+    assert_ne!(ease_swim_roll(target + 0.005, fly, 0.05, dt, true), 0.0);
+    // Forward held, the same converged bank stays.
+    let forward = fly | move_flags::FORWARD;
+    assert_ne!(
+        ease_swim_roll(target + 0.005, forward, 0.05, dt, false),
+        0.0
+    );
+}
+
+#[test]
+fn a_left_turn_banks_the_left_side_down() {
+    // +yaw is a left turn, its roll is negative, and left is −X here.
+    let roll = ease_swim_roll(
+        0.0,
+        move_flags::FLYING | move_flags::FORWARD,
+        0.1,
+        1.0 / 60.0,
+        false,
+    );
+    assert!(roll < 0.0);
+    let q = smoothed_swim_rotation(0.0, 0.0, roll);
+    assert!((q * Vec3::NEG_X).y < 0.0, "left side dips");
+    assert!((q * Vec3::X).y > 0.0, "right side rises");
+    // Pitch keeps its sign: nose (−Z) up for a positive pitch.
+    assert!((smoothed_swim_rotation(0.0, 0.3, 0.0) * Vec3::NEG_Z).y > 0.0);
 }
 
 #[test]

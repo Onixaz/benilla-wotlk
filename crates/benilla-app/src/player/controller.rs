@@ -851,6 +851,8 @@ pub(super) fn control(
             move_flags_now,
             facing_delta,
             dt,
+            // With no forward or back the pitch targets level, so off level is still easing.
+            player.swim_body_pitch != 0.0,
         );
         let cam_pivot_target = body_pose::drive(
             &player,
