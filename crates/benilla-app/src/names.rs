@@ -1000,4 +1000,30 @@ mod tests {
             Ok(ClientCommand::PetNameQuery { pet_number: 55, .. })
         ));
     }
+
+    /// A `0xF150` vehicle is a creature: 12340's unit name (`0x72a000`) reads the descriptor, and
+    /// `0x60e6a0`-`0x60e6b6` take `0xF130` and `0xF150` alike as creature guids.
+    #[test]
+    fn a_vehicle_guid_is_named_by_its_creature_record() {
+        let (cmds, rx) = commands();
+        let mut cache = NameCache::default();
+        let drake = compose(guid::HIGH_VEHICLE, 29_708, 4_242);
+        let store = unit(&[(ENTRY, 29_708), (PETNUMBER, 0)]);
+        cache.insert_creature(29_708, Some(record("Captive Proto-Drake")));
+
+        assert_eq!(
+            NameKey::of(drake, Some(&store)),
+            Some(NameKey::Creature(29_708))
+        );
+        assert_eq!(
+            cache.resolve_unit(drake, Some(&store), &cmds),
+            Some("Captive Proto-Drake")
+        );
+        assert_eq!(
+            cache.peek_unit(drake, None),
+            Some("Captive Proto-Drake"),
+            "without a descriptor the guid's own entry bits name it"
+        );
+        assert!(matches!(rx.try_recv(), Err(TryRecvError::Empty)));
+    }
 }
