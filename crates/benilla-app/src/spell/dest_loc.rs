@@ -47,21 +47,27 @@ fn on_dest_loc_spell_cast(
     In(ev): In<SessionEvent>,
     mut processed: ResMut<ProcessedDestLocCasts>,
     time: Res<Time<Real>>,
+    index: Res<crate::net::GuidIndex>,
+    decks: Query<&GlobalTransform>,
     mut out: MessageWriter<DestLocCast>,
 ) {
     if let SessionEvent::DestLocSpellCast(c) = ev {
-        if let Some(cast) = dest_loc_cast(c, &mut processed, time.elapsed_secs_f64()) {
+        let deck = |guid: u64| decks.get(*index.0.get(&guid)?).ok().copied();
+        if let Some(cast) = dest_loc_cast(c, &mut processed, time.elapsed_secs_f64(), deck) {
             out.write(cast);
         }
     }
 }
 
 /// A nonzero caster's counter is checked and recorded (`0x810098`-`0x8100ba`); a zero caster
-/// always plays.
+/// always plays. The dest is local to `dest_target` when set: its effects are placed through that
+/// transport once, as no unit re-places them (`0x8023e2`, `0x6f7d79`); a transport not here leaves
+/// the point as it is (`0x74b475`).
 fn dest_loc_cast(
     c: DestLocSpellCast,
     processed: &mut ProcessedDestLocCasts,
     now: f64,
+    deck: impl Fn(u64) -> Option<GlobalTransform>,
 ) -> Option<DestLocCast> {
     if c.caster != 0 {
         if processed.stale(c.caster, c.counter, now) {
@@ -73,10 +79,15 @@ fn dest_loc_cast(
         }
         processed.record(c.caster, c.counter, now);
     }
+    let dest = benilla_assets::coords::wow_to_bevy(c.dest);
+    let dest = match (c.dest_target != 0).then(|| deck(c.dest_target)).flatten() {
+        Some(g) => crate::entities::deck_place(dest, &g),
+        None => dest,
+    };
     Some(DestLocCast {
         spell_id: c.spell_id,
         src: benilla_assets::coords::wow_to_bevy(c.src),
-        dest: benilla_assets::coords::wow_to_bevy(c.dest),
+        dest,
         delay_ms: c.delay_ms,
         // The missile's pitch, speed and landing time ride the packet (`0x80264d`-`0x80266f`).
         trajectory: (c.speed > 0.0).then_some(crate::creature_anim::Trajectory {
@@ -115,6 +126,34 @@ fn on_session_end(In(_): In<SessionEvent>, mut processed: ResMut<ProcessedDestLo
 mod tests {
     use super::*;
 
+    /// [`dest_loc_cast`] with no transport streamed in.
+    fn dest_loc_cast_at(
+        c: DestLocSpellCast,
+        processed: &mut ProcessedDestLocCasts,
+        now: f64,
+    ) -> Option<DestLocCast> {
+        dest_loc_cast(c, processed, now, |_| None)
+    }
+
+    /// A dest on a transport plays where the transport puts it now; with the transport not here
+    /// the point stays as sent (`0x8023e2`, `0x74b475`).
+    #[test]
+    fn a_dest_on_a_transport_plays_through_it() {
+        const BOAT: u64 = 0x1FC0_0000_0000_0010;
+        let mut p = ProcessedDestLocCasts::default();
+        let on_deck = DestLocSpellCast {
+            dest_target: BOAT,
+            ..cast(0, 1)
+        };
+        let local = benilla_assets::coords::wow_to_bevy(on_deck.dest);
+        let pose = GlobalTransform::from_xyz(50.0, 1.0, -20.0);
+        let here = |g: u64| (g == BOAT).then_some(pose);
+        let played = dest_loc_cast(on_deck, &mut p, 0.0, here).unwrap();
+        assert_eq!(played.dest, Vec3::new(50.0, 1.0, -20.0) + local);
+        let gone = dest_loc_cast(on_deck, &mut p, 0.0, |_| None).unwrap();
+        assert_eq!(gone.dest, local);
+    }
+
     fn cast(caster: u64, counter: u8) -> DestLocSpellCast {
         DestLocSpellCast {
             caster,
@@ -134,32 +173,32 @@ mod tests {
     #[test]
     fn a_seen_counter_drops_the_notify() {
         let mut p = ProcessedDestLocCasts::default();
-        assert!(dest_loc_cast(cast(7, 5), &mut p, 0.0).is_some());
+        assert!(dest_loc_cast_at(cast(7, 5), &mut p, 0.0).is_some());
         assert!(
-            dest_loc_cast(cast(7, 5), &mut p, 1.0).is_none(),
+            dest_loc_cast_at(cast(7, 5), &mut p, 1.0).is_none(),
             "same counter"
         );
-        assert!(dest_loc_cast(cast(7, 4), &mut p, 1.0).is_none(), "older");
-        assert!(dest_loc_cast(cast(7, 6), &mut p, 1.0).is_some(), "newer");
+        assert!(dest_loc_cast_at(cast(7, 4), &mut p, 1.0).is_none(), "older");
+        assert!(dest_loc_cast_at(cast(7, 6), &mut p, 1.0).is_some(), "newer");
         assert!(
-            dest_loc_cast(cast(8, 6), &mut p, 1.0).is_some(),
+            dest_loc_cast_at(cast(8, 6), &mut p, 1.0).is_some(),
             "another caster"
         );
         assert!(
-            dest_loc_cast(cast(0, 6), &mut p, 1.0).is_some(),
+            dest_loc_cast_at(cast(0, 6), &mut p, 1.0).is_some(),
             "no caster"
         );
         assert!(
-            dest_loc_cast(cast(0, 6), &mut p, 1.0).is_some(),
+            dest_loc_cast_at(cast(0, 6), &mut p, 1.0).is_some(),
             "no caster, again"
         );
         p.record(9, 255, 2.0);
         assert!(
-            dest_loc_cast(cast(9, 0), &mut p, 2.0).is_some(),
+            dest_loc_cast_at(cast(9, 0), &mut p, 2.0).is_some(),
             "wraps past 255"
         );
         assert!(
-            dest_loc_cast(cast(7, 6), &mut p, 11.5).is_some(),
+            dest_loc_cast_at(cast(7, 6), &mut p, 11.5).is_some(),
             "lapsed after 10 s"
         );
     }
@@ -169,8 +208,8 @@ mod tests {
     fn a_spell_go_counter_suppresses_its_notify() {
         let mut p = ProcessedDestLocCasts::default();
         p.record(7, 3, 0.0);
-        assert!(dest_loc_cast(cast(7, 3), &mut p, 0.5).is_none());
-        let played = dest_loc_cast(cast(7, 4), &mut p, 0.5).unwrap();
+        assert!(dest_loc_cast_at(cast(7, 3), &mut p, 0.5).is_none());
+        let played = dest_loc_cast_at(cast(7, 4), &mut p, 0.5).unwrap();
         assert_eq!(played.delay_ms, 500);
     }
 
@@ -178,14 +217,14 @@ mod tests {
     #[test]
     fn a_notify_carries_its_trajectory_at_a_missile_speed() {
         let mut p = ProcessedDestLocCasts::default();
-        let flat = dest_loc_cast(cast(7, 1), &mut p, 0.0).unwrap();
+        let flat = dest_loc_cast_at(cast(7, 1), &mut p, 0.0).unwrap();
         assert_eq!(flat.trajectory, None, "speed 0");
         let aimed = DestLocSpellCast {
             elevation: 0.4,
             speed: 25.0,
             ..cast(7, 2)
         };
-        let played = dest_loc_cast(aimed, &mut p, 0.0).unwrap();
+        let played = dest_loc_cast_at(aimed, &mut p, 0.0).unwrap();
         assert_eq!(
             played.trajectory,
             Some(crate::creature_anim::Trajectory {

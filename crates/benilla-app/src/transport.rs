@@ -59,6 +59,7 @@ impl Plugin for TransportPlugin {
                     refit_changed_collider_aabbs::<With<Transport>>,
                     compose_riders,
                     compose_deck_passengers,
+                    place_deck_effects,
                     ground_deck_riders,
                 )
                     .chain()
@@ -729,6 +730,69 @@ pub(crate) fn ground_deck_riders(
     }
 }
 
+/// A point a unit's kit plays at on a transport: the transport, the point in its frame and the
+/// unit, through which the reference re-places the effect (`0x6fa0b6`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DeckRide {
+    pub(crate) deck: Entity,
+    /// Bevy coords, in the deck's frame.
+    pub(crate) local: Vec3,
+    pub(crate) source: Entity,
+}
+
+/// A point effect riding its transport, at its point through the deck plus `shift`, its
+/// attach row's offset.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[component(storage = "SparseSet")]
+pub(crate) struct DeckEffect {
+    pub(crate) ride: DeckRide,
+    pub(crate) shift: Vec3,
+}
+
+/// Re-place each [`DeckEffect`] through its transport's this-frame pose, while its playing unit
+/// exists (`0x6fa0d0`-`0x6fa0f0`). With the transport gone it keeps its last world place and
+/// rides no more (`0x6f77a5`); with the unit gone it is never re-placed again.
+fn place_deck_effects(
+    mut commands: Commands,
+    mut effects: Query<(Entity, &DeckEffect, &mut Transform)>,
+    decks: Query<&Transform, Without<DeckEffect>>,
+    units: Query<()>,
+) {
+    for (entity, fx, mut transform) in &mut effects {
+        let deck = decks
+            .get(fx.ride.deck)
+            .ok()
+            .filter(|_| units.contains(fx.ride.source));
+        let Some(deck) = deck else {
+            commands.entity(entity).remove::<DeckEffect>();
+            continue;
+        };
+        let at = deck.translation + deck.rotation * fx.ride.local + fx.shift;
+        if benilla_assets::trace::enabled_for("dfx") {
+            let (w, d) = (
+                benilla_assets::coords::bevy_to_wow(at),
+                benilla_assets::coords::bevy_to_wow(deck.translation),
+            );
+            benilla_assets::trace::line(
+                "dfx",
+                &format!(
+                    "{entity} at=[{:.2},{:.2},{:.2}] deck=[{:.2},{:.2},{:.2}] moved={:.3}",
+                    w[0],
+                    w[1],
+                    w[2],
+                    d[0],
+                    d[1],
+                    d[2],
+                    transform.translation.distance(at)
+                ),
+            );
+        }
+        if transform.translation != at {
+            transform.translation = at;
+        }
+    }
+}
+
 /// Publish the ride frame onto every model standing on a transport, the reference's move-base
 /// install (`[model+0x17c]`), the frame a rider's world-space effects are stored in
 /// ([`benilla_world::ride_frame`]). The body we steer takes the mover's platform attach, an
@@ -778,6 +842,65 @@ fn stamp_ride_frames(
 mod tests {
     use super::*;
     use benilla_formats::ElevatorKeyframe;
+    use std::f32::consts::FRAC_PI_2;
+
+    /// A point effect follows its moving transport each frame, plus its attach offset; with the
+    /// transport gone it keeps its last place and rides no more; with its unit gone it is never
+    /// re-placed; an effect on no transport is never touched (`0x6fa0b6`, `0x6f77a5`).
+    #[test]
+    fn a_point_effect_rides_its_transport_while_it_and_its_unit_last() {
+        let mut app = App::new();
+        app.add_systems(Update, place_deck_effects);
+        let world = app.world_mut();
+        let deck = world.spawn(Transform::from_xyz(10.0, 0.0, 0.0)).id();
+        let other = world.spawn(Transform::from_xyz(-10.0, 0.0, 0.0)).id();
+        let caster = world.spawn_empty().id();
+        let local = Vec3::new(1.0, 0.0, 0.0);
+        let shift = Vec3::new(0.0, 2.0, 0.0);
+        let effect = |deck| DeckEffect {
+            ride: DeckRide {
+                deck,
+                local,
+                source: caster,
+            },
+            shift,
+        };
+        let riding = world
+            .spawn((effect(deck), Transform::from_xyz(11.0, 2.0, 0.0)))
+            .id();
+        let orphan = world
+            .spawn((effect(other), Transform::from_xyz(-9.0, 2.0, 0.0)))
+            .id();
+        let still = world.spawn(Transform::from_xyz(5.0, 5.0, 5.0)).id();
+        app.update();
+        let at = |app: &App, e| app.world().get::<Transform>(e).unwrap().translation;
+        // The deck turns a quarter and moves on: the point turns with it.
+        *app.world_mut().get_mut::<Transform>(deck).unwrap() =
+            Transform::from_xyz(20.0, 0.0, 0.0).with_rotation(Quat::from_rotation_y(FRAC_PI_2));
+        app.world_mut().despawn(other);
+        app.update();
+        let want = Vec3::new(20.0, 0.0, 0.0) + Quat::from_rotation_y(FRAC_PI_2) * local + shift;
+        assert!(
+            at(&app, riding).distance(want) < 1e-5,
+            "{}",
+            at(&app, riding)
+        );
+        assert_eq!(
+            at(&app, orphan),
+            Vec3::new(-9.0, 2.0, 0.0),
+            "last place kept"
+        );
+        assert!(app.world().get::<DeckEffect>(orphan).is_none());
+        assert_eq!(at(&app, still), Vec3::splat(5.0));
+        app.world_mut().despawn(caster);
+        *app.world_mut().get_mut::<Transform>(deck).unwrap() = Transform::from_xyz(40.0, 0.0, 0.0);
+        app.update();
+        assert!(
+            at(&app, riding).distance(want) < 1e-5,
+            "frozen with its unit gone"
+        );
+        assert!(app.world().get::<DeckEffect>(riding).is_none());
+    }
 
     /// The Ratchet–Booty Bay ferry's real timetable (taxi path 241): the builder can truncate a
     /// short synthetic cycle so the far continent's legs are never reached.

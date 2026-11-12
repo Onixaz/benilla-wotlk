@@ -97,6 +97,8 @@ pub(crate) struct GroundBurst {
     pub(crate) turn: Quat,
     /// The unit a looping point play hangs on, or `None` for a one-pass burst.
     pub(crate) held_by: Option<Entity>,
+    /// The transport the point is on, which the model rides while its unit lasts.
+    pub(crate) ride: Option<crate::transport::DeckRide>,
 }
 
 /// One cast flying at a point or a unit, until it would land (`0x804b20`).
@@ -170,6 +172,7 @@ pub(super) fn spawn_held_point_fx(
     commands: &mut Commands,
     path: &str,
     pos: Vec3,
+    ride: Option<crate::transport::DeckRide>,
     attach: Option<benilla_formats::ModelAttach>,
     scale: f32,
 ) -> Entity {
@@ -177,15 +180,17 @@ pub(super) fn spawn_held_point_fx(
         (Vec3::ZERO, Quat::IDENTITY),
         super::spell_fx::model_attach_local,
     );
-    commands
-        .spawn((
-            GroundFx::new(path.to_string(), true),
-            Transform::from_translation(pos + shift)
-                .with_rotation(turn)
-                .with_scale(Vec3::splat(scale)),
-            Visibility::default(),
-        ))
-        .id()
+    let mut e = commands.spawn((
+        GroundFx::new(path.to_string(), true),
+        Transform::from_translation(pos + shift)
+            .with_rotation(turn)
+            .with_scale(Vec3::splat(scale)),
+        Visibility::default(),
+    ));
+    if let Some(ride) = ride {
+        e.insert(crate::transport::DeckEffect { ride, shift });
+    }
+    e.id()
 }
 
 /// Arm each new DynamicObject off its create's fields: visual A, the shard emitter and the area
@@ -319,13 +324,16 @@ pub(super) fn spawn_ground_bursts(
         );
         let mut ground = GroundFx::new(burst.path.clone(), burst.held_by.is_some());
         ground.owner = burst.held_by;
-        commands.spawn((
+        let mut e = commands.spawn((
             ground,
             Transform::from_translation(burst.pos + shift)
                 .with_rotation(burst.turn * turn)
                 .with_scale(Vec3::splat(burst.scale)),
             Visibility::default(),
         ));
+        if let Some(ride) = burst.ride {
+            e.insert(crate::transport::DeckEffect { ride, shift });
+        }
     }
 }
 
@@ -508,7 +516,9 @@ mod tests {
                 list: Vec::new(),
                 target_mask: 0x40,
                 src: None,
+                src_deck: None,
                 dest: Some(Vec3::new(40.0, 0.0, 0.0)),
+                dest_deck: None,
                 points: Vec::new(),
                 ammo: None,
                 seq: 1,
@@ -554,6 +564,7 @@ mod tests {
             scale: 1.0,
             turn: Quat::IDENTITY,
             held_by,
+            ride: None,
         };
         app.world_mut().write_message(burst(Some(caster)));
         app.world_mut().write_message(burst(None));
@@ -570,6 +581,75 @@ mod tests {
         app.world_mut().despawn(caster);
         app.update();
         assert_eq!(live(&mut app), vec![(false, None)], "gone with the caster");
+    }
+
+    /// A held point model (a ground targeting kit's) on a transport spawns riding it.
+    #[test]
+    fn a_held_point_model_on_a_transport_spawns_riding_it() {
+        let mut world = World::new();
+        let (deck, caster) = (world.spawn_empty().id(), world.spawn_empty().id());
+        let ride = crate::transport::DeckRide {
+            deck,
+            local: Vec3::X,
+            source: caster,
+        };
+        let mut queue = bevy::ecs::world::CommandQueue::default();
+        let mut commands = Commands::new(&mut queue, &world);
+        let riding = spawn_held_point_fx(&mut commands, "a.m2", Vec3::ONE, Some(ride), None, 1.0);
+        let plain = spawn_held_point_fx(&mut commands, "a.m2", Vec3::ONE, None, None, 1.0);
+        queue.apply(&mut world);
+        let fx = world.get::<crate::transport::DeckEffect>(riding).copied();
+        assert_eq!(
+            fx,
+            Some(crate::transport::DeckEffect {
+                ride,
+                shift: Vec3::ZERO
+            })
+        );
+        assert!(world.get::<crate::transport::DeckEffect>(plain).is_none());
+    }
+
+    /// A burst on a transport spawns riding it, with its attach row's offset kept beside the
+    /// point; one off any transport spawns with no ride.
+    #[test]
+    fn a_burst_on_a_transport_spawns_riding_it() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<benilla_assets::M2Model>()
+            .init_resource::<SpellFx>()
+            .add_message::<GroundBurst>()
+            .add_systems(Update, spawn_ground_bursts);
+        let deck = app.world_mut().spawn_empty().id();
+        let caster = app.world_mut().spawn_empty().id();
+        let ride = crate::transport::DeckRide {
+            deck,
+            local: Vec3::new(1.0, 2.0, 3.0),
+            source: caster,
+        };
+        let attach = benilla_formats::ModelAttach {
+            offset: [0.0, 0.0, 2.0],
+            ..Default::default()
+        };
+        for ride in [Some(ride), None] {
+            app.world_mut().write_message(GroundBurst {
+                path: "Spells\\Base.m2".to_string(),
+                pos: Vec3::new(24.0, 0.0, 0.0),
+                attach: Some(attach),
+                scale: 1.0,
+                turn: Quat::IDENTITY,
+                held_by: None,
+                ride,
+            });
+        }
+        app.update();
+        let mut q = app
+            .world_mut()
+            .query::<(&GroundFx, Option<&crate::transport::DeckEffect>)>();
+        let rides: Vec<_> = q.iter(app.world()).map(|(_, d)| d.copied()).collect();
+        assert_eq!(rides.len(), 2);
+        let (shift, _) = super::super::spell_fx::model_attach_local(&attach);
+        assert!(rides.contains(&Some(crate::transport::DeckEffect { ride, shift })));
+        assert!(rides.contains(&None));
     }
 
     #[test]

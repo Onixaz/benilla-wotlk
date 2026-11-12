@@ -444,13 +444,21 @@ pub(crate) enum CastEventKind {
     },
     /// A projectile with no live target at arrival (a located cast, a target gone, an object): the
     /// impact area kit plays through `entity`, the caster or our player, at `pos` (`0x700e20`).
-    GroundImpact { pos: Vec3 },
+    GroundImpact {
+        pos: Vec3,
+        /// The aim's transport and the point in its frame, which the kit rides (`0x700e20`).
+        deck: Option<(Entity, Vec3)>,
+    },
     /// A missile landing on its area reached this listed unit (`0x70105d`): its impact kit and,
     /// under the hit's aura test, its state kit, both carrying `caster`, with no flinch.
     AreaImpact { caster: Entity },
     /// A missile landing on its area reached this extra point: the target kit plays there through
     /// the caster (`0x701150`).
-    PointImpact { pos: Vec3 },
+    PointImpact {
+        pos: Vec3,
+        /// The point's transport and the point in its frame, which the kit rides (`0x701150`).
+        deck: Option<(Entity, Vec3)>,
+    },
 }
 
 /// The anim held while a cast is in flight (`SpellVisualKit` field 2): full-body when standing
@@ -717,10 +725,14 @@ pub(crate) struct SpellGoTargets {
     pub(crate) list: Vec<(u64, u8, u8)>,
     /// The targets' flag mask, which picks the missiles' kind (`0x7fffb0`).
     pub(crate) target_mask: u32,
-    /// The source point, in bevy coords.
+    /// The source point, in bevy coords: its world place at the GO.
     pub(crate) src: Option<Vec3>,
-    /// A dest-targeted cast's ground point, in bevy coords.
+    /// The source point's transport and the point in its frame.
+    pub(crate) src_deck: Option<(Entity, Vec3)>,
+    /// A dest-targeted cast's ground point, in bevy coords: its world place at the GO.
     pub(crate) dest: Option<Vec3>,
+    /// The dest point's transport and the point in its frame, which its effects ride (`0x80f031`).
+    pub(crate) dest_deck: Option<(Entity, Vec3)>,
     /// The extra target points, in bevy coords; one whose transport is not here is dropped.
     pub(crate) points: Vec<crate::entities::DeckPoint>,
     /// The GO's ammo block (`castFlags & 0x20`), a missile's model for column 8's 0, -4 and -5.

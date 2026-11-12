@@ -572,7 +572,7 @@ pub(crate) fn arm_targeting_kit(
 fn play_point_targeting_kit(
     caster: Entity,
     kit: &VisualKit,
-    at: Vec3,
+    (at, deck): PointAt,
     visuals: &SpellVisualCatalog,
     sounds: &mut MessageWriter<SpellKitSound>,
     bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
@@ -585,6 +585,7 @@ fn play_point_targeting_kit(
             scale,
             turn: Quat::IDENTITY,
             held_by: Some(caster),
+            ride: deck_ride(deck, caster),
         });
     }
     if let Some(kit_sound) = kit.sound {
@@ -698,11 +699,11 @@ enum WaitPlay {
         kit: Box<VisualKit>,
         play: KitPlay,
         seq: u64,
-        at: Option<Vec3>,
+        at: Option<PointAt>,
     },
     /// An area kit the unit plays at a point: a location beam's (`0x726b2c`), the GO's instant
     /// area kit (`0x80ee85`) or a landing's (`0x700e20`).
-    Area { kit_id: u32, pos: Vec3 },
+    Area { kit_id: u32, at: PointAt },
     /// An aura's state kit (`0x724c86`), armed by [`arm_aura_state_fx`].
     AuraState,
     /// A cast's precast kit, its hold and loop.
@@ -711,7 +712,7 @@ enum WaitPlay {
     Channel { kit: Box<VisualKit> },
     /// A missile's targeting kit, on its target or at a ground aim on its caster (`0x702941`); the
     /// replay carries no fade time, so the flight's end never reaps it (`0x6ff410`).
-    Targeting { kit_id: u32, at: Option<Vec3> },
+    Targeting { kit_id: u32, at: Option<PointAt> },
 }
 
 /// One play held until a beam reaches its unit, the unit's delayed kit (`0x728050`).
@@ -772,7 +773,11 @@ impl BeamKitWaits {
         pos: Vec3,
         now: f32,
     ) {
-        let what = WaitPlay::Area { kit_id, pos };
+        // The beam's location is a world point (`0x715400`).
+        let what = WaitPlay::Area {
+            kit_id,
+            at: (pos, None),
+        };
         self.hold(caster, spell_id, sequence, what, now);
     }
 
@@ -783,7 +788,7 @@ impl BeamKitWaits {
         unit: Entity,
         spell_id: u32,
         kit_id: u32,
-        at: Option<Vec3>,
+        at: Option<PointAt>,
         now: f32,
     ) {
         let what = WaitPlay::Targeting { kit_id, at };
@@ -796,7 +801,7 @@ impl BeamKitWaits {
         let point = |w: &BeamKitWait| match w.what {
             WaitPlay::Targeting {
                 kit_id,
-                at: Some(at),
+                at: Some((at, _)),
             } if w.reached => Some((w.entity, kit_id, at)),
             _ => None,
         };
@@ -1164,26 +1169,28 @@ fn play_proc_nodes(
 fn play_kit_at(
     kit: &VisualKit,
     pos: Vec3,
+    ride: Option<crate::transport::DeckRide>,
     visuals: &SpellVisualCatalog,
     sounds: &mut MessageWriter<SpellKitSound>,
     shakes: &mut MessageWriter<SpellKitShake>,
     bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
 ) {
     let slots = kit.effects().map(|(_, e)| e);
-    play_models_at(kit, slots, pos, visuals, sounds, shakes, bursts);
+    play_models_at(kit, slots, pos, ride, visuals, sounds, shakes, bursts);
 }
 
 /// An area kit at a point: only its head, world and base slots and its attach rows (`0x745230`).
 fn play_area_kit_at(
     kit: &VisualKit,
     pos: Vec3,
+    ride: Option<crate::transport::DeckRide>,
     visuals: &SpellVisualCatalog,
     sounds: &mut MessageWriter<SpellKitSound>,
     shakes: &mut MessageWriter<SpellKitShake>,
     bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
 ) {
     let slots = area_slots(kit);
-    play_models_at(kit, slots, pos, visuals, sounds, shakes, bursts);
+    play_models_at(kit, slots, pos, ride, visuals, sounds, shakes, bursts);
 }
 
 /// The slots an area or targeting kit plays at a point.
@@ -1216,11 +1223,15 @@ fn point_scale(visuals: &SpellVisualCatalog, effect: u32) -> f32 {
     visuals.effect_scale(effect).map_or(1.0, |s| s.planted(1.0))
 }
 
-/// The models `slots` names and the kit's attach rows at a point, with its sound and shake.
+/// The models `slots` names and the kit's attach rows at a point, with its sound and shake. On a
+/// transport the models ride it (`0x6fa0b6`); the sound and shake ring once at its place now
+/// (`0x6f7720`).
+#[allow(clippy::too_many_arguments)] // the kit, its point and the three lanes it writes
 fn play_models_at(
     kit: &VisualKit,
     slots: impl Iterator<Item = u32>,
     pos: Vec3,
+    ride: Option<crate::transport::DeckRide>,
     visuals: &SpellVisualCatalog,
     sounds: &mut MessageWriter<SpellKitSound>,
     shakes: &mut MessageWriter<SpellKitShake>,
@@ -1239,6 +1250,7 @@ fn play_models_at(
                 scale: point_scale(visuals, effect),
                 turn: Quat::IDENTITY,
                 held_by: None,
+                ride,
             });
         }
     }
@@ -1261,6 +1273,8 @@ pub(crate) struct DelayedAreaKit {
     /// The transport the point is on and the point in its frame, placed through it when due;
     /// `pos` is its place at the GO.
     pub(crate) deck: Option<(Entity, Vec3)>,
+    /// The unit whose kit player holds it, through which its models ride the transport.
+    pub(crate) source: Option<Entity>,
 }
 
 /// How long a [`DelayedAreaKit`] waits.
@@ -1344,7 +1358,10 @@ fn play_no_caster_dest(
         return;
     };
     if let Some(kit) = visuals.kit(stages.instant_area_kit) {
-        play_area_kit_at(kit, c.dest, visuals, out.sounds, out.shakes, out.bursts);
+        // Placed once: a no-caster effect has no unit to re-place it through (`0x6f7d79`).
+        play_area_kit_at(
+            kit, c.dest, None, visuals, out.sounds, out.shakes, out.bursts,
+        );
     }
     let speed = display.speed;
     let missile = stages.missile_gate != 0 && stages.missile_model != 0 && speed > 0.0;
@@ -1404,6 +1421,7 @@ fn play_no_caster_dest(
             AreaKitWait::Secs(c.delay_ms as f32 / 1000.0)
         },
         deck: None,
+        source: None,
     });
 }
 
@@ -1441,7 +1459,11 @@ pub(super) fn play_delayed_area_kits(
         |&(
             due,
             DelayedAreaKit {
-                kit_id, pos, deck, ..
+                kit_id,
+                pos,
+                deck,
+                source,
+                ..
             },
         )| {
             if now < due {
@@ -1453,8 +1475,17 @@ pub(super) fn play_delayed_area_kits(
                     Some(crate::entities::deck_place(local, casters.get(d).ok()?))
                 })
                 .unwrap_or(pos);
+            let ride = source.and_then(|u| deck_ride(deck, u));
             if let Some(kit) = visuals.0.kit(kit_id) {
-                play_area_kit_at(kit, pos, &visuals.0, &mut sounds, &mut shakes, &mut bursts);
+                play_area_kit_at(
+                    kit,
+                    pos,
+                    ride,
+                    &visuals.0,
+                    &mut sounds,
+                    &mut shakes,
+                    &mut bursts,
+                );
             }
             false
         },
@@ -1474,10 +1505,11 @@ fn go_missiles(
     let mask = go.target_mask;
     let located = mask & TARGET_LOCATIONS != 0;
     // A located missile aims at the dest, else the source (`0x7334c1`).
-    let point = if mask & TARGET_DEST != 0 {
-        go.dest
+    // A point on a transport keeps its transport as the missile's (`0x7334d7`, `0x7334fb`).
+    let (point, deck) = if mask & TARGET_DEST != 0 {
+        (go.dest, go.dest_deck)
     } else {
-        go.src
+        (go.src, go.src_deck)
     };
     let listed = |hits: bool| -> Vec<ListedUnit> {
         go.list
@@ -1511,6 +1543,7 @@ fn go_missiles(
             };
             out.push(MissileSpawn {
                 ground_aim: point.filter(|_| located),
+                aim_deck: deck.filter(|_| located),
                 list: Some(list),
                 ..base.clone()
             });
@@ -1554,6 +1587,7 @@ fn go_missiles(
             let units = listed(hits);
             out.push(MissileSpawn {
                 ground_aim: point,
+                aim_deck: deck,
                 list: (!units.is_empty()).then_some(TargetList {
                     units,
                     results: !hits,
@@ -1685,6 +1719,19 @@ fn go_plays_impact_area(visuals: &SpellVisualCatalog, stages: &VisualStages, spe
     !(stages.missile_gate != 0 && speed > 0.0) && !visuals.has_chain_effect(stages)
 }
 
+/// A point a kit plays at: its world place now, and the transport it is on with the point in its
+/// frame.
+type PointAt = (Vec3, Option<(Entity, Vec3)>);
+
+/// The ride of a point the unit `source` plays a kit at, when the point is on a transport.
+fn deck_ride(deck: Option<(Entity, Vec3)>, source: Entity) -> Option<crate::transport::DeckRide> {
+    deck.map(|(deck, local)| crate::transport::DeckRide {
+        deck,
+        local,
+        source,
+    })
+}
+
 /// One spell landing on one unit.
 #[derive(Clone, Copy)]
 struct ImpactPlay {
@@ -1696,7 +1743,7 @@ struct ImpactPlay {
     /// The unit is the caster: the caster impact kit, else the target impact kit (`0x800d00`).
     on_caster: bool,
     /// Play the impact kit's models, sound and shake at this point, not on the unit (`0x702e5a`).
-    at: Option<Vec3>,
+    at: Option<PointAt>,
     /// Lay the victim's severity-0 wound flinch beside the kit.
     flinch: bool,
     seq: u64,
@@ -1860,7 +1907,7 @@ fn play_kit_split(
     entity: Entity,
     spell_id: u32,
     kit: &VisualKit,
-    at: Vec3,
+    (at, deck): PointAt,
     base: KitPlay,
     seq: u64,
     visuals: &SpellVisualCatalog,
@@ -1877,7 +1924,8 @@ fn play_kit_split(
         ..base
     };
     play_kit(entity, spell_id, &unit_legs, play, seq, visuals, out);
-    play_kit_at(kit, at, visuals, out.sounds, out.shakes, bursts);
+    let ride = deck_ride(deck, entity);
+    play_kit_at(kit, at, ride, visuals, out.sounds, out.shakes, bursts);
 }
 
 /// A cast's precast kit: the `0x400` ranged hold, the [`CastHold`], the sound and the persistent
@@ -2019,7 +2067,7 @@ fn play_unit_area_kit(
     entity: Entity,
     spell_id: u32,
     kit: &VisualKit,
-    pos: Vec3,
+    (pos, deck): PointAt,
     visuals: &SpellVisualCatalog,
     out: &mut KitOut,
     bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
@@ -2027,12 +2075,13 @@ fn play_unit_area_kit(
     if waits_for_beam(entity, spell_id, kit, visuals, out) {
         let what = WaitPlay::Area {
             kit_id: kit.id,
-            pos,
+            at: (pos, deck),
         };
         hold_kit(out, entity, spell_id, what);
         return;
     }
-    play_area_kit_at(kit, pos, visuals, out.sounds, out.shakes, bursts);
+    let ride = deck_ride(deck, entity);
+    play_area_kit_at(kit, pos, ride, visuals, out.sounds, out.shakes, bursts);
 }
 /// A unit the cast router reads: its store, its auras for a missile's hit and whether it is us.
 type CastUnit = (
@@ -2145,12 +2194,16 @@ pub(super) fn route_cast_visuals(
             } => play_kit_split(
                 w.entity, w.spell_id, &kit, at, play, seq, &visuals.0, &mut out, bursts,
             ),
-            WaitPlay::Area { kit_id, pos } => {
+            WaitPlay::Area {
+                kit_id,
+                at: (pos, deck),
+            } => {
                 delayed.write(DelayedAreaKit {
                     kit_id,
                     pos,
                     wait: AreaKitWait::Secs(0.0),
-                    deck: None,
+                    deck,
+                    source: Some(w.entity),
                 });
             }
             WaitPlay::Precast { kit, seq } => play_precast_kit(
@@ -2389,7 +2442,7 @@ pub(super) fn route_cast_visuals(
                         )),
                         weapon_visual: None,
                         on_caster,
-                        at,
+                        at: at.map(|a| (a, None)),
                         flinch: true,
                         seq: ev.seq,
                     },
@@ -2421,7 +2474,7 @@ pub(super) fn route_cast_visuals(
                     bursts,
                 );
             }
-            CastEventKind::PointImpact { pos } => {
+            CastEventKind::PointImpact { pos, deck } => {
                 // The target kit at the point, stage 1, with no state kit and no flinch.
                 play_impact(
                     ev.entity,
@@ -2430,7 +2483,7 @@ pub(super) fn route_cast_visuals(
                         missile: None,
                         weapon_visual: None,
                         on_caster: false,
-                        at: Some(pos),
+                        at: Some((pos, deck)),
                         flinch: false,
                         seq: ev.seq,
                     },
@@ -2440,7 +2493,7 @@ pub(super) fn route_cast_visuals(
                     bursts,
                 );
             }
-            CastEventKind::GroundImpact { pos } => {
+            CastEventKind::GroundImpact { pos, deck } => {
                 // A missile arrived at a point: `SpellVisual` column 24, the impact area kit, which
                 // `SMSG_SPELL_GO` leaves to the landing when a missile flies (`0x80ef53`), plays
                 // there.
@@ -2457,7 +2510,7 @@ pub(super) fn route_cast_visuals(
                         ev.entity,
                         ev.spell_id,
                         &kit,
-                        pos,
+                        (pos, deck),
                         &visuals.0,
                         &mut out,
                         bursts,
@@ -2540,7 +2593,7 @@ pub(super) fn route_cast_visuals(
         }
         // One landing time serves every point, the last point's when there are some (`0x80e978`).
         let landing = go.points.last().map(|p| p.world).or(go.dest);
-        let dest = go.dest.map(|d| (d, None));
+        let dest = go.dest.map(|d| (d, go.dest_deck));
         let points = go
             .points
             .iter()
@@ -2554,7 +2607,7 @@ pub(super) fn route_cast_visuals(
                     go.caster,
                     go.spell_id,
                     kit,
-                    at,
+                    (at, deck),
                     &visuals.0,
                     &mut out,
                     bursts,
@@ -2573,9 +2626,11 @@ pub(super) fn route_cast_visuals(
                         to: landing.unwrap_or(at),
                     },
                     deck,
+                    source: Some(go.caster),
                 });
             } else {
-                play_area_kit_at(kit, at, &visuals.0, out.sounds, out.shakes, bursts);
+                let ride = deck_ride(deck, go.caster);
+                play_area_kit_at(kit, at, ride, &visuals.0, out.sounds, out.shakes, bursts);
             }
         }
         if display.speed <= 0.0 {
