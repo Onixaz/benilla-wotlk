@@ -325,7 +325,10 @@ impl SpellTargeting {
     /// The location bind's fork: SOURCE (`0x20`) is tested before DEST (`0x40`). The reference
     /// takes a second click for a word carrying both; no 1.12 spell does, so only the precedence is
     /// built.
-    fn location_bind(&self, point: [f32; 3]) -> Option<super::cast_send::TargetedBind> {
+    fn location_bind(
+        &self,
+        point: benilla_protocol::messages::TargetPoint,
+    ) -> Option<super::cast_send::TargetedBind> {
         let word = self.0.as_ref()?.word;
         if word & 0x0020 != 0 {
             Some(super::cast_send::TargetedBind::Source(point))

@@ -1338,12 +1338,12 @@ pub(crate) enum ClientCommand {
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_DEST_LOCATION`; `dest` in WoW coordinates.
     CastSpellAtDest {
         spell_id: u32,
-        dest: [f32; 3],
+        dest: benilla_protocol::messages::TargetPoint,
     },
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_SOURCE_LOCATION` (bit 5); `src` in WoW coordinates.
     CastSpellAtSource {
         spell_id: u32,
-        src: [f32; 3],
+        src: benilla_protocol::messages::TargetPoint,
     },
     /// `CMSG_CANCEL_AURA`, by spell id, not slot; the removal returns as a `UNIT_FIELD_AURA` delta.
     CancelAura {

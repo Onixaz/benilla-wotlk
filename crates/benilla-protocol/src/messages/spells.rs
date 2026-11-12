@@ -754,11 +754,26 @@ pub(super) fn put_target_guid(body: &mut Vec<u8>, guid: u64) {
     crate::wire::write_packed_guid(guid, body).expect("vec write");
 }
 
-/// A point target after the mask: a packed transport guid (0, none) and three `f32` WoW world
-/// coords, as the writer puts them for SOURCE and DEST (`0x9ab924`, `0x9ab96c`).
-pub(super) fn put_target_point(body: &mut Vec<u8>, point: [f32; 3]) {
-    crate::wire::write_packed_guid(0, body).expect("vec write");
-    for c in point {
+/// A SOURCE or DEST point as a cast sends it: the transport it was clicked on (0, none) and the
+/// point, WoW coords in that transport's frame when it names one (`0x80c38c`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TargetPoint {
+    pub transport: u64,
+    pub pos: [f32; 3],
+}
+
+impl From<[f32; 3]> for TargetPoint {
+    /// A world point, on no transport.
+    fn from(pos: [f32; 3]) -> Self {
+        Self { transport: 0, pos }
+    }
+}
+
+/// A point target after the mask: a packed transport guid and three `f32` coords, as the writer
+/// puts them for SOURCE and DEST (`0x9ab924`, `0x9ab96c`).
+pub(super) fn put_target_point(body: &mut Vec<u8>, point: TargetPoint) {
+    crate::wire::write_packed_guid(point.transport, body).expect("vec write");
+    for c in point.pos {
         body.extend_from_slice(&c.to_le_bytes());
     }
 }
@@ -771,7 +786,7 @@ fn cast_at_guid(cast_count: u8, spell_id: u32, mask: u32, guid: u64) -> Vec<u8> 
 }
 
 /// A point-target body: the head and the point.
-fn cast_at_point(cast_count: u8, spell_id: u32, mask: u32, point: [f32; 3]) -> Vec<u8> {
+fn cast_at_point(cast_count: u8, spell_id: u32, mask: u32, point: TargetPoint) -> Vec<u8> {
     let mut body = cast_head(cast_count, spell_id, mask);
     put_target_point(&mut body, point);
     body
@@ -847,13 +862,13 @@ pub fn cast_spell_glyph(cast_count: u8, spell_id: u32) -> Vec<u8> {
 }
 
 /// Body of `CMSG_CAST_SPELL` at a ground point, for a `Targets & 0x40` spell such as Blizzard.
-pub fn cast_spell_at_dest(cast_count: u8, spell_id: u32, dest: [f32; 3]) -> Vec<u8> {
+pub fn cast_spell_at_dest(cast_count: u8, spell_id: u32, dest: TargetPoint) -> Vec<u8> {
     cast_at_point(cast_count, spell_id, TARGET_FLAG_DEST_LOCATION, dest)
 }
 
 /// Body of `CMSG_CAST_SPELL` at a source point, for a `Targets & 0x20` spell; the server centres
 /// the area effect there.
-pub fn cast_spell_at_source(cast_count: u8, spell_id: u32, src: [f32; 3]) -> Vec<u8> {
+pub fn cast_spell_at_source(cast_count: u8, spell_id: u32, src: TargetPoint) -> Vec<u8> {
     cast_at_point(cast_count, spell_id, TARGET_FLAG_SOURCE_LOCATION, src)
 }
 
@@ -949,7 +964,7 @@ mod tests {
     fn cast_spell_at_points_golden() {
         // Spell 10 is Blizzard: the mask, a packed transport guid of 0, then x, y, z.
         assert_eq!(
-            cast_spell_at_dest(2, 10, [1.0, -2.5, 3.0]),
+            cast_spell_at_dest(2, 10, [1.0, -2.5, 3.0].into()),
             [
                 2, 0x0A, 0x00, 0x00, 0x00, 0, // count, spell, flags
                 0x40, 0x00, 0x00, 0x00, // TARGET_FLAG_DEST_LOCATION
@@ -961,14 +976,29 @@ mod tests {
             "CMSG_CAST_SPELL (ground dest) body"
         );
         let (src, dest) = (
-            cast_spell_at_source(2, 265, [1.0, -2.5, 3.0]),
-            cast_spell_at_dest(2, 265, [1.0, -2.5, 3.0]),
+            cast_spell_at_source(2, 265, [1.0, -2.5, 3.0].into()),
+            cast_spell_at_dest(2, 265, [1.0, -2.5, 3.0].into()),
         );
         assert_eq!(src.len(), dest.len());
         assert_eq!(
             src.iter().zip(&dest).filter(|(a, b)| a != b).count(),
             1,
             "source and dest bodies differ only in the mask"
+        );
+        // Clicked on a boat's deck: its packed guid, then the point in the boat's frame.
+        let on_deck = TargetPoint {
+            transport: 0x1FC0_0000_0000_0010,
+            pos: [1.0, -2.5, 3.0],
+        };
+        assert_eq!(
+            cast_spell_at_dest(2, 10, on_deck)[10..15],
+            [0xC1, 0x10, 0xC0, 0x1F, 0x00],
+            "packed transport guid: bytes 0, 6 and 7"
+        );
+        assert_eq!(
+            cast_spell_at_dest(2, 10, on_deck)[14..],
+            cast_spell_at_dest(2, 10, on_deck.pos.into())[11..],
+            "the point follows the guid unchanged"
         );
     }
 

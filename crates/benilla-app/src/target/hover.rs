@@ -27,13 +27,23 @@ use super::{Hovered, HoveredObject, PickOcclusion};
 /// the [`PickOccluder`] colliders (terrain, WMO faces), then the drawn doodads nearer than that
 /// ([`DoodadOccluders`]). Net entities are the object trace, not occluders, so a chest never
 /// occludes itself. The picks run unbounded and compare against it after. Aimed as the picks are:
-/// the OS pointer, else the hover probe's aim.
+/// the OS pointer, else the hover probe's aim. While a location is wanted, the ground leg also
+/// traces GameObject hulls ([`super::ObjectGround`]).
+#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 pub(super) fn update_pick_occlusion(
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     window: Query<&Window, With<PrimaryWindow>>,
     spatial: avian3d::prelude::SpatialQuery,
     occluders: Query<(), With<PickOccluder>>,
     doodads: DoodadOccluders,
+    targeting: Option<Res<crate::spell::SpellTargeting>>,
+    parents: Query<&ChildOf>,
+    objects: Query<(
+        &Guid,
+        &NetEntity,
+        &GlobalTransform,
+        Has<crate::transport::Transport>,
+    )>,
     mut occlusion: ResMut<PickOcclusion>,
 ) {
     *occlusion = PickOcclusion::default();
@@ -69,6 +79,42 @@ pub(super) fn update_pick_occlusion(
         occlusion.distance = distance;
         occlusion.point = Some(ray.origin + *ray.direction * distance);
     }
+    if !targeting.is_some_and(|t| {
+        t.spell_for(crate::spell::targeting::TargetingWants::Location)
+            .is_some()
+    }) {
+        return;
+    }
+    // A hull's owning GameObject: the collider's own entity or a parent of it (a deck prop).
+    let owner = |mut e: Entity| {
+        for _ in 0..4 {
+            if let Ok((guid, net, tf, transport)) = objects.get(e) {
+                return matches!(net.kind, EntityKind::GameObject)
+                    .then_some((guid.0, tf, transport));
+            }
+            e = parents.get(e).ok()?.parent();
+        }
+        None
+    };
+    let Some(hit) = spatial.cast_ray_predicate(
+        ray.origin,
+        ray.direction,
+        distance.min(f32::MAX),
+        true,
+        &benilla_world::collision::WorldCollision::body_filter(),
+        &|e| !occluders.contains(e) && owner(e).is_some(),
+    ) else {
+        return;
+    };
+    let Some((guid, deck, transport)) = owner(hit.entity) else {
+        return;
+    };
+    let point = ray.origin + *ray.direction * hit.distance;
+    occlusion.object_ground = Some(super::ObjectGround {
+        point,
+        deck: (transport && super::is_ship_guid(guid))
+            .then(|| (guid, crate::entities::deck_local(point, deck))),
+    });
 }
 
 /// The model instances whose parts are `unit`'s pick geometry: the body, everything it wears, and
@@ -933,7 +979,7 @@ mod tests {
         world.insert_resource(PickOcclusion {
             distance: f32::INFINITY,
             point: None,
-            ray: None,
+            ..Default::default()
         });
         world.init_resource::<crate::vplates::PlateHover>();
         world.init_resource::<Hovered>();

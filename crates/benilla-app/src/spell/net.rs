@@ -475,7 +475,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
         let wire = dest;
         let src = src.map(|(p, t)| resolve_point(p, t, deck));
         let dest = dest.map(|(p, t)| resolve_point(p, t, deck));
-        // A source or dest on a transport not here drops the GO's visuals (`0x80e647`).
+        // A source or dest on a transport not here ends the GO at its release (`0x80e647`).
         let here = !matches!(src, Some(None)) && !matches!(dest, Some(None));
         if benilla_assets::trace::enabled_for("dfx") {
             benilla_assets::trace::line(
@@ -1449,6 +1449,26 @@ fn spell_go(
         hits.len(),
         misses.len()
     );
+    // A source or dest on a transport not here ends the GO at the pending cast's release: no
+    // feed edge, cooldown, swing, latch or visual (`0x80e647`-`0x80e686`).
+    let (cooldowns, spells, items, net_commands, pet_bar, spell_mods) = cooldown_ctx;
+    if !transports_here {
+        if self_guid.0 == Some(caster) {
+            pending.clear_if(spell_id);
+            queued_melee.clear_if(spell_id);
+        }
+        if pet_bar.has_bar() && pet_bar.spells.pet_guid == caster {
+            pet_bar.pending_cast = None;
+        }
+        // 12340 leaves the unit's cast state for the next cast; our `Casting` has no expiry, so
+        // the cast's own reap runs.
+        if let Some(&e) = index.0.get(&caster) {
+            if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
+                commands.entity(e).remove::<Casting>();
+            }
+        }
+        return;
+    }
     // Every caster's launch reaches the unit-cast feed (`0x80e763`).
     cast_bar.0.push(CastBarEdge::Go {
         caster,
@@ -1475,7 +1495,6 @@ fn spell_go(
     if let Some(go_guid) = go_target {
         go_lid.write(crate::go_anim::GoLidOpen { go_guid, spell_id });
     }
-    let (cooldowns, spells, items, net_commands, pet_bar, spell_mods) = cooldown_ctx;
     let (auto_repeat, sheath, engaged) = attack_ctx;
     let now = Instant::now();
     let display = spells.and_then(|s| s.catalog.get(spell_id));
@@ -1667,12 +1686,12 @@ fn spell_go(
         // A pure dest cast (ground AoE, empty lists) rides the same message: the point is a target.
         let (dest, dest_deck) = dest.map_or((None, None), |(p, d)| (Some(p), d));
         let (src, src_deck) = src.map_or((None, None), |(p, d)| (Some(p), d));
-        let targeted = !hits.is_empty()
+        if !hits.is_empty()
             || !misses.is_empty()
             || dest.is_some()
             || src.is_some()
-            || !points.is_empty();
-        if targeted && transports_here {
+            || !points.is_empty()
+        {
             go_targets.write(SpellGoTargets {
                 caster: e,
                 spell_id,
@@ -2638,7 +2657,7 @@ mod tests {
         app.world_mut().resource_mut::<SelfGuid>().0 = Some(10);
 
         // One `spell_go` call, parameterized by the completing spell id.
-        let fire_go = |app: &mut App, go_spell: u32| {
+        let fire_go = |app: &mut App, go_spell: u32, here: bool| {
             let (tx, _rx) = crossbeam_channel::unbounded();
             app.world_mut()
                 .run_system_once(
@@ -2669,7 +2688,7 @@ mod tests {
                             Vec::new(),
                             None,
                             None,
-                            (0, None, None, Vec::new(), true),
+                            (0, None, None, Vec::new(), here),
                             None,
                             None,
                             None,
@@ -2707,8 +2726,8 @@ mod tests {
 
         // Every GO reaches the feed, a proc's (6136) too; the feed ends only the running cast,
         // keyed by spell and castCount (`0x7fee38`).
-        fire_go(&mut app, 6136);
-        fire_go(&mut app, 133);
+        fire_go(&mut app, 6136, true);
+        fire_go(&mut app, 133, true);
         let go = |spell_id| CastBarEdge::Go {
             caster: 10,
             spell_id,
@@ -2719,6 +2738,26 @@ mod tests {
             app.world().resource::<CastBarFeed>().0,
             vec![go(6136), go(133)]
         );
+
+        // A dest on a transport not here (`0x80e647`): the pending cast is released and the cast
+        // reaped, with no feed edge.
+        app.world_mut().entity_mut(self_e).insert(Casting {
+            spell_id: 10,
+            cast_count: 0,
+            until: None,
+        });
+        app.world_mut()
+            .resource_mut::<PendingCast>()
+            .arm(10, Instant::now(), true);
+        fire_go(&mut app, 10, false);
+        assert_eq!(app.world().resource::<CastBarFeed>().0.len(), 2);
+        assert_eq!(
+            app.world()
+                .resource::<PendingCast>()
+                .committed(Instant::now()),
+            None
+        );
+        assert!(app.world().get::<Casting>(self_e).is_none());
     }
 
     /// Our channel's start and its server end (`MSG_CHANNEL_UPDATE(0)`) arm and close

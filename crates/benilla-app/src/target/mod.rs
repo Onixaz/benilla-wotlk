@@ -165,6 +165,9 @@ pub(crate) struct PickOcclusion {
     pub(crate) point: Option<Vec3>,
     /// The cursor ray's direction, which a right-click on the sky walks along.
     pub(crate) ray: Option<Dir3>,
+    /// A GameObject hull nearer than `point`, traced only while a location is wanted: the ground
+    /// leg's trace takes GameObject meshes and the world leg's does not (`0x4f9b5c`, `0x7a2a5e`).
+    pub(crate) object_ground: Option<ObjectGround>,
 }
 
 impl Default for PickOcclusion {
@@ -173,8 +176,48 @@ impl Default for PickOcclusion {
             distance: f32::INFINITY,
             point: None,
             ray: None,
+            object_ground: None,
         }
     }
+}
+
+impl PickOcclusion {
+    /// The location pick's point: a GameObject hull before the world.
+    pub(crate) fn ground_point(&self) -> Option<Vec3> {
+        self.object_ground.map(|g| g.point).or(self.point)
+    }
+
+    /// The location pick as a cast sends it: on a boat or zeppelin its guid and the point in its
+    /// frame, else the world point.
+    pub(crate) fn ground_target(&self) -> Option<benilla_protocol::messages::TargetPoint> {
+        use benilla_assets::coords::bevy_to_wow;
+        match self.object_ground {
+            Some(ObjectGround {
+                deck: Some((transport, local)),
+                ..
+            }) => Some(benilla_protocol::messages::TargetPoint {
+                transport,
+                pos: bevy_to_wow(local),
+            }),
+            _ => self.ground_point().map(|p| bevy_to_wow(p).into()),
+        }
+    }
+}
+
+/// The ground leg's GameObject hit ([`PickOcclusion::object_ground`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ObjectGround {
+    pub(crate) point: Vec3,
+    /// On a boat or zeppelin (high guid `0x1FC`), its guid and the point in its frame, Bevy
+    /// coords. The hit keeps the point in a transport's frame and the click keeps that guid alone
+    /// (`0x4f9d19`, `0x4f7939`); on any other transport, which would send that local point with
+    /// no guid, benilla sends the world point.
+    pub(crate) deck: Option<(u64, Vec3)>,
+}
+
+/// A boat or zeppelin, the one transport a ground click names (`0x4f7927`-`0x4f793e`).
+pub(crate) fn is_ship_guid(guid: u64) -> bool {
+    guid >> 52 == 0x1FC
 }
 
 /// A [`WorldClick`] whose press the UI claimed for a payload drop: it drops and never selects.

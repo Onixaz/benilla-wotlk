@@ -163,7 +163,7 @@ pub(crate) fn drive_targeting_cursor(
         targeting.can_target_corpse(corpse, &checks)
     } else if targeting.wants(TargetingWants::Location) {
         // The ground leg. No ground hit (sky, mouselook) is state 0, UnableCast.
-        match (occlusion.point, me) {
+        match (occlusion.ground_point(), me) {
             (Some(point), Some(me)) => ground_point_in_range(range, me, point),
             _ => false,
         }
@@ -524,7 +524,7 @@ mod tests {
             world.insert_resource(PickOcclusion {
                 distance: 10.0,
                 point,
-                ray: None,
+                ..Default::default()
             });
             if let Some(distance) = go {
                 let chest = world.spawn(Transform::default()).id();
@@ -602,7 +602,7 @@ mod tests {
                 world.insert_resource(PickOcclusion {
                     distance: 10.0,
                     point: Some(Vec3::new(d, 0.0, 0.0)),
-                    ray: None,
+                    ..Default::default()
                 });
                 let mut mods = SpellModifiers::default();
                 mods.set_class_family(3);

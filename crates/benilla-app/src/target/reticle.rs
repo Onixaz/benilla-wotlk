@@ -87,7 +87,7 @@ pub(super) fn update_reticle(
     let state = &mut *state;
     let (Some(spell_id), Some(point)) = (
         targeting.spell_for(TargetingWants::Location),
-        occlusion.point,
+        occlusion.ground_point(),
     ) else {
         // Not targeting, a word that wants no location, or no world hit: nothing is drawn.
         state.shown = false;
@@ -199,7 +199,7 @@ mod tests {
             world.insert_resource(PickOcclusion {
                 distance: 10.0,
                 point: Some(Vec3::ZERO),
-                ray: None,
+                ..Default::default()
             });
             world
                 .resource_mut::<SpellTargeting>()
