@@ -245,9 +245,8 @@ fn guild_query_response_reports_no_such_guild_as_an_empty_name() {
     }
 }
 
-/// `SMSG_GUILD_EVENT`'s trailing guid rides on the event id: the reference reads it only for 0x0c
-/// and 0x0d, though vmangos also writes one for `GE_JOINED` and `GE_LEFT`
-/// (`Handlers/GuildHandler.cpp:218`, `:405`).
+/// `SMSG_GUILD_EVENT`'s trailing guid rides on the event id: the joined, left, sign-on and sign-off
+/// arms read it (`0x6d935e`, `0x6d938a`), no other does.
 #[test]
 fn guild_event_trailing_guid_rides_on_the_event_id() {
     // GE_SIGNED_ON (0x0c): one param and the guid (Server/Packets/Guild.cpp:133-141).
@@ -281,20 +280,28 @@ fn guild_event_trailing_guid_rides_on_the_event_id() {
         other => panic!("expected GuildEvent, got {}", other.name()),
     }
 
-    // GE_JOINED (0x03): vmangos appends a guid here, which the reference never reads.
-    let mut body = vec![guild_event::JOINED, 1];
-    body.extend_from_slice(b"Carol\0");
-    body.extend_from_slice(&0x1234u64.to_le_bytes());
-    match &messages::parse_server(opcode::SMSG_GUILD_EVENT, &body).unwrap() {
-        ServerPacket::GuildEvent(notice) => {
-            assert_eq!(notice.event, guild_event::JOINED);
-            assert_eq!(notice.params, vec!["Carol".to_string()]);
-            assert_eq!(
-                notice.guid, None,
-                "the client reads the guid for 0x0c/0x0d only — this one is trailing slack"
-            );
+    // GE_JOINED (0x03) and GE_LEFT (0x04): one param and the guid.
+    for event in [guild_event::JOINED, guild_event::LEFT] {
+        let mut body = vec![event, 1];
+        body.extend_from_slice(b"Carol\0");
+        body.extend_from_slice(&0x1234u64.to_le_bytes());
+        match &messages::parse_server(opcode::SMSG_GUILD_EVENT, &body).unwrap() {
+            ServerPacket::GuildEvent(notice) => {
+                assert_eq!(notice.event, event);
+                assert_eq!(notice.params, vec!["Carol".to_string()]);
+                assert_eq!(notice.guid, Some(0x1234));
+            }
+            other => panic!("expected GuildEvent, got {}", other.name()),
         }
-        other => panic!("expected GuildEvent, got {}", other.name()),
+
+        // A body that stops after the name still prints its line.
+        match &messages::parse_server(opcode::SMSG_GUILD_EVENT, &body[..body.len() - 8]).unwrap() {
+            ServerPacket::GuildEvent(notice) => {
+                assert_eq!(notice.params, vec!["Carol".to_string()]);
+                assert_eq!(notice.guid, None);
+            }
+            other => panic!("expected GuildEvent, got {}", other.name()),
+        }
     }
 
     // GE_PROMOTION (0x00): the three-param maximum (promoter, promoted, new rank name).

@@ -104,9 +104,9 @@ pub mod guild_event {
     /// `GE_MOTD`, param: the new MOTD. The reference routes it through the CVar-gated profanity
     /// filter, not the normal event path.
     pub const MOTD: u8 = 0x02;
-    /// `GE_JOINED`, param: the joiner's name.
+    /// `GE_JOINED`, param: the joiner's name; carries the trailing guid.
     pub const JOINED: u8 = 0x03;
-    /// `GE_LEFT`, param: the leaver's name.
+    /// `GE_LEFT`, param: the leaver's name; carries the trailing guid.
     pub const LEFT: u8 = 0x04;
     /// `GE_REMOVED`, params: the removed player, then who removed them.
     pub const REMOVED: u8 = 0x05;
@@ -486,14 +486,14 @@ pub struct GuildEventNotice {
     /// Every string `strCount` announced, uncapped like the reference read loop; the reference
     /// display passes none of them when there are four or more.
     pub params: Vec<String>,
-    /// The guildmate's guid, read only for [`guild_event::SIGNED_ON`] and
-    /// [`guild_event::SIGNED_OFF`].
+    /// The subject's guid, read for [`guild_event::JOINED`], [`guild_event::LEFT`],
+    /// [`guild_event::SIGNED_ON`] and [`guild_event::SIGNED_OFF`].
     pub guid: Option<u64>,
 }
 
-/// Read `SMSG_GUILD_EVENT` (`Server/Packets/Guild.cpp:133-141`): `u8` event, `u8` count, that many
-/// cstrings, then a `u64` guid that the reference reads only for sign-on and sign-off; vmangos also
-/// sends it with `GE_JOINED` and `GE_LEFT`, unread there.
+/// Read `SMSG_GUILD_EVENT` (`0x6d92d0`): `u8` event, `u8` count, that many cstrings, then a `u64`
+/// guid in the joined, left, sign-on and sign-off arms (`0x6d935e`, `0x6d938a`); a body that ends
+/// before it reads as no guid.
 pub(super) fn read_guild_event(r: &mut impl Read) -> io::Result<GuildEventNotice> {
     let event = read_u8(r)?;
     let param_count = read_u8(r)?;
@@ -502,9 +502,12 @@ pub(super) fn read_guild_event(r: &mut impl Read) -> io::Result<GuildEventNotice
     for _ in 0..param_count {
         params.push(read_cstring(r)?);
     }
-    let guid = matches!(event, guild_event::SIGNED_ON | guild_event::SIGNED_OFF)
-        .then(|| read_u64_le(r))
-        .transpose()?;
+    let guid = matches!(
+        event,
+        guild_event::JOINED | guild_event::LEFT | guild_event::SIGNED_ON | guild_event::SIGNED_OFF
+    )
+    .then(|| read_u64_le(r).ok())
+    .flatten();
     Ok(GuildEventNotice {
         event,
         params,

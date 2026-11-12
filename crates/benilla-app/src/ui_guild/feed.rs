@@ -30,7 +30,6 @@ pub(super) struct FedGuild {
     /// loaded after the roster still populates.
     seeded: bool,
     motd: String,
-    invite: Option<(String, String)>,
 }
 
 /// Build the display snapshot, push it, and fire the guild events on their edges.
@@ -165,19 +164,13 @@ pub(super) fn feed_guild(
         script.fire_event("PLAYER_GUILD_UPDATE", Vec::new());
     }
 
-    // `GUILD_INVITE_REQUEST` shows the popup. There is no hide edge: nothing in the 1.12 client
-    // raises `GUILD_INVITE_CANCEL`.
-    if fed.invite != guild.pending_invite {
-        fed.invite = guild.pending_invite.clone();
-        if let Some((inviter, name)) = &guild.pending_invite {
-            script.fire_event(
-                "GUILD_INVITE_REQUEST",
-                vec![
-                    ScriptValue::Str(inviter.clone()),
-                    ScriptValue::Str(name.clone()),
-                ],
-            );
-        }
+    // `GUILD_INVITE_REQUEST` shows the popup, once per packet (`0x512570`); no 12340 site signals
+    // `GUILD_INVITE_CANCEL`.
+    for (inviter, name) in std::mem::take(&mut guild.pending_invites) {
+        script.fire_event(
+            "GUILD_INVITE_REQUEST",
+            vec![ScriptValue::Str(inviter), ScriptValue::Str(name)],
+        );
     }
 
     // `/ginfo`'s two lines, resolved here because their templates are not catalog rows.
@@ -357,11 +350,9 @@ pub(super) fn drain_guild(
                 let _ = commands.0.send(ClientCommand::GuildLeader { name });
             }
             GuildRequest::Accept => {
-                guild.clear_invite();
                 let _ = commands.0.send(ClientCommand::GuildAccept);
             }
             GuildRequest::Decline => {
-                guild.clear_invite();
                 let _ = commands.0.send(ClientCommand::GuildDecline);
             }
             GuildRequest::Leave => {
