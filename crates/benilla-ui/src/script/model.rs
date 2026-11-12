@@ -1007,6 +1007,8 @@ pub(crate) struct Model {
     pub(crate) random_properties: HashMap<u32, super::RandomPropertyView>,
     /// `ItemRandomSuffix.dbc`, what a negative random-property id takes.
     pub(crate) random_suffixes: HashMap<u32, super::RandomSuffixView>,
+    /// `ScalingStatDistribution` and `ScalingStatValues`, pushed whole at startup.
+    pub(crate) scaling: super::ScalingTables,
     /// `SpellItemEnchantment.dbc`, pushed whole at startup: a link names any row.
     pub(crate) enchant_rows: HashMap<u32, super::EnchantRowView>,
     /// Quest tooltips by quest id, the quests a tooltip asked for, and the tooltips waiting.
@@ -1790,6 +1792,7 @@ impl Model {
             random_properties: HashMap::new(),
             hovered_link: None,
             random_suffixes: HashMap::new(),
+            scaling: Default::default(),
             enchant_rows: HashMap::new(),
             quest_tooltips: HashMap::new(),
             quest_tooltip_asks: HashSet::new(),

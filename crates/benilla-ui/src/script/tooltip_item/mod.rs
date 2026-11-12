@@ -27,6 +27,8 @@ mod socket_tips;
 mod sockets;
 mod wait;
 
+#[cfg(test)]
+pub(super) use render::bind_key;
 pub(super) use render::Sell;
 use render::{render_view, BuilderFlags};
 use wait::{note_item_miss, retrieving};
@@ -547,10 +549,12 @@ fn set_item_link(
                     .expect("model app_data");
                 rolled_name(&model, lua, &v.name, fields.random_property)
             };
+            // The link block rides to the builder, so a scaling item shows the link's level.
             let inst = render::ItemInstance {
                 name: Some(name),
                 enchants: link_enchants(lua, &fields),
                 link: fields,
+                link_level: fields.level,
                 ..Default::default()
             };
             render_view(lua, this, &v, flags, Some(&inst))?;
@@ -574,11 +578,12 @@ fn add_compare_delta(
     };
     let delta = {
         let mut model = crate::script::model_mut_of(lua);
-        let Ok((a_id, a_fields)) = tip_mut(&mut model, main).map(|t| (t.item_id, t.item_link))
-        else {
+        // Each side's summary at the level its tooltip showed (`0x630c70`).
+        let shown = |t: &crate::widget::TooltipState| (t.item_id, t.item_link, t.item_shown_level);
+        let Ok((a_id, a_fields, a_level)) = tip_mut(&mut model, main).map(|t| shown(t)) else {
             return Ok(());
         };
-        let Ok((b_id, b_fields)) = tip_mut(&mut model, h).map(|t| (t.item_id, t.item_link)) else {
+        let Ok((b_id, b_fields, b_level)) = tip_mut(&mut model, h).map(|t| shown(t)) else {
             return Ok(());
         };
         match (
@@ -586,8 +591,8 @@ fn add_compare_delta(
             model.item_templates.get(&b_id),
         ) {
             (Some(a), Some(b)) => Some(StatSummary::delta(
-                &StatSummary::of(&model, a, &a_fields),
-                &StatSummary::of(&model, b, &b_fields),
+                &StatSummary::of_at(&model, a, &a_fields, a_level),
+                &StatSummary::of_at(&model, b, &b_fields, b_level),
             )),
             _ => None,
         }
@@ -664,12 +669,12 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // GameTooltip:SetHyperlinkCompareItem("hyperlink" [, offset, shiftButton, mainTooltip])
     // (`0x631b60`): the worn item the link's item is compared against, under "Currently
     // Equipped", with the stat change against `mainTooltip`'s item; the number 1, or nil with the
-    // tooltip untouched. Not built: offset 3's heirloom arm (a scaling item at an open vendor
-    // shows itself).
+    // tooltip untouched. Offset 3 is the heirloom arm (`0x6318be`): a scaling item, with a vendor
+    // open and shift up, shows itself at its lowest level, with no header and no delta.
     m.set(
         "SetHyperlinkCompareItem",
         lua.create_function(
-            |lua, (this, link, offset, _shift, main): (Table, Value, Value, Value, Value)| {
+            |lua, (this, link, offset, shift, main): (Table, Value, Value, Value, Value)| {
                 let h = frame_handle_of(lua, &this)?;
                 let Some(link) = lua.coerce_string(link)? else {
                     let name = {
@@ -699,12 +704,29 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     return Ok(Value::Nil);
                 }
                 let offset = lua.coerce_number(offset)?.map_or(0, |n| n as i64 - 1);
-                if offset == 2 {
-                    return Ok(Value::Nil);
-                }
+                let shift = super::binding_abi::bool_or_default(Some(&shift), false);
                 let Some(offered) = view_of(lua, item_id) else {
                     return Ok(Value::Nil);
                 };
+                if offset == 2 {
+                    let merchant_open = crate::script::model_mut_of(lua).merchant.is_some();
+                    if offered.scaling_value == 0 || !merchant_open || shift {
+                        return Ok(Value::Nil);
+                    }
+                    {
+                        let mut model = crate::script::model_mut_of(lua);
+                        clear_content(&mut model, h);
+                    }
+                    fire_cleared(lua, h);
+                    let flags = BuilderFlags {
+                        sell: Sell::ONE,
+                        minimum_level: true,
+                        ..Default::default()
+                    };
+                    render_view(lua, &this, &offered, flags, None)?;
+                    show_or_hide_empty(lua, h);
+                    return Ok(Value::Integer(1));
+                }
                 let slot = {
                     let model = lua
                         .app_data_ref::<crate::script::ModelCell>()
@@ -873,6 +895,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         Ok(t) => std::mem::take(&mut t.equipped_header_armed),
                         Err(_) => false,
                     };
+                    // The unit is the requester: a scaling item shows at its level.
+                    let requester_level = model.unit(&unit).map_or(0, |u| u.level as i32);
                     let view = model
                         .inv_slot(&unit, slot)
                         .filter(|s| s.item_id != 0)
@@ -899,11 +923,13 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                     guid: s.guid,
                                     socket_preview: None,
                                     inspected: !unit.eq_ignore_ascii_case("player"),
+                                    requester_level,
                                     link: s
                                         .link
                                         .as_deref()
                                         .and_then(ItemLinkFields::parse)
                                         .map_or_else(Default::default, |(_, f)| f),
+                                    ..Default::default()
                                 },
                             )
                         });
@@ -939,6 +965,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     currently_equipped,
                     name_only,
                     sell,
+                    minimum_level: false,
                 };
                 {
                     let mut model = crate::script::model_mut_of(lua);
@@ -1027,6 +1054,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                 guid: s.guid,
                                 socket_preview: None,
                                 inspected: false,
+                                ..Default::default()
                             },
                             cost.unwrap_or(0),
                         )
@@ -1145,7 +1173,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             fire_cleared(lua, h);
             // The row's app-composed name has the suffix joined, as the reference does; the lines
             // come from the roll id, the reference's `+0x424`.
-            let inst = block_instance(lua, row.name.clone(), row.link.as_deref());
+            // The requester is the loot's source, which keeps a class 10 item's bind line.
+            let inst = render::ItemInstance {
+                loot_window: true,
+                ..block_instance(lua, row.name.clone(), row.link.as_deref())
+            };
             // The slot's count as the block's stack (`0x62e520`).
             let flags = BuilderFlags {
                 sell: Sell::Block {

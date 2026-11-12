@@ -147,6 +147,9 @@ pub(super) fn seed_ui_fixture(
         flags2: 0,
         required_disenchant_skill: -1,
         item_limit_category: 0,
+        scaling_stat_distribution: 0,
+        scaling_stat_value: 0,
+        armor_damage_modifier: 0.0,
     };
 
     match fixture {

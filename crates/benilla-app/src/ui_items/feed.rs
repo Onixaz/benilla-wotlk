@@ -232,6 +232,16 @@ fn template_view(
         sub_class_display: sub_classes
             .and_then(|c| c.display_name(t.class, t.subclass))
             .map(str::to_string),
+        // A scaling armor piece's alternate names, leather (2) and mail (3) (`0x628930`).
+        scaling_armor_names: if t.scaling_stat_value != 0 && t.class == 4 {
+            [2, 3].map(|sub| {
+                sub_classes
+                    .and_then(|c| c.display_name(4, sub))
+                    .map(str::to_string)
+            })
+        } else {
+            Default::default()
+        },
         flags: t.flags,
         bonding: t.bonding,
         max_count: t.max_count,
@@ -311,6 +321,9 @@ fn template_view(
             })
             .collect(),
         bag_family: t.bag_family,
+        scaling_distribution: t.scaling_stat_distribution,
+        scaling_value: t.scaling_stat_value,
+        armor_damage_modifier: t.armor_damage_modifier,
         item_limit: limits
             .and_then(|l| l.0.get(t.item_limit_category))
             .map(|c| benilla_ui::script::ItemLimitView {
@@ -505,25 +518,49 @@ pub(super) fn feed_item_sets(
     }
 }
 
-/// Pushes the whole random-suffix table once per VM, when both catalogs are in: its consumers are
-/// click-driven, and a chat-link tooltip has no hover loop to repaint a late answer.
-pub(super) fn feed_random_properties(
+/// Which of the whole tables [`feed_item_tables`] has pushed to the current VM.
+#[derive(Default)]
+pub(super) struct TablesPushed {
+    random_properties: bool,
+    scaling: bool,
+}
+
+/// Pushes the whole item tables once per VM, each as soon as its catalogs are in: the random-suffix
+/// table (consumers are click-driven, and a chat-link tooltip has no hover loop to repaint a late
+/// answer) and the two scaling tables (a link's heirloom reads them on its first hover). One
+/// system: once both are in, a frame costs a VM check and two flags.
+pub(super) fn feed_item_tables(
     script: Option<NonSendMut<UiScript>>,
     props: Option<Res<crate::items::RandomProperties>>,
     enchants: Option<Res<crate::items::Enchants>>,
-    mut pushed: Local<crate::ui_script::VmMemo<bool>>,
+    scaling: Option<Res<super::ScalingStats>>,
+    mut pushed: Local<crate::ui_script::VmMemo<TablesPushed>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    if *pushed.get(&script) {
-        return;
+    let pushed = pushed.get(&script);
+    if !pushed.random_properties {
+        // Without the enchant catalog every row would push empty, never to be retried.
+        if let (Some(props), Some(enchants)) = (props, enchants) {
+            push_random_properties(&mut script, &props, &enchants);
+            pushed.random_properties = true;
+        }
     }
-    // Without the enchant catalog every row would push empty, never to be retried.
-    let (Some(props), Some(enchants)) = (props, enchants) else {
-        return;
-    };
-    let rows = crate::items::random_property_views(&props, Some(&enchants));
+    if !pushed.scaling {
+        if let Some(tables) = scaling {
+            push_scaling_tables(&mut script, &tables);
+            pushed.scaling = true;
+        }
+    }
+}
+
+fn push_random_properties(
+    script: &mut UiScript,
+    props: &crate::items::RandomProperties,
+    enchants: &crate::items::Enchants,
+) {
+    let rows = crate::items::random_property_views(props, Some(enchants));
     let with_lines = rows.values().filter(|v| !v.enchants.is_empty()).count();
     info!(
         "random-property table: {} rows pushed, {with_lines} with enchant lines",
@@ -546,8 +583,33 @@ pub(super) fn feed_random_properties(
             })
             .collect(),
     );
-    script.set_enchant_rows(crate::items::enchant_rows(&enchants));
-    *pushed.get(&script) = true;
+    script.set_enchant_rows(crate::items::enchant_rows(enchants));
+}
+
+fn push_scaling_tables(script: &mut UiScript, tables: &super::ScalingStats) {
+    script.set_scaling_tables(benilla_ui::script::ScalingTables {
+        distributions: tables
+            .0
+            .distributions
+            .iter()
+            .map(|(&id, d)| {
+                (
+                    id,
+                    benilla_ui::script::ScalingDistributionView {
+                        stat_ids: d.stat_ids,
+                        bonuses: d.bonuses,
+                        max_level: d.max_level,
+                    },
+                )
+            })
+            .collect(),
+        values: tables
+            .0
+            .values
+            .iter()
+            .map(|&row| benilla_ui::script::ScalingValuesView(row))
+            .collect(),
+    });
 }
 
 /// The item-tooltip feed: every template that lands is pushed unprompted, so the first hover never
@@ -726,6 +788,8 @@ pub(super) fn feed_player_req(
     factions: Option<Res<crate::target::Factions>>,
     actions: Res<crate::ui_action::PlayerActions>,
     spells: Option<Res<crate::ui_action::Spells>>,
+    // The class flags the scaling armor alternates read (`0x6288f5`).
+    classes: Option<Res<crate::chr_classes::ChrClassTable>>,
     mut last: Local<crate::ui_script::VmMemo<Option<benilla_ui::script::PlayerReqState>>>,
 ) {
     let Some(mut script) = script else {
@@ -813,6 +877,7 @@ pub(super) fn feed_player_req(
         rep_ranks,
         can_dual_wield,
         honor_rank: store.0.player_honor_rank().unwrap_or(0),
+        class_flags: classes.map_or(0, |c| c.0.flags(u32::from(class))),
     };
     if last.as_ref() != Some(&state) {
         gate.audit("feed_player_req", "the player-requirement state");

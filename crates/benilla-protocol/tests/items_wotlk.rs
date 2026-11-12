@@ -153,6 +153,9 @@ fn starting_pants_decode_whole() {
             flags2: 0,
             required_disenchant_skill: -1,
             item_limit_category: 0,
+            scaling_stat_distribution: 0,
+            scaling_stat_value: 0,
+            armor_damage_modifier: 0.0,
         }))
     );
 }
@@ -230,4 +233,20 @@ fn sockets_socket_bonus_and_gem_properties_decode() {
     assert_eq!(info.socket_colors, [2, 8, 0]);
     assert_eq!(info.socket_bonus, 3_301);
     assert_eq!(info.gem_properties, 7);
+}
+
+#[test]
+fn the_scaling_fields_decode_after_the_stat_run() {
+    // The pants with distribution 5 and mask 0x101 (shoulder budget, plate shoulder armor).
+    let mut body = hx(PANTS);
+    // The two words sit right after the zero StatsCount.
+    let at = 16 + 23 + 3 + 22 * 4;
+    assert_eq!(&body[at..at + 8], &[0; 8]);
+    body[at..at + 4].copy_from_slice(&5u32.to_le_bytes());
+    body[at + 4..at + 8].copy_from_slice(&0x101u32.to_le_bytes());
+    let (_, info) = parse_wotlk(&body);
+    let info = info.expect("a template");
+    assert_eq!(info.scaling_stat_distribution, 5);
+    assert_eq!(info.scaling_stat_value, 0x101);
+    assert_eq!(info.armor, 2, "the fields after them still line up");
 }

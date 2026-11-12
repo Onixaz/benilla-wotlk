@@ -39,8 +39,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("ObjectEffectPackage", "#243 object effects"),
     ("ObjectEffectPackageElem", "#243 object effects"),
     ("RandPropPoints", "#239 random property and suffix stats"),
-    ("ScalingStatDistribution", "#239 heirloom stat scaling"),
-    ("ScalingStatValues", "#239 heirloom stat scaling"),
     ("ScreenEffect", "#243 screen effects"),
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
     ("Startup_Strings", "#245 the client's startup error text"),

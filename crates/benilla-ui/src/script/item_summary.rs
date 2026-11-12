@@ -1,6 +1,6 @@
 //! The item stat summary: one item's stats folded into 73 cells and a DPS, which the compare
 //! tooltip subtracts (`0x631590`) and `GetItemStats`/`GetItemStatDelta` (`0x608690`, `0x608760`)
-//! read. Not built: a scaling item (`0x61f550`), which reads as its template.
+//! read; a scaling item folds its level's values instead (`0x61f550`).
 
 use super::item_link::ItemLinkFields;
 use super::model::Model;
@@ -109,15 +109,86 @@ fn stat_key(stat: usize) -> String {
 }
 
 impl StatSummary {
-    /// The summary of a template with a link block's roll (`0x6265c0`).
+    /// The summary of a link's item (`0x6207a0`): a scaling item at the link's level field.
     pub(super) fn of(model: &Model, v: &ItemTemplateView, f: &ItemLinkFields) -> Self {
+        Self::of_at(model, v, f, f.level)
+    }
+
+    /// The summary of a template with a link block's roll (`0x6265c0`); a scaling item reads
+    /// `level` instead, 0 taking the shown level.
+    pub(super) fn of_at(
+        model: &Model,
+        v: &ItemTemplateView,
+        f: &ItemLinkFields,
+        level: i32,
+    ) -> Self {
         let mut s = Self::default();
-        s.accumulate(model, v);
-        if f.random_property != 0 {
-            s.add_roll(model, f);
+        if v.scaling_value != 0 {
+            s.fill_scaling(model, v, level);
+        } else {
+            s.accumulate(model, v);
+            if f.random_property != 0 {
+                s.add_roll(model, f);
+            }
         }
         s.clean_names();
         s
+    }
+
+    /// A scaling item at `level` (`0x61f550`), unclamped when given: no distribution or values row
+    /// leaves it empty; else its spells, the budget's stats by the distribution, armor by the
+    /// mask or the template's, damage by the mask or the template's, and the spell power bit.
+    fn fill_scaling(&mut self, model: &Model, v: &ItemTemplateView, level: i32) {
+        let tables = &model.scaling;
+        let level = if level == 0 {
+            let player = model.player_req.level as i32;
+            super::item_scaling::shown_level(v, tables, false, 0, 0, player)
+        } else {
+            level
+        };
+        let (Some(d), Some(row)) = (
+            tables.distributions.get(&v.scaling_distribution),
+            tables.values_at(level),
+        ) else {
+            return;
+        };
+        for s in v.item_spells.iter().filter(|s| s.spell as i32 > 0) {
+            self.add_spell(model, s.spell);
+        }
+        let mask = v.scaling_value;
+        let budget = row.budget(mask);
+        for (&kind, &bonus) in d.stat_ids.iter().zip(&d.bonuses) {
+            if kind > 0 {
+                self.add_stat(kind as usize, super::item_scaling::share(budget, bonus));
+            }
+        }
+        if mask & 0xf8_01e0 != 0 {
+            self.stats[0] += row.armor(mask);
+        } else {
+            self.add_resistances(v);
+        }
+        if mask & 0x7e00 != 0 {
+            let (min, max) = row.damage(mask);
+            let total = min + max;
+            self.dps = 0.5 * total;
+            let damage = total * v.delay_ms as i32 as f32 * 0.0005;
+            if model.player_req.class_id == 11 {
+                self.stats[10] += self.stats[8] + feral_attack_power(v, damage);
+            }
+        } else {
+            self.add_template_dps(model, v);
+        }
+        if mask & 0x8000 != 0 {
+            self.stats[56] += row.spell_power();
+        }
+    }
+
+    /// The template's armor and resistances (`0x61b8e0`).
+    fn add_resistances(&mut self, v: &ItemTemplateView) {
+        self.stats[0] += v.armor as i32;
+        for (i, r) in v.resistances.iter().enumerate() {
+            self.stats[i + 1] += r;
+        }
     }
 
     /// `a - b`, its group cells rejoined (`0x61dbc0`).
@@ -192,10 +263,7 @@ impl StatSummary {
         for s in &v.item_spells {
             self.add_spell(model, s.spell);
         }
-        self.stats[0] += v.armor as i32;
-        for (i, r) in v.resistances.iter().enumerate() {
-            self.stats[i + 1] += r;
-        }
+        self.add_resistances(v);
         for &color in &v.socket_colors {
             for bit in 0..4 {
                 if color & (1 << bit) != 0 {
@@ -204,6 +272,11 @@ impl StatSummary {
             }
         }
         self.stats[60] += v.block as i32;
+        self.add_template_dps(model, v);
+    }
+
+    /// The template's two damage blocks over its delay (`0x61f410`).
+    fn add_template_dps(&mut self, model: &Model, v: &ItemTemplateView) {
         // The two-block average over the delay, without a guard: no damage on no delay reads NaN,
         // which no comparison passes, so a non-weapon's DPS shows nowhere.
         let delay = v.delay_ms as f32;
@@ -436,6 +509,86 @@ mod tests {
                 "|cff00ff00+6|r ITEM_MOD_AGILITY_SHORT".to_string(),
                 "|cff00ff00+20|r ITEM_MOD_HIT_RATING_SHORT".to_string(),
             ]
+        );
+    }
+
+    /// A model holding one distribution (id 3: stamina 50%, attack power 100%, a mana slot at 0
+    /// skipped) and two values rows, the second level 2's.
+    fn scaling_model() -> Model {
+        use crate::script::{ScalingDistributionView, ScalingValuesView};
+        let mut model = Model::new();
+        let mut d = ScalingDistributionView {
+            stat_ids: [-1; 10],
+            max_level: 80,
+            ..Default::default()
+        };
+        d.stat_ids[..3].copy_from_slice(&[7, 38, 0]);
+        d.bonuses[..3].copy_from_slice(&[5_000, 10_000, 9_000]);
+        model.scaling.distributions.insert(3, d);
+        let mut row = [0; 24];
+        row[1] = 2;
+        row[17] = 200; // primary budget
+        row[9] = 300; // plate shoulder armor
+        row[10] = 100; // one-hand weapon DPS
+        row[16] = 40; // spell power
+        model.scaling.values = vec![ScalingValuesView([1; 24]), ScalingValuesView(row)];
+        model
+    }
+
+    fn heirloom(mask: u32) -> ItemTemplateView {
+        ItemTemplateView {
+            scaling_distribution: 3,
+            scaling_value: mask,
+            stats: vec![(4, 99)],
+            armor: 999,
+            resistances: [5; 6],
+            socket_colors: [2, 0, 0],
+            delay_ms: 2000,
+            damages: vec![(1.0, 3.0, 0)],
+            ..Default::default()
+        }
+    }
+
+    /// `0x61f550`: the budget's shares by the distribution, armor and spell power by the mask, and
+    /// none of the template's stats, sockets or armor.
+    #[test]
+    fn a_scaling_item_folds_its_level_row() {
+        let model = scaling_model();
+        let f = ItemLinkFields {
+            level: 2,
+            ..Default::default()
+        };
+        let s = StatSummary::of(&model, &heirloom(0x8 | 0x100 | 0x8000), &f);
+        assert_eq!(
+            entries(&s),
+            vec![
+                ("ITEM_MOD_ATTACK_POWER_SHORT".into(), 200),
+                ("ITEM_MOD_SPELL_POWER_SHORT".into(), 40),
+                ("ITEM_MOD_STAMINA_SHORT".into(), 100),
+                ("RESISTANCE0_NAME".into(), 300),
+            ]
+        );
+        // No armor bit: the template's armor and resistances; no damage bit: its damage.
+        let plain = StatSummary::of(&model, &heirloom(0x8), &f);
+        assert!(entries(&plain).contains(&("RESISTANCE0_NAME".into(), 999)));
+        assert!(entries(&plain).contains(&("RESISTANCE1_NAME".into(), 5)));
+        assert_eq!(plain.dps(), Some(1.0));
+    }
+
+    /// A damage bit's band sets the DPS to its mean; a link level past the table reads nothing, as
+    /// the link's level is not held to the item's range.
+    #[test]
+    fn a_scaling_weapon_reads_its_band_and_an_unrowed_level_reads_empty() {
+        let model = scaling_model();
+        let at = |level| ItemLinkFields {
+            level,
+            ..Default::default()
+        };
+        let sword = heirloom(0x4 | 0x200);
+        assert_eq!(StatSummary::of(&model, &sword, &at(2)).dps(), Some(100.0));
+        assert_eq!(
+            StatSummary::of(&model, &sword, &at(99)),
+            StatSummary::default()
         );
     }
 
