@@ -1346,6 +1346,7 @@ fn spell_start(
                 spell_id,
                 cast_count,
                 until: Some(Instant::now() + Duration::from_millis(u64::from(cast_time_ms))),
+                listed: true,
             });
         }
         // The precast edge, instants included: their GO follows at once and reaps the hold.
@@ -1461,6 +1462,16 @@ fn spell_go(
             pet_bar.pending_cast = None;
         }
         // The caster's cast state stays; the next start or end clears it (`0x805330`, `0x7fecc0`).
+        if let Some(&e) = index.0.get(&caster) {
+            if let Ok(&held) = casting.get(e) {
+                if (held.spell_id, held.cast_count) == (spell_id, cast_count) {
+                    commands.entity(e).insert(Casting {
+                        listed: false,
+                        ..held
+                    });
+                }
+            }
+        }
         return;
     }
     // Every caster's launch reaches the unit-cast feed (`0x80e763`).
@@ -2640,6 +2651,7 @@ mod tests {
                     spell_id: 133,
                     cast_count: 0,
                     until: None,
+                    listed: true,
                 },
                 ObjectStore::default(),
             ))
@@ -2739,6 +2751,7 @@ mod tests {
             spell_id: 10,
             cast_count: 0,
             until: None,
+            listed: true,
         });
         app.world_mut()
             .resource_mut::<PendingCast>()
@@ -2751,9 +2764,12 @@ mod tests {
                 .committed(Instant::now()),
             None
         );
+        // Held, but its pending cast is no longer listed (`0x805f30`).
         assert_eq!(
-            app.world().get::<Casting>(self_e).map(|c| c.spell_id),
-            Some(10)
+            app.world()
+                .get::<Casting>(self_e)
+                .map(|c| (c.spell_id, c.listed)),
+            Some((10, false))
         );
 
         // The next timed start replaces the held state (`0x805330`).

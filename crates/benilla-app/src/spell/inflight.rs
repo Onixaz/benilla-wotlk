@@ -338,6 +338,7 @@ impl SelfCancel<'_, '_> {
                 .is_none_or(pick)
         };
         // The cast abort treats a cast and a queued strike alike; only the local teardown differs.
+        // An unlisted held cast still cancels: 12340 hands `0x806200` a null pending cast there.
         let started = self_e.and_then(|e| casting.get(e).ok()).map(|c| c.spell_id);
         if let Some(slot) = inflight(pending, queued_melee, started, now) {
             let spell_id = slot.spell_id();
@@ -572,6 +573,7 @@ mod tests {
                 spell_id,
                 cast_count: 0,
                 until: None,
+                listed: true,
             });
         }
 

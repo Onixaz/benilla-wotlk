@@ -687,6 +687,7 @@ mod tests {
                 spell_id: 7,
                 cast_count: 3,
                 until: None,
+                listed: true,
             })
             .id();
         app.insert_resource(GuidIndex([(0x2A, pet)].into_iter().collect()));

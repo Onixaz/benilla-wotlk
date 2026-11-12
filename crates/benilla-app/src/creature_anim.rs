@@ -397,6 +397,8 @@ pub(crate) struct Casting {
     pub(crate) cast_count: u8,
     #[allow(dead_code)]
     pub(crate) until: Option<Instant>,
+    /// Its pending cast is still listed, which `IsCurrentSpell` tests (`0x805f30`).
+    pub(crate) listed: bool,
 }
 
 /// The reference's animation play order: handlers run in packet order and the later play wins
