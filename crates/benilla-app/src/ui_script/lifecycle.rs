@@ -63,6 +63,7 @@ fn install_glue_vm(world: &mut World, screen: super::glue::GlueScreen) -> bool {
     let Some(mut script) = new_vm(world, UiScript::new_glue) else {
         return false;
     };
+    script.set_glue_file_reader(Box::new(super::reference_ui::read));
     seat_raster_seam_for_load(world, &mut script);
     // The CVar table before the files load: the options panels read their CVars in `OnLoad`, and
     // this VM was born before `cvars::sync_cvars`'s per-VM seed.

@@ -84,7 +84,6 @@ fn the_glue_tables_hold_their_rows() {
 const NOT_YET: &[(&str, &[&str])] = &[(
     "the glue's credits text and its options defaults (table t022)",
     &[
-        "GetCreditsText",
         "RestoreVideoEffectsDefaults",
         "RestoreVideoResolutionDefaults",
         "RestoreVideoStereoDefaults",
@@ -196,6 +195,59 @@ fn glue_events_register_by_the_glue_table() {
     assert_eq!(
         s.eval::<Vec<String>>("return heard").unwrap(),
         ["all:SET_GLUE_SCREEN"]
+    );
+}
+
+/// `GetCreditsText` (`0x4dcd60`) reads its file at the call: 1 and 2 name the first two, every
+/// other number the third, a numeric string is a number, and the text ends at a NUL.
+#[test]
+fn get_credits_text_reads_the_file_its_number_names() {
+    let mut s = UiScript::new_glue().unwrap();
+    s.set_glue_file_reader(Box::new(|name| match name {
+        "credits.html" => Some(b"classic".to_vec()),
+        "credits_BC.html" => Some(b"bc\0past the end".to_vec()),
+        "credits_LK.html" => Some(b"wrath \xff".to_vec()),
+        _ => None,
+    }));
+    let text = |args: &str| {
+        s.eval::<mlua::String>(&format!("return GetCreditsText({args})"))
+            .unwrap()
+            .as_bytes()
+            .to_vec()
+    };
+    assert_eq!(text("1"), b"classic");
+    assert_eq!(text("1.9"), b"classic", "the number is truncated");
+    assert_eq!(text("'1'"), b"classic", "a numeric string is a number");
+    assert_eq!(text("2, 'ignored'"), b"bc");
+    for other in ["3", "0", "-1", "2.5e9", "0/0"] {
+        assert_eq!(text(other), b"wrath \xff", "{other}");
+    }
+    for bad in ["", "nil", "'one'", "{}", "true"] {
+        let err = s.run(&format!("GetCreditsText({bad})")).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Usage: Script_GetCreditText(versionIndex)"),
+            "{bad}: {err}"
+        );
+    }
+}
+
+/// A file that does not read pushes nothing and the verb still returns one value: its last
+/// argument.
+#[test]
+fn get_credits_text_answers_its_last_argument_for_a_missing_file() {
+    let mut s = UiScript::new_glue().unwrap();
+    assert_eq!(s.eval::<i64>("return GetCreditsText(3)").unwrap(), 3);
+    s.set_glue_file_reader(Box::new(|_| None));
+    assert_eq!(
+        s.eval::<String>("return GetCreditsText(1, 'last')")
+            .unwrap(),
+        "last"
+    );
+    assert_eq!(
+        s.eval::<i64>("return select('#', GetCreditsText(1, 2))")
+            .unwrap(),
+        1
     );
 }
 

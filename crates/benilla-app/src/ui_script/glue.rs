@@ -298,6 +298,82 @@ mod tests {
         );
     }
 
+    /// The Credits window opens on the newest expansion's file and each switch button takes it to
+    /// another's, the two buttons naming the other two, with nothing raised (#431).
+    #[test]
+    fn the_credits_window_switches_between_its_three_files() {
+        let _ = benilla_formats::wow_data_or_skip!();
+        let mut s = UiScript::new_glue().unwrap();
+        s.set_screen_size(1024.0, 768.0);
+        s.seed_cvars(crate::cvars::Cvars::default().vm_seed());
+        s.set_glue_file_reader(Box::new(reference_ui::read));
+        let _ = load_glue(&mut s);
+        set_glue_screen(&mut s, GlueScreen::Login);
+        s.tick(0.1);
+        let _ = s.take_errors();
+        s.run(
+            r#"
+            Read = {}
+            local text = GetCreditsText
+            GetCreditsText = function(n) Read[#Read + 1] = n; return text(n) end
+            function Buttons()
+                local one, two = CreditsFrameSwitchButton1, CreditsFrameSwitchButton2
+                return one:GetText(), one:GetID(), two:GetText(), two:GetID()
+            end
+            function Names(a, b) return _G[a], _G[b] end
+            "#,
+        )
+        .unwrap();
+        s.run("AccountLoginCreditsButton:Click()").unwrap();
+        let mut seen = Vec::new();
+        for (click, shown, names, ids) in [
+            (None, 3, ("CREDITS_WOW_CLASSIC", "CREDITS_WOW_BC"), (1, 2)),
+            (Some(1), 1, ("CREDITS_WOW_BC", "CREDITS_WOW_LK"), (2, 3)),
+            (
+                Some(2),
+                3,
+                ("CREDITS_WOW_CLASSIC", "CREDITS_WOW_BC"),
+                (1, 2),
+            ),
+            (
+                Some(2),
+                2,
+                ("CREDITS_WOW_CLASSIC", "CREDITS_WOW_LK"),
+                (1, 3),
+            ),
+        ] {
+            if let Some(button) = click {
+                s.run(&format!("CreditsFrameSwitchButton{button}:Click()"))
+                    .unwrap();
+            }
+            s.tick(0.1);
+            s.resolve();
+            let errors = s.take_errors();
+            assert!(errors.is_empty(), "{click:?}: {errors:?}");
+            assert_eq!(
+                s.eval::<i64>("return CreditsFrame.creditsType").unwrap(),
+                shown
+            );
+            assert_eq!(s.eval::<i64>("return Read[#Read]").unwrap(), shown);
+            let (first, first_id, second, second_id) = s
+                .eval::<(String, i64, String, i64)>("return Buttons()")
+                .unwrap();
+            let want = s
+                .eval::<(String, String)>(&format!("return Names('{}', '{}')", names.0, names.1))
+                .unwrap();
+            assert_eq!((first, second), want, "{click:?}");
+            assert_eq!((first_id, second_id), ids, "{click:?}");
+            // The text the SimpleHTML took is the file's: its regions differ from file to file.
+            seen.push(
+                s.eval::<i64>("return select('#', CreditsText:GetRegions())")
+                    .unwrap(),
+            );
+        }
+        assert!(seen.iter().all(|&n| n > 0), "{seen:?}");
+        assert_eq!(seen[0], seen[2], "the same file builds the same text");
+        assert!(seen[0] != seen[1] && seen[1] != seen[3], "{seen:?}");
+    }
+
     /// Each Cinematics button shows `MovieFrame`, whose stock walk tries every movie of its
     /// version; `StartMovie` answers nil, so the walk ends by hiding the frame and its `OnHide`
     /// puts the login screen back, with nothing raised (#301).
