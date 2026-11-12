@@ -281,10 +281,19 @@ impl KeybindState {
     /// header opens a `HEADER_<addon>` row, where the reference files those rows under the
     /// previous file's last header, because under a foreign header the player could not find
     /// them. The core file passes `None` and is read as the reference reads it.
-    fn register(&mut self, fallback_header: Option<&str>, bindings: &[Binding]) {
+    fn register(
+        &mut self,
+        os: super::ClientOs,
+        fallback_header: Option<&str>,
+        bindings: &[Binding],
+    ) {
         let mut opened = false;
         for b in bindings {
-            if b.platform.as_deref().is_some_and(|p| p != THIS_PLATFORM) {
+            // The loader's compare ignores case.
+            if b.platform
+                .as_deref()
+                .is_some_and(|p| !p.eq_ignore_ascii_case(os.binding_platform()))
+            {
                 continue;
             }
             let key = b.name.to_ascii_uppercase();
@@ -311,22 +320,21 @@ impl KeybindState {
     }
 }
 
-/// The `platform="…"` value that registers: `"windows"`, the PC build's, on every OS, since benilla
-/// answers as the PC build (`IsMacClient` nil, `client.rs`); the Mac build compares against `"mac"`
-/// and so has the `ITUNES_*` rows.
-const THIS_PLATFORM: &str = "windows";
-
 impl super::UiScript {
     /// Register the core's `Interface\FrameXML\Bindings.xml`, at the reference's point in the UI
     /// load: after the `FrameXML.toc` walk, before the addons.
     pub fn register_bindings(&self, bindings: &[Binding]) {
-        self.model_mut().keybinds.register(None, bindings);
+        let mut model = self.model_mut();
+        let os = model.os;
+        model.keybinds.register(os, None, bindings);
     }
 
     /// Register one addon's parsed `Bindings.xml`, at the reference's point in the addon load:
     /// after its `.toc` files, before its saved variables.
     pub fn register_addon_bindings(&mut self, addon: &str, bindings: &[Binding]) {
-        self.model_mut().keybinds.register(Some(addon), bindings);
+        let mut model = self.model_mut();
+        let os = model.os;
+        model.keybinds.register(os, Some(addon), bindings);
     }
 
     /// Set 0, the defaults, from `WTF\DefaultBindings.wtf` ([`parse_bindings_wtf`]), as the
@@ -422,9 +430,9 @@ impl super::UiScript {
 /// Register one addon's `Bindings.xml` from a bare `&Lua`: `LoadAddOn` runs inside a Lua binding
 /// with no `UiScript` to reach.
 pub(crate) fn register_addon_bindings(lua: &Lua, addon: &str, bindings: &[Binding]) {
-    crate::script::model_mut_of(lua)
-        .keybinds
-        .register(Some(addon), bindings);
+    let mut model = crate::script::model_mut_of(lua);
+    let os = model.os;
+    model.keybinds.register(os, Some(addon), bindings);
 }
 
 /// The binding table's command run: look the command up by name; on a release run nothing unless it
@@ -945,11 +953,30 @@ mod tests {
         );
     }
 
-    /// The PC build's filter on every OS (against `"windows"`), so the stock `platform="mac"`
-    /// iTunes rows are never commands.
+    /// The Mac build keeps the `platform="mac"` rows and their headers and drops the PC ones.
+    #[test]
+    fn the_mac_build_registers_the_mac_rows() {
+        let s = UiScript::new_on(crate::script::ClientOs::Mac).unwrap();
+        let parsed = parse(
+            r#"<Bindings>
+                <Binding name="PROBEHERE" platform="Windows">Here();</Binding>
+                <Binding name="PROBEMAC" platform="mac" header="ITUNES_REMOTE">Mac();</Binding>
+                <Binding name="PROBEANYWHERE">Anywhere();</Binding>
+            </Bindings>"#,
+        )
+        .unwrap();
+        s.register_bindings(&parsed);
+
+        let names: Vec<String> = s.keybind_snapshot().into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["PROBEMAC", "PROBEANYWHERE"]);
+        assert!(rows(&s).contains(&row(&["HEADER_ITUNES_REMOTE"])));
+    }
+
+    /// The PC build's filter (against `"windows"`), so the stock `platform="mac"` iTunes rows are
+    /// never commands.
     #[test]
     fn a_binding_for_another_platform_does_not_register() {
-        let mut s = script();
+        let mut s = UiScript::new_on(crate::script::ClientOs::Pc).unwrap();
         let parsed = parse(
             r#"<Bindings>
                 <Binding name="PROBEHERE" platform="Windows">Here();</Binding>

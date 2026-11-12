@@ -169,13 +169,50 @@ pub(crate) fn registered_pairs() -> impl Iterator<Item = (&'static str, &'static
     registered_rows().map(|r| (r.name, r.default))
 }
 
-/// [`REGISTERED`], then [`REGISTERED_WOTLK`], then the camera's generated tuning rows.
+/// [`REGISTERED`], then [`REGISTERED_WOTLK`], then the camera's generated tuning rows, then
+/// [`REGISTERED_MAC`] where benilla answers as the Mac build.
 pub(crate) fn registered_rows() -> impl Iterator<Item = &'static Registered> {
+    let mac: &[Registered] = match benilla_ui::script::ClientOs::NATIVE {
+        benilla_ui::script::ClientOs::Mac => REGISTERED_MAC,
+        benilla_ui::script::ClientOs::Pc => &[],
+    };
     REGISTERED
         .iter()
         .chain(REGISTERED_WOTLK)
         .chain(super::camera_tuning::ROWS.iter())
+        .chain(mac)
 }
+
+/// The rows only the Mac build of 12340 registers that its stock UI reads (`MacOptionsFrame.lua`),
+/// with the defaults of the Mac build's register sites (`0x98a498` on, the last two `0x65642b` and
+/// `0x65647c`), each with flags 0. benilla records no movie and drives no music player
+/// (`docs/DEVIATIONS.md`), so nothing but the stock window reads them.
+pub(crate) const REGISTERED_MAC: &[Registered] = &[
+    // "Movie width".
+    same("MovieRecordingWidth", "640"),
+    // "Movie framerate".
+    same("MovieRecordingFramerate", "29.97"),
+    // "Enable sound in recorded movie".
+    same("MovieRecordingSound", "1"),
+    // "Enable the user interface in recorded movie"; `MovieRecording_ToggleGUI` flips it.
+    same("MovieRecordingGUI", "1"),
+    // "Enable the cursor in recorded movie".
+    same("MovieRecordingCursor", "0"),
+    // "Controls the quality of the movie."
+    same("MovieRecordingQuality", "2"),
+    // "Controls the compression of the movie.": a QuickTime codec tag, `avc1`.
+    same("MovieRecordingCompression", "1635148593"),
+    // "Show an icon on the minimap while recording."
+    same("MovieRecordingIcon", "1"),
+    // "Check at login to compress any incomplete movies."
+    same("MovieRecordingRecover", "1"),
+    // "Compress the movie when the recording stops."
+    same("MovieRecordingAutoCompress", "1"),
+    // "should iTunes Remote appear whenever a new song starts".
+    same("iTunesTrackDisplay", "0"),
+    // "display iTunes Remote feedback".
+    same("iTunesRemoteFeedback", "1"),
+];
 
 /// The rows 3.3.5a registers and 1.12.1 has no name for, each with a reader in the 3.3.5a stock UI.
 /// Their register sites sit in one run.

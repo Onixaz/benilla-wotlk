@@ -150,6 +150,7 @@ mod glue_realm;
 mod glue_select;
 mod glue_system;
 mod mirror_timer;
+pub use client::ClientOs;
 pub use glue::{VmKind, GLUE_EVENTS};
 pub use glue_addons::GlueAddonChange;
 pub use glue_core::{
@@ -199,6 +200,7 @@ mod lfg;
 mod loot;
 mod loot_roll;
 mod lua51;
+mod mac_client;
 mod macros;
 mod mail;
 mod measure;
@@ -977,10 +979,11 @@ pub fn addon_chunk_name(folder: &str, file: &str) -> String {
 /// shares with the in-game UI's init: the system table `0xad2184` (the clock and `ConsoleExec`),
 /// the frame-script table `0xaf5848` with the widget method tables, and the sound table
 /// `0xb2d928`.
-fn install_framescript(vm: VmKind) -> mlua::Result<Lua> {
+fn install_framescript(vm: VmKind, os: ClientOs) -> mlua::Result<Lua> {
     let lua = Lua::new();
     let mut model = Model::new();
     model.vm = vm;
+    model.os = os;
     lua.set_app_data(ModelCell::new(model));
     // Before anything can fire a handler and while no app-data borrow is held, as the
     // profiler's slot requires.
@@ -1157,7 +1160,12 @@ impl UiScript {
     /// The in-game VM: FrameScript's base set and the registrars both states share
     /// ([`install_framescript`]), then the in-game surface the UI init registers.
     pub fn new() -> mlua::Result<UiScript> {
-        let lua = install_framescript(VmKind::InGame)?;
+        Self::new_on(ClientOs::NATIVE)
+    }
+
+    /// [`Self::new`] answering as `os`'s build of the client, whatever this binary runs on.
+    pub fn new_on(os: ClientOs) -> mlua::Result<UiScript> {
+        let lua = install_framescript(VmKind::InGame, os)?;
         install_in_game(&lua)?;
         Ok(Self::host(lua))
     }
@@ -1167,7 +1175,12 @@ impl UiScript {
     /// ([`glue`]), and none of the in-game surface. Of the glue registrar's own four tables the
     /// screen verbs and the realm list are built ([`glue::install`]).
     pub fn new_glue() -> mlua::Result<UiScript> {
-        let lua = install_framescript(VmKind::Glue)?;
+        Self::new_glue_on(ClientOs::NATIVE)
+    }
+
+    /// [`Self::new_glue`] answering as `os`'s build of the client.
+    pub fn new_glue_on(os: ClientOs) -> mlua::Result<UiScript> {
+        let lua = install_framescript(VmKind::Glue, os)?;
         glue::install(&lua)?;
         Ok(Self::host(lua))
     }

@@ -1018,6 +1018,9 @@ mod macro_tests;
 mod keybindings_tests;
 
 #[cfg(test)]
+mod mac_client_tests;
+
+#[cfg(test)]
 mod delete_item_tests;
 #[cfg(test)]
 mod instance_tests;

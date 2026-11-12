@@ -270,20 +270,31 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The client's identity: `IsWindowsClient` (`0x4dce40`) 1, `IsMacClient`/`IsLinuxClient`
-    // (`0x510b90`) nil, `GetClientExpansionLevel` (`0x4dcbf0`) the installed expansion plus one,
-    // 3 for Wrath of the Lich King; `IsSystemSupported` (`0x4dd540`) the processor's SSE2 bit,
-    // which every machine benilla runs on has.
+    // The client's identity: `IsWindowsClient` (`0x4dce40`) and `IsMacClient`/`IsLinuxClient`
+    // (`0x510b90`) by the build the VM answers as, `GetClientExpansionLevel` (`0x4dcbf0`) the
+    // installed expansion plus one, 3 for Wrath of the Lich King; `IsSystemSupported`
+    // (`0x4dd540`) the processor's SSE2 bit, which every machine benilla runs on has.
+    let os = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data")
+        .os;
     g.set(
         "IsWindowsClient",
-        lua.create_function(|_, _: MultiValue| Ok(1.0))?,
+        lua.create_function(move |_, _: MultiValue| {
+            Ok(match os {
+                super::ClientOs::Pc => Value::Number(1.0),
+                super::ClientOs::Mac => Value::Nil,
+            })
+        })?,
     )?;
-    for name in ["IsMacClient", "IsLinuxClient"] {
-        g.set(
-            name,
-            lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
-        )?;
-    }
+    g.set(
+        "IsMacClient",
+        lua.create_function(move |_, _: MultiValue| Ok(os.is_mac_client()))?,
+    )?;
+    g.set(
+        "IsLinuxClient",
+        lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
+    )?;
     g.set(
         "GetClientExpansionLevel",
         lua.create_function(|_, _: MultiValue| Ok(3.0))?,
