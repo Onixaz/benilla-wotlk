@@ -1,7 +1,9 @@
 # scripts/gates.sh, the land gates, on Linux for a pull request from a fork: a red one is seen
 # before anyone builds it. The chain reads no WoW install, so it runs here as it runs anywhere; the
 # engine boot draws to Xvfb through Mesa's software Vulkan. The data-gated tests and the player
-# build (scripts/check.sh) and a live run happen on the maintainer's machine.
+# build (scripts/check.sh) and a live run happen on the maintainer's machine. A pull request from a
+# branch of this repository waits on the `gates` environment and runs only once the maintainer
+# approves it there.
 name: CI
 
 on:
@@ -17,8 +19,11 @@ concurrency:
 
 jobs:
   gates:
-    # A branch of this repository runs the chain before it lands; a fork's pull request runs here.
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name != github.repository
+    # `gates` holds for the maintainer's approval; `gates-open` (a fork, a manual run) has no rule.
+    environment: >-
+      ${{ github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && 'gates' || 'gates-open' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
