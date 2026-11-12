@@ -1492,8 +1492,22 @@ impl<D: QueryData, F: QueryFilter> QueryState<D, F> {
                 }
             };
 
-            for storage_id in &self.matched_storage_ids {
-                let count = storage_entity_count(*storage_id);
+            // PATCH(occupancy): a non-dense query visits only the archetypes that hold an entity.
+            let dense_ids = self
+                .is_dense
+                .then(|| self.matched_storage_ids.iter().copied())
+                .into_iter()
+                .flatten();
+            let occupied_ids = (!self.is_dense)
+                .then(|| {
+                    archetypes
+                        .occupied_among(self.matched_archetypes.as_slice())
+                        .map(|archetype_id| StorageId { archetype_id })
+                })
+                .into_iter()
+                .flatten();
+            for storage_id in dense_ids.chain(occupied_ids) {
+                let count = storage_entity_count(storage_id);
 
                 // skip empty storage
                 if count == 0 {
@@ -1501,11 +1515,11 @@ impl<D: QueryData, F: QueryFilter> QueryState<D, F> {
                 }
                 // immediately submit large storage
                 if count >= batch_size {
-                    submit_single(count, *storage_id);
+                    submit_single(count, storage_id);
                     continue;
                 }
                 // merge small storage
-                batch_queue.push(*storage_id);
+                batch_queue.push(storage_id);
                 queue_entity_count += count;
 
                 // submit batch_queue

@@ -142,9 +142,11 @@ impl<'w, 's, D: QueryData, F: QueryFilter> QueryParIter<'w, 's, D, F> {
                     .max()
             } else {
                 let archetypes = &self.world.archetypes();
-                id_iter
-                    // SAFETY: The if check ensures that matched_storage_ids stores ArchetypeIds
-                    .map(|id| unsafe { archetypes[id.archetype_id].len() })
+                let _ = id_iter;
+                // PATCH(occupancy): only the archetypes that hold an entity are loaded.
+                archetypes
+                    .occupied_among(self.state.matched_archetypes.as_slice())
+                    .map(|id| archetypes[id].len())
                     .max()
             }
             .map(|v| v as usize)

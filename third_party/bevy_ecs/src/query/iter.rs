@@ -1,6 +1,6 @@
 use super::{QueryData, QueryFilter, ReadOnlyQueryData};
 use crate::{
-    archetype::{Archetype, ArchetypeEntity, Archetypes},
+    archetype::{Archetype, ArchetypeEntity, Archetypes, OccupiedIter},
     bundle::Bundle,
     change_detection::Tick,
     entity::{ContainsEntity, Entities, Entity, EntityEquivalent, EntitySet, EntitySetIterator},
@@ -935,10 +935,26 @@ impl<'w, 's, D: QueryData, F: QueryFilter> Iterator for QueryIter<'w, 's, D, F> 
             accum = func(accum, item);
         }
 
-        for id in self.cursor.storage_id_iter.clone().copied() {
-            // SAFETY:
-            // - The range(None) is equivalent to [0, storage.entity_count)
-            accum = unsafe { self.fold_over_storage_range(accum, &mut func, id, None) };
+        if self.cursor.is_dense {
+            for id in self.cursor.storage_id_iter.clone().copied() {
+                // SAFETY:
+                // - The range(None) is equivalent to [0, storage.entity_count)
+                accum = unsafe { self.fold_over_storage_range(accum, &mut func, id, None) };
+            }
+        } else {
+            // PATCH(occupancy): only the archetypes that hold an entity are visited.
+            for archetype_id in self.cursor.occupied_iter.clone() {
+                // SAFETY:
+                // - The range(None) is equivalent to [0, storage.entity_count)
+                accum = unsafe {
+                    self.fold_over_storage_range(
+                        accum,
+                        &mut func,
+                        StorageId { archetype_id },
+                        None,
+                    )
+                };
+            }
         }
         accum
     }
@@ -2392,6 +2408,9 @@ struct QueryIterationCursor<'w, 's, D: QueryData, F: QueryFilter> {
     // whether the query iteration is dense or not. Mirrors QueryState's `is_dense` field.
     is_dense: bool,
     storage_id_iter: core::slice::Iter<'s, StorageId>,
+    /// PATCH(occupancy): the non-dense walk, over the matched archetypes that hold an entity;
+    /// `storage_id_iter` is the dense one.
+    occupied_iter: OccupiedIter<'w, 's>,
     table_entities: &'w [Entity],
     archetype_entities: &'w [ArchetypeEntity],
     fetch: D::Fetch<'w>,
@@ -2407,6 +2426,7 @@ impl<D: QueryData, F: QueryFilter> Clone for QueryIterationCursor<'_, '_, D, F> 
         Self {
             is_dense: self.is_dense,
             storage_id_iter: self.storage_id_iter.clone(),
+            occupied_iter: self.occupied_iter.clone(),
             table_entities: self.table_entities,
             archetype_entities: self.archetype_entities,
             fetch: self.fetch.clone(),
@@ -2429,6 +2449,7 @@ impl<'w, 's, D: QueryData, F: QueryFilter> QueryIterationCursor<'w, 's, D, F> {
     ) -> Self {
         QueryIterationCursor {
             storage_id_iter: [].iter(),
+            occupied_iter: OccupiedIter::empty(),
             ..Self::init(world, query_state, last_run, this_run)
         }
     }
@@ -2450,6 +2471,13 @@ impl<'w, 's, D: QueryData, F: QueryFilter> QueryIterationCursor<'w, 's, D, F> {
             table_entities: &[],
             archetype_entities: &[],
             storage_id_iter: query_state.matched_storage_ids.iter(),
+            occupied_iter: if query_state.is_dense {
+                OccupiedIter::empty()
+            } else {
+                world
+                    .archetypes()
+                    .occupied_among(query_state.matched_archetypes.as_slice())
+            },
             is_dense: query_state.is_dense,
             current_len: 0,
             current_row: 0,
@@ -2464,6 +2492,7 @@ impl<'w, 's, D: QueryData, F: QueryFilter> QueryIterationCursor<'w, 's, D, F> {
             table_entities: self.table_entities,
             archetype_entities: self.archetype_entities,
             storage_id_iter: self.storage_id_iter.clone(),
+            occupied_iter: self.occupied_iter.clone(),
             current_len: self.current_len,
             current_row: self.current_row,
         }
@@ -2524,8 +2553,12 @@ impl<'w, 's, D: QueryData, F: QueryFilter> QueryIterationCursor<'w, 's, D, F> {
             // SAFETY: The if check ensures that storage_id_iter stores TableIds
             unsafe { ids.map(|id| tables[id.table_id].entity_count()).sum() }
         } else {
-            // SAFETY: The if check ensures that storage_id_iter stores ArchetypeIds
-            unsafe { ids.map(|id| archetypes[id.archetype_id].len()).sum() }
+            // PATCH(occupancy): the non-dense walk's own remaining ids.
+            let _ = ids;
+            self.occupied_iter
+                .clone()
+                .map(|id| archetypes[id].len())
+                .sum()
         };
         remaining_matched + self.current_len - self.current_row
     }
@@ -2591,7 +2624,8 @@ impl<'w, 's, D: QueryData, F: QueryFilter> QueryIterationCursor<'w, 's, D, F> {
         } else {
             loop {
                 if self.current_row == self.current_len {
-                    let archetype_id = self.storage_id_iter.next()?.archetype_id;
+                    // PATCH(occupancy): only the archetypes that hold an entity are visited.
+                    let archetype_id = self.occupied_iter.next()?;
                     let archetype = archetypes.get(archetype_id).debug_checked_unwrap();
                     if archetype.is_empty() {
                         continue;

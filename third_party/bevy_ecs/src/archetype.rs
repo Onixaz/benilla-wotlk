@@ -33,6 +33,7 @@ use bevy_platform::collections::{hash_map::Entry, HashMap};
 use core::{
     hash::Hash,
     ops::{Index, IndexMut, RangeFrom},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use nonmax::NonMaxU32;
 
@@ -385,6 +386,8 @@ pub struct Archetype {
     table_id: TableId,
     edges: Edges,
     entities: Vec<ArchetypeEntity>,
+    /// PATCH(occupancy): this archetype's bit in [`Occupancy`], kept equal to `!entities.is_empty()`.
+    occupied: OccupiedBit,
     components: ImmutableSparseSet<ComponentId, ArchetypeComponentInfo>,
     pub(crate) flags: ArchetypeFlags,
 }
@@ -399,6 +402,7 @@ impl Archetype {
         table_id: TableId,
         table_components: impl Iterator<Item = ComponentId>,
         sparse_set_components: impl Iterator<Item = ComponentId>,
+        occupied: OccupiedBit,
     ) -> Self {
         let (min_table, _) = table_components.size_hint();
         let (min_sparse, _) = sparse_set_components.size_hint();
@@ -444,6 +448,7 @@ impl Archetype {
             id,
             table_id,
             entities: Vec::new(),
+            occupied,
             components: archetype_components.into_immutable(),
             edges: Default::default(),
             flags,
@@ -600,6 +605,9 @@ impl Archetype {
         // SAFETY: An entity can not have multiple archetype rows and there can not be more than u32::MAX entities.
         let archetype_row = unsafe { ArchetypeRow::new(NonMaxU32::new_unchecked(self.len())) };
         self.entities.push(ArchetypeEntity { entity, table_row });
+        if self.entities.len() == 1 {
+            self.occupied.set(true);
+        }
 
         EntityLocation {
             archetype_id: self.id,
@@ -623,6 +631,9 @@ impl Archetype {
     pub(crate) fn swap_remove(&mut self, row: ArchetypeRow) -> ArchetypeSwapRemoveResult {
         let is_last = row.index() == self.entities.len() - 1;
         let entity = self.entities.swap_remove(row.index());
+        if self.entities.is_empty() {
+            self.occupied.set(false);
+        }
         ArchetypeSwapRemoveResult {
             swapped_entity: if is_last {
                 None
@@ -666,6 +677,7 @@ impl Archetype {
     /// Clears all entities from the archetype.
     pub(crate) fn clear_entities(&mut self) {
         self.entities.clear();
+        self.occupied.set(false);
     }
 
     /// Returns true if any of the components in this archetype have `on_add` hooks
@@ -764,6 +776,109 @@ struct ArchetypeComponents {
 /// along with an [`ArchetypeRecord`] which contains some metadata about how the component is stored in the archetype.
 pub type ComponentIndex = HashMap<ComponentId, HashMap<ArchetypeId, ArchetypeRecord>>;
 
+/// PATCH(occupancy): one bit per archetype, set while it holds an entity. Chunks are boxed and never
+/// freed or moved while the owning [`Archetypes`] lives, so an [`OccupiedBit`] may point into one.
+#[derive(Default)]
+pub(crate) struct Occupancy {
+    chunks: Vec<Box<[AtomicUsize; OCCUPANCY_CHUNK_WORDS]>>,
+}
+
+const OCCUPANCY_CHUNK_WORDS: usize = 64;
+const OCCUPANCY_WORD_BITS: usize = usize::BITS as usize;
+
+impl Occupancy {
+    /// The bit of archetype `index`, growing the set to hold it.
+    fn bit(&mut self, index: usize) -> OccupiedBit {
+        let word = index / OCCUPANCY_WORD_BITS;
+        let chunk = word / OCCUPANCY_CHUNK_WORDS;
+        while self.chunks.len() <= chunk {
+            self.chunks.push(Box::new(
+                [const { AtomicUsize::new(0) }; OCCUPANCY_CHUNK_WORDS],
+            ));
+        }
+        OccupiedBit {
+            word: &self.chunks[chunk][word % OCCUPANCY_CHUNK_WORDS],
+            mask: 1 << (index % OCCUPANCY_WORD_BITS),
+        }
+    }
+
+    /// Word `word` of the set; zero past its end.
+    #[inline]
+    fn word(&self, word: usize) -> usize {
+        match self.chunks.get(word / OCCUPANCY_CHUNK_WORDS) {
+            Some(chunk) => chunk[word % OCCUPANCY_CHUNK_WORDS]
+                .load(Ordering::Relaxed),
+            None => 0,
+        }
+    }
+}
+
+/// PATCH(occupancy): an archetype's own bit in its [`Archetypes`]' [`Occupancy`].
+pub(crate) struct OccupiedBit {
+    word: *const AtomicUsize,
+    mask: usize,
+}
+
+// SAFETY: the pointer targets a boxed chunk owned by the `Archetypes` that owns this archetype,
+// which outlives it and never frees or moves a chunk; the word is atomic.
+unsafe impl Send for OccupiedBit {}
+// SAFETY: as above.
+unsafe impl Sync for OccupiedBit {}
+
+impl OccupiedBit {
+    #[inline]
+    fn set(&self, occupied: bool) {
+        // SAFETY: see the `Send` impl; the chunk is alive for as long as the archetype is.
+        let word = unsafe { &*self.word };
+        if occupied {
+            word.fetch_or(self.mask, Ordering::Relaxed);
+        } else {
+            word.fetch_and(!self.mask, Ordering::Relaxed);
+        }
+    }
+}
+
+/// PATCH(occupancy): see [`Archetypes::occupied_among`].
+#[derive(Clone)]
+pub(crate) struct OccupiedIter<'w, 's> {
+    occupancy: Option<&'w Occupancy>,
+    matched: &'s [usize],
+    /// The next word to load.
+    word: usize,
+    /// The bits left of the word before it.
+    bits: usize,
+}
+
+impl OccupiedIter<'_, '_> {
+    /// An iterator over nothing.
+    pub(crate) fn empty() -> Self {
+        OccupiedIter {
+            occupancy: None,
+            matched: &[],
+            word: 0,
+            bits: 0,
+        }
+    }
+}
+
+impl Iterator for OccupiedIter<'_, '_> {
+    type Item = ArchetypeId;
+
+    #[inline]
+    fn next(&mut self) -> Option<ArchetypeId> {
+        while self.bits == 0 {
+            let matched = *self.matched.get(self.word)?;
+            self.bits = matched & self.occupancy?.word(self.word);
+            self.word += 1;
+        }
+        let bit = self.bits.trailing_zeros() as usize;
+        self.bits &= self.bits - 1;
+        Some(ArchetypeId::new(
+            (self.word - 1) * OCCUPANCY_WORD_BITS + bit,
+        ))
+    }
+}
+
 /// The backing store of all [`Archetype`]s within a [`World`].
 ///
 /// For more information, see the *[module level documentation]*.
@@ -772,6 +887,8 @@ pub type ComponentIndex = HashMap<ComponentId, HashMap<ArchetypeId, ArchetypeRec
 /// [module level documentation]: crate::archetype
 pub struct Archetypes {
     pub(crate) archetypes: Vec<Archetype>,
+    /// PATCH(occupancy): which archetypes hold an entity, a bit each.
+    occupancy: Occupancy,
     /// find the archetype id by the archetype's components
     by_components: HashMap<ArchetypeComponents, ArchetypeId>,
     /// find all the archetypes that contain a component
@@ -792,6 +909,7 @@ pub struct ArchetypeRecord {
 impl Archetypes {
     pub(crate) fn new() -> Self {
         let mut archetypes = Archetypes {
+            occupancy: Occupancy::default(),
             archetypes: Vec::new(),
             by_components: Default::default(),
             by_component: Default::default(),
@@ -807,6 +925,19 @@ impl Archetypes {
             );
         }
         archetypes
+    }
+
+    /// PATCH(occupancy): the archetypes that hold an entity among `matched` (a bitset's words, a
+    /// bit per archetype id), ascending. A whole word of empty archetypes costs one `and`, so a
+    /// query's walk no longer grows with the archetypes that hold nothing.
+    #[inline]
+    pub(crate) fn occupied_among<'w, 's>(&'w self, matched: &'s [usize]) -> OccupiedIter<'w, 's> {
+        OccupiedIter {
+            occupancy: Some(&self.occupancy),
+            matched,
+            word: 0,
+            bits: 0,
+        }
     }
 
     /// Returns the "generation", a handle to the current highest archetype ID.
@@ -904,6 +1035,7 @@ impl Archetypes {
         };
 
         let archetypes = &mut self.archetypes;
+        let occupancy = &mut self.occupancy;
         let component_index = &mut self.by_component;
         match self.by_components.entry(archetype_identity) {
             Entry::Occupied(occupied) => (*occupied.get(), false),
@@ -921,6 +1053,7 @@ impl Archetypes {
                     table_id,
                     table_components.iter().copied(),
                     sparse_set_components.iter().copied(),
+                    occupancy.bit(id.index()),
                 ));
                 vacant.insert(id);
                 (id, true)
