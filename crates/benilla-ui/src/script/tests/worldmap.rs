@@ -151,6 +151,7 @@ fn catalog() -> WorldMapCatalog {
             },
         ],
         orphans: vec![dalaran, ulduar],
+        dungeon_chunks: Vec::new(),
         dungeon_maps: vec![
             WorldMapDungeonView {
                 id: 27,
@@ -191,6 +192,7 @@ fn catalog() -> WorldMapCatalog {
                 map: 0,
                 x: -11208.0,
                 y: 1672.0,
+                z: 0.0,
             },
         )]),
         pois: vec![
@@ -202,6 +204,7 @@ fn catalog() -> WorldMapCatalog {
                     map: 0,
                     x: -1500.0,
                     y: -9500.0,
+                    z: 0.0,
                 },
                 flags: 0x0d,
                 area_id: 87,
@@ -217,6 +220,7 @@ fn catalog() -> WorldMapCatalog {
                     map: 0,
                     x: -800.0,
                     y: -8500.0,
+                    z: 0.0,
                 },
                 flags: 0x1d,
                 map_link: 31,
@@ -230,6 +234,7 @@ fn catalog() -> WorldMapCatalog {
                     map: 0,
                     x: -1000.0,
                     y: -9000.0,
+                    z: 0.0,
                 },
                 flags: 0x284,
                 world_state_id: 2372,
@@ -242,9 +247,10 @@ fn catalog() -> WorldMapCatalog {
 fn player_at(map: u32, x: f32, y: f32, zone: u32) -> WorldMapFeed {
     WorldMapFeed {
         player: Some(WorldMapPlayer {
-            pos: WorldMapPoint { map, x, y },
+            pos: WorldMapPoint::flat(map, x, y),
             facing: 0.0,
             zone,
+            wmo_group: 0,
         }),
         ..Default::default()
     }
@@ -525,6 +531,7 @@ fn the_release_graveyard_projects_like_the_corpse() {
         map: 0,
         x: -1500.0,
         y: -9500.0,
+        z: 0.0,
     };
     s.set_world_map_feed(WorldMapFeed {
         release: Some(at),
@@ -605,6 +612,7 @@ fn landmarks_pass_their_gates_and_answer_seven_values() {
             map: 0,
             x: -1200.0,
             y: -9200.0,
+            z: 0.0,
         },
         ..Default::default()
     }));
@@ -808,4 +816,240 @@ fn a_moving_player_leaves_the_mutation_count_standing() {
     s.set_world_map_feed(player_at(0, -1510.0, -9490.0, 12));
     assert_eq!(s.visual_epoch(), before, "a feed write moved the count");
     assert_ne!(pos(&mut s), at, "the verb answers the new place");
+}
+
+/// The catalog with Ulduar's second floor and a chunk table: Dalaran's two groups on its two
+/// floors, and one Ulduar group that is floor 70 below height 400 and floor 71 from it.
+fn floors() -> WorldMapCatalog {
+    let mut cat = catalog();
+    cat.dungeon_maps.push(WorldMapDungeonView {
+        id: 71,
+        map_id: 603,
+        floor_index: 2,
+        y: (-500.0, 500.0),
+        x: (-500.0, 500.0),
+        parent_world_map_id: 0,
+    });
+    let chunk = |map_id, wmo_group_id, dungeon_map_id, min_z| WorldMapChunkView {
+        map_id,
+        wmo_group_id,
+        dungeon_map_id,
+        min_z,
+    };
+    cat.dungeon_chunks = vec![
+        chunk(571, 9001, 27, 0.0),
+        chunk(571, 9002, 26, 0.0),
+        chunk(603, 9101, 70, -10000.0),
+        chunk(603, 9101, 71, 400.0),
+    ];
+    cat
+}
+
+/// The player at a height, standing in a WMO group.
+fn standing(map: u32, [x, y, z]: [f32; 3], zone: u32, wmo_group: u32) -> WorldMapFeed {
+    WorldMapFeed {
+        player: Some(WorldMapPlayer {
+            pos: WorldMapPoint { map, x, y, z },
+            facing: 0.0,
+            zone,
+            wmo_group,
+        }),
+        ..Default::default()
+    }
+}
+
+/// #1118: inside an instance the current-zone lookup opens the floor under the player
+/// (`0x5474cf`), the terrain floor where the group has no row, and a transform's floor only
+/// when the lookup finds none.
+#[test]
+fn an_instance_opens_on_the_floor_under_the_player() {
+    let mut s = script();
+    s.set_world_map_catalog(floors());
+    let open = |s: &mut UiScript, feed| {
+        s.set_world_map_feed(feed);
+        s.run("SetMapToCurrentZone()").unwrap();
+        (
+            s.world_map_selection(),
+            s.eval::<i64>("return GetCurrentMapDungeonLevel()").unwrap(),
+        )
+    };
+    let on = |dungeon_map| WorldMapSelection {
+        continent: -2,
+        zone: -1,
+        dungeon_map,
+        direct: 529,
+    };
+    // Ulduar's floor 0 is its terrain, so the levels read one up.
+    assert_eq!(
+        open(&mut s, standing(603, [0.0, 0.0, 500.0], 4273, 9101)),
+        (on(71), 3)
+    );
+    assert_eq!(
+        open(&mut s, standing(603, [0.0, 0.0, 399.0], 4273, 9101)),
+        (on(70), 2)
+    );
+    assert_eq!(
+        open(&mut s, standing(603, [0.0, 0.0, 500.0], 4273, 9100)),
+        (on(-1), 1),
+        "a group with no row is on the terrain"
+    );
+    assert_eq!(
+        open(&mut s, standing(603, [0.0, 0.0, 500.0], 4273, 0)),
+        (on(-1), 1),
+        "and so is open ground"
+    );
+
+    let mut cat = floors();
+    cat.transforms.push(WorldMapTransformView {
+        map_id: 603,
+        x: (-100.0, 100.0),
+        y: (-100.0, 100.0),
+        new_map_id: 603,
+        offset: (0.0, 0.0),
+        new_dungeon_map_id: 70,
+    });
+    s.set_world_map_catalog(cat);
+    assert_eq!(
+        open(&mut s, standing(603, [0.0, 0.0, 500.0], 4273, 0)).0,
+        on(70),
+        "the transform's floor stands in"
+    );
+    assert_eq!(
+        open(&mut s, standing(603, [0.0, 0.0, 500.0], 4273, 9101)).0,
+        on(71),
+        "but the floor under the player comes first"
+    );
+}
+
+/// #1118: a continent zone with no rect opens on the floor under the player (`0x5478ce`), and
+/// only without one on its parent.
+#[test]
+fn a_rectless_zone_opens_on_the_floor_under_the_player() {
+    let mut s = script();
+    s.set_world_map_catalog(floors());
+    let dalaran = |dungeon_map| WorldMapSelection {
+        continent: -2,
+        zone: -1,
+        dungeon_map,
+        direct: 504,
+    };
+    s.set_world_map_feed(standing(571, [5800.0, 600.0, 640.0], 4395, 9002));
+    s.run("SetMapToCurrentZone()").unwrap();
+    assert_eq!(s.world_map_selection(), dalaran(26));
+    assert_eq!(
+        s.eval::<i64>("return GetCurrentMapDungeonLevel()").unwrap(),
+        2
+    );
+    s.set_world_map_feed(standing(571, [5800.0, 600.0, 650.0], 4395, 9001));
+    s.run("SetMapToCurrentZone()").unwrap();
+    assert_eq!(s.world_map_selection(), dalaran(27));
+    s.set_world_map_feed(standing(571, [5800.0, 600.0, 650.0], 4395, 0));
+    s.run("SetMapToCurrentZone()").unwrap();
+    assert_eq!(map(&mut s), (Some("CrystalsongForest".into()), 4, 1));
+    // The first-entry sync takes the same walk.
+    s.set_world_map_feed(standing(571, [5800.0, 600.0, 640.0], 4395, 9002));
+    s.sync_world_map_to_player_zone();
+    assert_eq!(s.world_map_selection(), dalaran(26));
+}
+
+/// #1118: on a floor map a position draws when the floor under it is the displayed one
+/// (`0x5442b1`), through that floor's rect; the lookup keys every position on the player's own
+/// WMO group and the position's own height.
+#[test]
+fn a_position_draws_on_the_floor_it_stands_on() {
+    let mut s = script();
+    s.set_world_map_catalog(floors());
+    let mut feed = standing(603, [100.0, -200.0, 500.0], 4273, 9101);
+    // A streamed party member below height 400, and one known by its stats alone, at height 0.
+    feed.party = vec![
+        Some(WorldMapPoint {
+            map: 603,
+            x: 100.0,
+            y: -200.0,
+            z: 390.0,
+        }),
+        Some(WorldMapPoint::flat(603, 250.0, 250.0)),
+    ];
+    s.set_world_map_feed(feed);
+    s.run("SetMapToCurrentZone()").unwrap();
+    let pos = |s: &mut UiScript, unit: &str| -> (f64, f64) {
+        s.eval(&format!("return GetPlayerMapPosition('{unit}')"))
+            .unwrap()
+    };
+    let (u, v) = pos(&mut s, "player");
+    assert!(
+        (u - 0.7).abs() < 1e-5 && (v - 0.4).abs() < 1e-5,
+        "floor 71's own rect: {u} {v}"
+    );
+    assert_eq!(pos(&mut s, "party1"), (0.0, 0.0), "a floor below");
+    assert_eq!(pos(&mut s, "party2"), (0.0, 0.0));
+
+    s.run("SetDungeonMapLevel(2)").unwrap();
+    assert_eq!(s.world_map_selection().dungeon_map, 70);
+    assert_eq!(pos(&mut s, "player"), (0.0, 0.0), "we are a floor above");
+    let (u, v) = pos(&mut s, "party1");
+    assert!(
+        (u - 0.6).abs() < 1e-5 && (v - 0.45).abs() < 1e-5,
+        "floor 70's rect: {u} {v}"
+    );
+    let (u, v) = pos(&mut s, "party2");
+    assert!(u > 0.0 && v > 0.0, "{u} {v}");
+
+    // The terrain floor hides no floor (`0x54430f`): every position draws through the row's rect.
+    s.run("SetDungeonMapLevel(1)").unwrap();
+    assert_eq!(s.world_map_selection().dungeon_map, -1);
+    for unit in ["player", "party1", "party2"] {
+        let (u, v) = pos(&mut s, unit);
+        assert!(u > 0.0 && v > 0.0, "{unit}: {u} {v}");
+    }
+}
+
+/// A quest icon projects onto the displayed floor itself (`0x5e0180`, `0x5e0590`), whatever
+/// floor is under the player.
+#[test]
+fn a_quest_icon_projects_onto_the_displayed_floor() {
+    let mut s = script();
+    s.register_cvars([("questPOI", "1")]);
+    s.set_world_map_catalog(floors());
+    s.set_quest_log(QuestLogState {
+        num_quests: 1,
+        entries: vec![QuestLogEntryView {
+            quest_id: 33,
+            poi_objectives: u32::MAX,
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    s.apply_quest_pois(vec![QuestPoiView {
+        quest_id: 33,
+        regions: vec![QuestPoiRegion {
+            objective: -1,
+            map: 603,
+            area: 529,
+            floor: 2,
+            flags: 0,
+            center: (100, -200),
+            outline: vec![(100, -200)],
+            priority: 0,
+        }],
+    }]);
+    s.set_world_map_feed(standing(603, [0.0, 0.0, 0.0], 4273, 0));
+    s.run("SetMapByID(529) SetDungeonMapLevel(3) QuestPOIUpdateIcons()")
+        .unwrap();
+    assert_eq!(s.world_map_selection().dungeon_map, 71);
+    let (_, u, v, _) = s
+        .eval::<(bool, f64, f64, i64)>("return QuestPOIGetIconInfo(33)")
+        .unwrap();
+    assert!(
+        (u - 0.7).abs() < 1e-5 && (v - 0.4).abs() < 1e-5,
+        "floor 71's rect: {u} {v}"
+    );
+    s.run("SetDungeonMapLevel(2) QuestPOIUpdateIcons()")
+        .unwrap();
+    assert_eq!(
+        s.eval::<i64>("return select('#', QuestPOIGetIconInfo(33))")
+            .unwrap(),
+        0,
+        "the region is on floor 2 alone"
+    );
 }

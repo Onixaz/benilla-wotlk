@@ -1,9 +1,11 @@
 //! The world-map data feed behind the stock `WorldMapFrame.xml` and benilla-ui's map engine:
 //!
 //! - [`seed_world_map_catalog`], at world entry: the static catalog from `WorldMapArea`,
-//!   `WorldMapContinent`, `WorldMapOverlay`, `DungeonMap`, `WorldMapTransforms`, `AreaPOI`,
-//!   `AreaTable`, `Map` and the `.zmp` bitmaps, built as 12340's `0x547eb0` builds it.
+//!   `WorldMapContinent`, `WorldMapOverlay`, `DungeonMap`, `DungeonMapChunk`,
+//!   `WorldMapTransforms`, `AreaPOI`, `AreaTable`, `Map` and the `.zmp` bitmaps, built as 12340's
+//!   `0x547eb0` builds it.
 //! - [`feed_world_map`], every frame: the world positions the engine projects when Lua asks, the
+//!   WMO group under the player its floor lookup keys on (`0x5439e0`), the
 //!   discovery bits, world states and guard marker its landmarks gate on, and the first-entry
 //!   selection (`0x5204f9` into `0x547170`).
 //! - [`dev_map_jump`]: Alt+click the map to go there.
@@ -15,14 +17,14 @@ use bevy::prelude::*;
 
 use benilla_assets::coords::bevy_to_wow;
 use benilla_formats::{
-    load_dungeon_map_catalog, load_world_map_area_catalog, load_world_map_continent_catalog,
-    load_world_map_overlay_catalog, load_world_map_transform_catalog, load_zone_map, AreaPoi,
-    AreaTableCatalog, WorldMapArea,
+    load_dungeon_map_catalog, load_dungeon_map_chunks, load_world_map_area_catalog,
+    load_world_map_continent_catalog, load_world_map_overlay_catalog,
+    load_world_map_transform_catalog, load_zone_map, AreaPoi, AreaTableCatalog, WorldMapArea,
 };
 use benilla_ui::script::{
-    UiScript, WorldMapCatalog, WorldMapContinentView, WorldMapDungeonView, WorldMapExploreGate,
-    WorldMapFeed, WorldMapOverlayView, WorldMapPlayer, WorldMapPoiView, WorldMapPoint,
-    WorldMapSheet, WorldMapTransformView, WorldMapZoneView,
+    UiScript, WorldMapCatalog, WorldMapChunkView, WorldMapContinentView, WorldMapDungeonView,
+    WorldMapExploreGate, WorldMapFeed, WorldMapOverlayView, WorldMapPlayer, WorldMapPoiView,
+    WorldMapPoint, WorldMapSheet, WorldMapTransformView, WorldMapZoneView,
 };
 
 use crate::net::{ObjectStore, SelfPlayer};
@@ -119,11 +121,8 @@ fn poi_view(poi: &AreaPoi, areas: &AreaTableCatalog) -> WorldMapPoiView {
         name: poi.name.clone(),
         description: poi.description.clone(),
         icons: poi.icons,
-        pos: WorldMapPoint {
-            map: poi.continent_id,
-            x: poi.pos[0],
-            y: poi.pos[1],
-        },
+        // Height 0, as the landmark build projects a row (`0x5445f0`).
+        pos: WorldMapPoint::flat(poi.continent_id, poi.pos[0], poi.pos[1]),
         flags: poi.flags,
         area_id: poi.area_id,
         explore,
@@ -144,10 +143,11 @@ pub(crate) fn build_catalog(
         let wmc = load_world_map_continent_catalog(&mut *chain)?;
         let wmo = load_world_map_overlay_catalog(&mut *chain)?;
         let dungeons = load_dungeon_map_catalog(&mut *chain)?;
+        let chunks = load_dungeon_map_chunks(&mut *chain)?;
         let transforms = load_world_map_transform_catalog(&mut *chain)?;
-        Ok((wma, wmc, wmo, dungeons, transforms))
+        Ok((wma, wmc, wmo, dungeons, chunks, transforms))
     });
-    let (wma, wmc, wmo, dungeons, transforms) = match loaded {
+    let (wma, wmc, wmo, dungeons, chunks, transforms) = match loaded {
         Ok(t) => t,
         Err(e) => {
             error!("world map: DBC load failed, map window disabled: {e:#}");
@@ -251,6 +251,15 @@ pub(crate) fn build_catalog(
                 parent_world_map_id: d.parent_world_map_id,
             })
             .collect(),
+        dungeon_chunks: chunks
+            .iter()
+            .map(|c| WorldMapChunkView {
+                map_id: c.map_id,
+                wmo_group_id: c.wmo_group_id,
+                dungeon_map_id: c.dungeon_map_id,
+                min_z: c.min_z,
+            })
+            .collect(),
         transforms: transforms
             .rows()
             .iter()
@@ -266,7 +275,7 @@ pub(crate) fn build_catalog(
         entrances: maps
             .0
             .entrances()
-            .map(|(id, (map, x, y))| (id, WorldMapPoint { map, x, y }))
+            .map(|(id, (map, x, y))| (id, WorldMapPoint::flat(map, x, y)))
             .collect(),
         pois: pois
             .map(|p| p.rows().map(|(_, poi)| poi_view(poi, areas)).collect())
@@ -332,11 +341,8 @@ fn marker_view(poi: &AreaPoi) -> WorldMapPoiView {
         name: poi.name.clone(),
         description: poi.description.clone(),
         icons: poi.icons,
-        pos: WorldMapPoint {
-            map: poi.continent_id,
-            x: poi.pos[0],
-            y: poi.pos[1],
-        },
+        // Height 0, as the landmark build projects a row (`0x5445f0`).
+        pos: WorldMapPoint::flat(poi.continent_id, poi.pos[0], poi.pos[1]),
         flags: poi.flags,
         ..Default::default()
     }
@@ -398,7 +404,7 @@ fn feed_world_map(
     let wow = bevy_to_wow(player.pos);
     // CurrentArea is the MCNK leaf; its top zone is the zone the reference matches.
     let top_zone = world.area().and_then(|aid| areas.0.top_zone(aid));
-    let point = |map: u32, x: f32, y: f32| WorldMapPoint { map, x, y };
+    let point = |map: u32, [x, y, z]: [f32; 3]| WorldMapPoint { map, x, y, z };
 
     // The `party1..4` blips: a streamed member's transform, else the `i16` position from
     // `SMSG_PARTY_MEMBER_STATS`, whose zone names the continent and so the map.
@@ -417,9 +423,15 @@ fn feed_world_map(
                     .map(|c| c.map_id)
             })
             .unwrap_or(map.0);
-        Some(point(member_map, px, py))
+        // A streamed member at its own height, a stats one at 0 (`0x5444f0`).
+        let pz = guids
+            .0
+            .get(&m.guid)
+            .and_then(|e| unit_pos.get(*e).ok())
+            .map_or(0.0, |tf| bevy_to_wow(tf.translation())[2]);
+        Some(point(member_map, [px, py, pz]))
     };
-    let me = point(map.0, wow[0], wow[1]);
+    let me = point(map.0, wow);
     // `raid1..40` in roster order, ourselves first so `raidN` matches; the stock map skips our
     // own slot by `UnitIsUnit`.
     let raid = if group.group_type == crate::ui_party::GROUPTYPE_RAID {
@@ -434,18 +446,16 @@ fn feed_world_map(
             pos: me,
             facing: player.facing(),
             zone: top_zone.unwrap_or(0),
+            wmo_group: world.wmo_group(),
         }),
         // The corpse at the query answer's display position, a dungeon corpse at its entrance.
         corpse: death_net.corpse.map(|cp| {
             point(
                 u32::try_from(cp.display_map).unwrap_or(u32::MAX),
-                cp.position[0],
-                cp.position[1],
+                cp.position,
             )
         }),
-        release: death_net
-            .release
-            .map(|r| point(r.map, r.position[0], r.position[1])),
+        release: death_net.release.map(|r| point(r.map, r.position)),
         party: group.party_slots().map(member).collect(),
         raid,
     });
@@ -613,5 +623,11 @@ mod tests {
             .iter()
             .any(|o| o.map_file == "Ulduar" && !continent_maps.contains(&o.map_id)));
         assert!(!cat.dungeon_maps.is_empty() && !cat.transforms.is_empty());
+        // Every chunk row names a floor the catalog holds, so the lookup's answer always opens.
+        assert!(!cat.dungeon_chunks.is_empty());
+        assert!(cat.dungeon_chunks.iter().all(|c| cat
+            .dungeon_maps
+            .iter()
+            .any(|d| d.id as i32 == c.dungeon_map_id && d.map_id == c.map_id)));
     }
 }

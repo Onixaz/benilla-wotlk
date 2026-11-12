@@ -1,6 +1,9 @@
 //! `DungeonMap.dbc`: the floors of a multi-level map, each a world rect on its map and the
 //! `WorldMapArea` row a zoom out returns to. 12340's world map keeps the selected row in
 //! `[0xaccf0c]` (`GetCurrentMapDungeonLevel` `0x544fc0`, `ZoomOut` `0x546a90`).
+//!
+//! `DungeonMapChunk.dbc`: which of those floors a WMO group is on, by height, the table the
+//! floor lookup walks in file order (`0x5439e0`).
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
@@ -9,6 +12,7 @@ use crate::dbc::{f32_at, i32_at, parse, u32_at};
 use crate::Chain;
 
 const DUNGEON_MAP: &str = "DBFilesClient\\DungeonMap.dbc";
+const DUNGEON_MAP_CHUNK: &str = "DBFilesClient\\DungeonMapChunk.dbc";
 
 /// One `DungeonMap.dbc` row: one floor of a map.
 #[derive(Clone, Debug, PartialEq)]
@@ -93,9 +97,99 @@ pub fn load_dungeon_map_catalog(chain: &mut Chain) -> Result<DungeonMapCatalog> 
     Ok(DungeonMapCatalog { rows })
 }
 
+/// One `DungeonMapChunk.dbc` row: a WMO group's floor from `min_z` up.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DungeonMapChunk {
+    pub id: u32,
+    pub map_id: u32,
+    /// The group's MOGP id (`+0x8`), `WMOAreaTable`'s `WMOGroupID`.
+    pub wmo_group_id: u32,
+    /// The `DungeonMap` row (`+0xc`).
+    pub dungeon_map_id: i32,
+    /// The lowest height the row answers for (`+0x10`).
+    pub min_z: f32,
+}
+
+pub(crate) fn chunk_schema() -> Schema {
+    let mut s = Schema::new("DungeonMapChunk");
+    s.add_field(SchemaField::new("ID", FieldType::UInt32));
+    s.add_field(SchemaField::new("MapID", FieldType::UInt32));
+    s.add_field(SchemaField::new("WMOGroupID", FieldType::UInt32));
+    s.add_field(SchemaField::new("DungeonMapID", FieldType::Int32));
+    s.add_field(SchemaField::new("MinZ", FieldType::Float32));
+    s
+}
+
+/// Read `DungeonMapChunk.dbc` off the patch chain, in file order: the lookup's walk depends on it.
+pub fn load_dungeon_map_chunks(chain: &mut Chain) -> Result<Vec<DungeonMapChunk>> {
+    let bytes = chain
+        .read_file(DUNGEON_MAP_CHUNK)
+        .context("reading DungeonMapChunk.dbc")?;
+    let rs = parse(&bytes, chunk_schema(), "DungeonMapChunk")?;
+    Ok(rs
+        .records()
+        .iter()
+        .filter_map(|r| {
+            Some(DungeonMapChunk {
+                id: u32_at(r, 0)?,
+                map_id: u32_at(r, 1)?,
+                wmo_group_id: u32_at(r, 2)?,
+                dungeon_map_id: i32_at(r, 3)?,
+                min_z: f32_at(r, 4)?,
+            })
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shape the floor lookup's walk leans on: a map's rows in one run, a group's rows in one
+    /// run within it by rising height, and every row naming a floor of its own map.
+    #[test]
+    fn real_dungeon_map_chunks_run_by_map_then_group() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let floors = load_dungeon_map_catalog(&mut chain).expect("load DungeonMap");
+        let chunks = load_dungeon_map_chunks(&mut chain).expect("load DungeonMapChunk");
+        assert!(!chunks.is_empty());
+        let mut maps = Vec::new();
+        let mut groups = Vec::new();
+        for pair in chunks.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            if a.map_id != b.map_id {
+                maps.push(a.map_id);
+                assert!(!maps.contains(&b.map_id), "map {} runs twice", b.map_id);
+                groups.clear();
+            } else if a.wmo_group_id != b.wmo_group_id {
+                groups.push(a.wmo_group_id);
+                assert!(
+                    !groups.contains(&b.wmo_group_id),
+                    "group {} runs twice",
+                    b.wmo_group_id
+                );
+            } else {
+                assert!(a.min_z <= b.min_z, "group {} falls", a.wmo_group_id);
+            }
+        }
+        for c in &chunks {
+            let floor = u32::try_from(c.dungeon_map_id)
+                .ok()
+                .and_then(|id| floors.get(id))
+                .expect("a chunk names a DungeonMap row");
+            assert_eq!(floor.map_id, c.map_id);
+            assert!(c.wmo_group_id != 0);
+        }
+        // Dalaran's groups split over its two floors.
+        let dalaran: std::collections::BTreeSet<u32> = chunks
+            .iter()
+            .filter(|c| c.map_id == 571)
+            .filter_map(|c| floors.get(c.dungeon_map_id as u32))
+            .map(|f| f.floor_index as u32)
+            .collect();
+        assert_eq!(dalaran.into_iter().collect::<Vec<_>>(), [1, 2]);
+    }
 
     /// Dalaran's two floors sit on Northrend and zoom out to Crystalsong Forest.
     #[test]

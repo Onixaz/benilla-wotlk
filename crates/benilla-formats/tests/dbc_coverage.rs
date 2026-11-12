@@ -26,7 +26,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("DeclinedWord", "#242 Russian name declension"),
     ("DeclinedWordCases", "#242 Russian name declension"),
     ("DestructibleModelData", "#243 destructible buildings"),
-    ("DungeonMapChunk", "#238 dungeon map levels"),
     ("GameObjectArtKit", "#243 game object art kits"),
     ("ItemPurchaseGroup", "#239 merchant purchase groups"),
     ("LoadingScreenTaxiSplines", "#243 the taxi loading screen"),

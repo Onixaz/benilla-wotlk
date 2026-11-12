@@ -380,7 +380,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let ((u, v), outland) =
                 model
                     .worldmap
-                    .quest_project(icon.map, icon.x as f32, icon.y as f32);
+                    .quest_icon_project(icon.map, icon.x as f32, icon.y as f32);
             if outland || (u * v).abs() < 0.001 {
                 return Ok(MultiValue::new());
             }

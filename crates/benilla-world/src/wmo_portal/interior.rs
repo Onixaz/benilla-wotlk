@@ -33,9 +33,7 @@ pub(super) fn load_wmo_areas(
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_assets::{AdtTile, WmoModel};
 
-use super::seed::{
-    area_down_ray, down_ray_claim, down_ray_seeds, link_down_ray, up_ray_claim, DownRayClaim,
-};
+use super::seed::{down_ray_claim, down_ray_seeds, link_down_ray, up_ray_claim, DownRayClaim};
 use super::{WmoPortalInstance, WmoRoom, WorldCamera, EXTERIOR, EXTERIOR_LIT};
 use crate::terrain_stream::{terrain_height_under, PropLobeLight, TerrainStreamer};
 
@@ -99,8 +97,13 @@ pub(crate) const POSITION_PROBE_LIFT: f32 = 0.1;
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CurrentAreaInterior(pub Option<WmoInteriorKeys>);
 
-/// Track [`CurrentAreaInterior`]: per placed building, the faces-only down-ray from the player's
-/// position, first claim wins; the camera stands in before login.
+/// The MOGP id of the nearest WMO group under the player, interior or exterior, 0 when terrain is
+/// nearer (`[0xadf330]`, written at `0x7a1640`): the world map's floor key.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CurrentWmoGroup(pub u32);
+
+/// Track [`CurrentAreaInterior`] (first interior claim) and [`CurrentWmoGroup`] (nearest claim, the
+/// one link `0x7c28f0` keeps) from the faces-only down-ray; the camera stands in before login.
 pub(super) fn track_area_interior(
     wmos: Res<Assets<WmoModel>>,
     viewer: Res<crate::view::Viewer>,
@@ -109,6 +112,7 @@ pub(super) fn track_area_interior(
     streamer: Res<TerrainStreamer>,
     adt_tiles: Res<Assets<AdtTile>>,
     mut current: ResMut<CurrentAreaInterior>,
+    mut standing: ResMut<CurrentWmoGroup>,
 ) {
     // Cast from the position, lifted only for float safety, as the client does.
     let eye_world = if let Some(body) = viewer.at {
@@ -120,6 +124,7 @@ pub(super) fn track_area_interior(
     };
     let terrain = terrain_height_under(&streamer, &adt_tiles, eye_world);
     let mut found = None;
+    let mut nearest: Option<(f32, u32)> = None;
     for inst in &instances {
         let Some(model) = wmos.get(&inst.handle) else {
             continue;
@@ -135,7 +140,7 @@ pub(super) fn track_area_interior(
         let terrain_local = terrain.map(|z| terrain_z_local(&local_from_world, eye_world, z));
         // The zone-text law is `0x8` alone: a `0x40`-only street group is indoors for naming
         // (`[node+0x90]` bit 0 is set before the `0x40` test).
-        if let Some(gi) = area_down_ray(
+        let Some(claim) = down_ray_claim(
             &model.group_collision_tris,
             &model.group_collision_bounds,
             &model.group_collision_grids,
@@ -143,18 +148,29 @@ pub(super) fn track_area_interior(
             eye_local,
             terrain_local,
             EXTERIOR,
-        ) {
+        ) else {
+            continue;
+        };
+        let group_area_id = model
+            .group_nav
+            .get(claim.group)
+            .map_or(0, |g| g.area_table_id);
+        // Static placements only, so `0x7a1640`'s exterior skip on a moved (0x400) one never applies.
+        if nearest.is_none_or(|(depth, _)| claim.depth < depth) {
+            nearest = Some((claim.depth, group_area_id));
+        }
+        if !claim.outdoor && found.is_none() {
             found = Some(WmoInteriorKeys {
                 wmo_id: model.wmo_id,
                 name_set: u32::from(inst.name_set),
-                group_area_id: model.group_nav.get(gi).map_or(0, |g| g.area_table_id),
+                group_area_id,
             });
-            break;
         }
     }
     if current.0 != found {
         current.0 = found;
     }
+    standing.set_if_neq(CurrentWmoGroup(nearest.map_or(0, |(_, id)| id)));
 }
 
 /// Track [`CurrentWmoInterior`] and [`PlayerWmoRoom`] from the character, where the client's audio
@@ -965,6 +981,141 @@ mod tests {
         assert_eq!(footprint_sample(&model, [-1.0, -1.0, -1.0]), None);
         model.group_footprint_bounds = footprint_tri_bounds(&model.group_footprints);
         assert_eq!(footprint_sample(&model, [-1.0, -1.0, -1.0]), None);
+    }
+
+    /// The area tracker names the group under the player interior or exterior (`0x7a1640`), while
+    /// the zone-text claim stays the interior one: a room, a courtyard, then open ground.
+    #[test]
+    fn the_standing_group_is_named_indoors_and_out() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        // Group 0 a room over x < 0, group 1 an EXTERIOR courtyard over x > 0, both floored at 0.
+        let slab = |x0: f32, x1: f32| {
+            vec![
+                [[x0, -5.0, 0.0], [x1, -5.0, 0.0], [x1, 5.0, 0.0]],
+                [[x0, -5.0, 0.0], [x1, 5.0, 0.0], [x0, 5.0, 0.0]],
+            ]
+        };
+        let nav = |flags, area_table_id| benilla_assets::WmoGroupNav {
+            flags,
+            bbox_min: [-10.0, -5.0, 0.0],
+            bbox_max: [10.0, 5.0, 10.0],
+            ref_start: 0,
+            ref_count: 0,
+            area_table_id,
+            fog_indices: [0; 4],
+            group_liquid: benilla_formats::NO_GROUP_LIQUID,
+        };
+        let mut model = bare_model();
+        model.wmo_id = 77;
+        model.group_collision_tris = vec![slab(-10.0, 0.0), slab(0.0, 10.0)];
+        let (bounds, all) = benilla_assets::collision_tri_bounds(&model.group_collision_tris);
+        model.group_collision_bounds = bounds;
+        model.collision_bounds = all;
+        model.group_nav = vec![nav(0, 501), nav(EXTERIOR, 502)];
+
+        let mut world = World::new();
+        world.init_resource::<Assets<WmoModel>>();
+        world.init_resource::<Assets<AdtTile>>();
+        world.init_resource::<TerrainStreamer>();
+        world.init_resource::<crate::view::Viewer>();
+        world.init_resource::<CurrentAreaInterior>();
+        world.init_resource::<CurrentWmoGroup>();
+        let handle = world.resource_mut::<Assets<WmoModel>>().add(model);
+        world.spawn(WmoPortalInstance {
+            handle,
+            world_from_local: Affine3A::IDENTITY,
+            name_set: 3,
+            visible: vec![true; 2],
+            interior_fog: vec![false; 2],
+            liquid_visited: vec![false; 2],
+            flooded: vec![None; 2],
+        });
+        let mut stand = |wow: [f32; 3]| {
+            world.resource_mut::<crate::view::Viewer>().at = Some(wow_to_bevy(wow));
+            world.run_system_once(track_area_interior).unwrap();
+            (
+                world.resource::<CurrentAreaInterior>().0,
+                world.resource::<CurrentWmoGroup>().0,
+            )
+        };
+        let room = WmoInteriorKeys {
+            wmo_id: 77,
+            name_set: 3,
+            group_area_id: 501,
+        };
+        assert_eq!(stand([-5.0, 0.0, 0.0]), (Some(room), 501));
+        assert_eq!(stand([5.0, 0.0, 0.0]), (None, 502), "the courtyard");
+        assert_eq!(stand([50.0, 0.0, 0.0]), (None, 0), "open ground");
+    }
+
+    /// Across buildings the floor key is the nearest hit's group (`0x7c28f0` keeps one per slot),
+    /// an exterior one included, while the zone-text claim still names the interior below it.
+    #[test]
+    fn the_standing_group_is_the_nearest_hit_across_buildings() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        // One single-group building: a 20 x 10 floor at `z` with the given flags and MOGP id.
+        let building = |wmo_id: u32, z: f32, flags: u32, area_table_id: u32| {
+            let mut model = bare_model();
+            model.wmo_id = wmo_id;
+            model.group_collision_tris = vec![vec![
+                [[-10.0, -5.0, z], [10.0, -5.0, z], [10.0, 5.0, z]],
+                [[-10.0, -5.0, z], [10.0, 5.0, z], [-10.0, 5.0, z]],
+            ]];
+            let (bounds, all) = benilla_assets::collision_tri_bounds(&model.group_collision_tris);
+            model.group_collision_bounds = bounds;
+            model.collision_bounds = all;
+            model.group_nav = vec![benilla_assets::WmoGroupNav {
+                flags,
+                bbox_min: [-10.0, -5.0, z],
+                bbox_max: [10.0, 5.0, z + 10.0],
+                ref_start: 0,
+                ref_count: 0,
+                area_table_id,
+                fog_indices: [0; 4],
+                group_liquid: benilla_formats::NO_GROUP_LIQUID,
+            }];
+            model
+        };
+        // The exterior building is spawned first, so query order alone cannot decide.
+        let run = |exterior_z: f32, interior_z: f32| {
+            let mut world = World::new();
+            world.init_resource::<Assets<WmoModel>>();
+            world.init_resource::<Assets<AdtTile>>();
+            world.init_resource::<TerrainStreamer>();
+            world.init_resource::<crate::view::Viewer>();
+            world.init_resource::<CurrentAreaInterior>();
+            world.init_resource::<CurrentWmoGroup>();
+            for model in [
+                building(10, exterior_z, EXTERIOR, 601),
+                building(20, interior_z, 0, 701),
+            ] {
+                let handle = world.resource_mut::<Assets<WmoModel>>().add(model);
+                world.spawn(WmoPortalInstance {
+                    handle,
+                    world_from_local: Affine3A::IDENTITY,
+                    name_set: 0,
+                    visible: vec![true],
+                    interior_fog: vec![false],
+                    liquid_visited: vec![false],
+                    flooded: vec![None],
+                });
+            }
+            world.resource_mut::<crate::view::Viewer>().at = Some(wow_to_bevy([0.0, 0.0, 1.0]));
+            world.run_system_once(track_area_interior).unwrap();
+            (
+                world.resource::<CurrentAreaInterior>().0,
+                world.resource::<CurrentWmoGroup>().0,
+            )
+        };
+        let interior = Some(WmoInteriorKeys {
+            wmo_id: 20,
+            name_set: 0,
+            group_area_id: 701,
+        });
+        assert_eq!(run(0.0, -3.0), (interior, 601), "the nearer exterior deck");
+        assert_eq!(run(-3.0, 0.0), (interior, 701), "the nearer interior floor");
     }
 
     /// The containment attach's upward retry: after a downward miss the nearest face above answers,

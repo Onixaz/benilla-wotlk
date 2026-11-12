@@ -215,7 +215,9 @@ const ZONE_RAY_LEN: f32 = 1000.0;
 /// - unit lighting (`[node+0xc]`): `EXTERIOR | EXTERIOR_LIT`, the fork on `MOGI & 0x48`.
 ///
 /// The portal leg belongs to the camera's render seed alone: a doorway plane under the eye must
-/// not claim the interior. `None` is outdoors; [`down_ray_claim`] keeps an outdoor-class winner.
+/// not claim the interior. `None` is outdoors; [`down_ray_claim`] keeps an outdoor-class winner,
+/// which every live caller reads, so the collapse serves the audits alone.
+#[cfg(test)]
 pub(crate) fn area_down_ray(
     tris: &[Vec<[[f32; 3]; 3]>],
     bounds: &[Option<([f32; 3], [f32; 3])>],
@@ -245,9 +247,9 @@ pub fn standing_group(model: &WmoModel, eye: [f32; 3], terrain_z: Option<f32>) -
     .map(|c| c.group)
 }
 
-/// [`area_down_ray`] for linking a world object to a group (the map's object link, `0x7c25d0`): an
-/// interior group takes part only when the object's own point `mid` lies in its authored box, so a
-/// cast through a hole in an exterior floor cannot claim a room beneath it.
+/// [`down_ray_claim`]'s interior winner for linking a world object to a group (the map's object
+/// link, `0x7c25d0`): an interior group takes part only when the object's own point `mid` lies in
+/// its authored box, so a cast through a hole in an exterior floor cannot claim a room beneath it.
 pub(crate) fn link_down_ray(
     tris: &[Vec<[[f32; 3]; 3]>],
     bounds: &[Option<([f32; 3], [f32; 3])>],
@@ -293,8 +295,8 @@ pub(crate) struct DownRayClaim {
     pub(crate) outdoor: bool,
 }
 
-/// [`area_down_ray`] without the outdoor collapse: the light chain tells an outdoor-class face (a
-/// deck) from open terrain.
+/// The position cast's claim with its outdoor class: the light chain tells an outdoor-class face
+/// (a deck) from open terrain, and the area tracker reads an exterior group's id.
 pub(crate) fn down_ray_claim(
     tris: &[Vec<[[f32; 3]; 3]>],
     bounds: &[Option<([f32; 3], [f32; 3])>],

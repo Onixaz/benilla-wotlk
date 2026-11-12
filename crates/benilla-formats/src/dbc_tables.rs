@@ -79,6 +79,7 @@ tables! {
         "DeathThudLookups" => death_thud::death_thud_lookups_schema(),
         "DungeonEncounter" => dungeon_encounter::schema(),
         "DungeonMap" => dungeon_map::schema(),
+        "DungeonMapChunk" => dungeon_map::chunk_schema(),
         "DurabilityCosts" => durability::costs_schema(),
         "DurabilityQuality" => durability::qualities_schema(),
         "Emotes" => emotes::emotes_schema(),
