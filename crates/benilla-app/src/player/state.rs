@@ -349,6 +349,8 @@ pub(crate) struct Player {
     /// `pos` and the facing still describe the last one. Set when the mover guid changes, cleared
     /// at the take-control edge.
     pub(crate) reseat: bool,
+    /// Our own body's flight while we drive another unit, given back with the reins.
+    pub(super) own_flying: Option<bool>,
     /// Mode grants and forced speeds for the mover, held until the driven body is that unit: their
     /// acks carry its pose, which is still the last body's across a hand-over.
     pub(super) held_modes: Vec<crate::net::MoveModeMessage>,
