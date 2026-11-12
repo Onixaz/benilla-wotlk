@@ -237,7 +237,7 @@ impl WorldPoint<'_, '_> {
         )
     }
 
-    /// The MOGP id of the WMO group under the player whatever its flags, 0 over open ground.
+    /// The MOGP id of the nearest WMO group under the player, interior or exterior, 0 over terrain.
     pub fn wmo_group(&self) -> u32 {
         self.wmo_group.0
     }

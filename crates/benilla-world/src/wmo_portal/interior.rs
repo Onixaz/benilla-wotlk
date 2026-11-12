@@ -97,14 +97,13 @@ pub(crate) const POSITION_PROBE_LIFT: f32 = 0.1;
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CurrentAreaInterior(pub Option<WmoInteriorKeys>);
 
-/// The MOGP id of the WMO group under the player whatever its flags, 0 over open ground
-/// (`[0xadf330]`, written at `0x7a1640`): the world map's floor key.
+/// The MOGP id of the nearest WMO group under the player, interior or exterior, 0 when terrain is
+/// nearer (`[0xadf330]`, written at `0x7a1640`): the world map's floor key.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
 pub struct CurrentWmoGroup(pub u32);
 
-/// Track [`CurrentAreaInterior`] and [`CurrentWmoGroup`]: per placed building, the faces-only
-/// down-ray from the player's position, the first interior claim wins, else the first exterior
-/// one names the group alone; the camera stands in before login.
+/// Track [`CurrentAreaInterior`] (first interior claim) and [`CurrentWmoGroup`] (nearest claim, the
+/// one link `0x7c28f0` keeps) from the faces-only down-ray; the camera stands in before login.
 pub(super) fn track_area_interior(
     wmos: Res<Assets<WmoModel>>,
     viewer: Res<crate::view::Viewer>,
@@ -125,7 +124,7 @@ pub(super) fn track_area_interior(
     };
     let terrain = terrain_height_under(&streamer, &adt_tiles, eye_world);
     let mut found = None;
-    let mut exterior = None;
+    let mut nearest: Option<(f32, u32)> = None;
     for inst in &instances {
         let Some(model) = wmos.get(&inst.handle) else {
             continue;
@@ -156,22 +155,22 @@ pub(super) fn track_area_interior(
             .group_nav
             .get(claim.group)
             .map_or(0, |g| g.area_table_id);
-        if claim.outdoor {
-            exterior.get_or_insert(group_area_id);
-            continue;
+        // Static placements only, so `0x7a1640`'s exterior skip on a moved (0x400) one never applies.
+        if nearest.is_none_or(|(depth, _)| claim.depth < depth) {
+            nearest = Some((claim.depth, group_area_id));
         }
-        found = Some(WmoInteriorKeys {
-            wmo_id: model.wmo_id,
-            name_set: u32::from(inst.name_set),
-            group_area_id,
-        });
-        break;
+        if !claim.outdoor && found.is_none() {
+            found = Some(WmoInteriorKeys {
+                wmo_id: model.wmo_id,
+                name_set: u32::from(inst.name_set),
+                group_area_id,
+            });
+        }
     }
     if current.0 != found {
         current.0 = found;
     }
-    let group = CurrentWmoGroup(found.map_or(exterior.unwrap_or(0), |k| k.group_area_id));
-    standing.set_if_neq(group);
+    standing.set_if_neq(CurrentWmoGroup(nearest.map_or(0, |(_, id)| id)));
 }
 
 /// Track [`CurrentWmoInterior`] and [`PlayerWmoRoom`] from the character, where the client's audio
@@ -984,7 +983,7 @@ mod tests {
         assert_eq!(footprint_sample(&model, [-1.0, -1.0, -1.0]), None);
     }
 
-    /// The area tracker names the group under the player whatever its flags (`0x7a1640`), while
+    /// The area tracker names the group under the player interior or exterior (`0x7a1640`), while
     /// the zone-text claim stays the interior one: a room, a courtyard, then open ground.
     #[test]
     fn the_standing_group_is_named_indoors_and_out() {
@@ -1048,6 +1047,75 @@ mod tests {
         assert_eq!(stand([-5.0, 0.0, 0.0]), (Some(room), 501));
         assert_eq!(stand([5.0, 0.0, 0.0]), (None, 502), "the courtyard");
         assert_eq!(stand([50.0, 0.0, 0.0]), (None, 0), "open ground");
+    }
+
+    /// Across buildings the floor key is the nearest hit's group (`0x7c28f0` keeps one per slot),
+    /// an exterior one included, while the zone-text claim still names the interior below it.
+    #[test]
+    fn the_standing_group_is_the_nearest_hit_across_buildings() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        // One single-group building: a 20 x 10 floor at `z` with the given flags and MOGP id.
+        let building = |wmo_id: u32, z: f32, flags: u32, area_table_id: u32| {
+            let mut model = bare_model();
+            model.wmo_id = wmo_id;
+            model.group_collision_tris = vec![vec![
+                [[-10.0, -5.0, z], [10.0, -5.0, z], [10.0, 5.0, z]],
+                [[-10.0, -5.0, z], [10.0, 5.0, z], [-10.0, 5.0, z]],
+            ]];
+            let (bounds, all) = benilla_assets::collision_tri_bounds(&model.group_collision_tris);
+            model.group_collision_bounds = bounds;
+            model.collision_bounds = all;
+            model.group_nav = vec![benilla_assets::WmoGroupNav {
+                flags,
+                bbox_min: [-10.0, -5.0, z],
+                bbox_max: [10.0, 5.0, z + 10.0],
+                ref_start: 0,
+                ref_count: 0,
+                area_table_id,
+                fog_indices: [0; 4],
+                group_liquid: benilla_formats::NO_GROUP_LIQUID,
+            }];
+            model
+        };
+        // The exterior building is spawned first, so query order alone cannot decide.
+        let run = |exterior_z: f32, interior_z: f32| {
+            let mut world = World::new();
+            world.init_resource::<Assets<WmoModel>>();
+            world.init_resource::<Assets<AdtTile>>();
+            world.init_resource::<TerrainStreamer>();
+            world.init_resource::<crate::view::Viewer>();
+            world.init_resource::<CurrentAreaInterior>();
+            world.init_resource::<CurrentWmoGroup>();
+            for model in [
+                building(10, exterior_z, EXTERIOR, 601),
+                building(20, interior_z, 0, 701),
+            ] {
+                let handle = world.resource_mut::<Assets<WmoModel>>().add(model);
+                world.spawn(WmoPortalInstance {
+                    handle,
+                    world_from_local: Affine3A::IDENTITY,
+                    name_set: 0,
+                    visible: vec![true],
+                    interior_fog: vec![false],
+                    liquid_visited: vec![false],
+                    flooded: vec![None],
+                });
+            }
+            world.resource_mut::<crate::view::Viewer>().at = Some(wow_to_bevy([0.0, 0.0, 1.0]));
+            world.run_system_once(track_area_interior).unwrap();
+            (
+                world.resource::<CurrentAreaInterior>().0,
+                world.resource::<CurrentWmoGroup>().0,
+            )
+        };
+        let interior = Some(WmoInteriorKeys {
+            wmo_id: 20,
+            name_set: 0,
+            group_area_id: 701,
+        });
+        assert_eq!(run(0.0, -3.0), (interior, 601), "the nearer exterior deck");
+        assert_eq!(run(-3.0, 0.0), (interior, 701), "the nearer interior floor");
     }
 
     /// The containment attach's upward retry: after a downward miss the nearest face above answers,
