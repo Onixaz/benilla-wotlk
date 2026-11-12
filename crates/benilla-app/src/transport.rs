@@ -59,7 +59,6 @@ impl Plugin for TransportPlugin {
                     refit_changed_collider_aabbs::<With<Transport>>,
                     compose_riders,
                     compose_deck_passengers,
-                    place_deck_effects,
                     ground_deck_riders,
                 )
                     .chain()
@@ -636,14 +635,40 @@ pub(crate) struct DeckPassenger {
 
 /// Compose each deck passenger's world pose through its transport's this-frame pose, as
 /// [`compose_riders`] does a unit's; one whose transport is not streamed keeps its create pose, as
-/// the reference's attach falls back to it (`0x4f4230`).
+/// the reference's attach falls back to it (`0x4f4230`). Then each riding point effect
+/// ([`place_deck_effects`]): one system, as both only follow a deck's this-frame pose.
+#[allow(clippy::type_complexity)]
 fn compose_deck_passengers(
+    mut commands: Commands,
     guid_index: Res<crate::net::GuidIndex>,
-    boats: Query<&Transform, (With<Transport>, Without<DeckPassenger>)>,
-    mut passengers: Query<(&DeckPassenger, &mut Transform), Without<Transport>>,
+    mut sets: ParamSet<(
+        (
+            Query<&Transform, (With<Transport>, Without<DeckPassenger>)>,
+            Query<(&DeckPassenger, &mut Transform), Without<Transport>>,
+        ),
+        (
+            Query<(Entity, &DeckEffect, &mut Transform)>,
+            Query<&Transform, Without<DeckEffect>>,
+            Query<()>,
+        ),
+    )>,
+) {
+    {
+        let (boats, mut passengers) = sets.p0();
+        place_deck_passengers(&guid_index, &boats, &mut passengers);
+    }
+    let (mut effects, decks, units) = sets.p1();
+    place_deck_effects(&mut commands, &mut effects, &decks, &units);
+}
+
+#[allow(clippy::type_complexity)]
+fn place_deck_passengers(
+    guid_index: &crate::net::GuidIndex,
+    boats: &Query<&Transform, (With<Transport>, Without<DeckPassenger>)>,
+    passengers: &mut Query<(&DeckPassenger, &mut Transform), Without<Transport>>,
 ) {
     let tracing = benilla_assets::trace::enabled_for("deck");
-    for (p, mut transform) in &mut passengers {
+    for (p, mut transform) in passengers.iter_mut() {
         let Some(boat) = guid_index
             .0
             .get(&p.transport_guid)
@@ -753,12 +778,12 @@ pub(crate) struct DeckEffect {
 /// exists (`0x6fa0d0`-`0x6fa0f0`). With the transport gone it keeps its last world place and
 /// rides no more (`0x6f77a5`); with the unit gone it is never re-placed again.
 fn place_deck_effects(
-    mut commands: Commands,
-    mut effects: Query<(Entity, &DeckEffect, &mut Transform)>,
-    decks: Query<&Transform, Without<DeckEffect>>,
-    units: Query<()>,
+    commands: &mut Commands,
+    effects: &mut Query<(Entity, &DeckEffect, &mut Transform)>,
+    decks: &Query<&Transform, Without<DeckEffect>>,
+    units: &Query<()>,
 ) {
-    for (entity, fx, mut transform) in &mut effects {
+    for (entity, fx, mut transform) in effects.iter_mut() {
         let deck = decks
             .get(fx.ride.deck)
             .ok()
@@ -850,7 +875,8 @@ mod tests {
     #[test]
     fn a_point_effect_rides_its_transport_while_it_and_its_unit_last() {
         let mut app = App::new();
-        app.add_systems(Update, place_deck_effects);
+        app.init_resource::<crate::net::GuidIndex>()
+            .add_systems(Update, compose_deck_passengers);
         let world = app.world_mut();
         let deck = world.spawn(Transform::from_xyz(10.0, 0.0, 0.0)).id();
         let other = world.spawn(Transform::from_xyz(-10.0, 0.0, 0.0)).id();
