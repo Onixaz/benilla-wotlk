@@ -2804,6 +2804,9 @@ pub(crate) struct TeleportMessage {
     pub(crate) counter: u32,
     pub(crate) position: [f32; 3],
     pub(crate) orientation: f32,
+    /// `(transport guid, pose in its frame, facing in its frame)`, set when the teleport keeps us
+    /// aboard: a transport's own same-map jump moves its passengers this way.
+    pub(crate) transport: Option<(u64, [f32; 3], f32)>,
 }
 
 /// An inbound `MSG_MOVE_*` for our own mover: always server-authored (vmangos

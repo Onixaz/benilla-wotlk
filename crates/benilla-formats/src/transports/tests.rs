@@ -302,3 +302,28 @@ fn first_cycle_on_map_lands_on_that_map() {
         "no golden path crosses continents — this test proves nothing"
     );
 }
+
+/// The server's period replaces the built one: a longer cycle holds the last keyframe past the
+/// built end, the sample before it is untouched, and `0` parks the path at its head.
+#[test]
+fn a_server_period_replaces_the_built_one() {
+    let data = crate::wow_data_or_skip!();
+    let mut chain = crate::open_chain(&data).expect("open chain");
+    let cat = load_taxi_path_nodes(&mut chain).expect("load TaxiPathNode");
+    let nodes = cat.path(302).expect("taxi path 302 (Orgrimmar–Undercity)");
+    let built = TransportTimetable::build(nodes, 30.0, 1.0).expect("path 302 builds");
+
+    let longer = built.with_period(built.period_ms + 5000);
+    assert_eq!(longer.period_ms, built.period_ms + 5000);
+    let (held, end) = (
+        longer.sample(built.period_ms + 2500),
+        longer.sample(longer.period_ms - 1),
+    );
+    assert_eq!((held.map, held.pos), (end.map, end.pos));
+    let mid = built.period_ms / 2;
+    assert_eq!(longer.sample(mid).pos, built.sample(mid).pos);
+
+    let parked = built.with_period(0);
+    assert_eq!(parked.period_ms, 0);
+    assert_eq!(parked.sample(12345).pos, built.sample(0).pos);
+}

@@ -228,7 +228,12 @@ pub(crate) fn drive_display_facing(
     // A parked rig is drawn nowhere: its display facing resumes from its state when it wakes, as
     // the reference ticks no pass-2 unit.
     candidates: Query<
-        (Entity, &NetEntity, &ObjectStore),
+        (
+            Entity,
+            &NetEntity,
+            &ObjectStore,
+            Has<crate::transport::TransportRider>,
+        ),
         (
             Without<Spline>,
             Without<RemoteMotion>,
@@ -264,8 +269,8 @@ pub(crate) fn drive_display_facing(
     let interact_npc = interact.and_then(|r| r.0);
 
     // Collect goals first, then apply, so no transform is borrowed mutably while another is read.
-    let mut goals: Vec<(Entity, Option<f32>, GoalSource)> = Vec::new();
-    for (e, net, store) in &candidates {
+    let mut goals: Vec<(Entity, Option<f32>, GoalSource, bool)> = Vec::new();
+    for (e, net, store, riding) in &candidates {
         if net.kind != EntityKind::Unit {
             continue; // a GameObject sits at its authored facing
         }
@@ -277,13 +282,13 @@ pub(crate) fn drive_display_facing(
                 emotes.as_ref().and_then(|c| c.emote_flags(id))
             })
         {
-            goals.push((e, None, GoalSource::Raw));
+            goals.push((e, None, GoalSource::Raw, riding));
             continue;
         }
         // Row 5.
         if let Ok((_, _, hold)) = holds.get(e) {
             if !hold.died {
-                goals.push((e, Some(hold.yaw), GoalSource::Held));
+                goals.push((e, Some(hold.yaw), GoalSource::Held, riding));
                 continue;
             }
         }
@@ -298,7 +303,7 @@ pub(crate) fn drive_display_facing(
             .and_then(|te| transforms.get(te).ok())
             .and_then(|t| bearing(unit_pos, bevy_to_wow(t.translation)));
         if let Some(goal) = target {
-            goals.push((e, Some(goal), GoalSource::Target));
+            goals.push((e, Some(goal), GoalSource::Target, riding));
             continue;
         }
         // Row 9: `InteractNpc` stands for the client's open-NPC-window global.
@@ -307,13 +312,13 @@ pub(crate) fn drive_display_facing(
             .flatten()
             .and_then(|p| bearing(unit_pos, p));
         match facing_me {
-            Some(goal) => goals.push((e, Some(goal), GoalSource::Interact)),
-            None => goals.push((e, None, GoalSource::Raw)),
+            Some(goal) => goals.push((e, Some(goal), GoalSource::Interact, riding)),
+            None => goals.push((e, None, GoalSource::Raw, riding)),
         }
     }
 
     let mut stepping: bevy::ecs::entity::EntityHashSet = default();
-    for (e, goal, source) in goals {
+    for (e, goal, source, riding) in goals {
         let Ok(mut tf) = transforms.get_mut(e) else {
             continue;
         };
@@ -327,6 +332,11 @@ pub(crate) fn drive_display_facing(
             });
             continue;
         };
+        // A deck rider's raw facing is deck-local, recomposed through the deck's yaw every frame
+        // (`compose_riders`), so its world-space raw goal is the pose it stands at.
+        if riding {
+            state.wire = cur;
+        }
         // The raw facing is a goal, not a freeze: it swings an NPC back when its window closes.
         let goal = goal.unwrap_or(state.wire);
         let new = filter_step(cur, goal, &mut state.hist);
@@ -828,5 +838,58 @@ mod tests {
             !app.world().entity(unit).contains::<FacingHold>(),
             "life releases it"
         );
+    }
+
+    /// A deck rider's yaw is recomposed through the turning deck every frame: the pump must take
+    /// that as its raw goal, never turn back toward the yaw it seeded, nor latch a shuffle.
+    #[test]
+    fn a_deck_rider_follows_its_deck_without_shuffling() {
+        let mut app = App::new();
+        app.init_resource::<GuidIndex>()
+            .add_systems(Update, drive_display_facing);
+        let crew = app
+            .world_mut()
+            .spawn((
+                NetEntity {
+                    kind: EntityKind::Unit,
+                    display_id: None,
+                    scale: 1.0,
+                },
+                ObjectStore::default(),
+                Transform::default(),
+                crate::transport::TransportRider {
+                    transport_guid: 0x1fc0_0000_0000_0006,
+                    local_pos: [0.0; 3],
+                    local_orientation: 0.0,
+                    seat: -1,
+                },
+            ))
+            .id();
+        app.update(); // the seeding frame
+        for k in 1..=8 {
+            // The deck has swung the rider's composed yaw since the seed.
+            let deck_yaw = 0.3 * k as f32;
+            app.world_mut()
+                .entity_mut(crew)
+                .get_mut::<Transform>()
+                .unwrap()
+                .rotation = Quat::from_rotation_y(deck_yaw);
+            app.update();
+            let yaw = yaw_of(
+                app.world()
+                    .entity(crew)
+                    .get::<Transform>()
+                    .unwrap()
+                    .rotation,
+            );
+            assert!(
+                crate::creature_anim::wrap_pi(yaw - deck_yaw).abs() < 1.0e-5,
+                "the pump turned the rider off its deck: {yaw} vs {deck_yaw}"
+            );
+            assert!(
+                !app.world().entity(crew).contains::<FacingStep>(),
+                "a rider standing still on a turning deck latched a shuffle"
+            );
+        }
     }
 }

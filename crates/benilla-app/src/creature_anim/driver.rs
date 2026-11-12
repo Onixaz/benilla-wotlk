@@ -651,8 +651,16 @@ fn drive_unit(
     // The rate divisor's `|modelScale|`: a mount child's display column composes under the rider's
     // scale.
     let model_scale = transform.scale.x * host_scale;
-    let traced = is_self || ridden_by_self;
-    let subject = if mount_body.is_some() { "mount " } else { "" };
+    // `WOW_ANIM_TRACE_ALL=1` traces every unit, each line led by its entity.
+    let trace_all = anim_trace_all();
+    let traced = is_self || ridden_by_self || trace_all;
+    // Borrowed unless tracing every unit: this runs per unit per frame.
+    let subject: std::borrow::Cow<'static, str> = match (trace_all, mount_body.is_some()) {
+        (true, true) => format!("{entity} mount ").into(),
+        (true, false) => format!("{entity} ").into(),
+        (false, true) => "mount ".into(),
+        (false, false) => "".into(),
+    };
     let walk = speeds.map_or(DEFAULT_WALK_SPEED, |s| s.0.walk);
     // Dead is zero health or `UNIT_DYNFLAG_DEAD`: the flag's watcher plays Death and holds it, the
     // pair the death handler runs, so a feign lies down and stands when the flag clears. Absent
@@ -1477,7 +1485,7 @@ fn drive_unit(
             walk,
             model_scale,
             traced,
-            subject,
+            subject: &subject,
         },
         &mut drv,
         &mut tr,
@@ -1782,6 +1790,12 @@ fn body_clip_ended(
                     .is_some_and(|a| a.completions() >= budget)
         }),
     }
+}
+
+/// `WOW_ANIM_TRACE_ALL=1`: the anim trace covers every unit, not only our own; read once.
+fn anim_trace_all() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("WOW_ANIM_TRACE_ALL").as_deref() == Ok("1"))
 }
 
 /// `WOW_ANIM_COST=1` arms the resting-row counter; read once.

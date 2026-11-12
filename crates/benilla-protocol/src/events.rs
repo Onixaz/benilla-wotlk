@@ -344,6 +344,8 @@ pub enum SessionEvent {
         counter: u32,
         position: [f32; 3],
         orientation: f32,
+        /// Set when the teleport keeps us on a transport: the deck and our pose in its frame.
+        transport: Option<TransportPose>,
     },
     /// `SMSG_NEW_WORLD` (acked) or the login `SMSG_LOGIN_VERIFY_WORLD`. After a transfer that
     /// named a transport the pose is boat-local (vmangos `SendNewWorld` sends `GetTransportPos()`).

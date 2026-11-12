@@ -270,6 +270,8 @@ pub enum ServerPacket {
         counter: u32,
         position: Vector3d,
         orientation: f32,
+        /// The `ON_TRANSPORT` tail: the deck a rider stays on, and its pose in the deck's frame.
+        transport: Option<TransportPose>,
     },
     NewWorld {
         map: u32,

@@ -593,6 +593,7 @@ fn parse_server_body(
                 counter,
                 position: info.position,
                 orientation: info.orientation,
+                transport: info.transport,
             }
         }
         opcode::SMSG_NEW_WORLD => {

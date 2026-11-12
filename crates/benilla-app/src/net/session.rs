@@ -265,10 +265,12 @@ fn on_mover_edge(
             counter,
             position,
             orientation,
+            transport,
         } => teleport(
             guid,
             counter,
             position,
+            transport,
             orientation,
             &b.self_guid,
             &mut e.teleports,
@@ -660,6 +662,7 @@ fn teleport(
     guid: u64,
     counter: u32,
     position: [f32; 3],
+    transport: Option<benilla_protocol::TransportPose>,
     orientation: f32,
     self_guid: &SelfGuid,
     teleports: &mut MessageWriter<TeleportMessage>,
@@ -670,6 +673,7 @@ fn teleport(
             counter,
             position,
             orientation,
+            transport: transport.map(|t| (t.guid, [t.pos.x, t.pos.y, t.pos.z], t.orientation)),
         });
     }
 }
