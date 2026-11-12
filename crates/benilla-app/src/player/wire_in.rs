@@ -315,6 +315,22 @@ pub(super) fn apply_server_moves(
                 // The modes are the unit's own: a possessed unit keeps the root it took while we
                 // only watched it (the Eye of Acherus is rooted before it is handed over).
                 player.modes = super::state::MoveModes::of_unit(driven.map_or(0, |(_, w)| w));
+                // Flight is the body's own movement state: the reference keeps one per unit and the
+                // mover setter (`0x6ee870`) leaves it, so our body lands back in its own, not in the
+                // possessed unit's, and a taken unit starts from none.
+                match player.foreign_mover {
+                    Some(_) if player.own_flying.is_none() => {
+                        player.own_flying = Some(player.flying);
+                        player.flying = false;
+                    }
+                    None => {
+                        if let Some(own) = player.own_flying.take() {
+                            player.flying = own;
+                        }
+                    }
+                    Some(_) => {}
+                }
+                player.vertical.end();
             }
             player.pos = pos;
             player.active = true;
@@ -1189,5 +1205,40 @@ mod handover_tests {
         app.update();
         assert_eq!(mode_acks(&rx).len(), 1);
         assert!(!app.world().resource::<Player>().modes.rooted);
+    }
+
+    /// Flight is each body's own: cancelling a flying Eye of Acherus lands us back on our feet,
+    /// and a body that flew before the possession flies again when it comes back.
+    #[test]
+    fn each_body_keeps_its_own_flight_across_a_possession() {
+        let hand = |app: &mut App, from: Entity, to: Entity, mover: u64| {
+            app.world_mut().write_message(ClientControlMessage {
+                mover,
+                allow_move: true,
+            });
+            app.update();
+            app.world_mut().entity_mut(from).remove::<Embodied>();
+            app.world_mut().entity_mut(to).insert(Embodied);
+            app.world_mut().resource_mut::<Player>().reseat = true;
+            app.update();
+        };
+        for own in [false, true] {
+            let (mut app, me, eye, _rx) = harness();
+            app.world_mut().resource_mut::<Player>().flying = own;
+            hand(&mut app, me, eye, EYE);
+            assert!(
+                !app.world().resource::<Player>().flying,
+                "the taken eye starts from its own state"
+            );
+            // The eye takes off under its own grant.
+            app.world_mut().resource_mut::<Player>().flying = true;
+            hand(&mut app, eye, me, ME);
+            let player = app.world().resource::<Player>();
+            assert!(player.foreign_mover.is_none());
+            assert_eq!(
+                player.flying, own,
+                "our body comes back in its own flight state"
+            );
+        }
     }
 }

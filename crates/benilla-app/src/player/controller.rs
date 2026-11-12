@@ -394,8 +394,10 @@ pub(super) fn control(
                 },
                 &dynamics,
             );
-            // Flush a stale run once, but never under a ride, whose FORWARD is deliberate.
-            if !player.server_riding {
+            // Flush a stale run once, but never under a ride, whose FORWARD is deliberate, nor across
+            // a hand-over: the flags and pose are the body let go, and the stop would carry them
+            // under the new mover's guid. The take-control edge clears them.
+            if !player.server_riding && !player.reseat {
                 movement_net::park_mover(&net.0 .0, &mut player);
             }
             // After the park, so a fear's ack carries the stopped word.
