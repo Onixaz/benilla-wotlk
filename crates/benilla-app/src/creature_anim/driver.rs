@@ -301,6 +301,9 @@ type HostData = (
     // Read only by the debug trace.
     Has<SelfPlayer>,
     Has<benilla_world::model_fade::DespawnFade>,
+    // The rider's descriptor: the mount child has none of its own, and reads the anim tier
+    // from here (`0x717708`).
+    Option<&'static ObjectStore>,
 );
 
 /// The per-unit animation state machine: death overrides; otherwise Specials as bracketed loops,
@@ -629,12 +632,13 @@ fn drive_unit(
         move_modes,
         host_scale,
         ridden_by_self,
+        host_store,
     ) = match mount_body {
         Some(mb) => match mount_hosts.get(mb.host) {
-            Ok((s, r, m, sp, f, sw, md, t, host_self, _)) => {
-                (s, r, m, sp, f, sw, md, t.scale.x, host_self)
+            Ok((s, r, m, sp, f, sw, md, t, host_self, _, store)) => {
+                (s, r, m, sp, f, sw, md, t.scale.x, host_self, store)
             }
-            Err(_) => (None, None, None, None, None, false, None, 1.0, false),
+            Err(_) => (None, None, None, None, None, false, None, 1.0, false, None),
         },
         None => (
             spline,
@@ -646,6 +650,7 @@ fn drive_unit(
             move_modes,
             1.0,
             false,
+            None,
         ),
     };
     // The rate divisor's `|modelScale|`: a mount child's display column composes under the rider's
@@ -1480,6 +1485,11 @@ fn drive_unit(
             cast_start: cast_start.map(|(_, a)| a),
             wielded,
             store,
+            anim_tier: if mount_body.is_some() {
+                host_store.map_or(0, |s| s.0.unit_anim_tier())
+            } else {
+                store.map_or(0, |s| s.0.unit_anim_tier())
+            },
             emote_sounds,
             interacting: interacting || drv.interact_hold,
             walk,

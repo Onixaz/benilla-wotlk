@@ -2544,6 +2544,81 @@ fn a_mounts_gait_rate_composes_the_riders_scale_with_the_mounts() {
     );
 }
 
+/// A mount child has no descriptor of its own: it plays the rider's anim tier, so an idle
+/// fly-tier rider's mount is FlyStand (229), not Stand (`0x7176f0` on GetObjectModel).
+#[test]
+fn a_mount_child_plays_the_riders_fly_tier_idle() {
+    const FLY_STAND: u16 = 229;
+    // Shared layout: anim tier lives in byte 2 (`unit_anim_tier`).
+    const FLY_TIER: u32 = 3 << 16;
+    let mut app = app();
+    app.insert_resource(AnimData(AnimDataCatalog::from_rows([
+        (
+            0,
+            AnimEntry {
+                weapon_flags: 0,
+                fallback: 0,
+                flags: 0,
+                behavior: 0,
+                tier: 0,
+            },
+        ),
+        (
+            FLY_STAND,
+            AnimEntry {
+                weapon_flags: 0,
+                fallback: 0,
+                flags: 0,
+                behavior: 0,
+                tier: 3,
+            },
+        ),
+    ])));
+    let flyer = |tier: u32| crate::net::ObjectStore(ObjectFields::from_pairs(&[(138, tier)]));
+    let rider = app
+        .world_mut()
+        .spawn((
+            Transform::default(),
+            flyer(FLY_TIER),
+            MovementState::default(),
+        ))
+        .id();
+    let mount = app
+        .world_mut()
+        .spawn((
+            ModelAnimations {
+                graph: Handle::default(),
+                clips: vec![clip(0, 1, true), clip(FLY_STAND, 2, true)],
+                hand_close: [None, None],
+                playable_animation_lookup: Vec::new(),
+                animation_lookup: Vec::new(),
+                global_bones: Vec::new(),
+                first_seq: None,
+                pose: Default::default(),
+            },
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimDriver::default(),
+            Transform::default(),
+            crate::entities::mount::MountBody { host: rider },
+        ))
+        .id();
+    app.update();
+    assert_eq!(
+        drv_of(&app, mount).active_anim(),
+        Some(FLY_STAND),
+        "the idle flying mount plays FlyStand off the rider's tier"
+    );
+
+    app.world_mut().entity_mut(rider).insert(flyer(0));
+    app.update();
+    assert_eq!(
+        drv_of(&app, mount).active_anim(),
+        Some(0),
+        "a ground-tier rider's mount stands"
+    );
+}
+
 /// A mount's JumpLandRun 187 resolves to Run(5), a rate-scaled clip, so the landing runs at
 /// `speed / moveSpeed` like the gait: the rate write covers every mode.
 #[test]
