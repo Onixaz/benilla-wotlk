@@ -41,10 +41,12 @@ use motion::{
     sample_splines,
 };
 // `pub(crate)`: `creature_anim` reads the shuffle latch it produces, and a test runs both.
+#[cfg(feature = "dev")]
+pub(crate) use motion::ground_derived;
 pub(crate) use motion::{apply_walk_end_facing, drive_display_facing, facing_bearing, FacingHold};
 pub(crate) use motion::{
-    ground_derived, grounded_y, jump_seed, CreatureSwimming, FacingStep, RemoteMotion, Spline,
-    SplineStopped, SwimFlyTransition, UnitMoveModes,
+    grounded_y, jump_seed, CreatureSwimming, FacingStep, RemoteMotion, Spline, SplineStopped,
+    SwimFlyTransition, UnitMoveModes,
 };
 // Only the ground-census probe reads this, so a build without the instruments leaves it unused.
 // Not a `cfg`: seam knowledge lives in three fixed places, and this file is not one of them.

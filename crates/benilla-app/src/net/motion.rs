@@ -33,7 +33,9 @@ pub(super) use spline::{
     create_spline, ground_clamp_creatures, mark_swimming_creatures, monster_move_spline,
     sample_splines, trace_create_spline, trace_move_snap,
 };
-pub(crate) use spline::{ground_derived, grounded_y};
+pub(crate) use spline::grounded_y;
+#[cfg(feature = "dev")]
+pub(crate) use spline::ground_derived;
 // Named by `NetEntity`'s `require`, which a streamed entity is born with.
 pub(super) use spline::SwimStamp;
 pub(crate) use spline::{CreatureSwimming, GroundClamped, Spline, SplineStopped};

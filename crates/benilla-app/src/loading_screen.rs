@@ -27,6 +27,7 @@ use benilla_world::world_map::CurrentMap;
 
 /// The cover's input half: while it is up the client takes no input (a source cut in `PreUpdate`).
 mod input;
+#[cfg(feature = "dev")]
 pub(crate) use input::CoverInput;
 
 // The bar, from the loading screen's descriptor table: entry {cx, cy, halfW, halfH}, rect [cx ±
