@@ -13,8 +13,6 @@
 
 use bevy::prelude::*;
 
-use benilla_assets::coords::bevy_to_wow;
-
 use crate::spell::cast_send::TargetedBind;
 use crate::target::go_is_nearest;
 #[cfg(test)]
@@ -48,20 +46,17 @@ pub(crate) fn commit_ground_cast_on_click(
     let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::Location) else {
         return;
     };
-    let Some(point) = occlusion.point else {
+    // A boat's or zeppelin's deck binds its guid and the point in its frame (`0x80c38c`).
+    let Some(at) = occlusion.ground_target() else {
         // Sky: the nothing leg, no commit, the mode stays.
         return;
     };
-    let at = bevy_to_wow(point);
     // The location bind: SOURCE (`0x20`) first, then DEST (`0x40`). `None` cannot happen behind
     // `pending_for(Location)`; the `let else` fails closed.
     let Some(bound) = ladder.ground.location_bind(at) else {
         return;
     };
-    debug!(
-        "ui_action: ground cast {spell_id} committed at wow ({:.2}, {:.2}, {:.2}) as {bound:?}",
-        at[0], at[1], at[2]
-    );
+    debug!("ui_action: ground cast {spell_id} committed at {at:?} as {bound:?}");
     // The cast send: a thrown grenade commits as `CMSG_USE_ITEM` with the location block.
     ladder.commit_targeted(spell_id, commit, bound);
 }
@@ -123,6 +118,7 @@ pub(crate) fn commit_object_cast_on_click(
 mod tests {
     use super::*;
     use crate::net::{ClientCommand, NetCommands};
+    use benilla_assets::coords::bevy_to_wow;
     use bevy::ecs::system::SystemId;
     use crossbeam_channel::Receiver;
 
@@ -189,7 +185,7 @@ mod tests {
                 crate::target::PickOcclusion {
                     distance: 5.0,
                     point: Some(Vec3::new(1.0, 2.0, 3.0)),
-                    ray: None,
+                    ..Default::default()
                 };
         };
         let run = |world: &mut World, id: SystemId| {
@@ -253,6 +249,51 @@ mod tests {
         ));
     }
 
+    /// A click on a hull nearer than the world binds there; a boat's deck binds the boat's guid
+    /// and the point in its frame (`0x80c38c`), any other GameObject the world point.
+    #[test]
+    fn a_click_on_a_deck_binds_the_boat_and_the_local_point() {
+        const BLIZZARD: u32 = 10;
+        const BOAT: u64 = 0x1FC0_0000_0000_0010;
+        let commit = crate::spell::cast_send::CastCommit::Spell;
+        let local = Vec3::new(1.0, 2.0, 3.0);
+        let send = |object_ground| {
+            let (mut world, rx, _) = fixture();
+            let id = world.register_system(commit_ground_cast_on_click);
+            world
+                .resource_mut::<super::super::SpellTargeting>()
+                .enter(BLIZZARD, commit, 0x0040);
+            world.resource_mut::<crate::target::PressPick>().occlusion =
+                crate::target::PickOcclusion {
+                    distance: 50.0,
+                    point: Some(Vec3::new(0.0, -10.0, 0.0)),
+                    ray: None,
+                    object_ground,
+                };
+            world
+                .resource_mut::<Messages<WorldClick>>()
+                .write(WorldClick);
+            world.run_system(id).expect("the ground commit runs");
+            match rx.try_recv() {
+                Ok(ClientCommand::CastSpellAtDest { dest, .. }) => dest,
+                other => panic!("a dest cast: {other:?}"),
+            }
+        };
+        let on_deck = send(Some(crate::target::ObjectGround {
+            point: Vec3::new(40.0, 5.0, 7.0),
+            deck: Some((BOAT, local)),
+        }));
+        assert_eq!(on_deck.transport, BOAT);
+        assert_eq!(on_deck.pos, bevy_to_wow(local));
+        let on_hull = send(Some(crate::target::ObjectGround {
+            point: Vec3::new(40.0, 5.0, 7.0),
+            deck: None,
+        }));
+        assert_eq!(on_hull, bevy_to_wow(Vec3::new(40.0, 5.0, 7.0)).into());
+        let on_ground = send(None);
+        assert_eq!(on_ground, bevy_to_wow(Vec3::new(0.0, -10.0, 0.0)).into());
+    }
+
     /// A cast as the pet (Freeze, `0x5d445a`) binds the same terrain click and leaves as
     /// `CMSG_PET_CAST_SPELL` with the pet's guid and the dest block (`0x80b315`).
     #[test]
@@ -269,7 +310,7 @@ mod tests {
         world.resource_mut::<crate::target::PressPick>().occlusion = crate::target::PickOcclusion {
             distance: 5.0,
             point: Some(Vec3::new(1.0, 2.0, 3.0)),
-            ray: None,
+            ..Default::default()
         };
         world
             .resource_mut::<Messages<WorldClick>>()
@@ -285,7 +326,7 @@ mod tests {
             panic!("a pet cast at the click: {sent:?}");
         };
         assert_eq!((pet_guid, spell_id), (PET, FREEZE));
-        assert_eq!(at, bevy_to_wow(Vec3::new(1.0, 2.0, 3.0)));
+        assert_eq!(at, bevy_to_wow(Vec3::new(1.0, 2.0, 3.0)).into());
         assert!(rx.try_recv().is_err(), "nothing else: no CMSG_CAST_SPELL");
         assert!(!world.resource::<super::super::SpellTargeting>().active());
     }

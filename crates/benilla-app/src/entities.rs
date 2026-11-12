@@ -83,7 +83,7 @@ use missile::{
     attach_missile_models, mark_forced_missiles, move_missiles, run_missile_motion, spawn_missiles,
     MissileMotion, MotionScripts,
 };
-pub(crate) use missile::{deck_place, DeckPoint, ListedUnit, MissileShape, TargetList};
+pub(crate) use missile::{deck_local, deck_place, DeckPoint, ListedUnit, MissileShape, TargetList};
 
 /// A WMO-display GameObject's doodad props (a ship's sails), parented under it to ride a transport.
 mod wmo_props;

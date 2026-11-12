@@ -331,7 +331,7 @@ pub use spells::{
     cast_spell_gameobject, cast_spell_glyph, cast_spell_item, cast_spell_trade_item,
     dismiss_critter, wotlk_cast_fail_shared, CastCounter, CastOutcome, CastRunes, CorpseTarget,
     DestLocSpellCast, ResumeCastBar, SpellCastTargets, SpellChainTargets, SpellGo, SpellStart,
-    WOTLK_CAST_FAIL_KEYS,
+    TargetPoint, WOTLK_CAST_FAIL_KEYS,
 };
 pub use stable::{
     buy_stable_slot, list_stabled_pets, stable_pet, stable_result, stable_swap_pet, unstable_pet,

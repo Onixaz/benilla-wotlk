@@ -90,9 +90,9 @@ impl WorldWriter {
         )
     }
 
-    /// `CMSG_CAST_SPELL` with `TARGET_FLAG_DEST_LOCATION`: a ground-targeted spell at a world
-    /// point; the server checks range and line of sight (`Spell::CheckCast`).
-    pub fn cast_spell_at_dest(&mut self, spell_id: u32, dest: [f32; 3]) -> Result<()> {
+    /// `CMSG_CAST_SPELL` with `TARGET_FLAG_DEST_LOCATION`: a ground-targeted spell at a point; the
+    /// server checks range and line of sight (`Spell::CheckCast`).
+    pub fn cast_spell_at_dest(&mut self, spell_id: u32, dest: messages::TargetPoint) -> Result<()> {
         let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,
@@ -101,8 +101,12 @@ impl WorldWriter {
     }
 
     /// `CMSG_CAST_SPELL` with `TARGET_FLAG_SOURCE_LOCATION`, for a `Targets & 0x20` spell; the
-    /// server centres the area effect on `src`, a world point.
-    pub fn cast_spell_at_source(&mut self, spell_id: u32, src: [f32; 3]) -> Result<()> {
+    /// server centres the area effect on `src`.
+    pub fn cast_spell_at_source(
+        &mut self,
+        spell_id: u32,
+        src: messages::TargetPoint,
+    ) -> Result<()> {
         let count = self.cast_counter.take();
         self.send(
             opcode::CMSG_CAST_SPELL,

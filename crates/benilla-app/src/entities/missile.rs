@@ -287,6 +287,11 @@ pub(crate) fn deck_place(local: Vec3, deck: &GlobalTransform) -> Vec3 {
     deck.translation() + deck.rotation() * local
 }
 
+/// A world point in a transport's frame, the inverse of [`deck_place`].
+pub(crate) fn deck_local(world: Vec3, deck: &GlobalTransform) -> Vec3 {
+    deck.rotation().inverse() * (world - deck.translation())
+}
+
 /// One listed target, resolved by guid where the missile meets it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ListedUnit {
@@ -2700,6 +2705,21 @@ mod tests {
 
     /// `Spell.dbc` Speed such that the test target's 24-unit range is a 1.000 s flight.
     const SPEED: f32 = 24.0;
+
+    /// A world point taken into a turned, moved deck's frame places back where it was.
+    #[test]
+    fn deck_local_inverts_deck_place() {
+        let deck = GlobalTransform::from(
+            Transform::from_xyz(100.0, 5.0, -30.0).with_rotation(Quat::from_rotation_y(0.7)),
+        );
+        let world = Vec3::new(104.0, 6.5, -27.0);
+        let local = deck_local(world, &deck);
+        assert!(deck_place(local, &deck).distance(world) < 1e-4);
+        assert!(
+            local.distance(world - Vec3::new(100.0, 5.0, -30.0)) > 0.5,
+            "the turn is undone"
+        );
+    }
 
     /// An item missile's file (`0x732100`): its `InventoryType`'s folder, the left model and skin
     /// else the right, nothing for a head item or a row with no model.

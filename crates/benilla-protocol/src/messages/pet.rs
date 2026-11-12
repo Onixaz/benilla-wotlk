@@ -390,8 +390,8 @@ pub fn pet_cast_trajectory(
     body.extend_from_slice(
         &(TARGET_FLAG_SOURCE_LOCATION | TARGET_FLAG_DEST_LOCATION).to_le_bytes(),
     );
-    put_target_point(&mut body, shot.source);
-    put_target_point(&mut body, shot.dest);
+    put_target_point(&mut body, shot.source.into());
+    put_target_point(&mut body, shot.dest.into());
     body.extend_from_slice(&shot.pitch.to_le_bytes());
     body.extend_from_slice(&shot.speed.to_le_bytes());
     body.push(1);
@@ -586,7 +586,7 @@ mod tests {
             0xF140_0000_0000_0007,
             3,
             33395,
-            super::super::UseItemTarget::Dest([1.0, 2.0, 3.0]),
+            super::super::UseItemTarget::Dest([1.0, 2.0, 3.0].into()),
         );
         let mut want = vec![0x07, 0, 0, 0, 0, 0, 0x40, 0xF1, 3, 0x73, 0x82, 0, 0, 0];
         want.extend_from_slice(&0x40u32.to_le_bytes());
