@@ -441,7 +441,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SocketInventoryItem",
         lua.create_function(|lua, slot: Value| {
-            let slot = number_arg(lua, slot, "Usage: SocketInventoryItem(slot)")?;
+            let Some(slot) = super::char_stats::live_slot_arg(lua, &slot)?.filter(|&s| s != 0)
+            else {
+                return Ok(());
+            };
             let mut model = crate::script::model_mut_of(lua);
             let Some(s) = usize::try_from(slot)
                 .ok()

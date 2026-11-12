@@ -189,7 +189,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     g.set(
         "PutItemInBag",
-        lua.create_function(|lua, live: u32| {
+        lua.create_function(|lua, live: Value| {
+            let Some(live) = super::doll::live_id(lua, &live)? else {
+                return consumed(false);
+            };
             let yes = {
                 let mut model = crate::script::model_mut_of(lua);
                 put_item_in_bag(&mut model, live)
@@ -209,7 +212,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     g.set(
         "PickupBagFromSlot",
-        lua.create_function(|lua, live: u32| {
+        lua.create_function(|lua, live: Value| {
+            let Some(live) = super::doll::live_id(lua, &live)? else {
+                return Ok(());
+            };
             let mut model = crate::script::model_mut_of(lua);
             pickup_bag_from_slot(&mut model, live);
             Ok(())

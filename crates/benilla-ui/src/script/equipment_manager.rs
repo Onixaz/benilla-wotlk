@@ -799,7 +799,10 @@ fn install_item_verbs(lua: &Lua) -> mlua::Result<()> {
     // inspected unit's visible item; nothing for an empty slot.
     g.set(
         "GetInventoryItemID",
-        lua.create_function(|lua, (token, slot): (Option<String>, i64)| {
+        lua.create_function(|lua, (token, slot): (Option<String>, Value)| {
+            let Some(slot) = super::char_stats::live_slot_arg(lua, &slot)? else {
+                return Ok(None);
+            };
             let id = super::char_stats::player_inv_slot(lua, &token, slot)
                 .map(|v| v.item_id)
                 .filter(|&id| id != 0);
@@ -858,41 +861,35 @@ fn install_item_verbs(lua: &Lua) -> mlua::Result<()> {
 
     // GetInventoryItemsForSlot(slot [, table]) (`0x5e95c0`): every held item that fits the
     // 1-based slot, location → entry: the equipment, the backpack and bags, and with a banker the
-    // bank. A slot outside 1..19 answers nothing; a slot name reads `PaperDollItemFrame.dbc`.
+    // bank. A number outside 1..19 answers nothing; a slot name is its last
+    // `PaperDollItemFrame.dbc` row's number, used 0-based and unbounded (`0x5e967f`).
     g.set(
         "GetInventoryItemsForSlot",
         lua.create_function(|lua, args: MultiValue| {
             let mut it = args.into_iter();
             let slot = it.next().unwrap_or(Value::Nil);
             let into = it.next();
-            let slot0 = match &slot {
-                Value::Integer(_) | Value::Number(_) => {
-                    let n = super::binding_abi::coerced_number(lua, Some(slot.clone()));
-                    (n - 1.0) as i64
+            const USAGE: &str = "Usage: GetInventoryItemsForSlot(slot [, returnTable])";
+            let slot0 = match (lua.coerce_number(slot.clone())?, &slot) {
+                (Some(n), _) => {
+                    let slot0 = (n - 1.0) as i64;
+                    if !(0..EQUIPMENT_SET_SLOTS as i64).contains(&slot0) {
+                        return Ok(Value::Nil);
+                    }
+                    slot0
                 }
-                Value::String(s) => {
+                (None, Value::String(s)) => {
                     let name = s.to_string_lossy();
-                    match super::char_stats::slot_id_by_name(&read(lua), &name).filter(|&id| id > 0)
-                    {
-                        Some(id) => id - 1,
-                        None => {
-                            return Err(mlua::Error::runtime(
-                                "Usage: GetInventoryItemsForSlot(slot [, returnTable])",
-                            ))
-                        }
+                    match super::char_stats::last_slot_id_by_name(&read(lua), &name) {
+                        Some(id) if id != 0 => id,
+                        _ => return Err(mlua::Error::runtime(USAGE)),
                     }
                 }
-                _ => {
-                    return Err(mlua::Error::runtime(
-                        "Usage: GetInventoryItemsForSlot(slot [, returnTable])",
-                    ))
-                }
+                _ => return Err(mlua::Error::runtime(USAGE)),
             };
-            if !(0..EQUIPMENT_SET_SLOTS as i64).contains(&slot0) {
-                return Ok(Value::Nil);
-            }
             let t = result_table(lua, into.as_ref())?;
-            let fits = slot0 as u8 + 1;
+            // A row number no slot answers to fits nothing.
+            let fits = u8::try_from(slot0 + 1).unwrap_or(u8::MAX);
             let model = read(lua);
             let usable = |item_id: u32| super::item_stats::item_usable_by_id(&model, item_id);
             for s in 0..EQUIPMENT_SET_SLOTS {
@@ -1325,7 +1322,12 @@ mod tests {
             assert(n == 2, n)
             assert(t[0x100010] == 200)
             assert(t[0x300103] == 201)
-            assert(GetInventoryItemsForSlot("HeadSlot")[0x100001] == 100)
+            -- A name is its row number read 0-based, so it lists the slot after its own.
+            assert(GetInventoryItemsForSlot("MainHandSlot")[0x100001] == nil)
+            assert(next(GetInventoryItemsForSlot("HeadSlot")) == nil)
+            assert(GetInventoryItemsForSlot("BackSlot")[0x100010] == 200)
+            assert(not pcall(GetInventoryItemsForSlot, "AmmoSlot"))
+            assert(not pcall(GetInventoryItemsForSlot, "NoSuchSlot"))
             assert(GetInventoryItemsForSlot(25) == nil)
             assert(GetInventoryItemID("player", 1) == 100)
             assert(GetInventoryItemID("player", 2) == nil)

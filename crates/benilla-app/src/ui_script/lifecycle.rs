@@ -136,6 +136,8 @@ fn new_vm<E: std::fmt::Display>(
     Some(script)
 }
 
+/// Hand the new VM `PaperDollItemFrame.dbc`'s rows, which the inventory verbs resolve a slot name
+/// through; without them `GetInventorySlotInfo` raises on every name.
 fn seed_paperdoll_item_frame(world: &mut World, script: &mut UiScript) {
     let Some(assets) = world.get_resource::<benilla_assets::WorldAssets>() else {
         return;

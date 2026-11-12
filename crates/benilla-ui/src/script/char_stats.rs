@@ -281,11 +281,12 @@ pub type InventorySlots = [Option<InvSlotView>; INVENTORY_SLOT_COUNT];
 pub const BANK_BAG_SLOT_COUNT: usize = 7;
 pub type BankBagSlots = [Option<InvSlotView>; BANK_BAG_SLOT_COUNT];
 
+/// A `PaperDollItemFrame.dbc` row: the button name, the texture path and the slot number.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaperDollSlotInfo {
     pub name: String,
     pub texture: String,
-    pub slot: u32,
+    pub slot: i32,
 }
 
 impl PaperDollSlotInfo {
@@ -295,6 +296,7 @@ impl PaperDollSlotInfo {
     }
 }
 
+/// A stand-in table for tests, which run without the install.
 #[doc(hidden)]
 pub fn test_paperdoll_rows() -> Vec<PaperDollSlotInfo> {
     let rows = [
@@ -339,14 +341,12 @@ pub fn test_paperdoll_rows() -> Vec<PaperDollSlotInfo> {
         .map(|(name, slot, texture)| PaperDollSlotInfo {
             name: name.into(),
             slot,
-            texture: format!("UI-PaperDoll-Slot-{texture}"),
+            texture: format!("interface\\paperdoll\\UI-PaperDoll-Slot-{texture}.blp"),
         })
         .collect()
 }
 
-/// `PaperDollItemFrame.dbc`'s 36 rows as `(SlotName, SlotID, art suffix)`. The texture column
-/// shares strings between rows, so `BackSlot` shows the Chest art and `AmmoSlot` the Ranged.
-/// A `SLOT_INFO` slot id by its button name, case-insensitive (`0x5e9617`).
+/// The first row whose button name matches, case-insensitive (`0x5e7dc5`).
 pub(super) fn slot_info_by_name<'a>(model: &'a Model, name: &str) -> Option<&'a PaperDollSlotInfo> {
     model
         .paperdoll_item_frame
@@ -356,6 +356,36 @@ pub(super) fn slot_info_by_name<'a>(model: &'a Model, name: &str) -> Option<&'a 
 
 pub(super) fn slot_id_by_name(model: &Model, name: &str) -> Option<i64> {
     slot_info_by_name(model, name).map(|r| i64::from(r.slot))
+}
+
+/// The last matching row's slot number: `GetInventoryItemsForSlot`'s walk never stops (`0x5e967f`).
+pub(super) fn last_slot_id_by_name(model: &Model, name: &str) -> Option<i64> {
+    let mut rows = model.paperdoll_item_frame.iter().rev();
+    rows.find(|r| r.name.eq_ignore_ascii_case(name))
+        .map(|r| i64::from(r.slot))
+}
+
+/// The slot reader (`0x5e7c00`), 0-based: a number less one, a slot name's row number as it
+/// stands (`0x5e7c9e`), anything else the callers' 0; `None` off the whitelist.
+pub(super) fn inventory_slot_arg(lua: &Lua, v: &Value) -> mlua::Result<Option<i32>> {
+    let slot0 = match lua.coerce_number(v.clone())? {
+        Some(n) => (n as i64 as i32).wrapping_sub(1),
+        None => match v {
+            Value::String(name) => {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                slot_info_by_name(&model, &name.to_string_lossy()).map_or(0, |r| r.slot)
+            }
+            _ => 0,
+        },
+    };
+    Ok(inventory_slot_reader_accepts(slot0).then_some(slot0))
+}
+
+/// [`inventory_slot_arg`] as the live 1-based id, 0 the ammo leg.
+pub(super) fn live_slot_arg(lua: &Lua, v: &Value) -> mlua::Result<Option<i64>> {
+    Ok(inventory_slot_arg(lua, v)?.map(|slot0| i64::from(slot0) + 1))
 }
 
 /// The GlobalStrings key naming equipment slot `slot0` (0..18), the button name upper-cased
@@ -662,8 +692,8 @@ impl Model {
 }
 
 /// The inventory-slot reader's whitelist (`0x5e7c00`) on its 0-based slot (`0x5e7cb2`); outside
-/// it the binding raises "Invalid inventory slot in …". The backpack's item slots (23..=38) and
-/// buyback (74..=85) are container-API slots, not in it.
+/// it a verb returns nothing. The backpack's item slots (23..=38) and buyback (74..=85) are
+/// container-API slots, not in it.
 pub(super) fn inventory_slot_reader_accepts(slot0: i32) -> bool {
     slot0 == -1                            // Lua 0      the ammo leg
         || (0x00..=0x16).contains(&slot0)  // Lua 1..=23   the doll + the four equipped bags
@@ -968,7 +998,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetInventoryItemTexture(unit, slot) → icon path, or nil until the item's template arrives.
     g.set(
         "GetInventoryItemTexture",
-        lua.create_function(|lua, (token, slot): (Option<String>, i64)| {
+        lua.create_function(|lua, (token, slot): (Option<String>, Value)| {
+            let Some(slot) = live_slot_arg(lua, &slot)? else {
+                return Ok(Value::Nil);
+            };
             match player_inv_slot(lua, &token, slot).and_then(|v| v.icon) {
                 Some(icon) => Ok(Value::String(lua.create_string(&icon)?)),
                 None => Ok(Value::Nil),
@@ -980,7 +1013,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // arrives with the name and quality.
     g.set(
         "GetInventoryItemLink",
-        lua.create_function(|lua, (token, slot): (Option<String>, i64)| {
+        lua.create_function(|lua, (token, slot): (Option<String>, Value)| {
+            let Some(slot) = live_slot_arg(lua, &slot)? else {
+                return Ok(Value::Nil);
+            };
             match player_inv_slot(lua, &token, slot).and_then(|v| v.link) {
                 Some(link) => Ok(Value::String(lua.create_string(&link)?)),
                 None => Ok(Value::Nil),
@@ -988,11 +1024,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The reference's verbatim strings: the usage line when arg 1 is neither number nor string, the
-    // slot error when arg 2 is not a number or not a whitelisted slot.
+    // The usage line when arg 1 is neither number nor string (`0x5e7d1b`); a slot the reader
+    // refuses returns nothing.
     const USAGE_GET_INVENTORY_ITEM_COUNT: &str = "Usage: GetInventoryItemCount(unit, slot)";
-    const INVALID_SLOT_GET_INVENTORY_ITEM_COUNT: &str =
-        "Invalid inventory slot in GetInventoryItemCount";
     // GetInventoryItemCount(unit, slot): an empty slot pushes 1, a non-container its stack count, a
     // container past 0-based slot `0x16` 0 before any lookup (so a bank bag shows no digit), and an
     // equipped bag its `contents_count`.
@@ -1000,29 +1034,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetInventoryItemCount",
         lua.create_function(|lua, (unit, slot): (Value, Value)| {
             let token = super::binding_abi::string_arg(lua, unit, USAGE_GET_INVENTORY_ITEM_COUNT)?;
-            let slot0 =
-                super::binding_abi::number_arg(lua, slot, INVALID_SLOT_GET_INVENTORY_ITEM_COUNT)?;
-            let slot0 = slot0.wrapping_sub(1);
-            if !inventory_slot_reader_accepts(slot0) {
-                return Err(mlua::Error::RuntimeError(
-                    INVALID_SLOT_GET_INVENTORY_ITEM_COUNT.into(),
-                ));
-            }
-            let Some(v) = player_inv_slot(lua, &Some(token), i64::from(slot0) + 1) else {
-                return Ok(1i64);
+            let Some(slot0) = inventory_slot_arg(lua, &slot)? else {
+                return Ok(None);
             };
-            Ok(match v.contents_count {
+            let Some(v) = player_inv_slot(lua, &Some(token), i64::from(slot0) + 1) else {
+                return Ok(Some(1i64));
+            };
+            Ok(Some(match v.contents_count {
                 None => i64::from(v.count),
                 Some(_) if slot0 > 0x16 => 0,
                 Some(n) => i64::from(n),
-            })
+            }))
         })?,
     )?;
 
     // GetInventoryItemQuality(unit, slot) → 0..6, or nil for an empty slot (the wiki's shape).
     g.set(
         "GetInventoryItemQuality",
-        lua.create_function(|lua, (token, slot): (Option<String>, i64)| {
+        lua.create_function(|lua, (token, slot): (Option<String>, Value)| {
+            let Some(slot) = live_slot_arg(lua, &slot)? else {
+                return Ok(Value::Nil);
+            };
             match player_inv_slot(lua, &token, slot) {
                 Some(v) if v.item_id != 0 => Ok(Value::Integer(i64::from(v.quality))),
                 _ => Ok(Value::Nil),
@@ -1033,7 +1065,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // GetInventoryItemBroken(unit, slot) → 1 or nil, per `slot_is_broken`.
     g.set(
         "GetInventoryItemBroken",
-        lua.create_function(|lua, (token, slot): (Option<String>, i64)| {
+        lua.create_function(|lua, (token, slot): (Option<String>, Value)| {
+            let Some(slot) = live_slot_arg(lua, &slot)? else {
+                return Ok(Value::Nil);
+            };
             match player_inv_slot(lua, &token, slot) {
                 Some(v) if slot_is_broken(&v) => Ok(Value::Integer(1)),
                 _ => Ok(Value::Nil),
@@ -1065,7 +1100,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // does; stock calls it on every slot update (`PaperDollFrame.lua:691`).
     g.set(
         "GetInventoryItemCooldown",
-        lua.create_function(|_, (_token, _slot): (Option<String>, i64)| {
+        lua.create_function(|_, (_token, _slot): (Option<String>, Value)| {
             Ok((0.0f64, 0.0f64, 1i64))
         })?,
     )?;
@@ -1098,7 +1133,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetInventorySlotInfo(slotName) → (slotId, textureName, checkRelic) from `PaperDollItemFrame.dbc`.
+    // GetInventorySlotInfo(slotName) (`0x5e7d60`) → (slotId, textureName, checkRelic) off the
+    // first `PaperDollItemFrame.dbc` row of that name.
     // `checkRelic` is a property of the slot; stock pairs it with `UnitHasRelicSlot("player")`
     // (`PaperDollFrame.lua:680`, `:744`).
     g.set(
@@ -1113,9 +1149,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             Ok((
                 i64::from(row.slot),
-                Value::String(
-                    lua.create_string(format!("interface\\paperdoll\\{}.blp", row.texture))?,
-                ),
+                // The row's string as it stands (`0x5e7e07`).
+                Value::String(lua.create_string(&row.texture)?),
                 // `checkRelic`: the number 1 for `RangedSlot` only, not a boolean.
                 if row.slot == 18 {
                     Value::Integer(1)
@@ -1847,22 +1882,19 @@ mod tests {
             "0-based 67 is past 0x16: every container short-circuits, quiver or not"
         );
 
-        // Both arms raise. The backpack's item slots (Lua 24..=39) are outside the whitelist.
+        // A slot the reader refuses returns nothing. The backpack's item slots (Lua 24..=39) are
+        // outside the whitelist.
         let err = |code: &str| s.run(code).unwrap_err().to_string();
-        assert!(
-            err(r#"GetInventoryItemCount("player", 30)"#)
-                .contains("Invalid inventory slot in GetInventoryItemCount"),
-            "the backpack band raises"
-        );
-        assert!(
-            err(r#"GetInventoryItemCount("player", 200)"#)
-                .contains("Invalid inventory slot in GetInventoryItemCount"),
-            "and so does anything past the keyring"
-        );
-        assert!(
-            err(r#"GetInventoryItemCount("player", {})"#)
-                .contains("Invalid inventory slot in GetInventoryItemCount"),
-            "a non-number slot takes the SAME string, not the Usage one"
+        let slot_count = |args: &str| {
+            s.eval::<Option<i64>>(&format!("return GetInventoryItemCount({args})"))
+                .unwrap()
+        };
+        assert_eq!(slot_count(r#""player", 30"#), None, "the backpack band");
+        assert_eq!(slot_count(r#""player", 200"#), None, "past the keyring");
+        assert_eq!(
+            slot_count(r#""player", {}"#),
+            Some(1),
+            "a non-number reads as slot 1"
         );
         assert!(
             err("GetInventoryItemCount({}, 1)")
@@ -2027,6 +2059,66 @@ mod tests {
         assert!(s
             .eval::<i64>(r#"return GetInventorySlotInfo("NoSuchSlot")"#)
             .is_err());
+    }
+
+    /// The table's own rows answer: the texture string undecorated, a negative number, the first
+    /// of two rows of one name.
+    #[test]
+    fn get_inventory_slot_info_hands_back_the_row_as_it_stands() {
+        let row = |name: &str, texture: &str, slot| super::PaperDollSlotInfo {
+            name: name.into(),
+            texture: texture.into(),
+            slot,
+        };
+        let mut s = UiScript::new().unwrap();
+        s.set_paperdoll_item_frame(vec![
+            row("OddSlot", "Some\\Path\\Art", -3),
+            row("oddslot", "Other", 7),
+            row("RelicSlot", "", 18),
+        ]);
+        assert_eq!(
+            s.eval::<(i64, String, Option<i64>)>(r#"return GetInventorySlotInfo("ODDSLOT")"#)
+                .unwrap(),
+            (-3, "Some\\Path\\Art".into(), None)
+        );
+        assert_eq!(
+            s.eval::<(i64, String, Option<i64>)>(r#"return GetInventorySlotInfo("RelicSlot")"#)
+                .unwrap(),
+            (18, String::new(), Some(1))
+        );
+        assert!(s
+            .eval::<i64>(r#"return GetInventorySlotInfo("HeadSlot")"#)
+            .is_err());
+    }
+
+    /// The slot reader's name leg uses the row number 0-based, so a name answers for the slot
+    /// after its own; an unknown name and a non-number read as slot 1.
+    #[test]
+    fn a_slot_name_reads_as_its_row_number_zero_based() {
+        let mut s = UiScript::new().unwrap();
+        s.set_paperdoll_item_frame(super::test_paperdoll_rows());
+        let mut slots: crate::script::InventorySlots = Default::default();
+        slots[1] = Some(InvSlotView {
+            item_id: 100,
+            ..Default::default()
+        });
+        slots[2] = Some(InvSlotView {
+            item_id: 200,
+            ..Default::default()
+        });
+        s.set_inventory_slots(slots);
+        let id = |slot: &str| {
+            s.eval::<Option<i64>>(&format!("return GetInventoryItemID('player', {slot})"))
+                .unwrap()
+        };
+        assert_eq!(id("1"), Some(100));
+        assert_eq!(id("'1'"), Some(100), "a numeric string is a number");
+        assert_eq!(id("'HeadSlot'"), Some(200));
+        assert_eq!(id("'headslot'"), Some(200));
+        assert_eq!(id("'NoSuchSlot'"), Some(100));
+        assert_eq!(id("{}"), Some(100));
+        assert_eq!(id("'Bag12'"), None, "row 75 is off the whitelist");
+        assert_eq!(id("30"), None);
     }
 
     /// Each paper doll's facing is its pane's own `SetRotation` state, so turning one leaves the
