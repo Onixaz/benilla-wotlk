@@ -748,6 +748,36 @@ impl UnitTokens<'_, '_> {
         Some(unit)
     }
 
+    /// The guid a token names, held or not: a held unit's, else a group base's off the roster
+    /// (`partyN`, `raidN` and their pets), as the reference's token resolve answers before any
+    /// object lookup. A hop needs a held unit to read, so a chain answers only through [`Self::resolve`].
+    pub(crate) fn guid_of(&self, token: &str, selection: &Selection) -> Option<u64> {
+        if let Some((_, guid)) = self.resolve(token, selection) {
+            return Some(guid);
+        }
+        let UnitTokenParse::Unit { base, hops: 0 } = parse_unit_token(token) else {
+            return None;
+        };
+        let live = |guid: u64| {
+            self.held(guid)
+                .and_then(|(e, _)| self.stores.get(e).ok())
+                .map(|s| &s.0)
+        };
+        match base {
+            UnitBase::Target => selection.guid,
+            UnitBase::Party(row) => self.party_member(row),
+            UnitBase::Raid(row) => self.raid_member(row),
+            UnitBase::PartyPet(row) => self
+                .party_member(row)
+                .and_then(|m| self.group.party_pet_guid(m, live(m))),
+            UnitBase::RaidPet(row) => self
+                .raid_member(row)
+                .and_then(|m| self.group.raid_pet_guid(m, live(m))),
+            _ => None,
+        }
+        .filter(|&guid| guid != 0)
+    }
+
     /// The held unit a token's base names, before any `target` hop.
     fn base(&self, base: UnitBase, selection: &Selection) -> Option<(Entity, u64)> {
         match base {
@@ -1569,12 +1599,22 @@ fn feed_units(
         types,
         loot_lists: tables.loot_lists(),
     };
-    let target = selection.target.zip(selection.guid).and_then(|(e, guid)| {
-        let store = stores.all.get(e).ok()?;
-        let mut s = held.state(store, guid);
-        s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
-        Some(s)
-    });
+    let target = match (selection.target, selection.guid) {
+        (Some(e), Some(guid)) => stores.all.get(e).ok().map(|store| {
+            let mut s = held.state(store, guid);
+            s.guild = crate::ui_guild::unit_guild(&store.0, &mut guild, &commands);
+            s
+        }),
+        // A group member or pet selected by guid alone reads its roster record.
+        (None, Some(guid)) => crate::ui_party::unheld_group_state(
+            &group,
+            guid,
+            self_pair.and_then(|(store, _)| faction_group(store, factions.as_deref())),
+            chr,
+            types,
+        ),
+        _ => None,
+    };
 
     // `"focus"`: the VM's focus guid while the object manager holds it, as `"target"` is read.
     let focus = index

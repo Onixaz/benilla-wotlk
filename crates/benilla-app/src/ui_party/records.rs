@@ -54,6 +54,22 @@ impl GroupState {
         self.pet_guid_of(member, live, false)
     }
 
+    /// The group test a guid-only selection passes (`0x512a30`: party `0x52d310`, then raid
+    /// `0x573200`): us, our pet, a member, or a member's pet off its descriptor while held, else its
+    /// record while that reads online. `held` is a member's live descriptor.
+    pub(crate) fn names_member_or_pet<'a>(
+        &self,
+        guid: u64,
+        own: Option<(u64, &ObjectFields)>,
+        held: impl Fn(u64) -> Option<&'a ObjectFields>,
+    ) -> bool {
+        guid != 0
+            && (own.is_some_and(|(me, fields)| me == guid || fields.unit_pet_guid() == Some(guid))
+                || self.members.iter().any(|m| {
+                    m.guid == guid || self.party_pet_guid(m.guid, held(m.guid)) == Some(guid)
+                }))
+    }
+
     fn pet_guid_of(
         &self,
         member: u64,
@@ -236,6 +252,34 @@ mod tests {
 
         let g = group_with(record(member_status::OFFLINE));
         assert_eq!(g.party_pet_guid(MEMBER, None), None);
+    }
+
+    /// The guid-only selection's group test: us and our pet, a member, its pet off a held member's
+    /// descriptor or else an online record; a stranger, 0 and an offline member's pet fail.
+    #[test]
+    fn the_group_test_names_members_and_their_pets() {
+        let g = group_with(record(member_status::ONLINE));
+        let me = ObjectFields::from_pairs(&[(8, 0x99), (9, 0)]);
+        let none = |_| None;
+        assert!(g.names_member_or_pet(MEMBER, None, none));
+        assert!(g.names_member_or_pet(PET, None, none), "the record's pet");
+        assert!(g.names_member_or_pet(1, Some((1, &me)), none), "us");
+        assert!(g.names_member_or_pet(0x99, Some((1, &me)), none), "our pet");
+        assert!(!g.names_member_or_pet(0x7777, Some((1, &me)), none));
+        assert!(!g.names_member_or_pet(0, None, none));
+        let summon = ObjectFields::from_pairs(&[(8, 0x55), (9, 0)]);
+        let held = |guid| (guid == MEMBER).then_some(&summon);
+        assert!(
+            g.names_member_or_pet(0x55, None, held),
+            "a held member's pet"
+        );
+        assert!(
+            !g.names_member_or_pet(PET, None, held),
+            "a held member answers off its descriptor"
+        );
+        let g = group_with(record(member_status::OFFLINE));
+        assert!(g.names_member_or_pet(MEMBER, None, none));
+        assert!(!g.names_member_or_pet(PET, None, none), "offline record");
     }
 
     /// `raidpetN` reads the same fields as `partypetN`, but its record leg has no online test where

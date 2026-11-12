@@ -747,6 +747,40 @@ impl SelectCommit<'_, '_> {
         }
     }
 
+    /// The script verbs' select (`0x5259e0`): a held unit, else a group member or pet by guid alone;
+    /// anything else is a no-op. True when an unheld guid was newly selected, which the caller
+    /// sounds (`0x524eef`).
+    pub(super) fn target_if_valid(&mut self, guid: u64) -> bool {
+        if let Some(&entity) = self.index.0.get(&guid) {
+            self.commit(entity, guid);
+            return false;
+        }
+        let me = self.me.single().ok();
+        let own = me.and_then(|(g, store, _)| Some((g.0, &store?.0)));
+        let held = |member: u64| {
+            let &entity = self.index.0.get(&member)?;
+            self.stores.get(entity).ok().map(|s| &s.0)
+        };
+        if !self
+            .group
+            .as_deref()
+            .is_some_and(|g| g.names_member_or_pet(guid, own, held))
+        {
+            return false;
+        }
+        scan::commit_at(
+            &mut self.selection,
+            &mut self.seam,
+            None,
+            guid,
+            None,
+            me.is_some_and(|(_, _, engaged)| engaged),
+            me.map(|(g, _, _)| g.0),
+            false,
+        )
+        .changed
+    }
+
     /// Select a resolved guid, the reference's arm 1, through [`scan::commit`].
     pub(super) fn commit(&mut self, entity: Entity, guid: u64) {
         let me = self.me.single().ok();

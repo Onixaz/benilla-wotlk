@@ -185,7 +185,7 @@ pub(super) fn member_pet(
 ///
 /// The roster names the pet's owner with no object, on the terms it answers `UnitExists`: the party
 /// half of `UnitPlayerOrPetInParty` compares guids alone.
-fn record_state(group: &GroupState, guid: u64, owner: u64, exists: bool) -> UnitState {
+pub(super) fn record_state(group: &GroupState, guid: u64, owner: u64, exists: bool) -> UnitState {
     let record = group.pet_record(guid);
     UnitState {
         exists,

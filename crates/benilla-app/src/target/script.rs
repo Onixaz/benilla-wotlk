@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 
-use benilla_ui::script::SelectionRequest;
+use benilla_ui::script::{SelectionRequest, UiScript};
 
 use super::by_name::{self, ByNameScan, SelectCommit};
 use super::scan;
@@ -30,15 +30,15 @@ pub(crate) struct ScriptSelect<'w, 's> {
 }
 
 impl ScriptSelect<'_, '_> {
-    /// `TargetUnit`, `AssistUnit` and `TargetLastEnemy` share the reference's helper: a resolved
-    /// unit or a roster member is committed, anything else is a no-op, never a deselect. Here a
-    /// token must name a streamed unit, so an out-of-range roster member is a no-op (the guid-only
-    /// selection is not built).
-    pub(crate) fn select(&mut self, request: SelectionRequest) {
+    /// `TargetUnit`, `TargetLastEnemy` and `TargetLastFriend` share the reference's helper
+    /// (`0x5259e0`): a held unit, else a group member or pet by its guid alone, is committed;
+    /// anything else is a no-op, never a deselect. An unheld pick plays its select sound
+    /// (`0x524eef`) through `script`.
+    pub(crate) fn select(&mut self, request: SelectionRequest, script: &mut UiScript) {
         match request {
             SelectionRequest::Unit(token) => {
-                if let Some((entity, guid)) = self.tokens.resolve(&token, &self.commit.selection) {
-                    self.commit.commit(entity, guid);
+                if let Some(guid) = self.tokens.guid_of(&token, &self.commit.selection) {
+                    self.target_if_valid(guid, script);
                 }
             }
             // The token resolve, then the shared tail. An unresolvable token is silent here; the
@@ -56,23 +56,22 @@ impl ScriptSelect<'_, '_> {
             // Through the shared helper. Empty memory is a no-op, unlike `TargetLastTarget`, which
             // deselects.
             SelectionRequest::LastFriend => {
-                if let Some((entity, guid)) = self.last_friend.0.and_then(|g| self.tokens.held(g)) {
-                    self.commit.commit(entity, guid);
+                if let Some(guid) = self.last_friend.0 {
+                    self.target_if_valid(guid, script);
                 }
             }
-            SelectionRequest::LastEnemy => {
-                let Some(guid) = self.last_enemy.0 else {
-                    info!("TargetLastEnemy: nothing hostile has been targeted yet; no-op");
-                    return;
-                };
-                match self.tokens.held(guid) {
-                    Some((entity, guid)) => self.commit.commit(entity, guid),
-                    // Stale: a no-op, and the memory stays, as the reference never clears it.
-                    None => info!(
-                        "TargetLastEnemy: {guid:#x} is no longer streamed; target left untouched"
-                    ),
-                }
-            }
+            // A stale memory is a no-op, and the memory stays, as the reference never clears it.
+            SelectionRequest::LastEnemy => match self.last_enemy.0 {
+                Some(guid) => self.target_if_valid(guid, script),
+                None => info!("TargetLastEnemy: nothing hostile has been targeted yet; no-op"),
+            },
+        }
+    }
+
+    /// The shared helper's commit, with the unheld branch's `igCharacterSelect`.
+    fn target_if_valid(&mut self, guid: u64, script: &mut UiScript) {
+        if self.commit.target_if_valid(guid) {
+            script.queue_sound_kit("igCharacterSelect");
         }
     }
 
@@ -110,16 +109,12 @@ impl ScriptSelect<'_, '_> {
         );
     }
 
-    /// `TargetLastTarget()`: a held last-target pair goes to the shared helper as a stack copy, so
-    /// a streamed unit is committed (which stamps the outgoing target, swapping the two) and an
-    /// unstreamed one is a no-op (the roster fallback is not built, as for `TargetLastEnemy`); an
-    /// empty pair deselects.
-    pub(crate) fn target_last_target(&mut self) {
+    /// `TargetLastTarget()` (`0x525d70`): a last-target pair goes to the shared helper, so a held
+    /// unit or a group member is committed (which stamps the outgoing target, swapping the two)
+    /// and anything else is a no-op; an empty pair deselects.
+    pub(crate) fn target_last_target(&mut self, script: &mut UiScript) {
         match self.commit.selection.last {
-            Some(guid) => match self.tokens.held(guid) {
-                Some((entity, guid)) => self.commit.commit(entity, guid),
-                None => info!("TargetLastTarget: {guid:#x} is no longer streamed; no-op"),
-            },
+            Some(guid) => self.target_if_valid(guid, script),
             None => self.commit.clear(),
         }
     }
@@ -204,7 +199,7 @@ mod tests {
                 .run_system_once(
                     |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
                         for request in script.take_selection_requests() {
-                            select.select(request);
+                            select.select(request, &mut script);
                         }
                     },
                 )
@@ -303,7 +298,7 @@ mod tests {
                 .run_system_once(
                     |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
                         for request in script.take_selection_requests() {
-                            select.select(request);
+                            select.select(request, &mut script);
                         }
                     },
                 )
@@ -322,10 +317,196 @@ mod tests {
                 "{token}"
             );
         }
-        // Out of view, the pet is named but not held: nothing to select, no deselect.
+        // Out of view, the pet is named by its held owner's descriptor: selected by guid alone
+        // (`0x5259e0`'s group leg).
         world.resource_mut::<crate::net::GuidIndex>().0.remove(&PET);
         assert_eq!(run(&mut world, r#"TargetUnit("party1")"#), Some(MEMBER));
-        assert_eq!(run(&mut world, r#"TargetUnit("partypet1")"#), Some(MEMBER));
+        assert_eq!(run(&mut world, r#"TargetUnit("partypet1")"#), Some(PET));
+        assert_eq!(world.resource::<super::super::Selection>().target, None);
+    }
+
+    /// The stock party frame, off the player's own 3.3.5a chain: `PartyMemberFrame1` is a secure
+    /// unit button on `party1` (`PartyMemberFrame.lua`'s `SecureUnitButton_OnLoad`), so a left
+    /// click on a member the object manager does not hold queues `TargetUnit("party1")`, which
+    /// selects the roster guid.
+    #[test]
+    fn clicking_an_unstreamed_members_stock_party_frame_selects_them() {
+        benilla_formats::wow_data_or_skip!();
+        use benilla_protocol::messages::{member_status, GroupMemberEntry};
+        use benilla_ui::script::{PartyMemberInfo, PartyState, ScriptValue, UiScript, UnitState};
+        use bevy::ecs::system::RunSystemOnce;
+
+        const ME: u64 = 1;
+        const MEMBER: u64 = 0x1234;
+        let mut world = script_world();
+        world
+            .resource_mut::<crate::ui_party::GroupState>()
+            .apply_list(
+                0,
+                0,
+                vec![GroupMemberEntry {
+                    name: "Brisca".into(),
+                    guid: MEMBER,
+                    status: member_status::ONLINE,
+                    flags: 0,
+                    roles: 0,
+                }],
+                ME,
+                None,
+                Some(ME),
+            );
+        {
+            let mut s = world.non_send_resource_mut::<UiScript>();
+            s.set_screen_size(1024.0, 768.0);
+            crate::ui_script::test_ui::load_stock_ui(&mut s);
+            s.set_party(PartyState {
+                members: vec![PartyMemberInfo {
+                    name: "Brisca".into(),
+                    guid: MEMBER,
+                    online: true,
+                }],
+                ..PartyState::default()
+            });
+            // The feed's unstreamed leg: the roster record, no object.
+            s.set_unit(
+                "party1",
+                Some(UnitState {
+                    exists: true,
+                    guid: MEMBER,
+                    name: Some("Brisca".into()),
+                    is_player: true,
+                    is_connected: true,
+                    health: 50,
+                    max_health: 100,
+                    level: 80,
+                    reaction: 5,
+                    ..UnitState::default()
+                }),
+            );
+            s.fire_event("PARTY_MEMBERS_CHANGED", vec![]);
+            s.fire_event("UNIT_HEALTH", vec![ScriptValue::Str("party1".into())]);
+            s.run(r#"PartyMemberFrame1:Click("LeftButton")"#).unwrap();
+        }
+        world
+            .run_system_once(
+                |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
+                    for call in script.take_script_calls() {
+                        if let benilla_ui::script::ScriptCall::Select(request) = call {
+                            select.select(request, &mut script);
+                        }
+                    }
+                },
+            )
+            .expect("the applier runs as a one-shot system");
+        let sel = world.resource::<super::super::Selection>();
+        assert_eq!((sel.target, sel.guid), (None, Some(MEMBER)));
+    }
+
+    /// The issue's case: party1 is in another zone, so the object manager holds no unit, and
+    /// `TargetUnit("party1")` selects the roster guid alone, with the unheld branch's sound
+    /// (`0x524eef`). A stranger's guid out of view, a garbage token and an empty slot stay no-ops;
+    /// `TargetLastTarget` swaps back to the unheld member through the same helper.
+    #[test]
+    fn target_unit_selects_an_unstreamed_party_member_by_guid() {
+        use crate::net::{Guid, ObjectStore, SelfPlayer};
+        use benilla_protocol::messages::{member_status, GroupMemberEntry};
+        use benilla_ui::script::{SoundRequest, UiScript};
+        use bevy::ecs::system::RunSystemOnce;
+
+        const ME: u64 = 1;
+        const MEMBER: u64 = 0x1234;
+        const MOB: u64 = 0xF130_0000_0000_0042;
+        const STRANGER: u64 = 0x5555;
+        let store =
+            |pairs: &[(u16, u32)]| ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs));
+
+        let mut world = script_world();
+        world.spawn((SelfPlayer, Guid(ME), store(&[(22, 100), (28, 100)])));
+        let mob = world
+            .spawn((Guid(MOB), store(&[(22, 100), (28, 100)])))
+            .id();
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(MOB, mob);
+        world
+            .resource_mut::<crate::ui_party::GroupState>()
+            .apply_list(
+                0,
+                0,
+                vec![GroupMemberEntry {
+                    name: "Brisca".into(),
+                    guid: MEMBER,
+                    status: member_status::ONLINE,
+                    flags: 0,
+                    roles: 0,
+                }],
+                ME,
+                None,
+                Some(ME),
+            );
+
+        let run = |world: &mut World, lua: &str| {
+            world
+                .non_send_resource_mut::<UiScript>()
+                .eval::<()>(lua)
+                .expect("the binding runs");
+            world
+                .run_system_once(
+                    |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
+                        for call in script.take_script_calls() {
+                            match call {
+                                benilla_ui::script::ScriptCall::Select(request) => {
+                                    select.select(request, &mut script);
+                                }
+                                benilla_ui::script::ScriptCall::TargetLastTarget => {
+                                    select.target_last_target(&mut script);
+                                }
+                                _ => {}
+                            }
+                        }
+                    },
+                )
+                .expect("the applier runs as a one-shot system");
+            let sel = world.resource::<super::super::Selection>();
+            (sel.target, sel.guid)
+        };
+        let sounds = |world: &mut World| world.non_send_resource_mut::<UiScript>().take_sounds();
+        let select_sound = vec![SoundRequest::KitName("igCharacterSelect".into())];
+
+        assert_eq!(
+            run(&mut world, r#"TargetUnit("party1")"#),
+            (None, Some(MEMBER))
+        );
+        assert_eq!(sounds(&mut world), select_sound);
+        // The setter's dedup: no second sound.
+        assert_eq!(
+            run(&mut world, r#"TargetUnit("party1")"#),
+            (None, Some(MEMBER))
+        );
+        assert!(sounds(&mut world).is_empty());
+
+        // A held unit, then back through the last-target pair.
+        world.resource_mut::<scan::LastEnemy>().0 = Some(MOB);
+        assert_eq!(run(&mut world, "TargetLastEnemy()"), (Some(mob), Some(MOB)));
+        assert!(
+            sounds(&mut world).is_empty(),
+            "the held branch is silent here"
+        );
+        assert_eq!(run(&mut world, "TargetLastTarget()"), (None, Some(MEMBER)));
+        assert_eq!(sounds(&mut world), select_sound);
+
+        // No-ops, never a deselect: an empty slot, an unheld chain, a stranger out of view.
+        for lua in [
+            r#"TargetUnit("party2")"#,
+            r#"TargetUnit("party1target")"#,
+            r#"TargetUnit("nosuchunit")"#,
+        ] {
+            assert_eq!(run(&mut world, lua), (None, Some(MEMBER)), "{lua}");
+        }
+        world.resource_mut::<scan::LastEnemy>().0 = Some(STRANGER);
+        assert_eq!(run(&mut world, "TargetLastEnemy()"), (None, Some(MEMBER)));
+        assert!(sounds(&mut world).is_empty());
     }
 
     /// `TargetUnit` and `AssistUnit` take the tokens the reference's resolver takes: a base then a
@@ -400,7 +581,7 @@ mod tests {
                 .run_system_once(
                     |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
                         for request in script.take_selection_requests() {
-                            select.select(request);
+                            select.select(request, &mut script);
                         }
                     },
                 )
@@ -508,7 +689,7 @@ mod tests {
                 .run_system_once(
                     |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
                         for request in script.take_selection_requests() {
-                            select.select(request);
+                            select.select(request, &mut script);
                         }
                     },
                 )
@@ -577,7 +758,7 @@ mod tests {
             .run_system_once(
                 |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
                     for request in script.take_selection_requests() {
-                        select.select(request);
+                        select.select(request, &mut script);
                     }
                 },
             )
