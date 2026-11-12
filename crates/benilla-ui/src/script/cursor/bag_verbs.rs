@@ -41,13 +41,12 @@ fn is_container(item: &CursorItem) -> bool {
     item.equip_slots.contains(&BAG0_SLOT)
 }
 
-/// Whether the held item may go in doll slot `id`: its `equip_slots`, or a bank bag slot for a
-/// container, which `FindEquipSlot` never names. The reference's fit check behind
-/// `CursorCanGoInSlot` passes any item at a bank bag slot, as its slot test answers 1 for every
-/// 0-based slot from 23; the server's `CanBankItem` referees either way.
+/// Whether the held item may go in doll slot `id`: its `equip_slots`, or any item at a bank bag
+/// slot, which `FindEquipSlot` never names: the reference's slot check (`0x6d4a00`) passes every
+/// 0-based slot from 23 (`0x7084ce`), so the swap goes out and the server refuses a non-bag.
 pub(super) fn fits_slot(item: &CursorItem, id: u32) -> bool {
     if BANK_BAG_INV_SLOTS.contains(&id) {
-        return is_container(item);
+        return true;
     }
     u8::try_from(id).is_ok_and(|id| item.equip_slots.contains(&id))
 }
@@ -327,15 +326,28 @@ mod tests {
         assert!(s.take_bag_autostores().is_empty(), "an equip, not a store");
     }
 
+    /// A non-bag on an empty bank bag slot swaps there too (`0x5e8dde`, `0x5e89c0`), for the
+    /// server to refuse.
     #[test]
-    fn an_empty_bag_slot_refuses_an_ordinary_item() {
+    fn an_empty_bank_bag_slot_sends_an_ordinary_item_for_the_server_to_refuse() {
         let mut s = UiScript::new().unwrap();
         s.set_container(0, Some(backpack()));
+        s.set_bank_bag_slots(Default::default());
         s.run("PickupContainerItem(0, 2)").unwrap();
+        assert!(s.eval::<bool>("return CursorCanGoInSlot(68)").unwrap());
 
         assert!(s.eval::<bool>("return PutItemInBag(68) == nil").unwrap());
-        assert!(s.cursor_item().is_some(), "refused, kept");
-        assert!(s.take_container_moves().is_empty());
+        assert!(s.cursor_item().is_none(), "sent, not kept");
+        assert_eq!(
+            s.take_container_moves(),
+            vec![ContainerMove {
+                src_bag: 0,
+                src_slot: 2,
+                dst_bag: EQUIPMENT_BAG,
+                dst_slot: 68,
+                count: None,
+            }]
+        );
         assert!(s.take_bag_autostores().is_empty());
     }
 
