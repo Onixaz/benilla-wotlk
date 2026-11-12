@@ -1345,7 +1345,15 @@ fn sync_portraits(
         let mut occupant: Option<u64> = None;
         let unit: Option<Entity> = match token {
             "player" => self_q.single().ok(),
-            "target" => selection.target,
+            "target" => {
+                if selection.target.is_none() {
+                    // A group member or pet selected by guid alone.
+                    (occupant, unseen) = selection.guid.map_or((None, None), |g| {
+                        unheld_subject(g, &party.names, &party.roster)
+                    });
+                }
+                selection.target
+            }
             // Gated on the UI drawing the slot: its frame ships hidden (`SHOW_TARGET_OF_TARGET`
             // defaults to `"0"`), and ungated it would re-bake on every target switch.
             "targettarget" => party
@@ -1409,13 +1417,8 @@ fn sync_portraits(
                 occupant = member.map(|m| m.guid);
                 let entity = member.and_then(|m| party.index.0.get(&m.guid)).copied();
                 if entity.is_none() {
-                    unseen = member.map(|m| {
-                        let traits = party.names.player_traits(m.guid);
-                        player_temporary_portrait(
-                            traits.map(|(race, _, _)| race),
-                            traits.map(|(_, _, sex)| sex),
-                        )
-                    });
+                    unseen =
+                        member.and_then(|m| unheld_subject(m.guid, &party.names, &party.roster).1);
                 }
                 entity
             }
@@ -2287,18 +2290,35 @@ fn player_temporary_portrait(race: Option<u8>, sex: Option<u8>) -> String {
         Some(1) => "Female",
         _ => "Male",
     };
-    let race = match race {
-        Some(1) => "Human",
-        Some(2) => "Orc",
-        Some(3) => "Dwarf",
-        Some(4) => "NightElf",
-        Some(5) => "Scourge",
-        Some(6) => "Tauren",
-        Some(7) => "Gnome",
-        Some(8) => "Troll",
-        _ => return format!("{TEMPORARY_PORTRAIT}.blp"),
+    // The race's `ChrRaces` client file string (`0x6181e9`).
+    let Some((_, race)) = race.and_then(crate::ui_unit::race_names) else {
+        return format!("{TEMPORARY_PORTRAIT}.blp");
     };
     format!("{TEMPORARY_PORTRAIT}-{sex}-{race}.blp")
+}
+
+/// What `SetPortraitTexture` draws for a guid the object manager does not hold (`0x61152f`), as
+/// the bake-cache key and the stand-in file: a player guid reads its name-cache record, the cached
+/// bake else the race and sex stand-in, and no record draws blank; any other guid is a group pet,
+/// whose record takes the pet stand-in.
+fn unheld_subject(
+    guid: u64,
+    names: &crate::names::NameCache,
+    roster: &crate::ui_party::GroupState,
+) -> (Option<u64>, Option<String>) {
+    if benilla_protocol::guid::is_player(guid) {
+        return match names.player_traits(guid) {
+            Some((race, _, sex)) => (
+                Some(guid),
+                Some(player_temporary_portrait(Some(race), Some(sex))),
+            ),
+            None => (None, None),
+        };
+    }
+    (
+        None,
+        roster.pet_record(guid).map(|_| pet_temporary_portrait()),
+    )
 }
 
 /// What `"partypetN"`'s portrait shows, as the entity to bake and the stand-in file: the pet the
@@ -2897,6 +2917,60 @@ mod tests {
         assert!(LookKey::build(&parts, &riders, &[], &[&glow]) == after);
     }
 
+    /// A target the object manager does not hold, a group member or pet selected by guid alone,
+    /// draws as `SetPortraitTexture` draws any unheld guid (`0x61152f`): a player off its name
+    /// record (the bake key, then the race and sex stand-in), blank with no record; a pet off its
+    /// owner's record, the pet stand-in; a stranger's creature guid, blank.
+    #[test]
+    fn an_unheld_target_draws_its_record_stand_in() {
+        use benilla_protocol::messages::{member_status, GroupMemberEntry, PartyMemberStatsInfo};
+        const MEMBER: u64 = 0x1001;
+        const PET: u64 = 0xF140_0000_0000_0001;
+        const MOB: u64 = 0xF130_0000_0000_0002;
+        let mut names = crate::names::NameCache::default();
+        let mut group = crate::ui_party::GroupState::default();
+        group.apply_list(
+            0,
+            0,
+            vec![GroupMemberEntry {
+                name: "Brisca".into(),
+                guid: MEMBER,
+                status: member_status::ONLINE,
+                flags: 0,
+                roles: 0,
+            }],
+            MEMBER,
+            None,
+            None,
+        );
+        group.stats.insert(
+            MEMBER,
+            PartyMemberStatsInfo {
+                status: Some(member_status::ONLINE.into()),
+                pet_guid: Some(PET),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            unheld_subject(MEMBER, &names, &group),
+            (None, None),
+            "no record"
+        );
+        names.insert_player(MEMBER, "Brisca".into(), Some((10, 2, 1)));
+        assert_eq!(
+            unheld_subject(MEMBER, &names, &group),
+            (
+                Some(MEMBER),
+                Some("Interface\\CharacterFrame\\TemporaryPortrait-Female-BloodElf.blp".into())
+            )
+        );
+        assert_eq!(
+            unheld_subject(PET, &names, &group),
+            (None, Some(pet_temporary_portrait()))
+        );
+        assert_eq!(unheld_subject(MOB, &names, &group), (None, None));
+    }
+
     /// The stand-in's player arm.
     #[test]
     fn the_stand_in_names_the_sex_and_race_and_falls_back_without_them() {
@@ -2907,6 +2981,10 @@ mod tests {
         assert_eq!(
             player_temporary_portrait(Some(6), Some(0)),
             "Interface\\CharacterFrame\\TemporaryPortrait-Male-Tauren.blp",
+        );
+        assert_eq!(
+            player_temporary_portrait(Some(11), Some(0)),
+            "Interface\\CharacterFrame\\TemporaryPortrait-Male-Draenei.blp",
         );
         // The plain file, as the reference's `%s-%s` format degenerates.
         assert_eq!(

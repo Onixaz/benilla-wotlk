@@ -16,8 +16,7 @@
 //! ([`Rank::beats`]), because the nearest namesake is the better pick.
 //!
 //! Not built for selection: the reference's party and raid pre-scans, which select an unstreamed
-//! groupmate; [`Selection::target`] is an `Entity`. `DoEmote` needs only a guid
-//! ([`emote_name_match`]).
+//! groupmate (#1176). `DoEmote` has them ([`emote_name_match`]).
 
 use std::cmp::Ordering;
 
@@ -518,13 +517,13 @@ pub(super) fn target_named(
 
 /// `/assist [name]` and the Lua `AssistByName`: the basis is a named player, or bare the current
 /// selection (`AssistUnit("target")`, `ChatFrame.lua:744`), and [`SelectCommit::assist`] selects
-/// its target.
+/// its target. True when an unheld guid was newly selected.
 pub(super) fn assist_named(
     scan_params: &ByNameScan,
     commit: &mut SelectCommit,
     name: Option<&str>,
     how: &str,
-) {
+) -> bool {
     let basis = match name {
         Some(name) => scan_params
             .resolve(
@@ -538,10 +537,10 @@ pub(super) fn assist_named(
     };
     let Some(basis) = basis else {
         info!("assist ({how}): no basis unit; nothing to assist");
-        return;
+        return false;
     };
     // From here on this is `AssistUnit`'s tail too, one function as in the reference.
-    commit.assist(basis, how);
+    commit.assist(basis, how)
 }
 
 /// Drain the chat layer's `/target <name>` asks.
@@ -562,6 +561,7 @@ pub(super) fn assist_requests(
     mut commit: SelectCommit,
 ) {
     for request in requests.read() {
+        // The chat drain holds no VM, so an unheld pick's select sound is not played here.
         assist_named(
             &scan_params,
             &mut commit,
@@ -683,11 +683,13 @@ pub(crate) struct SelectCommit<'w, 's> {
 }
 
 impl SelectCommit<'_, '_> {
-    /// The shared assist tail (byte-identical in `AssistByName`): select the basis unit's
-    /// `UNIT_FIELD_TARGET` if it is streamed. Every miss is silent and deselects nothing: no basis,
-    /// a basis targeting nothing, or an unstreamed guid (the reference's arm 3 is a bare `ret`).
-    /// With `assistAttack` set, the tail then opens the swing.
-    pub(super) fn assist(&mut self, basis: Entity, how: &str) {
+    /// The shared assist tail (byte-identical in `AssistByName`): the basis unit's
+    /// `UNIT_FIELD_TARGET` goes to the script select helper (`0x525f25` calls `0x5259e0`), so a
+    /// held unit, or a group member or pet the object manager does not hold, is selected. Every
+    /// other miss is silent and deselects nothing: a basis targeting nothing, or a stranger out of
+    /// view. With `assistAttack` set, the tail then opens the swing on an attackable unit. True when
+    /// an unheld guid was newly selected, which the caller sounds (`0x524eef`).
+    pub(super) fn assist(&mut self, basis: Entity, how: &str) -> bool {
         let Some(guid) = self
             .stores
             .get(basis)
@@ -696,13 +698,12 @@ impl SelectCommit<'_, '_> {
             .filter(|g| *g != 0)
         else {
             info!("assist ({how}): the basis unit is targeting nothing; silent no-op");
-            return;
+            return false;
         };
-        // Only a streamed unit can be selected; the reference's roster fallback for an unstreamed
-        // guid is not built (see the module doc).
         let Some(entity) = self.index.0.get(&guid).copied() else {
-            info!("assist ({how}): the basis is targeting guid {guid:#x}, which is not streamed");
-            return;
+            // An unheld guid: a group member or pet by guid alone, else a no-op; never attackable.
+            info!("assist ({how}): the basis is targeting guid {guid:#x}, which is not held");
+            return self.target_if_valid(guid);
         };
         info!("assist ({how}) -> the basis unit's target, guid {guid:#x}");
         // `engaged` and attackability are read before the selection: the selection set may re-point
@@ -724,6 +725,7 @@ impl SelectCommit<'_, '_> {
             info!("assist ({how}): assistAttack is on -> opening the swing");
             self.seam.start(guid, engaged, false);
         }
+        false
     }
 
     /// Whether we are mid-swing, which a deselect stops.
