@@ -288,8 +288,15 @@ pub struct PaperDollSlotInfo {
     pub slot: u32,
 }
 
-#[cfg(test)]
-pub(crate) fn test_paperdoll_rows() -> Vec<PaperDollSlotInfo> {
+impl PaperDollSlotInfo {
+    #[doc(hidden)]
+    pub fn test_rows() -> Vec<Self> {
+        test_paperdoll_rows()
+    }
+}
+
+#[doc(hidden)]
+pub fn test_paperdoll_rows() -> Vec<PaperDollSlotInfo> {
     let rows = [
         ("AmmoSlot", 0, "Ranged"),
         ("HeadSlot", 1, "Head"),

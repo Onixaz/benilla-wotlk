@@ -557,6 +557,7 @@ mod tests {
     /// A player with `id` in backpack slot 3.
     fn carrying(id: u32) -> UiScript {
         let mut s = UiScript::new().unwrap();
+        s.set_paperdoll_item_frame(crate::script::PaperDollSlotInfo::test_rows());
         s.set_unit_guids(&UnitGuids {
             player: 1,
             ..Default::default()
