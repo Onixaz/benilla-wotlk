@@ -1460,12 +1460,7 @@ fn spell_go(
         if pet_bar.has_bar() && pet_bar.spells.pet_guid == caster {
             pet_bar.pending_cast = None;
         }
-        // Deviates: 12340 holds it until the next start or end (`0x805330`, `0x7fecc0`).
-        if let Some(&e) = index.0.get(&caster) {
-            if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
-                commands.entity(e).remove::<Casting>();
-            }
-        }
+        // The caster's cast state stays; the next start or end clears it (`0x805330`, `0x7fecc0`).
         return;
     }
     // Every caster's launch reaches the unit-cast feed (`0x80e763`).
@@ -2738,8 +2733,8 @@ mod tests {
             vec![go(6136), go(133)]
         );
 
-        // A dest on a transport not here (`0x80e647`): the pending cast is released and the cast
-        // reaped, with no feed edge.
+        // A dest on a transport not here (`0x80e647`): the pending cast is released, the cast
+        // state stays, and no feed edge.
         app.world_mut().entity_mut(self_e).insert(Casting {
             spell_id: 10,
             cast_count: 0,
@@ -2756,7 +2751,43 @@ mod tests {
                 .committed(Instant::now()),
             None
         );
-        assert!(app.world().get::<Casting>(self_e).is_none());
+        assert_eq!(
+            app.world().get::<Casting>(self_e).map(|c| c.spell_id),
+            Some(10)
+        );
+
+        // The next timed start replaces the held state (`0x805330`).
+        app.world_mut()
+            .run_system_once(
+                |mut commands: Commands,
+                 index: Res<GuidIndex>,
+                 mut cast_events: MessageWriter<CastEvent>,
+                 self_guid: Res<SelfGuid>,
+                 mut cast_bar: ResMut<CastBarFeed>,
+                 mut pending: ResMut<PendingCast>| {
+                    spell_start(
+                        10,
+                        1,
+                        133,
+                        0,
+                        2500,
+                        None,
+                        None,
+                        None,
+                        &mut commands,
+                        &index,
+                        &mut cast_events,
+                        &self_guid,
+                        &mut cast_bar,
+                        &mut pending,
+                        None,
+                        2,
+                    );
+                },
+            )
+            .unwrap();
+        let held = app.world().get::<Casting>(self_e).copied();
+        assert_eq!(held.map(|c| (c.spell_id, c.cast_count)), Some((133, 1)));
     }
 
     /// Our channel's start and its server end (`MSG_CHANNEL_UPDATE(0)`) arm and close
