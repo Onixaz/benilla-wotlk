@@ -165,7 +165,7 @@ pub use glue_realm::{
     GlueRealmType, RealmSortKey,
 };
 pub use glue_select::{GlueCharacter, GlueScenePane, GlueSelectCells};
-pub use glue_system::{GlueBilling, ScanDll};
+pub use glue_system::{GlueBilling, GlueFileReader, ScanDll};
 mod gm_ticket;
 mod gossip;
 mod guild;

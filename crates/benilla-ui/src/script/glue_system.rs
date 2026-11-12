@@ -33,11 +33,17 @@ pub struct GlueBilling {
     pub rested: u32,
 }
 
+/// Reads one of the install's files by name for the glue's verbs.
+pub type GlueFileReader = Box<dyn Fn(&str) -> Option<Vec<u8>>>;
+
+/// [`GlueFileReader`], shared so a verb can call it without holding the model.
+type SharedFileReader = std::rc::Rc<dyn Fn(&str) -> Option<Vec<u8>>>;
+
 /// The system verbs' slots in the glue model.
 #[derive(Default)]
 pub(crate) struct GlueSystem {
-    /// The three credits files, indexed by client expansion (Classic, Burning Crusade, Wrath).
-    pub(super) credits: [Option<String>; 3],
+    /// Reads a file by its bare name, as `GetCreditsText` reads its credits file.
+    files: Option<SharedFileReader>,
     pub(super) scan: ScanDll,
     /// `SCANDLL_ERROR` waits for the glue manager's next idle tick (`0x4dab40` at state 14 finishes
     /// the scan), never inside the `ScanDLLStart` call.
@@ -50,9 +56,11 @@ pub(crate) struct GlueSystem {
 }
 
 impl super::UiScript {
-    pub fn set_glue_credits(&mut self, credits: [Option<String>; 3]) {
-        self.model_mut().glue.system.credits = credits;
+    /// Seat the reader the glue's verbs read the install's files through.
+    pub fn set_glue_file_reader(&mut self, reader: GlueFileReader) {
+        self.model_mut().glue.system.files = Some(std::rc::Rc::from(reader));
     }
+
     /// The Scan.dll check's state.
     pub fn glue_scan(&self) -> ScanDll {
         self.model_ref().glue.system.scan
@@ -156,37 +164,38 @@ pub(super) fn install_cvar_ranges(lua: &Lua) -> mlua::Result<()> {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
+    // `GetCreditsText` (`0x4dcd60`): a number or the usage error, truncated to an integer; 1 reads
+    // `credits.html`, 2 `credits_BC.html`, anything else `credits_LK.html`, at each call. It
+    // returns one value whatever the read did (`0x4dcde5`), so a failed read answers the top of
+    // the stack, the last argument.
     g.set(
         "GetCreditsText",
-        lua.create_function(|lua, value: Value| {
-            let index = match value {
-                Value::Integer(v) => v as f64,
-                Value::Number(v) => v,
-                _ => {
-                    return Err(mlua::Error::runtime(
-                        "Usage: Script_GetCreditText(versionIndex)",
-                    ))
-                }
+        lua.create_function(|lua, args: MultiValue| {
+            let first = args.front().cloned().unwrap_or(Value::Nil);
+            let Some(version) = lua.coerce_number(first).ok().flatten() else {
+                return Err(mlua::Error::runtime(
+                    "Usage: Script_GetCreditText(versionIndex)",
+                ));
             };
-            let index = index.trunc() as i64;
-            let model = lua
+            let file = match version as i32 {
+                1 => "credits.html",
+                2 => "credits_BC.html",
+                _ => "credits_LK.html",
+            };
+            let reader = lua
                 .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let text = model
+                .expect("model app_data")
                 .glue
                 .system
-                .credits
-                .get(if index == 1 {
-                    0
-                } else if index == 2 {
-                    1
-                } else {
-                    2
-                })
-                .and_then(|v| v.clone());
-            match text {
-                Some(text) => Ok(Value::String(lua.create_string(text)?)),
-                None => Ok(Value::Nil),
+                .files
+                .clone();
+            match reader.and_then(|read| read(file)) {
+                // The file is pushed as a C string, so it ends at its first NUL.
+                Some(bytes) => {
+                    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+                    Ok(Value::String(lua.create_string(&bytes[..end])?))
+                }
+                None => Ok(args.back().cloned().unwrap_or(Value::Nil)),
             }
         })?,
     )?;
