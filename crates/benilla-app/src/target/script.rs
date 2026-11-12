@@ -156,6 +156,47 @@ impl ScriptSelect<'_, '_> {
     }
 }
 
+/// Drain the chat layer's `/target <name>` asks; an unheld pick's sound goes through the VM's
+/// sound queue, as the Lua path's does.
+pub(super) fn target_by_name_requests(
+    mut requests: MessageReader<by_name::TargetByNameRequest>,
+    scan_params: ByNameScan,
+    mut commit: SelectCommit,
+    mut script: Option<NonSendMut<UiScript>>,
+) {
+    for request in requests.read() {
+        if by_name::target_named(&scan_params, &mut commit, &request.name, false) {
+            select_sound(script.as_deref_mut());
+        }
+    }
+}
+
+/// Drain the chat layer's `/assist [name]` asks.
+pub(super) fn assist_requests(
+    mut requests: MessageReader<by_name::AssistRequest>,
+    scan_params: ByNameScan,
+    mut commit: SelectCommit,
+    mut script: Option<NonSendMut<UiScript>>,
+) {
+    for request in requests.read() {
+        if by_name::assist_named(
+            &scan_params,
+            &mut commit,
+            request.name.as_deref(),
+            "/assist",
+        ) {
+            select_sound(script.as_deref_mut());
+        }
+    }
+}
+
+/// The target setter's unheld branch sound (`0x524eef`).
+fn select_sound(script: Option<&mut UiScript>) {
+    if let Some(script) = script {
+        script.queue_sound_kit("igCharacterSelect");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1096,7 +1137,7 @@ mod tests {
             name: "clar".into(),
         });
         world
-            .run_system_once(super::super::by_name::target_by_name_requests)
+            .run_system_once(super::target_by_name_requests)
             .expect("the chat drain runs as a one-shot system");
         assert_eq!(
             world.resource::<super::super::Selection>().guid,

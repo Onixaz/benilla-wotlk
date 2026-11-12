@@ -459,8 +459,8 @@ impl Plugin for TargetPlugin {
                     // The chat layer's by-name asks: `/target` and `/assist` commit through
                     // `scan::commit`; `/follow` hands its subject to `crate::player`.
                     (
-                        by_name::target_by_name_requests,
-                        by_name::assist_requests,
+                        script::target_by_name_requests,
+                        script::assist_requests,
                         by_name::follow_requests,
                     )
                         .chain(),

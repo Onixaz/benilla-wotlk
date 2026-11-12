@@ -609,47 +609,6 @@ pub(super) fn assist_named(
     commit.assist(basis, how)
 }
 
-/// Drain the chat layer's `/target <name>` asks; an unheld pick's sound goes through the VM's
-/// sound queue, as the Lua path's does.
-pub(super) fn target_by_name_requests(
-    mut requests: MessageReader<TargetByNameRequest>,
-    scan_params: ByNameScan,
-    mut commit: SelectCommit,
-    mut script: Option<NonSendMut<benilla_ui::script::UiScript>>,
-) {
-    for request in requests.read() {
-        if target_named(&scan_params, &mut commit, &request.name, false) {
-            select_sound(script.as_deref_mut());
-        }
-    }
-}
-
-/// Drain the chat layer's `/assist [name]` asks.
-pub(super) fn assist_requests(
-    mut requests: MessageReader<AssistRequest>,
-    scan_params: ByNameScan,
-    mut commit: SelectCommit,
-    mut script: Option<NonSendMut<benilla_ui::script::UiScript>>,
-) {
-    for request in requests.read() {
-        if assist_named(
-            &scan_params,
-            &mut commit,
-            request.name.as_deref(),
-            "/assist",
-        ) {
-            select_sound(script.as_deref_mut());
-        }
-    }
-}
-
-/// The target setter's unheld branch sound (`0x524eef`).
-fn select_sound(script: Option<&mut benilla_ui::script::UiScript>) {
-    if let Some(script) = script {
-        script.queue_sound_kit("igCharacterSelect");
-    }
-}
-
 /// Drain `/follow [name]` into [`crate::player`]; follow sends nothing on the wire. The followee's
 /// name is latched here for `AUTOFOLLOW_BEGIN` ([`crate::ui_follow`]).
 pub(super) fn follow_requests(
