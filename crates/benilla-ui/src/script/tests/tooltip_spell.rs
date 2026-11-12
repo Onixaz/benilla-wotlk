@@ -968,8 +968,8 @@ fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
 }
 
 /// The builder's unit selector picks the view built against the pet: `SetPetAction` passes it,
-/// `SetSpell` on the pet book and a pet-learn `SetTrainerService`; the player's book, a class
-/// service and a recipe pass 0.
+/// `SetAction` on a pet-action slot, `SetSpell` on the pet book and a pet-learn
+/// `SetTrainerService`; the player's book, a class service and a recipe pass 0.
 #[test]
 fn the_unit_selector_setters_read_the_pet_view() {
     let mut s = script();
@@ -985,11 +985,18 @@ fn the_unit_selector_setters_read_the_pet_view() {
         true,
         true,
         true,
-        vec![PetActionView {
-            name: Some("Sacrifice".into()),
-            spell_id: Some(7812),
-            ..Default::default()
-        }],
+        vec![
+            PetActionView {
+                name: Some("Sacrifice".into()),
+                spell_id: Some(7812),
+                ..Default::default()
+            },
+            PetActionView {
+                name: Some("PET_MODE_PASSIVE".into()),
+                is_token: true,
+                ..Default::default()
+            },
+        ],
     );
     let slot = SpellSlotView {
         spell_id: 7812,
@@ -1020,6 +1027,24 @@ fn the_unit_selector_setters_read_the_pet_view() {
         ..Default::default()
     }));
     s.set_trade_skill(Some(enchant_book(&[(7812, "Sacrifice")])));
+    // The pet bar paged onto the main bar: slot 121 holds the pet bar's first action.
+    s.set_action(
+        121,
+        Some(ActionSlot {
+            kind: 0x10,
+            action: 0,
+            pet_spell: Some(7812),
+            ..Default::default()
+        }),
+    );
+    s.set_action(
+        122,
+        Some(ActionSlot {
+            kind: 0x10,
+            action: 1,
+            ..Default::default()
+        }),
+    );
     s.run(
         r#"
         local a = CreateFrame("Button", "PB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
@@ -1028,6 +1053,10 @@ fn the_unit_selector_setters_read_the_pet_view() {
             TT:SetOwner(PB1, "ANCHOR_RIGHT"); set(); return TTTextLeft2:GetText()
         end
         PET_BAR = desc(function() TT:SetPetAction(1) end)
+        PET_SLOT = desc(function() TT:SetAction(121) end)
+        PET_MODE_PASSIVE = "Passive"
+        TT:SetOwner(PB1, "ANCHOR_RIGHT"); TT:SetAction(122)
+        MODE_SLOT = TTTextLeft1:GetText() .. "/" .. TT:NumLines()
         PET_BOOK = desc(function() TT:SetSpell(1, "pet") end)
         BOOK = desc(function() TT:SetSpell(1, "spell") end)
         -- Row 1 is the group header.
@@ -1039,6 +1068,12 @@ fn the_unit_selector_setters_read_the_pet_view() {
     .unwrap();
     let got = |name: &str| s.eval::<String>(&format!("return {name}")).unwrap();
     assert_eq!(got("PET_BAR"), "absorb 318 damage");
+    assert_eq!(got("PET_SLOT"), "absorb 318 damage");
+    assert_eq!(
+        got("MODE_SLOT"),
+        "Passive/1",
+        "a mode slot shows its text alone"
+    );
     assert_eq!(got("PET_BOOK"), "absorb 318 damage");
     assert_eq!(got("PET_SERVICE"), "absorb 318 damage");
     assert_eq!(got("BOOK"), "absorb 305 damage");
