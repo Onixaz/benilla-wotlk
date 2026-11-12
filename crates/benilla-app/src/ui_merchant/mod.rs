@@ -1706,6 +1706,9 @@ mod tests {
                 flags2: 0,
                 required_disenchant_skill: -1,
                 item_limit_category: 0,
+                scaling_stat_distribution: 0,
+                scaling_stat_value: 0,
+                armor_damage_modifier: 0.0,
             }),
         );
         let resolved = resolve_item(&row(2129, 1, 3), &items, None, None, &commands);

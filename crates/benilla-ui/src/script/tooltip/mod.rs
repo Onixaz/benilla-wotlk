@@ -406,6 +406,7 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
         t.item_id = 0;
         t.item_guid = 0;
         t.item_link = Default::default();
+        t.item_shown_level = 0;
         t.spell_id = 0;
         t.next_rank_spell = 0;
         t.quest_id = 0;

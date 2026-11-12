@@ -107,6 +107,16 @@ pub struct ItemTemplateView {
     pub item_spells: Vec<ItemSpellView>,
     /// The bag family mask, `GetItemFamily`'s.
     pub bag_family: u32,
+    /// `ScalingStatDistribution.dbc` id (`ItemRec+0xb8`).
+    pub scaling_distribution: u32,
+    /// The scaling mask (`ItemRec+0xbc`); nonzero makes the item an heirloom that reads its stats
+    /// at the shown level ([`super::item_scaling`]).
+    pub scaling_value: u32,
+    /// `ArmorDamageModifier` (`ItemRec+0x1e4`): above 0 the armor line reads green (`0x629089`).
+    pub armor_damage_modifier: f32,
+    /// A scaling armor piece's alternate type cells, `ItemSubClass.dbc` DisplayName of armor
+    /// subclasses 2 (leather) and 3 (mail), which a class flagged for it reads instead of red.
+    pub scaling_armor_names: [Option<String>; 2],
     /// The `ItemLimitCategory.dbc` row the item names; `None` for no category or no such row.
     pub item_limit: Option<ItemLimitView>,
     /// The item a recipe teaches to make: a learn-spell (36) trigger whose taught spell creates
@@ -166,6 +176,9 @@ pub struct PlayerReqState {
     pub can_dual_wield: bool,
     /// The highest lifetime honor rank (`PLAYER_FIELD_BYTES` byte 3).
     pub honor_rank: u8,
+    /// `ChrClasses.dbc` flags of the class (`row + 0x24`): `0x10` lets a scaling mail item read as
+    /// leather, `0x20` a scaling plate item as mail or leather (`0x6288f5`).
+    pub class_flags: u32,
 }
 
 /// [`item_usable`] by item entry: entry 0 and a template not yet answered are usable, as the
@@ -364,6 +377,11 @@ impl super::UiScript {
     /// Pushes the `ItemRandomSuffix` names once, at load.
     pub fn set_random_suffixes(&mut self, rows: std::collections::HashMap<u32, RandomSuffixView>) {
         set_field!(self, random_suffixes, rows);
+    }
+
+    /// Pushes the two scaling tables whole, once at load.
+    pub fn set_scaling_tables(&mut self, tables: super::ScalingTables) {
+        set_field!(self, scaling, tables);
     }
 
     /// Push `SpellItemEnchantment.dbc` whole: a link can name any row.

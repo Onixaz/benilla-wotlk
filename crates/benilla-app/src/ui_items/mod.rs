@@ -1024,7 +1024,23 @@ fn load_item_dbcs(mut commands: Commands, world_assets: Option<Res<benilla_asset
         }
         Err(e) => warn!("ui_items: ItemBagFamily.dbc failed to load: {e:#}"),
     }
+    match benilla_formats::load_scaling_stats(&mut chain) {
+        Ok(cat) => {
+            info!(
+                "ui_items: ScalingStat tables loaded ({} distributions, {} levels)",
+                cat.distributions.len(),
+                cat.values.len()
+            );
+            commands.insert_resource(ScalingStats(cat));
+        }
+        Err(e) => warn!("ui_items: ScalingStat tables failed to load: {e:#}"),
+    }
 }
+
+/// `ScalingStatDistribution.dbc` and `ScalingStatValues.dbc`: what a scaling item (an heirloom)
+/// reads its stats from at the shown level.
+#[derive(Resource)]
+pub(crate) struct ScalingStats(pub(crate) benilla_formats::ScalingStatCatalog);
 
 pub(crate) struct UiItemsPlugin;
 
@@ -1068,6 +1084,7 @@ impl Plugin for UiItemsPlugin {
                         .after(crate::ui_action::SlotIdentityFeed),
                     // The roll table, pushed whole once per VM, before the first hover.
                     feed_random_properties.in_set(UnitFeed),
+                    feed::feed_scaling_tables.in_set(UnitFeed),
                     feed_player_req.in_set(UnitFeed),
                     track_link_level.before(UnitFeed),
                     // After the input pass, so a repair-mode click goes out the same frame; a

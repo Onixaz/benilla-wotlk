@@ -59,6 +59,88 @@ pub(super) struct ItemInstance {
     /// The item is an inspected player's: a condition counts their gems, not the player's
     /// (`0x629cd5`).
     pub inspected: bool,
+    /// The link's level field, passed only by a source that hands the builder its link block
+    /// (`SetHyperlink`); a scaling item shows it first (`0x61e785`). 0 for none.
+    pub link_level: i32,
+    /// The requesting unit's level, which a scaling item shows when no link level does
+    /// (`0x61e7bf`); 0 for a source whose requester is the player or no unit.
+    pub requester_level: i32,
+    /// The requester is the open loot's source (`0xbfa8d8`): a class 10 item keeps its bind line
+    /// (`0x627efd`).
+    pub loot_window: bool,
+}
+
+/// A scaling item's shown level and the two rows it reads (`0x6284e3`..`0x628563`).
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Scaled {
+    pub level: i32,
+    pub distribution: Option<crate::script::ScalingDistributionView>,
+    pub values: Option<crate::script::ScalingValuesView>,
+}
+
+impl Scaled {
+    /// The rows of `v` at its shown level; `None` for an item that does not scale.
+    pub(super) fn of(
+        model: &crate::script::Model,
+        v: &ItemTemplateView,
+        flags: BuilderFlags,
+        inst: Option<&ItemInstance>,
+    ) -> Option<Self> {
+        if v.scaling_value == 0 {
+            return None;
+        }
+        let tables = &model.scaling;
+        let level = crate::script::item_scaling::shown_level(
+            v,
+            tables,
+            flags.minimum_level,
+            inst.map_or(0, |i| i.link_level),
+            inst.map_or(0, |i| i.requester_level),
+            model.player_req.level as i32,
+        );
+        Some(Self {
+            level,
+            distribution: tables.distributions.get(&v.scaling_distribution).copied(),
+            values: tables.values_at(level).copied(),
+        })
+    }
+}
+
+/// The bind line's key (`0x627e7d`..`0x627f3d`): a bound instance reads the quest key for bonding
+/// 4, nothing for class 10, else the account or soul key by template flag `0x8000000`. Failing
+/// that, a set bonding prints unless the item is class 10 outside the loot window: the account key
+/// under the flag, else bonding 1..4's pickup, equip, use and quest keys.
+pub(in crate::script) fn bind_key(
+    v: &ItemTemplateView,
+    bound: bool,
+    loot_window: bool,
+) -> Option<&'static str> {
+    let account = v.flags & 0x800_0000 != 0;
+    if bound {
+        if v.bonding == 4 {
+            return Some("ITEM_BIND_QUEST");
+        }
+        if v.class != 10 {
+            return Some(if account {
+                "ITEM_ACCOUNTBOUND"
+            } else {
+                "ITEM_SOULBOUND"
+            });
+        }
+    }
+    if v.bonding == 0 || (v.class == 10 && !loot_window) {
+        return None;
+    }
+    if account {
+        return Some("ITEM_BIND_TO_ACCOUNT");
+    }
+    match v.bonding {
+        1 => Some("ITEM_BIND_ON_PICKUP"),
+        2 => Some("ITEM_BIND_ON_EQUIP"),
+        3 => Some("ITEM_BIND_ON_USE"),
+        4 => Some("ITEM_BIND_QUEST"),
+        _ => None,
+    }
 }
 
 /// The sets holding `item` (`0x5ae380`): each set's name once per slot that holds it, in set
@@ -124,6 +206,9 @@ pub(super) struct BuilderFlags {
     /// duration, requirements, spell triggers and set block still print.
     pub name_only: bool,
     pub sell: Sell,
+    /// The minimum-level argument: a scaling item shows its lowest level, as the compare arm for
+    /// an open vendor passes (`0x6318ec`).
+    pub minimum_level: bool,
 }
 
 /// Render one item into the tooltip's order, then run `OnTooltipSetItem` before the caller's show.
@@ -135,15 +220,51 @@ pub(super) fn render_view(
     inst: Option<&ItemInstance>,
 ) -> mlua::Result<()> {
     let h = crate::script::object::frame_handle_of(lua, this)?;
-    {
+    let scaled = {
         let mut model = crate::script::model_mut_of(lua);
+        let scaled = Scaled::of(&model, v, flags, inst);
         if let Ok(t) = crate::script::tooltip::tip_mut(&mut model, h) {
             t.item_guid = inst.map_or(0, |i| i.guid);
             t.item_link = inst.map_or_else(Default::default, |i| i.link);
+            t.item_shown_level = scaled.map_or(0, |s| s.level);
         }
-    }
-    render_lines(lua, this, v, flags, inst)?;
+        scaled
+    };
+    render_lines(lua, this, v, flags, inst, scaled)?;
     super::fire_set_item(lua, this)
+}
+
+/// A rating stat's text: a `%c` template takes the sign, the rest the value alone (`0x62bca3`).
+fn rating_text(template: &str, val: i32) -> String {
+    if template.contains("%c") {
+        let sign = if val > 0 { "+" } else { "-" };
+        fill(template, &[Arg::S(sign), Arg::D(val.abs().into())])
+    } else {
+        fill(template, &[Arg::D(val.into())])
+    }
+}
+
+/// The armor subclass a scaling plate or mail piece reads as (`0x6288a3`..`0x628919`): plate (4)
+/// for a class with flag `0x20` reads mail (3) when the mail bit is proficient, else leather (2);
+/// mail (3) for a class with flag `0x10` reads leather when the leather bit is. Both rows must
+/// resolve.
+fn scaling_armor_alternate(
+    v: &ItemTemplateView,
+    rows: (
+        Option<crate::script::ScalingDistributionView>,
+        Option<crate::script::ScalingValuesView>,
+    ),
+    class_flags: u32,
+    proficiency: u32,
+) -> Option<u32> {
+    if rows.0.is_none() || rows.1.is_none() || v.class != 4 {
+        return None;
+    }
+    match v.subclass {
+        4 if class_flags & 0x20 != 0 => Some(((proficiency & 0x8) | 0x10) >> 3),
+        3 if class_flags & 0x10 != 0 && proficiency & 0x4 != 0 => Some(2),
+        _ => None,
+    }
 }
 
 /// The one uniqueness line (`0x627fb4`): none for class 10, else the unique-equipped flag, a signed
@@ -181,7 +302,11 @@ fn render_lines(
     flags: BuilderFlags,
     // `None`: a template source, with no item object and no instance block.
     inst: Option<&ItemInstance>,
+    // A scaling item's level and rows; `None` for any other.
+    scaled: Option<Scaled>,
 ) -> mlua::Result<()> {
+    let rows = scaled.map_or((None, None), |s| (s.distribution, s.values));
+    let mask = v.scaling_value;
     let (req, known_spell, taught_known, set_view, worn, show_item_level, colorblind) = {
         let mut model = crate::script::model_mut_of(lua);
         let show_item_level = model
@@ -325,18 +450,9 @@ fn render_lines(
         if v.flags & 0x2 != 0 {
             keyed("ITEM_CONJURED", &[], WHITE, false)?;
         }
-        // Bonding (`[record+0x194]`) 1..5 decides whether a bind line prints. A runtime-bound
-        // instance prints ITEM_SOULBOUND, or ITEM_BIND_QUEST for the quest kinds; otherwise the
-        // jump table picks 1 pickup, 2 equip, 3 use, 4 and 5 quest.
-        match v.bonding {
-            4 | 5 => keyed("ITEM_BIND_QUEST", &[], WHITE, false)?,
-            1..=3 if inst.is_some_and(|i| i.already_bound) => {
-                keyed("ITEM_SOULBOUND", &[], WHITE, false)?
-            }
-            1 => keyed("ITEM_BIND_ON_PICKUP", &[], WHITE, false)?,
-            2 => keyed("ITEM_BIND_ON_EQUIP", &[], WHITE, false)?,
-            3 => keyed("ITEM_BIND_ON_USE", &[], WHITE, false)?,
-            _ => {}
+        let bound = inst.is_some_and(|i| i.already_bound);
+        if let Some(key) = bind_key(v, bound, inst.is_some_and(|i| i.loot_window)) {
+            keyed(key, &[], WHITE, false)?;
         }
         if let Some((key, args)) = uniqueness_line(v) {
             keyed(key, &args, WHITE, false)?;
@@ -376,7 +492,7 @@ fn render_lines(
             invtype_key(v.inventory_type).and_then(&get)
         };
         // The type cell: `ItemSubClass.dbc`'s DisplayName, app-resolved.
-        let ty = if v.inventory_type == 16 || v.hide_subclass {
+        let mut ty = if v.inventory_type == 16 || v.hide_subclass {
             None
         } else {
             v.sub_class_display.as_deref()
@@ -389,8 +505,19 @@ fn render_lines(
                     v.class == 2 && v.proficiency_alt.is_some_and(|a| mask & (1 << a) != 0);
                 if alt_ok {
                     left_red = true;
-                } else {
+                } else if v.class == 2 {
                     right_red = true;
+                } else {
+                    // A scaling plate or mail piece reads as the armor a flagged class may wear
+                    // until it learns the heavier kind, unred (`0x6288b7`..`0x628974`).
+                    match scaling_armor_alternate(v, rows, req.class_flags, mask) {
+                        Some(alt) => {
+                            if let Some(name) = v.scaling_armor_names[alt as usize - 2].as_deref() {
+                                ty = Some(name);
+                            }
+                        }
+                        None => right_red = true,
+                    }
                 }
             }
         }
@@ -417,7 +544,31 @@ fn render_lines(
         // every emitted slot after the first takes `PLUS_`.
         let mut first = true;
         let mut dps_acc = 0.0f32;
-        for &(min, max, school) in v.damages.iter().take(5) {
+        // A scaling weapon's damage bit replaces the blocks with its level's band over the delay,
+        // truncated, and the speed on every class (`0x628a39`..`0x628b51`).
+        let scaled_band = rows.1.filter(|_| mask & 0x7e00 != 0);
+        if let Some(row) = scaled_band {
+            let (mut min, mut max) = row.damage(mask);
+            if v.delay_ms != 0 {
+                let delay = f64::from(v.delay_ms as i32);
+                let ms = f64::from(0.001_f32);
+                min = (f64::from(min) * delay * ms) as f32;
+                max = (ms * (delay * f64::from(max))) as f32;
+            }
+            dps_acc = (min + max) * 0.5;
+            if let Some(t) = get("DAMAGE_TEMPLATE") {
+                let line = fill(&t, &[Arg::D(min as i64), Arg::D(max as i64)]);
+                let word = get("SPEED").unwrap_or_default();
+                let secs = f64::from(v.delay_ms as i32) * f64::from(0.001_f32);
+                add2((line, WHITE), (format!("{word} {secs:.2}"), WHITE))?;
+            }
+            first = false;
+        }
+        for &(min, max, school) in v
+            .damages
+            .iter()
+            .take(if scaled_band.is_some() { 0 } else { 5 })
+        {
             // The biased floor and ceil, not rounding: 38.7-85.7 reads "38 - 86".
             let (lo, hi) = (floor_min(min), ceil_max(max));
             // A slot is emitted iff either rounded bound is nonzero.
@@ -489,8 +640,18 @@ fn render_lines(
                 false,
             )?;
         }
-        if v.armor > 0 {
-            keyed("ARMOR_TEMPLATE", &[Arg::D(v.armor.into())], WHITE, false)?;
+        // A scaling armor bit prints its level's armor, 0 without a row (`0x628fc4`).
+        if mask & 0xf8_01e0 != 0 {
+            let armor = rows.1.map_or(0, |r| r.armor(mask));
+            keyed("ARMOR_TEMPLATE", &[Arg::D(armor.into())], WHITE, false)?;
+        } else if v.armor as i32 > 0 {
+            // Green with an armor damage modifier above 0, bonus armor (`0x629089`).
+            let color = if v.armor_damage_modifier > 0.0 {
+                GREEN
+            } else {
+                WHITE
+            };
+            keyed("ARMOR_TEMPLATE", &[Arg::D(v.armor.into())], color, false)?;
         }
         if v.block > 0 {
             keyed(
@@ -500,19 +661,35 @@ fn render_lines(
                 false,
             )?;
         }
-        // Stats in the display order of (4,3,7,5,6,1,0, then 8,9,2,10 and zero padding), not wire
-        // order. Deviation: the reference's padding repeats a mana stat once per zero entry; not
-        // emulated, since only the internal test ring 6674 has one.
+        // Stats in the display order (4,3,7,5,6,1,0, then 8,9,2,10, which name no line), not wire
+        // order (`0xa262f0`).
         const STAT_DISPLAY_ORDER: [u32; 7] = [4, 3, 7, 5, 6, 1, 0];
-        for &want in &STAT_DISPLAY_ORDER {
-            for &(t, val) in &v.stats {
-                if t != want || val == 0 {
-                    continue;
+        if mask == 0 {
+            for &want in &STAT_DISPLAY_ORDER {
+                for &(t, val) in &v.stats {
+                    if t != want || val == 0 {
+                        continue;
+                    }
+                    // The sign fills the template's `%c` (`"%c%d Agility"`).
+                    let Some(key) = stat_key(t) else { continue };
+                    let sign = if val > 0 { "+" } else { "-" };
+                    keyed(key, &[Arg::S(sign), Arg::D(val.abs().into())], WHITE, false)?;
                 }
-                // The sign fills the template's `%c` (`"%c%d Agility"`).
-                let Some(key) = stat_key(t) else { continue };
+            }
+        } else if let Some(d) = rows.0 {
+            // A scaling item's: per display stat, the first slot naming it whose share of the
+            // level's budget is nonzero, wrapped (`0x62915b`..`0x62928b`).
+            let budget = rows.1.map_or(0, |r| r.budget(mask));
+            for &want in &STAT_DISPLAY_ORDER {
+                let hit = d.stat_ids.iter().zip(&d.bonuses).find_map(|(&t, &bonus)| {
+                    let val = crate::script::item_scaling::share(budget, bonus);
+                    (bonus != 0 && val != 0 && t == want as i32).then_some(val)
+                });
+                let (Some(val), Some(key)) = (hit, stat_key(want)) else {
+                    continue;
+                };
                 let sign = if val > 0 { "+" } else { "-" };
-                keyed(key, &[Arg::S(sign), Arg::D(val.abs().into())], WHITE, false)?;
+                keyed(key, &[Arg::S(sign), Arg::D(val.abs().into())], WHITE, true)?;
             }
         }
         // Six equal non-zero resistances print the ALL line; otherwise one line per non-zero
@@ -672,8 +849,22 @@ fn render_lines(
             )?;
         }
     }
-    // Only a required level above 1 prints.
-    if v.required_level > 1 {
+    // A scaling item with a distribution prints its range and the shown level, red outside the
+    // range (`0x6277f0`, `ITEM_LEVEL_RANGE_CURRENT`); otherwise only a required level above 1.
+    if let (Some(d), Some(s)) = (rows.0, scaled) {
+        let required = v.required_level as i32;
+        let level = req.level as i32;
+        keyed(
+            "ITEM_LEVEL_RANGE_CURRENT",
+            &[
+                Arg::D(required.max(1).into()),
+                Arg::D(d.max_level.into()),
+                Arg::D(s.level.into()),
+            ],
+            req_color(level >= required && level <= d.max_level),
+            false,
+        )?;
+    } else if v.required_level > 1 {
         keyed(
             "ITEM_MIN_LEVEL",
             &[Arg::D(v.required_level.into())],
@@ -729,7 +920,34 @@ fn render_lines(
     if let (Some(ap), Some(t)) = (feral_ap, get("FERAL_DRUID_ITEM_AP")) {
         addw((fill(&t, &[Arg::D(ap)]), GREEN))?;
     }
-    if let Some(prefix) = get("ITEM_SPELL_TRIGGER_ONEQUIP") {
+    if mask != 0 {
+        // A scaling item's rating stats off its level's budget, in distribution order and
+        // wrapped, then its spell power bit (`0x62bbda`..`0x62be06`).
+        if let (Some(d), Some(prefix)) = (rows.0, get("ITEM_SPELL_TRIGGER_ONEQUIP")) {
+            let budget = rows.1.map_or(0, |r| r.budget(mask));
+            for (&t, &bonus) in d.stat_ids.iter().zip(&d.bonuses) {
+                let val = crate::script::item_scaling::share(budget, bonus);
+                if bonus == 0 || val == 0 {
+                    continue;
+                }
+                let Some(template) = u32::try_from(t).ok().and_then(rating_key).and_then(&get)
+                else {
+                    continue;
+                };
+                addw((format!("{prefix} {}", rating_text(&template, val)), GREEN))?;
+            }
+        }
+        let power = rows.1.map_or(0, |r| r.spell_power());
+        if mask & 0x8000 != 0 && power != 0 {
+            if let (Some(t), Some(prefix)) = (
+                get("ITEM_MOD_SPELL_POWER"),
+                get("ITEM_SPELL_TRIGGER_ONEQUIP"),
+            ) {
+                let text = fill(&t, &[Arg::D(power.into())]);
+                addw((format!("{prefix} {text}"), GREEN))?;
+            }
+        }
+    } else if let Some(prefix) = get("ITEM_SPELL_TRIGGER_ONEQUIP") {
         for &(t, val) in &v.stats {
             let Some(template) = rating_key(t).and_then(&get) else {
                 continue;
@@ -737,14 +955,7 @@ fn render_lines(
             if val == 0 {
                 continue;
             }
-            // A `%c` template takes the sign; the rest take the value alone.
-            let text = if template.contains("%c") {
-                let sign = if val > 0 { "+" } else { "-" };
-                fill(&template, &[Arg::S(sign), Arg::D(val.abs().into())])
-            } else {
-                fill(&template, &[Arg::D(val.into())])
-            };
-            add((format!("{prefix} {text}"), GREEN))?;
+            add((format!("{prefix} {}", rating_text(&template, val)), GREEN))?;
         }
     }
     // Green, wrapped trigger lines: the prefix key and the app-resolved text joined by the literal

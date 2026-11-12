@@ -183,6 +183,7 @@ mod input_verbs;
 mod inspect;
 mod inventory_verbs;
 mod item_link;
+mod item_scaling;
 mod item_search;
 mod item_stats;
 mod item_summary;
@@ -406,6 +407,7 @@ pub use glyph::{
 };
 pub use inspect::{InspectView, UnitReach};
 pub use instance::InstanceLock;
+pub use item_scaling::{ScalingDistributionView, ScalingTables, ScalingValuesView};
 pub use item_stats::equip_loc_token;
 pub use item_stats::{
     item_usable, item_use_refusal, EnchantEffectView, EnchantRowView, GemView, ItemLimitView,

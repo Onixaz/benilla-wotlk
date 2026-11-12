@@ -72,6 +72,7 @@ struct ChrClass {
     pet_name_token: Option<String>,
     name: Option<String>,
     has_relic_slot: bool,
+    flags: u32,
     spell_family: u32,
 }
 
@@ -123,6 +124,13 @@ impl ChrClasses {
     /// row answers false, as the reference's bound check against `[0xad3410]` falls to its nil leg.
     pub fn has_relic_slot(&self, class: u32) -> bool {
         self.by_id.get(&class).is_some_and(|c| c.has_relic_slot)
+    }
+
+    /// Field 57, the class flags (`row + 0x24`); 0 for a class with no row. Besides the relic bit,
+    /// the item tooltip reads `0x10` and `0x20`, the scaling mail and plate alternates (`0x6288f5`,
+    /// `0x62890e`).
+    pub fn flags(&self, class: u32) -> u32 {
+        self.by_id.get(&class).map_or(0, |c| c.flags)
     }
 
     /// The class spell family, matched against a spell's `SpellFamilyName` before a talent
@@ -178,6 +186,7 @@ pub fn load_chr_classes(chain: &mut Chain) -> Result<ChrClasses> {
                 pet_name_token: str_at(&rs, r, PET_NAME_TOKEN_FIELD),
                 name: str_at(&rs, r, NAME_FIELD),
                 has_relic_slot: u32_at(r, FLAGS_FIELD).is_some_and(|v| v & FLAG_RELIC_SLOT != 0),
+                flags: u32_at(r, FLAGS_FIELD).unwrap_or(0),
                 spell_family: u32_at(r, SPELL_FAMILY_FIELD).unwrap_or(0),
             },
         );
@@ -248,6 +257,18 @@ mod tests {
         // No row: the reference's nil leg.
         assert!(!t.has_relic_slot(10));
         assert!(!t.has_relic_slot(0));
+    }
+
+    /// The scaling armor alternates: `0x20` marks the plate classes, `0x10` every class that
+    /// wears mail.
+    #[test]
+    fn the_scaling_armor_flags_name_the_plate_and_mail_classes() {
+        let Some(mut chain) = chain() else { return };
+        let t = load_chr_classes(&mut chain).expect("load ChrClasses.dbc");
+        let with = |bit: u32| -> Vec<u32> { (1..=11).filter(|&c| t.flags(c) & bit != 0).collect() };
+        assert_eq!(with(0x20), [1, 2, 6]);
+        assert_eq!(with(0x10), [1, 2, 3, 6, 7]);
+        assert_eq!(t.flags(10), 0);
     }
 
     /// Hunters, Rogues and Shamans scale their damage off Agility, the rest off Strength; the

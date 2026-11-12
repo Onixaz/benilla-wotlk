@@ -43,8 +43,6 @@ const NOT_READ: &[(&str, &str)] = &[
         "#239 equipment slot names: GetInventorySlotInfo",
     ),
     ("RandPropPoints", "#239 random property and suffix stats"),
-    ("ScalingStatDistribution", "#239 heirloom stat scaling"),
-    ("ScalingStatValues", "#239 heirloom stat scaling"),
     ("ScreenEffect", "#243 screen effects"),
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
     ("Startup_Strings", "#245 the client's startup error text"),

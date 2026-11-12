@@ -169,6 +169,8 @@ tables! {
         "QuestSort" => quest_headers::quest_sort_schema(),
         "QuestXP" => quest_rewards::quest_xp_schema(),
         "Resistances" => spells::resistances_schema(),
+        "ScalingStatDistribution" => scaling_stats::distribution_schema(),
+        "ScalingStatValues" => scaling_stats::values_schema(),
         "ServerMessages" => server_messages::schema(&LAYOUTS.server_messages),
         "SkillCostsData" => skill_lines::skill_costs_data_schema(),
         "SkillLine" => skill_lines::skill_line_schema(),

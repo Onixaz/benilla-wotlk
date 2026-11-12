@@ -283,6 +283,9 @@ pub struct TooltipState {
     pub item_guid: u64,
     /// The shown item's link block (`+0x3a0`): what `GetItem` rebuilds its link from.
     pub item_link: crate::script::ItemLinkFields,
+    /// The level a scaling item was shown at (`[tooltip+0x4d0]`, `0x62853a`), which the compare
+    /// summary reads; 0 for any other item.
+    pub item_shown_level: i32,
     /// The spell shown and the talent's next rank (`GetSpell`, `0x61f0f0`); 0 for none.
     pub spell_id: u32,
     pub next_rank_spell: u32,

@@ -232,6 +232,16 @@ fn template_view(
         sub_class_display: sub_classes
             .and_then(|c| c.display_name(t.class, t.subclass))
             .map(str::to_string),
+        // A scaling armor piece's alternate names, leather (2) and mail (3) (`0x628930`).
+        scaling_armor_names: if t.scaling_stat_value != 0 && t.class == 4 {
+            [2, 3].map(|sub| {
+                sub_classes
+                    .and_then(|c| c.display_name(4, sub))
+                    .map(str::to_string)
+            })
+        } else {
+            Default::default()
+        },
         flags: t.flags,
         bonding: t.bonding,
         max_count: t.max_count,
@@ -311,6 +321,9 @@ fn template_view(
             })
             .collect(),
         bag_family: t.bag_family,
+        scaling_distribution: t.scaling_stat_distribution,
+        scaling_value: t.scaling_stat_value,
+        armor_damage_modifier: t.armor_damage_modifier,
         item_limit: limits
             .and_then(|l| l.0.get(t.item_limit_category))
             .map(|c| benilla_ui::script::ItemLimitView {
@@ -550,6 +563,44 @@ pub(super) fn feed_random_properties(
     *pushed.get(&script) = true;
 }
 
+/// Pushes the two scaling tables once per VM: a link's heirloom reads them on its first hover.
+pub(super) fn feed_scaling_tables(
+    script: Option<NonSendMut<UiScript>>,
+    tables: Option<Res<super::ScalingStats>>,
+    mut pushed: Local<crate::ui_script::VmMemo<bool>>,
+) {
+    let (Some(mut script), Some(tables)) = (script, tables) else {
+        return;
+    };
+    if *pushed.get(&script) {
+        return;
+    }
+    script.set_scaling_tables(benilla_ui::script::ScalingTables {
+        distributions: tables
+            .0
+            .distributions
+            .iter()
+            .map(|(&id, d)| {
+                (
+                    id,
+                    benilla_ui::script::ScalingDistributionView {
+                        stat_ids: d.stat_ids,
+                        bonuses: d.bonuses,
+                        max_level: d.max_level,
+                    },
+                )
+            })
+            .collect(),
+        values: tables
+            .0
+            .values
+            .iter()
+            .map(|&row| benilla_ui::script::ScalingValuesView(row))
+            .collect(),
+    });
+    *pushed.get(&script) = true;
+}
+
 /// The item-tooltip feed: every template that lands is pushed unprompted, so the first hover never
 /// misses, as the reference reads one item cache synchronously; a read of an unresolved id records
 /// a miss, which queries it here.
@@ -726,6 +777,8 @@ pub(super) fn feed_player_req(
     factions: Option<Res<crate::target::Factions>>,
     actions: Res<crate::ui_action::PlayerActions>,
     spells: Option<Res<crate::ui_action::Spells>>,
+    // The class flags the scaling armor alternates read (`0x6288f5`).
+    classes: Option<Res<crate::chr_classes::ChrClassTable>>,
     mut last: Local<crate::ui_script::VmMemo<Option<benilla_ui::script::PlayerReqState>>>,
 ) {
     let Some(mut script) = script else {
@@ -813,6 +866,7 @@ pub(super) fn feed_player_req(
         rep_ranks,
         can_dual_wield,
         honor_rank: store.0.player_honor_rank().unwrap_or(0),
+        class_flags: classes.map_or(0, |c| c.0.flags(u32::from(class))),
     };
     if last.as_ref() != Some(&state) {
         gate.audit("feed_player_req", "the player-requirement state");
