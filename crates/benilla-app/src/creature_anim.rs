@@ -388,9 +388,10 @@ impl AttackSeam<'_, '_> {
     }
 }
 
-/// Mid-cast (`SMSG_SPELL_START` to GO or failure), inserted only for a nonzero cast time and
-/// removed by the same spell id (the reference's reap is keyed by spell id).
+/// The unit's cast state (`+0xa60`): set by a start (`0x805330`), cleared by its spell and count's
+/// end (`0x7fed81`).
 #[derive(Component, Clone, Copy)]
+#[component(storage = "SparseSet")]
 pub(crate) struct Casting {
     pub(crate) spell_id: u32,
     /// The start's `castCount`, which an interrupt must match (`0x72ed80`).

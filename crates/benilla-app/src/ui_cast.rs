@@ -268,7 +268,7 @@ struct Running {
 /// `Attributes & 2` (a ranged-slot spell) never does, the active player passes, and anyone else
 /// fails on `Attributes & 0x180` or `AttributesEx4 & 1`, and a channel also on
 /// `AttributesEx3 & 0x2000`.
-fn raises_events(d: &SpellDisplay, is_self: bool, channel: bool) -> bool {
+pub(crate) fn raises_events(d: &SpellDisplay, is_self: bool, channel: bool) -> bool {
     if d.attributes_ex4 & 0x0800_0000 != 0 {
         return true;
     }

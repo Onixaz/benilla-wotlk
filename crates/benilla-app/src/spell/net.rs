@@ -407,6 +407,7 @@ fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
             immunities,
             &mut sc.commands,
             &l.index,
+            &sc.casting,
             &mut sc.cast_events,
             &l.self_guid,
             &mut l.cast_bar,
@@ -1198,8 +1199,11 @@ fn cast_result(
         }
         // Only the failure of the cast the bar shows (keyed to our `Casting`) red-fades it: a
         // pre-start rejection opened no bar, and a proc's failure names another spell.
-        let fails_our_cast =
-            self_e.is_some_and(|e| casting.get(e).is_ok_and(|c| c.spell_id == spell_id));
+        let fails_our_cast = self_e.is_some_and(|e| {
+            casting
+                .get(e)
+                .is_ok_and(|c| (c.spell_id, c.cast_count) == (spell_id, cast_count))
+        });
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV CAST_RESULT failure — spell {spell_id} reason={reason:?}; fails_bar={fails_our_cast}");
         }
@@ -1277,6 +1281,7 @@ fn spell_start(
     immunities: Option<(u32, u32)>,
     commands: &mut Commands,
     index: &GuidIndex,
+    casting: &Query<&Casting>,
     cast_events: &mut MessageWriter<CastEvent>,
     self_guid: &SelfGuid,
     cast_bar: &mut CastBarFeed,
@@ -1284,7 +1289,6 @@ fn spell_start(
     spells: Option<&crate::ui_action::Spells>,
     seq: u64,
 ) {
-    // A nonzero cast time marks the caster `Casting`; an instant gets none, its GO follows at once.
     debug!(
         "net: spell start {spell_id} by {caster:#x} ({cast_time_ms}ms, flags \
          {cast_flags:#x}, target {target:?}, ammo {ammo_display_id:?})"
@@ -1341,13 +1345,36 @@ fn spell_start(
         pending.refine(cast_time_ms, Instant::now());
     }
     if let Some(&e) = index.0.get(&caster) {
-        if cast_time_ms > 0 {
-            commands.entity(e).insert(Casting {
-                spell_id,
-                cast_count,
-                until: Some(Instant::now() + Duration::from_millis(u64::from(cast_time_ms))),
-                listed: true,
-            });
+        let fresh = Casting {
+            spell_id,
+            cast_count,
+            until: (cast_time_ms > 0)
+                .then(|| Instant::now() + Duration::from_millis(u64::from(cast_time_ms))),
+            listed: true,
+        };
+        let shows_bar = cast_time_ms > 0
+            && spells
+                .and_then(|s| s.catalog.get(spell_id))
+                .is_none_or(|d| {
+                    crate::ui_cast::raises_events(d, self_guid.0 == Some(caster), false)
+                });
+        match casting.get(e).ok().copied() {
+            // Set when none is held (`0x8053cd`).
+            None => {
+                commands.entity(e).insert(fresh);
+            }
+            // A timed start with a shown bar replaces another spell's (`0x80544e`).
+            Some(held) if shows_bar && held.spell_id != spell_id => {
+                commands.entity(e).insert(fresh);
+            }
+            // A same-spell restart keeps the held count; its new pending cast is listed.
+            Some(held) if held.spell_id == spell_id && !held.listed => {
+                commands.entity(e).insert(Casting {
+                    listed: true,
+                    ..held
+                });
+            }
+            Some(_) => {}
         }
         // The precast edge, instants included: their GO follows at once and reaps the hold.
         cast_events.write(CastEvent {
@@ -1522,10 +1549,11 @@ fn spell_go(
     if self_guid.0 == Some(caster) {
         // Only the cast the bar shows completes it: a proc landing mid-cast (Chilled, 6136) is our
         // own cast too, and must not finish the running bar.
-        let completes_our_cast = index
-            .0
-            .get(&caster)
-            .is_some_and(|&e| casting.get(e).is_ok_and(|c| c.spell_id == spell_id));
+        let completes_our_cast = index.0.get(&caster).is_some_and(|&e| {
+            casting
+                .get(e)
+                .is_ok_and(|c| (c.spell_id, c.cast_count) == (spell_id, cast_count))
+        });
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_GO — spell {spell_id} (self); completes_bar={completes_our_cast}");
         }
@@ -1640,10 +1668,12 @@ fn spell_go(
         cooldowns.collect(now);
         pet_bar.cooldowns.collect(now);
     }
-    // Keyed by spell id, like the reap `(spellId, 0)`: a proc's GO must not clear another spell's
-    // precast state.
+    // The end clears the held state of this spell and count alone (`0x7fed81`).
     if let Some(&e) = index.0.get(&caster) {
-        if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
+        if casting
+            .get(e)
+            .is_ok_and(|c| (c.spell_id, c.cast_count) == (spell_id, cast_count))
+        {
             commands.entity(e).remove::<Casting>();
         }
         // The GO's one target list: hits then misses, swapped by flag 0x400 (`0x80ec10`,
@@ -1751,10 +1781,11 @@ fn spell_failed_other(
     // Only the cast the bar shows turns it red "Interrupted" (keyed to `Casting`); the guard opens
     // either way.
     if self_guid.0 == Some(caster) {
-        let interrupts_our_cast = index
-            .0
-            .get(&caster)
-            .is_some_and(|&e| casting.get(e).is_ok_and(|c| c.spell_id == spell_id));
+        let interrupts_our_cast = index.0.get(&caster).is_some_and(|&e| {
+            casting
+                .get(e)
+                .is_ok_and(|c| (c.spell_id, c.cast_count) == (spell_id, cast_count))
+        });
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_FAILED_OTHER — spell {spell_id} (self); interrupts_bar={interrupts_our_cast}");
         }
@@ -1762,10 +1793,10 @@ fn spell_failed_other(
         // The melee-slot interrupt's other half, beside the failing CAST_RESULT.
         queued_melee.clear_if(spell_id);
     }
-    // Keyed by spell id, like the reap (the 0x2A6 handler's `(spellId, 0)`).
+    // The end clears the held state of this spell and count alone (`0x7fed81`).
     if let Some(&e) = index.0.get(&caster) {
         let running = casting.get(e).ok();
-        if running.is_some_and(|c| c.spell_id == spell_id) {
+        if running.is_some_and(|c| (c.spell_id, c.cast_count) == (spell_id, cast_count)) {
             commands.entity(e).remove::<Casting>();
         }
         // `SMSG_SPELL_FAILURE` interrupts the running cast of this spell and count (`0x72ed80`).
@@ -2772,38 +2803,69 @@ mod tests {
             Some((10, false))
         );
 
-        // The next timed start replaces the held state (`0x805330`).
-        app.world_mut()
-            .run_system_once(
-                |mut commands: Commands,
-                 index: Res<GuidIndex>,
-                 mut cast_events: MessageWriter<CastEvent>,
-                 self_guid: Res<SelfGuid>,
-                 mut cast_bar: ResMut<CastBarFeed>,
-                 mut pending: ResMut<PendingCast>| {
-                    spell_start(
-                        10,
-                        1,
-                        133,
-                        0,
-                        2500,
-                        None,
-                        None,
-                        None,
-                        &mut commands,
-                        &index,
-                        &mut cast_events,
-                        &self_guid,
-                        &mut cast_bar,
-                        &mut pending,
-                        None,
-                        2,
-                    );
-                },
-            )
-            .unwrap();
-        let held = app.world().get::<Casting>(self_e).copied();
-        assert_eq!(held.map(|c| (c.spell_id, c.cast_count)), Some((133, 1)));
+        // One `spell_start` call: (count, spell, cast time).
+        let start = |app: &mut App, count: u8, spell: u32, cast_ms: u32| {
+            app.world_mut()
+                .run_system_once(
+                    move |mut commands: Commands,
+                          index: Res<GuidIndex>,
+                          casting: Query<&Casting>,
+                          mut cast_events: MessageWriter<CastEvent>,
+                          self_guid: Res<SelfGuid>,
+                          mut cast_bar: ResMut<CastBarFeed>,
+                          mut pending: ResMut<PendingCast>| {
+                        spell_start(
+                            10,
+                            count,
+                            spell,
+                            0,
+                            cast_ms,
+                            None,
+                            None,
+                            None,
+                            &mut commands,
+                            &index,
+                            &casting,
+                            &mut cast_events,
+                            &self_guid,
+                            &mut cast_bar,
+                            &mut pending,
+                            None,
+                            2,
+                        );
+                    },
+                )
+                .unwrap();
+        };
+        let held = |app: &App| {
+            app.world()
+                .get::<Casting>(self_e)
+                .map(|c| (c.spell_id, c.cast_count, c.listed))
+        };
+
+        // An instant leaves another spell's held state (`0x8053cd`).
+        start(&mut app, 1, 6136, 0);
+        assert_eq!(held(&app), Some((10, 0, false)));
+        // A timed start of another spell replaces it (`0x80544e`).
+        start(&mut app, 1, 133, 2500);
+        assert_eq!(held(&app), Some((133, 1, true)));
+        // A same-spell restart keeps the held count.
+        start(&mut app, 2, 133, 2500);
+        assert_eq!(held(&app), Some((133, 1, true)));
+        // The end of another count leaves it; its own count clears it (`0x7fed81`).
+        fire_go(&mut app, 133, true);
+        assert_eq!(held(&app), Some((133, 1, true)));
+        app.world_mut().entity_mut(self_e).insert(Casting {
+            spell_id: 133,
+            cast_count: 0,
+            until: None,
+            listed: true,
+        });
+        fire_go(&mut app, 133, true);
+        assert_eq!(held(&app), None);
+        // With none held, an instant sets it.
+        start(&mut app, 3, 6136, 0);
+        assert_eq!(held(&app), Some((6136, 3, true)));
     }
 
     /// Our channel's start and its server end (`MSG_CHANNEL_UPDATE(0)`) arm and close
