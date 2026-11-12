@@ -543,13 +543,13 @@ pub(super) fn feed_item_tables(
     if !pushed.random_properties {
         // Without the enchant catalog every row would push empty, never to be retried.
         if let (Some(props), Some(enchants)) = (props, enchants) {
-            push_random_properties(&mut *script, &props, &enchants);
+            push_random_properties(&mut script, &props, &enchants);
             pushed.random_properties = true;
         }
     }
     if !pushed.scaling {
         if let Some(tables) = scaling {
-            push_scaling_tables(&mut *script, &tables);
+            push_scaling_tables(&mut script, &tables);
             pushed.scaling = true;
         }
     }
