@@ -39,6 +39,7 @@ mod relations;
 mod reticle;
 // `pub(crate)` for the hover inspector too: its faction catalog feeds `go_highlightable`.
 pub(crate) mod ring;
+mod roster;
 mod scan;
 mod script;
 pub(crate) mod stone;

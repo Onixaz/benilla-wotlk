@@ -950,6 +950,37 @@ fn member_unit_state(
     s
 }
 
+/// The `"target"` snapshot of a group member or pet selected by guid alone: the getters read the
+/// party record, then the pet record, as for a `partyN` or `partypetN` the object manager does not
+/// hold (`0x60c2a0` answers it existing on the group test alone).
+pub(crate) fn unheld_group_state(
+    group: &GroupState,
+    guid: u64,
+    own_group: Option<String>,
+    classes: Option<&benilla_formats::ChrClasses>,
+    types: CreatureTypeSources<'_>,
+) -> Option<UnitState> {
+    if let Some(m) = group.members.iter().find(|m| m.guid == guid) {
+        return Some(member_unit_state(
+            m,
+            group.stats.get(&guid),
+            None,
+            group,
+            own_group,
+            classes,
+            types,
+        ));
+    }
+    let owner = group
+        .stats
+        .iter()
+        .find(|(_, r)| r.pet_guid == Some(guid))
+        .map(|(&owner, _)| owner)?;
+    let mut s = pets::record_state(group, guid, owner, true);
+    s.raid_target = group.raid_target_index(guid);
+    Some(s)
+}
+
 /// `"party1".."party4"` → the roster entry it names.
 fn member_for_token<'a>(group: &'a GroupState, token: &str) -> Option<&'a GroupMemberEntry> {
     let n: usize = token.strip_prefix("party")?.parse().ok()?;
@@ -1715,6 +1746,55 @@ mod roster_update_tests;
 mod tests {
     use super::super::pets::tests::{app, app_with, flag, frame, member, party, stream, ME};
     use super::*;
+
+    /// A member or pet selected by guid alone snapshots as `"target"` off the records: the member
+    /// as `partyN`'s unstreamed leg, the pet off its owner's pet block; a stranger has none.
+    #[test]
+    fn an_unheld_group_target_reads_the_member_and_pet_records() {
+        const MEMBER: u64 = 0x1234;
+        const PET: u64 = 0xF140_0000_0000_0077;
+        let mut group = GroupState::default();
+        group.apply_list(
+            0,
+            0,
+            vec![GroupMemberEntry {
+                name: "Brisca".into(),
+                guid: MEMBER,
+                status: member_status::ONLINE,
+                flags: 0,
+                roles: 0,
+            }],
+            MEMBER,
+            None,
+            None,
+        );
+        group.stats.insert(
+            MEMBER,
+            PartyMemberStatsInfo {
+                status: Some(member_status::ONLINE.into()),
+                cur_hp: Some(2400),
+                max_hp: Some(3000),
+                level: Some(41),
+                pet_guid: Some(PET),
+                pet_name: Some("Grimjaw".into()),
+                pet_cur_hp: Some(70),
+                pet_max_hp: Some(90),
+                ..PartyMemberStatsInfo::default()
+            },
+        );
+        let types = CreatureTypeSources::default();
+        let m = unheld_group_state(&group, MEMBER, Some("Alliance".into()), None, types)
+            .expect("a member");
+        assert!(m.exists && m.is_player && m.is_connected);
+        assert_eq!((m.guid, m.name.as_deref()), (MEMBER, Some("Brisca")));
+        assert_eq!((m.health, m.max_health, m.level), (2400, 3000, 41));
+        assert_eq!(m.faction_group.as_deref(), Some("Alliance"));
+        let p = unheld_group_state(&group, PET, None, None, types).expect("a pet");
+        assert!(p.exists);
+        assert_eq!((p.owner, p.name.as_deref()), (MEMBER, Some("Grimjaw")));
+        assert_eq!((p.health, p.max_health), (70, 90));
+        assert!(unheld_group_state(&group, 0x5555, None, None, types).is_none());
+    }
 
     #[test]
     fn an_out_of_range_member_reads_the_record_and_divides_its_rage() {

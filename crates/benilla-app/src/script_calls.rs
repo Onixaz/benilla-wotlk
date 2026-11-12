@@ -38,12 +38,12 @@ pub(crate) fn apply_script_calls(
     };
     in_call_order(&mut script, |script, call| {
         match call {
-            ScriptCall::Select(request) => appliers.p0().select(request),
+            ScriptCall::Select(request) => appliers.p0().select(request, script),
             ScriptCall::TargetByName { name, exact } => appliers.p0().target_by_name(&name, exact),
             ScriptCall::TargetNearest { mode, reverse } => {
                 appliers.p0().target_nearest(mode, reverse);
             }
-            ScriptCall::TargetLastTarget => appliers.p0().target_last_target(),
+            ScriptCall::TargetLastTarget => appliers.p0().target_last_target(script),
             ScriptCall::ClearTarget => appliers.p0().clear_target(),
             ScriptCall::AttackTarget => appliers.p7().attack_target(),
             ScriptCall::StartAttack { unit: None, .. } => appliers.p7().start_attack(),

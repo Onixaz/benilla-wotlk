@@ -1917,11 +1917,11 @@ pub(super) fn clear(
     seam: &mut crate::creature_anim::AttackSeam,
     engaged: bool,
 ) {
-    if selection.target.take().is_some() {
-        if let Some(old) = selection.guid.take() {
-            // The teardown closes the old target's loot before its own send.
-            seam.close_loot_on(old);
-        }
+    // Keyed on the guid: a group member's selection may hold no entity (`0x5241b0`).
+    selection.target = None;
+    if let Some(old) = selection.guid.take() {
+        // The teardown closes the old target's loot before its own send.
+        seam.close_loot_on(old);
         let _ = seam.net.0.send(ClientCommand::SetSelection { guid: 0 });
         // The selection set's own, the real StopAttack, which also un-queues a pending
         // on-next-swing strike.

@@ -211,8 +211,16 @@ pub(super) fn update_ring(
         Res<Time>,
         ResMut<MoveRingState>,
     ),
+    roster: super::roster::RosterTarget,
 ) {
     let (approach, time, mut move_ring) = walk;
+    // A group member out of view keeps the selection by guid, ahead of the teardown clear below.
+    roster.follow(
+        &mut selection,
+        Some(&*targets.2),
+        |e| targets.0.contains(e),
+        &seam.net,
+    );
     update_move_ring(
         approach.as_deref(),
         &time,

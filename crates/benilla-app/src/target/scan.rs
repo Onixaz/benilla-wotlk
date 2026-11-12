@@ -483,6 +483,30 @@ pub(super) fn commit(
     self_guid: Option<u64>,
     new_attackable: bool,
 ) -> CommitOutcome {
+    commit_at(
+        selection,
+        seam,
+        Some(entity),
+        guid,
+        target_store,
+        engaged,
+        self_guid,
+        new_attackable,
+    )
+}
+
+/// [`commit`] for an entity or none: a group member or pet the object manager does not hold is
+/// selected by guid alone (`0x524bf0`'s unheld branch at `0x524ed2`).
+pub(super) fn commit_at(
+    selection: &mut Selection,
+    seam: &mut crate::creature_anim::AttackSeam,
+    entity: Option<Entity>,
+    guid: u64,
+    target_store: Option<&ObjectStore>,
+    engaged: bool,
+    self_guid: Option<u64>,
+    new_attackable: bool,
+) -> CommitOutcome {
     // The selectable test, before the dedup: a non-selectable unit is a complete no-op that keeps
     // the current target, for every selection writer.
     if !super::relations::is_selectable(target_store, self_guid) {
@@ -498,7 +522,7 @@ pub(super) fn commit(
         // The old target's teardown closes its loot first.
         seam.close_loot_on(old);
     }
-    selection.target = Some(entity);
+    selection.target = entity;
     selection.guid = Some(guid);
     let stop_and_repoint = engaged && had_old;
     if stop_and_repoint {
