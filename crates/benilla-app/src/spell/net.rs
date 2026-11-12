@@ -1460,8 +1460,7 @@ fn spell_go(
         if pet_bar.has_bar() && pet_bar.spells.pet_guid == caster {
             pet_bar.pending_cast = None;
         }
-        // 12340 leaves the unit's cast state for the next cast; our `Casting` has no expiry, so
-        // the cast's own reap runs.
+        // Deviates: 12340 holds it until the next start or end (`0x805330`, `0x7fecc0`).
         if let Some(&e) = index.0.get(&caster) {
             if casting.get(e).is_ok_and(|c| c.spell_id == spell_id) {
                 commands.entity(e).remove::<Casting>();
