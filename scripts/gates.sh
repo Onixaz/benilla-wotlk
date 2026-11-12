@@ -11,7 +11,7 @@
 # `dev`, so the chain reuses the artifacts a `cargo dev` or a probe build left.
 # A failure prints the gate's log tail and exits nonzero; a green run stamps the tree, which then
 # re-greens without running. GATES_FORCE=1 runs the chain anyway; TMPDIR holds the scratch files.
-# `.github/workflows/ci.yml` runs this script on a fork's pull request.
+# `.github/workflows/ci.yml` runs this script on every pull request.
 #
 #   scripts/gates.sh
 set -uo pipefail
