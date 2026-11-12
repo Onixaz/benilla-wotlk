@@ -1072,7 +1072,7 @@ mod tests {
     /// one in the bank vault's slot 2, with the manager on and the list loaded empty.
     fn script() -> UiScript {
         let mut s = UiScript::new().unwrap();
-        s.set_paperdoll_item_frame(crate::script::PaperDollSlotInfo::test_rows());
+        s.set_paperdoll_item_frame(crate::script::tests::common::paperdoll_rows());
         s.register_cvars([("equipmentManager", "1")]);
         s.set_unit(
             "player",

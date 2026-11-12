@@ -8,7 +8,7 @@ mod anchors;
 mod backdrop;
 mod button;
 mod channel;
-mod common;
+pub(super) mod common;
 mod cooldown;
 mod create_frame_template;
 mod cvar_bindings;

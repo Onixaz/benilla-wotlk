@@ -176,6 +176,8 @@ pub(super) fn load_core(script: &UiScript) -> Vec<String> {
         failures.extend(load_core_bindings(script));
         return failures;
     };
+    // Stock `PaperDollItemSlotButton_OnLoad` reads the slot table, which a world's VM has from birth.
+    reference_ui::seat_paperdoll_rows(script);
     let mut toc = benilla_ui::status::Status::default();
     let mut failures = core.load_files_into(script, &core.toc.files, &mut toc);
     let mut log = benilla_ui::status::Status::default();

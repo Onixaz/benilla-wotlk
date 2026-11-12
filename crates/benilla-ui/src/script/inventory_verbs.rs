@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn inventory_sell_cursor_buys_over_a_worn_item_only() {
         let mut s = UiScript::new().unwrap();
-        s.set_paperdoll_item_frame(crate::script::PaperDollSlotInfo::test_rows());
+        s.set_paperdoll_item_frame(crate::script::tests::common::paperdoll_rows());
         let mut slots: crate::script::InventorySlots = Default::default();
         slots[16] = Some(InvSlotView {
             item_id: 2361,

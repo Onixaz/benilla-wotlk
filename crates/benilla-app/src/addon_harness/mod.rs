@@ -3538,7 +3538,6 @@ mod dependency_tests {
     /// A VM shaped like the survey's, for the oracle tests below.
     fn seated_vm() -> UiScript {
         let mut script = UiScript::new().unwrap();
-        script.set_paperdoll_item_frame(benilla_ui::script::PaperDollSlotInfo::test_rows());
         script.set_screen_size(1024.0, 768.0);
         seat_a_session(&mut script);
         let _ = crate::ui_script::load_default_ui(&script);
@@ -3647,12 +3646,14 @@ mod dependency_tests {
         assert!(s
             .eval::<bool>(r#"return GetInventoryItemLink("player", 10) == nil"#)
             .unwrap());
-        // The slot ids match `GetInventorySlotInfo`'s table.
-        assert_eq!(
-            s.eval::<i64>(r#"return GetInventorySlotInfo("MainHandSlot")"#)
-                .unwrap(),
-            16
-        );
+        // The slot ids match `GetInventorySlotInfo`'s table, which the install provides.
+        if s.has_paperdoll_item_frame() {
+            assert_eq!(
+                s.eval::<i64>(r#"return GetInventorySlotInfo("MainHandSlot")"#)
+                    .unwrap(),
+                16
+            );
+        }
 
         // The spellbook.
         assert_eq!(
