@@ -311,9 +311,10 @@ impl KeybindState {
     }
 }
 
-/// The `platform="…"` value that registers: `"windows"`, the PC build's, on every OS, since benilla
-/// answers as the PC build (`IsMacClient` nil, `client.rs`); the Mac build compares against `"mac"`
-/// and so has the `ITUNES_*` rows.
+/// The `platform="…"` value selected by the running client build.
+#[cfg(target_os = "macos")]
+const THIS_PLATFORM: &str = "mac";
+#[cfg(not(target_os = "macos"))]
 const THIS_PLATFORM: &str = "windows";
 
 impl super::UiScript {
@@ -945,8 +946,7 @@ mod tests {
         );
     }
 
-    /// The PC build's filter on every OS (against `"windows"`), so the stock `platform="mac"`
-    /// iTunes rows are never commands.
+    /// Platform-filtered binding rows register only for the running client platform.
     #[test]
     fn a_binding_for_another_platform_does_not_register() {
         let mut s = script();
@@ -961,12 +961,21 @@ mod tests {
         s.register_addon_bindings("Probe", &parsed);
 
         let names: Vec<String> = s.keybind_snapshot().into_iter().map(|(n, _)| n).collect();
-        assert!(names.iter().any(|n| n == "PROBEHERE"), "{names:?}");
         assert!(names.iter().any(|n| n == "PROBEANYWHERE"), "{names:?}");
+        #[cfg(target_os = "macos")]
+        assert!(!names.iter().any(|n| n == "PROBEHERE"), "{names:?}");
+        #[cfg(not(target_os = "macos"))]
+        assert!(names.iter().any(|n| n == "PROBEHERE"), "{names:?}");
+        #[cfg(target_os = "macos")]
+        assert!(names.iter().any(|n| n == "PROBEMAC"), "{names:?}");
+        #[cfg(not(target_os = "macos"))]
         assert!(
             !names.iter().any(|n| n == "PROBEMAC"),
             "a foreign-platform row registered: {names:?}"
         );
+        #[cfg(target_os = "macos")]
+        assert!(rows(&s).contains(&row(&["HEADER_ITUNES_REMOTE"])));
+        #[cfg(not(target_os = "macos"))]
         assert!(
             !rows(&s).contains(&row(&["HEADER_ITUNES_REMOTE"])),
             "the skipped node's header is never read"

@@ -14,13 +14,22 @@ pub(super) const INTERFACE_VERSION: f64 = 30300.0;
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `GetLocale()` (`0x4dbfd0`) returns the running locale's script name. `IsMacClient()` returns
-    // one nil, the PC build's answer, which takes FrameXML's PC key-label arm.
+    // `GetLocale()` (`0x4dbfd0`) returns the running locale's script name. The macOS client returns
+    // 1 from `IsMacClient`, selecting FrameXML's `_MAC` key-label globals.
     g.set(
         "GetLocale",
         lua.create_function(|lua, ()| lua.create_string(crate::locale::script_name()))?,
     )?;
-    g.set("IsMacClient", lua.create_function(|_, ()| Ok(Value::Nil))?)?;
+    g.set(
+        "IsMacClient",
+        lua.create_function(|_, ()| {
+            if cfg!(target_os = "macos") {
+                Ok(Value::Integer(1))
+            } else {
+                Ok(Value::Nil)
+            }
+        })?,
+    )?;
     // `GetExistingLocales()` (`0x511c80`): one string per installed locale, in the table's order.
     g.set(
         "GetExistingLocales",
@@ -411,7 +420,7 @@ mod tests {
         );
     }
 
-    /// The reference's arities: `GetLocale` one string, `IsMacClient` one nil.
+    /// The reference's arities: `GetLocale` one string, `IsMacClient` one platform value.
     #[test]
     fn the_client_identity_pair_answers_its_reference_arity() {
         let s = UiScript::new().unwrap();
@@ -426,10 +435,10 @@ mod tests {
             1,
             "IsMacClient pushes one value, and it is nil"
         );
-        assert!(
-            s.eval::<bool>("return IsMacClient() == nil").unwrap(),
-            "nil is the PC arm, which is the arm this client wants"
-        );
+        #[cfg(target_os = "macos")]
+        assert_eq!(s.eval::<i64>("return IsMacClient()").unwrap(), 1);
+        #[cfg(not(target_os = "macos"))]
+        assert!(s.eval::<bool>("return IsMacClient() == nil").unwrap());
     }
 
     /// `IsWindowsClient` pushes 1 and `IsLinuxClient` nil, one value each; `GetDebugStats` pushes

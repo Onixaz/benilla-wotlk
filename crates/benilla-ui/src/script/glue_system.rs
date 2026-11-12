@@ -221,20 +221,28 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The client's identity: `IsWindowsClient` (`0x4dce40`) 1, `IsMacClient`/`IsLinuxClient`
-    // (`0x510b90`) nil, `GetClientExpansionLevel` (`0x4dcbf0`) the installed expansion plus one,
+    // The client's identity: `IsWindowsClient` (`0x4dce40`) 1, `IsMacClient` (`0x510b90`) is 1 on
+    // macOS and nil elsewhere, `IsLinuxClient` nil, `GetClientExpansionLevel` the installed plus one,
     // 3 for Wrath of the Lich King; `IsSystemSupported` (`0x4dd540`) the processor's SSE2 bit,
     // which every machine benilla runs on has.
     g.set(
         "IsWindowsClient",
         lua.create_function(|_, _: MultiValue| Ok(1.0))?,
     )?;
-    for name in ["IsMacClient", "IsLinuxClient"] {
-        g.set(
-            name,
-            lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
-        )?;
-    }
+    g.set(
+        "IsMacClient",
+        lua.create_function(|_, _: MultiValue| {
+            if cfg!(target_os = "macos") {
+                Ok(Value::Integer(1))
+            } else {
+                Ok(Value::Nil)
+            }
+        })?,
+    )?;
+    g.set(
+        "IsLinuxClient",
+        lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
+    )?;
     g.set(
         "GetClientExpansionLevel",
         lua.create_function(|_, _: MultiValue| Ok(3.0))?,
