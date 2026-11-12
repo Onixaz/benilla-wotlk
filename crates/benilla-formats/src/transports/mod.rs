@@ -401,8 +401,8 @@ impl TransportTimetable {
         // steps, the client's (`spline.h:61`).
         let mut tt =
             Self::build_with_variant(nodes, move_speed, accel_rate, TimeMode::Vmangos, 20)?;
-        // The reference's period (`transport_period`), which vmangos's DB periods are sniffs of;
-        // `% period` on the server-uptime anchor multiplies any error by the cycle count.
+        // The client's own period (`transport_period`), until the server's `GAMEOBJECT_LEVEL`
+        // replaces it ([`Self::with_period`]).
         if let Some(period) =
             crate::transport_period::client_period_ms(nodes, move_speed, accel_rate)
         {
@@ -634,10 +634,20 @@ impl TransportTimetable {
         })
     }
 
-    /// Pin the period as vmangos pins its DB value (`TransportMgr.cpp:63-79`): a longer one parks
-    /// the transport at its last keyframe, a shorter one cuts the final approach at the wrap.
+    /// The cycle pinned to the server's `GAMEOBJECT_LEVEL`, which 12340 hands the ship path as its
+    /// total time right after building it (`0x711c97` → `0x7f7fc0`); at `0` the path time is
+    /// always 0 (`0x7f7810`), parked at the head.
+    #[must_use]
+    pub fn with_period(&self, period_ms: u32) -> Self {
+        let mut tt = self.clone();
+        tt.override_period(period_ms);
+        tt
+    }
+
+    /// Pin the period: a longer one parks the transport at its last keyframe, a shorter one cuts
+    /// the final approach at the wrap.
     fn override_period(&mut self, period_ms: u32) {
-        if period_ms == 0 || period_ms == self.period_ms {
+        if period_ms == self.period_ms {
             return;
         }
         if period_ms > self.period_ms {

@@ -234,7 +234,23 @@ pub(super) fn apply_server_moves(
     // Same-map teleport: snap and echo the ack, without which the server freezes our movement.
     for t in teleports.read() {
         player.teleported = true;
-        snap_near_teleport(player, &mut cam.yaw, t, time.elapsed_secs());
+        // A transport's own same-map jump keeps its passengers aboard: the packet's tail names the
+        // deck we ride, and the apply re-parents to it rather than dropping us mid-air.
+        let deck = t
+            .transport
+            .filter(|&(guid, ..)| player.ride.as_ref().is_some_and(|r| r.guid == guid));
+        let boat = player
+            .ride
+            .as_ref()
+            .and_then(|r| transports.get(r.entity).ok())
+            .map(|(boat, _, _)| *boat);
+        match (deck, boat) {
+            (Some((_, local, local_yaw)), Some(boat)) => {
+                reseat_on_deck(player, &mut cam.yaw, &boat, local, local_yaw);
+                info!("teleport: kept aboard at deck-local {local:?}");
+            }
+            _ => snap_near_teleport(player, &mut cam.yaw, t, time.elapsed_secs()),
+        }
         // The echo is the whole handshake: the reference echoes on its next movement tick and sends
         // nothing else, and vmangos relocates us only when it lands (`ExecuteTeleportNear`,
         // `MovementHandler.cpp:237`).
@@ -422,11 +438,36 @@ pub(super) fn apply_server_moves(
     speed_acks
 }
 
+/// A same-map teleport that keeps us aboard: the pose is deck-local, composed through the deck as
+/// the riding worldport does, with no settle hold, which would drop `ON_TRANSPORT` from the next
+/// move and read as a deboard.
+fn reseat_on_deck(
+    player: &mut Player,
+    cam_yaw: &mut f32,
+    boat: &Transform,
+    local: [f32; 3],
+    local_yaw: f32,
+) {
+    let Some(ride) = player.ride.as_mut() else {
+        return;
+    };
+    let boat_yaw = boat.rotation.to_euler(EulerRot::YXZ).0;
+    ride.local_pos = wow_to_bevy(local);
+    ride.boat_yaw = boat_yaw;
+    player.pos = boat.translation + boat.rotation * ride.local_pos;
+    let dyaw = wrap_pi(local_yaw + boat_yaw - player.face_yaw);
+    player.face_yaw += dyaw;
+    player.model_yaw = wrap_pi(player.model_yaw + dyaw);
+    *cam_yaw += dyaw;
+    player.move_flags = 0;
+    player.airborne_since = None; // a snap ends any jump arc (no phantom FALL_LAND)
+}
+
 /// Apply one same-map teleport's snap (`MSG_MOVE_TELEPORT_ACK` inbound); the caller echoes it.
 fn snap_near_teleport(player: &mut Player, cam_yaw: &mut f32, t: &TeleportMessage, now: f32) {
-    // A near teleport arrives detached: vmangos takes this path only off a transport
-    // (`Player.cpp:1866-1893`), and the reference's apply re-parents to the packet's transport
-    // guid, zero here. A kept ride would carry us back onto the deck.
+    // A teleport with no tail for our deck arrives detached (a hearth off a zeppelin): the
+    // reference's apply re-parents to the packet's transport guid, none here. A kept ride would
+    // carry us back onto the deck.
     player.ride = None;
     player.pos = wow_to_bevy(t.position);
     player.face_yaw = t.orientation;
@@ -888,12 +929,47 @@ mod teleport_tests {
             counter: 1,
             position: [-8_913.0, -136.0, 81.0],
             orientation: 1.25,
+            transport: None,
         };
         snap_near_teleport(&mut player, &mut cam_yaw, &t, 10.0);
         assert!(player.ride.is_none(), "the snap deboards");
         assert_eq!(player.pos, wow_to_bevy(t.position));
         assert_eq!((player.face_yaw, cam_yaw), (1.25, 1.25));
         assert!(player.settling && player.ride_abort && player.world_stale);
+    }
+
+    /// A transport's same-map jump keeps its rider: the deck-local pose composes through the deck,
+    /// with no settle hold and the ride kept.
+    #[test]
+    fn a_teleport_naming_our_deck_keeps_us_aboard() {
+        let mut player = Player {
+            active: true,
+            ride: Some(super::super::state::PlayerRide {
+                entity: Entity::PLACEHOLDER,
+                guid: 0x1F,
+                local_pos: Vec3::ZERO,
+                boat_yaw: 0.0,
+            }),
+            ..Default::default()
+        };
+        let mut cam_yaw = 0.0;
+        let boat = Transform::from_translation(Vec3::new(100.0, 50.0, -20.0))
+            .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+        let local = [3.0, -2.0, -16.5];
+        reseat_on_deck(&mut player, &mut cam_yaw, &boat, local, 0.25);
+        let ride = player.ride.as_ref().expect("still aboard");
+        assert_eq!(ride.local_pos, wow_to_bevy(local));
+        let want = boat.translation + boat.rotation * wow_to_bevy(local);
+        assert!(
+            player.pos.distance(want) < 1.0e-4,
+            "{:?} vs {want:?}",
+            player.pos
+        );
+        assert!((player.face_yaw - (0.25 + std::f32::consts::FRAC_PI_2)).abs() < 1.0e-5);
+        assert!(
+            !player.settling && !player.ride_abort,
+            "no settle hold, no ride abort"
+        );
     }
 }
 
@@ -973,6 +1049,7 @@ mod handover_tests {
             counter: 1,
             position: [1.0, 2.0, 3.0],
             orientation: 0.0,
+            transport: None,
         });
         app.update();
         assert!(app.world().resource::<Player>().teleported);

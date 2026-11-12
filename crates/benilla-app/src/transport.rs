@@ -26,7 +26,7 @@ use benilla_world::collision::refit_changed_collider_aabbs;
 use bevy::prelude::*;
 
 use crate::go_templates::GameObjectTemplates;
-use crate::net::Guid;
+use crate::net::{Guid, ObjectStore};
 use benilla_assets::{LockRecover, WorldAssets};
 use benilla_world::ride_frame::RideFrame;
 use benilla_world::vis_chain::VisChainOnly;
@@ -207,12 +207,12 @@ impl Transport {
     }
 }
 
-/// `TaxiPathNode.dbc` with the per-path timetables built from it (`None` in `built` is a failed
-/// build, not retried), and the `TransportAnimation.dbc` lift keyframes, both shared by path.
+/// `TaxiPathNode.dbc` with the timetables built from it, keyed by `(taxiPathId, server period)`
+/// (`None` is a failed build, not retried), and the `TransportAnimation.dbc` lift keyframes.
 #[derive(Resource, Default)]
 struct Timetables {
     nodes: Option<TaxiPathNodes>,
-    built: HashMap<u32, Option<Arc<TransportTimetable>>>,
+    built: HashMap<(u32, u32), Option<Arc<TransportTimetable>>>,
     elevators: Option<ElevatorPaths>,
     lifts: HashMap<u32, Arc<Vec<ElevatorKeyframe>>>,
 }
@@ -250,7 +250,7 @@ fn arm_transports(
     templates: Res<GameObjectTemplates>,
     // A re-created lift is already armed but carries a fresh seed, so it re-enters to consume it.
     pending: Query<
-        (Entity, &Guid, Option<&ElevatorSeed>),
+        (Entity, &Guid, Option<&ElevatorSeed>, Option<&ObjectStore>),
         (
             With<TransportAnchor>,
             Or<(Without<Transport>, With<ElevatorSeed>)>,
@@ -260,7 +260,7 @@ fn arm_transports(
     if pending.is_empty() {
         return;
     }
-    for (entity, guid, seed) in &pending {
+    for (entity, guid, seed, store) in &pending {
         // The lift arm.
         if let Some(seed) = seed {
             let Timetables {
@@ -324,15 +324,18 @@ fn arm_transports(
         let Some(nodes) = nodes.as_ref() else {
             continue; // no client data: stays frozen
         };
+        // The cycle is the server's `GAMEOBJECT_LEVEL`, not the period the path builds to
+        // (`0x711c97`): the anchor is uptime-scale, so any difference grows every cycle.
+        let period_ms = store.map_or(0, |s| s.0.gameobject_level());
         let timetable = built
-            .entry(mo.taxi_path_id)
+            .entry((mo.taxi_path_id, period_ms))
             .or_insert_with(|| {
                 let t = nodes.path(mo.taxi_path_id).and_then(|path| {
-                    // The build pins its period to the reference's own bookkeeping.
-                    let t = TransportTimetable::build(path, mo.move_speed, mo.accel_rate)?;
+                    let built = TransportTimetable::build(path, mo.move_speed, mo.accel_rate)?;
+                    let t = built.with_period(period_ms);
                     info!(
-                        "transport: path {} timetable built — period {} ms",
-                        mo.taxi_path_id, t.period_ms
+                        "transport: path {} timetable built — period {} ms (path builds {} ms)",
+                        mo.taxi_path_id, t.period_ms, built.period_ms
                     );
                     Some(t)
                 });
@@ -580,14 +583,27 @@ fn compose_riders(
     boats: Query<&Transform, (With<Transport>, Without<TransportRider>)>,
     mut riders: Query<
         (
+            Entity,
             &TransportRider,
             &mut Transform,
             Option<&mut crate::net::RemoteMotion>,
         ),
         Without<Transport>,
     >,
+    mut named: Local<std::collections::HashSet<Entity>>,
 ) {
-    for (rider, mut transform, motion) in &mut riders {
+    let tracing = benilla_assets::trace::enabled_for("rider");
+    for (entity, rider, mut transform, motion) in &mut riders {
+        // One line per rider, joining the anim trace's entity to its deck.
+        if tracing && named.insert(entity) {
+            benilla_assets::trace::line(
+                "rider",
+                &format!(
+                    "{entity} on {:#x} local={:?}",
+                    rider.transport_guid, rider.local_pos
+                ),
+            );
+        }
         let Some(&boat_entity) = guid_index.0.get(&rider.transport_guid) else {
             continue;
         };

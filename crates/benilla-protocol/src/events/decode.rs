@@ -1097,11 +1097,13 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             counter,
             position,
             orientation,
+            transport,
         } => vec![SessionEvent::Teleport {
             guid,
             counter,
             position: v3(position),
             orientation,
+            transport,
         }],
         ServerPacket::NewWorld {
             map,
