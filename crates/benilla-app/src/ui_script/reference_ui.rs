@@ -195,6 +195,40 @@ fn chain() -> Option<&'static Chain> {
         .as_ref()
 }
 
+/// `PaperDollItemFrame.dbc`'s rows off `chain`, the table the inventory verbs resolve a slot name
+/// through; `None`, logged, when the chain lacks it.
+pub(crate) fn paperdoll_rows(chain: &Chain) -> Option<Vec<benilla_ui::script::PaperDollSlotInfo>> {
+    match benilla_formats::load_paperdoll_item_frame(chain) {
+        Ok(catalog) => Some(
+            catalog
+                .rows()
+                .iter()
+                .map(|r| benilla_ui::script::PaperDollSlotInfo {
+                    name: r.name.clone(),
+                    texture: r.texture.clone(),
+                    slot: r.slot,
+                })
+                .collect(),
+        ),
+        Err(e) => {
+            warn!("ui_script: PaperDollItemFrame.dbc unavailable: {e:#}");
+            None
+        }
+    }
+}
+
+/// Seat [`paperdoll_rows`] off the process chain on a VM born without them (a test's, the addon
+/// harness's), as the world's VMs get them at birth; a VM holding a table keeps it.
+pub(crate) fn seat_paperdoll_rows(script: &benilla_ui::script::UiScript) {
+    static ROWS: OnceLock<Option<Vec<benilla_ui::script::PaperDollSlotInfo>>> = OnceLock::new();
+    if script.has_paperdoll_item_frame() {
+        return;
+    }
+    if let Some(rows) = ROWS.get_or_init(|| chain().and_then(paperdoll_rows)) {
+        script.set_paperdoll_item_frame(rows.clone());
+    }
+}
+
 /// Files a test lays over the chain, per test thread: an entry with bytes reads as a chain file,
 /// one with `None` as a file the chain lacks, and any other path falls through to the chain.
 #[cfg(test)]
@@ -261,6 +295,36 @@ mod tests {
         assert_eq!(read("credits.html"), b"data");
         assert_eq!(read("eula.html"), b"root");
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// A loaded VM answers `GetInventorySlotInfo` from the install's `PaperDollItemFrame.dbc`:
+    /// each name its first row's number and texture verbatim, the third return 1 for slot 18 alone.
+    #[test]
+    fn a_loaded_vm_serves_the_installs_slot_rows() {
+        let _data = benilla_formats::wow_data_or_skip!();
+        let rows = super::paperdoll_rows(super::chain().expect("chain")).expect("the table");
+        assert!(!rows.is_empty());
+        let s = UiScript::new().unwrap();
+        super::seat_paperdoll_rows(&s);
+        for row in &rows {
+            let first = rows
+                .iter()
+                .find(|r| r.name.eq_ignore_ascii_case(&row.name))
+                .unwrap();
+            let got = s
+                .eval::<(i64, String, Option<i64>)>(&format!(
+                    "return GetInventorySlotInfo({:?})",
+                    row.name
+                ))
+                .unwrap();
+            let relic = (first.slot == 18).then_some(1);
+            assert_eq!(
+                got,
+                (i64::from(first.slot), first.texture.clone(), relic),
+                "{}",
+                row.name
+            );
+        }
     }
 
     /// The UI globals saved per character are exactly the ones the stock files `RegisterForSave`,

@@ -289,63 +289,6 @@ pub struct PaperDollSlotInfo {
     pub slot: i32,
 }
 
-impl PaperDollSlotInfo {
-    #[doc(hidden)]
-    pub fn test_rows() -> Vec<Self> {
-        test_paperdoll_rows()
-    }
-}
-
-/// A stand-in table for tests, which run without the install.
-#[doc(hidden)]
-pub fn test_paperdoll_rows() -> Vec<PaperDollSlotInfo> {
-    let rows = [
-        ("AmmoSlot", 0, "Ranged"),
-        ("HeadSlot", 1, "Head"),
-        ("NeckSlot", 2, "Neck"),
-        ("ShoulderSlot", 3, "Shoulder"),
-        ("ShirtSlot", 4, "Shirt"),
-        ("ChestSlot", 5, "Chest"),
-        ("WaistSlot", 6, "Waist"),
-        ("LegsSlot", 7, "Legs"),
-        ("FeetSlot", 8, "Feet"),
-        ("WristSlot", 9, "Wrists"),
-        ("HandsSlot", 10, "Hands"),
-        ("Finger0Slot", 11, "Finger"),
-        ("Finger1Slot", 12, "Finger"),
-        ("Trinket0Slot", 13, "Trinket"),
-        ("Trinket1Slot", 14, "Trinket"),
-        ("BackSlot", 15, "Chest"),
-        ("MainHandSlot", 16, "MainHand"),
-        ("SecondaryHandSlot", 17, "SecondaryHand"),
-        ("RangedSlot", 18, "Ranged"),
-        ("TabardSlot", 19, "Tabard"),
-        ("Bag0Slot", 20, "Bag"),
-        ("Bag1Slot", 21, "Bag"),
-        ("Bag2Slot", 22, "Bag"),
-        ("Bag3Slot", 23, "Bag"),
-        ("Bag1", 64, "Bag"),
-        ("Bag2", 65, "Bag"),
-        ("Bag3", 66, "Bag"),
-        ("Bag4", 67, "Bag"),
-        ("Bag5", 68, "Bag"),
-        ("Bag6", 69, "Bag"),
-        ("Bag7", 70, "Bag"),
-        ("Bag8", 71, "Bag"),
-        ("Bag9", 72, "Bag"),
-        ("Bag10", 73, "Bag"),
-        ("Bag11", 74, "Bag"),
-        ("Bag12", 75, "Bag"),
-    ];
-    rows.into_iter()
-        .map(|(name, slot, texture)| PaperDollSlotInfo {
-            name: name.into(),
-            slot,
-            texture: format!("interface\\paperdoll\\UI-PaperDoll-Slot-{texture}.blp"),
-        })
-        .collect()
-}
-
 /// The first row whose button name matches, case-insensitive (`0x5e7dc5`).
 pub(super) fn slot_info_by_name<'a>(model: &'a Model, name: &str) -> Option<&'a PaperDollSlotInfo> {
     model
@@ -462,8 +405,14 @@ fn ammo_alert_status(slot: &Option<InvSlotView>) -> u8 {
 }
 
 impl super::UiScript {
-    pub fn set_paperdoll_item_frame(&mut self, rows: Vec<PaperDollSlotInfo>) {
+    /// Seat `PaperDollItemFrame.dbc`'s rows, the table the slot-name verbs walk.
+    pub fn set_paperdoll_item_frame(&self, rows: Vec<PaperDollSlotInfo>) {
         set_field!(self, paperdoll_item_frame, rows);
+    }
+
+    /// Whether the VM holds a slot table ([`Self::set_paperdoll_item_frame`]).
+    pub fn has_paperdoll_item_frame(&self) -> bool {
+        !self.model_ref().paperdoll_item_frame.is_empty()
     }
 
     /// Push, or clear with `None`, the player's combat-stats snapshot.
@@ -1999,68 +1948,6 @@ mod tests {
             .unwrap());
     }
 
-    #[test]
-    fn get_inventory_slot_info_serves_the_dbc_rows() {
-        let mut s = UiScript::new().unwrap();
-        s.set_paperdoll_item_frame(super::test_paperdoll_rows());
-        assert_eq!(
-            s.eval::<(i64, String)>(r#"return GetInventorySlotInfo("HeadSlot")"#)
-                .unwrap(),
-            (1, "interface\\paperdoll\\UI-PaperDoll-Slot-Head.blp".into())
-        );
-        // The DBC's oddballs: BackSlot shows the Chest art, AmmoSlot the Ranged art.
-        assert_eq!(
-            s.eval::<(i64, String)>(r#"return GetInventorySlotInfo("BackSlot")"#)
-                .unwrap(),
-            (
-                15,
-                "interface\\paperdoll\\UI-PaperDoll-Slot-Chest".to_string() + ".blp"
-            )
-        );
-        assert_eq!(
-            s.eval::<(i64, String)>(r#"return GetInventorySlotInfo("AmmoSlot")"#)
-                .unwrap(),
-            (
-                0,
-                "interface\\paperdoll\\UI-PaperDoll-Slot-Ranged.blp".into()
-            )
-        );
-        // The bag rows, 20..23 and 64..75, share one texture string.
-        const BAG_ART: &str = "interface\\paperdoll\\UI-PaperDoll-Slot-Bag.blp";
-        for (name, id) in [
-            ("Bag0Slot", 20),
-            ("Bag1Slot", 21),
-            ("Bag2Slot", 22),
-            ("Bag3Slot", 23),
-        ] {
-            assert_eq!(
-                s.eval::<(i64, String)>(&format!(r#"return GetInventorySlotInfo("{name}")"#))
-                    .unwrap(),
-                (id, BAG_ART.into()),
-                "{name}"
-            );
-        }
-        for n in 1..=12i64 {
-            assert_eq!(
-                s.eval::<(i64, String)>(&format!(r#"return GetInventorySlotInfo("Bag{n}")"#))
-                    .unwrap(),
-                (63 + n, BAG_ART.into()),
-                "Bag{n}"
-            );
-        }
-        assert_eq!(
-            s.eval::<(i64, String)>(r#"return GetInventorySlotInfo("SecondaryHandSlot")"#)
-                .unwrap(),
-            (
-                17,
-                "interface\\paperdoll\\UI-PaperDoll-Slot-SecondaryHand.blp".into()
-            )
-        );
-        assert!(s
-            .eval::<i64>(r#"return GetInventorySlotInfo("NoSuchSlot")"#)
-            .is_err());
-    }
-
     /// The table's own rows answer: the texture string undecorated, a negative number, the first
     /// of two rows of one name.
     #[test]
@@ -2070,7 +1957,7 @@ mod tests {
             texture: texture.into(),
             slot,
         };
-        let mut s = UiScript::new().unwrap();
+        let s = UiScript::new().unwrap();
         s.set_paperdoll_item_frame(vec![
             row("OddSlot", "Some\\Path\\Art", -3),
             row("oddslot", "Other", 7),
@@ -2096,7 +1983,7 @@ mod tests {
     #[test]
     fn a_slot_name_reads_as_its_row_number_zero_based() {
         let mut s = UiScript::new().unwrap();
-        s.set_paperdoll_item_frame(super::test_paperdoll_rows());
+        s.set_paperdoll_item_frame(crate::script::tests::common::paperdoll_rows());
         let mut slots: crate::script::InventorySlots = Default::default();
         slots[1] = Some(InvSlotView {
             item_id: 100,

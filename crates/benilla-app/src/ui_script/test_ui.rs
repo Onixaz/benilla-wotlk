@@ -91,6 +91,10 @@ fn load_entry(s: &UiScript, entry: &str, strict_templates: bool, no_warnings: bo
     // The app registers its CVars before any file loads: stock `UIOptionsFrame.xml` reads two
     // camera CVars at `OnLoad` and raises on a nil. A value a test already set stands.
     s.register_cvars(crate::cvars::registered_pairs());
+    // A stock file may read the slot table at load, as `PaperDollItemSlotButton_OnLoad` does.
+    if super::reference_ui::is_chain_entry(entry) {
+        super::reference_ui::seat_paperdoll_rows(s);
+    }
     let path = entry.replace('\\', "/");
     let bytes = read(&path).unwrap_or_else(|| panic!("{entry}: not found"));
     if path.to_ascii_lowercase().ends_with(".lua") {

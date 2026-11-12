@@ -37,9 +37,9 @@ pub(crate) fn schema() -> Schema {
     s
 }
 
-pub fn load_paperdoll_item_frame(chain: &mut Chain) -> Result<PaperDollItemFrameCatalog> {
+pub fn load_paperdoll_item_frame(chain: &Chain) -> Result<PaperDollItemFrameCatalog> {
     let bytes = chain
-        .read_file(PAPERDOLL_ITEM_FRAME)
+        .read(PAPERDOLL_ITEM_FRAME)
         .with_context(|| format!("reading {PAPERDOLL_ITEM_FRAME}"))?;
     let rs = parse(&bytes, schema(), "PaperDollItemFrame")?;
     let rows = rs
@@ -63,8 +63,8 @@ mod tests {
     #[test]
     fn loads_reference_rows() {
         let data = crate::wow_data_or_skip!();
-        let mut chain = crate::open_chain(&data).expect("open chain");
-        let cat = load_paperdoll_item_frame(&mut chain).expect("PaperDollItemFrame.dbc");
+        let chain = crate::open_chain(&data).expect("open chain");
+        let cat = load_paperdoll_item_frame(&chain).expect("PaperDollItemFrame.dbc");
         let row = |name: &str| cat.rows().iter().find(|r| r.name == name);
         assert_eq!(row("HeadSlot").map(|r| r.slot), Some(1));
         assert_eq!(row("Bag12").map(|r| r.slot), Some(75));

@@ -866,8 +866,8 @@ fn get_inventory_slot_info_folds_case_and_flags_only_the_ranged_slot() {
         .eval::<(i64, String)>("return GetInventorySlotInfo('HeadSlot')")
         .unwrap();
     assert_eq!(id, 1);
-    // The DBC string verbatim, lowercase directory and `.blp`: the binding pushes `[esi+4]` as is.
-    assert_eq!(art, "interface\\paperdoll\\UI-PaperDoll-Slot-Head.blp");
+    // The row's string verbatim: the binding pushes `[esi+4]` as is.
+    assert_eq!(art, "Test\\Slot\\HeadSlot");
 
     assert!(s
         .eval::<bool>("local _,_,r = GetInventorySlotInfo('RangedSlot') return r == 1")
@@ -876,8 +876,7 @@ fn get_inventory_slot_info_folds_case_and_flags_only_the_ranged_slot() {
         .eval::<bool>("local _,_,r = GetInventorySlotInfo('HeadSlot') return r == nil")
         .unwrap());
 
-    // `Bag1`..`Bag12` are SlotNumbers 64..75 (64..69 the bank bags) and share one string offset
-    // with `Bag0Slot`..`Bag3Slot`, so all sixteen answer the same art.
+    // `Bag1`..`Bag12` are SlotNumbers 64..75, the bank bags among them.
     assert_eq!(
         s.eval::<i64>("return GetInventorySlotInfo('Bag1')")
             .unwrap(),
@@ -888,13 +887,6 @@ fn get_inventory_slot_info_folds_case_and_flags_only_the_ranged_slot() {
             .unwrap(),
         75,
         "the new rows fold case like every other"
-    );
-    assert_eq!(
-        s.eval::<String>("local _,a = GetInventorySlotInfo('Bag6') return a")
-            .unwrap(),
-        s.eval::<String>("local _,a = GetInventorySlotInfo('Bag0Slot') return a")
-            .unwrap(),
-        "all sixteen bag rows share one string-block offset"
     );
     // `Bag1` (64) and `Bag1Slot` (21) are different rows.
     assert_eq!(
