@@ -1154,16 +1154,14 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetLootItem",
         lua.create_function(|lua, (this, slot): (Table, usize)| {
             let h = frame_handle_of(lua, &this)?;
-            let row = {
+            let found = {
                 let model = crate::script::model_mut_of(lua);
-                model
-                    .loot
-                    .as_ref()
-                    .and_then(|l| slot.checked_sub(1).and_then(|n| l.rows.get(n)))
-                    .and_then(|r| r.clone())
-                    .filter(|r| !r.is_coin && r.item_id != 0)
+                model.loot.as_ref().and_then(|l| {
+                    let row = slot.checked_sub(1).and_then(|n| l.rows.get(n))?.clone()?;
+                    (!row.is_coin && row.item_id != 0).then_some((row, l.source_level))
+                })
             };
-            let Some(row) = row else {
+            let Some((row, source_level)) = found else {
                 return Ok(());
             };
             {
@@ -1173,9 +1171,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             fire_cleared(lua, h);
             // The row's app-composed name has the suffix joined, as the reference does; the lines
             // come from the roll id, the reference's `+0x424`.
-            // The requester is the loot's source, which keeps a class 10 item's bind line.
+            // The requester is the loot's source (`0x62e638`), which keeps a class 10 item's bind
+            // line and shows a scaling item at a source unit's level.
             let inst = render::ItemInstance {
                 loot_window: true,
+                requester_level: source_level as i32,
                 ..block_instance(lua, row.name.clone(), row.link.as_deref())
             };
             // The slot's count as the block's stack (`0x62e520`).

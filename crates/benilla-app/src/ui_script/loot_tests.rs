@@ -43,6 +43,7 @@ fn text_color(quads: &[ExtractedQuad], t: &str) -> Option<[f32; 4]> {
 fn coin_and_two_items() -> LootState {
     LootState {
         source_unit: false,
+        source_level: 0,
         fishing: false,
         master_candidates: Vec::new(),
         rows: vec![
@@ -255,6 +256,7 @@ fn the_empty_open_sound_reads_the_previous_windows_count() {
     let mut s = stock_ui(1024.0, 768.0);
     let empty = || LootState {
         source_unit: false,
+        source_level: 0,
         fishing: false,
         master_candidates: Vec::new(),
         rows: vec![],
@@ -353,6 +355,7 @@ fn shipped_loot_frame_pages_five_items() {
         .collect();
     s.set_loot(Some(LootState {
         source_unit: false,
+        source_level: 0,
         fishing: false,
         master_candidates: Vec::new(),
         rows: rows.clone(),
@@ -393,6 +396,7 @@ fn shipped_loot_frame_pages_five_items() {
     cleared[2] = None;
     s.set_loot(Some(LootState {
         source_unit: false,
+        source_level: 0,
         fishing: false,
         master_candidates: Vec::new(),
         rows: cleared,
@@ -519,6 +523,7 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
 
     s.set_loot(Some(LootState {
         source_unit: false,
+        source_level: 0,
         fishing: false,
         master_candidates: Vec::new(),
         rows: vec![
@@ -636,6 +641,7 @@ fn ctrl_and_shift_on_a_loot_row_preview_and_post_without_looting() {
     s.fire_event("LOOT_CLOSED", vec![]);
     s.set_loot(Some(LootState {
         source_unit: false,
+        source_level: 0,
         fishing: false,
         master_candidates: Vec::new(),
         rows: vec![Some(LootRow {
@@ -688,6 +694,7 @@ fn shipped_loot_frame_hands_a_master_row_to_a_candidate() {
     };
     s.set_loot(Some(LootState {
         source_unit: false,
+        source_level: 0,
         fishing: false,
         master_candidates: vec![Some("Thrall".into()), Some("Cairne".into())],
         rows: vec![row("Wool Cloth", 2), row("Thunderfury", 4)],
@@ -822,6 +829,7 @@ fn the_master_loot_menu_groups_raid_candidates_by_subgroup() {
     candidates[10] = Some("Sylvanas".to_string());
     s.set_loot(Some(LootState {
         source_unit: false,
+        source_level: 0,
         fishing: false,
         master_candidates: candidates,
         rows: vec![Some(LootRow {
@@ -984,6 +992,7 @@ fn loot_row_awaiting_its_template_opens_clean() {
     // One row in flight: the wire gives the icon (by display id) and the count, nothing else.
     s.set_loot(Some(LootState {
         source_unit: false,
+        source_level: 0,
         fishing: false,
         master_candidates: Vec::new(),
         rows: vec![Some(LootRow {
@@ -1046,6 +1055,7 @@ fn loot_row_awaiting_its_template_opens_clean() {
     s.fire_event("LOOT_CLOSED", vec![]);
     s.set_loot(Some(LootState {
         source_unit: false,
+        source_level: 0,
         fishing: false,
         master_candidates: Vec::new(),
         rows: vec![Some(LootRow {
