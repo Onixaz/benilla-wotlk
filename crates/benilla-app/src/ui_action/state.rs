@@ -102,6 +102,45 @@ fn resolve_through_macro(
     }
 }
 
+/// What a pet-action slot holds, for the usable compute.
+enum PetSlot<'a> {
+    /// No pet bar, an empty word, or a spell with no record.
+    Empty,
+    /// A mode or an order.
+    Order,
+    /// A spell flagged `AttributesExB & 0x40000`, which the player casts.
+    PlayerSpell(u32),
+    /// A spell the pet casts.
+    PetSpell(u32, &'a benilla_formats::SpellDisplay),
+}
+
+/// `AttributesExB & 0x40000`: a pet-bar spell the player casts (`0x5a80e0`).
+const EX2_CAST_BY_PLAYER: u32 = 0x0004_0000;
+
+/// The spell resolver's pet leg (`0x5a80e0`): the pet bar's action at the slot's index.
+fn pet_slot<'a>(
+    bar: Option<&crate::ui_pet::PetBar>,
+    index: u32,
+    spells: Option<&'a Spells>,
+) -> PetSlot<'a> {
+    let Some(entry) = bar.and_then(|b| b.spells.bar.get(index as usize).copied()) else {
+        return PetSlot::Empty;
+    };
+    if entry.is_empty() {
+        return PetSlot::Empty;
+    }
+    if !entry.is_spell() {
+        return PetSlot::Order;
+    }
+    match spells.and_then(|s| s.catalog.get(entry.action())) {
+        Some(d) if d.attributes_ex2 & EX2_CAST_BY_PLAYER != 0 => {
+            PetSlot::PlayerSpell(entry.action())
+        }
+        Some(d) => PetSlot::PetSpell(entry.action(), d),
+        None => PetSlot::Empty,
+    }
+}
+
 /// Computes and diff-pushes every occupied slot's state, and fires the reference's events.
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(super) fn feed_action_state(
@@ -140,6 +179,8 @@ pub(super) fn feed_action_state(
     units_and_auras: (
         Query<(&ObjectStore, &Transform), Without<SelfPlayer>>,
         usable::UsableAuras,
+        // The pet bar a pet-action slot reads.
+        Option<Res<crate::ui_pet::PetBar>>,
     ),
     factions: Option<Res<crate::target::Factions>>,
     reputations: Res<crate::net::Reputations>,
@@ -147,7 +188,7 @@ pub(super) fn feed_action_state(
     commands: Res<NetCommands>,
     mut memory: Local<crate::ui_script::VmMemo<StateMemory>>,
 ) {
-    let (units, usable_auras) = &units_and_auras;
+    let (units, usable_auras, pet_bar) = &units_and_auras;
     let Some(mut script) = script else {
         return;
     };
@@ -257,6 +298,62 @@ pub(super) fn feed_action_state(
                 fresh.insert(action, st);
                 continue;
             }
+        };
+        let (kind, id) = if kind == super::ACTION_KIND_PET {
+            match pet_slot(pet_bar.as_deref(), id, spells.as_deref()) {
+                PetSlot::Empty => {
+                    fresh.insert(action, st);
+                    continue;
+                }
+                // `0x5a9e20`'s pet-action leg: usable while we hold control (not built).
+                PetSlot::Order => {
+                    st.usable = true;
+                    fresh.insert(action, st);
+                    continue;
+                }
+                PetSlot::PlayerSpell(spell) => (ACTION_KIND_SPELL, spell),
+                PetSlot::PetSpell(spell, d) => {
+                    let bar = pet_bar.as_deref().expect("a pet spell reads the bar");
+                    let pet = objects
+                        .entity(bar.spells.pet_guid)
+                        .and_then(|e| units.get(e).ok())
+                        .map(|(s, _)| s);
+                    // The walk with the pet as caster, its own cooldowns; no pet, unusable.
+                    if let (Some(pet), Some(sp)) = (pet, spells.as_deref()) {
+                        let ctx = usable::UsableCtx {
+                            self_auras: None,
+                            target_auras: target_entity.and_then(|e| usable_auras.all.get(e).ok()),
+                            store: pet,
+                            target_store: walk_target,
+                            factions: factions.as_deref(),
+                            reputations: &reputations,
+                            party: crate::target::party_of(group.as_deref()),
+                            cooldowns: &bar.cooldowns,
+                            carried: &HashMap::new(),
+                            spell_mods,
+                            // The pet is not the active player: no rune spell is usable on it.
+                            runes: None,
+                            combo_points: combo
+                                .as_deref()
+                                .map_or(0, |c| c.pet.on(0, selection.guid.unwrap_or(0))),
+                            auto_unshift: false,
+                        };
+                        let (u, oom) =
+                            usable::spell_usable(spell, d, sp, &ctx, &objects, &items, &commands);
+                        st.usable = u;
+                        st.not_enough_mana = oom;
+                    }
+                    // `0x5a8e40`: the pet's cooldown bank.
+                    st.cooldown = bar
+                        .cooldowns
+                        .info(spell, 0, Some(d), now)
+                        .ui_triple(anchor, ui_now);
+                    fresh.insert(action, st);
+                    continue;
+                }
+            }
+        } else {
+            (kind, id)
         };
         let button = &benilla_protocol::messages::ActionButton {
             slot,
@@ -1247,5 +1344,119 @@ mod tests {
             script.tick(0.1);
         }
         assert!(!shown(&script), "the sweep and its flash end on their own");
+    }
+
+    /// A possessed unit's bar (the pet bar paged onto the main bar): a pet spell slot walks with
+    /// the pet as caster and reads the pet's power, an order is usable, an empty word is grey, and
+    /// with the pet not streamed its spell is grey (`0x5a9e20`).
+    #[test]
+    fn a_pet_action_slot_walks_with_the_pet_as_caster() {
+        use benilla_protocol::messages::{ActionButton, PetActionEntry};
+        use benilla_protocol::ObjectFields;
+
+        const CHEAP: u32 = 9001;
+        const DEAR: u32 = 9002;
+        const PET: u64 = 0xF130_0000_0000_0001;
+        let spell_word = |id: u32| PetActionEntry::from(id | (1 << 24));
+
+        let run = |pet_streamed: bool| {
+            let (tx, _rx) = crossbeam_channel::unbounded();
+            let mut app = App::new();
+            let mut actions = PlayerActions::default();
+            for i in 0..4u8 {
+                actions.buttons.insert(
+                    i,
+                    ActionButton {
+                        slot: i,
+                        action: u32::from(i),
+                        kind: crate::ui_action::ACTION_KIND_PET,
+                    },
+                );
+            }
+            let mut bar = crate::ui_pet::PetBar::default();
+            bar.spells.pet_guid = PET;
+            bar.spells.bar[0] = spell_word(CHEAP);
+            bar.spells.bar[1] = PetActionEntry::from(0x0700_0002); // Attack
+            bar.spells.bar[2] = spell_word(DEAR);
+            let dear = SpellDisplay {
+                mana_cost: 50,
+                ..Default::default()
+            };
+            app.insert_resource(actions)
+                .insert_resource(bar)
+                .insert_resource(crate::ui_macro::MacroBoundSpells::default())
+                .insert_resource(Spells {
+                    catalog: benilla_formats::SpellCatalog::from_displays(
+                        [(CHEAP, SpellDisplay::default()), (DEAR, dear)]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    forms: Default::default(),
+                    ranges: Default::default(),
+                    cast_times: Default::default(),
+                    power_displays: Default::default(),
+                    difficulties: Default::default(),
+                    instance_difficulty: Default::default(),
+                    durations: Default::default(),
+                    radii: Default::default(),
+                })
+                .init_resource::<Cooldowns>()
+                .init_resource::<crate::spell::SpellModifiers>()
+                .init_resource::<crate::ui_script::UiClock>()
+                .init_resource::<AutoRepeatActive>()
+                .init_resource::<crate::spell::PendingCast>()
+                .init_resource::<crate::spell::QueuedMeleeSpell>()
+                .init_resource::<crate::spell::ActiveChannel>()
+                .init_resource::<crate::spell::SpellTargeting>()
+                .init_resource::<crate::spell::HeldForPick>()
+                .init_resource::<Selection>()
+                .init_resource::<crate::net::GuidIndex>()
+                .init_resource::<crate::net::Reputations>()
+                .init_resource::<Items>()
+                .insert_resource(NetCommands(tx));
+            // The player has no mana at all: only the pet's pool may pay.
+            app.world_mut().spawn((
+                SelfPlayer,
+                Transform::default(),
+                ObjectStore(ObjectFields::from_pairs(&[(22, 100), (23, 0)])),
+            ));
+            if pet_streamed {
+                let pet = app
+                    .world_mut()
+                    .spawn((
+                        Transform::default(),
+                        ObjectStore(ObjectFields::from_pairs(&[(22, 100), (23, 10)])),
+                    ))
+                    .id();
+                app.world_mut()
+                    .resource_mut::<crate::net::GuidIndex>()
+                    .0
+                    .insert(PET, pet);
+            }
+            app.insert_non_send_resource(UiScript::new().unwrap());
+            app.add_systems(Update, feed_action_state);
+            app.update();
+            let script = app.world().non_send_resource::<UiScript>();
+            (1..=4)
+                .map(|a| {
+                    script
+                        .eval::<(bool, bool)>(&format!(
+                            "local u, oom = IsUsableAction({a}) return u and true or false, oom and true or false"
+                        ))
+                        .unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            run(true),
+            [(true, false), (true, false), (false, true), (false, false)],
+            "the pet's spell, an order, the pet's spell past its mana, an empty word"
+        );
+        assert_eq!(
+            run(false)[0],
+            (false, false),
+            "no pet object, no caster: grey"
+        );
     }
 }

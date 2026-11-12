@@ -1005,6 +1005,43 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     super::tooltip::show_or_hide_empty(lua, h);
                     Ok(())
                 }
+                // A pet-action slot (`0x631000`'s pet leg): the pet bar's spell at the slot's
+                // index, built against the pet; a mode or order its `PET_MODE_*`/`PET_ACTION_*`
+                // text alone.
+                0x10 => {
+                    let view = {
+                        let model = crate::script::model_mut_of(lua);
+                        model
+                            .pet_bar
+                            .slots
+                            .get(a.action as usize)
+                            .map(|s| (s.view.is_token, s.view.name.clone(), s.view.spell_id))
+                    };
+                    match view {
+                        Some((false, name, Some(spell_id))) => {
+                            let opts = SpellRenderOpts {
+                                alt_caster: true,
+                                ..Default::default()
+                            };
+                            set_spell_by_id(lua, &this, spell_id, name, opts, None)
+                        }
+                        Some((true, Some(key), _)) => {
+                            let text: Option<String> = lua.globals().get(key.as_str())?;
+                            let h = frame_handle_of(lua, &this)?;
+                            {
+                                let mut model = crate::script::model_mut_of(lua);
+                                clear_content(&mut model, h);
+                            }
+                            fire_cleared(lua, h);
+                            if let Some(text) = text {
+                                append_line(lua, &this, (text, WHITE), None, false)?;
+                            }
+                            super::tooltip::show_or_hide_empty(lua, h);
+                            Ok(())
+                        }
+                        _ => Ok(()),
+                    }
+                }
                 _ => Ok(()),
             }
         })?,
