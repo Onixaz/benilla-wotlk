@@ -51,9 +51,10 @@ fn reference() -> HashSet<String> {
     names
 }
 
-/// The string keys of a bare VM's `_G`.
+/// The string keys of a bare VM's `_G`, as the PC build the reference table was read from.
 pub(super) fn engine_globals() -> HashSet<String> {
-    script()
+    crate::script::UiScript::new_on(crate::script::ClientOs::Pc)
+        .unwrap()
         .eval::<Vec<String>>(
             "local out = {} \
              for k in pairs(getfenv(0)) do if type(k) == 'string' then table.insert(out, k) end end \

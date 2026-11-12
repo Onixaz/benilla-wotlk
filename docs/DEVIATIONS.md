@@ -118,6 +118,23 @@ serve what they ask for.
 | `ChannelUnSilenceVoice` | `0x5012f0` | no voice chat |
 | `SetActiveVoiceChannelBySessionID` | `0x7db280` | no voice chat |
 
+## The Mac build
+
+On macOS benilla answers as the Mac build of 12340: `IsMacClient()` is 1, the `platform="mac"` rows
+of a binding file register, and the Mac build's own 23 verbs and 12 CVars exist
+(`crates/benilla-ui/src/script/mac_client.rs`, `REGISTERED_MAC` in
+`crates/benilla-app/src/cvars/table.rs`). What those verbs drive is left out. The addresses in this
+table are the Mac build's.
+
+| Verbs | Mac 12340 | What benilla answers | Why |
+|---|---|---|---|
+| `MovieRecording_IsSupported`, `MovieRecording_IsCursorRecordingSupported` | `0x508af0`, `0x508ba0` | `false`, the Mac client's answer on a machine below the recorder's requirements (`0x909f40`) | no movie recording |
+| `MovieRecording_Toggle` | `0x511840` | shows `MOVIE_RECORDING_WARNING_REQUIREMENTS`, as on such a machine | no movie recording |
+| `MovieRecording_Cancel`, `MovieRecording_SearchUncompressedMovie`, `MovieRecording_QueueMovieToCompress`, `MovieRecording_DeleteMovie` | `0x5088e0`, `0x508a50`, `0x508a90`, `0x508ac0` | nothing | no movie recording |
+| `MovieRecording_IsRecording`, `MovieRecording_IsCompressing`, `MovieRecording_GetProgress`, `MovieRecording_GetTime`, `MovieRecording_GetMovieFullPath`, `MovieRecording_MaxLength` | `0x508910`, `0x508940`, `0x5089a0`, `0x508c00`, `0x508bd0`, `0x508d00` | the idle recorder's values | no movie recording |
+| `MovieRecording_IsCodecSupported` | `0x508b20` | `false` for every codec | no QuickTime |
+| `MusicPlayer_PlayPause`, `MusicPlayer_VolumeUp`, `MusicPlayer_VolumeDown`, `MusicPlayer_BackTrack`, `MusicPlayer_NextTrack` | `0x51c100`, `0x51c150`, `0x51c1a0`, `0x51c1f0`, `0x51c240` | nothing | no music player remote |
+
 ## DBC tables
 
 Of the 241 tables 12340 loads (`reference/3.3.5a-dbc.tsv`), the ones benilla does not read on

@@ -63,6 +63,9 @@ impl<T: Copy> IdMap<T> {
 pub(crate) struct Model {
     /// Which script state this VM is: it picks the event table and the frame types.
     pub(crate) vm: super::glue::VmKind,
+    /// Which build of the client this VM answers as: `IsMacClient`, the binding files' `platform`
+    /// filter and the Mac build's own verbs follow it.
+    pub(crate) os: super::client::ClientOs,
     /// Every discovered addon in load order: the AddOn API's registry, filled at world entry.
     pub(crate) addons: Vec<super::addon::AddOnInfo>,
     /// The Lua index space into `addons`, a title-sorted, hidden-filtered list.
@@ -1347,6 +1350,7 @@ impl Model {
     pub(crate) fn new() -> Model {
         Model {
             vm: super::glue::VmKind::InGame,
+            os: super::client::ClientOs::NATIVE,
             addons: Vec::new(),
             addon_index: Vec::new(),
             addon_info_hidden: None,

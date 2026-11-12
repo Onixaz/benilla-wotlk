@@ -11,16 +11,65 @@ pub(super) const BUILD_DATE: &str = "Jun 24 2010";
 /// `GetCodeInterfaceVersion()` (`0x5f4c10`), the TOC number the addon gate compares with.
 pub(super) const INTERFACE_VERSION: f64 = 30300.0;
 
+/// Which build of the 12340 client a VM answers as. The two differ in script: `IsMacClient`, the
+/// `platform` a binding file's rows are kept for, and the Mac build's own verbs
+/// ([`super::mac_client`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClientOs {
+    /// The Windows build, which benilla answers as on Windows and Linux.
+    Pc,
+    /// The Mac build.
+    Mac,
+}
+
+impl ClientOs {
+    /// The build this binary answers as: the Mac one on macOS, where the key engine names keys by
+    /// the Mac key table.
+    pub const NATIVE: ClientOs = if cfg!(target_os = "macos") {
+        ClientOs::Mac
+    } else {
+        ClientOs::Pc
+    };
+
+    /// The `platform="…"` value whose binding rows this build keeps: the loader drops a row whose
+    /// `platform` is anything else (`0x564470` compares with `"windows"`, the Mac build's
+    /// `0x602e82` with `"mac"`).
+    pub(crate) const fn binding_platform(self) -> &'static str {
+        match self {
+            ClientOs::Pc => "windows",
+            ClientOs::Mac => "mac",
+        }
+    }
+
+    /// `IsMacClient()`'s one value: nil on the PC build (`0x510b90`), the number 1 on the Mac
+    /// build (its `0x506de0`, and `0x2c8f80` in the glue), which takes the stock UI's Mac arms.
+    pub(crate) fn is_mac_client(self) -> Value {
+        match self {
+            ClientOs::Pc => Value::Nil,
+            ClientOs::Mac => Value::Number(1.0),
+        }
+    }
+}
+
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
+    let os = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data")
+        .os;
 
-    // `GetLocale()` (`0x4dbfd0`) returns the running locale's script name. `IsMacClient()` returns
-    // one nil, the PC build's answer, which takes FrameXML's PC key-label arm.
+    // `GetLocale()` (`0x4dbfd0`) returns the running locale's script name.
     g.set(
         "GetLocale",
         lua.create_function(|lua, ()| lua.create_string(crate::locale::script_name()))?,
     )?;
-    g.set("IsMacClient", lua.create_function(|_, ()| Ok(Value::Nil))?)?;
+    g.set(
+        "IsMacClient",
+        lua.create_function(move |_, _: MultiValue| Ok(os.is_mac_client()))?,
+    )?;
+    if os == ClientOs::Mac {
+        super::mac_client::install(lua)?;
+    }
     // `GetExistingLocales()` (`0x511c80`): one string per installed locale, in the table's order.
     g.set(
         "GetExistingLocales",
@@ -31,11 +80,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .collect::<mlua::Result<MultiValue>>()
         })?,
     )?;
-    // The PC build's other two platform answers: `IsWindowsClient()` pushes the number 1 and
-    // `IsLinuxClient()` one nil. Arguments are ignored.
+    // The other two platform answers, arguments ignored: `IsWindowsClient()` pushes the number 1
+    // on the PC build and one nil on the Mac build (its `0x506dc0`); `IsLinuxClient()` one nil on
+    // both.
     g.set(
         "IsWindowsClient",
-        lua.create_function(|_, _: MultiValue| Ok(1.0))?,
+        lua.create_function(move |_, _: MultiValue| {
+            Ok(match os {
+                ClientOs::Pc => Value::Number(1.0),
+                ClientOs::Mac => Value::Nil,
+            })
+        })?,
     )?;
     g.set(
         "IsLinuxClient",
@@ -308,6 +363,7 @@ impl super::UiScript {
 
 #[cfg(test)]
 mod tests {
+    use super::ClientOs;
     use crate::script::UiScript;
 
     /// Three strings and the interface number, as the in-game registrar pushes (`0x50f890`); this
@@ -414,7 +470,7 @@ mod tests {
     /// The reference's arities: `GetLocale` one string, `IsMacClient` one nil.
     #[test]
     fn the_client_identity_pair_answers_its_reference_arity() {
-        let s = UiScript::new().unwrap();
+        let s = UiScript::new_on(ClientOs::Pc).unwrap();
         assert_eq!(
             s.arity("GetLocale()").unwrap(),
             1,
@@ -428,7 +484,7 @@ mod tests {
         );
         assert!(
             s.eval::<bool>("return IsMacClient() == nil").unwrap(),
-            "nil is the PC arm, which is the arm this client wants"
+            "nil is the PC arm"
         );
     }
 
@@ -436,12 +492,42 @@ mod tests {
     /// none.
     #[test]
     fn the_platform_queries_and_debug_stats_answer_the_pc_build() {
-        let s = UiScript::new().unwrap();
+        let s = UiScript::new_on(ClientOs::Pc).unwrap();
         assert_eq!(s.arity("IsWindowsClient()").unwrap(), 1);
         assert_eq!(s.eval::<f64>("return IsWindowsClient(0)").unwrap(), 1.0);
         assert_eq!(s.arity("IsLinuxClient()").unwrap(), 1);
         assert!(s.eval::<bool>("return IsLinuxClient() == nil").unwrap());
         assert_eq!(s.arity("GetDebugStats()").unwrap(), 0);
+    }
+
+    /// The Mac build's three answers, in game and in the glue: `IsMacClient` the number 1, the
+    /// other two one nil each.
+    #[test]
+    fn the_platform_queries_answer_the_mac_build() {
+        for s in [
+            UiScript::new_on(ClientOs::Mac).unwrap(),
+            UiScript::new_glue_on(ClientOs::Mac).unwrap(),
+        ] {
+            for verb in ["IsMacClient", "IsWindowsClient", "IsLinuxClient"] {
+                assert_eq!(s.arity(&format!("{verb}(0)")).unwrap(), 1, "{verb}");
+            }
+            assert!(s
+                .eval::<bool>("return type(IsMacClient()) == 'number' and IsMacClient() == 1")
+                .unwrap());
+            assert!(s
+                .eval::<bool>("return IsWindowsClient() == nil and IsLinuxClient() == nil")
+                .unwrap());
+        }
+        let glue = UiScript::new_glue_on(ClientOs::Pc).unwrap();
+        assert!(glue
+            .eval::<bool>("return IsMacClient() == nil and IsWindowsClient() == 1")
+            .unwrap());
+    }
+
+    /// The build this binary answers as follows the OS it was built for.
+    #[test]
+    fn the_native_build_is_the_mac_one_on_macos_alone() {
+        assert_eq!(ClientOs::NATIVE == ClientOs::Mac, cfg!(target_os = "macos"));
     }
 
     /// Each `OpeningCinematic()` queues one send and returns nothing.

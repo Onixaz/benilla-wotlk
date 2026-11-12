@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use super::registered_rows;
 
 /// Names the stock interface uses that the Windows 12340 client never registers, each with why.
+/// The Mac client's are rows where benilla answers as the Mac build ([`super::REGISTERED_MAC`]).
 const NOT_REGISTERED: &[(&str, &str)] = &[
     (
         "iTunesRemoteFeedback",
@@ -58,6 +59,23 @@ const NOT_REGISTERED: &[(&str, &str)] = &[
     ),
 ];
 
+/// The reason every Mac-only row of [`NOT_REGISTERED`] ends with.
+const MAC_CLIENTS: &str = "the Mac client's";
+
+/// The Mac build's rows are the names [`NOT_REGISTERED`] excuses as the Mac client's, no more.
+#[test]
+fn the_mac_rows_are_the_stock_interfaces_mac_names() {
+    let mut excused: Vec<&str> = NOT_REGISTERED
+        .iter()
+        .filter(|(_, why)| why.ends_with(MAC_CLIENTS))
+        .map(|(name, _)| *name)
+        .collect();
+    let mut rows: Vec<&str> = super::REGISTERED_MAC.iter().map(|r| r.name).collect();
+    excused.sort_unstable();
+    rows.sort_unstable();
+    assert_eq!(rows, excused);
+}
+
 /// Each CVar name the stock interface spells out, by lowercased name, with the files naming it:
 /// the first argument of a CVar verb, a `cvar = "…"` field, or a `CVAR_… = "…"` local.
 fn stock_cvar_names(data: &std::path::Path) -> BTreeMap<String, (String, Vec<String>)> {
@@ -101,11 +119,13 @@ fn every_cvar_the_stock_interface_names_is_registered() {
     // The run is valid: 3.3.5a's interface names about 250.
     assert!(names.len() > 200, "only {} names found", names.len());
     let registered = |key: &str| registered_rows().any(|r| r.name.eq_ignore_ascii_case(key));
-    let exempt = |key: &str| {
+    let mac = benilla_ui::script::ClientOs::NATIVE == benilla_ui::script::ClientOs::Mac;
+    let not_registered = || {
         NOT_REGISTERED
             .iter()
-            .any(|(n, _)| n.eq_ignore_ascii_case(key))
+            .filter(move |(_, why)| !(mac && why.ends_with(MAC_CLIENTS)))
     };
+    let exempt = |key: &str| not_registered().any(|(n, _)| n.eq_ignore_ascii_case(key));
     let missing: Vec<_> = names
         .iter()
         .filter(|(key, _)| !registered(key) && !exempt(key))
@@ -115,7 +135,7 @@ fn every_cvar_the_stock_interface_names_is_registered() {
         missing.is_empty(),
         "stock CVars with no row (GetCVar answers nil): {missing:#?}"
     );
-    for (name, why) in NOT_REGISTERED {
+    for (name, why) in not_registered() {
         let key = name.to_ascii_lowercase();
         assert!(
             names.contains_key(&key),

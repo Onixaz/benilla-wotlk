@@ -39,6 +39,8 @@ pub(crate) mod wtf;
 #[cfg(test)]
 use table::Reference;
 pub(crate) use table::Scope;
+#[cfg(test)]
+pub(crate) use table::REGISTERED_MAC;
 pub(crate) use table::{registered_pairs, registered_rows, REGISTERED};
 
 // ─── The registry ────────────────────────────────────────────────────────────────────────────
