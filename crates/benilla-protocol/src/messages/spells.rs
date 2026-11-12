@@ -302,8 +302,8 @@ const TARGET_GUID_BITS: u32 = TARGET_FLAG_UNIT
 
 /// A decoded `SpellCastTargets` as the 12340 client reads it (`0x9ab9c0`): a `u32` mask; one packed
 /// guid for any of [`TARGET_GUID_BITS`]; a packed item guid for ITEM or TRADE_ITEM; for SOURCE and
-/// DEST each, a packed transport guid and three `f32`s; a string. Item, corpse, source, transport
-/// and string targets are read and dropped.
+/// DEST each, a packed transport guid and three `f32`s; a string. Item, corpse and string targets
+/// are read and dropped.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpellCastTargets {
     pub mask: u32,
@@ -314,6 +314,11 @@ pub struct SpellCastTargets {
     /// (`0x7334e5`).
     pub src: Option<Vector3d>,
     pub dest: Option<Vector3d>,
+    /// The source point's transport guid, 0 for none; a nonzero one makes `src` local to it.
+    pub src_transport: u64,
+    /// The dest point's transport guid, 0 for none; a nonzero one makes `dest` local to it, its
+    /// world place `dest` through the transport (`0x9ab810`).
+    pub dest_transport: u64,
 }
 
 fn read_spell_cast_targets(r: &mut impl Read) -> io::Result<SpellCastTargets> {
@@ -332,14 +337,15 @@ fn read_spell_cast_targets(r: &mut impl Read) -> io::Result<SpellCastTargets> {
     if mask & (TARGET_FLAG_ITEM | TARGET_FLAG_TRADE_ITEM) != 0 {
         let _item_guid = read_packed_guid(r)?;
     }
+    let (mut src_transport, mut dest_transport) = (0, 0);
     let src = if mask & TARGET_FLAG_SOURCE_LOCATION != 0 {
-        let _transport = read_packed_guid(r)?;
+        src_transport = read_packed_guid(r)?;
         Some(Vector3d::read(r)?)
     } else {
         None
     };
     let dest = if mask & TARGET_FLAG_DEST_LOCATION != 0 {
-        let _transport = read_packed_guid(r)?;
+        dest_transport = read_packed_guid(r)?;
         Some(Vector3d::read(r)?)
     } else {
         None
@@ -353,6 +359,8 @@ fn read_spell_cast_targets(r: &mut impl Read) -> io::Result<SpellCastTargets> {
         go_target,
         src,
         dest,
+        src_transport,
+        dest_transport,
     })
 }
 
@@ -985,6 +993,37 @@ mod tests {
         assert!(go.misses.is_empty());
         assert_eq!(go.targets.mask, TARGET_FLAG_UNIT);
         assert_eq!(go.targets.unit_target, Some(0));
+    }
+
+    /// The source and dest points keep their transport guids, read before each point
+    /// (`0x9ab9c0`); a point with none reads 0.
+    #[test]
+    fn the_target_points_keep_their_transport_guids() {
+        let mut body = (TARGET_FLAG_SOURCE_LOCATION | TARGET_FLAG_DEST_LOCATION)
+            .to_le_bytes()
+            .to_vec();
+        body.push(0x00); // source transport, none
+        for c in [1.0f32, 2.0, 3.0] {
+            body.extend_from_slice(&c.to_le_bytes());
+        }
+        // Dest transport 0x1FC0_0000_0000_0010: bytes 0, 6 and 7 set.
+        body.extend_from_slice(&[0xC1, 0x10, 0xC0, 0x1F]);
+        for c in [4.0f32, -5.0, 6.5] {
+            body.extend_from_slice(&c.to_le_bytes());
+        }
+        let mut r = &body[..];
+        let t = read_spell_cast_targets(&mut r).unwrap();
+        assert!(r.is_empty(), "{} bytes left", r.len());
+        assert_eq!(
+            (t.src_transport, t.dest_transport),
+            (0, 0x1FC0_0000_0000_0010)
+        );
+        let dest = t.dest.unwrap();
+        assert_eq!(
+            (dest.x, dest.y, dest.z),
+            (4.0, -5.0, 6.5),
+            "local to the deck"
+        );
     }
 
     /// A reflect miss carries one more byte, the reflected spell's own outcome on the caster.

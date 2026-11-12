@@ -468,6 +468,21 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
                 })
             })
             .collect();
+        let deck = |guid: u64| {
+            let e = *l.index.0.get(&guid)?;
+            Some((e, *sc.decks.get(e).ok()?))
+        };
+        let wire = dest;
+        let src = src.map(|(p, t)| resolve_point(p, t, deck));
+        let dest = dest.map(|(p, t)| resolve_point(p, t, deck));
+        // A source or dest on a transport not here drops the GO's visuals (`0x80e647`).
+        let here = !matches!(src, Some(None)) && !matches!(dest, Some(None));
+        if benilla_assets::trace::enabled_for("dfx") {
+            benilla_assets::trace::line(
+                "dfx",
+                &format!("go spell={spell_id} wire={wire:?} dest={dest:?} here={here}"),
+            );
+        }
         let engaged = !sc.engaged_self.is_empty();
         spell_go(
             caster,
@@ -480,7 +495,7 @@ fn on_spell_go(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene, mut ar
             reflects,
             target,
             go_target,
-            (target_mask, src, dest, points),
+            (target_mask, src.flatten(), dest.flatten(), points, here),
             ammo.map(
                 |(display_id, inventory_type)| crate::creature_anim::ItemModel {
                     display_id,
@@ -1348,13 +1363,33 @@ fn spell_start(
 /// loot-target latch.
 const GO_TYPE_CHEST: i32 = 3;
 
-/// The targets' mask, source and dest points, and extra points.
+/// A target point's world place and, on a transport, the transport and the point in its frame.
+type PlacedPoint = (Vec3, Option<(Entity, Vec3)>);
+
+/// The targets' mask, source and dest points, extra points, and whether every transport the
+/// source and dest name is here.
 type GoPoints = (
     u32,
-    Option<[f32; 3]>,
-    Option<[f32; 3]>,
+    Option<PlacedPoint>,
+    Option<PlacedPoint>,
     Vec<crate::entities::DeckPoint>,
+    bool,
 );
+
+/// A wire point (raw WoW) placed through its transport, the world place at the GO
+/// (`0x9ab810`); `None` when the transport is not here (`0x7fd830`).
+fn resolve_point(
+    raw: [f32; 3],
+    transport: u64,
+    deck: impl Fn(u64) -> Option<(Entity, GlobalTransform)>,
+) -> Option<PlacedPoint> {
+    let at = benilla_assets::coords::wow_to_bevy(raw);
+    if transport == 0 {
+        return Some((at, None));
+    }
+    let (e, g) = deck(transport)?;
+    Some((crate::entities::deck_place(at, &g), Some((e, at))))
+}
 
 /// `SMSG_SPELL_GO`: the cast launched. The server schedules damage off `Spell.dbc` Speed; the
 /// packet carries the hit and miss lists and the ammo display id, and the flight is rebuilt from
@@ -1371,7 +1406,7 @@ fn spell_go(
     target: Option<u64>,
     go_target: Option<u64>,
     // The targets' mask with their source, dest and extra points.
-    (target_mask, src, dest, points): GoPoints,
+    (target_mask, src, dest, points, transports_here): GoPoints,
     ammo: Option<crate::creature_anim::ItemModel>,
     item_caster: Option<u64>,
     trajectory: Option<(f32, u32)>,
@@ -1630,14 +1665,14 @@ fn spell_go(
             .filter_map(|&(g, code)| index.0.get(&g).map(|&e| (e, code)))
             .collect();
         // A pure dest cast (ground AoE, empty lists) rides the same message: the point is a target.
-        let dest = dest.map(benilla_assets::coords::wow_to_bevy);
-        let src = src.map(benilla_assets::coords::wow_to_bevy);
-        if !hits.is_empty()
+        let (dest, dest_deck) = dest.map_or((None, None), |(p, d)| (Some(p), d));
+        let (src, src_deck) = src.map_or((None, None), |(p, d)| (Some(p), d));
+        let targeted = !hits.is_empty()
             || !misses.is_empty()
             || dest.is_some()
             || src.is_some()
-            || !points.is_empty()
-        {
+            || !points.is_empty();
+        if targeted && transports_here {
             go_targets.write(SpellGoTargets {
                 caster: e,
                 spell_id,
@@ -1646,7 +1681,9 @@ fn spell_go(
                 list,
                 target_mask,
                 src,
+                src_deck,
                 dest,
+                dest_deck,
                 points,
                 ammo,
                 seq,
@@ -1956,6 +1993,28 @@ fn spell_chain_targets(
 mod tests {
     use super::*;
     use crate::spell::learn_place::Learner;
+
+    /// A point with no transport is its own world place; one on a transport here is placed
+    /// through it and keeps its local point; one on a transport not here resolves to nothing
+    /// (`0x9ab810`, `0x7fd830`).
+    #[test]
+    fn a_target_point_is_placed_through_its_transport() {
+        use std::f32::consts::FRAC_PI_2;
+        const BOAT: u64 = 0x1FC0_0000_0000_0010;
+        let deck = Entity::from_raw_u32(7).expect("valid entity id");
+        let pose = GlobalTransform::from(
+            Transform::from_xyz(100.0, 0.0, 0.0).with_rotation(Quat::from_rotation_y(FRAC_PI_2)),
+        );
+        let here = |g: u64| (g == BOAT).then_some((deck, pose));
+        let raw = [3.0, 0.0, 1.0];
+        let local = benilla_assets::coords::wow_to_bevy(raw);
+        assert_eq!(resolve_point(raw, 0, here), Some((local, None)));
+        let (world, on) = resolve_point(raw, BOAT, here).unwrap();
+        assert_eq!(on, Some((deck, local)));
+        let want = Vec3::new(100.0, 0.0, 0.0) + Quat::from_rotation_y(FRAC_PI_2) * local;
+        assert!(world.distance(want) < 1e-4, "{world} vs {want}");
+        assert_eq!(resolve_point(raw, BOAT + 1, here), None);
+    }
 
     /// Another unit's cancel ends only its ranged mode; ours clears our auto-repeat, sending
     /// nothing back.
@@ -2610,7 +2669,7 @@ mod tests {
                             Vec::new(),
                             None,
                             None,
-                            (0, None, None, Vec::new()),
+                            (0, None, None, Vec::new(), true),
                             None,
                             None,
                             None,
@@ -2820,7 +2879,7 @@ mod tests {
                         Vec::new(),
                         None,
                         None,
-                        (0, None, None, Vec::new()),
+                        (0, None, None, Vec::new(), true),
                         None,
                         item_caster.or(Some(caster)),
                         None,
@@ -3028,7 +3087,7 @@ mod tests {
                         Vec::new(),
                         None,
                         None,
-                        (0, None, None, Vec::new()),
+                        (0, None, None, Vec::new(), true),
                         None,
                         None,
                         None,
@@ -3420,7 +3479,7 @@ mod tests {
                             // A different guid from `hits[0]`, which the arm must take.
                             Some(99),
                             None,
-                            (0, None, None, Vec::new()),
+                            (0, None, None, Vec::new(), true),
                             None,
                             None,
                             None,

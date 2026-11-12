@@ -356,7 +356,9 @@ pub(super) fn spawn_chain_beams(
                 kit_id: area_kit,
                 pos,
                 wait: AreaKitWait::Secs(0.0),
+                // The beam's location is a world point (`0x715400`).
                 deck: None,
+                source: Some(play.entity),
             });
         }
     }

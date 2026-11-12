@@ -113,11 +113,13 @@ fn go_aimed(
         list: Vec::new(),
         target_mask: if dest.is_some() { 0x40 } else { 0x2 },
         src: None,
+        src_deck: None,
         caster,
         spell_id: SPELL,
         hits,
         misses: Vec::new(),
         dest,
+        dest_deck: None,
         points: points
             .iter()
             .map(|&p| crate::entities::DeckPoint {

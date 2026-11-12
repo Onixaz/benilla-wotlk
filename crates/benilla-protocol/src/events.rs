@@ -837,11 +837,12 @@ pub enum SessionEvent {
         go_target: Option<u64>,
         /// The targets' flag mask, which picks a missile's kind (`0x7fffb0`).
         target_mask: u32,
-        /// The source point (`TARGET_FLAG_SOURCE_LOCATION`, raw WoW).
-        src: Option<[f32; 3]>,
-        /// The ground point (`TARGET_FLAG_DEST_LOCATION`, raw WoW); the lasting effect is a
-        /// DynamicObject.
-        dest: Option<[f32; 3]>,
+        /// The source point (`TARGET_FLAG_SOURCE_LOCATION`, raw WoW) and its transport guid or 0;
+        /// with a transport the point is in its frame.
+        src: Option<([f32; 3], u64)>,
+        /// The ground point (`TARGET_FLAG_DEST_LOCATION`, raw WoW) and its transport guid or 0;
+        /// with a transport the point is in its frame. The lasting effect is a DynamicObject.
+        dest: Option<([f32; 3], u64)>,
         /// The ammo block, `(displayId, inventoryType)` (`CAST_FLAG_AMMO`).
         ammo: Option<(u32, u32)>,
         /// The cast item when the first guid is not the caster; the item cooldown keys on it.

@@ -835,6 +835,7 @@ fn land_on_area(
         spell_id: missile.spell_id,
         list: missile.list.as_deref().map(|l| &l.list),
         words: !missile.spent && missile.index == 0,
+        deck: missile.aim_deck,
     };
     landing.land(at, out, play_seq);
 }
@@ -846,6 +847,8 @@ struct AreaLanding<'a> {
     list: Option<&'a TargetList>,
     /// The landing may word its misses: copy 0 alone, and once (`0x700fe3`, `0x700ff1`).
     words: bool,
+    /// The aim's transport and the point in its frame, which the area kit rides (`0x700e20`).
+    deck: Option<(Entity, Vec3)>,
 }
 
 impl AreaLanding<'_> {
@@ -864,8 +867,13 @@ impl AreaLanding<'_> {
             out.me.iter().next()
         };
         if let Some(host) = host {
-            out.impacts
-                .write(event(host, CastEventKind::GroundImpact { pos: at }));
+            out.impacts.write(event(
+                host,
+                CastEventKind::GroundImpact {
+                    pos: at,
+                    deck: self.deck,
+                },
+            ));
         }
         let Some(list) = self.list else {
             return;
@@ -895,12 +903,17 @@ impl AreaLanding<'_> {
                 });
             }
         }
-        // Each point plays the target kit there through the caster, none with it gone (`0x701150`).
+        // Each point plays the target kit there through the caster, none with it gone; a point
+        // whose transport is still here rides it (`0x701150`).
         if out.placed.contains(caster) {
             for p in &list.points {
                 let pos = p.place(&out.placed);
+                let deck = p
+                    .deck
+                    .filter(|&d| out.placed.contains(d))
+                    .map(|d| (d, p.at));
                 out.impacts
-                    .write(event(caster, CastEventKind::PointImpact { pos }));
+                    .write(event(caster, CastEventKind::PointImpact { pos, deck }));
             }
         }
     }
@@ -1006,6 +1019,7 @@ fn resist_burst(at: Vec3, turn: Quat, out: &mut ArrivalOut) {
         scale,
         turn: Quat::from_rotation_y(turn.to_euler(EulerRot::YXZ).0),
         held_by: None,
+        ride: None,
     });
 }
 
@@ -1294,7 +1308,7 @@ fn arm_targeting_kit(
 fn arm_point_targeting_kit(
     caster: Entity,
     spell_id: u32,
-    at: Vec3,
+    (at, deck): (Vec3, Option<(Entity, Vec3)>),
     kit_id: u32,
     commands: &mut Commands,
     out: &mut ArrivalOut,
@@ -1315,9 +1329,13 @@ fn arm_point_targeting_kit(
         if crate::creature_anim::spell_visual::kit_waits_for_beam(spells, &visuals.0, spell_id, kit)
         {
             let now = out.time.elapsed_secs();
-            waits
-                .bypass_change_detection()
-                .hold_targeting(caster, spell_id, kit_id, Some(at), now);
+            waits.bypass_change_detection().hold_targeting(
+                caster,
+                spell_id,
+                kit_id,
+                Some((at, deck)),
+                now,
+            );
             return Vec::new();
         }
     }
@@ -1326,9 +1344,15 @@ fn arm_point_targeting_kit(
             .sounds
             .write(SpellKitSound::PlayAt { pos: at, kit_sound });
     }
+    // A point on a transport rides it through the caster (`0x702941`).
+    let ride = deck.map(|(deck, local)| crate::transport::DeckRide {
+        deck,
+        local,
+        source: caster,
+    });
     crate::creature_anim::area_kit_models(&visuals.0, kit)
         .map(|(path, attach, scale)| {
-            super::dest_fx::spawn_held_point_fx(commands, path, at, attach, scale)
+            super::dest_fx::spawn_held_point_fx(commands, path, at, ride, attach, scale)
         })
         .collect()
 }
@@ -1448,6 +1472,8 @@ fn launch_go(
                 spell_id: go.spawn.spell_id,
                 list: go.spawn.list.as_ref().filter(|_| listed),
                 words: index == 0,
+                // At an object's place, on no transport.
+                deck: None,
             };
             landing.land(at, out, play_seq);
         }
@@ -1509,6 +1535,7 @@ fn launch_go(
         let mut targeting_points = match aim_at {
             Aim::Ground(at) if shape.targeting_kit != 0 && arrive_in > 0.0 => {
                 let (caster, spell_id) = (go.spawn.caster, go.spawn.spell_id);
+                let at = (at, aim_deck);
                 arm_point_targeting_kit(caster, spell_id, at, shape.targeting_kit, commands, out)
             }
             _ => Vec::new(),
@@ -2298,7 +2325,10 @@ fn land_short(
     out.impacts.write(CastEvent {
         entity: missile.caster,
         spell_id: missile.spell_id,
-        kind: CastEventKind::GroundImpact { pos: at },
+        kind: CastEventKind::GroundImpact {
+            pos: at,
+            deck: None,
+        },
         cast_count: 0,
         seq: play_seq.next(),
     });
@@ -3104,7 +3134,10 @@ mod tests {
         assert_eq!(events[0].entity, caster, "the kit plays on the caster");
         assert_eq!(
             events[0].kind,
-            CastEventKind::GroundImpact { pos: at },
+            CastEventKind::GroundImpact {
+                pos: at,
+                deck: None
+            },
             "the ground arm, carrying the landing point"
         );
     }
@@ -3649,7 +3682,7 @@ mod tests {
                 .resource_mut::<Messages<CastEvent>>()
                 .drain()
                 .find_map(|e| match e.kind {
-                    CastEventKind::GroundImpact { pos } => Some(pos),
+                    CastEventKind::GroundImpact { pos, .. } => Some(pos),
                     _ => None,
                 });
             if landed.is_some() {
@@ -4368,7 +4401,13 @@ speedAbs = 48"
         assert_eq!(
             kinds,
             vec![
-                (caster, CastEventKind::GroundImpact { pos: at }),
+                (
+                    caster,
+                    CastEventKind::GroundImpact {
+                        pos: at,
+                        deck: None
+                    }
+                ),
                 (a, CastEventKind::AreaImpact { caster }),
                 (b, CastEventKind::AreaImpact { caster }),
             ]
@@ -4468,7 +4507,13 @@ speedAbs = 48"
             impacts.iter().map(|e| (e.entity, e.kind)).collect();
         assert_eq!(
             kinds,
-            vec![(caster, CastEventKind::GroundImpact { pos: at })]
+            vec![(
+                caster,
+                CastEventKind::GroundImpact {
+                    pos: at,
+                    deck: None
+                }
+            )]
         );
     }
 
@@ -4491,7 +4536,13 @@ speedAbs = 48"
             .collect();
         assert_eq!(
             kinds,
-            vec![(caster, CastEventKind::GroundImpact { pos: at })]
+            vec![(
+                caster,
+                CastEventKind::GroundImpact {
+                    pos: at,
+                    deck: None
+                }
+            )]
         );
     }
 
@@ -4544,7 +4595,16 @@ speedAbs = 48"
             impacts.iter().map(|e| (e.entity, e.kind)).collect();
         assert_eq!(kinds.len(), 2);
         assert_eq!(kinds[0].0, a);
-        assert_eq!(kinds[1], (caster, CastEventKind::GroundImpact { pos: at }));
+        assert_eq!(
+            kinds[1],
+            (
+                caster,
+                CastEventKind::GroundImpact {
+                    pos: at,
+                    deck: None
+                }
+            )
+        );
     }
 
     /// A blocked landing lodges in the shield, and a unit left takes it straight out again on the
@@ -4736,12 +4796,25 @@ speedAbs = 48"
         assert_eq!(
             kinds,
             vec![
-                (caster, CastEventKind::GroundImpact { pos: first }),
-                (caster, CastEventKind::PointImpact { pos: first }),
+                (
+                    caster,
+                    CastEventKind::GroundImpact {
+                        pos: first,
+                        deck: None
+                    }
+                ),
                 (
                     caster,
                     CastEventKind::PointImpact {
-                        pos: Vec3::new(1.0, 0.0, 12.0)
+                        pos: first,
+                        deck: None
+                    }
+                ),
+                (
+                    caster,
+                    CastEventKind::PointImpact {
+                        pos: Vec3::new(1.0, 0.0, 12.0),
+                        deck: Some((deck, local))
                     }
                 ),
             ]
@@ -4777,10 +4850,13 @@ speedAbs = 48"
             }
             let (impacts, ..) = fly_out(&mut app);
             let landed = if gone { 14.0 } else { 16.0 };
+            // The landing's kit rides the transport while it is here (`0x700e20`).
+            let deck = (!gone).then_some((deck, local));
             assert_eq!(
                 impacts.iter().map(|e| e.kind).collect::<Vec<_>>(),
                 vec![CastEventKind::GroundImpact {
-                    pos: Vec3::new(1.0, 0.0, landed)
+                    pos: Vec3::new(1.0, 0.0, landed),
+                    deck,
                 }],
                 "transport gone: {gone}"
             );
@@ -4800,7 +4876,13 @@ speedAbs = 48"
             impacts.iter().map(|e| (e.entity, e.kind)).collect();
         assert_eq!(
             kinds,
-            vec![(caster, CastEventKind::GroundImpact { pos: at })]
+            vec![(
+                caster,
+                CastEventKind::GroundImpact {
+                    pos: at,
+                    deck: None
+                }
+            )]
         );
     }
 }
