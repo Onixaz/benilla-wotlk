@@ -27,6 +27,18 @@ pub(crate) struct ScriptSelect<'w, 's> {
     scan: scan::TargetScan<'w, 's>,
     history: ResMut<'w, scan::TabHistory>,
     time: Res<'w, Time>,
+    /// `AssistUnit`'s miss lines.
+    errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
+}
+
+/// `AssistUnit`'s line for a basis it cannot use: an empty or `"target"` token (`0x9fc4a0`) shows
+/// `ERR_GENERIC_NO_TARGET`, any other `ERR_UNIT_NOT_FOUND`.
+fn assist_miss_key(token: &str) -> &'static str {
+    if token.is_empty() || token.eq_ignore_ascii_case("target") {
+        "ERR_GENERIC_NO_TARGET"
+    } else {
+        "ERR_UNIT_NOT_FOUND"
+    }
 }
 
 impl ScriptSelect<'_, '_> {
@@ -41,17 +53,34 @@ impl ScriptSelect<'_, '_> {
                     self.target_if_valid(guid, script);
                 }
             }
-            // The token resolve, then the shared tail. An unresolvable token is silent here; the
-            // reference shows message `0xb8` `ERR_GENERIC_NO_TARGET`.
+            // The token resolve, then the shared tail. A basis the object manager does not hold
+            // shows `ERR_UNIT_NOT_FOUND` (`0x525f87`), or `ERR_GENERIC_NO_TARGET` for an empty or
+            // `"target"` token (`0x525f9c`).
             SelectionRequest::Assist(token) => {
                 match self.tokens.resolve(&token, &self.commit.selection) {
-                    Some((basis, _)) => self.commit.assist(basis, "AssistUnit"),
-                    None => info!("assist (AssistUnit): \"{token}\" names nothing; silent no-op"),
+                    Some((basis, _)) => {
+                        if self.commit.assist(basis, "AssistUnit") {
+                            script.queue_sound_kit("igCharacterSelect");
+                        }
+                    }
+                    None => {
+                        info!("assist (AssistUnit): \"{token}\" names no held unit");
+                        self.errors
+                            .0
+                            .push(crate::ui_action::UiError::key(assist_miss_key(&token)));
+                    }
                 }
             }
             // `/assist <name>`: a player name, prefix-matched by the app's name scan.
             SelectionRequest::AssistByName(name) => {
-                by_name::assist_named(&self.by_name, &mut self.commit, Some(&name), "AssistByName");
+                if by_name::assist_named(
+                    &self.by_name,
+                    &mut self.commit,
+                    Some(&name),
+                    "AssistByName",
+                ) {
+                    script.queue_sound_kit("igCharacterSelect");
+                }
             }
             // Through the shared helper. Empty memory is a no-op, unlike `TargetLastTarget`, which
             // deselects.
@@ -152,6 +181,7 @@ mod tests {
         world.init_resource::<crate::names::NameCache>();
         world.init_resource::<scan::TabHistory>();
         world.init_resource::<Time>();
+        world.init_resource::<crate::ui_action::UiErrorKeys>();
         world.insert_non_send_resource(UiScript::new().expect("a bare VM"));
         world
     }
@@ -507,6 +537,138 @@ mod tests {
         world.resource_mut::<scan::LastEnemy>().0 = Some(STRANGER);
         assert_eq!(run(&mut world, "TargetLastEnemy()"), (None, Some(MEMBER)));
         assert!(sounds(&mut world).is_empty());
+    }
+
+    /// `AssistUnit` hands the basis's target to the same helper (`0x525f25`): a group member the
+    /// object manager does not hold is selected by guid alone, with the unheld sound, and a
+    /// stranger out of view is a no-op. A basis it does not hold shows its miss line: the target
+    /// token `ERR_GENERIC_NO_TARGET`, any other `ERR_UNIT_NOT_FOUND`.
+    #[test]
+    fn assist_unit_selects_an_unheld_member_and_names_a_missing_basis() {
+        use crate::net::{Guid, ObjectStore, SelfPlayer};
+        use benilla_protocol::messages::{member_status, GroupMemberEntry};
+        use benilla_ui::script::{SoundRequest, UiScript};
+        use bevy::ecs::system::RunSystemOnce;
+
+        const ME: u64 = 1;
+        const BASIS: u64 = 0xF130_0000_0000_0042;
+        const MEMBER: u64 = 0x1234;
+        const STRANGER: u64 = 0x5555;
+        let store =
+            |pairs: &[(u16, u32)]| ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs));
+
+        let mut world = script_world();
+        world.spawn((SelfPlayer, Guid(ME), store(&[(22, 100), (28, 100)])));
+        let basis = world
+            .spawn((
+                Guid(BASIS),
+                store(&[(22, 100), (28, 100), (16, MEMBER as u32)]),
+            ))
+            .id();
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(BASIS, basis);
+        world
+            .resource_mut::<crate::ui_party::GroupState>()
+            .apply_list(
+                0,
+                0,
+                vec![GroupMemberEntry {
+                    name: "Brisca".into(),
+                    guid: MEMBER,
+                    status: member_status::ONLINE,
+                    flags: 0,
+                    roles: 0,
+                }],
+                ME,
+                None,
+                Some(ME),
+            );
+        let select = |world: &mut World, target: Option<(Entity, u64)>| {
+            let mut sel = world.resource_mut::<super::super::Selection>();
+            sel.target = target.map(|(e, _)| e);
+            sel.guid = target.map(|(_, g)| g);
+        };
+        let run = |world: &mut World, lua: &str| {
+            world
+                .non_send_resource_mut::<UiScript>()
+                .eval::<()>(lua)
+                .expect("the binding runs");
+            world
+                .run_system_once(
+                    |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
+                        for request in script.take_selection_requests() {
+                            select.select(request, &mut script);
+                        }
+                    },
+                )
+                .expect("the applier runs as a one-shot system");
+            let sel = world.resource::<super::super::Selection>();
+            (sel.target, sel.guid)
+        };
+        let sounds = |world: &mut World| world.non_send_resource_mut::<UiScript>().take_sounds();
+        let errors = |world: &mut World| {
+            std::mem::take(&mut world.resource_mut::<crate::ui_action::UiErrorKeys>().0)
+        };
+
+        select(&mut world, Some((basis, BASIS)));
+        assert_eq!(
+            run(&mut world, r#"AssistUnit("target")"#),
+            (None, Some(MEMBER))
+        );
+        assert_eq!(
+            sounds(&mut world),
+            vec![SoundRequest::KitName("igCharacterSelect".into())]
+        );
+        assert!(errors(&mut world).is_empty());
+
+        // The member is the target now, held by guid alone: the basis is gone.
+        assert_eq!(
+            run(&mut world, r#"AssistUnit("target")"#),
+            (None, Some(MEMBER))
+        );
+        assert_eq!(
+            errors(&mut world),
+            vec![crate::ui_action::UiError::key("ERR_GENERIC_NO_TARGET")]
+        );
+        for lua in [r#"AssistUnit("party1")"#, r#"AssistUnit("nosuchunit")"#] {
+            assert_eq!(run(&mut world, lua), (None, Some(MEMBER)), "{lua}");
+            assert_eq!(
+                errors(&mut world),
+                vec![crate::ui_action::UiError::key("ERR_UNIT_NOT_FOUND")],
+                "{lua}"
+            );
+        }
+        assert_eq!(run(&mut world, "AssistUnit()"), (None, Some(MEMBER)));
+        assert_eq!(
+            errors(&mut world),
+            vec![crate::ui_action::UiError::key("ERR_GENERIC_NO_TARGET")]
+        );
+
+        // A stranger out of view: a no-op, silent.
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .remove(&BASIS);
+        world.despawn(basis);
+        let basis = world
+            .spawn((
+                Guid(BASIS),
+                store(&[(22, 100), (28, 100), (16, STRANGER as u32)]),
+            ))
+            .id();
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(BASIS, basis);
+        select(&mut world, Some((basis, BASIS)));
+        assert_eq!(
+            run(&mut world, r#"AssistUnit("target")"#),
+            (Some(basis), Some(BASIS))
+        );
+        assert!(sounds(&mut world).is_empty());
+        assert!(errors(&mut world).is_empty());
     }
 
     /// `TargetUnit` and `AssistUnit` take the tokens the reference's resolver takes: a base then a

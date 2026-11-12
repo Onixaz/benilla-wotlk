@@ -1427,17 +1427,17 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // AssistUnit(unit): select the unit's `UNIT_FIELD_TARGET`. The shared tail returns silently on
     // 0 and selects, which leaves the selection alone when nothing resolves; no assist-check gate,
-    // any unit, and a swing only with `assistAttack` set (default "0"). A token that resolves
-    // nothing is silent here, where the reference shows `0xb8` ERR_GENERIC_NO_TARGET.
+    // any unit, and a swing only with `assistAttack` set (default "0"). The app shows the miss line
+    // for a basis it does not hold (`0x525f6a`); a missing argument is the empty name there.
     g.set(
         "AssistUnit",
         lua.create_function(|lua, token: Option<String>| {
-            if let Some(token) = token {
-                let mut model = crate::script::model_mut_of(lua);
-                model
-                    .script_calls
-                    .push(ScriptCall::Select(SelectionRequest::Assist(token)));
-            }
+            let mut model = crate::script::model_mut_of(lua);
+            model
+                .script_calls
+                .push(ScriptCall::Select(SelectionRequest::Assist(
+                    token.unwrap_or_default(),
+                )));
             Ok(())
         })?,
     )?;

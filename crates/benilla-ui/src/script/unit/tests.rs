@@ -518,7 +518,7 @@ fn target_unit_queues_the_token_for_the_app_to_resolve() {
     assert!(s.take_selection_requests().is_empty());
 }
 
-/// A nil `AssistUnit` argument is dropped like `TargetUnit`'s.
+/// A nil `AssistUnit` argument queues the empty name, whose miss line the app shows (`0x525f6a`).
 #[test]
 fn the_selection_queue_carries_all_three_verbs_in_call_order() {
     use crate::script::SelectionRequest;
@@ -532,6 +532,7 @@ fn the_selection_queue_carries_all_three_verbs_in_call_order() {
         vec![
             SelectionRequest::Unit("party1".into()),
             SelectionRequest::Assist("target".into()),
+            SelectionRequest::Assist(String::new()),
             SelectionRequest::LastEnemy,
         ]
     );
