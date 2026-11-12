@@ -745,7 +745,7 @@ fn feed_mail(
                 crate::ui_action::show_messages(&mut script, &mut sink, "ui_mail", line);
             }
             MailEffect::EquipError(reason) => equip_errors.0.push(EquipError {
-                reason: reason as u8,
+                reason,
                 required_level: None,
                 // The result names no bag slot: 255 is the wire's "own array" sentinel.
                 bag_slot: 255,

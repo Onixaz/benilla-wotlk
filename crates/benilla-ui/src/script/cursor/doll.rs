@@ -10,8 +10,9 @@ use crate::script::Model;
 use super::{queue_cursor_update, queue_lock_changed, CursorItem, CursorPayload, EQUIPMENT_BAG};
 
 /// `PickupInventoryItem(id)`, the doll slot's click, on the bag click's model: a fitting whole item
-/// moves in and the cursor clears, with no hop; a split or a misfit stays held. Returns whether to
-/// repaint.
+/// moves in and the cursor clears, with no hop; a misfit on the doll's 23 slots auto-equips
+/// (`0x5e89f3`), one off a worn slot going back instead (`0x5e89e5`); a split stays held. Returns
+/// whether to repaint.
 pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
     // Head 1 to Tabard 19, the bag slots 20-23, and the bank bag slots, which only `PutItemInBag`
     // reaches. Ammo (0) is refused; its leg is not built.
@@ -68,10 +69,16 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
             true
         }
         Some(CursorPayload::Item(held)) => {
-            // A split or a misfit stays held, with no event: nothing changed.
-            if held.count.is_some() || !super::bag_verbs::fits_slot(&held, id) {
+            // A split stays held, with no event: nothing changed.
+            if held.count.is_some() {
                 model.cursor = Some(CursorPayload::Item(held));
                 return false;
+            }
+            // A misfit takes the auto-equip path, the server picking the slot (`0x5e89f3`); at a
+            // bank bag slot it stays held.
+            if !super::bag_verbs::fits_slot(&held, id) {
+                model.cursor = Some(CursorPayload::Item(held));
+                return id <= 23 && auto_equip_cursor_item(model);
             }
             model.container_moves.push(ContainerMove {
                 src_bag: held.bag,
@@ -139,10 +146,17 @@ pub(super) fn cursor_can_go_in_slot(model: &Model, id: u32) -> bool {
 
 /// `AutoEquipCursorItem()`, a click or drop on the doll's model (`PaperDollFrame.lua:31-35`): a
 /// whole stack from a bag becomes `CMSG_AUTOEQUIP_ITEM`: the server picks the slot and swaps
-/// the displaced piece back (`ItemHandler.cpp:138-228`); an equipped item or a split stays held.
-/// Returns whether to repaint.
+/// the displaced piece back (`ItemHandler.cpp:138-228`); an item off the doll's 23 slots goes back
+/// with nothing sent (`0x6dfcf3`); a split stays held. Returns whether to repaint.
 pub(super) fn auto_equip_cursor_item(model: &mut Model) -> bool {
     match model.cursor.take() {
+        Some(CursorPayload::Item(item))
+            if item.bag == EQUIPMENT_BAG && (1..=23).contains(&item.slot) =>
+        {
+            queue_cursor_update(model);
+            queue_lock_changed(model, item.bag, item.slot);
+            true
+        }
         Some(CursorPayload::Item(item)) if item.bag >= 0 && item.count.is_none() => {
             model.container_autoequips.push((item.bag, item.slot));
             queue_cursor_update(model);
@@ -422,18 +436,32 @@ mod tests {
         );
     }
 
+    /// A bag item dropped on a slot it does not fit auto-equips: no swap, the cursor cleared.
     #[test]
-    fn place_non_fitting_item_is_a_no_op() {
+    fn a_misfit_from_a_bag_auto_equips() {
         let mut s = UiScript::new().unwrap();
         s.set_inventory_slots(doll_slots());
         // The bag item only fits HeadSlot (1); try placing it on NeckSlot (2).
         s.set_container(0, Some(one_fitting_bag_item()));
         s.run("PickupContainerItem(0, 1)").unwrap();
 
-        assert!(!s.eval::<bool>("return PickupInventoryItem(2)").unwrap());
-        let held = s.cursor_item().expect("kept — doesn't fit slot 2");
-        assert_eq!(held.item_id, 2000);
+        assert!(s.eval::<bool>("return PickupInventoryItem(2)").unwrap());
+        assert!(s.cursor_item().is_none());
         assert!(s.take_container_moves().is_empty());
+        assert_eq!(s.take_container_autoequips(), vec![(0, 1)]);
+    }
+
+    /// A worn item dropped on a slot it does not fit goes back, with nothing sent.
+    #[test]
+    fn a_misfit_from_a_worn_slot_goes_back() {
+        let mut s = UiScript::new().unwrap();
+        s.set_inventory_slots(doll_slots());
+        s.run("PickupInventoryItem(1)").unwrap();
+
+        assert!(s.eval::<bool>("return PickupInventoryItem(2)").unwrap());
+        assert!(s.cursor_item().is_none());
+        assert!(s.take_container_moves().is_empty());
+        assert!(s.take_container_autoequips().is_empty());
     }
 
     #[test]
@@ -619,15 +647,14 @@ mod tests {
     }
 
     #[test]
-    fn auto_equip_cursor_item_is_a_no_op_from_the_doll_or_a_split_carry() {
+    fn auto_equip_cursor_item_puts_a_worn_item_back_and_keeps_a_split_carry() {
         let mut s = UiScript::new().unwrap();
         s.set_inventory_slots(doll_slots());
 
         s.run("PickupInventoryItem(1)").unwrap();
-        assert!(!s.eval::<bool>("return AutoEquipCursorItem()").unwrap());
-        assert!(s.cursor_item().is_some(), "kept");
+        assert!(s.eval::<bool>("return AutoEquipCursorItem()").unwrap());
+        assert!(s.cursor_item().is_none(), "put back");
         assert!(s.take_container_autoequips().is_empty());
-        s.run("ClearCursor()").unwrap();
 
         let mut state = one_fitting_bag_item();
         state.slots.get_mut(&1).unwrap().count = 5;

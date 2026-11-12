@@ -303,7 +303,7 @@ fn auction_command_result(
         },
         auction_error::INVENTORY => {
             if let AuctionCommandTail::Inventory { result } = tail {
-                let key = crate::ui_items::equip_error_key(*result as u8);
+                let key = crate::ui_items::equip_error_key(*result);
                 auction.messages.push(AuctionMessage::key(key));
             }
         }

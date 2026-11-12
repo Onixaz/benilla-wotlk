@@ -65,6 +65,8 @@ pub(crate) mod id {
     pub(crate) const KEYRINGS: u32 = 0x31;
     /// The player joins a threat list, warning on, at level 14 or more (`0x52b370`).
     pub(crate) const THREAT: u32 = 0x35;
+    /// The bag-full line is displayed (`0x52170c`).
+    pub(crate) const BAG_FULL: u32 = 0x39;
 }
 
 /// The level-gated arm of the `SMSG_LEVELUP_INFO` handler (`0x6e35d2`): in the handler's own
@@ -345,6 +347,10 @@ fn feed_tutorials(
         if bag == KEYRING_BAG && KEYRING_SLOTS.contains(&slot) {
             tutorials.trigger(id::KEYRINGS, 0, now);
         }
+    }
+
+    if sounds.take_bag_full() {
+        tutorials.trigger(id::BAG_FULL, 0, now);
     }
 
     tutorials.tick(now);
@@ -838,6 +844,26 @@ mod tests {
         );
         app.update();
         assert!(enabled(&mut app), "…and must be told it again");
+    }
+
+    /// The bag-full line's display raises tutorial `0x39` once; another message raises none.
+    #[test]
+    fn a_displayed_bag_full_line_raises_its_tutorial() {
+        let mut app = feeder();
+        app.world_mut()
+            .resource_mut::<Tutorials>()
+            .apply_flags(&[0u8; 32]);
+        let show = |app: &mut App, key: &str| {
+            let record = benilla_ui::messages::by_key(key).expect("a catalog row");
+            app.world_mut()
+                .resource_mut::<crate::sound::MessageSounds>()
+                .push(record);
+            app.update();
+            let fire_once = app.world().resource::<Tutorials>().fire_once.clone();
+            bank_bit(&fire_once.expect("a bank"), id::BAG_FULL)
+        };
+        assert_eq!(show(&mut app, "ERR_INV_FULL"), Some(false));
+        assert_eq!(show(&mut app, "ERR_BAG_FULL"), Some(true));
     }
 
     /// The push is per-VM, not per-frame: a steady session hands the bank over once.

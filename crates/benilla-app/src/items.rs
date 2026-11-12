@@ -253,6 +253,20 @@ pub(crate) fn live_enchant(fields: &ObjectFields, slot: u8, cat: Option<&Enchant
     cat.is_some_and(|c| c.0.has_row(id)).then_some(id)
 }
 
+/// The skill and rank an item's use enchant asks (`0x706ec0`, `0x708f15`): the first of the twelve
+/// slots whose row casts a use spell, `None` when that row asks no skill.
+pub(crate) fn use_enchant_skill(
+    fields: &ObjectFields,
+    cat: Option<&Enchants>,
+) -> Option<(u32, u32)> {
+    let cat = &cat?.0;
+    let id = (0..ENCHANT_SLOTS as u8)
+        .filter_map(|slot| u32::try_from(fields.item_enchant(slot)?).ok())
+        .find(|&id| cat.use_spell(id) != 0)?;
+    let r = cat.requirement(id)?;
+    (r.skill != 0).then_some((r.skill, r.skill_rank))
+}
+
 /// A gem enchant's condition row as the VM's tooltip reads it.
 pub(crate) fn condition_view(
     c: &benilla_formats::EnchantCondition,
@@ -1140,6 +1154,41 @@ mod tests {
     /// One item object with the given `ITEM_FIELD_FLAGS` and enchant slot 0.
     fn item(flags: u32, slot0: u32) -> ObjectFields {
         ObjectFields::from_pairs(&[(21, flags), (22, slot0)])
+    }
+
+    /// Against the install: a use enchant that asks a skill answers it from its slot; a negative
+    /// id, a skill enchant with no use spell and an empty item answer none. Skips without data.
+    #[test]
+    fn a_use_enchant_answers_its_skill_requirement() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let cat = Enchants(
+            benilla_formats::load_enchant_catalog(&mut chain).expect("the enchant table"),
+            Default::default(),
+        );
+        let asks_skill = |id: u32| cat.0.requirement(id).is_some_and(|r| r.skill != 0);
+        let asked: Vec<u32> = (cat.0.ids())
+            .filter(|&id| cat.0.use_spell(id) != 0 && asks_skill(id))
+            .collect();
+        assert!(!asked.is_empty(), "no use enchant asks a skill");
+        for id in asked {
+            let r = cat.0.requirement(id).expect("asked");
+            assert_eq!(
+                use_enchant_skill(&item(0, id), Some(&cat)),
+                Some((r.skill, r.skill_rank)),
+                "enchant {id}"
+            );
+            assert_eq!(
+                use_enchant_skill(&item(0, id.wrapping_neg()), Some(&cat)),
+                None
+            );
+        }
+        let plain = (cat.0.ids())
+            .find(|&id| cat.0.use_spell(id) == 0 && asks_skill(id))
+            .expect("a skill enchant with no use spell");
+        assert_eq!(use_enchant_skill(&item(0, plain), Some(&cat)), None);
+        assert_eq!(use_enchant_skill(&item(0, 0), Some(&cat)), None);
+        assert_eq!(use_enchant_skill(&item(0, plain), None), None);
     }
 
     /// The Firestone shape binds and prints no line, so a predicate read off [`enchant_lines`]

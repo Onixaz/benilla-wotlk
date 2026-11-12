@@ -22,6 +22,9 @@ use super::kit::{self, KitRef, SoundCategory, SoundKits};
 use super::vocal::{self, VocalSpeech, NO_SPEECH_TAG};
 use super::{AudioListener, SoundConfig, SoundOutput};
 
+/// `ERR_BAG_FULL`'s catalog id, the one message whose display raises a tutorial (`0x521707`).
+const BAG_FULL_MESSAGE: u16 = 0xb;
+
 /// Catalog rows displayed this frame, awaiting their sound. Pushed by
 /// `crate::ui_action::show_messages`, the sink every displayed message passes through.
 #[derive(Resource, Default)]
@@ -32,6 +35,9 @@ pub(crate) struct MessageSounds {
     cues: Vec<&'static str>,
     /// UI kits by `SoundEntries` id (`0x4c8fc0`), on the same path.
     kits: Vec<u32>,
+    /// The bag-full line was displayed: the display raises its tutorial (`0x52170c`), which the
+    /// tutorial feed takes.
+    bag_full: bool,
 }
 
 impl MessageSounds {
@@ -41,7 +47,13 @@ impl MessageSounds {
     /// empty-text guard), while benilla drops an empty line before it gets here. No sounding row in
     /// the shipped `GlobalStrings.lua` has empty text, so the two agree on 1.12.1's data.
     pub(crate) fn push(&mut self, record: &'static MessageRecord) {
+        self.bag_full |= record.id == BAG_FULL_MESSAGE;
         self.records.push(record);
+    }
+
+    /// Whether the bag-full line was displayed since the last take.
+    pub(crate) fn take_bag_full(&mut self) -> bool {
+        std::mem::take(&mut self.bag_full)
     }
 
     /// Queue a named cue with no message behind it.

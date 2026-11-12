@@ -514,7 +514,11 @@ impl ScriptItemUse<'_, '_> {
         // The requirement check follows the quest-starter arm and precedes the readable, open and
         // spell arms (`0x708eb9`).
         if let Some(c) = clicked {
-            if super::refuse_item_use(script, c.entry, ui_errors) {
+            let enchant_skill = ladder
+                .objects
+                .object(c.guid)
+                .and_then(|f| crate::items::use_enchant_skill(f, ladder.trade_window.1.as_deref()));
+            if super::refuse_item_use(script, c.entry, enchant_skill, ui_errors) {
                 return;
             }
         }

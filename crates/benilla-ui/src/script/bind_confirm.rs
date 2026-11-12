@@ -38,6 +38,14 @@ impl super::UiScript {
     pub fn item_use_refusal(&self, item_id: u32) -> Option<&'static str> {
         super::item_stats::item_use_refusal_by_id(&self.model_ref(), item_id)
     }
+
+    /// The player's value in a skill as the item-use checks read it (`0x51a250`), 0 for a skill
+    /// not held; `None` until the requirement state is pushed.
+    pub fn skill_value(&self, skill: u32) -> Option<u32> {
+        let model = self.model_ref();
+        let req = &model.player_req;
+        (req.level != 0).then(|| req.skills.get(&skill).copied().unwrap_or(0))
+    }
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
