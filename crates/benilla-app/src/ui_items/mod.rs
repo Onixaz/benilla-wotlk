@@ -38,9 +38,7 @@ use drain::{
 };
 // `UseContainerItem` and `UseInventoryItem`, applied in call order by `crate::script_calls`.
 pub(crate) use drain::ScriptItemUse;
-use feed::{
-    feed_containers, feed_item_sets, feed_item_stats, feed_player_req, feed_random_properties,
-};
+use feed::{feed_containers, feed_item_sets, feed_item_stats, feed_item_tables, feed_player_req};
 
 /// The backpack's capacity (`PLAYER_FIELD_PACK_SLOT_1..`).
 pub(super) const PACK_SLOTS: u8 = 16;
@@ -1082,9 +1080,8 @@ impl Plugin for UiItemsPlugin {
                     feed_item_sets
                         .in_set(UnitFeed)
                         .after(crate::ui_action::SlotIdentityFeed),
-                    // The roll table, pushed whole once per VM, before the first hover.
-                    feed_random_properties.in_set(UnitFeed),
-                    feed::feed_scaling_tables.in_set(UnitFeed),
+                    // The roll and scaling tables, pushed whole once per VM, before the first hover.
+                    feed_item_tables.in_set(UnitFeed),
                     feed_player_req.in_set(UnitFeed),
                     track_link_level.before(UnitFeed),
                     // After the input pass, so a repair-mode click goes out the same frame; a

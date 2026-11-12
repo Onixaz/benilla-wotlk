@@ -518,25 +518,49 @@ pub(super) fn feed_item_sets(
     }
 }
 
-/// Pushes the whole random-suffix table once per VM, when both catalogs are in: its consumers are
-/// click-driven, and a chat-link tooltip has no hover loop to repaint a late answer.
-pub(super) fn feed_random_properties(
+/// Which of the whole tables [`feed_item_tables`] has pushed to the current VM.
+#[derive(Default)]
+pub(super) struct TablesPushed {
+    random_properties: bool,
+    scaling: bool,
+}
+
+/// Pushes the whole item tables once per VM, each as soon as its catalogs are in: the random-suffix
+/// table (consumers are click-driven, and a chat-link tooltip has no hover loop to repaint a late
+/// answer) and the two scaling tables (a link's heirloom reads them on its first hover). One
+/// system: once both are in, a frame costs a VM check and two flags.
+pub(super) fn feed_item_tables(
     script: Option<NonSendMut<UiScript>>,
     props: Option<Res<crate::items::RandomProperties>>,
     enchants: Option<Res<crate::items::Enchants>>,
-    mut pushed: Local<crate::ui_script::VmMemo<bool>>,
+    scaling: Option<Res<super::ScalingStats>>,
+    mut pushed: Local<crate::ui_script::VmMemo<TablesPushed>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    if *pushed.get(&script) {
-        return;
+    let pushed = pushed.get(&script);
+    if !pushed.random_properties {
+        // Without the enchant catalog every row would push empty, never to be retried.
+        if let (Some(props), Some(enchants)) = (props, enchants) {
+            push_random_properties(&mut *script, &props, &enchants);
+            pushed.random_properties = true;
+        }
     }
-    // Without the enchant catalog every row would push empty, never to be retried.
-    let (Some(props), Some(enchants)) = (props, enchants) else {
-        return;
-    };
-    let rows = crate::items::random_property_views(&props, Some(&enchants));
+    if !pushed.scaling {
+        if let Some(tables) = scaling {
+            push_scaling_tables(&mut *script, &tables);
+            pushed.scaling = true;
+        }
+    }
+}
+
+fn push_random_properties(
+    script: &mut UiScript,
+    props: &crate::items::RandomProperties,
+    enchants: &crate::items::Enchants,
+) {
+    let rows = crate::items::random_property_views(props, Some(enchants));
     let with_lines = rows.values().filter(|v| !v.enchants.is_empty()).count();
     info!(
         "random-property table: {} rows pushed, {with_lines} with enchant lines",
@@ -559,22 +583,10 @@ pub(super) fn feed_random_properties(
             })
             .collect(),
     );
-    script.set_enchant_rows(crate::items::enchant_rows(&enchants));
-    *pushed.get(&script) = true;
+    script.set_enchant_rows(crate::items::enchant_rows(enchants));
 }
 
-/// Pushes the two scaling tables once per VM: a link's heirloom reads them on its first hover.
-pub(super) fn feed_scaling_tables(
-    script: Option<NonSendMut<UiScript>>,
-    tables: Option<Res<super::ScalingStats>>,
-    mut pushed: Local<crate::ui_script::VmMemo<bool>>,
-) {
-    let (Some(mut script), Some(tables)) = (script, tables) else {
-        return;
-    };
-    if *pushed.get(&script) {
-        return;
-    }
+fn push_scaling_tables(script: &mut UiScript, tables: &super::ScalingStats) {
     script.set_scaling_tables(benilla_ui::script::ScalingTables {
         distributions: tables
             .0
@@ -598,7 +610,6 @@ pub(super) fn feed_scaling_tables(
             .map(|&row| benilla_ui::script::ScalingValuesView(row))
             .collect(),
     });
-    *pushed.get(&script) = true;
 }
 
 /// The item-tooltip feed: every template that lands is pushed unprompted, so the first hover never
