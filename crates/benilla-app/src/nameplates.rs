@@ -1,4 +1,4 @@
-//! Overhead unit names, the 1.12 world-text name system.
+//! Overhead unit names, the 3.3.5a world-text name system.
 //!
 //! - Geometry: a camera-facing glyph mesh in the world pass, depth-tested like the reference's name
 //!   batch, so walls occlude names. Deviation: `AlphaMode::Blend` writes no depth where the
@@ -10,15 +10,15 @@
 //!   pitch per line.
 //! - Show gate (`0x729c70`): [`name_shown`] over the thirteen
 //!   `UnitName*` bits of [`NameConfig`].
-//! - Lines: an NPC's name and `<Subname>`; a player's `<AFK>`/`<DND>`/`<GM>` prefixes, the a4 title
-//!   slot (`UnitNamePlayerPVPTitle`, bit `0x20`) and name, and `<Guild>`. The guild (a5) and
-//!   subname (a6) slots share the format `"\n<%s>"` and are never both reached; a5 alone is
-//!   CVar-gated.
+//! - Lines (`0x72d4f0`): an NPC's name and `<Subname>`; a player's AFK/DND/GM/Dev prefixes, the
+//!   a4 title slot (`UnitNamePlayerPVPTitle`, bit `0x8`) and name, and `<Guild>`. The guild (a5)
+//!   and subname (a6) slots share the format `"\n<%s>"` and are never both reached; a5 alone is
+//!   CVar-gated. A unit holding an applied aura-279 effect takes its caster's lines (`0x72d590`).
 //! - The a4 slot is 12340's chosen-title lookup (`0x72a290`): a player's `PLAYER_CHOSEN_TITLE` row
 //!   from `CharTitles.dbc` with the name in its `%s`, gendered, and the `PVP_MEDAL<n>` line under
 //!   it for a set `PLAYER_BYTES_3` byte 2; never a creature's.
 //!
-//! Not built: a7 and a8 have no cross-realm wire here.
+//! Not built: the owner line, the pet-subname rule and the foreign-realm tag.
 
 use std::collections::HashMap;
 
@@ -124,11 +124,37 @@ pub(crate) struct NameSubject {
     /// The creator read (`0x71b600`) answers: `CREATEDBY` with neither `CHARMEDBY` nor
     /// `SUMMONEDBY`.
     pub(crate) guardian: bool,
+    /// The `CHARMEDBY` unit rides this one and is the viewer or one it can cooperate with
+    /// (`0x729e96`-`0x729ec2`).
+    pub(crate) friendly_driver: bool,
 }
 
-/// The name gate's answer for a unit past its targetable, plate/bubble and own-unit
-/// legs. Not applied: the vehicle-charmer leg (`0x729e96`-`0x729ec2`), which names a vehicle a
-/// cooperating driver rides by the friendly-pet bit.
+/// `SPELL_AURA` 279, whose holder is named as the aura's caster (`0x72d590`).
+const AURA_INITIALIZE_IMAGES: u32 = 279;
+
+/// The casters `0x72d4f0`'s head walks, in aura-slot order: each aura with an applied effect
+/// that applies aura 279. The first one in view is the line source; one not found walks on.
+fn image_casters(
+    auras: &crate::unit_auras::UnitAuras,
+    effect_auras: impl Fn(u32) -> Option<[u32; 3]>,
+) -> Vec<u64> {
+    auras
+        .iter()
+        .filter(|a| {
+            effect_auras(a.spell_id).is_some_and(|effects| {
+                (0..3).any(|i| effects[i] == AURA_INITIALIZE_IMAGES && a.flags & (1 << i) != 0)
+            })
+        })
+        .map(|a| a.caster)
+        .collect()
+}
+
+/// Each named unit's [`image_casters`], re-walked only when its aura packets or the spell table
+/// move, so a steady frame reads no spell rows.
+#[derive(Default)]
+pub(crate) struct ImageCasters(bevy::ecs::entity::EntityHashMap<((u64, bool), Vec<u64>)>);
+
+/// The name gate's answer for a unit past its targetable, plate/bubble and own-unit legs.
 pub(crate) fn name_shown(cfg: NameConfig, s: &NameSubject) -> bool {
     use name_bit::*;
     if s.is_target {
@@ -160,7 +186,7 @@ pub(crate) fn name_shown(cfg: NameConfig, s: &NameSubject) -> bool {
         if s.guardian {
             return cfg.has(ENEMY_GUARDIAN);
         }
-        return side(s.cooperates, FRIENDLY_PET, ENEMY_PET);
+        return side(s.cooperates || s.friendly_driver, FRIENDLY_PET, ENEMY_PET);
     }
     if s.stealthed && s.attackable {
         return false;
@@ -171,25 +197,37 @@ pub(crate) fn name_shown(cfg: NameConfig, s: &NameSubject) -> bool {
     cfg.has(NPC)
 }
 
-/// The a1-a3 prefix slots of the line stack, the player object's vtable `+0x7c/+0x80/+0x84`: each
-/// set `PLAYER_FLAGS` bit (vmangos `Player.h:316-318`) stacks in slot order with no space before
-/// the name; the base unit object's slots are stubs, so NPCs never decorate. The tags are
-/// `CHAT_FLAG_AFK/DND/GM` (`GlobalStrings.lua:534-536`). The own player's AFK slot also reads the
-/// client-side mirror ([`drive_nameplates`]).
-const FLAG_PREFIXES: [(u32, &str); 3] = [(0x2, "<AFK>"), (0x4, "<DND>"), (0x8, "<GM>")];
+/// The a1-a3 prefix slots, the player's AFK (`0x6dc8d0`), DND (`0x6dc940`) and GM (`0x6dc980`)
+/// tags: each `PLAYER_FLAGS` bit reads its global, a missing one no tag; a unit's slots are stubs.
+/// The own player's AFK slot also reads the client-side mirror ([`drive_nameplates`]).
+pub(crate) const FLAG_TAG_KEYS: [(u32, &str); 3] = [
+    (0x2, "CHAT_FLAG_AFK"),
+    (0x4, "CHAT_FLAG_DND"),
+    (0x8, "CHAT_FLAG_GM"),
+];
 
-/// The name-line prefix for a player's `PLAYER_FLAGS`; empty when unflagged.
-fn flag_prefix(player_flags: u32) -> String {
-    FLAG_PREFIXES
+/// `PLAYER_FLAGS` bit `0x8000`: the Dev slot's literal `<Dev>` (`0x6dc9d0`), which also clears the
+/// GM tag (`0x6dc996`).
+const PLAYER_FLAGS_DEVELOPER: u32 = 0x8000;
+
+/// The name-line prefix for a player's `PLAYER_FLAGS`, the four slots glued with no separator;
+/// empty when unflagged.
+fn flag_prefix(player_flags: u32, strings: &PvpNameStrings) -> String {
+    let dev = player_flags & PLAYER_FLAGS_DEVELOPER != 0;
+    let mut out: String = FLAG_TAG_KEYS
         .iter()
-        .filter(|(bit, _)| player_flags & bit != 0)
-        .map(|(_, s)| *s)
-        .collect()
+        .filter(|&&(bit, _)| player_flags & bit != 0 && !(bit == 0x8 && dev))
+        .filter_map(|(_, key)| strings.strings.get(*key).map(String::as_str))
+        .collect();
+    if dev {
+        out.push_str("<Dev>");
+    }
+    out
 }
 
-/// What the a4 title slot resolves: `CharTitles.dbc`'s rows and the `PVP_MEDAL<n>` strings, which
-/// the honor feed reads off each VM once ([`crate::ui_honor`]): the world-text pass runs without
-/// the VM.
+/// What the a1-a4 slots resolve: `CharTitles.dbc`'s rows, the `PVP_MEDAL<n>` and flag-tag
+/// strings, which the honor feed reads off each VM once ([`crate::ui_honor`]): the world-text pass
+/// runs without the VM.
 #[derive(Resource, Default)]
 pub(crate) struct PvpNameStrings {
     /// The VM session the strings were read from; `None` before the first VM.
@@ -253,7 +291,7 @@ struct TitleKey {
     female: bool,
     /// `PLAYER_BYTES_3` byte 2.
     medal: u8,
-    /// The a4 bit (`0x20`) was set when the line was built.
+    /// The a4 bit (`0x8`) was set when the line was built.
     on: bool,
     /// The [`PvpNameStrings`] generation the line was built from.
     strings: u64,
@@ -283,7 +321,7 @@ fn name_line(flags: u32, key: Option<TitleKey>, strings: &PvpNameStrings, name: 
     let decorated = key
         .filter(|key| key.on)
         .and_then(|key| strings.decorated(key, name));
-    let mut line = flag_prefix(flags);
+    let mut line = flag_prefix(flags, strings);
     line.push_str(decorated.as_deref().unwrap_or(name));
     line
 }
@@ -491,6 +529,12 @@ pub(crate) fn drive_nameplates(
         Res<PvpNameStrings>,
         // A controller guid to its unit, for the player-controlled arm.
         Res<crate::net::GuidIndex>,
+        // The seats units ride, for the driver leg.
+        Query<&crate::vehicle::Passenger>,
+        // The auras and their spells' effect auras, for the aura-279 line source.
+        Query<&crate::unit_auras::UnitAuras>,
+        Option<Res<crate::ui_action::Spells>>,
+        Local<ImageCasters>,
     ),
     names: Res<NameCache>,
     // The guild cache, the a5 line's text; `ResMut` because a miss sends `CMSG_GUILD_QUERY`.
@@ -512,8 +556,22 @@ pub(crate) fn drive_nameplates(
         Query<(), With<crate::entities::mount::MountChild>>,
     ),
 ) {
-    let (selection, flash, rig, vplates, bubbles, group, social, name_cfg, pvp_strings, index) =
-        gates;
+    let (
+        selection,
+        flash,
+        rig,
+        vplates,
+        bubbles,
+        group,
+        social,
+        name_cfg,
+        pvp_strings,
+        index,
+        passengers,
+        auras,
+        spells,
+        mut image_cache,
+    ) = gates;
     let (self_guid, own_store) = self_store
         .single()
         .map_or((None, None), |(g, s)| (Some(g.0), Some(s)));
@@ -628,39 +686,87 @@ pub(crate) fn drive_nameplates(
                         && f.unit_charmed_by().is_none()
                         && f.unit_summoned_by().is_none()
                 }),
+                friendly_driver: fields
+                    .and_then(|f| f.unit_charmed_by())
+                    .and_then(|g| index.0.get(&g))
+                    .and_then(|&e| units.get(e).ok().zip(passengers.get(e).ok()))
+                    .is_some_and(|(driver, seat)| {
+                        seat.vehicle == guid.0
+                            && (driver.5 .0
+                                || crate::target::ring::can_cooperate_with_player(
+                                    factions.as_deref(),
+                                    driver.4,
+                                    own_store,
+                                ))
+                    }),
             };
             name_shown(*name_cfg, &subject)
         };
         if !show {
             continue;
         }
+        // Whose lines these are: the unit's own, or its aura-279 caster's when that is in view.
+        let casters: &[u64] = match auras.get(entity) {
+            Ok(a) => {
+                let stamp = (a.packets(), spells.is_some());
+                let slot = image_cache.0.entry(entity).or_default();
+                if slot.0 != stamp {
+                    *slot = (
+                        stamp,
+                        image_casters(a, |id| {
+                            spells
+                                .as_deref()
+                                .and_then(|s| s.catalog.get(id))
+                                .map(|d| d.effect_apply_aura)
+                        }),
+                    );
+                }
+                &slot.1
+            }
+            Err(_) => &[],
+        };
+        let (line_guid, line_net, line_store, line_self) = casters
+            .iter()
+            .find_map(|caster| {
+                index
+                    .0
+                    .get(caster)
+                    .and_then(|&e| units.get(e).ok())
+                    .filter(|u| matches!(u.1.kind, EntityKind::Player | EntityKind::Unit))
+            })
+            .map_or((guid.0, net, store, is_self), |u| {
+                (u.2 .0, u.1, u.4, u.5 .0)
+            });
         // Re-read by `peek`: resolve's `&mut`-tied return cannot outlive the subname read.
-        if names.resolve_unit(guid.0, store, &net_commands).is_none() {
+        if names
+            .resolve_unit(line_guid, line_store, &net_commands)
+            .is_none()
+        {
             continue;
         }
-        let Some(name) = names.peek_unit(guid.0, store) else {
+        let Some(name) = names.peek_unit(line_guid, line_store) else {
             continue;
         };
-        // The player flag prefixes (a1-a3), glued onto the name with no space.
-        let flags = if net.kind == EntityKind::Player {
-            store.map_or(0, |s| s.0.player_flags())
+        // The player flag prefixes (a1-a3 and Dev), glued onto the name with no space.
+        let flags = if line_net.kind == EntityKind::Player {
+            line_store.map_or(0, |s| s.0.player_flags())
         } else {
             0
         };
         // The AFK slot alone emits `<AFK>` for the active player while the mirror is set, whatever
         // the bit. Folded into `flags`, so the cache compare and [`name_line`] read the same bit.
-        let flags = if is_self && mirror.is_afk() {
+        let flags = if line_self && mirror.is_afk() {
             flags | 0x2
         } else {
             flags
         };
         // The one `"\n<%s>"` slot: a6 subtitle for an NPC, a5 guild for a player (CVar-gated).
-        let bracketed = match net.kind {
-            EntityKind::Unit => benilla_protocol::guid::entry(guid.0)
+        let bracketed = match line_net.kind {
+            EntityKind::Unit => benilla_protocol::guid::entry(line_guid)
                 .and_then(|e| names.creature_subname(e))
-                // vmangos sends "" for most templates: an empty subname is no line.
+                // An empty subname is no line (`0x72d852`).
                 .filter(|s| !s.trim().is_empty()),
-            EntityKind::Player if name_cfg.has(name_bit::PLAYER_GUILD) => store
+            EntityKind::Player if name_cfg.has(name_bit::PLAYER_GUILD) => line_store
                 .and_then(|s| crate::ui_guild::unit_guild_name(&s.0, &mut guilds, &net_commands)),
             _ => None,
         };
@@ -682,7 +788,7 @@ pub(crate) fn drive_nameplates(
         };
 
         seen.insert(entity);
-        let key = title_key(&name_cfg, &pvp_strings, net, store);
+        let key = title_key(&name_cfg, &pvp_strings, line_net, line_store);
         match plates.live.get(&entity) {
             // The steady frame compares the inputs in place, allocating nothing; a rebuild from
             // these inputs is the stack `LiveName` holds.
@@ -744,6 +850,7 @@ pub(crate) fn drive_nameplates(
             }
         }
     }
+    image_cache.0.retain(|unit, _| seen.contains(unit));
     // Plates whose unit despawned or gated off this frame.
     plates.live.retain(|unit, live| {
         if seen.contains(unit) {
@@ -948,24 +1055,99 @@ mod tests {
         assert!(height_scale(4.1) > 0.2, "past the knee: the jump is real");
     }
 
-    /// Bare concatenation in slot order AFK, DND, GM; other bits ignored.
+    /// The stock tags, as a VM defining `GlobalStrings.lua`'s three hands them over.
+    fn tag_strings() -> PvpNameStrings {
+        strings_of(
+            1,
+            &[
+                ("CHAT_FLAG_AFK", "<AFK>"),
+                ("CHAT_FLAG_DND", "<DND>"),
+                ("CHAT_FLAG_GM", "<GM>"),
+            ],
+        )
+    }
+
+    /// Bare concatenation in slot order AFK, DND, GM, Dev; other bits ignored.
     #[test]
     fn flag_prefix_matches_the_slot_law() {
-        assert_eq!(flag_prefix(0), "");
-        assert_eq!(flag_prefix(0x8), "<GM>");
-        assert_eq!(flag_prefix(0x2), "<AFK>");
-        assert_eq!(flag_prefix(0x4), "<DND>");
-        assert_eq!(flag_prefix(0x8 | 0x2), "<AFK><GM>", "slot order, a1 first");
+        let s = tag_strings();
+        assert_eq!(flag_prefix(0, &s), "");
+        assert_eq!(flag_prefix(0x8, &s), "<GM>");
+        assert_eq!(flag_prefix(0x2, &s), "<AFK>");
+        assert_eq!(flag_prefix(0x4, &s), "<DND>");
         assert_eq!(
-            flag_prefix(0x2 | 0x4 | 0x8),
+            flag_prefix(0x8 | 0x2, &s),
+            "<AFK><GM>",
+            "slot order, a1 first"
+        );
+        assert_eq!(
+            flag_prefix(0x2 | 0x4 | 0x8, &s),
             "<AFK><DND><GM>",
             "all three stack — the client enforces no exclusivity"
         );
         assert_eq!(
-            flag_prefix(0x10 | 0x20 | 0x1),
+            flag_prefix(0x10 | 0x20 | 0x1, &s),
             "",
             "ghost/resting/leader don't decorate"
         );
+    }
+
+    /// `0x8000` writes the literal `<Dev>` last and silences the GM slot (`0x6dc996`).
+    #[test]
+    fn the_developer_bit_writes_dev_and_clears_gm() {
+        let s = tag_strings();
+        assert_eq!(flag_prefix(0x8000, &s), "<Dev>");
+        assert_eq!(flag_prefix(0x8000 | 0x8, &s), "<Dev>");
+        assert_eq!(flag_prefix(0x8000 | 0x8 | 0x2, &s), "<AFK><Dev>");
+    }
+
+    /// The tags are the VM's globals: a localized one is read as is, an undefined one is no tag.
+    #[test]
+    fn the_tags_read_the_vms_strings() {
+        let s = strings_of(1, &[("CHAT_FLAG_AFK", "<ABS>"), ("CHAT_FLAG_DND", "")]);
+        assert_eq!(flag_prefix(0x2 | 0x4 | 0x8, &s), "<ABS>");
+    }
+
+    /// The install's Mirror Image images carry 58836, whose effect applies aura 279, so the
+    /// line-source walk has a live subject.
+    #[test]
+    fn the_installs_image_spell_applies_aura_279() {
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let catalog = benilla_formats::load_spell_catalog(&mut chain).expect("Spell.dbc");
+        let images = catalog.get(58836).expect("spell 58836");
+        assert!(images.effect_apply_aura.contains(&AURA_INITIALIZE_IMAGES));
+    }
+
+    /// The first aura holding an applied effect that applies aura 279 names its caster, in slot
+    /// order; an unapplied effect bit or another aura does not.
+    #[test]
+    fn image_casters_walk_the_applied_279_effects_in_slot_order() {
+        use crate::unit_auras::UnitAuras;
+        const IMAGES: u32 = 100;
+        const OTHER: u32 = 200;
+        const FIRST: u32 = 101;
+        let effects = |id: u32| match id {
+            IMAGES => Some([0, AURA_INITIALIZE_IMAGES, 0]),
+            FIRST => Some([AURA_INITIALIZE_IMAGES, 0, 0]),
+            OTHER => Some([AURA_INITIALIZE_IMAGES - 1, 0, 0]),
+            _ => None,
+        };
+        // Effect 1 is bit 0x2: flags 0x1 applies only effect 0, which is not 279.
+        let unapplied = UnitAuras::of(7, &[(0, IMAGES, 0x1)]);
+        assert!(image_casters(&unapplied, effects).is_empty());
+        let other = UnitAuras::of(7, &[(0, OTHER, 0x1)]);
+        assert!(image_casters(&other, effects).is_empty());
+        assert_eq!(
+            image_casters(&UnitAuras::of(9, &[(4, IMAGES, 0x2)]), effects),
+            vec![9]
+        );
+        // Flags 1 apply effect 0, where `FIRST` applies 279: slot 2 walks before slot 5.
+        let ordered =
+            UnitAuras::of_casters(&[(5, FIRST, 0x50), (2, FIRST, 0x20), (3, OTHER, 0x30)]);
+        assert_eq!(image_casters(&ordered, effects), vec![0x20, 0x50]);
+        let unknown_spell = UnitAuras::of(9, &[(0, 300, 0x7)]);
+        assert!(image_casters(&unknown_spell, effects).is_empty());
     }
 
     /// The strings a VM defining `pairs` hands over, as the honor feed sets them, and two rows.
@@ -1032,7 +1214,7 @@ mod tests {
     /// a4 title slot with no separator; the CVar off, no title or a creature keep the plain name.
     #[test]
     fn the_name_line_glues_the_flag_tags_onto_the_titled_name() {
-        let strings = strings_of(1, &[("PVP_MEDAL1", "Guardian")]);
+        let strings = strings_of(1, &[("PVP_MEDAL1", "Guardian"), ("CHAT_FLAG_AFK", "<AFK>")]);
         let line = |cfg: &NameConfig, (net, store): &(NetEntity, ObjectStore), flags, name| {
             name_line(
                 flags,
@@ -1313,6 +1495,23 @@ mod tests {
             &owned(1, true, false, true)
         ));
         assert!(name_shown(only(NON_COMBAT), &owned(12, false, false, true)));
+        // A vehicle we cannot cooperate with, driven by one we can, reads the friendly-pet bit.
+        let driven = NameSubject {
+            friendly_driver: true,
+            ..owned(1, false, true, false)
+        };
+        assert!(name_shown(only(FRIENDLY_PET), &driven));
+        assert!(!name_shown(only(ENEMY_PET), &driven));
+        assert!(
+            name_shown(
+                only(ENEMY_GUARDIAN),
+                &NameSubject {
+                    guardian: true,
+                    ..driven
+                }
+            ),
+            "the guardian leg comes first"
+        );
         let critter = NameSubject {
             creature_type: 8,
             ..Default::default()

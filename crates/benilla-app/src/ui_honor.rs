@@ -169,10 +169,10 @@ fn feed_pvp_timer(
     script.set_pvp_toggle_timer(timer.toggle_timer(now));
 }
 
-/// The overhead name's medal strings ([`crate::nameplates::PvpNameStrings`]), read off a VM the
-/// first frame it is in the world. Every VM is installed whole, outside `Update` (the boot VM with
-/// `GlobalStrings.lua` run, a world VM after its FrameXML and addon load), so the read sees what
-/// the load defined; any other frame pays one compare.
+/// The overhead name's medal and flag-tag strings ([`crate::nameplates::PvpNameStrings`]), read
+/// off a VM the first frame it is in the world. Every VM is installed whole, outside `Update` (the
+/// boot VM with `GlobalStrings.lua` run, a world VM after its FrameXML and addon load), so the read
+/// sees what the load defined; any other frame pays one compare.
 fn feed_pvp_name_strings(
     script: Option<NonSend<UiScript>>,
     mut strings: ResMut<crate::nameplates::PvpNameStrings>,
@@ -185,10 +185,16 @@ fn feed_pvp_name_strings(
     }
 }
 
-/// The [`benilla_ui::script::pvp_name_global_keys`] that `script` defines, with their values.
+/// The [`benilla_ui::script::pvp_name_global_keys`] and the name flag tags
+/// ([`crate::nameplates::FLAG_TAG_KEYS`]) that `script` defines, with their values.
 fn pvp_name_strings(script: &UiScript) -> HashMap<String, String> {
     benilla_ui::script::pvp_name_global_keys()
         .into_iter()
+        .chain(
+            crate::nameplates::FLAG_TAG_KEYS
+                .iter()
+                .map(|(_, key)| (*key).to_owned()),
+        )
         .filter_map(|key| benilla_ui::strings::global(script.lua(), &key).map(|value| (key, value)))
         .collect()
 }
@@ -453,19 +459,25 @@ mod tests {
         script
     }
 
-    /// The read takes the overhead name's medal keys a VM defines, and nothing else.
+    /// The read takes the overhead name's medal and flag-tag keys a VM defines, and nothing else.
     #[test]
-    fn the_name_strings_read_takes_only_the_medal_keys() {
+    fn the_name_strings_read_takes_only_the_medal_and_tag_keys() {
         let strings = pvp_name_strings(&vm(r#"PVP_MEDAL1 = "Guardian"
+               CHAT_FLAG_DND = "<DND>"
                UNIT_PVP_NAME = "%s %s"
                GARBAGE_KEY = "x""#));
         assert_eq!(
             strings.get("PVP_MEDAL1").map(String::as_str),
             Some("Guardian")
         );
+        assert_eq!(
+            strings.get("CHAT_FLAG_DND").map(String::as_str),
+            Some("<DND>")
+        );
+        assert!(!strings.contains_key("CHAT_FLAG_AFK"), "an undefined tag");
         assert!(
             !strings.contains_key("UNIT_PVP_NAME"),
-            "only the medal keys"
+            "only the medal and tag keys"
         );
         assert!(!strings.contains_key("GARBAGE_KEY"));
     }
