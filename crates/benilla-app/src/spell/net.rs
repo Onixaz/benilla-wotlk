@@ -1331,7 +1331,8 @@ fn spell_start(
             }
         );
     }
-    // Our own timed cast opens the bar.
+    // A hidden start (`castFlags & 1`) skips the cast state, precast and UI start (`0x80694e`).
+    let hidden = cast_flags & 0x1 != 0;
     // Every caster's start reaches the unit-cast feed, which applies the event gate.
     cast_bar.0.push(CastBarEdge::Start {
         caster,
@@ -1339,12 +1340,13 @@ fn spell_start(
         cast_count,
         cast_time_ms,
         immunities,
+        hidden,
     });
     if self_guid.0 == Some(caster) && cast_time_ms > 0 {
         // The real cast time replaces the guard's send-time deadline, ranged casts included.
         pending.refine(cast_time_ms, Instant::now());
     }
-    if let Some(&e) = index.0.get(&caster) {
+    if let Some(&e) = index.0.get(&caster).filter(|_| !hidden) {
         let fresh = Casting {
             spell_id,
             cast_count,
@@ -2804,7 +2806,7 @@ mod tests {
         );
 
         // One `spell_start` call: (count, spell, cast time).
-        let start = |app: &mut App, count: u8, spell: u32, cast_ms: u32| {
+        let start = |app: &mut App, count: u8, spell: u32, cast_ms: u32, flags: u32| {
             app.world_mut()
                 .run_system_once(
                     move |mut commands: Commands,
@@ -2818,7 +2820,7 @@ mod tests {
                             10,
                             count,
                             spell,
-                            0,
+                            flags,
                             cast_ms,
                             None,
                             None,
@@ -2844,13 +2846,13 @@ mod tests {
         };
 
         // An instant leaves another spell's held state (`0x8053cd`).
-        start(&mut app, 1, 6136, 0);
+        start(&mut app, 1, 6136, 0, 0);
         assert_eq!(held(&app), Some((10, 0, false)));
         // A timed start of another spell replaces it (`0x80544e`).
-        start(&mut app, 1, 133, 2500);
+        start(&mut app, 1, 133, 2500, 0);
         assert_eq!(held(&app), Some((133, 1, true)));
         // A same-spell restart keeps the held count.
-        start(&mut app, 2, 133, 2500);
+        start(&mut app, 2, 133, 2500, 0);
         assert_eq!(held(&app), Some((133, 1, true)));
         // The end of another count leaves it; its own count clears it (`0x7fed81`).
         fire_go(&mut app, 133, true);
@@ -2864,8 +2866,15 @@ mod tests {
         fire_go(&mut app, 133, true);
         assert_eq!(held(&app), None);
         // With none held, an instant sets it.
-        start(&mut app, 3, 6136, 0);
+        start(&mut app, 3, 6136, 0, 0);
         assert_eq!(held(&app), Some((6136, 3, true)));
+        // A hidden start (`castFlags & 1`) leaves it, with no precast edge (`0x80694e`).
+        app.world_mut()
+            .resource_mut::<Messages<CastEvent>>()
+            .clear();
+        start(&mut app, 4, 133, 2500, 0x1);
+        assert_eq!(held(&app), Some((6136, 3, true)));
+        assert!(app.world().resource::<Messages<CastEvent>>().is_empty());
     }
 
     /// Our channel's start and its server end (`MSG_CHANNEL_UPDATE(0)`) arm and close
