@@ -2,29 +2,28 @@
 # before anyone builds it. The chain reads no WoW install, so it runs here as it runs anywhere; the
 # engine boot draws to Xvfb through Mesa's software Vulkan. The data-gated tests and the player
 # build (scripts/check.sh) and a live run happen on the maintainer's machine. A pull request from a
-# branch of this repository runs it too while it carries the `run-gates` label, on every push.
+# branch of this repository waits on the `gates` environment and runs only once the maintainer
+# approves it there.
 name: CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gates:
-    # A fork's pull request, a manual run, or a labelled one; another label added starts nothing.
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      || (github.event.action != 'labeled' || github.event.label.name == 'run-gates')
-      && (github.event.pull_request.head.repo.full_name != github.repository
-      || contains(github.event.pull_request.labels.*.name, 'run-gates'))
-    # On the job, so a skipped run (another label) never cancels a running one.
-    concurrency:
-      group: ci-${{ github.event.pull_request.number || github.ref }}
-      cancel-in-progress: true
+    # `gates` holds for the maintainer's approval; `gates-open` (a fork, a manual run) has no rule.
+    environment: >-
+      ${{ github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && 'gates' || 'gates-open' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
