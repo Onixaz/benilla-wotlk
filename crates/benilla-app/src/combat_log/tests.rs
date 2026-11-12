@@ -322,6 +322,37 @@ fn a_flagged_auras_mechanic_floats_by_its_three_cvars() {
     );
 }
 
+/// `0x74db8c`: a flagged spell hidden in the log (`AttributesExD & 1`) floats no mechanic word,
+/// though its aura still logs.
+#[test]
+fn a_spell_hidden_in_the_log_floats_no_mechanic() {
+    let mut app = rig();
+    app.insert_resource(crate::ui_action::SpellMechanics {
+        catalog: benilla_formats::SpellMechanicCatalog::from_names([(12, "stunned".to_string())]),
+    });
+    app.world_mut()
+        .resource_mut::<crate::ui_action::Spells>()
+        .catalog = SpellCatalog::from_displays(
+        [(
+            STUN,
+            SpellDisplay {
+                attributes_ex4: 0x1,
+                attributes_ex6: 0x20_0000,
+                effect_mechanic: [12, 0, 0],
+                ..spell("Hammer of Justice", 2, 1)
+            },
+        )]
+        .into_iter()
+        .collect(),
+    );
+    app.world_mut().resource_mut::<DamageTextGates>().mechanics = true;
+    run(&mut app, |log| {
+        log.aura_added_or_removed(MOB, ME, STUN, true, true)
+    });
+    assert_eq!(events(&app), [CombatLogEvent::SpellAuraApplied]);
+    assert!(floated(&mut app).is_empty());
+}
+
 /// A heal over someone else floats green `+N`; over the player it is centre text with the healer.
 #[test]
 fn heals_float_over_others_and_centre_over_you() {

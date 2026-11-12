@@ -1493,9 +1493,10 @@ impl Log<'_, '_> {
     }
 
     /// An aura's mechanic words (`0x74db80`): each distinct effect mechanic, then the spell's own
-    /// when no effect names it; an open-lock spell and the interrupt mechanic float none.
+    /// when no effect names it; a spell hidden in the log (`0x74db8c`), an open-lock spell and the
+    /// interrupt mechanic float none.
     fn spell_mechanic_text(&mut self, unit: u64, caster: u64, spell: u32) {
-        let Some(d) = self.ctx.spell(spell).filter(|d| logged(d)) else {
+        let Some(d) = self.ctx.spell(spell).filter(|d| !hidden_in_log(d)) else {
             return;
         };
         if d.effects.contains(&EFFECT_OPEN_LOCK) {

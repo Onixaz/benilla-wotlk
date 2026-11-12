@@ -411,7 +411,8 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut gates: ResMut<Damag
         "petspelldamage" => gates.pet_spell = ev.flag(),
         "combatlogperiodicspells" => gates.periodic = ev.flag(),
         "combathealing" => gates.healing = ev.flag(),
-        "fctallspellmechanics" => gates.all_mechanics = ev.flag(),
+        // `0x74da1d`: the all row needs an int value above 0, the other two any nonzero one.
+        "fctallspellmechanics" => gates.all_mechanics = ev.num() >= 1.0,
         "fctspellmechanics" => gates.mechanics = ev.flag(),
         "fctspellmechanicsother" => gates.mechanics_other = ev.flag(),
         _ => {}
@@ -493,5 +494,24 @@ mod tests {
         assert_eq!(v, ["c"]);
         drop_indices(&mut v, vec![0]);
         assert!(v.is_empty());
+    }
+
+    /// `0x74da1d`: `fctAllSpellMechanics` opens on an int value above 0, so `-1` keeps it shut,
+    /// while `fctSpellMechanics` opens on any nonzero one.
+    #[test]
+    fn the_all_mechanics_row_needs_a_positive_value() {
+        let mut app = App::new();
+        app.init_resource::<DamageTextGates>().add_observer(on_cvar);
+        let mut set = |name: &str, new: &str| {
+            app.world_mut().trigger(crate::cvars::CvarChanged {
+                name: name.into(),
+                old: "0".into(),
+                new: new.into(),
+            });
+            *app.world().resource::<DamageTextGates>()
+        };
+        assert!(set("fctAllSpellMechanics", "1").all_mechanics);
+        assert!(!set("fctAllSpellMechanics", "-1").all_mechanics);
+        assert!(set("fctSpellMechanics", "-1").mechanics);
     }
 }
