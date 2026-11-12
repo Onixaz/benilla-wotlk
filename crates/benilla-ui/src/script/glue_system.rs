@@ -36,6 +36,8 @@ pub struct GlueBilling {
 /// The system verbs' slots in the glue model.
 #[derive(Default)]
 pub(crate) struct GlueSystem {
+    /// The three credits files, indexed by client expansion (Classic, Burning Crusade, Wrath).
+    pub(super) credits: [Option<String>; 3],
     pub(super) scan: ScanDll,
     /// `SCANDLL_ERROR` waits for the glue manager's next idle tick (`0x4dab40` at state 14 finishes
     /// the scan), never inside the `ScanDLLStart` call.
@@ -48,6 +50,9 @@ pub(crate) struct GlueSystem {
 }
 
 impl super::UiScript {
+    pub fn set_glue_credits(&mut self, credits: [Option<String>; 3]) {
+        self.model_mut().glue.system.credits = credits;
+    }
     /// The Scan.dll check's state.
     pub fn glue_scan(&self) -> ScanDll {
         self.model_ref().glue.system.scan
@@ -150,6 +155,41 @@ pub(super) fn install_cvar_ranges(lua: &Lua) -> mlua::Result<()> {
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
+
+    g.set(
+        "GetCreditsText",
+        lua.create_function(|lua, value: Value| {
+            let index = match value {
+                Value::Integer(v) => v as f64,
+                Value::Number(v) => v,
+                _ => {
+                    return Err(mlua::Error::runtime(
+                        "Usage: Script_GetCreditText(versionIndex)",
+                    ))
+                }
+            };
+            let index = index.trunc() as i64;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let text = model
+                .glue
+                .system
+                .credits
+                .get(if index == 1 {
+                    0
+                } else if index == 2 {
+                    1
+                } else {
+                    2
+                })
+                .and_then(|v| v.clone());
+            match text {
+                Some(text) => Ok(Value::String(lua.create_string(text)?)),
+                None => Ok(Value::Nil),
+            }
+        })?,
+    )?;
 
     // `GetCVar` (`0x4ddd10`) and `GetCVarDefault` (`0x4dde10`): a string argument or the usage
     // error, then the registered CVar's value or default, or `Couldn't find CVar named`.

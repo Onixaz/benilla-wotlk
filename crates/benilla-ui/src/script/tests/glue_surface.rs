@@ -84,7 +84,6 @@ fn the_glue_tables_hold_their_rows() {
 const NOT_YET: &[(&str, &[&str])] = &[(
     "the glue's credits text and its options defaults (table t022)",
     &[
-        "GetCreditsText",
         "RestoreVideoEffectsDefaults",
         "RestoreVideoResolutionDefaults",
         "RestoreVideoStereoDefaults",
@@ -197,6 +196,29 @@ fn glue_events_register_by_the_glue_table() {
         s.eval::<Vec<String>>("return heard").unwrap(),
         ["all:SET_GLUE_SCREEN"]
     );
+}
+
+#[test]
+fn get_credits_text_selects_expansion_and_validates_arguments() {
+    let mut s = UiScript::new_glue().unwrap();
+    s.set_glue_credits([
+        Some("classic".into()),
+        Some("bc".into()),
+        Some("wrath".into()),
+    ]);
+    assert_eq!(
+        s.eval::<String>("return GetCreditsText(1)").unwrap(),
+        "classic"
+    );
+    assert_eq!(
+        s.eval::<String>("return GetCreditsText(2.9)").unwrap(),
+        "bc"
+    );
+    assert_eq!(
+        s.eval::<String>("return GetCreditsText(3)").unwrap(),
+        "wrath"
+    );
+    assert!(s.run("GetCreditsText('1')").is_err());
 }
 
 /// The in-game VM keeps its by-name registry: an in-game event registers and fires there.
