@@ -1,7 +1,7 @@
 //! The paper-doll cursor verbs: an equipped slot is an item source under
 //! [`super::EQUIPMENT_BAG`], so the shared cursor code handles its cancel, clear and world drop.
 
-use mlua::Lua;
+use mlua::{Lua, Value};
 
 use crate::script::binding_abi::flag;
 use crate::script::container::ContainerMove;
@@ -190,13 +190,22 @@ pub(in crate::script) fn is_inventory_item_locked(model: &Model, id: u32) -> boo
     held_here || fed
 }
 
+/// A verb's slot argument as the live id, through the registrar's reader (`0x5e7c00`).
+pub(super) fn live_id(lua: &Lua, v: &Value) -> mlua::Result<Option<u32>> {
+    let live = crate::script::char_stats::live_slot_arg(lua, v)?;
+    Ok(live.and_then(|id| u32::try_from(id).ok()))
+}
+
 /// Register the paper-doll verbs as globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
     g.set(
         "PickupInventoryItem",
-        lua.create_function(|lua, id: u32| {
+        lua.create_function(|lua, id: Value| {
+            let Some(id) = live_id(lua, &id)? else {
+                return Ok(false);
+            };
             let mut model = crate::script::model_mut_of(lua);
             Ok(pickup_inventory_item(&mut model, id))
         })?,
@@ -210,7 +219,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     g.set(
         "CursorCanGoInSlot",
-        lua.create_function(|lua, id: u32| {
+        lua.create_function(|lua, id: Value| {
+            let Some(id) = live_id(lua, &id)? else {
+                return Ok(false);
+            };
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
@@ -226,7 +238,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     g.set(
         "UseInventoryItem",
-        lua.create_function(|lua, id: u32| {
+        lua.create_function(|lua, id: Value| {
+            // The ammo leg returns with the refused slots (`0x5ea630`).
+            let Some(id) = live_id(lua, &id)?.filter(|&id| id != 0) else {
+                return Ok(());
+            };
             let mut model = crate::script::model_mut_of(lua);
             use_inventory_item(&mut model, id);
             Ok(())
@@ -234,7 +250,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     g.set(
         "IsInventoryItemLocked",
-        lua.create_function(|lua, id: u32| {
+        lua.create_function(|lua, id: Value| {
+            let Some(id) = live_id(lua, &id)? else {
+                return Ok(Value::Nil);
+            };
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");

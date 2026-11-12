@@ -294,13 +294,13 @@ fn enchant_use_spell(model: &Model, item_id: u32) -> Option<u32> {
 
 /// `EquipItemByName`'s target, 0-based: a number less one, or a slot name's doll id with nothing
 /// taken off, one slot higher (`0x51cfb4` against `0x51cf23`), as 12340 runs it.
-fn equip_slot(lua: &Lua, slot: &Value) -> mlua::Result<u32> {
+fn equip_slot(lua: &Lua, model: &Model, slot: &Value) -> mlua::Result<u32> {
     const INVALID: &str = "EquipItemByName(): Invalid inventory dstSlot";
     let dst = match lua.coerce_number(slot.clone())? {
         Some(n) => ftol(n).wrapping_sub(1) as u32,
         None => {
             let name = super::binding_abi::optional_string(lua, slot).unwrap_or_default();
-            match super::char_stats::slot_id_by_name(&name) {
+            match super::char_stats::slot_id_by_name(model, &name) {
                 Some(id) => id as u32,
                 None => return Err(mlua::Error::runtime(INVALID)),
             }
@@ -358,7 +358,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             let dst = match slot {
                 Value::Nil | Value::Boolean(_) | Value::Table(_) => None,
-                ref slot => Some(equip_slot(lua, slot)?),
+                ref slot => Some(equip_slot(lua, &model, slot)?),
             };
             let Some(query) = ItemQuery::of(lua, &item, ItemQuery::Prefix)? else {
                 return Ok(());
@@ -557,6 +557,7 @@ mod tests {
     /// A player with `id` in backpack slot 3.
     fn carrying(id: u32) -> UiScript {
         let mut s = UiScript::new().unwrap();
+        s.set_paperdoll_item_frame(crate::script::PaperDollSlotInfo::test_rows());
         s.set_unit_guids(&UnitGuids {
             player: 1,
             ..Default::default()

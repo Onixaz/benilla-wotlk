@@ -1095,6 +1095,7 @@ pub(crate) struct Model {
     /// The pet's combat stats, which the reference's pet sheet reads as `UnitStat("pet", …)`.
     pub(crate) pet_combat_stats: Option<char_stats::UnitCombatStats>,
     pub(crate) inventory_slots: char_stats::InventorySlots,
+    pub(crate) paperdoll_item_frame: Vec<char_stats::PaperDollSlotInfo>,
     /// The seven bank-bag slots, ids 68..=74, fed from the player descriptor's guids.
     pub(crate) bank_bag_slots: char_stats::BankBagSlots,
     /// `GetInventoryAlertStatus` in `0xa1ce4c` order; a change fires `UPDATE_INVENTORY_ALERTS`.
@@ -1871,6 +1872,7 @@ impl Model {
             player_combat_stats: None,
             pet_combat_stats: None,
             inventory_slots: Default::default(),
+            paperdoll_item_frame: Vec::new(),
             bank_bag_slots: Default::default(),
             inventory_alerts: [0; 12],
             inventory_repairs: Vec::new(),

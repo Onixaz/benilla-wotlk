@@ -38,10 +38,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("ObjectEffectModifier", "#243 object effects"),
     ("ObjectEffectPackage", "#243 object effects"),
     ("ObjectEffectPackageElem", "#243 object effects"),
-    (
-        "PaperDollItemFrame",
-        "#239 equipment slot names: GetInventorySlotInfo",
-    ),
     ("RandPropPoints", "#239 random property and suffix stats"),
     ("ScalingStatDistribution", "#239 heirloom stat scaling"),
     ("ScalingStatValues", "#239 heirloom stat scaling"),

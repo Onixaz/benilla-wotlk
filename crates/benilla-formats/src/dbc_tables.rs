@@ -160,6 +160,7 @@ tables! {
         "NameGen" => characters::name_gen_schema(),
         "Package" => packages::schema(),
         "PageTextMaterial" => page_text_material::schema(),
+        "PaperDollItemFrame" => paperdoll_item_frame::schema(),
         "ParticleColor" => particles::particle_color_schema(),
         "PetPersonality" => pet_stats::personality_schema(),
         "PowerDisplay" => power_display::power_display_schema(),

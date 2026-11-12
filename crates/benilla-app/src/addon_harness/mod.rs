@@ -3538,6 +3538,7 @@ mod dependency_tests {
     /// A VM shaped like the survey's, for the oracle tests below.
     fn seated_vm() -> UiScript {
         let mut script = UiScript::new().unwrap();
+        script.set_paperdoll_item_frame(benilla_ui::script::PaperDollSlotInfo::test_rows());
         script.set_screen_size(1024.0, 768.0);
         seat_a_session(&mut script);
         let _ = crate::ui_script::load_default_ui(&script);

@@ -5,20 +5,9 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::number_arg;
-use super::char_stats::{alert_events, inventory_slot_reader_accepts, recompute_inventory_alerts};
+use super::char_stats::{alert_events, inventory_slot_arg, recompute_inventory_alerts};
 use super::container::UiCursorMode;
 use super::region::{clear_texture, this_texture};
-
-/// The registrar's shared slot reader: `is-number`, `tonumber`, the truncating cast, then `dec`
-/// into the 0-based slot and the whitelist; a failure of either raises `message`. The 0-based slot,
-/// `-1` for Lua 0, the ammo leg.
-fn inventory_slot_arg(lua: &Lua, v: Value, message: &'static str) -> mlua::Result<i32> {
-    let slot0 = number_arg(lua, v, message)?.wrapping_sub(1);
-    if !inventory_slot_reader_accepts(slot0) {
-        return Err(mlua::Error::RuntimeError(message.into()));
-    }
-    Ok(slot0)
-}
 
 /// Register the four globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -35,9 +24,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ShowInventorySellCursor(slot): the Buy cursor over a worn item. The armed-spell and
-    // base-cursor gates run before the argument is read, so under either a bad slot does not raise;
-    // past them a slot outside the reader's whitelist raises, and the ammo slot, an empty slot or a
-    // locked item leave the cursor as it was. Zero returns. The stock doll's call is commented out
+    // base-cursor gates run before the argument is read; past them a slot the reader refuses, the
+    // ammo slot, an empty slot or a locked item leave the cursor as it was (`0x5ea930`). Zero returns. The stock doll's call is commented out
     // (`PaperDollFrame.lua:754-756`).
     g.set(
         "ShowInventorySellCursor",
@@ -51,14 +39,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     return Ok(());
                 }
             }
-            let slot0 = inventory_slot_arg(
-                lua,
-                slot,
-                "Invalid inventory slot in ShowInventorySellCursor",
-            )?;
-            if slot0 == -1 {
+            let Some(slot0) = inventory_slot_arg(lua, &slot)?.filter(|&s| s != -1) else {
                 return Ok(());
-            }
+            };
             let mut model = crate::script::model_mut_of(lua);
             let sellable = usize::try_from(slot0 + 1)
                 .ok()
@@ -73,8 +56,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // SetInventoryPortaitTexture(texture, unit, slot) (the reference's spelling): the texture is
-    // cleared before arguments 2 and 3 are read, each of which raises on a bad value. The unit is
-    // then read from argument 1, the texture itself, which `lua_tostring` answers NULL for, so the
+    // cleared before arguments 2 and 3 are read; a bad unit raises and a refused slot returns. The
+    // unit is then read from argument 1, the texture itself, which `lua_tostring` answers NULL for, so the
     // token resolves no unit and the item's icon is never painted: the call only blanks the
     // texture. No stock caller.
     g.set(
@@ -90,11 +73,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: SetInventoryPortaitTexture(texure, unit, slot)",
                 ));
             }
-            inventory_slot_arg(
-                lua,
-                slot,
-                "Invalid inventory slot in SetInventoryPortaitTexture",
-            )?;
+            inventory_slot_arg(lua, &slot)?;
             Ok(())
         })?,
     )?;
@@ -209,6 +188,7 @@ mod tests {
     #[test]
     fn inventory_sell_cursor_buys_over_a_worn_item_only() {
         let mut s = UiScript::new().unwrap();
+        s.set_paperdoll_item_frame(crate::script::PaperDollSlotInfo::test_rows());
         let mut slots: crate::script::InventorySlots = Default::default();
         slots[16] = Some(InvSlotView {
             item_id: 2361,
@@ -235,16 +215,15 @@ mod tests {
             0
         );
 
-        for bad in ["24", "39", "75", "119", "-1", "'x'"] {
-            let err = s
-                .run(&format!("ShowInventorySellCursor({bad})"))
-                .unwrap_err()
-                .to_string();
-            assert!(
-                err.contains("Invalid inventory slot in ShowInventorySellCursor"),
-                "{bad}: {err}"
-            );
+        // A slot the reader refuses returns, and a name is its row number read 0-based.
+        s.run("ResetCursor()").unwrap();
+        for refused in ["24", "39", "75", "119", "-1", "'MainHandSlot'"] {
+            s.run(&format!("ShowInventorySellCursor({refused})"))
+                .unwrap();
+            assert_eq!(s.ui_cursor(), None, "{refused}");
         }
+        s.run("ShowInventorySellCursor('BackSlot')").unwrap();
+        assert_eq!(s.ui_cursor(), Some(UiCursorMode::Buy));
     }
 
     /// The two cursor gates come before the argument read.
@@ -299,14 +278,8 @@ mod tests {
                 .unwrap(),
             None
         );
-        let err = s
-            .run("SetInventoryPortaitTexture(PortTex, 'player', 30)")
-            .unwrap_err()
-            .to_string();
-        assert!(
-            err.contains("Invalid inventory slot in SetInventoryPortaitTexture"),
-            "{err}"
-        );
+        s.run("SetInventoryPortaitTexture(PortTex, 'player', 30)")
+            .unwrap();
 
         for (call, message) in [
             (

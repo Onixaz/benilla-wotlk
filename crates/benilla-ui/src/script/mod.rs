@@ -318,8 +318,8 @@ pub use camera_view::{CameraViewRequest, CAMERA_VIEW_COUNT};
 pub use channel::{ChannelCommand, ZoneChannelRow};
 pub use channel_pane::ChannelSlotInfo;
 pub use char_stats::{
-    weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, UnitCombatStats,
-    BANK_BAG_SLOT_COUNT, INVENTORY_SLOT_COUNT, SKILL_DEFENSE, SKILL_UNARMED,
+    weapon_subclass_skill, BankBagSlots, InvSlotView, InventorySlots, PaperDollSlotInfo,
+    UnitCombatStats, BANK_BAG_SLOT_COUNT, INVENTORY_SLOT_COUNT, SKILL_DEFENSE, SKILL_UNARMED,
 };
 pub use chat_misc::{EmoteRequest, EmoteTarget};
 pub use chat_send::ChatSend;
