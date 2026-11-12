@@ -51,6 +51,9 @@ bevy_render = { path = "third_party/bevy_render" }
 # wgpu-hal 27.0.4, patched to recycle Metal staging buffers instead of allocating one per
 # `write_buffer` (`third_party/wgpu-hal/BENILLA.md`).
 wgpu-hal = { path = "third_party/wgpu-hal" }
+# bevy_ecs 0.18.1, patched so a query walks only the archetypes that hold an entity
+# (`third_party/bevy_ecs/BENILLA.md`).
+bevy_ecs = { path = "third_party/bevy_ecs" }
 
 # Two builds. `dev` (`cargo dev`): every run, probe, test and gate builds it, so they share one
 # set of compiled artifacts. `release` is built, never tested: to play (`cargo play`), to ship
@@ -77,6 +80,11 @@ codegen-units = 1
 debug = false
 debug-assertions = false
 overflow-checks = false
+
+# The vendored crates build as the registry's do, not incrementally as a path dependency does by
+# default: an incremental `bevy_ecs` splits into many codegen units whatever `codegen-units` says.
+[profile.dev.package.bevy_ecs]
+incremental = false
 
 # The audio thread's no-allocation guard: under its `disable_release` default it checks only with
 # debug assertions of its own.

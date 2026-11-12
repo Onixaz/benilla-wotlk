@@ -29,13 +29,14 @@
 //! benilla-buildstamp = { git = "https://github.com/Onixaz/benilla-wotlk" }
 //!
 //! # Cargo reads `[patch]` and `[profile]` from the root manifest only, so benilla's are repeated:
-//! # without the patches the addon Lua, the mixer, the swapchain latency and Metal's staging
-//! # buffers are not benilla's.
+//! # without the patches the addon Lua, the mixer, the swapchain latency, Metal's staging
+//! # buffers and the query walk are not benilla's.
 //! [patch.crates-io]
 //! lua-src = { git = "https://github.com/Onixaz/benilla-wotlk" }
 //! kira = { git = "https://github.com/Onixaz/benilla-wotlk" }
 //! bevy_render = { git = "https://github.com/Onixaz/benilla-wotlk" }
 //! wgpu-hal = { git = "https://github.com/Onixaz/benilla-wotlk" }
+//! bevy_ecs = { git = "https://github.com/Onixaz/benilla-wotlk" }
 //!
 //! # The dev build; `assert_no_alloc` keeps its debug assertions, or `benilla-app` does
 //! # not build.
@@ -54,6 +55,11 @@
 //!
 //! [profile.dev.package.assert_no_alloc]
 //! debug-assertions = true
+//!
+//! # As the root has it, where the patched `bevy_ecs` is a path dependency and would otherwise
+//! # build incrementally.
+//! [profile.dev.package.bevy_ecs]
+//! incremental = false
 //!
 //! [profile.release]
 //! lto = "fat"
