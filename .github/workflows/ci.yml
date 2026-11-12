@@ -1,24 +1,30 @@
 # scripts/gates.sh, the land gates, on Linux for a pull request from a fork: a red one is seen
 # before anyone builds it. The chain reads no WoW install, so it runs here as it runs anywhere; the
 # engine boot draws to Xvfb through Mesa's software Vulkan. The data-gated tests and the player
-# build (scripts/check.sh) and a live run happen on the maintainer's machine.
+# build (scripts/check.sh) and a live run happen on the maintainer's machine. A pull request from a
+# branch of this repository runs it too while it carries the `run-gates` label, on every push.
 name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   gates:
-    # A branch of this repository runs the chain before it lands; a fork's pull request runs here.
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name != github.repository
+    # A fork's pull request, a manual run, or a labelled one; another label added starts nothing.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.action != 'labeled' || github.event.label.name == 'run-gates')
+      && (github.event.pull_request.head.repo.full_name != github.repository
+      || contains(github.event.pull_request.labels.*.name, 'run-gates'))
+    # On the job, so a skipped run (another label) never cancels a running one.
+    concurrency:
+      group: ci-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 150
     env:
