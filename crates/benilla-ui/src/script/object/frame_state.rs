@@ -353,30 +353,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 }
             }
             // The same parent is a total no-op (`0x4911b0`), not even a layout touch.
-            let moves = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model");
-                model.arena.reparent_moves(h, new_parent)
-            };
-            if !moves {
-                return Ok(());
-            }
-            event::hide_this(lua, h);
-            let relinked = {
-                let mut model = crate::script::model_mut_of(lua);
-                let relinked = model.arena.reparent_relink(h, new_parent);
-                if relinked {
-                    // A reparent moves the subtree's effective scale, a layout input and part of
-                    // every descendant FontString's measure key.
-                    model.touch_layout_reparent(h);
-                    model.touch_measure_all();
-                }
-                relinked
-            };
-            if relinked {
-                event::show_this(lua, h);
-            }
+            event::set_parent(lua, h, new_parent);
             Ok(())
         },
     )?;

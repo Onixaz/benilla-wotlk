@@ -190,6 +190,51 @@ pub(super) fn hide_this(lua: &Lua, h: FrameHandle) {
     hide_step(lua, h, true);
 }
 
+/// `SetParent`'s body (`0x4911b0`), live: nothing for an unchanged parent, else the hide half
+/// under the old parent, the relink, and the show half under the new one.
+pub(super) fn set_parent(lua: &Lua, h: FrameHandle, new_parent: Option<FrameHandle>) {
+    let moves = {
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model app_data");
+        model.arena.reparent_moves(h, new_parent)
+    };
+    if !moves {
+        return;
+    }
+    hide_this(lua, h);
+    let relinked = {
+        let mut model = crate::script::model_mut_of(lua);
+        let relinked = model.arena.reparent_relink(h, new_parent);
+        if relinked {
+            // A reparent moves the subtree's effective scale, a layout input and part of every
+            // descendant FontString's measure key.
+            model.touch_layout_reparent(h);
+            model.touch_measure_all();
+        }
+        relinked
+    };
+    if relinked {
+        show_this(lua, h);
+    }
+}
+
+/// The being-scrolled set's bracket (`0x490f60`): a visible frame is hidden and shown again, so
+/// its subtree hears `OnHide` and `OnShow`. The flags it writes between the two (`0x2000`,
+/// `0x4000`) route the client's own draw; benilla clips a scroll child at extract and keeps none.
+pub(super) fn rescroll_bracket(lua: &Lua, h: FrameHandle) {
+    let visible = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data")
+        .arena
+        .frame(h)
+        .is_some_and(|f| f.effective_visible);
+    if visible {
+        hide_this(lua, h);
+        show_this(lua, h);
+    }
+}
+
 /// `Hide` on `h` without its kind's hide override; its descendants still take theirs.
 pub(super) fn hide_without_override(lua: &Lua, h: FrameHandle) {
     {
