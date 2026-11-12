@@ -114,8 +114,9 @@ pub(crate) struct GuildState {
     selection: u64,
     /// Member guids in the order last shown, mapping a Lua row index back to its player.
     display_order: Vec<u64>,
-    /// The held invitation, `(inviter, guild)`; the accept and decline packets do not name it.
-    pending_invite: Option<(String, String)>,
+    /// The invitations not yet signalled, `(inviter, guild)`: every packet fires its own
+    /// `GUILD_INVITE_REQUEST` and nothing is held after it (`0x6cc3e5`).
+    pending_invites: Vec<(String, String)>,
     roster_event: Option<RosterUpdate>,
     /// Real-time seconds before which `GuildRoster()` is swallowed; `0.0` = allowed now.
     roster_allowed_at: f64,
@@ -388,18 +389,10 @@ impl GuildState {
         }
     }
 
-    /// `SMSG_GUILD_INVITE`: hold the invitation, which fires the popup's show edge.
+    /// `SMSG_GUILD_INVITE`: queue the invitation for the feed, which signals the popup's event.
     fn apply_invite(&mut self, inviter: String, guild: String) {
-        self.pending_invite = Some((inviter, guild));
+        self.pending_invites.push((inviter, guild));
         self.dirty = true;
-    }
-
-    /// The popup's Accept or Decline. Nothing raises a hide edge, but clearing lets a second
-    /// invitation fire the show edge again.
-    fn clear_invite(&mut self) {
-        if self.pending_invite.take().is_some() {
-            self.dirty = true;
-        }
     }
 
     /// `SortGuildRoster(field)`: re-order and repaint, never re-request ([`sort::SortStack`]).
@@ -1276,15 +1269,20 @@ mod tests {
     }
 
     #[test]
-    fn an_invitation_arms_and_answering_clears_it() {
-        let mut guild = GuildState::default();
-        guild.apply_invite("Tigole".into(), "Legacy of Steel".into());
+    fn every_invitation_packet_queues_its_own_event() {
+        let mut guild = GuildState {
+            dirty: false,
+            ..Default::default()
+        };
+        // The same inviter and guild twice: two events, as `0x6cc3e5` signals per packet.
+        for _ in 0..2 {
+            guild.apply_invite("Tigole".into(), "Legacy of Steel".into());
+        }
+        assert!(guild.dirty, "the feed runs to signal them");
         assert_eq!(
-            guild.pending_invite,
-            Some(("Tigole".into(), "Legacy of Steel".into()))
+            guild.pending_invites,
+            vec![("Tigole".to_string(), "Legacy of Steel".to_string()); 2]
         );
-        guild.clear_invite();
-        assert_eq!(guild.pending_invite, None);
     }
 
     #[test]

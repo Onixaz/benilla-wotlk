@@ -1,6 +1,9 @@
 //! The guild bank's packet handlers and the guild events that touch it.
 
-use benilla_protocol::messages::{guild_event, GuildBankList, GuildBankLog, GuildEventNotice};
+use benilla_protocol::messages::{
+    guild_command, guild_command_error, guild_event, GuildBankList, GuildBankLog,
+    GuildCommandResult, GuildEventNotice,
+};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use bevy::prelude::*;
 
@@ -14,6 +17,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::GuildBankLog, on_log)
         .net_handler(K::GuildBankText, on_text)
         .net_handler(K::GuildEvent, on_event)
+        .net_handler(K::GuildCommandResult, on_command_result)
         .net_handler(K::GuildPermissions, on_permissions)
         .net_handler(K::Disconnected, on_session_end);
 }
@@ -129,6 +133,21 @@ fn on_event(
 ) {
     if let SessionEvent::GuildEvent(notice) = ev {
         apply_event(&mut state, &commands, &notice, guild.rank_index());
+    }
+}
+
+fn on_command_result(In(ev): In<SessionEvent>, mut state: ResMut<GuildBankState>) {
+    if let SessionEvent::GuildCommandResult(result) = ev {
+        apply_command_result(&mut state, &result);
+    }
+}
+
+/// Leaving the guild shuts the banker: the quit command's success arm sets it to 0 (`0x6cc630`).
+fn apply_command_result(state: &mut GuildBankState, result: &GuildCommandResult) {
+    if result.command == guild_command::QUIT
+        && result.result == guild_command_error::PLAYER_NO_MORE_IN_GUILD
+    {
+        state.close();
     }
 }
 
@@ -297,6 +316,53 @@ mod tests {
         );
         assert_eq!(state.logs[6][0].written_at, 940);
         assert_eq!(state.owe_log, Some((6, 0)));
+    }
+
+    #[test]
+    fn leaving_the_guild_shuts_the_open_banker_and_no_other_result_does() {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let net = NetCommands(tx);
+        let result = |command, result| GuildCommandResult {
+            command,
+            name: "Legacy of Steel".into(),
+            result,
+        };
+        let open = || {
+            let mut state = GuildBankState::default();
+            let mut guild = GuildState::default();
+            state.talk(0x77, &net);
+            apply_list(
+                &mut state,
+                &mut guild,
+                list(0, Some(Vec::new()), Vec::new()),
+            );
+            assert!(state.is_open());
+            state
+        };
+
+        let mut state = open();
+        apply_command_result(
+            &mut state,
+            &result(
+                guild_command::QUIT,
+                guild_command_error::PLAYER_NO_MORE_IN_GUILD,
+            ),
+        );
+        assert!(!state.is_open());
+        assert!(state.owe_closed, "GUILDBANKFRAME_CLOSED follows");
+
+        // A refused quit and another command's success leave the banker alone.
+        for other in [
+            result(guild_command::QUIT, guild_command_error::LEADER_LEAVE),
+            result(
+                guild_command::INVITE,
+                guild_command_error::PLAYER_NO_MORE_IN_GUILD,
+            ),
+        ] {
+            let mut state = open();
+            apply_command_result(&mut state, &other);
+            assert!(state.is_open());
+        }
     }
 
     #[test]
