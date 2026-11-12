@@ -709,9 +709,8 @@ const LONG_ERROR: &str = "Interface/AddOns/Boom/Boom.lua:12: bad argument | #1\\
 /// The `/errors` window open on the trainer's kit with `LONG_ERROR` logged and its row selected,
 /// settled a few frames. Returns the script and the message as Lua holds it.
 fn error_log_selected() -> (UiScript, String) {
+    // The stock load has the layer, this window with it.
     let mut s = super::trainer_tests::trainer_script();
-    s.run("SlashCmdList = {}").unwrap();
-    super::test_ui::load_ui_strict(&s, "ScriptLogFrame.xml");
     s.run("ShowUIPanel(BenillaScriptLogFrame)").unwrap();
     s.run(&format!(
         "MSG = \"{LONG_ERROR}\" .. string.rep(\"  [C]: in function `Boom'\\n\", 60)"

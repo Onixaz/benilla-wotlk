@@ -69,6 +69,141 @@ fn get_scroll_child_roundtrips_wrapper_and_name_and_clears_on_nil() {
     .unwrap();
 }
 
+#[test]
+fn set_scroll_child_reparents_new_and_detaches_old_child() {
+    let s = script();
+    s.run(
+        r#"
+        local sf = CreateFrame("ScrollFrame", "SF")
+        local oldHost = CreateFrame("Frame", "OldHost")
+        local newHost = CreateFrame("Frame", "NewHost")
+        local old = CreateFrame("Frame", "Old", oldHost)
+        local new = CreateFrame("Frame", "New", newHost)
+        sf:SetScrollChild(old)
+        assert(old:GetParent() == sf)
+        assert(oldHost:GetNumChildren() == 0)
+        assert(sf:GetNumChildren() == 1)
+        sf:SetScrollChild(new)
+        assert(old:GetParent() == nil)
+        assert(new:GetParent() == sf)
+        assert(oldHost:GetNumChildren() == 0 and newHost:GetNumChildren() == 0)
+        assert(sf:GetNumChildren() == 1)
+        sf:SetScrollChild(nil)
+        assert(new:GetParent() == nil)
+        assert(sf:GetNumChildren() == 0)
+        "#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn scroll_child_inherits_scrollframe_visibility_and_scale() {
+    let s = script();
+    s.run(
+        r#"
+        local sf = CreateFrame("ScrollFrame", "SF")
+        local host = CreateFrame("Frame", "Host")
+        local child = CreateFrame("Frame", "Child", host)
+        sf:SetScale(2)
+        sf:Hide()
+        child:Show()
+        sf:SetScrollChild(child)
+        assert(not child:IsVisible(), "a hidden ScrollFrame hides its scroll child")
+        assert(child:GetEffectiveScale() == 2, "the scroll child inherits the ScrollFrame scale")
+        sf:Show()
+        assert(child:IsVisible(), "showing the ScrollFrame shows its scroll child")
+        "#,
+    )
+    .unwrap();
+}
+
+/// The setter (`0x96b3a0`) does not compare the child with the one it holds: the same child is
+/// detached and taken again, so one a script moved away comes back, at the tail of the list.
+#[test]
+fn set_scroll_child_takes_the_child_it_already_holds_again() {
+    let s = script();
+    s.run(
+        r#"
+        local sf = CreateFrame("ScrollFrame", "SF")
+        local first = CreateFrame("Frame", "First", sf)
+        local child = CreateFrame("Frame", "Child", sf)
+        local other = CreateFrame("Frame", "Other", sf)
+        sf:SetScrollChild(child)
+        child:SetParent(first)
+        sf:SetScrollChild(child)
+        assert(child:GetParent() == sf)
+        assert(sf:GetScrollChild() == child)
+        assert(select(3, sf:GetChildren()) == child, "taken again at the tail")
+        "#,
+    )
+    .unwrap();
+}
+
+/// The being-scrolled set (`0x490f60`) hides and shows a visible child around its flag write: once
+/// for a child the ScrollFrame already parents, and four times over for the child already held
+/// (the old side's bracket, both parent changes, the new side's bracket).
+#[test]
+fn set_scroll_child_hides_and_shows_a_visible_child() {
+    let s = script();
+    s.run(
+        r#"
+        local sf = CreateFrame("ScrollFrame", "SF")
+        local child = CreateFrame("Frame", "Child", sf)
+        local hidden = CreateFrame("Frame", "HiddenChild", sf)
+        hidden:Hide()
+        hides, shows = 0, 0
+        for _, f in ipairs({ child, hidden }) do
+            f:SetScript("OnHide", function() hides = hides + 1 end)
+            f:SetScript("OnShow", function() shows = shows + 1 end)
+        end
+        sf:SetScrollChild(hidden)
+        assert(hides == 0 and shows == 0, "a hidden child hears nothing")
+        sf:SetScrollChild(nil)
+        assert(not hidden:IsShown() and hides == 0 and shows == 0)
+        sf:SetScrollChild(child)
+        assert(hides == 1 and shows == 1, hides .. " " .. shows)
+        sf:SetScrollChild(child)
+        assert(hides == 5 and shows == 5, hides .. " " .. shows)
+        sf:SetScrollChild(nil)
+        assert(hides == 7 and shows == 7, hides .. " " .. shows)
+        assert(child:IsVisible(), "a detached child shows at the top level")
+        "#,
+    )
+    .unwrap();
+}
+
+/// The binding (`0x972210`) raises for a child it cannot resolve to a frame and for the
+/// ScrollFrame itself or one of its ancestors, and leaves the child it holds.
+#[test]
+fn set_scroll_child_raises_for_what_is_not_a_frame_and_for_a_loop() {
+    let s = script();
+    s.run(
+        r#"
+        local host = CreateFrame("Frame", "Host")
+        local sf = CreateFrame("ScrollFrame", "SF", host)
+        local anon = CreateFrame("ScrollFrame", nil, host)
+        local child = CreateFrame("Frame", "Child", sf)
+        local tex = sf:CreateTexture("Tex")
+        sf:SetScrollChild(child)
+        local function raises(frame, arg, want)
+            local ok, err = pcall(frame.SetScrollChild, frame, arg)
+            assert(not ok and tostring(err):find(want, 1, true), tostring(err))
+        end
+        raises(sf, "NoSuchFrame", "SF:SetScrollChild(): Couldn't find frame named 'NoSuchFrame'")
+        raises(sf, "Tex", "SF:SetScrollChild(): Couldn't find frame named 'Tex'")
+        raises(sf, 5, "SF:SetScrollChild(): Couldn't find frame named '5'")
+        raises(sf, true, "SF:SetScrollChild(): Couldn't find frame named '(null)'")
+        raises(sf, {}, "SF:SetScrollChild(): Couldn't find 'this' in child object")
+        raises(sf, tex, "SF:SetScrollChild(): Wrong child object type, expected frame")
+        raises(sf, sf, "SF:SetScrollChild(): Would create a loop adding child SF")
+        raises(sf, host, "SF:SetScrollChild(): Would create a loop adding child Host")
+        raises(anon, "Nope", "<unnamed>:SetScrollChild(): Couldn't find frame named 'Nope'")
+        assert(sf:GetScrollChild() == child and child:GetParent() == sf)
+        "#,
+    )
+    .unwrap();
+}
+
 /// The re-anchor (`0x96b1c0`) drops every point of the child and sets one TOPLEFT at
 /// `(-horizontal, vertical)`; points set after it hold until the next scroll set, as AceGUI's
 /// scroll content relies on (TOPLEFT plus TOPRIGHT re-set after `SetScrollChild`).

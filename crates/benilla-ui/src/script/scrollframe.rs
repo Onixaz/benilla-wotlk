@@ -116,40 +116,96 @@ fn subtree_span(model: &Model, f: FrameHandle, axis: Axis) -> Option<(f32, f32)>
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
-    // SetScrollChild(frame | name | nil): nil or an unresolvable target clears.
+    // SetScrollChild(frame | name | nil) (`0x972210`): nil clears, anything unresolvable raises.
     m.set(
         "SetScrollChild",
         lua.create_function(|lua, (this, target): (Table, Value)| {
-            // A name is `_G[name]` with no `$parent`: the setter calls `SetParent`'s resolver.
-            let named = match &target {
-                Value::String(s) => s
-                    .to_str()
-                    .ok()
-                    .map(|n| super::object::prefetch_named_target(lua, n.as_ref(), None)),
-                _ => None,
+            let h = frame_handle_of(lua, &this)?;
+            let old_child = with_scroll(lua, &this, |s| s.child)?;
+            let name_of = |f: FrameHandle| {
+                lua.app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data")
+                    .arena
+                    .frame(f)
+                    .and_then(|f| f.name.clone())
+                    .unwrap_or_else(|| "<unnamed>".to_string())
             };
-            let new_child: Option<FrameHandle> = {
-                let model = lua
-                    .app_data_ref::<crate::script::ModelCell>()
-                    .expect("model app_data");
+            let raise = |what: String| {
+                mlua::Error::runtime(format!("{}:SetScrollChild(): {what}", name_of(h)))
+            };
+            let new_child =
                 match &target {
-                    Value::Table(t) => decode_id(t)
-                        .ok()
-                        .and_then(|id| model.id_to_frame.get(&id).copied()),
-                    Value::String(_) => named.as_ref().and_then(|nt| {
-                        super::object::resolve_named_target(&model, nt)
-                            .and_then(|id| model.id_to_frame.get(&id).copied())
-                    }),
-                    _ => None,
+                    Value::Nil => None,
+                    Value::Table(t) => {
+                        let id = decode_id(t)
+                            .map_err(|_| raise("Couldn't find 'this' in child object".into()))?;
+                        let model = lua
+                            .app_data_ref::<crate::script::ModelCell>()
+                            .expect("model app_data");
+                        Some(model.id_to_frame.get(&id).copied().ok_or_else(|| {
+                            raise("Wrong child object type, expected frame".into())
+                        })?)
+                    }
+                    // A string or a number is `_G[name]` with no `$parent`; any other type names
+                    // nothing.
+                    other => {
+                        let name = match other {
+                            Value::String(_) | Value::Integer(_) | Value::Number(_) => lua
+                                .coerce_string(other.clone())?
+                                .map(|n| n.to_string_lossy()),
+                            _ => None,
+                        };
+                        let hit = name.as_deref().and_then(|n| {
+                            let nt = super::object::prefetch_named_target(lua, n, None);
+                            let model = lua
+                                .app_data_ref::<crate::script::ModelCell>()
+                                .expect("model app_data");
+                            super::object::resolve_named_target(&model, &nt)
+                                .and_then(|id| model.id_to_frame.get(&id).copied())
+                        });
+                        Some(hit.ok_or_else(|| {
+                            raise(format!(
+                                "Couldn't find frame named '{}'",
+                                name.as_deref().unwrap_or("(null)")
+                            ))
+                        })?)
+                    }
+                };
+            // The ScrollFrame or one of its ancestors as the child raises.
+            if let Some(c) = new_child {
+                let loops = c == h || {
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    model.arena.is_ancestor(c, h)
+                };
+                if loops {
+                    return Err(raise(format!(
+                        "Would create a loop adding child {}",
+                        name_of(c)
+                    )));
                 }
-            };
-            // Any call marks the ranges dirty and re-anchors the child, the same one included
-            // (`0x96b3a0`); the old child keeps the anchor it last had.
-            with_scroll(lua, &this, |s| {
+            }
+            // The setter (`0x96b3a0`) asks nothing about the child it holds: the old one leaves
+            // the scrolled state and its parent, the new one takes this frame and the state, the
+            // same child included, each state change inside a hide and show of a visible child.
+            if let Some(old) = old_child {
+                event::rescroll_bracket(lua, old);
+                event::set_parent(lua, old, None);
+            }
+            // A handler above may have destroyed this frame.
+            if with_scroll(lua, &this, |s| {
                 s.child = new_child;
                 s.range_dirty = true;
-            })?;
-            let h = frame_handle_of(lua, &this)?;
+            })
+            .is_err()
+            {
+                return Ok(());
+            }
+            if let Some(new) = new_child {
+                event::set_parent(lua, new, Some(h));
+                event::rescroll_bracket(lua, new);
+            }
             crate::script::model_mut_of(lua).reanchor_scroll_child(h);
             Ok(())
         })?,
