@@ -39,7 +39,9 @@ pub(crate) fn apply_script_calls(
     in_call_order(&mut script, |script, call| {
         match call {
             ScriptCall::Select(request) => appliers.p0().select(request, script),
-            ScriptCall::TargetByName { name, exact } => appliers.p0().target_by_name(&name, exact),
+            ScriptCall::TargetByName { name, exact } => {
+                appliers.p0().target_by_name(&name, exact, script);
+            }
             ScriptCall::TargetNearest { mode, reverse } => {
                 appliers.p0().target_nearest(mode, reverse);
             }

@@ -104,9 +104,11 @@ impl ScriptSelect<'_, '_> {
         }
     }
 
-    /// `TargetByName(name, exactMatch)`, the stock `/target`.
-    pub(crate) fn target_by_name(&mut self, name: &str, exact: bool) {
-        by_name::target_named(&self.by_name, &mut self.commit, name, exact);
+    /// `TargetUnit(name, exact)`, the stock `/target`, with the unheld branch's sound.
+    pub(crate) fn target_by_name(&mut self, name: &str, exact: bool, script: &mut UiScript) {
+        if by_name::target_named(&self.by_name, &mut self.commit, name, exact) {
+            script.queue_sound_kit("igCharacterSelect");
+        }
     }
 
     /// `StartAttack`'s named unit (`0x523090`): a token, else the closest attackable name, as a
@@ -929,5 +931,177 @@ mod tests {
             world.resource::<super::super::Selection>().guid,
             Some(VENDOR)
         );
+    }
+
+    /// `TargetUnit("<name>")` and the chat `/target <name>` reach a party member out of view
+    /// (`0x5202e1`): by the whole name, by a prefix, behind a visible match and ahead of ourselves,
+    /// with the unheld branch's sound; never with the exact flag on a prefix, a member with no name
+    /// record, or `StartAttack`'s name.
+    #[test]
+    fn target_by_name_selects_a_party_member_out_of_view() {
+        use crate::net::{Guid, ObjectStore, SelfPlayer};
+        use benilla_protocol::messages::{member_status, GroupMemberEntry};
+        use benilla_ui::script::{SoundRequest, UiScript};
+        use bevy::ecs::system::RunSystemOnce;
+
+        const ME: u64 = 1;
+        const BRISCA: u64 = 0x1234;
+        const QUILL: u64 = 0x1235;
+        const CLARA: u64 = 0x1236;
+        const NEAR: u64 = 0x5555;
+        let store =
+            |pairs: &[(u16, u32)]| ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs));
+        let live = || store(&[(22, 100), (28, 100)]);
+
+        let mut world = script_world();
+        world.init_resource::<Messages<super::super::by_name::TargetByNameRequest>>();
+        let me = world
+            .spawn((SelfPlayer, Guid(ME), Transform::default(), live()))
+            .id();
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(ME, me);
+        let member = |name: &str, guid| GroupMemberEntry {
+            name: name.into(),
+            guid,
+            status: member_status::ONLINE,
+            flags: 0,
+            roles: 0,
+        };
+        world
+            .resource_mut::<crate::ui_party::GroupState>()
+            .apply_list(
+                0,
+                0,
+                vec![
+                    member("Brisca", BRISCA),
+                    member("Quill", QUILL),
+                    member("Clara", CLARA),
+                ],
+                ME,
+                None,
+                Some(ME),
+            );
+        {
+            // Quill has no name record.
+            let mut names = world.resource_mut::<crate::names::NameCache>();
+            for (guid, name) in [
+                (ME, "Claude"),
+                (BRISCA, "Brisca"),
+                (CLARA, "Clara"),
+                (NEAR, "Brismond"),
+            ] {
+                names.insert_player(guid, name.into(), None);
+            }
+        }
+
+        let run = |world: &mut World, lua: &str| {
+            world
+                .non_send_resource_mut::<UiScript>()
+                .eval::<()>(lua)
+                .expect("the binding runs");
+            world
+                .run_system_once(
+                    |mut script: NonSendMut<UiScript>, mut select: ScriptSelect| {
+                        for call in script.take_script_calls() {
+                            match call {
+                                benilla_ui::script::ScriptCall::TargetByName { name, exact } => {
+                                    select.target_by_name(&name, exact, &mut script);
+                                }
+                                benilla_ui::script::ScriptCall::ClearTarget => {
+                                    select.clear_target();
+                                }
+                                _ => {}
+                            }
+                        }
+                    },
+                )
+                .expect("the applier runs as a one-shot system");
+            let sel = world.resource::<super::super::Selection>();
+            (sel.target, sel.guid)
+        };
+        let sounds = |world: &mut World| world.non_send_resource_mut::<UiScript>().take_sounds();
+        let select_sound = vec![SoundRequest::KitName("igCharacterSelect".into())];
+
+        assert_eq!(
+            run(&mut world, r#"TargetUnit("Brisca")"#),
+            (None, Some(BRISCA))
+        );
+        assert_eq!(sounds(&mut world), select_sound);
+        assert_eq!(
+            run(&mut world, r#"ClearTarget() TargetUnit("bri")"#),
+            (None, Some(BRISCA)),
+            "a prefix of the member's name"
+        );
+        assert_eq!(sounds(&mut world), select_sound);
+        assert_eq!(
+            run(&mut world, r#"ClearTarget() TargetUnit("bri", 1)"#),
+            (None, None),
+            "the exact flag compares the whole name"
+        );
+        assert_eq!(
+            run(&mut world, r#"TargetUnit("Quill")"#),
+            (None, None),
+            "no name record, no match"
+        );
+        assert_eq!(
+            run(&mut world, r#"TargetUnit("Cla")"#),
+            (None, Some(CLARA)),
+            "we scan at the group's distance, behind the member"
+        );
+        assert_eq!(sounds(&mut world), select_sound);
+        assert_eq!(
+            run(&mut world, r#"TargetUnit("Claude")"#),
+            (Some(me), Some(ME)),
+            "our own whole name"
+        );
+        assert_eq!(
+            run(&mut world, r#"TargetUnit("Clau")"#),
+            (Some(me), Some(ME)),
+            "ourselves, when no member matches"
+        );
+
+        // A visible match outbids the member out of view; the member's whole name still wins.
+        let near = world
+            .spawn((Guid(NEAR), Transform::from_xyz(10.0, 0.0, 0.0), live()))
+            .id();
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(NEAR, near);
+        sounds(&mut world);
+        assert_eq!(
+            run(&mut world, r#"TargetUnit("Bri")"#),
+            (Some(near), Some(NEAR))
+        );
+        assert!(
+            sounds(&mut world).is_empty(),
+            "the held branch is silent here"
+        );
+        assert_eq!(
+            run(&mut world, r#"TargetUnit("brisca")"#),
+            (None, Some(BRISCA))
+        );
+
+        // `StartAttack`'s name (filter mode 1) skips the group scans.
+        let attack = world
+            .run_system_once(|select: ScriptSelect| select.attack_unit("Clara", false))
+            .expect("the resolve runs as a one-shot system");
+        assert_eq!(attack, None);
+
+        // The chat `/target`, with its sound off the VM.
+        sounds(&mut world);
+        world.write_message(super::super::by_name::TargetByNameRequest {
+            name: "clar".into(),
+        });
+        world
+            .run_system_once(super::super::by_name::target_by_name_requests)
+            .expect("the chat drain runs as a one-shot system");
+        assert_eq!(
+            world.resource::<super::super::Selection>().guid,
+            Some(CLARA)
+        );
+        assert_eq!(sounds(&mut world), select_sound);
     }
 }

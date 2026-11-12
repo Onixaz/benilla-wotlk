@@ -31,6 +31,20 @@ pub(crate) struct GroupRoster {
 }
 
 impl GroupRoster {
+    /// The two tables off the group: the party slots `partyN` reads, none after a leave or a kick,
+    /// and the raid rows `raidN` reads.
+    pub(crate) fn of(group: &GroupState, self_guid: Option<u64>) -> Self {
+        let party = if group.slots_emptied {
+            Vec::new()
+        } else {
+            group.party_slots().map(|m| m.guid).collect()
+        };
+        Self {
+            party,
+            raid: raid_row_guids(group, self_guid),
+        }
+    }
+
     /// A nonzero guid that is the active player's or in a party slot.
     pub(crate) fn in_party(&self, me: Option<u64>, guid: u64) -> bool {
         guid != 0 && (me == Some(guid) || self.party.contains(&guid))
@@ -54,15 +68,7 @@ pub(crate) fn publish_group_roster(
     if !group.is_changed() && !self_guid.is_changed() {
         return;
     }
-    let party = if group.slots_emptied {
-        Vec::new()
-    } else {
-        group.party_slots().map(|m| m.guid).collect()
-    };
-    let now = GroupRoster {
-        party,
-        raid: raid_row_guids(&group, self_guid.0),
-    };
+    let now = GroupRoster::of(&group, self_guid.0);
     if *roster != now {
         *roster = now;
     }
