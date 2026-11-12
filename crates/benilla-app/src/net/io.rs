@@ -1125,6 +1125,7 @@ fn stream(
                     );
                 }
                 for ev in events {
+                    super::wire_audit::inbound(&ev);
                     // The pong bypass: the reference's receive path hands `SMSG_PONG` to its pong
                     // handler inline, not onto the game thread's queue, so it is timed and consumed
                     // here.
@@ -1234,6 +1235,7 @@ fn apply_swap(
             writer: w,
             fresh_link,
         } => {
+            super::wire_audit::reset(w.mover());
             *writer = Some(w);
             *warned = 0;
             // Sequence 1 is the new socket's first ping, so an old socket's pong cannot match.
@@ -1333,6 +1335,7 @@ pub(super) fn writer_loop(
                     }
                     continue;
                 };
+                super::wire_audit::outbound(&cmd, w.mover());
                 let result = match cmd {
                     ClientCommand::Move {
                         kind,

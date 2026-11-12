@@ -125,6 +125,10 @@ impl Plugin for DevProbesPlugin {
             if std::env::var("WOW_PROBE_KEY").is_ok() {
                 app.add_plugins(crate::capture::ProbeKeyPlugin);
             }
+            // `WOW_STRETCH=<name>`: a scripted quest stretch's verbs, filmstrip and verdict.
+            if crate::capture::stretch_active() {
+                app.add_plugins(crate::capture::StretchPlugin);
+            }
             // `WOW_PROBE_EXIT_AT=<secs>`: bounds any scripted live probe's lifetime.
             if std::env::var("WOW_PROBE_EXIT_AT").is_ok() {
                 app.add_plugins(crate::capture::ProbeExitPlugin);

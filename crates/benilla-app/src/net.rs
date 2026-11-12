@@ -25,6 +25,7 @@ pub(crate) mod io;
 mod motion;
 mod objects;
 mod parked;
+pub(crate) mod wire_audit;
 pub(crate) use objects::tear_down;
 pub(crate) use parked::ParkedObjects;
 mod session;

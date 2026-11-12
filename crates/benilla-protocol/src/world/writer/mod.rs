@@ -77,6 +77,11 @@ pub struct WorldWriter {
 }
 
 impl WorldWriter {
+    /// The unit every movement packet is stamped with now.
+    pub fn mover(&self) -> u64 {
+        self.mover
+    }
+
     /// Frame, encrypt and write one packet: the sole write path every verb goes through.
     fn send(&mut self, opcode: u16, body: &[u8]) -> Result<()> {
         send_packet(&mut self.stream, Some(&mut self.encrypter), opcode, body)

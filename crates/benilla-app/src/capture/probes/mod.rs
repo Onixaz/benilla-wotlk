@@ -17,6 +17,9 @@ pub(crate) use act::{
 mod run;
 pub(crate) use run::{ProbeExitPlugin, ProbeFocusPlugin, ProbeResizePlugin};
 
+/// The scripted quest stretch's verbs, filmstrip and verdict.
+pub(crate) mod stretch;
+
 /// The live frame-time sample, `FPS_PROBE`, and the lines printed from the same window.
 mod live_fps;
 pub(crate) use live_fps::LiveFpsPlugin;
