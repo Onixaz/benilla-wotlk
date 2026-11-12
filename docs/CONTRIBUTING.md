@@ -54,7 +54,7 @@ pins the benilla revision it builds on. What a crate cannot reach stays a fork's
 
 1. `scripts/gates.sh` is green: fmt, clippy with warnings denied, the workspace tests, the
    doc-link and render-pass lints, and the engine boot. It is the gate for a pull request from an
-   external contributor, and CI runs the same script on one, on Linux. It reads no client data, so
+   external contributor, and CI runs the same script on every pull request, on Linux. It reads no client data, so
    a test that reads the install has to declare it. `scripts/check.sh` runs all of it plus the
    tests that read the client data, where the data is, and the player build without `dev` with
    its own tests; the maintainers' own pull requests run that instead.
