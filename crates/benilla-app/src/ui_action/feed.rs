@@ -267,8 +267,10 @@ pub(super) fn feed_actions(
                  arg {:?} → {:?}",
                 fail.arg, line
             );
-            // The log entry from the shown text; nothing for a redisplay or for the pet.
-            if let (Some(shown), false, false) = (line.as_ref(), pet, fail.redisplay) {
+            // The log entry from the shown text; nothing for a redisplay, the pet or a custom line.
+            if let (Some(shown), false, false) =
+                (line.as_ref().filter(|l| l.logs), pet, fail.redisplay)
+            {
                 fail_lines.push(crate::combat_log::SpellCastFailedLog {
                     spell_id,
                     reason: shown.logged().to_string(),
