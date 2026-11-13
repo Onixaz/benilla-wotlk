@@ -2335,23 +2335,21 @@ fn glue_dialog_text(raw: &str) -> String {
     while let Some(ch) = chars.next() {
         if ch == '<' {
             let mut tag = String::new();
-            while let Some(next) = chars.next() {
+            for next in chars.by_ref() {
                 if next == '>' {
                     break;
                 }
                 tag.push(next);
             }
             let tag = tag.trim().to_ascii_lowercase();
-            if tag.starts_with("br") || tag.starts_with("/p") {
-                if !out.ends_with('\n') {
-                    out.push('\n');
-                }
+            if (tag.starts_with("br") || tag.starts_with("/p")) && !out.ends_with('\n') {
+                out.push('\n');
             }
             continue;
         }
         if ch == '&' {
             let mut entity = String::new();
-            while let Some(next) = chars.next() {
+            for next in chars.by_ref() {
                 if next == ';' {
                     break;
                 }
