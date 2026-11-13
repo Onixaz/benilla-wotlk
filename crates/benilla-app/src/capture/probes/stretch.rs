@@ -9,8 +9,10 @@
 //! | `ProbeShot(label)` | takes a filmstrip shot |
 //! | `ProbeVerdict(ok, why)` | records the stretch's verdict and exits |
 //! | `ProbePos()` | the driven body's WoW `x, y, z`, whether it is another unit, its facing, and whether input moves it |
-//! | `ProbeNearest(entry)` | the nearest unit or GameObject of that entry: yards, `x, y, z`; nil if none |
-//! | `ProbeInteractEntry(entry)` | right-clicks the nearest unit or GameObject of that entry |
+//! | `ProbeNearest(entry[, alive])` | the nearest unit or GameObject of that entry (with `alive`, a unit with health left and not skipped): yards, `x, y, z`; nil if none |
+//! | `ProbeInteractEntry(entry[, alive])` | right-clicks the nearest unit or GameObject of that entry (with `alive`, as above) |
+//! | `ProbeSkip(guid)` | leaves that unit (a `UnitGUID` string) out of the `alive` verbs from now on |
+//! | `ProbeTargetPos()` | our target's WoW `x, y, z`; nil with none |
 //! | `ProbeWalkTo(x, y, z)` | a ground right-click at that WoW point (click to move) |
 //! | `ProbeKeyDown(key)`, `ProbeKeyUp(key)` | a real key press or release (`WOW_PROBE_KEY`'s names) |
 //!
@@ -42,7 +44,7 @@ struct Shared {
     steps: Vec<String>,
     shots: Vec<String>,
     verdict: Option<(bool, String)>,
-    interact: Option<u32>,
+    interact: Option<(u32, bool)>,
     walk_to: Option<[f32; 3]>,
     /// Key presses (`true`) and releases asked for, in order.
     keys: Vec<(String, bool)>,
@@ -50,6 +52,12 @@ struct Shared {
     pos: Option<([f32; 3], bool, f32, bool)>,
     /// Every streamed entry's nearest instance: yards and WoW pose, published each frame.
     nearest: std::collections::HashMap<u32, (f32, [f32; 3])>,
+    /// The same, among units with health left and GameObjects, less the skipped.
+    nearest_alive: std::collections::HashMap<u32, (f32, [f32; 3])>,
+    /// Units the `alive` verbs leave out, by guid.
+    skip: std::collections::HashSet<u64>,
+    /// Our target's WoW position, published each frame.
+    target: Option<[f32; 3]>,
 }
 
 static SHARED: Mutex<Option<Shared>> = Mutex::new(None);
@@ -182,17 +190,42 @@ fn install_verbs(
     );
     set(
         "ProbeNearest",
-        lua.create_function(|_, entry: u32| {
-            Ok(match shared(|s| s.nearest.get(&entry).copied()) {
+        lua.create_function(|_, (entry, alive): (u32, Option<bool>)| {
+            let alive = alive.unwrap_or(false);
+            let found = shared(|s| {
+                if alive { &s.nearest_alive } else { &s.nearest }
+                    .get(&entry)
+                    .copied()
+            });
+            Ok(match found {
                 Some((d, p)) => (Some(d), Some(p[0]), Some(p[1]), Some(p[2])),
                 None => (None, None, None, None),
             })
         }),
     );
     set(
+        "ProbeSkip",
+        lua.create_function(|_, guid: String| {
+            let hex = guid.trim_start_matches("0x").trim_start_matches("0X");
+            if let Ok(g) = u64::from_str_radix(hex, 16) {
+                shared(|s| s.skip.insert(g));
+            }
+            Ok(())
+        }),
+    );
+    set(
+        "ProbeTargetPos",
+        lua.create_function(|_, ()| {
+            Ok(match shared(|s| s.target) {
+                Some(p) => (Some(p[0]), Some(p[1]), Some(p[2])),
+                None => (None, None, None),
+            })
+        }),
+    );
+    set(
         "ProbeInteractEntry",
-        lua.create_function(|_, entry: u32| {
-            shared(|s| s.interact = Some(entry));
+        lua.create_function(|_, (entry, alive): (u32, Option<bool>)| {
+            shared(|s| s.interact = Some((entry, alive.unwrap_or(false))));
             Ok(())
         }),
     );
@@ -250,10 +283,26 @@ fn press_keys(
     }
 }
 
+/// Whether an object counts as alive for the `alive` verbs: a unit with health left, or any
+/// GameObject (which has no health field), and not skipped.
+fn alive(store: &benilla_protocol::ObjectFields, guid: Option<&crate::net::Guid>) -> bool {
+    store.unit_health().is_none_or(|h| h > 0)
+        && guid.is_none_or(|g| !shared(|s| s.skip.contains(&g.0)))
+}
+
 /// Publishes the driven body's pose and each streamed entry's nearest instance for the read verbs.
 fn publish(
     player: Option<Res<crate::player::Player>>,
-    objects: Query<(&NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
+    selection: Option<Res<crate::target::Selection>>,
+    objects: Query<
+        (
+            &NetEntity,
+            &ObjectStore,
+            &Transform,
+            Option<&crate::net::Guid>,
+        ),
+        Without<SelfPlayer>,
+    >,
 ) {
     let Some(player) = player else { return };
     if !player.active {
@@ -261,7 +310,8 @@ fn publish(
     }
     let at = player.pos;
     let mut nearest: std::collections::HashMap<u32, (f32, [f32; 3])> = Default::default();
-    for (net, store, t) in &objects {
+    let mut nearest_alive = nearest.clone();
+    for (net, store, t, guid) in &objects {
         if !matches!(
             net.kind,
             benilla_protocol::EntityKind::Unit | benilla_protocol::EntityKind::GameObject
@@ -272,9 +322,16 @@ fn publish(
             continue;
         };
         let d = t.translation.distance(at);
+        let here = (d, bevy_to_wow(t.translation));
         let slot = nearest.entry(entry).or_insert((f32::MAX, [0.0; 3]));
         if d < slot.0 {
-            *slot = (d, bevy_to_wow(t.translation));
+            *slot = here;
+        }
+        if alive(&store.0, guid) {
+            let slot = nearest_alive.entry(entry).or_insert((f32::MAX, [0.0; 3]));
+            if d < slot.0 {
+                *slot = here;
+            }
         }
     }
     let pos = (
@@ -283,9 +340,15 @@ fn publish(
         player.facing().rem_euclid(std::f32::consts::TAU),
         player.steerable(),
     );
+    let target = selection
+        .and_then(|sel| sel.target)
+        .and_then(|e| objects.get(e).ok())
+        .map(|(_, _, t, _)| bevy_to_wow(t.translation));
     shared(|s| {
         s.pos = Some(pos);
+        s.target = target;
         s.nearest = nearest;
+        s.nearest_alive = nearest_alive;
     });
 }
 
@@ -298,7 +361,10 @@ fn drive(
     mut windows: Query<&mut Window, With<PrimaryWindow>>,
     mut out: MessageWriter<crate::target::Interact>,
     mut auto: crate::player::AutoMove,
-    objects: Query<(Entity, &NetEntity, &ObjectStore, &Transform), Without<SelfPlayer>>,
+    objects: Query<
+        (Entity, &ObjectStore, &Transform, Option<&crate::net::Guid>),
+        Without<SelfPlayer>,
+    >,
     player: Option<Res<crate::player::Player>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -344,15 +410,17 @@ fn drive(
                 .observe(save_to_disk(path));
         }
     }
-    if let Some(entry) = interact {
+    if let Some((entry, living)) = interact {
         let at = player.as_ref().map(|p| p.pos).unwrap_or_default();
         let nearest = objects
             .iter()
-            .filter(|(_, _, s, _)| s.0.object_entry() == Some(entry))
+            .filter(|(_, s, _, g)| {
+                s.0.object_entry() == Some(entry) && (!living || alive(&s.0, *g))
+            })
             .min_by(|a, b| {
-                a.3.translation
+                a.2.translation
                     .distance_squared(at)
-                    .total_cmp(&b.3.translation.distance_squared(at))
+                    .total_cmp(&b.2.translation.distance_squared(at))
             });
         match nearest {
             Some((e, ..)) => {

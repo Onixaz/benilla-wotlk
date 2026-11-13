@@ -13,7 +13,9 @@
 # bindings) and writes target/stretch/<name>-<stamp>/: client.log, trace.txt, the filmstrip (one shot
 # per step, and every STRETCH_EVERY seconds, default 4) and index.html, which lays the shots along
 # the steps and the wire audit's lines. Exit: 0 pass, 3 a wire rule broken, 4 no verdict by the
-# timeout (STRETCH_TIMEOUT, default 600 s), 5 a failed step, 1 a setup problem.
+# timeout (STRETCH_TIMEOUT, default 600 s), 5 a failed step, 1 a setup problem. Every frame slower
+# than STRETCH_PHASES ms (default 250) logs its phase breakdown (`WOW_FRAME_PHASES`), so a stall
+# says where it was spent.
 set -uo pipefail
 
 root="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
@@ -74,7 +76,7 @@ $(cat "$script")"
 
 echo "stretch: $name -> $out"
 env BENILLA_HOME="$home" WOW_STRETCH="$name" WOW_STRETCH_DIR="$out" WOW_STRETCH_EVERY="${STRETCH_EVERY:-4}" \
-    WOW_UNATTENDED=1 WOW_NOSOUND=1 WOW_MOVE_TRACE="$out/trace.txt" \
+    WOW_UNATTENDED=1 WOW_NOSOUND=1 WOW_MOVE_TRACE="$out/trace.txt"     WOW_FRAME_PHASES="${STRETCH_PHASES:-250}" \
     WOW_PROBE_LUA="$chunk" WOW_PROBE_LUA_AT=5 WOW_PROBE_EXIT_AT="${STRETCH_TIMEOUT:-600}" \
     ${STRETCH_CHAR:+WOW_CHAR="$STRETCH_CHAR"} \
     ./target/debug/benilla >"$out/client.log" 2>&1
