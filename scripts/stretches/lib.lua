@@ -81,6 +81,15 @@ function S.objectives(id)
   return d .. "/" .. n
 end
 
+-- Values of any type, comma-joined for a log line.
+function S.list(...)
+  local t = {}
+  for i = 1, select("#", ...) do
+    t[i] = tostring((select(i, ...)))
+  end
+  return table.concat(t, ", ")
+end
+
 -- The quest dialogs, answered as a player would, while `S.want` names what to do:
 -- { accept = <id>, turnin = <id>, reward = <choice index or 1> }.
 S.want = {}
@@ -93,6 +102,8 @@ dialogs:SetScript("OnEvent", function(_, e)
   S.log("event %s", e)
   -- A turn-in goes first: the follow-up quest it unlocks is offered after the reward.
   if e == "GOSSIP_SHOW" then
+    S.log("gossip: available {%s} active {%s}", S.list(GetGossipAvailableQuests()),
+      S.list(GetGossipActiveQuests()))
     if S.want.turnin and S.questIndex(S.want.turnin) and GetNumGossipActiveQuests() > 0 then
       SelectGossipActiveQuest(1)
     elseif S.want.accept and GetNumGossipAvailableQuests() > 0 then
@@ -122,6 +133,20 @@ casts:SetScript("OnEvent", function(_, _, unit, spell)
   c.n, c.last = c.n + 1, spell
   S.casts[unit] = c
   S.log("cast %s by %s", tostring(spell), tostring(unit))
+end)
+
+-- Each quest turned in, by title, as its system line says (`ERR_QUEST_COMPLETE_S`): a quest with
+-- nothing to do is offered straight to its reward and never enters the log.
+S.completed = {}
+local completeLine = "^" .. ERR_QUEST_COMPLETE_S:gsub("%.", "%%."):gsub("%%s", "(.+)") .. "$"
+local system = CreateFrame("Frame")
+system:RegisterEvent("CHAT_MSG_SYSTEM")
+system:SetScript("OnEvent", function(_, _, text)
+  local title = text and text:match(completeLine)
+  if title then
+    S.completed[title] = true
+    S.log("completed %s", title)
+  end
 end)
 
 function S.castCount(unit)
@@ -223,6 +248,22 @@ function S.steer(x, y, z, r, fly, vr)
     end
   end
   return false
+end
+
+-- A walk through `points` ({x, y, z} each) on the movement keys, each reached within `r` yards
+-- (default 2): call every tick; answers true at the last. The legs keep the walk off walls.
+function S.route(points, r)
+  local i = points.at or 1
+  while points[i] do
+    local p = points[i]
+    if not S.steer(p[1], p[2], p[3], r or 2, false, 6) then
+      points.at = i
+      return false
+    end
+    i = i + 1
+  end
+  points.at = nil
+  return true
 end
 
 -- The step machine.

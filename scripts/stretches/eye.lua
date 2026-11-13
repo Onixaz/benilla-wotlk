@@ -205,6 +205,8 @@ STRETCH = {
     function()
       ClearTarget()
     end,
+    -- A quest is offered only while the next in its chain is neither taken nor done.
+    ".quest remove 12657",
     ".quest remove 12641",
     ".quest remove 12636",
     ".quest add 12636",
