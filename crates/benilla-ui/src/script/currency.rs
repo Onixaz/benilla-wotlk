@@ -454,7 +454,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 }
 
 /// `GameTooltip:SetCurrencyToken(index)` (`0x630620`) and `:SetBackpackToken(index)` (`0x6307e0`):
-/// the currency's item tooltip; nothing for a header or an index past the list.
+/// the currency's item tooltip, from the held token when one is; nothing for a header, an index
+/// past the list or no player (`0x6306db`).
 pub(crate) fn install_tooltip_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetCurrencyToken",
@@ -472,7 +473,7 @@ pub(crate) fn install_tooltip_methods(lua: &Lua, m: &Table) -> mlua::Result<()> 
                     .map(|e| e.item_id)
             };
             match item {
-                Some(id) => super::tooltip_item::render_by_id(lua, &this, id, Default::default()),
+                Some(id) => super::tooltip_item::render_token(lua, &this, id, false),
                 None => Ok(()),
             }
         })?,
@@ -492,7 +493,7 @@ pub(crate) fn install_tooltip_methods(lua: &Lua, m: &Table) -> mlua::Result<()> 
                     .map(|t| t.item_id)
             };
             match item {
-                Some(id) => super::tooltip_item::render_by_id(lua, &this, id, Default::default()),
+                Some(id) => super::tooltip_item::render_token(lua, &this, id, true),
                 None => Ok(()),
             }
         })?,
@@ -695,6 +696,105 @@ mod tests {
                 .unwrap(),
             "2",
             "2.7 truncates to row 2, -1 is on"
+        );
+    }
+
+    /// A Badge of Justice template, class 10 and bind on pickup, and a tooltip `TT` whose lines and
+    /// money [`token_tip`] reads.
+    fn with_token_tip(s: &mut UiScript) {
+        s.set_item_template(
+            29434,
+            crate::script::ItemTemplateView {
+                name: "Badge of Justice".into(),
+                class: 10,
+                bonding: 1,
+                sell_price: 5,
+                ..Default::default()
+            },
+        );
+        s.run(
+            r#"
+            ITEM_BIND_ON_PICKUP = "[BOP]"
+            local a = CreateFrame("Button", "Slot")
+            CreateFrame("GameTooltip", "TT"):SetOwner(Slot, "ANCHOR_RIGHT")
+            TT:SetScript("OnTooltipAddMoney", function(_, cost) Money = cost end)
+        "#,
+        )
+        .unwrap();
+    }
+
+    /// `call` on `TT`: its lines joined by `|`, and the money it added.
+    fn token_tip(s: &UiScript, call: &str) -> (String, Option<f64>) {
+        s.run(&format!("Money = nil TT:{call}")).unwrap();
+        s.eval(
+            r#"local t = {}
+            for i = 1, TT:NumLines() do t[i] = _G["TTTextLeft" .. i]:GetText() or "" end
+            return table.concat(t, "|"), Money"#,
+        )
+        .unwrap()
+    }
+
+    /// A held token builds from its slot's object with the player as requester (`0x630789`): no
+    /// bind line, and only `SetBackpackToken` prices the stack (`0x63097d`).
+    #[test]
+    fn a_held_token_builds_from_its_slot_without_the_bind_line() {
+        let mut s = script();
+        with_token_tip(&mut s);
+        s.run("SetCurrencyBackpack(2, 1)").unwrap();
+        let mut slots = crate::script::ContainerState {
+            num_slots: 32,
+            ..Default::default()
+        };
+        slots.slots.insert(
+            4,
+            crate::script::ContainerSlot {
+                guid: 0x4000_0000_0000_0099,
+                item_id: 29434,
+                count: 12,
+                link: Some(
+                    "|cffffffff|Hitem:29434:0:0:0:0:0:0:0:80|h[Badge of Justice]|h|r".into(),
+                ),
+                ..Default::default()
+            },
+        );
+        s.set_token_slots(Some(slots));
+        assert_eq!(
+            token_tip(&s, "SetCurrencyToken(2)"),
+            ("Badge of Justice".into(), None)
+        );
+        assert_eq!(
+            token_tip(&s, "SetBackpackToken(1)"),
+            ("Badge of Justice".into(), Some(60.0)),
+            "the held stack of 12 at 5 each"
+        );
+        // With loot open the player is still not its source.
+        s.set_loot_source(0xF130_0000_0000_0001);
+        assert_eq!(token_tip(&s, "SetCurrencyToken(2)").0, "Badge of Justice");
+    }
+
+    /// An unheld token builds by id with a zero requester (`0x630750`), which equals the loot
+    /// source `[0xbfa8d8]` only while no loot is open (`0x627efd`); neither binding prices it.
+    #[test]
+    fn an_unheld_token_shows_the_bind_line_only_with_no_loot_open() {
+        let mut s = script();
+        with_token_tip(&mut s);
+        s.run("SetCurrencyBackpack(2, 1)").unwrap();
+        s.set_token_slots(Some(crate::script::ContainerState {
+            num_slots: 32,
+            ..Default::default()
+        }));
+        for call in ["SetCurrencyToken(2)", "SetBackpackToken(1)"] {
+            assert_eq!(
+                token_tip(&s, call),
+                ("Badge of Justice|[BOP]".into(), None),
+                "{call}"
+            );
+        }
+        s.set_loot_source(0xF130_0000_0000_0001);
+        assert_eq!(
+            token_tip(&s, "SetCurrencyToken(2)").0,
+            "Badge of Justice",
+            "a zero requester is not an open loot's source"
         );
     }
 

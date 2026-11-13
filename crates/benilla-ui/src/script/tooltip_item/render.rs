@@ -65,9 +65,30 @@ pub(super) struct ItemInstance {
     /// The requesting unit's level, which a scaling item shows when no link level does
     /// (`0x61e7bf`); 0 for a source whose requester is the player or no unit.
     pub requester_level: i32,
-    /// The requester is the open loot's source (`0xbfa8d8`): a class 10 item keeps its bind line
-    /// (`0x627efd`).
-    pub loot_window: bool,
+}
+
+/// The builder's p3, the requester guid, as far as the class 10 bind gate reads it: the gate
+/// compares it with the loot source `[0xbfa8d8]`, 0 with no loot open (`0x627efd`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Requester {
+    /// A unit or object that is never the loot source: the player, a merchant, a quest giver.
+    #[default]
+    Object,
+    /// A zero guid, which matches while no loot is open.
+    Zero,
+    /// The loot source itself, `SetLootItem`'s (`0x62e638`).
+    LootSource,
+}
+
+impl Requester {
+    /// Whether the requester equals the loot source `loot_source`.
+    fn is_loot_source(self, loot_source: u64) -> bool {
+        match self {
+            Self::Object => false,
+            Self::Zero => loot_source == 0,
+            Self::LootSource => true,
+        }
+    }
 }
 
 /// A scaling item's shown level and the two rows it reads (`0x6284e3`..`0x628563`).
@@ -108,12 +129,12 @@ impl Scaled {
 
 /// The bind line's key (`0x627e7d`..`0x627f3d`): a bound instance reads the quest key for bonding
 /// 4, nothing for class 10, else the account or soul key by template flag `0x8000000`. Failing
-/// that, a set bonding prints unless the item is class 10 outside the loot window: the account key
-/// under the flag, else bonding 1..4's pickup, equip, use and quest keys.
+/// that, a set bonding prints unless the item is class 10 and the requester is not the loot
+/// source: the account key under the flag, else bonding 1..4's pickup, equip, use and quest keys.
 pub(in crate::script) fn bind_key(
     v: &ItemTemplateView,
     bound: bool,
-    loot_window: bool,
+    loot_requester: bool,
 ) -> Option<&'static str> {
     let account = v.flags & 0x800_0000 != 0;
     if bound {
@@ -128,7 +149,7 @@ pub(in crate::script) fn bind_key(
             });
         }
     }
-    if v.bonding == 0 || (v.class == 10 && !loot_window) {
+    if v.bonding == 0 || (v.class == 10 && !loot_requester) {
         return None;
     }
     if account {
@@ -209,6 +230,7 @@ pub(super) struct BuilderFlags {
     /// The minimum-level argument: a scaling item shows its lowest level, as the compare arm for
     /// an open vendor passes (`0x6318ec`).
     pub minimum_level: bool,
+    pub requester: Requester,
 }
 
 /// Render one item into the tooltip's order, then run `OnTooltipSetItem` before the caller's show.
@@ -451,7 +473,8 @@ fn render_lines(
             keyed("ITEM_CONJURED", &[], WHITE, false)?;
         }
         let bound = inst.is_some_and(|i| i.already_bound);
-        if let Some(key) = bind_key(v, bound, inst.is_some_and(|i| i.loot_window)) {
+        let loot_source = crate::script::model_mut_of(lua).loot_source;
+        if let Some(key) = bind_key(v, bound, flags.requester.is_loot_source(loot_source)) {
             keyed(key, &[], WHITE, false)?;
         }
         if let Some((key, args)) = uniqueness_line(v) {

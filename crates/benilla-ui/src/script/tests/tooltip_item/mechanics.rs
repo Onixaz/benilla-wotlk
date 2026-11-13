@@ -758,6 +758,69 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
     }
 }
 
+/// The class 10 bind gate (`0x627ef7`): a token prints its bind line only when the requester is
+/// the loot source `[0xbfa8d8]`, as `SetLootItem` passes (`0x62e638`); a bound non-token prints it
+/// from every source.
+#[test]
+fn a_token_binds_only_for_the_loot_source_and_a_non_token_always() {
+    let mut s = script();
+    let template = |name: &str, class| ItemTemplateView {
+        name: name.into(),
+        class,
+        bonding: 1,
+        ..Default::default()
+    };
+    s.set_item_template(49426, template("Emblem of Frost", 10));
+    s.set_item_template(5000, template("Signet", 4));
+    let row = |item_id, name: &str| LootRow {
+        name: Some(name.into()),
+        quantity: 1,
+        quality: Some(4),
+        item_id,
+        ..Default::default()
+    };
+    s.set_loot(Some(LootState {
+        source_unit: true,
+        source_level: 80,
+        master_candidates: Vec::new(),
+        rows: vec![
+            Some(row(49426, "Emblem of Frost")),
+            Some(row(5000, "Signet")),
+        ],
+        fishing: false,
+    }));
+    s.set_loot_source(0xF130_0000_0000_0001);
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        CreateFrame("GameTooltip", "TT"):SetOwner(Slot, "ANCHOR_RIGHT")
+    "#,
+    )
+    .unwrap();
+    let mut texts = |call: &str| -> Vec<String> {
+        s.run(call).unwrap();
+        super::lines_of(&mut s)
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect()
+    };
+    let bop = "[ITEM_BIND_ON_PICKUP]".to_string();
+    assert_eq!(
+        texts("TT:SetLootItem(1)"),
+        ["Emblem of Frost".to_string(), bop.clone()]
+    );
+    assert_eq!(
+        texts("TT:SetLootItem(2)"),
+        ["Signet".to_string(), bop.clone()]
+    );
+    // A template source's requester is an object, never the loot source.
+    assert_eq!(texts("SetItemByIdForTest(TT, 49426)"), ["Emblem of Frost"]);
+    assert_eq!(
+        texts("SetItemByIdForTest(TT, 5000)"),
+        ["Signet".to_string(), bop]
+    );
+}
+
 /// A loot row with no roll shows neither enchant lines nor the placeholder, though the template can
 /// roll: the fork tests the block's presence, not its contents.
 #[test]
