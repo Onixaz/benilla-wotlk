@@ -119,7 +119,7 @@ impl PetCastEnd<'_, '_> {
         let running = self
             .casting
             .get(entity)
-            .is_ok_and(|c| c.spell_id == spell_id && c.cast_count == cast_count);
+            .is_ok_and(|c| c.ended_by(spell_id, cast_count));
         if running {
             self.commands
                 .entity(entity)
@@ -688,6 +688,7 @@ mod tests {
                 cast_count: 3,
                 until: None,
                 listed: true,
+                hidden: false,
             })
             .id();
         app.insert_resource(GuidIndex([(0x2A, pet)].into_iter().collect()));

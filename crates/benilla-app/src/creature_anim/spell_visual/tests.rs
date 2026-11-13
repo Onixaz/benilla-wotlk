@@ -139,8 +139,11 @@ fn timed_cast_hold_arms_and_releases_across_frames() {
     let mut app = app();
     let unit = app.world_mut().spawn_empty().id();
 
-    app.world_mut()
-        .write_message(cast_event(unit, SPELL, CastEventKind::Start));
+    app.world_mut().write_message(cast_event(
+        unit,
+        SPELL,
+        CastEventKind::Start { visuals: true },
+    ));
     app.update();
     assert_eq!(hold(&app, unit), Some(SPELL), "START arms the hold");
 
@@ -157,8 +160,11 @@ fn same_frame_start_and_go_leave_no_hold() {
     let mut app = app();
     let unit = app.world_mut().spawn_empty().id();
 
-    app.world_mut()
-        .write_message(cast_event(unit, SPELL, CastEventKind::Start));
+    app.world_mut().write_message(cast_event(
+        unit,
+        SPELL,
+        CastEventKind::Start { visuals: true },
+    ));
     app.world_mut()
         .write_message(cast_event(unit, SPELL, CastEventKind::Go));
     app.update();
@@ -175,8 +181,11 @@ fn a_foreign_go_never_drops_the_hold() {
     let mut app = app();
     let unit = app.world_mut().spawn_empty().id();
 
-    app.world_mut()
-        .write_message(cast_event(unit, SPELL, CastEventKind::Start));
+    app.world_mut().write_message(cast_event(
+        unit,
+        SPELL,
+        CastEventKind::Start { visuals: true },
+    ));
     app.world_mut()
         .write_message(cast_event(unit, 999, CastEventKind::Go));
     app.update();
@@ -259,8 +268,11 @@ fn precast_kit_sound_rings_once_at_start() {
     app.add_systems(Update, route_cast_visuals);
     let unit = app.world_mut().spawn_empty().id();
 
-    app.world_mut()
-        .write_message(cast_event(unit, HERB, CastEventKind::Start));
+    app.world_mut().write_message(cast_event(
+        unit,
+        HERB,
+        CastEventKind::Start { visuals: true },
+    ));
     app.update();
     let played: Vec<_> = app
         .world_mut()
@@ -352,8 +364,11 @@ fn same_frame_start_and_fail_leave_no_hold() {
     let mut app = app();
     let unit = app.world_mut().spawn_empty().id();
 
-    app.world_mut()
-        .write_message(cast_event(unit, SPELL, CastEventKind::Start));
+    app.world_mut().write_message(cast_event(
+        unit,
+        SPELL,
+        CastEventKind::Start { visuals: true },
+    ));
     app.world_mut().write_message(cast_event(
         unit,
         SPELL,
@@ -1330,8 +1345,11 @@ fn a_despawned_subject_never_panics_the_router() {
         let mut app = app();
         let unit = app.world_mut().spawn_empty().id();
         app.world_mut().entity_mut(unit).despawn();
-        app.world_mut()
-            .write_message(cast_event(unit, SPELL, CastEventKind::Start));
+        app.world_mut().write_message(cast_event(
+            unit,
+            SPELL,
+            CastEventKind::Start { visuals: true },
+        ));
         app.update(); // window 1: the unit is gone before the edge is read
         assert!(
             app.world().get_entity(unit).is_err(),
@@ -1350,8 +1368,11 @@ fn a_despawned_subject_never_panics_the_router() {
             })
             .before_ignore_deferred(route_cast_visuals),
         );
-        app.world_mut()
-            .write_message(cast_event(unit, SPELL, CastEventKind::Start));
+        app.world_mut().write_message(cast_event(
+            unit,
+            SPELL,
+            CastEventKind::Start { visuals: true },
+        ));
         app.update();
         assert!(
             app.world().get_entity(unit).is_err(),
@@ -1375,8 +1396,11 @@ fn ranged_visual_play_arms_the_any_caster_hold_and_a_non_ranged_play_clears_it()
         "a ranged GO's visual play sets the hold"
     );
 
-    app.world_mut()
-        .write_message(cast_event(unit, SPELL, CastEventKind::Start));
+    app.world_mut().write_message(cast_event(
+        unit,
+        SPELL,
+        CastEventKind::Start { visuals: true },
+    ));
     app.update();
     assert!(
         app.world().entity(unit).get::<RangedHold>().is_none(),
@@ -1828,8 +1852,11 @@ fn a_real_bow_shooters_auto_shot_start_arms_the_loadbow_hold() {
     let Some((mut app, unit)) = real_shooter(&WORN_SHORTBOW) else {
         return;
     };
-    app.world_mut()
-        .write_message(cast_event(unit, AUTO_SHOT, CastEventKind::Start));
+    app.world_mut().write_message(cast_event(
+        unit,
+        AUTO_SHOT,
+        CastEventKind::Start { visuals: true },
+    ));
     app.update();
     let held = app.world().entity(unit).get::<CastHold>();
     assert_eq!(
@@ -1877,8 +1904,11 @@ fn a_shooter_with_no_ranged_weapon_resolves_no_clip_at_all() {
         benilla_protocol::ObjectFields::from_pairs(&[(VISIBLE_RANGED_ENTRY_FIELD, 0)])
             .into_created(benilla_protocol::messages::ObjectType::Unit),
     );
-    app.world_mut()
-        .write_message(cast_event(unit, AUTO_SHOT, CastEventKind::Start));
+    app.world_mut().write_message(cast_event(
+        unit,
+        AUTO_SHOT,
+        CastEventKind::Start { visuals: true },
+    ));
     app.world_mut()
         .write_message(cast_event(unit, AUTO_SHOT, CastEventKind::Go));
     app.update();
@@ -2986,7 +3016,7 @@ fn a_precast_start_anim_rides_the_hold() {
     let unit = app.world_mut().spawn_empty().id();
     app.world_mut().write_message(CastEvent {
         seq: 9,
-        ..cast_event(unit, SPELL, CastEventKind::Start)
+        ..cast_event(unit, SPELL, CastEventKind::Start { visuals: true })
     });
     app.update();
     let h = app.world().entity(unit).get::<CastHold>().expect("held");
@@ -3330,7 +3360,7 @@ fn edge_of(
 fn a_flagged_visual_holds_its_missile_from_start() {
     use HoldEdge::*;
     let (mut app, unit, _) = hold_app();
-    let start = CastEventKind::Start;
+    let start = CastEventKind::Start { visuals: true };
     assert_eq!(
         edge_of(&mut app, unit, 101, 7, start),
         vec![Hold(7, Some((0x15, 50)))],
@@ -3352,10 +3382,50 @@ fn our_own_start_releases_our_missiles() {
     let (mut app, _, me) = hold_app();
     for spell_id in [101, 104] {
         assert_eq!(
-            edge_of(&mut app, me, spell_id, 1, CastEventKind::Start),
+            edge_of(
+                &mut app,
+                me,
+                spell_id,
+                1,
+                CastEventKind::Start { visuals: true }
+            ),
             vec![HoldEdge::Fire]
         );
     }
+}
+
+/// Our send's precast holds a flagged row's model like any unit's start, launching nothing; the
+/// server's start over that state replays no precast and releases (`0x80b573`, `0x806a0b`).
+#[test]
+fn our_send_holds_and_our_start_releases_without_a_second_precast() {
+    use HoldEdge::*;
+    let (mut app, unit, me) = hold_app();
+    assert_eq!(
+        edge_of(&mut app, me, 101, 0, CastEventKind::Sent),
+        vec![Hold(0, Some((0x15, 50)))]
+    );
+    assert!(edge_of(&mut app, me, 104, 0, CastEventKind::Sent).is_empty());
+    assert_eq!(
+        edge_of(
+            &mut app,
+            me,
+            101,
+            3,
+            CastEventKind::Start { visuals: false }
+        ),
+        vec![Fire]
+    );
+    assert!(
+        edge_of(
+            &mut app,
+            unit,
+            101,
+            3,
+            CastEventKind::Start { visuals: false }
+        )
+        .is_empty(),
+        "another unit's start that sets no state holds nothing"
+    );
 }
 
 /// A failure: `SMSG_SPELL_FAILURE` naming the running cast launches and drops (`0x72ed80`); the
@@ -4652,8 +4722,11 @@ fn a_beam_spells_precast_channel_and_area_kits_wait_for_the_beam() {
 
     // The precast: no hold and no sound until the reach, then both.
     let caster = app.world_mut().spawn(unit_with_channel(0)).id();
-    app.world_mut()
-        .write_message(cast_event(caster, BEAM_SPELL, CastEventKind::Start));
+    app.world_mut().write_message(cast_event(
+        caster,
+        BEAM_SPELL,
+        CastEventKind::Start { visuals: true },
+    ));
     app.update();
     assert!(rung(&mut app).is_empty(), "the precast waits");
     assert_eq!(hold_of(&app, caster), None);

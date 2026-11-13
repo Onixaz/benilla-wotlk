@@ -305,7 +305,7 @@ fn an_object_casters_start_plays_no_precast_kit() {
     app.world_mut().write_message(CastEvent {
         entity: trap,
         spell_id: SPELL,
-        kind: CastEventKind::Start,
+        kind: CastEventKind::Start { visuals: true },
         cast_count: 1,
         seq: 1,
     });

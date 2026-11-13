@@ -2286,12 +2286,27 @@ pub(super) fn route_cast_visuals(
             continue;
         }
         // A caster that is no unit plays no start or cast visuals (`0x806891`, `0x80ee08`).
-        let start_or_go = matches!(ev.kind, CastEventKind::Start | CastEventKind::Go);
+        let start_or_go = matches!(
+            ev.kind,
+            CastEventKind::Start { .. } | CastEventKind::Sent | CastEventKind::Go
+        );
         if start_or_go && object_type(ev.entity).is_some() {
             continue;
         }
+        let me = units.get(ev.entity).is_ok_and(|(.., me)| me);
         match ev.kind {
-            CastEventKind::Start => {
+            // Our own start packet launches our missiles, whether or not it set the state
+            // (`0x806a0b`).
+            CastEventKind::Start { visuals: false } => {
+                if me {
+                    releases.write(MissileRelease {
+                        caster: ev.entity,
+                        seq: ev.seq,
+                        kind: ReleaseKind::Fire,
+                    });
+                }
+            }
+            CastEventKind::Start { visuals: true } | CastEventKind::Sent => {
                 // A replacing cast reaps the prior hold's loop and persistent models first.
                 out.sounds
                     .write(SpellKitSound::StopHold { entity: ev.entity });
@@ -2336,8 +2351,8 @@ pub(super) fn route_cast_visuals(
                     );
                 }
                 // Our own start packet launches our missiles and drops any held model right after the
-                // start visuals (`0x806a0b`), so a hold of our own never draws.
-                if units.get(ev.entity).is_ok_and(|(.., me)| me) {
+                // start visuals (`0x806a0b`), so a hold of our own draws only from a send to it.
+                if me && ev.kind != CastEventKind::Sent {
                     releases.write(MissileRelease {
                         caster: ev.entity,
                         seq: ev.seq,

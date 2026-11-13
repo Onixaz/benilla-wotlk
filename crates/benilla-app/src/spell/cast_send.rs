@@ -283,6 +283,10 @@ impl CastLadder<'_, '_> {
             prelude.send(&self.commands, &mut self.ecs);
         }
         let _ = self.commands.0.send(cmd);
+        // The trade-slot click alone sends with its visuals hidden (`0x80c62c`).
+        if bound != TargetedBind::TradeItem {
+            start_sent_cast(&mut self.ecs, None, spell_id, false);
+        }
         let now = Instant::now();
         if commit.is_item() {
             self.pending.arm_item(spell_id, now);
@@ -435,6 +439,7 @@ impl CastLadder<'_, '_> {
             .and_then(|s| s.catalog.get(spell_id))
             .is_some_and(|d| d.flies_aim);
         let aims = self.trajectory_casts.as_deref_mut().filter(|_| flies_aim);
+        let aimed = aims.is_some();
         if let Some(aims) = aims {
             // `0x80b39d`: the aim replaces the targets, flown from the mover.
             debug!("ui_pet: pet cast {spell_id} as {pet:#x} flies an aim");
@@ -450,6 +455,7 @@ impl CastLadder<'_, '_> {
                 target,
             });
         }
+        start_sent_cast(&mut self.ecs, Some(pet), spell_id, aimed);
         let now = Instant::now();
         let mods = self.spell_mods.clone();
         self.ecs.queue(move |world: &mut World| {
@@ -1118,6 +1124,11 @@ fn send_spell_cast(
             target: target.map_or(UseItemTarget::SelfImplicit, UseItemTarget::Unit),
         },
     });
+    let caster = match commit {
+        CastCommit::Pet { caster } => Some(caster),
+        _ => None,
+    };
+    start_sent_cast(ecs, caster, spell_id, false);
     // One in-flight id for every commit: every class is recorded, so the `modalNextSpell` test can
     // match a ranged shot; only `normal_cast` and the item arm guard. The item arm's deadline is
     // shorter because vmangos answers some `CMSG_USE_ITEM` legs with
@@ -1185,6 +1196,80 @@ impl CastPrelude {
             let _ = net.0.send(ClientCommand::CancelAura { spell_id });
         }
     }
+}
+
+/// The send's cast start (`0x80b573`): a caster holding no cast state takes a hidden one of the
+/// sent spell and starts its precast, ahead of the server's start (`0x8053cd`). `caster` is the
+/// pet's guid, `None` the player; `aimed` when the send flies a trajectory aim, whose instant
+/// missile cast takes no state (`0x8053d6`, set at `0x80a09a`).
+pub(crate) fn start_sent_cast(ecs: &mut Commands, caster: Option<u64>, spell_id: u32, aimed: bool) {
+    ecs.queue(move |world: &mut World| {
+        let guid = caster.or(world
+            .get_resource::<crate::net::SelfGuid>()
+            .and_then(|g| g.0));
+        let Some(entity) = guid.and_then(|g| {
+            world
+                .get_resource::<crate::net::GuidIndex>()
+                .and_then(|i| i.0.get(&g).copied())
+        }) else {
+            return;
+        };
+        if world.get::<crate::creature_anim::Casting>(entity).is_some()
+            || (aimed && sends_trajectory(world, entity, spell_id))
+        {
+            return;
+        }
+        world
+            .entity_mut(entity)
+            .insert(crate::creature_anim::Casting {
+                spell_id,
+                cast_count: 0,
+                until: None,
+                listed: true,
+                hidden: true,
+            });
+        let seq = world
+            .get_resource_mut::<crate::creature_anim::PlaySeq>()
+            .map_or(0, |mut s| s.next());
+        if let Some(mut events) =
+            world.get_resource_mut::<Messages<crate::creature_anim::CastEvent>>()
+        {
+            events.write(crate::creature_anim::CastEvent {
+                entity,
+                spell_id,
+                kind: crate::creature_anim::CastEventKind::Sent,
+                cast_count: 0,
+                seq,
+            });
+        }
+    });
+}
+
+/// The trajectory mark of a flown aim (`0x80a09a`): an instant cast whose visual has a missile
+/// (`0x809fdf`, `0x80a065`).
+fn sends_trajectory(world: &World, caster: Entity, spell_id: u32) -> bool {
+    let Some(spells) = world.get_resource::<Spells>() else {
+        return false;
+    };
+    let Some(def) = spells.catalog.get(spell_id) else {
+        return false;
+    };
+    let level = world
+        .get::<crate::net::ObjectStore>(caster)
+        .and_then(|s| s.0.unit_level())
+        .unwrap_or(0);
+    let cast_ms = match world.get_resource::<crate::spell::SpellModifiers>() {
+        Some(mods) => spells.cast_time_unclamped_ms(def, level, mods),
+        None => spells.cast_time_unclamped_ms(def, level, &Default::default()),
+    };
+    let missile = world
+        .get_resource::<crate::creature_anim::SpellVisuals>()
+        .and_then(|v| {
+            v.0.stages(crate::creature_anim::spell_visual::spell_visual_id(def))
+                .map(|s| s.missile_gate != 0)
+        })
+        .unwrap_or(false);
+    cast_ms <= 0 && missile
 }
 
 #[cfg(test)]
@@ -1814,6 +1899,126 @@ mod tests {
             ])),
             ..Spells::empty_for_tests()
         }
+    }
+
+    const SENDER: u64 = 0x10;
+
+    /// [`world`] with the player streamed in and the cast edges stored.
+    fn sender_world() -> (World, Receiver<ClientCommand>, Entity) {
+        let (mut world, rx) = world();
+        world.init_resource::<Messages<crate::creature_anim::CastEvent>>();
+        world.init_resource::<crate::creature_anim::PlaySeq>();
+        let me = world.spawn(SelfPlayer).id();
+        world.insert_resource(crate::net::SelfGuid(Some(SENDER)));
+        world
+            .resource_mut::<crate::net::GuidIndex>()
+            .0
+            .insert(SENDER, me);
+        (world, rx, me)
+    }
+
+    fn sent_edges(world: &mut World) -> Vec<(u32, crate::creature_anim::CastEventKind)> {
+        world
+            .resource_mut::<Messages<crate::creature_anim::CastEvent>>()
+            .drain()
+            .map(|e| (e.spell_id, e.kind))
+            .collect()
+    }
+
+    /// The send's cast start (`0x80b573`): a caster with no cast state takes a hidden one of the
+    /// sent spell and starts its precast; one already holding a state keeps it, and no edge plays
+    /// (`0x8053cd`).
+    #[test]
+    fn a_sent_cast_takes_the_free_cast_state_hidden_and_starts_its_precast() {
+        use crate::creature_anim::{CastEventKind, Casting};
+        let (mut world, _rx, me) = sender_world();
+        send(&mut world, MOUNT, CastCommit::Spell);
+        let held = *world.get::<Casting>(me).expect("the send set the state");
+        assert_eq!(
+            (held.spell_id, held.hidden, held.listed),
+            (MOUNT, true, true)
+        );
+        assert_eq!(sent_edges(&mut world), [(MOUNT, CastEventKind::Sent)]);
+
+        world.insert_resource(crate::spell::PendingCast::default());
+        send(&mut world, HEARTHSTONE, CastCommit::Spell);
+        assert_eq!(
+            world.get::<Casting>(me).map(|c| c.spell_id),
+            Some(MOUNT),
+            "a held state stays"
+        );
+        assert!(sent_edges(&mut world).is_empty(), "and no precast plays");
+    }
+
+    /// The trade-slot click sends with its visuals hidden (`0x80c62c`): no state, no precast.
+    /// Another cursor commit takes the state as a press does.
+    #[test]
+    fn the_trade_slot_send_hides_its_visuals() {
+        use crate::creature_anim::Casting;
+        let (mut world, _rx, me) = sender_world();
+        let commit = |world: &mut World, bound: TargetedBind| {
+            world.insert_resource(crate::spell::PendingCast::default());
+            world
+                .run_system_once(move |mut ladder: CastLadder| {
+                    ladder.commit_targeted(MOUNT, CastCommit::Spell, bound);
+                })
+                .expect("the tail runs as a one-shot system");
+        };
+        commit(&mut world, TargetedBind::TradeItem);
+        assert!(world.get::<Casting>(me).is_none());
+        assert!(sent_edges(&mut world).is_empty());
+        commit(&mut world, TargetedBind::Glyph(0));
+        assert!(world.get::<Casting>(me).is_some_and(|c| c.hidden));
+    }
+
+    /// A flown aim marks an instant cast whose visual has a missile as a trajectory cast, which
+    /// takes no state at the send (`0x80a09a`, `0x8053d6`); sent plain, or with no missile, it
+    /// does.
+    #[test]
+    fn a_flown_instant_missile_aim_takes_no_state_at_the_send() {
+        use crate::creature_anim::Casting;
+        use std::collections::HashMap;
+        const AIM: u32 = 900;
+        const VISUAL: u32 = 77;
+        let (mut world, _rx, me) = sender_world();
+        let flown = |cast_index: u32| benilla_formats::SpellDisplay {
+            visual: VISUAL,
+            flies_aim: true,
+            casting_time_index: cast_index,
+            ..Default::default()
+        };
+        let mut visuals = HashMap::new();
+        visuals.insert(
+            VISUAL,
+            benilla_formats::VisualStages {
+                missile_gate: 1,
+                ..Default::default()
+            },
+        );
+        world.insert_resource(crate::creature_anim::SpellVisuals(
+            benilla_formats::SpellVisualCatalog::from_tables(visuals, HashMap::new()),
+        ));
+        let mut spells = Spells::empty_for_tests();
+        spells.catalog =
+            benilla_formats::SpellCatalog::from_displays(HashMap::from([(AIM, flown(0))]));
+        world.insert_resource(spells);
+        let start = |world: &mut World, aimed: bool| {
+            world.entity_mut(me).remove::<Casting>();
+            world
+                .run_system_once(move |mut ecs: Commands| {
+                    start_sent_cast(&mut ecs, None, AIM, aimed);
+                })
+                .expect("one-shot");
+            world.get::<Casting>(me).is_some()
+        };
+        assert!(!start(&mut world, true), "a trajectory cast holds no state");
+        assert!(start(&mut world, false), "sent plain, it does");
+        let mut no_missile = world.resource_mut::<crate::creature_anim::SpellVisuals>();
+        no_missile.0 = benilla_formats::SpellVisualCatalog::from_tables(
+            HashMap::from([(VISUAL, Default::default())]),
+            HashMap::new(),
+        );
+        assert!(start(&mut world, true), "no missile, no trajectory mark");
     }
 
     /// Every commit is recorded, but a ranged shot does not guard: it must not refuse the next

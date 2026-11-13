@@ -1344,7 +1344,7 @@ fn castvis_parses_id_and_phase() {
         parse_line("/castvis 133"),
         ParsedChat::CastVis {
             spell_id: 133,
-            kind: CastEventKind::Start,
+            kind: CastEventKind::Start { visuals: true },
             ground: false
         }
     );

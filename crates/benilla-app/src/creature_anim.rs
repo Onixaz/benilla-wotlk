@@ -400,6 +400,16 @@ pub(crate) struct Casting {
     pub(crate) until: Option<Instant>,
     /// Its pending cast is still listed, which `IsCurrentSpell` tests (`0x805f30`).
     pub(crate) listed: bool,
+    /// Set at the send, before the server's start: its pending cast's hidden byte (`0x805344`).
+    pub(crate) hidden: bool,
+}
+
+impl Casting {
+    /// Whether an end of this spell and count ends the state (`0x7fed81`); a sent state's count is
+    /// taken by the wire writer, so it matches by spell.
+    pub(crate) fn ended_by(&self, spell_id: u32, cast_count: u8) -> bool {
+        self.spell_id == spell_id && (self.hidden || self.cast_count == cast_count)
+    }
 }
 
 /// The reference's animation play order: handlers run in packet order and the later play wins
@@ -431,8 +441,12 @@ pub(crate) struct CastEvent {
 /// Which cast edge fired.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum CastEventKind {
-    /// `SMSG_SPELL_START`: the precast kit persists from here.
-    Start,
+    /// `SMSG_SPELL_START`; `visuals` when it set the cast state and so starts the precast kit
+    /// (`0x8053f8`, `0x80547d`).
+    Start { visuals: bool },
+    /// A cast sent with visuals took the free cast state: its precast starts at the press, ahead
+    /// of the server's start (`0x80b573`).
+    Sent,
     /// `SMSG_SPELL_GO`: reaps the precast, plays the cast kit.
     Go,
     /// Died without release, through the end-cast (`0x7fecc0`) with the reason byte as sent;
