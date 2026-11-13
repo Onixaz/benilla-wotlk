@@ -1688,21 +1688,6 @@ fn spell_go(
         } else {
             hit_codes.chain(miss_codes).collect()
         };
-        // The hop fill the cast kit consumes, a unit caster's alone (`0x80ed5a`). Deviation:
-        // fills on every row, not only a beam's, as only a beam consumes it.
-        let object = stores.get(e).is_ok_and(|s| {
-            s.0.object_type().is_some_and(|t| {
-                !matches!(
-                    t,
-                    benilla_protocol::messages::ObjectType::Unit
-                        | benilla_protocol::messages::ObjectType::Player
-                )
-            })
-        });
-        if !object {
-            let hops: Vec<u64> = list.iter().map(|&(g, ..)| g).collect();
-            fill_chain_hops(caster, e, &hops, commands, index);
-        }
         cast_events.write(CastEvent {
             entity: e,
             spell_id,
@@ -2006,26 +1991,6 @@ fn set_spell_modifier(
     mods.set(flat, mask_bit, op, value);
 }
 
-/// The caster's chain-hop array from a wire target list, as the reference: clear, then fill,
-/// skipping the unit's own guid; unstreamed targets drop out. Its two callers are the
-/// `SMSG_SPELL_UPDATE_CHAIN_TARGETS` handler and the `SMSG_SPELL_GO` handler.
-fn fill_chain_hops(
-    caster: u64,
-    caster_entity: Entity,
-    targets: &[u64],
-    commands: &mut Commands,
-    index: &GuidIndex,
-) {
-    let hops: Vec<Entity> = targets
-        .iter()
-        .filter(|&&g| g != caster)
-        .filter_map(|g| index.0.get(g).copied())
-        .collect();
-    commands
-        .entity(caster_entity)
-        .try_insert(crate::entities::ChainHops(hops));
-}
-
 /// `SMSG_SPELL_UPDATE_CHAIN_TARGETS`: the hop list a beam runs through, parked on the caster
 /// (`unit+0xd44`: capacity `+0xd44`, count `+0xd48`, data `+0xd4c`, quantum `+0xd50`) and consumed
 /// once by the next chain proc. vmangos sends it only for channelled spells
@@ -2041,8 +2006,16 @@ fn spell_chain_targets(
         "net: chain targets for spell {spell_id} by {caster:#x} — {} hop(s)",
         targets.len()
     );
+    // The caster's own guid and unstreamed targets drop out; the GO's beam fill is the spawner's.
     if let Some(&e) = index.0.get(&caster) {
-        fill_chain_hops(caster, e, &targets, commands, index);
+        let hops: Vec<Entity> = targets
+            .iter()
+            .filter(|&&g| g != caster)
+            .filter_map(|g| index.0.get(g).copied())
+            .collect();
+        commands
+            .entity(e)
+            .try_insert(crate::entities::ChainHops { spell_id, hops });
     }
 }
 
@@ -3162,10 +3135,10 @@ mod tests {
         assert_eq!(used.0, 5000, "the item leg applies no modifier");
     }
 
-    /// Both producers of the chain-hop array, the GO's hit list and the 816 packet, drop the
-    /// caster's own guid and clear before they fill.
+    /// The GO hands its whole target list to the beam spawner and parks no hops itself; the 816
+    /// packet parks its list on the caster under its spell, less the caster's own guid.
     #[test]
-    fn both_wire_producers_fill_the_casters_chain_hop_array() {
+    fn the_go_leaves_the_hop_fill_to_the_spawner_and_the_816_packet_tags_its_list() {
         use crate::combat_text::CombatTextSpawn;
         use crate::creature_anim::Casting;
         use crate::entities::ChainHops;
@@ -3202,17 +3175,17 @@ mod tests {
                 .insert(guid, e);
             e
         };
-        let (caster, t1, t2) = (spawn(10), spawn(20), spawn(30));
+        let (caster, _, t2) = (spawn(10), spawn(20), spawn(30));
 
         let hops = |app: &App| {
             app.world()
                 .entity(caster)
                 .get::<ChainHops>()
-                .map(|h| h.0.clone())
+                .map(|h| (h.spell_id, h.hops.clone()))
         };
 
-        // The `SMSG_SPELL_GO` handler's fill: the caster itself (vmangos includes self-hits) and an
-        // unstreamed target both drop.
+        // The `SMSG_SPELL_GO` handler: the caster itself (vmangos includes self-hits) and an
+        // unstreamed target stay in the list the spawner filters.
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.world_mut()
             .run_system_once(
@@ -3277,13 +3250,16 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(
-            hops(&app),
-            Some(vec![t1, t2]),
-            "the GO fills the array in wire order, minus the caster and the unstreamed target"
-        );
+        assert_eq!(hops(&app), None, "the GO parks no hops on the caster");
+        let lists: Vec<Vec<u64>> = app
+            .world_mut()
+            .resource_mut::<Messages<SpellGoTargets>>()
+            .drain()
+            .map(|go| go.list.iter().map(|&(g, ..)| g).collect())
+            .collect();
+        assert_eq!(lists, vec![vec![10, 20, 40, 30]], "the wire list, whole");
 
-        // The 816 packet, vmangos's for a channelled chain, clears the GO's list first.
+        // The 816 packet, vmangos's for a channelled chain.
         app.world_mut()
             .run_system_once(move |mut commands: Commands, index: Res<GuidIndex>| {
                 spell_chain_targets(10, 689, vec![30, 10], &mut commands, &index);
@@ -3291,8 +3267,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             hops(&app),
-            Some(vec![t2]),
-            "clear-before-fill, caster dropped"
+            Some((689, vec![t2])),
+            "tagged with its spell, caster dropped"
         );
     }
 

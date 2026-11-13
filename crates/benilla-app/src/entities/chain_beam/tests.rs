@@ -13,6 +13,11 @@ use crate::net::ObjectStore;
 /// Chain Lightning (`benilla-extract <Data> spellvis 421`): visual 36.
 const CHAIN_SPELL: u32 = 421;
 const CHAIN_VISUAL: u32 = 36;
+/// Lightning Overload's Chain Lightning, which shares visual 36.
+const OVERLOAD_SPELL: u32 = 45297;
+/// Clearcasting from Elemental Focus, a self-cast with no beam.
+const SELF_PROC_SPELL: u32 = 16246;
+const SELF_PROC_VISUAL: u32 = 37;
 /// The fixture visual's cast kit, with its beam slot, and its impact area kit.
 const BEAM_KIT: u32 = 900;
 const AREA_KIT: u32 = 901;
@@ -52,6 +57,7 @@ fn beam_app_area_flags(area_flags: u32) -> App {
     app.init_asset::<Image>();
     app.init_resource::<GuidIndex>();
     app.init_resource::<ChainLocations>();
+    app.init_resource::<ChainHopLists>();
     app.add_message::<ChainProcPlay>()
         .add_message::<SpellEffectClear>()
         .add_message::<KitEffectClear>()
@@ -59,16 +65,25 @@ fn beam_app_area_flags(area_flags: u32) -> App {
         .add_message::<DelayedAreaKit>();
     app.insert_resource(SpellVisuals(
         SpellVisualCatalog::from_tables(
-            HashMap::from([(
-                CHAIN_VISUAL,
-                VisualStages {
-                    // Column 10's ordinal: missile-table index 1 is attachment 34.
-                    missile_attach: 1,
-                    cast: BEAM_KIT,
-                    impact_area_kit: AREA_KIT,
-                    ..Default::default()
-                },
-            )]),
+            HashMap::from([
+                (
+                    CHAIN_VISUAL,
+                    VisualStages {
+                        // Column 10's ordinal: missile-table index 1 is attachment 34.
+                        missile_attach: 1,
+                        cast: BEAM_KIT,
+                        impact_area_kit: AREA_KIT,
+                        ..Default::default()
+                    },
+                ),
+                (
+                    SELF_PROC_VISUAL,
+                    VisualStages {
+                        cast: AREA_KIT,
+                        ..Default::default()
+                    },
+                ),
+            ]),
             HashMap::from([
                 (
                     BEAM_KIT,
@@ -122,13 +137,29 @@ fn beam_app_area_flags(area_flags: u32) -> App {
         .with_chain_effect(COMBO_B, lightning()),
     ));
     app.insert_resource(crate::ui_action::Spells {
-        catalog: SpellCatalog::from_displays(HashMap::from([(
-            CHAIN_SPELL,
-            SpellDisplay {
-                visual: CHAIN_VISUAL,
-                ..Default::default()
-            },
-        )])),
+        catalog: SpellCatalog::from_displays(HashMap::from([
+            (
+                CHAIN_SPELL,
+                SpellDisplay {
+                    visual: CHAIN_VISUAL,
+                    ..Default::default()
+                },
+            ),
+            (
+                OVERLOAD_SPELL,
+                SpellDisplay {
+                    visual: CHAIN_VISUAL,
+                    ..Default::default()
+                },
+            ),
+            (
+                SELF_PROC_SPELL,
+                SpellDisplay {
+                    visual: SELF_PROC_VISUAL,
+                    ..Default::default()
+                },
+            ),
+        ])),
         ..crate::ui_action::Spells::empty_for_tests()
     });
     app.add_systems(Update, spawn_chain_beams);
@@ -162,6 +193,19 @@ fn node_entities(app: &App, nodes: &[u64]) -> Vec<Entity> {
         .iter()
         .map(|g| index.0.get(g).copied().unwrap_or(Entity::PLACEHOLDER))
         .collect()
+}
+
+/// A hop list parked for Chain Lightning, as the 816 packet leaves it.
+fn packet(hops: Vec<Entity>) -> ChainHops {
+    ChainHops {
+        spell_id: CHAIN_SPELL,
+        hops,
+    }
+}
+
+/// The caster's saved hop lists as `(spell, hops)`.
+fn lists(app: &App, caster: Entity) -> Vec<(u32, Vec<Entity>)> {
+    app.world().resource::<ChainHopLists>().lists(caster)
 }
 
 /// A cast-stage play of chain id 1, flag clear.
@@ -233,37 +277,27 @@ fn target_selection_prefers_the_channel_object_only_on_its_own_narrow_path() {
     let idle = ObjectStore(ObjectFields::from_pairs(&[]));
 
     assert_eq!(
-        select_targets(CHANNEL_SPELL, None, &channelling, &index),
+        select_targets(CHANNEL_SPELL, Vec::new(), &channelling, &index),
         vec![victim],
         "no hops + a live channel object ⇒ the channel object"
     );
     assert_eq!(
-        select_targets(
-            CHANNEL_SPELL,
-            Some(&ChainHops(vec![hop])),
-            &channelling,
-            &index
-        ),
+        select_targets(CHANNEL_SPELL, vec![hop], &channelling, &index),
         vec![victim],
         "…and `<= 1` is unsigned `jbe`: ONE hop still takes the channel path"
     );
     assert_eq!(
-        select_targets(
-            CHANNEL_SPELL,
-            Some(&ChainHops(vec![hop, victim])),
-            &channelling,
-            &index
-        ),
+        select_targets(CHANNEL_SPELL, vec![hop, victim], &channelling, &index),
         vec![hop, victim],
         "two hops outgrow the single-target path and the array wins"
     );
     assert_eq!(
-        select_targets(421, Some(&ChainHops(vec![hop])), &channelling, &index),
+        select_targets(421, vec![hop], &channelling, &index),
         vec![hop],
         "a DIFFERENT spell's kit never takes the channel object"
     );
     assert!(
-        select_targets(CHANNEL_SPELL, None, &idle, &index).is_empty(),
+        select_targets(CHANNEL_SPELL, Vec::new(), &idle, &index).is_empty(),
         "no channel, no hops ⇒ nothing is drawn"
     );
 }
@@ -274,7 +308,7 @@ fn a_play_over_a_filled_hop_array_builds_the_staggered_polyline_once() {
     let (caster, t1, t2) = (unit(&mut app), unit(&mut app), unit(&mut app));
     app.world_mut()
         .entity_mut(caster)
-        .insert(ChainHops(vec![t1, t2]));
+        .insert(packet(vec![t1, t2]));
     app.world_mut().write_message(play(caster, CHAIN_SPELL));
     app.update();
 
@@ -296,7 +330,7 @@ fn a_play_over_a_filled_hop_array_builds_the_staggered_polyline_once() {
     assert_eq!(*expiry, bolts[1].1, "the beam ends with its last hop");
     assert!(!persistent, "a cast-stage proc (flag 0) self-terminates");
 
-    assert!(app.world().entity(caster).get::<ChainHops>().is_none());
+    assert!(lists(&app, caster).is_empty(), "the play took the list");
     app.world_mut().write_message(play(caster, CHAIN_SPELL));
     app.update();
     assert_eq!(
@@ -313,7 +347,7 @@ fn a_staggered_row_lights_its_hops_in_turn() {
     let (caster, t1, t2) = (unit(&mut app), unit(&mut app), unit(&mut app));
     app.world_mut()
         .entity_mut(caster)
-        .insert(ChainHops(vec![t1, t2]));
+        .insert(packet(vec![t1, t2]));
     let mut p = play(caster, CHAIN_SPELL);
     p.proc.effect_id = STAGGERED;
     app.world_mut().write_message(p);
@@ -333,9 +367,7 @@ fn a_staggered_row_lights_its_hops_in_turn() {
 fn two_plays_in_one_frame_share_no_hops() {
     let mut app = beam_app();
     let (caster, t1) = (unit(&mut app), unit(&mut app));
-    app.world_mut()
-        .entity_mut(caster)
-        .insert(ChainHops(vec![t1]));
+    app.world_mut().entity_mut(caster).insert(packet(vec![t1]));
     app.world_mut().write_message(play(caster, CHAIN_SPELL));
     app.world_mut().write_message(play(caster, CHAIN_SPELL));
     app.update();
@@ -347,9 +379,7 @@ fn only_a_persistent_beam_answers_the_spell_clear() {
     for persistent in [false, true] {
         let mut app = beam_app();
         let (caster, t1) = (unit(&mut app), unit(&mut app));
-        app.world_mut()
-            .entity_mut(caster)
-            .insert(ChainHops(vec![t1]));
+        app.world_mut().entity_mut(caster).insert(packet(vec![t1]));
         let mut p = play(caster, CHAIN_SPELL);
         p.proc.flag = persistent;
         app.world_mut().write_message(p);
@@ -375,9 +405,10 @@ fn the_constructors_guards_build_nothing_but_still_consume() {
     for (spell_id, effect_id) in [(0u32, 1u32), (CHAIN_SPELL, 99)] {
         let mut app = beam_app();
         let (caster, t1) = (unit(&mut app), unit(&mut app));
-        app.world_mut()
-            .entity_mut(caster)
-            .insert(ChainHops(vec![t1]));
+        app.world_mut().entity_mut(caster).insert(ChainHops {
+            spell_id,
+            hops: vec![t1],
+        });
         let mut p = play(caster, spell_id);
         p.proc.effect_id = effect_id;
         app.world_mut().write_message(p);
@@ -387,7 +418,7 @@ fn the_constructors_guards_build_nothing_but_still_consume() {
             "spell {spell_id} / chain {effect_id} draws nothing"
         );
         assert!(
-            app.world().entity(caster).get::<ChainHops>().is_none(),
+            lists(&app, caster).is_empty(),
             "…and the array is consumed anyway"
         );
     }
@@ -416,9 +447,7 @@ fn the_reverse_flag_fans_every_hop_out_of_the_caster() {
         let mut app = beam_app();
         let caster = unit(&mut app);
         let targets = vec![unit(&mut app), unit(&mut app), unit(&mut app)];
-        app.world_mut()
-            .entity_mut(caster)
-            .insert(ChainHops(targets));
+        app.world_mut().entity_mut(caster).insert(packet(targets));
         let mut p = play(caster, CHAIN_SPELL);
         p.proc.reverse = reverse;
         app.world_mut().write_message(p);
@@ -432,9 +461,7 @@ fn the_reverse_flag_fans_every_hop_out_of_the_caster() {
 fn a_combo_row_draws_every_row_it_names() {
     let mut app = beam_app();
     let (caster, t1) = (unit(&mut app), unit(&mut app));
-    app.world_mut()
-        .entity_mut(caster)
-        .insert(ChainHops(vec![t1]));
+    app.world_mut().entity_mut(caster).insert(packet(vec![t1]));
     let mut p = play(caster, CHAIN_SPELL);
     p.proc.effect_id = COMBO;
     app.world_mut().write_message(p);
@@ -457,12 +484,14 @@ fn a_saved_location_draws_one_bolt_to_the_ground_and_plays_the_area_kit() {
     let mut app = beam_app();
     let (caster, t1) = (unit(&mut app), unit(&mut app));
     let dest = Vec3::new(5.0, 1.0, -7.0);
-    app.world_mut()
-        .resource_mut::<ChainLocations>()
-        .save(caster, 0, false, Some(dest));
-    app.world_mut()
-        .entity_mut(caster)
-        .insert(ChainHops(vec![t1]));
+    app.world_mut().resource_mut::<ChainLocations>().save(
+        caster,
+        CHAIN_SPELL,
+        0,
+        false,
+        Some(dest),
+    );
+    app.world_mut().entity_mut(caster).insert(packet(vec![t1]));
     app.world_mut().write_message(play(caster, CHAIN_SPELL));
     app.update();
     let beam = app
@@ -505,7 +534,7 @@ fn a_location_beams_flag_1_area_kit_waits_under_the_beams_sequence() {
     // A unit beam first: its first bolt carries sequence 0, the rest none.
     app.world_mut()
         .entity_mut(caster)
-        .insert(ChainHops(vec![t1, caster]));
+        .insert(packet(vec![t1, caster]));
     app.world_mut().write_message(play(caster, CHAIN_SPELL));
     app.update();
     assert_eq!(attachments(&mut app), vec![vec![0, NO_BEAM_KEY]]);
@@ -518,9 +547,13 @@ fn a_location_beams_flag_1_area_kit_waits_under_the_beams_sequence() {
     }
 
     // Then a ground beam: sequence 2, its area kit held, not played.
-    app.world_mut()
-        .resource_mut::<ChainLocations>()
-        .save(caster, 0, false, Some(dest));
+    app.world_mut().resource_mut::<ChainLocations>().save(
+        caster,
+        CHAIN_SPELL,
+        0,
+        false,
+        Some(dest),
+    );
     app.world_mut().write_message(play(caster, CHAIN_SPELL));
     app.update();
     assert_eq!(attachments(&mut app), vec![vec![2]]);
@@ -549,14 +582,14 @@ fn beams_with_ids(app: &mut App) -> Vec<(Entity, u32)> {
 fn a_beam_rows_go_saves_or_clears_the_location() {
     let caster = Entity::from_raw_u32(9).expect("a test entity id");
     let mut locations = ChainLocations::default();
-    let at = |l: &ChainLocations| l.0.get(&caster).copied();
-    locations.save(caster, 0, true, Some(Vec3::X));
+    let at = |l: &ChainLocations| l.0.get(&(caster, CHAIN_SPELL)).copied();
+    locations.save(caster, CHAIN_SPELL, 0, true, Some(Vec3::X));
     assert_eq!(at(&locations), Some(Vec3::X), "flag clear: units or not");
-    locations.save(caster, 0x1, true, Some(Vec3::Y));
+    locations.save(caster, CHAIN_SPELL, 0x1, true, Some(Vec3::Y));
     assert_eq!(at(&locations), None, "flag 0x1 with units hit clears it");
-    locations.save(caster, 0x1, false, Some(Vec3::Z));
+    locations.save(caster, CHAIN_SPELL, 0x1, false, Some(Vec3::Z));
     assert_eq!(at(&locations), Some(Vec3::Z), "flag 0x1 with none saves");
-    locations.save(caster, 0, false, None);
+    locations.save(caster, CHAIN_SPELL, 0, false, None);
     assert_eq!(at(&locations), None, "no dest clears it");
 }
 
@@ -566,12 +599,14 @@ fn a_beam_rows_go_saves_or_clears_the_location() {
 fn a_play_from_another_unit_runs_from_it_to_the_owner() {
     let mut app = beam_app();
     let (owner, hop, other) = (unit(&mut app), unit(&mut app), typed_unit(&mut app));
-    app.world_mut()
-        .entity_mut(owner)
-        .insert(ChainHops(vec![hop]));
-    app.world_mut()
-        .resource_mut::<ChainLocations>()
-        .save(owner, 0, false, Some(Vec3::X));
+    app.world_mut().entity_mut(owner).insert(packet(vec![hop]));
+    app.world_mut().resource_mut::<ChainLocations>().save(
+        owner,
+        CHAIN_SPELL,
+        0,
+        false,
+        Some(Vec3::X),
+    );
     let mut p = play(owner, CHAIN_SPELL);
     p.from = Some(other);
     app.world_mut().write_message(p);
@@ -589,10 +624,7 @@ fn a_play_from_another_unit_runs_from_it_to_the_owner() {
     assert_eq!(beam.location, None, "a unit target, never the ground");
     assert_eq!(beam.caster, owner, "the owner's kit keeps it");
     assert_eq!(hops(&mut app), vec![vec![(0, 1)]]);
-    assert!(
-        app.world().entity(owner).get::<ChainHops>().is_none(),
-        "the hop array is consumed"
-    );
+    assert!(lists(&app, owner).is_empty(), "the hop array is consumed");
     let kits: Vec<u32> = app
         .world_mut()
         .resource_mut::<Messages<DelayedAreaKit>>()
@@ -611,9 +643,7 @@ fn a_play_from_another_unit_runs_from_it_to_the_owner() {
 fn a_play_naming_its_owner_takes_the_ordinary_path() {
     let mut app = beam_app();
     let (owner, hop) = (typed_unit(&mut app), unit(&mut app));
-    app.world_mut()
-        .entity_mut(owner)
-        .insert(ChainHops(vec![hop]));
+    app.world_mut().entity_mut(owner).insert(packet(vec![hop]));
     let mut p = play(owner, CHAIN_SPELL);
     p.from = Some(owner);
     app.world_mut().write_message(p);
@@ -630,16 +660,14 @@ fn an_unresolved_guid_draws_nothing_and_keeps_the_hops() {
     let object = unit(&mut app); // a store with no unit type
     for from in [gone, object, Entity::PLACEHOLDER] {
         let (owner, hop) = (unit(&mut app), unit(&mut app));
-        app.world_mut()
-            .entity_mut(owner)
-            .insert(ChainHops(vec![hop]));
+        app.world_mut().entity_mut(owner).insert(packet(vec![hop]));
         let mut p = play(owner, CHAIN_SPELL);
         p.from = Some(from);
         app.world_mut().write_message(p);
         app.update();
         assert!(beams(&mut app).is_empty(), "{from} draws nothing");
         assert!(
-            app.world().entity(owner).get::<ChainHops>().is_some(),
+            !lists(&app, owner).is_empty(),
             "{from} leaves the hops for the next play"
         );
     }
@@ -658,7 +686,7 @@ fn two_persistent_beams_of_one_spell_coexist_until_the_spell_clear() {
     app.update();
     app.world_mut()
         .entity_mut(owner)
-        .insert(ChainHops(vec![other]));
+        .insert(packet(vec![other]));
     let mut own = play(owner, CHAIN_SPELL);
     own.proc.flag = true;
     app.world_mut().write_message(own);
@@ -787,9 +815,13 @@ fn a_bolts_drawn_ends_connect_its_source_and_target() {
 fn a_ground_beam_with_no_chain_row_still_plays_its_area_kit() {
     let mut app = beam_app();
     let caster = unit(&mut app);
-    app.world_mut()
-        .resource_mut::<ChainLocations>()
-        .save(caster, 0, false, Some(Vec3::ONE));
+    app.world_mut().resource_mut::<ChainLocations>().save(
+        caster,
+        CHAIN_SPELL,
+        0,
+        false,
+        Some(Vec3::ONE),
+    );
     let mut p = play(caster, CHAIN_SPELL);
     p.proc.effect_id = 999;
     app.world_mut().write_message(p);
@@ -837,6 +869,185 @@ fn only_a_unit_casters_go_saves_the_location() {
     }
     app.update();
     let saved = &app.world().resource::<ChainLocations>().0;
-    assert_eq!(saved.get(&unit), Some(&Vec3::X), "the unit's");
-    assert_eq!(saved.get(&trap), None, "not the GameObject's");
+    assert_eq!(
+        saved.get(&(unit, CHAIN_SPELL)),
+        Some(&Vec3::X),
+        "the unit's"
+    );
+    assert_eq!(
+        saved.get(&(trap, CHAIN_SPELL)),
+        None,
+        "not the GameObject's"
+    );
+}
+
+/// A GO from `caster` hitting `hits`, as the net stage hands it on.
+fn go(app: &App, caster: Entity, spell_id: u32, hits: &[Entity]) -> SpellGoTargets {
+    let guid = |e: Entity| app.world().entity(e).get::<Guid>().map_or(0, |g| g.0);
+    SpellGoTargets {
+        caster,
+        spell_id,
+        hits: hits.to_vec(),
+        misses: Vec::new(),
+        list: hits.iter().map(|&e| (guid(e), 0, 0)).collect(),
+        target_mask: 0x2,
+        src: None,
+        src_deck: None,
+        dest: None,
+        dest_deck: None,
+        points: Vec::new(),
+        ammo: None,
+        seq: 0,
+        trajectory: None,
+        reflected: 0,
+        reflects: Vec::new(),
+        caster_guid: guid(caster),
+        server_time: 0,
+    }
+}
+
+/// Every live beam as `(spell, nodes)`, sorted.
+fn beams_by_spell(app: &mut App) -> Vec<(u32, Vec<Entity>)> {
+    let mut all: Vec<(u32, Vec<u64>)> = app
+        .world_mut()
+        .query::<&ChainBeam>()
+        .iter(app.world())
+        .map(|b| (b.spell_id, b.nodes.clone()))
+        .collect();
+    all.sort();
+    all.into_iter()
+        .map(|(spell, nodes)| (spell, node_entities(app, &nodes)))
+        .collect()
+}
+
+/// Chain Lightning and its overload land in one drain: each beam runs its own GO's hops, so each
+/// spell's bolts reach its own held impacts (`0x80ed6f`, `0x726a56` within one packet).
+#[test]
+fn two_beam_gos_from_one_caster_in_one_frame_each_draw_their_own_hops() {
+    for overload_first in [false, true] {
+        let mut app = beam_app();
+        let caster = unit(&mut app);
+        let chain: Vec<Entity> = (0..3).map(|_| unit(&mut app)).collect();
+        let overload: Vec<Entity> = (0..2).map(|_| unit(&mut app)).collect();
+        let gos = [
+            go(&app, caster, CHAIN_SPELL, &chain),
+            go(&app, caster, OVERLOAD_SPELL, &overload),
+        ];
+        for g in gos {
+            app.world_mut().write_message(g);
+        }
+        let mut plays = [play(caster, CHAIN_SPELL), play(caster, OVERLOAD_SPELL)];
+        if overload_first {
+            plays.reverse();
+        }
+        for p in plays {
+            app.world_mut().write_message(p);
+        }
+        app.update();
+        let want = vec![
+            (CHAIN_SPELL, [vec![caster], chain.clone()].concat()),
+            (OVERLOAD_SPELL, [vec![caster], overload.clone()].concat()),
+        ];
+        assert_eq!(
+            beams_by_spell(&mut app),
+            want,
+            "overload_first={overload_first}"
+        );
+        assert!(lists(&app, caster).is_empty(), "both lists taken");
+    }
+}
+
+/// Only a beam row's GO saves its list (`0x80ed5a`, `0x80ed64`): a self-cast proc landing beside
+/// the beam's GO leaves the beam its hops.
+#[test]
+fn a_non_beam_go_in_the_same_frame_leaves_the_beams_hops() {
+    let mut app = beam_app();
+    let caster = unit(&mut app);
+    let chain: Vec<Entity> = (0..3).map(|_| unit(&mut app)).collect();
+    let beam_go = go(&app, caster, CHAIN_SPELL, &chain);
+    let proc_go = go(&app, caster, SELF_PROC_SPELL, &[caster]);
+    app.world_mut().write_message(beam_go);
+    app.world_mut().write_message(proc_go);
+    app.world_mut().write_message(play(caster, CHAIN_SPELL));
+    app.update();
+    assert_eq!(
+        beams_by_spell(&mut app),
+        vec![(CHAIN_SPELL, [vec![caster], chain].concat())],
+        "the beam runs through its three hops"
+    );
+    assert!(
+        lists(&app, caster).is_empty(),
+        "the self-cast saved no list of its own"
+    );
+}
+
+/// A GO's list drops the caster's own guid and unstreamed targets, and a later run's GO of the
+/// same spell replaces an unconsumed one (`0x724f50`).
+#[test]
+fn a_go_list_drops_the_caster_and_replaces_its_spells_stale_list() {
+    let mut app = beam_app();
+    let (caster, t1, t2) = (unit(&mut app), unit(&mut app), unit(&mut app));
+    let mut first = go(&app, caster, CHAIN_SPELL, &[caster, t1]);
+    first.list.push((0xDEAD, 0, 0));
+    app.world_mut().write_message(first);
+    app.update();
+    assert_eq!(lists(&app, caster), vec![(CHAIN_SPELL, vec![t1])]);
+    let second = go(&app, caster, CHAIN_SPELL, &[t2]);
+    app.world_mut().write_message(second);
+    app.update();
+    assert_eq!(lists(&app, caster), vec![(CHAIN_SPELL, vec![t2])]);
+}
+
+/// The 816 packet's list still feeds its channel's beam, and no other spell's play takes it.
+#[test]
+fn the_chain_targets_packet_feeds_its_own_channels_beam() {
+    const CHANNEL_SPELL: u32 = OVERLOAD_SPELL;
+    let mut app = beam_app();
+    let (caster, t1, t2) = (unit(&mut app), unit(&mut app), unit(&mut app));
+    app.world_mut().entity_mut(caster).insert(ChainHops {
+        spell_id: CHANNEL_SPELL,
+        hops: vec![t1, t2],
+    });
+    app.world_mut().write_message(play(caster, CHAIN_SPELL));
+    app.update();
+    assert!(
+        beams(&mut app).is_empty(),
+        "another spell's play draws nothing"
+    );
+    let mut channel = play(caster, CHANNEL_SPELL);
+    channel.proc.flag = true;
+    app.world_mut().write_message(channel);
+    app.update();
+    assert_eq!(
+        beams_by_spell(&mut app),
+        vec![(CHANNEL_SPELL, vec![caster, t1, t2])]
+    );
+}
+
+/// A location is saved per spell: one beam GO at the ground and another at units in one frame
+/// each keep their own aim (`0x80eda6`, `0x80edb2`).
+#[test]
+fn a_ground_beam_and_a_unit_beam_in_one_frame_keep_their_own_aim() {
+    let mut app = beam_app();
+    let (caster, t1) = (unit(&mut app), unit(&mut app));
+    let dest = Vec3::new(5.0, 1.0, -7.0);
+    let mut ground = go(&app, caster, CHAIN_SPELL, &[]);
+    ground.dest = Some(dest);
+    let units = go(&app, caster, OVERLOAD_SPELL, &[t1]);
+    app.world_mut().write_message(ground);
+    app.world_mut().write_message(units);
+    app.world_mut().write_message(play(caster, CHAIN_SPELL));
+    app.world_mut().write_message(play(caster, OVERLOAD_SPELL));
+    app.update();
+    let mut aims: Vec<(u32, Option<Vec3>, usize)> = app
+        .world_mut()
+        .query::<&ChainBeam>()
+        .iter(app.world())
+        .map(|b| (b.spell_id, b.location, b.nodes.len()))
+        .collect();
+    aims.sort_by_key(|a| a.0);
+    assert_eq!(
+        aims,
+        vec![(CHAIN_SPELL, Some(dest), 1), (OVERLOAD_SPELL, None, 2)]
+    );
 }
