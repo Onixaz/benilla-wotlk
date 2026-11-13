@@ -498,6 +498,69 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
     );
 }
 
+/// A custom refusal (wire 172) shows the row its word names and, unlike a plain refusal, writes
+/// no combat log line: the player's handler sets its shown flag (`0x808537`).
+#[test]
+fn a_custom_refusal_shows_its_row_and_is_not_logged() {
+    use crate::ui_action::cast_fail::CUSTOM_ERROR;
+    use crate::ui_action::{CastFail, Spells};
+
+    const FIRE_NOVA: u32 = 61657;
+
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let mut app = App::new();
+    let mut errors = CastErrors::default();
+    errors.0.push(CastFail {
+        arg: Some(83),
+        ..CastFail::local(FIRE_NOVA, CUSTOM_ERROR)
+    });
+    errors.push_local(FIRE_NOVA, 0x5F);
+
+    app.insert_resource(PlayerActions::default())
+        .insert_resource(errors)
+        .insert_resource(Spells::empty_for_tests())
+        .init_resource::<Items>()
+        .init_resource::<crate::net::GuidIndex>()
+        .init_resource::<MountErrors>()
+        .init_resource::<PetTameFailures>()
+        .init_resource::<UiErrorKeys>()
+        .init_resource::<UiErrorTexts>()
+        .init_resource::<crate::ui_chat::ChatLog>()
+        .init_resource::<crate::sound::MessageSounds>()
+        .add_message::<crate::combat_log::SpellCastFailedLog>()
+        .insert_resource(NetCommands(tx));
+    let script = UiScript::new().unwrap();
+    script
+        .run(
+            r#"SPELL_FAILED_CUSTOM_ERROR_83 = "A fire totem line"
+               SPELL_FAILED_ROOTED = "A reason"
+               BENILLA_TEST_LINES = {}
+               local f = CreateFrame("Frame")
+               f:RegisterEvent("UI_ERROR_MESSAGE")
+               f:SetScript("OnEvent", function(self, event, arg1)
+                   table.insert(BENILLA_TEST_LINES, arg1)
+               end)"#,
+        )
+        .unwrap();
+    app.insert_non_send_resource(script);
+    app.add_systems(Update, feed_actions);
+    app.update();
+
+    let shown = app
+        .world()
+        .non_send_resource::<UiScript>()
+        .eval::<String>("return table.concat(BENILLA_TEST_LINES, '|')")
+        .unwrap();
+    assert_eq!(shown, "A fire totem line|A reason", "each shows once");
+    let logged: Vec<String> = app
+        .world_mut()
+        .resource_mut::<Messages<crate::combat_log::SpellCastFailedLog>>()
+        .drain()
+        .map(|f| f.reason)
+        .collect();
+    assert_eq!(logged, ["A reason"], "only the plain refusal logs");
+}
+
 /// `0x808200`'s two-word arms: `NEED_MORE_ITEMS` (wire 55) names the item and the count, and
 /// `MIN_SKILL` (wire 150) the skill line and the value; the pet's table fills neither.
 #[test]

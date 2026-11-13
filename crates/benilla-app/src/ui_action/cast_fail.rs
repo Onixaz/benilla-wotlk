@@ -352,6 +352,9 @@ pub(super) struct CastFailLine {
     /// changes only the displayed text. Only a filled arm, `0x02` and `0x4d` rewrite it; empty
     /// means the log reads the displayed text ([`Self::logged`]).
     pub arg_text: String,
+    /// Whether the player's handler logs the line; its custom-error arm sets the shown flag
+    /// (`0x808537`), which skips the combat log.
+    pub logs: bool,
 }
 
 impl CastFailLine {
@@ -361,6 +364,7 @@ impl CastFailLine {
             key: PASSTHROUGH,
             arg_text: text.clone(),
             text,
+            logs: true,
         }
     }
 
@@ -402,18 +406,22 @@ pub(super) fn cast_fail_text(
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Option<CastFailLine> {
     let get_text = |key: &str| get(key).filter(|s| !s.is_empty());
+    let key = CAST_FAIL_KEYS.get(usize::from(reason));
+    // The player's handler reads `<key>_PET` first for a spell that teaches the pet (`0x808481`).
+    let pet_text = key
+        .filter(|_| caster == Caster::Player && spell.is_some_and(teaches_pet))
+        .and_then(|k| get_text(&format!("{k}_PET")));
+    // The raw first-layer string: the `_PET` text when there is one.
+    let raw = pet_text.clone().or_else(|| key.and_then(|k| get_text(k)));
     // `[ebp-0x488]`, the first-layer string (`edi`): what the log reads for every reason no arm
     // claims, overrides included. Empty when 1.12 ships no such key.
-    let first_layer = CAST_FAIL_KEYS
-        .get(usize::from(reason))
-        .and_then(|k| get_text(k))
-        .map(|t| strip_tokens(&t))
-        .unwrap_or_default();
+    let first_layer = raw.as_deref().map(strip_tokens).unwrap_or_default();
     let get_display = |key: &'static str| {
         get_text(key).map(|text| CastFailLine {
             key,
             text,
             arg_text: first_layer.clone(),
+            logs: true,
         })
     };
     // `0x4d`, both handlers' arm (`0x80569e`, `0x808935`): a spell with a `PowerDisplay.dbc` row
@@ -453,6 +461,8 @@ pub(super) fn cast_fail_text(
             // Health takes `0x123`, the rest a per-power table entry, the same five ids as the
             // player's, so [`power_keys`] serves both.
             0x4D => return no_power(),
+            // `0x8059f5`.
+            CUSTOM_ERROR => return custom_error(args.arg, &get_text),
             // The pet sends `0x01`, `0x02`, `0x09`, `0x18`, `0x28`, `0x41` and `0x8e` to its
             // generic arm, so it never says those lines. `0x17` goes there too and shows nothing
             // only because 1.12 ships no `SPELL_FAILED_DONT_REPORT`. `0x56`'s pet arm (errorId
@@ -499,16 +509,18 @@ pub(super) fn cast_fail_text(
             0x4D => return no_power(),
             0x59 => return get_display("ERR_SPELL_OUT_OF_RANGE"),
             0x8E => return get_display("ERR_PLAY_TIME_EXCEEDED"),
+            // `0x808528`, only when the `_PET` read found nothing.
+            CUSTOM_ERROR if pet_text.is_none() => return custom_error(args.arg, &get_text),
             _ => {}
         },
     }
     // The passthrough: errorId `0x2c` displays the key's string as is.
-    let Some(key) = CAST_FAIL_KEYS.get(usize::from(reason)) else {
+    if key.is_none() {
         return Some(CastFailLine::passthrough(format!(
             "Spell failed ({reason:#04x})"
         )));
-    };
-    let text = get_text(key)?;
+    }
+    let text = raw?;
     let line = CastFailLine::passthrough;
     // The argument arms.
     match args.fill(caster, reason, spell) {
@@ -518,6 +530,30 @@ pub(super) fn cast_fail_text(
         Fill::Template => {}
     }
     Some(line(strip_tokens(&text)))
+}
+
+/// 12340's `SPELL_FAILED_CUSTOM_ERROR` (wire 172) in the shared numbering.
+pub(crate) const CUSTOM_ERROR: u8 = 0xB2;
+
+/// A spell that teaches the pet: `Effect[0]` 57, or 36 on implicit target 5 (`0x808481`).
+fn teaches_pet(d: &SpellDisplay) -> bool {
+    d.effects[0] == 57 || (d.effects[0] == 36 && d.implicit_target_a1 == 5)
+}
+
+/// `0x7fef10`: the line is `SPELL_FAILED_CUSTOM_ERROR_<word>` on errorId `0x2c`. The word prints
+/// signed, so a missing one (read as `0xffffffff`, `0x809af0`) asks for `_-1`; an absent key reads
+/// empty and shows nothing. Never logged ([`CastFailLine::logs`]).
+fn custom_error(
+    arg: Option<u32>,
+    get_text: &dyn Fn(&str) -> Option<String>,
+) -> Option<CastFailLine> {
+    let id = arg.map_or(-1, |w| w as i32);
+    get_text(&format!("SPELL_FAILED_CUSTOM_ERROR_{id}")).map(|text| CastFailLine {
+        key: PASSTHROUGH,
+        text,
+        arg_text: String::new(),
+        logs: false,
+    })
 }
 
 /// Deviation: a declined arm's template loses its tokens ("Missing reagent: %s" reads "Missing
@@ -1359,6 +1395,106 @@ mod tests {
             .unwrap()
             .text,
             "Requires Shadowglen Moonwell"
+        );
+    }
+
+    /// `SPELL_FAILED_CUSTOM_ERROR` (wire 172) names its line by the word: Fire Nova's id 83 on
+    /// both handlers, never logged; a missing word and an id with no plain row show nothing.
+    #[test]
+    fn a_custom_refusal_shows_the_row_its_word_names() {
+        let m = HashMap::from([
+            ("SPELL_FAILED_CUSTOM_ERROR_83", "A fire totem line"),
+            // The stock file ships id 14 only under a suffixed key.
+            ("SPELL_FAILED_CUSTOM_ERROR_14_NONE", "A tree line"),
+        ]);
+        let g = getter(&m);
+        let say = |caster, arg| {
+            cast_fail_text(
+                caster,
+                CUSTOM_ERROR,
+                None,
+                FailArgs {
+                    arg,
+                    ..FailArgs::default()
+                },
+                &g,
+            )
+        };
+        for caster in [Caster::Player, Caster::Pet] {
+            let line = say(caster, Some(83)).expect("the numbered row");
+            assert_eq!(line.text, "A fire totem line", "{caster:?}");
+            assert_eq!(line.key, PASSTHROUGH);
+            assert!(!line.logs, "the custom arm skips the combat log");
+            assert_eq!(
+                say(caster, None),
+                None,
+                "{caster:?}: no word asks for `_-1`"
+            );
+            assert_eq!(say(caster, Some(14)), None, "{caster:?}: no plain row");
+        }
+        // The missing word prints signed.
+        let m = HashMap::from([("SPELL_FAILED_CUSTOM_ERROR_-1", "A minus-one line")]);
+        let g = getter(&m);
+        assert_eq!(
+            cast_fail_text(Caster::Player, CUSTOM_ERROR, None, FailArgs::default(), &g)
+                .map(|l| l.text)
+                .as_deref(),
+            Some("A minus-one line")
+        );
+    }
+
+    /// The player's `_PET` read: a pet-teaching spell (effect 57, or 36 on implicit target 5)
+    /// takes `<key>_PET` as its first-layer string where one exists; the pet's handler never does.
+    #[test]
+    fn a_pet_teaching_spell_reads_the_pet_row_first() {
+        let m = HashMap::from([
+            ("SPELL_FAILED_LEVEL_REQUIREMENT", "A level line"),
+            ("SPELL_FAILED_LEVEL_REQUIREMENT_PET", "A pet level line"),
+            ("SPELL_FAILED_CUSTOM_ERROR_83", "A fire totem line"),
+        ]);
+        let g = getter(&m);
+        let teach = |effect, target| SpellDisplay {
+            effects: [effect, 0, 0],
+            implicit_target_a1: target,
+            ..Default::default()
+        };
+        let say = |caster, reason, d: &SpellDisplay| {
+            cast_fail_text(
+                caster,
+                reason,
+                Some(d),
+                FailArgs {
+                    arg: Some(83),
+                    ..FailArgs::default()
+                },
+                &g,
+            )
+            .map(|l| (l.text, l.arg_text))
+        };
+        let pet_line = Some((
+            "A pet level line".to_string(),
+            "A pet level line".to_string(),
+        ));
+        assert_eq!(say(Caster::Player, 0x29, &teach(57, 0)), pet_line);
+        assert_eq!(say(Caster::Player, 0x29, &teach(36, 5)), pet_line);
+        for (caster, d) in [
+            (Caster::Player, teach(36, 1)),
+            (Caster::Player, teach(0, 5)),
+            (Caster::Pet, teach(57, 0)),
+        ] {
+            assert_eq!(
+                say(caster, 0x29, &d).map(|l| l.0).as_deref(),
+                Some("A level line"),
+                "{caster:?} {:?}",
+                d.effects
+            );
+        }
+        // No `_PET` custom row, so the custom arm still runs.
+        assert_eq!(
+            say(Caster::Player, CUSTOM_ERROR, &teach(57, 0))
+                .map(|l| l.0)
+                .as_deref(),
+            Some("A fire totem line")
         );
     }
 }
