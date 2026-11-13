@@ -76,6 +76,11 @@ impl super::UiScript {
         set_field!(self, currency_holdings, holdings);
     }
 
+    /// Push the token slots' item views, slot 1 being player slot `0x76`; `None` with no player.
+    pub fn set_token_slots(&mut self, slots: Option<super::ContainerState>) {
+        set_field!(self, token_slots, slots);
+    }
+
     /// Take the categories' open flags out of this VM, for a `ReloadUI`, which they outlive.
     pub fn take_currency_folds(&mut self) -> CurrencyFolds {
         CurrencyFolds(std::mem::take(&mut self.model_mut().currency_collapsed))

@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use bevy::prelude::*;
 
+use benilla_protocol::messages::CURRENCY_TOKEN_SLOTS;
 use benilla_protocol::ItemInfo;
 use benilla_ui::script::{item_lock_args, ContainerSlot, ContainerState, ScriptValue, UiScript};
 
@@ -1472,6 +1473,35 @@ pub(crate) fn feed_containers(
                 slots,
             },
         );
+
+        // The token slots 118-149, read by the item search and the token tooltips (`0x753a50`).
+        let mut slots = HashMap::new();
+        for i in 0..CURRENCY_TOKEN_SLOTS {
+            let guid = store.0.player_currency_token_slot(i).unwrap_or(0);
+            if let Some(slot) = resolve_slot(
+                guid,
+                &inv.objects,
+                &items,
+                icons.as_deref(),
+                rolls,
+                &commands,
+                &cooldowns,
+                spell_catalog,
+                &names,
+                &mut petitions,
+                now,
+                ui_now,
+                has_relic_slot,
+            ) {
+                slots.insert(u32::from(i) + 1, slot);
+            }
+        }
+        script.set_token_slots(Some(ContainerState {
+            bag_family: 0,
+            name: None,
+            num_slots: u32::from(CURRENCY_TOKEN_SLOTS),
+            slots,
+        }));
 
         // `HasKey()`, which decides whether the keyring shows at all, pushed with the containers
         // so it is fresh on every `BAG_UPDATE` frame.
