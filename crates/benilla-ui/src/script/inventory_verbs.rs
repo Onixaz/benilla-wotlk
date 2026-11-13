@@ -4,7 +4,7 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::binding_abi::number_arg;
+use super::binding_abi::{number_arg, string_arg};
 use super::char_stats::{alert_events, inventory_slot_arg, recompute_inventory_alerts};
 use super::container::UiCursorMode;
 use super::region::{clear_texture, this_texture};
@@ -55,25 +55,42 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetInventoryPortaitTexture(texture, unit, slot) (the reference's spelling): the texture is
-    // cleared before arguments 2 and 3 are read; a bad unit raises and a refused slot returns. The
-    // unit is then read from argument 1, the texture itself, which `lua_tostring` answers NULL for, so the
-    // token resolves no unit and the item's icon is never painted: the call only blanks the
-    // texture. No stock caller.
+    // SetInventoryPortraitTexture(texture, unit, slot) (`0x5ea9b0`): the texture is cleared before
+    // anything else is read; a non-string unit raises, a refused slot or a unit that is no player
+    // returns blank, else the worn item's icon (the ammo for slot 0) is painted round (`0x5eaadb`).
     g.set(
-        "SetInventoryPortaitTexture",
+        "SetInventoryPortraitTexture",
         lua.create_function(|lua, (texture, unit, slot): (Value, Value, Value)| {
             let rh = this_texture(lua, &texture)?;
             clear_texture(&mut crate::script::model_mut_of(lua), rh);
-            if !matches!(
+            let token = string_arg(
+                lua,
                 unit,
-                Value::String(_) | Value::Number(_) | Value::Integer(_)
-            ) {
-                return Err(mlua::Error::runtime(
-                    "Usage: SetInventoryPortaitTexture(texure, unit, slot)",
-                ));
-            }
-            inventory_slot_arg(lua, &slot)?;
+                "Usage: SetInventoryPortraitTexture(texture, unit, slot)",
+            )?;
+            let Some(slot0) = inventory_slot_arg(lua, &slot)? else {
+                return Ok(());
+            };
+            let icon = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                // The player-type test on the resolved unit (`0x5eaa59`).
+                if !model.unit(&token).is_some_and(|u| u.is_player) {
+                    return Ok(());
+                }
+                // Slot -1 finds the active player's ammo in the unit's bags, only ours (`0x5eaa7a`).
+                let view = match usize::try_from(slot0 + 1) {
+                    Ok(0) if !token.eq_ignore_ascii_case("player") => None,
+                    Ok(live) => model.inv_slot(&token, live),
+                    Err(_) => None,
+                };
+                view.filter(|v| v.item_id != 0).and_then(|v| v.icon)
+            };
+            let mut model = crate::script::model_mut_of(lua);
+            let data = model.region_data.entry(rh).or_default();
+            data.texture = icon;
+            data.circular = true;
             Ok(())
         })?,
     )?;
@@ -97,7 +114,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::script::{ContainerSlot, ContainerState, InvSlotView, UiCursorMode, UiScript};
+    use crate::script::{
+        ContainerSlot, ContainerState, InvSlotView, QuadContent, UiCursorMode, UiScript, UnitState,
+    };
 
     fn keyring_with_key() -> ContainerState {
         let mut slots = std::collections::HashMap::new();
@@ -239,38 +258,109 @@ mod tests {
         assert_eq!(s.ui_cursor(), None);
     }
 
-    #[test]
-    fn inventory_portrait_setter_only_blanks_the_texture() {
-        let s = UiScript::new().unwrap();
+    fn portrait_script() -> UiScript {
+        let mut s = UiScript::new().unwrap();
         s.run(
             r#"local f = CreateFrame("Frame", "PortHost", UIParent)
+               f:SetPoint("TOPLEFT", 0, 0)
+               f:SetWidth(64); f:SetHeight(64)
                PortTex = f:CreateTexture("PortTex")
-               PortTex:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")
+               PortTex:SetAllPoints(f)
                PortText = f:CreateFontString("PortText")"#,
         )
         .unwrap();
-        s.run("SetInventoryPortaitTexture(PortTex, 'player', 1)")
+        s.set_screen_size(800.0, 600.0);
+        let mut slots: crate::script::InventorySlots = Default::default();
+        slots[0] = Some(InvSlotView {
+            item_id: 2512,
+            icon: Some("Interface\\Icons\\INV_Ammo_Arrow_02".into()),
+            ..Default::default()
+        });
+        slots[1] = Some(InvSlotView {
+            item_id: 10050,
+            icon: Some("Interface\\Icons\\INV_Helmet_01".into()),
+            ..Default::default()
+        });
+        s.set_inventory_slots(slots);
+        for (token, is_player) in [("player", true), ("target", false)] {
+            s.set_unit(
+                token,
+                Some(UnitState {
+                    exists: true,
+                    is_player,
+                    ..Default::default()
+                }),
+            );
+        }
+        s
+    }
+
+    /// Paint a stale icon, run `call`, and read the drawn quad's path and round mask back.
+    fn portrait_after(s: &mut UiScript, call: &str) -> (Option<String>, bool) {
+        s.run(r#"PortTex:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")"#)
             .unwrap();
+        s.run(call).unwrap();
+        s.resolve();
+        s.extract()
+            .into_iter()
+            .find_map(|q| match q.content {
+                QuadContent::Texture { path, circular, .. } => Some((path, circular)),
+                _ => None,
+            })
+            .unwrap_or((None, false))
+    }
+
+    #[test]
+    fn inventory_portrait_paints_the_worn_item_round() {
+        let mut s = portrait_script();
         assert_eq!(
-            s.eval::<Option<String>>("return PortTex:GetTexture()")
-                .unwrap(),
-            None
+            portrait_after(&mut s, "SetInventoryPortraitTexture(PortTex, 'player', 1)"),
+            (Some("Interface\\Icons\\INV_Helmet_01".into()), true)
         );
         assert_eq!(
-            s.eval::<i64>("local n = function(...) return arg.n end return n(SetInventoryPortaitTexture(PortTex, 'player', 1))")
+            portrait_after(&mut s, "SetInventoryPortraitTexture(PortTex, 'player', 0)"),
+            (Some("Interface\\Icons\\INV_Ammo_Arrow_02".into()), true),
+            "slot 0 is the ammo leg"
+        );
+        assert_eq!(
+            s.arity("SetInventoryPortraitTexture(PortTex, 'player', 1)")
                 .unwrap(),
             0
         );
+        assert!(
+            s.eval::<bool>("return SetInventoryPortaitTexture == nil")
+                .unwrap(),
+            "1.12.1's spelling is not a 3.3.5a global"
+        );
+    }
 
-        // The clear precedes the argument checks.
+    /// The clear runs first, so every quiet return leaves the texture blank.
+    #[test]
+    fn inventory_portrait_quiet_returns_leave_it_blank() {
+        let mut s = portrait_script();
+        for call in [
+            "SetInventoryPortraitTexture(PortTex, 'player', 30)",
+            "SetInventoryPortraitTexture(PortTex, 'player', 75)",
+            "SetInventoryPortraitTexture(PortTex, 'target', 1)",
+            "SetInventoryPortraitTexture(PortTex, 'focus', 1)",
+            "SetInventoryPortraitTexture(PortTex, 'player', 2)",
+            "SetInventoryPortraitTexture(PortTex, 'target', 0)",
+        ] {
+            assert_eq!(portrait_after(&mut s, call).0, None, "{call}");
+        }
+    }
+
+    #[test]
+    fn inventory_portrait_raises_after_the_clear() {
+        let s = portrait_script();
         s.run(r#"PortTex:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")"#)
             .unwrap();
         let err = s
-            .run("SetInventoryPortaitTexture(PortTex, nil, 1)")
+            .run("SetInventoryPortraitTexture(PortTex, nil, 1)")
             .unwrap_err()
             .to_string();
         assert!(
-            err.contains("Usage: SetInventoryPortaitTexture(texure, unit, slot)"),
+            err.contains("Usage: SetInventoryPortraitTexture(texture, unit, slot)"),
             "{err}"
         );
         assert_eq!(
@@ -278,24 +368,22 @@ mod tests {
                 .unwrap(),
             None
         );
-        s.run("SetInventoryPortaitTexture(PortTex, 'player', 30)")
-            .unwrap();
 
         for (call, message) in [
             (
-                "SetInventoryPortaitTexture(1, 'player', 1)",
+                "SetInventoryPortraitTexture(1, 'player', 1)",
                 "non-table object",
             ),
             (
-                "SetInventoryPortaitTexture({}, 'player', 1)",
+                "SetInventoryPortraitTexture({}, 'player', 1)",
                 "non-framescript object",
             ),
             (
-                "SetInventoryPortaitTexture(PortText, 'player', 1)",
+                "SetInventoryPortraitTexture(PortText, 'player', 1)",
                 "Wrong object type for member function",
             ),
             (
-                "SetInventoryPortaitTexture(PortHost, 'player', 1)",
+                "SetInventoryPortraitTexture(PortHost, 'player', 1)",
                 "Wrong object type for member function",
             ),
         ] {

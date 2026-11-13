@@ -145,7 +145,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "SetBindingMacro",
     "SetBindingSpell",
     "SetChannelWatch",
-    "SetInventoryPortraitTexture",
     "SetMacroItem",
     "SetMacroSpell",
     "SetMouselookOverrideBinding",

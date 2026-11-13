@@ -811,14 +811,22 @@ fn install_item_verbs(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetInventoryItemGems(slot) (`0x5ea4f0`): the gem item of each socket enchant (slots 2..4),
-    // nil per empty socket; nothing for an empty slot.
+    // nil per empty socket; a non-number or a slot the reader refuses raises (`0x5ea538`), the
+    // ammo slot and an empty slot answer nothing.
     g.set(
         "GetInventoryItemGems",
         lua.create_function(|lua, slot: Value| {
-            let slot =
-                super::binding_abi::number_arg(lua, slot, "Usage: GetInventoryItemGems(slot)")?;
+            const USAGE: &str = "Usage: GetInventoryItemGems(slot)";
+            super::binding_abi::number_arg(lua, slot.clone(), USAGE)?;
+            let Some(slot0) = super::char_stats::inventory_slot_arg(lua, &slot)? else {
+                return Err(mlua::Error::runtime(USAGE));
+            };
             let player = Some("player".to_string());
-            let Some(v) = super::char_stats::player_inv_slot(lua, &player, i64::from(slot)) else {
+            let v = match slot0 {
+                -1 => None,
+                _ => super::char_stats::player_inv_slot(lua, &player, i64::from(slot0) + 1),
+            };
+            let Some(v) = v.filter(|v| v.item_id != 0) else {
                 return Ok(MultiValue::new());
             };
             gems(v.gems)
@@ -1343,6 +1351,43 @@ mod tests {
 
     /// `GameTooltip:SetEquipmentSet`: the name and count, then equipped, in bags, ignored and a
     /// red line per missing slot.
+    /// `0x5ea4f0`: the slot goes through the inventory reader, which raises off its whitelist; the
+    /// ammo slot and an empty slot answer nothing, a worn item its three sockets.
+    #[test]
+    fn inventory_gems_take_the_slot_reader() {
+        let mut s = script();
+        let mut inv: crate::script::InventorySlots = Default::default();
+        inv[0] = Some(slot(0, 2512, 0));
+        inv[1] = Some(InvSlotView {
+            gems: [40001, 0, 40003],
+            ..slot(HELM, 100, 1)
+        });
+        inv[16] = Some(slot(SWORD, 200, 16));
+        s.set_inventory_slots(inv);
+
+        assert_eq!(
+            s.eval::<(Option<i64>, Option<i64>, Option<i64>)>("return GetInventoryItemGems(1)")
+                .unwrap(),
+            (Some(40001), None, Some(40003)),
+            "a socketed helm"
+        );
+        assert_eq!(s.arity("GetInventoryItemGems(16)").unwrap(), 3);
+        assert_eq!(s.arity("GetInventoryItemGems(2)").unwrap(), 0, "empty");
+        assert_eq!(s.arity("GetInventoryItemGems(0)").unwrap(), 0, "ammo");
+
+        // Backpack, buyback and past the keyring are off the reader's whitelist; so is a name.
+        for refused in ["24", "39", "75", "86", "119", "-1", "'HeadSlot'", "nil"] {
+            let err = s
+                .run(&format!("GetInventoryItemGems({refused})"))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains("Usage: GetInventoryItemGems(slot)"),
+                "{refused}: {err}"
+            );
+        }
+    }
+
     #[test]
     fn the_set_tooltip_counts_where_the_items_are() {
         let mut s = script();
