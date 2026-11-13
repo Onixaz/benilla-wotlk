@@ -295,6 +295,9 @@ pub(super) fn attach_entity_visuals(
         mut images,
     ) = skin_build;
     let now = time.elapsed_secs();
+    // Mount children this pass despawned: a child is itself pending, and its build queued after the
+    // despawn would land on a freed entity.
+    let mut dropped: Vec<Entity> = Vec::new();
     for (
         entity,
         net,
@@ -309,6 +312,9 @@ pub(super) fn attach_entity_visuals(
         model_scale,
     ) in &pending
     {
+        if dropped.contains(&entity) {
+            continue;
+        }
         // The appear ramp's origin: the unit's arrival, however long its visual waited to build.
         let arrived = arrival.map_or(now, |a| a.0);
         // A player attaches once its equipment settles, so it never flashes naked.
@@ -436,6 +442,7 @@ pub(super) fn attach_entity_visuals(
                 // Dismounted while pending: drop the mount it ordered.
                 if let Ok(mut ec) = commands.get_entity(child) {
                     ec.despawn();
+                    dropped.push(child);
                 }
                 commands.entity(entity).remove::<super::mount::MountChild>();
             }
@@ -1052,10 +1059,8 @@ mod tests {
     /// A unit torn down before its visual built gets none: the reference frees it at once, so the
     /// build would run commands on an entity `apply_despawn_fade` has despawned by the time they
     /// apply.
-    #[test]
-    fn a_torn_down_unit_is_not_built() {
-        use benilla_world::model_fade::DespawnFade;
-
+    /// The build's resources, with no model tables: every unit builds as the cube.
+    fn build_app() -> App {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Image>()
@@ -1076,6 +1081,14 @@ mod tests {
                 player_mat: Handle::default(),
                 npc_mat: Handle::default(),
             });
+        app
+    }
+
+    #[test]
+    fn a_torn_down_unit_is_not_built() {
+        use benilla_world::model_fade::DespawnFade;
+
+        let mut app = build_app();
         let mut spawn = |torn_down: bool| {
             let mut unit = app.world_mut().spawn(NetEntity {
                 kind: EntityKind::Unit,
@@ -1110,6 +1123,67 @@ mod tests {
         assert!(
             world.entity(live).contains::<VisualAttached>(),
             "a live unit still builds"
+        );
+    }
+
+    /// A rider that dismounted while its model was pending drops the mount child it ordered; the
+    /// child, pending in the same pass, is not built after that despawn (a build queued on the freed
+    /// child panicked as the queue applied).
+    #[test]
+    fn a_mount_dropped_in_the_pass_is_not_built() {
+        const DISPLAY: u32 = 7;
+        let mut app = build_app();
+        app.world_mut().insert_resource(Creatures {
+            catalog: Default::default(),
+            models: std::collections::HashMap::from([(
+                DISPLAY,
+                DisplayModel {
+                    handle: ModelHandle::M2(Handle::default()),
+                    parts: Some(Vec::new()),
+                    ..super::super::display::empty_shell()
+                },
+            )]),
+        });
+        let unit = |kind| NetEntity {
+            kind,
+            display_id: Some(DISPLAY),
+            scale: 1.0,
+        };
+        app.add_systems(Update, attach_entity_visuals);
+        // The rider's archetype first, so the pass reaches it, and its drop, before the child; the
+        // child is named once spawned, a write that keeps the archetype.
+        let world = app.world_mut();
+        let rider = world
+            .spawn((
+                unit(EntityKind::Unit),
+                super::super::mount::MountChild(Entity::PLACEHOLDER),
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .id();
+        let child = world
+            .spawn((
+                unit(EntityKind::Unit),
+                super::super::mount::MountBody { host: rider },
+                Transform::default(),
+                Visibility::default(),
+            ))
+            .id();
+        world
+            .get_mut::<super::super::mount::MountChild>(rider)
+            .expect("the rider's mount")
+            .0 = child;
+
+        app.update();
+
+        let world = app.world();
+        assert!(
+            world.get_entity(child).is_err(),
+            "the dropped mount is gone"
+        );
+        assert!(
+            world.entity(rider).contains::<VisualAttached>(),
+            "the rider builds on foot"
         );
     }
 }
