@@ -50,6 +50,10 @@ pub struct CurrencyHoldings {
     pub items: std::collections::HashMap<u32, (Option<String>, Option<String>)>,
 }
 
+/// The categories' open flags, set only at a world entry from the character screen (`0x5afd90`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CurrencyFolds(std::collections::HashMap<u32, bool>);
+
 /// One display-list entry.
 #[derive(Clone, Debug, PartialEq)]
 struct Entry {
@@ -70,6 +74,16 @@ impl super::UiScript {
     /// Push the player's currency holdings, `None` with no player.
     pub fn set_currency_holdings(&mut self, holdings: Option<CurrencyHoldings>) {
         set_field!(self, currency_holdings, holdings);
+    }
+
+    /// Take the categories' open flags out of this VM, for a `ReloadUI`, which they outlive.
+    pub fn take_currency_folds(&mut self) -> CurrencyFolds {
+        CurrencyFolds(std::mem::take(&mut self.model_mut().currency_collapsed))
+    }
+
+    /// Put the flags taken from the previous VM back.
+    pub fn restore_currency_folds(&mut self, folds: CurrencyFolds) {
+        self.model_mut().currency_collapsed = folds.0;
     }
 }
 
@@ -789,5 +803,22 @@ mod tests {
             "Badge of Justice",
         ];
         assert_eq!(names[..5], want.map(|n| Some(n.to_string())), "{names:?}");
+    }
+
+    /// A `ReloadUI` carries the closed categories into the new VM; a fresh VM, as a world entry from
+    /// the character screen builds, has every category open.
+    #[test]
+    fn closed_categories_survive_a_reload_and_open_on_a_new_vm() {
+        let mut s = script();
+        s.run("ExpandCurrencyList(1, 0)").unwrap();
+        let carried = s.take_currency_folds();
+        let mut fresh = script();
+        assert!(row(&fresh, 1).2, "a new VM starts open");
+        fresh.restore_currency_folds(carried);
+        assert!(!row(&fresh, 1).2, "the reload kept it closed");
+        assert_eq!(
+            fresh.eval::<i64>("return GetCurrencyListSize()").unwrap(),
+            4
+        );
     }
 }

@@ -839,6 +839,10 @@ pub(crate) fn run_pending_reload(world: &mut World) {
     let calendar = world
         .get_non_send_resource_mut::<UiScript>()
         .map(|mut s| s.take_calendar());
+    // So do the currency categories' open flags, set only at a world entry (`0x52b887`).
+    let currency_folds = world
+        .get_non_send_resource_mut::<UiScript>()
+        .map(|mut s| s.take_currency_folds());
     // A boot VM, never the glue's: the reload builds no glue, and the load replaces this VM at
     // once.
     close_ui_session(world);
@@ -853,6 +857,12 @@ pub(crate) fn run_pending_reload(world: &mut World) {
         (calendar, world.get_non_send_resource_mut::<UiScript>())
     {
         script.restore_calendar(calendar);
+    }
+    if let (Some(folds), Some(mut script)) = (
+        currency_folds,
+        world.get_non_send_resource_mut::<UiScript>(),
+    ) {
+        script.restore_currency_folds(folds);
     }
     // The UI init ends by re-entering the world-enter cascade, its sends included, but only with
     // the active player set: our own player's entity exists. Not the active-mover set, which only
@@ -1090,6 +1100,59 @@ mod tests {
             0,
             "no cascade before our own player's create"
         );
+    }
+
+    /// A `ReloadUI` hands the closed currency categories to the VM it builds.
+    #[test]
+    fn a_reload_keeps_the_closed_currency_categories() {
+        use benilla_ui::script::CurrencyTypeView;
+        use benilla_ui::script::{CurrencyCatalogView, CurrencyCategoryView, CurrencyHoldings};
+        let feed = |script: &mut UiScript| {
+            script.set_currency_catalog(CurrencyCatalogView {
+                types: vec![CurrencyTypeView {
+                    item_id: 29434,
+                    category_id: 2,
+                    bit_index: 1,
+                }],
+                categories: vec![CurrencyCategoryView {
+                    id: 2,
+                    flags: 0,
+                    name: "Dungeon".into(),
+                }],
+            });
+            script.set_currency_holdings(Some(CurrencyHoldings {
+                known: 1,
+                ..Default::default()
+            }));
+        };
+        let expanded = |world: &mut World| {
+            let mut script = world.non_send_resource_mut::<UiScript>();
+            feed(&mut script);
+            script
+                .eval::<bool>("return select(3, GetCurrencyListInfo(1))")
+                .unwrap()
+        };
+        let mut world = World::new();
+        world.insert_resource(State::new(crate::char_select::ClientState::InWorld));
+        world.insert_resource(crate::run_mode::CaptureMode);
+        world.init_resource::<Messages<crate::net::WorldEnterCascadeMessage>>();
+        world.init_resource::<Messages<WorldLeaveSweepMessage>>();
+        world.init_resource::<LeavingWorldArmed>();
+        world.insert_non_send_resource(UiScript::new().unwrap());
+        assert!(expanded(&mut world), "a category starts open");
+        world
+            .non_send_resource_mut::<UiScript>()
+            .run("ExpandCurrencyList(1, 0)")
+            .unwrap();
+        let before = world.non_send_resource::<UiScript>().session();
+        world.insert_resource(ReloadUiPending(true));
+        run_pending_reload(&mut world);
+        assert_ne!(
+            world.non_send_resource::<UiScript>().session(),
+            before,
+            "a new VM"
+        );
+        assert!(!expanded(&mut world), "still closed after the reload");
     }
 
     /// The IO thread's roster policy follows the VM that came up: the screen asks only when the

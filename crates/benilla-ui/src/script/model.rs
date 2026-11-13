@@ -535,7 +535,7 @@ pub(crate) struct Model {
     pub(crate) currency_catalog: super::currency::CurrencyCatalogView,
     /// The player's currencies, `None` with no player.
     pub(crate) currency_holdings: Option<super::currency::CurrencyHoldings>,
-    /// Categories closed by `ExpandCurrencyList`; every one starts open (`0x5afd90`).
+    /// Each category's open flag, all open at a world entry from the character screen (`0x5afde2`).
     pub(crate) currency_collapsed: HashMap<u32, bool>,
     /// The equipment manager's saved sets and swap state.
     pub(crate) equipment_manager: super::equipment_manager::EquipmentManager,

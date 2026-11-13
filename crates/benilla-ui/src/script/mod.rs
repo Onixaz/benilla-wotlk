@@ -399,7 +399,9 @@ pub use calendar::{
     WowTime,
 };
 pub use companion::{CompanionIntent, CompanionState, CompanionType, CompanionView};
-pub use currency::{CurrencyCatalogView, CurrencyCategoryView, CurrencyHoldings, CurrencyTypeView};
+pub use currency::{
+    CurrencyCatalogView, CurrencyCategoryView, CurrencyFolds, CurrencyHoldings, CurrencyTypeView,
+};
 pub use equipment_manager::{
     EquipmentSetRequest, EquipmentSetView, EQUIPMENT_SET_SLOTS, IGNORED_SLOT, MAX_EQUIPMENT_SETS,
 };
