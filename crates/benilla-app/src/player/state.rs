@@ -432,9 +432,9 @@ pub(crate) struct Player {
     /// site, since our mover re-derives ground contact every frame and would cancel a jump
     /// committed here.
     pub(super) hover_launch: bool,
-    /// The knockback waiting to be flown, armed by `SMSG_MOVE_KNOCK_BACK` and taken at the take-off
-    /// site with the jump and the hover launch.
-    pub(super) knockback: Option<PendingKnockback>,
+    /// The knockbacks waiting to be flown, in arrival order, queued by `SMSG_MOVE_KNOCK_BACK` and
+    /// taken at the take-off site with the jump and the hover launch.
+    pub(super) knockback: Vec<PendingKnockback>,
     /// The arc's take-off vertical speed (yd/s, WoW +Z up), the client's fall-start argument
     /// (`+0xa0`) and the jump tail's `zspeed`: [`JUMP_SPEED`] for a jump, exactly 0 for a step-off.
     pub(super) jump_zspeed: f32,
@@ -577,10 +577,14 @@ impl Player {
         fire
     }
 
-    /// Take the knockback, clearing the latch; the mover may still decline it (the settle hold, a
-    /// root), and then it is dropped, not deferred, and no ack is sent.
-    pub(super) fn take_knockback(&mut self) -> Option<PendingKnockback> {
-        self.knockback.take()
+    /// Take the queued knockbacks, oldest first. The settle hold, benilla's own wait for the ground
+    /// with no reference counterpart, keeps them queued until it ends; the mover may still decline
+    /// them under a root, and then they are dropped and none is acked.
+    pub(super) fn take_knockbacks(&mut self) -> Vec<PendingKnockback> {
+        if self.settling {
+            return Vec::new();
+        }
+        std::mem::take(&mut self.knockback)
     }
 
     /// Turn the aim by `radians`, the scripted mouse turn (`capture::probe_look`): the same
@@ -836,6 +840,33 @@ mod stand_state_tests {
             !stand_state_refused(false, f::FALLING, 3),
             "falling: /sleep granted"
         );
+    }
+}
+
+#[cfg(test)]
+mod knockback_tests {
+    use super::{PendingKnockback, Player};
+
+    /// A knockback that lands during the settle hold waits for it, and is then taken with any
+    /// later one, oldest first.
+    #[test]
+    fn the_settle_hold_keeps_knockbacks_queued() {
+        let knock = |counter| PendingKnockback {
+            guid: 0x405,
+            counter,
+            launch: benilla_protocol::JumpInfo::default(),
+        };
+        let mut player = Player {
+            settling: true,
+            ..Default::default()
+        };
+        player.knockback.push(knock(8));
+        assert!(player.take_knockbacks().is_empty(), "held while settling");
+        player.settling = false;
+        player.knockback.push(knock(9));
+        let taken: Vec<u32> = player.take_knockbacks().iter().map(|k| k.counter).collect();
+        assert_eq!(taken, vec![8, 9]);
+        assert!(player.knockback.is_empty());
     }
 }
 

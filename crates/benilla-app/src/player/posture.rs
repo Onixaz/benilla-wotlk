@@ -60,7 +60,7 @@ pub(super) fn update(
     // release within 200 ms is a right-click, whose action stands you. A knockback's move event
     // stands us too (through the stand wrapper's state read), read off the latch
     // [`super::wire_in::apply_server_moves`] armed this frame, as the mover runs later.
-    let knocked_out_of_it = player.knockback.is_some();
+    let knocked_out_of_it = !player.knockback.is_empty();
     if (moving || turned || knocked_out_of_it || binds.fired(crate::bindings::Input::Jump))
         && stand_state != 0
         && request_stand.is_none()

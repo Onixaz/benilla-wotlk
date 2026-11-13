@@ -99,7 +99,7 @@ pub(super) fn stream_self_movement(
     arc: ArcEdges,
     now: f32,
     speed_acks: &[crate::net::SpeedChangeMessage],
-    knock_ack: Option<super::state::PendingKnockback>,
+    knock_acks: &[super::state::PendingKnockback],
     transport: Option<TransportPose>,
     skip: SkipClock,
 ) {
@@ -154,11 +154,12 @@ pub(super) fn stream_self_movement(
         player.last_pos = wow_pos;
     }
 
-    // The knockback ack goes out on the take-off frame with the take-off pose, as the reference
-    // applies the launch and then sends (push `0xf0`). `launch` is echoed bit for bit, as the
-    // reference copies its live fields: vmangos matches the four floats within 0.01
-    // (`Unit.cpp:7097-7100`), and a re-derived quad has no direction at `xy_speed == 0`.
-    if let Some(k) = knock_ack {
+    // The knockback acks go out on the take-off frame with the take-off pose, as the reference
+    // applies the launch and then sends (push `0xf0`), one per queued knockback in arrival order.
+    // `launch` is echoed bit for bit, as the reference copies its live fields: vmangos matches the
+    // four floats within 0.01 (`Unit.cpp:7097-7100`), and a re-derived quad has no direction at
+    // `xy_speed == 0`.
+    for k in knock_acks {
         let _ = sender.send(ClientCommand::KnockBackAck {
             guid: k.guid,
             counter: k.counter,
@@ -568,7 +569,7 @@ mod tests {
             arc(),
             0.0,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -590,7 +591,7 @@ mod tests {
             arc(),
             0.0,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -611,7 +612,7 @@ mod tests {
             arc(),
             0.0,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -626,7 +627,7 @@ mod tests {
             arc(),
             0.1,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -657,7 +658,7 @@ mod tests {
             },
             0.0,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -695,7 +696,7 @@ mod tests {
             },
             0.0,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -736,7 +737,7 @@ mod tests {
             // 1.7 s of fall, past vmangos's 1229 ms fall-damage gate
             0.0,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -776,7 +777,7 @@ mod tests {
             },
             0.2,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -801,7 +802,7 @@ mod tests {
             },
             0.8,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -837,7 +838,7 @@ mod tests {
                 },
                 now,
                 &[],
-                None,
+                &[],
                 None,
                 no_skip(),
             );
@@ -895,7 +896,7 @@ mod tests {
             },
             0.3,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -935,7 +936,7 @@ mod tests {
             },
             0.3,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -966,7 +967,7 @@ mod tests {
             },
             0.2,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -995,7 +996,7 @@ mod tests {
             },
             1.5,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -1035,7 +1036,7 @@ mod tests {
             },
             0.05,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -1070,7 +1071,7 @@ mod tests {
             },
             0.06,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -1100,7 +1101,7 @@ mod tests {
                 },
                 0.05 * (i as f32 + 1.0),
                 &[],
-                None,
+                &[],
                 None,
                 no_skip(),
             );
@@ -1124,7 +1125,7 @@ mod tests {
             },
             0.2,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -1160,7 +1161,7 @@ mod tests {
             },
             0.05,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -1191,7 +1192,7 @@ mod tests {
             },
             0.0,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -1378,11 +1379,11 @@ mod tests {
             },
             0.0,
             &[],
-            Some(super::super::state::PendingKnockback {
+            &[super::super::state::PendingKnockback {
                 guid: 0x1234,
                 counter: 7,
                 launch,
-            }),
+            }],
             None,
             no_skip(),
         );
@@ -1422,6 +1423,58 @@ mod tests {
     }
 
     #[test]
+    fn two_knockbacks_in_one_frame_ack_both_in_order() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let launch = |cos_angle| benilla_protocol::JumpInfo {
+            zspeed: -9.5,
+            cos_angle,
+            sin_angle: 0.0,
+            xy_speed: 2.0,
+        };
+        let knock = |counter, cos| super::super::state::PendingKnockback {
+            guid: 0x405,
+            counter,
+            launch: launch(cos),
+        };
+        let mut player = Player {
+            jump_zspeed: 9.5,
+            ..Default::default()
+        };
+        stream_self_movement(
+            &tx,
+            &mut player,
+            move_flags::FALLING,
+            0.0,
+            ArcEdges {
+                jumped: true,
+                wire_launch: true,
+                air_nudged: false,
+                landed: false,
+                fall_time: 0,
+            },
+            0.0,
+            &[],
+            &[knock(107, 1.0), knock(108, -1.0)],
+            None,
+            no_skip(),
+        );
+        let acked: Vec<(u32, f32)> = rx
+            .try_iter()
+            .filter_map(|c| match c {
+                ClientCommand::KnockBackAck {
+                    counter, launch, ..
+                } => Some((counter, launch.cos_angle)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            acked,
+            vec![(107, 1.0), (108, -1.0)],
+            "each knockback owes its own ack, echoing its own counter and launch, in arrival order"
+        );
+    }
+
+    #[test]
     fn an_ordinary_jump_still_sends_its_jump() {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut player = Player {
@@ -1442,7 +1495,7 @@ mod tests {
             },
             0.0,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -1486,7 +1539,7 @@ mod tests {
                 },
                 now,
                 &[],
-                None,
+                &[],
                 None,
                 no_skip(),
             );
@@ -1533,7 +1586,7 @@ mod tests {
             },
             0.3,
             &[],
-            None,
+            &[],
             None,
             no_skip(),
         );
@@ -1569,7 +1622,7 @@ mod tests {
                 },
                 now,
                 &[],
-                None,
+                &[],
                 None,
                 no_skip(),
             );

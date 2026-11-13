@@ -278,15 +278,12 @@ pub(super) fn apply_server_moves(
     player.held_modes.extend(mode_msgs.read().copied());
     player.held_speeds.extend(speed_msgs.read().copied());
 
-    // A knockback is only latched here; the mover launches it and acks. The reference enqueues it,
+    // A knockback is only queued here; the mover launches it and acks. The reference enqueues it,
     // and its frame update applies it and then acks, so the wire carries the post-launch
-    // `MovementInfo`.
-    //
-    // Two in one frame collapse to the last, where the reference queues both: the motion is the
-    // same, as the reference replaces the velocity, but the first ack is lost (the reference's
-    // failed-ack path).
+    // `MovementInfo`. Two in one frame queue both: the last launch wins, as the reference replaces
+    // the velocity, and each owes its own ack.
     for k in knock_msgs.read() {
-        player.knockback = Some(super::state::PendingKnockback {
+        player.knockback.push(super::state::PendingKnockback {
             guid: k.guid,
             counter: k.counter,
             launch: k.launch,
