@@ -295,6 +295,7 @@ const LOGIN_PIN_WAIT: i32 = 8;
 
 /// Results.
 const RESULT_LOGIN_FAILED: i32 = 0x0b;
+const RESULT_PARENTAL_CONTROL: i32 = 0x13;
 const RESULT_DISCONNECTED: i32 = 0x14;
 
 /// World statuses.
@@ -416,6 +417,9 @@ enum Outgoing {
         text: Option<Text>,
         data: Option<String>,
     },
+    /// A logon refusal's `OPEN_STATUS_DIALOG`, its type picked from its text at the fire (`help`:
+    /// `LOGIN_FAILED`'s connection help).
+    Refusal { key: &'static str, help: bool },
     /// `UPDATE_STATUS_DIALOG(text[, button])` (event 4).
     Update { text: Text, button: Option<Text> },
     /// The queue's per-frame re-text, composed at the fire from the ring.
@@ -1507,12 +1511,19 @@ impl GlueMgr {
             else {
                 return;
             };
-            let which = if c.result == RESULT_LOGIN_FAILED {
-                "CONNECTION_HELP"
-            } else {
-                "OKAY"
-            };
-            self.open(which, Some(Text::Key(key)));
+            // Parental control opens its own type with its URL's key, no HTML search (0x4d8104).
+            if c.result == RESULT_PARENTAL_CONTROL {
+                self.outbox.push(Outgoing::Open {
+                    which: "PARENTAL_CONTROL",
+                    text: Some(Text::Key(key)),
+                    data: Some("AUTH_PARENTAL_CONTROL_URL".into()),
+                });
+                return;
+            }
+            self.outbox.push(Outgoing::Refusal {
+                key,
+                help: c.result == RESULT_LOGIN_FAILED,
+            });
             return;
         }
         // No dialog outside the table, for DISCONNECTED (11) or SURVEY (12).
@@ -2222,12 +2233,9 @@ fn flush_one(
     names: &RosterNames,
     out: Outgoing,
 ) {
-    let text = |script: &UiScript, t: &Text| {
-        let text = match t {
-            Text::Key(k) => script.global_text(k),
-            Text::Raw(s) => s.clone(),
-        };
-        glue_dialog_text(&text)
+    let text = |script: &UiScript, t: &Text| match t {
+        Text::Key(k) => script.global_text(k),
+        Text::Raw(s) => s.clone(),
     };
     match out {
         Outgoing::Open {
@@ -2243,6 +2251,21 @@ fn flush_one(
                 args.push(ScriptValue::Str(d));
             }
             script.fire_event("OPEN_STATUS_DIALOG", args);
+        }
+        Outgoing::Refusal { key, help } => {
+            let text = script.global_text(key);
+            // 12340 opens the HTML type when the text holds `<HTML>`, case folded (0x4d8150).
+            let html = text.to_ascii_uppercase().contains("<HTML>");
+            let which = match (html, help) {
+                (true, true) => "CONNECTION_HELP_HTML",
+                (true, false) => "OKAY_HTML",
+                (false, true) => "CONNECTION_HELP",
+                (false, false) => "OKAY",
+            };
+            script.fire_event(
+                "OPEN_STATUS_DIALOG",
+                vec![ScriptValue::Str(which.into()), ScriptValue::Str(text)],
+            );
         }
         Outgoing::Update { text: t, button } => {
             let mut args = vec![ScriptValue::Str(text(script, &t))];
@@ -2320,58 +2343,6 @@ fn flush_one(
             mgr.addons_stale = true;
         }
     }
-}
-
-/// The stock glue strings for authentication failures are HTML fragments (for example, they
-/// contain `<p align="CENTER">` and an `<a>` support link), while `GlueDialogText` is a plain
-/// text region in the stock GlueXML.  The reference's glue text path consumes that markup before
-/// painting; keep the same visible text instead of exposing the tags on the login dialog.
-fn glue_dialog_text(raw: &str) -> String {
-    if !raw.contains('<') && !raw.contains('&') {
-        return raw.to_string();
-    }
-    let mut out = String::with_capacity(raw.len());
-    let mut chars = raw.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '<' {
-            let mut tag = String::new();
-            for next in chars.by_ref() {
-                if next == '>' {
-                    break;
-                }
-                tag.push(next);
-            }
-            let tag = tag.trim().to_ascii_lowercase();
-            if (tag.starts_with("br") || tag.starts_with("/p")) && !out.ends_with('\n') {
-                out.push('\n');
-            }
-            continue;
-        }
-        if ch == '&' {
-            let mut entity = String::new();
-            for next in chars.by_ref() {
-                if next == ';' {
-                    break;
-                }
-                entity.push(next);
-            }
-            match entity.as_str() {
-                "amp" => out.push('&'),
-                "lt" => out.push('<'),
-                "gt" => out.push('>'),
-                "quot" => out.push('"'),
-                "nbsp" => out.push(' '),
-                _ => {
-                    out.push('&');
-                    out.push_str(&entity);
-                    out.push(';');
-                }
-            }
-            continue;
-        }
-        out.push(ch);
-    }
-    out.trim().to_string()
 }
 
 /// Seat a new glue VM before its first `SET_GLUE_SCREEN`: the manager takes it ([`GlueMgr::seat`])
