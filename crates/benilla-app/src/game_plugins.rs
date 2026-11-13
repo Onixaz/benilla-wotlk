@@ -1025,7 +1025,10 @@ pub(crate) mod schedule_tests {
     ///   clocks; it reads one torn-down unit's clip time, a frame's step either way.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_891;
+    // The post-input cooldown snapshot has three deliberate VM readers: it must run after a
+    // script cast and before the synchronous cooldown flush, so it adds 50 same-frame resource
+    // pairs with world/UI drains that are otherwise independent and may settle a frame later.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_941;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

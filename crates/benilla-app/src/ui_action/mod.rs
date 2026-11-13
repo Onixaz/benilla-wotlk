@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use bevy::ecs::system::IntoSystem;
 use bevy::prelude::*;
 
 use benilla_formats::SpellCatalog;
@@ -493,7 +494,8 @@ impl Plugin for UiActionPlugin {
                         .after(feed::feed_actions),
                     // A script cast is committed after the input pass.  Publish the local GCD
                     // before painting, while the next network pass remains free to clear it.
-                    state::feed_action_state
+                    IntoSystem::into_system(state::feed_action_state)
+                        .with_name("feed_action_state_post")
                         .in_set(CooldownPostEvents)
                         .run_if(crate::spell::cooldowns::post_feed_needed),
                 ),
@@ -502,6 +504,7 @@ impl Plugin for UiActionPlugin {
             Update,
             (CooldownPostFeed, CooldownPostEvents)
                 .chain()
+                .run_if(crate::ui_script::ingame_ui_up)
                 .after(crate::target::TargetUpdate)
                 .before(crate::ui_script::UiPaint),
         );

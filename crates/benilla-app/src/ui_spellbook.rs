@@ -13,6 +13,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use bevy::ecs::system::IntoSystem;
 use bevy::prelude::*;
 
 use benilla_formats::{SkillLineCatalog, SpellCatalog, SummonPropertiesCatalog};
@@ -70,7 +71,8 @@ impl Plugin for UiSpellbookPlugin {
                         .in_set(BookFeed)
                         .before(crate::ui_action::SlotIdentityFeed)
                         .before(crate::ui_action::CooldownEvents),
-                    feed_spellbook
+                    IntoSystem::into_system(feed_spellbook)
+                        .with_name("feed_spellbook_post")
                         .in_set(crate::ui_action::CooldownPostFeed)
                         .run_if(crate::spell::cooldowns::post_feed_needed),
                 ),

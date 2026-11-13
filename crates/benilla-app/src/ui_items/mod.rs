@@ -16,6 +16,7 @@ use benilla_protocol::messages::{
 pub(crate) use benilla_protocol::messages::{BANK_BAGS, BANK_SLOTS, KEYRING_SLOTS};
 use benilla_protocol::ObjectFields;
 use benilla_ui::script::{ItemLinkFields, EQUIPMENT_BAG};
+use bevy::ecs::system::IntoSystem;
 use bevy::prelude::*;
 
 use crate::items::Items;
@@ -1088,7 +1089,8 @@ impl Plugin for UiItemsPlugin {
                         .in_set(UnitFeed)
                         .in_set(ContainerFeed)
                         .before(crate::ui_action::CooldownEvents),
-                    feed_containers
+                    IntoSystem::into_system(feed_containers)
+                        .with_name("feed_containers_post")
                         .in_set(crate::ui_action::CooldownPostFeed)
                         .run_if(crate::spell::cooldowns::post_feed_needed),
                     // The item-tooltip store answers before the input pass, so a re-hover the
