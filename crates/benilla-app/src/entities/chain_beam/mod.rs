@@ -29,10 +29,60 @@ const NO_SPELL_ATTACH: u16 = 34;
 /// The beams' render layers, drawn in order; a row outside them never draws (`0x9ab070`).
 const RENDER_LAYERS: std::ops::RangeInclusive<i32> = 0..=3;
 
-/// The caster's hop array in wire order (`0x724f50`), consumed by the next chain proc (`0x726b0d`).
+/// An `SMSG_SPELL_UPDATE_CHAIN_TARGETS` hop list parked on the caster until the spawner saves it.
 #[derive(Component)]
 #[component(storage = "SparseSet")]
-pub(crate) struct ChainHops(pub(crate) Vec<Entity>);
+pub(crate) struct ChainHops {
+    pub(crate) spell_id: u32,
+    pub(crate) hops: Vec<Entity>,
+}
+
+/// One saved hop list in wire order, the spell that filled it, and the spawner run that did.
+struct HopList {
+    spell_id: u32,
+    run: u32,
+    hops: Vec<Entity>,
+}
+
+/// Each caster's hop arrays (`0x724f50`) per spell, as plays here run after the GO's own handling.
+#[derive(Resource, Default)]
+pub(crate) struct ChainHopLists(bevy::ecs::entity::EntityHashMap<Vec<HopList>>);
+
+impl ChainHopLists {
+    /// Saves a spell's list over one an earlier run saved for it (`0x724f50` clears first).
+    fn fill(&mut self, caster: Entity, spell_id: u32, run: u32, hops: Vec<Entity>) {
+        let lists = self.0.entry(caster).or_default();
+        lists.retain(|l| l.spell_id != spell_id || l.run == run);
+        lists.push(HopList {
+            spell_id,
+            run,
+            hops,
+        });
+    }
+
+    /// Takes the spell's oldest list, zeroed even when nothing is drawn (`0x726b0d`).
+    fn take(&mut self, caster: Entity, spell_id: u32) -> Vec<Entity> {
+        let Some(lists) = self.0.get_mut(&caster) else {
+            return Vec::new();
+        };
+        let taken = lists
+            .iter()
+            .position(|l| l.spell_id == spell_id)
+            .map(|i| lists.remove(i).hops);
+        if lists.is_empty() {
+            self.0.remove(&caster);
+        }
+        taken.unwrap_or_default()
+    }
+
+    /// The caster's lists as `(spell, hops)`, oldest first.
+    #[cfg(test)]
+    fn lists(&self, caster: Entity) -> Vec<(u32, Vec<Entity>)> {
+        self.0.get(&caster).map_or_else(Vec::new, |l| {
+            l.iter().map(|l| (l.spell_id, l.hops.clone())).collect()
+        })
+    }
+}
 
 /// Where a beam's ends sit, from the spell's visual row in model space (`0x7fc5f0`, `0x7fabf0`).
 #[derive(Clone, Copy, Default)]
@@ -70,23 +120,30 @@ impl Ends {
 /// What [`spawn_chain_beams`] keeps between plays.
 #[derive(Default)]
 pub(crate) struct SpawnState {
-    /// The hop array's in-place zeroing within one frame (`0x726b0d`).
-    consumed: bevy::ecs::entity::EntityHashSet,
+    /// The run count, which tells this frame's hop lists from earlier ones.
+    run: u32,
     plays_seen: u32,
     /// Each caster's beam sequence, from 0 and up 2 a beam (`0x726b96`), its beams' first-bolt key.
     sequences: bevy::ecs::entity::EntityHashMap<i32>,
 }
 
-/// Each caster's saved ground point, cleared by its next beam row's GO (`0x715400`).
+/// Each caster's saved ground point per spell, cleared by that spell's next GO (`0x715400`).
 #[derive(Resource, Default)]
-pub(crate) struct ChainLocations(bevy::ecs::entity::EntityHashMap<Vec3>);
+pub(crate) struct ChainLocations(std::collections::HashMap<(Entity, u32), Vec3>);
 
 impl ChainLocations {
     /// A beam row's GO saves its dest, unless flag 0x1 keeps it on the units it hit (`0x80ed7d`).
-    fn save(&mut self, caster: Entity, row_flags: u32, hit_units: bool, dest: Option<Vec3>) {
+    fn save(
+        &mut self,
+        caster: Entity,
+        spell_id: u32,
+        row_flags: u32,
+        hit_units: bool,
+        dest: Option<Vec3>,
+    ) {
         match dest.filter(|_| row_flags & 0x1 == 0 || !hit_units) {
-            Some(dest) => self.0.insert(caster, dest),
-            None => self.0.remove(&caster),
+            Some(dest) => self.0.insert((caster, spell_id), dest),
+            None => self.0.remove(&(caster, spell_id)),
         };
     }
 }
@@ -143,11 +200,10 @@ fn beam_texture_url(raw: &str) -> String {
 /// The live channel's object while the hop array holds at most one, else the hops (`0x726a56`).
 fn select_targets(
     spell_id: u32,
-    hops: Option<&ChainHops>,
+    hops: Vec<Entity>,
     store: &crate::net::ObjectStore,
     index: &GuidIndex,
 ) -> Vec<Entity> {
-    let hops = hops.map(|h| h.0.as_slice()).unwrap_or_default();
     let channelling = spell_id != 0 && store.0.unit_channel_spell() == spell_id;
     if channelling && hops.len() <= 1 {
         if let Some(object) = store.0.unit_channel_object().filter(|g| *g != 0) {
@@ -155,7 +211,7 @@ fn select_targets(
             return index.0.get(&object).copied().into_iter().collect();
         }
     }
-    hops.to_vec()
+    hops
 }
 
 /// The dispatcher's beam case (`0x726a8d`): reaps persistent beams, then spawns one beam per row.
@@ -166,24 +222,25 @@ pub(super) fn spawn_chain_beams(
     mut plays: MessageReader<ChainProcPlay>,
     mut clears: MessageReader<SpellEffectClear>,
     mut kit_clears: MessageReader<KitEffectClear>,
-    mut go_targets: MessageReader<SpellGoTargets>,
+    (mut go_targets, packets): (MessageReader<SpellGoTargets>, Query<(Entity, &ChainHops)>),
     mut area_kits: MessageWriter<DelayedAreaKit>,
     visuals: Option<Res<SpellVisuals>>,
     spells: Option<Res<crate::ui_action::Spells>>,
     asset_server: Res<AssetServer>,
     index: Res<GuidIndex>,
-    stores: Query<(&crate::net::ObjectStore, Option<&ChainHops>, Option<&Guid>)>,
+    stores: Query<(&crate::net::ObjectStore, Option<&Guid>)>,
     beams: Query<(Entity, &ChainBeam)>,
     transforms: Query<&GlobalTransform, Without<WorldCamera>>,
-    mut locations: ResMut<ChainLocations>,
+    (mut locations, mut hop_lists): (ResMut<ChainLocations>, ResMut<ChainHopLists>),
     (mut waits, mut state): (Option<ResMut<BeamKitWaits>>, Local<SpawnState>),
 ) {
     let SpawnState {
-        consumed,
+        run,
         plays_seen,
         sequences,
     } = &mut *state;
-    consumed.clear();
+    *run = run.wrapping_add(1);
+    let run = *run;
     let visual_of = |spell_id: u32| {
         let display = spells.as_deref()?.catalog.get(spell_id)?;
         let id = crate::creature_anim::spell_visual::spell_visual_id(display);
@@ -207,10 +264,23 @@ pub(super) fn spawn_chain_beams(
         if object {
             continue;
         }
+        // Only a beam row saves the GO's list, less the caster and unstreamed guids (`0x80ed64`).
+        let hops = go
+            .list
+            .iter()
+            .filter_map(|(g, ..)| index.0.get(g).copied())
+            .filter(|&e| e != go.caster)
+            .collect();
+        hop_lists.fill(go.caster, go.spell_id, run, hops);
         let hit_units = !(go.hits.is_empty() && go.misses.is_empty());
-        locations.save(go.caster, row.flags, hit_units, go.dest);
+        locations.save(go.caster, go.spell_id, row.flags, hit_units, go.dest);
     }
-    locations.0.retain(|e, _| stores.contains(*e));
+    for (caster, packet) in &packets {
+        hop_lists.fill(caster, packet.spell_id, run, packet.hops.clone());
+        commands.entity(caster).try_remove::<ChainHops>();
+    }
+    locations.0.retain(|(e, _), _| stores.contains(*e));
+    hop_lists.0.retain(|e, _| stores.contains(*e));
     sequences.retain(|e, _| stores.contains(*e));
     // The spell clear releases the owner's effects and the persistent beams they hold; a
     // self-terminating beam keeps its own clock (`0x743b40`, `0x6f74f0`).
@@ -237,7 +307,7 @@ pub(super) fn spawn_chain_beams(
     let now = time.elapsed_secs();
     for play in plays.read() {
         // The caster may be gone within the same wire drain that produced this play.
-        let Ok((store, hops, _)) = stores.get(play.entity) else {
+        let Ok((store, _)) = stores.get(play.entity) else {
             continue;
         };
         // Another unit's play runs from it to this one, or ends here unconsumed (`0x7269d8`).
@@ -246,11 +316,9 @@ pub(super) fn spawn_chain_beams(
             continue;
         }
         // Consume once on every other path: zeroed even when nothing is drawn (`0x726b0d`).
-        let hops = hops.filter(|_| !consumed.contains(&play.entity));
-        consumed.insert(play.entity);
-        commands.entity(play.entity).try_remove::<ChainHops>();
+        let hops = hop_lists.take(play.entity, play.spell_id);
         // A saved location overrides the hops (`0x726a3b`); no spell or target is a silent return.
-        let location = locations.0.get(&play.entity).copied();
+        let location = locations.0.get(&(play.entity, play.spell_id)).copied();
         let targets = match (source, location) {
             (Some(_), _) => vec![play.entity],
             (None, Some(_)) => Vec::new(),
@@ -272,7 +340,7 @@ pub(super) fn spawn_chain_beams(
             let ends = Ends::from_visual(stages, spells.catalog.get(play.spell_id).is_some());
             // Each play adds its own effect beside the spell's earlier ones (`0x7269ca`).
             *plays_seen = plays_seen.wrapping_add(1);
-            let guid_of = |e: Entity| stores.get(e).ok().and_then(|(.., g)| g).map_or(0, |g| g.0);
+            let guid_of = |e: Entity| stores.get(e).ok().and_then(|(_, g)| g).map_or(0, |g| g.0);
             let nodes: Vec<u64> = std::iter::once(from).chain(targets).map(guid_of).collect();
             // A location aims the one bolt when no unit is hit, turned with the caster (`0x7fc878`).
             let turn = transforms
@@ -282,6 +350,10 @@ pub(super) fn spawn_chain_beams(
                 .filter(|_| source.is_none())
                 .map(|at| at + turn * ends.impact_offset);
             let hop_count = if ground.is_some() { 1 } else { nodes.len() - 1 };
+            debug!(
+                "chain beam: spell {} kit {} on {} over {hop_count} hop(s)",
+                play.spell_id, play.kit_id, play.entity
+            );
             // The root, then its combo walk, each drawing the same hops (`0x7fc8ea`).
             let rows = std::iter::once(play.proc.effect_id)
                 .chain(root.combo.iter().copied())
