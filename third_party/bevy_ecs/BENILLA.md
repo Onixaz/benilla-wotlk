@@ -39,12 +39,17 @@ path), in `max_remaining` (the size hint), in the parallel batcher of
 upstream visits in, ascending archetype id, and an empty archetype yielded nothing before, so the
 items and their order are unchanged. Dense queries, which walk tables, are untouched.
 
+## Warning fix — `src/world/identifier.rs`
+
+`WorldId::new` calls `try_update` where upstream calls `fetch_update`, the same call under its
+new name, which the pinned toolchain warns on; behaviour is unchanged.
+
 ## How to check
 
 `diff -ru <registry>/bevy_ecs-0.18.1/src third_party/bevy_ecs/src` shows the patch in those four
-files and nothing else; every other file is byte-identical to the registry crate. The crate's own
-`cargo test --lib` gives the same result patched and as published (805 pass; three error-reporting
-tests fail in both outside a workspace). `benilla-world`'s `occupied_archetype_walk` test drives a
-sparse query through the iterator, the fold path, the size hint and the parallel walk while
-archetypes empty, refill and clear. The gain shows in a per-system timing of `tag_self_player`
+files and the warning fix, nothing else; every other file is byte-identical to the registry crate.
+The crate's own `cargo test --lib` gives the same result patched and as published (805 pass; three
+error-reporting tests fail in both outside a workspace). `benilla-world`'s `occupied_archetype_walk`
+test drives a sparse query through the iterator, the fold path, the size hint and the parallel walk
+while archetypes empty, refill and clear. The gain shows in a per-system timing of `tag_self_player`
 before and after a teleport tour: flat with the patch, five times its fresh cost without.
