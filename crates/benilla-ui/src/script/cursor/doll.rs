@@ -74,11 +74,11 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
                 model.cursor = Some(CursorPayload::Item(held));
                 return false;
             }
-            // A misfit takes the auto-equip path, the server picking the slot (`0x5e89f3`); at a
-            // bank bag slot it stays held.
+            // A misfit takes the auto-equip path, the server picking the slot (`0x5e89f3`); every
+            // item fits a bank bag slot.
             if !super::bag_verbs::fits_slot(&held, id) {
                 model.cursor = Some(CursorPayload::Item(held));
-                return id <= 23 && auto_equip_cursor_item(model);
+                return auto_equip_cursor_item(model);
             }
             model.container_moves.push(ContainerMove {
                 src_bag: held.bag,

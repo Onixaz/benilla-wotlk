@@ -388,15 +388,18 @@ impl AttackSeam<'_, '_> {
     }
 }
 
-/// Mid-cast (`SMSG_SPELL_START` to GO or failure), inserted only for a nonzero cast time and
-/// removed by the same spell id (the reference's reap is keyed by spell id).
+/// The unit's cast state (`+0xa60`): set by a start (`0x805330`), cleared by its spell and count's
+/// end (`0x7fed81`).
 #[derive(Component, Clone, Copy)]
+#[component(storage = "SparseSet")]
 pub(crate) struct Casting {
     pub(crate) spell_id: u32,
     /// The start's `castCount`, which an interrupt must match (`0x72ed80`).
     pub(crate) cast_count: u8,
     #[allow(dead_code)]
     pub(crate) until: Option<Instant>,
+    /// Its pending cast is still listed, which `IsCurrentSpell` tests (`0x805f30`).
+    pub(crate) listed: bool,
 }
 
 /// The reference's animation play order: handlers run in packet order and the later play wins

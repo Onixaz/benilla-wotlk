@@ -259,7 +259,8 @@ pub(super) fn feed_action_state(
     let form_byte = me
         .map(|(s, _, _, _)| s.0.unit_shapeshift_form())
         .unwrap_or(0);
-    let casting_spell = me.and_then(|(_, _, _, c)| c.map(|c| c.spell_id));
+    // The pending list alone (`0x805f30`), not the unit's cast state.
+    let casting_spell = me.and_then(|(_, _, _, c)| c.filter(|c| c.listed).map(|c| c.spell_id));
     let current_cast = pending.current(now).or(casting_spell);
     let caster = range_units.caster();
     let self_pos = me.map(|(_, t, _, _)| t.translation);

@@ -744,6 +744,7 @@ fn snapshot(
         master_candidates: who.names_for(loot),
         // The feed's, which holds the object manager.
         source_unit: false,
+        source_level: 0,
     })
 }
 
@@ -868,12 +869,14 @@ struct LootSourceObjects<'w, 's> {
 }
 
 impl LootSourceObjects<'_, '_> {
-    fn is_unit(&self, guid: u64) -> bool {
+    /// The source's level when it resolves as a unit (`[unit+0xd0]+0xc0`, `0x61e7bf`), else `None`.
+    fn unit_level(&self, guid: u64) -> Option<u32> {
         self.index
             .as_ref()
             .and_then(|index| index.0.get(&guid))
             .and_then(|&e| self.stores.get(e).ok())
-            .is_some_and(|s| s.is_unit())
+            .filter(|s| s.is_unit())
+            .map(|s| s.0.unit_level().unwrap_or(0))
     }
 }
 
@@ -921,7 +924,9 @@ fn feed_loot(
     // The looted object (`[0xbfa8d8]`), which the purchase verbs refuse while it is open.
     script.set_loot_source(loot.source().unwrap_or(0));
     let fresh = snapshot(&loot, &items, icons.as_deref(), &commands, rolls, who).map(|mut snap| {
-        snap.source_unit = loot.source().is_some_and(|g| objects.is_unit(g));
+        let level = loot.source().and_then(|g| objects.unit_level(g));
+        snap.source_unit = level.is_some();
+        snap.source_level = level.unwrap_or(0);
         snap
     });
     // A sweep on the shown window (the flag armed at an interact) fires its confirm and reopens.

@@ -150,10 +150,10 @@ pub(crate) struct CastLadder<'w, 's> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum TargetedBind {
     /// The terrain click's point in WoW coords: the location bind's bit-6 arm.
-    Dest([f32; 3]),
+    Dest(benilla_protocol::messages::TargetPoint),
     /// The terrain click bound to the source slot: the location bind's bit-5 arm, tested first;
     /// writes `SPELLCAST+0x30` and wire bit `0x0020`.
-    Source([f32; 3]),
+    Source(benilla_protocol::messages::TargetPoint),
     /// The bag or paper-doll click's item guid.
     Item(u64),
     /// The partner's not-traded trade slot (`0x80c5f0`).
@@ -2341,7 +2341,11 @@ mod tests {
     #[test]
     fn the_targeting_commit_tail_covers_every_seam() {
         use benilla_protocol::messages::UseItemTarget;
-        const DEST: [f32; 3] = [1.0, 2.0, 3.0];
+        const DEST: benilla_protocol::messages::TargetPoint =
+            benilla_protocol::messages::TargetPoint {
+                transport: 0,
+                pos: [1.0, 2.0, 3.0],
+            };
         const ITEM: u64 = 0xF150_0000_0000_ABCD;
         const GO: u64 = 0xF110_000C_1F00_A3B2;
         let (mut world, rx) = world();

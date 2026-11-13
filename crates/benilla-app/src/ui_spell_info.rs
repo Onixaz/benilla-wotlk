@@ -507,7 +507,8 @@ impl CastNowInputs<'_, '_> {
         cast.pending = crate::spell::inflight(
             &self.pending,
             &self.queued_melee,
-            casting.map(|c| c.spell_id),
+            // The pending list alone (`0x805f30`), not the unit's cast state.
+            casting.filter(|c| c.listed).map(|c| c.spell_id),
             std::time::Instant::now(),
         )
         .map(|i| i.spell_id());
@@ -528,6 +529,45 @@ impl CastNowInputs<'_, '_> {
             }
             Some(_) => {}
             None => cast.auras.clear(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::creature_anim::Casting;
+    use bevy::ecs::system::RunSystemOnce;
+
+    /// The current-spell test reads the pending list alone (`0x805f30`): a held cast whose pending
+    /// cast was released is not current.
+    #[test]
+    fn a_held_cast_is_current_only_while_listed() {
+        for (listed, want) in [(true, Some(133)), (false, None)] {
+            let mut app = App::new();
+            app.init_resource::<crate::spell::PendingCast>()
+                .init_resource::<crate::spell::QueuedMeleeSpell>()
+                .init_resource::<crate::spell::SummonSlots>()
+                .init_resource::<crate::ui_action::PlayerActions>();
+            app.world_mut().spawn((
+                SelfPlayer,
+                ObjectStore::default(),
+                Casting {
+                    spell_id: 133,
+                    cast_count: 0,
+                    until: None,
+                    listed,
+                },
+            ));
+            let got = app
+                .world_mut()
+                .run_system_once(|inputs: CastNowInputs| {
+                    let mut cast = CastNow::default();
+                    inputs.refresh(&mut cast, true);
+                    cast.pending
+                })
+                .unwrap();
+            assert_eq!(got, want);
         }
     }
 }

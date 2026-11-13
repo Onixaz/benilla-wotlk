@@ -36,6 +36,8 @@ pub(crate) enum CastBarEdge {
         cast_time_ms: u32,
         /// The `CAST_FLAG_IMMUNITY` pair, `(school, mechanic)`, kept on the caster until the next.
         immunities: Option<(u32, u32)>,
+        /// `castFlags & 1`: the immunities are kept, nothing else runs (`0x80694e`).
+        hidden: bool,
     },
     /// `SMSG_SPELL_GO`: the cast launched; `cast_flags & 1` fires nothing (`0x80e747`).
     Go {
@@ -268,7 +270,7 @@ struct Running {
 /// `Attributes & 2` (a ranged-slot spell) never does, the active player passes, and anyone else
 /// fails on `Attributes & 0x180` or `AttributesEx4 & 1`, and a channel also on
 /// `AttributesEx3 & 0x2000`.
-fn raises_events(d: &SpellDisplay, is_self: bool, channel: bool) -> bool {
+pub(crate) fn raises_events(d: &SpellDisplay, is_self: bool, channel: bool) -> bool {
     if d.attributes_ex4 & 0x0800_0000 != 0 {
         return true;
     }
@@ -440,6 +442,7 @@ pub(crate) fn feed_cast_bar(
                 cast_count,
                 cast_time_ms,
                 immunities,
+                hidden,
             } => {
                 // Stored before any gate, and kept until the next start that carries a pair.
                 if let Some(pair) = immunities {
@@ -448,7 +451,7 @@ pub(crate) fn feed_cast_bar(
                 let raises = spells
                     .and_then(|s| s.catalog.get(spell_id))
                     .is_none_or(|d| raises_events(d, is_self(caster), false));
-                if cast_time_ms == 0 || !raises {
+                if hidden || cast_time_ms == 0 || !raises {
                     continue;
                 }
                 let run = Running {
@@ -933,6 +936,7 @@ mod tests {
             cast_count,
             cast_time_ms: 1500,
             immunities: None,
+            hidden: false,
         };
         assert_eq!(run(&mut app, vec![start(7)]), "START:player:Lesser Heal:7");
         assert_eq!(
@@ -993,6 +997,7 @@ mod tests {
             cast_count: 11,
             cast_time_ms: 0,
             immunities: None,
+            hidden: false,
         };
         let go11 = CastBarEdge::Go {
             caster: ME,
@@ -1003,6 +1008,20 @@ mod tests {
         assert_eq!(
             run(&mut app, vec![instant, go11]),
             "SUCCEEDED:player:Lesser Heal:11"
+        );
+        // A hidden start keeps its immunities and opens nothing (`0x80694e`).
+        let hidden = CastBarEdge::Start {
+            caster: ME,
+            spell_id: HEAL,
+            cast_count: 12,
+            cast_time_ms: 1500,
+            immunities: Some((1, 2)),
+            hidden: true,
+        };
+        assert_eq!(run(&mut app, vec![hidden]), "");
+        assert_eq!(
+            app.world().resource::<UnitCasts>().immunities.get(&ME),
+            Some(&(1, 2))
         );
     }
 
@@ -1165,6 +1184,7 @@ mod tests {
             cast_count: 0,
             cast_time_ms: 2000,
             immunities: None,
+            hidden: false,
         };
         run(&mut app, vec![start]);
         let shield = |app: &mut App| {

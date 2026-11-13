@@ -15,9 +15,9 @@
 //! object list's order (a tail append); we rank exact, then longer prefix, then nearest
 //! ([`Rank::beats`]), because the nearest namesake is the better pick.
 //!
-//! Not built for selection: the reference's party and raid pre-scans, which select an unstreamed
-//! groupmate; [`Selection::target`] is an `Entity`. `DoEmote` needs only a guid
-//! ([`emote_name_match`]).
+//! `/target` and `TargetUnit` also take the reference's group legs ([`target_named`]): a group
+//! member by the whole name first, and a party or raid member the object manager does not hold
+//! behind every visible match. The active player scans at the group's distance (`0x52006a`).
 
 use std::cmp::Ordering;
 
@@ -221,6 +221,11 @@ impl ByNameScan<'_, '_> {
             .map(|(_, _, tf, _)| tf.translation)
     }
 
+    /// The active player's guid.
+    fn me(&self) -> Option<u64> {
+        self.self_q.single().ok().map(|(_, g, _, _)| g.0)
+    }
+
     /// The mode-2 arm: alive, and the assist check as a friendly reaction (4+).
     fn assistable_alive(&self, store: Option<&ObjectStore>) -> bool {
         if store.is_some_and(|s| s.0.unit_is_dead()) {
@@ -305,6 +310,7 @@ impl ByNameScan<'_, '_> {
                 .iter()
                 .map(|(e, g, tf, store)| (e, g.0, tf.translation, store)),
             self.origin(),
+            self.me(),
             &self.names,
             query,
             search,
@@ -317,6 +323,10 @@ impl ByNameScan<'_, '_> {
         )
     }
 }
+
+/// The squared distance the reference gives a group member out of view and the active player, the
+/// float at `0xa02a3c` (`0x520331`, `0x52006a`).
+const GROUP_DIST2: f32 = 2.5e9 * 2.5e9;
 
 /// One unit query's candidates, shared by [`ByNameScan`] and [`PlayerLookup`].
 type UnitQuery<'w, 's> = Query<
@@ -333,10 +343,12 @@ type UnitQuery<'w, 's> = Query<
 /// The resolver's walk: a name to a unit, logging one `by-name:` line per call, ungated since it
 /// runs per command: the candidates counted, the winner and on what. `keep` is the per-candidate
 /// filter mode; `origin` is the active player's position, without which the reference resolves
-/// nothing.
+/// nothing. The active player `me` ranks at the group's distance, behind every other unit.
+#[allow(clippy::too_many_arguments)] // the resolver's own argument list
 fn scan_units<'a>(
     units: impl Iterator<Item = (Entity, u64, Vec3, Option<&'a ObjectStore>)>,
     origin: Option<Vec3>,
+    me: Option<u64>,
     names: &NameCache,
     query: &str,
     search: NameSearch,
@@ -363,7 +375,11 @@ fn scan_units<'a>(
             continue;
         };
         considered += 1;
-        let dist2 = pos.distance_squared(origin);
+        let dist2 = if Some(guid) == me {
+            GROUP_DIST2
+        } else {
+            pos.distance_squared(origin)
+        };
         let Some(r) = rank(query, name, dist2, mode) else {
             continue;
         };
@@ -409,6 +425,7 @@ impl PlayerLookup<'_, '_> {
                 .filter(|(_, g, _)| Some(g.0) != me)
                 .map(|(e, g, tf)| (e, g.0, tf.translation(), None)),
             origin,
+            None,
             names,
             name,
             NameSearch::PlayerOnly,
@@ -432,6 +449,7 @@ impl PlayerLookup<'_, '_> {
                 .iter()
                 .map(|(e, g, tf)| (e, g.0, tf.translation(), None)),
             origin,
+            None,
             names,
             name,
             NameSearch::PlayerOnly,
@@ -461,32 +479,51 @@ pub(crate) fn emote_name_match(
     held: impl Fn(u64) -> bool,
     query: &str,
 ) -> Option<u64> {
-    let named = |guid: u64, hit: fn(&str, &str) -> bool| {
-        names.peek(guid).is_some_and(|name| hit(name, query))
-    };
-    let whole = |name: &str, query: &str| name.eq_ignore_ascii_case(query);
+    whole_name_in_group(names, roster, me, query).or_else(|| {
+        streamed
+            .filter(|&g| names.peek(g).is_some_and(|n| has_query_prefix(n, query)))
+            .or_else(|| unheld_group_match(names, roster, held, query, Match::PrefixOk))
+    })
+}
+
+/// The token resolver's name half (`0x60a630`): the active player, then the raid or else the
+/// party, by the whole name, held or not.
+fn whole_name_in_group(
+    names: &NameCache,
+    roster: &crate::spell::group_relation::GroupRoster,
+    me: Option<u64>,
+    query: &str,
+) -> Option<u64> {
     let group = if roster.raid.is_empty() {
         &roster.party
     } else {
         &roster.raid
     };
-    if let Some(guid) = me
-        .into_iter()
+    me.into_iter()
         .chain(group.iter().copied())
-        .find(|&g| named(g, whole))
-    {
-        return Some(guid);
-    }
-    streamed
-        .filter(|&g| named(g, has_query_prefix))
-        .or_else(|| {
-            roster
-                .party
-                .iter()
-                .chain(&roster.raid)
-                .copied()
-                .find(|&g| !held(g) && named(g, has_query_prefix))
-        })
+        .find(|&g| names.peek(g).is_some_and(|n| n.eq_ignore_ascii_case(query)))
+}
+
+/// The group scans (`0x5202e1`, `0x52035d`): the party slots, then the raid rows, each member the
+/// object manager does not hold with a cached name matching over the compare length; all share one
+/// distance (`0x520331`), so the first wins.
+fn unheld_group_match(
+    names: &NameCache,
+    roster: &crate::spell::group_relation::GroupRoster,
+    held: impl Fn(u64) -> bool,
+    query: &str,
+    mode: Match,
+) -> Option<u64> {
+    let matches = |name: &str| match mode {
+        Match::PrefixOk => has_query_prefix(name, query),
+        Match::ExactOnly => name.eq_ignore_ascii_case(query),
+    };
+    roster
+        .party
+        .iter()
+        .chain(&roster.raid)
+        .copied()
+        .find(|&g| g != 0 && !held(g) && names.peek(g).is_some_and(matches))
 }
 
 /// `/target <name>` and the Lua `TargetByName(name, exactMatch)` through [`scan::commit`], the
@@ -495,36 +532,64 @@ pub(crate) fn emote_name_match(
 /// alone, as neither failure edge reaches the selection set, and prints nothing; the reference
 /// prints message `0x127` `ERR_UNIT_NOT_FOUND` there, or `0xb8` `ERR_GENERIC_NO_TARGET` for an
 /// empty name.
+///
+/// The group legs (`0x520190`, filter mode 0): a group member or ourselves by the whole name first
+/// (`0x5201e5`), then the visible units, then a party or raid member out of view, which every
+/// other visible match outbids. A group pick goes through the script select helper (`0x5259e0`).
+/// True when an unheld guid was newly selected, which the caller sounds (`0x524eef`).
 pub(super) fn target_named(
     scan_params: &ByNameScan,
     commit: &mut SelectCommit,
     name: &str,
     exact: bool,
-) {
-    let Some((entity, guid, _)) = scan_params.resolve(
-        name,
-        NameSearch::AnyUnit,
-        Filter::AcceptAll,
-        if exact {
-            Match::ExactOnly
-        } else {
-            Match::PrefixOk
-        },
-    ) else {
-        return;
+) -> bool {
+    let query = name.trim();
+    if query.is_empty() {
+        return false;
+    }
+    let Some(me) = scan_params.me() else {
+        info!("by-name: \"{query}\" — no active player object; nothing resolves");
+        return false;
     };
-    commit.commit(entity, guid);
+    let mode = if exact {
+        Match::ExactOnly
+    } else {
+        Match::PrefixOk
+    };
+    let roster = scan_params
+        .group
+        .as_deref()
+        .map(|g| crate::spell::group_relation::GroupRoster::of(g, Some(me)))
+        .unwrap_or_default();
+    if let Some(guid) = whole_name_in_group(&scan_params.names, &roster, Some(me), query) {
+        info!("by-name: \"{query}\" -> the group's whole name, guid {guid:#x}");
+        return commit.target_if_valid(guid);
+    }
+    let visible = scan_params.resolve(query, NameSearch::AnyUnit, Filter::AcceptAll, mode);
+    if let Some((entity, guid, _)) = visible.as_ref().filter(|(_, g, _)| *g != me) {
+        commit.commit(*entity, *guid);
+        return false;
+    }
+    let held = |g: u64| commit.index.0.contains_key(&g);
+    if let Some(guid) = unheld_group_match(&scan_params.names, &roster, held, query, mode) {
+        info!("by-name: \"{query}\" -> group member guid {guid:#x}, not held");
+        return commit.target_if_valid(guid);
+    }
+    if let Some((entity, guid, _)) = visible {
+        commit.commit(entity, guid);
+    }
+    false
 }
 
 /// `/assist [name]` and the Lua `AssistByName`: the basis is a named player, or bare the current
 /// selection (`AssistUnit("target")`, `ChatFrame.lua:744`), and [`SelectCommit::assist`] selects
-/// its target.
+/// its target. True when an unheld guid was newly selected.
 pub(super) fn assist_named(
     scan_params: &ByNameScan,
     commit: &mut SelectCommit,
     name: Option<&str>,
     how: &str,
-) {
+) -> bool {
     let basis = match name {
         Some(name) => scan_params
             .resolve(
@@ -538,37 +603,10 @@ pub(super) fn assist_named(
     };
     let Some(basis) = basis else {
         info!("assist ({how}): no basis unit; nothing to assist");
-        return;
+        return false;
     };
     // From here on this is `AssistUnit`'s tail too, one function as in the reference.
-    commit.assist(basis, how);
-}
-
-/// Drain the chat layer's `/target <name>` asks.
-pub(super) fn target_by_name_requests(
-    mut requests: MessageReader<TargetByNameRequest>,
-    scan_params: ByNameScan,
-    mut commit: SelectCommit,
-) {
-    for request in requests.read() {
-        target_named(&scan_params, &mut commit, &request.name, false);
-    }
-}
-
-/// Drain the chat layer's `/assist [name]` asks.
-pub(super) fn assist_requests(
-    mut requests: MessageReader<AssistRequest>,
-    scan_params: ByNameScan,
-    mut commit: SelectCommit,
-) {
-    for request in requests.read() {
-        assist_named(
-            &scan_params,
-            &mut commit,
-            request.name.as_deref(),
-            "/assist",
-        );
-    }
+    commit.assist(basis, how)
 }
 
 /// Drain `/follow [name]` into [`crate::player`]; follow sends nothing on the wire. The followee's
@@ -683,11 +721,13 @@ pub(crate) struct SelectCommit<'w, 's> {
 }
 
 impl SelectCommit<'_, '_> {
-    /// The shared assist tail (byte-identical in `AssistByName`): select the basis unit's
-    /// `UNIT_FIELD_TARGET` if it is streamed. Every miss is silent and deselects nothing: no basis,
-    /// a basis targeting nothing, or an unstreamed guid (the reference's arm 3 is a bare `ret`).
-    /// With `assistAttack` set, the tail then opens the swing.
-    pub(super) fn assist(&mut self, basis: Entity, how: &str) {
+    /// The shared assist tail (byte-identical in `AssistByName`): the basis unit's
+    /// `UNIT_FIELD_TARGET` goes to the script select helper (`0x525f25` calls `0x5259e0`), so a
+    /// held unit, or a group member or pet the object manager does not hold, is selected. Every
+    /// other miss is silent and deselects nothing: a basis targeting nothing, or a stranger out of
+    /// view. With `assistAttack` set, the tail then opens the swing on an attackable unit. True when
+    /// an unheld guid was newly selected, which the caller sounds (`0x524eef`).
+    pub(super) fn assist(&mut self, basis: Entity, how: &str) -> bool {
         let Some(guid) = self
             .stores
             .get(basis)
@@ -696,13 +736,12 @@ impl SelectCommit<'_, '_> {
             .filter(|g| *g != 0)
         else {
             info!("assist ({how}): the basis unit is targeting nothing; silent no-op");
-            return;
+            return false;
         };
-        // Only a streamed unit can be selected; the reference's roster fallback for an unstreamed
-        // guid is not built (see the module doc).
         let Some(entity) = self.index.0.get(&guid).copied() else {
-            info!("assist ({how}): the basis is targeting guid {guid:#x}, which is not streamed");
-            return;
+            // An unheld guid: a group member or pet by guid alone, else a no-op; never attackable.
+            info!("assist ({how}): the basis is targeting guid {guid:#x}, which is not held");
+            return self.target_if_valid(guid);
         };
         info!("assist ({how}) -> the basis unit's target, guid {guid:#x}");
         // `engaged` and attackability are read before the selection: the selection set may re-point
@@ -724,6 +763,7 @@ impl SelectCommit<'_, '_> {
             info!("assist ({how}): assistAttack is on -> opening the swing");
             self.seam.start(guid, engaged, false);
         }
+        false
     }
 
     /// Whether we are mid-swing, which a deselect stops.
@@ -888,6 +928,67 @@ mod tests {
             emote_name_match(&names, &raid, Some(ME), None, held, "Raid"),
             Some(RAIDER),
             "the raid roster, when the party slots miss"
+        );
+    }
+
+    /// Filter modes 1 (`StartAttack`) and 2 (`/follow`) skip the group scans (`0x5202c3`), so a
+    /// member out of view never resolves for them; the unheld scan alone takes them.
+    #[test]
+    fn the_attack_and_follow_modes_never_take_a_member_out_of_view() {
+        use crate::spell::group_relation::GroupRoster;
+        use bevy::ecs::system::RunSystemOnce;
+
+        const ME: u64 = 1;
+        const MEMBER: u64 = 0x1234;
+        let mut world = World::new();
+        world.init_resource::<NameCache>();
+        world.init_resource::<crate::net::Reputations>();
+        world.init_resource::<crate::ui_party::GroupState>();
+        world
+            .resource_mut::<crate::ui_party::GroupState>()
+            .apply_list(
+                0,
+                0,
+                vec![benilla_protocol::messages::GroupMemberEntry {
+                    name: "Brisca".into(),
+                    guid: MEMBER,
+                    status: benilla_protocol::messages::member_status::ONLINE,
+                    flags: 0,
+                    roles: 0,
+                }],
+                ME,
+                None,
+                Some(ME),
+            );
+        world
+            .resource_mut::<NameCache>()
+            .insert_player(MEMBER, "Brisca".into(), None);
+        world.spawn((SelfPlayer, Guid(ME), Transform::default()));
+        for filter in [Filter::AttackableAlive, Filter::AssistableAlive] {
+            let hit = world
+                .run_system_once(move |scan: ByNameScan| {
+                    scan.resolve("Brisca", NameSearch::PlayerOnly, filter, Match::PrefixOk)
+                })
+                .expect("the resolve runs as a one-shot system");
+            assert_eq!(hit, None, "{filter:?}");
+        }
+        let roster = GroupRoster {
+            party: vec![MEMBER],
+            raid: Vec::new(),
+        };
+        let names = world.resource::<NameCache>();
+        assert_eq!(
+            unheld_group_match(names, &roster, |_| false, "bris", Match::PrefixOk),
+            Some(MEMBER)
+        );
+        assert_eq!(
+            unheld_group_match(names, &roster, |_| false, "bris", Match::ExactOnly),
+            None
+        );
+        assert_eq!(
+            unheld_group_match(names, &roster, |_| true, "Brisca", Match::ExactOnly),
+            None,
+            "a held member is the visible scan's"
         );
     }
 

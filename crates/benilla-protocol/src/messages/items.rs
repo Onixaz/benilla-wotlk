@@ -536,15 +536,15 @@ pub enum UseItemTarget {
     /// only from an item cast (`Spell.cpp:7892`). The mask is `0x0800` alone; the reference's
     /// target binding never writes `TARGET_FLAG_LOCKED`.
     Object(u64),
-    /// `TARGET_FLAG_DEST_LOCATION` and three `f32` coords: a thrown item, dynamite or a grenade.
-    Dest([f32; 3]),
+    /// `TARGET_FLAG_DEST_LOCATION` and its point: a thrown item, dynamite or a grenade.
+    Dest(super::spells::TargetPoint),
     /// `TARGET_FLAG_ITEM` and a packed guid: a poison, oil or stone applied to a clicked item.
     Item(u64),
     /// `TARGET_FLAG_TRADE_ITEM` and the not-traded slot in the guid's place.
     TradeItem,
-    /// `TARGET_FLAG_SOURCE_LOCATION` and three `f32` coords (the location binding); only items
+    /// `TARGET_FLAG_SOURCE_LOCATION` and its point (the location binding); only items
     /// carrying spell 265, such as Martin Fury, use it. vmangos reads it before the dest.
-    Source([f32; 3]),
+    Source(super::spells::TargetPoint),
     /// A corpse bit and the corpse's packed guid: Goblin Jumper Cables' Defibrillate
     /// (`Targets 0x8000`) on a released player's corpse.
     Corpse(super::spells::CorpseTarget, u64),
@@ -840,7 +840,7 @@ mod tests {
 
     #[test]
     fn use_item_dest_body_golden() {
-        let body = use_body(UseItemTarget::Dest([1.0, -2.5, 3.0]));
+        let body = use_body(UseItemTarget::Dest([1.0, -2.5, 3.0].into()));
         assert_eq!(body[..19], USE_HEAD);
         assert_eq!(
             body[19..],

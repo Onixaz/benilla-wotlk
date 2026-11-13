@@ -124,6 +124,46 @@ fn a_linked_heirloom_reads_the_links_level() {
     assert!(texts(&mut s).contains(&"[RANGE 1 80 40]".to_string()));
 }
 
+/// A loot row's requester is the loot's source (`0x62e638`): a unit source's level picks the row,
+/// any other source (a chest, a bobber) leaves the player's.
+#[test]
+fn a_looted_heirloom_reads_the_source_units_level() {
+    let mut s = setup(40, 0, 1 << 4);
+    let read = |s: &mut UiScript, source_unit: bool, source_level: u32| {
+        s.set_loot(Some(LootState {
+            source_unit,
+            source_level,
+            master_candidates: Vec::new(),
+            rows: vec![Some(LootRow {
+                name: Some("Heirloom Chest".into()),
+                texture: None,
+                quantity: 1,
+                quality: Some(7),
+                is_coin: false,
+                item_id: 9100,
+                link: Some("|cffe6cc80|Hitem:9100:0:0:0:0:0:0:0:0|h[Heirloom Chest]|h|r".into()),
+                random_property_id: 0,
+                locked: false,
+            })],
+            fishing: false,
+        }));
+        s.run(r#"TT:SetOwner(Slot, "ANCHOR_RIGHT"); TT:SetLootItem(1)"#)
+            .unwrap();
+        texts(s)
+    };
+    let corpse = read(&mut s, true, 12);
+    assert!(corpse.contains(&"[ARMOR 120]".to_string()), "{corpse:?}");
+    assert!(
+        corpse.contains(&"[RANGE 1 80 12]".to_string()),
+        "{corpse:?}"
+    );
+    let chest = read(&mut s, false, 0);
+    assert!(chest.contains(&"[RANGE 1 80 40]".to_string()), "{chest:?}");
+    // Above the distribution's maximum the source is held to it, as any requester is.
+    let boss = read(&mut s, true, 83);
+    assert!(boss.contains(&"[RANGE 1 80 80]".to_string()), "{boss:?}");
+}
+
 /// The plate piece reads as mail for a class flagged `0x20` with the mail bit, leather without
 /// it, and red plate for an unflagged class (`0x6288f5`).
 #[test]

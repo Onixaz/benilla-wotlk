@@ -74,6 +74,9 @@ pub struct LootState {
     /// The loot source resolves as a unit object (typemask 8): a corpse, not a chest, a bobber or
     /// an item. `SetLootPortrait` bakes it under the token [`LOOT_PORTRAIT_UNIT`].
     pub source_unit: bool,
+    /// That unit's level, 0 for any other source: the requester a scaling item shows at in the
+    /// loot tooltip (`0x62e638` passes the source, `0x61e7bf` reads its level).
+    pub source_level: u32,
 }
 
 /// The portrait key `SetLootPortrait` binds a texture to, which the app bakes from the loot
@@ -406,6 +409,7 @@ mod tests {
     fn loot() -> LootState {
         LootState {
             source_unit: false,
+            source_level: 0,
             master_candidates: Vec::new(),
             rows: vec![
                 Some(LootRow {
