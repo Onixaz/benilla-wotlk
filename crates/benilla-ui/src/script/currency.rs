@@ -315,13 +315,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let Some(e) = usize::try_from(i).ok().and_then(|i| list.get(i)) else {
                 return Ok(MultiValue::from_iter(std::iter::repeat_n(Value::Nil, 9)));
             };
-            let unused = !e.header
-                && model
+            // A header is unused when its category sorts last (`0x5b0518`), a row by its CVar bit.
+            let unused = if e.header {
+                sorted_categories(&model)
+                    .last()
+                    .is_some_and(|c| c.id == e.category_id)
+            } else {
+                model
                     .currency_catalog
                     .types
                     .iter()
                     .find(|t| t.item_id == e.item_id)
-                    .is_some_and(|t| cvar_bit(&model, "currencyTokensUnused", t.bit_index));
+                    .is_some_and(|t| cvar_bit(&model, "currencyTokensUnused", t.bit_index))
+            };
             let (count, kind) = match (e.header, count_of(&model, e.item_id)) {
                 (true, _) => (Value::Number(0.0), Value::Integer(0)),
                 (false, Some((n, k))) => {
@@ -715,5 +721,25 @@ mod tests {
             .eval("return GetCVar('currencyTokensUnused1'), GetCVar('currencyTokensBackpack1')")
             .unwrap();
         assert_eq!((unused.as_str(), watched.as_str()), ("0", "2"));
+    }
+
+    /// A header reports unused only for the category that sorts last.
+    #[test]
+    fn only_the_last_category_header_is_unused() {
+        let s = script();
+        s.run("SetCurrencyUnused(2, 1)").unwrap();
+        let headers: Vec<(String, bool)> = (1..=7)
+            .map(|i| row(&s, i))
+            .filter(|r| r.1)
+            .map(|r| (r.0.unwrap(), r.3))
+            .collect();
+        assert_eq!(
+            headers,
+            [
+                ("Dungeon".to_string(), false),
+                ("Player vs. Player".to_string(), false),
+                ("Unused".to_string(), true),
+            ]
+        );
     }
 }
