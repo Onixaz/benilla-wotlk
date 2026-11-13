@@ -38,12 +38,7 @@ pub(super) fn update_pick_occlusion(
     doodads: DoodadOccluders,
     targeting: Option<Res<crate::spell::SpellTargeting>>,
     parents: Query<&ChildOf>,
-    objects: Query<(
-        &Guid,
-        &NetEntity,
-        &GlobalTransform,
-        Has<crate::transport::Transport>,
-    )>,
+    objects: PickObjects,
     mut occlusion: ResMut<PickOcclusion>,
 ) {
     *occlusion = PickOcclusion::default();
@@ -62,7 +57,47 @@ pub(super) fn update_pick_occlusion(
     let Ok(ray) = camera.viewport_to_world(cam_tf, cursor) else {
         return;
     };
-    occlusion.ray = Some(ray.direction);
+    let wants_location = targeting.is_some_and(|t| {
+        t.spell_for(crate::spell::targeting::TargetingWants::Location)
+            .is_some()
+    });
+    *occlusion = trace_occlusion(
+        ray,
+        &spatial,
+        &occluders,
+        &doodads,
+        wants_location,
+        &parents,
+        &objects,
+    );
+}
+
+/// The GameObjects a hull's collider resolves to, for the ground leg.
+type PickObjects<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Guid,
+        &'static NetEntity,
+        &'static GlobalTransform,
+        Has<crate::transport::Transport>,
+    ),
+>;
+
+/// The world hit along `ray`, and while a location is wanted the GameObject hull nearer than it.
+fn trace_occlusion(
+    ray: Ray3d,
+    spatial: &avian3d::prelude::SpatialQuery,
+    occluders: &Query<(), With<PickOccluder>>,
+    doodads: &DoodadOccluders,
+    wants_location: bool,
+    parents: &Query<&ChildOf>,
+    objects: &PickObjects,
+) -> PickOcclusion {
+    let mut occlusion = PickOcclusion {
+        ray: Some(ray.direction),
+        ..default()
+    };
     let world = spatial
         .cast_ray_predicate(
             ray.origin,
@@ -79,11 +114,8 @@ pub(super) fn update_pick_occlusion(
         occlusion.distance = distance;
         occlusion.point = Some(ray.origin + *ray.direction * distance);
     }
-    if !targeting.is_some_and(|t| {
-        t.spell_for(crate::spell::targeting::TargetingWants::Location)
-            .is_some()
-    }) {
-        return;
+    if !wants_location {
+        return occlusion;
     }
     // A hull's owning GameObject: the collider's own entity or a parent of it (a deck prop).
     let owner = |mut e: Entity| {
@@ -104,10 +136,10 @@ pub(super) fn update_pick_occlusion(
         &benilla_world::collision::WorldCollision::body_filter(),
         &|e| !occluders.contains(e) && owner(e).is_some(),
     ) else {
-        return;
+        return occlusion;
     };
     let Some((guid, deck, transport)) = owner(hit.entity) else {
-        return;
+        return occlusion;
     };
     let point = ray.origin + *ray.direction * hit.distance;
     occlusion.object_ground = Some(super::ObjectGround {
@@ -115,6 +147,7 @@ pub(super) fn update_pick_occlusion(
         deck: (transport && super::is_ship_guid(guid))
             .then(|| (guid, crate::entities::deck_local(point, deck))),
     });
+    occlusion
 }
 
 /// The model instances whose parts are `unit`'s pick geometry: the body, everything it wears, and
@@ -888,6 +921,113 @@ mod tests {
     use super::*;
     use crate::spell::targeting::corpse_fixture as fx;
     use bevy::ecs::system::RunSystemOnce;
+
+    /// The ground leg stops on a GameObject hull above the terrain, and a zeppelin's hull gives its
+    /// guid and the point in its frame (`0x4f9b5c`, `0x4f9d19`); a plain hull names no guid, and
+    /// with no location wanted the trace is the world's alone.
+    #[test]
+    fn the_ground_leg_stops_on_a_hull_above_the_terrain() {
+        use avian3d::prelude::{Collider, RigidBody};
+        #[derive(Resource)]
+        struct Aim(bool);
+        #[derive(Resource, Default)]
+        struct Out(PickOcclusion);
+        fn trace(
+            aim: Res<Aim>,
+            spatial: avian3d::prelude::SpatialQuery,
+            occluders: Query<(), With<PickOccluder>>,
+            doodads: DoodadOccluders,
+            parents: Query<&ChildOf>,
+            objects: PickObjects,
+            mut out: ResMut<Out>,
+        ) {
+            let ray = Ray3d::new(Vec3::new(1.0, 50.0, 2.0), Dir3::NEG_Y);
+            out.0 = trace_occlusion(
+                ray, &spatial, &occluders, &doodads, aim.0, &parents, &objects,
+            );
+        }
+        const ZEPPELIN: u64 = 0x1FC0_0000_0000_0010;
+        let run = |wants_location: bool, guid: u64, transport: bool| {
+            let mut app = App::new();
+            app.add_plugins((
+                MinimalPlugins,
+                bevy::transform::TransformPlugin,
+                bevy::asset::AssetPlugin::default(),
+                bevy::scene::ScenePlugin,
+                avian3d::prelude::PhysicsPlugins::new(bevy::app::PostUpdate),
+            ));
+            app.init_asset::<Mesh>();
+            app.finish();
+            app.cleanup();
+            app.insert_resource(Aim(wants_location))
+                .init_resource::<Out>()
+                .add_systems(Update, trace);
+            // The terrain, a world occluder at y 0.
+            app.world_mut().spawn((
+                PickOccluder,
+                RigidBody::Static,
+                Collider::cuboid(40.0, 1.0, 40.0),
+                Transform::from_xyz(0.0, -0.5, 0.0),
+            ));
+            // A deck turned a quarter, its hull a child collider 10 above the terrain.
+            let deck = Transform::from_xyz(0.0, 10.0, 0.0)
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
+            let mut object = app.world_mut().spawn((
+                Guid(guid),
+                NetEntity {
+                    kind: EntityKind::GameObject,
+                    display_id: None,
+                    scale: 1.0,
+                },
+                deck,
+                RigidBody::Kinematic,
+            ));
+            if transport {
+                object.insert(crate::transport::Transport::parked());
+            }
+            let object = object.id();
+            app.world_mut().spawn((
+                Collider::cuboid(8.0, 1.0, 8.0),
+                Transform::from_xyz(0.0, -0.5, 0.0),
+                ChildOf(object),
+            ));
+            for _ in 0..3 {
+                app.update();
+            }
+            (app.world().resource::<Out>().0, deck)
+        };
+        let (on_deck, deck) = run(true, ZEPPELIN, true);
+        assert_eq!(
+            on_deck.point,
+            Some(Vec3::new(1.0, 0.0, 2.0)),
+            "the world hit"
+        );
+        let ground = on_deck
+            .object_ground
+            .expect("the hull stops the ground leg");
+        assert!(ground.point.distance(Vec3::new(1.0, 10.0, 2.0)) < 1e-3);
+        let (guid, local) = ground.deck.expect("a zeppelin names itself");
+        assert_eq!(guid, ZEPPELIN);
+        let want = deck.rotation.inverse() * (ground.point - deck.translation);
+        assert!(local.distance(want) < 1e-3, "{local} vs {want}");
+        assert!(
+            on_deck.ground_point().unwrap().distance(ground.point) < 1e-3,
+            "the reticle rides the deck"
+        );
+        let (plain, _) = run(true, 0xF110_0000_0000_0020, false);
+        assert_eq!(
+            plain.object_ground.and_then(|g| g.deck),
+            None,
+            "no guid for a plain hull"
+        );
+        assert!(
+            plain.object_ground.is_some(),
+            "a plain hull still stops the ground leg"
+        );
+        let (hover, _) = run(false, ZEPPELIN, true);
+        assert_eq!(hover.object_ground, None, "the world leg passes the hull");
+        assert_eq!(hover.point, Some(Vec3::new(1.0, 0.0, 2.0)));
+    }
 
     fn card(bone: u16, owner: Entity) -> BillboardCard {
         let info = benilla_assets::BillboardInfo {

@@ -48,6 +48,16 @@ pub(crate) struct DisplayFacing {
     wire: f32,
     /// A zero head means the next pump takes the ring-fill leg.
     hist: [f32; 4],
+    /// A deck rider's display facing in its deck's frame, which `compose_riders` turns the shown
+    /// yaw through; the pump steps it there (`0x7362e3`).
+    deck: Option<f32>,
+}
+
+impl DisplayFacing {
+    /// The deck-local display facing of a rider the pump governs.
+    pub(crate) fn deck(&self) -> Option<f32> {
+        self.deck
+    }
 }
 
 /// The signed yaw the facing pump applied this frame (positive turns left), the client's shuffle
@@ -144,6 +154,7 @@ pub(crate) fn apply_walk_end_facing(
             commands.entity(e).try_insert(DisplayFacing {
                 wire: wire.rem_euclid(std::f32::consts::TAU),
                 hist: [0.0; 4],
+                deck: None,
             });
         }
     }
@@ -218,6 +229,10 @@ fn filter_step(cur: f32, goal: f32, hist: &mut [f32; 4]) -> f32 {
 /// No range, line-of-sight, faction or alive test is on this path; the window's own range close
 /// is the only leash. Deviation: a remote player's facing is the remote interp's, so row 5 never
 /// reaches one; a server sets the hold for none on AzerothCore.
+///
+/// A deck rider turns in its deck's frame: its raw goal is the wire's deck-local facing, and a
+/// bearing goal is taken off the deck's yaw (`0x7362e3`). Deviation: the reference reads row 5's
+/// world bearing (`0x7567ec`) as deck-local; benilla takes it off the deck's yaw too.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(crate) fn drive_display_facing(
     mut commands: Commands,
@@ -232,7 +247,7 @@ pub(crate) fn drive_display_facing(
             Entity,
             &NetEntity,
             &ObjectStore,
-            Has<crate::transport::TransportRider>,
+            Option<&crate::transport::TransportRider>,
         ),
         (
             Without<Spline>,
@@ -244,6 +259,7 @@ pub(crate) fn drive_display_facing(
         ),
     >,
     self_q: Query<Entity, With<SelfPlayer>>,
+    decks: Query<(), With<crate::transport::Transport>>,
     mut transforms: Query<&mut Transform>,
     mut facings: Query<&mut DisplayFacing>,
     // A remote player's latch belongs to the remote facing interp; sweeping it here would fight it.
@@ -269,11 +285,26 @@ pub(crate) fn drive_display_facing(
     let interact_npc = interact.and_then(|r| r.0);
 
     // Collect goals first, then apply, so no transform is borrowed mutably while another is read.
-    let mut goals: Vec<(Entity, Option<f32>, GoalSource, bool)> = Vec::new();
-    for (e, net, store, riding) in &candidates {
+    let mut goals: Vec<(Entity, Option<f32>, GoalSource, Riding)> = Vec::new();
+    for (e, net, store, rider) in &candidates {
         if net.kind != EntityKind::Unit {
             continue; // a GameObject sits at its authored facing
         }
+        let riding = match rider {
+            None => Riding::No,
+            Some(r) => match index.0.get(&r.transport_guid).copied() {
+                Some(d) if decks.contains(d) => match transforms.get(d) {
+                    Ok(deck) => Riding::Deck(Deck {
+                        yaw: deck.rotation.to_euler(EulerRot::YXZ).0,
+                        wire: r.local_orientation.rem_euclid(std::f32::consts::TAU),
+                    }),
+                    Err(_) => continue,
+                },
+                // A rider whose deck is not streamed holds its last pose, as `compose_riders` does.
+                None => continue,
+                Some(_) => Riding::Seat,
+            },
+        };
         let fields = &store.0;
         // Rows 2-4.
         if fields.unit_stand_state() != 0
@@ -319,30 +350,41 @@ pub(crate) fn drive_display_facing(
 
     let mut stepping: bevy::ecs::entity::EntityHashSet = default();
     for (e, goal, source, riding) in goals {
+        use std::f32::consts::TAU;
+        let deck = match riding {
+            Riding::Deck(d) => Some(d),
+            _ => None,
+        };
         let Ok(mut tf) = transforms.get_mut(e) else {
             continue;
         };
-        let cur = yaw_of(tf.rotation).rem_euclid(std::f32::consts::TAU);
         let Ok(mut state) = facings.get_mut(e) else {
             // First frame governed: the transform still holds the wire's facing, so seed from it
             // with a clean ring.
             commands.entity(e).try_insert(DisplayFacing {
-                wire: cur,
+                wire: yaw_of(tf.rotation).rem_euclid(TAU),
                 hist: [0.0; 4],
+                deck: deck.map(|d| d.wire),
             });
             continue;
         };
-        // A deck rider's raw facing is deck-local, recomposed through the deck's yaw every frame
-        // (`compose_riders`), so its world-space raw goal is the pose it stands at.
-        if riding {
-            state.wire = cur;
-        }
+        // On a deck the pump runs in the deck's frame, from the wire's deck-local facing.
+        let (cur, raw, frame) = match riding {
+            Riding::Deck(d) => (state.deck.unwrap_or(d.wire), d.wire, d.yaw),
+            // A vehicle seat places its passenger itself, so its raw goal is the pose it sits at.
+            Riding::Seat => {
+                state.wire = yaw_of(tf.rotation).rem_euclid(TAU);
+                (state.wire, state.wire, 0.0)
+            }
+            Riding::No => (yaw_of(tf.rotation).rem_euclid(TAU), state.wire, 0.0),
+        };
         // The raw facing is a goal, not a freeze: it swings an NPC back when its window closes.
-        let goal = goal.unwrap_or(state.wire);
+        let goal = goal.map_or(raw, |g| (g - frame).rem_euclid(TAU));
         let new = filter_step(cur, goal, &mut state.hist);
+        state.deck = deck.is_some().then_some(new);
         // Write only on change: a settled unit's `new` is bitwise the goal, so a standing crowd
         // stops tripping every downstream `Changed<Transform>` gate.
-        let rot = Quat::from_rotation_y(new);
+        let rot = Quat::from_rotation_y(new + frame);
         if tf.rotation != rot {
             tf.rotation = rot;
         }
@@ -353,7 +395,7 @@ pub(crate) fn drive_display_facing(
             commands.entity(e).insert(FacingStep(step));
             stepping.insert(e);
         }
-        trace_face(e, source, goal, cur, new);
+        trace_face(e, source, goal, cur, new, deck.map(|d| d.yaw));
     }
     for e in &latched {
         if !stepping.contains(&e) {
@@ -365,17 +407,34 @@ pub(crate) fn drive_display_facing(
     }
 }
 
-/// The `face` trace tag: one line per turning unit per frame, naming the goal-chain row that won.
-fn trace_face(e: Entity, source: GoalSource, goal: f32, cur: f32, new: f32) {
+/// What a candidate rides: nothing, a boat or zeppelin deck, or a vehicle seat.
+#[derive(Clone, Copy, PartialEq)]
+enum Riding {
+    No,
+    Deck(Deck),
+    Seat,
+}
+
+/// A deck rider's frame for the pump: the deck's yaw and the wire's deck-local facing.
+#[derive(Clone, Copy, PartialEq)]
+struct Deck {
+    yaw: f32,
+    wire: f32,
+}
+
+/// The `face` trace tag: one line per turning unit per frame, naming the goal-chain row that won;
+/// a deck rider's facings are deck-local, with the deck's yaw beside them.
+fn trace_face(e: Entity, source: GoalSource, goal: f32, cur: f32, new: f32, deck: Option<f32>) {
     if !benilla_assets::trace::enabled_for("face") || (new - cur).abs() < 1.0e-6 {
         return;
     }
     benilla_assets::trace::line(
         "face",
         &format!(
-            "e={e} src={} goal={goal:.4} cur={cur:.4} new={new:.4} step={:.4}",
+            "e={e} src={} goal={goal:.4} cur={cur:.4} new={new:.4} step={:.4}{}",
             source.tag(),
-            new - cur
+            new - cur,
+            deck.map(|d| format!(" deck={d:.4}")).unwrap_or_default()
         ),
     );
 }
@@ -840,13 +899,23 @@ mod tests {
         );
     }
 
-    /// A deck rider's yaw is recomposed through the turning deck every frame: the pump must take
-    /// that as its raw goal, never turn back toward the yaw it seeded, nor latch a shuffle.
+    /// A deck rider with no goal turns in its deck's frame toward the wire's deck-local facing:
+    /// it follows the turning deck, never turns back toward the yaw it seeded, nor latches a
+    /// shuffle.
     #[test]
     fn a_deck_rider_follows_its_deck_without_shuffling() {
+        const DECK: u64 = 0x1fc0_0000_0000_0006;
         let mut app = App::new();
         app.init_resource::<GuidIndex>()
             .add_systems(Update, drive_display_facing);
+        let deck = app
+            .world_mut()
+            .spawn((crate::transport::Transport::parked(), Transform::default()))
+            .id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(DECK, deck);
         let crew = app
             .world_mut()
             .spawn((
@@ -858,7 +927,7 @@ mod tests {
                 ObjectStore::default(),
                 Transform::default(),
                 crate::transport::TransportRider {
-                    transport_guid: 0x1fc0_0000_0000_0006,
+                    transport_guid: DECK,
                     local_pos: [0.0; 3],
                     local_orientation: 0.0,
                     seat: -1,
@@ -867,10 +936,10 @@ mod tests {
             .id();
         app.update(); // the seeding frame
         for k in 1..=8 {
-            // The deck has swung the rider's composed yaw since the seed.
+            // The deck has turned since the seed.
             let deck_yaw = 0.3 * k as f32;
             app.world_mut()
-                .entity_mut(crew)
+                .entity_mut(deck)
                 .get_mut::<Transform>()
                 .unwrap()
                 .rotation = Quat::from_rotation_y(deck_yaw);

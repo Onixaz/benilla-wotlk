@@ -42,7 +42,9 @@ use motion::{
     sample_splines,
 };
 // `pub(crate)`: `creature_anim` reads the shuffle latch it produces, and a test runs both.
-pub(crate) use motion::{apply_walk_end_facing, drive_display_facing, facing_bearing, FacingHold};
+pub(crate) use motion::{
+    apply_walk_end_facing, drive_display_facing, facing_bearing, DisplayFacing, FacingHold,
+};
 pub(crate) use motion::{
     ground_derived, grounded_y, jump_seed, CreatureSwimming, FacingStep, RemoteMotion, Spline,
     SplineStopped, SwimFlyTransition, UnitMoveModes,
