@@ -334,6 +334,7 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
             };
             let old_owner = model.arena.region(rh).map(|r| r.owner);
             if model.arena.set_region_owner(rh, new_owner) {
+                // A re-link takes the new owner's scale (0x4906c0); a detach moves nothing.
                 if let (Some(old), Some(new)) = (old_owner, new_owner) {
                     let old_id = model.frame_id(old);
                     let new_id = model.frame_id(new);

@@ -1266,8 +1266,8 @@ impl UiScript {
                     is_fontstring: matches!(r.kind, crate::widget::RegionKind::FontString),
                 });
             }
-            // Liveness: `WidgetArena::destroy` leaves
-            // `region_data` behind, so membership alone would miss a destroyed region.
+            // Liveness: `WidgetArena::destroy` leaves `region_data` behind, so membership alone
+            // would miss a destroyed region.
             fp.feed(u64::from(live.is_some()));
         }
         // The count of anchored entries fed, not the map's len.
