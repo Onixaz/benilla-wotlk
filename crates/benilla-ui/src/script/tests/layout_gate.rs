@@ -29,6 +29,47 @@ fn setup(s: &UiScript) {
 }
 
 #[test]
+fn reparented_region_tracks_its_new_owners_scale_without_full_derivation() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        A = CreateFrame('Frame', 'OwnerA', UIParent)
+        B = CreateFrame('Frame', 'OwnerB', UIParent)
+        A:SetPoint('BOTTOMLEFT', nil, 'BOTTOMLEFT', 0, 0)
+        A:SetSize(100, 100); B:SetScale(2)
+        T = A:CreateTexture(); T:SetSize(10, 10); T:SetPoint('BOTTOMLEFT', A, 'BOTTOMLEFT')
+    "#,
+    )
+    .unwrap();
+    s.resolve();
+    let table: mlua::Table = s.lua().globals().get("T").unwrap();
+    let rh = crate::script::region::region_handle_of(s.lua(), &table).unwrap();
+    let span = |s: &UiScript| {
+        let model = s.model_ref();
+        let r = model.region_resolved.get(&rh).unwrap();
+        r.right - r.left
+    };
+    assert!((span(&s) - 10.0).abs() < 0.01);
+    s.run("T:SetParent(B)").unwrap();
+    assert!(
+        s.model_ref().layout_touched.is_some(),
+        "reparent keeps the incremental graph"
+    );
+    s.resolve();
+    assert!((span(&s) - 20.0).abs() < 0.01);
+    let width: f32 = s.eval("return T:GetWidth()").unwrap();
+    assert!((width - 10.0).abs() < 0.01);
+    s.run("B:SetScale(3)").unwrap();
+    s.resolve();
+    assert!((span(&s) - 30.0).abs() < 0.01);
+    s.run("T:SetParent(nil); T:SetParent(A)").unwrap();
+    s.resolve();
+    assert!((span(&s) - 10.0).abs() < 0.01);
+    assert!(s.eval::<bool>("return T:GetParent() == A").unwrap());
+}
+
+#[test]
 fn an_unchanged_resolve_does_not_run_the_fixpoint() {
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
