@@ -81,6 +81,16 @@ impl super::UiScript {
         set_field!(self, token_slots, slots);
     }
 
+    /// The item of each row the display list shows, whose record the build asks with its landing
+    /// callback (`0x5b01d7`, `0x5b0260`).
+    pub fn currency_listed_items(&self) -> Vec<u32> {
+        display_list(&self.model_ref())
+            .into_iter()
+            .filter(|e| !e.header)
+            .map(|e| e.item_id)
+            .collect()
+    }
+
     /// Take the categories' open flags out of this VM, for a `ReloadUI`, which they outlive.
     pub fn take_currency_folds(&mut self) -> CurrencyFolds {
         CurrencyFolds(std::mem::take(&mut self.model_mut().currency_collapsed))
@@ -616,6 +626,19 @@ mod tests {
             .eval::<bool>("return GetCurrencyListInfo(7) == nil")
             .unwrap());
         assert!(s.run("GetCurrencyListInfo()").is_err());
+    }
+
+    /// The listed items are the shown rows, without the headers or a collapsed category's rows.
+    #[test]
+    fn the_listed_items_are_the_shown_rows() {
+        let s = script();
+        let mut listed = s.currency_listed_items();
+        listed.sort_unstable();
+        assert_eq!(listed, [20560, 29434, 40752, 43308]);
+        s.run("ExpandCurrencyList(1, 0)").unwrap();
+        let mut listed = s.currency_listed_items();
+        listed.sort_unstable();
+        assert_eq!(listed, [20560, 43308], "the Dungeon rows are folded away");
     }
 
     /// Collapsing hides a header's rows; marking a row unused moves it under the last category

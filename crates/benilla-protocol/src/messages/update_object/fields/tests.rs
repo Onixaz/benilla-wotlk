@@ -1,3 +1,4 @@
+use super::player::player_slot_of_field;
 use super::*;
 
 /// The indices re-derived from vmangos's enum arithmetic and chained to two anchors known
@@ -971,4 +972,54 @@ fn a_dropped_mount_reads_zero_until_its_field_moves() {
     assert!(!f.drop_mount(), "nothing left to drop");
     f.merge(mount(2_410));
     assert_eq!(f.unit_mount_display_id(), 2_410, "a new mount reads");
+}
+
+/// Each slot array's guid words map to their player slot and back, one past each run to none.
+#[test]
+fn a_slot_field_names_its_player_slot_and_word() {
+    assert_eq!(
+        player_slot_of_field(FIELD_PLAYER_INV_SLOT_HEAD),
+        Some((0, false))
+    );
+    assert_eq!(
+        player_slot_of_field(FIELD_PLAYER_PACK_SLOT_1 + 1),
+        Some((23, true))
+    );
+    assert_eq!(
+        player_slot_of_field(FIELD_PLAYER_BANK_BAG_SLOT_1 + 13),
+        Some((73, true))
+    );
+    assert_eq!(
+        player_slot_of_field(FIELD_PLAYER_KEYRING_SLOT_1 + 63),
+        Some((117, true))
+    );
+    assert_eq!(
+        player_slot_of_field(FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1),
+        Some((118, false))
+    );
+    assert_eq!(
+        player_slot_of_field(FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1 + 63),
+        Some((149, true))
+    );
+    assert_eq!(
+        player_slot_of_field(FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1 + 64),
+        None
+    );
+    assert_eq!(player_slot_of_field(FIELD_PLAYER_FARSIGHT), None);
+    let mut pairs = Vec::new();
+    for slot in 0..150u8 {
+        let lo = (0..u16::MAX)
+            .find(|&i| player_slot_of_field(i) == Some((slot, false)))
+            .unwrap();
+        pairs.push((lo, u32::from(slot) + 1));
+    }
+    let f = ObjectFields::from_pairs(&pairs);
+    for slot in 0..150u8 {
+        assert_eq!(
+            f.player_slot(slot),
+            Some(u64::from(slot) + 1),
+            "slot {slot}"
+        );
+    }
+    assert_eq!(f.player_slot(150), None);
 }
