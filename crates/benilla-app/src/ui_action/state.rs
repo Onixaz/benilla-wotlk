@@ -37,6 +37,11 @@ pub(super) struct StateMemory {
     reactive: Option<Vec<(u32, bool)>>,
 }
 
+/// Shared between the normal feed and the post-input cooldown pass.  Keeping one VM memo means
+/// the second pass updates the same snapshot instead of emitting a second, contradictory edge.
+#[derive(Resource, Default)]
+pub(super) struct StateMemoryStore(pub(crate) crate::ui_script::VmMemo<StateMemory>);
+
 /// `AttributesExD & 0x200`: a reactive spell, whose turn to usable floats its name
 /// (`0x54228c`).
 const EX4_REACTIVE: u32 = 0x200;
@@ -152,7 +157,7 @@ pub(super) fn feed_action_state(
     auto_repeat: Res<AutoRepeatActive>,
     // One tuple for Bevy's 16-param ceiling: cast tracking, macro bindings, spell mods and the
     // range units.
-    cast_state: (
+    mut cast_state: (
         Res<crate::spell::PendingCast>,
         Res<crate::spell::QueuedMeleeSpell>,
         Res<crate::spell::ActiveChannel>,
@@ -170,6 +175,7 @@ pub(super) fn feed_action_state(
         // The group, for the reaction's party rung.
         Option<Res<crate::ui_party::GroupState>>,
         crate::spell::AutoChecks,
+        Option<ResMut<crate::spell::cooldowns::CooldownFeedBoundary>>,
     ),
     self_q: Query<(&ObjectStore, &Transform, Has<Engaged>, Option<&Casting>), With<SelfPlayer>>,
     selection: Res<Selection>,
@@ -186,13 +192,20 @@ pub(super) fn feed_action_state(
     reputations: Res<crate::net::Reputations>,
     items: Res<Items>,
     commands: Res<NetCommands>,
-    mut memory: Local<crate::ui_script::VmMemo<StateMemory>>,
+    memory_sources: (
+        Option<ResMut<StateMemoryStore>>,
+        Local<crate::ui_script::VmMemo<StateMemory>>,
+    ),
 ) {
     let (units, usable_auras, pet_bar) = &units_and_auras;
     let Some(mut script) = script else {
         return;
     };
-    let memory = memory.get(&script);
+    let (mut shared_memory, mut local_memory) = memory_sources;
+    let memory = match shared_memory {
+        Some(ref mut shared) => shared.0.get(&script),
+        None => local_memory.get(&script),
+    };
     let now = Instant::now();
     // Every cooldown pushes its absolute start on the `GetTime` clock, derived from this one
     // pair, so a running cooldown derives the same start every frame.
@@ -221,7 +234,8 @@ pub(super) fn feed_action_state(
         combo,
         group,
         auto,
-    ) = &cast_state;
+        boundary,
+    ) = &mut cast_state;
     let combo_points = combo
         .as_deref()
         .map_or(0, |c| c.player.on(0, selection.guid.unwrap_or(0)));
@@ -626,6 +640,9 @@ pub(super) fn feed_action_state(
             },
             vec![],
         );
+    }
+    if let Some(boundary) = boundary.as_mut() {
+        boundary.generation = cooldowns.generation;
     }
 }
 

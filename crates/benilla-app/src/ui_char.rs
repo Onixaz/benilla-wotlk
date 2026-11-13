@@ -152,7 +152,7 @@ impl Plugin for UiCharPlugin {
                 // row (`GetInventoryItemLink("player", ContainerIDToInventoryID(bag))`), so the
                 // inventory push lands first.
                 feed_char
-                    .before(crate::ui_items::feed::feed_containers)
+                    .before(crate::ui_items::ContainerFeed)
                     .in_set(UiFeed),
                 watch_skill_ups.in_set(UiFeed),
                 feed_skills.in_set(UiFeed),

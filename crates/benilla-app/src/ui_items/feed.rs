@@ -40,6 +40,11 @@ pub(crate) struct FeedMemory {
     vault_guids: [u64; BANK_SLOTS as usize],
 }
 
+/// Shared by the normal and post-input container feeds so slot cooldowns are in the VM before
+/// the post-cast cooldown events are delivered.
+#[derive(Resource, Default)]
+pub(crate) struct FeedMemoryStore(pub(crate) crate::ui_script::VmMemo<FeedMemory>);
+
 /// The item guids in the player's bag and vault slots, as the reference's watchers read them
 /// (installs over the guid fields): which item, where a pushed slot view only says what it looks
 /// like, so two identical items swapped still register.
@@ -1121,7 +1126,10 @@ pub(crate) fn feed_containers(
         Res<crate::ui_script::UiClock>,
         ResMut<crate::ui_petition::PetitionState>,
     ),
-    mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
+    memory_sources: (
+        Option<ResMut<FeedMemoryStore>>,
+        Local<crate::ui_script::VmMemo<FeedMemory>>,
+    ),
 ) {
     let Some(mut script) = script else {
         return;
@@ -1129,7 +1137,11 @@ pub(crate) fn feed_containers(
     let (clock, mut petitions) = clock_and_petitions;
     let (mut equip_errors, mut sink) = equip;
     let (mut lock_cleared, mut opens) = queues;
-    let (memory, vm_reset) = memory.get_reset(&script);
+    let (mut shared_memory, mut local_memory) = memory_sources;
+    let (memory, vm_reset) = match shared_memory {
+        Some(ref mut shared) => shared.0.get_reset(&script),
+        None => local_memory.get_reset(&script),
+    };
     // The snapshot is a function of these inputs; the stores' counters stand in for their
     // `is_changed`, which lazy resolves make always true. `UiClock` is not an input: a running
     // cooldown's pushed start is absolute, and expiry moves `feed_epoch` through the prune.

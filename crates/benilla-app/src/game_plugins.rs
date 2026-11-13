@@ -1170,7 +1170,9 @@ pub(crate) mod schedule_tests {
     // Both are intentional: the observer reacts only to CVar changes, while the limiter must run
     // every frame to enforce the reference client's sleep-based cap.
     const FRAME_FLOOR: &[(&str, usize, usize)] = &[
-        ("Update", 745, 737),
+        // The three cooldown post-input feeds are event-gated: they do not add to the quiet
+        // frame floor, but remain explicit dispatch entries when a cast arms a local GCD.
+        ("Update", 748, 737),
         ("PostUpdate", 183, 142),
         ("PreUpdate", 60, 60),
         ("First", 11, 8),

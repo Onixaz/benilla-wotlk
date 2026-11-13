@@ -85,6 +85,8 @@ struct Record {
     /// The recovery timers hold their durations but have not started.
     on_hold: bool,
     gcd_category: u32,
+    /// A server clear can leave the GCD visible while making it non-blocking for local casts.
+    gcd_blocks_cast: bool,
     gcd: Timer,
     /// Every timer has run out: the record reads cold and stays until [`Cooldowns::collect`].
     spent: bool,
@@ -141,6 +143,28 @@ pub(crate) struct Cooldowns {
     expiry_epoch: u64,
     /// When the next spell go collects both lists (`0xd3f608`), `None` before the first.
     next_collect: Option<Instant>,
+}
+
+/// The cooldown generation last published to the script VM.  A cast can arm the local GCD in
+/// the input phase, after the normal UI feed has run; the post-input feed uses this boundary to
+/// publish that edge in the same frame without holding back a later server clear.
+#[derive(Resource, Default)]
+pub(crate) struct CooldownFeedBoundary {
+    pub(crate) generation: u64,
+}
+
+impl CooldownFeedBoundary {
+    fn needs(&self, generation: u64) -> bool {
+        self.generation != generation
+    }
+}
+
+/// Whether a cooldown changed after the normal feed and needs the post-input publication pass.
+pub(crate) fn post_feed_needed(
+    cooldowns: Res<Cooldowns>,
+    boundary: Option<Res<CooldownFeedBoundary>>,
+) -> bool {
+    boundary.is_some_and(|boundary| boundary.needs(cooldowns.generation))
 }
 
 /// What the rune leg of [`Cooldowns::with_rune_leg`] reads: the rune table and costs, the
@@ -223,6 +247,7 @@ impl Cooldowns {
             category_recovery,
             on_hold,
             gcd_category,
+            gcd_blocks_cast: true,
             gcd,
             spent: false,
             time: now,
@@ -470,6 +495,28 @@ impl Cooldowns {
         let before = self.records.len();
         self.records.retain(|r| r.spell_id != spell_id);
         if self.records.len() != before {
+            self.bump();
+        }
+    }
+
+    /// `SMSG_CLEAR_COOLDOWN` clears a spell's recovery and category timers, but does not cancel
+    /// the client-side GCD armed when the cast was sent. AzerothCore's cooldown cheat uses this
+    /// packet after a successful cast; dropping the whole record here makes the action button
+    /// flash once and then lose the GCD sweep.
+    pub(crate) fn clear_spell_recovery(&mut self, spell_id: u32) {
+        let mut changed = false;
+        self.records.retain_mut(|r| {
+            if r.spell_id != spell_id {
+                return true;
+            }
+            r.recovery.duration = Duration::ZERO;
+            r.category_recovery.duration = Duration::ZERO;
+            r.on_hold = false;
+            r.gcd_blocks_cast = false;
+            changed = true;
+            !r.gcd.duration.is_zero()
+        });
+        if changed {
             self.bump();
         }
     }
@@ -772,10 +819,9 @@ impl Cooldowns {
         })
     }
 
-    /// The cast validator's first check: refused while [`Self::info`] reads any remainder, so a
-    /// press sharing the running GCD's category is refused whatever its own `startRecoveryTime`.
-    /// The caller picks the reason: 0x28 for an item, 0x3c for a spell. Refusing locally matters:
-    /// the server's NOT_READY failure would clear the running GCD.
+    /// The cast validator's first check: refused while a blocking recovery, category timer, or
+    /// GCD reads a remainder. A server-cleared GCD remains visible to `GetActionCooldown`, but no
+    /// longer gates this local validator, matching the cooldown-cheat path.
     pub(crate) fn not_ready(
         &self,
         spell_id: u32,
@@ -783,7 +829,40 @@ impl Cooldowns {
         spell: Option<&SpellDisplay>,
         now: Instant,
     ) -> bool {
-        self.info(spell_id, item_entry, spell, now).remaining_ms > 0
+        if spell.is_some_and(|s| s.cooldown_query_excluded()) {
+            return false;
+        }
+        let category = spell.map_or(0, |s| s.category);
+        let start_recovery_category = spell.map_or(0, |s| s.start_recovery_category);
+        let running = |timer: &Timer| !timer.remaining(now).is_zero();
+        for r in &self.records {
+            if r.spell_id == spell_id && r.item_id == item_entry {
+                if r.on_hold {
+                    if !r.recovery.duration.is_zero() {
+                        return true;
+                    }
+                } else if running(&r.recovery) {
+                    return true;
+                }
+            }
+            if (r.category != 0 && r.category == category) || r.category_wildcard {
+                if r.on_hold {
+                    if !r.category_recovery.duration.is_zero() {
+                        return true;
+                    }
+                } else if running(&r.category_recovery) {
+                    return true;
+                }
+            }
+            if r.gcd_blocks_cast
+                && r.gcd_category == start_recovery_category
+                && !r.gcd.duration.is_zero()
+                && running(&r.gcd)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// The cooldown query: the longest remainder over every record's three legs.
@@ -853,6 +932,15 @@ impl Cooldowns {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn post_feed_boundary_only_opens_after_a_later_generation() {
+        let mut boundary = CooldownFeedBoundary::default();
+        assert!(!boundary.needs(0));
+        assert!(boundary.needs(1));
+        boundary.generation = 1;
+        assert!(!boundary.needs(1));
+    }
 
     fn spell(
         category: u32,
@@ -1781,6 +1869,49 @@ mod tests {
         cds.wipe();
         assert_ne!(cds.generation, g1);
         assert_eq!(cds.info(133, 0, Some(&fireball()), t0).remaining_ms, 0);
+    }
+
+    #[test]
+    fn server_clear_keeps_the_cast_send_gcd_but_drops_spell_recovery() {
+        let t0 = Instant::now();
+        let mut cds = Cooldowns::default();
+        let display = spell(35, 25_000, 0, (133, 1500), 0);
+        cds.start_gcd(122, &display, t0, &super::SpellModifiers::default());
+        cds.start_spell(122, &display, 0, t0, None);
+
+        cds.clear_spell_recovery(122);
+
+        let mid = t0 + Duration::from_millis(200);
+        let own = cds.info(122, 0, Some(&display), mid);
+        assert_eq!(
+            (own.remaining_ms, own.duration_ms),
+            (1300, 1500),
+            "the server clear must not erase the local GCD"
+        );
+        assert!(
+            !cds.not_ready(122, 0, Some(&display), mid),
+            "a server-cleared GCD remains visible but no longer blocks a cast"
+        );
+        assert!(
+            !cds.not_ready(133, 0, Some(&fireball()), mid),
+            "a server-cleared GCD must not block sibling spells either"
+        );
+
+        let later = t0 + Duration::from_millis(300);
+        cds.start_gcd(122, &display, later, &super::SpellModifiers::default());
+        assert!(
+            cds.not_ready(133, 0, Some(&fireball()), later),
+            "a newly armed GCD still blocks until its own server clear"
+        );
+
+        let bare = spell(0, 25_000, 0, (0, 0), 0);
+        cds.start_spell(133, &bare, 0, t0, None);
+        cds.clear_spell_recovery(133);
+        assert_eq!(
+            cds.info(133, 0, Some(&bare), mid).remaining_ms,
+            0,
+            "a spell with no GCD has no record left after the clear"
+        );
     }
 
     /// The ranged pad: Throw (category 76, no DBC recovery) sweeps the weapon speed.

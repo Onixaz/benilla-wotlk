@@ -109,6 +109,7 @@ impl Plugin for SpellPlugin {
             .init_resource::<LocalMoveStart>()
             .init_resource::<AutoRepeatActive>()
             .init_resource::<Cooldowns>()
+            .init_resource::<cooldowns::CooldownFeedBoundary>()
             .init_resource::<ComboPoints>()
             .init_resource::<SpellModifiers>()
             .init_resource::<AutoSelfCast>()

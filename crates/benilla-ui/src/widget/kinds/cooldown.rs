@@ -68,6 +68,16 @@ impl CooldownState {
     /// `SetCooldown(start, duration)` past its argument checks (`0x5ecd70`): the clock restarts,
     /// the flash ends, and the art is loaded.
     pub fn set(&mut self, start_ms: u32, duration_ms: u32) {
+        // `ACTIONBAR_UPDATE_COOLDOWN` and the spell/item listeners can report the same
+        // active timer in one flush.  The native widget keeps the running sweep in that case;
+        // restarting it at zero would briefly cover the whole button with the dark wedge.
+        if self.armed
+            && !self.flashing
+            && self.start_ms == start_ms
+            && self.duration_ms == duration_ms
+        {
+            return;
+        }
         self.start_ms = start_ms;
         self.duration_ms = duration_ms;
         self.elapsed_ms = 0;
@@ -306,6 +316,20 @@ mod tests {
         c.set(5_000, 60_000);
         c.update(4_000);
         assert!(c.flashing);
+    }
+
+    #[test]
+    fn repeating_the_same_active_timer_does_not_restart_the_sweep() {
+        let mut c = CooldownState::default();
+        c.set(1_000, 10_000);
+        c.update(4_000);
+        assert_eq!(c.elapsed_ms, 3_000);
+
+        c.set(1_000, 10_000);
+        assert_eq!(c.elapsed_ms, 3_000);
+
+        c.set(2_000, 10_000);
+        assert_eq!(c.elapsed_ms, 0, "a changed timer still restarts");
     }
 
     /// The edge rides the sweep angle; unrotated, its UVs are the texture's own corners.

@@ -56,18 +56,24 @@ pub(crate) struct BookFeed;
 impl Plugin for UiSpellbookPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LearnedInTab>()
+            .init_resource::<FeedMemoryStore>()
             .add_systems(Startup, load_skill_lines.after(AssetSet::Open))
             .add_systems(
                 Update,
-                // The feed precedes the bar's identity feed (the registrar's order: the book and
-                // its events, then the placed slot's `ACTIONBAR_SLOT_CHANGED`) and
-                // `CooldownEvents`, whose `SPELL_UPDATE_COOLDOWN` makes the book re-read its
-                // cooldowns. A click's cast is a script call (`cast_spell`).
-                feed_spellbook
-                    .in_set(UnitFeed)
-                    .in_set(BookFeed)
-                    .before(crate::ui_action::SlotIdentityFeed)
-                    .before(crate::ui_action::CooldownEvents),
+                (
+                    // The feed precedes the bar's identity feed (the registrar's order: the book and
+                    // its events, then the placed slot's `ACTIONBAR_SLOT_CHANGED`) and
+                    // `CooldownEvents`, whose `SPELL_UPDATE_COOLDOWN` makes the book re-read its
+                    // cooldowns. A click's cast is a script call (`cast_spell`).
+                    feed_spellbook
+                        .in_set(UnitFeed)
+                        .in_set(BookFeed)
+                        .before(crate::ui_action::SlotIdentityFeed)
+                        .before(crate::ui_action::CooldownEvents),
+                    feed_spellbook
+                        .in_set(crate::ui_action::CooldownPostFeed)
+                        .run_if(crate::spell::cooldowns::post_feed_needed),
+                ),
             );
     }
 }
@@ -97,7 +103,7 @@ fn load_skill_lines(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
 
 /// The feed's memory of what it last pushed, for the `SPELLS_CHANGED` diff.
 #[derive(Default)]
-struct FeedMemory {
+pub(crate) struct FeedMemory {
     pushed: SpellBookState,
     /// Counter watches for stores whose lazy resolves defeat `is_changed` (template asks, the
     /// cooldown prune), and for the self store's presence: a despawn flips the weapon icons unseen.
@@ -111,6 +117,10 @@ struct FeedMemory {
     known_pushed: BTreeSet<u32>,
 }
 
+/// Shared by the normal and post-input feeds so one VM owns one cooldown/book snapshot.
+#[derive(Resource, Default)]
+pub(crate) struct FeedMemoryStore(pub(crate) crate::ui_script::VmMemo<FeedMemory>);
+
 fn feed_spellbook(
     script: Option<NonSendMut<UiScript>>,
     actions: Res<PlayerActions>,
@@ -122,7 +132,8 @@ fn feed_spellbook(
     commands: Res<NetCommands>,
     cooldowns: Res<crate::spell::Cooldowns>,
     clock: Res<crate::ui_script::UiClock>,
-    mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
+    mut shared_memory: Option<ResMut<FeedMemoryStore>>,
+    mut local_memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
     mut learned: ResMut<LearnedInTab>,
     summons: Res<crate::spell::SummonSlots>,
     // The rune table and costs, and the cost modifiers, that a rune spell's cooldown reads.
@@ -136,7 +147,10 @@ fn feed_spellbook(
     let Some(mut script) = script else {
         return;
     };
-    let (memory, vm_reset) = memory.get_reset(&script);
+    let (memory, vm_reset) = match shared_memory {
+        Some(ref mut shared) => shared.0.get_reset(&script),
+        None => local_memory.get_reset(&script),
+    };
     // The book depends on these inputs alone. `UiClock` is not one: `ui_triple` is frame-stable
     // per arm, and expiry moves the store's `feed_epoch`.
     let objects_moved = inv.changes.moved();

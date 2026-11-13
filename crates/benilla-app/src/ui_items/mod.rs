@@ -70,6 +70,10 @@ const BANK_BAG_LIVE: std::ops::RangeInclusive<u32> =
 /// reference's `HasKey` searches for.
 pub(super) const BAG_FAMILY_KEYS: u32 = 9;
 
+/// The normal container snapshot, before the action bar's synchronous cooldown flush.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ContainerFeed;
+
 /// Lua `(bag, 1-based slot)` to the wire `(bag_index, slot)`, the one mapping every drain shares.
 /// The backpack, the bank's generic slots, the keyring and the doll ([`EQUIPMENT_BAG`]: live id
 /// minus one, 1..=23 and the bank-bag buttons 68..=74) all land on [`BAG_PLAYER_INVENTORY`], so a
@@ -1058,6 +1062,7 @@ impl Plugin for UiItemsPlugin {
         net::register(app);
         // The icons come from the equipment renderer's `ItemDisplays`.
         app.init_resource::<EquipErrors>()
+            .init_resource::<feed::FeedMemoryStore>()
             .init_resource::<PendingItemOps>()
             // The soulbind confirmations' pending records: the client's pending-equip array and
             // its one bind-on-use cell.
@@ -1075,13 +1080,17 @@ impl Plugin for UiItemsPlugin {
                 (
                     // The pending-lock clear, ahead of both feeds that push `locked`.
                     feed::resolve_item_locks
-                        .before(feed_containers)
+                        .before(ContainerFeed)
                         .before(crate::ui_char::feed_char),
                     // The slot cooldowns must be in the VM before `feed_action_state`'s
                     // synchronous `BAG_UPDATE_COOLDOWN` makes the bag handlers re-read them.
                     feed_containers
                         .in_set(UnitFeed)
+                        .in_set(ContainerFeed)
                         .before(crate::ui_action::CooldownEvents),
+                    feed_containers
+                        .in_set(crate::ui_action::CooldownPostFeed)
+                        .run_if(crate::spell::cooldowns::post_feed_needed),
                     // The item-tooltip store answers before the input pass, so a re-hover the
                     // next frame sees the answer.
                     // After the book feed, so a `$?s` reads this frame's learns.

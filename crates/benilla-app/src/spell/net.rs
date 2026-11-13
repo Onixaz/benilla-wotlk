@@ -1941,10 +1941,11 @@ fn cooldown_event(spell_id: u32, caster: u64, cooldowns: &mut Cooldowns) {
     cooldowns.cooldown_event(spell_id, Instant::now());
 }
 
-/// `SMSG_CLEAR_COOLDOWN` (`(force=1)`): remove the spell's record outright.
+/// `SMSG_CLEAR_COOLDOWN` (`(force=1)`): clear the spell/category recovery while retaining a
+/// client-side GCD armed at cast send.
 fn clear_cooldown(spell_id: u32, caster: u64, cooldowns: &mut Cooldowns) {
     debug!("net: clear cooldown — spell {spell_id} on {caster:#x}");
-    cooldowns.clear_spell(spell_id);
+    cooldowns.clear_spell_recovery(spell_id);
 }
 
 /// `SMSG_COOLDOWN_CHEAT`: the GM reset wipes the self or pet list the guid names.

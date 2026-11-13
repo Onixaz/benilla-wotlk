@@ -39,6 +39,15 @@ mod weapon_icon;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct CooldownEvents;
 
+/// Post-input feeds are split so every cooldown-backed snapshot is current before the one
+/// synchronous Lua cooldown flush.  Casts are committed after `UiInput`; the reference publishes
+/// their local GCD before the next frame's server packets can clear it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct CooldownPostFeed;
+
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct CooldownPostEvents;
+
 /// The slot-identity feed ([`feed::feed_actions`]), which fires `ACTIONBAR_SLOT_CHANGED`. The
 /// spellbook feed runs `.before` it: the registrar `0x542030` re-sorts the book and fires
 /// `SPELLS_CHANGED` (`0x542cd4`) and `LEARNED_SPELL_IN_TAB` (`0x542d16`) before it places the
@@ -444,6 +453,7 @@ impl Plugin for UiActionPlugin {
         net::register(app);
         equipment_sets::register(app);
         app.init_resource::<PlayerActions>()
+            .init_resource::<state::StateMemoryStore>()
             .init_resource::<TempActionBar>()
             .init_resource::<LearnedAbilities>()
             .init_resource::<CastErrors>()
@@ -472,7 +482,7 @@ impl Plugin for UiActionPlugin {
                         .after(feed::feed_actions),
                     state::fire_combat_edges
                         .in_set(UnitFeed)
-                        .after(state::feed_action_state),
+                        .after(CooldownEvents),
                     drain::drain_action_sets.after(UiInput),
                     equipment_sets::drain_equipment_sets.after(UiInput),
                     // The target chain queues the openers earlier in the frame.
@@ -481,8 +491,20 @@ impl Plugin for UiActionPlugin {
                     track_learned_abilities
                         .in_set(UnitFeed)
                         .after(feed::feed_actions),
+                    // A script cast is committed after the input pass.  Publish the local GCD
+                    // before painting, while the next network pass remains free to clear it.
+                    state::feed_action_state
+                        .in_set(CooldownPostEvents)
+                        .run_if(crate::spell::cooldowns::post_feed_needed),
                 ),
             );
+        app.configure_sets(
+            Update,
+            (CooldownPostFeed, CooldownPostEvents)
+                .chain()
+                .after(crate::target::TargetUpdate)
+                .before(crate::ui_script::UiPaint),
+        );
     }
 }
 
