@@ -71,6 +71,17 @@ fn track_constant(track: &benilla_m2::M2ScalarTrack) -> Option<f32> {
     track.constant()
 }
 
+/// Whether a batch's constant alpha factors (`None` where the track animates) hold
+/// `colorAlpha · weight ≤ 0` for good. One constant factor ≤ 0 culls even beside an animated one,
+/// which the bake cannot hold (`FlameShock_Impact_Chest.m2`'s glows: weight 0, colour animated).
+fn constant_invisible(color_alpha: Option<f32>, weight: Option<f32>) -> bool {
+    match (color_alpha, weight) {
+        (Some(c), Some(w)) => c * w <= 0.0,
+        (Some(f), None) | (None, Some(f)) => f <= 0.0,
+        (None, None) => false,
+    }
+}
+
 /// The 4 raw `u8` weights as `f32` summing to 1; a weightless vertex binds wholly to bone 0.
 fn normalize_weights(w: [u8; 4]) -> [f32; 4] {
     let sum = w.iter().map(|&x| f32::from(x)).sum::<f32>();
@@ -408,10 +419,8 @@ pub fn parse_m2_render_submeshes(
         } else {
             Some(1.0) // textureCount 0: no transparency factor
         };
-        if let (Some(c), Some(w)) = (color_alpha, weight) {
-            if c * w <= 0.0 {
-                continue; // constant-invisible: the reference never draws it
-            }
+        if constant_invisible(color_alpha, weight) {
+            continue; // the reference never draws it
         }
         // What the static cull cannot fold away bakes to an `AlphaAnim`, one per sequence, as the
         // reference reads the playing sequence's key window each frame.
@@ -755,6 +764,52 @@ mod tests {
         }
         // The snap-up scan relies on the set ascending.
         assert!(OWNER_RUNG_BUCKETS.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    /// A constant factor at or below 0 culls alone; two animated factors never cull statically.
+    #[test]
+    fn one_constant_zero_factor_culls_the_batch() {
+        assert!(constant_invisible(Some(1.0), Some(0.0)));
+        assert!(
+            constant_invisible(None, Some(0.0)),
+            "weight 0 beside a colour fade"
+        );
+        assert!(
+            constant_invisible(Some(0.0), None),
+            "colour 0 beside a weight loop"
+        );
+        assert!(!constant_invisible(None, None));
+        assert!(!constant_invisible(Some(0.5), None));
+        assert!(!constant_invisible(None, Some(1.0)));
+    }
+
+    /// `FlameShock_Impact_Chest.m2` keeps its six `YELLOW_GLOW3` glow cards (up to 4.15 yd) on
+    /// transparency weight 2, a constant 0, beside an animated colour alpha: never drawn. Its star
+    /// cards hold colour alpha 1 (step keys) until 1.034 s, then cull.
+    #[test]
+    fn flame_shock_impact_never_draws_its_zero_weight_glows() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        let subs = load_m2_mesh(&mut chain, "Spells\\FlameShock_Impact_Chest.m2")
+            .expect("parse FlameShock_Impact_Chest");
+        let tex = |s: &RenderSubmesh| s.texture.as_deref().unwrap_or("").to_ascii_uppercase();
+        assert!(
+            !subs.iter().any(|s| tex(s).ends_with("YELLOW_GLOW3.BLP")),
+            "a weight-0 batch is culled whatever its colour does"
+        );
+        let stars: Vec<_> = subs
+            .iter()
+            .filter(|s| s.billboard.is_some() && tex(s).contains("STAR"))
+            .collect();
+        assert_eq!(stars.len(), 3, "the three star cards on bones 32-34 remain");
+        for s in stars {
+            let a = s
+                .alpha_anim
+                .as_ref()
+                .expect("the stars' colour alpha animates");
+            assert_eq!(a.sample(Some(0), 0.36, 0.0), 1.0, "a step key holds 1");
+            assert_eq!(a.sample(Some(0), 1.04, 0.0), 0.0, "and drops at 1.034 s");
+        }
     }
 
     /// `TaurenMale.m2`'s type-8 fur, opaque core and alpha-cut two-sided fringe alike, surfaces as
