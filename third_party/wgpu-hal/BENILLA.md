@@ -29,9 +29,14 @@ releases it past the cap. `wgpu-core` destroys a staging buffer only once the GP
 (its pending-writes temp resources are triaged on the submission's completion), so the next write
 may fill it.
 
+## Warning fix — `build.rs`
+
+`main` allows `semicolon_in_expressions_from_non_local_macros`, which the `cfg_aliases!` expansion
+raises in a path dependency; the build itself is unchanged.
+
 ## How to check
 
-`diff -ru <registry>/wgpu-hal-27.0.4 third_party/wgpu-hal` shows the patch and this file, nothing
-else. A `sample` of a Dalaran run shows the effect: next to no
+`diff -ru <registry>/wgpu-hal-27.0.4 third_party/wgpu-hal` shows the patch, the warning fix and this
+file, nothing else. A `sample` of a Dalaran run shows the effect: next to no
 `StagingBuffer::new` under the render world's prepare systems, and no `-[AGXBuffer dealloc]` under
 `Queue::maintain`.
