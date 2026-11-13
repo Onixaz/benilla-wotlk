@@ -206,6 +206,29 @@ fn prevents_resurrection(
     })
 }
 
+/// The self-resurrect check (`0x727860`) before `CMSG_SELF_RES`: with a live
+/// [`AURA_PREVENT_RESURRECTION`] effect, a self-res spell without `AttributesEx7 & 0x8000000` is
+/// refused with the custom line named by the first such aura's effect misc value; its walk reads
+/// all three effects, not the live bits.
+fn self_res_refusal(
+    auras: &crate::unit_auras::UnitAuras,
+    self_res_spell: u32,
+    spell: impl Fn(u32) -> Option<(u32, [u32; 3], [i32; 3])>,
+) -> Option<i32> {
+    if !prevents_resurrection(auras, |id| spell(id).map(|(_, types, _)| types)) {
+        return None;
+    }
+    if spell(self_res_spell).is_some_and(|(ex7, ..)| ex7 & 0x800_0000 != 0) {
+        return None;
+    }
+    auras.iter().find_map(|a| {
+        let (_, types, misc) = spell(a.spell_id)?;
+        (0..3)
+            .find(|&i| types[i] == AURA_PREVENT_RESURRECTION)
+            .map(|i| misc[i])
+    })
+}
+
 /// Derive the death state from the self descriptor, push the snapshot, and fire the death events
 /// on its edges.
 fn feed_death(
@@ -622,11 +645,7 @@ const SPELL_EFFECT_SELF_RESURRECT: u32 = 94;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SelfRes {
     /// `PLAYER_SELF_RES_SPELL` is non-zero: send `CMSG_SELF_RES` and the server casts it.
-    Spell {
-        #[allow(dead_code)] // the server reads its own field
-        spell: u32,
-        label: String,
-    },
+    Spell { spell: u32, label: String },
     /// The field is zero but a carried item's on-use spell self-resurrects: use the item, named
     /// for the item.
     Item {
@@ -752,6 +771,7 @@ fn drain_death(
     targeting: crate::spell::cast_target::CastTargeting,
     mut ladder: crate::spell::CastLadder,
     mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,
+    self_auras: Query<&crate::unit_auras::UnitAuras, With<SelfPlayer>>,
     // The soulstone's item leg is an item use, so it carries the bind gate.
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
@@ -793,7 +813,26 @@ fn drain_death(
                         &ladder.commands,
                     )
                 }) {
-                    Some(SelfRes::Spell { .. }) => net.0.send(ClientCommand::SelfRes),
+                    Some(SelfRes::Spell { spell, .. }) => {
+                        let refusal = self_auras.single().ok().and_then(|auras| {
+                            self_res_refusal(auras, spell, |id| {
+                                let d = ladder.spells.as_deref()?.catalog.get(id)?;
+                                Some((d.attributes_ex7, d.effect_apply_aura, d.effect_misc_value))
+                            })
+                        });
+                        match refusal {
+                            // The check's custom line; nothing goes out.
+                            Some(id) => {
+                                ladder.cast_errors.push_local_arg(
+                                    spell,
+                                    crate::ui_action::cast_fail::CUSTOM_ERROR,
+                                    id as u32,
+                                );
+                                Ok(())
+                            }
+                            None => net.0.send(ClientCommand::SelfRes),
+                        }
+                    }
                     // An ordinary item use, like every bag click.
                     Some(SelfRes::Item {
                         bag_index,
@@ -1315,6 +1354,64 @@ mod self_res_tests {
         assert_eq!(
             resolve_self_res(&bare, &objects, &items, Some(&spells), &net),
             None
+        );
+    }
+
+    /// The self-resurrect check (`0x727860`): a live prevent-resurrection effect refuses the spell
+    /// leg with the custom line its misc value names, unless the self-res spell carries
+    /// `AttributesEx7 & 0x8000000`; the walk reads every effect, not only the live ones.
+    #[test]
+    fn a_prevent_resurrection_aura_refuses_the_self_res_with_its_custom_id() {
+        use benilla_protocol::messages::{AuraRecord, AuraUpdate};
+
+        const DEBUFF: u32 = 1000;
+        const PLAIN: u32 = 1001;
+        let auras = |slots: &[(u32, u8)]| {
+            let mut t = crate::unit_auras::UnitAuras::default();
+            let slots = slots
+                .iter()
+                .enumerate()
+                .map(|(i, &(spell_id, flags))| {
+                    let record = AuraRecord {
+                        spell_id,
+                        flags,
+                        level: 1,
+                        stacks: 1,
+                        caster: None,
+                        duration_ms: None,
+                    };
+                    (i as u8, Some(record))
+                })
+                .collect();
+            t.apply(
+                &AuraUpdate {
+                    unit: 1,
+                    all: false,
+                    slots,
+                },
+                0.0,
+            );
+            t
+        };
+        let spell = |ex7: u32| {
+            move |id| match id {
+                REINCARNATION => Some((ex7, [0; 3], [0; 3])),
+                DEBUFF => Some((0, [0, super::AURA_PREVENT_RESURRECTION, 0], [0, 77, 0])),
+                PLAIN => Some((0, [0; 3], [0; 3])),
+                _ => None,
+            }
+        };
+        let refusal = |slots: &[(u32, u8)], ex7| {
+            super::self_res_refusal(&auras(slots), REINCARNATION, spell(ex7))
+        };
+        // Effect bit 1 is the aura effect's own.
+        assert_eq!(refusal(&[(PLAIN, 1), (DEBUFF, 2)], 0), Some(77));
+        assert_eq!(refusal(&[(PLAIN, 1)], 0), None, "no such aura");
+        assert_eq!(refusal(&[(DEBUFF, 1)], 0), None, "the effect is not live");
+        assert_eq!(
+            refusal(&[(DEBUFF, 2)], 0x800_0000),
+            None,
+            "the spell bypasses"
         );
     }
 }
