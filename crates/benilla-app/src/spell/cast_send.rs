@@ -233,6 +233,12 @@ impl CastLadder<'_, '_> {
             self.ground.clear();
             return;
         }
+        if let TargetedBind::Dest(p) | TargetedBind::Source(p) = bound {
+            debug!(
+                "spell: {spell_id} commits a point {:?} on transport {:#x}",
+                p.pos, p.transport
+            );
+        }
         let cmd = match commit {
             CastCommit::Pet { .. } => unreachable!("committed above"),
             // The same targets block under either opcode; the spell side has one builder per bind.
