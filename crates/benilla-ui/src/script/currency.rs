@@ -218,7 +218,7 @@ fn backpack_currency(model: &super::Model, i: usize) -> Option<CurrencyTypeView>
 /// A 1-based list index, `lua_isnumber` gated (`0x5b0680`), made 0-based.
 fn index_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<i64> {
     match lua.coerce_number(v)? {
-        Some(n) => Ok(super::binding_abi::ftol(n) as i64 - 1),
+        Some(n) => Ok(i64::from(super::binding_abi::ftol(n)) - 1),
         None => Err(mlua::Error::runtime(usage)),
     }
 }
@@ -262,14 +262,32 @@ fn set_mark(lua: &Lua, index: i64, on: bool, pair: &str) {
         .and_then(|f| f.call::<()>((write.0, write.1)));
 }
 
-/// A flag argument: `lua_toboolean` for a boolean, nonzero for a number (`0x5b09d5`).
-fn flag_arg(v: &Value) -> bool {
-    match v {
-        Value::Nil | Value::Boolean(false) => false,
-        Value::Integer(i) => *i != 0,
-        Value::Number(n) => *n != 0.0,
-        _ => true,
+/// The setters' two numbers, both tested first (`0x5b094a`, `0x5b0959`, `0x5b09c9`), truncated.
+fn index_flag_args(
+    lua: &Lua,
+    index: Value,
+    flag: Value,
+    usage: &'static str,
+) -> mlua::Result<(i64, bool)> {
+    match (lua.coerce_number(index)?, lua.coerce_number(flag)?) {
+        (Some(i), Some(f)) => Ok((
+            i64::from(super::binding_abi::ftol(i)) - 1,
+            super::binding_abi::ftol(f) != 0,
+        )),
+        _ => Err(mlua::Error::runtime(usage)),
     }
+}
+
+/// A tooltip method's usage error, filled with the tooltip's own name or `<unnamed>` (`0x630670`).
+fn tooltip_usage(lua: &Lua, this: &Table, call: &str) -> mlua::Error {
+    let name = super::object::frame_handle_of(lua, this)
+        .ok()
+        .and_then(|h| read(lua).arena.frame(h).and_then(|f| f.name.clone()));
+    mlua::Error::runtime(format!(
+        "Usage: {}:{call}",
+        name.as_deref()
+            .unwrap_or(super::object::anchor_args::UNNAMED)
+    ))
 }
 
 fn opt_str(lua: &Lua, s: Option<String>) -> mlua::Result<Value> {
@@ -337,13 +355,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ExpandCurrencyList",
         lua.create_function(|lua, (index, expand): (Value, Value)| {
-            let i = index_arg(lua, index, "Usage: ExpandCurrencyList(index, expand)")?;
+            let (i, expand) = index_flag_args(
+                lua,
+                index,
+                expand,
+                "Usage: ExpandCurrencyList(index,expand)",
+            )?;
             let mut model = super::model_mut_of(lua);
             let list = display_list(&model);
             if let Some(e) = usize::try_from(i).ok().and_then(|i| list.get(i)) {
                 if e.header {
                     let id = e.category_id;
-                    model.currency_collapsed.insert(id, !flag_arg(&expand));
+                    model.currency_collapsed.insert(id, !expand);
                 }
             }
             Ok(())
@@ -355,16 +378,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetCurrencyUnused",
         lua.create_function(|lua, (index, on): (Value, Value)| {
-            let i = index_arg(lua, index, "Usage: SetCurrencyUnused(index, unused)")?;
-            set_mark(lua, i, flag_arg(&on), "currencyTokensUnused");
+            let (i, on) =
+                index_flag_args(lua, index, on, "Usage: SetCurrencyUnused(index,unused)")?;
+            set_mark(lua, i, on, "currencyTokensUnused");
             Ok(())
         })?,
     )?;
     g.set(
         "SetCurrencyBackpack",
         lua.create_function(|lua, (index, on): (Value, Value)| {
-            let i = index_arg(lua, index, "Usage: SetCurrencyBackpack(index, backpack)")?;
-            set_mark(lua, i, flag_arg(&on), "currencyTokensBackpack");
+            let (i, on) =
+                index_flag_args(lua, index, on, "Usage: SetCurrencyBackpack(index,backpack)")?;
+            set_mark(lua, i, on, "currencyTokensBackpack");
             Ok(())
         })?,
     )?;
@@ -406,7 +431,10 @@ pub(crate) fn install_tooltip_methods(lua: &Lua, m: &Table) -> mlua::Result<()> 
     m.set(
         "SetCurrencyToken",
         lua.create_function(|lua, (this, index): (Table, Value)| {
-            let i = index_arg(lua, index, "Usage: GameTooltip:SetCurrencyToken(index)")?;
+            let Some(n) = lua.coerce_number(index)? else {
+                return Err(tooltip_usage(lua, &this, "SetCurrencyToken(index)"));
+            };
+            let i = i64::from(super::binding_abi::ftol(n)) - 1;
             let item = {
                 let model = read(lua);
                 usize::try_from(i)
@@ -424,7 +452,10 @@ pub(crate) fn install_tooltip_methods(lua: &Lua, m: &Table) -> mlua::Result<()> 
     m.set(
         "SetBackpackToken",
         lua.create_function(|lua, (this, index): (Table, Value)| {
-            let i = index_arg(lua, index, "Usage: GameTooltip:SetBackpackToken(index)")?;
+            let Some(n) = lua.coerce_number(index)? else {
+                return Err(tooltip_usage(lua, &this, "SetBackpackToken(index)"));
+            };
+            let i = i64::from(super::binding_abi::ftol(n)) - 1;
             let item = {
                 let model = read(lua);
                 usize::try_from(i)
@@ -579,7 +610,7 @@ mod tests {
         assert_eq!(row(&s, 7).0.as_deref(), Some("Badge of Justice"));
         assert!(row(&s, 7).3, "unused");
         // Row 4 is now the Alterac Valley mark (bit 40, the second CVar's bit 7).
-        s.run("SetCurrencyBackpack(4, true)").unwrap();
+        s.run("SetCurrencyBackpack(4, 1)").unwrap();
         let (name, count, kind, _icon, id): (String, f64, f64, Option<String>, i64) =
             s.eval("return GetBackpackCurrencyInfo(1)").unwrap();
         assert_eq!(
@@ -594,5 +625,75 @@ mod tests {
         assert!(s
             .eval::<bool>("return GetBackpackCurrencyInfo(2) == nil")
             .unwrap());
+    }
+
+    /// The three setters take two numbers or raise their usage, and a flag truncates: `true`, nil
+    /// and a word raise, `0.5` is off, a numeric string passes.
+    #[test]
+    fn the_setters_take_two_numbers_and_truncate_the_flag() {
+        let s = script();
+        for (call, usage) in [
+            (
+                "ExpandCurrencyList",
+                "Usage: ExpandCurrencyList(index,expand)",
+            ),
+            (
+                "SetCurrencyUnused",
+                "Usage: SetCurrencyUnused(index,unused)",
+            ),
+            (
+                "SetCurrencyBackpack",
+                "Usage: SetCurrencyBackpack(index,backpack)",
+            ),
+        ] {
+            for args in ["1, true", "1, nil", "1", "1, 'on'", "nil, 1", "'x', 1"] {
+                let err = s.run(&format!("{call}({args})")).unwrap_err().to_string();
+                assert!(err.contains(usage), "{call}({args}): {err}");
+            }
+        }
+        s.run("ExpandCurrencyList(1, 0.5)").unwrap();
+        assert!(!row(&s, 1).2, "0.5 truncates to 0: collapsed");
+        s.run("ExpandCurrencyList('1', '1')").unwrap();
+        assert!(row(&s, 1).2, "numeric strings pass");
+        s.run("SetCurrencyUnused(2, 0.9)").unwrap();
+        assert_eq!(
+            s.eval::<String>("return GetCVar('currencyTokensUnused1')")
+                .unwrap(),
+            "0"
+        );
+        s.run("SetCurrencyUnused(2.7, -1)").unwrap();
+        assert_eq!(
+            s.eval::<String>("return GetCVar('currencyTokensUnused1')")
+                .unwrap(),
+            "2",
+            "2.7 truncates to row 2, -1 is on"
+        );
+    }
+
+    /// The tooltip methods' usage names the tooltip they were called on (`0xa26b00`, `0xa26b24`).
+    #[test]
+    fn a_tooltip_usage_names_its_own_frame() {
+        let s = script();
+        s.run(r#"CreateFrame("GameTooltip", "CurrencyTip") Unnamed = CreateFrame("GameTooltip")"#)
+            .unwrap();
+        for (call, want) in [
+            (
+                "CurrencyTip:SetCurrencyToken()",
+                "Usage: CurrencyTip:SetCurrencyToken(index)",
+            ),
+            (
+                "CurrencyTip:SetBackpackToken('x')",
+                "Usage: CurrencyTip:SetBackpackToken(index)",
+            ),
+            (
+                "Unnamed:SetCurrencyToken(nil)",
+                "Usage: <unnamed>:SetCurrencyToken(index)",
+            ),
+        ] {
+            let err = s.run(call).unwrap_err().to_string();
+            assert!(err.contains(want), "{call}: {err}");
+        }
+        s.run("CurrencyTip:SetCurrencyToken(99) CurrencyTip:SetBackpackToken(99)")
+            .unwrap();
     }
 }
