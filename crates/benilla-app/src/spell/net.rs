@@ -1202,7 +1202,7 @@ fn cast_result(
         let fails_our_cast = self_e.is_some_and(|e| {
             casting
                 .get(e)
-                .is_ok_and(|c| (c.spell_id, c.cast_count) == (spell_id, cast_count))
+                .is_ok_and(|c| c.ended_by(spell_id, cast_count))
         });
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV CAST_RESULT failure — spell {spell_id} reason={reason:?}; fails_bar={fails_our_cast}");
@@ -1353,6 +1353,7 @@ fn spell_start(
             until: (cast_time_ms > 0)
                 .then(|| Instant::now() + Duration::from_millis(u64::from(cast_time_ms))),
             listed: true,
+            hidden: false,
         };
         let shows_bar = cast_time_ms > 0
             && spells
@@ -1360,14 +1361,24 @@ fn spell_start(
                 .is_none_or(|d| {
                     crate::ui_cast::raises_events(d, self_guid.0 == Some(caster), false)
                 });
-        match casting.get(e).ok().copied() {
-            // Set when none is held (`0x8053cd`).
-            None => {
+        // Whether this start sets the state, and with it plays the precast.
+        let visuals = match casting.get(e).ok().copied() {
+            // Our sent state is this start's own pending cast, no longer hidden (`0x805344`): it
+            // keeps the state and plays nothing again.
+            Some(held) if held.hidden && held.spell_id == spell_id => {
                 commands.entity(e).insert(fresh);
+                false
+            }
+            // Set when none is held (`0x8053cd`), or over another sent cast's, cleared first
+            // (`0x805392`).
+            None | Some(Casting { hidden: true, .. }) => {
+                commands.entity(e).insert(fresh);
+                true
             }
             // A timed start with a shown bar replaces another spell's (`0x80544e`).
             Some(held) if shows_bar && held.spell_id != spell_id => {
                 commands.entity(e).insert(fresh);
+                true
             }
             // A same-spell restart keeps the held count; its new pending cast is listed.
             Some(held) if held.spell_id == spell_id && !held.listed => {
@@ -1375,14 +1386,23 @@ fn spell_start(
                     listed: true,
                     ..held
                 });
+                false
             }
-            Some(_) => {}
+            Some(_) => false,
+        };
+        if benilla_assets::trace::enabled_for("use") {
+            benilla_assets::trace::line(
+                "use",
+                &format!(
+                    "SPELL_START spell={spell_id} caster={caster:#x} count={cast_count} visuals={visuals}"
+                ),
+            );
         }
-        // The precast edge, instants included: their GO follows at once and reaps the hold.
+        // The start edge, instants included: their GO follows at once and reaps the hold.
         cast_events.write(CastEvent {
             entity: e,
             spell_id,
-            kind: CastEventKind::Start,
+            kind: CastEventKind::Start { visuals },
             cast_count,
             seq,
         });
@@ -1493,7 +1513,7 @@ fn spell_go(
         // The caster's cast state stays; the next start or end clears it (`0x805330`, `0x7fecc0`).
         if let Some(&e) = index.0.get(&caster) {
             if let Ok(&held) = casting.get(e) {
-                if (held.spell_id, held.cast_count) == (spell_id, cast_count) {
+                if held.ended_by(spell_id, cast_count) {
                     commands.entity(e).insert(Casting {
                         listed: false,
                         ..held
@@ -1554,7 +1574,7 @@ fn spell_go(
         let completes_our_cast = index.0.get(&caster).is_some_and(|&e| {
             casting
                 .get(e)
-                .is_ok_and(|c| (c.spell_id, c.cast_count) == (spell_id, cast_count))
+                .is_ok_and(|c| c.ended_by(spell_id, cast_count))
         });
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_GO — spell {spell_id} (self); completes_bar={completes_our_cast}");
@@ -1674,7 +1694,7 @@ fn spell_go(
     if let Some(&e) = index.0.get(&caster) {
         if casting
             .get(e)
-            .is_ok_and(|c| (c.spell_id, c.cast_count) == (spell_id, cast_count))
+            .is_ok_and(|c| c.ended_by(spell_id, cast_count))
         {
             commands.entity(e).remove::<Casting>();
         }
@@ -1771,7 +1791,7 @@ fn spell_failed_other(
         let interrupts_our_cast = index.0.get(&caster).is_some_and(|&e| {
             casting
                 .get(e)
-                .is_ok_and(|c| (c.spell_id, c.cast_count) == (spell_id, cast_count))
+                .is_ok_and(|c| c.ended_by(spell_id, cast_count))
         });
         if *crate::net::CAST_TRACE {
             info!("cast-trace: RECV SPELL_FAILED_OTHER — spell {spell_id} (self); interrupts_bar={interrupts_our_cast}");
@@ -1783,12 +1803,11 @@ fn spell_failed_other(
     // The end clears the held state of this spell and count alone (`0x7fed81`).
     if let Some(&e) = index.0.get(&caster) {
         let running = casting.get(e).ok();
-        if running.is_some_and(|c| (c.spell_id, c.cast_count) == (spell_id, cast_count)) {
+        if running.is_some_and(|c| c.ended_by(spell_id, cast_count)) {
             commands.entity(e).remove::<Casting>();
         }
         // `SMSG_SPELL_FAILURE` interrupts the running cast of this spell and count (`0x72ed80`).
-        let interrupt =
-            !other && running.is_some_and(|c| c.spell_id == spell_id && c.cast_count == cast_count);
+        let interrupt = !other && running.is_some_and(|c| c.ended_by(spell_id, cast_count));
         cast_events.write(CastEvent {
             entity: e,
             spell_id,
@@ -2658,6 +2677,7 @@ mod tests {
                     cast_count: 0,
                     until: None,
                     listed: true,
+                    hidden: false,
                 },
                 ObjectStore::default(),
             ))
@@ -2758,6 +2778,7 @@ mod tests {
             cast_count: 0,
             until: None,
             listed: true,
+            hidden: false,
         });
         app.world_mut()
             .resource_mut::<PendingCast>()
@@ -2835,6 +2856,7 @@ mod tests {
             cast_count: 0,
             until: None,
             listed: true,
+            hidden: false,
         });
         fire_go(&mut app, 133, true);
         assert_eq!(held(&app), None);
@@ -2848,6 +2870,153 @@ mod tests {
         start(&mut app, 4, 133, 2500, 0x1);
         assert_eq!(held(&app), Some((6136, 3, true)));
         assert!(app.world().resource::<Messages<CastEvent>>().is_empty());
+    }
+
+    /// The send's hidden state against the server: its own start takes it over with the wire's
+    /// count and plays no precast again (`0x805344`); another cast's start clears it and sets its
+    /// own, with the precast (`0x805392`); a failure before any start clears it by spell, the
+    /// send's count being the writer's (`0x7fed81`). A start that sets no state plays none.
+    #[test]
+    fn a_sent_state_gives_way_to_the_servers_start_or_failure() {
+        use crate::creature_anim::Casting;
+        use crate::net::{Guid, SelfPlayer};
+        use bevy::ecs::system::RunSystemOnce;
+
+        let mut app = App::new();
+        app.add_message::<CastEvent>()
+            .init_resource::<GuidIndex>()
+            .init_resource::<SelfGuid>()
+            .init_resource::<CastErrors>()
+            .init_resource::<CastBarFeed>()
+            .init_resource::<PendingCast>()
+            .init_resource::<QueuedMeleeSpell>()
+            .init_resource::<Cooldowns>()
+            .init_resource::<AutoRepeatActive>();
+        let self_e = app.world_mut().spawn((Guid(10), SelfPlayer)).id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(10, self_e);
+        app.world_mut().resource_mut::<SelfGuid>().0 = Some(10);
+        let hold = |app: &mut App, spell_id: u32, cast_count: u8, hidden: bool| {
+            app.world_mut().entity_mut(self_e).insert(Casting {
+                spell_id,
+                cast_count,
+                until: None,
+                listed: true,
+                hidden,
+            });
+        };
+        let start = |app: &mut App, count: u8, spell: u32, cast_ms: u32| {
+            app.world_mut()
+                .run_system_once(
+                    move |mut commands: Commands,
+                          index: Res<GuidIndex>,
+                          casting: Query<&Casting>,
+                          mut cast_events: MessageWriter<CastEvent>,
+                          self_guid: Res<SelfGuid>,
+                          mut cast_bar: ResMut<CastBarFeed>,
+                          mut pending: ResMut<PendingCast>| {
+                        spell_start(
+                            10,
+                            count,
+                            spell,
+                            0,
+                            cast_ms,
+                            None,
+                            None,
+                            None,
+                            &mut commands,
+                            &index,
+                            &casting,
+                            &mut cast_events,
+                            &self_guid,
+                            &mut cast_bar,
+                            &mut pending,
+                            None,
+                            2,
+                        );
+                    },
+                )
+                .unwrap();
+        };
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let fail = |app: &mut App, count: u8, spell: u32| {
+            let tx = tx.clone();
+            app.world_mut()
+                .run_system_once(
+                    move |mut commands: Commands,
+                          self_guid: Res<SelfGuid>,
+                          index: Res<GuidIndex>,
+                          mut cast_errors: ResMut<CastErrors>,
+                          casting: Query<&Casting>,
+                          mut cast_events: MessageWriter<CastEvent>,
+                          mut pending: ResMut<PendingCast>,
+                          mut queued_melee: ResMut<QueuedMeleeSpell>,
+                          mut cooldowns: ResMut<Cooldowns>,
+                          mut auto_repeat: ResMut<AutoRepeatActive>| {
+                        cast_result(
+                            (spell, count, 0x1e),
+                            false,
+                            Some(0x1e),
+                            [None; 2],
+                            &mut commands,
+                            &self_guid,
+                            &index,
+                            &mut cast_errors,
+                            &casting,
+                            &mut cast_events,
+                            &mut pending,
+                            &mut queued_melee,
+                            &mut cooldowns,
+                            &mut auto_repeat,
+                            None,
+                            &crate::net::NetCommands(tx.clone()),
+                            1,
+                        );
+                    },
+                )
+                .unwrap();
+        };
+        let held = |app: &App| {
+            app.world()
+                .get::<Casting>(self_e)
+                .map(|c| (c.spell_id, c.cast_count, c.hidden))
+        };
+        let edges = |app: &mut App| -> Vec<CastEventKind> {
+            app.world_mut()
+                .resource_mut::<Messages<CastEvent>>()
+                .drain()
+                .map(|e| e.kind)
+                .collect()
+        };
+
+        // Our own start: the wire's count, no longer hidden, no second precast.
+        hold(&mut app, 133, 0, true);
+        start(&mut app, 5, 133, 2500);
+        assert_eq!(held(&app), Some((133, 5, false)));
+        assert_eq!(edges(&mut app), [CastEventKind::Start { visuals: false }]);
+
+        // Another cast's start, an instant too, replaces a sent state with its precast.
+        hold(&mut app, 133, 0, true);
+        start(&mut app, 6, 6136, 0);
+        assert_eq!(held(&app), Some((6136, 6, false)));
+        assert_eq!(edges(&mut app), [CastEventKind::Start { visuals: true }]);
+        // Over a started state the instant sets nothing and plays no precast.
+        start(&mut app, 7, 116, 0);
+        assert_eq!(held(&app), Some((6136, 6, false)));
+        assert_eq!(edges(&mut app), [CastEventKind::Start { visuals: false }]);
+
+        // A failure before the start ends a sent state by spell.
+        hold(&mut app, 133, 0, true);
+        fail(&mut app, 9, 133);
+        assert_eq!(held(&app), None);
+        // A started state wants its own count.
+        hold(&mut app, 133, 1, false);
+        fail(&mut app, 9, 133);
+        assert_eq!(held(&app), Some((133, 1, false)));
+        fail(&mut app, 1, 133);
+        assert_eq!(held(&app), None);
     }
 
     /// Our channel's start and its server end (`MSG_CHANNEL_UPDATE(0)`) arm and close

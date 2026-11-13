@@ -317,7 +317,7 @@ fn dev_command(dev: DevCmd, args: &str) -> ParsedChat {
                 return ParsedChat::Unknown;
             };
             let (kind, ground) = match words.next() {
-                None => (CastEventKind::Start, false),
+                None => (CastEventKind::Start { visuals: true }, false),
                 Some(w) if w.eq_ignore_ascii_case("go") => (CastEventKind::Go, false),
                 Some(w) if w.eq_ignore_ascii_case("ground") => (CastEventKind::Go, true),
                 Some(w) if w.eq_ignore_ascii_case("fail") => (

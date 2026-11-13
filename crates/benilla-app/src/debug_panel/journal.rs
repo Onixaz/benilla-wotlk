@@ -80,13 +80,13 @@ pub(super) fn record_casts(
     let now = time.elapsed_secs_f64();
     for ev in casts.read() {
         match ev.kind {
-            CastEventKind::Start | CastEventKind::Go | CastEventKind::Fail { .. } => {
+            CastEventKind::Start { .. } | CastEventKind::Go | CastEventKind::Fail { .. } => {
                 // A caster despawned the same frame drops.
                 let Ok(&Guid(caster)) = guids.get(ev.entity) else {
                     continue;
                 };
                 let state = match ev.kind {
-                    CastEventKind::Start => CastState::Casting,
+                    CastEventKind::Start { .. } => CastState::Casting,
                     CastEventKind::Go => CastState::Went,
                     _ => CastState::Failed,
                 };
@@ -126,6 +126,8 @@ pub(super) fn record_casts(
                     row.impacts += 1;
                 }
             }
+            // The journal keeps wire edges; the send's own precast opens no row.
+            CastEventKind::Sent => {}
         }
     }
 }

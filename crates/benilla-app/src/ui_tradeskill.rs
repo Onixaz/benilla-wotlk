@@ -806,7 +806,7 @@ fn drain_trade_skill(
             continue;
         }
         match ev.kind {
-            CastEventKind::Start => script.trade_skill_cast_started(ev.spell_id),
+            CastEventKind::Start { .. } => script.trade_skill_cast_started(ev.spell_id),
             CastEventKind::Go => {
                 if script.trade_skill_cast_done(ev.spell_id) {
                     debug!("ui_tradeskill: recast {}", ev.spell_id);

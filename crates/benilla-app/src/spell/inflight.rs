@@ -574,6 +574,7 @@ mod tests {
                 cast_count: 0,
                 until: None,
                 listed: true,
+                hidden: false,
             });
         }
 

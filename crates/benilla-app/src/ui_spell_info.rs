@@ -557,6 +557,7 @@ mod tests {
                     cast_count: 0,
                     until: None,
                     listed,
+                    hidden: false,
                 },
             ));
             let got = app
