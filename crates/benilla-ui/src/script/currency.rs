@@ -410,14 +410,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             else {
                 return Ok(MultiValue::from_iter(std::iter::repeat_n(Value::Nil, 5)));
             };
-            let name = model
+            // An uncached item record answers five nils (`0x5b0b0d`).
+            let Some(name) = model
                 .currency_holdings
                 .as_ref()
                 .and_then(|h| h.items.get(&t.item_id))
-                .and_then(|(n, _)| n.clone());
+                .and_then(|(n, _)| n.clone())
+            else {
+                return Ok(MultiValue::from_iter(std::iter::repeat_n(Value::Nil, 5)));
+            };
             let (count, kind) = count_of(&model, t.item_id).unwrap_or((0, 0));
             Ok(MultiValue::from_iter([
-                opt_str(lua, name)?,
+                Value::String(lua.create_string(&name)?),
                 Value::Number(f64::from(count)),
                 Value::Number(f64::from(kind)),
                 opt_str(lua, icon_of(&model, t.item_id))?,
@@ -741,5 +745,24 @@ mod tests {
                 ("Unused".to_string(), true),
             ]
         );
+    }
+
+    /// A watched token whose item record has not arrived answers five nils.
+    #[test]
+    fn an_uncached_watched_token_answers_nothing() {
+        let s = script();
+        // Row 3 is the uncached token (bit 5).
+        s.run("SetCurrencyBackpack(3, 1)").unwrap();
+        assert_eq!(
+            s.eval::<String>("return GetCVar('currencyTokensBackpack1')")
+                .unwrap(),
+            "16"
+        );
+        let (n, all_nil): (i64, bool) = s
+            .eval(
+                "local a, b, c, d, e = GetBackpackCurrencyInfo(1)                  return select('#', GetBackpackCurrencyInfo(1)),                  a == nil and b == nil and c == nil and d == nil and e == nil",
+            )
+            .unwrap();
+        assert_eq!((n, all_nil), (5, true));
     }
 }
