@@ -130,6 +130,15 @@ struct Lift {
 }
 
 impl Transport {
+    /// A lift that never moves, for tests outside this module that need a transport to exist.
+    #[cfg(test)]
+    pub(crate) fn parked() -> Self {
+        Self {
+            drive: Drive::Lift(tests::parked_lift()),
+            was_moving: false,
+        }
+    }
+
     /// Which drive is underneath, for the instruments only (`WOW_LIFT_CENSUS`).
     pub(crate) fn drive_label(&self) -> &'static str {
         match &self.drive {
@@ -577,8 +586,10 @@ pub(crate) struct TransportRider {
 
 /// Compose each observed rider's world pose through its transport's this-frame pose, after
 /// [`tick_transports`], and refresh [`RemoteMotion`]'s WoW pose to match. A rider whose transport
-/// is not streamed keeps its last world pose; the server despawns the pair together.
-fn compose_riders(
+/// is not streamed keeps its last world pose; the server despawns the pair together. A rider the
+/// facing pump governs shows its deck-local display facing, else the wire's (`0x7362e3`).
+#[allow(clippy::type_complexity)] // one Bevy system's full input set
+pub(crate) fn compose_riders(
     guid_index: Res<crate::net::GuidIndex>,
     boats: Query<&Transform, (With<Transport>, Without<TransportRider>)>,
     mut riders: Query<
@@ -587,13 +598,14 @@ fn compose_riders(
             &TransportRider,
             &mut Transform,
             Option<&mut crate::net::RemoteMotion>,
+            Option<&crate::net::DisplayFacing>,
         ),
         Without<Transport>,
     >,
     mut named: Local<std::collections::HashSet<Entity>>,
 ) {
     let tracing = benilla_assets::trace::enabled_for("rider");
-    for (entity, rider, mut transform, motion) in &mut riders {
+    for (entity, rider, mut transform, motion, facing) in &mut riders {
         // One line per rider, joining the anim trace's entity to its deck.
         if tracing && named.insert(entity) {
             benilla_assets::trace::line(
@@ -612,7 +624,10 @@ fn compose_riders(
         };
         let local = benilla_assets::coords::wow_to_bevy(rider.local_pos);
         let world = boat.translation + boat.rotation * local;
-        let yaw = rider.local_orientation + boat.rotation.to_euler(EulerRot::YXZ).0;
+        let local_yaw = facing
+            .and_then(crate::net::DisplayFacing::deck)
+            .unwrap_or(rider.local_orientation);
+        let yaw = local_yaw + boat.rotation.to_euler(EulerRot::YXZ).0;
         transform.translation = world;
         transform.rotation = Quat::from_rotation_y(yaw);
         if let Some(mut rm) = motion {
@@ -928,6 +943,84 @@ mod tests {
         assert!(app.world().get::<DeckEffect>(riding).is_none());
     }
 
+    /// A deck rider with a target turns toward it in the deck's frame (`0x7362e3`), and the
+    /// compose keeps that turn: it holds its bearing on the target while the deck turns under it.
+    #[test]
+    fn a_deck_rider_keeps_facing_its_target_as_the_deck_turns() {
+        use benilla_protocol::{EntityKind, ObjectFields};
+        const DECK: u64 = 0x1fc0_0000_0000_0006;
+        const VICTIM: u64 = 7;
+        let mut app = App::new();
+        app.init_resource::<crate::net::GuidIndex>().add_systems(
+            Update,
+            (crate::net::drive_display_facing, compose_riders).chain(),
+        );
+        let deck = app
+            .world_mut()
+            .spawn((
+                Transport {
+                    drive: Drive::Lift(parked_lift()),
+                    was_moving: false,
+                },
+                Transform::default(),
+            ))
+            .id();
+        // Off the deck, a quarter turn left of the rider in the world.
+        let victim = app
+            .world_mut()
+            .spawn(Transform::from_translation(
+                benilla_assets::coords::wow_to_bevy([0.0, 5.0, 0.0]),
+            ))
+            .id();
+        // UNIT_FIELD_TARGET is field 16, a guid pair.
+        let crew = app
+            .world_mut()
+            .spawn((
+                crate::net::NetEntity {
+                    kind: EntityKind::Unit,
+                    display_id: None,
+                    scale: 1.0,
+                },
+                crate::net::ObjectStore(ObjectFields::from_pairs(&[(16, VICTIM as u32), (17, 0)])),
+                Transform::default(),
+                TransportRider {
+                    transport_guid: DECK,
+                    local_pos: [0.0; 3],
+                    local_orientation: 0.0,
+                    seat: -1,
+                },
+            ))
+            .id();
+        let mut index = app.world_mut().resource_mut::<crate::net::GuidIndex>();
+        index.0.insert(DECK, deck);
+        index.0.insert(VICTIM, victim);
+        let yaw = |app: &App| {
+            let rotation = app.world().get::<Transform>(crew).unwrap().rotation;
+            rotation.to_euler(EulerRot::YXZ).0
+        };
+        for k in 0..=6 {
+            let deck_yaw = 0.4 * k as f32;
+            app.world_mut().get_mut::<Transform>(deck).unwrap().rotation =
+                Quat::from_rotation_y(deck_yaw);
+            for _ in 0..16 {
+                app.update();
+            }
+            let off = crate::creature_anim::wrap_pi(yaw(&app) - FRAC_PI_2);
+            assert!(
+                off.abs() <= 0.01,
+                "deck at {deck_yaw}: the rider turned off its target by {off}"
+            );
+        }
+        // The turn lives in the deck's frame: the target's bearing less the deck's yaw.
+        let local = app
+            .world()
+            .get::<crate::net::DisplayFacing>(crew)
+            .and_then(crate::net::DisplayFacing::deck)
+            .expect("a governed rider keeps its deck-local facing");
+        let want = (FRAC_PI_2 - 2.4).rem_euclid(std::f32::consts::TAU);
+        assert!((local - want).abs() <= 0.01, "{local} vs {want}");
+    }
+
     /// The Ratchet–Booty Bay ferry's real timetable (taxi path 241): the builder can truncate a
     /// short synthetic cycle so the far continent's legs are never reached.
     fn ferry_241(chain: &mut benilla_formats::Chain) -> Transport {
@@ -1021,7 +1114,7 @@ mod tests {
     }
 
     /// A two-frame pause path at `base_pos`.
-    fn parked_lift() -> Lift {
+    pub(super) fn parked_lift() -> Lift {
         Lift {
             frames: Arc::new(vec![
                 ElevatorKeyframe {

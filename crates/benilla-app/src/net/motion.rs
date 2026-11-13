@@ -16,7 +16,7 @@ mod spline;
 mod tests;
 
 pub(in crate::net) use facing::resolve_facing;
-pub(in crate::net) use facing::DisplayFacing;
+pub(crate) use facing::DisplayFacing;
 pub(crate) use facing::FacingStep;
 pub(crate) use facing::{
     apply_walk_end_facing, bearing as facing_bearing, drive_display_facing, FacingHold,
