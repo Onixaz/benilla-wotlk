@@ -224,10 +224,10 @@ fn index_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<i64> {
 }
 
 /// The unused and backpack setters (`0x5b0440`, `0x5b0590`): a non-header row's bit set or cleared
-/// in the CVar pair, written back with `%d`.
+/// in the CVar pair, written with `%d` through the CVar store, never Lua's `SetCVar` (`0x5b04a4`).
 fn set_mark(lua: &Lua, index: i64, on: bool, pair: &str) {
+    let mut model = super::model_mut_of(lua);
     let write = {
-        let model = read(lua);
         let list = display_list(&model);
         let Some(entry) = usize::try_from(index).ok().and_then(|i| list.get(i)) else {
             return;
@@ -256,10 +256,7 @@ fn set_mark(lua: &Lua, index: i64, on: bool, pair: &str) {
         };
         (name, (new as i32).to_string())
     };
-    let _ = lua
-        .globals()
-        .get::<mlua::Function>("SetCVar")
-        .and_then(|f| f.call::<()>((write.0, write.1)));
+    super::cvars::set_from_engine(&mut model, &write.0, write.1);
 }
 
 /// The setters' two numbers, both tested first (`0x5b094a`, `0x5b0959`, `0x5b09c9`), truncated.
@@ -695,5 +692,28 @@ mod tests {
         }
         s.run("CurrencyTip:SetCurrencyToken(99) CurrencyTip:SetBackpackToken(99)")
             .unwrap();
+    }
+
+    /// Marking a row writes the CVar pair without calling Lua's `SetCVar`, hooked or replaced.
+    #[test]
+    fn a_mark_writes_the_cvar_without_the_lua_setcvar() {
+        let s = script();
+        s.run("Calls = 0 hooksecurefunc('SetCVar', function() Calls = Calls + 1 end)")
+            .unwrap();
+        s.run("SetCurrencyBackpack(2, 1) SetCurrencyUnused(2, 1)")
+            .unwrap();
+        assert_eq!(
+            s.eval::<String>("return GetCVar('currencyTokensUnused1')")
+                .unwrap(),
+            "2"
+        );
+        // The badge now sits last, under the unused header.
+        s.run("SetCVar = function() error('replaced') end SetCurrencyUnused(7, 0)")
+            .unwrap();
+        assert_eq!(s.eval::<i64>("return Calls").unwrap(), 0);
+        let (unused, watched): (String, String) = s
+            .eval("return GetCVar('currencyTokensUnused1'), GetCVar('currencyTokensBackpack1')")
+            .unwrap();
+        assert_eq!((unused.as_str(), watched.as_str()), ("0", "2"));
     }
 }
