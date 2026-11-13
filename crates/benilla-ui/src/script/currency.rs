@@ -5,6 +5,8 @@
 
 use mlua::{Lua, MultiValue, Table, Value};
 
+use super::who_sort::sort_utf8i;
+
 /// Honor and arena points, counted from the player's fields, not a token slot (`0x5b0757`).
 const ARENA_POINTS_ITEM: u32 = 43307;
 const HONOR_POINTS_ITEM: u32 = 43308;
@@ -98,20 +100,19 @@ fn known(model: &super::Model, bit: i32) -> bool {
     (1..=64).contains(&bit) && known & (1 << (bit - 1)) != 0
 }
 
-/// The categories in display order (`0x5afc40`): unflagged first, then by name, any case.
+/// The categories in display order (`0x5afc40`): unflagged first, then by the UTF-8 sort (`0x5afc70`).
 fn sorted_categories(model: &super::Model) -> Vec<&CurrencyCategoryView> {
     let mut cats: Vec<&CurrencyCategoryView> = model.currency_catalog.categories.iter().collect();
     cats.sort_by(|a, b| {
         (a.flags & 1)
             .cmp(&(b.flags & 1))
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| sort_utf8i(&a.name, &b.name))
     });
     cats
 }
 
 /// The display list build (`0x5b0030`): a header per category with a row to show, then, expanded,
-/// its known rows not marked unused, or under the last category every row marked unused; each
-/// category's rows by name, uncached names last.
+/// its known rows not marked unused, or under the last category every row marked unused.
 fn display_list(model: &super::Model) -> Vec<Entry> {
     let cats = sorted_categories(model);
     let types = &model.currency_catalog.types;
@@ -166,8 +167,9 @@ fn display_list(model: &super::Model) -> Vec<Entry> {
                 watched: cvar_bit(model, "currencyTokensBackpack", t.bit_index),
             })
             .collect();
+        // The row sort (`0x5aff10`): the UTF-8 sort (`0x5affbc`), uncached names last.
         rows.sort_by(|a, b| match (&a.name, &b.name) {
-            (Some(x), Some(y)) => x.to_lowercase().cmp(&y.to_lowercase()),
+            (Some(x), Some(y)) => sort_utf8i(x, y),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
@@ -764,5 +766,28 @@ mod tests {
             )
             .unwrap();
         assert_eq!((n, all_nil), (5, true));
+    }
+
+    /// Categories and the rows within one sort with accents folded: `É` sorts as `E`, before `Z`.
+    #[test]
+    fn categories_and_rows_fold_accents_when_sorting() {
+        let mut s = script();
+        let mut catalog = s.model_ref().currency_catalog.clone();
+        catalog.categories[1].name = "Zone".into();
+        catalog.categories[2].name = "Événements".into();
+        s.set_currency_catalog(catalog);
+        let mut holdings = s.model_ref().currency_holdings.clone().unwrap();
+        holdings.items.get_mut(&43308).unwrap().0 = Some("Points".into());
+        holdings.items.get_mut(&20560).unwrap().0 = Some("Écusson".into());
+        s.set_currency_holdings(Some(holdings));
+        let names: Vec<Option<String>> = (1..=6).map(|i| row(&s, i).0).collect();
+        let want = [
+            "Événements",
+            "Écusson",
+            "Points",
+            "Zone",
+            "Badge of Justice",
+        ];
+        assert_eq!(names[..5], want.map(|n| Some(n.to_string())), "{names:?}");
     }
 }
