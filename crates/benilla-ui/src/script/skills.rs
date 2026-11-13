@@ -2,10 +2,10 @@
 //! skill lines, resolved from `SkillLine.dbc` and `SkillLineCategory.dbc`, and the engine groups,
 //! sorts and folds it as the client's list build does: one header per category, by `category_order`
 //! (category id breaks a tie), and within a category the untrained lines (rank 0) after the trained
-//! ones, each by name. A push re-expands every group. Every Lua index is 1-based into the visible
-//! rows, headers plus the entries of expanded groups; the selection is held by skill id, so it
-//! survives a re-push, and selecting a header clears it. Which lines reach the engine at all is the
-//! app's half (`feed_skills`).
+//! ones, each by name. A push re-expands every group. As in `0x5cd5e0`, the
+//! visible rows come first and the folded groups' entries after them, which every index but
+//! `GetNumSkillLines` reaches; the selection is held by skill id. Which lines reach the engine at
+//! all is the app's half (`feed_skills`).
 //!
 //! `numTempPoints` is what `AddSkillUp` has pending on the line, which a rebuild drops. `stepCost` is
 //! the tier the line's flags open and `rankCost` the next rank's price; the shipped data gives
@@ -164,30 +164,45 @@ fn build_groups(entries: &[SkillEntry]) -> Vec<SkillGroup> {
     groups
 }
 
-/// The visible rows; the Lua's 1-based index is a position in this list.
+/// The whole list: headers and expanded entries, then the folded entries the line sort puts last.
 fn rows(model: &Model) -> Vec<Row> {
     let mut out = Vec::new();
+    let mut folded = Vec::new();
     for (gi, g) in model.skills_groups.iter().enumerate() {
         out.push(Row::Header(gi));
-        if !model.skills_collapsed.contains(&g.category_id) {
-            for &ei in &g.entries {
-                out.push(Row::Entry(ei));
-            }
-        }
+        let collapsed = model.skills_collapsed.contains(&g.category_id);
+        let sink = if collapsed { &mut folded } else { &mut out };
+        sink.extend(g.entries.iter().map(|&ei| Row::Entry(ei)));
     }
+    out.extend(folded);
     out
 }
 
+/// `GetNumSkillLines()` (`0x5cd1b0`): the visible rows, the list less the folded entries.
 fn num_rows(model: &Model) -> usize {
-    rows(model).len()
+    let folded: usize = model
+        .skills_groups
+        .iter()
+        .filter(|g| model.skills_collapsed.contains(&g.category_id))
+        .map(|g| g.entries.len())
+        .sum();
+    rows(model).len() - folded
 }
 
-/// The entry at a 1-based visible index; `None` for a header.
+/// The entry at a 1-based index into the whole list; `None` for a header.
 fn entry_at(model: &Model, index: usize) -> Option<&SkillEntry> {
     let n = index.checked_sub(1)?;
     match rows(model).get(n)? {
         Row::Entry(ei) => model.skills.entries.get(*ei),
         Row::Header(_) => None,
+    }
+}
+
+/// The category of the row at a 0-based index into the whole list, header or entry.
+fn category_at(model: &Model, n: usize) -> Option<u32> {
+    match *rows(model).get(n)? {
+        Row::Header(gi) => model.skills_groups.get(gi).map(|g| g.category_id),
+        Row::Entry(ei) => model.skills.entries.get(ei).map(|e| e.category_id),
     }
 }
 
@@ -238,25 +253,14 @@ fn remove_skill_up(model: &mut Model, index: usize) -> bool {
     true
 }
 
-/// Collapse or expand the category whose header is at visible index `id`; 0 is every group, and a
-/// non-header index does nothing.
-fn set_collapsed(model: &mut Model, id: usize, collapse: bool) {
-    if id == 0 && !collapse {
-        model.skills_collapsed.clear();
-        return;
-    }
-    let targets: Vec<u32> = if id == 0 {
-        model.skills_groups.iter().map(|g| g.category_id).collect()
-    } else {
-        match rows(model).get(id - 1) {
-            Some(Row::Header(gi)) => model
-                .skills_groups
-                .get(*gi)
-                .map(|g| g.category_id)
-                .into_iter()
-                .collect(),
-            _ => Vec::new(),
-        }
+/// Fold or unfold the row's group, any row, or every group below 1 (`0x5cd760`, `0x5ce3dc`).
+fn set_collapsed(model: &mut Model, index: i32, collapse: bool) -> bool {
+    let targets: Vec<u32> = match usize::try_from(index.wrapping_sub(1)) {
+        Err(_) => model.skills_groups.iter().map(|g| g.category_id).collect(),
+        Ok(n) => match category_at(model, n) {
+            Some(c) => vec![c],
+            None => return false,
+        },
     };
     for c in targets {
         if collapse {
@@ -265,6 +269,7 @@ fn set_collapsed(model: &mut Model, id: usize, collapse: bool) {
             model.skills_collapsed.remove(&c);
         }
     }
+    true
 }
 
 /// `GetSkillLineInfo`'s out-of-range answer, thirteen values: the reference's one unsigned bounds
@@ -289,17 +294,21 @@ fn out_of_range_tuple(_lua: &Lua) -> mlua::Result<MultiValue> {
     ]))
 }
 
-fn set_selected(model: &mut Model, index: u32) {
-    model.skills_selected = entry_at(model, index as usize).map(|e| e.skill_id);
+fn set_selected(model: &mut Model, index: i32) {
+    model.skills_selected = usize::try_from(index)
+        .ok()
+        .and_then(|i| entry_at(model, i))
+        .map(|e| e.skill_id);
 }
 
-/// `GetSelectedSkill()`: the selection's current visible index, 0 when none or folded away.
+/// `GetSelectedSkill()`: the selection's visible index, 0 when none or folded (`0x5cd360`).
 fn selected_index(model: &Model) -> u32 {
     let Some(sid) = model.skills_selected else {
         return 0;
     };
     rows(model)
         .iter()
+        .take(num_rows(model))
         .position(|r| matches!(r, Row::Entry(ei) if model.skills.entries[*ei].skill_id == sid))
         .map_or(0, |p| (p + 1) as u32)
 }
@@ -340,11 +349,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // 13-value tuple, whose nil first slot drives stock `SkillFrame.lua:211`'s early return.
     g.set(
         "GetSkillLineInfo",
-        lua.create_function(|lua, index: usize| {
+        lua.create_function(|lua, index: Value| {
+            let index = binding_abi::number_arg(lua, index, "Usage: GetSkillLineInfo(index)")?;
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let Some(n) = index.checked_sub(1) else {
+            let Some(n) = usize::try_from(index).ok().and_then(|i| i.checked_sub(1)) else {
                 return out_of_range_tuple(lua);
             };
             let Some(row) = rows(&model).get(n).copied() else {
@@ -403,29 +413,38 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // Collapse/ExpandSkillHeader(id): by the header's visible index, 0 for every group.
-    g.set(
-        "CollapseSkillHeader",
-        lua.create_function(|lua, id: usize| {
-            let mut model = crate::script::model_mut_of(lua);
-            set_collapsed(&mut model, id, true);
-            Ok(())
-        })?,
-    )?;
-    g.set(
-        "ExpandSkillHeader",
-        lua.create_function(|lua, id: usize| {
-            let mut model = crate::script::model_mut_of(lua);
-            set_collapsed(&mut model, id, false);
-            Ok(())
-        })?,
-    )?;
+    // Collapse/ExpandSkillHeader(index): the rebuild fires `SKILL_LINES_CHANGED` (`0x5cd701`).
+    for (verb, usage, collapse) in [
+        (
+            "CollapseSkillHeader",
+            "Usage: CollapseSkillHeader(index)",
+            true,
+        ),
+        (
+            "ExpandSkillHeader",
+            "Usage: ExpandSkillHeader(index)",
+            false,
+        ),
+    ] {
+        g.set(
+            verb,
+            lua.create_function(move |lua, index: Value| {
+                let index = binding_abi::number_arg(lua, index, usage)?;
+                let rebuilt = set_collapsed(&mut crate::script::model_mut_of(lua), index, collapse);
+                if rebuilt {
+                    super::tick::fire_event_into(lua, "SKILL_LINES_CHANGED", Vec::new());
+                }
+                Ok(())
+            })?,
+        )?;
+    }
 
-    // SetSelectedSkill(index) / GetSelectedSkill(): visible indices, held by skill id;
+    // SetSelectedSkill(index) (`0x5cd860`) / GetSelectedSkill(): held by skill id;
     // `GetSelectedSkill` always answers one number, 0 included.
     g.set(
         "SetSelectedSkill",
-        lua.create_function(|lua, index: u32| {
+        lua.create_function(|lua, index: Value| {
+            let index = binding_abi::number_arg(lua, index, "Usage: SetSelectedSkill(index)")?;
             let mut model = crate::script::model_mut_of(lua);
             set_selected(&mut model, index);
             Ok(())
@@ -532,9 +551,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // locally: the reference waits for the skill-field update (vmangos `SetSkill(id,0,0)`).
     g.set(
         "AbandonSkill",
-        lua.create_function(|lua, index: usize| {
+        lua.create_function(|lua, index: Value| {
+            let index = binding_abi::number_arg(lua, index, "Usage: AbandonSkill(index)")?;
             let mut model = crate::script::model_mut_of(lua);
-            if let Some(id) = entry_at(&model, index).map(|e| e.skill_id) {
+            let line = usize::try_from(index)
+                .ok()
+                .and_then(|i| entry_at(&model, i));
+            if let Some(id) = line.map(|e| e.skill_id) {
                 model.skill_abandons.push(id);
             }
             Ok(())
@@ -776,6 +799,61 @@ mod tests {
         assert_eq!(s.eval::<i64>("return GetNumSkillLines()").unwrap(), 2);
         s.run("ExpandSkillHeader(0)").unwrap();
         assert_eq!(s.eval::<i64>("return GetNumSkillLines()").unwrap(), 6);
+    }
+
+    /// A fold fires the repaint, any row folds its group, folded rows stay addressable.
+    #[test]
+    fn a_fold_fires_the_repaint_and_any_row_names_its_group() {
+        let mut s = UiScript::new().unwrap();
+        s.set_skills(state());
+        s.run(
+            "SKILL_FIRES = 0 \
+             local f = CreateFrame('Frame') f:RegisterEvent('SKILL_LINES_CHANGED') \
+             f:SetScript('OnEvent', function() SKILL_FIRES = SKILL_FIRES + 1 end)",
+        )
+        .unwrap();
+        let fires = |s: &mut UiScript| s.eval::<i64>("return SKILL_FIRES").unwrap();
+
+        // Swords (row 3), an entry, folds Weapon Skills; its lines move past the visible four.
+        s.run("CollapseSkillHeader(3)").unwrap();
+        assert_eq!(fires(&mut s), 1, "the rebuild fires once");
+        assert_eq!(s.eval::<i64>("return GetNumSkillLines()").unwrap(), 4);
+        assert_eq!(row_kind(&mut s, 2), ("Professions".into(), "header".into()));
+        assert_eq!(row_kind(&mut s, 5), ("Defense".into(), "entry".into()));
+        assert_eq!(row_kind(&mut s, 6), ("Swords".into(), "entry".into()));
+
+        // A folded line's index unfolds its group too.
+        s.run("ExpandSkillHeader(6)").unwrap();
+        assert_eq!(fires(&mut s), 2);
+        assert_eq!(s.eval::<i64>("return GetNumSkillLines()").unwrap(), 6);
+
+        // Past the list nothing is rebuilt; below 1 is every group, rebuilt either way.
+        s.run("CollapseSkillHeader(7)").unwrap();
+        assert_eq!(fires(&mut s), 2, "no rebuild past the end");
+        s.run("CollapseSkillHeader(-3)").unwrap();
+        assert_eq!(fires(&mut s), 3);
+        assert_eq!(s.eval::<i64>("return GetNumSkillLines()").unwrap(), 2);
+        s.run("ExpandSkillHeader(0)").unwrap();
+        assert_eq!(fires(&mut s), 4);
+
+        // Not a number: the binding's usage error.
+        let err = s.run("CollapseSkillHeader(nil)").unwrap_err().to_string();
+        assert!(err.contains("Usage: CollapseSkillHeader(index)"), "{err}");
+        let err = s.run("ExpandSkillHeader('x')").unwrap_err().to_string();
+        assert!(err.contains("Usage: ExpandSkillHeader(index)"), "{err}");
+    }
+
+    /// A selection inside a folded group reads 0 until the group unfolds.
+    #[test]
+    fn a_folded_selection_reads_zero() {
+        let mut s = UiScript::new().unwrap();
+        s.set_skills(state());
+        s.run("SetSelectedSkill(5)").unwrap(); // First Aid
+        assert_eq!(s.eval::<i64>("return GetSelectedSkill()").unwrap(), 5);
+        s.run("CollapseSkillHeader(4)").unwrap();
+        assert_eq!(s.eval::<i64>("return GetSelectedSkill()").unwrap(), 0);
+        s.run("ExpandSkillHeader(4)").unwrap();
+        assert_eq!(s.eval::<i64>("return GetSelectedSkill()").unwrap(), 5);
     }
 
     #[test]

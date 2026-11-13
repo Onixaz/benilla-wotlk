@@ -33,6 +33,14 @@ fn skill(
     }
 }
 
+/// The stock load plus `Blizzard_TokenUI`, whose `TokenFrame` `ToggleCharacter` hides.
+fn load_character_ui(s: &mut UiScript) {
+    super::test_ui::load_stock_ui(s);
+    super::test_ui::seat_chain_addon(s, "Blizzard_TokenUI");
+    s.run("LoadAddOn('Blizzard_TokenUI')").unwrap();
+    s.fire_event("VARIABLES_LOADED", vec![]);
+}
+
 /// The Skills page shown over a hunter's vmangos lines: single-rank `Beast Mastery 300/300`
 /// (`SkillRaceClassInfo` flags 0x410), `Defense 12/60` and the server-capped `Cloth 1/1`.
 fn shown_skills_page() -> UiScript {
@@ -46,9 +54,7 @@ fn shown_skills_page_with(measurer: Option<Box<dyn benilla_ui::script::TextMeasu
     if let Some(m) = measurer {
         s.set_text_measurer(m);
     }
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    load_character_ui(&mut s);
     // Stock `PaperDollFrame_SetLevel` formats level, race and class unguarded on every show
     // (`PaperDollFrame.lua:100-104`).
     s.set_unit(
@@ -111,7 +117,6 @@ fn row_bg(s: &mut UiScript, i: u32) -> [f32; 4] {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_single_rank_line_paints_gray_with_no_rank_text() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_skills_page();
@@ -290,7 +295,6 @@ fn a_real_hunters_block_lists_exactly_what_the_reference_client_lists() {
 /// `SkillFrameCancelButton` is live: the XML comment around `SkillFrameAcceptButton` closes just
 /// above it (`SkillFrame.xml:338-339`). It is 80x22, centred at the page's TOPLEFT + (305, -422).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pages_close_button_sits_where_the_reference_seats_it_and_closes_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_skills_page();
@@ -362,7 +366,6 @@ fn the_pages_close_button_sits_where_the_reference_seats_it_and_closes_the_windo
 /// The fold inherits `SkillLabelTemplate`, the row font, and sits at `(-3, -3)` off the left cap's
 /// right edge (`SkillFrame.xml:292-300`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_collapse_all_fold_wears_the_row_font_and_the_references_seat() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = shown_skills_page();
@@ -416,7 +419,6 @@ fn the_collapse_all_fold_wears_the_row_font_and_the_references_seat() {
 /// Stock `SkillFrameExpandButtonFrame` sizes itself once, in `OnLoad`, to the label's width + 45
 /// (`SkillFrame.xml:314`), so the measurer must be seated before the load.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_expand_tab_fits_its_label_at_load() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = shown_skills_page_with(Some(Box::new(super::FixedWidthFont(7.0))));
@@ -452,15 +454,11 @@ fn the_expand_tab_fits_its_label_at_load() {
 /// `SkillListScrollFrame` is 220 tall (`SkillFrame.xml:468`), so its overflow `n * 15 - 220` is
 /// 40px short of the bar's `(n - 12) * 15`; the reference stores the scroll value unclamped, so the
 /// bar's end shows the last line.
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_list_reaches_its_last_row_at_the_bars_end() {
-    let _data = benilla_formats::wow_data_or_skip!();
+/// The Skills page over a warrior's 22 lines under 3 headers: 25 rows, past the twelve shown.
+fn warrior_page() -> UiScript {
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    load_character_ui(&mut s);
     s.set_unit(
         "player",
         Some(UnitState {
@@ -473,7 +471,6 @@ fn the_list_reaches_its_last_row_at_the_bars_end() {
             ..UnitState::default()
         }),
     );
-    // 22 lines under 3 headers, 25 rows: enough that the tail lies past the overflow.
     let mut entries = Vec::new();
     for (i, name) in [
         "Axes",
@@ -531,6 +528,13 @@ fn the_list_reaches_its_last_row_at_the_bars_end() {
     s.run(r#"ToggleCharacter("SkillFrame")"#).unwrap();
     s.resolve();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    s
+}
+
+#[test]
+fn the_list_reaches_its_last_row_at_the_bars_end() {
+    let _data = benilla_formats::wow_data_or_skip!();
+    let s = warrior_page();
 
     let n = s.eval::<i64>("return GetNumSkillLines()").unwrap();
     assert_eq!(n, 25, "22 lines under 3 headers");
@@ -574,5 +578,94 @@ fn the_list_reaches_its_last_row_at_the_bars_end() {
             .unwrap(),
         last_name,
         "the twelfth row is the block's last line"
+    );
+}
+
+/// The centre of a named frame in UI space, where the pointer verbs take their coordinates.
+fn centre(s: &mut UiScript, frame: &str) -> (f32, f32) {
+    s.eval::<(f32, f32)>(&format!(
+        "local f = {frame} return f:GetLeft() + f:GetWidth() / 2, f:GetBottom() + f:GetHeight() / 2"
+    ))
+    .unwrap()
+}
+
+/// The wheel scrolls the list and a header click folds its group, repainted off `0x5cd701`.
+#[test]
+fn the_wheel_scrolls_the_list_and_a_header_click_folds_its_group() {
+    let _data = benilla_formats::wow_data_or_skip!();
+    let mut s = warrior_page();
+    assert_eq!(s.eval::<i64>("return GetNumSkillLines()").unwrap(), 25);
+    assert!(
+        s.eval::<bool>("return SkillListScrollFrameScrollBar:IsVisible()")
+            .unwrap(),
+        "25 rows overflow the twelve shown: the bar is up"
+    );
+
+    // Wheel down over the list: half the bar's height, 110 px, is seven 15 px rows.
+    let (x, y) = centre(&mut s, "SkillListScrollFrame");
+    s.mouse_wheel(x, y, -1.0);
+    s.resolve();
+    assert!(s.errors().is_empty(), "wheel errors: {:?}", s.errors());
+    let offset = s
+        .eval::<i64>("return FauxScrollFrame_GetOffset(SkillListScrollFrame)")
+        .unwrap();
+    assert!(offset > 0, "the wheel moved the list, offset {offset}");
+    let first = s
+        .eval::<String>("return SkillRankFrame1SkillName:GetText()")
+        .unwrap();
+    assert_ne!(first, "Axes", "the first row repainted past the top");
+
+    // Back to the top, then click Weapon Skills' fold button.
+    s.mouse_wheel(x, y, 1.0);
+    s.mouse_wheel(x, y, 1.0);
+    s.resolve();
+    assert_eq!(
+        s.eval::<i64>("return FauxScrollFrame_GetOffset(SkillListScrollFrame)")
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        s.eval::<String>("return SkillTypeLabel1:GetText()")
+            .unwrap(),
+        "Weapon Skills"
+    );
+    let (x, y) = centre(&mut s, "SkillTypeLabel1");
+    s.mouse_move(x, y);
+    s.mouse_button(x, y, "LeftButton", true);
+    s.mouse_button(x, y, "LeftButton", false);
+    s.resolve();
+    assert!(s.errors().is_empty(), "click errors: {:?}", s.errors());
+    assert_eq!(
+        s.eval::<i64>("return GetNumSkillLines()").unwrap(),
+        10,
+        "the fifteen weapon lines folded away"
+    );
+    assert!(
+        s.eval::<Option<bool>>("return SkillTypeLabel1.isExpanded")
+            .unwrap()
+            .is_none(),
+        "the header repainted as folded"
+    );
+    assert_eq!(
+        s.eval::<String>("return SkillTypeLabel2:GetText()")
+            .unwrap(),
+        "Armor Proficiencies",
+        "the next group's header moved up under it"
+    );
+    assert!(
+        !s.eval::<bool>("return SkillListScrollFrameScrollBar:IsVisible()")
+            .unwrap(),
+        "ten rows fit: the bar is gone"
+    );
+
+    // A second click unfolds it.
+    s.mouse_button(x, y, "LeftButton", true);
+    s.mouse_button(x, y, "LeftButton", false);
+    s.resolve();
+    assert_eq!(s.eval::<i64>("return GetNumSkillLines()").unwrap(), 25);
+    assert_eq!(
+        s.eval::<String>("return SkillRankFrame2SkillName:GetText()")
+            .unwrap(),
+        "Axes"
     );
 }
