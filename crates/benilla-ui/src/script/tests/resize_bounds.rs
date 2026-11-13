@@ -285,3 +285,54 @@ fn load(s: &UiScript, src: &str) {
     let report = crate::loader::load_in(s, &doc, "test.xml", &|_| None);
     assert!(report.errors.is_empty(), "{:#?}", report.errors);
 }
+
+/// A font engine whose glyphs are each 6 wide and 12 tall.
+struct SixWide;
+
+impl crate::script::TextMeasure for SixWide {
+    fn measure(&mut self, req: &crate::script::MeasureRequest) -> (f32, f32, f32) {
+        let w = req.text.chars().count() as f32 * 6.0;
+        (w, 12.0, w)
+    }
+}
+
+/// `GetBoundsRect` (`0x49e700`) unions the frame's rect with its shown regions', a text measured
+/// on the spot, and its shown children's, as left, bottom, width, height; a hidden region or child
+/// is left out, and an empty rect returns nothing.
+#[test]
+fn bounds_rect_unions_the_shown_regions_and_children() {
+    let mut s = sizer();
+    s.set_text_measurer(Box::new(SixWide));
+    s.run(
+        r#"
+        local t = Sizer:CreateFontString(nil, "ARTWORK")
+        t:SetFont("Fonts\\FRIZQT__.TTF", 12)
+        t:SetPoint("TOPLEFT", Sizer, "BOTTOMLEFT", 0, 0)
+        t:SetText("abcd")
+        local hid = Sizer:CreateTexture()
+        hid:SetWidth(10) hid:SetHeight(10)
+        hid:SetPoint("BOTTOMLEFT", Sizer, "BOTTOMLEFT", -50, -50)
+        hid:Hide()
+        local c = CreateFrame("Frame", nil, Sizer)
+        c:SetWidth(20) c:SetHeight(20)
+        c:SetPoint("LEFT", Sizer, "RIGHT", 10, 0)
+        local off = CreateFrame("Frame", nil, Sizer)
+        off:SetWidth(20) off:SetHeight(20)
+        off:SetPoint("TOP", Sizer, "TOP", 0, 100)
+        off:Hide()
+        Empty = CreateFrame("Frame", nil, UIParent)
+        "#,
+    )
+    .unwrap();
+    assert_eq!(
+        s.eval::<(f64, f64, f64, f64)>("return Sizer:GetBoundsRect()")
+            .unwrap(),
+        (100.0, 38.0, 230.0, 112.0),
+        "the frame, its text below it and its child to the right"
+    );
+    assert_eq!(
+        s.eval::<i64>("return select('#', Empty:GetBoundsRect())")
+            .unwrap(),
+        0
+    );
+}

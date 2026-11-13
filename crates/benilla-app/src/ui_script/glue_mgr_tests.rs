@@ -130,35 +130,45 @@ fn the_logon_shows_each_state_once_then_connects() {
     assert_eq!(m.state, ScreenState::Connect);
 }
 
-/// A logon refusal raises its `LOGIN_*` text, `CONNECTION_HELP` for `LOGIN_FAILED`, and state 0;
-/// a dial that never connected ends on the disconnect it reports last.
+/// A logon refusal raises its `LOGIN_*` text, with `LOGIN_FAILED`'s connection help, and state 0;
+/// a dial that never connected ends on the disconnect it reports last. Parental control opens its
+/// own type with its URL's key.
 #[test]
 fn a_logon_refusal_opens_its_result_and_ends_the_logon() {
-    for (refusal, which, key) in [
+    let refusal = |key, help| Outgoing::Refusal { key, help };
+    for (refusal, out) in [
         (
             Some(LoginRefusal::Logon(0x04)),
-            "OKAY",
-            "LOGIN_UNKNOWN_ACCOUNT",
+            refusal("LOGIN_UNKNOWN_ACCOUNT", false),
         ),
         (
             Some(LoginRefusal::Logon(0x05)),
-            "OKAY",
-            "LOGIN_UNKNOWN_ACCOUNT",
+            refusal("LOGIN_UNKNOWN_ACCOUNT", false),
         ),
         (
             Some(LoginRefusal::Logon(0x01)),
-            "CONNECTION_HELP",
-            "LOGIN_FAILED",
+            refusal("LOGIN_FAILED", true),
         ),
-        (Some(LoginRefusal::Logon(0x03)), "OKAY", "LOGIN_BANNED"),
-        (None, "OKAY", "DISCONNECTED"),
+        (
+            Some(LoginRefusal::Logon(0x03)),
+            refusal("LOGIN_BANNED", false),
+        ),
+        (None, refusal("DISCONNECTED", false)),
+        (
+            Some(LoginRefusal::Logon(0x0f)),
+            Outgoing::Open {
+                which: "PARENTAL_CONTROL",
+                text: Some(Text::Key("LOGIN_PARENTALCONTROL")),
+                data: Some("AUTH_PARENTAL_CONTROL_URL".into()),
+            },
+        ),
     ] {
         let mut m = accepted();
         m.login("a".into(), "b".into(), &mut Vec::new());
         m.outbox.clear();
         m.on_failed(&failed(refusal, false));
         m.tick();
-        assert_eq!(m.outbox, [open(which, Some(key))], "{refusal:?}");
+        assert_eq!(m.outbox, [out], "{refusal:?}");
         assert_eq!(m.state, ScreenState::Idle);
     }
 }
@@ -1156,9 +1166,20 @@ fn the_stock_login_reaches_the_native_login_and_shows_its_status() {
     app.world_mut()
         .write_message(failed(Some(LoginRefusal::Logon(0x04)), false));
     app.update();
+    // The stock text is HTML, so the refusal opens `OKAY_HTML` and the markup goes to `GlueDialogHTML`.
     let unknown = vm(&app).global_text("LOGIN_UNKNOWN_ACCOUNT");
-    assert!(!unknown.is_empty());
-    assert_eq!(dialog(&app), Some(("OKAY".into(), unknown)));
+    assert!(unknown.to_ascii_uppercase().contains("<HTML>"));
+    let (which, _) = dialog(&app).expect("the refusal dialog is up");
+    assert_eq!(which, "OKAY_HTML");
+    assert_eq!(
+        vm(&app)
+            .eval::<(bool, bool)>(
+                "return GlueDialogHTML:IsShown() == 1, GlueDialogText:IsShown() == 1"
+            )
+            .unwrap(),
+        (true, false),
+        "the HTML type shows the HTML region instead of the plain text"
+    );
     assert_eq!(app.world().resource::<GlueMgr>().state, ScreenState::Idle);
 }
 
@@ -2358,4 +2379,57 @@ fn the_create_dials_walk_the_install_grid_by_class() {
     let skins = walk(&dk, 0, grid.sections[0][0].len() * 2);
     assert!(skins.iter().any(|&s| skin_flags(s) & 0x4 != 0), "{skins:?}");
     assert!(skins.iter().all(|&s| skin_flags(s) & 0x8 == 0), "{skins:?}");
+}
+
+/// An HTML refusal text opens the stock HTML type, whose region shows the text without its markup,
+/// and the dialog grows by the text's bounds (`GlueDialog.lua` reads `GetBoundsRect`); a plain one
+/// keeps the plain type.
+#[test]
+fn an_html_refusal_shows_its_text_in_the_html_region() {
+    let _ = benilla_formats::wow_data_or_skip!();
+    for (code, key, help) in [
+        (0x04, "LOGIN_UNKNOWN_ACCOUNT", false),
+        (0x01, "LOGIN_FAILED", true),
+    ] {
+        let (mut app, rx, _abandon) = stock_app();
+        app.world_mut()
+            .non_send_resource_mut::<UiScript>()
+            .set_text_measurer(Box::new(crate::ui_script::FixedWidthFont(6.0)));
+        accept_agreements(&mut app);
+        type_and_login(&mut app);
+        assert!(rx.try_recv().is_ok());
+        app.world_mut()
+            .write_message(failed(Some(LoginRefusal::Logon(code)), false));
+        app.update();
+        let html = vm(&app)
+            .global_text(key)
+            .to_ascii_uppercase()
+            .contains("<HTML>");
+        let which = match (html, help) {
+            (true, true) => "CONNECTION_HELP_HTML",
+            (true, false) => "OKAY_HTML",
+            (false, true) => "CONNECTION_HELP",
+            (false, false) => "OKAY",
+        };
+        let (shown, got) = vm(&app)
+            .eval::<(bool, String)>("return GlueDialog:IsShown() == 1, GlueDialog.which or ''")
+            .unwrap();
+        assert!(shown, "{key}");
+        assert_eq!(got, which, "{key}");
+        if !html {
+            continue;
+        }
+        let (text_shown, line, line_h, bounds_h, frame_h) = vm(&app)
+            .eval::<(bool, String, f64, f64, f64)>(
+                "local r = GlueDialogHTML:GetRegions()                  return GlueDialogText:IsShown() == 1, r:GetText(), r:GetHeight(),                  select(4, GlueDialogHTML:GetBoundsRect()), GlueDialogHTML:GetHeight()",
+            )
+            .unwrap();
+        assert!(!text_shown, "{key}: the plain text region stays hidden");
+        assert!(!line.contains('<') && line.contains("|H"), "{key}: {line}");
+        assert!(
+            line_h > frame_h,
+            "{key}: the wrapped text outgrows the region's own height"
+        );
+        assert_eq!(bounds_h, line_h, "{key}: the bounds are the text's");
+    }
 }

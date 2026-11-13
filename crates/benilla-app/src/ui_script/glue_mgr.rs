@@ -295,6 +295,7 @@ const LOGIN_PIN_WAIT: i32 = 8;
 
 /// Results.
 const RESULT_LOGIN_FAILED: i32 = 0x0b;
+const RESULT_PARENTAL_CONTROL: i32 = 0x13;
 const RESULT_DISCONNECTED: i32 = 0x14;
 
 /// World statuses.
@@ -416,6 +417,9 @@ enum Outgoing {
         text: Option<Text>,
         data: Option<String>,
     },
+    /// A logon refusal's `OPEN_STATUS_DIALOG`, its type picked from its text at the fire (`help`:
+    /// `LOGIN_FAILED`'s connection help).
+    Refusal { key: &'static str, help: bool },
     /// `UPDATE_STATUS_DIALOG(text[, button])` (event 4).
     Update { text: Text, button: Option<Text> },
     /// The queue's per-frame re-text, composed at the fire from the ring.
@@ -1507,12 +1511,19 @@ impl GlueMgr {
             else {
                 return;
             };
-            let which = if c.result == RESULT_LOGIN_FAILED {
-                "CONNECTION_HELP"
-            } else {
-                "OKAY"
-            };
-            self.open(which, Some(Text::Key(key)));
+            // Parental control opens its own type with its URL's key, no HTML search (0x4d8104).
+            if c.result == RESULT_PARENTAL_CONTROL {
+                self.outbox.push(Outgoing::Open {
+                    which: "PARENTAL_CONTROL",
+                    text: Some(Text::Key(key)),
+                    data: Some("AUTH_PARENTAL_CONTROL_URL".into()),
+                });
+                return;
+            }
+            self.outbox.push(Outgoing::Refusal {
+                key,
+                help: c.result == RESULT_LOGIN_FAILED,
+            });
             return;
         }
         // No dialog outside the table, for DISCONNECTED (11) or SURVEY (12).
@@ -2240,6 +2251,21 @@ fn flush_one(
                 args.push(ScriptValue::Str(d));
             }
             script.fire_event("OPEN_STATUS_DIALOG", args);
+        }
+        Outgoing::Refusal { key, help } => {
+            let text = script.global_text(key);
+            // 12340 opens the HTML type when the text holds `<HTML>`, case folded (0x4d8150).
+            let html = text.to_ascii_uppercase().contains("<HTML>");
+            let which = match (html, help) {
+                (true, true) => "CONNECTION_HELP_HTML",
+                (true, false) => "OKAY_HTML",
+                (false, true) => "CONNECTION_HELP",
+                (false, false) => "OKAY",
+            };
+            script.fire_event(
+                "OPEN_STATUS_DIALOG",
+                vec![ScriptValue::Str(which.into()), ScriptValue::Str(text)],
+            );
         }
         Outgoing::Update { text: t, button } => {
             let mut args = vec![ScriptValue::Str(text(script, &t))];

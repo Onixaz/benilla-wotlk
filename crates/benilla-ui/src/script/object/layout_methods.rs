@@ -2,7 +2,7 @@
 
 use mlua::{Lua, MultiValue, Table, Value};
 
-use crate::layout::{Anchor, Point};
+use crate::layout::{Anchor, Point, Rect};
 use crate::script::region_map::{set_shared, Side};
 use crate::script::{Model, SCREEN};
 use crate::widget::FrameHandle;
@@ -280,6 +280,33 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             }))
         })?;
     }
+
+    // GetBoundsRect() (`0x49e700`): left, bottom, width, height of the union of the frame's rect,
+    // its shown regions' and its shown children's, walked down (`0x4913c0`); nothing when empty.
+    set_shared(lua, m, Side::Frame, "GetBoundsRect", |lua, this: Table| {
+        let h = frame_handle_of(lua, &this)?;
+        // Each pending region is sized first, as the walk's resize of a pending one does.
+        let mut text = Vec::new();
+        bounds_regions(&crate::script::model_mut_of(lua), h, &mut text);
+        for rh in text {
+            crate::script::measure::ensure_measured(lua, rh);
+        }
+        settle(lua);
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
+        let mut b = Rect::new(f32::MAX, f32::MAX, 0.0, 0.0);
+        bounds_walk(&model, h, &mut b);
+        if !(b.top > b.bottom && b.right > b.left) {
+            return Ok(MultiValue::new());
+        }
+        let inv = 1.0 / eff_scale(&model, h);
+        Ok(MultiValue::from_vec(
+            [b.left, b.bottom, b.right - b.left, b.top - b.bottom]
+                .map(|v| Value::Number(f64::from(v * inv)))
+                .to_vec(),
+        ))
+    })?;
     Ok(())
 }
 
@@ -295,6 +322,59 @@ pub(in crate::script) fn settle(lua: &Lua) {
     crate::script::UiScript::resolve_layout(&mut model);
     if model.layout_solves == solves {
         model.set_epoch(quiet);
+    }
+}
+
+/// The shown linked regions under `h` that `GetBoundsRect` walks, collected into `out`.
+fn bounds_regions(model: &Model, h: FrameHandle, out: &mut Vec<crate::widget::RegionHandle>) {
+    let Some(f) = model.arena.frame(h) else {
+        return;
+    };
+    out.extend(
+        f.regions
+            .iter()
+            .copied()
+            .filter(|&rh| bounds_counts(model, f, rh)),
+    );
+    for &c in &f.children {
+        if model.arena.frame(c).is_some_and(|cf| cf.shown) {
+            bounds_regions(model, c, out);
+        }
+    }
+}
+
+/// Whether region `rh` of frame `f` counts in `GetBoundsRect`: linked and shown; the title region
+/// never reaches the linker.
+fn bounds_counts(model: &Model, f: &crate::widget::Frame, rh: crate::widget::RegionHandle) -> bool {
+    Some(rh) != f.title_region
+        && model.arena.region(rh).is_some_and(|reg| !reg.detached)
+        && !model.region_data.get(&rh).is_some_and(|d| d.hidden)
+}
+
+/// `GetBoundsRect`'s walk: grow `b` by the frame's rect, then each counted region's, then each shown
+/// child's walk.
+fn bounds_walk(model: &Model, h: FrameHandle, b: &mut Rect) {
+    let grow = |b: &mut Rect, r: &Rect| {
+        b.left = b.left.min(r.left);
+        b.right = b.right.max(r.right);
+        b.bottom = b.bottom.min(r.bottom);
+        b.top = b.top.max(r.top);
+    };
+    let Some(f) = model.arena.frame(h) else {
+        return;
+    };
+    if let Some(r) = model.resolved.get(&h) {
+        grow(b, r);
+    }
+    for &rh in &f.regions {
+        if let (true, Some(r)) = (bounds_counts(model, f, rh), model.region_resolved.get(&rh)) {
+            grow(b, r);
+        }
+    }
+    for &c in &f.children {
+        if model.arena.frame(c).is_some_and(|cf| cf.shown) {
+            bounds_walk(model, c, b);
+        }
     }
 }
 
