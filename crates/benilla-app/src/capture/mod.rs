@@ -111,6 +111,7 @@ pub(crate) use probe_rig::ProbeRigPlugin;
 pub(crate) use probe_service::ProbeServicePlugin;
 pub(crate) use probe_taxi::ProbeTaxiPlugin;
 pub(crate) use probe_vendor_swap::ProbeVendorSwapPlugin;
+pub(crate) use probes::stretch::{active as stretch_active, StretchPlugin};
 pub(crate) use probes::{
     fx_draw_census_plugin, DressCensusPlugin, EntityCensusPlugin, GroundCensusPlugin,
     JitterMeterPlugin, LiftCensusPlugin, LiveFpsPlugin, NodeProbePlugin, ParticleCensusPlugin,

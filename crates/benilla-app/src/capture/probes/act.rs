@@ -145,7 +145,7 @@ fn probe_input_by_name(name: &str) -> Option<ProbeInput> {
 }
 
 /// The key names [`ProbeKeyPlugin`] accepts.
-fn probe_key_by_name(name: &str) -> Option<KeyCode> {
+pub(super) fn probe_key_by_name(name: &str) -> Option<KeyCode> {
     Some(match name {
         "Space" => KeyCode::Space,
         "W" => KeyCode::KeyW,

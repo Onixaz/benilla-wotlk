@@ -675,6 +675,12 @@ impl Player {
     pub(crate) fn server_riding(&self) -> bool {
         self.server_riding
     }
+
+    /// Whether input moves the driven body now: ours to move, not rooted and no server spline on
+    /// it, for instruments.
+    pub(crate) fn steerable(&self) -> bool {
+        self.active && !self.control_lost && !self.modes.rooted && !self.server_riding
+    }
 }
 
 /// The forward/back axis, summed as the reference's emitter sums it: autorun, forward and

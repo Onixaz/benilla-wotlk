@@ -128,13 +128,29 @@ fn fire_probe_exit(
     if !probe.fired && time.elapsed_secs() >= at {
         info!("probe-exit: {at}s elapsed — exiting");
         probe.fired = true;
-        exit.write(AppExit::Success);
+        // A broken wire rule fails an unattended run.
+        let code = crate::net::wire_audit::exit_code();
+        // A stretch that reached no verdict by its timeout failed.
+        let code = if super::stretch::active() {
+            super::stretch::exit_code(code)
+        } else {
+            code
+        };
+        let code = if crate::run_mode::unattended() {
+            code
+        } else {
+            0
+        };
+        exit.write(match std::num::NonZeroU8::new(code as u8) {
+            Some(c) => AppExit::Error(c),
+            None => AppExit::Success,
+        });
         // The hard backstop runs on its own thread, since `AppExit` stops `Update`: a teardown
         // hang would otherwise leave a client holding the account.
-        std::thread::spawn(|| {
+        std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(5));
             warn!("probe-exit: still alive 5s after AppExit — hard exit");
-            std::process::exit(0);
+            std::process::exit(code);
         });
     }
 }
