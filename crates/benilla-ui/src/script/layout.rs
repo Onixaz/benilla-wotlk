@@ -97,8 +97,9 @@ fn frame_node_hash(input: &LayoutInput) -> u64 {
 
 /// A region's per-node input hash: its anchors, explicit size and measured text extent.
 #[inline]
-fn region_node_hash(data: &RegionData) -> u64 {
+fn region_node_hash(data: &RegionData, owner: u32) -> u64 {
     let mut node = InputFingerprint::default();
+    node.feed(u64::from(owner));
     node.anchors(&data.anchors);
     match data.size {
         Some((w, h)) => {
@@ -334,6 +335,31 @@ impl LayoutScope {
         self.node_of
             .get(id as usize)
             .is_some_and(|&n| n != u32::MAX)
+    }
+
+    /// Repoint a region's owner dependency and force its rect to be solved at the new scale.
+    pub(crate) fn reparent_region(
+        &mut self,
+        id: u32,
+        owner: FrameHandle,
+        old: u32,
+        new: u32,
+    ) -> bool {
+        let Some(&n) = self.node_of.get(id as usize) else {
+            return false;
+        };
+        if n == u32::MAX || n & REGION_TAG == 0 {
+            return false;
+        }
+        self.unlink_edge(old, id);
+        self.hold(new);
+        self.edge(id, new);
+        self.regions[(n & !REGION_TAG) as usize].owner = owner;
+        if self.last[id as usize] != NO_NODE {
+            self.last[id as usize] = NO_NODE;
+            self.last_count -= 1;
+        }
+        true
     }
 
     /// Record that node `from` reads `to`'s rect, so a change at `to` reaches `from`.
@@ -703,9 +729,13 @@ impl UiScript {
                     continue;
                 }
                 let now = if n & REGION_TAG != 0 {
-                    let rh = scope.regions[(n & !REGION_TAG) as usize].rh;
+                    let row = scope.regions[(n & !REGION_TAG) as usize];
+                    let rh = row.rh;
                     match region_data.get(&rh) {
-                        Some(d) => region_node_hash(d),
+                        Some(d) => region_node_hash(
+                            d,
+                            frame_to_id.get(&row.owner).copied().unwrap_or(u32::MAX),
+                        ),
                         None => continue,
                     }
                 } else {
@@ -1198,6 +1228,9 @@ impl UiScript {
                 None => fp.feed(u64::MAX),
             }
             if let Some(r) = live {
+                fp.feed(u64::from(
+                    frame_to_id.get(&r.owner).copied().unwrap_or(u32::MAX),
+                ));
                 // Mint an id for a region that never needed one, without `Model::region_id`'s
                 // epoch bump, which would re-dirty the running resolve.
                 let id = match region_to_id.get(&rh) {
@@ -1213,7 +1246,10 @@ impl UiScript {
                 #[allow(clippy::cast_possible_truncation)]
                 let idx = scope.regions.len() as u32 | REGION_TAG;
                 if let Some(slot) = scope.now.get_mut(id as usize) {
-                    *slot = region_node_hash(data);
+                    *slot = region_node_hash(
+                        data,
+                        frame_to_id.get(&r.owner).copied().unwrap_or(u32::MAX),
+                    );
                     scope.node_of[id as usize] = idx;
                 }
                 // A region reads its anchor targets' rects and its owner's scale.
@@ -1230,7 +1266,7 @@ impl UiScript {
                     is_fontstring: matches!(r.kind, crate::widget::RegionKind::FontString),
                 });
             }
-            // Liveness only (`owner` and `kind` never change): `WidgetArena::destroy` leaves
+            // Liveness: `WidgetArena::destroy` leaves
             // `region_data` behind, so membership alone would miss a destroyed region.
             fp.feed(u64::from(live.is_some()));
         }

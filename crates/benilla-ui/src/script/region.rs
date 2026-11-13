@@ -332,9 +332,20 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
                 }
                 _ => return Err(wrong_type()),
             };
+            let old_owner = model.arena.region(rh).map(|r| r.owner);
             if model.arena.set_region_owner(rh, new_owner) {
-                // The owner supplies the region's scale to layout, so a re-link is a layout change.
-                model.touch_layout();
+                if let (Some(old), Some(new)) = (old_owner, new_owner) {
+                    let old_id = model.frame_id(old);
+                    let new_id = model.frame_id(new);
+                    let id = model.region_id(rh);
+                    if model.layout_touched.is_some()
+                        && model.layout_scope.reparent_region(id, new, old_id, new_id)
+                    {
+                        model.touch_layout_region(rh);
+                    } else {
+                        model.touch_layout();
+                    }
+                }
             }
             Ok(())
         },
