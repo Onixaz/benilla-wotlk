@@ -1181,6 +1181,20 @@ fn the_status_dialogs_cancel_abandons_the_attempt() {
     assert_eq!(dialog(&app), None);
 }
 
+#[test]
+fn glue_dialog_text_consumes_auth_html() {
+    let raw = r#"<html><body><p align="CENTER">The information you have entered is not valid.<br>Check <a href="http://example.test">support</a>.</p></body></html>"#;
+    assert_eq!(
+        super::glue_dialog_text(raw),
+        "The information you have entered is not valid.\nCheck support."
+    );
+}
+
+#[test]
+fn glue_dialog_text_leaves_plain_status_text_unchanged() {
+    assert_eq!(super::glue_dialog_text("AUTHENTICATING"), "AUTHENTICATING");
+}
+
 /// The login screen is built from the stock GlueXML with no address readout or server editor.
 #[test]
 fn the_login_screen_has_no_realmlist_control() {

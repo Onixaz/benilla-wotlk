@@ -2222,9 +2222,12 @@ fn flush_one(
     names: &RosterNames,
     out: Outgoing,
 ) {
-    let text = |script: &UiScript, t: &Text| match t {
-        Text::Key(k) => script.global_text(k),
-        Text::Raw(s) => s.clone(),
+    let text = |script: &UiScript, t: &Text| {
+        let text = match t {
+            Text::Key(k) => script.global_text(k),
+            Text::Raw(s) => s.clone(),
+        };
+        glue_dialog_text(&text)
     };
     match out {
         Outgoing::Open {
@@ -2317,6 +2320,60 @@ fn flush_one(
             mgr.addons_stale = true;
         }
     }
+}
+
+/// The stock glue strings for authentication failures are HTML fragments (for example, they
+/// contain `<p align="CENTER">` and an `<a>` support link), while `GlueDialogText` is a plain
+/// text region in the stock GlueXML.  The reference's glue text path consumes that markup before
+/// painting; keep the same visible text instead of exposing the tags on the login dialog.
+fn glue_dialog_text(raw: &str) -> String {
+    if !raw.contains('<') && !raw.contains('&') {
+        return raw.to_string();
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '<' {
+            let mut tag = String::new();
+            while let Some(next) = chars.next() {
+                if next == '>' {
+                    break;
+                }
+                tag.push(next);
+            }
+            let tag = tag.trim().to_ascii_lowercase();
+            if tag.starts_with("br") || tag.starts_with("/p") {
+                if !out.ends_with('\n') {
+                    out.push('\n');
+                }
+            }
+            continue;
+        }
+        if ch == '&' {
+            let mut entity = String::new();
+            while let Some(next) = chars.next() {
+                if next == ';' {
+                    break;
+                }
+                entity.push(next);
+            }
+            match entity.as_str() {
+                "amp" => out.push('&'),
+                "lt" => out.push('<'),
+                "gt" => out.push('>'),
+                "quot" => out.push('"'),
+                "nbsp" => out.push(' '),
+                _ => {
+                    out.push('&');
+                    out.push_str(&entity);
+                    out.push(';');
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out.trim().to_string()
 }
 
 /// Seat a new glue VM before its first `SET_GLUE_SCREEN`: the manager takes it ([`GlueMgr::seat`])
