@@ -48,8 +48,6 @@ pub(crate) use motion::{
     SplineStopped, SwimFlyTransition, UnitMoveModes,
 };
 // Only the ground-census probe reads this, so a build without the instruments leaves it unused.
-// Not a `cfg`: seam knowledge lives in three fixed places, and this file is not one of them.
-#[allow(unused_imports)]
 pub(crate) use motion::GroundClamped;
 
 /// The net subsystem: spawns the background IO threads and drives the per-frame event drain.

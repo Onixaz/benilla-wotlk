@@ -7,10 +7,10 @@
 //! have no world behind them, so with no server the client sits at the login screen, as the
 //! reference does. The capture harness (`$WOW_CAPTURE`) boots straight in-world.
 
-// A player build's dead code is the seam working: with `--no-default-features` every symbol only an
-// instrument calls goes unused, and a `cfg` per item would spread seam knowledge into gameplay
-// modules. Dev builds warn normally.
-#![cfg_attr(not(feature = "dev"), allow(dead_code))]
+// A player build's dead code is the seam working: with `--no-default-features` every symbol and
+// re-export only an instrument uses goes unused, and a `cfg` per item would spread seam knowledge
+// into gameplay modules. Dev builds warn normally.
+#![cfg_attr(not(feature = "dev"), allow(dead_code, unused_imports))]
 
 /// The realtime-audio allocation tripwire: in the dev build an allocation inside `sound::output`'s
 /// `no_alloc` scopes (the output IO callback, the render pass) aborts the process; release builds
