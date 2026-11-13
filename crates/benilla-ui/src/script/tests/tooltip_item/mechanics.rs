@@ -821,6 +821,43 @@ fn a_token_binds_only_for_the_loot_source_and_a_non_token_always() {
     );
 }
 
+/// A chat link builds with a zero requester (`0x62dbbc`), which equals the loot source only while
+/// no loot is open, so a token's link shows its bind line then and not beside an open loot window.
+#[test]
+fn a_linked_token_binds_only_while_no_loot_is_open() {
+    let mut s = script();
+    s.set_item_template(
+        49426,
+        ItemTemplateView {
+            name: "Emblem of Frost".into(),
+            class: 10,
+            bonding: 1,
+            ..Default::default()
+        },
+    );
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "Slot"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        CreateFrame("GameTooltip", "TT"):SetOwner(Slot, "ANCHOR_RIGHT")
+    "#,
+    )
+    .unwrap();
+    let link = "TT:SetHyperlink('item:49426:0:0:0:0:0:0:0:80')";
+    let texts = |s: &mut UiScript| -> Vec<String> {
+        s.run(link).unwrap();
+        super::lines_of(s).into_iter().map(|(t, _)| t).collect()
+    };
+    assert_eq!(
+        texts(&mut s),
+        ["Emblem of Frost", "[ITEM_BIND_ON_PICKUP]"],
+        "no loot open"
+    );
+    s.set_loot_source(0xF130_0000_0000_0001);
+    s.run("TT:Hide() TT:SetOwner(Slot, 'ANCHOR_RIGHT')")
+        .unwrap();
+    assert_eq!(texts(&mut s), ["Emblem of Frost"], "a loot window open");
+}
+
 /// A loot row with no roll shows neither enchant lines nor the placeholder, though the template can
 /// roll: the fork tests the block's presence, not its contents.
 #[test]

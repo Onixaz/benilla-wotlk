@@ -314,6 +314,20 @@ pub(super) fn render_token(
     }
 }
 
+/// A dungeon finder reward by entry, its count as the link-info stack, with a zero requester
+/// (`0x630b6b`, `0x630c58`).
+fn render_reward(lua: &Lua, this: &Table, item_id: u32, count: u32) -> mlua::Result<()> {
+    let flags = BuilderFlags {
+        sell: Sell::Block {
+            stack: count,
+            max: None,
+        },
+        requester: Requester::Zero,
+        ..Default::default()
+    };
+    render_item(lua, this, item_id, flags, None)
+}
+
 /// An action-bar item's money source: the copy `SetAction` (`0x631000`) finds through the
 /// reference's item-of-type lookup: a worn copy of equipment, else the first carried stack, else
 /// the template.
@@ -365,18 +379,21 @@ fn set_quest_item_view(
     lua: &Lua,
     this: &Table,
     item: Option<crate::script::quest::QuestItemView>,
+    requester: Requester,
 ) -> mlua::Result<()> {
     match item {
         // The count as the link-info stack (`0x62e670`, `0x62e790`).
-        Some(it) => render_by_id(
-            lua,
-            this,
-            it.item_id,
-            Sell::Block {
-                stack: it.count,
-                max: None,
-            },
-        ),
+        Some(it) => {
+            let flags = BuilderFlags {
+                sell: Sell::Block {
+                    stack: it.count,
+                    max: None,
+                },
+                requester,
+                ..Default::default()
+            };
+            render_item(lua, this, it.item_id, flags, None)
+        }
         None => {
             let h = frame_handle_of(lua, this)?;
             {
@@ -614,8 +631,10 @@ fn set_item_link(
         clear_content(&mut model, h);
     }
     fire_cleared(lua, h);
+    // A zero requester (`0x62dbbc`).
     let flags = BuilderFlags {
         sell: Sell::ONE,
+        requester: Requester::Zero,
         ..Default::default()
     };
     match view_of(lua, id) {
@@ -845,7 +864,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         .cloned()
                 })
             };
-            set_quest_item_view(lua, &this, item)
+            // The quest giver as requester (`0x62e754`).
+            set_quest_item_view(lua, &this, item, Requester::Object)
         })?,
     )?;
     m.set(
@@ -865,7 +885,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         .cloned()
                 })
             };
-            set_quest_item_view(lua, &this, item)
+            // A zero requester (`0x62e8cf`).
+            set_quest_item_view(lua, &this, item, Requester::Zero)
         })?,
     )?;
 
@@ -889,15 +910,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 })
             };
             match item {
-                Some(it) => render_by_id(
-                    lua,
-                    &this,
-                    it.item,
-                    Sell::Block {
-                        stack: it.count,
-                        max: None,
-                    },
-                ),
+                Some(it) => render_reward(lua, &this, it.item, it.count),
                 None => Ok(()),
             }
         })?,
@@ -919,15 +932,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     .and_then(|i| model.lfg.reward.items.get(i).copied())
             };
             match item {
-                Some(it) => render_by_id(
-                    lua,
-                    &this,
-                    it.item,
-                    Sell::Block {
-                        stack: it.count,
-                        max: None,
-                    },
-                ),
+                Some(it) => render_reward(lua, &this, it.item, it.count),
                 None => Ok(()),
             }
         })?,
@@ -1292,11 +1297,13 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 flags: s.flags & 0x4,
                 ..Default::default()
             };
+            // A zero requester (`0x6305fb`).
             let flags = BuilderFlags {
                 sell: Sell::Block {
                     stack: s.count.max(1),
                     max: None,
                 },
+                requester: Requester::Zero,
                 ..Default::default()
             };
             match view_of(lua, s.item_id) {
@@ -1334,11 +1341,13 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             }
             fire_cleared(lua, h);
             let inst = block_instance(lua, entry.name.clone(), entry.link.as_deref());
+            // A zero requester (`0x63018b`).
             let flags = BuilderFlags {
                 sell: Sell::Block {
                     stack: entry.quantity,
                     max: None,
                 },
+                requester: Requester::Zero,
                 ..Default::default()
             };
             match view_of(lua, entry.item_id) {
@@ -1614,9 +1623,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             fire_cleared(lua, h);
             // A block source (p6=1) carrying the attachment's roll: no placeholder.
             let inst = block_instance(lua, name, link.as_deref());
-            // The attachment's count as the block's stack (`0x62f9e0`).
+            // The attachment's count as the block's stack and a zero requester (`0x62fbdb`).
             let flags = BuilderFlags {
                 sell: Sell::Block { stack, max: None },
+                requester: Requester::Zero,
                 ..Default::default()
             };
             match view_of(lua, item_id) {
