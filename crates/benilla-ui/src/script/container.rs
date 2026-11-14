@@ -579,7 +579,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(model.containers.get(&bag).map_or(0, |c| c.num_slots))
+            // The currency container -4 counts the 32 token slots (`0x5d7529`).
+            let c = match bag {
+                -4 => model.token_slots.as_ref(),
+                _ => model.containers.get(&bag),
+            };
+            Ok(c.map_or(0, |c| c.num_slots))
         })?,
     )?;
 

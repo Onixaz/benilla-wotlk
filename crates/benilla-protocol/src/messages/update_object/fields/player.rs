@@ -149,6 +149,18 @@ impl ObjectFields {
     pub fn player_buyback_slot(&self, i: u8) -> Option<u64> {
         (i < 12).then(|| self.get_guid(FIELD_PLAYER_VENDORBUYBACK_SLOT_1 + 2 * u16::from(i)))?
     }
+    /// Player slot `slot`'s item guid (0-149), whichever slot array holds it.
+    pub fn player_slot(&self, slot: u8) -> Option<u64> {
+        match slot {
+            0..=22 => self.player_inv_slot(slot),
+            23..=38 => self.player_pack_slot(slot - 23),
+            39..=66 => self.player_bank_slot(slot - 39),
+            67..=73 => self.player_bank_bag_slot(slot - 67),
+            74..=85 => self.player_buyback_slot(slot - 74),
+            86..=117 => self.player_keyring_slot(slot - 86),
+            _ => self.player_currency_token_slot(slot.checked_sub(118)?),
+        }
+    }
     /// `PLAYER_FIELD_BUYBACK_PRICE_1 + i`: what buying slot `i` back costs, in copper.
     pub fn player_buyback_price(&self, i: u8) -> Option<u32> {
         (i < 12).then(|| self.get_u32(FIELD_PLAYER_BUYBACK_PRICE_1 + u16::from(i)))?
@@ -810,6 +822,31 @@ impl ObjectFields {
             }
         })
     }
+}
+
+/// The player slot (0-149) a slot array's guid word `index` holds, and whether it is the high word.
+pub fn player_slot_of_field(index: u16) -> Option<(u8, bool)> {
+    const RUNS: [(u16, u8, u8); 7] = [
+        (FIELD_PLAYER_INV_SLOT_HEAD, 0, 23),
+        (FIELD_PLAYER_PACK_SLOT_1, 23, 16),
+        (FIELD_PLAYER_BANK_SLOT_1, 39, crate::messages::BANK_SLOTS),
+        (FIELD_PLAYER_BANK_BAG_SLOT_1, 67, crate::messages::BANK_BAGS),
+        (FIELD_PLAYER_VENDORBUYBACK_SLOT_1, 74, 12),
+        (
+            FIELD_PLAYER_KEYRING_SLOT_1,
+            86,
+            crate::messages::KEYRING_SLOTS,
+        ),
+        (
+            FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1,
+            118,
+            CURRENCY_TOKEN_SLOTS,
+        ),
+    ];
+    RUNS.iter().find_map(|&(base, first, n)| {
+        let off = index.checked_sub(base)?;
+        (off < 2 * u16::from(n)).then(|| (first + (off / 2) as u8, off % 2 == 1))
+    })
 }
 
 /// Where enchant slot `slot`'s triple starts in the shared index space, its id's field, for a local

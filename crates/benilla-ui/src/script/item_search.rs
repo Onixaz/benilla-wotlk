@@ -125,9 +125,13 @@ impl ItemQuery {
     }
 }
 
-/// The items in Lua container `bag`, in slot order.
+/// The items in Lua container `bag`, in slot order; the currency container reads the token slots.
 fn contents(model: &Model, bag: i64, out: &mut Vec<Held>) {
-    let Some(c) = model.containers.get(&bag) else {
+    let c = match bag {
+        CURRENCY => model.token_slots.as_ref(),
+        _ => model.containers.get(&bag),
+    };
+    let Some(c) = c else {
         return;
     };
     for slot in 1..=c.num_slots {
@@ -621,6 +625,37 @@ mod tests {
             .eval("local t = {} GetContainerFreeSlots(0, t) return t[2]")
             .unwrap();
         assert_eq!(kept, 2);
+    }
+
+    /// The search's default places take the token slots (`0x7546ff`, `0x753a50`), which count 32
+    /// as container -4 (`0x5d7529`) though no container verb resolves a slot there (`0x5d7380`).
+    #[test]
+    fn the_token_slots_count_in_a_search_and_as_container_minus_four() {
+        let mut s = carrying(25);
+        assert_eq!(s.eval::<i64>("return GetContainerNumSlots(-4)").unwrap(), 0);
+        let mut tokens = ContainerState {
+            num_slots: 32,
+            ..Default::default()
+        };
+        tokens.slots.insert(
+            2,
+            ContainerSlot {
+                item_id: 29434,
+                count: 12,
+                link: Some("|Hitem:29434|h[Badge of Justice]|h".into()),
+                ..Default::default()
+            },
+        );
+        s.set_token_slots(Some(tokens));
+        assert_eq!(s.eval::<i64>("return GetItemCount(29434)").unwrap(), 12);
+        assert_eq!(
+            s.eval::<i64>("return GetContainerNumSlots(-4)").unwrap(),
+            32
+        );
+        assert!(s
+            .eval::<Option<String>>("return GetContainerItemLink(-4, 2)")
+            .unwrap()
+            .is_none());
     }
 
     /// `0x7545d0`: a zero link field is unread; the set ones must match.
