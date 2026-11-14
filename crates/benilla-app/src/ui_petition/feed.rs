@@ -211,10 +211,7 @@ pub(super) fn feed_petition(
                 .map(|t| t.name.clone());
             PetitionVendorItem {
                 texture: name.as_ref().and_then(|_| {
-                    icons
-                        .as_deref()
-                        .and_then(|i| i.catalog.get(row.charter_display_id))
-                        .and_then(|d| d.icon.clone())
+                    crate::ui_items::item_icon(icons.as_deref(), row.charter_display_id)
                 }),
                 name,
                 cost: row.charter_cost,

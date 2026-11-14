@@ -449,7 +449,7 @@ fn feed_lfg(
         let icons: HashMap<u32, String> = script
             .lfg_wanted_displays()
             .into_iter()
-            .filter_map(|d| Some((d, displays.catalog.get(d)?.icon.clone()?)))
+            .map(|d| (d, displays.icon(d)))
             .collect();
         if icons != memory.icons {
             memory.icons = icons.clone();

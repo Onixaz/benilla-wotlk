@@ -455,7 +455,9 @@ pub(super) fn feed_actions(
                     let template = items.template(button.action, 0, &commands).cloned();
                     let texture = template
                         .as_ref()
-                        .and_then(|t| icons.as_ref()?.catalog.get(t.display_info_id)?.icon.clone())
+                        .and_then(|t| {
+                            crate::ui_items::item_icon(icons.as_deref(), t.display_info_id)
+                        })
                         .unwrap_or_else(|| MISSING_ITEM_ICON.to_string());
                     let count = store
                         .map(|s| count_of(&s.0, &objects, button.action, InventoryScope::CARRIED))

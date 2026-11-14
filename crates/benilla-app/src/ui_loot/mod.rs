@@ -675,9 +675,7 @@ fn resolve_item(
         }
         None => (None, None, None),
     };
-    let texture = icons
-        .and_then(|i| i.catalog.get(item.display_info_id))
-        .and_then(|d| d.icon.clone());
+    let texture = crate::ui_items::item_icon(icons, item.display_info_id);
     LootRow {
         name,
         texture,
@@ -828,9 +826,7 @@ fn drain_receives(
             Some((name, quality, display_id)) => {
                 // Ungated by `in_chat`. `arg2` is the icon path the reference builds from the
                 // display record.
-                let icon = icons
-                    .and_then(|i| i.catalog.get(display_id))
-                    .and_then(|d| d.icon.clone());
+                let icon = crate::ui_items::item_icon(icons, display_id);
                 if let Some(icon) = icon {
                     debug!(
                         "ui_loot: ITEM_PUSH container {} icon {icon} (item {})",

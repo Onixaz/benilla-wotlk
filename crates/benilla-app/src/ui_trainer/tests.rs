@@ -14,7 +14,7 @@ fn empty_catalog() -> SpellCatalog {
     SpellCatalog::from_displays(HashMap::new())
 }
 
-/// What [`service_icon`] needs; a template is in flight unless a test seeds one.
+/// The item cache the link and description laws read; a template is in flight until seeded.
 use crate::items::TestDeps as Deps;
 
 /// Header labels that name their key, so each assertion says which lookup the arm made.
@@ -121,18 +121,27 @@ fn icon_catalog() -> SpellCatalog {
     SpellCatalog::from_displays(HashMap::from([(100, recipe), (200, off_slot)]))
 }
 
-/// The product item's template and `ItemDisplayInfo` row, landed.
+/// The product item's template, `Item.dbc` row and `ItemDisplayInfo` row, landed.
 fn landed_item(deps: &mut Deps) -> ItemDisplays {
     let mut t = crate::items::test_template("Copper Shortsword");
     t.display_info_id = 5;
     deps.items.insert_template(777, Some(t));
-    ItemDisplays::icons_for_tests(ItemDisplayCatalog::from_displays(HashMap::from([(
-        5,
-        ItemDisplay {
-            icon: Some("ITEM".into()),
+    let mut icons =
+        ItemDisplays::icons_for_tests(ItemDisplayCatalog::from_displays(HashMap::from([(
+            5,
+            ItemDisplay {
+                icon: Some("ITEM".into()),
+                ..Default::default()
+            },
+        )])));
+    icons.item_dbc.insert(
+        777,
+        benilla_formats::ItemDbcRow {
+            display: 5,
             ..Default::default()
         },
-    )])))
+    );
+    icons
 }
 
 fn icon_of(
@@ -143,14 +152,7 @@ fn icon_of(
 ) -> Option<String> {
     let mut deps = Deps::new();
     let icons = land.then(|| landed_item(&mut deps));
-    service_icon(
-        wire_spell,
-        trainer_type,
-        spells,
-        icons.as_ref(),
-        &deps.items,
-        &deps.commands,
-    )
+    service_icon(wire_spell, trainer_type, spells, icons.as_ref())
 }
 
 /// `GetTrainerServiceIcon` (`0x595150`): a create effect in slot 0 at a tradeskill trainer.
@@ -174,54 +176,51 @@ fn trainer_icon_substitutes_the_product_only_at_a_tradeskill_trainer() {
     assert_eq!(icon_of(&spells, TRAINER_TYPE_TRADESKILL, 999, true), None);
 }
 
-/// The client pushes nil here and repaints from the cache callback.
+/// `0x595213`: a product with no `Item.dbc` row falls back to the spell's icon.
 #[test]
-fn trainer_icon_is_nil_until_the_product_template_lands_and_asks_once() {
+fn trainer_icon_without_an_item_dbc_row_is_the_spells_icon() {
     let spells = icon_catalog();
-    let deps = Deps::new();
     let icons = ItemDisplays::icons_for_tests(ItemDisplayCatalog::from_displays(HashMap::new()));
-    let icon = || {
-        service_icon(
-            100,
-            TRAINER_TYPE_TRADESKILL,
-            &spells,
-            Some(&icons),
-            &deps.items,
-            &deps.commands,
-        )
-    };
-    assert_eq!(
-        icon(),
-        None,
-        "no template yet, so nil, not the spell's icon"
+    let icon = service_icon(100, TRAINER_TYPE_TRADESKILL, &spells, Some(&icons));
+    assert_eq!(icon.as_deref(), Some("RECIPE"));
+}
+
+/// A product whose `Item.dbc` display has no `ItemDisplayInfo` row shows the question mark
+/// (`0x70a9d5`), not the spell's icon.
+#[test]
+fn trainer_icon_with_a_missing_display_is_the_question_mark() {
+    let spells = icon_catalog();
+    let mut icons =
+        ItemDisplays::icons_for_tests(ItemDisplayCatalog::from_displays(HashMap::new()));
+    icons.item_dbc.insert(
+        777,
+        benilla_formats::ItemDbcRow {
+            display: 5,
+            ..Default::default()
+        },
     );
-    assert_eq!(deps.queried_entries(), vec![777]);
-    let _ = icon();
-    assert!(
-        deps.queried_entries().is_empty(),
-        "asked once, not per frame"
+    assert_eq!(
+        service_icon(100, TRAINER_TYPE_TRADESKILL, &spells, Some(&icons)).as_deref(),
+        Some(crate::entities::FALLBACK_ITEM_ICON)
     );
 }
 
 /// On 12340 a blacksmith lists the recipe itself: 2739 "Copper Shortsword" creates item 2847 in
-/// slot 0, so the icon and the item link both wait on 2847's template. Skips without client data.
+/// slot 0, whose `Item.dbc` display gives the icon at once while the link waits on the template.
+/// Skips without client data.
 #[test]
 fn trainer_icon_and_link_on_real_data_reach_for_the_crafted_item() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = benilla_formats::load_spell_catalog(&mut chain).expect("load Spell");
+    let catalog = benilla_formats::load_item_display_catalog(&mut chain).expect("load displays");
+    let mut icons = ItemDisplays::icons_for_tests(catalog);
+    icons.item_dbc = benilla_formats::load_item_dbc(&mut chain).expect("load Item");
     let deps = Deps::new();
-    let icons = ItemDisplays::icons_for_tests(ItemDisplayCatalog::from_displays(HashMap::new()));
-    let icon = service_icon(
-        2739,
-        TRAINER_TYPE_TRADESKILL,
-        &spells,
-        Some(&icons),
-        &deps.items,
-        &deps.commands,
-    );
-    assert_eq!(icon, None, "waiting on the item template");
-    assert_eq!(deps.queried_entries(), vec![2847]);
+    let display = icons.item_dbc.get(&2847).expect("2847 in Item.dbc").display;
+    let icon = service_icon(2739, TRAINER_TYPE_TRADESKILL, &spells, Some(&icons));
+    assert_eq!(icon, Some(icons.icon(display)));
+    assert_ne!(icon.as_deref(), Some(crate::entities::FALLBACK_ITEM_ICON));
     assert_eq!(
         service_item_link(
             2739,
@@ -232,6 +231,7 @@ fn trainer_icon_and_link_on_real_data_reach_for_the_crafted_item() {
         ),
         None
     );
+    assert_eq!(deps.queried_entries(), vec![2847]);
     assert_eq!(
         service_tooltip(2739, &spells),
         TrainerTooltip::Spell {
@@ -241,7 +241,7 @@ fn trainer_icon_and_link_on_real_data_reach_for_the_crafted_item() {
         "a recipe with no learn slot shows its own spell"
     );
     // A class trainer: the spell's own icon.
-    let class_icon = service_icon(2739, 0, &spells, None, &deps.items, &deps.commands);
+    let class_icon = service_icon(2739, 0, &spells, None);
     assert_eq!(class_icon, spells.get(2739).unwrap().icon.clone());
 }
 
@@ -672,9 +672,8 @@ fn tooltip_hops_to_the_taught_spell_where_the_icon_pins_the_wire() {
             alt_caster: false,
         },
     );
-    let deps = Deps::new();
     assert_eq!(
-        super::service_icon(100, 0, &spells, None, &deps.items, &deps.commands),
+        super::service_icon(100, 0, &spells, None),
         Some("WRAPPER".into()),
     );
 }

@@ -35,9 +35,7 @@ fn main_hand_item(
     let entry = objects.object(guid)?.object_entry()?;
     let template = items.template(entry, guid, commands)?;
     let (class, display) = (template.class, template.display_info_id);
-    let icon = icons
-        .and_then(|i| i.catalog.get(display))
-        .and_then(|d| d.icon.clone());
+    let icon = crate::ui_items::item_icon(icons, display);
     Some((class, icon))
 }
 
@@ -92,8 +90,7 @@ pub(crate) fn ranged_weapon_icon(
     if template.subclass == ITEM_SUBCLASS_THROWN {
         return None;
     }
-    let display = template.display_info_id;
-    icons?.catalog.get(display)?.icon.clone()
+    crate::ui_items::item_icon(icons, template.display_info_id)
 }
 
 /// Whether `spell` shows a weapon's icon; the per-frame icon refresh keys on it.

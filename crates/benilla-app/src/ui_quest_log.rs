@@ -311,11 +311,9 @@ fn resolve_template_item(
     let template = items.template(entry, 0, commands).cloned();
     let name = template.as_ref().map(|t| t.name.clone());
     let quality = template.as_ref().map(|t| t.quality).unwrap_or(1);
-    let texture = template.as_ref().and_then(|t| {
-        icons
-            .and_then(|i| i.catalog.get(t.display_info_id))
-            .and_then(|d| d.icon.clone())
-    });
+    let texture = template
+        .as_ref()
+        .and_then(|t| crate::ui_items::item_icon(icons, t.display_info_id));
     // `GetQuestLogItemLink`'s payload; `None` until the template gives the name and quality.
     let link = name
         .as_ref()

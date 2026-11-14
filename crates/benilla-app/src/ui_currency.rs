@@ -96,9 +96,7 @@ fn holdings(
         .map(|t| {
             let rec = items.template(t.item_id, 0, commands);
             let name = rec.map(|r| r.name.clone());
-            let icon = rec
-                .and_then(|r| icons.and_then(|i| i.catalog.get(r.display_info_id)))
-                .and_then(|d| d.icon.clone());
+            let icon = rec.and_then(|r| crate::ui_items::item_icon(icons, r.display_info_id));
             (t.item_id, (name, icon))
         })
         .collect();

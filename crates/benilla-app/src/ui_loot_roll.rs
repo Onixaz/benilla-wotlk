@@ -511,9 +511,7 @@ fn snapshot(
         .iter()
         .map(|r| {
             let t = items.template(r.item_id, 0, commands);
-            let texture = t
-                .and_then(|t| icons?.catalog.get(t.display_info_id))
-                .and_then(|d| d.icon.clone());
+            let texture = t.and_then(|t| crate::ui_items::item_icon(icons, t.display_info_id));
             LootRollEntry {
                 roll_id: r.roll_id,
                 name: t.map(|t| catalogs.name(&t.name, r.random_property_id)),

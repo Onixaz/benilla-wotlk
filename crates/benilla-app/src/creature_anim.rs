@@ -1226,8 +1226,7 @@ impl Plugin for CreatureAnimPlugin {
                 )
                     .after(AssetSet::Open),
             )
-            // Ahead of the frame's kit resolves; a `violenceLevel` change applies next frame.
-            .add_systems(First, track_violence_level)
+            .add_observer(track_violence_level)
             .add_systems(
                 Update,
                 (

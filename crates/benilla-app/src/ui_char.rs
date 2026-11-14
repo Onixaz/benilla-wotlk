@@ -720,9 +720,7 @@ fn slot_view(
             0
         }
     });
-    let icon = icons
-        .and_then(|i| i.catalog.get(display))
-        .and_then(|d| d.icon.clone());
+    let icon = crate::ui_items::item_icon(icons, display);
     Some(InvSlotView {
         item_id: entry,
         guid,
@@ -805,9 +803,7 @@ fn inventory_slots(
             ),
             None => (None, 0, 0, None),
         };
-        let icon = icons
-            .and_then(|i| i.catalog.get(display))
-            .and_then(|d| d.icon.clone());
+        let icon = t.and(crate::ui_items::item_icon(icons, display));
         inv[0] = Some(InvSlotView {
             guid: 0,
             gems: [0; 3],

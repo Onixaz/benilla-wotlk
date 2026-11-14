@@ -528,9 +528,7 @@ fn resolve_slot(
     let template = items.template(item.entry, 0, commands);
     let name = template.map(|t| t.name.clone());
     let quality = template.map(|t| t.quality);
-    let texture = icons
-        .and_then(|i| i.catalog.get(item.display_id))
-        .and_then(|d| d.icon.clone());
+    let texture = crate::ui_items::item_icon(icons, item.display_id);
     // Nil until the template answers: the link embeds the name and the quality colour.
     let link = match (name.as_deref(), quality) {
         (Some(n), Some(q)) => Some(crate::ui_items::item_link_full(

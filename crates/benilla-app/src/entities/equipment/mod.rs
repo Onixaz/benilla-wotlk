@@ -65,6 +65,8 @@ pub(crate) struct ItemDisplays {
     pub(crate) helm_prefixes: HashMap<u8, String>,
     /// `Item.dbc` by entry, which a creature's held items and the bag icon read.
     pub(crate) item_dbc: HashMap<u32, benilla_formats::ItemDbcRow>,
+    /// Each display's art as first resolved, kept for the session (`0x70a928`, `0x70a9a0`).
+    pub(crate) art: std::sync::Mutex<HashMap<u32, String>>,
 }
 
 /// The icon no item or display names (`0x70a9ef`).
@@ -74,11 +76,38 @@ impl ItemDisplays {
     /// A carried item's icon (`0x70aa00`, `0x70a910`): `Item.dbc`'s display, display 0 with no
     /// row, ending on [`FALLBACK_ITEM_ICON`]. No template is read.
     pub(crate) fn carried_icon(&self, entry: u32) -> String {
-        let display = self.item_dbc.get(&entry).map_or(0, |r| r.display);
-        self.catalog
-            .get(display)
-            .and_then(|d| d.icon.clone())
-            .unwrap_or_else(|| FALLBACK_ITEM_ICON.to_string())
+        self.icon(self.item_dbc.get(&entry).map_or(0, |r| r.display))
+    }
+
+    /// A display's inventory art (`0x70a910`), the `violenceLevel` read on its first lookup.
+    pub(crate) fn icon(&self, display: u32) -> String {
+        let mut art = self.art.lock().unwrap_or_else(|e| e.into_inner());
+        inventory_art(
+            &mut art,
+            display,
+            self.catalog.get(display),
+            crate::creature_anim::spell_visual::low_violence(),
+        )
+    }
+}
+
+/// The item art lookup (`0x70a910`): a cached art as it is, else the row's violence pick, cached;
+/// [`FALLBACK_ITEM_ICON`], never cached, when the row or its icon is missing (`0x70a9d5`).
+pub(crate) fn inventory_art(
+    cache: &mut HashMap<u32, String>,
+    display: u32,
+    row: Option<&benilla_formats::ItemDisplay>,
+    low_violence: bool,
+) -> String {
+    if let Some(art) = cache.get(&display) {
+        return art.clone();
+    }
+    match row.and_then(|d| d.inventory_icon(low_violence)) {
+        Some(art) => cache
+            .entry(display)
+            .or_insert_with(|| art.to_string())
+            .clone(),
+        None => FALLBACK_ITEM_ICON.to_string(),
     }
 }
 
@@ -90,6 +119,7 @@ impl ItemDisplays {
             models: HashMap::new(),
             helm_prefixes: HashMap::new(),
             item_dbc: HashMap::new(),
+            art: Default::default(),
         }
     }
 }
@@ -416,7 +446,89 @@ mod item_display_tests {
     use bevy::prelude::*;
 
     use super::super::display::empty_display;
-    use super::{ensure_item_model_mut, helm_file, ItemDisplays, ItemModelKind};
+    use super::{
+        ensure_item_model_mut, helm_file, inventory_art, ItemDisplays, ItemModelKind,
+        FALLBACK_ITEM_ICON,
+    };
+    use benilla_formats::ItemDisplay;
+    use std::collections::HashMap;
+
+    /// One uncached lookup of display 1.
+    fn art(row: Option<&ItemDisplay>, low_violence: bool) -> String {
+        inventory_art(&mut HashMap::new(), 1, row, low_violence)
+    }
+
+    /// The item art lookup (`0x70a910`): no row and an empty icon both end on the question mark.
+    #[test]
+    fn a_missing_row_or_icon_is_the_question_mark() {
+        assert_eq!(art(None, false), FALLBACK_ITEM_ICON);
+        assert_eq!(
+            art(Some(&ItemDisplay::default()), false),
+            FALLBACK_ITEM_ICON
+        );
+        // An empty first icon is not rescued by the second at violence 2.
+        let second_only = ItemDisplay {
+            icon_low_violence: Some("SECOND".into()),
+            ..Default::default()
+        };
+        assert_eq!(art(Some(&second_only), false), FALLBACK_ITEM_ICON);
+        assert_eq!(art(Some(&second_only), true), "SECOND");
+    }
+
+    /// `0x70a958`: at `violenceLevel` 0 and 1 a row's second icon, at 2 its first; a row without a
+    /// second icon shows its first at every level.
+    #[test]
+    fn the_violence_level_picks_the_second_icon_below_two() {
+        let both = ItemDisplay {
+            icon: Some("FIRST".into()),
+            icon_low_violence: Some("SECOND".into()),
+            ..Default::default()
+        };
+        let first_only = ItemDisplay {
+            icon: Some("FIRST".into()),
+            ..Default::default()
+        };
+        let mut cvars = crate::cvars::Cvars::default();
+        for (level, want) in [("0", "SECOND"), ("1", "SECOND"), ("2", "FIRST")] {
+            cvars.set("violenceLevel", level);
+            let low = crate::creature_anim::spell_visual::is_low_violence(&cvars);
+            assert_eq!(art(Some(&both), low), want, "violence {level}");
+            assert_eq!(art(Some(&first_only), low), "FIRST");
+        }
+    }
+
+    /// `0x70a928`: a display's first resolved art holds for the session, so a later violence change
+    /// does not repaint it; the question mark is never cached.
+    #[test]
+    fn a_resolved_art_is_kept_and_the_question_mark_is_not() {
+        let both = ItemDisplay {
+            icon: Some("FIRST".into()),
+            icon_low_violence: Some("SECOND".into()),
+            ..Default::default()
+        };
+        let mut cache = HashMap::new();
+        assert_eq!(inventory_art(&mut cache, 7, Some(&both), false), "FIRST");
+        assert_eq!(inventory_art(&mut cache, 7, Some(&both), true), "FIRST");
+        assert_eq!(
+            inventory_art(&mut cache, 8, None, false),
+            FALLBACK_ITEM_ICON
+        );
+        assert!(!cache.contains_key(&8));
+    }
+
+    /// The window-facing helper answers through the same lookup, and only goes quiet before the
+    /// display table loads.
+    #[test]
+    fn item_icon_falls_back_to_the_question_mark_for_an_unknown_display() {
+        let displays = ItemDisplays::icons_for_tests(
+            benilla_formats::ItemDisplayCatalog::from_displays(std::collections::HashMap::new()),
+        );
+        assert_eq!(
+            crate::ui_items::item_icon(Some(&displays), 4242).as_deref(),
+            Some(FALLBACK_ITEM_ICON)
+        );
+        assert_eq!(crate::ui_items::item_icon(None, 4242), None);
+    }
 
     /// The helm's race suffix is the race's ChrRaces prefix, so a Blood Elf wears its own file
     /// rather than the eighth race's; a race without a row wears none.

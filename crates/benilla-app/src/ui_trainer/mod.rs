@@ -190,14 +190,7 @@ fn resolve_service(wire: &TrainerSpell, cx: &ResolveCtx) -> TrainerService {
         spell_id: wire.spell,
         name: display.map(|d| d.name.clone()),
         subtext: display.and_then(|d| d.rank.clone()),
-        texture: service_icon(
-            wire.spell,
-            cx.trainer_type,
-            spells,
-            cx.icons,
-            cx.items,
-            cx.commands,
-        ),
+        texture: service_icon(wire.spell, cx.trainer_type, spells, cx.icons),
         // `0x5959d0`: the spell's description, else a recipe's cached product description.
         description: cx
             .descriptions

@@ -15,7 +15,6 @@ use benilla_ui::script::{
 use crate::entities::ItemDisplays;
 use crate::items::Items;
 use crate::net::NetCommands;
-use crate::ui_items::item_icon;
 
 use super::reeval::{known_or_higher, PlayerView};
 use super::TRAINER_TYPE_TRADESKILL;
@@ -32,25 +31,20 @@ fn product_item(spell: u32, spells: &SpellCatalog) -> Option<u32> {
         .filter(|&i| i != 0)
 }
 
-/// `GetTrainerServiceIcon` (`0x595150`): at a tradeskill trainer a recipe's product art, else the
-/// wire spell's own icon. Deviation: the product's display comes from the item cache, since
-/// `Item.dbc`, which the reference reads it from, is not loaded; an uncached template reads `None`
-/// until its answer re-pushes the snapshot.
+/// `GetTrainerServiceIcon` (`0x595150`): at a tradeskill trainer the art of a recipe's product
+/// through its `Item.dbc` display, else, with no `Item.dbc` row (`0x595213`), the spell's own icon.
 pub(super) fn service_icon(
     wire_spell: u32,
     trainer_type: u32,
     spells: &SpellCatalog,
     icons: Option<&ItemDisplays>,
-    items: &Items,
-    commands: &NetCommands,
 ) -> Option<String> {
     let wire = spells.get(wire_spell)?;
     if trainer_type == TRAINER_TYPE_TRADESKILL {
-        if let Some(product) = product_item(wire_spell, spells) {
-            return items
-                .template(product, 0, commands)
-                .map(|t| t.display_info_id)
-                .and_then(|d| item_icon(icons, d));
+        let product = product_item(wire_spell, spells)
+            .and_then(|p| icons.and_then(|i| Some((i, i.item_dbc.get(&p)?))));
+        if let Some((icons, row)) = product {
+            return Some(icons.icon(row.display));
         }
     }
     wire.icon.clone()

@@ -177,11 +177,7 @@ fn icon_and_link(
     commands: &NetCommands,
 ) -> (Option<String>, Option<String>) {
     let template = items.template(entry, 0, commands);
-    let texture = template.and_then(|t| {
-        icons
-            .and_then(|i| i.catalog.get(t.display_info_id))
-            .and_then(|d| d.icon.clone())
-    });
+    let texture = template.and_then(|t| crate::ui_items::item_icon(icons, t.display_info_id));
     (
         texture,
         template.map(|t| item_link(entry, &t.name, t.quality)),
@@ -245,9 +241,7 @@ fn resolve_item(
         block: t.block,
         sell_price: t.sell_price,
     });
-    let texture = icons
-        .and_then(|i| i.catalog.get(item.display_id))
-        .and_then(|d| d.icon.clone());
+    let texture = crate::ui_items::item_icon(icons, item.display_id);
     let num_available = if item.current_count == STOCK_UNLIMITED {
         -1
     } else {
@@ -314,9 +308,7 @@ fn resolve_buyback(
         sell_price: t.sell_price,
     });
     let display_id = template.map(|t| t.display_info_id).unwrap_or(0);
-    let texture = icons
-        .and_then(|i| i.catalog.get(display_id))
-        .and_then(|d| d.icon.clone());
+    let texture = crate::ui_items::item_icon(icons, display_id);
     MerchantItem {
         name,
         texture,
