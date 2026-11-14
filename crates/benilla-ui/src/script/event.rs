@@ -521,9 +521,9 @@ pub(crate) fn script_parameters(script: &str) -> &'static str {
 }
 
 /// The calling convention, shared by [`fire`] and the loader's `OnLoad`: the handler is called
-/// with `self`, then `event` for `OnEvent`, then the arguments. `this` and `event` are still set
-/// as globals and restored after the call, even on error, so nested fires are safe; no `argN` is
-/// (the client has no such name).
+/// with `self`, then `event` for `OnEvent`, then the arguments. Event handlers also receive the
+/// 3.3.5a `arg1`..`arg12` globals; stock FrameXML uses those globals for event payloads. `this`,
+/// `event` and the argument globals are restored after the call, even on error.
 pub(crate) fn invoke_with_globals(
     lua: &Lua,
     wrapper: Table,
@@ -534,6 +534,14 @@ pub(crate) fn invoke_with_globals(
     let g = lua.globals();
     let saved_this: Value = g.get("this")?;
     let saved_event: Value = g.get("event")?;
+    let arg_names = [
+        "arg1", "arg2", "arg3", "arg4", "arg5", "arg6", "arg7", "arg8", "arg9", "arg10", "arg11",
+        "arg12",
+    ];
+    let saved_args: Vec<Value> = arg_names
+        .iter()
+        .map(|name| g.get(*name))
+        .collect::<mlua::Result<_>>()?;
 
     g.set("this", wrapper.clone())?;
     let event_value = match event_name {
@@ -542,6 +550,9 @@ pub(crate) fn invoke_with_globals(
     };
     if let Some(ev) = &event_value {
         g.set("event", ev.clone())?;
+        for (index, name) in arg_names.iter().enumerate() {
+            g.set(*name, extra.get(index).cloned().unwrap_or(Value::Nil))?;
+        }
     }
 
     let args: mlua::MultiValue = std::iter::once(Value::Table(wrapper))
@@ -553,6 +564,9 @@ pub(crate) fn invoke_with_globals(
 
     g.set("this", saved_this)?;
     g.set("event", saved_event)?;
+    for (name, value) in arg_names.iter().zip(saved_args) {
+        g.set(*name, value)?;
+    }
 
     outcome
 }

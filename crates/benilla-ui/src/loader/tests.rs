@@ -2796,9 +2796,10 @@ mod script_args_tests {
         }
         assert_eq!(s.eval::<String>("return EventName").unwrap(), "ARGS_PROBE");
         assert_eq!(s.eval::<String>("return EventArg").unwrap(), "payload");
-        assert!(
-            s.eval::<bool>("return EventArg1 == nil").unwrap(),
-            "the client sets no argN global"
+        assert_eq!(
+            s.eval::<String>("return EventArg1").unwrap(),
+            "payload",
+            "3.3.5a event handlers receive arg1 as a legacy global"
         );
         assert_eq!(s.eval::<f64>("return UpdateElapsed").unwrap(), 0.25);
         assert_eq!(
