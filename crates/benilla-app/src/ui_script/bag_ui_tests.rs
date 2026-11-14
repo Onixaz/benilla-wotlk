@@ -235,6 +235,48 @@ fn backpack_button(s: &UiScript, slot: u32) -> String {
     .unwrap()
 }
 
+/// `BAG_UPDATE` naming an open bag repaints its frame in place (`ContainerFrame_OnEvent`, its
+/// first argument against the frame's id), without the window closing and reopening.
+#[test]
+fn bag_update_repaints_an_already_open_bag() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = crate::local_state::test_env::ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = open_backpack("bag-update-open");
+    let button = backpack_button(&s, 1);
+    let texture = |s: &UiScript, button: &str| {
+        s.eval::<Option<String>>(&format!("return _G['{button}IconTexture']:GetTexture()"))
+            .unwrap()
+    };
+    assert_eq!(
+        texture(&s, &button).as_deref(),
+        Some("Interface\\Icons\\INV_Misc_Food_16"),
+        "the initial item is visible"
+    );
+
+    let mut slots = std::collections::HashMap::new();
+    slots.insert(1, item(752, "INV_Misc_Bone_01"));
+    s.set_container(
+        0,
+        Some(ContainerState {
+            name: Some("Backpack".into()),
+            num_slots: 16,
+            slots,
+            bag_family: 0,
+        }),
+    );
+    s.fire_event("BAG_UPDATE", vec![ScriptValue::Int(0)]);
+
+    assert_eq!(
+        texture(&s, &button).as_deref(),
+        Some("Interface\\Icons\\INV_Misc_Bone_01"),
+        "BAG_UPDATE repaints the open frame without reopening it"
+    );
+    let errors = bag_errors(s.take_errors());
+    assert!(errors.is_empty(), "bag errors: {errors:#?}");
+}
+
 /// With no vendor open, hovering a bag stack and a worn item both end in `Sell Price:` and the
 /// tooltip's money frame: `SellPrice` × stack, through `GameTooltip_OnTooltipAddMoney`.
 #[test]

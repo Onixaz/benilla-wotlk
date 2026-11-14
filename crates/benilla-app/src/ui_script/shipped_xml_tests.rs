@@ -1019,10 +1019,10 @@ fn the_layer_does_not_grow() {
 }
 
 /// The layer speaks the dialect of the FrameXML it loads over: a 3.3.5a handler body is compiled
-/// under its parameter list (`self`, `delta`, `value`, ...), and the client sets `this` and `event`
-/// around a handler but no `argN` global (no such name in the 12340 binary), so a body reads its
-/// arguments, never `arg1`. The strata table has no `BLIZZARD`; `SetDrawLayer` takes a layer name
-/// alone; and a button's state textures take a texture, never a colour.
+/// under its parameter list (`self`, `delta`, `value`, ...), so a body reads its named arguments,
+/// never the `argN` globals the client also sets around it (`0x819ea0`). The strata table has no
+/// `BLIZZARD`; `SetDrawLayer` takes a layer name alone; and a button's state textures take a
+/// texture, never a colour.
 #[test]
 fn the_layer_speaks_the_3_3_5a_dialect() {
     fn handlers(el: &benilla_ui::framexml::Element, out: &mut Vec<(String, String)>) {
@@ -1061,7 +1061,7 @@ fn the_layer_speaks_the_3_3_5a_dialect() {
                 let global = format!("arg{n}");
                 assert!(
                     !word(&body, &global),
-                    "{file}: <{tag}> reads `{global}`, which 3.3.5a never sets: {body}"
+                    "{file}: <{tag}> reads `{global}`, not its named argument: {body}"
                 );
             }
         }

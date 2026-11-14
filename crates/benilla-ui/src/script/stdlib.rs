@@ -106,8 +106,8 @@ pub(super) fn sandbox(lua: &Lua) -> mlua::Result<()> {
         .set_name(PCALL_CHUNK)
         .call(handler.clone())?;
     lua.set_named_registry_value(REG_HANDLER_PCALL, pcall)?;
-    // The `OnUpdate` sweep's whole fire in one call: `this` set and `this`/`event` restored, the
-    // handler run under the same message handler through a reused thunk, so a frame's update
+    // The `OnUpdate` sweep's whole fire in one call: `this` and `arg1` (elapsed, `0x490770`) set
+    // and `this`/`event`/`arg1` restored, the handler run under the same message handler through a reused thunk, so a frame's update
     // allocates nothing. The thunk's upvalues are saved around the call, so a nested fire holds.
     let update: mlua::Function = lua
         .load(
@@ -117,10 +117,10 @@ pub(super) fn sandbox(lua: &Lua) -> mlua::Result<()> {
              return function(f, self, elapsed)
                  local pf, ps, pe = cf, cs, ce
                  cf, cs, ce = f, self, elapsed
-                 local saved_this, saved_event = this, event
-                 this = self
+                 local saved_this, saved_event, saved_arg1 = this, event, arg1
+                 this, arg1 = self, elapsed
                  local ok, err = xpcall(thunk, handler)
-                 this, event = saved_this, saved_event
+                 this, event, arg1 = saved_this, saved_event, saved_arg1
                  cf, cs, ce = pf, ps, pe
                  return ok, err
              end",
@@ -138,7 +138,8 @@ const REG_HANDLER_PCALL: &str = "benilla.handler_pcall";
 /// The registry slot of the `OnUpdate` sweep's fire ([`update_fire`]).
 const REG_UPDATE_FIRE: &str = "benilla.update_fire";
 
-/// `fire(handler, self, elapsed) -> (ok, err)`: an `OnUpdate` call with `this` set and restored.
+/// `fire(handler, self, elapsed) -> (ok, err)`: an `OnUpdate` call with `this` and `arg1` set and
+/// restored.
 pub(super) fn update_fire(lua: &Lua) -> mlua::Result<mlua::Function> {
     lua.named_registry_value(REG_UPDATE_FIRE)
 }

@@ -241,10 +241,11 @@ fn serve_realmd(
         list.extend_from_slice(&records);
         // AzerothCore's trailer.
         list.extend_from_slice(&0x0010u16.to_le_bytes());
+        // Counted before the write, so a test that has read the list also reads its count.
+        lists.fetch_add(1, Ordering::SeqCst);
         if s.write_all(&list).is_err() {
             return;
         }
-        lists.fetch_add(1, Ordering::SeqCst);
     }
 }
 

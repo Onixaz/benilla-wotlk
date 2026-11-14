@@ -2759,8 +2759,8 @@ mod script_args_tests {
             <Scripts>
                 <OnLoad>LoadSelf = self; LoadThis = this; this:RegisterEvent("ARGS_PROBE")</OnLoad>
                 <OnEvent>EventSelf = self; EventName = event; EventArg = ...; EventArg1 = arg1</OnEvent>
-                <OnUpdate>UpdateSelf = self; UpdateElapsed = elapsed</OnUpdate>
-                <OnClick>ClickSelf = self; ClickButton = button</OnClick>
+                <OnUpdate>UpdateSelf = self; UpdateElapsed = elapsed; UpdateArg1 = arg1</OnUpdate>
+                <OnClick>ClickSelf = self; ClickButton = button; ClickArgs = { arg1, arg2 }</OnClick>
             </Scripts>
         </Button>
     </Ui>"#;
@@ -2796,15 +2796,55 @@ mod script_args_tests {
         }
         assert_eq!(s.eval::<String>("return EventName").unwrap(), "ARGS_PROBE");
         assert_eq!(s.eval::<String>("return EventArg").unwrap(), "payload");
-        assert!(
-            s.eval::<bool>("return EventArg1 == nil").unwrap(),
-            "the client sets no argN global"
-        );
         assert_eq!(s.eval::<f64>("return UpdateElapsed").unwrap(), 0.25);
         assert_eq!(
             s.eval::<String>("return ClickButton").unwrap(),
             "LeftButton"
         );
+    }
+
+    /// `0x819ea0` sets one `argN` global per argument after the event name, for every script
+    /// that takes arguments, and restores each after the call.
+    #[test]
+    fn a_handler_sees_its_arguments_as_arg_globals() {
+        let s = loaded();
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+        assert_eq!(s.eval::<String>("return EventArg1").unwrap(), "payload");
+        assert_eq!(s.eval::<f64>("return UpdateArg1").unwrap(), 0.25);
+        assert!(s
+            .eval::<bool>("return ClickArgs[1] == 'LeftButton' and ClickArgs[2] == false")
+            .unwrap());
+        assert!(
+            s.eval::<bool>("return arg1 == nil and arg2 == nil and this == nil and event == nil")
+                .unwrap(),
+            "every global is restored after its handler"
+        );
+    }
+
+    /// An argument past the twentieth still gets its global, and a nested call with fewer
+    /// arguments (`Click()`'s two) sets only its own, leaving the outer handler's third in place.
+    #[test]
+    fn arg_globals_are_unbounded_and_nest() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            "local b = CreateFrame('Button', 'NestProbe')              b:SetScript('OnClick', function() InnerSaw = { arg1, arg3 } end)              local f = CreateFrame('Frame') f:RegisterEvent('OUTER')              f:SetScript('OnEvent', function()                  OuterArg22 = arg22                  NestProbe:Click()                  OuterAfter = { arg1, arg3 }              end)",
+        )
+        .unwrap();
+        s.fire_event(
+            "OUTER",
+            (1..=22).map(crate::script::ScriptValue::Int).collect(),
+        );
+        assert!(s.errors().is_empty(), "{:?}", s.errors());
+        assert_eq!(s.eval::<i64>("return OuterArg22").unwrap(), 22);
+        assert!(s
+            .eval::<bool>("return InnerSaw[1] == 'LeftButton' and InnerSaw[2] == 3")
+            .unwrap());
+        assert!(s
+            .eval::<bool>("return OuterAfter[1] == 1 and OuterAfter[2] == 3")
+            .unwrap());
+        assert!(s
+            .eval::<bool>("return arg1 == nil and arg22 == nil")
+            .unwrap());
     }
 
     #[test]
