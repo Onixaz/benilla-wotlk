@@ -88,6 +88,9 @@ pub(crate) mod move_flags {
     /// `MOVEFLAG_ROOT`: vmangos kicks a root-apply ack without it unless the ack still falls
     /// (`MovementHandler.cpp:715-722`); a moving bit beside it freezes the 1.12 client.
     pub const ROOT: u32 = 0x1000;
+    /// 3.3.5a's `MOVEFLAG_PENDING_ROOT` (`0x10_0000`): a root held off through a fall, applied by
+    /// the fall stop (`0x9884b8`) (`benilla_protocol::messages::CLASSIC_PENDING_ROOT`).
+    pub const PENDING_ROOT: u32 = benilla_protocol::messages::CLASSIC_PENDING_ROOT;
     pub const SWIMMING: u32 = 0x20_0000;
     /// 3.3.5a's `MOVEFLAG_ASCENDING` (`0x40_0000`), in an unused bit of this 1.12.1-shaped word
     /// (`benilla_protocol::messages::CLASSIC_ASCENDING`).

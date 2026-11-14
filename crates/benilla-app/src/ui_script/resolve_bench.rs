@@ -259,8 +259,9 @@ fn a_region_moving_every_frame_costs_one_gate_walk_on_the_shipped_ui() {
 
 /// Those walks cost zero derivations of the layout graph: a moving region names its node, so the
 /// resolve re-hashes one node, not the roster; a derivation per frame means a write site fell back
-/// to the conservative `touch_layout`. The VM ticks, so the shipped handlers are held to it too,
-/// and re-owning a region must derive, which proves the counter moves.
+/// to the conservative `touch_layout`. The VM ticks, so the shipped handlers are held to it too.
+/// A screen resize must derive, which proves the counter moves; re-owning a region repoints its
+/// node in place (`reparent_region`) and must not.
 #[test]
 fn a_region_moving_every_frame_costs_no_graph_derivation_on_the_shipped_ui() {
     benilla_formats::wow_data_or_skip!();
@@ -287,22 +288,25 @@ fn a_region_moving_every_frame_costs_no_graph_derivation_on_the_shipped_ui() {
         s.run("bench_spark2_frame()").unwrap();
         app_frame_ticked(&mut s, 1.0 / 144.0);
     }
-    // Positive control: re-owning a region moves its owner edge, which the per-node ledger does
-    // not re-point, so it must derive.
-    let reowned_at = s.layout_derivations();
-    for owner in ["UIParent", "BenchBar2"] {
-        s.run(&format!("BenchSpark2:SetParent({owner})")).unwrap();
+    // Positive control: a screen resize moves every rect, so it must derive.
+    let resized_at = s.layout_derivations();
+    for height in [901.0, 900.0] {
+        s.set_screen_size(1600.0, height);
         app_frame_ticked(&mut s, 1.0 / 144.0);
     }
     assert!(
-        s.layout_derivations() > reowned_at,
-        "re-owning a region must derive the graph — its owner edge moves, which the per-node \
-         ledger does not re-point. Reading zero here means `layout_derivations` never moves and \
-         the assertion below is vacuous."
+        s.layout_derivations() > resized_at,
+        "a screen resize must derive the graph. Reading zero here means `layout_derivations` \
+         never moves and the assertion below is vacuous."
     );
 
     let derives_before = s.layout_derivations();
     let walks_before = s.layout_gate_walks();
+    // Re-owning a region repoints its owner edge in place (`reparent_region`): no derivation.
+    for owner in ["UIParent", "BenchBar2"] {
+        s.run(&format!("BenchSpark2:SetParent({owner})")).unwrap();
+        app_frame_ticked(&mut s, 1.0 / 144.0);
+    }
     for _ in 0..10 {
         s.run("bench_spark2_frame()").unwrap();
         app_frame_ticked(&mut s, 1.0 / 144.0);
@@ -316,7 +320,7 @@ fn a_region_moving_every_frame_costs_no_graph_derivation_on_the_shipped_ui() {
     );
     assert_eq!(
         derives, 0,
-        "10 frames of one moving region derived the layout graph {derives} times. Each derivation \
+        "2 re-owns and 10 frames of one moving region derived the layout graph {derives} times. Each derivation \
          is a walk of the WHOLE roster — every live frame's scale re-synced, every seed rect \
          re-filtered for liveness, all 10,438 anchored regions re-hashed and their edges rebuilt: \
          ~1.48 ms of CPU at the Stormwind pin, on every frame anything moves. A write site is \

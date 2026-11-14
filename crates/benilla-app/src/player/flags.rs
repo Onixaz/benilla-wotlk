@@ -102,6 +102,16 @@ pub(super) fn this_frame(
         // The arc's edges; FALLING rides the wire too, so observers replay the arc.
         let arc = player.advance_airborne_arc(airborne, jumped, now, launch_y);
         landed = arc.landed;
+        // The fall stop applies a pending root (`0x9884b8`): ROOT, with the root's wipe of the
+        // direction, turn and pitch bits, so the landing already goes out rooted.
+        if landed && player.modes.pending_root {
+            player.modes.pending_root = false;
+            player.modes.rooted = true;
+            player.horiz_vel = bevy::prelude::Vec3::ZERO;
+            move_flags_now =
+                (move_flags_now & !move_flags::PENDING_ROOT & crate::net::ROOT_APPLY_WIPE)
+                    | move_flags::ROOT;
+        }
         if airborne {
             move_flags_now |= move_flags::FALLING;
             // In mid-air the wire's direction bits track the keys, as the reference's do (in a
@@ -302,6 +312,42 @@ mod tests {
         assert!(
             f.wire & move_flags::ANY_MOVE == 0,
             "an ordinary fall with no keys held streams no direction: {:#x}",
+            f.wire
+        );
+    }
+
+    /// The landing applies a pending root (`0x9884b8`): ROOT on the landing's own word, the
+    /// direction bits wiped, the pending bit gone.
+    #[test]
+    fn the_landing_applies_a_pending_root() {
+        let mut player = Player {
+            airborne_since: Some(0.0),
+            ..Default::default()
+        };
+        player.modes.pending_root = true;
+        let mut axes = still();
+        axes.fwd = 1;
+        axes.translating = true;
+        let f = this_frame(
+            &mut player,
+            &axes,
+            None,
+            false, // touched down
+            false,
+            false,
+            false,
+            true,
+            true,
+            1.0,
+            0.0,
+        );
+        assert!(f.landed);
+        assert!(player.modes.rooted && !player.modes.pending_root);
+        assert_eq!(f.wire & move_flags::ROOT, move_flags::ROOT);
+        assert_eq!(
+            f.wire & (move_flags::PENDING_ROOT | move_flags::ANY_MOVE),
+            0,
+            "{:#x}",
             f.wire
         );
     }

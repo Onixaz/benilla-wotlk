@@ -419,6 +419,10 @@ mod tests {
             flags,
             pos: [0.0; 3],
             orientation: 0.0,
+            pitch: 0.0,
+            fall_time: 0,
+            jump: None,
+            transport: None,
         }
     }
 

@@ -23,12 +23,20 @@ pub const CLASSIC_DESCENDING: u32 = 0x80_0000;
 pub const CLASSIC_CAN_FLY: u32 = 0x800_0000;
 /// 3.3.5a's `DISABLE_GRAVITY` (`0x400`) in the 1.12.1 word: the same bit, 1.12.1's levitating.
 pub const CLASSIC_DISABLE_GRAVITY: u32 = 0x400;
+/// 3.3.5a's `PENDING_ROOT` (`0x10_0000`) in the 1.12.1 word, a bit 1.12.1 never defines: a root
+/// held off while the body falls, applied on landing (`0x9884b8`).
+pub const CLASSIC_PENDING_ROOT: u32 = 0x8000_0000;
 
 /// The 1.12.1-bit flags a launch leaves (`0x6f0e30`): a swim or flight ends, the root becomes a
-/// pending root, `CAN_FLY` clears, and the unit falls.
+/// pending root (`0x6ea01d`), `CAN_FLY` clears, and the unit falls.
 pub(super) fn launch_flags(classic: u32) -> u32 {
     let ended = MOVEMENT_FLAG_SWIMMING | CLASSIC_FLYING | MOVEMENT_FLAG_ROOT | CLASSIC_CAN_FLY;
-    (classic & !ended) | MOVEMENT_FLAG_JUMPING
+    let pending = if classic & MOVEMENT_FLAG_ROOT != 0 {
+        CLASSIC_PENDING_ROOT
+    } else {
+        0
+    };
+    (classic & !ended) | pending | MOVEMENT_FLAG_JUMPING
 }
 
 /// `MSG_MOVE_TIME_SKIPPED` inbound: a packed guid and the ms that mover's client skipped. Our own
@@ -45,6 +53,8 @@ mod wotlk_flag {
     pub const DISABLE_GRAVITY: u32 = 0x400;
     pub const ROOT: u32 = 0x800;
     pub const FALLING: u32 = 0x1000;
+    /// Set by a launch or a root taken while falling, made a root by the fall stop (`0x9884b8`).
+    pub const PENDING_ROOT: u32 = 0x10_0000;
     pub const SWIMMING: u32 = 0x20_0000;
     /// Set by StartAscend `0x9898e0`, cleared with [`DESCENDING`] by StopAscend `0x989940`.
     pub const ASCENDING: u32 = 0x40_0000;
@@ -69,15 +79,16 @@ pub const FLAG2_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY: u16 =
 
 /// 3.3.5a's movement flags in 1.12.1's bits. 3.3.5a moved transport to `0x200` and spline to
 /// `0x0800_0000`, shifted root through the pending bits down by one and added ascending,
-/// descending, can-fly and pending-root. Ascending, descending and can-fly ride 1.12.1's unused
-/// bits ([`CLASSIC_ASCENDING`], [`CLASSIC_DESCENDING`], [`CLASSIC_CAN_FLY`]); pending-root is
-/// dropped. Its gravity off is 1.12.1's levitating and its flying 1.12.1's `0x0100_0000`.
+/// descending, can-fly and pending-root, which ride 1.12.1's unused bits ([`CLASSIC_ASCENDING`],
+/// [`CLASSIC_DESCENDING`], [`CLASSIC_CAN_FLY`], [`CLASSIC_PENDING_ROOT`]). Its gravity off is
+/// 1.12.1's levitating and its flying 1.12.1's `0x0100_0000`.
 pub(crate) fn classic_flags_from_wotlk(flags: u32) -> u32 {
     // Forward through walking, and swimming, spline elevation, water walk, safe fall and hover,
     // keep their bit.
     let mut classic = flags & (0x1ff | 0x20_0000 | 0x400_0000 | 0x7000_0000);
-    let moved: [(u32, u32); 16] = [
+    let moved: [(u32, u32); 17] = [
         (wotlk_flag::ON_TRANSPORT, MOVEMENT_FLAG_ON_TRANSPORT),
+        (wotlk_flag::PENDING_ROOT, CLASSIC_PENDING_ROOT),
         (wotlk_flag::ASCENDING, CLASSIC_ASCENDING),
         (wotlk_flag::DESCENDING, CLASSIC_DESCENDING),
         (wotlk_flag::CAN_FLY, CLASSIC_CAN_FLY),
@@ -106,8 +117,9 @@ pub(crate) fn classic_flags_from_wotlk(flags: u32) -> u32 {
 /// bit it produces.
 pub(crate) fn wotlk_flags_from_classic(classic: u32) -> u32 {
     let mut flags = classic & (0x1ff | 0x20_0000 | 0x400_0000 | 0x7000_0000);
-    let moved: [(u32, u32); 16] = [
+    let moved: [(u32, u32); 17] = [
         (MOVEMENT_FLAG_ON_TRANSPORT, wotlk_flag::ON_TRANSPORT),
+        (CLASSIC_PENDING_ROOT, wotlk_flag::PENDING_ROOT),
         (CLASSIC_ASCENDING, wotlk_flag::ASCENDING),
         (CLASSIC_DESCENDING, wotlk_flag::DESCENDING),
         (CLASSIC_CAN_FLY, wotlk_flag::CAN_FLY),
@@ -570,6 +582,7 @@ mod tests {
         assert_eq!(wotlk_flags_from_classic(CLASSIC_DESCENDING), 0x80_0000);
         assert_eq!(wotlk_flags_from_classic(CLASSIC_CAN_FLY), 0x100_0000);
         assert_eq!(wotlk_flags_from_classic(CLASSIC_FLYING), 0x200_0000);
+        assert_eq!(wotlk_flags_from_classic(CLASSIC_PENDING_ROOT), 0x10_0000);
         assert_eq!(
             classic_flags_from_wotlk(0x40_0000),
             CLASSIC_ASCENDING,
