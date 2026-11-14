@@ -261,7 +261,10 @@ fn rank_title_gendered(lua: &Lua, title: RankTitle) -> Option<String> {
 
 /// [`rank_title_gendered`]'s key construction over a string lookup, so a caller with no VM (the
 /// world-text pass) resolves the same `_FEMALE` twin and fallback.
-fn rank_title(lookup: &impl Fn(&str) -> Option<String>, title: RankTitle) -> Option<String> {
+pub(crate) fn rank_title(
+    lookup: &impl Fn(&str) -> Option<String>,
+    title: RankTitle,
+) -> Option<String> {
     title
         .female
         .then(|| lookup(&format!("PVP_RANK_{}_{}_FEMALE", title.rank, title.team)))

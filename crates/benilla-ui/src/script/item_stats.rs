@@ -77,9 +77,9 @@ pub struct ItemTemplateView {
     pub required_skill_name: Option<String>,
     pub required_spell: u32,
     pub required_spell_name: Option<String>,
-    /// No tooltip line in 1.12; only the usable gate reads it.
+    /// The lifetime honor rank required, named by the player's `PVP_RANK_<rank>_<team>`.
     pub required_honor_rank: u32,
-    /// Usable gate only; nonzero always fails, as the `PVP_MEDALS` bits it tests are never set.
+    /// The PvP medal required, `PVP_MEDAL<n>`, held as bit `n - 1` of the medal field.
     pub required_city_rank: u32,
     /// "Requires <Faction> - <Standing>", app-resolved; the raw faction and rank drive its red.
     pub required_rep_line: Option<String>,
@@ -122,6 +122,9 @@ pub struct ItemTemplateView {
     /// The item a recipe teaches to make: a learn-spell (36) trigger whose taught spell creates
     /// (24) an item; 0 for none. `IsDressableItem` dresses a pattern as its product.
     pub recipe_creates: u32,
+    /// A learn item's taught spell and whether the pet learns it, `None` unless block 0's spell
+    /// learns; a known one draws the red `ITEM_SPELL_KNOWN`.
+    pub taught: Option<(u32, bool)>,
     /// `SocketColor` per socket, a mask (1 meta, 2 red, 4 yellow, 8 blue); 0 for no socket.
     pub socket_colors: [u32; 3],
     /// The socket bonus's `SpellItemEnchantment` row, 0 for none, and its name.
@@ -176,6 +179,8 @@ pub struct PlayerReqState {
     pub can_dual_wield: bool,
     /// The highest lifetime honor rank (`PLAYER_FIELD_BYTES` byte 3).
     pub honor_rank: u8,
+    /// `PLAYER_FIELD_PVP_MEDALS`: bit `n - 1` holds medal `n`.
+    pub pvp_medals: u32,
     /// `ChrClasses.dbc` flags of the class (`row + 0x24`): `0x10` lets a scaling mail item read as
     /// leather, `0x20` a scaling plate item as mail or leather (`0x6288f5`).
     pub class_flags: u32,
@@ -185,6 +190,12 @@ pub struct PlayerReqState {
 /// merchant getter skips an uncached record.
 pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
     item_use_refusal_by_id(model, item_id).is_none()
+}
+
+/// Medal `rank` is held: bit `rank - 1` of the medal field (`0x61dcb0`); a shift past the word
+/// wraps as the x86 `shl` does.
+pub(super) fn has_medal(req: &PlayerReqState, rank: u32) -> bool {
+    req.pvp_medals & 1u32.wrapping_shl(rank.wrapping_sub(1)) != 0
 }
 
 /// [`item_use_refusal`] by item entry: entry 0 and a template not yet answered are refused nothing.
@@ -269,7 +280,7 @@ pub fn item_use_refusal(
     if v.required_honor_rank != 0 && u32::from(req.honor_rank) < v.required_honor_rank {
         return CANT_USE;
     }
-    if v.required_city_rank != 0 {
+    if v.required_city_rank != 0 && !has_medal(req, v.required_city_rank) {
         return CANT_USE;
     }
     if v.required_rep_faction != 0 {
@@ -838,9 +849,15 @@ mod tests {
         req.honor_rank = 3;
         assert!(item_usable(&v, &req, knows_none));
 
+        // Medal 2 is bit 1 of the medal field (`0x6dc4f3`).
         let mut v = base_item.clone();
-        v.required_city_rank = 1;
+        v.required_city_rank = 2;
         assert!(!item_usable(&v, &base_req, knows_none));
+        let mut req = base_req.clone();
+        req.pvp_medals = 0b01;
+        assert!(!item_usable(&v, &req, knows_none));
+        req.pvp_medals = 0b10;
+        assert!(item_usable(&v, &req, knows_none));
 
         // An unknown faction is rank 0.
         let mut v = base_item.clone();

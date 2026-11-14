@@ -309,6 +309,7 @@ fn template_view(
         item_set: t.item_set,
         random_property: t.random_property,
         recipe_creates: recipe_creates(t, spells),
+        taught: taught_spell(t, spells),
         item_spells: t
             .spells
             .iter()
@@ -374,6 +375,30 @@ pub(crate) fn recipe_creates(t: &ItemInfo, spells: Option<&crate::ui_action::Spe
             Some(taught.effect_item_type[0]).filter(|&id| id != 0)
         })
         .unwrap_or(0)
+}
+
+/// The spell a learn item teaches and whether its pet learns it (`0x62b3f9`..`0x62b491`): block 0's
+/// spell must learn (36), teaching its first trigger spell, else the first learn-trigger (6)
+/// block's spell; a first target of 5 (the pet) makes the pet the learner.
+pub(crate) fn taught_spell(
+    t: &ItemInfo,
+    spells: Option<&crate::ui_action::Spells>,
+) -> Option<(u32, bool)> {
+    let block0 = t.spells.iter().find(|s| s.index == 0)?;
+    let sd = spells?
+        .catalog
+        .get(block0.spell_id)
+        .filter(|sd| sd.effects[0] == 36)?;
+    let taught = match sd.effect_trigger_spell[0] {
+        0 => t
+            .spells
+            .iter()
+            .find(|s| s.trigger == 6)
+            .map_or(0, |s| s.spell_id),
+        id => id,
+    };
+    let pet = sd.effect_implicit_target_a[0] == 5 || sd.effect_implicit_target_b[0] == 5;
+    Some((taught, pet))
 }
 
 /// Answers the engine's set-id asks from `ItemSet.dbc`: member names from the item-name cache, each
@@ -876,6 +901,7 @@ pub(super) fn feed_player_req(
         rep_ranks,
         can_dual_wield,
         honor_rank: store.0.player_honor_rank().unwrap_or(0),
+        pvp_medals: store.0.player_pvp_medals().unwrap_or(0),
         class_flags: classes.map_or(0, |c| c.0.flags(u32::from(class))),
     };
     if last.as_ref() != Some(&state) {

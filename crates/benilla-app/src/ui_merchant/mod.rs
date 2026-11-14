@@ -184,9 +184,8 @@ fn icon_and_link(
     )
 }
 
-/// A row's `ItemExtendedCost.dbc` record, its required items resolved. A personal-rating demand
-/// passes only through the personal-and-team rating check (`0x5a37b0`), which needs a team in the
-/// bracket; arena teams are not built, so it fails as for a player in none.
+/// A row's `ItemExtendedCost.dbc` record, its required items resolved; the VM tests its rating
+/// demand against the arena teams it holds.
 fn resolve_extended_cost(
     id: u32,
     costs: Option<&ExtendedCosts>,
@@ -213,7 +212,8 @@ fn resolve_extended_cost(
         honor: row.honor,
         arena: row.arena,
         items,
-        rating_met: row.personal_rating == 0,
+        required_rating: row.personal_rating,
+        arena_bracket: row.arena_slot as i32,
     })
 }
 
@@ -1567,7 +1567,7 @@ mod tests {
     }
 
     /// A row's extended cost resolves from `ItemExtendedCost.dbc`: points, the non-zero items in
-    /// record order, and a personal-rating demand that fails with no arena team.
+    /// record order, and the rating demand with its bracket.
     #[test]
     fn an_extended_cost_row_resolves_its_record() {
         use benilla_formats::{ExtendedCostRow, ItemExtendedCosts};
@@ -1587,6 +1587,7 @@ mod tests {
                 2277,
                 ExtendedCostRow {
                     arena: 150,
+                    arena_slot: 1,
                     personal_rating: 1800,
                     ..Default::default()
                 },
@@ -1600,11 +1601,12 @@ mod tests {
         assert_eq!((cost.honor, cost.arena), (7000, 0));
         assert_eq!(cost.items.len(), 1);
         assert_eq!((cost.items[0].item_id, cost.items[0].count), (20560, 3));
-        assert!(cost.rating_met);
+        assert_eq!(cost.required_rating, 0);
 
         token.extended_cost = 2277;
         let rated = resolve_item(&token, &items, None, Some(&costs), &commands);
-        assert!(!rated.extended_cost.expect("the record").rating_met);
+        let rated = rated.extended_cost.expect("the record");
+        assert_eq!((rated.required_rating, rated.arena_bracket), (1800, 1));
 
         token.extended_cost = 9;
         assert_eq!(

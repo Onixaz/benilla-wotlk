@@ -134,6 +134,26 @@ impl ArenaTeams {
         self.order[slot] = order;
     }
 
+    /// The personal and team rating check (`0x5a37b0`): a slot whose team size is at least the
+    /// bracket's (2, 3, 5) with a personal rating of `rating`, and a team of that size rated as
+    /// high. A bracket off the three never passes.
+    pub(crate) fn rating_met(&self, rating: u32, bracket: i32) -> bool {
+        let Some(&min_size) = usize::try_from(bracket)
+            .ok()
+            .and_then(|b| [2u32, 3, 5].get(b))
+        else {
+            return false;
+        };
+        self.slots.iter().any(|s| {
+            let size = s.info[1];
+            size >= min_size
+                && s.info[6] >= rating
+                && self.slots.iter().any(|t| {
+                    t.record.as_ref().is_some_and(|r| r.team_type == size) && t.stats[0] >= rating
+                })
+        })
+    }
+
     fn member(&self, slot: u32, index: u32) -> Option<&ArenaTeamMemberView> {
         let slot = usize::try_from(slot).ok().filter(|&s| s < 3)?;
         let &m = self.order[slot].get(index as usize)?;

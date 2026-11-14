@@ -17,7 +17,7 @@ fn a_known_higher_rank_clears_the_spell_requirement_and_marks_a_taught_spell() {
             quality: 1,
             required_spell: 100,
             required_spell_name: Some("Riding".into()),
-            spell_triggers: vec![(6, 100, String::new())],
+            taught: Some((100, false)),
             ..Default::default()
         },
     );
@@ -180,6 +180,7 @@ fn verified_families_signable_locked_resists_known() {
             lock_id: 7,
             resistances: [5, 5, 5, 5, 5, 5],
             spell_triggers: vec![(6, 2020, "Recipe: Stew".into())],
+            taught: Some((2020, false)),
             description: "Sign here.".into(),
             ..Default::default()
         },
@@ -1210,4 +1211,201 @@ fn name_only_mode_prints_no_line_under_the_name() {
     )
     .unwrap();
     assert!(s.take_errors().is_empty());
+}
+
+/// Stand-ins for the requirement block's rank, medal and arena keys.
+fn seed_requirement_strings(s: &mut UiScript) {
+    s.run(
+        r#"
+        PVP_RANK_5_1 = "[RANK5]"; PVP_RANK_5_1_FEMALE = "[RANK5F]"
+        PVP_MEDAL2 = "[MEDAL2]"
+        ITEM_REQ_ARENA_RATING = "[ARENA %d]"
+        ITEM_REQ_ARENA_RATING_3V3 = "[ARENA3 %d]"
+        ITEM_REQ_ARENA_RATING_5V5 = "[ARENA5 %d]"
+        ITEM_PROSPECTABLE = "[ITEM_PROSPECTABLE]"
+        ITEM_MILLABLE = "[ITEM_MILLABLE]"
+        local a = CreateFrame("Button", "Slot9"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        CreateFrame("GameTooltip", "TT")
+    "#,
+    )
+    .unwrap();
+}
+
+/// An item carrying every requirement, sold by the open merchant for an arena rating.
+fn all_requirements() -> ItemTemplateView {
+    ItemTemplateView {
+        name: "Pattern".into(),
+        quality: 1,
+        required_skill: 197,
+        required_skill_rank: 300,
+        required_skill_name: Some("Tailoring".into()),
+        taught: Some((2020, false)),
+        required_spell: 100,
+        required_spell_name: Some("Riding".into()),
+        required_honor_rank: 5,
+        required_city_rank: 2,
+        required_rep_faction: 72,
+        required_rep_rank: 5,
+        required_rep_line: Some("Requires Stormwind - Honored".into()),
+        ..Default::default()
+    }
+}
+
+fn rated_merchant(item_id: u32, bracket: i32) -> MerchantState {
+    MerchantState {
+        items: vec![MerchantItem {
+            item_id,
+            extended_cost: Some(ExtendedCost {
+                required_rating: 1800,
+                arena_bracket: bracket,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+/// The builder's order (`0x6277f0`): skill, taught spell known, required spell, honor rank, the
+/// merchant's arena rating, medal, reputation.
+#[test]
+fn requirement_lines_come_out_in_the_reference_order() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    seed_requirement_strings(&mut s);
+    s.set_item_template(9, all_requirements());
+    s.set_known_spells([2020]);
+    s.set_unit(
+        "player",
+        Some(UnitState {
+            exists: true,
+            pvp_team: 1,
+            sex: 3,
+            ..Default::default()
+        }),
+    );
+    s.set_merchant(Some(rated_merchant(9, 1)));
+    s.run("TT:SetOwner(Slot9, 'ANCHOR_RIGHT'); TT:SetMerchantItem(1)")
+        .unwrap();
+    let lines = lines_of(&mut s);
+    let texts: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec![
+            "Pattern",
+            "[MIN_SKILL Tailoring 300]",
+            "[ITEM_SPELL_KNOWN]",
+            "[REQ_SKILL Riding]",
+            "[REQ_SKILL [RANK5F]]",
+            "[ARENA3 1800]",
+            "[REQ_SKILL [MEDAL2]]",
+            "Requires Stormwind - Honored",
+        ],
+    );
+
+    // Off the merchant the arena line is gone; the rest keep their order.
+    s.run("TT:SetOwner(Slot9, 'ANCHOR_RIGHT'); SetItemByIdForTest(TT, 9)")
+        .unwrap();
+    let lines = lines_of(&mut s);
+    assert!(!lines.iter().any(|(t, _)| t.starts_with("[ARENA")));
+    assert_eq!(lines.len(), 7);
+}
+
+/// The arena line's key follows the bracket, and it reads white once a team of the bracket's size
+/// and its member's personal rating both reach the demand (`0x5a37b0`); the medal line reads white
+/// once its bit is held.
+#[test]
+fn the_arena_rating_and_medal_lines_turn_white_when_met() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    seed_requirement_strings(&mut s);
+    s.set_item_template(9, all_requirements());
+    let red = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
+    let white = [1.0, 1.0, 1.0, 1.0];
+    let read = |s: &mut UiScript, needle: &str| {
+        s.run("TT:SetOwner(Slot9, 'ANCHOR_RIGHT'); TT:SetMerchantItem(1)")
+            .unwrap();
+        lines_of(s)
+            .into_iter()
+            .find(|(t, _)| t == needle)
+            .unwrap_or_else(|| panic!("no line {needle:?}"))
+            .1
+    };
+    for (bracket, key) in [
+        (0, "[ARENA 1800]"),
+        (2, "[ARENA5 1800]"),
+        (7, "[ARENA 1800]"),
+    ] {
+        s.set_merchant(Some(rated_merchant(9, bracket)));
+        assert_eq!(read(&mut s, key), red, "no team, bracket {bracket}");
+    }
+    assert_eq!(read(&mut s, "[REQ_SKILL [MEDAL2]]"), red);
+
+    s.set_merchant(Some(rated_merchant(9, 1)));
+    let team = |personal: u32, rating: u32| ArenaTeamSlotView {
+        info: [7, 3, 1, 0, 0, 0, personal],
+        record: Some(ArenaTeamRecordView {
+            team_type: 3,
+            ..Default::default()
+        }),
+        stats: [rating, 0, 0, 0, 0, 0],
+        members: Vec::new(),
+    };
+    s.set_arena_teams([team(1799, 1900), Default::default(), Default::default()]);
+    assert_eq!(read(&mut s, "[ARENA3 1800]"), red, "personal rating short");
+    s.set_arena_teams([team(1800, 1799), Default::default(), Default::default()]);
+    assert_eq!(read(&mut s, "[ARENA3 1800]"), red, "team rating short");
+    s.set_arena_teams([team(1800, 1800), Default::default(), Default::default()]);
+    assert_eq!(read(&mut s, "[ARENA3 1800]"), white);
+    // A 3v3 team does not meet a 5v5 demand.
+    s.set_merchant(Some(rated_merchant(9, 2)));
+    assert_eq!(read(&mut s, "[ARENA5 1800]"), red);
+
+    s.set_player_req_state(PlayerReqState {
+        pvp_medals: 0b10,
+        ..Default::default()
+    });
+    assert_eq!(read(&mut s, "[REQ_SKILL [MEDAL2]]"), white);
+}
+
+/// A prospectable or millable item draws its gathering line instead of the skill line, and only
+/// once the skill has a value (`0x62b2a2`).
+#[test]
+fn a_prospectable_item_reads_its_line_only_with_the_skill() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    seed_requirement_strings(&mut s);
+    let red = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
+    for (flag, key) in [
+        (0x4_0000, "[ITEM_PROSPECTABLE]"),
+        (0x2000_0000, "[ITEM_MILLABLE]"),
+    ] {
+        s.set_item_template(
+            9,
+            ItemTemplateView {
+                name: "Ore".into(),
+                flags: flag,
+                required_skill: 755,
+                required_skill_rank: 20,
+                required_skill_name: Some("Jewelcrafting".into()),
+                ..Default::default()
+            },
+        );
+        let read = |s: &mut UiScript| {
+            s.run("TT:SetOwner(Slot9, 'ANCHOR_RIGHT'); SetItemByIdForTest(TT, 9)")
+                .unwrap();
+            lines_of(s)
+        };
+        s.set_player_req_state(PlayerReqState::default());
+        let texts: Vec<String> = read(&mut s).into_iter().map(|(t, _)| t).collect();
+        assert_eq!(texts, vec!["Ore".to_string()], "no skill, no line");
+        let mut req = PlayerReqState::default();
+        req.skills.insert(755, 10);
+        s.set_player_req_state(req.clone());
+        let lines = read(&mut s);
+        assert_eq!((lines[1].0.as_str(), lines[1].1), (key, red), "below rank");
+        req.skills.insert(755, 20);
+        s.set_player_req_state(req);
+        assert_eq!(read(&mut s)[1].1, [1.0, 1.0, 1.0, 1.0]);
+    }
 }
