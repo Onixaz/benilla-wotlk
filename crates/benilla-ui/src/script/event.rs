@@ -1,8 +1,7 @@
 //! Handler firing: the FrameScript calling convention for events, ticks and show/hide. The
-//! reference sets `this`, `event` and `arg1..argN` around the call, restoring each after, and
-//! `pcall`s with no arguments; the handler here also gets the same values as `(self, event, ...)`
-//! arguments, which 1.12 does not pass. Handler errors return to the caller, which records them in
-//! [`super::Model::errors`].
+//! reference (`0x819ea0`) sets `this`, `event` and `arg1..argN` around the call, restoring each
+//! after, and calls the handler with the same values as `(self, event, ...)`. Handler errors
+//! return to the caller, which records them in [`super::Model::errors`].
 
 use mlua::{Function, Lua, Table, Value};
 
@@ -76,8 +75,8 @@ impl UpdateSweep {
         })
     }
 
-    /// Fire frame `id`'s `OnUpdate(self, elapsed)` with `this` set and `this`/`event` restored
-    /// after, as [`fire`] does; a no-op when the frame has none.
+    /// Fire frame `id`'s `OnUpdate(self, elapsed)` with `this` and `arg1` set and restored after,
+    /// as [`fire`] does; a no-op when the frame has none.
     pub(super) fn fire(&self, lua: &Lua, id: u32, elapsed: f32) -> mlua::Result<()> {
         let func: Function = match self.scripts.raw_get::<Value>(id)? {
             Value::Table(per) => match per.raw_get::<Value>(&self.on_update)? {
@@ -521,9 +520,9 @@ pub(crate) fn script_parameters(script: &str) -> &'static str {
 }
 
 /// The calling convention, shared by [`fire`] and the loader's `OnLoad`: the handler is called
-/// with `self`, then `event` for `OnEvent`, then the arguments. Event handlers also receive the
-/// 3.3.5a `arg1`..`arg12` globals; stock FrameXML uses those globals for event payloads. `this`,
-/// `event` and the argument globals are restored after the call, even on error.
+/// with `self`, then `event` for `OnEvent`, then the arguments. As `0x819ea0` does, `this`, `event`
+/// and one `argN` global per argument after the event name are set around the call and restored
+/// after it, even on error, so nested fires are safe; a higher `argN` is left as it was.
 pub(crate) fn invoke_with_globals(
     lua: &Lua,
     wrapper: Table,
@@ -534,13 +533,8 @@ pub(crate) fn invoke_with_globals(
     let g = lua.globals();
     let saved_this: Value = g.get("this")?;
     let saved_event: Value = g.get("event")?;
-    let arg_names = [
-        "arg1", "arg2", "arg3", "arg4", "arg5", "arg6", "arg7", "arg8", "arg9", "arg10", "arg11",
-        "arg12",
-    ];
-    let saved_args: Vec<Value> = arg_names
-        .iter()
-        .map(|name| g.get(*name))
+    let saved_args: Vec<Value> = (1..=extra.len())
+        .map(|n| g.get(arg_name(n)))
         .collect::<mlua::Result<_>>()?;
 
     g.set("this", wrapper.clone())?;
@@ -550,9 +544,9 @@ pub(crate) fn invoke_with_globals(
     };
     if let Some(ev) = &event_value {
         g.set("event", ev.clone())?;
-        for (index, name) in arg_names.iter().enumerate() {
-            g.set(*name, extra.get(index).cloned().unwrap_or(Value::Nil))?;
-        }
+    }
+    for (n, value) in (1..).zip(&extra) {
+        g.set(arg_name(n), value.clone())?;
     }
 
     let args: mlua::MultiValue = std::iter::once(Value::Table(wrapper))
@@ -564,11 +558,24 @@ pub(crate) fn invoke_with_globals(
 
     g.set("this", saved_this)?;
     g.set("event", saved_event)?;
-    for (name, value) in arg_names.iter().zip(saved_args) {
-        g.set(*name, value)?;
+    for (n, value) in (1..).zip(saved_args) {
+        g.set(arg_name(n), value)?;
     }
 
     outcome
+}
+
+/// The global the `n`th handler argument is set under (`0x819ea0` writes the number into its
+/// `"arg0"` buffer, `0xaf57f4`), with no upper bound.
+fn arg_name(n: usize) -> std::borrow::Cow<'static, str> {
+    const NAMES: [&str; 20] = [
+        "arg1", "arg2", "arg3", "arg4", "arg5", "arg6", "arg7", "arg8", "arg9", "arg10", "arg11",
+        "arg12", "arg13", "arg14", "arg15", "arg16", "arg17", "arg18", "arg19", "arg20",
+    ];
+    match NAMES.get(n.wrapping_sub(1)) {
+        Some(name) => (*name).into(),
+        None => format!("arg{n}").into(),
+    }
 }
 
 #[cfg(test)]

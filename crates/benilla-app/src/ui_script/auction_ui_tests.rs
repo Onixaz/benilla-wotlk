@@ -319,25 +319,43 @@ fn a_two_stack_sale_runs_as_a_multisell() {
     assert!(!req.direct, "more than the sell item: a multi-sell");
     assert_eq!(req.items, vec![(0, 1, 20), (0, 2, 20)], "gathered until 40");
 
-    // The stock handler reads the global `arg1`, which 12340 never sets, and its
-    // `SetMinMaxValues` (`0x9713c0`) refuses the nil: the form blocks and the bar stays hidden.
+    // The stock handler reads the global `arg1`, which `0x819ea0` sets: the form blocks and the
+    // bar counts up to the stacks, then unblocks on the last one.
     s.fire_event("AUCTION_MULTISELL_START", vec![ScriptValue::Int(2)]);
-    let errors = auction_errors(s.take_errors());
-    assert!(
-        errors.len() == 1 && errors[0].contains("SetMinMaxValues"),
-        "the reference's own error: {errors:#?}"
+    let shown = |s: &UiScript, frame: &str| {
+        s.eval::<bool>(&format!("return {frame}:IsShown() == 1"))
+            .unwrap()
+    };
+    assert!(shown(&s, "AuctionsBlockFrame"));
+    assert!(shown(&s, "AuctionProgressFrame"));
+    assert_eq!(
+        s.eval::<f64>("return select(2, AuctionProgressBar:GetMinMaxValues())")
+            .unwrap(),
+        2.0
     );
+    s.fire_event(
+        "AUCTION_MULTISELL_UPDATE",
+        vec![ScriptValue::Int(1), ScriptValue::Int(2)],
+    );
+    assert_eq!(
+        s.eval::<f64>("return AuctionProgressBar:GetValue()")
+            .unwrap(),
+        1.0
+    );
+    assert!(shown(&s, "AuctionsBlockFrame"));
+    s.fire_event(
+        "AUCTION_MULTISELL_UPDATE",
+        vec![ScriptValue::Int(2), ScriptValue::Int(2)],
+    );
+    assert!(!shown(&s, "AuctionsBlockFrame"));
     assert!(s
-        .eval::<bool>("return AuctionsBlockFrame:IsShown() == 1")
-        .unwrap());
-    assert!(!s
-        .eval::<bool>("return AuctionProgressFrame:IsShown() == 1")
+        .eval::<bool>("return AuctionProgressFrame.fadeOut == true")
         .unwrap());
     // A failure takes no argument and unblocks the form.
+    s.fire_event("AUCTION_MULTISELL_START", vec![ScriptValue::Int(2)]);
     s.fire_event("AUCTION_MULTISELL_FAILURE", Vec::<ScriptValue>::new());
-    assert!(!s
-        .eval::<bool>("return AuctionsBlockFrame:IsShown() == 1")
-        .unwrap());
+    assert!(!shown(&s, "AuctionsBlockFrame"));
+    assert!(!shown(&s, "AuctionProgressFrame"));
     let errors = auction_errors(s.take_errors());
     assert!(errors.is_empty(), "sell errors: {errors:#?}");
 }

@@ -235,9 +235,8 @@ fn backpack_button(s: &UiScript, slot: u32) -> String {
     .unwrap()
 }
 
-/// `ContainerFrame_OnEvent` reads `BAG_UPDATE`'s bag id from the legacy global `arg1`, then
-/// repaints the already-open frame (`ContainerFrame.lua`). This is the live-bag regression: the
-/// widget must change before closing and reopening the window.
+/// `BAG_UPDATE` naming an open bag repaints its frame in place (`ContainerFrame_OnEvent`, its
+/// first argument against the frame's id), without the window closing and reopening.
 #[test]
 fn bag_update_repaints_an_already_open_bag() {
     benilla_formats::wow_data_or_skip!();

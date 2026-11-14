@@ -170,15 +170,6 @@ fn auction_errors(script: &UiScript) -> String {
         .unwrap_or_default()
 }
 
-/// Whether every error is the reference's own: the multi-sell branches of
-/// `AuctionFrameAuctions_OnEvent` read the global `arg1`, which 12340 never sets.
-fn only_reference_errors(errors: &str) -> bool {
-    errors
-        .split(" | ")
-        .filter(|e| !e.is_empty())
-        .all(|e| e.contains("AuctionFrameAuctions_OnEvent"))
-}
-
 /// `CanSendAuctionQuery()` for the Browse list.
 fn can_query(script: &UiScript) -> bool {
     script
@@ -949,13 +940,6 @@ fn auction_probe(
                 pass(
                     &mut probe,
                     "(14 lua) — Blizzard_AuctionUI raised no Lua error",
-                );
-            } else if only_reference_errors(&errors) {
-                pass(
-                    &mut probe,
-                    &format!(
-                        "(14 lua) — only the reference's own multi-sell `arg1` errors: {errors}"
-                    ),
                 );
             } else {
                 fail(&mut probe, &format!("(14 lua) — {errors}"));
