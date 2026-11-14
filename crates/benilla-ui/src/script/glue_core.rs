@@ -158,9 +158,9 @@ pub enum GlueRequest {
         name: String,
         cases: [String; 5],
     },
-    /// `SaveAddOns()` (`0x4dcac0`): the enable bits changed since the last load or save, for the
-    /// host to write to each character's enable file.
-    SaveAddOns(Vec<super::glue_addons::GlueAddonChange>),
+    /// `SaveAddOns()` (`0x4dcac0`): each dirty character node, for the host to write as that
+    /// character's whole enable file.
+    SaveAddOns(Vec<super::glue_addons::GlueAddonList>),
 }
 
 /// The hosts `LaunchURL` opens, the 10-entry table: a leading `*` stands for one label, so
