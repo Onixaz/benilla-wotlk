@@ -968,6 +968,7 @@ pub(crate) fn setup_entities(
                 models: HashMap::new(),
                 helm_prefixes,
                 item_dbc,
+                art: Default::default(),
             });
         }
         Err(e) => warn!("item displays unavailable, units hold nothing: {e:#}"),

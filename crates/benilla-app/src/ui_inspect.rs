@@ -161,9 +161,7 @@ fn inspect_slot_view(
     });
     Some(InvSlotView {
         item_id: entry,
-        icon: icons
-            .and_then(|i| i.catalog.get(display))
-            .and_then(|d| d.icon.clone()),
+        icon: crate::ui_items::item_icon(icons, display),
         count: 1,
         quality: quality as i32,
         name,

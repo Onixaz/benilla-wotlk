@@ -427,13 +427,18 @@ fn hand_disarmed(slot: u8, flags: u32, flags2: u32, main_weapon: bool, own_weapo
 /// The player's first held visible item slot, the main hand; the off hand and ranged follow.
 const PLAYER_VISIBLE_HELD: u8 = 15;
 
-/// The violence level below 2, as [`track_violence_level`] keeps it from `violenceLevel`.
+/// Whether `violenceLevel` is below 2, as [`track_violence_level`] keeps it.
 static LOW_VIOLENCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The spell's visual pick (`0x7fa290`): below violence level 2 a spell's second visual, when it
 /// has one.
 pub(crate) fn spell_visual_id(d: &benilla_formats::SpellDisplay) -> u32 {
-    pick_visual(d, LOW_VIOLENCE.load(std::sync::atomic::Ordering::Relaxed))
+    pick_visual(d, low_violence())
+}
+
+/// Whether `violenceLevel` is below 2, the gate the spell visual and item art picks share.
+pub(crate) fn low_violence() -> bool {
+    LOW_VIOLENCE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 fn pick_visual(d: &benilla_formats::SpellDisplay, low_violence: bool) -> u32 {
@@ -444,12 +449,19 @@ fn pick_visual(d: &benilla_formats::SpellDisplay, low_violence: bool) -> u32 {
     }
 }
 
-/// Follow `violenceLevel` into [`LOW_VIOLENCE`] when the CVars change.
-pub(super) fn track_violence_level(cvars: Option<Res<crate::cvars::Cvars>>) {
-    if let Some(c) = cvars.filter(|c| c.is_changed()) {
-        let low = super::blood::violence_level(Some(&c)) < 2;
-        LOW_VIOLENCE.store(low, std::sync::atomic::Ordering::Relaxed);
+/// `violenceLevel`'s change callback (`0x7f39b0`) into [`LOW_VIOLENCE`], as the CVar moves.
+pub(super) fn track_violence_level(
+    ev: On<crate::cvars::CvarChanged>,
+    cvars: Option<Res<crate::cvars::Cvars>>,
+) {
+    if let Some(c) = cvars.filter(|_| ev.key() == "violencelevel") {
+        LOW_VIOLENCE.store(is_low_violence(&c), std::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// Whether these CVars' `violenceLevel` is below 2.
+pub(crate) fn is_low_violence(cvars: &crate::cvars::Cvars) -> bool {
+    super::blood::violence_level(Some(cvars)) < 2
 }
 
 /// A spell's effective `SpellVisual` row ([`spell_visual_id`]). A ranged spell (`Attributes & 0x2`)

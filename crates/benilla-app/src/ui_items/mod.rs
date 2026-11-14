@@ -180,17 +180,14 @@ pub(crate) fn slot_guid_count(
     }
 }
 
-/// An item template's icon path: its `DisplayInfoID` joined through `ItemDisplayInfo.dbc`. The
-/// reference has no shared icon resolver (five registered getters and a C-side setter, each with
-/// its own law), but every arm that ends at an item ends at this join, `ItemTemplate+0x18` → →
-/// `rec+0x14`; each window keeps its own law above it.
+/// A display id's icon path through the item art lookup (`0x70a910`), which every item icon arm
+/// ends at: the violence pick, else the question mark. `None` only before `ItemDisplayInfo.dbc`
+/// loads; each window keeps its own law above it.
 pub(crate) fn item_icon(
     icons: Option<&crate::entities::ItemDisplays>,
     display_info_id: u32,
 ) -> Option<String> {
-    icons
-        .and_then(|i| i.catalog.get(display_info_id))
-        .and_then(|d| d.icon.clone())
+    icons.map(|i| i.icon(display_info_id))
 }
 
 /// The walker's section mask (the reference walker's `ebx`) over the player's 113-guid slot array.

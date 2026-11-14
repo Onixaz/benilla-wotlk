@@ -249,9 +249,7 @@ fn template_view(
         // The stack size, `GetItemInfo`'s `itemStackCount`; `max_count` is the unique cap.
         stackable: t.stackable,
         // `GetItemInfo`'s `itemTexture`, the bag slots' `ItemDisplayInfo.dbc` icon.
-        icon: icons
-            .and_then(|i| i.catalog.get(t.display_info_id))
-            .and_then(|d| d.icon.clone()),
+        icon: crate::ui_items::item_icon(icons, t.display_info_id),
         start_quest: t.start_quest,
         container_slots: t.container_slots,
         stats: t.stats.clone(),
