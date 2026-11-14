@@ -305,7 +305,7 @@ pub(super) fn control(
 
     // The server's movement edges and their acks. Speed changes come back unacked while we drive,
     // for the movement stream to ack with the live pose.
-    let speed_acks = wire_in::apply_server_moves(
+    let acks = wire_in::apply_server_moves(
         &time,
         &mut commands,
         &mut player,
@@ -401,7 +401,8 @@ pub(super) fn control(
                 movement_net::park_mover(&net.0 .0, &mut player);
             }
             // After the park, so a fear's ack carries the stopped word.
-            movement_net::ack_speeds_undriven(&net.0 .0, &player, &speed_acks);
+            movement_net::ack_speeds_undriven(&net.0 .0, &player, &acks.speeds);
+            movement_net::ack_modes_undriven(&net.0 .0, &player, &acks.modes);
             return;
         }
         // After `apply_server_moves`, so this frame's root edge is already in `modes`.
@@ -973,8 +974,9 @@ pub(super) fn control(
                 fall_time: wire_fall_time,
             },
             now,
-            &speed_acks,
-            // Acked only if flown, each queued one: under root the reference drops them unacked.
+            &acks.speeds,
+            &acks.modes,
+            // Each queued one, acked after its launch (`0x6ed17d`, `0x6f027e`).
             if knocked { &knockbacks[..] } else { &[] },
             wire_transport,
             skip,

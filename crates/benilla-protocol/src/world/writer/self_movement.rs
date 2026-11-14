@@ -237,10 +237,12 @@ impl WorldWriter {
         )
     }
 
-    /// Ack a granted root, water-walk, feather-fall, hover, can-fly or swim-to-fly: guid, echoed counter and
-    /// our pose, plus a trailing `f32` apply for all but root. Unacked, the server never applies it.
-    /// `flags` must carry the mode's bit (a root apply-ack without it is a kick, vmangos
-    /// `MovementHandler.cpp:715-722`) and no moving bit beside `MOVEFLAG_ROOT`; turn bits are fine.
+    /// Ack a granted root, water-walk, feather-fall, hover, can-fly or swim-to-fly: guid, echoed
+    /// counter and our live movement status, as the reference's drain builds it (`0x6ed17d`): the
+    /// flags, pose, pitch, fall time, jump tail and transport, plus a trailing `f32` apply for all
+    /// but root. Unacked, the server never applies it. `flags` must carry the mode's bit, or for a
+    /// root taken mid-fall the pending root and `FALLING`, and no moving bit beside `ROOT`.
+    #[allow(clippy::too_many_arguments)] // the acked mode beside the live status
     pub fn move_mode_ack(
         &mut self,
         guid: u64,
@@ -249,8 +251,16 @@ impl WorldWriter {
         apply: bool,
         flags: u32,
         pose: ([f32; 3], f32),
+        pitch: f32,
+        fall_time: u32,
+        jump: Option<JumpInfo>,
+        transport: Option<TransportPose>,
     ) -> Result<()> {
         let mut info = movement_info(pose.0, pose.1, flags);
+        info.pitch = pitch;
+        info.fall_time = fall_time;
+        info.jump = jump;
+        info.transport = transport;
         // The swim-to-fly event sets or clears its bit before the ack takes the live status.
         if mode == MoveMode::SwimFlyTransition && apply {
             info.flags2 |= crate::messages::FLAG2_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY;

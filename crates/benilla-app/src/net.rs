@@ -51,6 +51,7 @@ pub(crate) use motion::{
 };
 // Only the ground-census probe reads this, so a build without the instruments leaves it unused.
 pub(crate) use motion::GroundClamped;
+pub(crate) use motion::ROOT_APPLY_WIPE;
 
 /// The net subsystem: spawns the background IO threads and drives the per-frame event drain.
 pub(crate) struct NetPlugin {
@@ -2253,9 +2254,10 @@ pub(crate) enum ClientCommand {
     /// `CMSG_NEXT_CINEMATIC_CAMERA`, for every shot including the first: the send is in the shot
     /// arm, so a single-camera intro sends one.
     NextCinematicCamera,
-    /// Acknowledge a root, water-walk, feather-fall or hover on [`MoveMode::ack_opcode`];
-    /// unacked, the server never applies it. `flags` must carry the mode bit: vmangos kicks a
-    /// root ack without `MOVEFLAG_ROOT` and takes the word as the new flags for the others.
+    /// Acknowledge a root, water-walk, feather-fall or hover on [`MoveMode::ack_opcode`], with our
+    /// live movement status; unacked, the server never applies it. `flags` must carry the mode bit
+    /// (or a mid-fall root's pending bit beside `FALLING`): the server takes the word as the new
+    /// flags.
     MoveModeAck {
         guid: u64,
         counter: u32,
@@ -2264,6 +2266,10 @@ pub(crate) enum ClientCommand {
         flags: u32,
         pos: [f32; 3],
         orientation: f32,
+        pitch: f32,
+        fall_time: u32,
+        jump: Option<JumpInfo>,
+        transport: Option<TransportPose>,
     },
     /// `CMSG_MOVE_SET_COLLISION_HGT_ACK`: the granted `height` echoed after our live pose.
     CollisionHeightAck {

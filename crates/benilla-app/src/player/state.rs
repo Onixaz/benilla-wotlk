@@ -140,6 +140,11 @@ pub(crate) struct MoveModes {
     /// input tick's allow-list permits turn, pitch and facing. A stun, which takes the pivot too,
     /// is [`crate::player::UNIT_FLAG_STUNNED`].
     pub(crate) rooted: bool,
+    /// A root held off while the body falls (`MOVEFLAG_PENDING_ROOT`): a knockback launches a
+    /// rooted body and turns its root into this (`0x6ea01d`), as does a root taken mid-fall off a
+    /// spline (`0x98c50d`); the landing makes it the root (`0x9884b8`), and an unroot clears both
+    /// (`0x98c556`).
+    pub(crate) pending_root: bool,
     /// Water walking (`SMSG_MOVE_WATER_WALK`): the liquid surface is ground. It does not stop the
     /// swim latch; swimming turns it off instead.
     pub(crate) water_walking: bool,
@@ -171,6 +176,7 @@ impl MoveModes {
     pub(crate) fn of_unit(word: u32) -> Self {
         let mut modes = Self {
             rooted: word & crate::creature_anim::move_flags::ROOT != 0,
+            pending_root: word & crate::creature_anim::move_flags::PENDING_ROOT != 0,
             ..Self::default()
         };
         modes.merge_from_wire(word);
@@ -181,7 +187,14 @@ impl MoveModes {
     pub(crate) fn set(&mut self, mode: MoveMode, apply: bool) {
         match mode {
             MoveMode::DisableGravity => self.levitating = apply,
-            MoveMode::Root => self.rooted = apply,
+            // An unroot clears a pending root too (`0x98c556`); a root's apply edge, which can be
+            // held off, is `super::wire_in`'s.
+            MoveMode::Root => {
+                self.rooted = apply;
+                if !apply {
+                    self.pending_root = false;
+                }
+            }
             MoveMode::WaterWalk => self.water_walking = apply,
             MoveMode::FeatherFall => self.feather_fall = apply,
             MoveMode::Hover => self.hover = apply,
@@ -189,6 +202,18 @@ impl MoveModes {
             MoveMode::SwimFlyTransition => self.swim_fly_transition = apply,
         }
     }
+
+    /// Every bit [`Self::wire_flags`] can set.
+    pub(crate) const WIRE_BITS: u32 = {
+        use crate::creature_anim::move_flags as f;
+        f::ROOT
+            | f::PENDING_ROOT
+            | f::WATER_WALKING
+            | f::SAFE_FALL
+            | f::HOVER
+            | f::LEVITATING
+            | f::CAN_FLY
+    };
 
     /// The granted modes as `MOVEMENTFLAGS` bits, which every outbound packet must carry: the
     /// reference's wire word is its live state (`[cmov+0x40]`), and a mode we drop is cleared by
@@ -198,6 +223,9 @@ impl MoveModes {
         let mut flags = 0;
         if self.rooted {
             flags |= f::ROOT;
+        }
+        if self.pending_root {
+            flags |= f::PENDING_ROOT;
         }
         if self.water_walking {
             flags |= f::WATER_WALKING;
@@ -577,9 +605,10 @@ impl Player {
         fire
     }
 
-    /// Take the queued knockbacks, oldest first. The settle hold, benilla's own wait for the ground
-    /// with no reference counterpart, keeps them queued until it ends; the mover may still decline
-    /// them under a root, and then they are dropped and none is acked.
+    /// Take the queued knockbacks, oldest first, each launched and acked by the move queue's drain
+    /// (`0x6ed17d`, `0x6f027e`). Deviation: the settle hold, benilla's own wait for the ground with
+    /// no reference counterpart, keeps them queued until it ends, where the reference would launch
+    /// at once.
     pub(super) fn take_knockbacks(&mut self) -> Vec<PendingKnockback> {
         if self.settling {
             return Vec::new();

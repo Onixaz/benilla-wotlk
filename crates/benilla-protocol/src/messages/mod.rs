@@ -259,7 +259,7 @@ pub use mirror_timer::{
 pub use movement::{
     JumpInfo, MoveMode, MovementInfo, RelayVerb, SpeedKind, SplineMode, TransportPose,
     CLASSIC_ASCENDING, CLASSIC_CAN_FLY, CLASSIC_DESCENDING, CLASSIC_DISABLE_GRAVITY,
-    CLASSIC_FLYING, FLAG2_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY,
+    CLASSIC_FLYING, CLASSIC_PENDING_ROOT, FLAG2_CAN_TRANSITION_BETWEEN_SWIM_AND_FLY,
 };
 pub use notices::{
     accept_level_grant, realm_split, DanceRecord, InebriationThreshold, OverrideLight, RWhois,

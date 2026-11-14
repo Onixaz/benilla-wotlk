@@ -130,9 +130,15 @@ pub(super) fn step(
     // body is frozen with gravity off. The terrain streamer releases it on the destination's
     // residency, never on ground contact, which a flyer or a swimmer never makes.
     let held = player.settling;
+    // A knockback launches a rooted body too: the launch turns the root into a pending root
+    // (`0x6ea01d`), which the landing makes a root again (`super::flags`).
+    if !held && knockback.is_some() && player.modes.rooted {
+        player.modes.rooted = false;
+        player.modes.pending_root = true;
+    }
     // Rooted, nothing moves the body: the root clears FALLING and the direction bits, so the
-    // dispatcher skips the fall integrator and the walk resolver returns on a step under `2^-20`. A
-    // root caught mid-air hangs until the unroot starts the fall (which refuses while rooted).
+    // dispatcher skips the fall integrator and the walk resolver returns on a step under `2^-20`.
+    // A root taken mid-fall waits for the landing as a pending root (`super::wire_in`).
     let anchored = !held && player.modes.rooted;
     // Gravity off (`DISABLE_GRAVITY`): nothing pulls the body down and it cannot jump (`Jump`
     // `0x9883f0` refuses), so an unsupported body holds its height and steers as on the ground;
@@ -155,9 +161,8 @@ pub(super) fn step(
     let mut jumped = false;
     let mut knocked = false;
     if held || anchored {
-        // Frozen by the settle hold or the root: no gravity, no momentum. A knockback here is
-        // dropped, not deferred, and `knocked` stays false so no ack goes out; the reference drops
-        // one under root too, and vmangos sends none to a rooted unit.
+        // Frozen by the settle hold or the root: no gravity, no momentum. A knockback never meets
+        // either: the hold keeps it queued and the launch above lifts the root.
         player.vel_y = 0.0;
         player.horiz_vel = Vec3::ZERO;
     } else if let Some(launch) = knockback {
@@ -2493,11 +2498,10 @@ mod tests {
         );
     }
 
-    /// The launch seeds both axes from the server, not the keys, and only ROOT refuses it: the
-    /// reference's drain tests nothing else before applying one, and discards it under root with no
-    /// apply and no ack.
+    /// The launch seeds both axes from the server, not the keys, and a root does not refuse it: the
+    /// reference's launch turns the root into a pending root and flies (`0x6ea01d`).
     #[test]
-    fn a_knockback_launch_overrides_the_keys_and_only_a_root_refuses_it() {
+    fn a_knockback_launch_overrides_the_keys_and_a_root() {
         let flat: [(f32, f32); 2] = [(-3.0, 0.0), (3.0, 0.0)];
         // Due east at 25 yd/s with 12 yd/s of lift, while the player holds "run west" at 7 yd/s.
         const PUSH: Vec3 = Vec3::new(25.0, 12.0, 0.0);
@@ -2529,16 +2533,20 @@ mod tests {
                         None,
                         AIR_NUDGE_SPEED,
                     );
-                    (out.jumped, out.knocked, player.launch_vz, player.horiz_vel)
+                    (
+                        (out.jumped, out.knocked, player.launch_vz, player.horiz_vel),
+                        player.modes,
+                    )
                 };
                 (knock(false), knock(true))
             })
             .unwrap();
 
-        let (jumped, knocked, vel_y, horiz) = free;
+        let ((jumped, knocked, vel_y, horiz), _) = free;
         assert!(
             jumped && knocked,
-            "the launch opens an arc, and says which kind it was: {free:?}"
+            "the launch opens an arc, and says which kind it was: {:?}",
+            free.0
         );
         assert_eq!(
             vel_y, PUSH.y,
@@ -2551,10 +2559,14 @@ mod tests {
             "the horizontal is the server's too — the held key must not claw it back"
         );
 
+        let (launch, modes) = rooted;
         assert_eq!(
-            rooted,
-            (false, false, 0.0, Vec3::ZERO),
-            "a rooted body is anchored: no launch, and `knocked` false so no ack goes out either"
+            launch, free.0,
+            "a rooted body flies the same launch, and owes the same ack"
+        );
+        assert!(
+            !modes.rooted && modes.pending_root,
+            "the root waits for the landing as a pending root: {modes:?}"
         );
     }
 

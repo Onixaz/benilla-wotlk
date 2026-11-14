@@ -67,11 +67,11 @@ pub(super) fn height_above_ground(
         .map_or(reach, |hit| hit.distance)
 }
 
-/// Take flight, the flight start (`0x989890`): refused without `CAN_FLY`, or under a root (the
-/// reference refuses a pending one; ours applies at once). SWIMMING, FALLING and FALLING_FAR end
-/// silently, so the arc owes no landing.
+/// Take flight, the flight start (`0x989890`): refused without `CAN_FLY` or under a pending root, and
+/// under a root, whose press never reaches it. SWIMMING, FALLING and FALLING_FAR end silently, so
+/// the arc owes no landing.
 pub(super) fn take_off(player: &mut Player, now: f32) -> bool {
-    if !player.modes.can_fly || player.modes.rooted {
+    if !player.modes.can_fly || player.modes.rooted || player.modes.pending_root {
         return false;
     }
     player.flying = true;

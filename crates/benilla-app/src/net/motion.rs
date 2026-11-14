@@ -22,7 +22,7 @@ pub(crate) use facing::{
     apply_walk_end_facing, bearing as facing_bearing, drive_display_facing, FacingHold,
     WalkEndFacing,
 };
-pub(in crate::net) use modes::ROOT_APPLY_WIPE;
+pub(crate) use modes::ROOT_APPLY_WIPE;
 pub(crate) use modes::{SwimFlyTransition, UnitMoveModes};
 pub(crate) use relay::{PendingMove, RelayMove};
 pub(crate) use remote::jump_seed;

@@ -40,6 +40,8 @@ const OUTBOUND_FLAG_MASK: u32 = move_flags::FORWARD
     // vmangos re-adds `ROOT` to a rooted mover's report (`MovementHandler.cpp:1064-1065`) and kicks
     // a root-apply ack without it (`MovementHandler.cpp:715-722`).
     | move_flags::ROOT
+    // A root held off through a fall rides the word as the reference's status carries it.
+    | move_flags::PENDING_ROOT
     | move_flags::WATER_WALKING
     | move_flags::SAFE_FALL
     | move_flags::HOVER
@@ -99,6 +101,7 @@ pub(super) fn stream_self_movement(
     arc: ArcEdges,
     now: f32,
     speed_acks: &[crate::net::SpeedChangeMessage],
+    mode_acks: &[crate::net::MoveModeMessage],
     knock_acks: &[super::state::PendingKnockback],
     transport: Option<TransportPose>,
     skip: SkipClock,
@@ -151,6 +154,25 @@ pub(super) fn stream_self_movement(
             transport,
         });
         // The ack relocates us server-side, so it is a position report too.
+        player.last_pos = wow_pos;
+    }
+    // A granted or revoked mode is acked the same way: the reference's drain acks each event from
+    // the live status it left (`0x6ed17d`), so a root taken mid-fall goes back with its pending bit,
+    // FALLING and the jump tail.
+    for ack in mode_acks {
+        let _ = sender.send(ClientCommand::MoveModeAck {
+            guid: ack.guid,
+            counter: ack.counter,
+            mode: ack.mode,
+            apply: ack.apply,
+            flags: wire_flags,
+            pos: wow_pos,
+            orientation: facing,
+            pitch: swim_pitch,
+            fall_time,
+            jump: wire_jump,
+            transport,
+        });
         player.last_pos = wow_pos;
     }
 
@@ -468,6 +490,43 @@ pub(super) fn ack_speeds_undriven(
     }
 }
 
+/// Acks mode grants on a frame the controller does not drive, from the parked status: our last
+/// reported flags with the modes as they now stand, the airborne pair dropped as no arc runs.
+pub(super) fn ack_modes_undriven(
+    sender: &Sender<ClientCommand>,
+    player: &Player,
+    acks: &[crate::net::MoveModeMessage],
+) {
+    if acks.is_empty() {
+        return;
+    }
+    let transport = wire_transport(player);
+    let flying = if player.flying { move_flags::FLYING } else { 0 };
+    let mut flags = player.move_flags
+        & OUTBOUND_FLAG_MASK
+        & !(move_flags::FALLING | move_flags::FALLING_FAR | super::state::MoveModes::WIRE_BITS)
+        | player.modes.wire_flags()
+        | flying;
+    if transport.is_none() {
+        flags &= !move_flags::ON_TRANSPORT; // flag and tail travel together
+    }
+    for ack in acks {
+        let _ = sender.send(ClientCommand::MoveModeAck {
+            guid: ack.guid,
+            counter: ack.counter,
+            mode: ack.mode,
+            apply: ack.apply,
+            flags,
+            pos: bevy_to_wow(player.pos),
+            orientation: player.face_yaw.rem_euclid(std::f32::consts::TAU),
+            pitch: 0.0,
+            fall_time: 0,
+            jump: None,
+            transport: transport.filter(|_| flags & move_flags::ON_TRANSPORT != 0),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     fn no_skip() -> SkipClock {
@@ -570,6 +629,7 @@ mod tests {
             0.0,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -590,6 +650,7 @@ mod tests {
             0.0,
             arc(),
             0.0,
+            &[],
             &[],
             &[],
             None,
@@ -613,6 +674,7 @@ mod tests {
             0.0,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -626,6 +688,7 @@ mod tests {
             0.1,
             arc(),
             0.1,
+            &[],
             &[],
             &[],
             None,
@@ -657,6 +720,7 @@ mod tests {
                 fall_time: 400,
             },
             0.0,
+            &[],
             &[],
             &[],
             None,
@@ -695,6 +759,7 @@ mod tests {
                 fall_time: 0,
             },
             0.0,
+            &[],
             &[],
             &[],
             None,
@@ -738,6 +803,7 @@ mod tests {
             0.0,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -778,6 +844,7 @@ mod tests {
             0.2,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -801,6 +868,7 @@ mod tests {
                 fall_time: 800,
             },
             0.8,
+            &[],
             &[],
             &[],
             None,
@@ -837,6 +905,7 @@ mod tests {
                     fall_time: (now * 1000.0) as u32,
                 },
                 now,
+                &[],
                 &[],
                 &[],
                 None,
@@ -897,6 +966,7 @@ mod tests {
             0.3,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -937,6 +1007,7 @@ mod tests {
             0.3,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -968,6 +1039,7 @@ mod tests {
             0.2,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -995,6 +1067,7 @@ mod tests {
                 fall_time: 900,
             },
             1.5,
+            &[],
             &[],
             &[],
             None,
@@ -1037,6 +1110,7 @@ mod tests {
             0.05,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -1072,6 +1146,7 @@ mod tests {
             0.06,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -1102,6 +1177,7 @@ mod tests {
                 0.05 * (i as f32 + 1.0),
                 &[],
                 &[],
+                &[],
                 None,
                 no_skip(),
             );
@@ -1124,6 +1200,7 @@ mod tests {
                 fall_time: 0,
             },
             0.2,
+            &[],
             &[],
             &[],
             None,
@@ -1162,6 +1239,7 @@ mod tests {
             0.05,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -1191,6 +1269,7 @@ mod tests {
                 fall_time: 0,
             },
             0.0,
+            &[],
             &[],
             &[],
             None,
@@ -1379,6 +1458,7 @@ mod tests {
             },
             0.0,
             &[],
+            &[],
             &[super::super::state::PendingKnockback {
                 guid: 0x1234,
                 counter: 7,
@@ -1454,6 +1534,7 @@ mod tests {
             },
             0.0,
             &[],
+            &[],
             &[knock(107, 1.0), knock(108, -1.0)],
             None,
             no_skip(),
@@ -1494,6 +1575,7 @@ mod tests {
                 fall_time: 0,
             },
             0.0,
+            &[],
             &[],
             &[],
             None,
@@ -1538,6 +1620,7 @@ mod tests {
                     fall_time: 0,
                 },
                 now,
+                &[],
                 &[],
                 &[],
                 None,
@@ -1587,6 +1670,7 @@ mod tests {
             0.3,
             &[],
             &[],
+            &[],
             None,
             no_skip(),
         );
@@ -1621,6 +1705,7 @@ mod tests {
                     fall_time: 0,
                 },
                 now,
+                &[],
                 &[],
                 &[],
                 None,

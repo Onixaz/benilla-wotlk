@@ -112,7 +112,7 @@ pub(super) fn apply_server_moves(
     >,
     self_pose: Option<(Vec3, f32)>,
     driven: Option<(u64, u32)>,
-) -> Vec<SpeedChangeMessage> {
+) -> ServerAcks {
     // World entry hands control back before this frame's control packets, so a later revoke wins;
     // AzerothCore never lifts a battleground's end freeze by packet.
     let creates: Vec<SelfCreateMover> = self_creates.read().copied().collect();
@@ -376,16 +376,27 @@ pub(super) fn apply_server_moves(
     };
     let ours = |guid: u64| mover.is_none() || Some(guid) == mover;
 
-    // The acked modes: apply to our state first, then ack with the flags it rebuilds to, as the
-    // reference does. vmangos kicks a root apply-ack without `MOVEFLAG_ROOT`, or defers the root to
+    // The acked modes: apply to our state now, ack with the live status the frame ends on, as the
+    // reference's drain applies an event and acks from the status it left (`0x6ed17d`). vmangos kicks a root apply-ack without `MOVEFLAG_ROOT`, or defers the root to
     // landing when the ack carries `JUMPING` or `FALLINGFAR` (`MovementHandler.cpp:715-729`).
     //
-    // Root also parks the walk stream and ends the arc, as the reference's root clears the
-    // direction bits and stops the fall; moving bits beside ROOT freeze the reference and raise
-    // vmangos's `CHEAT_TYPE_ROOT_MOVE`. Turn bits are not moving bits.
+    // A root applied at once also parks the walk stream and ends the arc, as the reference's root
+    // clears the direction bits and stops the fall (`0x98c517`); moving bits beside ROOT freeze
+    // the reference and raise vmangos's `CHEAT_TYPE_ROOT_MOVE`. Turn bits are not moving bits.
     for m in modes.iter().filter(|m| ours(m.guid)) {
-        player.modes.set(m.mode, m.apply);
-        if m.mode == MoveMode::Root && m.apply {
+        // A root taken while falling off a spline is held off to the landing (`0x98c4f0`: FALLING
+        // and no spline set only the pending bit); an already rooted body takes nothing.
+        let held_off = m.mode == MoveMode::Root
+            && m.apply
+            && !player.modes.rooted
+            && player.airborne_since.is_some()
+            && !player.server_riding;
+        if held_off {
+            player.modes.pending_root = true;
+        } else {
+            player.modes.set(m.mode, m.apply);
+        }
+        if m.mode == MoveMode::Root && m.apply && !held_off {
             movement_net::park_mover(&net_cmds.0, player);
             player.airborne_since = None;
             player.vel_y = 0.0;
@@ -408,17 +419,6 @@ pub(super) fn apply_server_moves(
         else if m.mode == MoveMode::DisableGravity && m.apply {
             player.vel_y = 0.0;
         }
-        let facing = player.face_yaw.rem_euclid(std::f32::consts::TAU);
-        let flying = if player.flying { move_flags::FLYING } else { 0 };
-        let _ = net_cmds.0.send(ClientCommand::MoveModeAck {
-            guid: m.guid,
-            counter: m.counter,
-            mode: m.mode,
-            apply: m.apply,
-            flags: player.modes.wire_flags() | flying,
-            pos: bevy_to_wow(player.pos),
-            orientation: facing,
-        });
         info!(
             "mover mode {:?} {} on {:#x} (acked)",
             m.mode,
@@ -427,6 +427,7 @@ pub(super) fn apply_server_moves(
         );
     }
 
+    let mode_acks: Vec<MoveModeMessage> = modes.into_iter().filter(|m| ours(m.guid)).collect();
     // Forced speed changes: the bridge applied the speed; the ack carries our wire state, which the
     // server relocates us to. Controlled, the movement stream acks; otherwise our state is the
     // parked pose, so ack here.
@@ -447,8 +448,21 @@ pub(super) fn apply_server_moves(
                 transport: None, // flags 0 → no transport tail
             });
         }
+        movement_net::ack_modes_undriven(&net_cmds.0, player, &mode_acks);
+        return ServerAcks::default();
     }
-    speed_acks
+    ServerAcks {
+        speeds: speed_acks,
+        modes: mode_acks,
+    }
+}
+
+/// This frame's forced speed changes and mode grants for our mover, applied and owed an ack with
+/// the live status the frame ends on ([`movement_net::stream_self_movement`]).
+#[derive(Default)]
+pub(super) struct ServerAcks {
+    pub(super) speeds: Vec<SpeedChangeMessage>,
+    pub(super) modes: Vec<MoveModeMessage>,
 }
 
 /// A same-map teleport that keeps us aboard: the pose is deck-local, composed through the deck as
@@ -646,6 +660,7 @@ mod session_end_tests {
         p.active = true;
         p.modes = super::super::state::MoveModes {
             rooted: true,
+            pending_root: true,
             water_walking: true,
             feather_fall: true,
             hover: true,
@@ -1031,7 +1046,7 @@ mod handover_tests {
             speed: 0.0,
         };
         let driven = body.single().ok();
-        out.0 = apply_server_moves(
+        let acks = apply_server_moves(
             &time,
             &mut commands,
             &mut player,
@@ -1050,6 +1065,9 @@ mod handover_tests {
             driven.map(|(t, ..)| (t.translation, 0.0)),
             driven.map(|(_, g, m)| (g.0, m.map_or(0, |m| m.0))),
         );
+        // The mode acks as the stream sends them, from this frame's status: here the parked one.
+        super::super::movement_net::ack_modes_undriven(&net.0, &player, &acks.modes);
+        out.0 = acks.speeds;
     }
 
     /// A teleport ends the auto-move, the near and the far alike (`0x72d2d0`, `0x72aec0(1, 0)`).
@@ -1202,6 +1220,48 @@ mod handover_tests {
         app.update();
         assert_eq!(mode_acks(&rx).len(), 1);
         assert!(!app.world().resource::<Player>().modes.rooted);
+    }
+
+    /// A root taken mid-fall off a spline is held off as a pending root (`0x98c4f0`), and its ack
+    /// says so; an unroot clears it; on the ground the root applies at once.
+    #[test]
+    fn a_root_taken_mid_fall_waits_for_the_landing() {
+        let (mut app, _me, _eye, rx) = harness();
+        let own = |apply| MoveModeMessage {
+            guid: ME,
+            ..root(apply)
+        };
+        app.world_mut().resource_mut::<Player>().airborne_since = Some(0.0);
+        app.world_mut().write_message(own(true));
+        app.update();
+        let player = app.world().resource::<Player>();
+        assert!(!player.modes.rooted && player.modes.pending_root);
+        assert!(player.airborne_since.is_some(), "the fall goes on");
+        let acks = mode_acks(&rx);
+        assert_eq!(acks.len(), 1);
+        let flags = acks[0].3;
+        assert_eq!(
+            (flags & move_flags::PENDING_ROOT, flags & move_flags::ROOT),
+            (move_flags::PENDING_ROOT, 0),
+            "the ack carries the pending bit, not ROOT: {flags:#x}"
+        );
+
+        app.world_mut().write_message(own(false));
+        app.update();
+        let modes = app.world().resource::<Player>().modes;
+        assert!(
+            !modes.rooted && !modes.pending_root,
+            "the unroot clears both"
+        );
+
+        app.world_mut().resource_mut::<Player>().airborne_since = None;
+        app.world_mut().write_message(own(true));
+        app.update();
+        let modes = app.world().resource::<Player>().modes;
+        assert!(
+            modes.rooted && !modes.pending_root,
+            "on the ground the root applies at once"
+        );
     }
 
     /// Flight is each body's own: cancelling a flying Eye of Acherus lands us back on our feet,
