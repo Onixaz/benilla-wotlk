@@ -114,18 +114,46 @@ fn holdings(
 /// The item class the currency list holds.
 const CURRENCY_CLASS: u32 = 10;
 
-/// What the feed remembers across frames: the template epoch, and the listed rows' items whose
-/// record is still asked for.
+/// What the feed remembers across frames: the template epoch, the listed rows' items whose record is
+/// still asked for, and each backpack and keyring slot's (guid, entry).
 #[derive(Default)]
 struct CurrencyMemo {
     epoch: u64,
     waiting: HashSet<u32>,
+    slot_items: Vec<(u64, u32)>,
 }
 
 /// Whether a player slot's change reaches the currency list: the backpack, keyring and token slots
 /// carry its handler (`0x5d9c5b`, `0x5d9cb9`, `0x5d9ce8`).
 fn watched_slot(slot: u8) -> bool {
     matches!(slot, 23..=38 | 86..=149)
+}
+
+/// The watched slots below the token slots, whose item's class the slot trigger reads.
+fn item_slots() -> impl Iterator<Item = u8> {
+    (23..=38).chain(86..=117)
+}
+
+/// Records each backpack and keyring slot's item entry, kept while its object is gone, so an item
+/// destroyed in the frame it leaves its slot still reads its class.
+fn remember_slot_items(
+    memo: &mut Vec<(u64, u32)>,
+    slot_guid: impl Fn(u8) -> u64,
+    entry: impl Fn(u64) -> Option<u32>,
+) {
+    memo.resize(item_slots().count(), (0, 0));
+    for (at, slot) in item_slots().enumerate() {
+        let guid = slot_guid(slot);
+        let kept = (memo[at].0 == guid).then_some(memo[at].1);
+        memo[at] = (guid, entry(guid).or(kept).unwrap_or(0));
+    }
+}
+
+/// A remembered slot item's entry by guid.
+fn remembered_entry(memo: &[(u64, u32)], guid: u64) -> Option<u32> {
+    memo.iter()
+        .find(|&&(g, e)| g == guid && g != 0 && e != 0)
+        .map(|&(_, e)| e)
 }
 
 /// One frame's edges against 12340's triggers, as (known currencies moved, display triggers), one
@@ -227,6 +255,7 @@ fn feed_currencies(
     };
     // A token's stack count rides its own item object, so any edge refreshes the holdings.
     let any_edge = !edges.is_empty();
+    let slot_items = &memo.slot_items;
     let (known_moved, display_moved) = currency_edges(
         edges.read(),
         me,
@@ -235,6 +264,7 @@ fn feed_currencies(
             objects
                 .object(g)
                 .and_then(|o| Some((o.object_entry()?, o.item_owner())))
+                .or_else(|| Some((remembered_entry(slot_items, g)?, None)))
         },
         |entry| {
             let row = icons.as_deref()?.item_dbc.get(&entry)?;
@@ -242,6 +272,13 @@ fn feed_currencies(
         },
         |entry| items.template_cached(entry).map(|r| r.class),
     );
+    if vm_reset || entered || !changed_self.is_empty() {
+        remember_slot_items(
+            &mut memo.slot_items,
+            |slot| store.0.player_slot(slot).unwrap_or(0),
+            |g| objects.object(g).and_then(|o| o.object_entry()),
+        );
+    }
     let template_epoch = items.template_epoch();
     let epoch_moved = std::mem::replace(&mut memo.epoch, template_epoch) != template_epoch;
     let records_landed = if epoch_moved {
@@ -403,6 +440,40 @@ mod tests {
             0,
         );
         assert_eq!(run(me, &store, &[e]), (false, 1));
+    }
+
+    /// A badge sold out of the backpack, its object gone the same frame, still fires by the slot's
+    /// remembered entry; a slot whose guid changes forgets the old entry.
+    #[test]
+    fn a_destroyed_item_leaving_its_slot_reads_the_remembered_class() {
+        let (me, _) = entities();
+        let mut memo = Vec::new();
+        let slot_guid = |guid| move |slot| if slot == 23 { guid } else { 0 };
+        remember_slot_items(&mut memo, slot_guid(BADGE), |g| {
+            (g == BADGE).then_some(29434)
+        });
+        remember_slot_items(&mut memo, slot_guid(BADGE), |_| None);
+        assert_eq!(
+            remembered_entry(&memo, BADGE),
+            Some(29434),
+            "kept while unresolved"
+        );
+        let gone = edge(me, ME, ObjectType::Player, slot_field(23), BADGE as u32);
+        let fired = currency_edges(
+            &[gone],
+            me,
+            &player(&[]),
+            |g| Some((remembered_entry(&memo, g)?, None)),
+            |entry| Some(if entry == 29434 { 10 } else { 7 }),
+            |_| None,
+        );
+        assert_eq!(fired, (false, 1));
+        remember_slot_items(&mut memo, slot_guid(CLOTH), |_| None);
+        assert_eq!(
+            remembered_entry(&memo, BADGE),
+            None,
+            "a new guid forgets the old entry"
+        );
     }
 
     /// The known-currencies pair moves the known types, not the display.
