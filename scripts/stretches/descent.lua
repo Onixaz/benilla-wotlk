@@ -33,53 +33,7 @@ local TO_GRYPHON = { { 2352.5, -5690.0, 382.3 } }
 -- Valanar's tent: south of the bookshelf at its mouth.
 local TO_VALANAR = { { 2392.0, -5707.0, 153.9 }, { 2385.5, -5705.0, 153.9 }, { 2376.0, -5702.5, 154.0 } }
 
-local function walk(text, points, timeout)
-  return {
-    text,
-    done = function()
-      return S.route(points)
-    end,
-    status = function()
-      return "at " .. S.where() .. ", leg " .. tostring(points.at)
-    end,
-    timeout = timeout or 60,
-  }
-end
-
--- A talk to `npc` with S.want set to `want`, done when `done` answers true. The NPC may stand off
--- its spawn: the last steps close in on where it is now, into talking range.
-local TALK_RANGE = 4
-local function talk(text, npc, want, done)
-  local near = false
-  return {
-    text,
-    start = function()
-      S.want = want
-    end,
-    poke = function()
-      if near then
-        ProbeInteractEntry(npc)
-      end
-    end,
-    every = 5,
-    done = function()
-      if not near then
-        local _, x, y, z = ProbeNearest(npc)
-        near = not x or S.steer(x, y, z, TALK_RANGE, false, 6)
-        if near then
-          ProbeInteractEntry(npc)
-        end
-        return false
-      end
-      return done()
-    end,
-    status = function()
-      local d = ProbeNearest(npc)
-      return string.format("at %s, %s yd from the NPC", S.where(), tostring(d and math.floor(d)))
-    end,
-    timeout = 30,
-  }
-end
+local walk, talk = S.walk, S.talk
 
 local function inLog(id)
   return S.questIndex(id) ~= nil

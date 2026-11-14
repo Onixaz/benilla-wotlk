@@ -195,12 +195,14 @@ function S.nearEntry(entry, r)
 end
 
 -- Steering as a player does, with the movement keys: turn toward the point, hold forward once
--- facing it, and ascend or descend toward its height when flying. Call every tick; answers true on
--- arrival, `r` yards across and `vr` (default 25) up or down, having let go of every key: a roof
--- or the ground may hold a flyer off the exact height. Real keys (W, A, D, Space, X through their
--- default bindings): the movement functions refuse any caller but a binding body.
+-- roughly facing it, and ascend or descend toward its height when flying. Call every tick; answers
+-- true on arrival, `r` yards across and `vr` (default 25) up or down, having let go of every key: a
+-- roof or the ground may hold a flyer off the exact height. The keys themselves move every frame
+-- toward the goal the last call set, so a turn stops on its heading instead of a tick past it.
+-- Real keys (W, A, D, Space, X through their default bindings): the movement functions refuse any
+-- caller but a binding body.
 local held = {}
-local KEYS = { fwd = "W", left = "A", right = "D", up = "Space", down = "X" }
+local KEYS = { fwd = "W", left = "A", right = "D", up = "Space", down = "X", sleft = "Q", sright = "E" }
 local function hold(key, on)
   if (held[key] or false) == on then
     return
@@ -213,14 +215,16 @@ local function hold(key, on)
   end
 end
 
+local goal
 function S.release()
-  for _, k in ipairs({ "fwd", "left", "right", "up", "down" }) do
+  goal = nil
+  for _, k in ipairs({ "fwd", "left", "right", "up", "down", "sleft", "sright" }) do
     hold(k, false)
   end
 end
 
 function S.steer(x, y, z, r, fly, vr)
-  local px, py, pz, _, facing = ProbePos()
+  local px, py, pz = ProbePos()
   if not px then
     return false
   end
@@ -228,17 +232,41 @@ function S.steer(x, y, z, r, fly, vr)
     S.release()
     return true
   end
+  goal = { x = x, y = y, z = z, fly = fly, at = now() }
+  return false
+end
+
+-- A turn starts past TURN_START radians off the heading and stops inside TURN_STOP.
+local TURN_START, TURN_STOP = 0.12, 0.03
+local steerer = CreateFrame("Frame")
+steerer:SetScript("OnUpdate", function()
+  S.crumb()
+  -- A goal no step renews is dropped: the step that set it has moved on.
+  if goal and now() - goal.at > 0.6 then
+    S.release()
+  end
+  if not goal then
+    return
+  end
+  local px, py, pz, _, facing = ProbePos()
+  if not px then
+    return
+  end
   -- WoW facing: radians from +x toward +y.
-  local diff = math.atan2(y - py, x - px) - facing
+  local diff = math.atan2(goal.y - py, goal.x - px) - facing
   diff = (diff + math.pi) % (2 * math.pi) - math.pi
-  hold("left", diff > 0.08)
-  hold("right", diff < -0.08)
+  local turning = held.left or held.right
+  local off = math.abs(diff) > (turning and TURN_STOP or TURN_START)
+  hold("left", off and diff > 0)
+  hold("right", off and diff < 0)
   hold("fwd", math.abs(diff) < 0.5)
-  if fly then
-    -- One vertical key at a time, the other let go a tick before: a same-frame swap is one resync
-    -- that starts descent over a standing ascent, and with both bits the reference climbs
+  if not goal.fly then
+    S.unstick(px, py)
+  else
+    -- One vertical key at a time, the other let go a frame before: a same-frame swap is one
+    -- resync that starts descent over a standing ascent, and with both bits the reference climbs
     -- (`0x987709` tests ASCENDING alone).
-    local up, down = pz < z - 3, pz > z + 3
+    local up, down = pz < goal.z - 3, pz > goal.z + 3
     if up and held.down or down and held.up then
       hold("up", false)
       hold("down", false)
@@ -247,8 +275,97 @@ function S.steer(x, y, z, r, fly, vr)
       hold("down", down)
     end
   end
+end)
+
+-- A breadcrumb trail of where the body went, one crumb every TRAIL_STEP yards from S.trailStart on:
+-- ground it got over, for S.retrace to walk back by.
+local TRAIL_STEP = 4
+function S.trailStart()
+  S.trail = {}
+end
+
+function S.crumb()
+  local t = S.trail
+  if not t or t.back then
+    return
+  end
+  local px, py, pz = ProbePos()
+  local last = t[#t]
+  if px and (not last or S.dist(px, py, 0, last[1], last[2], 0) > TRAIL_STEP) then
+    t[#t + 1] = { px, py, pz }
+  end
+end
+
+-- Back along the trail to its first crumb: each leg goes to the crumb before the earliest one within
+-- a few yards, so the walk skips any loop the trail made back past itself. Answers true there.
+local SHORTCUT = 8
+function S.retrace()
+  local t = S.trail
+  if not t or #t == 0 then
+    return true
+  end
+  t.back = true
+  local px, py = ProbePos()
+  if not px then
+    return false
+  end
+  local j, best, bd = nil, 1, math.huge
+  for i, c in ipairs(t) do
+    local d = S.dist(px, py, 0, c[1], c[2], 0)
+    if d < SHORTCUT and not j then
+      j = i
+    end
+    if d < bd then
+      best, bd = i, d
+    end
+  end
+  j = j or best
+  if j == 1 and bd < 3 then
+    S.release()
+    return true
+  end
+  local c = t[math.max(j - 1, 1)]
+  S.steer(c[1], c[2], c[3], 1.5, false, 10)
   return false
 end
+
+-- On foot, a way round what the walk caught on, as a player gets past a fence or a step: after a
+-- second and a half of forward without a yard of headway a jump, and if that fails a second of
+-- strafing, to either side in turn, before going on.
+local stuck = { x = 0, y = 0, t = 0, tries = 0, side = "sright" }
+function S.unstick(px, py)
+  if held.up then
+    hold("up", false)
+  end
+  if held.sleft or held.sright then
+    if now() - stuck.t > 1 then
+      hold("sleft", false)
+      hold("sright", false)
+      stuck.t = now()
+    end
+    return
+  end
+  if not held.fwd or S.dist(px, py, 0, stuck.x, stuck.y, 0) > 1 then
+    stuck.x, stuck.y, stuck.t, stuck.tries = px, py, now(), 0
+  elseif now() - stuck.t > 1.5 then
+    stuck.tries, stuck.t = stuck.tries + 1, now()
+    if stuck.tries % 2 == 1 then
+      hold("up", true)
+    else
+      stuck.side = stuck.side == "sright" and "sleft" or "sright"
+      hold(stuck.side, true)
+    end
+  end
+end
+
+-- The loot window, emptied as it opens, as autoloot does.
+local loot = CreateFrame("Frame")
+loot:RegisterEvent("LOOT_OPENED")
+loot:SetScript("OnEvent", function()
+  for i = GetNumLootItems(), 1, -1 do
+    LootSlot(i)
+  end
+end)
 
 -- A walk through `points` ({x, y, z} each) on the movement keys, each reached within `r` yards
 -- (default 2): call every tick; answers true at the last. The legs keep the walk off walls.
@@ -264,6 +381,55 @@ function S.route(points, r)
   end
   points.at = nil
   return true
+end
+
+-- A step walking `points` (S.route).
+function S.walk(text, points, timeout)
+  return {
+    text,
+    done = function()
+      return S.route(points)
+    end,
+    status = function()
+      return "at " .. S.where() .. ", leg " .. tostring(points.at)
+    end,
+    timeout = timeout or 60,
+  }
+end
+
+-- A step talking to `npc` with S.want set to `want`, done when `done` answers true. The NPC may
+-- stand off its spawn: the last steps close in on where it is now, into talking range.
+local TALK_RANGE = 4
+function S.talk(text, npc, want, done)
+  local near = false
+  return {
+    text,
+    start = function()
+      S.want = want
+    end,
+    poke = function()
+      if near then
+        ProbeInteractEntry(npc)
+      end
+    end,
+    every = 5,
+    done = function()
+      if not near then
+        local _, x, y, z = ProbeNearest(npc)
+        near = not x or S.steer(x, y, z, TALK_RANGE, false, 6)
+        if near then
+          ProbeInteractEntry(npc)
+        end
+        return false
+      end
+      return done()
+    end,
+    status = function()
+      local d = ProbeNearest(npc)
+      return string.format("at %s, %s yd from the NPC", S.where(), tostring(d and math.floor(d)))
+    end,
+    timeout = 30,
+  }
 end
 
 -- The step machine.

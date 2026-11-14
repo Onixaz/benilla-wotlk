@@ -14,9 +14,11 @@ local BUILDINGS = {
   { "New Avalon Town Hall", 28543, 1590.8, -5731.7, 143.9 },
   { "Chapel of the Crimson Flame", 28544, 1385.9, -5702.1, 146.3 },
 }
--- How close the eye flies over each building's credit unit before it siphons, and how high.
-local SIPHON_RANGE = 40
+-- How close the eye flies over each building's credit unit before it siphons, how high, and how far
+-- off that height it may stop: the siphon's reach is counted in three dimensions.
+local SIPHON_RANGE = 30
 local SIPHON_HEIGHT = 25
+local SIPHON_SLACK = 8
 
 local function foreign()
   local _, _, _, f = ProbePos()
@@ -133,7 +135,7 @@ for _, b in ipairs(BUILDINGS) do
         return false, "the possession ended"
       end
       -- The eye flies with the movement keys: click to move refuses another mover.
-      return S.steer(x, y, z + SIPHON_HEIGHT, SIPHON_RANGE, true)
+      return S.steer(x, y, z + SIPHON_HEIGHT, SIPHON_RANGE, true, SIPHON_SLACK)
     end,
     status = function()
       return string.format("at %s, target (%.1f, %.1f, %.1f)", S.where(), x, y, z + SIPHON_HEIGHT)
