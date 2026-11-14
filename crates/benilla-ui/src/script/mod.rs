@@ -644,34 +644,52 @@ const REG_SCRIPTS: &str = "__benilla_scripts";
 /// which a top-level `SetPoint` without `relativeTo` anchors to; frame ids, from 1, are the rest.
 pub const SCREEN: crate::layout::Handle = 0;
 
-/// The FrameScript handler kinds `SetScript` accepts, each only with the code that fires it
-/// ([`crate::script::object::events_regions::set_script`]). The list is flat, where the reference
-/// resolves names per widget type (base map plus the type's own; a `<Frame>` has no `OnClick`), so
-/// any widget accepts any kind here.
-///
-/// `OnValueChanged` is the StatusBar's (`+0x32c`) and the Slider's (`+0x330`) own slot; the
-/// ScrollFrame's three scroll kinds are `+0x32c`/`+0x334`/`+0x33c`. The EditBox's vtable replaces
-/// the key and char slots: an EditBox never fires `OnKeyDown`, and fires `OnChar` only from
-/// `Insert`, with the inserted text.
-const SCRIPT_KINDS: [&str; 54] = [
-    "OnLoad",
+// The FrameScript handler names per widget type, each carried only with the code that fires it:
+// [`frame_script_kind`] chains the frame's table and the type's, and the dispatch keys by the
+// canonical spellings.
+
+/// The frame's own script names (`0x816830`'s `OnEvent`, then `0x48e680`'s), which every type has.
+const FRAME_SCRIPTS: &[&str] = &[
     "OnEvent",
+    "OnLoad",
+    // The layout event (`+0x120`), fired by the resolve pass on a size change.
+    "OnSizeChanged",
     "OnUpdate",
-    // The model pane's two, fired by the tick's model pass (`tick_model_panes`): `OnUpdateModel`
-    // at the top of a visible pane's paint, `OnAnimFinished` when the armed sequence completes.
-    "OnUpdateModel",
-    "OnAnimFinished",
     "OnShow",
     "OnHide",
-    "PreClick",
-    "OnClick",
-    "PostClick",
     "OnEnter",
     "OnLeave",
     "OnMouseDown",
     "OnMouseUp",
     "OnMouseWheel",
-    "OnValueChanged",
+    "OnDragStart",
+    "OnDragStop",
+    "OnReceiveDrag",
+    // The key channels, fired by [`keyboard`]'s walk. `OnKeyUp` never fires, as the host feeds no
+    // key-up, but a frame carrying only `OnKeyUp` still consumes every key-down and runs nothing,
+    // the reference's own asymmetry. The EditBox's vtable replaces the key and char slots: it never
+    // fires `OnKeyDown`, and fires `OnChar` only from `Insert`, with the inserted text.
+    "OnChar",
+    "OnKeyDown",
+    "OnKeyUp",
+    // Has a parameter template in the script compiler ([`event::script_parameters`]).
+    "OnAttributeChanged",
+    // The base map's pair (`0x48e916`, slots `+0x1bc`/`+0x1c4`), fired by `Button:Enable` and
+    // `Disable` on a change ([`button`]).
+    "OnEnable",
+    "OnDisable",
+];
+/// Button and CheckButton (`0x96f200`).
+const BUTTON_SCRIPTS: &[&str] = &[
+    "PreClick",
+    "OnClick",
+    "PostClick",
+    // The double click (`+0x4d4`), fired by [`pointer`]'s release edge in place of the second
+    // `OnClick` within 300 ms.
+    "OnDoubleClick",
+];
+/// EditBox (`0x9628f0`). Deviation: its `OnCharComposition` is left out, as nothing fires it.
+const EDITBOX_SCRIPTS: &[&str] = &[
     "OnEnterPressed",
     "OnEscapePressed",
     "OnSpacePressed",
@@ -682,52 +700,44 @@ const SCRIPT_KINDS: [&str; 54] = [
     // focus change and a re-seat raise: the edge `ScrollingEdit_OnCursorChanged` scrolls a
     // multiline box by.
     "OnCursorChanged",
+    // Has a parameter template in the script compiler ([`event::script_parameters`]).
+    "OnInputLanguageChanged",
     "OnEditFocusGained",
     "OnEditFocusLost",
+];
+/// ScrollFrame (`0x96b0b0`), slots `+0x32c`/`+0x334`/`+0x33c`.
+const SCROLLFRAME_SCRIPTS: &[&str] = &[
     "OnHorizontalScroll",
     "OnVerticalScroll",
     "OnScrollRangeChanged",
-    "OnDragStart",
-    "OnDragStop",
-    "OnReceiveDrag",
-    // A release over a message-frame hyperlink span, `OnHyperlinkClick(link, text, button)`;
-    // `ChatFrameTemplate` passes it to `SetItemRef` (`ChatFrame.xml:15`, `ChatFrame.lua:1534`).
-    "OnHyperlinkClick",
-    // The pointer entering and leaving such a span (`0x978540`, `0x978570`), fired by [`pointer`]'s move.
-    "OnHyperlinkEnter",
-    "OnHyperlinkLeave",
-    // The GameTooltip's engine-fired scripts: money render, money clear and world-hover default
-    // placement, all three wired by the stock template (`GameTooltipTemplate.xml:617-625`).
-    "OnTooltipAddMoney",
-    "OnTooltipCleared",
+];
+/// Slider (`0x96bca0`) and StatusBar (`0x961630`): `OnValueChanged` is the StatusBar's `+0x32c` and
+/// the Slider's `+0x330`; `OnMinMaxChanged` fires from `SetMinMaxValues` on a new range
+/// ([`statusbar`]).
+const VALUE_SCRIPTS: &[&str] = &["OnValueChanged", "OnMinMaxChanged"];
+/// Model and the character models (`0x95f420`), fired by the tick's model pass
+/// (`tick_model_panes`): `OnUpdateModel` at the top of a visible pane's paint, `OnAnimFinished`
+/// when the armed sequence completes.
+const MODEL_SCRIPTS: &[&str] = &["OnUpdateModel", "OnAnimFinished"];
+/// ColorSelect (`0x96dc50`), slot `+0x338`, fired by its `SetColorRGB`.
+const COLORSELECT_SCRIPTS: &[&str] = &["OnColorSelect"];
+/// SimpleHTML and ScrollingMessageFrame (`0x978610`): the pointer entering and leaving a hyperlink
+/// span (`0x978540`, `0x978570`) and a release over one, fired by [`pointer`]; `ChatFrameTemplate`
+/// passes the click to `SetItemRef`. Deviation: the scrolling frame's own `OnMessageScrollChanged`
+/// (`0x969040`) is left out, as nothing fires it.
+const HYPERLINK_SCRIPTS: &[&str] = &["OnHyperlinkEnter", "OnHyperlinkLeave", "OnHyperlinkClick"];
+/// GameTooltip (`0x61a280`). Deviation: its `OnTooltipSetFrameStack` is left out, as nothing
+/// fires it.
+const TOOLTIP_SCRIPTS: &[&str] = &[
+    // Money render, money clear and world-hover default placement, all three wired by the stock
+    // template (`GameTooltipTemplate.xml:617-625`).
     "OnTooltipSetDefaultAnchor",
-    // The ColorSelect's own slot (`+0x338`), fired by its `SetColorRGB`.
-    "OnColorSelect",
-    // The Button/CheckButton double click (`+0x4d4`), fired by [`pointer`]'s release edge in place
-    // of the second `OnClick` within 300 ms.
-    "OnDoubleClick",
-    // The layout event (`+0x120`), fired by the resolve pass on a size change.
-    "OnSizeChanged",
-    // The key channels, fired by [`keyboard`]'s walk. `OnKeyUp` never fires, as the host feeds no
-    // key-up, but a frame carrying only `OnKeyUp` still consumes every key-down and runs nothing,
-    // the reference's own asymmetry.
-    "OnChar",
-    "OnKeyDown",
-    "OnKeyUp",
-    // Both have parameter templates in the script compiler ([`event::script_parameters`]).
-    "OnAttributeChanged",
-    "OnInputLanguageChanged",
-    // The base map's pair (`0x48e916`, slots `+0x1bc`/`+0x1c4`), fired by `Button:Enable` and
-    // `Disable` on a change ([`button`]).
-    "OnEnable",
-    "OnDisable",
-    // The StatusBar's and Slider's, fired by `SetMinMaxValues` on a new range ([`statusbar`]).
-    "OnMinMaxChanged",
-    // The GameTooltip's (`0x61a30b`, `+0x4ec`), fired once a unit's lines are built
-    // ([`tooltip_unit`]).
+    "OnTooltipCleared",
+    "OnTooltipAddMoney",
+    // Fired once a unit's lines are built (`0x61a30b`, `+0x4ec`, [`tooltip_unit`]).
     "OnTooltipSetUnit",
-    // The item, spell, quest, achievement and equipment-set builders' (`+0x4f4`..), each fired once
-    // its lines are built and before the show ([`tooltip_item`], [`tooltip_spell`],
+    // The item, spell, quest, achievement and equipment-set builders' (`+0x4f4`..), each fired
+    // once its lines are built and before the show ([`tooltip_item`], [`tooltip_spell`],
     // [`tooltip_quest`]).
     "OnTooltipSetItem",
     "OnTooltipSetSpell",
@@ -735,6 +745,43 @@ const SCRIPT_KINDS: [&str; 54] = [
     "OnTooltipSetAchievement",
     "OnTooltipSetEquipmentSet",
 ];
+
+/// The script names a widget type adds over [`FRAME_SCRIPTS`]. Deviation: the MovieFrame's three
+/// (`0x95db80`) are left out, as nothing fires them; MessageFrame, Minimap, Cooldown, QuestPOIFrame
+/// and the world frame keep the frame's table in their vtables.
+fn type_scripts(kind: crate::widget::FrameKind) -> &'static [&'static str] {
+    use crate::widget::FrameKind as K;
+    match kind {
+        K::Button | K::CheckButton => BUTTON_SCRIPTS,
+        K::EditBox => EDITBOX_SCRIPTS,
+        K::ScrollFrame => SCROLLFRAME_SCRIPTS,
+        K::Slider | K::StatusBar => VALUE_SCRIPTS,
+        K::Model | K::PlayerModel | K::DressUpModel | K::TabardModel => MODEL_SCRIPTS,
+        K::ColorSelect => COLORSELECT_SCRIPTS,
+        K::SimpleHtml | K::ScrollingMessageFrame => HYPERLINK_SCRIPTS,
+        K::GameTooltip => TOOLTIP_SCRIPTS,
+        K::Frame
+        | K::WorldFrame
+        | K::MessageFrame
+        | K::MovieFrame
+        | K::Minimap
+        | K::Cooldown
+        | K::QuestPoiFrame => &[],
+    }
+}
+
+/// The canonical spelling of script `name` on a widget of `kind`, matched case-insensitively
+/// through the frame's table and then the type's, as each type's lookup chains to its base's.
+pub(crate) fn frame_script_kind(
+    kind: crate::widget::FrameKind,
+    name: &str,
+) -> Option<&'static str> {
+    FRAME_SCRIPTS
+        .iter()
+        .chain(type_scripts(kind))
+        .copied()
+        .find(|k| k.eq_ignore_ascii_case(name))
+}
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // UiScript: the public host

@@ -39,6 +39,7 @@ mod reference_surface;
 mod region_map;
 mod regions;
 mod resize_bounds;
+mod script_names;
 mod scrollframe;
 mod setparent;
 mod simplehtml;
