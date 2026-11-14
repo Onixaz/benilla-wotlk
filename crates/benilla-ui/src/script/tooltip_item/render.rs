@@ -78,13 +78,15 @@ pub(super) enum Requester {
     Zero,
     /// The loot source itself, `SetLootItem`'s (`0x62e638`).
     LootSource,
+    /// The open merchant, with the entry its row is found by (`0x62b5ec`, `0x62b60b`).
+    Merchant { item_id: u32 },
 }
 
 impl Requester {
     /// Whether the requester equals the loot source `loot_source`.
     fn is_loot_source(self, loot_source: u64) -> bool {
         match self {
-            Self::Object => false,
+            Self::Object | Self::Merchant { .. } => false,
             Self::Zero => loot_source == 0,
             Self::LootSource => true,
         }
@@ -329,7 +331,17 @@ fn render_lines(
 ) -> mlua::Result<()> {
     let rows = scaled.map_or((None, None), |s| (s.distribution, s.values));
     let mask = v.scaling_value;
-    let (req, known_spell, taught_known, set_view, worn, show_item_level, colorblind) = {
+    let (
+        req,
+        known_spell,
+        taught_known,
+        set_view,
+        worn,
+        show_item_level,
+        colorblind,
+        rated,
+        player,
+    ) = {
         let mut model = crate::script::model_mut_of(lua);
         let show_item_level = model
             .cvars
@@ -342,11 +354,32 @@ fn render_lines(
         // The known bits or a higher rank (`0x62b4a2`-`0x62b4ae`, `0x62b50d`-`0x62b51c`).
         let knows = |id: u32| model.known_spells.known_or_higher(id);
         let known = v.required_spell != 0 && knows(v.required_spell);
-        // A taught spell (trigger 6, learn) the player knows: the always-red ITEM_SPELL_KNOWN.
-        let taught = v
-            .spell_triggers
-            .iter()
-            .any(|&(t, id, _)| t == 6 && id != 0 && knows(id));
+        // The taught spell known to its learner, the player or the pet (`0x62b4a2`).
+        let taught = v.taught.is_some_and(|(id, pet)| {
+            if pet {
+                crate::script::multicast::has_spell(&model, id, true)
+            } else {
+                knows(id)
+            }
+        });
+        // The open merchant's first row of the item: its rating demand, bracket and the check
+        // (`0x62b5ec`..`0x62b676`), the bracket clamped to 0..=3.
+        let rated = match flags.requester {
+            Requester::Merchant { item_id } => model
+                .merchant
+                .as_ref()
+                .and_then(|m| m.items.iter().find(|r| r.item_id == item_id))
+                .and_then(|r| r.extended_cost.as_ref())
+                .filter(|c| c.required_rating > 0)
+                .map(|c| {
+                    let bracket = c.arena_bracket.clamp(0, 3);
+                    let met = model.arena_teams.rating_met(c.required_rating, bracket);
+                    (c.required_rating, bracket, met)
+                }),
+            _ => None,
+        };
+        // The player's PvP team and sex, which name a required honor rank (`0x6d6f00`).
+        let player = model.unit("player").map(|u| (u.pvp_team, u.sex == 3));
         // The set view (a miss records the ask) and the equipped ids the set block counts.
         let set_view = (v.item_set != 0)
             .then(|| {
@@ -396,6 +429,8 @@ fn render_lines(
             worn,
             show_item_level,
             colorblind,
+            rated,
+            player,
         )
     };
     let add = |l: (String, [f32; 4])| append_line(lua, this, l, None, false);
@@ -900,43 +935,15 @@ fn render_lines(
     if show_item_level && matches!(v.class, 2 | 4 | 5 | 6) {
         keyed("ITEM_LEVEL", &[Arg::D(v.item_level.into())], WHITE, false)?;
     }
-    // ITEM_MIN_SKILL with a rank, ITEM_REQ_SKILL without; the required spell takes ITEM_REQ_SKILL
-    // too.
-    // The requirement lines (`0x6277f0`), which the socket preview cuts; the level lines above stay.
-    if let Some(skill) = v.required_skill_name.as_ref().filter(|_| !preview) {
-        let have = req.skills.get(&v.required_skill).copied().unwrap_or(0);
-        let color = req_color(have >= v.required_skill_rank.max(1));
-        if v.required_skill_rank > 0 {
-            let args = [Arg::S(skill), Arg::D(v.required_skill_rank.into())];
-            keyed("ITEM_MIN_SKILL", &args, color, false)?;
-        } else {
-            keyed("ITEM_REQ_SKILL", &[Arg::S(skill)], color, false)?;
-        }
-    }
-    if v.required_spell != 0 && !preview {
-        if let Some(name) = &v.required_spell_name {
-            keyed(
-                "ITEM_REQ_SKILL",
-                &[Arg::S(name)],
-                req_color(known_spell),
-                false,
-            )?;
-        }
-    }
-    if let Some(rep) = v.required_rep_line.as_ref().filter(|_| !preview) {
-        // Red below the required rank (`[+0x58]`); an unfed faction reads as unmet.
-        let rank = req
-            .rep_ranks
-            .get(&v.required_rep_faction)
-            .copied()
-            .unwrap_or(0);
-        add((
-            rep.clone(),
-            req_color(u32::from(rank) >= v.required_rep_rank),
-        ))?;
-    }
-    if taught_known && !preview {
-        keyed("ITEM_SPELL_KNOWN", &[], RED, false)?;
+    // The requirement lines, which the socket preview cuts (`0x62b242`); the level lines stay.
+    if !preview {
+        let facts = ReqFacts {
+            known_spell,
+            taught_known,
+            rated,
+            player,
+        };
+        requirement_lines(&get, &keyed, &add, v, &req, facts)?;
     }
     // The green stat lines (`0x6277f0`): the feral line, then each rating stat in wire order as the
     // ON_EQUIP prefix and its `ITEM_MOD_*` text, joined by the literal `"%s %s"`.
@@ -1151,6 +1158,117 @@ fn render_lines(
 
 /// A trade or refund window's time left (`0x6277f0`): `INT_SPELL_DURATION`'s largest unit, except
 /// that 61 minutes to under two hours reads "1 hour" and the minutes past it.
+/// A keyed line: GlobalStrings key, its arguments, colour and wrap.
+type Keyed<'a> = dyn Fn(&str, &[Arg<'_>], [f32; 4], bool) -> mlua::Result<()> + 'a;
+
+/// What the requirement block reads besides the template and the player's requirement state.
+struct ReqFacts {
+    /// The required spell or a higher rank is known.
+    known_spell: bool,
+    /// The taught spell is known to its learner.
+    taught_known: bool,
+    /// The open merchant's rating demand, bracket and check.
+    rated: Option<(u32, i32, bool)>,
+    /// The player's PvP team and sex, which name a required honor rank.
+    player: Option<(i8, bool)>,
+}
+
+/// The requirement block (`0x62b242`..`0x62b956`).
+fn requirement_lines(
+    get: &dyn Fn(&str) -> Option<String>,
+    keyed: &Keyed<'_>,
+    add: &dyn Fn((String, [f32; 4])) -> mlua::Result<()>,
+    v: &ItemTemplateView,
+    req: &crate::script::PlayerReqState,
+    facts: ReqFacts,
+) -> mlua::Result<()> {
+    let ReqFacts {
+        known_spell,
+        taught_known,
+        rated,
+        player,
+    } = facts;
+    if v.required_skill != 0 {
+        let have = req.skills.get(&v.required_skill).copied();
+        let color = req_color(have.is_some_and(|h| h >= v.required_skill_rank));
+        // Flag `0x40000` prospects and `0x20000000` mills: their line only once the skill has a
+        // value (`0x62b2a2`); every other item its skill line.
+        let gather = if v.flags & 0x4_0000 != 0 {
+            Some("ITEM_PROSPECTABLE")
+        } else if v.flags & 0x2000_0000 != 0 {
+            Some("ITEM_MILLABLE")
+        } else {
+            None
+        };
+        match (gather, &v.required_skill_name) {
+            (Some(key), _) if have.is_some_and(|h| h > 0) => keyed(key, &[], color, false)?,
+            (Some(_), _) | (None, None) => {}
+            (None, Some(skill)) if v.required_skill_rank > 0 => {
+                let args = [Arg::S(skill), Arg::D(v.required_skill_rank.into())];
+                keyed("ITEM_MIN_SKILL", &args, color, false)?;
+            }
+            (None, Some(skill)) => keyed("ITEM_REQ_SKILL", &[Arg::S(skill)], color, false)?,
+        }
+    }
+    if taught_known {
+        keyed("ITEM_SPELL_KNOWN", &[], RED, false)?;
+    }
+    if let Some(name) = v
+        .required_spell_name
+        .as_ref()
+        .filter(|_| v.required_spell != 0)
+    {
+        keyed(
+            "ITEM_REQ_SKILL",
+            &[Arg::S(name)],
+            req_color(known_spell),
+            false,
+        )?;
+    }
+    // The honor rank by `PVP_RANK_<rank>_<team>`, the player's gendered text, red below the
+    // highest rank held (`0x62b57b`).
+    if let (Ok(rank @ 1..), Some((team, female))) = (u8::try_from(v.required_honor_rank), player) {
+        let title = crate::script::pvp::rank_title(
+            &|key: &str| get(key).filter(|s| !s.is_empty()),
+            crate::script::pvp::RankTitle { rank, team, female },
+        );
+        if let Some(title) = title {
+            let ok = req.honor_rank >= rank;
+            keyed("ITEM_REQ_SKILL", &[Arg::S(&title)], req_color(ok), false)?;
+        }
+    }
+    // The merchant's arena rating by bracket: 2 the 5v5 key, 1 the 3v3, else the plain one.
+    if let Some((rating, bracket, met)) = rated {
+        let key = match bracket {
+            2 => "ITEM_REQ_ARENA_RATING_5V5",
+            1 => "ITEM_REQ_ARENA_RATING_3V3",
+            _ => "ITEM_REQ_ARENA_RATING",
+        };
+        keyed(key, &[Arg::D(rating.into())], req_color(met), false)?;
+    }
+    // The medal, `PVP_MEDAL<n>` inside ITEM_REQ_SKILL, red unless held (`0x62b7e3`).
+    if v.required_city_rank != 0 {
+        let medal = get(&format!("PVP_MEDAL{}", v.required_city_rank));
+        if let Some(medal) = medal {
+            let ok = super::super::item_stats::has_medal(req, v.required_city_rank);
+            keyed("ITEM_REQ_SKILL", &[Arg::S(&medal)], req_color(ok), false)?;
+        }
+    }
+    if let Some(rep) = &v.required_rep_line {
+        // Red below the required rank (`[+0x58]`); an unfed faction reads as unmet.
+        let rank = req
+            .rep_ranks
+            .get(&v.required_rep_faction)
+            .copied()
+            .unwrap_or(0);
+        add((
+            rep.clone(),
+            req_color(u32::from(rank) >= v.required_rep_rank),
+        ))?;
+    }
+    Ok(())
+}
+
 fn window_text(left: i64, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     let left = u32::try_from(left).ok()?;
     if !(3660..7200).contains(&left) {

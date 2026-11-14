@@ -643,6 +643,7 @@ mod tests {
             (Field::PlayerFieldBytes, FIELD_PLAYER_FIELD_BYTES),
             (Field::PlayerAmmoId, FIELD_PLAYER_AMMO_ID),
             (Field::PlayerSelfResSpell, FIELD_PLAYER_SELF_RES_SPELL),
+            (Field::PlayerPvpMedals, FIELD_PLAYER_FIELD_PVP_MEDALS),
             (Field::PlayerBuybackPrice, FIELD_PLAYER_BUYBACK_PRICE_1),
             (
                 Field::PlayerBuybackTimestamp,

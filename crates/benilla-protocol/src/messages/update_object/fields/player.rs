@@ -498,6 +498,11 @@ impl ObjectFields {
         self.get_u32(FIELD_PLAYER_SELF_RES_SPELL)
             .filter(|&s| s != 0)
     }
+    /// `PLAYER_FIELD_PVP_MEDALS` (private): bit `n - 1` holds medal `n`, an item's
+    /// `RequiredCityRank` (`0x61dcb0`).
+    pub fn player_pvp_medals(&self) -> Option<u32> {
+        self.get_u32(FIELD_PLAYER_FIELD_PVP_MEDALS)
+    }
     /// `PLAYER_BYTES`: skinColor, faceType, hairStyle and hairColor, bytes 0 to 3.
     pub fn player_bytes(&self) -> Option<u32> {
         self.get_u32(FIELD_PLAYER_BYTES)

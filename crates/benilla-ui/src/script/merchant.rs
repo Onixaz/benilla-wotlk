@@ -48,9 +48,10 @@ pub struct ExtendedCost {
     pub arena: u32,
     /// The required items with a non-zero id, in record order (`+0x10..+0x20`).
     pub items: Vec<CostItem>,
-    /// The record's arena-rating requirement passes the personal and team rating check
-    /// (`0x5a37b0`), or it has none.
-    pub rating_met: bool,
+    /// The personal and team arena rating required (`+0x38`), 0 for none.
+    pub required_rating: u32,
+    /// The bracket that rating is for (`+0xc`): 0 two, 1 three, 2 five.
+    pub arena_bracket: i32,
 }
 
 /// One item an extended cost asks for.
@@ -237,8 +238,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .cloned();
                 // A failed arena-rating test reads unusable before the item gate (`0x584fa4`).
                 let usable = item.as_ref().is_none_or(|it| {
-                    it.extended_cost.as_ref().is_none_or(|c| c.rating_met)
-                        && super::item_stats::item_usable_by_id(&model, it.item_id)
+                    it.extended_cost.as_ref().is_none_or(|c| {
+                        c.required_rating == 0
+                            || (0..3).contains(&c.arena_bracket)
+                                && model
+                                    .arena_teams
+                                    .rating_met(c.required_rating, c.arena_bracket)
+                    }) && super::item_stats::item_usable_by_id(&model, it.item_id)
                 });
                 (item, usable)
             };
@@ -925,7 +931,8 @@ mod tests {
                         link: None,
                     },
                 ],
-                rating_met: true,
+                required_rating: 0,
+                arena_bracket: 0,
             }),
             ..Default::default()
         }
@@ -946,7 +953,11 @@ mod tests {
             )
             .unwrap());
 
-        state.items[2].extended_cost.as_mut().unwrap().rating_met = false;
+        state.items[2]
+            .extended_cost
+            .as_mut()
+            .unwrap()
+            .required_rating = 1800;
         s.set_merchant(Some(state));
         assert!(s
             .eval::<bool>(

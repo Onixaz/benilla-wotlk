@@ -817,6 +817,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     let flags = BuilderFlags {
                         sell: Sell::ONE,
                         minimum_level: true,
+                        requester: Requester::Merchant { item_id },
                         ..Default::default()
                     };
                     render_view(lua, &this, &offered, flags, None)?;
@@ -1526,6 +1527,14 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                         }
                     } else {
                         Sell::Skip
+                    },
+                    // The vendor's goods are asked for by the merchant (`0x62ed70`).
+                    requester: if buyback {
+                        Requester::Object
+                    } else {
+                        Requester::Merchant {
+                            item_id: row.item_id,
+                        }
                     },
                     ..Default::default()
                 };
