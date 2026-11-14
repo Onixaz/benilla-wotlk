@@ -19,7 +19,11 @@ pub(crate) struct CvarSlot {
     /// its lowercase form.
     pub name: String,
     pub value: String,
+    /// The registered string, what `GetCVarDefault` answers (`rec+0x40`, `0x51019b`).
     pub default: String,
+    /// What the device defaults write where it is not [`Self::default`]: the hardware row's value
+    /// of a row the first-run pass moves.
+    pub device_default: Option<String>,
     /// The reference's flag bit1 (`rec+0x1c & 0x2`): a write goes to [`Self::pending`] and
     /// `GetCVar` answers the applied value until the host commits it (the CVar update). Host-seeded
     /// only; a VM-registered row is never latched, like a console-created one.
@@ -35,6 +39,8 @@ pub struct SeededCvar {
     pub name: String,
     pub value: String,
     pub default: String,
+    /// [`CvarSlot::device_default`].
+    pub device_default: Option<String>,
     pub latched: bool,
 }
 
@@ -139,6 +145,7 @@ impl super::UiScript {
                             name: name.to_string(),
                             value,
                             default: default.to_string(),
+                            device_default: None,
                             latched: false,
                             pending: None,
                         },
@@ -161,6 +168,7 @@ impl super::UiScript {
                     name: row.name,
                     value: row.value,
                     default: row.default,
+                    device_default: row.device_default,
                     latched: row.latched,
                     pending: None,
                 },
@@ -502,6 +510,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     name,
                     value: saved.unwrap_or_else(|| value.clone()),
                     default: value,
+                    device_default: None,
                     latched: false,
                     pending: None,
                 },
@@ -515,9 +524,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `RestoreVideoResolutionDefaults` (`0x510dc0`) and `RestoreVideoEffectsDefaults` (`0x510dd0`),
     // the device defaults (`0x76a130`) for pages 0 and 1: page 0 rewrites the device format's `gx*`
     // rows and restarts the device at once, then each page runs its defaults callbacks (the
-    // client's `0x4048a0`, the world parameters' `0x78e1a0`). Each row goes back to its registered
+    // client's `0x402530`, the world parameters' `0x78e1a0`). Each row goes back to its registered
     // default here, which for the hardware-detected rows is the matched `VideoHardware.dbc` row's
-    // value (the host table's `overridden` rows).
+    // value (the host table's `first_run` rows).
     lua.globals().set(
         "RestoreVideoResolutionDefaults",
         lua.create_function(|lua, _: mlua::MultiValue| {
@@ -749,11 +758,12 @@ pub const VIDEO_EFFECTS_DEFAULT_CVARS: &[&str] = &[
 /// VM never registered is skipped.
 fn restore_defaults(model: &mut Model, names: &[&str]) {
     for name in names {
-        let Some(default) = model
-            .cvars
-            .get(&name.to_ascii_lowercase())
-            .map(|slot| slot.default.clone())
-        else {
+        let Some(default) = model.cvars.get(&name.to_ascii_lowercase()).map(|slot| {
+            slot.device_default
+                .as_ref()
+                .unwrap_or(&slot.default)
+                .clone()
+        }) else {
             continue;
         };
         set_from_engine(model, name, default);
@@ -1048,12 +1058,14 @@ mod tests {
                 name: "gxVSync".into(),
                 value: "1".into(),
                 default: "1".into(),
+                device_default: None,
                 latched: true,
             },
             SeededCvar {
                 name: "MusicVolume".into(),
                 value: "0.4".into(),
                 default: "0.4".into(),
+                device_default: None,
                 latched: false,
             },
         ]);

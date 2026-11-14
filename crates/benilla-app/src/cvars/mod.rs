@@ -100,6 +100,9 @@ pub(crate) struct Row {
     pub(crate) scope: Scope,
     /// [`table::Registered::hidden`]: kept out of every VM's mirror.
     pub(crate) hidden: bool,
+    /// A row the first-run pass moves ([`table::Reference::FirstRun`]): `default` is the
+    /// hardware row's value, and `GetCVarDefault` answers the registered string.
+    pub(crate) first_run: bool,
 }
 
 impl Row {
@@ -176,12 +179,13 @@ impl Default for Cvars {
                 name: r.name.to_string(),
                 default: r.default.to_string(),
                 archive_default: r.reference_default().to_string(),
-                value: r.default.to_string(),
+                value: r.boot_value().to_string(),
                 pending: None,
                 latched: r.latched,
                 addon: false,
                 scope: r.scope,
                 hidden: r.hidden,
+                first_run: matches!(r.reference, table::Reference::FirstRun { .. }),
             });
         }
         cvars
@@ -279,15 +283,17 @@ impl Cvars {
             return SetOutcome::Refused;
         }
         if row.latched {
-            // The reference's set on flag bit1 stores the latched value and skips the internal
-            // write: no dirty, no callback. The stage lives here, not in the mirror, which only
-            // ever learns applied values.
+            // The reference's set on flag bit1 stores the latched value, marks the archive for
+            // saving (`0x76690a`) and skips the internal write. The stage lives here, not in the
+            // mirror, which only ever learns applied values.
             let staged = (value != row.value).then(|| value.to_string());
             if row.pending == staged {
                 return SetOutcome::Unchanged;
             }
             row.pending = staged;
-            return if row.pending.is_some() {
+            let staged = row.pending.is_some();
+            self.touch();
+            return if staged {
                 SetOutcome::Staged
             } else {
                 SetOutcome::Unchanged // the stage cleared: the boundary has nothing to do
@@ -417,6 +423,7 @@ impl Cvars {
             addon: true,
             scope: Scope::Config,
             hidden: false,
+            first_run: false,
         });
     }
 
@@ -458,6 +465,34 @@ impl Cvars {
             });
         }
         self.file = file;
+    }
+
+    /// The first-run pass, once the file and the `RunOnce*.wtf` files are in. While `hwDetect` is
+    /// set (`0x76abdf`), the device's init clears it and the client's and the world parameters'
+    /// defaults callbacks run (`0x4048cc`, `0x78e90a`), each row at the value the device defaults
+    /// write; while the loaded `videoOptionsVersion` is below 2 the two shader rows are written
+    /// again (`0x78e939`). The device's init then stages version 3 (`0x76b265`), saved at exit.
+    /// benilla's hardware is one fixed row, so the reference's changed-hardware arm never fires.
+    /// A session-owned row keeps the env's value.
+    fn first_run_defaults(&mut self) {
+        let mut rows: Vec<&str> = Vec::new();
+        if self.flag("hwDetect").unwrap_or(true) {
+            self.set("hwDetect", "0");
+            rows.extend(FIRST_RUN_ROWS);
+            rows.extend(benilla_ui::script::VIDEO_EFFECTS_DEFAULT_CVARS);
+        }
+        if self.num("videoOptionsVersion").unwrap_or(0.0) < 2.0 {
+            rows.extend(["particleDensity", "projectedTextures"]);
+        }
+        for name in rows {
+            if self.is_session_owned(name) {
+                continue;
+            }
+            if let Some(default) = self.default_of(name).map(str::to_string) {
+                self.set(name, &default);
+            }
+        }
+        self.set("videoOptionsVersion", "3");
     }
 
     /// The character rows' delete (`0x767350`) at the UI shutdown, and the account rows' delete
@@ -545,7 +580,12 @@ impl Cvars {
             .map(|r| SeededCvar {
                 name: r.name.clone(),
                 value: r.value.clone(),
-                default: r.default.clone(),
+                default: if r.first_run {
+                    r.archive_default.clone()
+                } else {
+                    r.default.clone()
+                },
+                device_default: r.first_run.then(|| r.default.clone()),
                 latched: r.latched,
             })
             .collect()
@@ -770,12 +810,24 @@ fn load_config(world: &mut World) {
                 cvars.touch();
             }
         }
+        cvars.first_run_defaults();
         cvars.take_events()
     };
     for event in events {
         world.trigger(event);
     }
 }
+
+/// The client's defaults callback's rows on its device and stereo pages (`0x402530`), which the
+/// first-run pass writes beside the Effects page's ([`Cvars::first_run_defaults`]).
+const FIRST_RUN_ROWS: [&str; 6] = [
+    "DesktopGamma",
+    benilla_ui::script::CVAR_GAMMA,
+    "windowResizeLock",
+    "gxStereoEnabled",
+    "gxStereoConvergence",
+    "gxStereoSeparation",
+];
 
 /// Rows earlier builds registered from 1.12.1 that the 3.3.5a client has no record of, each now
 /// served by its 3.3.5a row: the texture filter by `textureFilteringMode`, the ground clutter by
@@ -1100,12 +1152,13 @@ mod tests {
                     );
                     assert!(!why.trim().is_empty(), "{name}: a deviation owes a reason");
                 }
-                Reference::Overridden { registered, why } => {
+                Reference::Overridden { registered, why }
+                | Reference::FirstRun { registered, why } => {
                     assert!(
                         !agrees(row.default, registered),
-                        "{name}: an `overridden` row whose default is just the registered string \
-                         {registered:?} — that is `same`, and saying otherwise buries a real \
-                         override behind a false one.",
+                        "{name}: an `overridden` or `first_run` row whose default is just the \
+                         registered string {registered:?} — that is `same`, and saying otherwise \
+                         buries a real override behind a false one.",
                     );
                     assert!(
                         !why.trim().is_empty(),
@@ -1571,8 +1624,13 @@ mod tests {
             !res::<benilla_world::terrain_stream::TerrainOptions>(&app).low_mip,
             "refused above 1"
         );
+        // Both boot at the registered "0" until the first-run pass; on, then off.
+        apply(&mut app, "specular", "1");
+        assert!(res::<benilla_world::terrain_stream::TerrainOptions>(&app).specular);
         apply(&mut app, "specular", "0");
         assert!(!res::<benilla_world::terrain_stream::TerrainOptions>(&app).specular);
+        apply(&mut app, "projectedTextures", "1");
+        assert!(res::<benilla_world::view::ProjectedTextures>(&app).0);
         apply(&mut app, "projectedTextures", "0");
         assert!(!res::<benilla_world::view::ProjectedTextures>(&app).0);
         apply(&mut app, "componentTextureLevel", "9");
@@ -1898,8 +1956,11 @@ mod tests {
         // 12340 registers, which its own file carries the same way.
         for (name, _) in wtf::parse(&text) {
             let row = app.world().resource::<Cvars>().row(&name).cloned().unwrap();
+            // The first-run pass's two gates are saved off their registered strings, as 12340's.
             assert!(
-                name == "Sound_MusicVolume" || row.default != row.archive_default,
+                name == "Sound_MusicVolume"
+                    || matches!(name.as_str(), "hwDetect" | "videoOptionsVersion")
+                    || row.default != row.archive_default,
                 "{name} written at the reference's default: {text}"
             );
         }
@@ -2265,9 +2326,99 @@ mod tests {
         cvars
     }
 
-    /// A latched row's write is staged: the applied value stands and nothing fires or dirties (the
-    /// reference's set stores the latched value and skips the internal write) until the commit
-    /// applies, fires, persists and mirrors it.
+    /// The first boot runs the first-run pass and saves its gates; a Low choice then equal to the
+    /// registered string leaves the file and reads back as itself on the next boot (#1148).
+    #[test]
+    fn a_low_effects_choice_survives_the_restart() {
+        const LOW: [(&str, &str); 3] = [
+            ("specular", "0"),
+            ("groundEffectDensity", "16"),
+            ("projectedTextures", "0"),
+        ];
+        let boot = |file: Vec<(String, String)>| {
+            let mut cvars = Cvars::default();
+            cvars.load_file(file);
+            cvars.first_run_defaults();
+            cvars
+        };
+        let mut first = boot(Vec::new());
+        for (name, hw) in [
+            ("specular", "1"),
+            ("groundEffectDensity", "24"),
+            ("projectedTextures", "1"),
+            ("farclip", "777"),
+        ] {
+            assert_eq!(first.get(name), Some(hw), "{name}: the first run's pass");
+        }
+        let saved = composed(&first);
+        assert_eq!(saved.get("hwDetect").map(String::as_str), Some("0"));
+        assert_eq!(
+            saved.get("videoOptionsVersion").map(String::as_str),
+            Some("3")
+        );
+        assert_eq!(saved.get("specular").map(String::as_str), Some("1"));
+        for (name, low) in LOW {
+            first.set(name, low);
+        }
+        let file = first.compose();
+        for (name, _) in LOW {
+            assert!(
+                !file.iter().any(|(k, _)| k == name),
+                "{name}: at the registered string, off the file"
+            );
+        }
+        let second = boot(file.clone());
+        for (name, low) in LOW {
+            assert_eq!(second.get(name), Some(low), "{name}: the second boot");
+        }
+        assert_eq!(
+            second.get("farclip"),
+            Some("777"),
+            "the pass's value stays saved"
+        );
+        let third = boot(second.compose());
+        for (name, low) in LOW {
+            assert_eq!(third.get(name), Some(low), "{name}: the third boot");
+        }
+        // `hwDetect` set again reruns the whole pass; a version below 2 only the shader rows.
+        let mut redetect = file.clone();
+        redetect.push(("hwDetect".into(), "1".into()));
+        assert_eq!(boot(redetect).get("specular"), Some("1"));
+        let mut old = file;
+        old.retain(|(k, _)| k != "videoOptionsVersion");
+        let old = boot(old);
+        assert_eq!(old.get("specular"), Some("0"));
+        assert_eq!(old.get("projectedTextures"), Some("1"));
+    }
+
+    /// A row the first-run pass moves answers `GetCVarDefault` with its registered string
+    /// (`0x51019b`), and the Effects page's Defaults writes the hardware row's value (`0x78e1a0`).
+    #[test]
+    fn a_first_run_row_answers_the_registered_default_and_restores_the_detected_one() {
+        let mut cvars = Cvars::default();
+        cvars.first_run_defaults();
+        let s = UiScript::new().unwrap();
+        s.seed_cvars(cvars.vm_seed());
+        for (name, registered, detected) in [
+            ("specular", "0", "1"),
+            ("groundEffectDensity", "16", "24"),
+            ("projectedTextures", "0", "1"),
+            ("farclip", "350", "777"),
+        ] {
+            let default: String = s.eval(&format!("return GetCVarDefault({name:?})")).unwrap();
+            assert_eq!(default, registered, "{name}");
+            assert_eq!(s.cvar(name).as_deref(), Some(detected), "{name}");
+            s.run(&format!(
+                "SetCVar({name:?}, {registered:?}) RestoreVideoEffectsDefaults()"
+            ))
+            .unwrap();
+            assert_eq!(s.cvar(name).as_deref(), Some(detected), "{name}: Defaults");
+        }
+    }
+
+    /// A latched row's write is staged: the applied value stands and nothing fires (the reference's
+    /// set stores the latched value, marks the archive and skips the internal write) until the
+    /// commit applies, fires and mirrors it.
     #[test]
     fn a_latched_row_stages_the_write_until_the_boundary_commits_it() {
         let mut cvars = Cvars::default();
@@ -2279,7 +2430,10 @@ mod tests {
         assert_eq!(cvars.get("gxVSync"), Some("1"), "applied value stands");
         assert_eq!(cvars.row("gxVSync").unwrap().pending.as_deref(), Some("0"));
         assert!(!cvars.has_events(), "nothing fires before the boundary");
-        assert!(!cvars.dirty, "nothing to save before the boundary");
+        assert!(
+            cvars.dirty,
+            "the stage is saved, committed or not (`0x76690a`)"
+        );
         assert_eq!(
             cvars.set("gxVSync", "0"),
             SetOutcome::Unchanged,
@@ -2415,7 +2569,11 @@ mod tests {
         // A lever with no resource still marks the row, so the file cannot apply over the env.
         cvars.own_for_session("farclip", None);
         cvars.load_file(Vec::from([("farclip".to_string(), "500".to_string())]));
-        assert_eq!(cvars.get("farclip"), Some("777"));
+        assert_eq!(
+            cvars.get("farclip"),
+            Some("350"),
+            "the registered string, before the pass"
+        );
         assert!(cvars.is_session_owned("FARCLIP"));
     }
 
