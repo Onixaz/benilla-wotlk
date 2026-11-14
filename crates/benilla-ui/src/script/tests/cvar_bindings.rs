@@ -152,6 +152,7 @@ fn the_read_only_flag_survives_a_host_reseed() {
         name: "realmName".into(),
         value: "Here".into(),
         default: String::new(),
+        device_default: None,
         latched: false,
     }]);
     assert!(raised(&s, "SetCVar(\"realmName\", \"x\")").contains("is read-only"));

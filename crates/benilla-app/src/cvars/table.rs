@@ -7,7 +7,8 @@
 pub(crate) struct Registered {
     /// The registered name, in the reference's own spelling.
     pub(crate) name: &'static str,
-    /// What a fresh `benilla-config` runs at, and what `GetCVar` answers until the player moves it.
+    /// What a fresh `benilla-config` runs at (a [`Reference::FirstRun`] row through the first-run
+    /// pass), and what `GetCVar` answers until the player moves it.
     pub(crate) default: &'static str,
     /// Where `default` stands against the reference's; the archive compares against the
     /// reference's string ([`Registered::reference_default`]).
@@ -41,9 +42,20 @@ impl Registered {
     pub(crate) const fn reference_default(&self) -> &'static str {
         match self.reference {
             Reference::Same(d) => d,
-            Reference::Overridden { registered, .. } => registered,
+            Reference::Overridden { registered, .. } | Reference::FirstRun { registered, .. } => {
+                registered
+            }
             Reference::Deviates { value, .. } => value,
             Reference::Ours(_) => self.default,
+        }
+    }
+
+    /// What the row holds before the file is read: the registered string for a row only the
+    /// first-run pass moves ([`Reference::FirstRun`]), else [`Self::default`].
+    pub(crate) const fn boot_value(&self) -> &'static str {
+        match self.reference {
+            Reference::FirstRun { registered, .. } => registered,
+            _ => self.default,
         }
     }
 
@@ -83,16 +95,24 @@ impl Registered {
 /// benilla's default against the reference's: the string the reference registers for the name, or,
 /// for a setting 1.12 keeps in FrameXML, the value `UIOptionsFrame.lua` boots it at. Not a
 /// `Config.wtf` line (`SaveConfig` writes only values off their default), and not always what a
-/// fresh install runs at: `hwDetect` rewrites sixteen video CVars from `VideoHardware.dbc` before
-/// the first frame ([`Reference::Overridden`]). Each row's register site or FrameXML line is cited
-/// above it.
-#[allow(dead_code)] // read only by the tests
+/// fresh install runs at: the first-run pass rewrites the video CVars from `VideoHardware.dbc`
+/// before the first frame ([`Reference::FirstRun`]). Each row's register site or FrameXML line is
+/// cited above it.
+#[allow(dead_code)] // the reasons are read only by the tests
 pub(crate) enum Reference {
     /// The reference registers this default and benilla ships it; the test compares the two.
     Same(&'static str),
     /// The reference registers `registered`, but its own boot code overwrites it before the first
     /// frame; `default` is where that lands, and `why` is the override.
     Overridden {
+        registered: &'static str,
+        why: &'static str,
+    },
+    /// The reference registers `registered`, and only its first-run pass writes `default`: while
+    /// `hwDetect` is set (`0x769d10`) or, for the two shader rows, while `videoOptionsVersion` is
+    /// below 2 (`0x78e939`). After that a row missing from the file reads `registered`. `why` is
+    /// where the pass takes `default` from.
+    FirstRun {
         registered: &'static str,
         why: &'static str,
     },
@@ -129,6 +149,23 @@ const fn overridden(
         name,
         default,
         reference: Reference::Overridden { registered, why },
+        latched: false,
+        scope: Scope::Config,
+        hidden: false,
+    }
+}
+
+/// A row the reference's first-run pass moves from `registered` to `default`.
+const fn first_run(
+    name: &'static str,
+    default: &'static str,
+    registered: &'static str,
+    why: &'static str,
+) -> Registered {
+    Registered {
+        name,
+        default,
+        reference: Reference::FirstRun { registered, why },
         latched: false,
         scope: Scope::Config,
         hidden: false,
@@ -214,9 +251,14 @@ pub(crate) const REGISTERED_MAC: &[Registered] = &[
     same("iTunesRemoteFeedback", "1"),
 ];
 
-/// The rows 3.3.5a registers and 1.12.1 has no name for, each with a reader in the 3.3.5a stock UI.
-/// Their register sites sit in one run.
+/// The rows 3.3.5a registers and 1.12.1 has no name for, each with a reader in the 3.3.5a stock UI
+/// or its boot. Their register sites sit in one run.
 pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
+    // `hwDetect` (`0x76abaa`, "1", flags 1) and `videoOptionsVersion` (`0x76aa45`, "0", flags 3),
+    // the first-run pass's two gates ([`super::Cvars::first_run_defaults`]): the device's init
+    // writes `hwDetect` "0" (`0x76abfe`) and stages `videoOptionsVersion` "3" (`0x76b265`).
+    same("hwDetect", "1"),
+    same("videoOptionsVersion", "0").latched(),
     // "The style of Edit Boxes for the ChatFrame" ("im"); `ChatFrame.lua` hides the edit box
     // between lines in "im" and keeps it in "classic".
     same("chatStyle", "im").per_account(),
@@ -325,7 +367,7 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // `groundEffectDensity` ("16", callback `0x78dab0`: refused outside [16, 256]), the ground
     // clutter's cells per chunk, and `groundEffectDist` ("70.0", callback `0x78db10`: refused
     // outside [0, 140]), its reach. The knob is `benilla_world::clutter::ClutterConfig`.
-    overridden(
+    first_run(
         "groundEffectDensity",
         "24",
         "16",
@@ -337,7 +379,7 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("groundEffectDist", "70.0"),
     // `projectedTextures` ("0", callback `0x78dcf0`: bit 4 of the world's second enable mask),
     // which gates the M2 projected batches (`0x77f500`).
-    overridden(
+    first_run(
         "projectedTextures",
         "1",
         "0",
@@ -658,7 +700,7 @@ pub(crate) const REGISTERED: &[Registered] = &[
     same("useUiScale", "0"),
     // `farclip` (`0x78e400`, "350", callback `0x78d780`), validated per map (`0x780770`,
     // [`benilla_world::view::validate_farclip`]).
-    overridden(
+    first_run(
         "farclip",
         "777",
         "350",
@@ -1006,7 +1048,7 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // Highlights: bit `0x8000000` of the world's enable mask, read into the map's specular switch
     // at each map load (the WDT load → `0x7bd8a0`), hence the stock row's logout requirement. The
     // knob is `benilla_world::terrain_stream::TerrainSpecular`.
-    overridden(
+    first_run(
         "specular",
         "1",
         "0",
