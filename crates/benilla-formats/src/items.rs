@@ -37,6 +37,8 @@ pub struct ItemDisplay {
     pub helmet_vis: [u32; 2],
     /// The inventory icon as an extensionless `Interface\Icons\…` path, ready to load.
     pub icon: Option<String>,
+    /// The second inventory icon (column 6), the same path shape; see [`Self::inventory_icon`].
+    pub icon_low_violence: Option<String>,
     /// The `ItemGroupSounds.dbc` pickup and place sound group; 0 is silent, as the reference's
     /// bounds check returns.
     pub group_sounds: u32,
@@ -68,6 +70,15 @@ impl ItemDisplay {
     /// the tabard slot). Seven shipped rows set it, all tabards.
     pub fn takes_guild_emblem(&self) -> bool {
         self.flags & FLAG_GUILD_EMBLEM_TABARD != 0
+    }
+
+    /// The item art pick (`0x70a958`): below violence level 2 the second icon when it has one,
+    /// else the first.
+    pub fn inventory_icon(&self, low_violence: bool) -> Option<&str> {
+        match &self.icon_low_violence {
+            Some(second) if low_violence => Some(second),
+            _ => self.icon.as_deref(),
+        }
     }
 }
 
@@ -112,6 +123,7 @@ pub(crate) fn item_display_info_schema(l: &dbc_layout::ItemDisplayInfo) -> Schem
         ("ModelTextureLeft", FieldType::String),
         ("ModelTextureRight", FieldType::String),
         ("Icon", FieldType::String),
+        ("IconLowViolence", FieldType::String),
     ] {
         s.add_field(SchemaField::new(name, ty));
     }
@@ -169,6 +181,7 @@ fn catalog_from_records(
         let region_textures = std::array::from_fn(|i| str_at(&rs, r, l.textures + i));
         let helmet_vis = std::array::from_fn(|i| u32_at(r, l.helmet_geoset_vis + i).unwrap_or(0));
         let icon = str_at(&rs, r, 5).map(|i| format!("Interface\\Icons\\{i}"));
+        let icon_low_violence = str_at(&rs, r, 6).map(|i| format!("Interface\\Icons\\{i}"));
         let group_sounds = u32_at(r, l.group_sound).unwrap_or(0);
         let spell_visual = u32_at(r, l.spell_visual).unwrap_or(0);
         let flags = u32_at(r, l.flags).unwrap_or(0);
@@ -183,6 +196,7 @@ fn catalog_from_records(
                 region_textures,
                 helmet_vis,
                 icon,
+                icon_low_violence,
                 group_sounds,
                 spell_visual,
                 flags,
@@ -365,10 +379,12 @@ mod tests {
         let l = layout();
         let mut strings = StringBlock::new();
         let icon = strings.push("INV_Boots_01");
+        let second = strings.push("INV_Boots_02");
         let foot = strings.push("Generic_HuMa_01_Boot_FO");
         let mut cols = [0u32; 25];
         cols[0] = 222;
         cols[5] = icon;
+        cols[6] = second;
         cols[7] = 2; // GeosetGroup0
         cols[10] = 0x10; // Flags
         cols[11] = 41; // SpellVisualID
@@ -387,6 +403,10 @@ mod tests {
             .expect("row");
         assert_eq!(d.particle_colors, Some(crate::ParticleColors::MISSING));
         assert_eq!(d.icon.as_deref(), Some("Interface\\Icons\\INV_Boots_01"));
+        assert_eq!(
+            d.icon_low_violence.as_deref(),
+            Some("Interface\\Icons\\INV_Boots_02")
+        );
         assert_eq!(d.geoset_groups, [2, 0, 0]);
         assert_eq!((d.flags, d.spell_visual, d.group_sounds), (0x10, 41, 7));
         assert_eq!(d.helmet_vis, [0, 3]);
@@ -406,5 +426,24 @@ mod tests {
         let catalog = catalog_from_records(rs, layout(), &crate::ParticleColorTable::default());
         assert_eq!(catalog.len(), 1);
         assert!(catalog.get(999).is_none());
+    }
+
+    /// The art pick (`0x70a958`): the second icon below violence 2 when it is set, else the first.
+    #[test]
+    fn the_second_icon_is_taken_below_violence_two_when_set() {
+        let both = ItemDisplay {
+            icon: Some("FIRST".into()),
+            icon_low_violence: Some("SECOND".into()),
+            ..Default::default()
+        };
+        assert_eq!(both.inventory_icon(true), Some("SECOND"));
+        assert_eq!(both.inventory_icon(false), Some("FIRST"));
+        let first_only = ItemDisplay {
+            icon: Some("FIRST".into()),
+            ..Default::default()
+        };
+        assert_eq!(first_only.inventory_icon(true), Some("FIRST"));
+        let none = ItemDisplay::default();
+        assert_eq!(none.inventory_icon(true), None);
     }
 }
