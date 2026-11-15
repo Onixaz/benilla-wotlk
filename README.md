@@ -55,7 +55,7 @@ subsystems, instruments, and scripts.
 
 ## Quick start
 
-Clone the repository, point `WOW_DATA` at the `Data` directory of your 3.3.5a installation, and
+Clone the repository, point `WOW_INSTALL` at your 3.3.5a installation, the folder `Wow.exe` and `Data` sit in, and
 run `cargo play`. It builds the player binary and starts it; the first build takes a while.
 
 ### Windows PowerShell
@@ -63,7 +63,7 @@ run `cargo play`. It builds the player binary and starts it; the first build tak
 ```powershell
 git clone https://github.com/Onixaz/benilla-wotlk.git
 Set-Location benilla-wotlk
-$env:WOW_DATA = "C:\Games\World of Warcraft 3.3.5a\Data"
+$env:WOW_INSTALL = "C:\Games\World of Warcraft 3.3.5a"
 cargo play
 ```
 
@@ -72,7 +72,7 @@ cargo play
 ```sh
 git clone https://github.com/Onixaz/benilla-wotlk.git
 cd benilla-wotlk
-WOW_DATA=/path/to/WoW/Data cargo play
+WOW_INSTALL=/path/to/WoW cargo play
 ```
 
 ### Faster with a profile
@@ -115,8 +115,7 @@ not the one to play on. It also finds a `WoW` link at the repository root. See
 
 | Setting | Purpose |
 | --- | --- |
-| `WOW_DATA` | Path to the installation's `Data` directory. |
-| `WOW_INSTALL` | Path to the installation itself, the folder `Wow.exe` and `Data` sit in; its `Data` is used when `WOW_DATA` is not set. A server running Warden reads its memory checks' answers from that `Wow.exe`; defaults to the folder `WOW_DATA` sits in. |
+| `WOW_INSTALL` | Path to the installation, the folder `Wow.exe` and `Data` sit in. The game data is read from its `Data`, and a server running Warden has its memory checks answered from its `Wow.exe`. |
 | `WOW_HOST` | Authentication endpoint; defaults to `localhost:3724`. A hostname or `host:port` is accepted. |
 | `WOW_USER` and `WOW_PASS` | Optional credentials for automatic login. Set both or use the login screen. |
 | `WOW_CHAR` | Optional character name for automatic selection. |
