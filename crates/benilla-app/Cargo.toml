@@ -23,7 +23,9 @@ anyhow.workspace = true
 arboard = "3"
 benilla-ui = { path = "../benilla-ui" }
 bevy.workspace = true
-wgpu.workspace = true
+# `noop`: the characterization rig's stub device (`Device::noop`), which seats the render device
+# headless frames' main-world systems take; a normal dependency so tests and builds share artifacts.
+wgpu = { workspace = true, features = ["noop"] }
 # The debug panel, `dev` only, yet a dependency of every build: as an optional one it would turn
 # on Bevy, `syn` and `ttf-parser` features the player build lacks, and its tests would rebuild Bevy.
 bevy_egui = "0.39"

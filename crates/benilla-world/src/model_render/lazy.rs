@@ -125,6 +125,12 @@ fn with_pending<R>(f: impl FnOnce(&mut Parked<WowModelMaterial>) -> R) -> R {
     f(guard.get_or_insert_with(Parked::default))
 }
 
+/// Drops every parked value: the table is process-wide, so a process that builds a second `App`
+/// (a test rig) must start it empty, or the first app's handles realize into the second's store.
+pub fn forget_parked() {
+    *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
 /// The builder's `Assets::add`: reserves a handle and parks the value until a binding draws.
 pub fn defer(
     materials: &Assets<WowModelMaterial>,
