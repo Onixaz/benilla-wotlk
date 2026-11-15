@@ -44,16 +44,16 @@ pub enum EditAction {
 /// caret `SetCursorPosition` stores unsnapped, which each edit and move settles first.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditBoxState {
-    /// The real text (`E+0x32c`); `password` masks only the display (`E+0x334`).
+    /// The real text (`E+0x2b4`); `password` masks only the display (`E+0x2bc`).
     pub text: String,
-    /// The caret, a byte offset into the text (`E+0x36c`, clamped to `[0, len]`). It can sit
+    /// The caret, a byte offset into the text (`E+0x2f4`, clamped to `[0, len]`). It can sit
     /// anywhere against the selection: `HighlightText` writes only the selection.
     pub cursor: usize,
-    /// Selection start (`E+0x35c`); equal to `sel_end` when nothing is selected.
+    /// Selection start (`E+0x2e4`); equal to `sel_end` when nothing is selected.
     pub sel_start: usize,
-    /// Selection end (`E+0x360`); an insert replaces a non-empty selection first.
+    /// Selection end (`E+0x2e8`); an insert replaces a non-empty selection first.
     pub sel_end: usize,
-    /// `autoFocus` (`E+0x318` bit 0): take the focus when shown if nothing holds it and on a key or
+    /// `autoFocus` (`E+0x2a0` bit 0): take the focus when shown if nothing holds it and on a key or
     /// char event while nothing is focused.
     pub auto_focus: bool,
     /// `multiLine` (bit 1): Enter inserts a newline unless the box has an `OnEnterPressed` script.
@@ -61,22 +61,25 @@ pub struct EditBoxState {
     /// `numeric` (bit 2): one insert with any non-digit is refused whole; a paste is one insert per
     /// character.
     pub numeric: bool,
-    /// `password` (bit 3): the display is one `*` per character (`E+0x334`); the text is untouched.
+    /// `password` (bit 3): the display is one `*` per character (`E+0x2bc`); the text is untouched.
     pub password: bool,
     /// Alt-arrow mode (bit 4; XML `ignoreArrows`, Lua `SetAltArrowKeyMode`): a focused box lets the
     /// four arrows through to their bindings unless Alt is held, so you can turn while typing. It
     /// consumes every other key.
     pub alt_arrow_key_mode: bool,
-    /// `maxLetters` (`E+0x340`), 0 for unlimited.
+    /// `countInvisibleLetters` (bit 5): `maxLetters` and `GetNumLetters` count every character of
+    /// the raw text, escapes included, instead of the visible letters.
+    pub count_invisible_letters: bool,
+    /// `maxLetters` (`E+0x2c8`), 0 for unlimited.
     pub max_letters: usize,
-    /// `maxBytes` (`E+0x33c`); the client's `-1`, unlimited, is `None`.
+    /// `maxBytes` (`E+0x2c4`); the client's `-1`, unlimited, is `None`.
     pub max_bytes: Option<usize>,
-    /// The implicit FontString the text renders through (`E+0x328`).
+    /// The implicit FontString the text renders through (`E+0x2b0`).
     pub text_region: Option<RegionHandle>,
-    /// The three selection-highlight textures (`E+0x350`/`0x354`/`0x358`). They paint nothing: the
+    /// The three selection-highlight textures (`E+0x2d8`/`0x2dc`/`0x2e0`). They paint nothing: the
     /// host draws the highlight from `sel_start`/`sel_end`.
     pub selection_regions: [Option<RegionHandle>; 3],
-    /// The caret texture (`E+0x368`), a solid quad above the text. It paints nothing: the host
+    /// The caret texture (`E+0x2f0`), a solid quad above the text. It paints nothing: the host
     /// draws the caret from `caret_shown`.
     pub caret_region: Option<RegionHandle>,
     /// The submitted lines, oldest first, which UP and DOWN recall in a single-line box
@@ -89,7 +92,7 @@ pub struct EditBoxState {
     pub history_pos: Option<usize>,
     /// The live line stashed when browsing starts, restored when DOWN walks past the newest entry.
     pub history_draft: Option<String>,
-    /// `SetTextInsets(l, r, t, b)` (`+0x3ec`, `+0x3f4`, `+0x3f0`, `+0x3e8`), which seat the text
+    /// `SetTextInsets(l, r, t, b)` (`+0x374`, `+0x37c`, `+0x378`, `+0x370`), which seat the text
     /// region and pad a multi-line box's height.
     pub text_insets: [f32; 4],
     /// One line's measured height in the text region's font (a one-line measure of the font
@@ -109,7 +112,7 @@ pub struct EditBoxState {
     pub rows: Vec<usize>,
     /// The row pitch in pixels (the snapped font em), answered with the advances; 0 until then.
     pub cell_h: f32,
-    /// The dirty word (`[E+0x31c]`) the box's flush drains: [`Self::DIRTY_TEXT`],
+    /// The dirty word (`[E+0x2a4]`) the box's flush drains: [`Self::DIRTY_TEXT`],
     /// [`Self::DIRTY_CURSOR`] and [`Self::DIRTY_USER_INPUT`]. The ctor sets bit 0 alone, so a box
     /// fires `OnTextChanged` at its first flush once shown, with `userInput` false.
     pub dirty: u8,
@@ -119,14 +122,14 @@ pub struct EditBoxState {
     /// A caret leg that found the advance table pending, retried at each flush until it lands: the
     /// flush clears bit 2 before the leg, so the bit cannot carry the retry.
     pub caret_owed: bool,
-    /// The first visible display byte of a single-line box (`E+0x348`), scrolled by whole chars to
+    /// The first visible display byte of a single-line box (`E+0x2d0`), scrolled by whole chars to
     /// keep the caret in view; hides a caret outside the window.
     pub scroll_start: usize,
-    /// A press in the box is held (`E+0x364`), any button; moves extend the selection.
+    /// A press in the box is held (`E+0x2ec`), any button; moves extend the selection.
     pub drag_active: bool,
-    /// Caret blink half-period in seconds (`E+0x370`; ctor 0.5, XML `blinkSpeed`).
+    /// Caret blink half-period in seconds (`E+0x2f8`; ctor 0.5, XML `blinkSpeed`).
     pub blink_period: f32,
-    /// Blink accumulator (`E+0x374`): grows while focused; crossing the period toggles the caret.
+    /// Blink accumulator (`E+0x2fc`): grows while focused; crossing the period toggles the caret.
     pub blink_accum: f32,
     /// The caret shows this half-period. The flush's caret leg, which every caret move, edit and
     /// focus change raises, turns it on in the focused box, off in others.
@@ -189,6 +192,7 @@ impl Default for EditBoxState {
             numeric: false,
             password: false,
             alt_arrow_key_mode: false,
+            count_invisible_letters: false,
             max_letters: 0,
             max_bytes: None,
             text_region: None,
@@ -277,7 +281,7 @@ impl EditBoxState {
     // ── selection / geometry law ─────────────────────────────────────────────────────────────
 
     /// What the box draws and hit-tests: the text, or one `*` per character under `password`
-    /// (`E+0x334`; the draw and the hit-test both branch on the flag).
+    /// (`E+0x2bc`; the draw and the hit-test both branch on the flag).
     pub fn display(&self) -> String {
         if self.password {
             "*".repeat(self.text.chars().count())
@@ -409,7 +413,7 @@ impl EditBoxState {
         self.blink_accum = 0.0;
     }
 
-    /// Scroll the single-line window (`E+0x348`) by whole chars to keep the caret in `avail` px.
+    /// Scroll the single-line window (`E+0x2d0`) by whole chars to keep the caret in `avail` px.
     pub fn clamp_scroll(&mut self, avail: f32) {
         if self.multi_line {
             // A multiline box wraps; its parent ScrollFrame scrolls it.
@@ -596,7 +600,7 @@ impl EditBoxState {
     }
 
     /// `HighlightText` with the client's clamp, so `(0, -1)` selects all. It writes only the
-    /// selection (`+0x35c`/`+0x360`) and raises bit 1: the caret stays put, so no `OnCursorChanged`
+    /// selection (`+0x2e4`/`+0x2e8`) and raises bit 1: the caret stays put, so no `OnCursorChanged`
     /// fires and the blink runs on.
     pub fn highlight_text(&mut self, start: i64, end: i64) {
         let len = self.text.len() as i64;
@@ -969,6 +973,16 @@ impl EditBoxState {
         self.sel_end = a.max(b);
     }
 
+    /// The letter count `maxLetters` and `GetNumLetters` read (`0x9766cc`): the visible letters, or
+    /// with `countInvisibleLetters` every UTF-8 character of the raw text.
+    pub fn num_letters(&self) -> usize {
+        if self.count_invisible_letters {
+            self.text.chars().count()
+        } else {
+            crate::markup::ClassMap::new(&self.text).num_letters()
+        }
+    }
+
     /// After an edit, trim from the end to `maxBytes`, then `maxLetters`.
     fn enforce_caps(&mut self) {
         if let Some(mb) = self.max_bytes {
@@ -977,15 +991,16 @@ impl EditBoxState {
             }
         }
         if self.max_letters > 0 {
-            // Letters, not chars: the reference's letter count takes classes 2, 3 and 6, so an item
-            // link costs only its visible name. The trim is the Backspace step (links atomic),
-            // re-counting after each pop, so it sheds a whole link at once.
+            // Each pass deletes as many Backspace steps (links atomic) as there are letters over the
+            // cap, then re-counts (`0x965ba3`), so a link at the end goes with the letters before it.
             loop {
-                let map = crate::markup::ClassMap::new(&self.text);
-                if map.num_letters() <= self.max_letters {
+                let letters = self.num_letters();
+                if letters <= self.max_letters {
                     break;
                 }
-                let cut = map.advance(self.text.len(), -1, true);
+                let excess = (letters - self.max_letters) as isize;
+                let map = crate::markup::ClassMap::new(&self.text);
+                let cut = map.advance(self.text.len(), -excess, true);
                 if cut >= self.text.len() {
                     break;
                 }

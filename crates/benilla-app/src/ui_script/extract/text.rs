@@ -114,7 +114,7 @@ pub(super) fn emit(
         ebox_geom = Some((x0, top, cell_h, pitch));
         // A single-line box shows only what fits its text region, so the whole string drawn here is
         // cut at the region. A multi-line region is only as tall as its text, and the reference
-        // clips neither it nor the caret texture (`E+0x368`), which after a trailing break stands a
+        // clips neither it nor the caret texture (`E+0x2f0`), which after a trailing break stands a
         // line below it: only a ScrollFrame's clip applies.
         if !ui.multi_line {
             text_clip = Some(host.clip.map_or(host.rect, |c| c.intersect(host.rect)));

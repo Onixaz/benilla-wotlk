@@ -11,7 +11,7 @@
 //! - Editing: an insert deletes the selection, then `numeric` aborts a whole insert on any
 //!   non-digit; caps trim from the end (`maxBytes`, then `maxLetters`).
 //! - Events: an edit, a caret move, a focus change or a re-seat of the text only raises the box's
-//!   dirty bits (`[E+0x31c]`); the box's flush, run after its own `OnUpdate` in the tick's walk
+//!   dirty bits (`[E+0x2a4]`); the box's flush, run after its own `OnUpdate` in the tick's walk
 //!   ([`update`]) and before a key or click acts on it, fires `OnCursorChanged` and then
 //!   `OnTextChanged(userInput)`, true for an edit that did not come from `SetText`.
 //!
@@ -551,7 +551,7 @@ fn fire_script(lua: &Lua, id: u32, name: &str) {
 /// The caret width `OnCursorChanged` reports: 4.0 UI units on every raster.
 const CARET_WIDTH: f32 = 4.0;
 
-/// Register the EditBox methods and the global keyboard-focus query.
+/// Register the EditBox methods and `GetCurrentKeyBoardFocus` (`0x81b820`), the focused box or nil.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     methods::install(lua)?;
     lua.globals().set(

@@ -1332,7 +1332,7 @@ mod loader_tests {
         s.set_screen_size(800.0, 600.0);
         let doc = parse(
             r#"<Ui>
-                <EditBox name="XmlEdit" letters="5" numeric="true">
+                <EditBox name="XmlEdit" letters="5" numeric="true" countInvisibleLetters="true">
                     <Size><AbsDimension x="120" y="20"/></Size>
                     <Anchors>
                         <Anchor point="BOTTOMLEFT" relativePoint="BOTTOMLEFT">
@@ -1349,6 +1349,11 @@ mod loader_tests {
         assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
 
         assert_eq!(s.eval::<i64>("return XmlEdit:GetNumLetters()").unwrap(), 0);
+        assert_eq!(
+            s.eval::<i64>("return XmlEdit:IsCountInvisibleLetters()")
+                .unwrap(),
+            1
+        );
         s.run(r#"XmlEdit:Insert("12x")"#).unwrap(); // numeric: aborts
         s.run(r#"XmlEdit:Insert("123456")"#).unwrap(); // digits, capped at 5
         assert_eq!(

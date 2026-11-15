@@ -1,5 +1,5 @@
 //! The box's flush in its place in the tick's walk: after the box's own `OnUpdate`,
-//! `OnCursorChanged` then `OnTextChanged`, on the dirty word `[E+0x31c]`.
+//! `OnCursorChanged` then `OnTextChanged`, on the dirty word `[E+0x2a4]`.
 
 use crate::script::{
     EditAction, EditBoxAdvanceRequest, EditUnit, MeasureRequest, TextMeasure, UiScript,
