@@ -55,8 +55,9 @@ subsystems, instruments, and scripts.
 
 ## Quick start
 
-Clone the repository, point `WOW_INSTALL` at your 3.3.5a installation, the folder `Wow.exe` and `Data` sit in, and
-run `cargo play`. It builds the player binary and starts it; the first build takes a while.
+Clone the repository, point `WOW_INSTALL` at your 3.3.5a installation, the folder `Wow.exe` and
+`Data` sit in, and run `cargo play`. It builds the player binary and starts it; the first build
+takes a while.
 
 ### Windows PowerShell
 
