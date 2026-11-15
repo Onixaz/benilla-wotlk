@@ -1274,6 +1274,7 @@ mod tests {
             &seal,
             anchor + std::time::Duration::from_millis(4),
             &crate::spell::SpellModifiers::default(),
+            1.0,
         );
         app.insert_resource(actions)
             .insert_resource(crate::ui_macro::MacroBoundSpells::default())

@@ -306,7 +306,9 @@ impl CastLadder<'_, '_> {
             self.pending.arm(spell_id, now, guards);
         }
         if let Some(d) = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id)) {
-            self.cooldowns.start_gcd(spell_id, d, now, &self.spell_mods);
+            let speed = cast_speed(self.objects.player_object());
+            self.cooldowns
+                .start_gcd(spell_id, d, now, &self.spell_mods, speed);
         }
         self.ground.clear();
     }
@@ -464,6 +466,7 @@ impl CastLadder<'_, '_> {
         start_sent_cast(&mut self.ecs, Some(pet), spell_id, aimed);
         let now = Instant::now();
         let mods = self.spell_mods.clone();
+        let speed = cast_speed(self.objects.object(pet));
         self.ecs.queue(move |world: &mut World| {
             if !world.contains_resource::<crate::ui_pet::PetBar>() {
                 return;
@@ -474,7 +477,7 @@ impl CastLadder<'_, '_> {
                     .get_resource::<crate::ui_action::Spells>()
                     .and_then(|s| s.catalog.get(spell_id));
                 if let Some(d) = d {
-                    bar.cooldowns.start_gcd(spell_id, d, now, &mods);
+                    bar.cooldowns.start_gcd(spell_id, d, now, &mods, speed);
                 }
             });
         });
@@ -1175,8 +1178,17 @@ fn send_spell_cast(
     }
     // The GCD arms at send; a failed cast result clears it.
     if let Some(d) = def {
-        cooldowns.start_gcd(spell_id, d, now, spell_mods);
+        let caster_fields = match commit {
+            CastCommit::Pet { caster } => objects.object(caster),
+            _ => ctx.rel.self_store.map(|s| &s.0),
+        };
+        cooldowns.start_gcd(spell_id, d, now, spell_mods, cast_speed(caster_fields));
     }
+}
+
+/// A caster's `UNIT_MOD_CAST_SPEED`, the GCD arm's haste factor (`0x805e09`); 1.0 before it streams.
+pub(crate) fn cast_speed(caster: Option<&benilla_protocol::messages::ObjectFields>) -> f32 {
+    caster.and_then(|f| f.unit_mod_cast_speed()).unwrap_or(1.0)
 }
 
 /// What the pending send does ahead of the cast (`0x80ac90`), in its order.
@@ -1798,6 +1810,7 @@ mod tests {
             &gcd,
             Instant::now(),
             &crate::spell::SpellModifiers::default(),
+            1.0,
         );
         let keeps = |world: &mut World| {
             world

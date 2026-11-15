@@ -96,6 +96,9 @@ pub struct SpellDisplay {
     /// `PreventionType` (column 214): 1 silence, 2 pacify, 0 neither; the crowd control that
     /// refuses the spell locally (from the cast attempt). A stun refuses all.
     pub prevention_type: u32,
+    /// `DmgClass` (column 213, `+0x254`): 0 none, 1 magic, 2 melee, 3 ranged; the GCD's haste
+    /// scaling skips melee and ranged (`0x805de7`).
+    pub dmg_class: u32,
     /// `modalNextSpell` (column 48): cast by the client itself, at no target, when
     /// `SMSG_CAST_RESULT` for this in-flight spell arrives, success or failure; if it is the
     /// running auto-repeat, that is only re-armed. Every hunter shot names 75, Auto Shot: that is
@@ -310,6 +313,7 @@ impl Default for SpellDisplay {
             spell_family: 0,
             spell_family_flags: 0,
             prevention_type: 0,
+            dmg_class: 0,
             passive: false,
             cast_ui: 0,
             effects: [0, 0, 0],
