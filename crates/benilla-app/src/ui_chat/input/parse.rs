@@ -89,8 +89,8 @@ pub(in crate::ui_chat) enum ParsedChat {
     /// synthetic, the popup's group-mutating rows apply locally
     /// ([`crate::ui_party::GroupState::test`]).
     PartyTest { arg: String },
-    /// `/target [name]` (`TargetByName`): creatures and players, case-insensitive, whole name or
-    /// longest common prefix, with no range, cone, liveness or hostility gate.
+    /// `/target [name]` (`TargetByName`): creatures and players whose name starts with the whole
+    /// query, case-insensitive, the nearest first, with no range, cone, liveness or hostility gate.
     Target { name: Option<String> },
     /// `/assist [name]`: a named basis is a player (typemask `0x10`); bare assists the target.
     Assist { name: Option<String> },

@@ -426,6 +426,11 @@ impl NameCache {
         }
     }
 
+    /// The realm a player from another realm answered with; none for our own.
+    pub(crate) fn player_realm(&self, guid: u64) -> Option<&str> {
+        self.player_realms.get(&guid).map(String::as_str)
+    }
+
     /// A player's name as the reference's realm-aware callers format it: `name-realm` when the
     /// record holds a realm (`"%s-%s"`, `0x54b58a`), else the bare name. Asks once on a miss.
     pub(crate) fn full_name(&self, guid: u64, commands: &NetCommands) -> Option<String> {

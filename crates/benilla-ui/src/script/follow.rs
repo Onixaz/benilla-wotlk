@@ -13,8 +13,8 @@ pub enum FollowRequest {
     /// `FollowUnit(unit)`: whoever the token names, of any type; the reference applies no
     /// typemask here.
     ByUnit(String),
-    /// `FollowByName(name, exactMatch)`: with `exact`, the resolver skips its longest-prefix tier
-    /// and takes only a whole-name, case-insensitive match.
+    /// `FollowByName(name, exactMatch)`: with `exact`, the resolver compares the whole name rather
+    /// than the query's length, case-insensitive.
     ByName { name: String, exact: bool },
 }
 
