@@ -29,17 +29,22 @@ compile error. A change the reference's VM makes to stock 5.1 lands here, as a l
 ## The owner tag
 
 `GetAddOnMemoryUsage` answers per addon because the reference's VM carries a taint pointer in every
-object's header and walks the heap for it (`0x85b4e0`). benilla keeps no taint, so the hunk carries
-only the owner:
+object's header and walks the heap for it (`0x85b4e0`). The hunk carries that pointer as an owner
+byte, and the running owner is the execution taint (`0xd4139c`) the protected-frame gate reads
+(`crates/benilla-ui/src/script/taint.rs`); the taint the reference also keeps on every value slot is
+not carried:
 
 - `lobject.h`: a `lu_byte owner` in `CommonHeader`, which fits the header's padding, so no object
   grows. 255 owners; every addon past the 255th shares the last.
-- `lua.h`, `lgc.h`, `lgc.c`: the running owner, `lua_setgcowner`, and `lua_gcupdatesizes`, the walk
-  of `rootgc` and the string table.
+- `lua.h`, `lgc.h`, `lgc.c`: the running owner, `lua_setgcowner`, `lua_getgcowner`,
+  `lua_getgcbaseowner`, `lua_setgcrunning` (the running owner alone), and `lua_gcupdatesizes`, the
+  walk of `rootgc` and the string table.
+- `lapi.c`: `lua_getobjowner`, the owner of a value's object.
 - `lgc.c`, `lstring.c`, `lfunc.c`, `lstate.c`: a new object takes the running owner.
 - `lvm.c`: entering a closure with an owner makes it the running one, as the reference's closure
   taint does (`0x857ca0`).
-- `ldo.c`: a call from outside Lua starts from the owner the host set.
+- `ldo.c`: a call from outside Lua starts from the owner the host set, and returning there, or
+  unwinding there on an error, puts it back.
 
 ## The command that proves it
 

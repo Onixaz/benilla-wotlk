@@ -378,6 +378,7 @@ void luaD_call (lua_State *L, StkId func, int nResults) {
   if (luaD_precall(L, func, nResults) == PCRLUA)  /* is a Lua function? */
     luaV_execute(L, 1);  /* call it */
   L->nCcalls--;
+  if (L->nCcalls == 0) lua_gcowner = lua_gcbaseowner;
   luaC_checkGC(L);
 }
 
@@ -468,6 +469,7 @@ int luaD_pcall (lua_State *L, Pfunc func, void *u,
     luaF_close(L, oldtop);  /* close eventual pending closures */
     luaD_seterrorobj(L, status, oldtop);
     L->nCcalls = oldnCcalls;
+    if (L->nCcalls == 0) lua_gcowner = lua_gcbaseowner;
     L->ci = restoreci(L, old_ci);
     L->base = L->ci->base;
     L->savedpc = L->ci->savedpc;

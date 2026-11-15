@@ -229,6 +229,10 @@ LUA_API int  (lua_status) (lua_State *L);
 
 LUA_API int (lua_gc) (lua_State *L, int what, int data);
 LUA_API void (lua_setgcowner) (int owner);
+LUA_API int (lua_getgcowner) (void);
+LUA_API int (lua_getgcbaseowner) (void);
+LUA_API void (lua_setgcrunning) (int owner);
+LUA_API int (lua_getobjowner) (lua_State *L, int idx);
 LUA_API void (lua_gcupdatesizes) (lua_State *L, size_t *usage, int count);
 
 
