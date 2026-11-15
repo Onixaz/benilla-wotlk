@@ -812,7 +812,7 @@ impl Plugin for UiInstancePlugin {
                     // Before the feeds that read the slots, so a port's frame pushes no boss.
                     encounter_leave_world
                         .after(crate::net::apply_net_updates)
-                        .before(UiFeed),
+                        .before(crate::ui_script::UiPress),
                     drain_instance.after(UiInput),
                 ),
             );

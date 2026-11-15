@@ -1070,10 +1070,12 @@ impl Plugin for UiItemsPlugin {
             .add_systems(
                 Update,
                 (
-                    // The pending-lock clear, ahead of both feeds that push `locked`.
+                    // The pending-lock clear, ahead of both feeds that push `locked` and of the
+                    // press, whose item uses read the locks.
                     feed::resolve_item_locks
                         .before(feed_containers)
-                        .before(crate::ui_char::feed_char),
+                        .before(crate::ui_char::feed_char)
+                        .before(crate::ui_script::UiPress),
                     // The slot cooldowns must be in the VM before `feed_action_state`'s
                     // synchronous `BAG_UPDATE_COOLDOWN` makes the bag handlers re-read them.
                     feed_containers

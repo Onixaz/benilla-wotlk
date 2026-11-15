@@ -67,7 +67,7 @@ impl Plugin for CharSelectPlugin {
                 Update,
                 session_edges()
                     .after(benilla_world::schedule::WorldStage::Net)
-                    .before(crate::ui_script::UiFeed)
+                    .before(crate::ui_script::UiPress)
                     .in_set(RealmEntrySet),
             );
     }

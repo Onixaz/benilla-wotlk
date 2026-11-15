@@ -1,5 +1,5 @@
 //! The player-UI input pass: [`feed_ui_input`] feeds mouse and keyboard events into the UI engine
-//! once [`super::extract::tick_script`] has resolved the frame's rects.
+//! against the rects the last [`super::extract::tick_script`] resolved, the ones on screen.
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::AccumulatedMouseScroll;
@@ -17,7 +17,7 @@ use crate::textinput::{self, keymap, HostClipboard};
 /// hover and occlusion ray, since the target chain runs after this pass; one frame of staleness is
 /// within the pick's tolerance.
 #[derive(bevy::ecs::system::SystemParam)]
-pub(super) struct PointerFeed<'w> {
+pub(crate) struct PointerFeed<'w> {
     hover: ResMut<'w, PlayerUiHover>,
     click_consumed: ResMut<'w, PlayerUiClickConsumed>,
     hovered: Res<'w, crate::target::Hovered>,
@@ -68,8 +68,9 @@ fn feed_wheel(
 
 /// Feeds cursor, buttons, wheel and keys into the UI engine, publishing [`PlayerUiHover`] (the
 /// pointer arbiter yields to the UI) and [`UiKeyboardCapture`] (a key a box or frame ate never
-/// fires its binding). Runs in the `UiInput` set, before `WorldStage::Input` and every key reader.
-pub(super) fn feed_ui_input(
+/// fires its binding). Runs first in [`super::UiPress`], before the binding dispatch,
+/// `WorldStage::Input` and every key reader.
+pub(crate) fn feed_ui_input(
     script: Option<NonSendMut<UiScript>>,
     // Carries the `wl_display` the Wayland clipboard backend needs, once winit has a surface.
     window: Query<(&Window, Option<&bevy::window::RawHandleWrapper>), With<PrimaryWindow>>,

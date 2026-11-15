@@ -402,8 +402,11 @@ impl Plugin for UiTradePlugin {
                     // the input pass, with the drain after it, so each lands the same frame. No
                     // range guard: vmangos cancels a trade on distance (`Player.cpp:6117`).
                     feed_trade.after(crate::ui_unit::UnitFeed).in_set(UiFeed),
-                    // Ahead of the feed, so an accepted partner shows the frame the window opens.
-                    answer_trade_request.before(feed_trade),
+                    // Ahead of the press and the feed, so an accepted partner shows the frame the
+                    // window opens.
+                    answer_trade_request
+                        .before(crate::ui_script::UiPress)
+                        .before(feed_trade),
                     // The coinage-change reflex's trade half, after the world's fields land.
                     trim_offer_to_purse
                         .after(crate::ui_unit::UnitFeed)

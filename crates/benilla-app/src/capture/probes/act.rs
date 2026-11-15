@@ -219,12 +219,14 @@ fn fire_probe_key(
     mut buttons: ResMut<ButtonInput<MouseButton>>,
     mut events: MessageWriter<bevy::input::keyboard::KeyboardInput>,
     mut hold: ResMut<benilla_world::modkeys::SyntheticHold>,
+    frames: Res<bevy::diagnostic::FrameCount>,
 ) {
     probe.armed |= !self_player.is_empty();
     if probe.taps.is_empty() || !probe.armed {
         return;
     }
     let now = time.elapsed_secs();
+    let frame = frames.0;
     let mut synth = |key: KeyCode, state: bevy::input::ButtonState| {
         events.write(bevy::input::keyboard::KeyboardInput {
             key_code: key,
@@ -240,7 +242,7 @@ fn fire_probe_key(
     for tap in &mut probe.taps {
         if !tap.pressed && now >= tap.at {
             info!(
-                "probe-key: {:?} down ({now:.1}s, hold {:.2}s)",
+                "probe-key: {:?} down ({now:.1}s, hold {:.2}s, frame {frame})",
                 tap.key, tap.hold
             );
             match tap.key {
@@ -302,8 +304,17 @@ impl Plugin for ProbeLuaPlugin {
             again,
             ..default()
         })
+        .add_systems(First, stamp_probe_frame)
         .add_systems(Update, (fire_probe_lua, fire_probe_interacts));
     }
+}
+
+/// The frame number `ProbeFrame()` answers, the one `probe-key` lines carry.
+static PROBE_FRAME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Stamp this frame's number before any schedule that runs Lua.
+fn stamp_probe_frame(frames: Res<bevy::diagnostic::FrameCount>) {
+    PROBE_FRAME.store(frames.0, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// `ProbeInteract()` calls not yet run, each a right-click on the target.
@@ -479,6 +490,17 @@ fn install_probe_log(script: &benilla_ui::script::UiScript) {
             }
         }
         Err(e) => error!("probe-lua: creating ProbeClick: {e}"),
+    }
+    match script
+        .lua()
+        .create_function(|_, ()| Ok(PROBE_FRAME.load(std::sync::atomic::Ordering::Relaxed)))
+    {
+        Ok(f) => {
+            if let Err(e) = script.lua().globals().set("ProbeFrame", f) {
+                error!("probe-lua: installing ProbeFrame: {e}");
+            }
+        }
+        Err(e) => error!("probe-lua: creating ProbeFrame: {e}"),
     }
     match script.lua().create_function(|_, text: String| {
         info!("probe-log: {text}");

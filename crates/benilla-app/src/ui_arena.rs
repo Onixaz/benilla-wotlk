@@ -270,7 +270,7 @@ impl Plugin for UiArenaPlugin {
                 Update,
                 track_streamed_players
                     .after(benilla_world::schedule::WorldStage::Net)
-                    .before(UiFeed),
+                    .before(crate::ui_script::UiPress),
             )
             .add_systems(
                 Update,

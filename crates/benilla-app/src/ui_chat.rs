@@ -126,7 +126,7 @@ impl Plugin for UiChatPlugin {
             )
             // The last-input stamp, ungated and ahead of the UI pass: the reference stamps raw
             // input before dispatch, so a key the chat box swallows still counts.
-            .add_systems(Update, idle::stamp_input.before(UiInput))
+            .add_systems(Update, idle::stamp_input.before(crate::ui_script::UiPress))
             // A fresh VM's joined-channel mirror, before the feed so its first line is numbered.
             .add_systems(
                 Update,

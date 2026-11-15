@@ -845,13 +845,12 @@ pub(crate) mod schedule_tests {
     /// - `ui_quest::lines::feed_quest_lines` against `ui_items::feed_item_stats` and
     ///   `ui_tooltip::feed_spell_tooltips` over `Items` and the VM: it only reads templates, which
     ///   those two do not write, and a chat line commutes with their pushes;
-    /// - `script_calls::apply_script_calls`, in the target chain, against the `.after(UiInput)`
-    ///   drains of gestures that are not such script calls (the ATTACKTARGET binding, the
-    ///   item-pick commit, the GameObject openers, the chat, party, duel, trade and death drains)
-    ///   over the `CastLadder`, the selection and the unit-token resolver: the class
-    ///   `drop_item_on_unit` and the world click's legs already carry, as none of those drains
-    ///   orders against the target chain. Such a gesture and a script call in one frame take
-    ///   either order;
+    /// - `script_calls::apply_script_calls`, in the press pass ahead of the feeds, against the
+    ///   transport chain's `Transform` and `RemoteMotion` writers (`tick_transports`,
+    ///   `reseek_ridden_transport_at_worldport`, `compose_riders`, `compose_deck_passengers`,
+    ///   `ground_deck_riders`), the booth billboards and the world camera's gate: a press's range,
+    ///   facing and nearest-unit reads see a rider's pose or the camera a frame late at worst, as
+    ///   the range compare's readers do;
     /// - the range compare's readers (`ui_action::state::feed_action_state`,
     ///   `ui_tooltip::spell_feed::feed_spell_tooltips`, `spell::targeting::feed_targeting_to_vm`,
     ///   the targeting cursor and the object-click commit) against the writers of `Player` and
@@ -1027,7 +1026,9 @@ pub(crate) mod schedule_tests {
     ///   clocks; it reads one torn-down unit's clip time, a frame's step either way.
     // The realm entry latch precedes UiFeed and the logout probe, ordering 54 roster/UI pairs.
     // The corpse resolver (#636) follows the transport chain inside UiFeed, ordering 63 more.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_891;
+    // The press pass (#1215) runs the script calls ahead of the feeds and their drains, and the
+    // packet-derived state a press reads ahead of it, taking the count from at most 3891 to 3808.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_808;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
@@ -1416,12 +1417,12 @@ pub(crate) mod schedule_tests {
     /// reason.
     const OUTSIDE_THE_FEED_PHASE: &[(&str, &str)] = &[];
 
-    /// The VM ticks once a frame (`extract::tick_script`, in `UiInput`): a push the tick must
-    /// see rides `UiFeed`, chained after the net drain and before the tick; a drain of what it
-    /// produced is `.after(UiInput)`. Read off the built graph. Fails a holder with no path to or
-    /// from the tick, one before the tick outside `UiFeed` and not argued in
-    /// [`OUTSIDE_THE_FEED_PHASE`], a `UiFeed` member the graph does not place between the drain
-    /// and the tick, and a stale row.
+    /// The VM ticks once a frame (`extract::tick_script`, in `UiInput`): a press rides `UiPress`
+    /// and a push the tick must see rides `UiFeed`, both chained after the net drain and before
+    /// the tick; a drain of what it produced is `.after(UiInput)`. Read off the built graph. Fails
+    /// a holder with no path to or from the tick, one before the tick outside both phases and not
+    /// argued in [`OUTSIDE_THE_FEED_PHASE`], a phase member the graph does not place between the
+    /// drain and the tick, and a stale row.
     #[test]
     fn every_vm_holder_in_update_declares_its_side_of_the_tick() {
         let mut app = headless_client();
@@ -1464,7 +1465,7 @@ pub(crate) mod schedule_tests {
         let after_drain = reach(drain, &succ);
         let mut holders: Vec<SystemKey> = c.holds_vm.iter().copied().collect();
         holders.sort_by(|a, b| c.name(*a).cmp(c.name(*b)));
-        let (mut feed, mut post, mut argued) = (0, 0, 0);
+        let (mut press, mut feed, mut post, mut argued) = (0, 0, 0, 0);
         let mut offenders = Vec::new();
         let mut stale = Vec::new();
         for k in &holders {
@@ -1472,15 +1473,22 @@ pub(crate) mod schedule_tests {
                 continue;
             }
             let s = &c.systems[k];
-            let in_feed = s.sets.iter().any(|set| set == "UiFeed");
+            let phase = ["UiPress", "UiFeed"]
+                .into_iter()
+                .find(|phase| s.sets.iter().any(|set| set == phase));
+            let in_feed = phase.is_some();
             let row = OUTSIDE_THE_FEED_PHASE
                 .iter()
                 .find(|(suffix, _)| s.name.ends_with(suffix));
-            if in_feed {
-                feed += 1;
+            if let Some(phase) = phase {
+                if phase == "UiPress" {
+                    press += 1;
+                } else {
+                    feed += 1;
+                }
                 if !(after_drain.contains(k) && before_tick.contains(k)) {
                     offenders.push(format!(
-                        "{}: in `UiFeed`, but the graph does not place it after the net drain and before the tick",
+                        "{}: in `{phase}`, but the graph does not place it after the net drain and before the tick",
                         s.name
                     ));
                 }
@@ -1521,13 +1529,13 @@ pub(crate) mod schedule_tests {
             }
         }
         eprintln!(
-            "VM holders in Update: {} — the tick, {feed} in the feed phase, {post} after the tick, {argued} argued outside the phase",
+            "VM holders in Update: {} — the tick, {press} in the press phase, {feed} in the feed phase, {post} after the tick, {argued} argued outside the phases",
             holders.len()
         );
         assert!(
             offenders.is_empty(),
             "these systems hold the VM in `Update` without declaring their side of the tick \
-             (`UiFeed` before it, or `.after(UiInput)`):\n  {}",
+             (`UiPress` or `UiFeed` before it, or `.after(UiInput)`):\n  {}",
             offenders.join("\n  ")
         );
         assert!(stale.is_empty(), "stale rows:\n  {}", stale.join("\n  "));

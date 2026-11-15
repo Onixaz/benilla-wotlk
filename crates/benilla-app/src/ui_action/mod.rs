@@ -29,6 +29,9 @@ mod feed_tests;
 mod net;
 mod ranks;
 mod state;
+// The press-frame tests run the state feed as a system of their own.
+#[cfg(test)]
+pub(crate) use state::feed_action_state;
 pub(crate) mod toggle;
 mod weapon_icon;
 

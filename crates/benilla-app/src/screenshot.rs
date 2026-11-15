@@ -3,9 +3,8 @@
 //! which hides `ScreenshotStatus` and calls `Screenshot()`; the engine later answers
 //! `SCREENSHOT_SUCCEEDED` or `SCREENSHOT_FAILED`.
 //!
-//! Our UI quads are built at the top of `UiInput` and the binding runs at its bottom, so a capture
-//! on the press frame would still show a second press's fading status; [`ask_for_captures`]
-//! therefore holds each ask exactly one frame.
+//! [`ask_for_captures`] holds each ask exactly one frame, so the shot is a whole frame drawn after
+//! the binding's `Hide()`, never one where a second press's fading status still shows.
 //!
 //! The file is the capture's (`0x4a8570`): `Screenshots\WoWScrnShot_<%m%d%y_%H%M%S>` in local
 //! time, a run-length Targa with no alpha when `screenshotFormat` is `tga` in any case, else a

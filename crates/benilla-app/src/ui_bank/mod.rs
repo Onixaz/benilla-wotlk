@@ -70,8 +70,11 @@ impl Plugin for UiBankPlugin {
             .add_systems(
                 Update,
                 (
-                    // Range-close first so the clear fires `BANKFRAME_CLOSED` the same frame.
-                    close_npc_session_out_of_range::<BankOpen>.before(feed_bank),
+                    // Range-close first, ahead of the press, so the clear fires `BANKFRAME_CLOSED`
+                    // the same frame.
+                    close_npc_session_out_of_range::<BankOpen>
+                        .before(crate::ui_script::UiPress)
+                        .before(feed_bank),
                     feed_bank.in_set(UiFeed),
                     drain_bank.after(UiInput),
                 ),

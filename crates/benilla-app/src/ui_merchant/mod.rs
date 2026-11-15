@@ -118,7 +118,9 @@ impl Plugin for UiMerchantPlugin {
                     // Range-close first so the clear fires `MERCHANT_CLOSED` the same frame. The
                     // feed follows `UnitFeed`: `MERCHANT_SHOW`'s paint reads the item and
                     // player-requirement stores for `GetMerchantItemInfo`'s `isUsable`.
-                    close_npc_session_out_of_range::<MerchantOpen>.before(feed_merchant),
+                    close_npc_session_out_of_range::<MerchantOpen>
+                        .before(crate::ui_script::UiPress)
+                        .before(feed_merchant),
                     feed_merchant.after(crate::ui_unit::UnitFeed).in_set(UiFeed),
                     // Before `feed_char`: the `UNIT_INVENTORY_CHANGED` a repair fires refreshes the
                     // Repair All button from this total (`PaperDollFrame.lua:717-724`).

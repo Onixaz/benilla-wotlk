@@ -24,7 +24,7 @@ mod temp_bar;
 mod unit;
 mod usable;
 
-use bar::{feed_pet_bar, fire_pet_cooldown_events};
+pub(crate) use bar::{feed_pet_bar, fire_pet_cooldown_events};
 use drain::drain_pet_actions;
 // A pet bar press, applied in call order by `crate::script_calls`.
 pub(crate) use drain::pet_stop_on_old_target_clear;
@@ -140,10 +140,10 @@ impl Plugin for UiPetPlugin {
             .add_systems(
                 Update,
                 (
-                    // Feeds ride the unit feed, before the VM ticks; drains run after the input pass so
-                    // a click is sent that frame (a press is a script call, `PetPress`). The old-target
-                    // clear precedes the bar feed so Attack
-                    // goes dark the frame the selection moves.
+                    // Feeds ride the unit feed, before the VM ticks; the bar's drain runs in the
+                    // press pass so a click is sent, and shown, that frame (a press is a script
+                    // call, `PetPress`). The old-target clear precedes the bar feed so Attack goes
+                    // dark the frame the selection moves.
                     pet_stop_on_old_target_clear
                         .in_set(UnitFeed)
                         .before(feed_pet_bar)
@@ -164,12 +164,12 @@ impl Plugin for UiPetPlugin {
                         .after(crate::ui_pet_stats::PetSnapshot),
                     feed_pet_menu.in_set(UnitFeed),
                     // The UI's world entry asks after the time and before the mail (`0x528010`);
-                    // its bar drop lands before the feeds read the bar.
+                    // its bar drop lands before the press and the feeds read the bar.
                     request_pet_info_on_world_enter
                         .after(crate::net::send_query_time)
                         .before(crate::ui_mail::send_query_next_mail_time_on_enter)
                         .before(UnitFeed)
-                        .before(crate::ui_script::UiFeed),
+                        .before(crate::ui_script::UiPress),
                     possess::feed_possess_spell.in_set(UnitFeed),
                     // Before the slot feed, which shows the slots it writes.
                     temp_bar::update_pet_temp_bar
@@ -179,10 +179,11 @@ impl Plugin for UiPetPlugin {
                         .after(pet_stop_on_old_target_clear)
                         .before(crate::ui_action::SlotIdentityFeed),
                     // After this frame's presses, as the one drain before it ran them ahead of the
-                    // toggles, stops and writes.
+                    // toggles, stops and writes; in the press pass, so the bar's feed shows them.
                     drain_pet_actions
-                        .after(UiInput)
-                        .after(crate::script_calls::apply_script_calls),
+                        .in_set(crate::ui_script::UiPress)
+                        .after(crate::script_calls::apply_script_calls)
+                        .after(crate::ui_action::drop_item::drop_item_on_unit),
                     // It fires `PET_DISMISS_START`, so it waits for the interface. An abandon re-lists
                     // the stable it reads before the stable's own verbs move it.
                     drain_pet_menu
