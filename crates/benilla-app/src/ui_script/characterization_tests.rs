@@ -63,12 +63,7 @@ f:RegisterAllEvents()
 f:SetScript("OnEvent", function(_, e, ...)
     local args = {}
     for i = 1, select("#", ...) do args[#args + 1] = tostring((select(i, ...))) end
-    local verbs = {}
-    for _, v in ipairs(VERBS) do
-        local ok, a = pcall(v[2])
-        verbs[#verbs + 1] = v[1] .. "=" .. (ok and tostring(a) or "error")
-    end
-    CHARZ_LOG[#CHARZ_LOG + 1] = e .. "\t" .. table.concat(args, " ") .. "\t" .. table.concat(verbs, ";")
+    CHARZ_LOG[#CHARZ_LOG + 1] = e .. "\t" .. table.concat(args, " ") .. "\t" .. answers()
 end)
 "##;
 
@@ -127,7 +122,16 @@ pub(super) struct Rig {
     tx: Sender<SessionEvent>,
     seen: Vec<Seen>,
     _env: (EnvGuard, EnvGuard),
+    tmp: std::path::PathBuf,
     _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl Drop for Rig {
+    fn drop(&mut self) {
+        // The app first: it holds files under the scratch home open.
+        drop(std::mem::replace(&mut self.app, App::empty()));
+        let _ = std::fs::remove_dir_all(&self.tmp);
+    }
 }
 
 impl Rig {
@@ -187,6 +191,7 @@ impl Rig {
             tx,
             seen: Vec::new(),
             _env: env,
+            tmp,
             _lock: lock,
         };
         rig.send(SessionEvent::Connected {
@@ -317,10 +322,6 @@ const QUEST: u32 = 7;
 /// `PLAYER_FLAGS_GHOST`.
 const GHOST: u32 = 0x10;
 
-fn lines(seen: &[Seen], events: &[&str], verbs: &[&str]) -> Vec<String> {
-    pin(seen, events, verbs)
-}
-
 fn flags(f: u32) -> SessionEvent {
     self_values(&[(FIELD_UNIT_FLAGS, f)])
 }
@@ -350,7 +351,7 @@ fn login_fires_the_load_events_in_order() {
     };
     let seen = rig.take();
     assert_eq!(
-        lines(
+        pin(
             &seen,
             &[
                 "VARIABLES_LOADED",
@@ -387,7 +388,7 @@ fn reload_fires_the_load_events_again() {
     rig.run(4);
     let seen = rig.take();
     assert_eq!(
-        lines(
+        pin(
             &seen,
             &[
                 "VARIABLES_LOADED",
@@ -440,21 +441,21 @@ fn death_release_and_resurrection() {
         3,
     );
     assert_eq!(
-        lines(&died, events, verbs),
+        pin(&died, events, verbs),
         vec![
             "PLAYER_DEAD | dead=nil ghost=nil popup=You have died. Release to the nearest graveyard?",
             "UNIT_HEALTH player | dead=1 ghost=nil popup=You have died. Release to the nearest graveyard?",
         ]
     );
     assert_eq!(
-        lines(&released, events, verbs),
+        pin(&released, events, verbs),
         vec![
             "PLAYER_ALIVE | dead=1 ghost=nil popup=nil",
             "UNIT_HEALTH player | dead=1 ghost=1 popup=nil",
         ]
     );
     assert_eq!(
-        lines(&revived, events, verbs),
+        pin(&revived, events, verbs),
         vec![
             "PLAYER_UNGHOST | dead=1 ghost=1 popup=nil",
             "UNIT_HEALTH player | dead=nil ghost=nil popup=nil",
@@ -475,14 +476,14 @@ fn flight_start_and_end_with_the_flags_ahead_of_the_control_update() {
     );
     let end = rig.packets(vec![flags(0), control(true)], 3);
     assert_eq!(
-        lines(&start, events, verbs),
+        pin(&start, events, verbs),
         vec![
             "UNIT_FLAGS player | taxi=1 control=1",
             "PLAYER_CONTROL_LOST | taxi=1 control=nil",
         ]
     );
     assert_eq!(
-        lines(&end, events, verbs),
+        pin(&end, events, verbs),
         vec![
             "UNIT_FLAGS player | taxi=nil control=nil",
             "PLAYER_CONTROL_GAINED | taxi=nil control=1",
@@ -521,7 +522,7 @@ fn quest_accept_and_complete() {
         3,
     );
     assert_eq!(
-        lines(&accept, events, verbs),
+        pin(&accept, events, verbs),
         vec![
             "UNIT_QUEST_LOG_CHANGED player | quests=0",
             "QUEST_LOG_UPDATE | quests=2",
@@ -529,7 +530,7 @@ fn quest_accept_and_complete() {
         ]
     );
     assert_eq!(
-        lines(&complete, events, verbs),
+        pin(&complete, events, verbs),
         vec![
             "UNIT_QUEST_LOG_CHANGED player | quests=2",
             "QUEST_LOG_UPDATE | quests=0",
@@ -589,14 +590,14 @@ fn pet_summon_and_dismiss() {
         3,
     );
     assert_eq!(
-        lines(&summon, events, verbs),
+        pin(&summon, events, verbs),
         vec![
             "PET_BAR_UPDATE | pet=nil petui=nil",
             "UNIT_PET player | pet=1 petui=nil",
         ]
     );
     assert_eq!(
-        lines(&dismiss, events, verbs),
+        pin(&dismiss, events, verbs),
         vec![
             "PET_BAR_UPDATE | pet=1 petui=nil",
             "UNIT_PET player | pet=nil petui=nil",
@@ -650,11 +651,11 @@ fn zone_change() {
     let elwynn = area(&mut rig, 12);
     let stormwind = area(&mut rig, 1519);
     assert_eq!(
-        lines(&elwynn, events, verbs),
+        pin(&elwynn, events, verbs),
         vec!["ZONE_CHANGED_NEW_AREA | zone=Elwynn Forest",]
     );
     assert_eq!(
-        lines(&stormwind, events, verbs),
+        pin(&stormwind, events, verbs),
         vec!["ZONE_CHANGED_NEW_AREA | zone=Stormwind City",]
     );
 }
@@ -673,14 +674,14 @@ fn combat_enter_and_leave() {
     let enter = rig.packets(vec![flags(crate::player::UNIT_FLAG_IN_COMBAT)], 3);
     let leave = rig.packets(vec![flags(0)], 3);
     assert_eq!(
-        lines(&enter, events, verbs),
+        pin(&enter, events, verbs),
         vec![
             "UNIT_FLAGS player | combat=1 lockdown=nil",
             "PLAYER_REGEN_DISABLED | combat=1 lockdown=nil",
         ]
     );
     assert_eq!(
-        lines(&leave, events, verbs),
+        pin(&leave, events, verbs),
         vec![
             "UNIT_FLAGS player | combat=nil lockdown=1",
             "PLAYER_REGEN_ENABLED | combat=nil lockdown=nil",
@@ -698,7 +699,7 @@ fn combat_enter_and_leave() {
 #[ignore = "#1245: PLAYER_DEAD fires from its feed before the battlefield feed pushes the arena"]
 fn arena_death_popup_shows_the_arena_text() {
     use benilla_protocol::messages::{BattlefieldActive, BattlefieldStatus};
-    // A 2v2 queue word (team size 2) for Nagrand Arena, map 559.
+    // A 2v2 queue word (team size 2, type 6: all arenas), active on Nagrand Arena, map 559.
     let status = SessionEvent::BattlefieldStatus(BattlefieldStatus {
         slot: 0,
         queue: (6 << 16) | 2,
@@ -744,7 +745,7 @@ fn flight_start_with_the_control_update_ahead_of_the_flags() {
         3,
     );
     assert_eq!(
-        lines(&start, &["PLAYER_CONTROL_LOST"], &["taxi"]),
+        pin(&start, &["PLAYER_CONTROL_LOST"], &["taxi"]),
         vec!["PLAYER_CONTROL_LOST | taxi=nil".to_string()]
     );
 }
@@ -772,7 +773,7 @@ fn quest_accept_with_a_carried_source_item() {
         return;
     };
     assert_eq!(
-        lines(
+        pin(
             &accept,
             &["QUEST_LOG_UPDATE", "QUEST_ACCEPTED"],
             &["special"]

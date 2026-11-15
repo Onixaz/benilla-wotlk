@@ -127,6 +127,8 @@ fn with_pending<R>(f: impl FnOnce(&mut Parked<WowModelMaterial>) -> R) -> R {
 
 /// Drops every parked value: the table is process-wide, so a process that builds a second `App`
 /// (a test rig) must start it empty, or the first app's handles realize into the second's store.
+/// Only a test rig calls it.
+#[doc(hidden)]
 pub fn forget_parked() {
     *PENDING.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
