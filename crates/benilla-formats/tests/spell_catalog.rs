@@ -51,6 +51,14 @@ fn spell_catalog_resolves_known_spells() {
         "Auto Shot is pacify-preventable — and its DmgClass 3 is what makes column 213 \
          distinguishable from 214 at all"
     );
+    // `DmgClass`, column 213: the GCD's haste scaling skips melee (2) and ranged (3).
+    assert_eq!(catalog.get(75).expect("Auto Shot").dmg_class, 3, "ranged");
+    assert_eq!(
+        catalog.get(78).expect("Heroic Strike").dmg_class,
+        2,
+        "melee"
+    );
+    assert_eq!(catalog.get(133).expect("Fireball").dmg_class, 1, "magic");
 
     // The crowd-control exemption's columns: `SchoolMask` 225, `Mechanic` 3, `EffectMechanic`
     // 83-85.

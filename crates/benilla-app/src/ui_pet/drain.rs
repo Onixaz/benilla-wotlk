@@ -208,6 +208,7 @@ impl PetPress<'_, '_> {
                 spell,
                 possessing,
                 spell_mods,
+                crate::spell::cast_speed(Some(&pet_store.0)),
                 Instant::now(),
             );
         }
@@ -236,10 +237,12 @@ pub(super) fn arm_pet_gcd(
     spell: &benilla_formats::SpellDisplay,
     possessing: bool,
     mods: &crate::spell::SpellModifiers,
+    cast_speed: f32,
     now: Instant,
 ) {
     if !possessing && !spell.allows_client_targeting() {
-        bar.cooldowns.start_gcd(spell_id, spell, now, mods);
+        bar.cooldowns
+            .start_gcd(spell_id, spell, now, mods, cast_speed);
     }
 }
 
