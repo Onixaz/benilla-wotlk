@@ -53,8 +53,8 @@ impl Plugin for UiCompanionPlugin {
                     .after(crate::ui_action::SlotIdentityFeed)
                     .before(crate::ui_action::CooldownEvents),
                 drain_companions.after(UiInput),
-                // After the VM ticks: a click's `SetCreature` lands during `UiInput`. Before the
-                // display build that loads its model and the booth that draws it.
+                // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it.
+                // Before the display build that loads its model and the booth that draws it.
                 feed_companion_booth
                     .after(UiInput)
                     .in_set(crate::portrait::CreatureBoothFeed)

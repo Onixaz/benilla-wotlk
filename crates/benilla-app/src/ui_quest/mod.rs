@@ -242,6 +242,7 @@ impl Plugin for UiQuestPlugin {
                     // frame. The unit feed reads the giver for `"questnpc"` between the two, so
                     // the panel event's `QuestFrame_SetPortrait` names this frame's giver.
                     close_npc_session_out_of_range::<QuestGiver>
+                        .before(crate::ui_script::UiPress)
                         .before(crate::ui_unit::UnitFeed)
                         .before(feed_quest),
                     feed_quest.after(crate::ui_unit::UnitFeed).in_set(UiFeed),

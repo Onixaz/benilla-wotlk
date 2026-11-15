@@ -134,11 +134,12 @@ impl Plugin for UiTradeSkillPlugin {
             .add_systems(
                 Update,
                 (
-                    // Opens before the feed, so an opener shows the window this frame; the
-                    // drain after the input pass, so a Create click casts this frame.
+                    // Opens after the press that cast the opener and before the feed, so the
+                    // window shows in the press's frame; the drain after the input pass, so a
+                    // Create click casts this frame.
                     open_trade_skill
                         .before(feed_trade_skill)
-                        .after(benilla_world::schedule::WorldStage::Net),
+                        .after(crate::ui_script::UiPress),
                     feed_trade_skill.in_set(UnitFeed),
                     drain_trade_skill.after(UiInput),
                 ),

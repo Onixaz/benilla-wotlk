@@ -24,7 +24,6 @@ use benilla_ui::script::{PetBookState, SpellSlotView, UiScript};
 use crate::net::{ClientCommand, GuidIndex, NetCommands, ObjectStore, SelfPlayer};
 use crate::ui_action::Spells;
 use crate::ui_pet::{PetBar, PetUnit};
-use crate::ui_script::UiInput;
 use crate::ui_unit::UnitFeed;
 
 pub(crate) struct UiPetBookPlugin;
@@ -34,15 +33,16 @@ impl Plugin for UiPetBookPlugin {
         app.add_systems(
             Update,
             (
-                // Before the input pass, so a tab flipped this frame reads a populated book.
+                // Before the cooldown events and the tick, whose handlers read the book.
                 feed_pet_book
                     .in_set(UnitFeed)
                     .before(crate::ui_action::CooldownEvents),
-                // After the input pass and this frame's pet book casts; it writes back into
-                // `PetBar`, whose next feed carries the mirrored autocast bit.
+                // In the press pass after this frame's pet book casts; it writes back into
+                // `PetBar`, whose feed this frame carries the mirrored autocast bit.
                 drain_pet_book
-                    .after(UiInput)
-                    .after(crate::script_calls::apply_script_calls),
+                    .in_set(crate::ui_script::UiPress)
+                    .after(crate::script_calls::apply_script_calls)
+                    .after(crate::ui_action::drop_item::drop_item_on_unit),
             ),
         );
     }

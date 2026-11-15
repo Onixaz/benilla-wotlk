@@ -4,7 +4,7 @@
 //! Bindings window write. This module derives an exact-match dispatch map from the keys whenever
 //! the table's generation moves, and runs a pressed chord's command.
 //!
-//! Dispatch ([`latch_and_dispatch`], in [`crate::ui_script::UiInput`] after the UI key feed), as
+//! Dispatch ([`latch_and_dispatch`], in [`crate::ui_script::UiPress`] after the UI key feed), as
 //! the reference's binding dispatch and command runner do:
 //! - a press probes its exact chord, then each subset of its modifiers ([`Chord::reductions`]);
 //! - the resolved command's body runs with `keystate = "down"`, and the base key's release runs a
@@ -167,7 +167,7 @@ struct BindingFiles {
     dirty: u8,
 }
 
-/// This module's systems inside [`crate::ui_script::UiInput`]. The UI key feed runs before it, so
+/// This module's systems inside [`crate::ui_script::UiPress`]. The UI key feed runs before it, so
 /// a key a focused box consumed is already in the capture gate when dispatch runs.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BindingSet;
@@ -188,7 +188,7 @@ impl Plugin for BindingsPlugin {
                     // the commands come with the load.
                     (sync_dispatch, latch_and_dispatch)
                         .chain()
-                        .in_set(crate::ui_script::UiInput)
+                        .in_set(crate::ui_script::UiPress)
                         .in_set(BindingSet)
                         .in_set(InWorldGated),
                     // After the tick: the requests are Lua's own (`SaveBindings`), queued by
@@ -365,8 +365,8 @@ impl WheelNotches {
     }
 }
 
-/// The dispatch pass (see the module doc). Runs after the UI key feed and before
-/// `WorldStage::Input`, so a bound key acts this frame, once.
+/// The dispatch pass (see the module doc). Runs after the UI key feed and before the script calls
+/// apply, so a bound key acts this frame, once, ahead of the frame's feed and tick.
 pub(crate) fn latch_and_dispatch(
     mut script: Option<NonSendMut<UiScript>>,
     mut keyboard: MessageReader<KeyboardInput>,

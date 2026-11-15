@@ -131,12 +131,14 @@ impl Plugin for SpellPlugin {
                     inflight::local_self_cancel
                         .in_set(UnitFeed)
                         .in_set(LocalCancel),
+                    // Before the press too, whose casts read the cost inputs.
                     (mods::track_class_family, mods::track_cost_inputs)
                         .chain()
                         .after(WorldStage::Net)
+                        .before(crate::ui_script::UiPress)
                         .before(UnitFeed),
-                    // The state push runs before the input pass's `ToggleGameMenu`, whose
-                    // `SpellStopTargeting` lands with the script calls after it. After the
+                    // The state push follows the press, so a `SpellStopTargeting` its script
+                    // calls applied (an ESC's `ToggleGameMenu`) is pushed this frame. After the
                     // old-target clear, the pet bar's writer in the feed: `"pet"` resolves off
                     // the bar. After the aura feed, whose resolver inputs list the units the
                     // hover verdict is asked for.
@@ -168,13 +170,13 @@ impl Plugin for SpellPlugin {
                 Update,
                 (
                     // The player's init puts the stored table on before the totem refill reads
-                    // the bar.
+                    // the bar, and both before the press reads it.
                     net::put_action_table_on_init,
                     multicast::run_refill,
                 )
                     .chain()
                     .after(WorldStage::Net)
-                    .before(UiFeed),
+                    .before(crate::ui_script::UiPress),
             )
             .add_systems(
                 Startup,

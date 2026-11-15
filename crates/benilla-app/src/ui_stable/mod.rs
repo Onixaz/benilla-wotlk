@@ -35,7 +35,7 @@ impl Plugin for UiStablePlugin {
                     close_npc_session_out_of_range::<StableOpen>.before(feed_stable),
                     feed_stable.in_set(UiFeed),
                     drain_stable.after(UiInput),
-                    // After the VM ticks: the selection is written by a click during `UiInput`
+                    // After the VM ticks: the selection is written by a click in `UiPress`
                     // and by `PetStable_Update`'s re-pick (`PetStable.lua:48-63`) inside the
                     // feed's events, so an earlier read shows the previous pet for a frame.
                     feed_stable_booth

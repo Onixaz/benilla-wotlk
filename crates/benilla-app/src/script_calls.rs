@@ -18,7 +18,8 @@ use benilla_ui::script::{ScriptCall, UiScript};
 /// so a frame always ends.
 const MAX_NESTING: u8 = 8;
 
-/// Apply this frame's script calls in call order, in the target chain after the world clicks.
+/// Apply the queued script calls in call order, in the press pass after the clicks and keys that
+/// made them and before the frame's feed, which publishes the cooldowns they arm.
 #[allow(clippy::type_complexity)] // the appliers, one per owner of the state a call touches
 pub(crate) fn apply_script_calls(
     script: Option<NonSendMut<UiScript>>,

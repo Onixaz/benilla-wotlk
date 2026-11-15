@@ -447,15 +447,6 @@ impl Plugin for TargetPlugin {
                         .chain(),
                     // The loot close's guid-scoped deselect.
                     click::clear_target_requests,
-                    // The script calls that touch the selection, the cast or the targeting cursor
-                    // (`TargetUnit`, `/target`, `ClearTarget`, `/cast`, `UseAction`, …), applied
-                    // in the order the script made them; then the two item legs.
-                    (
-                        crate::script_calls::apply_script_calls,
-                        crate::ui_action::drop_item::drop_item_on_unit,
-                        crate::ui_action::drop_item::drop_on_world_click,
-                    )
-                        .chain(),
                     // The chat layer's by-name asks: `/target` and `/assist` commit through
                     // `scan::commit`; `/follow` hands its subject to `crate::player`.
                     (
@@ -482,6 +473,21 @@ impl Plugin for TargetPlugin {
                     .chain()
                     .in_set(TargetUpdate)
                     .after(WorldStage::Input),
+            )
+            // The script calls that touch the selection, the cast or the targeting cursor
+            // (`TargetUnit`, `/target`, `ClearTarget`, `/cast`, `UseAction`, …), applied in the
+            // order the script made them, then the two item legs: in the press pass after the
+            // clicks and keys that made them, so the frame's feed publishes what they arm.
+            .add_systems(
+                Update,
+                (
+                    crate::script_calls::apply_script_calls,
+                    crate::ui_action::drop_item::drop_item_on_unit,
+                    crate::ui_action::drop_item::drop_on_world_click,
+                )
+                    .chain()
+                    .in_set(crate::ui_script::UiPress)
+                    .after(crate::bindings::BindingSet),
             )
             // PostUpdate: the brighten sets MeshTag bit 31 after every Update writer that
             // overwrites the whole tag.

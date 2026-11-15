@@ -816,7 +816,6 @@ fn a_pet_bar_press_reaches_the_pet_and_its_bar() {
 /// the bags', the pet bar's and book's, the runes', the forms' and the companions', and the pet's
 /// flush.
 #[test]
-#[ignore = "#1215: the press runs after the frame's cooldown feeds"]
 fn the_press_runs_before_every_cooldown_feed_and_each_feed_before_the_tick() {
     let g = graph_or_skip!();
     for feed in [
@@ -847,7 +846,6 @@ fn the_press_runs_before_every_cooldown_feed_and_each_feed_before_the_tick() {
 /// `SPELL_UPDATE_COOLDOWN` fire before the frame's `OnUpdate`, which reads the sweep from
 /// `GetActionCooldown`.
 #[test]
-#[ignore = "#1215: the press runs after the frame's cooldown feeds"]
 fn a_pressed_cast_shows_its_gcd_in_the_frame_of_the_press() {
     let mut rig = rig_or_skip!(&[
         Step::BindingSync,
@@ -877,7 +875,6 @@ fn a_pressed_cast_shows_its_gcd_in_the_frame_of_the_press() {
 /// The spellbook's sweep of the same press, in the same frame: `GetSpellCooldown` reads the GCD
 /// from the frame's `OnUpdate`.
 #[test]
-#[ignore = "#1215: the press runs after the frame's cooldown feeds"]
 fn a_pressed_cast_shows_its_gcd_on_the_spellbook_in_the_frame_of_the_press() {
     let mut rig = rig_or_skip!(&[
         Step::BindingSync,
@@ -902,7 +899,6 @@ fn a_pressed_cast_shows_its_gcd_on_the_spellbook_in_the_frame_of_the_press() {
 /// A pet bar press shows the pet's GCD in that frame: the flush fires before the frame's
 /// `OnUpdate`, which reads the sweep from `GetPetActionCooldown`.
 #[test]
-#[ignore = "#1215: the press runs after the frame's cooldown feeds"]
 fn a_pet_bar_press_shows_the_pets_gcd_in_the_frame_of_the_press() {
     let mut rig = rig_or_skip!(&[
         Step::BindingSync,
@@ -934,7 +930,6 @@ fn a_pet_bar_press_shows_the_pets_gcd_in_the_frame_of_the_press() {
 /// its elapsed time) is updated (`0x5ec8f0`) before the frame draws, so it draws at its real
 /// elapsed time and never fully dark.
 #[test]
-#[ignore = "#1215: the press runs after the frame's cooldown feeds"]
 fn a_running_cooldown_set_again_in_the_press_frame_draws_at_its_elapsed_time() {
     let mut rig = rig_or_skip!(&[
         Step::BindingSync,
@@ -986,4 +981,24 @@ fn a_running_cooldown_set_again_in_the_press_frame_draws_at_its_elapsed_time() {
         "the elapsed time is the recovery's: {elapsed_ms}"
     );
     assert_eq!(drawn, expected, "drawn at {elapsed_ms} ms, not at 0");
+}
+
+/// A key and a world click landing in one frame: the press pass runs before player control settles
+/// the click, so the key's cast goes to the selection the frame began with and the click selects
+/// after it. 12340 takes the two in the order the OS queued them (`0x480410`).
+#[test]
+fn a_key_and_a_world_click_in_one_frame_cast_before_the_click_selects() {
+    let mut rig = rig_or_skip!(&[
+        Step::BindingSync,
+        Step::BindingDispatch,
+        Step::ScriptCalls,
+        Step::WorldSelect,
+    ]);
+    rig.lua("function PROBE_PRESS() UseAction(1) end");
+    rig.frame();
+    rig.key(true);
+    rig.world_click();
+    rig.frame();
+    assert_eq!(rig.casts(), [(BOLT, Some(OLD))]);
+    assert_eq!(rig.selected(), Some(NEW));
 }
