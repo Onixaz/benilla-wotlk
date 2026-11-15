@@ -8,8 +8,8 @@
 //! | `FollowByName` | 0x10, players only | 2, assistable and alive | Lua arg 2 |
 //!
 //! Filter mode 0 underflows the reference's jump table into accept-all: no range, facing, reaction,
-//! liveness, visibility or self test. A name matches whole-string first, else by the longest common
-//! prefix, both case-insensitive.
+//! liveness, visibility or self test. A name matches whole-string first, else when it starts with
+//! the whole query, both case-insensitive.
 //!
 //! Deviation: the reference ends the walk at the first whole-string hit, so its pick follows the
 //! object list's order (a tail append); we rank exact, then longer prefix, then nearest
@@ -162,6 +162,11 @@ fn rank(query: &str, name: &str, dist2: f32, mode: Match) -> Option<Rank> {
         });
     }
     if mode == Match::ExactOnly {
+        return None;
+    }
+    // 12340 compares the candidate with the query for the query's full length; sharing only the
+    // first character is not a match.
+    if !has_query_prefix(name, query) {
         return None;
     }
     let prefix = common_prefix_len(query, name);
@@ -1016,6 +1021,13 @@ mod tests {
             rank("rag", "Ragnaros", 1.0, Match::PrefixOk).map(|r| r.prefix),
             Some(3)
         );
+    }
+
+    #[test]
+    fn a_prefix_match_must_cover_the_whole_query() {
+        assert!(rank("Bob", "Brian", 1.0, Match::PrefixOk).is_none());
+        assert!(rank("Bob", "Bobby", 1.0, Match::PrefixOk).is_some());
+        assert!(rank("Bobby", "Bob", 1.0, Match::PrefixOk).is_none());
     }
 
     #[test]
