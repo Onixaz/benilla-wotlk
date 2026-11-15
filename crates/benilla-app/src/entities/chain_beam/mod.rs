@@ -14,6 +14,7 @@ use crate::creature_anim::spell_visual::{kit_waits_for_beam, NO_BEAM_KEY};
 use crate::creature_anim::spell_visual::{AreaKitWait, DelayedAreaKit};
 use crate::creature_anim::{
     BeamKitWaits, ChainProcPlay, KitEffectClear, SpellEffectClear, SpellGoTargets, SpellVisuals,
+    UnitEffectClear,
 };
 use crate::net::{Guid, GuidIndex, NetEntity};
 use lightning::{Lightning, Scratch};
@@ -220,7 +221,10 @@ pub(super) fn spawn_chain_beams(
     mut commands: Commands,
     time: Res<Time>,
     mut plays: MessageReader<ChainProcPlay>,
-    mut clears: MessageReader<SpellEffectClear>,
+    (mut clears, mut list_clears): (
+        MessageReader<SpellEffectClear>,
+        MessageReader<UnitEffectClear>,
+    ),
     mut kit_clears: MessageReader<KitEffectClear>,
     (mut go_targets, packets): (MessageReader<SpellGoTargets>, Query<(Entity, &ChainHops)>),
     mut area_kits: MessageWriter<DelayedAreaKit>,
@@ -286,7 +290,10 @@ pub(super) fn spawn_chain_beams(
     // self-terminating beam keeps its own clock (`0x743b40`, `0x6f74f0`).
     let cleared: Vec<SpellEffectClear> = clears.read().copied().collect();
     let kits_cleared: Vec<KitEffectClear> = kit_clears.read().copied().collect();
-    if !cleared.is_empty() || !kits_cleared.is_empty() {
+    // The effect-list clear ends every beam its unit holds, a death sparing a death-persistent
+    // spell's (`0x744ac0`, `0x6f74f0`).
+    let lists_cleared: Vec<UnitEffectClear> = list_clears.read().copied().collect();
+    if !cleared.is_empty() || !kits_cleared.is_empty() || !lists_cleared.is_empty() {
         for (e, beam) in &beams {
             let spell = || {
                 cleared
@@ -298,7 +305,18 @@ pub(super) fn spawn_chain_beams(
                     .iter()
                     .any(|c| c.entity == beam.caster && c.kit_id == beam.kit_id)
             };
+            let list = || {
+                lists_cleared.iter().any(|c| {
+                    c.entity == beam.caster && c.mode.ends(spells.as_deref(), beam.spell_id)
+                })
+            };
             if beam.persistent && (spell() || kit()) {
+                commands.entity(e).despawn();
+            } else if list() {
+                debug!(
+                    "chain beam: spell {} ends with {}'s effect list",
+                    beam.spell_id, beam.caster
+                );
                 commands.entity(e).despawn();
             }
         }

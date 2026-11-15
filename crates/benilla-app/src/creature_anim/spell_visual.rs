@@ -70,8 +70,13 @@ pub(crate) struct SpellVisuals(pub(crate) SpellVisualCatalog);
 #[derive(Message, Clone, Copy, Debug)]
 pub(crate) enum SpellKitSound {
     /// Ring this kit at the unit; a looping kit (`SoundEntries` flag 0x200) becomes the unit's
-    /// tracked hold loop until [`Self::StopHold`].
-    Play { entity: Entity, kit_sound: u32 },
+    /// tracked hold loop until [`Self::StopHold`]. `spell_id` is the playing effect's, which an
+    /// effect-list clear matches.
+    Play {
+        entity: Entity,
+        kit_sound: u32,
+        spell_id: u32,
+    },
     /// The cast or channel hold ended: stop the unit's hold loop.
     StopHold { entity: Entity },
     /// Ring this kit at a world point, the kit play's `extra` override: a missile's ground arrival.
@@ -234,6 +239,114 @@ pub(crate) struct ChannelSpellLeft {
 pub(crate) struct SpellEffectClear {
     pub(crate) entity: Entity,
     pub(crate) spell_id: u32,
+}
+
+/// The clear of an object's whole effect list (`0x744ac0`), read by every effect owner: kit models,
+/// beams, kit sounds, anim-rate nodes, item swaps, held point plays and the unit's missiles.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UnitEffectClear {
+    pub(crate) entity: Entity,
+    pub(crate) mode: EffectListClear,
+}
+
+/// How a [`UnitEffectClear`] ends each effect.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EffectListClear {
+    /// The unit's death, mode 0 (`0x729362`): every effect but a death-persistent spell's goes to
+    /// the destroy list, its meshes at once and its particles draining (`0x744b62`, `0x6f87c0`).
+    Death,
+    /// The object's disable or teardown, a nonzero mode (`0x7355a7`): every effect is released at
+    /// once, but one with no attachment still timing out runs out on its own (`0x744ba7`).
+    Release,
+}
+
+impl EffectListClear {
+    /// Whether this clear ends an effect of `spell_id`: a death spares `AttributesEx3 & 0x100000`
+    /// (`0x744b54`).
+    pub(crate) fn ends(self, spells: Option<&crate::ui_action::Spells>, spell_id: u32) -> bool {
+        const SPELL_ATTR_EX3_DEATH_PERSISTENT: u32 = 0x10_0000;
+        self == Self::Release
+            || !spells
+                .and_then(|s| s.catalog.get(spell_id))
+                .is_some_and(|d| d.attributes_ex3 & SPELL_ATTR_EX3_DEATH_PERSISTENT != 0)
+    }
+
+    /// A catalog in which `id` alone persists through death, for the owners' tests.
+    #[cfg(test)]
+    pub(crate) fn death_persistent_for_tests(id: u32) -> crate::ui_action::Spells {
+        let display = benilla_formats::SpellDisplay {
+            attributes_ex3: 0x10_0000,
+            ..Default::default()
+        };
+        crate::ui_action::Spells {
+            catalog: benilla_formats::SpellCatalog::from_displays([(id, display)].into()),
+            ..crate::ui_action::Spells::empty_for_tests()
+        }
+    }
+}
+
+#[cfg(test)]
+mod list_clear_tests {
+    use super::*;
+
+    /// A death spares a death-persistent spell's effects alone; a release spares nothing.
+    #[test]
+    fn a_death_spares_only_death_persistent_spells() {
+        let spells = EffectListClear::death_persistent_for_tests(20707);
+        let death = EffectListClear::Death;
+        assert!(!death.ends(Some(&spells), 20707), "Soulstone's stays");
+        assert!(death.ends(Some(&spells), 133), "any other goes");
+        assert!(
+            death.ends(None, 20707),
+            "no client data: nothing is known to persist"
+        );
+        assert!(EffectListClear::Release.ends(Some(&spells), 20707));
+    }
+
+    /// The death edge, health falling to 0 or the dead flag rising, clears the unit's list once
+    /// per edge; a heal or a create edge clears nothing.
+    #[test]
+    fn a_death_edge_clears_the_units_effect_list() {
+        use benilla_protocol::field::{
+            FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH, UNIT_DYNFLAG_DEAD,
+        };
+        let mut app = App::new();
+        app.add_message::<FieldChanged>()
+            .add_message::<SpellKitFx>()
+            .add_message::<UnitEffectClear>()
+            .add_systems(Update, arm_unit_edge_fx);
+        let unit = app.world_mut().spawn_empty().id();
+        let edge = |index, old, new| FieldChanged {
+            entity: unit,
+            guid: 7,
+            kind: benilla_protocol::messages::ObjectType::Unit,
+            index,
+            old,
+            new,
+        };
+        let clears = |app: &mut App| -> Vec<UnitEffectClear> {
+            app.world_mut()
+                .resource_mut::<Messages<UnitEffectClear>>()
+                .drain()
+                .collect()
+        };
+        app.world_mut()
+            .write_message(edge(FIELD_UNIT_HEALTH, 50, 20));
+        app.update();
+        assert!(clears(&mut app).is_empty(), "a hit is no death");
+        app.world_mut()
+            .write_message(edge(FIELD_UNIT_HEALTH, 20, 0));
+        app.update();
+        let death = UnitEffectClear {
+            entity: unit,
+            mode: EffectListClear::Death,
+        };
+        assert_eq!(clears(&mut app), vec![death]);
+        app.world_mut()
+            .write_message(edge(FIELD_UNIT_DYNAMIC_FLAGS, 0, UNIT_DYNFLAG_DEAD));
+        app.update();
+        assert_eq!(clears(&mut app), vec![death], "the dead flag rising");
+    }
 }
 
 /// The clear of one kit's effects on a unit by kit alone (`0x744bd0`), the precast kit's at a
@@ -575,6 +688,7 @@ pub(crate) fn arm_targeting_kit(
         sounds.write(SpellKitSound::Play {
             entity: target,
             kit_sound,
+            spell_id,
         });
     }
 }
@@ -582,7 +696,7 @@ pub(crate) fn arm_targeting_kit(
 /// A reached ground-aim targeting kit at its point: its area-subset models loop there while the
 /// caster holds them (`0x744ac0`), and its sound rings there (`0x74547b`).
 fn play_point_targeting_kit(
-    caster: Entity,
+    (caster, spell_id): (Entity, u32),
     kit: &VisualKit,
     (at, deck): PointAt,
     visuals: &SpellVisualCatalog,
@@ -596,7 +710,7 @@ fn play_point_targeting_kit(
             attach,
             scale,
             turn: Quat::IDENTITY,
-            held_by: Some(caster),
+            held_by: Some((caster, spell_id)),
             ride: deck_ride(deck, caster),
         });
     }
@@ -1048,7 +1162,11 @@ fn play_kit(
         }
     }
     if let Some(kit_sound) = kit.sound.filter(|_| play.sound) {
-        out.sounds.write(SpellKitSound::Play { entity, kit_sound });
+        out.sounds.write(SpellKitSound::Play {
+            entity,
+            kit_sound,
+            spell_id,
+        });
     }
     // The camera shake plays at every stage, gated on nothing.
     if let Some(group) = kit.shake {
@@ -1991,7 +2109,11 @@ fn play_precast_kit(
         pending.insert(entity, Some(spell_id));
     }
     if let Some(kit_sound) = kit.sound {
-        out.sounds.write(SpellKitSound::Play { entity, kit_sound });
+        out.sounds.write(SpellKitSound::Play {
+            entity,
+            kit_sound,
+            spell_id,
+        });
     }
     stow_for_weapon_effects(out.sheaths, spells, entity, spell_id, kit);
     // Persistent until the cast resolves, re-armed forever (stage 4).
@@ -2039,7 +2161,11 @@ fn play_channel_kit(
         pending.insert(entity, Some(spell_id));
     }
     if let Some(kit_sound) = kit.sound {
-        out.sounds.write(SpellKitSound::Play { entity, kit_sound });
+        out.sounds.write(SpellKitSound::Play {
+            entity,
+            kit_sound,
+            spell_id,
+        });
     }
     // The CharProc dispatcher's second caller: Drain Life's beam is reached only here, on the
     // rising edge, and lives until the field clears; every chain slot runs.
@@ -2245,9 +2371,14 @@ pub(super) fn route_cast_visuals(
                     None => {
                         arm_targeting_kit(w.entity, w.spell_id, kit, &visuals.0, out.fx, out.sounds)
                     }
-                    Some(at) => {
-                        play_point_targeting_kit(w.entity, kit, at, &visuals.0, out.sounds, bursts)
-                    }
+                    Some(at) => play_point_targeting_kit(
+                        (w.entity, w.spell_id),
+                        kit,
+                        at,
+                        &visuals.0,
+                        out.sounds,
+                        bursts,
+                    ),
                 }
             }
             WaitPlay::AuraState => {}
@@ -3237,7 +3368,11 @@ pub(crate) fn arm_aura_state_fx(
         play_proc_nodes(&mut procs, entity, spell_id, &kit);
         // Ungated; a same-frame duplicate of the impact hand-off's collapses downstream.
         if let Some(kit_sound) = kit.sound {
-            sounds.write(SpellKitSound::Play { entity, kit_sound });
+            sounds.write(SpellKitSound::Play {
+                entity,
+                kit_sound,
+                spell_id,
+            });
         }
         // The stage-2 anim leg, on the add edge only: an aura refreshed in place keeps its
         // spell, and the slot already storing it is skipped (`0x7248a8`).
@@ -3525,15 +3660,32 @@ pub(super) fn arm_go_loot_fx(
     armed.retain(|e| objects.contains(*e));
 }
 
-/// The level-up ding: any streamed unit's `UNIT_FIELD_LEVEL` change spawns [`LEVEL_UP_EFFECT`],
-/// independent of `SMSG_LEVELUP_INFO`; a unit streaming in does not ding. Its sound is the model's
-/// own `$SND` event.
-pub(super) fn arm_level_up_fx(
+/// A unit's field edges that touch its effects. Its death, health falling to 0 or the dead flag
+/// rising (`0x73f330`, `0x740570`), clears its effect list ([`EffectListClear::Death`]); a unit
+/// streaming in dead clears nothing, as create edges are suppressed. The level-up ding: any
+/// streamed unit's `UNIT_FIELD_LEVEL` change spawns [`LEVEL_UP_EFFECT`], independent of
+/// `SMSG_LEVELUP_INFO`; a unit streaming in does not ding. Its sound is the model's own `$SND`
+/// event.
+pub(super) fn arm_unit_edge_fx(
+    mut commands: Commands,
     mut edges: MessageReader<FieldChanged>,
     visuals: Option<Res<SpellVisuals>>,
     mut fx: MessageWriter<SpellKitFx>,
 ) {
+    use benilla_protocol::field::{FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH, UNIT_DYNFLAG_DEAD};
     for e in edges.read() {
+        let died = (e.unit_field(FIELD_UNIT_HEALTH) && e.old > 0 && e.new == 0)
+            || (e.unit_field(FIELD_UNIT_DYNAMIC_FLAGS)
+                && e.old & UNIT_DYNFLAG_DEAD == 0
+                && e.new & UNIT_DYNFLAG_DEAD != 0);
+        if died {
+            debug!("anim: {} died, its effect list clears", e.entity);
+            // Deferred, so the owners that read it need no order against this system.
+            commands.write_message(UnitEffectClear {
+                entity: e.entity,
+                mode: EffectListClear::Death,
+            });
+        }
         if !e.unit_field(benilla_protocol::field::FIELD_UNIT_LEVEL) {
             continue;
         }

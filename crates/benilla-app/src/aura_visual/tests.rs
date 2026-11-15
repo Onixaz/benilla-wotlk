@@ -221,7 +221,8 @@ fn app_with_chains() -> App {
         .add_message::<crate::creature_anim::SpellKitShake>()
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<crate::creature_anim::SpellEffectClear>()
-        .add_message::<crate::creature_anim::KitEffectClear>();
+        .add_message::<crate::creature_anim::KitEffectClear>()
+        .add_message::<crate::creature_anim::UnitEffectClear>();
     app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::creature_anim::BaseAnimRecompute>();
     app.add_message::<crate::creature_anim::SheathRequest>();
@@ -1017,7 +1018,8 @@ fn a_kit_clear_drops_only_the_anim_rate_of_its_kit() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     app.add_message::<AuraProc>()
-        .add_message::<crate::creature_anim::KitEffectClear>();
+        .add_message::<crate::creature_anim::KitEffectClear>()
+        .add_message::<crate::creature_anim::UnitEffectClear>();
     app.add_systems(Update, drain_aura_procs);
     let unit = app.world_mut().spawn_empty().id();
     for kit_id in [5, 9] {
@@ -1049,6 +1051,55 @@ fn a_kit_clear_drops_only_the_anim_rate_of_its_kit() {
     assert_eq!(rates(&app), vec![5]);
     let n = app.world().entity(unit).get::<AuraNodes>().unwrap();
     assert_eq!(n.head_tint(), Some([1, 2, 3]), "the tint is no effect");
+}
+
+/// The effect-list clear drops the anim-rate effects, as they sit in the unit's effect list: a
+/// death spares a death-persistent spell's and the alpha and tint, which are not effects; a
+/// release takes every rate (`0x744ac0`).
+#[test]
+fn a_list_clear_drops_the_anim_rates_but_a_death_persistent_spells() {
+    use crate::creature_anim::{EffectListClear, UnitEffectClear};
+    const FROZEN: u32 = 30888;
+    const SOULSTONE: u32 = 20707;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<AuraProc>()
+        .add_message::<crate::creature_anim::KitEffectClear>()
+        .add_message::<UnitEffectClear>();
+    app.insert_resource(EffectListClear::death_persistent_for_tests(SOULSTONE));
+    app.add_systems(Update, drain_aura_procs);
+    let unit = app.world_mut().spawn_empty().id();
+    for spell_id in [FROZEN, SOULSTONE] {
+        app.world_mut().write_message(AuraProc::Begin {
+            entity: unit,
+            spell_id,
+            nodes: vec![
+                AuraNode::AnimRate(0.0),
+                AuraNode::Tint([1, 2, 3]),
+                AuraNode::Alpha(0.5, 0.0),
+            ],
+            kit_id: 5,
+            body_only: false,
+        });
+    }
+    app.update();
+    let rates = |app: &App| -> Vec<u32> {
+        let n = app.world().entity(unit).get::<AuraNodes>().unwrap();
+        n.rate.iter().map(|r| r.spell_id).collect()
+    };
+    assert_eq!(rates(&app), vec![SOULSTONE, FROZEN]);
+    let clear = |app: &mut App, mode| {
+        app.world_mut()
+            .write_message(UnitEffectClear { entity: unit, mode });
+        app.update();
+    };
+    clear(&mut app, EffectListClear::Death);
+    assert_eq!(rates(&app), vec![SOULSTONE]);
+    let n = app.world().entity(unit).get::<AuraNodes>().unwrap();
+    assert_eq!(n.alpha.len(), 2, "the alpha is no effect");
+    assert_eq!(n.tint.len(), 2, "nor the tint");
+    clear(&mut app, EffectListClear::Release);
+    assert!(rates(&app).is_empty());
 }
 
 /// One alpha-authored unit: a body part, a mount child with its own part and the rider's seat frame
