@@ -50,6 +50,30 @@ fn back_dated(full: i32, left: i32, now: Instant) -> Timer {
     }
 }
 
+/// The standard GCD (category 133, 1500 ms) of a spell that is neither melee nor ranged and has
+/// neither `Attributes` bit 0x2 nor 0x10, after op 21, scaled by the caster's cast speed and held
+/// to 1000..=1500 ms (`0x805dd3`-`0x805e3e`); any other GCD is `gcd_ms` as it stands.
+fn hasted_gcd(spell: &SpellDisplay, gcd_ms: i32, cast_speed: f32) -> i32 {
+    if spell.start_recovery_category != 133
+        || spell.start_recovery_ms != 1500
+        || matches!(spell.dmg_class, 2 | 3)
+        || spell.attributes & 0x12 != 0
+    {
+        return gcd_ms;
+    }
+    // The product is stored as an `f32`, then `x − 0.5` rounds to nearest even (`0x805e00`).
+    let scaled = (f64::from(gcd_ms) * f64::from(cast_speed)) as f32;
+    #[allow(clippy::cast_possible_truncation)] // a GCD-sized product fits i32
+    let ms = (f64::from(scaled) - 0.5).round_ties_even() as i32;
+    if (ms.wrapping_sub(1000) as u32) <= 500 {
+        ms
+    } else if ms < 1000 {
+        1000
+    } else {
+        1500
+    }
+}
+
 /// One timer; a zero duration is untracked.
 #[derive(Clone, Copy, Debug)]
 struct Timer {
@@ -383,19 +407,24 @@ impl Cooldowns {
     /// press (into the pet's list), unless `startRecoveryCategory` and `startRecoveryTime` are both
     /// 0, then with op 21 applied and nothing armed for a zero result. A negative one arms nothing
     /// either, where the reference inserts a record no reader shows. `on_hold` is Attributes
-    /// bit 25.
+    /// bit 25. `cast_speed` is the caster's `UNIT_MOD_CAST_SPEED`, which scales the standard GCD.
     pub(crate) fn start_gcd(
         &mut self,
         spell_id: u32,
         spell: &SpellDisplay,
         now: Instant,
         mods: &SpellModifiers,
+        cast_speed: f32,
     ) {
         if spell.start_recovery_category == 0 && spell.start_recovery_ms == 0 {
             return;
         }
         // The GCD start: op 21 before the zero-duration exit.
-        let duration_ms = mods.apply(spell, OP_GCD, spell.start_recovery_ms as i32);
+        let duration_ms = hasted_gcd(
+            spell,
+            mods.apply(spell, OP_GCD, spell.start_recovery_ms as i32),
+            cast_speed,
+        );
         if duration_ms <= 0 {
             return;
         }
@@ -887,14 +916,45 @@ mod tests {
         mods.set(false, 5, OP_GCD, -50);
         let now = Instant::now();
         let mut cds = Cooldowns::default();
-        cds.start_gcd(133, &d, now, &mods);
+        cds.start_gcd(133, &d, now, &mods, 1.0);
+        // The standard GCD is held to 1000 ms past op 21; a melee one is not.
+        assert_eq!(cds.info(133, 0, Some(&d), now).duration_ms, 1000);
+        d.dmg_class = 2;
+        let mut cds = Cooldowns::default();
+        cds.start_gcd(133, &d, now, &mods, 1.0);
         assert_eq!(cds.info(133, 0, Some(&d), now).duration_ms, 750);
 
         d.start_recovery_ms = 0;
         mods.set(true, 5, OP_GCD, 1000);
         let mut cds = Cooldowns::default();
-        cds.start_gcd(133, &d, now, &mods);
+        cds.start_gcd(133, &d, now, &mods, 1.0);
         assert_eq!(cds.info(133, 0, Some(&d), now).duration_ms, 500);
+    }
+
+    #[test]
+    fn the_standard_gcd_scales_by_cast_speed_within_one_to_one_and_a_half_seconds() {
+        let gcd = |d: &SpellDisplay, speed: f32| {
+            let now = Instant::now();
+            let mut cds = Cooldowns::default();
+            cds.start_gcd(133, d, now, &SpellModifiers::default(), speed);
+            cds.info(133, 0, Some(d), now).duration_ms
+        };
+        let d = fireball();
+        // `x · speed − 0.5`, rounded to nearest even: 1200 − 0.5 ties down to 1200.
+        assert_eq!(gcd(&d, 0.8), 1200);
+        assert_eq!(gcd(&d, 1.0 / 1.3), 1153);
+        assert_eq!(gcd(&d, 0.5), 1000, "held at one second");
+        assert_eq!(gcd(&d, 1.2), 1500, "a slowed cast never lengthens it");
+        // Melee, ranged, `Attributes` 0x2 or 0x10, or another pair: unscaled.
+        for (class, attrs) in [(2, 0), (3, 0), (1, 0x2), (1, 0x10)] {
+            let mut e = fireball();
+            e.dmg_class = class;
+            e.attributes |= attrs;
+            assert_eq!(gcd(&e, 0.8), 1500, "class {class} attrs {attrs:#x}");
+        }
+        let mut cat_form = fireball();
+        cat_form.start_recovery_ms = 1000;
+        assert_eq!(gcd(&cat_form, 0.8), 1000);
     }
 
     #[test]
@@ -936,7 +996,7 @@ mod tests {
     fn the_gcd_spreads_to_every_spell_sharing_the_start_recovery_category() {
         let t0 = Instant::now();
         let mut cds = Cooldowns::default();
-        cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default());
+        cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
 
         // Any spell with the same startRecoveryCategory reads the GCD; Charge has none.
         let mid = t0 + Duration::from_millis(500);
@@ -963,7 +1023,7 @@ mod tests {
         let mut cds = Cooldowns::default();
         // Frost-Nova-shaped: own 25 s recovery, category 35, the ordinary 133/1500 GCD pair.
         let frost_nova = spell(35, 25_000, 0, (133, 1500), 0);
-        cds.start_gcd(122, &frost_nova, t0, &super::SpellModifiers::default()); // the cast-send arm
+        cds.start_gcd(122, &frost_nova, t0, &super::SpellModifiers::default(), 1.0); // the cast-send arm
         cds.start_spell(122, &frost_nova, 0, t0 + Duration::from_millis(100), None); // the GO insert
 
         let mid = t0 + Duration::from_millis(200);
@@ -988,7 +1048,7 @@ mod tests {
         let t0 = Instant::now();
         let mut cds = Cooldowns::default();
         let fd = spell(0, 30_000, 0, (133, 1500), 0); // Feign-Death-shaped minus on-event
-        cds.start_gcd(5384, &fd, t0, &super::SpellModifiers::default());
+        cds.start_gcd(5384, &fd, t0, &super::SpellModifiers::default(), 1.0);
         cds.start_spell(5384, &fd, 0, t0, None);
         let mid = t0 + Duration::from_millis(100);
         assert!(cds.not_ready(5384, 0, Some(&fd), mid));
@@ -1288,7 +1348,7 @@ mod tests {
     fn prune_marks_only_fully_elapsed_records_spent() {
         let t0 = Instant::now();
         let mut cds = Cooldowns::default();
-        cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default());
+        cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
         cds.start_spell(100, &charge(), 0, t0, None);
         assert_eq!(cds.live_count(), 2);
 
@@ -1317,7 +1377,7 @@ mod tests {
         cds.start_spell(300, &parked(), 0, t0, None);
         cds.start_spell(400, &spell(0, 2_000, 0, (0, 0), 0), 0, t0, None);
         let later = t0 + Duration::from_secs(5);
-        cds.start_gcd(133, &fireball(), later, &mods);
+        cds.start_gcd(133, &fireball(), later, &mods, 1.0);
         let epoch = cds.feed_epoch();
         cds.collect(later);
         let kept: Vec<u32> = cds.records.iter().map(|r| r.spell_id).collect();
@@ -1412,6 +1472,7 @@ mod tests {
             catalog.get(PLAGUE_STRIKE).unwrap(),
             Instant::now(),
             &mods,
+            1.0,
         );
         assert_eq!(
             read(&cds, ICY_TOUCH),
@@ -1423,6 +1484,7 @@ mod tests {
             catalog.get(HOWLING_BLAST).unwrap(),
             Instant::now(),
             &mods,
+            1.0,
         );
         // The first frost rune is due at 59.999 s.
         assert_eq!(read(&cds, ICY_TOUCH), Some((49_999, 10_000, true)));
@@ -1484,7 +1546,7 @@ mod tests {
         cds.start_spell(100, &charge(), 0, t0, None);
         for i in 0..30u64 {
             let now = t0 + Duration::from_secs(2 * i);
-            cds.start_gcd(133, &fireball(), now, &mods);
+            cds.start_gcd(133, &fireball(), now, &mods, 1.0);
             let charge_live = usize::from(2 * i < 15);
             assert_eq!(
                 cds.live_count(),
@@ -1507,7 +1569,7 @@ mod tests {
         let brief = || spell(7, 2_000, 0, (0, 0), 0);
         // Parked: `Attributes` bit 25, its timers wait for `SMSG_COOLDOWN_EVENT`.
         let parked = || spell(9, 1_000, 0, (0, 0), 1 << 25);
-        cds.start_gcd(133, &fireball(), t0, &mods);
+        cds.start_gcd(133, &fireball(), t0, &mods, 1.0);
         cds.start_spell(100, &brief(), 0, t0, None);
         cds.start_spell(200, &charge(), 0, t0, None);
         cds.start_spell(300, &parked(), 0, t0, None);
@@ -1564,7 +1626,7 @@ mod tests {
         let brief = || spell(7, 2_000, 0, (0, 0), 0);
         // Parked: `Attributes` bit 25, its timers wait for `SMSG_COOLDOWN_EVENT`.
         let parked = || spell(9, 1_000, 0, (0, 0), 1 << 25);
-        cds.start_gcd(133, &fireball(), t0, &mods);
+        cds.start_gcd(133, &fireball(), t0, &mods, 1.0);
         cds.start_spell(100, &brief(), 0, t0, None);
         cds.start_spell(200, &charge(), 0, t0, None);
         cds.start_spell(300, &parked(), 0, t0, None);
@@ -1605,7 +1667,7 @@ mod tests {
         let t0 = Instant::now();
         let mut cds = Cooldowns::default();
         let e0 = cds.feed_epoch();
-        cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default());
+        cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
         let armed = cds.feed_epoch();
         assert_ne!(e0, armed, "a mutation moves the epoch (generation)");
 
@@ -1626,7 +1688,7 @@ mod tests {
             cds.generation,
             {
                 let mut probe = Cooldowns::default();
-                probe.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default());
+                probe.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
                 probe.generation
             },
             "…but the event-edge generation never saw it (the reference is silent on expiry)"
@@ -1641,7 +1703,7 @@ mod tests {
     fn the_ui_triple_is_stable_per_arm_and_distinct_across_arms() {
         let t0 = Instant::now();
         let mut cds = Cooldowns::default();
-        cds.start_gcd(772, &fireball(), t0, &super::SpellModifiers::default());
+        cds.start_gcd(772, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
 
         // Two reads of one arm, frames apart, with both clocks in lockstep.
         let read1 = cds
@@ -1660,6 +1722,7 @@ mod tests {
             &fireball(),
             t0 + Duration::from_millis(200),
             &super::SpellModifiers::default(),
+            1.0,
         );
         let rearmed = cds
             .info(772, 0, Some(&fireball()), t0 + Duration::from_millis(216))
@@ -1683,6 +1746,7 @@ mod tests {
             &fireball(),
             anchor0 + Duration::from_millis(4),
             &super::SpellModifiers::default(),
+            1.0,
         );
 
         // Frame 1 converts through the pre-arm pair, frames 2 and 3 through the next ones.
@@ -1713,7 +1777,7 @@ mod tests {
             "no GCD running — nothing locks"
         );
 
-        cds.start_gcd(772, &fireball(), t0, &super::SpellModifiers::default());
+        cds.start_gcd(772, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
         let mid = t0 + Duration::from_millis(200);
         assert!(
             cds.not_ready(133, 0, Some(&fireball()), mid),
@@ -1734,7 +1798,7 @@ mod tests {
     fn attack_and_tradeskill_reads_are_always_cold() {
         let t0 = Instant::now();
         let mut cds = Cooldowns::default();
-        cds.start_gcd(772, &fireball(), t0, &super::SpellModifiers::default());
+        cds.start_gcd(772, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
         let mid = t0 + Duration::from_millis(200);
         let attack = SpellDisplay {
             effects: [78, 0, 0], // SPELL_EFFECT_ATTACK
@@ -1775,7 +1839,7 @@ mod tests {
         cds.wipe();
         assert_eq!(cds.generation, g0);
 
-        cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default());
+        cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default(), 1.0);
         assert_ne!(cds.generation, g0);
         let g1 = cds.generation;
         cds.wipe();

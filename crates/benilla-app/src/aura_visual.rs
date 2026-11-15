@@ -385,10 +385,16 @@ pub(crate) fn node_for(proc: benilla_formats::CharProc) -> Option<AuraNode> {
 }
 
 /// Apply this frame's [`AuraProc`] edges to the units' node lists, then the kit clears, which drop
-/// the anim-rate effects they match (`0x744bd0`).
+/// the anim-rate effects they match (`0x744bd0`), and the effect-list clears, which drop every
+/// anim-rate effect but a death-persistent spell's on a death (`0x744ac0`). The alpha and tint
+/// nodes are not in the effect list, so a death keeps them.
 pub(crate) fn drain_aura_procs(
     mut edges: MessageReader<AuraProc>,
-    mut kit_clears: MessageReader<crate::creature_anim::KitEffectClear>,
+    (mut kit_clears, mut list_clears, spells): (
+        MessageReader<crate::creature_anim::KitEffectClear>,
+        MessageReader<crate::creature_anim::UnitEffectClear>,
+        Option<Res<crate::ui_action::Spells>>,
+    ),
     time: Res<Time>,
     mut commands: Commands,
     mut nodes: Query<&mut AuraNodes>,
@@ -443,6 +449,16 @@ pub(crate) fn drain_aura_procs(
             }
         } else if let Some(n) = fresh.get_mut(&clear.entity) {
             n.rate.retain(|r| !matches(r));
+        }
+    }
+    for clear in list_clears.read() {
+        let ends = |r: &RateNode| clear.mode.ends(spells.as_deref(), r.spell_id);
+        if let Ok(mut n) = nodes.get_mut(clear.entity) {
+            if n.rate.iter().any(ends) {
+                n.rate.retain(|r| !ends(r));
+            }
+        } else if let Some(n) = fresh.get_mut(&clear.entity) {
+            n.rate.retain(|r| !ends(r));
         }
     }
     for (entity, n) in fresh {

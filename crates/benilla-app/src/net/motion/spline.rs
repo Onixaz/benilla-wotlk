@@ -901,8 +901,12 @@ fn clamp_gate(row: &ClampRow, epoch: u64, legacy: bool) -> ClampGate {
     // deck-local wire Z; in liquid the wire Z is the creature's swim depth.
     // An arc in flight keeps its own Z too (`0x75ee00`).
     let now = Instant::now();
+    // A kept word with FLYING or SWIMMING holds its Z: the fall test skips it (`0x6eaba0`).
+    use crate::creature_anim::move_flags::{FLYING, SWIMMING};
+    let afloat = modes.is_some_and(|m| m.0 & (SWIMMING | FLYING) != 0);
     if spline.is_some_and(|s| !s.grounded || s.deck.is_some() || s.airborne(now).is_some())
         || *swimming
+        || afloat
     {
         return ClampGate::Skip;
     }
@@ -1548,6 +1552,19 @@ mod under_floor {
             TERRAIN_Y,
             "no liquid over this NPC: the terrain is still the only floor"
         );
+    }
+
+    /// A kept word that flies holds the wire Z: a flyer has no fall to settle (`0x6eaba0`).
+    #[test]
+    fn a_flying_word_keeps_its_wire_z() {
+        let (mut app, npc) = half_arrived_world();
+        app.world_mut()
+            .entity_mut(npc)
+            .insert(crate::net::UnitMoveModes(
+                crate::creature_anim::move_flags::FLYING,
+            ));
+        clamp(&mut app);
+        assert_eq!(y_of(&app, npc), WIRE_Y, "hovering, not grounded");
     }
 
     #[test]

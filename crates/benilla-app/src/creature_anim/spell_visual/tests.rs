@@ -58,6 +58,7 @@ fn app() -> App {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([
@@ -237,6 +238,7 @@ fn precast_kit_sound_rings_once_at_start() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([(
@@ -525,7 +527,8 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
         .add_message::<SpellKitShake>()
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
-        .add_message::<super::KitEffectClear>();
+        .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>();
     app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::aura_visual::BodyProcPlay>();
     app.add_message::<SheathRequest>();
@@ -694,7 +697,8 @@ fn an_ending_aura_plays_its_state_done_kit_once() {
         .add_message::<SpellKitShake>()
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
-        .add_message::<super::KitEffectClear>();
+        .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>();
     app.init_resource::<crate::net::GuidIndex>();
     app.add_message::<crate::aura_visual::BodyProcPlay>();
     app.add_message::<SheathRequest>();
@@ -709,6 +713,7 @@ fn an_ending_aura_plays_its_state_done_kit_once() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
@@ -837,6 +842,7 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .add_message::<SheathRequest>();
     let stages = VisualStages {
         impact: IMPACT_KIT,
@@ -972,6 +978,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([
@@ -1109,6 +1116,7 @@ fn ground_app(
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
         HashMap::from([(VISUAL, stages)]),
@@ -1740,6 +1748,7 @@ fn real_shooter(weapon: &RealRanged) -> Option<(App, Entity)> {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(visuals));
     app.insert_resource(crate::ui_action::Spells {
@@ -1961,6 +1970,7 @@ fn an_instant_hit_plays_its_impact_kit_and_no_state_kit() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .add_message::<SheathRequest>();
     app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables(
         HashMap::from([(
@@ -2084,6 +2094,7 @@ fn an_anim_only_state_kit_still_arms_on_the_aura_add_edge() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .init_resource::<crate::net::GuidIndex>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
@@ -2160,6 +2171,7 @@ fn a_detection_aura_s_state_kit_follows_our_own_aura_vision() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .init_resource::<crate::net::GuidIndex>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
@@ -2849,7 +2861,9 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
     let rung: Vec<(Entity, u32)> = sounds(&mut app)
         .into_iter()
         .filter_map(|s| match s {
-            SpellKitSound::Play { entity, kit_sound } => Some((entity, kit_sound)),
+            SpellKitSound::Play {
+                entity, kit_sound, ..
+            } => Some((entity, kit_sound)),
             _ => None,
         })
         .collect();
@@ -2879,7 +2893,11 @@ fn the_impact_kit_is_the_casters_on_the_caster_and_the_targets_elsewhere() {
     app.update();
     assert!(matches!(
         sounds(&mut app)[..],
-        [SpellKitSound::Play { entity, kit_sound: 200 }] if entity == caster
+        [SpellKitSound::Play {
+            entity,
+            kit_sound: 200,
+            ..
+        }] if entity == caster
     ));
 
     // No target impact kit: the target falls back on column 3, and a point takes the kit.
@@ -3652,6 +3670,7 @@ fn aura_arm_app_with(state_kit: VisualKit) -> App {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::SpellEffectClear>()
         .add_message::<super::KitEffectClear>()
+        .add_message::<super::UnitEffectClear>()
         .init_resource::<crate::net::GuidIndex>()
         .add_message::<crate::aura_visual::BodyProcPlay>()
         .add_message::<SheathRequest>()
@@ -4275,7 +4294,7 @@ fn a_beam_spells_flag_1_impact_kit_waits_for_the_beam_or_drops_at_the_timeout() 
             .resource_mut::<Messages<SpellKitSound>>()
             .drain()
             .filter(|s| {
-                matches!(s, SpellKitSound::Play { entity, kit_sound: IMPACT_SOUND } if *entity == on)
+                matches!(s, SpellKitSound::Play { entity, kit_sound: IMPACT_SOUND, .. } if *entity == on)
             })
             .count()
     };
@@ -4438,7 +4457,7 @@ fn a_held_ground_targeting_kit_plants_at_its_point_on_the_casters_reach() {
         app.world_mut()
             .resource_mut::<Messages<crate::entities::dest_fx::GroundBurst>>()
             .drain()
-            .map(|b| (b.path, b.pos, b.held_by))
+            .map(|b| (b.path, b.pos, b.held_by.map(|(e, _)| e)))
             .collect()
     };
     let rang_at = |app: &mut App| -> Vec<Vec3> {
@@ -4694,7 +4713,9 @@ fn a_beam_spells_precast_channel_and_area_kits_wait_for_the_beam() {
             .resource_mut::<Messages<SpellKitSound>>()
             .drain()
             .filter_map(|s| match s {
-                SpellKitSound::Play { entity, kit_sound } => Some((entity, kit_sound)),
+                SpellKitSound::Play {
+                    entity, kit_sound, ..
+                } => Some((entity, kit_sound)),
                 _ => None,
             })
             .collect()

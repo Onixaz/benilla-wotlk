@@ -46,8 +46,9 @@ pub(super) struct GroundFx {
     loop_armed: bool,
     /// One-shot self-termination deadline (`time.elapsed_secs()`), set at attach.
     expires: Option<f32>,
-    /// The unit whose effect list holds it: it loops until that unit is gone (`0x744ac0`).
-    owner: Option<Entity>,
+    /// The unit whose effect list holds it and the effect's spell: it loops until that unit is
+    /// gone or its effect list clears (`0x744ac0`).
+    owner: Option<(Entity, u32)>,
 }
 
 impl GroundFx {
@@ -95,8 +96,9 @@ pub(crate) struct GroundBurst {
     pub(crate) scale: f32,
     /// The turn it stands at, as a resist burst takes the missile's facing (`0x7031ea`).
     pub(crate) turn: Quat,
-    /// The unit a looping point play hangs on, or `None` for a one-pass burst.
-    pub(crate) held_by: Option<Entity>,
+    /// The unit a looping point play hangs on and the effect's spell, or `None` for a one-pass
+    /// burst.
+    pub(crate) held_by: Option<(Entity, u32)>,
     /// The transport the point is on, which the model rides while its unit lasts.
     pub(crate) ride: Option<crate::transport::DeckRide>,
 }
@@ -294,6 +296,7 @@ pub(super) fn arm_ground_effects(
                 sounds.write(SpellKitSound::Play {
                     entity: anchor,
                     kit_sound,
+                    spell_id,
                 });
             }
         }
@@ -383,8 +386,13 @@ pub(super) fn tick_shard_emitters(
 
 /// Attach each pending instance's parts once its M2 builds, start the one-shot clocks, arm the
 /// loops and despawn expired one-shots.
+#[allow(clippy::too_many_arguments)] // one Bevy system's full input set
 pub(super) fn attach_ground_fx_models(
     mut commands: Commands,
+    (mut list_clears, spells): (
+        MessageReader<crate::creature_anim::UnitEffectClear>,
+        Option<Res<crate::ui_action::Spells>>,
+    ),
     time: Res<Time>,
     mut instances: Query<(Entity, &mut GroundFx, Option<&mut AnimationPlayer>)>,
     fx: Option<ResMut<SpellFx>>,
@@ -396,10 +404,20 @@ pub(super) fn attach_ground_fx_models(
     ibps: Res<Assets<bevy::mesh::skinning::SkinnedMeshInverseBindposes>>,
     mut palettes: ResMut<benilla_world::rig_palette::RigPalettes>,
 ) {
-    let Some(mut fx) = fx else { return };
+    let Some(mut fx) = fx else {
+        list_clears.clear();
+        return;
+    };
     let now = time.elapsed_secs();
+    let cleared: Vec<_> = list_clears.read().copied().collect();
     for (entity, mut inst, player) in &mut instances {
-        if inst.owner.is_some_and(|o| commands.get_entity(o).is_err()) {
+        let gone = inst.owner.is_some_and(|(o, spell_id)| {
+            commands.get_entity(o).is_err()
+                || cleared
+                    .iter()
+                    .any(|c| c.entity == o && c.mode.ends(spells.as_deref(), spell_id))
+        });
+        if gone {
             commands.entity(entity).despawn();
             continue;
         }
@@ -552,6 +570,7 @@ mod tests {
             .init_resource::<benilla_world::mat_anim_table::MatAnimTable>()
             .init_resource::<benilla_world::rig_palette::RigPalettes>()
             .add_message::<GroundBurst>()
+            .add_message::<crate::creature_anim::UnitEffectClear>()
             .add_systems(
                 Update,
                 (spawn_ground_bursts, attach_ground_fx_models).chain(),
@@ -566,21 +585,82 @@ mod tests {
             held_by,
             ride: None,
         };
-        app.world_mut().write_message(burst(Some(caster)));
+        app.world_mut().write_message(burst(Some((caster, 0))));
         app.world_mut().write_message(burst(None));
         app.update();
-        let live = |app: &mut App| -> Vec<(bool, Option<Entity>)> {
+        let live = |app: &mut App| -> Vec<(bool, Option<(Entity, u32)>)> {
             let mut q = app.world_mut().query::<&GroundFx>();
             q.iter(app.world()).map(|g| (g.looping, g.owner)).collect()
         };
         let mut now = live(&mut app);
         now.sort_by_key(|(looping, _)| *looping);
-        assert_eq!(now, vec![(false, None), (true, Some(caster))]);
+        assert_eq!(now, vec![(false, None), (true, Some((caster, 0)))]);
         app.update();
         assert_eq!(live(&mut app).len(), 2, "held while the caster stands");
         app.world_mut().despawn(caster);
         app.update();
         assert_eq!(live(&mut app), vec![(false, None)], "gone with the caster");
+    }
+
+    /// A held point play is in its unit's effect list: a death ends it unless its spell persists
+    /// through death, a release ends it whatever its spell (`0x744ac0`).
+    #[test]
+    fn a_held_point_play_goes_with_its_units_effect_list() {
+        use crate::creature_anim::{EffectListClear, UnitEffectClear};
+        const SOULSTONE: u32 = 20707;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>()
+            .init_asset::<Mesh>()
+            .init_asset::<benilla_assets::M2Model>()
+            .init_asset::<benilla_assets::materials::WowModelMaterial>()
+            .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
+            .init_resource::<SpellFx>()
+            .init_resource::<super::super::spell_fx::FxTintAnims>()
+            .init_resource::<benilla_world::doodad_anim::UvAnimMaterials>()
+            .init_resource::<benilla_world::mat_anim_table::MatAnimTable>()
+            .init_resource::<benilla_world::rig_palette::RigPalettes>()
+            .insert_resource(EffectListClear::death_persistent_for_tests(SOULSTONE))
+            .add_message::<GroundBurst>()
+            .add_message::<UnitEffectClear>()
+            .add_systems(
+                Update,
+                (spawn_ground_bursts, attach_ground_fx_models).chain(),
+            );
+        let caster = app.world_mut().spawn_empty().id();
+        for spell_id in [133, SOULSTONE] {
+            app.world_mut().write_message(GroundBurst {
+                path: "Spells\\Base.m2".to_string(),
+                pos: Vec3::ZERO,
+                attach: None,
+                scale: 1.0,
+                turn: Quat::IDENTITY,
+                held_by: Some((caster, spell_id)),
+                ride: None,
+            });
+        }
+        app.update();
+        let held = |app: &mut App| -> Vec<u32> {
+            let mut q = app.world_mut().query::<&GroundFx>();
+            let mut v: Vec<u32> = q
+                .iter(app.world())
+                .filter_map(|g| g.owner.map(|(_, s)| s))
+                .collect();
+            v.sort();
+            v
+        };
+        assert_eq!(held(&mut app), vec![133, SOULSTONE]);
+        for (mode, left) in [
+            (EffectListClear::Death, vec![SOULSTONE]),
+            (EffectListClear::Release, vec![]),
+        ] {
+            app.world_mut().write_message(UnitEffectClear {
+                entity: caster,
+                mode,
+            });
+            app.update();
+            assert_eq!(held(&mut app), left, "{mode:?}");
+        }
     }
 
     /// A held point model (a ground targeting kit's) on a transport spawns riding it.
@@ -618,6 +698,7 @@ mod tests {
             .init_asset::<benilla_assets::M2Model>()
             .init_resource::<SpellFx>()
             .add_message::<GroundBurst>()
+            .add_message::<crate::creature_anim::UnitEffectClear>()
             .add_systems(Update, spawn_ground_bursts);
         let deck = app.world_mut().spawn_empty().id();
         let caster = app.world_mut().spawn_empty().id();

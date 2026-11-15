@@ -21,7 +21,9 @@ use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
 
 use crate::creature_anim::spell_visual::FxSlot;
-use crate::creature_anim::{scan_events, AnimSoundEvent, FxClass, FxStage, SpellKitFx};
+use crate::creature_anim::{
+    scan_events, AnimSoundEvent, EffectListClear, FxClass, FxStage, SpellKitFx, UnitEffectClear,
+};
 use benilla_assets::m2_url;
 use benilla_assets::materials::WowModelMaterial;
 use benilla_world::model_render::{ModelKind, ModelPart};
@@ -506,7 +508,7 @@ struct PrecastKey {
     handed: bool,
 }
 
-/// A unit's effect instances (the client's per-unit `+0xb4` effect list).
+/// A unit's effect instances (the client's per-object `+0xa8` effect list, `0x744ae3`).
 #[derive(Component, Default)]
 #[component(storage = "SparseSet")]
 pub(crate) struct FxAttached {
@@ -703,14 +705,28 @@ pub(super) fn spell_forces_projection(
         .is_some_and(|d| d.attributes_ex5 & SPELL_ATTR_EX5_FORCE_PROJECTION != 0)
 }
 
+/// A world plant its unit released while it still timed out: unlinked, it runs out on its own
+/// clock (`0x744ba7`).
+#[derive(Component)]
+pub(super) struct FxOrphan {
+    until: f32,
+}
+
 /// Despawn a plant whose owner is gone, and re-plant a `follow` one whose owner moved past
-/// [`REPLANT_EPS_SQ`] (per frame).
+/// [`REPLANT_EPS_SQ`] (per frame); an orphan stands where it is until its time is up.
 pub(super) fn tend_world_plants(
     mut commands: Commands,
-    mut plants: Query<(Entity, &WorldPlantFx, &mut Transform)>,
+    time: Res<Time>,
+    mut plants: Query<(Entity, &WorldPlantFx, &mut Transform, Option<&FxOrphan>)>,
     owners: Query<&GlobalTransform>,
 ) {
-    for (root, plant, mut t) in &mut plants {
+    for (root, plant, mut t, orphan) in &mut plants {
+        if let Some(o) = orphan {
+            if time.elapsed_secs() >= o.until {
+                commands.entity(root).despawn();
+            }
+            continue;
+        }
         let Ok(owner) = owners.get(plant.owner) else {
             commands.entity(root).despawn();
             continue;
@@ -733,8 +749,15 @@ pub(super) fn resolve_spell_fx(
     asset_server: Res<AssetServer>,
     mut emitters: Query<&mut benilla_world::particles::ParticleEmitter>,
     bodies: Query<(Has<crate::entities::VisualAttached>, Option<&BoneAttach>)>,
+    (mut list_clears, spells): (
+        MessageReader<UnitEffectClear>,
+        Option<Res<crate::ui_action::Spells>>,
+    ),
 ) {
-    let Some(mut fx) = fx else { return };
+    let Some(mut fx) = fx else {
+        list_clears.clear();
+        return;
+    };
     let now = time.elapsed_secs();
     let mut ops: EntityHashMap<Vec<&SpellKitFx>> = EntityHashMap::default();
     for ev in events.read() {
@@ -745,6 +768,15 @@ pub(super) fn resolve_spell_fx(
         };
         ops.entry(entity).or_default().push(ev);
     }
+    // A list clear lands after the frame's plays, which reached the wire before it.
+    let mut cleared: EntityHashMap<EffectListClear> = EntityHashMap::default();
+    for c in list_clears.read() {
+        let mode = cleared.entry(c.entity).or_insert(c.mode);
+        if c.mode == EffectListClear::Release {
+            *mode = EffectListClear::Release;
+        }
+        ops.entry(c.entity).or_default();
+    }
     for (entity, edges) in ops {
         if commands.get_entity(entity).is_err() {
             continue;
@@ -754,6 +786,7 @@ pub(super) fn resolve_spell_fx(
             Some(mut att) => std::mem::take(&mut att.instances),
             None => Vec::new(),
         };
+        let had_edges = !edges.is_empty();
         for edge in edges {
             match edge {
                 SpellKitFx::Begin {
@@ -875,8 +908,18 @@ pub(super) fn resolve_spell_fx(
                 }
             }
         }
+        if let Some(&mode) = cleared.get(&entity) {
+            clear_effect_list(
+                &mut instances,
+                mode,
+                spells.as_deref(),
+                &mut commands,
+                &mut emitters,
+            );
+        }
         match units.get_mut(entity) {
             Ok(mut att) => att.instances = instances,
+            Err(_) if !had_edges => {}
             Err(_) => {
                 commands.entity(entity).insert(FxAttached { instances });
             }
@@ -920,6 +963,48 @@ fn replace_same_slot(
             // Through the shared teardown, so its particles finish.
             drain_instance_emitters(emitters, root);
             commands.entity(root).despawn();
+        }
+        false
+    });
+}
+
+/// The loot sparkle's [`FxInstance::spell_id`]: its add follows the death in the field walk, so a
+/// death clear never reaches it.
+const LOOT_SPARKLE_KEY: u32 = u32::MAX;
+
+/// The effect-list clear (`0x744ac0`) over a unit's instances. A death sends each to the destroy
+/// list, decaying ones too: the meshes go and the particles drain (`0x6f87c0`); the held missile
+/// model is no effect and stays (`0x735542` deletes it on disable alone). A release ends each at
+/// once, but a world plant still timing out is orphaned to run out (`0x744ba7`).
+fn clear_effect_list(
+    instances: &mut Vec<FxInstance>,
+    mode: EffectListClear,
+    spells: Option<&crate::ui_action::Spells>,
+    commands: &mut Commands,
+    emitters: &mut Query<&mut benilla_world::particles::ParticleEmitter>,
+) {
+    instances.retain(|i| {
+        if mode == EffectListClear::Death
+            && (i.spell_id == LOOT_SPARKLE_KEY
+                || i.precast.is_some()
+                || !mode.ends(spells, i.spell_id))
+        {
+            return true;
+        }
+        debug!("spell fx: {} cleared with its unit ({mode:?})", i.path);
+        let Some(root) = i.root else {
+            return false;
+        };
+        match (mode, i.expires) {
+            (EffectListClear::Death, _) => end_root(commands, emitters, root),
+            (EffectListClear::Release, Some(until))
+                if i.tag == benilla_formats::WORLD_EFFECT_TAG =>
+            {
+                commands.entity(root).try_insert(FxOrphan { until });
+            }
+            (EffectListClear::Release, _) => {
+                commands.entity(root).despawn();
+            }
         }
         false
     });
@@ -1445,6 +1530,7 @@ mod tests {
             .init_asset::<benilla_assets::M2Model>()
             .init_resource::<SpellFx>()
             .add_message::<SpellKitFx>()
+            .add_message::<UnitEffectClear>()
             .add_systems(Update, resolve_spell_fx);
         let unit = app.world_mut().spawn_empty().id();
         (app, unit)
@@ -1828,5 +1914,143 @@ mod tests {
         assert_eq!(slots_of(&app, unit).len(), 2, "two rows coexist");
         send(&mut app, begin_row(2));
         assert_eq!(slots_of(&app, unit).len(), 2, "the same row replaces");
+    }
+
+    // ---- the effect-list clear ----
+
+    /// Soulstone Resurrection, a death-persistent spell.
+    const SOULSTONE: u32 = 20707;
+
+    /// A unit wearing, each spawned: Ice Barrier's state model, a one-shot flash, a decaying
+    /// model, Soulstone's model, the loot sparkle, a held missile model and a timed world plant.
+    fn wearing(app: &mut App, unit: Entity) -> Vec<Entity> {
+        let roots: Vec<Entity> = (0..7).map(|_| app.world_mut().spawn_empty().id()).collect();
+        let base = |i: usize| instance(roots[i], true);
+        let instances = vec![
+            base(0),
+            FxInstance {
+                persistent: false,
+                expires: Some(9.0),
+                ..base(1)
+            },
+            FxInstance {
+                decaying: true,
+                expires: Some(9.0),
+                ..base(2)
+            },
+            FxInstance {
+                spell_id: SOULSTONE,
+                ..base(3)
+            },
+            FxInstance {
+                spell_id: LOOT_SPARKLE_KEY,
+                ..base(4)
+            },
+            FxInstance {
+                class: FxClass::Precast,
+                precast: Some(PrecastKey {
+                    cast_count: 0,
+                    seq: 0,
+                    handed: false,
+                }),
+                ..base(5)
+            },
+            FxInstance {
+                persistent: false,
+                tag: benilla_formats::WORLD_EFFECT_TAG,
+                expires: Some(9.0),
+                ..base(6)
+            },
+        ];
+        app.world_mut()
+            .entity_mut(unit)
+            .insert(FxAttached { instances });
+        roots
+    }
+
+    fn clear(app: &mut App, entity: Entity, mode: EffectListClear) {
+        app.world_mut()
+            .write_message(UnitEffectClear { entity, mode });
+        app.update();
+    }
+
+    fn alive(app: &App, roots: &[Entity]) -> Vec<bool> {
+        roots
+            .iter()
+            .map(|&r| app.world().get_entity(r).is_ok())
+            .collect()
+    }
+
+    /// A death sends every effect to the destroy list, the decaying one too, but a death-persistent
+    /// spell's, the loot sparkle and the held missile model stay (`0x744b54`, `0x729220`).
+    #[test]
+    fn a_death_ends_every_effect_but_a_death_persistent_spells() {
+        let (mut app, unit) = resolving();
+        app.insert_resource(EffectListClear::death_persistent_for_tests(SOULSTONE));
+        let roots = wearing(&mut app, unit);
+        clear(&mut app, unit, EffectListClear::Death);
+        assert_eq!(
+            alive(&app, &roots),
+            vec![false, false, false, true, true, true, false]
+        );
+        let left: Vec<u32> = app
+            .world()
+            .entity(unit)
+            .get::<FxAttached>()
+            .unwrap()
+            .instances
+            .iter()
+            .map(|i| i.spell_id)
+            .collect();
+        assert_eq!(left, vec![SOULSTONE, LOOT_SPARKLE_KEY, 13033]);
+    }
+
+    /// A release ends every effect at once, the death-persistent one too, but a world plant still
+    /// timing out is orphaned and runs out where it stands (`0x744ba7`).
+    #[test]
+    fn a_release_ends_every_effect_and_orphans_a_timed_world_plant() {
+        let (mut app, unit) = resolving();
+        app.insert_resource(EffectListClear::death_persistent_for_tests(SOULSTONE));
+        app.add_systems(Update, tend_world_plants.after(resolve_spell_fx));
+        let roots = wearing(&mut app, unit);
+        let plant = roots[6];
+        app.world_mut().entity_mut(plant).insert((
+            Transform::default(),
+            WorldPlantFx {
+                owner: unit,
+                follow: false,
+                name_scale: None,
+                attach: None,
+            },
+        ));
+        clear(&mut app, unit, EffectListClear::Release);
+        assert_eq!(
+            alive(&app, &roots),
+            vec![false, false, false, false, false, false, true]
+        );
+        assert!(app
+            .world()
+            .entity(unit)
+            .get::<FxAttached>()
+            .unwrap()
+            .instances
+            .is_empty());
+        // The owner goes as its fade ends; the orphan stands until its own time.
+        app.world_mut().entity_mut(unit).despawn();
+        app.update();
+        assert!(
+            app.world().get_entity(plant).is_ok(),
+            "an orphan outlives its unit"
+        );
+        app.world_mut()
+            .entity_mut(plant)
+            .get_mut::<FxOrphan>()
+            .unwrap()
+            .until = 0.0;
+        app.update();
+        assert!(
+            app.world().get_entity(plant).is_err(),
+            "and runs out on its own clock"
+        );
     }
 }

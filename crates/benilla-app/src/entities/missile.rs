@@ -1742,6 +1742,9 @@ pub(super) struct MissileEdges<'w, 's> {
     spawns: MessageReader<'w, 's, MissileSpawn>,
     releases: MessageReader<'w, 's, MissileRelease>,
     precast: PrecastHolds<'w, 's>,
+    /// The effect-list clears, which delete a unit's own missiles first.
+    list_clears: MessageReader<'w, 's, crate::creature_anim::UnitEffectClear>,
+    stuck: Query<'w, 's, (Entity, &'static StuckMissile)>,
 }
 
 /// The parts of [`spawn_missiles`] that launch a caster's queue.
@@ -1831,7 +1834,20 @@ pub(super) fn spawn_missiles(
         spawns,
         releases,
         precast,
+        list_clears,
+        stuck,
     } = &mut edges;
+    // A death or disable deletes the unit's queue awaiting release and the missiles lodged in it,
+    // whatever their spell (`0x729336`, `0x729350`, `0x735596`).
+    for c in list_clears.read() {
+        pending.0.remove(&c.entity);
+        for (entity, s) in stuck.iter().filter(|(_, s)| s.target == c.entity) {
+            if let Some(t) = s.targeting {
+                reap_targeting(t, s.spell_id, &mut out.kit.fx);
+            }
+            commands.entity(entity).despawn();
+        }
+    }
     let mut wire: Vec<(u64, Result<&MissileSpawn, MissileRelease>)> = spawns
         .read()
         .map(|sp| (sp.seq, Ok(sp)))
@@ -2770,6 +2786,7 @@ mod tests {
         app.init_resource::<PendingMissiles>();
         app.init_resource::<PlaySeq>();
         app.add_message::<MissileSpawn>()
+            .add_message::<crate::creature_anim::UnitEffectClear>()
             .add_message::<MissileRelease>()
             .add_message::<AnimSoundEvent>()
             .add_message::<MissileSound>()
@@ -2797,6 +2814,44 @@ mod tests {
             .resource_mut::<Time>()
             .advance_by(Duration::from_secs_f32(dt));
         app.update();
+    }
+
+    /// A death or disable deletes the unit's own missiles, whatever their spell: its queue awaiting
+    /// release and the missiles lodged in it; another unit's stay (`0x729336`, `0x729350`).
+    #[test]
+    fn a_list_clear_deletes_the_units_queued_and_lodged_missiles() {
+        use crate::creature_anim::{EffectListClear, UnitEffectClear};
+        for mode in [EffectListClear::Death, EffectListClear::Release] {
+            let mut app = app();
+            let (unit, other) = (caster(&mut app, Vec3::ZERO), caster(&mut app, Vec3::ZERO));
+            PendingMissiles::queue_a_shot(&mut app, unit);
+            PendingMissiles::queue_a_shot(&mut app, other);
+            let lodge = |app: &mut App, target| {
+                app.world_mut()
+                    .spawn(StuckMissile {
+                        target,
+                        tag: 0,
+                        local: Vec3::ZERO,
+                        turn: Quat::IDENTITY,
+                        until: 99.0,
+                        spell_id: 75,
+                        targeting: None,
+                    })
+                    .id()
+            };
+            let (in_unit, in_other) = (lodge(&mut app, unit), lodge(&mut app, other));
+            app.world_mut()
+                .write_message(UnitEffectClear { entity: unit, mode });
+            step(&mut app, 0.0);
+            let pending = app.world().resource::<PendingMissiles>();
+            assert!(!pending.releasing(unit), "{mode:?}: the queue goes");
+            assert!(pending.releasing(other), "{mode:?}: another's stays");
+            assert!(
+                app.world().get_entity(in_unit).is_err(),
+                "{mode:?}: lodged goes"
+            );
+            assert!(app.world().get_entity(in_other).is_ok());
+        }
     }
 
     /// A caster whose `$CSL` marker, on bone 0 of its pose, sits at `hand`.

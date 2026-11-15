@@ -1189,6 +1189,45 @@ fn a_flyer_strokes_and_idles_as_a_swimmer() {
     ));
 }
 
+/// A kept flying word idles as a swimmer (`0x71e340`) and strokes as one on a path (`0x717050`).
+#[test]
+fn a_kept_flying_word_idles_and_strokes_as_a_swimmer() {
+    use crate::net::UnitMoveModes;
+    let kept = UnitMoveModes(move_flags::FLYING | move_flags::CAN_FLY);
+    let still = unify(None, None, None, false, Some(&kept));
+    assert!(matches!(
+        base_candidates(&still, 2.5, None, None, None),
+        BaseCands::Fixed(&[41, 0])
+    ));
+    let grounded = unify(
+        None,
+        None,
+        None,
+        false,
+        Some(&UnitMoveModes(move_flags::CAN_FLY)),
+    );
+    assert!(matches!(
+        base_candidates(&grounded, 2.5, None, None, None),
+        BaseCands::Fixed(&[0])
+    ));
+    let path = crate::net::Spline {
+        deck: None,
+        arc: None,
+        facing_fixed: false,
+        points: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]],
+        start: std::time::Instant::now(),
+        duration: std::time::Duration::from_secs(10),
+        id: 1,
+        grounded: false,
+        catmull_rom: false,
+        end_facing: benilla_protocol::MonsterMoveFacing::None,
+        run_mode: true,
+        cycle: None,
+    };
+    let travelling = unify(None, None, Some(&path), false, Some(&kept));
+    assert_eq!(gait_candidates(&travelling, 2.5, None, None), &[42, 41, 0]);
+}
+
 #[test]
 fn a_flying_spline_is_fly_before_backward_and_speed() {
     // The fly branch sits between swim and backward, so a 32 yd/s taxi plays Fly 135, never Sprint

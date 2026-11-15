@@ -187,9 +187,10 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         trace_create(
             guid,
             &format!(
-                "fresh{} kind={kind:?} target={attack_target:?} transport={:?}",
+                "fresh{} kind={kind:?} target={attack_target:?} transport={:?} flags={:?}",
                 if spawned { " spawned" } else { "" },
                 transport.map(|t| t.guid),
+                mover.map(|m| format!("{:#x}", m.flags)),
             ),
         );
         sc.parked.expire_oldest_of(
@@ -221,6 +222,9 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         };
         if matches!(kind, EntityKind::Unit | EntityKind::Player) {
             seed_attack_target(e, attack_target, &mut sc.commands);
+        }
+        if let Some(m) = mover.filter(|_| sc.self_guid.0 != Some(guid)) {
+            seed_player_word(e, guid, m, &mut sc.commands);
         }
         // The bool reaches a creature's stand-state seed and an animated GameObject's Spawn.
         if spawned && matches!(kind, EntityKind::Unit | EntityKind::GameObject) {
@@ -270,6 +274,16 @@ fn mover_placement(orientation: f32, mover: Option<MoverState>) -> Quat {
     )
 }
 
+/// A block replaces another player's kept word (`0x6f1520` zeroes it, then merges).
+fn seed_player_word(e: Entity, guid: u64, mover: MoverState, commands: &mut Commands) {
+    if benilla_protocol::guid::is_player(guid) {
+        let stated = crate::creature_anim::move_flags::merge_server_authored(0, mover.flags);
+        commands
+            .entity(e)
+            .insert(UnitMoveModes(crate::net::motion::standing_bits(stated)));
+    }
+}
+
 /// A mover's whole state from a `LIVING` create or a `MOVEMENT` block (`0x6f1520`): its speeds,
 /// the path it walks or none, its transport, and its pose; a relayed extrapolation restarts.
 fn apply_mover(
@@ -289,6 +303,7 @@ fn apply_mover(
         .entity(e)
         .remove::<RemoteMotion>()
         .insert(UnitSpeeds(speeds));
+    seed_player_word(e, guid, mover, commands);
     match unit_rider(kind, transport) {
         Some(r) => {
             commands.entity(e).insert(r);
@@ -494,6 +509,9 @@ fn on_unit_move(In(ev): In<SessionEvent>, mut sc: Scene) {
         if verb == benilla_protocol::RelayVerb::Value && active {
             return;
         }
+        if let Some(&e) = sc.index.0.get(&guid).filter(|_| !active) {
+            relay_takes_word(e, &sc.remote, &mut sc.modes);
+        }
         unit_move(
             guid,
             crate::net::motion::RelayMove {
@@ -516,6 +534,39 @@ fn on_unit_move(In(ev): In<SessionEvent>, mut sc: Scene) {
             &mut sc.hard_landings,
             &mut sc.self_moves,
         );
+    }
+}
+
+/// A relay seeding a unit's dead-reckoning merges over its kept word (`0x6eb730`).
+fn relay_takes_word(
+    e: Entity,
+    remote: &Query<&mut RemoteMotion>,
+    modes: &mut Query<&mut UnitMoveModes>,
+) {
+    if remote.contains(e) {
+        return;
+    }
+    if let Ok(mut word) = modes.get_mut(e) {
+        word.0 &= !crate::creature_anim::move_flags::SERVER_AUTHORED;
+    }
+}
+
+/// A path keeps a relayed unit's standing word: its install (`0x6eb680`) writes the direction.
+fn path_keeps_word(
+    e: Entity,
+    remote: &Query<&mut RemoteMotion>,
+    modes: &mut Query<&mut UnitMoveModes>,
+    commands: &mut Commands,
+) {
+    let Ok(rm) = remote.get(e) else {
+        return;
+    };
+    let kept = crate::net::motion::standing_bits(rm.flags);
+    match modes.get_mut(e) {
+        Ok(mut word) => word.0 |= kept,
+        Err(_) => {
+            commands.entity(e).insert(UnitMoveModes(kept));
+        }
     }
 }
 
@@ -601,6 +652,10 @@ fn on_monster_move(In(ev): In<SessionEvent>, mut sc: Scene) {
     } = ev
     {
         let rooted = modes_of(guid, &sc.index, &sc.modes).rooted();
+        // A rooted unit takes no path and keeps its relay state.
+        if let Some(&e) = sc.index.0.get(&guid).filter(|_| !rooted) {
+            path_keeps_word(e, &sc.remote, &mut sc.modes, &mut sc.commands);
+        }
         monster_move(
             guid,
             transport,
@@ -1066,6 +1121,18 @@ pub(crate) fn tear_down(mut ent: EntityWorldMut) {
     // The movement disable (`0x6ec390` at `0x735198`) deletes the spline and frees the move queue.
     ent.remove::<(Spline, super::motion::WalkEndFacing, RemoteMotion)>();
     ent.insert(DespawnFade::default());
+    // The disable releases the effect list, so nothing the object wore fades out with it
+    // (`0x7355a7`).
+    let entity = ent.id();
+    ent.world_scope(|world| {
+        use crate::creature_anim::{EffectListClear, UnitEffectClear};
+        if world.contains_resource::<bevy::ecs::message::Messages<UnitEffectClear>>() {
+            world.write_message(UnitEffectClear {
+                entity,
+                mode: EffectListClear::Release,
+            });
+        }
+    });
 }
 
 /// `SMSG_MONSTER_MOVE` or `SMSG_MONSTER_MOVE_TRANSPORT`: settles transport membership, snaps the
@@ -1271,11 +1338,22 @@ fn spline_move_mode(
                 // The flight stop (`0x98c240`): the pitch and the flight bits go.
                 rm.flags &= !(PITCH_BITS | f::ASCENDING | f::DESCENDING | f::FLYING);
             }
+            return;
         }
-        return;
     }
     let mut word = modes_of(guid, index, modes);
-    word.set(mode, apply);
+    if mode == SplineMode::Flying {
+        // With no relay state the kept word is the unit's whole word.
+        use crate::creature_anim::move_flags as f;
+        if apply && word.0 & f::CAN_FLY != 0 {
+            word.0 &= !(f::FALLING | f::FALLING_FAR | f::SWIMMING | SPLINE_ELEVATION);
+            word.0 |= f::FLYING;
+        } else if !apply {
+            word.0 &= !(PITCH_BITS | f::ASCENDING | f::DESCENDING | f::FLYING);
+        }
+    } else {
+        word.set(mode, apply);
+    }
     if let Ok(mut live) = modes.get_mut(e) {
         *live = word;
     } else {
@@ -1422,6 +1500,27 @@ fn speed_changed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The teardown is the disable: it releases the object's effect list (`0x7355a7`).
+    #[test]
+    fn a_teardown_releases_the_effect_list() {
+        use crate::creature_anim::{EffectListClear, UnitEffectClear};
+        let mut world = World::new();
+        world.init_resource::<bevy::ecs::message::Messages<UnitEffectClear>>();
+        let e = world.spawn(Guid(7)).id();
+        tear_down(world.entity_mut(e));
+        let sent: Vec<UnitEffectClear> = world
+            .resource_mut::<bevy::ecs::message::Messages<UnitEffectClear>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            sent,
+            vec![UnitEffectClear {
+                entity: e,
+                mode: EffectListClear::Release,
+            }]
+        );
+    }
 
     /// `0x1EB` for an unheld item waits on the active player and replays at its create; `0x1EA`
     /// for one is dropped; the destroy takes the cells.
@@ -1622,6 +1721,98 @@ mod tests {
                 0,
                 "and the unit keeps gravity off"
             );
+        }
+
+        /// With no relay state flight writes the kept word, under the `CAN_FLY` gate (`0x989890`).
+        #[test]
+        fn flight_without_relay_state_writes_the_kept_word() {
+            use crate::creature_anim::move_flags as f;
+            let (mut w, e) = world_with_unit(None);
+            grant(&mut w, SplineMode::Flying, true);
+            let word = w.entity(e).get::<UnitMoveModes>().unwrap().0;
+            assert_eq!(word & f::FLYING, 0, "no CAN_FLY, no flight");
+
+            w.entity_mut(e)
+                .insert(UnitMoveModes(f::CAN_FLY | f::FALLING));
+            grant(&mut w, SplineMode::Flying, true);
+            let word = w.entity(e).get::<UnitMoveModes>().unwrap().0;
+            assert_eq!(word, f::CAN_FLY | f::FLYING, "flying, not falling");
+            grant(&mut w, SplineMode::Flying, false);
+            let word = w.entity(e).get::<UnitMoveModes>().unwrap().0;
+            assert_eq!(word, f::CAN_FLY, "it may still fly");
+        }
+
+        /// A path keeps the standing word; the relay that seeds again takes it back.
+        #[test]
+        fn a_path_keeps_the_word_and_the_next_relay_takes_it_back() {
+            use crate::creature_anim::move_flags as f;
+            let hovering = RemoteMotion {
+                flags: f::FLYING | f::CAN_FLY | f::FORWARD | f::ASCENDING,
+                ..remote_walking_forward()
+            };
+            let (mut w, e) = world_with_unit(Some(hovering));
+            w.entity_mut(e).insert(UnitMoveModes(f::WATER_WALKING));
+            w.run_system_once(
+                move |mut commands: Commands,
+                      remote: Query<&mut RemoteMotion>,
+                      mut modes: Query<&mut UnitMoveModes>| {
+                    path_keeps_word(e, &remote, &mut modes, &mut commands);
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                w.entity(e).get::<UnitMoveModes>().unwrap().0,
+                f::WATER_WALKING | f::FLYING | f::CAN_FLY,
+                "the flight outlives the path; the motion does not"
+            );
+
+            let take = move |w: &mut World| {
+                w.run_system_once(
+                    move |remote: Query<&mut RemoteMotion>,
+                          mut modes: Query<&mut UnitMoveModes>| {
+                        relay_takes_word(e, &remote, &mut modes);
+                    },
+                )
+                .unwrap();
+            };
+            take(&mut w);
+            assert_eq!(
+                w.entity(e).get::<UnitMoveModes>().unwrap().0,
+                f::WATER_WALKING | f::FLYING | f::CAN_FLY,
+                "a unit still dead-reckoning is not re-seeded"
+            );
+            w.entity_mut(e).remove::<RemoteMotion>();
+            take(&mut w);
+            assert_eq!(
+                w.entity(e).get::<UnitMoveModes>().unwrap().0,
+                0,
+                "the seeding relay's word is the whole word"
+            );
+        }
+
+        /// A block replaces a player's kept word with its standing bits (`0x6f1520`).
+        #[test]
+        fn a_block_seeds_a_players_word_and_drops_its_motion() {
+            use crate::creature_anim::move_flags as f;
+            const PLAYER: u64 = 0x3f2;
+            let mover = MoverState {
+                flags: f::FLYING | f::CAN_FLY | f::FORWARD | f::FALLING,
+                pitch: 0.0,
+                flags2: 0,
+            };
+            let mut w = World::new();
+            let player = w.spawn(UnitMoveModes(f::ROOT)).id();
+            let mob = w.spawn_empty().id();
+            w.run_system_once(move |mut commands: Commands| {
+                seed_player_word(player, PLAYER, mover, &mut commands);
+                seed_player_word(mob, 0xF130_0000_0000_00F0, mover, &mut commands);
+            })
+            .unwrap();
+            assert_eq!(
+                w.entity(player).get::<UnitMoveModes>().unwrap().0,
+                f::FLYING | f::CAN_FLY
+            );
+            assert!(w.entity(mob).get::<UnitMoveModes>().is_none());
         }
 
         /// Every one of the twelve 1.12.1-shaped opcodes sets or clears one bit.

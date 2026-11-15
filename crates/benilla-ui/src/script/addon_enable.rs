@@ -84,6 +84,98 @@ impl EnableHash {
     }
 }
 
+/// The reference's addon-state list: a node per character, each holding that character's
+/// [`EnableHash`]. The in-world load and the glue AddOns screen answer and set through it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnableLists {
+    /// `(character, enable hash)` in character-list order.
+    nodes: Vec<(String, EnableHash)>,
+}
+
+impl EnableLists {
+    pub fn new(nodes: Vec<(String, EnableHash)>) -> Self {
+        Self { nodes }
+    }
+
+    /// The aggregate (`0x5f7570`): explicit rows only, across every node; none is the default
+    /// state's 2/0, all off 0, all on 2, mixed 1.
+    pub fn aggregate(&self, addon: &str, default_state: bool) -> u8 {
+        let (mut total, mut on) = (0usize, 0usize);
+        for (_, hash) in &self.nodes {
+            if let Some(v) = hash.get(addon) {
+                total += 1;
+                on += usize::from(v);
+            }
+        }
+        tri_state(total, on, default_state)
+    }
+
+    /// The state query with the compute flag (`0x5f7d70`), over the named node or, with `None`,
+    /// every node: a row counts as itself, a node without one takes the aggregate (0 off, 2 on, 1
+    /// the default state). 0 none on, 2 all on, 1 some; no node counted is the default's 2/0.
+    pub fn state(&self, addon: &str, default_state: bool, character: Option<&str>) -> u8 {
+        let (mut total, mut on) = (0usize, 0usize);
+        for (name, hash) in &self.nodes {
+            if character.is_some_and(|c| !name.eq_ignore_ascii_case(c)) {
+                continue;
+            }
+            let enabled = match hash.get(addon) {
+                Some(v) => v,
+                None => match self.aggregate(addon, default_state) {
+                    0 => false,
+                    2 => true,
+                    _ => default_state,
+                },
+            };
+            total += 1;
+            on += usize::from(enabled);
+            if character.is_some() {
+                break;
+            }
+        }
+        tri_state(total, on, default_state)
+    }
+
+    /// The setter (`0x5f90b0`): the named node, or every node with `None`; a name with no node is
+    /// a no-op, as the setter never creates one.
+    pub fn set(&mut self, addon: &str, character: Option<&str>, on: bool) {
+        for (name, hash) in &mut self.nodes {
+            if character.is_none_or(|c| name.eq_ignore_ascii_case(c)) {
+                hash.set(addon, on);
+                if character.is_some() {
+                    break;
+                }
+            }
+        }
+    }
+
+    /// The node a character name picks, any case.
+    pub fn node(&self, character: &str) -> Option<&EnableHash> {
+        self.nodes
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(character))
+            .map(|(_, hash)| hash)
+    }
+
+    /// The writer's view (`0x5f76a0`): each dirty node's character and rows, clearing the flags.
+    pub fn take_dirty(&mut self) -> Vec<(String, Vec<(String, bool)>)> {
+        self.nodes
+            .iter_mut()
+            .filter_map(|(name, hash)| hash.take_dirty().map(|rows| (name.clone(), rows)))
+            .collect()
+    }
+}
+
+/// The 0/1/2 both walks end with: nothing counted is the default state's 2/0.
+fn tri_state(total: usize, on: usize, default_state: bool) -> u8 {
+    match (total, on) {
+        (0, _) => 2 * u8::from(default_state),
+        (_, 0) => 0,
+        (t, o) if o == t => 2,
+        _ => 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::EnableHash;

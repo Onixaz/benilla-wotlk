@@ -6,7 +6,7 @@
 //! `[unit+0xb34]`), re-resolving its model facts and the stand or ride animation: an instant swap,
 //! a ghost's revive too. Its scale handler eases over 2 s with a cosine smoothstep. Here a swap
 //! tears the visual down for `attach_entity_visuals` to rebuild without the spawn fade; the unit's
-//! [`super::spell_fx::FxAttached`] list outlives it, as the reference's per-unit `+0xb4` effect
+//! [`super::spell_fx::FxAttached`] list outlives it, as the reference's per-object `+0xa8` effect
 //! list does, so persistent effects re-spawn on the new body.
 
 use benilla_protocol::EntityKind;

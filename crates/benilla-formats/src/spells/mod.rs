@@ -75,10 +75,11 @@ const COL_MANA_PER_SECOND_PER_LEVEL: usize = 45;
 const COL_RANGE_INDEX: usize = 46;
 /// `modalNextSpell` (`+0xc0`): 52 of its 57 nonzero rows are hunter shots naming Auto Shot.
 const COL_MODAL_NEXT_SPELL: usize = 48;
-/// `StartRecoveryCategory` (`+0x334`) and `StartRecoveryTime` (`+0x338`): the global cooldown the
+/// `StartRecoveryCategory` (`+0x234`) and `StartRecoveryTime` (`+0x238`): the global cooldown the
 /// client starts at the cast send.
 const COL_START_RECOVERY_CATEGORY: usize = 205;
 const COL_START_RECOVERY_TIME: usize = 206;
+const COL_DMG_CLASS: usize = 213;
 const COL_PREVENTION_TYPE: usize = 214;
 const COL_SPELL_FAMILY_NAME: usize = 208;
 const COL_SPELL_FAMILY_FLAGS_LOW: usize = 209;
@@ -678,6 +679,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                     u32_at(r, COL_EFFECT_MECHANIC_1 + i).unwrap_or(0)
                 }),
                 prevention_type: u32_at(r, COL_PREVENTION_TYPE).unwrap_or(0),
+                dmg_class: u32_at(r, COL_DMG_CLASS).unwrap_or(0),
                 spell_family: u32_at(r, COL_SPELL_FAMILY_NAME).unwrap_or(0),
                 // Low dword first: the reference reads bit i in dword `i >> 5` (`0x7fd970`).
                 spell_family_flags: (0..3).fold(0u128, |mask, i| {

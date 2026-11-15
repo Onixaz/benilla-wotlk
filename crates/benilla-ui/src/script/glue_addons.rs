@@ -2,91 +2,76 @@
 //! every character of the realm, read and set per character or, with `nil`, across them all, saved
 //! by `SaveAddOns` and reloaded by `ResetAddOns`.
 //!
-//! The host seeds the state from the characters' enable files ([`super::UiScript::set_glue_addon_enable`])
-//! and writes what `SaveAddOns` changed ([`super::GlueRequest::SaveAddOns`]). With no characters
-//! the state is one column, the realm's default, which nothing can save.
+//! The host seeds the per-character lists from the characters' enable files
+//! ([`super::UiScript::set_glue_addon_enable`]) and writes the nodes `SaveAddOns` hands it
+//! ([`super::GlueRequest::SaveAddOns`]). Every answer is computed from the explicit rows as the
+//! query does; with no characters there is no list, so each addon reads its default state and
+//! nothing can set or save it.
 
 use mlua::{Lua, MultiValue, Value};
 
+use super::addon_enable::EnableLists;
 use super::glue_core::{queue, GlueRequest};
+use super::Model;
 
-/// One addon's enable bit for one character, as `SaveAddOns` hands it to the host.
+/// One dirty character node as `SaveAddOns` hands it to the host: every row, written as the
+/// character's whole file.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GlueAddonChange {
+pub struct GlueAddonList {
     pub character: String,
-    pub addon: String,
-    pub enabled: bool,
+    pub rows: Vec<(String, bool)>,
 }
 
-/// The enable state the verbs read and write, by registry row then character.
+/// The lists the verbs read and write, what `ResetAddOns` reloads, and each registry row's
+/// `## DefaultState`.
 #[derive(Default)]
 pub(crate) struct GlueAddonEnable {
-    characters: Vec<String>,
-    cells: Vec<Vec<bool>>,
-    saved: Vec<Vec<bool>>,
+    lists: EnableLists,
+    loaded: EnableLists,
+    defaults: Vec<bool>,
 }
 
 impl GlueAddonEnable {
-    /// The column a character string names, any case; `None` for a name off the roster.
-    fn column(&self, character: &str) -> Option<usize> {
-        self.characters
-            .iter()
-            .position(|c| c.eq_ignore_ascii_case(character))
-    }
-
-    /// `GetAddOnEnableState`: 2 enabled, 0 disabled for one character; across them all 2 when
-    /// every character has it, 1 for some, 0 for none.
-    fn state(&self, row: usize, character: Option<&str>) -> u8 {
-        let Some(cells) = self.cells.get(row) else {
-            return 0;
-        };
-        match character {
-            Some(c) => match self.column(c).and_then(|i| cells.get(i)) {
-                Some(true) => 2,
-                _ => 0,
-            },
-            None => {
-                let on = cells.iter().filter(|&&b| b).count();
-                if on == 0 {
-                    0
-                } else if on == cells.len() {
-                    2
-                } else {
-                    1
-                }
-            }
-        }
-    }
-
-    /// `SetAddOnEnableState`: one character's bit, or every character's.
-    fn set(&mut self, row: usize, character: Option<&str>, on: bool) {
-        let column = character.map(|c| self.column(c));
-        let Some(cells) = self.cells.get_mut(row) else {
-            return;
-        };
-        match column {
-            Some(Some(i)) => {
-                if let Some(b) = cells.get_mut(i) {
-                    *b = on;
-                }
-            }
-            Some(None) => {}
-            None => cells.iter_mut().for_each(|b| *b = on),
-        }
+    /// `GetAddOnEnableState` for a registry row: the query with the compute flag.
+    fn state(&self, name: &str, row: usize, character: Option<&str>) -> u8 {
+        let default = self.defaults.get(row).copied().unwrap_or(true);
+        self.lists.state(name, default, character)
     }
 }
 
+/// The registry bit the glue's `GetAddOnInfo` gate reads for a row: the loadable test asks the
+/// query across every character (`0x5f7ecc` with no character), disabled only when none has it.
+fn refresh_enabled(m: &mut Model, row: usize) {
+    let Some(name) = m.addons.get(row).map(|a| a.name.clone()) else {
+        return;
+    };
+    let on = m.glue.addons.state(&name, row, None) != 0;
+    m.addons[row].enabled = on;
+}
+
+/// The setter for one registry row, then its gate bit.
+fn set_row(m: &mut Model, row: usize, character: Option<&str>, on: bool) {
+    let Some(name) = m.addons.get(row).map(|a| a.name.clone()) else {
+        return;
+    };
+    m.glue.addons.lists.set(&name, character, on);
+    refresh_enabled(m, row);
+}
+
 impl super::UiScript {
-    /// Seed the AddOns screen's state: the realm's characters and, per registry row, each one's
-    /// enable bit (`cells[row][character]`); with no characters, one column of defaults. The seed
-    /// is also what `ResetAddOns` returns to.
-    pub fn set_glue_addon_enable(&mut self, characters: Vec<String>, cells: Vec<Vec<bool>>) {
+    /// Seed the AddOns screen's state: the realm's per-character lists as loaded, and each
+    /// registry row's `## DefaultState`. The lists are also what `ResetAddOns` returns to.
+    pub fn set_glue_addon_enable(&mut self, lists: EnableLists, defaults: Vec<bool>) {
         let mut m = self.model_mut();
         m.glue.addons = GlueAddonEnable {
-            characters,
-            saved: cells.clone(),
-            cells,
+            loaded: lists.clone(),
+            lists,
+            defaults,
         };
+        for row in 0..m.addons.len() {
+            refresh_enabled(&mut m, row);
+            m.addons[row].saved_enabled = m.addons[row].enabled;
+        }
     }
 }
 
@@ -126,7 +111,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             let row = row(lua, arg(&args, 1), USAGE)?;
             let m = crate::script::model_mut_of(lua);
-            Ok(f64::from(m.glue.addons.state(row, character.as_deref())))
+            let name = &m.addons[row].name;
+            Ok(f64::from(m.glue.addons.state(
+                name,
+                row,
+                character.as_deref(),
+            )))
         })?,
     )?;
 
@@ -151,10 +141,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     return Err(mlua::Error::runtime(usage));
                 }
                 let row = row(lua, arg(&args, 1), usage)?;
-                crate::script::model_mut_of(lua)
-                    .glue
-                    .addons
-                    .set(row, character.as_deref(), on);
+                let mut m = crate::script::model_mut_of(lua);
+                set_row(&mut m, row, character.as_deref(), on);
                 Ok(())
             })?,
         )?;
@@ -175,54 +163,46 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let mut m = crate::script::model_mut_of(lua);
                 let rows = m.addon_index.clone();
                 for row in rows {
-                    m.glue.addons.set(row, character.as_deref(), on);
+                    set_row(&mut m, row, character.as_deref(), on);
                 }
                 Ok(())
             })?,
         )?;
     }
 
-    // `SaveAddOns()` (`0x4dcac0`): every changed bit to the host's writer, the state now saved.
+    // `SaveAddOns()` (`0x4dcac0` → `0x5f76a0`): each dirty node to the host's writer, clean after;
+    // what was written is what a reload now reads.
     g.set(
         "SaveAddOns",
         lua.create_function(|lua, _: MultiValue| {
-            let changes = {
+            let lists = {
                 let mut m = crate::script::model_mut_of(lua);
-                let names: Vec<String> = m.addons.iter().map(|a| a.name.clone()).collect();
                 let e = &mut m.glue.addons;
-                let mut changes = Vec::new();
-                for (row, (now, was)) in e.cells.iter().zip(&e.saved).enumerate() {
-                    for (column, (&on, &before)) in now.iter().zip(was).enumerate() {
-                        if on != before {
-                            if let (Some(character), Some(addon)) =
-                                (e.characters.get(column), names.get(row))
-                            {
-                                changes.push(GlueAddonChange {
-                                    character: character.clone(),
-                                    addon: addon.clone(),
-                                    enabled: on,
-                                });
-                            }
-                        }
-                    }
-                }
-                e.saved = e.cells.clone();
-                changes
+                let dirty = e.lists.take_dirty();
+                e.loaded = e.lists.clone();
+                dirty
             };
-            if !changes.is_empty() {
-                queue(lua, GlueRequest::SaveAddOns(changes));
+            if !lists.is_empty() {
+                let lists = lists
+                    .into_iter()
+                    .map(|(character, rows)| GlueAddonList { character, rows })
+                    .collect();
+                queue(lua, GlueRequest::SaveAddOns(lists));
             }
             Ok(())
         })?,
     )?;
 
-    // `ResetAddOns()` (`0x4dcad0`): the state as last loaded or saved.
+    // `ResetAddOns()` (`0x4dcad0` → `0x5f91e0` with no character): every node reloaded, the
+    // lists as last loaded or saved.
     g.set(
         "ResetAddOns",
         lua.create_function(|lua, _: MultiValue| {
             let mut m = crate::script::model_mut_of(lua);
-            let e = &mut m.glue.addons;
-            e.cells = e.saved.clone();
+            m.glue.addons.lists = m.glue.addons.loaded.clone();
+            for row in 0..m.addons.len() {
+                refresh_enabled(&mut m, row);
+            }
             Ok(())
         })?,
     )?;
@@ -248,7 +228,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::script::{GlueRequest, UiScript};
+    use crate::script::{EnableHash, EnableLists, GlueAddonList, GlueRequest, UiScript};
 
     fn vm() -> UiScript {
         UiScript::new_glue().unwrap()
@@ -281,45 +261,142 @@ mod tests {
         );
     }
 
-    /// The tri-state across characters, a per-character set, the All set, and Save handing the
-    /// host only what changed; Reset returns to the saved state.
-    #[test]
-    fn the_state_is_per_character_and_saves_its_changes() {
+    /// A glue VM over `names` (default state each), the server's reply seated, and one list per
+    /// `(character, rows)`.
+    fn seated(names: &[(&str, bool)], lists: &[(&str, &[(&str, bool)])]) -> UiScript {
         let mut s = vm();
-        s.register_addons(vec![addon("Alpha"), addon("Beta")], None, None, None);
+        s.register_addons(
+            names.iter().map(|(n, _)| addon(n)).collect(),
+            None,
+            None,
+            None,
+        );
         // The index space opens with the server's reply.
         s.note_addon_info_reply(&[]);
+        let nodes = lists
+            .iter()
+            .map(|(c, rows)| {
+                let rows = rows.iter().map(|(n, on)| (n.to_string(), *on));
+                (c.to_string(), EnableHash::from_rows(rows))
+            })
+            .collect();
         s.set_glue_addon_enable(
-            vec!["Ann".into(), "Bob".into()],
-            vec![vec![true, false], vec![true, true]],
+            EnableLists::new(nodes),
+            names.iter().map(|(_, d)| *d).collect(),
         );
-        let state = |s: &UiScript, call: &str| s.eval::<f64>(&format!("return {call}")).unwrap();
-        assert_eq!(state(&s, "GetAddOnEnableState(nil, 1)"), 1.0);
-        assert_eq!(state(&s, "GetAddOnEnableState(nil, 2)"), 2.0);
-        assert_eq!(state(&s, "GetAddOnEnableState('ann', 1)"), 2.0);
-        assert_eq!(state(&s, "GetAddOnEnableState('Bob', 1)"), 0.0);
-        s.run("EnableAddOn('Bob', 1) DisableAllAddOns('Ann')")
-            .unwrap();
-        assert_eq!(state(&s, "GetAddOnEnableState(nil, 1)"), 1.0);
-        s.run("ResetAddOns()").unwrap();
-        assert_eq!(state(&s, "GetAddOnEnableState('Bob', 1)"), 0.0);
-        s.run("EnableAddOn(nil, 1) SaveAddOns()").unwrap();
-        let requests = s.take_glue_requests();
-        match requests.as_slice() {
-            [GlueRequest::SaveAddOns(changes)] => {
-                assert_eq!(changes.len(), 1);
-                assert_eq!(
-                    (
-                        changes[0].character.as_str(),
-                        changes[0].addon.as_str(),
-                        changes[0].enabled
-                    ),
-                    ("Bob", "Alpha", true)
-                );
-            }
+        s
+    }
+
+    fn state(s: &UiScript, character: &str, index: u32) -> f64 {
+        s.eval::<f64>(&format!("return GetAddOnEnableState({character}, {index})"))
+            .unwrap()
+    }
+
+    fn saved(s: &mut UiScript) -> Vec<GlueAddonList> {
+        s.run("SaveAddOns()").unwrap();
+        match s.take_glue_requests().as_slice() {
+            [] => Vec::new(),
+            [GlueRequest::SaveAddOns(lists)] => lists.clone(),
             other => panic!("{other:?}"),
         }
-        s.run("SaveAddOns()").unwrap();
-        assert!(s.take_glue_requests().is_empty(), "nothing changed since");
+    }
+
+    fn list(character: &str, rows: &[(&str, bool)]) -> GlueAddonList {
+        GlueAddonList {
+            character: character.into(),
+            rows: rows.iter().map(|(n, on)| (n.to_string(), *on)).collect(),
+        }
+    }
+
+    const ROSTER: [(&str, &[(&str, bool)]); 3] = [("Ann", &[]), ("Bob", &[]), ("Cid", &[])];
+
+    /// One character's disable is the only explicit row, so the others take its aggregate 0 at
+    /// once: All reads 0, not "some", and the glue's `GetAddOnInfo` gate reads it disabled.
+    #[test]
+    fn a_per_character_disable_with_no_other_rows_turns_the_others_off() {
+        let mut s = seated(&[("Alpha", true)], &ROSTER);
+        assert_eq!(state(&s, "nil", 1), 2.0);
+        s.run("DisableAddOn('bob', 1)").unwrap();
+        assert_eq!(state(&s, "nil", 1), 0.0);
+        assert_eq!(state(&s, "'Ann'", 1), 0.0);
+        let reason: String = s.eval("return select(6, GetAddOnInfo(1))").unwrap();
+        assert_eq!(reason, "DISABLED");
+        assert_eq!(saved(&mut s), vec![list("Bob", &[("Alpha", false)])]);
+    }
+
+    /// Mixed explicit rows aggregate to 1, so a list without a row takes the default state.
+    #[test]
+    fn mixed_explicit_rows_give_some_and_the_rest_take_the_default() {
+        let lists: [(&str, &[(&str, bool)]); 3] = [
+            ("Ann", &[("Alpha", true), ("Beta", true)]),
+            ("Bob", &[("Alpha", false), ("Beta", false)]),
+            ("Cid", &[]),
+        ];
+        let s = seated(&[("Alpha", true), ("Beta", false)], &lists);
+        assert_eq!(state(&s, "'Cid'", 1), 2.0, "default enabled");
+        assert_eq!(state(&s, "'Cid'", 2), 0.0, "DefaultState: disabled");
+        assert_eq!(state(&s, "nil", 1), 1.0);
+        assert_eq!(state(&s, "nil", 2), 1.0);
+    }
+
+    /// No explicit rows anywhere, or no list at all, is the default state's 2/0.
+    #[test]
+    fn no_rows_fall_back_to_the_default_state() {
+        let mut s = seated(&[("Alpha", true), ("Beta", false)], &ROSTER);
+        assert_eq!(state(&s, "nil", 1), 2.0);
+        assert_eq!(state(&s, "nil", 2), 0.0);
+        assert_eq!(state(&s, "'Nobody'", 2), 0.0, "a name with no list");
+        let mut none = seated(&[("Alpha", true), ("Beta", false)], &[]);
+        assert_eq!(state(&none, "nil", 1), 2.0);
+        none.run("DisableAddOn(nil, 1)").unwrap();
+        assert_eq!(state(&none, "nil", 1), 2.0, "no list to set");
+        assert!(saved(&mut none).is_empty());
+        assert!(saved(&mut s).is_empty(), "nothing set, nothing written");
+    }
+
+    /// The setter creates a missing row even when it matches what the query computed, and the
+    /// new row is saved and decides the aggregate.
+    #[test]
+    fn enabling_an_already_enabled_addon_creates_and_saves_a_row() {
+        let s = seated(&[("Alpha", false)], &ROSTER);
+        s.run("EnableAddOn('Ann', 1) DisableAddOn('Ann', 1) EnableAddOn('Ann', 1)")
+            .unwrap();
+        assert_eq!(
+            state(&s, "'Cid'", 1),
+            2.0,
+            "the one row, on, is the aggregate"
+        );
+        let mut fresh = seated(&[("Alpha", true)], &ROSTER);
+        fresh.run("EnableAddOn('Ann', 1)").unwrap();
+        assert_eq!(saved(&mut fresh), vec![list("Ann", &[("Alpha", true)])]);
+        assert!(saved(&mut fresh).is_empty(), "clean after the write");
+    }
+
+    /// `nil` writes a row in every list; Reset returns to the lists as last loaded or saved.
+    #[test]
+    fn nil_writes_a_row_in_every_list_and_reset_restores_the_loaded_rows() {
+        let lists: [(&str, &[(&str, bool)]); 2] = [("Ann", &[("Alpha", false)]), ("Bob", &[])];
+        let mut s = seated(&[("Alpha", true), ("Beta", true)], &lists);
+        assert_eq!(state(&s, "nil", 1), 0.0, "Bob takes Ann's lone off");
+        s.run("EnableAddOn(nil, 1)").unwrap();
+        assert_eq!(state(&s, "nil", 1), 2.0);
+        s.run("ResetAddOns()").unwrap();
+        assert_eq!(state(&s, "nil", 1), 0.0);
+        let reason: String = s.eval("return select(6, GetAddOnInfo(1))").unwrap();
+        assert_eq!(reason, "DISABLED", "the gate bit follows the reset");
+        s.run("DisableAllAddOns(nil)").unwrap();
+        assert_eq!(
+            saved(&mut s),
+            vec![
+                list("Ann", &[("Alpha", false), ("Beta", false)]),
+                list("Bob", &[("Alpha", false), ("Beta", false)]),
+            ]
+        );
+        s.run("EnableAddOn('Bob', 2) ResetAddOns()").unwrap();
+        assert_eq!(
+            state(&s, "'Bob'", 2),
+            0.0,
+            "reset returns to the saved lists"
+        );
     }
 }
