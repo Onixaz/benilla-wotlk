@@ -637,8 +637,8 @@ fn world_hover_drive_and_health_watcher() {
     s.set_unit("target", Some(as_target));
     s.run(r#"assert(GameTooltipStatusBar:GetValue() == 8, "the watcher follows the guid")"#)
         .unwrap();
-    s.tick(0.5);
-    s.run(r#"assert(not GameTooltip:IsShown(), "faded out after the ramp")"#)
+    s.tick(2.0);
+    s.run(r#"assert(not GameTooltip:IsShown(), "faded out after the 2 s countdown")"#)
         .unwrap();
     assert!(s.take_errors().is_empty());
 }
@@ -687,8 +687,8 @@ fn minimap_blip_tooltip_shows_and_fades() {
         .unwrap();
     // Hover loss rides the shared world fade.
     s.world_tooltip_fade();
-    s.tick(0.6);
-    s.run(r#"assert(not GameTooltip:IsShown(), "faded out after the ramp")"#)
+    s.tick(2.0);
+    s.run(r#"assert(not GameTooltip:IsShown(), "faded out after the 2 s countdown")"#)
         .unwrap();
     assert!(s.take_errors().is_empty());
 }

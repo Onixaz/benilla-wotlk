@@ -376,15 +376,6 @@ impl super::UiScript {
         };
         if shown {
             set_world_owned(&self.lua, h);
-            let mut model = self.model_mut();
-            if let Some(f) = model.arena.frame_mut(h) {
-                if let KindState::Tooltip(t) = &mut f.kind_state {
-                    if t.fade_start.take().is_some() {
-                        model.arena.set_alpha(h, 1.0);
-                    }
-                }
-            }
-            drop(model);
             self.fire_event("UPDATE_MOUSEOVER_UNIT", vec![]);
         }
         shown
@@ -404,7 +395,7 @@ impl super::UiScript {
             let KindState::Tooltip(t) = &f.kind_state else {
                 return;
             };
-            if t.unit_guid != Some(guid) || t.fade_start.is_some() {
+            if t.unit_guid != Some(guid) || t.fade.is_some() {
                 return;
             }
             let world_owned = t.world_owned;
@@ -523,16 +514,6 @@ impl super::UiScript {
             return false;
         }
         set_world_owned(&self.lua, h);
-        {
-            let mut model = self.model_mut();
-            if let Some(f) = model.arena.frame_mut(h) {
-                if let KindState::Tooltip(t) = &mut f.kind_state {
-                    if t.fade_start.take().is_some() {
-                        model.arena.set_alpha(h, 1.0);
-                    }
-                }
-            }
-        }
         show_or_hide_empty(&self.lua, h);
         true
     }
@@ -595,16 +576,6 @@ impl super::UiScript {
             return false;
         }
         set_world_owned(&self.lua, h);
-        {
-            let mut model = self.model_mut();
-            if let Some(f) = model.arena.frame_mut(h) {
-                if let KindState::Tooltip(t) = &mut f.kind_state {
-                    if t.fade_start.take().is_some() {
-                        model.arena.set_alpha(h, 1.0);
-                    }
-                }
-            }
-        }
         show_or_hide_empty(&self.lua, h);
         true
     }
@@ -653,21 +624,23 @@ impl super::UiScript {
             .unwrap_or(false)
     }
 
-    /// On hover loss, arm the world tooltip's timed fade (the reference's unit plate fades rather
-    /// than hiding); a no-op unless a world-owned plate is shown.
+    /// On hover loss, `FadeOut` the world tooltip, as the mouseover change does (`0x51f807`); a
+    /// no-op unless a world-owned plate is shown.
     pub fn world_tooltip_fade(&mut self) {
-        let now = self.now();
-        let mut model = self.model_mut();
-        let Some(h) = model.arena.lookup("GameTooltip") else {
-            return;
-        };
-        if let Some(f) = model.arena.frame_mut(h) {
-            if let KindState::Tooltip(t) = &mut f.kind_state {
-                if t.world_owned && f.shown && t.fade_start.is_none() {
-                    t.fade_start = Some(now);
-                }
+        let h = {
+            let model = self.model_mut();
+            let Some(h) = model.arena.lookup("GameTooltip") else {
+                return;
+            };
+            let up = model.arena.frame(h).is_some_and(|f| {
+                f.shown && matches!(&f.kind_state, KindState::Tooltip(t) if t.world_owned)
+            });
+            if !up {
+                return;
             }
-        }
+            h
+        };
+        super::tooltip::fade_out(&self.lua, h);
     }
 }
 

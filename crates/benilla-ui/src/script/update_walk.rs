@@ -168,7 +168,7 @@ impl UiScript {
             // fire in its place in the walk.
             FrameKind::EditBox => editbox::update(lua, entry.h, elapsed),
             FrameKind::Cooldown => super::cooldown_widget::update(lua, entry.h),
-            FrameKind::GameTooltip => super::tooltip::update(lua, entry.h),
+            FrameKind::GameTooltip => super::tooltip::update(lua, entry.h, elapsed),
             FrameKind::MessageFrame | FrameKind::ScrollingMessageFrame => {
                 self.update_message_lines(entry.h, kind, elapsed)
             }

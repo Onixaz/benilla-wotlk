@@ -201,7 +201,7 @@ fn answer_wait(lua: &Lua, h: FrameHandle) -> mlua::Result<()> {
             return Ok(());
         };
         let shown = model.arena.frame(h).is_some_and(|f| f.shown);
-        let fading = tip_mut(&mut model, h)?.fade_start.is_some();
+        let fading = tip_mut(&mut model, h)?.fade.is_some();
         if !shown || fading || drawn_lines(&mut model, h)? != wait.drawn {
             model.item_tooltip_waits.remove(&h);
             return Ok(());
