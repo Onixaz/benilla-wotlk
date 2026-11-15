@@ -46,11 +46,14 @@ impl Plugin for UiCompanionPlugin {
             Update,
             (
                 // Before the cooldown events, whose `SPELL_UPDATE_COOLDOWN` makes the page re-read
-                // `GetCompanionCooldown`, and after the book, which the learn line follows.
+                // `GetCompanionCooldown`, and after the book, which the learn line follows. Before
+                // the pet feeds: their `UNIT_PET` and `PET_BAR_UPDATE` re-test the Pets tab off
+                // `GetNumCompanions`, whose lists 12340 fills with the known spells (`0x5426a5`).
                 feed_companions
                     .in_set(UnitFeed)
                     .after(crate::ui_spellbook::BookFeed)
                     .after(crate::ui_action::SlotIdentityFeed)
+                    .before(crate::ui_pet_stats::PetSnapshot)
                     .before(crate::ui_action::CooldownEvents),
                 drain_companions.after(UiInput),
                 // After the VM ticks: a click's `SetCreature` lands in `UiPress`, before it.
