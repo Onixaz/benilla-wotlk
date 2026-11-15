@@ -40,6 +40,11 @@ const BOLT: u32 = 133;
 const NOVA: u32 = 122;
 /// A pet spell with the pet's GCD, on the pet bar's slot 1.
 const CLAW: u32 = 16829;
+/// Water in the backpack's first slot when a test puts it there, and its on-use spell, which
+/// arms the standard GCD.
+const WATER: u32 = 159;
+const DRINK: u32 = 430;
+const WATER_GUID: u64 = 0x4000_0000_0000_0042;
 /// The `GetTime()` the rigs' VM stands at; no frame moves it, as `Time<Real>` never steps here.
 const NOW: f64 = 100.0;
 /// How long the running recovery has run when a test starts.
@@ -353,6 +358,7 @@ impl Rig {
                         },
                     ),
                     (CLAW, gcd("Claw")),
+                    (DRINK, gcd("Drink")),
                 ]
                 .into(),
             ),
@@ -531,6 +537,57 @@ impl Rig {
 
     fn selected(&self) -> Option<u64> {
         self.app.world().resource::<Selection>().guid
+    }
+
+    /// Five waters in the backpack's first slot (`PLAYER_FIELD_PACK_SLOT_1`, field 532), with
+    /// Drink as their on-use spell.
+    fn water_in_the_backpack(&mut self) {
+        let world = self.app.world_mut();
+        let water = world
+            .spawn((
+                Guid(WATER_GUID),
+                ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                    (3, WATER),
+                    (14, 5),
+                ])),
+            ))
+            .id();
+        let me = {
+            let mut index = world.resource_mut::<GuidIndex>();
+            index.0.insert(WATER_GUID, water);
+            index.0[&ME]
+        };
+        world
+            .entity_mut(me)
+            .insert(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (2, 0x19),
+                (22, 100),
+                (28, 100),
+                (46, 0x8),
+                (532, WATER_GUID as u32),
+                (533, (WATER_GUID >> 32) as u32),
+            ])));
+        world.resource_mut::<crate::items::Items>().insert_template(
+            WATER,
+            Some(benilla_protocol::ItemInfo {
+                spells: vec![benilla_protocol::messages::ItemSpellEntry {
+                    index: 0,
+                    spell_id: DRINK,
+                    trigger: 0,
+                    charges: -1,
+                    cooldown_ms: -1,
+                    category: 59,
+                    category_cooldown_ms: 1000,
+                }],
+                use_spell: Some(benilla_protocol::messages::ItemUseSpell {
+                    spell_id: DRINK,
+                    cooldown_ms: -1,
+                    category: 59,
+                    category_cooldown_ms: 1000,
+                }),
+                ..crate::items::test_template("Water")
+            }),
+        );
     }
 }
 
@@ -806,6 +863,42 @@ fn a_pet_bar_press_reaches_the_pet_and_its_bar() {
     assert!(
         in_frame(&log, 3).contains(&"OnUpdate action cold pet swept book cold".to_string()),
         "the bar sweeps by the frame after the press: {log:?}"
+    );
+}
+
+/// A bag item used through a binding goes out once per press, and the GCD its on-use spell arms
+/// reaches the action bar by the frame after the press at the latest.
+#[test]
+fn a_bag_item_use_is_sent_once_and_its_gcd_reaches_the_bar() {
+    let mut rig = rig_or_skip!(&[
+        Step::BindingSync,
+        Step::BindingDispatch,
+        Step::ScriptCalls,
+        Step::ActionState,
+        Step::Tick,
+    ]);
+    rig.water_in_the_backpack();
+    rig.lua("function PROBE_PRESS() UseContainerItem(0, 1) end");
+    rig.frame();
+    rig.press();
+    rig.frame();
+    let uses: Vec<u32> = rig
+        .sent()
+        .into_iter()
+        .filter_map(|c| match c {
+            ClientCommand::UseItem {
+                spell_id,
+                item_guid,
+                ..
+            } if item_guid == WATER_GUID => Some(spell_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(uses, [DRINK], "one use for one press");
+    let log = rig.log();
+    assert!(
+        in_frame(&log, 3).contains(&"OnUpdate action swept pet cold book cold".to_string()),
+        "the GCD reaches the bar by the frame after the press: {log:?}"
     );
 }
 
