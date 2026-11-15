@@ -31,7 +31,7 @@ pub(crate) use drain::pet_stop_on_old_target_clear;
 pub(crate) use drain::{PetCast, PetPress};
 use menu::{drain_pet_menu, feed_pet_menu};
 pub(crate) use temp_bar::temp_slot_texture;
-use unit::feed_pet_unit;
+pub(crate) use unit::feed_pet_unit;
 
 #[cfg(test)]
 mod flush_tests;
