@@ -348,8 +348,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 }
 
 /// `InitWorldMapPing(parent)` (`0x545ff0`): the parent checked as the arrow's create checks it,
-/// then its `WorldMapPing` child's half size handed to the arrow effect as the ping's centre
-/// (`0x542f80`). benilla's effect model plays no ping, so only the checks are observable.
+/// then the `WorldMapPing` model's position set to half its size, so the ping model sits on the
+/// pane's centre and not its bottom-left corner. The name has no `$parent`, so it resolves as the
+/// global; with no such region the call does nothing.
 fn init_ping(lua: &Lua, parent: Value) -> mlua::Result<()> {
     let Value::Table(t) = parent else {
         return Err(mlua::Error::runtime("Usage: InitWorldMapPing(parent)"));
@@ -364,6 +365,24 @@ fn init_ping(lua: &Lua, parent: Value) -> mlua::Result<()> {
             "InitWorldMapPing(): Wrong object type, expected frame",
         ));
     }
+    let Some(ping) = lua
+        .globals()
+        .get::<Option<Table>>("WorldMapPing")?
+        .filter(|t| frame_handle_of(lua, t).is_ok())
+    else {
+        return Ok(());
+    };
+    let h = frame_handle_of(lua, &ping)?;
+    // `m_width`, `m_height` over the layout unit: the size in `SetPosition`'s units.
+    let centre = {
+        let model = crate::script::model_mut_of(lua);
+        let unit = model.layout_unit();
+        model.layout_inputs.get(&h).map_or((0.0, 0.0, 0.0), |i| {
+            (i.width * 0.5 / unit, i.height * 0.5 / unit, 0.0)
+        })
+    };
+    // The reference casts the region to a model unchecked; a non-model here is left alone.
+    let _ = super::modelframe::with_model(lua, &ping, |m| m.position = centre);
     Ok(())
 }
 
@@ -399,6 +418,42 @@ mod tests {
         )
         .unwrap();
         s
+    }
+
+    /// The stock `WorldMapPing` is a 50 x 50 `<Model>`; the call puts its model on the pane's centre,
+    /// 25 FrameXML units in on each axis, 25/1280 layout units at 4:3.
+    #[test]
+    fn init_ping_centres_the_ping_model_on_its_pane() {
+        let s = vm();
+        for (call, want) in [
+            ("InitWorldMapPing(5)", "Usage: InitWorldMapPing(parent)"),
+            (
+                "InitWorldMapPing({})",
+                "InitWorldMapPing(): Couldn't find 'this' in parent object",
+            ),
+            (
+                "InitWorldMapPing(WM:CreateTexture())",
+                "InitWorldMapPing(): Wrong object type, expected frame",
+            ),
+        ] {
+            let err = s.run(call).unwrap_err().to_string();
+            assert!(err.contains(want), "{call}: {err}");
+        }
+        s.run("InitWorldMapPing(WM)").unwrap(); // no `WorldMapPing` yet: nothing to do
+        s.run(
+            r#"local p = CreateFrame("Model", "WorldMapPing", WM)
+               p:SetWidth(50); p:SetHeight(50); p:SetPoint("CENTER", WM)
+               InitWorldMapPing(WM)"#,
+        )
+        .unwrap();
+        let (x, y, z) = s
+            .eval::<(f32, f32, f32)>("return WorldMapPing:GetPosition()")
+            .unwrap();
+        let want = 25.0 / 1280.0;
+        assert!(
+            (x - want).abs() < 1e-6 && (y - want).abs() < 1e-6 && z == 0.0,
+            "half the pane in layout units: {x} {y} {z}"
+        );
     }
 
     #[test]
