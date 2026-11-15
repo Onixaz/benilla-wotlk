@@ -13,6 +13,8 @@ use super::{decode_id, draw_layer_from_str, frame_handle_of, frame_wrapper, stra
 /// Populate `m`'s visibility, hierarchy, strata, backdrop and input methods.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // Show / Hide / visibility. No `SetShown`: no 1.12 method table registers it.
+    // `0x49fd70`/`0x49fdd0` over the frame's show and hide (`0x48f660`/`0x48f620`), each behind
+    // the protected gate.
     m.set(
         "Show",
         lua.create_function(|lua, this: Table| set_shown(lua, &this, true))?,
@@ -77,6 +79,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetID",
         lua.create_function(|lua, (this, id): (Table, i64)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let h = frame_handle_of(lua, &this)?;
             let mut model = crate::script::model_mut_of(lua);
             if let Some(f) = model.arena.frame_mut(h) {
@@ -361,6 +366,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetFrameStrata",
         lua.create_function(|lua, (this, strata): (Table, String)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let h = frame_handle_of(lua, &this)?;
             // A name off the table raises, naming the frame or `<unnamed>`, and the stratum stays.
             let Some(s) = strata_from_str(&strata) else {
@@ -395,6 +403,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetFrameLevel",
         lua.create_function(|lua, (this, level): (Table, i64)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let h = frame_handle_of(lua, &this)?;
             let lvl = level.clamp(0, i64::from(u16::MAX)) as u16;
             // A script level change carries the same-strata children along: `0x49e9d0` calls
@@ -420,6 +431,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetScale",
         lua.create_function(|lua, (this, scale): (Table, f32)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let h = frame_handle_of(lua, &this)?;
             crate::script::model_mut_of(lua).set_frame_scale(h, scale);
             Ok(())
@@ -596,6 +610,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "EnableMouse",
         lua.create_function(|lua, (this, enable): (Table, bool)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let h = frame_handle_of(lua, &this)?;
             crate::script::event::set_mouse_enabled(lua, h, enable);
             Ok(())
@@ -618,6 +635,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "EnableKeyboard",
         lua.create_function(|lua, (this, enable): (Table, bool)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let h = frame_handle_of(lua, &this)?;
             crate::script::model_mut_of(lua)
                 .arena
@@ -668,6 +688,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "EnableMouseWheel",
         lua.create_function(|lua, (this, enable): (Table, bool)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let h = frame_handle_of(lua, &this)?;
             crate::script::model_mut_of(lua)
                 .arena
@@ -684,6 +707,36 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 .expect("model");
             Ok(crate::script::binding_abi::flag(
                 model.arena.is_mouse_wheel_enabled(h),
+            ))
+        })?,
+    )?;
+    // EnableJoystick (`0x4a11d0`) / IsJoystickEnabled: the frame's joystick flag, behind the
+    // protected gate; no joystick input reaches a frame here.
+    m.set(
+        "EnableJoystick",
+        lua.create_function(|lua, (this, enable): (Table, bool)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
+            let h = frame_handle_of(lua, &this)?;
+            let mut model = crate::script::model_mut_of(lua);
+            if enable {
+                model.joystick_enabled.insert(h);
+            } else {
+                model.joystick_enabled.remove(&h);
+            }
+            Ok(())
+        })?,
+    )?;
+    m.set(
+        "IsJoystickEnabled",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model");
+            Ok(crate::script::binding_abi::flag(
+                model.joystick_enabled.contains(&h),
             ))
         })?,
     )?;
@@ -798,6 +851,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetHitRectInsets",
         lua.create_function(
             |lua, (this, left, right, top, bottom): (Table, f32, f32, f32, f32)| {
+                if !crate::script::taint::gate(lua, &this)? {
+                    return Ok(());
+                }
                 let h = frame_handle_of(lua, &this)?;
                 crate::script::model_mut_of(lua)
                     .arena
@@ -877,6 +933,9 @@ fn strata_name(s: Strata) -> &'static str {
 }
 
 fn set_shown(lua: &Lua, this: &Table, shown: bool) -> mlua::Result<()> {
+    if !crate::script::taint::gate(lua, this)? {
+        return Ok(());
+    }
     let h = frame_handle_of(lua, this)?;
     event::set_shown(lua, h, shown);
     Ok(())

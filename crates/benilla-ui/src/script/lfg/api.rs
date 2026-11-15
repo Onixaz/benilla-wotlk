@@ -710,7 +710,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // AcceptProposal()/RejectProposal() (`0x5545e0`/`0x554600` → `0x554450`): an accept marks
     // our row answered, a reject drops the proposal; both repaint. `CanPerformAction(9)` only
-    // stops tainted code, which benilla does not track.
+    // stops tainted code and is not asked yet (#1227).
     for (name, accept) in [("AcceptProposal", true), ("RejectProposal", false)] {
         g.set(
             name,

@@ -21,8 +21,7 @@ impl super::UiScript {
 }
 
 /// The game UI's focus setter (`0x51ff20`): a new guid is stored and signals
-/// `PLAYER_FOCUS_CHANGED`. Its blocked arm, for tainted code, never runs here: benilla runs every
-/// chunk untainted.
+/// `PLAYER_FOCUS_CHANGED`. Its blocked arm, for tainted code, is not asked yet (#1227).
 fn set_focus_target(lua: &Lua, guid: u64) {
     {
         let mut model = super::model_mut_of(lua);

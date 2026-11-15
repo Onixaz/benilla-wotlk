@@ -16,7 +16,7 @@ pub(crate) struct Cache {
 }
 
 impl Cache {
-    fn contains(&mut self, model: &ModelCell, id: u32) -> bool {
+    pub(crate) fn contains(&mut self, model: &ModelCell, id: u32) -> bool {
         if self.epoch != Some(model.epoch()) {
             self.protected.clear();
             let mut pending: Vec<u32> = model
@@ -77,9 +77,9 @@ pub(in crate::script) fn install(lua: &Lua, methods: &Table, side: Side) -> mlua
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model");
-            let combat = model.unit("player").is_some_and(|u| u.in_combat);
+            let allowed = model.protected_actions_allowed;
             let protected = model.protection_cache.borrow_mut().contains(&model, id);
-            Ok(flag(!combat || !protected))
+            Ok(flag(allowed || !protected))
         },
     )?;
     Ok(())
@@ -87,7 +87,7 @@ pub(in crate::script) fn install(lua: &Lua, methods: &Table, side: Side) -> mlua
 
 #[cfg(test)]
 mod tests {
-    use crate::script::{UiScript, UnitState};
+    use crate::script::UiScript;
 
     fn script() -> UiScript {
         let s = UiScript::new().unwrap();
@@ -163,14 +163,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        s.set_unit(
-            "player",
-            Some(UnitState {
-                exists: true,
-                in_combat: true,
-                ..Default::default()
-            }),
-        );
+        s.set_regen_enabled(false);
         s.run(
             r#"
             assert(Header:CanChangeProtectedState() == nil)
@@ -178,7 +171,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        s.set_unit("player", None);
+        s.set_regen_enabled(true);
         assert_eq!(
             s.eval::<i64>("return Header:CanChangeProtectedState()")
                 .unwrap(),

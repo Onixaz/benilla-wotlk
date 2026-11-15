@@ -1987,7 +1987,6 @@ mod tests {
 
         // Registered by a chain file we load and fired by nothing here; each says why.
         // The 3.3.5a listeners still to be fed, by feature.
-        const R_0: &str = "the protected-action refusal; benilla has no protected-call taint model, so nothing can raise it";
         const R_1: &str = "a 12340 event nothing here fires yet";
         const R_2: &str = "Real ID: 12340's Battle.net events, not built; a 3.3.5a server has no Battle.net service";
         const R_3: &str = "the knowledge base behind the help frame, not built";
@@ -1996,8 +1995,6 @@ mod tests {
         const R_6: &str = "voice chat, not built";
         const UNPRODUCED: &[(&str, &str)] = &[
             // ── The stock `UIParent.lua`'s listeners first, then the other files' ──
-            ("ADDON_ACTION_BLOCKED", R_0),
-            ("MACRO_ACTION_BLOCKED", R_0),
             ("FRIENDLIST_SHOW", R_1),
             ("ITEM_UNLOCKED", R_1),
             ("MAIL_LOCK_SEND_ITEMS", R_1),
@@ -2065,8 +2062,8 @@ mod tests {
             ("VOICE_STOP", R_6),
             (
                 "ADDON_ACTION_FORBIDDEN",
-                "UIParent.lua — the protected-action refusal; benilla has no protected-call \
-                 taint model, so nothing can raise it",
+                "UIParent.lua — the protected-function refusal; no protected function asks \
+                 the taint yet (#1227)",
             ),
             (
                 "MACRO_ACTION_FORBIDDEN",

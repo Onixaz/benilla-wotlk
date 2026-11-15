@@ -8,10 +8,10 @@
 //! Every movement function but the mouselook three opens on the hardware-event gate with tag 0.
 //! Untainted, it passes only inside a real input event, which for a binding body is the binding
 //! executor on the stack; tainted code (a macro, `RunScript`, an addon's own) is refused. So a
-//! key's body moves and a `/script MoveForwardStart()` does not. benilla has no taint model, so
-//! here the gate is "a binding body is running" ([`UiScript::execute_binding`]), which refuses the
-//! same callers, silently where the reference fires `MACRO_ACTION_FORBIDDEN` (431) or
-//! `ADDON_ACTION_FORBIDDEN` (432). The camera table and the main-table verbs have no gate.
+//! key's body moves and a `/script MoveForwardStart()` does not. The taint does not reach this
+//! gate yet (#1227), so here it is "a binding body is running" ([`UiScript::execute_binding`]),
+//! which refuses the same callers, silently where the reference fires `MACRO_ACTION_FORBIDDEN`
+//! (431) or `ADDON_ACTION_FORBIDDEN` (432). The camera table and the main-table verbs have no gate.
 
 use mlua::{Lua, MultiValue, Value};
 

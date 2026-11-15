@@ -243,13 +243,11 @@ fn model_of(lua: &Lua) -> mlua::AppDataRef<'_, crate::script::ModelCell> {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // InCombatLockdown() (`0x511cc0`): 1 from entering combat until leaving it.
+    // InCombatLockdown() (`0x511cc0`): 1 while protected actions are barred, from just after
+    // `PLAYER_REGEN_DISABLED` to just before `PLAYER_REGEN_ENABLED`.
     g.set(
         "InCombatLockdown",
-        lua.create_function(|lua, ()| {
-            let model = model_of(lua);
-            Ok(flag(model.unit("player").is_some_and(|u| u.in_combat)))
-        })?,
+        lua.create_function(|lua, ()| Ok(flag(!model_of(lua).protected_actions_allowed)))?,
     )?;
     // GetDungeonDifficulty() (`0x515790`): the current dungeon difficulty and the player's, 1-based.
     g.set(

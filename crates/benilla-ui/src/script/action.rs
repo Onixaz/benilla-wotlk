@@ -427,7 +427,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // ChangeActionBarPage(page) (`0x5a7f60`): the page is `lua_tonumber` truncated, so nil is 0,
     // and outside 1..6 raises (`0x5a7fb5`). A new page is stored and fires `ACTIONBAR_PAGE_CHANGED`
     // synchronously (`0x5a7fa7`); the same page does nothing. The protected-call check
-    // (`0x5191c0`) answers only tainted code, which benilla does not track.
+    // (`0x5191c0`) answers only tainted code and is not asked yet (#1227).
     g.set(
         "ChangeActionBarPage",
         lua.create_function(|lua, page: Value| {

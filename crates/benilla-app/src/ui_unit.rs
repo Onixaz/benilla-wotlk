@@ -1973,14 +1973,7 @@ fn feed_units(
             let first_sight = memo.in_combat.is_none();
             memo.in_combat = Some(in_combat);
             if !first_sight || in_combat {
-                script.fire_event(
-                    if in_combat {
-                        "PLAYER_REGEN_DISABLED"
-                    } else {
-                        "PLAYER_REGEN_ENABLED"
-                    },
-                    vec![],
-                );
+                script.set_regen_enabled(!in_combat);
             }
         }
     }

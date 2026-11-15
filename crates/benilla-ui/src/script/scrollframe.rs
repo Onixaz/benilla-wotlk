@@ -171,6 +171,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         })?)
                     }
                 };
+            // A new child is behind the protected gate, the scroll frame taking the blame
+            // (`0x97237b`); a nil one is not.
+            if let Some(c) = new_child {
+                let id = crate::script::model_mut_of(lua).frame_id(c);
+                if !crate::script::taint::allowed(lua, id) {
+                    crate::script::taint::blocked(lua, &this);
+                    return Ok(());
+                }
+            }
             // The ScrollFrame or one of its ancestors as the child raises.
             if let Some(c) = new_child {
                 let loops = c == h || {
@@ -234,6 +243,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "SetVerticalScroll",
         lua.create_function(|lua, (this, px): (Table, f32)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let changed = with_scroll(lua, &this, |s| {
                 let changed = s.vertical.to_bits() != px.to_bits();
                 s.vertical = px;
@@ -269,6 +281,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "SetHorizontalScroll",
         lua.create_function(|lua, (this, px): (Table, f32)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let changed = with_scroll(lua, &this, |s| {
                 let changed = s.horizontal.to_bits() != px.to_bits();
                 s.horizontal = px;
