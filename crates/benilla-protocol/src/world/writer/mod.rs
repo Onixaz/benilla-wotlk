@@ -74,12 +74,27 @@ pub struct WorldWriter {
     pub(super) cast_counter: crate::messages::CastCounter,
     /// The unit every movement packet names, set by [`Self::set_active_mover`].
     pub(super) mover: u64,
+    /// The connection's Warden, whose replies this half sends.
+    pub(super) warden: crate::warden::SharedWarden,
 }
 
 impl WorldWriter {
     /// The unit every movement packet is stamped with now.
     pub fn mover(&self) -> u64 {
         self.mover
+    }
+
+    /// Every Warden reply the read queued, sealed and sent in order (`CMSG_WARDEN_DATA`).
+    pub fn warden_replies(&mut self) -> Result<()> {
+        let sealed = self
+            .warden
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Warden lock"))?
+            .seal_outgoing();
+        for body in sealed {
+            self.send(crate::messages::opcode::CMSG_WARDEN_DATA, &body)?;
+        }
+        Ok(())
     }
 
     /// Frame, encrypt and write one packet: the sole write path every verb goes through.

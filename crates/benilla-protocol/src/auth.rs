@@ -29,7 +29,8 @@ const OS_WINDOWS: u32 = 0x0057_696e; // "Win\0"
 const OS_MACOS: u32 = 0x004F_5358; // "OSX\0"
 
 /// The host's OS tag: `OSX` on macOS, else `Win`, as there was no 3.3.5a Linux client. Servers act
-/// on it: vmangos picks `WardenWin` or `WardenMac`, and realmd checks the build (`FindBuildInfo`).
+/// on it: AzerothCore starts Warden's Windows module for `Win` and none for `OSX`
+/// (`WorldSession::InitWarden`), and realmd checks the build (`FindBuildInfo`).
 const fn client_os() -> u32 {
     if cfg!(target_os = "macos") {
         OS_MACOS

@@ -1,14 +1,14 @@
 //! The world handshake over a real socket against a fake server that checks `CMSG_AUTH_SESSION` as
 //! AzerothCore's `WorldSocket::HandleAuthSession` does and answers with RC4 headers. Packets may
-//! precede `SMSG_AUTH_RESPONSE`. Deviation: `SMSG_WARDEN_DATA` refuses the login, because benilla
-//! cannot answer Warden and the server kicks a client that stays silent about 30 s later.
+//! precede `SMSG_AUTH_RESPONSE`, Warden data among them.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
 use benilla_protocol::messages::{self, opcode};
-use benilla_protocol::{WardenRequired, WorldAuthReject, WorldSession};
+use benilla_protocol::warden::WardenServerStreams;
+use benilla_protocol::{WardenRefused, WorldAuthReject, WorldSession};
 use benilla_srp::wotlk_header::WotlkHeaderCrypto;
 use benilla_srp::SESSION_KEY_LENGTH;
 use sha1::{Digest, Sha1};
@@ -242,15 +242,20 @@ fn packets_ahead_of_the_auth_response_are_skipped() {
     assert!(WorldSession::connect(&addr, "one", SESSION_KEY, REALM_ID).is_ok());
 }
 
+/// A Warden module benilla has no keys for ends the handshake with the reason.
 #[test]
-fn a_warden_server_is_refused_at_the_handshake() {
-    let (addr, _seen) = fake_server(vec![(opcode::SMSG_WARDEN_DATA, vec![0u8; 16])], vec![]);
+fn a_warden_module_benilla_cannot_answer_is_refused_at_the_handshake() {
+    let mut module_use = vec![0u8];
+    module_use.extend_from_slice(&[0xee; 32]);
+    module_use.extend_from_slice(&100u32.to_le_bytes());
+    let body = WardenServerStreams::new(&SESSION_KEY).seal(&module_use);
+    let (addr, _seen) = fake_server(vec![(opcode::SMSG_WARDEN_DATA, body)], vec![]);
     let Err(err) = WorldSession::connect(&addr, "one", SESSION_KEY, REALM_ID) else {
-        panic!("a Warden server must not yield a session");
+        panic!("an unanswerable Warden module must not yield a session");
     };
     assert!(
-        err.downcast_ref::<WardenRequired>().is_some(),
-        "expected WardenRequired, got: {err:#}"
+        err.downcast_ref::<WardenRefused>().is_some(),
+        "expected WardenRefused, got: {err:#}"
     );
 }
 

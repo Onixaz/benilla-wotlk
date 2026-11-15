@@ -22,8 +22,12 @@ pub use tga::tga_to_rgba;
 mod install;
 pub use install::{
     addon_corpus, addon_corpus_candidates, candidates, drop_in_install, project_folder,
-    set_drop_in_install, set_project_folder, skipped, wow_data,
+    set_drop_in_install, set_project_folder, skipped, wow_data, wow_exe, wow_exe_candidates,
+    wow_install,
 };
+/// The reference executable's sections, mapped read-only from disk.
+mod pe;
+pub use pe::ExeImage;
 mod characters;
 pub use characters::{
     equip_blits, equip_column, equip_region_candidates, equip_tex_dir, equip_tile, forearm_dressed,

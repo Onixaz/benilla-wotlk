@@ -477,9 +477,9 @@ fn a_late_roster_reply_is_dropped_unless_it_lands_before_the_tick() {
     assert!(m.op.done && m.op.ok);
 }
 
-/// A server that wants Warden refuses the roster ask with its words (a terminal login failure): the
-/// query completes failed and the next tick opens `OKAY` with them, where state 3 would otherwise
-/// stand on its `CANCEL` dialog for ever. The link is gone.
+/// A Warden exchange benilla cannot answer ends the roster ask with its words (a terminal
+/// failure): the query completes failed and the next tick opens `OKAY` with them, where state 3
+/// would otherwise stand on its `CANCEL` dialog for ever. The link is gone.
 #[test]
 fn a_terminal_failure_fails_the_character_list_query_with_its_words() {
     let mut m = accepted();

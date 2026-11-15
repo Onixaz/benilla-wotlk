@@ -273,6 +273,8 @@ impl PluginGroup for GamePlugins {
             .add(UiItemTextPlugin)
             .add(UiSavedPlugin)
             .add(crate::wdb::WdbPlugin)
+            .add(crate::warden::WardenPlugin)
+            .add(crate::ui_warden::UiWardenPlugin)
             .add(crate::account_data::AccountDataPlugin)
             .add(UiStablePlugin)
             .add(TabardUiPlugin)

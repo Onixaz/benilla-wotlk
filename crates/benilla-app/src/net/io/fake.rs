@@ -341,7 +341,7 @@ pub(crate) struct World {
     rosters: Arc<Mutex<Vec<Vec<u8>>>>,
     /// How long a `CMSG_CHAR_ENUM` waits before its answer.
     enum_delay: Arc<Mutex<Duration>>,
-    /// Answer `CMSG_CHAR_ENUM` with `SMSG_WARDEN_DATA`, as a server does that wants Warden.
+    /// Answer `CMSG_CHAR_ENUM` with a Warden module benilla cannot answer.
     warden: Arc<AtomicBool>,
     /// Close the socket on `CMSG_CHAR_ENUM` instead of answering.
     cut: Arc<AtomicBool>,
@@ -363,7 +363,8 @@ impl World {
         *self.rosters.lock().unwrap() = per_session.iter().map(|c| char_enum_body(c)).collect();
     }
 
-    /// Have the server demand Warden in place of the roster from now on.
+    /// Have the server send a Warden module benilla cannot answer in place of the roster from now
+    /// on.
     pub(crate) fn demand_warden(&self) {
         self.warden.store(true, Ordering::SeqCst);
     }
@@ -495,6 +496,7 @@ pub(crate) fn world(listener: TcpListener, keys: Receiver<Key>) -> World {
             };
             let sessions = Arc::clone(&sessions);
             sessions.fetch_add(1, Ordering::SeqCst);
+            let mut warden = benilla_protocol::warden::WardenServerStreams::new(&key);
             thread::spawn(move || {
                 while let Some(packet) = recv_packet(&mut s, Some(&mut crypto)) {
                     let op = u16::from_le_bytes([packet[2], packet[3]]);
@@ -513,7 +515,12 @@ pub(crate) fn world(listener: TcpListener, keys: Receiver<Key>) -> World {
                                 break;
                             }
                             if warden_flag.load(Ordering::SeqCst) {
-                                send(&mut s, Some(&mut crypto), opcode::SMSG_WARDEN_DATA, &[]);
+                                // MODULE_USE naming a module benilla has no keys for.
+                                let mut module_use = vec![0u8];
+                                module_use.extend_from_slice(&[0xee; 32]);
+                                module_use.extend_from_slice(&100u32.to_le_bytes());
+                                let body = warden.seal(&module_use);
+                                send(&mut s, Some(&mut crypto), opcode::SMSG_WARDEN_DATA, &body);
                                 continue;
                             }
                             send(&mut s, Some(&mut crypto), opcode::SMSG_CHAR_ENUM, &body);

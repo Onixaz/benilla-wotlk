@@ -82,7 +82,8 @@ out of scope is closed with the reason.
   command line tools, which also supply libclang for the audio bindings; on Linux the ALSA and
   udev development packages and pkg-config. Python 3 (`python3`, `py -3` or `python`) runs two
   of the gates.
-- **A 3.3.5a install of your own.** `WOW_DATA=<its Data folder>`, or a `WoW` link at the repo
+- **A 3.3.5a install of your own.** `WOW_INSTALL=<its folder>`, the one `Wow.exe` and `Data` sit
+  in, or a `WoW` link at the repo
   root, which only a dev build sees: the player build looks for `Data/` or `WoW/Data/` beside
   the binary. benilla reads the install and never writes into it, but as the drop-in: the
   `standalone` build `cargo ship` makes goes beside `Wow.exe` in the install root and writes what

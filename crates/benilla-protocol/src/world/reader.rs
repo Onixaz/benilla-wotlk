@@ -15,12 +15,31 @@ pub struct WorldReader {
     pub(super) stream: TcpStream,
     pub(super) decrypter: Decrypter,
     pub(super) link: super::session::LinkFacts,
+    pub(super) warden: crate::warden::SharedWarden,
 }
 
 impl WorldReader {
     /// Read + decrypt one server packet (blocking).
     pub fn recv(&mut self) -> Result<ServerPacket> {
         recv_packet(&mut self.stream, Some(&mut self.decrypter))
+    }
+
+    /// Warden data off the world stream: its scripts, then [`crate::SessionEvent::WardenReplies`]
+    /// for the writer to send what it queued, as the reference runs a check's script before the
+    /// reply leaves. A module or seed benilla cannot answer ends the stream.
+    fn warden(&mut self, body: &[u8]) -> Result<Vec<crate::SessionEvent>> {
+        let received = self
+            .warden
+            .lock()
+            .map_err(|_| anyhow!("Warden lock"))?
+            .receive(body)?;
+        let mut events: Vec<crate::SessionEvent> = received
+            .scripts
+            .into_iter()
+            .map(|chunk| crate::SessionEvent::WardenScript { chunk })
+            .collect();
+        events.push(crate::SessionEvent::WardenReplies);
+        Ok(events)
     }
 
     /// Read one packet and decode it into a [`crate::Poll`]; errors only when the socket fails. The
@@ -31,6 +50,13 @@ impl WorldReader {
         let mut body = vec![0u8; body_len];
         if let Err(e) = self.stream.read_exact(&mut body) {
             return Err(anyhow!("world stream closed: {e}"));
+        }
+        if opcode == crate::messages::opcode::SMSG_WARDEN_DATA {
+            return Ok(crate::Poll::Events {
+                opcode,
+                events: self.warden(&body)?,
+                tail: 0,
+            });
         }
         match messages::parse_server_with_tail(opcode, &body) {
             Ok((packet, tail)) => {

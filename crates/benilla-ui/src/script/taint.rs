@@ -444,6 +444,23 @@ mod tests {
         assert_eq!(point_x(&s, "Header"), 4.0);
     }
 
+    /// Warden's executor runs secure, even under an addon's taint, and an error never raises.
+    #[test]
+    fn the_warden_executor_runs_secure_and_reports_without_raising() {
+        let mut s = script();
+        s.with_addon_owner("TaintTest", || {
+            s.execute_secure("WardenSecure = issecure() forceinsecure() WardenForced = issecure()")
+        });
+        let ran: (Option<i64>, Option<i64>) = s.eval("return WardenSecure, WardenForced").unwrap();
+        assert_eq!(ran, (Some(1), None));
+        s.execute_secure("this is not lua");
+        let errs = s.take_errors();
+        assert!(
+            errs.iter().any(|e| e.contains("[string \"?\"]:1:")),
+            "{errs:?}"
+        );
+    }
+
     #[test]
     fn run_script_is_macro_tainted_and_a_nested_refusal_is_silent() {
         let s = script();

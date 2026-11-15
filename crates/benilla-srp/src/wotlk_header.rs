@@ -60,8 +60,8 @@ impl std::fmt::Debug for Arc4 {
 }
 
 impl Arc4 {
-    /// RC4 keyed with `key`.
-    fn keyed(key: &[u8]) -> Self {
+    /// RC4 keyed with `key`, no keystream discarded: the Warden streams' form.
+    pub fn keyed(key: &[u8]) -> Self {
         let mut state = [0u8; 256];
         for (i, s) in state.iter_mut().enumerate() {
             *s = i as u8;

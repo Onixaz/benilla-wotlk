@@ -414,9 +414,9 @@ fn a_world_session_has_one_epoch_and_a_realm_change_a_new_one() {
     assert_ne!(seen[0], seen[1], "a new session has a new epoch");
 }
 
-/// A server that wants Warden answers the stock screen's first ask with `SMSG_WARDEN_DATA`: the
-/// login fails for good with the server's words, as it does at the park under the native policy,
-/// not as a lost stream.
+/// A server whose Warden module benilla cannot answer sends it at the stock screen's first ask: the
+/// login fails for good with the reason, as it does at the park under the native policy, not as a
+/// lost stream.
 #[test]
 fn a_warden_demand_at_the_asked_roster_is_a_terminal_login_failure() {
     let (realmd, world) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);

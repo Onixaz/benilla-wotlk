@@ -1,0 +1,16 @@
+[package]
+name = "benilla-warden"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WoW 3.3.5a Warden answered natively: its streams, module handshake, hash and checks"
+
+[lints]
+workspace = true
+
+[dependencies]
+# The RC4 the Warden streams run through.
+benilla-srp = { path = "../benilla-srp" }
+# A module's id is the MD5 of its bytes.
+md-5 = "0.10"
+sha1.workspace = true

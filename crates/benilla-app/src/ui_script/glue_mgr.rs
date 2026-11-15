@@ -1189,9 +1189,9 @@ impl GlueMgr {
                     self.cells.result = result;
                 }
             }
-            // The character list query's reply never came: the server refused the roster to a
-            // client without Warden (the park's `char_enum`), the one failure it reports. The
-            // query completes failed with the words, and the link is gone.
+            // The character list query's reply never came: a Warden exchange benilla cannot answer
+            // ended the roster (the park's `char_enum`), the one failure it reports. The query
+            // completes failed with the words, and the link is gone.
             ScreenState::CharList if self.op.kind != OpKind::CharList || self.op.done => {}
             ScreenState::Connect | ScreenState::CharList => {
                 if self.state == ScreenState::CharList {
@@ -1206,8 +1206,7 @@ impl GlueMgr {
                     None => STATUS_FAILED_TO_CONNECT,
                 };
                 self.op.complete(false, status);
-                // A server refusing a client without Warden has no reference status: its own
-                // words.
+                // A Warden exchange benilla cannot answer has no reference status: its own words.
                 if msg.terminal && msg.refusal.is_none() {
                     self.op.raw = Some(msg.reason.clone());
                 }

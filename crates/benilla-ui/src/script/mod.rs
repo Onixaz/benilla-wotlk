@@ -1497,6 +1497,22 @@ impl UiScript {
             .exec()
     }
 
+    /// The script executor a Warden check binds (`0x819210`), called with no name and no taint:
+    /// the chunk compiles as `?` and runs as secure code; a compile or run error goes to the error
+    /// handler, never to the caller.
+    pub fn execute_secure(&self, chunk: &str) {
+        let lua = &self.lua;
+        let run = taint::run_as(0, || {
+            lua.load(chunk)
+                .set_name("?")
+                .set_mode(mlua::ChunkMode::Text)
+                .exec()
+        });
+        if let Err(e) = run {
+            model_mut_of(lua).record_lua_error(&e);
+        }
+    }
+
     /// Load and evaluate a Lua chunk, returning its result: for tests and one-shot queries.
     pub fn eval<T: mlua::FromLuaMulti>(&self, chunk: &str) -> mlua::Result<T> {
         self.lua.load(chunk).set_mode(mlua::ChunkMode::Text).eval()

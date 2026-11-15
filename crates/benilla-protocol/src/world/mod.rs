@@ -23,7 +23,7 @@ mod writer;
 
 pub use movement::client_uptime_ms;
 pub use reader::WorldReader;
-pub use session::{WardenRequired, WorldAuthReject, WorldConnectEvent, WorldSession};
+pub use session::{WorldAuthReject, WorldConnectEvent, WorldSession};
 
 pub use writer::WorldWriter;
 
