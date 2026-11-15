@@ -151,10 +151,12 @@ impl Plugin for UiPetPlugin {
                     // After the pet snapshot: these feeds' events reach Lua at once, and their
                     // handlers read `HasPetUI()`, which `crate::ui_pet_stats` pushes. The bar pushes
                     // its cooldown triples before the cooldown events and the pet's flush fires after
-                    // them, so the buttons it wakes read the new list.
+                    // them, so the buttons it wakes read the new list. After the pet unit: the
+                    // bar's `PET_BAR_UPDATE` handler reads `UnitIsVisible("pet")`, the live object.
                     feed_pet_bar
                         .in_set(UnitFeed)
                         .after(crate::ui_pet_stats::PetSnapshot)
+                        .after(feed_pet_unit)
                         .before(CooldownEvents),
                     fire_pet_cooldown_events
                         .in_set(UnitFeed)

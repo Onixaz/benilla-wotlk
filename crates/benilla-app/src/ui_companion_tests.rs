@@ -220,9 +220,10 @@ fn a_mount_ridden_through_another_spell_cancels_that_one() {
 }
 
 /// The lists land before the pet feeds' `UNIT_PET` and `PET_BAR_UPDATE`, whose handlers re-test
-/// the Pets tab off `GetNumCompanions`: a mage's mounts show the tab from the login frame.
+/// the Pets tab off `GetNumCompanions`, so a mage's mounts show the tab from the login frame; and
+/// the pet unit before the bar, whose handler reads `UnitIsVisible("pet")`.
 #[test]
-fn the_lists_feed_before_the_pet_events() {
+fn the_pet_events_follow_the_state_they_read() {
     use crate::test_support::runs_before;
     let mut app = crate::game_plugins::schedule_tests::headless_client();
     assert!(runs_before(
@@ -234,5 +235,11 @@ fn the_lists_feed_before_the_pet_events() {
         &mut app,
         feed_companions,
         crate::ui_pet::feed_pet_unit
+    ));
+    // `PET_BAR_UPDATE`'s handler reads `UnitIsVisible("pet")`, which the pet unit feed pushes.
+    assert!(runs_before(
+        &mut app,
+        crate::ui_pet::feed_pet_unit,
+        crate::ui_pet::feed_pet_bar
     ));
 }
