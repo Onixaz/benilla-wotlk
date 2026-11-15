@@ -31,9 +31,9 @@ use super::select::{
 use super::sheath::{advance_sheath_ceremony, start_sheath_ceremony};
 use super::{
     find_resolved, move_flags, resolved, routed_behavior, AnimData, AnimDriver, AnimPlayFlags,
-    AutoRepeatArmed, BaseAnimRecompute, CastHold, DefenseAnim, EmoteAnim, Engaged, MovementState,
-    NockLatch, Overlay, OverlayFade, SheathRequest, SheathSwapMessage, SwingImpact, SwingMessage,
-    SwingSlowdown, UnitAnimRng, Wielded, WoundAnim,
+    AutoRepeatArmed, BaseAnimRecompute, BaseRearm, CastHold, DefenseAnim, EmoteAnim, Engaged,
+    MovementState, NockLatch, Overlay, OverlayFade, SheathRequest, SheathSwapMessage, SwingImpact,
+    SwingMessage, SwingSlowdown, UnitAnimRng, Wielded, WoundAnim,
 };
 
 mod grip;
@@ -70,6 +70,17 @@ enum OneShotReq {
     /// The id, whether it came through the emote player's armed-id test, and the play flags a kit
     /// passes ([`EmoteAnim::play`]).
     Emote(u16, bool, AnimPlayFlags),
+    /// A cast's end re-picking the base ([`BaseRearm`]).
+    Rearm,
+}
+
+/// One step of a unit's frame of one-shot calls, in call order.
+#[derive(Clone, Copy)]
+enum Arm {
+    /// The id to play, the raw id the armed test compares, and whether it keeps the weapons out.
+    Play(u16, Option<u16>, bool),
+    /// The base re-picked: a live one-shot ends and the next arm of its id starts from time 0.
+    Rearm,
 }
 
 /// The live one-shot the combat fast path tests: the key bone's clip, else bone 0's.
@@ -346,6 +357,7 @@ pub(super) fn drive_animations(
         // Server-pushed kits and their anims, for the stage-0 special idle latch.
         MessageReader<super::KitPush>,
         Option<Res<super::spell_visual::SpellVisuals>>,
+        MessageReader<BaseRearm>,
     ),
     // The session seed each unit's own variation stream is cut from.
     session_rng: Res<benilla_assets::AnimRng>,
@@ -363,6 +375,7 @@ pub(super) fn drive_animations(
         mut swaps,
         mut kit_pushes,
         visuals,
+        mut rearms,
     ) = aux;
     let dt = time.delta_secs();
     // This frame's one-shot plays per unit, replayed in the reference's call order (`PlaySeq`
@@ -407,6 +420,13 @@ pub(super) fn drive_animations(
     let mut pending_slow: bevy::ecs::entity::EntityHashSet = default();
     for s in slows.read() {
         pending_slow.insert(s.0);
+    }
+    // Ahead of the emotes: a cast kit's anim shares its cast edge's stamp and is the later call.
+    for r in rearms.read() {
+        pending
+            .entry(r.entity)
+            .or_default()
+            .push((OneShotReq::Rearm, r.seq));
     }
     for e in emotes.read() {
         pending
@@ -1049,10 +1069,8 @@ fn drive_unit(
     });
     // In `PlaySeq` order, defense last: the reference plays it from the deferred impact scan,
     // after every message handler.
-    // Each request: the id to play, the raw id the armed test compares, and whether it keeps the
-    // weapons out.
     let tier = store.map_or(0, |s| s.0.unit_anim_tier());
-    let mut requests: Vec<(u16, Option<u16>, bool)> = pending
+    let mut requests: Vec<Arm> = pending
         .get(&entity)
         .map(|v| {
             v.iter()
@@ -1068,7 +1086,7 @@ fn drive_unit(
                             swing_anim_main(w.armed_main())
                         };
                         debug!("swing: unit {entity} anim {id} (hitInfo {hit_info:#x})");
-                        (id, None, false)
+                        Arm::Play(id, None, false)
                     }
                     // The armed-id test compares the record's own AnimID, before the play
                     // seam's Special remap from the held hands.
@@ -1079,13 +1097,14 @@ fn drive_unit(
                             Some(cat) => anims.resolve_tier(played, tier, cat),
                             None => played,
                         };
-                        (played, via_player.then_some(id), play.keep_weapons())
+                        Arm::Play(played, via_player.then_some(id), play.keep_weapons())
                     }
+                    OneShotReq::Rearm => Arm::Rearm,
                 })
                 .collect()
         })
         .unwrap_or_default();
-    requests.extend(defense.map(|id| (id, None, false)));
+    requests.extend(defense.map(|id| Arm::Play(id, None, false)));
     // The deferred cache (`+0xd60`): once no one-shot is live, the parked combat clip plays. Fresh
     // requests supersede it. Never mid-air: the read is past the airborne freeze, so the landing
     // play clears it.
@@ -1094,10 +1113,35 @@ fn drive_unit(
         && !airborne_frozen
         && live_oneshot(&drv, &player, &tr, anims, catalog).is_none()
     {
-        requests.extend(drv.deferred.take().map(|id| (id, None, false)));
+        requests.extend(drv.deferred.take().map(|id| Arm::Play(id, None, false)));
     }
     let mut oneshot_keeps = false;
-    for (id, armed_test, keeps) in requests {
+    // A base re-pick since the last arm: the same-id keep below has nothing to keep.
+    let mut rearmed = false;
+    for req in requests {
+        let (id, armed_test, keeps) = match req {
+            Arm::Play(id, armed_test, keeps) => (id, armed_test, keeps),
+            Arm::Rearm => {
+                // The base play's head guard: a locked unit re-picks nothing (`0x7385c0`).
+                if drv.base_lock.refuses() {
+                    continue;
+                }
+                // A base arm clears the cache; mid-arc the airborne freeze keeps bone 0.
+                drv.deferred = None;
+                rearmed = true;
+                if matches!(drv.mode, Mode::Swing { under: None, .. }) && !airborne_frozen {
+                    drv.mode = Mode::Gait;
+                    drv.gait = None;
+                }
+                if drv.overlay.is_some_and(|ov| !ov.looping) {
+                    retire_overlay(&mut drv, &mut player, ONESHOT_RELEASE_FADE);
+                }
+                if benilla_assets::trace::enabled() {
+                    benilla_assets::trace::line("fct", &format!("anim rearm unit={entity}"));
+                }
+                continue;
+            }
+        };
         // The emote player's own test first: an id already armed on the key bone or bone 0 plays
         // nothing, ahead of the lock and the fast path.
         if let Some(raw) = armed_test {
@@ -1137,14 +1181,14 @@ fn drive_unit(
         }
         // A normal arm clears the cache.
         drv.deferred = None;
-        // Same-id dedup: an id still playing in its slot is not re-armed, so an eat/drink loop
-        // free-runs across the server's ~5 s kit resends.
+        // Same-id dedup: an id still playing in its slot is not re-armed (`0x738000`), so an
+        // eat/drink loop free-runs across the server's ~5 s kit resends; a re-pick between re-arms.
         let overlay_live = drv.overlay.is_some_and(|ov| {
             ov.id == id && player.animation(ov.node).is_some_and(|a| !a.is_finished())
         });
         let base_live = matches!(drv.mode, Mode::Swing { id: m, .. } if m == id)
             && !oneshot_finished(&player, anims, id, catalog);
-        if overlay_live || base_live {
+        if !std::mem::take(&mut rearmed) && (overlay_live || base_live) {
             if benilla_assets::trace::enabled() {
                 benilla_assets::trace::line(
                     "fct",

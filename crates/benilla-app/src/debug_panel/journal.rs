@@ -80,14 +80,14 @@ pub(super) fn record_casts(
     let now = time.elapsed_secs_f64();
     for ev in casts.read() {
         match ev.kind {
-            CastEventKind::Start { .. } | CastEventKind::Go | CastEventKind::Fail { .. } => {
+            CastEventKind::Start { .. } | CastEventKind::Go { .. } | CastEventKind::Fail { .. } => {
                 // A caster despawned the same frame drops.
                 let Ok(&Guid(caster)) = guids.get(ev.entity) else {
                     continue;
                 };
                 let state = match ev.kind {
                     CastEventKind::Start { .. } => CastState::Casting,
-                    CastEventKind::Go => CastState::Went,
+                    CastEventKind::Go { .. } => CastState::Went,
                     _ => CastState::Failed,
                 };
                 // A GO or fail closes its START row; without one (a proc's bare GO, a failed

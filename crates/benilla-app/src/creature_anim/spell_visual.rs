@@ -21,8 +21,8 @@ use crate::unit_auras::UnitAuras;
 use benilla_assets::{LockRecover, WorldAssets};
 
 use super::{
-    AnimPlayFlags, BaseAnimRecompute, CastEvent, CastEventKind, CastHold, EmoteAnim, ItemModel,
-    SpellGoTargets, WoundAnim,
+    AnimPlayFlags, BaseAnimRecompute, BaseRearm, CastEvent, CastEventKind, CastHold, EmoteAnim,
+    ItemModel, SpellGoTargets, WoundAnim,
 };
 
 /// The missile model when none resolves (`0x7339e1`).
@@ -908,6 +908,7 @@ type KitSpawnWriters<'w> = (
     MessageWriter<'w, KitEffectClear>,
     Option<ResMut<'w, BeamKitWaits>>,
     Res<'w, Time>,
+    MessageWriter<'w, BaseRearm>,
 );
 
 /// The writers one kit play fans out to.
@@ -1912,6 +1913,23 @@ fn clear_precast_kit(
     }
 }
 
+/// The cast-state clear's base re-pick (`0x7fed9f`): the spell's own visual, no weapon fallback,
+/// whose precast kit names a start or an anim (`0x7fec68`).
+fn rearm_base(
+    rearms: &mut MessageWriter<BaseRearm>,
+    spells: &crate::ui_action::Spells,
+    visuals: &SpellVisualCatalog,
+    ev: &CastEvent,
+) {
+    let kit = resolve_kit(spells, visuals, ev.spell_id, |s| s.precast, || None);
+    if kit.is_some_and(|k| k.rearms_base) {
+        rearms.write(BaseRearm {
+            entity: ev.entity,
+            seq: ev.seq,
+        });
+    }
+}
+
 /// An impact kit split between the unit and a point: the unit keeps the anim, beam and trail
 /// legs; the models, sound and shake go to the point.
 #[allow(clippy::too_many_arguments)]
@@ -2162,6 +2180,7 @@ pub(super) fn route_cast_visuals(
         &spawns.12,
     );
     let kit_clears = &mut spawns.10;
+    let rearms = &mut spawns.13;
     // Nothing watches the waits for changes.
     let reached = waits.as_mut().map_or_else(Vec::new, |w| {
         w.bypass_change_detection()
@@ -2300,7 +2319,7 @@ pub(super) fn route_cast_visuals(
         // A caster that is no unit plays no start or cast visuals (`0x806891`, `0x80ee08`).
         let start_or_go = matches!(
             ev.kind,
-            CastEventKind::Start { .. } | CastEventKind::Sent | CastEventKind::Go
+            CastEventKind::Start { .. } | CastEventKind::Sent | CastEventKind::Go { .. }
         );
         if start_or_go && object_type(ev.entity).is_some() {
             continue;
@@ -2386,11 +2405,14 @@ pub(super) fn route_cast_visuals(
                     });
                 }
             }
-            CastEventKind::Go => {
+            CastEventKind::Go { ends_cast } => {
                 // Spell-id-keyed (the reap with no force): a proc's GO keeps another spell's hold.
                 if held_spell(&pending, ev.entity) == Some(ev.spell_id) {
                     commands.entity(ev.entity).try_remove::<CastHold>();
                     pending.insert(ev.entity, None);
+                }
+                if ends_cast {
+                    rearm_base(rearms, spells, &visuals.0, ev);
                 }
                 // Reaped whatever the hold: a precast kit with no anim still starts a loop.
                 out.sounds
@@ -2547,10 +2569,14 @@ pub(super) fn route_cast_visuals(
             CastEventKind::Fail {
                 interrupt,
                 wire_reason,
+                ends_cast,
             } => {
                 if held_spell(&pending, ev.entity) == Some(ev.spell_id) {
                     commands.entity(ev.entity).try_remove::<CastHold>();
                     pending.insert(ev.entity, None);
+                }
+                if ends_cast {
+                    rearm_base(rearms, spells, &visuals.0, ev);
                 }
                 out.sounds
                     .write(SpellKitSound::StopHold { entity: ev.entity });

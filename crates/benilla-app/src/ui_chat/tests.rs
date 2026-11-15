@@ -1352,7 +1352,7 @@ fn castvis_parses_id_and_phase() {
         parse_line("/castvis 133 go"),
         ParsedChat::CastVis {
             spell_id: 133,
-            kind: CastEventKind::Go,
+            kind: CastEventKind::Go { ends_cast: true },
             ground: false
         }
     );
@@ -1361,7 +1361,7 @@ fn castvis_parses_id_and_phase() {
         parse_line("/castvis 1543 GROUND"),
         ParsedChat::CastVis {
             spell_id: 1543,
-            kind: CastEventKind::Go,
+            kind: CastEventKind::Go { ends_cast: true },
             ground: true
         }
     );
@@ -1371,7 +1371,8 @@ fn castvis_parses_id_and_phase() {
             spell_id: 689,
             kind: CastEventKind::Fail {
                 interrupt: false,
-                wire_reason: 0
+                wire_reason: 0,
+                ends_cast: true,
             },
             ground: false
         }

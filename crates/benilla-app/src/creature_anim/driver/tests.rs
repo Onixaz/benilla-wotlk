@@ -152,6 +152,7 @@ fn app() -> App {
         .add_message::<crate::creature_anim::SwingSlowdown>()
         .add_message::<EmoteAnim>()
         .add_message::<super::super::BaseAnimRecompute>()
+        .add_message::<super::super::BaseRearm>()
         .add_message::<WoundAnim>()
         .add_message::<SheathRequest>()
         .add_message::<SheathSwapMessage>()
@@ -4796,6 +4797,112 @@ fn the_emote_player_skips_an_id_already_armed_but_plays_a_different_one() {
     // A different id replaces it.
     play(&mut app, 67, true);
     assert_eq!(swing(&app), Some(67));
+}
+
+/// A cast's end re-picks the base (`0x7fec7a`), so the next cast's anim, still playing from the
+/// last cast, arms again from time 0; with no re-pick between, the same id keeps its play
+/// (`0x738000`). The re-pick and the cast kit's anim share the go's stamp.
+#[test]
+fn a_cast_end_rearm_restarts_the_running_cast_anim() {
+    use bevy::animation::graph::{AnimationGraph, AnimationGraphHandle};
+    use bevy::animation::AnimationClip;
+
+    /// SpellCastOmni, a one-shot cast kit anim.
+    const CAST: u16 = 125;
+
+    for rearm in [true, false] {
+        let mut app = app();
+        let mut asset = |secs: f32| {
+            let mut c = AnimationClip::default();
+            c.set_duration(secs);
+            app.world_mut()
+                .resource_mut::<Assets<AnimationClip>>()
+                .add(c)
+        };
+        let (stand, cast) = (asset(10.0), asset(1.0));
+        let (graph, nodes) = AnimationGraph::from_clips([stand, cast]);
+        let graph_handle = app
+            .world_mut()
+            .resource_mut::<Assets<AnimationGraph>>()
+            .add(graph);
+        let mut clips = vec![clip(0, 0, true), clip(CAST, 0, false)];
+        for (c, n) in clips.iter_mut().zip(nodes.iter().copied()) {
+            c.node = n;
+        }
+        clips[0].duration = 10.0;
+        let unit = app
+            .world_mut()
+            .spawn((
+                ModelAnimations {
+                    graph: graph_handle.clone(),
+                    clips,
+                    hand_close: [None, None],
+                    playable_animation_lookup: Vec::new(),
+                    animation_lookup: Vec::new(),
+                    global_bones: Vec::new(),
+                    first_seq: None,
+                    pose: Default::default(),
+                },
+                AnimationPlayer::default(),
+                AnimationTransitions::new(),
+                AnimationGraphHandle(graph_handle),
+                AnimDriver::default(),
+            ))
+            .id();
+        app.update(); // settle: Stand holds bone 0
+        let go = |app: &mut App, seq: u64| {
+            if rearm {
+                app.world_mut()
+                    .write_message(super::super::BaseRearm { entity: unit, seq });
+            }
+            app.world_mut().write_message(EmoteAnim {
+                entity: unit,
+                anim_id: CAST,
+                seq,
+                via_player: false,
+                play: Default::default(),
+            });
+        };
+        let time = |app: &App| {
+            app.world()
+                .entity(unit)
+                .get::<AnimationPlayer>()
+                .unwrap()
+                .animation(nodes[1])
+                .map(|a| a.seek_time())
+                .expect("the cast anim is armed")
+        };
+        let swing = |app: &App| match app.world().entity(unit).get::<AnimDriver>().unwrap().mode {
+            super::super::select::Mode::Swing { id, .. } => Some(id),
+            _ => None,
+        };
+
+        go(&mut app, 1);
+        advance(&mut app, 300);
+        assert_eq!(swing(&app), Some(CAST), "the first cast plays its anim");
+        let t = time(&app);
+        assert!(t > 0.25, "the cast anim has run since its arm: {t}");
+        // The second cast inside the anim's length.
+        go(&mut app, 2);
+        app.update();
+        let t2 = time(&app);
+        assert_eq!(
+            swing(&app),
+            Some(CAST),
+            "the second cast leaves its anim on bone 0"
+        );
+        if rearm {
+            assert!(
+                t2 < 0.05,
+                "the re-pick lets the second cast arm from time 0: {t2}"
+            );
+        } else {
+            assert!(
+                t2 > t,
+                "with no re-pick the same id keeps its play, {t} then {t2}"
+            );
+        }
+    }
 }
 
 /// Each unit rolls from its own stream: its variation picks are the same whichever unit

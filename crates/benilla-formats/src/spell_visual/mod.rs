@@ -397,6 +397,9 @@ pub struct VisualKit {
     pub start_anim: Option<u16>,
     /// Column 2: the `AnimationData.dbc` id played on the unit.
     pub anim_id: Option<u16>,
+    /// Columns 1 and 2 are not both 0, -1 included: as a precast kit, its cast's end re-picks the
+    /// caster's base (`0x7fec68`).
+    pub rearms_base: bool,
     /// Column 15: the `SoundEntries.dbc` id.
     pub sound: Option<u32>,
     /// `SpellVisualEffectName` ids from [`KIT_SLOT_COLUMNS`], slot `i` attaching at
@@ -862,6 +865,7 @@ fn parse_kits(bytes: &[u8]) -> Result<HashMap<u32, VisualKit>> {
         let Some(id) = u32_at(r, 0) else { continue };
         let start_anim = i32_at(r, 1).and_then(|a| u16::try_from(a).ok());
         let anim_id = u32_at(r, 2).and_then(some_unless_none).map(|a| a as u16);
+        let rearms_base = i32_at(r, 1).unwrap_or(0) != 0 || i32_at(r, 2).unwrap_or(0) != 0;
         let sound = u32_at(r, 15).and_then(some_unless_none);
         let mut effect_slots = [None; 9];
         for (slot, &col) in effect_slots.iter_mut().zip(&KIT_SLOT_COLUMNS) {
@@ -877,6 +881,7 @@ fn parse_kits(bytes: &[u8]) -> Result<HashMap<u32, VisualKit>> {
                 id,
                 start_anim,
                 anim_id,
+                rearms_base,
                 sound,
                 effect_slots,
                 weapon_effects: [9, 10].map(|c| u32_at(r, c).and_then(some_unless_none)),

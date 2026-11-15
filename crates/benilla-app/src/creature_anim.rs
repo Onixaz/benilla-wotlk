@@ -447,11 +447,17 @@ pub(crate) enum CastEventKind {
     /// A cast sent with visuals took the free cast state: its precast starts at the press, ahead
     /// of the server's start (`0x80b573`).
     Sent,
-    /// `SMSG_SPELL_GO`: reaps the precast, plays the cast kit.
-    Go,
+    /// `SMSG_SPELL_GO`: reaps the precast, plays the cast kit; `ends_cast` when it ended the
+    /// unit's cast state (`0x7fed81`).
+    Go { ends_cast: bool },
     /// Died without release, through the end-cast (`0x7fecc0`) with the reason byte as sent;
-    /// `interrupt` when `SMSG_SPELL_FAILURE` names the unit's running cast (`0x72ed80`).
-    Fail { interrupt: bool, wire_reason: u8 },
+    /// `interrupt` when `SMSG_SPELL_FAILURE` names the unit's running cast (`0x72ed80`), `ends_cast`
+    /// when it ended the unit's cast state (`0x7fed81`).
+    Fail {
+        interrupt: bool,
+        wire_reason: u8,
+        ends_cast: bool,
+    },
     /// A missile landed: `on_caster` picks the kit (`0x800d00`), `at` is its point (`0x702e5a`);
     /// `caster` is the guid both of its kit plays carry (`0x702f5f`).
     Impact {
@@ -620,6 +626,15 @@ pub(crate) struct BaseAnimRecompute {
     pub(crate) anim_id: u16,
     /// The kit play's flags, which a dead or dying id is played with (`0x73b33e`).
     pub(crate) play: AnimPlayFlags,
+}
+
+/// A cast's end re-picks the caster's base when its precast kit names a start or an anim
+/// (`0x7fec7a`), so the cast kit's anim after it arms from time 0 even when it is the one playing.
+#[derive(Message, Clone, Copy)]
+pub(crate) struct BaseRearm {
+    pub(crate) entity: Entity,
+    /// `PlaySeq` stamp, the cast edge's: the cast kit's anim carries the same and comes after.
+    pub(crate) seq: u64,
 }
 
 /// A live kit effect's `AnimID` and the play flags its own kit flags give (`0x73e79d`).
@@ -1189,6 +1204,7 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<EmoteAnim>()
             .add_message::<QueueNpcEmotes>()
             .add_message::<BaseAnimRecompute>()
+            .add_message::<BaseRearm>()
             .add_message::<MountFlourish>()
             .add_message::<WoundAnim>()
             .add_message::<SheathSwapMessage>()

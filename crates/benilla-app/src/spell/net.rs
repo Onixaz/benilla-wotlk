@@ -1238,6 +1238,7 @@ fn cast_result(
                 kind: CastEventKind::Fail {
                     interrupt: false,
                     wire_reason,
+                    ends_cast: fails_our_cast,
                 },
                 cast_count,
                 seq,
@@ -1692,10 +1693,10 @@ fn spell_go(
     }
     // The end clears the held state of this spell and count alone (`0x7fed81`).
     if let Some(&e) = index.0.get(&caster) {
-        if casting
+        let ends_cast = casting
             .get(e)
-            .is_ok_and(|c| c.ended_by(spell_id, cast_count))
-        {
+            .is_ok_and(|c| c.ended_by(spell_id, cast_count));
+        if ends_cast {
             commands.entity(e).remove::<Casting>();
         }
         // The GO's one target list: hits then misses, swapped by flag 0x400 (`0x80ec10`,
@@ -1711,7 +1712,7 @@ fn spell_go(
         cast_events.write(CastEvent {
             entity: e,
             spell_id,
-            kind: CastEventKind::Go,
+            kind: CastEventKind::Go { ends_cast },
             cast_count,
             seq,
         });
@@ -1802,18 +1803,21 @@ fn spell_failed_other(
     }
     // The end clears the held state of this spell and count alone (`0x7fed81`).
     if let Some(&e) = index.0.get(&caster) {
-        let running = casting.get(e).ok();
-        if running.is_some_and(|c| c.ended_by(spell_id, cast_count)) {
+        let ends_cast = casting
+            .get(e)
+            .is_ok_and(|c| c.ended_by(spell_id, cast_count));
+        if ends_cast {
             commands.entity(e).remove::<Casting>();
         }
         // `SMSG_SPELL_FAILURE` interrupts the running cast of this spell and count (`0x72ed80`).
-        let interrupt = !other && running.is_some_and(|c| c.ended_by(spell_id, cast_count));
+        let interrupt = !other && ends_cast;
         cast_events.write(CastEvent {
             entity: e,
             spell_id,
             kind: CastEventKind::Fail {
                 interrupt,
                 wire_reason,
+                ends_cast,
             },
             cast_count,
             seq,
