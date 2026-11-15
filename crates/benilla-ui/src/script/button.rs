@@ -700,13 +700,24 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // Enable/Disable (`0x977090`/`0x977100`), behind the protected gate.
     m.set(
         "Enable",
-        lua.create_function(|lua, this: Table| set_enabled(lua, &this, true))?,
+        lua.create_function(|lua, this: Table| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
+            set_enabled(lua, &this, true)
+        })?,
     )?;
     m.set(
         "Disable",
-        lua.create_function(|lua, this: Table| set_enabled(lua, &this, false))?,
+        lua.create_function(|lua, this: Table| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
+            set_enabled(lua, &this, false)
+        })?,
     )?;
     // IsEnabled() → the number 1 or 0 from the state at `+0x328`, never a boolean: 0 is truthy in
     // Lua, and the stock UI tests `== 0` (`FriendsFrame.lua:404`) and `== 1`

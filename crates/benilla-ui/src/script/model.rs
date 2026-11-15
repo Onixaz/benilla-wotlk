@@ -406,6 +406,17 @@ pub(crate) struct Model {
     pub(crate) addon_owners: Vec<String>,
     /// The running tag, restored as a nested load ends.
     pub(crate) addon_owner: u8,
+    /// Protected actions are allowed (`[+0x124c]`): set before `PLAYER_REGEN_ENABLED`, cleared
+    /// after `PLAYER_REGEN_DISABLED` (`0x524600`); `InCombatLockdown` reads it.
+    pub(crate) protected_actions_allowed: bool,
+    /// The blocked-action feedback is running (`[0xbd0c68]`), so a nested refusal is silent.
+    pub(crate) blocked_feedback_showing: bool,
+    /// The taint each tainted handler was set under, by frame id and script kind.
+    pub(crate) script_taint: HashMap<u32, Vec<(&'static str, u8)>>,
+    /// Frames whose attributes stay open to any code until the next layer update (`0x48ecf0`).
+    pub(crate) attribute_changes_allowed: HashSet<FrameHandle>,
+    /// Frames with `EnableJoystick` on.
+    pub(crate) joystick_enabled: HashSet<FrameHandle>,
     /// Bytes per tag at the last `UpdateAddOnMemoryUsage`.
     pub(crate) addon_memory: Vec<usize>,
     /// `RandomRoll` calls queued.
@@ -1503,6 +1514,11 @@ impl Model {
             macro_running: false,
             addon_owners: Vec::new(),
             addon_owner: 0,
+            protected_actions_allowed: true,
+            blocked_feedback_showing: false,
+            script_taint: HashMap::new(),
+            attribute_changes_allowed: HashSet::new(),
+            joystick_enabled: HashSet::new(),
             addon_memory: Vec::new(),
             taxi_benchmark_requests: Vec::new(),
             temp_enchant_cancels: Vec::new(),

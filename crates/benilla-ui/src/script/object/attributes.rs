@@ -11,6 +11,25 @@ use mlua::{Lua, Table, Value};
 use super::{decode_id, frame_handle_of};
 use crate::script::event;
 
+/// `0x48ed30`: the frame or an ancestor had `AllowAttributeChanges` since the last layer update.
+fn attribute_changes_allowed(lua: &Lua, this: &Table) -> mlua::Result<bool> {
+    let h = frame_handle_of(lua, this)?;
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
+    if model.attribute_changes_allowed.is_empty() {
+        return Ok(false);
+    }
+    let mut at = Some(h);
+    while let Some(f) = at {
+        if model.attribute_changes_allowed.contains(&f) {
+            return Ok(true);
+        }
+        at = model.arena.frame(f).and_then(|f| f.parent);
+    }
+    Ok(false)
+}
+
 /// Registry table of per-frame attribute tables, `[frame id][lowercased name] = value`.
 const REG_ATTRIBUTES: &str = "__benilla_attributes";
 
@@ -18,10 +37,40 @@ const REG_ATTRIBUTES: &str = "__benilla_attributes";
 /// has them.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     lua.set_named_registry_value(REG_ATTRIBUTES, lua.create_table()?)?;
-    // `0x49f610`: a non-string name raises its usage line; any value, nil included, is stored.
+    // `0x49f260`: 1 when the protected gate or an attribute-change allowance lets attributes change.
+    m.set(
+        "CanChangeAttribute",
+        lua.create_function(|lua, this: Table| {
+            let open = crate::script::taint::allowed(lua, decode_id(&this)?)
+                || attribute_changes_allowed(lua, &this)?;
+            Ok(crate::script::binding_abi::flag(open))
+        })?,
+    )?;
+    // `0x49f210`: secure code opens the frame's and its descendants' attributes to any code until
+    // the next layer update (`0x48ecf0`, cleared by `0x495320`).
+    m.set(
+        "AllowAttributeChanges",
+        lua.create_function(|lua, this: Table| {
+            if crate::script::taint::running() == 0 {
+                let h = frame_handle_of(lua, &this)?;
+                crate::script::model_mut_of(lua)
+                    .attribute_changes_allowed
+                    .insert(h);
+            }
+            Ok(())
+        })?,
+    )?;
+    // `0x49f610`: behind the protected gate unless attribute changes are allowed; then a
+    // non-string name raises its usage line, and any value, nil included, is stored.
     m.set(
         "SetAttribute",
         lua.create_function(|lua, (this, name, value): (Table, Value, Value)| {
+            if !crate::script::taint::allowed(lua, decode_id(&this)?)
+                && !attribute_changes_allowed(lua, &this)?
+            {
+                crate::script::taint::blocked(lua, &this);
+                return Ok(());
+            }
             let Some(name) = attribute_name(lua, &name)? else {
                 return Err(usage(&this, "SetAttribute(\"name\", value)"));
             };

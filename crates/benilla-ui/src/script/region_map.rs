@@ -78,8 +78,24 @@ where
     R: IntoLuaMulti + 'static,
     F: Fn(&Lua, A) -> mlua::Result<R> + 'static,
 {
-    let arm: Arm =
-        Rc::new(move |lua, args| f(lua, A::from_lua_multi(args, lua)?)?.into_lua_multi(lua));
+    // The layout verbs behind the protected gate (`0x49cbd0`, `0x49d480`, `0x49d620`, `0x49d7a0`,
+    // `0x49db10`, `0x49de40`, `0x49e010`): refused, nothing runs and nothing returns.
+    let gated = matches!(
+        name,
+        "SetParent"
+            | "SetWidth"
+            | "SetHeight"
+            | "SetSize"
+            | "SetPoint"
+            | "SetAllPoints"
+            | "ClearAllPoints"
+    );
+    let arm: Arm = Rc::new(move |lua, args| {
+        if gated && !super::taint::gate_args(lua, &args)? {
+            return Ok(MultiValue::new());
+        }
+        f(lua, A::from_lua_multi(args, lua)?)?.into_lua_multi(lua)
+    });
     let entry = arm.clone();
     m.set(
         name,

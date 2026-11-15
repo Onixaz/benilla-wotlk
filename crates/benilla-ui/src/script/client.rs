@@ -196,12 +196,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
             // The chunk name is the source bytes as given (1).
             let name = String::from_utf8_lossy(&raw).into_owned();
-            if let Err(e) = lua
-                .load(&*raw)
-                .set_name(name)
-                .set_mode(mlua::ChunkMode::Text)
-                .exec()
-            {
+            // The chunk runs under the macro taint (`[0xac804c]`), the caller's put back after.
+            let run = super::taint::as_macro(lua, || {
+                lua.load(&*raw)
+                    .set_name(name)
+                    .set_mode(mlua::ChunkMode::Text)
+                    .exec()
+            });
+            if let Err(e) = run {
                 // Both channels bare: this message names its chunk by its own source.
                 let bare = super::stdlib::lua_message(&e);
                 crate::script::model_mut_of(lua).record_script_error(bare.clone(), bare);

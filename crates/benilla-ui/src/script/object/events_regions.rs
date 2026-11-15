@@ -148,13 +148,20 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 )));
             };
             let kind = script_kind_or_raise(lua, &this, &name)?;
-            let func = match get_script(lua, &this, kind)? {
+            // A hooked script keeps the taint it was set with, and the read leaves the caller's
+            // taint as it was (`0x49edb0`).
+            let running = crate::script::taint::running();
+            let current = get_script(lua, &this, kind);
+            crate::script::taint::set_running(running);
+            match current? {
                 Value::Function(original) => {
-                    crate::script::secure_call::hook_wrapper(lua, original, hook)?
+                    let id = decode_id(&this)?;
+                    let taint = crate::script::taint::script_taint(lua, id, kind);
+                    let func = crate::script::secure_call::hook_wrapper(lua, original, hook)?;
+                    set_script_tainted(lua, &this, kind, Some(func), taint)
                 }
-                _ => hook,
-            };
-            set_script(lua, &this, kind, Some(func))
+                _ => set_script(lua, &this, kind, Some(hook)),
+            }
         })?,
     )?;
     // `HasScript("type")` (`0x49eab0`): 1 if the widget's type carries that script, set or not.
@@ -294,8 +301,20 @@ fn set_script(
     kind: &'static str,
     func: Option<Function>,
 ) -> mlua::Result<()> {
+    set_script_tainted(lua, this, kind, func, crate::script::taint::running())
+}
+
+/// [`set_script`] recording `taint` as the one the handler's dispatch runs with (`0x49ec80`).
+fn set_script_tainted(
+    lua: &Lua,
+    this: &Table,
+    kind: &'static str,
+    func: Option<Function>,
+    taint: u8,
+) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let id = crate::script::model_mut_of(lua).frame_id(h);
+    crate::script::taint::note_script_taint(lua, id, kind, taint);
 
     // The closure lives Lua-side in `REG_SCRIPTS[id][kind]`; Rust keeps a presence mirror.
     let scripts: Table = lua.named_registry_value(REG_SCRIPTS)?;
@@ -394,6 +413,11 @@ fn script_kind_or_raise(lua: &Lua, this: &Table, name: &str) -> mlua::Result<&'s
 
 fn get_script(lua: &Lua, this: &Table, kind: &'static str) -> mlua::Result<Value> {
     let id = decode_id(this)?;
+    // Reading a tainted script taints the reader (`0x49eb70`).
+    let taint = crate::script::taint::script_taint(lua, id, kind);
+    if taint != 0 {
+        crate::script::taint::set_running(taint);
+    }
     let scripts: Table = lua.named_registry_value(REG_SCRIPTS)?;
     match scripts.get::<Value>(id)? {
         Value::Table(t) => t.get::<Value>(kind),

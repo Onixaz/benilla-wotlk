@@ -1085,3 +1085,9 @@ LUA_API const char *lua_setupvalue (lua_State *L, int funcindex, int n) {
   return name;
 }
 
+
+/* the owner a collectable value was made under, 0 for none or a plain value */
+LUA_API int lua_getobjowner (lua_State *L, int idx) {
+  TValue *o = index2adr(L, idx);
+  return iscollectable(o) ? gcvalue(o)->gch.owner : 0;
+}

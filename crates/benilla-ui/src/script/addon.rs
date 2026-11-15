@@ -98,13 +98,7 @@ fn owned<R>(lua: &Lua, i: usize, f: impl FnOnce() -> R) -> R {
 fn with_owner<R>(lua: &Lua, name: &str, f: impl FnOnce() -> R) -> R {
     let (tag, outer) = {
         let mut model = crate::script::model_mut_of(lua);
-        let owners = &mut model.addon_owners;
-        let at = owners.iter().position(|n| n.eq_ignore_ascii_case(name));
-        let at = at.unwrap_or_else(|| {
-            owners.push(name.to_string());
-            owners.len() - 1
-        });
-        let tag = (at + 1).min(GC_OWNERS - 1) as u8;
+        let tag = super::taint::tag_of(&mut model, name);
         (tag, std::mem::replace(&mut model.addon_owner, tag))
     };
     // SAFETY: a plain store to the thread's owner cells.

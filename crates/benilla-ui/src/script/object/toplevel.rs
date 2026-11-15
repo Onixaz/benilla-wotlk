@@ -28,6 +28,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "SetToplevel",
         lua.create_function(|lua, (this, flag): (Table, Option<Value>)| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let on = match flag {
                 None => true,
                 Some(v) => !matches!(v, Value::Nil | Value::Boolean(false)),
@@ -52,14 +55,24 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     m.set(
         "Raise",
         lua.create_function(|lua, this: Table| {
+            if !crate::script::taint::gate(lua, &this)? {
+                return Ok(());
+            }
             let h = frame_handle_of(lua, &this)?;
             let mut model = crate::script::model_mut_of(lua);
             raise(&mut model, h);
             Ok(())
         })?,
     )?;
-    // Lower() does nothing in the reference, which is `xor eax,eax; ret 4`.
-    m.set("Lower", lua.create_function(|_, _this: Table| Ok(()))?)?;
+    // Lower() (`0x49ff50`), behind the protected gate, changes nothing: the reference's lower only
+    // re-reads its children's protection (`0x48e9b0`).
+    m.set(
+        "Lower",
+        lua.create_function(|lua, this: Table| {
+            crate::script::taint::gate(lua, &this)?;
+            Ok(())
+        })?,
+    )?;
     Ok(())
 }
 

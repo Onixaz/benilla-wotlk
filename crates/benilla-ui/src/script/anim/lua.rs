@@ -123,13 +123,28 @@ fn scripts_of(lua: &Lua, id: u32) -> mlua::Result<Option<Table>> {
     }
 }
 
-/// Set one script slot, `None` clearing it.
+/// An animation's key in the script-taint map, apart from the frame ids.
+const ANIM_TAINT_KEY: u32 = 1 << 31;
+
+/// Set one script slot under the running taint, `None` clearing it.
 pub(crate) fn set_script(
     lua: &Lua,
     id: u32,
-    name: &str,
+    name: &'static str,
     func: Option<Function>,
 ) -> mlua::Result<()> {
+    set_script_tainted(lua, id, name, func, crate::script::taint::running())
+}
+
+/// Set one script slot, `None` clearing it, recording the taint its dispatch runs with.
+fn set_script_tainted(
+    lua: &Lua,
+    id: u32,
+    name: &'static str,
+    func: Option<Function>,
+    taint: u8,
+) -> mlua::Result<()> {
+    crate::script::taint::note_script_taint(lua, id | ANIM_TAINT_KEY, name, taint);
     let all: Table = lua.named_registry_value(REG_SCRIPTS)?;
     let per = match scripts_of(lua, id)? {
         Some(t) => t,
@@ -151,8 +166,12 @@ pub(crate) fn fire(lua: &Lua, id: u32, name: &str, args: Vec<Value>) {
         Ok(Some(f)) => f,
         _ => return,
     };
-    let outcome = wrapper(lua, id)
-        .and_then(|w| crate::script::event::invoke_with_globals(lua, w, &func, None, args));
+    let taint = crate::script::taint::script_taint(lua, id | ANIM_TAINT_KEY, name);
+    let outcome = wrapper(lua, id).and_then(|w| {
+        crate::script::taint::run_as(taint, || {
+            crate::script::event::invoke_with_globals(lua, w, &func, None, args)
+        })
+    });
     if let Err(e) = outcome {
         crate::script::model_mut_of(lua).record_lua_error(&e);
     }
@@ -279,6 +298,11 @@ fn install_script_methods(lua: &Lua, m: &Table, group: bool) -> mlua::Result<()>
                     name_of(lua, id)
                 )));
             };
+            // Reading a tainted script taints the reader (`0x49eb70`).
+            let taint = crate::script::taint::script_taint(lua, id | ANIM_TAINT_KEY, k);
+            if taint != 0 {
+                crate::script::taint::set_running(taint);
+            }
             Ok(match scripts_of(lua, id)? {
                 Some(t) => t.get::<Option<Function>>(k)?,
                 None => None,
@@ -325,11 +349,15 @@ fn install_script_methods(lua: &Lua, m: &Table, group: bool) -> mlua::Result<()>
                 Some(t) => t.get::<Option<Function>>(k)?,
                 None => None,
             };
-            let func = match current {
-                None => hook,
-                Some(orig) => crate::script::secure_call::hook_wrapper(lua, orig, hook)?,
-            };
-            set_script(lua, id, k, Some(func))
+            // A hooked script keeps the taint it was set with (`0x49edb0`).
+            match current {
+                None => set_script(lua, id, k, Some(hook)),
+                Some(orig) => {
+                    let taint = crate::script::taint::script_taint(lua, id | ANIM_TAINT_KEY, k);
+                    let func = crate::script::secure_call::hook_wrapper(lua, orig, hook)?;
+                    set_script_tainted(lua, id, k, Some(func), taint)
+                }
+            }
         })?,
     )?;
     Ok(())

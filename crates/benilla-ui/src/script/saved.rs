@@ -207,7 +207,7 @@ fn print_table(out: &mut Vec<u8>, t: &Table, depth: usize, seen: &mut HashSet<*c
 }
 
 /// Register `RegisterForSave` and `RegisterForSavePerCharacter` (`0x52b470`, `0x52b4e0`), with no
-/// taint gate: the reference refuses them outside Blizzard code, and benilla has no taint model.
+/// taint gate: the reference refuses them outside Blizzard code, which is not asked yet (#1227).
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "RegisterForSave",

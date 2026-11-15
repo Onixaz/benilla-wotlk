@@ -89,6 +89,7 @@ mod binding_commands;
 mod dialog_verbs;
 pub mod focus;
 mod secure_call;
+pub(crate) mod taint;
 mod tutorial;
 mod unit_menu;
 pub use chat_record::{ChatComplaint, ChatRecord};
@@ -1042,7 +1043,8 @@ fn install_framescript(vm: VmKind, os: ClientOs) -> mlua::Result<Lua> {
     bit::install(&lua)?;
     stdlib::install(&lua)?;
     lua51::install(&lua)?;
-    // `issecure` and `securecall`, FrameScript's base table `0xa443a8`.
+    // `issecure`, `securecall` and the rest of the taint family, FrameScript's base table
+    // `0xa443a8`.
     secure_call::install(&lua)?;
 
     // Table `0xad2184`: `GetTime`, `GetGameTime` and `ConsoleExec`. `ReadFile`, `DeleteFile`,

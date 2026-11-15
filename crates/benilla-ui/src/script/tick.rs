@@ -35,6 +35,18 @@ impl UiScript {
             super::epoch_trace::note_event(event, self.visual_epoch().wrapping_sub(before));
         }
     }
+
+    /// The combat edge (`0x524600`): protected actions allowed and then `PLAYER_REGEN_ENABLED`, or
+    /// `PLAYER_REGEN_DISABLED` and then protected actions barred.
+    pub fn set_regen_enabled(&mut self, enabled: bool) {
+        if enabled {
+            self.model_mut().protected_actions_allowed = true;
+            self.fire_event("PLAYER_REGEN_ENABLED", Vec::new());
+        } else {
+            self.fire_event("PLAYER_REGEN_DISABLED", Vec::new());
+            self.model_mut().protected_actions_allowed = false;
+        }
+    }
 }
 
 /// [`UiScript::fire_event`] for a caller holding `&Lua`, such as a Lua binding.
@@ -90,7 +102,12 @@ impl super::UiScript {
         // stands ([`ModelCell`]); the events fired below bump it through their verbs.
         let quiet = self.visual_epoch();
         let quiet_at_entry = quiet;
-        self.model_mut().now += f64::from(elapsed);
+        {
+            let mut model = self.model_mut();
+            model.now += f64::from(elapsed);
+            // The layer update first closes every attribute-change allowance (`0x495320`).
+            model.attribute_changes_allowed.clear();
+        }
         self.model_ref().clock_wall.set(std::time::Instant::now());
         // The socketed item's changes queue first, the reference signalling them as they land.
         self.watch_socket_item();

@@ -91,9 +91,12 @@ impl UpdateSweep {
         };
         let _fire = super::handler_prof::armed()
             .then(|| super::handler_prof::Fire::open(lua, id, "OnUpdate"));
-        self.fire
-            .call((func, wrapper, f64::from(elapsed)))
-            .and_then(super::stdlib::pcall_outcome)
+        let taint = super::taint::script_taint(lua, id, "OnUpdate");
+        super::taint::run_as(taint, || {
+            self.fire
+                .call((func, wrapper, f64::from(elapsed)))
+                .and_then(super::stdlib::pcall_outcome)
+        })
     }
 }
 
@@ -482,7 +485,11 @@ fn fire(
     // when the guard drops, unwinds included.
     let _fire =
         super::handler_prof::armed().then(|| super::handler_prof::Fire::open(lua, id, script));
-    invoke_with_globals(lua, wrapper, &func, event_name, extra)
+    // The handler runs under the taint it was set with, the caller's put back after (`0x81a2c0`).
+    let taint = super::taint::script_taint(lua, id, script);
+    super::taint::run_as(taint, || {
+        invoke_with_globals(lua, wrapper, &func, event_name, extra)
+    })
 }
 
 /// The parameter list an XML handler body of `script` is compiled under: one of `Wow.exe`'s

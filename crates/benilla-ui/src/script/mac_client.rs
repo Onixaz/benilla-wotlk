@@ -110,7 +110,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
     // The music player's five (`0x51c100` on): secure-only, then one command to the player, no
-    // returns. benilla has no taint model and no player to command.
+    // returns. The secure-only check is not asked yet (#1227), and there is no player to command.
     for name in &VERBS[..5] {
         g.set(
             *name,

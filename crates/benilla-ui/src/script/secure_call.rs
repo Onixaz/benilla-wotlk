@@ -1,23 +1,24 @@
 //! 3.3.5a's `securecall(f, ...)`, the base-library call `UIDropDownMenu.lua` makes every menu
-//! through, `issecure()`, which `UIDropDownMenu_CreateInfo` asks, and the rest of the security
-//! family: `hooksecurefunc`, `issecurevariable` and `forceinsecure`.
+//! through, and `hooksecurefunc`; the taint family they save and restore is in [`super::taint`].
 //!
 //! `0x816f30`: a string first argument is replaced by the global of that name; the call then runs
 //! under `lua_pcall` with the error handler (`geterrorhandler()`'s reference) as its message
-//! handler. On success it returns the function's results; on an error the handler has seen the
-//! message and `securecall` returns nothing. The taint save and restore around the call has nothing
-//! to act on: benilla runs every chunk alike.
+//! handler, and the caller's taint is put back after it. On success it returns the function's
+//! results; on an error the handler has seen the message and `securecall` returns nothing.
 
 use mlua::Lua;
 
 const SECURECALL: &str = r##"
+local get_taint, set_taint = ...
 local type, xpcall, geterrorhandler, select, unpack = type, xpcall, geterrorhandler, select, unpack
-local function results(ok, ...)
+local function results(taint, ok, ...)
+    set_taint(taint)
     if ok then
         return ...
     end
 end
 function securecall(...)
+    local taint = get_taint()
     local n = select("#", ...)
     if n == 0 then
         return
@@ -28,7 +29,7 @@ function securecall(...)
         f = _G[f .. ""]
     end
     local args = { select(2, ...) }
-    return results(xpcall(function()
+    return results(taint, xpcall(function()
         return f(unpack(args, 1, n - 1))
     end, function(msg)
         local handler = geterrorhandler()
@@ -41,7 +42,8 @@ end
 
 -- hooksecurefunc([table,] "name", hook) (`0x817170`): the named function becomes a wrapper that
 -- calls the original, its errors propagating, then the hook with the same arguments under the
--- error handler, and answers the original's results.
+-- error handler and the taint the original left, put back after, and answers the original's
+-- results. The wrapper is made secure, as the reference's C closure carries no taint.
 local error, rawset, tostring = error, rawset, tostring
 function hooksecurefunc(t, name, hook)
     if type(t) ~= "table" then
@@ -56,11 +58,14 @@ function hooksecurefunc(t, name, hook)
     if type(original) ~= "function" then
         error("hooksecurefunc(): " .. name .. " is not a function", 2)
     end
-    rawset(t, name, function(...)
+    local taint = get_taint()
+    set_taint(0)
+    local wrapper = function(...)
         local n = select("#", ...)
         local args = { ... }
         local out = { original(...) }
         local outn = table.maxn(out)
+        local left = get_taint()
         xpcall(function()
             hook(unpack(args, 1, n))
         end, function(msg)
@@ -70,25 +75,12 @@ function hooksecurefunc(t, name, hook)
             end
             return msg
         end)
+        set_taint(left)
         return unpack(out, 1, outn)
-    end)
-end
-
--- issecurevariable([table,] "name") (`0x816de0`): 1 and nil for an untainted variable; benilla
--- taints nothing.
-function issecurevariable(t, name)
-    if type(t) ~= "table" then
-        t, name = _G, t
     end
-    local tn = type(name)
-    if tn ~= "string" and tn ~= "number" then
-        error('Usage: issecurevariable([table,] "variable")', 2)
-    end
-    return 1, nil
+    set_taint(taint)
+    rawset(t, name, wrapper)
 end
-
--- forceinsecure() (`0x816f00`) taints the running code; with no taint to set, it does nothing.
-function forceinsecure() end
 "##;
 
 /// Registry key of the compiled script hook wrapper factory.
@@ -96,8 +88,10 @@ const REG_HOOK_WRAPPER: &str = "__benilla_hook_wrapper";
 
 /// The script hook wrapper (`0x817050`): the original with the arguments, its errors propagating,
 /// then the hook with the same arguments under a protected call whose message handler is the error
-/// handler, so it runs at the error, and the original's results returned.
+/// handler, so it runs at the error, with the taint the original left put back after it, and the
+/// original's results returned.
 const HOOK_WRAPPER: &str = r##"
+local get_taint, set_taint = ...
 local xpcall, select, unpack = xpcall, select, unpack
 local function pack(...)
     return { n = select("#", ...), ... }
@@ -113,15 +107,18 @@ return function(original, hook)
     return function(...)
         local out = pack(original(...))
         local args = pack(...)
+        local left = get_taint()
         xpcall(function()
             hook(unpack(args, 1, args.n))
         end, report)
+        set_taint(left)
         return unpack(out, 1, out.n)
     end
 end
 "##;
 
-/// `HookScript`'s wrapper over a set script and the hook, shared by every object kind.
+/// `HookScript`'s wrapper over a set script and the hook, shared by every object kind; made
+/// secure, as the reference's C closure carries no taint.
 pub(crate) fn hook_wrapper(
     lua: &Lua,
     original: mlua::Function,
@@ -130,22 +127,31 @@ pub(crate) fn hook_wrapper(
     let factory = match lua.named_registry_value::<Option<mlua::Function>>(REG_HOOK_WRAPPER)? {
         Some(f) => f,
         None => {
-            let f: mlua::Function = lua.load(HOOK_WRAPPER).set_name("=HookScript").eval()?;
+            let (get, set) = super::taint::accessors(lua)?;
+            let f: mlua::Function = super::taint::run_as(0, || {
+                lua.load(HOOK_WRAPPER)
+                    .set_name("=HookScript")
+                    .call((get, set))
+            })?;
             lua.set_named_registry_value(REG_HOOK_WRAPPER, f.clone())?;
             f
         }
     };
-    factory.call((original, hook))
+    let running = super::taint::running();
+    super::taint::set_running(0);
+    let wrapped = factory.call((original, hook));
+    super::taint::set_running(running);
+    wrapped
 }
 
-/// Install `securecall` on a target whose base library has it.
+/// Install `securecall`, `hooksecurefunc` and the taint family on a target whose base library has
+/// them.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
-    // `issecure()` (`0x816da0`): 1 while the taint global is clear, else nil. benilla taints
-    // nothing, so it is always clear, as for the stock FrameXML in the reference; an addon's code,
-    // which the reference runs tainted, reads 1 here too.
-    lua.globals()
-        .set("issecure", lua.create_function(|_, ()| Ok(1i64))?)?;
-    lua.load(SECURECALL).set_name("=securecall").exec()
+    super::taint::install(lua)?;
+    let (get, set) = super::taint::accessors(lua)?;
+    lua.load(SECURECALL)
+        .set_name("=securecall")
+        .call::<()>((get, set))
 }
 
 #[cfg(test)]

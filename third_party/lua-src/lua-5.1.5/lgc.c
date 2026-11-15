@@ -701,6 +701,22 @@ LUA_API void lua_setgcowner (int owner) {
 }
 
 
+/* the running owner, the reference's execution taint (0xd4139c) */
+LUA_API int lua_getgcowner (void) {
+  return lua_gcowner;
+}
+
+
+LUA_API int lua_getgcbaseowner (void) {
+  return lua_gcbaseowner;
+}
+
+
+LUA_API void lua_setgcrunning (int owner) {
+  lua_gcowner = cast_byte(owner);
+}
+
+
 static size_t sizeobj (GCObject *o) {
   switch (o->gch.tt) {
     case LUA_TSTRING:
