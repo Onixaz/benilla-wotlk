@@ -2484,7 +2484,7 @@ pub(crate) enum ClientCommand {
     ChatIgnored {
         guid: u64,
     },
-    /// `CMSG_WHO`, parsed into wire fields by `ui_social::who_query`.
+    /// `CMSG_WHO`, the `/who` filter parsed into wire fields as `SendWho` builds them.
     Who {
         request: Box<WhoRequest>,
     },

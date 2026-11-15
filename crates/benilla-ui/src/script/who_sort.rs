@@ -184,6 +184,14 @@ pub fn starts_with_utf8i(name: &str, prefix: &str) -> bool {
         .all(|p| name.next().is_some_and(|n| fold(n) == fold(p)))
 }
 
+/// The UTF-8 case-insensitive search (`0x76f7e0`): `needle`, folded, starts at some character of
+/// `haystack`. An empty needle is found in any non-empty haystack, and nothing in an empty one.
+pub fn contains_utf8i(haystack: &str, needle: &str) -> bool {
+    haystack
+        .char_indices()
+        .any(|(i, _)| starts_with_utf8i(&haystack[i..], needle))
+}
+
 /// The UTF-8 sort compare's fold (`0x76e7a0`): ASCII, Latin-1 and Cyrillic lower case up, `œ` to
 /// `Œ`.
 fn sort_upper(c: u32) -> u32 {
@@ -437,6 +445,18 @@ mod tests {
         assert!(!starts_with_utf8i("Brian", "Bob"));
         assert!(!starts_with_utf8i("Bob", "Bobby"));
         assert!(starts_with_utf8i("Bob", ""));
+    }
+
+    /// The search tries the folded needle at every letter, and an empty needle finds any letter.
+    #[test]
+    fn the_search_finds_the_needle_anywhere_without_case() {
+        assert!(contains_utf8i("Elwynn Forest", "elwynn"));
+        assert!(contains_utf8i("Warlock", "WAR"));
+        assert!(contains_utf8i("Ice Troll", "troll"));
+        assert!(contains_utf8i("Éowyn", "OWYN"));
+        assert!(!contains_utf8i("Mage", "warrior"));
+        assert!(contains_utf8i("Mage", ""));
+        assert!(!contains_utf8i("", ""), "an empty haystack holds nothing");
     }
 
     /// The record and guild arms are the UTF-8 sort compare: by base letter, ligatures spelled out,
