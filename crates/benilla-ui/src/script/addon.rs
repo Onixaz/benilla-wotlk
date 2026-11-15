@@ -810,7 +810,7 @@ fn log_error(lua: &Lua, host: &str, bare: &str) {
 
 /// The glue's AddOn verbs (table `0xac3e00`) over the same registry the in-game ones read: the
 /// array the server's `SMSG_ADDON_INFO` builds, keyed by its 1-based index. The per-character
-/// enable verbs are not built yet.
+/// enable verbs are [`super::glue_addons`]'s.
 pub(super) fn install_glue(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 

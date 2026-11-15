@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 
-use benilla_ui::script::{EnableHash, ScriptValue, UiScript};
+use benilla_ui::script::{EnableHash, EnableLists, ScriptValue, UiScript};
 use benilla_ui::status::{self, Status};
 use benilla_ui::toc::Toc;
 
@@ -500,10 +500,8 @@ pub(crate) fn enable_state_path(identity: Option<&(String, String)>) -> Option<P
 /// from the others.
 #[derive(Default)]
 pub(crate) struct EnableStore {
-    /// The realm half of every node's file.
-    realm: String,
-    /// `(character, enable hash)` in character-list order.
-    nodes: Vec<(String, EnableHash)>,
+    /// The nodes, in character-list order.
+    lists: EnableLists,
 }
 
 impl EnableStore {
@@ -530,78 +528,49 @@ impl EnableStore {
             })
             .collect();
         Self {
-            realm: realm.to_string(),
-            nodes,
+            lists: EnableLists::new(nodes),
         }
     }
 
-    /// `(addon, NULL, useDefault = 0)`, the explicit-only aggregate over the nodes with a row:
-    /// `Some(v)` when all say `v` (the reference's 2 or 0), `None` when they are mixed or there are
-    /// none.
-    fn aggregate(&self, addon: &str) -> Option<bool> {
-        let mut total = 0usize;
-        let mut on = 0usize;
-        for (_, hash) in &self.nodes {
-            if let Some(v) = hash.get(addon) {
-                total += 1;
-                on += usize::from(v);
-            }
-        }
-        match (total, on) {
-            (0, _) => None,
-            (_, 0) => Some(false),
-            (t, o) if o == t => Some(true),
-            _ => None,
-        }
-    }
-
-    /// The bit a character gets, `(addon, character, useDefault = 1)` (0 or 2 as a bool):
-    /// * an explicit row in their hash wins;
-    /// * a node with no row takes [`Self::aggregate`], then `## DefaultState` where that is
-    ///   undecided;
-    /// * no node at all, or no character, takes `## DefaultState`: the walk passes each mismatching
-    ///   node and ends with `total == 0`. From our callers a named character always has a node
-    ///   ([`store_nodes`]).
+    /// The bit a character gets from the query with the compute flag (`0x5f7d70`): its explicit
+    /// row, else the explicit rows' aggregate, else `## DefaultState`. No node at all, or no
+    /// character, takes `## DefaultState`; from our callers a named character always has a node
+    /// ([`store_nodes`]).
     pub(crate) fn enabled_for(
         &self,
         addon: &str,
         default_state: bool,
         character: Option<&str>,
     ) -> bool {
-        let Some(node) = character.and_then(|c| self.node(c)) else {
-            return default_state;
-        };
-        match node.get(addon) {
-            Some(explicit) => explicit,
-            None => self.aggregate(addon).unwrap_or(default_state),
+        match character {
+            Some(c) => self.lists.state(addon, default_state, Some(c)) != 0,
+            None => default_state,
         }
     }
 
     /// The setter: `None` is every node (the glue's All), a name its one node; a name with no node
     /// is a no-op, as the setter never creates one.
+    #[cfg(test)]
     pub(crate) fn set(&mut self, addon: &str, character: Option<&str>, on: bool) {
-        for (name, hash) in &mut self.nodes {
-            if character.is_none_or(|c| name.eq_ignore_ascii_case(c)) {
-                hash.set(addon, on);
-            }
-        }
+        self.lists.set(addon, character, on);
     }
 
     /// The writer, glue `SaveAddOns`: each dirty node's file, rewritten from its hash; a clean node
     /// is skipped and its file left as it is.
-    pub(crate) fn save(&mut self) {
-        for (name, hash) in &mut self.nodes {
-            if let Some(rows) = hash.take_dirty() {
-                write_enable_state(Some(&(self.realm.clone(), name.clone())), &rows);
-            }
+    #[cfg(test)]
+    pub(crate) fn save(&mut self, realm: &str) {
+        for (name, rows) in self.lists.take_dirty() {
+            write_enable_state(Some(&(realm.to_string(), name)), &rows);
         }
     }
 
     pub(crate) fn node(&self, character: &str) -> Option<&EnableHash> {
-        self.nodes
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(character))
-            .map(|(_, hash)| hash)
+        self.lists.node(character)
+    }
+
+    /// The nodes as loaded, for the glue AddOns screen to answer and set live.
+    fn into_lists(self) -> EnableLists {
+        self.lists
     }
 }
 
@@ -695,8 +664,8 @@ pub(super) fn save_addon_variables(script: &mut UiScript, identity: Option<&(Str
     }
 }
 
-/// Seat the glue VM's AddOn registry: every discovered addon, its enable bit what the realm's
-/// characters agree on (no character is logged in), and the array the server's
+/// Seat the glue VM's AddOn registry: every discovered addon, the realm's per-character lists the
+/// AddOns screen answers from (no character is logged in), and the array the server's
 /// `SMSG_ADDON_INFO` builds, when it has answered. Nothing loads.
 pub(super) fn register_for_glue(
     script: &mut UiScript,
@@ -705,45 +674,24 @@ pub(super) fn register_for_glue(
     reply: Option<&[String]>,
 ) {
     let addons = discover();
-    let mut infos: Vec<_> = addons.iter().map(info_for).collect();
-    let store = EnableStore::load(realm, roster);
-    for (info, addon) in infos.iter_mut().zip(addons.iter()) {
-        info.enabled = store.enabled_for(&info.name, addon.toc.default_state(), None);
-    }
-    // The AddOns screen's state: each character's bit through the same query, or, with no
-    // characters, the one default column.
-    let columns: Vec<Option<&str>> = if roster.is_empty() {
-        vec![None]
-    } else {
-        roster.iter().map(|c| Some(c.as_str())).collect()
-    };
-    let cells = addons
-        .iter()
-        .map(|a| {
-            columns
-                .iter()
-                .map(|&c| store.enabled_for(&a.name, a.toc.default_state(), c))
-                .collect()
-        })
-        .collect();
+    let infos: Vec<_> = addons.iter().map(info_for).collect();
+    let defaults = addons.iter().map(|a| a.toc.default_state()).collect();
     script.register_addons(infos, root(), None, None);
-    script.set_glue_addon_enable(roster.to_vec(), cells);
+    // Seats each registry enable bit from the lists too, as the glue's loadable test asks them.
+    script.set_glue_addon_enable(EnableStore::load(realm, roster).into_lists(), defaults);
     if let Some(reply) = reply {
         script.note_addon_info_reply(reply);
     }
 }
 
-/// `SaveAddOns` on the glue (`0x4dcac0`): each changed bit into its character's enable file.
-pub(super) fn save_glue_addons(
-    realm: &str,
-    roster: &[String],
-    changes: &[benilla_ui::script::GlueAddonChange],
-) {
-    let mut store = EnableStore::load(realm, roster);
-    for c in changes {
-        store.set(&c.addon, Some(&c.character), c.enabled);
+/// `SaveAddOns` on the glue (`0x4dcac0`): each dirty node's whole file, from its rows.
+pub(super) fn save_glue_addons(realm: &str, lists: &[benilla_ui::script::GlueAddonList]) {
+    for list in lists {
+        write_enable_state(
+            Some(&(realm.to_string(), list.character.clone())),
+            &list.rows,
+        );
     }
-    store.save();
 }
 
 /// Load every discovered third-party addon at world entry (the UI init), returning every load error
@@ -1914,7 +1862,7 @@ mod tests {
         let mut store = EnableStore::load("Realm", &["Char".to_string()]);
         store.set("Stays", Some("char"), false);
         store.set("New", None, true);
-        store.save();
+        store.save("Realm");
 
         let written = std::fs::read_to_string(&path).unwrap();
         assert!(
@@ -2410,6 +2358,52 @@ mod tests {
             script.eval::<bool>("return ContestedRan == true").ok(),
             Some(true),
             "…and a contested addon falls to its `## DefaultState`, which is enabled"
+        );
+        let _ = std::fs::remove_dir_all(home.parent().unwrap());
+    }
+
+    /// The glue AddOns screen answers from the lists live: with no `AddOns.txt` anywhere, one
+    /// character's untick turns All off at once, `SaveAddOns` writes only that character's file,
+    /// and a reseat from the files reads the same.
+    #[test]
+    fn the_glue_screen_reads_a_per_character_untick_at_once_and_after_a_reseat() {
+        let _l = crate::local_state::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _c = crate::local_state::test_env::EnvGuard::unset("WOW_CAPTURE");
+        let (home, _h) = hermetic_root("glue-untick");
+        write_addon(&home, "Alpha", "## Interface: 30300\n", &[]);
+        let roster: Vec<String> = ["Ann", "Bob", "Cid"].map(String::from).to_vec();
+        let all = "return GetAddOnEnableState(nil, 1)";
+
+        let mut s = UiScript::new_glue().unwrap();
+        register_for_glue(&mut s, "Realm", &roster, Some(&[]));
+        assert_eq!(s.eval::<f64>(all).unwrap(), 2.0);
+        s.run("DisableAddOn('Bob', 1)").unwrap();
+        assert_eq!(
+            s.eval::<f64>(all).unwrap(),
+            0.0,
+            "Bob's lone row is the aggregate"
+        );
+        s.run("SaveAddOns()").unwrap();
+        for request in s.take_glue_requests() {
+            if let benilla_ui::script::GlueRequest::SaveAddOns(lists) = request {
+                save_glue_addons("Realm", &lists);
+            }
+        }
+        let file = |who: &str| enable_state_path(Some(&("Realm".into(), who.into()))).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(file("Bob")).unwrap(),
+            "Alpha: disabled\r\n"
+        );
+        assert!(!file("Ann").exists(), "a clean node writes nothing");
+
+        let mut again = UiScript::new_glue().unwrap();
+        register_for_glue(&mut again, "Realm", &roster, Some(&[]));
+        assert_eq!(
+            again.eval::<f64>(all).unwrap(),
+            0.0,
+            "the same after a reseat"
         );
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }

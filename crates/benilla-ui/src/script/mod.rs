@@ -152,7 +152,7 @@ mod glue_system;
 mod mirror_timer;
 pub use client::ClientOs;
 pub use glue::{VmKind, GLUE_EVENTS};
-pub use glue_addons::GlueAddonChange;
+pub use glue_addons::GlueAddonList;
 pub use glue_core::{
     launch_url_allowed, GlueCredentials, GlueNotice, GlueRequest, GlueServer, NoticeState,
 };
@@ -292,7 +292,7 @@ mod zone_text;
 
 pub use action::{ActionSlot, ActionState, ActionUse};
 pub use addon::AddOnInfo;
-pub use addon_enable::EnableHash;
+pub use addon_enable::{EnableHash, EnableLists};
 pub use addon_message::{AddonDistribution, AddonSend};
 pub use arena_team::{
     ArenaTeamMemberView, ArenaTeamRecordView, ArenaTeamRequest, ArenaTeamSlotView,

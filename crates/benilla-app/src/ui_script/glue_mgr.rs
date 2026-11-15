@@ -1907,12 +1907,11 @@ pub(crate) fn drive_glue_mgr(
                 GlueRequest::DeclineCharacter { guid, name, cases } => {
                     mgr.decline_character(guid, &name, &cases);
                 }
-                GlueRequest::SaveAddOns(changes) => {
+                GlueRequest::SaveAddOns(lists) => {
                     let realm = s
                         .cvar(crate::realm_select::CVAR_REALM_NAME)
                         .unwrap_or_default();
-                    let roster: Vec<String> = mgr.roster.iter().map(|c| c.name.clone()).collect();
-                    super::addons::save_glue_addons(&realm, &roster, &changes);
+                    super::addons::save_glue_addons(&realm, &lists);
                 }
                 GlueRequest::PlayGlueAmbience { name, fade } => {
                     asks.music
