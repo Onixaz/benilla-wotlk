@@ -118,6 +118,11 @@ impl ItemSwaps {
         self.end(|e| e.kit_id == kit_id)
     }
 
+    /// The effect-list clear (`0x744ac0`): every effect whose spell `ends` takes.
+    pub(crate) fn end_list(&mut self, ends: impl Fn(u32) -> bool) -> bool {
+        self.end(|e| ends(e.spell_id))
+    }
+
     /// Whether an effect still waits on the item cache.
     pub(crate) fn waiting(&self) -> bool {
         self.effects.iter().any(|e| e.pending)

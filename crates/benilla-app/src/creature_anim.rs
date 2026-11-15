@@ -850,8 +850,8 @@ use env_damage::{hard_landing_dust, load_env_damage_table};
 pub(crate) use env_damage::{EnvDamageTable, HardLanding, HARD_LANDING_DESCENT};
 pub(crate) use spell_visual::area_kit_models;
 use spell_visual::{
-    arm_aura_state_fx, arm_go_loot_fx, arm_level_up_fx, arm_loot_fx, arm_morph_latch,
-    arm_mount_poof_fx, load_spell_visuals, play_delayed_area_kits, play_dest_loc_casts,
+    arm_aura_state_fx, arm_go_loot_fx, arm_loot_fx, arm_morph_latch, arm_mount_poof_fx,
+    arm_unit_edge_fx, load_spell_visuals, play_delayed_area_kits, play_dest_loc_casts,
     play_state_done_kits, replay_morph_kit, route_cast_visuals, track_violence_level, MorphLatch,
     StateDoneKit,
 };
@@ -860,8 +860,9 @@ use spell_visual::{
 pub(crate) use spell_visual::arm_aura_state_fx as arm_aura_state_fx_for_test;
 pub(crate) use spell_visual::{
     end_cast_clears_hold, held_strike_sound, BeamKitWaits, ChainProcPlay, ChannelSpellLeft,
-    FxClass, FxStage, KitEffectClear, KitPush, MissileRelease, MissileSpawn, ReleaseKind,
-    SpellEffectClear, SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals, UnitKitLanes,
+    EffectListClear, FxClass, FxStage, KitEffectClear, KitPush, MissileRelease, MissileSpawn,
+    ReleaseKind, SpellEffectClear, SpellKitFx, SpellKitShake, SpellKitSound, SpellVisuals,
+    UnitEffectClear, UnitKitLanes,
 };
 
 /// The unit's own variation stream ([`benilla_assets::AnimRng::stream`]), cut on its first frame
@@ -1207,6 +1208,7 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<ChannelSpellLeft>()
             .add_message::<SpellEffectClear>()
             .add_message::<KitEffectClear>()
+            .add_message::<UnitEffectClear>()
             .add_message::<KitPush>()
             // The aura CharProc edges, drained by `crate::aura_visual`.
             .add_message::<crate::aura_visual::AuraProc>()
@@ -1237,7 +1239,7 @@ impl Plugin for CreatureAnimPlugin {
                         // After the stream stage, whose collider finish is an exclusive system.
                         play_dest_loc_casts.after(WorldStage::Stream),
                         play_delayed_area_kits,
-                        arm_level_up_fx,
+                        arm_unit_edge_fx,
                         arm_mount_poof_fx,
                     )
                         .chain(),

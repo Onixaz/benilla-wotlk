@@ -61,6 +61,7 @@ fn beam_app_area_flags(area_flags: u32) -> App {
     app.add_message::<ChainProcPlay>()
         .add_message::<SpellEffectClear>()
         .add_message::<KitEffectClear>()
+        .add_message::<crate::creature_anim::UnitEffectClear>()
         .add_message::<SpellGoTargets>()
         .add_message::<DelayedAreaKit>();
     app.insert_resource(SpellVisuals(
@@ -709,6 +710,71 @@ fn two_persistent_beams_of_one_spell_coexist_until_the_spell_clear() {
     });
     app.update();
     assert!(beams(&mut app).is_empty(), "the owner's clear takes both");
+}
+
+/// The effect-list clear ends every beam its owner holds, persistent or timed: a death spares a
+/// death-persistent spell's, a release nothing (`0x744ac0`, `0x6f74f0`).
+#[test]
+fn the_effect_list_clear_ends_the_owners_beams() {
+    use crate::creature_anim::{EffectListClear, UnitEffectClear};
+    let mut app = beam_app();
+    // Lightning Overload's rank persists through death here.
+    let mut spells = EffectListClear::death_persistent_for_tests(OVERLOAD_SPELL);
+    let mut displays: HashMap<u32, SpellDisplay> = HashMap::new();
+    displays.insert(
+        CHAIN_SPELL,
+        SpellDisplay {
+            visual: CHAIN_VISUAL,
+            ..Default::default()
+        },
+    );
+    displays.insert(
+        OVERLOAD_SPELL,
+        SpellDisplay {
+            visual: CHAIN_VISUAL,
+            attributes_ex3: 0x10_0000,
+            ..Default::default()
+        },
+    );
+    spells.catalog = SpellCatalog::from_displays(displays);
+    app.insert_resource(spells);
+    let (owner, other) = (unit(&mut app), typed_unit(&mut app));
+    for spell in [CHAIN_SPELL, OVERLOAD_SPELL] {
+        let mut p = play(owner, spell);
+        p.from = Some(other);
+        p.proc.flag = true;
+        app.world_mut().write_message(p);
+        app.update();
+    }
+    app.world_mut()
+        .entity_mut(owner)
+        .insert(packet(vec![other]));
+    app.world_mut().write_message(play(owner, CHAIN_SPELL));
+    app.update();
+    assert_eq!(beams_with_ids(&mut app).len(), 3, "two held, one timed");
+    let clear = |app: &mut App, entity, mode| {
+        app.world_mut()
+            .write_message(UnitEffectClear { entity, mode });
+        app.update();
+    };
+    clear(&mut app, other, EffectListClear::Release);
+    assert_eq!(
+        beams_with_ids(&mut app).len(),
+        3,
+        "another unit's clear leaves them"
+    );
+    clear(&mut app, owner, EffectListClear::Death);
+    let left: Vec<u32> = beams_with_ids(&mut app)
+        .into_iter()
+        .map(|(_, s)| s)
+        .collect();
+    assert_eq!(
+        left,
+        vec![OVERLOAD_SPELL],
+        "the death spares the persistent spell's"
+    );
+    clear(&mut app, owner, EffectListClear::Release);
+    assert!(beams_with_ids(&mut app).is_empty(), "the release takes it");
 }
 
 /// A beam keeps its ends as guids (`0x7faeef`): a source that streams out and back under a new

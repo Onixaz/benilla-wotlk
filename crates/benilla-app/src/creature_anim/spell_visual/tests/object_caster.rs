@@ -164,7 +164,9 @@ fn played_on(sounds: &[SpellKitSound], who: Entity) -> Vec<u32> {
     sounds
         .iter()
         .filter_map(|s| match *s {
-            SpellKitSound::Play { entity, kit_sound } if entity == who => Some(kit_sound - SOUND),
+            SpellKitSound::Play {
+                entity, kit_sound, ..
+            } if entity == who => Some(kit_sound - SOUND),
             _ => None,
         })
         .collect()

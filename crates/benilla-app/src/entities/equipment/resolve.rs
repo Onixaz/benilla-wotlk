@@ -130,11 +130,15 @@ pub(crate) struct DressKey {
 pub(in crate::entities) struct SwapEdges<'w, 's> {
     procs: Option<Res<'w, Messages<crate::aura_visual::AuraProc>>>,
     clears: Option<Res<'w, Messages<crate::creature_anim::KitEffectClear>>>,
+    lists: Option<Res<'w, Messages<crate::creature_anim::UnitEffectClear>>>,
+    /// The spells a death clear spares.
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
     cursors: Local<
         's,
         (
             MessageCursor<crate::aura_visual::AuraProc>,
             MessageCursor<crate::creature_anim::KitEffectClear>,
+            MessageCursor<crate::creature_anim::UnitEffectClear>,
         ),
     >,
 }
@@ -149,14 +153,17 @@ enum SwapEdge {
     },
     EndSpell(u32),
     EndKit(u32),
+    /// The effect-list clear (`0x744ac0`), each effect it ends putting its slot's item back
+    /// (`0x6f8700`).
+    EndList(crate::creature_anim::EffectListClear),
 }
 
 impl SwapEdges<'_, '_> {
-    /// This frame's edges by unit, the aura lane's before the kit clears.
+    /// This frame's edges by unit, the aura lane's before the kit clears, then the list clears.
     fn take(&mut self) -> EntityHashMap<Vec<SwapEdge>> {
         use crate::aura_visual::{AuraNode, AuraProc};
         let mut out: EntityHashMap<Vec<SwapEdge>> = EntityHashMap::default();
-        let (proc_cursor, clear_cursor) = &mut *self.cursors;
+        let (proc_cursor, clear_cursor, list_cursor) = &mut *self.cursors;
         if let Some(procs) = self.procs.as_deref() {
             for edge in proc_cursor.read(procs) {
                 match edge {
@@ -192,6 +199,13 @@ impl SwapEdges<'_, '_> {
                     .push(SwapEdge::EndKit(clear.kit_id));
             }
         }
+        if let Some(lists) = self.lists.as_deref() {
+            for clear in list_cursor.read(lists) {
+                out.entry(clear.entity)
+                    .or_default()
+                    .push(SwapEdge::EndList(clear.mode));
+            }
+        }
         out
     }
 }
@@ -201,6 +215,7 @@ fn apply_swap_edges(
     swaps: &mut Option<&mut ItemSwaps>,
     fresh: &mut Option<ItemSwaps>,
     edges: &[SwapEdge],
+    spells: Option<&crate::ui_action::Spells>,
 ) {
     if swaps.is_none() && edges.iter().any(|e| matches!(e, SwapEdge::Begin { .. })) {
         *fresh = Some(ItemSwaps::default());
@@ -220,6 +235,9 @@ fn apply_swap_edges(
             }
             SwapEdge::EndKit(kit_id) => {
                 s.end_kit(kit_id);
+            }
+            SwapEdge::EndList(mode) => {
+                s.end_list(|spell_id| mode.ends(spells, spell_id));
             }
         }
     }
@@ -380,7 +398,12 @@ pub(in crate::entities) fn resolve_equipment(
         let mut fresh = None;
         let mut swaps = swaps.as_deref_mut();
         if let Some(unit_edges) = &unit_edges {
-            apply_swap_edges(&mut swaps, &mut fresh, unit_edges);
+            apply_swap_edges(
+                &mut swaps,
+                &mut fresh,
+                unit_edges,
+                swap_edges.spells.as_deref(),
+            );
             // Each new effect asks the item cache itself, a denied item again (`0x6f86d8`).
             for edge in unit_edges {
                 if let SwapEdge::Begin { item, .. } = *edge {
@@ -1214,6 +1237,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()));
         app.add_message::<crate::aura_visual::AuraProc>();
         app.add_message::<crate::creature_anim::KitEffectClear>();
+        app.add_message::<crate::creature_anim::UnitEffectClear>();
         let mut items = Items::default();
         items.insert_template(100, Some(worn(900, 1)));
         items.insert_template(501, Some(worn(778, 20)));
@@ -1334,6 +1358,39 @@ mod tests {
         app.update();
         assert_eq!(helm(&app, player), (0, None), "hidden again");
         assert_eq!(chest(&app), 778, "the other kit's swap stays");
+    }
+
+    /// The effect-list clear ends the swaps it reaches, each putting its slot's own item back: a
+    /// death spares a death-persistent spell's, a release takes it too (`0x744ac0`, `0x6f8700`).
+    #[test]
+    fn a_list_clear_ends_the_swaps_but_a_death_persistent_spells() {
+        use crate::creature_anim::{EffectListClear, UnitEffectClear};
+        let (mut app, player, _rx) = swap_world(0);
+        app.insert_resource(EffectListClear::death_persistent_for_tests(61401));
+        app.world_mut()
+            .resource_mut::<Items>()
+            .insert_template(500, Some(worn(1, 1)));
+        swap_begin(&mut app, player, 44212, 8381, 500);
+        swap_begin(&mut app, player, 61401, 12024, 501);
+        app.update();
+        let chest = |app: &App| app.world().get::<Equipment>(player).unwrap().bodyslots[1];
+        assert_eq!((helm(&app, player).0, chest(&app)), (777, 778));
+        let clear = |app: &mut App, mode| {
+            app.world_mut().write_message(UnitEffectClear {
+                entity: player,
+                mode,
+            });
+            app.update();
+        };
+        clear(&mut app, EffectListClear::Death);
+        assert_eq!(
+            helm(&app, player),
+            (900, Some(900)),
+            "the worn helm is back"
+        );
+        assert_eq!(chest(&app), 778, "the persistent spell's swap stays");
+        clear(&mut app, EffectListClear::Release);
+        assert_ne!(chest(&app), 778, "the release ends it");
     }
 
     /// A denied item is asked again by the next effect, which waits on that answer; a denial still

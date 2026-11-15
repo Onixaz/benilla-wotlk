@@ -1066,6 +1066,18 @@ pub(crate) fn tear_down(mut ent: EntityWorldMut) {
     // The movement disable (`0x6ec390` at `0x735198`) deletes the spline and frees the move queue.
     ent.remove::<(Spline, super::motion::WalkEndFacing, RemoteMotion)>();
     ent.insert(DespawnFade::default());
+    // The disable releases the effect list, so nothing the object wore fades out with it
+    // (`0x7355a7`).
+    let entity = ent.id();
+    ent.world_scope(|world| {
+        use crate::creature_anim::{EffectListClear, UnitEffectClear};
+        if world.contains_resource::<bevy::ecs::message::Messages<UnitEffectClear>>() {
+            world.write_message(UnitEffectClear {
+                entity,
+                mode: EffectListClear::Release,
+            });
+        }
+    });
 }
 
 /// `SMSG_MONSTER_MOVE` or `SMSG_MONSTER_MOVE_TRANSPORT`: settles transport membership, snaps the
@@ -1422,6 +1434,27 @@ fn speed_changed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The teardown is the disable: it releases the object's effect list (`0x7355a7`).
+    #[test]
+    fn a_teardown_releases_the_effect_list() {
+        use crate::creature_anim::{EffectListClear, UnitEffectClear};
+        let mut world = World::new();
+        world.init_resource::<bevy::ecs::message::Messages<UnitEffectClear>>();
+        let e = world.spawn(Guid(7)).id();
+        tear_down(world.entity_mut(e));
+        let sent: Vec<UnitEffectClear> = world
+            .resource_mut::<bevy::ecs::message::Messages<UnitEffectClear>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            sent,
+            vec![UnitEffectClear {
+                entity: e,
+                mode: EffectListClear::Release,
+            }]
+        );
+    }
 
     /// `0x1EB` for an unheld item waits on the active player and replays at its create; `0x1EA`
     /// for one is dropped; the destroy takes the cells.
