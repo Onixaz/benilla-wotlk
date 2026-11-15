@@ -69,6 +69,8 @@ pub trait WardenHost: Send + Sync {
     fn async_time_ms(&self) -> u32;
     /// The system tick count, in ms.
     fn tick_count(&self) -> u32;
+    /// One line on what a command asked and how it was answered, for the host's log.
+    fn note(&self, _line: &str) {}
 }
 
 /// The host with nothing behind it: no cache, no memory, no archives.
@@ -324,7 +326,13 @@ impl Warden {
             let Some(opcode) = cursor.u8() else { break };
             let rekeyed = match self.command(host, opcode, &mut cursor, &mut received) {
                 Ok(rekeyed) => rekeyed,
-                Err(Stop::Short) => break,
+                Err(Stop::Short) => {
+                    host.note(&format!(
+                        "command {opcode} at byte {at} of {} read nothing more",
+                        plain.len()
+                    ));
+                    break;
+                }
                 Err(Stop::Refused(r)) => return Err(r),
             };
             at += cursor.at;
@@ -358,14 +366,19 @@ impl Warden {
                 self.reply(reply, None);
                 Ok(false)
             }
-            SMSG_MODULE_INITIALIZE => self.initialize(cursor).map(|()| false),
+            SMSG_MODULE_INITIALIZE => {
+                self.initialize(cursor)?;
+                host.note(&format!("initialize: {:?}", self.bindings));
+                Ok(false)
+            }
             SMSG_MEM_CHECKS_REQUEST => {
                 // A count and that many bytes the module keeps; it answers nothing.
                 let n = cursor.u8().ok_or(Stop::Short)?;
                 cursor.take(usize::from(n)).ok_or(Stop::Short)?;
+                host.note(&format!("memory-checks request of {n} bytes kept"));
                 Ok(false)
             }
-            SMSG_HASH_REQUEST => self.hash_request(cursor).map(|()| true),
+            SMSG_HASH_REQUEST => self.hash_request(host, cursor).map(|()| true),
             _ => Err(Stop::Short),
         }
     }
@@ -397,6 +410,7 @@ impl Warden {
         if host.module_cached(&id) {
             self.module = Some(module);
             self.reply(vec![CMSG_MODULE_OK], None);
+            host.note(&format!("module use {}: cached, answered ok", hex(&id)));
         } else {
             self.download = Some(Download {
                 id,
@@ -404,6 +418,10 @@ impl Warden {
                 data: Vec::with_capacity(size),
             });
             self.reply(vec![CMSG_MODULE_MISSING], None);
+            host.note(&format!(
+                "module use {}: not cached, asked for its {size} bytes",
+                hex(&id)
+            ));
         }
         Ok(())
     }
@@ -425,6 +443,14 @@ impl Warden {
         }
         let download = self.download.take().expect("checked above");
         let digest: [u8; 16] = Md5::digest(&download.data).into();
+        host.note(&format!(
+            "module download complete, its MD5 {} its id",
+            if digest == download.id {
+                "matches"
+            } else {
+                "differs from"
+            }
+        ));
         if digest != download.id {
             self.download = Some(Download {
                 data: Vec::with_capacity(download.size),
@@ -446,7 +472,7 @@ impl Warden {
 
     /// `HASH_REQUEST`: the seed. The reply is the SHA-1 of the client's new sending key; the
     /// receiving stream switches now, the sending one after the reply.
-    fn hash_request(&mut self, cursor: &mut Cursor) -> Result<(), Stop> {
+    fn hash_request(&mut self, host: &dyn WardenHost, cursor: &mut Cursor) -> Result<(), Stop> {
         let seed = cursor.array::<16>().ok_or(Stop::Short)?;
         let keys = self
             .module
@@ -465,6 +491,10 @@ impl Warden {
         self.reply(reply, Some(keys.client_key));
         self.incoming = Arc4::keyed(&keys.server_key);
         self.xor = keys.client_key[0];
+        host.note(&format!(
+            "hash request {}: answered, streams switched",
+            hex(&seed)
+        ));
         Ok(())
     }
 

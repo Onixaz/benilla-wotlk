@@ -160,6 +160,10 @@ impl benilla_protocol::warden::WardenHost for AppHost {
     fn tick_count(&self) -> u32 {
         benilla_protocol::client_uptime_ms()
     }
+
+    fn note(&self, line: &str) {
+        debug!("warden: {line}");
+    }
 }
 
 /// The globals 12340 has written by the time it is in the world, over the file's bytes at `va`.

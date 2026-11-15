@@ -98,6 +98,7 @@ pub(super) fn answer(
         }
     };
     let mut results = Vec::new();
+    let mut notes = Vec::new();
     for check in checks {
         match check {
             Check::Timing => {
@@ -109,13 +110,18 @@ pub(super) fn answer(
                     host.tick_count()
                 };
                 results.extend_from_slice(&now.to_le_bytes());
+                notes.push(format!("timing {now}"));
             }
             Check::Driver { name } | Check::Proc { module: name } => {
-                if string(name).is_some() {
+                if let Some(name) = string(name) {
                     results.push(NOT_FOUND);
+                    notes.push(format!("scan {name:?} not found"));
                 }
             }
-            Check::Page | Check::Module => results.push(NOT_FOUND),
+            Check::Page | Check::Module => {
+                results.push(NOT_FOUND);
+                notes.push("scan not found".to_owned());
+            }
             Check::Script { text } => {
                 let Some(text) = string(text) else { continue };
                 // Slot 0 is called first when bound; only the executor in slot 1 runs the text.
@@ -123,6 +129,7 @@ pub(super) fn answer(
                     received.scripts.push(text.to_owned());
                 }
                 results.push(1);
+                notes.push(format!("script {text:?}"));
             }
             Check::File { path } => {
                 let Some(path) = string(path) else { continue };
@@ -132,6 +139,10 @@ pub(super) fn answer(
                     .then(|| host.read_file(path))
                     .flatten()
                     .map(|bytes| Sha1::digest(&bytes).into());
+                notes.push(format!(
+                    "file {path:?} {}",
+                    if sha.is_some() { "hashed" } else { "unread" }
+                ));
                 match sha {
                     Some(sha) => {
                         results.push(0);
@@ -152,7 +163,12 @@ pub(super) fn answer(
                 } else {
                     super::resolve(name, 0).map(|base| base.wrapping_add(offset))
                 };
-                match va.and_then(|va| host.read_memory(va, usize::from(len))) {
+                let read = va.and_then(|va| host.read_memory(va, usize::from(len)));
+                notes.push(format!(
+                    "memory {name:?}+{offset:#x}/{len} {}",
+                    if read.is_some() { "read" } else { "unread" }
+                ));
+                match read {
                     Some(bytes) => {
                         results.push(0);
                         results.extend_from_slice(&bytes);
@@ -163,6 +179,7 @@ pub(super) fn answer(
         }
     }
 
+    host.note(&format!("checks ({}): {}", notes.len(), notes.join("; ")));
     let mut reply = vec![CMSG_CHEAT_CHECKS_RESULT];
     reply.extend_from_slice(&(results.len() as u16).to_le_bytes());
     reply.extend_from_slice(&checksum(&results).to_le_bytes());
