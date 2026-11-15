@@ -153,7 +153,12 @@ fn kit_columns_read_the_3_3_5a_layout() {
         ..Default::default()
     };
     assert_eq!(kits[&1], bare(1), "plain 0 = none");
-    assert_eq!(kits[&2], bare(2), "0xFFFFFFFF = none too");
+    let rearming = VisualKit {
+        rearms_base: true,
+        ..bare(2)
+    };
+    assert_eq!(kits[&2], rearming, "0xFFFFFFFF = none too, yet not 0");
+    assert!(kits[&38].rearms_base, "a -1 start is not 0");
     assert_eq!(kits[&38].start_anim, None, "-1 starts nothing");
     assert_eq!(
         kits[&3].effects().count(),

@@ -105,7 +105,7 @@ fn go_aimed(
     app.world_mut().write_message(CastEvent {
         entity: caster,
         spell_id: SPELL,
-        kind: CastEventKind::Go,
+        kind: CastEventKind::Go { ends_cast: true },
         cast_count: 1,
         seq: 1,
     });

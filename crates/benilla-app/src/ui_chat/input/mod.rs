@@ -861,7 +861,7 @@ pub(super) fn drain_chat_input(
                         // A selected caster's GO hits us, so a missile flies end to end; a
                         // self-cast has no target. `ground` sends the pure dest shape instead, a
                         // point 15 yd ahead at the player's height.
-                        if kind == crate::creature_anim::CastEventKind::Go {
+                        if matches!(kind, crate::creature_anim::CastEventKind::Go { .. }) {
                             let dest = ground.then(|| {
                                 self_player.single().ok().map(|(_, _, tf)| {
                                     tf.translation() + tf.forward().as_vec3() * 15.0

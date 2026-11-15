@@ -374,6 +374,7 @@ impl SelfCancel<'_, '_> {
                                 kind: CastEventKind::Fail {
                                     interrupt: false,
                                     wire_reason: CANCEL_REASON,
+                                    ends_cast: running.is_some(),
                                 },
                                 cast_count: running.map_or(0, |c| c.cast_count),
                                 seq: play_seq.next(),

@@ -318,12 +318,17 @@ fn dev_command(dev: DevCmd, args: &str) -> ParsedChat {
             };
             let (kind, ground) = match words.next() {
                 None => (CastEventKind::Start { visuals: true }, false),
-                Some(w) if w.eq_ignore_ascii_case("go") => (CastEventKind::Go, false),
-                Some(w) if w.eq_ignore_ascii_case("ground") => (CastEventKind::Go, true),
+                Some(w) if w.eq_ignore_ascii_case("go") => {
+                    (CastEventKind::Go { ends_cast: true }, false)
+                }
+                Some(w) if w.eq_ignore_ascii_case("ground") => {
+                    (CastEventKind::Go { ends_cast: true }, true)
+                }
                 Some(w) if w.eq_ignore_ascii_case("fail") => (
                     CastEventKind::Fail {
                         interrupt: false,
                         wire_reason: 0,
+                        ends_cast: true,
                     },
                     false,
                 ),

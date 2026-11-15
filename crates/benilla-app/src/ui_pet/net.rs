@@ -130,6 +130,7 @@ impl PetCastEnd<'_, '_> {
                 kind: crate::creature_anim::CastEventKind::Fail {
                     interrupt: false,
                     wire_reason,
+                    ends_cast: true,
                 },
                 cast_count,
                 seq,

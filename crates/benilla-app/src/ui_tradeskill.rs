@@ -807,7 +807,7 @@ fn drain_trade_skill(
         }
         match ev.kind {
             CastEventKind::Start { .. } => script.trade_skill_cast_started(ev.spell_id),
-            CastEventKind::Go => {
+            CastEventKind::Go { .. } => {
                 if script.trade_skill_cast_done(ev.spell_id) {
                     debug!("ui_tradeskill: recast {}", ev.spell_id);
                     ladder.send(ev.spell_id, &targeting.context(), CastCommit::Spell);
