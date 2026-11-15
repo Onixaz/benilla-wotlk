@@ -469,20 +469,46 @@ fn buff_hover_hangs_below_left_of_the_button() {
     );
 }
 
-/// The cursor-seated GameObject plate is owned: the reference's publisher sets the owner through
-/// the SetOwner core (called with `(owner, 6, 0, 0)`, which writes `+0x314`). The cursor arm fires
-/// no `OnTooltipSetDefaultAnchor`, so no Lua sets it.
+/// The cursor-seated GameObject plate goes through the SetOwner core with
+/// `(UIParent, ANCHOR_CURSOR, 0, 0)` (`0x51f956`): it is owned by `UIParent` and answers
+/// `ANCHOR_CURSOR`, though the cursor arm fires no `OnTooltipSetDefaultAnchor`.
 #[test]
-fn a_cursor_seated_gameobject_plate_is_owned() {
+fn a_cursor_seated_gameobject_plate_is_owned_in_cursor_mode() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[]);
-    assert!(s.world_tooltip_gameobject("Brill", &[], Some((512.0, 384.0))));
-    let owned: bool = s.eval("return GameTooltip:IsOwned(UIParent)").unwrap();
+    assert!(s.world_tooltip_gameobject("Brill", &[], true));
+    let (owned, mode): (bool, String) = s
+        .eval("return GameTooltip:GetOwner() == UIParent, GameTooltip:GetAnchorType()")
+        .unwrap();
     assert!(
         owned,
         "the signpost plate is owned; errors: {:?}",
         s.errors()
     );
+    assert_eq!(mode, "ANCHOR_CURSOR");
+}
+
+/// The cursor mode's layer update (`0x61b2e0`) seats the plate's BOTTOM on the pointer every
+/// frame, and hover loss is `FadeOut`, which hides a cursor-mode plate at once (`0x61b2bb`).
+#[test]
+fn a_cursor_seated_gameobject_plate_follows_the_pointer_and_drops_on_loss() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = harness(&[]);
+    s.mouse_move(300.0, 200.0);
+    assert!(s.world_tooltip_gameobject("Brill", &[], true));
+    s.resolve();
+    let at = |s: &UiScript| -> (f64, f64) {
+        s.eval("return GameTooltip:GetLeft() + GameTooltip:GetWidth() / 2, GameTooltip:GetBottom()")
+            .unwrap()
+    };
+    assert_eq!(at(&s), (300.0, 200.0), "centred above the pointer");
+    s.mouse_move(420.0, 330.0);
+    s.resolve();
+    assert_eq!(at(&s), (420.0, 330.0), "the plate follows the pointer");
+    s.world_tooltip_fade();
+    let visible: bool = s.eval("return GameTooltip:IsVisible() ~= nil").unwrap();
+    assert!(!visible, "hover loss hides the cursor plate at once");
+    assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
 }
 
 /// An addon `OnShow` hook that calls `GameTooltip:Show()` (as `!Questie`'s does) leaves the plate
@@ -495,7 +521,7 @@ fn a_cursor_seated_gameobject_plate_survives_an_addons_on_show_hook() {
     // Questie's hook, in one line: the plate's own show event calls Show() again.
     s.run(r#"GameTooltip:SetScript("OnShow", function() GameTooltip:Show() end)"#)
         .unwrap();
-    assert!(s.world_tooltip_gameobject("Brill", &[], Some((512.0, 384.0))));
+    assert!(s.world_tooltip_gameobject("Brill", &[], true));
     let shown: bool = s
         .eval("return GameTooltip:IsShown() and true or false")
         .unwrap();
@@ -513,13 +539,35 @@ fn a_cursor_seated_gameobject_plate_survives_an_addons_on_show_hook() {
 fn a_corner_seated_gameobject_plate_is_owned_and_shown() {
     benilla_formats::wow_data_or_skip!();
     let mut s = harness(&[]);
-    assert!(s.world_tooltip_gameobject("Ironforge Main Gate", &[], None));
+    assert!(s.world_tooltip_gameobject("Ironforge Main Gate", &[], false));
     let owned: bool = s.eval("return GameTooltip:IsOwned(UIParent)").unwrap();
     assert!(owned, "the corner plate is owned; errors: {:?}", s.errors());
     let shown: bool = s
         .eval("return GameTooltip:IsShown() and true or false")
         .unwrap();
     assert!(shown, "and it is on screen; errors: {:?}", s.errors());
+}
+
+/// The corner plate's hover loss is the 2 s `FadeOut`: still up a second later.
+#[test]
+fn a_corner_seated_gameobject_plate_fades_on_loss() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = harness(&[]);
+    assert!(s.world_tooltip_gameobject("Ironforge Main Gate", &[], false));
+    s.world_tooltip_fade();
+    s.tick(1.0);
+    let up: bool = s.eval("return GameTooltip:IsVisible() ~= nil").unwrap();
+    assert!(up, "still fading a second after the loss");
+    s.tick(1.1);
+    let gone: bool = s.eval("return GameTooltip:IsShown() == nil").unwrap();
+    assert!(gone, "hidden once the 2 s run out");
+    // The kit's UIParent `OnUpdate` calls into files it does not load; only tooltip errors count.
+    let errors: Vec<String> = s
+        .errors()
+        .into_iter()
+        .filter(|e| !e.contains("LFRBrowseFrame"))
+        .collect();
+    assert!(errors.is_empty(), "errors: {errors:?}");
 }
 
 /// The corner plate survives the same `OnShow` hook through the existence gate.
@@ -529,7 +577,7 @@ fn a_corner_seated_gameobject_plate_survives_an_addons_on_show_hook() {
     let mut s = harness(&[]);
     s.run(r#"GameTooltip:SetScript("OnShow", function() GameTooltip:Show() end)"#)
         .unwrap();
-    assert!(s.world_tooltip_gameobject("Ironforge Main Gate", &[], None));
+    assert!(s.world_tooltip_gameobject("Ironforge Main Gate", &[], false));
     let shown: bool = s
         .eval("return GameTooltip:IsShown() and true or false")
         .unwrap();

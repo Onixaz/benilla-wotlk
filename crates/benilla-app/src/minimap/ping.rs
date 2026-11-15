@@ -196,7 +196,6 @@ mod tests {
             wx: 0.0,
             wy: 0.0,
             cursor: None,
-            cursor_ui: None,
             seam: 1.0,
             turn: 0.0,
         }

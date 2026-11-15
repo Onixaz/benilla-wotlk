@@ -315,69 +315,129 @@ fn minimum_width_floors_autosize() {
         .unwrap();
 }
 
-/// Fresh content mid-fade cancels the ramp at full alpha.
-#[test]
-fn fadeout_ramps_then_hides() {
-    let mut s = script();
-    s.set_screen_size(800.0, 600.0);
-    s.run(
+/// A plate `FadeOut` is called on with `anchor`, owned by a centred button, one line, shown.
+fn fading_plate(s: &UiScript, name: &str, anchor: &str) {
+    s.run(&format!(
         r#"
         cleared = 0
-        local a = CreateFrame("Button", "A5"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
-        local tt = CreateFrame("GameTooltip", "TT5")
+        local a = CreateFrame("Button", "{name}Owner"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "{name}")
         tt:SetScript("OnTooltipCleared", function() cleared = cleared + 1 end)
-        tt:SetOwner(a, "ANCHOR_RIGHT")
+        tt:SetOwner(a, "{anchor}")
         tt:SetText("Fading Unit")
         tt:FadeOut()
-    "#,
-    )
+    "#
+    ))
     .unwrap();
-    // Half the ramp: still shown, alpha well below 1.
-    s.tick(0.25);
-    s.run(r#"assert(TT5:IsShown(), "still shown mid-fade")"#)
-        .unwrap();
-    s.resolve();
-    let mid_alpha = s
-        .extract()
-        .iter()
-        .find_map(|q| match &q.content {
-            QuadContent::Text { text: Some(t), .. } if t == "Fading Unit" => Some(q.alpha),
-            _ => None,
-        })
-        .expect("fading line still draws");
-    assert!(
-        mid_alpha > 0.2 && mid_alpha < 0.8,
-        "mid-fade alpha ~0.5, got {mid_alpha}"
-    );
+}
+
+fn alpha_of(s: &UiScript, name: &str) -> f64 {
+    s.eval(&format!("return {name}:GetAlpha()")).unwrap()
+}
+
+fn shown(s: &UiScript, name: &str) -> bool {
+    s.eval(&format!("return {name}:IsShown() ~= nil")).unwrap()
+}
+
+/// `FadeOut` counts 2 s down (`[0xa246d8]`): the plate stays opaque for the first second, its alpha
+/// byte is the time left times 255 over the last, and at 0 it hides at full alpha, cleared.
+#[test]
+fn fadeout_counts_two_seconds_then_hides() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    fading_plate(&s, "TT5", "ANCHOR_RIGHT");
+    s.tick(0.5);
+    assert!(shown(&s, "TT5"));
+    assert_eq!(alpha_of(&s, "TT5"), 1.0, "opaque with 1.5 s left");
+    s.tick(1.0);
+    assert!(shown(&s, "TT5"));
+    let half = f64::from((0.5f32 * 255.0).trunc() / 255.0);
+    assert_eq!(alpha_of(&s, "TT5"), half, "byte 127 with 0.5 s left");
+    s.tick(0.5);
+    assert!(!shown(&s, "TT5"), "hidden at 0");
+    assert_eq!(alpha_of(&s, "TT5"), 1.0, "back at full alpha");
     s.run(
         r#"
-        TT5:SetText("Fresh Hover")
-    "#,
-    )
-    .unwrap();
-    s.tick(0.05);
-    s.resolve();
-    let fresh_alpha = s
-        .extract()
-        .iter()
-        .find_map(|q| match &q.content {
-            QuadContent::Text { text: Some(t), .. } if t == "Fresh Hover" => Some(q.alpha),
-            _ => None,
-        })
-        .expect("fresh line draws");
-    assert_eq!(fresh_alpha, 1.0, "fresh content restored full alpha");
-    // A full ramp ends hidden and cleared.
-    s.run("TT5:FadeOut()").unwrap();
-    s.tick(0.6);
-    s.run(
-        r#"
-        assert(not TT5:IsShown(), "hidden at ramp end")
-        assert(TT5:NumLines() == 0, "content dropped at ramp end")
+        assert(TT5:NumLines() == 0, "content dropped at the end")
+        assert(TT5:GetOwner() == nil, "owner dropped at the end")
         assert(cleared >= 1, "OnTooltipCleared fired")
     "#,
     )
     .unwrap();
     assert!(s.take_errors().is_empty());
+}
+
+/// A second `FadeOut` mid-fade restarts the full 2 s (`0x61b2a9`), it does not keep the first.
+#[test]
+fn a_second_fadeout_rearms_the_countdown() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    fading_plate(&s, "TT6", "ANCHOR_RIGHT");
+    s.tick(1.5);
+    assert!(alpha_of(&s, "TT6") < 1.0);
+    s.run("TT6:FadeOut()").unwrap();
+    s.tick(1.0);
+    assert!(shown(&s, "TT6"), "1 s into the re-armed fade");
+    assert_eq!(alpha_of(&s, "TT6"), 1.0, "1 s left reads opaque");
+    s.tick(0.9);
+    assert!(shown(&s, "TT6"));
+    s.tick(0.2);
+    assert!(!shown(&s, "TT6"), "hidden 2 s after the re-arm");
+    assert!(s.take_errors().is_empty());
+}
+
+/// Only `SetOwner` (`0x61ea29`) and `Show` (`0x61d011`) disarm the fade: a line added mid-fade
+/// leaves it running, and the `Show` after it returns the plate to full alpha for good.
+#[test]
+fn a_line_keeps_the_fade_and_show_disarms_it() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    fading_plate(&s, "TT7", "ANCHOR_RIGHT");
+    s.tick(1.5);
+    s.run(r#"TT7:AddLine("Fresh")"#).unwrap();
+    s.tick(0.1);
+    assert!(alpha_of(&s, "TT7") < 1.0, "AddLine does not disarm");
+    s.run("TT7:Show()").unwrap();
+    assert_eq!(alpha_of(&s, "TT7"), 1.0, "Show restores full alpha");
+    s.tick(3.0);
+    assert!(shown(&s, "TT7"), "and disarms the fade");
+    s.run(r#"TT7:FadeOut() TT7:SetOwner(TT7Owner, "ANCHOR_RIGHT")"#)
+        .unwrap();
+    s.tick(3.0);
+    assert_eq!(alpha_of(&s, "TT7"), 1.0, "SetOwner disarms it too");
+    assert!(s.take_errors().is_empty());
+}
+
+/// In `ANCHOR_CURSOR` and `ANCHOR_CURSOR_RIGHT`, `FadeOut` takes the tooltip's own hide step at
+/// once (`0x61b2bb`): the plate leaves the screen without its owner or lines, while `IsShown`'s
+/// flag, which only `Hide` clears, stays set.
+#[test]
+fn fadeout_in_a_cursor_mode_hides_at_once() {
+    for (name, anchor) in [("TC8", "ANCHOR_CURSOR"), ("TC9", "ANCHOR_CURSOR_RIGHT")] {
+        let mut s = script();
+        s.set_screen_size(800.0, 600.0);
+        fading_plate(&s, name, anchor);
+        let (visible, owner, lines, cleared): (bool, bool, i64, i64) = s
+            .eval(&format!(
+                "return {name}:IsVisible() ~= nil, {name}:GetOwner() ~= nil, \
+                 {name}:NumLines(), cleared"
+            ))
+            .unwrap();
+        assert!(!visible, "{anchor}: off screen at once");
+        assert!(!owner, "{anchor}: owner dropped");
+        assert_eq!(lines, 0, "{anchor}: lines dropped");
+        assert!(cleared >= 1, "{anchor}: OnTooltipCleared fired");
+        assert!(shown(&s, name), "{anchor}: IsShown's flag stays set");
+        assert_eq!(alpha_of(&s, name), 1.0, "{anchor}: no fade armed");
+        s.tick(0.5);
+        assert!(!s
+            .eval::<bool>(&format!("return {name}:IsVisible() ~= nil"))
+            .unwrap());
+        // A later Show finds no owner and takes the full hide.
+        s.run(&format!("{name}:Show()")).unwrap();
+        assert!(!shown(&s, name), "{anchor}: Show without an owner hides");
+        assert!(s.take_errors().is_empty());
+    }
 }
 
 /// Every GameTooltip clamps to the screen (the geometry-flags bit 4 clamp, `assemble`), so the zone
