@@ -79,7 +79,7 @@ pub(super) fn select_on_plate_click(
 /// On a [`WorldClick`], select the press pick's unit or deselect on empty world, except on nothing
 /// (the sky) with a payload held; the terrain leg deselects regardless. The press pick, since the
 /// hover is empty through a camera drag, as in the reference's freelook.
-pub(super) fn select_on_click(
+pub(crate) fn select_on_click(
     mut clicks: MessageReader<WorldClick>,
     inspect: Res<InspectMode>,
     press: Res<PressPick>,

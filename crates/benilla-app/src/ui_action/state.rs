@@ -27,7 +27,7 @@ use crate::spell::AutoRepeatActive;
 
 /// The feed's memory: what was last pushed, and the edge detectors.
 #[derive(Default)]
-pub(super) struct StateMemory {
+pub(crate) struct StateMemory {
     pushed: HashMap<u32, ActionState>,
     last_generation: Option<u64>,
     auto_repeat: Option<u32>,
@@ -143,7 +143,7 @@ fn pet_slot<'a>(
 
 /// Computes and diff-pushes every occupied slot's state, and fires the reference's events.
 #[allow(clippy::type_complexity)] // a Bevy system's full input set
-pub(super) fn feed_action_state(
+pub(crate) fn feed_action_state(
     script: Option<NonSendMut<UiScript>>,
     actions: Res<PlayerActions>,
     spells: Option<Res<Spells>>,

@@ -185,6 +185,9 @@ pub(crate) fn in_call_order(
 }
 
 #[cfg(test)]
+mod frame_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::net::{

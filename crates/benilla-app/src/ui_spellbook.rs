@@ -97,7 +97,7 @@ fn load_skill_lines(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
 
 /// The feed's memory of what it last pushed, for the `SPELLS_CHANGED` diff.
 #[derive(Default)]
-struct FeedMemory {
+pub(crate) struct FeedMemory {
     pushed: SpellBookState,
     /// Counter watches for stores whose lazy resolves defeat `is_changed` (template asks, the
     /// cooldown prune), and for the self store's presence: a despawn flips the weapon icons unseen.
@@ -111,7 +111,7 @@ struct FeedMemory {
     known_pushed: BTreeSet<u32>,
 }
 
-fn feed_spellbook(
+pub(crate) fn feed_spellbook(
     script: Option<NonSendMut<UiScript>>,
     actions: Res<PlayerActions>,
     spells: Option<Res<Spells>>,

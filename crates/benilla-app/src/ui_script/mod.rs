@@ -21,6 +21,9 @@ pub(crate) mod glue;
 pub(crate) mod glue_mgr;
 pub(crate) mod glue_scene;
 mod input;
+// The press-frame tests run the input pass as a system of their own.
+#[cfg(test)]
+pub(crate) use input::feed_ui_input;
 #[cfg(test)]
 mod layer_tests;
 mod load_log;

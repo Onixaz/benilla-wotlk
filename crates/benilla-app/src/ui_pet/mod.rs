@@ -24,7 +24,7 @@ mod temp_bar;
 mod unit;
 mod usable;
 
-use bar::{feed_pet_bar, fire_pet_cooldown_events};
+pub(crate) use bar::{feed_pet_bar, fire_pet_cooldown_events};
 use drain::drain_pet_actions;
 // A pet bar press, applied in call order by `crate::script_calls`.
 pub(crate) use drain::pet_stop_on_old_target_clear;

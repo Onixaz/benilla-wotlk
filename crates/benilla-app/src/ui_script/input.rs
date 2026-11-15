@@ -17,7 +17,7 @@ use crate::textinput::{self, keymap, HostClipboard};
 /// hover and occlusion ray, since the target chain runs after this pass; one frame of staleness is
 /// within the pick's tolerance.
 #[derive(bevy::ecs::system::SystemParam)]
-pub(super) struct PointerFeed<'w> {
+pub(crate) struct PointerFeed<'w> {
     hover: ResMut<'w, PlayerUiHover>,
     click_consumed: ResMut<'w, PlayerUiClickConsumed>,
     hovered: Res<'w, crate::target::Hovered>,
@@ -69,7 +69,7 @@ fn feed_wheel(
 /// Feeds cursor, buttons, wheel and keys into the UI engine, publishing [`PlayerUiHover`] (the
 /// pointer arbiter yields to the UI) and [`UiKeyboardCapture`] (a key a box or frame ate never
 /// fires its binding). Runs in the `UiInput` set, before `WorldStage::Input` and every key reader.
-pub(super) fn feed_ui_input(
+pub(crate) fn feed_ui_input(
     script: Option<NonSendMut<UiScript>>,
     // Carries the `wl_display` the Wayland clipboard backend needs, once winit has a surface.
     window: Query<(&Window, Option<&bevy::window::RawHandleWrapper>), With<PrimaryWindow>>,

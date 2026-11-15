@@ -481,7 +481,7 @@ pub(crate) fn seat_text_measurer(script: &mut UiScript, atlas: &UiFontAtlas, sea
 /// The UI pass's first half, before `WorldStage::Input` because the camera reads the UI hover:
 /// screen size, `tick`, the measure round-trip, `resolve` and the script errors. The quads are
 /// [`paint_script`]'s, after the camera that places the `WorldFrame` nameplates.
-pub(super) fn tick_script(
+pub(crate) fn tick_script(
     script: Option<NonSendMut<UiScript>>,
     window: Query<&Window, With<PrimaryWindow>>,
     // Real time: the reference's `GetTime` is the OS tick count.
