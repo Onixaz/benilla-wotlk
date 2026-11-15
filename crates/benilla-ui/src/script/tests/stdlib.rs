@@ -444,7 +444,7 @@ fn a_handler_error_carries_a_call_site_traceback_and_a_host_error_its_cause() {
     let errors = s.take_errors();
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(
-        errors[0].contains("SetScript: unsupported script 'OnNoSuchScript'"),
+        errors[0].contains("<unnamed> doesn't have a \"OnNoSuchScript\" script"),
         "the host's error text survives: {}",
         errors[0]
     );

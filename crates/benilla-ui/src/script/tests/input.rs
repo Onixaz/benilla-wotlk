@@ -121,10 +121,10 @@ fn onclick_fires_on_press_release_same_frame_not_when_release_lands_elsewhere() 
     s.run(
         r#"
         clicks_a, clicks_b, click_btn = 0, 0, nil
-        local a = CreateFrame("Frame", "A")   -- left half
+        local a = CreateFrame("Button", "A")   -- left half
         a:SetPoint("BOTTOMLEFT", 0, 0); a:SetWidth(400); a:SetHeight(600); a:EnableMouse(true)
         a:SetScript("OnClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button, down = this, arg1, arg2 clicks_a = clicks_a + 1; click_btn = button end)
-        local b = CreateFrame("Frame", "B")   -- right half
+        local b = CreateFrame("Button", "B")   -- right half
         b:SetPoint("BOTTOMLEFT", 400, 0); b:SetWidth(400); b:SetHeight(600); b:EnableMouse(true)
         b:SetScript("OnClick", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button, down = this, arg1, arg2 clicks_b = clicks_b + 1 end)
     "#,
@@ -533,7 +533,7 @@ fn a_half_finished_double_click_survives_the_cursor_leaving_the_window() {
     );
 }
 
-/// A name in `SCRIPT_KINDS` must have something that fires it, so this asserts the fire.
+/// A script name a type carries must have something that fires it, so this asserts the fire.
 #[test]
 fn set_script_on_double_click_is_accepted_because_something_fires_it() {
     let mut s = script();
@@ -584,7 +584,7 @@ fn a_pointer_crossing_a_link_span_fires_enter_then_leave() {
     s.run(
         r#"
         seen = {}
-        F = CreateFrame("Frame", "Spanned", UIParent)
+        F = CreateFrame("ScrollingMessageFrame", "Spanned", UIParent)
         F:SetPoint("BOTTOMLEFT", 0, 0); F:SetWidth(100); F:SetHeight(100); F:EnableMouse(true)
         F:SetScript("OnHyperlinkEnter", function(self, link, text) seen[#seen + 1] = "in " .. link end)
         F:SetScript("OnHyperlinkLeave", function(self, link, text) seen[#seen + 1] = "out " .. text end)
@@ -605,24 +605,34 @@ fn a_pointer_crossing_a_link_span_fires_enter_then_leave() {
     );
 }
 
-/// Script names nothing fires still raise; a name leaves this list only when something fires it.
+/// Script names nothing fires still raise, each on the type that carries it; a name leaves this
+/// list only when something fires it.
 #[test]
 fn the_unfired_script_kinds_still_raise_rather_than_silently_accepting() {
     let s = script();
-    s.run(r#"Raiser = CreateFrame("EditBox", "RaiserBox")"#)
-        .unwrap();
-    // Real slots that benilla does not fire.
-    for name in [
-        "OnMessageScrollChanged",
-        "OnTooltipSetFrameStack",
-        "OnMovieFinished",
+    // Real slots that benilla does not fire, on their own types.
+    for (ty, name) in [
+        ("ScrollingMessageFrame", "OnMessageScrollChanged"),
+        ("GameTooltip", "OnTooltipSetFrameStack"),
+        ("MovieFrame", "OnMovieFinished"),
+        ("MovieFrame", "OnMovieShowSubtitle"),
+        ("MovieFrame", "OnMovieHideSubtitle"),
+        ("EditBox", "OnCharComposition"),
     ] {
+        s.run(&format!(r#"Raiser = CreateFrame("{ty}", "Raiser{ty}")"#))
+            .unwrap();
         let err = s
             .run(&format!(r#"Raiser:SetScript("{name}", function() end)"#))
             .unwrap_err();
         assert!(
-            err.to_string().contains(name),
-            "{name} must raise by name, got {err}"
+            err.to_string()
+                .contains(&format!("Raiser{ty} doesn't have a \"{name}\" script")),
+            "{ty} {name} must raise by name, got {err}"
+        );
+        assert!(
+            s.eval::<bool>(&format!(r#"return Raiser:HasScript("{name}") == nil"#))
+                .unwrap(),
+            "{ty} {name} reads as absent"
         );
     }
 }

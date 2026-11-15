@@ -76,8 +76,8 @@ fn events_fire_in_registration_order_fifo() {
     assert_eq!(s.eval::<String>("return order").unwrap(), "ACB");
 }
 
-/// Callers ask before hooking, when nothing is set yet (`Tablet-2.0.lua:2409`). Our kind table is
-/// flat where the reference's is per widget type, so a Frame also answers true for `OnClick`.
+/// Callers ask before hooking, when nothing is set yet (`Tablet-2.0.lua:2409`); the answer is the
+/// widget type's own table, so a Frame has no `OnClick` (`0x49eab0`).
 #[test]
 fn has_script_reports_the_kind_is_supported_not_that_one_is_set() {
     let s = script();
@@ -111,10 +111,10 @@ fn has_script_reports_the_kind_is_supported_not_that_one_is_set() {
         .unwrap();
     assert!(fired, "the guarded hook must install and run");
 
-    // The flat table: a Frame says true for a Button-only kind, where the reference says false.
     assert!(
-        s.eval::<bool>(r#"return f:HasScript("OnClick")"#).unwrap(),
-        "over-permissive by design today — see the comment at the binding"
+        s.eval::<bool>(r#"return f:HasScript("OnClick") == nil"#)
+            .unwrap(),
+        "OnClick is the Button's, not the Frame's"
     );
 }
 

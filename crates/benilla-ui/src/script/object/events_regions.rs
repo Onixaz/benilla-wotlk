@@ -6,7 +6,7 @@ use mlua::{Function, Lua, MultiValue, Table, Value};
 
 use crate::script::binding_abi::optional_string;
 use crate::script::region::region_wrapper;
-use crate::script::{RegionData, REG_SCRIPTS, SCRIPT_KINDS};
+use crate::script::{RegionData, REG_SCRIPTS};
 use crate::widget::RegionKind;
 
 use super::{decode_id, draw_layer_from_str, frame_handle_of, publish_global};
@@ -100,43 +100,54 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    // `SetScript("type", function)` (`0x49ec80`): the handler must be a function or an explicit
+    // nil, so a missing one raises the usage too.
     m.set(
         "SetScript",
-        lua.create_function(
-            |lua, (this, name, func): (Table, String, Option<Function>)| {
-                set_script(lua, &this, &name, func)
-            },
-        )?,
+        lua.create_function(|lua, (this, args): (Table, MultiValue)| {
+            let name = script_name_arg(lua, args.front())?;
+            let func = match args.get(1) {
+                Some(Value::Function(f)) => Some(Some(f.clone())),
+                Some(Value::Nil) => Some(None),
+                _ => None,
+            };
+            let (Some(name), Some(func)) = (name, func) else {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:SetScript(\"type\", function)",
+                    name_or_unnamed(&this)
+                )));
+            };
+            let kind = script_kind_or_raise(lua, &this, &name)?;
+            set_script(lua, &this, kind, func)
+        })?,
     )?;
+    // `GetScript("type")` (`0x49eb70`): the handler or nil; a name the type lacks raises.
     m.set(
         "GetScript",
-        lua.create_function(|lua, (this, name): (Table, String)| get_script(lua, &this, &name))?,
+        lua.create_function(|lua, (this, name): (Table, Value)| {
+            let Some(name) = script_name_arg(lua, Some(&name))? else {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:GetScript(\"type\")",
+                    name_or_unnamed(&this)
+                )));
+            };
+            let kind = script_kind_or_raise(lua, &this, &name)?;
+            get_script(lua, &this, kind)
+        })?,
     )?;
     // `HookScript("type", function)` (`0x49edb0`): with no script set, the hook becomes the script;
     // else the script becomes the hook wrapper over the two (`0x817050`).
     m.set(
         "HookScript",
         lua.create_function(|lua, (this, name, hook): (Table, Value, Value)| {
-            // `lua_isstring`: a number names a script too.
-            let name = match name {
-                Value::String(_) | Value::Integer(_) | Value::Number(_) => {
-                    lua.coerce_string(name)?
-                }
-                _ => None,
-            };
+            let name = script_name_arg(lua, Some(&name))?;
             let (Some(name), Value::Function(hook)) = (name, hook) else {
                 return Err(mlua::Error::runtime(format!(
                     "Usage: {}:HookScript(\"type\", function)",
                     name_or_unnamed(&this)
                 )));
             };
-            let name = name.to_string_lossy();
-            let Some(kind) = script_kind(lua, &name) else {
-                return Err(mlua::Error::runtime(format!(
-                    "{} doesn't have a \"{name}\" script",
-                    name_or_unnamed(&this)
-                )));
-            };
+            let kind = script_kind_or_raise(lua, &this, &name)?;
             let func = match get_script(lua, &this, kind)? {
                 Value::Function(original) => {
                     crate::script::secure_call::hook_wrapper(lua, original, hook)?
@@ -146,14 +157,18 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             set_script(lua, &this, kind, Some(func))
         })?,
     )?;
-    // `HasScript(name)`: 1 if the widget can carry that script kind, else nil, whether or not one
-    // is set. Answered from the flat `SCRIPT_KINDS`, so another type's kind reads 1 too, where the
-    // reference's tables are per widget type (a plain Frame has no `OnClick`).
+    // `HasScript("type")` (`0x49eab0`): 1 if the widget's type carries that script, set or not.
     m.set(
         "HasScript",
-        lua.create_function(|lua, (_this, name): (Table, String)| {
+        lua.create_function(|lua, (this, name): (Table, Value)| {
+            let Some(name) = script_name_arg(lua, Some(&name))? else {
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:HasScript(\"type\")",
+                    name_or_unnamed(&this)
+                )));
+            };
             Ok(crate::script::binding_abi::flag(
-                script_kind(lua, &name).is_some(),
+                script_kind(lua, &this, &name)?.is_some(),
             ))
         })?,
     )?;
@@ -272,13 +287,13 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `SetScript(name, func)`: stores the closure under one of [`SCRIPT_KINDS`], else raises.
-/// Deviation: real kinds nothing fires yet raise too (`OnMessageScrollChanged`,
-/// `OnTooltipSetFrameStack`, the movie frame's three), because an accepted handler that never runs
-/// fails silently.
-fn set_script(lua: &Lua, this: &Table, name: &str, func: Option<Function>) -> mlua::Result<()> {
-    let kind = script_kind(lua, name)
-        .ok_or_else(|| mlua::Error::runtime(format!("SetScript: unsupported script '{name}'")))?;
+/// Stores `func` as the frame's `kind` handler, a canonical name from [`script_kind`].
+fn set_script(
+    lua: &Lua,
+    this: &Table,
+    kind: &'static str,
+    func: Option<Function>,
+) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let id = crate::script::model_mut_of(lua).frame_id(h);
 
@@ -342,19 +357,42 @@ fn name_or_unnamed(this: &Table) -> String {
         .unwrap_or_else(|| super::anchor_args::UNNAMED.to_string())
 }
 
-/// The canonical spelling of script kind `name`, case-insensitively, from [`SCRIPT_KINDS`];
-/// `None` for a name the frames do not carry.
-fn script_kind(_lua: &Lua, name: &str) -> Option<&'static str> {
-    SCRIPT_KINDS
-        .iter()
-        .copied()
-        .find(|&k| k.eq_ignore_ascii_case(name))
+/// The script-name argument as the verbs' `lua_isstring` takes it: a string, or a number in its
+/// string form; `None` for anything else.
+fn script_name_arg(lua: &Lua, v: Option<&Value>) -> mlua::Result<Option<String>> {
+    match v {
+        Some(v @ (Value::String(_) | Value::Integer(_) | Value::Number(_))) => {
+            Ok(lua.coerce_string(v.clone())?.map(|s| s.to_string_lossy()))
+        }
+        _ => Ok(None),
+    }
 }
 
-fn get_script(lua: &Lua, this: &Table, name: &str) -> mlua::Result<Value> {
-    let Some(kind) = script_kind(lua, name) else {
-        return Ok(Value::Nil);
-    };
+/// The canonical spelling of script `name` on the receiver's widget type
+/// ([`crate::script::frame_script_kind`]); `None` for a name that type does not carry.
+fn script_kind(lua: &Lua, this: &Table, name: &str) -> mlua::Result<Option<&'static str>> {
+    let h = frame_handle_of(lua, this)?;
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model");
+    let kind = model
+        .arena
+        .frame(h)
+        .map_or(crate::widget::FrameKind::Frame, |f| f.kind);
+    Ok(crate::script::frame_script_kind(kind, name))
+}
+
+/// [`script_kind`], raising the reference's missing-script error on a name the type lacks.
+fn script_kind_or_raise(lua: &Lua, this: &Table, name: &str) -> mlua::Result<&'static str> {
+    script_kind(lua, this, name)?.ok_or_else(|| {
+        mlua::Error::runtime(format!(
+            "{} doesn't have a \"{name}\" script",
+            name_or_unnamed(this)
+        ))
+    })
+}
+
+fn get_script(lua: &Lua, this: &Table, kind: &'static str) -> mlua::Result<Value> {
     let id = decode_id(this)?;
     let scripts: Table = lua.named_registry_value(REG_SCRIPTS)?;
     match scripts.get::<Value>(id)? {

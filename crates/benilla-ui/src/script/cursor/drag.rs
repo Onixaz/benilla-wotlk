@@ -105,13 +105,13 @@ mod tests {
             drag_starts, drag_stops, receives = 0, 0, 0
             click_a, click_b = 0, 0
             drag_button = nil
-            local a = CreateFrame("Frame", "A")
+            local a = CreateFrame("Button", "A")
             a:SetPoint("BOTTOMLEFT", 0, 0); a:SetWidth(400); a:SetHeight(600); a:EnableMouse(true)
             a:RegisterForDrag("LeftButton")
             a:SetScript("OnDragStart", function(self, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) local self, button = this, arg1 drag_starts = drag_starts + 1; drag_button = button end)
             a:SetScript("OnDragStop", function() local self = this drag_stops = drag_stops + 1 end)
             a:SetScript("OnClick", function() local self = this click_a = click_a + 1 end)
-            local b = CreateFrame("Frame", "B")
+            local b = CreateFrame("Button", "B")
             b:SetPoint("BOTTOMLEFT", 400, 0); b:SetWidth(400); b:SetHeight(600); b:EnableMouse(true)
             b:SetScript("OnReceiveDrag", function() local self = this receives = receives + 1 end)
             b:SetScript("OnClick", function() local self = this click_b = click_b + 1 end)
@@ -162,12 +162,12 @@ mod tests {
 
     #[test]
     fn drag_release_on_the_source_still_suppresses_onclick() {
-        // A plain Frame fires OnClick on a same-frame release; a started drag suppresses it.
+        // A Button fires OnClick on a same-frame release; a started drag suppresses it.
         let mut s = drag_script();
         s.run(
             r#"
             clicks = 0
-            local a = CreateFrame("Frame", "A")
+            local a = CreateFrame("Button", "A")
             a:SetPoint("BOTTOMLEFT", 0, 0); a:SetWidth(400); a:SetHeight(600); a:EnableMouse(true)
             a:RegisterForDrag("LeftButton")
             a:SetScript("OnClick", function() local self = this clicks = clicks + 1 end)
@@ -189,7 +189,7 @@ mod tests {
         s.run(
             r#"
             clicks = 0
-            local a = CreateFrame("Frame", "A")
+            local a = CreateFrame("Button", "A")
             a:SetPoint("BOTTOMLEFT", 0, 0); a:SetWidth(400); a:SetHeight(600); a:EnableMouse(true)
             a:RegisterForDrag("LeftButton")
             a:SetScript("OnClick", function() local self = this clicks = clicks + 1 end)
@@ -216,7 +216,7 @@ mod tests {
         s.run(
             r#"
             heard = 0
-            local a = CreateFrame("Frame", "A")
+            local a = CreateFrame("Button", "A")
             a:SetPoint("BOTTOMLEFT", 0, 0); a:SetWidth(400); a:SetHeight(600); a:EnableMouse(true)
             a:RegisterForDrag("LeftButton")
             local f = CreateFrame("Frame", "Listener")
