@@ -305,11 +305,14 @@ fn a_scaled_world_tooltip_stays_on_the_cursor() {
         .unwrap();
     s.set_ui_scale(0.5);
     let anchor = "select(4, GameTooltip:GetPoint()), select(5, GameTooltip:GetPoint())";
-    assert!(s.minimap_tooltip("Stormwind", 400.0, 300.0, false));
+    s.mouse_move(400.0, 300.0);
+    assert!(s.minimap_tooltip("Stormwind", false));
+    s.resolve();
     let got = s.eval::<(f64, f64)>(&format!("return {anchor}")).unwrap();
     assert_eq!(got, (800.0, 600.0), "own units, doubled back at layout");
 
-    s.world_tooltip_move(500.0, 200.0);
+    s.mouse_move(500.0, 200.0);
+    s.resolve();
     let got = s.eval::<(f64, f64)>(&format!("return {anchor}")).unwrap();
     assert_eq!(got, (1000.0, 400.0));
 }

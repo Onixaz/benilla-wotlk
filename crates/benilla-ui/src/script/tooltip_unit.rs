@@ -9,11 +9,9 @@ use mlua::{Lua, Table};
 use super::object::frame_handle_of;
 use super::tooltip::{
     add_texture, append_line, clear_content, fire_cleared, set_owner_core, show_or_hide_empty,
-    tip_mut,
 };
 use super::unit::{is_civilian_kill, level_reads_unknown, unknownobject};
 use super::{KindState, UnitState};
-use crate::layout::{Anchor, Point};
 use crate::strings::{fill, Arg};
 use crate::widget::{FrameHandle, TooltipAnchor};
 
@@ -335,13 +333,6 @@ pub(super) fn on_unit_push(lua: &Lua, token: &str) {
     }
 }
 
-/// A root-unit cursor point over the tooltip's own scale, as the anchor offset multiplies it back
-/// (`0x61b2e0`).
-fn own_units(model: &super::Model, h: FrameHandle, (x, y): (f32, f32)) -> (f32, f32) {
-    let scale = super::object::layout_methods::eff_scale(model, h);
-    (x / scale, y / scale)
-}
-
 impl super::UiScript {
     /// Show the world-mouseover unit tooltip: fire `OnTooltipSetDefaultAnchor`, render `token`,
     /// fire `UPDATE_MOUSEOVER_UNIT`. Call on a hover-target change; a re-show mid-fade returns to
@@ -491,11 +482,11 @@ impl super::UiScript {
     }
 
     /// Show the minimap blip tooltip (an `AreaPOI` or quest-dot name): one gold line, faint gold
-    /// for a cross-interior dot, its bottom at the given UI point above the cursor.
-    /// [`Self::world_tooltip_move`] follows the pointer, and hover loss arms
-    /// [`Self::world_tooltip_fade`].
-    pub fn minimap_tooltip(&mut self, text: &str, ui_x: f32, ui_y: f32, grey: bool) -> bool {
-        let (h, id, root, root_id) = {
+    /// for a cross-interior dot, through the SetOwner core with `(Minimap, ANCHOR_CURSOR, 0, 0)`
+    /// (`0x57d181`), whose layer update follows the pointer. Hover loss is
+    /// [`Self::minimap_tooltip_hide`].
+    pub fn minimap_tooltip(&mut self, text: &str, grey: bool) -> bool {
+        let (h, id, owner) = {
             let mut model = self.model_mut();
             let Some(h) = model.arena.lookup("GameTooltip") else {
                 return false;
@@ -503,8 +494,8 @@ impl super::UiScript {
             let Some(root) = model.arena.lookup("UIParent") else {
                 return false;
             };
-            let (id, root_id) = (model.frame_id(h), model.frame_id(root));
-            (h, id, root, root_id)
+            let owner = model.arena.lookup("Minimap").unwrap_or(root);
+            (h, model.frame_id(h), owner)
         };
         let wrapper = match super::object::frame_wrapper(&self.lua, id) {
             Ok(w) => w,
@@ -513,29 +504,7 @@ impl super::UiScript {
                 return false;
             }
         };
-        {
-            let mut model = self.model_mut();
-            clear_content(&mut model, h);
-            // The owner, the Minimap's `SetOwner(this, ANCHOR_CURSOR)`: without one the show
-            // override (`0x61cff0`) hides the plate.
-            let owner = model.arena.lookup("Minimap").unwrap_or(root);
-            if let Ok(t) = tip_mut(&mut model, h) {
-                t.owner = Some(owner);
-            }
-            let (ui_x, ui_y) = own_units(&model, h, (ui_x, ui_y));
-            let input = model.layout_inputs.entry(h).or_default();
-            // Anchor only: the frame's own clamp flag (`Frame::clamped_to_screen`, G flags bit 4)
-            // slides a plate near the window edge back on screen.
-            let new = Anchor::new(Point::Bottom, root_id, Point::BottomLeft, ui_x, ui_y);
-            // Compare-then-touch, so a still cursor does not dirty the layout.
-            let same =
-                input.anchors.len() == 1 && super::object::anchor_bits_eq(&input.anchors[0], &new);
-            if !same {
-                input.anchors = vec![new];
-                model.touch_layout();
-            }
-        }
-        fire_cleared(&self.lua, h);
+        set_owner_core(&self.lua, h, Some(owner), TooltipAnchor::Cursor, (0.0, 0.0));
         // A cross-interior entry's `|cffb0b0b0` wrap modulates the gold: faint gold, not grey.
         let dim = 0xb0 as f32 / 255.0;
         let color = if grey {
@@ -552,34 +521,23 @@ impl super::UiScript {
         true
     }
 
-    /// Re-seat the shown world-owned tooltip at a new pointer point, anchor only; else a no-op.
-    pub fn world_tooltip_move(&mut self, ui_x: f32, ui_y: f32) {
-        let mut model = self.model_mut();
-        let Some(h) = model.arena.lookup("GameTooltip") else {
-            return;
+    /// The blip hover's loss: `Hide`, not a fade (`0x57d15e`); a no-op unless a world-owned plate
+    /// is shown.
+    pub fn minimap_tooltip_hide(&mut self) {
+        let h = {
+            let model = self.model_mut();
+            let Some(h) = model.arena.lookup("GameTooltip") else {
+                return;
+            };
+            let up = model.arena.frame(h).is_some_and(|f| {
+                f.shown && matches!(&f.kind_state, KindState::Tooltip(t) if t.world_owned)
+            });
+            if !up {
+                return;
+            }
+            h
         };
-        let Some(root) = model.arena.lookup("UIParent") else {
-            return;
-        };
-        let owned_shown = model
-            .arena
-            .frame(h)
-            .map(|f| matches!(&f.kind_state, KindState::Tooltip(t) if t.world_owned) && f.shown)
-            .unwrap_or(false);
-        if !owned_shown {
-            return;
-        }
-        let root_id = model.frame_id(root);
-        let (ui_x, ui_y) = own_units(&model, h, (ui_x, ui_y));
-        let input = model.layout_inputs.entry(h).or_default();
-        let new = Anchor::new(Point::Bottom, root_id, Point::BottomLeft, ui_x, ui_y);
-        // Compare-then-touch: this runs on every pointer event.
-        let same =
-            input.anchors.len() == 1 && super::object::anchor_bits_eq(&input.anchors[0], &new);
-        if !same {
-            input.anchors = vec![new];
-            model.touch_layout();
-        }
+        super::tooltip::hide_tooltip(&self.lua, h);
     }
 
     /// Whether `GameTooltip` is still the shown plate a world hover put up, with no Lua

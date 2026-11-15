@@ -795,11 +795,6 @@ fn emit_minimap(
             wx: (wx / q).round() * q,
             wy: (wy / q).round() * q,
             cursor,
-            // The cursor in root units (y-up, ÷ the seam scale): the tooltip anchor resolves in
-            // those, not window px.
-            cursor_ui: cursor
-                .zip(win)
-                .map(|(c, w)| Vec2::new(c.x / seam, (w.height() - c.y) / seam)),
             seam,
             turn,
         }
@@ -956,8 +951,8 @@ fn emit_minimap(
                     );
                 }
             }
-            if let (false, Some(ui)) = (hits.is_empty(), ctx.cursor_ui) {
-                hover = blips::MinimapBlipHover::Objects(hits, ui);
+            if !hits.is_empty() {
+                hover = blips::MinimapBlipHover::Objects(hits);
             }
         }
     }
