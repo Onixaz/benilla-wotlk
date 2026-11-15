@@ -23,7 +23,7 @@ pub(crate) use facing::{
     WalkEndFacing,
 };
 pub(crate) use modes::ROOT_APPLY_WIPE;
-pub(crate) use modes::{SwimFlyTransition, UnitMoveModes};
+pub(crate) use modes::{standing_bits, SwimFlyTransition, UnitMoveModes};
 pub(crate) use relay::{PendingMove, RelayMove};
 pub(crate) use remote::jump_seed;
 pub(crate) use remote::RemoteMotion;

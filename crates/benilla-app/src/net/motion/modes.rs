@@ -9,10 +9,23 @@ use crate::creature_anim::move_flags;
 /// feather-fall, hover, walk-mode and swim. The reference keeps one flags dword per unit
 /// (the movement object at unit `+0x9a8`, word `+0x40`); the granted half is kept apart from
 /// [`super::RemoteMotion::flags`] because the relay merge rewrites that word from every pose and a
-/// creature sends none. Absent means no modes; once inserted it lives as long as the entity, as the
-/// reference's word lives as long as the unit.
+/// creature sends none. A player with no relay state keeps its word here ([`standing_bits`]).
+/// Absent means no modes; once inserted it lives as long as the entity, as the reference's word
+/// lives as long as the unit.
 #[derive(Component, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct UnitMoveModes(pub(crate) u32);
+
+/// The input latches `0x8000..=0x10_0000` and spline-enabled `0x40_0000`, in the 1.12.1-bit word.
+const LATCHES_AND_SPLINE: u32 = 0x1f_8000 | 0x40_0000;
+
+/// A flags word without its motion bits: what a path leaves (`0x98c770` writes the direction).
+pub(crate) const fn standing_bits(flags: u32) -> u32 {
+    flags
+        & !(move_flags::INTEGRATED
+            | move_flags::FALLING_FAR
+            | LATCHES_AND_SPLINE
+            | move_flags::ON_TRANSPORT)
+}
 
 impl UnitMoveModes {
     /// `apply` is the bit's direction; the run/walk opcodes' inversion is folded at the parse
