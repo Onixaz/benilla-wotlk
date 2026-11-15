@@ -448,6 +448,27 @@ mod tests {
         assert_eq!(item.item_enchant(12), None);
     }
 
+    /// `PLAYER_EXPLORED_ZONES_1` is 128 words at wire 1041..=1168 (`PLAYER_EXPLORED_ZONES_SIZE`):
+    /// Crystalsong Forest, the Storm Peaks and Icecrown reveal through `exploreFlag` 2048 and up,
+    /// in words 64 and past, and rest XP follows at 1169.
+    #[test]
+    fn every_word_of_the_discovery_bitset_reaches_the_shared_space() {
+        let f = ObjectFields::from_wotlk(
+            wire(&[
+                (1041, 0x1),
+                (1041 + 64, 0x2),
+                (1168, 0x8000_0000),
+                (1169, 4_200),
+            ]),
+            ObjectType::Player,
+        );
+        assert_eq!(f.player_explored_zone_slot(0), 0x1);
+        assert_eq!(f.player_explored_zone_slot(64), 0x2);
+        assert_eq!(f.player_explored_zone_slot(127), 0x8000_0000);
+        assert_eq!(f.player_explored_zone_slot(128), 0);
+        assert_eq!(f.player_rest_state_experience(), Some(4_200));
+    }
+
     #[test]
     fn a_container_s_slots_and_a_corpse_s_owner_move_with_their_blocks() {
         let bag = ObjectFields::from_wotlk(wire(&[(64, 16), (66, 0x77)]), ObjectType::Container);

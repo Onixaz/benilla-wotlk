@@ -662,7 +662,8 @@ pub(super) fn seed_ui_fixture(
             // it at the scenario's Northshire spot.
             player.pos = benilla_assets::coords::wow_to_bevy(scenario.eye);
             // Alternating explore bits, so about half of each zone's overlays reveal.
-            script.set_world_map_explored(vec![0x5555_5555; 64]);
+            let words = usize::from(benilla_protocol::messages::PLAYER_EXPLORED_ZONES_SLOTS);
+            script.set_world_map_explored(vec![0x5555_5555; words]);
             // The Elwynn zone map: continent 2, zone 10 in the alphabetical zone list.
             if let Err(e) = script.run("ToggleWorldMap(); SetMapZoom(2, 10)") {
                 warn!("capture: ui-worldmap seed failed to open the map: {e}");

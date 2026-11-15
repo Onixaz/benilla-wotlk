@@ -358,7 +358,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 78,
         container: 152,
         unit: 188,
-        player: 1660,
+        player: 1788,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -501,6 +501,8 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         run(F::PlayerKnownCurrencies, Player, 1593, 2),
         run(F::PlayerCurrencyTokenSlots, Player, 1595, 64),
         one(F::PlayerOverrideSpellsId, Player, 1659),
+        // 3.3.5a's 128-word discovery bitset, which outgrew 1.12.1's 64.
+        run(F::PlayerExploredZones, Player, 1660, 128),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),
@@ -523,7 +525,6 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::PlayerParryPercentage, Player, 1108),
         one(F::PlayerCritPercentage, Player, 1109),
         one(F::PlayerRangedCritPercentage, Player, 1110),
-        run(F::PlayerExploredZones, Player, 1111, 64),
         one(F::PlayerRestStateExperience, Player, 1175),
         one(F::PlayerCoinage, Player, 1176),
         run(F::PosStat, Player, 1177, 5),
@@ -745,8 +746,7 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         run(F::PlayerSpellCritPercentage, Player, 1032, 7),
         // `+0xdec` (`GetShieldBlock` `0x60dff0`).
         one(F::PlayerShieldBlock, Player, 1039),
-        // 128 words; the shared space keeps the first 64.
-        run(F::PlayerExploredZones, Player, 1041, 64),
+        run(F::PlayerExploredZones, Player, 1041, 128),
         one(F::PlayerRestStateExperience, Player, 1169),
         one(F::PlayerCoinage, Player, 1170),
         run(F::PlayerModDamageDonePos, Player, 1171, 7),

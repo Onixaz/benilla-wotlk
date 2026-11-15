@@ -222,6 +222,11 @@ pub const FIELD_PLAYER_KNOWN_CURRENCIES: u16 = 1593;
 pub const FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1: u16 = 1595;
 /// 3.3.5a's `OverrideSpellData` id, `PLAYER_FIELD_BYTES2`'s low `i16`, past the currency slots.
 pub const FIELD_PLAYER_OVERRIDE_SPELLS_ID: u16 = 1659;
+/// 3.3.5a's `PLAYER_EXPLORED_ZONES_1`, the discovery bitset, 4096 bits indexed by `AreaTable.dbc`
+/// exploreFlag, past the 1.12.1 player end: Northrend's later zones use bits 2048 and up.
+const FIELD_PLAYER_EXPLORED_ZONES_1: u16 = 1660;
+/// The bitset's slot count (`Size: 128` in the server enum, `PLAYER_EXPLORED_ZONES_SIZE`).
+pub const PLAYER_EXPLORED_ZONES_SLOTS: u16 = 128;
 /// The known-titles bitmask's width in bits.
 pub const PLAYER_KNOWN_TITLE_BITS: u32 = 192;
 /// The currency-token slots, player slots 118..149.
@@ -321,15 +326,11 @@ const FIELD_PLAYER_WATCHED_FACTION_INDEX: u16 = 1261;
 // The rested pool in base kill-XP units: a kill drains it 1:1 while granting +100%
 // (`Player::GetXPRestBonus`), so the doubled span on the XP bar is twice this value.
 const FIELD_PLAYER_REST_STATE_EXPERIENCE: u16 = 1175;
-// EXPLORED_ZONES_1 is the discovery bitset, 2048 bits indexed by `AreaTable.dbc` exploreFlag. Just
-// below it sit block, dodge, parry and crit chance (FLOAT, UNIT_END + 0x396..0x399).
+// Block, dodge, parry and crit chance (FLOAT, UNIT_END + 0x396..0x399).
 const FIELD_PLAYER_BLOCK_PERCENTAGE: u16 = 1106;
 const FIELD_PLAYER_DODGE_PERCENTAGE: u16 = 1107;
 const FIELD_PLAYER_PARRY_PERCENTAGE: u16 = 1108;
 const FIELD_PLAYER_CRIT_PERCENTAGE: u16 = 1109;
-const FIELD_PLAYER_EXPLORED_ZONES_1: u16 = 1111;
-/// The bitset's slot count (`Size: 64` in the server enum).
-pub const PLAYER_EXPLORED_ZONES_SLOTS: u16 = 64;
 // PLAYER stat block. POSSTAT, NEGSTAT and the resistance buff mods are floats in vmangos but go out
 // as INT (`Object::BuildValuesUpdate` narrows them). Read them signed: the server's cast of a
 // negative float wraps on x86 and saturates to 0 on aarch64.
@@ -458,7 +459,7 @@ fn descriptor_len(object_type: ObjectType) -> u16 {
         ObjectType::Container => 152, // CONTAINER_END = ITEM_END + 0x4A
         ObjectType::Unit => 188,      // UNIT_END = OBJECT_END + 0xB6
         // 1.12.1's PLAYER_END (UNIT_END + 0x446), plus the 3.3.5a fields kept past it.
-        ObjectType::Player => 1660,
+        ObjectType::Player => 1788,
         ObjectType::GameObject => 26, // GAMEOBJECT_END = OBJECT_END + 0x14
         ObjectType::DynamicObject => 16, // DYNAMICOBJECT_END = OBJECT_END + 0xA
         ObjectType::Corpse => 38,     // CORPSE_END = OBJECT_END + 0x20

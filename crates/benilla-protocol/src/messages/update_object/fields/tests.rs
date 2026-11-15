@@ -33,10 +33,12 @@ fn combat_stat_indices_chain_to_the_tested_anchors() {
         FIELD_PLAYER_REST_STATE_EXPERIENCE + 1,
         FIELD_PLAYER_FIELD_COINAGE
     );
+    // The discovery bitset sits past the 1.12.1 player end, after the override spell id.
     assert_eq!(
-        FIELD_PLAYER_EXPLORED_ZONES_1 + PLAYER_EXPLORED_ZONES_SLOTS,
-        FIELD_PLAYER_REST_STATE_EXPERIENCE
+        FIELD_PLAYER_EXPLORED_ZONES_1,
+        FIELD_PLAYER_OVERRIDE_SPELLS_ID + 1
     );
+    assert_eq!(PLAYER_EXPLORED_ZONES_SLOTS, 128);
     // The stat block runs past COINAGE to AMMO_ID 1223; SELF_RES and PVP_MEDALS fill 1224-1225.
     assert_eq!(FIELD_PLAYER_POSSTAT0, FIELD_PLAYER_FIELD_COINAGE + 1);
     assert_eq!(FIELD_PLAYER_POSSTAT0, UNIT_END + 0x3DD);
