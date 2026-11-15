@@ -8,13 +8,14 @@ use mlua::{Lua, Table};
 
 use super::object::frame_handle_of;
 use super::tooltip::{
-    add_texture, append_line, clear_content, fire_cleared, show_or_hide_empty, tip_mut,
+    add_texture, append_line, clear_content, fire_cleared, set_owner_core, show_or_hide_empty,
+    tip_mut,
 };
 use super::unit::{is_civilian_kill, level_reads_unknown, unknownobject};
 use super::{KindState, UnitState};
 use crate::layout::{Anchor, Point};
 use crate::strings::{fill, Arg};
-use crate::widget::FrameHandle;
+use crate::widget::{FrameHandle, TooltipAnchor};
 
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
@@ -427,18 +428,17 @@ impl super::UiScript {
     }
 
     /// Show the world-mouseover GameObject tooltip: the name in gold, then the caller's lock lines.
-    /// The anchor forks on the object's `[vtbl+0x5c]`: true seats it at the cursor, anchor state 6
-    /// (the anchor set with `(owner, 6, 0, 0)`); false keeps the default corner, as units always
-    /// do. `cursor` is that verdict, and [`Self::world_tooltip_move`] follows a cursor-seated
-    /// plate. Hover loss arms the unit flow's fade, where the reference's loss path hides an
-    /// anchor-state-6 plate at once.
+    /// The mouseover change forks on the object's floating-tooltip test (`0x51f936`): `cursor`
+    /// takes the `SetOwner` core with `(UIParent, ANCHOR_CURSOR, 0, 0)` (`0x51f956`), whose layer
+    /// update then follows the pointer, else `OnTooltipSetDefaultAnchor` seats the corner
+    /// (`0x51f96c`). Hover loss is `FadeOut` ([`Self::world_tooltip_fade`]).
     pub fn world_tooltip_gameobject(
         &mut self,
         name: &str,
         lines: &[(String, TooltipTint)],
-        cursor: Option<(f32, f32)>,
+        cursor: bool,
     ) -> bool {
-        let (h, id, root, root_id) = {
+        let (h, id, root) = {
             let mut model = self.model_mut();
             let Some(h) = model.arena.lookup("GameTooltip") else {
                 return false;
@@ -446,42 +446,14 @@ impl super::UiScript {
             let Some(root) = model.arena.lookup("UIParent") else {
                 return false;
             };
-            let (id, root_id) = (model.frame_id(h), model.frame_id(root));
-            (h, id, root, root_id)
+            (h, model.frame_id(h), root)
         };
-        match cursor {
-            // The cursor arm: centred above the pointer; compare-then-touch, so a still pointer
-            // never re-layouts.
-            Some(cursor) => {
-                let mut model = self.model_mut();
-                let (ui_x, ui_y) = own_units(&model, h, cursor);
-                // The owner: this arm is the SetOwner core, which stores it at `+0x314`; the other
-                // arms get theirs from FrameXML's `OnTooltipSetDefaultAnchor`. Without one, any Lua
-                // `GameTooltip:Show()` hides the plate: the reference's show runs only when
-                // `+0x314` and `+0x31c` are both set, else it takes the hide.
-                if let Ok(t) = tip_mut(&mut model, h) {
-                    t.owner = Some(root);
-                }
-                let input = model.layout_inputs.entry(h).or_default();
-                let new = Anchor::new(Point::Bottom, root_id, Point::BottomLeft, ui_x, ui_y);
-                let same = input.anchors.len() == 1
-                    && super::object::anchor_bits_eq(&input.anchors[0], &new);
-                if !same {
-                    input.anchors = vec![new];
-                    model.touch_layout();
-                }
-            }
-            // The corner arm: the default-anchor handler the unit flow fires too.
-            None => {
-                if let Err(e) = super::event::fire_widget_handler(
-                    &self.lua,
-                    id,
-                    "OnTooltipSetDefaultAnchor",
-                    vec![],
-                ) {
-                    self.push_error(e);
-                }
-            }
+        if cursor {
+            set_owner_core(&self.lua, h, Some(root), TooltipAnchor::Cursor, (0.0, 0.0));
+        } else if let Err(e) =
+            super::event::fire_widget_handler(&self.lua, id, "OnTooltipSetDefaultAnchor", vec![])
+        {
+            self.push_error(e);
         }
         let wrapper = match super::object::frame_wrapper(&self.lua, id) {
             Ok(w) => w,
