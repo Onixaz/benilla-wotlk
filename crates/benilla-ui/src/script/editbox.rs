@@ -19,7 +19,7 @@
 //! [`paste`] in and `UiScript::editbox_copy` or `editbox_cut` out. The host's per-OS keymap sends
 //! editing keys as [`EditAction`]s ([`action`]).
 
-use mlua::{Lua, Table};
+use mlua::{Lua, Table, Value};
 
 use super::object::frame_handle_of;
 use super::types::{EditAction, EditUnit};
@@ -551,9 +551,28 @@ fn fire_script(lua: &Lua, id: u32, name: &str) {
 /// The caret width `OnCursorChanged` reports: 4.0 UI units on every raster.
 const CARET_WIDTH: f32 = 4.0;
 
+/// Register the EditBox methods and the global keyboard-focus query.
+pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+    methods::install(lua)?;
+    lua.globals().set(
+        "GetCurrentKeyBoardFocus",
+        lua.create_function(|lua, ()| {
+            let id = {
+                let mut model = crate::script::model_mut_of(lua);
+                let Some(h) = model.focused_editbox else {
+                    return Ok(Value::Nil);
+                };
+                // The reference registers the focused frame's script object on first query.
+                model.frame_id(h)
+            };
+            Ok(Value::Table(crate::script::object::frame_wrapper(lua, id)?))
+        })?,
+    )?;
+    Ok(())
+}
+
 // The EditBox Lua methods, consulted before the shared frame table for EditBox frames.
 mod methods;
-pub(super) use methods::install;
 
 #[cfg(test)]
 mod flush_tests;

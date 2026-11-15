@@ -358,6 +358,16 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
+    // The flag readers return 1 or nil, reading the same four bits as their setters.
+    for (name, get) in flag_getters() {
+        m.set(
+            name,
+            lua.create_function(move |lua, this: Table| {
+                with_editbox(lua, &this, |eb| crate::script::binding_abi::flag(get(eb)))
+            })?,
+        )?;
+    }
+
     install_font_block(lua, &m)?;
 
     lua.set_named_registry_value(REG_EDITBOX_METHODS, m)?;
@@ -428,5 +438,17 @@ fn flag_setters() -> [FlagSetter; 4] {
         ("SetNumeric", |eb, on| eb.numeric = on),
         ("SetPassword", |eb, on| eb.password = on),
         ("SetMultiLine", |eb, on| eb.multi_line = on),
+    ]
+}
+
+/// The four flag readers paired with the setters; false is nil in the 3.3.5a UI ABI.
+type FlagGetter = (&'static str, fn(&EditBoxState) -> bool);
+
+fn flag_getters() -> [FlagGetter; 4] {
+    [
+        ("IsAutoFocus", |eb| eb.auto_focus),
+        ("IsMultiLine", |eb| eb.multi_line),
+        ("IsNumeric", |eb| eb.numeric),
+        ("IsPassword", |eb| eb.password),
     ]
 }

@@ -6,6 +6,38 @@ fn script() -> UiScript {
     UiScript::new().expect("construct UiScript")
 }
 
+/// 12340 exposes the current focus global and EditBox flag readers beside the setters.
+#[test]
+fn focus_and_flag_getters_follow_the_editbox_state() {
+    let s = script();
+    s.run(
+        r#"
+        E = CreateFrame("EditBox", "E")
+        assert(GetCurrentKeyBoardFocus() == nil)
+        assert(E:IsAutoFocus() == 1)
+        assert(E:IsMultiLine() == nil)
+        assert(E:IsNumeric() == nil)
+        assert(E:IsPassword() == nil)
+
+        E:SetAutoFocus(false)
+        E:SetMultiLine(true)
+        E:SetNumeric(true)
+        E:SetPassword(true)
+        assert(E:IsAutoFocus() == nil)
+        assert(E:IsMultiLine() == 1)
+        assert(E:IsNumeric() == 1)
+        assert(E:IsPassword() == 1)
+
+        E:SetFocus()
+        assert(GetCurrentKeyBoardFocus() == E)
+        E:Hide()
+        assert(GetCurrentKeyBoardFocus() == nil)
+        "#,
+    )
+    .unwrap();
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
 /// UP and DOWN, which recall history in a single-line box.
 const UP: EditAction = EditAction::Move {
     unit: EditUnit::Row,
