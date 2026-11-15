@@ -6,6 +6,85 @@ fn script() -> UiScript {
     UiScript::new().expect("construct UiScript")
 }
 
+/// `GetCurrentKeyBoardFocus` (`0x81b820`) answers the focused box or nil, and each flag reader
+/// answers 1 or nil from the bit its setter writes.
+#[test]
+fn focus_and_flag_getters_follow_the_editbox_state() {
+    let s = script();
+    s.run(
+        r#"
+        E = CreateFrame("EditBox", "E")
+        assert(GetCurrentKeyBoardFocus() == nil)
+        assert(E:IsAutoFocus() == 1)
+        assert(E:IsCountInvisibleLetters() == nil)
+        assert(E:IsMultiLine() == nil)
+        assert(E:IsNumeric() == nil)
+        assert(E:IsPassword() == nil)
+
+        E:SetAutoFocus(false)
+        E:SetCountInvisibleLetters(true)
+        E:SetMultiLine(true)
+        E:SetNumeric(true)
+        E:SetPassword(true)
+        assert(E:IsAutoFocus() == nil)
+        assert(E:IsCountInvisibleLetters() == 1)
+        assert(E:IsMultiLine() == 1)
+        assert(E:IsNumeric() == 1)
+        assert(E:IsPassword() == 1)
+
+        E:SetCountInvisibleLetters(false)
+        E:SetMultiLine(false)
+        E:SetNumeric(false)
+        E:SetPassword(false)
+        assert(E:IsCountInvisibleLetters() == nil)
+        assert(E:IsMultiLine() == nil)
+        assert(E:IsNumeric() == nil)
+        assert(E:IsPassword() == nil)
+
+        E:SetFocus()
+        assert(GetCurrentKeyBoardFocus() == E)
+        E:ClearFocus()
+        assert(GetCurrentKeyBoardFocus() == nil)
+        E:SetFocus()
+        assert(GetCurrentKeyBoardFocus() == E)
+        E:Hide()
+        assert(GetCurrentKeyBoardFocus() == nil)
+        "#,
+    )
+    .unwrap();
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
+/// The flag setters read a boolean with default 1 (`0x975b60`), not Lua truthiness: no argument
+/// enables, nil and 0 disable, `"0"` disables.
+#[test]
+fn flag_setters_read_a_boolean_with_default_on() {
+    let s = script();
+    s.run(
+        r#"
+        E = CreateFrame("EditBox", "E")
+        E:SetMultiLine()
+        assert(E:IsMultiLine() == 1)
+        E:SetMultiLine(0)
+        assert(E:IsMultiLine() == nil)
+        E:SetPassword("1")
+        assert(E:IsPassword() == 1)
+        E:SetPassword("0")
+        assert(E:IsPassword() == nil)
+        E:SetNumeric(1)
+        assert(E:IsNumeric() == 1)
+        E:SetNumeric(nil)
+        assert(E:IsNumeric() == nil)
+        E:SetCountInvisibleLetters()
+        assert(E:IsCountInvisibleLetters() == 1)
+        E:SetAutoFocus(0)
+        assert(E:IsAutoFocus() == nil)
+        "#,
+    )
+    .unwrap();
+    assert!(s.errors().is_empty(), "{:?}", s.errors());
+}
+
 /// UP and DOWN, which recall history in a single-line box.
 const UP: EditAction = EditAction::Move {
     unit: EditUnit::Row,
@@ -631,7 +710,7 @@ fn multiline_enter_with_a_script_runs_it_and_inserts_nothing() {
 }
 
 /// The method table has `SetAltArrowKeyMode`/`GetAltArrowKeyMode` at 46/47 and no
-/// `SetIgnoreArrows`; the XML `ignoreArrows` is the same flag (`[E+0x318] & 0x10`). The gate is on
+/// `SetIgnoreArrows`; the XML `ignoreArrows` is the same flag (`[E+0x2a0] & 0x10`). The gate is on
 /// the key, in the host (`UiKeyboardCapture::arrows_fall_through`), so an `EditAction` that arrives
 /// here acts whatever the flag says.
 #[test]
@@ -648,7 +727,7 @@ fn alt_arrow_key_mode_is_the_flag_and_the_engine_core_no_longer_swallows_moves()
 
     assert!(
         s.eval::<bool>("return E.SetIgnoreArrows == nil").unwrap(),
-        "5875 has no SetIgnoreArrows — an EditBox must not publish it"
+        "12340 has no SetIgnoreArrows — an EditBox must not publish it"
     );
 
     assert_eq!(
@@ -1541,6 +1620,40 @@ fn max_letters_counts_visible_letters_not_escape_bytes() {
     // 43 bytes, but "[Ironfoe]" is 9 letters, under the 20-letter cap.
     assert_eq!(text_of(&s), LINK);
     assert_eq!(s.eval::<i64>("return E:GetNumLetters()").unwrap(), 9);
+}
+
+/// `countInvisibleLetters` counts every character of the raw text (`0x9766cc`), so the same link
+/// is 43 letters to `GetNumLetters` and to the `maxLetters` cap.
+#[test]
+fn count_invisible_letters_counts_escape_bytes() {
+    let s = script();
+    s.run(r#"E = CreateFrame("EditBox", "E"); E:SetFocus(); E:SetCountInvisibleLetters(true)"#)
+        .unwrap();
+    s.run(&format!("E:Insert(\"{LINK}\")")).unwrap();
+    assert_eq!(s.eval::<i64>("return E:GetNumLetters()").unwrap(), 43);
+    s.run(r#"E:SetText("aé")"#).unwrap();
+    assert_eq!(
+        s.eval::<i64>("return E:GetNumLetters()").unwrap(),
+        2,
+        "characters, not bytes"
+    );
+
+    // Over a 20-letter cap the link goes whole, one Backspace step.
+    s.run(r#"E:SetText(""); E:SetMaxLetters(20)"#).unwrap();
+    s.run(&format!("E:Insert(\"{LINK}\")")).unwrap();
+    assert_eq!(text_of(&s), "");
+}
+
+/// A pass over the cap deletes as many Backspace steps as there are excess letters
+/// (`0x965ba3`): three over with a link at the end sheds the link and two letters before it.
+#[test]
+fn max_letters_deletes_the_excess_in_steps() {
+    let s = script();
+    s.run(r#"E = CreateFrame("EditBox", "E"); E:SetFocus(); E:SetMaxLetters(9)"#)
+        .unwrap();
+    // "abc" + "[Ironfoe]" is 12 letters, 3 over.
+    s.run(&format!("E:Insert(\"abc{LINK}\")")).unwrap();
+    assert_eq!(text_of(&s), "a");
 }
 
 /// A box born visible has had no show transition, so the OnShow focus never runs for it; if it

@@ -288,7 +288,7 @@ impl Loader<'_> {
 
     /// `<EditBox>`. An absent flag keeps the ctor's, where `autoFocus` is on and the rest off, so
     /// flags are read presence-aware: `autoFocus="false"` clears. The reference also skips an empty
-    /// `autoFocus`, which clears here. `blinkSpeed` is the caret half-period (`E+0x370`).
+    /// `autoFocus`, which clears here. `blinkSpeed` is the caret half-period (`E+0x2f8`).
     pub(super) fn apply_editbox(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         if !el.tag.eq_ignore_ascii_case("EditBox") {
             return;
@@ -323,6 +323,7 @@ impl Loader<'_> {
         }
         for (attr, method) in [
             ("autoFocus", "SetAutoFocus"),
+            ("countInvisibleLetters", "SetCountInvisibleLetters"),
             ("numeric", "SetNumeric"),
             ("password", "SetPassword"),
             ("multiLine", "SetMultiLine"),

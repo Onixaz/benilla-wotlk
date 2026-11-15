@@ -67,7 +67,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "GetAllowLowLevelRaid",
     "GetCVarInfo",
     "GetCoinTextureString",
-    "GetCurrentKeyBoardFocus",
     "GetEventCPUUsage",
     "GetFrameCPUUsage",
     "GetFramesRegisteredForEvent",

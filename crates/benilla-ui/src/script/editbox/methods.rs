@@ -306,17 +306,15 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     // GetNumLetters: the class array's letters, classes 2, 3 and 6 only, so escapes are free and a
-    // 43-byte item link counts 9.
+    // 43-byte item link counts 9; with `countInvisibleLetters` it counts all 43.
     m.set(
         "GetNumLetters",
         lua.create_function(|lua, this: Table| {
-            with_editbox(lua, &this, |eb| {
-                crate::markup::ClassMap::new(&eb.text).num_letters() as i64
-            })
+            with_editbox(lua, &this, |eb| eb.num_letters() as i64)
         })?,
     )?;
 
-    // The XML's fifth flag, `ignoreArrows`, is `SetAltArrowKeyMode` in Lua; 1.12 has no
+    // The XML's fifth flag, `ignoreArrows`, is `SetAltArrowKeyMode` in Lua; 12340 has no
     // `SetIgnoreArrows`.
     //
     // SetAltArrowKeyMode reads its argument as a boolean with default 1: no argument enables, nil
@@ -340,12 +338,15 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // The flag setters read their argument as SetAltArrowKeyMode does, a boolean with default 1
+    // (`0x975b60`): `SetMultiLine()` enables, `SetMultiLine(0)` disables.
     for (name, set) in flag_setters() {
         let refresh_text = name == "SetMultiLine";
         m.set(
             name,
-            lua.create_function(move |lua, (this, v): (Table, Value)| {
-                let on = !matches!(v, Value::Nil | Value::Boolean(false));
+            lua.create_function(move |lua, (this, args): (Table, mlua::MultiValue)| {
+                let args: Vec<Value> = args.into_iter().collect();
+                let on = crate::script::binding_abi::bool_or_default(args.first(), true);
                 with_editbox(lua, &this, |eb| set(eb, on))?;
                 if refresh_text {
                     // A multi-line box seats its text TOP and as tall as the text, a single-line
@@ -354,6 +355,16 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                     super::refresh_text_region(lua, &this)?;
                 }
                 Ok(())
+            })?,
+        )?;
+    }
+
+    // The flag readers return 1 or nil, reading the same five bits as their setters.
+    for (name, get) in flag_getters() {
+        m.set(
+            name,
+            lua.create_function(move |lua, this: Table| {
+                with_editbox(lua, &this, |eb| crate::script::binding_abi::flag(get(eb)))
             })?,
         )?;
     }
@@ -370,7 +381,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
 /// The justify four (#12-#15) act on the box's own [`EditBoxState::justify`] word, not its text
 /// region.
 fn install_font_block(lua: &Lua, m: &Table) -> mlua::Result<()> {
-    // Every font method acts on the box's implicit FontString (`[this+0x324]`, our
+    // Every font method acts on the box's implicit FontString (`E+0x2b0`, our
     // `text_region`), created on demand.
     let resolve: crate::script::font_block::ResolveRegion = |lua, this| {
         let h = frame_handle_of(lua, this)?;
@@ -421,12 +432,28 @@ fn install_font_block(lua: &Lua, m: &Table) -> mlua::Result<()> {
 /// A `Set<Flag>` method name and the field write it drives.
 type FlagSetter = (&'static str, fn(&mut EditBoxState, bool));
 
-/// The four config-flag setters, each taking Lua truthiness.
-fn flag_setters() -> [FlagSetter; 4] {
+/// The five config-flag setters.
+fn flag_setters() -> [FlagSetter; 5] {
     [
         ("SetAutoFocus", |eb, on| eb.auto_focus = on),
+        ("SetCountInvisibleLetters", |eb, on| {
+            eb.count_invisible_letters = on
+        }),
         ("SetNumeric", |eb, on| eb.numeric = on),
         ("SetPassword", |eb, on| eb.password = on),
         ("SetMultiLine", |eb, on| eb.multi_line = on),
+    ]
+}
+
+/// The five flag readers paired with the setters; false is nil in the 3.3.5a UI ABI.
+type FlagGetter = (&'static str, fn(&EditBoxState) -> bool);
+
+fn flag_getters() -> [FlagGetter; 5] {
+    [
+        ("IsAutoFocus", |eb| eb.auto_focus),
+        ("IsCountInvisibleLetters", |eb| eb.count_invisible_letters),
+        ("IsMultiLine", |eb| eb.multi_line),
+        ("IsNumeric", |eb| eb.numeric),
+        ("IsPassword", |eb| eb.password),
     ]
 }

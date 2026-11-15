@@ -694,8 +694,8 @@ impl WidgetArena {
     }
 
     /// Build the five regions the edit box constructor gives every EditBox, in its order: the text
-    /// FontString `E+0x328` (`(E, 2, 1)`), three selection quads `E+0x350/0x354/0x358`
-    /// (`(E, 2, 0)`) and the caret `E+0x368` (`(E, 3, 1)`). `GetRegions` lists them first, hidden
+    /// FontString `E+0x2b0` (`(E, 2, 1)`), three selection quads `E+0x2d8/0x2dc/0x2e0`
+    /// (`(E, 2, 0)`) and the caret `E+0x2f0` (`(E, 3, 1)`). `GetRegions` lists them first, hidden
     /// or not, so authored `<Layers>` regions start at index 6. The quads carry no texture: caret
     /// and selection paint host-side.
     fn build_editbox_engine_regions(&mut self, eb: FrameHandle) {

@@ -1,7 +1,7 @@
 //! The inline text markup (`|cAARRGGBB`, `|r`, `|H…|h…|h`, `|T…|t`, `|n`, `||`) and the edit box's
 //! cursor law over it, one grammar for the renderer and the edit box. It transcribes the token
 //! decoder ([`token_at`], `0x6bd5a0`), the embedded texture's spec parser ([`TextureSpec`],
-//! `0x6c0e80`) and the edit box's per-byte class array `E+0x330`, rebuilt by the reference after
+//! `0x6c0e80`) and the edit box's per-byte class array `E+0x2b8`, rebuilt by the reference after
 //! every edit, with the primitives that read it ([`ClassMap`]).
 //!
 //! The decoder's flags word can disable classes (`0x100` colours, `0x1000` textures), but no
@@ -422,7 +422,7 @@ impl<'a> Iterator for Tokens<'a> {
     }
 }
 
-// ── Layer 2: the per-byte class map (`E+0x330`) ─────────────────────────
+// ── Layer 2: the per-byte class map (`E+0x2b8`) ─────────────────────────
 
 /// One class-map entry, the client's dword unpacked: byte length in bits 0..15, class in 16..23,
 /// "inside a hyperlink" in bit 31. Only a token's first byte is stored; continuation bytes and the
@@ -463,7 +463,7 @@ impl Entry {
     }
 }
 
-/// The edit box's per-byte class array (`E+0x330`) and the cursor primitives over it: one entry per
+/// The edit box's per-byte class array (`E+0x2b8`) and the cursor primitives over it: one entry per
 /// byte plus a zero terminator. It holds no text; the edit box rebuilds it after every edit, as the
 /// client rebuilds it at the end of each insert.
 #[derive(Clone, PartialEq, Eq, Debug)]
