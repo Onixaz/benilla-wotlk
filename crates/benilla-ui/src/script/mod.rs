@@ -608,9 +608,9 @@ pub(crate) const FONTSTRING_ONLY_METHODS: [&str; 24] = [
     "GetSpacing",
 ];
 
-/// The Region method map: the names every region leaf reaches on a miss, 3.3.5a's `SetSize` and
-/// `GetSize` (`0x49d7a0`, `0x49d6f0`, registrar `0xac1480`) among them.
-pub(crate) const REGION_MAP_METHODS: [&str; 26] = [
+/// The Region method map: the names every region leaf reaches on a miss, 3.3.5a's `SetSize`,
+/// `GetSize` and `GetRect` (`0x49d7a0`, `0x49d6f0`, `0x49ce50`, registrar `0xac1480`) among them.
+pub(crate) const REGION_MAP_METHODS: [&str; 27] = [
     "IsProtected",
     "CanChangeProtectedState",
     "GetObjectType",
@@ -619,6 +619,7 @@ pub(crate) const REGION_MAP_METHODS: [&str; 26] = [
     "GetParent",
     "SetParent",
     "GetCenter",
+    "GetRect",
     "GetLeft",
     "GetRight",
     "GetTop",

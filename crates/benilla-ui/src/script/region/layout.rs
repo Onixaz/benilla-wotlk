@@ -112,6 +112,25 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?;
     }
 
+    // GetRect() (`0x49ce50`): left, bottom, width, height in the owner's units; nothing for a
+    // region never resolved.
+    set_shared(lua, m, Side::Region, "GetRect", |lua, this: Table| {
+        let rh = region_handle_of(lua, &this)?;
+        crate::script::object::layout_methods::settle(lua);
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
+        let inv = 1.0 / owner_scale(&model, rh);
+        Ok(match model.region_resolved.get(&rh) {
+            Some(r) => mlua::MultiValue::from_vec(
+                [r.left, r.bottom, r.right - r.left, r.top - r.bottom]
+                    .map(|v| mlua::Value::Number(f64::from(v * inv)))
+                    .to_vec(),
+            ),
+            None => mlua::MultiValue::new(),
+        })
+    })?;
+
     // SetPoint, ClearAllPoints and SetAllPoints write the region's anchors. `relativeTo` defaults
     // to the owner frame, and a named one may be a frame or a sibling region, as stock XML uses.
     set_shared(

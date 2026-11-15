@@ -281,6 +281,25 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?;
     }
 
+    // GetRect() (`0x49ce50`): left, bottom, width, height in the frame's own units; nothing
+    // before the first resolve.
+    set_shared(lua, m, Side::Frame, "GetRect", |lua, this: Table| {
+        let h = frame_handle_of(lua, &this)?;
+        settle(lua);
+        let model = lua
+            .app_data_ref::<crate::script::ModelCell>()
+            .expect("model");
+        let inv = 1.0 / eff_scale(&model, h);
+        Ok(match model.resolved.get(&h) {
+            Some(r) => MultiValue::from_vec(
+                [r.left, r.bottom, r.right - r.left, r.top - r.bottom]
+                    .map(|v| Value::Number(f64::from(v * inv)))
+                    .to_vec(),
+            ),
+            None => MultiValue::new(),
+        })
+    })?;
+
     // GetBoundsRect() (`0x49e700`): left, bottom, width, height of the union of the frame's rect,
     // its shown regions' and its shown children's, walked down (`0x4913c0`); nothing when empty.
     set_shared(lua, m, Side::Frame, "GetBoundsRect", |lua, this: Table| {

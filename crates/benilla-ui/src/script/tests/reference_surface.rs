@@ -914,7 +914,7 @@ fn get_inventory_slot_info_folds_case_and_flags_only_the_ranged_slot() {
 #[test]
 fn every_region_map_method_is_callable_on_a_texture_and_a_fontstring() {
     /// All of them, `GetObjectType`/`IsObjectType` among them.
-    const REGION_MAP: [&str; 26] = crate::script::REGION_MAP_METHODS;
+    const REGION_MAP: [&str; 27] = crate::script::REGION_MAP_METHODS;
     let mut s = crate::script::UiScript::new().unwrap();
     s.set_screen_size(800.0, 600.0);
     s.run(
@@ -981,6 +981,17 @@ fn the_region_map_readers_answer_the_way_the_edges_do() {
         .eval("return RRPlate:GetLeft(), RRPlate:GetRight(), RRPlate:GetTop(), RRPlate:GetBottom()")
         .unwrap();
     assert_eq!((cx, cy), ((l + r) * 0.5, (t + b) * 0.5));
+    // GetRect (`0x49ce50`) is left, bottom, width, height, on a region and on its frame.
+    let rect: (f64, f64, f64, f64) = s.eval("return RRPlate:GetRect()").unwrap();
+    assert_eq!(rect, (l, b, r - l, t - b));
+    let frame: (f64, f64, f64, f64) = s.eval("return RRFrame:GetRect()").unwrap();
+    assert_eq!(frame, (100.0, 200.0, 200.0, 100.0));
+    assert_eq!(
+        s.eval::<i64>("return select('#', CreateFrame('Frame'):GetRect())")
+            .unwrap(),
+        0,
+        "an unresolved frame answers nothing"
+    );
 
     assert_eq!(s.eval::<i64>("return RRPlate:GetNumPoints()").unwrap(), 1);
     assert_eq!(
