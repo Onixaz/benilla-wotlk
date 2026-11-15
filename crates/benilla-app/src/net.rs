@@ -1187,6 +1187,8 @@ pub(crate) enum ClientCommand {
         counter: u32,
         client_ms: u32,
     },
+    /// `CMSG_WARDEN_DATA`: every Warden reply the world read queued, sealed in order.
+    WardenReplies,
     /// `CMSG_SET_ACTIVE_MOVER`: at our own player's create and on possession; the server drops
     /// `MSG_MOVE_*` for an unconfirmed mover.
     SetActiveMover {

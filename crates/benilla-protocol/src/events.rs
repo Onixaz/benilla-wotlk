@@ -175,7 +175,7 @@ pub enum SessionEvent {
         realm: Option<String>,
     },
     /// A login failed before the roster; `refusal` is `None` for a transport failure. A `terminal`
-    /// one ([`crate::WardenRequired`]) no retry can fix: show `reason` and stop.
+    /// one ([`crate::WardenRefused`]) no retry can fix: show `reason` and stop.
     LoginFailed {
         refusal: Option<LoginRefusal>,
         reason: String,
@@ -1271,6 +1271,12 @@ pub enum SessionEvent {
     ItemPushResult(ItemPushResult),
     /// The keepalive echo (`SMSG_PONG`) of a 30 s `CMSG_PING`, matched by `sequence`.
     Pong { sequence: u32 },
+    /// A Warden check's Lua chunk, for the bound script executor (`0x819210`) to run in the UI's
+    /// state as secure code. Emitted by the IO thread, never wire-decoded.
+    WardenScript { chunk: String },
+    /// Warden data off the world stream queued replies: the writer sends them, after any
+    /// [`Self::WardenScript`] ahead of this. Emitted by the IO thread, never wire-decoded.
+    WardenReplies,
     /// Our speed changed (`SMSG_FORCE_*_SPEED_CHANGE`): ack `counter`, the exact `speed` and a live
     /// `MovementInfo`, or vmangos flags anticheat in about 4 s (`CheckPendingMovementChanges`).
     ForceSpeedChange {

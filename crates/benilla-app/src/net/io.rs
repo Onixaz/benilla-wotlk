@@ -25,7 +25,7 @@ use anyhow::{anyhow, Result};
 use benilla_assets::LockRecover;
 use benilla_protocol::{
     messages, AuthReject, CharAction, LoginStage, Poll, RosterCause, SessionEnd, SessionEvent,
-    WardenRequired, WorldReader, WorldSession, WorldWriter,
+    WardenRefused, WorldReader, WorldSession, WorldWriter,
 };
 use crossbeam_channel::{Receiver, Sender};
 
@@ -198,7 +198,7 @@ enum Parked {
     Acted(CharAction, u8),
     /// `CMSG_CHAR_ENUM` was serviced in place; the roster is re-emitted, with no result.
     Listed,
-    /// The server refused the roster to a client without Warden: the login fails for good.
+    /// A Warden exchange benilla cannot answer ended the roster: the login fails for good.
     Refused(String),
     /// Stay parked: a realm-list refresh, or a Cancel over this screen.
     StayPut,
@@ -266,6 +266,8 @@ pub(super) fn spawn_net(connect: bool) -> NetHandles {
     let login_abandon = Arc::new(AtomicU64::new(0));
     let ping_clock = Arc::new(Mutex::new(PingClock::default()));
     if connect {
+        // Warden's checks read the install through the app's host from the first connect on.
+        crate::warden::install_host();
         // The writer thread outlives connections; the read thread hands it each world entry's
         // WorldWriter and takes it back after a logout.
         let (writer_tx, writer_rx) = crossbeam_channel::unbounded::<WriterSwap>();
@@ -692,8 +694,8 @@ fn world(
                 if canceled() {
                     return Ok(WorldEnd::Failed);
                 }
-                // A Warden refusal is the server's answer, not a transport fault.
-                if let Some(w) = e.downcast_ref::<WardenRequired>() {
+                // A Warden exchange benilla cannot answer is final, not a transport fault.
+                if let Some(w) = e.downcast_ref::<WardenRefused>() {
                     return fail_terminal(w.to_string());
                 }
                 // The world server's refusal code, for the screen's `AUTH_*` string.
@@ -730,7 +732,7 @@ fn world(
                     if canceled() {
                         return Ok(WorldEnd::Failed);
                     }
-                    if let Some(w) = e.downcast_ref::<WardenRequired>() {
+                    if let Some(w) = e.downcast_ref::<WardenRefused>() {
                         return fail_terminal(w.to_string());
                     }
                     return fail(None, format!("character roster: {e:#}"));
@@ -873,7 +875,7 @@ fn world(
                                 characters = c;
                                 Parked::Listed
                             }
-                            Err(e) => match e.downcast_ref::<WardenRequired>() {
+                            Err(e) => match e.downcast_ref::<WardenRefused>() {
                                 Some(w) => Parked::Refused(w.to_string()),
                                 // The stream failed under the ask: the screen's query fails, and
                                 // the session ends as a dropped socket does.
@@ -1042,7 +1044,7 @@ fn world(
             if !asks {
                 characters = match session.char_enum() {
                     Ok(c) => c,
-                    Err(e) => match e.downcast_ref::<WardenRequired>() {
+                    Err(e) => match e.downcast_ref::<WardenRefused>() {
                         Some(w) => return fail_terminal(w.to_string()),
                         None => return Err(e),
                     },
@@ -1368,6 +1370,7 @@ pub(super) fn writer_loop(
                     ClientCommand::TimeSyncResp { counter, client_ms } => {
                         w.time_sync_resp(counter, client_ms)
                     }
+                    ClientCommand::WardenReplies => w.warden_replies(),
                     ClientCommand::ForceSpeedAck {
                         kind,
                         guid,

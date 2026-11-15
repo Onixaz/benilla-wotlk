@@ -5,6 +5,8 @@ pub mod auth;
 pub mod events;
 pub mod guid;
 pub mod messages;
+/// Warden's exchange, fed where the session reads ([`world`]).
+pub use benilla_warden as warden;
 pub mod wire;
 pub mod world;
 pub use auth::{AuthReject, LogonReply};
@@ -20,9 +22,10 @@ pub use messages::{
     CHARACTER_FLAG_GHOST, CHARACTER_FLAG_HIDE_CLOAK, CHARACTER_FLAG_HIDE_HELM,
     CHARACTER_FLAG_RENAME,
 };
+pub use warden::WardenRefused;
 pub use world::{
-    client_uptime_ms, observe_sends, SendObserver, Unparsed, WardenRequired, WorldAuthReject,
-    WorldConnectEvent, WorldReader, WorldSession, WorldWriter, WORLD_PORT,
+    client_uptime_ms, observe_sends, SendObserver, Unparsed, WorldAuthReject, WorldConnectEvent,
+    WorldReader, WorldSession, WorldWriter, WORLD_PORT,
 };
 
 use std::net::TcpStream;

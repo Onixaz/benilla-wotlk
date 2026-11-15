@@ -626,6 +626,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "benilla-srp",
+ "benilla-warden",
  "clap",
  "flate2",
  "num-bigint",
@@ -657,6 +658,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "image",
+]
+
+[[package]]
+name = "benilla-warden"
+version = "0.1.0"
+dependencies = [
+ "benilla-srp",
+ "md-5",
+ "sha1",
 ]
 
 [[package]]

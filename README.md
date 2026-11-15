@@ -116,6 +116,7 @@ not the one to play on. It also finds a `WoW` link at the repository root. See
 | Setting | Purpose |
 | --- | --- |
 | `WOW_DATA` | Path to the installation's `Data` directory. |
+| `WOW_INSTALL` | Path to the installation itself, the folder `Wow.exe` and `Data` sit in; its `Data` is used when `WOW_DATA` is not set. A server running Warden reads its memory checks' answers from that `Wow.exe`; defaults to the folder `WOW_DATA` sits in. |
 | `WOW_HOST` | Authentication endpoint; defaults to `localhost:3724`. A hostname or `host:port` is accepted. |
 | `WOW_USER` and `WOW_PASS` | Optional credentials for automatic login. Set both or use the login screen. |
 | `WOW_CHAR` | Optional character name for automatic selection. |

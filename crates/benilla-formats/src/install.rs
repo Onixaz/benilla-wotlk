@@ -1,13 +1,18 @@
-//! Where the WoW install is: the one resolver for the `Data` folder. The first candidate that
-//! exists wins:
+//! Where the WoW install is: the one resolver for the `Data` folder and the install root around
+//! it. The first `Data` candidate that exists wins:
 //!
 //! 1. `$WOW_DATA`. Set and empty (`WOW_DATA=`) means no install and ends the search, so the
 //!    no-install path runs on a machine that has one.
-//! 2. `<project folder>/WoW/Data`, `dev` builds only ([`project_folder`]).
-//! 3. `<exe dir>/Data`, then `<exe dir>/WoW/Data`, the release layouts.
+//! 2. `$WOW_INSTALL/Data`. Set and empty (`WOW_INSTALL=`) with no `$WOW_DATA` is no install too.
+//! 3. `<project folder>/WoW/Data`, `dev` builds only ([`project_folder`]).
+//! 4. `<exe dir>/Data`, then `<exe dir>/WoW/Data`, the release layouts.
+//!
+//! The install root ([`wow_install`]), where `Wow.exe` sits, is `$WOW_INSTALL`, else the folder
+//! the chosen `Data` sits in.
 //!
 //! A drop-in `Wow.exe` (the `standalone` launcher, [`set_drop_in_install`]) has one candidate,
-//! `<install>/Data`, and never reads `$WOW_DATA` or a `WoW` link: it is the install's own client.
+//! `<install>/Data`, and never reads `$WOW_DATA`, `$WOW_INSTALL` or a `WoW` link: it is the
+//! install's own client.
 //!
 //! `dev` is a default feature here, so every dependent declares `default-features = false` and
 //! re-exports it; otherwise feature unification puts the source-tree path in a player build.
@@ -82,6 +87,7 @@ pub fn candidates() -> Vec<PathBuf> {
     }
     candidates_from(
         std::env::var_os("WOW_DATA").map(PathBuf::from),
+        std::env::var_os("WOW_INSTALL").map(PathBuf::from),
         project_folder(),
         std::env::current_exe()
             .ok()
@@ -98,13 +104,15 @@ fn drop_in_candidates(root: &Path) -> Vec<PathBuf> {
 /// answer for every test running beside it. `tests/wow_data_env.rs` covers the real read.
 fn candidates_from(
     override_dir: Option<PathBuf>,
+    install_dir: Option<PathBuf>,
     project: Option<&Path>,
     exe_dir: Option<PathBuf>,
 ) -> Vec<PathBuf> {
-    let mut out = Vec::with_capacity(4);
+    let mut out = Vec::with_capacity(5);
 
     // 1. The override; set and empty is no install at all, even in a dev build
     // (`WOW_DATA= cargo dev` runs as a player without data).
+    let data_named = override_dir.is_some();
     if let Some(over) = override_dir {
         if over.as_os_str().is_empty() {
             return Vec::new();
@@ -112,18 +120,84 @@ fn candidates_from(
         out.push(over);
     }
 
-    // 2. The project folder, dev builds only.
+    // 2. The install root's `Data`; set and empty is no install unless `$WOW_DATA` named one.
+    if let Some(root) = install_dir {
+        if root.as_os_str().is_empty() {
+            if !data_named {
+                return Vec::new();
+            }
+        } else {
+            out.push(root.join("Data"));
+        }
+    }
+
+    // 3. The project folder, dev builds only.
     if let Some(root) = project {
         out.push(root.join("WoW/Data"));
     }
 
-    // 3. Beside the binary; a failed `current_exe` adds nothing.
+    // 4. Beside the binary; a failed `current_exe` adds nothing.
     if let Some(dir) = exe_dir {
         out.push(dir.join("Data"));
         out.push(dir.join("WoW/Data"));
     }
 
     out
+}
+
+/// The install root, the folder `Wow.exe` and `Data` sit in, or `None` with no install: the drop-in's
+/// own folder, else `$WOW_INSTALL` (set and empty: none), else the parent of [`wow_data`]'s answer.
+pub fn wow_install() -> Option<PathBuf> {
+    if let Some(root) = drop_in_install() {
+        return Some(root.to_path_buf());
+    }
+    install_from(
+        std::env::var_os("WOW_INSTALL").map(PathBuf::from),
+        wow_data(),
+    )
+}
+
+/// [`wow_install`] with the environment and the resolved `Data` passed in.
+fn install_from(install_dir: Option<PathBuf>, data: Option<PathBuf>) -> Option<PathBuf> {
+    match install_dir {
+        Some(root) if root.as_os_str().is_empty() => None,
+        Some(root) if root.is_dir() => Some(root),
+        _ => data.and_then(|d| d.parent().map(Path::to_path_buf)),
+    }
+}
+
+/// The install's `Wow.exe`, or `None` when the install root has none: the reference executable the
+/// Warden memory checks read, never written and never run.
+pub fn wow_exe() -> Option<PathBuf> {
+    let root = wow_install()?;
+    ["Wow.exe", "WoW.exe", "wow.exe"]
+        .iter()
+        .map(|name| root.join(name))
+        .find(|p| p.is_file())
+}
+
+/// Every place [`wow_exe`] looks, for a skip message.
+pub fn wow_exe_candidates() -> Vec<PathBuf> {
+    wow_install()
+        .map(|root| vec![root.join("Wow.exe")])
+        .unwrap_or_default()
+}
+
+/// The install's `Wow.exe`, or skip this test, spelled and refused as [`wow_data_or_skip`] is.
+#[macro_export]
+macro_rules! wow_exe_or_skip {
+    () => {
+        $crate::wow_exe_or_skip!(())
+    };
+    ($ret:expr) => {
+        match $crate::wow_exe() {
+            Some(exe) => exe,
+            None => {
+                $crate::skipped("no Wow.exe in the install", &$crate::wow_exe_candidates());
+                return $ret;
+            }
+        }
+    };
 }
 
 /// The install, or skip this test: `wow_data_or_skip!()` in a `-> ()` test,
@@ -239,6 +313,7 @@ mod tests {
     fn probe(over: Option<&str>, exe: Option<&str>) -> Vec<PathBuf> {
         candidates_from(
             over.map(PathBuf::from),
+            None,
             project_folder(),
             exe.map(PathBuf::from),
         )
@@ -272,9 +347,14 @@ mod tests {
 
         // The winner depends on the build (dev puts the project folder first), so assert only
         // that it is not the ghost and exists.
-        let chosen = candidates_from(Some(ghost.clone()), project_folder(), Some(tmp.clone()))
-            .into_iter()
-            .find(|c| c.is_dir());
+        let chosen = candidates_from(
+            Some(ghost.clone()),
+            None,
+            project_folder(),
+            Some(tmp.clone()),
+        )
+        .into_iter()
+        .find(|c| c.is_dir());
         assert_ne!(
             chosen,
             Some(ghost),
@@ -295,6 +375,58 @@ mod tests {
             drop_in_candidates(Path::new("/games/wotlk")),
             vec![PathBuf::from("/games/wotlk/Data")]
         );
+    }
+
+    /// `$WOW_INSTALL` names the root: its `Data` follows `$WOW_DATA`, and set empty it is no
+    /// install unless `$WOW_DATA` named one.
+    #[test]
+    fn the_install_root_adds_its_data_after_the_override() {
+        let c = candidates_from(
+            Some(PathBuf::from("/opt/wow/Data")),
+            Some(PathBuf::from("/games/wotlk")),
+            None,
+            None,
+        );
+        assert_eq!(
+            c,
+            vec![
+                PathBuf::from("/opt/wow/Data"),
+                PathBuf::from("/games/wotlk/Data")
+            ]
+        );
+        assert_eq!(
+            candidates_from(None, Some(PathBuf::new()), None, Some("/x".into())),
+            Vec::<PathBuf>::new()
+        );
+        assert_eq!(
+            candidates_from(Some("/d".into()), Some(PathBuf::new()), None, None),
+            vec![PathBuf::from("/d")]
+        );
+    }
+
+    /// The root is `$WOW_INSTALL` when it exists, else the folder `Data` sits in; set empty, none.
+    #[test]
+    fn the_install_root_is_the_override_else_the_data_folders_parent() {
+        let tmp = std::env::temp_dir().join(format!("benilla-wi-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        assert_eq!(
+            install_from(Some(tmp.clone()), Some("/games/wotlk/Data".into())),
+            Some(tmp.clone())
+        );
+        assert_eq!(
+            install_from(Some(tmp.join("nope")), Some("/games/wotlk/Data".into())),
+            Some(PathBuf::from("/games/wotlk"))
+        );
+        assert_eq!(
+            install_from(None, Some("/games/wotlk/Data".into())),
+            Some(PathBuf::from("/games/wotlk"))
+        );
+        assert_eq!(
+            install_from(Some(PathBuf::new()), Some("/g/Data".into())),
+            None
+        );
+        assert_eq!(install_from(None, None), None);
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
@@ -347,7 +479,12 @@ mod tests {
         );
 
         let launcher = Path::new("/home/player/hello-mod");
-        let c = candidates_from(None, Some(launcher), Some(PathBuf::from("/games/benilla")));
+        let c = candidates_from(
+            None,
+            None,
+            Some(launcher),
+            Some(PathBuf::from("/games/benilla")),
+        );
         assert_eq!(
             c,
             vec![

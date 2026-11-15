@@ -6,13 +6,14 @@ use benilla_srp::wotlk_header::WotlkHeaderCrypto;
 use benilla_srp::{NormalizedString, SESSION_KEY_LENGTH};
 
 use crate::messages::{self, opcode, Character, MoveMode, ServerPacket};
+use crate::warden::{SharedWarden, WardenLink};
 use crate::SessionEvent;
 
 use super::cipher::Crypto;
 use super::movement::{client_uptime_ms, movement_info, MOVEMENT_FLAG_FORWARD};
 use super::reader::WorldReader;
 use super::writer::WorldWriter;
-use super::{recv_packet, recv_raw, send_packet};
+use super::{recv_raw, send_packet};
 
 /// Read timeout through `player_login`, where each step awaits one reply.
 const HANDSHAKE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
@@ -20,12 +21,6 @@ const HANDSHAKE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// Read timeout in the login queue, where updates can be minutes apart. Deviation: the reference
 /// waits forever; a bound tells a server that died mid-queue from a long wait.
 const QUEUE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
-
-/// The server requires Warden. Deviation: benilla does not implement it; vmangos ships with it
-/// off (`Warden.WinEnabled`, `Warden.OSXEnabled`). vmangos kicks a client that leaves a Warden
-/// request unanswered for 30 s (`Warden.cpp`), so the connect refuses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WardenRequired;
 
 /// The world server refused the session. Its code is from `messages`' `AUTH_*` block, not
 /// [`crate::AuthReject`]'s, whose numbers overlap with unrelated meanings.
@@ -45,17 +40,6 @@ impl std::fmt::Display for WorldAuthReject {
 }
 
 impl std::error::Error for WorldAuthReject {}
-
-impl std::fmt::Display for WardenRequired {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "this server requires the Warden anticheat, which benilla does not implement"
-        )
-    }
-}
-
-impl std::error::Error for WardenRequired {}
 
 /// The packets the glue acts on that can arrive on the link before the world stream starts: the
 /// server's cache version (sent after the authentication), which the `.wdb` files are checked
@@ -90,6 +74,8 @@ pub struct WorldSession {
     /// The unit our movement packets name: the last `CMSG_SET_ACTIVE_MOVER`, handed on to the
     /// split writer. AzerothCore drops a move whose packed guid is not its mover.
     mover: u64,
+    /// The connection's Warden, shared with both halves of a split.
+    warden: SharedWarden,
 }
 
 /// What the connection learned that outlives one character's world session, carried by the read
@@ -207,9 +193,11 @@ impl WorldSession {
             glue_events: Vec::new(),
             cast_counter: Default::default(),
             mover: 0,
+            warden: WardenLink::shared(&session_key),
         };
 
-        // AUTH_RESPONSE is not always first, so others are skipped; Warden data ends the connect.
+        // AUTH_RESPONSE is not always first, so others are skipped; Warden data is answered in
+        // place by the read.
         loop {
             let packet = session.recv_glue()?;
             match packet {
@@ -249,9 +237,6 @@ impl WorldSession {
                 ServerPacket::AuthResponse { result, .. } => {
                     return Err(WorldAuthReject { code: result }.into())
                 }
-                ServerPacket::Other {
-                    opcode: opcode::SMSG_WARDEN_DATA,
-                } => return Err(WardenRequired.into()),
                 _ => continue,
             }
         }
@@ -406,10 +391,14 @@ impl WorldSession {
     }
 
     /// One packet of the handshake or the roster: the auth response and the character list parsed,
-    /// every other packet left as [`ServerPacket::Other`].
+    /// every other packet left as [`ServerPacket::Other`]. Warden data is answered here.
     fn recv_glue(&mut self) -> Result<ServerPacket> {
         let (opcode, body) = recv_raw(&mut self.stream, Some(&mut self.crypto.decrypter))?;
         match opcode {
+            opcode::SMSG_WARDEN_DATA => {
+                self.on_warden(&body)?;
+                Ok(ServerPacket::Other { opcode })
+            }
             opcode::SMSG_AUTH_RESPONSE => messages::parse_auth_response_wotlk(&body)
                 .map_err(|e| anyhow!("parsing SMSG_AUTH_RESPONSE: {e}")),
             opcode::SMSG_CHAR_ENUM => messages::parse_server(opcode, &body)
@@ -433,9 +422,19 @@ impl WorldSession {
         }
     }
 
-    /// Read + decrypt + parse one server packet.
+    /// Read + decrypt + parse one server packet, answering any Warden data on the way.
     pub fn recv(&mut self) -> Result<ServerPacket> {
-        let packet = recv_packet(&mut self.stream, Some(&mut self.crypto.decrypter))?;
+        let packet = loop {
+            let (opcode, body) = recv_raw(&mut self.stream, Some(&mut self.crypto.decrypter))?;
+            if opcode == opcode::SMSG_WARDEN_DATA {
+                self.on_warden(&body)?;
+                continue;
+            }
+            break messages::parse_server(opcode, &body).map_err(|e| super::Unparsed {
+                opcode,
+                reason: e.to_string(),
+            })?;
+        };
         self.keep_glue(&packet);
         // `SMSG_ADDON_INFO` can reach any of the handshake's read loops, so it is caught here.
         if let ServerPacket::AddonInfo { statuses, .. } = &packet {
@@ -462,6 +461,36 @@ impl WorldSession {
         self.link.addon_info.as_deref()
     }
 
+    /// One `SMSG_WARDEN_DATA` read in place: its scripts kept for the glue, its replies sent now. A
+    /// module or seed benilla cannot answer ends the session ([`crate::WardenRefused`]).
+    fn on_warden(&mut self, body: &[u8]) -> Result<()> {
+        let received = self
+            .warden
+            .lock()
+            .map_err(|_| anyhow!("Warden lock"))?
+            .receive(body)?;
+        self.glue_events.extend(
+            received
+                .scripts
+                .into_iter()
+                .map(|chunk| SessionEvent::WardenScript { chunk }),
+        );
+        self.flush_warden()
+    }
+
+    /// Every Warden reply waiting, sealed and sent in order.
+    fn flush_warden(&mut self) -> Result<()> {
+        let sealed = self
+            .warden
+            .lock()
+            .map_err(|_| anyhow!("Warden lock"))?
+            .seal_outgoing();
+        for body in sealed {
+            self.send(opcode::CMSG_WARDEN_DATA, &body)?;
+        }
+        Ok(())
+    }
+
     /// Send a client packet (encrypted header + plaintext body).
     fn send(&mut self, opcode: u16, body: &[u8]) -> Result<()> {
         send_packet(
@@ -482,10 +511,6 @@ impl WorldSession {
                     self.link.roster_races = characters.iter().map(|c| (c.guid, c.race)).collect();
                     return Ok(characters);
                 }
-                // Warden can arm on either side of SMSG_AUTH_RESPONSE, so this step refuses it too.
-                ServerPacket::Other {
-                    opcode: opcode::SMSG_WARDEN_DATA,
-                } => return Err(WardenRequired.into()),
                 // Kept for the world entry when the server sends it this early.
                 ServerPacket::TutorialFlags(flags) => {
                     self.tutorial_flags = Some(flags.bytes);
@@ -1053,6 +1078,7 @@ impl WorldSession {
                 stream: read_stream,
                 decrypter,
                 link: self.link,
+                warden: self.warden.clone(),
             },
             WorldWriter {
                 stream: self.stream,
@@ -1060,6 +1086,7 @@ impl WorldSession {
                 chat_language: self.chat_language,
                 cast_counter: self.cast_counter,
                 mover: self.mover,
+                warden: self.warden,
             },
         ))
     }
@@ -1074,7 +1101,7 @@ impl WorldSession {
         let WorldReader {
             decrypter, link, ..
         } = reader;
-        let session = WorldSession {
+        let mut session = WorldSession {
             stream: writer.stream,
             crypto: Crypto {
                 encrypter: writer.encrypter,
@@ -1086,10 +1113,13 @@ impl WorldSession {
             glue_events: Vec::new(),
             cast_counter: writer.cast_counter,
             mover: writer.mover,
+            warden: writer.warden,
         };
         session
             .set_read_timeout(Some(HANDSHAKE_READ_TIMEOUT))
             .context("restoring the park's read timeout")?;
+        // A reply the world read queued after the writer was taken back still leaves, in order.
+        session.flush_warden()?;
         Ok(session)
     }
 

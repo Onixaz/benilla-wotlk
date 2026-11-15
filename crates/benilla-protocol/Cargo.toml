@@ -12,6 +12,7 @@ workspace = true
 anyhow.workspace = true
 clap.workspace = true
 benilla-srp = { path = "../benilla-srp" }
+benilla-warden = { path = "../benilla-warden" }
 flate2 = "1.0"
 sha1.workspace = true
 # Derives `SessionEventKind`, `SessionEvent`'s fieldless twin that the handler table keys on.

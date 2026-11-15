@@ -84,6 +84,8 @@ fn load() -> WdbCaches {
             }
         }
     }
+    // The modules go to Warden's cache, which the IO thread adds downloads to.
+    crate::warden::seed_modules(caches.file_mut(&codec::WARDEN).entries());
     let total: usize = caches.files.iter().map(WdbFile::len).sum();
     info!("wdb: {total} cached answers from {}", dir.display());
     caches
@@ -141,6 +143,7 @@ fn on_cache_version(In(ev): In<SessionEvent>, world: &mut World) {
         return;
     }
     info!("wdb: the server's cache version is {version}; the cached answers are dropped");
+    crate::warden::drop_modules();
     drop_persisted::<crate::names::NameCache>(world);
     drop_persisted::<crate::go_templates::GameObjectTemplates>(world);
     drop_persisted::<crate::items::Items>(world);
@@ -173,7 +176,18 @@ fn save(caches: Option<Res<WdbCaches>>) {
         return;
     }
     let code = codec::locale_code(locale);
+    // The modules as Warden's cache holds them, downloads included.
+    let mut warden = WdbFile::default();
+    warden.server_version = caches.files[KINDS.len() - 1].server_version;
+    for (id, body) in crate::warden::module_records() {
+        warden.insert(id, body);
+    }
     for (kind, file) in KINDS.iter().zip(caches.files.iter()) {
+        let file = if *kind == codec::WARDEN {
+            &warden
+        } else {
+            file
+        };
         let path = dir.join(kind.file);
         if let Err(e) = std::fs::write(&path, file.encode(kind, code)) {
             warn!("wdb: cannot write {}: {e}", path.display());
