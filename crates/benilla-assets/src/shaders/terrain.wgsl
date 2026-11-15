@@ -90,19 +90,24 @@ struct TerrainVsOut {
 const TERRAIN_REACH: f32 = 33.570166;
 
 // Terrain Texture Low: a chunk's 64² alpha or shadow map as the reference's half-size copy, which
-// keeps every second texel of every second row, the last column from texel 63 (`0x7b8c70` and its
-// siblings), sampled bilinearly at the full map's coordinates. Level 0 is the arrays' only mip.
+// keeps texels 0, 2, …, 60 and 63 of rows 0, 2, …, 60 and 63 (`0x7b8c70` and its siblings: the
+// last column after the stride loop's `x++`, the last row after the extra row skip at
+// `y == size − 4`). An unfixed map's texel 63 is its fixed-up copy of 62, which `0x7b8620` reads
+// instead, so 63 serves both. Sampled as the device's bilinear clamp-to-edge read of that 32² copy
+// at the full map's coordinates. Level 0 is the arrays' only mip.
 fn half_map(tex: texture_2d_array<f32>, uv: vec2<f32>, layer: i32) -> vec4<f32> {
     let p = uv * 32.0 - 0.5;
     let base = floor(p);
     let f = p - base;
+    // Clamp-to-edge clamps each tap on its own: below the first texel centre (`base` −1) both
+    // taps are texel 0, not texels 0 and 1, which drew a seam strip along every chunk's near edges.
     let i0 = clamp(vec2<i32>(base), vec2<i32>(0), vec2<i32>(31));
-    let i1 = clamp(i0 + vec2<i32>(1), vec2<i32>(0), vec2<i32>(31));
+    let i1 = clamp(vec2<i32>(base) + vec2<i32>(1), vec2<i32>(0), vec2<i32>(31));
     let src = vec4<i32>(
         select(i0.x * 2, 63, i0.x == 31),
         select(i1.x * 2, 63, i1.x == 31),
-        i0.y * 2,
-        i1.y * 2,
+        select(i0.y * 2, 63, i0.y == 31),
+        select(i1.y * 2, 63, i1.y == 31),
     );
     let t00 = textureLoad(tex, vec2<i32>(src.x, src.z), layer, 0);
     let t10 = textureLoad(tex, vec2<i32>(src.y, src.z), layer, 0);
