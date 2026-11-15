@@ -312,6 +312,12 @@ impl FactionCatalog {
         self.names.get(&faction_id).map(String::as_str)
     }
 
+    /// The localized name for a row that exists, preserving an empty `Faction.dbc` name.
+    pub fn faction_name_or_empty(&self, faction_id: u32) -> Option<&str> {
+        self.factions.get(&faction_id)?;
+        Some(self.names.get(&faction_id).map_or("", String::as_str))
+    }
+
     /// The localized description of a `Faction.dbc` id, the reputation pane's detail paragraph.
     pub fn faction_description(&self, faction_id: u32) -> Option<&str> {
         self.descriptions.get(&faction_id).map(String::as_str)
@@ -717,6 +723,29 @@ mod tests {
         assert_eq!(Reaction::from_rank(3), Reaction::Neutral);
         assert_eq!(Reaction::from_rank(4), Reaction::Friendly);
         assert_eq!(Reaction::from_rank(7), Reaction::Friendly);
+    }
+
+    #[test]
+    fn faction_name_or_empty_distinguishes_empty_and_missing_rows() {
+        let mut cat = FactionCatalog::from_rows(HashMap::new(), HashMap::new());
+        cat.factions.insert(
+            7,
+            FactionInfo {
+                rep_index: -1,
+                team: 0,
+                race_masks: [0; 4],
+                class_masks: [0; 4],
+                base: [0; 4],
+                flags: [0; 4],
+                spillover_rate_in: 0.0,
+                spillover_rate_out: 0.0,
+                spillover_max_rank_in: 0,
+                spillover_rank: 0,
+            },
+        );
+
+        assert_eq!(cat.faction_name_or_empty(7), Some(""));
+        assert_eq!(cat.faction_name_or_empty(8), None);
     }
 
     #[test]

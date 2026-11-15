@@ -113,7 +113,7 @@ impl RewardInputs<'_, '_> {
             .factions
             .as_ref()?
             .catalog()
-            .faction_name(faction)?
+            .faction_name_or_empty(faction)?
             .to_string();
         let amount = t.rep_objective_value as i32;
         let standing = self.standing(store, faction);
