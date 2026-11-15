@@ -278,6 +278,7 @@ mod update_walk;
 mod vehicle;
 pub use tooltip_unit::{skill_rung, skill_rung_suffix, TooltipTint};
 pub use tracking::{TownKind, TownType, TrackingSpell, TOWN_TYPES};
+pub use who_sort::{cmp_utf8i, starts_with_utf8i};
 mod trade;
 mod tradeskill;
 mod trainer;

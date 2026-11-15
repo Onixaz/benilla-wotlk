@@ -8,23 +8,21 @@
 //! | `FollowByName` | 0x10, players only | 2, assistable and alive | Lua arg 2 |
 //!
 //! Filter mode 0 underflows the reference's jump table into accept-all: no range, facing, reaction,
-//! liveness, visibility or self test. A name matches whole-string first, else by the longest common
-//! prefix, both case-insensitive.
-//!
-//! Deviation: the reference ends the walk at the first whole-string hit, so its pick follows the
-//! object list's order (a tail append); we rank exact, then longer prefix, then nearest
-//! ([`Rank::beats`]), because the nearest namesake is the better pick.
+//! liveness, visibility or self test. A name matches when it starts with the whole query, compared
+//! in UTF-8 without case at the query's length (`0x52029d`, `0x52016d`); exact-only compares the
+//! whole name (`0x520293`). A query holding `-` compares a player from another realm as
+//! `name-realm` (`0x5202a8`, `0x52012d`). The strictly nearest match wins (`0x520151`), whole name
+//! or not, and a dead unit counts 10000 yd farther (`0x5200dd`).
 //!
 //! `/target` and `TargetUnit` also take the reference's group legs ([`target_named`]): a group
 //! member by the whole name first, and a party or raid member the object manager does not hold
 //! behind every visible match. The active player scans at the group's distance (`0x52006a`).
 
-use std::cmp::Ordering;
-
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use benilla_protocol::guid;
+use benilla_ui::script::{cmp_utf8i, starts_with_utf8i};
 
 use crate::names::NameCache;
 use crate::net::{Guid, GuidIndex, ObjectStore, SelfPlayer};
@@ -62,40 +60,21 @@ pub(crate) struct AssistRequest {
     pub(crate) name: Option<String>,
 }
 
-/// How well one candidate answered the query, ordered by [`Rank::beats`].
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Rank {
-    /// A whole-string, case-insensitive match.
-    exact: bool,
-    /// The folded common-prefix length.
-    prefix: usize,
-    /// 3D centre-to-centre squared distance from the active player.
-    dist2: f32,
+/// Whether `dist` displaces the incumbent's: strictly nearer, against a best seeded at `FLT_MAX`
+/// (`0x9ea8fc`), so a tie or a NaN keeps the incumbent, as the `fcomp`/`test ah,0x41` does
+/// (`0x520151`).
+fn nearer(dist: f32, best: Option<f32>) -> bool {
+    dist < best.unwrap_or(f32::MAX)
 }
 
-impl Rank {
-    /// Strictly better than the incumbent: exact, then the longer prefix, then the strictly nearer.
-    /// A tie or a NaN distance keeps the incumbent, as the reference's `fcomp`/`jp` compare does.
-    fn beats(self, other: Rank) -> bool {
-        match (self.exact, other.exact) {
-            (true, false) => true,
-            (false, true) => false,
-            _ => match self.prefix.cmp(&other.prefix) {
-                Ordering::Greater => true,
-                Ordering::Less => false,
-                Ordering::Equal => self.dist2 < other.dist2,
-            },
-        }
+/// A candidate's distance for the walk (`0x520050`): 3D from the active player, plus 10000 for a
+/// unit dead, a ghost, feigning or lying dead (`0x5200a8`-`0x5200e3`).
+fn match_distance(dist: f32, store: Option<&ObjectStore>) -> f32 {
+    if store.is_some_and(|s| s.0.is_dead_or_ghost() || s.0.unit_reads_dead()) {
+        DEAD_EXTRA + dist
+    } else {
+        dist
     }
-}
-
-/// The case-folded common-prefix length, the reference's lockstep walk through the ASCII fold.
-fn common_prefix_len(query: &str, name: &str) -> usize {
-    query
-        .bytes()
-        .zip(name.bytes())
-        .take_while(|(q, n)| q.eq_ignore_ascii_case(n))
-        .count()
 }
 
 /// The follow start gate (the reference's mode-3 chain) as a pure function, its order pinned by
@@ -140,36 +119,24 @@ fn follow_refusal_key(
 /// The arm's refusal, the one past its canceller.
 const FOLLOW_TOO_FAR: &str = "ERR_AUTOFOLLOW_TOO_FAR";
 
-/// Whether the prefix tier is live, the resolver's exact-only argument. The unit popup's Target and
-/// Follow pass 1 (`UnitPopup.lua:557`, `UnitPopup.lua:623`), so a menu naming its unit never lands
-/// on a bystander sharing a first letter; the slash commands pass nothing.
+/// The compare length, the resolver's exact-only argument. The unit popup's Target and Follow pass
+/// 1 (`UnitPopup.lua:557`, `UnitPopup.lua:623`), so a menu naming its unit never lands on a
+/// bystander whose name extends it; the slash commands pass nothing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Match {
-    /// A whole-string hit, else the longest common prefix.
+    /// The name starts with the whole query (`0x52029d`, the query's length in letters).
     PrefixOk,
-    /// Whole-string only.
+    /// The whole name (`0x520293`, length `0x7fffffff`).
     ExactOnly,
 }
 
-/// Score one candidate against the query. The reference's best length seeds at 1, so a zero-length
-/// overlap is no match.
-fn rank(query: &str, name: &str, dist2: f32, mode: Match) -> Option<Rank> {
-    if query.eq_ignore_ascii_case(name) {
-        return Some(Rank {
-            exact: true,
-            prefix: query.len(),
-            dist2,
-        });
+/// Whether `name` answers `query` under `mode`, through the client's UTF-8 case-insensitive
+/// compare (`0x52016d`, `0x5131ad`).
+fn name_matches(query: &str, name: &str, mode: Match) -> bool {
+    match mode {
+        Match::PrefixOk => starts_with_utf8i(name, query),
+        Match::ExactOnly => cmp_utf8i(name, query).is_eq(),
     }
-    if mode == Match::ExactOnly {
-        return None;
-    }
-    let prefix = common_prefix_len(query, name);
-    (prefix >= 1).then_some(Rank {
-        exact: false,
-        prefix,
-        dist2,
-    })
 }
 
 /// Everything a by-name search reads.
@@ -198,6 +165,8 @@ pub(crate) struct ByNameScan<'w, 's> {
     reputations: Res<'w, crate::net::Reputations>,
     /// The group, for the reaction's party rung; none without the party plugin.
     group: Option<Res<'w, crate::ui_party::GroupState>>,
+    /// The form table behind a unit's creature type, for `StartAttack`'s totem skip.
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
 }
 
 /// The per-candidate filter, the mode argument the reference hands its filter.
@@ -254,6 +223,28 @@ impl ByNameScan<'_, '_> {
             super::party_of(self.group.as_deref()),
             self_store,
         )
+    }
+
+    /// `StartAttack`'s totem skip, its last resolver argument (`0x5230f8`): a totem (creature type
+    /// 11) not friendly to us, reaction under 4 (`0x52008a`-`0x5200a2`, `0x514050`).
+    fn hostile_totem(&self, store: Option<&ObjectStore>) -> bool {
+        let Some(store) = store else {
+            return false;
+        };
+        let sources = crate::creature_type::CreatureTypeSources::of_resources(
+            &self.names,
+            self.spells.as_deref(),
+        );
+        let self_store = self.self_q.single().ok().and_then(|(_, _, _, s)| s);
+        skips_as_hostile_totem(sources.of(store), || {
+            super::ring_reaction(
+                self.factions.as_deref(),
+                &self.reputations,
+                super::party_of(self.group.as_deref()),
+                Some(store),
+                self_store,
+            )
+        })
     }
 
     /// The closest attackable unit by name, `StartAttack`'s search (`0x523090`).
@@ -318,15 +309,28 @@ impl ByNameScan<'_, '_> {
             |store| match filter {
                 Filter::AcceptAll => true,
                 Filter::AssistableAlive => self.assistable_alive(store),
-                Filter::AttackableAlive => self.attackable_alive(store),
+                Filter::AttackableAlive => {
+                    self.attackable_alive(store) && !self.hostile_totem(store)
+                }
             },
         )
     }
 }
 
-/// The squared distance the reference gives a group member out of view and the active player, the
-/// float at `0xa02a3c` (`0x520331`, `0x52006a`).
-const GROUP_DIST2: f32 = 2.5e9 * 2.5e9;
+/// The distance the reference gives a group member out of view and the active player, the float at
+/// `0xa02a3c` (`0x520331`, `0x52006a`).
+const GROUP_DIST: f32 = 2.5e9;
+
+/// What a dead unit adds to its distance, the float at `0xac8a74` (`0x5200dd`).
+const DEAD_EXTRA: f32 = 10_000.0;
+
+/// `CreatureType.dbc`'s Totem.
+const CREATURE_TYPE_TOTEM: u32 = 11;
+
+/// The totem skip's test: a totem whose reaction to us is under friendly.
+fn skips_as_hostile_totem(creature_type: u32, reaction: impl FnOnce() -> u8) -> bool {
+    creature_type == CREATURE_TYPE_TOTEM && reaction() < 4
+}
 
 /// One unit query's candidates, shared by [`ByNameScan`] and [`PlayerLookup`].
 type UnitQuery<'w, 's> = Query<
@@ -343,7 +347,7 @@ type UnitQuery<'w, 's> = Query<
 /// The resolver's walk: a name to a unit, logging one `by-name:` line per call, ungated since it
 /// runs per command: the candidates counted, the winner and on what. `keep` is the per-candidate
 /// filter mode; `origin` is the active player's position, without which the reference resolves
-/// nothing. The active player `me` ranks at the group's distance, behind every other unit.
+/// nothing. The active player `me` ranks at the group's distance, behind every other living unit.
 #[allow(clippy::too_many_arguments)] // the resolver's own argument list
 fn scan_units<'a>(
     units: impl Iterator<Item = (Entity, u64, Vec3, Option<&'a ObjectStore>)>,
@@ -363,9 +367,10 @@ fn scan_units<'a>(
         info!("by-name: \"{query}\" — no active player object; nothing resolves");
         return None;
     };
+    let realm_form = query.contains('-');
     let mut considered = 0usize;
     let mut nameless = 0usize;
-    let mut best: Option<(Entity, u64, Rank, String)> = None;
+    let mut best: Option<(Entity, u64, f32, String)> = None;
     for (entity, guid, pos, store) in units {
         if !search.accepts(guid) || !keep(store) {
             continue;
@@ -375,25 +380,27 @@ fn scan_units<'a>(
             continue;
         };
         considered += 1;
-        let dist2 = if Some(guid) == me {
-            GROUP_DIST2
+        let dist = if Some(guid) == me {
+            GROUP_DIST
         } else {
-            pos.distance_squared(origin)
+            match_distance(pos.distance(origin), store)
         };
-        let Some(r) = rank(query, name, dist2, mode) else {
-            continue;
+        let full;
+        let name = match names.player_realm(guid).filter(|_| realm_form) {
+            Some(realm) => {
+                full = format!("{name}-{realm}");
+                full.as_str()
+            }
+            None => name,
         };
-        if best.as_ref().is_none_or(|(_, _, b, _)| r.beats(*b)) {
-            best = Some((entity, guid, r, name.to_string()));
+        if nearer(dist, best.as_ref().map(|b| b.2)) && name_matches(query, name, mode) {
+            best = Some((entity, guid, dist, name.to_string()));
         }
     }
     match &best {
-        Some((_, guid, r, name)) => info!(
-            "by-name: \"{query}\" ({search:?}) -> \"{name}\" guid {guid:#x} \
-             ({}, prefix {}, {:.1} yd) over {considered} named candidates ({nameless} unnamed)",
-            if r.exact { "exact" } else { "prefix" },
-            r.prefix,
-            r.dist2.sqrt(),
+        Some((_, guid, dist, name)) => info!(
+            "by-name: \"{query}\" ({search:?}) -> \"{name}\" guid {guid:#x} ({dist:.1} yd) \
+             over {considered} named candidates ({nameless} unnamed)"
         ),
         None => info!(
             "by-name: \"{query}\" ({search:?}) -> NO MATCH over {considered} named candidates \
@@ -409,7 +416,16 @@ fn scan_units<'a>(
 pub(crate) struct PlayerLookup<'w, 's> {
     /// World positions, [`GlobalTransform`]: the chat drain already reads it, where `Transform`
     /// would put it in an undeclared order against every system that moves a unit.
-    units: Query<'w, 's, (Entity, &'static Guid, &'static GlobalTransform)>,
+    units: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static Guid,
+            &'static GlobalTransform,
+            Option<&'static ObjectStore>,
+        ),
+    >,
     self_q: Query<'w, 's, &'static GlobalTransform, With<SelfPlayer>>,
 }
 
@@ -422,8 +438,8 @@ impl PlayerLookup<'_, '_> {
         scan_units(
             self.units
                 .iter()
-                .filter(|(_, g, _)| Some(g.0) != me)
-                .map(|(e, g, tf)| (e, g.0, tf.translation(), None)),
+                .filter(|(_, g, _, _)| Some(g.0) != me)
+                .map(|(e, g, tf, store)| (e, g.0, tf.translation(), store)),
             origin,
             None,
             names,
@@ -447,7 +463,7 @@ impl PlayerLookup<'_, '_> {
         scan_units(
             self.units
                 .iter()
-                .map(|(e, g, tf)| (e, g.0, tf.translation(), None)),
+                .map(|(e, g, tf, store)| (e, g.0, tf.translation(), store)),
             origin,
             None,
             names,
@@ -458,12 +474,6 @@ impl PlayerLookup<'_, '_> {
         )
         .map(|(e, g, _)| (e, g))
     }
-}
-
-/// `name` starts with the whole of `query`, folded (`0x5131ad`, compared at the query's length).
-fn has_query_prefix(name: &str, query: &str) -> bool {
-    name.len() >= query.len()
-        && name.as_bytes()[..query.len()].eq_ignore_ascii_case(query.as_bytes())
 }
 
 /// `DoEmote`'s name search past the token words, which needs only a guid. The token resolver's name
@@ -481,7 +491,11 @@ pub(crate) fn emote_name_match(
 ) -> Option<u64> {
     whole_name_in_group(names, roster, me, query).or_else(|| {
         streamed
-            .filter(|&g| names.peek(g).is_some_and(|n| has_query_prefix(n, query)))
+            .filter(|&g| {
+                names
+                    .peek(g)
+                    .is_some_and(|n| name_matches(query, n, Match::PrefixOk))
+            })
             .or_else(|| unheld_group_match(names, roster, held, query, Match::PrefixOk))
     })
 }
@@ -499,9 +513,11 @@ fn whole_name_in_group(
     } else {
         &roster.raid
     };
-    me.into_iter()
-        .chain(group.iter().copied())
-        .find(|&g| names.peek(g).is_some_and(|n| n.eq_ignore_ascii_case(query)))
+    me.into_iter().chain(group.iter().copied()).find(|&g| {
+        names
+            .peek(g)
+            .is_some_and(|n| name_matches(query, n, Match::ExactOnly))
+    })
 }
 
 /// The group scans (`0x5202e1`, `0x52035d`): the party slots, then the raid rows, each member the
@@ -514,10 +530,7 @@ fn unheld_group_match(
     query: &str,
     mode: Match,
 ) -> Option<u64> {
-    let matches = |name: &str| match mode {
-        Match::PrefixOk => has_query_prefix(name, query),
-        Match::ExactOnly => name.eq_ignore_ascii_case(query),
-    };
+    let matches = |name: &str| name_matches(query, name, mode);
     roster
         .party
         .iter()
@@ -850,19 +863,53 @@ impl SelectCommit<'_, '_> {
 mod tests {
     use super::*;
 
-    fn exact(dist2: f32) -> Rank {
-        Rank {
-            exact: true,
-            prefix: 3,
-            dist2,
+    /// One player candidate for [`scan_units`]: guid, name, distance along x, store.
+    type Candidate = (u64, &'static str, f32, Option<ObjectStore>);
+
+    /// Run the walk over `candidates` from the origin, players only, and return the winner's guid.
+    fn pick(
+        query: &str,
+        mode: Match,
+        candidates: &[Candidate],
+        realms: &[(u64, &str)],
+    ) -> Option<u64> {
+        let mut names = NameCache::default();
+        for &(guid, name, _, _) in candidates {
+            names.insert_player(guid, name.to_string(), None);
         }
+        for &(guid, realm) in realms {
+            names.set_player_realm(guid, realm.to_string());
+        }
+        scan_units(
+            candidates.iter().map(|(guid, _, x, store)| {
+                (
+                    Entity::PLACEHOLDER,
+                    *guid,
+                    Vec3::new(*x, 0.0, 0.0),
+                    store.as_ref(),
+                )
+            }),
+            Some(Vec3::ZERO),
+            Some(ME),
+            &names,
+            query,
+            NameSearch::PlayerOnly,
+            mode,
+            |_| true,
+        )
+        .map(|(_, g, _)| g)
     }
-    fn prefix(prefix: usize, dist2: f32) -> Rank {
-        Rank {
-            exact: false,
-            prefix,
-            dist2,
-        }
+
+    /// The active player's guid in [`pick`].
+    const ME: u64 = 0x99;
+
+    /// A unit at 0 health of 100.
+    fn dead() -> Option<ObjectStore> {
+        use benilla_protocol::field::{FIELD_UNIT_HEALTH, FIELD_UNIT_MAXHEALTH};
+        Some(ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+            (FIELD_UNIT_HEALTH, 0),
+            (FIELD_UNIT_MAXHEALTH, 100),
+        ])))
     }
 
     /// The scan's order: a member's whole name first, a visible player over an unstreamed member,
@@ -992,36 +1039,111 @@ mod tests {
         );
     }
 
+    /// The compare runs to the query's length: a shared first letter is no match, and a query
+    /// longer than the name fails.
     #[test]
-    fn prefix_length_folds_case_and_stops_at_the_shorter_string() {
-        assert_eq!(common_prefix_len("rag", "Ragnaros"), 3);
-        assert_eq!(common_prefix_len("RAG", "ragnaros"), 3);
+    fn a_prefix_match_must_cover_the_whole_query() {
+        assert!(!name_matches("Bob", "Brian", Match::PrefixOk));
+        assert!(name_matches("Bob", "Bobby", Match::PrefixOk));
+        assert!(name_matches("bOB", "Bobby", Match::PrefixOk), "case folded");
+        assert!(!name_matches("Bobby", "Bob", Match::PrefixOk));
+        assert!(!name_matches("zzz", "Ragnaros", Match::PrefixOk));
+    }
+
+    /// The fold is the client's UTF-8 one, not ASCII's: a Latin-1 capital matches its small letter.
+    #[test]
+    fn the_compare_folds_accented_letters() {
+        assert!(name_matches("élu", "Élune", Match::PrefixOk));
+        assert!(name_matches("ÉLUNE", "élune", Match::ExactOnly));
+    }
+
+    /// `/target Bob` with Brian alone in view leaves the target alone.
+    #[test]
+    fn a_shared_first_letter_resolves_nobody() {
         assert_eq!(
-            common_prefix_len("Ragnarosx", "Ragnaros"),
-            8,
-            "capped by the candidate"
+            pick("Bob", Match::PrefixOk, &[(1, "Brian", 2.0, None)], &[]),
+            None
         );
         assert_eq!(
-            common_prefix_len("zzz", "Ragnaros"),
-            0,
-            "no shared first letter"
+            pick("Bob", Match::PrefixOk, &[(1, "Bobby", 2.0, None)], &[]),
+            Some(1)
         );
     }
 
+    /// One tier: the nearest match wins, a whole-name hit included (`0x520151`).
     #[test]
-    fn a_match_needs_one_folded_character() {
-        // The reference seeds its best length at 1: zero overlap is no match.
-        assert!(rank("zzz", "Ragnaros", 1.0, Match::PrefixOk).is_none());
+    fn the_nearest_match_wins_over_a_farther_whole_name() {
+        let near_prefix = (1, "Bobby", 5.0, None);
+        let far_exact = (2, "Bob", 20.0, None);
         assert_eq!(
-            rank("rag", "Ragnaros", 1.0, Match::PrefixOk).map(|r| r.prefix),
-            Some(3)
+            pick(
+                "bob",
+                Match::PrefixOk,
+                &[far_exact.clone(), near_prefix.clone()],
+                &[]
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            pick("bob", Match::ExactOnly, &[far_exact, near_prefix], &[]),
+            Some(2),
+            "exact-only skips the nearer prefix"
         );
     }
 
+    /// A dead unit counts 10000 yd farther (`0x5200dd`): behind any living match, ahead of the
+    /// active player at the group's distance.
     #[test]
-    fn whole_string_match_is_case_insensitive_and_ranks_exact() {
-        let r = rank("kobold vermin", "Kobold Vermin", 9.0, Match::PrefixOk).expect("matches");
-        assert!(r.exact, "tier 1 is case-insensitive whole-string");
+    fn a_dead_match_ranks_behind_the_living() {
+        let corpse = (1, "Bobby", 1.0, dead());
+        let living = (2, "Bobbins", 900.0, None);
+        assert_eq!(
+            pick("bob", Match::PrefixOk, &[corpse.clone(), living], &[]),
+            Some(2)
+        );
+        let me = (ME, "Bobo", 0.0, None);
+        assert_eq!(pick("bob", Match::PrefixOk, &[me, corpse], &[]), Some(1));
+    }
+
+    /// A tie keeps the incumbent, and a NaN never displaces.
+    #[test]
+    fn ties_keep_the_incumbent_and_nan_never_displaces() {
+        assert_eq!(
+            pick(
+                "bob",
+                Match::PrefixOk,
+                &[(1, "Bob", 4.0, None), (2, "Bob", 4.0, None)],
+                &[]
+            ),
+            Some(1)
+        );
+        assert!(!nearer(4.0, Some(4.0)));
+        assert!(!nearer(f32::NAN, Some(4.0)));
+        assert!(!nearer(f32::NAN, None));
+        assert!(nearer(1.0e30, None));
+    }
+
+    /// A query holding `-` matches a player from another realm by `name-realm`, and only then.
+    #[test]
+    fn a_dashed_query_matches_the_realm_form() {
+        let visitor = [(1, "Bob", 3.0, None)];
+        let realms = [(1, "Outland")];
+        assert_eq!(pick("bob-out", Match::PrefixOk, &visitor, &realms), Some(1));
+        assert_eq!(
+            pick("Bob-Outland", Match::ExactOnly, &visitor, &realms),
+            Some(1)
+        );
+        assert_eq!(pick("Bob", Match::ExactOnly, &visitor, &realms), Some(1));
+        assert_eq!(pick("Bob-Outland", Match::PrefixOk, &visitor, &[]), None);
+    }
+
+    /// `StartAttack` skips a totem not friendly to us, and only a totem.
+    #[test]
+    fn the_attack_search_skips_a_hostile_totem() {
+        assert!(skips_as_hostile_totem(CREATURE_TYPE_TOTEM, || 1));
+        assert!(skips_as_hostile_totem(CREATURE_TYPE_TOTEM, || 3));
+        assert!(!skips_as_hostile_totem(CREATURE_TYPE_TOTEM, || 4));
+        assert!(!skips_as_hostile_totem(7, || 1));
     }
 
     /// A dead player following a creature sees `ERR_INVALID_FOLLOW_TARGET`, not `ERR_PLAYER_DEAD`:
@@ -1078,39 +1200,8 @@ mod tests {
     }
 
     #[test]
-    fn exact_only_skips_the_prefix_tier_but_keeps_the_case_fold() {
-        assert!(rank("rag", "Ragnaros", 1.0, Match::ExactOnly).is_none());
-        assert!(
-            rank("RAGNAROS", "Ragnaros", 1.0, Match::ExactOnly)
-                .expect("whole-string still matches")
-                .exact
-        );
-    }
-
-    #[test]
-    fn exact_beats_any_prefix_and_nearest_breaks_the_tie() {
-        // The deviation: exact ranks first, whatever the reference's walk order.
-        assert!(exact(100.0).beats(prefix(3, 1.0)));
-        assert!(!prefix(3, 1.0).beats(exact(100.0)));
-        // Among same-named exact matches, the nearest wins.
-        assert!(exact(4.0).beats(exact(9.0)));
-        assert!(!exact(9.0).beats(exact(4.0)));
-    }
-
-    #[test]
-    fn longer_prefix_beats_nearer_shorter_one() {
-        // The reference's `jg` accept: a longer prefix wins at any distance.
-        assert!(prefix(5, 900.0).beats(prefix(3, 1.0)));
-        assert!(!prefix(3, 1.0).beats(prefix(5, 900.0)));
-        // Equal prefix length falls through to strictly-nearest.
-        assert!(prefix(3, 4.0).beats(prefix(3, 9.0)));
-    }
-
-    #[test]
-    fn ties_keep_the_incumbent_and_nan_never_displaces() {
-        // The reference's `jp` reject edge makes the accept a strict `<`.
-        assert!(!prefix(3, 4.0).beats(prefix(3, 4.0)));
-        assert!(!exact(4.0).beats(exact(4.0)));
-        assert!(!prefix(3, f32::NAN).beats(prefix(3, 4.0)));
+    fn exact_only_compares_the_whole_name_but_keeps_the_case_fold() {
+        assert!(!name_matches("rag", "Ragnaros", Match::ExactOnly));
+        assert!(name_matches("RAGNAROS", "Ragnaros", Match::ExactOnly));
     }
 }
