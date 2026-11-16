@@ -31,6 +31,15 @@ local function popup()
         end
     end
 end
+local function button2()
+    for i = 1, 4 do
+        local p = _G["StaticPopup" .. i]
+        if p and p:IsShown() and p.which == "DEATH" then
+            local b = _G["StaticPopup" .. i .. "Button2"]
+            return b:IsShown() and b:GetText()
+        end
+    end
+end
 local VERBS = {
     { "taxi", function() return UnitOnTaxi("player") end },
     { "control", function() return HasFullControl() end },
@@ -46,6 +55,8 @@ local VERBS = {
     { "petui", function() return HasPetUI() end },
     { "mounts", function() return GetNumCompanions("MOUNT") end },
     { "popup", popup },
+    { "button2", button2 },
+    { "soulstone", function() return HasSoulstone() end },
     { "special", function() return GetQuestLogSpecialItemInfo(2) ~= nil end },
     { "watchitem", function() return WatchFrameItem1 ~= nil and WatchFrameItem1:IsShown() end },
     { "release", function() return GetReleaseTimeRemaining() end },
@@ -361,6 +372,8 @@ const PET: u64 = 0xF140_0000_0100_0001;
 const QUEST: u32 = 7;
 /// `PLAYER_FLAGS_GHOST`.
 const GHOST: u32 = 0x10;
+/// `PLAYER_SELF_RES_SPELL`.
+const FIELD_PLAYER_SELF_RES_SPELL: u16 = 1224;
 
 fn flags(f: u32) -> SessionEvent {
     self_values(&[(FIELD_UNIT_FLAGS, f)])
@@ -526,6 +539,27 @@ fn death_and_release_in_one_frame_fire_in_wire_order() {
             &["release"]
         ),
         vec!["PLAYER_DEAD | release=-1", "PLAYER_ALIVE | release=-1"]
+    );
+}
+
+/// A Reincarnation owed at death, its field one flush ahead of health 0: `HasSoulstone`
+/// (`0x51acd0`) reads it at call time, so the `DEATH` popup `UIParent` raises on `PLAYER_DEAD`
+/// shows its second button with the spell's name.
+#[test]
+fn a_self_res_owed_at_death_shows_on_the_death_popup() {
+    let Some(mut rig) = Rig::login(&[]) else {
+        return;
+    };
+    let seen = rig.packets(
+        vec![
+            self_values(&[(FIELD_PLAYER_SELF_RES_SPELL, 21169)]),
+            self_values(&[(FIELD_UNIT_HEALTH, 0)]),
+        ],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, &["PLAYER_DEAD"], &["soulstone", "button2"]),
+        vec!["PLAYER_DEAD | soulstone=Reincarnation button2=Reincarnation"]
     );
 }
 
@@ -835,6 +869,28 @@ fn combat_enter_and_leave() {
             "UNIT_FLAGS player | combat=nil lockdown=1",
             "PLAYER_REGEN_ENABLED | combat=nil lockdown=nil",
         ]
+    );
+}
+
+/// A death in combat: the server clears the in-combat flag in the update that zeroes health, and
+/// 12340 runs the mirror handlers in field order (`0x4d5550`), so health's `PLAYER_DEAD`
+/// (`0x73f330`) fires before the flags word's `UNIT_FLAGS` (`0x60c240`).
+#[test]
+fn a_death_in_combat_fires_player_dead_before_unit_flags() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    rig.packets(vec![flags(crate::player::UNIT_FLAG_IN_COMBAT)], 3);
+    let seen = rig.packets(
+        vec![self_values(&[
+            (FIELD_UNIT_HEALTH, 0),
+            (FIELD_UNIT_FLAGS, 0),
+        ])],
+        3,
+    );
+    assert_eq!(
+        pin(&seen, &["PLAYER_DEAD", "UNIT_FLAGS"], &[]),
+        vec!["PLAYER_DEAD", "UNIT_FLAGS player"]
     );
 }
 

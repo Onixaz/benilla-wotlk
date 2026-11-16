@@ -88,7 +88,7 @@ pub(crate) struct DeathGlobals {
     no_release_timer: bool,
     /// When the corpse becomes reclaimable, on the real clock (`0xbd0850`).
     pub(crate) reclaim_at: Option<f64>,
-    /// The last resurrect offer (`0xc9eab8`-`0xc9eac4`), kept after an answer as the reference's.
+    /// The last resurrect offer (`0xc9eab8`-`0xc9eac4`); an answer zeroes its caster alone.
     pub(crate) resurrect: Option<ResurrectOffer>,
     /// The spirit healer asked about (`0xc9eb10`), which `AcceptXPLoss` answers.
     pub(crate) spirit_healer: Option<u64>,
@@ -211,8 +211,8 @@ impl DeathView<'_, '_> {
 
 /// The death verbs' answers that read state systems holding the VM also write (the mover's
 /// flags, positions, item templates, the spell catalog, the battlefield): sampled once a frame
-/// after the packet drain, ahead of every script call, as the borrow rules let no VM holder
-/// lend them.
+/// after the packet drain, ahead of every script call, and before each handler's events fire, as
+/// the borrow rules let no VM holder lend them.
 #[derive(Resource, Default, PartialEq)]
 pub(crate) struct DeathSample {
     /// `IsFalling` (`0x612430`).
@@ -292,7 +292,7 @@ fn active_player_refresh(health: u32) -> (&'static str, bool) {
 /// (`Corpse.h:40`), sits 1 yd inside it.
 const CORPSE_RANGE_SQ: f32 = 40.0 * 40.0;
 
-/// The spirit-healer reach past the healer's bounding radius (`0x6d1fc0`, `0x6db010`).
+/// The spirit-healer reach past the healer's combat reach (`0x6d1fc0`, `0x6db010`).
 const SPIRIT_HEALER_REACH: f32 = 4.0;
 
 /// `PLAYER_FLAGS_IS_OUT_OF_BOUNDS`, the bit `IsOutOfBounds` tests (`0x6123eb`).
@@ -504,7 +504,7 @@ pub(crate) fn queue_enter_world(commands: &mut Commands) {
     });
 }
 
-/// Talking to a spirit healer (`0x6db010`), a ghost alone: a healer within its bounding radius
+/// Talking to a spirit healer (`0x6db010`), a ghost alone: a healer within its combat reach
 /// plus 4 yd is stored and asked about with `CONFIRM_XP_LOSS` (`0x6db103`); `npc` 0 answers the
 /// stored one with `CMSG_SPIRIT_HEALER_ACTIVATE` instead.
 pub(crate) fn talk_to_spirit_healer(
@@ -541,12 +541,29 @@ pub(crate) fn talk_to_spirit_healer(
     ui.fire("CONFIRM_XP_LOSS", vec![ScriptValue::Int(xp_cost)]);
 }
 
-/// `0x6d1fc0`'s test: the held healer's bounding radius plus 4 yd, squared, inclusive.
+/// `0x6d1fc0`'s test: the held healer's combat reach (`0x6d2023`) plus 4 yd, squared, inclusive.
 pub(crate) fn within_spirit_healer_reach(me: Vec3, healer: Option<(f32, Vec3)>) -> bool {
     healer.is_some_and(|(radius, at)| {
         let reach = radius + SPIRIT_HEALER_REACH;
         at.distance_squared(me) <= reach * reach
     })
+}
+
+/// `0x6d1d30`: answer the held offer's caster with `CMSG_RESURRECT_RESPONSE`, then zero the caster
+/// (`0x6d1da6`), so a second answer sends nothing (`0x6d1d41`); the sickness and timer bytes stay.
+pub(crate) fn answer_resurrect(world: &mut World, accept: bool) {
+    let Some(caster) = world
+        .get_resource_mut::<DeathGlobals>()
+        .and_then(|mut g| g.resurrect.as_mut().map(|o| std::mem::take(&mut o.caster)))
+        .filter(|&caster| caster != 0)
+    else {
+        return;
+    };
+    if let Some(net) = world.get_resource::<NetCommands>() {
+        let _ = net
+            .0
+            .send(ClientCommand::ResurrectResponse { caster, accept });
+    }
 }
 
 /// The spirit-healer talk as a command, for a click: run with the `World` and its event fired.
@@ -579,7 +596,7 @@ pub(crate) fn spirit_healer_talk_system(
     );
 }
 
-/// A held unit's bounding radius and place.
+/// A held unit's `UNIT_FIELD_COMBATREACH` and place.
 pub(crate) fn healer_reach(
     guid: u64,
     index: &crate::net::GuidIndex,
@@ -589,7 +606,7 @@ pub(crate) fn healer_reach(
     store
         .0
         .is_unit()
-        .then(|| (store.0.unit_bounding_radius(), t.translation))
+        .then(|| (store.0.unit_combat_reach(), t.translation))
 }
 
 /// The corpse distance each world-frame update (`0x4fa040` -> `0x51f5c0`): the corpse POI, the
@@ -884,7 +901,6 @@ pub(crate) fn ghost_probe() -> Option<bool> {
 fn drain_death(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     death_net: Res<DeathNet>,
-    globals: Res<DeathGlobals>,
     mut commands: Commands,
     net: Res<NetCommands>,
     targeting: crate::spell::cast_target::CastTargeting,
@@ -905,16 +921,10 @@ fn drain_death(
             DeathAction::RetrieveCorpse => net.0.send(ClientCommand::ReclaimCorpse {
                 corpse: death_net.corpse_guid.unwrap_or(0),
             }),
-            // The offer stays latched after an answer, as the reference's does.
             DeathAction::AcceptResurrect | DeathAction::DeclineResurrect => {
                 let accept = action == DeathAction::AcceptResurrect;
-                match &globals.resurrect {
-                    Some(offer) => net.0.send(ClientCommand::ResurrectResponse {
-                        caster: offer.caster,
-                        accept,
-                    }),
-                    None => Ok(()),
-                }
+                commands.queue(move |world: &mut World| answer_resurrect(world, accept));
+                Ok(())
             }
             // The stored healer, re-checked for reach (`0x51b6a0` -> `0x6db010` with 0).
             DeathAction::AcceptXpLoss => {
@@ -1000,7 +1010,10 @@ pub(crate) struct DeathPlugin;
 
 impl Plugin for DeathPlugin {
     fn build(&self, app: &mut App) {
+        use crate::ui_script::live::LiveSamplerApp;
         net::register(app);
+        // Again before a handler's events fire, so `PLAYER_DEAD`'s popup reads this death.
+        app.live_sampler(sample_death_state);
         app.init_resource::<DeathNet>()
             .init_resource::<DeathGlobals>()
             .init_resource::<ActivePlayerInit>()
@@ -1215,13 +1228,45 @@ mod tests {
         assert!(rig.sent().is_empty(), "no ask inside an arena");
     }
 
-    /// `0x6d1fc0`: the healer's bounding radius plus 4 yd, inclusive; an unheld healer is out.
+    /// `0x6d1fc0`: the healer's combat reach plus 4 yd, inclusive; an unheld healer is out.
     #[test]
-    fn the_spirit_healer_reach_is_its_radius_plus_four_yards() {
+    fn the_spirit_healer_reach_is_its_combat_reach_plus_four_yards() {
         let at = |x: f32| Some((1.5, Vec3::new(x, 0.0, 0.0)));
         assert!(within_spirit_healer_reach(Vec3::ZERO, at(5.5)));
         assert!(!within_spirit_healer_reach(Vec3::ZERO, at(5.6)));
         assert!(!within_spirit_healer_reach(Vec3::ZERO, None));
+    }
+
+    /// `0x6d1d30`: an answer goes out once for the offer's caster, then zeroes it; a second answer
+    /// sends nothing, and the sickness and timer bytes stay.
+    #[test]
+    fn a_resurrect_answer_goes_out_once_and_keeps_the_offer_bytes() {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut w = World::new();
+        w.insert_resource(NetCommands(tx));
+        w.insert_resource(DeathGlobals {
+            resurrect: Some(ResurrectOffer {
+                caster: 0x77,
+                name: "Priest".into(),
+                sickness: true,
+                has_timer: true,
+                awaiting_name: false,
+            }),
+            ..Default::default()
+        });
+        answer_resurrect(&mut w, true);
+        answer_resurrect(&mut w, false);
+        let sent: Vec<_> = rx.try_iter().collect();
+        assert!(matches!(
+            sent.as_slice(),
+            [ClientCommand::ResurrectResponse {
+                caster: 0x77,
+                accept: true
+            }]
+        ));
+        let offer = w.resource::<DeathGlobals>().resurrect.clone().unwrap();
+        assert_eq!(offer.caster, 0);
+        assert!(offer.sickness && offer.has_timer);
     }
 
     /// `0x512c40`: the instance event when the display map is not the corpse's.

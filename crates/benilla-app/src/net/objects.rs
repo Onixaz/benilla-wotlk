@@ -1427,19 +1427,31 @@ fn gameobject_info(
     go_templates.insert(entry, type_id, name, data);
 }
 
-/// `UNIT_FLAGS` for our own unit's `"player"` token from the field watch of the update that moved
-/// the word (`0x60c240` -> `0x60bf10`), so it keeps wire order with the next handler's events.
+/// Our own unit's watched fields in field order, as the mirror handlers run (`0x4d5550`): health
+/// (`0x73f330`) ahead of the flags word, whose `UNIT_FLAGS` for `"player"` comes from its watch
+/// (`0x60c240` -> `0x60bf10`), then the dynamic and player flags; each keeps wire order with the
+/// next handler's events.
 fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
     if sc.self_guid.0 != Some(guid) {
         return;
     }
+    let split = merged
+        .death
+        .partition_point(|&(index, ..)| index < benilla_protocol::field::FIELD_UNIT_FLAGS);
+    let (before, after) = merged.death.split_at(split);
+    own_death_fields(sc, guid, before);
     if merged.flags_moved {
         sc.ui.fire(
             "UNIT_FLAGS",
             vec![benilla_ui::script::ScriptValue::Str("player".into())],
         );
     }
-    if merged.death.is_empty() {
+    own_death_fields(sc, guid, after);
+}
+
+/// Our own death fields' edges, in field order, through [`crate::death::own_fields_changed`].
+fn own_death_fields(sc: &mut Scene, guid: u64, edges: &[(u16, u32, u32)]) {
+    if edges.is_empty() {
         return;
     }
     let Some(fields) = sc
@@ -1460,7 +1472,7 @@ fn own_flags_watch(sc: &mut Scene, guid: u64, merged: Merged) {
         now: sc.real.elapsed_secs_f64(),
         arena,
     };
-    crate::death::own_fields_changed(&merged.death, &fields, &mut cx);
+    crate::death::own_fields_changed(edges, &fields, &mut cx);
 }
 
 /// Merges a descriptor delta into an object's store and reports its [`FieldChanged`] edges, and

@@ -50,7 +50,7 @@ pub trait LiveState {
         false
     }
 
-    /// The spirit healer asked about is held and within its bounding radius plus 4 yd of us
+    /// The spirit healer asked about is held and within its combat reach plus 4 yd of us
     /// (`0x6d1fc0`).
     fn spirit_healer_in_range(&self) -> bool {
         false
