@@ -42,17 +42,6 @@ fn to_u32(v: &Value) -> u32 {
     }
 }
 
-fn flag_arg(v: Option<Value>) -> Option<bool> {
-    match v {
-        None | Some(Value::Nil) => None,
-        Some(Value::Boolean(b)) => Some(b),
-        Some(Value::Integer(n)) => Some(n != 0),
-        Some(Value::Number(n)) => Some(n != 0.0),
-        Some(Value::String(s)) => Some(s.to_str().is_ok_and(|s| s != "0" && !s.is_empty())),
-        Some(_) => Some(true),
-    }
-}
-
 impl super::UiScript {
     /// `DoEmote` calls since the last drain.
     pub fn take_emote_requests(&mut self) -> Vec<EmoteRequest> {
@@ -106,6 +95,13 @@ impl super::UiScript {
     /// Whether a logging flag moved since the last drain: the app's cue to open or close its logs.
     pub fn take_logging_changes(&mut self) -> bool {
         drain_field!(self, logging_changed)
+    }
+
+    /// Set both flags without a cue: a reload's carry, or a log the app could not open, which
+    /// clears its flag (`0x4fbcba`).
+    pub fn set_logging_flags(&mut self, chat: bool, combat: bool) {
+        let mut model = self.model_mut();
+        (model.logging_chat, model.logging_combat) = (chat, combat);
     }
 }
 
@@ -210,30 +206,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
+    // `0x4fbc60`: any argument sets the flag (`0x815500`, default on), then the flag reads 1 or nil.
     for (name, chat) in [("LoggingChat", true), ("LoggingCombat", false)] {
         g.set(
             name,
-            lua.create_function(move |lua, flag: Option<Value>| {
+            lua.create_function(move |lua, args: MultiValue| {
                 let mut model = crate::script::model_mut_of(lua);
                 let slot = if chat {
                     &mut model.logging_chat
                 } else {
                     &mut model.logging_combat
                 };
-                match flag_arg(flag) {
-                    None => Ok(MultiValue::from_vec(vec![if *slot {
-                        Value::Integer(1)
-                    } else {
-                        Value::Nil
-                    }])),
-                    Some(on) => {
-                        if *slot != on {
-                            *slot = on;
-                            model.logging_changed = true;
-                        }
-                        Ok(MultiValue::new())
+                if !args.is_empty() {
+                    let on = super::binding_abi::bool_or_default(args.front(), true);
+                    if *slot != on {
+                        *slot = on;
+                        model.logging_changed = true;
                     }
                 }
+                let on = if chat {
+                    model.logging_chat
+                } else {
+                    model.logging_combat
+                };
+                Ok(if on { Value::Number(1.0) } else { Value::Nil })
             })?,
         )?;
     }
@@ -364,9 +360,9 @@ mod tests {
         assert!(s.eval::<bool>("return LoggingChat() == nil").unwrap());
         assert!(s.eval::<bool>("return LoggingCombat() == nil").unwrap());
         assert_eq!(
-            s.arity("LoggingChat(true)").unwrap(),
-            0,
-            "the setter returns nothing"
+            s.eval::<i64>("return LoggingChat(true)").unwrap(),
+            1,
+            "the setter reads the flag back"
         );
         assert_eq!(s.eval::<i64>("return LoggingChat()").unwrap(), 1);
         assert_eq!(s.logging_flags(), (true, false));
@@ -379,5 +375,12 @@ mod tests {
             !s.take_logging_changes(),
             "a write that moves nothing cues nothing"
         );
+        assert!(
+            s.eval::<bool>("return LoggingCombat(nil) == nil").unwrap(),
+            "an explicit nil is an argument, read as off"
+        );
+        assert!(s.eval::<bool>("return LoggingChat('on') == 1").unwrap());
+        s.set_logging_flags(false, true);
+        assert_eq!(s.logging_flags(), (false, true));
     }
 }

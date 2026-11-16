@@ -55,8 +55,8 @@ pub(crate) struct UnitCombatFeedback {
 }
 
 /// One `COMBAT_TEXT_UPDATE` (the combat-text send, `0x74d460`-`0x74d550`): the type word, then the
-/// fire's own `%s`/`%d` arguments. The combat log fires it only for the combat-text unit, the
-/// player (`0x74d430`).
+/// fire's own `%s`/`%d` arguments. The combat log fires it only for the combat-text unit
+/// (`0x74d430`).
 #[derive(Message, Clone)]
 pub(crate) struct CombatTextEvent {
     pub(crate) message_type: &'static str,

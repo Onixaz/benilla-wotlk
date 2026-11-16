@@ -2088,7 +2088,7 @@ fn a_speaker_that_cannot_animate_queues_no_talk_gesture() {
 #[test]
 fn every_combat_log_kind_reaches_an_addon() {
     let _data = benilla_formats::wow_data_or_skip!();
-    for kind in K::ALL.iter().copied().filter(|k| k.is_combat_log()) {
+    for kind in [K::CombatMiscInfo, K::CombatFactionChange] {
         let name = super::event::event_name(kind);
         let mut s = chat_vm();
         let mut windows = super::frames::ChatWindows::default();
@@ -2126,12 +2126,44 @@ fn every_combat_log_kind_reaches_an_addon() {
     }
 }
 
+/// #441: the `COMBAT_` kinds are chat lines, so they go to the chat log; the combat log file
+/// holds only packed entries (`0x4fb3c0`).
+#[test]
+fn a_combat_chat_kind_goes_to_the_chat_log() {
+    let path = std::env::temp_dir().join(format!("benilla-chatlog-441-{}", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let mut s = benilla_ui::script::UiScript::new().unwrap();
+    let mut windows = super::frames::ChatWindows {
+        logs: super::logging::ChatLogFile(super::logging::LogFile::at(&path)),
+        ..Default::default()
+    };
+    for kind in [K::CombatMiscInfo, K::CombatFactionChange] {
+        let line = format!("a line for {}", super::event::event_name(kind));
+        super::frames::route(&mut s, &mut windows, &ChatEvent::text_only(kind, line));
+    }
+    drop(windows);
+    let written = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_file(&path);
+    let lines: Vec<&str> = written
+        .split("\r\n")
+        .filter(|l| !l.is_empty())
+        .map(|l| l.split_once("  ").map_or(l, |(_, text)| text))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "a line for CHAT_MSG_COMBAT_MISC_INFO",
+            "a line for CHAT_MSG_COMBAT_FACTION_CHANGE"
+        ]
+    );
+}
+
 /// The `COMBAT_` and `SPELL_` arms only `AddMessage(arg1)` (`ChatFrame.lua:1397`, `:1399`).
 #[test]
 fn a_combat_log_line_renders_verbatim() {
     let _data = benilla_formats::wow_data_or_skip!();
     let default_language = String::from("Common");
-    for kind in K::ALL.iter().copied().filter(|k| k.is_combat_log()) {
+    for kind in [K::CombatMiscInfo, K::CombatFactionChange] {
         let mut e = ChatEvent::text_only(kind, "You hit Kobold Vermin for 5.".into());
         // Populated so a fall-through to the player branch would show.
         e.sender = "Somebody".into();
