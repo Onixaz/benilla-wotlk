@@ -176,7 +176,10 @@ impl Plugin for UiQuestLogPlugin {
                     progress::announce_quest_progress
                         .in_set(UnitFeed)
                         .before(feed_quest_log),
-                    feed_quest_log.in_set(UnitFeed),
+                    // After the unit feed's `UNIT_QUEST_LOG_CHANGED`, the order #1245's rig pins.
+                    feed_quest_log
+                        .in_set(UnitFeed)
+                        .after(crate::ui_unit::EnterWorldFeed),
                     tooltip::feed_quest_tooltips.in_set(UnitFeed),
                     // Before the script tick, so `QuestTimerFrame` reads this frame's clock.
                     feed_server_clock.in_set(UiFeed),
