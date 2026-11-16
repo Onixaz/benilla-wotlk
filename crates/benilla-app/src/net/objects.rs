@@ -746,7 +746,11 @@ fn on_spline_move_mode(In(ev): In<SessionEvent>, mut sc: Scene) {
     }
 }
 
-fn on_speed(In(ev): In<SessionEvent>, mut sc: Scene) {
+fn on_speed(
+    In(ev): In<SessionEvent>,
+    mut sc: Scene,
+    mut arrivals: ResMut<super::ForcedMoveArrivals>,
+) {
     match ev {
         SessionEvent::ForceSpeedChange {
             guid,
@@ -762,6 +766,7 @@ fn on_speed(In(ev): In<SessionEvent>, mut sc: Scene) {
             &mut sc.speeds,
             &sc.self_guid,
             &mut sc.speed_changes,
+            arrivals.next(),
         ),
         SessionEvent::SpeedChanged { guid, kind, speed } => {
             speed_changed(guid, kind, speed, &sc.index, &mut sc.speeds)
@@ -1460,6 +1465,7 @@ fn force_speed_change(
     speeds: &mut Query<&mut UnitSpeeds>,
     self_guid: &SelfGuid,
     speed_changes: &mut MessageWriter<SpeedChangeMessage>,
+    arrival: u64,
 ) {
     let applied = set_speed(guid, kind, speed, index, speeds);
     if self_guid.0 == Some(guid) {
@@ -1479,6 +1485,7 @@ fn force_speed_change(
         kind,
         counter,
         speed,
+        arrival,
     });
 }
 

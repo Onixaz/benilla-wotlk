@@ -401,8 +401,7 @@ pub(super) fn control(
                 movement_net::park_mover(&net.0 .0, &mut player);
             }
             // After the park, so a fear's ack carries the stopped word.
-            movement_net::ack_speeds_undriven(&net.0 .0, &player, &acks.speeds);
-            movement_net::ack_modes_undriven(&net.0 .0, &player, &acks.modes);
+            movement_net::ack_undriven(&net.0 .0, &player, &acks);
             return;
         }
         // After `apply_server_moves`, so this frame's root edge is already in `modes`.
@@ -974,8 +973,7 @@ pub(super) fn control(
                 fall_time: wire_fall_time,
             },
             now,
-            &acks.speeds,
-            &acks.modes,
+            &acks,
             // Each queued one, acked after its launch (`0x6ed17d`, `0x6f027e`).
             if knocked { &knockbacks[..] } else { &[] },
             wire_transport,
