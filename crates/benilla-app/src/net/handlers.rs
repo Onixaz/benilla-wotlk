@@ -49,7 +49,8 @@ impl NetHandlers {
         self.by_kind.entry(kind).or_default().push(handler);
     }
 
-    /// Runs the event's handlers in registration order.
+    /// Runs the event's handlers in registration order, each one's events fired once its
+    /// commands apply.
     fn run(&self, world: &mut World, ev: SessionEvent) {
         let Some(list) = self.by_kind.get(&SessionEventKind::from(&ev)) else {
             return;
@@ -69,6 +70,8 @@ fn call(world: &mut World, id: SystemId<In<SessionEvent>>, name: &str, ev: Sessi
         // A plugin bug (most likely a missing resource), logged loud so the smoke gate sees it.
         error!("net: handler `{name}` did not run: {e}");
     }
+    // The reference's handler fires its events itself, after its changes (`0x520fe0`).
+    crate::ui_script::live::fire_handler_events(world);
 }
 
 /// `app.net_handler(SessionEventKind::X, on_x)` registers a system taking `In<SessionEvent>`;
@@ -92,6 +95,8 @@ impl NetHandlerApp for App {
         self.world_mut()
             .get_resource_or_init::<NetHandlers>()
             .push(kind, (id, name));
+        // The queue a handler fires its UI events into.
+        self.init_resource::<crate::ui_script::live::UiEvents>();
         self
     }
 }
@@ -236,8 +241,13 @@ mod tests {
         }
         let (mut seen, mut problems) = (0, Vec::new());
         for path in files {
-            if path.ends_with("net/handlers.rs") {
-                continue; // this file's own fixtures and prose
+            // This file's own fixtures and prose, and the test files' fixtures.
+            if path.ends_with("net/handlers.rs")
+                || path
+                    .file_stem()
+                    .is_some_and(|s| s.to_string_lossy().ends_with("_tests"))
+            {
+                continue;
             }
             let text = regex_lite_strip_comments(&std::fs::read_to_string(&path).expect("source"));
             for call in text.split("net_handler(").skip(1) {

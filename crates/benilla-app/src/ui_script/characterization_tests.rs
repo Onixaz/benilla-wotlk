@@ -861,3 +861,111 @@ fn accept_with_the_source_item() -> Option<(Rig, Vec<Seen>)> {
     );
     Some((rig, accept))
 }
+
+// ── The live infrastructure end to end ───────────────────────────────────────────────────────────
+
+/// `OBJECT_FIELD_TYPE` as a server sends it for a player (object, unit, player), which the live
+/// view's unit lookup tests.
+const OBJECT_TYPE_PLAYER: (u16, u32) = (2, 0x19);
+
+/// A test handler on the control update firing `CHARZ_HANDLER`, as a migrated handler fires its
+/// event (`0x520fe0`).
+fn charz_control(In(ev): In<SessionEvent>, mut ui: ResMut<crate::ui_script::live::UiEvents>) {
+    if let SessionEvent::ClientControl { allow_move, .. } = ev {
+        let edge = if allow_move { "gained" } else { "lost" };
+        ui.fire(
+            "CHARZ_HANDLER",
+            vec![benilla_ui::script::ScriptValue::Str(edge.into())],
+        );
+    }
+}
+
+/// A logged-in rig with [`charz_control`] registered after the stock control handler.
+fn login_with_handler_event() -> Option<Rig> {
+    use crate::net::handlers::NetHandlerApp;
+    let mut rig = Rig::login(&[OBJECT_TYPE_PLAYER])?;
+    rig.app.net_handler(
+        benilla_protocol::SessionEventKind::ClientControl,
+        charz_control,
+    );
+    Some(rig)
+}
+
+/// A handler-fired event reaches Lua inside the drain, in wire order: after every earlier packet's
+/// change (the flags ahead of it), before any later one's (the flags behind it), and its handler's
+/// `UnitOnTaxi` reads the `World` through the lent view, since no feed has pushed the flag yet.
+#[test]
+fn a_handler_event_sees_the_packets_before_it_and_none_after() {
+    let Some(mut rig) = login_with_handler_event() else {
+        return;
+    };
+    let taxi = crate::player::UNIT_FLAG_TAXI_FLIGHT;
+    let ahead = rig.packets(vec![flags(taxi), control(false)], 1);
+    let landed = rig.packets(vec![flags(0), control(true)], 1);
+    let behind = rig.packets(vec![control(false), flags(taxi)], 1);
+    let between = rig.packets(vec![flags(0), control(true), flags(taxi)], 1);
+    let events = &["CHARZ_HANDLER"];
+    let verbs = &["taxi"];
+    assert_eq!(
+        pin(&ahead, events, verbs),
+        vec!["CHARZ_HANDLER lost | taxi=1"]
+    );
+    assert_eq!(
+        pin(&landed, events, verbs),
+        vec!["CHARZ_HANDLER gained | taxi=nil"]
+    );
+    assert_eq!(
+        pin(&behind, events, verbs),
+        vec!["CHARZ_HANDLER lost | taxi=nil"]
+    );
+    assert_eq!(
+        pin(&between, events, verbs),
+        vec!["CHARZ_HANDLER gained | taxi=nil"]
+    );
+    // The handler event is the frame's first: it fires inside the drain, ahead of every feed.
+    assert_eq!(
+        ahead.first().map(|s| s.event.as_str()),
+        Some("CHARZ_HANDLER")
+    );
+}
+
+/// The OnUpdate tick lends the view too: `UnitOnTaxi("playertarget")`, with us our own target,
+/// reads the flags the frame's packet set, which the pushed ride flag answers for `player` alone;
+/// outside any call into Lua nothing is lent.
+#[test]
+fn an_on_update_reads_the_world_through_the_lent_view() {
+    let Some(mut rig) = Rig::login(&[OBJECT_TYPE_PLAYER]) else {
+        return;
+    };
+    // `UNIT_FIELD_TARGET`, words 16 and 17: we target ourselves.
+    rig.packets(vec![self_values(&[(16, ME as u32), (17, 0)])], 2);
+    rig.app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .run(
+            r#"
+            CHARZ_TICK = {}
+            local f = CreateFrame("Frame")
+            f:SetScript("OnUpdate", function()
+                CHARZ_TICK[#CHARZ_TICK + 1] = tostring(UnitOnTaxi("playertarget"))
+            end)
+            "#,
+        )
+        .unwrap();
+    let tick = |rig: &mut Rig| -> Vec<String> {
+        rig.app
+            .world()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .eval("local t = CHARZ_TICK; CHARZ_TICK = {}; return t")
+            .unwrap()
+    };
+    rig.packets(vec![flags(crate::player::UNIT_FLAG_TAXI_FLIGHT)], 1);
+    assert_eq!(tick(&mut rig), vec!["1"]);
+    rig.packets(vec![flags(0)], 1);
+    assert_eq!(tick(&mut rig), vec!["nil"]);
+    assert!(!rig
+        .app
+        .world()
+        .non_send_resource::<benilla_ui::script::UiScript>()
+        .has_live());
+}
