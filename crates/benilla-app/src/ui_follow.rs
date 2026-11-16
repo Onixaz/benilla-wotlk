@@ -1,4 +1,4 @@
-//! The follow bridge: drains `FollowUnit`/`FollowByName` into [`crate::player::FollowRequest`]
+//! The follow bridge: drains `FollowUnit` into [`crate::player::FollowRequest`]
 //! and fires `AUTOFOLLOW_BEGIN`/`AUTOFOLLOW_END` on [`crate::player::FollowState`]'s transitions,
 //! the reference's whole follow interface to the UI (there is no `IsFollowing()`).
 //!
@@ -63,11 +63,8 @@ fn drain_follow(
     let Some(mut script) = script else {
         return;
     };
-    for request in script.take_follow_requests() {
-        out.write(match request {
-            ScriptFollowRequest::ByUnit(unit) => FollowRequest::Unit(unit),
-            ScriptFollowRequest::ByName { name, exact } => FollowRequest::Name { name, exact },
-        });
+    for ScriptFollowRequest { name, exact } in script.take_follow_requests() {
+        out.write(FollowRequest { name, exact });
     }
 }
 

@@ -70,14 +70,12 @@ impl FollowState {
     }
 }
 
-/// A start-following request: the chat input's `/follow`, or the UI's `FollowUnit`/`FollowByName`.
-/// A name finds players only; the start gate refuses a creature either way.
+/// A start-following request, `FollowUnit(nameOrUnit, exactMatch)`: a unit token or a name, the
+/// empty string the target; the unit popup passes `exact`, `/follow <name>` does not.
 #[derive(bevy::ecs::message::Message, Clone, Debug)]
-pub(crate) enum FollowRequest {
-    /// `FollowUnit(unit)`; a bare `/follow` is `FollowUnit("target")`.
-    Unit(String),
-    /// `FollowByName(name, exactMatch)`: the unit popup passes `1`, `/follow <name>` nothing.
-    Name { name: String, exact: bool },
+pub(crate) struct FollowRequest {
+    pub(crate) name: String,
+    pub(crate) exact: bool,
 }
 
 /// A stopped follow resumes at this distance or beyond, off the 3D distance.

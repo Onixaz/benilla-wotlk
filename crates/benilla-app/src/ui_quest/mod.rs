@@ -659,7 +659,7 @@ fn decline_leg(npc: u64, acted: bool, close_on_cancel: u32, npc_flags: Option<u3
 }
 
 /// Drain the Lua intents: greeting-row selects and the panel buttons, each to its `CMSG`.
-fn drain_quest(
+pub(crate) fn drain_quest(
     (script, _live): (Option<NonSendMut<UiScript>>, crate::ui_script::LendLive),
     mut giver: ResMut<QuestGiver>,
     commands: Res<NetCommands>,
