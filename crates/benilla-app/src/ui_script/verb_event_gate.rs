@@ -15,8 +15,9 @@ struct Pair {
     via: String,
 }
 
-/// Pairs a feed fires on the state the verb changes, as `(verb, event, file)` with the file
-/// matched as a path suffix; each row's comment names the trigger.
+/// Pairs fired off the verb's module on the verb's own change, as `(verb, event, file)` with the
+/// file matched as a path suffix: a feed reading the state the verb changed, or a helper on the
+/// verb's own path. Each row's comment names the trigger.
 const ELSEWHERE: &[(&str, &str, &str)] = &[
     // The sell slot's diff (`auction_sell_item` moved), from the click, the right-click arm or
     // the cancelled multi-sell's slot clear.
@@ -46,50 +47,80 @@ const ELSEWHERE: &[(&str, &str, &str)] = &[
         "AUCTION_MULTISELL_START",
         "benilla-app/src/ui_auction/mod.rs",
     ),
-    // The query goes to the wire; the inbox feed announces the list when it lands.
-    (
-        "CheckInbox",
-        "MAIL_INBOX_UPDATE",
-        "benilla-app/src/ui_mail/mod.rs",
-    ),
-    // `take_loot_roll_confirms`: a Need/Greed on a bind-on-pickup roll is diverted to the popup.
-    (
-        "ConfirmLootRoll",
-        "CANCEL_LOOT_ROLL",
-        "benilla-app/src/ui_loot_roll.rs",
-    ),
-    (
-        "ConfirmLootRoll",
-        "CONFIRM_LOOT_ROLL",
-        "benilla-app/src/ui_loot_roll.rs",
-    ),
-    (
-        "RollOnLoot",
-        "CANCEL_LOOT_ROLL",
-        "benilla-app/src/ui_loot_roll.rs",
-    ),
-    (
-        "RollOnLoot",
-        "CONFIRM_LOOT_ROLL",
-        "benilla-app/src/ui_loot_roll.rs",
-    ),
     // `keybinds.generation` moves; `sync_dispatch` re-derives the table and fires.
     (
         "SetBinding",
         "UPDATE_BINDINGS",
         "benilla-app/src/bindings.rs",
     ),
-    // Fired when the server's reply changes the bar, a round trip after the reference, which
-    // fires locally from the toggle.
+    // The trade drain applies the accept, the unaccept or the close to the session at once, and
+    // the trade feed fires on the change it reads.
     (
-        "TogglePetAutocast",
-        "PET_BAR_UPDATE",
-        "benilla-app/src/ui_pet/bar.rs",
+        "AcceptTrade",
+        "TRADE_ACCEPT_UPDATE",
+        "benilla-app/src/ui_trade/mod.rs",
     ),
     (
-        "ToggleSpellAutocast",
-        "PET_BAR_UPDATE",
-        "benilla-app/src/ui_pet/bar.rs",
+        "CancelTradeAccept",
+        "TRADE_ACCEPT_UPDATE",
+        "benilla-app/src/ui_trade/mod.rs",
+    ),
+    (
+        "CloseTrade",
+        "TRADE_CLOSED",
+        "benilla-app/src/ui_trade/mod.rs",
+    ),
+    // The direct RSVP (`direct_rsvp`) marks the action pending and signals it.
+    (
+        "CalendarContextInviteAvailable",
+        "CALENDAR_ACTION_PENDING",
+        "benilla-ui/src/script/calendar/engine.rs",
+    ),
+    (
+        "CalendarContextInviteDecline",
+        "CALENDAR_ACTION_PENDING",
+        "benilla-ui/src/script/calendar/engine.rs",
+    ),
+    // The close intent empties the window's snapshot; the feed fires on the open edge falling.
+    (
+        "CloseGuildRegistrar",
+        "GUILD_REGISTRAR_CLOSED",
+        "benilla-app/src/ui_petition/feed.rs",
+    ),
+    (
+        "ClosePetStables",
+        "PET_STABLE_CLOSED",
+        "benilla-app/src/ui_stable/mod.rs",
+    ),
+    // `pickup_item` puts the item on the cursor and queues the cursor's transition event.
+    (
+        "PickupItem",
+        "CURSOR_UPDATE",
+        "benilla-ui/src/script/cursor.rs",
+    ),
+    // The reset restores the colour table, then `chat_types::fire_all` signals every entry.
+    (
+        "ResetChatWindows",
+        "UPDATE_CHAT_COLOR",
+        "benilla-ui/src/script/chat_types.rs",
+    ),
+    (
+        "ResetChatWindows",
+        "UPDATE_CHAT_COLOR_NAME_BY_CLASS",
+        "benilla-ui/src/script/chat_types.rs",
+    ),
+    // Fired when the server's raid-target update lands, a round trip after the reference, which
+    // fires locally from the verb.
+    (
+        "SetRaidTarget",
+        "RAID_TARGET_UPDATE",
+        "benilla-app/src/ui_party/feed.rs",
+    ),
+    // The item drain runs the use: a glyph fires the event ahead of it (`0x5d8ad3`).
+    (
+        "UseContainerItem",
+        "USE_GLYPH",
+        "benilla-app/src/ui_items/drain.rs",
     ),
 ];
 
@@ -104,18 +135,11 @@ const GAP: &[(&str, &str, &str)] = &[
          next window opens at zero either way",
     ),
     (
-        "PetDismiss",
-        "PET_DISMISS_START",
-        "the worker sends the dismiss and fires this with a duration (`%d`, 10000); \
-         no shipped file listens, the dismiss reaches the \
-         wire through the app's drain, and the pet frame follows the unit's departure",
-    ),
-    (
-        "SelectGossipOption",
-        "GOSSIP_ENTER_CODE",
-        "a coded option raises the code-entry popup in the reference; here \
-         coded options are greyed and unselectable (`reference_ui`'s UNPRODUCED row), and \
-         vmangos's `gossip_menu_option` carries zero coded rows, so no NPC on this server reaches it",
+        "PetRename",
+        "PET_FORCE_NAME_DECLENSION",
+        "fired from the verb (`0x5d5670`) only when the client's locale declines names and the \
+         call carries fewer than five forms; benilla's name check declines no name, and the \
+         server's refusal with its forms fires it from the app's pet feed",
     ),
 ];
 
@@ -200,7 +224,6 @@ fn verb_module_fires(src: &[(PathBuf, String)], verb: &str, event: &str) -> (Vec
 }
 
 #[test]
-#[ignore = "1.12.1's gate rules; port them to the 3.3.5a tables (#54)"]
 fn every_event_the_reference_fires_from_a_verb_is_fired_by_the_verb_s_module() {
     let src = sources();
     assert!(src.len() > 100, "source walk found {} files", src.len());
@@ -260,7 +283,6 @@ fn every_event_the_reference_fires_from_a_verb_is_fired_by_the_verb_s_module() {
 }
 
 #[test]
-#[ignore = "1.12.1's gate rules; port them to the 3.3.5a tables (#54)"]
 fn the_declared_rows_are_still_true() {
     let src = sources();
     let table = table();
