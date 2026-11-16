@@ -410,8 +410,9 @@ pub(crate) struct RegionData {
     /// texel extent when the texture is queued (`0x4847a0`), so the art repeats at one texel per
     /// unit.
     pub(crate) tile: (bool, bool),
-    /// `SetNonBlocking`, `+0x160` bit `0x1`: the reference then asks for the file without waiting
-    /// on its load. Stored, not applied: benilla's loads never block the frame.
+    /// `SetNonBlocking` or XML `nonBlocking`, `+0x160` bit `0x1`: the reference then asks for the
+    /// file without waiting on its read. Every benilla texture load already works that way, so the
+    /// bit is read by its getter alone.
     pub(crate) non_blocking: bool,
     /// `SetWordWrap(false)`, the font string's style bit `0x40`. Stored, not applied: the reference
     /// then lays the text out on one line; here it still wraps at the rect's width.

@@ -583,6 +583,11 @@ impl Loader<'_> {
             };
             let child = &self.expand_region(child);
             self.apply_element_font(child, wrapper, elem, dbg);
+            // The element font's `indented` (`0x497070`), by the element's name.
+            if let Some(on) = super::regions::xml_flag(child, "indented") {
+                let name = ["P", "H1", "H2", "H3"][elem];
+                self.call(wrapper, "SetIndentedWordWrap", (name, on), dbg);
+            }
         }
         if let Some(raw) = el.attr("file") {
             if let Some(bytes) = (self.files)(raw) {
