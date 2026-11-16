@@ -563,7 +563,8 @@ pub(in crate::net) fn sample_splines(
         // A finished path drops its spline: `creature_anim` reads the spline's presence as moving.
         if spline.finished(now) {
             // The done branch stops the move (`0x6eb0b0` → `0x98bd10` clears forward and back), so
-            // `Animate` (`0x71fd80`) draws the body level from this frame; the pitch is not drawn.
+            // the per-frame draw (`0x71fd80`) puts the body level from this frame; the pitch is kept
+            // but not drawn.
             let level = Quat::from_rotation_y(super::yaw_of(t.rotation));
             if t.rotation != level {
                 t.rotation = level;
