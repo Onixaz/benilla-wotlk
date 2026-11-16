@@ -87,7 +87,12 @@ mod tests {
     fn wearing(entries: &[(u8, u32)]) -> ObjectStore {
         let pairs: Vec<(u16, u32)> = entries
             .iter()
-            .map(|(slot, entry)| (258 + 2 + 12 * u16::from(*slot), *entry))
+            .map(|(slot, entry)| {
+                (
+                    benilla_protocol::field::player_visible_item_entry_field(*slot),
+                    *entry,
+                )
+            })
             .collect();
         ObjectStore(ObjectFields::from_pairs(&pairs))
     }

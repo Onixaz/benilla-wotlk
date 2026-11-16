@@ -21,7 +21,7 @@ const FLUSH: [&str; 3] = [
 ];
 
 /// `UNIT_FIELD_SUMMONEDBY`, low word, the owner test the GO's pet leg reads.
-const SUMMONEDBY: u16 = 12;
+const SUMMONEDBY: u16 = benilla_protocol::field::FIELD_UNIT_SUMMONEDBY;
 
 /// Our own pet by the field the GO's pet leg reads: `SUMMONEDBY` us.
 fn summoned_pet() -> ObjectStore {
@@ -374,7 +374,10 @@ fn a_pet_gcd_sweeps_the_spellbooks_pet_tab_button() {
         // Our class, so the book reads a token; no `ChrClasses` row, so "PET".
         world.spawn((
             crate::net::SelfPlayer,
-            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(36, 3 << 8)])),
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_BYTES_0,
+                3 << 8,
+            )])),
         ));
         world.insert_resource(crate::chr_classes::ChrClassTable(Default::default()));
         world.resource_mut::<PetBar>().spells.spells = vec![PetActionEntry::from(

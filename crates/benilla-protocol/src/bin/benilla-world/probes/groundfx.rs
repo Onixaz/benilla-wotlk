@@ -10,7 +10,7 @@ use benilla_protocol::{EntityKind, SessionEvent};
 
 use crate::probes::{Ctx, Probe};
 
-/// `DYNAMICOBJECT_*` UpdateField labels (vmangos `UpdateFields_1_12_1.h:325-334`; OBJECT_END=6).
+/// `DYNAMICOBJECT_*` update-field labels, the 3.3.5a descriptor (`0xac7848`).
 fn dyn_field_label(index: u16) -> &'static str {
     match index {
         0 => "OBJECT_FIELD_GUID_LO",
@@ -23,21 +23,18 @@ fn dyn_field_label(index: u16) -> &'static str {
         8 => "DYNAMICOBJECT_BYTES",
         9 => "DYNAMICOBJECT_SPELLID",
         10 => "DYNAMICOBJECT_RADIUS",
-        11 => "DYNAMICOBJECT_POS_X",
-        12 => "DYNAMICOBJECT_POS_Y",
-        13 => "DYNAMICOBJECT_POS_Z",
-        14 => "DYNAMICOBJECT_FACING",
+        11 => "DYNAMICOBJECT_CASTTIME",
         _ => "?",
     }
 }
 
 /// Indices whose wire u32 is an f32 bit pattern.
 fn dyn_field_is_f32(index: u16) -> bool {
-    matches!(index, 4 | 10..=14)
+    matches!(index, 4 | 10)
 }
 
-/// `UNIT_FIELD_POWER1` (mana): `OBJECT_END` (6) + 0x11 (`UpdateFields_1_12_1.h:50`).
-const FIELD_UNIT_POWER1: u16 = 6 + 0x11;
+/// `UNIT_FIELD_POWER1` (mana).
+const FIELD_UNIT_POWER1: u16 = benilla_protocol::messages::field::FIELD_UNIT_POWER1;
 
 pub(crate) struct GroundFx {
     spell: u32,

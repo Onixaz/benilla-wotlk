@@ -1141,9 +1141,9 @@ mod tests {
     #[test]
     fn not_selectable_refuses_the_commit_and_keeps_the_old_target() {
         use benilla_protocol::ObjectFields;
-        const FLAGS: u16 = 46;
-        const CREATEDBY: u16 = 14;
-        const OBJECT_TYPE: u16 = 2;
+        const FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+        const CREATEDBY: u16 = benilla_protocol::field::FIELD_UNIT_CREATEDBY;
+        const OBJECT_TYPE: u16 = benilla_protocol::field::FIELD_OBJECT_TYPE;
         const NOT_SELECTABLE: u32 = 1 << 25;
         // `OBJECT_FIELD_TYPE` bit 3, a unit: the only kind whose `+0x58` slot is not the base stub.
         let unit = |pairs: &[(u16, u32)]| {
@@ -1273,10 +1273,10 @@ mod tests {
     #[test]
     fn the_attack_orders_final_gate_reads_health_then_can_attack() {
         use benilla_protocol::ObjectFields;
-        const HEALTH: u16 = 22;
-        const DYNFLAGS: u16 = 143;
-        const FLAGS: u16 = 46;
-        const TPL: u16 = 35;
+        const HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+        const DYNFLAGS: u16 = benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS;
+        const FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+        const TPL: u16 = benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
         let reps = Reputations::default();
         let unit = |pairs: &[(u16, u32)]| ObjectStore(ObjectFields::from_pairs(pairs));
         // With no catalog both reactions are neutral, which the attack check's mixed arm (< 4)
@@ -1354,15 +1354,15 @@ mod tests {
     }
 
     /// Field indices, for the store builders below (`benilla-protocol`'s own numbering).
-    const F_TYPE: u16 = 2;
-    const F_HEALTH: u16 = 22;
-    const F_MAXHEALTH: u16 = 28;
-    const F_FLAGS: u16 = 46;
-    const F_DYNFLAGS: u16 = 143;
-    const F_MOUNTDISPLAYID: u16 = 133;
-    const F_DUEL_ARBITER: u16 = 188;
-    const F_PLAYER_FLAGS: u16 = 190;
-    const F_DUEL_TEAM: u16 = 196;
+    const F_TYPE: u16 = benilla_protocol::field::FIELD_OBJECT_TYPE;
+    const F_HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+    const F_MAXHEALTH: u16 = benilla_protocol::field::FIELD_UNIT_MAXHEALTH;
+    const F_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+    const F_DYNFLAGS: u16 = benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS;
+    const F_MOUNTDISPLAYID: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
+    const F_DUEL_ARBITER: u16 = benilla_protocol::field::FIELD_PLAYER_DUEL_ARBITER;
+    const F_PLAYER_FLAGS: u16 = benilla_protocol::field::FIELD_PLAYER_FLAGS;
+    const F_DUEL_TEAM: u16 = benilla_protocol::field::FIELD_PLAYER_DUEL_TEAM;
     /// `UNIT_FLAG_PVP_ATTACKABLE`, always on a player: it selects the player arms of the attack
     /// check and the assist check.
     const CONTROLLED: u32 = 0x8;

@@ -104,13 +104,13 @@ mod tests {
     use crate::net::ObjectStore;
 
     // The UNIT-block field indices the core reads (`benilla_protocol`'s `fields::FIELD_UNIT_*`).
-    const BASEATTACKTIME: u16 = 126;
-    const MINDAMAGE: u16 = 134;
-    const MAXDAMAGE: u16 = 135;
-    const STAT0: u16 = 150;
-    const RESISTANCES0: u16 = 155;
-    const ATTACK_POWER: u16 = 165;
-    const ATTACK_POWER_MODS: u16 = 166;
+    const BASEATTACKTIME: u16 = benilla_protocol::field::FIELD_UNIT_BASEATTACKTIME;
+    const MINDAMAGE: u16 = benilla_protocol::field::FIELD_UNIT_MINDAMAGE;
+    const MAXDAMAGE: u16 = benilla_protocol::field::FIELD_UNIT_MAXDAMAGE;
+    const STAT0: u16 = benilla_protocol::field::FIELD_UNIT_STAT0;
+    const RESISTANCES0: u16 = benilla_protocol::field::FIELD_UNIT_RESISTANCES;
+    const ATTACK_POWER: u16 = benilla_protocol::field::FIELD_UNIT_ATTACK_POWER;
+    const ATTACK_POWER_MODS: u16 = benilla_protocol::field::FIELD_UNIT_ATTACK_POWER_MODS;
 
     /// A boar's descriptor: the UNIT block alone, built as a create block, because a live pet
     /// arrives as one and a create reads an absent field as 0, not unknown.

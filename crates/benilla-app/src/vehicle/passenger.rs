@@ -460,7 +460,11 @@ mod tests {
                 .spawn((
                     Guid(guid),
                     ObjectStore(
-                        ObjectFields::from_pairs(&[(2, 0x9)]).into_created(ObjectType::Unit),
+                        ObjectFields::from_pairs(&[(
+                            benilla_protocol::field::FIELD_OBJECT_TYPE,
+                            0x9,
+                        )])
+                        .into_created(ObjectType::Unit),
                     ),
                 ))
                 .id();

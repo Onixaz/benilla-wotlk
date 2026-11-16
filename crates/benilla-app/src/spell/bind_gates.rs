@@ -66,11 +66,11 @@ mod tests {
 
     /// Absolute descriptor indices: `OBJECT_FIELD_ENTRY`, `UNIT_FIELD_BYTES_0` (the race byte),
     /// `UNIT_FIELD_HEALTH`, `UNIT_FIELD_FLAGS` and `UNIT_DYNAMIC_FLAGS`.
-    const ENTRY: u16 = 3;
-    const BYTES_0: u16 = 36;
-    const HEALTH: u16 = 22;
-    const FLAGS: u16 = 46;
-    const DYNAMIC_FLAGS: u16 = 143;
+    const ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
+    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    const HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+    const FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+    const DYNAMIC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_DYNAMIC_FLAGS;
 
     const WORD_UNIT: u32 = 0x0002;
     const WORD_ASSIST: u32 = 0x0100;
@@ -300,7 +300,7 @@ mod tests {
 
         const ME: u64 = 1;
         const THEM: u64 = 42;
-        const TEMPLATE: u16 = 35;
+        const TEMPLATE: u16 = benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
         /// A creature entry whose cached template is a Humanoid (type 7) and one that is a
         /// Beast (type 1).
         const HUMANOID_ENTRY: u32 = 69;

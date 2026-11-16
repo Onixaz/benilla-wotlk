@@ -127,11 +127,14 @@ mod tests {
         let pet = |created_by_spell: Option<u32>, created_by: Option<u64>| {
             let mut pairs: Vec<(u16, u32)> = Vec::new();
             if let Some(s) = created_by_spell {
-                pairs.push((146, s));
+                pairs.push((benilla_protocol::field::FIELD_UNIT_CREATED_BY_SPELL, s));
             }
             if let Some(g) = created_by {
-                pairs.push((14, g as u32));
-                pairs.push((15, (g >> 32) as u32));
+                pairs.push((benilla_protocol::field::FIELD_UNIT_CREATEDBY, g as u32));
+                pairs.push((
+                    benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1,
+                    (g >> 32) as u32,
+                ));
             }
             ObjectFields::from_pairs(&pairs)
         };

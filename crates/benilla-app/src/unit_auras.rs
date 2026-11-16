@@ -457,7 +457,10 @@ mod tests {
 
     fn unit_store() -> ObjectStore {
         // `OBJECT_FIELD_TYPE` (index 2) with the unit bit.
-        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(2, 0x9)]))
+        ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_OBJECT_TYPE,
+            0x9,
+        )]))
     }
 
     #[test]

@@ -113,7 +113,11 @@ impl TestCtx {
 
 /// A unit's fields: level (34) and base mana (162).
 fn unit(level: u32, base_mana: u32) -> benilla_protocol::ObjectFields {
-    benilla_protocol::ObjectFields::from_pairs(&[(22u16, 100u32), (34, level), (162, base_mana)])
+    benilla_protocol::ObjectFields::from_pairs(&[
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 100u32),
+        (benilla_protocol::field::FIELD_UNIT_LEVEL, level),
+        (benilla_protocol::field::FIELD_UNIT_BASE_MANA, base_mana),
+    ])
 }
 
 /// The pet bar's views scale by the pet's level (with the selector: the charm or summon's
@@ -226,7 +230,7 @@ fn a_female_players_spell_tooltips_take_the_second_gender_form() {
     let player = |gender: u32| {
         let mut fields = unit(60, 1373);
         fields.merge(benilla_protocol::ObjectFields::from_pairs(&[(
-            36,
+            benilla_protocol::field::FIELD_UNIT_BYTES_0,
             gender << 16,
         )]));
         ObjectStore(fields)
@@ -264,7 +268,8 @@ fn no_objects() -> crate::ui_items::TestObjects {
 
 fn empty_player() -> ObjectStore {
     ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
-        22u16, 100u32,
+        benilla_protocol::field::FIELD_UNIT_HEALTH,
+        100u32,
     )]))
 }
 
@@ -298,7 +303,7 @@ fn battle_shout_description_scales_by_the_skill_level() {
     // (character level, skill value, attack power); the last is a level 60 at skill 5.
     for (level, skill, ap) in [(1, 5, 15), (11, 55, 20), (60, 300, 20), (60, 5, 15)] {
         let store = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-            (34, level),
+            (benilla_protocol::field::FIELD_UNIT_LEVEL, level),
             (FIELD_PLAYER_SKILL_INFO_1_1, line),
             (FIELD_PLAYER_SKILL_INFO_1_1 + 1, skill | 300 << 16),
         ]));
@@ -519,11 +524,11 @@ fn cost_and_cast_cells_on_real_data() {
     // A level-60 store: max health 4000, base mana 1000 and base health 1689 (fields: health 22,
     // max health 28, level 34, base mana 162, base health 163).
     let store = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-        (22u16, 3500u32),
-        (28, 4000),
-        (34, 60),
-        (162, 1000),
-        (163, 1689),
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 3500u32),
+        (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 4000),
+        (benilla_protocol::field::FIELD_UNIT_LEVEL, 60),
+        (benilla_protocol::field::FIELD_UNIT_BASE_MANA, 1000),
+        (benilla_protocol::field::FIELD_UNIT_BASE_HEALTH, 1689),
     ]));
 
     // Bloodrage (2687): 20% of base health; bare "Instant" on a non-mana type.
@@ -648,7 +653,7 @@ fn range_cell_on_real_data() {
 
     // A 4.0 reach: 4.0 + 4.0 + 1.3333334 = 9.333, rounded to 9.
     let big = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
-        130u16,
+        benilla_protocol::field::FIELD_UNIT_COMBATREACH,
         4.0f32.to_bits(),
     )]));
     let v = spell_tooltip_view(1752, &spells, &mut t.ctx_for(&objects, 0, None, Some(&big)))
@@ -793,9 +798,15 @@ fn the_required_item_chance_and_reagent_lines_on_real_data() {
     // the wire's values are already percents.
     assert_eq!(v.chance, None, "no player streamed yet");
     let rated = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-        (22u16, 100u32),
-        (1109u16, 2.62f32.to_bits()), // PLAYER_CRIT_PERCENTAGE
-        (1107u16, 5.5f32.to_bits()),  // PLAYER_DODGE_PERCENTAGE
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 100u32),
+        (
+            benilla_protocol::field::FIELD_PLAYER_CRIT_PERCENTAGE,
+            2.62f32.to_bits(),
+        ), // PLAYER_CRIT_PERCENTAGE
+        (
+            benilla_protocol::field::FIELD_PLAYER_DODGE_PERCENTAGE,
+            5.5f32.to_bits(),
+        ), // PLAYER_DODGE_PERCENTAGE
     ]));
     let v = spell_tooltip_view(
         6603,
@@ -1035,8 +1046,8 @@ fn the_mouseover_token_names_the_hovered_units_creature_type() {
     use benilla_protocol::ObjectFields;
 
     /// `UNIT_FIELD_BYTES_0` and `UNIT_FIELD_BYTES_1`, absolute descriptor indices.
-    const BYTES_0: u16 = 36;
-    const BYTES_2: u16 = 164;
+    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    const BYTES_2: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_2;
     const NIGHT_ELF: u32 = 4;
     const CAT_FORM: u32 = 1;
     const DRUID: u64 = 0x99;
@@ -1303,15 +1314,21 @@ fn the_feed_builds_the_pet_views_against_the_pet_and_rebuilds_them_on_its_level(
         .spawn((
             SelfPlayer,
             ObjectStore(ObjectFields::from_pairs(&[
-                (8, IMP as u32),
-                (9, (IMP >> 32) as u32),
-                (34, 60),
+                (benilla_protocol::field::FIELD_UNIT_SUMMON, IMP as u32),
+                (
+                    benilla_protocol::field::FIELD_UNIT_SUMMON + 1,
+                    (IMP >> 32) as u32,
+                ),
+                (benilla_protocol::field::FIELD_UNIT_LEVEL, 60),
             ])),
         ))
         .id();
     let imp = app
         .world_mut()
-        .spawn(ObjectStore(ObjectFields::from_pairs(&[(34, 14)])))
+        .spawn(ObjectStore(ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_LEVEL,
+            14,
+        )])))
         .id();
     let mut index = app.world_mut().resource_mut::<crate::net::GuidIndex>();
     index.0.insert(ME, me);
@@ -1380,7 +1397,10 @@ fn the_feed_builds_the_pet_views_against_the_pet_and_rebuilds_them_on_its_level(
     // The imp dings: its views rebuild; the player's does not move.
     app.world_mut()
         .entity_mut(imp)
-        .insert(ObjectStore(ObjectFields::from_pairs(&[(34, 15)])));
+        .insert(ObjectStore(ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_LEVEL,
+            15,
+        )])));
     app.update();
     assert_eq!(
         descs(&mut app),

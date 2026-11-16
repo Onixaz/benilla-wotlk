@@ -57,7 +57,7 @@ pub(in crate::entities) fn placement(
     }
 }
 
-/// One held slot's enchant ids folded for [`DressKey`], over the item's seven enchant slots.
+/// One held slot's enchant ids folded for [`DressKey`], over the slot's two broadcast enchants.
 fn enchant_fold(
     s: &benilla_protocol::messages::ObjectFields,
     kind: EntityKind,
@@ -66,7 +66,7 @@ fn enchant_fold(
     if kind != EntityKind::Player {
         return 0;
     }
-    (0..7u8)
+    (0..2u8)
         .filter_map(|j| s.player_visible_item_enchant(PLAYER_HELD_SLOTS[slot], j))
         .fold(0i32, |acc, e| acc.wrapping_mul(31).wrapping_add(e as i32))
 }
@@ -695,8 +695,8 @@ pub(in crate::entities) fn resolve_equipment(
             };
             ensure_item_model_mut(&mut held, display, kind, &asset_server);
             let enchants = (net_entity.kind == EntityKind::Player).then(|| {
-                // All seven of the item's enchant slots; 1.12 sends two, PERM and TEMP.
-                (0..7u8).filter_map(|j| s.player_visible_item_enchant(PLAYER_HELD_SLOTS[slot], j))
+                // The permanent and temporary enchants, the two the slot broadcasts.
+                (0..2u8).filter_map(|j| s.player_visible_item_enchant(PLAYER_HELD_SLOTS[slot], j))
             });
             let visual = resolve_glow(
                 glows.as_deref_mut(),
@@ -1006,12 +1006,14 @@ mod tests {
     fn corpse_dresses_from_its_own_snapshot() {
         use benilla_protocol::messages::ObjectType;
 
-        /// `CORPSE_FIELD_ITEM` is field 13, each slot `DisplayInfoID | InventoryType << 24`.
+        /// `CORPSE_FIELD_ITEM`, each slot `DisplayInfoID | InventoryType << 24`.
         fn item(slot: u16, display: u32, inv: u32) -> (u16, u32) {
-            (13 + slot, display | (inv << 24))
+            (
+                benilla_protocol::field::FIELD_CORPSE_ITEM + slot,
+                display | (inv << 24),
+            )
         }
-        // Fields 32, 33 and 35 are `CORPSE_FIELD_BYTES_1` (race and sex in bytes 1 and 2),
-        // `CORPSE_FIELD_BYTES_2` and `CORPSE_FIELD_FLAGS`.
+        // `CORPSE_FIELD_BYTES_1` holds race and sex in bytes 1 and 2.
         let dressed = |flags: u32| {
             let mut pairs = vec![
                 item(0, 900, 1),
@@ -1020,11 +1022,11 @@ mod tests {
                 item(14, 903, 16),
                 item(15, 904, 13),
                 item(17, 905, 15),
-                (32, 1 << 8),
-                (33, 0),
+                (benilla_protocol::field::FIELD_CORPSE_BYTES_1, 1 << 8),
+                (benilla_protocol::field::FIELD_CORPSE_BYTES_2, 0),
             ];
             if flags != 0 {
-                pairs.push((35, flags));
+                pairs.push((benilla_protocol::field::FIELD_CORPSE_FLAGS, flags));
             }
             ObjectStore(ObjectFields::from_pairs(&pairs).into_created(ObjectType::Corpse))
         };
@@ -1132,10 +1134,10 @@ mod tests {
         assert_eq!(ammo_attach(None, true), None); // no ranged record
     }
 
-    /// Raw field indices, private to benilla-protocol: `PLAYER_FLAGS` is 190, and the visible-item
-    /// blocks start at 258 (`PLAYER_VISIBLE_ITEM_1_CREATOR`), 12 per slot, the entry at +2.
-    const PLAYER_FLAGS: u16 = 190;
-    const BYTES_0: u16 = 36;
+    /// The fields a worn look reads: `PLAYER_FLAGS`, `UNIT_FIELD_BYTES_0` and each slot's
+    /// `PLAYER_VISIBLE_ITEM_<n>_ENTRYID`.
+    const PLAYER_FLAGS: u16 = benilla_protocol::field::FIELD_PLAYER_FLAGS;
+    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
 
     fn wearing(flags: u32, entries: &[(u8, u32)]) -> ObjectStore {
         let mut pairs = vec![
@@ -1143,7 +1145,10 @@ mod tests {
             (PLAYER_FLAGS, flags),
         ];
         for (slot, entry) in entries {
-            pairs.push((258 + 2 + 12 * u16::from(*slot), *entry));
+            pairs.push((
+                benilla_protocol::field::player_visible_item_entry_field(*slot),
+                *entry,
+            ));
         }
         ObjectStore(ObjectFields::from_pairs(&pairs))
     }
@@ -1465,7 +1470,10 @@ mod tests {
             .unwrap()
             .bypass_change_detection()
             .0
-            .merge(ObjectFields::from_pairs(&[(258 + 2, 101)]));
+            .merge(ObjectFields::from_pairs(&[(
+                benilla_protocol::field::player_visible_item_entry_field(0),
+                101,
+            )]));
         app.update();
         assert_eq!(
             app.world().get::<Equipment>(player).unwrap().helm,
@@ -1492,9 +1500,10 @@ mod tests {
         use crate::creature_anim::Wielded;
 
         /// Raw field indices; byte 0 of `UNIT_FIELD_BYTES_2` is the sheath state.
-        const UNIT_FLAGS: u16 = 46;
-        const UNIT_BYTES_2: u16 = 164;
-        const VISIBLE_ITEM_MAINHAND_ENTRY: u16 = 258 + 2 + 12 * 15;
+        const UNIT_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+        const UNIT_BYTES_2: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_2;
+        const VISIBLE_ITEM_MAINHAND_ENTRY: u16 =
+            benilla_protocol::field::player_visible_item_entry_field(15);
         /// `UNIT_FLAG_DISARMED`.
         const DISARMED: u32 = 0x0020_0000;
 
@@ -1611,8 +1620,8 @@ mod tests {
     }
 
     /// `UNIT_VIRTUAL_ITEM_SLOT_ID` in the shared index space, and `UNIT_FIELD_BYTES_2`.
-    const VIRTUAL_ITEM: u16 = 37;
-    const UNIT_BYTES_2: u16 = 164;
+    const VIRTUAL_ITEM: u16 = benilla_protocol::field::FIELD_UNIT_VIRTUAL_ITEM_SLOT_ID;
+    const UNIT_BYTES_2: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_2;
 
     /// A creature holding `items` (slot, entry); rows: hip sword 500, back 2H 501, bow 502, 503 display 0.
     fn creature_app(items: &[(u16, u32)], sheath: u8) -> (App, Entity) {
@@ -1747,8 +1756,9 @@ mod tests {
     fn the_hands_keep_the_worn_reading_through_a_disarm() {
         use crate::creature_anim::Wielded;
 
-        const UNIT_FLAGS: u16 = 46;
-        const VISIBLE_ITEM_MAINHAND_ENTRY: u16 = 258 + 2 + 12 * 15;
+        const UNIT_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+        const VISIBLE_ITEM_MAINHAND_ENTRY: u16 =
+            benilla_protocol::field::player_visible_item_entry_field(15);
         const DISARMED: u32 = 0x0020_0000;
 
         let mut app = App::new();

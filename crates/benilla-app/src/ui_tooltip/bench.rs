@@ -92,17 +92,32 @@ fn feed_cost_per_invalidation() {
     // A level-60 mage: unit fields, the four percentages, the skills of its lines.
     let player_fields = |crit: f32, dodge: f32, reach: f32, form: u32, head: u32, skill: u32| {
         let mut pairs: Vec<(u16, u32)> = vec![
-            (22, 3500),
-            (28, 4000),
-            (34, 60),
-            (162, 1373),
-            (130, reach.to_bits()),
-            (164, form << 24),
-            (486, head),
-            (1106, 5.0f32.to_bits()),
-            (1107, dodge.to_bits()),
-            (1108, 4.0f32.to_bits()),
-            (1109, crit.to_bits()),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 3500),
+            (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 4000),
+            (benilla_protocol::field::FIELD_UNIT_LEVEL, 60),
+            (benilla_protocol::field::FIELD_UNIT_BASE_MANA, 1373),
+            (
+                benilla_protocol::field::FIELD_UNIT_COMBATREACH,
+                reach.to_bits(),
+            ),
+            (benilla_protocol::field::FIELD_UNIT_BYTES_2, form << 24),
+            (benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD, head),
+            (
+                benilla_protocol::field::FIELD_PLAYER_BLOCK_PERCENTAGE,
+                5.0f32.to_bits(),
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_DODGE_PERCENTAGE,
+                dodge.to_bits(),
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_PARRY_PERCENTAGE,
+                4.0f32.to_bits(),
+            ),
+            (
+                benilla_protocol::field::FIELD_PLAYER_CRIT_PERCENTAGE,
+                crit.to_bits(),
+            ),
         ];
         for (slot, &line) in lines.iter().take(128).enumerate() {
             let base = 718 + 3 * slot as u16;
@@ -117,8 +132,12 @@ fn feed_cost_per_invalidation() {
         .id();
     // An auto-attack target, whose reach a swap moves.
     const TARGET: u64 = 0xF130_0000_0000_0042;
-    let target_fields =
-        |reach: f32| ObjectStore(ObjectFields::from_pairs(&[(130, reach.to_bits())]));
+    let target_fields = |reach: f32| {
+        ObjectStore(ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_UNIT_COMBATREACH,
+            reach.to_bits(),
+        )]))
+    };
     let target = app.world_mut().spawn(target_fields(1.5)).id();
     app.world_mut()
         .resource_mut::<GuidIndex>()

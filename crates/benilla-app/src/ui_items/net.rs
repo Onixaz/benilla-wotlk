@@ -285,7 +285,7 @@ mod open_container_tests {
     use benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD;
 
     /// `PLAYER_FIELD_BANK_BAG_SLOT_1`, field 1572 (private to the fields module).
-    const BANK_BAG_SLOT_1: u16 = 1572;
+    const BANK_BAG_SLOT_1: u16 = benilla_protocol::field::FIELD_PLAYER_BANK_BAG_SLOT_1;
 
     /// A self descriptor holding the given guids at the given first-dword indices.
     fn store(guids: &[(u16, u64)]) -> ObjectFields {

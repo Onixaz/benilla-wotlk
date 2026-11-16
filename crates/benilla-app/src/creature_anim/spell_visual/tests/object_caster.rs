@@ -72,7 +72,10 @@ fn app(speed: f32, missile: bool) -> App {
 fn object(app: &mut App, mask: u32) -> Entity {
     app.world_mut()
         .spawn(crate::net::ObjectStore(
-            benilla_protocol::ObjectFields::from_pairs(&[(2, mask)]),
+            benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_OBJECT_TYPE,
+                mask,
+            )]),
         ))
         .id()
 }
@@ -409,8 +412,11 @@ fn a_units_item_missile_flies_its_held_item() {
                 },
                 // `UNIT_VIRTUAL_ITEM_SLOT_ID + 2`, the ranged slot.
                 crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                    (2, UNIT),
-                    (39, BOW),
+                    (benilla_protocol::field::FIELD_OBJECT_TYPE, UNIT),
+                    (
+                        benilla_protocol::field::FIELD_UNIT_VIRTUAL_ITEM_SLOT_ID + 2,
+                        BOW,
+                    ),
                 ])),
             ))
             .id();
@@ -468,9 +474,12 @@ fn a_head_item_needs_the_race_row_its_sex_byte_names() {
                 },
                 // The ranged slot and `UNIT_FIELD_BYTES_0`'s sex byte.
                 crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                    (2, UNIT),
-                    (39, HELM),
-                    (36, sex << 16),
+                    (benilla_protocol::field::FIELD_OBJECT_TYPE, UNIT),
+                    (
+                        benilla_protocol::field::FIELD_UNIT_VIRTUAL_ITEM_SLOT_ID + 2,
+                        HELM,
+                    ),
+                    (benilla_protocol::field::FIELD_UNIT_BYTES_0, sex << 16),
                 ])),
             ))
             .id();

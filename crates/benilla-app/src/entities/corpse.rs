@@ -216,16 +216,23 @@ mod tests {
         // race 1 (Human), sex 0, in CORPSE_FIELD_BYTES_1 bytes 1/2.
         let bytes_1 = 1u32 << 8;
         let flesh = ObjectStore(
-            ObjectFields::from_pairs(&[(32, bytes_1), (33, 0)])
-                .into_created(benilla_protocol::messages::ObjectType::Corpse),
+            ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_CORPSE_BYTES_1, bytes_1),
+                (benilla_protocol::field::FIELD_CORPSE_BYTES_2, 0),
+            ])
+            .into_created(benilla_protocol::messages::ObjectType::Corpse),
         );
         assert_eq!(
             corpse_model(&net, Some(&flesh)),
             Some(CorpseModel::Flesh(49))
         );
         let bones = ObjectStore(
-            ObjectFields::from_pairs(&[(32, bytes_1), (33, 0), (35, 0x01)])
-                .into_created(benilla_protocol::messages::ObjectType::Corpse),
+            ObjectFields::from_pairs(&[
+                (benilla_protocol::field::FIELD_CORPSE_BYTES_1, bytes_1),
+                (benilla_protocol::field::FIELD_CORPSE_BYTES_2, 0),
+                (benilla_protocol::field::FIELD_CORPSE_FLAGS, 0x01),
+            ])
+            .into_created(benilla_protocol::messages::ObjectType::Corpse),
         );
         assert_eq!(
             corpse_model(&net, Some(&bones)),

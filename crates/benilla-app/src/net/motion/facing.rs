@@ -751,7 +751,7 @@ mod tests {
                 Transform::from_translation(wow_to_bevy([5.0, 5.0, 0.0])),
             ))
             .id();
-        // UNIT_FIELD_TARGET is field 16, a guid pair; the victim is guid 7.
+        // UNIT_FIELD_TARGET, a guid pair; the victim is guid 7.
         let npc = app
             .world_mut()
             .spawn((
@@ -760,7 +760,10 @@ mod tests {
                     display_id: None,
                     scale: 1.0,
                 },
-                ObjectStore(ObjectFields::from_pairs(&[(16, 7), (17, 0)])),
+                ObjectStore(ObjectFields::from_pairs(&[
+                    (benilla_protocol::field::FIELD_UNIT_TARGET, 7),
+                    (benilla_protocol::field::FIELD_UNIT_TARGET + 1, 0),
+                ])),
                 Transform::from_translation(wow_to_bevy([5.0, 0.0, 0.0])),
             ))
             .id();

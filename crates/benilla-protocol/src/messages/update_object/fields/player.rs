@@ -3,46 +3,46 @@
 use super::*;
 
 impl ObjectFields {
-    /// `OBJECT_FIELD_ENTRY` (3): the template entry. The only route to a pet's template: its guid
-    /// holds a pet number instead, but vmangos writes the entry here (`Creature.cpp:376`).
+    /// `OBJECT_FIELD_ENTRY`: the template entry. The only route to a pet's template: its guid
+    /// holds a pet number instead, but the server writes the entry here.
     pub fn object_entry(&self) -> Option<u32> {
-        self.get_u32(3)
+        self.get_u32(FIELD_OBJECT_ENTRY)
     }
-    /// `OBJECT_FIELD_GUID` (0-1): the object's own guid, `None` until it streams or when zero.
+    /// `OBJECT_FIELD_GUID`: the object's own guid, `None` until it streams or when zero.
     pub fn object_guid(&self) -> Option<u64> {
-        self.get_guid(0).filter(|&g| g != 0)
+        self.get_guid(FIELD_OBJECT_GUID).filter(|&g| g != 0)
     }
     /// `ITEM_FIELD_STACK_COUNT`: an item object's stack size.
     pub fn item_stack_count(&self) -> Option<u32> {
         self.get_u32(FIELD_ITEM_STACK_COUNT)
     }
-    /// `ITEM_FIELD_SPELL_CHARGES + i` (field `16 + i`, the client's `[item+0x114]+0x28`):
-    /// charges left on spell `i`, signed; negative is consumed when empty, 0 is spent.
+    /// `ITEM_FIELD_SPELL_CHARGES + i` (the client's `[item+0x114]+0x28`): charges left on spell
+    /// `i`, signed; negative is consumed when empty, 0 is spent.
     pub fn item_spell_charges(&self, i: u8) -> Option<i32> {
         (i < 5)
-            .then(|| self.get_u32(FIELD_ITEM_STACK_COUNT + 2 + u16::from(i)))?
+            .then(|| self.get_u32(FIELD_ITEM_SPELL_CHARGES + u16::from(i)))?
             .map(|v| v as i32)
     }
-    /// `ITEM_FIELD_DURATION` (field 15): a timed item's remaining seconds, 0 for none.
+    /// `ITEM_FIELD_DURATION`: a timed item's remaining seconds, 0 for none.
     pub fn item_duration(&self) -> Option<u32> {
-        self.get_u32(FIELD_ITEM_STACK_COUNT + 1)
+        self.get_u32(FIELD_ITEM_DURATION)
     }
-    /// `ITEM_FIELD_FLAGS` (field 21): `0x08` wrapped, never alerts; `0x10` forces red status 4.
+    /// `ITEM_FIELD_FLAGS`: `0x08` wrapped, never alerts; `0x10` forces red status 4.
     pub fn item_flags(&self) -> Option<u32> {
         self.get_u32(FIELD_ITEM_FLAGS)
     }
-    /// `ITEM_FIELD_OWNER` (field 6).
+    /// `ITEM_FIELD_OWNER`.
     pub fn item_owner(&self) -> Option<u64> {
-        self.get_guid(6).filter(|&g| g != 0)
+        self.get_guid(FIELD_ITEM_OWNER).filter(|&g| g != 0)
     }
-    /// `ITEM_FIELD_CREATE_PLAYED_TIME` (shared 45, 3.3.5a's 62): the owner's played seconds when a
-    /// bound item's trade window opened, read with `ITEM_FIELD_FLAGS & 0x100` (`0x708b40`).
+    /// `ITEM_FIELD_CREATE_PLAYED_TIME`: the owner's played seconds when a bound item's trade window
+    /// opened, read with `ITEM_FIELD_FLAGS & 0x100` (`0x708b40`).
     pub fn item_create_played_time(&self) -> Option<u32> {
-        self.get_u32(45)
+        self.get_u32(FIELD_ITEM_CREATE_PLAYED_TIME)
     }
-    /// `ITEM_FIELD_CREATOR` (field 10): crafter, or letter sender (`HandleMailCreateTextItem`).
+    /// `ITEM_FIELD_CREATOR`: crafter, or letter sender (`HandleMailCreateTextItem`).
     pub fn item_creator(&self) -> Option<u64> {
-        self.get_guid(10).filter(|&g| g != 0)
+        self.get_guid(FIELD_ITEM_CREATOR).filter(|&g| g != 0)
     }
     /// `ITEM_FIELD_FLAGS & 0x200`: the item carries its own text, a copied mail letter's, which a
     /// right-click reads by `CMSG_ITEM_TEXT_QUERY` on the item's guid (`0x58a2bc`).
@@ -64,22 +64,22 @@ impl ObjectFields {
             .and_then(|i| self.get_u32(i + 2))
             .unwrap_or(0)
     }
-    /// `ITEM_FIELD_RANDOM_PROPERTIES_ID` (field 44): the `ItemRandomProperties.dbc` suffix, 0 if
+    /// `ITEM_FIELD_RANDOM_PROPERTIES_ID`: the `ItemRandomProperties.dbc` suffix, 0 if
     /// none; only the name uses it, the roll's enchants fill enchant slots 7-11.
     pub fn item_random_properties_id(&self) -> u32 {
-        self.get_u32(44).unwrap_or(0)
+        self.get_u32(FIELD_ITEM_RANDOM_PROPERTIES_ID).unwrap_or(0)
     }
-    /// `ITEM_FIELD_PROPERTY_SEED` (field 43): a random suffix's points, the link's seed.
+    /// `ITEM_FIELD_PROPERTY_SEED`: a random suffix's points, the link's seed.
     pub fn item_property_seed(&self) -> u32 {
-        self.get_u32(43).unwrap_or(0)
+        self.get_u32(FIELD_ITEM_PROPERTY_SEED).unwrap_or(0)
     }
-    /// `ITEM_FIELD_DURABILITY` (field 46): current durability.
+    /// `ITEM_FIELD_DURABILITY`: current durability.
     pub fn item_durability(&self) -> Option<u32> {
-        self.get_u32(46)
+        self.get_u32(FIELD_ITEM_DURABILITY)
     }
     /// `ITEM_FIELD_MAXDURABILITY`: the durability ceiling, 0 for an item without durability.
     pub fn item_max_durability(&self) -> Option<u32> {
-        self.get_u32(47)
+        self.get_u32(FIELD_ITEM_MAXDURABILITY)
     }
     /// `CONTAINER_FIELD_NUM_SLOTS`: a bag object's capacity.
     pub fn container_num_slots(&self) -> Option<u32> {
@@ -89,37 +89,27 @@ impl ObjectFields {
     pub fn container_slot(&self, i: u8) -> Option<u64> {
         (i < 36).then(|| self.get_guid(FIELD_CONTAINER_SLOT_1 + 2 * u16::from(i)))?
     }
-    /// `PLAYER_VISIBLE_ITEM_<slot>_0`: the public entry worn in equipment slot `i`, which other
-    /// clients render from; each slot is 12 dwords, the entry after a 2-dword creator.
+    /// `PLAYER_VISIBLE_ITEM_<i+1>_ENTRYID`: the public entry worn in equipment slot `i`, which
+    /// other clients render from.
     pub fn player_visible_item_entry(&self, i: u8) -> Option<u32> {
         (i < 19)
             .then(|| {
-                self.get_u32(FIELD_PLAYER_VISIBLE_ITEM_1_CREATOR + 2 + 12 * u16::from(i))
+                self.get_u32(field::player_visible_item_entry_field(i))
                     .filter(|&e| e != 0)
             })
             .flatten()
     }
-    /// `PLAYER_VISIBLE_ITEM_<slot>_0 + 1 + j`: broadcast enchant `j` of the item in slot `i`;
-    /// vmangos fills only 0 and 1 (`MAX_INSPECTED_ENCHANTMENT_SLOT`). The reference's enchant
-    /// visuals for every unit, itself included, come from these (`item+0xc`).
+    /// `PLAYER_VISIBLE_ITEM_<i+1>_ENCHANTMENT`'s `u16` half `j`: 0 the permanent enchant, 1 the
+    /// temporary one, the only two the slot broadcasts. The reference's enchant visuals for every
+    /// unit, itself included, come from these.
     pub fn player_visible_item_enchant(&self, i: u8, j: u8) -> Option<u32> {
-        (i < 19 && j < 7)
+        (i < 19 && j < 2)
             .then(|| {
-                self.get_u32(
-                    FIELD_PLAYER_VISIBLE_ITEM_1_CREATOR + 3 + 12 * u16::from(i) + u16::from(j),
-                )
-                .filter(|&e| e != 0)
+                self.get_u16_pair(field::player_visible_item_entry_field(i) + 1)
+                    .map(|(perm, temp)| u32::from(if j == 0 { perm } else { temp }))
+                    .filter(|&e| e != 0)
             })
             .flatten()
-    }
-    /// `PLAYER_VISIBLE_ITEM_<slot>_PROPERTIES`: slot `i`'s broadcast suffix roll, the low half
-    /// (`movzx WORD`) of the dword after the 7 enchants. Only the name uses it.
-    pub fn player_visible_item_properties(&self, i: u8) -> u32 {
-        (i < 19)
-            .then(|| self.get_u32(FIELD_PLAYER_VISIBLE_ITEM_1_CREATOR + 10 + 12 * u16::from(i)))
-            .flatten()
-            .unwrap_or(0)
-            & 0xffff
     }
     /// `PLAYER_FIELD_INV_SLOT_HEAD + 2i`: our equipment (0-18) and equipped-bag (19-22) guids.
     pub fn player_inv_slot(&self, i: u8) -> Option<u64> {
@@ -291,13 +281,13 @@ impl ObjectFields {
     pub fn player_parry_percentage(&self) -> Option<f32> {
         self.get_f32(FIELD_PLAYER_PARRY_PERCENTAGE)
     }
-    /// `PLAYER_CRIT_PERCENTAGE`: melee crit chance, already a percent; ranged is the next field.
+    /// `PLAYER_CRIT_PERCENTAGE`: melee crit chance, already a percent.
     pub fn player_crit_percentage(&self) -> Option<f32> {
         self.get_f32(FIELD_PLAYER_CRIT_PERCENTAGE)
     }
     /// `PLAYER_RANGED_CRIT_PERCENTAGE`: ranged crit chance, already a percent.
     pub fn player_ranged_crit_percentage(&self) -> Option<f32> {
-        self.get_f32(FIELD_PLAYER_CRIT_PERCENTAGE + 1)
+        self.get_f32(FIELD_PLAYER_RANGED_CRIT_PERCENTAGE)
     }
     /// `PLAYER_SPELL_CRIT_PERCENTAGE1 + school`: spell crit chance, already a percent.
     pub fn player_spell_crit_percentage(&self, school: u8) -> Option<f32> {
@@ -334,22 +324,22 @@ impl ObjectFields {
     }
     /// `PLAYER_FIELD_BYTES` byte 1: the Refer-a-Friend levels left to grant (`0x6deb08`).
     pub fn player_raf_grantable_level(&self) -> u8 {
-        self.get_u32(FIELD_PLAYER_RAF_GRANTABLE_LEVEL).unwrap_or(0) as u8
+        (self.get_u32(FIELD_PLAYER_FIELD_BYTES).unwrap_or(0) >> 8) as u8
     }
-    /// 3.3.5a `PLAYER_FIELD_KILLS` (private): today's honorable kills, the low half.
+    /// `PLAYER_FIELD_KILLS` (private): today's honorable kills, the low half.
     pub fn player_kills_today(&self) -> Option<u16> {
         self.get_u32(FIELD_PLAYER_FIELD_KILLS).map(|v| v as u16)
     }
-    /// 3.3.5a `PLAYER_FIELD_KILLS`: yesterday's honorable kills, the high half.
+    /// `PLAYER_FIELD_KILLS`: yesterday's honorable kills, the high half.
     pub fn player_kills_yesterday(&self) -> Option<u16> {
         self.get_u32(FIELD_PLAYER_FIELD_KILLS)
             .map(|v| (v >> 16) as u16)
     }
-    /// 3.3.5a `PLAYER_FIELD_TODAY_CONTRIBUTION` (private): honor earned today.
+    /// `PLAYER_FIELD_TODAY_CONTRIBUTION` (private): honor earned today.
     pub fn player_today_contribution(&self) -> Option<u32> {
         self.get_u32(FIELD_PLAYER_FIELD_TODAY_CONTRIBUTION)
     }
-    /// 3.3.5a `PLAYER_FIELD_ARENA_TEAM_INFO_1_1 + 7 * slot + word`: arena-team slot 0..3's word
+    /// `PLAYER_FIELD_ARENA_TEAM_INFO_1_1 + 7 * slot + word`: arena-team slot 0..3's word
     /// 0..7 (team id, type, captain flag, week games, season games, season wins, rating).
     pub fn player_arena_team_info(&self, slot: u16, word: u16) -> Option<u32> {
         (slot < 3 && word < ARENA_TEAM_INFO_STRIDE).then(|| {
@@ -358,15 +348,15 @@ impl ObjectFields {
             )
         })?
     }
-    /// 3.3.5a `PLAYER_FIELD_HONOR_CURRENCY` (private): the honor point balance.
+    /// `PLAYER_FIELD_HONOR_CURRENCY` (private): the honor point balance.
     pub fn player_honor_currency(&self) -> Option<u32> {
         self.get_u32(FIELD_PLAYER_FIELD_HONOR_CURRENCY)
     }
-    /// 3.3.5a `PLAYER_FIELD_ARENA_CURRENCY` (private): the arena point balance.
+    /// `PLAYER_FIELD_ARENA_CURRENCY` (private): the arena point balance.
     pub fn player_arena_currency(&self) -> Option<u32> {
         self.get_u32(FIELD_PLAYER_FIELD_ARENA_CURRENCY)
     }
-    /// 3.3.5a `PLAYER_RUNE_REGEN_1 + kind` (private): runes of `kind` (0 blood, 1 unholy, 2 frost,
+    /// `PLAYER_RUNE_REGEN_1 + kind` (private): runes of `kind` (0 blood, 1 unholy, 2 frost,
     /// 3 death) regained per second; 0 when absent.
     pub fn player_rune_regen(&self, kind: u8) -> f32 {
         (kind < 4)
@@ -374,7 +364,7 @@ impl ObjectFields {
             .flatten()
             .unwrap_or(0.0)
     }
-    /// 3.3.5a `PLAYER_FIELD_GLYPH_SLOTS_1 + socket` (private): the socket's `GlyphSlot.dbc` id, 0
+    /// `PLAYER_FIELD_GLYPH_SLOTS_1 + socket` (private): the socket's `GlyphSlot.dbc` id, 0
     /// when absent.
     pub fn player_glyph_slot(&self, socket: u8) -> u32 {
         (socket < PLAYER_GLYPH_SOCKETS)
@@ -382,7 +372,7 @@ impl ObjectFields {
             .flatten()
             .unwrap_or(0)
     }
-    /// 3.3.5a `PLAYER_FIELD_GLYPHS_1 + socket` (private): the inscribed `GlyphProperties.dbc` id, 0
+    /// `PLAYER_FIELD_GLYPHS_1 + socket` (private): the inscribed `GlyphProperties.dbc` id, 0
     /// when empty.
     pub fn player_glyph(&self, socket: u8) -> u32 {
         (socket < PLAYER_GLYPH_SOCKETS)
@@ -390,12 +380,12 @@ impl ObjectFields {
             .flatten()
             .unwrap_or(0)
     }
-    /// 3.3.5a `PLAYER_CHOSEN_TITLE` (public): the shown title's `CharTitles.dbc` mask id, 0 for
+    /// `PLAYER_CHOSEN_TITLE` (public): the shown title's `CharTitles.dbc` mask id, 0 for
     /// none; read signed, as the reference's title lookup (`0x72a290`) shows none at or below 0.
     pub fn player_chosen_title(&self) -> i32 {
         self.get_i32(FIELD_PLAYER_CHOSEN_TITLE).unwrap_or(0)
     }
-    /// 3.3.5a `PLAYER__FIELD_KNOWN_TITLES` (private): whether mask id `bit` is set
+    /// `PLAYER__FIELD_KNOWN_TITLES` (private): whether mask id `bit` is set
     /// (`IsTitleKnown` `0x51b410`); bits past the 192 answer false.
     pub fn player_knows_title(&self, bit: u32) -> bool {
         if bit >= PLAYER_KNOWN_TITLE_BITS {
@@ -413,20 +403,20 @@ impl ObjectFields {
                 .unwrap_or(0)
         })
     }
-    /// 3.3.5a `PLAYER_FIELD_KNOWN_CURRENCIES` (private): bit `i` for `CurrencyTypes.dbc` bit index
+    /// `PLAYER_FIELD_KNOWN_CURRENCIES` (private): bit `i` for `CurrencyTypes.dbc` bit index
     /// `i + 1`.
     pub fn player_known_currencies(&self) -> u64 {
         let lo = self.get_u32(FIELD_PLAYER_KNOWN_CURRENCIES).unwrap_or(0);
         let hi = self.get_u32(FIELD_PLAYER_KNOWN_CURRENCIES + 1).unwrap_or(0);
         u64::from(lo) | u64::from(hi) << 32
     }
-    /// 3.3.5a `PLAYER_FIELD_CURRENCYTOKEN_SLOT_1 + 2i`: the item guid in currency slot `i`
+    /// `PLAYER_FIELD_CURRENCYTOKEN_SLOT_1 + 2i`: the item guid in currency slot `i`
     /// (player slot `118 + i`), `Some(0)` when empty.
     pub fn player_currency_token_slot(&self, i: u8) -> Option<u64> {
         (i < CURRENCY_TOKEN_SLOTS)
             .then(|| self.get_guid(FIELD_PLAYER_CURRENCY_TOKEN_SLOT_1 + 2 * u16::from(i)))?
     }
-    /// 3.3.5a `PLAYER_GLYPHS_ENABLED` (private): bit `i` set while socket `i` is unlocked.
+    /// `PLAYER_GLYPHS_ENABLED` (private): bit `i` set while socket `i` is unlocked.
     pub fn player_glyphs_enabled(&self) -> u32 {
         self.get_u32(FIELD_PLAYER_GLYPHS_ENABLED).unwrap_or(0)
     }
@@ -435,25 +425,25 @@ impl ObjectFields {
         (i < PLAYER_COMBAT_RATINGS)
             .then(|| self.get_i32(FIELD_PLAYER_COMBAT_RATING_1 + u16::from(i)))?
     }
-    /// `PLAYER_FIELD_POSSTAT0 + i`: stat `i`'s positive buff total from gear, enchants and
-    /// auras; an int on the wire, narrowed from the server's float (`BuildValuesUpdate`).
+    /// `UNIT_FIELD_POSSTAT0 + i`: stat `i`'s positive buff total from gear, enchants and auras;
+    /// an int on the wire, narrowed from the server's float.
     pub fn player_posstat(&self, i: u8) -> Option<i32> {
-        (i < 5).then(|| self.get_i32(FIELD_PLAYER_POSSTAT0 + u16::from(i)))?
+        (i < 5).then(|| self.get_i32(FIELD_UNIT_POSSTAT0 + u16::from(i)))?
     }
-    /// `PLAYER_FIELD_NEGSTAT0 + i`: stat `i`'s negative buff total, an int at or below 0. An x86
+    /// `UNIT_FIELD_NEGSTAT0 + i`: stat `i`'s negative buff total, an int at or below 0. An x86
     /// server sends it in two's complement, an arm64 one saturates it to 0.
     pub fn player_negstat(&self, i: u8) -> Option<i32> {
-        (i < 5).then(|| self.get_i32(FIELD_PLAYER_NEGSTAT0 + u16::from(i)))?
+        (i < 5).then(|| self.get_i32(FIELD_UNIT_NEGSTAT0 + u16::from(i)))?
     }
-    /// `PLAYER_FIELD_RESISTANCEBUFFMODSPOSITIVE + school`: the positive resistance buff, an int.
+    /// `UNIT_FIELD_RESISTANCEBUFFMODSPOSITIVE + school`: the positive resistance buff, an int.
     pub fn player_resistance_buff_pos(&self, school: u8) -> Option<i32> {
         (school < 7)
-            .then(|| self.get_i32(FIELD_PLAYER_RESISTANCEBUFFMODSPOSITIVE + u16::from(school)))?
+            .then(|| self.get_i32(FIELD_UNIT_RESISTANCEBUFFMODSPOSITIVE + u16::from(school)))?
     }
-    /// `PLAYER_FIELD_RESISTANCEBUFFMODSNEGATIVE + school`: the negative resistance buff, at most 0.
+    /// `UNIT_FIELD_RESISTANCEBUFFMODSNEGATIVE + school`: the negative resistance buff, at most 0.
     pub fn player_resistance_buff_neg(&self, school: u8) -> Option<i32> {
         (school < 7)
-            .then(|| self.get_i32(FIELD_PLAYER_RESISTANCEBUFFMODSNEGATIVE + u16::from(school)))?
+            .then(|| self.get_i32(FIELD_UNIT_RESISTANCEBUFFMODSNEGATIVE + u16::from(school)))?
     }
     /// `PLAYER_FIELD_MOD_DAMAGE_DONE_POS + school`: the positive damage bonus, school 0 physical.
     pub fn player_mod_damage_done_pos(&self, school: u8) -> Option<i32> {
@@ -517,7 +507,7 @@ impl ObjectFields {
     pub fn player_rest_state(&self) -> Option<u8> {
         self.player_bytes_2().map(|b| (b >> 24) as u8)
     }
-    /// `PLAYER_REST_STATE_EXPERIENCE` (field 1175, private): the rested pool in base kill XP,
+    /// `PLAYER_REST_STATE_EXPERIENCE` (private): the rested pool in base kill XP,
     /// drained 1:1 while kills pay double (`GetXPRestBonus`), so the bar's rested span is twice it.
     pub fn player_rest_state_experience(&self) -> Option<u32> {
         self.get_u32(FIELD_PLAYER_REST_STATE_EXPERIENCE)
@@ -532,7 +522,7 @@ impl ObjectFields {
     pub fn player_drunk_byte(&self) -> Option<u8> {
         self.get_u32(FIELD_PLAYER_BYTES_3).map(|v| (v >> 8) as u8)
     }
-    /// `PLAYER_FLAGS` (field 190): the player state flags.
+    /// `PLAYER_FLAGS`: the player state flags.
     pub fn player_flags(&self) -> u32 {
         self.get_u32(FIELD_PLAYER_FLAGS).unwrap_or(0)
     }
@@ -563,22 +553,22 @@ impl ObjectFields {
     pub fn player_is_resting(&self) -> bool {
         self.player_flags() & 0x20 != 0
     }
-    /// `PLAYER_DUEL_ARBITER` (field 188, guid, public): the duel flag GameObject, 0 for none;
+    /// `PLAYER_DUEL_ARBITER` (guid, public): the duel flag GameObject, 0 for none;
     /// set on both duellists at the challenge (`Spell::EffectDuel`).
     pub fn player_duel_arbiter(&self) -> u64 {
         self.get_guid(FIELD_PLAYER_DUEL_ARBITER).unwrap_or(0)
     }
-    /// `PLAYER_DUEL_TEAM` (field 196): 0 until the countdown ends, then 1 challenger, 2
+    /// `PLAYER_DUEL_TEAM`: 0 until the countdown ends, then 1 challenger, 2
     /// challenged (`Player::UpdateDuelFlag`); a duel is live only when both sides are nonzero.
     pub fn player_duel_team(&self) -> u32 {
         self.get_u32(FIELD_PLAYER_DUEL_TEAM).unwrap_or(0)
     }
-    /// `PLAYER_GUILDID` (field 191, public): the guild, 0 for none; names come from
+    /// `PLAYER_GUILDID` (public): the guild, 0 for none; names come from
     /// `SMSG_GUILD_QUERY_RESPONSE`, and `GetGuildInfo` answers nil on 0 or a miss.
     pub fn player_guild_id(&self) -> u32 {
         self.get_u32(FIELD_PLAYER_GUILDID).unwrap_or(0)
     }
-    /// `PLAYER_GUILDRANK` (field 192): the guild rank, 0 the guild master; the reference indexes
+    /// `PLAYER_GUILDRANK`: the guild rank, 0 the guild master; the reference indexes
     /// its rank names with it unbounded, so bound it to the ten ranks.
     pub fn player_guild_rank(&self) -> u32 {
         self.get_u32(FIELD_PLAYER_GUILDRANK).unwrap_or(0)
@@ -594,26 +584,16 @@ impl ObjectFields {
     pub fn player_no_release_window(&self) -> bool {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES).unwrap_or(0) & 0x10 != 0
     }
-    /// `PLAYER_FIELD_BYTES` byte 2 (private, field 1222): the four extra action bars' toggles, bits
-    /// `0x01..0x08` (`Player.h:360-363`), read by `GetActionBarToggles` at
-    /// `[[player+0xe68]+0x102a]`. The client never writes it and no event fires when it moves.
-    /// vmangos's `// 0x4C0` beside the field is stale; `UNIT_END + 0x40A` is right.
+    /// `PLAYER_FIELD_BYTES` byte 2 (private): the four extra action bars' toggles, bits
+    /// `0x01..0x08`. The client never writes it and no event fires when it moves.
     pub fn player_action_bar_toggles(&self) -> Option<u8> {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES)
             .map(|b| ((b >> 16) & 0xff) as u8)
     }
-    /// `PLAYER_FIELD_BYTES` byte 3 (private): the highest honor rank held, 0 never ranked, which
-    /// `RequiredHonorRank` checks; only ever raised (`HonorMgr.cpp:894-895`), so it outlives a
-    /// demotion, unlike [`Self::player_pvp_rank`].
+    /// `PLAYER_FIELD_BYTES` byte 3 (private): the lifetime highest honor rank held, 0 never
+    /// ranked, which `RequiredHonorRank` checks.
     pub fn player_honor_rank(&self) -> Option<u8> {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES)
-            .map(|b| ((b >> 24) & 0xff) as u8)
-    }
-    /// `PLAYER_BYTES_3` byte 3 (public, `UpdateFields_1_12_1.h:125`): the current internal rank
-    /// (`HonorMgr.cpp:900`), 0 unranked, 1-4 negative, 5 up positive, indexing `PVP_RANK_*`;
-    /// the drawn rank is `rank > 4 ? rank - 4 : -rank` (`HonorMgr.cpp:991`).
-    pub fn player_pvp_rank(&self) -> Option<u8> {
-        self.get_u32(FIELD_PLAYER_BYTES_3)
             .map(|b| ((b >> 24) & 0xff) as u8)
     }
     /// `PLAYER_BYTES_3` byte 3 as 12340 reads it: the arena team side, which a player streamed
@@ -622,71 +602,19 @@ impl ObjectFields {
         self.get_u32(FIELD_PLAYER_BYTES_3)
             .map(|b| ((b >> 24) & 0xff) as u8)
     }
-    /// `PLAYER_BYTES_3` byte 2 (public): the city-protector title, a race id (`Player.h:354`);
-    /// `UnitPVPName` appends `PVP_MEDAL<n>` when nonzero. vmangos never writes it.
-    pub fn player_pvp_medal(&self) -> Option<u8> {
-        self.get_u32(FIELD_PLAYER_BYTES_3)
-            .map(|b| ((b >> 16) & 0xff) as u8)
-    }
-    /// `PLAYER_FIELD_SESSION_KILLS` (private): today's honorable and dishonorable kills, both
-    /// halves written (`HonorMgr.cpp:913-914`); "session" means today, `GetPVPSessionStats()`.
-    pub fn player_session_kills(&self) -> Option<(u16, u16)> {
-        self.get_u16_pair(FIELD_PLAYER_FIELD_SESSION_KILLS)
-    }
-    /// `PLAYER_FIELD_YESTERDAY_KILLS` (private): yesterday's kills, two shorts; vmangos writes a
-    /// whole dword (`HonorMgr.cpp:917`), so the dishonorable half is 0, not a decode bug.
-    pub fn player_yesterday_kills(&self) -> Option<(u16, u16)> {
-        self.get_u16_pair(FIELD_PLAYER_FIELD_YESTERDAY_KILLS)
-    }
-    /// `PLAYER_FIELD_LAST_WEEK_KILLS` (private): last week's kills; the dishonorable half is 0
-    /// from vmangos (`HonorMgr.cpp:929` writes a whole dword).
-    pub fn player_last_week_kills(&self) -> Option<(u16, u16)> {
-        self.get_u16_pair(FIELD_PLAYER_FIELD_LAST_WEEK_KILLS)
-    }
-    /// `PLAYER_FIELD_THIS_WEEK_KILLS` (private): this week's kills; the dishonorable half is 0
-    /// from vmangos (`HonorMgr.cpp:924` writes a whole dword).
-    pub fn player_this_week_kills(&self) -> Option<(u16, u16)> {
-        self.get_u16_pair(FIELD_PLAYER_FIELD_THIS_WEEK_KILLS)
-    }
-    /// `PLAYER_FIELD_THIS_WEEK_CONTRIBUTION` (private): honor earned this week, floored at 0
-    /// (`HonorMgr.cpp:925`).
-    pub fn player_this_week_contribution(&self) -> Option<u32> {
-        self.get_u32(FIELD_PLAYER_FIELD_THIS_WEEK_CONTRIBUTION)
-    }
-    /// `PLAYER_FIELD_YESTERDAY_CONTRIBUTION` (private): yesterday's honor (`HonorMgr.cpp:918`).
+    /// `PLAYER_FIELD_YESTERDAY_CONTRIBUTION` (private): yesterday's honor.
     pub fn player_yesterday_contribution(&self) -> Option<u32> {
         self.get_u32(FIELD_PLAYER_FIELD_YESTERDAY_CONTRIBUTION)
     }
-    /// `PLAYER_FIELD_LAST_WEEK_CONTRIBUTION` (private): last week's honor, what the weekly rank
-    /// calculation used (`HonorMgr.cpp:930`).
-    pub fn player_last_week_contribution(&self) -> Option<u32> {
-        self.get_u32(FIELD_PLAYER_FIELD_LAST_WEEK_CONTRIBUTION)
-    }
-    /// `PLAYER_FIELD_LAST_WEEK_RANK` (private): last week's standing on the honor ladder, not an
-    /// honor rank; 0 is unranked (`HonorMgr.cpp:931`).
-    pub fn player_last_week_rank(&self) -> Option<u32> {
-        self.get_u32(FIELD_PLAYER_FIELD_LAST_WEEK_RANK)
-    }
-    /// `PLAYER_FIELD_LIFETIME_HONORBALE_KILLS` (private, vmangos's spelling): lifetime honorable
-    /// kills (`HonorMgr.cpp:934`).
+    /// `PLAYER_FIELD_LIFETIME_HONORBALE_KILLS` (private, the reference's spelling): lifetime
+    /// honorable kills.
     pub fn player_lifetime_honorable_kills(&self) -> Option<u32> {
         self.get_u32(FIELD_PLAYER_FIELD_LIFETIME_HONORABLE_KILLS)
-    }
-    /// `PLAYER_FIELD_LIFETIME_DISHONORBALE_KILLS` (private, vmangos's spelling): lifetime
-    /// dishonorable kills (`HonorMgr.cpp:935`).
-    pub fn player_lifetime_dishonorable_kills(&self) -> Option<u32> {
-        self.get_u32(FIELD_PLAYER_FIELD_LIFETIME_DISHONORABLE_KILLS)
-    }
-    /// `PLAYER_FIELD_BYTES2` byte 0 (private): progress through the current rank, 0-255
-    /// (`HonorMgr.cpp:905-909`); a negative rank's `-255` scale wraps in the `uint8` cast.
-    pub fn player_honor_rank_bar(&self) -> Option<u8> {
-        self.get_u32(FIELD_PLAYER_FIELD_BYTES2)
-            .map(|b| (b & 0xff) as u8)
     }
     /// `PLAYER_FIELD_BYTES2`'s low `i16` (private): the `OverrideSpellData` row the bar's
     /// override spells come from (`0x5abb40`).
     pub fn player_override_spells_id(&self) -> Option<i16> {
-        self.get_u32(FIELD_PLAYER_OVERRIDE_SPELLS_ID)
+        self.get_u32(FIELD_PLAYER_FIELD_BYTES2)
             .map(|v| v as u16 as i16)
     }
     /// `PLAYER_FIELD_BYTES2` byte 3 (private): the aura vision, `0x20` stealth and `0x40`
@@ -733,7 +661,7 @@ impl ObjectFields {
     pub fn player_bank_bag_slots_purchased(&self) -> Option<u8> {
         self.player_bytes_2().map(|b| ((b >> 16) & 0xff) as u8)
     }
-    /// `OBJECT_FIELD_CREATED_BY` (fields 6-7): who summoned a spell-spawned object; the faction
+    /// `OBJECT_FIELD_CREATED_BY`: who summoned a spell-spawned object; the faction
     /// resolver prefers its reaction, but a bobber's use gate is our channel object.
     pub fn gameobject_created_by(&self) -> Option<u64> {
         self.get_guid(FIELD_GAMEOBJECT_CREATED_BY)
@@ -743,60 +671,33 @@ impl ObjectFields {
     pub fn gameobject_displayid(&self) -> Option<i32> {
         self.get_i32(FIELD_GAMEOBJECT_DISPLAYID)
     }
-    /// `GAMEOBJECT_STATE` (`OBJECT_END + 0x8`): 0 active (open), 1 ready (closed), 2 active-alt.
+    /// `GAMEOBJECT_BYTES_1` byte 0, the state: 0 active (open), 1 ready (closed), 2 active-alt.
     pub fn gameobject_state(&self) -> Option<u32> {
-        self.get_u32(FIELD_GAMEOBJECT_STATE)
+        self.get_u32(FIELD_GAMEOBJECT_BYTES_1)
+            .map(field::gameobject_state_of)
     }
-    /// `GAMEOBJECT_ROTATION`: the spawn quaternion `(x, y, z, w)`, unsent components 0; the
-    /// reference places a GameObject by it, never by `GAMEOBJECT_FACING`.
-    pub fn gameobject_rotation(&self) -> Option<[f32; 4]> {
-        let any_sent = (0..4u16).any(|i| self.contains(FIELD_GAMEOBJECT_ROTATION + i));
-        any_sent.then(|| {
-            [
-                self.get_f32(FIELD_GAMEOBJECT_ROTATION).unwrap_or(0.0),
-                self.get_f32(FIELD_GAMEOBJECT_ROTATION + 1).unwrap_or(0.0),
-                self.get_f32(FIELD_GAMEOBJECT_ROTATION + 2).unwrap_or(0.0),
-                self.get_f32(FIELD_GAMEOBJECT_ROTATION + 3).unwrap_or(0.0),
-            ]
-        })
-    }
-    /// `GAMEOBJECT_POS_*` and `GAMEOBJECT_FACING`; a create reads `Some` even with no position
-    /// sent, as for a transport, so check [`Self::gameobject_pos_sent`].
-    pub fn gameobject_position(&self) -> Option<(Vector3d, f32)> {
-        Some((
-            Vector3d {
-                x: self.get_f32(FIELD_GAMEOBJECT_POS_X)?,
-                y: self.get_f32(FIELD_GAMEOBJECT_POS_Y)?,
-                z: self.get_f32(FIELD_GAMEOBJECT_POS_Z)?,
-            },
-            self.get_f32(FIELD_GAMEOBJECT_FACING).unwrap_or(0.0),
-        ))
-    }
-    /// Whether any `GAMEOBJECT_POS_*` was really sent; vmangos sends none for a transport.
-    pub fn gameobject_pos_sent(&self) -> bool {
-        self.contains(FIELD_GAMEOBJECT_POS_X)
-            || self.contains(FIELD_GAMEOBJECT_POS_Y)
-            || self.contains(FIELD_GAMEOBJECT_POS_Z)
-    }
-    /// `GAMEOBJECT_TYPE_ID`: absent is 0, `GAMEOBJECT_TYPE_DOOR`: a create omits zero fields.
+    /// `GAMEOBJECT_BYTES_1` byte 1, the type: absent is 0, `GAMEOBJECT_TYPE_DOOR`, as a create
+    /// omits zero fields.
     pub fn gameobject_type_id(&self) -> i32 {
-        self.get_i32(FIELD_GAMEOBJECT_TYPE_ID).unwrap_or(0)
+        self.get_u32(FIELD_GAMEOBJECT_BYTES_1)
+            .map_or(0, |b| i32::from((b >> 8) as u8))
     }
     /// `GAMEOBJECT_FLAGS`: `0x1` in use, `0x4` needs the quest activate bit, `0x10` no interact.
     pub fn gameobject_flags(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_FLAGS).unwrap_or(0)
     }
     /// `GAMEOBJECT_FACTION`: the `FactionTemplate.dbc` id, 0 neutral; hostile to the player
-    /// means not highlightable (`[go+0x110]+0x38`): no cursor, tooltip or hover.
+    /// means not highlightable: no cursor, tooltip or hover.
     pub fn gameobject_faction(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_FACTION).unwrap_or(0)
     }
     /// `GAMEOBJECT_DYNAMIC`'s low half (per player): `0x1` activate, read only under flag `0x4`;
     /// `0x8` the loot sparkle (`0x71121c`).
     pub fn gameobject_dynamic_flags(&self) -> u32 {
-        self.get_u32(FIELD_GAMEOBJECT_DYN_FLAGS).unwrap_or(0)
+        self.get_u32(FIELD_GAMEOBJECT_DYNAMIC)
+            .map_or(0, field::gameobject_dyn_flags_of)
     }
-    /// `GAMEOBJECT_LEVEL` (field 22): a lock with `Skill[0]` 0 asks for `level * 5`.
+    /// `GAMEOBJECT_LEVEL`: a lock with `Skill[0]` 0 asks for `level * 5`.
     pub fn gameobject_level(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_LEVEL).unwrap_or(0)
     }
@@ -854,19 +755,13 @@ pub fn player_slot_of_field(index: u16) -> Option<(u8, bool)> {
     })
 }
 
-/// Where enchant slot `slot`'s triple starts in the shared index space, its id's field, for a local
-/// write; `None` past slot 11.
+/// Where enchant slot `slot`'s triple starts, its id's field, for a local write; `None` past slot
+/// 11.
 pub fn item_enchant_field(slot: u8) -> Option<u16> {
     item_enchant_index(slot)
 }
 
-/// Where enchant slot `slot`'s triple starts in the shared index space; `None` past slot 11.
+/// `ITEM_FIELD_ENCHANTMENT_<slot+1>_1`, twelve triples in a row; `None` past slot 11.
 fn item_enchant_index(slot: u8) -> Option<u16> {
-    let slot = u16::from(slot);
-    match slot {
-        0..=1 => Some(FIELD_ITEM_ENCHANTMENT + 3 * slot),
-        2..=6 => Some(FIELD_ITEM_ENCHANTMENT_SOCKETS + 3 * (slot - 2)),
-        7..=11 => Some(FIELD_ITEM_ENCHANTMENT_PROPS + 3 * (slot - 7)),
-        _ => None,
-    }
+    (slot < 12).then(|| FIELD_ITEM_ENCHANTMENT_1_1 + 3 * u16::from(slot))
 }

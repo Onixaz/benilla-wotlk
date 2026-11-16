@@ -1379,8 +1379,8 @@ mod tests {
     }
 
     /// Descriptor field indices the predicate-B table reads.
-    const F_GO_TYPE_ID: u16 = 21;
-    const F_UNIT_HEALTH: u16 = 22;
+    const F_GO_TYPE_ID: u16 = benilla_protocol::field::FIELD_GAMEOBJECT_BYTES_1;
+    const F_UNIT_HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
 
     /// Predicate B's answer for one latched object; `None` latches a guid that does not resolve.
     fn kneels_at(object: Option<(EntityKind, &[(u16, u32)])>) -> bool {
@@ -1417,16 +1417,16 @@ mod tests {
         // A GameObject other than the bobber: a chest (3), a fishing hole (25).
         assert!(kneels_at(Some((
             EntityKind::GameObject,
-            &[(F_GO_TYPE_ID, 3)]
+            &[(F_GO_TYPE_ID, 3 << 8)]
         ))));
         assert!(kneels_at(Some((
             EntityKind::GameObject,
-            &[(F_GO_TYPE_ID, 25)]
+            &[(F_GO_TYPE_ID, 25 << 8)]
         ))));
         // Type 17, `FISHINGNODE`.
         assert!(!kneels_at(Some((
             EntityKind::GameObject,
-            &[(F_GO_TYPE_ID, 17)]
+            &[(F_GO_TYPE_ID, 17 << 8)]
         ))));
         // A corpse kneels, a live (pickpocketed) target does not.
         assert!(kneels_at(Some((EntityKind::Unit, &[(F_UNIT_HEALTH, 0)]))));
@@ -1560,7 +1560,8 @@ mod tests {
             let e = app
                 .world_mut()
                 .spawn(crate::net::ObjectStore(ObjectFields::from_pairs(&[(
-                    2, kind,
+                    benilla_protocol::field::FIELD_OBJECT_TYPE,
+                    kind,
                 )])))
                 .id();
             app.world_mut()

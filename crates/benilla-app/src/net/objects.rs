@@ -1568,7 +1568,7 @@ mod tests {
         let create = |guid| SessionEvent::ItemCreate {
             guid,
             container: false,
-            fields: ObjectFields::from_pairs(&[(3, 117)]),
+            fields: ObjectFields::from_pairs(&[(benilla_protocol::field::FIELD_OBJECT_ENTRY, 117)]),
         };
         let cells = |world: &World, guid: u64| -> Option<Countdowns> {
             let e = *world.resource::<GuidIndex>().0.get(&guid)?;

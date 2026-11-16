@@ -236,9 +236,17 @@ mod tests {
         let g = group_with(record(member_status::ONLINE));
         assert_eq!(g.party_pet_guid(MEMBER, None), Some(PET));
 
-        let summon = ObjectFields::from_pairs(&[(8, 0x55), (9, 0)]);
+        let summon = ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_SUMMON, 0x55),
+            (benilla_protocol::field::FIELD_UNIT_SUMMON + 1, 0),
+        ]);
         assert_eq!(g.party_pet_guid(MEMBER, Some(&summon)), Some(0x55));
-        let both = ObjectFields::from_pairs(&[(6, 0x66), (7, 0), (8, 0x55), (9, 0)]);
+        let both = ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_CHARM, 0x66),
+            (benilla_protocol::field::FIELD_UNIT_CHARM + 1, 0),
+            (benilla_protocol::field::FIELD_UNIT_SUMMON, 0x55),
+            (benilla_protocol::field::FIELD_UNIT_SUMMON + 1, 0),
+        ]);
         assert_eq!(
             g.party_pet_guid(MEMBER, Some(&both)),
             Some(0x66),
@@ -259,7 +267,10 @@ mod tests {
     #[test]
     fn the_group_test_names_members_and_their_pets() {
         let g = group_with(record(member_status::ONLINE));
-        let me = ObjectFields::from_pairs(&[(8, 0x99), (9, 0)]);
+        let me = ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_SUMMON, 0x99),
+            (benilla_protocol::field::FIELD_UNIT_SUMMON + 1, 0),
+        ]);
         let none = |_| None;
         assert!(g.names_member_or_pet(MEMBER, None, none));
         assert!(g.names_member_or_pet(PET, None, none), "the record's pet");
@@ -267,7 +278,10 @@ mod tests {
         assert!(g.names_member_or_pet(0x99, Some((1, &me)), none), "our pet");
         assert!(!g.names_member_or_pet(0x7777, Some((1, &me)), none));
         assert!(!g.names_member_or_pet(0, None, none));
-        let summon = ObjectFields::from_pairs(&[(8, 0x55), (9, 0)]);
+        let summon = ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_SUMMON, 0x55),
+            (benilla_protocol::field::FIELD_UNIT_SUMMON + 1, 0),
+        ]);
         let held = |guid| (guid == MEMBER).then_some(&summon);
         assert!(
             g.names_member_or_pet(0x55, None, held),
@@ -288,7 +302,10 @@ mod tests {
     fn the_raid_pet_guid_reads_the_record_whatever_its_online_bit() {
         let g = group_with(record(member_status::ONLINE));
         assert_eq!(g.raid_pet_guid(MEMBER, None), Some(PET));
-        let summon = ObjectFields::from_pairs(&[(8, 0x55), (9, 0)]);
+        let summon = ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_UNIT_SUMMON, 0x55),
+            (benilla_protocol::field::FIELD_UNIT_SUMMON + 1, 0),
+        ]);
         assert_eq!(g.raid_pet_guid(MEMBER, Some(&summon)), Some(0x55));
         assert_eq!(
             g.raid_pet_guid(MEMBER, Some(&ObjectFields::default())),

@@ -1458,9 +1458,9 @@ mod tests {
     fn a_dead_or_ghost_initiator_is_refused() {
         // The `UNIT_FIELD_HEALTH`, `UNIT_FIELD_MAXHEALTH` and `PLAYER_FLAGS` field ids, and
         // `PLAYER_FLAGS_GHOST`.
-        const HEALTH: u16 = 22;
-        const MAXHEALTH: u16 = 28;
-        const PLAYER_FLAGS: u16 = 190;
+        const HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+        const MAXHEALTH: u16 = benilla_protocol::field::FIELD_UNIT_MAXHEALTH;
+        const PLAYER_FLAGS: u16 = benilla_protocol::field::FIELD_PLAYER_FLAGS;
         const GHOST: u32 = 0x10;
         for (label, fields) in [
             ("dead", vec![(HEALTH, 0u32), (MAXHEALTH, 100)]),

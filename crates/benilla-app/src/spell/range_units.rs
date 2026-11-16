@@ -234,9 +234,12 @@ mod tests {
 
     fn store(typemask: u32, reach: f32) -> ObjectStore {
         ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-            (2, typemask),
-            (22, 100),
-            (130, reach.to_bits()),
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, typemask),
+            (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+            (
+                benilla_protocol::field::FIELD_UNIT_COMBATREACH,
+                reach.to_bits(),
+            ),
         ]))
     }
 
@@ -332,9 +335,12 @@ mod tests {
         // `OBJECT_FIELD_TYPE` 2, the template 35, `UNIT_FIELD_FLAGS` 46 (player-controlled 0x8).
         let unit = |typemask: u32, template: u32, flags: u32| {
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (2, typemask),
-                (35, template),
-                (46, flags),
+                (benilla_protocol::field::FIELD_OBJECT_TYPE, typemask),
+                (
+                    benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE,
+                    template,
+                ),
+                (benilla_protocol::field::FIELD_UNIT_FLAGS, flags),
             ]))
         };
         let me = world.spawn((SelfPlayer, unit(0x19, 1, 0x8))).id();

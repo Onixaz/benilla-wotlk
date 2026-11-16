@@ -154,7 +154,8 @@ fn stats_for(
             happiness,
             damage_percentage,
             loyalty: None,
-            training_points: fields.unit_training_points(),
+            // 12340's unit block has no `UNIT_TRAINING_POINTS`.
+            training_points: (0, 0),
             experience: fields.unit_pet_experience(),
             family,
             icon,
@@ -236,15 +237,14 @@ mod tests {
     use super::*;
     use benilla_protocol::ObjectFields;
 
-    const BYTES_0: u16 = 36;
-    const BYTES_1: u16 = 138;
-    const POWER5: u16 = 27;
-    const PETNUMBER: u16 = 139;
-    const PETXP: u16 = 141;
-    const PETNEXTXP: u16 = 142;
-    const TRAINING: u16 = 149;
+    const BYTES_0: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_0;
+    const BYTES_1: u16 = benilla_protocol::field::FIELD_UNIT_BYTES_1;
+    const POWER5: u16 = benilla_protocol::field::FIELD_UNIT_POWER1 + 4;
+    const PETNUMBER: u16 = benilla_protocol::field::FIELD_UNIT_PETNUMBER;
+    const PETXP: u16 = benilla_protocol::field::FIELD_UNIT_PETEXPERIENCE;
+    const PETNEXTXP: u16 = benilla_protocol::field::FIELD_UNIT_PETNEXTLEVELEXP;
     /// `OBJECT_FIELD_ENTRY`, the pet's creature-template id.
-    const ENTRY: u16 = 3;
+    const ENTRY: u16 = benilla_protocol::field::FIELD_OBJECT_ENTRY;
     /// vmangos `creature_template` entries: Imp (`pet_family` 23) and Stonetusk Boar (5).
     const IMP_ENTRY: u32 = 416;
     const BOAR_ENTRY: u32 = 113;
@@ -260,14 +260,13 @@ mod tests {
         ObjectStore(ObjectFields::from_pairs(&[(BYTES_0, 9 << 8)]))
     }
 
-    /// A boar with loyalty level 6, full happiness, part-trained and mid-XP.
+    /// A boar with loyalty level 6, full happiness and mid-XP.
     fn boar() -> ObjectStore {
         ObjectStore(ObjectFields::from_pairs(&[
             (ENTRY, BOAR_ENTRY),
             (PETNUMBER, 42),
-            (BYTES_1, 6 << 8),             // loyalty level in byte 1
-            (POWER5, 1_000_000),           // maximum happiness
-            (TRAINING, (170 << 16) | 130), // total in the high word, spent in the low
+            (BYTES_1, 6 << 8),   // loyalty level in byte 1
+            (POWER5, 1_000_000), // maximum happiness
             (PETXP, 4200),
             (PETNEXTXP, 8000),
         ]))
@@ -328,8 +327,8 @@ mod tests {
         (NetCommands(tx), rx)
     }
 
-    /// On the real DBC data: the training-point word order, the loyalty byte, and a maxed pet's
-    /// bucket with 125% damage.
+    /// On the real DBC data: no training points, the loyalty byte, and a maxed pet's bucket with
+    /// 125% damage.
     #[test]
     fn a_hunters_boar_reads_every_field() {
         let Some(t) = tables() else { return };
@@ -338,11 +337,7 @@ mod tests {
         assert_eq!(s.happiness, Some(3));
         assert_eq!(s.damage_percentage, 125.0);
         assert_eq!(s.loyalty, None);
-        assert_eq!(
-            s.training_points,
-            (170, 130),
-            "TOTAL first, from the high word"
-        );
+        assert_eq!(s.training_points, (0, 0), "no 12340 field carries them");
         assert_eq!(s.experience, (4200, 8000));
     }
 
@@ -410,7 +405,7 @@ mod tests {
         assert_eq!(s.happiness, None);
         assert_eq!(s.damage_percentage, 100.0);
         // The descriptor values need no table.
-        assert_eq!(s.training_points, (170, 130));
+        assert_eq!(s.experience, (4200, 8000));
     }
 
     /// A missing tooltip key is silent: `getglobal` answers nil and the tooltip loses a line.

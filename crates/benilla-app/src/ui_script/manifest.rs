@@ -314,6 +314,7 @@ pub(super) fn load_ingame_ui_with(
 mod tests {
     use super::*;
     use crate::ui_script::reference_ui::fixture;
+    use benilla_ui::script::ClientOs;
 
     /// A chain whose `FrameXML.toc` lists `rows`, each a `.lua` that appends its own letter to
     /// `LOAD_LOG`, and one `.xml` whose `<Script file=>` does the same.
@@ -517,8 +518,9 @@ mod tests {
 
     /// The core's commands are the chain's `Bindings.xml`, loaded after the toc's files (which see
     /// none) as the UI init does: its order, its headers and its bodies are what registers and
-    /// runs, the defaults are the chain's `DefaultBindings.wtf`, and a debug, an empty, a nested
-    /// and a Mac row are no commands.
+    /// runs, the defaults are the chain's `DefaultBindings.wtf`, and a debug, an empty and a nested
+    /// row are no commands. The Mac row is a command on the Mac build alone, each build keeping
+    /// the rows of its own `platform` (`0x564470`, `0x602e82`).
     #[test]
     fn the_cores_commands_are_the_chain_bindings_xml() {
         const TOC_LUA: &[u8] =
@@ -532,43 +534,52 @@ mod tests {
                 Some(b"bind J JUMP\r\nbind B TOGGLEBACKPACK\r\nbind CTRL-Y TOGGLESTATS\r\n"),
             ),
         ]);
-        let mut s = UiScript::new().unwrap();
-        s.set_default_bindings(default_bindings());
-        s.load_binding_set(1);
-        let failures = load_core(&s);
-        assert!(failures.is_empty(), "{failures:#?}");
-        assert_eq!(s.eval::<i64>("return TOC_SAW").unwrap(), 0);
-        let rows: Vec<Vec<String>> = s
-            .eval(
-                "local out = {} \
-                 for i = 1, GetNumBindings() do out[i] = { GetBinding(i) } end \
-                 return out",
-            )
-            .unwrap();
         let row = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        assert_eq!(
-            rows,
-            [
+        for os in [ClientOs::Pc, ClientOs::Mac] {
+            let mac = os == ClientOs::Mac;
+            let mut s = UiScript::new_on(os).unwrap();
+            s.set_default_bindings(default_bindings());
+            s.load_binding_set(1);
+            let failures = load_core(&s);
+            assert!(failures.is_empty(), "{os:?}: {failures:#?}");
+            assert_eq!(s.eval::<i64>("return TOC_SAW").unwrap(), 0);
+            let rows: Vec<Vec<String>> = s
+                .eval(
+                    "local out = {} \
+                     for i = 1, GetNumBindings() do out[i] = { GetBinding(i) } end \
+                     return out",
+                )
+                .unwrap();
+            let mut want = vec![
                 row(&["HEADER_INTERFACE"]),
                 row(&["TOGGLEBACKPACK", "B"]),
                 row(&["HEADER_MOVEMENT"]),
                 row(&["JUMP", "J"]),
-            ]
-        );
-        assert!(s.execute_binding("JUMP", true).unwrap());
-        assert_eq!(s.eval::<String>("return PROBED").unwrap(), "edited jump");
-        for skipped in ["TOGGLESTATS", "EMPTYROW", "NESTEDROW", "ITUNES_PLAYPAUSE"] {
-            assert!(
-                !s.execute_binding(skipped, true).unwrap(),
-                "{skipped} is no command"
+            ];
+            if mac {
+                want.extend([row(&["HEADER_ITUNES_REMOTE"]), row(&["ITUNES_PLAYPAUSE"])]);
+            }
+            assert_eq!(rows, want, "{os:?}");
+            assert!(s.execute_binding("JUMP", true).unwrap());
+            assert_eq!(s.eval::<String>("return PROBED").unwrap(), "edited jump");
+            assert_eq!(
+                s.execute_binding("ITUNES_PLAYPAUSE", true).unwrap(),
+                mac,
+                "{os:?}: the Mac row is a command on the Mac build alone"
+            );
+            for skipped in ["TOGGLESTATS", "EMPTYROW", "NESTEDROW"] {
+                assert!(
+                    !s.execute_binding(skipped, true).unwrap(),
+                    "{os:?}: {skipped} is no command"
+                );
+            }
+            assert_eq!(
+                s.eval::<String>(r#"return GetBindingAction("CTRL-Y")"#)
+                    .unwrap(),
+                "TOGGLESTATS",
+                "a default key on a command the file never declared is still the key table's"
             );
         }
-        assert_eq!(
-            s.eval::<String>(r#"return GetBindingAction("CTRL-Y")"#)
-                .unwrap(),
-            "TOGGLESTATS",
-            "a default key on a command the file never declared is still the key table's"
-        );
     }
 
     /// A chain without `Bindings.xml` loads no command and fails nothing.
@@ -611,12 +622,25 @@ mod tests {
         }
         assert_eq!(binds[0].header.as_deref(), Some("MOVEMENT"));
 
-        // Registered on this client, the PC build: every row but the nine Mac ones, so the list
-        // walks 251 visible commands and 17 headers, `ITUNES_REMOTE` and `MOVIE_RECORDING` riding
-        // on Mac rows.
-        let mut s = UiScript::new().unwrap();
-        load_stock_bindings(&mut s);
-        assert_eq!(s.eval::<i64>("return GetNumBindings()").unwrap(), 268);
-        assert!(!s.execute_binding("ITUNES_PLAYPAUSE", true).unwrap());
+        // Registered on each build: the PC one keeps every row but the nine Mac ones, so its list
+        // walks 251 visible commands and 17 headers; the Mac one keeps them too, and their two
+        // headers, `ITUNES_REMOTE` and `MOVIE_RECORDING`.
+        for (os, rows) in [(ClientOs::Pc, 268), (ClientOs::Mac, 279)] {
+            let mut s = UiScript::new_on(os).unwrap();
+            load_stock_bindings(&mut s);
+            assert_eq!(
+                s.eval::<i64>("return GetNumBindings()").unwrap(),
+                rows,
+                "{os:?}"
+            );
+            let has_itunes: bool = s
+                .eval(
+                    "for i = 1, GetNumBindings() do \
+                     if GetBinding(i) == 'ITUNES_PLAYPAUSE' then return true end end \
+                     return false",
+                )
+                .unwrap();
+            assert_eq!(has_itunes, os == ClientOs::Mac, "{os:?}");
+        }
     }
 }

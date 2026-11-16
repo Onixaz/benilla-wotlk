@@ -175,10 +175,10 @@ mod tests {
         }
     }
 
-    /// Our player at rest state `state` (`PLAYER_BYTES_2` byte 3, field 194).
+    /// Our player at rest state `state` (`PLAYER_BYTES_2` byte 3).
     fn me(state: u8) -> ObjectStore {
         ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
-            194,
+            benilla_protocol::field::FIELD_PLAYER_BYTES_2,
             u32::from(state) << 24,
         )]))
     }

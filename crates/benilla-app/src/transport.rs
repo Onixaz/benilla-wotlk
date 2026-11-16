@@ -90,8 +90,7 @@ pub(crate) struct TransportAnchor {
 pub(crate) struct ElevatorSeed {
     /// `gameobject_template` entry, `TransportAnimation.dbc`'s `TransportID` key.
     pub(crate) entry: u32,
-    /// Spawn position (raw WoW coords), from the movement block: a transport create carries no
-    /// `GAMEOBJECT_POS_*`.
+    /// Spawn position (raw WoW coords), from the movement block: no descriptor field holds it.
     pub(crate) base_pos: [f32; 3],
     /// Spawn facing (WoW radians), the car's constant heading.
     pub(crate) yaw: f32,
@@ -972,7 +971,7 @@ mod tests {
                 benilla_assets::coords::wow_to_bevy([0.0, 5.0, 0.0]),
             ))
             .id();
-        // UNIT_FIELD_TARGET is field 16, a guid pair.
+        // UNIT_FIELD_TARGET, a guid pair.
         let crew = app
             .world_mut()
             .spawn((
@@ -981,7 +980,10 @@ mod tests {
                     display_id: None,
                     scale: 1.0,
                 },
-                crate::net::ObjectStore(ObjectFields::from_pairs(&[(16, VICTIM as u32), (17, 0)])),
+                crate::net::ObjectStore(ObjectFields::from_pairs(&[
+                    (benilla_protocol::field::FIELD_UNIT_TARGET, VICTIM as u32),
+                    (benilla_protocol::field::FIELD_UNIT_TARGET + 1, 0),
+                ])),
                 Transform::default(),
                 TransportRider {
                     transport_guid: DECK,

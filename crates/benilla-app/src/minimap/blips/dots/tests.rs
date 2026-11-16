@@ -8,8 +8,9 @@ use benilla_protocol::field::{
 use benilla_protocol::ObjectFields;
 use benilla_ui::script::TOWN_TYPES;
 
-const FIELD_SUMMONEDBY: u16 = 12;
-const FIELD_GAMEOBJECT_TYPE_ID: u16 = 21;
+const FIELD_SUMMONEDBY: u16 = benilla_protocol::field::FIELD_UNIT_SUMMONEDBY;
+/// The type is `GAMEOBJECT_BYTES_1` byte 1.
+const FIELD_GAMEOBJECT_BYTES_1: u16 = benilla_protocol::field::FIELD_GAMEOBJECT_BYTES_1;
 const ME: u64 = 0x7;
 const NPC: u64 = 0xF130_0000_0000_0042;
 
@@ -197,7 +198,7 @@ fn creature_tracking_colours_by_reaction_and_the_untrackable_never_show() {
     let hidden = store(&[
         (FIELD_UNIT_HEALTH, 10),
         (FIELD_UNIT_DYNAMIC_FLAGS, UNIT_DYNFLAG_TRACK_UNIT),
-        (FIELD_UNIT_BYTES_1, 0x4 << 24),
+        (FIELD_UNIT_BYTES_1, 0x4 << 16),
     ]);
     assert_eq!(
         blip(w.classify(NPC, EntityKind::Unit, Some(&hidden), false)),
@@ -221,8 +222,8 @@ fn creature_tracking_colours_by_reaction_and_the_untrackable_never_show() {
 #[test]
 fn the_mailbox_type_tracks_mailboxes() {
     let fx = Fixture::new();
-    let mailbox = store(&[(FIELD_GAMEOBJECT_TYPE_ID, 19)]);
-    let chair = store(&[(FIELD_GAMEOBJECT_TYPE_ID, 7)]);
+    let mailbox = store(&[(FIELD_GAMEOBJECT_BYTES_1, 19 << 8)]);
+    let chair = store(&[(FIELD_GAMEOBJECT_BYTES_1, 7 << 8)]);
     let w = fx.world(
         SelfTracking::default(),
         Some(town("MINIMAP_TRACKING_MAILBOX")),

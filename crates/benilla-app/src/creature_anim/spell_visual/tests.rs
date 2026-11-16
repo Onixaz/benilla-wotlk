@@ -1572,7 +1572,7 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
     use benilla_protocol::ObjectFields;
 
     /// `UNIT_FIELD_MOUNTDISPLAYID` (index 133).
-    const FIELD_MOUNTDISPLAYID: u16 = 133;
+    const FIELD_MOUNTDISPLAYID: u16 = benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
     /// The shipped path of `SpellVisualEffectName` row 1185, the druid-morph cloud.
     const POOF: &str = "Spells\\DruidMorph_Impact_Base.mdx";
     const POOF_FX: u32 = 1185;
@@ -1773,8 +1773,11 @@ fn a_kit_with_a_chain_char_proc_asks_for_a_beam_from_both_dispatcher_sites() {
     let channeller = app
         .world_mut()
         .spawn(crate::net::ObjectStore(
-            benilla_protocol::ObjectFields::from_pairs(&[(144, BEAM_SPELL)])
-                .into_created(benilla_protocol::messages::ObjectType::Unit),
+            benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_CHANNEL_SPELL,
+                BEAM_SPELL,
+            )])
+            .into_created(benilla_protocol::messages::ObjectType::Unit),
         ))
         .id();
     app.update();
@@ -1845,10 +1848,9 @@ const BLACKCROW: RealRanged = RealRanged {
     fire_anim: 49,
 };
 
-/// `PLAYER_VISIBLE_ITEM_18_0`, the item entry in equipment slot 17 (vmangos
-/// `EQUIPMENT_SLOT_RANGED`): `PLAYER_VISIBLE_ITEM_1_CREATOR` (258) + 2 + 12 × 17, spelled out as
-/// the base is private to `benilla-protocol`.
-const VISIBLE_RANGED_ENTRY_FIELD: u16 = 258 + 2 + 12 * 17;
+/// `PLAYER_VISIBLE_ITEM_18_ENTRYID`, the item entry in equipment slot 17, the ranged slot.
+const VISIBLE_RANGED_ENTRY_FIELD: u16 =
+    benilla_protocol::field::player_visible_item_entry_field(17);
 
 /// Keeps the item layer's ask-once channel alive, so an unexpected `ItemQuery` (a template not
 /// landed, which starves the weapon lookup) is observable.
@@ -2855,7 +2857,7 @@ fn the_go_loot_sparkle_scales_to_its_object() {
 /// loaded, re-arms at model load, ignores other bits and reaps with the bit.
 #[test]
 fn a_go_loot_sparkle_follows_dynamic_bit_8_and_the_model_load() {
-    use benilla_protocol::field::FIELD_GAMEOBJECT_DYN_FLAGS;
+    use benilla_protocol::field::FIELD_GAMEOBJECT_DYNAMIC;
     use benilla_protocol::messages::ObjectType;
     use benilla_protocol::ObjectFields;
     const LOOT_FX: u32 = 14;
@@ -2875,7 +2877,7 @@ fn a_go_loot_sparkle_follows_dynamic_bit_8_and_the_model_load() {
         ),
     ));
     app.add_systems(Update, super::arm_go_loot_fx);
-    let dyn_flags = |v: u32| ObjectFields::from_pairs(&[(FIELD_GAMEOBJECT_DYN_FLAGS, v)]);
+    let dyn_flags = |v: u32| ObjectFields::from_pairs(&[(FIELD_GAMEOBJECT_DYNAMIC, v)]);
     let go = app
         .world_mut()
         .spawn((
@@ -4054,8 +4056,11 @@ fn the_channel_poll_reports_the_spell_it_leaves() {
     };
     let store = |spell: u32| {
         crate::net::ObjectStore(
-            benilla_protocol::ObjectFields::from_pairs(&[(144, spell)])
-                .into_created(benilla_protocol::messages::ObjectType::Unit),
+            benilla_protocol::ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_UNIT_CHANNEL_SPELL,
+                spell,
+            )])
+            .into_created(benilla_protocol::messages::ObjectType::Unit),
         )
     };
     let unit = app.world_mut().spawn(store(SPELL)).id();
@@ -4434,7 +4439,10 @@ fn a_beam_spells_flag_1_impact_kit_waits_for_the_beam_or_drops_at_the_timeout() 
     });
     // `OBJECT_FIELD_TYPE`'s mask: object and unit, or object and game object.
     let store = |mask: u32| {
-        crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(2, mask)]))
+        crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_OBJECT_TYPE,
+            mask,
+        )]))
     };
     let caster = app.world_mut().spawn_empty().id();
     let target = app.world_mut().spawn(store(0x9)).id();
@@ -4844,8 +4852,11 @@ fn waiting_kit(id: u32, anim_id: Option<u16>) -> VisualKit {
 fn unit_with_channel(channel: u32) -> crate::net::ObjectStore {
     crate::net::ObjectStore(
         // `OBJECT_FIELD_TYPE` object and unit, and `UNIT_CHANNEL_SPELL`.
-        benilla_protocol::ObjectFields::from_pairs(&[(2, 0x9), (144, channel)])
-            .into_created(benilla_protocol::messages::ObjectType::Unit),
+        benilla_protocol::ObjectFields::from_pairs(&[
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, 0x9),
+            (benilla_protocol::field::FIELD_UNIT_CHANNEL_SPELL, channel),
+        ])
+        .into_created(benilla_protocol::messages::ObjectType::Unit),
     )
 }
 

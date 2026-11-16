@@ -391,10 +391,10 @@ mod tests {
         ObjectFields::from_pairs(fields)
     }
 
-    const HEALTH: u16 = 22;
-    const MAXHEALTH: u16 = 28;
-    const UNIT_FLAGS: u16 = 46;
-    const PLAYER_FLAGS: u16 = 190;
+    const HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+    const MAXHEALTH: u16 = benilla_protocol::field::FIELD_UNIT_MAXHEALTH;
+    const UNIT_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_FLAGS;
+    const PLAYER_FLAGS: u16 = benilla_protocol::field::FIELD_PLAYER_FLAGS;
 
     /// A `WOW_GM=off` run is not warned about GM mode while its `.gm off` is in flight.
     #[test]

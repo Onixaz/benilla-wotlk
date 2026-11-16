@@ -1,7 +1,7 @@
 //! 3.3.5a's `SMSG_UPDATE_OBJECT` body (AzerothCore `UpdateData::BuildPacket`,
 //! `Object::BuildMovementUpdate`), read into the same [`Object`] list the 1.12.1 decoder gives.
 //! The update types and the field mask are 1.12.1's; the block count has no has-transport byte
-//! after it, the movement block is its own, and the fields are 3.3.5a's ([`ObjectFields::from_wotlk`]).
+//! after it, the movement block is its own, and the fields are stored at their 3.3.5a indices.
 
 use std::io::{self, Read};
 
@@ -54,10 +54,9 @@ fn read_object(r: &mut impl Read) -> io::Result<Object> {
     Ok(match update_type {
         0 => {
             let guid = read_packed_guid(r)?;
-            let raw = ObjectFields::read(r)?;
             Object::Values {
                 guid,
-                mask: ObjectFields::from_wotlk(raw, object_type_of_guid(guid)?),
+                mask: ObjectFields::read(r)?,
             }
         }
         // No update flags: the mover body alone (`0x4d6db1`, `0x4d6dd7`).
@@ -69,17 +68,13 @@ fn read_object(r: &mut impl Read) -> io::Result<Object> {
             let guid = read_packed_guid(r)?;
             let object_type = ObjectType::from_u8(read_u8(r)?);
             let movement = read_movement_block(r)?;
-            let mut mask = ObjectFields::from_wotlk(ObjectFields::read(r)?, object_type);
-            mask.place_wotlk_movement_fields(
-                object_type,
-                movement.block.position,
-                movement.rotation,
-            );
+            let mut mask = ObjectFields::read(r)?;
+            mask.place_movement_values(object_type, movement.block.position, movement.rotation);
             Object::Create {
                 guid,
                 object_type,
                 movement: movement.block,
-                // As 1.12.1's: a create omits zero fields, so absent reads 0 in its descriptor.
+                // A create omits zero fields, so absent reads 0 in its descriptor.
                 mask: mask.into_created(object_type),
                 spawned: update_type == 3,
             }
@@ -106,28 +101,6 @@ fn read_guid_list(r: &mut impl Read) -> io::Result<Vec<u64>> {
         guids.push(read_packed_guid(r)?);
     }
     Ok(guids)
-}
-
-/// The object type a 3.3.5a guid's high half names (AzerothCore `HighGuid`), which a values
-/// delta needs to read its fields: it carries no type byte. An item guid names the container
-/// layout, whose item block is the item's.
-fn object_type_of_guid(guid: u64) -> io::Result<ObjectType> {
-    Ok(match (guid >> 48) as u16 {
-        0x0000 => ObjectType::Player,
-        0x4000 => ObjectType::Container,
-        // GameObject, Transport, MO transport.
-        0xF110 | 0xF120 | 0x1FC0 => ObjectType::GameObject,
-        // Unit, Pet, Vehicle.
-        0xF130 | 0xF140 | 0xF150 => ObjectType::Unit,
-        0xF100 => ObjectType::DynamicObject,
-        0xF101 => ObjectType::Corpse,
-        high => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("values update for guid {guid:#018x}: no object type has high {high:#06x}"),
-            ))
-        }
-    })
 }
 
 /// A movement block and what 3.3.5a moved from the fields into it.
@@ -487,35 +460,5 @@ mod tests {
             panic!("expected a create");
         };
         assert_eq!((movement.attack_target, *spawned), (None, false));
-    }
-
-    #[test]
-    fn guid_highs_name_their_object_type() {
-        assert_eq!(object_type_of_guid(0x10).unwrap(), ObjectType::Player);
-        assert_eq!(
-            object_type_of_guid(0xF130_0000_0000_0001).unwrap(),
-            ObjectType::Unit
-        );
-        assert_eq!(
-            object_type_of_guid(0xF140_0000_0000_0001).unwrap(),
-            ObjectType::Unit
-        );
-        assert_eq!(
-            object_type_of_guid(0xF110_0000_0000_0001).unwrap(),
-            ObjectType::GameObject
-        );
-        assert_eq!(
-            object_type_of_guid(0x1FC0_0000_0000_0001).unwrap(),
-            ObjectType::GameObject
-        );
-        assert_eq!(
-            object_type_of_guid(0x4000_0000_0000_0001).unwrap(),
-            ObjectType::Container
-        );
-        assert_eq!(
-            object_type_of_guid(0xF101_0000_0000_0001).unwrap(),
-            ObjectType::Corpse
-        );
-        assert!(object_type_of_guid(0x1F50_0000_0000_0001).is_err());
     }
 }

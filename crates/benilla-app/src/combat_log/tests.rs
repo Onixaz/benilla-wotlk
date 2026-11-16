@@ -87,7 +87,7 @@ fn unit(kind: ObjectType, health: u32) -> ObjectStore {
     };
     ObjectStore(
         ObjectFields::from_pairs(&[
-            (2, mask), // OBJECT_FIELD_TYPE
+            (benilla_protocol::field::FIELD_OBJECT_TYPE, mask), // OBJECT_FIELD_TYPE
             (FIELD_UNIT_HEALTH, health),
             (FIELD_UNIT_LEVEL, 80),
         ])
@@ -510,10 +510,14 @@ fn a_building_floats_its_hit_and_repair_for_its_owner() {
     const BUILDING: u64 = 0xF110_0000_0000_0099;
     const WALL: u64 = 0xF110_0000_0000_009A;
     let mut app = rig();
-    // `GAMEOBJECT_TYPE_ID`: 33 is a destructible building, 0 a door.
+    // `GAMEOBJECT_BYTES_1` byte 1, the type: 33 is a destructible building, 0 a door.
     for (guid, go_type) in [(BUILDING, 33), (WALL, 0)] {
         let store = ObjectStore(
-            ObjectFields::from_pairs(&[(21, go_type)]).into_created(ObjectType::GameObject),
+            ObjectFields::from_pairs(&[(
+                benilla_protocol::field::FIELD_GAMEOBJECT_BYTES_1,
+                go_type << 8,
+            )])
+            .into_created(ObjectType::GameObject),
         );
         let e = app
             .world_mut()

@@ -254,8 +254,8 @@ mod tests {
         use benilla_protocol::{EntityKind, ObjectFields};
 
         const NPC: u64 = 0xdead_beef;
-        const FIELD_LEVEL: u16 = 34; // UNIT_FIELD_LEVEL
-        const FIELD_NPC_FLAGS: u16 = 147; // UNIT_NPC_FLAGS
+        const FIELD_LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL; // UNIT_FIELD_LEVEL
+        const FIELD_NPC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS; // UNIT_NPC_FLAGS
 
         let net_entity = || NetEntity {
             kind: EntityKind::Unit,
@@ -362,8 +362,8 @@ mod tests {
         use benilla_protocol::{EntityKind, ObjectFields};
 
         const NPC: u64 = 0x4242;
-        const FIELD_LEVEL: u16 = 34;
-        const FIELD_NPC_FLAGS: u16 = 147;
+        const FIELD_LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL;
+        const FIELD_NPC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
 
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
@@ -435,7 +435,7 @@ mod tests {
 
         const ESCORT: u64 = 0x5115; // Mist: gives the quest, then follows with npcflags off
         const PLAIN: u64 = 0x5116; // an ordinary giver standing next to her
-        const FIELD_NPC_FLAGS: u16 = 147;
+        const FIELD_NPC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
         use benilla_protocol::messages::field::FIELD_PLAYER_QUEST_LOG_1_1 as FIELD_QUEST_LOG_1_1;
 
         let net_entity = || NetEntity {
@@ -531,10 +531,10 @@ mod tests {
         use benilla_protocol::{EntityKind, ObjectFields};
 
         const NPC: u64 = 0x7777;
-        const FIELD_LEVEL: u16 = 34;
-        const FIELD_HEALTH: u16 = 22;
-        const FIELD_FACTION: u16 = 35; // UNIT_FIELD_FACTIONTEMPLATE
-        const FIELD_NPC_FLAGS: u16 = 147;
+        const FIELD_LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL;
+        const FIELD_HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+        const FIELD_FACTION: u16 = benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE; // UNIT_FIELD_FACTIONTEMPLATE
+        const FIELD_NPC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
 
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
@@ -639,9 +639,9 @@ mod tests {
 
         const FRIENDLY: u64 = 0x1001;
         const HOSTILE: u64 = 0x1002;
-        const FIELD_LEVEL: u16 = 34;
-        const FIELD_FACTION: u16 = 35;
-        const FIELD_NPC_FLAGS: u16 = 147;
+        const FIELD_LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL;
+        const FIELD_FACTION: u16 = benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;
+        const FIELD_NPC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
         /// `FactionTemplate.dbc` 35 is friendly to players, 14 the monster template hostile to all.
         const TPL_FRIENDLY: u32 = 35;
         const TPL_MONSTER: u32 = 14;
@@ -744,9 +744,9 @@ mod tests {
         const FM: u64 = 0x9001; // flightmaster only
         const GIVER: u64 = 0x9002; // questgiver only, the control
         const VENDOR: u64 = 0x9003; // neither: never asked
-        const FIELD_LEVEL: u16 = 34;
-        const FIELD_HEALTH: u16 = 22;
-        const FIELD_NPC_FLAGS: u16 = 147;
+        const FIELD_LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL;
+        const FIELD_HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH;
+        const FIELD_NPC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
 
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
@@ -895,9 +895,9 @@ mod tests {
         const DOOR_FLAGS: u32 = 0x20;
         /// The control: a creature questgiver.
         const NPC: u64 = 0x2222;
-        const FIELD_LEVEL: u16 = 34;
-        const FIELD_NPC_FLAGS: u16 = 147;
-        const FIELD_GAMEOBJECT_FLAGS: u16 = 9;
+        const FIELD_LEVEL: u16 = benilla_protocol::field::FIELD_UNIT_LEVEL;
+        const FIELD_NPC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
+        const FIELD_GAMEOBJECT_FLAGS: u16 = benilla_protocol::field::FIELD_GAMEOBJECT_FLAGS;
 
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut app = App::new();
@@ -989,13 +989,13 @@ mod tests {
         use benilla_protocol::{EntityKind, ObjectFields};
 
         const NPC: u64 = 0x1234;
-        const FIELD_HEALTH: u16 = 22; // UNIT_FIELD_HEALTH
-        const FIELD_NPC_FLAGS: u16 = 147;
-        const FIELD_FACTION: u16 = 35; // UNIT_FIELD_FACTIONTEMPLATE
-        const FIELD_PLAYER_FLAGS: u16 = 190;
-        const FIELD_COINAGE: u16 = 1176;
-        const FIELD_SKILL_1_1: u16 = 718;
-        const FIELD_INV_SLOT_0: u16 = 486; // PLAYER_FIELD_INV_SLOT_HEAD
+        const FIELD_HEALTH: u16 = benilla_protocol::field::FIELD_UNIT_HEALTH; // UNIT_FIELD_HEALTH
+        const FIELD_NPC_FLAGS: u16 = benilla_protocol::field::FIELD_UNIT_NPC_FLAGS;
+        const FIELD_FACTION: u16 = benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE; // UNIT_FIELD_FACTIONTEMPLATE
+        const FIELD_PLAYER_FLAGS: u16 = benilla_protocol::field::FIELD_PLAYER_FLAGS;
+        const FIELD_COINAGE: u16 = benilla_protocol::field::FIELD_PLAYER_FIELD_COINAGE;
+        const FIELD_SKILL_1_1: u16 = benilla_protocol::field::FIELD_PLAYER_SKILL_INFO_1_1;
+        const FIELD_INV_SLOT_0: u16 = benilla_protocol::field::FIELD_PLAYER_INV_SLOT_HEAD; // PLAYER_FIELD_INV_SLOT_HEAD
 
         let net_entity = || NetEntity {
             kind: EntityKind::Unit,
@@ -1012,7 +1012,7 @@ mod tests {
 
         // Every watched field starts present, so each leg below is a change, not an arrival.
         let base_self = vec![
-            (34u16, 5u32),
+            (benilla_protocol::field::FIELD_UNIT_LEVEL, 5u32),
             (FIELD_HEALTH, 100),
             (FIELD_PLAYER_FLAGS, 0),
             (FIELD_COINAGE, 500),
@@ -1140,9 +1140,15 @@ mod tests {
     #[test]
     fn the_daily_reset_re_asks_everyone() {
         let base = ObjectStore::default();
-        let mut daily = benilla_protocol::ObjectFields::from_pairs(&[(1407, 1234)]);
+        let mut daily = benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_PLAYER_DAILY_QUESTS_1,
+            1234,
+        )]);
         assert_ne!(self_generation(&base.0), self_generation(&daily));
-        daily = benilla_protocol::ObjectFields::from_pairs(&[(1407, 0)]);
+        daily = benilla_protocol::ObjectFields::from_pairs(&[(
+            benilla_protocol::field::FIELD_PLAYER_DAILY_QUESTS_1,
+            0,
+        )]);
         assert_eq!(self_generation(&base.0), self_generation(&daily));
     }
 }

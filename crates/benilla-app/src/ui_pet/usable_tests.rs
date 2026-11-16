@@ -21,7 +21,7 @@ use super::PetBar;
 
 /// `PLAYER_FARSIGHT`, low word: the view's anchor, the guid `0x5d3ec0`-`0x5d3ef3` holds against the
 /// pet's.
-const FARSIGHT: u16 = 712;
+const FARSIGHT: u16 = benilla_protocol::field::FIELD_PLAYER_FARSIGHT;
 /// Some other guid than ours or the pet's.
 const OTHER: u64 = 0x99;
 /// A foe the Attack order can be aimed at.
@@ -45,7 +45,10 @@ fn set_player(rig: &mut Rig, extra: &[(u16, u32)]) {
 fn set_pet(rig: &mut Rig, extra: &[(u16, u32)]) {
     let world = rig.app.world_mut();
     let pet = world.resource::<GuidIndex>().0[&PET];
-    let mut fields = vec![(22, 100), (28, 100)];
+    let mut fields = vec![
+        (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+        (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
+    ];
     fields.extend_from_slice(extra);
     world.entity_mut(pet).insert(owned_pet_with(&fields));
 }
@@ -69,8 +72,8 @@ fn scene() -> Rig {
             Guid(FOE),
             Transform::default(),
             crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
-                (22, 100),
-                (28, 100),
+                (benilla_protocol::field::FIELD_UNIT_HEALTH, 100),
+                (benilla_protocol::field::FIELD_UNIT_MAXHEALTH, 100),
             ])),
         ))
         .id();
@@ -620,7 +623,7 @@ fn the_stock_bar_greys_a_stunned_pet_and_its_click_sends_nothing() {
 #[test]
 fn a_dead_pet_is_still_usable() {
     let mut rig = scene();
-    set_pet(&mut rig, &[(22, 0)]);
+    set_pet(&mut rig, &[(benilla_protocol::field::FIELD_UNIT_HEALTH, 0)]);
 
     assert!(usable_answer(&mut rig));
     rig.press(1);
@@ -651,7 +654,7 @@ fn the_predicate_reads_exactly_the_reference_fields() {
         ..Default::default()
     };
     let me = Some(ME);
-    let player = store(&[(2, 0x19)]);
+    let player = store(&[(benilla_protocol::field::FIELD_OBJECT_TYPE, 0x19)]);
     let pet = owned_pet();
 
     assert!(actions_usable(&bar, me, Some(&player), Some(&pet), None));
@@ -660,7 +663,10 @@ fn the_predicate_reads_exactly_the_reference_fields() {
     assert!(!actions_usable(&bar, me, Some(&player), None, None));
 
     // The owner is `CHARMEDBY` when set, else `SUMMONEDBY`, and never `CREATEDBY`.
-    let created_only = store(&[(14, ME as u32), (15, 0)]);
+    let created_only = store(&[
+        (benilla_protocol::field::FIELD_UNIT_CREATEDBY, ME as u32),
+        (benilla_protocol::field::FIELD_UNIT_CREATEDBY + 1, 0),
+    ]);
     assert!(!actions_usable(
         &bar,
         me,

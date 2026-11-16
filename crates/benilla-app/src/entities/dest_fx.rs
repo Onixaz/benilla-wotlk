@@ -520,7 +520,10 @@ mod tests {
             app.world_mut()
                 .spawn((
                     GlobalTransform::default(),
-                    ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(2, mask)])),
+                    ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                        benilla_protocol::field::FIELD_OBJECT_TYPE,
+                        mask,
+                    )])),
                 ))
                 .id()
         };
