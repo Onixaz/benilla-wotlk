@@ -88,7 +88,8 @@ pub(crate) fn on_clear_far_sight(
     }
 }
 
-/// Our own create, or a values update of our `PLAYER_FARSIGHT`, ends a clear's hold.
+/// Our own create, or a values update moving our `PLAYER_FARSIGHT` off the held value, ends a
+/// clear's hold.
 pub(crate) fn on_far_sight_field(
     In(ev): In<benilla_protocol::SessionEvent>,
     mut clear: ResMut<FarSightClear>,
@@ -103,6 +104,7 @@ pub(crate) fn on_far_sight_field(
                 && fields
                     .raw_fields()
                     .any(|(i, _)| (FIELD_PLAYER_FARSIGHT..=FIELD_PLAYER_FARSIGHT + 1).contains(&i))
+                && fields.player_farsight() != clear.held
         }
         _ => false,
     };
@@ -283,6 +285,12 @@ mod tests {
         assert_eq!(votes(&rx), [false], "the clear sends the release itself");
         app.update();
         assert!(app.world().resource::<ViewSubject>().remote.is_none());
+        set(&mut app, 0x1234);
+        app.update();
+        assert!(
+            app.world().resource::<ViewSubject>().remote.is_none() && votes(&rx).is_empty(),
+            "a resend of the held value keeps the clear"
+        );
         set(&mut app, 0);
         app.update();
         assert!(
