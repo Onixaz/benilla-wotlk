@@ -880,24 +880,29 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetNumCompletedAchievements() -> total, completed (`0x5b3ca0`).
+    // GetNumCompletedAchievements() -> total, completed (`0x5b3ca0`), two numbers on every path:
+    // with no achievement table loaded, a book of none.
     g.set(
         "GetNumCompletedAchievements",
         lua.create_function(|lua, ()| {
             let m = model(lua);
-            let Some(db) = db_of(&m) else { return none() };
+            let Some(db) = db_of(&m) else {
+                return values(vec![num(0.0), num(0.0)]);
+            };
             let faction = AchievementModel::player_faction(&m);
             let (total, completed) = num_completed(&db, &m.achievement.book.completed, faction);
             values(vec![num(total as f64), num(completed as f64)])
         })?,
     )?;
 
-    // GetNumComparisonCompletedAchievements() (`0x5b3dc0`).
+    // GetNumComparisonCompletedAchievements() (`0x5b3dc0`), the same two numbers.
     g.set(
         "GetNumComparisonCompletedAchievements",
         lua.create_function(|lua, ()| {
             let m = model(lua);
-            let Some(db) = db_of(&m) else { return none() };
+            let Some(db) = db_of(&m) else {
+                return values(vec![num(0.0), num(0.0)]);
+            };
             let faction = AchievementModel::inspect_faction(&m);
             let (total, completed) =
                 num_completed(&db, &m.achievement.book.inspect_completed, faction);
