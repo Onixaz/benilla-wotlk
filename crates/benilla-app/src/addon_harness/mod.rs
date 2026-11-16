@@ -3371,11 +3371,11 @@ mod dependency_tests {
     ///
     /// | the call | what must happen |
     /// |---|---|
-    /// | `smf:SetInsertMode()`, a ScrollingMessageFrame local | a row: this kind lacks it |
-    /// | `mf:SetInsertMode()`, a MessageFrame local | no row: the control |
+    /// | `bar:SetValueStep()`, a StatusBar local | a row: this kind lacks it |
+    /// | `sl:SetValueStep()`, a Slider local | no row: the control |
     /// | `UIParent:AddMessage()` | a row via the published name: a plain Frame |
     /// | `UIErrorsFrame:AddMessage()` | no row: ours is a `<MessageFrame>` |
-    /// | `self:SetInsertMode()` | an ambiguous row: `self` is untyped |
+    /// | `self:SetValueStep()` | an ambiguous row: `self` is untyped |
     ///
     /// `ghost` is typed only inside a `--` comment and `faker` only inside a string, both as
     /// `Button`, so a leaking stripper would mint an otherwise impossible `Button:AddMessage` row.
@@ -3392,16 +3392,16 @@ mod dependency_tests {
         // Never executed: the scan is static, and an unrun body keeps `loaded` clean.
         std::fs::write(
             dir.join("a.lua"),
-            "local smf = CreateFrame(\"ScrollingMessageFrame\")\n\
-             local mf = CreateFrame(\"MessageFrame\")\n\
+            "local bar = CreateFrame(\"StatusBar\")\n\
+             local sl = CreateFrame(\"Slider\")\n\
              -- local ghost = CreateFrame(\"Button\")\n\
              local faker = \"CreateFrame('Button')\"\n\
              function PerKind_Never(self)\n\
-             smf:SetInsertMode(\"TOP\")\n\
-             mf:SetInsertMode(\"TOP\")\n\
+             bar:SetValueStep(1)\n\
+             sl:SetValueStep(1)\n\
              UIParent:AddMessage(\"x\")\n\
              UIErrorsFrame:AddMessage(\"x\")\n\
-             self:SetInsertMode(\"TOP\")\n\
+             self:SetValueStep(1)\n\
              ghost:AddMessage(\"x\")\n\
              faker:AddMessage(\"x\")\n\
              end\n",
@@ -3421,7 +3421,7 @@ mod dependency_tests {
             r.kind_missing_methods,
             vec![
                 "Frame:AddMessage (on MessageFrame, ScrollingMessageFrame)".to_string(),
-                "ScrollingMessageFrame:SetInsertMode (on MessageFrame)".to_string(),
+                "StatusBar:SetValueStep (on Slider)".to_string(),
             ],
             "the typed call sites, and only the ones whose kind cannot answer — no Button row, so \
              neither the comment nor the string literal was read as code"
@@ -3431,7 +3431,7 @@ mod dependency_tests {
             r.ambiguous_methods,
             vec![
                 "AddMessage (only on MessageFrame, ScrollingMessageFrame)".to_string(),
-                "SetInsertMode (only on MessageFrame)".to_string(),
+                "SetValueStep (only on Slider)".to_string(),
             ],
             "an untypable receiver is a stated unknown, never a silent pass"
         );
@@ -3443,10 +3443,7 @@ mod dependency_tests {
                     "Frame:AddMessage (on MessageFrame, ScrollingMessageFrame)".to_string(),
                     1
                 ),
-                (
-                    "ScrollingMessageFrame:SetInsertMode (on MessageFrame)".to_string(),
-                    1
-                ),
+                ("StatusBar:SetValueStep (on Slider)".to_string(), 1),
             ]
         );
 
@@ -3703,17 +3700,17 @@ mod dependency_tests {
         let wants = Wants {
             missing_globals: Vec::new(),
             missing_tables: Vec::new(),
-            wanted_methods: wanted(&["SetWidth", "SetInsertMode"]),
+            wanted_methods: wanted(&["SetWidth", "SetValueStep"]),
             tested_methods: BTreeSet::new(),
             kind_calls: [("Frame".to_string(), "SetWidth".to_string())]
                 .into_iter()
                 .collect(),
             global_calls: BTreeSet::new(),
-            loose_methods: wanted(&["SetInsertMode"]),
+            loose_methods: wanted(&["SetValueStep"]),
         };
         let (missing, ambiguous) = per_kind_rows(
             &script,
-            &widget_method_kinds(&script, &wanted(&["SetWidth", "SetInsertMode"])),
+            &widget_method_kinds(&script, &wanted(&["SetWidth", "SetValueStep"])),
             &wants,
         );
         assert!(
@@ -3722,7 +3719,7 @@ mod dependency_tests {
         );
         assert_eq!(
             ambiguous,
-            vec!["SetInsertMode (only on MessageFrame)".to_string()],
+            vec!["SetValueStep (only on Slider)".to_string()],
             "...and the untypable one is reported as conditional, with the kind named"
         );
 
@@ -3740,12 +3737,12 @@ mod dependency_tests {
     }
 
     /// A method on a sibling kind is invisible to the any-kind table and found per kind:
-    /// `SetInsertMode` is a MessageFrame binding only, so a ScrollingMessageFrame call to it is a
-    /// row, and the same call on a MessageFrame is none.
+    /// `SetValueStep` is a Slider binding only, so a StatusBar call to it is a row, and the same
+    /// call on a Slider is none.
     #[test]
     fn a_method_on_a_sibling_kind_is_invisible_to_any_and_found_per_kind() {
         let script = seated_vm();
-        let want = wanted(&["SetInsertMode"]);
+        let want = wanted(&["SetValueStep"]);
         let oracle = widget_method_kinds(&script, &want);
         assert!(
             unresolved_from(&oracle, &want).is_empty(),
@@ -3762,7 +3759,7 @@ mod dependency_tests {
                     missing_tables: Vec::new(),
                     wanted_methods: want.clone(),
                     tested_methods: BTreeSet::new(),
-                    kind_calls: [(kind.to_string(), "SetInsertMode".to_string())]
+                    kind_calls: [(kind.to_string(), "SetValueStep".to_string())]
                         .into_iter()
                         .collect(),
                     global_calls: BTreeSet::new(),
@@ -3772,13 +3769,13 @@ mod dependency_tests {
             .0
         };
         assert_eq!(
-            called_on("ScrollingMessageFrame"),
-            vec!["ScrollingMessageFrame:SetInsertMode (on MessageFrame)".to_string()],
+            called_on("StatusBar"),
+            vec!["StatusBar:SetValueStep (on Slider)".to_string()],
             "a missing verb's row names the sibling that DOES answer it, because \
              `wire the kind` and `write the verb` are different jobs"
         );
         assert!(
-            called_on("MessageFrame").is_empty(),
+            called_on("Slider").is_empty(),
             "...and the kind that answers it produces nothing — the pass is not just over-reporting"
         );
     }
