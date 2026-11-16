@@ -381,11 +381,11 @@ fn solo_target_follow_click_queues_an_exact_by_name_follow() {
     s.mouse_button(fx as f32, fy as f32, "LeftButton", false);
     assert_eq!(
         s.take_follow_requests(),
-        vec![FollowRequest::ByName {
+        vec![FollowRequest {
             name: "Ally".into(),
             exact: true,
         }],
-        "the popup follows by NAME and exactly — not by unit token, and not prefix-matched"
+        "the popup follows by NAME and exactly, not prefix-matched"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }

@@ -5,21 +5,19 @@
 //! |---|---|---|---|
 //! | `TargetByName` | 8, creatures and players | 0 | Lua arg 2 |
 //! | `AssistByName` | 0x10, players only | 0 | 0 |
-//! | `FollowByName` | 0x10, players only | 2, assistable and alive | Lua arg 2 |
+//! | `FollowUnit` | 0x10, players only, then 8 | 3, assistable and alive, then 0 | Lua arg 2 |
 //!
 //! Filter mode 0 underflows the reference's jump table into accept-all: no range, facing, reaction,
-//! liveness, visibility or self test. A name matches whole-string first, else by the longest common
-//! prefix, both case-insensitive.
+//! liveness, visibility or self test. A name matches whole-string first, else when the query starts
+//! it, both case-insensitive.
 //!
 //! Deviation: the reference ends the walk at the first whole-string hit, so its pick follows the
-//! object list's order (a tail append); we rank exact, then longer prefix, then nearest
+//! object list's order (a tail append); we rank exact, then nearest
 //! ([`Rank::beats`]), because the nearest namesake is the better pick.
 //!
 //! `/target` and `TargetUnit` also take the reference's group legs ([`target_named`]): a group
 //! member by the whole name first, and a party or raid member the object manager does not hold
 //! behind every visible match. The active player scans at the group's distance (`0x52006a`).
-
-use std::cmp::Ordering;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -36,7 +34,7 @@ use super::{scan, Selection};
 pub(crate) enum NameSearch {
     /// Typemask 8, creatures and players (a player carries the UNIT bit): `/target`.
     AnyUnit,
-    /// Typemask 0x10, players only: `/assist <name>` and `/follow <name>`.
+    /// Typemask 0x10, players only: `/assist <name>` and `FollowUnit`'s first pass.
     PlayerOnly,
 }
 
@@ -67,35 +65,20 @@ pub(crate) struct AssistRequest {
 struct Rank {
     /// A whole-string, case-insensitive match.
     exact: bool,
-    /// The folded common-prefix length.
-    prefix: usize,
     /// 3D centre-to-centre squared distance from the active player.
     dist2: f32,
 }
 
 impl Rank {
-    /// Strictly better than the incumbent: exact, then the longer prefix, then the strictly nearer.
-    /// A tie or a NaN distance keeps the incumbent, as the reference's `fcomp`/`jp` compare does.
+    /// Strictly better than the incumbent: exact, then the strictly nearer. A tie or a NaN
+    /// distance keeps the incumbent, as the reference's `fcomp`/`jp` compare does.
     fn beats(self, other: Rank) -> bool {
         match (self.exact, other.exact) {
             (true, false) => true,
             (false, true) => false,
-            _ => match self.prefix.cmp(&other.prefix) {
-                Ordering::Greater => true,
-                Ordering::Less => false,
-                Ordering::Equal => self.dist2 < other.dist2,
-            },
+            _ => self.dist2 < other.dist2,
         }
     }
-}
-
-/// The case-folded common-prefix length, the reference's lockstep walk through the ASCII fold.
-fn common_prefix_len(query: &str, name: &str) -> usize {
-    query
-        .bytes()
-        .zip(name.bytes())
-        .take_while(|(q, n)| q.eq_ignore_ascii_case(n))
-        .count()
 }
 
 /// The follow start gate (the reference's mode-3 chain) as a pure function, its order pinned by
@@ -145,31 +128,18 @@ const FOLLOW_TOO_FAR: &str = "ERR_AUTOFOLLOW_TOO_FAR";
 /// on a bystander sharing a first letter; the slash commands pass nothing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Match {
-    /// A whole-string hit, else the longest common prefix.
+    /// A whole-string hit, else a name the query starts.
     PrefixOk,
     /// Whole-string only.
     ExactOnly,
 }
 
-/// Score one candidate against the query. The reference's best length seeds at 1, so a zero-length
-/// overlap is no match.
+/// Score one candidate against the query: the whole name, else a name the query starts, compared
+/// at the query's length (`0x5131ad`), so `Claudetwo` never matches `Claude`.
 fn rank(query: &str, name: &str, dist2: f32, mode: Match) -> Option<Rank> {
-    if query.eq_ignore_ascii_case(name) {
-        return Some(Rank {
-            exact: true,
-            prefix: query.len(),
-            dist2,
-        });
-    }
-    if mode == Match::ExactOnly {
-        return None;
-    }
-    let prefix = common_prefix_len(query, name);
-    (prefix >= 1).then_some(Rank {
-        exact: false,
-        prefix,
-        dist2,
-    })
+    let exact = query.eq_ignore_ascii_case(name);
+    (exact || (mode == Match::PrefixOk && has_query_prefix(name, query)))
+        .then_some(Rank { exact, dist2 })
 }
 
 /// Everything a by-name search reads.
@@ -205,7 +175,7 @@ pub(crate) struct ByNameScan<'w, 's> {
 enum Filter {
     /// Mode 0, which underflows the jump table's bound into accept-all: `/target`, `/assist`.
     AcceptAll,
-    /// Mode 2, the assist check and `UNIT_FIELD_HEALTH > 0`: `/follow`.
+    /// Mode 3, the assist check and `UNIT_FIELD_HEALTH > 0`: `FollowUnit`'s first pass.
     AssistableAlive,
     /// Mode 1, the attack check and alive: `StartAttack`'s name.
     AttackableAlive,
@@ -226,7 +196,7 @@ impl ByNameScan<'_, '_> {
         self.self_q.single().ok().map(|(_, g, _, _)| g.0)
     }
 
-    /// The mode-2 arm: alive, and the assist check as a friendly reaction (4+).
+    /// The mode-3 arm: alive, and the assist check as a friendly reaction (4+).
     fn assistable_alive(&self, store: Option<&ObjectStore>) -> bool {
         if store.is_some_and(|s| s.0.unit_is_dead()) {
             return false;
@@ -268,7 +238,7 @@ impl ByNameScan<'_, '_> {
     }
 
     /// The follow start gate ([`follow_refusal_key`]): the key of the first refusal, for the UI's
-    /// error display. `FollowUnit` skips the resolver but not this gate.
+    /// error display.
     fn follow_refusal(
         &self,
         followee: u64,
@@ -390,9 +360,8 @@ fn scan_units<'a>(
     match &best {
         Some((_, guid, r, name)) => info!(
             "by-name: \"{query}\" ({search:?}) -> \"{name}\" guid {guid:#x} \
-             ({}, prefix {}, {:.1} yd) over {considered} named candidates ({nameless} unnamed)",
+             ({}, {:.1} yd) over {considered} named candidates ({nameless} unnamed)",
             if r.exact { "exact" } else { "prefix" },
-            r.prefix,
             r.dist2.sqrt(),
         ),
         None => info!(
@@ -609,13 +578,49 @@ pub(super) fn assist_named(
     commit.assist(basis, how)
 }
 
-/// Drain `/follow [name]` into [`crate::player`]; follow sends nothing on the wire. The followee's
-/// name is latched here for `AUTOFOLLOW_BEGIN` ([`crate::ui_follow`]).
+/// `FollowUnit`'s subject (`0x5224c0`): the resolver's players-only pass with filter mode 3, the
+/// assist check and alive, then its any-unit pass with mode 0, both with the exact flag. Each pass
+/// takes a unit token first, the empty string naming the target, and a token naming nobody falls
+/// to the name scan; the subject must be a held unit. A miss is the error key the binding shows.
+fn follow_subject(
+    scan_params: &ByNameScan,
+    tokens: &crate::ui_unit::UnitTokens,
+    selection: &Selection,
+    name: &str,
+    exact: bool,
+) -> Result<u64, &'static str> {
+    let token = if name.is_empty() { "target" } else { name };
+    let found = match tokens.guid_of(token, selection) {
+        // A player the first pass filters out the second takes, so a token's subject is any held
+        // unit; one the object manager does not hold is no subject.
+        Some(guid) => tokens
+            .held(guid)
+            .map(|(_, guid)| guid)
+            .filter(|&guid| NameSearch::AnyUnit.accepts(guid)),
+        None if name.is_empty() => None,
+        None => {
+            let mode = if exact {
+                Match::ExactOnly
+            } else {
+                Match::PrefixOk
+            };
+            scan_params
+                .resolve(name, NameSearch::PlayerOnly, Filter::AssistableAlive, mode)
+                .or_else(|| scan_params.resolve(name, NameSearch::AnyUnit, Filter::AcceptAll, mode))
+                .map(|(_, guid, _)| guid)
+        }
+    };
+    found.ok_or_else(|| super::script::unit_miss_key(name))
+}
+
+/// Drain `FollowUnit` and `/follow [name]` into [`crate::player`]; follow sends nothing on the
+/// wire. The followee's name is latched here for `AUTOFOLLOW_BEGIN` ([`crate::ui_follow`]).
+#[allow(clippy::too_many_arguments)] // one system, the arm's whole read set
 pub(super) fn follow_requests(
     mut requests: MessageReader<crate::player::FollowRequest>,
     scan_params: ByNameScan,
+    tokens: crate::ui_unit::UnitTokens,
     selection: Res<Selection>,
-    group: Res<crate::ui_party::GroupState>,
     index: Res<GuidIndex>,
     stores: Query<&ObjectStore>,
     places: Query<&Transform>,
@@ -626,68 +631,55 @@ pub(super) fn follow_requests(
     mut stand: MessageWriter<crate::player::StandStateRequest>,
 ) {
     for request in requests.read() {
-        let resolved = match request {
-            crate::player::FollowRequest::Name { name, exact } => scan_params
-                .resolve(
-                    name,
-                    NameSearch::PlayerOnly,
-                    Filter::AssistableAlive,
-                    if *exact {
-                        Match::ExactOnly
-                    } else {
-                        Match::PrefixOk
-                    },
-                )
-                .map(|(_, guid, name)| (guid, name)),
-            // `"target"` skips `player_token_guid`, whose players-only filter would make a
-            // creature a silent miss: the start gate must refuse it with its error line.
-            crate::player::FollowRequest::Unit(token) => match token.as_str() {
-                "target" => selection.guid,
-                tok => crate::ui_unit::player_token_guid(tok, &selection, &group),
-            }
-            .map(|guid| {
-                let name = scan_params.names.peek(guid).unwrap_or_default().to_string();
-                (guid, name)
-            }),
-        };
-        // The start gate, whichever way the subject was found.
-        if let Some((guid, _)) = &resolved {
-            let entity = index.0.get(guid);
-            let followee = entity.and_then(|e| stores.get(*e).ok());
-            let at = entity.and_then(|e| places.get(*e).ok().map(|t| t.translation));
-            if let Some(key) = scan_params.follow_refusal(
-                *guid,
-                followee,
-                cast.in_flight(std::time::Instant::now()),
-                at,
-            ) {
-                info!("follow: refused — {key}");
+        let guid = match follow_subject(
+            &scan_params,
+            &tokens,
+            &selection,
+            &request.name,
+            request.exact,
+        ) {
+            Ok(guid) => guid,
+            Err(key) => {
+                // A follow in progress is left alone.
+                info!("follow: \"{}\" names no unit — {key}", request.name);
                 errors.0.push(crate::ui_action::UiError::key(key));
-                if key == FOLLOW_TOO_FAR {
-                    approach.stop();
-                    follow.stop();
-                }
                 continue;
             }
+        };
+        // Ourselves: the arm refuses silently (`0x72b4a0`).
+        if scan_params.me() == Some(guid) {
+            info!("follow: refused — the subject is ourselves");
+            continue;
         }
-        match resolved {
-            Some((guid, name)) => {
-                info!("follow: now following \"{name}\" guid {guid:#x}");
-                // The arm cancels what runs first, one auto-move cell, and stands us up.
+        // The start gate.
+        let entity = index.0.get(&guid);
+        let followee = entity.and_then(|e| stores.get(*e).ok());
+        let at = entity.and_then(|e| places.get(*e).ok().map(|t| t.translation));
+        if let Some(key) = scan_params.follow_refusal(
+            guid,
+            followee,
+            cast.in_flight(std::time::Instant::now()),
+            at,
+        ) {
+            info!("follow: refused — {key}");
+            errors.0.push(crate::ui_action::UiError::key(key));
+            if key == FOLLOW_TOO_FAR {
                 approach.stop();
-                follow.start(guid, name);
-                let seated = scan_params
-                    .self_q
-                    .single()
-                    .is_ok_and(|(_, _, _, s)| s.is_some_and(|s| s.0.unit_stand_state() != 0));
-                if seated {
-                    stand.write(crate::player::StandStateRequest { state: 0 });
-                }
+                follow.stop();
             }
-            None => {
-                // No subject by name or token: a follow in progress is left alone.
-                info!("follow: nothing to follow");
-            }
+            continue;
+        }
+        let name = scan_params.names.peek(guid).unwrap_or_default().to_string();
+        info!("follow: now following \"{name}\" guid {guid:#x}");
+        // The arm cancels what runs first, one auto-move cell, and stands us up.
+        approach.stop();
+        follow.start(guid, name);
+        let seated = scan_params
+            .self_q
+            .single()
+            .is_ok_and(|(_, _, _, s)| s.is_some_and(|s| s.0.unit_stand_state() != 0));
+        if seated {
+            stand.write(crate::player::StandStateRequest { state: 0 });
         }
     }
 }
@@ -851,16 +843,11 @@ mod tests {
     use super::*;
 
     fn exact(dist2: f32) -> Rank {
-        Rank {
-            exact: true,
-            prefix: 3,
-            dist2,
-        }
+        Rank { exact: true, dist2 }
     }
-    fn prefix(prefix: usize, dist2: f32) -> Rank {
+    fn prefix(dist2: f32) -> Rank {
         Rank {
             exact: false,
-            prefix,
             dist2,
         }
     }
@@ -992,30 +979,20 @@ mod tests {
         );
     }
 
+    /// The query must start the name, folded: a longer query sharing only its head is no match.
     #[test]
-    fn prefix_length_folds_case_and_stops_at_the_shorter_string() {
-        assert_eq!(common_prefix_len("rag", "Ragnaros"), 3);
-        assert_eq!(common_prefix_len("RAG", "ragnaros"), 3);
-        assert_eq!(
-            common_prefix_len("Ragnarosx", "Ragnaros"),
-            8,
-            "capped by the candidate"
-        );
-        assert_eq!(
-            common_prefix_len("zzz", "Ragnaros"),
-            0,
-            "no shared first letter"
-        );
-    }
-
-    #[test]
-    fn a_match_needs_one_folded_character() {
-        // The reference seeds its best length at 1: zero overlap is no match.
+    fn a_prefix_match_is_the_whole_query_at_the_names_start() {
         assert!(rank("zzz", "Ragnaros", 1.0, Match::PrefixOk).is_none());
-        assert_eq!(
-            rank("rag", "Ragnaros", 1.0, Match::PrefixOk).map(|r| r.prefix),
-            Some(3)
+        assert!(rank("RAG", "ragnaros", 1.0, Match::PrefixOk).is_some_and(|r| !r.exact));
+        assert!(
+            rank("Ragnarosx", "Ragnaros", 1.0, Match::PrefixOk).is_none(),
+            "the name is shorter than the query"
         );
+        assert!(
+            rank("Claudetwo", "Claude", 1.0, Match::PrefixOk).is_none(),
+            "a shared head is not a prefix match"
+        );
+        assert!(rank("nar", "Ragnaros", 1.0, Match::PrefixOk).is_none());
     }
 
     #[test]
@@ -1090,27 +1067,24 @@ mod tests {
     #[test]
     fn exact_beats_any_prefix_and_nearest_breaks_the_tie() {
         // The deviation: exact ranks first, whatever the reference's walk order.
-        assert!(exact(100.0).beats(prefix(3, 1.0)));
-        assert!(!prefix(3, 1.0).beats(exact(100.0)));
+        assert!(exact(100.0).beats(prefix(1.0)));
+        assert!(!prefix(1.0).beats(exact(100.0)));
         // Among same-named exact matches, the nearest wins.
         assert!(exact(4.0).beats(exact(9.0)));
         assert!(!exact(9.0).beats(exact(4.0)));
     }
 
     #[test]
-    fn longer_prefix_beats_nearer_shorter_one() {
-        // The reference's `jg` accept: a longer prefix wins at any distance.
-        assert!(prefix(5, 900.0).beats(prefix(3, 1.0)));
-        assert!(!prefix(3, 1.0).beats(prefix(5, 900.0)));
-        // Equal prefix length falls through to strictly-nearest.
-        assert!(prefix(3, 4.0).beats(prefix(3, 9.0)));
+    fn the_nearer_prefix_match_wins() {
+        assert!(prefix(4.0).beats(prefix(9.0)));
+        assert!(!prefix(9.0).beats(prefix(4.0)));
     }
 
     #[test]
     fn ties_keep_the_incumbent_and_nan_never_displaces() {
         // The reference's `jp` reject edge makes the accept a strict `<`.
-        assert!(!prefix(3, 4.0).beats(prefix(3, 4.0)));
+        assert!(!prefix(4.0).beats(prefix(4.0)));
         assert!(!exact(4.0).beats(exact(4.0)));
-        assert!(!prefix(3, f32::NAN).beats(prefix(3, 4.0)));
+        assert!(!prefix(f32::NAN).beats(prefix(4.0)));
     }
 }

@@ -31,9 +31,9 @@ pub(crate) struct ScriptSelect<'w, 's> {
     errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
 }
 
-/// `AssistUnit`'s line for a basis it cannot use: an empty or `"target"` token (`0x9fc4a0`) shows
-/// `ERR_GENERIC_NO_TARGET`, any other `ERR_UNIT_NOT_FOUND`.
-fn assist_miss_key(token: &str) -> &'static str {
+/// `AssistUnit`'s and `FollowUnit`'s line for a unit they cannot use: an empty or `"target"` token
+/// (`0x9fc4a0`) shows `ERR_GENERIC_NO_TARGET`, any other `ERR_UNIT_NOT_FOUND`.
+pub(super) fn unit_miss_key(token: &str) -> &'static str {
     if token.is_empty() || token.eq_ignore_ascii_case("target") {
         "ERR_GENERIC_NO_TARGET"
     } else {
@@ -67,7 +67,7 @@ impl ScriptSelect<'_, '_> {
                         info!("assist (AssistUnit): \"{token}\" names no held unit");
                         self.errors
                             .0
-                            .push(crate::ui_action::UiError::key(assist_miss_key(&token)));
+                            .push(crate::ui_action::UiError::key(unit_miss_key(&token)));
                     }
                 }
             }
