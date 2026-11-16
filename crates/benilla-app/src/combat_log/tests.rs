@@ -753,3 +753,30 @@ fn centre_text_follows_the_combat_text_unit() {
     app.insert_non_send_resource(benilla_ui::script::UiScript::new().unwrap());
     assert_eq!(hits(&mut app), 0, "no unit named yet");
 }
+
+/// A player whose name record carries a realm fires as `name-realm`; one without keeps the bare
+/// name (`0x74f720`, `0x74e319`).
+#[test]
+fn a_player_from_another_realm_logs_as_name_dash_realm() {
+    let fire = |realm: &str| {
+        let mut app = rig();
+        app.add_message::<super::entries::CombatLogFired>()
+            .insert_resource(Time::<bevy::time::Real>::default());
+        let mut names = app.world_mut().resource_mut::<crate::names::NameCache>();
+        names.insert_player(ME, "Claude".into(), None);
+        names.set_player_realm(ME, realm.into());
+        run(&mut app, |log| log.unit_dead(ME));
+        app.world_mut()
+            .run_system_once(super::entries::fire_pending)
+            .unwrap();
+        let fired = app
+            .world_mut()
+            .resource_mut::<Messages<super::entries::CombatLogFired>>()
+            .drain()
+            .map(|f| f.0.dest.name)
+            .collect::<Vec<_>>();
+        fired
+    };
+    assert_eq!(fire("Outland"), [Some("Claude-Outland".to_string())]);
+    assert_eq!(fire(""), [Some("Claude".to_string())]);
+}

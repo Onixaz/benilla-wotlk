@@ -22,10 +22,13 @@ impl LogFile {
         Self { name, file: None }
     }
 
-    /// Append a line, when the file is open.
-    pub(crate) fn record(&mut self, line: &str) {
+    /// Append a line's bytes as they are, when the file is open.
+    pub(crate) fn record(&mut self, line: &[u8]) {
         if let Some(file) = self.file.as_mut() {
-            if write!(file, "{}  {line}\r\n", stamp()).is_err() {
+            let mut out = format!("{}  ", stamp()).into_bytes();
+            out.extend_from_slice(line);
+            out.extend_from_slice(b"\r\n");
+            if file.write_all(&out).is_err() {
                 self.file = None;
             }
         }
@@ -97,7 +100,7 @@ pub(crate) struct CombatLogFile(pub(crate) LogFile);
 impl CombatLogFile {
     /// Append an entry's line, opening the file first when the flag moved this frame ahead of
     /// [`sync_chat_logging`], as `LoggingCombat` opens it in the call (`0x4fbcb1`).
-    pub(crate) fn record(&mut self, line: &str) {
+    pub(crate) fn record(&mut self, line: &[u8]) {
         if self.0.set(true) {
             self.0.record(line);
         }
